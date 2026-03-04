@@ -10,11 +10,15 @@
   },
   "inputs": {
     "required": [
-      "sourceType"
+      { "name": "sourceType", "type": "string", "description": "Source type: 'followers', 'following', or profile URL" }
     ],
     "optional": [
-      "maxResultsCount",
-      "listId"
+      { "name": "maxResultsCount", "type": "number", "default": 1000, "min": 1, "max": 10000, "description": "Maximum followers to export" },
+      { "name": "listId", "type": "string", "default": "", "description": "Save to existing list ID" },
+      { "name": "filterMinFollowers", "type": "number", "default": 0, "min": 0, "description": "Minimum follower count filter" },
+      { "name": "filterMaxFollowers", "type": "number", "default": 0, "min": 0, "description": "Maximum follower count filter (0=unlimited)" },
+      { "name": "filterVerified", "type": "boolean", "default": false, "description": "Only include verified accounts" },
+      { "name": "sortBy", "type": "string", "default": "recent", "enum": ["recent", "followers"], "description": "Sort order for results" }
     ]
   },
   "outputs": {
@@ -35,7 +39,7 @@
     {
       "id": "close_popups",
       "type": "wait",
-      "duration": 2.0,
+      "duration": "{{delayBetweenPages or 3}}",
       "waitFor": "time"
     },
     {
@@ -131,7 +135,7 @@
     {
       "id": "wait_for_list_load_t2",
       "type": "wait",
-      "duration": 3.0,
+      "duration": "{{delayBetweenPages or 3}}",
       "waitFor": "time"
     },
     {
@@ -246,7 +250,7 @@
     {
       "id": "wait_for_list_load_t3",
       "type": "wait",
-      "duration": 3.0,
+      "duration": "{{delayBetweenPages or 3}}",
       "waitFor": "time"
     },
     {

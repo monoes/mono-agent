@@ -10,9 +10,15 @@
   },
   "inputs": {
     "required": [
-      "selectedListItems"
+      { "name": "selectedListItems", "type": "list", "description": "Profile URLs to scrape" }
     ],
-    "optional": []
+    "optional": [
+      { "name": "fieldsToScrape", "type": "string", "default": "all", "enum": ["all", "basic", "followers", "posts"], "description": "Which profile fields to scrape" },
+      { "name": "includeRecentPosts", "type": "boolean", "default": false, "description": "Also scrape recent posts metadata" },
+      { "name": "maxRecentPosts", "type": "number", "default": 12, "min": 1, "max": 100, "description": "Max recent posts to scrape per profile" },
+      { "name": "saveToListId", "type": "string", "default": "", "description": "Save scraped profiles to list ID" },
+      { "name": "updateExisting", "type": "boolean", "default": true, "description": "Update existing records" }
+    ]
   },
   "outputs": {
     "success": [
@@ -39,7 +45,7 @@
     {
       "id": "wait_for_page",
       "type": "wait",
-      "duration": 2.0,
+      "duration": "{{delayBetweenProfiles or 3}}",
       "waitFor": "time"
     },
     {

@@ -10,12 +10,17 @@
   },
   "inputs": {
     "required": [
-      "maxContentCount",
-      "searches"
+      { "name": "maxContentCount", "type": "number", "description": "Maximum number of posts to engage with" },
+      { "name": "searches", "type": "array", "description": "Array of hashtags or keywords to search" }
     ],
     "optional": [
-      "commentText",
-      "target"
+      { "name": "engagementActions", "type": "array", "default": ["like"], "description": "Actions to perform: like, comment, follow" },
+      { "name": "commentText", "type": "string", "default": "", "description": "Comment text (if comment in engagementActions)" },
+      { "name": "commentVariants", "type": "array", "default": [], "description": "Array of comment variants (randomly selected)" },
+      { "name": "target", "type": "string", "default": "posts", "enum": ["posts","reels"], "description": "Target content type" },
+      { "name": "minLikes", "type": "number", "default": 0, "min": 0, "description": "Skip posts with fewer likes" },
+      { "name": "maxLikes", "type": "number", "default": 0, "min": 0, "description": "Skip posts with more likes (0=unlimited)" },
+      { "name": "sessionDelay", "type": "number", "default": 30, "min": 5, "max": 300, "description": "Seconds to wait between engagement sessions" }
     ]
   },
   "outputs": {
@@ -83,7 +88,7 @@
     {
       "id": "close_popups",
       "type": "wait",
-      "duration": 2.0,
+      "duration": "{{sessionDelay or 30}}",
       "waitFor": "time"
     },
     {

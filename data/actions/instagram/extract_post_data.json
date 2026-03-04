@@ -10,9 +10,16 @@
   },
   "inputs": {
     "required": [
-      "selectedListItems"
+      { "name": "selectedListItems", "type": "list", "description": "Post URLs to extract data from" }
     ],
-    "optional": []
+    "optional": [
+      { "name": "fieldsToExtract", "type": "string", "default": "all", "enum": ["all","basic","comments"], "description": "Which post fields to extract" },
+      { "name": "includeComments", "type": "boolean", "default": false, "description": "Extract post comments" },
+      { "name": "maxComments", "type": "number", "default": 0, "min": 0, "description": "Maximum comments to extract (0=all)" },
+      { "name": "includeReplies", "type": "boolean", "default": false, "description": "Include comment replies" },
+      { "name": "downloadMedia", "type": "boolean", "default": false, "description": "Download post media files" },
+      { "name": "delayBetweenPosts", "type": "number", "default": 2, "min": 1, "max": 30, "description": "Seconds between post extractions" }
+    ]
   },
   "outputs": {
     "success": [
@@ -323,7 +330,7 @@
     {
       "id": "wait_between_posts",
       "type": "wait",
-      "duration": 2.0,
+      "duration": "{{delayBetweenPosts or 2}}",
       "waitFor": "time"
     },
     {

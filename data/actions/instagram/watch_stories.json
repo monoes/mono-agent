@@ -10,9 +10,16 @@
   },
   "inputs": {
     "required": [
-      "selectedListItems"
+      { "name": "selectedListItems", "type": "list", "description": "Profile URLs whose stories to watch" }
     ],
-    "optional": []
+    "optional": [
+      { "name": "maxStoriesPerUser", "type": "number", "default": 0, "min": 0, "description": "Max stories per user (0=all)" },
+      { "name": "delayBetweenStories", "type": "number", "default": 3, "min": 1, "max": 30, "description": "Seconds to wait between stories" },
+      { "name": "delayBetweenProfiles", "type": "number", "default": 5, "min": 2, "max": 60, "description": "Seconds to wait between profiles" },
+      { "name": "likeStory", "type": "boolean", "default": false, "description": "Like each story while watching" },
+      { "name": "replyToStory", "type": "boolean", "default": false, "description": "Reply to each story" },
+      { "name": "replyText", "type": "string", "default": "", "description": "Text to use when replying to stories" }
+    ]
   },
   "outputs": {
     "success": [
@@ -89,7 +96,7 @@
     {
       "id": "t2_wait_for_story",
       "type": "wait",
-      "duration": 8.0,
+      "duration": "{{delayBetweenStories or 3}}",
       "waitFor": "time"
     },
     {
@@ -132,13 +139,13 @@
     {
       "id": "t3_wait_for_story",
       "type": "wait",
-      "duration": 8.0,
+      "duration": "{{delayBetweenStories or 3}}",
       "waitFor": "time"
     },
     {
       "id": "wait_between_profiles",
       "type": "wait",
-      "duration": 2.0,
+      "duration": "{{delayBetweenProfiles or 5}}",
       "waitFor": "time"
     },
     {

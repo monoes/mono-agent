@@ -10,13 +10,17 @@
   },
   "inputs": {
     "required": [
-      "replyText",
-      "startDate",
-      "endDate",
-      "pollInterval"
+      { "name": "replyText", "type": "string", "description": "Auto-reply text" },
+      { "name": "startDate", "type": "string", "description": "Start date for auto-replies (YYYY-MM-DD)" },
+      { "name": "endDate", "type": "string", "description": "End date for auto-replies (YYYY-MM-DD)" },
+      { "name": "pollInterval", "type": "number", "description": "Seconds between polling for new messages" }
     ],
     "optional": [
-      "selectedListItems"
+      { "name": "replyVariants", "type": "array", "default": [], "description": "Array of reply text variants" },
+      { "name": "filterByKeyword", "type": "string", "default": "", "description": "Only reply to messages containing this keyword" },
+      { "name": "maxRepliesPerDay", "type": "number", "default": 100, "min": 1, "max": 500, "description": "Max auto-replies per day" },
+      { "name": "delayBeforeReply", "type": "number", "default": 5, "min": 1, "max": 60, "description": "Seconds to wait before sending reply" },
+      { "name": "stopAfterReplies", "type": "number", "default": 0, "min": 0, "description": "Stop after N total replies (0=unlimited)" }
     ]
   },
   "outputs": {
@@ -73,7 +77,7 @@
     {
       "id": "wait_for_inbox_load",
       "type": "wait",
-      "duration": 3.0,
+      "duration": "{{delayBeforeReply or 5}}",
       "waitFor": "time"
     },
     {
@@ -187,7 +191,7 @@
     {
       "id": "wait_for_inbox_load_t3",
       "type": "wait",
-      "duration": 3.0,
+      "duration": "{{delayBeforeReply or 5}}",
       "waitFor": "time"
     },
     {

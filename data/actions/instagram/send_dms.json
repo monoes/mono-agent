@@ -10,11 +10,14 @@
   },
   "inputs": {
     "required": [
-      "selectedListItems",
-      "messageText"
+      { "name": "selectedListItems", "type": "list", "description": "Profile URLs to message" },
+      { "name": "messageText", "type": "string", "description": "Message text to send" }
     ],
     "optional": [
-      "messageSubject"
+      { "name": "messageVariants", "type": "array", "default": [], "description": "Array of message variants (randomly selected)" },
+      { "name": "maxMessagesPerSession", "type": "number", "default": 30, "min": 1, "max": 100, "description": "Rate limit: max DMs per session" },
+      { "name": "delayBetweenMessages", "type": "number", "default": 15, "min": 5, "max": 120, "description": "Seconds to wait between messages" },
+      { "name": "skipAlreadyMessaged", "type": "boolean", "default": true, "description": "Skip users already messaged" }
     ]
   },
   "outputs": {
@@ -164,7 +167,7 @@
     {
       "id": "wait_between_messages",
       "type": "wait",
-      "duration": 3.0,
+      "duration": "{{delayBetweenMessages or 15}}",
       "waitFor": "time"
     },
     {

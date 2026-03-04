@@ -10,10 +10,16 @@
   },
   "inputs": {
     "required": [
-      "selectedListItems"
+      { "name": "selectedListItems", "type": "list", "description": "Post URLs whose comments to like" }
     ],
     "optional": [
-      "commentAuthor"
+      { "name": "commentAuthor", "type": "string", "default": "", "description": "Only like comments by this author" },
+      { "name": "maxCommentsToLike", "type": "number", "default": 5, "min": 1, "max": 50, "description": "Max comments to like per post" },
+      { "name": "maxLikesPerSession", "type": "number", "default": 100, "min": 1, "max": 500, "description": "Rate limit: max comment likes per session" },
+      { "name": "delayBetweenLikes", "type": "number", "default": 2, "min": 1, "max": 30, "description": "Seconds to wait between comment likes" },
+      { "name": "likeReplies", "type": "boolean", "default": false, "description": "Also like comment replies" },
+      { "name": "skipAlreadyLiked", "type": "boolean", "default": true, "description": "Skip already-liked comments" },
+      { "name": "sortByNew", "type": "boolean", "default": false, "description": "Sort comments by newest first" }
     ]
   },
   "outputs": {
@@ -152,7 +158,7 @@
     {
       "id": "wait_between_likes",
       "type": "wait",
-      "duration": 3.0,
+      "duration": "{{delayBetweenLikes or 2}}",
       "waitFor": "time"
     },
     {

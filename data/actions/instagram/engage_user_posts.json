@@ -10,11 +10,18 @@
   },
   "inputs": {
     "required": [
-      "username",
-      "maxContentCount"
+      { "name": "username", "type": "string", "description": "Instagram username to engage with" },
+      { "name": "maxContentCount", "type": "number", "description": "Maximum number of posts to engage with" }
     ],
     "optional": [
-      "commentText"
+      { "name": "engagementActions", "type": "array", "default": ["like"], "description": "Actions to perform: like, comment" },
+      { "name": "commentText", "type": "string", "default": "", "description": "Comment text (if comment in engagementActions)" },
+      { "name": "commentVariants", "type": "array", "default": [], "description": "Array of comment variants (randomly selected)" },
+      { "name": "startFromPost", "type": "number", "default": 0, "min": 0, "description": "Start from post index (0=latest)" },
+      { "name": "filterRecentOnly", "type": "boolean", "default": false, "description": "Only engage with recent posts" },
+      { "name": "reverseOrder", "type": "boolean", "default": false, "description": "Process posts from oldest to newest" },
+      { "name": "filterMinLikes", "type": "number", "default": 0, "min": 0, "description": "Skip posts with fewer likes" },
+      { "name": "delayBetweenPosts", "type": "number", "default": 5, "min": 2, "max": 60, "description": "Seconds between post engagements" }
     ]
   },
   "outputs": {
@@ -75,7 +82,7 @@
     {
       "id": "close_popups",
       "type": "wait",
-      "duration": 2.0,
+      "duration": "{{delayBetweenPosts or 5}}",
       "waitFor": "time"
     },
     {

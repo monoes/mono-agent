@@ -10,10 +10,16 @@
   },
   "inputs": {
     "required": [
-      "keyword",
-      "maxResultsCount"
+      { "name": "keyword", "type": "string", "description": "Search keyword or hashtag" },
+      { "name": "maxResultsCount", "type": "number", "description": "Maximum number of results to collect" }
     ],
-    "optional": []
+    "optional": [
+      { "name": "mediaType", "type": "string", "default": "all", "enum": ["all","image","video","reels"], "description": "Filter by media type" },
+      { "name": "minLikes", "type": "number", "default": 0, "min": 0, "description": "Minimum likes filter" },
+      { "name": "sortBy", "type": "string", "default": "recent", "enum": ["recent","top"], "description": "Sort order for results" },
+      { "name": "followFound", "type": "boolean", "default": false, "description": "Follow discovered accounts" },
+      { "name": "saveToListId", "type": "string", "default": "", "description": "Save results to list ID" }
+    ]
   },
   "outputs": {
     "success": [
@@ -58,7 +64,7 @@
     {
       "id": "wait_for_search_load",
       "type": "wait",
-      "duration": 3.0,
+      "duration": "{{delayBetweenRequests or 3}}",
       "waitFor": "time"
     },
     {
@@ -111,7 +117,7 @@
     {
       "id": "wait_for_post_load",
       "type": "wait",
-      "duration": 3.0,
+      "duration": "{{delayBetweenRequests or 3}}",
       "waitFor": "time"
     },
     {
@@ -247,7 +253,7 @@
     {
       "id": "t2_wait_for_profile_load",
       "type": "wait",
-      "duration": 3.0,
+      "duration": "{{delayBetweenRequests or 3}}",
       "waitFor": "time"
     },
     {

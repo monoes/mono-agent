@@ -10,10 +10,15 @@
   },
   "inputs": {
     "required": [
-      "selectedListItems",
-      "commentText"
+      { "name": "selectedListItems", "type": "list", "description": "Post URLs to comment on" },
+      { "name": "commentText", "type": "string", "description": "Comment text to post" }
     ],
-    "optional": []
+    "optional": [
+      { "name": "commentVariants", "type": "array", "default": [], "description": "Array of comment text variants (randomly selected)" },
+      { "name": "maxCommentsPerSession", "type": "number", "default": 20, "min": 1, "max": 100, "description": "Rate limit: max comments per session" },
+      { "name": "delayBetweenComments", "type": "number", "default": 10, "min": 5, "max": 120, "description": "Seconds to wait between comments" },
+      { "name": "skipAlreadyCommented", "type": "boolean", "default": true, "description": "Skip posts already commented on" }
+    ]
   },
   "outputs": {
     "success": [
@@ -76,7 +81,7 @@
     {
       "id": "wait_for_post_load",
       "type": "wait",
-      "duration": 3.0,
+      "duration": "{{delayBetweenComments or 10}}",
       "waitFor": "time"
     },
     {
@@ -105,7 +110,7 @@
     {
       "id": "t2_wait_for_focus",
       "type": "wait",
-      "duration": 1.0,
+      "duration": "{{delayBetweenComments or 10}}",
       "waitFor": "time"
     },
     {
@@ -118,7 +123,7 @@
     {
       "id": "t2_wait_after_typing",
       "type": "wait",
-      "duration": 1.0,
+      "duration": "{{delayBetweenComments or 10}}",
       "waitFor": "time"
     },
     {
@@ -146,7 +151,7 @@
     {
       "id": "t2_wait_for_comment_posted",
       "type": "wait",
-      "duration": 3.0,
+      "duration": "{{delayBetweenComments or 10}}",
       "waitFor": "time"
     },
     {
@@ -198,7 +203,7 @@
     {
       "id": "t3_wait_for_focus",
       "type": "wait",
-      "duration": 1.0,
+      "duration": "{{delayBetweenComments or 10}}",
       "waitFor": "time"
     },
     {
@@ -211,7 +216,7 @@
     {
       "id": "t3_wait_after_typing",
       "type": "wait",
-      "duration": 1.0,
+      "duration": "{{delayBetweenComments or 10}}",
       "waitFor": "time"
     },
     {
@@ -232,7 +237,7 @@
     {
       "id": "t3_wait_for_comment_posted",
       "type": "wait",
-      "duration": 3.0,
+      "duration": "{{delayBetweenComments or 10}}",
       "waitFor": "time"
     },
     {

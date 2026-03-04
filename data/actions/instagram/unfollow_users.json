@@ -10,9 +10,15 @@
   },
   "inputs": {
     "required": [
-      "selectedListItems"
+      { "name": "selectedListItems", "type": "list", "description": "Profile URLs to unfollow" }
     ],
-    "optional": []
+    "optional": [
+      { "name": "maxUnfollowsPerSession", "type": "number", "default": 50, "min": 1, "max": 200, "description": "Rate limit: max unfollows per session" },
+      { "name": "maxUnfollowsPerDay", "type": "number", "default": 150, "min": 1, "max": 500, "description": "Rate limit: max unfollows per day" },
+      { "name": "delayBetweenUnfollows", "type": "number", "default": 5, "min": 2, "max": 60, "description": "Seconds to wait between unfollows" },
+      { "name": "skipMutualFollows", "type": "boolean", "default": true, "description": "Skip accounts that follow you back" },
+      { "name": "onlyNonFollowers", "type": "boolean", "default": false, "description": "Only unfollow accounts that don't follow you back" }
+    ]
   },
   "outputs": {
     "success": [
@@ -168,7 +174,7 @@
     {
       "id": "wait_between_unfollows",
       "type": "wait",
-      "duration": 4.0,
+      "duration": "{{delayBetweenUnfollows or 5}}",
       "waitFor": "time"
     },
     {
