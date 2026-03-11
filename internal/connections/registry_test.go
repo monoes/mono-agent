@@ -75,3 +75,18 @@ func TestByConnectVia(t *testing.T) {
 			len(ui), len(api), total, len(Registry))
 	}
 }
+
+func TestOAuthPlatformsHaveConfig(t *testing.T) {
+	for id, p := range Registry {
+		for _, m := range p.Methods {
+			if m == MethodOAuth {
+				if p.OAuth == nil {
+					t.Errorf("platform %q has MethodOAuth but nil OAuthConfig", id)
+				}
+				if p.OAuth != nil && (p.OAuth.AuthURL == "" || p.OAuth.TokenURL == "") {
+					t.Errorf("platform %q OAuthConfig missing AuthURL or TokenURL", id)
+				}
+			}
+		}
+	}
+}
