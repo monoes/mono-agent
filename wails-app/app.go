@@ -7,22 +7,45 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/launcher"
+	"github.com/go-rod/rod/lib/proto"
+	"github.com/google/uuid"
+	"github.com/monoes/monoes-agent/internal/bot"
+	_ "github.com/monoes/monoes-agent/internal/bot/instagram"
+	_ "github.com/monoes/monoes-agent/internal/bot/linkedin"
+	_ "github.com/monoes/monoes-agent/internal/bot/tiktok"
+	_ "github.com/monoes/monoes-agent/internal/bot/x"
+	"github.com/monoes/monoes-agent/internal/action"
+	"github.com/monoes/monoes-agent/internal/ai"
+	aichat "github.com/monoes/monoes-agent/internal/ai/chat"
+	"github.com/monoes/monoes-agent/internal/config"
+	"github.com/monoes/monoes-agent/internal/connections"
+	"github.com/monoes/monoes-agent/internal/workflow"
+	"github.com/rs/zerolog"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	_ "modernc.org/sqlite"
 )
 
 // App holds application state bound to the Wails runtime.
 type App struct {
-	ctx    context.Context
-	db     *sql.DB
-	dbPath string
-	logs   []LogEntry
+	ctx     context.Context
+	db      *sql.DB
+	dbPath  string
+	logs    []LogEntry
+	connMgr     *connections.Manager
+	aiStore     *ai.AIStore
+	chatService *aichat.ChatService
+	cfgMgr      action.ConfigInterface
+	wfStore     *workflow.WorkflowFileStore
 }
 
 // NewApp creates the App instance.
@@ -43,6 +66,56 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.db = db
 
+	// Initialize workflow file store.
+	wfDir := filepath.Join(os.Getenv("HOME"), ".monoes", "workflows")
+	wfStore, wfErr := workflow.NewWorkflowFileStore(wfDir)
+	if wfErr != nil {
+		fmt.Printf("workflow file store init error: %v\n", wfErr)
+	} else {
+		a.wfStore = wfStore
+	}
+
+	// Initialize connections manager.
+	mgr, err := connections.NewManager(a.db)
+	if err != nil {
+		fmt.Printf("connections manager init error: %v\n", err)
+	} else {
+		a.connMgr = mgr
+	}
+
+	// Initialize config manager for selector resolution in browser nodes.
+	cfgLogger := zerolog.New(io.Discard)
+	home2, _ := os.UserHomeDir()
+	apiClient := config.NewAPIClient(cfgLogger)
+	rawCfgMgr := config.NewConfigManager(filepath.Join(home2, ".monoes", "configs"), nil, apiClient, cfgLogger)
+	a.cfgMgr = &config.ConfigManagerAdapter{Mgr: rawCfgMgr}
+
+	// Initialize AI store.
+	aiStore, aiErr := ai.NewAIStore(db)
+	if aiErr != nil {
+		fmt.Printf("ai store init error: %v\n", aiErr)
+	} else {
+		a.aiStore = aiStore
+		cs := aichat.NewChatService(aiStore, db)
+		// Feed the node type registry into canvas tools so AI knows what nodes are available.
+		ntMap := a.GetWorkflowNodeTypes()
+		var allTypes []aichat.NodeTypeInfo
+		for _, v := range ntMap {
+			// v is interface{} wrapping a typed slice; marshal+unmarshal to extract
+			b, err := json.Marshal(v)
+			if err != nil {
+				continue
+			}
+			var items []aichat.NodeTypeInfo
+			if err := json.Unmarshal(b, &items); err != nil {
+				continue
+			}
+			allTypes = append(allTypes, items...)
+		}
+		cs.SetCanvasNodeTypes(allTypes)
+		a.chatService = cs
+	}
+
 	// Ensure schema is up-to-date with any columns added by CLI migrations.
 	safeMigrations := []string{
 		`ALTER TABLE people ADD COLUMN IF NOT EXISTS profile_url TEXT`,
@@ -57,6 +130,36 @@ func (a *App) startup(ctx context.Context) {
 			PRIMARY KEY (person_id, tag_id)
 		)`,
 		`ALTER TABLE actions ADD COLUMN IF NOT EXISTS params TEXT NOT NULL DEFAULT '{}'`,
+		`CREATE TABLE IF NOT EXISTS workflows (
+			id          TEXT PRIMARY KEY,
+			name        TEXT NOT NULL DEFAULT '',
+			description TEXT NOT NULL DEFAULT '',
+			is_active   INTEGER NOT NULL DEFAULT 0,
+			version     INTEGER NOT NULL DEFAULT 1,
+			created_at  TEXT NOT NULL DEFAULT '',
+			updated_at  TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE TABLE IF NOT EXISTS workflow_nodes (
+			id          TEXT PRIMARY KEY,
+			workflow_id TEXT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
+			node_type   TEXT NOT NULL DEFAULT '',
+			name        TEXT NOT NULL DEFAULT '',
+			config      TEXT NOT NULL DEFAULT '{}',
+			position_x  REAL NOT NULL DEFAULT 0,
+			position_y  REAL NOT NULL DEFAULT 0,
+			disabled    INTEGER NOT NULL DEFAULT 0,
+			created_at  TEXT NOT NULL DEFAULT '',
+			updated_at  TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE TABLE IF NOT EXISTS workflow_connections (
+			id             TEXT PRIMARY KEY,
+			workflow_id    TEXT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
+			source_node_id TEXT NOT NULL DEFAULT '',
+			source_handle  TEXT NOT NULL DEFAULT '',
+			target_node_id TEXT NOT NULL DEFAULT '',
+			target_handle  TEXT NOT NULL DEFAULT '',
+			position       INTEGER NOT NULL DEFAULT 0
+		)`,
 	}
 	for _, q := range safeMigrations {
 		_, _ = db.Exec(q)
@@ -946,4 +1049,1314 @@ func (a *App) IsDBConnected() bool {
 		return false
 	}
 	return a.db.Ping() == nil
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Workflow types
+// ─────────────────────────────────────────────────────────────────────────────
+
+type WorkflowSummary struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	IsActive    bool   `json:"is_active"`
+	Version     int    `json:"version"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
+}
+
+type WorkflowNodeData struct {
+	ID        string                 `json:"id"`
+	NodeType  string                 `json:"node_type"`
+	Name      string                 `json:"name"`
+	Config    map[string]interface{} `json:"config"`
+	PositionX float64                `json:"position_x"`
+	PositionY float64                `json:"position_y"`
+	Disabled  bool                   `json:"disabled"`
+	Schema    *workflow.NodeSchema   `json:"schema,omitempty"`
+}
+
+type WorkflowConnectionData struct {
+	ID           string `json:"id"`
+	SourceNodeID string `json:"source_node_id"`
+	SourceHandle string `json:"source_handle"`
+	TargetNodeID string `json:"target_node_id"`
+	TargetHandle string `json:"target_handle"`
+	Position     int    `json:"position"`
+}
+
+type WorkflowDetail struct {
+	WorkflowSummary
+	Nodes       []WorkflowNodeData       `json:"nodes"`
+	Connections []WorkflowConnectionData `json:"connections"`
+}
+
+type SaveWorkflowRequest struct {
+	ID          string                   `json:"id"`
+	Name        string                   `json:"name"`
+	Description string                   `json:"description"`
+	IsActive    bool                     `json:"is_active"`
+	Nodes       []WorkflowNodeData       `json:"nodes"`
+	Connections []WorkflowConnectionData `json:"connections"`
+}
+
+type WorkflowExecutionSummary struct {
+	ID          string `json:"id"`
+	WorkflowID  string `json:"workflow_id"`
+	Status      string `json:"status"`
+	TriggerType string `json:"trigger_type"`
+	StartedAt   string `json:"started_at"`
+	FinishedAt  string `json:"finished_at"`
+	Error       string `json:"error"`
+	CreatedAt   string `json:"created_at"`
+}
+
+type CredentialSummary struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	ServiceType string `json:"service_type"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
+}
+
+type SaveCredentialRequest struct {
+	ID          string                 `json:"id"`
+	Name        string                 `json:"name"`
+	ServiceType string                 `json:"service_type"`
+	Data        map[string]interface{} `json:"data"`
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Workflow CRUD
+// ─────────────────────────────────────────────────────────────────────────────
+
+// workflowToDetail converts a *workflow.Workflow into a *WorkflowDetail for the frontend.
+func workflowToDetail(wf *workflow.Workflow) *WorkflowDetail {
+	detail := &WorkflowDetail{
+		WorkflowSummary: WorkflowSummary{
+			ID:          wf.ID,
+			Name:        wf.Name,
+			Description: wf.Description,
+			IsActive:    wf.IsActive,
+			Version:     wf.Version,
+			CreatedAt:   wf.CreatedAt.Format(time.RFC3339),
+			UpdatedAt:   wf.UpdatedAt.Format(time.RFC3339),
+		},
+		Nodes:       []WorkflowNodeData{},
+		Connections: []WorkflowConnectionData{},
+	}
+	for _, n := range wf.Nodes {
+		detail.Nodes = append(detail.Nodes, WorkflowNodeData{
+			ID:        n.ID,
+			NodeType:  n.Type,
+			Name:      n.Name,
+			Config:    n.Config,
+			PositionX: n.PositionX,
+			PositionY: n.PositionY,
+			Disabled:  n.Disabled,
+			Schema:    n.Schema,
+		})
+	}
+	for _, c := range wf.Connections {
+		detail.Connections = append(detail.Connections, WorkflowConnectionData{
+			ID:           c.ID,
+			SourceNodeID: c.SourceNodeID,
+			SourceHandle: c.SourceHandle,
+			TargetNodeID: c.TargetNodeID,
+			TargetHandle: c.TargetHandle,
+			Position:     c.Position,
+		})
+	}
+	return detail
+}
+
+func (a *App) ListWorkflows() ([]WorkflowSummary, error) {
+	if a.wfStore == nil {
+		return nil, fmt.Errorf("workflow store not available")
+	}
+	ctx := context.Background()
+	wfs, err := a.wfStore.ListWorkflows(ctx)
+	if err != nil {
+		return nil, err
+	}
+	summaries := make([]WorkflowSummary, 0, len(wfs))
+	for _, wf := range wfs {
+		summaries = append(summaries, WorkflowSummary{
+			ID:          wf.ID,
+			Name:        wf.Name,
+			Description: wf.Description,
+			IsActive:    wf.IsActive,
+			Version:     wf.Version,
+			CreatedAt:   wf.CreatedAt.Format(time.RFC3339),
+			UpdatedAt:   wf.UpdatedAt.Format(time.RFC3339),
+		})
+	}
+	return summaries, nil
+}
+
+func (a *App) GetWorkflow(id string) (*WorkflowDetail, error) {
+	if a.wfStore == nil {
+		return nil, fmt.Errorf("workflow store not available")
+	}
+	ctx := context.Background()
+	wf, err := a.wfStore.GetWorkflow(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if wf == nil {
+		return nil, fmt.Errorf("workflow %s not found", id)
+	}
+	return workflowToDetail(wf), nil
+}
+
+func (a *App) SaveWorkflow(req SaveWorkflowRequest) (*WorkflowSummary, error) {
+	if a.wfStore == nil {
+		return nil, fmt.Errorf("workflow store not available")
+	}
+	ctx := context.Background()
+	wf := &workflow.Workflow{
+		ID:          req.ID,
+		Name:        req.Name,
+		Description: req.Description,
+		IsActive:    req.IsActive,
+	}
+	for _, n := range req.Nodes {
+		node := workflow.WorkflowNode{
+			ID:        n.ID,
+			Type:      n.NodeType,
+			Name:      n.Name,
+			PositionX: n.PositionX,
+			PositionY: n.PositionY,
+			Disabled:  n.Disabled,
+			Config:    n.Config,
+			Schema:    n.Schema,
+		}
+		if node.Schema == nil {
+			schema, _ := workflow.LoadDefaultSchema(node.Type)
+			node.Schema = schema
+		}
+		wf.Nodes = append(wf.Nodes, node)
+	}
+	for _, c := range req.Connections {
+		wf.Connections = append(wf.Connections, workflow.WorkflowConnection{
+			ID:           c.ID,
+			SourceNodeID: c.SourceNodeID,
+			SourceHandle: c.SourceHandle,
+			TargetNodeID: c.TargetNodeID,
+			TargetHandle: c.TargetHandle,
+			Position:     c.Position,
+		})
+	}
+	if err := a.wfStore.SaveWorkflow(ctx, wf); err != nil {
+		return nil, err
+	}
+	a.emitLog("WORKFLOW", "INFO", fmt.Sprintf("Saved workflow: %s [%s]", wf.Name, wf.ID))
+	return &WorkflowSummary{
+		ID:          wf.ID,
+		Name:        wf.Name,
+		Description: wf.Description,
+		IsActive:    wf.IsActive,
+		Version:     wf.Version,
+		CreatedAt:   wf.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:   wf.UpdatedAt.Format(time.RFC3339),
+	}, nil
+}
+
+func (a *App) DeleteWorkflow(id string) error {
+	if a.wfStore == nil {
+		return fmt.Errorf("workflow store not available")
+	}
+	err := a.wfStore.DeleteWorkflow(context.Background(), id)
+	if err == nil {
+		a.emitLog("WORKFLOW", "WARN", "Deleted workflow: "+id)
+	}
+	return err
+}
+
+func (a *App) SetWorkflowActive(id string, active bool) error {
+	if a.wfStore == nil {
+		return fmt.Errorf("workflow store not available")
+	}
+	ctx := context.Background()
+	wf, err := a.wfStore.GetWorkflow(ctx, id)
+	if err != nil || wf == nil {
+		return fmt.Errorf("workflow %s not found", id)
+	}
+	wf.IsActive = active
+	return a.wfStore.SaveWorkflow(ctx, wf)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Workflow execution (via CLI subprocess)
+// ─────────────────────────────────────────────────────────────────────────────
+
+func (a *App) RunWorkflow(id string) error {
+	monoesBin, err := findMonoesBinary()
+	if err != nil {
+		return err
+	}
+
+	cmd := exec.Command(monoesBin, "workflow", "run", id)
+	stdout, _ := cmd.StdoutPipe()
+	stderr, _ := cmd.StderrPipe()
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start workflow %s: %w", id, err)
+	}
+	a.emitLog("WORKFLOW", "INFO", fmt.Sprintf("Started workflow run: %s", id))
+
+	go func() {
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			a.emitLog("WORKFLOW", "INFO", scanner.Text())
+		}
+	}()
+	go func() {
+		scanner := bufio.NewScanner(stderr)
+		for scanner.Scan() {
+			a.emitLog("WORKFLOW", "WARN", scanner.Text())
+		}
+	}()
+	go func() {
+		waitErr := cmd.Wait()
+		if waitErr != nil {
+			a.emitLog("WORKFLOW", "ERROR", fmt.Sprintf("Workflow %s run failed: %v", id, waitErr))
+			runtime.EventsEmit(a.ctx, "workflow:complete", map[string]interface{}{"workflow_id": id, "success": false})
+		} else {
+			a.emitLog("WORKFLOW", "INFO", fmt.Sprintf("Workflow %s run completed successfully", id))
+			runtime.EventsEmit(a.ctx, "workflow:complete", map[string]interface{}{"workflow_id": id, "success": true})
+		}
+	}()
+	return nil
+}
+
+func (a *App) GetWorkflowExecutions(workflowID string, limit int) ([]WorkflowExecutionSummary, error) {
+	if a.db == nil {
+		return nil, fmt.Errorf("database not available")
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := a.db.Query(`SELECT id, workflow_id, status, trigger_type,
+	                                 COALESCE(started_at, '') as started_at,
+	                                 COALESCE(finished_at, '') as finished_at,
+	                                 COALESCE(error_message, '') as error,
+	                                 created_at
+	                          FROM workflow_executions
+	                          WHERE workflow_id = ?
+	                          ORDER BY created_at DESC
+	                          LIMIT ?`, workflowID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var execs []WorkflowExecutionSummary
+	for rows.Next() {
+		var e WorkflowExecutionSummary
+		if rows.Scan(&e.ID, &e.WorkflowID, &e.Status, &e.TriggerType,
+			&e.StartedAt, &e.FinishedAt, &e.Error, &e.CreatedAt) == nil {
+			execs = append(execs, e)
+		}
+	}
+	if execs == nil {
+		execs = []WorkflowExecutionSummary{}
+	}
+	return execs, rows.Err()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Credentials
+// ─────────────────────────────────────────────────────────────────────────────
+
+func (a *App) ListCredentials() ([]CredentialSummary, error) {
+	if a.db == nil {
+		return nil, fmt.Errorf("database not available")
+	}
+	rows, err := a.db.Query(`SELECT id, name, service_type, created_at, updated_at
+	                          FROM credentials ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var creds []CredentialSummary
+	for rows.Next() {
+		var c CredentialSummary
+		if rows.Scan(&c.ID, &c.Name, &c.ServiceType, &c.CreatedAt, &c.UpdatedAt) == nil {
+			creds = append(creds, c)
+		}
+	}
+	if creds == nil {
+		creds = []CredentialSummary{}
+	}
+	return creds, rows.Err()
+}
+
+func (a *App) SaveCredential(req SaveCredentialRequest) (*CredentialSummary, error) {
+	if a.db == nil {
+		return nil, fmt.Errorf("database not available")
+	}
+
+	dataJSON := "{}"
+	if len(req.Data) > 0 {
+		if b, err := json.Marshal(req.Data); err == nil {
+			dataJSON = string(b)
+		}
+	}
+
+	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	var credID string
+
+	if req.ID == "" {
+		credID = uuid.New().String()
+		_, err := a.db.Exec(`INSERT INTO credentials (id, name, service_type, encrypted_data, created_at, updated_at)
+		                      VALUES (?, ?, ?, ?, ?, ?)`,
+			credID, req.Name, req.ServiceType, dataJSON, now, now)
+		if err != nil {
+			return nil, fmt.Errorf("insert credential: %w", err)
+		}
+	} else {
+		credID = req.ID
+		_, err := a.db.Exec(`UPDATE credentials SET name = ?, service_type = ?, encrypted_data = ?, updated_at = ?
+		                      WHERE id = ?`,
+			req.Name, req.ServiceType, dataJSON, now, credID)
+		if err != nil {
+			return nil, fmt.Errorf("update credential: %w", err)
+		}
+	}
+
+	row := a.db.QueryRow(`SELECT id, name, service_type, created_at, updated_at FROM credentials WHERE id = ?`, credID)
+	var c CredentialSummary
+	if err := row.Scan(&c.ID, &c.Name, &c.ServiceType, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+func (a *App) DeleteCredential(id string) error {
+	if a.db == nil {
+		return fmt.Errorf("database not available")
+	}
+	_, err := a.db.Exec(`DELETE FROM credentials WHERE id = ?`, id)
+	return err
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Node types registry
+// ─────────────────────────────────────────────────────────────────────────────
+
+func (a *App) GetWorkflowNodeTypes() map[string]interface{} {
+	type nodeDesc struct {
+		Type        string `json:"type"`
+		Label       string `json:"label"`
+		Category    string `json:"category"`
+		Description string `json:"description"`
+	}
+	mkNode := func(t, label, cat, desc string) nodeDesc {
+		return nodeDesc{Type: t, Label: label, Category: cat, Description: desc}
+	}
+
+	return map[string]interface{}{
+		"triggers": []nodeDesc{
+			mkNode("trigger.manual", "Manual Trigger", "triggers", "Start a workflow run manually"),
+			mkNode("trigger.schedule", "Schedule", "triggers", "Run workflow on a cron or interval schedule"),
+			mkNode("trigger.webhook", "Webhook", "triggers", "Start workflow on incoming HTTP request"),
+		},
+		"control": []nodeDesc{
+			mkNode("core.if", "If", "control", "Branch execution based on a condition"),
+			mkNode("core.switch", "Switch", "control", "Route execution to one of multiple branches"),
+			mkNode("core.merge", "Merge", "control", "Merge multiple input branches into one"),
+			mkNode("core.split_in_batches", "Split In Batches", "control", "Process items in fixed-size batches"),
+			mkNode("core.wait", "Wait", "control", "Pause execution for a specified duration"),
+			mkNode("core.stop_error", "Stop And Error", "control", "Halt workflow with an error message"),
+			mkNode("core.set", "Set", "control", "Set or transform data fields"),
+			mkNode("core.code", "Code", "control", "Execute arbitrary JavaScript code"),
+			mkNode("core.filter", "Filter", "control", "Keep only items matching a condition"),
+			mkNode("core.sort", "Sort", "control", "Sort items by one or more fields"),
+			mkNode("core.limit", "Limit", "control", "Limit the number of output items"),
+			mkNode("core.remove_duplicates", "Remove Duplicates", "control", "Deduplicate items by key"),
+			mkNode("core.compare_datasets", "Compare Datasets", "control", "Compare two datasets and output differences"),
+			mkNode("core.aggregate", "Aggregate", "control", "Aggregate multiple items into one"),
+		},
+		"data": []nodeDesc{
+			mkNode("data.datetime", "Date & Time", "data", "Parse, format, and manipulate date/time values"),
+			mkNode("data.crypto", "Crypto", "data", "Hash, encrypt, or sign data"),
+			mkNode("data.html", "HTML", "data", "Parse or generate HTML"),
+			mkNode("data.xml", "XML", "data", "Parse or generate XML"),
+			mkNode("data.markdown", "Markdown", "data", "Convert Markdown to HTML and vice-versa"),
+			mkNode("data.spreadsheet", "Spreadsheet", "data", "Read or write spreadsheet data"),
+			mkNode("data.compression", "Compression", "data", "Compress or decompress files"),
+			mkNode("data.write_binary_file", "Write Binary File", "data", "Write binary data to disk"),
+		},
+		"http": []nodeDesc{
+			mkNode("http.request", "HTTP Request", "http", "Make an HTTP/S request"),
+			mkNode("http.ftp", "FTP", "http", "Transfer files via FTP/SFTP"),
+			mkNode("http.ssh", "SSH", "http", "Execute commands over SSH"),
+		},
+		"system": []nodeDesc{
+			mkNode("system.execute_command", "Execute Command", "system", "Run a shell command on the host"),
+			mkNode("system.rss_read", "RSS Read", "system", "Fetch and parse an RSS/Atom feed"),
+		},
+		"db": []nodeDesc{
+			mkNode("db.mysql", "MySQL", "db", "Query a MySQL/MariaDB database"),
+			mkNode("db.postgres", "Postgres", "db", "Query a PostgreSQL database"),
+			mkNode("db.mongodb", "MongoDB", "db", "Interact with a MongoDB collection"),
+			mkNode("db.redis", "Redis", "db", "Read/write keys in a Redis store"),
+		},
+		"comm": []nodeDesc{
+			mkNode("comm.email_send", "Send Email", "comm", "Send an email via SMTP"),
+			mkNode("comm.email_read", "Read Email", "comm", "Read emails via IMAP"),
+			mkNode("comm.slack", "Slack", "comm", "Send or read Slack messages"),
+			mkNode("comm.telegram", "Telegram", "comm", "Send or receive Telegram messages"),
+			mkNode("comm.discord", "Discord", "comm", "Send messages to a Discord channel"),
+			mkNode("comm.twilio", "Twilio", "comm", "Send SMS or make calls via Twilio"),
+			mkNode("comm.whatsapp", "WhatsApp", "comm", "Send WhatsApp messages"),
+		},
+		"service": []nodeDesc{
+			mkNode("service.github", "GitHub", "service", "Interact with GitHub repositories and issues"),
+			mkNode("service.airtable", "Airtable", "service", "Read/write Airtable bases"),
+			mkNode("service.notion", "Notion", "service", "Read/write Notion pages and databases"),
+			mkNode("service.jira", "Jira", "service", "Manage Jira issues and projects"),
+			mkNode("service.linear", "Linear", "service", "Manage Linear issues and cycles"),
+			mkNode("service.asana", "Asana", "service", "Manage Asana tasks and projects"),
+			mkNode("service.stripe", "Stripe", "service", "Interact with Stripe payments"),
+			mkNode("service.shopify", "Shopify", "service", "Manage Shopify orders and products"),
+			mkNode("service.salesforce", "Salesforce", "service", "Read/write Salesforce records"),
+			mkNode("service.hubspot", "HubSpot", "service", "Manage HubSpot CRM contacts and deals"),
+			mkNode("service.google_sheets", "Google Sheets", "service", "Read/write Google Sheets"),
+			mkNode("service.gmail", "Gmail", "service", "Send and read Gmail messages"),
+			mkNode("service.google_drive", "Google Drive", "service", "Manage Google Drive files"),
+		},
+		"ai": []nodeDesc{
+			mkNode("ai.chat", "AI Chat", "ai", "Send a prompt to an AI model and get a response"),
+			mkNode("ai.extract", "AI Extract", "ai", "Extract structured data from text using AI"),
+			mkNode("ai.classify", "AI Classify", "ai", "Classify items into categories using AI"),
+			mkNode("ai.transform", "AI Transform", "ai", "Transform text content using AI"),
+			mkNode("ai.embed", "AI Embed", "ai", "Generate embeddings for text content"),
+			mkNode("ai.agent", "AI Agent", "ai", "Autonomous AI agent that works toward a goal"),
+		},
+		"browser": []nodeDesc{
+			// Instagram
+			mkNode("instagram.find_by_keyword", "Instagram: Find By Keyword", "browser", "Search Instagram users or posts by keyword"),
+			mkNode("instagram.export_followers", "Instagram: Export Followers", "browser", "Export a profile's follower list"),
+			mkNode("instagram.scrape_profile_info", "Instagram: Scrape Profile Info", "browser", "Collect profile metadata"),
+			mkNode("instagram.engage_with_posts", "Instagram: Engage With Posts", "browser", "Like/comment on matched posts"),
+			mkNode("instagram.send_dms", "Instagram: Send DMs", "browser", "Send direct messages"),
+			mkNode("instagram.auto_reply_dms", "Instagram: Auto Reply DMs", "browser", "Automatically reply to incoming DMs"),
+			mkNode("instagram.publish_post", "Instagram: Publish Post", "browser", "Publish a photo or reel"),
+			mkNode("instagram.like_posts", "Instagram: Like Posts", "browser", "Like a list of posts"),
+			mkNode("instagram.comment_on_posts", "Instagram: Comment On Posts", "browser", "Comment on a list of posts"),
+			mkNode("instagram.like_comments_on_posts", "Instagram: Like Comments On Posts", "browser", "Like comments on posts"),
+			mkNode("instagram.extract_post_data", "Instagram: Extract Post Data", "browser", "Extract structured data from posts"),
+			mkNode("instagram.follow_users", "Instagram: Follow Users", "browser", "Follow a list of users"),
+			mkNode("instagram.unfollow_users", "Instagram: Unfollow Users", "browser", "Unfollow a list of users"),
+			mkNode("instagram.watch_stories", "Instagram: Watch Stories", "browser", "View stories for a list of users"),
+			mkNode("instagram.engage_user_posts", "Instagram: Engage User Posts", "browser", "Engage with a specific user's posts"),
+			// LinkedIn
+			mkNode("linkedin.find_by_keyword", "LinkedIn: Find By Keyword", "browser", "Search LinkedIn profiles by keyword"),
+			mkNode("linkedin.export_followers", "LinkedIn: Export Followers", "browser", "Export a profile's connections/followers"),
+			mkNode("linkedin.scrape_profile_info", "LinkedIn: Scrape Profile Info", "browser", "Collect LinkedIn profile metadata"),
+			mkNode("linkedin.engage_with_posts", "LinkedIn: Engage With Posts", "browser", "Like/comment on LinkedIn posts"),
+			mkNode("linkedin.send_dms", "LinkedIn: Send DMs", "browser", "Send LinkedIn direct messages"),
+			mkNode("linkedin.auto_reply_dms", "LinkedIn: Auto Reply DMs", "browser", "Automatically reply to LinkedIn messages"),
+			mkNode("linkedin.publish_post", "LinkedIn: Publish Post", "browser", "Publish a LinkedIn post"),
+			// X (Twitter)
+			mkNode("x.find_by_keyword", "X: Find By Keyword", "browser", "Search X/Twitter by keyword"),
+			mkNode("x.export_followers", "X: Export Followers", "browser", "Export a profile's followers on X"),
+			mkNode("x.scrape_profile_info", "X: Scrape Profile Info", "browser", "Collect X profile metadata"),
+			mkNode("x.engage_with_posts", "X: Engage With Posts", "browser", "Like/reply to X posts"),
+			mkNode("x.send_dms", "X: Send DMs", "browser", "Send X direct messages"),
+			mkNode("x.auto_reply_dms", "X: Auto Reply DMs", "browser", "Automatically reply to X DMs"),
+			mkNode("x.publish_post", "X: Publish Post", "browser", "Publish a post on X"),
+			// TikTok
+			mkNode("tiktok.find_by_keyword", "TikTok: Find By Keyword", "browser", "Search TikTok by keyword"),
+			mkNode("tiktok.export_followers", "TikTok: Export Followers", "browser", "Export a TikTok profile's followers"),
+			mkNode("tiktok.scrape_profile_info", "TikTok: Scrape Profile Info", "browser", "Collect TikTok profile metadata"),
+			mkNode("tiktok.engage_with_posts", "TikTok: Engage With Posts", "browser", "Like/comment on TikTok posts"),
+			mkNode("tiktok.send_dms", "TikTok: Send DMs", "browser", "Send TikTok direct messages"),
+			mkNode("tiktok.auto_reply_dms", "TikTok: Auto Reply DMs", "browser", "Automatically reply to TikTok DMs"),
+			mkNode("tiktok.publish_post", "TikTok: Publish Post", "browser", "Publish a TikTok video"),
+		},
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Node runner — execute any node type directly
+// ─────────────────────────────────────────────────────────────────────────────
+
+// NodeRunRequest is the payload sent by the frontend to run a node.
+type NodeRunRequest struct {
+	NodeType string                   `json:"node_type"`
+	Config   map[string]interface{}   `json:"config"`
+	Items    []map[string]interface{} `json:"items"` // each element is a JSON object (the item's .json field)
+}
+
+// NodeRunResult is returned after running a node.
+type NodeRunResult struct {
+	Outputs []NodeRunOutput `json:"outputs"`
+	Error   string          `json:"error,omitempty"`
+	DurationMs int64        `json:"duration_ms"`
+}
+
+// NodeRunOutput is one output handle's items.
+type NodeRunOutput struct {
+	Handle string                   `json:"handle"`
+	Items  []map[string]interface{} `json:"items"`
+}
+
+// RunNode executes any registered node type directly via the CLI subprocess.
+// Config and input items are passed as JSON; results are returned as structured data.
+// legacyNodeTypes maps old short type names to their new prefixed equivalents.
+var legacyNodeTypes = map[string]string{
+	"if": "core.if", "switch": "core.switch", "merge": "core.merge",
+	"split_in_batches": "core.split_in_batches", "wait": "core.wait",
+	"stop_error": "core.stop_error", "set": "core.set", "code": "core.code",
+	"filter": "core.filter", "sort": "core.sort", "limit": "core.limit",
+	"remove_duplicates": "core.remove_duplicates", "compare_datasets": "core.compare_datasets",
+	"aggregate": "core.aggregate",
+	"datetime": "data.datetime", "crypto": "data.crypto", "html": "data.html",
+	"xml": "data.xml", "markdown": "data.markdown", "spreadsheet": "data.spreadsheet",
+	"compression": "data.compression", "write_binary_file": "data.write_binary_file",
+	"mysql": "db.mysql", "postgres": "db.postgres", "mongodb": "db.mongodb", "redis": "db.redis",
+	"email_send": "comm.email_send", "email_read": "comm.email_read",
+	"slack": "comm.slack", "telegram": "comm.telegram", "discord": "comm.discord",
+	"twilio": "comm.twilio", "whatsapp": "comm.whatsapp",
+	"github": "service.github", "airtable": "service.airtable", "notion": "service.notion",
+	"jira": "service.jira", "linear": "service.linear", "asana": "service.asana",
+	"stripe": "service.stripe", "shopify": "service.shopify", "salesforce": "service.salesforce",
+	"hubspot": "service.hubspot", "google_sheets": "service.google_sheets",
+	"gmail": "service.gmail", "google_drive": "service.google_drive",
+}
+
+// isBrowserNodeType returns true for platform.action social/browser node types.
+func isBrowserNodeType(t string) bool {
+	return strings.HasPrefix(t, "instagram.") || strings.HasPrefix(t, "linkedin.") ||
+		strings.HasPrefix(t, "x.") || strings.HasPrefix(t, "tiktok.")
+}
+
+func (a *App) RunNode(req NodeRunRequest) NodeRunResult {
+	// Normalize legacy short type names to prefixed names.
+	if mapped, ok := legacyNodeTypes[req.NodeType]; ok {
+		req.NodeType = mapped
+	}
+
+	// Resolve credential_id → merge connection credentials into config.
+	if credID, ok := req.Config["credential_id"].(string); ok && credID != "" && a.connMgr != nil {
+		conn, err := a.connMgr.Get(context.Background(), credID)
+		if err != nil {
+			return NodeRunResult{Error: fmt.Sprintf("resolve credential %s: %v", credID, err)}
+		}
+		// Merge connection data fields into config (connection credentials take precedence).
+		for k, v := range conn.Data {
+			req.Config[k] = v
+		}
+		delete(req.Config, "credential_id")
+	}
+
+	// Browser/social nodes run in-process (they need a live browser session).
+	if isBrowserNodeType(req.NodeType) {
+		return a.runBrowserNode(req)
+	}
+
+	monoesBin, err := findMonoesBinary()
+	if err != nil {
+		return NodeRunResult{Error: err.Error()}
+	}
+
+	// Build --config JSON
+	configBytes, err := json.Marshal(req.Config)
+	if err != nil {
+		return NodeRunResult{Error: "invalid config: " + err.Error()}
+	}
+
+	// Build --input JSON array
+	items := req.Items
+	if len(items) == 0 {
+		items = []map[string]interface{}{{"json": map[string]interface{}{}}}
+	}
+	inputItems := make([]map[string]interface{}, len(items))
+	for i, it := range items {
+		inputItems[i] = map[string]interface{}{"json": it}
+	}
+	inputBytes, err := json.Marshal(inputItems)
+	if err != nil {
+		return NodeRunResult{Error: "invalid input: " + err.Error()}
+	}
+
+	start := time.Now()
+	cmd := exec.Command(monoesBin,
+		"node", "run", req.NodeType,
+		"--config", string(configBytes),
+		"--input", string(inputBytes),
+		"--output", "json",
+	)
+	out, runErr := cmd.Output()
+	elapsed := time.Since(start).Milliseconds()
+
+	if runErr != nil {
+		// cmd.Output captures stderr only on error via *exec.ExitError
+		msg := runErr.Error()
+		if exitErr, ok := runErr.(*exec.ExitError); ok && len(exitErr.Stderr) > 0 {
+			// strip "exit status N" suffix from actual message
+			msg = strings.TrimSpace(string(exitErr.Stderr))
+		}
+		return NodeRunResult{Error: msg, DurationMs: elapsed}
+	}
+
+	// Parse JSON output: map[handle][]Item
+	var raw map[string][]struct {
+		JSON map[string]interface{} `json:"json"`
+	}
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return NodeRunResult{Error: "failed to parse output: " + err.Error(), DurationMs: elapsed}
+	}
+
+	var outputs []NodeRunOutput
+	for handle, rawItems := range raw {
+		flat := make([]map[string]interface{}, len(rawItems))
+		for i, ri := range rawItems {
+			flat[i] = ri.JSON
+		}
+		outputs = append(outputs, NodeRunOutput{Handle: handle, Items: flat})
+	}
+	// Sort outputs by handle for deterministic order
+	sort.Slice(outputs, func(i, j int) bool { return outputs[i].Handle < outputs[j].Handle })
+
+	return NodeRunResult{Outputs: outputs, DurationMs: elapsed}
+}
+
+func nopLogger() zerolog.Logger { return zerolog.New(io.Discard) }
+
+// runBrowserNode executes a browser/social node in-process using the local browser.
+// It launches a browser, restores session cookies from the DB, and runs the action.
+func (a *App) runBrowserNode(req NodeRunRequest) NodeRunResult {
+	start := time.Now()
+
+	// Parse "platform.action_type" → platform, actionType
+	parts := strings.SplitN(req.NodeType, ".", 2)
+	if len(parts) != 2 {
+		return NodeRunResult{Error: fmt.Sprintf("invalid browser node type: %s", req.NodeType)}
+	}
+	platform, actionType := parts[0], parts[1]
+
+	// 1. Launch browser page with anti-detection.
+	launchURL, err := launcher.New().
+		Headless(false).
+		Set("disable-blink-features", "AutomationControlled").
+		Launch()
+	if err != nil {
+		return NodeRunResult{Error: "failed to launch browser: " + err.Error(), DurationMs: time.Since(start).Milliseconds()}
+	}
+	browser := rod.New().ControlURL(launchURL)
+	if err := browser.Connect(); err != nil {
+		return NodeRunResult{Error: "failed to connect browser: " + err.Error(), DurationMs: time.Since(start).Milliseconds()}
+	}
+	defer browser.Close()
+
+	page, err := browser.Page(proto.TargetCreateTarget{URL: "about:blank"})
+	if err != nil {
+		return NodeRunResult{Error: "failed to create page: " + err.Error(), DurationMs: time.Since(start).Milliseconds()}
+	}
+
+	// 2. Restore session cookies from DB.
+	if a.db != nil {
+		var cookiesJSON string
+		qErr := a.db.QueryRow(
+			"SELECT cookies_json FROM crawler_sessions WHERE platform = ? ORDER BY expiry DESC LIMIT 1",
+			strings.ToLower(platform),
+		).Scan(&cookiesJSON)
+		if qErr == nil && cookiesJSON != "" {
+			var cookies []*proto.NetworkCookieParam
+			if json.Unmarshal([]byte(cookiesJSON), &cookies) == nil {
+				_ = page.SetCookies(cookies)
+			}
+		}
+	}
+
+	// 3. Get bot adapter for call_bot_method steps.
+	var botAdapter action.BotAdapter
+	if factory, ok := bot.PlatformRegistry[strings.ToUpper(platform)]; ok {
+		adapter := factory()
+		if ba, ok := adapter.(action.BotAdapter); ok {
+			botAdapter = ba
+		}
+	}
+
+	// 4. Build StorageAction from config.
+	sa := &action.StorageAction{
+		ID:             uuid.New().String(),
+		Type:           actionType,
+		TargetPlatform: platform,
+	}
+	if msg, ok := req.Config["message"].(string); ok {
+		sa.ContentMessage = msg
+	}
+	if kw, ok := req.Config["keywords"].(string); ok {
+		sa.Keywords = kw
+	}
+	if targetsRaw, ok := req.Config["targets"]; ok {
+		if targets, ok := targetsRaw.([]interface{}); ok {
+			sa.Params = map[string]interface{}{"targets": targets}
+		}
+	}
+	if sa.Params == nil {
+		sa.Params = make(map[string]interface{})
+	}
+	for k, v := range req.Config {
+		if k != "username" && k != "targets" && k != "message" && k != "keywords" {
+			sa.Params[k] = v
+		}
+	}
+
+	// 5. Execute the action.
+	executor := action.NewActionExecutor(
+		a.ctx,
+		page,
+		nil, // db storage - not needed for workflow execution
+		a.cfgMgr,
+		nil, // events channel
+		botAdapter,
+		nopLogger(),
+	)
+
+	// Seed targets if provided.
+	if targetsRaw, ok := req.Config["targets"]; ok {
+		if targets, ok := targetsRaw.([]interface{}); ok && len(targets) > 0 {
+			executor.SetVariable("selectedListItems", targets)
+		}
+	}
+
+	result, err := executor.Execute(sa)
+	elapsed := time.Since(start).Milliseconds()
+	if err != nil {
+		return NodeRunResult{Error: err.Error(), DurationMs: elapsed}
+	}
+
+	// 6. Convert results to NodeRunOutput.
+	return NodeRunResult{
+		Outputs:    []NodeRunOutput{{Handle: "main", Items: result.ExtractedItems}},
+		DurationMs: elapsed,
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Connections
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ListConnections returns all saved connections, filtered by platform if non-empty.
+func (a *App) ListConnections(platform string) []connections.Connection {
+	if a.connMgr == nil {
+		return []connections.Connection{}
+	}
+	result, err := a.connMgr.List(a.ctx, platform)
+	if err != nil {
+		return []connections.Connection{}
+	}
+	if result == nil {
+		result = []connections.Connection{}
+	}
+	return result
+}
+
+// PlatformInfo is a frontend-safe representation of a platform (no OAuth secrets).
+type PlatformInfo struct {
+	ID         string                                       `json:"id"`
+	Name       string                                       `json:"name"`
+	Category   string                                       `json:"category"`
+	ConnectVia string                                       `json:"connectVia"`
+	Methods    []string                                     `json:"methods"`
+	Fields     map[string][]connections.CredentialField     `json:"fields"`
+	IconEmoji  string                                       `json:"iconEmoji"`
+}
+
+func toPlatformInfo(p connections.PlatformDef) PlatformInfo {
+	methods := make([]string, len(p.Methods))
+	for i, m := range p.Methods {
+		methods[i] = string(m)
+	}
+	fields := make(map[string][]connections.CredentialField)
+	for method, cfields := range p.Fields {
+		fields[string(method)] = cfields
+	}
+	return PlatformInfo{
+		ID:         p.ID,
+		Name:       p.Name,
+		Category:   p.Category,
+		ConnectVia: p.ConnectVia,
+		Methods:    methods,
+		Fields:     fields,
+		IconEmoji:  p.IconEmoji,
+	}
+}
+
+// ListPlatformsJSON returns all platforms as a JSON string (bypasses Wails type serialization).
+func (a *App) ListPlatformsJSON(connectVia string) string {
+	var platforms []connections.PlatformDef
+	if connectVia == "" {
+		platforms = connections.All()
+	} else {
+		platforms = connections.ByConnectVia(connectVia)
+	}
+	result := make([]PlatformInfo, len(platforms))
+	for i, p := range platforms {
+		result[i] = toPlatformInfo(p)
+	}
+	b, err := json.Marshal(result)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+// TestConnection re-validates a connection by ID.
+func (a *App) TestConnection(id string) string {
+	if a.connMgr == nil {
+		return "error: manager not initialized"
+	}
+	if err := a.connMgr.Test(a.ctx, id); err != nil {
+		return fmt.Sprintf("error: %v", err)
+	}
+	return "ok"
+}
+
+// RemoveConnection deletes a connection by ID.
+func (a *App) RemoveConnection(id string) string {
+	if a.connMgr == nil {
+		return "error: manager not initialized"
+	}
+	if err := a.connMgr.Remove(a.ctx, id); err != nil {
+		return fmt.Sprintf("error: %v", err)
+	}
+	return "ok"
+}
+
+// GetConnectionsForPlatform returns connections filtered by platform ID.
+func (a *App) GetConnectionsForPlatform(platformID string) []connections.Connection {
+	return a.ListConnections(platformID)
+}
+
+// ensureOAuthCredsTable creates the platform_oauth_credentials table if it doesn't exist.
+func (a *App) ensureOAuthCredsTable() error {
+	_, err := a.db.Exec(`CREATE TABLE IF NOT EXISTS platform_oauth_credentials (
+		platform      TEXT PRIMARY KEY,
+		client_id     TEXT NOT NULL,
+		client_secret TEXT NOT NULL,
+		updated_at    TEXT NOT NULL
+	)`)
+	return err
+}
+
+// GetOAuthCredentials returns the stored OAuth client_id and client_secret for a platform as JSON.
+// Returns JSON {"clientID":"...","clientSecret":"..."} or "" if not set.
+func (a *App) GetOAuthCredentials(platformID string) string {
+	if a.db == nil {
+		return ""
+	}
+	_ = a.ensureOAuthCredsTable()
+	var clientID, clientSecret string
+	err := a.db.QueryRow(
+		`SELECT client_id, client_secret FROM platform_oauth_credentials WHERE platform = ?`, platformID,
+	).Scan(&clientID, &clientSecret)
+	if err != nil {
+		return ""
+	}
+	b, _ := json.Marshal(map[string]string{"clientID": clientID, "clientSecret": clientSecret})
+	return string(b)
+}
+
+// SetOAuthCredentials saves OAuth client_id and client_secret for a platform.
+func (a *App) SetOAuthCredentials(platformID, clientID, clientSecret string) string {
+	if a.db == nil {
+		return "error: db not available"
+	}
+	if clientID == "" || clientSecret == "" {
+		return "error: clientID and clientSecret are required"
+	}
+	_ = a.ensureOAuthCredsTable()
+	_, err := a.db.Exec(
+		`INSERT OR REPLACE INTO platform_oauth_credentials (platform, client_id, client_secret, updated_at)
+		 VALUES (?, ?, ?, ?)`,
+		platformID, clientID, clientSecret, time.Now().UTC().Format(time.RFC3339),
+	)
+	if err != nil {
+		return fmt.Sprintf("error: %v", err)
+	}
+	return "ok"
+}
+
+// ConnectPlatformOAuth starts an OAuth flow in a background goroutine.
+// Emits "conn:progress" events with {platform, message, kind} and a final
+// "conn:done" event with {platform, success, accountID?, error?}.
+// Returns "started" immediately, or "error: ..." if preconditions fail.
+func (a *App) ConnectPlatformOAuth(platformID string) string {
+	if a.connMgr == nil {
+		return "error: manager not initialized"
+	}
+	p, ok := connections.Get(platformID)
+	if !ok {
+		return fmt.Sprintf("error: unknown platform %q", platformID)
+	}
+	if p.OAuth == nil {
+		return "error: platform does not support OAuth"
+	}
+
+	go func() {
+		emit := func(msg, kind string) {
+			runtime.EventsEmit(a.ctx, "conn:progress", map[string]interface{}{
+				"platform": platformID,
+				"message":  msg,
+				"kind":     kind,
+			})
+		}
+
+		// Inject DB-stored OAuth credentials into env so ConnectOAuthWithProgress can find them.
+		envPrefix := "MONOES_" + strings.ToUpper(strings.ReplaceAll(platformID, "-", "_")) + "_"
+		if os.Getenv(envPrefix+"CLIENT_ID") == "" {
+			if credsJSON := a.GetOAuthCredentials(platformID); credsJSON != "" {
+				var creds map[string]string
+				if json.Unmarshal([]byte(credsJSON), &creds) == nil {
+					os.Setenv(envPrefix+"CLIENT_ID", creds["clientID"])
+					os.Setenv(envPrefix+"CLIENT_SECRET", creds["clientSecret"])
+				}
+			}
+		}
+
+		conn, err := a.connMgr.ConnectOAuthWithProgress(a.ctx, platformID, emit)
+		if err != nil {
+			runtime.EventsEmit(a.ctx, "conn:done", map[string]interface{}{
+				"platform": platformID,
+				"success":  false,
+				"error":    err.Error(),
+			})
+			return
+		}
+
+		runtime.EventsEmit(a.ctx, "conn:done", map[string]interface{}{
+			"platform":  platformID,
+			"success":   true,
+			"accountID": conn.AccountID,
+		})
+	}()
+
+	return "started"
+}
+
+// LoginSocial opens a visible browser window for the user to log in to a social platform.
+// Runs the login flow asynchronously, emitting conn:progress and conn:done events.
+// Returns "started" immediately or "error: ..." if the platform is unknown.
+func (a *App) LoginSocial(platform string) string {
+	pid := strings.ToLower(platform)
+	factory, ok := bot.PlatformRegistry[strings.ToUpper(platform)]
+	if !ok {
+		return fmt.Sprintf("error: unsupported platform %q", platform)
+	}
+
+	emit := func(msg, kind string) {
+		runtime.EventsEmit(a.ctx, "conn:progress", map[string]interface{}{
+			"platform": pid,
+			"message":  msg,
+			"kind":     kind,
+		})
+	}
+
+	go func() {
+		adapter := factory()
+
+		launchURL, err := launcher.New().Headless(false).Launch()
+		if err != nil {
+			emit(fmt.Sprintf("Failed to launch browser: %v", err), "error")
+			runtime.EventsEmit(a.ctx, "conn:done", map[string]interface{}{"platform": pid, "success": false, "error": err.Error()})
+			return
+		}
+
+		browser := rod.New().ControlURL(launchURL)
+		if err := browser.Connect(); err != nil {
+			emit(fmt.Sprintf("Failed to connect browser: %v", err), "error")
+			runtime.EventsEmit(a.ctx, "conn:done", map[string]interface{}{"platform": pid, "success": false, "error": err.Error()})
+			return
+		}
+		defer browser.Close()
+
+		page, err := browser.Page(proto.TargetCreateTarget{URL: adapter.LoginURL()})
+		if err != nil {
+			emit(fmt.Sprintf("Failed to open login page: %v", err), "error")
+			runtime.EventsEmit(a.ctx, "conn:done", map[string]interface{}{"platform": pid, "success": false, "error": err.Error()})
+			return
+		}
+
+		platformName := strings.ToUpper(pid[:1]) + pid[1:]
+		emit("Browser opened — please log in to "+platformName+" in the window that appeared", "info")
+
+		ctx, cancel := context.WithTimeout(a.ctx, 5*time.Minute)
+		defer cancel()
+
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				emit("Login timed out after 5 minutes", "error")
+				runtime.EventsEmit(a.ctx, "conn:done", map[string]interface{}{"platform": pid, "success": false, "error": "timed out"})
+				return
+			case <-ticker.C:
+				loggedIn, checkErr := adapter.IsLoggedIn(page)
+				if checkErr != nil {
+					continue
+				}
+				if loggedIn {
+					emit("Login detected! Capturing session…", "info")
+					cookies, cookieErr := page.Cookies(nil)
+					if cookieErr != nil {
+						emit(fmt.Sprintf("Failed to capture cookies: %v", cookieErr), "error")
+						runtime.EventsEmit(a.ctx, "conn:done", map[string]interface{}{"platform": pid, "success": false, "error": cookieErr.Error()})
+						return
+					}
+					cookiesJSON, marshalErr := json.Marshal(cookies)
+					if marshalErr != nil {
+						emit(fmt.Sprintf("Failed to encode cookies: %v", marshalErr), "error")
+						runtime.EventsEmit(a.ctx, "conn:done", map[string]interface{}{"platform": pid, "success": false, "error": marshalErr.Error()})
+						return
+					}
+					username := adapter.ExtractUsername(page.MustInfo().URL)
+					if username == "" {
+						username = "unknown"
+					}
+					expiry := time.Now().Add(30 * 24 * time.Hour)
+					if a.db == nil {
+						emit("Database not available", "error")
+						runtime.EventsEmit(a.ctx, "conn:done", map[string]interface{}{"platform": pid, "success": false, "error": "db nil"})
+						return
+					}
+					_, dbErr := a.db.Exec(
+						`INSERT OR REPLACE INTO crawler_sessions (username, platform, cookies_json, expiry)
+						 VALUES (?, ?, ?, ?)`,
+						username, pid, string(cookiesJSON), expiry,
+					)
+					if dbErr != nil {
+						emit(fmt.Sprintf("Failed to save session: %v", dbErr), "error")
+						runtime.EventsEmit(a.ctx, "conn:done", map[string]interface{}{"platform": pid, "success": false, "error": dbErr.Error()})
+						return
+					}
+					emit(fmt.Sprintf("Connected as %s", username), "success")
+					runtime.EventsEmit(a.ctx, "conn:done", map[string]interface{}{"platform": pid, "success": true, "accountID": username})
+					return
+				}
+			}
+		}
+	}()
+
+	return "started"
+}
+
+// SaveConnectionDirect saves a connection directly from the UI with provided field values.
+// fieldValuesJSON is a JSON object string (avoids Wails map serialization issues).
+// Returns "ok:<id>" on success or "error: ..." on failure.
+func (a *App) SaveConnectionDirect(platformID string, method string, fieldValuesJSON string) string {
+	if a.connMgr == nil {
+		return "error: manager not initialized"
+	}
+	p, ok := connections.Get(platformID)
+	if !ok {
+		return fmt.Sprintf("error: unknown platform %q", platformID)
+	}
+	var fieldValues map[string]interface{}
+	if err := json.Unmarshal([]byte(fieldValuesJSON), &fieldValues); err != nil {
+		return fmt.Sprintf("error: invalid field values JSON: %v", err)
+	}
+	now := time.Now().Format(time.RFC3339)
+	conn := &connections.Connection{
+		ID:        uuid.New().String(),
+		Platform:  platformID,
+		Method:    connections.AuthMethod(method),
+		Label:     p.Name,
+		Data:      fieldValues,
+		Status:    "active",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	// Validate the connection
+	accountID, err := connections.ValidateConnection(a.ctx, conn)
+	if err != nil {
+		return fmt.Sprintf("error: %v", err)
+	}
+	if accountID != "" {
+		conn.AccountID = accountID
+		conn.Label = fmt.Sprintf("%s – %s", p.Name, accountID)
+	}
+	// Save to DB
+	store := connections.NewStore(a.db)
+	if err := store.EnsureTable(a.ctx); err != nil {
+		return fmt.Sprintf("error: table init: %v", err)
+	}
+	if err := store.Save(a.ctx, conn); err != nil {
+		return fmt.Sprintf("error: save: %v", err)
+	}
+	return "ok:" + conn.ID
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AI Providers
+// ─────────────────────────────────────────────────────────────────────────────
+
+func (a *App) ListAIProviders() string {
+	if a.aiStore == nil {
+		return "[]"
+	}
+	providers, err := a.aiStore.ListProviders()
+	if err != nil {
+		return aiError(err)
+	}
+	b, _ := json.Marshal(providers)
+	return string(b)
+}
+
+func (a *App) SaveAIProvider(providerJSON string) string {
+	if a.aiStore == nil {
+		return aiError(fmt.Errorf("ai store not initialized"))
+	}
+	var p ai.AIProvider
+	if err := json.Unmarshal([]byte(providerJSON), &p); err != nil {
+		return aiError(err)
+	}
+	if p.ID == "" {
+		p.ID = newUUID()
+	}
+	if err := a.aiStore.SaveProvider(p); err != nil {
+		return aiError(err)
+	}
+	b, _ := json.Marshal(p)
+	return string(b)
+}
+
+func (a *App) DeleteAIProvider(id string) string {
+	if a.aiStore == nil {
+		return aiError(fmt.Errorf("ai store not initialized"))
+	}
+	if err := a.aiStore.DeleteProvider(id); err != nil {
+		return aiError(err)
+	}
+	return `{"ok":true}`
+}
+
+func (a *App) TestAIProvider(id string) string {
+	if a.aiStore == nil {
+		return aiError(fmt.Errorf("ai store not initialized"))
+	}
+	p, err := a.aiStore.GetProvider(id)
+	if err != nil {
+		return aiError(err)
+	}
+	client, err := ai.NewClient(p)
+	if err != nil {
+		return aiError(err)
+	}
+	model := p.DefaultModel
+	if model == "" {
+		def, ok := ai.GetProviderDef(p.ProviderID)
+		if ok && len(def.Models) > 0 {
+			model = def.Models[0].ID
+		} else {
+			model = "gpt-4o-mini"
+		}
+	}
+	_, err = client.Complete(context.Background(), ai.CompletionRequest{
+		Model:     model,
+		Messages:  []ai.Message{{Role: ai.RoleUser, Content: "Say ok"}},
+		MaxTokens: 5,
+	})
+	status := "active"
+	if err != nil {
+		status = "error"
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	_ = a.aiStore.UpdateProviderStatus(id, status, now)
+	if err != nil {
+		return fmt.Sprintf(`{"status":"error","error":%q}`, err.Error())
+	}
+	return `{"status":"active"}`
+}
+
+func (a *App) GetAIModels(providerID string) string {
+	def, ok := ai.GetProviderDef(providerID)
+	if !ok {
+		return "[]"
+	}
+	b, _ := json.Marshal(def.Models)
+	return string(b)
+}
+
+func (a *App) GetAIRegistry() string {
+	b, _ := json.Marshal(ai.ProviderRegistry)
+	return string(b)
+}
+
+func aiError(err error) string {
+	return fmt.Sprintf(`{"error":%q}`, err.Error())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AI Chat
+// ─────────────────────────────────────────────────────────────────────────────
+
+func (a *App) StreamAIChat(workflowID, message, providerID, model string) string {
+	if a.chatService == nil {
+		return aiError(fmt.Errorf("chat service not initialized"))
+	}
+	go func() {
+		err := a.chatService.StreamChat(
+			context.Background(),
+			workflowID, message, providerID, model,
+			func(chunk ai.StreamChunk) {
+				runtime.EventsEmit(a.ctx, "ai:chunk", map[string]interface{}{
+					"workflowID": workflowID,
+					"content":    chunk.Content,
+					"done":       chunk.Done,
+				})
+			},
+			func(name, args, result string) {
+				runtime.EventsEmit(a.ctx, "ai:tool", map[string]interface{}{
+					"workflowID": workflowID,
+					"tool":       name,
+					"args":       args,
+					"result":     result,
+				})
+			},
+		)
+		if err != nil {
+			runtime.EventsEmit(a.ctx, "ai:error", map[string]interface{}{
+				"workflowID": workflowID,
+				"error":      err.Error(),
+			})
+		} else {
+			// Signal streaming is complete.
+			runtime.EventsEmit(a.ctx, "ai:chunk", map[string]interface{}{
+				"workflowID": workflowID,
+				"content":    "",
+				"done":       true,
+			})
+		}
+	}()
+	return `{"ok":true}`
+}
+
+func (a *App) GetAIChatHistory(workflowID string) string {
+	if a.chatService == nil {
+		return "[]"
+	}
+	msgs, err := a.chatService.GetHistory(workflowID)
+	if err != nil {
+		return aiError(err)
+	}
+	b, _ := json.Marshal(msgs)
+	return string(b)
+}
+
+func (a *App) ClearAIChatHistory(workflowID string) string {
+	if a.chatService == nil {
+		return aiError(fmt.Errorf("chat service not initialized"))
+	}
+	if err := a.chatService.ClearHistory(workflowID); err != nil {
+		return aiError(err)
+	}
+	return `{"ok":true}`
 }
