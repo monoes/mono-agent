@@ -1,0 +1,6 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "message", "label": "Error Message", "type": "text", "required": true, "placeholder": "Workflow stopped: condition not met" }
+  ]
+}

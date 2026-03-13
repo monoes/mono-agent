@@ -1,0 +1,9 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "path", "label": "Webhook Path", "type": "text", "required": false, "placeholder": "/webhook/my-hook", "help": "URL path suffix. Leave blank to auto-generate." },
+    { "key": "method", "label": "HTTP Method", "type": "select", "required": false, "options": ["GET", "POST", "PUT", "PATCH", "DELETE"], "default": "POST" },
+    { "key": "auth_header", "label": "Auth Header Name", "type": "text", "required": false, "placeholder": "X-Webhook-Secret", "help": "If set, requests must include this header with the auth token value." },
+    { "key": "auth_token", "label": "Auth Token", "type": "password", "required": false, "help": "Secret value expected in the auth header." }
+  ]
+}

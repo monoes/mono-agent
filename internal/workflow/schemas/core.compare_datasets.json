@@ -1,0 +1,7 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "key_field", "label": "Key Field", "type": "text", "required": true, "placeholder": "id" },
+    { "key": "output", "label": "Output", "type": "select", "required": true, "options": ["new_items", "removed_items", "changed_items", "all_differences"], "default": "new_items" }
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "condition", "label": "Keep items where", "type": "text", "required": true, "placeholder": "{{ $json.age > 18 }}", "help": "Items where this evaluates to true are passed through." }
+  ]
+}

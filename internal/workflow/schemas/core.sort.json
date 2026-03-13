@@ -1,0 +1,7 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "field", "label": "Sort By Field", "type": "text", "required": true, "placeholder": "created_at" },
+    { "key": "direction", "label": "Direction", "type": "select", "required": true, "options": ["asc", "desc"], "default": "asc" }
+  ]
+}

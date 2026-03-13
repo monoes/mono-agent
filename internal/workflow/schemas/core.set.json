@@ -1,0 +1,6 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "assignments", "label": "Field Assignments (JSON)", "type": "textarea", "required": true, "rows": 5, "placeholder": "{\n  \"fullName\": \"{{ $json.first }} {{ $json.last }}\"\n}", "help": "JSON object. Keys are field names to set. Values are expressions." }
+  ]
+}

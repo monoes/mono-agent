@@ -1,0 +1,6 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "condition", "label": "Condition Expression", "type": "text", "required": true, "placeholder": "e.g. {{ $json.status == 'active' }}", "help": "Expression evaluated against the current item. Routes to 'true' or 'false' output." }
+  ]
+}

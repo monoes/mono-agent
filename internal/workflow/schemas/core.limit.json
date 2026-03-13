@@ -1,0 +1,6 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "max_items", "label": "Max Items", "type": "number", "required": true, "default": 10, "min": 1, "help": "Only the first N items pass through." }
+  ]
+}

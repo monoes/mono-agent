@@ -1,0 +1,7 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "cron", "label": "Cron Expression", "type": "text", "required": true, "placeholder": "e.g. 0 9 * * 1-5", "help": "Standard 5-field cron expression. e.g. '0 9 * * 1-5' = weekdays at 9am." },
+    { "key": "timezone", "label": "Timezone", "type": "text", "required": false, "default": "UTC", "help": "IANA timezone name, e.g. America/New_York" }
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "field", "label": "Deduplicate By Field", "type": "text", "required": true, "placeholder": "id", "help": "Items with the same value in this field are deduplicated." }
+  ]
+}
