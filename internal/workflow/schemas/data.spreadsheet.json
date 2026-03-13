@@ -1,0 +1,8 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "operation", "label": "Operation", "type": "select", "required": true, "options": ["read_csv", "write_csv", "read_xlsx", "write_xlsx"], "default": "read_csv" },
+    { "key": "file_path", "label": "File Path", "type": "text", "required": true, "placeholder": "/tmp/data.csv" },
+    { "key": "sheet_name", "label": "Sheet Name", "type": "text", "required": false, "default": "Sheet1", "depends_on": { "key": "operation", "values": ["read_xlsx", "write_xlsx"] } }
+  ]
+}

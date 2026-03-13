@@ -1,0 +1,11 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "host", "label": "FTP Host", "type": "text", "required": true },
+    { "key": "port", "label": "Port", "type": "number", "required": false, "default": 21 },
+    { "key": "username", "label": "Username", "type": "text", "required": true },
+    { "key": "password", "label": "Password", "type": "password", "required": true },
+    { "key": "operation", "label": "Operation", "type": "select", "required": true, "options": ["list", "download", "upload", "delete"], "default": "list" },
+    { "key": "path", "label": "Remote Path", "type": "text", "required": true, "placeholder": "/remote/dir/file.csv" }
+  ]
+}

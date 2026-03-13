@@ -1,0 +1,7 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "operation", "label": "Operation", "type": "select", "required": true, "options": ["to_html", "to_text", "from_html"], "default": "to_html" },
+    { "key": "field", "label": "Input Field", "type": "text", "required": true, "placeholder": "content" }
+  ]
+}

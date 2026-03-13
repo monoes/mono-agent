@@ -1,0 +1,8 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "operation", "label": "Operation", "type": "select", "required": true, "options": ["parse", "build", "xpath"], "default": "parse" },
+    { "key": "field", "label": "XML Field", "type": "text", "required": true, "placeholder": "xml_content" },
+    { "key": "xpath", "label": "XPath Expression", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["xpath"] } }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "operation", "label": "Operation", "type": "select", "required": true, "options": ["extract_text", "extract_links", "select", "sanitize"], "default": "extract_text" },
+    { "key": "field", "label": "HTML Field", "type": "text", "required": true, "placeholder": "html_content" },
+    { "key": "selector", "label": "CSS Selector", "type": "text", "required": false, "placeholder": "div.article p", "depends_on": { "key": "operation", "values": ["select"] } }
+  ]
+}

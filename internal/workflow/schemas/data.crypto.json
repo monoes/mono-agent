@@ -1,0 +1,8 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "operation", "label": "Operation", "type": "select", "required": true, "options": ["hash_md5", "hash_sha256", "hash_sha512", "base64_encode", "base64_decode", "hmac_sha256"], "default": "hash_sha256" },
+    { "key": "field", "label": "Input Field", "type": "text", "required": true, "placeholder": "password" },
+    { "key": "secret", "label": "HMAC Secret", "type": "password", "required": false, "depends_on": { "key": "operation", "values": ["hmac_sha256"] } }
+  ]
+}

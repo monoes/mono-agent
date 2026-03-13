@@ -1,0 +1,10 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "uri", "label": "MongoDB URI", "type": "password", "required": true, "placeholder": "mongodb://user:pass@host:27017/db" },
+    { "key": "collection", "label": "Collection", "type": "text", "required": true },
+    { "key": "operation", "label": "Operation", "type": "select", "required": true, "options": ["find", "findOne", "insertOne", "insertMany", "updateOne", "updateMany", "deleteOne", "deleteMany"], "default": "find" },
+    { "key": "filter", "label": "Filter (JSON)", "type": "textarea", "required": false, "rows": 3, "placeholder": "{ \"status\": \"active\" }" },
+    { "key": "update", "label": "Update (JSON)", "type": "textarea", "required": false, "rows": 3, "depends_on": { "key": "operation", "values": ["updateOne", "updateMany"] } }
+  ]
+}

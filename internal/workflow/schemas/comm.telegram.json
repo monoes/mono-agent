@@ -1,0 +1,9 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "bot_token", "label": "Bot Token", "type": "password", "required": true, "help": "Get from @BotFather on Telegram." },
+    { "key": "chat_id", "label": "Chat ID", "type": "text", "required": true, "help": "Numeric chat ID or @channel_username." },
+    { "key": "message", "label": "Message", "type": "textarea", "required": true, "rows": 3 },
+    { "key": "parse_mode", "label": "Parse Mode", "type": "select", "required": false, "options": ["plain", "Markdown", "HTML"], "default": "plain" }
+  ]
+}

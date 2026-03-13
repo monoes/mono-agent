@@ -1,0 +1,10 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "username", "label": "Session Username", "type": "text", "required": false, "help": "Username of the browser session to use. Leave blank to use the default session." },
+    { "key": "keywords", "label": "Keywords", "type": "text", "required": false },
+    { "key": "message", "label": "Message", "type": "textarea", "required": false, "rows": 3 },
+    { "key": "targets", "label": "Target List", "type": "array", "required": false, "item_type": "text", "help": "List of target usernames, URLs, or identifiers." },
+    { "key": "limit", "label": "Max Actions", "type": "number", "required": false, "default": 10 }
+  ]
+}

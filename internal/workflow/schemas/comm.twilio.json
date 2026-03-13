@@ -1,0 +1,10 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "account_sid", "label": "Account SID", "type": "text", "required": true },
+    { "key": "auth_token", "label": "Auth Token", "type": "password", "required": true },
+    { "key": "from", "label": "From Number", "type": "text", "required": true, "placeholder": "+15551234567" },
+    { "key": "to", "label": "To Number", "type": "text", "required": true, "placeholder": "+15557654321" },
+    { "key": "message", "label": "SMS Message", "type": "textarea", "required": true, "rows": 3 }
+  ]
+}

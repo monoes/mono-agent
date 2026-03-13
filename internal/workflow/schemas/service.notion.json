@@ -1,0 +1,10 @@
+{
+  "credential_platform": "notion",
+  "fields": [
+    { "key": "credential_id", "label": "Notion Connection", "type": "text", "required": true },
+    { "key": "operation", "label": "Operation", "type": "select", "required": true, "options": ["query_database", "create_page", "update_page", "get_page"], "default": "query_database" },
+    { "key": "database_id", "label": "Database", "type": "resource_picker", "required": false, "resource": { "type": "databases", "create_label": null }, "depends_on": { "key": "operation", "values": ["query_database", "create_page"] } },
+    { "key": "page_id", "label": "Page ID", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["update_page", "get_page"] } },
+    { "key": "properties", "label": "Page Properties (JSON)", "type": "textarea", "required": false, "rows": 5, "depends_on": { "key": "operation", "values": ["create_page", "update_page"] } }
+  ]
+}

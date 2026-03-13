@@ -1,0 +1,10 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "url", "label": "URL", "type": "text", "required": true, "placeholder": "https://api.example.com/data" },
+    { "key": "method", "label": "Method", "type": "select", "required": true, "options": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"], "default": "GET" },
+    { "key": "headers", "label": "Headers (JSON)", "type": "textarea", "required": false, "rows": 3, "placeholder": "{ \"Authorization\": \"Bearer {{$env.API_KEY}}\" }" },
+    { "key": "body", "label": "Request Body", "type": "textarea", "required": false, "rows": 5, "depends_on": { "key": "method", "values": ["POST", "PUT", "PATCH"] } },
+    { "key": "timeout", "label": "Timeout (seconds)", "type": "number", "required": false, "default": 30 }
+  ]
+}

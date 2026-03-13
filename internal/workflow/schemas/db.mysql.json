@@ -1,0 +1,8 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "connection_string", "label": "Connection String", "type": "password", "required": true, "placeholder": "user:pass@tcp(host:3306)/db" },
+    { "key": "query", "label": "SQL Query", "type": "code", "required": true, "placeholder": "SELECT * FROM users WHERE active = ?" },
+    { "key": "params", "label": "Query Parameters (JSON array)", "type": "textarea", "required": false, "rows": 3, "placeholder": "[1]" }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "phone_number_id", "label": "Phone Number ID", "type": "text", "required": true },
+    { "key": "access_token", "label": "Access Token", "type": "password", "required": true },
+    { "key": "to", "label": "Recipient Number", "type": "text", "required": true, "placeholder": "+15551234567" },
+    { "key": "message", "label": "Message Text", "type": "textarea", "required": true, "rows": 3 }
+  ]
+}

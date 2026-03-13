@@ -1,0 +1,8 @@
+{
+  "credential_platform": "discord",
+  "fields": [
+    { "key": "credential_id", "label": "Discord Connection", "type": "text", "required": true },
+    { "key": "channel_id", "label": "Channel", "type": "resource_picker", "required": true, "resource": { "type": "channels", "create_label": null } },
+    { "key": "message", "label": "Message", "type": "textarea", "required": true, "rows": 3 }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "credential_platform": "gmail",
+  "fields": [
+    { "key": "credential_id", "label": "Gmail Account", "type": "text", "required": true },
+    { "key": "operation", "label": "Operation", "type": "select", "required": true, "options": ["send", "list", "get", "label"], "default": "send" },
+    { "key": "to", "label": "To", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["send"] } },
+    { "key": "subject", "label": "Subject", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["send"] } },
+    { "key": "body", "label": "Body", "type": "textarea", "required": false, "rows": 5, "depends_on": { "key": "operation", "values": ["send"] } },
+    { "key": "label_id", "label": "Label", "type": "resource_picker", "required": false, "resource": { "type": "labels", "create_label": null }, "depends_on": { "key": "operation", "values": ["list", "label"] } }
+  ]
+}

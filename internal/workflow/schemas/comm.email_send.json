@@ -1,0 +1,14 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "smtp_host", "label": "SMTP Host", "type": "text", "required": true, "placeholder": "smtp.gmail.com" },
+    { "key": "smtp_port", "label": "SMTP Port", "type": "number", "required": true, "default": 587 },
+    { "key": "username", "label": "Username", "type": "text", "required": true },
+    { "key": "password", "label": "Password / App Password", "type": "password", "required": true },
+    { "key": "from", "label": "From Address", "type": "text", "required": true, "placeholder": "you@example.com" },
+    { "key": "to", "label": "To Address(es)", "type": "text", "required": true, "placeholder": "user@example.com, other@example.com" },
+    { "key": "subject", "label": "Subject", "type": "text", "required": true },
+    { "key": "body", "label": "Email Body", "type": "textarea", "required": true, "rows": 6 },
+    { "key": "html", "label": "Body is HTML", "type": "boolean", "required": false, "default": false }
+  ]
+}

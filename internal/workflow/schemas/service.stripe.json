@@ -1,0 +1,9 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "api_key", "label": "Stripe Secret Key", "type": "password", "required": true },
+    { "key": "operation", "label": "Operation", "type": "select", "required": true, "options": ["list_customers", "get_customer", "list_payments", "get_payment", "create_refund", "list_subscriptions"], "default": "list_customers" },
+    { "key": "customer_id", "label": "Customer ID", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["get_customer", "list_payments", "list_subscriptions"] } },
+    { "key": "limit", "label": "Max Results", "type": "number", "required": false, "default": 20 }
+  ]
+}

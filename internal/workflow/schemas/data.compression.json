@@ -1,0 +1,8 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "operation", "label": "Operation", "type": "select", "required": true, "options": ["zip", "unzip", "gzip", "gunzip"], "default": "zip" },
+    { "key": "input_field", "label": "Input Field", "type": "text", "required": true, "placeholder": "file_data" },
+    { "key": "output_field", "label": "Output Field Name", "type": "text", "required": false, "default": "compressed" }
+  ]
+}

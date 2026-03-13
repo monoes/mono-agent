@@ -1,0 +1,12 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "imap_host", "label": "IMAP Host", "type": "text", "required": true, "placeholder": "imap.gmail.com" },
+    { "key": "imap_port", "label": "IMAP Port", "type": "number", "required": true, "default": 993 },
+    { "key": "username", "label": "Username", "type": "text", "required": true },
+    { "key": "password", "label": "Password / App Password", "type": "password", "required": true },
+    { "key": "mailbox", "label": "Mailbox", "type": "text", "required": false, "default": "INBOX" },
+    { "key": "limit", "label": "Max Emails", "type": "number", "required": false, "default": 20 },
+    { "key": "unread_only", "label": "Unread Only", "type": "boolean", "required": false, "default": false }
+  ]
+}

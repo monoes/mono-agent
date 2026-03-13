@@ -1,0 +1,7 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "url", "label": "RSS/Atom Feed URL", "type": "text", "required": true, "placeholder": "https://feeds.example.com/rss.xml" },
+    { "key": "limit", "label": "Max Items", "type": "number", "required": false, "default": 20 }
+  ]
+}

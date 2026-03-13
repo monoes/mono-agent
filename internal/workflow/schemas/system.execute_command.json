@@ -1,0 +1,8 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "command", "label": "Shell Command", "type": "text", "required": true, "placeholder": "echo hello world" },
+    { "key": "working_dir", "label": "Working Directory", "type": "text", "required": false, "placeholder": "/tmp" },
+    { "key": "timeout", "label": "Timeout (seconds)", "type": "number", "required": false, "default": 60 }
+  ]
+}

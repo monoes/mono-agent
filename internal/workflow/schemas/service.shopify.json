@@ -1,0 +1,10 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "shop_domain", "label": "Shop Domain", "type": "text", "required": true, "placeholder": "mystore.myshopify.com" },
+    { "key": "access_token", "label": "Access Token", "type": "password", "required": true },
+    { "key": "operation", "label": "Operation", "type": "select", "required": true, "options": ["list_orders", "get_order", "list_products", "get_product", "list_customers", "update_order"], "default": "list_orders" },
+    { "key": "limit", "label": "Max Results", "type": "number", "required": false, "default": 20 },
+    { "key": "status", "label": "Order Status Filter", "type": "select", "required": false, "options": ["any", "open", "closed", "cancelled"], "default": "open", "depends_on": { "key": "operation", "values": ["list_orders"] } }
+  ]
+}
