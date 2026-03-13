@@ -1446,13 +1446,15 @@ func (a *App) DeleteCredential(id string) error {
 
 func (a *App) GetWorkflowNodeTypes() map[string]interface{} {
 	type nodeDesc struct {
-		Type        string `json:"type"`
-		Label       string `json:"label"`
-		Category    string `json:"category"`
-		Description string `json:"description"`
+		Type        string               `json:"type"`
+		Label       string               `json:"label"`
+		Category    string               `json:"category"`
+		Description string               `json:"description"`
+		Schema      *workflow.NodeSchema `json:"schema,omitempty"`
 	}
 	mkNode := func(t, label, cat, desc string) nodeDesc {
-		return nodeDesc{Type: t, Label: label, Category: cat, Description: desc}
+		schema, _ := workflow.LoadDefaultSchema(t)
+		return nodeDesc{Type: t, Label: label, Category: cat, Description: desc, Schema: schema}
 	}
 
 	return map[string]interface{}{
