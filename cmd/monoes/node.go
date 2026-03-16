@@ -404,6 +404,37 @@ Browser/social nodes require --config to include "username" and a session must e
 				}
 			}
 
+			// Auto-save comments to post_comments table after list_post_comments.
+			if strings.HasSuffix(nodeType, "list_post_comments") && rawDB != nil {
+				var allItems []workflow.Item
+				for _, o := range outputs {
+					allItems = append(allItems, o.Items...)
+				}
+				if len(allItems) > 0 {
+					// Resolve post_id from config targets[0].url
+					postID := ""
+					platform := strings.ToUpper(strings.SplitN(nodeType, ".", 2)[0])
+					if targets, ok := config["targets"].([]interface{}); ok && len(targets) > 0 {
+						if t, ok := targets[0].(map[string]interface{}); ok {
+							postURL, _ := t["url"].(string)
+							shortcode := extractPostShortcode(postURL)
+							if shortcode != "" {
+								_ = rawDB.QueryRowContext(ctx,
+									"SELECT id FROM posts WHERE platform = ? AND shortcode = ?",
+									platform, shortcode,
+								).Scan(&postID)
+							}
+						}
+					}
+					if postID == "" {
+						fmt.Fprintf(os.Stderr, "  Warning: post not found in DB — run list_user_posts first\n")
+					} else {
+						saved, skipped, failed := saveCommentsToDB(ctx, rawDB, allItems, postID)
+						fmt.Fprintf(os.Stderr, "  Saved %d comment(s) to post_comments table (%d skipped, %d failed)\n", saved, skipped, failed)
+					}
+				}
+			}
+
 			// Render output
 			switch outputFmt {
 			case "json":
@@ -550,6 +581,62 @@ func nullableStrCLI(s string) interface{} {
 		return nil
 	}
 	return s
+}
+
+// saveCommentsToDB upserts scraped comment items into the post_comments table.
+// Returns (saved, skipped, failed) counts.
+func saveCommentsToDB(ctx context.Context, db *sql.DB, items []workflow.Item, postID string) (int, int, int) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	saved, skipped, failed := 0, 0, 0
+
+	for _, item := range items {
+		data := item.JSON
+		author, _ := data["author"].(string)
+		if author == "" {
+			skipped++
+			continue
+		}
+		text, _ := data["text"].(string)
+		timestamp, _ := data["timestamp"].(string)
+		if timestamp == "" {
+			timestamp = now
+		}
+
+		likesCount := int64(0)
+		switch v := data["likes_count"].(type) {
+		case float64:
+			likesCount = int64(v)
+		case int64:
+			likesCount = v
+		}
+		replyCount := int64(0)
+		switch v := data["reply_count"].(type) {
+		case float64:
+			replyCount = int64(v)
+		case int64:
+			replyCount = v
+		}
+
+		_, err := db.ExecContext(ctx,
+			`INSERT INTO post_comments (id, post_id, author, text, timestamp, likes_count, reply_count, scraped_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(post_id, author, timestamp)
+             DO UPDATE SET
+               text        = COALESCE(excluded.text,        post_comments.text),
+               likes_count = excluded.likes_count,
+               reply_count = excluded.reply_count,
+               scraped_at  = excluded.scraped_at`,
+			uuid.New().String(), postID, author,
+			nullableStrCLI(text), timestamp, likesCount, replyCount, now,
+		)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  Warning: failed to save comment by %s: %v\n", author, err)
+			failed++
+		} else {
+			saved++
+		}
+	}
+	return saved, skipped, failed
 }
 
 // nodeCategory infers a display category from a node type string.
