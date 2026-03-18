@@ -459,3 +459,160 @@ func (b *TikTokBot) GetProfileData(ctx context.Context, page *rod.Page) (map[str
 
 	return data, nil
 }
+
+// GetMethodByName returns a dispatchable wrapper for the named TikTok action method.
+// This satisfies the action.BotAdapter interface so call_bot_method steps can resolve
+// TikTok methods at runtime.
+func (b *TikTokBot) GetMethodByName(name string) (func(ctx context.Context, args ...interface{}) (interface{}, error), bool) {
+	switch name {
+	case "list_user_videos":
+		return func(ctx context.Context, args ...interface{}) (interface{}, error) {
+			if len(args) < 2 {
+				return nil, fmt.Errorf("list_user_videos requires (page, profileURL)")
+			}
+			page, ok := args[0].(*rod.Page)
+			if !ok {
+				return nil, fmt.Errorf("list_user_videos: first arg must be *rod.Page")
+			}
+			profileURL, _ := args[1].(string)
+			maxCount := 20
+			if len(args) >= 3 {
+				if v, ok := args[2].(float64); ok {
+					maxCount = int(v)
+				}
+			}
+			return b.ListUserVideos(ctx, page, profileURL, maxCount)
+		}, true
+
+	case "like_video":
+		return func(ctx context.Context, args ...interface{}) (interface{}, error) {
+			if len(args) < 2 {
+				return nil, fmt.Errorf("like_video requires (page, videoURL)")
+			}
+			page, ok := args[0].(*rod.Page)
+			if !ok {
+				return nil, fmt.Errorf("like_video: first arg must be *rod.Page")
+			}
+			videoURL, _ := args[1].(string)
+			if err := b.LikeVideo(ctx, page, videoURL); err != nil {
+				return nil, err
+			}
+			return map[string]interface{}{"success": true, "videoURL": videoURL}, nil
+		}, true
+
+	case "comment_on_video":
+		return func(ctx context.Context, args ...interface{}) (interface{}, error) {
+			if len(args) < 3 {
+				return nil, fmt.Errorf("comment_on_video requires (page, videoURL, commentText)")
+			}
+			page, ok := args[0].(*rod.Page)
+			if !ok {
+				return nil, fmt.Errorf("comment_on_video: first arg must be *rod.Page")
+			}
+			videoURL, _ := args[1].(string)
+			commentText, _ := args[2].(string)
+			if err := b.CommentOnVideo(ctx, page, videoURL, commentText); err != nil {
+				return nil, err
+			}
+			return map[string]interface{}{"success": true, "videoURL": videoURL}, nil
+		}, true
+
+	case "list_video_comments":
+		return func(ctx context.Context, args ...interface{}) (interface{}, error) {
+			if len(args) < 2 {
+				return nil, fmt.Errorf("list_video_comments requires (page, videoURL)")
+			}
+			page, ok := args[0].(*rod.Page)
+			if !ok {
+				return nil, fmt.Errorf("list_video_comments: first arg must be *rod.Page")
+			}
+			videoURL, _ := args[1].(string)
+			maxCount := 50
+			if len(args) >= 3 {
+				if v, ok := args[2].(float64); ok {
+					maxCount = int(v)
+				}
+			}
+			return b.ListVideoComments(ctx, page, videoURL, maxCount)
+		}, true
+
+	case "like_comment":
+		return func(ctx context.Context, args ...interface{}) (interface{}, error) {
+			if len(args) < 3 {
+				return nil, fmt.Errorf("like_comment requires (page, videoURL, commentID)")
+			}
+			page, ok := args[0].(*rod.Page)
+			if !ok {
+				return nil, fmt.Errorf("like_comment: first arg must be *rod.Page")
+			}
+			videoURL, _ := args[1].(string)
+			commentID, _ := args[2].(string)
+			if err := b.LikeComment(ctx, page, videoURL, commentID); err != nil {
+				return nil, err
+			}
+			return map[string]interface{}{"success": true, "videoURL": videoURL, "commentID": commentID}, nil
+		}, true
+
+	case "follow_user":
+		return func(ctx context.Context, args ...interface{}) (interface{}, error) {
+			if len(args) < 2 {
+				return nil, fmt.Errorf("follow_user requires (page, profileURL)")
+			}
+			page, ok := args[0].(*rod.Page)
+			if !ok {
+				return nil, fmt.Errorf("follow_user: first arg must be *rod.Page")
+			}
+			profileURL, _ := args[1].(string)
+			if err := b.FollowUser(ctx, page, profileURL); err != nil {
+				return nil, err
+			}
+			return map[string]interface{}{"success": true, "profileURL": profileURL}, nil
+		}, true
+
+	case "stitch_video":
+		return func(ctx context.Context, args ...interface{}) (interface{}, error) {
+			if len(args) < 2 {
+				return nil, fmt.Errorf("stitch_video requires (page, videoURL)")
+			}
+			page, ok := args[0].(*rod.Page)
+			if !ok {
+				return nil, fmt.Errorf("stitch_video: first arg must be *rod.Page")
+			}
+			videoURL, _ := args[1].(string)
+			if err := b.StitchVideo(ctx, page, videoURL); err != nil {
+				return nil, err
+			}
+			return map[string]interface{}{"success": true, "videoURL": videoURL}, nil
+		}, true
+
+	case "duet_video":
+		return func(ctx context.Context, args ...interface{}) (interface{}, error) {
+			if len(args) < 2 {
+				return nil, fmt.Errorf("duet_video requires (page, videoURL)")
+			}
+			page, ok := args[0].(*rod.Page)
+			if !ok {
+				return nil, fmt.Errorf("duet_video: first arg must be *rod.Page")
+			}
+			videoURL, _ := args[1].(string)
+			if err := b.DuetVideo(ctx, page, videoURL); err != nil {
+				return nil, err
+			}
+			return map[string]interface{}{"success": true, "videoURL": videoURL}, nil
+		}, true
+
+	case "share_video":
+		return func(ctx context.Context, args ...interface{}) (interface{}, error) {
+			if len(args) < 2 {
+				return nil, fmt.Errorf("share_video requires (page, videoURL)")
+			}
+			page, ok := args[0].(*rod.Page)
+			if !ok {
+				return nil, fmt.Errorf("share_video: first arg must be *rod.Page")
+			}
+			videoURL, _ := args[1].(string)
+			return b.ShareVideo(ctx, page, videoURL)
+		}, true
+	}
+	return nil, false
+}
