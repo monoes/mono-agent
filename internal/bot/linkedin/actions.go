@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/input"
+	"github.com/go-rod/rod/lib/proto"
 )
 
 // jsonUnmarshal is a package-local helper to decode JSON strings from page.Eval results.
@@ -239,4 +241,308 @@ func (b *LinkedInBot) ListPostComments(ctx context.Context, page *rod.Page, post
 	}
 
 	return result, nil
+}
+
+// LikePost reacts to a LinkedIn post with the specified reaction.
+// reaction: "like"|"celebrate"|"support"|"love"|"insightful"|"funny" (default: "like")
+func (b *LinkedInBot) LikePost(ctx context.Context, page *rod.Page, postURL string, reaction string) error {
+	if postURL == "" {
+		return fmt.Errorf("linkedin: postURL is required")
+	}
+	if reaction == "" {
+		reaction = "like"
+	}
+	validReactions := map[string]bool{"like": true, "celebrate": true, "support": true, "love": true, "insightful": true, "funny": true}
+	if !validReactions[reaction] {
+		reaction = "like"
+	}
+
+	if err := page.Navigate(postURL); err != nil {
+		return fmt.Errorf("linkedin: failed to navigate to post: %w", err)
+	}
+	if err := page.WaitLoad(); err != nil {
+		return fmt.Errorf("linkedin: post page did not load: %w", err)
+	}
+	time.Sleep(3 * time.Second)
+
+	res, err := page.Eval(`() => {
+		const prev = document.querySelector('[data-monoes-reaction-btn]');
+		if (prev) prev.removeAttribute('data-monoes-reaction-btn');
+
+		const actionBars = document.querySelectorAll('div.feed-shared-social-action-bar, div.social-actions-button, div[class*="social-actions"]');
+		let reactionBtn = null;
+		for (const bar of actionBars) {
+			const btn = bar.querySelector('button[aria-label*="Like"], button[aria-label*="React"]');
+			if (btn) { reactionBtn = btn; break; }
+		}
+		if (!reactionBtn) {
+			const allBtns = document.querySelectorAll('button[aria-label*="React Like"], button[aria-label*="Like"]');
+			for (const btn of allBtns) {
+				if (!btn.closest('article.comments-comment-item') && !btn.closest('div[class*="comment-item"]')) {
+					reactionBtn = btn;
+					break;
+				}
+			}
+		}
+		if (!reactionBtn) return 'not_found';
+
+		const label = (reactionBtn.getAttribute('aria-label') || '').toLowerCase();
+		if (label.includes('remove') || label.includes('unlike')) return 'already_reacted';
+
+		reactionBtn.setAttribute('data-monoes-reaction-btn', 'true');
+		return 'marked';
+	}`)
+	if err != nil {
+		return fmt.Errorf("linkedin: failed to evaluate reaction script: %w", err)
+	}
+
+	state := res.Value.Str()
+	if state == "already_reacted" {
+		return nil
+	}
+	if state != "marked" {
+		return fmt.Errorf("linkedin: could not find reaction button on %s (%s)", postURL, state)
+	}
+
+	reactionBtn, err := page.Timeout(5 * time.Second).Element("[data-monoes-reaction-btn='true']")
+	if err != nil {
+		return fmt.Errorf("linkedin: marked reaction button not found: %w", err)
+	}
+	if err := reactionBtn.ScrollIntoView(); err != nil {
+		return fmt.Errorf("linkedin: failed to scroll element into view: %w", err)
+	}
+	time.Sleep(300 * time.Millisecond)
+
+	if reaction == "like" {
+		if err := reactionBtn.Click(proto.InputMouseButtonLeft, 1); err != nil {
+			return fmt.Errorf("linkedin: failed to click Like: %w", err)
+		}
+	} else {
+		if err := reactionBtn.Hover(); err != nil {
+			return fmt.Errorf("linkedin: failed to hover reaction button: %w", err)
+		}
+		time.Sleep(1 * time.Second)
+
+		// Capitalize first letter: "celebrate" → "Celebrate"
+		reactionLabel := strings.ToUpper(reaction[:1]) + reaction[1:]
+		popupBtn, popupErr := page.Timeout(5 * time.Second).Element(
+			fmt.Sprintf("button[aria-label='%s']", reactionLabel),
+		)
+		if popupErr != nil {
+			if err := reactionBtn.Click(proto.InputMouseButtonLeft, 1); err != nil {
+				return fmt.Errorf("linkedin: fallback Like click failed: %w", err)
+			}
+		} else {
+			if err := popupBtn.Click(proto.InputMouseButtonLeft, 1); err != nil {
+				return fmt.Errorf("linkedin: failed to click %s reaction: %w", reaction, err)
+			}
+		}
+	}
+
+	time.Sleep(2 * time.Second)
+	page.Eval(`() => {
+		const el = document.querySelector('[data-monoes-reaction-btn]');
+		if (el) el.removeAttribute('data-monoes-reaction-btn');
+	}`)
+
+	return nil
+}
+
+// CommentOnPost posts a comment on a LinkedIn post, or replies to a specific comment.
+// parentCommentID: empty for top-level comment; URN string to reply to that comment.
+func (b *LinkedInBot) CommentOnPost(ctx context.Context, page *rod.Page, postURL, commentText, parentCommentID string) error {
+	if postURL == "" {
+		return fmt.Errorf("linkedin: postURL is required")
+	}
+	if commentText == "" {
+		return fmt.Errorf("linkedin: commentText is required")
+	}
+
+	if err := page.Navigate(postURL); err != nil {
+		return fmt.Errorf("linkedin: failed to navigate to post: %w", err)
+	}
+	if err := page.WaitLoad(); err != nil {
+		return fmt.Errorf("linkedin: post page did not load: %w", err)
+	}
+	time.Sleep(3 * time.Second)
+
+	if parentCommentID != "" {
+		replyRes, err := page.Eval(`(id) => {
+			const prev = document.querySelector('[data-monoes-reply-btn]');
+			if (prev) prev.removeAttribute('data-monoes-reply-btn');
+			const commentEl = document.querySelector('[data-id="' + CSS.escape(id) + '"]');
+			if (!commentEl) return 'not_found';
+			const replyBtn = Array.from(commentEl.querySelectorAll('button')).find(b => b.innerText.trim() === 'Reply');
+			if (!replyBtn) return 'no_reply_btn';
+			replyBtn.setAttribute('data-monoes-reply-btn', 'true');
+			return 'marked';
+		}`, parentCommentID)
+		if err != nil || replyRes.Value.Str() != "marked" {
+			return fmt.Errorf("linkedin: could not find Reply button for comment %s", parentCommentID)
+		}
+		replyBtn, err := page.Timeout(5 * time.Second).Element("[data-monoes-reply-btn='true']")
+		if err != nil {
+			return fmt.Errorf("linkedin: marked Reply button not found: %w", err)
+		}
+		if err := replyBtn.ScrollIntoView(); err != nil {
+			return fmt.Errorf("linkedin: failed to scroll element into view: %w", err)
+		}
+		time.Sleep(300 * time.Millisecond)
+		if err := replyBtn.Click(proto.InputMouseButtonLeft, 1); err != nil {
+			return fmt.Errorf("linkedin: failed to click Reply: %w", err)
+		}
+		time.Sleep(1 * time.Second)
+		page.Eval(`() => {
+			const el = document.querySelector('[data-monoes-reply-btn]');
+			if (el) el.removeAttribute('data-monoes-reply-btn');
+		}`)
+	}
+
+	inputRes, err := page.Eval(`() => {
+		const prev = document.querySelector('[data-monoes-comment-input]');
+		if (prev) prev.removeAttribute('data-monoes-comment-input');
+
+		const editors = document.querySelectorAll('div.ql-editor[contenteditable="true"], div[role="textbox"][contenteditable="true"]');
+		if (editors.length > 0) {
+			editors[editors.length - 1].setAttribute('data-monoes-comment-input', 'true');
+			return 'marked';
+		}
+		const textareas = document.querySelectorAll('textarea[aria-label*="comment" i]');
+		if (textareas.length > 0) {
+			textareas[textareas.length - 1].setAttribute('data-monoes-comment-input', 'true');
+			return 'marked';
+		}
+		return 'not_found';
+	}`)
+	if err != nil || inputRes.Value.Str() != "marked" {
+		return fmt.Errorf("linkedin: could not find comment input")
+	}
+
+	commentInput, err := page.Timeout(5 * time.Second).Element("[data-monoes-comment-input='true']")
+	if err != nil {
+		return fmt.Errorf("linkedin: marked comment input not found: %w", err)
+	}
+	if err := commentInput.ScrollIntoView(); err != nil {
+		return fmt.Errorf("linkedin: failed to scroll element into view: %w", err)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if err := commentInput.Click(proto.InputMouseButtonLeft, 1); err != nil {
+		return fmt.Errorf("linkedin: failed to click comment input: %w", err)
+	}
+	time.Sleep(500 * time.Millisecond)
+
+	for _, ch := range commentText {
+		if err := page.Keyboard.Type(input.Key(ch)); err != nil {
+			return fmt.Errorf("linkedin: failed to type character: %w", err)
+		}
+		time.Sleep(40 * time.Millisecond)
+	}
+	time.Sleep(800 * time.Millisecond)
+
+	submitRes, err := page.Eval(`() => {
+		const prev = document.querySelector('[data-monoes-submit-btn]');
+		if (prev) prev.removeAttribute('data-monoes-submit-btn');
+		const allBtns = Array.from(document.querySelectorAll('button'));
+		const submitBtn = allBtns.find(b => b.innerText.trim() === 'Post' || b.innerText.trim() === 'Done' || b.innerText.trim() === 'Reply');
+		if (submitBtn) {
+			submitBtn.setAttribute('data-monoes-submit-btn', 'true');
+			return 'marked';
+		}
+		return 'not_found';
+	}`)
+	if err != nil || submitRes.Value.Str() != "marked" {
+		page.Keyboard.Press(input.Enter)
+	} else {
+		submitBtn, err := page.Timeout(5 * time.Second).Element("[data-monoes-submit-btn='true']")
+		if err != nil {
+			page.Keyboard.Press(input.Enter)
+		} else {
+			if err := submitBtn.ScrollIntoView(); err != nil {
+				return fmt.Errorf("linkedin: failed to scroll element into view: %w", err)
+			}
+			time.Sleep(200 * time.Millisecond)
+			if err := submitBtn.Click(proto.InputMouseButtonLeft, 1); err != nil {
+				return fmt.Errorf("linkedin: failed to click submit: %w", err)
+			}
+		}
+	}
+
+	time.Sleep(3 * time.Second)
+	page.Eval(`() => {
+		['[data-monoes-comment-input]','[data-monoes-submit-btn]'].forEach(sel => {
+			const el = document.querySelector(sel);
+			if (el) el.removeAttribute(sel.slice(1,-1));
+		});
+	}`)
+
+	return nil
+}
+
+// LikeComment likes a specific comment on a LinkedIn post.
+// commentID: the URN string from list_post_comments output.
+func (b *LinkedInBot) LikeComment(ctx context.Context, page *rod.Page, postURL, commentID string) error {
+	if postURL == "" {
+		return fmt.Errorf("linkedin: postURL is required")
+	}
+	if commentID == "" {
+		return fmt.Errorf("linkedin: commentID is required")
+	}
+
+	if err := page.Navigate(postURL); err != nil {
+		return fmt.Errorf("linkedin: failed to navigate to post: %w", err)
+	}
+	if err := page.WaitLoad(); err != nil {
+		return fmt.Errorf("linkedin: post page did not load: %w", err)
+	}
+	time.Sleep(3 * time.Second)
+
+	res, err := page.Eval(`(id) => {
+		const prev = document.querySelector('[data-monoes-comment-like]');
+		if (prev) prev.removeAttribute('data-monoes-comment-like');
+
+		const commentEl = document.querySelector('[data-id="' + CSS.escape(id) + '"]');
+		if (!commentEl) return 'not_found';
+		commentEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+		const likeBtn = commentEl.querySelector('button[aria-label*="Like"], button[aria-label*="React"]');
+		if (!likeBtn) return 'no_like_btn';
+
+		const label = (likeBtn.getAttribute('aria-label') || '').toLowerCase();
+		if (label.includes('remove') || label.includes('unlike')) return 'already_liked';
+
+		likeBtn.setAttribute('data-monoes-comment-like', 'true');
+		return 'marked';
+	}`, commentID)
+	if err != nil {
+		return fmt.Errorf("linkedin: failed to evaluate like comment script: %w", err)
+	}
+
+	state := res.Value.Str()
+	if state == "already_liked" {
+		return nil
+	}
+	if state != "marked" {
+		return fmt.Errorf("linkedin: could not find Like button for comment %s (%s)", commentID, state)
+	}
+
+	likeBtn, err := page.Timeout(5 * time.Second).Element("[data-monoes-comment-like='true']")
+	if err != nil {
+		return fmt.Errorf("linkedin: marked comment like button not found: %w", err)
+	}
+	if err := likeBtn.ScrollIntoView(); err != nil {
+		return fmt.Errorf("linkedin: failed to scroll element into view: %w", err)
+	}
+	time.Sleep(300 * time.Millisecond)
+
+	if err := likeBtn.Click(proto.InputMouseButtonLeft, 1); err != nil {
+		return fmt.Errorf("linkedin: failed to click comment Like: %w", err)
+	}
+
+	time.Sleep(1 * time.Second)
+	page.Eval(`() => {
+		const el = document.querySelector('[data-monoes-comment-like]');
+		if (el) el.removeAttribute('data-monoes-comment-like');
+	}`)
+
+	return nil
 }
