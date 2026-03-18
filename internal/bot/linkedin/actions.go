@@ -13,6 +13,19 @@ import (
 	"github.com/go-rod/rod/lib/proto"
 )
 
+// reLinkedInActivity matches the numeric activity ID in LinkedIn post URLs.
+// e.g. "activity-7123456789" or "activity:7123456789"
+var reLinkedInActivity = regexp.MustCompile(`activity[-:](\d+)`)
+
+// reactionButtonSelectors maps a reaction name to its static CSS selector for the popup button.
+var reactionButtonSelectors = map[string]string{
+	"celebrate":  "button[aria-label='Celebrate']",
+	"support":    "button[aria-label='Support']",
+	"love":       "button[aria-label='Love']",
+	"insightful": "button[aria-label='Insightful']",
+	"funny":      "button[aria-label='Funny']",
+}
+
 // jsonUnmarshal is a package-local helper to decode JSON strings from page.Eval results.
 func jsonUnmarshal(s string, v interface{}) error {
 	return json.Unmarshal([]byte(s), v)
@@ -52,8 +65,6 @@ func (b *LinkedInBot) ListUserPosts(ctx context.Context, page *rod.Page, profile
 		return nil, fmt.Errorf("linkedin: activity feed did not load: %w", err)
 	}
 	time.Sleep(3 * time.Second)
-
-	activityRe := regexp.MustCompile(`activity[-:](\d+)`)
 
 	var allPosts []map[string]interface{}
 	seen := map[string]bool{}
@@ -99,7 +110,7 @@ func (b *LinkedInBot) ListUserPosts(ctx context.Context, page *rod.Page, profile
 			if rawURL == "" {
 				continue
 			}
-			m := activityRe.FindStringSubmatch(rawURL)
+			m := reLinkedInActivity.FindStringSubmatch(rawURL)
 			if len(m) < 2 {
 				// URL doesn't contain activity ID pattern — skip silently (LinkedIn has varied URL formats)
 				continue
@@ -136,8 +147,8 @@ func (b *LinkedInBot) ListUserPosts(ctx context.Context, page *rod.Page, profile
 
 		if len(allPosts) < maxCount {
 			if _, scrollErr := page.Eval(`() => window.scrollBy(0, window.innerHeight * 2)`); scrollErr != nil {
-			break
-		}
+				fmt.Println("linkedin: smooth scroll failed, continuing:", scrollErr)
+			}
 			time.Sleep(2 * time.Second)
 		}
 	}
@@ -323,11 +334,11 @@ func (b *LinkedInBot) LikePost(ctx context.Context, page *rod.Page, postURL stri
 		}
 		time.Sleep(1 * time.Second)
 
-		// Capitalize first letter: "celebrate" → "Celebrate"
-		reactionLabel := strings.ToUpper(reaction[:1]) + reaction[1:]
-		popupBtn, popupErr := page.Timeout(5 * time.Second).Element(
-			fmt.Sprintf("button[aria-label='%s']", reactionLabel),
-		)
+		reactionSel, hasSel := reactionButtonSelectors[reaction]
+		if !hasSel {
+			reactionSel = reactionButtonSelectors["celebrate"] // fallback, won't normally be reached
+		}
+		popupBtn, popupErr := page.Timeout(5 * time.Second).Element(reactionSel)
 		if popupErr != nil {
 			if err := reactionBtn.Click(proto.InputMouseButtonLeft, 1); err != nil {
 				return fmt.Errorf("linkedin: fallback Like click failed: %w", err)
@@ -451,11 +462,15 @@ func (b *LinkedInBot) CommentOnPost(ctx context.Context, page *rod.Page, postURL
 		return 'not_found';
 	}`)
 	if err != nil || submitRes.Value.Str() != "marked" {
-		page.Keyboard.Press(input.Enter)
+		if err := page.Keyboard.Press(input.Enter); err != nil {
+			return fmt.Errorf("keyboard enter press: %w", err)
+		}
 	} else {
 		submitBtn, err := page.Timeout(5 * time.Second).Element("[data-monoes-submit-btn='true']")
 		if err != nil {
-			page.Keyboard.Press(input.Enter)
+			if err := page.Keyboard.Press(input.Enter); err != nil {
+				return fmt.Errorf("keyboard enter press: %w", err)
+			}
 		} else {
 			if err := submitBtn.ScrollIntoView(); err != nil {
 				return fmt.Errorf("linkedin: failed to scroll element into view: %w", err)
@@ -469,9 +484,9 @@ func (b *LinkedInBot) CommentOnPost(ctx context.Context, page *rod.Page, postURL
 
 	time.Sleep(3 * time.Second)
 	page.Eval(`() => {
-		['[data-monoes-comment-input]','[data-monoes-submit-btn]'].forEach(sel => {
-			const el = document.querySelector(sel);
-			if (el) el.removeAttribute(sel.slice(1,-1));
+		['data-monoes-comment-input', 'data-monoes-submit-btn'].forEach(attr => {
+			const el = document.querySelector('[' + attr + ']');
+			if (el) el.removeAttribute(attr);
 		});
 	}`)
 

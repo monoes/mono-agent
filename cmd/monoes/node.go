@@ -416,19 +416,25 @@ Browser/social nodes require --config to include "username" and a session must e
 					allItems = append(allItems, o.Items...)
 				}
 				if len(allItems) > 0 {
-					// Resolve post_id from config targets[0].url
+					// Resolve post_id from config selectedListItems[0] (the post URL input declared in the action JSON).
 					postID := ""
 					platform := strings.ToUpper(strings.SplitN(nodeType, ".", 2)[0])
-					if targets, ok := config["targets"].([]interface{}); ok && len(targets) > 0 {
-						if t, ok := targets[0].(map[string]interface{}); ok {
-							postURL, _ := t["url"].(string)
-							shortcode := extractPostShortcode(postURL)
-							if shortcode != "" {
-								_ = rawDB.QueryRowContext(ctx,
-									"SELECT id FROM posts WHERE platform = ? AND shortcode = ?",
-									platform, shortcode,
-								).Scan(&postID)
-							}
+					postURL := ""
+					if items, ok := config["selectedListItems"].([]interface{}); ok && len(items) > 0 {
+						switch v := items[0].(type) {
+						case string:
+							postURL = v
+						case map[string]interface{}:
+							postURL, _ = v["url"].(string)
+						}
+					}
+					if postURL != "" {
+						shortcode := extractPostShortcode(postURL)
+						if shortcode != "" {
+							_ = rawDB.QueryRowContext(ctx,
+								"SELECT id FROM posts WHERE platform = ? AND shortcode = ?",
+								platform, shortcode,
+							).Scan(&postID)
 						}
 					}
 					if postID == "" {
