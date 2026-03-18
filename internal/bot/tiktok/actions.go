@@ -113,12 +113,127 @@ func (b *TikTokBot) FollowUser(ctx context.Context, page *rod.Page, profileURL s
 	return nil
 }
 
+// LikeVideo navigates to a TikTok video page and clicks the like button.
+// Returns nil if already liked (idempotent).
 func (b *TikTokBot) LikeVideo(ctx context.Context, page *rod.Page, videoURL string) error {
-	return fmt.Errorf("tiktok: LikeVideo not yet implemented")
+	if videoURL == "" {
+		return fmt.Errorf("tiktok: videoURL is required")
+	}
+
+	if err := page.Navigate(videoURL); err != nil {
+		return fmt.Errorf("tiktok: navigate to %s: %w", videoURL, err)
+	}
+	if err := page.WaitLoad(); err != nil {
+		return fmt.Errorf("tiktok: page load failed: %w", err)
+	}
+	time.Sleep(3 * time.Second)
+
+	likeSelectors := []string{
+		"[data-e2e='like-icon']",
+		"[data-e2e='browse-like-button']",
+	}
+
+	var likeBtn *rod.Element
+	for _, sel := range likeSelectors {
+		el, err := page.Timeout(5 * time.Second).Element(sel)
+		if err == nil && el != nil {
+			likeBtn = el
+			break
+		}
+	}
+	if likeBtn == nil {
+		return fmt.Errorf("tiktok: like button not found on %s", videoURL)
+	}
+
+	// Check if already liked (aria-pressed="true").
+	pressed, _ := likeBtn.Attribute("aria-pressed")
+	if pressed != nil && *pressed == "true" {
+		return nil // already liked
+	}
+
+	if err := likeBtn.Click(proto.InputMouseButtonLeft, 1); err != nil {
+		return fmt.Errorf("tiktok: failed to click like button: %w", err)
+	}
+	time.Sleep(1 * time.Second)
+	return nil
 }
 
+// CommentOnVideo navigates to a TikTok video page, opens the comment panel,
+// types the comment, and submits it.
 func (b *TikTokBot) CommentOnVideo(ctx context.Context, page *rod.Page, videoURL string, commentText string) error {
-	return fmt.Errorf("tiktok: CommentOnVideo not yet implemented")
+	if videoURL == "" {
+		return fmt.Errorf("tiktok: videoURL is required")
+	}
+	if commentText == "" {
+		return fmt.Errorf("tiktok: commentText is required")
+	}
+
+	if err := page.Navigate(videoURL); err != nil {
+		return fmt.Errorf("tiktok: navigate to %s: %w", videoURL, err)
+	}
+	if err := page.WaitLoad(); err != nil {
+		return fmt.Errorf("tiktok: page load failed: %w", err)
+	}
+	time.Sleep(3 * time.Second)
+
+	// Open comment panel.
+	commentIconSelectors := []string{
+		"[data-e2e='comment-icon']",
+		"[data-e2e='browse-comment-button']",
+	}
+	for _, sel := range commentIconSelectors {
+		el, err := page.Timeout(5 * time.Second).Element(sel)
+		if err == nil && el != nil {
+			_ = el.Click(proto.InputMouseButtonLeft, 1)
+			time.Sleep(2 * time.Second)
+			break
+		}
+	}
+
+	// Find comment input.
+	inputSelectors := []string{
+		"[data-e2e='comment-input']",
+		"div[contenteditable='true'][class*='comment']",
+		"div[contenteditable='true']",
+	}
+	var commentInput *rod.Element
+	for _, sel := range inputSelectors {
+		el, err := page.Timeout(5 * time.Second).Element(sel)
+		if err == nil && el != nil {
+			commentInput = el
+			break
+		}
+	}
+	if commentInput == nil {
+		return fmt.Errorf("tiktok: comment input not found on %s", videoURL)
+	}
+
+	if err := commentInput.Click(proto.InputMouseButtonLeft, 1); err != nil {
+		return fmt.Errorf("tiktok: failed to focus comment input: %w", err)
+	}
+	time.Sleep(500 * time.Millisecond)
+
+	if err := commentInput.Input(commentText); err != nil {
+		return fmt.Errorf("tiktok: failed to type comment: %w", err)
+	}
+	time.Sleep(500 * time.Millisecond)
+
+	// Submit comment.
+	submitSelectors := []string{
+		"[data-e2e='comment-send-btn']",
+		"[data-e2e='comment-post-btn']",
+		"button[type='submit']",
+	}
+	for _, sel := range submitSelectors {
+		el, err := page.Timeout(5 * time.Second).Element(sel)
+		if err == nil && el != nil {
+			if clickErr := el.Click(proto.InputMouseButtonLeft, 1); clickErr == nil {
+				time.Sleep(1 * time.Second)
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("tiktok: could not find comment submit button on %s", videoURL)
 }
 
 func (b *TikTokBot) ListVideoComments(ctx context.Context, page *rod.Page, videoURL string, maxCount int) (interface{}, error) {
