@@ -40,12 +40,17 @@ Implement a full TikTok bot adapter following the same three-layer pattern as Li
 ```
 internal/bot/tiktok/
   bot.go       — TikTokBot struct, New(), Register(), GetMethodByName() dispatch
-  actions.go   — one exported function per action (JS DOM automation via go-rod)
+  actions.go   — unexported struct methods (JS DOM automation via go-rod page.Eval)
+  tiktok.go    — existing stub (package declaration only; can remain or be removed)
 ```
 
 `TikTokBot` must implement both:
-- `bot.BotAdapter` (Platform, LoginURL, IsLoggedIn, etc.) — for login flow
-- `action.BotAdapter` (GetMethodByName) — for `call_bot_method` step dispatch
+- `bot.BotAdapter` (Platform, LoginURL, IsLoggedIn, etc.) — already partially implemented in `tiktok.go`
+- `action.BotAdapter` (GetMethodByName) — added in `bot.go` for `call_bot_method` step dispatch
+
+`actions.go` contains **unexported struct methods** on `*TikTokBot` (e.g., `b.listUserVideos`).
+`GetMethodByName` in `bot.go` wraps these in closures that cast `args[0].(*rod.Page)` and forward
+the remaining args — identical to the LinkedIn/Instagram pattern.
 
 ### JSON Action Files
 
@@ -173,41 +178,47 @@ loop over selectedListItems (video URLs):
 
 ## Go Method Signatures
 
+The executor (`stepCallBotMethod`) always prepends `*rod.Page` as the first argument before
+calling `GetMethodByName` functions. The JSON `args` array contains only user-supplied values;
+the page is injected automatically. All methods on the `TikTokBot` struct are unexported or
+exported as struct methods (not standalone functions) — `GetMethodByName` in `bot.go` wraps
+them in closures, identical to the LinkedIn/Instagram pattern.
+
 ```go
-func (b *TikTokBot) ListUserVideos(ctx context.Context, args ...interface{}) (interface{}, error)
-// args[0]: profileURL string, args[1]: maxCount int
+func (b *TikTokBot) listUserVideos(page *rod.Page, profileURL string, maxCount int) (interface{}, error)
+// GetMethodByName wrapper: args[0]=*rod.Page, args[1]=profileURL, args[2]=maxCount
 // returns []map[string]interface{} with fields: url, thumbnail, description, likes, comments, shares
 
-func (b *TikTokBot) LikeVideo(ctx context.Context, args ...interface{}) (interface{}, error)
-// args[0]: videoURL string
+func (b *TikTokBot) likeVideo(page *rod.Page, videoURL string) (interface{}, error)
+// GetMethodByName wrapper: args[0]=*rod.Page, args[1]=videoURL
 // returns bool (true = liked, false = already liked)
 
-func (b *TikTokBot) CommentOnVideo(ctx context.Context, args ...interface{}) (interface{}, error)
-// args[0]: videoURL string, args[1]: commentText string
+func (b *TikTokBot) commentOnVideo(page *rod.Page, videoURL string, commentText string) (interface{}, error)
+// GetMethodByName wrapper: args[0]=*rod.Page, args[1]=videoURL, args[2]=commentText
 // returns bool
 
-func (b *TikTokBot) ListVideoComments(ctx context.Context, args ...interface{}) (interface{}, error)
-// args[0]: videoURL string, args[1]: maxCount int
+func (b *TikTokBot) listVideoComments(page *rod.Page, videoURL string, maxCount int) (interface{}, error)
+// GetMethodByName wrapper: args[0]=*rod.Page, args[1]=videoURL, args[2]=maxCount
 // returns []map[string]interface{} with fields: id, username, text, likes, timestamp
 
-func (b *TikTokBot) LikeComment(ctx context.Context, args ...interface{}) (interface{}, error)
-// args[0]: videoURL string, args[1]: commentID string
+func (b *TikTokBot) likeComment(page *rod.Page, videoURL string, commentID string) (interface{}, error)
+// GetMethodByName wrapper: args[0]=*rod.Page, args[1]=videoURL, args[2]=commentID
 // returns bool
 
-func (b *TikTokBot) FollowUser(ctx context.Context, args ...interface{}) (interface{}, error)
-// args[0]: profileURL string
+func (b *TikTokBot) followUser(page *rod.Page, profileURL string) (interface{}, error)
+// GetMethodByName wrapper: args[0]=*rod.Page, args[1]=profileURL
 // returns bool (true = followed, false = already following)
 
-func (b *TikTokBot) StitchVideo(ctx context.Context, args ...interface{}) (interface{}, error)
-// args[0]: videoURL string
+func (b *TikTokBot) stitchVideo(page *rod.Page, videoURL string) (interface{}, error)
+// GetMethodByName wrapper: args[0]=*rod.Page, args[1]=videoURL
 // returns bool (true = stitch creator opened)
 
-func (b *TikTokBot) DuetVideo(ctx context.Context, args ...interface{}) (interface{}, error)
-// args[0]: videoURL string
+func (b *TikTokBot) duetVideo(page *rod.Page, videoURL string) (interface{}, error)
+// GetMethodByName wrapper: args[0]=*rod.Page, args[1]=videoURL
 // returns bool (true = duet creator opened)
 
-func (b *TikTokBot) ShareVideo(ctx context.Context, args ...interface{}) (interface{}, error)
-// args[0]: videoURL string
+func (b *TikTokBot) shareVideo(page *rod.Page, videoURL string) (interface{}, error)
+// GetMethodByName wrapper: args[0]=*rod.Page, args[1]=videoURL
 // returns string (copied share URL)
 ```
 
