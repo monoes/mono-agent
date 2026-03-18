@@ -236,12 +236,132 @@ func (b *TikTokBot) CommentOnVideo(ctx context.Context, page *rod.Page, videoURL
 	return fmt.Errorf("tiktok: could not find comment submit button on %s", videoURL)
 }
 
-func (b *TikTokBot) ListVideoComments(ctx context.Context, page *rod.Page, videoURL string, maxCount int) (interface{}, error) {
-	return nil, fmt.Errorf("tiktok: ListVideoComments not yet implemented")
+// ListVideoComments navigates to a TikTok video page, opens the comment panel,
+// and returns up to maxCount comment entries.
+func (b *TikTokBot) ListVideoComments(ctx context.Context, page *rod.Page, videoURL string, maxCount int) ([]map[string]interface{}, error) {
+	if videoURL == "" {
+		return nil, fmt.Errorf("tiktok: videoURL is required")
+	}
+	if maxCount <= 0 {
+		maxCount = 50
+	}
+
+	if err := page.Navigate(videoURL); err != nil {
+		return nil, fmt.Errorf("tiktok: navigate to %s: %w", videoURL, err)
+	}
+	if err := page.WaitLoad(); err != nil {
+		return nil, fmt.Errorf("tiktok: page load failed: %w", err)
+	}
+	time.Sleep(3 * time.Second)
+
+	// Open comment panel.
+	for _, sel := range []string{"[data-e2e='comment-icon']", "[data-e2e='browse-comment-button']"} {
+		el, err := page.Timeout(5 * time.Second).Element(sel)
+		if err == nil && el != nil {
+			_ = el.Click(proto.InputMouseButtonLeft, 1)
+			time.Sleep(2 * time.Second)
+			break
+		}
+	}
+
+	var comments []map[string]interface{}
+	prevCount := 0
+	noChangeRounds := 0
+
+	for len(comments) < maxCount && noChangeRounds < 3 {
+		result, err := page.Eval(`() => {
+			const items = document.querySelectorAll('[data-e2e="comment-item"]');
+			return JSON.stringify(Array.from(items).map(el => {
+				const username = el.querySelector('[data-e2e="comment-username"]');
+				const content = el.querySelector('[data-e2e="comment-content"]');
+				return {
+					id: el.getAttribute('data-comment-id') || el.id || '',
+					username: username ? username.innerText.trim() : '',
+					text: content ? content.innerText.trim() : '',
+				};
+			}).filter(c => c.text !== ''));
+		}`)
+		if err == nil && result != nil {
+			var parsed []map[string]interface{}
+			if jsonErr := json.Unmarshal([]byte(result.Value.Str()), &parsed); jsonErr != nil {
+				return nil, fmt.Errorf("tiktok: failed to parse comment list JSON: %w", jsonErr)
+			}
+			comments = parsed
+		}
+
+		if len(comments) == prevCount {
+			noChangeRounds++
+		} else {
+			noChangeRounds = 0
+			prevCount = len(comments)
+		}
+
+		if len(comments) < maxCount {
+			_, _ = page.Eval(`() => {
+				const panel = document.querySelector('[data-e2e="comment-list"]') ||
+				              document.querySelector('[class*="CommentList"]');
+				if (panel) panel.scrollBy(0, 500);
+				else window.scrollBy(0, 500);
+			}`)
+			time.Sleep(1500 * time.Millisecond)
+		}
+	}
+
+	if len(comments) > maxCount {
+		comments = comments[:maxCount]
+	}
+	return comments, nil
 }
 
+// LikeComment navigates to a TikTok video page, opens the comment panel, finds
+// the comment by ID, and clicks its like button.
 func (b *TikTokBot) LikeComment(ctx context.Context, page *rod.Page, videoURL string, commentID string) error {
-	return fmt.Errorf("tiktok: LikeComment not yet implemented")
+	if videoURL == "" {
+		return fmt.Errorf("tiktok: videoURL is required")
+	}
+	if commentID == "" {
+		return fmt.Errorf("tiktok: commentID is required")
+	}
+
+	if err := page.Navigate(videoURL); err != nil {
+		return fmt.Errorf("tiktok: navigate to %s: %w", videoURL, err)
+	}
+	if err := page.WaitLoad(); err != nil {
+		return fmt.Errorf("tiktok: page load failed: %w", err)
+	}
+	time.Sleep(3 * time.Second)
+
+	// Open comment panel.
+	for _, sel := range []string{"[data-e2e='comment-icon']", "[data-e2e='browse-comment-button']"} {
+		el, err := page.Timeout(5 * time.Second).Element(sel)
+		if err == nil && el != nil {
+			_ = el.Click(proto.InputMouseButtonLeft, 1)
+			time.Sleep(2 * time.Second)
+			break
+		}
+	}
+
+	result, err := page.Eval(fmt.Sprintf(`() => {
+		const id = %q;
+		const items = document.querySelectorAll('[data-e2e="comment-item"]');
+		for (const el of items) {
+			if (el.getAttribute('data-comment-id') === id || el.id === id) {
+				const likeBtn = el.querySelector('[data-e2e="comment-like-btn"]');
+				if (likeBtn) { likeBtn.click(); return true; }
+			}
+		}
+		return false;
+	}`, commentID))
+	if err != nil {
+		return fmt.Errorf("tiktok: failed to like comment %s: %w", commentID, err)
+	}
+	if result != nil {
+		if result.Value.Str() != "true" {
+			return fmt.Errorf("tiktok: comment %s not found on page %s", commentID, videoURL)
+		}
+	}
+	time.Sleep(1 * time.Second)
+	return nil
 }
 
 func (b *TikTokBot) StitchVideo(ctx context.Context, page *rod.Page, videoURL string) error {
