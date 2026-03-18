@@ -205,10 +205,10 @@ func (b *LinkedInBot) ListPostComments(ctx context.Context, page *rod.Page, post
 
 	res, err := page.Eval(`() => {
 		const comments = [];
-		const commentEls = document.querySelectorAll('article.comments-comment-item, div[class*="comment-item"]');
+		const commentEls = document.querySelectorAll('article.comments-comment-entity, article.comments-comment-item');
 		for (const el of commentEls) {
 			const id = el.getAttribute('data-id') || el.getAttribute('id') || '';
-			const authorEl = el.querySelector('span.comments-post-meta__name, a.comments-post-meta__name span');
+			const authorEl = el.querySelector('span.comments-comment-meta__description-title, span.comments-post-meta__name, a.comments-post-meta__name span');
 			const author = authorEl ? authorEl.innerText.trim() : '';
 			const authorLinkEl = el.querySelector('a[href*="/in/"]');
 			const authorUrl = authorLinkEl ? authorLinkEl.href : '';
@@ -219,7 +219,7 @@ func (b *LinkedInBot) ListPostComments(ctx context.Context, page *rod.Page, post
 			const likeEl = el.querySelector('button[aria-label*="Like"][aria-label*="comment"], span.social-details-social-counts__reactions-count');
 			const likesCount = likeEl ? (parseInt((likeEl.innerText || '').replace(/[^0-9]/g, '')) || 0) : 0;
 			const isReply = !!el.closest('div.comments-comment-item__nested-items, div[class*="nested"]');
-			const parentEl = isReply ? el.parentElement.closest('article.comments-comment-item') : null;
+			const parentEl = isReply ? el.parentElement.closest('article.comments-comment-entity, article.comments-comment-item') : null;
 			const parentId = parentEl ? (parentEl.getAttribute('data-id') || '') : '';
 			comments.push({ id, author, authorUrl, text, timestamp, likesCount, replyCount: 0, parentId: parentId || null });
 		}
@@ -453,8 +453,15 @@ func (b *LinkedInBot) CommentOnPost(ctx context.Context, page *rod.Page, postURL
 	submitRes, err := page.Eval(`() => {
 		const prev = document.querySelector('[data-monoes-submit-btn]');
 		if (prev) prev.removeAttribute('data-monoes-submit-btn');
-		const allBtns = Array.from(document.querySelectorAll('button'));
-		const submitBtn = allBtns.find(b => b.innerText.trim() === 'Post' || b.innerText.trim() === 'Done' || b.innerText.trim() === 'Reply');
+		// Try the known submit button class first (most reliable).
+		let submitBtn = document.querySelector('button.comments-comment-box__submit-button--cr');
+		if (!submitBtn) {
+			// Search within the comment box container.
+			const commentBox = document.querySelector('[data-monoes-comment-input]')?.closest('.comments-comment-box--cr, .comments-comment-texteditor, .comments-reply-box');
+			const searchIn = commentBox || document;
+			const submitLabels = new Set(['Post', 'Done', 'Reply', 'Comment', 'Submit']);
+			submitBtn = Array.from(searchIn.querySelectorAll('button')).find(b => submitLabels.has(b.innerText.trim()));
+		}
 		if (submitBtn) {
 			submitBtn.setAttribute('data-monoes-submit-btn', 'true');
 			return 'marked';
