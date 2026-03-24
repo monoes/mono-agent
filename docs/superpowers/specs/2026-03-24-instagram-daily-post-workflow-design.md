@@ -2,7 +2,7 @@
 
 **Goal:** A scheduled (and manually-triggerable) workflow that reads a Google Sheet, picks the first `todo` item, generates an AI image and caption via OpenRouter, posts to Instagram, and marks the row as `done`.
 
-**Architecture:** A workflow JSON definition wires together existing nodes (`service.google_sheets`, `http.request`, `data.write_binary_file`, `instagram.publish_post`) with one new node executor (`service.openrouter`). The OpenRouter API key is stored as a connection. The workflow is registered with the cron scheduler and can also be triggered manually.
+**Architecture:** A workflow JSON definition wires together existing nodes (`service.google_sheets`, `http.request`, `data.write_binary_file`, `instagram.publish_post`) with one new node executor (`service.openrouter`). The OpenRouter API key is stored as a connection. The workflow embeds a `trigger.schedule` node (cron `0 9 * * *`) for daily execution and can also be triggered manually via CLI.
 
 **Tech Stack:** Go, go-rod, OpenRouter API (FLUX 1.1 Pro for images, Claude 3.5 Sonnet for captions), Google Sheets API (OAuth), existing workflow engine + cron scheduler.
 
@@ -23,7 +23,7 @@ Row 1 = headers. The workflow reads the first row where `status = todo`.
 | G | `scheduled_date` | string (YYYY-MM-DD, optional) | Informational target date, not used for row selection |
 | H | `status` | string | `todo` or `done` |
 | I | `posted_at` | string | Filled by system after posting (ISO 8601 timestamp) |
-| J | `post_url` | string | Filled by system after posting |
+| J | `post_url` | string | Left empty (Instagram publish does not return a post URL — best-effort) |
 
 ---
 
@@ -32,11 +32,18 @@ Row 1 = headers. The workflow reads the first row where `status = todo`.
 ### File
 `internal/nodes/service/openrouter.go`
 
+### Registration
+Add to `internal/nodes/service/register_b.go` (following the existing pattern for other service nodes).
+
 ### Connection Type
 Add `openrouter` to `internal/connections/registry.go`:
 - Auth method: `api_key`
 - Stores: `api_key` string
 - Base URL: `https://openrouter.ai/api/v1`
+
+### Schema File
+`internal/workflow/schemas/service.openrouter.json`
+(matches the flat `{node_type}.json` naming convention; embedded via `//go:embed schemas/*.json` in `schema_loader.go`)
 
 ### Operations
 
@@ -47,7 +54,15 @@ Add `openrouter` to `internal/connections/registry.go`:
   - `width` (int, default: 1024)
   - `height` (int, default: 1024)
 - HTTP call: `POST https://openrouter.ai/api/v1/images/generations`
-- Request body: `{ "model": "...", "prompt": "...", "size": "1024x1024" }`
+- Request body:
+  ```json
+  {
+    "model": "black-forest-labs/flux-1.1-pro",
+    "prompt": "...",
+    "width": 1024,
+    "height": 1024
+  }
+  ```
 - Output: `{ "url": "https://..." }` — URL of generated image
 
 **`generate_text`**
@@ -56,7 +71,14 @@ Add `openrouter` to `internal/connections/registry.go`:
   - `model` (string, default: `anthropic/claude-3.5-sonnet`)
   - `max_tokens` (int, default: 500)
 - HTTP call: `POST https://openrouter.ai/api/v1/chat/completions`
-- Request body: `{ "model": "...", "messages": [{"role": "user", "content": "..."}], "max_tokens": 500 }`
+- Request body:
+  ```json
+  {
+    "model": "anthropic/claude-3.5-sonnet",
+    "messages": [{"role": "user", "content": "..."}],
+    "max_tokens": 500
+  }
+  ```
 - Output: `{ "text": "..." }` — generated text content
 
 ---
@@ -64,45 +86,33 @@ Add `openrouter` to `internal/connections/registry.go`:
 ## 3. Workflow Definition
 
 ### File
-`data/workflows/instagram_daily_post.json`
+`tools/seed/instagram_daily_post.json`
+
+This file is imported into the workflow engine via `monoes workflow import tools/seed/instagram_daily_post.json`. It is not auto-loaded from disk at runtime.
 
 ### Trigger
-- **Cron**: `0 9 * * *` (9:00 AM daily) — registered via `monoes schedule add`
-- **Manual**: triggerable via CLI (`monoes workflow run instagram_daily_post`) or UI
+- **Cron**: embedded as a `trigger.schedule` node in the workflow JSON with `"cron": "0 9 * * *"` (9:00 AM daily)
+- **Manual**: triggerable via `monoes workflow run instagram_daily_post`
 
-### Connections Required (configured once)
+### Connections Required (configured once in UI/CLI)
 - `google_sheets_connection_id` — Google OAuth connection
 - `openrouter_connection_id` — OpenRouter API key connection
 
 ### Node Graph (in order)
 
 ```
-[trigger.cron]
-  → [service.google_sheets: read_range]        — read all rows, find first status=todo
-  → [core.set: extract_row]                    — extract row data, build fallback prompts
-  → [service.openrouter: generate_image]       — generate image from prompt
-  → [http.request: download_image]             — GET image URL → binary
+[trigger.schedule]
+  → [service.google_sheets: read_rows]         — read all rows, find first status=todo
+  → [core.set: extract_row]                    — extract row data, compute row range string, build fallback prompts
+  → [service.openrouter: generate_image]       — generate image from resolved prompt
+  → [http.request: download_image]             — GET image URL → binary response
   → [data.write_binary_file: save_image]       — write to /tmp/monoes_post_{timestamp}.jpg
   → [core.if: caption_filled]                  — check if caption column is non-empty
-       ├─ yes → [core.set: use_caption]        — pass through existing caption
-       └─ no  → [service.openrouter: generate_text]  — generate caption via AI
+       ├─ true  → [core.set: use_caption]      — pass through existing caption
+       └─ false → [service.openrouter: generate_text]  — generate caption via AI
+  → [core.set: build_media_input]              — wrap file_path into media array: [{"url": "/tmp/..."}]
   → [instagram.publish_post]                   — post image + caption + hashtags
-  → [service.google_sheets: update_row]        — set status=done, posted_at, post_url
-```
-
-### Prompt Fallbacks
-
-**Image prompt** (used when `image_prompt` column is empty):
-```
-{{title}}. {{description}}. Photorealistic, high quality, social media post.
-```
-
-**Caption generation prompt** (used when `caption` column is empty):
-```
-Write an engaging Instagram caption for a post about: {{title}}.
-Context: {{description}}.
-Tone: {{tone}}.
-Keep it under 150 words. Do not include hashtags.
+  → [service.google_sheets: update_rows]       — set status=done, posted_at=now (post_url left empty)
 ```
 
 ---
@@ -110,54 +120,76 @@ Keep it under 150 words. Do not include hashtags.
 ## 4. Data Flow Detail
 
 ```
-google_sheets.read_range
-  output: rows[]
+service.google_sheets (read_rows)
+  operation: "read_rows"
+  spreadsheetId: "{{config.spreadsheet_id}}"
+  range: "Sheet1!A:J"
+  output: rows[]  (array of row arrays)
 
-core.set (extract first todo row)
-  image_prompt_resolved = row.image_prompt || "{{row.title}}. {{row.description}}. Photorealistic, high quality."
-  row_index = index of first todo row
+core.set (extract_row)
+  find first row where row[7] == "todo"  (column H, index 7)
+  title             = row[0]
+  description       = row[1]
+  image_prompt_col  = row[2]
+  caption_col       = row[3]
+  hashtags          = row[4]
+  tone              = row[5]
+  row_index         = index of matched row (1-based, accounting for header row)
+  row_range         = "Sheet1!H{row_index+1}:J{row_index+1}"
+  image_prompt_resolved = image_prompt_col || "{{title}}. {{description}}. Photorealistic, high quality, social media post."
 
-service.openrouter.generate_image
-  input: image_prompt_resolved
-  output: { url: "https://cdn.openrouter.ai/..." }
+service.openrouter (generate_image)
+  operation: "generate_image"
+  prompt: image_prompt_resolved
+  model: "black-forest-labs/flux-1.1-pro"
+  width: 1024
+  height: 1024
+  output: { url: "https://..." }
 
-http.request (GET image URL)
+http.request (download_image)
+  method: GET
+  url: generate_image.url
+  responseType: binary
   output: binary image data
 
-data.write_binary_file
-  path: /tmp/monoes_post_{{timestamp}}.jpg
-  output: { path: "/tmp/monoes_post_1234567890.jpg" }
+data.write_binary_file (save_image)
+  data: download_image.data
+  path: "/tmp/monoes_post_{{timestamp}}.jpg"
+  output: { file_path: "/tmp/monoes_post_1234567890.jpg" }
 
 core.if (caption_filled)
-  condition: row.caption != ""
-
-  [branch: caption filled]
-  core.set: final_caption = row.caption
-
-  [branch: caption empty]
-  service.openrouter.generate_text
-    prompt: "Write an engaging Instagram caption for: {{row.title}}. Context: {{row.description}}. Tone: {{row.tone}}. Under 150 words, no hashtags."
+  condition: caption_col != ""
+  true branch  → core.set: final_caption = caption_col
+  false branch → service.openrouter.generate_text:
+    operation: "generate_text"
+    prompt: "Write an engaging Instagram caption for a post about: {{title}}. Context: {{description}}. Tone: {{tone}}. Keep it under 150 words. Do not include hashtags."
     output: { text: "..." }
-  core.set: final_caption = generate_text.text
+    then core.set: final_caption = generate_text.text
+
+core.set (build_media_input)
+  media = [{"url": save_image.file_path}]
 
 instagram.publish_post
-  mediaPath: write_binary_file.path
-  caption: "{{final_caption}}\n\n{{row.hashtags}}"
-  output: { postUrl: "https://www.instagram.com/p/..." }
+  input:
+    media: [{"url": "/tmp/monoes_post_1234567890.jpg"}]
+    text: "{{final_caption}}\n\n{{hashtags}}"
+  note: instagram.publish_post returns no post URL (outputs.success is empty)
 
-service.google_sheets.update_row
-  row_index: extract_row.row_index
-  updates: { status: "done", posted_at: now(), post_url: instagram.postUrl }
+service.google_sheets (update_rows)
+  operation: "update_rows"
+  spreadsheetId: "{{config.spreadsheet_id}}"
+  range: extract_row.row_range          — e.g. "Sheet1!H3:J3"
+  values: [["done", "{{now()}}", ""]]   — status=done, posted_at=now, post_url=empty
 ```
 
 ---
 
 ## 5. Error Handling
 
-- **No todo rows found**: workflow exits gracefully with a log message — no error
+- **No todo rows found**: `core.if` on row existence exits gracefully with a log message — no error, no action
 - **Image generation fails**: workflow stops, row stays `todo`, error logged
 - **Instagram post fails**: workflow stops, row stays `todo`, temp image cleaned up
-- **Sheet update fails**: post was made but sheet not updated — log warning with post URL so user can manually update
+- **Sheet update fails**: post was made but sheet not updated — log warning with timestamp so user can manually update
 
 ---
 
@@ -167,17 +199,17 @@ service.google_sheets.update_row
 |--------|------|
 | Create | `internal/nodes/service/openrouter.go` |
 | Modify | `internal/connections/registry.go` — add `openrouter` connection type |
-| Modify | `cmd/monoes/node.go` — register `service.openrouter` executor |
-| Create | `data/workflows/instagram_daily_post.json` |
-| Create | `data/schemas/service/openrouter.json` — UI schema for node inspector |
+| Modify | `internal/nodes/service/register_b.go` — register `service.openrouter` executor |
+| Create | `internal/workflow/schemas/service.openrouter.json` — UI schema for node inspector |
+| Create | `tools/seed/instagram_daily_post.json` — workflow definition (imported via CLI) |
 
 ---
 
 ## 7. Out of Scope
 
 - Multi-image posts (single image only)
-- Video posts
-- Story posts
+- Video or story posts
 - Retry logic for image generation (one attempt per run)
 - Multiple Instagram accounts
-- Sheet selection via UI (spreadsheet ID configured in workflow JSON)
+- Automatic post URL capture (Instagram publish returns no URL)
+- Sheet or tab selection via UI (spreadsheet ID configured statically in workflow JSON)
