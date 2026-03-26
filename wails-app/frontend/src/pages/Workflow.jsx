@@ -573,6 +573,22 @@ function backendToCanvas(workflow) {
       subtype: n.node_type, label: n.name || n.node_type,
       inputs: [], outputs: [], configFields: [], color: PCOL.default,
     }
+    // Prefer schema fields from the saved workflow node over the static catalog.
+    const schemaFields = n.schema?.fields
+    const configFields = schemaFields?.length > 0
+      ? schemaFields.map(f => ({
+          key:         f.key,
+          label:       f.label || f.key,
+          type:        f.type || 'text',
+          default:     f.default,
+          placeholder: f.placeholder,
+          help:        f.help,
+          required:    f.required,
+          options:     f.options,
+          depends_on:  f.depends_on,
+          resource:    f.resource,
+        }))
+      : (tpl.configFields || [])
     return {
       id: n.id,
       type: tpl.platform ? 'action' : (n.node_type.startsWith('trigger') ? 'trigger' : 'data'),
@@ -582,8 +598,9 @@ function backendToCanvas(workflow) {
       color: tpl.color || (tpl.platform ? PCOL[tpl.platform] : PCOL.default),
       inputs: tpl.inputs || [],
       outputs: tpl.outputs || [],
-      configFields: tpl.configFields || [],
+      configFields,
       config: n.config || {},
+      schema: n.schema || null,
       x: n.position_x || 100,
       y: n.position_y || 100,
     }
@@ -1260,56 +1277,99 @@ function NodeInspector({ node, onUpdateLabel, onUpdateConfig, onDelete, onClose 
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-muted)', letterSpacing: 2, textTransform: 'uppercase', margin: '14px 0 8px', paddingTop: 12, borderTop: '1px solid rgba(0,180,216,0.07)' }}>
               CONFIGURATION
             </div>
-            {node.configFields.map(f => (
-              <InspectorField key={f.key} label={f.label}>
-                {f.type === 'textarea' ? (
-                  <textarea
-                    rows={5}
-                    style={{
-                      width: '100%', resize: 'vertical', background: '#0d1a28',
-                      border: '1px solid rgba(0,180,216,0.18)', borderRadius: 5,
-                      padding: '6px 9px', color: '#dde6f0',
-                      fontFamily: 'var(--font-mono)', fontSize: 10, outline: 'none', lineHeight: 1.6,
-                    }}
-                    value={node.config?.[f.key] ?? ''}
-                    onChange={e => onUpdateConfig(node.id, f.key, e.target.value)}
-                    placeholder={`Enter ${f.label.toLowerCase()}...`}
-                    onFocus={e => e.currentTarget.style.borderColor = `${color}50`}
-                    onBlur={e => e.currentTarget.style.borderColor = 'rgba(0,180,216,0.18)'}
-                  />
-                ) : f.type === 'select' ? (
-                  <select
-                    style={{
-                      width: '100%', background: '#0d1a28',
-                      border: '1px solid rgba(0,180,216,0.18)', borderRadius: 5,
-                      padding: '6px 9px', color: '#dde6f0',
-                      fontFamily: 'var(--font-mono)', fontSize: 11, outline: 'none',
-                    }}
-                    value={node.config?.[f.key] ?? (f.options?.[0] ?? '')}
-                    onChange={e => onUpdateConfig(node.id, f.key, e.target.value)}
-                    onFocus={e => e.currentTarget.style.borderColor = `${color}50`}
-                    onBlur={e => e.currentTarget.style.borderColor = 'rgba(0,180,216,0.18)'}
-                  >
-                    {(f.options || []).map(o => <option key={o} value={o}>{o}</option>)}
-                  </select>
-                ) : (
-                  <input
-                    type={f.type || 'text'}
-                    style={{
-                      width: '100%', background: '#0d1a28',
-                      border: '1px solid rgba(0,180,216,0.18)', borderRadius: 5,
-                      padding: '6px 9px', color: '#dde6f0',
-                      fontFamily: 'var(--font-mono)', fontSize: 11, outline: 'none',
-                    }}
-                    value={node.config?.[f.key] ?? ''}
-                    onChange={e => onUpdateConfig(node.id, f.key, e.target.value)}
-                    placeholder={f.default ?? ''}
-                    onFocus={e => e.currentTarget.style.borderColor = `${color}50`}
-                    onBlur={e => e.currentTarget.style.borderColor = 'rgba(0,180,216,0.18)'}
-                  />
-                )}
-              </InspectorField>
-            ))}
+            {node.configFields.map(f => {
+              // depends_on: hide field when dependency condition not met
+              if (f.depends_on) {
+                const depVal = node.config?.[f.depends_on.key]
+                const allowed = f.depends_on.values || f.depends_on.value
+                const allowedArr = Array.isArray(allowed) ? allowed : [allowed]
+                if (!allowedArr.includes(depVal)) return null
+              }
+              const fieldInputStyle = {
+                width: '100%', background: '#0d1a28',
+                border: '1px solid rgba(0,180,216,0.18)', borderRadius: 5,
+                padding: '6px 9px', color: '#dde6f0',
+                fontFamily: 'var(--font-mono)', fontSize: 11, outline: 'none',
+              }
+              return (
+                <InspectorField key={f.key} label={f.label} help={f.help} required={f.required}>
+                  {(f.type === 'textarea' || f.type === 'code') ? (() => {
+                    const raw = node.config?.[f.key]
+                    const displayVal = (raw === null || raw === undefined) ? ''
+                      : typeof raw === 'string' ? raw
+                      : JSON.stringify(raw, null, 2)
+                    const handleChange = (val) => {
+                      try { onUpdateConfig(node.id, f.key, JSON.parse(val)) }
+                      catch { onUpdateConfig(node.id, f.key, val) }
+                    }
+                    return (
+                      <textarea
+                        rows={f.rows || 5}
+                        style={{ ...fieldInputStyle, resize: 'vertical', fontSize: 10, lineHeight: 1.6 }}
+                        defaultValue={displayVal}
+                        key={displayVal}
+                        onChange={e => handleChange(e.target.value)}
+                        placeholder={f.placeholder || f.default || ''}
+                        onFocus={e => e.currentTarget.style.borderColor = `${color}50`}
+                        onBlur={e => e.currentTarget.style.borderColor = 'rgba(0,180,216,0.18)'}
+                      />
+                    )
+                  })()
+                  ) : f.type === 'select' ? (
+                    <select
+                      style={fieldInputStyle}
+                      value={node.config?.[f.key] ?? (f.default ?? f.options?.[0] ?? '')}
+                      onChange={e => onUpdateConfig(node.id, f.key, e.target.value)}
+                      onFocus={e => e.currentTarget.style.borderColor = `${color}50`}
+                      onBlur={e => e.currentTarget.style.borderColor = 'rgba(0,180,216,0.18)'}
+                    >
+                      {(f.options || []).map(o => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                  ) : f.type === 'boolean' ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <input
+                        type="checkbox"
+                        checked={!!(node.config?.[f.key] ?? f.default)}
+                        onChange={e => onUpdateConfig(node.id, f.key, e.target.checked)}
+                        style={{ accentColor: color, width: 14, height: 14 }}
+                      />
+                      <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
+                        {node.config?.[f.key] ? 'enabled' : 'disabled'}
+                      </span>
+                    </div>
+                  ) : f.type === 'resource_picker' ? (
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <input
+                        style={{ ...fieldInputStyle, flex: 1 }}
+                        value={node.config?.[f.key] ?? ''}
+                        onChange={e => onUpdateConfig(node.id, f.key, e.target.value)}
+                        placeholder={f.placeholder || 'Resource ID'}
+                        onFocus={e => e.currentTarget.style.borderColor = `${color}50`}
+                        onBlur={e => e.currentTarget.style.borderColor = 'rgba(0,180,216,0.18)'}
+                      />
+                      <div style={{
+                        background: `${color}15`, border: `1px solid ${color}30`,
+                        borderRadius: 5, padding: '6px 8px', fontSize: 9,
+                        fontFamily: 'var(--font-mono)', color, cursor: 'default',
+                        display: 'flex', alignItems: 'center', whiteSpace: 'nowrap',
+                      }}>
+                        {f.resource?.type || 'resource'}
+                      </div>
+                    </div>
+                  ) : (
+                    <input
+                      type={f.type === 'number' ? 'number' : 'text'}
+                      style={fieldInputStyle}
+                      value={node.config?.[f.key] ?? ''}
+                      onChange={e => onUpdateConfig(node.id, f.key, e.target.value)}
+                      placeholder={f.placeholder || f.default || ''}
+                      onFocus={e => e.currentTarget.style.borderColor = `${color}50`}
+                      onBlur={e => e.currentTarget.style.borderColor = 'rgba(0,180,216,0.18)'}
+                    />
+                  )}
+                </InspectorField>
+              )
+            })}
           </>
         )}
       </div>
@@ -1335,13 +1395,21 @@ function NodeInspector({ node, onUpdateLabel, onUpdateConfig, onDelete, onClose 
   )
 }
 
-function InspectorField({ label, children }) {
+function InspectorField({ label, help, required, children }) {
   return (
     <div style={{ marginBottom: 10 }}>
-      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-muted)', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 5 }}>
-        {label}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 5 }}>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-muted)', letterSpacing: 1.5, textTransform: 'uppercase' }}>
+          {label}
+        </span>
+        {required && <span style={{ color: '#ef4444', fontSize: 9, lineHeight: 1 }}>*</span>}
       </div>
       {children}
+      {help && (
+        <div style={{ marginTop: 4, fontSize: 9, color: 'rgba(180,200,220,0.45)', fontFamily: 'var(--font-mono)', lineHeight: 1.5 }}>
+          {help}
+        </div>
+      )}
     </div>
   )
 }

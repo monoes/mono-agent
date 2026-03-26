@@ -179,6 +179,13 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 		items = append(items, workflow.NewItem(normalizeBrowserItem(raw, b.platform)))
 	}
 
+	// When the action produced no extracted items (e.g. publish actions that
+	// don't scrape data), pass the input items through so downstream nodes
+	// that need fields like _row_range or _row_index continue to work.
+	if len(items) == 0 && len(input.Items) > 0 {
+		items = input.Items
+	}
+
 	return []workflow.NodeOutput{
 		{Handle: "main", Items: items},
 	}, nil

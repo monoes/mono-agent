@@ -1,0 +1,42 @@
+{
+  "credential_platform": "huggingface",
+  "fields": [
+    {
+      "key": "credential_id",
+      "label": "HuggingFace Account",
+      "type": "text",
+      "required": true,
+      "help": "Select your HuggingFace API token connection."
+    },
+    {
+      "key": "operation",
+      "label": "Operation",
+      "type": "select",
+      "required": true,
+      "options": ["generate_image", "generate_text"],
+      "default": "generate_image"
+    },
+    {
+      "key": "prompt",
+      "label": "Prompt",
+      "type": "text",
+      "required": true,
+      "help": "The prompt. Supports {{ $json.fieldName }} expressions."
+    },
+    {
+      "key": "model",
+      "label": "Model",
+      "type": "text",
+      "required": false,
+      "help": "Default: black-forest-labs/FLUX.1-schnell for images, meta-llama/Llama-3.2-3B-Instruct for text."
+    },
+    {
+      "key": "max_tokens",
+      "label": "Max New Tokens",
+      "type": "number",
+      "required": false,
+      "default": 500,
+      "depends_on": { "key": "operation", "values": ["generate_text"] }
+    }
+  ]
+}

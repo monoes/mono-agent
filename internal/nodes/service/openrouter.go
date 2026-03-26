@@ -2,10 +2,12 @@ package service
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/monoes/monoes-agent/internal/workflow"
@@ -70,32 +72,55 @@ func (n *OpenRouterNode) generateImage(ctx context.Context, apiKey string, confi
 	if model == "" {
 		model = "black-forest-labs/flux-1.1-pro"
 	}
-	width := intVal(config, "width")
-	if width == 0 {
-		width = 1024
-	}
-	height := intVal(config, "height")
-	if height == 0 {
-		height = 1024
-	}
-
 	reqBody := map[string]interface{}{
-		"model":  model,
-		"prompt": prompt,
-		"width":  width,
-		"height": height,
+		"model": model,
+		"messages": []map[string]interface{}{
+			{"role": "user", "content": prompt},
+		},
+		// Limit text tokens to avoid 402 credit-cap errors; image tokens are billed separately.
+		"max_tokens": 512,
 	}
 
-	// Use the shared apiRequest helper (same package, sets Authorization + Content-Type headers).
-	data, err := apiRequest(ctx, http.MethodPost, "https://openrouter.ai/api/v1/images/generations", apiKey, reqBody)
+	// OpenRouter routes image models through /chat/completions (same as text).
+	data, err := apiRequest(ctx, http.MethodPost, "https://openrouter.ai/api/v1/chat/completions", apiKey, reqBody)
 	if err != nil {
 		return item, fmt.Errorf("openrouter generate_image: %w", err)
 	}
 
+	// Extract image URL from response — OpenRouter image models return the URL in one of:
+	//   a) choices[0].message.content = "https://..."  (string URL)
+	//   b) choices[0].message.content = [{"type":"image_url","image_url":{"url":"..."}}]  (array)
+	//   c) choices[0].message.images = [{"type":"image_url","image_url":{"url":"data:..."}}]  (Gemini-style)
 	imageURL := ""
-	if imageData, ok := data["data"].([]interface{}); ok && len(imageData) > 0 {
-		if img, ok := imageData[0].(map[string]interface{}); ok {
-			imageURL, _ = img["url"].(string)
+	if choices, ok := data["choices"].([]interface{}); ok && len(choices) > 0 {
+		if choice, ok := choices[0].(map[string]interface{}); ok {
+			if msg, ok := choice["message"].(map[string]interface{}); ok {
+				// Check message.images first (Gemini image models return here)
+				if imgs, ok := msg["images"].([]interface{}); ok && len(imgs) > 0 {
+					if img, ok := imgs[0].(map[string]interface{}); ok {
+						if iu, ok := img["image_url"].(map[string]interface{}); ok {
+							imageURL, _ = iu["url"].(string)
+						}
+					}
+				}
+				// Fall back to message.content
+				if imageURL == "" {
+					switch content := msg["content"].(type) {
+					case string:
+						imageURL = content
+					case []interface{}:
+						for _, part := range content {
+							if p, ok := part.(map[string]interface{}); ok {
+								if p["type"] == "image_url" {
+									if iu, ok := p["image_url"].(map[string]interface{}); ok {
+										imageURL, _ = iu["url"].(string)
+									}
+								}
+							}
+						}
+					}
+				}
+			}
 		}
 	}
 	if imageURL == "" {
@@ -159,11 +184,28 @@ func (n *OpenRouterNode) generateText(ctx context.Context, apiKey string, config
 	return enriched, nil
 }
 
-// downloadImageToTemp downloads a binary image URL to /tmp and returns the local file path.
-// Uses plain http.Get — NOT apiRequest (which parses JSON responses).
+// downloadImageToTemp saves an image to /tmp and returns the local file path.
+// Handles both remote URLs (http/https) and data URIs (data:image/...;base64,...).
 func downloadImageToTemp(ctx context.Context, imageURL string) (string, error) {
-	filePath := fmt.Sprintf("/tmp/monoes_post_%d.jpg", time.Now().UnixNano())
+	filePath := fmt.Sprintf("/tmp/monoes_post_%d.png", time.Now().UnixNano())
 
+	// Handle base64 data URIs (e.g. from Gemini image models).
+	if strings.HasPrefix(imageURL, "data:") {
+		comma := strings.Index(imageURL, ",")
+		if comma < 0 {
+			return "", fmt.Errorf("invalid data URI: no comma separator")
+		}
+		imgData, err := base64.StdEncoding.DecodeString(imageURL[comma+1:])
+		if err != nil {
+			return "", fmt.Errorf("decode base64 image: %w", err)
+		}
+		if err := os.WriteFile(filePath, imgData, 0o644); err != nil {
+			return "", fmt.Errorf("write image file: %w", err)
+		}
+		return filePath, nil
+	}
+
+	// Remote URL — plain HTTP download.
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, nil)
 	if err != nil {
 		return "", err

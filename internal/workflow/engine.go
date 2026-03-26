@@ -367,6 +367,10 @@ func (e *WorkflowEngine) handleExecution(ctx context.Context, req ExecutionReque
 	runErr := e.runExecution(ctx, exec, wf, dag)
 
 	// 5. On completion: update execution status to SUCCESS or FAILED.
+	// Use a detached context so DB writes succeed even if the execution context
+	// was cancelled (e.g. by engine shutdown or a browser panic).
+	persistCtx, persistCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer persistCancel()
 	if runErr != nil {
 		errMsg := runErr.Error()
 		finalStatus := "FAILED"
@@ -374,10 +378,10 @@ func (e *WorkflowEngine) handleExecution(ctx context.Context, req ExecutionReque
 			finalStatus = "CANCELLED"
 		}
 		log.Warn().Err(runErr).Str("final_status", finalStatus).Msg("engine: execution finished with error")
-		_ = e.store.SetExecutionFinished(ctx, req.ExecutionID, finalStatus, errMsg)
+		_ = e.store.SetExecutionFinished(persistCtx, req.ExecutionID, finalStatus, errMsg)
 	} else {
 		log.Info().Msg("engine: execution finished successfully")
-		_ = e.store.SetExecutionFinished(ctx, req.ExecutionID, "SUCCESS", "")
+		_ = e.store.SetExecutionFinished(persistCtx, req.ExecutionID, "SUCCESS", "")
 	}
 }
 

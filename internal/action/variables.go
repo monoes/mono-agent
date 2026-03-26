@@ -305,6 +305,9 @@ func (vr *VariableResolver) ResolveStepDef(step StepDef) StepDef {
 	resolved.Variable = vr.Resolve(step.Variable)
 	resolved.WaitFor = vr.Resolve(step.WaitFor)
 	resolved.WaitAfter = vr.Resolve(step.WaitAfter)
+	resolved.Text = vr.Resolve(step.Text)
+	resolved.XPath = vr.Resolve(step.XPath)
+	resolved.Description = vr.Resolve(step.Description)
 	if step.Duration != nil {
 		resolved.Duration = vr.ResolveValue(step.Duration)
 	}

@@ -1392,7 +1392,27 @@ func (ae *ActionExecutor) stepMarkFailed(ctx context.Context, step StepDef) (*St
 }
 
 // ---------------------------------------------------------------------------
-// 16. stepLog — Log a message with variable resolution
+// 16. stepSetVariable — Set an execution variable directly
+// ---------------------------------------------------------------------------
+
+func (ae *ActionExecutor) stepSetVariable(_ context.Context, step StepDef) (*StepResult, error) {
+	varName := step.VariableName
+	if varName == "" {
+		varName = step.Variable
+	}
+	if varName == "" {
+		return &StepResult{Success: false, StepID: step.ID, Error: fmt.Errorf("set_variable step %s: missing variable_name", step.ID)}, nil
+	}
+	ae.execCtx.SetVariable(varName, step.Value)
+	ae.logger.Debug().
+		Str("stepID", step.ID).
+		Str("type", "set_variable").
+		Msg("variable set")
+	return &StepResult{Success: true, StepID: step.ID}, nil
+}
+
+// ---------------------------------------------------------------------------
+// 17. stepLog — Log a message with variable resolution
 // ---------------------------------------------------------------------------
 
 func (ae *ActionExecutor) stepLog(ctx context.Context, step StepDef) (*StepResult, error) {

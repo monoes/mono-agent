@@ -216,7 +216,7 @@ func newWorkflowRunCmd(cfg *globalConfig) *cobra.Command {
 			fmt.Fprintf(os.Stdout, "Execution started: %s\n", executionID)
 
 			// Poll until the execution leaves RUNNING/QUEUED or times out.
-			deadline := time.Now().Add(30 * time.Second)
+			deadline := time.Now().Add(5 * time.Minute)
 			ticker := time.NewTicker(500 * time.Millisecond)
 			defer ticker.Stop()
 

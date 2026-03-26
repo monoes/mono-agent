@@ -1,7 +1,7 @@
 {
   "actionType": "publish_post",
   "platform": "INSTAGRAM",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Publish content (post/story) to Instagram using 3-tier fallback pattern",
   "metadata": {
     "requiresAuth": true,
@@ -54,12 +54,18 @@
         "navigate_to_create",
         "find_create_button",
         "click_create",
+        "wait_for_menu",
+        "click_post_option",
+        "do_click_post_option",
         "wait_for_dialog",
         "find_file_input",
         "upload_media",
         "wait_for_upload",
         "find_next_button",
         "click_next",
+        "wait_for_next2",
+        "find_next_button2",
+        "click_next2",
         "wait_for_caption_screen",
         "find_caption_input",
         "type_caption",
@@ -100,6 +106,29 @@
       }
     },
     {
+      "id": "wait_for_menu",
+      "type": "wait",
+      "duration": 3,
+      "waitFor": "time"
+    },
+    {
+      "id": "click_post_option",
+      "type": "find_element",
+      "xpath": "//span[text()='Post'] | //div[text()='Post'] | //button[contains(.,'Post') and not(contains(.,'Share'))]",
+      "timeout": 5,
+      "onError": {
+        "action": "skip"
+      }
+    },
+    {
+      "id": "do_click_post_option",
+      "type": "click",
+      "elementRef": "click_post_option",
+      "onError": {
+        "action": "skip"
+      }
+    },
+    {
       "id": "wait_for_dialog",
       "type": "wait",
       "duration": "{{uploadDelay or 5}}",
@@ -109,7 +138,7 @@
       "id": "find_file_input",
       "type": "find_element",
       "xpath": "//input[@type='file']",
-      "timeout": 10,
+      "timeout": 15,
       "onError": {
         "action": "skip"
       }
@@ -126,17 +155,13 @@
     {
       "id": "wait_for_upload",
       "type": "wait",
-      "duration": "{{uploadDelay or 5}}",
+      "duration": "{{uploadDelay or 8}}",
       "waitFor": "time"
     },
     {
       "id": "find_next_button",
       "type": "find_element",
-      "xpath": "//button[contains(text(), 'Next')]",
-      "alternatives": [
-        "//button[text()='Next']",
-        "//div[@role='button' and contains(text(), 'Next')]"
-      ],
+      "xpath": "//button[normalize-space(text())='Next'] | //div[@role='button' and normalize-space(text())='Next']",
       "timeout": 15,
       "onError": {
         "action": "skip"
@@ -151,15 +176,38 @@
       }
     },
     {
+      "id": "wait_for_next2",
+      "type": "wait",
+      "duration": 3,
+      "waitFor": "time"
+    },
+    {
+      "id": "find_next_button2",
+      "type": "find_element",
+      "xpath": "//button[normalize-space(text())='Next'] | //div[@role='button' and normalize-space(text())='Next']",
+      "timeout": 10,
+      "onError": {
+        "action": "skip"
+      }
+    },
+    {
+      "id": "click_next2",
+      "type": "click",
+      "elementRef": "find_next_button2",
+      "onError": {
+        "action": "skip"
+      }
+    },
+    {
       "id": "wait_for_caption_screen",
       "type": "wait",
-      "duration": "{{uploadDelay or 5}}",
+      "duration": 3,
       "waitFor": "time"
     },
     {
       "id": "find_caption_input",
       "type": "find_element",
-      "xpath": "//textarea[@aria-label='Write a caption...'] | //textarea | //div[@aria-label='Write a caption...'][@contenteditable='true']",
+      "xpath": "//textarea[@aria-label='Write a caption...'] | //div[@aria-label='Write a caption...'][@contenteditable='true'] | //div[@role='textbox'][@contenteditable='true']",
       "timeout": 15,
       "onError": {
         "action": "skip"
@@ -206,8 +254,8 @@
     {
       "id": "find_share_button",
       "type": "find_element",
-      "xpath": "//button[contains(text(), 'Share')] | //div[@role='button' and contains(text(), 'Share')]",
-      "timeout": 10,
+      "xpath": "//button[normalize-space(text())='Share'] | //div[@role='button' and normalize-space(text())='Share']",
+      "timeout": 15,
       "onError": {
         "action": "skip"
       }
@@ -234,14 +282,21 @@
         "operator": "not_exists"
       },
       "then": [
+        "tier3_navigate",
         "tier3_find_create_button",
         "tier3_click_create",
+        "tier3_wait_menu",
+        "tier3_click_post_option",
+        "tier3_do_click_post_option",
         "tier3_wait_for_dialog",
         "find_file_input_t3",
         "upload_media_t3",
         "wait_for_upload_t3",
         "find_next_button_t3",
         "click_next_t3",
+        "wait_next2_t3",
+        "find_next_button2_t3",
+        "click_next2_t3",
         "wait_for_caption_screen_t3",
         "tier3_find_caption_input",
         "type_caption_t3",
@@ -252,9 +307,23 @@
       "else": []
     },
     {
+      "id": "tier3_navigate",
+      "type": "navigate",
+      "url": "https://www.instagram.com/",
+      "waitFor": "page_load",
+      "timeout": 30,
+      "onError": {
+        "action": "mark_failed"
+      }
+    },
+    {
       "id": "tier3_find_create_button",
       "type": "find_element",
-      "configKey": "create_button",
+      "xpath": "//a[contains(@href, '/create')] | //button[contains(@aria-label, 'New post')]",
+      "alternatives": [
+        "svg[aria-label='New post']",
+        "a[href='/create/style/']"
+      ],
       "timeout": 10,
       "onError": {
         "action": "mark_failed"
@@ -269,6 +338,29 @@
       }
     },
     {
+      "id": "tier3_wait_menu",
+      "type": "wait",
+      "duration": 3,
+      "waitFor": "time"
+    },
+    {
+      "id": "tier3_click_post_option",
+      "type": "find_element",
+      "xpath": "//span[text()='Post'] | //div[text()='Post'] | //button[contains(.,'Post') and not(contains(.,'Share'))]",
+      "timeout": 5,
+      "onError": {
+        "action": "skip"
+      }
+    },
+    {
+      "id": "tier3_do_click_post_option",
+      "type": "click",
+      "elementRef": "tier3_click_post_option",
+      "onError": {
+        "action": "skip"
+      }
+    },
+    {
       "id": "tier3_wait_for_dialog",
       "type": "wait",
       "duration": "{{uploadDelay or 5}}",
@@ -278,7 +370,7 @@
       "id": "find_file_input_t3",
       "type": "find_element",
       "xpath": "//input[@type='file']",
-      "timeout": 10,
+      "timeout": 15,
       "onError": {
         "action": "mark_failed"
       }
@@ -295,17 +387,13 @@
     {
       "id": "wait_for_upload_t3",
       "type": "wait",
-      "duration": "{{uploadDelay or 5}}",
+      "duration": "{{uploadDelay or 8}}",
       "waitFor": "time"
     },
     {
       "id": "find_next_button_t3",
       "type": "find_element",
-      "xpath": "//button[contains(text(), 'Next')]",
-      "alternatives": [
-        "//button[text()='Next']",
-        "//div[@role='button' and contains(text(), 'Next')]"
-      ],
+      "xpath": "//button[normalize-space(text())='Next'] | //div[@role='button' and normalize-space(text())='Next']",
       "timeout": 15,
       "onError": {
         "action": "mark_failed"
@@ -320,15 +408,38 @@
       }
     },
     {
+      "id": "wait_next2_t3",
+      "type": "wait",
+      "duration": 3,
+      "waitFor": "time"
+    },
+    {
+      "id": "find_next_button2_t3",
+      "type": "find_element",
+      "xpath": "//button[normalize-space(text())='Next'] | //div[@role='button' and normalize-space(text())='Next']",
+      "timeout": 10,
+      "onError": {
+        "action": "mark_failed"
+      }
+    },
+    {
+      "id": "click_next2_t3",
+      "type": "click",
+      "elementRef": "find_next_button2_t3",
+      "onError": {
+        "action": "mark_failed"
+      }
+    },
+    {
       "id": "wait_for_caption_screen_t3",
       "type": "wait",
-      "duration": "{{uploadDelay or 5}}",
+      "duration": 3,
       "waitFor": "time"
     },
     {
       "id": "tier3_find_caption_input",
       "type": "find_element",
-      "configKey": "caption_input",
+      "xpath": "//textarea[@aria-label='Write a caption...'] | //div[@aria-label='Write a caption...'][@contenteditable='true'] | //div[@role='textbox'][@contenteditable='true']",
       "timeout": 15,
       "onError": {
         "action": "mark_failed"
@@ -375,8 +486,8 @@
     {
       "id": "tier3_find_share_button",
       "type": "find_element",
-      "configKey": "share_button",
-      "timeout": 10,
+      "xpath": "//button[normalize-space(text())='Share'] | //div[@role='button' and normalize-space(text())='Share']",
+      "timeout": 15,
       "onError": {
         "action": "mark_failed"
       }

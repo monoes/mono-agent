@@ -1,0 +1,52 @@
+{
+  "credential_platform": "instagram",
+  "fields": [
+    {
+      "key": "credential_id",
+      "label": "Instagram Account",
+      "type": "text",
+      "required": true,
+      "help": "Select your Instagram browser session connection."
+    },
+    {
+      "key": "text",
+      "label": "Caption",
+      "type": "textarea",
+      "required": true,
+      "rows": 4,
+      "placeholder": "Write your caption here... Supports {{ $json.fieldName }} expressions.",
+      "help": "The caption for the Instagram post."
+    },
+    {
+      "key": "media",
+      "label": "Media Path / URL",
+      "type": "text",
+      "required": true,
+      "placeholder": "e.g. /tmp/image.jpg or https://...",
+      "help": "Local file path or URL of the image to post."
+    },
+    {
+      "key": "locationTag",
+      "label": "Location Tag",
+      "type": "text",
+      "required": false,
+      "placeholder": "e.g. New York"
+    },
+    {
+      "key": "tags",
+      "label": "Hashtags",
+      "type": "text",
+      "required": false,
+      "placeholder": "e.g. #ai #automation",
+      "help": "Comma-separated hashtags to append to the caption."
+    },
+    {
+      "key": "scheduledTime",
+      "label": "Scheduled Time",
+      "type": "text",
+      "required": false,
+      "placeholder": "e.g. 2025-12-31T09:00:00Z",
+      "help": "Optional ISO 8601 time to schedule the post."
+    }
+  ]
+}

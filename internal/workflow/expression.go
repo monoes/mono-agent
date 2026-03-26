@@ -375,7 +375,21 @@ func (e *ExpressionEngine) ResolveConfig(config map[string]interface{}, ctx Expr
 func (e *ExpressionEngine) resolveValue(v interface{}, ctx ExpressionContext) (interface{}, error) {
 	switch t := v.(type) {
 	case string:
-		return e.EvaluateString(t, ctx)
+		s, err := e.EvaluateString(t, ctx)
+		if err != nil {
+			return nil, err
+		}
+		// If the evaluated string looks like a JSON array or object, try to
+		// parse it back to a native Go value so that downstream nodes receive
+		// the correct type (e.g. []interface{} instead of a raw string).
+		trimmed := strings.TrimSpace(s)
+		if len(trimmed) > 0 && (trimmed[0] == '[' || trimmed[0] == '{') {
+			var parsed interface{}
+			if json.Unmarshal([]byte(trimmed), &parsed) == nil {
+				return parsed, nil
+			}
+		}
+		return s, nil
 	case map[string]interface{}:
 		return e.ResolveConfig(t, ctx)
 	case []interface{}:

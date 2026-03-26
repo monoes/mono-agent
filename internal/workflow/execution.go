@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -231,7 +232,7 @@ func RunExecution(
 			InputItems:  inputItems,
 			StartedAt:   &now,
 		}
-		if err := store.CreateExecutionNode(ctx, execNode); err != nil {
+		if err := store.CreateExecutionNode(dbCtx(), execNode); err != nil {
 			logger.Error().Err(err).
 				Str("node_id", node.ID).
 				Str("node_name", node.Name).
@@ -260,7 +261,7 @@ func RunExecution(
 				Msg("node execution failed")
 
 			// Persist failure.
-			if storeErr := store.SetExecutionNodeFinished(ctx, execNode.ID, "FAILED", nil, execErr.Error()); storeErr != nil {
+			if storeErr := store.SetExecutionNodeFinished(dbCtx(), execNode.ID, "FAILED", nil, execErr.Error()); storeErr != nil {
 				logger.Error().Err(storeErr).
 					Str("node_id", node.ID).
 					Msg("failed to persist node failure")
@@ -268,7 +269,13 @@ func RunExecution(
 
 			switch onError {
 			case "continue":
-				// Emit empty output and carry on.
+				// Pass through the input items so downstream nodes still receive data.
+				// This preserves pipeline data even when a node fails (e.g. rate-limited AI).
+				successors := dag.SuccessorsOnHandle(node.ID, "main")
+				for _, succ := range successors {
+					pendingInputs[succ.ID] = append(pendingInputs[succ.ID], inputItems...)
+				}
+				nodeOutputs[node.Name] = inputItems
 				completedNodes[node.ID] = true
 				decrementMergeWaiting(node.ID, dag, mergeWaiting, completedNodes)
 				continue
@@ -305,7 +312,7 @@ func RunExecution(
 		nodeOutputs[node.Name] = mainItems
 
 		// Persist success.
-		if storeErr := store.SetExecutionNodeFinished(ctx, execNode.ID, "SUCCESS", mainItems, ""); storeErr != nil {
+		if storeErr := store.SetExecutionNodeFinished(dbCtx(), execNode.ID, "SUCCESS", mainItems, ""); storeErr != nil {
 			logger.Error().Err(storeErr).
 				Str("node_id", node.ID).
 				Msg("failed to persist node success")
@@ -356,15 +363,24 @@ func decrementMergeWaiting(completedNodeID string, dag *DAG, mergeWaiting map[st
 	}
 }
 
+// dbCtx returns a short-lived context for DB persistence operations.
+// It is intentionally independent of the execution context so that
+// persistence succeeds even when the execution has been cancelled.
+func dbCtx() context.Context {
+	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second) //nolint:govet
+	return ctx
+}
+
 // executeWithRetry executes a node, retrying on failure according to the
-// supplied RetryPolicy.
+// supplied RetryPolicy.  Panics from the executor are caught and returned
+// as errors so that DB persistence in the caller is not bypassed.
 func executeWithRetry(
 	ctx context.Context,
 	executor NodeExecutor,
 	input NodeInput,
 	config map[string]interface{},
 	policy RetryPolicy,
-) ([]NodeOutput, error) {
+) (outputs []NodeOutput, err error) {
 	maxRetries := policy.MaxRetries
 	if maxRetries < 0 {
 		maxRetries = 0
@@ -384,7 +400,14 @@ func executeWithRetry(
 			}
 		}
 
-		outputs, err := executor.Execute(ctx, input, config)
+		outputs, err = func() (out []NodeOutput, execErr error) {
+			defer func() {
+				if r := recover(); r != nil {
+					execErr = fmt.Errorf("node executor panicked: %v\n%s", r, debug.Stack())
+				}
+			}()
+			return executor.Execute(ctx, input, config)
+		}()
 		if err == nil {
 			return outputs, nil
 		}

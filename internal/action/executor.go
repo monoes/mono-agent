@@ -367,6 +367,7 @@ func (ae *ActionExecutor) initHandlers() {
 	ae.handlers["mark_failed"] = ae.stepMarkFailed
 	ae.handlers["log"] = ae.stepLog
 	ae.handlers["call_bot_method"] = ae.stepCallBotMethod
+	ae.handlers["set_variable"] = ae.stepSetVariable
 }
 
 // Execute runs the complete action. It follows four phases:
@@ -410,10 +411,27 @@ func (ae *ActionExecutor) Execute(action *StorageAction) (*ExecutionResult, erro
 		}
 	}
 
-	// Phase 2: Execute initial (non-loop) steps in order.
+	// Identify all step IDs referenced only in condition then/else branches.
+	// These should not be included in initialSteps — the condition step executes
+	// them directly via executeSteps when the branch is taken.
+	conditionBranchIDs := make(map[string]bool)
+	var collectBranches func(steps []StepDef)
+	collectBranches = func(steps []StepDef) {
+		for _, step := range steps {
+			for _, id := range step.Then {
+				conditionBranchIDs[id] = true
+			}
+			for _, id := range step.Else {
+				conditionBranchIDs[id] = true
+			}
+		}
+	}
+	collectBranches(actionDef.Steps)
+
+	// Phase 2: Execute initial (non-loop, non-condition-branch) steps in order.
 	var initialSteps []StepDef
 	for _, step := range actionDef.Steps {
-		if !loopStepIDs[step.ID] {
+		if !loopStepIDs[step.ID] && !conditionBranchIDs[step.ID] {
 			initialSteps = append(initialSteps, step)
 		}
 	}
@@ -547,9 +565,11 @@ func (ae *ActionExecutor) executeSteps(ctx context.Context, steps []StepDef) err
 				continue
 			}
 			if handled.Skip {
-				ae.logger.Debug().
-					Str("stepID", resolved.ID).
-					Msg("step skipped after error handling")
+				skipLog := ae.logger.Debug().Str("stepID", resolved.ID)
+				if result != nil && result.Error != nil {
+					skipLog = skipLog.Err(result.Error)
+				}
+				skipLog.Msg("step skipped after error handling")
 				ae.execCtx.SetStepResult(resolved.ID, handled)
 				continue
 			}

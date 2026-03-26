@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import {
-  Play, RotateCcw, ZoomIn, ZoomOut, Trash2, Search,
+  Play, Square, RotateCcw, ZoomIn, ZoomOut, Trash2, Search,
   ChevronDown, ChevronRight, X, Settings2, Copy,
   AlertCircle, CheckCircle, Clock, Loader, Plus,
   Save, FolderOpen, ToggleLeft, ToggleRight, List,
-  MessageSquare, Braces,
+  MessageSquare, Braces, LayoutDashboard,
 } from 'lucide-react'
 import * as WailsApp from '../wailsjs/go/main/App'
 import { api } from '../services/api.js'
@@ -504,6 +504,9 @@ const CREDENTIAL_PLATFORMS = {
   'db.mysql': 'mysql',
   'db.mongodb': 'mongodb',
   'db.redis': 'redis',
+  'service.openrouter': 'openrouter',
+  'service.huggingface': 'huggingface',
+  'instagram.publish_post': 'instagram',
 }
 
 // ── Field visibility check (depends_on support) ───────────────────────────────
@@ -615,6 +618,8 @@ function Inspector({ node, onConfigChange, onClose, onNavigate }) {
               <Label>CONFIG</Label>
               {fields.map(f => {
                 if (!fieldIsVisible(f, node.config)) return null
+                // Skip credential_id text field when a credential picker is rendered above
+                if (f.key === 'credential_id' && platformId) return null
                 const val = node.config?.[f.key] ?? f.default ?? ''
                 const onChange = e => onConfigChange(node.id, f.key, e.target.value)
                 let inputEl
@@ -886,6 +891,7 @@ export default function NodeRunner({ onNavigate }) {
   const [camera, setCamera]         = useState({ x: 60, y: 60, zoom: 1 })
   const [pendingEdge, setPendingEdge] = useState(null)
   const [running, setRunning]       = useState(false)
+  const stopRef                     = useRef(false)
   const [globalStatus, setGlobalStatus] = useState(null) // null | 'ok' | 'error'
 
   // ── Workflow persistence state ────────────────────────────────────────────
@@ -1088,8 +1094,13 @@ export default function NodeRunner({ onNavigate }) {
   }
 
   // ── RUN ──────────────────────────────────────────────────────────────────
+  const handleStop = useCallback(() => {
+    stopRef.current = true
+  }, [])
+
   const handleRun = async () => {
     if (running || nodes.length === 0) return
+    stopRef.current = false
     setRunning(true)
     setGlobalStatus(null)
 
@@ -1101,6 +1112,12 @@ export default function NodeRunner({ onNavigate }) {
     let hadError = false
 
     for (const nodeId of order) {
+      if (stopRef.current) {
+        setNodes(prev => prev.map(n => n.runStatus === 'running' ? { ...n, runStatus: null } : n))
+        setGlobalStatus('error')
+        setRunning(false)
+        return
+      }
       const node = nodesRef.current.find(n => n.id === nodeId)
       if (!node) continue
 
@@ -1258,6 +1275,52 @@ export default function NodeRunner({ onNavigate }) {
     setCamera({ x: 60, y: 60, zoom: 1 })
   }, [nodes.length])
 
+  // ── Auto-layout: topological left-to-right layout ─────────────────────────
+  const handleAutoLayout = useCallback(() => {
+    if (nodes.length === 0) return
+    const NODE_W = 180, NODE_H = 80, GAP_X = 80, GAP_Y = 60
+    // Build adjacency: nodeId → list of successor nodeIds
+    const successors = {}
+    const predecessors = {}
+    nodes.forEach(n => { successors[n.id] = []; predecessors[n.id] = [] })
+    edges.forEach(e => {
+      if (successors[e.source]) successors[e.source].push(e.target)
+      if (predecessors[e.target]) predecessors[e.target].push(e.source)
+    })
+    // Assign column (depth) via BFS from roots
+    const col = {}
+    const roots = nodes.filter(n => predecessors[n.id].length === 0).map(n => n.id)
+    const queue = roots.map(id => ({ id, depth: 0 }))
+    while (queue.length) {
+      const { id, depth } = queue.shift()
+      if (col[id] !== undefined && col[id] >= depth) continue
+      col[id] = depth
+      successors[id].forEach(sid => queue.push({ id: sid, depth: depth + 1 }))
+    }
+    // Nodes with no column (disconnected) go at the end
+    nodes.forEach(n => { if (col[n.id] === undefined) col[n.id] = 0 })
+    // Group nodes by column, assign row within column
+    const byCol = {}
+    nodes.forEach(n => {
+      const c = col[n.id] || 0
+      if (!byCol[c]) byCol[c] = []
+      byCol[c].push(n.id)
+    })
+    // Calculate positions
+    const positions = {}
+    Object.keys(byCol).forEach(c => {
+      const colNodes = byCol[c]
+      colNodes.forEach((id, row) => {
+        positions[id] = {
+          x: 60 + parseInt(c) * (NODE_W + GAP_X),
+          y: 60 + row * (NODE_H + GAP_Y),
+        }
+      })
+    })
+    setNodes(prev => prev.map(n => ({ ...n, x: positions[n.id]?.x ?? n.x, y: positions[n.id]?.y ?? n.y })))
+    setCamera({ x: 40, y: 40, zoom: 1 })
+  }, [nodes, edges])
+
   // ── Edge paths ────────────────────────────────────────────────────────────
   const edgePaths = edges.map(edge => {
     const sNode = nodes.find(n => n.id === edge.source)
@@ -1359,6 +1422,7 @@ export default function NodeRunner({ onNavigate }) {
         </span>
         <button style={tbBtn} onMouseDown={() => setCamera(c => ({ ...c, zoom: Math.min(2.5, c.zoom * 1.2) }))} title="Zoom in"><ZoomIn size={13} /></button>
         <button style={tbBtn} onMouseDown={() => setCamera({ x: 60, y: 60, zoom: 1 })} title="Reset view"><RotateCcw size={13} /></button>
+        <button style={tbBtn} onMouseDown={handleAutoLayout} title="Auto-layout nodes"><LayoutDashboard size={13} /></button>
 
         {/* Clear */}
         <button
@@ -1387,25 +1451,44 @@ export default function NodeRunner({ onNavigate }) {
           <MessageSquare size={13} />
         </button>
 
-        {/* Run */}
-        <button
-          onMouseDown={handleRun}
-          disabled={!canRun}
-          style={{
-            ...tbBtn,
-            background: canRun ? 'rgba(16,185,129,0.12)' : 'rgba(100,116,139,0.06)',
-            border: `1px solid ${canRun ? 'rgba(16,185,129,0.3)' : 'rgba(100,116,139,0.1)'}`,
-            color: canRun ? '#10b981' : 'var(--text-muted)',
-            padding: '5px 14px', gap: 5,
-            opacity: canRun ? 1 : 0.5,
-          }}
-          onMouseEnter={e => { if (canRun) e.currentTarget.style.background = 'rgba(16,185,129,0.2)' }}
-          onMouseLeave={e => { if (canRun) e.currentTarget.style.background = 'rgba(16,185,129,0.12)' }}
-          title="Run all nodes"
-        >
-          {running ? <Loader size={12} style={{ animation: 'spin 0.7s linear infinite' }} /> : <Play size={12} />}
-          {running ? 'RUNNING…' : 'RUN'}
-        </button>
+        {/* Run / Stop */}
+        {running ? (
+          <button
+            onMouseDown={handleStop}
+            style={{
+              ...tbBtn,
+              background: 'rgba(239,68,68,0.12)',
+              border: '1px solid rgba(239,68,68,0.35)',
+              color: '#ef4444',
+              padding: '5px 14px', gap: 5,
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(239,68,68,0.22)' }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'rgba(239,68,68,0.12)' }}
+            title="Stop execution"
+          >
+            <Square size={12} />
+            STOP
+          </button>
+        ) : (
+          <button
+            onMouseDown={handleRun}
+            disabled={nodes.length === 0}
+            style={{
+              ...tbBtn,
+              background: nodes.length > 0 ? 'rgba(16,185,129,0.12)' : 'rgba(100,116,139,0.06)',
+              border: `1px solid ${nodes.length > 0 ? 'rgba(16,185,129,0.3)' : 'rgba(100,116,139,0.1)'}`,
+              color: nodes.length > 0 ? '#10b981' : 'var(--text-muted)',
+              padding: '5px 14px', gap: 5,
+              opacity: nodes.length > 0 ? 1 : 0.5,
+            }}
+            onMouseEnter={e => { if (nodes.length > 0) e.currentTarget.style.background = 'rgba(16,185,129,0.2)' }}
+            onMouseLeave={e => { if (nodes.length > 0) e.currentTarget.style.background = 'rgba(16,185,129,0.12)' }}
+            title="Run all nodes"
+          >
+            <Play size={12} />
+            RUN
+          </button>
+        )}
       </div>
 
       {/* ── SAVE MODAL ── */}

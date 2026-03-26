@@ -589,8 +589,17 @@ func (b *InstagramBot) PublishContent(ctx context.Context, page *rod.Page, media
 	}
 	time.Sleep(3 * time.Second)
 
+	// Step 1b: Click "Post" from the submenu (Instagram now shows Post/Story/Reel menu).
+	_ = rod.Try(func() {
+		postOption := page.Timeout(5 * time.Second).MustElementX(
+			"//span[text()='Post'] | //div[text()='Post']",
+		)
+		_ = postOption.Click(proto.InputMouseButtonLeft, 1)
+		time.Sleep(2 * time.Second)
+	})
+
 	// Step 2: Set the file input for media upload.
-	fileInput, err := page.Timeout(10 * time.Second).Element("input[type='file']")
+	fileInput, err := page.Timeout(15 * time.Second).Element("input[type='file']")
 	if err != nil {
 		return fmt.Errorf("instagram: could not find file input: %w", err)
 	}
@@ -642,9 +651,18 @@ func (b *InstagramBot) PublishContent(ctx context.Context, page *rod.Page, media
 		if captionInput != nil {
 			if clickErr := captionInput.Click(proto.InputMouseButtonLeft, 1); clickErr == nil {
 				time.Sleep(500 * time.Millisecond)
-				for _, ch := range caption {
-					_ = page.Keyboard.Type(input.Key(ch))
-					time.Sleep(30 * time.Millisecond)
+				// Use clipboard paste to handle unicode/emoji characters that Rod's keyboard can't type.
+				pasteErr := rod.Try(func() {
+					page.MustInsertText(caption)
+				})
+				if pasteErr != nil {
+					// Fallback: type char by char, skipping keys Rod doesn't know.
+					for _, ch := range caption {
+						_ = rod.Try(func() {
+							page.Keyboard.Type(input.Key(ch))
+						})
+						time.Sleep(30 * time.Millisecond)
+					}
 				}
 				time.Sleep(1 * time.Second)
 			}

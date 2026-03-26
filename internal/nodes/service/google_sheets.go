@@ -273,7 +273,15 @@ func sheetsValuesToItems(values []interface{}, useHeaderRow bool) []workflow.Ite
 			}
 			data[key] = cell
 		}
-		data["_row_index"] = i + 1
+		rowNum := i + 1
+		data["_row_index"] = rowNum
+		// _row_range provides a ready-made range string (e.g. "A3:Z3") for
+		// downstream update_rows steps that need to target this exact row.
+		colCount := len(row)
+		if colCount < 1 {
+			colCount = 1
+		}
+		data["_row_range"] = fmt.Sprintf("A%d:%s%d", rowNum, sheetsColumnLetter(colCount-1), rowNum)
 		items = append(items, workflow.NewItem(data))
 	}
 	return items

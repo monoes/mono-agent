@@ -96,10 +96,22 @@ func simulateTypo(page *rod.Page, correct rune) error {
 // input.Key. For non-BMP characters (emoji, etc.) it falls back to
 // page.InsertText() which uses CDP Input.insertText.
 func typeCharacter(page *rod.Page, ch rune) error {
-	if ch > 0xFFFF {
+	// Use InsertText for any character outside the printable ASCII range that
+	// Rod's keyboard map may not support (e.g. newlines, emoji, accented chars).
+	if ch > 0x7E || ch < 0x20 {
 		return page.InsertText(string(ch))
 	}
-	return page.Keyboard.Type(input.Key(ch))
+	err := rod.Try(func() {
+		if typeErr := page.Keyboard.Type(input.Key(ch)); typeErr != nil {
+			// Fallback for supported-range chars with no key mapping.
+			_ = page.InsertText(string(ch))
+		}
+	})
+	if err != nil {
+		// Panic recovered by rod.Try — use InsertText as fallback.
+		return page.InsertText(string(ch))
+	}
+	return nil
 }
 
 // randomWrongChar returns a random printable ASCII character that differs from

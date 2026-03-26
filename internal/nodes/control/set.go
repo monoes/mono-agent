@@ -69,15 +69,25 @@ func (n *SetNode) Execute(ctx context.Context, input workflow.NodeInput, config 
 				return nil, fmt.Errorf("%w: set node assignment[%d] missing \"field\"", workflow.ErrInvalidConfig, i)
 			}
 
-			valueExpr, _ := assign["value"].(string)
 			typeName, _ := assign["type"].(string)
 			if typeName == "" {
 				typeName = "string"
 			}
 
-			rawVal, err := engine.EvaluateValue(valueExpr, exprCtx)
-			if err != nil {
-				return nil, fmt.Errorf("set node assignment[%d] expression error: %w", i, err)
+			// If the value was already resolved to a native Go type by ResolveConfig
+			// (e.g. a []interface{} parsed from a JSON template result), use it directly.
+			// Only call EvaluateValue when the value is still a raw template string.
+			rawAssignVal := assign["value"]
+			var rawVal interface{}
+			var err error
+			if valueExpr, isStr := rawAssignVal.(string); isStr {
+				rawVal, err = engine.EvaluateValue(valueExpr, exprCtx)
+				if err != nil {
+					return nil, fmt.Errorf("set node assignment[%d] expression error: %w", i, err)
+				}
+			} else {
+				// Already a resolved native value (map, slice, number, bool, etc.)
+				rawVal = rawAssignVal
 			}
 
 			converted, err := convertType(rawVal, typeName)
