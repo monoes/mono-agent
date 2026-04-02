@@ -100,7 +100,7 @@ export default function App() {
     connections: <Connections onRefresh={refreshStats} />,
     ai: <AIProviders />,
     logs:      <Logs logs={logs} onClear={() => { api.clearLogs(); setLogs([]) }} />,
-    settings:  <SettingsPage />,
+    settings:  <SettingsPage onNavigate={setActivePage} />,
   }
 
   return (

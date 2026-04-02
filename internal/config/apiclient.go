@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	defaultBaseURL     = "http://apiv1.monoes.me"
+	defaultBaseURL     = "https://apiv1.monoes.me"
 	defaultTimeout     = 30 * time.Second
 	generateTimeout    = 90 * time.Second
 	maxHTMLForGenerate = 500 * 1024 // 500 KB

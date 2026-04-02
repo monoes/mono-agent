@@ -81,7 +81,7 @@ func expandPath(path string) string {
 // initDB creates and returns a database connection, applying migrations.
 func initDB(cfg *globalConfig) (*storage.Database, error) {
 	dbPath := expandPath(cfg.DBPath)
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0700); err != nil {
 		return nil, err
 	}
 	db, err := storage.NewDatabase(dbPath)

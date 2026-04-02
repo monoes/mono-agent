@@ -588,7 +588,7 @@ function Inspector({ node, onConfigChange, onClose, onNavigate }) {
                 </div>
               )}
               <button
-                onClick={() => onNavigate?.('credentials')}
+                onClick={() => onNavigate?.('connections')}
                 style={{
                   background: 'transparent', border: 'none', cursor: 'pointer',
                   fontFamily: 'var(--font-mono)', fontSize: 9,

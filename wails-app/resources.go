@@ -201,13 +201,13 @@ func listGoogleDriveResources(creds map[string]interface{}, resourceType, query 
 	case "spreadsheets":
 		q := "mimeType='application/vnd.google-apps.spreadsheet' and trashed=false"
 		if query != "" {
-			q += " and name contains '" + query + "'"
+			q += " and name contains '" + strings.ReplaceAll(query, "'", "\\'") + "'"
 		}
 		apiURL = "https://www.googleapis.com/drive/v3/files?q=" + url.QueryEscape(q) + "&fields=files(id,name,modifiedTime)&pageSize=50"
 	case "folders":
 		q := "mimeType='application/vnd.google-apps.folder' and trashed=false"
 		if query != "" {
-			q += " and name contains '" + query + "'"
+			q += " and name contains '" + strings.ReplaceAll(query, "'", "\\'") + "'"
 		}
 		apiURL = "https://www.googleapis.com/drive/v3/files?q=" + url.QueryEscape(q) + "&fields=files(id,name,modifiedTime)&pageSize=50"
 	default:

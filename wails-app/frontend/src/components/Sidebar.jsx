@@ -1,7 +1,9 @@
+import { useState, useEffect } from 'react'
 import {
   LayoutDashboard, Users,
   Terminal, ChevronRight, PlayCircle, Link2, Brain, Settings
 } from 'lucide-react'
+import { GetVersion } from '../wailsjs/go/main/App'
 
 const NAV_ITEMS = [
   { id: 'dashboard',   label: 'Dashboard',   icon: LayoutDashboard, section: 'MAIN' },
@@ -14,6 +16,9 @@ const NAV_ITEMS = [
 ]
 
 export default function Sidebar({ activePage, onNavigate, stats, dbConnected }) {
+  const [ver, setVer] = useState(null)
+  useEffect(() => { GetVersion().then(setVer).catch(() => {}) }, [])
+
   const getBadge = (id) => {
     if (!stats) return null
     if (id === 'people' && stats.total_people > 0) return stats.total_people
@@ -30,7 +35,7 @@ export default function Sidebar({ activePage, onNavigate, stats, dbConnected }) 
           <div className="logo-mark">MN</div>
           <div>
             <div className="logo-text">Monoes</div>
-            <div className="logo-sub">Agent</div>
+            <div className="logo-sub">Agent {ver ? `v${ver.version.replace(/^v/, '')}` : ''}</div>
           </div>
         </div>
       </div>
