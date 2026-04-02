@@ -1,9 +1,8 @@
-name: Release
+name: Auto Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [master]
 
 permissions:
   contents: write
@@ -16,6 +15,30 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Bump version
+        id: version
+        run: |
+          LAST=$(git tag --sort=-v:refname | head -1)
+          if [ -z "$LAST" ]; then
+            NEXT="v0.1.0"
+          else
+            MAJOR=$(echo "$LAST" | sed 's/v//' | cut -d. -f1)
+            MINOR=$(echo "$LAST" | sed 's/v//' | cut -d. -f2)
+            PATCH=$(echo "$LAST" | sed 's/v//' | cut -d. -f3)
+            PATCH=$((PATCH + 1))
+            NEXT="v${MAJOR}.${MINOR}.${PATCH}"
+          fi
+          echo "tag=$NEXT" >> "$GITHUB_OUTPUT"
+          echo "prev=$LAST" >> "$GITHUB_OUTPUT"
+          echo "Bumping $LAST → $NEXT"
+
+      - name: Create tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.tag }}"
+          git push origin "${{ steps.version.outputs.tag }}"
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -26,12 +49,12 @@ jobs:
       - name: Generate release notes
         id: notes
         run: |
-          # Get previous tag (if any)
-          PREV_TAG=$(git tag --sort=-v:refname | sed -n '2p')
-          if [ -z "$PREV_TAG" ]; then
+          PREV="${{ steps.version.outputs.prev }}"
+          TAG="${{ steps.version.outputs.tag }}"
+          if [ -z "$PREV" ]; then
             COMMITS=$(git log --oneline --no-decorate)
           else
-            COMMITS=$(git log --oneline --no-decorate "${PREV_TAG}..HEAD")
+            COMMITS=$(git log --oneline --no-decorate "${PREV}..HEAD")
           fi
           {
             echo 'NOTES<<EOF'
@@ -43,13 +66,13 @@ jobs:
             echo ""
             echo '```bash'
             echo "# macOS (Apple Silicon)"
-            echo "curl -L https://github.com/nokhodian/mono-agent/releases/download/${GITHUB_REF_NAME}/monoes-darwin-arm64 -o monoes && chmod +x monoes"
+            echo "curl -L https://github.com/nokhodian/mono-agent/releases/download/${TAG}/monoes-darwin-arm64 -o monoes && chmod +x monoes"
             echo ""
             echo "# macOS (Intel)"
-            echo "curl -L https://github.com/nokhodian/mono-agent/releases/download/${GITHUB_REF_NAME}/monoes-darwin-amd64 -o monoes && chmod +x monoes"
+            echo "curl -L https://github.com/nokhodian/mono-agent/releases/download/${TAG}/monoes-darwin-amd64 -o monoes && chmod +x monoes"
             echo ""
             echo "# Linux"
-            echo "curl -L https://github.com/nokhodian/mono-agent/releases/download/${GITHUB_REF_NAME}/monoes-linux-amd64 -o monoes && chmod +x monoes"
+            echo "curl -L https://github.com/nokhodian/mono-agent/releases/download/${TAG}/monoes-linux-amd64 -o monoes && chmod +x monoes"
             echo '```'
             echo 'EOF'
           } >> "$GITHUB_OUTPUT"
@@ -57,6 +80,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.version.outputs.tag }}
           body: ${{ steps.notes.outputs.NOTES }}
           files: |
             bin/monoes-darwin-amd64

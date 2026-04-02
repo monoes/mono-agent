@@ -28,10 +28,10 @@ clean:
 tidy:
 	go mod tidy
 
-# Release: bump version, tag, push. Usage: make release [v=patch|minor|major]
-# Defaults to patch. Examples:
-#   make release          → v0.1.0 → v0.1.1
-#   make release v=minor  → v0.1.1 → v0.2.0
+# Manual release: bump version, tag, push. Usage: make release [v=minor|major]
+# Every push to master auto-creates a patch release via GitHub Actions.
+# Use this for intentional minor/major bumps:
+#   make release          → v0.1.5 → v0.2.0 (minor)
 #   make release v=major  → v0.2.0 → v1.0.0
 .PHONY: release
 release:
@@ -45,7 +45,7 @@ release:
 		case "$(v)" in \
 			major) MAJOR=$$((MAJOR+1)); MINOR=0; PATCH=0;; \
 			minor) MINOR=$$((MINOR+1)); PATCH=0;; \
-			*)     PATCH=$$((PATCH+1));; \
+			*)     MINOR=$$((MINOR+1)); PATCH=0;; \
 		esac; \
 		NEXT="v$$MAJOR.$$MINOR.$$PATCH"; \
 	fi; \
