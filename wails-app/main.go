@@ -10,6 +10,12 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/windows"
 )
 
+// Version is injected at build time via ldflags.
+var (
+	version   = "dev"
+	buildDate = "unknown"
+)
+
 // enableDevTools controls whether the WebKit inspector opens on startup.
 // Set to true temporarily while debugging frontend issues.
 const enableDevTools = true

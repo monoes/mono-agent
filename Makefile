@@ -1,6 +1,8 @@
 VERSION := $(shell git describe --tags --always 2>/dev/null || echo "dev")
 LDFLAGS := -X main.version=$(VERSION) -X main.buildDate=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
+WAILS_LDFLAGS := -X main.version=$(VERSION) -X main.buildDate=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+
 .PHONY: build
 build:
 	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/monoes ./cmd/monoes

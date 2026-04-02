@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Copy, CheckCircle, ExternalLink, ChevronDown, ChevronRight } from 'lucide-react'
 import { api } from '../services/api.js'
+import { GetVersion, CheckForUpdate, SelfUpdate } from '../wailsjs/go/main/App'
 
 const OAUTH_PLATFORMS = [
   { id: 'gmail.oauth', name: 'Gmail', emoji: '📧', docsUrl: 'https://console.cloud.google.com/apis/credentials' },
@@ -207,6 +208,93 @@ function OAuthCard({ platform, configured, onSaved }) {
 
 // ── Main ─────────────────────────────────────────────────────────────────────
 
+function VersionRow() {
+  const [ver, setVer] = useState(null)
+  const [update, setUpdate] = useState(null)
+
+  useEffect(() => { GetVersion().then(setVer).catch(() => {}) }, [])
+
+  function check() {
+    setUpdate({ checking: true })
+    CheckForUpdate().then(info => {
+      if (info.error) setUpdate({ error: info.error })
+      else if (info.update_available) setUpdate({ available: true, latest: info.latest_version })
+      else { setUpdate({ upToDate: true }); setTimeout(() => setUpdate(null), 3000) }
+    }).catch(e => setUpdate({ error: String(e) }))
+  }
+
+  function doUpdate() {
+    setUpdate(u => ({ ...u, updating: true }))
+    SelfUpdate().then(r => {
+      if (r.success) setUpdate({ done: true, latest: r.new_version })
+      else setUpdate({ error: r.error })
+    }).catch(e => setUpdate({ error: String(e) }))
+  }
+
+  const vText = ver ? `v${ver.version.replace(/^v/, '')}` : '...'
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1 }}>
+          Version
+        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-secondary)' }}>
+            Monoes Agent {vText}
+          </span>
+          <button
+            onClick={check}
+            disabled={update?.checking || update?.updating}
+            style={{
+              background: 'rgba(0,180,216,.15)',
+              color: '#00b4d8',
+              border: '1px solid rgba(0,180,216,.2)',
+              borderRadius: 4,
+              padding: '2px 10px',
+              cursor: 'pointer',
+              fontFamily: 'var(--font-mono)',
+              fontSize: 9,
+              opacity: (update?.checking || update?.updating) ? 0.5 : 1,
+            }}
+          >
+            {update?.checking ? 'Checking...' : 'Check for updates'}
+          </button>
+        </div>
+      </div>
+      {update?.upToDate && (
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#00f5d4', marginTop: 6 }}>
+          You're on the latest version.
+        </div>
+      )}
+      {update?.available && !update.updating && !update.done && (
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, marginTop: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ color: '#fbbf24' }}>{update.latest} is available</span>
+          <button onClick={doUpdate} style={{
+            background: '#00b4d8', color: '#fff', border: 'none', borderRadius: 4,
+            padding: '3px 12px', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 10,
+          }}>Install Update</button>
+        </div>
+      )}
+      {update?.updating && (
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#00b4d8', marginTop: 6 }}>
+          Updating...
+        </div>
+      )}
+      {update?.done && (
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#00f5d4', marginTop: 6 }}>
+          Updated to {update.latest} — restart the app to apply.
+        </div>
+      )}
+      {update?.error && (
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--red)', marginTop: 6 }}>
+          {update.error}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function Settings() {
   const [activeTab, setActiveTab] = useState('oauth')
   const [credStatus, setCredStatus] = useState({}) // { platformID: boolean }
@@ -368,15 +456,8 @@ export default function Settings() {
                 </div>
               </div>
 
-              {/* App version */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1 }}>
-                  Version
-                </span>
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-secondary)' }}>
-                  Monoes Agent v1.0
-                </span>
-              </div>
+              {/* App version + update */}
+              <VersionRow />
             </div>
 
             {/* Note */}

@@ -74,6 +74,18 @@ export function GetDBPath() {
   return window['go']['main']['App']['GetDBPath']();
 }
 
+export function GetVersion() {
+  return window['go']['main']['App']['GetVersion']();
+}
+
+export function CheckForUpdate() {
+  return window['go']['main']['App']['CheckForUpdate']();
+}
+
+export function SelfUpdate() {
+  return window['go']['main']['App']['SelfUpdate']();
+}
+
 export function GetDashboardStats() {
   return window['go']['main']['App']['GetDashboardStats']();
 }

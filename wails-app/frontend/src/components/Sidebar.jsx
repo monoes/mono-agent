@@ -30,7 +30,7 @@ export default function Sidebar({ activePage, onNavigate, stats, dbConnected }) 
           <div className="logo-mark">MN</div>
           <div>
             <div className="logo-text">Monoes</div>
-            <div className="logo-sub">Agent v1.0</div>
+            <div className="logo-sub">Agent</div>
           </div>
         </div>
       </div>
