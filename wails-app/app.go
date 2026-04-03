@@ -1178,6 +1178,27 @@ func fileExists(p string) bool {
 	return err == nil && !info.IsDir()
 }
 
+// nodeTypeToPlatform derives the connection platform ID from a node type string.
+// e.g. "service.google_sheets" → "google_sheets", "db.postgres" → "postgresql"
+func nodeTypeToPlatform(nodeType string) string {
+	overrides := map[string]string{
+		"db.postgres": "postgresql",
+		"db.mysql":    "mysql",
+		"db.mongodb":  "mongodb",
+		"db.redis":    "redis",
+		"comm.email_send": "smtp",
+		"comm.email_read": "imap",
+	}
+	if p, ok := overrides[nodeType]; ok {
+		return p
+	}
+	parts := strings.SplitN(nodeType, ".", 2)
+	if len(parts) == 2 {
+		return parts[1] // "service.google_sheets" → "google_sheets"
+	}
+	return nodeType
+}
+
 func (a *App) ExecuteAction(id string) error {
 	monoesBin, err := findMonoesBinary()
 	if err != nil {
@@ -1931,7 +1952,14 @@ func (a *App) RunNode(req NodeRunRequest) NodeRunResult {
 	if credID, ok := req.Config["credential_id"].(string); ok && credID != "" && a.connMgr != nil {
 		credData, err := a.getResourceCredentialData(context.Background(), credID)
 		if err != nil {
-			return NodeRunResult{Error: fmt.Sprintf("resolve credential %s: %v", credID, err)}
+			// Fallback: derive platform from node type and try by platform name.
+			platform := nodeTypeToPlatform(req.NodeType)
+			if platform != "" {
+				credData, err = a.getResourceCredentialData(context.Background(), platform)
+			}
+			if err != nil {
+				return NodeRunResult{Error: fmt.Sprintf("resolve credential %s: %v", credID, err)}
+			}
 		}
 		// Merge connection data fields into config (connection credentials take precedence).
 		for k, v := range credData {
