@@ -922,7 +922,9 @@ export default function NodeRunner({ onNavigate }) {
   const [globalStatus, setGlobalStatus] = useState(null) // null | 'ok' | 'error'
 
   // ── Workflow persistence state ────────────────────────────────────────────
-  const [wfId,     setWfId]     = useState(null)
+  const [wfId,     setWfId]     = useState(() => {
+    try { return localStorage.getItem('nr2-last-wf-id') || null } catch { return null }
+  })
   const [wfName,   setWfName]   = useState('Untitled Workflow')
   const [wfActive, setWfActive] = useState(false)
   const [saving,        setSaving]       = useState(false)
@@ -930,6 +932,14 @@ export default function NodeRunner({ onNavigate }) {
   const [showWfModal,   setShowWfModal]   = useState(false)
   const [showSaveModal, setShowSaveModal] = useState(false)
   const [isDirty, setIsDirty] = useState(false)
+
+  // Persist last loaded workflow ID so it restores on next visit
+  useEffect(() => {
+    try {
+      if (wfId) localStorage.setItem('nr2-last-wf-id', wfId)
+      else localStorage.removeItem('nr2-last-wf-id')
+    } catch {}
+  }, [wfId])
 
   const [chatOpen, setChatOpen] = useState(false)
   const [jsonView, setJsonView] = useState(false)
@@ -1295,6 +1305,11 @@ export default function NodeRunner({ onNavigate }) {
       console.error('Load failed', e)
     }
   }, [])
+
+  // ── Auto-load last workflow on mount ──────────────────────────────────────
+  useEffect(() => {
+    if (wfId && nodes.length === 0) handleLoad(wfId)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Toggle active ─────────────────────────────────────────────────────────
   const handleToggleActive = useCallback(async () => {
