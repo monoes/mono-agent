@@ -26,6 +26,8 @@ export default function ResourcePickerField({ field, value, onChange, credential
   const [selectedLabel, setSelectedLabel] = useState('')
 
   const resourceType = field.resource?.type || ''
+  // Use credentialId if set, otherwise fall back to platform name for auto-lookup
+  const effectiveCredId = credentialId || platform
 
   function handleListResult(result) {
     if (result.needs_reauth) {
@@ -44,23 +46,23 @@ export default function ResourcePickerField({ field, value, onChange, credential
   // Load items when expanded
   useEffect(() => {
     if (!expanded) return
-    if (!credentialId || !platform || !resourceType) return
+    if (!effectiveCredId || !platform || !resourceType) return
     setLoading(true)
     setError(null)
     setNeedsReauth(false)
-    ListResources(platform, resourceType, credentialId, query)
+    ListResources(platform, resourceType, effectiveCredId, query)
       .then(handleListResult)
       .catch(e => setError(String(e)))
       .finally(() => setLoading(false))
-  }, [expanded, credentialId, platform, resourceType])
+  }, [expanded, effectiveCredId, platform, resourceType])
 
   // Re-load when query changes (debounced)
   useEffect(() => {
-    if (!expanded || !credentialId || !platform || !resourceType) return
+    if (!expanded || !effectiveCredId || !platform || !resourceType) return
     const timer = setTimeout(() => {
       setLoading(true)
       setError(null)
-      ListResources(platform, resourceType, credentialId, query)
+      ListResources(platform, resourceType, effectiveCredId, query)
         .then(handleListResult)
         .catch(e => setError(String(e)))
         .finally(() => setLoading(false))
@@ -79,7 +81,7 @@ export default function ResourcePickerField({ field, value, onChange, credential
         setNeedsReauth(false)
         // Re-fetch resources with the refreshed credential
         setLoading(true)
-        ListResources(platform, resourceType, credentialId, query)
+        ListResources(platform, resourceType, effectiveCredId, query)
           .then(handleListResult)
           .catch(e => setError(String(e)))
           .finally(() => setLoading(false))
@@ -109,7 +111,7 @@ export default function ResourcePickerField({ field, value, onChange, credential
     if (!newName.trim()) return
     setLoading(true)
     try {
-      const result = await CreateResource(platform, resourceType, credentialId, newName.trim())
+      const result = await CreateResource(platform, resourceType, effectiveCredId, newName.trim())
       if (result.error) { setError(result.error); return }
       if (result.item) {
         setItems(prev => [result.item, ...prev])
@@ -229,7 +231,7 @@ export default function ResourcePickerField({ field, value, onChange, credential
               ))}
               {items.length === 0 && !error && (
                 <li className="resource-empty">
-                  {credentialId ? 'No results found' : 'No credential selected'}
+                  {effectiveCredId ? 'No results found' : 'No credential selected'}
                 </li>
               )}
             </ul>

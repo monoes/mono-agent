@@ -83,12 +83,27 @@ func (a *App) CreateResource(platform, resourceType, credentialID, name string) 
 // getResourceCredentialData fetches credential data from the connections manager.
 // If the stored access token is expired and a refresh token is available, it
 // silently refreshes the token before returning.
+// credentialID can be a connection ID or a platform name (fallback lookup).
 func (a *App) getResourceCredentialData(ctx context.Context, credentialID string) (map[string]interface{}, error) {
 	if a.connMgr == nil {
 		return nil, fmt.Errorf("connections manager not available")
 	}
 	conn, err := a.connMgr.Get(ctx, credentialID)
-	if err != nil || conn == nil {
+	if (err != nil || conn == nil) && credentialID != "" {
+		// Fallback: try to find an active connection for the platform by name.
+		if conns, lErr := a.connMgr.List(ctx, credentialID); lErr == nil && len(conns) > 0 {
+			for i := range conns {
+				if conns[i].Status == "active" {
+					conn = &conns[i]
+					break
+				}
+			}
+			if conn == nil {
+				conn = &conns[0] // use first available even if not "active"
+			}
+		}
+	}
+	if conn == nil {
 		return nil, fmt.Errorf("credential %s not found", credentialID)
 	}
 
