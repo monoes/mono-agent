@@ -309,10 +309,15 @@ function Modal({ platform, conn, onClose, onRefresh, onDisconnect }) {
                 <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, padding: '7px 12px', borderRadius: 'var(--radius)', background: testMsg === 'ok' ? 'rgba(74,222,128,.08)' : 'rgba(239,68,68,.08)', border: `1px solid ${testMsg === 'ok' ? 'rgba(74,222,128,.25)' : 'rgba(239,68,68,.25)'}`, color: testMsg === 'ok' ? 'var(--green-neon)' : 'var(--red)' }}>
                   {testMsg === 'ok' ? '✓ Connection OK' : (
                     <div>
-                      <div>✗ Authentication expired or invalid</div>
+                      <div>✗ {testMsg.replace('error: ', '')}</div>
                       {conn.method === 'oauth' && (
                         <div style={{ marginTop: 8, fontSize: 10, color: 'var(--text-muted)' }}>
                           Your access token has expired. Click <strong style={{ color: 'var(--cyan)' }}>Reconnect</strong> below to re-authorize.
+                        </div>
+                      )}
+                      {conn._type === 'session' && (
+                        <div style={{ marginTop: 8, fontSize: 10, color: 'var(--text-muted)' }}>
+                          Click <strong style={{ color: 'var(--cyan)' }}>Log in again</strong> below to re-authenticate via browser.
                         </div>
                       )}
                     </div>
@@ -329,6 +334,12 @@ function Modal({ platform, conn, onClose, onRefresh, onDisconnect }) {
                   <button className="btn btn-primary btn-sm" onClick={startOAuthFlow} disabled={flowRunning} style={{ gap: 5 }}>
                     {flowRunning ? <Loader size={11} style={{ animation: 'spin .7s linear infinite' }} /> : <RefreshCw size={11} />}
                     {flowRunning ? 'Reconnecting…' : 'Reconnect'}
+                  </button>
+                )}
+                {conn._type === 'session' && testMsg && testMsg !== 'ok' && (
+                  <button className="btn btn-primary btn-sm" onClick={() => { api.loginSocial(pid); setFlowRunning(true); setFlowSteps([]) }} disabled={flowRunning} style={{ gap: 5 }}>
+                    {flowRunning ? <Loader size={11} style={{ animation: 'spin .7s linear infinite' }} /> : <RefreshCw size={11} />}
+                    {flowRunning ? 'Logging in…' : 'Log in again'}
                   </button>
                 )}
                 {!confirmDisconnect ? (

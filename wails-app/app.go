@@ -2438,20 +2438,67 @@ func (a *App) ListPlatformsJSON(connectVia string) string {
 
 // TestConnection re-validates a connection by ID.
 // For OAuth connections it attempts a silent token refresh first.
+// For browser sessions (social platforms), it checks session expiry and cookie presence.
 func (a *App) TestConnection(id string) string {
-	if a.connMgr == nil {
+	if a.connMgr == nil && a.db == nil {
 		return "error: manager not initialized"
 	}
-	// Attempt silent token refresh for OAuth connections before testing.
-	if conn, err := a.connMgr.Get(a.ctx, id); err == nil && conn != nil && conn.Method == "oauth" {
-		if _, refreshErr := a.getResourceCredentialData(a.ctx, id); refreshErr != nil {
-			fmt.Printf("token refresh attempted: %v\n", refreshErr)
+
+	// First try the connections table (OAuth/API key connections).
+	if a.connMgr != nil {
+		if conn, err := a.connMgr.Get(a.ctx, id); err == nil && conn != nil {
+			// OAuth: attempt silent token refresh before testing.
+			if conn.Method == "oauth" {
+				if _, refreshErr := a.getResourceCredentialData(a.ctx, id); refreshErr != nil {
+					fmt.Printf("token refresh attempted: %v\n", refreshErr)
+				}
+			}
+			if err := a.connMgr.Test(a.ctx, id); err != nil {
+				return fmt.Sprintf("error: %v", err)
+			}
+			return "ok"
 		}
 	}
-	if err := a.connMgr.Test(a.ctx, id); err != nil {
-		return fmt.Sprintf("error: %v", err)
+
+	// Fallback: check crawler_sessions (browser sessions for social platforms).
+	// The UI passes integer session IDs for social platforms.
+	if a.db != nil {
+		var platform, cookiesJSON, expiry string
+		err := a.db.QueryRow(
+			`SELECT platform, cookies_json, expiry FROM crawler_sessions WHERE id = ?`, id,
+		).Scan(&platform, &cookiesJSON, &expiry)
+		if err == nil {
+			// Check expiry
+			if exp, pErr := time.Parse("2006-01-02 15:04:05", expiry); pErr == nil {
+				if time.Now().After(exp) {
+					return "error: session expired — please log in again via the browser"
+				}
+			} else if exp2, pErr2 := time.Parse(time.RFC3339, expiry); pErr2 == nil {
+				if time.Now().After(exp2) {
+					return "error: session expired — please log in again via the browser"
+				}
+			}
+			// Check cookies present
+			if cookiesJSON == "" || cookiesJSON == "[]" || cookiesJSON == "null" {
+				return "error: no session cookies stored — please log in again"
+			}
+			return "ok"
+		}
 	}
-	return "ok"
+
+	// Also try looking up by platform name (fallback for credential_id = platform string).
+	if a.connMgr != nil {
+		platform := nodeTypeToPlatform(id)
+		if conns, err := a.connMgr.List(a.ctx, platform); err == nil && len(conns) > 0 {
+			for _, c := range conns {
+				if c.Status == "active" {
+					return "ok"
+				}
+			}
+		}
+	}
+
+	return "error: connection not found"
 }
 
 // RemoveConnection deletes a connection by ID.
