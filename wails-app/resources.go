@@ -130,6 +130,20 @@ func (a *App) refreshOAuthToken(ctx context.Context, conn *connections.Connectio
 	if cfg.ClientSecret == "" {
 		cfg.ClientSecret = os.Getenv(envPrefix + "CLIENT_SECRET")
 	}
+	// Fall back to stored OAuth app credentials from the DB.
+	if cfg.ClientID == "" {
+		if credsJSON := a.GetOAuthCredentials(conn.Platform); credsJSON != "" {
+			var creds map[string]string
+			if json.Unmarshal([]byte(credsJSON), &creds) == nil {
+				if creds["clientID"] != "" {
+					cfg.ClientID = creds["clientID"]
+				}
+				if creds["clientSecret"] != "" {
+					cfg.ClientSecret = creds["clientSecret"]
+				}
+			}
+		}
+	}
 	if cfg.ClientID == "" {
 		return nil, fmt.Errorf("missing OAuth client credentials for refresh")
 	}

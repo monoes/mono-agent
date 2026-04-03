@@ -34,6 +34,12 @@ func ValidateConnection(ctx context.Context, c *Connection) (accountID string, e
 		return validateTwilio(ctx, c)
 	case "telegram":
 		return validateTelegram(ctx, c)
+	case "google_sheets", "google_drive", "gmail":
+		return validateGoogle(ctx, c)
+	case "hubspot":
+		return validateHubSpot(ctx, c)
+	case "salesforce":
+		return validateSalesforce(ctx, c)
 	case "postgresql", "mysql", "mongodb", "redis":
 		cs := getStr(c.Data, "connection_string")
 		if cs == "" {
@@ -447,4 +453,86 @@ func doGET(ctx context.Context, url, authHeader string) ([]byte, int, error) {
 		return nil, resp.StatusCode, fmt.Errorf("doGET: read body: %w", err)
 	}
 	return body, resp.StatusCode, nil
+}
+
+// validateGoogle validates a Google OAuth connection (Sheets, Drive, Gmail)
+// by calling the Google userinfo endpoint with the stored access_token.
+func validateGoogle(ctx context.Context, c *Connection) (string, error) {
+	token := getStr(c.Data, "access_token")
+	if token == "" {
+		return "", fmt.Errorf("validateGoogle: missing access_token")
+	}
+	body, status, err := doGET(ctx, "https://www.googleapis.com/oauth2/v2/userinfo", "Bearer "+token)
+	if err != nil {
+		return "", fmt.Errorf("validateGoogle: %w", err)
+	}
+	if status == 401 {
+		return "", fmt.Errorf("validateGoogle: token expired or invalid (HTTP 401)")
+	}
+	if status != 200 {
+		return "", fmt.Errorf("validateGoogle: unexpected status %d: %s", status, string(body))
+	}
+	var r struct {
+		Email string `json:"email"`
+		Name  string `json:"name"`
+	}
+	if err := json.Unmarshal(body, &r); err != nil {
+		return "", fmt.Errorf("validateGoogle: parse response: %w", err)
+	}
+	if r.Email != "" {
+		return r.Email, nil
+	}
+	return r.Name, nil
+}
+
+// validateHubSpot validates a HubSpot OAuth connection.
+func validateHubSpot(ctx context.Context, c *Connection) (string, error) {
+	token := getStr(c.Data, "access_token")
+	if token == "" {
+		return "", fmt.Errorf("validateHubSpot: missing access_token")
+	}
+	body, status, err := doGET(ctx, "https://api.hubapi.com/oauth/v1/access-tokens/"+token, "")
+	if err != nil {
+		return "", fmt.Errorf("validateHubSpot: %w", err)
+	}
+	if status != 200 {
+		return "", fmt.Errorf("validateHubSpot: unexpected status %d", status)
+	}
+	var r struct {
+		User   string `json:"user"`
+		HubID  int    `json:"hub_id"`
+	}
+	_ = json.Unmarshal(body, &r)
+	if r.User != "" {
+		return r.User, nil
+	}
+	return fmt.Sprintf("hub-%d", r.HubID), nil
+}
+
+// validateSalesforce validates a Salesforce OAuth connection.
+func validateSalesforce(ctx context.Context, c *Connection) (string, error) {
+	token := getStr(c.Data, "access_token")
+	instanceURL := getStr(c.Data, "instance_url")
+	if token == "" {
+		return "", fmt.Errorf("validateSalesforce: missing access_token")
+	}
+	if instanceURL == "" {
+		instanceURL = "https://login.salesforce.com"
+	}
+	body, status, err := doGET(ctx, instanceURL+"/services/oauth2/userinfo", "Bearer "+token)
+	if err != nil {
+		return "", fmt.Errorf("validateSalesforce: %w", err)
+	}
+	if status != 200 {
+		return "", fmt.Errorf("validateSalesforce: unexpected status %d", status)
+	}
+	var r struct {
+		Email string `json:"email"`
+		Name  string `json:"name"`
+	}
+	_ = json.Unmarshal(body, &r)
+	if r.Email != "" {
+		return r.Email, nil
+	}
+	return r.Name, nil
 }
