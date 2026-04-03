@@ -1,5 +1,5 @@
 {
-  "credential_platform": null,
+  "credential_platform": "mongodb",
   "fields": [
     { "key": "uri", "label": "MongoDB URI", "type": "password", "required": true, "placeholder": "mongodb://user:pass@host:27017/db" },
     { "key": "collection", "label": "Collection", "type": "text", "required": true },

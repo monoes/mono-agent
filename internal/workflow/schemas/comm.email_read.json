@@ -1,5 +1,5 @@
 {
-  "credential_platform": null,
+  "credential_platform": "imap",
   "fields": [
     { "key": "imap_host", "label": "IMAP Host", "type": "text", "required": true, "placeholder": "imap.gmail.com" },
     { "key": "imap_port", "label": "IMAP Port", "type": "number", "required": true, "default": 993 },

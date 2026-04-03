@@ -1,5 +1,5 @@
 {
-  "credential_platform": null,
+  "credential_platform": "telegram",
   "fields": [
     { "key": "bot_token", "label": "Bot Token", "type": "password", "required": true, "help": "Get from @BotFather on Telegram." },
     { "key": "chat_id", "label": "Chat ID", "type": "text", "required": true, "help": "Numeric chat ID or @channel_username." },

@@ -1,5 +1,5 @@
 {
-  "credential_platform": null,
+  "credential_platform": "hubspot",
   "fields": [
     { "key": "api_key", "label": "HubSpot API Key", "type": "password", "required": true },
     { "key": "object_type", "label": "Object Type", "type": "select", "required": true, "options": ["contacts", "companies", "deals", "tickets"], "default": "contacts" },

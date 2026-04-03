@@ -1,5 +1,5 @@
 {
-  "credential_platform": null,
+  "credential_platform": "twilio",
   "fields": [
     { "key": "account_sid", "label": "Account SID", "type": "text", "required": true },
     { "key": "auth_token", "label": "Auth Token", "type": "password", "required": true },

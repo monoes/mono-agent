@@ -1,5 +1,5 @@
 {
-  "credential_platform": null,
+  "credential_platform": "smtp",
   "fields": [
     { "key": "smtp_host", "label": "SMTP Host", "type": "text", "required": true, "placeholder": "smtp.gmail.com" },
     { "key": "smtp_port", "label": "SMTP Port", "type": "number", "required": true, "default": 587 },

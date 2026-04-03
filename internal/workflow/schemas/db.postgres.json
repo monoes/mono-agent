@@ -1,5 +1,5 @@
 {
-  "credential_platform": null,
+  "credential_platform": "postgresql",
   "fields": [
     { "key": "connection_string", "label": "Connection String", "type": "password", "required": true, "placeholder": "postgres://user:pass@host:5432/db" },
     { "key": "query", "label": "SQL Query", "type": "code", "required": true, "placeholder": "SELECT * FROM users WHERE active = true" },

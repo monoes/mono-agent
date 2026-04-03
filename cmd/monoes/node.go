@@ -5,6 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"sort"
@@ -49,6 +52,165 @@ var reLinkedInActivity = regexp.MustCompile(`activity[-:](\d+)`)
 func isBrowserNodeType(t string) bool {
 	return strings.HasPrefix(t, "instagram.") || strings.HasPrefix(t, "linkedin.") ||
 		strings.HasPrefix(t, "x.") || strings.HasPrefix(t, "tiktok.")
+}
+
+// nodeTypeToPlatform maps a node type to its connections-registry platform ID.
+// The mapping covers node-type prefixes that don't match their platform ID directly.
+var nodeTypeToPlatformOverrides = map[string]string{
+	"db.postgres": "postgresql",
+	"db.mysql":    "mysql",
+	"db.mongodb":  "mongodb",
+	"db.redis":    "redis",
+}
+
+// nodeTypeToPlatform derives the connections-registry platform ID from a node type.
+// Examples:
+//
+//	"service.google_sheets" → "google_sheets"
+//	"service.github"        → "github"
+//	"comm.slack"            → "slack"
+//	"db.postgres"           → "postgresql"
+//	"google_sheets"         → "google_sheets"  (legacy unprefixed)
+func nodeTypeToPlatform(nodeType string) string {
+	if p, ok := nodeTypeToPlatformOverrides[nodeType]; ok {
+		return p
+	}
+	// Strip known category prefixes.
+	for _, prefix := range []string{"service.", "comm.", "db."} {
+		if strings.HasPrefix(nodeType, prefix) {
+			return strings.TrimPrefix(nodeType, prefix)
+		}
+	}
+	// Already a bare platform name (legacy alias).
+	return nodeType
+}
+
+// resolveCredentialData looks up a connection by ID or platform name, checks for
+// token expiry, and returns the credential data map. This mirrors the Wails app's
+// getResourceCredentialData function.
+func resolveCredentialData(ctx context.Context, store *connections.Store, credentialOrPlatform string) (map[string]interface{}, error) {
+	if store == nil {
+		return nil, fmt.Errorf("connections store not available")
+	}
+	// Try by ID first.
+	conn, err := store.Get(ctx, credentialOrPlatform)
+	if (err != nil || conn == nil) && credentialOrPlatform != "" {
+		// Fallback: look up by platform name.
+		conns, lErr := store.ListByPlatform(ctx, credentialOrPlatform)
+		if lErr == nil && len(conns) > 0 {
+			for i := range conns {
+				if conns[i].Status == "active" {
+					conn = &conns[i]
+					break
+				}
+			}
+			if conn == nil {
+				conn = &conns[0]
+			}
+		}
+	}
+	if conn == nil {
+		return nil, fmt.Errorf("no connection found for %q — run `monoes connect %s` first", credentialOrPlatform, credentialOrPlatform)
+	}
+
+	// Check if OAuth token needs refresh (expires within 60 seconds).
+	if expiresStr, _ := conn.Data["expires_at"].(string); expiresStr != "" {
+		if expiresAt, err := time.Parse(time.RFC3339, expiresStr); err == nil {
+			if time.Now().UTC().After(expiresAt.Add(-60 * time.Second)) {
+				if refreshed, err := refreshOAuthTokenCLI(ctx, store, conn); err == nil {
+					return refreshed, nil
+				}
+				// If refresh fails, fall through and try with existing (possibly expired) token.
+				fmt.Fprintf(os.Stderr, "  Warning: token refresh failed, using existing token\n")
+			}
+		}
+	}
+
+	return conn.Data, nil
+}
+
+// refreshOAuthTokenCLI uses the stored refresh_token to obtain a new access_token
+// from the provider's token endpoint, updates the connection in the DB, and returns
+// the refreshed credential data. This mirrors the Wails app's refreshOAuthToken.
+func refreshOAuthTokenCLI(ctx context.Context, store *connections.Store, conn *connections.Connection) (map[string]interface{}, error) {
+	refreshToken, _ := conn.Data["refresh_token"].(string)
+	if refreshToken == "" {
+		return nil, fmt.Errorf("no refresh_token available")
+	}
+
+	p, ok := connections.Get(conn.Platform)
+	if !ok || p.OAuth == nil {
+		return nil, fmt.Errorf("platform %q has no OAuth config", conn.Platform)
+	}
+
+	cfg := *p.OAuth
+	envPrefix := "MONOES_" + strings.ToUpper(strings.ReplaceAll(p.ID, "-", "_")) + "_"
+	if cfg.ClientID == "" {
+		cfg.ClientID = os.Getenv(envPrefix + "CLIENT_ID")
+	}
+	if cfg.ClientSecret == "" {
+		cfg.ClientSecret = os.Getenv(envPrefix + "CLIENT_SECRET")
+	}
+	if cfg.ClientID == "" {
+		return nil, fmt.Errorf("missing OAuth client credentials for refresh (set %sCLIENT_ID)", envPrefix)
+	}
+
+	form := url.Values{}
+	form.Set("grant_type", "refresh_token")
+	form.Set("refresh_token", refreshToken)
+	form.Set("client_id", cfg.ClientID)
+	form.Set("client_secret", cfg.ClientSecret)
+
+	req, err := http.NewRequest(http.MethodPost, cfg.TokenURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, fmt.Errorf("build refresh request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("refresh request: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("token refresh returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	var tokenResp struct {
+		AccessToken  string `json:"access_token"`
+		ExpiresIn    int    `json:"expires_in"`
+		TokenType    string `json:"token_type"`
+		Scope        string `json:"scope"`
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := json.Unmarshal(body, &tokenResp); err != nil || tokenResp.AccessToken == "" {
+		return nil, fmt.Errorf("invalid refresh response: %s", string(body))
+	}
+
+	// Update connection data with new tokens.
+	conn.Data["access_token"] = tokenResp.AccessToken
+	if tokenResp.TokenType != "" {
+		conn.Data["token_type"] = tokenResp.TokenType
+	}
+	if tokenResp.RefreshToken != "" {
+		conn.Data["refresh_token"] = tokenResp.RefreshToken
+	}
+	if tokenResp.ExpiresIn > 0 {
+		conn.Data["expires_at"] = time.Now().UTC().Add(time.Duration(tokenResp.ExpiresIn) * time.Second).Format(time.RFC3339)
+	}
+	conn.Status = "active"
+	conn.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+
+	// Persist the refreshed credentials.
+	if saveErr := store.Save(ctx, conn); saveErr != nil {
+		fmt.Fprintf(os.Stderr, "  Warning: could not persist refreshed token: %v\n", saveErr)
+	} else {
+		fmt.Fprintf(os.Stderr, "  Token refreshed successfully\n")
+	}
+
+	return conn.Data, nil
 }
 
 // cliSessionProvider launches a headed browser and restores session cookies from the DB.
@@ -232,9 +394,10 @@ func newNodeListCmd(cfg *globalConfig) *cobra.Command {
 // newNodeRunCmd runs a single node type with provided config and input items.
 func newNodeRunCmd(cfg *globalConfig) *cobra.Command {
 	var (
-		configJSON string
-		inputJSON  string
-		outputFmt  string
+		configJSON   string
+		inputJSON    string
+		outputFmt    string
+		credentialID string
 	)
 
 	cmd := &cobra.Command{
@@ -244,7 +407,11 @@ func newNodeRunCmd(cfg *globalConfig) *cobra.Command {
 Config and input items are passed as JSON. Results are printed to stdout.
 
 Node types follow the pattern: category.name (e.g. http.request, comm.slack, control.if)
-Browser/social nodes require --config to include "username" and a session must exist.`,
+Browser/social nodes require --config to include "username" and a session must exist.
+
+Credentials are resolved automatically from stored connections when credential_id
+is not provided in config. You can also pass --credential with a connection ID or
+platform name to override. Token refresh is handled automatically for OAuth connections.`,
 		Example: `  # HTTP GET request
   monoes node run http.request --config '{"method":"GET","url":"https://httpbin.org/get"}'
 
@@ -285,7 +452,13 @@ Browser/social nodes require --config to include "username" and a session must e
   # Aggregate items
   monoes node run control.aggregate \
     --config '{"operation":"sum","field":"amount"}' \
-    --input '[{"json":{"amount":10}},{"json":{"amount":20}},{"json":{"amount":30}}]'`,
+    --input '[{"json":{"amount":10}},{"json":{"amount":20}},{"json":{"amount":30}}]'
+
+  # Google Sheets (auto-resolves credential from stored connections)
+  monoes node run service.google_sheets --config '{"operation":"read_rows","spreadsheetId":"abc123","range":"Sheet1!A1:D10"}'
+
+  # Explicit credential by connection ID or platform name
+  monoes node run service.google_sheets --credential google_sheets --config '{"operation":"read_rows","spreadsheetId":"abc123"}'`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			nodeType := args[0]
@@ -319,6 +492,42 @@ Browser/social nodes require --config to include "username" and a session must e
 			if configJSON != "" {
 				if err := json.Unmarshal([]byte(configJSON), &config); err != nil {
 					return fmt.Errorf("invalid --config JSON: %w", err)
+				}
+			}
+
+			// Resolve credentials: --credential flag → config.credential_id → auto-resolve by platform.
+			// This matches the Wails app's getResourceCredentialData pattern.
+			if rawDB != nil {
+				connStore := connections.NewStore(rawDB)
+				credKey := credentialID // from --credential flag
+				if credKey == "" {
+					if cid, ok := config["credential_id"].(string); ok && cid != "" {
+						credKey = cid
+					}
+				}
+				// Auto-resolve: if still empty, derive platform from node type and look up.
+				if credKey == "" {
+					credKey = nodeTypeToPlatform(nodeType)
+				}
+				if credKey != "" {
+					credData, err := resolveCredentialData(context.Background(), connStore, credKey)
+					if err == nil && credData != nil {
+						// Merge credential data into config (access_token, refresh_token, etc.).
+						for k, v := range credData {
+							if _, exists := config[k]; !exists {
+								config[k] = v
+							}
+						}
+						config["credential"] = credData
+						if cfg.Verbose {
+							fmt.Fprintf(os.Stderr, "  Resolved credential for platform %q\n", credKey)
+						}
+					} else if credentialID != "" {
+						// Only error if --credential was explicitly provided.
+						return fmt.Errorf("credential resolution failed: %w", err)
+					}
+					// If auto-resolve fails silently, the node may still work
+					// with credentials passed directly in config (e.g., --config '{"token":"..."}').
 				}
 			}
 
@@ -499,6 +708,7 @@ Browser/social nodes require --config to include "username" and a session must e
 	cmd.Flags().StringVar(&configJSON, "config", "", "Node config as JSON object")
 	cmd.Flags().StringVar(&inputJSON, "input", "", "Input items as JSON array of {\"json\":{...}} objects, or a single JSON object")
 	cmd.Flags().StringVar(&outputFmt, "output", "pretty", "Output format: pretty|json|jsonl")
+	cmd.Flags().StringVar(&credentialID, "credential", "", "Connection ID or platform name for credential lookup (auto-resolved from node type if omitted)")
 	return cmd
 }
 

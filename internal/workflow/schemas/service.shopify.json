@@ -1,5 +1,5 @@
 {
-  "credential_platform": null,
+  "credential_platform": "shopify",
   "fields": [
     { "key": "shop_domain", "label": "Shop Domain", "type": "text", "required": true, "placeholder": "mystore.myshopify.com" },
     { "key": "access_token", "label": "Access Token", "type": "password", "required": true },

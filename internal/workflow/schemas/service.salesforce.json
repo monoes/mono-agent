@@ -1,5 +1,5 @@
 {
-  "credential_platform": null,
+  "credential_platform": "salesforce",
   "fields": [
     { "key": "instance_url", "label": "Instance URL", "type": "text", "required": true, "placeholder": "https://myorg.salesforce.com" },
     { "key": "access_token", "label": "Access Token", "type": "password", "required": true },

@@ -482,6 +482,8 @@ function Palette({ categories, onAdd, onNodeMouseDown }) {
 }
 
 // ── Platforms that require a credential selection ─────────────────────────────
+// LEGACY FALLBACK: This map is only needed for nodes whose schemas don't have
+// credential_platform set yet. Once all schemas are updated, this map can be removed.
 const CREDENTIAL_PLATFORMS = {
   'service.github': 'github',
   'service.notion': 'notion',
@@ -516,13 +518,30 @@ function fieldIsVisible(field, config) {
   return (field.depends_on.values || []).includes(depValue)
 }
 
+// ── Derive platformId for credential/session picker ──────────────────────────
+const BROWSER_PLATFORMS = ['instagram', 'linkedin', 'x', 'tiktok']
+
+function derivePlatformId(node) {
+  if (!node) return null
+  // Schema-defined takes priority
+  if (node.schema?.credential_platform) return node.schema.credential_platform
+  // Hardcoded map fallback
+  if (CREDENTIAL_PLATFORMS[node.subtype]) return CREDENTIAL_PLATFORMS[node.subtype]
+  // Browser node pattern: "instagram.like_posts" → "instagram"
+  const subtype = node.subtype || ''
+  const prefix = subtype.split('.')[0]
+  if (BROWSER_PLATFORMS.includes(prefix)) return prefix
+  return null
+}
+
 // ── Inspector panel (right side) ──────────────────────────────────────────────
 function Inspector({ node, onConfigChange, onClose, onNavigate }) {
   const [copied, setCopied] = useState(false)
   const [connections, setConnections] = useState([])
   const [loadingCreds, setLoadingCreds] = useState(false)
 
-  const platformId = node ? (node.schema?.credential_platform || CREDENTIAL_PLATFORMS[node.subtype] || null) : null
+  const platformId = derivePlatformId(node)
+  const isBrowserPlatform = BROWSER_PLATFORMS.includes(platformId)
 
   useEffect(() => {
     if (!platformId) { setConnections([]); return }
@@ -575,7 +594,7 @@ function Inspector({ node, onConfigChange, onClose, onNavigate }) {
         {/* Credential dropdown — shown for platforms that require auth */}
         {platformId && (
           <>
-            <Label>CREDENTIAL</Label>
+            <Label>{isBrowserPlatform ? 'SESSION' : 'CREDENTIAL'}</Label>
             <div style={{ marginBottom: 10 }}>
               <select
                 value={node.config?.credential_id ?? ''}
@@ -910,6 +929,7 @@ export default function NodeRunner({ onNavigate }) {
   const [saveMsg,       setSaveMsg]       = useState(null) // { ok: bool, text: string }
   const [showWfModal,   setShowWfModal]   = useState(false)
   const [showSaveModal, setShowSaveModal] = useState(false)
+  const [isDirty, setIsDirty] = useState(false)
 
   const [chatOpen, setChatOpen] = useState(false)
   const [jsonView, setJsonView] = useState(false)
@@ -1051,6 +1071,7 @@ export default function NodeRunner({ onNavigate }) {
       runStatus: null, runOutputs: null, runOutputItems: 0, runDuration: null, runError: null,
     }])
     setSelectedId(id)
+    setIsDirty(true)
   }, [])
 
   // Keep addNode accessible from mouseup closure via ref
@@ -1069,10 +1090,13 @@ export default function NodeRunner({ onNavigate }) {
     setNodes(prev => prev.filter(n => n.id !== id))
     setEdges(prev => prev.filter(e => e.source !== id && e.target !== id))
     if (id === selectedId) { setSelectedId(null); setInspectorOpen(false) }
+    setIsDirty(true)
   }
 
-  const updateConfig = (nodeId, key, val) =>
+  const updateConfig = (nodeId, key, val) => {
     setNodes(prev => prev.map(n => n.id === nodeId ? { ...n, config: { ...n.config, [key]: val } } : n))
+    setIsDirty(true)
+  }
 
   // ── Edge drawing ──────────────────────────────────────────────────────────
   const startEdge = (e, nodeId, portIdx) => {
@@ -1098,6 +1122,7 @@ export default function NodeRunner({ onNavigate }) {
         targetPortId: tNode.inputs[targetPortIdx]?.id,
       }]
     })
+    setIsDirty(true)
     dragRef.current = null; setPendingEdge(null)
   }
 
@@ -1207,6 +1232,7 @@ export default function NodeRunner({ onNavigate }) {
       const saved = await SaveWorkflow(req)
       if (saved?.id) {
         setWfId(saved.id)
+        setIsDirty(false)
         setSaveMsg({ ok: true, text: 'Saved' })
       } else {
         setSaveMsg({ ok: false, text: 'Save returned no ID' })
@@ -1262,6 +1288,7 @@ export default function NodeRunner({ onNavigate }) {
       setEdges(loadedEdges)
       setSelectedId(null)
       setGlobalStatus(null)
+      setIsDirty(false)
       setCamera({ x: 60, y: 60, zoom: 1 })
       setShowWfModal(false)
     } catch (e) {
@@ -1281,7 +1308,7 @@ export default function NodeRunner({ onNavigate }) {
     if (nodes.length > 0 && !window.confirm('Create a new workflow? Unsaved changes will be lost.')) return
     setWfId(null); setWfName('Untitled Workflow'); setWfActive(false)
     setNodes([]); setEdges([]); setSelectedId(null); setGlobalStatus(null)
-    setCamera({ x: 60, y: 60, zoom: 1 })
+    setIsDirty(false); setCamera({ x: 60, y: 60, zoom: 1 })
   }, [nodes.length])
 
   // ── Auto-layout: topological left-to-right layout ─────────────────────────
@@ -1358,7 +1385,7 @@ export default function NodeRunner({ onNavigate }) {
         {/* Workflow name */}
         <input
           value={wfName}
-          onChange={e => setWfName(e.target.value)}
+          onChange={e => { setWfName(e.target.value); setIsDirty(true) }}
           style={{
             background: 'transparent', border: 'none', outline: 'none',
             fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 700,
@@ -1366,6 +1393,15 @@ export default function NodeRunner({ onNavigate }) {
             width: 200, minWidth: 80,
           }}
         />
+        {isDirty && (
+          <span style={{
+            fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: 1,
+            color: '#f59e0b', display: 'flex', alignItems: 'center', gap: 3,
+          }}>
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#f59e0b', display: 'inline-block' }} />
+            UNSAVED
+          </span>
+        )}
 
         {/* Active toggle */}
         <button
@@ -1616,7 +1652,7 @@ export default function NodeRunner({ onNavigate }) {
                     <path d={ep.path} stroke={ep.color} strokeWidth={1.5} fill="none" strokeOpacity={0.5} />
                     <path d={ep.path} stroke={ep.color} strokeWidth={4} fill="none" strokeOpacity={0}
                       style={{ pointerEvents: 'stroke', cursor: 'pointer' }}
-                      onClick={() => setEdges(prev => prev.filter(e => e.id !== ep.id))}
+                      onClick={() => { setEdges(prev => prev.filter(e => e.id !== ep.id)); setIsDirty(true) }}
                     />
                   </g>
                 ))}
