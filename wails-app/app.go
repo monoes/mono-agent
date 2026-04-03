@@ -1065,6 +1065,29 @@ func (a *App) GetSessions() []SessionInfo {
 	return sessions
 }
 
+// TestSession validates a browser session by checking if it exists and hasn't expired.
+func (a *App) TestSession(id int) string {
+	if a.db == nil {
+		return "error: database not available"
+	}
+	var platform, cookiesJSON string
+	var activeInt int
+	err := a.db.QueryRow(
+		`SELECT platform, cookies_json, (expiry > datetime('now')) as active
+		 FROM crawler_sessions WHERE id = ?`, id,
+	).Scan(&platform, &cookiesJSON, &activeInt)
+	if err != nil {
+		return "error: session not found"
+	}
+	if activeInt != 1 {
+		return "error: session expired"
+	}
+	if len(cookiesJSON) < 10 {
+		return "error: no cookies stored"
+	}
+	return "ok"
+}
+
 func (a *App) DeleteSession(id int) error {
 	if a.db == nil {
 		return fmt.Errorf("database not available")

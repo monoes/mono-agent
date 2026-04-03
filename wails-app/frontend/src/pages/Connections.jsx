@@ -212,7 +212,12 @@ function Modal({ platform, conn, onClose, onRefresh, onDisconnect }) {
   const test = useCallback(async () => {
     if (!conn) return
     setTesting(true); setTestMsg(null)
-    try { setTestMsg(await api.testConnection(conn.id) === 'ok' ? 'ok' : 'error') }
+    try {
+      const result = conn._type === 'session'
+        ? await api.testSession(conn.id)
+        : await api.testConnection(conn.id)
+      setTestMsg(result === 'ok' ? 'ok' : 'error')
+    }
     finally { setTesting(false) }
   }, [conn])
 

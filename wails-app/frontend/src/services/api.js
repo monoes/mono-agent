@@ -43,6 +43,7 @@ export const api = {
   listConnections:      (platform = '') => GoApp.ListConnections(platform).catch(() => []),
   listPlatforms:        (connectVia = '') => GoApp.ListPlatformsJSON(connectVia).then(s => JSON.parse(s)).catch(() => []),
   testConnection:       (id) => GoApp.TestConnection(id).catch(e => `error: ${e}`),
+  testSession:          (id) => GoApp.TestSession(id).catch(e => `error: ${e}`),
   removeConnection:     (id) => GoApp.RemoveConnection(id).catch(e => `error: ${e}`),
   getConnectionsForPlatform: (platformID) => GoApp.GetConnectionsForPlatform(platformID).catch(() => []),
   saveConnectionDirect: (platformID, method, fieldValues) =>
