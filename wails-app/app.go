@@ -2388,9 +2388,16 @@ func (a *App) ListPlatformsJSON(connectVia string) string {
 }
 
 // TestConnection re-validates a connection by ID.
+// For OAuth connections it attempts a silent token refresh first.
 func (a *App) TestConnection(id string) string {
 	if a.connMgr == nil {
 		return "error: manager not initialized"
+	}
+	// Attempt silent token refresh for OAuth connections before testing.
+	if conn, err := a.connMgr.Get(a.ctx, id); err == nil && conn != nil && conn.Method == "oauth" {
+		if _, refreshErr := a.getResourceCredentialData(a.ctx, id); refreshErr != nil {
+			fmt.Printf("token refresh attempted: %v\n", refreshErr)
+		}
 	}
 	if err := a.connMgr.Test(a.ctx, id); err != nil {
 		return fmt.Sprintf("error: %v", err)

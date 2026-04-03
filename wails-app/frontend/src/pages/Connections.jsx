@@ -305,21 +305,46 @@ function Modal({ platform, conn, onClose, onRefresh, onDisconnect }) {
               </div>
               {testMsg && (
                 <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, padding: '7px 12px', borderRadius: 'var(--radius)', background: testMsg === 'ok' ? 'rgba(74,222,128,.08)' : 'rgba(239,68,68,.08)', border: `1px solid ${testMsg === 'ok' ? 'rgba(74,222,128,.25)' : 'rgba(239,68,68,.25)'}`, color: testMsg === 'ok' ? 'var(--green-neon)' : 'var(--red)' }}>
-                  {testMsg === 'ok' ? '✓ Connection OK' : '✗ Test failed'}
+                  {testMsg === 'ok' ? '✓ Connection OK' : (
+                    <div>
+                      <div>✗ Authentication expired or invalid</div>
+                      {conn.method === 'oauth' && (
+                        <div style={{ marginTop: 8, fontSize: 10, color: 'var(--text-muted)' }}>
+                          Your access token has expired. Click <strong style={{ color: 'var(--cyan)' }}>Reconnect</strong> below to re-authorize.
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
               {saveErr && <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, padding: '7px 12px', borderRadius: 'var(--radius)', background: 'rgba(239,68,68,.08)', border: '1px solid rgba(239,68,68,.25)', color: 'var(--red)' }}>{saveErr}</div>}
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <button className="btn btn-secondary btn-sm" onClick={test} disabled={testing} style={{ gap: 5 }}>
+                <button className="btn btn-secondary btn-sm" onClick={test} disabled={testing || flowRunning} style={{ gap: 5 }}>
                   {testing ? <Loader size={11} style={{ animation: 'spin .7s linear infinite' }} /> : <CheckCircle size={11} />}
                   {testing ? 'Testing…' : 'Test'}
                 </button>
+                {conn.method === 'oauth' && testMsg && testMsg !== 'ok' && (
+                  <button className="btn btn-primary btn-sm" onClick={startOAuthFlow} disabled={flowRunning} style={{ gap: 5 }}>
+                    {flowRunning ? <Loader size={11} style={{ animation: 'spin .7s linear infinite' }} /> : <RefreshCw size={11} />}
+                    {flowRunning ? 'Reconnecting…' : 'Reconnect'}
+                  </button>
+                )}
                 <button className="btn btn-danger btn-sm" onClick={disconnect} disabled={removing} style={{ gap: 5 }}>
                   {removing ? <Loader size={11} style={{ animation: 'spin .7s linear infinite' }} /> : <Trash2 size={11} />}
                   {removing ? 'Removing…' : 'Disconnect'}
                 </button>
                 <button className="btn btn-ghost btn-sm" onClick={onClose}>Close</button>
               </div>
+              {flowSteps.length > 0 && (
+                <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '8px 10px', maxHeight: 120, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 5 }}>
+                  {flowSteps.map((step, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ width: 5, height: 5, borderRadius: '50%', background: step.kind === 'success' ? 'var(--green-neon)' : step.kind === 'error' ? 'var(--red)' : 'var(--text-muted)', flexShrink: 0 }} />
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: step.kind === 'success' ? 'var(--green-neon)' : step.kind === 'error' ? 'var(--red)' : 'var(--text-secondary)' }}>{step.message}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </>
           ) : (
             /* ── Not connected state ── */
