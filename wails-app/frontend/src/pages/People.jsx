@@ -409,6 +409,7 @@ export default function People({ onProfile }) {
   const [tagsMap, setTagsMap] = useState({})
   const [count, setCount]     = useState(0)
   const [loading, setLoading] = useState(true)
+  const [error, setError]     = useState(null)
   const [platform, setPlatform] = useState('')
   const [search, setSearch]   = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
@@ -427,23 +428,29 @@ export default function People({ onProfile }) {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const [data, total] = await Promise.all([
-      api.getPeople(platform, debouncedSearch, LIMIT, offset),
-      api.getPeopleCount(platform, debouncedSearch),
-    ])
-    const rows = data || []
-    setPeople(rows)
-    setCount(total || 0)
+    try {
+      setError(null)
+      const [data, total] = await Promise.all([
+        api.getPeople(platform, debouncedSearch, LIMIT, offset),
+        api.getPeopleCount(platform, debouncedSearch),
+      ])
+      const rows = data || []
+      setPeople(rows)
+      setCount(total || 0)
 
-    // Bulk-load tags for all visible people
-    if (rows.length > 0) {
-      const ids = rows.map(p => p.id)
-      const tm  = await api.getPeopleTagsMap(ids)
-      setTagsMap(tm || {})
-    } else {
-      setTagsMap({})
+      // Bulk-load tags for all visible people
+      if (rows.length > 0) {
+        const ids = rows.map(p => p.id)
+        const tm  = await api.getPeopleTagsMap(ids)
+        setTagsMap(tm || {})
+      } else {
+        setTagsMap({})
+      }
+    } catch (e) {
+      setError(e?.message || 'Failed to load people')
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }, [platform, debouncedSearch, offset])
 
   useEffect(() => { load() }, [load])
@@ -476,6 +483,7 @@ export default function People({ onProfile }) {
       </div>
 
       <div className="page-body">
+        {error && <div style={{ padding: '12px 16px', background: 'rgba(239,68,68,.08)', border: '1px solid rgba(239,68,68,.2)', borderRadius: 'var(--radius)', fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--red)', marginBottom: 12 }}>{error}</div>}
         <div className="filters-bar">
           <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
             <Search size={13} style={{ position: 'absolute', left: 10, color: 'var(--text-muted)', pointerEvents: 'none' }} />

@@ -14,6 +14,7 @@ export default function Logs({ logs, onClear }) {
   const containerRef = useRef(null)
   const [autoScroll, setAutoScroll] = useState(true)
   const [filter, setFilter] = useState('')
+  const [levelFilter, setLevelFilter] = useState('all')
 
   useEffect(() => {
     if (autoScroll && endRef.current) {
@@ -28,13 +29,21 @@ export default function Logs({ logs, onClear }) {
     setAutoScroll(nearBottom)
   }
 
-  const filtered = filter
-    ? logs.filter(l =>
-        l.message?.toLowerCase().includes(filter.toLowerCase()) ||
-        l.source?.toLowerCase().includes(filter.toLowerCase()) ||
-        l.level?.toLowerCase().includes(filter.toLowerCase())
-      )
-    : logs
+  const filtered = logs.filter(l => {
+    if (levelFilter !== 'all') {
+      const lvl = (l.level || '').toUpperCase()
+      if (lvl !== levelFilter && !(levelFilter === 'WARN' && lvl === 'WARNING')) return false
+    }
+    if (filter) {
+      const q = filter.toLowerCase()
+      if (
+        !l.message?.toLowerCase().includes(q) &&
+        !l.source?.toLowerCase().includes(q) &&
+        !l.level?.toLowerCase().includes(q)
+      ) return false
+    }
+    return true
+  })
 
   return (
     <>
@@ -71,6 +80,18 @@ export default function Logs({ logs, onClear }) {
             onChange={e => setFilter(e.target.value)}
             style={{ maxWidth: 300 }}
           />
+          <select
+            className="filter-select"
+            value={levelFilter}
+            onChange={e => setLevelFilter(e.target.value)}
+            style={{ maxWidth: 120 }}
+          >
+            <option value="all">All Levels</option>
+            <option value="INFO">INFO</option>
+            <option value="WARN">WARN</option>
+            <option value="ERROR">ERROR</option>
+            <option value="SYSTEM">SYSTEM</option>
+          </select>
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>
             {filtered.length} {filtered.length !== 1 ? 'entries' : 'entry'}
           </span>

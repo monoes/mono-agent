@@ -1,7 +1,16 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Plus, Play, Trash2, Pause, RefreshCw, Target, Zap } from 'lucide-react'
+import { Plus, Play, Trash2, Pause, RefreshCw, Target, Zap, Pencil } from 'lucide-react'
 import { api, PLATFORMS, STATES, onActionComplete } from '../services/api.js'
 import ActionInputsForm from '../components/ActionInputsForm.jsx'
+
+const ACTION_LABELS = {
+  like_posts: 'Like Posts', comment_on_posts: 'Comment on Posts', send_dms: 'Send DMs',
+  auto_reply_dms: 'Auto-Reply DMs', follow_users: 'Follow Users', unfollow_users: 'Unfollow Users',
+  watch_stories: 'Watch Stories', scrape_profile_info: 'Scrape Profiles', export_followers: 'Export Followers',
+  engage_with_posts: 'Engage with Posts', engage_user_posts: 'Engage User Posts',
+  extract_post_data: 'Extract Post Data', publish_post: 'Publish Post',
+  like_comments_on_posts: 'Like Comments', find_by_keyword: 'Find by Keyword',
+}
 
 function ActionBadge({ state }) {
   return <span className={`badge badge-state-${state.toLowerCase()}`}>{state}</span>
@@ -11,14 +20,15 @@ function PlatformBadge({ platform }) {
   return <span className={`badge badge-platform-${(platform || '').toLowerCase()}`}>{platform}</span>
 }
 
-function CreateModal({ availableTypes, onClose, onCreated }) {
+function CreateModal({ availableTypes, onClose, onCreated, editAction }) {
+  const isEdit = !!editAction
   const [form, setForm] = useState({
-    title: '',
-    type: '',
-    platform: 'INSTAGRAM',
-    keywords: '',
-    content_message: '',
-    params: {},
+    title: editAction?.title || '',
+    type: editAction?.type || '',
+    platform: editAction?.platform || 'INSTAGRAM',
+    keywords: editAction?.keywords || '',
+    content_message: editAction?.content_message || '',
+    params: editAction?.params || {},
   })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -41,10 +51,21 @@ function CreateModal({ availableTypes, onClose, onCreated }) {
     setLoading(true)
     setError('')
     try {
-      const created = await api.createAction(form)
-      if (created) {
-        onCreated(created)
+      if (isEdit) {
+        // Update params for existing action
+        await api.updateActionParams(editAction.id, { ...form.params, title: form.title, keywords: form.keywords, content_message: form.content_message })
+        // Re-fetch updated action to return to parent
+        const updated = await api.getAction(editAction.id)
+        if (updated) {
+          onCreated(updated, true)
+        }
         onClose()
+      } else {
+        const created = await api.createAction(form)
+        if (created) {
+          onCreated(created, false)
+          onClose()
+        }
       }
     } catch (err) {
       setError(String(err))
@@ -57,7 +78,7 @@ function CreateModal({ availableTypes, onClose, onCreated }) {
     <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal">
         <div className="modal-title">
-          <span>New Action</span>
+          <span>{isEdit ? 'Edit Action' : 'New Action'}</span>
           <button className="btn btn-ghost btn-icon" onClick={onClose} style={{ fontSize: 18, color: 'var(--text-muted)' }}>×</button>
         </div>
         <form onSubmit={submit}>
@@ -78,6 +99,7 @@ function CreateModal({ availableTypes, onClose, onCreated }) {
                 className="form-select"
                 value={form.platform}
                 onChange={e => setForm(f => ({ ...f, platform: e.target.value, type: '' }))}
+                disabled={isEdit}
               >
                 {PLATFORMS.map(p => <option key={p} value={p}>{p}</option>)}
               </select>
@@ -88,9 +110,10 @@ function CreateModal({ availableTypes, onClose, onCreated }) {
                 className="form-select"
                 value={form.type}
                 onChange={e => setForm(f => ({ ...f, type: e.target.value }))}
+                disabled={isEdit}
               >
                 <option value="">— Select —</option>
-                {types.map(t => <option key={t} value={t}>{t}</option>)}
+                {types.map(t => <option key={t} value={t}>{ACTION_LABELS[t] || t}</option>)}
               </select>
             </div>
           </div>
@@ -132,8 +155,8 @@ function CreateModal({ availableTypes, onClose, onCreated }) {
           <div className="modal-actions">
             <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
             <button type="submit" className="btn btn-primary" disabled={loading}>
-              {loading ? <span className="spinner" style={{ width: 14, height: 14 }} /> : <Plus size={14} />}
-              Create Action
+              {loading ? <span className="spinner" style={{ width: 14, height: 14 }} /> : isEdit ? <Pencil size={14} /> : <Plus size={14} />}
+              {isEdit ? 'Save Changes' : 'Create Action'}
             </button>
           </div>
         </form>
@@ -148,6 +171,7 @@ export default function Actions({ onRefresh }) {
   const [filterPlatform, setFilterPlatform] = useState('')
   const [filterState, setFilterState] = useState('')
   const [showCreate, setShowCreate] = useState(false)
+  const [editAction, setEditAction] = useState(null)
   const [availableTypes, setAvailableTypes] = useState({})
   const [runningIds, setRunningIds] = useState(new Set())
   const [runError, setRunError] = useState('')
@@ -284,7 +308,7 @@ export default function Actions({ onRefresh }) {
                     <div className="action-meta">
                       <PlatformBadge platform={action.platform} />
                       <ActionBadge state={action.state} />
-                      <span className="action-type">{action.type}</span>
+                      <span className="action-type">{ACTION_LABELS[action.type] || action.type}</span>
                       {action.target_count > 0 && (
                         <span className="action-stat">
                           <Target size={10} />
@@ -315,6 +339,11 @@ export default function Actions({ onRefresh }) {
                         <Pause size={11} /> Pause
                       </button>
                     )}
+                    {!isRunning && (
+                      <button className="btn btn-secondary btn-sm btn-icon" onClick={() => { setEditAction(action); setShowCreate(true) }} aria-label={`Edit ${action.title}`} title="Edit action">
+                        <Pencil size={12} />
+                      </button>
+                    )}
                     <button className="btn btn-danger btn-sm btn-icon" onClick={() => handleDelete(action.id)} aria-label={`Delete ${action.title}`} title="Delete action">
                       <Trash2 size={12} />
                     </button>
@@ -329,9 +358,14 @@ export default function Actions({ onRefresh }) {
       {showCreate && (
         <CreateModal
           availableTypes={availableTypes}
-          onClose={() => setShowCreate(false)}
-          onCreated={(created) => {
-            setActions(prev => [created, ...prev])
+          editAction={editAction}
+          onClose={() => { setShowCreate(false); setEditAction(null) }}
+          onCreated={(action, isUpdate) => {
+            if (isUpdate) {
+              setActions(prev => prev.map(a => a.id === action.id ? action : a))
+            } else {
+              setActions(prev => [action, ...prev])
+            }
             onRefresh?.()
           }}
         />

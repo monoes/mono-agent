@@ -254,18 +254,25 @@ export default function Profile({ id, onBack, onOpenURL, onOpenPost }) {
   const [person, setPerson] = useState(null)
   const [interactions, setInteractions] = useState([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
   const [filterType, setFilterType] = useState('')
 
   const load = async () => {
     if (!id) return
     setLoading(true)
-    const [p, i] = await Promise.all([
-      api.getPersonDetail(id),
-      api.getPersonInteractions(id),
-    ])
-    setPerson(p)
-    setInteractions(i || [])
-    setLoading(false)
+    try {
+      setError(null)
+      const [p, i] = await Promise.all([
+        api.getPersonDetail(id),
+        api.getPersonInteractions(id),
+      ])
+      setPerson(p)
+      setInteractions(i || [])
+    } catch (e) {
+      setError(e?.message || 'Failed to load profile')
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => { load() }, [id])
@@ -274,6 +281,17 @@ export default function Profile({ id, onBack, onOpenURL, onOpenPost }) {
     return (
       <div className="empty-state" style={{ height: '100%' }}>
         <div className="spinner" />
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="empty-state" style={{ height: '100%' }}>
+        <div style={{ padding: '12px 16px', background: 'rgba(239,68,68,.08)', border: '1px solid rgba(239,68,68,.2)', borderRadius: 'var(--radius)', fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--red)', marginBottom: 12 }}>{error}</div>
+        <button className="btn btn-secondary btn-sm" onClick={onBack} style={{ marginTop: 12 }}>
+          <ArrowLeft size={13} /> Back
+        </button>
       </div>
     )
   }

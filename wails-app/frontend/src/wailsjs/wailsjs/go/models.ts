@@ -774,6 +774,56 @@ export namespace main {
 	        this.body = source["body"];
 	    }
 	}
+	export class UpdateInfo {
+	    current_version: string;
+	    latest_version: string;
+	    update_available: boolean;
+	    release_url: string;
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new UpdateInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.current_version = source["current_version"];
+	        this.latest_version = source["latest_version"];
+	        this.update_available = source["update_available"];
+	        this.release_url = source["release_url"];
+	        this.error = source["error"];
+	    }
+	}
+	export class UpdateResult {
+	    success: boolean;
+	    new_version?: string;
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new UpdateResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.success = source["success"];
+	        this.new_version = source["new_version"];
+	        this.error = source["error"];
+	    }
+	}
+	export class VersionInfo {
+	    version: string;
+	    build_date: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new VersionInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.version = source["version"];
+	        this.build_date = source["build_date"];
+	    }
+	}
 	
 	export class WorkflowDetail {
 	    id: string;

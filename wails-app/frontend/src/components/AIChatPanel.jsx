@@ -439,9 +439,15 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
       <div style={{
         padding: '8px 12px 10px',
         borderTop: '1px solid rgba(0,180,216,0.1)',
-        display: 'flex', gap: 6,
+        display: 'flex', flexDirection: 'column', gap: 6,
         flexShrink: 0,
       }}>
+        {!selectedProvider && (
+          <div style={{ padding: '8px 12px', background: 'rgba(251,191,36,.08)', border: '1px solid rgba(251,191,36,.2)', borderRadius: 'var(--radius)', fontFamily: 'var(--font-mono)', fontSize: 10, color: '#fbbf24' }}>
+            Select an AI provider above to start chatting
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 6 }}>
         <textarea
           ref={textareaRef}
           value={input}
@@ -491,6 +497,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
             : <Send size={13} />
           }
         </button>
+        </div>
       </div>
     </div>
   )

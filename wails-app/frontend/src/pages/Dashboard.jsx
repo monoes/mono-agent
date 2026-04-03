@@ -50,11 +50,15 @@ function relTime(ts) {
 }
 
 // ── Stat card ─────────────────────────────────────────────────────────────────
-function StatCard({ icon: Icon, label, value, color }) {
+function StatCard({ icon: Icon, label, value, color, loading }) {
   return (
     <div className="stat-card" style={{ '--accent-color': color, '--icon-bg': color + '18', '--icon-color': color }}>
       <div className="stat-icon"><Icon size={16} /></div>
-      <div className="stat-value">{value ?? '—'}</div>
+      <div className="stat-value">
+        {loading
+          ? <div style={{ width: 40, height: 20, background: 'var(--elevated)', borderRadius: 4, animation: 'pulse-dot 1.5s infinite' }} />
+          : (value ?? '—')}
+      </div>
       <div className="stat-label">{label}</div>
     </div>
   )
@@ -185,6 +189,7 @@ function ExecRow({ exec }) {
 // ── Main dashboard ────────────────────────────────────────────────────────────
 export default function Dashboard({ stats, onRefresh, onNavigate }) {
   const [refreshing, setRefreshing]     = useState(false)
+  const [dashLoading, setDashLoading]   = useState(true)
   const [workflows, setWorkflows]       = useState([])
   const [executions, setExecutions]     = useState([])
   const [ver, setVer]                   = useState(null)
@@ -209,6 +214,7 @@ export default function Dashboard({ stats, onRefresh, onNavigate }) {
       map[e.workflow_id].push(e)
     })
     setExecMap(map)
+    setDashLoading(false)
   }, [])
 
   useEffect(() => { load() }, [load])
@@ -255,10 +261,10 @@ export default function Dashboard({ stats, onRefresh, onNavigate }) {
       <div className="page-body">
         {/* ── Stat cards ── */}
         <div className="stat-grid">
-          <StatCard icon={Layers}     label="Workflows"        value={workflows.length} color="var(--cyan)" />
-          <StatCard icon={GitBranch}  label="Active"           value={activeWFs}        color="var(--purple-light)" />
-          <StatCard icon={Zap}        label="Recent Runs"      value={totalExecs}       color="#eab308" />
-          <StatCard icon={Users}      label="People Found"     value={totalPeople}      color="var(--green-neon)" />
+          <StatCard icon={Layers}     label="Workflows"        value={workflows.length} color="var(--cyan)" loading={dashLoading} />
+          <StatCard icon={GitBranch}  label="Active"           value={activeWFs}        color="var(--purple-light)" loading={dashLoading} />
+          <StatCard icon={Zap}        label="Recent Runs"      value={totalExecs}       color="#eab308" loading={dashLoading} />
+          <StatCard icon={Users}      label="People Found"     value={totalPeople}      color="var(--green-neon)" loading={dashLoading} />
         </div>
 
         <div className="dashboard-grid">

@@ -7,6 +7,8 @@ export function AddActionTarget(arg1:string,arg2:string,arg3:string):Promise<voi
 
 export function AddPersonTag(arg1:string,arg2:string,arg3:string):Promise<main.TagInfo>;
 
+export function CheckForUpdate():Promise<main.UpdateInfo>;
+
 export function ClearAIChatHistory(arg1:string):Promise<string>;
 
 export function ClearLogs():Promise<void>;
@@ -81,6 +83,8 @@ export function GetSocialLists():Promise<Array<main.SocialListInfo>>;
 
 export function GetTemplates():Promise<Array<main.TemplateInfo>>;
 
+export function GetVersion():Promise<main.VersionInfo>;
+
 export function GetWorkflow(arg1:string):Promise<main.WorkflowDetail>;
 
 export function GetWorkflowExecutions(arg1:string,arg2:number):Promise<Array<main.WorkflowExecutionSummary>>;
@@ -122,6 +126,8 @@ export function SaveConnectionDirect(arg1:string,arg2:string,arg3:string):Promis
 export function SaveCredential(arg1:main.SaveCredentialRequest):Promise<main.CredentialSummary>;
 
 export function SaveWorkflow(arg1:main.SaveWorkflowRequest):Promise<main.WorkflowSummary>;
+
+export function SelfUpdate():Promise<main.UpdateResult>;
 
 export function SetOAuthCredentials(arg1:string,arg2:string,arg3:string):Promise<string>;
 

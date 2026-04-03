@@ -36,7 +36,8 @@ function resolveConn(platform, connections, sessions) {
 
 function Tile({ platform, conn, onClick }) {
   const [hov, setHov] = useState(false)
-  const connected = !!conn
+  const connected = conn && conn.status === 'active'
+  const expired = conn && conn.status !== 'active'
   return (
     <div
       onClick={onClick}
@@ -55,15 +56,15 @@ function Tile({ platform, conn, onClick }) {
         minWidth: 0,
       }}
     >
-      <span style={{ fontSize: 24, lineHeight: 1, filter: connected ? 'none' : 'grayscale(40%) opacity(0.7)' }}>
+      <span style={{ fontSize: 24, lineHeight: 1, filter: (connected || expired) ? 'none' : 'grayscale(40%) opacity(0.7)' }}>
         {platform.iconEmoji || '🔌'}
       </span>
-      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 600, color: connected ? 'var(--text)' : 'var(--text-secondary)', textAlign: 'center', lineHeight: 1.3 }}>
+      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 600, color: (connected || expired) ? 'var(--text)' : 'var(--text-secondary)', textAlign: 'center', lineHeight: 1.3 }}>
         {platform.name}
       </span>
       <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-        <span style={{ width: 6, height: 6, borderRadius: '50%', background: connected ? 'var(--green-neon)' : 'var(--text-muted)', boxShadow: connected ? '0 0 5px var(--green-neon)' : 'none', flexShrink: 0 }} />
-        {connected && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-muted)', maxWidth: 72, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{conn.account}</span>}
+        <span style={{ width: 6, height: 6, borderRadius: '50%', background: connected ? 'var(--green-neon)' : expired ? '#fbbf24' : 'var(--text-muted)', boxShadow: connected ? '0 0 5px var(--green-neon)' : expired ? '0 0 5px #fbbf24' : 'none', flexShrink: 0 }} />
+        {(connected || expired) && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-muted)', maxWidth: 72, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{conn.account}</span>}
       </div>
     </div>
   )
@@ -216,6 +217,7 @@ function Modal({ platform, conn, onClose, onRefresh, onDisconnect }) {
 
   const disconnect = useCallback(async () => {
     if (!conn) return
+    if (!window.confirm(`Disconnect from ${name}? This will remove your stored credentials.`)) return
     setRemoving(true)
     try {
       if (conn._type === 'session') { await api.deleteSession(conn.id) }
@@ -383,15 +385,22 @@ function Modal({ platform, conn, onClose, onRefresh, onDisconnect }) {
                   )}
 
                   {flowSteps.length === 0 && !flowRunning && (
-                    <button
-                      className="btn btn-secondary btn-sm"
-                      disabled={!oauthCreds.clientID || !oauthCreds.clientSecret}
-                      onClick={startOAuthFlow}
-                      style={{ gap: 5, alignSelf: 'flex-start' }}
-                      title={(!oauthCreds.clientID || !oauthCreds.clientSecret) ? 'Save your OAuth credentials first' : ''}
-                    >
-                      <CheckCircle size={11} /> Connect with {name}
-                    </button>
+                    <>
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        disabled={!oauthCreds.clientID || !oauthCreds.clientSecret}
+                        onClick={startOAuthFlow}
+                        style={{ gap: 5, alignSelf: 'flex-start' }}
+                        title={(!oauthCreds.clientID || !oauthCreds.clientSecret) ? 'Save your OAuth credentials first' : ''}
+                      >
+                        <CheckCircle size={11} /> Connect with {name}
+                      </button>
+                      {(!oauthCreds.clientID || !oauthCreds.clientSecret) && (
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)' }}>
+                          Save your OAuth credentials above first
+                        </span>
+                      )}
+                    </>
                   )}
                   {flowSteps.length > 0 && (
                     <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '8px 10px', maxHeight: 160, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 5 }}>
@@ -548,12 +557,14 @@ export default function Connections({ onRefresh }) {
   const [connections,  setConnections]  = useState([])
   const [sessions,     setSessions]     = useState([])
   const [loading,      setLoading]      = useState(true)
+  const [error,        setError]        = useState(null)
   const [selected,     setSelected]     = useState(null)
   const pollRef = useRef(null)
 
   const loadAll = useCallback(async (silent = false) => {
     if (!silent) setLoading(true)
     try {
+      if (!silent) setError(null)
       const [plats, conns, sess] = await Promise.all([
         api.listPlatforms(''),
         api.listConnections(''),
@@ -562,6 +573,8 @@ export default function Connections({ onRefresh }) {
       setPlatforms(Array.isArray(plats) ? plats : [])
       setConnections(Array.isArray(conns) ? conns : [])
       setSessions(Array.isArray(sess) ? sess : [])
+    } catch (e) {
+      if (!silent) setError(e?.message || 'Failed to load connections')
     } finally {
       if (!silent) setLoading(false)
     }
@@ -612,6 +625,7 @@ export default function Connections({ onRefresh }) {
       </div>
 
       <div className="page-body">
+        {error && <div style={{ padding: '12px 16px', background: 'rgba(239,68,68,.08)', border: '1px solid rgba(239,68,68,.2)', borderRadius: 'var(--radius)', fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--red)', marginBottom: 12 }}>{error}</div>}
         {loading ? (
           <div className="empty-state"><div className="spinner" /></div>
         ) : platforms.length === 0 ? (

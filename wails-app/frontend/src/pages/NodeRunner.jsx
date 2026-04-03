@@ -522,7 +522,7 @@ function Inspector({ node, onConfigChange, onClose, onNavigate }) {
   const [connections, setConnections] = useState([])
   const [loadingCreds, setLoadingCreds] = useState(false)
 
-  const platformId = node ? CREDENTIAL_PLATFORMS[node.subtype] : null
+  const platformId = node ? (node.schema?.credential_platform || CREDENTIAL_PLATFORMS[node.subtype] || null) : null
 
   useEffect(() => {
     if (!platformId) { setConnections([]); return }
@@ -1270,6 +1270,7 @@ export default function NodeRunner({ onNavigate }) {
 
   // ── New canvas ────────────────────────────────────────────────────────────
   const handleNew = useCallback(() => {
+    if (nodes.length > 0 && !window.confirm('Create a new workflow? Unsaved changes will be lost.')) return
     setWfId(null); setWfName('Untitled Workflow'); setWfActive(false)
     setNodes([]); setEdges([]); setSelectedId(null); setGlobalStatus(null)
     setCamera({ x: 60, y: 60, zoom: 1 })
@@ -1427,7 +1428,7 @@ export default function NodeRunner({ onNavigate }) {
         {/* Clear */}
         <button
           style={{ ...tbBtn, color: nodes.length ? 'rgba(239,68,68,0.6)' : 'var(--text-muted)' }}
-          onMouseDown={() => { setNodes([]); setEdges([]); setSelectedId(null); setGlobalStatus(null) }}
+          onMouseDown={() => { if (nodes.length > 0 && !window.confirm('Clear the entire canvas?')) return; setNodes([]); setEdges([]); setSelectedId(null); setGlobalStatus(null) }}
           title="Clear canvas"
         >
           <Trash2 size={13} />
@@ -1625,7 +1626,7 @@ export default function NodeRunner({ onNavigate }) {
                   node={node}
                   selected={selectedId === node.id}
                   zoom={camera.zoom}
-                  onClick={() => setSelectedId(node.id)}
+                  onClick={() => { setSelectedId(node.id); setInspectorOpen(true) }}
                   onDelete={() => deleteNode(node.id)}
                   onConfigure={() => { setSelectedId(node.id); setInspectorOpen(true) }}
                   onHeaderMouseDown={(e) => {

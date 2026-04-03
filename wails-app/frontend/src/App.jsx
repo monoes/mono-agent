@@ -43,6 +43,7 @@ export default function App() {
 
   const navigate = useCallback((page) => {
     if (page !== 'postDetail') setPostId(null)
+    if (page !== 'profile' && page !== 'postDetail') setProfileId(null)
     setActivePage(page)
   }, [])
 

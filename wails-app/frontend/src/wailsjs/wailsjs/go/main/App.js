@@ -10,6 +10,10 @@ export function AddPersonTag(arg1, arg2, arg3) {
   return window['go']['main']['App']['AddPersonTag'](arg1, arg2, arg3);
 }
 
+export function CheckForUpdate() {
+  return window['go']['main']['App']['CheckForUpdate']();
+}
+
 export function ClearAIChatHistory(arg1) {
   return window['go']['main']['App']['ClearAIChatHistory'](arg1);
 }
@@ -158,6 +162,10 @@ export function GetTemplates() {
   return window['go']['main']['App']['GetTemplates']();
 }
 
+export function GetVersion() {
+  return window['go']['main']['App']['GetVersion']();
+}
+
 export function GetWorkflow(arg1) {
   return window['go']['main']['App']['GetWorkflow'](arg1);
 }
@@ -240,6 +248,10 @@ export function SaveCredential(arg1) {
 
 export function SaveWorkflow(arg1) {
   return window['go']['main']['App']['SaveWorkflow'](arg1);
+}
+
+export function SelfUpdate() {
+  return window['go']['main']['App']['SelfUpdate']();
 }
 
 export function SetOAuthCredentials(arg1, arg2, arg3) {
