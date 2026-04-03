@@ -1174,8 +1174,8 @@ func findMonoesBinary() (string, error) {
 }
 
 func fileExists(p string) bool {
-	_, err := os.Stat(p)
-	return err == nil
+	info, err := os.Stat(p) // Stat follows symlinks; returns error for broken symlinks
+	return err == nil && !info.IsDir()
 }
 
 func (a *App) ExecuteAction(id string) error {
