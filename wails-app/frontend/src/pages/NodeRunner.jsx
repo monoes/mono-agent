@@ -528,7 +528,15 @@ function Inspector({ node, onConfigChange, onClose, onNavigate }) {
     if (!platformId) { setConnections([]); return }
     setLoadingCreds(true)
     api.getConnectionsForPlatform(platformId)
-      .then(list => setConnections(Array.isArray(list) ? list : []))
+      .then(list => {
+        const conns = Array.isArray(list) ? list : []
+        setConnections(conns)
+        // Auto-select the first (or only) credential if none is set
+        if (conns.length > 0 && !node.config?.credential_id) {
+          const firstId = String(conns[0].id || conns[0].ID || '')
+          if (firstId) onConfigChange(node.id, 'credential_id', firstId)
+        }
+      })
       .catch(() => setConnections([]))
       .finally(() => setLoadingCreds(false))
   }, [platformId, node?.id])
