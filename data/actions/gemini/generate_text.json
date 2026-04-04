@@ -44,8 +44,8 @@
     {
       "id": "t2_find_input",
       "type": "find_element",
-      "selector": "div[contenteditable='true']",
-      "alternatives": ["rich-textarea", "textarea[aria-label*='prompt' i]", ".ql-editor"],
+      "selector": "div.ql-editor[contenteditable='true']",
+      "alternatives": ["[role='textbox'][aria-label*='prompt' i]", "rich-textarea .ql-editor"],
       "variable_name": "promptInput",
       "timeout": 10,
       "onError": { "action": "skip" }
@@ -105,8 +105,8 @@
     {
       "id": "t2_click_send",
       "type": "find_element",
-      "selector": "button[aria-label*='Send' i]",
-      "alternatives": ["button[data-testid='send-button']", "button .send-button-icon"],
+      "selector": "button.send-button",
+      "alternatives": ["button[aria-label='Send message']"],
       "action": "click",
       "variable_name": "sendResult",
       "timeout": 10,
@@ -146,8 +146,8 @@
       "type": "wait",
       "duration": "{{maxWaitSeconds or 60}}",
       "condition": "element_visible",
-      "selector": ".response-container .markdown-content",
-      "alternatives": ["message-content .model-response-text"],
+      "selector": "message-content div.markdown.markdown-main-panel",
+      "alternatives": ["message-content", "structured-content-container.model-response-text"],
       "pollInterval": 2000,
       "timeout": 90,
       "onError": { "action": "mark_failed" }
@@ -169,8 +169,8 @@
     {
       "id": "t2_extract_text",
       "type": "find_element",
-      "selector": ".response-container .markdown-content",
-      "alternatives": ["message-content .model-response-text", "div[data-content-type='text']"],
+      "selector": "message-content div.markdown.markdown-main-panel",
+      "alternatives": ["message-content", "structured-content-container.model-response-text"],
       "extract": "text",
       "variable_name": "extractResult",
       "timeout": 10,

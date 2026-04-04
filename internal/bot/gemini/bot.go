@@ -51,10 +51,9 @@ func (b *GeminiBot) IsLoggedIn(page *rod.Page) (bool, error) {
 
 	// Check for prompt input — only appears when logged in.
 	promptSelectors := []string{
-		"div[contenteditable='true']",
+		"div.ql-editor[contenteditable='true']",
 		"rich-textarea",
-		"textarea[aria-label*='prompt' i]",
-		".ql-editor",
+		"input-area-v2",
 	}
 	for _, sel := range promptSelectors {
 		has, _, err := page.Has(sel)
@@ -132,10 +131,9 @@ func (b *GeminiBot) methodFindPromptInput(_ context.Context, args ...interface{}
 		return nil, fmt.Errorf("find_prompt_input: first arg must be *rod.Page")
 	}
 	selectors := []string{
-		"div[contenteditable='true']",
-		"rich-textarea",
-		"textarea[aria-label*='prompt' i]",
-		".ql-editor",
+		"div.ql-editor[contenteditable='true']",
+		"[role='textbox'][aria-label*='prompt' i]",
+		"rich-textarea .ql-editor",
 	}
 	for _, sel := range selectors {
 		el, err := page.Timeout(5 * time.Second).Element(sel)
@@ -161,9 +159,9 @@ func (b *GeminiBot) methodTypePrompt(_ context.Context, args ...interface{}) (in
 
 	// Find and focus the input.
 	selectors := []string{
-		"div[contenteditable='true']",
-		"rich-textarea",
-		"textarea[aria-label*='prompt' i]",
+		"div.ql-editor[contenteditable='true']",
+		"[role='textbox'][aria-label*='prompt' i]",
+		"rich-textarea .ql-editor",
 	}
 	for _, sel := range selectors {
 		el, err := page.Timeout(5 * time.Second).Element(sel)
@@ -190,10 +188,8 @@ func (b *GeminiBot) methodClickSend(_ context.Context, args ...interface{}) (int
 		return nil, fmt.Errorf("click_send: first arg must be *rod.Page")
 	}
 	selectors := []string{
-		"button[aria-label*='Send' i]",
-		"button[data-testid='send-button']",
-		"button .send-button-icon",
-		"mat-icon[data-mat-icon-name='send']",
+		"button.send-button",
+		"button[aria-label='Send message']",
 	}
 	for _, sel := range selectors {
 		el, err := page.Timeout(5 * time.Second).Element(sel)
@@ -229,16 +225,15 @@ func (b *GeminiBot) methodWaitForResponse(_ context.Context, args ...interface{}
 
 	deadline := time.Now().Add(time.Duration(maxWait) * time.Second)
 	responseSelectors := []string{
-		".response-container .markdown-content",
-		"message-content .model-response-text",
-		".response-container model-response",
-		"div[data-content-type='text']",
+		"message-content div.markdown.markdown-main-panel",
+		"message-content",
+		"structured-content-container.model-response-text",
 	}
 
 	for time.Now().Before(deadline) {
 		// Check if still loading.
 		loading := false
-		loadSelectors := []string{".loading-indicator", "[aria-busy='true']", ".generating-animation"}
+		loadSelectors := []string{"mat-progress-spinner"}
 		for _, sel := range loadSelectors {
 			has, _, _ := page.Has(sel)
 			if has {
@@ -285,9 +280,9 @@ func (b *GeminiBot) methodWaitForImageResponse(_ context.Context, args ...interf
 
 	deadline := time.Now().Add(time.Duration(maxWait) * time.Second)
 	imageSelectors := []string{
-		".response-container img[src*='blob:']",
-		".generated-image img",
-		"img[data-image-id]",
+		"model-response img:not([width='24'])",
+		"message-content img[src*='blob:']",
+		".response-container img",
 	}
 
 	for time.Now().Before(deadline) {
@@ -313,10 +308,9 @@ func (b *GeminiBot) methodExtractTextResponse(_ context.Context, args ...interfa
 		return nil, fmt.Errorf("extract_text_response: first arg must be *rod.Page")
 	}
 	selectors := []string{
-		".response-container .markdown-content",
-		"message-content .model-response-text",
-		"div[data-content-type='text']",
-		".response-container model-response",
+		"message-content div.markdown.markdown-main-panel",
+		"message-content",
+		"structured-content-container.model-response-text",
 	}
 	for _, sel := range selectors {
 		els, err := page.Elements(sel)
@@ -343,10 +337,9 @@ func (b *GeminiBot) methodExtractImageResponse(_ context.Context, args ...interf
 		return nil, fmt.Errorf("extract_image_response: first arg must be *rod.Page")
 	}
 	selectors := []string{
-		".response-container img[src*='blob:']",
-		".generated-image img",
-		"img[data-image-id]",
-		".response-container img:not([alt='avatar']):not([width='24'])",
+		"model-response img:not([width='24']):not([alt=''])",
+		"message-content img[src*='blob:']",
+		".response-container img:not([width='24'])",
 	}
 	var urls []string
 	for _, sel := range selectors {
