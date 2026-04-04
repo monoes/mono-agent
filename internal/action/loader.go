@@ -88,9 +88,18 @@ func (l *ActionLoader) Load(platform, actionType string) (*ActionDef, error) {
 // "<platform>/<ACTION_TYPE>" strings.
 func (l *ActionLoader) ListAvailable() ([]string, error) {
 	var result []string
-	platforms := []string{"instagram", "linkedin", "x", "tiktok"}
 
-	for _, p := range platforms {
+	// Dynamically discover all platform directories under actions/
+	platformDirs, err := data.ActionsFS.ReadDir("actions")
+	if err != nil {
+		return nil, fmt.Errorf("list platforms: %w", err)
+	}
+
+	for _, pd := range platformDirs {
+		if !pd.IsDir() {
+			continue
+		}
+		p := pd.Name()
 		entries, err := data.ActionsFS.ReadDir(fmt.Sprintf("actions/%s", p))
 		if err != nil {
 			continue

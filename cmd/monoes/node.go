@@ -53,7 +53,8 @@ var reLinkedInActivity = regexp.MustCompile(`activity[-:](\d+)`)
 // isBrowserNodeType returns true for platform.action social/browser node types.
 func isBrowserNodeType(t string) bool {
 	return strings.HasPrefix(t, "instagram.") || strings.HasPrefix(t, "linkedin.") ||
-		strings.HasPrefix(t, "x.") || strings.HasPrefix(t, "tiktok.")
+		strings.HasPrefix(t, "x.") || strings.HasPrefix(t, "tiktok.") ||
+		strings.HasPrefix(t, "gemini.")
 }
 
 // nodeTypeToPlatform maps a node type to its connections-registry platform ID.

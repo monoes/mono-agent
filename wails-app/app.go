@@ -1969,7 +1969,8 @@ var legacyNodeTypes = map[string]string{
 // isBrowserNodeType returns true for platform.action social/browser node types.
 func isBrowserNodeType(t string) bool {
 	return strings.HasPrefix(t, "instagram.") || strings.HasPrefix(t, "linkedin.") ||
-		strings.HasPrefix(t, "x.") || strings.HasPrefix(t, "tiktok.")
+		strings.HasPrefix(t, "x.") || strings.HasPrefix(t, "tiktok.") ||
+		strings.HasPrefix(t, "gemini.")
 }
 
 func (a *App) RunNode(req NodeRunRequest) NodeRunResult {
