@@ -218,6 +218,10 @@ export function TestConnection(arg1) {
   return window['go']['main']['App']['TestConnection'](arg1);
 }
 
+export function TestSession(arg1) {
+  return window['go']['main']['App']['TestSession'](arg1);
+}
+
 export function UpdateActionParams(arg1, arg2) {
   return window['go']['main']['App']['UpdateActionParams'](arg1, arg2);
 }

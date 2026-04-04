@@ -217,7 +217,7 @@ function Modal({ platform, conn, onClose, onRefresh, onDisconnect }) {
       const result = conn._type === 'session'
         ? await api.testSession(conn.id)
         : await api.testConnection(conn.id)
-      setTestMsg(result === 'ok' ? 'ok' : 'error')
+      setTestMsg(result === 'ok' ? 'ok' : (result || 'error'))
     }
     finally { setTesting(false) }
   }, [conn])
