@@ -1,0 +1,153 @@
+{
+  "id": "instagram-daily-post-gemini-v1",
+  "name": "Instagram Daily Post (Gemini)",
+  "description": "Daily: reads first todo row from Google Sheet, generates AI image + caption via Gemini browser automation (free, no API key), posts to Instagram, marks row done.",
+  "version": 1,
+  "is_active": true,
+  "nodes": [
+    {
+      "id": "n1",
+      "type": "trigger.schedule",
+      "name": "Daily 9am",
+      "position": { "x": 100, "y": 200 },
+      "config": {
+        "cron": "0 9 * * *"
+      }
+    },
+    {
+      "id": "n2",
+      "type": "service.google_sheets",
+      "name": "Read Sheet",
+      "position": { "x": 350, "y": 200 },
+      "config": {
+        "credential_id": "REPLACE_WITH_GOOGLE_CREDENTIAL_ID",
+        "spreadsheet_id": "REPLACE_WITH_SPREADSHEET_ID",
+        "sheet_name": "Sheet1",
+        "operation": "read_rows",
+        "range": "A:J",
+        "use_header_row": true
+      }
+    },
+    {
+      "id": "n3",
+      "type": "core.filter",
+      "name": "Filter Todo",
+      "position": { "x": 600, "y": 200 },
+      "config": {
+        "condition": "{{ eq $json.status \"todo\" }}"
+      }
+    },
+    {
+      "id": "n4",
+      "type": "core.limit",
+      "name": "First Item",
+      "position": { "x": 850, "y": 200 },
+      "config": {
+        "max_items": 1
+      }
+    },
+    {
+      "id": "n5",
+      "type": "core.set",
+      "name": "Build Prompts",
+      "position": { "x": 1100, "y": 200 },
+      "config": {
+        "assignments": [
+          {
+            "field": "image_prompt_resolved",
+            "value": "{{ if $json.image_prompt }}{{ $json.image_prompt }}{{ else }}Generate a photorealistic, high quality image for an Instagram post about: {{ $json.title }}. {{ $json.description }}. Make it visually stunning and social-media ready. 1024x1024 resolution.{{ end }}",
+            "type": "string"
+          },
+          {
+            "field": "caption_prompt_resolved",
+            "value": "{{ if $json.caption }}{{ $json.caption }}{{ else }}Write an engaging Instagram caption for a post about: {{ $json.title }}. Context: {{ $json.description }}. Tone: {{ default \"inspirational\" $json.tone }}. Keep it under 150 words. Do not include hashtags. Return only the caption text, nothing else.{{ end }}",
+            "type": "string"
+          },
+          {
+            "field": "row_range",
+            "value": "Sheet1!H{{ $json._row_index }}:J{{ $json._row_index }}",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "n6",
+      "type": "gemini.generate_image",
+      "name": "Generate Image (Gemini)",
+      "position": { "x": 1350, "y": 200 },
+      "config": {
+        "credential_id": "REPLACE_WITH_GEMINI_SESSION_ID",
+        "prompt": "{{ $json.image_prompt_resolved }}",
+        "maxWaitSeconds": 120,
+        "downloadDir": "~/.monoes/downloads"
+      }
+    },
+    {
+      "id": "n7",
+      "type": "gemini.generate_text",
+      "name": "Generate Caption (Gemini)",
+      "position": { "x": 1600, "y": 200 },
+      "config": {
+        "credential_id": "REPLACE_WITH_GEMINI_SESSION_ID",
+        "prompt": "{{ $json.caption_prompt_resolved }}",
+        "maxWaitSeconds": 60
+      }
+    },
+    {
+      "id": "n8",
+      "type": "core.set",
+      "name": "Build Post Data",
+      "position": { "x": 1850, "y": 200 },
+      "config": {
+        "assignments": [
+          {
+            "field": "media",
+            "value": "[{\"url\": \"{{ (index $json.images 0).path }}\"}]",
+            "type": "json"
+          },
+          {
+            "field": "post_text",
+            "value": "{{ $json.response_text }}\n\n{{ $json.hashtags }}",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "id": "n9",
+      "type": "instagram.publish_post",
+      "name": "Post to Instagram",
+      "position": { "x": 2100, "y": 200 },
+      "config": {
+        "credential_id": "REPLACE_WITH_INSTAGRAM_CREDENTIAL_ID",
+        "media": "{{ $json.media }}",
+        "text": "{{ $json.post_text }}"
+      }
+    },
+    {
+      "id": "n10",
+      "type": "service.google_sheets",
+      "name": "Mark Done",
+      "position": { "x": 2350, "y": 200 },
+      "config": {
+        "credential_id": "REPLACE_WITH_GOOGLE_CREDENTIAL_ID",
+        "spreadsheet_id": "REPLACE_WITH_SPREADSHEET_ID",
+        "operation": "update_rows",
+        "range": "{{ $json.row_range }}",
+        "values": [["done", "{{ now }}", ""]]
+      }
+    }
+  ],
+  "connections": [
+    { "id": "e1", "source": "n1", "source_handle": "main", "target": "n2", "target_handle": "main" },
+    { "id": "e2", "source": "n2", "source_handle": "main", "target": "n3", "target_handle": "main" },
+    { "id": "e3", "source": "n3", "source_handle": "main", "target": "n4", "target_handle": "main" },
+    { "id": "e4", "source": "n4", "source_handle": "main", "target": "n5", "target_handle": "main" },
+    { "id": "e5", "source": "n5", "source_handle": "main", "target": "n6", "target_handle": "main" },
+    { "id": "e6", "source": "n6", "source_handle": "main", "target": "n7", "target_handle": "main" },
+    { "id": "e7", "source": "n7", "source_handle": "main", "target": "n8", "target_handle": "main" },
+    { "id": "e8", "source": "n8", "source_handle": "main", "target": "n9", "target_handle": "main" },
+    { "id": "e9", "source": "n9", "source_handle": "main", "target": "n10", "target_handle": "main" }
+  ]
+}
