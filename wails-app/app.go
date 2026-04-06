@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-rod/rod"
@@ -55,14 +56,18 @@ type App struct {
 	cfgMgr      action.ConfigInterface
 	wfStore     *workflow.HybridWorkflowStore
 	extServer   *extension.Server
+
+	runningMu        sync.Mutex
+	runningWorkflows map[string]context.CancelFunc // executionID → cancel
 }
 
 // NewApp creates the App instance.
 func NewApp() *App {
 	home, _ := os.UserHomeDir()
 	return &App{
-		dbPath: filepath.Join(home, ".monoes", "monoes.db"),
-		logs:   make([]LogEntry, 0, 200),
+		dbPath:           filepath.Join(home, ".monoes", "monoes.db"),
+		logs:             make([]LogEntry, 0, 200),
+		runningWorkflows: make(map[string]context.CancelFunc),
 	}
 }
 
@@ -1642,6 +1647,17 @@ func (a *App) RunWorkflow(id string) error {
 		}
 		a.emitLog("WORKFLOW", "INFO", fmt.Sprintf("Execution started: %s", execID))
 
+		// Store the cancel func so CancelWorkflow can abort this execution.
+		a.runningMu.Lock()
+		a.runningWorkflows[execID] = cancel
+		a.runningMu.Unlock()
+
+		defer func() {
+			a.runningMu.Lock()
+			delete(a.runningWorkflows, execID)
+			a.runningMu.Unlock()
+		}()
+
 		// Poll for completion.
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
@@ -1767,6 +1783,113 @@ func (a *App) GetRecentExecutions(limit int) ([]WorkflowExecutionSummary, error)
 		execs = []WorkflowExecutionSummary{}
 	}
 	return execs, rows.Err()
+}
+
+// GetExecutionDetail returns a full execution record with per-node status.
+func (a *App) GetExecutionDetail(executionID string) (map[string]interface{}, error) {
+	if a.db == nil {
+		return nil, fmt.Errorf("database not available")
+	}
+
+	// Fetch the execution itself.
+	var execID, wfID, status, triggerType, startedAt, finishedAt, errMsg, createdAt string
+	err := a.db.QueryRow(`SELECT id, workflow_id, status,
+	                              COALESCE(trigger_type,'') as trigger_type,
+	                              COALESCE(started_at,'') as started_at,
+	                              COALESCE(finished_at,'') as finished_at,
+	                              COALESCE(error_message,'') as error_message,
+	                              created_at
+	                       FROM workflow_executions WHERE id = ?`, executionID).
+		Scan(&execID, &wfID, &status, &triggerType, &startedAt, &finishedAt, &errMsg, &createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("execution not found: %w", err)
+	}
+
+	// Fetch per-node execution rows.
+	rows, err := a.db.Query(`SELECT id, node_id, node_name, status,
+	                                COALESCE(error_message,'') as error_message,
+	                                COALESCE(started_at,'') as started_at,
+	                                COALESCE(finished_at,'') as finished_at,
+	                                COALESCE(input_items,'[]') as input_items,
+	                                COALESCE(output_items,'[]') as output_items,
+	                                retry_count
+	                         FROM workflow_execution_nodes
+	                         WHERE execution_id = ?
+	                         ORDER BY started_at`, executionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var nodesList []map[string]interface{}
+	for rows.Next() {
+		var nID, nodeID, nodeName, nStatus, nErr, nStarted, nFinished, inputItems, outputItems string
+		var retryCount int
+		if err := rows.Scan(&nID, &nodeID, &nodeName, &nStatus, &nErr, &nStarted, &nFinished, &inputItems, &outputItems, &retryCount); err != nil {
+			continue
+		}
+		nodesList = append(nodesList, map[string]interface{}{
+			"id":            nID,
+			"node_id":       nodeID,
+			"node_name":     nodeName,
+			"status":        nStatus,
+			"error_message": nErr,
+			"started_at":    nStarted,
+			"finished_at":   nFinished,
+			"input_items":   inputItems,
+			"output_items":  outputItems,
+			"retry_count":   retryCount,
+		})
+	}
+	if nodesList == nil {
+		nodesList = []map[string]interface{}{}
+	}
+
+	return map[string]interface{}{
+		"id":          execID,
+		"workflow_id": wfID,
+		"status":      status,
+		"trigger_type": triggerType,
+		"started_at":  startedAt,
+		"finished_at": finishedAt,
+		"error":       errMsg,
+		"created_at":  createdAt,
+		"nodes":       nodesList,
+	}, nil
+}
+
+// CancelWorkflow cancels a running workflow execution.
+func (a *App) CancelWorkflow(executionID string) error {
+	if a.db == nil {
+		return fmt.Errorf("database not available")
+	}
+
+	// Check that the execution exists and is running.
+	var status string
+	err := a.db.QueryRow(`SELECT status FROM workflow_executions WHERE id = ?`, executionID).Scan(&status)
+	if err != nil {
+		return fmt.Errorf("execution not found: %w", err)
+	}
+	if status != "RUNNING" && status != "QUEUED" && status != "PENDING" {
+		return fmt.Errorf("execution is not running (status: %s)", status)
+	}
+
+	// Update DB status to CANCELLED.
+	_, err = a.db.Exec(`UPDATE workflow_executions SET status = 'CANCELLED', finished_at = CURRENT_TIMESTAMP WHERE id = ?`, executionID)
+	if err != nil {
+		return fmt.Errorf("failed to update execution status: %w", err)
+	}
+
+	// If we have a cancel function stored, call it to abort the goroutine.
+	a.runningMu.Lock()
+	if cancelFn, ok := a.runningWorkflows[executionID]; ok {
+		cancelFn()
+		delete(a.runningWorkflows, executionID)
+	}
+	a.runningMu.Unlock()
+
+	a.emitLog("WORKFLOW", "INFO", fmt.Sprintf("Execution %s cancelled by user", executionID))
+	return nil
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

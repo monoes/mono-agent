@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useMemo, memo } from 'react'
 import {
   RefreshCw, Play, Users, Shield, GitBranch,
   CheckCircle, XCircle, Clock, Loader, ChevronRight,
-  ToggleLeft, ToggleRight, Layers, Zap,
+  ToggleLeft, ToggleRight, Layers, Zap, StopCircle,
 } from 'lucide-react'
 import { api, STATE_COLORS, PLATFORM_COLORS } from '../services/api.js'
 import { GetVersion } from '../wailsjs/go/main/App'
@@ -65,16 +65,24 @@ function StatCard({ icon: Icon, label, value, color, loading }) {
 }
 
 // ── Workflow row ──────────────────────────────────────────────────────────────
-function WorkflowRow({ wf, execMap, onRun, onToggle, onNavigate }) {
+function WorkflowRow({ wf, execMap, onRun, onStop, onToggle, onNavigate }) {
   const execs = execMap[wf.id] || []
   const last = execs[0]
   const [running, setRunning] = useState(false)
+  const [stopping, setStopping] = useState(false)
   const [toggling, setToggling] = useState(false)
 
   const handleRun = async () => {
     setRunning(true)
     await onRun(wf.id)
     setTimeout(() => setRunning(false), 2000)
+  }
+
+  const handleStop = async () => {
+    if (!last?.id) return
+    setStopping(true)
+    await onStop(last.id)
+    setStopping(false)
   }
 
   const handleToggle = async () => {
@@ -84,11 +92,12 @@ function WorkflowRow({ wf, execMap, onRun, onToggle, onNavigate }) {
   }
 
   const lastStatus = last?.status?.toUpperCase() || null
+  const isRunning = lastStatus === 'RUNNING' || lastStatus === 'QUEUED' || lastStatus === 'PENDING'
   const statusColor =
     lastStatus === 'COMPLETED' ? 'var(--green-neon)' :
-    lastStatus === 'RUNNING'   ? 'var(--cyan)' :
+    isRunning                  ? 'var(--cyan)' :
     lastStatus === 'FAILED'    ? '#ef4444' :
-    lastStatus === 'PENDING'   ? '#eab308' : 'var(--text-dim)'
+    lastStatus === 'CANCELLED' ? '#6b7280' : 'var(--text-dim)'
 
   return (
     <div className="wf-row" style={{ opacity: wf.is_active ? 1 : 0.55 }}>
@@ -136,18 +145,41 @@ function WorkflowRow({ wf, execMap, onRun, onToggle, onNavigate }) {
         )}
       </div>
 
-      {/* Run button */}
-      <button
-        className="btn btn-secondary btn-sm"
-        onClick={handleRun}
-        disabled={running || lastStatus === 'RUNNING'}
-        style={{ gap: 4, minWidth: 60, flexShrink: 0 }}
-      >
-        {running || lastStatus === 'RUNNING'
-          ? <Loader size={11} style={{ animation: 'spin 1s linear infinite' }} />
-          : <Play size={11} />}
-        {running || lastStatus === 'RUNNING' ? 'Running' : 'Run'}
-      </button>
+      {/* Stop button (visible when running) */}
+      {isRunning && (
+        <button
+          className="btn btn-sm"
+          onClick={handleStop}
+          disabled={stopping}
+          style={{
+            gap: 4, minWidth: 56, flexShrink: 0,
+            background: 'rgba(239,68,68,0.12)',
+            border: '1px solid rgba(239,68,68,0.35)',
+            color: '#ef4444',
+          }}
+          title="Stop this execution"
+        >
+          {stopping
+            ? <Loader size={11} style={{ animation: 'spin 1s linear infinite' }} />
+            : <StopCircle size={11} />}
+          Stop
+        </button>
+      )}
+
+      {/* Run button (hidden when running) */}
+      {!isRunning && (
+        <button
+          className="btn btn-secondary btn-sm"
+          onClick={handleRun}
+          disabled={running}
+          style={{ gap: 4, minWidth: 60, flexShrink: 0 }}
+        >
+          {running
+            ? <Loader size={11} style={{ animation: 'spin 1s linear infinite' }} />
+            : <Play size={11} />}
+          {running ? 'Starting' : 'Run'}
+        </button>
+      )}
 
       {/* Arrow to workflow editor */}
       <button
@@ -163,11 +195,30 @@ function WorkflowRow({ wf, execMap, onRun, onToggle, onNavigate }) {
 }
 
 // ── Execution timeline row ────────────────────────────────────────────────────
-const ExecRow = memo(function ExecRow({ exec }) {
+const ExecRow = memo(function ExecRow({ exec, onNavigate }) {
   const dur = useMemo(() => duration(exec.started_at, exec.finished_at), [exec.started_at, exec.finished_at])
   const rel = useMemo(() => relTime(exec.created_at), [exec.created_at])
+
+  const handleClick = () => {
+    if (onNavigate) {
+      onNavigate('noderunner', { executionId: exec.id, workflowId: exec.workflow_id })
+    }
+  }
+
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 0', borderBottom: '1px solid var(--border-dim)' }}>
+    <div
+      onClick={handleClick}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 8, padding: '7px 0',
+        borderBottom: '1px solid var(--border-dim)',
+        cursor: onNavigate ? 'pointer' : 'default',
+        borderRadius: 4,
+        transition: 'background 0.15s',
+      }}
+      onMouseEnter={e => { if (onNavigate) e.currentTarget.style.background = 'rgba(0,180,216,0.06)' }}
+      onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+      title="View execution in workflow editor"
+    >
       <ExecStatusDot status={exec.status} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -234,6 +285,11 @@ export default function Dashboard({ stats, onRefresh, onNavigate }) {
     })
     await api.runWorkflow(id)
     setTimeout(load, 1500)
+  }
+
+  const handleStop = async (executionId) => {
+    await api.cancelWorkflow(executionId)
+    setTimeout(load, 500)
   }
 
   const handleToggle = async (id, active) => {
@@ -305,6 +361,7 @@ export default function Dashboard({ stats, onRefresh, onNavigate }) {
                       wf={wf}
                       execMap={execMap}
                       onRun={handleRun}
+                      onStop={handleStop}
                       onToggle={handleToggle}
                       onNavigate={onNavigate}
                     />
@@ -327,7 +384,7 @@ export default function Dashboard({ stats, onRefresh, onNavigate }) {
                 </div>
               ) : (
                 <div>
-                  {executions.slice(0, 15).map(e => <ExecRow key={e.id} exec={e} />)}
+                  {executions.slice(0, 15).map(e => <ExecRow key={e.id} exec={e} onNavigate={onNavigate} />)}
                 </div>
               )}
             </div>

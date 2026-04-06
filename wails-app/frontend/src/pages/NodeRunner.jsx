@@ -67,8 +67,8 @@ const uid = () => `nr${_seq++}`
 // ── Status badge on node ──────────────────────────────────────────────────────
 function NodeStatusBadge({ status, itemCount, durationMs }) {
   if (!status) return null
-  const color = status === 'ok' ? '#10b981' : status === 'error' ? '#ef4444' : '#00b4d8'
-  const icon = status === 'ok' ? '✓' : status === 'error' ? '✕' : '…'
+  const color = status === 'ok' ? '#10b981' : status === 'error' ? '#ef4444' : status === 'skipped' ? '#6b7280' : '#00b4d8'
+  const icon = status === 'ok' ? '✓' : status === 'error' ? '✕' : status === 'skipped' ? '—' : '…'
   return (
     <div style={{
       position: 'absolute', top: -10, right: -6,
@@ -82,7 +82,7 @@ function NodeStatusBadge({ status, itemCount, durationMs }) {
       boxShadow: `0 0 8px ${color}66`,
       whiteSpace: 'nowrap',
     }}>
-      {icon} {status === 'ok' ? `${itemCount} item${itemCount !== 1 ? 's' : ''}` : status === 'running' ? 'running' : 'error'}
+      {icon} {status === 'ok' ? `${itemCount} item${itemCount !== 1 ? 's' : ''}` : status === 'running' ? 'running' : status === 'skipped' ? 'skipped' : 'error'}
       {durationMs != null && status === 'ok' && <span style={{ opacity: 0.7 }}> · {durationMs}ms</span>}
     </div>
   )
@@ -101,7 +101,7 @@ function CanvasNode({ node, selected, zoom, onHeaderMouseDown, onOutputPortMouse
         position: 'absolute', left: node.x, top: node.y,
         width: NODE_W, height: h,
         background: 'linear-gradient(160deg,#0d1a28 0%,#091220 100%)',
-        border: `1.5px solid ${selected ? color : status === 'error' ? '#ef444444' : status === 'ok' ? '#10b98133' : 'rgba(0,180,216,0.12)'}`,
+        border: `1.5px solid ${selected ? color : status === 'error' ? '#ef444444' : status === 'ok' ? '#10b98133' : status === 'skipped' ? '#6b728033' : status === 'running' ? '#00b4d866' : 'rgba(0,180,216,0.12)'}`,
         borderRadius: 10,
         boxShadow: selected
           ? `0 0 0 1.5px ${color}55, 0 12px 32px rgba(0,0,0,.7)`
@@ -763,6 +763,53 @@ function Inspector({ node, onConfigChange, onClose, onNavigate }) {
                       {f.help && <p className="field-help">{f.help}</p>}
                     </div>
                   )
+                } else if (f.type === '_help') {
+                  // Inline help/reference section — not a config field
+                  return (
+                    <details key={f.key} style={{ marginBottom: 12 }}>
+                      <summary style={{
+                        fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--cyan)',
+                        cursor: 'pointer', letterSpacing: 0.5, userSelect: 'none',
+                        padding: '4px 0',
+                      }}>
+                        {f.label}
+                      </summary>
+                      <div style={{
+                        marginTop: 6, padding: '8px 10px',
+                        background: 'rgba(0,180,216,0.04)',
+                        border: '1px solid rgba(0,180,216,0.1)',
+                        borderRadius: 6,
+                      }}>
+                        {(f.helpContent || []).map((section, si) => (
+                          <div key={si} style={{ marginBottom: si < f.helpContent.length - 1 ? 10 : 0 }}>
+                            <div style={{
+                              fontFamily: 'var(--font-mono)', fontSize: 9,
+                              color: 'var(--text-secondary)', letterSpacing: 1,
+                              textTransform: 'uppercase', marginBottom: 4,
+                            }}>
+                              {section.title}
+                            </div>
+                            {section.examples.map((ex, ei) => (
+                              <div key={ei} style={{
+                                fontFamily: 'var(--font-mono)', fontSize: 10,
+                                color: '#c4d1de', padding: '2px 6px',
+                                background: 'rgba(0,0,0,0.3)', borderRadius: 3,
+                                marginBottom: 3, wordBreak: 'break-all',
+                                cursor: 'pointer',
+                              }}
+                                title="Click to copy"
+                                onClick={() => {
+                                  navigator.clipboard.writeText(ex)
+                                }}
+                              >
+                                {ex}
+                              </div>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  )
                 } else if (f.type === 'resource_picker') {
                   inputEl = (
                     <ResourcePickerField
@@ -798,6 +845,42 @@ function Inspector({ node, onConfigChange, onClose, onNavigate }) {
             </>
           )
         })()}
+
+        {/* Input data — what this node received from upstream */}
+        {node.runStatus && node.runInputItems && node.runInputItems.length > 0 && (
+          <>
+            <div style={{ height: 1, background: 'rgba(0,180,216,0.08)', margin: '12px 0' }} />
+            <details style={{ marginBottom: 4 }}>
+              <summary style={{
+                fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-muted)',
+                letterSpacing: 1.2, textTransform: 'uppercase', cursor: 'pointer',
+                padding: '4px 0', userSelect: 'none',
+              }}>
+                INPUT · {node.runInputItems.length} item{node.runInputItems.length !== 1 ? 's' : ''}
+              </summary>
+              <div style={{ marginTop: 4 }}>
+                {node.runInputItems.slice(0, 3).map((item, ii) => (
+                  <div key={ii} style={{
+                    background: '#020509', border: '1px solid rgba(107,114,128,0.15)',
+                    borderRadius: 6, padding: '7px 9px', marginBottom: 4, position: 'relative',
+                  }}>
+                    {node.runInputItems.length > 1 && (
+                      <span style={{ position: 'absolute', top: 4, right: 6, fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-muted)' }}>[{ii}]</span>
+                    )}
+                    <pre style={{ margin: 0, fontFamily: 'var(--font-mono)', fontSize: 10, color: '#a0aec0', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 100, overflow: 'auto' }}>
+                      {JSON.stringify(item, null, 2)}
+                    </pre>
+                  </div>
+                ))}
+                {node.runInputItems.length > 3 && (
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)', textAlign: 'center', padding: '2px 0' }}>
+                    + {node.runInputItems.length - 3} more
+                  </div>
+                )}
+              </div>
+            </details>
+          </>
+        )}
 
         {/* Output results */}
         {node.runStatus && (
@@ -909,7 +992,7 @@ function topoSort(nodes, edges) {
 }
 
 // ── Main page ─────────────────────────────────────────────────────────────────
-export default function NodeRunner({ onNavigate }) {
+export default function NodeRunner({ onNavigate, navData }) {
   const [categories, setCategories] = useState([])
   const [nodes, setNodes]           = useState([])
   const [edges, setEdges]           = useState([])
@@ -943,6 +1026,138 @@ export default function NodeRunner({ onNavigate }) {
 
   const [chatOpen, setChatOpen] = useState(false)
   const [jsonView, setJsonView] = useState(false)
+
+  // ── Execution overlay mode ────────────────────────────────────────────────
+  const [execOverlay, setExecOverlay] = useState(null) // { id, status, nodes: [] }
+  const execPollRef = useRef(null)
+
+  // When navData contains executionId, load the workflow and overlay execution status.
+  useEffect(() => {
+    if (!navData?.executionId) {
+      // Clear overlay if navigated without execution data
+      if (execOverlay) {
+        setExecOverlay(null)
+        setNodes(prev => prev.map(n => ({ ...n, runStatus: null, runInputItems: null, runOutputs: null, runOutputItems: 0, runDuration: null, runError: null })))
+      }
+      return
+    }
+
+    let cancelled = false
+    const loadExec = async () => {
+      const detail = await api.getExecutionDetail(navData.executionId)
+      if (cancelled || !detail) return
+
+      // Load the workflow first if not already loaded
+      if (detail.workflow_id && detail.workflow_id !== wfId) {
+        try {
+          const wf = await WailsApp.GetWorkflow(detail.workflow_id)
+          if (wf && !cancelled) {
+            // Inline load logic from handleLoad but simplified
+            setWfId(wf.id)
+            setWfName(wf.name || 'Untitled Workflow')
+            setWfActive(!!wf.is_active)
+            const prefixToCat = { core: 'control', db: 'database', comm: 'communication', service: 'services', data: 'data', http: 'http', system: 'system', trigger: 'triggers', ai: 'ai', instagram: 'instagram', linkedin: 'linkedin', x: 'x', tiktok: 'tiktok' }
+            const loadedNodes = (wf.nodes || []).map(n => {
+              const nt = normalizeNodeType(n.node_type || n.type || '')
+              const prefix = nt.split('.')[0]
+              const cat = prefixToCat[prefix] || prefix
+              return {
+                id: n.id, label: n.name, subtype: nt, category: cat,
+                x: n.position_x, y: n.position_y,
+                config: n.config || {}, color: catColor(cat),
+                schema: n.schema || null,
+                configFields: n.schema?.fields ? n.schema.fields : getConfigFields(nt),
+                inputs: deriveInputs(nt), outputs: deriveOutputs(nt),
+                runStatus: null, runInputItems: null, runOutputs: null, runOutputItems: 0, runDuration: null, runError: null,
+              }
+            })
+            const loadedEdges = (wf.connections || []).map(c => ({
+              id: c.id, source: c.source_node_id, sourcePortId: c.source_handle,
+              sourcePortIdx: parseInt(c.source_handle) || 0,
+              target: c.target_node_id, targetPortId: c.target_handle,
+              targetPortIdx: parseInt(c.target_handle) || 0,
+            }))
+            setNodes(loadedNodes)
+            setEdges(loadedEdges)
+            setSelectedId(null)
+            setIsDirty(false)
+            setCamera({ x: 60, y: 60, zoom: 1 })
+          }
+        } catch (e) {
+          console.error('Failed to load workflow for execution overlay', e)
+        }
+      }
+
+      // Apply execution node statuses
+      applyExecOverlay(detail)
+    }
+
+    const applyExecOverlay = (detail) => {
+      if (!detail) return
+      setExecOverlay({ id: detail.id, status: detail.status, nodes: detail.nodes || [] })
+      setNodes(prev => {
+        const nodeMap = {}
+        ;(detail.nodes || []).forEach(en => { nodeMap[en.node_id] = en })
+        return prev.map(n => {
+          const en = nodeMap[n.id]
+          if (!en) return { ...n, runStatus: null, runError: null, runDuration: null, runOutputItems: 0 }
+          const s = (en.status || '').toUpperCase()
+          let runStatus = null
+          if (s === 'SUCCESS' || s === 'COMPLETED') runStatus = 'ok'
+          else if (s === 'RUNNING') runStatus = 'running'
+          else if (s === 'FAILED') runStatus = 'error'
+          else if (s === 'SKIPPED') runStatus = 'skipped'
+          // Calculate duration
+          let durationMs = null
+          if (en.started_at && en.finished_at) {
+            durationMs = Math.round(new Date(en.finished_at) - new Date(en.started_at))
+          }
+          // Parse input/output items
+          let inputItems = null
+          let outputItems = null
+          let outputCount = 0
+          try { inputItems = JSON.parse(en.input_items || '[]'); } catch {}
+          try { outputItems = JSON.parse(en.output_items || '[]'); outputCount = outputItems.length } catch {}
+
+          // Build runOutputs format for the OUTPUT section
+          let runOutputs = null
+          if (outputItems && outputItems.length > 0) {
+            runOutputs = [{ handle: 'main', items: outputItems }]
+          }
+
+          return {
+            ...n,
+            runStatus,
+            runError: en.error_message || null,
+            runDuration: durationMs,
+            runInputItems: inputItems,
+            runOutputs,
+            runOutputItems: outputCount,
+          }
+        })
+      })
+    }
+
+    loadExec()
+
+    // Auto-refresh while execution is running
+    const poll = setInterval(async () => {
+      if (cancelled) return
+      const detail = await api.getExecutionDetail(navData.executionId)
+      if (cancelled || !detail) return
+      applyExecOverlay(detail)
+      const st = (detail.status || '').toUpperCase()
+      if (st !== 'RUNNING' && st !== 'QUEUED' && st !== 'PENDING') {
+        clearInterval(poll)
+      }
+    }, 2000)
+    execPollRef.current = poll
+
+    return () => {
+      cancelled = true
+      clearInterval(poll)
+    }
+  }, [navData?.executionId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const [ghost, setGhost] = useState(null) // { template, x, y }
   const ghostRef   = useRef(null)          // same data, for mouseup handler
@@ -1078,7 +1293,7 @@ export default function NodeRunner({ onNavigate }) {
       configFields: template.configFields || [],
       config: defaults,
       x, y,
-      runStatus: null, runOutputs: null, runOutputItems: 0, runDuration: null, runError: null,
+      runStatus: null, runInputItems: null, runOutputs: null, runOutputItems: 0, runDuration: null, runError: null,
     }])
     setSelectedId(id)
     setIsDirty(true)
@@ -1148,7 +1363,7 @@ export default function NodeRunner({ onNavigate }) {
     setGlobalStatus(null)
 
     // Reset all node statuses
-    setNodes(prev => prev.map(n => ({ ...n, runStatus: null, runOutputs: null, runOutputItems: 0, runDuration: null, runError: null })))
+    setNodes(prev => prev.map(n => ({ ...n, runStatus: null, runInputItems: null, runOutputs: null, runOutputItems: 0, runDuration: null, runError: null })))
 
     const order = topoSort(nodes, edges)
     const nodeOutputsMap = {} // nodeId → items from "main" handle
@@ -1177,8 +1392,8 @@ export default function NodeRunner({ onNavigate }) {
         ? incomingEdges.flatMap(e => nodeOutputsMap[e.source] || [])
         : [{}]
 
-      // Mark as running
-      setNodes(prev => prev.map(n => n.id === nodeId ? { ...n, runStatus: 'running' } : n))
+      // Mark as running and store input items
+      setNodes(prev => prev.map(n => n.id === nodeId ? { ...n, runStatus: 'running', runInputItems: inputItems } : n))
 
       try {
         const result = await RunNode({ node_type: node.subtype, config: node.config || {}, items: inputItems })
@@ -1282,7 +1497,7 @@ export default function NodeRunner({ onNavigate }) {
         configFields: n.schema?.fields ? n.schema.fields : getConfigFields(nt),
         inputs:  deriveInputs(nt),
         outputs: deriveOutputs(nt),
-        runStatus: null, runOutputs: null, runOutputItems: 0, runDuration: null, runError: null,
+        runStatus: null, runInputItems: null, runOutputs: null, runOutputItems: 0, runDuration: null, runError: null,
       }})
       // Map backend WorkflowConnectionData → canvas edge shape
       const loadedEdges = (wf.connections || []).map(c => ({
@@ -1320,11 +1535,16 @@ export default function NodeRunner({ onNavigate }) {
 
   // ── New canvas ────────────────────────────────────────────────────────────
   const handleNew = useCallback(() => {
-    if (nodes.length > 0 && !window.confirm('Create a new workflow? Unsaved changes will be lost.')) return
+    if (isDirty && nodes.length > 0) {
+      // Use a simple state-based confirmation instead of window.confirm
+      // (which may be blocked in Wails WebView)
+      if (!window.confirm('Create a new workflow? Unsaved changes will be lost.')) return
+    }
     setWfId(null); setWfName('Untitled Workflow'); setWfActive(false)
     setNodes([]); setEdges([]); setSelectedId(null); setGlobalStatus(null)
     setIsDirty(false); setCamera({ x: 60, y: 60, zoom: 1 })
-  }, [nodes.length])
+    setExecOverlay(null)
+  }, [nodes.length, isDirty])
 
   // ── Auto-layout: topological left-to-right layout ─────────────────────────
   const handleAutoLayout = useCallback(() => {
@@ -1445,7 +1665,7 @@ export default function NodeRunner({ onNavigate }) {
           </div>
         )}
 
-        {globalStatus && !saveMsg && (
+        {globalStatus && !saveMsg && !execOverlay && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             {globalStatus === 'ok'
               ? <CheckCircle size={11} color="#10b981" />
@@ -1453,6 +1673,50 @@ export default function NodeRunner({ onNavigate }) {
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: globalStatus === 'ok' ? '#10b981' : '#ef4444' }}>
               {globalStatus === 'ok' ? 'done' : 'failed'}
             </span>
+          </div>
+        )}
+
+        {/* Execution overlay banner */}
+        {execOverlay && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '3px 10px',
+            background: execOverlay.status === 'RUNNING' ? 'rgba(0,180,216,0.1)' :
+                        execOverlay.status === 'COMPLETED' || execOverlay.status === 'SUCCESS' ? 'rgba(16,185,129,0.1)' :
+                        execOverlay.status === 'FAILED' ? 'rgba(239,68,68,0.1)' : 'rgba(107,114,128,0.1)',
+            border: `1px solid ${
+              execOverlay.status === 'RUNNING' ? 'rgba(0,180,216,0.3)' :
+              execOverlay.status === 'COMPLETED' || execOverlay.status === 'SUCCESS' ? 'rgba(16,185,129,0.3)' :
+              execOverlay.status === 'FAILED' ? 'rgba(239,68,68,0.3)' : 'rgba(107,114,128,0.3)'}`,
+            borderRadius: 6,
+          }}>
+            {execOverlay.status === 'RUNNING' && <Loader size={10} style={{ animation: 'spin 1s linear infinite', color: 'var(--cyan)' }} />}
+            {(execOverlay.status === 'COMPLETED' || execOverlay.status === 'SUCCESS') && <CheckCircle size={10} color="#10b981" />}
+            {execOverlay.status === 'FAILED' && <AlertCircle size={10} color="#ef4444" />}
+            {execOverlay.status === 'CANCELLED' && <X size={10} color="#6b7280" />}
+            <span style={{
+              fontFamily: 'var(--font-mono)', fontSize: 9,
+              color: execOverlay.status === 'RUNNING' ? 'var(--cyan)' :
+                     execOverlay.status === 'COMPLETED' || execOverlay.status === 'SUCCESS' ? '#10b981' :
+                     execOverlay.status === 'FAILED' ? '#ef4444' : '#6b7280',
+              textTransform: 'uppercase',
+            }}>
+              Execution: {execOverlay.status}
+            </span>
+            <button
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer', padding: 2,
+                color: 'var(--text-muted)', display: 'flex', alignItems: 'center',
+              }}
+              onClick={() => {
+                setExecOverlay(null)
+                setNodes(prev => prev.map(n => ({ ...n, runStatus: null, runInputItems: null, runOutputs: null, runOutputItems: 0, runDuration: null, runError: null })))
+                if (execPollRef.current) clearInterval(execPollRef.current)
+              }}
+              title="Close execution view"
+            >
+              <X size={10} />
+            </button>
           </div>
         )}
 
@@ -1790,12 +2054,24 @@ const NODE_CONFIG_FIELDS = {
 
   // ── Control ───────────────────────────────────────────────────────────────
   'core.if': [
-    { key: 'condition', label: 'Condition', type: 'text', default: '{{$json.value}} == true' },
-    { key: 'mode', label: 'Mode', type: 'select', options: ['expression','regex'], default: 'expression' },
+    { key: 'condition', label: 'Condition', type: 'textarea', rows: 2, default: '{{ eq $json.active true }}',
+      placeholder: '{{ eq $json.active true }}',
+      help: 'Go template expression. Items go to "true" handle if condition passes, "false" otherwise.' },
   ],
   'core.filter': [
-    { key: 'condition', label: 'Condition', type: 'text', default: '{{$json.value}} != ""' },
-    { key: 'mode', label: 'Mode', type: 'select', options: ['expression','regex'], default: 'expression' },
+    { key: 'condition', label: 'Condition', type: 'textarea', rows: 2, default: '{{ eq $json.status "todo" }}',
+      placeholder: '{{ eq $json.status "todo" }}',
+      help: 'Go template expression that evaluates to true/false for each item. Use $json.fieldName to access fields.' },
+    { key: 'mode', label: 'Mode', type: 'select', options: ['keep','remove'], default: 'keep',
+      help: 'keep = pass items where condition is true; remove = pass items where condition is false' },
+    { key: '_help', label: 'Condition Reference', type: '_help', helpContent: [
+      { title: 'Compare text', examples: ['{{ eq $json.status "todo" }}', '{{ ne $json.status "done" }}'] },
+      { title: 'Compare numbers', examples: ['{{ gt $json.age 18 }}', '{{ le $json.price 100 }}'] },
+      { title: 'Check if field exists', examples: ['{{ $json.email }}', '{{ ne $json.name "" }}'] },
+      { title: 'Contains text', examples: ['{{ contains $json.title "sale" }}', '{{ hasPrefix $json.url "https" }}'] },
+      { title: 'AND / OR', examples: ['{{ and (eq $json.status "todo") (ne $json.title "") }}', '{{ or (eq $json.type "A") (eq $json.type "B") }}'] },
+      { title: 'Available operators', examples: ['eq (=), ne (!=), gt (>), ge (>=), lt (<), le (<=), and, or, not, contains, hasPrefix, hasSuffix'] },
+    ]},
   ],
   'core.switch': [
     { key: 'expression', label: 'Expression', type: 'text', default: '{{$json.status}}' },

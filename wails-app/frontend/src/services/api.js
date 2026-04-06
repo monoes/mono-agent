@@ -9,6 +9,8 @@ export const api = {
   setWorkflowActive:    (id, active) => GoApp.SetWorkflowActive(id, active),
   getRecentExecutions:  (limit = 20) => GoApp.GetRecentExecutions(limit).catch(() => []),
   getWorkflowExecutions:(id, limit = 20) => GoApp.GetWorkflowExecutions(id, limit).catch(() => []),
+  getExecutionDetail:   (id) => GoApp.GetExecutionDetail(id).catch(nullOnError),
+  cancelWorkflow:       (id) => GoApp.CancelWorkflow(id).catch(e => `error: ${e}`),
   getActions:       (platform = '', state = '', limit = 0) => GoApp.GetActions(platform, state, limit).catch(nullOnError),
   getAction:        (id) => GoApp.GetAction(id).catch(nullOnError),
   createAction:     (req) => GoApp.CreateAction(req),

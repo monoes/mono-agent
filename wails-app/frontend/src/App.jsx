@@ -14,6 +14,7 @@ import { api, onLogEntry, onActionComplete } from './services/api.js'
 
 export default function App() {
   const [activePage, setActivePage] = useState('dashboard')
+  const [navData, setNavData] = useState(null) // extra data passed to a page (e.g., executionId)
   const [profileId, setProfileId] = useState(null)
   const [postId, setPostId] = useState(null)
   const [dbConnected, setDbConnected] = useState(false)
@@ -41,9 +42,10 @@ export default function App() {
     setActivePage('profile')
   }, [])
 
-  const navigate = useCallback((page) => {
+  const navigate = useCallback((page, data) => {
     if (page !== 'postDetail') setPostId(null)
     if (page !== 'profile' && page !== 'postDetail') setProfileId(null)
+    setNavData(data || null)
     setActivePage(page)
   }, [])
 
@@ -93,8 +95,8 @@ export default function App() {
   }, [])
 
   const pages = {
-    dashboard: <Dashboard stats={stats} onRefresh={refreshStats} onNavigate={setActivePage} />,
-    noderunner: <NodeRunner onNavigate={setActivePage} />,
+    dashboard: <Dashboard stats={stats} onRefresh={refreshStats} onNavigate={navigate} />,
+    noderunner: <NodeRunner onNavigate={navigate} navData={navData} />,
     people:    <People key={peopleRefreshKey} onProfile={openProfile} />,
     profile:   <Profile id={profileId} onBack={closeProfile} onOpenURL={api.openURL} onOpenPost={openPost} />,
     postDetail: <PostDetail id={postId} onBack={closePost} onOpenURL={api.openURL} />,
