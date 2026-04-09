@@ -11,6 +11,7 @@ import (
 
 	"github.com/nokhodian/mono-agent/internal/browser"
 	"github.com/nokhodian/mono-agent/internal/extension"
+	"github.com/nokhodian/mono-agent/internal/vault"
 
 	botpkg "github.com/nokhodian/mono-agent/internal/bot"
 )
@@ -179,6 +180,22 @@ func (b *GeminiBot) methodTypePrompt(_ context.Context, args ...interface{}) (in
 		"[role='textbox'][aria-label*='prompt' i]",
 		"rich-textarea .ql-editor",
 	}
+
+	// Extension path: use TypeCDP (Chrome Debugger Input.insertText) which
+	// reliably triggers Gemini's Quill editor — content-script paste doesn't.
+	if ep, ok := page.(*extension.ExtensionPage); ok {
+		for _, sel := range selectors {
+			el, err := ep.Element(sel, 5*time.Second)
+			if err == nil && el != nil {
+				if ee, ok := el.(*extension.ExtensionElement); ok {
+					_ = ep.TypeCDPOnElement(prompt, ee.ElementID())
+					return map[string]interface{}{"success": true, "typed": len(prompt)}, nil
+				}
+			}
+		}
+		return nil, fmt.Errorf("type_prompt: could not find input to type into")
+	}
+
 	for _, sel := range selectors {
 		el, err := page.Element(sel, 5*time.Second)
 		if err == nil && el != nil {
@@ -244,15 +261,23 @@ func (b *GeminiBot) methodWaitForResponse(_ context.Context, args ...interface{}
 
 	deadline := time.Now().Add(time.Duration(maxWait) * time.Second)
 
-	// Use DOM queries to count existing responses and detect new ones with stable text.
-	// Works with both ExtensionPage (content script queries) and RodPage (Eval).
 	prevText := ""
 	stableCount := 0
 	beforeCount := 0
 
-	// Get initial count.
+	// Get initial message-content count before prompt was sent.
 	if ep, ok := page.(*extension.ExtensionPage); ok {
-		beforeCount, _ = ep.QueryCount("message-content")
+		// Extension path: use EvalCDP (page main world, bypasses CSP).
+		raw, _ := ep.EvalCDP(`(function() {
+			for (var i = 0, sels = ['message-content', 'model-response']; i < sels.length; i++) {
+				var n = document.querySelectorAll(sels[i]).length;
+				if (n > 0) return n;
+			}
+			return 0;
+		})()`)
+		if c, ok := raw.(float64); ok {
+			beforeCount = int(c)
+		}
 	} else {
 		initResult, err := page.Eval(`() => document.querySelectorAll('message-content').length`)
 		if err == nil && !initResult.Nil() {
@@ -267,14 +292,27 @@ func (b *GeminiBot) methodWaitForResponse(_ context.Context, args ...interface{}
 		var text string
 
 		if ep, ok := page.(*extension.ExtensionPage); ok {
-			// Extension path: use content script DOM queries
-			count, _ := ep.QueryCount("message-content")
-			if count <= beforeCount {
-				continue
+			// Extension path: use EvalCDP to query DOM in page main world.
+			raw, err := ep.EvalCDP(fmt.Sprintf(`(function() {
+				var sels = ['message-content', 'model-response'];
+				for (var i = 0; i < sels.length; i++) {
+					var els = document.querySelectorAll(sels[i]);
+					if (els.length <= %d) continue;
+					var text = (els[els.length - 1].textContent || '').trim();
+					if (text) return {ready: true, text: text};
+				}
+				return {ready: false, text: ''};
+			})()`, beforeCount))
+			if err == nil {
+				if m, ok := raw.(map[string]interface{}); ok {
+					if r, _ := m["ready"].(bool); r {
+						ready = true
+						if t, _ := m["text"].(string); t != "" {
+							text = t
+						}
+					}
+				}
 			}
-			// Get last message-content text (index -1 = last)
-			text, _ = ep.QueryText("message-content")
-			ready = text != ""
 		} else {
 			// Rod path: use Eval
 			result, err := page.Eval(`(beforeCount) => {
@@ -325,19 +363,46 @@ func (b *GeminiBot) methodWaitForImageResponse(_ context.Context, args ...interf
 	deadline := time.Now().Add(time.Duration(maxWait) * time.Second)
 
 	if ep, ok := page.(*extension.ExtensionPage); ok {
-		// Extension path: use content script queries
+		// Extension path: use EvalCDP (page main world, bypasses CSP).
 		prevText := ""
 		stableTextCount := 0
 		for time.Now().Before(deadline) {
 			time.Sleep(3 * time.Second)
-			// Check for images via content script
-			imgCount, _ := ep.QueryCount("model-response img, message-content img, .response-container img")
+			raw, _ := ep.EvalCDP(`(function() {
+				var containers = document.querySelectorAll('model-response, message-content, .response-container');
+				if (!containers.length) return {imgCount: 0, text: ''};
+				var last = containers[containers.length - 1];
+				var imgs = last.querySelectorAll('img');
+				var valid = 0;
+				for (var i = 0; i < imgs.length; i++) {
+					var img = imgs[i];
+					var w = img.width || img.naturalWidth || 0;
+					if (w > 0 && w < 48) continue;
+					var src = img.src || '';
+					if (src.indexOf('blob:') === 0 || src.indexOf('data:image') === 0 || (src.indexOf('https://') === 0 && w >= 100)) valid++;
+				}
+				var text = '';
+				var textSels = ['message-content', 'model-response'];
+				for (var j = 0; j < textSels.length; j++) {
+					var els = document.querySelectorAll(textSels[j]);
+					if (els.length) { text = (els[els.length-1].textContent || '').trim(); break; }
+				}
+				return {imgCount: valid, text: text.substring(0, 300)};
+			})()`)
+			var imgCount int
+			var text string
+			if m, ok := raw.(map[string]interface{}); ok {
+				if c, ok := m["imgCount"].(float64); ok {
+					imgCount = int(c)
+				}
+				if t, ok := m["text"].(string); ok {
+					text = t
+				}
+			}
 			if imgCount > 0 {
 				time.Sleep(3 * time.Second)
 				return map[string]interface{}{"success": true, "ready": true}, nil
 			}
-			// Check for text-only refusal
-			text, _ := ep.QueryText("message-content")
 			if text != "" && text == prevText {
 				stableTextCount++
 				lower := strings.ToLower(text)
@@ -397,17 +462,27 @@ func (b *GeminiBot) methodExtractTextResponse(_ context.Context, args ...interfa
 		return nil, err
 	}
 
-	selectors := []string{
-		"message-content div.markdown.markdown-main-panel",
-		"message-content",
-		"structured-content-container.model-response-text",
-	}
-
 	if ep, ok := page.(*extension.ExtensionPage); ok {
-		// Extension path: use content script DOM queries
-		for _, sel := range selectors {
-			text, err := ep.QueryText(sel)
-			if err == nil && text != "" {
+		// Extension path: use EvalCDP (page main world, bypasses CSP/Trusted Types).
+		raw, err := ep.EvalCDP(`(function() {
+			var sels = [
+				'message-content div.markdown.markdown-main-panel',
+				'message-content',
+				'model-response',
+				'.response-container'
+			];
+			for (var i = 0; i < sels.length; i++) {
+				try {
+					var els = document.querySelectorAll(sels[i]);
+					if (!els.length) continue;
+					var text = (els[els.length - 1].textContent || '').trim();
+					if (text && text.length > 2) return text;
+				} catch(e) {}
+			}
+			return '';
+		})()`)
+		if err == nil {
+			if text, ok := raw.(string); ok && text != "" {
 				return map[string]interface{}{"success": true, "response_text": text}, nil
 			}
 		}
@@ -581,7 +656,7 @@ func (b *GeminiBot) methodDownloadImages(_ context.Context, args ...interface{})
 
 // methodExtractAndDownloadImages combines image extraction + download in one step.
 // Uses the content script FetchImageBase64 on extension path, Eval on Rod path.
-func (b *GeminiBot) methodExtractAndDownloadImages(_ context.Context, args ...interface{}) (interface{}, error) {
+func (b *GeminiBot) methodExtractAndDownloadImages(ctx context.Context, args ...interface{}) (interface{}, error) {
 	page, err := extractPage(args, "extract_and_download_images")
 	if err != nil {
 		return nil, err
@@ -685,6 +760,20 @@ func (b *GeminiBot) methodExtractAndDownloadImages(_ context.Context, args ...in
 		latestLink := filepath.Join(downloadDir, "latest_gemini.png")
 		_ = os.Remove(latestLink)
 		_ = os.Symlink(first, latestLink)
+	}
+
+	// Register each downloaded image in the vault.
+	if vaultDB := vault.DBFromContext(ctx); vaultDB != nil {
+		for i, img := range downloaded {
+			path, _ := img["path"].(string)
+			if path == "" {
+				continue
+			}
+			vaultID, err := vault.Register(ctx, vaultDB, path, "gemini", "", "")
+			if err == nil {
+				downloaded[i]["vault_id"] = vaultID
+			}
+		}
 	}
 
 	return map[string]interface{}{
