@@ -2,7 +2,10 @@ package main
 
 import (
 	"embed"
+	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -40,6 +43,20 @@ const enableDevTools = true
 //go:embed all:frontend/dist
 var assets embed.FS
 
+// vaultImageHandler serves files from ~/.monoes/vault/ at /vault-image/<filename>.
+func vaultImageHandler() http.Handler {
+	vaultDir := filepath.Join(os.Getenv("HOME"), ".monoes", "vault")
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/vault-image/") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		// Use filepath.Base to prevent path traversal.
+		name := filepath.Base(r.URL.Path)
+		http.ServeFile(w, r, filepath.Join(vaultDir, name))
+	})
+}
+
 func main() {
 	app := NewApp()
 
@@ -51,7 +68,8 @@ func main() {
 		MinHeight:        700,
 		BackgroundColour: &options.RGBA{R: 4, G: 6, B: 10, A: 255},
 		AssetServer: &assetserver.Options{
-			Assets: assets,
+			Assets:  assets,
+			Handler: vaultImageHandler(),
 		},
 		OnStartup:  app.startup,
 		OnShutdown: app.shutdown,
