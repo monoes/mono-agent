@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Trash2, Plus, Search, Image as ImageIcon } from 'lucide-react'
-import * as WailsApp from '../wailsjs/wailsjs/go/main/App'
+import * as WailsApp from '../wailsjs/go/main/App'
 import ImageDetailModal from '../components/ImageDetailModal'
 
 const fmtBytes = (b) => {
@@ -249,7 +249,10 @@ export default function ImageVault() {
                   try {
                     await WailsApp.DeleteVaultImage(img.id)
                     setImages(prev => prev.filter(i => i.id !== img.id))
-                    load()
+                    try {
+                      const st = await WailsApp.GetVaultStats()
+                      setStats(st)
+                    } catch (_) {}
                   } catch (err) { setError('Delete failed: ' + err) }
                 }}
                 style={{

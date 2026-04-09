@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { X, Copy, Trash2, Edit3 } from 'lucide-react'
-import * as WailsApp from '../wailsjs/wailsjs/go/main/App'
+import * as WailsApp from '../wailsjs/go/main/App'
 
 export default function ImageDetailModal({ image, onClose, onDelete, onRename }) {
   const overlayRef = useRef(null)

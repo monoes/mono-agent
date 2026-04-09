@@ -108,6 +108,7 @@ func Register(ctx context.Context, db *sql.DB, src, source, workflowID, executio
 	// Get file size.
 	fi, err := os.Stat(destPath)
 	if err != nil {
+		_ = os.Remove(destPath) // best-effort cleanup
 		return "", fmt.Errorf("vault.Register: stat dest: %w", err)
 	}
 

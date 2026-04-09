@@ -27,7 +27,11 @@ export default function ImagePickerModal({ onSelect, onClose }) {
       )
     : images
 
-  const fmtBytes = (b) => b < 1024 * 1024 ? (b / 1024).toFixed(0) + ' KB' : (b / 1024 / 1024).toFixed(1) + ' MB'
+  const fmtBytes = (b) => {
+    if (!b || b < 1024) return (b || 0) + ' B'
+    if (b < 1024 * 1024) return (b / 1024).toFixed(0) + ' KB'
+    return (b / 1024 / 1024).toFixed(1) + ' MB'
+  }
 
   return (
     <div
