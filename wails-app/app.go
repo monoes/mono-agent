@@ -2928,6 +2928,18 @@ func (a *App) OpenVaultFilePicker() string {
 	return path
 }
 
+func (a *App) UpdateVaultImageLabel(id, label string) error {
+	if a.db == nil {
+		return fmt.Errorf("database not available")
+	}
+	var nullLabel interface{} = nil
+	if label != "" {
+		nullLabel = label
+	}
+	_, err := a.db.Exec(`UPDATE vault_images SET label = ? WHERE id = ?`, nullLabel, id)
+	return err
+}
+
 func (a *App) DeleteVaultImage(id string) error {
 	if a.db == nil {
 		return fmt.Errorf("database not available")

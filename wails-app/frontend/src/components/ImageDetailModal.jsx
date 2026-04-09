@@ -37,7 +37,8 @@ export default function ImageDetailModal({ image, onClose, onDelete, onRename })
 
   const fmtDate = (s) => {
     if (!s) return '—'
-    const d = new Date(s.includes('T') ? s : s.replace(' ', 'T'))
+    const iso = s.includes('T') ? s : s.replace(' ', 'T')
+    const d = new Date(iso.endsWith('Z') ? iso : iso + 'Z')
     return isNaN(d) ? s : d.toLocaleDateString()
   }
 

@@ -1049,6 +1049,7 @@ function Inspector({ node, onConfigChange, onClose, onNavigate }) {
             )}
           </>
         )}
+      </div>
       {pickerField && (
         <ImagePickerModal
           onSelect={(ref) => {
@@ -1058,7 +1059,6 @@ function Inspector({ node, onConfigChange, onClose, onNavigate }) {
           onClose={() => setPickerField(null)}
         />
       )}
-      </div>
     </div>
   )
 }

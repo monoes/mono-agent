@@ -39,7 +39,6 @@ export default function ImageVault() {
   const [dragging, setDragging] = useState(false)
   const [detail, setDetail] = useState(null)
   const [error, setError] = useState(null)
-  const fileInputRef = useRef(null)
   const pageRef = useRef(null)
 
   const load = useCallback(async () => {
@@ -66,28 +65,42 @@ export default function ImageVault() {
       )
     : images
 
-  const handleFileAdd = async (files) => {
+  const handlePickAndAdd = async () => {
     setError(null)
-    for (const file of files) {
-      try {
-        await WailsApp.AddVaultImage(file.path || file.name, '')
-      } catch (e) {
-        setError('Upload failed: ' + e)
-      }
+    try {
+      const path = await WailsApp.OpenVaultFilePicker()
+      if (!path) return // user cancelled
+      await WailsApp.AddVaultImage(path, '')
+      load()
+    } catch (e) {
+      setError('Upload failed: ' + e)
     }
-    load()
   }
 
   const handleDrop = (e) => {
     e.preventDefault()
     setDragging(false)
     const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'))
-    if (files.length) handleFileAdd(files)
+    if (!files.length) return
+    setError(null)
+    // Use first dropped file's path (Wails WebKit sets file.path on drop)
+    const promises = files.map(async (file) => {
+      const path = file.path
+      if (!path) {
+        setError('Drag-drop path unavailable — use the Add Image button instead')
+        return
+      }
+      await WailsApp.AddVaultImage(path, '')
+    })
+    Promise.all(promises).then(load).catch(e => setError('Upload failed: ' + e))
   }
 
-  const handleDelete = (id) => {
+  const handleDelete = async (id) => {
     setImages(prev => prev.filter(img => img.id !== id))
-    load()
+    try {
+      const st = await WailsApp.GetVaultStats()
+      setStats(st)
+    } catch (_) {}
   }
 
   return (
@@ -128,7 +141,7 @@ export default function ImageVault() {
           />
         </div>
         <button
-          onClick={() => fileInputRef.current?.click()}
+          onClick={handlePickAndAdd}
           style={{
             background: 'rgba(0,180,216,0.1)', border: '1px solid rgba(0,180,216,0.3)',
             borderRadius: 6, padding: '6px 12px', color: '#00b4d8',
@@ -138,14 +151,6 @@ export default function ImageVault() {
         >
           <Plus size={12} /> Add Image
         </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          multiple
-          style={{ display: 'none' }}
-          onChange={e => { handleFileAdd(Array.from(e.target.files)); e.target.value = '' }}
-        />
       </div>
 
       {/* Drop hint */}
@@ -268,6 +273,13 @@ export default function ImageVault() {
           image={detail}
           onClose={() => setDetail(null)}
           onDelete={handleDelete}
+          onRename={async (img) => {
+            const newLabel = window.prompt(`Rename ${img.id}:`, img.label || '')
+            if (newLabel === null) return // cancelled
+            await WailsApp.UpdateVaultImageLabel(img.id, newLabel)
+            load()
+            setDetail(null)
+          }}
         />
       )}
     </div>

@@ -321,3 +321,11 @@ export function SearchVaultImages(arg1) {
 export function GetVaultStats() {
   return window['go']['main']['App']['GetVaultStats']();
 }
+
+export function OpenVaultFilePicker() {
+  return window['go']['main']['App']['OpenVaultFilePicker']();
+}
+
+export function UpdateVaultImageLabel(arg1, arg2) {
+  return window['go']['main']['App']['UpdateVaultImageLabel'](arg1, arg2);
+}

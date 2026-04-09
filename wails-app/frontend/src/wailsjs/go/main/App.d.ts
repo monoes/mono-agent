@@ -157,3 +157,5 @@ export function AddVaultImage(arg1: string, arg2: string): Promise<Record<string
 export function DeleteVaultImage(arg1: string): Promise<void>;
 export function SearchVaultImages(arg1: string): Promise<Array<Record<string, any>>>;
 export function GetVaultStats(): Promise<Record<string, any>>;
+export function OpenVaultFilePicker(): Promise<string>;
+export function UpdateVaultImageLabel(arg1: string, arg2: string): Promise<void>;
