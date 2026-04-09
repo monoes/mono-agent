@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/nokhodian/mono-agent/internal/connections"
+	"github.com/nokhodian/mono-agent/internal/vault"
 	"github.com/rs/zerolog"
 )
 
@@ -80,6 +81,19 @@ func RunExecution(
 				Str("node_id", node.ID).
 				Str("node_name", node.Name).
 				Msg("skipping disabled node")
+			skipNow := time.Now().UTC()
+			skipCtx, skipCancel := dbCtx()
+			defer skipCancel()
+			_ = store.CreateExecutionNode(skipCtx, &WorkflowExecutionNode{
+				ExecutionID: exec.ID,
+				NodeID:      node.ID,
+				NodeName:    node.Name,
+				Status:      "SKIPPED",
+				InputItems:  []Item{},
+				OutputItems: []Item{},
+				StartedAt:   &skipNow,
+				FinishedAt:  &skipNow,
+			})
 			completedNodes[node.ID] = true
 			decrementMergeWaiting(node.ID, dag, mergeWaiting, completedNodes)
 			continue
@@ -114,6 +128,34 @@ func RunExecution(
 		}
 		if inputItems == nil {
 			inputItems = []Item{}
+		}
+
+		// Skip non-trigger nodes that received no items from their predecessors.
+		// When all upstream nodes produced 0 items the pipeline is "empty" — running
+		// downstream nodes with an empty context produces garbage (unresolved template
+		// variables, malformed API calls, etc.).  Persist a SKIPPED record so the
+		// workflow editor can display them correctly in past-run views.
+		if !triggerNodeIDs[node.ID] && dag.InDegree(node.ID) > 0 && len(inputItems) == 0 {
+			logger.Debug().
+				Str("node_id", node.ID).
+				Str("node_name", node.Name).
+				Msg("no input items from predecessors — skipping node")
+			skipNow := time.Now().UTC()
+			skipCtx, skipCancel := dbCtx()
+			defer skipCancel()
+			_ = store.CreateExecutionNode(skipCtx, &WorkflowExecutionNode{
+				ExecutionID: exec.ID,
+				NodeID:      node.ID,
+				NodeName:    node.Name,
+				Status:      "SKIPPED",
+				InputItems:  []Item{},
+				OutputItems: []Item{},
+				StartedAt:   &skipNow,
+				FinishedAt:  &skipNow,
+			})
+			completedNodes[node.ID] = true
+			decrementMergeWaiting(node.ID, dag, mergeWaiting, completedNodes)
+			continue
 		}
 
 		// Parse node config.
@@ -210,6 +252,11 @@ func RunExecution(
 		// Restore the per-item fields unresolved.
 		for k, v := range savedFields {
 			resolvedConfig[k] = v
+		}
+
+		// Resolve @img-NNN references to absolute vault file paths.
+		if vaultDB := vault.DBFromContext(ctx); vaultDB != nil {
+			_ = vault.ResolveConfig(vaultDB, resolvedConfig)
 		}
 
 		// Extract retry policy and on_error behaviour from config.
@@ -314,6 +361,13 @@ func RunExecution(
 					pendingInputs[succ.ID] = append(pendingInputs[succ.ID], inputItems...)
 				}
 				nodeOutputs[node.Name] = inputItems
+				completedNodes[node.ID] = true
+				decrementMergeWaiting(node.ID, dag, mergeWaiting, completedNodes)
+				continue
+
+			case "skip":
+				// Mark the node as failed but do not propagate items or error downstream.
+				// Downstream nodes will receive no input from this node and may not run.
 				completedNodes[node.ID] = true
 				decrementMergeWaiting(node.ID, dag, mergeWaiting, completedNodes)
 				continue

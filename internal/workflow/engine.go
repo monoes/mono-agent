@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/nokhodian/mono-agent/internal/connections"
+	"github.com/nokhodian/mono-agent/internal/vault"
 	"github.com/rs/zerolog"
 )
 
@@ -685,5 +686,6 @@ func (e *WorkflowEngine) ListExecutions(ctx context.Context, workflowID string, 
 
 // runExecution delegates to RunExecution defined in execution.go.
 func (e *WorkflowEngine) runExecution(ctx context.Context, exec *WorkflowExecution, wf *Workflow, dag *DAG) error {
+	ctx = vault.ContextWithDB(ctx, e.store.RawDB())
 	return RunExecution(ctx, exec, wf, dag, e.registry, e.store, e.connStore, e.expr, e.logger)
 }
