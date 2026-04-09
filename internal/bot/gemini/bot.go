@@ -543,7 +543,7 @@ func (b *GeminiBot) methodExtractImageResponse(_ context.Context, args ...interf
 	return map[string]interface{}{"success": true, "image_urls": urls}, nil
 }
 
-func (b *GeminiBot) methodDownloadImages(_ context.Context, args ...interface{}) (interface{}, error) {
+func (b *GeminiBot) methodDownloadImages(ctx context.Context, args ...interface{}) (interface{}, error) {
 	page, err := extractPage(args, "download_images")
 	if err != nil {
 		return nil, err
@@ -645,6 +645,23 @@ func (b *GeminiBot) methodDownloadImages(_ context.Context, args ...interface{})
 		latestLink := filepath.Join(downloadDir, "latest_gemini.png")
 		_ = os.Remove(latestLink)
 		_ = os.Symlink(first, latestLink)
+	}
+
+	// Register each downloaded image in the vault.
+	if vaultDB := vault.DBFromContext(ctx); vaultDB != nil {
+		wfID, execID := vault.ExecIDsFromContext(ctx)
+		for i, img := range downloaded {
+			path, _ := img["path"].(string)
+			if path == "" {
+				continue
+			}
+			vaultID, err := vault.Register(ctx, vaultDB, path, "gemini", wfID, execID)
+			if err == nil {
+				downloaded[i]["vault_id"] = vaultID
+			} else {
+				fmt.Fprintf(os.Stderr, "vault: warning: register image: %v\n", err)
+			}
+		}
 	}
 
 	return map[string]interface{}{
@@ -764,14 +781,17 @@ func (b *GeminiBot) methodExtractAndDownloadImages(ctx context.Context, args ...
 
 	// Register each downloaded image in the vault.
 	if vaultDB := vault.DBFromContext(ctx); vaultDB != nil {
+		wfID, execID := vault.ExecIDsFromContext(ctx)
 		for i, img := range downloaded {
 			path, _ := img["path"].(string)
 			if path == "" {
 				continue
 			}
-			vaultID, err := vault.Register(ctx, vaultDB, path, "gemini", "", "")
+			vaultID, err := vault.Register(ctx, vaultDB, path, "gemini", wfID, execID)
 			if err == nil {
 				downloaded[i]["vault_id"] = vaultID
+			} else {
+				fmt.Fprintf(os.Stderr, "vault: warning: register image: %v\n", err)
 			}
 		}
 	}

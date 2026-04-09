@@ -38,7 +38,7 @@ func init() {
 
 // enableDevTools controls whether the WebKit inspector opens on startup.
 // Set to true temporarily while debugging frontend issues.
-const enableDevTools = true
+const enableDevTools = false
 
 //go:embed all:frontend/dist
 var assets embed.FS

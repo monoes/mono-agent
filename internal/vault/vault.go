@@ -23,6 +23,26 @@ func DBFromContext(ctx context.Context) *sql.DB {
 	return db
 }
 
+type execCtxKey struct{}
+
+type execIDs struct {
+	WorkflowID  string
+	ExecutionID string
+}
+
+// ContextWithExecIDs stores workflow and execution IDs in context for vault registration.
+func ContextWithExecIDs(ctx context.Context, workflowID, executionID string) context.Context {
+	return context.WithValue(ctx, execCtxKey{}, execIDs{workflowID, executionID})
+}
+
+// ExecIDsFromContext retrieves the workflow and execution IDs stored by ContextWithExecIDs.
+func ExecIDsFromContext(ctx context.Context) (workflowID, executionID string) {
+	if v, ok := ctx.Value(execCtxKey{}).(execIDs); ok {
+		return v.WorkflowID, v.ExecutionID
+	}
+	return "", ""
+}
+
 // VaultDir returns the absolute path of the vault directory (~/.monoes/vault/).
 func VaultDir() string {
 	return filepath.Join(os.Getenv("HOME"), ".monoes", "vault")
@@ -81,6 +101,7 @@ func Register(ctx context.Context, db *sql.DB, src, source, workflowID, executio
 
 	// Copy source file to vault.
 	if err := copyFile(src, destPath); err != nil {
+		_ = os.Remove(destPath) // best-effort cleanup of partial file
 		return "", fmt.Errorf("vault.Register: copy file: %w", err)
 	}
 
@@ -136,7 +157,7 @@ func Resolve(ctx context.Context, db *sql.DB, ref string) (string, error) {
 // ResolveConfig walks a config map and replaces any string value that starts
 // with "@img-" with its absolute file path from the vault.
 // Keys with missing images are left as-is (the ref string) and a warning is logged to stderr.
-func ResolveConfig(db *sql.DB, config map[string]interface{}) error {
+func ResolveConfig(ctx context.Context, db *sql.DB, config map[string]interface{}) error {
 	if db == nil {
 		return nil
 	}
@@ -148,7 +169,7 @@ func ResolveConfig(db *sql.DB, config map[string]interface{}) error {
 		if !strings.HasPrefix(s, "@img-") {
 			continue
 		}
-		resolved, err := Resolve(context.Background(), db, s)
+		resolved, err := Resolve(ctx, db, s)
 		if err != nil {
 			// Non-fatal: leave original ref, emit warning.
 			fmt.Fprintf(os.Stderr, "vault: warning: %v\n", err)

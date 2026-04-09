@@ -56,6 +56,9 @@ func RunExecution(
 	// decremented by each subsequent predecessor until it reaches zero.
 	mergeWaiting := make(map[string]int)
 
+	// Enrich context with workflow and execution IDs for vault registration.
+	ctx = vault.ContextWithExecIDs(ctx, wf.ID, exec.ID)
+
 	// Phase 2: BFS execution loop — process nodes in topological order.
 	order, err := dag.TopologicalSort()
 	if err != nil {
@@ -256,7 +259,7 @@ func RunExecution(
 
 		// Resolve @img-NNN references to absolute vault file paths.
 		if vaultDB := vault.DBFromContext(ctx); vaultDB != nil {
-			_ = vault.ResolveConfig(vaultDB, resolvedConfig)
+			_ = vault.ResolveConfig(ctx, vaultDB, resolvedConfig)
 		}
 
 		// Extract retry policy and on_error behaviour from config.

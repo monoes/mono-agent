@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,6 +20,7 @@ import (
 	"github.com/nokhodian/mono-agent/internal/ai"
 	aichat "github.com/nokhodian/mono-agent/internal/ai/chat"
 	"github.com/nokhodian/mono-agent/internal/connections"
+	"github.com/nokhodian/mono-agent/internal/vault"
 	"github.com/nokhodian/mono-agent/internal/workflow"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	_ "modernc.org/sqlite"
@@ -219,6 +219,19 @@ func (a *App) startup(ctx context.Context) {
     message    TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 )`,
+		`CREATE TABLE IF NOT EXISTS vault_images (
+    id           TEXT PRIMARY KEY,
+    seq          INTEGER NOT NULL UNIQUE,
+    path         TEXT NOT NULL,
+    filename     TEXT NOT NULL,
+    size_bytes   INTEGER NOT NULL DEFAULT 0,
+    source       TEXT NOT NULL DEFAULT 'upload',
+    workflow_id  TEXT,
+    execution_id TEXT,
+    label        TEXT,
+    created_at   TIMESTAMP NOT NULL DEFAULT (datetime('now'))
+)`,
+		`CREATE INDEX IF NOT EXISTS idx_vault_images_seq ON vault_images(seq DESC)`,
 	}
 	for _, q := range safeMigrations {
 		_, _ = db.Exec(q)
@@ -2853,6 +2866,9 @@ func (a *App) GetVaultImages(limit int) ([]map[string]interface{}, error) {
 			"url": "/vault-image/" + filename,
 		})
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	if out == nil {
 		out = []map[string]interface{}{}
 	}
@@ -2863,7 +2879,7 @@ func (a *App) GetVaultImage(id string) (map[string]interface{}, error) {
 	if a.db == nil {
 		return nil, fmt.Errorf("database not available")
 	}
-	var path, filename, source, workflowID, executionID, label, createdAt string
+	var imgID, path, filename, source, workflowID, executionID, label, createdAt string
 	var seq, sizeBytes int
 	err := a.db.QueryRow(`
 		SELECT id, seq, path, filename, size_bytes, source,
@@ -2871,12 +2887,12 @@ func (a *App) GetVaultImage(id string) (map[string]interface{}, error) {
 		       COALESCE(execution_id,'') as execution_id,
 		       COALESCE(label,'') as label, created_at
 		FROM vault_images WHERE id = ?`, id).
-		Scan(&id, &seq, &path, &filename, &sizeBytes, &source, &workflowID, &executionID, &label, &createdAt)
+		Scan(&imgID, &seq, &path, &filename, &sizeBytes, &source, &workflowID, &executionID, &label, &createdAt)
 	if err != nil {
 		return nil, fmt.Errorf("vault image %q not found: %w", id, err)
 	}
 	return map[string]interface{}{
-		"id": id, "seq": seq, "path": path, "filename": filename,
+		"id": imgID, "seq": seq, "path": path, "filename": filename,
 		"size_bytes": sizeBytes, "source": source,
 		"workflow_id": workflowID, "execution_id": executionID,
 		"label": label, "created_at": createdAt,
@@ -2888,71 +2904,28 @@ func (a *App) AddVaultImage(srcPath, label string) (map[string]interface{}, erro
 	if a.db == nil {
 		return nil, fmt.Errorf("database not available")
 	}
-	vaultDir := filepath.Join(os.Getenv("HOME"), ".monoes", "vault")
-	if err := os.MkdirAll(vaultDir, 0700); err != nil {
-		return nil, fmt.Errorf("vault dir: %w", err)
-	}
-
-	tx, err := a.db.Begin()
+	id, err := vault.Register(context.Background(), a.db, srcPath, "upload", "", "")
 	if err != nil {
-		return nil, fmt.Errorf("vault tx: %w", err)
+		return nil, fmt.Errorf("vault register: %w", err)
 	}
-	defer tx.Rollback()
-
-	var seq int
-	if err := tx.QueryRow(`SELECT COALESCE(MAX(seq), 0) + 1 FROM vault_images`).Scan(&seq); err != nil {
-		return nil, fmt.Errorf("vault seq: %w", err)
-	}
-	id := fmt.Sprintf("img-%03d", seq)
-	ext := filepath.Ext(srcPath)
-	if ext == "" {
-		ext = ".png"
-	}
-	destFilename := id + ext
-	destPath := filepath.Join(vaultDir, destFilename)
-
-	in, err := os.Open(srcPath)
-	if err != nil {
-		return nil, fmt.Errorf("open source: %w", err)
-	}
-	defer in.Close()
-	out, err := os.Create(destPath)
-	if err != nil {
-		return nil, fmt.Errorf("create dest: %w", err)
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		os.Remove(destPath)
-		return nil, fmt.Errorf("copy: %w", err)
-	}
-	if err := out.Close(); err != nil {
-		os.Remove(destPath)
-		return nil, fmt.Errorf("flush dest: %w", err)
-	}
-
-	fi, _ := os.Stat(destPath)
-	sizeBytes := int64(0)
-	if fi != nil {
-		sizeBytes = fi.Size()
-	}
-
-	nullLabel := interface{}(nil)
 	if label != "" {
-		nullLabel = label
-	}
-	if _, err := tx.Exec(`
-		INSERT INTO vault_images (id, seq, path, filename, size_bytes, source, label)
-		VALUES (?, ?, ?, ?, ?, 'upload', ?)`,
-		id, seq, destPath, destFilename, sizeBytes, nullLabel,
-	); err != nil {
-		os.Remove(destPath) // best-effort cleanup
-		return nil, fmt.Errorf("insert: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		os.Remove(destPath)
-		return nil, fmt.Errorf("vault commit: %w", err)
+		_, _ = a.db.Exec(`UPDATE vault_images SET label = ? WHERE id = ?`, label, id)
 	}
 	return a.GetVaultImage(id)
+}
+
+// OpenVaultFilePicker opens a native file picker and returns the selected file path (empty if cancelled).
+func (a *App) OpenVaultFilePicker() string {
+	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Select Image",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "Images", Pattern: "*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp"},
+		},
+	})
+	if err != nil {
+		return ""
+	}
+	return path
 }
 
 func (a *App) DeleteVaultImage(id string) error {
@@ -2974,14 +2947,15 @@ func (a *App) SearchVaultImages(query string) ([]map[string]interface{}, error) 
 	if a.db == nil {
 		return nil, fmt.Errorf("database not available")
 	}
-	q := "%" + query + "%"
+	escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(query)
+	q := "%" + escaped + "%"
 	rows, err := a.db.Query(`
 		SELECT id, seq, path, filename, size_bytes, source,
 		       COALESCE(workflow_id,'') as workflow_id,
 		       COALESCE(execution_id,'') as execution_id,
 		       COALESCE(label,'') as label, created_at
 		FROM vault_images
-		WHERE label LIKE ? OR filename LIKE ? OR source LIKE ? OR workflow_id LIKE ?
+		WHERE label LIKE ? ESCAPE '\' OR filename LIKE ? ESCAPE '\' OR source LIKE ? ESCAPE '\' OR workflow_id LIKE ? ESCAPE '\'
 		ORDER BY seq DESC LIMIT 100`, q, q, q, q)
 	if err != nil {
 		return nil, err
@@ -3001,6 +2975,9 @@ func (a *App) SearchVaultImages(query string) ([]map[string]interface{}, error) 
 			"label": label, "created_at": createdAt,
 			"url": "/vault-image/" + filename,
 		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	if out == nil {
 		out = []map[string]interface{}{}
