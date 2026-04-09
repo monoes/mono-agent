@@ -10,12 +10,36 @@ export function AddPersonTag(arg1, arg2, arg3) {
   return window['go']['main']['App']['AddPersonTag'](arg1, arg2, arg3);
 }
 
+export function CancelWorkflow(arg1) {
+  return window['go']['main']['App']['CancelWorkflow'](arg1);
+}
+
+export function CheckForUpdate() {
+  return window['go']['main']['App']['CheckForUpdate']();
+}
+
+export function ClearAIChatHistory(arg1) {
+  return window['go']['main']['App']['ClearAIChatHistory'](arg1);
+}
+
 export function ClearLogs() {
   return window['go']['main']['App']['ClearLogs']();
 }
 
+export function ConnectPlatformOAuth(arg1) {
+  return window['go']['main']['App']['ConnectPlatformOAuth'](arg1);
+}
+
 export function CreateAction(arg1) {
   return window['go']['main']['App']['CreateAction'](arg1);
+}
+
+export function CreateResource(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['CreateResource'](arg1, arg2, arg3, arg4);
+}
+
+export function DeleteAIProvider(arg1) {
+  return window['go']['main']['App']['DeleteAIProvider'](arg1);
 }
 
 export function DeleteAction(arg1) {
@@ -36,6 +60,18 @@ export function DeleteWorkflow(arg1) {
 
 export function ExecuteAction(arg1) {
   return window['go']['main']['App']['ExecuteAction'](arg1);
+}
+
+export function GetAIChatHistory(arg1) {
+  return window['go']['main']['App']['GetAIChatHistory'](arg1);
+}
+
+export function GetAIModels(arg1) {
+  return window['go']['main']['App']['GetAIModels'](arg1);
+}
+
+export function GetAIRegistry() {
+  return window['go']['main']['App']['GetAIRegistry']();
 }
 
 export function GetAction(arg1) {
@@ -62,36 +98,24 @@ export function GetConnectionsForPlatform(arg1) {
   return window['go']['main']['App']['GetConnectionsForPlatform'](arg1);
 }
 
-export function GetOAuthCredentials(arg1) {
-  return window['go']['main']['App']['GetOAuthCredentials'](arg1);
-}
-
-export function SetOAuthCredentials(arg1, arg2, arg3) {
-  return window['go']['main']['App']['SetOAuthCredentials'](arg1, arg2, arg3);
-}
-
 export function GetDBPath() {
   return window['go']['main']['App']['GetDBPath']();
-}
-
-export function GetVersion() {
-  return window['go']['main']['App']['GetVersion']();
-}
-
-export function CheckForUpdate() {
-  return window['go']['main']['App']['CheckForUpdate']();
-}
-
-export function SelfUpdate() {
-  return window['go']['main']['App']['SelfUpdate']();
 }
 
 export function GetDashboardStats() {
   return window['go']['main']['App']['GetDashboardStats']();
 }
 
+export function GetExecutionDetail(arg1) {
+  return window['go']['main']['App']['GetExecutionDetail'](arg1);
+}
+
 export function GetLogs() {
   return window['go']['main']['App']['GetLogs']();
+}
+
+export function GetOAuthCredentials(arg1) {
+  return window['go']['main']['App']['GetOAuthCredentials'](arg1);
 }
 
 export function GetPeople(arg1, arg2, arg3, arg4) {
@@ -114,8 +138,28 @@ export function GetPersonInteractions(arg1) {
   return window['go']['main']['App']['GetPersonInteractions'](arg1);
 }
 
+export function GetPersonPosts(arg1) {
+  return window['go']['main']['App']['GetPersonPosts'](arg1);
+}
+
 export function GetPersonTags(arg1) {
   return window['go']['main']['App']['GetPersonTags'](arg1);
+}
+
+export function GetPostComments(arg1) {
+  return window['go']['main']['App']['GetPostComments'](arg1);
+}
+
+export function GetPostDetail(arg1) {
+  return window['go']['main']['App']['GetPostDetail'](arg1);
+}
+
+export function GetRecentExecutions(arg1) {
+  return window['go']['main']['App']['GetRecentExecutions'](arg1);
+}
+
+export function GetRunLogs(arg1) {
+  return window['go']['main']['App']['GetRunLogs'](arg1);
 }
 
 export function GetSessions() {
@@ -130,16 +174,16 @@ export function GetTemplates() {
   return window['go']['main']['App']['GetTemplates']();
 }
 
+export function GetVersion() {
+  return window['go']['main']['App']['GetVersion']();
+}
+
 export function GetWorkflow(arg1) {
   return window['go']['main']['App']['GetWorkflow'](arg1);
 }
 
 export function GetWorkflowExecutions(arg1, arg2) {
   return window['go']['main']['App']['GetWorkflowExecutions'](arg1, arg2);
-}
-
-export function GetRecentExecutions(arg1) {
-  return window['go']['main']['App']['GetRecentExecutions'](arg1);
 }
 
 export function GetWorkflowNodeTypes() {
@@ -150,28 +194,36 @@ export function IsDBConnected() {
   return window['go']['main']['App']['IsDBConnected']();
 }
 
+export function ListAIProviders() {
+  return window['go']['main']['App']['ListAIProviders']();
+}
+
 export function ListConnections(arg1) {
   return window['go']['main']['App']['ListConnections'](arg1);
-}
-
-export function ListCredentialsForNode(arg1) {
-  return window['go']['main']['App']['ListCredentialsForNode'](arg1);
-}
-
-export function LoginSocial(arg1) {
-  return window['go']['main']['App']['LoginSocial'](arg1);
 }
 
 export function ListCredentials() {
   return window['go']['main']['App']['ListCredentials']();
 }
 
+export function ListCredentialsForNode(arg1) {
+  return window['go']['main']['App']['ListCredentialsForNode'](arg1);
+}
+
 export function ListPlatformsJSON(arg1) {
   return window['go']['main']['App']['ListPlatformsJSON'](arg1);
 }
 
+export function ListResources(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['ListResources'](arg1, arg2, arg3, arg4);
+}
+
 export function ListWorkflows() {
   return window['go']['main']['App']['ListWorkflows']();
+}
+
+export function LoginSocial(arg1) {
+  return window['go']['main']['App']['LoginSocial'](arg1);
 }
 
 export function OpenURL(arg1) {
@@ -194,8 +246,8 @@ export function RunWorkflow(arg1) {
   return window['go']['main']['App']['RunWorkflow'](arg1);
 }
 
-export function ConnectPlatformOAuth(arg1) {
-  return window['go']['main']['App']['ConnectPlatformOAuth'](arg1);
+export function SaveAIProvider(arg1) {
+  return window['go']['main']['App']['SaveAIProvider'](arg1);
 }
 
 export function SaveConnectionDirect(arg1, arg2, arg3) {
@@ -210,8 +262,24 @@ export function SaveWorkflow(arg1) {
   return window['go']['main']['App']['SaveWorkflow'](arg1);
 }
 
+export function SelfUpdate() {
+  return window['go']['main']['App']['SelfUpdate']();
+}
+
+export function SetOAuthCredentials(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SetOAuthCredentials'](arg1, arg2, arg3);
+}
+
 export function SetWorkflowActive(arg1, arg2) {
   return window['go']['main']['App']['SetWorkflowActive'](arg1, arg2);
+}
+
+export function StreamAIChat(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['StreamAIChat'](arg1, arg2, arg3, arg4);
+}
+
+export function TestAIProvider(arg1) {
+  return window['go']['main']['App']['TestAIProvider'](arg1);
 }
 
 export function TestConnection(arg1) {
@@ -230,46 +298,26 @@ export function UpdateActionState(arg1, arg2) {
   return window['go']['main']['App']['UpdateActionState'](arg1, arg2);
 }
 
-export function ListAIProviders() {
-  return window['go']['main']['App']['ListAIProviders']();
+export function GetVaultImages(arg1) {
+  return window['go']['main']['App']['GetVaultImages'](arg1);
 }
 
-export function SaveAIProvider(arg1) {
-  return window['go']['main']['App']['SaveAIProvider'](arg1);
+export function GetVaultImage(arg1) {
+  return window['go']['main']['App']['GetVaultImage'](arg1);
 }
 
-export function DeleteAIProvider(arg1) {
-  return window['go']['main']['App']['DeleteAIProvider'](arg1);
+export function AddVaultImage(arg1, arg2) {
+  return window['go']['main']['App']['AddVaultImage'](arg1, arg2);
 }
 
-export function TestAIProvider(arg1) {
-  return window['go']['main']['App']['TestAIProvider'](arg1);
+export function DeleteVaultImage(arg1) {
+  return window['go']['main']['App']['DeleteVaultImage'](arg1);
 }
 
-export function GetAIModels(arg1) {
-  return window['go']['main']['App']['GetAIModels'](arg1);
+export function SearchVaultImages(arg1) {
+  return window['go']['main']['App']['SearchVaultImages'](arg1);
 }
 
-export function GetAIRegistry() {
-  return window['go']['main']['App']['GetAIRegistry']();
-}
-
-export function StreamAIChat(arg1, arg2, arg3, arg4) {
-  return window['go']['main']['App']['StreamAIChat'](arg1, arg2, arg3, arg4);
-}
-
-export function GetAIChatHistory(arg1) {
-  return window['go']['main']['App']['GetAIChatHistory'](arg1);
-}
-
-export function ClearAIChatHistory(arg1) {
-  return window['go']['main']['App']['ClearAIChatHistory'](arg1);
-}
-
-export function ListResources(platform, resourceType, credentialID, query) {
-  return window['go']['main']['App']['ListResources'](platform, resourceType, credentialID, query);
-}
-
-export function CreateResource(platform, resourceType, credentialID, name) {
-  return window['go']['main']['App']['CreateResource'](platform, resourceType, credentialID, name);
+export function GetVaultStats() {
+  return window['go']['main']['App']['GetVaultStats']();
 }
