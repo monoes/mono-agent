@@ -138,6 +138,7 @@ func (e *ExpressionEngine) buildFuncMap() template.FuncMap {
 		"trimRight": func(cutset, s string) string { return strings.TrimRight(s, cutset) },
 		"split":     func(sep, s string) []string { return strings.Split(s, sep) },
 		"join":      func(sep string, parts []string) string { return strings.Join(parts, sep) },
+		"replace":   func(old, new, s string) string { return strings.ReplaceAll(s, old, new) },
 
 		// Map helpers
 		"hasKey": func(m map[string]interface{}, key string) bool {
@@ -191,6 +192,15 @@ func (e *ExpressionEngine) buildFuncMap() template.FuncMap {
 		"index": func(collection interface{}, key interface{}) (interface{}, error) {
 			switch c := collection.(type) {
 			case []interface{}:
+				idx, err := toIndexInt(key)
+				if err != nil {
+					return nil, err
+				}
+				if idx < 0 || idx >= len(c) {
+					return nil, nil
+				}
+				return c[idx], nil
+			case []map[string]interface{}:
 				idx, err := toIndexInt(key)
 				if err != nil {
 					return nil, err

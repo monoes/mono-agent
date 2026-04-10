@@ -5,8 +5,11 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"mime"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -2898,6 +2901,35 @@ func (a *App) GetVaultImage(id string) (map[string]interface{}, error) {
 		"label": label, "created_at": createdAt,
 		"url": "/vault-image/" + filename,
 	}, nil
+}
+
+// GetVaultImageData reads a vault image from disk and returns it as a base64
+// data URL (e.g. "data:image/png;base64,..."). This is the reliable way to
+// display vault images inside the Wails WebView without relying on the HTTP
+// asset handler.
+func (a *App) GetVaultImageData(id string) (string, error) {
+	if a.db == nil {
+		return "", fmt.Errorf("database not available")
+	}
+	var path string
+	err := a.db.QueryRow(`SELECT path FROM vault_images WHERE id = ?`, id).Scan(&path)
+	if err != nil {
+		return "", fmt.Errorf("vault image %q not found: %w", id, err)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("vault image file open: %w", err)
+	}
+	defer f.Close()
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return "", fmt.Errorf("vault image file read: %w", err)
+	}
+	mimeType := mime.TypeByExtension(filepath.Ext(path))
+	if mimeType == "" {
+		mimeType = "image/png"
+	}
+	return "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(data), nil
 }
 
 func (a *App) AddVaultImage(srcPath, label string) (map[string]interface{}, error) {

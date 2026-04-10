@@ -181,10 +181,10 @@ function WorkflowRow({ wf, execMap, onRun, onStop, onToggle, onNavigate }) {
         </button>
       )}
 
-      {/* Arrow to workflow editor */}
+      {/* Arrow to workflow editor — pass latest executionId so node status overlay loads */}
       <button
         className="btn btn-ghost btn-icon"
-        onClick={() => onNavigate('noderunner')}
+        onClick={() => onNavigate('noderunner', last ? { workflowId: wf.id, executionId: last.id } : { workflowId: wf.id })}
         style={{ padding: 3, color: 'var(--text-dim)' }}
         title="Open in editor"
       >
@@ -271,6 +271,18 @@ export default function Dashboard({ stats, onRefresh, onNavigate }) {
 
   useEffect(() => { load() }, [load])
 
+  // Auto-poll: 2s while any execution is RUNNING/QUEUED, 5s baseline to catch
+  // new CLI runs that start externally without a manual trigger from this UI.
+  useEffect(() => {
+    const hasRunning = executions.some(e => {
+      const s = (e.status || '').toUpperCase()
+      return s === 'RUNNING' || s === 'QUEUED' || s === 'PENDING'
+    })
+    const interval = hasRunning ? 2000 : 5000
+    const t = setInterval(load, interval)
+    return () => clearInterval(t)
+  }, [executions, load])
+
   const handleRefresh = async () => {
     setRefreshing(true)
     await Promise.all([onRefresh(), load()])
@@ -288,6 +300,8 @@ export default function Dashboard({ stats, onRefresh, onNavigate }) {
   }
 
   const handleStop = async (executionId) => {
+    // Optimistic update: mark cancelled immediately so UI feels instant
+    setExecutions(prev => prev.map(e => e.id === executionId ? { ...e, status: 'CANCELLED' } : e))
     await api.cancelWorkflow(executionId)
     setTimeout(load, 500)
   }

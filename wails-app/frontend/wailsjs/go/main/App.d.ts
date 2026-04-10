@@ -7,9 +7,21 @@ export function AddActionTarget(arg1:string,arg2:string,arg3:string):Promise<voi
 
 export function AddPersonTag(arg1:string,arg2:string,arg3:string):Promise<main.TagInfo>;
 
+export function CancelWorkflow(arg1:string):Promise<void>;
+
+export function CheckForUpdate():Promise<main.UpdateInfo>;
+
+export function ClearAIChatHistory(arg1:string):Promise<string>;
+
 export function ClearLogs():Promise<void>;
 
+export function ConnectPlatformOAuth(arg1:string):Promise<string>;
+
 export function CreateAction(arg1:main.CreateActionRequest):Promise<main.ActionInfo>;
+
+export function CreateResource(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.ResourceItemResult>;
+
+export function DeleteAIProvider(arg1:string):Promise<string>;
 
 export function DeleteAction(arg1:string):Promise<void>;
 
@@ -20,6 +32,12 @@ export function DeleteSession(arg1:number):Promise<void>;
 export function DeleteWorkflow(arg1:string):Promise<void>;
 
 export function ExecuteAction(arg1:string):Promise<void>;
+
+export function GetAIChatHistory(arg1:string):Promise<string>;
+
+export function GetAIModels(arg1:string):Promise<string>;
+
+export function GetAIRegistry():Promise<string>;
 
 export function GetAction(arg1:string):Promise<main.ActionInfo>;
 
@@ -37,7 +55,11 @@ export function GetDBPath():Promise<string>;
 
 export function GetDashboardStats():Promise<main.DashboardStats>;
 
+export function GetExecutionDetail(arg1:string):Promise<Record<string, any>>;
+
 export function GetLogs():Promise<Array<main.LogEntry>>;
+
+export function GetOAuthCredentials(arg1:string):Promise<string>;
 
 export function GetPeople(arg1:string,arg2:string,arg3:number,arg4:number):Promise<Array<main.PersonInfo>>;
 
@@ -49,13 +71,25 @@ export function GetPersonDetail(arg1:string):Promise<main.PersonDetailInfo>;
 
 export function GetPersonInteractions(arg1:string):Promise<Array<main.PersonInteraction>>;
 
+export function GetPersonPosts(arg1:string):Promise<Array<main.PostSummary>>;
+
 export function GetPersonTags(arg1:string):Promise<Array<main.TagInfo>>;
+
+export function GetPostComments(arg1:string):Promise<Array<main.PostComment>>;
+
+export function GetPostDetail(arg1:string):Promise<main.PostDetail>;
+
+export function GetRecentExecutions(arg1:number):Promise<Array<main.WorkflowExecutionSummary>>;
+
+export function GetRunLogs(arg1:number):Promise<Array<main.LogEntry>>;
 
 export function GetSessions():Promise<Array<main.SessionInfo>>;
 
 export function GetSocialLists():Promise<Array<main.SocialListInfo>>;
 
 export function GetTemplates():Promise<Array<main.TemplateInfo>>;
+
+export function GetVersion():Promise<main.VersionInfo>;
 
 export function GetWorkflow(arg1:string):Promise<main.WorkflowDetail>;
 
@@ -65,13 +99,21 @@ export function GetWorkflowNodeTypes():Promise<Record<string, any>>;
 
 export function IsDBConnected():Promise<boolean>;
 
+export function ListAIProviders():Promise<string>;
+
 export function ListConnections(arg1:string):Promise<Array<connections.Connection>>;
 
 export function ListCredentials():Promise<Array<main.CredentialSummary>>;
 
+export function ListCredentialsForNode(arg1:string):Promise<Array<main.CredentialOption>>;
+
 export function ListPlatformsJSON(arg1:string):Promise<string>;
 
+export function ListResources(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.ResourceListResult>;
+
 export function ListWorkflows():Promise<Array<main.WorkflowSummary>>;
+
+export function LoginSocial(arg1:string):Promise<string>;
 
 export function OpenURL(arg1:string):Promise<void>;
 
@@ -83,15 +125,27 @@ export function RunNode(arg1:main.NodeRunRequest):Promise<main.NodeRunResult>;
 
 export function RunWorkflow(arg1:string):Promise<void>;
 
-export function SaveConnectionDirect(arg1:string,arg2:string,arg3:Record<string, any>):Promise<string>;
+export function SaveAIProvider(arg1:string):Promise<string>;
+
+export function SaveConnectionDirect(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function SaveCredential(arg1:main.SaveCredentialRequest):Promise<main.CredentialSummary>;
 
 export function SaveWorkflow(arg1:main.SaveWorkflowRequest):Promise<main.WorkflowSummary>;
 
+export function SelfUpdate():Promise<main.UpdateResult>;
+
+export function SetOAuthCredentials(arg1:string,arg2:string,arg3:string):Promise<string>;
+
 export function SetWorkflowActive(arg1:string,arg2:boolean):Promise<void>;
 
+export function StreamAIChat(arg1:string,arg2:string,arg3:string,arg4:string):Promise<string>;
+
+export function TestAIProvider(arg1:string):Promise<string>;
+
 export function TestConnection(arg1:string):Promise<string>;
+
+export function TestSession(arg1:number):Promise<string>;
 
 export function UpdateActionParams(arg1:string,arg2:Record<string, any>):Promise<void>;
 

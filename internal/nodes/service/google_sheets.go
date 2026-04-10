@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strings"
 
 	"github.com/nokhodian/mono-agent/internal/workflow"
 )
@@ -118,6 +119,13 @@ func (n *GoogleSheetsNode) Execute(ctx context.Context, input workflow.NodeInput
 		items = []workflow.Item{workflow.NewItem(result)}
 
 	case "update_rows":
+		// Guard: if the range contains "<no value>" it means a template variable
+		// (e.g. _row_index) was not available in the expression context — likely
+		// because the upstream node produced no items.  Fail fast with a clear message
+		// instead of sending a malformed range to the Sheets API.
+		if strings.Contains(rangeStr, "<no value>") {
+			return nil, fmt.Errorf("google_sheets update_rows: range %q contains unresolved template variable — check that upstream nodes produced items with the required fields", rangeStr)
+		}
 		values := sheetsExtractValues(config)
 		url := baseURL + "/values/" + sheetsEncodeRange(rangeStr) + "?valueInputOption=" + valueInputOption
 		body := map[string]interface{}{
@@ -128,7 +136,18 @@ func (n *GoogleSheetsNode) Execute(ctx context.Context, input workflow.NodeInput
 		if err != nil {
 			return nil, fmt.Errorf("google_sheets update_rows: %w", err)
 		}
-		items = []workflow.Item{workflow.NewItem(resp)}
+		// Merge input item with the API response so downstream nodes retain fields
+		// like _row_index, post_text, etc. that were present before the update.
+		merged := make(map[string]interface{})
+		if len(input.Items) > 0 {
+			for k, v := range input.Items[0].JSON {
+				merged[k] = v
+			}
+		}
+		for k, v := range resp {
+			merged[k] = v
+		}
+		items = []workflow.Item{workflow.NewItem(merged)}
 
 	case "clear_range":
 		url := baseURL + "/values/" + sheetsEncodeRange(rangeStr) + ":clear"

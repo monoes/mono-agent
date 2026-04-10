@@ -194,35 +194,43 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 		return nil, fmt.Errorf("nodes: BrowserNode execute %s/%s: %w", b.platform, b.actionType, err)
 	}
 
-	// 6. Convert and normalize ExtractedItems to []workflow.Item.
-	// Merge extracted items with input item fields so downstream nodes can
-	// still access original data (e.g., sheet row fields, prompts, hashtags).
-	items := make([]workflow.Item, 0, len(result.ExtractedItems))
+	// 6. Convert and normalize ExtractedItems to a single output item.
+	// All extracted items (one per bot method step) are merged together so the
+	// downstream node sees a single item with all fields — including both the
+	// input data (sheet row, prompts) and the action results (image_count,
+	// response_text, etc.).  This prevents "3 items for 3 steps" fan-out.
 	var inputJSON map[string]interface{}
 	if len(input.Items) > 0 {
 		inputJSON = input.Items[0].JSON
 	}
-	for _, raw := range result.ExtractedItems {
+
+	if len(result.ExtractedItems) > 0 {
 		merged := make(map[string]interface{})
-		// Start with input fields (original data from upstream).
+		// Start with input fields.
 		for k, v := range inputJSON {
 			merged[k] = v
 		}
-		// Overlay extracted fields (browser action results).
-		for k, v := range normalizeBrowserItem(raw, b.platform) {
-			merged[k] = v
+		// Overlay each step's result in order so the last step wins for any
+		// key that appears in multiple steps.
+		for _, raw := range result.ExtractedItems {
+			for k, v := range normalizeBrowserItem(raw, b.platform) {
+				merged[k] = v
+			}
 		}
-		items = append(items, workflow.NewItem(merged))
+		return []workflow.NodeOutput{
+			{Handle: "main", Items: []workflow.Item{workflow.NewItem(merged)}},
+		}, nil
 	}
 
-	// When the action produced no extracted items (e.g. publish actions that
-	// don't scrape data), pass the input items through.
-	if len(items) == 0 && len(input.Items) > 0 {
-		items = input.Items
+	// No extracted items (e.g. publish actions) — pass input items through.
+	if len(input.Items) > 0 {
+		return []workflow.NodeOutput{
+			{Handle: "main", Items: input.Items},
+		}, nil
 	}
 
 	return []workflow.NodeOutput{
-		{Handle: "main", Items: items},
+		{Handle: "main", Items: []workflow.Item{}},
 	}, nil
 }
 

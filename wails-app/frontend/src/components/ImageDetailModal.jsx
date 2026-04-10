@@ -1,10 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
-import { X, Copy, Trash2, Edit3 } from 'lucide-react'
+import { X, Copy, Trash2, Edit3, Check, AlertTriangle } from 'lucide-react'
 import * as WailsApp from '../wailsjs/go/main/App'
 
 export default function ImageDetailModal({ image, onClose, onDelete, onRename }) {
   const overlayRef = useRef(null)
+  const [dataUrl, setDataUrl] = useState(null)
   const [imgError, setImgError] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [renaming, setRenaming] = useState(false)
+  const [renameValue, setRenameValue] = useState('')
+  const [copied, setCopied] = useState(false)
 
   useEffect(() => {
     const handler = (e) => { if (e.key === 'Escape') onClose() }
@@ -12,25 +17,69 @@ export default function ImageDetailModal({ image, onClose, onDelete, onRename })
     return () => window.removeEventListener('keydown', handler)
   }, [onClose])
 
+  useEffect(() => {
+    if (!image) return
+    setDataUrl(null)
+    setImgError(false)
+    setConfirmDelete(false)
+    setRenaming(false)
+    try {
+      const p = WailsApp.GetVaultImageData(image.id)
+      if (p && typeof p.then === 'function') {
+        p.then(url => setDataUrl(url)).catch(() => setImgError(true))
+      }
+    } catch (_) { setImgError(true) }
+  }, [image?.id])
+
   if (!image) return null
 
   const handleDelete = async () => {
-    if (!window.confirm(`Delete ${image.id}? This cannot be undone.`)) return
+    if (!confirmDelete) { setConfirmDelete(true); return }
     try {
       await WailsApp.DeleteVaultImage(image.id)
       onDelete(image.id)
       onClose()
     } catch (e) {
-      alert('Delete failed: ' + e)
+      setConfirmDelete(false)
     }
   }
 
+  const handleRename = async () => {
+    if (!renaming) {
+      setRenameValue(image.label || '')
+      setRenaming(true)
+      return
+    }
+    try {
+      await WailsApp.UpdateVaultImageLabel(image.id, renameValue)
+      onRename && onRename({ ...image, label: renameValue })
+      setRenaming(false)
+      onClose()
+    } catch (_) { setRenaming(false) }
+  }
+
   const copyRef = () => {
-    navigator.clipboard.writeText('@' + image.id).catch(() => {})
+    const text = '@' + image.id
+    try {
+      navigator.clipboard.writeText(text).catch(() => fallbackCopy(text))
+    } catch (_) { fallbackCopy(text) }
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
+
+  const fallbackCopy = (text) => {
+    const el = document.createElement('textarea')
+    el.value = text
+    el.style.position = 'fixed'
+    el.style.opacity = '0'
+    document.body.appendChild(el)
+    el.select()
+    document.execCommand('copy')
+    document.body.removeChild(el)
   }
 
   const fmtBytes = (b) => {
-    if (b < 1024) return b + ' B'
+    if (!b || b < 1024) return (b || 0) + ' B'
     if (b < 1024 * 1024) return (b / 1024).toFixed(1) + ' KB'
     return (b / 1024 / 1024).toFixed(1) + ' MB'
   }
@@ -79,13 +128,15 @@ export default function ImageDetailModal({ image, onClose, onDelete, onRename })
               <span style={{ fontSize: 28 }}>🖼</span>
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10 }}>Image unavailable</span>
             </div>
-          ) : (
+          ) : dataUrl ? (
             <img
-              src={image.url}
+              src={dataUrl}
               alt={image.label || image.id}
               style={{ maxWidth: '100%', maxHeight: 280, objectFit: 'contain', display: 'block' }}
               onError={() => setImgError(true)}
             />
+          ) : (
+            <div style={{ color: '#334155', fontFamily: 'var(--font-mono)', fontSize: 10, padding: 20 }}>Loading…</div>
           )}
         </div>
 
@@ -97,22 +148,60 @@ export default function ImageDetailModal({ image, onClose, onDelete, onRename })
           {image.workflow_id && <span style={{ color: '#64748b' }}>{image.workflow_id}</span>}
         </div>
 
-        {/* Actions */}
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button
-            onClick={copyRef}
-            style={{
-              flex: 1, background: '#0a1829', border: '1px solid rgba(0,180,216,0.3)',
-              borderRadius: 6, padding: '7px 12px', color: '#00b4d8',
-              fontFamily: 'var(--font-mono)', fontSize: 11, cursor: 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
-            }}
-          >
-            <Copy size={12} /> Copy @{image.id}
-          </button>
-          {onRename && (
+        {/* Rename input */}
+        {renaming && (
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input
+              autoFocus
+              value={renameValue}
+              onChange={e => setRenameValue(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') handleRename(); if (e.key === 'Escape') setRenaming(false) }}
+              placeholder="Label…"
+              style={{
+                flex: 1, background: '#060b11', border: '1px solid rgba(0,180,216,0.4)',
+                borderRadius: 5, padding: '6px 8px', color: '#e2e8f0',
+                fontFamily: 'var(--font-mono)', fontSize: 11,
+              }}
+            />
             <button
-              onClick={() => onRename(image)}
+              onClick={handleRename}
+              style={{
+                background: 'rgba(0,180,216,0.15)', border: '1px solid rgba(0,180,216,0.4)',
+                borderRadius: 5, padding: '6px 10px', color: '#00b4d8', cursor: 'pointer',
+                fontFamily: 'var(--font-mono)', fontSize: 11,
+              }}
+            >Save</button>
+            <button
+              onClick={() => setRenaming(false)}
+              style={{
+                background: 'none', border: '1px solid #1e3a4f',
+                borderRadius: 5, padding: '6px 10px', color: '#475569', cursor: 'pointer',
+                fontFamily: 'var(--font-mono)', fontSize: 11,
+              }}
+            >Cancel</button>
+          </div>
+        )}
+
+        {/* Actions */}
+        {!renaming && (
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              onClick={copyRef}
+              style={{
+                flex: 1, background: copied ? 'rgba(16,185,129,0.1)' : '#0a1829',
+                border: `1px solid ${copied ? 'rgba(16,185,129,0.4)' : 'rgba(0,180,216,0.3)'}`,
+                borderRadius: 6, padding: '7px 12px',
+                color: copied ? '#34d399' : '#00b4d8',
+                fontFamily: 'var(--font-mono)', fontSize: 11, cursor: 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+                transition: 'all 0.15s',
+              }}
+            >
+              {copied ? <><Check size={12} /> Copied!</> : <><Copy size={12} /> Copy @{image.id}</>}
+            </button>
+
+            <button
+              onClick={handleRename}
               style={{
                 background: '#0a1829', border: '1px solid #1e3a4f',
                 borderRadius: 6, padding: '7px 10px', color: '#475569',
@@ -122,19 +211,22 @@ export default function ImageDetailModal({ image, onClose, onDelete, onRename })
             >
               <Edit3 size={12} /> Rename
             </button>
-          )}
-          <button
-            onClick={handleDelete}
-            style={{
-              background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)',
-              borderRadius: 6, padding: '7px 10px', color: '#ef4444',
-              cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4,
-              fontFamily: 'var(--font-mono)', fontSize: 11,
-            }}
-          >
-            <Trash2 size={12} /> Delete
-          </button>
-        </div>
+
+            <button
+              onClick={handleDelete}
+              style={{
+                background: confirmDelete ? 'rgba(239,68,68,0.2)' : 'rgba(239,68,68,0.08)',
+                border: '1px solid rgba(239,68,68,0.4)',
+                borderRadius: 6, padding: '7px 10px',
+                color: confirmDelete ? '#fca5a5' : '#ef4444',
+                cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4,
+                fontFamily: 'var(--font-mono)', fontSize: 11, transition: 'all 0.15s',
+              }}
+            >
+              {confirmDelete ? <><AlertTriangle size={12} /> Confirm</> : <><Trash2 size={12} /> Delete</>}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )

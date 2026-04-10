@@ -55,6 +55,9 @@ func NewStore(db *sql.DB) *Store {
 	return &Store{db: db}
 }
 
+// DB returns the underlying *sql.DB.
+func (s *Store) DB() *sql.DB { return s.db }
+
 // EnsureTable creates the connections table and indices if they do not exist.
 func (s *Store) EnsureTable(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx, createConnectionsTable)

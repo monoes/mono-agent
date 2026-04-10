@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import {
   LayoutDashboard, Users,
-  Terminal, ChevronRight, PlayCircle, Link2, Brain, Settings, Image
+  Terminal, PlayCircle, Link2, Brain, Settings, Image
 } from 'lucide-react'
 import { GetVersion } from '../wailsjs/go/main/App'
 

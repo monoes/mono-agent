@@ -133,6 +133,7 @@ type WorkflowExecution struct {
 	FinishedAt     *time.Time             `json:"finished_at" db:"finished_at"`
 	ErrorMessage   string                 `json:"error_message" db:"error_message"`
 	CreatedAt      time.Time              `json:"created_at" db:"created_at"`
+	PID            int                    `json:"pid" db:"pid"`
 	// Populated on load
 	Nodes []WorkflowExecutionNode `json:"nodes,omitempty"`
 }

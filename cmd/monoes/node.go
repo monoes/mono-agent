@@ -156,6 +156,22 @@ func refreshOAuthTokenCLI(ctx context.Context, store *connections.Store, conn *c
 	if cfg.ClientSecret == "" {
 		cfg.ClientSecret = os.Getenv(envPrefix + "CLIENT_SECRET")
 	}
+	// Fallback: read from platform_oauth_credentials table (same table the Wails app uses).
+	if (cfg.ClientID == "" || cfg.ClientSecret == "") && store != nil {
+		if db := store.DB(); db != nil {
+			var storedID, storedSecret string
+			_ = db.QueryRowContext(ctx,
+				`SELECT client_id, client_secret FROM platform_oauth_credentials WHERE platform = ?`,
+				conn.Platform,
+			).Scan(&storedID, &storedSecret)
+			if cfg.ClientID == "" {
+				cfg.ClientID = storedID
+			}
+			if cfg.ClientSecret == "" {
+				cfg.ClientSecret = storedSecret
+			}
+		}
+	}
 	if cfg.ClientID == "" {
 		return nil, fmt.Errorf("missing OAuth client credentials for refresh (set %sCLIENT_ID)", envPrefix)
 	}

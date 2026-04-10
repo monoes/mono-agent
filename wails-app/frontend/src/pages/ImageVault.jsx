@@ -3,6 +3,21 @@ import { Trash2, Plus, Search, Image as ImageIcon } from 'lucide-react'
 import * as WailsApp from '../wailsjs/go/main/App'
 import ImageDetailModal from '../components/ImageDetailModal'
 
+// Lazy-loads a vault image's data URL on first render.
+function VaultThumb({ id }) {
+  const [src, setSrc] = useState(null)
+  useEffect(() => {
+    try {
+      const p = WailsApp.GetVaultImageData(id)
+      if (p && typeof p.then === 'function') {
+        p.then(setSrc).catch(() => {})
+      }
+    } catch (_) {}
+  }, [id])
+  if (!src) return null
+  return <img src={src} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+}
+
 const fmtBytes = (b) => {
   if (!b) return '0 B'
   if (b < 1024) return b + ' B'
@@ -219,12 +234,7 @@ export default function ImageVault() {
                 width: 36, height: 36, borderRadius: 4, overflow: 'hidden',
                 background: '#111827', border: '1px solid #1e3a4f', flexShrink: 0,
               }}>
-                <img
-                  src={img.url}
-                  alt=""
-                  style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-                  onError={e => { e.target.style.display = 'none' }}
-                />
+                <VaultThumb id={img.id} />
               </div>
             </div>
             <div style={{ width: 72, fontFamily: 'var(--font-mono)', fontSize: 11, color: '#00b4d8', fontWeight: 600 }}>{img.id}</div>
@@ -276,12 +286,9 @@ export default function ImageVault() {
           image={detail}
           onClose={() => setDetail(null)}
           onDelete={handleDelete}
-          onRename={async (img) => {
-            const newLabel = window.prompt(`Rename ${img.id}:`, img.label || '')
-            if (newLabel === null) return // cancelled
-            await WailsApp.UpdateVaultImageLabel(img.id, newLabel)
+          onRename={(img) => {
+            setDetail({ ...detail, label: img.label })
             load()
-            setDetail(null)
           }}
         />
       )}

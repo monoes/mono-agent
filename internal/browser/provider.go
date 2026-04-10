@@ -32,11 +32,10 @@ type HybridSessionProvider struct {
 }
 
 func (h *HybridSessionProvider) GetPage(ctx context.Context, platform, username string) (PageInterface, error) {
-	// Try extension first
 	connected := h.ExtBridge != nil && h.ExtBridge.IsConnected()
 	h.Logger.Info().Bool("ext_connected", connected).Str("platform", platform).Msg("GetPage called")
+
 	if connected {
-		// Map platform to URL
 		platformURLs := map[string]string{
 			"gemini":    "https://gemini.google.com/app",
 			"instagram": "https://www.instagram.com",
@@ -48,7 +47,6 @@ func (h *HybridSessionProvider) GetPage(ctx context.Context, platform, username 
 		if url == "" {
 			url = "about:blank"
 		}
-
 		tabID, err := h.ExtBridge.CreateTab(url)
 		if err == nil {
 			h.Logger.Info().Str("platform", platform).Int("tabId", tabID).Msg("using Chrome extension")
@@ -57,7 +55,6 @@ func (h *HybridSessionProvider) GetPage(ctx context.Context, platform, username 
 		h.Logger.Warn().Err(err).Msg("extension tab creation failed, falling back to Rod")
 	}
 
-	// Fallback to Rod
 	if h.RodProvider != nil {
 		return h.RodProvider.GetPage(ctx, platform, username)
 	}

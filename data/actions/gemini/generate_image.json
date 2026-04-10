@@ -76,7 +76,7 @@
       "id": "t1_type_prompt",
       "type": "call_bot_method",
       "methodName": "type_prompt",
-      "args": ["use nanao banana to generate image that {{prompt}}"],
+      "args": ["generate an image that {{prompt}}"],
       "variable_name": "typeResult",
       "timeout": 30,
       "onError": { "action": "skip" }
@@ -91,7 +91,7 @@
       "id": "t2_type_prompt",
       "type": "type_text",
       "target": "{{promptInput}}",
-      "text": "use nanao banana to generate image that {{prompt}}",
+      "text": "generate an image that {{prompt}}",
       "humanize": true,
       "timeout": 30,
       "onError": { "action": "mark_failed" }

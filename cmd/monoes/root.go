@@ -61,6 +61,7 @@ func newRootCmd() *cobra.Command {
 		newWorkflowCmd(cfg),
 		newNodeCmd(cfg),
 		newConnectCmd(cfg),
+		newRefCmd(),
 	)
 
 	return cmd

@@ -7,6 +7,8 @@ export function AddActionTarget(arg1:string,arg2:string,arg3:string):Promise<voi
 
 export function AddPersonTag(arg1:string,arg2:string,arg3:string):Promise<main.TagInfo>;
 
+export function AddVaultImage(arg1:string,arg2:string):Promise<Record<string, any>>;
+
 export function CancelWorkflow(arg1:string):Promise<void>;
 
 export function CheckForUpdate():Promise<main.UpdateInfo>;
@@ -28,6 +30,8 @@ export function DeleteAction(arg1:string):Promise<void>;
 export function DeleteCredential(arg1:string):Promise<void>;
 
 export function DeleteSession(arg1:number):Promise<void>;
+
+export function DeleteVaultImage(arg1:string):Promise<void>;
 
 export function DeleteWorkflow(arg1:string):Promise<void>;
 
@@ -89,6 +93,14 @@ export function GetSocialLists():Promise<Array<main.SocialListInfo>>;
 
 export function GetTemplates():Promise<Array<main.TemplateInfo>>;
 
+export function GetVaultImage(arg1:string):Promise<Record<string, any>>;
+
+export function GetVaultImageData(arg1:string):Promise<string>;
+
+export function GetVaultImages(arg1:number):Promise<Array<Record<string, any>>>;
+
+export function GetVaultStats():Promise<Record<string, any>>;
+
 export function GetVersion():Promise<main.VersionInfo>;
 
 export function GetWorkflow(arg1:string):Promise<main.WorkflowDetail>;
@@ -117,6 +129,8 @@ export function LoginSocial(arg1:string):Promise<string>;
 
 export function OpenURL(arg1:string):Promise<void>;
 
+export function OpenVaultFilePicker():Promise<string>;
+
 export function RemoveConnection(arg1:string):Promise<string>;
 
 export function RemovePersonTag(arg1:string,arg2:string):Promise<void>;
@@ -132,6 +146,8 @@ export function SaveConnectionDirect(arg1:string,arg2:string,arg3:string):Promis
 export function SaveCredential(arg1:main.SaveCredentialRequest):Promise<main.CredentialSummary>;
 
 export function SaveWorkflow(arg1:main.SaveWorkflowRequest):Promise<main.WorkflowSummary>;
+
+export function SearchVaultImages(arg1:string):Promise<Array<Record<string, any>>>;
 
 export function SelfUpdate():Promise<main.UpdateResult>;
 
@@ -151,11 +167,4 @@ export function UpdateActionParams(arg1:string,arg2:Record<string, any>):Promise
 
 export function UpdateActionState(arg1:string,arg2:string):Promise<void>;
 
-export function GetVaultImages(arg1: number): Promise<Array<Record<string, any>>>;
-export function GetVaultImage(arg1: string): Promise<Record<string, any>>;
-export function AddVaultImage(arg1: string, arg2: string): Promise<Record<string, any>>;
-export function DeleteVaultImage(arg1: string): Promise<void>;
-export function SearchVaultImages(arg1: string): Promise<Array<Record<string, any>>>;
-export function GetVaultStats(): Promise<Record<string, any>>;
-export function OpenVaultFilePicker(): Promise<string>;
-export function UpdateVaultImageLabel(arg1: string, arg2: string): Promise<void>;
+export function UpdateVaultImageLabel(arg1:string,arg2:string):Promise<void>;

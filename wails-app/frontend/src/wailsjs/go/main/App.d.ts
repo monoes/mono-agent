@@ -152,6 +152,7 @@ export function UpdateActionParams(arg1:string,arg2:Record<string, any>):Promise
 export function UpdateActionState(arg1:string,arg2:string):Promise<void>;
 
 export function GetVaultImages(arg1: number): Promise<Array<Record<string, any>>>;
+export function GetVaultImageData(arg1: string): Promise<string>;
 export function GetVaultImage(arg1: string): Promise<Record<string, any>>;
 export function AddVaultImage(arg1: string, arg2: string): Promise<Record<string, any>>;
 export function DeleteVaultImage(arg1: string): Promise<void>;

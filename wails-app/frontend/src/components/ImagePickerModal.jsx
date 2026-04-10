@@ -1,6 +1,20 @@
 import { useState, useEffect, useRef } from 'react'
 import { X, Search } from 'lucide-react'
-import * as WailsApp from '../wailsjs/wailsjs/go/main/App'
+import * as WailsApp from '../wailsjs/go/main/App'
+
+function VaultThumb({ id }) {
+  const [src, setSrc] = useState(null)
+  useEffect(() => {
+    try {
+      const p = WailsApp.GetVaultImageData(id)
+      if (p && typeof p.then === 'function') {
+        p.then(setSrc).catch(() => {})
+      }
+    } catch (_) {}
+  }, [id])
+  if (!src) return null
+  return <img src={src} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+}
 
 export default function ImagePickerModal({ onSelect, onClose }) {
   const [images, setImages] = useState([])
@@ -88,8 +102,7 @@ export default function ImagePickerModal({ onSelect, onClose }) {
               }}
             >
               <div style={{ width: 32, height: 32, borderRadius: 3, overflow: 'hidden', flexShrink: 0, background: '#060b11' }}>
-                <img src={img.url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                  onError={e => { e.target.style.display = 'none' }} />
+                <VaultThumb id={img.id} />
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: selected === img.id ? '#10b981' : '#00b4d8' }}>{img.id}</div>

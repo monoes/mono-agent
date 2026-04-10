@@ -42,6 +42,108 @@ newmonoes/
 └── Makefile             Build targets
 ```
 
+## Two-Tier Application Architecture (CRITICAL — Read Before Any Wails Work)
+
+### The Model: CLI is the Engine, Wails is the View
+
+```
+┌─────────────────────────────────────┐
+│          Wails App (View)            │
+│  wails-app/app.go                   │
+│  - No internal/* imports            │
+│  - No browser automation            │
+│  - No extension server              │
+│  - Reads SQLite for display         │
+│  - Spawns CLI subprocesses          │
+└──────────────┬──────────────────────┘
+               │ os/exec  (spawns)
+               ▼
+┌─────────────────────────────────────┐
+│          CLI Binary (Engine)         │
+│  cmd/monoes/  + internal/*          │
+│  - Owns browser automation (Rod)    │
+│  - Owns Chrome extension (port 9222)│
+│  - Owns SQLite writes               │
+│  - Owns all business logic          │
+└─────────────────────────────────────┘
+               │ reads/writes
+               ▼
+        ~/.monoes/monoes.db  (SQLite)
+```
+
+### Why This Architecture
+
+The Wails app and CLI both share port 9222 (Chrome extension server). If Wails starts its own extension server AND spawns CLI subprocesses, both fight over the same port. The clean solution: CLI owns everything, Wails is a pure view.
+
+**Benefits:**
+- CLI is fully functional standalone (power users, scripts, CI/CD)
+- Wails gets ALL CLI features automatically — no extra wiring
+- No import cycles between wails-app and internal/
+- CLI can be updated/deployed independently
+
+### Wails App Rules (Do Not Violate)
+
+1. **NEVER import `internal/action`, `internal/bot`, `internal/browser`, `internal/extension`, `internal/nodes`** in `wails-app/app.go`
+2. **NEVER start an extension server in Wails** — CLI owns port 9222
+3. **ALL execution goes through CLI subprocesses**: `exec.Command("monoes", ...)`
+4. **SQLite reads are OK** in Wails — it reads `~/.monoes/monoes.db` for display data
+5. **Allowed internal imports**: `internal/connections`, `internal/workflow`, `internal/ai`, `internal/ai/chat` (data access only, no execution)
+
+### Communication Patterns
+
+**Wails → CLI (triggering work):**
+```go
+cmd := exec.Command("monoes", "run", actionID, "--verbose")
+cmd.Stdout = // pipe to UI logs
+cmd.Stderr = // pipe to UI logs
+cmd.Start()
+// Track cmd in runningCmds[id] for cancellation
+```
+
+**CLI → Wails (results/state):**
+- CLI writes execution state to `workflow_executions` SQLite table
+- CLI writes logs to `run_logs` SQLite table (Wails polls via `GetRunLogs()`)
+- CLI writes people/profiles to `people` table
+- Wails reads these tables directly — no IPC needed
+
+**Cancellation:**
+```go
+if cmd, ok := app.runningCmds[id]; ok {
+    cmd.Process.Kill()
+}
+```
+
+### CLI Commands Wails Uses
+
+| Wails method | CLI command |
+|---|---|
+| `ExecuteAction(id)` | `monoes run <id> --verbose` |
+| `RunWorkflow(id)` | `monoes workflow run <id>` |
+| `CancelWorkflow(execID)` | `cmd.Process.Kill()` on tracked subprocess |
+| `RunNode(type, config)` | `monoes node run <type> --config <json>` |
+
+### Adding New Features
+
+**Golden rule**: Add to CLI first, Wails gets it automatically via subprocess.
+
+1. Add CLI command in `cmd/monoes/`
+2. Add business logic in `internal/`
+3. In Wails, add a method that spawns the new CLI command
+4. Wails reads results from SQLite if persistence is needed
+
+**Do NOT**: Add logic directly to `wails-app/app.go` that could live in CLI.
+
+### Finding the CLI Binary
+
+`wails-app/app.go` has `findMonoesBinary()` which checks:
+1. Same directory as the app binary (production: bundled together via `make build`)
+2. `PATH` lookup
+3. `~/go/bin/monoes` (development: `go install ./cmd/monoes`)
+
+For development, always run `make build-cli` or `go install ./cmd/monoes` first, then `wails dev`.
+
+---
+
 ## How Actions Work
 
 ### Execution Flow

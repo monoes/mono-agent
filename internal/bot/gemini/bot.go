@@ -364,8 +364,6 @@ func (b *GeminiBot) methodWaitForImageResponse(_ context.Context, args ...interf
 
 	if ep, ok := page.(*extension.ExtensionPage); ok {
 		// Extension path: use EvalCDP (page main world, bypasses CSP).
-		prevText := ""
-		stableTextCount := 0
 		for time.Now().Before(deadline) {
 			time.Sleep(3 * time.Second)
 			raw, _ := ep.EvalCDP(`(function() {
@@ -403,19 +401,12 @@ func (b *GeminiBot) methodWaitForImageResponse(_ context.Context, args ...interf
 				time.Sleep(3 * time.Second)
 				return map[string]interface{}{"success": true, "ready": true}, nil
 			}
-			if text != "" && text == prevText {
-				stableTextCount++
+			if text != "" {
 				lower := strings.ToLower(text)
 				if strings.Contains(lower, "can't create") || strings.Contains(lower, "image creation isn't available") {
 					return nil, fmt.Errorf("wait_for_image_response: Gemini refused: %s", text[:min(len(text), 200)])
 				}
-				if stableTextCount >= 5 {
-					return nil, fmt.Errorf("wait_for_image_response: text-only response (no images): %s", text[:min(len(text), 200)])
-				}
-			} else {
-				stableTextCount = 0
 			}
-			prevText = text
 		}
 		return nil, fmt.Errorf("wait_for_image_response: timed out after %ds", maxWait)
 	}

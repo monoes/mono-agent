@@ -10,6 +10,10 @@ export function AddPersonTag(arg1, arg2, arg3) {
   return window['go']['main']['App']['AddPersonTag'](arg1, arg2, arg3);
 }
 
+export function AddVaultImage(arg1, arg2) {
+  return window['go']['main']['App']['AddVaultImage'](arg1, arg2);
+}
+
 export function CancelWorkflow(arg1) {
   return window['go']['main']['App']['CancelWorkflow'](arg1);
 }
@@ -52,6 +56,10 @@ export function DeleteCredential(arg1) {
 
 export function DeleteSession(arg1) {
   return window['go']['main']['App']['DeleteSession'](arg1);
+}
+
+export function DeleteVaultImage(arg1) {
+  return window['go']['main']['App']['DeleteVaultImage'](arg1);
 }
 
 export function DeleteWorkflow(arg1) {
@@ -174,6 +182,22 @@ export function GetTemplates() {
   return window['go']['main']['App']['GetTemplates']();
 }
 
+export function GetVaultImage(arg1) {
+  return window['go']['main']['App']['GetVaultImage'](arg1);
+}
+
+export function GetVaultImageData(arg1) {
+  return window['go']['main']['App']['GetVaultImageData'](arg1);
+}
+
+export function GetVaultImages(arg1) {
+  return window['go']['main']['App']['GetVaultImages'](arg1);
+}
+
+export function GetVaultStats() {
+  return window['go']['main']['App']['GetVaultStats']();
+}
+
 export function GetVersion() {
   return window['go']['main']['App']['GetVersion']();
 }
@@ -230,6 +254,10 @@ export function OpenURL(arg1) {
   return window['go']['main']['App']['OpenURL'](arg1);
 }
 
+export function OpenVaultFilePicker() {
+  return window['go']['main']['App']['OpenVaultFilePicker']();
+}
+
 export function RemoveConnection(arg1) {
   return window['go']['main']['App']['RemoveConnection'](arg1);
 }
@@ -260,6 +288,10 @@ export function SaveCredential(arg1) {
 
 export function SaveWorkflow(arg1) {
   return window['go']['main']['App']['SaveWorkflow'](arg1);
+}
+
+export function SearchVaultImages(arg1) {
+  return window['go']['main']['App']['SearchVaultImages'](arg1);
 }
 
 export function SelfUpdate() {
@@ -296,34 +328,6 @@ export function UpdateActionParams(arg1, arg2) {
 
 export function UpdateActionState(arg1, arg2) {
   return window['go']['main']['App']['UpdateActionState'](arg1, arg2);
-}
-
-export function GetVaultImages(arg1) {
-  return window['go']['main']['App']['GetVaultImages'](arg1);
-}
-
-export function GetVaultImage(arg1) {
-  return window['go']['main']['App']['GetVaultImage'](arg1);
-}
-
-export function AddVaultImage(arg1, arg2) {
-  return window['go']['main']['App']['AddVaultImage'](arg1, arg2);
-}
-
-export function DeleteVaultImage(arg1) {
-  return window['go']['main']['App']['DeleteVaultImage'](arg1);
-}
-
-export function SearchVaultImages(arg1) {
-  return window['go']['main']['App']['SearchVaultImages'](arg1);
-}
-
-export function GetVaultStats() {
-  return window['go']['main']['App']['GetVaultStats']();
-}
-
-export function OpenVaultFilePicker() {
-  return window['go']['main']['App']['OpenVaultFilePicker']();
 }
 
 export function UpdateVaultImageLabel(arg1, arg2) {

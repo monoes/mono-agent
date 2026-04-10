@@ -1,14 +1,24 @@
 VERSION := $(shell git describe --tags --always 2>/dev/null || echo "dev")
 LDFLAGS := -X main.version=$(VERSION) -X main.buildDate=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
-WAILS_LDFLAGS := -X main.version=$(VERSION) -X main.buildDate=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)
-
+# Both the CLI and the Wails GUI share internal/ packages — build them together.
 .PHONY: build
-build:
+build: build-cli build-app
+
+.PHONY: build-cli
+build-cli:
 	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/monoes ./cmd/monoes
 
+.PHONY: build-app
+build-app:
+	cd wails-app && wails build -ldflags "$(LDFLAGS)" -o ../bin/MonoAgent
+
+.PHONY: dev
+dev:
+	cd wails-app && wails dev
+
 .PHONY: build-all
-build-all:
+build-all: build-cli
 	GOOS=darwin  GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/monoes-darwin-amd64 ./cmd/monoes
 	GOOS=darwin  GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/monoes-darwin-arm64 ./cmd/monoes
 	GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/monoes-linux-amd64 ./cmd/monoes
@@ -29,6 +39,7 @@ clean:
 .PHONY: tidy
 tidy:
 	go mod tidy
+	cd wails-app && go mod tidy
 
 # Manual release: bump version, tag, push. Usage: make release [v=minor|major]
 # Every push to master auto-creates a patch release via GitHub Actions.

@@ -302,6 +302,10 @@ export function GetVaultImages(arg1) {
   return window['go']['main']['App']['GetVaultImages'](arg1);
 }
 
+export function GetVaultImageData(arg1) {
+  return window['go']['main']['App']['GetVaultImageData'](arg1);
+}
+
 export function GetVaultImage(arg1) {
   return window['go']['main']['App']['GetVaultImage'](arg1);
 }
