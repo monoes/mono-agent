@@ -16,32 +16,33 @@ import (
 	"time"
 
 	"github.com/go-rod/rod"
-	browserpkg "github.com/nokhodian/mono-agent/internal/browser"
+	browserpkg "github.com/monoes/mono-agent/internal/browser"
 	"github.com/go-rod/rod/lib/launcher"
 	"github.com/go-rod/rod/lib/proto"
-	"github.com/nokhodian/mono-agent/internal/action"
-	"github.com/nokhodian/mono-agent/internal/ai"
-	cfgpkg "github.com/nokhodian/mono-agent/internal/config"
-	"github.com/nokhodian/mono-agent/internal/connections"
-	ainodes "github.com/nokhodian/mono-agent/internal/ai/nodes"
-	crawlnodes "github.com/nokhodian/mono-agent/internal/nodes/ai/crawl"
-	"github.com/nokhodian/mono-agent/internal/bot"
-	_ "github.com/nokhodian/mono-agent/internal/bot/instagram"
-	_ "github.com/nokhodian/mono-agent/internal/bot/linkedin"
-	_ "github.com/nokhodian/mono-agent/internal/bot/tiktok"
-	_ "github.com/nokhodian/mono-agent/internal/bot/gemini"
-	_ "github.com/nokhodian/mono-agent/internal/bot/x"
-	"github.com/nokhodian/mono-agent/internal/extension"
-	"github.com/nokhodian/mono-agent/internal/nodes"
-	"github.com/nokhodian/mono-agent/internal/nodes/comm"
-	"github.com/nokhodian/mono-agent/internal/nodes/control"
-	"github.com/nokhodian/mono-agent/internal/nodes/data"
-	dbnodes "github.com/nokhodian/mono-agent/internal/nodes/db"
-	httpnodes "github.com/nokhodian/mono-agent/internal/nodes/http"
-	peoplenodes "github.com/nokhodian/mono-agent/internal/nodes/people"
-	"github.com/nokhodian/mono-agent/internal/nodes/service"
-	"github.com/nokhodian/mono-agent/internal/nodes/system"
-	"github.com/nokhodian/mono-agent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/action"
+	"github.com/monoes/mono-agent/internal/ai"
+	cfgpkg "github.com/monoes/mono-agent/internal/config"
+	"github.com/monoes/mono-agent/internal/connections"
+	ainodes "github.com/monoes/mono-agent/internal/ai/nodes"
+	crawlnodes "github.com/monoes/mono-agent/internal/nodes/ai/crawl"
+	imagenodes "github.com/monoes/mono-agent/internal/nodes/image"
+	"github.com/monoes/mono-agent/internal/bot"
+	_ "github.com/monoes/mono-agent/internal/bot/instagram"
+	_ "github.com/monoes/mono-agent/internal/bot/linkedin"
+	_ "github.com/monoes/mono-agent/internal/bot/tiktok"
+	_ "github.com/monoes/mono-agent/internal/bot/gemini"
+	_ "github.com/monoes/mono-agent/internal/bot/x"
+	"github.com/monoes/mono-agent/internal/extension"
+	"github.com/monoes/mono-agent/internal/nodes"
+	"github.com/monoes/mono-agent/internal/nodes/comm"
+	"github.com/monoes/mono-agent/internal/nodes/control"
+	"github.com/monoes/mono-agent/internal/nodes/data"
+	dbnodes "github.com/monoes/mono-agent/internal/nodes/db"
+	httpnodes "github.com/monoes/mono-agent/internal/nodes/http"
+	peoplenodes "github.com/monoes/mono-agent/internal/nodes/people"
+	"github.com/monoes/mono-agent/internal/nodes/service"
+	"github.com/monoes/mono-agent/internal/nodes/system"
+	"github.com/monoes/mono-agent/internal/workflow"
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
@@ -359,6 +360,9 @@ func buildNodeRegistry(verbose bool, db *sql.DB) *workflow.NodeTypeRegistry {
 		}
 	}
 
+	// Image processing nodes (Tier 1)
+	imagenodes.RegisterAll(registry)
+
 	// AI crawl nodes
 	crawlnodes.RegisterAll(registry, cfgpkg.NewAPIClient(zerolog.Nop()))
 
@@ -477,6 +481,13 @@ GEMINI NODES — NO API KEY REQUIRED:
   Setup: run 'monoes login gemini' once to authenticate, then use the node directly.
   credential_id is optional — omit it and the saved session is resolved automatically.
 
+  gemini.generate_image optional fields:
+    referenceImagePath — local path to an image to upload BEFORE the prompt is sent.
+                         Use this to ask Gemini to recreate the image in a different style.
+                         If omitted, the node works as a normal text-to-image generation.
+    maxWaitSeconds     — how long to wait for Gemini to finish generating (default: 120)
+    downloadDir        — where to save generated images (default: ~/.monoes/downloads)
+
 Browser/social nodes (instagram, linkedin, gemini, etc.) require a saved session.
 Run 'monoes login <platform>' to create one.
 
@@ -493,6 +504,11 @@ platform name to override. Token refresh is handled automatically for OAuth conn
   # Gemini image generation — NO API KEY, uses browser session, saves to disk
   monoes node run gemini.generate_image \
     --config '{"prompt":"sunset over a mountain lake","downloadDir":"~/.monoes/downloads"}'
+
+  # Gemini image generation WITH a reference image (style transfer)
+  # Upload a local image first; Gemini uses it as a reference and generates a similar image
+  monoes node run gemini.generate_image \
+    --config '{"prompt":"recreate this in a watercolor painting style","referenceImagePath":"/path/to/photo.jpg","downloadDir":"~/.monoes/downloads"}'
 
   # Hash a value with crypto node
   monoes node run crypto --config '{"operation":"hash","algorithm":"sha256","value":"hello world"}'

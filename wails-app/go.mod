@@ -1,15 +1,15 @@
-module github.com/nokhodian/mono-agent/wails-app
+module github.com/monoes/mono-agent/wails-app
 
 go 1.25
 
 require (
 	github.com/google/uuid v1.6.0
-	github.com/nokhodian/mono-agent v0.2.12
+	github.com/monoes/mono-agent v0.2.12
 	github.com/wailsapp/wails/v2 v2.11.0
 	modernc.org/sqlite v1.46.1
 )
 
-replace github.com/nokhodian/mono-agent => ..
+replace github.com/monoes/mono-agent => ..
 
 require (
 	github.com/bep/debounce v1.2.1 // indirect

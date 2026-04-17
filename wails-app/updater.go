@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	githubOwner = "nokhodian"
+	githubOwner = "monoes"
 	githubRepo  = "mono-agent"
 )
 

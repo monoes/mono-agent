@@ -327,6 +327,114 @@ Use to build prompts, format strings, or reshape data before the next node.`,
 		Outputs:  "path, size_bytes",
 	},
 
+	// ── Image Processing (Tier 1) ─────────────────────────────────────────────
+	{
+		Type:     "image.info",
+		Category: "image",
+		Short:    "Read image metadata: width, height, format, size_bytes",
+		Config:   `{ "field": "image_path" }`,
+		Inputs:   "item with image path field",
+		Outputs:  "width, height, format, size_bytes, image_path",
+	},
+	{
+		Type:     "image.resize",
+		Category: "image",
+		Short:    "Resize an image (contain/cover/fill/width/height fit modes)",
+		Config: `{
+  "field":        "image_path",
+  "width":        800,
+  "height":       600,
+  "fit":          "contain",
+  "output_field": "resized_path"
+}`,
+		Inputs:  "item with image path field",
+		Outputs: "output_field with path to resized image",
+		Notes:   "fit values: contain (default), cover, fill, width (ignore height), height (ignore width). output_dir optional.",
+	},
+	{
+		Type:     "image.crop",
+		Category: "image",
+		Short:    "Crop an image to a rectangle or aspect ratio",
+		Config: `{
+  "field":        "image_path",
+  "x":            100,
+  "y":            50,
+  "width":        400,
+  "height":       300,
+  "output_field": "cropped_path"
+}`,
+		Inputs:  "item with image path field",
+		Outputs: "output_field with path to cropped image",
+		Notes:   "Use aspect_ratio (e.g. '16:9') instead of x/y/w/h for centre-crop. anchor: TopLeft, Top, TopRight, Left, Center (default), Right, BottomLeft, Bottom, BottomRight.",
+	},
+	{
+		Type:     "image.thumbnail",
+		Category: "image",
+		Short:    "Create an exact-size thumbnail (fills and crops to fit)",
+		Config: `{
+  "field":        "image_path",
+  "width":        200,
+  "height":       200,
+  "output_field": "thumb_path"
+}`,
+		Inputs:  "item with image path field",
+		Outputs: "output_field with path to thumbnail",
+		Notes:   "anchor controls crop position (default Center). output_dir optional.",
+	},
+	{
+		Type:     "image.convert",
+		Category: "image",
+		Short:    "Convert image to a different format (jpeg/png/gif/tiff/bmp)",
+		Config: `{
+  "field":        "image_path",
+  "format":       "jpeg",
+  "quality":      85,
+  "output_field": "converted_path"
+}`,
+		Inputs:  "item with image path field",
+		Outputs: "output_field with path to converted image",
+		Notes:   "quality applies to JPEG only (1-100, default 85). output_dir optional.",
+	},
+	{
+		Type:     "image.remove_background",
+		Category: "image",
+		Short:    "Remove image background using U2-Net AI model (same model as rembg)",
+		Config: `{
+  "field":        "image_path",
+  "output_field": "nobg_path",
+  "bgcolor":      ""
+}`,
+		Inputs:  "item with image path field",
+		Outputs: "output_field with path to PNG with transparent background",
+		Notes: `No API key required — runs fully locally using ONNX Runtime.
+On first use, automatically downloads:
+  • ONNX Runtime 1.24.1 shared library     → ~/.monoes/lib/
+  • u2net.onnx (~176 MB)              → ~/.monoes/models/
+bgcolor: optional hex colour (e.g. "ffffff") to flatten alpha onto solid background.
+Output is always PNG. Subsequent calls reuse cached model and ORT session.`,
+	},
+	{
+		Type:     "image.adjust",
+		Category: "image",
+		Short:    "Adjust brightness, contrast, saturation, sharpness, blur, gamma, grayscale, sepia, invert",
+		Config: `{
+  "field":       "image_path",
+  "brightness":  0.1,
+  "contrast":    0.2,
+  "saturation":  -0.1,
+  "sharpen":     1.5,
+  "blur":        0.0,
+  "gamma":       1.0,
+  "grayscale":   false,
+  "sepia":       false,
+  "invert":      false,
+  "output_field": "adjusted_path"
+}`,
+		Inputs:  "item with image path field",
+		Outputs: "output_field with path to adjusted image",
+		Notes:   "brightness/contrast/saturation range -1.0 to 1.0 (0 = no change). sharpen = sigma (0 = off). blur = sigma (0 = off). gamma default 1.0.",
+	},
+
 	// ── Databases ─────────────────────────────────────────────────────────────
 	{
 		Type:     "db.postgres",
@@ -661,16 +769,21 @@ Two methods are available automatically (monoes tries both):
 
 Always prefer the browser crawl method. It requires only a Google login, no billing.`,
 		Config: `{
-  "prompt":         "editorial photo of a city skyline at sunset",
-  "maxWaitSeconds": 120,
-  "downloadDir":    "~/.monoes/downloads"
+  "prompt":              "editorial photo of a city skyline at sunset",
+  "maxWaitSeconds":      120,
+  "downloadDir":         "~/.monoes/downloads",
+  "referenceImagePath":  "/path/to/reference.jpg"
 }
+
+// referenceImagePath is OPTIONAL. When set, the image is uploaded to Gemini
+// before the prompt is sent. Use it to ask Gemini for "something similar to
+// this image but in a different style" — include the style request in prompt.
 
 // credential_id is OPTIONAL — only set it if you have multiple Gemini sessions:
 // "credential_id": "social:gemini:gemini-user"`,
 		Inputs:  "item with prompt",
 		Outputs: "images (array: {path, url, filename, size_bytes}), image_count",
-		Notes:   "Use short English prompts (< 100 chars). Long or Persian prompts trigger the Nano Banana 2 reasoning model which cannot generate images.",
+		Notes:   "Use short English prompts (< 100 chars). Long or Persian prompts trigger the Nano Banana 2 reasoning model which cannot generate images. Set referenceImagePath to upload a reference image before the prompt.",
 	},
 
 	// ── Instagram ─────────────────────────────────────────────────────────────
@@ -1319,6 +1432,8 @@ var cliDocs = []cmdDoc{
 			`monoes node run gemini.generate_text --config '{"prompt":"Say hello in Persian"}'`,
 			`# Gemini image — NO API KEY needed, downloads to ~/.monoes/downloads/`,
 			`monoes node run gemini.generate_image --config '{"prompt":"sunset over a city skyline","downloadDir":"~/.monoes/downloads"}'`,
+			`# Gemini image with reference (style transfer) — upload a local image, prompt for a new style`,
+			`monoes node run gemini.generate_image --config '{"prompt":"recreate this in a watercolor painting style","referenceImagePath":"/path/to/photo.jpg","downloadDir":"~/.monoes/downloads"}'`,
 		},
 	},
 	{
@@ -1453,7 +1568,7 @@ func refNodesCmd() *cobra.Command {
 			fmt.Printf("  %-38s  %s\n", "Type", "Description")
 			fmt.Println("  " + strings.Repeat("─", 70))
 
-			categories := []string{"trigger", "system", "core", "http", "data", "db", "comm", "service", "ai", "gemini", "instagram", "linkedin", "x", "tiktok", "people"}
+			categories := []string{"trigger", "system", "core", "http", "data", "image", "db", "comm", "service", "ai", "gemini", "instagram", "linkedin", "x", "tiktok", "people"}
 			byCategory := make(map[string][]nodeDoc)
 			for _, n := range nodeDocs {
 				byCategory[n.Category] = append(byCategory[n.Category], n)
@@ -1767,8 +1882,18 @@ Or workflow:
   monoes node run gemini.generate_text \
     --config '{"prompt":"Say hello in Persian"}'
 
+  # Standard text-to-image generation:
   monoes node run gemini.generate_image \
     --config '{"prompt":"sunset over a mountain lake","downloadDir":"~/.monoes/downloads"}'
+
+  # Style transfer — upload a reference image and ask Gemini to recreate it
+  # in a different style. referenceImagePath is uploaded BEFORE the prompt is sent.
+  monoes node run gemini.generate_image \
+    --config '{
+      "prompt": "recreate this in a watercolor painting style with soft pastel colors",
+      "referenceImagePath": "/path/to/my-photo.jpg",
+      "downloadDir": "~/.monoes/downloads"
+    }'
 
 ──────────────────────────────────────────────────────────────
 7. TROUBLESHOOTING CHECKLIST
@@ -1787,6 +1912,15 @@ Or workflow:
   Gemini images not generating
     → use short English prompts (< 100 chars); long/Persian prompts trigger reasoning mode
     → check session is alive: monoes login status
+
+  Generating a Gemini image that looks like an existing photo (style transfer)
+    → set "referenceImagePath" to the local path of your image
+    → monoagent uploads the image to Gemini BEFORE sending the prompt
+    → write your prompt to describe the style: "recreate this in oil painting style"
+    → example:
+        monoes node run gemini.generate_image \
+          --config '{"prompt":"recreate this as a vintage poster","referenceImagePath":"/Users/me/photo.jpg"}'
+    → referenceImagePath is OPTIONAL — omit it for standard text-to-image generation
 
   Instagram posting as comment instead of new post
     → media must be a native JSON array: [{"url": "{{ $json.media_path }}"}]

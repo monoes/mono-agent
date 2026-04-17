@@ -25,7 +25,13 @@ jobs:
             MAJOR=$(echo "$LAST" | sed 's/v//' | cut -d. -f1)
             MINOR=$(echo "$LAST" | sed 's/v//' | cut -d. -f2)
             PATCH=$(echo "$LAST" | sed 's/v//' | cut -d. -f3)
-            PATCH=$((PATCH + 1))
+            # Bump minor when any commit since last tag starts with "feat:"
+            if git log --oneline "${LAST}..HEAD" | grep -qE '^[0-9a-f]+ feat(\(.+\))?:'; then
+              MINOR=$((MINOR + 1))
+              PATCH=0
+            else
+              PATCH=$((PATCH + 1))
+            fi
             NEXT="v${MAJOR}.${MINOR}.${PATCH}"
           fi
           echo "tag=$NEXT" >> "$GITHUB_OUTPUT"
@@ -56,25 +62,82 @@ jobs:
           else
             COMMITS=$(git log --oneline --no-decorate "${PREV}..HEAD")
           fi
+
+          # Separate commits by type
+          FEATS=$(echo "$COMMITS"   | grep -E '^[0-9a-f]+ feat(\(.+\))?:'   | sed 's/^[0-9a-f]* //')
+          FIXES=$(echo "$COMMITS"   | grep -E '^[0-9a-f]+ fix(\(.+\))?:'    | sed 's/^[0-9a-f]* //')
+          DOCS=$(echo "$COMMITS"    | grep -E '^[0-9a-f]+ docs?(\(.+\))?:'  | sed 's/^[0-9a-f]* //')
+          BUILDS=$(echo "$COMMITS"  | grep -E '^[0-9a-f]+ build(\(.+\))?:'  | sed 's/^[0-9a-f]* //')
+          OTHERS=$(echo "$COMMITS"  | grep -vE '^[0-9a-f]+ (feat|fix|docs?|build)(\(.+\))?:' | sed 's/^[0-9a-f]* //')
+
           {
-            echo 'NOTES<<EOF'
-            echo "## What's Changed"
+            echo 'NOTES<<RELEASE_EOF'
+            echo "## What's New in ${TAG}"
             echo ""
-            echo "$COMMITS" | while read -r line; do echo "- $line"; done
+
+            if [ -n "$FEATS" ]; then
+              echo "### ✨ New Features"
+              echo "$FEATS" | while read -r line; do
+                # Pretty-print: strip "feat: " / "feat(scope): " prefix
+                pretty=$(echo "$line" | sed 's/^feat([^)]*): //' | sed 's/^feat: //')
+                echo "- $pretty"
+              done
+              echo ""
+            fi
+
+            if [ -n "$FIXES" ]; then
+              echo "### 🐛 Bug Fixes"
+              echo "$FIXES" | while read -r line; do
+                pretty=$(echo "$line" | sed 's/^fix([^)]*): //' | sed 's/^fix: //')
+                echo "- $pretty"
+              done
+              echo ""
+            fi
+
+            if [ -n "$DOCS" ]; then
+              echo "### 📚 Documentation"
+              echo "$DOCS" | while read -r line; do
+                pretty=$(echo "$line" | sed 's/^docs\?([^)]*): //' | sed 's/^docs\?: //')
+                echo "- $pretty"
+              done
+              echo ""
+            fi
+
+            if [ -n "$BUILDS" ]; then
+              echo "### 🔧 Build & CI"
+              echo "$BUILDS" | while read -r line; do
+                pretty=$(echo "$line" | sed 's/^build([^)]*): //' | sed 's/^build: //')
+                echo "- $pretty"
+              done
+              echo ""
+            fi
+
+            if [ -n "$OTHERS" ]; then
+              echo "### 🔄 Other Changes"
+              echo "$OTHERS" | while read -r line; do echo "- $line"; done
+              echo ""
+            fi
+
+            echo "---"
             echo ""
-            echo "## Install"
+            echo "## Install / Upgrade"
             echo ""
             echo '```bash'
             echo "# macOS (Apple Silicon)"
-            echo "curl -L https://github.com/nokhodian/mono-agent/releases/download/${TAG}/monoagent-darwin-arm64 -o monoagent && chmod +x monoagent && sudo mv monoagent /usr/local/bin/"
+            echo "curl -fsSL https://github.com/monoes/mono-agent/releases/download/${TAG}/monoagent-darwin-arm64 -o monoagent && chmod +x monoagent && sudo mv monoagent /usr/local/bin/"
             echo ""
             echo "# macOS (Intel)"
-            echo "curl -L https://github.com/nokhodian/mono-agent/releases/download/${TAG}/monoagent-darwin-amd64 -o monoagent && chmod +x monoagent && sudo mv monoagent /usr/local/bin/"
+            echo "curl -fsSL https://github.com/monoes/mono-agent/releases/download/${TAG}/monoagent-darwin-amd64 -o monoagent && chmod +x monoagent && sudo mv monoagent /usr/local/bin/"
             echo ""
-            echo "# Linux"
-            echo "curl -L https://github.com/nokhodian/mono-agent/releases/download/${TAG}/monoagent-linux-amd64 -o monoagent && chmod +x monoagent && sudo mv monoagent /usr/local/bin/"
+            echo "# Linux (x86_64)"
+            echo "curl -fsSL https://github.com/monoes/mono-agent/releases/download/${TAG}/monoagent-linux-amd64 -o monoagent && chmod +x monoagent && sudo mv monoagent /usr/local/bin/"
             echo '```'
-            echo 'EOF'
+            echo ""
+            echo "> **Go install**"
+            echo '> ```bash'
+            echo "> go install github.com/monoes/mono-agent/cmd/monoes@${TAG}"
+            echo '> ```'
+            echo 'RELEASE_EOF'
           } >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release

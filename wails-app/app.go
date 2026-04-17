@@ -20,11 +20,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/nokhodian/mono-agent/internal/ai"
-	aichat "github.com/nokhodian/mono-agent/internal/ai/chat"
-	"github.com/nokhodian/mono-agent/internal/connections"
-	"github.com/nokhodian/mono-agent/internal/vault"
-	"github.com/nokhodian/mono-agent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/ai"
+	aichat "github.com/monoes/mono-agent/internal/ai/chat"
+	"github.com/monoes/mono-agent/internal/connections"
+	"github.com/monoes/mono-agent/internal/vault"
+	"github.com/monoes/mono-agent/internal/workflow"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	_ "modernc.org/sqlite"
 )

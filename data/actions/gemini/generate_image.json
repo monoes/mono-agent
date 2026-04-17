@@ -13,6 +13,7 @@
       { "name": "prompt", "type": "string", "description": "Image generation prompt" }
     ],
     "optional": [
+      { "name": "referenceImagePath", "type": "string", "description": "Local path to a reference image to upload before prompting Gemini (e.g. use this to ask for a similar image in a different style)" },
       { "name": "maxWaitSeconds", "type": "number", "default": 120, "min": 30, "max": 600, "description": "Max seconds to wait for image generation" },
       { "name": "downloadDir", "type": "string", "default": "~/.monoes/downloads", "description": "Directory to save generated images" }
     ]
@@ -71,6 +72,15 @@
       "variable_name": "promptInput",
       "timeout": 10,
       "onError": { "action": "mark_failed" }
+    },
+    {
+      "id": "upload_reference_image",
+      "type": "call_bot_method",
+      "methodName": "upload_image",
+      "args": ["{{referenceImagePath}}"],
+      "variable_name": "uploadResult",
+      "timeout": 30,
+      "onError": { "action": "skip" }
     },
     {
       "id": "t1_type_prompt",
