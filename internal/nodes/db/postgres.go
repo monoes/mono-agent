@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	_ "github.com/lib/pq"
-	"github.com/nokhodian/mono-agent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 var validIdentifier = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_.]*$`)

@@ -5,7 +5,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/nokhodian/mono-agent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
 	"github.com/yuin/goldmark/parser"

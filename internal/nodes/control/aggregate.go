@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/nokhodian/mono-agent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // AggregateNode groups items and computes aggregate operations per group.

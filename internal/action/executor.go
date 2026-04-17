@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nokhodian/mono-agent/internal/browser"
+	"github.com/monoes/mono-agent/internal/browser"
 	"github.com/rs/zerolog"
 )
 

@@ -10,8 +10,8 @@ import (
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/input"
 	"github.com/go-rod/rod/lib/proto"
-	botpkg "github.com/nokhodian/mono-agent/internal/bot"
-	"github.com/nokhodian/mono-agent/internal/browser"
+	botpkg "github.com/monoes/mono-agent/internal/bot"
+	"github.com/monoes/mono-agent/internal/browser"
 )
 
 // LinkedInBot implements botpkg.BotAdapter for LinkedIn.

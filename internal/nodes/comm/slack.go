@@ -7,7 +7,7 @@ import (
 
 	slackgo "github.com/slack-go/slack"
 
-	"github.com/nokhodian/mono-agent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // SlackNode interacts with the Slack API.

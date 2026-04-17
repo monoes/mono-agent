@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nokhodian/mono-agent/internal/browser"
-	"github.com/nokhodian/mono-agent/internal/extension"
-	"github.com/nokhodian/mono-agent/internal/vault"
+	"github.com/monoes/mono-agent/internal/browser"
+	"github.com/monoes/mono-agent/internal/extension"
+	"github.com/monoes/mono-agent/internal/vault"
 
-	botpkg "github.com/nokhodian/mono-agent/internal/bot"
+	botpkg "github.com/monoes/mono-agent/internal/bot"
 )
 
 // GeminiBot implements botpkg.BotAdapter for Google Gemini.
@@ -116,6 +116,8 @@ func (b *GeminiBot) GetMethodByName(name string) (func(ctx context.Context, args
 		return b.methodDownloadImages, true
 	case "extract_and_download_images":
 		return b.methodExtractAndDownloadImages, true
+	case "upload_image":
+		return b.methodUploadImage, true
 	default:
 		return nil, false
 	}
@@ -237,8 +239,8 @@ func (b *GeminiBot) methodClickSend(_ context.Context, args ...interface{}) (int
 			return map[string]interface{}{"success": true}, nil
 		}
 	}
-	// Fallback: press Enter.
-	_ = page.KeyboardPress('\n')
+	// Fallback: press Enter ('\r' maps to input.Enter in Rod; '\n' is undefined).
+	_ = page.KeyboardPress('\r')
 	return map[string]interface{}{"success": true, "method": "enter_key"}, nil
 }
 
@@ -660,6 +662,160 @@ func (b *GeminiBot) methodDownloadImages(ctx context.Context, args ...interface{
 		"images":      downloaded,
 		"image_count": len(downloaded),
 	}, nil
+}
+
+// methodUploadImage uploads a local image file to Gemini's chat input before
+// submitting a prompt. If imagePath is empty or the file does not exist it is
+// a no-op (returns success) so the node still works without a reference image.
+//
+// Gemini's upload flow (discovered via live DOM inspection):
+//  1. Click "+" button (aria-label="Open upload file menu")
+//  2. Click "Upload files" menuitem (aria-label contains "Upload files")
+//  3. A hidden <input type="file" name="Filedata"> appears in the DOM
+//  4. Call SetFiles on that input to trigger the upload
+//  5. Wait for the image thumbnail to appear in the chat input area
+func (b *GeminiBot) methodUploadImage(_ context.Context, args ...interface{}) (interface{}, error) {
+	page, err := extractPage(args, "upload_image")
+	if err != nil {
+		return nil, err
+	}
+
+	// Second arg: local image file path (may be empty — treated as no-op).
+	if len(args) < 2 {
+		return map[string]interface{}{"success": true, "skipped": true, "reason": "no image path"}, nil
+	}
+	imagePath, _ := args[1].(string)
+	imagePath = strings.TrimSpace(imagePath)
+	if imagePath == "" {
+		return map[string]interface{}{"success": true, "skipped": true, "reason": "empty image path"}, nil
+	}
+	if strings.HasPrefix(imagePath, "~/") {
+		imagePath = filepath.Join(os.Getenv("HOME"), imagePath[2:])
+	}
+	if _, err := os.Stat(imagePath); err != nil {
+		return nil, fmt.Errorf("upload_image: image file not found: %s", imagePath)
+	}
+
+	// Step 1: Click the "+" button to open the upload menu.
+	plusBtnSelectors := []string{
+		"button[aria-label='Open upload file menu']",
+		"button[aria-label*='upload file menu' i]",
+		"button[aria-label*='Upload' i][aria-label*='menu' i]",
+	}
+	var plusClicked bool
+	for _, sel := range plusBtnSelectors {
+		el, err := page.Element(sel, 5*time.Second)
+		if err == nil && el != nil {
+			_ = el.Click()
+			plusClicked = true
+			time.Sleep(800 * time.Millisecond)
+			break
+		}
+	}
+	if !plusClicked {
+		return nil, fmt.Errorf("upload_image: could not find the '+' upload menu button")
+	}
+
+	// Step 2: Click the "Upload files" menu item.
+	uploadItemSelectors := []string{
+		"[role='menuitem'][aria-label*='Upload files' i]",
+		"[role='menuitem'][aria-label*='Upload' i]",
+	}
+	var uploadClicked bool
+	for _, sel := range uploadItemSelectors {
+		el, err := page.Element(sel, 5*time.Second)
+		if err == nil && el != nil {
+			_ = el.Click()
+			uploadClicked = true
+			time.Sleep(800 * time.Millisecond)
+			break
+		}
+	}
+	if !uploadClicked {
+		return nil, fmt.Errorf("upload_image: could not find the 'Upload files' menu item")
+	}
+
+	// Step 3: Find the hidden file input and set files on it.
+	fileInputSelectors := []string{
+		"input[name='Filedata']",
+		"input[type='file'][name='Filedata']",
+		"input[type='file']",
+	}
+
+	// Extension path — uses CDP for file injection.
+	if ep, ok := page.(*extension.ExtensionPage); ok {
+		// Try SetFiles first (extension reads file on Go side, sends base64).
+		for _, sel := range fileInputSelectors {
+			el, err := ep.Element(sel, 5*time.Second)
+			if err == nil && el != nil {
+				if err := el.SetFiles([]string{imagePath}); err == nil {
+					time.Sleep(3 * time.Second)
+					return map[string]interface{}{"success": true, "uploaded": imagePath}, nil
+				}
+			}
+		}
+
+		// Fallback: inject file via CDP DataTransfer into the file input.
+		data, err := os.ReadFile(imagePath)
+		if err != nil {
+			return nil, fmt.Errorf("upload_image: read file: %w", err)
+		}
+		b64 := base64.StdEncoding.EncodeToString(data)
+		mime := "image/jpeg"
+		ext := strings.ToLower(filepath.Ext(imagePath))
+		switch ext {
+		case ".png":
+			mime = "image/png"
+		case ".gif":
+			mime = "image/gif"
+		case ".webp":
+			mime = "image/webp"
+		}
+		name := filepath.Base(imagePath)
+
+		js := fmt.Sprintf(`(function() {
+			var input = document.querySelector("input[name='Filedata']") || document.querySelector("input[type='file']");
+			if (!input) return {success: false, reason: "no file input found after menu click"};
+			var b64 = %q;
+			var mime = %q;
+			var name = %q;
+			var bin = atob(b64);
+			var buf = new Uint8Array(bin.length);
+			for (var k = 0; k < bin.length; k++) buf[k] = bin.charCodeAt(k);
+			var file = new File([buf.buffer], name, {type: mime, lastModified: Date.now()});
+			var dt = new DataTransfer();
+			dt.items.add(file);
+			Object.defineProperty(input, "files", {value: dt.files, configurable: true, writable: false});
+			input.dispatchEvent(new Event("change", {bubbles: true}));
+			input.dispatchEvent(new InputEvent("input", {bubbles: true}));
+			return {success: true, name: name, size: file.size};
+		})()`, b64, mime, name)
+
+		raw, _ := ep.EvalCDP(js)
+		if m, ok := raw.(map[string]interface{}); ok {
+			if s, _ := m["success"].(bool); s {
+				time.Sleep(3 * time.Second)
+				return map[string]interface{}{"success": true, "uploaded": imagePath}, nil
+			}
+			if reason, _ := m["reason"].(string); reason != "" {
+				return nil, fmt.Errorf("upload_image: CDP inject failed: %s", reason)
+			}
+		}
+		return nil, fmt.Errorf("upload_image: could not set files via CDP")
+	}
+
+	// Rod path — standard SetFiles via file input.
+	for _, sel := range fileInputSelectors {
+		el, err := page.Element(sel, 5*time.Second)
+		if err == nil && el != nil {
+			if err := el.SetFiles([]string{imagePath}); err == nil {
+				time.Sleep(3 * time.Second)
+				return map[string]interface{}{"success": true, "uploaded": imagePath}, nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("upload_image: could not find file input after opening upload menu")
 }
 
 // methodExtractAndDownloadImages combines image extraction + download in one step.

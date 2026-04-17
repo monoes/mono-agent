@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nokhodian/mono-agent/data"
+	"github.com/monoes/mono-agent/data"
 
 	_ "modernc.org/sqlite"
 )

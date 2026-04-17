@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nokhodian/mono-agent/internal/connections"
+	"github.com/monoes/mono-agent/internal/connections"
 )
 
 // ResourceItem is a single listable resource (spreadsheet, channel, etc.)

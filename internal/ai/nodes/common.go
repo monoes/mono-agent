@@ -5,8 +5,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/nokhodian/mono-agent/internal/ai"
-	"github.com/nokhodian/mono-agent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/ai"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // templatePattern matches {{$json.FIELD}} placeholders in prompt templates.

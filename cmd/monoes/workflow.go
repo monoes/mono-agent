@@ -14,14 +14,14 @@ import (
 
 	"github.com/google/uuid"
 
-	browserpkg "github.com/nokhodian/mono-agent/internal/browser"
-	cfgpkg "github.com/nokhodian/mono-agent/internal/config"
-	"github.com/nokhodian/mono-agent/internal/connections"
-	"github.com/nokhodian/mono-agent/internal/extension"
-	"github.com/nokhodian/mono-agent/internal/nodes"
-	"github.com/nokhodian/mono-agent/internal/scheduler"
-	"github.com/nokhodian/mono-agent/internal/storage"
-	"github.com/nokhodian/mono-agent/internal/workflow"
+	browserpkg "github.com/monoes/mono-agent/internal/browser"
+	cfgpkg "github.com/monoes/mono-agent/internal/config"
+	"github.com/monoes/mono-agent/internal/connections"
+	"github.com/monoes/mono-agent/internal/extension"
+	"github.com/monoes/mono-agent/internal/nodes"
+	"github.com/monoes/mono-agent/internal/scheduler"
+	"github.com/monoes/mono-agent/internal/storage"
+	"github.com/monoes/mono-agent/internal/workflow"
 	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
 )

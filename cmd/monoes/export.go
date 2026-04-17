@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/nokhodian/mono-agent/internal/storage"
+	"github.com/monoes/mono-agent/internal/storage"
 	"github.com/spf13/cobra"
 )
 

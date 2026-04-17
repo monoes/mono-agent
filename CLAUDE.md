@@ -1,332 +1,236 @@
-# Mono Agent — Development Guide
-
-All active development happens in this `newmonoes/` directory. The sibling `src/` directory is the legacy codebase — do NOT develop there.
-
-## Project Overview
-
-Mono Agent is a Go CLI tool for browser-based social media automation. It uses Rod (Chrome DevTools Protocol) to drive a real browser, executing actions defined in JSON files. Platforms: Instagram, LinkedIn, X (Twitter), TikTok, Telegram, Email.
-
-## Architecture
-
-```
-newmonoes/
-├── cmd/monoes/          CLI commands (Cobra)
-├── data/
-│   ├── actions/         JSON action definitions (embedded at compile time)
-│   │   ├── instagram/   POST_LIKING.json, POST_COMMENTING.json, BULK_MESSAGING.json, ...
-│   │   ├── linkedin/
-│   │   ├── tiktok/
-│   │   └── x/
-│   ├── migrations/      SQL migrations
-│   └── embed.go         go:embed directives for actions + migrations
-├── internal/
-│   ├── action/          Action executor engine
-│   │   ├── loader.go    Loads action JSON from embedded FS
-│   │   ├── executor.go  Executes actions (steps, loops, variables)
-│   │   ├── steps.go     Step type implementations (navigate, click, type, call_bot_method, ...)
-│   │   ├── runner.go    Action run orchestration
-│   │   └── *_test.go    Integration tests (build tag: integration)
-│   ├── bot/             Platform bot adapters
-│   │   ├── adapter.go   BotAdapter interface + PlatformRegistry
-│   │   ├── browser.go   BrowserPool management
-│   │   ├── humanize.go  Human-like typing, scrolling, delays
-│   │   ├── instagram/bot.go
-│   │   ├── linkedin/bot.go
-│   │   ├── x/bot.go
-│   │   └── tiktok/bot.go
-│   ├── config/          Config manager, schemas, API client
-│   ├── storage/         SQLite database + file storage
-│   ├── scheduler/       Cron-based action scheduling
-│   └── util/            Helpers (SleepRandom, etc.)
-├── go.mod               Module: github.com/monoes/mono-agent
-└── Makefile             Build targets
-```
-
-## Two-Tier Application Architecture (CRITICAL — Read Before Any Wails Work)
-
-### The Model: CLI is the Engine, Wails is the View
-
-```
-┌─────────────────────────────────────┐
-│          Wails App (View)            │
-│  wails-app/app.go                   │
-│  - No internal/* imports            │
-│  - No browser automation            │
-│  - No extension server              │
-│  - Reads SQLite for display         │
-│  - Spawns CLI subprocesses          │
-└──────────────┬──────────────────────┘
-               │ os/exec  (spawns)
-               ▼
-┌─────────────────────────────────────┐
-│          CLI Binary (Engine)         │
-│  cmd/monoes/  + internal/*          │
-│  - Owns browser automation (Rod)    │
-│  - Owns Chrome extension (port 9222)│
-│  - Owns SQLite writes               │
-│  - Owns all business logic          │
-└─────────────────────────────────────┘
-               │ reads/writes
-               ▼
-        ~/.monoes/monoes.db  (SQLite)
-```
-
-### Why This Architecture
-
-The Wails app and CLI both share port 9222 (Chrome extension server). If Wails starts its own extension server AND spawns CLI subprocesses, both fight over the same port. The clean solution: CLI owns everything, Wails is a pure view.
-
-**Benefits:**
-- CLI is fully functional standalone (power users, scripts, CI/CD)
-- Wails gets ALL CLI features automatically — no extra wiring
-- No import cycles between wails-app and internal/
-- CLI can be updated/deployed independently
-
-### Wails App Rules (Do Not Violate)
-
-1. **NEVER import `internal/action`, `internal/bot`, `internal/browser`, `internal/extension`, `internal/nodes`** in `wails-app/app.go`
-2. **NEVER start an extension server in Wails** — CLI owns port 9222
-3. **ALL execution goes through CLI subprocesses**: `exec.Command("monoes", ...)`
-4. **SQLite reads are OK** in Wails — it reads `~/.monoes/monoes.db` for display data
-5. **Allowed internal imports**: `internal/connections`, `internal/workflow`, `internal/ai`, `internal/ai/chat` (data access only, no execution)
-
-### Communication Patterns
-
-**Wails → CLI (triggering work):**
-```go
-cmd := exec.Command("monoes", "run", actionID, "--verbose")
-cmd.Stdout = // pipe to UI logs
-cmd.Stderr = // pipe to UI logs
-cmd.Start()
-// Track cmd in runningCmds[id] for cancellation
-```
-
-**CLI → Wails (results/state):**
-- CLI writes execution state to `workflow_executions` SQLite table
-- CLI writes logs to `run_logs` SQLite table (Wails polls via `GetRunLogs()`)
-- CLI writes people/profiles to `people` table
-- Wails reads these tables directly — no IPC needed
-
-**Cancellation:**
-```go
-if cmd, ok := app.runningCmds[id]; ok {
-    cmd.Process.Kill()
-}
-```
-
-### CLI Commands Wails Uses
-
-| Wails method | CLI command |
-|---|---|
-| `ExecuteAction(id)` | `monoes run <id> --verbose` |
-| `RunWorkflow(id)` | `monoes workflow run <id>` |
-| `CancelWorkflow(execID)` | `cmd.Process.Kill()` on tracked subprocess |
-| `RunNode(type, config)` | `monoes node run <type> --config <json>` |
-
-### Adding New Features
-
-**Golden rule**: Add to CLI first, Wails gets it automatically via subprocess.
-
-1. Add CLI command in `cmd/monoes/`
-2. Add business logic in `internal/`
-3. In Wails, add a method that spawns the new CLI command
-4. Wails reads results from SQLite if persistence is needed
-
-**Do NOT**: Add logic directly to `wails-app/app.go` that could live in CLI.
-
-### Finding the CLI Binary
-
-`wails-app/app.go` has `findMonoesBinary()` which checks:
-1. Same directory as the app binary (production: bundled together via `make build`)
-2. `PATH` lookup
-3. `~/go/bin/monoes` (development: `go install ./cmd/monoes`)
-
-For development, always run `make build-cli` or `go install ./cmd/monoes` first, then `wails dev`.
-
----
-
-## How Actions Work
-
-### Execution Flow
-
-1. User triggers an action (e.g., `POST_LIKING` on Instagram)
-2. `ActionLoader` reads `data/actions/instagram/POST_LIKING.json` from embedded FS
-3. `ActionExecutor` receives the action definition + a Rod page + variables
-4. Executor runs loops over `selectedListItems`, executing steps for each item
-5. Steps interact with the browser via Rod (navigate, click, type) or delegate to bot methods
-
-### Two Action Patterns
-
-#### Pattern 1: Pure JSON Steps (find_element + click + type)
-Used when DOM selectors are stable. Steps define XPaths/CSS selectors directly in JSON.
-Example: `POST_COMMENTING.json` — finds comment textarea, types, clicks Post button.
-
-**Downside**: Fragile on platforms like Instagram that swap DOM elements and class names.
-
-#### Pattern 2: `call_bot_method` (Preferred for complex interactions)
-Delegates all DOM complexity to Go code. The JSON just says "call this method with these args."
-
-```json
-{
-  "id": "like_post",
-  "type": "call_bot_method",
-  "methodName": "like_post",
-  "args": ["{{item.url}}"],
-  "variable_name": "likeResult",
-  "timeout": 30
-}
-```
-
-The Go method handles navigation, element discovery, retries, and verification internally.
-**Use this pattern for any interaction where selectors are unreliable.**
-
-#### Pattern 3: 3-Tier Fallback (Required for Instagram)
-All Instagram actions use a 3-tier cascade for every DOM interaction:
-1. **Tier 1** — Go bot method (`call_bot_method`, `onError: skip`)
-2. **Tier 2** — Hardcoded XPath selectors (`find_element`, `onError: skip`)
-3. **Tier 3** — AI-generated selectors via `configKey` (`find_element`, `onError: mark_failed`)
-
-See `THREE_TIER_FALLBACK.md` for the full pattern, JSON template, and checklist.
-
-### Variables
-
-- `{{item.url}}` — current loop item's URL
-- `{{item.platform}}` — current loop item's platform
-- `{{messageText}}` — message text from action inputs
-- `{{commentText}}` — comment text from action inputs
-- `selectedListItems` — array of `{url, platform, status}` objects to iterate over
-
-## Adding a New Action (Step-by-Step)
-
-### 1. Create the Action JSON
-
-File: `data/actions/<platform>/<ACTION_TYPE>.json`
-
-```json
-{
-  "actionType": "ACTION_TYPE",
-  "platform": "PLATFORM",
-  "version": "1.0.0",
-  "description": "What this action does",
-  "metadata": { "requiresAuth": true, "supportsPagination": false, "supportsRetry": true },
-  "inputs": { "required": ["selectedListItems"], "optional": [] },
-  "outputs": { "success": ["count", "reachedIndex"], "failure": ["failedItems"] },
-  "steps": [ ... ],
-  "loops": [{
-    "id": "process_items",
-    "iterator": "selectedListItems",
-    "indexVar": "reachedIndex",
-    "steps": ["step1", "step2"],
-    "onComplete": "update_action_state"
-  }],
-  "errorHandling": { "globalRetries": 3, "retryDelay": 2000, "onFinalFailure": "log_and_continue" }
-}
-```
-
-### 2. Add the Bot Method (if using call_bot_method)
-
-File: `internal/bot/<platform>/bot.go`
-
-1. Add a method: `func (b *PlatformBot) DoSomething(ctx context.Context, page *rod.Page, arg string) error`
-2. Expose it in `GetMethodByName`:
-
-```go
-case "do_something":
-    return func(ctx context.Context, args ...interface{}) (interface{}, error) {
-        page, ok := args[0].(*rod.Page)  // page is always auto-prepended by executor
-        if !ok { return nil, fmt.Errorf("first arg must be *rod.Page") }
-        arg, ok := args[1].(string)
-        if !ok { return nil, fmt.Errorf("second arg must be string") }
-        err := b.DoSomething(ctx, page, arg)
-        if err != nil { return nil, err }
-        return map[string]interface{}{"success": true}, nil
-    }, true
-```
-
-### 3. Add Config Schema (for Tier 3 configKey)
-
-File: `internal/config/schemas.go`
-
-Add a schema with fields matching the `configKey` values used in Tier 3 steps:
-```go
-var instagramNewActionSchema = schema("new_action", "Elements for the new action",
-    field("element_name", "Description of the element"),
-)
-```
-Register it in the `schemas` map as `"INSTAGRAM_NEW_ACTION": instagramNewActionSchema`.
-
-### 4. Write Action JSON with 3-Tier Cascade
-
-Follow the template in `THREE_TIER_FALLBACK.md` — every DOM interaction must have all 3 tiers.
-
-### 5. Add Integration Test
-
-File: `internal/action/instagram_integration_test.go` (build tag: `integration`)
-
-Follow the existing test pattern:
-```go
-func TestInstagramNewAction(t *testing.T) {
-    // launchTestBrowser → newTestExecutor → SetVariable → Execute → printReport → assertions
-}
-```
-
-Run: `go test -tags integration -run TestInstagramNewAction -v -timeout 3m ./internal/action/`
-
-### 4. Verify
-
-```bash
-go build ./...                    # compile check
-go vet -tags integration ./...    # vet check
-```
-
-## Instagram-Specific Lessons (Critical)
-
-### DOM Structure (as of 2026)
-- **No `<article>` element** on individual post pages — do NOT rely on it
-- Post action bar (Like, Comment, Share, Save) is inside a `<section>`
-- Comments have their own like buttons (NOT inside `<section>` elements)
-- **Sections are NESTED**: outer section wraps comments + action bar, inner section is the action bar
-- Always select the **innermost (last) matching section** when searching for the post action bar
-
-### Element Identification Strategy
-1. Use JavaScript to **identify** the correct element (scan sections, match by co-presence of multiple icon types)
-2. Mark the element with a temporary `data-*` attribute
-3. Use Rod's CSS selector to **find** the marked element
-4. Use Rod's native `.Click(proto.InputMouseButtonLeft, 1)` to **click** it
-
-**Never use JS `.click()`** — it does NOT trigger Instagram's React synthetic event handlers.
-
-### Like vs Unlike (Avoid Toggle-Off)
-- `svg[aria-label='Like']` and `svg[aria-label='Unlike']` exist for both posts AND comments
-- The post's Like/Unlike is in the **innermost section** that also has Comment + Share + Save icons
-- Comment Like/Unlike buttons are standalone (no section parent, or in the outer section)
-- Always check the **innermost action section** for Unlike before clicking, to avoid un-liking
-
-### Dismissing Dialogs
-- Instagram shows "Turn on Notifications" dialog on first DM page visit
-- Use `dismissNotificationDialog(page)` which clicks "Not Now"
-- Call this after every navigation before interacting with elements
-
-### Typing Text
-- Use `page.Keyboard.Type()` for character input (not `element.Type()`)
-- `element.Type()` inherits timeout context and can expire
-- Add small delays between keystrokes for React's synthetic event processing
-
-## Key Dependencies
-
-- **Rod** v0.116.2 — browser automation via Chrome DevTools Protocol
-- **Cobra** — CLI framework
-- **SQLite** (modernc.org/sqlite) — pure Go, no CGO
-- **Zerolog** — structured logging
+# Claude Code Configuration - Monobrain
+
+## Behavioral Rules (Always Enforced)
+
+- Do what has been asked; nothing more, nothing less
+- NEVER create files unless they're absolutely necessary for achieving your goal
+- ALWAYS prefer editing an existing file to creating a new one
+- NEVER proactively create documentation files (*.md) or README files unless explicitly requested
+- NEVER save working files, text/mds, or tests to the root folder
+- Never continuously check status after spawning a swarm — wait for results
+- ALWAYS read a file before editing it
+- NEVER commit secrets, credentials, or .env files
+
+## File Organization
+
+- NEVER save to root folder — use the directories below
+- Use `/src` for source code files
+- Use `/tests` for test files
+- Use `/docs` for documentation and markdown files
+- Use `/config` for configuration files
+- Use `/scripts` for utility scripts
+- Use `/examples` for example code
+
+## Project Architecture
+
+- Follow Domain-Driven Design with bounded contexts
+- Keep files under 500 lines
+- Use typed interfaces for all public APIs
+- Prefer TDD London School (mock-first) for new code
+- Use event sourcing for state changes
+- Ensure input validation at system boundaries
+
+### Project Config
+
+- **Topology**: hierarchical-mesh
+- **Max Agents**: 15
+- **Memory**: hybrid
+- **HNSW**: Enabled
+- **Neural**: Enabled
 
 ## Build & Test
 
 ```bash
-make build                        # build for current platform
-go build ./...                    # compile check
-go test ./...                     # unit tests
-go test -tags integration -v -timeout 3m ./internal/action/   # integration tests (needs browser + session)
+# Build
+npm run build
+
+# Test
+npm test
+
+# Lint
+npm run lint
 ```
 
-Integration tests require:
-- Chrome installed
-- Instagram session cookies in `~/.monoes/monoes.db` (run `monoes login instagram` first)
+- ALWAYS run tests after making code changes
+- ALWAYS verify build succeeds before committing
+
+## Git Commits
+
+When creating git commits, ALWAYS include this trailer in the commit message:
+
+```
+Co-Authored-By: nokhodian <nokhodian@gmail.com>
+```
+
+Example:
+```bash
+git commit -m "$(cat <<'EOF'
+feat: your commit message here
+
+Co-Authored-By: nokhodian <nokhodian@gmail.com>
+EOF
+)"
+```
+
+## Security Rules
+
+- NEVER hardcode API keys, secrets, or credentials in source files
+- NEVER commit .env files or any file containing secrets
+- Always validate user input at system boundaries
+- Always sanitize file paths to prevent directory traversal
+- Run `npx monobrain@latest security scan` after security-related changes
+
+## Concurrency: 1 MESSAGE = ALL RELATED OPERATIONS
+
+- All operations MUST be concurrent/parallel in a single message
+- Use Claude Code's Task tool for spawning agents, not just MCP
+- ALWAYS batch ALL todos in ONE TodoWrite call (5-10+ minimum)
+- ALWAYS spawn ALL agents in ONE message with full instructions via Task tool
+- ALWAYS batch ALL file reads/writes/edits in ONE message
+- ALWAYS batch ALL Bash commands in ONE message
+
+## Swarm Orchestration
+
+- MUST initialize the swarm using CLI tools when starting complex tasks
+- MUST spawn concurrent agents using Claude Code's Task tool
+- Never use CLI tools alone for execution — Task tool agents do the actual work
+- MUST call CLI tools AND Task tool in ONE message for complex work
+
+### 3-Tier Model Routing (ADR-026)
+
+| Tier | Handler | Latency | Cost | Use Cases |
+|------|---------|---------|------|-----------|
+| **1** | Agent Booster (WASM) | <1ms | $0 | Simple transforms (var→const, add types) — Skip LLM |
+| **2** | Haiku | ~500ms | $0.0002 | Simple tasks, low complexity (<30%) |
+| **3** | Sonnet/Opus | 2-5s | $0.003-0.015 | Complex reasoning, architecture, security (>30%) |
+
+- Always check for `[AGENT_BOOSTER_AVAILABLE]` or `[TASK_MODEL_RECOMMENDATION]` before spawning agents
+- Use Edit tool directly when `[AGENT_BOOSTER_AVAILABLE]`
+
+## Swarm Configuration & Anti-Drift
+
+- ALWAYS use hierarchical topology for coding swarms
+- Keep maxAgents at 6-8 for tight coordination
+- Use specialized strategy for clear role boundaries
+- Use `raft` consensus for hive-mind (leader maintains authoritative state)
+- Run frequent checkpoints via `post-task` hooks
+- Keep shared memory namespace for all agents
+
+```bash
+npx monobrain@latest swarm init --topology hierarchical --max-agents 8 --strategy specialized
+```
+
+## Swarm Execution Rules
+
+- ALWAYS use `run_in_background: true` for all agent Task calls
+- ALWAYS put ALL agent Task calls in ONE message for parallel execution
+- After spawning, STOP — do NOT add more tool calls or check status
+- Never poll TaskOutput or check swarm status — trust agents to return
+- When agent results arrive, review ALL results before proceeding
+
+## V1 CLI Commands
+
+### Core Commands
+
+| Command | Subcommands | Description |
+|---------|-------------|-------------|
+| `init` | 4 | Project initialization |
+| `agent` | 8 | Agent lifecycle management |
+| `swarm` | 6 | Multi-agent swarm coordination |
+| `memory` | 11 | AgentDB memory with HNSW search |
+| `task` | 6 | Task creation and lifecycle |
+| `session` | 7 | Session state management |
+| `hooks` | 17 | Self-learning hooks + 12 workers |
+| `hive-mind` | 6 | Byzantine fault-tolerant consensus |
+
+### Quick CLI Examples
+
+```bash
+npx monobrain@latest init --wizard
+npx monobrain@latest agent spawn -t coder --name my-coder
+npx monobrain@latest swarm init --v1-mode
+npx monobrain@latest memory search --query "authentication patterns"
+npx monobrain@latest doctor --fix
+```
+
+## Available Agents (60+ Types)
+
+### Core Development
+`coder`, `reviewer`, `tester`, `planner`, `researcher`
+
+### Specialized
+`security-architect`, `security-auditor`, `memory-specialist`, `performance-engineer`
+
+### Swarm Coordination
+`hierarchical-coordinator`, `mesh-coordinator`, `adaptive-coordinator`
+
+### GitHub & Repository
+`pr-manager`, `code-review-swarm`, `issue-tracker`, `release-manager`
+
+### SPARC Methodology
+`sparc-coord`, `sparc-coder`, `specification`, `pseudocode`, `architecture`
+
+## Memory Commands Reference
+
+```bash
+# Store (REQUIRED: --key, --value; OPTIONAL: --namespace, --ttl, --tags)
+npx monobrain@latest memory store --key "pattern-auth" --value "JWT with refresh" --namespace patterns
+
+# Search (REQUIRED: --query; OPTIONAL: --namespace, --limit, --threshold)
+npx monobrain@latest memory search --query "authentication patterns"
+
+# List (OPTIONAL: --namespace, --limit)
+npx monobrain@latest memory list --namespace patterns --limit 10
+
+# Retrieve (REQUIRED: --key; OPTIONAL: --namespace)
+npx monobrain@latest memory retrieve --key "pattern-auth" --namespace patterns
+```
+
+## Knowledge Graph (graphify)
+
+Built into monobrain since v1.3.0 — no separate install needed.
+
+### MCP Tools (prefix: `mcp__monobrain__`)
+
+| Tool | Description |
+|------|-------------|
+| `graphify_build` | Build or refresh knowledge graph from codebase |
+| `graphify_report` | Generate GRAPH_REPORT.md with community breakdown |
+| `graphify_suggest` | Get refactoring/architecture suggestions from graph |
+| `graphify_health` | Check graph quality score and experiment status |
+
+### How It Works
+
+1. **AST extraction** — parses TypeScript/JS/Python/Go/Rust into nodes + edges
+2. **Community detection** — Louvain algorithm finds logical clusters
+3. **Quality metric** — `graphQuality = avgCohesion × ln(1 + avgDegree)`
+4. **Experiment loop** — tracks BASELINE/KEEP/DISCARD in `results.tsv`
+5. **BFD chunking** — efficient Anthropic API calls via bin-packing
+
+> If graphify tools are not available, run `npx monobrain@latest init --force` then restart Claude Code.
+
+## Quick Setup
+
+```bash
+# Add MCP server — includes graphify, swarm, memory, hooks, all 200+ tools
+claude mcp add monobrain -- npx -y monobrain@latest mcp start
+
+# Start background workers
+npx monobrain@latest daemon start
+
+# Verify everything works
+npx monobrain@latest doctor --fix
+```
+
+> **Package name changed:** Use `monobrain@latest` (not `@monobrain/cli@latest` which is the old name and returns 404).
+
+## Claude Code vs CLI Tools
+
+- Claude Code's Task tool handles ALL execution: agents, file ops, code generation, git
+- CLI tools handle coordination via Bash: swarm init, memory, hooks, routing
+- NEVER use CLI tools as a substitute for Task tool agents
+
+## Support
+
+- Documentation: https://github.com/nokhodian/monobrain
+- Issues: https://github.com/nokhodian/monobrain/issues

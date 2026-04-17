@@ -1,6 +1,6 @@
 package httpnodes
 
-import "github.com/nokhodian/mono-agent/internal/workflow"
+import "github.com/monoes/mono-agent/internal/workflow"
 
 // RegisterAll registers all HTTP node types into the registry.
 func RegisterAll(r *workflow.NodeTypeRegistry) {

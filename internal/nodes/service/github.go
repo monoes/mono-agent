@@ -7,7 +7,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/nokhodian/mono-agent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 const githubBaseURL = "https://api.github.com"

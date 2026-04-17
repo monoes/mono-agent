@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/nokhodian/mono-agent/internal/storage"
+	"github.com/monoes/mono-agent/internal/storage"
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 )

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/nokhodian/mono-agent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // ReadPageNode fetches a web page, cleans its content, and outputs structured

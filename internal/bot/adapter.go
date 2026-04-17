@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/nokhodian/mono-agent/internal/browser"
+	"github.com/monoes/mono-agent/internal/browser"
 )
 
 // BotAdapter defines the contract that every platform-specific bot must

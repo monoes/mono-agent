@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/go-rod/rod/lib/proto"
-	"github.com/nokhodian/mono-agent/internal/browser"
+	"github.com/monoes/mono-agent/internal/browser"
 	"github.com/rs/zerolog"
 )
 

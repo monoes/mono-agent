@@ -32,7 +32,7 @@ import (
 	"time"
 
 	"github.com/go-rod/rod"
-	botpkg "github.com/nokhodian/mono-agent/internal/bot"
+	botpkg "github.com/monoes/mono-agent/internal/bot"
 )
 
 // GeminiBot implements botpkg.BotAdapter for Google Gemini.
@@ -1063,7 +1063,7 @@ mkNode("gemini.generate_image", "Gemini Image", "browser", "Send a prompt to Gem
 In `wails-app/app.go`, add to the blank imports:
 
 ```go
-_ "github.com/nokhodian/mono-agent/internal/bot/gemini"
+_ "github.com/monoes/mono-agent/internal/bot/gemini"
 ```
 
 - [ ] **Step 5: Add Gemini bot import to cmd/monoes/node.go**
@@ -1071,7 +1071,7 @@ _ "github.com/nokhodian/mono-agent/internal/bot/gemini"
 In `cmd/monoes/node.go`, find the existing bot imports and add:
 
 ```go
-_ "github.com/nokhodian/mono-agent/internal/bot/gemini"
+_ "github.com/monoes/mono-agent/internal/bot/gemini"
 ```
 
 - [ ] **Step 6: Verify full build**

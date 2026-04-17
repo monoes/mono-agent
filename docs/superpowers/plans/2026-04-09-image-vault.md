@@ -326,7 +326,7 @@ func (e *WorkflowEngine) runExecution(ctx context.Context, exec *WorkflowExecuti
 }
 ```
 
-Add `"github.com/nokhodian/mono-agent/internal/vault"` to the imports in `engine.go`.
+Add `"github.com/monoes/mono-agent/internal/vault"` to the imports in `engine.go`.
 
 - [ ] **Call vault.ResolveConfig in execution.go after template resolution**
 
@@ -353,7 +353,7 @@ Add vault resolution immediately after this block:
 		}
 ```
 
-Add `"github.com/nokhodian/mono-agent/internal/vault"` to the imports in `execution.go`.
+Add `"github.com/monoes/mono-agent/internal/vault"` to the imports in `execution.go`.
 
 - [ ] **Build check**
 
@@ -381,7 +381,7 @@ git commit -m "feat: resolve @img-NNN vault refs in workflow execution"
 Add to the import block in `internal/bot/gemini/bot.go`:
 
 ```go
-"github.com/nokhodian/mono-agent/internal/vault"
+"github.com/monoes/mono-agent/internal/vault"
 ```
 
 - [ ] **Register images after download in extract_and_download_images**

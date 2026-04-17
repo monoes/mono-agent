@@ -13,7 +13,7 @@
 
 [![Go Version](https://img.shields.io/badge/Go-1.25-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://golang.org)
 [![License](https://img.shields.io/badge/License-MIT-purple?style=for-the-badge)](LICENSE)
-[![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-333?style=for-the-badge&logo=github)](https://github.com/nokhodian/mono-agent)
+[![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-333?style=for-the-badge&logo=github)](https://github.com/monoes/mono-agent)
 [![Build](https://img.shields.io/badge/Build-CGO__FREE-00b894?style=for-the-badge&logo=docker&logoColor=white)](#)
 
 <br/>
@@ -338,7 +338,7 @@ The **Instagram Daily Post** workflow — reads captions from Google Sheets, gen
 
 ```bash
 # Clone
-git clone https://github.com/nokhodian/mono-agent.git
+git clone https://github.com/monoes/mono-agent.git
 cd mono-agent
 
 # Build CLI

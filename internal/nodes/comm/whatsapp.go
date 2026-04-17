@@ -8,7 +8,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/nokhodian/mono-agent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // WhatsAppNode sends messages via the WhatsApp Business Cloud API.

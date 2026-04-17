@@ -609,7 +609,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/nokhodian/mono-agent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // ReadPageNode crawls a web page and returns clean readable content.
@@ -739,8 +739,8 @@ import (
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
-	cfgpkg "github.com/nokhodian/mono-agent/internal/config"
-	"github.com/nokhodian/mono-agent/internal/workflow"
+	cfgpkg "github.com/monoes/mono-agent/internal/config"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // ExtractPageNode crawls a page and extracts specific fields using AI or CSS selectors.
@@ -958,8 +958,8 @@ git commit -m "feat(crawl): add ai.extract_page node executor (natural + css mod
 package crawl
 
 import (
-	cfgpkg "github.com/nokhodian/mono-agent/internal/config"
-	"github.com/nokhodian/mono-agent/internal/workflow"
+	cfgpkg "github.com/monoes/mono-agent/internal/config"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // RegisterAll registers the AI crawl nodes.
@@ -1013,7 +1013,7 @@ func RegisterAll(r *workflow.NodeTypeRegistry, cfgClient *cfgpkg.APIClient) {
 In `cmd/monoes/node.go`, find where `ainodes.RegisterAll(registry, store)` is called (~line 298). Add after it:
 
 ```go
-	crawlnodes "github.com/nokhodian/mono-agent/internal/nodes/ai/crawl"
+	crawlnodes "github.com/monoes/mono-agent/internal/nodes/ai/crawl"
 ```
 (add to imports)
 

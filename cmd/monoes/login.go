@@ -12,18 +12,18 @@ import (
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/launcher"
 	"github.com/go-rod/rod/lib/proto"
-	"github.com/nokhodian/mono-agent/internal/bot"
-	browserpkg "github.com/nokhodian/mono-agent/internal/browser"
+	"github.com/monoes/mono-agent/internal/bot"
+	browserpkg "github.com/monoes/mono-agent/internal/browser"
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 
 	// Import platform bots to trigger init() registration.
-	_ "github.com/nokhodian/mono-agent/internal/bot/email"
-	_ "github.com/nokhodian/mono-agent/internal/bot/instagram"
-	_ "github.com/nokhodian/mono-agent/internal/bot/linkedin"
-	_ "github.com/nokhodian/mono-agent/internal/bot/telegram"
-	_ "github.com/nokhodian/mono-agent/internal/bot/tiktok"
-	_ "github.com/nokhodian/mono-agent/internal/bot/x"
+	_ "github.com/monoes/mono-agent/internal/bot/email"
+	_ "github.com/monoes/mono-agent/internal/bot/instagram"
+	_ "github.com/monoes/mono-agent/internal/bot/linkedin"
+	_ "github.com/monoes/mono-agent/internal/bot/telegram"
+	_ "github.com/monoes/mono-agent/internal/bot/tiktok"
+	_ "github.com/monoes/mono-agent/internal/bot/x"
 )
 
 // findSystemChrome returns the path to the user's real Chrome/Chromium browser.
