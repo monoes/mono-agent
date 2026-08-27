@@ -14,6 +14,7 @@ import (
 	"monoagent/internal/bot"
 	browserpkg "monoagent/internal/browser"
 	"monoagent/internal/config"
+	"monoagent/internal/nodes"
 	"monoagent/internal/storage"
 	"monoagent/internal/util"
 	"github.com/olekukonko/tablewriter"
@@ -679,7 +680,15 @@ func executeAction(
 
 		// Save extracted data to people table.
 		if extracted > 0 {
-			if saveErr := sa.SaveExtractedData(act.ID, result.ExtractedItems); saveErr != nil {
+			// stepExtractMultiple (list-scrape steps like find_by_keyword) only
+			// populates generic "text"/"href" keys. Normalize to the "platform"/
+			// "url"/"full_name" fields SaveExtractedData expects — otherwise every
+			// row is silently skipped for lacking a resolvable username.
+			normalized := make([]map[string]interface{}, len(result.ExtractedItems))
+			for i, item := range result.ExtractedItems {
+				normalized[i] = nodes.NormalizeBrowserItem(item, act.TargetPlatform)
+			}
+			if saveErr := sa.SaveExtractedData(act.ID, normalized); saveErr != nil {
 				fmt.Fprintf(os.Stderr, "  Warning: failed to save some extracted data: %v\n", saveErr)
 			} else {
 				fmt.Fprintf(os.Stderr, "  Saved %d extracted profile(s) to database\n", extracted)
