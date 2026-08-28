@@ -1,0 +1,50 @@
+# mono-agent daemon — example compose file.
+#
+# State paths (verified against the source):
+#   SQLite DB      $HOME/.monoagent/monoagent.db   (cmd/monoagentcli/root.go --db-path default)
+#   Workflow JSON  $HOME/.monoagent/workflows/     (cmd/monoagentcli/workflow.go newHybridStore)
+#   Secrets vault  $HOME/.monoagent/vault/         (internal/vault/vault.go VaultDir)
+#   Config cache   $HOME/.monoagent/configs/       (internal/config via ConfigManager)
+# The image sets HOME=/data, so the single named volume below persists all
+# of it (DB, workflows, vault, configs, downloads).
+
+services:
+  monoagent:
+    build: .
+    image: monoagent:latest
+    container_name: monoagent
+    restart: unless-stopped
+
+    # ── Webhook trigger endpoint ────────────────────────────────────────────
+    # The workflow engine's webhook server currently binds 127.0.0.1:9321
+    # (internal/workflow/engine.go applyEngineDefaults) — loopback-only by
+    # design. Under the default Docker bridge network that means the mapping
+    # below does NOT forward: the listener is on the container's loopback,
+    # not its external interface. Options today:
+    #
+    #   a) Linux hosts: use host networking instead — comment out `ports` and
+    #      uncomment `network_mode` below. The loopback bind then lands on
+    #      the host itself and webhooks are reachable at
+    #      http://127.0.0.1:9321/webhook/<path>.
+    #   b) Any host: fire webhooks from inside the container:
+    #      docker exec monoagent curl -s http://127.0.0.1:9321/webhook/<path> \
+    #        -H 'Content-Type: application/json' -d '{"hello":"world"}'
+    #   c) Publish once the engine grows a configurable bind address.
+    ports:
+      - "9321:9321"
+    # network_mode: host   # Linux only; replaces `ports` (and the bridge net)
+
+    volumes:
+      - monoagent-data:/data
+
+    # Usage:
+    #   docker compose up -d --build
+    #   # import a workflow from the repo checkout:
+    #   docker exec monoagent monoagentcli workflow import --file /dev/stdin \
+    #     < examples/http-to-slack.json
+    #   # (or mount ./examples into the container and import from there)
+    #   # activate its triggers (kept alive by the daemon):
+    #   docker exec monoagent monoagentcli workflow activate <id>
+
+volumes:
+  monoagent-data:

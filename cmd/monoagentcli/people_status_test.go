@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"monoagent/internal/storage"
+	"github.com/monoes/mono-agent/internal/storage"
 )
 
 // newStatusCLITestDB applies every real migration (via the same

@@ -1,0 +1,38 @@
+{
+  "name": "Image Gen to Vault",
+  "description": "Manual run: generate an image from a prompt with HuggingFace and store the result in the local image vault. Set the HuggingFace credential before running.",
+  "version": 1,
+  "is_active": false,
+  "nodes": [
+    {
+      "id": "trigger",
+      "type": "trigger.manual",
+      "name": "Run Manually",
+      "position": { "x": 0, "y": 0 },
+      "disabled": false,
+      "config": {}
+    },
+    {
+      "id": "generate",
+      "type": "service.huggingface",
+      "name": "Generate Image",
+      "position": { "x": 320, "y": 0 },
+      "disabled": false,
+      "config": {
+        "credential_id": "",
+        "operation": "generate_image",
+        "prompt": "A minimal poster of a lighthouse at dawn, flat colors",
+        "model": "black-forest-labs/FLUX.1-schnell"
+      }
+    }
+  ],
+  "connections": [
+    {
+      "id": "trigger-to-generate",
+      "source": "trigger",
+      "source_handle": "main",
+      "target": "generate",
+      "target_handle": "main"
+    }
+  ]
+}

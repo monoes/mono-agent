@@ -2,229 +2,208 @@
   <img src="assets/banner.png" alt="Mono Agent" width="600" />
 </p>
 
+<h3 align="center">Local-first n8n alternative in a single Go binary<br/>— visual workflows, CLI, human-in-the-loop.</h3>
+
 <div align="center">
 
-```
-███╗   ███╗ ██████╗ ███╗   ██╗ ██████╗      █████╗  ██████╗ ███████╗███╗   ██╗████████╗
-████╗ ████║██╔═══██╗████╗  ██║██╔═══██╗    ██╔══██╗██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝
-██╔████╔██║██║   ██║██╔██╗ ██║██║   ██║    ███████║██║  ███╗█████╗  ██╔██╗ ██║   ██║
-██║╚██╔╝██║██║   ██║██║╚██╗██║██║   ██║    ██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║
-██║ ╚═╝ ██║╚██████╔╝██║ ╚████║╚██████╔╝    ██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║
-╚═╝     ╚═╝ ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝     ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝
-```
-
-**Multi-profile workflow automation engine for social platforms, AI services, image processing, and browser automation**
-
+[![License: MIT](https://img.shields.io/badge/License-MIT-purple?style=for-the-badge)](LICENSE)
+[![CI](https://github.com/monoes/mono-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/monoes/mono-agent/actions/workflows/ci.yml)
 [![Go Version](https://img.shields.io/badge/Go-1.25-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://golang.org)
-[![License](https://img.shields.io/badge/License-MIT-purple?style=for-the-badge)](LICENSE)
-[![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-333?style=for-the-badge&logo=github)](https://github.com/monoes/mono-agent)
-[![Build](https://img.shields.io/badge/Build-CGO__FREE-00b894?style=for-the-badge&logo=docker&logoColor=white)](#)
-
-<br/>
-
-[![Instagram](https://img.shields.io/badge/Instagram-E4405F?style=flat-square&logo=instagram&logoColor=white)](#)
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-0077B5?style=flat-square&logo=linkedin&logoColor=white)](#)
-[![X](https://img.shields.io/badge/X-000000?style=flat-square&logo=x&logoColor=white)](#)
-[![TikTok](https://img.shields.io/badge/TikTok-010101?style=flat-square&logo=tiktok&logoColor=white)](#)
-[![Telegram](https://img.shields.io/badge/Telegram-2CA5E0?style=flat-square&logo=telegram&logoColor=white)](#)
-[![Slack](https://img.shields.io/badge/Slack-4A154B?style=flat-square&logo=slack&logoColor=white)](#)
-[![Discord](https://img.shields.io/badge/Discord-5865F2?style=flat-square&logo=discord&logoColor=white)](#)
-[![Google Sheets](https://img.shields.io/badge/Google%20Sheets-34A853?style=flat-square&logo=googlesheets&logoColor=white)](#)
-[![OpenAI](https://img.shields.io/badge/OpenRouter-7B2FBE?style=flat-square&logo=openai&logoColor=white)](#)
+[![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-333?style=for-the-badge)](#getting-started)
 
 </div>
 
 ---
 
-## ✦ What is Mono Agent?
+## What is Mono Agent?
 
-**Mono Agent** is a production-grade automation orchestration platform that combines:
+**Mono Agent** is a production-grade, local-first automation platform for humans **and** AI agents:
 
-- 🔁 **Visual workflow engine** — DAG-based execution with 70+ built-in node types
-- 🌐 **Real browser automation** — Stealth Chrome control for social platforms via Rod
-- 🤖 **AI-powered intelligence** — OpenRouter, HuggingFace, and Gemini integrations
-- 🖥️ **Desktop GUI** — Wails 2 + React canvas workflow editor with AI canvas chat
-- ⚡ **CLI-first** — 70+ commands for scripting, scheduling, and automation
-- 👤 **Multi-profile isolation** — switch between named profiles; all data fully isolated per profile
-- 🖼️ **Image Vault** — built-in image storage, labeling, and fullscreen editor
-- 🤝 **Human-in-Loop** — pause workflows for human review/editing before continuing
-- 📧 **Outlook integration** — read and send Outlook mail natively
+- 🔁 **DAG workflow engine** — 90 built-in node types (150 with the optional social build): services (GitHub, Google Sheets / Gmail / Drive, Stripe, Salesforce, HubSpot, Jira, Linear, Notion, Airtable), databases, HTTP, data transforms, and comms (Gmail, Outlook, Slack, Telegram, Discord, and more)
+- 📦 **Single static Go binary** — zero CGO, SQLite embedded, no Docker, no Node.js runtime, no telemetry. All data stays on your machine (crash reports default to local files — see [SECURITY.md](SECURITY.md))
+- 🖥️ **Three ways to drive it** — a visual canvas editor (Wails desktop GUI), a 70+-command CLI with JSON output everywhere, and a built-in MCP server so AI agents can operate it safely
+- 🤝 **Human-in-the-loop as a platform primitive** — pause any workflow for review, edit the payload, then approve or reject; the queue is durable and survives restarts
+- 🌐 **Browser automation where no practical API exists** — drive *your own logged-in Chrome* via the bundled extension bridge, publishing to and reading your own accounts (same model as consumer RPA tools)
+- 📣 **Social platform nodes** (Instagram, LinkedIn, X, TikTok, Hacker News, Product Hunt) are an **opt-in** compile-time build (`-tags social`) for managing your own accounts — see [Usage Policy](docs/USAGE_POLICY.md)
 
-Think of it as **n8n meets Playwright** — a fully self-hosted, code-first automation platform with a visual editor, multi-account profiles, and human-in-the-loop controls.
+Think of it as an honest, self-hosted n8n you can carry in a single file — with human approval gates and first-class agent access built in.
 
-<br/>
-
-<div align="center">
-
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│                         MONO AGENT STACK                             │
-│                                                                      │
-│   ┌──────────────────────┐      ┌──────────────────────────────┐    │
-│   │     Desktop GUI      │      │        CLI (70+ cmds)        │    │
-│   │  Wails + React       │      │   cobra · zerolog · tabwriter│    │
-│   │  AI Canvas Chat      │      │   --profile flag on all cmds │    │
-│   │  Image Vault + Editor│      │                              │    │
-│   │  HIL Review Panel    │      │                              │    │
-│   └──────────┬───────────┘      └──────────────┬──────────────┘    │
-│              │                                 │                    │
-│              └────────────────┬────────────────┘                    │
-│                               ▼                                     │
-│   ┌──────────────────────────────────────────────────────────────┐  │
-│   │                     Profile Layer                            │  │
-│   │   Named profiles · per-profile DB isolation · context        │  │
-│   │   actions / people / workflows / vault / sessions / HIL      │  │
-│   └──────────────────────────┬───────────────────────────────────┘  │
-│                              │                                      │
-│   ┌──────────────────────────▼───────────────────────────────────┐  │
-│   │                   Workflow Engine                            │  │
-│   │   DAG executor · Trigger manager · Expression eval          │  │
-│   │   Hybrid store (JSON files + SQLite) · BFS scheduler        │  │
-│   └──────────────────────────┬───────────────────────────────────┘  │
-│                              │                                      │
-│       ┌──────────────────────┼─────────────────────┐               │
-│       ▼                      ▼                     ▼               │
-│  ┌──────────┐        ┌────────────┐       ┌─────────────┐          │
-│  │  Browser │        │  Services  │       │   Control   │          │
-│  │   Nodes  │        │   Nodes    │       │    Nodes    │          │
-│  │ Rod/CDP  │        │ 18 APIs    │       │ 15 types    │          │
-│  └──────────┘        └────────────┘       └──────┬──────┘          │
-│       │                     │                    │                 │
-│       ▼                     ▼                    ▼                 │
-│  Instagram         Google Sheets          if · filter              │
-│  LinkedIn          OpenRouter             set · code (JS)          │
-│  X / TikTok        HuggingFace            cron · webhook           │
-│  Telegram          GitHub · Notion        split · merge            │
-│                    Outlook (read/send)    human_in_loop ← NEW      │
-│                                                                     │
-│  ┌──────────────────────────────────────────────────────────┐      │
-│  │                    Image Vault                           │      │
-│  │   Register · Resolve · Label · Background removal        │      │
-│  │   Profile-scoped · Fullscreen editor · Metadata          │      │
-│  └──────────────────────────────────────────────────────────┘      │
-└──────────────────────────────────────────────────────────────────────┘
-```
-
-</div>
+> ### Scope & fair use
+>
+> Mono Agent is a general automation tool. The social/browser nodes exist to publish to and read **your own accounts**, not to mass-message, spam, or manipulate anyone.
+>
+> - **Own accounts only** — actions run against sessions and credentials you personally control
+> - **Approval gates** — drop a `core.human_in_loop` node before any sensitive step so a human reviews (and can edit) what goes out
+> - **Platform terms apply** — automating your own account may still be subject to the platform's Terms of Service; that's between you and the platform
+> - **Read the full policy** — [docs/USAGE_POLICY.md](docs/USAGE_POLICY.md)
+>
+> Mono Agent is an independent, unofficial, MIT-licensed project. It is not affiliated with, endorsed by, or connected to any of the platforms it can talk to.
 
 ---
 
-## ✦ Feature Highlights
+## Quick Start
+
+```bash
+# Build the CLI (Go 1.25+, no CGO)
+git clone https://github.com/monoes/mono-agent.git
+cd mono-agent
+go build -o monoagentcli ./cmd/monoagentcli
+
+# Orientation
+./monoagentcli version
+./monoagentcli ref                       # built-in offline docs: commands, nodes, expressions
+./monoagentcli node list                 # all 90 node types
+
+# Try the flagship example workflow (prints the new workflow id)
+./monoagentcli workflow templates list
+./monoagentcli workflow import --file examples/morning-briefing.json
+./monoagentcli workflow activate <id>              # enable its triggers
+./monoagentcli workflow run <id>                   # run it now
+
+# Run the scheduler daemon (keeps cron/webhook triggers alive)
+./monoagentcli daemon
+```
+
+Prefer a one-line install? See [install.sh](install.sh) or [Docker](Dockerfile).
+
+### Flagship example — "Morning Briefing"
+
+Every weekday at 7am: read your favorite feeds, filter for AI news, summarize with an LLM, pause for a human to edit the summary, then email it to you.
+
+```
+[trigger.schedule: 0 7 * * 1-5]
+        │
+        ▼
+[system.rss_read]        ← fetch items from an RSS/Atom feed
+        │
+        ▼
+[core.filter]            ← keep items matching a condition
+        │
+        ▼
+[service.openrouter]     ← generate_text: summarize titles into a brief
+        │
+        ▼
+[core.human_in_loop]     ← PAUSE — you review & edit the draft
+        │                   Approve → continue | Reject → drop
+        ▼
+[comm.email_send]        ← email the approved digest to you
+```
+
+```json
+{
+  "name": "Morning Briefing",
+  "nodes": [
+    { "id": "t1",  "type": "trigger.schedule",   "config": { "cron": "0 7 * * 1-5" } },
+    { "id": "n1",  "type": "system.rss_read",    "config": { "url": "https://example.com/feed.xml", "limit": 25 } },
+    { "id": "n2",  "type": "core.filter",        "config": { "condition": "{{item.title}} contains ai" } },
+    { "id": "n3",  "type": "service.openrouter", "config": {
+        "operation": "generate_text", "model": "anthropic/claude-3-haiku",
+        "prompt": "Summarize these headlines into a 5-bullet briefing:\n{{item.title}}", "credential_id": "YOUR_OR_CRED" } },
+    { "id": "n4",  "type": "core.human_in_loop", "config": {
+        "readonly_fields": ["title", "link"],
+        "editable_fields": ["summary"],
+        "timeout_minutes": 120 } },
+    { "id": "n5",  "type": "comm.email_send",    "config": {
+        "to": "you@example.com", "subject": "Morning Briefing",
+        "body": "{{item.summary}}", "credential_id": "YOUR_SMTP_CRED" } }
+  ],
+  "connections": [
+    { "source": "t1", "target": "n1" }, { "source": "n1", "target": "n2" },
+    { "source": "n2", "target": "n3" }, { "source": "n3", "target": "n4" },
+    { "source": "n4", "target": "n5" }
+  ]
+}
+```
+
+More ready-to-run workflows (RSS→AI→email, Sheets→Gmail, Stripe→Sheets sync, GitHub→Linear, and more) live in [examples/](examples/).
+
+---
+
+## Feature Highlights
 
 <table>
 <tr>
 <td width="50%">
 
 ### 🔄 Workflow Engine
-- DAG execution with cycle detection (Kahn's algorithm)
-- Template expressions `{{variable.path}}` with dot-notation, array index, fallback chains
-- Multi-input / multi-output nodes
+- DAG execution with cycle detection (Kahn topological sort)
+- Template expressions `{{variable.path}}` — dot notation, array indices, fallback chains
+- Per-node `on_error` semantics: `stop`, `continue`, `skip`, `error_branch`
+- Honest run statuses — partial failures surface as `SUCCESS_WITH_ERRORS`, never green
 - Webhook, cron, and manual triggers
-- Full execution history with state machine
-- Hybrid storage: JSON workflow files + SQLite
+- Hybrid storage: JSON workflow files + SQLite; full execution history
 
 </td>
 <td width="50%">
 
-### 🌐 Browser Automation
-- Real Chrome via Rod (Chrome DevTools Protocol)
-- Or drive your own logged-in Chrome via the bundled extension bridge — see [Chrome Extension](#-chrome-extension) below
-- Stealth mode — evades bot detection
-- Instagram, LinkedIn, X, TikTok fully supported
-- Human-like delays, typing, scrolling
-- AI-assisted XPath/selector generation (Gemini)
-- 53 embedded action definitions compiled-in
+### 🤝 Human-in-the-Loop (platform primitive)
+- Drop `core.human_in_loop` anywhere to pause for human review
+- **Durable, DB-backed queue** — pending approvals survive restarts
+- **Edit-before-approve** — readonly fields show context; editable fields let the reviewer fix content before it proceeds
+- Optional timeout with auto-reject
+- Approve via CLI (`hil list` / `hil approve <id>`) or the GUI review panel
 
 </td>
 </tr>
 <tr>
 <td width="50%">
 
-### 🖥️ Visual Workflow Editor
-- Drag-and-drop canvas (React + SVG)
-- Schema-driven inspector with live field types
-- `credential_picker` — unified credential dropdown
-- `resource_picker` — Google Sheets / Drive resource selection
-- `depends_on` — conditional field visibility
-- Dark-themed, keyboard-navigable
+### 👤 Multi-Profile Workspaces
+- Named workspaces (`default`, `work`, `client-a`, …) with full tenant isolation
+- Workflows, connections, people, vault images, HIL items — all scoped per workspace
+- Switch with `--profile <name>` on any CLI command or via the GUI sidebar
+- Running workflows in one workspace are unaffected when you switch to another
 
 </td>
 <td width="50%">
 
-### 🤖 AI Integrations
-- **OpenRouter** — 200+ models via single API key
-- **HuggingFace** — image generation, text generation
-- **Google Gemini** — auto-generate CSS/XPath selectors
-- AI-powered post captions from spreadsheet rows
-- Image generation → Instagram post pipeline built-in
+### 🔐 Encrypted Secrets Vault
+- Secrets stored in your **OS keyring** (macOS Keychain / Windows Credential Manager / Linux secret service)
+- **AES-256-GCM envelope encryption** (DEK/KEK) for data at rest
+- Encrypted, passphrase-protected portable export (`secret export` / `secret import`)
+- One-command migration: `secret encrypt-connections` seals legacy plaintext credentials in place
+- Manageable from the CLI (`secret`) or the GUI Vault page
 
 </td>
 </tr>
 <tr>
 <td width="50%">
 
-### 🔐 Unified Credentials
-- All credentials in one `connections` table
-- Social logins (browser sessions) auto-mirror to connections
-- Stable IDs: `social:{platform}:{username}`
-- Per-node credential resolution via `credential_id`
-- Zero manual config to connect a social account
+### 📇 CRM: People + Communications
+- Contact database with tags, notes, and full message history
+- Unified inbox across sources (Gmail, Outlook sync built in)
+- AI drafts an email → you edit/approve → one-click send (see [example below](#-human-in-the-loop-example-email-outreach-with-review))
+- `people import` (JSON), people search, and per-person status timeline
 
 </td>
 <td width="50%">
 
-### ⚡ Pure Go, Zero CGO
-- `modernc.org/sqlite` — no CGO, single binary
-- Cross-compiles for macOS (Intel + ARM), Linux, Windows
-- Embedded action JSON, schemas, and migrations
-- 70+ node types ship with the binary
-- Self-contained — no external runtime needed
-
-</td>
-</tr>
-<tr>
-<td width="50%">
-
-### 👤 Multi-Profile Isolation
-- Create named profiles (`default`, `client-a`, `work`, …)
-- Switch active profile in CLI (`--profile`) or GUI sidebar
-- **Full data isolation per profile**: actions, people, sessions, workflows, connections, vault images, HIL items, social lists, tags — all scoped to the active profile
-- Running workflows from one profile are unaffected when you switch to another
-- Profile ID carried through context for vault, workflow engine, AI tools, and all browser nodes
-
-</td>
-<td width="50%">
-
-### 🖼️ Image Vault & Processing
-- Dedicated Image Vault tab in the GUI — browse, label, and manage all generated/imported images
-- Fullscreen editor with crop, resize, rotate, and filter tools
-- Detail modal with metadata and workflow provenance
-- AI background removal (Tier-1 image processing nodes)
-- Images are profile-scoped — each profile sees only its own vault
+### 🖼️ Image Vault
+- Every workflow-generated image registered with provenance (which run, which node)
+- Reference images in prompts and posts as `{{@img-001}}`
+- Fullscreen editor — crop, resize, rotate, filters
+- AI background removal (U2-Net) plus a full image-processing node set
+- Profile-scoped: each workspace sees only its own vault
 
 </td>
 </tr>
 <tr>
 <td width="50%">
 
-### 🤝 Human-in-Loop Node (`core.human_in_loop`)
-- Drop a HIL node anywhere in a workflow to pause execution and request human review
-- **Read-only section** — shows context data (e.g. contact name, LinkedIn URL, profile info)
-- **Editable section** — lets the reviewer edit content before it proceeds (e.g. message text, images)
-- **Rich text editor** built into the GUI review panel
-- Configurable field visibility per node
-- Approve → workflow resumes; Reject → item is dropped
-- Optional timeout — auto-reject if no response within N minutes
+### 📣 Communication Nodes
+- Email: `comm.email_send`, Outlook (`comm.outlook_read` / `comm.outlook_send`)
+- Chat: Slack, Discord, Telegram, WhatsApp, Twilio (SMS)
+- Open social protocols: Bluesky, Mastodon, Reddit — via official-style APIs
+- `comm.email_read` is currently **experimental** (requires an IMAP dependency not yet vendored)
 
 </td>
 <td width="50%">
 
-### 🤖 AI Canvas Chat
-- Conversational workflow builder inside the GUI
-- Type natural-language instructions to create, modify, or explain workflows on the canvas
-- AI generates nodes, wires connections, and sets config via chat
-- Uses OpenRouter (any model) or Gemini
-- Profile-aware — workflows created via chat are scoped to the active profile
+### 🤖 AI Canvas Chat + Desktop GUI
+- Conversational workflow builder: describe the workflow in chat, AI wires the nodes
+- OpenRouter (200+ models), HuggingFace, Gemini
+- Wails 2 desktop app: canvas editor, HIL review panel, Vault, People, Image Vault
+- Dark-themed, keyboard-navigable, fully local
 
 </td>
 </tr>
@@ -232,17 +211,61 @@ Think of it as **n8n meets Playwright** — a fully self-hosted, code-first auto
 
 ---
 
-## ✦ Node Library
+## 🤝 Human-in-the-Loop example: email outreach with review
 
-> 72+ built-in node types across 10 categories
+The pattern Mono Agent recommends for *any* outbound communication — the AI drafts, a human decides. No message leaves the machine until a person approves it.
+
+```
+[service.google_sheets]      ← read prospect rows (name, company, email)
+        │
+        ▼
+[service.openrouter]         ← generate_text: draft a personalized email
+        │
+        ▼
+[core.human_in_loop]         ← PAUSE — reviewer sees:
+        │                       Read-only: name, company, email
+        │                       Editable:  subject, body
+        │                     Approve → continue | Reject → drop item
+        ▼
+[comm.email_send]            ← send the approved (possibly edited) email
+        │
+        ▼
+[service.google_sheets]      ← mark row as "sent"
+```
+
+```json
+{
+  "id": "n3",
+  "type": "core.human_in_loop",
+  "config": {
+    "readonly_fields": ["name", "company", "email"],
+    "editable_fields": ["subject", "body"],
+    "timeout_minutes": 60
+  }
+}
+```
+
+Approve from the terminal while the workflow waits:
+
+```bash
+monoagentcli hil list               # show pending items
+monoagentcli hil approve <id>       # resume the workflow
+monoagentcli hil reject <id>        # drop the item
+```
+
+---
+
+## Node Library
+
+> 90 built-in node types (+ triggers) in the default build — 150 with the optional social build (below).
 
 <details>
-<summary><strong>⚙️ Core Control (14 nodes)</strong></summary>
+<summary><strong>⚙️ Core Control (15 nodes)</strong></summary>
 
 | Node | Description |
 |------|-------------|
 | `core.if` | Conditional branching — route items by expression |
-| `core.switch` | Multi-way routing — up to N output handles |
+| `core.switch` | Multi-way routing — N output handles |
 | `core.set` | Assign or transform fields on items |
 | `core.filter` | Keep only items matching a predicate |
 | `core.code` | Execute JavaScript (Goja engine) on item stream |
@@ -255,18 +278,19 @@ Think of it as **n8n meets Playwright** — a fully self-hosted, code-first auto
 | `core.compare_datasets` | Diff two item streams |
 | `core.aggregate` | Sum, avg, count, min, max over a field |
 | `core.stop_error` | Halt workflow with a custom error message |
-| `core.human_in_loop` | Pause execution — human reviews read-only data, edits content, then approves or rejects |
+| `core.human_in_loop` | Pause execution — human reviews, edits, approves or rejects |
 
 </details>
 
 <details>
-<summary><strong>🔗 Services (16 nodes)</strong></summary>
+<summary><strong>🔗 Services (24 nodes)</strong></summary>
 
 | Node | Description |
 |------|-------------|
 | `service.google_sheets` | Read rows, append, update, clear ranges |
 | `service.gmail` | Send and read Gmail messages |
 | `service.google_drive` | File operations on Google Drive |
+| `service.outlook_mail` | Read/send Outlook via Microsoft Graph |
 | `service.openrouter` | Generate text or images via 200+ AI models |
 | `service.huggingface` | HuggingFace inference (text + images) |
 | `service.github` | Issues, PRs, repos, and more |
@@ -279,20 +303,18 @@ Think of it as **n8n meets Playwright** — a fully self-hosted, code-first auto
 | `service.shopify` | Products, orders, customers |
 | `service.salesforce` | CRM objects and records |
 | `service.hubspot` | Contacts, deals, companies |
-
-</details>
-
-<details>
-<summary><strong>📣 Communication (7 nodes)</strong></summary>
-
-`comm.email_send` · `comm.email_read` · `comm.slack` · `comm.telegram` · `comm.discord` · `comm.twilio` · `comm.whatsapp` · `comm.outlook_read` · `comm.outlook_send`
+| `service.youtube` | Video and channel data |
+| `service.bluesky` | ATProto — posts and profile data |
+| `service.mastodon` | ActivityPub — toots and timelines |
+| `service.reddit` | Posts, comments, subreddits |
+| `service.devto` / `service.hashnode` / `service.producthunt` / `service.discord` | Dev community platforms |
 
 </details>
 
 <details>
 <summary><strong>🗄️ Database (4 nodes)</strong></summary>
 
-`db.mysql` · `db.postgres` · `db.mongodb` · `db.redis`
+`db.postgres` · `db.mysql` · `db.mongodb` · `db.redis`
 
 </details>
 
@@ -311,14 +333,32 @@ Think of it as **n8n meets Playwright** — a fully self-hosted, code-first auto
 </details>
 
 <details>
-<summary><strong>📱 Social Platform Actions</strong></summary>
+<summary><strong>🖼️ Image Processing (7 nodes)</strong></summary>
 
-| Platform | Actions |
-|----------|---------|
-| **Instagram** | `publish_post` · `like_posts` · `comment_on_posts` · `send_dms` · `auto_reply_dms` · `follow_users` · `unfollow_users` · `bulk_following` · `keyword_search` · `hashtag_search` · `story_interactions` |
-| **LinkedIn** | `publish_post` · `list_user_posts` · `list_post_comments` · `like_post` · `comment_on_post` · `keyword_search` · `bulk_following` · `export_followers` · `send_connection_request` |
-| **X (Twitter)** | `publish_post` · `like_posts` · `comment_on_posts` · `follow_users` · `keyword_search` · `bulk_following` · `send_dms` |
-| **TikTok** | `publish_post` · `like_video` · `comment_on_video` · `follow_user` · `list_user_videos` · `list_video_comments` · `stitch_video` · `duet_video` · `share_video` |
+`image.info` · `image.resize` · `image.crop` · `image.thumbnail` · `image.convert` · `image.adjust` · `image.remove_background` (U2-Net AI)
+
+</details>
+
+<details>
+<summary><strong>📣 Communication (12 nodes)</strong></summary>
+
+`comm.email_send` · `comm.email_read` *(experimental)* · `comm.outlook_read` · `comm.outlook_send` · `comm.slack` · `comm.discord` · `comm.telegram` · `comm.twilio` · `comm.whatsapp` · `comm.bluesky` · `comm.mastodon` · `comm.reddit`
+
+</details>
+
+<details>
+<summary><strong>🧠 AI, Gemini, System & People (17 nodes)</strong></summary>
+
+| Node | Description |
+|------|-------------|
+| `ai.read_page` / `ai.extract_page` | AI-assisted page reading and structured extraction |
+| `agent.ask` | Ask an agent runtime a question mid-workflow |
+| `system.execute_command` | Run a local shell command, capture output |
+| `system.rss_read` | Fetch items from RSS / Atom feeds |
+| `people.save` | Upsert a contact into the CRM (profile-scoped) |
+| `people.sync_outlook_message` | Sync an Outlook message into People history |
+
+Also: `ai.agent` · `ai.chat` · `ai.classify` · `ai.embed` · `ai.extract` · `ai.transform` (LLM utilities), and `gemini.chat_session` · `gemini.chat_session_many` · `gemini.generate_image` · `gemini.generate_text` (Gemini via your own logged-in browser session — no API key).
 
 </details>
 
@@ -333,247 +373,137 @@ Think of it as **n8n meets Playwright** — a fully self-hosted, code-first auto
 
 </details>
 
----
+<details>
+<summary><strong>📱 Social platform actions — <em>opt-in build</em> (<code>-tags social</code>)</strong></summary>
 
-## ✦ Workflow Example
+Publish to and read **your own accounts** on these platforms via the Chrome extension bridge. These node types are **not compiled into the default binary** — build with `go build -tags social ./cmd/monoagentcli` to include them. They exist for managing your own presence; platform terms apply — see the [Usage Policy](docs/USAGE_POLICY.md).
 
-The **Instagram Daily Post** workflow — reads captions from Google Sheets, generates images with AI, posts to Instagram automatically:
+| Platform | Available actions |
+|----------|-------------------|
+| **Instagram** | `publish_post` · `like_posts` · `comment_on_posts` · `reply_to_comments` · `like_comments_on_posts` · `send_dms` · `auto_reply_dms` · `follow_users` · `unfollow_users` · `engage_with_posts` · `engage_user_posts` · `find_by_keyword` · `watch_stories` · `export_followers` · `scrape_profile_info` · `extract_post_data` · `list_user_posts` · `list_post_comments` |
+| **LinkedIn** | `publish_post` · `like_posts` · `like_comments` · `comment_on_posts` · `send_dms` · `auto_reply_dms` · `engage_with_posts` · `find_by_keyword` · `export_followers` · `scrape_profile_info` · `list_user_posts` · `list_post_comments` |
+| **X (Twitter)** | `publish_post` · `engage_with_posts` · `send_dms` · `auto_reply_dms` · `find_by_keyword` · `export_followers` · `scrape_profile_info` |
+| **TikTok** | `publish_post` · `like_video` · `comment_on_video` · `like_comment` · `follow_user` · `engage_with_posts` · `find_by_keyword` · `send_dms` · `auto_reply_dms` · `duet_video` · `stitch_video` · `share_video` · `export_followers` · `scrape_profile_info` · `list_user_videos` · `list_video_comments` |
+| **Hacker News** | `get_post_metrics` · `list_comments` · `reply_to_comment` · `submit_post` |
+| **Product Hunt** | `comment_on_launch` · `get_launch_metrics` · `list_comments` |
 
-```
-[Schedule: 9am daily]
-        │
-        ▼
-[Google Sheets: read_rows]   ← reads pending posts from spreadsheet
-        │
-        ▼
-[Filter: status == "pending"]
-        │
-        ▼
-[Limit: 1]                   ← one post per run
-        │
-        ▼
-[Set: build prompt]          ← constructs image generation prompt
-        │
-        ▼
-[HuggingFace: generate_image] ← FLUX.1-schnell text-to-image
-        │
-        ▼
-[OpenRouter: generate_text]   ← writes caption via Claude/GPT
-        │
-        ▼
-[Instagram: publish_post]     ← posts image + caption
-        │
-        ▼
-[Google Sheets: update_rows]  ← marks row as "posted"
-```
-
-```json
-{
-  "id": "instagram-daily-post",
-  "name": "Instagram Daily Post",
-  "nodes": [
-    { "id": "n1", "type": "trigger.schedule", "config": { "cron": "0 9 * * *" } },
-    { "id": "n2", "type": "service.google_sheets", "config": {
-        "operation": "read_rows", "use_header_row": true, "spreadsheet_id": "YOUR_SHEET_ID"
-    }},
-    { "id": "n3", "type": "core.filter",  "config": { "condition": "{{item.status}} == pending" } },
-    { "id": "n4", "type": "core.limit",   "config": { "max": 1 } },
-    { "id": "n5", "type": "service.huggingface", "config": {
-        "operation": "generate_image", "prompt": "{{item.image_prompt}}", "credential_id": "YOUR_HF_CRED"
-    }},
-    { "id": "n6", "type": "service.openrouter", "config": {
-        "operation": "generate_text", "model": "anthropic/claude-3-haiku",
-        "prompt": "Write an Instagram caption for: {{item.topic}}", "credential_id": "YOUR_OR_CRED"
-    }},
-    { "id": "n7", "type": "action.instagram.publish_post", "config": {
-        "credential_id": "social:instagram:yourusername",
-        "text": "{{item.caption}}", "media": "{{item.image_path}}"
-    }},
-    { "id": "n8", "type": "service.google_sheets", "config": {
-        "operation": "update_rows", "range": "{{item._row_range}}"
-    }}
-  ]
-}
-```
+</details>
 
 ---
 
-## ✦ Human-in-Loop Example
+## CLI Reference
 
-The **LinkedIn Outreach with Review** workflow — generates personalised messages, pauses for a human to review and edit each one, then sends only approved messages:
-
-```
-[Google Sheets: read_rows]     ← list of prospects
-        │
-        ▼
-[OpenRouter: generate_text]    ← draft personalised LinkedIn message
-        │
-        ▼
-[core.human_in_loop]           ← PAUSE — reviewer sees:
-        │                          Read-only: name, company, LinkedIn URL
-        │                          Editable:  message text
-        │                        Approve → continue  |  Reject → drop item
-        ▼
-[action.linkedin.send_connection_request]  ← sends approved message
-        │
-        ▼
-[Google Sheets: update_rows]   ← marks row "sent"
-```
-
-```json
-{
-  "id": "n3",
-  "type": "core.human_in_loop",
-  "config": {
-    "readonly_fields": ["name", "company", "linkedin_url"],
-    "editable_fields": ["message"],
-    "timeout_minutes": 60
-  }
-}
-```
-
----
-
-## ✦ Getting Started
-
-### Prerequisites
-
-- Go 1.22+ (`brew install go`)
-- Chrome/Chromium (for browser nodes)
-- SQLite (bundled, no install needed)
-
-### Install
-
-```bash
-# Clone
-git clone https://github.com/monoes/mono-agent.git
-cd mono-agent
-
-# Build CLI
-go build -o monoagentcli ./cmd/monoagentcli
-
-# Or install globally
-go install ./cmd/monoagentcli@latest
-```
-
-### First Run
-
-```bash
-# Check version
-./monoes version
-
-# Login to Instagram (opens browser)
-./monoes login instagram
-
-# List available workflow node types
-./monoes node list
-
-# Run a workflow
-./monoes workflow run --id instagram-daily-post
-
-# Watch mode (run every 30 seconds)
-./monoes run --watch --interval 30s
-```
-
-### Desktop GUI
-
-```bash
-cd wails-app
-
-# Install Wails CLI
-go install github.com/wailsapp/wails/v2/cmd/wails@latest
-
-# Run in development mode
-wails dev
-
-# Build desktop app
-wails build
-```
-
-### 🧩 Chrome Extension
-
-`chrome-extension/` bridges monoagentcli to your **real, already-logged-in Chrome browser** — no separate automation profile, no re-authenticating for sites (like Google/Gemini) that invalidate sessions ported into a bot-flagged browser. When connected, browser nodes drive your actual Chrome tabs instead of falling back to a fresh Chromium instance.
-
-It's not published to the Chrome Web Store — load it as an unpacked extension. Either clone this repo, or grab `monoagent-chrome-extension.zip` from the [latest release](https://github.com/monoes/mono-agent/releases/latest) and unzip it:
-
-1. Open `chrome://extensions` in Chrome
-2. Enable **Developer mode** (top-right toggle)
-3. Click **Load unpacked**
-4. Select the `chrome-extension/` folder (from the repo clone, or the unzipped release download)
-5. "MonoAgent Bridge" should now appear in your extensions list, enabled
-
-That's it — no configuration needed. The extension connects automatically to `ws://127.0.0.1:9222/monoagent` whenever a `monoagentcli` process (the `daemon`, or a `node run` / `workflow run` invocation) needs a browser. If one process already owns that connection, others share it automatically instead of competing for it.
-
-To confirm it's working, run any browser node and look for `Chrome extension connected -- using your browser` (or, when another `monoagentcli` process already holds the connection, `Reusing existing extension connection`) in the output.
-
-**Updating:** after pulling changes that touch `chrome-extension/`, reload it from `chrome://extensions` (the reload icon on its card) to pick up the changes — Chrome does not auto-reload unpacked extensions.
-
----
-
-## ✦ CLI Reference
+The binary is `monoagentcli`. Most commands accept `--json` for machine-readable output and `--profile <name>` to scope to a workspace.
 
 <details>
-<summary><strong>Workflow Commands</strong></summary>
+<summary><strong>Workflow</strong></summary>
 
 ```bash
-monoes workflow list                        # List all workflows
-monoes workflow get <id>                    # Get workflow details
-monoes workflow create --name "My Flow"     # Create new workflow
-monoes workflow import --file flow.json     # Import from JSON
-monoes workflow export --id <id>            # Export to JSON
-monoes workflow run --id <id>               # Execute workflow
-monoes workflow activate --id <id>          # Enable triggers
-monoes workflow deactivate --id <id>        # Disable triggers
-monoes workflow executions --id <id>        # View run history
-monoes workflow node add --workflow <id> --type service.google_sheets
-monoes workflow connect --from n1 --to n2 --workflow <id>
-monoes workflow migrate --action <id>       # Migrate legacy action
+monoagentcli workflow list                          # list workflows (--json)
+monoagentcli workflow get <id>                      # print a workflow as JSON
+monoagentcli workflow create <name>                 # new blank workflow
+monoagentcli workflow import --file flow.json       # import (also accepts stdin)
+monoagentcli workflow export <id>                   # export as JSON
+monoagentcli workflow validate <id>                 # validate against node schemas (exit 3 on invalid)
+monoagentcli workflow run <id>                      # run and wait
+monoagentcli workflow run <id> --dry-run            # validate + print execution plan, no run
+monoagentcli workflow run <id> --no-wait            # print execution id, exit immediately
+monoagentcli workflow run <id> --json               # execution record + per-node outputs
+monoagentcli workflow run <id> --input '{"key":1}'  # inject trigger data
+monoagentcli workflow activate <id>                 # enable triggers
+monoagentcli workflow deactivate <id>               # disable triggers
+monoagentcli workflow executions <id>               # run history
+monoagentcli workflow search [query]                # search workflows & templates
+monoagentcli workflow templates list                # bundled ready-to-use templates
+monoagentcli workflow node add <id> --type core.filter --name Filter
+monoagentcli workflow node set <id> <node-id> --config '{"max":5}'
+monoagentcli workflow node remove <id> <node-id>
+monoagentcli workflow connect <id> --from n1:main --to n2:main
 ```
 
 </details>
 
 <details>
-<summary><strong>Node Commands</strong></summary>
+<summary><strong>Nodes</strong></summary>
 
 ```bash
-monoes node list                            # List registered node types
-monoes node run --type action.instagram.publish_post \
-  --config '{"credential_id":"social:instagram:user","text":"Hello!"}'
+monoagentcli node list                              # all node types (--json)
+monoagentcli node schema core.if                    # JSON schema for a node type
+monoagentcli node run http.request \
+  --config '{"method":"GET","url":"https://httpbin.org/get"}'
 ```
 
 </details>
 
 <details>
-<summary><strong>Auth & Connections</strong></summary>
+<summary><strong>Secrets & Connections</strong></summary>
 
 ```bash
-monoes login instagram                      # Browser login (saves session)
-monoes login linkedin
-monoes login status                         # Show all active sessions
-monoes connect list                         # List API credentials
-monoes connect test --id <cred-id>          # Test a credential
-monoes connect remove --id <cred-id>        # Remove credential
+monoagentcli secret add --kind secret --name aws \
+  --field access_key_id=... --field secret_access_key=...   # values via flags or stdin
+monoagentcli secret list                            # metadata only — never values
+monoagentcli secret get <name>                      # resolve a vault reference (no plaintext)
+monoagentcli secret update <name> / secret rm <name>
+monoagentcli secret export                          # encrypted, passphrase-protected bundle
+monoagentcli secret import <file>                   # restore on another machine
+monoagentcli secret encrypt-connections             # one-time seal of legacy plaintext creds
+
+monoagentcli login <platform>                       # browser session login (saved locally)
+monoagentcli login status
+monoagentcli connect <platform>                     # add an API credential
+monoagentcli connect list / connect test <id> / connect remove <id>
 ```
 
 </details>
 
 <details>
-<summary><strong>Data & People</strong></summary>
+<summary><strong>Human-in-the-Loop</strong></summary>
 
 ```bash
-monoes search --platform instagram --keyword "coffee lovers"
-monoes people list                          # List saved contacts
-monoes people import --file contacts.csv    # Import from CSV
-monoes people messages add <id> --source outlook --subject "Hi" --body "..."   # Log a message/interaction
-monoes people messages list <id>            # Show a person's message history
-monoes people messages import <id> --file thread.json --source gmail          # Bulk-import history
-monoes people status set <id> "Just closed the Q1 deal"    # Post a status update
-monoes people status get <id>                               # Show the latest status
-monoes people status history <id>                            # Show every status ever posted
-monoes list create --name "Leads Q1"        # Create a list
-monoes list add-item --list <id> --url https://instagram.com/user
-monoes export --platform instagram --format csv
+monoagentcli hil list                               # pending review items
+monoagentcli hil approve <id>                       # resume the workflow
+monoagentcli hil reject <id>                        # drop the item (workflow errors out)
 ```
+
+</details>
+
+<details>
+<summary><strong>People (CRM)</strong></summary>
+
+```bash
+monoagentcli people list                            # contacts (--json)
+monoagentcli people import --file people.json --platform linkedin   # JSON array format
+monoagentcli people messages list <person-id>       # message history
+monoagentcli people messages compose <person-id>    # AI-assisted draft
+monoagentcli people messages send-draft <message-id>   # send an approved draft
+monoagentcli people status set <person-id> "text"   # status timeline
+```
+
+</details>
+
+<details>
+<summary><strong>For AI agents</strong></summary>
+
+```bash
+monoagentcli mcp                  # MCP server over stdio — tools/list, workflow_run, hil_approve, …
+monoagentcli ref                  # built-in offline docs: commands, nodes, expressions, examples
+monoagentcli ref node core.if     # detailed docs for one node type
+```
+
+Full agent documentation: [AGENTS.md](AGENTS.md).
+
+</details>
+
+<details>
+<summary><strong>Exit codes</strong></summary>
+
+| Code | Meaning |
+|------|---------|
+| `0` | Success |
+| `1` | General error (including a run that ends `CANCELLED`) |
+| `2` | Not found — e.g. `hil approve`/`hil reject`, `secret rm`/`secret update`, or `workflow delete` on an unknown id |
+| `3` | Invalid input / validation failure |
+| `4` | Auth or connection failure |
 
 </details>
 
@@ -581,166 +511,157 @@ monoes export --platform instagram --format csv
 <summary><strong>Scheduling</strong></summary>
 
 ```bash
-monoes schedule add --action <id> --cron "0 9 * * *"
-monoes schedule list
-monoes schedule remove --id <id>
+monoagentcli schedule add <action-id> --cron "0 9 * * *"
+monoagentcli schedule list
+monoagentcli daemon                # keep all workflow triggers alive; blocks until Ctrl+C
 ```
 
-Workflow triggers (`trigger.schedule`, `trigger.webhook`) are separate from action schedules above — `workflow activate` only registers a workflow's triggers for as long as that one command keeps running. To have activated workflows actually fire over time (e.g. an hourly sync), run the daemon as a persistent background process:
-
-```bash
-monoagentcli daemon   # restores every active workflow's triggers across all profiles, blocks until Ctrl+C
-```
-
-</details>
-
-<details>
-<summary><strong>Profiles</strong></summary>
-
-Every command accepts `--profile <name>` to scope operations to a named profile. All user data (actions, people, workflows, sessions, vault images, connections, HIL items, social lists, tags) is fully isolated per profile.
-
-```bash
-# Use a named profile (default is "default")
-monoes --profile work workflow list
-monoes --profile client-a login instagram
-monoes --profile work run --workflow instagram-daily-post
-
-# The GUI lets you switch profiles from the sidebar
-# Switching profiles does NOT stop workflows running under other profiles
-```
-
-</details>
-
-<details>
-<summary><strong>Image Vault</strong></summary>
-
-```bash
-# Images are registered automatically when workflow nodes generate them.
-# Browse, label, and manage images from the GUI Image Vault tab.
-# Via CLI:
-monoes workflow run --id my-image-workflow   # vault images are saved to active profile
-```
+Workflow triggers (`trigger.schedule`, `trigger.webhook`) only fire while a process is serving them — run `monoagentcli daemon` as a persistent background process and activated workflows fire on time, across all profiles.
 
 </details>
 
 ---
 
-## ✦ Architecture
+## Chrome Extension
+
+`chrome-extension/` lets workflow nodes drive **your real, already-logged-in Chrome browser** — the same model as consumer RPA tools. No separate automation profile, no re-authenticating for sites (like Google) that invalidate sessions ported into a scripted browser.
+
+- **Loopback only** — the extension connects to `ws://127.0.0.1:9222/monoagent` on your machine; nothing leaves localhost
+- **Broad host permissions by design** — workflows can target any site, so the extension needs access to all tabs; it acts only when a `monoagentcli` process you started requests it
+- **Shared connection** — multiple CLI processes share one extension connection instead of fighting over the browser
+
+Install (unpacked, not on the Web Store):
+
+1. Open `chrome://extensions`
+2. Enable **Developer mode** (top-right toggle)
+3. Click **Load unpacked** and select the `chrome-extension/` folder (or the zip from the [latest release](https://github.com/monoes/mono-agent/releases/latest))
+
+No configuration needed. Run any browser node and look for `Chrome extension connected -- using your browser` in the output. After pulling changes that touch `chrome-extension/`, reload it from `chrome://extensions`.
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+- Go 1.25+ (`brew install go`)
+- Chrome/Chromium (for browser nodes — optional for everything else)
+- That's it — SQLite is embedded, no external database
+
+### Install
+
+```bash
+git clone https://github.com/monoes/mono-agent.git
+cd mono-agent
+go build -o monoagentcli ./cmd/monoagentcli
+
+# Or with the social platform nodes (opt-in):
+go build -tags social -o monoagentcli ./cmd/monoagentcli
+```
+
+### Desktop GUI
+
+```bash
+cd wails-app
+go install github.com/wailsapp/wails/v2/cmd/wails@latest
+wails dev      # development mode
+wails build    # production build
+```
+
+---
+
+## Architecture
 
 ```
 mono-agent/
-│
-├── cmd/monoagentcli/        # CLI entry point (Cobra, 70+ commands)
-│   ├── main.go
+├── cmd/monoagentcli/        # CLI entry point (Cobra)
 │   ├── workflow.go          # workflow subcommands + engine builder
-│   ├── node.go              # node run + registry builder
-│   ├── login.go             # browser session auth
-│   ├── ref.go               # --profile flag wiring
-│   ├── init.go              # project init
-│   └── crawl.go             # crawler commands
+│   ├── node.go              # node run + registry
+│   ├── ref.go               # built-in offline reference docs
+│   ├── secret.go            # encrypted secrets vault CLI
+│   ├── hil.go               # human-in-the-loop approve/reject
+│   ├── mcp.go               # MCP server for AI agents (stdio)
+│   └── ...
 │
 ├── internal/
 │   ├── workflow/            # Core workflow engine
-│   │   ├── engine.go        # WorkflowEngine — orchestration + profile isolation
-│   │   ├── models.go        # Workflow, WorkflowNode, … (ProfileID field)
-│   │   ├── storage.go       # SQLiteWorkflowStore — profile-scoped CRUD
-│   │   ├── hybrid_store.go  # Hybrid (JSON files + SQLite)
-│   │   ├── dag.go           # Topological sort, cycle detection
-│   │   ├── execution.go     # Run state machine
+│   │   ├── engine.go        # orchestration + profile isolation
+│   │   ├── dag.go           # Kahn topological sort, cycle detection
+│   │   ├── execution.go     # run state machine, on_error → SUCCESS_WITH_ERRORS
 │   │   ├── expression.go    # {{template}} evaluation
-│   │   ├── trigger.go       # Cron / webhook triggers
-│   │   └── schemas/         # 70+ embedded JSON schemas
+│   │   ├── trigger_manager.go  # cron / webhook trigger lifecycle
+│   │   ├── webhook_server.go   # loopback webhook HTTP server
+│   │   ├── templates/       # bundled ready-to-use workflows
+│   │   └── schemas/         # 90+ embedded JSON node schemas
 │   │
-│   ├── nodes/               # Node executor implementations
-│   │   ├── browser_adapter.go  # BrowserNode → ActionExecutor bridge
-│   │   ├── control/
-│   │   │   ├── human_in_loop.go  # core.human_in_loop — pause + review
-│   │   │   └── ...              # if, set, filter, code, merge…
-│   │   ├── service/         # google_sheets, openrouter, huggingface…
-│   │   ├── http/            # request, ftp, ssh
-│   │   ├── db/              # mysql, postgres, mongodb, redis
-│   │   ├── comm/            # email, slack, telegram, discord, outlook
-│   │   ├── data/            # datetime, html, xml, crypto…
-│   │   ├── people/          # save.go — profile-scoped contact upsert
-│   │   └── system/          # execute_command, rss_read
+│   ├── nodes/               # Node executors
+│   │   ├── control/         # if, filter, set, code, human_in_loop…
+│   │   ├── service/         # google_sheets, openrouter, github, stripe…
+│   │   ├── comm/            # email, slack, telegram, outlook, discord…
+│   │   ├── db/ · http/ · data/ · image/ · system/ · people/ · ai/
+│   │   └── browser_adapter.go   # action.* nodes → opt-in social build
 │   │
-│   ├── vault/               # Image Vault
-│   │   └── vault.go         # Register/Resolve/ProfileIDFromContext
-│   │
-│   ├── ai/chat/             # AI Canvas Chat
-│   │   ├── service.go       # ChatService + SetProfileID
-│   │   └── tools.go         # CanvasTools — AI creates workflows
-│   │
-│   ├── action/              # Legacy browser action executor
-│   │   ├── executor.go      # Step runner with variable resolution
-│   │   ├── steps.go         # navigate, click, type, extract, loop…
-│   │   └── variables.go     # {{path.to.variable}} resolver
-│   │
-│   ├── bot/                 # Platform browser adapters
-│   │   ├── instagram/
-│   │   ├── linkedin/
-│   │   ├── tiktok/
-│   │   └── x/
-│   │
-│   ├── connections/         # Unified credential storage
-│   │   ├── storage.go       # Connection CRUD — profile-scoped Delete
-│   │   ├── manager.go       # OAuth, API key, browser auth flows
-│   │   └── registry.go      # Platform definitions + auth methods
-│   │
-│   ├── config/              # Profile config + AI-assisted selector generation
-│   ├── scheduler/           # Cron scheduler wrapper
-│   └── storage/             # DB init + migrations (profile_id columns)
+│   ├── mcp/                 # JSON-RPC 2.0 MCP server (no dependencies)
+│   ├── secrets/             # keyring + AES-256-GCM envelope encryption
+│   ├── vault/               # Image Vault — register/resolve/provenance
+│   ├── connections/         # unified credential storage + OAuth flows
+│   ├── bot/                 # platform browser adapters (build tag: social)
+│   ├── extension/           # Chrome extension bridge server (loopback :9222)
+│   ├── ai/chat/             # AI Canvas Chat — conversational builder
+│   └── scheduler/ · config/ · storage/
 │
-├── wails-app/               # Desktop GUI
-│   ├── app.go               # Wails App struct — all RPC methods, activeProfileID
-│   └── frontend/src/
-│       ├── pages/
-│       │   ├── Workflow.jsx     # Visual workflow canvas editor
-│       │   ├── ImageVault.jsx   # Image Vault browser + management
-│       │   └── Settings.jsx     # Profile management + app settings
-│       └── components/
-│           ├── ImageDetailModal.jsx       # Image metadata + provenance
-│           ├── ImageEditorPanel.jsx       # Inline image editor
-│           ├── ImageEditorFullscreen.jsx  # Fullscreen editor with tools
-│           └── Sidebar.jsx               # Profile switcher + navigation
-│
-└── data/actions/            # 53 embedded JSON action definitions
-    ├── instagram/
-    ├── linkedin/
-    ├── tiktok/
-    └── x/
+├── wails-app/               # Desktop GUI (Wails 2 + React)
+├── examples/                # ready-to-run workflow JSONs
+├── docs/                    # usage policy, comparison, screenshots
+└── data/actions/            # embedded action definitions
 ```
 
 ---
 
-## ✦ Tech Stack
+## Docs & Resources
+
+| Resource | What's inside |
+|----------|---------------|
+| [AGENTS.md](AGENTS.md) | Canonical entrypoint for AI agents: `ref`, `--json`, MCP, exit codes |
+| [docs/USAGE_POLICY.md](docs/USAGE_POLICY.md) | Scope of use, platform ToS, rate caps, anti-spam commitments |
+| [docs/COMPARISON.md](docs/COMPARISON.md) | Honest comparison vs n8n, Activepieces, Windmill, Node-RED |
+| [FEATURE_n8n.md](FEATURE_n8n.md) | n8n parity tracker — what matches, what's missing |
+| [examples/](examples/) | Ready-to-run workflow JSONs with webhook trigger examples |
+| [install.sh](install.sh) | One-line installer (macOS / Linux) |
+| [SECURITY.md](SECURITY.md) | Reporting, supported versions, telemetry & crash-reporting statement |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Build/test commands (incl. `-tags social`), PR guidelines |
+| [CHANGELOG.md](CHANGELOG.md) | Release history |
+| [docs/screenshots/](docs/screenshots/) | GUI screenshots |
+
+---
+
+## Tech Stack
 
 | Layer | Technology |
 |-------|-----------|
 | **Language** | Go 1.25 (zero CGO) |
-| **Browser** | [go-rod/rod](https://github.com/go-rod/rod) — Chrome DevTools Protocol |
-| **Stealth** | [go-rod/stealth](https://github.com/go-rod/stealth) — anti-detection |
+| **Database** | [modernc.org/sqlite](https://pkg.go.dev/modernc.org/sqlite) — pure Go, embedded |
 | **CLI** | [spf13/cobra](https://github.com/spf13/cobra) |
 | **Logging** | [rs/zerolog](https://github.com/rs/zerolog) |
-| **Database** | [modernc.org/sqlite](https://pkg.go.dev/modernc.org/sqlite) — pure Go |
 | **Scheduling** | [robfig/cron](https://github.com/robfig/cron) |
-| **JS Engine** | [dop251/goja](https://github.com/dop251/goja) — ECMAScript 5.1+ |
-| **HTML** | [goquery](https://github.com/PuerkitoBio/goquery) |
-| **Desktop GUI** | [Wails v2](https://wails.io) + React 18 |
+| **JS Engine** | [dop251/goja](https://github.com/dop251/goja) — for `core.code` |
+| **Browser** | [go-rod/rod](https://github.com/go-rod/rod) — Chrome DevTools Protocol |
+| **Keyring** | [zalando/go-keyring](https://github.com/zalando/go-keyring) — OS secret storage |
+| **Desktop GUI** | [Wails v2](https://wails.io) + React |
 | **AI APIs** | OpenRouter · HuggingFace · Google Gemini |
-| **IDs** | [google/uuid](https://github.com/google/uuid) |
 
 ---
 
-## ✦ Roadmap
+## Roadmap
 
 **Recently shipped**
-- [x] Multi-profile isolation — all user data scoped per named profile
-- [x] Image Vault — built-in image storage, labeling, fullscreen editor
-- [x] Human-in-Loop node (`core.human_in_loop`) — pause + review + approve/reject
-- [x] AI Canvas Chat — conversational workflow builder in the GUI
-- [x] Outlook integration — read and send email natively
-- [x] AI background removal — Tier-1 image processing nodes
+- [x] Multi-profile workspaces — all user data scoped per named profile
+- [x] Human-in-Loop node (`core.human_in_loop`) — durable, editable, timeout-aware
+- [x] Image Vault — storage, labeling, fullscreen editor, provenance
+- [x] AI Canvas Chat — conversational workflow builder
+- [x] Outlook integration — read and send email via Microsoft Graph
+- [x] Encrypted Secrets Vault — OS keyring + AES-256-GCM + portable encrypted export
+- [x] MCP server — AI agents can list, run, and validate workflows
 
 **Coming next**
 - [ ] More trigger types — email, file watcher, database change
@@ -748,29 +669,38 @@ mono-agent/
 - [ ] Sub-workflow / reusable workflow node
 - [ ] Visual debugger — step-through execution in GUI
 - [ ] Marketplace — shareable workflow templates
-- [ ] WhatsApp & WeChat platform bots
+- [ ] Official-API publishing for Bluesky/Mastodon (ATProto/ActivityPub)
 - [ ] Metrics dashboard — success rates, throughput, latency per profile
 
 ---
 
-## ✦ Contributing
+## Contributing
 
-Pull requests are welcome. For major changes, open an issue first.
+Pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). By participating, you agree to keep Mono Agent a fair-use tool.
 
 ```bash
-# Run tests
-go test ./...
-
-# Run integration tests (requires Chrome)
-go test -tags integration ./...
-
-# Lint
-go vet ./...
+go test ./...                  # unit tests (no Chrome needed)
+go test -tags "integration,social" ./... # integration tests (requires Chrome)
+go vet ./...                   # lint
 ```
 
 ---
 
+## License
+
+Mono Agent is released under the [MIT License](LICENSE). In plain English:
+
+- ✅ You may **use** it, commercially or personally
+- ✅ You may **modify** it and build your own tools on it
+- ✅ You may **distribute** copies and modified versions
+- ❌ It comes with **no warranty** — the authors are not liable for anything it does or fails to do
+- 📋 Keep the license and copyright notice with any copy you distribute
+
+---
+
 <div align="center">
+
+**Mono Agent is in no way affiliated with Instagram, LinkedIn, X, TikTok, or any platform.<br/>Independent, unofficial, MIT-licensed. Use at your own risk and in accordance with each platform's terms.**
 
 Made with ☕ by [nokhodian](https://github.com/nokhodian)
 

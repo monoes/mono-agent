@@ -8,7 +8,7 @@ import (
 	"io"
 	"net/http"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 const linearGraphQLURL = "https://api.linear.app/graphql"

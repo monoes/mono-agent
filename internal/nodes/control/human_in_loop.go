@@ -7,8 +7,8 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"monoagent/internal/vault"
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/vault"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // HumanInLoopNode pauses workflow execution and waits for a human to review

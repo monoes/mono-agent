@@ -10,10 +10,10 @@ import (
 	"strings"
 	"testing"
 
-	"monoagent/internal/ai"
-	"monoagent/internal/connections"
-	"monoagent/internal/secrets"
-	"monoagent/internal/storage"
+	"github.com/monoes/mono-agent/internal/ai"
+	"github.com/monoes/mono-agent/internal/connections"
+	"github.com/monoes/mono-agent/internal/secrets"
+	"github.com/monoes/mono-agent/internal/storage"
 
 	"github.com/zalando/go-keyring"
 )
@@ -215,6 +215,95 @@ func TestSecretEncryptConnections_MigratesPlaintextRow(t *testing.T) {
 	}
 	if !strings.HasPrefix(rawData, "vaultenc:v1:") {
 		t.Fatalf("expected vaultenc-prefixed ciphertext, got: %s", rawData)
+	}
+}
+
+// TestReadSecretValue covers the extracted stdin reader (RV4-3): a value
+// without a trailing newline (`printf '%s'`) must be accepted, a trailing
+// newline (scripts/import_edge_passwords.py) must be trimmed, and only a
+// completely empty stream is an error.
+func TestReadSecretValue(t *testing.T) {
+	cases := []struct {
+		name    string
+		in      string
+		want    string
+		wantErr bool
+	}{
+		{"newline terminated", "value\n", "value", false},
+		{"crlf terminated", "value\r\n", "value", false},
+		{"no trailing newline (printf %s)", "value", "value", false},
+		{"script-appended newline", "edge-password\n", "edge-password", false},
+		{"bare newline", "\n", "", false},
+		{"empty stream", "", "", true},
+	}
+	for _, tc := range cases {
+		got, err := readSecretValue(strings.NewReader(tc.in))
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("%s: expected error, got %q", tc.name, got)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%s: %v", tc.name, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestSecretAdd_ReadsValueFromStdinWithoutTrailingNewline is the full-stack
+// version of TestReadSecretValue's EOF case: `printf '%s' value | secret
+// add` (no newline) must store the value, where it used to fail on EOF and
+// store nothing.
+func TestSecretAdd_ReadsValueFromStdinWithoutTrailingNewline(t *testing.T) {
+	dbPath := newSecretCLITestDB(t)
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	orig := os.Stdin
+	os.Stdin = r
+	defer func() { os.Stdin = orig }()
+
+	go func() {
+		io.WriteString(w, "piped-no-newline") // no trailing \n on purpose
+		w.Close()
+	}()
+
+	addOut, err := runSecretCmd(t, dbPath, "add", "--kind", "secret", "--name", "no-newline-key")
+	os.Stdin = orig
+	if err != nil {
+		t.Fatalf("secret add via newline-less stdin: %v (%s)", err, addOut)
+	}
+
+	revealOut, err := runSecretCmdText(t, dbPath, "reveal", "no-newline-key", "--reveal")
+	if err != nil {
+		t.Fatalf("secret reveal: %v", err)
+	}
+	if strings.TrimSpace(revealOut) != "piped-no-newline" {
+		t.Fatalf("expected the newline-less stdin value to be stored, got: %q", revealOut)
+	}
+}
+
+// TestSecretUnknownNameIsNotFound guards RV4-4: rm/update on an unknown
+// vault name must exit 2 via the not-found sentinel.
+func TestSecretUnknownNameIsNotFound(t *testing.T) {
+	dbPath := newSecretCLITestDB(t)
+	for _, sub := range [][]string{
+		{"rm", "ghost"},
+		{"update", "ghost", "--notes", "x"},
+	} {
+		_, err := runSecretCmd(t, dbPath, sub...)
+		if err == nil {
+			t.Fatalf("%v: expected error for unknown secret name", sub)
+		}
+		if code := exitCodeFor(err); code != 2 {
+			t.Fatalf("%v: exit %d, want 2 (%v)", sub, code, err)
+		}
 	}
 }
 

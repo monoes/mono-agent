@@ -6,7 +6,7 @@ import (
 	"net/url"
 	"time"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // BlueskyNode posts, reads, likes, and reposts via the Bluesky (AT Protocol) API.

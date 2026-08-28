@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"monoagent/internal/vault"
+	"github.com/monoes/mono-agent/internal/vault"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 

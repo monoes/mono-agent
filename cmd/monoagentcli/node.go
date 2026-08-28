@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -13,22 +14,22 @@ import (
 	"text/tabwriter"
 	"time"
 
-	browserpkg "monoagent/internal/browser"
-	"monoagent/internal/action"
-	cfgpkg "monoagent/internal/config"
-	"monoagent/internal/connections"
-	"monoagent/internal/bot"
-	_ "monoagent/internal/bot/instagram"
-	_ "monoagent/internal/bot/linkedin"
-	_ "monoagent/internal/bot/tiktok"
-	_ "monoagent/internal/bot/gemini"
-	_ "monoagent/internal/bot/x"
-	"monoagent/internal/extension"
-	"monoagent/internal/noderegistry"
-	"monoagent/internal/nodes"
-	peoplenodes "monoagent/internal/nodes/people"
-	"monoagent/internal/workflow"
 	"github.com/google/uuid"
+	"github.com/monoes/mono-agent/internal/action"
+	"github.com/monoes/mono-agent/internal/bot"
+	_ "github.com/monoes/mono-agent/internal/bot/gemini"
+	_ "github.com/monoes/mono-agent/internal/bot/instagram"
+	_ "github.com/monoes/mono-agent/internal/bot/linkedin"
+	_ "github.com/monoes/mono-agent/internal/bot/tiktok"
+	_ "github.com/monoes/mono-agent/internal/bot/x"
+	browserpkg "github.com/monoes/mono-agent/internal/browser"
+	cfgpkg "github.com/monoes/mono-agent/internal/config"
+	"github.com/monoes/mono-agent/internal/connections"
+	"github.com/monoes/mono-agent/internal/extension"
+	"github.com/monoes/mono-agent/internal/noderegistry"
+	"github.com/monoes/mono-agent/internal/nodes"
+	peoplenodes "github.com/monoes/mono-agent/internal/nodes/people"
+	"github.com/monoes/mono-agent/internal/workflow"
 	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
 	_ "modernc.org/sqlite"
@@ -249,8 +250,49 @@ func newNodeCmd(cfg *globalConfig) *cobra.Command {
 	cmd.AddCommand(
 		newNodeListCmd(cfg),
 		newNodeRunCmd(cfg),
+		newNodeSchemaCmd(cfg),
 	)
 	return cmd
+}
+
+// newNodeSchemaCmd prints a node type's embedded JSON schema (pretty-printed).
+func newNodeSchemaCmd(cfg *globalConfig) *cobra.Command {
+	return &cobra.Command{
+		Use:   "schema <type>",
+		Short: "Print the embedded JSON schema for a node type",
+		Example: `  monoagentcli node schema core.if
+  monoagentcli node schema trigger.schedule`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			data, ok := workflow.ReadEmbeddedSchema(args[0])
+			if !ok {
+				return errNotFound("no schema for node type %q — run `monoagentcli node list` to see available types", args[0])
+			}
+			var buf bytes.Buffer
+			if err := json.Indent(&buf, data, "", "  "); err != nil {
+				return fmt.Errorf("format schema for %s: %w", args[0], err)
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), buf.String())
+			return nil
+		},
+	}
+}
+
+// nodeListEntry is one element of `node list --json`.
+type nodeListEntry struct {
+	Type     string `json:"type"`
+	Category string `json:"category"`
+	Title    string `json:"title"`
+}
+
+// nodeTypeCategory returns the category portion of a node type — the prefix
+// before the first dot (core, comm, db, http, …). Legacy unprefixed types
+// fall back to the heuristic nodeCategory mapping.
+func nodeTypeCategory(t string) string {
+	if i := strings.Index(t, "."); i > 0 {
+		return t[:i]
+	}
+	return nodeCategory(t)
 }
 
 // newNodeListCmd lists all registered node types.
@@ -285,7 +327,15 @@ func newNodeListCmd(cfg *globalConfig) *cobra.Command {
 			}
 
 			if cfg.JSONOutput {
-				return json.NewEncoder(os.Stdout).Encode(types)
+				entries := make([]nodeListEntry, 0, len(types))
+				for _, t := range types {
+					entries = append(entries, nodeListEntry{
+						Type:     t,
+						Category: nodeTypeCategory(t),
+						Title:    workflow.SchemaTitle(t),
+					})
+				}
+				return json.NewEncoder(os.Stdout).Encode(entries)
 			}
 
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
@@ -440,9 +490,9 @@ platform name to override. Token refresh is handled automatically for OAuth conn
 					}
 				}
 				if len(matches) > 0 {
-					return fmt.Errorf("unknown node type %q. Did you mean one of: %s", nodeType, strings.Join(matches, ", "))
+					return errNotFound("unknown node type %q. Did you mean one of: %s", nodeType, strings.Join(matches, ", "))
 				}
-				return fmt.Errorf("unknown node type %q. Run `monoagentcli node list` to see all types", nodeType)
+				return errNotFound("unknown node type %q. Run `monoagentcli node list` to see all types", nodeType)
 			}
 
 			// Parse config

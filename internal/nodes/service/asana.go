@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 const asanaBaseURL = "https://app.asana.com/api/1.0"

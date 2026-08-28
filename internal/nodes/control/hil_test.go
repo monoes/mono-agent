@@ -8,8 +8,8 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"monoagent/internal/vault"
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/vault"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 func newHILTestDB(t *testing.T) *sql.DB {

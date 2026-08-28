@@ -4,23 +4,25 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/google/uuid"
 
-	browserpkg "monoagent/internal/browser"
-	cfgpkg "monoagent/internal/config"
-	"monoagent/internal/connections"
-	"monoagent/internal/nodes"
-	"monoagent/internal/scheduler"
-	"monoagent/internal/storage"
-	"monoagent/internal/workflow"
+	browserpkg "github.com/monoes/mono-agent/internal/browser"
+	cfgpkg "github.com/monoes/mono-agent/internal/config"
+	"github.com/monoes/mono-agent/internal/connections"
+	"github.com/monoes/mono-agent/internal/nodes"
+	"github.com/monoes/mono-agent/internal/scheduler"
+	"github.com/monoes/mono-agent/internal/storage"
+	"github.com/monoes/mono-agent/internal/workflow"
 	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
 )
@@ -119,6 +121,7 @@ func newWorkflowCmd(cfg *globalConfig) *cobra.Command {
 		newWorkflowImportCmd(cfg),
 		newWorkflowExportCmd(cfg),
 		newWorkflowRunCmd(cfg),
+		newWorkflowValidateCmd(cfg),
 		newWorkflowActivateCmd(cfg),
 		newWorkflowDeactivateCmd(cfg),
 		newWorkflowDeleteCmd(cfg),
@@ -534,7 +537,7 @@ func newWorkflowGetCmd(cfg *globalConfig) *cobra.Command {
 				return fmt.Errorf("get workflow: %w", err)
 			}
 			if wf == nil {
-				return fmt.Errorf("workflow %q not found", args[0])
+				return errNotFound("workflow %q not found", args[0])
 			}
 
 			enc := json.NewEncoder(os.Stdout)
@@ -545,8 +548,9 @@ func newWorkflowGetCmd(cfg *globalConfig) *cobra.Command {
 }
 
 // waitForExecution polls until the execution leaves RUNNING/QUEUED, printing
-// its final status, or returns an error once timeout elapses.
-func waitForExecution(ctx context.Context, engine *workflow.WorkflowEngine, executionID string, timeout time.Duration) error {
+// its final status, or returns an error once timeout elapses. When quiet is
+// true the status lines are suppressed (JSON callers emit their own record).
+func waitForExecution(ctx context.Context, engine *workflow.WorkflowEngine, executionID string, timeout time.Duration, quiet bool) error {
 	deadline := time.Now().Add(timeout)
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
@@ -565,10 +569,30 @@ func waitForExecution(ctx context.Context, engine *workflow.WorkflowEngine, exec
 				}
 				// keep polling
 			default:
-				if exec.ErrorMessage != "" {
-					fmt.Fprintf(os.Stdout, "Status: %s\nError:  %s\n", exec.Status, exec.ErrorMessage)
-				} else {
-					fmt.Fprintf(os.Stdout, "Status: %s\n", exec.Status)
+				if !quiet {
+					if exec.ErrorMessage != "" {
+						fmt.Fprintf(os.Stdout, "Status: %s\nError:  %s\n", exec.Status, exec.ErrorMessage)
+					} else {
+						fmt.Fprintf(os.Stdout, "Status: %s\n", exec.Status)
+					}
+				}
+				// A FAILED or CANCELLED execution must exit 1 even though the
+				// wait itself succeeded. JSON callers still print the full
+				// execution record (with error fields populated) before this
+				// propagates.
+				switch exec.Status {
+				case "FAILED":
+					msg := exec.ErrorMessage
+					if msg == "" {
+						msg = "unknown error"
+					}
+					return fmt.Errorf("execution %s failed: %s", executionID, msg)
+				case "CANCELLED":
+					msg := exec.ErrorMessage
+					if msg == "" {
+						msg = "cancelled"
+					}
+					return fmt.Errorf("execution %s was cancelled: %s", executionID, msg)
 				}
 				return nil
 			}
@@ -643,10 +667,28 @@ func newWorkflowTemplatesRunCmd(cfg *globalConfig) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("trigger workflow: %w", err)
 			}
-			fmt.Fprintf(os.Stdout, "Running template %q (workflow %s, execution %s)\n", args[0], wf.ID, executionID)
+			if !cfg.JSONOutput {
+				fmt.Fprintf(os.Stdout, "Running template %q (workflow %s, execution %s)\n", args[0], wf.ID, executionID)
+			}
 
-			runErr := waitForExecution(ctx, engine, executionID, 15*time.Minute)
-			if keep {
+			runErr := waitForExecution(ctx, engine, executionID, 15*time.Minute, cfg.JSONOutput)
+
+			if cfg.JSONOutput {
+				// Same record `workflow run --json` prints after its wait:
+				// status, timestamps, and per-node output items — printed
+				// even when the run failed, since runErr (returned below)
+				// then maps FAILED/CANCELLED to exit 1.
+				summary, serr := buildExecutionSummary(ctx, cfg, executionID)
+				if serr != nil {
+					return serr
+				}
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				if eerr := enc.Encode(summary); eerr != nil {
+					return eerr
+				}
+			}
+			if keep && !cfg.JSONOutput {
 				fmt.Fprintf(os.Stdout, "Kept workflow %s\n", wf.ID)
 			}
 			return runErr
@@ -661,18 +703,31 @@ func newWorkflowTemplatesRunCmd(cfg *globalConfig) *cobra.Command {
 // newWorkflowRunCmd manually triggers a workflow and polls for completion.
 func newWorkflowRunCmd(cfg *globalConfig) *cobra.Command {
 	var inputJSON string
+	var noWait bool
+	var timeout time.Duration
+	var dryRun bool
 
 	cmd := &cobra.Command{
 		Use:   "run <id>",
 		Short: "Manually trigger a workflow and wait for it to complete",
-		Args:  cobra.ExactArgs(1),
+		Long: "Manually triggers a workflow and waits for it to complete.\n\n" +
+			"--dry-run validates the workflow and prints the topological execution plan without " +
+			"starting anything. --no-wait prints the execution id and exits immediately — the run " +
+			"only keeps going while an engine (e.g. `monoagentcli daemon`) stays alive, so poll " +
+			"`workflow executions` for the final status. --json prints the execution record with " +
+			"per-node output items once the wait finishes.",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			workflowID := args[0]
+
+			if dryRun {
+				return runWorkflowDryRun(cfg, cmd, workflowID)
+			}
 
 			triggerData := map[string]interface{}{}
 			if inputJSON != "" {
 				if err := json.Unmarshal([]byte(inputJSON), &triggerData); err != nil {
-					return fmt.Errorf("invalid --input JSON (expected a JSON object): %w", err)
+					return errInvalidInput("invalid --input JSON (expected a JSON object): %v", err)
 				}
 			}
 
@@ -682,7 +737,7 @@ func newWorkflowRunCmd(cfg *globalConfig) *cobra.Command {
 			}
 			defer closeBrowsers()
 
-			ctx := context.Background()
+			ctx := cmd.Context()
 			if err := engine.Start(ctx); err != nil {
 				return fmt.Errorf("start engine: %w", err)
 			}
@@ -690,15 +745,52 @@ func newWorkflowRunCmd(cfg *globalConfig) *cobra.Command {
 
 			executionID, err := engine.TriggerWorkflow(ctx, workflowID, triggerData)
 			if err != nil {
+				// Keeps the engine's ErrWorkflowNotFound chain → exit 2.
+				if errors.Is(err, workflow.ErrWorkflowInactive) {
+					return errInvalidInput("trigger workflow: %v — activate it first: monoagentcli workflow activate %s", err, workflowID)
+				}
 				return fmt.Errorf("trigger workflow: %w", err)
 			}
 
-			fmt.Fprintf(os.Stdout, "Execution started: %s\n", executionID)
-			return waitForExecution(ctx, engine, executionID, 15*time.Minute)
+			if noWait {
+				status := "RUNNING"
+				if exec, gerr := engine.GetExecution(ctx, executionID); gerr == nil && exec != nil && exec.Status != "" {
+					status = exec.Status
+				}
+				if err := printExecutionNoWait(cfg, workflowID, executionID, status); err != nil {
+					return err
+				}
+				fmt.Fprintln(os.Stderr, "Note: --no-wait exits immediately; this run keeps executing only while a monoagentcli engine (daemon) is alive.")
+				return nil
+			}
+
+			if !cfg.JSONOutput {
+				fmt.Fprintf(os.Stdout, "Execution started: %s\n", executionID)
+			}
+			waitErr := waitForExecution(ctx, engine, executionID, timeout, cfg.JSONOutput)
+
+			if cfg.JSONOutput {
+				// Print the full record even when the run FAILED — the
+				// summary's error fields carry the reason, and waitErr
+				// (returned below) maps FAILED to exit code 1.
+				summary, serr := buildExecutionSummary(ctx, cfg, executionID)
+				if serr != nil {
+					return serr
+				}
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				if eerr := enc.Encode(summary); eerr != nil {
+					return eerr
+				}
+			}
+			return waitErr
 		},
 	}
 
 	cmd.Flags().StringVar(&inputJSON, "input", "", `Trigger data as a JSON object, e.g. --input '{"prompt":"a red bicycle"}' (available downstream as {{ $json.<field> }})`)
+	cmd.Flags().BoolVar(&noWait, "no-wait", false, "Print the execution id and exit immediately without waiting for completion")
+	cmd.Flags().DurationVar(&timeout, "timeout", 15*time.Minute, "Maximum time to wait for the execution to finish")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Validate the workflow and print its execution plan without running it")
 	return cmd
 }
 
@@ -775,6 +867,26 @@ func newWorkflowDeleteCmd(cfg *globalConfig) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			workflowID := args[0]
+
+			// Fail fast for unknown ids with the standard not-found sentinel
+			// (exit 2), before the confirmation prompt or the engine (with
+			// its browser/trigger machinery) spins up.
+			preDB, err := initDB(cfg)
+			if err != nil {
+				return fmt.Errorf("open database: %w", err)
+			}
+			store := newHybridStore(preDB)
+			existing, gerr := store.GetWorkflow(context.Background(), workflowID)
+			closeErr := preDB.Close()
+			if gerr != nil {
+				return fmt.Errorf("get workflow: %w", gerr)
+			}
+			if existing == nil {
+				return errNotFound("workflow %q not found", workflowID)
+			}
+			if closeErr != nil {
+				return fmt.Errorf("close database: %w", closeErr)
+			}
 
 			if !force {
 				fmt.Fprintf(os.Stdout, "Delete workflow %q? This is irreversible. [y/N] ", workflowID)
@@ -913,6 +1025,104 @@ func newWorkflowCreateCmd(cfg *globalConfig) *cobra.Command {
 	return cmd
 }
 
+// parseWorkflowDefinition parses workflow definition JSON for `workflow
+// import`: the documented WorkflowFile shape natively, plus legacy exports
+// (a marshaled *Workflow whose nodes use "node_type"/"position_x" and whose
+// connections use "source_node_id"/"target_node_id") converted first.
+// Without the conversion, legacy JSON silently parses to nodes with an
+// empty type and connections referencing nothing. Any node that still has
+// no type afterwards is rejected — a workflow like that must never be
+// persisted.
+func parseWorkflowDefinition(raw []byte) (workflow.Workflow, error) {
+	normalized, err := normalizeLegacyWorkflowJSON(raw)
+	if err != nil {
+		return workflow.Workflow{}, errInvalidInput("parse workflow JSON: %v", err)
+	}
+	wf, err := workflow.ParseWorkflowFileBytes(normalized)
+	if err != nil {
+		return workflow.Workflow{}, errInvalidInput("parse workflow JSON: %v", err)
+	}
+	for _, n := range wf.Nodes {
+		if n.Type == "" {
+			id := n.ID
+			if id == "" {
+				id = n.Name
+			}
+			return workflow.Workflow{}, errInvalidInput(
+				"node %q is missing a type — current files use \"type\", legacy exports \"node_type\"", id)
+		}
+	}
+	return wf, nil
+}
+
+// normalizeLegacyWorkflowJSON rewrites legacy export JSON — a marshaled
+// *workflow.Workflow — into the documented WorkflowFile shape: node
+// "node_type" → "type", "position_x"/"position_y" → "position": {"x","y"},
+// connection "source_node_id"/"target_node_id" → "source"/"target". Mixed
+// documents are fine: only legacy keys are rewritten, and only when their
+// native counterpart is absent. Input without any legacy key is returned
+// unchanged.
+func normalizeLegacyWorkflowJSON(raw []byte) ([]byte, error) {
+	var doc map[string]interface{}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, err
+	}
+	legacy := false
+	if nodes, ok := doc["nodes"].([]interface{}); ok {
+		for _, nm := range nodes {
+			n, ok := nm.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if nt, ok := n["node_type"]; ok {
+				legacy = true
+				if _, has := n["type"]; !has {
+					n["type"] = nt
+				}
+				delete(n, "node_type")
+			}
+			if px, ok := n["position_x"]; ok {
+				legacy = true
+				pos := map[string]interface{}{"x": px}
+				if py, ok := n["position_y"]; ok {
+					pos["y"] = py
+					delete(n, "position_y")
+				}
+				if _, has := n["position"]; !has {
+					n["position"] = pos
+				}
+				delete(n, "position_x")
+			}
+		}
+	}
+	if conns, ok := doc["connections"].([]interface{}); ok {
+		for _, cm := range conns {
+			c, ok := cm.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if s, ok := c["source_node_id"]; ok {
+				legacy = true
+				if _, has := c["source"]; !has {
+					c["source"] = s
+				}
+				delete(c, "source_node_id")
+			}
+			if tg, ok := c["target_node_id"]; ok {
+				legacy = true
+				if _, has := c["target"]; !has {
+					c["target"] = tg
+				}
+				delete(c, "target_node_id")
+			}
+		}
+	}
+	if !legacy {
+		return raw, nil
+	}
+	return json.Marshal(doc)
+}
+
 // newWorkflowImportCmd imports a full workflow definition from a JSON file.
 func newWorkflowImportCmd(cfg *globalConfig) *cobra.Command {
 	var inputFile string
@@ -927,23 +1137,21 @@ func newWorkflowImportCmd(cfg *globalConfig) *cobra.Command {
 			if inputFile != "" {
 				raw, err = os.ReadFile(inputFile)
 			} else {
-				raw, err = io.ReadAll(os.Stdin)
+				raw, err = io.ReadAll(cmd.InOrStdin())
 			}
 			if err != nil {
+				if os.IsNotExist(err) {
+					return errNotFound("read input: %v", err)
+				}
 				return fmt.Errorf("read input: %w", err)
 			}
 
-			// Try to parse as a WorkflowFile (new JSON file format with "type",
-			// "source", "target" keys). Fall back to direct Workflow unmarshal for
-			// legacy exports that already use "node_type", "source_node_id" etc.
-			wf, parseErr := workflow.ParseWorkflowFileBytes(raw)
-			if parseErr != nil {
-				// Legacy format fallback.
-				var legacyWF workflow.Workflow
-				if err2 := json.Unmarshal(raw, &legacyWF); err2 != nil {
-					return fmt.Errorf("parse JSON: %w", parseErr)
-				}
-				wf = legacyWF
+			// Accepts the documented WorkflowFile shape natively and legacy
+			// exports (marshaled *Workflow JSON) via key conversion; rejects
+			// any node that ends up without a type.
+			wf, err := parseWorkflowDefinition(raw)
+			if err != nil {
+				return err
 			}
 
 			db, err := initDB(cfg)
@@ -963,6 +1171,87 @@ func newWorkflowImportCmd(cfg *globalConfig) *cobra.Command {
 			}
 			wf.CreatedAt = now
 			wf.UpdatedAt = now
+
+			// workflow_nodes.id and workflow_connections.id are globally
+			// unique (PRIMARY KEY) across ALL workflows, so importing a file
+			// whose ids are already used by another workflow fails with
+			// "UNIQUE constraint failed" (bundled examples all use "trigger"
+			// and "trigger-to-…"). Remap each colliding id deterministically
+			// across nodes AND connections (including edge from/to refs).
+			// Node ids referenced inside node configs are rare and
+			// intentionally left untouched.
+			taken := map[string]bool{}
+			takenConns := map[string]bool{}
+			for _, q := range []struct{ label, sql string }{
+				{"node", `SELECT id FROM workflow_nodes WHERE workflow_id != ?`},
+				{"connection", `SELECT id FROM workflow_connections WHERE workflow_id != ?`},
+			} {
+				rows, qerr := db.DB.QueryContext(ctx, q.sql, wf.ID)
+				if qerr != nil {
+					return fmt.Errorf("query existing %s ids: %w", q.label, qerr)
+				}
+				for rows.Next() {
+					var id string
+					if err := rows.Scan(&id); err != nil {
+						rows.Close()
+						return fmt.Errorf("scan existing %s id: %w", q.label, err)
+					}
+					if q.label == "node" {
+						taken[id] = true
+					} else {
+						takenConns[id] = true
+					}
+				}
+				if err := rows.Err(); err != nil {
+					rows.Close()
+					return fmt.Errorf("iterate existing %s ids: %w", q.label, err)
+				}
+				rows.Close()
+			}
+
+			// freeID returns id unchanged (reserving it) or the first free
+			// deterministic variant "<id>-2", "<id>-3", … .
+			freeID := func(used map[string]bool, id string) string {
+				if !used[id] {
+					used[id] = true
+					return id
+				}
+				newID := fmt.Sprintf("%s-2", id)
+				for n := 2; used[newID]; n++ {
+					newID = fmt.Sprintf("%s-%d", id, n)
+				}
+				used[newID] = true
+				return newID
+			}
+
+			remapped := map[string]string{}
+			for i := range wf.Nodes {
+				if wf.Nodes[i].ID == "" {
+					continue // gets a fresh UUID below
+				}
+				newID := freeID(taken, wf.Nodes[i].ID)
+				if newID != wf.Nodes[i].ID {
+					remapped[wf.Nodes[i].ID] = newID
+					wf.Nodes[i].ID = newID
+				}
+			}
+			remappedConns := map[string]string{}
+			for i := range wf.Connections {
+				if newID, ok := remapped[wf.Connections[i].SourceNodeID]; ok {
+					wf.Connections[i].SourceNodeID = newID
+				}
+				if newID, ok := remapped[wf.Connections[i].TargetNodeID]; ok {
+					wf.Connections[i].TargetNodeID = newID
+				}
+				if wf.Connections[i].ID == "" {
+					continue // gets a fresh UUID below
+				}
+				newID := freeID(takenConns, wf.Connections[i].ID)
+				if newID != wf.Connections[i].ID {
+					remappedConns[wf.Connections[i].ID] = newID
+					wf.Connections[i].ID = newID
+				}
+			}
 
 			if err := store.CreateWorkflow(ctx, &wf); err != nil {
 				return fmt.Errorf("save workflow: %w", err)
@@ -996,8 +1285,31 @@ func newWorkflowImportCmd(cfg *globalConfig) *cobra.Command {
 				return fmt.Errorf("save connections: %w", err)
 			}
 
+			if cfg.JSONOutput {
+				out := map[string]interface{}{"id": wf.ID, "name": wf.Name}
+				if len(remapped) > 0 {
+					out["remapped_node_ids"] = remapped
+				}
+				if len(remappedConns) > 0 {
+					out["remapped_connection_ids"] = remappedConns
+				}
+				return json.NewEncoder(os.Stdout).Encode(out)
+			}
 			fmt.Fprintf(os.Stdout, "Imported workflow %q as id: %s  (%d nodes, %d connections)\n",
 				wf.Name, wf.ID, len(nodes), len(conns))
+			printRemapped := func(label string, m map[string]string) {
+				if len(m) == 0 {
+					return
+				}
+				parts := make([]string, 0, len(m))
+				for old, newID := range m {
+					parts = append(parts, old+" → "+newID)
+				}
+				sort.Strings(parts)
+				fmt.Fprintf(os.Stdout, "Remapped %s (already used by another workflow): %s\n", label, strings.Join(parts, ", "))
+			}
+			printRemapped("node ids", remapped)
+			printRemapped("connection ids", remappedConns)
 			return nil
 		},
 	}
@@ -1005,6 +1317,51 @@ func newWorkflowImportCmd(cfg *globalConfig) *cobra.Command {
 	cmd.Flags().StringVarP(&inputFile, "file", "f", "", "Path to JSON file (default: stdin)")
 	cmd.Flags().BoolVar(&overwrite, "overwrite", false, "Keep the id from the file instead of generating a new one")
 	return cmd
+}
+
+// workflowFileFromWorkflow converts a stored *Workflow into the documented
+// WorkflowFile JSON shape — the same shape `workflow import` (and the file
+// store) parses natively — so export→import roundtrips are lossless. Export
+// used to emit a raw *Workflow marshal ("node_type"/"source_node_id" keys),
+// which import no longer produces natively; that legacy shape is still
+// accepted on import.
+func workflowFileFromWorkflow(wf *workflow.Workflow) workflow.WorkflowFile {
+	file := workflow.WorkflowFile{
+		ID:          wf.ID,
+		Name:        wf.Name,
+		Description: wf.Description,
+		Version:     wf.Version,
+		IsActive:    wf.IsActive,
+		ProfileID:   wf.ProfileID,
+		CreatedAt:   wf.CreatedAt,
+		UpdatedAt:   wf.UpdatedAt,
+	}
+	for _, n := range wf.Nodes {
+		fn := workflow.WorkflowFileNode{
+			ID:       n.ID,
+			Type:     n.Type,
+			Name:     n.Name,
+			Disabled: n.Disabled,
+			Config:   n.Config,
+			Schema:   n.Schema,
+		}
+		fn.Position.X = n.PositionX
+		fn.Position.Y = n.PositionY
+		if fn.Config == nil {
+			fn.Config = map[string]interface{}{}
+		}
+		file.Nodes = append(file.Nodes, fn)
+	}
+	for _, c := range wf.Connections {
+		file.Connections = append(file.Connections, workflow.WorkflowFileEdge{
+			ID:           c.ID,
+			Source:       c.SourceNodeID,
+			SourceHandle: c.SourceHandle,
+			Target:       c.TargetNodeID,
+			TargetHandle: c.TargetHandle,
+		})
+	}
+	return file
 }
 
 // newWorkflowExportCmd exports a workflow as JSON.
@@ -1030,8 +1387,10 @@ func newWorkflowExportCmd(cfg *globalConfig) *cobra.Command {
 				return fmt.Errorf("get workflow: %w", err)
 			}
 			if wf == nil {
-				return fmt.Errorf("workflow %q not found", args[0])
+				return errNotFound("workflow %q not found", args[0])
 			}
+
+			wfFile := workflowFileFromWorkflow(wf)
 
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
@@ -1043,13 +1402,13 @@ func newWorkflowExportCmd(cfg *globalConfig) *cobra.Command {
 				defer f.Close()
 				enc = json.NewEncoder(f)
 				enc.SetIndent("", "  ")
-				if err := enc.Encode(wf); err != nil {
+				if err := enc.Encode(wfFile); err != nil {
 					return err
 				}
 				fmt.Fprintf(os.Stdout, "Exported workflow %q to %s\n", wf.Name, outputFile)
 				return nil
 			}
-			return enc.Encode(wf)
+			return enc.Encode(wfFile)
 		},
 	}
 
@@ -1098,7 +1457,7 @@ func newWorkflowNodeAddCmd(cfg *globalConfig) *cobra.Command {
 			// Ensure workflow exists.
 			wf, err := store.GetWorkflow(ctx, workflowID)
 			if err != nil || wf == nil {
-				return fmt.Errorf("workflow %q not found", workflowID)
+				return errNotFound("workflow %q not found", workflowID)
 			}
 
 			// Fetch existing nodes so we can append.
@@ -1130,6 +1489,12 @@ func newWorkflowNodeAddCmd(cfg *globalConfig) *cobra.Command {
 			existing = append(existing, newNode)
 			if err := store.SaveWorkflowNodes(ctx, workflowID, existing); err != nil {
 				return fmt.Errorf("save nodes: %w", err)
+			}
+			// SaveWorkflowNodes deletes+reinserts rows in workflow_nodes, and
+			// workflow_connections cascades on node delete — re-save the
+			// untouched connections so adding a node doesn't drop every edge.
+			if err := store.SaveWorkflowConnections(ctx, workflowID, wf.Connections); err != nil {
+				return fmt.Errorf("save connections: %w", err)
 			}
 
 			if cfg.JSONOutput {
@@ -1170,7 +1535,7 @@ func newWorkflowNodeListCmd(cfg *globalConfig) *cobra.Command {
 
 			wf, err := store.GetWorkflow(ctx, args[0])
 			if err != nil || wf == nil {
-				return fmt.Errorf("workflow %q not found", args[0])
+				return errNotFound("workflow %q not found", args[0])
 			}
 
 			if jsonOut || cfg.JSONOutput {
@@ -1219,7 +1584,7 @@ func newWorkflowNodeSetCmd(cfg *globalConfig) *cobra.Command {
 
 			wf, err := store.GetWorkflow(ctx, workflowID)
 			if err != nil || wf == nil {
-				return fmt.Errorf("workflow %q not found", workflowID)
+				return errNotFound("workflow %q not found", workflowID)
 			}
 
 			found := false
@@ -1234,7 +1599,7 @@ func newWorkflowNodeSetCmd(cfg *globalConfig) *cobra.Command {
 				if configJSON != "" {
 					var config map[string]interface{}
 					if err := json.Unmarshal([]byte(configJSON), &config); err != nil {
-						return fmt.Errorf("parse --config JSON: %w", err)
+						return errInvalidInput("parse --config JSON: %v", err)
 					}
 					wf.Nodes[i].Config = config
 					if err := wf.Nodes[i].MarshalConfig(); err != nil {
@@ -1250,11 +1615,25 @@ func newWorkflowNodeSetCmd(cfg *globalConfig) *cobra.Command {
 				break
 			}
 			if !found {
-				return fmt.Errorf("node %q not found in workflow %q", nodeID, workflowID)
+				return errNotFound("node %q not found in workflow %q", nodeID, workflowID)
 			}
 
 			if err := store.SaveWorkflowNodes(ctx, workflowID, wf.Nodes); err != nil {
 				return fmt.Errorf("save nodes: %w", err)
+			}
+			// SaveWorkflowNodes deletes+reinserts rows in workflow_nodes, and
+			// workflow_connections cascades on node delete — re-save the
+			// untouched connections so updating a node doesn't drop every edge.
+			if err := store.SaveWorkflowConnections(ctx, workflowID, wf.Connections); err != nil {
+				return fmt.Errorf("save connections: %w", err)
+			}
+			if cfg.JSONOutput {
+				for i := range wf.Nodes {
+					if wf.Nodes[i].ID == nodeID {
+						return json.NewEncoder(os.Stdout).Encode(wf.Nodes[i])
+					}
+				}
+				return nil
 			}
 			fmt.Fprintf(os.Stdout, "Node %s updated.\n", nodeID)
 			return nil
@@ -1294,20 +1673,21 @@ func newWorkflowNodeRemoveCmd(cfg *globalConfig) *cobra.Command {
 
 			wf, err := store.GetWorkflow(ctx, workflowID)
 			if err != nil || wf == nil {
-				return fmt.Errorf("workflow %q not found", workflowID)
+				return errNotFound("workflow %q not found", workflowID)
 			}
 
 			newNodes := wf.Nodes[:0]
-			found := false
-			for _, n := range wf.Nodes {
-				if n.ID == nodeID {
-					found = true
+			var removed *workflow.WorkflowNode
+			for i := range wf.Nodes {
+				if wf.Nodes[i].ID == nodeID {
+					cp := wf.Nodes[i]
+					removed = &cp
 					continue
 				}
-				newNodes = append(newNodes, n)
+				newNodes = append(newNodes, wf.Nodes[i])
 			}
-			if !found {
-				return fmt.Errorf("node %q not found in workflow %q", nodeID, workflowID)
+			if removed == nil {
+				return errNotFound("node %q not found in workflow %q", nodeID, workflowID)
 			}
 
 			// Drop connections that reference the removed node.
@@ -1326,6 +1706,9 @@ func newWorkflowNodeRemoveCmd(cfg *globalConfig) *cobra.Command {
 				return fmt.Errorf("save connections: %w", err)
 			}
 
+			if cfg.JSONOutput {
+				return json.NewEncoder(os.Stdout).Encode(removed)
+			}
 			fmt.Fprintf(os.Stdout, "Node %s removed.\n", nodeID)
 			return nil
 		},
@@ -1371,7 +1754,7 @@ func newWorkflowConnectCmd(cfg *globalConfig) *cobra.Command {
 
 			wf, err := store.GetWorkflow(ctx, workflowID)
 			if err != nil || wf == nil {
-				return fmt.Errorf("workflow %q not found", workflowID)
+				return errNotFound("workflow %q not found", workflowID)
 			}
 
 			conn := workflow.WorkflowConnection{
@@ -1425,7 +1808,7 @@ func newWorkflowDisconnectCmd(cfg *globalConfig) *cobra.Command {
 
 			wf, err := store.GetWorkflow(ctx, workflowID)
 			if err != nil || wf == nil {
-				return fmt.Errorf("workflow %q not found", workflowID)
+				return errNotFound("workflow %q not found", workflowID)
 			}
 
 			newConns := wf.Connections[:0]

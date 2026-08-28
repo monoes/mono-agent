@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // withYoutubeTestServer points youtubeAPIBase at an httptest server for the

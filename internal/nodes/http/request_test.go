@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 func runRequest(t *testing.T, config map[string]interface{}) []workflow.NodeOutput {

@@ -4,12 +4,13 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/rs/zerolog"
 
-	"monoagent/internal/monomind"
+	"github.com/monoes/mono-agent/internal/monomind"
 )
 
 // writeFakeIncompatibleMonomind mimics a pre-protocol monomind install: it
@@ -47,6 +48,14 @@ func TestGenerateConfigFailsFastOnIncompatibleMonomind(t *testing.T) {
 
 func TestGenerateConfigFailsFastWhenMonomindMissing(t *testing.T) {
 	t.Setenv(monomind.EnvOverride, filepath.Join(t.TempDir(), "does-not-exist"))
+	// Scrub discovery fallbacks so the test can't find a real monomind (or
+	// spawn `claude`) installed on the dev machine — without this the test
+	// flakes depending on what's locally installed.
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	if runtime.GOOS == "windows" {
+		t.Setenv("USERPROFILE", t.TempDir())
+	}
 
 	g := NewAgentGenerator(zerolog.Nop())
 	_, err := g.GenerateConfig(context.Background(), "test-config", "<html></html>", "extract title", nil)

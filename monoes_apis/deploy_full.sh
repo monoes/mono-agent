@@ -1,11 +1,12 @@
 #!/bin/bash
 set -e
 
-IP="18.199.91.233"
+: "${EC2_IP:?EC2_IP must be set in the environment before running this script, e.g. EC2_IP=203.0.113.10 ./deploy_full.sh}"
+: "${ROUTE53_ZONE_ID:?ROUTE53_ZONE_ID must be set in the environment before running this script, e.g. ROUTE53_ZONE_ID=Z0... ./deploy_full.sh}"
+: "${GEMINI_API_KEY:?GEMINI_API_KEY must be set in the environment before running this script, e.g. GEMINI_API_KEY=... ./deploy_full.sh}"
 KEY="deploy_key.pem"
 DOMAIN="apiv1.monoes.me"
-ZONE_ID="Z062787384KQWDBDUKUH"
-API_KEY="${GEMINI_API_KEY:?GEMINI_API_KEY must be set in the environment before running this script, e.g. GEMINI_API_KEY=... ./deploy_full.sh}"
+API_KEY="$GEMINI_API_KEY"
 
 echo "=== 1. Setting up Domain Record ==="
 CHANGE_BATCH=$(cat <<EOF
@@ -20,7 +21,7 @@ CHANGE_BATCH=$(cat <<EOF
         "TTL": 300,
         "ResourceRecords": [
           {
-            "Value": "$IP"
+            "Value": "$EC2_IP"
           }
         ]
       }
@@ -29,7 +30,7 @@ CHANGE_BATCH=$(cat <<EOF
 }
 EOF
 )
-aws route53 change-resource-record-sets --hosted-zone-id $ZONE_ID --change-batch "$CHANGE_BATCH"
+aws route53 change-resource-record-sets --hosted-zone-id $ROUTE53_ZONE_ID --change-batch "$CHANGE_BATCH"
 
 echo "=== 2. Creating Nginx Config ==="
 cat > nginx.conf <<EOF
@@ -49,7 +50,7 @@ server {
 EOF
 
 echo "=== 3. Preparing Server ==="
-ssh -o StrictHostKeyChecking=no -i $KEY ubuntu@$IP "
+ssh -o StrictHostKeyChecking=no -i $KEY ubuntu@$EC2_IP "
     export DEBIAN_FRONTEND=noninteractive
     sudo apt-get update
     sudo apt-get install -y python3-pip python3-venv nginx acl
@@ -57,10 +58,10 @@ ssh -o StrictHostKeyChecking=no -i $KEY ubuntu@$IP "
 "
 
 echo "=== 4. Syncing Files ==="
-rsync -avz --exclude 'venv' --exclude '.git' --exclude '__pycache__' --exclude '*.pyc' --exclude 'deploy_key.pem' -e "ssh -o StrictHostKeyChecking=no -i $KEY" . ubuntu@$IP:~/monoes_apis/
+rsync -avz --exclude 'venv' --exclude '.git' --exclude '__pycache__' --exclude '*.pyc' --exclude 'deploy_key.pem' -e "ssh -o StrictHostKeyChecking=no -i $KEY" . ubuntu@$EC2_IP:~/monoes_apis/
 
 echo "=== 5. Configuring Server ==="
-ssh -o StrictHostKeyChecking=no -i $KEY ubuntu@$IP <<EOF
+ssh -o StrictHostKeyChecking=no -i $KEY ubuntu@$EC2_IP <<EOF
     set -e
     cd monoes_apis
 
@@ -73,7 +74,6 @@ ssh -o StrictHostKeyChecking=no -i $KEY ubuntu@$IP <<EOF
 
     # Setup .env
     echo "GEMINI_API_KEY=$API_KEY" > .env
-    echo "DEBUG=false" >> .env
 
     # Setup Systemd Service
     sudo bash -c 'cat > /etc/systemd/system/monoes.service <<SERVICE

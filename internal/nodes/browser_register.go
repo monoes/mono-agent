@@ -4,8 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"monoagent/internal/action"
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/action"
+	"github.com/monoes/mono-agent/internal/bot"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // RegisterBrowserNodes registers all browser/social action types as workflow nodes.
@@ -24,6 +25,9 @@ func RegisterBrowserNodes(r *workflow.NodeTypeRegistry) {
 			continue
 		}
 		platform := parts[0]
+		if !bot.PlatformCompiledIn(platform) {
+			continue
+		}
 		actionType := parts[1]
 		nodeType := fmt.Sprintf("%s.%s", platform, actionType)
 

@@ -11,7 +11,7 @@ import (
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 
-	"monoagent/internal/ai"
+	"github.com/monoes/mono-agent/internal/ai"
 )
 
 func newAICmd(cfg *globalConfig) *cobra.Command {

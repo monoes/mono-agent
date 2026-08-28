@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"monoagent/internal/noderegistry"
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/noderegistry"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -9,7 +9,7 @@ import (
 	"os"
 	"strings"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // OpenRouterNode implements the service.openrouter node type.

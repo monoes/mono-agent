@@ -8,7 +8,7 @@ import (
 
 	"github.com/zalando/go-keyring"
 
-	"monoagent/internal/storage"
+	"github.com/monoes/mono-agent/internal/storage"
 )
 
 // TestProviderJSONOmitsAPIKey is a regression test: serializing an AIProvider

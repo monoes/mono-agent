@@ -13,7 +13,7 @@ import (
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/launcher"
 	"github.com/go-rod/rod/lib/proto"
-	"monoagent/internal/action"
+	"github.com/monoes/mono-agent/internal/action"
 	"github.com/spf13/cobra"
 )
 

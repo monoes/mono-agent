@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"monoagent/internal/browser"
+	"github.com/monoes/mono-agent/internal/browser"
 )
 
 // RemoteSender dispatches Commands through another local process's Server

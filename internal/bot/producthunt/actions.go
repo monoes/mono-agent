@@ -1,3 +1,5 @@
+//go:build social
+
 package producthunt
 
 import (
@@ -6,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"monoagent/internal/browser"
+	"github.com/monoes/mono-agent/internal/browser"
 )
 
 // CommentOnLaunch navigates to a launch page, finds the comment composer by

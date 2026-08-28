@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/monoes/mono-agent/internal/workflow"
 	"github.com/redis/go-redis/v9"
-	"monoagent/internal/workflow"
 )
 
 // RedisNode executes Redis operations.

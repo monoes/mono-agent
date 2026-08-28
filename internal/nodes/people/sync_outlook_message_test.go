@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // setupMessagesDB extends the people test schema with person_messages, which

@@ -9,7 +9,7 @@ import (
 	"time"
 
 	goftp "github.com/jlaffaye/ftp"
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // FTPNode performs FTP operations.

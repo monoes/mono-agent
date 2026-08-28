@@ -1,3 +1,5 @@
+//go:build social
+
 package hackernews
 
 import (
@@ -6,8 +8,8 @@ import (
 	"net/url"
 	"strings"
 
-	botpkg "monoagent/internal/bot"
-	"monoagent/internal/browser"
+	botpkg "github.com/monoes/mono-agent/internal/bot"
+	"github.com/monoes/mono-agent/internal/browser"
 )
 
 // HackerNewsBot implements botpkg.BotAdapter for Hacker News.

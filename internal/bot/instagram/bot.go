@@ -1,3 +1,5 @@
+//go:build social
+
 package instagram
 
 import (
@@ -11,9 +13,9 @@ import (
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/input"
 	"github.com/go-rod/rod/lib/proto"
-	botpkg "monoagent/internal/bot"
-	"monoagent/internal/browser"
-	"monoagent/internal/extension"
+	botpkg "github.com/monoes/mono-agent/internal/bot"
+	"github.com/monoes/mono-agent/internal/browser"
+	"github.com/monoes/mono-agent/internal/extension"
 )
 
 // reservedPaths contains Instagram URL path segments that do not represent
@@ -585,8 +587,10 @@ func (b *InstagramBot) GetProfileData(ctx context.Context, p browser.PageInterfa
 
 // GetUserInfo fetches Instagram profile data using the browser's own session.
 // Strategy 1: Use in-browser fetch() to call Instagram's API from the JS context.
-//   This is indistinguishable from Instagram's own frontend making the call —
-//   same cookies, same User-Agent, same origin, same CSRF token.
+//
+//	This is indistinguishable from Instagram's own frontend making the call —
+//	same cookies, same User-Agent, same origin, same CSRF token.
+//
 // Strategy 2: Navigate to profile page and extract from embedded page data.
 func (b *InstagramBot) GetUserInfo(ctx context.Context, page *rod.Page, username string) (map[string]interface{}, error) {
 	if username == "" {

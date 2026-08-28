@@ -16,7 +16,6 @@
       { "name": "pollInterval", "type": "number", "description": "Seconds between polling for new messages" }
     ],
     "optional": [
-      { "name": "replyVariants", "type": "array", "default": [], "description": "Array of reply text variants" },
       { "name": "filterByKeyword", "type": "string", "default": "", "description": "Only reply to messages containing this keyword" },
       { "name": "maxRepliesPerDay", "type": "number", "default": 100, "min": 1, "max": 500, "description": "Max auto-replies per day" },
       { "name": "delayBeforeReply", "type": "number", "default": 5, "min": 1, "max": 60, "description": "Seconds to wait before sending reply" },

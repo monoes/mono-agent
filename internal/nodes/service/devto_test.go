@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // withDevtoServer starts an httptest server, points devtoBaseURL at it for

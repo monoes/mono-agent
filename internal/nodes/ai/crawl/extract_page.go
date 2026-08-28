@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
-	cfgpkg "monoagent/internal/config"
-	"monoagent/internal/workflow"
+	cfgpkg "github.com/monoes/mono-agent/internal/config"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // ExtractPageNode implements the ai.extract_page workflow node.

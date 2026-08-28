@@ -10,7 +10,7 @@ import (
 
 	"github.com/go-rod/rod/lib/proto"
 
-	"monoagent/internal/browser"
+	"github.com/monoes/mono-agent/internal/browser"
 )
 
 const defaultTimeout = 30 * time.Second

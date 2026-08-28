@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"monoagent/internal/secrets"
-	"monoagent/internal/vault"
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/secrets"
+	"github.com/monoes/mono-agent/internal/vault"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // RequestNode performs HTTP requests.

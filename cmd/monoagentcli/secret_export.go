@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"monoagent/internal/ai"
-	"monoagent/internal/connections"
-	"monoagent/internal/secrets"
+	"github.com/monoes/mono-agent/internal/ai"
+	"github.com/monoes/mono-agent/internal/connections"
+	"github.com/monoes/mono-agent/internal/secrets"
 
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"

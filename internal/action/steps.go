@@ -11,10 +11,10 @@ import (
 	"time"
 
 	"github.com/go-rod/rod"
-	"monoagent/internal/bot"
-	"monoagent/internal/browser"
-	extpkg "monoagent/internal/extension"
-	"monoagent/internal/util"
+	"github.com/monoes/mono-agent/internal/bot"
+	"github.com/monoes/mono-agent/internal/browser"
+	extpkg "github.com/monoes/mono-agent/internal/extension"
+	"github.com/monoes/mono-agent/internal/util"
 )
 
 // xpathAttrPattern matches XPath expressions ending with /@attribute, used
@@ -554,14 +554,14 @@ func (ae *ActionExecutor) stepType(ctx context.Context, step StepDef) (*StepResu
 		Msg("typing text")
 
 	if step.HumanLike {
-		// Use bot.WriteHumanLike with 0.05 (5%) typo probability.
+		// Type with randomized pacing for session stability (no typo simulation).
 		// Pass the Rod page so keystrokes use page.Keyboard (not el.Type) — this
 		// ensures text reaches the focused element even if the DOM node was
 		// swapped on focus (e.g. Instagram replaces textarea with contenteditable).
 		rodPage := unwrapRodPage(ae.page)
 		rodElem := unwrapRodElement(elem)
 		if rodPage != nil && rodElem != nil {
-			if err := bot.WriteHumanLike(rodPage, rodElem, text, 0.05); err != nil {
+			if err := bot.WriteHumanLike(rodPage, rodElem, text); err != nil {
 				return &StepResult{
 					Success: false,
 					StepID:  step.ID,
@@ -1341,7 +1341,7 @@ func toFloat64(val interface{}) float64 {
 }
 
 // evalSimpleCondition evaluates a single condition expression like
-// "variable == 'value'" or "variable != ''".
+// "variable == 'value'" or "variable != ”".
 func (ae *ActionExecutor) evalSimpleCondition(expr string) bool {
 	expr = strings.TrimSpace(expr)
 

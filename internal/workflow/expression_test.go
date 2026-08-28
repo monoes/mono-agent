@@ -304,3 +304,63 @@ func TestExpressionResolveConfig_ArrayStaysArray(t *testing.T) {
 		t.Errorf("got %v, want the two original prompts", prompts)
 	}
 }
+
+// The OS environment must NOT leak into $env by default: a template
+// referencing a process-set variable renders empty unless the operator
+// opted in with MONOAGENT_ALLOW_ENV_TEMPLATES=1.
+func TestExpressionEnvNotPopulatedFromOSByDefault(t *testing.T) {
+	t.Setenv("MONOAGENT_SECRET_LEAK_PROBE", "os-secret-value")
+	t.Setenv("MONOAGENT_ALLOW_ENV_TEMPLATES", "")
+
+	engine := NewExpressionEngine()
+	got, err := engine.EvaluateString(`{{ $env.MONOAGENT_SECRET_LEAK_PROBE }}`, ExpressionContext{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "" {
+		t.Errorf("os env var leaked into template: got %q, want empty", got)
+	}
+}
+
+// With the opt-in set, $env sees the OS environment again, and ctx.Env
+// still wins over inherited values.
+func TestExpressionEnvIncludesOSWhenOptedIn(t *testing.T) {
+	t.Setenv("MONOAGENT_SECRET_LEAK_PROBE", "os-secret-value")
+	t.Setenv("MONOAGENT_ALLOW_ENV_TEMPLATES", "1")
+
+	engine := NewExpressionEngine()
+	got, err := engine.EvaluateString(`{{ $env.MONOAGENT_SECRET_LEAK_PROBE }}`, ExpressionContext{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "os-secret-value" {
+		t.Errorf("opt-in os env var missing: got %q, want %q", got, "os-secret-value")
+	}
+
+	got, err = engine.EvaluateString(`{{ $env.MY_VAR }}`, ExpressionContext{
+		Env: map[string]string{"MY_VAR": "ctx-wins"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "ctx-wins" {
+		t.Errorf("ctx.Env override lost: got %q, want %q", got, "ctx-wins")
+	}
+}
+
+// ctx.Env-provided variables are always available, opt-in or not, and
+// unknown $env keys render as the empty string (not "<no value>").
+func TestExpressionEnvFromContextAlwaysAvailable(t *testing.T) {
+	t.Setenv("MONOAGENT_ALLOW_ENV_TEMPLATES", "")
+
+	engine := NewExpressionEngine()
+	got, err := engine.EvaluateString(`{{ $env.MY_VAR }}|{{ $env.TOTALLY_UNKNOWN }}`, ExpressionContext{
+		Env: map[string]string{"MY_VAR": "hello_env"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "hello_env|" {
+		t.Errorf("got %q, want %q (ctx var + empty unknown)", got, "hello_env|")
+	}
+}

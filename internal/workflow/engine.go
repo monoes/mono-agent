@@ -8,25 +8,25 @@ import (
 	"sync"
 	"time"
 
-	"monoagent/internal/connections"
-	"monoagent/internal/vault"
+	"github.com/monoes/mono-agent/internal/connections"
+	"github.com/monoes/mono-agent/internal/vault"
 	"github.com/rs/zerolog"
 )
 
 // WorkflowEngine is the central coordinator for workflow management and execution.
 // It owns the queue, trigger manager, webhook server, node registry, and store.
 type WorkflowEngine struct {
-	store          WorkflowStore
-	connStore      *connections.Store
-	registry       *NodeTypeRegistry
-	queue          *ExecutionQueue
-	triggerMgr     *TriggerManager
-	webhookServer  *WebhookServer
-	expr           *ExpressionEngine
-	logger         zerolog.Logger
-	mu             sync.RWMutex
-	ctx            context.Context
-	cancel         context.CancelFunc
+	store            WorkflowStore
+	connStore        *connections.Store
+	registry         *NodeTypeRegistry
+	queue            *ExecutionQueue
+	triggerMgr       *TriggerManager
+	webhookServer    *WebhookServer
+	expr             *ExpressionEngine
+	logger           zerolog.Logger
+	mu               sync.RWMutex
+	ctx              context.Context
+	cancel           context.CancelFunc
 	pruneInterval    time.Duration
 	maxExecHistory   int
 	profileID        string

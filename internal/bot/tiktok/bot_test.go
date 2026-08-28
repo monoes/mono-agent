@@ -1,3 +1,5 @@
+//go:build social
+
 package tiktok
 
 import (
@@ -5,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"monoagent/internal/browser"
+	"github.com/monoes/mono-agent/internal/browser"
 )
 
 // TestGetMethodByNameAcceptsPageInterface is a regression test: the executor

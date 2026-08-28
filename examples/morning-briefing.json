@@ -1,0 +1,121 @@
+{
+  "name": "Morning Briefing",
+  "description": "Every weekday at 7am: read an RSS feed, drop items without a title, summarize each with OpenRouter, queue the digest for human review/edit, then email the approved draft. Set the OpenRouter credential and SMTP values before activating.",
+  "version": 1,
+  "is_active": false,
+  "nodes": [
+    {
+      "id": "trigger",
+      "type": "trigger.schedule",
+      "name": "Weekdays 7am",
+      "position": { "x": 0, "y": 0 },
+      "disabled": false,
+      "config": {
+        "cron": "0 0 7 * * 1-5",
+        "timezone": "UTC"
+      }
+    },
+    {
+      "id": "read_feed",
+      "type": "system.rss_read",
+      "name": "Read RSS Feed",
+      "position": { "x": 320, "y": 0 },
+      "disabled": false,
+      "config": {
+        "url": "https://hnrss.org/frontpage",
+        "limit": 10
+      }
+    },
+    {
+      "id": "filter_titled",
+      "type": "core.filter",
+      "name": "Keep Titled Items",
+      "position": { "x": 640, "y": 0 },
+      "disabled": false,
+      "config": {
+        "condition": "{{ $json.title != \"\" }}"
+      }
+    },
+    {
+      "id": "summarize",
+      "type": "service.openrouter",
+      "name": "Summarize with AI",
+      "position": { "x": 960, "y": 0 },
+      "disabled": false,
+      "config": {
+        "credential_id": "",
+        "operation": "generate_text",
+        "prompt": "Summarize this article in two sentences for a morning briefing: {{ $json.title }} — {{ $json.link }}",
+        "model": "openai/gpt-4o-mini",
+        "max_tokens": 200
+      }
+    },
+    {
+      "id": "review",
+      "type": "core.human_in_loop",
+      "name": "Review Draft",
+      "position": { "x": 1280, "y": 0 },
+      "disabled": false,
+      "config": {
+        "readonly_fields": ["title", "link"],
+        "editable_fields": ["text"],
+        "timeout_minutes": 60
+      }
+    },
+    {
+      "id": "send_email",
+      "type": "comm.email_send",
+      "name": "Email Briefing",
+      "position": { "x": 1600, "y": 0 },
+      "disabled": false,
+      "config": {
+        "smtp_host": "smtp.example.com",
+        "smtp_port": 587,
+        "username": "you@example.com",
+        "password": "REPLACE_WITH_APP_PASSWORD",
+        "from": "you@example.com",
+        "to": "you@example.com",
+        "subject": "Morning briefing",
+        "body": "{{ $json.text }}",
+        "html": false
+      }
+    }
+  ],
+  "connections": [
+    {
+      "id": "trigger-to-rss",
+      "source": "trigger",
+      "source_handle": "main",
+      "target": "read_feed",
+      "target_handle": "main"
+    },
+    {
+      "id": "rss-to-filter",
+      "source": "read_feed",
+      "source_handle": "main",
+      "target": "filter_titled",
+      "target_handle": "main"
+    },
+    {
+      "id": "filter-to-ai",
+      "source": "filter_titled",
+      "source_handle": "main",
+      "target": "summarize",
+      "target_handle": "main"
+    },
+    {
+      "id": "ai-to-hil",
+      "source": "summarize",
+      "source_handle": "main",
+      "target": "review",
+      "target_handle": "main"
+    },
+    {
+      "id": "hil-to-email",
+      "source": "review",
+      "source_handle": "main",
+      "target": "send_email",
+      "target_handle": "main"
+    }
+  ]
+}

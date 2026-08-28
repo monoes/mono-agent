@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"monoagent/internal/monomind"
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/monomind"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // writeFakeIncompatibleMonomind writes a script that mimics a pre-protocol

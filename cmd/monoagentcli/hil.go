@@ -149,7 +149,7 @@ func newHILApproveCmd(cfg *globalConfig) *cobra.Command {
 				return fmt.Errorf("approving HIL item: %w", err)
 			}
 			if n, _ := res.RowsAffected(); n == 0 {
-				return fmt.Errorf("HIL item %q not found or already resolved", args[0])
+				return errNotFound("HIL item %q not found or already resolved", args[0])
 			}
 			if cfg.JSONOutput {
 				return json.NewEncoder(os.Stdout).Encode(map[string]string{"id": args[0], "status": "approved"})
@@ -164,8 +164,8 @@ func newHILApproveCmd(cfg *globalConfig) *cobra.Command {
 
 func newHILRejectCmd(cfg *globalConfig) *cobra.Command {
 	return &cobra.Command{
-		Use:   "reject <id>",
-		Short: "Reject a pending Human-in-Loop item (the workflow errors out)",
+		Use:     "reject <id>",
+		Short:   "Reject a pending Human-in-Loop item (the workflow errors out)",
 		Example: `  monoagentcli hil reject 1a2b3c4d`,
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -184,7 +184,7 @@ func newHILRejectCmd(cfg *globalConfig) *cobra.Command {
 				return fmt.Errorf("rejecting HIL item: %w", err)
 			}
 			if n, _ := res.RowsAffected(); n == 0 {
-				return fmt.Errorf("HIL item %q not found or already resolved", args[0])
+				return errNotFound("HIL item %q not found or already resolved", args[0])
 			}
 			if cfg.JSONOutput {
 				return json.NewEncoder(os.Stdout).Encode(map[string]string{"id": args[0], "status": "rejected"})

@@ -6,7 +6,7 @@ import (
 	"context"
 	"fmt"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // Execute returns a clear error when the binary was compiled without CGo.

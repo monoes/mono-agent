@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // TestNodesRequireConnectionString is a regression test: db.postgres, db.mysql,

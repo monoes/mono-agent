@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"monoagent/internal/storage"
+	"github.com/monoes/mono-agent/internal/storage"
 
 	"github.com/zalando/go-keyring"
 )

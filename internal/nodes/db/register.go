@@ -1,6 +1,6 @@
 package dbnodes
 
-import "monoagent/internal/workflow"
+import "github.com/monoes/mono-agent/internal/workflow"
 
 // RegisterAll registers all database node types into the registry.
 func RegisterAll(r *workflow.NodeTypeRegistry) {

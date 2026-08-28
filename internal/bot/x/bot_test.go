@@ -1,3 +1,5 @@
+//go:build social
+
 package x
 
 import "testing"

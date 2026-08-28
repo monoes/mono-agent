@@ -13,10 +13,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
-	"monoagent/internal/ai"
-	aichat "monoagent/internal/ai/chat"
-	"monoagent/internal/monomind"
-	"monoagent/internal/noderegistry"
+	"github.com/monoes/mono-agent/internal/ai"
+	aichat "github.com/monoes/mono-agent/internal/ai/chat"
+	"github.com/monoes/mono-agent/internal/monomind"
+	"github.com/monoes/mono-agent/internal/noderegistry"
 )
 
 // parseDurationFlag accepts plain seconds ("90") or suffixed ("90s", "10m", "2h").

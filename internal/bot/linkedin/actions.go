@@ -1,3 +1,5 @@
+//go:build social
+
 package linkedin
 
 import (
@@ -8,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"monoagent/internal/browser"
+	"github.com/monoes/mono-agent/internal/browser"
 )
 
 // reLinkedInActivity matches the numeric activity ID in LinkedIn post URLs.

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // TestSwitchAcceptsSchemaCasesShape is a regression test: core.switch.json's

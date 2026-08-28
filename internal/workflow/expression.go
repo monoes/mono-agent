@@ -306,12 +306,19 @@ func buildData(ctx ExpressionContext) map[string]interface{} {
 		"id": ctx.ExecutionID,
 	}
 
-	// .env — merge OS environment with explicit Env overrides
-	envMap := make(map[string]interface{})
-	for _, kv := range os.Environ() {
-		parts := strings.SplitN(kv, "=", 2)
-		if len(parts) == 2 {
-			envMap[parts[0]] = parts[1]
+	// .env — ONLY the variables explicitly provided via ctx.Env. The full
+	// OS environment is merged in exclusively when
+	// MONOAGENT_ALLOW_ENV_TEMPLATES=1: by default a template must not be
+	// able to read the invoking shell's environment (which typically holds
+	// API keys and other secrets). Values are strings so that a missing
+	// key renders as the empty string rather than "<no value>".
+	envMap := make(map[string]string, len(ctx.Env))
+	if os.Getenv("MONOAGENT_ALLOW_ENV_TEMPLATES") == "1" {
+		for _, kv := range os.Environ() {
+			parts := strings.SplitN(kv, "=", 2)
+			if len(parts) == 2 {
+				envMap[parts[0]] = parts[1]
+			}
 		}
 	}
 	for k, v := range ctx.Env {

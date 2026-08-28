@@ -1,3 +1,5 @@
+//go:build social
+
 package producthunt
 
 import (
@@ -5,8 +7,8 @@ import (
 	"fmt"
 	"strings"
 
-	botpkg "monoagent/internal/bot"
-	"monoagent/internal/browser"
+	botpkg "github.com/monoes/mono-agent/internal/bot"
+	"github.com/monoes/mono-agent/internal/browser"
 )
 
 // ProductHuntBot implements botpkg.BotAdapter for Product Hunt.

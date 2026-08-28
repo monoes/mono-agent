@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"monoagent/internal/secrets"
-	"monoagent/internal/storage"
+	"github.com/monoes/mono-agent/internal/secrets"
+	"github.com/monoes/mono-agent/internal/storage"
 
 	"github.com/zalando/go-keyring"
 )

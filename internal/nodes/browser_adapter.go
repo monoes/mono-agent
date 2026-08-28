@@ -8,10 +8,10 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"monoagent/internal/action"
-	"monoagent/internal/browser"
-	"monoagent/internal/connections"
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/action"
+	"github.com/monoes/mono-agent/internal/browser"
+	"github.com/monoes/mono-agent/internal/connections"
+	"github.com/monoes/mono-agent/internal/workflow"
 	"github.com/rs/zerolog"
 )
 

@@ -5,13 +5,15 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
 
-	"monoagent/internal/connections"
-	"monoagent/internal/secrets"
+	"github.com/monoes/mono-agent/internal/connections"
+	"github.com/monoes/mono-agent/internal/secrets"
 
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
@@ -43,7 +45,8 @@ func newSecretCmd(cfg *globalConfig) *cobra.Command {
 
 // lookupSecretID resolves a vault entry name to its internal id, scoped to
 // profileID. Shared by reveal/update/rm, which all take a human-readable
-// name on the command line but store/query by id underneath.
+// name on the command line but store/query by id underneath. Unknown names
+// return the not-found sentinel (exit 2).
 func lookupSecretID(ctx context.Context, db *sql.DB, profileID, name string) (string, error) {
 	entries, err := secrets.List(ctx, db, profileID)
 	if err != nil {
@@ -54,7 +57,23 @@ func lookupSecretID(ctx context.Context, db *sql.DB, profileID, name string) (st
 			return e.ID, nil
 		}
 	}
-	return "", fmt.Errorf("no secret named %q found", name)
+	return "", errNotFound("no secret named %q found", name)
+}
+
+// readSecretValue reads a secret value from r up to the first newline. A
+// stream that ends without a newline (e.g. `printf '%s' value`) is accepted
+// as-is; only a completely empty stream is an error. A trailing newline —
+// including the one scripts/import_edge_passwords.py appends — is trimmed.
+func readSecretValue(r io.Reader) (string, error) {
+	reader := bufio.NewReader(r)
+	line, err := reader.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", fmt.Errorf("reading value from stdin: %w", err)
+	}
+	if errors.Is(err, io.EOF) && line == "" {
+		return "", fmt.Errorf("reading value from stdin: no value provided")
+	}
+	return strings.TrimRight(line, "\r\n"), nil
 }
 
 // parseFieldFlags turns repeated "key=value" strings into a field map,
@@ -101,12 +120,11 @@ func newSecretAddCmd(cfg *globalConfig) *cobra.Command {
 			}
 			if len(fields) == 0 {
 				fmt.Fprint(os.Stderr, "Value: ")
-				reader := bufio.NewReader(os.Stdin)
-				line, err := reader.ReadString('\n')
+				v, err := readSecretValue(os.Stdin)
 				if err != nil {
-					return fmt.Errorf("reading value from stdin: %w", err)
+					return err
 				}
-				fields["secret"] = strings.TrimRight(line, "\r\n")
+				fields["secret"] = v
 			}
 
 			db, err := initDB(cfg)
@@ -222,7 +240,7 @@ func newSecretGetCmd(cfg *globalConfig) *cobra.Command {
 				fmt.Fprintln(cmd.OutOrStdout(), ref)
 				return nil
 			}
-			return fmt.Errorf("no secret named %q found", args[0])
+			return errNotFound("no secret named %q found", args[0])
 		},
 	}
 }

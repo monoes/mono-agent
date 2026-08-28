@@ -1,3 +1,5 @@
+//go:build social
+
 package hackernews
 
 import (
@@ -6,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"monoagent/internal/browser"
+	"github.com/monoes/mono-agent/internal/browser"
 )
 
 // SubmitPost navigates to the Hacker News submit form, fills title/url/text,

@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // withHashnodeTestServer points hashnodeGraphQLURL at an httptest server for

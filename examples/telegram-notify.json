@@ -1,0 +1,60 @@
+{
+  "name": "Telegram RSS Notify",
+  "description": "Every morning: read an RSS feed and send each item as a Telegram message from a bot. Set the bot token (from @BotFather) and chat ID before activating.",
+  "version": 1,
+  "is_active": false,
+  "nodes": [
+    {
+      "id": "trigger",
+      "type": "trigger.schedule",
+      "name": "Every Morning 8am",
+      "position": { "x": 0, "y": 0 },
+      "disabled": false,
+      "config": {
+        "cron": "0 0 8 * * *",
+        "timezone": "UTC"
+      }
+    },
+    {
+      "id": "read_feed",
+      "type": "system.rss_read",
+      "name": "Read RSS Feed",
+      "position": { "x": 320, "y": 0 },
+      "disabled": false,
+      "config": {
+        "url": "https://hnrss.org/frontpage",
+        "limit": 5
+      }
+    },
+    {
+      "id": "notify",
+      "type": "comm.telegram",
+      "name": "Send Telegram Message",
+      "position": { "x": 640, "y": 0 },
+      "disabled": false,
+      "config": {
+        "bot_token": "REPLACE_WITH_BOT_TOKEN",
+        "operation": "send_message",
+        "chat_id": "REPLACE_WITH_CHAT_ID",
+        "message": "{{ $json.title }}\n{{ $json.link }}",
+        "parse_mode": "plain"
+      }
+    }
+  ],
+  "connections": [
+    {
+      "id": "trigger-to-rss",
+      "source": "trigger",
+      "source_handle": "main",
+      "target": "read_feed",
+      "target_handle": "main"
+    },
+    {
+      "id": "rss-to-telegram",
+      "source": "read_feed",
+      "source_handle": "main",
+      "target": "notify",
+      "target_handle": "main"
+    }
+  ]
+}

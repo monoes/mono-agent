@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"monoagent/internal/attachments"
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/attachments"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // OutlookMailNode implements the service.outlook_mail node type, talking to

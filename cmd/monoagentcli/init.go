@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"monoagent/data"
+	"github.com/monoes/mono-agent/data"
 	"github.com/spf13/cobra"
 )
 

@@ -1,8 +1,8 @@
 package ainodes
 
 import (
-	"monoagent/internal/ai"
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/ai"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // RegisterAll registers all AI node types into the given registry.

@@ -8,8 +8,8 @@ import (
 
 	"github.com/zalando/go-keyring"
 
-	"monoagent/internal/ai"
-	"monoagent/internal/storage"
+	"github.com/monoes/mono-agent/internal/ai"
+	"github.com/monoes/mono-agent/internal/storage"
 )
 
 // --- mock AI client ---

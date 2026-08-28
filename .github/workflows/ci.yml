@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  # NOTE: no CGO_ENABLED=0 here. `go test -race` requires cgo ("go: -race
+  # requires cgo" on Go 1.25), and ubuntu runners ship gcc — the default
+  # CGO_ENABLED=1 works for modernc.org/sqlite and everything else we use.
+  test:
+    name: Build & test (default)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./... -race
+
+  test-social:
+    name: Build & test (social)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: go build -tags social ./...
+
+      - name: Vet
+        run: go vet -tags social ./...
+
+      - name: Test
+        run: go test -tags social ./... -race
+
+  # Mirror of the release.yml test gate's Wails steps (minus release/tagging):
+  # system deps for GTK/WebKit headers, frontend build (main.go //go:embeds
+  # frontend/dist — it must exist with content at compile time), then vet and
+  # build the wails-app Go module. webkit2_41 tag because ubuntu-latest
+  # (24.04) has no webkit2gtk-4.0 dev package.
+  wails:
+    name: Wails GUI module
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: wails-app/go.mod
+
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-3-dev libwebkit2gtk-4.1-dev gcc pkg-config
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: wails-app/frontend/package-lock.json
+
+      - name: Build frontend
+        run: |
+          npm install
+          npm run build
+        working-directory: wails-app/frontend
+
+      - name: Vet
+        run: go vet -tags webkit2_41 ./...
+        working-directory: wails-app
+
+      - name: Build
+        run: go build -tags webkit2_41 ./...
+        working-directory: wails-app

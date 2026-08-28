@@ -6,7 +6,7 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // DiscordNode interacts with the Discord API using a bot token.

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"monoagent/internal/secrets"
+	"github.com/monoes/mono-agent/internal/secrets"
 
 	"github.com/google/uuid"
 )

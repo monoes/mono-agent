@@ -47,6 +47,6 @@ func main() {
 
 	if err := newRootCmd().ExecuteContext(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		os.Exit(exitCodeFor(err))
 	}
 }

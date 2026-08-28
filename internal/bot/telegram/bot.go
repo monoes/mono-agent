@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"monoagent/internal/browser"
+	"github.com/monoes/mono-agent/internal/browser"
 	
 	
-	botpkg "monoagent/internal/bot"
+	botpkg "github.com/monoes/mono-agent/internal/bot"
 )
 
 // TelegramBot implements botpkg.BotAdapter for Telegram Web.

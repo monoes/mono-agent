@@ -8,7 +8,7 @@ import (
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 
-	"monoagent/internal/monomind"
+	"github.com/monoes/mono-agent/internal/monomind"
 )
 
 // newAgentCmd exposes the local agent-runner surface: thin proxies over

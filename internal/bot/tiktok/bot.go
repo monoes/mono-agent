@@ -1,3 +1,5 @@
+//go:build social
+
 package tiktok
 
 import (
@@ -10,8 +12,8 @@ import (
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/input"
 	"github.com/go-rod/rod/lib/proto"
-	botpkg "monoagent/internal/bot"
-	"monoagent/internal/browser"
+	botpkg "github.com/monoes/mono-agent/internal/bot"
+	"github.com/monoes/mono-agent/internal/browser"
 )
 
 // TikTokBot implements botpkg.BotAdapter for TikTok.

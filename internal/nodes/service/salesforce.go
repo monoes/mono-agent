@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net/url"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // SalesforceNode implements the service.salesforce node type.

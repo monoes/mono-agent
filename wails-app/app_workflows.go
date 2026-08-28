@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 

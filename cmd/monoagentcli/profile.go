@@ -138,7 +138,7 @@ func newProfileSwitchCmd(cfg *globalConfig) *cobra.Command {
 			err = db.DB.QueryRow(`SELECT id FROM profiles WHERE id = ? OR LOWER(name) = LOWER(?) LIMIT 1`,
 				nameOrID, nameOrID).Scan(&id)
 			if err != nil {
-				return fmt.Errorf("profile %q not found", nameOrID)
+				return errNotFound("profile %q not found", nameOrID)
 			}
 
 			_, err = db.DB.Exec(`INSERT OR REPLACE INTO settings (key, value) VALUES ('active_profile_id', ?)`, id)

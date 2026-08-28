@@ -7,9 +7,9 @@ import (
 	"os"
 	"time"
 
-	"monoagent/internal/connections"
-	"monoagent/internal/storage"
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/connections"
+	"github.com/monoes/mono-agent/internal/storage"
+	"github.com/monoes/mono-agent/internal/workflow"
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 )
@@ -398,9 +398,9 @@ func newPeopleMessagesImportCmd(cfg *globalConfig) *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "import <person-id>",
-		Short: "Bulk-import a person's message history from a JSON array file",
-		Args:  cobra.ExactArgs(1),
+		Use:     "import <person-id>",
+		Short:   "Bulk-import a person's message history from a JSON array file",
+		Args:    cobra.ExactArgs(1),
 		Example: `  monoagentcli people messages import abc123 --file outlook_thread.json --source outlook`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if filePath == "" {

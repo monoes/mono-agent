@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // GoogleSheetsNode implements the service.google_sheets node type.

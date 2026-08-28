@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // EmailSendNode sends an email via SMTP with optional attachments.

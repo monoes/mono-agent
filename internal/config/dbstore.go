@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"monoagent/internal/storage"
+	"github.com/monoes/mono-agent/internal/storage"
 )
 
 // DBConfigStore adapts *storage.Database to satisfy the config.ConfigStore

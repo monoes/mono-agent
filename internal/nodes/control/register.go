@@ -1,6 +1,6 @@
 package control
 
-import "monoagent/internal/workflow"
+import "github.com/monoes/mono-agent/internal/workflow"
 
 // RegisterAll registers all control node types in the given registry.
 func RegisterAll(r *workflow.NodeTypeRegistry) {

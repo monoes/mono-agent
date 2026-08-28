@@ -1,3 +1,5 @@
+//go:build social
+
 package instagram
 
 import (
@@ -13,7 +15,7 @@ import (
 	"github.com/go-rod/rod/lib/input"
 	"github.com/go-rod/rod/lib/proto"
 
-	"monoagent/internal/browser"
+	"github.com/monoes/mono-agent/internal/browser"
 )
 
 // jsonUnmarshal wraps encoding/json.Unmarshal for use in helpers.

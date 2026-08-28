@@ -16,7 +16,7 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"monoagent/internal/monomind"
+	"github.com/monoes/mono-agent/internal/monomind"
 )
 
 // RuntimeEnvVar pins the agent runtime used for generation/selector tasks.

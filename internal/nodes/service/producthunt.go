@@ -8,7 +8,7 @@ import (
 	"io"
 	"net/http"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // producthuntGraphQLURL is the ProductHunt GraphQL API endpoint. It is a var

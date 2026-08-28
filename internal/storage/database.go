@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"monoagent/data"
+	"github.com/monoes/mono-agent/data"
 
 	_ "modernc.org/sqlite"
 )

@@ -9,7 +9,7 @@ import (
 	"net/url"
 	"strings"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // RedditNode submits posts, replies to comments, lists comments, and reads

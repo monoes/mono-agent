@@ -6,9 +6,9 @@ import (
 	"regexp"
 	"strings"
 
-	"monoagent/internal/ai"
-	"monoagent/internal/vault"
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/ai"
+	"github.com/monoes/mono-agent/internal/vault"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // templatePattern matches {{$json.FIELD}} placeholders in prompt templates.

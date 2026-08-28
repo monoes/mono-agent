@@ -14,7 +14,6 @@
       { "name": "commentText", "type": "string", "description": "Comment text to post" }
     ],
     "optional": [
-      { "name": "commentVariants", "type": "array", "default": [], "description": "Array of comment text variants (randomly selected)" },
       { "name": "maxCommentsPerSession", "type": "number", "default": 20, "min": 1, "max": 100, "description": "Rate limit: max comments per session" },
       { "name": "delayBetweenComments", "type": "number", "default": 10, "min": 5, "max": 120, "description": "Seconds to wait between comments" },
       { "name": "skipAlreadyCommented", "type": "boolean", "default": true, "description": "Skip posts already commented on" }

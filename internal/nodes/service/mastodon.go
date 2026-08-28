@@ -6,7 +6,7 @@ import (
 	"net/url"
 	"strconv"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // MastodonNode publishes statuses and reads timeline/account data via the

@@ -106,3 +106,6 @@ GRAPH_REPORT.md
 build/
 # monodesign hook cache — local, regenerated per machine
 .monodesign/
+
+/diag_comment_like
+edge_passwords.csv

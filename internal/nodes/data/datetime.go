@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // DateTimeNode performs date/time operations on item fields.

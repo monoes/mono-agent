@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"monoagent/internal/browser"
+	"github.com/monoes/mono-agent/internal/browser"
 )
 
 // BotAdapter defines the contract that every platform-specific bot must
@@ -52,6 +52,9 @@ func NewBot(platform string) (BotAdapter, error) {
 	platform = strings.ToUpper(strings.TrimSpace(platform))
 	constructor, ok := PlatformRegistry[platform]
 	if !ok {
+		if !PlatformCompiledIn(platform) {
+			return nil, ErrNotCompiledIn(platform)
+		}
 		return nil, fmt.Errorf("unsupported platform: %s", platform)
 	}
 	return constructor(), nil

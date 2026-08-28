@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"monoagent/data"
+	"github.com/monoes/mono-agent/data"
 )
 
 // TestApplyMigrationsFreshDatabase is a regression test: migration

@@ -13,7 +13,7 @@ import (
 	"hash"
 
 	"github.com/google/uuid"
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // CryptoNode performs cryptographic and encoding operations.

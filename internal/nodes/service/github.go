@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 const githubBaseURL = "https://api.github.com"

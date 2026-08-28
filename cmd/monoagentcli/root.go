@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"monoagent/internal/ai"
-	"monoagent/internal/connections"
-	"monoagent/internal/secrets"
-	"monoagent/internal/storage"
+	"github.com/monoes/mono-agent/internal/ai"
+	"github.com/monoes/mono-agent/internal/connections"
+	"github.com/monoes/mono-agent/internal/secrets"
+	"github.com/monoes/mono-agent/internal/storage"
 	"github.com/spf13/cobra"
 )
 
@@ -32,8 +32,8 @@ func newRootCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "monoagentcli",
-		Short: "Multi-platform social media automation agent",
-		Long: `Mono Agent — automate keyword search, profile discovery, bulk messaging, content publishing, and more across Instagram, LinkedIn, X, TikTok, Telegram, and Email.
+		Short: "Local-first workflow automation agent (n8n alternative)",
+		Long: `Mono Agent — local-first workflow automation (n8n alternative) in a single Go binary. Build, schedule, and run DAG workflows (90+ node types) from CLI, GUI, or MCP. Social platform actions are an opt-in build (-tags social) for your own accounts — see docs/USAGE_POLICY.md.
 
 START HERE — what can this already do?
 
@@ -105,7 +105,24 @@ be used — prefer it over guessing from --help output alone.`,
 		newAgentCmd(cfg),
 		newChatCmd(cfg),
 		newOrgCmd(cfg),
+		newMCPCmd(cfg),
 	)
+
+	// `workflow run --full-outputs`: skip credential-key redaction of
+	// output items in the --json record (4KB truncation still applies).
+	// Registered here on the run subcommand to keep workflow.go untouched.
+	if runCmd, _, err := cmd.Find([]string{"workflow", "run"}); err == nil && runCmd != nil {
+		runCmd.Flags().BoolVar(&fullOutputsFlag, "full-outputs", false,
+			"Include unredacted output items in the --json record (values under credential-like keys such as token/password/api_key are masked by default)")
+	}
+
+	// Legacy social-oriented commands are hidden from the default build's
+	// help but remain directly invokable; see cmd_visibility_*.go.
+	for _, name := range hideLegacySocialCommands() {
+		if sub, _, err := cmd.Find([]string{name}); err == nil && sub != nil && sub != cmd {
+			sub.Hidden = true
+		}
+	}
 
 	return cmd
 }

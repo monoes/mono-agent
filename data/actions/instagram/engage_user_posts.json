@@ -16,7 +16,6 @@
     "optional": [
       { "name": "engagementActions", "type": "array", "default": ["like"], "description": "Actions to perform: like, comment" },
       { "name": "commentText", "type": "string", "default": "", "description": "Comment text (if comment in engagementActions)" },
-      { "name": "commentVariants", "type": "array", "default": [], "description": "Array of comment variants (randomly selected)" },
       { "name": "startFromPost", "type": "number", "default": 0, "min": 0, "description": "Start from post index (0=latest)" },
       { "name": "filterRecentOnly", "type": "boolean", "default": false, "description": "Only engage with recent posts" },
       { "name": "reverseOrder", "type": "boolean", "default": false, "description": "Process posts from oldest to newest" },

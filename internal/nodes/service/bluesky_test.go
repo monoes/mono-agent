@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // withBlueskyServer starts an httptest server, points blueskyBaseURL at it

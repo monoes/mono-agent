@@ -7,7 +7,7 @@ import (
 	"io"
 	"net/url"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // DiscordNode sends messages, reads messages, adds reactions, and lists

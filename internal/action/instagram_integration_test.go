@@ -1,4 +1,4 @@
-//go:build integration
+//go:build integration && social
 
 package action
 
@@ -17,9 +17,9 @@ import (
 	"github.com/rs/zerolog"
 
 	// Import Instagram bot to trigger init() registration.
-	"monoagent/internal/bot"
-	"monoagent/internal/browser"
-	_ "monoagent/internal/bot/instagram"
+	"github.com/monoes/mono-agent/internal/bot"
+	_ "github.com/monoes/mono-agent/internal/bot/instagram"
+	"github.com/monoes/mono-agent/internal/browser"
 
 	// Import SQLite driver for session cookie loading.
 	_ "modernc.org/sqlite"

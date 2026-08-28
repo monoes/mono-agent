@@ -1,0 +1,150 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Fixed
+
+- `workflow import` now remaps node and connection ids that collide with
+  ids already used by other workflows (ids are globally unique in the
+  store), so multiple examples can be imported into one database; remapped
+  ids are reported in `--json` output. Importing a workflow whose nodes
+  have no type is rejected instead of silently persisting a broken graph.
+- `workflow export` now emits the documented workflow-file format, making
+  export → import roundtrips lossless; the legacy export shape is still
+  accepted on import.
+
+Repository hygiene and packaging wave: social bot implementations moved
+behind the opt-in `social` build tag (default builds exclude them),
+documentation restructured around the core workflow engine, repository
+hygiene fixes (tracked secrets removed, dead action templates deleted,
+license and community files added), and review-driven accuracy fixes to
+CLI behavior and docs.
+
+### Added
+
+- `LICENSE` (MIT), `SECURITY.md` (vulnerability reporting, telemetry and
+  crash-reporting statement, secrets-vault scope), `CONTRIBUTING.md`, and
+  this `CHANGELOG.md`.
+- CI workflow (`.github/workflows/ci.yml`): build, vet, and race-enabled
+  tests in both default and `-tags social` build modes, plus a Wails job
+  that builds the `wails-app/` desktop module.
+- MCP server (stdio JSON-RPC 2.0) so AI agents can list/run workflows,
+  inspect node schemas, and resolve human-in-the-loop approvals.
+- CLI agent-experience improvements: `workflow run --json/--dry-run/--no-wait`,
+  `workflow validate`, `node schema`, enriched `--json` output, and granular
+  exit codes.
+- Example workflows (`examples/`) and Docker/install distribution files.
+- `workflow templates run` now honors `--json`.
+
+### Changed
+
+- Go module path renamed to `github.com/monoes/mono-agent`.
+- README and agent docs restructured around the core workflow engine;
+  social-platform actions documented as an opt-in integration for your
+  own accounts.
+- Social engagement bots (browser automation for social platforms) moved
+  behind the opt-in `social` build tag; default builds exclude them.
+- Legacy social CLI commands (`message`, `comment`, `search`, `list`,
+  `template`) are hidden from default `--help` output; they remain
+  invokable and appear in `--help` in `-tags social` builds.
+- Crash reporting defaults to local files under `~/.monoagent/crashes/`;
+  filing to GitHub requires `MONOAGENT_CRASH_REPORT=1` and the `monomind`
+  CLI on PATH (the `npx` fallback was removed).
+- `{{ $env.* }}` template access now requires `MONOAGENT_ALLOW_ENV_TEMPLATES=1`.
+- Output items are redacted in `--json` and MCP output (values of keys
+  such as token/secret/password/authorization/cookie are masked);
+  `--full-outputs` opts out on the CLI.
+- `secret add` stdin now accepts values with or without a trailing newline.
+- Exit codes aligned with behavior: `hil approve`/`hil reject`,
+  `secret rm`/`secret update`, and `workflow delete` return 2 on unknown
+  ids; a run ending `CANCELLED` exits 1.
+- `wails-app` Go module fixed so the desktop app builds as its own module.
+
+### Removed
+
+- Dead browser-action templates for platforms with no live implementation
+  (alternativeto, betalist, capterra, facebook, futurepedia, g2,
+  indiehackers, lobsters, medium, pinterest, quora, threads, tildes) from
+  `data/actions/`.
+- Hardcoded deployment credentials and identifiers from
+  `monoes_apis/deploy_full.sh` (now required environment variables).
+- Message-variant rotation removed from social DM actions.
+
+### Security
+
+- `scripts/import_edge_passwords.py` now pipes passwords via stdin to
+  `monoagentcli secret add` instead of exposing them as command-line
+  arguments (visible in process lists).
+- Output redaction (above) keeps credential-shaped values out of `--json`
+  and MCP results unless `--full-outputs` is passed.
+
+## [0.31.0] - 2026-08-25
+
+### Added
+
+- Orgs UI (Phase 3) and an Agents-first rework of the AI settings page.
+- `agent.ask` workflow node; `ai.*` nodes deprecated in favor of it (Phase 2).
+- Phase 1 of delegating AI chat to local agent runtimes.
+
+### Fixed
+
+- Agent scan now performs a handshake first; canvas mode disabled for
+  general chat.
+- Frontend lockfile reconciliation after merging origin/master.
+
+## [0.30.2] - 2026-08-19
+
+### Fixed
+
+- Refreshed Wails build checksum after the Windows frontend build.
+
+## [0.30.1] - 2026-08-09
+
+### Fixed
+
+- Workflow engine: per-item config fields now resolve correctly for
+  `core.set` and `http.request`.
+- Secrets vault: KEK/DEK bootstrap serialized across concurrent processes.
+- Connections: Salesforce `instance_url`, Reddit/Notion OAuth exchange, and
+  Linear `Bearer` prefix.
+- Browser extension: local relay endpoint now requires a shared-secret token.
+- CI: build the frontend before the Wails Go backend; npm install workaround
+  for an upstream npm bug; lockfile regeneration.
+- `monoes_apis`: patched a path traversal, disabled debug mode, and made
+  `GEMINI_API_KEY` a required environment variable.
+
+### Changed
+
+- Release pipeline is now gated on tests passing.
+
+## [0.30.0] - 2026-08-08
+
+### Added
+
+- New social/service node implementations and action templates.
+
+## [0.29.0] - 2026-08-07
+
+### Added
+
+- Secrets-vault credential unification: AI provider API keys, crawler
+  session cookies, and connection credentials are routed through the
+  encrypted vault instead of plaintext columns.
+- Vault entries cascade-delete their dependent system rows, are badged in
+  the Vault UI, and are rematerialized on import.
+
+### Fixed
+
+- Import now preserves non-secret connection Data and provider Status.
+
+[unreleased]: https://github.com/monoes/mono-agent/compare/v0.31.0...HEAD
+[0.31.0]: https://github.com/monoes/mono-agent/compare/v0.30.2...v0.31.0
+[0.30.2]: https://github.com/monoes/mono-agent/compare/v0.30.1...v0.30.2
+[0.30.1]: https://github.com/monoes/mono-agent/compare/v0.30.0...v0.30.1
+[0.30.0]: https://github.com/monoes/mono-agent/compare/v0.29.0...v0.30.0
+[0.29.0]: https://github.com/monoes/mono-agent/compare/v0.28.1...v0.29.0

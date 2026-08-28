@@ -1,13 +1,15 @@
+//go:build social
+
 package hackernews
 
 import "testing"
 
 func TestExtractItemID(t *testing.T) {
 	cases := map[string]string{
-		"https://news.ycombinator.com/item?id=12345":       "12345",
-		"https://news.ycombinator.com/item?id=12345&p=2":   "12345",
-		"item?id=999":                                      "999",
-		"https://news.ycombinator.com/newest":               "",
+		"https://news.ycombinator.com/item?id=12345":     "12345",
+		"https://news.ycombinator.com/item?id=12345&p=2": "12345",
+		"item?id=999":                         "999",
+		"https://news.ycombinator.com/newest": "",
 	}
 	b := &HackerNewsBot{}
 	for in, want := range cases {

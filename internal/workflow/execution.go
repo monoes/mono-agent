@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"monoagent/internal/connections"
-	"monoagent/internal/secrets"
-	"monoagent/internal/vault"
+	"github.com/monoes/mono-agent/internal/connections"
+	"github.com/monoes/mono-agent/internal/secrets"
+	"github.com/monoes/mono-agent/internal/vault"
 	"github.com/rs/zerolog"
 )
 
@@ -657,7 +657,7 @@ func buildExpressionContext(
 		Node:        nodeCopy,
 		WorkflowID:  workflowID,
 		ExecutionID: executionID,
-		Env:         nil, // populated from os.Environ inside expression engine
+		Env:         nil, // populated from ctx.Env; OS env only merged when MONOAGENT_ALLOW_ENV_TEMPLATES=1
 	}
 }
 

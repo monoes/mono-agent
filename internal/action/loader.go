@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"monoagent/data"
+	"github.com/monoes/mono-agent/data"
 )
 
 // userActionsDir returns the path to ~/.monoagent/actions where user-installed

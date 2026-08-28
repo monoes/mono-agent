@@ -10,7 +10,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"monoagent/internal/connections"
+	"github.com/monoes/mono-agent/internal/connections"
 	"github.com/spf13/cobra"
 )
 
@@ -241,7 +241,15 @@ func newConnectTestCmd(cfg *globalConfig) *cobra.Command {
 				return err
 			}
 
-			return mgr.Test(cmd.Context(), args[0])
+			// Classify failures for the exit-code contract: unknown id → 2,
+			// anything the validation itself reports (auth, network) → 4.
+			if conn, gerr := mgr.Get(cmd.Context(), args[0]); gerr == nil && conn == nil {
+				return errNotFound("connection %q not found", args[0])
+			}
+			if err := mgr.Test(cmd.Context(), args[0]); err != nil {
+				return errAuthConnection("connection test failed: %v", err)
+			}
+			return nil
 		},
 	}
 }

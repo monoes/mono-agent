@@ -13,7 +13,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // GoogleDriveNode implements the service.google_drive node type.

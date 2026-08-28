@@ -10,7 +10,7 @@ import (
 	"net/url"
 	"time"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // BlueskyNode creates posts and reads engagement metrics via the AT

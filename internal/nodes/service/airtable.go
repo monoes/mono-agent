@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net/url"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 const airtableBaseURL = "https://api.airtable.com/v0"

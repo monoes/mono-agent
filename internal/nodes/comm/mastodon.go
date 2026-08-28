@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"strings"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // MastodonNode posts statuses and reads their engagement metrics via a

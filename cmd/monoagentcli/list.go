@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"monoagent/internal/storage"
+	"github.com/monoes/mono-agent/internal/storage"
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 )
@@ -107,8 +107,8 @@ func newListCreateCmd(cfg *globalConfig) *cobra.Command {
 	var name string
 
 	cmd := &cobra.Command{
-		Use:   "create",
-		Short: "Create a new social list",
+		Use:     "create",
+		Short:   "Create a new social list",
 		Example: `  monoagentcli list create --name "My List"`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if name == "" {
@@ -300,10 +300,10 @@ func newListAddItemCmd(cfg *globalConfig) *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "add-item <list-id>",
-		Short: "Add an item to a social list",
+		Use:     "add-item <list-id>",
+		Short:   "Add an item to a social list",
 		Example: `  monoagentcli list add-item abc-123 --username johndoe --platform instagram`,
-		Args: cobra.ExactArgs(1),
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			listID := args[0]
 

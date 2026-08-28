@@ -1,0 +1,97 @@
+{
+  "name": "Outlook Inbox Sync (Example)",
+  "description": "Adapted from the bundled 'Outlook Email Sync' template (internal/workflow/templates/outlook_email_sync.json): every hour, fetch new Outlook emails — inbox AND sent — and sync senders/recipients into People with message history. Set the Outlook Account credential on both Read Outlook nodes before activating.",
+  "version": 1,
+  "is_active": false,
+  "nodes": [
+    {
+      "id": "trigger",
+      "type": "trigger.schedule",
+      "name": "Every Hour",
+      "position": { "x": 0, "y": 0 },
+      "disabled": false,
+      "config": {
+        "cron": "0 0 * * * *"
+      }
+    },
+    {
+      "id": "read_outlook",
+      "type": "service.outlook_mail",
+      "name": "Read Outlook Inbox",
+      "position": { "x": 320, "y": 0 },
+      "disabled": false,
+      "config": {
+        "credential_id": "",
+        "mailbox": "inbox",
+        "max_results": 50,
+        "operation": "list_messages",
+        "unread_only": false
+      }
+    },
+    {
+      "id": "sync_people",
+      "type": "people.sync_outlook_message",
+      "name": "Sync Inbox to People",
+      "position": { "x": 640, "y": 0 },
+      "disabled": false,
+      "config": {
+        "source": "outlook"
+      }
+    },
+    {
+      "id": "read_outlook_sent",
+      "type": "service.outlook_mail",
+      "name": "Read Outlook Sent",
+      "position": { "x": 320, "y": 160 },
+      "disabled": false,
+      "config": {
+        "credential_id": "",
+        "mailbox": "sentitems",
+        "max_results": 50,
+        "operation": "list_messages",
+        "unread_only": false
+      }
+    },
+    {
+      "id": "sync_sent_people",
+      "type": "people.sync_outlook_message",
+      "name": "Sync Sent to People",
+      "position": { "x": 640, "y": 160 },
+      "disabled": false,
+      "config": {
+        "source": "outlook",
+        "direction": "outbound"
+      }
+    }
+  ],
+  "connections": [
+    {
+      "id": "trigger-to-read",
+      "source": "trigger",
+      "source_handle": "main",
+      "target": "read_outlook",
+      "target_handle": "main"
+    },
+    {
+      "id": "read-to-sync",
+      "source": "read_outlook",
+      "source_handle": "main",
+      "target": "sync_people",
+      "target_handle": "main"
+    },
+    {
+      "id": "trigger-to-read-sent",
+      "source": "trigger",
+      "source_handle": "main",
+      "target": "read_outlook_sent",
+      "target_handle": "main"
+    },
+    {
+      "id": "read-sent-to-sync-sent",
+      "source": "read_outlook_sent",
+      "source_handle": "main",
+      "target": "sync_sent_people",
+      "target_handle": "main"
+    }
+  ]
+}

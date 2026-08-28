@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"monoagent/internal/connections"
+	"github.com/monoes/mono-agent/internal/connections"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 

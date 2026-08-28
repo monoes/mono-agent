@@ -3,7 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"monoagent/internal/connections"
+	"github.com/monoes/mono-agent/internal/connections"
 )
 
 type PlatformInfo struct {

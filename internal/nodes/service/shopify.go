@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // ShopifyNode implements the service.shopify node type.

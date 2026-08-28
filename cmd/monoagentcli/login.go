@@ -11,22 +11,22 @@ import (
 	"strings"
 	"time"
 
+	"github.com/monoes/mono-agent/internal/bot"
+	"github.com/monoes/mono-agent/internal/chromecookies"
+	"github.com/monoes/mono-agent/internal/secrets"
 	"github.com/olekukonko/tablewriter"
 	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
-	"monoagent/internal/bot"
-	"monoagent/internal/chromecookies"
-	"monoagent/internal/secrets"
 
 	// Import platform bots to trigger init() registration.
-	_ "monoagent/internal/bot/email"
-	_ "monoagent/internal/bot/hackernews"
-	_ "monoagent/internal/bot/instagram"
-	_ "monoagent/internal/bot/linkedin"
-	_ "monoagent/internal/bot/producthunt"
-	_ "monoagent/internal/bot/telegram"
-	_ "monoagent/internal/bot/tiktok"
-	_ "monoagent/internal/bot/x"
+	_ "github.com/monoes/mono-agent/internal/bot/email"
+	_ "github.com/monoes/mono-agent/internal/bot/hackernews"
+	_ "github.com/monoes/mono-agent/internal/bot/instagram"
+	_ "github.com/monoes/mono-agent/internal/bot/linkedin"
+	_ "github.com/monoes/mono-agent/internal/bot/producthunt"
+	_ "github.com/monoes/mono-agent/internal/bot/telegram"
+	_ "github.com/monoes/mono-agent/internal/bot/tiktok"
+	_ "github.com/monoes/mono-agent/internal/bot/x"
 )
 
 // newExtensionLoginLogger builds the same warn-level stderr logger used by
@@ -220,6 +220,10 @@ func newLoginCmd(cfg *globalConfig) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			platform := strings.ToUpper(args[0])
 
+			if !bot.PlatformCompiledIn(platform) {
+				return bot.ErrNotCompiledIn(platform)
+			}
+
 			factory, ok := bot.PlatformRegistry[platform]
 			if !ok {
 				supported := make([]string, 0, len(bot.PlatformRegistry))
@@ -282,6 +286,10 @@ func newLoginConfirmCmd(cfg *globalConfig) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			platformArg := args[0]
 			platform := strings.ToUpper(platformArg)
+
+			if !bot.PlatformCompiledIn(platform) {
+				return bot.ErrNotCompiledIn(platform)
+			}
 
 			if _, ok := bot.PlatformRegistry[platform]; !ok {
 				return fmt.Errorf("unsupported platform %q", platformArg)

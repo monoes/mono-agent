@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // SplitInBatchesNode splits the input items into batches of size N.

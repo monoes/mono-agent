@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // DevToNode publishes articles and reads articles/comments via the Dev.to

@@ -10,12 +10,12 @@ import (
 	"strings"
 	"time"
 
-	"monoagent/internal/action"
-	"monoagent/internal/bot"
-	browserpkg "monoagent/internal/browser"
-	"monoagent/internal/config"
-	"monoagent/internal/storage"
-	"monoagent/internal/util"
+	"github.com/monoes/mono-agent/internal/action"
+	"github.com/monoes/mono-agent/internal/bot"
+	browserpkg "github.com/monoes/mono-agent/internal/browser"
+	"github.com/monoes/mono-agent/internal/config"
+	"github.com/monoes/mono-agent/internal/storage"
+	"github.com/monoes/mono-agent/internal/util"
 	"github.com/olekukonko/tablewriter"
 	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
@@ -500,6 +500,13 @@ func executeAction(
 	timeout time.Duration,
 ) error {
 	fmt.Fprintf(os.Stderr, "--- Executing action %s [%s] on %s ---\n", act.ID, act.Type, act.TargetPlatform)
+
+	// Social-engagement platforms are opt-in at compile time; fail fast with
+	// a clear message instead of launching a browser that can't do anything.
+	if !bot.PlatformCompiledIn(act.TargetPlatform) {
+		markActionFailed(db, act.ID)
+		return bot.ErrNotCompiledIn(act.TargetPlatform)
+	}
 
 	startTime := time.Now()
 

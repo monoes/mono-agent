@@ -1,0 +1,63 @@
+{
+  "name": "GitHub Issues to Linear",
+  "description": "Every 6 hours: list open issues from a GitHub repo and mirror each one as a Linear issue. Set the GitHub and Linear credentials, repo, and Linear team before activating.",
+  "version": 1,
+  "is_active": false,
+  "nodes": [
+    {
+      "id": "trigger",
+      "type": "trigger.schedule",
+      "name": "Every 6 Hours",
+      "position": { "x": 0, "y": 0 },
+      "disabled": false,
+      "config": {
+        "cron": "0 0 */6 * * *",
+        "timezone": "UTC"
+      }
+    },
+    {
+      "id": "list_issues",
+      "type": "service.github",
+      "name": "List GitHub Issues",
+      "position": { "x": 320, "y": 0 },
+      "disabled": false,
+      "config": {
+        "credential_id": "",
+        "operation": "list_issues",
+        "owner": "REPLACE_WITH_REPO_OWNER",
+        "repo": "REPLACE_WITH_REPO_NAME"
+      }
+    },
+    {
+      "id": "create_linear",
+      "type": "service.linear",
+      "name": "Create Linear Issue",
+      "position": { "x": 640, "y": 0 },
+      "disabled": false,
+      "config": {
+        "credential_id": "",
+        "team_id": "REPLACE_WITH_TEAM_ID",
+        "operation": "create_issue",
+        "title": "[gh] {{ $json.title }}",
+        "description": "Mirrored from GitHub issue #{{ $json.number }}: {{ $json.url }}",
+        "priority": "2"
+      }
+    }
+  ],
+  "connections": [
+    {
+      "id": "trigger-to-github",
+      "source": "trigger",
+      "source_handle": "main",
+      "target": "list_issues",
+      "target_handle": "main"
+    },
+    {
+      "id": "github-to-linear",
+      "source": "list_issues",
+      "source_handle": "main",
+      "target": "create_linear",
+      "target_handle": "main"
+    }
+  ]
+}

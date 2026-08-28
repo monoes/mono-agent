@@ -6,7 +6,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 
 	"github.com/spf13/cobra"
 )
@@ -1428,10 +1428,10 @@ func findNodeDoc(typ string) *nodeDoc {
 // ── commands catalogue ────────────────────────────────────────────────────────
 
 type cmdDoc struct {
-	Name  string
-	Short string
-	Usage string
-	Flags string
+	Name     string
+	Short    string
+	Usage    string
+	Flags    string
 	Examples []string
 }
 
@@ -1446,9 +1446,9 @@ var cliDocs = []cmdDoc{
 		},
 	},
 	{
-		Name:  "logout",
-		Short: "Remove stored session for a platform",
-		Usage: "monoagentcli logout <platform>",
+		Name:     "logout",
+		Short:    "Remove stored session for a platform",
+		Usage:    "monoagentcli logout <platform>",
 		Examples: []string{"monoagentcli logout instagram"},
 	},
 	{
@@ -1606,9 +1606,9 @@ live under ~/.monoagent/attachments/<message>/.
 		},
 	},
 	{
-		Name:  "status",
-		Short: "Show session status and connected platforms",
-		Usage: "monoagentcli status",
+		Name:     "status",
+		Short:    "Show session status and connected platforms",
+		Usage:    "monoagentcli status",
 		Examples: []string{"monoagentcli status"},
 	},
 	{
@@ -1787,7 +1787,7 @@ Subcommands:
 			fmt.Fprintln(w, "  connections\tProfiles, OAuth connections, credential resolution, account identity")
 			fmt.Fprintln(w, "  expressions\tTemplate expression syntax and built-in functions")
 			fmt.Fprintln(w, "  examples\tCommon workflow patterns and use cases")
-			fmt.Fprintln(w, "  crawling\tHow to scrape/automate new platforms with Claude Code")
+			fmt.Fprintln(w, "  crawling\tAutomate sites with no built-in node type (custom XPath configs or an AI agent)")
 			w.Flush()
 			fmt.Println()
 			fmt.Println("Example:  monoagentcli ref templates")

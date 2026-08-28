@@ -24,7 +24,7 @@ import (
 	"github.com/disintegration/imaging"
 	ort "github.com/yalue/onnxruntime_go"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // ── constants ──────────────────────────────────────────────────────────────────

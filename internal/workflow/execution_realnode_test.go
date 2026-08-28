@@ -10,9 +10,9 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"monoagent/internal/nodes/control"
-	httpnodes "monoagent/internal/nodes/http"
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/nodes/control"
+	httpnodes "github.com/monoes/mono-agent/internal/nodes/http"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // These are regression tests for the per-item config resolution bug: before

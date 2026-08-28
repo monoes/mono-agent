@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"os"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // HuggingFaceNode implements service.huggingface for image and text generation

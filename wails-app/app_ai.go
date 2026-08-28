@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
-	"monoagent/internal/ai"
-	"monoagent/internal/monomind"
+	"github.com/monoes/mono-agent/internal/ai"
+	"github.com/monoes/mono-agent/internal/monomind"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -10,7 +10,7 @@ import (
 	"net/url"
 	"os"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // YouTubeNode uploads videos and reads stats/comments via the YouTube Data API v3.

@@ -2,34 +2,30 @@ package bot
 
 import (
 	"fmt"
-	"math/rand"
 	"time"
 
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/input"
 	"github.com/go-rod/rod/lib/proto"
-	"monoagent/internal/util"
+	"github.com/monoes/mono-agent/internal/util"
 )
 
 // --------------------------------------------------------------------------
 // Character-level human typing
 // --------------------------------------------------------------------------
 
-// WriteHumanLike types text into an element character-by-character with random
-// inter-key delays (50-250 ms) and an optional typo simulation. When a typo
-// occurs the function types a wrong character, pauses, backspaces 1-3 times,
-// then retypes the correct character. After the full text has been entered a
-// post-typing pause of 1-3 seconds is applied.
+// WriteHumanLike types text into an element character-by-character with
+// randomized inter-key delays (50-250 ms). After the full text has been
+// entered a post-typing pause of 1-3 seconds is applied. The pacing keeps
+// long-running automation on the user's own logged-in session stable; no
+// typing mistakes are simulated.
 //
 // The page parameter is used for keyboard events (page.Keyboard.Type) instead
 // of el.Type. This is critical because some sites (e.g. Instagram) replace the
 // initial element (textarea) with a different one (contenteditable div) when
 // focused. Using page-level keyboard events ensures keystrokes reach whatever
 // element currently has focus, not the potentially-detached original element.
-//
-// mistakeProbability should be in [0,1]; a value of 0.05 means 5 % of
-// keystrokes will produce a simulated typo.
-func WriteHumanLike(page *rod.Page, el *rod.Element, text string, mistakeProbability float64) error {
+func WriteHumanLike(page *rod.Page, el *rod.Element, text string) error {
 	// Click and focus the element to ensure it's active. Some sites swap the
 	// underlying DOM node on focus (e.g. textarea → contenteditable div), so
 	// after this point we use page.Keyboard for all keystroke delivery.
@@ -39,55 +35,16 @@ func WriteHumanLike(page *rod.Page, el *rod.Element, text string, mistakeProbabi
 	util.SleepRandom(100*time.Millisecond, 200*time.Millisecond)
 
 	for i, ch := range text {
-		// Decide whether to simulate a typo for this character.
-		if mistakeProbability > 0 && rand.Float64() < mistakeProbability {
-			if err := simulateTypo(page, ch); err != nil {
-				return fmt.Errorf("typo simulation failed at index %d: %w", i, err)
-			}
-			continue
-		}
-
 		if err := typeCharacter(page, ch); err != nil {
 			return fmt.Errorf("typing char at index %d failed: %w", i, err)
 		}
 
-		// Human-like inter-keystroke delay.
+		// Randomized inter-keystroke delay.
 		util.SleepRandom(50*time.Millisecond, 250*time.Millisecond)
 	}
 
-	// Post-typing pause to mimic the user reviewing what they typed.
+	// Post-typing settle pause.
 	util.SleepRandom(1*time.Second, 3*time.Second)
-	return nil
-}
-
-// simulateTypo types a random wrong character, waits briefly, then backspaces
-// 1-3 times and retypes the correct character.
-func simulateTypo(page *rod.Page, correct rune) error {
-	// Pick a random printable ASCII character that is NOT the correct one.
-	wrong := randomWrongChar(correct)
-
-	if err := typeCharacter(page, wrong); err != nil {
-		return err
-	}
-
-	// Short pause before realising the mistake.
-	util.SleepRandom(200*time.Millisecond, 500*time.Millisecond)
-
-	// Backspace 1-3 times (sometimes people over-delete).
-	backspaces := 1 + rand.Intn(3)
-	for j := 0; j < backspaces; j++ {
-		if err := page.Keyboard.Type(input.Backspace); err != nil {
-			return fmt.Errorf("backspace failed: %w", err)
-		}
-		util.SleepRandom(50*time.Millisecond, 150*time.Millisecond)
-	}
-
-	// Retype the correct character (plus any that were over-deleted).
-	if err := typeCharacter(page, correct); err != nil {
-		return err
-	}
-
-	util.SleepRandom(100*time.Millisecond, 300*time.Millisecond)
 	return nil
 }
 
@@ -112,18 +69,6 @@ func typeCharacter(page *rod.Page, ch rune) error {
 		return page.InsertText(string(ch))
 	}
 	return nil
-}
-
-// randomWrongChar returns a random printable ASCII character that differs from
-// the given rune.
-func randomWrongChar(correct rune) rune {
-	const printable = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	for {
-		candidate := rune(printable[rand.Intn(len(printable))])
-		if candidate != correct {
-			return candidate
-		}
-	}
 }
 
 // --------------------------------------------------------------------------
@@ -319,10 +264,10 @@ func WaitForOutcome(page *rod.Page, outcomes map[string]string, timeout time.Dur
 // exhaustion). The function returns all collected elements.
 func ScrollAndCollect(page *rod.Page, itemSelector string, maxItems int) ([]*rod.Element, error) {
 	const (
-		scrollStep       = 600.0  // pixels per scroll
-		scrollSteps      = 3      // intermediate steps for smooth scroll
-		maxStaleAttempts = 5      // stop after this many scrolls with no new items
-		stabiliseWait    = 800    // ms to wait for lazy-loaded content
+		scrollStep       = 600.0 // pixels per scroll
+		scrollSteps      = 3     // intermediate steps for smooth scroll
+		maxStaleAttempts = 5     // stop after this many scrolls with no new items
+		stabiliseWait    = 800   // ms to wait for lazy-loaded content
 	)
 
 	var collected []*rod.Element

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"monoagent/internal/storage"
+	"github.com/monoes/mono-agent/internal/storage"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────

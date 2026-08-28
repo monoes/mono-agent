@@ -8,7 +8,7 @@ import (
 	"io"
 	"net/http"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // hashnodeGraphQLURL is the Hashnode GraphQL endpoint. Declared as a var

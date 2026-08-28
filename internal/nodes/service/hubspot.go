@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // HubSpotNode implements the service.hubspot node type.

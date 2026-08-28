@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"monoagent/internal/monomind"
+	"github.com/monoes/mono-agent/internal/monomind"
 )
 
 // defaultOrgProjectRoot is the project root org state resolves under

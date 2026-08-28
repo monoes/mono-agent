@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	"monoagent/internal/secrets"
+	"github.com/monoes/mono-agent/internal/secrets"
 )
 
 // vaultCredentialFieldName is the vault field key SaveProvider/GetProvider

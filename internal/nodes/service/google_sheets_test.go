@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 func TestSheetsItemsToRows_HeaderOptIn(t *testing.T) {

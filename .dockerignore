@@ -1,0 +1,35 @@
+# Keep the image build context small. Anything listed here must NOT be
+# go:embed-ed: data/ (migrations, actions, skills) and
+# internal/workflow/{schemas,templates} ARE embedded — do not exclude them.
+
+.git
+.gitignore
+.worktrees
+.github
+wails-app
+docs
+examples
+scripts
+tools
+monoes_apis
+assets
+chrome-extension
+diag_comment_like
+*.md
+package.json
+package-lock.json
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Secrets, agent/tool config, and local junk — never bake into an image.
+# All patterns are root-anchored (dockerignore patterns match full paths,
+# `*` does not cross `/`), so embedded trees like data/skills/*.md and
+# internal/workflow/{schemas,templates} stay in the context.
+.env*
+.claude*
+.agents
+.mcp.json
+*.pid
+.worktrees*
+*.log

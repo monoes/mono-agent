@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"monoagent/internal/browser"
+	"github.com/monoes/mono-agent/internal/browser"
 	
-	botpkg "monoagent/internal/bot"
+	botpkg "github.com/monoes/mono-agent/internal/bot"
 )
 
 // EmailBot implements botpkg.BotAdapter for email-based outreach via the

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // SortNode sorts items by a dot-path field value.

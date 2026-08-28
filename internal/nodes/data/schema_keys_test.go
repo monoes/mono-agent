@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // TestCompressionUsesSchemaOperationsAndKeys is a regression test: the schema

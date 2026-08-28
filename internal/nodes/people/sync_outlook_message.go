@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"monoagent/internal/storage"
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/storage"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // SyncOutlookMessageNode upserts a Person (keyed by sender email) and a

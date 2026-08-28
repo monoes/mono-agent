@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"monoagent/internal/monomind"
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/monomind"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // templatePattern matches {{$json.FIELD}} placeholders in prompt templates —

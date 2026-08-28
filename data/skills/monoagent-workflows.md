@@ -27,6 +27,24 @@ machine-readable output.
 `monoagentcli ref` is offline, always current, and more reliable than `--help`
 guessing. Read it before hand-building anything.
 
+## Check before you run (validate / dry-run / schemas)
+
+```bash
+monoagentcli workflow validate <id>        # or --file <f>; exit 3 when invalid
+monoagentcli workflow run <id> --dry-run   # validate + print execution plan, no run
+monoagentcli node schema <type>            # JSON schema for a node's config
+monoagentcli --json workflow run <id>      # execution record + per-node outputs
+```
+
+Dry-run first when a workflow is new or hand-edited; `workflow run --no-wait`
+prints an execution id and exits 0 for long runs, and `--timeout <dur>`
+(e.g. `30m`) caps how long the command waits.
+
+There is also an MCP server for hosts that support it: `monoagentcli mcp`
+(stdio) exposes `workflow_list/get/run/status/validate`, `node_list`,
+`node_schema`, `hil_list/approve/reject`, and `docs`. Prefer the CLI when
+MCP is not wired up.
+
 ## Running a bundled template (preferred)
 
 ```bash

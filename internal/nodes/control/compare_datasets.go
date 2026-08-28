@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"monoagent/internal/workflow"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // CompareDatasetsNode diffs two item sets passed as a combined slice.
