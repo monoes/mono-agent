@@ -33,18 +33,18 @@ func NewAnthropicClient(apiKey, baseURL string) *AnthropicClient {
 // ── Anthropic wire types ──────────────────────────────────────────────────────
 
 type anthropicRequest struct {
-	Model       string            `json:"model"`
-	Messages    []anthropicMsg    `json:"messages"`
-	System      string            `json:"system,omitempty"`
-	MaxTokens   int               `json:"max_tokens"`
-	Temperature *float64          `json:"temperature,omitempty"`
-	Tools       []anthropicTool   `json:"tools,omitempty"`
-	Stream      bool              `json:"stream"`
+	Model       string          `json:"model"`
+	Messages    []anthropicMsg  `json:"messages"`
+	System      string          `json:"system,omitempty"`
+	MaxTokens   int             `json:"max_tokens"`
+	Temperature *float64        `json:"temperature,omitempty"`
+	Tools       []anthropicTool `json:"tools,omitempty"`
+	Stream      bool            `json:"stream"`
 }
 
 type anthropicMsg struct {
-	Role    string               `json:"role"`
-	Content json.RawMessage      `json:"content"`
+	Role    string          `json:"role"`
+	Content json.RawMessage `json:"content"`
 }
 
 // anthropicBlock is a single content block used when a message carries

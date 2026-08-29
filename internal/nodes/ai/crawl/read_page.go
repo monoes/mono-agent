@@ -69,17 +69,17 @@ func (n *ReadPageNode) Execute(ctx context.Context, input workflow.NodeInput, co
 
 	// --- build output ---
 	data := map[string]interface{}{
-		"url":             content.URL,
-		"title":           content.Title,
-		"description":     content.Description,
-		"author":          content.Author,
-		"published_at":    content.PublishedAt,
-		"markdown":        markdown,
-		"main_text":       content.MainText,
-		"headings":        content.Headings,
-		"token_count":     tokenCount,
+		"url":              content.URL,
+		"title":            content.Title,
+		"description":      content.Description,
+		"author":           content.Author,
+		"published_at":     content.PublishedAt,
+		"markdown":         markdown,
+		"main_text":        content.MainText,
+		"headings":         content.Headings,
+		"token_count":      tokenCount,
 		"render_mode_used": fetchRes.Mode,
-		"fetch_time_ms":   fetchRes.Duration / time.Millisecond,
+		"fetch_time_ms":    fetchRes.Duration / time.Millisecond,
 	}
 
 	if includeLinks {

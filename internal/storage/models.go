@@ -27,28 +27,28 @@ type Session struct {
 
 // Action represents a row in the actions table.
 type Action struct {
-	ID                    string `json:"id"`
-	CreatedAt             int64  `json:"created_at"`
-	Title                 string `json:"title"`
-	Type                  string `json:"type"`
-	State                 string `json:"state"`
-	Disabled              bool   `json:"disabled"`
-	TargetPlatform        string `json:"target_platform"`
-	Position              int    `json:"position"`
-	ContentSubject        string `json:"content_subject,omitempty"`
-	ContentMessage        string `json:"content_message,omitempty"`
-	ContentBlobURLs       string `json:"content_blob_urls,omitempty"`
-	ScheduledDate         string `json:"scheduled_date,omitempty"`
-	ExecutionInterval     int    `json:"execution_interval,omitempty"`
-	StartDate             string `json:"start_date,omitempty"`
-	EndDate               string `json:"end_date,omitempty"`
-	CampaignID            string `json:"campaign_id,omitempty"`
-	ReachedIndex          int    `json:"reached_index"`
-	Keywords              string `json:"keywords,omitempty"`
-	ActionExecutionCount  int    `json:"action_execution_count"`
-	CreatedAtTS           time.Time              `json:"created_at_ts"`
-	UpdatedAtTS           time.Time              `json:"updated_at_ts"`
-	Params                map[string]interface{} `json:"params,omitempty"`
+	ID                   string                 `json:"id"`
+	CreatedAt            int64                  `json:"created_at"`
+	Title                string                 `json:"title"`
+	Type                 string                 `json:"type"`
+	State                string                 `json:"state"`
+	Disabled             bool                   `json:"disabled"`
+	TargetPlatform       string                 `json:"target_platform"`
+	Position             int                    `json:"position"`
+	ContentSubject       string                 `json:"content_subject,omitempty"`
+	ContentMessage       string                 `json:"content_message,omitempty"`
+	ContentBlobURLs      string                 `json:"content_blob_urls,omitempty"`
+	ScheduledDate        string                 `json:"scheduled_date,omitempty"`
+	ExecutionInterval    int                    `json:"execution_interval,omitempty"`
+	StartDate            string                 `json:"start_date,omitempty"`
+	EndDate              string                 `json:"end_date,omitempty"`
+	CampaignID           string                 `json:"campaign_id,omitempty"`
+	ReachedIndex         int                    `json:"reached_index"`
+	Keywords             string                 `json:"keywords,omitempty"`
+	ActionExecutionCount int                    `json:"action_execution_count"`
+	CreatedAtTS          time.Time              `json:"created_at_ts"`
+	UpdatedAtTS          time.Time              `json:"updated_at_ts"`
+	Params               map[string]interface{} `json:"params,omitempty"`
 }
 
 // ActionTarget represents a row in the action_targets table.
@@ -277,16 +277,16 @@ func ParseAction(data []byte) (*Action, error) {
 	}
 
 	action := &Action{
-		ID:             getString(raw, "id"),
-		Title:          getString(raw, "title"),
-		Type:           getString(raw, "type"),
-		TargetPlatform: getString(raw, "target_platform"),
-		State:          normalizeState(getString(raw, "state")),
-		Disabled:       getBool(raw, "disabled"),
-		Position:       getInt(raw, "position"),
-		ReachedIndex:   getInt(raw, "reached_index"),
-		Keywords:       getString(raw, "keywords"),
-		CampaignID:     getString(raw, "campaign_id"),
+		ID:                   getString(raw, "id"),
+		Title:                getString(raw, "title"),
+		Type:                 getString(raw, "type"),
+		TargetPlatform:       getString(raw, "target_platform"),
+		State:                normalizeState(getString(raw, "state")),
+		Disabled:             getBool(raw, "disabled"),
+		Position:             getInt(raw, "position"),
+		ReachedIndex:         getInt(raw, "reached_index"),
+		Keywords:             getString(raw, "keywords"),
+		CampaignID:           getString(raw, "campaign_id"),
 		ActionExecutionCount: getInt(raw, "action_execution_count"),
 	}
 

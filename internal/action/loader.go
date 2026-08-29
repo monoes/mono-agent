@@ -24,16 +24,16 @@ func userActionsDir() string {
 // ActionDef represents a complete action definition loaded from an embedded
 // JSON file under data/actions/<platform>/<TYPE>.json.
 type ActionDef struct {
-	ActionType  string            `json:"actionType"`
-	Platform    string            `json:"platform"`
-	Version     string            `json:"version,omitempty"`
-	Description string            `json:"description,omitempty"`
+	ActionType  string                 `json:"actionType"`
+	Platform    string                 `json:"platform"`
+	Version     string                 `json:"version,omitempty"`
+	Description string                 `json:"description,omitempty"`
 	Metadata    map[string]interface{} `json:"metadata,omitempty"`
-	Inputs      *InputDef         `json:"inputs,omitempty"`
+	Inputs      *InputDef              `json:"inputs,omitempty"`
 	Outputs     map[string][]string    `json:"outputs,omitempty"`
-	Steps       []StepDef         `json:"steps"`
-	Loops       []LoopDef         `json:"loops,omitempty"`
-	ErrorConfig *GlobalErrorConfig `json:"errorHandling,omitempty"`
+	Steps       []StepDef              `json:"steps"`
+	Loops       []LoopDef              `json:"loops,omitempty"`
+	ErrorConfig *GlobalErrorConfig     `json:"errorHandling,omitempty"`
 }
 
 // InputDef lists the required and optional input variables for an action.

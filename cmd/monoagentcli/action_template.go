@@ -148,9 +148,9 @@ func newActionTemplateCaptureCmd() *cobra.Command {
 
 func newActionTemplateInstallCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "install <file>",
-		Short: "Install an ActionDef JSON template so 'node run <platform>.<type>' works",
-		Args:  cobra.ExactArgs(1),
+		Use:     "install <file>",
+		Short:   "Install an ActionDef JSON template so 'node run <platform>.<type>' works",
+		Args:    cobra.ExactArgs(1),
 		Example: `  monoagent action template install ~/Downloads/example_scrape_profile.json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			srcPath := args[0]

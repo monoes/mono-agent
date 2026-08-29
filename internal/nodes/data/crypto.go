@@ -3,7 +3,7 @@ package data
 import (
 	"context"
 	"crypto/hmac"
-	"crypto/md5"  //nolint:gosec
+	"crypto/md5" //nolint:gosec
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/sha512"

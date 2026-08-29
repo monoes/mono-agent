@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/monoes/mono-agent/internal/browser"
-	
+
 	botpkg "github.com/monoes/mono-agent/internal/bot"
 )
 

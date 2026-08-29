@@ -217,11 +217,11 @@ func newActionCreateCmd(cfg *globalConfig) *cobra.Command {
 			defer db.Close()
 
 			act := &storage.Action{
-				ID:             storage.NewID(),
-				CreatedAt:      time.Now().Unix(),
-				Title:          fmt.Sprintf("%s on %s", strings.ToUpper(actionType), strings.ToLower(platform)),
-				Type:           strings.ToUpper(actionType),
-				State:          "PENDING",
+				ID:        storage.NewID(),
+				CreatedAt: time.Now().Unix(),
+				Title:     fmt.Sprintf("%s on %s", strings.ToUpper(actionType), strings.ToLower(platform)),
+				Type:      strings.ToUpper(actionType),
+				State:     "PENDING",
 				// Store uppercase to match the GUI's platform filter (execution
 				// paths re-normalize case themselves). Lowercase here made
 				// CLI-created actions invisible in the GUI's platform-filtered list.
@@ -259,8 +259,8 @@ func newActionImportCmd(cfg *globalConfig) *cobra.Command {
 	var filePath string
 
 	cmd := &cobra.Command{
-		Use:   "import",
-		Short: "Import an action from a JSON file",
+		Use:     "import",
+		Short:   "Import an action from a JSON file",
 		Example: `  monoagentcli action import --file action.json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if filePath == "" {

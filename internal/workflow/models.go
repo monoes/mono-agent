@@ -89,19 +89,19 @@ type Workflow struct {
 // WorkflowNode is one node in the workflow graph.
 // The Type field is the node type string (e.g. "core.if", "trigger.schedule").
 type WorkflowNode struct {
-	ID         string                 `json:"id" db:"id"`
-	WorkflowID string                 `json:"workflow_id" db:"workflow_id"`
+	ID         string `json:"id" db:"id"`
+	WorkflowID string `json:"workflow_id" db:"workflow_id"`
 	// Type is the node type identifier; stored as node_type in the database.
 	Type      string                 `json:"node_type" db:"node_type"`
-	Name       string                 `json:"name" db:"name"`
-	Config     map[string]interface{} `json:"config" db:"-"`
-	ConfigRaw  string                 `json:"-" db:"config"`
-	PositionX  float64                `json:"position_x" db:"position_x"`
-	PositionY  float64                `json:"position_y" db:"position_y"`
-	Disabled   bool                   `json:"disabled" db:"disabled"`
-	Schema     *NodeSchema            `json:"schema,omitempty" db:"-"`
-	CreatedAt  time.Time              `json:"created_at" db:"created_at"`
-	UpdatedAt  time.Time              `json:"updated_at" db:"updated_at"`
+	Name      string                 `json:"name" db:"name"`
+	Config    map[string]interface{} `json:"config" db:"-"`
+	ConfigRaw string                 `json:"-" db:"config"`
+	PositionX float64                `json:"position_x" db:"position_x"`
+	PositionY float64                `json:"position_y" db:"position_y"`
+	Disabled  bool                   `json:"disabled" db:"disabled"`
+	Schema    *NodeSchema            `json:"schema,omitempty" db:"-"`
+	CreatedAt time.Time              `json:"created_at" db:"created_at"`
+	UpdatedAt time.Time              `json:"updated_at" db:"updated_at"`
 }
 
 // ParseConfig unmarshals ConfigRaw JSON into Config.
@@ -140,10 +140,10 @@ type WorkflowConnection struct {
 
 // WorkflowExecution is a single run of a workflow.
 type WorkflowExecution struct {
-	ID             string                 `json:"id" db:"id"`
-	WorkflowID     string                 `json:"workflow_id" db:"workflow_id"`
-	Status         string                 `json:"status" db:"status"` // QUEUED, RUNNING, SUCCESS, FAILED, CANCELLED
-	TriggerType    string                 `json:"trigger_type" db:"trigger_type"`
+	ID          string `json:"id" db:"id"`
+	WorkflowID  string `json:"workflow_id" db:"workflow_id"`
+	Status      string `json:"status" db:"status"` // QUEUED, RUNNING, SUCCESS, FAILED, CANCELLED
+	TriggerType string `json:"trigger_type" db:"trigger_type"`
 	// TriggerNodeID is the trigger node that fired this run (in-memory only; not
 	// persisted). Empty means every trigger node fires (manual/retry runs).
 	TriggerNodeID  string                 `json:"-" db:"-"`
@@ -250,7 +250,7 @@ type RetryPolicy struct {
 // NodeConfig is the parsed config for a workflow node including retry and error handling.
 type NodeConfig struct {
 	RetryPolicy    RetryPolicy            `json:"retry_policy"`
-	OnError        string                 `json:"on_error"`         // "stop", "continue", "error_branch"
+	OnError        string                 `json:"on_error"` // "stop", "continue", "error_branch"
 	ContinueOnFail bool                   `json:"continue_on_fail"`
 	CredentialID   string                 `json:"credential_id"`
 	Params         map[string]interface{} `json:"params"`

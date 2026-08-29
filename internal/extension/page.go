@@ -530,7 +530,7 @@ func (ee *ExtensionElement) SetFiles(paths []string) error {
 	// Extensions can't read local files, so we read and encode here.
 	type fileData struct {
 		Name     string `json:"name"`
-		Data     string `json:"data"`     // base64
+		Data     string `json:"data"` // base64
 		MimeType string `json:"mimeType"`
 	}
 	var files []fileData

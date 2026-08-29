@@ -176,9 +176,9 @@ func TestDAGEmpty(t *testing.T) {
 // when it is not the first element in the input slice.
 func TestDAGTriggerFirst(t *testing.T) {
 	nodes := []WorkflowNode{
-		makeNode("B", "action.b"),       // listed before A intentionally
+		makeNode("B", "action.b"), // listed before A intentionally
 		makeNode("C", "action.c"),
-		makeNode("A", "trigger.cron"),   // trigger
+		makeNode("A", "trigger.cron"), // trigger
 	}
 	conns := []WorkflowConnection{
 		makeConn("1", "A", "B"),

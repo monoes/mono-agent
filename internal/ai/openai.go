@@ -39,12 +39,12 @@ func NewOpenAIClient(apiKey, baseURL, extraHeadersJSON string) *OpenAIClient {
 // ── OpenAI wire types ───────────────────────────────────────────────────────
 
 type openAIRequest struct {
-	Model       string          `json:"model"`
-	Messages    []openAIMsg     `json:"messages"`
-	Tools       []ToolDef       `json:"tools,omitempty"`
-	Temperature *float64        `json:"temperature,omitempty"`
-	MaxTokens   int             `json:"max_tokens,omitempty"`
-	Stream      bool            `json:"stream,omitempty"`
+	Model       string      `json:"model"`
+	Messages    []openAIMsg `json:"messages"`
+	Tools       []ToolDef   `json:"tools,omitempty"`
+	Temperature *float64    `json:"temperature,omitempty"`
+	MaxTokens   int         `json:"max_tokens,omitempty"`
+	Stream      bool        `json:"stream,omitempty"`
 }
 
 type openAIMsg struct {

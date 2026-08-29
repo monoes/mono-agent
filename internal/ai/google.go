@@ -80,9 +80,9 @@ type googleContent struct {
 }
 
 type googlePart struct {
-	Text         string                 `json:"text,omitempty"`
-	FunctionCall *googleFunctionCall    `json:"functionCall,omitempty"`
-	FunctionResp *googleFunctionResp    `json:"functionResponse,omitempty"`
+	Text         string              `json:"text,omitempty"`
+	FunctionCall *googleFunctionCall `json:"functionCall,omitempty"`
+	FunctionResp *googleFunctionResp `json:"functionResponse,omitempty"`
 }
 
 type googleFunctionCall struct {
@@ -101,8 +101,8 @@ type googleGenerationConf struct {
 }
 
 type googleResponse struct {
-	Candidates    []googleCandidate    `json:"candidates"`
-	UsageMetadata googleUsageMetadata  `json:"usageMetadata"`
+	Candidates    []googleCandidate   `json:"candidates"`
+	UsageMetadata googleUsageMetadata `json:"usageMetadata"`
 }
 
 type googleCandidate struct {

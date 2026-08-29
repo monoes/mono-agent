@@ -373,7 +373,7 @@ func (ct *CanvasTools) createWorkflow(args string) (string, error) {
 
 	result := map[string]interface{}{
 		"workflow_id": id,
-		"name":       a.Name,
+		"name":        a.Name,
 	}
 	return marshalJSON(result)
 }

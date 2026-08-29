@@ -263,23 +263,23 @@ var schemas = map[string]map[string]interface{}{
 	"LINKEDIN_PROFILE_INFO":             linkedinProfileInfoSchema,
 	"LINKEDIN_SEND_MESSAGE":             linkedinSendMessageSchema,
 	"LINKEDIN_KEYWORD_SEARCH":           linkedinKeywordSearchSchema,
-	"LINKEDIN_KEYWORD_SEARCH_MAIN_PAGE": linkedinKeywordSearchSchema,  // alias
-	"LINKEDIN_PROFILE_PAGE":             linkedinProfileInfoSchema,    // alias
+	"LINKEDIN_KEYWORD_SEARCH_MAIN_PAGE": linkedinKeywordSearchSchema, // alias
+	"LINKEDIN_PROFILE_PAGE":             linkedinProfileInfoSchema,   // alias
 
 	// X (Twitter)
-	"X_LOGIN":                        xLoginSchema,
-	"X_PROFILE_INFO":                 xProfileInfoSchema,
-	"X_FOLLOWERS":                    xFollowersSchema,
-	"X_KEYWORD_SEARCH_MAIN_PAGE":     xKeywordSearchMainPageSchema,
-	"X_POST_PAGE":                    xPostPageSchema,
-	"X_PROFILE_PAGE":                 xProfileInfoSchema, // alias
+	"X_LOGIN":                    xLoginSchema,
+	"X_PROFILE_INFO":             xProfileInfoSchema,
+	"X_FOLLOWERS":                xFollowersSchema,
+	"X_KEYWORD_SEARCH_MAIN_PAGE": xKeywordSearchMainPageSchema,
+	"X_POST_PAGE":                xPostPageSchema,
+	"X_PROFILE_PAGE":             xProfileInfoSchema, // alias
 
 	// Instagram
 	"INSTAGRAM_LOGIN":                    instagramLoginSchema,
 	"INSTAGRAM_KEYWORD_SEARCH_MAIN_PAGE": instagramKeywordSearchMainPageSchema,
 	"INSTAGRAM_POST_PAGE":                instagramPostPageSchema,
 	"INSTAGRAM_PROFILE_INFO":             instagramProfileInfoSchema,
-	"INSTAGRAM_PROFILE_PAGE":             instagramProfileInfoSchema,    // alias
+	"INSTAGRAM_PROFILE_PAGE":             instagramProfileInfoSchema, // alias
 	"INSTAGRAM_POST_COMMENTING":          instagramPostCommentingSchema,
 	"INSTAGRAM_BULK_REPLYING":            instagramBulkReplyingSchema,
 	"INSTAGRAM_PROFILE_FETCH":            instagramProfileFetchSchema,

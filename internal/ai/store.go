@@ -21,8 +21,8 @@ const vaultCredentialFieldName = "api_key"
 type AIProvider struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`
-	ProviderID   string `json:"provider_id"`   // references registry e.g. "openai"
-	Tier         string `json:"tier"`           // "known" | "gateway"
+	ProviderID   string `json:"provider_id"` // references registry e.g. "openai"
+	Tier         string `json:"tier"`        // "known" | "gateway"
 	APIKey       string `json:"api_key"`
 	BaseURL      string `json:"base_url"`
 	DefaultModel string `json:"default_model"`
@@ -49,10 +49,10 @@ func (p AIProvider) MarshalJSON() ([]byte, error) {
 type ChatMessage struct {
 	ID         string `json:"id"`
 	WorkflowID string `json:"workflow_id"`
-	Role       string `json:"role"`                    // "user" | "assistant" | "tool"
+	Role       string `json:"role"` // "user" | "assistant" | "tool"
 	Content    string `json:"content"`
-	ToolCalls  string `json:"tool_calls,omitempty"`     // JSON array
-	ToolCallID string `json:"tool_call_id,omitempty"`   // For tool result messages
+	ToolCalls  string `json:"tool_calls,omitempty"`   // JSON array
+	ToolCallID string `json:"tool_call_id,omitempty"` // For tool result messages
 	ProviderID string `json:"provider_id,omitempty"`
 	Model      string `json:"model,omitempty"`
 	TokenCount int    `json:"token_count,omitempty"`

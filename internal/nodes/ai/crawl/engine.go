@@ -517,7 +517,7 @@ func convertNode(buf *strings.Builder, s *goquery.Selection) {
 	case "ol":
 		buf.WriteString("\n")
 		s.Find("> li").Each(func(i int, li *goquery.Selection) {
-			buf.WriteString(strconv.Itoa(i+1))
+			buf.WriteString(strconv.Itoa(i + 1))
 			buf.WriteString(". ")
 			li.Contents().Each(func(_ int, child *goquery.Selection) {
 				convertNode(buf, child)

@@ -4,7 +4,7 @@ import "strings"
 
 // DAG represents the directed acyclic graph of a workflow.
 type DAG struct {
-	nodes       map[string]*WorkflowNode       // nodeID → node
+	nodes       map[string]*WorkflowNode // nodeID → node
 	connections []WorkflowConnection
 	outEdges    map[string][]WorkflowConnection // sourceNodeID → connections
 	inEdges     map[string][]WorkflowConnection // targetNodeID → connections

@@ -29,9 +29,9 @@ func TestRedditParseSubmitResponseErrors(t *testing.T) {
 
 func TestRedditFullnamePrefix(t *testing.T) {
 	cases := map[string]string{
-		"abc123":     "t3_abc123",
-		"t3_abc123":  "t3_abc123",
-		"t1_xyz":     "t1_xyz",
+		"abc123":    "t3_abc123",
+		"t3_abc123": "t3_abc123",
+		"t1_xyz":    "t1_xyz",
 	}
 	for in, want := range cases {
 		if got := redditEnsureFullname(in, "t3"); got != want {

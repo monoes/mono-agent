@@ -17,48 +17,48 @@ import (
 
 // StepDef represents a single step in an action definition.
 type StepDef struct {
-	ID            string            `json:"id"`
-	Type          string            `json:"type"`
-	URL           string            `json:"url,omitempty"`
-	Selector      string            `json:"selector,omitempty"`
-	XPath         string            `json:"xpath,omitempty"`
-	ConfigKey     string            `json:"configKey,omitempty"`
-	Alternatives  []string          `json:"alternatives,omitempty"`
-	ElementRef    string            `json:"elementRef,omitempty"`
-	Value         interface{}       `json:"value,omitempty"`
-	Text          string            `json:"text,omitempty"`
-	Attribute     string            `json:"attribute,omitempty"`
-	Direction     string            `json:"direction,omitempty"`
-	Duration      interface{}       `json:"duration,omitempty"`
-	Timeout       float64           `json:"timeout,omitempty"`
-	HumanLike     bool              `json:"humanLike,omitempty"`
-	MethodName    string            `json:"methodName,omitempty"`
-	Method        string            `json:"method,omitempty"`
-	Args          []interface{}     `json:"args,omitempty"`
-	Variable      string            `json:"variable,omitempty"`
-	VariableName  string            `json:"variable_name,omitempty"`
-	WaitFor       string            `json:"waitFor,omitempty"`
-	WaitAfter     string            `json:"waitAfter,omitempty"`
-	RaceSelectors map[string]string `json:"raceSelectors,omitempty"`
-	Condition     interface{}       `json:"condition,omitempty"`
-	Then          []string          `json:"then,omitempty"`
-	Else          []string          `json:"else,omitempty"`
-	OnError       *ErrorHandlerDef  `json:"onError,omitempty"`
-	OnSuccess     *SuccessAction    `json:"onSuccess,omitempty"`
+	ID            string                 `json:"id"`
+	Type          string                 `json:"type"`
+	URL           string                 `json:"url,omitempty"`
+	Selector      string                 `json:"selector,omitempty"`
+	XPath         string                 `json:"xpath,omitempty"`
+	ConfigKey     string                 `json:"configKey,omitempty"`
+	Alternatives  []string               `json:"alternatives,omitempty"`
+	ElementRef    string                 `json:"elementRef,omitempty"`
+	Value         interface{}            `json:"value,omitempty"`
+	Text          string                 `json:"text,omitempty"`
+	Attribute     string                 `json:"attribute,omitempty"`
+	Direction     string                 `json:"direction,omitempty"`
+	Duration      interface{}            `json:"duration,omitempty"`
+	Timeout       float64                `json:"timeout,omitempty"`
+	HumanLike     bool                   `json:"humanLike,omitempty"`
+	MethodName    string                 `json:"methodName,omitempty"`
+	Method        string                 `json:"method,omitempty"`
+	Args          []interface{}          `json:"args,omitempty"`
+	Variable      string                 `json:"variable,omitempty"`
+	VariableName  string                 `json:"variable_name,omitempty"`
+	WaitFor       string                 `json:"waitFor,omitempty"`
+	WaitAfter     string                 `json:"waitAfter,omitempty"`
+	RaceSelectors map[string]string      `json:"raceSelectors,omitempty"`
+	Condition     interface{}            `json:"condition,omitempty"`
+	Then          []string               `json:"then,omitempty"`
+	Else          []string               `json:"else,omitempty"`
+	OnError       *ErrorHandlerDef       `json:"onError,omitempty"`
+	OnSuccess     *SuccessAction         `json:"onSuccess,omitempty"`
 	Set           map[string]interface{} `json:"set,omitempty"`
-	Description   string            `json:"description,omitempty"`
-	DataSource    string            `json:"dataSource,omitempty"`
-	BatchSize     int               `json:"batchSize,omitempty"`
-	Increment     string            `json:"increment,omitempty"`
+	Description   string                 `json:"description,omitempty"`
+	DataSource    string                 `json:"dataSource,omitempty"`
+	BatchSize     int                    `json:"batchSize,omitempty"`
+	Increment     string                 `json:"increment,omitempty"`
 }
 
 // LoopDef defines an iteration over a collection of items, executing a subset
 // of the action's steps for each item.
 type LoopDef struct {
-	ID         string    `json:"id"`
-	Iterator   string    `json:"iterator"`
-	IndexVar   string    `json:"indexVar"`
-	Steps      []string  `json:"steps"`
+	ID         string      `json:"id"`
+	Iterator   string      `json:"iterator"`
+	IndexVar   string      `json:"indexVar"`
+	Steps      []string    `json:"steps"`
 	OnComplete interface{} `json:"onComplete,omitempty"`
 }
 
@@ -71,7 +71,7 @@ type ConditionDef struct {
 
 // SuccessAction defines what happens when a step succeeds.
 type SuccessAction struct {
-	Action    string      `json:"action"`   // "set_variable", "increment", "save_data", "update_progress"
+	Action    string      `json:"action"` // "set_variable", "increment", "save_data", "update_progress"
 	Variable  string      `json:"variable,omitempty"`
 	Value     interface{} `json:"value,omitempty"`
 	Increment string      `json:"increment,omitempty"`
@@ -277,7 +277,7 @@ type StorageAction struct {
 	EndDate           string
 	ExecutionInterval int
 	CampaignID        string
-	Params        map[string]interface{}
+	Params            map[string]interface{}
 }
 
 // ---------------------------------------------------------------------------
@@ -456,8 +456,8 @@ func (ae *ActionExecutor) Execute(action *StorageAction) (*ExecutionResult, erro
 				ae.logger.Error().Str("loopID", loop.ID).Msg("action aborted during loop")
 				if ae.db != nil {
 					if serr := ae.db.UpdateActionState(action.ID, "FAILED"); serr != nil {
-					ae.logger.Error().Err(serr).Str("actionID", action.ID).Msg("failed to persist action state FAILED — action may appear stuck")
-				}
+						ae.logger.Error().Err(serr).Str("actionID", action.ID).Msg("failed to persist action state FAILED — action may appear stuck")
+					}
 				}
 				return ae.buildResult(), err
 			}

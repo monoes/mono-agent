@@ -10,8 +10,8 @@ import (
 
 	ainodes "github.com/monoes/mono-agent/internal/ai/nodes"
 	cfgpkg "github.com/monoes/mono-agent/internal/config"
-	agentnodes "github.com/monoes/mono-agent/internal/nodes/agent"
 	"github.com/monoes/mono-agent/internal/nodes"
+	agentnodes "github.com/monoes/mono-agent/internal/nodes/agent"
 	crawlnodes "github.com/monoes/mono-agent/internal/nodes/ai/crawl"
 	"github.com/monoes/mono-agent/internal/nodes/comm"
 	"github.com/monoes/mono-agent/internal/nodes/control"
@@ -59,7 +59,7 @@ func Build(db *sql.DB) *workflow.NodeTypeRegistry {
 		"jira": "service.jira", "linear": "service.linear", "asana": "service.asana",
 		"stripe": "service.stripe", "shopify": "service.shopify", "salesforce": "service.salesforce",
 		"hubspot": "service.hubspot",
-		"slack": "comm.slack", "discord": "comm.discord", "telegram": "comm.telegram",
+		"slack":   "comm.slack", "discord": "comm.discord", "telegram": "comm.telegram",
 		"twilio": "comm.twilio", "whatsapp": "comm.whatsapp",
 		"email_send": "comm.email_send", "email_read": "comm.email_read",
 		"mysql": "db.mysql", "postgres": "db.postgres", "mongodb": "db.mongodb", "redis": "db.redis",

@@ -6,7 +6,7 @@ type ProviderDef struct {
 	Name           string     `json:"name"`
 	IconEmoji      string     `json:"icon_emoji"`
 	Category       string     `json:"category"` // "frontier","cloud","inference","gateway","other"
-	Tier           string     `json:"tier"`      // "known" | "gateway"
+	Tier           string     `json:"tier"`     // "known" | "gateway"
 	DefaultBaseURL string     `json:"default_base_url"`
 	AuthLabel      string     `json:"auth_label"`
 	Models         []ModelDef `json:"models"`

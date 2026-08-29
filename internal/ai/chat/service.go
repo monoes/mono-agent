@@ -44,10 +44,10 @@ type NewClientFunc func(provider ai.AIProvider) (ai.AIClient, error)
 
 // ChatService orchestrates AI chat interactions for workflows.
 type ChatService struct {
-	aiStore      *ai.AIStore
-	db           *sql.DB
-	newClientFn  NewClientFunc
-	canvasTools  *CanvasTools
+	aiStore     *ai.AIStore
+	db          *sql.DB
+	newClientFn NewClientFunc
+	canvasTools *CanvasTools
 }
 
 // NewChatService creates a ChatService wired to the given store and database.

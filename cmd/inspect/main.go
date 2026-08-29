@@ -19,7 +19,7 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Println("connected")
-	
+
 	// Create tab
 	tabID, err := srv.CreateTab("https://gemini.google.com/app")
 	if err != nil {
@@ -27,7 +27,7 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Println("tab:", tabID)
-	
+
 	page := extension.NewExtensionPage(srv, tabID)
 	time.Sleep(6 * time.Second)
 
@@ -44,7 +44,7 @@ func main() {
 		if (txt) { txt.textContent = 'Hello, respond with "hi"'; txt.dispatchEvent(new Event('input',{bubbles:true})); }
 		setTimeout(function() { if (btn) btn.click(); }, 1000);
 	})()`)
-	
+
 	fmt.Println("waiting 15s for response...")
 	time.Sleep(15 * time.Second)
 
@@ -58,13 +58,13 @@ func main() {
 		return JSON.stringify(counts);
 	})()`)
 	fmt.Println("custom elements:", raw)
-	
+
 	// Try common selectors
 	for _, sel := range []string{
-		"message-content","model-response","ms-chat-turn",
-		"ms-prompt-response","response-container","bard-response",
-		"[data-response-type]","[role='article']",".response-content",
-		"conversation-container","response-chunk",
+		"message-content", "model-response", "ms-chat-turn",
+		"ms-prompt-response", "response-container", "bard-response",
+		"[data-response-type]", "[role='article']", ".response-content",
+		"conversation-container", "response-chunk",
 	} {
 		n, _ := page.EvalCDP(fmt.Sprintf(`document.querySelectorAll('%s').length`, sel))
 		if count, ok := n.(float64); ok && count > 0 {
