@@ -45,7 +45,7 @@ function notifyNewHIL(items) {
   } catch { /* sandboxed webview may block */ }
 }
 
-export default function Sidebar({ activePage, onNavigate, stats, dbConnected }) {
+export default function Sidebar({ activePage, onNavigate, stats, dbConnected, showActions = true }) {
   const [ver, setVer] = useState(null)
   const [hilCount, setHilCount] = useState(0)
   const [profiles, setProfiles] = useState([])
@@ -165,11 +165,11 @@ export default function Sidebar({ activePage, onNavigate, stats, dbConnected }) 
     if (id === 'hil' && hilCount > 0) return hilCount
     if (!stats) return null
     if (id === 'people' && stats.total_people > 0) return stats.total_people
-    if (id === 'connections' && stats.active_sessions > 0) return stats.active_sessions
     return null
   }
 
-  const sections = [...new Set(NAV_ITEMS.map(i => i.section))]
+  const navItems = showActions ? NAV_ITEMS : NAV_ITEMS.filter(i => i.id !== 'actions')
+  const sections = [...new Set(navItems.map(i => i.section))]
 
   return (
     <aside className="sidebar">
@@ -283,7 +283,7 @@ export default function Sidebar({ activePage, onNavigate, stats, dbConnected }) 
         {sections.map(section => (
           <div key={section}>
             <div className="nav-section-label">{section}</div>
-            {NAV_ITEMS.filter(i => i.section === section).map(item => {
+            {navItems.filter(i => i.section === section).map(item => {
               const Icon = item.icon
               const badge = getBadge(item.id)
               const isActive = activePage === item.id
@@ -311,10 +311,10 @@ export default function Sidebar({ activePage, onNavigate, stats, dbConnected }) 
       </nav>
 
       <div className="sidebar-footer">
-        {/* Platform session indicators */}
+        {/* Platform session indicators — platform set derived from active sessions */}
         {stats?.sessions?.length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-            {['INSTAGRAM', 'LINKEDIN', 'X', 'TIKTOK'].map(p => {
+            {[...new Set(stats.sessions.filter(s => s.active).map(s => s.platform))].map(p => {
               const session = stats.sessions.find(s => s.platform === p && s.active)
               if (!session) return null
               return (

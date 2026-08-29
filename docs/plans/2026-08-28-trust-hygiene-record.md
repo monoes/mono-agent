@@ -109,9 +109,10 @@ in-flight work; each item below describes the end state.
 - Tracked-secrets grep (`AIza`/token patterns) clean on the working tree;
   LICENSE present; CI YAML parses; .gitignore effective; deleted action
   templates gone.
-- Docs greps: no stealth/evade/under-the-radar/bulk_following/auto_reply
-  terms in README's first 150 lines; telemetry claims qualified
-  everywhere they appear.
+- Docs greps: no stealth/evade/under-the-radar/bulk_following terms in
+  README; social action names (e.g. `auto_reply`) appear in README only
+  inside the opt-in social build section (~line 383), by design; telemetry
+  claims qualified everywhere they appear.
 
 ## Follow-ups (deferred deliberately)
 
@@ -136,3 +137,36 @@ in-flight work; each item below describes the end state.
    `push --force-with-lease`; then `gh repo edit` with the new description
    and topics.
 3. Confirm the CI workflow runs green once pushed.
+
+## Round 2 record (2026-08-29)
+
+Second wave, from a 12-reviewer audit (RA8–RA12 findings) plus follow-up
+verification. Same rules as above: each item describes the end state.
+
+### What changed and why
+
+- Sandbox resource caps added: HTTP node bodies capped at 64 MB by
+  default (configurable); `core.code` nodes limited to 512 MB memory and
+  30 s CPU by default, with at most 10,000 items of 16 MB each per
+  execution; `system.execute_command` output capped at 10 MB per channel
+  (stdout/stderr); stored outputs persisted in full, display-truncated at
+  4 KB.
+- Daemon lifecycle fixes: SIGTERM graceful shutdown; Chrome probe gated
+  in headless environments.
+- Credential profile scoping: credentials resolve strictly within their
+  own profile.
+- Service-node fixes: pagination and string-escaping corrections.
+- GUI (`wails-app`) fixes.
+- MCP server concurrency fixes.
+- Typo simulation removed from humanized typing in social actions; the
+  randomized pacing between keystrokes is kept.
+- README Quick Start now includes the `workflow activate` step before the
+  daemon is started.
+
+### Verification (plain results)
+
+- Round-1 verification results above still hold for that wave's items.
+- Round-2 end state recorded in CHANGELOG `[Unreleased]`; resource limits
+  documented in AGENTS.md and SECURITY.md with matching numbers.
+- FEATURE_n8n.md labeled as a porting reference, not a status tracker;
+  README and docs/COMPARISON.md link phrasing aligned to that.

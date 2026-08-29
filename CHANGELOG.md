@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `workflow export` now emits the documented workflow-file format, making
   export → import roundtrips lossless; the legacy export shape is still
   accepted on import.
+- Example workflows (`examples/`) fixed and re-validated (all pass
+  `workflow validate`); `examples/README.md` quickstart now includes the
+  required `workflow activate` step before starting the daemon.
+- `node schema core.set` output corrected to match the node's actual
+  configuration fields.
+- `core.filter` now surfaces evaluation errors from its condition instead
+  of passing items through silently.
 
 Repository hygiene and packaging wave: social bot implementations moved
 behind the opt-in `social` build tag (default builds exclude them),
@@ -40,6 +47,12 @@ CLI behavior and docs.
   exit codes.
 - Example workflows (`examples/`) and Docker/install distribution files.
 - `workflow templates run` now honors `--json`.
+- Sandbox resource caps: HTTP node bodies capped at 64 MB by default
+  (configurable); `core.code` nodes limited to 512 MB memory and 30 s
+  by default, with at most 10,000 items of 16 MB each per execution;
+  `system.execute_command` output capped at 10 MB per channel (stdout and
+  stderr). Stored outputs are persisted in full but display-truncated at
+  4 KB.
 
 ### Changed
 
@@ -74,6 +87,9 @@ CLI behavior and docs.
 - Hardcoded deployment credentials and identifiers from
   `monoes_apis/deploy_full.sh` (now required environment variables).
 - Message-variant rotation removed from social DM actions.
+- Typo simulation removed from humanized typing in social actions; the
+  randomized pacing between keystrokes is kept.
+- `go-rod/stealth` dependency dropped (unused).
 
 ### Security
 

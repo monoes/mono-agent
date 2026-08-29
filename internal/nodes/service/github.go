@@ -4,12 +4,20 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
+	"net/url"
+	"strings"
 
 	"github.com/monoes/mono-agent/internal/workflow"
 )
 
-const githubBaseURL = "https://api.github.com"
+// githubBaseURL is a var (not const) so tests can point it at an httptest server.
+var githubBaseURL = "https://api.github.com"
+
+// ghRepoPath builds the /repos/{owner}/{repo} path with both segments
+// PathEscape'd — an owner like "/../x" must never alter the request path.
+func ghRepoPath(owner, repo string) string {
+	return githubBaseURL + "/repos/" + url.PathEscape(owner) + "/" + url.PathEscape(repo)
+}
 
 // GitHubNode interacts with the GitHub REST API v3.
 // Type: "service.github"
@@ -78,12 +86,12 @@ func (n *GitHubNode) ghRequest(ctx context.Context, method, url, token string, b
 	}
 	defer resp.Body.Close()
 
-	respBytes, err := io.ReadAll(resp.Body)
+	respBytes, err := readBodyCapped(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("reading response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBytes))
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, errorBodyEcho(respBytes))
 	}
 	var result map[string]interface{}
 	if err := json.Unmarshal(respBytes, &result); err != nil {
@@ -92,54 +100,108 @@ func (n *GitHubNode) ghRequest(ctx context.Context, method, url, token string, b
 	return result, nil
 }
 
-// ghRequestList performs a GitHub API call returning a JSON array.
-func (n *GitHubNode) ghRequestList(ctx context.Context, method, url, token string, body interface{}) ([]interface{}, error) {
+// ghRequestListPage performs a GitHub API call returning a JSON array, plus
+// the rel="next" URL from the Link header ("" when there is no next page).
+func (n *GitHubNode) ghRequestListPage(ctx context.Context, method, url, token string, body interface{}) ([]interface{}, string, error) {
 	req, err := buildRequest(ctx, method, url, token, body)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	req.Header.Set("Authorization", "token "+token)
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("HTTP %s %s: %w", method, url, err)
+		return nil, "", fmt.Errorf("HTTP %s %s: %w", method, url, err)
 	}
 	defer resp.Body.Close()
 
-	respBytes, err := io.ReadAll(resp.Body)
+	respBytes, err := readBodyCapped(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("reading response: %w", err)
+		return nil, "", fmt.Errorf("reading response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBytes))
+		return nil, "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, errorBodyEcho(respBytes))
 	}
 	var result []interface{}
 	if err := json.Unmarshal(respBytes, &result); err != nil {
-		return nil, fmt.Errorf("parsing JSON array: %w", err)
+		return nil, "", fmt.Errorf("parsing JSON array: %w", err)
 	}
-	return result, nil
+	return result, ghNextLink(resp.Header.Get("Link")), nil
+}
+
+// ghNextLink extracts the rel="next" target from a GitHub Link header like
+//
+//	<https://api.github.com/repositories/1/issues?per_page=100&page=2>; rel="next",
+//	<https://api.github.com/repositories/1/issues?per_page=100&page=5>; rel="last"
+//
+// returning "" when absent.
+func ghNextLink(link string) string {
+	for _, part := range strings.Split(link, ",") {
+		part = strings.TrimSpace(part)
+		semi := strings.Index(part, ";")
+		if semi < 0 {
+			continue
+		}
+		target := strings.TrimSpace(part[:semi])
+		if !strings.HasPrefix(target, "<") || !strings.HasSuffix(target, ">") {
+			continue
+		}
+		target = target[1 : len(target)-1]
+		for _, param := range strings.Split(part[semi+1:], ";") {
+			if strings.TrimSpace(param) == `rel="next"` {
+				return target
+			}
+		}
+	}
+	return ""
+}
+
+// ghFetchAllList pages a GitHub list endpoint by following the Link header's
+// rel="next" URL, up to maxListPages requests. Returns the accumulated
+// entries and whether the page cap truncated the result.
+func (n *GitHubNode) ghFetchAllList(ctx context.Context, url, token string) ([]interface{}, bool, error) {
+	var all []interface{}
+	for page := 0; page < maxListPages; page++ {
+		list, next, err := n.ghRequestListPage(ctx, "GET", url, token, nil)
+		if err != nil {
+			return nil, false, err
+		}
+		all = append(all, list...)
+		if next == "" {
+			return all, false, nil
+		}
+		url = next
+	}
+	return all, true, nil
 }
 
 func (n *GitHubNode) listRepos(ctx context.Context, token string) ([]workflow.Item, error) {
-	url := githubBaseURL + "/user/repos?per_page=100"
-	list, err := n.ghRequestList(ctx, "GET", url, token, nil)
+	list, truncated, err := n.ghFetchAllList(ctx, githubBaseURL+"/user/repos?per_page=100", token)
 	if err != nil {
 		return nil, err
 	}
-	return listToItems(list), nil
+	items := listToItems(list)
+	if truncated {
+		flagTruncated(items)
+	}
+	return items, nil
 }
 
 func (n *GitHubNode) listIssues(ctx context.Context, token, owner, repo string, config map[string]interface{}) ([]workflow.Item, error) {
-	url := fmt.Sprintf("%s/repos/%s/%s/issues?per_page=100", githubBaseURL, owner, repo)
+	params := url.Values{"per_page": {"100"}}
 	if state := strVal(config, "state"); state != "" {
-		url += "&state=" + state
+		params.Set("state", state)
 	}
-	list, err := n.ghRequestList(ctx, "GET", url, token, nil)
+	list, truncated, err := n.ghFetchAllList(ctx, ghRepoPath(owner, repo)+"/issues?"+params.Encode(), token)
 	if err != nil {
 		return nil, err
 	}
-	return listToItems(list), nil
+	items := listToItems(list)
+	if truncated {
+		flagTruncated(items)
+	}
+	return items, nil
 }
 
 func (n *GitHubNode) getIssue(ctx context.Context, token, owner, repo string, config map[string]interface{}) ([]workflow.Item, error) {
@@ -147,8 +209,8 @@ func (n *GitHubNode) getIssue(ctx context.Context, token, owner, repo string, co
 	if number == 0 {
 		return nil, fmt.Errorf("service.github: 'number' is required for get_issue")
 	}
-	url := fmt.Sprintf("%s/repos/%s/%s/issues/%d", githubBaseURL, owner, repo, number)
-	result, err := n.ghRequest(ctx, "GET", url, token, nil)
+	u := fmt.Sprintf("%s/issues/%d", ghRepoPath(owner, repo), number)
+	result, err := n.ghRequest(ctx, "GET", u, token, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +225,7 @@ func (n *GitHubNode) createIssue(ctx context.Context, token, owner, repo string,
 	if labels := strSliceVal(config, "labels"); len(labels) > 0 {
 		body["labels"] = labels
 	}
-	url := fmt.Sprintf("%s/repos/%s/%s/issues", githubBaseURL, owner, repo)
+	url := ghRepoPath(owner, repo) + "/issues"
 	result, err := n.ghRequest(ctx, "POST", url, token, body)
 	if err != nil {
 		return nil, err
@@ -189,7 +251,7 @@ func (n *GitHubNode) updateIssue(ctx context.Context, token, owner, repo string,
 	if labels := strSliceVal(config, "labels"); len(labels) > 0 {
 		body["labels"] = labels
 	}
-	url := fmt.Sprintf("%s/repos/%s/%s/issues/%d", githubBaseURL, owner, repo, number)
+	url := fmt.Sprintf("%s/issues/%d", ghRepoPath(owner, repo), number)
 	result, err := n.ghRequest(ctx, "PATCH", url, token, body)
 	if err != nil {
 		return nil, err
@@ -198,15 +260,19 @@ func (n *GitHubNode) updateIssue(ctx context.Context, token, owner, repo string,
 }
 
 func (n *GitHubNode) listPRs(ctx context.Context, token, owner, repo string, config map[string]interface{}) ([]workflow.Item, error) {
-	url := fmt.Sprintf("%s/repos/%s/%s/pulls?per_page=100", githubBaseURL, owner, repo)
+	params := url.Values{"per_page": {"100"}}
 	if state := strVal(config, "state"); state != "" {
-		url += "&state=" + state
+		params.Set("state", state)
 	}
-	list, err := n.ghRequestList(ctx, "GET", url, token, nil)
+	list, truncated, err := n.ghFetchAllList(ctx, ghRepoPath(owner, repo)+"/pulls?"+params.Encode(), token)
 	if err != nil {
 		return nil, err
 	}
-	return listToItems(list), nil
+	items := listToItems(list)
+	if truncated {
+		flagTruncated(items)
+	}
+	return items, nil
 }
 
 func (n *GitHubNode) createPR(ctx context.Context, token, owner, repo string, config map[string]interface{}) ([]workflow.Item, error) {
@@ -224,7 +290,7 @@ func (n *GitHubNode) createPR(ctx context.Context, token, owner, repo string, co
 		"head":  head,
 		"base":  base,
 	}
-	url := fmt.Sprintf("%s/repos/%s/%s/pulls", githubBaseURL, owner, repo)
+	url := ghRepoPath(owner, repo) + "/pulls"
 	result, err := n.ghRequest(ctx, "POST", url, token, body)
 	if err != nil {
 		return nil, err
@@ -233,12 +299,15 @@ func (n *GitHubNode) createPR(ctx context.Context, token, owner, repo string, co
 }
 
 func (n *GitHubNode) listReleases(ctx context.Context, token, owner, repo string) ([]workflow.Item, error) {
-	url := fmt.Sprintf("%s/repos/%s/%s/releases?per_page=100", githubBaseURL, owner, repo)
-	list, err := n.ghRequestList(ctx, "GET", url, token, nil)
+	list, truncated, err := n.ghFetchAllList(ctx, ghRepoPath(owner, repo)+"/releases?per_page=100", token)
 	if err != nil {
 		return nil, err
 	}
-	return listToItems(list), nil
+	items := listToItems(list)
+	if truncated {
+		flagTruncated(items)
+	}
+	return items, nil
 }
 
 func (n *GitHubNode) createRelease(ctx context.Context, token, owner, repo string, config map[string]interface{}) ([]workflow.Item, error) {
@@ -247,7 +316,7 @@ func (n *GitHubNode) createRelease(ctx context.Context, token, owner, repo strin
 		"name":     strVal(config, "release_name"),
 		"body":     strVal(config, "body"),
 	}
-	url := fmt.Sprintf("%s/repos/%s/%s/releases", githubBaseURL, owner, repo)
+	url := ghRepoPath(owner, repo) + "/releases"
 	result, err := n.ghRequest(ctx, "POST", url, token, body)
 	if err != nil {
 		return nil, err

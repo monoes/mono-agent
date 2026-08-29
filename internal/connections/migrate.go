@@ -111,7 +111,7 @@ func MigrateConnectionsToVault(ctx context.Context, db *sql.DB) (migrated, total
 		// Mirror Store.RefreshToken's own pattern (storage.go) and re-read
 		// fresh from the DB now that we hold the lock, so we always re-save
 		// whatever is currently on disk rather than what we saw earlier.
-		fresh, getErr := store.Get(ctx, conns[i].ID)
+		fresh, getErr := store.Get(ctx, conns[i].ID, conns[i].ProfileID)
 		if getErr != nil {
 			store.releaseRefreshLock(context.WithoutCancel(ctx), conns[i].ID)
 			fmt.Fprintf(os.Stderr, "warning: failed to re-read connection %s: %v\n", conns[i].ID, getErr)

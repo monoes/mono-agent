@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -32,6 +33,11 @@ type runtime struct {
 	registry  *workflow.NodeTypeRegistry
 	engine    *workflow.WorkflowEngine
 	sched     *scheduler.Scheduler
+
+	// mu guards the lazy engine/registry/scheduler bootstrap: requests are
+	// dispatched concurrently, so several tools/call invocations may race
+	// to start the engine on first use.
+	mu sync.Mutex
 }
 
 func expandHome(path string) string {
@@ -46,7 +52,11 @@ func expandHome(path string) string {
 }
 
 // runtime lazily bootstraps and caches the shared runtime for a server.
+// It is race-safe: request handlers run on separate goroutines and may
+// call it simultaneously on first use.
 func (s *Server) runtime() (*runtime, error) {
+	s.rtMu.Lock()
+	defer s.rtMu.Unlock()
 	if s.rt != nil {
 		return s.rt, nil
 	}
@@ -64,6 +74,8 @@ func (rt *runtime) Close() {
 	if rt == nil {
 		return
 	}
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
 	if rt.engine != nil {
 		_ = rt.engine.Stop()
 		rt.engine = nil
@@ -167,6 +179,8 @@ func resolveProfileID(db *sql.DB, idOrName string) (string, error) {
 // loop) on first use. Browser-session nodes are not wired here: an MCP
 // server never launches Chrome; run those workflows via the CLI or daemon.
 func (rt *runtime) ensureEngine(ctx context.Context) error {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
 	if rt.engine != nil {
 		return nil
 	}
@@ -203,6 +217,8 @@ func (rt *runtime) ensureEngine(ctx context.Context) error {
 // registryOrDefault returns the node registry, building a DB-less one if
 // the engine has not been started yet.
 func (rt *runtime) registryOrDefault() *workflow.NodeTypeRegistry {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
 	if rt.registry != nil {
 		return rt.registry
 	}

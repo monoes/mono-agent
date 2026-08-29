@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"database/sql"
+	"time"
 )
 
 // HybridWorkflowStore delegates workflow-definition operations to a
@@ -250,6 +251,10 @@ func (h *HybridWorkflowStore) DeleteCredential(ctx context.Context, id string) e
 
 func (h *HybridWorkflowStore) RecoverStaleExecutions(ctx context.Context) error {
 	return h.sql.RecoverStaleExecutions(ctx)
+}
+
+func (h *HybridWorkflowStore) ReapStaleRunningExecutions(ctx context.Context, olderThan time.Time) error {
+	return h.sql.ReapStaleRunningExecutions(ctx, olderThan)
 }
 
 func (h *HybridWorkflowStore) CancelQueuedExecution(ctx context.Context, id string) (bool, error) {

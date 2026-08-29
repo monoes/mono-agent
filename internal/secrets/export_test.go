@@ -305,3 +305,19 @@ func TestImport_NilRematerializerSkipsGracefully(t *testing.T) {
 		t.Fatalf("expected the vault entry to import even with a nil rematerializer, got imported=%d", imported)
 	}
 }
+
+// TestImport_RejectsBadVersionOrKDF verifies Import refuses envelopes that
+// don't claim the exact version/KDF this package decrypts with, instead of
+// deriving a key with the wrong parameters and failing confusingly.
+func TestImport_RejectsBadVersionOrKDF(t *testing.T) {
+	db := newExportTestDB(t)
+
+	// Same format, but version 2.
+	if _, _, err := Import(context.Background(), db.DB, "default", "pw", []byte(`{"format":"monoagent-vault-export","version":2,"kdf":"argon2id"}`), nil, nil, nil); err == nil {
+		t.Fatal("expected error for unsupported version, got nil")
+	}
+	// Same format, but a different KDF.
+	if _, _, err := Import(context.Background(), db.DB, "default", "pw", []byte(`{"format":"monoagent-vault-export","version":1,"kdf":"scrypt"}`), nil, nil, nil); err == nil {
+		t.Fatal("expected error for unsupported KDF, got nil")
+	}
+}

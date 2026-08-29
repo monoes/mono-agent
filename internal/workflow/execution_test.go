@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/rs/zerolog"
 )
@@ -27,12 +28,12 @@ func (s *stubStore) CreateExecutionNode(ctx context.Context, en *WorkflowExecuti
 	return nil
 }
 
-func (s *stubStore) CreateWorkflow(context.Context, *Workflow) error              { return nil }
-func (s *stubStore) GetWorkflow(context.Context, string) (*Workflow, error)       { return nil, nil }
-func (s *stubStore) ListWorkflows(context.Context, string) ([]Workflow, error)    { return nil, nil }
-func (s *stubStore) UpdateWorkflow(context.Context, *Workflow) error              { return nil }
-func (s *stubStore) DeleteWorkflow(context.Context, string) error                 { return nil }
-func (s *stubStore) SetWorkflowActive(context.Context, string, bool) error        { return nil }
+func (s *stubStore) CreateWorkflow(context.Context, *Workflow) error           { return nil }
+func (s *stubStore) GetWorkflow(context.Context, string) (*Workflow, error)    { return nil, nil }
+func (s *stubStore) ListWorkflows(context.Context, string) ([]Workflow, error) { return nil, nil }
+func (s *stubStore) UpdateWorkflow(context.Context, *Workflow) error           { return nil }
+func (s *stubStore) DeleteWorkflow(context.Context, string) error              { return nil }
+func (s *stubStore) SetWorkflowActive(context.Context, string, bool) error     { return nil }
 func (s *stubStore) SaveWorkflowNodes(context.Context, string, []WorkflowNode) error {
 	return nil
 }
@@ -43,24 +44,26 @@ func (s *stubStore) CreateExecution(context.Context, *WorkflowExecution) error {
 func (s *stubStore) GetExecution(context.Context, string) (*WorkflowExecution, error) {
 	return nil, nil
 }
+func (s *stubStore) GetExecutionStatus(context.Context, string) (string, error) { return "", nil }
 func (s *stubStore) ListExecutions(context.Context, string, int) ([]WorkflowExecution, error) {
 	return nil, nil
 }
 func (s *stubStore) UpdateExecutionStatus(context.Context, string, string, string) error { return nil }
 func (s *stubStore) SetExecutionStarted(context.Context, string) error                   { return nil }
 func (s *stubStore) SetExecutionFinished(context.Context, string, string, string) error  { return nil }
-func (s *stubStore) UpdateExecutionNode(context.Context, *WorkflowExecutionNode) error    { return nil }
+func (s *stubStore) UpdateExecutionNode(context.Context, *WorkflowExecutionNode) error   { return nil }
 func (s *stubStore) SetExecutionNodeFinished(context.Context, string, string, []Item, string) error {
 	return nil
 }
-func (s *stubStore) CreateCredential(context.Context, *Credential) error         { return nil }
-func (s *stubStore) GetCredential(context.Context, string) (*Credential, error)  { return nil, nil }
+func (s *stubStore) CreateCredential(context.Context, *Credential) error        { return nil }
+func (s *stubStore) GetCredential(context.Context, string) (*Credential, error) { return nil, nil }
 func (s *stubStore) ListCredentials(context.Context, string) ([]Credential, error) {
 	return nil, nil
 }
-func (s *stubStore) UpdateCredential(context.Context, *Credential) error { return nil }
-func (s *stubStore) DeleteCredential(context.Context, string) error      { return nil }
-func (s *stubStore) RecoverStaleExecutions(context.Context) error        { return nil }
+func (s *stubStore) UpdateCredential(context.Context, *Credential) error         { return nil }
+func (s *stubStore) DeleteCredential(context.Context, string) error              { return nil }
+func (s *stubStore) RecoverStaleExecutions(context.Context) error                { return nil }
+func (s *stubStore) ReapStaleRunningExecutions(context.Context, time.Time) error { return nil }
 func (s *stubStore) CancelQueuedExecution(context.Context, string) (bool, error) { return false, nil }
 func (s *stubStore) SetExecutionWaiting(_ context.Context, _ string, state string) error {
 	s.mu.Lock()
@@ -68,10 +71,10 @@ func (s *stubStore) SetExecutionWaiting(_ context.Context, _ string, state strin
 	s.waitingState = state
 	return nil
 }
-func (s *stubStore) ListResumableExecutions(context.Context) ([]string, error) { return nil, nil }
+func (s *stubStore) ListResumableExecutions(context.Context) ([]string, error)    { return nil, nil }
 func (s *stubStore) ResumeWaitingExecution(context.Context, string) (bool, error) { return true, nil }
-func (s *stubStore) PruneExecutions(context.Context, string, int) error  { return nil }
-func (s *stubStore) RawDB() *sql.DB                                      { return nil }
+func (s *stubStore) PruneExecutions(context.Context, string, int) error           { return nil }
+func (s *stubStore) RawDB() *sql.DB                                               { return nil }
 
 // fakeFailNode always fails, to exercise on_error handling.
 type fakeFailNode struct{}

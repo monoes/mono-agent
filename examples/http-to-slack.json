@@ -24,9 +24,9 @@
       "position": { "x": 320, "y": 0 },
       "disabled": false,
       "config": {
-        "assignments": {
-          "text": "Alert: {{ $json.event }} — severity {{ $json.severity }} at {{ $json.source }}"
-        }
+        "assignments": [
+          { "field": "text", "value": "Alert: {{ $json.event }} — severity {{ $json.severity }} at {{ $json.source }}", "type": "string" }
+        ]
       }
     },
     {

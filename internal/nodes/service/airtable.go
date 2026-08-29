@@ -8,7 +8,8 @@ import (
 	"github.com/monoes/mono-agent/internal/workflow"
 )
 
-const airtableBaseURL = "https://api.airtable.com/v0"
+// airtableBaseURL is a var (not const) so tests can point it at an httptest server.
+var airtableBaseURL = "https://api.airtable.com/v0"
 
 // AirtableNode interacts with the Airtable REST API.
 // Type: "service.airtable"
@@ -62,7 +63,6 @@ func (n *AirtableNode) Execute(ctx context.Context, input workflow.NodeInput, co
 }
 
 func (n *AirtableNode) listRecords(ctx context.Context, token, baseURL string, config map[string]interface{}) ([]workflow.Item, error) {
-	reqURL := baseURL + "?"
 	params := url.Values{}
 	if ff := strVal(config, "filter_formula"); ff != "" {
 		params.Set("filterByFormula", ff)
@@ -73,27 +73,48 @@ func (n *AirtableNode) listRecords(ctx context.Context, token, baseURL string, c
 	if view := strVal(config, "view"); view != "" {
 		params.Set("view", view)
 	}
-	reqURL = baseURL + "?" + params.Encode()
 
-	result, err := apiRequest(ctx, "GET", reqURL, token, nil)
-	if err != nil {
-		return nil, fmt.Errorf("service.airtable list_records: %w", err)
+	// Airtable pages at ~100 records per response and hands back an
+	// "offset" token to fetch the next page — previously the token was
+	// ignored and every list silently stopped at the first page.
+	var items []workflow.Item
+	offset := ""
+	truncated := false
+	for page := 0; page < maxListPages; page++ {
+		if offset != "" {
+			params.Set("offset", offset)
+		}
+		result, err := apiRequest(ctx, "GET", baseURL+"?"+params.Encode(), token, nil)
+		if err != nil {
+			return nil, fmt.Errorf("service.airtable list_records: %w", err)
+		}
+		records, _ := result["records"].([]interface{})
+		for _, r := range records {
+			rec, ok := r.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			fields, _ := rec["fields"].(map[string]interface{})
+			if fields == nil {
+				fields = map[string]interface{}{}
+			}
+			fields["id"] = rec["id"]
+			fields["createdTime"] = rec["createdTime"]
+			items = append(items, workflow.NewItem(fields))
+		}
+		next, _ := result["offset"].(string)
+		if next == "" {
+			offset = ""
+			break
+		}
+		if page == maxListPages-1 {
+			truncated = true
+			break
+		}
+		offset = next
 	}
-
-	records, _ := result["records"].([]interface{})
-	items := make([]workflow.Item, 0, len(records))
-	for _, r := range records {
-		rec, ok := r.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		fields, _ := rec["fields"].(map[string]interface{})
-		if fields == nil {
-			fields = map[string]interface{}{}
-		}
-		fields["id"] = rec["id"]
-		fields["createdTime"] = rec["createdTime"]
-		items = append(items, workflow.NewItem(fields))
+	if truncated {
+		flagTruncated(items)
 	}
 	return items, nil
 }

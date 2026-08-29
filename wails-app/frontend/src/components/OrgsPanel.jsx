@@ -111,7 +111,9 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose }) 
 
   // ── Live event tail ──
   useEffect(() => {
-    if (!selected) return
+    // Embedded panels render null when closed, but hooks still run — guard the
+    // SSE stream + listeners on isOpen so a closed panel stops streaming.
+    if (!selected || !isOpen) return
     setEvents([])
     api.streamOrgEvents(selected)
     const offEvent = onOrgEvent((payload) => {
@@ -127,7 +129,7 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose }) 
       offClosed()
       api.stopOrgEvents(selected)
     }
-  }, [selected])
+  }, [selected, isOpen])
 
   const selectOrg = (name) => {
     setSelected(name)

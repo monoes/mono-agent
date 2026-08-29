@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"net/url"
 
 	"github.com/monoes/mono-agent/internal/workflow"
 )
@@ -55,16 +56,19 @@ func (n *AsanaNode) listTasks(ctx context.Context, token string, config map[stri
 	workspaceGID := strVal(config, "workspace_gid")
 	assignee := strVal(config, "assignee")
 
-	var url string
-	if projectGID != "" {
-		url = fmt.Sprintf("%s/tasks?project=%s&opt_fields=gid,name,notes,due_on,completed,assignee,created_at,modified_at", asanaBaseURL, projectGID)
-	} else if workspaceGID != "" && assignee != "" {
-		url = fmt.Sprintf("%s/tasks?workspace=%s&assignee=%s&opt_fields=gid,name,notes,due_on,completed,assignee,created_at,modified_at", asanaBaseURL, workspaceGID, assignee)
-	} else {
+	const optFields = "gid,name,notes,due_on,completed,assignee,created_at,modified_at"
+	params := url.Values{"opt_fields": {optFields}}
+	switch {
+	case projectGID != "":
+		params.Set("project", projectGID)
+	case workspaceGID != "" && assignee != "":
+		params.Set("workspace", workspaceGID)
+		params.Set("assignee", assignee)
+	default:
 		return nil, fmt.Errorf("service.asana list_tasks: 'project_gid' or ('workspace_gid' + 'assignee') is required")
 	}
 
-	result, err := apiRequest(ctx, "GET", url, token, nil)
+	result, err := apiRequest(ctx, "GET", asanaBaseURL+"/tasks?"+params.Encode(), token, nil)
 	if err != nil {
 		return nil, fmt.Errorf("service.asana list_tasks: %w", err)
 	}
@@ -78,8 +82,8 @@ func (n *AsanaNode) getTask(ctx context.Context, token string, config map[string
 	if taskGID == "" {
 		return nil, fmt.Errorf("service.asana: 'task_gid' is required for get_task")
 	}
-	url := fmt.Sprintf("%s/tasks/%s", asanaBaseURL, taskGID)
-	result, err := apiRequest(ctx, "GET", url, token, nil)
+	u := fmt.Sprintf("%s/tasks/%s", asanaBaseURL, url.PathEscape(taskGID))
+	result, err := apiRequest(ctx, "GET", u, token, nil)
 	if err != nil {
 		return nil, fmt.Errorf("service.asana get_task: %w", err)
 	}
@@ -150,8 +154,8 @@ func (n *AsanaNode) updateTask(ctx context.Context, token string, config map[str
 	}
 
 	body := map[string]interface{}{"data": taskData}
-	url := fmt.Sprintf("%s/tasks/%s", asanaBaseURL, taskGID)
-	result, err := apiRequest(ctx, "PUT", url, token, body)
+	u := fmt.Sprintf("%s/tasks/%s", asanaBaseURL, url.PathEscape(taskGID))
+	result, err := apiRequest(ctx, "PUT", u, token, body)
 	if err != nil {
 		return nil, fmt.Errorf("service.asana update_task: %w", err)
 	}
@@ -163,11 +167,11 @@ func (n *AsanaNode) updateTask(ctx context.Context, token string, config map[str
 }
 
 func (n *AsanaNode) listProjects(ctx context.Context, token string, config map[string]interface{}) ([]workflow.Item, error) {
-	url := asanaBaseURL + "/projects?opt_fields=gid,name,notes,color,archived,created_at,modified_at"
+	params := url.Values{"opt_fields": {"gid,name,notes,color,archived,created_at,modified_at"}}
 	if workspaceGID := strVal(config, "workspace_gid"); workspaceGID != "" {
-		url += "&workspace=" + workspaceGID
+		params.Set("workspace", workspaceGID)
 	}
-	result, err := apiRequest(ctx, "GET", url, token, nil)
+	result, err := apiRequest(ctx, "GET", asanaBaseURL+"/projects?"+params.Encode(), token, nil)
 	if err != nil {
 		return nil, fmt.Errorf("service.asana list_projects: %w", err)
 	}

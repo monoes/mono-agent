@@ -652,6 +652,190 @@ func TestSecretImport_RematerializesConnection_PreservesNonSecretDataOnUpdate(t 
 	}
 }
 
+// TestSecretAdd_StdinJSON covers RA1-4's argv-leak-free input path: with
+// --stdin-json, `secret add` reads {"value": "...", "fields": {...}} from
+// stdin — value shorthand maps to fields["secret"], both together merge —
+// and no secret material needs to appear in argv.
+func TestSecretAdd_StdinJSON(t *testing.T) {
+	dbPath := newSecretCLITestDB(t)
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	orig := os.Stdin
+	os.Stdin = r
+	go func() {
+		io.WriteString(w, `{"value":"shorthand-value","fields":{"api_key":"ak-stdin-1"}}`)
+		w.Close()
+	}()
+
+	addOut, err := runSecretCmd(t, dbPath, "add", "--kind", "secret", "--name", "stdin-json-key", "--stdin-json")
+	os.Stdin = orig
+	if err != nil {
+		t.Fatalf("secret add --stdin-json: %v (%s)", err, addOut)
+	}
+
+	revealOut, err := runSecretCmdText(t, dbPath, "reveal", "stdin-json-key", "--reveal")
+	if err != nil {
+		t.Fatalf("secret reveal: %v", revealOut)
+	}
+	if !strings.Contains(revealOut, "api_key: ak-stdin-1") || !strings.Contains(revealOut, "shorthand-value") {
+		t.Fatalf("expected both stdin-JSON fields stored, got: %s", revealOut)
+	}
+}
+
+// TestSecretAdd_StdinJSONFieldsOnly proves "value" is optional when fields
+// are present.
+func TestSecretAdd_StdinJSONFieldsOnly(t *testing.T) {
+	dbPath := newSecretCLITestDB(t)
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	orig := os.Stdin
+	os.Stdin = r
+	go func() {
+		io.WriteString(w, `{"fields":{"access_key_id":"AKIA...","secret_access_key":"sa-stdin-1"}}`)
+		w.Close()
+	}()
+
+	addOut, err := runSecretCmd(t, dbPath, "add", "--kind", "secret", "--name", "stdin-json-fields", "--stdin-json")
+	os.Stdin = orig
+	if err != nil {
+		t.Fatalf("secret add --stdin-json (fields only): %v (%s)", err, addOut)
+	}
+
+	revealOut, err := runSecretCmd(t, dbPath, "reveal", "stdin-json-fields", "--reveal")
+	if err != nil {
+		t.Fatalf("secret reveal: %v", err)
+	}
+	var parsed struct {
+		Fields map[string]string `json:"fields"`
+	}
+	if err := json.Unmarshal([]byte(revealOut), &parsed); err != nil {
+		t.Fatalf("unmarshal reveal output: %v", err)
+	}
+	if parsed.Fields["access_key_id"] != "AKIA..." || parsed.Fields["secret_access_key"] != "sa-stdin-1" {
+		t.Fatalf("unexpected stored fields: %+v", parsed.Fields)
+	}
+}
+
+// TestSecretAdd_StdinJSONValidation covers the rejection paths: combining
+// --stdin-json with --value/--field, an empty payload, a "secret" field
+// colliding with "value", and malformed JSON.
+func TestSecretAdd_StdinJSONValidation(t *testing.T) {
+	t.Run("rejects value flag combo", func(t *testing.T) {
+		dbPath := newSecretCLITestDB(t)
+		_, err := runSecretCmd(t, dbPath, "add", "--kind", "secret", "--name", "x", "--value", "v", "--stdin-json")
+		if err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+			t.Fatalf("expected flag-combo error, got: %v", err)
+		}
+	})
+	t.Run("rejects field flag combo", func(t *testing.T) {
+		dbPath := newSecretCLITestDB(t)
+		_, err := runSecretCmd(t, dbPath, "add", "--kind", "secret", "--name", "x", "--field", "k=v", "--stdin-json")
+		if err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+			t.Fatalf("expected flag-combo error, got: %v", err)
+		}
+	})
+	t.Run("rejects empty payload", func(t *testing.T) {
+		dbPath := newSecretCLITestDB(t)
+		orig := swapStdin(t, `{}`)
+		_, err := runSecretCmd(t, dbPath, "add", "--kind", "secret", "--name", "x", "--stdin-json")
+		os.Stdin = orig
+		if err == nil || !strings.Contains(err.Error(), "value") {
+			t.Fatalf("expected empty-payload error, got: %v", err)
+		}
+	})
+	t.Run("rejects secret field collision", func(t *testing.T) {
+		dbPath := newSecretCLITestDB(t)
+		orig := swapStdin(t, `{"value":"a","fields":{"secret":"b"}}`)
+		_, err := runSecretCmd(t, dbPath, "add", "--kind", "secret", "--name", "x", "--stdin-json")
+		os.Stdin = orig
+		if err == nil || !strings.Contains(err.Error(), `"secret"`) {
+			t.Fatalf("expected collision error, got: %v", err)
+		}
+	})
+	t.Run("rejects malformed json", func(t *testing.T) {
+		dbPath := newSecretCLITestDB(t)
+		orig := swapStdin(t, `not-json`)
+		_, err := runSecretCmd(t, dbPath, "add", "--kind", "secret", "--name", "x", "--stdin-json")
+		os.Stdin = orig
+		if err == nil {
+			t.Fatal("expected error for malformed stdin JSON, got nil")
+		}
+	})
+}
+
+// TestSecretUpdate_StdinJSON covers the update side of RA1-4: the full
+// replacement field set arrives as JSON on stdin, and --stdin-json plus
+// --field together is rejected.
+func TestSecretUpdate_StdinJSON(t *testing.T) {
+	dbPath := newSecretCLITestDB(t)
+	if _, err := runSecretCmd(t, dbPath, "add", "--kind", "secret", "--name", "svc", "--value", "v-old"); err != nil {
+		t.Fatalf("secret add: %v", err)
+	}
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	orig := os.Stdin
+	os.Stdin = r
+	go func() {
+		io.WriteString(w, `{"fields":{"pat":"ghp_new_1"}}`)
+		w.Close()
+	}()
+
+	updateOut, err := runSecretCmd(t, dbPath, "update", "svc", "--stdin-json")
+	os.Stdin = orig
+	if err != nil {
+		t.Fatalf("secret update --stdin-json: %v (%s)", err, updateOut)
+	}
+
+	revealOut, err := runSecretCmd(t, dbPath, "reveal", "svc", "--reveal")
+	if err != nil {
+		t.Fatalf("secret reveal: %v", err)
+	}
+	var parsed struct {
+		Fields map[string]string `json:"fields"`
+	}
+	if err := json.Unmarshal([]byte(revealOut), &parsed); err != nil {
+		t.Fatalf("unmarshal reveal output: %v", err)
+	}
+	if len(parsed.Fields) != 1 || parsed.Fields["pat"] != "ghp_new_1" {
+		t.Fatalf("expected fields fully replaced via stdin JSON, got: %+v", parsed.Fields)
+	}
+
+	// --stdin-json and --field are mutually exclusive.
+	orig = swapStdin(t, `{"fields":{"a":"1"}}`)
+	_, err = runSecretCmd(t, dbPath, "update", "svc", "--field", "b=2", "--stdin-json")
+	os.Stdin = orig
+	if err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+		t.Fatalf("expected flag-combo error, got: %v", err)
+	}
+}
+
+// swapStdin replaces os.Stdin with a pipe pre-loaded with s and returns the
+// original for restoration. The write happens on a goroutine so a large s
+// cannot deadlock the pipe buffer.
+func swapStdin(t *testing.T, s string) *os.File {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	orig := os.Stdin
+	os.Stdin = r
+	go func() {
+		io.WriteString(w, s)
+		w.Close()
+	}()
+	return orig
+}
+
 // TestSecretImport_RematerializesProvider_PreservesStatusOnUpdate covers
 // re-importing onto a machine that already has an AI provider with the
 // imported name: rematerializeProvider must carry over the existing row's

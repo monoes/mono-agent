@@ -5,19 +5,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 
 	"github.com/monoes/mono-agent/internal/workflow"
 )
 
-const linearGraphQLURL = "https://api.linear.app/graphql"
+// linearGraphQLURL is a var (not const) so tests can point it at an httptest server.
+var linearGraphQLURL = "https://api.linear.app/graphql"
 
 // GraphQL query constants for each Linear operation.
 const (
 	linearQueryListIssues = `
-query ListIssues($teamId: String, $projectId: String, $filter: IssueFilter, $first: Int) {
-  issues(filter: $filter, first: $first) {
+query ListIssues($teamId: String, $projectId: String, $filter: IssueFilter, $first: Int, $after: String) {
+  issues(filter: $filter, first: $first, after: $after) {
     nodes {
       id
       title
@@ -29,6 +29,10 @@ query ListIssues($teamId: String, $projectId: String, $filter: IssueFilter, $fir
       assignee { id name email }
       createdAt
       updatedAt
+    }
+    pageInfo {
+      hasNextPage
+      endCursor
     }
   }
 }`
@@ -184,12 +188,12 @@ func (n *LinearNode) linearGraphQL(ctx context.Context, token, query string, var
 	}
 	defer resp.Body.Close()
 
-	respBytes, err := io.ReadAll(resp.Body)
+	respBytes, err := readBodyCapped(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("reading response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBytes))
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, errorBodyEcho(respBytes))
 	}
 
 	var gqlResp struct {
@@ -235,11 +239,41 @@ func (n *LinearNode) listIssues(ctx context.Context, token string, config map[st
 	}
 	vars["first"] = 100
 
-	data, err := n.linearGraphQL(ctx, token, linearQueryListIssues, vars)
-	if err != nil {
-		return nil, fmt.Errorf("service.linear list_issues: %w", err)
+	// Linear pages via pageInfo.hasNextPage/endCursor — previously only the
+	// first page ever came back.
+	var items []workflow.Item
+	truncated := false
+	for page := 0; page < maxListPages; page++ {
+		data, err := n.linearGraphQL(ctx, token, linearQueryListIssues, vars)
+		if err != nil {
+			return nil, fmt.Errorf("service.linear list_issues: %w", err)
+		}
+		items = append(items, listToItems(nodesFromData(data, "issues"))...)
+		top, _ := data["issues"].(map[string]interface{})
+		if top == nil {
+			break
+		}
+		pageInfo, _ := top["pageInfo"].(map[string]interface{})
+		if pageInfo == nil {
+			break
+		}
+		if hasNext, _ := pageInfo["hasNextPage"].(bool); !hasNext {
+			break
+		}
+		cursor, _ := pageInfo["endCursor"].(string)
+		if cursor == "" {
+			break
+		}
+		if page == maxListPages-1 {
+			truncated = true
+			break
+		}
+		vars["after"] = cursor
 	}
-	return listToItems(nodesFromData(data, "issues")), nil
+	if truncated {
+		flagTruncated(items)
+	}
+	return items, nil
 }
 
 func (n *LinearNode) getIssue(ctx context.Context, token string, config map[string]interface{}) ([]workflow.Item, error) {

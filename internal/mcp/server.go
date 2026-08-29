@@ -13,6 +13,8 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
+	"time"
 )
 
 const protocolVersion = "2024-11-05"
@@ -21,6 +23,12 @@ const protocolVersion = "2024-11-05"
 // discarded and answered with a -32700 "request too large" error, but the
 // server keeps serving subsequent requests (the connection survives).
 const maxRequestLineBytes = 17 * 1024 * 1024
+
+// postEOFGrace bounds how long in-flight handlers may keep running after
+// stdin reaches EOF before the serve context is cancelled: fast tools
+// finish and get their responses flushed; long waits (a workflow_run
+// poll) are cut off by the cancel instead of holding the server open.
+const postEOFGrace = 3 * time.Second
 
 // Options configures the server.
 type Options struct {
@@ -70,6 +78,11 @@ type toolResult struct {
 type Server struct {
 	opts Options
 	rt   *runtime
+
+	// rtMu guards the lazy runtime bootstrap: requests are dispatched on
+	// separate goroutines, so concurrent tools/call invocations may race
+	// to build the runtime on first use.
+	rtMu sync.Mutex
 }
 
 // NewServer creates a Server with the given options.
@@ -85,12 +98,16 @@ func Run(opts Options) error {
 
 // Serve reads newline-delimited JSON-RPC requests from in and writes one
 // JSON response line per request to out. Notifications (requests with no
-// raw "id" member) produce no output. When the read loop ends (EOF), the
-// serve context is cancelled so any context-aware wait (e.g. a pending
-// workflow_run polling loop) observes the closed client instead of
-// blocking out its full timeout. It returns nil when in reaches EOF.
+// raw "id" member) produce no output. Each request is dispatched on its
+// own goroutine so a slow tool call cannot block other requests
+// (head-of-line removal); responses are serialized through wmu, but their
+// ORDER is no longer guaranteed under concurrency (acceptable per spec).
+// When the read loop ends (EOF), the serve context is cancelled so any
+// context-aware wait (e.g. a pending workflow_run polling loop) observes
+// the closed client instead of blocking out its full timeout. It returns
+// nil when in reaches EOF.
 func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
-	defer s.rt.Close()
+	defer s.closeRuntime()
 
 	// serveCtx is cancelled as soon as the read loop ends (client closed
 	// stdin) — handlers below receive it, so waitForExecution-style waits
@@ -100,36 +117,80 @@ func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 
 	reader := bufio.NewReaderSize(in, 64*1024)
 	w := bufio.NewWriter(out)
+	// wmu serializes response writes (and the shared bufio.Writer) across
+	// handler goroutines; writeErr remembers the first failure so Serve
+	// can surface it after all in-flight handlers settle.
+	var (
+		wmu      sync.Mutex
+		writeErr error
+	)
+	var wg sync.WaitGroup
+	dispatch := func(line []byte) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resp := s.handleLine(serveCtx, line)
+			if resp == nil {
+				return
+			}
+			wmu.Lock()
+			defer wmu.Unlock()
+			if werr := writeResponse(w, resp); werr != nil && writeErr == nil {
+				writeErr = werr
+			}
+		}()
+	}
+	// settle stops reading and releases the handlers: in-flight work gets
+	// postEOFGrace to complete on its own, then serveCtx is cancelled so
+	// context-aware waits return instead of blocking out their timeouts.
+	settle := func() {
+		graceDone := make(chan struct{})
+		go func() {
+			wg.Wait()
+			close(graceDone)
+		}()
+		select {
+		case <-graceDone:
+		case <-time.After(postEOFGrace):
+		}
+		cancel()
+		<-graceDone
+	}
+
 	for {
 		if err := serveCtx.Err(); err != nil {
+			settle()
 			return err
 		}
 		line, tooLong, rerr := readLine(reader, maxRequestLineBytes)
 		if tooLong {
-			if werr := writeResponse(w, &rpcResponse{
+			wmu.Lock()
+			werr := writeResponse(w, &rpcResponse{
 				JSONRPC: "2.0",
 				ID:      json.RawMessage("null"),
 				Error:   &rpcError{Code: -32700, Message: "request too large"},
-			}); werr != nil {
+			})
+			wmu.Unlock()
+			if werr != nil {
+				settle()
 				return werr
 			}
 		} else if trimmed := bytes.TrimSpace(line); len(trimmed) > 0 {
-			if resp := s.handleLine(serveCtx, trimmed); resp != nil {
-				if werr := writeResponse(w, resp); werr != nil {
-					return werr
-				}
-			}
+			dispatch(trimmed)
 		}
 		if rerr != nil {
 			if errors.Is(rerr, io.EOF) {
 				break
 			}
+			settle()
 			return fmt.Errorf("mcp: read stdin: %w", rerr)
 		}
 	}
-	// stdin is gone: unblock anything still observing serveCtx before the
-	// final flush returns.
-	cancel()
+	// stdin is gone: let in-flight handlers settle (bounded), then flush.
+	settle()
+	if writeErr != nil {
+		return writeErr
+	}
 	return w.Flush()
 }
 
@@ -191,6 +252,19 @@ func (s *Server) handleLine(ctx context.Context, line []byte) *rpcResponse {
 			Error:   &rpcError{Code: -32700, Message: "parse error: " + err.Error()},
 		}
 	}
+	// The jsonrpc member is mandatory and must be exactly "2.0" — a
+	// missing or wrong version is an Invalid Request, not a parse error.
+	if req.JSONRPC != "2.0" {
+		id := json.RawMessage("null")
+		if hasRequestID(req) {
+			id = req.ID
+		}
+		return &rpcResponse{
+			JSONRPC: "2.0",
+			ID:      id,
+			Error:   &rpcError{Code: -32600, Message: `invalid request: jsonrpc member must be "2.0"`},
+		}
+	}
 	isNotificationMethod := strings.HasPrefix(req.Method, "notifications/")
 
 	// A notifications/* method with a non-null id is a protocol violation.
@@ -218,6 +292,7 @@ func (s *Server) handleLine(ctx context.Context, line []byte) *rpcResponse {
 				"name":    "monoagentcli",
 				"version": s.version(),
 			},
+			"instructions": "Start with docs(topic) or workflow_list; validate before run; hil_list for pending approvals.",
 		})
 
 	case "ping":
@@ -261,6 +336,16 @@ func (s *Server) handleToolsCall(ctx context.Context, req rpcRequest) *rpcRespon
 		Content: []toolContent{{Type: "text", Text: text}},
 		IsError: err != nil,
 	})
+}
+
+// closeRuntime releases the lazily-bootstrapped runtime, if any. (A plain
+// `defer s.rt.Close()` would capture s.rt at defer time — before lazy
+// bootstrap — and no-op.) Safe when the runtime was never built.
+func (s *Server) closeRuntime() {
+	s.rtMu.Lock()
+	rt := s.rt
+	s.rtMu.Unlock()
+	rt.Close()
 }
 
 func (s *Server) result(id json.RawMessage, result interface{}) *rpcResponse {

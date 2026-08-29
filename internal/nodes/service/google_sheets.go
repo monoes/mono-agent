@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 
@@ -82,7 +83,7 @@ func (n *GoogleSheetsNode) Execute(ctx context.Context, input workflow.NodeInput
 	}
 	useHeaderRow := boolVal(config, "use_header_row")
 
-	baseURL := "https://sheets.googleapis.com/v4/spreadsheets/" + spreadsheetID
+	baseURL := "https://sheets.googleapis.com/v4/spreadsheets/" + url.PathEscape(spreadsheetID)
 
 	var items []workflow.Item
 
@@ -242,12 +243,12 @@ func sheetsRequest(ctx context.Context, method, url, accessToken string, body in
 		return nil, fmt.Errorf("google_sheets %s %s: %w", method, url, err)
 	}
 	defer resp.Body.Close()
-	respBytes, err := io.ReadAll(resp.Body)
+	respBytes, err := readBodyCapped(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("google_sheets: reading response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("google_sheets HTTP %d: %s", resp.StatusCode, string(respBytes))
+		return nil, fmt.Errorf("google_sheets HTTP %d: %s", resp.StatusCode, errorBodyEcho(respBytes))
 	}
 	if len(respBytes) == 0 {
 		return map[string]interface{}{}, nil
@@ -319,17 +320,11 @@ func sheetsColumnLetter(idx int) string {
 	return result
 }
 
+// sheetsEncodeRange percent-encodes a Sheets A1 range (sheet name and/or
+// cell range) as a single path segment — a sheet name with "/" or other
+// reserved characters must not alter the request path.
 func sheetsEncodeRange(r string) string {
-	out := make([]byte, 0, len(r))
-	for i := 0; i < len(r); i++ {
-		c := r[i]
-		if c == ' ' {
-			out = append(out, '%', '2', '0')
-		} else {
-			out = append(out, c)
-		}
-	}
-	return string(out)
+	return url.PathEscape(r)
 }
 
 func sheetsExtractValues(config map[string]interface{}) [][]interface{} {

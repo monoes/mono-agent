@@ -7,7 +7,7 @@ import (
 	"github.com/monoes/mono-agent/internal/workflow"
 )
 
-// Exit codes (see AGENTS.md / docs/REPOSITIONING_PLAN.md I4):
+// Exit codes (see the exit-code table in AGENTS.md):
 //
 //	0 ok · 1 general error · 2 not-found · 3 invalid input / validation · 4 auth/connection
 //

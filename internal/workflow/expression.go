@@ -368,7 +368,9 @@ func (e *ExpressionEngine) EvaluateBool(tmpl string, ctx ExpressionContext) (boo
 	case "false", "0", "no", "":
 		return false, nil
 	}
-	return false, fmt.Errorf("expression: cannot convert %q to bool", s)
+	// Report the rendered result's type and length only — the rendered
+	// string may be (or contain) a secret, and must not appear in errors.
+	return false, fmt.Errorf("expression: cannot convert value (type %T, len %d) to bool", s, len(s))
 }
 
 // EvaluateValue evaluates a template and returns the raw interface{} result.

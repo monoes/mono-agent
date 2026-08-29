@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/rs/zerolog"
 
@@ -51,6 +52,7 @@ func (fakeStore) CreateExecution(context.Context, *workflow.WorkflowExecution) e
 func (fakeStore) GetExecution(context.Context, string) (*workflow.WorkflowExecution, error) {
 	return nil, nil
 }
+func (fakeStore) GetExecutionStatus(context.Context, string) (string, error) { return "", nil }
 func (fakeStore) ListExecutions(context.Context, string, int) ([]workflow.WorkflowExecution, error) {
 	return nil, nil
 }
@@ -76,6 +78,7 @@ func (fakeStore) ListCredentials(context.Context, string) ([]workflow.Credential
 func (fakeStore) UpdateCredential(context.Context, *workflow.Credential) error { return nil }
 func (fakeStore) DeleteCredential(context.Context, string) error               { return nil }
 func (fakeStore) RecoverStaleExecutions(context.Context) error                 { return nil }
+func (fakeStore) ReapStaleRunningExecutions(context.Context, time.Time) error  { return nil }
 func (fakeStore) CancelQueuedExecution(context.Context, string) (bool, error)  { return false, nil }
 func (fakeStore) SetExecutionWaiting(context.Context, string, string) error    { return nil }
 func (fakeStore) ListResumableExecutions(context.Context) ([]string, error)    { return nil, nil }

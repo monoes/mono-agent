@@ -605,4 +605,3 @@ func (a *App) GetPostComments(postID string) []PostComment {
 	}
 	return comments
 }
-

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"net/url"
 
 	"github.com/monoes/mono-agent/internal/workflow"
 )
@@ -12,7 +13,8 @@ type HubSpotNode struct{}
 
 func (n *HubSpotNode) Type() string { return "service.hubspot" }
 
-const hubspotBaseURL = "https://api.hubapi.com"
+// hubspotBaseURL is a var (not const) so tests can point it at an httptest server.
+var hubspotBaseURL = "https://api.hubapi.com"
 
 // hubspotObjectType maps operation prefixes to HubSpot CRM object type paths.
 func hubspotObjectPath(objectType string) string {
@@ -125,30 +127,54 @@ func (n *HubSpotNode) Execute(ctx context.Context, input workflow.NodeInput, con
 	return []workflow.NodeOutput{{Handle: "main", Items: items}}, nil
 }
 
-// hubspotList fetches a page of CRM objects and returns them as Items.
+// hubspotList fetches CRM objects and follows the paging.next.after cursor
+// (up to maxListPages requests), returning them as Items.
 func hubspotList(ctx context.Context, accessToken, objectType string, limit int, after string) ([]workflow.Item, error) {
-	url := fmt.Sprintf("%s?limit=%d", hubspotObjectPath(objectType), limit)
-	if after != "" {
-		url += "&after=" + after
-	}
-	data, err := apiRequest(ctx, "GET", url, accessToken, nil)
-	if err != nil {
-		return nil, fmt.Errorf("hubspot list %s: %w", objectType, err)
-	}
-	results, _ := data["results"].([]interface{})
-	items := make([]workflow.Item, 0, len(results))
-	for _, r := range results {
-		if m, ok := r.(map[string]interface{}); ok {
-			items = append(items, workflow.NewItem(m))
+	var items []workflow.Item
+	truncated := false
+	for page := 0; page < maxListPages; page++ {
+		params := url.Values{"limit": {fmt.Sprintf("%d", limit)}}
+		if after != "" {
+			params.Set("after", after)
 		}
+		data, err := apiRequest(ctx, "GET", hubspotObjectPath(objectType)+"?"+params.Encode(), accessToken, nil)
+		if err != nil {
+			return nil, fmt.Errorf("hubspot list %s: %w", objectType, err)
+		}
+		results, _ := data["results"].([]interface{})
+		for _, r := range results {
+			if m, ok := r.(map[string]interface{}); ok {
+				items = append(items, workflow.NewItem(m))
+			}
+		}
+		paging, _ := data["paging"].(map[string]interface{})
+		if paging == nil {
+			break
+		}
+		next, _ := paging["next"].(map[string]interface{})
+		if next == nil {
+			break
+		}
+		nextAfter, _ := next["after"].(string)
+		if nextAfter == "" {
+			break
+		}
+		if page == maxListPages-1 {
+			truncated = true
+			break
+		}
+		after = nextAfter
+	}
+	if truncated {
+		flagTruncated(items)
 	}
 	return items, nil
 }
 
 // hubspotGet fetches a single CRM object by ID.
 func hubspotGet(ctx context.Context, accessToken, objectType, objectID string) (map[string]interface{}, error) {
-	url := hubspotObjectPath(objectType) + "/" + objectID
-	data, err := apiRequest(ctx, "GET", url, accessToken, nil)
+	u := hubspotObjectPath(objectType) + "/" + url.PathEscape(objectID)
+	data, err := apiRequest(ctx, "GET", u, accessToken, nil)
 	if err != nil {
 		return nil, fmt.Errorf("hubspot get %s/%s: %w", objectType, objectID, err)
 	}
@@ -174,8 +200,8 @@ func hubspotUpdate(ctx context.Context, accessToken, objectType, objectID string
 		properties = map[string]interface{}{}
 	}
 	body := map[string]interface{}{"properties": properties}
-	url := hubspotObjectPath(objectType) + "/" + objectID
-	data, err := apiRequest(ctx, "PATCH", url, accessToken, body)
+	u := hubspotObjectPath(objectType) + "/" + url.PathEscape(objectID)
+	data, err := apiRequest(ctx, "PATCH", u, accessToken, body)
 	if err != nil {
 		return nil, fmt.Errorf("hubspot update %s/%s: %w", objectType, objectID, err)
 	}

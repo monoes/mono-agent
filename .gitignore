@@ -109,3 +109,4 @@ build/
 
 /diag_comment_like
 edge_passwords.csv
+*.crashes

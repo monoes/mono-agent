@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -29,9 +30,15 @@ func EncryptBlob(ctx context.Context, db *sql.DB, plaintext []byte) (string, err
 // DecryptBlob reverses EncryptBlob. If encoded does not carry the vaultenc
 // prefix (a row from before this feature shipped, not yet migrated) it is
 // returned unchanged rather than erroring — callers that unmarshal JSON
-// from the result get the original plaintext JSON either way.
+// from the result get the original plaintext JSON either way. The downgrade
+// is never silent, though: a stderr warning mirrors migrate.go's so an
+// unmigrated plaintext row is visible instead of quietly decrypting to
+// itself forever.
 func DecryptBlob(ctx context.Context, db *sql.DB, encoded string) ([]byte, error) {
 	if !strings.HasPrefix(encoded, blobPrefix) {
+		if encoded != "" {
+			fmt.Fprintf(os.Stderr, "warning: secrets.DecryptBlob: %d-byte blob lacks the %q prefix — plaintext value not yet migrated; run `monoagentcli secret encrypt-connections`\n", len(encoded), blobPrefix)
+		}
 		return []byte(encoded), nil
 	}
 	dek, err := getOrCreateDEK(ctx, db)

@@ -22,11 +22,11 @@
       "position": { "x": 320, "y": 0 },
       "disabled": false,
       "config": {
-        "assignments": {
-          "event_name": "{{ $json.event }}",
-          "user_id": "{{ $json.userId }}",
-          "payload": "{{ $json.data }}"
-        }
+        "assignments": [
+          { "field": "event_name", "value": "{{ $json.event }}", "type": "string" },
+          { "field": "user_id", "value": "{{ $json.userId }}", "type": "string" },
+          { "field": "payload", "value": "{{ json $json.data }}", "type": "json" }
+        ]
       }
     },
     {

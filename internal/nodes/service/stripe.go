@@ -58,12 +58,12 @@ func stripeGet(ctx context.Context, endpoint, apiKey string, params map[string]i
 		return nil, fmt.Errorf("stripe GET %s: %w", fullURL, err)
 	}
 	defer resp.Body.Close()
-	respBytes, err := io.ReadAll(resp.Body)
+	respBytes, err := readBodyCapped(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("reading stripe response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("stripe HTTP %d: %s", resp.StatusCode, string(respBytes))
+		return nil, fmt.Errorf("stripe HTTP %d: %s", resp.StatusCode, errorBodyEcho(respBytes))
 	}
 	var result map[string]interface{}
 	if err := json.Unmarshal(respBytes, &result); err != nil {
@@ -92,12 +92,12 @@ func stripePost(ctx context.Context, endpoint, apiKey string, params map[string]
 		return nil, fmt.Errorf("stripe POST %s: %w", fullURL, err)
 	}
 	defer resp.Body.Close()
-	respBytes, err := io.ReadAll(resp.Body)
+	respBytes, err := readBodyCapped(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("reading stripe response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("stripe HTTP %d: %s", resp.StatusCode, string(respBytes))
+		return nil, fmt.Errorf("stripe HTTP %d: %s", resp.StatusCode, errorBodyEcho(respBytes))
 	}
 	var result map[string]interface{}
 	if err := json.Unmarshal(respBytes, &result); err != nil {
@@ -121,12 +121,12 @@ func stripeDelete(ctx context.Context, endpoint, apiKey string) (map[string]inte
 		return nil, fmt.Errorf("stripe DELETE %s: %w", fullURL, err)
 	}
 	defer resp.Body.Close()
-	respBytes, err := io.ReadAll(resp.Body)
+	respBytes, err := readBodyCapped(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("reading stripe response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("stripe HTTP %d: %s", resp.StatusCode, string(respBytes))
+		return nil, fmt.Errorf("stripe HTTP %d: %s", resp.StatusCode, errorBodyEcho(respBytes))
 	}
 	var result map[string]interface{}
 	if err := json.Unmarshal(respBytes, &result); err != nil {
@@ -152,9 +152,15 @@ func stripeGetList(ctx context.Context, endpoint, apiKey string, params map[stri
 }
 
 func (n *StripeNode) Execute(ctx context.Context, input workflow.NodeInput, config map[string]interface{}) ([]workflow.NodeOutput, error) {
-	apiKey := strVal(config, "api_key")
+	// Registry connections store the key as secret_key (the field
+	// internal/connections/registry.go defines for stripe); api_key is the
+	// legacy key older hand-written workflows used — accepted as fallback.
+	apiKey := strVal(config, "secret_key")
 	if apiKey == "" {
-		return nil, fmt.Errorf("stripe: api_key is required")
+		apiKey = strVal(config, "api_key")
+	}
+	if apiKey == "" {
+		return nil, fmt.Errorf("stripe: secret_key is required")
 	}
 	operation := strVal(config, "operation")
 	limit := intVal(config, "limit")
@@ -196,7 +202,7 @@ func (n *StripeNode) Execute(ctx context.Context, input workflow.NodeInput, conf
 		if customerID == "" {
 			return nil, fmt.Errorf("stripe: customer_id is required for get_customer")
 		}
-		data, err := stripeGet(ctx, "/customers/"+customerID, apiKey, nil)
+		data, err := stripeGet(ctx, "/customers/"+url.PathEscape(customerID), apiKey, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -269,7 +275,7 @@ func (n *StripeNode) Execute(ctx context.Context, input workflow.NodeInput, conf
 		if subscriptionID == "" {
 			return nil, fmt.Errorf("stripe: subscription_id is required for cancel_subscription")
 		}
-		data, err := stripeDelete(ctx, "/subscriptions/"+subscriptionID, apiKey)
+		data, err := stripeDelete(ctx, "/subscriptions/"+url.PathEscape(subscriptionID), apiKey)
 		if err != nil {
 			return nil, err
 		}

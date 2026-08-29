@@ -236,12 +236,15 @@ func RunExecution(
 
 				// Try the connections table unless the ID looks like a legacy wc_ credential.
 				// GetOrResolve also looks up by platform name and auto-refreshes
-				// expired OAuth tokens.
+				// expired OAuth tokens. Scoped to the execution's profile so a
+				// workflow under profile B never resolves profile A's credentials.
 				if !strings.HasPrefix(credID, "wc_") && connStore != nil {
-					conn, err := connStore.GetOrResolve(ctx, credID)
+					conn, err := connStore.GetOrResolve(ctx, credID, vault.ProfileIDFromContext(ctx))
 					if err != nil {
 						// DB error — log and fall back to legacy table
-						fmt.Printf("warning: connections lookup for %s failed: %v; falling back to workflow_credentials\n", credID, err)
+						logger.Warn().Err(err).
+							Str("credential_id", credID).
+							Msg("connections lookup failed; falling back to workflow_credentials")
 						// fall through: conn is nil, injected stays false, legacy path below will run
 					} else if conn != nil {
 						// Merge all connection Data fields directly into config.

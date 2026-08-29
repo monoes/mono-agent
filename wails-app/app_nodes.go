@@ -256,9 +256,9 @@ type NodeRunRequest struct {
 
 // NodeRunResult is returned after running a node.
 type NodeRunResult struct {
-	Outputs []NodeRunOutput `json:"outputs"`
-	Error   string          `json:"error,omitempty"`
-	DurationMs int64        `json:"duration_ms"`
+	Outputs    []NodeRunOutput `json:"outputs"`
+	Error      string          `json:"error,omitempty"`
+	DurationMs int64           `json:"duration_ms"`
 }
 
 // NodeRunOutput is one output handle's items.
@@ -277,7 +277,7 @@ var legacyNodeTypes = map[string]string{
 	"filter": "core.filter", "sort": "core.sort", "limit": "core.limit",
 	"remove_duplicates": "core.remove_duplicates", "compare_datasets": "core.compare_datasets",
 	"aggregate": "core.aggregate",
-	"datetime": "data.datetime", "crypto": "data.crypto", "html": "data.html",
+	"datetime":  "data.datetime", "crypto": "data.crypto", "html": "data.html",
 	"xml": "data.xml", "markdown": "data.markdown", "spreadsheet": "data.spreadsheet",
 	"compression": "data.compression", "write_binary_file": "data.write_binary_file",
 	"mysql": "db.mysql", "postgres": "db.postgres", "mongodb": "db.mongodb", "redis": "db.redis",

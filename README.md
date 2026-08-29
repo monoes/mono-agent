@@ -71,7 +71,7 @@ Prefer a one-line install? See [install.sh](install.sh) or [Docker](Dockerfile).
 Every weekday at 7am: read your favorite feeds, filter for AI news, summarize with an LLM, pause for a human to edit the summary, then email it to you.
 
 ```
-[trigger.schedule: 0 7 * * 1-5]
+[trigger.schedule: 0 0 7 * * 1-5]
         │
         ▼
 [system.rss_read]        ← fetch items from an RSS/Atom feed
@@ -93,7 +93,7 @@ Every weekday at 7am: read your favorite feeds, filter for AI news, summarize wi
 {
   "name": "Morning Briefing",
   "nodes": [
-    { "id": "t1",  "type": "trigger.schedule",   "config": { "cron": "0 7 * * 1-5" } },
+    { "id": "t1",  "type": "trigger.schedule",   "config": { "cron": "0 0 7 * * 1-5" } },
     { "id": "n1",  "type": "system.rss_read",    "config": { "url": "https://example.com/feed.xml", "limit": 25 } },
     { "id": "n2",  "type": "core.filter",        "config": { "condition": "{{item.title}} contains ai" } },
     { "id": "n3",  "type": "service.openrouter", "config": {
@@ -367,7 +367,7 @@ Also: `ai.agent` · `ai.chat` · `ai.classify` · `ai.embed` · `ai.extract` · 
 
 | Trigger | Description |
 |---------|-------------|
-| `trigger.schedule` | Cron expression — `0 9 * * *` every day at 9am |
+| `trigger.schedule` | Cron expression (6 fields: sec min hour dom month dow) — `0 0 9 * * *` every day at 9am |
 | `trigger.webhook` | HTTP endpoint — fire workflow on POST |
 | `trigger.manual` | One-click run from CLI or GUI |
 
@@ -559,6 +559,8 @@ go build -o monoagentcli ./cmd/monoagentcli
 go build -tags social -o monoagentcli ./cmd/monoagentcli
 ```
 
+Windows: download `monoagentcli-windows-amd64.exe` from [releases](https://github.com/monoes/mono-agent/releases/latest).
+
 ### Desktop GUI
 
 ```bash
@@ -625,7 +627,7 @@ mono-agent/
 | [AGENTS.md](AGENTS.md) | Canonical entrypoint for AI agents: `ref`, `--json`, MCP, exit codes |
 | [docs/USAGE_POLICY.md](docs/USAGE_POLICY.md) | Scope of use, platform ToS, rate caps, anti-spam commitments |
 | [docs/COMPARISON.md](docs/COMPARISON.md) | Honest comparison vs n8n, Activepieces, Windmill, Node-RED |
-| [FEATURE_n8n.md](FEATURE_n8n.md) | n8n parity tracker — what matches, what's missing |
+| [FEATURE_n8n.md](FEATURE_n8n.md) | detailed n8n feature map used as our porting reference |
 | [examples/](examples/) | Ready-to-run workflow JSONs with webhook trigger examples |
 | [install.sh](install.sh) | One-line installer (macOS / Linux) |
 | [SECURITY.md](SECURITY.md) | Reporting, supported versions, telemetry & crash-reporting statement |

@@ -142,8 +142,8 @@ export default function Agents() {
                 <div className="empty-state-desc" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   <span>
                     Agents run through the local monomind engine. {/not found/i.test(scanError)
-                      ? <>Install it with <code>npm install -g @monoes/monomindcli</code>.</>
-                      : <>Update it with <code>npm install -g @monoes/monomindcli@latest</code>.</>}
+                      ? <>Install it with <code>npm install -g monomind</code>.</>
+                      : <>Update it with <code>npm install -g monomind@latest</code>.</>}
                   </span>
                   <code style={{ fontSize: 10, color: 'var(--text-muted)', wordBreak: 'break-word', textAlign: 'left' }}>{scanError}</code>
                 </div>

@@ -45,8 +45,8 @@ func (n *SalesforceNode) Execute(ctx context.Context, input workflow.NodeInput, 
 		if objectType == "" || recordID == "" {
 			return nil, fmt.Errorf("salesforce: object_type and record_id are required for get_record")
 		}
-		url := baseURL + "/sobjects/" + objectType + "/" + recordID
-		data, err := apiRequest(ctx, "GET", url, accessToken, nil)
+		u := baseURL + "/sobjects/" + url.PathEscape(objectType) + "/" + url.PathEscape(recordID)
+		data, err := apiRequest(ctx, "GET", u, accessToken, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -61,8 +61,8 @@ func (n *SalesforceNode) Execute(ctx context.Context, input workflow.NodeInput, 
 		if fields == nil {
 			fields = map[string]interface{}{}
 		}
-		url := baseURL + "/sobjects/" + objectType
-		data, err := apiRequest(ctx, "POST", url, accessToken, fields)
+		u := baseURL + "/sobjects/" + url.PathEscape(objectType)
+		data, err := apiRequest(ctx, "POST", u, accessToken, fields)
 		if err != nil {
 			return nil, err
 		}
@@ -78,8 +78,8 @@ func (n *SalesforceNode) Execute(ctx context.Context, input workflow.NodeInput, 
 		if fields == nil {
 			fields = map[string]interface{}{}
 		}
-		url := baseURL + "/sobjects/" + objectType + "/" + recordID
-		_, err := apiRequest(ctx, "PATCH", url, accessToken, fields)
+		u := baseURL + "/sobjects/" + url.PathEscape(objectType) + "/" + url.PathEscape(recordID)
+		_, err := apiRequest(ctx, "PATCH", u, accessToken, fields)
 		if err != nil {
 			return nil, err
 		}
@@ -95,8 +95,8 @@ func (n *SalesforceNode) Execute(ctx context.Context, input workflow.NodeInput, 
 		if objectType == "" || recordID == "" {
 			return nil, fmt.Errorf("salesforce: object_type and record_id are required for delete_record")
 		}
-		url := baseURL + "/sobjects/" + objectType + "/" + recordID
-		_, err := apiRequest(ctx, "DELETE", url, accessToken, nil)
+		u := baseURL + "/sobjects/" + url.PathEscape(objectType) + "/" + url.PathEscape(recordID)
+		_, err := apiRequest(ctx, "DELETE", u, accessToken, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -110,8 +110,8 @@ func (n *SalesforceNode) Execute(ctx context.Context, input workflow.NodeInput, 
 		if objectType == "" {
 			return nil, fmt.Errorf("salesforce: object_type is required for describe_object")
 		}
-		url := baseURL + "/sobjects/" + objectType + "/describe"
-		data, err := apiRequest(ctx, "GET", url, accessToken, nil)
+		u := baseURL + "/sobjects/" + url.PathEscape(objectType) + "/describe"
+		data, err := apiRequest(ctx, "GET", u, accessToken, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -129,7 +129,7 @@ func salesforceQuery(ctx context.Context, baseURL, accessToken, soql string) ([]
 	var allItems []workflow.Item
 
 	// URL-encode the query
-	queryURL := baseURL + "/query?q=" + salesforceURLEncode(soql)
+	queryURL := baseURL + "/query?" + url.Values{"q": {soql}}.Encode()
 
 	for queryURL != "" {
 		data, err := apiRequest(ctx, "GET", queryURL, accessToken, nil)
@@ -162,11 +162,6 @@ func salesforceQuery(ctx context.Context, baseURL, accessToken, soql string) ([]
 	}
 
 	return allItems, nil
-}
-
-// salesforceURLEncode encodes a string for use in a query parameter.
-func salesforceURLEncode(s string) string {
-	return url.QueryEscape(s)
 }
 
 // salesforceInstanceRoot extracts the instance root URL from a base URL.

@@ -19,8 +19,8 @@ type SchedulerInterface interface {
 // triggerEntry holds state for an active trigger registration.
 // For schedule triggers it holds the cron EntryID; for webhook triggers the path.
 type triggerEntry struct {
-	kind      string // "schedule" or "webhook"
-	cronID    cron.EntryID
+	kind        string // "schedule" or "webhook"
+	cronID      cron.EntryID
 	webhookPath string
 }
 
@@ -32,7 +32,7 @@ type TriggerManager struct {
 	scheduler     SchedulerInterface
 	triggerFn     func(workflowID string, nodeID string, items []Item)
 	mu            sync.Mutex
-	active        map[string]*triggerEntry // key: workflowID+"_"+nodeID
+	active        map[string]map[string]*triggerEntry // workflowID → nodeID → entry
 	logger        zerolog.Logger
 }
 
@@ -50,14 +50,9 @@ func NewTriggerManager(
 		webhookServer: webhookServer,
 		scheduler:     scheduler,
 		triggerFn:     triggerFn,
-		active:        make(map[string]*triggerEntry),
+		active:        make(map[string]map[string]*triggerEntry),
 		logger:        logger,
 	}
-}
-
-// activeKey returns the map key for a workflow+node pair.
-func activeKey(workflowID, nodeID string) string {
-	return workflowID + "_" + nodeID
 }
 
 // ActivateWorkflow registers all trigger nodes in the given workflow.
@@ -104,7 +99,7 @@ func (tm *TriggerManager) ActivateWorkflow(ctx context.Context, w *Workflow) err
 
 // activateSchedule registers a cron job for a trigger.schedule node.
 func (tm *TriggerManager) activateSchedule(workflowID string, node *WorkflowNode) error {
-	key := activeKey(workflowID, node.ID)
+	key := node.ID
 
 	// Parse config outside the lock — no shared state involved.
 	if node.Config == nil {
@@ -117,9 +112,14 @@ func (tm *TriggerManager) activateSchedule(workflowID string, node *WorkflowNode
 	if !ok || spec == "" {
 		return fmt.Errorf("trigger.schedule: missing or invalid \"cron\" field in config")
 	}
-	if tz, ok := node.Config["timezone"].(string); ok && tz != "" && tz != "UTC" {
-		spec = fmt.Sprintf("CRON_TZ=%s %s", tz, spec)
+	// Always pin the timezone — the underlying cron instance evaluates specs
+	// in time.Local when no CRON_TZ prefix is present, so a default-UTC
+	// schedule would silently fire at local time on non-UTC hosts.
+	tz, _ := node.Config["timezone"].(string)
+	if tz == "" {
+		tz = "UTC"
 	}
+	spec = fmt.Sprintf("CRON_TZ=%s %s", tz, spec)
 
 	// Capture loop variables for the closure.
 	wfID := workflowID
@@ -127,13 +127,15 @@ func (tm *TriggerManager) activateSchedule(workflowID string, node *WorkflowNode
 
 	// Hold the mutex through the entire check-then-act to prevent TOCTOU races.
 	tm.mu.Lock()
-	if _, exists := tm.active[key]; exists {
-		tm.mu.Unlock()
-		tm.logger.Debug().
-			Str("workflow_id", workflowID).
-			Str("node_id", node.ID).
-			Msg("schedule trigger already active, skipping")
-		return nil
+	if tm.active[workflowID] != nil {
+		if _, exists := tm.active[workflowID][key]; exists {
+			tm.mu.Unlock()
+			tm.logger.Debug().
+				Str("workflow_id", workflowID).
+				Str("node_id", node.ID).
+				Msg("schedule trigger already active, skipping")
+			return nil
+		}
 	}
 
 	entryID, err := tm.scheduler.AddWorkflowJob(spec, func() {
@@ -152,7 +154,10 @@ func (tm *TriggerManager) activateSchedule(workflowID string, node *WorkflowNode
 		return fmt.Errorf("add cron job with spec %q: %w", spec, err)
 	}
 
-	tm.active[key] = &triggerEntry{
+	if tm.active[workflowID] == nil {
+		tm.active[workflowID] = make(map[string]*triggerEntry)
+	}
+	tm.active[workflowID][key] = &triggerEntry{
 		kind:   "schedule",
 		cronID: entryID,
 	}
@@ -169,7 +174,7 @@ func (tm *TriggerManager) activateSchedule(workflowID string, node *WorkflowNode
 
 // activateWebhook registers a webhook route for a trigger.webhook node.
 func (tm *TriggerManager) activateWebhook(workflowID string, node *WorkflowNode) error {
-	key := activeKey(workflowID, node.ID)
+	key := node.ID
 
 	// Parse config outside the lock — no shared state involved.
 	if node.Config == nil {
@@ -211,13 +216,15 @@ func (tm *TriggerManager) activateWebhook(workflowID string, node *WorkflowNode)
 
 	// Hold the mutex through the entire check-then-act to prevent TOCTOU races.
 	tm.mu.Lock()
-	if _, exists := tm.active[key]; exists {
-		tm.mu.Unlock()
-		tm.logger.Debug().
-			Str("workflow_id", workflowID).
-			Str("node_id", node.ID).
-			Msg("webhook trigger already active, skipping")
-		return nil
+	if tm.active[workflowID] != nil {
+		if _, exists := tm.active[workflowID][key]; exists {
+			tm.mu.Unlock()
+			tm.logger.Debug().
+				Str("workflow_id", workflowID).
+				Str("node_id", node.ID).
+				Msg("webhook trigger already active, skipping")
+			return nil
+		}
 	}
 
 	if err := tm.webhookServer.Register(reg); err != nil {
@@ -225,7 +232,10 @@ func (tm *TriggerManager) activateWebhook(workflowID string, node *WorkflowNode)
 		return fmt.Errorf("register webhook path %q: %w", path, err)
 	}
 
-	tm.active[key] = &triggerEntry{
+	if tm.active[workflowID] == nil {
+		tm.active[workflowID] = make(map[string]*triggerEntry)
+	}
+	tm.active[workflowID][key] = &triggerEntry{
 		kind:        "webhook",
 		webhookPath: path,
 	}
@@ -242,17 +252,21 @@ func (tm *TriggerManager) activateWebhook(workflowID string, node *WorkflowNode)
 }
 
 // DeactivateWorkflow removes all triggers for the given workflow.
+// Ownership is per exact workflow ID, so a workflow named "a" can never tear
+// down the triggers of an unrelated workflow whose ID merely starts with
+// "a_" (e.g. "a_b").
 func (tm *TriggerManager) DeactivateWorkflow(workflowID string) {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
 
-	for key, entry := range tm.active {
-		// Keys are workflowID+"_"+nodeID; check prefix.
-		prefix := workflowID + "_"
-		if len(key) > len(prefix) && key[:len(prefix)] == prefix {
-			tm.deactivateEntry(key, entry)
-		}
+	entries := tm.active[workflowID]
+	if entries == nil {
+		return
 	}
+	for key, entry := range entries {
+		tm.deactivateEntry(key, entry)
+	}
+	delete(tm.active, workflowID)
 }
 
 // DeactivateAll removes all triggers (called on shutdown).
@@ -260,8 +274,10 @@ func (tm *TriggerManager) DeactivateAll() {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
 
-	for key, entry := range tm.active {
-		tm.deactivateEntry(key, entry)
+	for _, entries := range tm.active {
+		for key, entry := range entries {
+			tm.deactivateEntry(key, entry)
+		}
 	}
 }
 

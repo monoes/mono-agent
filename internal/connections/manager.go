@@ -27,7 +27,7 @@ func NewManager(db *sql.DB) (*Manager, error) {
 
 // ConnectOptions controls how Connect behaves.
 type ConnectOptions struct {
-	Method       AuthMethod            // force a specific method (zero = prompt if multiple)
+	Method       AuthMethod // force a specific method (zero = prompt if multiple)
 	OAuthTimeout time.Duration
 	FieldValues  map[string]string // pre-filled field values for non-interactive use
 	ProfileID    string            // profile to save the connection under (empty = "default")
@@ -149,7 +149,7 @@ func (m *Manager) Test(ctx context.Context, id string) error {
 
 	accountID, err := ValidateConnection(ctx, conn)
 	if err != nil {
-		_ = m.store.MarkTested(ctx, id, "error")
+		_ = m.store.MarkTested(ctx, id, "error", conn.ProfileID)
 		fmt.Printf("✗ Validation failed: %v\n", err)
 		return err
 	}
@@ -162,18 +162,29 @@ func (m *Manager) Test(ctx context.Context, id string) error {
 		// Re-read before saving: ValidateConnection did a network round-trip
 		// during which a concurrent refresh may have rotated the tokens.
 		// Saving the pre-validation Data blob would clobber them; only the
-		// account_id/label should change here.
-		if latest, err := m.store.Get(ctx, id); err == nil && latest != nil {
-			conn = latest
-		}
-		conn.AccountID = accountID
-		conn.Label = label
-		if err := m.store.Save(ctx, conn); err != nil {
-			return fmt.Errorf("test: update account: %w", err)
+		// account_id/label should change here. The refresh lock (same one
+		// RefreshToken uses) closes the remaining Get→Save window so a
+		// refresh that starts after our re-read can't be overwritten either.
+		acquired, lockErr := m.store.acquireRefreshLock(ctx, id)
+		if lockErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to acquire refresh lock for connection %s: %v\n", id, lockErr)
+		} else if acquired {
+			if latest, err := m.store.Get(ctx, id, conn.ProfileID); err == nil && latest != nil {
+				conn = latest
+			}
+			conn.AccountID = accountID
+			conn.Label = label
+			saveErr := m.store.Save(ctx, conn)
+			m.store.releaseRefreshLock(context.WithoutCancel(ctx), id)
+			if saveErr != nil {
+				return fmt.Errorf("test: update account: %w", saveErr)
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "warning: skipping account update for connection %s: refresh lock held by another process\n", id)
 		}
 	}
 
-	if err := m.store.MarkTested(ctx, id, "active"); err != nil {
+	if err := m.store.MarkTested(ctx, id, "active", conn.ProfileID); err != nil {
 		return fmt.Errorf("test: mark tested: %w", err)
 	}
 	fmt.Printf("✓ Connection valid as %s\n", accountID)

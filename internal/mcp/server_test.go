@@ -299,14 +299,14 @@ func TestServerPingUnknownMethodAndNotifications(t *testing.T) {
 	if len(resps) != 3 {
 		t.Fatalf("expected 3 responses (notification produces none), got %d", len(resps))
 	}
-	if string(bytes.TrimSpace(resps[1]["result"])) != "{}" {
-		t.Errorf("ping result = %s, want {}", resps[1]["result"])
+	if string(bytes.TrimSpace(respByID(t, resps, "2")["result"])) != "{}" {
+		t.Errorf("ping result = %s, want {}", respByID(t, resps, "2")["result"])
 	}
 	var rpcErr struct {
 		Code    int    `json:"code"`
 		Message string `json:"message"`
 	}
-	if err := json.Unmarshal(resps[2]["error"], &rpcErr); err != nil {
+	if err := json.Unmarshal(respByID(t, resps, "3")["error"], &rpcErr); err != nil {
 		t.Fatalf("expected error object for unknown method: %v", err)
 	}
 	if rpcErr.Code != -32601 {
@@ -323,10 +323,10 @@ func TestServerUnknownToolAndMissingID(t *testing.T) {
 	if len(resps) != 2 {
 		t.Fatalf("expected 2 responses, got %d", len(resps))
 	}
-	if _, isErr := toolText(t, resps[0]); !isErr {
+	if _, isErr := toolText(t, respByID(t, resps, "1")); !isErr {
 		t.Errorf("unknown tool must return isError:true")
 	}
-	if _, isErr := toolText(t, resps[1]); !isErr {
+	if _, isErr := toolText(t, respByID(t, resps, "2")); !isErr {
 		t.Errorf("workflow_get without id must return isError:true")
 	}
 }
@@ -352,11 +352,20 @@ func TestServePipeRoundtrip(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("expected 2 response lines over pipe, got %d: %q", len(lines), out.String())
 	}
-	var last map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(lines[1]), &last); err != nil {
-		t.Fatalf("parse last line: %v", err)
+	var listResp map[string]json.RawMessage
+	for _, line := range lines {
+		var m map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			t.Fatalf("parse response line: %v", err)
+		}
+		if string(bytes.TrimSpace(m["id"])) == "2" {
+			listResp = m
+		}
 	}
-	text, isErr := toolText(t, last)
+	if listResp == nil {
+		t.Fatalf("workflow_list (id 2) response missing: %q", out.String())
+	}
+	text, isErr := toolText(t, listResp)
 	if isErr || strings.TrimSpace(text) != "[]" {
 		t.Errorf("workflow_list over pipe = %q (isErr=%v), want []", text, isErr)
 	}

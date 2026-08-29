@@ -15,6 +15,38 @@ import (
 // Type: "system.execute_command"
 type ExecuteCommandNode struct{}
 
+// Command output caps. stdout and stderr are each capped at
+// maxCommandOutputBytes; output past the cap is dropped and the result
+// item carries "truncated": true.
+const (
+	cmdDefaultTimeoutSecs = 30
+	cmdMaxTimeoutSecs     = 3600
+	maxCommandOutputBytes = 10 << 20 // 10MB each for stdout/stderr
+)
+
+// limitedBuffer is a bytes.Buffer that stops storing after max bytes but
+// keeps reporting successful writes so the command keeps running.
+type limitedBuffer struct {
+	buf       bytes.Buffer
+	max       int
+	truncated bool
+}
+
+func (b *limitedBuffer) Write(p []byte) (int, error) {
+	if b.buf.Len() >= b.max {
+		b.truncated = true
+		return len(p), nil
+	}
+	room := b.max - b.buf.Len()
+	if len(p) > room {
+		b.buf.Write(p[:room])
+		b.truncated = true
+	} else {
+		b.buf.Write(p)
+	}
+	return len(p), nil
+}
+
 func (n *ExecuteCommandNode) Type() string { return "system.execute_command" }
 
 func (n *ExecuteCommandNode) Execute(ctx context.Context, input workflow.NodeInput, config map[string]interface{}) ([]workflow.NodeOutput, error) {
@@ -32,11 +64,17 @@ func (n *ExecuteCommandNode) Execute(ctx context.Context, input workflow.NodeInp
 
 	workingDir, _ := config["working_dir"].(string)
 
-	timeoutSecs := 30
-	if v, ok := config["timeout"].(float64); ok {
+	// A non-positive timeout falls back to the default (previously a
+	// config value of 0 killed the command instantly); anything above the
+	// 3600s ceiling is clamped.
+	timeoutSecs := cmdDefaultTimeoutSecs
+	if v, ok := config["timeout"].(float64); ok && int(v) > 0 {
 		timeoutSecs = int(v)
-	} else if v, ok := config["timeout_seconds"].(float64); ok {
+	} else if v, ok := config["timeout_seconds"].(float64); ok && int(v) > 0 {
 		timeoutSecs = int(v)
+	}
+	if timeoutSecs > cmdMaxTimeoutSecs {
+		timeoutSecs = cmdMaxTimeoutSecs
 	}
 
 	runCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSecs)*time.Second)
@@ -56,9 +94,10 @@ func (n *ExecuteCommandNode) Execute(ctx context.Context, input workflow.NodeInp
 		}
 	}
 
-	var stdoutBuf, stderrBuf bytes.Buffer
-	cmd.Stdout = &stdoutBuf
-	cmd.Stderr = &stderrBuf
+	stdoutBuf := &limitedBuffer{max: maxCommandOutputBytes}
+	stderrBuf := &limitedBuffer{max: maxCommandOutputBytes}
+	cmd.Stdout = stdoutBuf
+	cmd.Stderr = stderrBuf
 
 	exitCode := 0
 	runErr := cmd.Run()
@@ -70,11 +109,15 @@ func (n *ExecuteCommandNode) Execute(ctx context.Context, input workflow.NodeInp
 		}
 	}
 
-	resultItem := workflow.NewItem(map[string]interface{}{
-		"stdout":    stdoutBuf.String(),
-		"stderr":    stderrBuf.String(),
+	result := map[string]interface{}{
+		"stdout":    stdoutBuf.buf.String(),
+		"stderr":    stderrBuf.buf.String(),
 		"exit_code": exitCode,
-	})
+	}
+	if stdoutBuf.truncated || stderrBuf.truncated {
+		result["truncated"] = true
+	}
+	resultItem := workflow.NewItem(result)
 
 	var outputs []workflow.NodeOutput
 	outputs = append(outputs, workflow.NodeOutput{Handle: "main", Items: []workflow.Item{resultItem}})

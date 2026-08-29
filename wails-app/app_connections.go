@@ -13,7 +13,6 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Connections
 // ─────────────────────────────────────────────────────────────────────────────
@@ -124,13 +123,13 @@ func (a *App) ListConnections(platform string) []connections.SafeConnection {
 
 // PlatformInfo is a frontend-safe representation of a platform (no OAuth secrets).
 type PlatformInfo struct {
-	ID         string                                       `json:"id"`
-	Name       string                                       `json:"name"`
-	Category   string                                       `json:"category"`
-	ConnectVia string                                       `json:"connectVia"`
-	Methods    []string                                     `json:"methods"`
-	Fields     map[string][]connections.CredentialField     `json:"fields"`
-	IconEmoji  string                                       `json:"iconEmoji"`
+	ID         string                                   `json:"id"`
+	Name       string                                   `json:"name"`
+	Category   string                                   `json:"category"`
+	ConnectVia string                                   `json:"connectVia"`
+	Methods    []string                                 `json:"methods"`
+	Fields     map[string][]connections.CredentialField `json:"fields"`
+	IconEmoji  string                                   `json:"iconEmoji"`
 }
 
 func toPlatformInfo(p connections.PlatformDef) PlatformInfo {
@@ -519,4 +518,3 @@ func (a *App) SaveConnectionDirect(platformID string, method string, fieldValues
 	}
 	return "ok:" + conn.ID
 }
-

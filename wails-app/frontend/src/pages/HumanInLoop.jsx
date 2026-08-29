@@ -148,7 +148,7 @@ function HILCard({ item, onApprove, onReject }) {
             )}
           </div>
           <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 2 }}>
-            {formatDate(item.created_at)} · exec: {item.execution_id.slice(0, 8)}…
+            {formatDate(item.created_at)} · exec: {item.execution_id?.slice(0, 8) ?? '—'}…
           </div>
         </div>
         <span style={{
@@ -338,8 +338,10 @@ export default function HumanInLoop() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
 
-  const load = useCallback(async () => {
-    setLoading(true)
+  const load = useCallback(async (background = false) => {
+    // Background refreshes (3s poll) don't toggle `loading` — otherwise the
+    // card list flickers into the empty state between ticks.
+    if (!background) setLoading(true)
     setError(null)
     try {
       const [data, draftData] = await Promise.all([GetHILItems(), GetDraftPersonMessages()])
@@ -348,14 +350,14 @@ export default function HumanInLoop() {
     } catch (e) {
       setError(e?.message ?? 'Failed to load')
     } finally {
-      setLoading(false)
+      if (!background) setLoading(false)
     }
   }, [])
 
   // Auto-refresh every 3 seconds while the page is open.
   useEffect(() => {
     load()
-    const interval = setInterval(load, 3000)
+    const interval = setInterval(() => load(true), 3000)
     return () => clearInterval(interval)
   }, [load])
 
@@ -406,7 +408,7 @@ export default function HumanInLoop() {
           </p>
         </div>
         <button
-          onClick={load}
+          onClick={() => load()}
           disabled={loading}
           style={{
             marginLeft: 'auto',

@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Users, Search, RefreshCw, CheckCircle, ExternalLink, Plus, X, Tag } from 'lucide-react'
-import { api, PLATFORMS } from '../services/api.js'
-import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime.js'
+import { api, subscribeEvent } from '../services/api.js'
 
 // ── Tag colour palette ────────────────────────────────────────
 const TAG_COLORS = [
@@ -457,8 +456,8 @@ export default function People({ onProfile }) {
 
   // Reload whenever a workflow finishes (may have saved new people).
   useEffect(() => {
-    EventsOn('workflow:complete', load)
-    return () => EventsOff('workflow:complete')
+    const off = subscribeEvent('workflow:complete', load)
+    return off
   }, [load])
 
   const handlePlatformChange = (p) => {
@@ -467,6 +466,13 @@ export default function People({ onProfile }) {
     setSearch('')
     setDebouncedSearch('')
   }
+
+  // Filter options derive from the platforms actually present in the data;
+  // keep the active filter selectable even if its page of rows is all one platform.
+  const platformOptions = [...new Set(people.map(p => p.platform?.toUpperCase()).filter(Boolean))]
+  if (platform && !platformOptions.includes(platform)) platformOptions.push(platform)
+  platformOptions.sort()
+  const showFollowers = people.some(p => p.follower_count)
 
   return (
     <>
@@ -497,7 +503,7 @@ export default function People({ onProfile }) {
           </div>
           <select className="filter-select" value={platform} onChange={e => handlePlatformChange(e.target.value)}>
             <option value="">All Platforms</option>
-            {PLATFORMS.map(p => <option key={p} value={p}>{p}</option>)}
+            {platformOptions.map(p => <option key={p} value={p}>{p}</option>)}
           </select>
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)', marginLeft: 'auto' }}>
             {count.toLocaleString()} profile{count !== 1 ? 's' : ''}
@@ -513,7 +519,7 @@ export default function People({ onProfile }) {
             <div className="empty-state-desc">
               {debouncedSearch || platform
                 ? 'Try adjusting your filters.'
-                : 'Run a KEYWORD_SEARCH or PROFILE_SEARCH action to discover profiles.'}
+                : 'Import contacts via `people import` or capture them from workflows.'}
             </div>
           </div>
         ) : (
@@ -526,7 +532,7 @@ export default function People({ onProfile }) {
                     <th>Platform</th>
                     <th>Full Name</th>
                     <th>Tags</th>
-                    <th>Followers</th>
+                    {showFollowers && <th>Followers</th>}
                     <th>Job / Category</th>
                     <th>Verified</th>
                     <th>Added</th>
@@ -570,7 +576,7 @@ export default function People({ onProfile }) {
                           />
                         </td>
 
-                        <td className="mono">{p.follower_count || '—'}</td>
+                        {showFollowers && <td className="mono">{p.follower_count || '—'}</td>}
                         <td style={{ maxWidth: 160 }} className="truncate">{p.job_title || p.category || '—'}</td>
                         <td>
                           {p.is_verified && (

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -74,21 +75,6 @@ type WorkflowExecutionSummary struct {
 	FinishedAt   string `json:"finished_at"`
 	Error        string `json:"error"`
 	CreatedAt    string `json:"created_at"`
-}
-
-type CredentialSummary struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	ServiceType string `json:"service_type"`
-	CreatedAt   string `json:"created_at"`
-	UpdatedAt   string `json:"updated_at"`
-}
-
-type SaveCredentialRequest struct {
-	ID          string                 `json:"id"`
-	Name        string                 `json:"name"`
-	ServiceType string                 `json:"service_type"`
-	Data        map[string]interface{} `json:"data"`
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -192,32 +178,44 @@ func (a *App) CreateWorkflowFromTemplate(templateID string) (*WorkflowSummary, e
 	return a.SaveWorkflow(req)
 }
 
+// ListWorkflows returns the active profile's workflows via the hybrid store
+// (file-first), so workflows that exist only as JSON files — the canonical
+// form for everything saved through the GUI or `workflow create` — appear
+// even before they have SQL metadata rows.
 func (a *App) ListWorkflows() ([]WorkflowSummary, error) {
-	if a.db == nil {
-		return nil, fmt.Errorf("database not available")
+	if a.wfStore == nil {
+		return nil, fmt.Errorf("workflow store not available")
 	}
-	rows, err := a.db.Query(`SELECT id, name, COALESCE(description,''), is_active, version,
-	                                 COALESCE(created_at,''), COALESCE(updated_at,'')
-	                          FROM workflows
-	                          WHERE profile_id = ?
-	                          ORDER BY updated_at DESC`, a.getActiveProfileID())
+	wfs, err := a.wfStore.ListWorkflows(context.Background(), a.getActiveProfileID())
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var summaries []WorkflowSummary
-	for rows.Next() {
-		var s WorkflowSummary
-		var isActive int
-		if rows.Scan(&s.ID, &s.Name, &s.Description, &isActive, &s.Version, &s.CreatedAt, &s.UpdatedAt) == nil {
-			s.IsActive = isActive == 1
-			summaries = append(summaries, s)
+	profileID := a.getActiveProfileID()
+	summaries := make([]WorkflowSummary, 0, len(wfs))
+	for _, wf := range wfs {
+		// The hybrid store's file half has no profile filter — apply the
+		// same COALESCE(profile_id,'default') semantics its SQL half uses.
+		wfProfile := wf.ProfileID
+		if wfProfile == "" {
+			wfProfile = "default"
 		}
+		if wfProfile != profileID {
+			continue
+		}
+		summaries = append(summaries, WorkflowSummary{
+			ID:          wf.ID,
+			Name:        wf.Name,
+			Description: wf.Description,
+			IsActive:    wf.IsActive,
+			Version:     wf.Version,
+			CreatedAt:   wf.CreatedAt.Format(time.RFC3339),
+			UpdatedAt:   wf.UpdatedAt.Format(time.RFC3339),
+		})
 	}
-	if summaries == nil {
-		summaries = []WorkflowSummary{}
-	}
-	return summaries, rows.Err()
+	sort.Slice(summaries, func(i, j int) bool {
+		return summaries[i].UpdatedAt > summaries[j].UpdatedAt
+	})
+	return summaries, nil
 }
 
 func (a *App) GetWorkflow(id string) (*WorkflowDetail, error) {
@@ -292,9 +290,21 @@ func (a *App) SaveWorkflow(req SaveWorkflowRequest) (*WorkflowSummary, error) {
 	if err := a.wfStore.SaveWorkflow(ctx, wf); err != nil {
 		return nil, err
 	}
-	// Tag the workflow with the active profile. The store doesn't know about profiles,
-	// so we set it with a follow-up UPDATE.
+	// The hybrid store saves file-first and has no profile concept, so the
+	// old follow-up UPDATE hit a nonexistent SQL row and silently no-opped.
+	// Mirror the hybrid store's ensureSQLWorkflow instead: INSERT OR IGNORE a
+	// minimal metadata row (executions and profile scoping reference it),
+	// then tag it with the active profile.
 	if a.db != nil {
+		isActive := 0
+		if wf.IsActive {
+			isActive = 1
+		}
+		_, _ = a.db.Exec(`INSERT OR IGNORE INTO workflows
+			(id, name, description, is_active, version, profile_id, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			wf.ID, wf.Name, wf.Description, isActive, wf.Version, a.getActiveProfileID(),
+			wf.CreatedAt.UTC().Format(time.RFC3339), wf.UpdatedAt.UTC().Format(time.RFC3339))
 		_, _ = a.db.Exec(`UPDATE workflows SET profile_id = ? WHERE id = ?`, a.getActiveProfileID(), wf.ID)
 	}
 	a.emitLog("WORKFLOW", "INFO", fmt.Sprintf("Saved workflow: %s [%s]", wf.Name, wf.ID))
@@ -354,14 +364,39 @@ func (a *App) SetWorkflowActive(id string, active bool) error {
 // RunWorkflow spawns `monoagentcli workflow run <id>` as a subprocess.
 // Stdout/stderr stream to the UI. The subprocess can be killed via CancelWorkflow.
 func (a *App) RunWorkflow(id string) error {
+	if a.wfStore == nil {
+		return fmt.Errorf("workflow store not available")
+	}
+	ctx := context.Background()
+	if a.db != nil {
+		var wfProfile string
+		_ = a.db.QueryRow(`SELECT profile_id FROM workflows WHERE id = ?`, id).Scan(&wfProfile)
+		if wfProfile != "" && wfProfile != a.getActiveProfileID() {
+			return fmt.Errorf("workflow %s not found", id)
+		}
+	}
+	wf, err := a.wfStore.GetWorkflow(ctx, id)
+	if err != nil || wf == nil {
+		return fmt.Errorf("workflow %s not found", id)
+	}
+	// The engine rejects inactive workflows — surface that here instead of
+	// silently flipping is_active behind the user's back.
+	if !wf.IsActive {
+		return fmt.Errorf("workflow %q is inactive — activate it first", wf.Name)
+	}
+	// Refuse a second concurrent run of the same workflow: runningCmds is
+	// keyed by workflow ID, so starting another would orphan the first
+	// subprocess (unkillable via CancelWorkflow).
+	a.runningMu.Lock()
+	if _, running := a.runningCmds[id]; running {
+		a.runningMu.Unlock()
+		return fmt.Errorf("workflow %s is already running", id)
+	}
+	a.runningMu.Unlock()
+
 	cliBin, err := findMonoAgentCLI()
 	if err != nil {
 		return err
-	}
-
-	// Ensure workflow is active so the engine doesn't reject it.
-	if a.db != nil {
-		_, _ = a.db.Exec("UPDATE workflows SET is_active = 1 WHERE id = ? AND profile_id = ?", id, a.getActiveProfileID())
 	}
 
 	a.emitLog("WORKFLOW", "INFO", fmt.Sprintf("Starting workflow %s", id))
@@ -370,14 +405,19 @@ func (a *App) RunWorkflow(id string) error {
 	stdout, _ := cmd.StdoutPipe()
 	stderr, _ := cmd.StderrPipe()
 
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("failed to start workflow: %w", err)
-	}
-	a.emitLog("WORKFLOW", "INFO", fmt.Sprintf("Workflow %s started (pid %d)", id, cmd.Process.Pid))
-
+	// Reserve the registry slot before Start so a concurrent RunWorkflow
+	// call loses the race cleanly; released on Start failure or process exit.
 	a.runningMu.Lock()
 	a.runningCmds[id] = cmd
 	a.runningMu.Unlock()
+
+	if err := cmd.Start(); err != nil {
+		a.runningMu.Lock()
+		delete(a.runningCmds, id)
+		a.runningMu.Unlock()
+		return fmt.Errorf("failed to start workflow: %w", err)
+	}
+	a.emitLog("WORKFLOW", "INFO", fmt.Sprintf("Workflow %s started (pid %d)", id, cmd.Process.Pid))
 
 	go func() {
 		scanner := bufio.NewScanner(stdout)
@@ -550,15 +590,15 @@ func (a *App) GetExecutionDetail(executionID string) (map[string]interface{}, er
 	}
 
 	return map[string]interface{}{
-		"id":          execID,
-		"workflow_id": wfID,
-		"status":      status,
+		"id":           execID,
+		"workflow_id":  wfID,
+		"status":       status,
 		"trigger_type": triggerType,
-		"started_at":  startedAt,
-		"finished_at": finishedAt,
-		"error":       errMsg,
-		"created_at":  createdAt,
-		"nodes":       nodesList,
+		"started_at":   startedAt,
+		"finished_at":  finishedAt,
+		"error":        errMsg,
+		"created_at":   createdAt,
+		"nodes":        nodesList,
 	}, nil
 }
 

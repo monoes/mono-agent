@@ -14,10 +14,14 @@ import (
 
 type toolHandler func(ctx context.Context, s *Server, args json.RawMessage) (interface{}, error)
 
+// tool is one MCP tool descriptor. annotations carries the MCP tool
+// annotations (readOnlyHint, destructiveHint, idempotentHint) so hosts can
+// surface safety hints; nil means no annotations are emitted.
 type tool struct {
 	name        string
 	description string
 	schema      map[string]interface{}
+	annotations map[string]bool
 	handler     toolHandler
 }
 
@@ -41,11 +45,15 @@ func toolDefinitions() []map[string]interface{} {
 	tools := allTools()
 	out := make([]map[string]interface{}, 0, len(tools))
 	for _, t := range tools {
-		out = append(out, map[string]interface{}{
+		def := map[string]interface{}{
 			"name":        t.name,
 			"description": t.description,
 			"inputSchema": t.schema,
-		})
+		}
+		if t.annotations != nil {
+			def["annotations"] = t.annotations
+		}
+		out = append(out, def)
 	}
 	return out
 }
@@ -77,6 +85,7 @@ func allTools() []tool {
 			name:        "workflow_list",
 			description: "List saved workflows for the active profile: [{id, name, active, node_count}]",
 			schema:      objSchema(nil),
+			annotations: map[string]bool{"readOnlyHint": true, "idempotentHint": true},
 			handler:     toolWorkflowList,
 		},
 		{
@@ -85,7 +94,8 @@ func allTools() []tool {
 			schema: objSchema(map[string]interface{}{
 				"id": strParam("Workflow ID"),
 			}, "id"),
-			handler: toolWorkflowGet,
+			annotations: map[string]bool{"readOnlyHint": true},
+			handler:     toolWorkflowGet,
 		},
 		{
 			name:        "workflow_validate",
@@ -95,7 +105,8 @@ func allTools() []tool {
 				"file":     strParam("Path to a workflow JSON file"),
 				"workflow": map[string]interface{}{"type": "object", "description": "Inline workflow JSON object"},
 			}),
-			handler: toolWorkflowValidate,
+			annotations: map[string]bool{"readOnlyHint": true},
+			handler:     toolWorkflowValidate,
 		},
 		{
 			name:        "workflow_run",
@@ -108,7 +119,8 @@ func allTools() []tool {
 				},
 				"timeout_seconds": map[string]interface{}{"type": "number", "description": "Wait limit in seconds (default 120, clamped to [1, 600])"},
 			}, "id"),
-			handler: toolWorkflowRun,
+			annotations: map[string]bool{"readOnlyHint": false},
+			handler:     toolWorkflowRun,
 		},
 		{
 			name:        "workflow_status",
@@ -116,12 +128,14 @@ func allTools() []tool {
 			schema: objSchema(map[string]interface{}{
 				"execution_id": strParam("Execution ID from workflow_run"),
 			}, "execution_id"),
-			handler: toolWorkflowStatus,
+			annotations: map[string]bool{"readOnlyHint": true},
+			handler:     toolWorkflowStatus,
 		},
 		{
 			name:        "node_list",
 			description: "List all available node types: [{type, category, title}]",
 			schema:      objSchema(nil),
+			annotations: map[string]bool{"readOnlyHint": true, "idempotentHint": true},
 			handler:     toolNodeList,
 		},
 		{
@@ -130,12 +144,14 @@ func allTools() []tool {
 			schema: objSchema(map[string]interface{}{
 				"type": strParam("Node type, e.g. http.request or trigger.schedule"),
 			}, "type"),
-			handler: toolNodeSchema,
+			annotations: map[string]bool{"readOnlyHint": true, "idempotentHint": true},
+			handler:     toolNodeSchema,
 		},
 		{
 			name:        "hil_list",
 			description: "List pending Human-in-Loop approval items for the active profile",
 			schema:      objSchema(nil),
+			annotations: map[string]bool{"readOnlyHint": true, "idempotentHint": true},
 			handler:     toolHilList,
 		},
 		{
@@ -148,7 +164,8 @@ func allTools() []tool {
 					"description": "JSON object overriding the item's editable data (default {})",
 				},
 			}, "id"),
-			handler: toolHilApprove,
+			annotations: map[string]bool{"readOnlyHint": false},
+			handler:     toolHilApprove,
 		},
 		{
 			name:        "hil_reject",
@@ -156,7 +173,8 @@ func allTools() []tool {
 			schema: objSchema(map[string]interface{}{
 				"id": strParam("HIL item ID"),
 			}, "id"),
-			handler: toolHilReject,
+			annotations: map[string]bool{"readOnlyHint": false, "destructiveHint": true},
+			handler:     toolHilReject,
 		},
 		{
 			name:        "docs",
@@ -164,7 +182,8 @@ func allTools() []tool {
 			schema: objSchema(map[string]interface{}{
 				"topic": strParam("Topic name (optional)"),
 			}),
-			handler: toolDocs,
+			annotations: map[string]bool{"readOnlyHint": true, "idempotentHint": true},
+			handler:     toolDocs,
 		},
 	}
 }
@@ -190,11 +209,33 @@ func toolWorkflowList(ctx context.Context, s *Server, args json.RawMessage) (int
 	if err != nil {
 		return nil, fmt.Errorf("list workflows: %w", err)
 	}
+	// Node counts without an N+1: one aggregate query over workflow_nodes
+	// covers SQL-stored workflows; file-store workflows already arrive
+	// with their nodes parsed by ListWorkflows.
+	nodeCounts := map[string]int{}
+	rows, err := rt.db.DB.QueryContext(ctx,
+		`SELECT workflow_id, COUNT(*) FROM workflow_nodes GROUP BY workflow_id`)
+	if err != nil {
+		return nil, fmt.Errorf("count workflow nodes: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var n int
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, fmt.Errorf("scan node count: %w", err)
+		}
+		nodeCounts[id] = n
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate node counts: %w", err)
+	}
+
 	out := []map[string]interface{}{}
 	for _, wf := range wfs {
-		nodeCount := 0
-		if full, err := rt.store.GetWorkflow(ctx, wf.ID); err == nil && full != nil {
-			nodeCount = len(full.Nodes)
+		nodeCount := len(wf.Nodes)
+		if nodeCount == 0 {
+			nodeCount = nodeCounts[wf.ID]
 		}
 		out = append(out, map[string]interface{}{
 			"id":         wf.ID,
@@ -377,33 +418,38 @@ func toolWorkflowRun(ctx context.Context, s *Server, args json.RawMessage) (inte
 	return result, nil
 }
 
-// waitForExecution polls until the execution reaches a terminal or paused
-// status, or the timeout elapses (returns the latest snapshot either way).
+// waitForExecution polls the execution's STATUS only (a single-column
+// query) until it reaches a terminal or paused status, the timeout
+// elapses, or ctx is cancelled; the full record (with node outputs) is
+// then loaded exactly once. Returns the latest snapshot either way.
 func waitForExecution(ctx context.Context, rt *runtime, executionID string, timeout time.Duration) *workflow.WorkflowExecution {
 	deadline := time.Now().Add(timeout)
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
+	load := func() *workflow.WorkflowExecution {
+		exec, err := rt.store.GetExecution(context.Background(), executionID)
+		if err != nil || exec == nil {
+			return &workflow.WorkflowExecution{ID: executionID, Status: "UNKNOWN"}
+		}
+		return exec
+	}
 	for {
 		select {
 		case <-ticker.C:
-			exec, err := rt.store.GetExecution(ctx, executionID)
-			if err != nil || exec == nil {
+			status, err := rt.store.GetExecutionStatus(ctx, executionID)
+			if err != nil || status == "" {
 				continue
 			}
-			switch exec.Status {
+			switch status {
 			case "QUEUED", "RUNNING":
 				if time.Now().After(deadline) {
-					return exec
+					return load()
 				}
 			default: // SUCCESS, FAILED, CANCELLED, WAITING (HIL pause)
-				return exec
+				return load()
 			}
 		case <-ctx.Done():
-			exec, _ := rt.store.GetExecution(context.Background(), executionID)
-			if exec == nil {
-				exec = &workflow.WorkflowExecution{ID: executionID, Status: "UNKNOWN"}
-			}
-			return exec
+			return load()
 		}
 	}
 }
@@ -439,8 +485,7 @@ func toolWorkflowStatus(ctx context.Context, s *Server, args json.RawMessage) (i
 
 // clampTimeoutSeconds maps the workflow_run timeout_seconds argument to a
 // duration clamped to [1s, 600s]; zero/negative values fall back to the
-// 120s default. The clamp bounds how long one tool call can hold the
-// (single-threaded) serve loop.
+// 120s default. The clamp bounds how long one tool call can run.
 func clampTimeoutSeconds(secs float64) time.Duration {
 	switch {
 	case secs <= 0:

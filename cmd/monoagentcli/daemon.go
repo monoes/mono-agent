@@ -8,6 +8,8 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
+
+	"github.com/monoes/mono-agent/internal/scheduler"
 )
 
 // newDaemonCmd runs the workflow engine as a long-running foreground process,
@@ -32,8 +34,36 @@ func newDaemonCmd(cfg *globalConfig) *cobra.Command {
 			}
 			defer closeBrowsers()
 
+			// Stop the scheduler after the engine has stopped (defers run LIFO,
+			// and this is registered before engine.Stop below): the engine's
+			// trigger entries live in this scheduler until deactivation.
+			if sched, ok := engine.Scheduler().(*scheduler.Scheduler); ok {
+				defer sched.Stop() //nolint:errcheck
+			}
+
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
+
+			// While the deferred engine.Stop() drains in-flight work, the
+			// NotifyContext registration above is still active and swallows any
+			// further SIGINT/SIGTERM. Count signals with a raw handler so a
+			// second interrupt forces an immediate exit instead of hanging on a
+			// stuck execution. shutdownDone is closed once the drain has
+			// completed cleanly (registered before engine.Stop, so it runs after).
+			shutdownDone := make(chan struct{})
+			sigCh := make(chan os.Signal, 2)
+			signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+			defer signal.Stop(sigCh)
+			go func() {
+				<-sigCh // first signal — also observed by the NotifyContext above
+				select {
+				case <-sigCh:
+					fmt.Fprintln(os.Stderr, "Second interrupt received — forcing immediate exit.")
+					os.Exit(130)
+				case <-shutdownDone:
+				}
+			}()
+			defer close(shutdownDone)
 
 			if err := engine.Start(ctx); err != nil {
 				return fmt.Errorf("start engine: %w", err)

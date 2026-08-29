@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/monoes/mono-agent/internal/workflow"
 )
@@ -53,8 +54,17 @@ func (n *FilterNode) Execute(ctx context.Context, input workflow.NodeInput, conf
 
 		result, err := engine.EvaluateBool(condition, exprCtx)
 		if err != nil {
-			// On evaluation error, treat condition as false.
-			result = false
+			// A condition that cannot be parsed or evaluated must fail the
+			// node. The previous behavior treated every error as a clean
+			// false, so a typo'd condition silently dropped all items and
+			// still reported the execution as SUCCESS. EvaluateBool's
+			// conversion error embeds the evaluated value; never echo item
+			// data back in the error message.
+			msg := err.Error()
+			if strings.Contains(msg, "cannot convert") {
+				msg = "expression did not evaluate to a boolean (expected true/false, 1/0, or yes/no)"
+			}
+			return nil, fmt.Errorf("filter condition error: %s", msg)
 		}
 
 		// Decide whether to keep this item based on mode.

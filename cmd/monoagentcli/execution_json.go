@@ -36,14 +36,28 @@ type executionNodeJSON struct {
 // executionSummaryJSON is the record emitted by `workflow run --json` after
 // the wait completes (and by --no-wait's short form).
 type executionSummaryJSON struct {
-	ExecutionID string              `json:"execution_id"`
-	WorkflowID  string              `json:"workflow_id"`
-	Status      string              `json:"status"`
-	Error       string              `json:"error,omitempty"`
-	StartedAt   *time.Time          `json:"started_at"`
-	FinishedAt  *time.Time          `json:"finished_at"`
-	Nodes       []executionNodeJSON `json:"nodes"`
+	ExecutionID string `json:"execution_id"`
+	WorkflowID  string `json:"workflow_id"`
+	Status      string `json:"status"`
+	Error       string `json:"error,omitempty"`
+	// Hint is set only for statuses that need operator guidance: WAITING
+	// (paused at a human-in-the-loop node — how to approve/reject) and the
+	// --no-wait short form (an engine must stay alive for the run to
+	// complete).
+	Hint       string              `json:"hint,omitempty"`
+	StartedAt  *time.Time          `json:"started_at"`
+	FinishedAt *time.Time          `json:"finished_at"`
+	Nodes      []executionNodeJSON `json:"nodes"`
 }
+
+// waitingHint explains a WAITING execution: the run is paused at a
+// human-in-the-loop node, not failed.
+const waitingHint = "paused for human review — run `monoagentcli hil list` to approve/reject"
+
+// noWaitHint explains what --no-wait leaves behind: the execution is queued
+// in-process and only completes while some engine (e.g. the daemon) stays
+// alive — with a manual trigger and no daemon, it dies with the CLI.
+const noWaitHint = "execution enqueued — a running `monoagentcli daemon` (or a waiting engine) is required for it to complete"
 
 // buildExecutionSummary assembles the run --json record for an execution:
 // status + timestamps from the execution row, per-node records (incl. output
@@ -95,6 +109,9 @@ func executionSummaryFromStore(ctx context.Context, db *storage.Database, execut
 		FinishedAt:  exec.FinishedAt,
 		Nodes:       make([]executionNodeJSON, 0, len(nodeOutputs)),
 	}
+	if exec.Status == "WAITING" {
+		summary.Hint = waitingHint
+	}
 	for _, en := range nodeOutputs {
 		summary.Nodes = append(summary.Nodes, executionNodeJSON{
 			NodeID:      en.NodeID,
@@ -137,15 +154,18 @@ func truncateOutputItems(items []workflow.Item) []workflow.Item {
 }
 
 // printExecutionNoWait emits the short --no-wait record: just enough for a
-// caller to poll `workflow executions` later.
+// caller to poll `workflow executions` later, plus the hint that the
+// enqueued run only completes while an engine stays alive.
 func printExecutionNoWait(cfg *globalConfig, workflowID, executionID, status string) error {
 	if cfg.JSONOutput {
 		return json.NewEncoder(os.Stdout).Encode(map[string]string{
 			"execution_id": executionID,
 			"workflow_id":  workflowID,
 			"status":       status,
+			"hint":         noWaitHint,
 		})
 	}
 	fmt.Fprintf(os.Stdout, "Execution started: %s (status: %s)\n", executionID, status)
+	fmt.Fprintf(os.Stdout, "%s\n", noWaitHint)
 	return nil
 }

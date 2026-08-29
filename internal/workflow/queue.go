@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/rs/zerolog"
 )
@@ -188,10 +189,17 @@ func (q *ExecutionQueue) run(ctx context.Context, req ExecutionRequest) {
 	q.handler(ContextWithSlot(execCtx, slot), req)
 }
 
-// Stop closes the channel and blocks until the dispatcher and all in-flight
-// executions have exited. Callers should cancel the context passed to Start
-// first so waiting executions unblock.
+// Stop closes the channel and waits for the dispatcher and all in-flight
+// executions to exit, bounded by a 15s grace period. Callers should cancel
+// the context passed to Start first so waiting executions unblock; handlers
+// that ignore cancellation past the grace period are abandoned (their
+// goroutines may still be running when Stop returns).
 func (q *ExecutionQueue) Stop() {
+	q.StopWithGrace(15 * time.Second)
+}
+
+// StopWithGrace is Stop with an explicit drain deadline.
+func (q *ExecutionQueue) StopWithGrace(grace time.Duration) {
 	q.mu.Lock()
 	if q.closed {
 		q.mu.Unlock()
@@ -200,7 +208,19 @@ func (q *ExecutionQueue) Stop() {
 	q.closed = true
 	close(q.ch)
 	q.mu.Unlock()
-	q.wg.Wait()
+
+	done := make(chan struct{})
+	go func() {
+		q.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(grace):
+		q.logger.Warn().
+			Str("grace", grace.String()).
+			Msg("workflow queue drain exceeded grace period; abandoning still-running executions")
+	}
 }
 
 // Enqueue adds a request to the queue. Returns ErrQueueFull if the buffer is

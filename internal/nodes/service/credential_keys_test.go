@@ -24,6 +24,9 @@ func TestNodesAcceptRegistryCredentialKeys(t *testing.T) {
 		{"service.jira (domain)", &JiraNode{}, map[string]interface{}{
 			"domain": "example.atlassian.net", "email": "a@b.com", "api_token": "tok", "operation": "list_projects",
 		}},
+		{"service.jira (oauth bearer)", &JiraNode{}, map[string]interface{}{
+			"domain": "example.atlassian.net", "access_token": "tok", "operation": "list_projects",
+		}},
 		{"service.linear (api_key)", &LinearNode{}, map[string]interface{}{
 			"api_key": "tok", "operation": "list_issues",
 		}},
@@ -38,6 +41,18 @@ func TestNodesAcceptRegistryCredentialKeys(t *testing.T) {
 		}},
 		{"service.github (token)", &GitHubNode{}, map[string]interface{}{
 			"token": "tok", "operation": "list_repos",
+		}},
+		{"service.stripe (secret_key)", &StripeNode{}, map[string]interface{}{
+			"secret_key": "sk_test_123", "operation": "list_customers",
+		}},
+		{"service.stripe (legacy api_key)", &StripeNode{}, map[string]interface{}{
+			"api_key": "sk_test_123", "operation": "list_customers",
+		}},
+		{"service.notion (token)", &NotionNode{}, map[string]interface{}{
+			"token": "tok", "database_id": "db1", "operation": "query_database",
+		}},
+		{"service.notion (access_token)", &NotionNode{}, map[string]interface{}{
+			"access_token": "tok", "database_id": "db1", "operation": "query_database",
 		}},
 	}
 

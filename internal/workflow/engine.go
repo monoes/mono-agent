@@ -22,6 +22,7 @@ type WorkflowEngine struct {
 	queue            *ExecutionQueue
 	triggerMgr       *TriggerManager
 	webhookServer    *WebhookServer
+	scheduler        SchedulerInterface
 	expr             *ExpressionEngine
 	logger           zerolog.Logger
 	mu               sync.RWMutex
@@ -66,6 +67,7 @@ func NewWorkflowEngineWithStore(store WorkflowStore, db *sql.DB, scheduler Sched
 		connStore:        connStore,
 		registry:         registry,
 		webhookServer:    webhookServer,
+		scheduler:        scheduler,
 		expr:             NewExpressionEngine(),
 		logger:           logger,
 		pruneInterval:    cfg.PruneInterval,
@@ -119,6 +121,7 @@ func NewWorkflowEngine(db *sql.DB, scheduler SchedulerInterface, registry *NodeT
 		connStore:      connStore,
 		registry:       registry,
 		webhookServer:  webhookServer,
+		scheduler:      scheduler,
 		expr:           NewExpressionEngine(),
 		logger:         logger,
 		pruneInterval:  cfg.PruneInterval,
@@ -160,12 +163,15 @@ func (e *WorkflowEngine) Start(ctx context.Context) error {
 	// daemon or the app is up) can never bind it. That must not stop the engine:
 	// webhook deliveries are already being served by whoever owns the port, and
 	// everything else — manual runs, schedules, node execution — is unaffected.
+	// A background loop keeps retrying the bind so this engine takes over
+	// webhook serving as soon as the current owner exits.
 	if err := e.webhookServer.Start(); err != nil {
 		if !isAddrInUse(err) {
 			return fmt.Errorf("engine: start webhook server: %w", err)
 		}
 		e.logger.Warn().Err(err).
-			Msg("engine: webhook port already in use by another monoagent process — this engine will not serve webhooks, everything else runs normally")
+			Msg("engine: webhook port already in use by another monoagent process — this engine will not serve webhooks yet, retrying every 30s, everything else runs normally")
+		go e.webhookRetryLoop(e.ctx)
 	}
 
 	// 2. Start queue workers.
@@ -194,12 +200,61 @@ func (e *WorkflowEngine) Start(ctx context.Context) error {
 		e.logger.Warn().Err(err).Msg("engine: failed to re-register some triggers on startup")
 	}
 
-	// 5. Start prune and resume loops.
+	// 5. Start prune, resume, and stale-RUNNING reaper loops.
 	go e.pruneLoop(e.ctx)
 	go e.resumeLoop(e.ctx)
+	go e.staleReapLoop(e.ctx)
 
 	e.logger.Info().Msg("workflow engine started")
 	return nil
+}
+
+// webhookRetryLoop retries the webhook bind every 30s after a startup
+// EADDRINUSE, so this engine takes over webhook serving once the process
+// holding the port exits. Exits when the engine context is cancelled.
+// Webhook routes live in the server's route map regardless of whether the
+// listener is up, so registrations made while unbound are served once the
+// bind succeeds.
+func (e *WorkflowEngine) webhookRetryLoop(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := e.webhookServer.Start(); err == nil {
+				e.logger.Info().Str("addr", e.webhookServer.addr).
+					Msg("engine: webhook port acquired; serving webhooks now")
+				return
+			}
+		}
+	}
+}
+
+// staleRunningAge is how long an execution may stay RUNNING before the reaper
+// considers it stale (its owning process crashed without cleanup).
+const staleRunningAge = 24 * time.Hour
+
+// staleReapLoop periodically fails executions stuck RUNNING for over 24h
+// whose owning process is dead (or was this process, which cannot have a
+// legitimately running execution that old at startup). Keeps zombie rows
+// from masquerading as active runs forever.
+func (e *WorkflowEngine) staleReapLoop(ctx context.Context) {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			dctx, cancel := dbCtx()
+			if err := e.store.ReapStaleRunningExecutions(dctx, time.Now().UTC().Add(-staleRunningAge)); err != nil {
+				e.logger.Warn().Err(err).Msg("engine: reap stale RUNNING executions")
+			}
+			cancel()
+		}
+	}
 }
 
 // resumeLoop periodically re-enqueues WAITING executions whose pause points
@@ -281,7 +336,8 @@ func (e *WorkflowEngine) Stop() error {
 	// Deactivate all triggers (stops cron jobs and deregisters webhooks).
 	e.triggerMgr.DeactivateAll()
 
-	// Stop the queue — drains in-flight work and waits for workers to exit.
+	// Stop the queue — drains in-flight work with a bounded 15s grace period
+	// (handlers that ignore cancellation past the grace are abandoned).
 	e.queue.Stop()
 
 	// Shut down the webhook HTTP server.
@@ -440,10 +496,16 @@ func (e *WorkflowEngine) handleExecution(ctx context.Context, req ExecutionReque
 		Logger()
 
 	// 0. Honor a cancellation that landed while this request sat in the queue.
-	if exec, err := e.store.GetExecution(ctx, req.ExecutionID); err == nil && exec != nil && exec.Status == "CANCELLED" {
+	// Status-only read — cheaper than loading the full execution record.
+	if st, err := e.store.GetExecutionStatus(ctx, req.ExecutionID); err == nil && st == "CANCELLED" {
 		log.Info().Msg("engine: handleExecution: execution cancelled before dispatch; skipping")
 		return
 	}
+
+	// Detached context for DB writes so status persistence succeeds even if
+	// the execution context is cancelled mid-dispatch (e.g. engine shutdown).
+	persistCtx, persistCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer persistCancel()
 
 	// 1. Load the workflow.
 	wf, err := e.store.GetWorkflow(ctx, req.WorkflowID)
@@ -459,7 +521,7 @@ func (e *WorkflowEngine) handleExecution(ctx context.Context, req ExecutionReque
 	}
 
 	// 2. Update execution status to RUNNING, record started_at.
-	if err := e.store.SetExecutionStarted(ctx, req.ExecutionID); err != nil {
+	if err := e.store.SetExecutionStarted(persistCtx, req.ExecutionID); err != nil {
 		log.Error().Err(err).Msg("engine: handleExecution: failed to mark execution as RUNNING")
 		// Non-fatal — attempt to continue.
 	}
@@ -473,7 +535,7 @@ func (e *WorkflowEngine) handleExecution(ctx context.Context, req ExecutionReque
 	}
 
 	// Load the full execution record (with trigger data) so runExecution has it.
-	exec, err := e.store.GetExecution(ctx, req.ExecutionID)
+	exec, err := e.store.GetExecution(persistCtx, req.ExecutionID)
 	if err != nil || exec == nil {
 		log.Error().Err(err).Msg("engine: handleExecution: failed to load execution record")
 		_ = e.store.SetExecutionFinished(ctx, req.ExecutionID, "FAILED", "could not load execution record")
@@ -487,10 +549,9 @@ func (e *WorkflowEngine) handleExecution(ctx context.Context, req ExecutionReque
 	runErr := e.runExecution(ctx, exec, wf, dag)
 
 	// 5. On completion: update execution status to SUCCESS or FAILED.
-	// Use a detached context so DB writes succeed even if the execution context
-	// was cancelled (e.g. by engine shutdown or a browser panic).
-	persistCtx, persistCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer persistCancel()
+	// persistCtx (created at the top of handleExecution) is detached from the
+	// execution context so DB writes succeed even if it was cancelled (e.g. by
+	// engine shutdown or a browser panic).
 	var partialErr *PartialFailureError
 	switch {
 	case runErr == nil:
@@ -873,6 +934,10 @@ func (e *WorkflowEngine) ListWorkflows(ctx context.Context) ([]Workflow, error) 
 	}
 	return workflows, nil
 }
+
+// Scheduler returns the scheduler this engine was built with (may be nil in
+// tests). Long-lived processes (the daemon) should Stop it after engine Stop.
+func (e *WorkflowEngine) Scheduler() SchedulerInterface { return e.scheduler }
 
 // GetExecution loads a workflow execution with all node results.
 func (e *WorkflowEngine) GetExecution(ctx context.Context, id string) (*WorkflowExecution, error) {

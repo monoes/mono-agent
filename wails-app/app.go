@@ -17,7 +17,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/monoes/mono-agent/internal/action"
 	"github.com/monoes/mono-agent/internal/ai"
 	aichat "github.com/monoes/mono-agent/internal/ai/chat"
@@ -31,11 +30,11 @@ import (
 
 // App holds application state bound to the Wails runtime.
 type App struct {
-	ctx     context.Context
-	db      *sql.DB
-	dbPath  string
-	logs    []LogEntry
-	logsMu  sync.Mutex
+	ctx         context.Context
+	db          *sql.DB
+	dbPath      string
+	logs        []LogEntry
+	logsMu      sync.Mutex
 	connMgr     *connections.Manager
 	aiStore     *ai.AIStore
 	chatService *aichat.ChatService
@@ -109,15 +108,18 @@ func (a *App) startup(ctx context.Context) {
 		runtime.LogErrorf(ctx, "ai providers migration error: %v", err)
 	}
 
+	// os.UserHomeDir (not $HOME) so vault/workflow dirs resolve on Windows too.
+	home, _ := os.UserHomeDir()
+
 	// Ensure vault directory exists.
-	vaultDir := filepath.Join(os.Getenv("HOME"), ".monoagent", "vault")
+	vaultDir := filepath.Join(home, ".monoagent", "vault")
 	if err := os.MkdirAll(vaultDir, 0700); err != nil {
 		runtime.LogErrorf(ctx, "vault dir error: %v", err)
 	}
 
 	// Initialize workflow hybrid store (file + SQLite) so workflows created
 	// by both the GUI and the CLI are visible.
-	wfDir := filepath.Join(os.Getenv("HOME"), ".monoagent", "workflows")
+	wfDir := filepath.Join(home, ".monoagent", "workflows")
 	fileStore, wfErr := workflow.NewWorkflowFileStore(wfDir)
 	if wfErr != nil {
 		fmt.Printf("workflow file store init error: %v\n", wfErr)
@@ -223,14 +225,14 @@ func (a *App) OpenURL(url string) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 type DashboardStats struct {
-	ActiveSessions int                    `json:"active_sessions"`
-	TotalActions   int                    `json:"total_actions"`
-	ActionsByState map[string]int         `json:"actions_by_state"`
-	TotalPeople    int                    `json:"total_people"`
-	TotalLists     int                    `json:"total_lists"`
-	Sessions       []SessionSummary       `json:"sessions"`
-	RecentActions  []ActionInfo           `json:"recent_actions"`
-	DBPath         string                 `json:"db_path"`
+	ActiveSessions int              `json:"active_sessions"`
+	TotalActions   int              `json:"total_actions"`
+	ActionsByState map[string]int   `json:"actions_by_state"`
+	TotalPeople    int              `json:"total_people"`
+	TotalLists     int              `json:"total_lists"`
+	Sessions       []SessionSummary `json:"sessions"`
+	RecentActions  []ActionInfo     `json:"recent_actions"`
+	DBPath         string           `json:"db_path"`
 }
 
 type SessionSummary struct {
@@ -631,10 +633,10 @@ func fileExists(p string) bool {
 // e.g. "service.google_sheets" → "google_sheets", "db.postgres" → "postgresql"
 func nodeTypeToPlatform(nodeType string) string {
 	overrides := map[string]string{
-		"db.postgres": "postgresql",
-		"db.mysql":    "mysql",
-		"db.mongodb":  "mongodb",
-		"db.redis":    "redis",
+		"db.postgres":     "postgresql",
+		"db.mysql":        "mysql",
+		"db.mongodb":      "mongodb",
+		"db.redis":        "redis",
 		"comm.email_send": "smtp",
 		"comm.email_read": "imap",
 	}
@@ -671,6 +673,12 @@ func (a *App) ExecuteAction(id string) error {
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start action: %w", err)
 	}
+	// Track the subprocess so shutdown kills it too. Namespaced with an
+	// "action:" prefix so it can never collide with workflow-ID keys.
+	actionKey := "action:" + id
+	a.runningMu.Lock()
+	a.runningCmds[actionKey] = cmd
+	a.runningMu.Unlock()
 	a.emitLog("RUNNER", "INFO", fmt.Sprintf("Started action %s (pid %d)", id, cmd.Process.Pid))
 
 	go func() {
@@ -686,6 +694,11 @@ func (a *App) ExecuteAction(id string) error {
 		}
 	}()
 	go func() {
+		defer func() {
+			a.runningMu.Lock()
+			delete(a.runningCmds, actionKey)
+			a.runningMu.Unlock()
+		}()
 		waitErr := cmd.Wait()
 		if waitErr != nil {
 			a.emitLog("RUNNER", "ERROR", fmt.Sprintf("Action %s failed: %v", id, waitErr))
@@ -991,89 +1004,3 @@ func (a *App) RejectHIL(id string) error {
 	a.emitLog("HIL", "INFO", fmt.Sprintf("HIL item %s rejected", id))
 	return nil
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Credentials
-// ─────────────────────────────────────────────────────────────────────────────
-
-func (a *App) ListCredentials() ([]CredentialSummary, error) {
-	if a.db == nil {
-		return nil, fmt.Errorf("database not available")
-	}
-	rows, err := a.db.Query(`SELECT id, name, service_type, created_at, updated_at
-	                          FROM credentials WHERE profile_id = ? ORDER BY name`, a.getActiveProfileID())
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var creds []CredentialSummary
-	for rows.Next() {
-		var c CredentialSummary
-		if rows.Scan(&c.ID, &c.Name, &c.ServiceType, &c.CreatedAt, &c.UpdatedAt) == nil {
-			creds = append(creds, c)
-		}
-	}
-	if creds == nil {
-		creds = []CredentialSummary{}
-	}
-	return creds, rows.Err()
-}
-
-func (a *App) SaveCredential(req SaveCredentialRequest) (*CredentialSummary, error) {
-	if a.db == nil {
-		return nil, fmt.Errorf("database not available")
-	}
-
-	dataJSON := "{}"
-	if len(req.Data) > 0 {
-		if b, err := json.Marshal(req.Data); err == nil {
-			dataJSON = string(b)
-		}
-	}
-
-	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	var credID string
-
-	if req.ID == "" {
-		credID = uuid.New().String()
-		_, err := a.db.Exec(`INSERT INTO credentials (id, name, service_type, encrypted_data, profile_id, created_at, updated_at)
-		                      VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			credID, req.Name, req.ServiceType, dataJSON, a.getActiveProfileID(), now, now)
-		if err != nil {
-			return nil, fmt.Errorf("insert credential: %w", err)
-		}
-	} else {
-		credID = req.ID
-		res, err := a.db.Exec(`UPDATE credentials SET name = ?, service_type = ?, encrypted_data = ?, updated_at = ?
-		                      WHERE id = ? AND profile_id = ?`,
-			req.Name, req.ServiceType, dataJSON, now, credID, a.getActiveProfileID())
-		if err != nil {
-			return nil, fmt.Errorf("update credential: %w", err)
-		}
-		if n, _ := res.RowsAffected(); n == 0 {
-			return nil, fmt.Errorf("credential %s not found", credID)
-		}
-	}
-
-	row := a.db.QueryRow(`SELECT id, name, service_type, created_at, updated_at FROM credentials WHERE id = ?`, credID)
-	var c CredentialSummary
-	if err := row.Scan(&c.ID, &c.Name, &c.ServiceType, &c.CreatedAt, &c.UpdatedAt); err != nil {
-		return nil, err
-	}
-	return &c, nil
-}
-
-func (a *App) DeleteCredential(id string) error {
-	if a.db == nil {
-		return fmt.Errorf("database not available")
-	}
-	res, err := a.db.Exec(`DELETE FROM credentials WHERE id = ? AND profile_id = ?`, id, a.getActiveProfileID())
-	if err != nil {
-		return err
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return fmt.Errorf("credential %s not found", id)
-	}
-	return nil
-}
-

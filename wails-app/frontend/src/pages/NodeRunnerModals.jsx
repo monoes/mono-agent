@@ -45,7 +45,7 @@ export function SaveModal({ initialName, onConfirm, onClose }) {
             value={name}
             onChange={e => setName(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') onClose() }}
-            placeholder="e.g. Instagram Outreach"
+            placeholder="e.g. Daily Digest Pipeline"
             style={{
               width: '100%', boxSizing: 'border-box',
               background: '#020509',

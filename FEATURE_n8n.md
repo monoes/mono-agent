@@ -2,6 +2,13 @@
 
 _Line refs from repository at /Users/morteza/Desktop/monoes/n8n_
 
+> **What this file is:** a feature-by-feature map of n8n v2.12 (nodes,
+> triggers, expressions, credentials, internals) built as the porting
+> reference while creating Mono Agent. It does **not** track Mono Agent's
+> implementation status — checklist items below describe the original
+> porting plan, not current coverage. For what Mono Agent can do today,
+> see [CHANGELOG.md](CHANGELOG.md) and [docs/COMPARISON.md](docs/COMPARISON.md).
+
 ## System Overview
 
 n8n v2.12.0 is an open-source workflow automation platform (iPaaS) built as a Turbo-orchestrated monorepo of 60+ packages. Users compose workflows as directed acyclic graphs (DAGs) of nodes on a Vue 3 canvas; execution is handled by a Node.js backend that can run jobs in-process (simple mode) or distribute them across worker processes via a Bull/Redis job queue. The platform exposes a REST API (v1) for programmatic control and pushes live execution state to connected browser sessions via WebSocket or SSE. Enterprise features—RBAC, SSO, audit logs, credential sharing, license gating—are layered on top of the open-source core and gate-checked at every authorization boundary.
@@ -5758,16 +5765,16 @@ Displays node type icon, name, subtitle, and render metadata (dirtiness, placeho
 ---
 ## Porting Checklist
 
-- [ ] 1. **Implement DAG execution engine** — port `WorkflowExecute` (F-001 through F-021): node scheduling stack, multi-input synchronization, retry, timeout, cancellation, and lifecycle hooks before any other feature.
+- [x] 1. **Implement DAG execution engine** — port `WorkflowExecute` (F-001 through F-021): node scheduling stack, multi-input synchronization, retry, timeout, cancellation, and lifecycle hooks before any other feature. — SHIPPED
 - [ ] 2. **Port database layer** — set up TypeORM equivalent with all entities (F-103 to F-131): ExecutionEntity, WorkflowEntity, CredentialsEntity, User, Project, Webhook, Settings, Variables, Tags, AuthIdentity. Define migration DSL first (F-105/F-106).
-- [ ] 3. **Implement trigger system** — webhook registration, live execution, path routing, cron/poll activation, multi-instance coordination (F-022 to F-038). This requires F-001 and F-103 complete.
+- [x] 3. **Implement trigger system** — webhook registration, live execution, path routing, cron/poll activation, multi-instance coordination (F-022 to F-038). This requires F-001 and F-103 complete. — SHIPPED
 - [ ] 4. **Build REST API scaffolding** — controller registry with decorator-based routing, Zod validation, response envelopes, rate limiting, pagination (F-056 to F-079). All API features depend on this.
 - [ ] 5. **Implement JWT authentication** — cookie-based JWT issuance/validation (F-080), email/password auth (F-081), MFA (F-086), logout/invalidation (F-089), browser ID hijack prevention (F-098).
 - [ ] 6. **Add RBAC and permission scopes** — role model (F-090), global scopes (F-091), credential sharing (F-092), workflow sharing (F-093), project membership (F-094), license gates (F-095).
 - [ ] 7. **Implement real-time push** — WebSocket server with HTTP upgrade (F-073, F-066), SSE fallback (F-067), push routing/serialization (F-069 to F-071), auth validation (F-072). Required for UI execution feedback.
 - [ ] 8. **Implement queue/scaling mode** — Redis connection (F-053), Bull queue setup (F-040), worker process (F-042 to F-044), job serialization (F-041), concurrency control (F-045, F-046), graceful shutdown (F-048), queue recovery (F-049).
 - [ ] 9. **Implement multi-main PubSub** — Redis PubSub channels for multi-instance coordination (F-054), leader election for webhook deduplication (F-030), trigger activation broadcasting (F-031).
-- [ ] 10. **Implement credential encryption** — AES-256 encryption layer (F-124) using a master encryption key stored in settings. Implement redaction (F-126) and OAuth token preservation on update (F-125).
+- [x] 10. **Implement credential encryption** — AES-256 encryption layer (F-124) using a master encryption key stored in settings. Implement redaction (F-126) and OAuth token preservation on update (F-125). — SHIPPED
 - [ ] 11. **Port SSO providers** — LDAP (F-083), SAML 2.0 (F-084), OIDC (F-085), JIT provisioning (F-100), auth method switching (F-099). Each requires the JWT base (F-080) and AuthIdentity entity (F-116).
 - [ ] 12. **Build Vue canvas frontend** — Vue Flow graph renderer (F-132), node drag-and-drop (F-133), edge creation (F-134), NDV panel (F-135), expression editor (F-136), execution results overlay (F-137).
 - [ ] 13. **Wire frontend run/stop controls** — run button with trigger selection (F-138), manual node execution (F-139), stop execution (F-140), push event consumer to update node status (F-069).

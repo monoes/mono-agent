@@ -2,7 +2,9 @@ package workflow
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"reflect"
 	"regexp"
 )
 
@@ -16,6 +18,24 @@ var redactKeyPattern = regexp.MustCompile(
 
 // RedactedValue replaces every value stored under a sensitive key.
 const RedactedValue = "***"
+
+// CycleMarker replaces any value that is part of a reference cycle or
+// deeper than MaxRedactDepth during redaction. goja's Export() preserves
+// reference cycles from core.code results, so without this guard a cyclic
+// item recurses forever and kills the process with a stack overflow.
+const CycleMarker = "***cycle***"
+
+// MaxRedactDepth bounds how deep redactValue recurses into nested maps
+// and arrays before substituting CycleMarker.
+const MaxRedactDepth = 32
+
+// errCyclicItem is returned by marshalItem for values that contain a
+// reference cycle or exceed maxMarshalDepth.
+var errCyclicItem = errors.New("value contains a cycle or exceeded max nesting depth")
+
+// maxMarshalDepth mirrors encoding/json's own maximum nesting depth; the
+// pre-walk in marshalItem never recurses deeper than this.
+const maxMarshalDepth = 10000
 
 // MaxOutputItemBytes caps a single output item included in execution
 // summaries (`workflow run --json`, MCP workflow_run/workflow_status);
@@ -40,36 +60,76 @@ func RedactItems(items []map[string]any) []map[string]any {
 	return out
 }
 
-// redactMap returns a redacted copy of m.
+// redactMap returns a redacted copy of m. Cyclic or too-deep values
+// reachable from m are replaced by CycleMarker instead of recursing
+// forever.
 func redactMap(m map[string]any) map[string]any {
 	if m == nil {
 		return nil
 	}
-	out := make(map[string]any, len(m))
-	for k, v := range m {
-		if redactKeyPattern.MatchString(k) {
-			out[k] = RedactedValue
-			continue
-		}
-		out[k] = redactValue(v)
-	}
+	out, _ := redactValueDepth(m, 0, nil).(map[string]any)
 	return out
 }
 
 // redactValue recursively redacts maps and arrays; scalars pass through.
+// Guarded against cycles (path-based visited set of container pointers)
+// and excessive depth; violations become CycleMarker.
 func redactValue(v any) any {
+	return redactValueDepth(v, 0, nil)
+}
+
+func redactValueDepth(v any, depth int, visited map[uintptr]bool) any {
+	if depth > MaxRedactDepth {
+		return CycleMarker
+	}
 	switch t := v.(type) {
 	case map[string]any:
-		return redactMap(t)
+		if len(t) == 0 {
+			return t
+		}
+		ptr := reflect.ValueOf(t).Pointer()
+		if visited[ptr] {
+			return CycleMarker
+		}
+		out := make(map[string]any, len(t))
+		vNext := withVisited(visited, ptr)
+		for k, val := range t {
+			if redactKeyPattern.MatchString(k) {
+				out[k] = RedactedValue
+				continue
+			}
+			out[k] = redactValueDepth(val, depth+1, vNext)
+		}
+		return out
 	case []any:
+		if len(t) == 0 {
+			return t
+		}
+		ptr := reflect.ValueOf(t).Pointer()
+		if visited[ptr] {
+			return CycleMarker
+		}
 		out := make([]any, len(t))
+		vNext := withVisited(visited, ptr)
 		for i, e := range t {
-			out[i] = redactValue(e)
+			out[i] = redactValueDepth(e, depth+1, vNext)
 		}
 		return out
 	default:
 		return v
 	}
+}
+
+// withVisited returns a copy of visited with ptr added. Copying keeps the
+// set path-scoped, so a subtree that merely appears twice (a shared
+// reference, not a cycle) is still redacted normally on both visits.
+func withVisited(visited map[uintptr]bool, ptr uintptr) map[uintptr]bool {
+	next := make(map[uintptr]bool, len(visited)+1)
+	for k := range visited {
+		next[k] = true
+	}
+	next[ptr] = true
+	return next
 }
 
 // RedactItemJSON returns a copy of item with its JSON map redacted (Binary
@@ -80,11 +140,13 @@ func RedactItemJSON(item Item) Item {
 
 // TruncateItems returns items with any single item whose JSON encoding
 // exceeds MaxOutputItemBytes (or that fails to encode) replaced by a stub
-// noting the original size. The input is never mutated.
+// noting the original size. The input is never mutated. Cyclic values are
+// detected by marshalItem's pre-walk, so a cyclic item becomes a stub
+// instead of relying solely on encoding/json internals.
 func TruncateItems(items []Item) []Item {
 	out := make([]Item, len(items))
 	for i, it := range items {
-		b, err := json.Marshal(it)
+		b, err := marshalItem(it)
 		if err == nil && len(b) <= MaxOutputItemBytes {
 			out[i] = it
 			continue
@@ -92,6 +154,9 @@ func TruncateItems(items []Item) []Item {
 		note := "output item exceeded 4KB and was truncated"
 		if err != nil {
 			note = fmt.Sprintf("output item could not be encoded (%v) and was truncated", err)
+			if errors.Is(err, errCyclicItem) {
+				note = fmt.Sprintf("output item contained a cycle (%s) and was truncated", CycleMarker)
+			}
 		}
 		out[i] = Item{JSON: map[string]interface{}{
 			"truncated":      true,
@@ -100,6 +165,58 @@ func TruncateItems(items []Item) []Item {
 		}}
 	}
 	return out
+}
+
+// marshalItem JSON-encodes an Item after a cycle/depth pre-walk over its
+// JSON value. The pre-walk mirrors redactValueDepth's guards so a cyclic
+// item is reported as an error deterministically, never a crash.
+func marshalItem(it Item) ([]byte, error) {
+	if err := checkEncodable(it.JSON, 0, nil); err != nil {
+		return nil, err
+	}
+	return json.Marshal(it)
+}
+
+// checkEncodable walks v and returns errCyclicItem when a reference cycle
+// or nesting beyond maxMarshalDepth is found.
+func checkEncodable(v any, depth int, visited map[uintptr]bool) error {
+	if depth > maxMarshalDepth {
+		return errCyclicItem
+	}
+	switch t := v.(type) {
+	case map[string]any:
+		if len(t) == 0 {
+			return nil
+		}
+		ptr := reflect.ValueOf(t).Pointer()
+		if visited[ptr] {
+			return errCyclicItem
+		}
+		vNext := withVisited(visited, ptr)
+		for _, val := range t {
+			if err := checkEncodable(val, depth+1, vNext); err != nil {
+				return err
+			}
+		}
+		return nil
+	case []any:
+		if len(t) == 0 {
+			return nil
+		}
+		ptr := reflect.ValueOf(t).Pointer()
+		if visited[ptr] {
+			return errCyclicItem
+		}
+		vNext := withVisited(visited, ptr)
+		for _, e := range t {
+			if err := checkEncodable(e, depth+1, vNext); err != nil {
+				return err
+			}
+		}
+		return nil
+	default:
+		return nil
+	}
 }
 
 // RedactAndTruncateItems applies redaction FIRST, then the size truncation,

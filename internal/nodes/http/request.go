@@ -80,6 +80,15 @@ func (n *RequestNode) Execute(ctx context.Context, input workflow.NodeInput, con
 		paginationType = "none"
 	}
 
+	// Response bodies are read through a LimitReader bounded by
+	// max_body_mb (default 64MB) so a huge or hostile response cannot
+	// exhaust memory.
+	maxBodyMB := 64
+	if v, ok := config["max_body_mb"].(float64); ok && v > 0 {
+		maxBodyMB = int(v)
+	}
+	maxBodyBytes := int64(maxBodyMB) << 20
+
 	pageSize := 100
 	if v, ok := config["page_size"].(float64); ok {
 		pageSize = int(v)
@@ -137,11 +146,11 @@ func (n *RequestNode) Execute(ctx context.Context, input workflow.NodeInput, con
 		itemURL, _ := itemConfig["url"].(string)
 
 		if paginationType == "offset" {
-			pageItems, pageErrors := n.executePaginated(ctx, client, method, itemURL, itemConfig, authType, bodyType, responseFormat, pageField, pageSize, item)
+			pageItems, pageErrors := n.executePaginated(ctx, client, method, itemURL, itemConfig, authType, bodyType, responseFormat, pageField, pageSize, maxBodyBytes, item)
 			mainItems = append(mainItems, pageItems...)
 			errorItems = append(errorItems, pageErrors...)
 		} else {
-			resp, errItem := n.executeRequest(ctx, client, method, itemURL, itemConfig, authType, bodyType, responseFormat, item, -1)
+			resp, errItem := n.executeRequest(ctx, client, method, itemURL, itemConfig, authType, bodyType, responseFormat, item, -1, maxBodyBytes)
 			if errItem != nil {
 				errorItems = append(errorItems, *errItem)
 			} else {
@@ -231,6 +240,7 @@ func (n *RequestNode) executePaginated(
 	authType, bodyType, responseFormat string,
 	pageField string,
 	pageSize int,
+	maxBodyBytes int64,
 	inputItem workflow.Item,
 ) ([]workflow.Item, []workflow.Item) {
 	var allMain []workflow.Item
@@ -244,7 +254,7 @@ func (n *RequestNode) executePaginated(
 
 outer:
 	for page := 0; page < maxPages; page++ {
-		resp, errItem := n.executeRequest(ctx, client, method, rawURL, config, authType, bodyType, responseFormat, inputItem, page)
+		resp, errItem := n.executeRequest(ctx, client, method, rawURL, config, authType, bodyType, responseFormat, inputItem, page, maxBodyBytes)
 		if errItem != nil {
 			allErrors = append(allErrors, *errItem)
 			break
@@ -286,6 +296,7 @@ func (n *RequestNode) executeRequest(
 	authType, bodyType, responseFormat string,
 	inputItem workflow.Item,
 	page int,
+	maxBodyBytes int64,
 ) (workflow.Item, *workflow.Item) {
 	// Build URL
 	u, err := url.Parse(rawURL)
@@ -413,10 +424,22 @@ func (n *RequestNode) executeRequest(
 	}
 	defer resp.Body.Close()
 
-	// Read response body
-	respBytes, err := io.ReadAll(resp.Body)
+	// Read response body, bounded by maxBodyBytes. Read at most one byte
+	// past the cap so an over-limit body is detected without slurping the
+	// whole thing; the unread remainder is dropped when the body closes.
+	respBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes+1))
 	if err != nil {
 		errItem := workflow.NewItem(map[string]interface{}{"error": "failed to read response: " + err.Error()})
+		return workflow.Item{}, &errItem
+	}
+	if int64(len(respBytes)) > maxBodyBytes {
+		detail := ""
+		if resp.ContentLength >= 0 {
+			detail = fmt.Sprintf(" (content-length: %d)", resp.ContentLength)
+		}
+		errItem := workflow.NewItem(map[string]interface{}{
+			"error": fmt.Sprintf("response body exceeds max_body_mb (%d): use max_body_mb to raise%s", maxBodyBytes>>20, detail),
+		})
 		return workflow.Item{}, &errItem
 	}
 

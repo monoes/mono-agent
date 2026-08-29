@@ -97,34 +97,80 @@ func parseFieldFlags(fieldFlags []string) (map[string]string, error) {
 	return fields, nil
 }
 
+// readSecretStdinFields reads a --stdin-json payload — a full JSON object
+// {"value": "...", "fields": {"k":"v"}} — from r and returns the resulting
+// field map. "value" is shorthand for fields["secret"]; at least one of
+// value/fields must be present. This is the argv-leak-free input path used
+// by the GUI (and scripts): secret material never appears in process
+// listings.
+func readSecretStdinFields(r io.Reader) (map[string]string, error) {
+	var payload struct {
+		Value  string            `json:"value"`
+		Fields map[string]string `json:"fields"`
+	}
+	if err := json.NewDecoder(r).Decode(&payload); err != nil {
+		return nil, fmt.Errorf("reading JSON payload from stdin: %w", err)
+	}
+	fields := payload.Fields
+	if fields == nil {
+		fields = map[string]string{}
+	}
+	if payload.Value == "" && len(fields) == 0 {
+		return nil, fmt.Errorf("stdin JSON payload must include \"value\" and/or non-empty \"fields\"")
+	}
+	if payload.Value != "" {
+		if _, exists := fields["secret"]; exists {
+			return nil, fmt.Errorf("stdin JSON payload sets field \"secret\" both directly and via \"value\"")
+		}
+		fields["secret"] = payload.Value
+	}
+	return fields, nil
+}
+
 func newSecretAddCmd(cfg *globalConfig) *cobra.Command {
 	var kind, name, value, username, url, notes string
 	var fieldFlags []string
+	var stdinJSON bool
 	cmd := &cobra.Command{
 		Use:   "add",
 		Short: "Add a new secret or login to the vault",
 		Example: `  monoagentcli secret add --kind secret --name openai-key
   monoagentcli secret add --kind login --name github --username alice --url https://github.com
-  monoagentcli secret add --kind secret --name aws --field access_key_id=... --field secret_access_key=...`,
+  monoagentcli secret add --kind secret --name aws --field access_key_id=... --field secret_access_key=...
+  printf '%s' '{"fields":{"access_key_id":"...","secret_access_key":"..."}}' | monoagentcli secret add --kind secret --name aws --stdin-json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if value != "" && len(fieldFlags) > 0 {
-				return fmt.Errorf("cannot use --value together with --field; --value is shorthand for --field secret=<value>")
+			if stdinJSON && (value != "" || len(fieldFlags) > 0) {
+				return fmt.Errorf("--stdin-json cannot be combined with --value/--field")
 			}
 
-			fields, err := parseFieldFlags(fieldFlags)
-			if err != nil {
-				return err
-			}
-			if value != "" {
-				fields["secret"] = value
-			}
-			if len(fields) == 0 {
-				fmt.Fprint(os.Stderr, "Value: ")
-				v, err := readSecretValue(os.Stdin)
+			var fields map[string]string
+			if stdinJSON {
+				var err error
+				fields, err = readSecretStdinFields(os.Stdin)
 				if err != nil {
 					return err
 				}
-				fields["secret"] = v
+			} else {
+				if value != "" && len(fieldFlags) > 0 {
+					return fmt.Errorf("cannot use --value together with --field; --value is shorthand for --field secret=<value>")
+				}
+
+				var err error
+				fields, err = parseFieldFlags(fieldFlags)
+				if err != nil {
+					return err
+				}
+				if value != "" {
+					fields["secret"] = value
+				}
+				if len(fields) == 0 {
+					fmt.Fprint(os.Stderr, "Value: ")
+					v, err := readSecretValue(os.Stdin)
+					if err != nil {
+						return err
+					}
+					fields["secret"] = v
+				}
 			}
 
 			db, err := initDB(cfg)
@@ -155,6 +201,7 @@ func newSecretAddCmd(cfg *globalConfig) *cobra.Command {
 	cmd.Flags().StringVar(&name, "name", "", "Unique name for this entry (required)")
 	cmd.Flags().StringVar(&value, "value", "", "Shorthand for --field secret=<value> (omit both --value and --field to be prompted on stdin)")
 	cmd.Flags().StringArrayVar(&fieldFlags, "field", nil, "Field as key=value (repeatable)")
+	cmd.Flags().BoolVar(&stdinJSON, "stdin-json", false, `Read the payload as a JSON object from stdin: {"value": "...", "fields": {"k":"v"}} (value optional when fields present)`)
 	cmd.Flags().StringVar(&username, "username", "", "Username (login kind only)")
 	cmd.Flags().StringVar(&url, "url", "", "URL (login kind only)")
 	cmd.Flags().StringVar(&notes, "notes", "", "Optional notes")
@@ -317,23 +364,29 @@ func printRevealedFields(cmd *cobra.Command, cfg *globalConfig, fields map[strin
 func newSecretUpdateCmd(cfg *globalConfig) *cobra.Command {
 	var newName, username, url, notes string
 	var fieldFlags []string
+	var stdinJSON bool
 	cmd := &cobra.Command{
-		Use:     "update <name>",
-		Short:   "Update an existing vault entry's metadata and/or fields",
-		Args:    cobra.ExactArgs(1),
-		Example: `  monoagentcli secret update github --username bob`,
-		RunE:    runSecretUpdate(cfg, &newName, &username, &url, &notes, &fieldFlags),
+		Use:   "update <name>",
+		Short: "Update an existing vault entry's metadata and/or fields",
+		Args:  cobra.ExactArgs(1),
+		Example: `  monoagentcli secret update github --username bob
+  printf '%s' '{"fields":{"pat":"ghp_..."}}' | monoagentcli secret update github --stdin-json`,
+		RunE: runSecretUpdate(cfg, &newName, &username, &url, &notes, &fieldFlags, &stdinJSON),
 	}
 	cmd.Flags().StringVar(&newName, "name", "", "Rename this entry")
 	cmd.Flags().StringVar(&username, "username", "", "New username (login kind only)")
 	cmd.Flags().StringVar(&url, "url", "", "New URL (login kind only)")
 	cmd.Flags().StringVar(&notes, "notes", "", "New notes")
 	cmd.Flags().StringArrayVar(&fieldFlags, "field", nil, "Replace the entire field set with these key=value pairs (repeatable)")
+	cmd.Flags().BoolVar(&stdinJSON, "stdin-json", false, `Read the replacement field set as a JSON object from stdin: {"value": "...", "fields": {"k":"v"}}`)
 	return cmd
 }
 
-func runSecretUpdate(cfg *globalConfig, newName, username, url, notes *string, fieldFlags *[]string) func(*cobra.Command, []string) error {
+func runSecretUpdate(cfg *globalConfig, newName, username, url, notes *string, fieldFlags *[]string, stdinJSON *bool) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, args []string) error {
+		if *stdinJSON && len(*fieldFlags) > 0 {
+			return fmt.Errorf("--stdin-json cannot be combined with --field")
+		}
 		db, err := initDB(cfg)
 		if err != nil {
 			return fmt.Errorf("initializing database: %w", err)
@@ -364,7 +417,15 @@ func runSecretUpdate(cfg *globalConfig, newName, username, url, notes *string, f
 		}
 
 		var fields map[string]string
-		if len(*fieldFlags) > 0 {
+		switch {
+		case *stdinJSON:
+			var err error
+			fields, err = readSecretStdinFields(os.Stdin)
+			if err != nil {
+				return err
+			}
+		case len(*fieldFlags) > 0:
+			var err error
 			fields, err = parseFieldFlags(*fieldFlags)
 			if err != nil {
 				return err

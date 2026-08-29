@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"text/tabwriter"
 	"time"
 
@@ -43,8 +44,8 @@ func newHybridStore(db *storage.Database) *workflow.HybridWorkflowStore {
 
 // buildEngine constructs a fully wired WorkflowEngine suitable for CLI use.
 // It creates its own scheduler (no action executor or store needed for workflow triggers).
-// The returned cleanup func closes any browser session (extension tabs)
-// opened by nodes the engine ran; callers should defer it alongside
+// The returned cleanup func is currently a no-op placeholder kept for the
+// engine lifecycle contract; callers should defer it alongside
 // engine.Stop().
 func buildEngine(cfg *globalConfig, allowAllProfiles bool) (*workflow.WorkflowEngine, func(), error) {
 	db, err := initDB(cfg)
@@ -62,22 +63,13 @@ func buildEngine(cfg *globalConfig, allowAllProfiles bool) (*workflow.WorkflowEn
 	// Set up browser session provider, bot registry, and config manager
 	// so browser/social nodes work in workflows. Chrome extension only —
 	// no Rod/Chromium fallback, sharing another local process's connection
-	// when one already exists (e.g. the daemon).
+	// when one already exists (e.g. the daemon). The bridge is connected
+	// lazily on the first browser-node GetPage: connecting eagerly blocked
+	// every engine command (workflow run/activate/daemon) for up to ~60s
+	// and launched the user's real Chrome even for browserless workflows.
 	extLogger := logger.With().Str("component", "extension").Logger()
-	extBridge := setupExtensionBridge(extLogger, 30*time.Second)
-	if !extBridge.IsConnected() {
-		// No throwaway automation browser — launch the user's real Chrome
-		// (same mechanism as `login`) so the extension can attach, then wait.
-		if err := ensureExtensionConnected(extBridge, 30*time.Second); err != nil {
-			fmt.Fprintf(os.Stderr, "  Warning: %v\n", err)
-		}
-	}
-
-	hybridProvider := &browserpkg.HybridSessionProvider{
-		ExtBridge: extBridge,
-		Logger:    extLogger,
-	}
-	nodes.SetGlobalSessionProvider(hybridProvider)
+	sessionProvider := &lazyBrowserSessionProvider{logger: extLogger}
+	nodes.SetGlobalSessionProvider(sessionProvider)
 	nodes.SetGlobalBotRegistry(&cliBotRegistry{})
 	nodes.SetGlobalCredentialStore(connections.NewStore(db.DB))
 
@@ -100,8 +92,45 @@ func buildEngine(cfg *globalConfig, allowAllProfiles bool) (*workflow.WorkflowEn
 
 	hybridStore := newHybridStore(db)
 	engine := workflow.NewWorkflowEngineWithStore(hybridStore, db.DB, sched, registry, engCfg, logger)
-	return engine, hybridProvider.Close, nil
+	return engine, sessionProvider.Close, nil
 }
+
+// lazyBrowserSessionProvider implements nodes.SessionProvider by connecting
+// the Chrome extension bridge on first use instead of at engine build time.
+// Browser nodes call GetPage when they execute, so the connect sequence —
+// setupExtensionBridge (waits for the extension), then
+// ensureExtensionConnected (launches the user's real Chrome if needed) —
+// runs only for workflows that actually contain a browser node, and its
+// cost is paid by that first node rather than by every engine command.
+type lazyBrowserSessionProvider struct {
+	logger zerolog.Logger
+	mu     sync.Mutex
+	inner  *browserpkg.HybridSessionProvider
+}
+
+func (p *lazyBrowserSessionProvider) GetPage(ctx context.Context, platform, username string) (browserpkg.PageInterface, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.inner == nil {
+		bridge := setupExtensionBridge(p.logger, 30*time.Second)
+		if !bridge.IsConnected() {
+			// No throwaway automation browser — launch the user's real
+			// Chrome (same mechanism as `login`) so the extension can
+			// attach, then wait.
+			if err := ensureExtensionConnected(bridge, 30*time.Second); err != nil {
+				return nil, fmt.Errorf("browser session: %w", err)
+			}
+		}
+		p.inner = &browserpkg.HybridSessionProvider{ExtBridge: bridge, Logger: p.logger}
+	}
+	return p.inner.GetPage(ctx, platform, username)
+}
+
+// Close matches the cleanup signature buildEngine hands back. There is
+// nothing to tear down: HybridSessionProvider.Close is a no-op, and the
+// extension server (when the lazy connect ever ran) is a process-wide
+// singleton on a fixed port that outlives individual engine runs.
+func (p *lazyBrowserSessionProvider) Close() {}
 
 // newWorkflowCmd returns the parent `workflow` cobra command with all subcommands attached.
 func newWorkflowCmd(cfg *globalConfig) *cobra.Command {
@@ -558,22 +587,32 @@ func waitForExecution(ctx context.Context, engine *workflow.WorkflowEngine, exec
 	for {
 		select {
 		case <-ticker.C:
-			exec, err := engine.GetExecution(ctx, executionID)
+			status, err := engine.GetExecutionStatus(ctx, executionID)
 			if err != nil {
 				return fmt.Errorf("poll execution: %w", err)
 			}
-			switch exec.Status {
+			switch status {
 			case "RUNNING", "QUEUED":
 				if time.Now().After(deadline) {
-					return fmt.Errorf("timed out waiting for execution %s (still %s)", executionID, exec.Status)
+					return fmt.Errorf("timed out waiting for execution %s (still %s)", executionID, status)
 				}
 				// keep polling
 			default:
+				// Terminal: load the full record once for the error fields.
+				exec, err := engine.GetExecution(ctx, executionID)
+				if err != nil {
+					return fmt.Errorf("poll execution: %w", err)
+				}
 				if !quiet {
 					if exec.ErrorMessage != "" {
 						fmt.Fprintf(os.Stdout, "Status: %s\nError:  %s\n", exec.Status, exec.ErrorMessage)
 					} else {
 						fmt.Fprintf(os.Stdout, "Status: %s\n", exec.Status)
+					}
+					if exec.Status == "WAITING" {
+						// A documented pause, not a failure (exit stays 0) —
+						// tell the operator where the approval lives.
+						fmt.Fprintf(os.Stdout, "Hint:   %s\n", waitingHint)
 					}
 				}
 				// A FAILED or CANCELLED execution must exit 1 even though the
@@ -757,11 +796,10 @@ func newWorkflowRunCmd(cfg *globalConfig) *cobra.Command {
 				if exec, gerr := engine.GetExecution(ctx, executionID); gerr == nil && exec != nil && exec.Status != "" {
 					status = exec.Status
 				}
-				if err := printExecutionNoWait(cfg, workflowID, executionID, status); err != nil {
-					return err
-				}
-				fmt.Fprintln(os.Stderr, "Note: --no-wait exits immediately; this run keeps executing only while a monoagentcli engine (daemon) is alive.")
-				return nil
+				// printExecutionNoWait appends the daemon hint to both the
+				// human and JSON records: the run is only enqueued in-process
+				// here and completes only while an engine stays alive.
+				return printExecutionNoWait(cfg, workflowID, executionID, status)
 			}
 
 			if !cfg.JSONOutput {
@@ -788,7 +826,7 @@ func newWorkflowRunCmd(cfg *globalConfig) *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&inputJSON, "input", "", `Trigger data as a JSON object, e.g. --input '{"prompt":"a red bicycle"}' (available downstream as {{ $json.<field> }})`)
-	cmd.Flags().BoolVar(&noWait, "no-wait", false, "Print the execution id and exit immediately without waiting for completion")
+	cmd.Flags().BoolVar(&noWait, "no-wait", false, "Print the execution id and exit immediately without waiting for completion (the run only completes while an engine, e.g. `monoagentcli daemon`, stays alive)")
 	cmd.Flags().DurationVar(&timeout, "timeout", 15*time.Minute, "Maximum time to wait for the execution to finish")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Validate the workflow and print its execution plan without running it")
 	return cmd

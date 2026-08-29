@@ -291,7 +291,6 @@ func TestOAuthClientPersistRoundTrip(t *testing.T) {
 	}
 }
 
-
 // TestRefreshTokenSerializesAcrossStores verifies the fix for the
 // cross-process refresh race: two Store instances sharing one DB (standing
 // in for two OS processes — the CLI and a daemon, say — resolving the same
@@ -543,5 +542,148 @@ func TestListAll_SkipsConnectionWithDanglingVaultRef(t *testing.T) {
 	}
 	if !foundHealthy {
 		t.Fatal("expected the healthy connection to still be returned")
+	}
+}
+
+// TestStoreGetOrResolve_ProfileScoping is the RA4 regression test: a
+// workflow running under profile B with credential_id set must NOT resolve
+// (and silently inject) a connection that only exists under profile A —
+// neither by platform-name fallback nor by passing profile A's connection
+// ID — while a same-name connection under profile B resolves normally.
+func TestStoreGetOrResolve_ProfileScoping(t *testing.T) {
+	db := newTestDB(t)
+	store := NewStore(db)
+	ctx := context.Background()
+
+	connA := &Connection{
+		Platform:  "github",
+		Method:    MethodAPIKey,
+		Label:     "github work",
+		ProfileID: "profile-a",
+		Data:      map[string]interface{}{"token": "token-a"},
+	}
+	if err := store.Save(ctx, connA); err != nil {
+		t.Fatalf("Save A: %v", err)
+	}
+
+	// Platform-name fallback with a connection only under A: must error.
+	if conn, err := store.GetOrResolve(ctx, "github", "profile-b"); err == nil || conn != nil {
+		t.Fatalf("expected error when connection exists only under another profile, got conn=%v err=%v", conn, err)
+	}
+
+	// By-ID lookup of profile A's connection from profile B: must error too.
+	if conn, err := store.GetOrResolve(ctx, connA.ID, "profile-b"); err == nil || conn != nil {
+		t.Fatalf("expected error when resolving another profile's connection ID, got conn=%v err=%v", conn, err)
+	}
+
+	// Same-name connection under B: resolves to B's row, never A's.
+	connB := &Connection{
+		Platform:  "github",
+		Method:    MethodAPIKey,
+		Label:     "github personal",
+		ProfileID: "profile-b",
+		Data:      map[string]interface{}{"token": "token-b"},
+	}
+	if err := store.Save(ctx, connB); err != nil {
+		t.Fatalf("Save B: %v", err)
+	}
+	resolved, err := store.GetOrResolve(ctx, "github", "profile-b")
+	if err != nil {
+		t.Fatalf("GetOrResolve under profile-b: %v", err)
+	}
+	if resolved.Data["token"] != "token-b" {
+		t.Fatalf("resolved the wrong profile's connection: token=%v, want token-b", resolved.Data["token"])
+	}
+
+	// And profile A still resolves its own.
+	resolvedA, err := store.GetOrResolve(ctx, "github", "profile-a")
+	if err != nil {
+		t.Fatalf("GetOrResolve under profile-a: %v", err)
+	}
+	if resolvedA.Data["token"] != "token-a" {
+		t.Fatalf("resolved the wrong profile's connection: token=%v, want token-a", resolvedA.Data["token"])
+	}
+
+	// Empty profileID is normalized to "default" (the profile
+	// ProfileIDFromContext returns when no profile is in context).
+	connDefault := &Connection{Platform: "linear", Method: MethodAPIKey, Data: map[string]interface{}{"api_key": "k"}}
+	if err := store.Save(ctx, connDefault); err != nil {
+		t.Fatalf("Save default: %v", err)
+	}
+	if conn, err := store.GetOrResolve(ctx, "linear", ""); err != nil || conn == nil {
+		t.Fatalf("GetOrResolve with empty profileID should resolve the default profile, got conn=%v err=%v", conn, err)
+	}
+}
+
+// TestStoreGet_ProfileScoped verifies the optional profile predicate on Get:
+// scoped to the right profile it finds the row, scoped to the wrong profile
+// it returns nil, and without a profile it stays unscoped (legacy behavior
+// cmd call-sites rely on).
+func TestStoreGet_ProfileScoped(t *testing.T) {
+	db := newTestDB(t)
+	store := NewStore(db)
+	ctx := context.Background()
+
+	conn := &Connection{Platform: "github", Method: MethodAPIKey, Data: map[string]interface{}{}, ProfileID: "work"}
+	if err := store.Save(ctx, conn); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	if got, err := store.Get(ctx, conn.ID, "work"); err != nil || got == nil {
+		t.Fatalf("Get scoped to work: conn=%v err=%v", got, err)
+	}
+	if got, err := store.Get(ctx, conn.ID, "other"); err != nil || got != nil {
+		t.Fatalf("Get scoped to other profile should return nil, got conn=%v err=%v", got, err)
+	}
+	if got, err := store.Get(ctx, conn.ID); err != nil || got == nil {
+		t.Fatalf("Get without profile must stay unscoped, got conn=%v err=%v", got, err)
+	}
+	if got, err := store.Get(ctx, conn.ID, ""); err != nil || got != nil {
+		t.Fatalf("Get scoped with empty profile (normalized to default) should return nil for a work-profile row, got conn=%v err=%v", got, err)
+	}
+}
+
+// TestStoreMarkTested_ProfileScoped verifies the optional profile predicate
+// on MarkTested: it refuses to touch another profile's row and an empty
+// profile argument is normalized to "default".
+func TestStoreMarkTested_ProfileScoped(t *testing.T) {
+	db := newTestDB(t)
+	store := NewStore(db)
+	ctx := context.Background()
+
+	workConn := &Connection{Platform: "github", Method: MethodAPIKey, Data: map[string]interface{}{}, ProfileID: "work"}
+	if err := store.Save(ctx, workConn); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	defConn := &Connection{Platform: "github", Method: MethodAPIKey, Data: map[string]interface{}{}}
+	if err := store.Save(ctx, defConn); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Wrong profile: no rows affected -> error, row unchanged.
+	if err := store.MarkTested(ctx, workConn.ID, "error", "other"); err == nil {
+		t.Fatal("expected error when MarkTested targets another profile's connection")
+	}
+	got, _ := store.Get(ctx, workConn.ID)
+	if got.Status != "active" {
+		t.Fatalf("cross-profile MarkTested must not modify the row, status=%q", got.Status)
+	}
+
+	// Right profile: updates.
+	if err := store.MarkTested(ctx, workConn.ID, "error", "work"); err != nil {
+		t.Fatalf("MarkTested scoped to work: %v", err)
+	}
+	got, _ = store.Get(ctx, workConn.ID)
+	if got.Status != "error" {
+		t.Fatalf("status=%q, want error", got.Status)
+	}
+
+	// Empty profile argument normalizes to "default".
+	if err := store.MarkTested(ctx, defConn.ID, "error", ""); err != nil {
+		t.Fatalf("MarkTested with empty profileID (default): %v", err)
+	}
+	got, _ = store.Get(ctx, defConn.ID)
+	if got.Status != "error" {
+		t.Fatalf("status=%q, want error", got.Status)
 	}
 }

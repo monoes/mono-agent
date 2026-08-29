@@ -124,3 +124,111 @@ func TestTruncateItemsMarshalEquivalence(t *testing.T) {
 		t.Errorf("original_bytes = %v, want > %d", got[1].JSON["original_bytes"], MaxOutputItemBytes)
 	}
 }
+
+// cyclicItems builds one item whose map contains a direct self-reference
+// and an array that contains itself — the exact shape goja's Export()
+// produces for a core.code result like `const o = {}; o.self = o; [o]`.
+func cyclicItems() []Item {
+	m := map[string]any{"name": "root", "password": "hunter2"}
+	m["self"] = m
+	arr := []any{nil}
+	arr[0] = arr
+	m["loop"] = arr
+	return []Item{{JSON: m}}
+}
+
+func TestRedactItemsCyclicNoCrash(t *testing.T) {
+	got := RedactItems([]map[string]any{cyclicItems()[0].JSON})
+	if len(got) != 1 {
+		t.Fatalf("item count changed: %d", len(got))
+	}
+	// The whole cyclic item must marshal now — the cycle was cut.
+	if _, err := json.Marshal(got); err != nil {
+		t.Fatalf("redacted cyclic item still unmarshalable: %v", err)
+	}
+	b, _ := json.Marshal(got[0])
+	if !strings.Contains(string(b), CycleMarker) {
+		t.Errorf("cycle marker missing from redacted output: %s", b)
+	}
+	if !strings.Contains(string(b), "***") || strings.Contains(string(b), "hunter2") {
+		t.Errorf("sensitive value leaked or redaction missing: %s", b)
+	}
+}
+
+func TestRedactItemsDepthGuard(t *testing.T) {
+	// A deeply (but not cyclically) nested acyclic chain longer than
+	// MaxRedactDepth must be cut by the depth guard, not recurse forever.
+	leaf := map[string]any{"k": 1}
+	cur := leaf
+	for i := 0; i < MaxRedactDepth+10; i++ {
+		cur = map[string]any{"child": cur}
+	}
+	got := RedactItems([]map[string]any{cur})
+	b, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("depth-capped item must marshal: %v", err)
+	}
+	if !strings.Contains(string(b), CycleMarker) {
+		t.Errorf("depth guard did not fire: %s", b)
+	}
+}
+
+func TestTruncateItemsCyclicNoCrash(t *testing.T) {
+	got := TruncateItems(cyclicItems())
+	if len(got) != 1 {
+		t.Fatalf("item count changed: %d", len(got))
+	}
+	if truncated, _ := got[0].JSON["truncated"].(bool); !truncated {
+		t.Fatalf("cyclic item must become a truncation stub: %+v", got[0].JSON)
+	}
+	note, _ := got[0].JSON["note"].(string)
+	if !strings.Contains(note, CycleMarker) {
+		t.Errorf("cycle marker missing from stub note: %q", note)
+	}
+	if _, err := json.Marshal(got); err != nil {
+		t.Fatalf("stub must be marshalable: %v", err)
+	}
+}
+
+func TestRedactAndTruncateItemsCyclicNoCrash(t *testing.T) {
+	got := RedactAndTruncateItems(cyclicItems())
+	if len(got) != 1 {
+		t.Fatalf("item count changed: %d", len(got))
+	}
+	// Redaction runs first and cuts the cycle, so the pipeline output is
+	// fully marshalable and carries the marker.
+	b, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("pipeline output must marshal: %v", err)
+	}
+	if !strings.Contains(string(b), CycleMarker) {
+		t.Errorf("cycle marker missing from pipeline output: %s", b)
+	}
+}
+
+func TestRedactItemsSharedSubtreeNotACycle(t *testing.T) {
+	// A DAG (same subtree referenced twice) is NOT a cycle: both
+	// occurrences must be redacted normally, no marker.
+	shared := map[string]any{"note": "x", "token": "sk-1"}
+	items := []map[string]any{{
+		"a":    shared,
+		"b":    shared,
+		"list": []any{shared, shared},
+	}}
+	got := RedactItems(items)[0]
+	for _, loc := range []string{"a", "b"} {
+		m := got[loc].(map[string]any)
+		if m["token"] != "***" || m["note"] != "x" {
+			t.Errorf("%s = %v, want redacted copy", loc, m)
+		}
+	}
+	for _, e := range got["list"].([]any) {
+		m := e.(map[string]any)
+		if m["token"] != "***" {
+			t.Errorf("list element = %v, want redacted copy", m)
+		}
+	}
+	if a := got["a"].(map[string]any); a["note"] != "x" {
+		t.Errorf("shared subtree content altered: %v", a)
+	}
+}

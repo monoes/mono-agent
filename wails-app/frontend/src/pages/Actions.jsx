@@ -166,7 +166,7 @@ function CreateModal({ availableTypes, onClose, onCreated, editAction }) {
   )
 }
 
-export default function Actions({ onRefresh }) {
+export default function Actions({ onRefresh, unavailable }) {
   const [actions, setActions] = useState([])
   const [loading, setLoading] = useState(true)
   const [filterPlatform, setFilterPlatform] = useState('')
@@ -203,6 +203,28 @@ export default function Actions({ onRefresh }) {
     })
     return off
   }, [load])
+
+  // Default builds ship without social action types — render a neutral state
+  // instead of the (unusable) action manager when deep-linked here.
+  if (unavailable) {
+    return (
+      <>
+        <div className="page-header">
+          <div className="page-header-left">
+            <div className="page-title">Actions</div>
+            <div className="page-subtitle">Automation Tasks</div>
+          </div>
+        </div>
+        <div className="page-body">
+          <div className="empty-state">
+            <div className="empty-state-icon"><Zap size={40} /></div>
+            <div className="empty-state-title">Not available in this build</div>
+            <div className="empty-state-desc">This build includes no action types. Use Workflows to automate tasks instead.</div>
+          </div>
+        </div>
+      </>
+    )
+  }
 
   const handleRun = async (id) => {
     setRunError('')

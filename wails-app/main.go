@@ -47,7 +47,9 @@ var assets embed.FS
 // scoped to the currently active profile so one profile cannot enumerate or view
 // another profile's vault images.
 func vaultImageHandler(app *App) http.Handler {
-	vaultDir := filepath.Join(os.Getenv("HOME"), ".monoagent", "vault")
+	// os.UserHomeDir (not $HOME) so the vault dir resolves on Windows too.
+	home, _ := os.UserHomeDir()
+	vaultDir := filepath.Join(home, ".monoagent", "vault")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.URL.Path, "/vault-image/") {
 			w.WriteHeader(http.StatusNotFound)

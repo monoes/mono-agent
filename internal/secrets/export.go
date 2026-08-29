@@ -18,7 +18,7 @@ const (
 	exportFormat  = "monoagent-vault-export"
 	exportVersion = 1
 
-	argon2Time    = 1
+	argon2Time    = 3
 	argon2Memory  = 64 * 1024 // KiB
 	argon2Threads = 4
 	argon2KeyLen  = 32
@@ -223,6 +223,13 @@ func Import(ctx context.Context, db *sql.DB, profileID, passphrase string, fileD
 	}
 	if envelope.Format != exportFormat {
 		return 0, 0, fmt.Errorf("secrets.Import: unrecognized export format %q", envelope.Format)
+	}
+	// The KDF parameters are fixed constants in this package, not carried in
+	// the file — so a file claiming a different version or KDF would be
+	// decrypted with the wrong key schedule and fail confusingly (or worse,
+	// some day silently). Reject it up front instead.
+	if envelope.Version != exportVersion || envelope.KDF != "argon2id" {
+		return 0, 0, fmt.Errorf("secrets.Import: unsupported export version %d / KDF %q (want version %d, argon2id)", envelope.Version, envelope.KDF, exportVersion)
 	}
 
 	key := argon2.IDKey([]byte(passphrase), envelope.Salt, argon2Time, argon2Memory, argon2Threads, argon2KeyLen)

@@ -256,4 +256,3 @@ func appAssetName() string {
 		return ""
 	}
 }
-

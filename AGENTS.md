@@ -115,6 +115,8 @@ Register it with any MCP client (stdio transport). Exposed tools:
 - `docs` (browse `ref` topics)
 
 Prefer MCP when the host supports it; the CLI covers the same surface.
+Tools carry `readOnly`/`destructive` annotations where applicable, so
+hosts can gate dangerous calls.
 
 ## Human-in-the-loop from agents
 
@@ -200,6 +202,17 @@ gofmt -l .
 The desktop GUI (`wails-app/`) is optional and needs the Wails toolchain;
 the CLI is fully usable without it. State always lives in `~/.monoagent/`
 regardless of where the binary runs from.
+
+## Resource limits
+
+Runs are capped to bound the blast radius of an imported or misbehaving
+workflow:
+
+- HTTP node bodies: 64 MB default (configurable).
+- `core.code` nodes: 512 MB memory and 30 s CPU defaults, and at most
+  10,000 items of 16 MB per item per execution.
+- `system.execute_command` output: 10 MB per channel (stdout and stderr).
+- Stored outputs are persisted in full but display-truncated at 4 KB.
 
 ## Honesty box — what this tool will NOT help with
 

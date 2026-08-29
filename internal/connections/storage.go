@@ -24,7 +24,7 @@ type Connection struct {
 	Label      string                 `json:"label"`
 	AccountID  string                 `json:"account_id"`
 	Data       map[string]interface{} `json:"data"`
-	Status     string                 `json:"status"`      // "active" | "expired" | "error"
+	Status     string                 `json:"status"` // "active" | "expired" | "error"
 	LastTested string                 `json:"last_tested,omitempty"`
 	ProfileID  string                 `json:"profile_id,omitempty"`
 	VaultRef   string                 `json:"vault_ref,omitempty"`
@@ -204,27 +204,54 @@ ON CONFLICT(id) DO UPDATE SET
 }
 
 // Get returns the connection with the given ID, or nil if not found.
-func (s *Store) Get(ctx context.Context, id string) (*Connection, error) {
-	row := s.db.QueryRowContext(ctx,
-		`SELECT id, platform, method, label, account_id, data, status, last_tested, COALESCE(profile_id,'default'), COALESCE(vault_ref,''), created_at, updated_at
-         FROM connections WHERE id = ?`, id)
+//
+// An optional profileID scopes the lookup to a single profile with the same
+// COALESCE(profile_id,'default') = ? predicate Delete/List use (an empty
+// profileID argument is normalized to "default"). Without it the lookup
+// stays unscoped for legacy callers: cmd/monoagentcli/node.go's
+// resolveCredentialData post-checks conn.ProfileID itself, and
+// secret_export.go's rematerializer must re-read rows matched by
+// ListByPlatform(profileID) whatever profile that is.
+func (s *Store) Get(ctx context.Context, id string, profileID ...string) (*Connection, error) {
+	q := `SELECT id, platform, method, label, account_id, data, status, last_tested, COALESCE(profile_id,'default'), COALESCE(vault_ref,''), created_at, updated_at
+          FROM connections WHERE id = ?`
+	args := []interface{}{id}
+	if len(profileID) > 0 {
+		p := profileID[0]
+		if p == "" {
+			p = "default"
+		}
+		q += ` AND COALESCE(profile_id,'default') = ?`
+		args = append(args, p)
+	}
+	row := s.db.QueryRowContext(ctx, q, args...)
 	return scanConnection(ctx, s.db, row)
 }
 
-// GetOrResolve looks up a connection by ID, falling back to platform name lookup
-// if the ID isn't found. When only one connection exists for a platform, it's used
-// automatically. OAuth tokens are refreshed if expired.
-func (s *Store) GetOrResolve(ctx context.Context, idOrPlatform string) (*Connection, error) {
-	// Try by ID first.
-	conn, err := s.Get(ctx, idOrPlatform)
+// GetOrResolve looks up a connection by ID, falling back to platform name
+// lookup if the ID isn't found. Both lookups are scoped to profileID: a
+// workflow running under profile B must never resolve — and silently inject
+// — a credential that only exists under profile A. An empty profileID is
+// normalized to "default". When several same-profile connections exist for
+// a platform, active ones are preferred. OAuth tokens are refreshed if
+// expired.
+func (s *Store) GetOrResolve(ctx context.Context, idOrPlatform, profileID string) (*Connection, error) {
+	if profileID == "" {
+		profileID = "default"
+	}
+
+	// Try by ID first, scoped to the profile like Delete/List.
+	conn, err := s.Get(ctx, idOrPlatform, profileID)
 	if err == nil && conn != nil {
 		return s.ensureFreshToken(ctx, conn)
 	}
 
-	// Fallback: look up by platform name across all profiles (no profile filter for workflow resolution).
-	conns, err := s.ListByPlatform(ctx, idOrPlatform, "")
+	// Fallback: look up by platform name, restricted to the same profile —
+	// the previous all-profiles fallback was cross-profile credential
+	// injection (RA4).
+	conns, err := s.ListByPlatform(ctx, idOrPlatform, profileID)
 	if err != nil || len(conns) == 0 {
-		return nil, fmt.Errorf("no connection found for %q", idOrPlatform)
+		return nil, fmt.Errorf("no connection found for %q under profile %q", idOrPlatform, profileID)
 	}
 	// Prefer active connections.
 	for i := range conns {
@@ -274,7 +301,7 @@ func (s *Store) RefreshToken(ctx context.Context, conn *Connection) error {
 			return fmt.Errorf("acquiring refresh lock: %w", err)
 		}
 		if !acquired {
-			if latest, gerr := s.Get(ctx, conn.ID); gerr == nil && latest != nil {
+			if latest, gerr := s.Get(ctx, conn.ID, conn.ProfileID); gerr == nil && latest != nil {
 				*conn = *latest
 			}
 			return nil
@@ -285,7 +312,7 @@ func (s *Store) RefreshToken(ctx context.Context, conn *Connection) error {
 		// process between our caller's Get and our lock acquisition may have
 		// rotated the refresh_token, and exchanging the now-consumed one
 		// would permanently break the connection.
-		if latest, err := s.Get(ctx, conn.ID); err == nil && latest != nil && latest.Data != nil {
+		if latest, err := s.Get(ctx, conn.ID, conn.ProfileID); err == nil && latest != nil && latest.Data != nil {
 			conn.Data = latest.Data
 			conn.VaultRef = latest.VaultRef
 		}
@@ -536,7 +563,7 @@ func (s *Store) Delete(ctx context.Context, id, profileID string) error {
 	if profileID == "" {
 		profileID = "default"
 	}
-	if conn, getErr := s.Get(ctx, id); getErr == nil && conn != nil && conn.VaultRef != "" {
+	if conn, getErr := s.Get(ctx, id, profileID); getErr == nil && conn != nil && conn.VaultRef != "" {
 		if delErr := secrets.Delete(ctx, s.db, profileID, conn.VaultRef); delErr != nil {
 			fmt.Fprintf(os.Stderr, "warning: connection %s deleted but its vault entry %s could not be removed: %v\n", id, conn.VaultRef, delErr)
 		}
@@ -557,11 +584,24 @@ func (s *Store) Delete(ctx context.Context, id, profileID string) error {
 }
 
 // MarkTested updates the status, last_tested, and updated_at fields for the
-// given connection ID.
-func (s *Store) MarkTested(ctx context.Context, id, status string) error {
+// given connection ID. An optional profileID scopes the update to a single
+// profile with the same COALESCE(profile_id,'default') = ? predicate
+// Delete/List use (an empty profileID argument is normalized to "default");
+// without it the update is unscoped for legacy callers whose call-site has
+// no profile context available.
+func (s *Store) MarkTested(ctx context.Context, id, status string, profileID ...string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
-	const q = `UPDATE connections SET status = ?, last_tested = ?, updated_at = ? WHERE id = ?`
-	res, err := s.db.ExecContext(ctx, q, status, now, now, id)
+	q := `UPDATE connections SET status = ?, last_tested = ?, updated_at = ? WHERE id = ?`
+	args := []interface{}{status, now, now, id}
+	if len(profileID) > 0 {
+		p := profileID[0]
+		if p == "" {
+			p = "default"
+		}
+		q += ` AND COALESCE(profile_id,'default') = ?`
+		args = append(args, p)
+	}
+	res, err := s.db.ExecContext(ctx, q, args...)
 	if err != nil {
 		return fmt.Errorf("connections.MarkTested: %w", err)
 	}

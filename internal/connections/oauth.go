@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -85,8 +86,8 @@ func RunOAuthFlow(ctx context.Context, cfg OAuthConfig, timeout time.Duration, p
 	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 
-		if gotState := q.Get("state"); gotState != state {
-			sendErr(fmt.Errorf("state mismatch: got %q, want %q", gotState, state))
+		if gotState := q.Get("state"); subtle.ConstantTimeCompare([]byte(gotState), []byte(state)) != 1 {
+			sendErr(fmt.Errorf("state mismatch"))
 			http.Error(w, "state mismatch", http.StatusBadRequest)
 			return
 		}

@@ -33,7 +33,7 @@
       "position": { "x": 640, "y": 0 },
       "disabled": false,
       "config": {
-        "condition": "{{ $json.title != \"\" }}"
+        "condition": "{{ ne $json.title \"\" }}"
       }
     },
     {

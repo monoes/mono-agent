@@ -200,7 +200,7 @@ Use to build prompts, format strings, or reshape data before the next node.`,
 		Category: "core",
 		Short:    "Run custom JavaScript logic on items",
 		Config: `{
-  "code": "return items.map(i => ({ ...i.json, extra: 'hello' }))"
+  "code": "(function () { return $input.all().map(item => ({ ...item, extra: 'hello' })); })()"
 }`,
 		Inputs:  "any items",
 		Outputs: "items returned by the code",

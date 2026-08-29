@@ -76,7 +76,18 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 		}
 	}
 	if downloadURL == "" {
-		return fmt.Errorf("no binary for %s/%s in release (wanted %s)", runtime.GOOS, runtime.GOARCH, assetName)
+		names := make([]string, 0, len(release.Assets))
+		for _, a := range release.Assets {
+			names = append(names, a.Name)
+		}
+		available := "(none)"
+		if len(names) > 0 {
+			available = strings.Join(names, ", ")
+		}
+		// Hard error, no architecture fallback: silently downloading an
+		// amd64 binary onto an arm64 host bricks the update.
+		return fmt.Errorf("no binary for %s/%s in release %s (wanted %s); available assets: %s",
+			runtime.GOOS, runtime.GOARCH, release.TagName, assetName, available)
 	}
 
 	selfPath, err := selfBinaryPath()
@@ -129,20 +140,19 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 	return nil
 }
 
+// updateAssetName returns the release asset name for the running
+// platform: monoagentcli-<GOOS>-<GOARCH> (plus ".exe" on windows) —
+// uniform across platforms, with no implicit amd64 fallback.
 func updateAssetName() string {
-	switch runtime.GOOS {
-	case "darwin":
-		if runtime.GOARCH == "arm64" {
-			return "monoagentcli-darwin-arm64"
-		}
-		return "monoagentcli-darwin-amd64"
-	case "linux":
-		return "monoagentcli-linux-amd64"
-	case "windows":
-		return "monoagentcli-windows-amd64.exe"
-	default:
-		return "monoagentcli-" + runtime.GOOS + "-" + runtime.GOARCH
+	return updateAssetNameFor(runtime.GOOS, runtime.GOARCH)
+}
+
+func updateAssetNameFor(goos, goarch string) string {
+	name := "monoagentcli-" + goos + "-" + goarch
+	if goos == "windows" {
+		name += ".exe"
 	}
+	return name
 }
 
 func selfBinaryPath() (string, error) {

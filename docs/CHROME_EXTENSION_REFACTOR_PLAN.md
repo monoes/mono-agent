@@ -1,7 +1,7 @@
 # Chrome Extension Refactor Plan
 
 ## Overview
-Replace Rod/CDP browser automation with a Chrome Extension that runs inside the user's existing Chrome profile, eliminating cookie restoration, session management, and bot detection issues.
+Replace Rod/CDP browser automation with a Chrome Extension that runs inside the user's existing Chrome profile, eliminating cookie restoration, session management, and session-stability issues.
 
 ## Architecture
 

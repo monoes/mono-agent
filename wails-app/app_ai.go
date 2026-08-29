@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"github.com/monoes/mono-agent/internal/ai"
 	"github.com/monoes/mono-agent/internal/monomind"
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -213,31 +213,6 @@ func (a *App) ClearAIChatHistory(workflowID string) string {
 		return aiError(err)
 	}
 	return `{"ok":true}`
-}
-
-// GetRunLogs returns the most recent run log entries written by CLI processes.
-func (a *App) GetRunLogs(limit int) []LogEntry {
-	if a.db == nil || limit <= 0 {
-		return nil
-	}
-	rows, err := a.db.Query(
-		`SELECT source, level, message, created_at FROM run_logs ORDER BY id DESC LIMIT ?`, limit)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-	var out []LogEntry
-	for rows.Next() {
-		var e LogEntry
-		if rows.Scan(&e.Source, &e.Level, &e.Message, &e.Time) == nil {
-			out = append(out, e)
-		}
-	}
-	// Reverse so oldest is first.
-	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
-		out[i], out[j] = out[j], out[i]
-	}
-	return out
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

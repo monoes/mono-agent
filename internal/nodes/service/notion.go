@@ -7,14 +7,17 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 
 	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 const (
-	notionBaseURL = "https://api.notion.com/v1"
 	notionVersion = "2022-06-28"
 )
+
+// notionBaseURL is a var (not const) so tests can point it at an httptest server.
+var notionBaseURL = "https://api.notion.com/v1"
 
 // NotionNode interacts with the Notion API.
 // Type: "service.notion"
@@ -24,6 +27,11 @@ func (n *NotionNode) Type() string { return "service.notion" }
 
 func (n *NotionNode) Execute(ctx context.Context, input workflow.NodeInput, config map[string]interface{}) ([]workflow.NodeOutput, error) {
 	token := strVal(config, "token")
+	if token == "" {
+		// OAuth connections store the token as access_token; the legacy
+		// `token` key stays preferred for API-key connections.
+		token = strVal(config, "access_token")
+	}
 	if token == "" {
 		return nil, fmt.Errorf("service.notion: 'token' is required")
 	}
@@ -88,12 +96,12 @@ func (n *NotionNode) notionRequest(ctx context.Context, method, url, token strin
 	}
 	defer resp.Body.Close()
 
-	respBytes, err := io.ReadAll(resp.Body)
+	respBytes, err := readBodyCapped(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("reading response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBytes))
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, errorBodyEcho(respBytes))
 	}
 
 	var result map[string]interface{}
@@ -108,7 +116,7 @@ func (n *NotionNode) getPage(ctx context.Context, token string, config map[strin
 	if pageID == "" {
 		return nil, fmt.Errorf("service.notion: 'page_id' is required for get_page")
 	}
-	url := fmt.Sprintf("%s/pages/%s", notionBaseURL, pageID)
+	url := fmt.Sprintf("%s/pages/%s", notionBaseURL, url.PathEscape(pageID))
 	result, err := n.notionRequest(ctx, "GET", url, token, nil)
 	if err != nil {
 		return nil, fmt.Errorf("service.notion get_page: %w", err)
@@ -150,7 +158,7 @@ func (n *NotionNode) updatePage(ctx context.Context, token string, config map[st
 	body := map[string]interface{}{
 		"properties": mapVal(config, "properties"),
 	}
-	url := fmt.Sprintf("%s/pages/%s", notionBaseURL, pageID)
+	url := fmt.Sprintf("%s/pages/%s", notionBaseURL, url.PathEscape(pageID))
 	result, err := n.notionRequest(ctx, "PATCH", url, token, body)
 	if err != nil {
 		return nil, fmt.Errorf("service.notion update_page: %w", err)
@@ -175,14 +183,34 @@ func (n *NotionNode) queryDatabase(ctx context.Context, token string, config map
 		body["page_size"] = ps
 	}
 
-	url := fmt.Sprintf("%s/databases/%s/query", notionBaseURL, dbID)
-	result, err := n.notionRequest(ctx, "POST", url, token, body)
-	if err != nil {
-		return nil, fmt.Errorf("service.notion query_database: %w", err)
+	// Notion caps a query response at 100 results and returns
+	// has_more/next_cursor for the rest — previously the cursor was ignored
+	// and every query silently stopped at the first page.
+	url := fmt.Sprintf("%s/databases/%s/query", notionBaseURL, url.PathEscape(dbID))
+	var items []workflow.Item
+	truncated := false
+	for page := 0; page < maxListPages; page++ {
+		result, err := n.notionRequest(ctx, "POST", url, token, body)
+		if err != nil {
+			return nil, fmt.Errorf("service.notion query_database: %w", err)
+		}
+		results, _ := result["results"].([]interface{})
+		items = append(items, listToItems(results)...)
+		hasMore, _ := result["has_more"].(bool)
+		cursor, _ := result["next_cursor"].(string)
+		if !hasMore || cursor == "" {
+			break
+		}
+		if page == maxListPages-1 {
+			truncated = true
+			break
+		}
+		body["start_cursor"] = cursor
 	}
-
-	results, _ := result["results"].([]interface{})
-	return listToItems(results), nil
+	if truncated {
+		flagTruncated(items)
+	}
+	return items, nil
 }
 
 func (n *NotionNode) getDatabase(ctx context.Context, token string, config map[string]interface{}) ([]workflow.Item, error) {
@@ -190,7 +218,7 @@ func (n *NotionNode) getDatabase(ctx context.Context, token string, config map[s
 	if dbID == "" {
 		return nil, fmt.Errorf("service.notion: 'database_id' is required for get_database")
 	}
-	url := fmt.Sprintf("%s/databases/%s", notionBaseURL, dbID)
+	url := fmt.Sprintf("%s/databases/%s", notionBaseURL, url.PathEscape(dbID))
 	result, err := n.notionRequest(ctx, "GET", url, token, nil)
 	if err != nil {
 		return nil, fmt.Errorf("service.notion get_database: %w", err)
@@ -228,7 +256,7 @@ func (n *NotionNode) appendBlocks(ctx context.Context, token string, config map[
 	}
 
 	body := map[string]interface{}{"children": children}
-	url := fmt.Sprintf("%s/blocks/%s/children", notionBaseURL, pageID)
+	url := fmt.Sprintf("%s/blocks/%s/children", notionBaseURL, url.PathEscape(pageID))
 	result, err := n.notionRequest(ctx, "PATCH", url, token, body)
 	if err != nil {
 		return nil, fmt.Errorf("service.notion append_blocks: %w", err)

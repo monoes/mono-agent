@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/monoes/mono-agent/internal/workflow"
@@ -70,8 +72,8 @@ func TestRequestNode_GetSuccess(t *testing.T) {
 func TestRequestNode_ErrorHandleOnBadHost(t *testing.T) {
 	// An unroutable URL must route to the "error" handle, not crash or hang.
 	out := runRequest(t, map[string]interface{}{
-		"method":         "GET",
-		"url":            "http://127.0.0.1:1/never",
+		"method":          "GET",
+		"url":             "http://127.0.0.1:1/never",
 		"timeout_seconds": 2.0,
 	})
 	if errs := handleItems(out, "error"); len(errs) == 0 {
@@ -87,6 +89,99 @@ func TestRequestNode_RequiresURL(t *testing.T) {
 	_, err := n.Execute(context.Background(), workflow.NodeInput{}, map[string]interface{}{"method": "GET"})
 	if err == nil {
 		t.Error("expected an error when url is missing")
+	}
+}
+
+// bodyServer serves n NUL bytes with an explicit Content-Length so the
+// over-cap error can report it (streams 1MB chunks — no big allocation
+// server-side).
+func bodyServer(t *testing.T, n int64) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", strconv.FormatInt(n, 10))
+		w.WriteHeader(200)
+		chunk := make([]byte, 1<<20)
+		remaining := n
+		for remaining > 0 {
+			next := int64(len(chunk))
+			if remaining < next {
+				next = remaining
+			}
+			if _, err := w.Write(chunk[:next]); err != nil {
+				return
+			}
+			remaining -= next
+		}
+	}))
+}
+
+func TestRequestNode_BodyUnderCapFlows(t *testing.T) {
+	// 10MB body flows through the default 64MB cap untouched.
+	srv := bodyServer(t, 10<<20)
+	defer srv.Close()
+
+	out := runRequest(t, map[string]interface{}{
+		"method":          "GET",
+		"url":             srv.URL,
+		"response_format": "text",
+	})
+	main := handleItems(out, "main")
+	if len(main) != 1 {
+		t.Fatalf("expected 1 main item, got %d", len(main))
+	}
+	body, _ := main[0].JSON["body"].(string)
+	if len(body) != 10<<20 {
+		t.Errorf("body length = %d, want %d", len(body), 10<<20)
+	}
+}
+
+func TestRequestNode_BodyOverDefaultCapErrors(t *testing.T) {
+	// 70MB body exceeds the 64MB default cap: clean error item naming the
+	// cap and the real content-length, no memory blowup, no crash.
+	srv := bodyServer(t, 70<<20)
+	defer srv.Close()
+
+	out := runRequest(t, map[string]interface{}{
+		"method":          "GET",
+		"url":             srv.URL,
+		"response_format": "text",
+	})
+	errs := handleItems(out, "error")
+	if len(errs) != 1 {
+		t.Fatalf("expected 1 error item, got %d (%v)", len(errs), out)
+	}
+	msg, _ := errs[0].JSON["error"].(string)
+	if !strings.Contains(msg, "exceeds max_body_mb (64)") {
+		t.Errorf("error must name the default cap: %q", msg)
+	}
+	if !strings.Contains(msg, "content-length: 73400320") {
+		t.Errorf("error must include actual content-length: %q", msg)
+	}
+	if !strings.Contains(msg, "use max_body_mb to raise") {
+		t.Errorf("error must point at the knob: %q", msg)
+	}
+	if main := handleItems(out, "main"); len(main) != 0 {
+		t.Errorf("expected no main items, got %d", len(main))
+	}
+}
+
+func TestRequestNode_BodyCustomCap(t *testing.T) {
+	// Raising max_body_mb lets the same 70MB body through.
+	srv := bodyServer(t, 70<<20)
+	defer srv.Close()
+
+	out := runRequest(t, map[string]interface{}{
+		"method":          "GET",
+		"url":             srv.URL,
+		"response_format": "text",
+		"max_body_mb":     100.0,
+	})
+	main := handleItems(out, "main")
+	if len(main) != 1 {
+		t.Fatalf("expected main item with raised cap, got %v", out)
+	}
+	if body, _ := main[0].JSON["body"].(string); len(body) != 70<<20 {
+		t.Errorf("body length = %d, want %d", len(body), 70<<20)
 	}
 }
 

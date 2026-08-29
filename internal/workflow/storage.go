@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -87,6 +88,7 @@ type WorkflowStore interface {
 	// Executions
 	CreateExecution(ctx context.Context, e *WorkflowExecution) error
 	GetExecution(ctx context.Context, id string) (*WorkflowExecution, error)
+	GetExecutionStatus(ctx context.Context, id string) (string, error)
 	ListExecutions(ctx context.Context, workflowID string, limit int) ([]WorkflowExecution, error)
 	UpdateExecutionStatus(ctx context.Context, id string, status string, errMsg string) error
 	SetExecutionStarted(ctx context.Context, id string) error
@@ -109,6 +111,7 @@ type WorkflowStore interface {
 
 	// Recovery
 	RecoverStaleExecutions(ctx context.Context) error
+	ReapStaleRunningExecutions(ctx context.Context, olderThan time.Time) error
 	CancelQueuedExecution(ctx context.Context, id string) (bool, error)
 	PruneExecutions(ctx context.Context, workflowID string, keepCount int) error
 
@@ -854,6 +857,11 @@ func (s *SQLiteWorkflowStore) DeleteCredential(ctx context.Context, id string) e
 // RecoverStaleExecutions transitions any RUNNING or QUEUED executions to FAILED.
 // This should be called once on process startup to handle executions that were
 // interrupted by a previous crash or restart.
+//
+// One exception: a QUEUED execution with a persisted resume_state and no pid
+// is the residue of a crash between the resume CAS (WAITING → QUEUED) and the
+// enqueue — the approved Human-in-Loop run would otherwise be destroyed.
+// Such rows are flipped back to WAITING so the resume loop re-enqueues them.
 func (s *SQLiteWorkflowStore) RecoverStaleExecutions(ctx context.Context) error {
 	// Only fail executions whose owning process is no longer alive. A concurrent
 	// engine (e.g. the `daemon` process) may legitimately have RUNNING executions;
@@ -861,7 +869,7 @@ func (s *SQLiteWorkflowStore) RecoverStaleExecutions(ctx context.Context) error 
 	// rows carry no live worker (pid is only set once RUNNING), so a null/zero/dead
 	// pid means the row is genuinely stale and safe to recover.
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, COALESCE(pid, 0) FROM workflow_executions WHERE status IN ('RUNNING', 'QUEUED')`)
+		`SELECT id, status, COALESCE(pid, 0), COALESCE(resume_state, '') FROM workflow_executions WHERE status IN ('RUNNING', 'QUEUED')`)
 	if err != nil {
 		return fmt.Errorf("recovering stale executions: %w", err)
 	}
@@ -869,21 +877,37 @@ func (s *SQLiteWorkflowStore) RecoverStaleExecutions(ctx context.Context) error 
 
 	self := os.Getpid()
 	var staleIDs []string
+	var resumableIDs []string
 	for rows.Next() {
-		var id string
+		var id, status, resumeState string
 		var pid int
-		if err := rows.Scan(&id, &pid); err != nil {
+		if err := rows.Scan(&id, &status, &pid, &resumeState); err != nil {
 			return fmt.Errorf("recovering stale executions: scan: %w", err)
 		}
 		if pid == self {
 			continue // never fail our own in-flight rows
 		}
 		if !processAlive(pid) {
-			staleIDs = append(staleIDs, id)
+			// Crashed between resume-CAS and Enqueue: flip back to WAITING so
+			// the resume loop re-enqueues the approved run.
+			if status == "QUEUED" && pid == 0 && resumeState != "" {
+				resumableIDs = append(resumableIDs, id)
+			} else {
+				staleIDs = append(staleIDs, id)
+			}
 		}
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("recovering stale executions: %w", err)
+	}
+
+	for _, id := range resumableIDs {
+		if _, err := s.db.ExecContext(ctx, `
+			UPDATE workflow_executions
+			SET status = 'WAITING'
+			WHERE id = ? AND status = 'QUEUED'`, id); err != nil {
+			return fmt.Errorf("recovering resumable execution %s: %w", id, err)
+		}
 	}
 
 	for _, id := range staleIDs {
@@ -891,10 +915,69 @@ func (s *SQLiteWorkflowStore) RecoverStaleExecutions(ctx context.Context) error 
 			UPDATE workflow_executions
 			SET status = 'FAILED',
 			    error_message = 'recovered: process restart',
-			    finished_at = CURRENT_TIMESTAMP
+			    finished_at = CURRENT_TIMESTAMP,
+			    resume_state = ''
 			WHERE id = ? AND status IN ('RUNNING', 'QUEUED')`, id); err != nil {
 			return fmt.Errorf("recovering stale execution %s: %w", id, err)
 		}
+	}
+	return nil
+}
+
+// ReapStaleRunningExecutions fails executions that have been RUNNING longer
+// than olderThan and whose owning process is dead (or is this process, which
+// cannot legitimately have a run that old). A crashed daemon can leave such
+// rows behind when RecoverStaleExecutions missed them (e.g. the pid was
+// recycled); this periodic sweep keeps them from masquerading as active runs.
+func (s *SQLiteWorkflowStore) ReapStaleRunningExecutions(ctx context.Context, olderThan time.Time) error {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, COALESCE(pid, 0) FROM workflow_executions
+		 WHERE status = 'RUNNING' AND started_at IS NOT NULL AND started_at < ?`,
+		olderThan,
+	)
+	if err != nil {
+		return fmt.Errorf("reaping stale running executions: %w", err)
+	}
+	defer rows.Close()
+
+	self := os.Getpid()
+	var ids []string
+	for rows.Next() {
+		var id string
+		var pid int
+		if err := rows.Scan(&id, &pid); err != nil {
+			return fmt.Errorf("reaping stale running executions: scan: %w", err)
+		}
+		if pid <= 0 {
+			continue // unknown owner — can't prove it's dead, stay conservative
+		}
+		if pid == self || !processAlive(pid) {
+			ids = append(ids, id)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("reaping stale running executions: %w", err)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+
+	placeholders := make([]string, len(ids))
+	args := make([]interface{}, 0, len(ids)+1)
+	args = append(args, olderThan)
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	query := `UPDATE workflow_executions
+		SET status = 'FAILED',
+		    error_message = 'stale: running for over 24h',
+		    finished_at = CURRENT_TIMESTAMP,
+		    resume_state = ''
+		WHERE status = 'RUNNING' AND started_at < ? AND id IN (` +
+		strings.Join(placeholders, ",") + `)`
+	if _, err := s.db.ExecContext(ctx, query, args...); err != nil {
+		return fmt.Errorf("reaping stale running executions: %w", err)
 	}
 	return nil
 }
@@ -932,22 +1015,55 @@ func (s *SQLiteWorkflowStore) ResumeWaitingExecution(ctx context.Context, id str
 // PruneExecutions deletes the oldest executions for a workflow when the total
 // count exceeds keepCount. Executions are ordered by created_at; the oldest
 // are removed first.
+//
+// WAITING (Human-in-Loop paused) executions are never prune candidates —
+// deleting one would destroy a paused run that is still awaiting approval.
+// In the same pass, hil_pending rows are cleaned up: rows whose execution no
+// longer exists (orphans — the table has no FK), and rows belonging to the
+// executions being pruned.
 func (s *SQLiteWorkflowStore) PruneExecutions(ctx context.Context, workflowID string, keepCount int) error {
 	if keepCount < 0 {
 		keepCount = 0
 	}
-	_, err := s.db.ExecContext(ctx, `
-		DELETE FROM workflow_executions
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("pruning executions for workflow %s: %w", workflowID, err)
+	}
+
+	// hil_pending rows referencing no existing execution (orphans).
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM hil_pending WHERE execution_id NOT IN (SELECT id FROM workflow_executions)`); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("pruning executions for workflow %s: %w", workflowID, err)
+	}
+
+	candidates := `
+		SELECT id FROM workflow_executions
 		WHERE workflow_id = ?
+		  AND status != 'WAITING'
 		  AND id NOT IN (
 		      SELECT id FROM workflow_executions
 		      WHERE workflow_id = ?
 		      ORDER BY created_at DESC
 		      LIMIT ?
-		  )`,
-		workflowID, workflowID, keepCount,
-	)
-	if err != nil {
+		  )`
+
+	// hil_pending rows of executions about to be pruned.
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM hil_pending WHERE execution_id IN (`+candidates+`)`,
+		workflowID, workflowID, keepCount); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("pruning executions for workflow %s: %w", workflowID, err)
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM workflow_executions WHERE id IN (`+candidates+`)`,
+		workflowID, workflowID, keepCount); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("pruning executions for workflow %s: %w", workflowID, err)
+	}
+
+	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("pruning executions for workflow %s: %w", workflowID, err)
 	}
 	return nil

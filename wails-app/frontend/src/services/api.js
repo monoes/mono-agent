@@ -1,6 +1,6 @@
 // Thin wrapper around Wails Go bindings with error handling.
 import * as GoApp from '../wailsjs/go/main/App'
-import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime'
+import { EventsOn } from '../wailsjs/runtime/runtime'
 
 // Global error bus. Read methods degrade to safe defaults ([]/null/0) so pages
 // keep rendering, but every failure is also broadcast on `api:error` so a toast
@@ -128,54 +128,66 @@ export const api = {
   stopOrgEvents:      (orgName) => GoApp.StopOrgEvents(orgName).then(s => JSON.parse(s)).catch(guard('stop org events', null)),
 }
 
+// The Wails runtime (window.runtime / window.go) only exists inside the desktop
+// shell. In a plain browser (vite dev server) EventsOn would throw, so no-op
+// after one warning instead of crashing the page.
+export function hasWails() {
+  return typeof window !== 'undefined' && !!(window.runtime || window.go)
+}
+
+let warnedNoWails = false
+
+// Subscribe via EventsOn and return its cancel function — removing by event
+// name would kill ALL listeners for the event, including App-level ones.
+export function subscribeEvent(name, callback) {
+  if (!hasWails()) {
+    if (!warnedNoWails) {
+      warnedNoWails = true
+      console.warn('Wails runtime not found — event subscriptions disabled (plain browser dev mode?)')
+    }
+    return () => {}
+  }
+  return EventsOn(name, callback)
+}
+
 export function onLogEntry(callback) {
-  EventsOn('log:entry', callback)
-  return () => EventsOff('log:entry')
+  return subscribeEvent('log:entry', callback)
 }
 
 export function onActionComplete(callback) {
-  EventsOn('action:complete', callback)
-  return () => EventsOff('action:complete')
+  return subscribeEvent('action:complete', callback)
 }
 
 export function onConnectionProgress(callback) {
-  EventsOn('conn:progress', callback)
-  return () => EventsOff('conn:progress')
+  return subscribeEvent('conn:progress', callback)
 }
 
 export function onConnectionDone(callback) {
-  EventsOn('conn:done', callback)
-  return () => EventsOff('conn:done')
+  return subscribeEvent('conn:done', callback)
 }
 
 export function onConnectionOpened(callback) {
-  EventsOn('conn:opened', callback)
-  return () => EventsOff('conn:opened')
+  return subscribeEvent('conn:opened', callback)
 }
 
 export function onAIChunk(callback) {
-  EventsOn('ai:chunk', callback)
-  return () => EventsOff('ai:chunk')
+  return subscribeEvent('ai:chunk', callback)
 }
 
 export function onAITool(callback) {
-  EventsOn('ai:tool', callback)
-  return () => EventsOff('ai:tool')
+  return subscribeEvent('ai:tool', callback)
 }
 
 export function onAIError(callback) {
-  EventsOn('ai:error', callback)
-  return () => EventsOff('ai:error')
+  return subscribeEvent('ai:error', callback)
 }
 
 export function onOrgEvent(callback) {
-  EventsOn('org:event', callback)
-  return () => EventsOff('org:event')
+  return subscribeEvent('org:event', callback)
 }
 
 export function onOrgEventsClosed(callback) {
-  EventsOn('org:eventsClosed', callback)
-  return () => EventsOff('org:eventsClosed')
+  return subscribeEvent('org:eventsClosed', callback)
 }
 
 export const PLATFORMS = ['INSTAGRAM', 'LINKEDIN', 'X', 'TIKTOK']

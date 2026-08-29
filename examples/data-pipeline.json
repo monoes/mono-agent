@@ -32,7 +32,7 @@
       "disabled": false,
       "config": {
         "language": "javascript",
-        "code": "const out = [];\nfor (const item of $input.all()) {\n  for (const order of (item.json.orders || [])) {\n    out.push({ orderId: order.id, amount: Number(order.total || 0), currency: order.currency || 'USD' });\n  }\n}\nreturn out;"
+        "code": "(function () {\n  const out = [];\n  for (const item of $input.all()) {\n    const orders = (item.body && item.body.orders) || [];\n    for (const order of orders) {\n      out.push({ orderId: order.id, amount: Number(order.total || 0), currency: order.currency || 'USD' });\n    }\n  }\n  return out;\n})()"
       }
     },
     {
@@ -82,8 +82,8 @@
       "target_handle": "main"
     },
     {
-      "id": "csv-to-aggregate",
-      "source": "write_csv",
+      "id": "reshape-to-aggregate",
+      "source": "reshape",
       "source_handle": "main",
       "target": "total",
       "target_handle": "main"

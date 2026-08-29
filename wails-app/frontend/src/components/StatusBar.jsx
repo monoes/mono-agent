@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { GetVersion, CheckForUpdate, SelfUpdate } from '../wailsjs/go/main/App'
-import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime'
+import { subscribeEvent } from '../services/api.js'
 
 export default function StatusBar({ stats, dbConnected }) {
   const running = stats?.actions_by_state?.RUNNING || 0
@@ -17,10 +17,10 @@ export default function StatusBar({ stats, dbConnected }) {
 
   // Listen for update progress events
   useEffect(() => {
-    const off = EventsOn('update:progress', msg => {
+    const off = subscribeEvent('update:progress', msg => {
       setUpdate(u => ({ ...u, progress: msg }))
     })
-    return () => { if (typeof off === 'function') off(); else EventsOff('update:progress') }
+    return off
   }, [])
 
   function handleVersionClick() {

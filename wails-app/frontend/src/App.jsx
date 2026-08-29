@@ -30,6 +30,7 @@ export default function App() {
   const [stats, setStats] = useState(null)
   const [logs, setLogs] = useState([])
   const [peopleRefreshKey, setPeopleRefreshKey] = useState(0)
+  const [actionsEnabled, setActionsEnabled] = useState(null) // null = not checked yet; false = no action types in this build
 
   const openProfile = useCallback((id) => {
     setProfileId(id)
@@ -72,9 +73,15 @@ export default function App() {
       const l = await api.getLogs()
       if (l) setLogs(l)
     }
+    const checkActionTypes = async () => {
+      const types = await api.getAvailableActionTypes()
+      const hasTypes = Object.values(types || {}).some(list => Array.isArray(list) && list.length > 0)
+      setActionsEnabled(hasTypes)
+    }
     checkDB()
     loadStats()
     loadLogs()
+    checkActionTypes()
   }, [])
 
   // Live log streaming
@@ -106,7 +113,7 @@ export default function App() {
   const pages = {
     dashboard: <Dashboard stats={stats} onRefresh={refreshStats} onNavigate={navigate} />,
     noderunner: <NodeRunner onNavigate={navigate} navData={navData} />,
-    actions: <Actions onRefresh={refreshStats} />,
+    actions: <Actions unavailable={actionsEnabled === false} onRefresh={refreshStats} />,
     hil: <HumanInLoop />,
     people:    <People key={peopleRefreshKey} onProfile={openProfile} />,
     communications: <Communications onProfile={openProfile} />,
@@ -128,6 +135,7 @@ export default function App() {
         onNavigate={navigate}
         stats={stats}
         dbConnected={dbConnected}
+        showActions={actionsEnabled !== false}
       />
       <main className="main-content">
         <ErrorBoundary key={activePage}>

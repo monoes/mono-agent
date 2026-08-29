@@ -188,6 +188,24 @@ func TestExpressionEvaluateBool(t *testing.T) {
 	}
 }
 
+func TestExpressionEvaluateBoolErrorDoesNotLeakValue(t *testing.T) {
+	engine := NewExpressionEngine()
+	secret := "sk-live-abcdefgh12345678" // 24 chars
+	ctx := ExpressionContext{
+		JSON: map[string]interface{}{"api_key": secret},
+	}
+	_, err := engine.EvaluateBool(`{{$json.api_key}}`, ctx)
+	if err == nil {
+		t.Fatal("expected error for non-bool value")
+	}
+	if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "sk-live") {
+		t.Errorf("error leaks the rendered value: %v", err)
+	}
+	if !strings.Contains(err.Error(), "type string, len 24) to bool") {
+		t.Errorf("error must report type and length only: %v", err)
+	}
+}
+
 func TestExpressionEvaluateString_LowerFunc(t *testing.T) {
 	engine := NewExpressionEngine()
 	ctx := ExpressionContext{

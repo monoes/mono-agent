@@ -92,3 +92,39 @@ func TestExecutionQueue_SlotYieldAllowsProgress(t *testing.T) {
 	cancel()
 	q.Stop()
 }
+
+// TestExecutionQueue_StopBoundedWithHungHandler verifies Stop returns within
+// its grace period even when an in-flight handler ignores context
+// cancellation (e.g. a node stuck in an uninterruptible call). Previously
+// Stop waited on the WaitGroup unbounded, so one hung execution could block
+// engine shutdown forever.
+func TestExecutionQueue_StopBoundedWithHungHandler(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	handler := func(ctx context.Context, req ExecutionRequest) {
+		started <- struct{}{}
+		<-release // deliberately ignores ctx — simulates a hung node
+	}
+	q := NewExecutionQueue(10, 1, handler, zerolog.Nop())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	q.Start(ctx)
+
+	if err := q.Enqueue(ExecutionRequest{ExecutionID: "hung"}); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	<-started
+
+	cancel() // engine Stop cancels the queue context before calling Stop
+
+	const grace = 500 * time.Millisecond
+	start := time.Now()
+	q.StopWithGrace(grace)
+	elapsed := time.Since(start)
+
+	if elapsed > 2*grace {
+		t.Fatalf("StopWithGrace took %v with a hung handler; want bounded near %v", elapsed, grace)
+	}
+
+	close(release) // let the abandoned goroutine exit so the test doesn't leak it
+}

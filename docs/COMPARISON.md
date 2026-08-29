@@ -67,13 +67,14 @@ Choosing n8n here is a correct decision, not a failure.
 - **A native desktop app** (Wails) when you want a GUI without running a
   web stack.
 
-## Ongoing n8n parity tracking
+## n8n feature reference
 
 We maintain a detailed feature-by-feature map of n8n — 5,780 lines covering
-nodes, triggers, expressions, credentials, and behavior — as the working
-parity tracker for what Mono Agent covers and what it doesn't yet:
-**[FEATURE_n8n.md](../FEATURE_n8n.md)**. If a comparison claim here and that
-document ever disagree, trust the tracker and file an issue.
+nodes, triggers, expressions, credentials, and behavior — as a reference
+map of n8n's feature surface used during porting; it is not a live status
+tracker: **[FEATURE_n8n.md](../FEATURE_n8n.md)**. For what Mono Agent
+covers today, see this document and the
+[CHANGELOG](../CHANGELOG.md).
 
 ---
 

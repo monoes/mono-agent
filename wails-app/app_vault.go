@@ -175,8 +175,16 @@ func (a *App) ListSecrets() ([]VaultEntry, error) {
 	return entries, nil
 }
 
+// secretStdinPayload is the JSON object piped to `monoagentcli secret
+// add/update --stdin-json`: {"value": "...", "fields": {...}}. Secret
+// material travels over the pipe, never in argv.
+type secretStdinPayload struct {
+	Value  string            `json:"value,omitempty"`
+	Fields map[string]string `json:"fields,omitempty"`
+}
+
 func (a *App) AddSecret(kind, name, username, url, notes string, fields map[string]string) (string, error) {
-	args := []string{"add", "--kind", kind, "--name", name}
+	args := []string{"add", "--stdin-json", "--kind", kind, "--name", name}
 	if username != "" {
 		args = append(args, "--username", username)
 	}
@@ -186,13 +194,14 @@ func (a *App) AddSecret(kind, name, username, url, notes string, fields map[stri
 	if notes != "" {
 		args = append(args, "--notes", notes)
 	}
-	for k, v := range fields {
-		args = append(args, "--field", k+"="+v)
+	payload, err := json.Marshal(secretStdinPayload{Fields: fields})
+	if err != nil {
+		return "", err
 	}
 	var result struct {
 		ID string `json:"id"`
 	}
-	if err := a.runVaultCLI("", &result, args...); err != nil {
+	if err := a.runVaultCLI(string(payload), &result, args...); err != nil {
 		return "", err
 	}
 	return result.ID, nil
@@ -208,10 +217,18 @@ func (a *App) GetSecretFields(name string) (*VaultFieldsAndNotes, error) {
 
 func (a *App) UpdateSecret(name, newName, username, url, notes string, fields map[string]string) error {
 	args := []string{"update", name, "--name", newName, "--username", username, "--url", url, "--notes", notes}
-	for k, v := range fields {
-		args = append(args, "--field", k+"="+v)
+	// Only pipe a field set when there is one — an update touching just
+	// metadata must keep the CLI's "don't touch fields" semantics.
+	stdin := ""
+	if len(fields) > 0 {
+		payload, err := json.Marshal(secretStdinPayload{Fields: fields})
+		if err != nil {
+			return err
+		}
+		args = append(args, "--stdin-json")
+		stdin = string(payload)
 	}
-	return a.runVaultCLI("", nil, args...)
+	return a.runVaultCLI(stdin, nil, args...)
 }
 
 func (a *App) DeleteSecret(name string) error {
