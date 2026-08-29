@@ -29,6 +29,8 @@ export function CancelWorkflow(arg1:string):Promise<void>;
 
 export function CheckForUpdate():Promise<main.UpdateInfo>;
 
+export function ChooseProfileFolder():Promise<string>;
+
 export function ClearAIChatHistory(arg1:string):Promise<string>;
 
 export function ClearLogs():Promise<void>;
@@ -41,7 +43,7 @@ export function ConnectPlatformOAuth(arg1:string):Promise<string>;
 
 export function CreateAction(arg1:main.CreateActionRequest):Promise<main.ActionInfo>;
 
-export function CreateProfile(arg1:string):Promise<main.ProfileInfo>;
+export function CreateProfile(arg1:string,arg2:string):Promise<main.ProfileInfo>;
 
 export function CreateResource(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.ResourceItemResult>;
 
@@ -92,6 +94,8 @@ export function GetAllPersonMessages(arg1:number):Promise<Array<storage.PersonMe
 export function GetAllTags():Promise<Array<main.TagInfo>>;
 
 export function GetAvailableActionTypes():Promise<Record<string, Array<string>>>;
+
+export function GetChatSessionMessages(arg1:string,arg2:string):Promise<string>;
 
 export function GetConnectionsForPlatform(arg1:string):Promise<Array<connections.SafeConnection>>;
 
@@ -187,6 +191,8 @@ export function IsDBConnected():Promise<boolean>;
 
 export function ListAIProviders():Promise<string>;
 
+export function ListChatSessions(arg1:string):Promise<string>;
+
 export function ListConnections(arg1:string):Promise<Array<connections.SafeConnection>>;
 
 export function ListCredentials():Promise<Array<main.CredentialSummary>>;
@@ -207,6 +213,8 @@ export function ListWorkflows():Promise<Array<main.WorkflowSummary>>;
 
 export function LoginSocial(arg1:string):Promise<string>;
 
+export function MoveProfileFolder(arg1:string,arg2:string):Promise<void>;
+
 export function OpenURL(arg1:string):Promise<void>;
 
 export function OpenVaultFilePicker():Promise<string>;
@@ -220,6 +228,8 @@ export function RejectHIL(arg1:string):Promise<void>;
 export function RemoveConnection(arg1:string):Promise<string>;
 
 export function RemovePersonTag(arg1:string,arg2:string):Promise<void>;
+
+export function RevealProfileFolder(arg1:string):Promise<void>;
 
 export function RunNode(arg1:main.NodeRunRequest):Promise<main.NodeRunResult>;
 
@@ -255,7 +265,7 @@ export function StopOrgEvents(arg1:string):Promise<string>;
 
 export function StreamAIChat(arg1:string,arg2:string,arg3:string,arg4:string):Promise<string>;
 
-export function StreamAgentChat(arg1:string,arg2:string,arg3:string,arg4:string,arg5:boolean):Promise<string>;
+export function StreamAgentChat(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:boolean,arg7:boolean):Promise<string>;
 
 export function StreamOrgEvents(arg1:string):Promise<string>;
 

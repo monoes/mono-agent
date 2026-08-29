@@ -406,3 +406,77 @@ func TestProviderStatus(t *testing.T) {
 		t.Errorf("LastTested = %q, want %q", got.LastTested, testedAt)
 	}
 }
+
+// TestChatSessions covers the resumable-session grouping introduced for
+// AIChatPanel's session continuity + past-sessions list: messages sharing a
+// SessionID within one WorkflowID must group into one ChatSession, ordered
+// most-recently-updated first, and GetSessionMessages must return only that
+// session's rows.
+func TestChatSessions(t *testing.T) {
+	db := openTestDB(t)
+	store, err := NewAIStore(db)
+	if err != nil {
+		t.Fatalf("NewAIStore: %v", err)
+	}
+
+	const wf = "general"
+	save := func(id, role, content, sessionID, createdAt string) {
+		t.Helper()
+		if err := store.SaveChatMessage(ChatMessage{
+			ID: id, WorkflowID: wf, Role: role, Content: content,
+			ProviderID: "codex", Model: "gpt-5", SessionID: sessionID, CreatedAt: createdAt,
+		}); err != nil {
+			t.Fatalf("SaveChatMessage(%s): %v", id, err)
+		}
+	}
+
+	// Session "s1": two turns, earlier.
+	save("m1", "user", "hi, remember 42", "s1", "2026-01-01T00:00:00Z")
+	save("m2", "assistant", "ok, 42 noted", "s1", "2026-01-01T00:00:01Z")
+	save("m3", "user", "what number?", "s1", "2026-01-01T00:00:02Z")
+	save("m4", "assistant", "42", "s1", "2026-01-01T00:00:03Z")
+	// Session "s2": one turn, later — should sort first.
+	save("m5", "user", "new topic entirely, this is a much longer message that should get truncated in the preview text shown in the past-sessions dropdown list", "s2", "2026-01-02T00:00:00Z")
+	save("m6", "assistant", "sure", "s2", "2026-01-02T00:00:01Z")
+	// A message with no session_id (legacy row) must be excluded entirely.
+	save("m7", "user", "legacy row", "", "2026-01-03T00:00:00Z")
+
+	sessions, err := store.ListChatSessions(wf)
+	if err != nil {
+		t.Fatalf("ListChatSessions: %v", err)
+	}
+	if len(sessions) != 2 {
+		t.Fatalf("ListChatSessions returned %d sessions, want 2 (legacy no-session-id row must be excluded)", len(sessions))
+	}
+	if sessions[0].SessionID != "s2" {
+		t.Errorf("sessions[0].SessionID = %q, want %q (most-recently-updated first)", sessions[0].SessionID, "s2")
+	}
+	if sessions[1].SessionID != "s1" {
+		t.Errorf("sessions[1].SessionID = %q, want %q", sessions[1].SessionID, "s1")
+	}
+	if sessions[1].MessageCount != 4 {
+		t.Errorf("sessions[1] (s1) MessageCount = %d, want 4", sessions[1].MessageCount)
+	}
+	if sessions[1].Runtime != "codex" || sessions[1].Model != "gpt-5" {
+		t.Errorf("sessions[1] (s1) Runtime/Model = %q/%q, want codex/gpt-5", sessions[1].Runtime, sessions[1].Model)
+	}
+	if got := []rune(sessions[0].Preview); len(got) > 81 { // 80 chars + ellipsis
+		t.Errorf("sessions[0].Preview not truncated: %d runes", len(got))
+	}
+
+	msgs, err := store.GetSessionMessages(wf, "s1")
+	if err != nil {
+		t.Fatalf("GetSessionMessages: %v", err)
+	}
+	if len(msgs) != 4 {
+		t.Fatalf("GetSessionMessages(s1) returned %d messages, want 4", len(msgs))
+	}
+	for _, m := range msgs {
+		if m.SessionID != "s1" {
+			t.Errorf("GetSessionMessages(s1) returned a message from session %q", m.SessionID)
+		}
+	}
+	if msgs[3].Content != "42" {
+		t.Errorf("GetSessionMessages(s1)[3].Content = %q, want %q (ascending order)", msgs[3].Content, "42")
+	}
+}

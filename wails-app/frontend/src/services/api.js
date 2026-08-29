@@ -1,6 +1,6 @@
 // Thin wrapper around Wails Go bindings with error handling.
 import * as GoApp from '../wailsjs/go/main/App'
-import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime'
+import { EventsOn } from '../wailsjs/runtime/runtime'
 
 // Global error bus. Read methods degrade to safe defaults ([]/null/0) so pages
 // keep rendering, but every failure is also broadcast on `api:error` so a toast
@@ -106,8 +106,10 @@ export const api = {
   clearAIChatHistory: (workflowID) => GoApp.ClearAIChatHistory(workflowID).then(s => JSON.parse(s)),
   // Agent Chat (monomind delegation — local AI agent runtimes)
   scanAgentRuntimes:  () => GoApp.ScanAgentRuntimes().then(s => JSON.parse(s)).catch(guard('scan agent runtimes', null)),
-  streamAgentChat:    (workflowID, message, runtime, model, canvas = true) => GoApp.StreamAgentChat(workflowID, message, runtime, model, canvas).then(s => JSON.parse(s)),
+  streamAgentChat:    (workflowID, message, runtime, model, resumeSessionID = '', canvas = true, monoagentTools = true) => GoApp.StreamAgentChat(workflowID, message, runtime, model, resumeSessionID, canvas, monoagentTools).then(s => JSON.parse(s)),
   stopAgentChat:      (workflowID) => GoApp.StopAgentChat(workflowID).then(s => JSON.parse(s)).catch(guard('stop agent chat', null)),
+  listChatSessions:      (workflowID) => GoApp.ListChatSessions(workflowID).then(s => JSON.parse(s)).catch(guard('list chat sessions', [])),
+  getChatSessionMessages: (workflowID, sessionID) => GoApp.GetChatSessionMessages(workflowID, sessionID).then(s => JSON.parse(s)).catch(guard('chat session messages', [])),
   // Orgs (monomind Org Runtime v2)
   listOrgs:           () => GoApp.ListOrgs().then(s => JSON.parse(s)).catch(guard('list orgs', null)),
   getOrgStatus:       (name = '') => GoApp.GetOrgStatus(name).then(s => JSON.parse(s)).catch(guard('org status', null)),
@@ -128,54 +130,61 @@ export const api = {
   stopOrgEvents:      (orgName) => GoApp.StopOrgEvents(orgName).then(s => JSON.parse(s)).catch(guard('stop org events', null)),
 }
 
+// Every onXxx() below returns EventsOn's own per-listener unsubscribe
+// function directly, rather than calling EventsOff(eventName) — EventsOff
+// unregisters *every* listener registered for that event name, not just
+// this one. With two AIChatPanel instances mounted at once (the global
+// assistant, and the Workflows editor's own canvas chat in NodeRunner.jsx,
+// which stays mounted indefinitely once visited per the app's keep-alive
+// navigation), switching which workflow is open in the editor re-runs its
+// panel's subscribe effect — and the old EventsOff(name) pattern silently
+// killed the *other* panel's listeners too, including mid-flight, so a
+// long-running chat turn's completion event had nothing left to receive
+// it: the backend finishes (visible in Live Logs) but the UI never learns
+// and "Thinking..." spins forever. EventsOn's return value fixes this by
+// construction — it can only ever unsubscribe the listener it created.
 export function onLogEntry(callback) {
-  EventsOn('log:entry', callback)
-  return () => EventsOff('log:entry')
+  return EventsOn('log:entry', callback)
 }
 
 export function onActionComplete(callback) {
-  EventsOn('action:complete', callback)
-  return () => EventsOff('action:complete')
+  return EventsOn('action:complete', callback)
 }
 
 export function onConnectionProgress(callback) {
-  EventsOn('conn:progress', callback)
-  return () => EventsOff('conn:progress')
+  return EventsOn('conn:progress', callback)
 }
 
 export function onConnectionDone(callback) {
-  EventsOn('conn:done', callback)
-  return () => EventsOff('conn:done')
+  return EventsOn('conn:done', callback)
 }
 
 export function onConnectionOpened(callback) {
-  EventsOn('conn:opened', callback)
-  return () => EventsOff('conn:opened')
+  return EventsOn('conn:opened', callback)
 }
 
 export function onAIChunk(callback) {
-  EventsOn('ai:chunk', callback)
-  return () => EventsOff('ai:chunk')
+  return EventsOn('ai:chunk', callback)
 }
 
 export function onAITool(callback) {
-  EventsOn('ai:tool', callback)
-  return () => EventsOff('ai:tool')
+  return EventsOn('ai:tool', callback)
 }
 
 export function onAIError(callback) {
-  EventsOn('ai:error', callback)
-  return () => EventsOff('ai:error')
+  return EventsOn('ai:error', callback)
+}
+
+export function onAgentSession(callback) {
+  return EventsOn('agent:session', callback)
 }
 
 export function onOrgEvent(callback) {
-  EventsOn('org:event', callback)
-  return () => EventsOff('org:event')
+  return EventsOn('org:event', callback)
 }
 
 export function onOrgEventsClosed(callback) {
-  EventsOn('org:eventsClosed', callback)
-  return () => EventsOff('org:eventsClosed')
+  return EventsOn('org:eventsClosed', callback)
 }
 
 export const PLATFORMS = ['INSTAGRAM', 'LINKEDIN', 'X', 'TIKTOK']

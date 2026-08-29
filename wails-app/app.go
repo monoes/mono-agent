@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,8 +23,11 @@ import (
 	"monoagent/internal/ai"
 	aichat "monoagent/internal/ai/chat"
 	"monoagent/internal/connections"
+	"monoagent/internal/monomind"
+	"monoagent/internal/profiledir"
 	"monoagent/internal/secrets"
 	"monoagent/internal/storage"
+	"monoagent/internal/vault"
 	"monoagent/internal/workflow"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	_ "modernc.org/sqlite"
@@ -168,9 +172,82 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.setActiveProfileID(activeProfileID)
 
+	a.migrateProfilesToPerProfileLayout(ctx, db)
+
 	a.emitLog("SYSTEM", "INFO", "Mono Agent UI connected to "+a.dbPath)
 
 	go a.backgroundUpdateCheck()
+}
+
+// migrateProfilesToPerProfileLayout brings every existing profile up to the
+// per-profile architecture: a dedicated folder, its files moved out of the
+// old shared vault directory, its secrets re-encrypted under its own key
+// (instead of the one every profile used to share), and an empty monomind
+// project bootstrapped for its knowledge graph. Runs once per app startup,
+// for every profile — each underlying step is already cheap and idempotent
+// once a profile is fully migrated (a handful of COUNT-first queries), the
+// same "run it every startup, no-op once done" pattern the migrations right
+// above this call already use (MigrateConnectionsToVault et al.). A failure
+// on one profile is logged and does not block the others or app startup.
+func (a *App) migrateProfilesToPerProfileLayout(ctx context.Context, db *sql.DB) {
+	rows, err := db.QueryContext(ctx, `SELECT id FROM profiles`)
+	if err != nil {
+		a.emitLog("SYSTEM", "WARN", fmt.Sprintf("per-profile layout migration: listing profiles: %v", err))
+		return
+	}
+	var profileIDs []string
+	for rows.Next() {
+		var id string
+		if rows.Scan(&id) == nil {
+			profileIDs = append(profileIDs, id)
+		}
+	}
+	rows.Close()
+
+	for _, profileID := range profileIDs {
+		if err := profiledir.EnsureLayout(db, profileID); err != nil {
+			a.emitLog("SYSTEM", "WARN", fmt.Sprintf("profile %s: creating folder layout: %v", profileID, err))
+			continue
+		}
+
+		if moved, errs := vault.MigrateVaultFiles(ctx, db, profileID); moved > 0 || len(errs) > 0 {
+			for _, e := range errs {
+				a.emitLog("SYSTEM", "WARN", fmt.Sprintf("profile %s: vault file migration: %v", profileID, e))
+			}
+			if moved > 0 {
+				a.emitLog("SYSTEM", "INFO", fmt.Sprintf("profile %s: moved %d vault file(s) into its own folder", profileID, moved))
+			}
+		}
+
+		if migrated, errs := secrets.MigrateProfileVaultKeys(ctx, db, profileID); migrated > 0 || len(errs) > 0 {
+			for _, e := range errs {
+				a.emitLog("SYSTEM", "WARN", fmt.Sprintf("profile %s: vault key migration: %v", profileID, e))
+			}
+			if migrated > 0 {
+				a.emitLog("SYSTEM", "INFO", fmt.Sprintf("profile %s: re-encrypted %d secret(s) under its own key", profileID, migrated))
+			}
+		}
+
+		// connections.data and platform_oauth_credentials.client_secret use
+		// the same DEK/KEK scheme as vault_secrets but live in a different
+		// table, so they need their own migration pass — see
+		// connections.MigrateProfileBlobs for why skipping this broke every
+		// existing OAuth connection (decrypt failures read as "connection
+		// not found," which sends callers into a fresh login flow instead).
+		if migrated, errs := connections.MigrateProfileBlobs(ctx, db, profileID); migrated > 0 || len(errs) > 0 {
+			for _, e := range errs {
+				a.emitLog("SYSTEM", "WARN", fmt.Sprintf("profile %s: connection data migration: %v", profileID, e))
+			}
+			if migrated > 0 {
+				a.emitLog("SYSTEM", "INFO", fmt.Sprintf("profile %s: re-encrypted %d connection(s) under its own key", profileID, migrated))
+			}
+		}
+
+		// Best-effort, fire-and-forget — bootstrapProfileMonograph already
+		// handles a not-yet-existing monomind binary or a slow first build
+		// without blocking startup.
+		a.bootstrapProfileMonograph(profileID)
+	}
 }
 
 func (a *App) shutdown(_ context.Context) {
@@ -597,6 +674,15 @@ func (a *App) GetTemplates() []TemplateInfo {
 
 // findMonoAgentCLI locates the monoagentcli binary.
 func findMonoAgentCLI() (string, error) {
+	// Explicit override — checked first so a stale PATH-installed
+	// monoagentcli (e.g. an old system-wide `go install`/release binary
+	// that predates a given dev build's new commands) can't silently shadow
+	// the binary a developer actually wants `wails dev` to shell out to.
+	if p := strings.TrimSpace(os.Getenv("MONOAGENTCLI_BIN")); p != "" {
+		if fileExists(p) {
+			return p, nil
+		}
+	}
 	if p, err := exec.LookPath("monoagentcli"); err == nil {
 		return p, nil
 	}
@@ -814,6 +900,10 @@ type ProfileInfo struct {
 	Name      string `json:"name"`
 	IsActive  bool   `json:"is_active"`
 	CreatedAt string `json:"created_at"`
+	// RootDir is the real, resolved folder this profile's data lives in —
+	// always populated (even for profiles using the default location), so
+	// the frontend never needs to know the fallback rule itself.
+	RootDir string `json:"root_dir"`
 }
 
 func (a *App) GetProfiles() ([]ProfileInfo, error) {
@@ -830,6 +920,7 @@ func (a *App) GetProfiles() ([]ProfileInfo, error) {
 		var p ProfileInfo
 		if rows.Scan(&p.ID, &p.Name, &p.CreatedAt) == nil {
 			p.IsActive = p.ID == a.getActiveProfileID()
+			p.RootDir = profiledir.Root(a.db, p.ID)
 			profiles = append(profiles, p)
 		}
 	}
@@ -839,7 +930,12 @@ func (a *App) GetProfiles() ([]ProfileInfo, error) {
 	return profiles, rows.Err()
 }
 
-func (a *App) CreateProfile(name string) (*ProfileInfo, error) {
+// CreateProfile creates a new profile. rootDir, if non-empty, is the folder
+// the user picked (via ChooseProfileFolder) for this profile's data instead
+// of the default ~/.monoagent/profiles/<id>/ — it must be an absolute path
+// that either doesn't exist yet or is empty, so we never silently adopt a
+// folder that already has unrelated files in it.
+func (a *App) CreateProfile(name, rootDir string) (*ProfileInfo, error) {
 	if a.db == nil {
 		return nil, fmt.Errorf("database not available")
 	}
@@ -847,13 +943,188 @@ func (a *App) CreateProfile(name string) (*ProfileInfo, error) {
 	if name == "" {
 		return nil, fmt.Errorf("profile name cannot be empty")
 	}
+	rootDir = strings.TrimSpace(rootDir)
+	if rootDir != "" {
+		if err := validateEmptyFolderChoice(rootDir); err != nil {
+			return nil, err
+		}
+	}
 	id := newUUID()
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	_, err := a.db.Exec(`INSERT INTO profiles (id, name, created_at) VALUES (?, ?, ?)`, id, name, now)
+	_, err := a.db.Exec(`INSERT INTO profiles (id, name, created_at, root_dir) VALUES (?, ?, ?, ?)`, id, name, now, rootDir)
 	if err != nil {
 		return nil, fmt.Errorf("create profile: %w", err)
 	}
-	return &ProfileInfo{ID: id, Name: name, IsActive: false, CreatedAt: now}, nil
+	if err := profiledir.EnsureLayout(a.db, id); err != nil {
+		// Non-fatal: the profile row exists and is usable; its dedicated
+		// folder (vault files, knowledge graph) just won't be there until
+		// the next startup migration pass retries it.
+		a.emitLog("SYSTEM", "WARN", fmt.Sprintf("profile %s: creating folder layout: %v", id, err))
+	} else {
+		a.bootstrapProfileMonograph(id)
+	}
+	return &ProfileInfo{ID: id, Name: name, IsActive: false, CreatedAt: now, RootDir: profiledir.Root(a.db, id)}, nil
+}
+
+// validateEmptyFolderChoice rejects a folder choice that isn't safe to hand
+// a profile's data to: must be absolute, and if it already exists, must be
+// empty (refusing to silently mix a profile's files into an unrelated
+// folder that already has content).
+func validateEmptyFolderChoice(dir string) error {
+	if !filepath.IsAbs(dir) {
+		return fmt.Errorf("folder path must be absolute: %q", dir)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // doesn't exist yet — fine, EnsureLayout creates it
+		}
+		return fmt.Errorf("checking folder %q: %w", dir, err)
+	}
+	if len(entries) > 0 {
+		return fmt.Errorf("folder %q is not empty — choose an empty folder", dir)
+	}
+	return nil
+}
+
+// bootstrapProfileMonograph seeds an empty monograph database at a fresh
+// profile's .monomind/ project root, so it exists (even if empty) before the
+// first chat turn or knowledge-graph write ever asks for it. Best-effort and
+// fire-and-forget — a failure here never blocks profile creation, since
+// monograph_build/kgIngest will lazily create what they need on first real
+// use regardless.
+func (a *App) bootstrapProfileMonograph(profileID string) {
+	db := a.db
+	go func() {
+		bin, err := monomind.Find()
+		if err != nil {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, bin, "monograph", "build", "--path", profiledir.MonomindDir(db, profileID))
+		if err := cmd.Run(); err != nil {
+			a.emitLog("SYSTEM", "WARN", fmt.Sprintf("profile %s: monograph bootstrap: %v", profileID, err))
+		}
+	}()
+}
+
+// ChooseProfileFolder opens a native folder picker and returns the chosen
+// absolute path, or "" if the user cancelled — same shape as ExportData's
+// existing use of the same dialog.
+func (a *App) ChooseProfileFolder() (string, error) {
+	return runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Choose a folder for this profile",
+	})
+}
+
+// RevealProfileFolder opens a Finder window at a profile's current folder —
+// distinct from ChooseProfileFolder/MoveProfileFolder, which change where
+// the folder is; this just shows where it already is.
+func (a *App) RevealProfileFolder(profileID string) error {
+	if a.db == nil {
+		return fmt.Errorf("database not available")
+	}
+	dir := profiledir.Root(a.db, profileID)
+	if err := profiledir.EnsureLayout(a.db, profileID); err != nil {
+		return fmt.Errorf("preparing profile folder: %w", err)
+	}
+	return exec.Command("open", dir).Run()
+}
+
+// MoveProfileFolder moves an existing profile's data (vault files and its
+// .monomind knowledge-graph directory) from its current folder to
+// newRootDir, then — only once both moves have actually succeeded — updates
+// profiles.root_dir to point at the new location. On any failure partway
+// through, root_dir is left unchanged so the database never points
+// somewhere the files didn't actually make it to; the old location stays
+// authoritative and the caller can retry.
+func (a *App) MoveProfileFolder(profileID, newRootDir string) error {
+	if a.db == nil {
+		return fmt.Errorf("database not available")
+	}
+	newRootDir = strings.TrimSpace(newRootDir)
+	if newRootDir == "" {
+		return fmt.Errorf("no folder chosen")
+	}
+	if err := validateEmptyFolderChoice(newRootDir); err != nil {
+		return err
+	}
+
+	oldRoot := profiledir.Root(a.db, profileID)
+	if newRootDir == oldRoot {
+		return fmt.Errorf("that's already this profile's folder")
+	}
+
+	oldVaultDir := profiledir.VaultDir(a.db, profileID)
+	oldMonomindDir := profiledir.MonomindDir(a.db, profileID)
+	newVaultDir := filepath.Join(newRootDir, "vault")
+	newMonomindDir := filepath.Join(newRootDir, ".monomind")
+
+	if err := os.MkdirAll(newVaultDir, 0700); err != nil {
+		return fmt.Errorf("creating new vault folder: %w", err)
+	}
+	if err := os.MkdirAll(newMonomindDir, 0700); err != nil {
+		return fmt.Errorf("creating new monomind folder: %w", err)
+	}
+
+	if _, errs := vault.MoveFiles(a.ctx, a.db, profileID, oldVaultDir, newVaultDir); len(errs) > 0 {
+		for _, e := range errs {
+			a.emitLog("SYSTEM", "WARN", fmt.Sprintf("profile %s: moving vault file: %v", profileID, e))
+		}
+		return fmt.Errorf("moving vault files: %v (see Live Logs for per-file detail)", errs[0])
+	}
+
+	// .monomind holds only monograph/KG SQLite files with no cross-references
+	// elsewhere in the database (unlike vault_images.path), so moving the
+	// directory itself is sufficient. os.Rename fails across filesystems
+	// (e.g. moving onto an external drive) — fall back to copy-then-remove.
+	if err := os.Rename(oldMonomindDir, newMonomindDir); err != nil {
+		if err := copyDirThenRemove(oldMonomindDir, newMonomindDir); err != nil {
+			return fmt.Errorf("moving monomind folder: %w", err)
+		}
+	}
+
+	if _, err := a.db.Exec(`UPDATE profiles SET root_dir = ? WHERE id = ?`, newRootDir, profileID); err != nil {
+		return fmt.Errorf("updating profile folder: %w", err)
+	}
+	a.emitLog("SYSTEM", "INFO", fmt.Sprintf("profile %s: moved to %s", profileID, newRootDir))
+	return nil
+}
+
+// copyDirThenRemove copies src's tree into dst (which must already exist),
+// then removes src — MoveProfileFolder's fallback for a .monomind move that
+// crosses filesystems, where os.Rename fails.
+func copyDirThenRemove(src, dst string) error {
+	err := filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		destPath := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(destPath, 0700)
+		}
+		in, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer in.Close()
+		out, err := os.Create(destPath)
+		if err != nil {
+			return err
+		}
+		defer out.Close()
+		_, err = io.Copy(out, in)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	return os.RemoveAll(src)
 }
 
 func (a *App) SwitchProfile(id string) error {

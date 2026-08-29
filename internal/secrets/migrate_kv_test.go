@@ -33,7 +33,7 @@ func newMigrateKVTestDB(t *testing.T) *storage.Database {
 func insertLegacyRow(t *testing.T, db *storage.Database, id, kind, name, plainValue string) {
 	t.Helper()
 	ctx := context.Background()
-	dek, err := getOrCreateDEK(ctx, db.DB)
+	dek, err := getOrCreateDEK(ctx, db.DB, "default")
 	if err != nil {
 		t.Fatalf("getOrCreateDEK: %v", err)
 	}

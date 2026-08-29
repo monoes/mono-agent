@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { RefreshCw, Bot, MessageSquare, KeyRound, Terminal } from 'lucide-react'
 import { api } from '../services/api.js'
-import AIChatPanel from '../components/AIChatPanel.jsx'
 import AIProviders from './AIProviders.jsx'
 
 function statusColor(installed) {
@@ -50,13 +49,42 @@ function RuntimeTile({ agent, onChat }) {
   )
 }
 
-export default function Agents() {
+// `agent scan` is a genuinely slow operation (~6-7s: it spawns monomind,
+// which itself spawns a handshake + a parallel probe of every known agent
+// CLI binary). Within one running app session, keeping Agents mounted
+// (App.jsx's keep-alive navigation) means this only runs once. But every
+// fresh app launch is a new session with nothing cached — so we also
+// persist the last scan result to localStorage and paint it immediately on
+// mount, then silently refresh in the background. The user sees last-known
+// state instantly instead of a multi-second spinner on every single app
+// start, and the display self-corrects within a few seconds if anything
+// changed (a runtime got installed/removed, monomind's version changed).
+const SCAN_CACHE_KEY = 'monoagent:agentScanCache:v1'
+
+function readScanCache() {
+  try {
+    const raw = localStorage.getItem(SCAN_CACHE_KEY)
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
+
+function writeScanCache(res) {
+  try {
+    localStorage.setItem(SCAN_CACHE_KEY, JSON.stringify({ res, cachedAt: Date.now() }))
+  } catch { /* localStorage unavailable/full — cache is best-effort */ }
+}
+
+export default function Agents({ onOpenChat }) {
   const [tab, setTab] = useState('agents')
-  const [agents, setAgents] = useState([])
-  const [scanError, setScanError] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [chatOpen, setChatOpen] = useState(false)
-  const [chatRuntime, setChatRuntime] = useState('')
+  const cached = readScanCache()
+  const [agents, setAgents] = useState(() => (cached && !cached.res?.error) ? (cached.res.agents || []) : [])
+  const [scanError, setScanError] = useState(() => cached?.res?.error || null)
+  // Only show the blocking spinner when there is truly nothing to paint yet
+  // (first-ever run on this machine, or a cleared cache). Otherwise show
+  // stale-but-instant data while refreshing quietly underneath it.
+  const [loading, setLoading] = useState(() => !cached)
 
   const loadAgents = useCallback(async (silent = false) => {
     if (!silent) setLoading(true)
@@ -69,17 +97,15 @@ export default function Agents() {
         setScanError(null)
         setAgents(res.agents || [])
       }
+      writeScanCache(res)
     } finally {
       if (!silent) setLoading(false)
     }
   }, [])
 
-  useEffect(() => { loadAgents() }, [loadAgents])
-
-  const openChat = (runtimeID) => {
-    setChatRuntime(runtimeID)
-    setChatOpen(true)
-  }
+  // First mount: if we already painted from cache, refresh silently (no
+  // spinner) — otherwise this is the one real blocking load.
+  useEffect(() => { loadAgents(!!cached) }, [loadAgents])
 
   const installedCount = agents.filter(a => a.installed).length
 
@@ -157,7 +183,7 @@ export default function Agents() {
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 10, paddingBottom: 24 }}>
                 {agents.map(a => (
-                  <RuntimeTile key={a.id} agent={a} onChat={openChat} />
+                  <RuntimeTile key={a.id} agent={a} onChat={onOpenChat} />
                 ))}
               </div>
             )}
@@ -168,16 +194,6 @@ export default function Agents() {
           </div>
         )}
       </div>
-
-      {tab === 'agents' && (
-        <AIChatPanel
-          workflowID="general"
-          isOpen={chatOpen}
-          initialRuntime={chatRuntime}
-          canvasMode={false}
-          onClose={() => setChatOpen(false)}
-        />
-      )}
     </div>
   )
 }

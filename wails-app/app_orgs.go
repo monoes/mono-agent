@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+
+	"monoagent/internal/profiledir"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -21,10 +23,34 @@ import (
 // <sub> ...`, whose stdout JSON is the UI contract. The Wails methods here
 // return that JSON verbatim as a string; the frontend parses it (same
 // pattern as ScanAgentRuntimes/StreamAgentChat).
+//
+// Per-profile scoping: `monoagentcli org` resolves org state under
+// `--project <root>/.monomind/orgs/` (see cmd/monoagentcli/org.go), NOT via
+// the subprocess's cwd — so scoping to the active profile means passing
+// `--project <profile root>`, not setting cmd.Dir. orgProjectRoot below
+// resolves that root and defensively ensures the folder exists first
+// (profiledir.EnsureLayout), falling back to the CLI's own default project
+// root (unscoped, today's global behavior) if that fails.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // orgCLITimeout bounds one-shot org observe/action calls from the UI.
 const orgCLITimeout = 60 * time.Second
+
+// orgProjectRoot resolves the active profile's project root for org state
+// (`<root>/.monomind/orgs/`) and ensures the folder layout exists. Returns
+// "" if the profile's layout can't be created, so callers can fall back to
+// the CLI's default (unscoped) project root rather than failing outright.
+func (a *App) orgProjectRoot() string {
+	profileID := a.getActiveProfileID()
+	if profileID == "" {
+		return ""
+	}
+	if err := profiledir.EnsureLayout(a.db, profileID); err != nil {
+		a.emitLog("ORG", "WARN", fmt.Sprintf("could not prepare profile folder for %q: %v (falling back to default org project root)", profileID, err))
+		return ""
+	}
+	return profiledir.Root(a.db, profileID)
+}
 
 // runOrgCLI runs `monoagentcli org <args...>` and returns its stdout JSON
 // verbatim, or an {"error":"..."} payload on failure (aiError shape,
@@ -36,20 +62,37 @@ func (a *App) runOrgCLI(args ...string) string {
 	}
 	ctx, cancel := context.WithTimeout(a.ctx, orgCLITimeout)
 	defer cancel()
-	fullArgs := append([]string{"org"}, args...)
+	fullArgs := []string{"org"}
+	projectRoot := a.orgProjectRoot()
+	if projectRoot != "" {
+		fullArgs = append(fullArgs, "--project", projectRoot)
+	}
+	fullArgs = append(fullArgs, args...)
+	logSuffix := ""
+	if projectRoot != "" {
+		logSuffix = fmt.Sprintf(" (project: %s)", projectRoot)
+	}
+	a.emitLog("ORG", "INFO", fmt.Sprintf("$ %s %s%s", cliBin, strings.Join(fullArgs, " "), logSuffix))
+	startedAt := time.Now()
 	cmd := exec.CommandContext(ctx, cliBin, fullArgs...)
 	out, err := cmd.Output()
+	elapsed := time.Since(startedAt).Round(time.Millisecond)
 	if err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) && len(ee.Stderr) > 0 {
-			return aiError(fmt.Errorf("%s", strings.TrimSpace(string(ee.Stderr))))
+			stderr := strings.TrimSpace(string(ee.Stderr))
+			a.emitLog("ORG", "ERROR", fmt.Sprintf("org %s failed after %s: %s", strings.Join(args, " "), elapsed, stderr))
+			return aiError(fmt.Errorf("%s", stderr))
 		}
+		a.emitLog("ORG", "ERROR", fmt.Sprintf("org %s failed after %s: %v", strings.Join(args, " "), elapsed, err))
 		return aiError(err)
 	}
 	trimmed := strings.TrimSpace(string(out))
 	if trimmed == "" {
+		a.emitLog("ORG", "WARN", fmt.Sprintf("org %s returned empty output after %s", strings.Join(args, " "), elapsed))
 		return aiError(fmt.Errorf("org %s: empty output", strings.Join(args, " ")))
 	}
+	a.emitLog("ORG", "INFO", fmt.Sprintf("org %s finished in %s", strings.Join(args, " "), elapsed))
 	return trimmed
 }
 
@@ -135,7 +178,16 @@ func (a *App) StreamOrgEvents(orgName string) string {
 	if err != nil {
 		return aiError(err)
 	}
-	cmd := exec.Command(cliBin, "org", "events", orgName, "--follow")
+	eventsArgs := []string{"org"}
+	projectRoot := a.orgProjectRoot()
+	logSuffix := ""
+	if projectRoot != "" {
+		eventsArgs = append(eventsArgs, "--project", projectRoot)
+		logSuffix = fmt.Sprintf(" (project: %s)", projectRoot)
+	}
+	eventsArgs = append(eventsArgs, "events", orgName, "--follow")
+	a.emitLog("ORG", "INFO", fmt.Sprintf("$ %s %s%s", cliBin, strings.Join(eventsArgs, " "), logSuffix))
+	cmd := exec.Command(cliBin, eventsArgs...)
 	setChatProcessGroup(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -143,6 +195,7 @@ func (a *App) StreamOrgEvents(orgName string) string {
 	}
 	cmd.Stderr = a.chatLogWriter()
 	if err := cmd.Start(); err != nil {
+		a.emitLog("ORG", "ERROR", fmt.Sprintf("org events failed to start: %v", err))
 		return aiError(fmt.Errorf("start org events: %w", err))
 	}
 

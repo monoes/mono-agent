@@ -25,19 +25,20 @@ func MigrateFieldsToKV(ctx context.Context, db *sql.DB) (migrated, total int, er
 		return 0, 0, nil
 	}
 
-	rows, err := db.QueryContext(ctx, `SELECT id, ciphertext, nonce FROM vault_secrets WHERE kv = 0`)
+	rows, err := db.QueryContext(ctx, `SELECT id, profile_id, ciphertext, nonce FROM vault_secrets WHERE kv = 0`)
 	if err != nil {
 		return 0, 0, fmt.Errorf("secrets.MigrateFieldsToKV: listing unmigrated rows: %w", err)
 	}
 	type legacyRow struct {
 		id         string
+		profileID  string
 		ciphertext []byte
 		nonce      []byte
 	}
 	var toMigrate []legacyRow
 	for rows.Next() {
 		var r legacyRow
-		if err := rows.Scan(&r.id, &r.ciphertext, &r.nonce); err != nil {
+		if err := rows.Scan(&r.id, &r.profileID, &r.ciphertext, &r.nonce); err != nil {
 			rows.Close()
 			return 0, 0, fmt.Errorf("secrets.MigrateFieldsToKV: scanning row: %w", err)
 		}
@@ -50,12 +51,15 @@ func MigrateFieldsToKV(ctx context.Context, db *sql.DB) (migrated, total int, er
 		return 0, 0, fmt.Errorf("secrets.MigrateFieldsToKV: %w", err)
 	}
 
-	dek, err := getOrCreateDEK(ctx, db)
-	if err != nil {
-		return 0, 0, fmt.Errorf("secrets.MigrateFieldsToKV: %w", err)
-	}
-
+	// Each row's DEK is looked up by its own profile_id — getOrCreateDEK is
+	// already memoized per (db, profile), so rows sharing a profile only pay
+	// the keychain/table round trip once.
 	for _, r := range toMigrate {
+		dek, err := getOrCreateDEK(ctx, db, r.profileID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: skipping kv migration of %s: dek: %v\n", r.id, err)
+			continue
+		}
 		plaintext, err := Decrypt(dek, r.ciphertext, r.nonce)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "warning: skipping kv migration of %s: decrypt: %v\n", r.id, err)

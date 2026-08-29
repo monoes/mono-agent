@@ -215,6 +215,34 @@ func (a *App) ClearAIChatHistory(workflowID string) string {
 	return `{"ok":true}`
 }
 
+// ListChatSessions returns a workflow's past resumable chat sessions
+// (most-recently-updated first), for the panel's session-history dropdown.
+func (a *App) ListChatSessions(workflowID string) string {
+	if a.aiStore == nil {
+		return "[]"
+	}
+	sessions, err := a.aiStore.ListChatSessions(workflowID)
+	if err != nil {
+		return aiError(err)
+	}
+	b, _ := json.Marshal(sessions)
+	return string(b)
+}
+
+// GetChatSessionMessages returns one resumable session's full message
+// history, for loading a past session back into the panel.
+func (a *App) GetChatSessionMessages(workflowID, sessionID string) string {
+	if a.aiStore == nil {
+		return "[]"
+	}
+	msgs, err := a.aiStore.GetSessionMessages(workflowID, sessionID)
+	if err != nil {
+		return aiError(err)
+	}
+	b, _ := json.Marshal(msgs)
+	return string(b)
+}
+
 // GetRunLogs returns the most recent run log entries written by CLI processes.
 func (a *App) GetRunLogs(limit int) []LogEntry {
 	if a.db == nil || limit <= 0 {
@@ -270,22 +298,43 @@ func (a *App) ScanAgentRuntimes() string {
 // workflowID is just a chat-history bucket, not a real workflow to build),
 // no --canvas flag is passed at all, so the turn is a plain conversation —
 // no tool round trips, no "build a workflow to say hi" behavior, and
-// dramatically faster. Emits the same ai:chunk/ai:tool/ai:error events as
-// the provider chat (frontend-compatible), plus agent:session carrying the
-// resumable session id.
-func (a *App) StreamAgentChat(workflowID, message, agentRuntime, model string, canvas bool) string {
+// dramatically faster (unless monoagentTools is also set — see below).
+// Emits the same ai:chunk/ai:tool/ai:error events as the provider chat
+// (frontend-compatible), plus agent:session carrying the resumable session
+// id. monoagentTools, when true, additionally wires the MonoagentTools
+// surface (--tools monoagent) — workflow/vault/people/actions/communications
+// access — composable with canvas mode. resumeSessionID, when non-empty,
+// continues that prior agent session (real conversational memory in the
+// runtime itself, not just replayed transcript) instead of starting a new
+// one — the frontend supplies whatever it last learned from an agent:session
+// event, and clears it to start a fresh conversation.
+func (a *App) StreamAgentChat(workflowID, message, agentRuntime, model, resumeSessionID string, canvas bool, monoagentTools bool) string {
 	cliBin, err := findMonoAgentCLI()
 	if err != nil {
 		return aiError(err)
 	}
-	args := []string{"--profile", a.getActiveProfileID(), "chat", "--runtime", agentRuntime}
+	args := []string{"--profile", a.getActiveProfileID(), "chat", "--runtime", agentRuntime, "--history-id", workflowID}
 	if canvas {
 		args = append(args, "--canvas", workflowID)
+	}
+	if monoagentTools {
+		args = append(args, "--tools", "monoagent")
+	}
+	if resumeSessionID != "" {
+		args = append(args, "--resume", resumeSessionID)
 	}
 	if model != "" {
 		args = append(args, "--model", model)
 	}
 	args = append(args, message)
+
+	// Logged separately from args: the invocation line omits the raw
+	// message (may be long/sensitive) but keeps every flag, so a flag
+	// typo/mismatch (e.g. an old CLI binary that doesn't know --tools yet)
+	// is immediately visible in the live log instead of only showing up as
+	// an opaque "unknown flag" line further down.
+	a.emitLog("AI", "INFO", fmt.Sprintf("$ %s %s <%d-char message>",
+		cliBin, strings.Join(args[:len(args)-1], " "), len(message)))
 
 	cmd := exec.Command(cliBin, args...)
 	setChatProcessGroup(cmd)
@@ -294,7 +343,9 @@ func (a *App) StreamAgentChat(workflowID, message, agentRuntime, model string, c
 		return aiError(err)
 	}
 	cmd.Stderr = a.chatLogWriter()
+	startedAt := time.Now()
 	if err := cmd.Start(); err != nil {
+		a.emitLog("AI", "ERROR", fmt.Sprintf("chat failed to start: %v", err))
 		return aiError(fmt.Errorf("start chat: %w", err))
 	}
 
@@ -336,6 +387,7 @@ func (a *App) StreamAgentChat(workflowID, message, agentRuntime, model string, c
 			}
 			switch ev.Type {
 			case "assistant":
+				println("[DEBUGEMIT] ai:chunk wf=" + workflowID + " len=" + fmt.Sprint(len(ev.Text)))
 				runtime.EventsEmit(a.ctx, "ai:chunk", map[string]interface{}{
 					"workflowID": workflowID,
 					"content":    ev.Text,
@@ -373,14 +425,20 @@ func (a *App) StreamAgentChat(workflowID, message, agentRuntime, model string, c
 				sawDone = true
 			}
 		}
-		_ = cmd.Wait()
+		waitErr := cmd.Wait()
+		elapsed := time.Since(startedAt)
 		runtime.EventsEmit(a.ctx, "ai:chunk", map[string]interface{}{
 			"workflowID": workflowID,
 			"content":    "",
 			"done":       true,
 		})
-		if !sawDone {
-			a.emitLog("AI", "WARN", "agent chat stream ended without a done event")
+		switch {
+		case waitErr != nil:
+			a.emitLog("AI", "ERROR", fmt.Sprintf("chat exited after %s: %v", elapsed.Round(time.Millisecond), waitErr))
+		case !sawDone:
+			a.emitLog("AI", "WARN", fmt.Sprintf("agent chat stream ended without a done event after %s", elapsed.Round(time.Millisecond)))
+		default:
+			a.emitLog("AI", "INFO", fmt.Sprintf("chat finished in %s", elapsed.Round(time.Millisecond)))
 		}
 	}()
 	return `{"ok":true}`

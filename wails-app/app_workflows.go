@@ -593,8 +593,17 @@ func (a *App) CancelWorkflow(executionID string) error {
 	}
 	a.runningMu.Unlock()
 
-	// Kill external CLI process via PID stored in the DB.
-	if !killed && pid > 0 {
+	// Kill external CLI process via PID stored in the DB. This PID is only
+	// meaningful — and only safe to signal — for a one-shot CLI process
+	// (`monoagentcli workflow run`). The long-running daemon stamps its own
+	// PID on every execution it runs in-process for scheduled/webhook
+	// triggers (SetExecutionStarted always records os.Getpid()), so a stuck
+	// scheduled execution's "pid" is the daemon itself: signalling it kills
+	// the whole daemon (and every other profile's active triggers with it),
+	// which then gets respawned by launchd, re-launching Chrome and
+	// re-touching Keychain-backed vault secrets on every restart. Refuse to
+	// signal any PID that is actually the daemon process.
+	if !killed && pid > 0 && !isMonoagentDaemonProcess(pid) {
 		if proc, err := os.FindProcess(pid); err == nil {
 			_ = proc.Signal(syscall.SIGTERM)
 		}
@@ -606,6 +615,20 @@ func (a *App) CancelWorkflow(executionID string) error {
 	_, _ = a.db.Exec(`UPDATE hil_pending SET status='rejected', updated_at=CURRENT_TIMESTAMP WHERE execution_id=? AND status='pending' AND profile_id = ?`, executionID, a.getActiveProfileID())
 	a.emitLog("WORKFLOW", "INFO", fmt.Sprintf("Execution %s cancelled", executionID))
 	return nil
+}
+
+// isMonoagentDaemonProcess reports whether pid is a running `monoagentcli
+// daemon` process, so CancelWorkflow's PID-signal fallback can refuse to
+// kill it — that PID column is also stamped (as the current process's own
+// PID) on every execution the daemon runs in-process for scheduled/webhook
+// triggers, and signalling it would take down the whole daemon.
+func isMonoagentDaemonProcess(pid int) bool {
+	out, err := exec.Command("ps", "-p", fmt.Sprintf("%d", pid), "-o", "command=").Output()
+	if err != nil {
+		return false
+	}
+	cmdline := string(out)
+	return strings.Contains(cmdline, "monoagentcli") && strings.Contains(cmdline, "daemon")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

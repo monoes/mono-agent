@@ -397,6 +397,7 @@ func (e *WorkflowEngine) handleTrigger(workflowID string, nodeID string, items [
 
 	exec := &WorkflowExecution{
 		WorkflowID:  workflowID,
+		ProfileID:   executionProfileID(wf, e.profileID),
 		Status:      "QUEUED",
 		TriggerType: triggerType,
 		TriggerData: triggerData,
@@ -592,6 +593,20 @@ func (e *WorkflowEngine) SaveWorkflow(ctx context.Context, w *Workflow) error {
 	return nil
 }
 
+// executionProfileID resolves the profile to stamp on a new WorkflowExecution:
+// the owning workflow's own ProfileID, since a single long-running daemon
+// process's engine (RestoreActiveWorkflows) can be handling triggers for
+// many profiles' workflows at once — engineProfileID alone would be wrong
+// for anything but whichever profile the engine happened to be constructed
+// with. Falls back to engineProfileID only for a legacy workflow row with no
+// ProfileID of its own (or wf == nil, e.g. handleTrigger's best-effort load).
+func executionProfileID(wf *Workflow, engineProfileID string) string {
+	if wf != nil && wf.ProfileID != "" {
+		return wf.ProfileID
+	}
+	return engineProfileID
+}
+
 // checkWorkflowProfile returns an error if wf belongs to a different profile
 // than the engine's active profile, preventing cross-profile access to a
 // workflow whose ID was guessed or leaked from another profile.
@@ -743,6 +758,7 @@ func (e *WorkflowEngine) TriggerWorkflow(ctx context.Context, workflowID string,
 
 	exec := &WorkflowExecution{
 		WorkflowID:  workflowID,
+		ProfileID:   executionProfileID(wf, e.profileID),
 		Status:      "QUEUED",
 		TriggerType: "trigger.manual",
 		TriggerData: data,
@@ -818,6 +834,7 @@ func (e *WorkflowEngine) RetryExecution(ctx context.Context, executionID string)
 
 	exec := &WorkflowExecution{
 		WorkflowID:  orig.WorkflowID,
+		ProfileID:   executionProfileID(wf, e.profileID),
 		Status:      "QUEUED",
 		TriggerType: orig.TriggerType,
 		TriggerData: orig.TriggerData,

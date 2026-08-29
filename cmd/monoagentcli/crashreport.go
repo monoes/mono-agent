@@ -19,7 +19,7 @@ import (
 // If monomind isn't installed, the crash is saved to a local log file instead.
 func reportCrash(panicValue interface{}, stack []byte) {
 	title := fmt.Sprintf("panic: %v", panicValue)
-	body := fmt.Sprintf("Uncaught panic in `monoagentcli`.\n\nVersion: %s (built %s)\n\n```\n%s\n```\n", version, buildDate, stack)
+	body := fmt.Sprintf("Uncaught panic in `monoagentcli`.\n\nVersion: %s (built %s)\n\n```\n%s\n```\n", getVersion(), getBuildDate(), stack)
 
 	if monomindPath, err := exec.LookPath("monomind"); err == nil {
 		if reportViaMonomind(monomindPath, title, body) {

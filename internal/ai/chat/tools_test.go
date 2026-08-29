@@ -491,3 +491,148 @@ func TestCanvasToolsRejectCrossProfileWorkflow(t *testing.T) {
 		t.Errorf("get_workflow_state on placeholder 'general': unexpected error: %v", err)
 	}
 }
+
+// TestCreateNodesTypeAlias is a regression test for a bug found testing both
+// Claude and Codex live against --canvas: both independently sent "type"
+// instead of the schema's "node_type" key, which the old code silently
+// accepted and inserted as an empty node_type — a broken, non-executable
+// node with a fully successful-looking tool_result. "type" must resolve the
+// same as "node_type", and a genuinely missing/unknown type must now error
+// instead of silently persisting.
+func TestCreateNodesTypeAlias(t *testing.T) {
+	db := setupTestDB(t)
+	ct := NewCanvasTools(db)
+
+	// "type" alias resolves exactly like "node_type" would.
+	result, err := ct.Execute("create_nodes", `{
+		"workflow_id": "wf-1",
+		"nodes": [{"type": "http.request", "name": "Fetch", "position_x": 0, "position_y": 0}]
+	}`)
+	if err != nil {
+		t.Fatalf("execute with 'type' alias: %v", err)
+	}
+	var res struct {
+		CreatedNodeIDs []string `json:"created_node_ids"`
+	}
+	if err := json.Unmarshal([]byte(result), &res); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	if len(res.CreatedNodeIDs) != 1 {
+		t.Fatalf("got %d node IDs, want 1", len(res.CreatedNodeIDs))
+	}
+	var nodeType, name string
+	if err := db.QueryRow(`SELECT node_type, name FROM workflow_nodes WHERE id = ?`, res.CreatedNodeIDs[0]).Scan(&nodeType, &name); err != nil {
+		t.Fatalf("query inserted node: %v", err)
+	}
+	if nodeType != "http.request" {
+		t.Errorf("node_type = %q, want %q — 'type' alias was not resolved", nodeType, "http.request")
+	}
+	if name != "Fetch" {
+		t.Errorf("name = %q, want %q", name, "Fetch")
+	}
+
+	// Neither key present: must error, not silently insert an empty type.
+	if _, err := ct.Execute("create_nodes", `{
+		"workflow_id": "wf-1",
+		"nodes": [{"name": "Nameless", "position_x": 0, "position_y": 0}]
+	}`); err == nil {
+		t.Error("create_nodes with neither node_type nor type: expected error, got nil")
+	}
+
+	// Missing name defaults to the resolved type rather than erroring —
+	// name is cosmetic, unlike node_type.
+	result2, err := ct.Execute("create_nodes", `{
+		"workflow_id": "wf-1",
+		"nodes": [{"node_type": "core.set", "position_x": 0, "position_y": 0}]
+	}`)
+	if err != nil {
+		t.Fatalf("execute with missing name: %v", err)
+	}
+	var res2 struct {
+		CreatedNodeIDs []string `json:"created_node_ids"`
+	}
+	if err := json.Unmarshal([]byte(result2), &res2); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	var name2 string
+	if err := db.QueryRow(`SELECT name FROM workflow_nodes WHERE id = ?`, res2.CreatedNodeIDs[0]).Scan(&name2); err != nil {
+		t.Fatalf("query inserted node: %v", err)
+	}
+	if name2 != "core.set" {
+		t.Errorf("name = %q, want %q (defaulted to node_type)", name2, "core.set")
+	}
+}
+
+// TestCreateNodesRejectsUnknownType verifies validation against the known
+// node registry when SetNodeTypes has been called (the real chat.go call
+// path always sets it from the live node registry — see registryNodeTypes
+// in cmd/monoagentcli/chat.go).
+func TestCreateNodesRejectsUnknownType(t *testing.T) {
+	db := setupTestDB(t)
+	ct := NewCanvasTools(db)
+	ct.SetNodeTypes([]NodeTypeInfo{
+		{Type: "http.request", Label: "HTTP Request", Category: "http"},
+		{Type: "core.set", Label: "Set", Category: "core"},
+	})
+
+	if _, err := ct.Execute("create_nodes", `{
+		"workflow_id": "wf-1",
+		"nodes": [{"node_type": "totally.madeup", "name": "Bogus", "position_x": 0, "position_y": 0}]
+	}`); err == nil {
+		t.Error("create_nodes with an unknown node_type: expected error, got nil")
+	}
+
+	// A known type still succeeds once the registry is populated.
+	if _, err := ct.Execute("create_nodes", `{
+		"workflow_id": "wf-1",
+		"nodes": [{"node_type": "core.set", "name": "Real", "position_x": 0, "position_y": 0}]
+	}`); err != nil {
+		t.Errorf("create_nodes with a known node_type: unexpected error: %v", err)
+	}
+}
+
+// TestCreateNodesAllowsTriggerTypes is a regression test: trigger.manual/
+// schedule/webhook belong to a separate subsystem (internal/workflow's
+// trigger_manager.go and validator.go, which recognize them by the same
+// "trigger." prefix) that never appears in the registry list_available_nodes
+// draws from. Found live: asking Claude to build a workflow via the general
+// assistant, its trigger.manual node was rejected by an earlier version of
+// this validation even though real workflows in the DB already contain one
+// — the registry check must not apply to the trigger namespace.
+func TestCreateNodesAllowsTriggerTypes(t *testing.T) {
+	db := setupTestDB(t)
+	ct := NewCanvasTools(db)
+	ct.SetNodeTypes([]NodeTypeInfo{
+		{Type: "http.request", Label: "HTTP Request", Category: "http"},
+	})
+
+	result, err := ct.Execute("create_nodes", `{
+		"workflow_id": "wf-1",
+		"nodes": [{"node_type": "trigger.manual", "name": "Start", "position_x": 0, "position_y": 0}]
+	}`)
+	if err != nil {
+		t.Fatalf("create_nodes with trigger.manual: unexpected error: %v", err)
+	}
+	var res struct {
+		CreatedNodeIDs []string `json:"created_node_ids"`
+	}
+	if err := json.Unmarshal([]byte(result), &res); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	var nodeType string
+	if err := db.QueryRow(`SELECT node_type FROM workflow_nodes WHERE id = ?`, res.CreatedNodeIDs[0]).Scan(&nodeType); err != nil {
+		t.Fatalf("query inserted node: %v", err)
+	}
+	if nodeType != "trigger.manual" {
+		t.Errorf("node_type = %q, want %q", nodeType, "trigger.manual")
+	}
+
+	// A genuinely unknown type must still be rejected — the trigger
+	// exemption is prefix-scoped, not a blanket bypass.
+	if _, err := ct.Execute("create_nodes", `{
+		"workflow_id": "wf-1",
+		"nodes": [{"node_type": "totally.madeup", "name": "Bogus", "position_x": 0, "position_y": 0}]
+	}`); err == nil {
+		t.Error("create_nodes with an unknown non-trigger type: expected error, got nil")
+	}
+}

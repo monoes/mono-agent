@@ -34,7 +34,7 @@ func TestGetOrCreateDEK_PersistsAcrossCalls(t *testing.T) {
 	db := newDEKTestDB(t)
 	ctx := context.Background()
 
-	dek1, err := getOrCreateDEK(ctx, db.DB)
+	dek1, err := getOrCreateDEK(ctx, db.DB, "default")
 	if err != nil {
 		t.Fatalf("getOrCreateDEK (first call): %v", err)
 	}
@@ -42,7 +42,7 @@ func TestGetOrCreateDEK_PersistsAcrossCalls(t *testing.T) {
 		t.Fatalf("expected 32-byte DEK, got %d bytes", len(dek1))
 	}
 
-	dek2, err := getOrCreateDEK(ctx, db.DB)
+	dek2, err := getOrCreateDEK(ctx, db.DB, "default")
 	if err != nil {
 		t.Fatalf("getOrCreateDEK (second call): %v", err)
 	}
@@ -70,11 +70,11 @@ func TestGetOrCreateDEK_DifferentDBsGetIndependentDEKs(t *testing.T) {
 	dbA := newDEKTestDB(t)
 	dbB := newDEKTestDB(t)
 
-	dekA, err := getOrCreateDEK(ctx, dbA.DB)
+	dekA, err := getOrCreateDEK(ctx, dbA.DB, "default")
 	if err != nil {
 		t.Fatalf("getOrCreateDEK (db A): %v", err)
 	}
-	dekB, err := getOrCreateDEK(ctx, dbB.DB)
+	dekB, err := getOrCreateDEK(ctx, dbB.DB, "default")
 	if err != nil {
 		t.Fatalf("getOrCreateDEK (db B): %v", err)
 	}
@@ -83,7 +83,7 @@ func TestGetOrCreateDEK_DifferentDBsGetIndependentDEKs(t *testing.T) {
 	}
 
 	// Confirm the cache is stable per-db across repeated calls too.
-	dekA2, err := getOrCreateDEK(ctx, dbA.DB)
+	dekA2, err := getOrCreateDEK(ctx, dbA.DB, "default")
 	if err != nil {
 		t.Fatalf("getOrCreateDEK (db A, second call): %v", err)
 	}
@@ -119,7 +119,7 @@ func TestGetOrCreateDEK_ConcurrentFirstUseIsRaceFree(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			start.Wait() // line every goroutine up to maximize the race window
-			deks[i], errs[i] = getOrCreateDEK(ctx, db.DB)
+			deks[i], errs[i] = getOrCreateDEK(ctx, db.DB, "default")
 		}(i)
 	}
 	start.Done()
@@ -160,11 +160,11 @@ func TestGetOrCreateDEK_FailedAttemptIsNotCached(t *testing.T) {
 	orig := fetchDEK
 	t.Cleanup(func() { fetchDEK = orig })
 
-	fetchDEK = func(ctx context.Context, db *sql.DB) ([]byte, error) {
+	fetchDEK = func(ctx context.Context, db *sql.DB, profileID string) ([]byte, error) {
 		return nil, injectedErr
 	}
 
-	_, err := getOrCreateDEK(ctx, db.DB)
+	_, err := getOrCreateDEK(ctx, db.DB, "default")
 	if !errors.Is(err, injectedErr) {
 		t.Fatalf("first call: expected injected error, got %v", err)
 	}
@@ -173,7 +173,7 @@ func TestGetOrCreateDEK_FailedAttemptIsNotCached(t *testing.T) {
 	// scratch instead of replaying the cached failure.
 	fetchDEK = orig
 
-	dek, err := getOrCreateDEK(ctx, db.DB)
+	dek, err := getOrCreateDEK(ctx, db.DB, "default")
 	if err != nil {
 		t.Fatalf("second call after failure: expected success, got error: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestGetOrCreateDEK_ConcurrentFailureIsSharedThenRetried(t *testing.T) {
 	arrived.Add(numGoroutines)
 
 	var calls int32
-	fetchDEK = func(ctx context.Context, db *sql.DB) ([]byte, error) {
+	fetchDEK = func(ctx context.Context, db *sql.DB, profileID string) ([]byte, error) {
 		atomic.AddInt32(&calls, 1)
 		arrived.Wait()
 		// Give the other goroutines, which have all signaled arrived but
@@ -232,7 +232,7 @@ func TestGetOrCreateDEK_ConcurrentFailureIsSharedThenRetried(t *testing.T) {
 			defer wg.Done()
 			start.Wait()
 			arrived.Done()
-			_, errs[i] = getOrCreateDEK(ctx, db.DB)
+			_, errs[i] = getOrCreateDEK(ctx, db.DB, "default")
 		}(i)
 	}
 	start.Done()
@@ -251,7 +251,7 @@ func TestGetOrCreateDEK_ConcurrentFailureIsSharedThenRetried(t *testing.T) {
 	// from scratch and succeed once the fetch behavior is restored.
 	fetchDEK = orig
 
-	dek, err := getOrCreateDEK(ctx, db.DB)
+	dek, err := getOrCreateDEK(ctx, db.DB, "default")
 	if err != nil {
 		t.Fatalf("call after concurrent failure: expected success, got error: %v", err)
 	}
@@ -292,7 +292,7 @@ func TestFetchOrCreateDEK_ConcurrentColdBootstrapIsRaceFree(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			start.Wait()
-			deks[i], errs[i] = fetchOrCreateDEK(ctx, db.DB)
+			deks[i], errs[i] = fetchOrCreateDEK(ctx, db.DB, "default")
 		}(i)
 	}
 	start.Done()
@@ -319,12 +319,12 @@ func TestFetchOrCreateDEK_ConcurrentColdBootstrapIsRaceFree(t *testing.T) {
 
 	// The KEK now in the keychain must actually be able to decrypt the
 	// persisted row — the exact property the old code couldn't guarantee.
-	kek, found, err := peekKEK()
+	kek, found, err := peekKEK("default")
 	if err != nil || !found {
 		t.Fatalf("peekKEK after bootstrap: found=%v err=%v", found, err)
 	}
 	var wrappedDEK, wrappedNonce []byte
-	if err := db.DB.QueryRow(`SELECT wrapped_dek, wrapped_nonce FROM vault_keys WHERE id = 1`).Scan(&wrappedDEK, &wrappedNonce); err != nil {
+	if err := db.DB.QueryRow(`SELECT wrapped_dek, wrapped_nonce FROM vault_keys WHERE profile_id = 'default'`).Scan(&wrappedDEK, &wrappedNonce); err != nil {
 		t.Fatalf("reading persisted vault_keys row: %v", err)
 	}
 	dek, err := Decrypt(kek, wrappedDEK, wrappedNonce)

@@ -8,6 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"monoagent/internal/monomind"
+	"monoagent/internal/profiledir"
 )
 
 type ctxKey struct{}
@@ -59,14 +62,16 @@ func ProfileIDFromContext(ctx context.Context) string {
 	return "default"
 }
 
-// VaultDir returns the absolute path of the vault directory (~/.monoagent/vault/).
-func VaultDir() string {
-	return filepath.Join(os.Getenv("HOME"), ".monoagent", "vault")
+// VaultDir returns the absolute path of a profile's vault directory —
+// either its chosen folder or the default
+// ~/.monoagent/profiles/<profileID>/vault/.
+func VaultDir(db *sql.DB, profileID string) string {
+	return profiledir.VaultDir(db, profileID)
 }
 
-// EnsureVaultDir creates the vault directory if it does not exist.
-func EnsureVaultDir() error {
-	return os.MkdirAll(VaultDir(), 0700)
+// EnsureVaultDir creates a profile's vault directory if it does not exist.
+func EnsureVaultDir(db *sql.DB, profileID string) error {
+	return os.MkdirAll(VaultDir(db, profileID), 0700)
 }
 
 // Register copies the file at src into the vault, inserts a DB row, and
@@ -86,12 +91,13 @@ func Register(ctx context.Context, db *sql.DB, src, source, workflowID, executio
 	}
 	src = absSrc
 
-	vaultDir := VaultDir()
+	profileID := ProfileIDFromContext(ctx)
+	vaultDir := VaultDir(db, profileID)
 	if strings.HasPrefix(absSrc, vaultDir+string(os.PathSeparator)) || absSrc == vaultDir {
 		return "", fmt.Errorf("vault.Register: src must not be inside the vault directory")
 	}
 
-	if err := EnsureVaultDir(); err != nil {
+	if err := EnsureVaultDir(db, profileID); err != nil {
 		return "", fmt.Errorf("vault.Register: ensure vault dir: %w", err)
 	}
 
@@ -130,7 +136,7 @@ func Register(ctx context.Context, db *sql.DB, src, source, workflowID, executio
 		ext = ".png"
 	}
 	destFilename := id + ext
-	destPath := filepath.Join(VaultDir(), destFilename)
+	destPath := filepath.Join(vaultDir, destFilename)
 
 	// Copy source file to vault.
 	if err := copyFile(src, destPath); err != nil {
@@ -153,8 +159,6 @@ func Register(ctx context.Context, db *sql.DB, src, source, workflowID, executio
 		return s
 	}
 
-	profileID := ProfileIDFromContext(ctx)
-
 	_, err = conn.ExecContext(ctx, `
 		INSERT INTO vault_images (id, seq, path, filename, size_bytes, source, workflow_id, execution_id, profile_id)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -170,7 +174,84 @@ func Register(ctx context.Context, db *sql.DB, src, source, workflowID, executio
 		return "", fmt.Errorf("vault.Register: commit: %w", err)
 	}
 	committed = true
+
+	go func() {
+		desc := "source: " + source
+		if workflowID != "" {
+			desc += ", workflow: " + workflowID
+		}
+		if executionID != "" {
+			desc += ", execution: " + executionID
+		}
+		node := monomind.KGNode{Name: id, Type: "file", Description: desc}
+		_ = monomind.SyncToKnowledgeGraph(context.Background(), db, profileID, []monomind.KGNode{node}, nil, "vault:"+id)
+	}()
+
 	return id, nil
+}
+
+// legacyVaultDir is the single flat directory every profile's files used to
+// share before per-profile folders existed. Kept only for MigrateVaultFiles.
+func legacyVaultDir() string {
+	return filepath.Join(os.Getenv("HOME"), ".monoagent", "vault")
+}
+
+// MigrateVaultFiles moves one profile's files out of the old shared flat
+// vault directory into its own vault/ folder, updating each vault_images
+// row's stored path to match. Idempotent: rows already pointing outside the
+// legacy directory (i.e. already migrated, or never lived there) are left
+// untouched. Thin wrapper over MoveFiles — kept as its own name since this
+// specific "off the old shared dir" case runs unconditionally on every
+// startup, same as this file's sibling migrations.
+func MigrateVaultFiles(ctx context.Context, db *sql.DB, profileID string) (moved int, errs []error) {
+	return MoveFiles(ctx, db, profileID, legacyVaultDir(), VaultDir(db, profileID))
+}
+
+// MoveFiles moves a profile's vault_images files from fromDir to toDir,
+// updating each row's stored path to match. Idempotent: rows whose path
+// isn't inside fromDir (already moved, or never lived there) are left
+// untouched — so re-running after a partial failure only retries what
+// didn't move yet. A failure on one row is reported via the returned
+// per-row error list rather than aborting the rest.
+func MoveFiles(ctx context.Context, db *sql.DB, profileID, fromDir, toDir string) (moved int, errs []error) {
+	if err := os.MkdirAll(toDir, 0700); err != nil {
+		return 0, []error{fmt.Errorf("vault.MoveFiles: ensure dest dir: %w", err)}
+	}
+
+	rows, err := db.QueryContext(ctx,
+		`SELECT id, path, filename FROM vault_images WHERE COALESCE(profile_id,'default') = ?`, profileID)
+	if err != nil {
+		return 0, []error{fmt.Errorf("vault.MoveFiles: query rows: %w", err)}
+	}
+	type row struct{ id, path, filename string }
+	var toMove []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.path, &r.filename); err == nil {
+			toMove = append(toMove, r)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		errs = append(errs, fmt.Errorf("vault.MoveFiles: iterate rows: %w", err))
+	}
+
+	for _, r := range toMove {
+		if !strings.HasPrefix(r.path, fromDir+string(os.PathSeparator)) {
+			continue // already moved, or never lived in fromDir
+		}
+		destPath := filepath.Join(toDir, r.filename)
+		if err := os.Rename(r.path, destPath); err != nil {
+			errs = append(errs, fmt.Errorf("vault.MoveFiles: move %s: %w", r.id, err))
+			continue
+		}
+		if _, err := db.ExecContext(ctx, `UPDATE vault_images SET path = ? WHERE id = ?`, destPath, r.id); err != nil {
+			errs = append(errs, fmt.Errorf("vault.MoveFiles: update path for %s: %w", r.id, err))
+			continue
+		}
+		moved++
+	}
+	return moved, errs
 }
 
 // Resolve turns "@img-001" into the absolute file path stored in the DB.

@@ -50,6 +50,10 @@ export function CheckForUpdate() {
   return window['go']['main']['App']['CheckForUpdate']();
 }
 
+export function ChooseProfileFolder() {
+  return window['go']['main']['App']['ChooseProfileFolder']();
+}
+
 export function ClearAIChatHistory(arg1) {
   return window['go']['main']['App']['ClearAIChatHistory'](arg1);
 }
@@ -74,8 +78,8 @@ export function CreateAction(arg1) {
   return window['go']['main']['App']['CreateAction'](arg1);
 }
 
-export function CreateProfile(arg1) {
-  return window['go']['main']['App']['CreateProfile'](arg1);
+export function CreateProfile(arg1, arg2) {
+  return window['go']['main']['App']['CreateProfile'](arg1, arg2);
 }
 
 export function CreateResource(arg1, arg2, arg3, arg4) {
@@ -176,6 +180,10 @@ export function GetAllTags() {
 
 export function GetAvailableActionTypes() {
   return window['go']['main']['App']['GetAvailableActionTypes']();
+}
+
+export function GetChatSessionMessages(arg1, arg2) {
+  return window['go']['main']['App']['GetChatSessionMessages'](arg1, arg2);
 }
 
 export function GetConnectionsForPlatform(arg1) {
@@ -366,6 +374,10 @@ export function ListAIProviders() {
   return window['go']['main']['App']['ListAIProviders']();
 }
 
+export function ListChatSessions(arg1) {
+  return window['go']['main']['App']['ListChatSessions'](arg1);
+}
+
 export function ListConnections(arg1) {
   return window['go']['main']['App']['ListConnections'](arg1);
 }
@@ -406,6 +418,10 @@ export function LoginSocial(arg1) {
   return window['go']['main']['App']['LoginSocial'](arg1);
 }
 
+export function MoveProfileFolder(arg1, arg2) {
+  return window['go']['main']['App']['MoveProfileFolder'](arg1, arg2);
+}
+
 export function OpenURL(arg1) {
   return window['go']['main']['App']['OpenURL'](arg1);
 }
@@ -432,6 +448,10 @@ export function RemoveConnection(arg1) {
 
 export function RemovePersonTag(arg1, arg2) {
   return window['go']['main']['App']['RemovePersonTag'](arg1, arg2);
+}
+
+export function RevealProfileFolder(arg1) {
+  return window['go']['main']['App']['RevealProfileFolder'](arg1);
 }
 
 export function RunNode(arg1) {
@@ -502,8 +522,8 @@ export function StreamAIChat(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['StreamAIChat'](arg1, arg2, arg3, arg4);
 }
 
-export function StreamAgentChat(arg1, arg2, arg3, arg4, arg5) {
-  return window['go']['main']['App']['StreamAgentChat'](arg1, arg2, arg3, arg4, arg5);
+export function StreamAgentChat(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
+  return window['go']['main']['App']['StreamAgentChat'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
 }
 
 export function StreamOrgEvents(arg1) {

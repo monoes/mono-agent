@@ -20,12 +20,12 @@ func newVersionCmd() *cobra.Command {
 				enc := json.NewEncoder(os.Stdout)
 				enc.SetIndent("", "  ")
 				return enc.Encode(map[string]string{
-					"version":    version,
-					"build_date": buildDate,
+					"version":    getVersion(),
+					"build_date": getBuildDate(),
 				})
 			}
 
-			fmt.Fprintf(os.Stdout, "monoagentcli %s (built %s)\n", version, buildDate)
+			fmt.Fprintf(os.Stdout, "monoagentcli %s (built %s)\n", getVersion(), getBuildDate())
 			return nil
 		},
 	}
