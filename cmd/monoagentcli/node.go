@@ -203,21 +203,7 @@ func setupExtensionBridge(logger zerolog.Logger, waitForConnection time.Duration
 	return &extension.ServerBridge{Server: extServer}
 }
 
-// findLocalChromePath returns the path to the local Chrome binary, or empty string.
-func findLocalChromePath() string {
-	candidates := []string{
-		"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-		"/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
-		"/usr/bin/google-chrome",
-		"/usr/bin/google-chrome-stable",
-	}
-	for _, p := range candidates {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-	return ""
-}
+
 
 // cliBotRegistry wraps bot.PlatformRegistry to satisfy nodes.BotRegistry.
 type cliBotRegistry struct{}
@@ -520,13 +506,13 @@ platform name to override. Token refresh is handled automatically for OAuth conn
 				if !cfg.Verbose {
 					extLogger = extLogger.Level(zerolog.WarnLevel)
 				}
-				extBridge := setupExtensionBridge(extLogger, 30*time.Second)
+				extBridge := setupExtensionBridge(extLogger, 3*time.Second)
 				if !extBridge.IsConnected() {
 					// No throwaway automation browser — launch the user's real
 					// Chrome (same mechanism as `login`) so the extension can
 					// attach, then wait.
 					if err := ensureExtensionConnected(extBridge, 30*time.Second); err != nil {
-						fmt.Fprintf(os.Stderr, "  Warning: %v\n", err)
+						return fmt.Errorf("chrome extension bridge: %w", err)
 					}
 				}
 
