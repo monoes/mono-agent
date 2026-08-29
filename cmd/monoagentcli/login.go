@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -35,42 +34,7 @@ func newExtensionLoginLogger() zerolog.Logger {
 	return zerolog.New(os.Stderr).With().Timestamp().Str("component", "extension").Logger().Level(zerolog.WarnLevel)
 }
 
-// connChecker is the minimal slice of browser.ExtensionBridge that
-// ensureExtensionConnected needs — defined locally to avoid pulling in the
-// browser package just for a type name.
-type connChecker interface {
-	IsConnected() bool
-}
 
-// ensureExtensionConnected returns once the extension bridge is connected,
-// launching the user's real Chrome first if it doesn't seem to be running.
-// The launch is a bare process start — no --user-data-dir override, no
-// --remote-debugging-port — so it opens (or focuses) the user's actual
-// default profile, complete with whatever extensions (including this one)
-// and logins are already there, rather than a blank throwaway profile.
-func ensureExtensionConnected(bridge connChecker, timeout time.Duration) error {
-	if bridge.IsConnected() {
-		return nil
-	}
-
-	chromePath := findLocalChromePath()
-	if chromePath == "" {
-		return fmt.Errorf("Chrome extension not connected, and Google Chrome wasn't found on this machine — install Chrome and the mono-agent extension, then try again")
-	}
-	fmt.Fprintln(os.Stderr, "Chrome doesn't seem to be running — launching it now...")
-	if err := exec.Command(chromePath).Start(); err != nil {
-		return fmt.Errorf("launching Chrome: %w", err)
-	}
-
-	deadline := time.Now().Add(timeout)
-	for !bridge.IsConnected() && time.Now().Before(deadline) {
-		time.Sleep(500 * time.Millisecond)
-	}
-	if !bridge.IsConnected() {
-		return fmt.Errorf("Chrome opened, but the mono-agent extension didn't connect within %s — make sure it's installed and enabled, then try again", timeout)
-	}
-	return nil
-}
 
 // loginTabStatePath returns the path to the small state file recording the
 // Chrome tab ID opened by `login <platform>`, so `login confirm <platform>`

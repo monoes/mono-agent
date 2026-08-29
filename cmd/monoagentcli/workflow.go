@@ -62,12 +62,12 @@ func buildEngine(cfg *globalConfig, allowAllProfiles bool) (*workflow.WorkflowEn
 	// no Rod/Chromium fallback, sharing another local process's connection
 	// when one already exists (e.g. the daemon).
 	extLogger := logger.With().Str("component", "extension").Logger()
-	extBridge := setupExtensionBridge(extLogger, 30*time.Second)
+	extBridge := setupExtensionBridge(extLogger, 3*time.Second)
 	if !extBridge.IsConnected() {
 		// No throwaway automation browser — launch the user's real Chrome
 		// (same mechanism as `login`) so the extension can attach, then wait.
 		if err := ensureExtensionConnected(extBridge, 30*time.Second); err != nil {
-			fmt.Fprintf(os.Stderr, "  Warning: %v\n", err)
+			return nil, func() {}, fmt.Errorf("chrome extension bridge: %w", err)
 		}
 	}
 

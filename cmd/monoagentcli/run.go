@@ -534,7 +534,7 @@ func executeAction(
 	extTabID := -1
 
 	extLogger := logger.With().Str("component", "extension").Logger()
-	extBridge := setupExtensionBridge(extLogger, 15*time.Second)
+	extBridge := setupExtensionBridge(extLogger, 3*time.Second)
 
 	if !extBridge.IsConnected() {
 		// No throwaway automation browser — launch the user's real Chrome
