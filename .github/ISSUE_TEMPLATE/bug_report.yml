@@ -1,0 +1,108 @@
+name: Bug report
+description: Something in Mono Agent does not behave as documented or expected.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug.
+
+        **Security vulnerabilities do not belong here** — report them
+        privately as described in
+        [SECURITY.md](https://github.com/monoes/mono-agent/blob/main/SECURITY.md).
+
+        Crash reports are written to local files under `~/.monoagent/crashes/`
+        and are never transmitted automatically — see "Logs" below.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear description of the problem.
+      placeholder: What happened, and what makes it a bug?
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `monoagentcli version`
+      placeholder: "e.g. monoagentcli version 0.4.2 (commit abc1234, go1.25)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Linux (x86_64)
+        - Linux (arm64)
+        - Windows
+        - Other / container (Docker, VM, …)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: build
+    attributes:
+      label: Build flavor
+      description: >
+        Social-platform nodes are not in the default binary — they require
+        `go build -tags social`. Pick the build you are running.
+      options:
+        - Default (downloaded release / `go build ./cmd/monoagentcli`)
+        - "`-tags social` build (Instagram/LinkedIn/X/TikTok/HN/PH nodes present)"
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Commands or workflow JSON that trigger the bug. Prefer a minimal workflow over a full export.
+      placeholder: |
+        1. `monoagentcli workflow import --file broken.json`
+        2. `monoagentcli workflow run <id>`
+        3. …
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What you expected to happen (quote docs/`ref` output if they say otherwise).
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead — include the exact error text and the exit code if the command failed.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and crash files
+      description: >
+        If the CLI crashed, a crash report was written under
+        `~/.monoagent/crashes/` on your machine. Check that directory,
+        redact anything sensitive, and paste the relevant file here.
+        Command output is also welcome — **redact secrets, tokens, and
+        personal data before pasting.** Secrets stored via `secret add`
+        are never printed, but pasted argv/config may contain them.
+      placeholder: |
+        ~/.monoagent/crashes/2026-08-29T…-panic.log
+        (redacted contents)
+      render: shell
+    validations:
+      required: false

@@ -82,16 +82,9 @@ func (s *stubStore) UpdateExecutionStatus(context.Context, string, string, strin
 func (s *stubStore) SetExecutionStarted(context.Context, string) error                   { return nil }
 func (s *stubStore) SetExecutionFinished(context.Context, string, string, string) error  { return nil }
 func (s *stubStore) UpdateExecutionNode(context.Context, *WorkflowExecutionNode) error   { return nil }
-func (s *stubStore) CreateCredential(context.Context, *Credential) error                 { return nil }
-func (s *stubStore) GetCredential(context.Context, string) (*Credential, error)          { return nil, nil }
-func (s *stubStore) ListCredentials(context.Context, string) ([]Credential, error) {
-	return nil, nil
-}
-func (s *stubStore) UpdateCredential(context.Context, *Credential) error         { return nil }
-func (s *stubStore) DeleteCredential(context.Context, string) error              { return nil }
-func (s *stubStore) RecoverStaleExecutions(context.Context) error                { return nil }
-func (s *stubStore) ReapStaleRunningExecutions(context.Context, time.Time) error { return nil }
-func (s *stubStore) CancelQueuedExecution(context.Context, string) (bool, error) { return false, nil }
+func (s *stubStore) RecoverStaleExecutions(context.Context) error                        { return nil }
+func (s *stubStore) ReapStaleRunningExecutions(context.Context, time.Time) error         { return nil }
+func (s *stubStore) CancelQueuedExecution(context.Context, string) (bool, error)         { return false, nil }
 func (s *stubStore) SetExecutionWaiting(_ context.Context, _ string, state string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -334,10 +327,9 @@ func TestRunExecution_ExecutorErrorBranchUnwiredFails(t *testing.T) {
 	}
 }
 
-// TestRunExecution_CredentialMissLogsProfile guards the legacy-credential
-// scoping note (V3-F6): the workflow_credentials fallback has no profile
-// column, so a full miss must log the execution's profile for
-// diagnosability.
+// TestRunExecution_CredentialMissLogsProfile guards the credential-miss log:
+// resolution is profile-scoped (connections GetOrResolve), so a full miss
+// must log the execution's profile for diagnosability.
 func TestRunExecution_CredentialMissLogsProfile(t *testing.T) {
 	var buf bytes.Buffer
 	logger := zerolog.New(&buf)

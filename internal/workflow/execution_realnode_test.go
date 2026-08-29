@@ -70,15 +70,6 @@ func (fakeStore) CreateExecutionNode(context.Context, *workflow.WorkflowExecutio
 func (fakeStore) SetExecutionNodeFinished(context.Context, string, string, []workflow.Item, string) error {
 	return nil
 }
-func (fakeStore) CreateCredential(context.Context, *workflow.Credential) error { return nil }
-func (fakeStore) GetCredential(context.Context, string) (*workflow.Credential, error) {
-	return nil, nil
-}
-func (fakeStore) ListCredentials(context.Context, string) ([]workflow.Credential, error) {
-	return nil, nil
-}
-func (fakeStore) UpdateCredential(context.Context, *workflow.Credential) error { return nil }
-func (fakeStore) DeleteCredential(context.Context, string) error               { return nil }
 func (fakeStore) RecoverStaleExecutions(context.Context) error                 { return nil }
 func (fakeStore) ReapStaleRunningExecutions(context.Context, time.Time) error  { return nil }
 func (fakeStore) CancelQueuedExecution(context.Context, string) (bool, error)  { return false, nil }

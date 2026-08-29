@@ -76,19 +76,44 @@
       margin-top: 4px;
       display: none;
     }
+    .unsafe-override {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: #b45309;
+      margin-top: 8px;
+      margin-bottom: 0;
+      cursor: pointer;
+    }
+    .unsafe-override input {
+      margin: 0;
+      flex-shrink: 0;
+    }
+    .error-msg {
+      color: #ef4444;
+      font-size: 11px;
+      margin-top: 4px;
+      display: none;
+    }
   </style>
 </head>
 <body>
-  <h3>Monoes Agent</h3>
+  <h3>MonoAgent Bridge</h3>
   <div class="status-row">
     <div id="dot" class="dot disconnected"></div>
     <span id="status-text" class="status-text">Checking...</span>
   </div>
   <div class="url-section">
     <label for="ws-url">WebSocket URL</label>
-    <input type="text" id="ws-url" placeholder="ws://127.0.0.1:9222/monoes" />
+    <input type="text" id="ws-url" placeholder="ws://127.0.0.1:9222/monoagent" />
     <button id="save-btn">Save &amp; Reconnect</button>
+    <label class="unsafe-override" title="Session-only: cleared when this popup reopens and when the browser restarts.">
+      <input type="checkbox" id="allow-remote" />
+      Allow non-loopback server (unsafe)
+    </label>
     <div id="saved-msg" class="saved-msg">Saved and reconnecting...</div>
+    <div id="error-msg" class="error-msg"></div>
   </div>
   <script src="popup.js"></script>
 </body>

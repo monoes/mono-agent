@@ -19,6 +19,106 @@ import (
 // TikTokBot implements botpkg.BotAdapter for TikTok.
 type TikTokBot struct{}
 
+// sendVerificationTimeout bounds the post-send poll that confirms a DM was
+// actually delivered (composer cleared or message bubble rendered).
+const sendVerificationTimeout = 3 * time.Second
+
+// dmBubbleSelectors are best-effort selectors for rendered message bubbles in
+// the chat thread, used as the "OR" branch of send verification.
+var dmBubbleSelectors = []string{
+	"div[data-e2e='chat-message']",
+	"div[data-e2e='message-item']",
+}
+
+// handleTextMatches reports whether the text of a search-result row contains
+// the target username (case-insensitive, ignoring the "@" prefix). It mirrors
+// Instagram's approach of embedding the username in the search-result
+// selector so a wrong-recipient click can never happen.
+func handleTextMatches(resultText, target string) bool {
+	if target == "" {
+		return false
+	}
+	normalize := func(s string) string {
+		return strings.TrimPrefix(strings.ToLower(strings.TrimSpace(s)), "@")
+	}
+	return strings.Contains(normalize(resultText), normalize(target))
+}
+
+// truncateForError shortens a string for inclusion in error messages.
+func truncateForError(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max]) + "…"
+}
+
+// messageSnippet returns the searchable portion of a message used to match a
+// rendered message bubble (long messages may be visually truncated by the UI).
+func messageSnippet(message string) string {
+	const maxSnippet = 80
+	r := []rune(message)
+	if len(r) > maxSnippet {
+		return string(r[:maxSnippet])
+	}
+	return message
+}
+
+// sendVerified reports whether the observable page state confirms the message
+// was sent: the composer is cleared, or a message bubble containing the
+// message snippet has rendered in the thread.
+func sendVerified(composerText string, bubbleTexts []string, message string) bool {
+	if strings.TrimSpace(composerText) == "" {
+		return true
+	}
+	snippet := messageSnippet(message)
+	for _, bubble := range bubbleTexts {
+		if strings.Contains(bubble, snippet) {
+			return true
+		}
+	}
+	return false
+}
+
+// composerText reads the current text of a message composer element,
+// handling both contenteditable divs (innerText) and textareas (value).
+func composerText(el *rod.Element) string {
+	if el == nil {
+		return ""
+	}
+	res, err := el.Eval(`() => this.value !== undefined ? this.value : (this.innerText || '')`)
+	if err != nil || res == nil {
+		return ""
+	}
+	return res.Value.Str()
+}
+
+// verifyMessageSent polls the page for up to sendVerificationTimeout to
+// confirm the message was actually sent. Verification failure is an error —
+// a send we cannot observe is reported as "not sent", never as success.
+func verifyMessageSent(page *rod.Page, msgInput *rod.Element, message string) error {
+	deadline := time.Now().Add(sendVerificationTimeout)
+	for time.Now().Before(deadline) {
+		var bubbleTexts []string
+		for _, sel := range dmBubbleSelectors {
+			els, err := page.Elements(sel)
+			if err != nil {
+				continue
+			}
+			for _, el := range els {
+				if text, tErr := el.Text(); tErr == nil {
+					bubbleTexts = append(bubbleTexts, text)
+				}
+			}
+		}
+		if sendVerified(composerText(msgInput), bubbleTexts, message) {
+			return nil
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	return fmt.Errorf("tiktok: send could not be verified (composer not cleared and no message bubble rendered within %s)", sendVerificationTimeout)
+}
+
 func init() {
 	botpkg.PlatformRegistry["TIKTOK"] = func() botpkg.BotAdapter {
 		return &TikTokBot{}
@@ -207,7 +307,11 @@ func (b *TikTokBot) SendMessage(ctx context.Context, p browser.PageInterface, us
 		}
 		time.Sleep(2 * time.Second)
 
-		// Click the first search result.
+		// Click the first search result whose handle matches the target
+		// username. Clicking a result without verifying its handle risks
+		// DM-ing the wrong user, so mismatched results are skipped and a
+		// fully mismatched result set is a hard error — the message is
+		// never typed.
 		resultSelectors := []string{
 			"div[data-e2e='search-user-item']",
 			"div[role='option']",
@@ -215,17 +319,38 @@ func (b *TikTokBot) SendMessage(ctx context.Context, p browser.PageInterface, us
 		}
 
 		resultClicked := false
+		var firstResultText string
 		for _, sel := range resultSelectors {
-			resultEl, rErr := page.Timeout(5 * time.Second).Element(sel)
-			if rErr == nil && resultEl != nil {
+			resultEls, rErr := page.Timeout(5 * time.Second).Elements(sel)
+			if rErr != nil || len(resultEls) == 0 {
+				continue
+			}
+			for _, resultEl := range resultEls {
+				text, tErr := resultEl.Text()
+				if tErr != nil {
+					continue
+				}
+				trimmed := strings.TrimSpace(text)
+				if firstResultText == "" {
+					firstResultText = trimmed
+				}
+				if !handleTextMatches(trimmed, username) {
+					continue
+				}
 				if clickErr := resultEl.Click(proto.InputMouseButtonLeft, 1); clickErr == nil {
 					resultClicked = true
 					break
 				}
 			}
+			if resultClicked {
+				break
+			}
 		}
 
 		if !resultClicked {
+			if firstResultText != "" {
+				return fmt.Errorf("tiktok: search result '%s' does not match target username '%s'", truncateForError(firstResultText, 80), username)
+			}
 			return fmt.Errorf("tiktok: could not select user %q from search results", username)
 		}
 		time.Sleep(2 * time.Second)
@@ -293,8 +418,7 @@ func (b *TikTokBot) SendMessage(ctx context.Context, p browser.PageInterface, us
 		}
 	}
 
-	time.Sleep(1 * time.Second)
-	return nil
+	return verifyMessageSent(page, msgInput, message)
 }
 
 // GetProfileData scrapes the currently loaded TikTok profile page and returns
@@ -581,10 +705,9 @@ func (b *TikTokBot) GetMethodByName(name string) (func(ctx context.Context, args
 				return nil, fmt.Errorf("stitch_video: first arg must be browser.PageInterface")
 			}
 			videoURL, _ := args[1].(string)
-			if err := b.StitchVideo(ctx, page, videoURL); err != nil {
-				return nil, err
-			}
-			return map[string]interface{}{"success": true, "videoURL": videoURL}, nil
+			// Returns status "opened_stitch_editor" — the stitch is not
+			// published automatically.
+			return b.StitchVideo(ctx, page, videoURL)
 		}, true
 
 	case "duet_video":
@@ -597,10 +720,9 @@ func (b *TikTokBot) GetMethodByName(name string) (func(ctx context.Context, args
 				return nil, fmt.Errorf("duet_video: first arg must be browser.PageInterface")
 			}
 			videoURL, _ := args[1].(string)
-			if err := b.DuetVideo(ctx, page, videoURL); err != nil {
-				return nil, err
-			}
-			return map[string]interface{}{"success": true, "videoURL": videoURL}, nil
+			// Returns status "opened_duet_editor" — the duet is not
+			// published automatically.
+			return b.DuetVideo(ctx, page, videoURL)
 		}, true
 
 	case "share_video":

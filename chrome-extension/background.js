@@ -5,7 +5,7 @@
  * to content scripts or the chrome.tabs / chrome.scripting APIs.
  *
  * MV3 Keep-Alive Strategy:
- * - chrome.alarms fires every ~24s to wake the service worker
+ * - chrome.alarms fires every ~30s to wake the service worker
  * - On each alarm, check WS connection and reconnect if needed
  * - Fast retry loop (500ms) runs during the first 30s after SW start
  * - No exponential backoff — flat 500ms retry for aggressive reconnection
@@ -28,10 +28,7 @@ const COMMAND_TIMEOUT = 30000; // 30s default timeout for pending commands
 // response — surfacing a misleading "Content script timeout" instead.
 const CONTENT_SCRIPT_TIMEOUT_BUFFER = 5000;
 const KEEPALIVE_ALARM = "monoagent-keepalive";
-const ALARM_PERIOD_MINUTES = 0.4; // ~24 seconds (minimum safe value for MV3)
-
-// Pending navigation completions: tabId -> {resolve, timeout}
-const pendingNavigations = new Map();
+const ALARM_PERIOD_MINUTES = 0.5; // 30s (Chrome clamps alarms to a 30s minimum)
 
 // ---------------------------------------------------------------------------
 // Keep-Alive: Alarm-based service worker persistence
@@ -44,15 +41,13 @@ function ensureAlarm() {
 chrome.runtime.onInstalled.addListener(() => {
   console.log("[monoagent] Extension installed, starting connection loop");
   ensureAlarm();
-  connect();
-  fastRetryConnect();
+  fastRetryConnect(); // calls connect() once, then schedules retries
 });
 
 chrome.runtime.onStartup.addListener(() => {
   console.log("[monoagent] Chrome started, starting connection loop");
   ensureAlarm();
-  connect();
-  fastRetryConnect();
+  fastRetryConnect(); // calls connect() once, then schedules retries
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
@@ -61,6 +56,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
       console.log("[monoagent] Alarm-triggered reconnect attempt");
       connect();
     }
+    sweepIdleDebuggers();
     // Re-create the alarm to guarantee the service worker stays alive.
     ensureAlarm();
   }
@@ -71,12 +67,60 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 let fastRetryCount = 0;
 const FAST_RETRY_MAX = 60; // 60 * 500ms = 30 seconds
 const FAST_RETRY_INTERVAL = 500;
+let fastRetryTimer = null;
 
 function fastRetryConnect() {
   if (connectionStatus === "connected" || fastRetryCount >= FAST_RETRY_MAX) return;
+  if (fastRetryTimer) return; // a retry chain is already scheduled
   fastRetryCount++;
   connect();
-  setTimeout(fastRetryConnect, FAST_RETRY_INTERVAL);
+  fastRetryTimer = setTimeout(() => {
+    fastRetryTimer = null;
+    fastRetryConnect();
+  }, FAST_RETRY_INTERVAL);
+}
+
+// ---------------------------------------------------------------------------
+// Loopback enforcement
+// ---------------------------------------------------------------------------
+
+// The bridge is an unauthenticated same-user channel; refusing non-loopback
+// servers keeps it from silently becoming a remote one. The only override is
+// a session-scoped flag set by the popup's unsafe checkbox (never persisted,
+// cleared when the popup reopens and when the browser restarts).
+function parseWsUrl(urlStr) {
+  try {
+    const u = new URL(urlStr);
+    return u.protocol === "ws:" || u.protocol === "wss:" ? u : null;
+  } catch {
+    return null;
+  }
+}
+
+function isLoopbackHost(hostname) {
+  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  return host === "127.0.0.1" || host === "localhost" || host === "::1";
+}
+
+async function getNonLoopbackOverride() {
+  try {
+    const { allowNonLoopback } = await chrome.storage.session.get("allowNonLoopback");
+    return !!allowNonLoopback;
+  } catch {
+    return false;
+  }
+}
+
+// Throws (with a user-visible message) if the URL targets a non-loopback
+// host and the session override is not set.
+async function assertLoopbackAllowed(url) {
+  const parsed = parseWsUrl(url);
+  if (!parsed || isLoopbackHost(parsed.hostname)) return;
+  if (await getNonLoopbackOverride()) return;
+  throw new Error(
+    `Refusing non-loopback server "${parsed.host}" — only 127.0.0.1, localhost, or ::1 are allowed. ` +
+      "To override, enable 'Allow non-loopback server (unsafe)' in the popup and save again."
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -92,15 +136,38 @@ async function getWsUrl() {
   }
 }
 
-async function connect() {
-  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
-    return;
-  }
+let connectingPromise = null;
 
+// Serialized: concurrent callers await/reuse the in-flight connection attempt
+// instead of racing to open a second socket.
+function connect() {
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+    return Promise.resolve();
+  }
+  if (connectingPromise) {
+    return connectingPromise;
+  }
+  connectingPromise = doConnect().finally(() => {
+    connectingPromise = null;
+  });
+  return connectingPromise;
+}
+
+async function doConnect() {
   connectionStatus = "connecting";
   broadcastStatus();
 
   const url = await getWsUrl();
+
+  try {
+    await assertLoopbackAllowed(url);
+  } catch (err) {
+    console.error("[monoagent]", err.message);
+    connectionStatus = "disconnected";
+    broadcastStatus();
+    fastRetryCount = FAST_RETRY_MAX; // retrying a refused URL is pointless
+    return;
+  }
 
   try {
     ws = new WebSocket(url);
@@ -335,10 +402,12 @@ async function setCookies({ tabId, cookies }) {
   return { set, failed: errors.length, errors };
 }
 
-async function getCookies({ tabId }) {
+async function getCookies({ tabId, includeHttpOnly = false }) {
   if (!tabId) throw new Error("tabId is required");
   const tab = await chrome.tabs.get(tabId);
-  const cookies = await chrome.cookies.getAll({ url: tab.url });
+  const all = await chrome.cookies.getAll({ url: tab.url });
+  // httpOnly cookies are withheld unless the command explicitly asks for them.
+  const cookies = includeHttpOnly ? all : all.filter((c) => !c.httpOnly);
   return { cookies };
 }
 
@@ -350,7 +419,6 @@ function waitForTabComplete(tabId, timeout = 30000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       chrome.tabs.onUpdated.removeListener(listener);
-      pendingNavigations.delete(tabId);
       reject(new Error(`Tab ${tabId} did not finish loading within ${timeout}ms`));
     }, timeout);
 
@@ -358,12 +426,10 @@ function waitForTabComplete(tabId, timeout = 30000) {
       if (updatedTabId === tabId && changeInfo.status === "complete") {
         chrome.tabs.onUpdated.removeListener(listener);
         clearTimeout(timer);
-        pendingNavigations.delete(tabId);
         resolve();
       }
     }
 
-    pendingNavigations.set(tabId, { resolve, timeout: timer });
     chrome.tabs.onUpdated.addListener(listener);
   });
 }
@@ -387,10 +453,10 @@ async function evalInTab({ tabId, js, expression, args }) {
   if (!tabId) throw new Error("tabId is required");
   if (!code) throw new Error("js code is required");
 
-  // chrome.scripting.executeScript with world:"MAIN" bypasses CSP.
-  // We can't use eval() inside func, so we pass code+args as strings
-  // and construct the evaluation via Function constructor (which is also
-  // an extension privilege in MAIN world injection).
+  // Injected via chrome.scripting into the page's MAIN world — it runs with
+  // the page's principal and is subject to the PAGE's CSP, so sites that
+  // block eval/Function will fail here. Use the eval_cdp command (Chrome
+  // Debugger Protocol) when page CSP must be bypassed.
   const argsJSON = JSON.stringify(args || []);
 
   // Wrap executeScript in a timeout — it can hang on some pages
@@ -419,9 +485,8 @@ async function evalInTab({ tabId, js, expression, args }) {
   let results;
   try {
     results = await Promise.race([execPromise, timeoutPromise]);
-  } catch(e) {
-    console.error("[monoagent] evalInTab failed:", e.message);
-    return null;
+  } catch (e) {
+    throw new Error("eval failed: " + e.message);
   }
 
   if (!results || results.length === 0) return null;
@@ -440,25 +505,71 @@ async function evalInTab({ tabId, js, expression, args }) {
 // This produces real browser-level keyboard events that work with any
 // framework (React, Lexical, Quill, etc.) — unlike synthetic JS events.
 const debuggerAttached = new Set();
+const debuggerLastUsed = new Map(); // tabId -> timestamp of last CDP command
+const DEBUGGER_IDLE_DETACH_MS = 30000; // detach after 30s without CDP traffic
+
+async function ensureDebuggerAttached(target, tabId) {
+  if (debuggerAttached.has(tabId)) return;
+  try {
+    await chrome.debugger.attach(target, "1.3");
+  } catch (e) {
+    if (!e.message.includes("Already attached")) {
+      throw new Error("debugger attach: " + e.message);
+    }
+  }
+  debuggerAttached.add(tabId);
+  debuggerLastUsed.set(tabId, Date.now());
+}
+
+// All CDP traffic goes through here so per-tab idle timers stay accurate.
+function debuggerSend(target, tabId, method, params) {
+  debuggerLastUsed.set(tabId, Date.now());
+  return chrome.debugger.sendCommand(target, method, params);
+}
+
+function forgetDebugger(tabId) {
+  debuggerAttached.delete(tabId);
+  debuggerLastUsed.delete(tabId);
+}
+
+async function detachDebugger(tabId) {
+  forgetDebugger(tabId);
+  try {
+    await chrome.debugger.detach({ tabId });
+  } catch {
+    // already detached (tab closed, user-initiated detach, etc.)
+  }
+}
+
+// Alarm-driven sweep: release debuggers idle since their last CDP command.
+function sweepIdleDebuggers() {
+  const now = Date.now();
+  for (const tabId of debuggerAttached) {
+    if (now - (debuggerLastUsed.get(tabId) || 0) > DEBUGGER_IDLE_DETACH_MS) {
+      console.log("[monoagent] Detaching idle debugger from tab", tabId);
+      detachDebugger(tabId);
+    }
+  }
+}
+
+// If the user (or DevTools) detaches the debugger, drop our bookkeeping.
+chrome.debugger.onDetach.addListener((source) => {
+  if (source?.tabId !== undefined) {
+    forgetDebugger(source.tabId);
+  }
+});
+
+// Clean up bookkeeping on tab close
+chrome.tabs.onRemoved.addListener((tabId) => {
+  forgetDebugger(tabId);
+});
 
 async function typeCDP({ tabId, text, elementId, tabCount }) {
   if (!tabId) throw new Error("tabId required");
   if (!text) throw new Error("text required");
 
   const target = { tabId };
-
-  // Attach debugger if needed
-  if (!debuggerAttached.has(tabId)) {
-    try {
-      await chrome.debugger.attach(target, "1.3");
-      debuggerAttached.add(tabId);
-    } catch (e) {
-      if (!e.message.includes("Already attached")) {
-        throw new Error("debugger attach: " + e.message);
-      }
-      debuggerAttached.add(tabId);
-    }
-  }
+  await ensureDebuggerAttached(target, tabId);
 
   // Strategy: use CDP to find the contenteditable element, focus it via
   // DOM.focus, then insert text via Input.insertText.
@@ -466,7 +577,7 @@ async function typeCDP({ tabId, text, elementId, tabCount }) {
   // Step 1: Find the caption element via Runtime.evaluate (not blocked by CSP
   // because chrome.debugger bypasses it entirely)
   try {
-    const findResult = await chrome.debugger.sendCommand(target, "Runtime.evaluate", {
+    const findResult = await debuggerSend(target, tabId, "Runtime.evaluate", {
       expression: `(() => {
         // Find contenteditable caption field
         const candidates = document.querySelectorAll('[contenteditable="true"]');
@@ -499,16 +610,20 @@ async function typeCDP({ tabId, text, elementId, tabCount }) {
           const timeout = setTimeout(() => reject(new Error("timeout")), 5000);
           chrome.tabs.sendMessage(tabId, { type: "get_rect", params: { elementId } }, (r) => {
             clearTimeout(timeout);
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+              return;
+            }
             resolve(r || {});
           });
         });
         if (rect.x !== undefined) {
           const x = rect.x + rect.width / 2;
           const y = rect.y + rect.height / 2;
-          await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
+          await debuggerSend(target, tabId, "Input.dispatchMouseEvent", {
             type: "mousePressed", x, y, button: "left", clickCount: 1
           });
-          await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
+          await debuggerSend(target, tabId, "Input.dispatchMouseEvent", {
             type: "mouseReleased", x, y, button: "left", clickCount: 1
           });
           await new Promise(r => setTimeout(r, 300));
@@ -518,35 +633,22 @@ async function typeCDP({ tabId, text, elementId, tabCount }) {
   }
 
   // Step 2: Insert text via CDP
-  await chrome.debugger.sendCommand(target, "Input.insertText", {
+  await debuggerSend(target, tabId, "Input.insertText", {
     text: text,
   });
 
   return { typed: true, length: text.length };
 }
 
-// Clean up debugger on tab close
-chrome.tabs.onRemoved.addListener((tabId) => {
-  debuggerAttached.delete(tabId);
-});
-
-// Evaluate JS via CDP Runtime.evaluate — bypasses CSP completely.
+// Evaluate JS via CDP Runtime.evaluate — bypasses page CSP completely.
 async function evalCDP({ tabId, expression }) {
   if (!tabId) throw new Error("tabId required");
   if (!expression) throw new Error("expression required");
 
   const target = { tabId };
-  if (!debuggerAttached.has(tabId)) {
-    try {
-      await chrome.debugger.attach(target, "1.3");
-      debuggerAttached.add(tabId);
-    } catch (e) {
-      if (!e.message.includes("Already attached")) throw new Error("debugger attach: " + e.message);
-      debuggerAttached.add(tabId);
-    }
-  }
+  await ensureDebuggerAttached(target, tabId);
 
-  const result = await chrome.debugger.sendCommand(target, "Runtime.evaluate", {
+  const result = await debuggerSend(target, tabId, "Runtime.evaluate", {
     expression,
     returnByValue: true,
     awaitPromise: true,
@@ -586,6 +688,27 @@ async function sendToContent(tabId, cmd) {
 // Message handler for popup and internal communication
 // ---------------------------------------------------------------------------
 
+// Persist a new WS URL (validating loopback policy first) and reconnect.
+async function setWsUrl(url) {
+  if (!url || typeof url !== "string") throw new Error("url is required");
+  if (!parseWsUrl(url)) throw new Error(`Invalid WebSocket URL: ${url}`);
+  await assertLoopbackAllowed(url); // throws a visible message for the popup
+  try {
+    await chrome.storage.local.set({ wsUrl: url });
+  } catch (err) {
+    throw new Error("Failed to save URL: " + err.message);
+  }
+  // Disconnect and reconnect with the new URL
+  if (ws) {
+    ws.close();
+  }
+  // Reset fast retry so we aggressively connect to the new URL
+  fastRetryCount = 0;
+  connect();
+  fastRetryConnect();
+  return { ok: true };
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "get_status") {
     sendResponse({ status: connectionStatus });
@@ -600,17 +723,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return false;
   }
   if (msg.type === "set_ws_url") {
-    chrome.storage.local.set({ wsUrl: msg.url }).then(() => {
-      // Disconnect and reconnect with new URL
-      if (ws) {
-        ws.close();
-      }
-      // Reset fast retry so we aggressively connect to the new URL
-      fastRetryCount = 0;
-      connect();
-      fastRetryConnect();
-      sendResponse({ ok: true });
-    });
+    setWsUrl(msg.url)
+      .then((result) => sendResponse(result))
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
     return true; // async response
   }
   return false;
@@ -621,5 +736,4 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // ---------------------------------------------------------------------------
 
 ensureAlarm();
-connect();
-fastRetryConnect();
+fastRetryConnect(); // calls connect() once, then schedules retries

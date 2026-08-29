@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -58,20 +59,24 @@ func toFloat64Ok(v interface{}) (float64, bool) {
 //  2. Selector — find by CSS selector (with alternatives via FindElementWithAlternatives).
 //  3. XPath — find by XPath expression.
 //  4. ConfigKey — dynamically obtain a selector from the config manager.
-func (ae *ActionExecutor) resolveElement(step StepDef) browser.ElementHandle {
+//
+// When no element is found, the returned error carries the underlying lookup
+// cause (if any) so callers can surface why resolution failed.
+func (ae *ActionExecutor) resolveElement(step StepDef) (browser.ElementHandle, error) {
 	timeout := stepTimeout(step, 10)
 
 	// 1. ElementRef from context.
 	if step.ElementRef != "" {
 		elem := ae.execCtx.GetElement(step.ElementRef)
 		if elem != nil {
-			return elem
+			return elem, nil
 		}
 		// Also check step results for elements.
 		sr := ae.execCtx.GetStepResult(step.ElementRef)
 		if sr != nil && sr.Element != nil {
-			return sr.Element
+			return sr.Element, nil
 		}
+		return nil, fmt.Errorf("element ref %q not found in context", step.ElementRef)
 	}
 
 	// 2. CSS Selector (with alternatives via bot.FindElementWithAlternatives).
@@ -80,25 +85,25 @@ func (ae *ActionExecutor) resolveElement(step StepDef) browser.ElementHandle {
 		if rodPage != nil {
 			el, err := bot.FindElementWithAlternatives(rodPage, step.Selector, step.Alternatives, timeout)
 			if err == nil {
-				return browser.NewRodElement(el)
+				return browser.NewRodElement(el), nil
 			}
-		} else {
-			// Non-Rod fallback.
-			el, err := ae.page.Element(step.Selector, timeout)
-			if err == nil {
-				return el
-			}
+			return nil, err
 		}
-		return nil
+		// Non-Rod fallback.
+		el, err := ae.page.Element(step.Selector, timeout)
+		if err == nil {
+			return el, nil
+		}
+		return nil, err
 	}
 
 	// 3. XPath.
 	if step.XPath != "" {
 		el, err := ae.page.ElementX(step.XPath, timeout)
 		if err != nil {
-			return nil
+			return nil, err
 		}
-		return el
+		return el, nil
 	}
 
 	// 4. ConfigKey — ask the config manager for a selector.
@@ -113,12 +118,14 @@ func (ae *ActionExecutor) resolveElement(step StepDef) browser.ElementHandle {
 				el, err = ae.page.Element(configSelector, timeout)
 			}
 			if err == nil {
-				return el
+				return el, nil
 			}
+			return nil, err
 		}
+		return nil, fmt.Errorf("config key %q resolved to no selector", step.ConfigKey)
 	}
 
-	return nil
+	return nil, nil
 }
 
 // unwrapRodPage extracts the underlying *rod.Page from a browser.PageInterface,
@@ -398,7 +405,10 @@ func (ae *ActionExecutor) stepFindElement(ctx context.Context, step StepDef) (*S
 			elem = el
 			break
 		}
-		lastErr = err
+		// Keep the first meaningful (non-nil) selector error for reporting.
+		if err != nil && lastErr == nil {
+			lastErr = err
+		}
 	}
 
 	if elem == nil {
@@ -429,12 +439,12 @@ func (ae *ActionExecutor) stepFindElement(ctx context.Context, step StepDef) (*S
 // ---------------------------------------------------------------------------
 
 func (ae *ActionExecutor) stepClick(ctx context.Context, step StepDef) (*StepResult, error) {
-	elem := ae.resolveElement(step)
+	elem, resolveErr := ae.resolveElement(step)
 	if elem == nil {
 		return &StepResult{
 			Success: false,
 			StepID:  step.ID,
-			Error:   fmt.Errorf("click step %s: no element to click", step.ID),
+			Error:   noElementError("click step %s: no element to click", step.ID, resolveErr),
 		}, nil
 	}
 
@@ -528,12 +538,12 @@ func (ae *ActionExecutor) waitAfterClick(step StepDef) {
 // ---------------------------------------------------------------------------
 
 func (ae *ActionExecutor) stepType(ctx context.Context, step StepDef) (*StepResult, error) {
-	elem := ae.resolveElement(step)
+	elem, resolveErr := ae.resolveElement(step)
 	if elem == nil {
 		return &StepResult{
 			Success: false,
 			StepID:  step.ID,
-			Error:   fmt.Errorf("type step %s: no element to type into", step.ID),
+			Error:   noElementError("type step %s: no element to type into", step.ID, resolveErr),
 		}, nil
 	}
 
@@ -623,12 +633,12 @@ func (ae *ActionExecutor) stepType(ctx context.Context, step StepDef) (*StepResu
 // ---------------------------------------------------------------------------
 
 func (ae *ActionExecutor) stepUpload(ctx context.Context, step StepDef) (*StepResult, error) {
-	elem := ae.resolveElement(step)
+	elem, resolveErr := ae.resolveElement(step)
 	if elem == nil {
 		return &StepResult{
 			Success: false,
 			StepID:  step.ID,
-			Error:   fmt.Errorf("upload step %s: no file input element found", step.ID),
+			Error:   noElementError("upload step %s: no file input element found", step.ID, resolveErr),
 		}, nil
 	}
 
@@ -758,12 +768,12 @@ func (ae *ActionExecutor) stepScroll(ctx context.Context, step StepDef) (*StepRe
 // ---------------------------------------------------------------------------
 
 func (ae *ActionExecutor) stepHover(ctx context.Context, step StepDef) (*StepResult, error) {
-	elem := ae.resolveElement(step)
+	elem, resolveErr := ae.resolveElement(step)
 	if elem == nil {
 		return &StepResult{
 			Success: false,
 			StepID:  step.ID,
-			Error:   fmt.Errorf("hover step %s: no element to hover", step.ID),
+			Error:   noElementError("hover step %s: no element to hover", step.ID, resolveErr),
 		}, nil
 	}
 
@@ -932,8 +942,6 @@ func (ae *ActionExecutor) stepExtractAttribute(ctx context.Context, step StepDef
 		if attrValue != "" {
 			break
 		}
-		lastErr = err
-		attrValue = ""
 	}
 
 	if attrValue == "" && lastErr != nil {
@@ -1137,8 +1145,15 @@ func (ae *ActionExecutor) stepCondition(ctx context.Context, step StepDef) (*Ste
 		return &StepResult{Success: true, Data: condResult, StepID: step.ID}, nil
 	}
 
-	// Prevent infinite recursion.
+	// Prevent infinite recursion. The counter is scoped to the current
+	// outer-loop iteration (when running inside a loop) so that a long loop
+	// does not exhaust the cap across iterations — each iteration gets a
+	// fresh budget while runaway recursion within one iteration is still
+	// caught.
 	recursionKey := fmt.Sprintf("condition_%s", step.ID)
+	if idx, ok := ae.execCtx.GetVariable("loopIndex"); ok {
+		recursionKey = fmt.Sprintf("condition_%s_loopidx_%v", step.ID, idx)
+	}
 	count := ae.execCtx.IncrementRecursion(recursionKey)
 	const maxRecursion = 100
 	if count > maxRecursion {
@@ -1363,9 +1378,13 @@ func (ae *ActionExecutor) evalSimpleCondition(expr string) bool {
 			left := strings.TrimSpace(expr[:idx])
 			right := strings.TrimSpace(expr[idx+len(op.op):])
 
-			// Resolve the left side variable.
+			// Resolve both sides: the left as a variable reference, the right
+			// as a literal (quoted/numeric/boolean) or, failing that, a
+			// variable reference. Without RHS resolution, comparisons like
+			// "resultsCount < maxResultsCount" compare against toFloat of the
+			// raw variable name, which is always 0.
 			leftVal := ae.resolveConditionValue(left)
-			rightVal := right
+			rightVal := ae.resolveConditionOperand(right)
 
 			return op.eval(leftVal, rightVal)
 		}
@@ -1384,6 +1403,31 @@ func (ae *ActionExecutor) resolveConditionValue(name string) string {
 		return ""
 	}
 	return fmt.Sprintf("%v", val)
+}
+
+// resolveConditionOperand resolves the right-hand side of a simple condition.
+// Quoted string literals, numeric literals, and boolean/null literals are kept
+// as-is; anything else is treated as a variable reference and resolved through
+// the execution context. If no such variable exists, the raw text is returned
+// unchanged (preserving pre-existing behavior for unknown names).
+func (ae *ActionExecutor) resolveConditionOperand(right string) string {
+	trimmed := strings.TrimSpace(right)
+	unq := unquote(trimmed)
+	if unq != trimmed {
+		// Quoted string literal (e.g. 'value' or "value").
+		return unq
+	}
+	if _, err := strconv.ParseFloat(trimmed, 64); err == nil {
+		return trimmed
+	}
+	switch trimmed {
+	case "true", "false", "None", "nil":
+		return trimmed
+	}
+	if v := ae.resolver.ResolvePath(trimmed); v != nil {
+		return fmt.Sprintf("%v", v)
+	}
+	return trimmed
 }
 
 // ---------------------------------------------------------------------------
@@ -1473,19 +1517,28 @@ func (ae *ActionExecutor) stepSaveData(ctx context.Context, step StepDef) (*Step
 			}
 		}
 
+		// Track dataSource items that are not already recorded in the
+		// extracted list. Producers like extract_multiple and
+		// call_bot_method already call AddExtractedItem for their output, so
+		// re-adding unconditionally would duplicate every row.
+		ae.execCtx.mu.Lock()
+		tracked := make([]map[string]interface{}, len(ae.execCtx.ExtractedItems))
+		copy(tracked, ae.execCtx.ExtractedItems)
+		ae.execCtx.mu.Unlock()
+		for _, item := range dataToSave {
+			if !containsExtractedItem(tracked, item) {
+				ae.execCtx.AddExtractedItem(item)
+			}
+		}
 	}
 
 	// If no specific data source, flush all accumulated extracted items.
+	// These items are already tracked in the context — do not re-add them.
 	if len(dataToSave) == 0 {
 		ae.execCtx.mu.Lock()
 		dataToSave = make([]map[string]interface{}, len(ae.execCtx.ExtractedItems))
 		copy(dataToSave, ae.execCtx.ExtractedItems)
 		ae.execCtx.mu.Unlock()
-	}
-
-	// Add items to the extracted list.
-	for _, item := range dataToSave {
-		ae.execCtx.AddExtractedItem(item)
 	}
 
 	// Persist to storage.
@@ -1642,7 +1695,15 @@ func (ae *ActionExecutor) stepCallBotMethod(ctx context.Context, step StepDef) (
 		resolvedArgs = append(resolvedArgs, ae.resolver.ResolveValue(arg))
 	}
 
-	result, err := fn(ctx, resolvedArgs...)
+	// Honor the step's timeout, if configured.
+	callCtx := ctx
+	if step.Timeout > 0 {
+		var cancel context.CancelFunc
+		callCtx, cancel = context.WithTimeout(ctx, time.Duration(step.Timeout*float64(time.Second)))
+		defer cancel()
+	}
+
+	result, err := fn(callCtx, resolvedArgs...)
 	if err != nil {
 		return &StepResult{
 			Success: false,
@@ -1681,6 +1742,15 @@ func (ae *ActionExecutor) stepCallBotMethod(ctx context.Context, step StepDef) (
 // ---------------------------------------------------------------------------
 // Helper functions
 // ---------------------------------------------------------------------------
+
+// noElementError builds the "no element" error for a step, appending the
+// resolution cause when one is available.
+func noElementError(msg, stepID string, cause error) error {
+	if cause != nil {
+		return fmt.Errorf(msg+": %w", stepID, cause)
+	}
+	return fmt.Errorf(msg, stepID)
+}
 
 // buildSelectorList assembles the list of selectors to try for element lookup,
 // starting with the primary selector from xpath/selector/configKey, then
@@ -1850,4 +1920,15 @@ func truncateStr(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+// containsExtractedItem reports whether candidate is already present in items,
+// comparing by deep equality (maps are not comparable with ==).
+func containsExtractedItem(items []map[string]interface{}, candidate map[string]interface{}) bool {
+	for _, item := range items {
+		if reflect.DeepEqual(item, candidate) {
+			return true
+		}
+	}
+	return false
 }

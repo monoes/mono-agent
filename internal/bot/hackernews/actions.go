@@ -78,9 +78,20 @@ func (b *HackerNewsBot) SubmitPost(ctx context.Context, page browser.PageInterfa
 	if err != nil {
 		return nil, fmt.Errorf("hackernews: reading submitted item: %w", err)
 	}
+	return parseSubmittedItem(result.Str())
+}
+
+// parseSubmittedItem parses the JSON emitted by the read-back script. A JSON
+// "null" (no tr.athing row on the page) unmarshals without error but leaves
+// the map nil — that means the submission was never confirmed, which is
+// reported as an error rather than an empty success.
+func parseSubmittedItem(raw string) (map[string]interface{}, error) {
 	var parsed map[string]interface{}
-	if unmarshalErr := json.Unmarshal([]byte(result.Str()), &parsed); unmarshalErr != nil {
+	if unmarshalErr := json.Unmarshal([]byte(raw), &parsed); unmarshalErr != nil {
 		return nil, fmt.Errorf("hackernews: parsing submitted item JSON: %w", unmarshalErr)
+	}
+	if parsed == nil {
+		return nil, fmt.Errorf("hackernews: submission not confirmed — HN may have rejected (duplicate URL, rate limit)")
 	}
 	return parsed, nil
 }

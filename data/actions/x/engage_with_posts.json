@@ -163,6 +163,7 @@
       "id": "process_content",
       "iterator": "extract_tweet_list",
       "indexVar": "reachedIndex",
+      "maxItems": "{{maxContentCount or 0}}",
       "steps": [
         "process_tweet",
         "determine_interaction_type"

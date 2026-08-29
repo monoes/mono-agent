@@ -1249,9 +1249,32 @@ func (b *InstagramBot) ScrapePostData(ctx context.Context, page *rod.Page, postU
 // LikeComment — navigate to a post and like a specific comment.
 // ---------------------------------------------------------------------------
 
+// resolveCommentTargetState interprets the result of the comment-target
+// lookup scripts shared by LikeComment and ReplyToComment.
+//
+//   - "marked": a suitable target comment was found and marked.
+//   - "not_found": the page has no candidate comments at all — no-op.
+//   - "author_not_found": commentAuthor was specified but no comment by that
+//     author exists. Acting on a different comment would target the wrong
+//     user, so this is an error, never a silent fallback to the most recent
+//     comment.
+func resolveCommentTargetState(state, commentAuthor, postURL, action string) (bool, error) {
+	switch state {
+	case "marked":
+		return true, nil
+	case "not_found":
+		return false, nil
+	case "author_not_found":
+		return false, fmt.Errorf("instagram: no comment by author %q found on %s — refusing to %s a different comment", commentAuthor, postURL, action)
+	default:
+		return false, fmt.Errorf("instagram: unexpected comment lookup state %q on %s", state, postURL)
+	}
+}
+
 // LikeComment navigates to the given post URL, finds a comment by the
-// specified author, and clicks the like heart on that comment. If no
-// matching comment is found, it likes the most recent comment as fallback.
+// specified author, and clicks the like heart on that comment. When
+// commentAuthor is specified but no matching comment exists, an error is
+// returned — it never falls back to liking a different comment.
 func (b *InstagramBot) LikeComment(ctx context.Context, page *rod.Page, postURL, commentAuthor string) error {
 	if postURL == "" {
 		return fmt.Errorf("instagram: post URL is required")
@@ -1320,7 +1343,7 @@ func (b *InstagramBot) LikeComment(ctx context.Context, page *rod.Page, postURL,
 		if (commentLikeBtns.length === 0) return 'not_found';
 
 		let targetBtn = null;
-		let fallbackBtn = commentLikeBtns[0];
+		const fallbackBtn = commentLikeBtns[0];
 
 		if (targetAuthor) {
 			for (const btn of commentLikeBtns) {
@@ -1329,11 +1352,12 @@ func (b *InstagramBot) LikeComment(ctx context.Context, page *rod.Page, postURL,
 					break;
 				}
 			}
+			if (!targetBtn) return 'author_not_found';
 		} else {
 			targetBtn = fallbackBtn;
 		}
 
-		const toMark = targetBtn || fallbackBtn;
+		const toMark = targetBtn;
 		if (!toMark) return 'not_found';
 
 		toMark.setAttribute('data-monoagent-comment-like', 'true');
@@ -1343,8 +1367,11 @@ func (b *InstagramBot) LikeComment(ctx context.Context, page *rod.Page, postURL,
 		return fmt.Errorf("instagram: failed to evaluate comment like script on %s: %w", postURL, err)
 	}
 
-	state := res.Value.Str()
-	if state == "not_found" {
+	marked, stateErr := resolveCommentTargetState(res.Value.Str(), commentAuthor, postURL, "like")
+	if stateErr != nil {
+		return stateErr
+	}
+	if !marked {
 		return nil
 	}
 
@@ -1371,9 +1398,11 @@ func (b *InstagramBot) LikeComment(ctx context.Context, page *rod.Page, postURL,
 	return nil
 }
 
-// ReplyToComment navigates to postURL, finds a comment by the given author (or
-// the first available comment if commentAuthor is empty), clicks its Reply
-// button, and posts replyText as a reply.
+// ReplyToComment navigates to postURL, finds a comment by the given author
+// (or the first available comment if commentAuthor is empty), clicks its
+// Reply button, and posts replyText as a reply. When commentAuthor is
+// specified but no matching comment exists, an error is returned — it never
+// falls back to replying to a different comment.
 func (b *InstagramBot) ReplyToComment(ctx context.Context, page *rod.Page, postURL, commentAuthor, replyText string) error {
 	if postURL == "" {
 		return fmt.Errorf("instagram: post URL is required")
@@ -1422,7 +1451,7 @@ func (b *InstagramBot) ReplyToComment(ctx context.Context, page *rod.Page, postU
 		}
 
 		let targetBtn = null;
-		let fallbackBtn = replyBtns[0];
+		const fallbackBtn = replyBtns[0];
 
 		if (targetAuthor) {
 			for (const btn of replyBtns) {
@@ -1431,11 +1460,12 @@ func (b *InstagramBot) ReplyToComment(ctx context.Context, page *rod.Page, postU
 					break;
 				}
 			}
+			if (!targetBtn) return 'author_not_found';
 		} else {
 			targetBtn = fallbackBtn;
 		}
 
-		const toMark = targetBtn || fallbackBtn;
+		const toMark = targetBtn;
 		if (!toMark) return 'not_found';
 
 		toMark.setAttribute('data-monoagent-reply-btn', 'true');
@@ -1445,7 +1475,11 @@ func (b *InstagramBot) ReplyToComment(ctx context.Context, page *rod.Page, postU
 		return fmt.Errorf("instagram: failed to find reply button on %s: %w", postURL, err)
 	}
 
-	if res.Value.Str() == "not_found" {
+	marked, stateErr := resolveCommentTargetState(res.Value.Str(), commentAuthor, postURL, "reply to")
+	if stateErr != nil {
+		return stateErr
+	}
+	if !marked {
 		return nil
 	}
 

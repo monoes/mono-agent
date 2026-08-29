@@ -216,6 +216,19 @@ func (r *ActionRunner) safeExecuteSingle(
 		}
 	}
 
+	// The runner acquired this page from the provider, so it owns closing it
+	// once the action finishes (PageInterface.Close closes just this page/tab,
+	// never the underlying browser process).
+	if page != nil {
+		defer func() {
+			if cerr := page.Close(); cerr != nil {
+				r.logger.Debug().Err(cerr).
+					Str("actionID", action.ID).
+					Msg("failed to close page after action")
+			}
+		}()
+	}
+
 	// Execute the action.
 	execResult, execErr := r.RunSingle(ctx, action, page, botAdapter)
 	if execErr != nil {

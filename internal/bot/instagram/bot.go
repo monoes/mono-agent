@@ -34,6 +34,83 @@ var reservedPaths = map[string]bool{
 // InstagramBot implements botpkg.BotAdapter for Instagram.
 type InstagramBot struct{}
 
+// sendVerificationTimeout bounds the post-send poll that confirms a DM was
+// actually delivered (composer cleared or message bubble rendered).
+const sendVerificationTimeout = 3 * time.Second
+
+// dmBubbleSelectors are best-effort selectors for rendered DM bubbles in the
+// conversation thread, used as the "OR" branch of send verification.
+var dmBubbleSelectors = []string{
+	"div[role='gridcell'] div[dir='ltr']",
+	"div[data-testid='conversation_message']",
+}
+
+// messageSnippet returns the searchable portion of a message used to match a
+// rendered message bubble (long messages may be visually truncated by the UI).
+func messageSnippet(message string) string {
+	const maxSnippet = 80
+	r := []rune(message)
+	if len(r) > maxSnippet {
+		return string(r[:maxSnippet])
+	}
+	return message
+}
+
+// sendVerified reports whether the observable page state confirms the message
+// was sent: the composer is cleared, or a message bubble containing the
+// message snippet has rendered in the thread.
+func sendVerified(composerText string, bubbleTexts []string, message string) bool {
+	if strings.TrimSpace(composerText) == "" {
+		return true
+	}
+	snippet := messageSnippet(message)
+	for _, bubble := range bubbleTexts {
+		if strings.Contains(bubble, snippet) {
+			return true
+		}
+	}
+	return false
+}
+
+// composerText reads the current text of a message composer element,
+// handling both contenteditable divs (innerText) and textareas (value).
+func composerText(el *rod.Element) string {
+	if el == nil {
+		return ""
+	}
+	res, err := el.Eval(`() => this.value !== undefined ? this.value : (this.innerText || '')`)
+	if err != nil || res == nil {
+		return ""
+	}
+	return res.Value.Str()
+}
+
+// verifyMessageSent polls the page for up to sendVerificationTimeout to
+// confirm the message was actually sent. Verification failure is an error —
+// a send we cannot observe is reported as "not sent", never as success.
+func verifyMessageSent(page *rod.Page, msgInput *rod.Element, message string) error {
+	deadline := time.Now().Add(sendVerificationTimeout)
+	for time.Now().Before(deadline) {
+		var bubbleTexts []string
+		for _, sel := range dmBubbleSelectors {
+			els, err := page.Elements(sel)
+			if err != nil {
+				continue
+			}
+			for _, el := range els {
+				if text, tErr := el.Text(); tErr == nil {
+					bubbleTexts = append(bubbleTexts, text)
+				}
+			}
+		}
+		if sendVerified(composerText(msgInput), bubbleTexts, message) {
+			return nil
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	return fmt.Errorf("instagram: send could not be verified (composer not cleared and no message bubble rendered within %s)", sendVerificationTimeout)
+}
+
 func init() {
 	botpkg.PlatformRegistry["INSTAGRAM"] = func() botpkg.BotAdapter {
 		return &InstagramBot{}
@@ -285,8 +362,6 @@ func (b *InstagramBot) sendViaComposeFlow(page *rod.Page, username, message stri
 	}
 
 	if !clicked {
-		// Debug: dump what elements are visible for diagnostics.
-		b.dumpSearchResultsDebug(page, username)
 		return fmt.Errorf("instagram: could not select user %q from search results", username)
 	}
 	time.Sleep(2 * time.Second)
@@ -312,34 +387,6 @@ func (b *InstagramBot) sendViaComposeFlow(page *rod.Page, username, message stri
 	time.Sleep(3 * time.Second)
 
 	return b.typeAndSendMessage(page, message)
-}
-
-// dumpSearchResultsDebug logs the DOM structure inside the dialog for debugging
-// when search results can't be found. Output goes to stderr via fmt.Fprintf.
-func (b *InstagramBot) dumpSearchResultsDebug(page *rod.Page, username string) {
-	res, err := page.Eval(`() => {
-		const dialogs = document.querySelectorAll('div[role="dialog"]');
-		let output = "Dialogs found: " + dialogs.length + "\n";
-		dialogs.forEach((d, i) => {
-			const children = d.querySelectorAll('*');
-			output += "Dialog " + i + " has " + children.length + " descendants\n";
-			children.forEach(c => {
-				const text = (c.textContent || "").trim();
-				if (text.length > 0 && text.length < 100) {
-					const tag = c.tagName.toLowerCase();
-					const role = c.getAttribute('role') || '';
-					const type = c.getAttribute('type') || '';
-					if (role || type || tag === 'input' || tag === 'button' || tag === 'span') {
-						output += "  <" + tag + " role=" + role + " type=" + type + "> " + text.substring(0, 60) + "\n";
-					}
-				}
-			});
-		});
-		return output;
-	}`)
-	if err == nil && res != nil {
-		fmt.Printf("[DM DEBUG] %s\n", res.Value.Str())
-	}
 }
 
 // typeAndSendMessage finds the message input field, types the message, and
@@ -424,8 +471,7 @@ func (b *InstagramBot) typeAndSendMessage(page *rod.Page, message string) error 
 		}
 	}
 
-	time.Sleep(2 * time.Second)
-	return nil
+	return verifyMessageSent(page, msgInput, message)
 }
 
 // GetProfileData scrapes the currently loaded Instagram profile page and

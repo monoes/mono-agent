@@ -64,7 +64,7 @@
         "t2_extract_post_date",
         "t2_find_media",
         "t2_extract_media_src",
-        "t2_set_result",
+        "assemble_scraped_post_record",
         "check_t2_result"
       ]
     },
@@ -197,10 +197,16 @@
       }
     },
     {
-      "id": "t2_set_result",
-      "type": "update_progress",
-      "set": {
-        "scrapeResult": true
+      "id": "assemble_scraped_post_record",
+      "type": "set_variable",
+      "variable_name": "scrapedPostRecord",
+      "value": {
+        "post_url": "{{item.url}}",
+        "caption": "{{caption_text}}",
+        "likes": "{{likes_count}}",
+        "comments": "{{comments_count}}",
+        "date": "{{post_date}}",
+        "media": "{{media_url}}"
       }
     },
     {
@@ -220,7 +226,8 @@
         "t3_find_post_date",
         "t3_extract_post_date",
         "t3_find_media",
-        "t3_extract_media_src"
+        "t3_extract_media_src",
+        "assemble_scraped_post_record"
       ]
     },
     {
@@ -316,16 +323,15 @@
       }
     },
     {
+      "id": "reset_scraped_post_record",
+      "type": "set_variable",
+      "variable_name": "scrapedPostRecord",
+      "value": null
+    },
+    {
       "id": "save_scraped_data",
       "type": "save_data",
-      "data": {
-        "post_url": "{{item.url}}",
-        "caption": "{{caption_text}}",
-        "likes": "{{likes_count}}",
-        "comments": "{{comments_count}}",
-        "date": "{{post_date}}",
-        "media": "{{media_url}}"
-      }
+      "dataSource": "scrapedPostRecord"
     },
     {
       "id": "wait_between_posts",
@@ -346,6 +352,7 @@
       "iterator": "selectedListItems",
       "indexVar": "reachedIndex",
       "steps": [
+        "reset_scraped_post_record",
         "t1_scrape_post",
         "check_t1_result",
         "save_scraped_data",

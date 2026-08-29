@@ -72,10 +72,37 @@
       "id": "click_tweet",
       "type": "click",
       "elementRef": "find_tweet_button",
-      "waitFor": "tweet_posted",
       "onSuccess": {
         "action": "update_progress"
       }
+    },
+    {
+      "id": "wait_for_x_post_outcome_toast",
+      "type": "wait",
+      "selector": "[data-testid='toast']",
+      "timeout": 10,
+      "onError": {
+        "action": "skip"
+      }
+    },
+    {
+      "id": "extract_x_post_outcome_toast_text",
+      "type": "extract_text",
+      "selector": "[data-testid='toast']",
+      "alternatives": [
+        "[data-testid='toast'] span",
+        "[role='status']"
+      ],
+      "variable_name": "postOutcomeText",
+      "timeout": 5,
+      "onError": {
+        "action": "skip"
+      }
+    },
+    {
+      "id": "log_x_post_outcome_not_verified_beyond_toast",
+      "type": "log",
+      "value": "Post submitted; outcome toast: {{postOutcomeText or 'none shown'}}"
     }
   ],
   "errorHandling": {

@@ -52,8 +52,11 @@
       },
       "then": [
         "t2_navigate_profile",
+        "t2_find_message_btn",
         "t2_click_message_btn",
+        "t2_find_message_input",
         "t2_type_message",
+        "t2_find_send_button",
         "t2_send_message",
         "check_t2"
       ]
@@ -65,47 +68,71 @@
       "timeout": 30
     },
     {
-      "id": "t2_click_message_btn",
+      "id": "t2_find_message_btn",
       "type": "find_element",
       "xpath": "//div[@role='button'][normalize-space(.)='Message']",
       "alternatives": [
         "//button[normalize-space(.)='Message']"
       ],
-      "action": "click",
       "timeout": 15,
-      "variable_name": "t2MsgBtn",
       "onError": {
         "action": "skip"
       }
     },
     {
-      "id": "t2_type_message",
+      "id": "t2_click_message_btn",
+      "type": "click",
+      "elementRef": "t2_find_message_btn",
+      "onError": {
+        "action": "skip"
+      }
+    },
+    {
+      "id": "t2_find_message_input",
       "type": "find_element",
       "xpath": "//div[@aria-label='Message'][@role='textbox']",
       "alternatives": [
         "//div[@contenteditable='true'][@role='textbox']",
         "//textarea[contains(@placeholder, 'Message')]"
       ],
-      "action": "type",
-      "value": "{{messageText}}",
       "timeout": 15,
-      "variable_name": "t2Input",
+      "onError": {
+        "action": "skip"
+      }
+    },
+    {
+      "id": "t2_type_message",
+      "type": "type",
+      "elementRef": "t2_find_message_input",
+      "text": "{{messageText}}",
+      "humanLike": true,
+      "onError": {
+        "action": "skip"
+      }
+    },
+    {
+      "id": "t2_find_send_button",
+      "type": "find_element",
+      "xpath": "//div[@role='button'][normalize-space(.)='Send']",
+      "alternatives": [
+        "//button[normalize-space(.)='Send']"
+      ],
+      "timeout": 15,
       "onError": {
         "action": "skip"
       }
     },
     {
       "id": "t2_send_message",
-      "type": "find_element",
-      "xpath": "//div[@role='button'][normalize-space(.)='Send']",
-      "alternatives": [
-        "//button[normalize-space(.)='Send']"
-      ],
-      "action": "click",
-      "timeout": 15,
-      "variable_name": "t2Result",
+      "type": "click",
+      "elementRef": "t2_find_send_button",
       "onError": {
         "action": "skip"
+      },
+      "onSuccess": {
+        "action": "set_variable",
+        "variable": "t2Result",
+        "value": true
       }
     },
     {
@@ -117,8 +144,11 @@
       },
       "then": [
         "t3_navigate_profile",
+        "t3_find_message_btn",
         "t3_click_message_btn",
+        "t3_find_message_input",
         "t3_type_message",
+        "t3_find_send_button",
         "t3_send_message"
       ]
     },
@@ -129,13 +159,29 @@
       "timeout": 30
     },
     {
-      "id": "t3_click_message_btn",
+      "id": "t3_find_message_btn",
       "type": "find_element",
       "xpath": "//div[@role='button'][normalize-space(.)='Message']",
       "alternatives": [
         "//button[normalize-space(.)='Message']"
       ],
-      "action": "click",
+      "timeout": 15,
+      "onError": {
+        "action": "skip"
+      }
+    },
+    {
+      "id": "t3_click_message_btn",
+      "type": "click",
+      "elementRef": "t3_find_message_btn",
+      "onError": {
+        "action": "skip"
+      }
+    },
+    {
+      "id": "t3_find_message_input",
+      "type": "find_element",
+      "configKey": "message_input",
       "timeout": 15,
       "onError": {
         "action": "skip"
@@ -143,10 +189,18 @@
     },
     {
       "id": "t3_type_message",
+      "type": "type",
+      "elementRef": "t3_find_message_input",
+      "text": "{{messageText}}",
+      "humanLike": true,
+      "onError": {
+        "action": "skip"
+      }
+    },
+    {
+      "id": "t3_find_send_button",
       "type": "find_element",
-      "configKey": "message_input",
-      "action": "type",
-      "value": "{{messageText}}",
+      "configKey": "send_button",
       "timeout": 15,
       "onError": {
         "action": "skip"
@@ -154,11 +208,8 @@
     },
     {
       "id": "t3_send_message",
-      "type": "find_element",
-      "configKey": "send_button",
-      "action": "click",
-      "timeout": 15,
-      "variable_name": "t3Result",
+      "type": "click",
+      "elementRef": "t3_find_send_button",
       "onError": {
         "action": "mark_failed"
       }
@@ -181,6 +232,7 @@
       "id": "process_recipients",
       "iterator": "selectedListItems",
       "indexVar": "reachedIndex",
+      "maxItems": "{{maxMessagesPerSession or 30}}",
       "steps": [
         "t1_send_dm",
         "check_t1",

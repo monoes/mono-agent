@@ -66,3 +66,97 @@ func TestGenerateConfigFailsFastWhenMonomindMissing(t *testing.T) {
 		t.Errorf("GenerateConfig() error = %q, want it to mention cache-only mode", err.Error())
 	}
 }
+
+// writeRecordingMonomind writes a fake monomind that answers the handshake
+// and one `agent exec` turn, recording the exec argv (plus probes of the
+// --cwd dir and --prompt-file contents) to the file named by
+// AGENTGEN_RECORD. Runtime is pinned via RuntimeEnvVar so no scan is needed.
+func writeRecordingMonomind(t *testing.T) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("fake monomind is a shell script")
+	}
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "monomind")
+	script := `#!/bin/sh
+if [ "$1" = "--version" ] && [ "$2" = "--json" ]; then
+  echo '{"v":1,"version":"2.10.0","min_caller":"1.0.0","capabilities":["agent-exec","agent-scan","org-json-v1"]}'
+  exit 0
+fi
+if [ "$1" = "agent" ] && [ "$2" = "exec" ]; then
+  REC="${AGENTGEN_RECORD:?}"
+  printf 'ARG %s\n' "$@" > "$REC"
+  cwd=""; pf=""; prev=""
+  for a in "$@"; do
+    [ "$prev" = "--cwd" ] && cwd="$a"
+    [ "$prev" = "--prompt-file" ] && pf="$a"
+    prev="$a"
+  done
+  if [ -n "$cwd" ] && [ -d "$cwd" ] && [ -z "$(ls -A "$cwd")" ]; then
+    echo "CWD_EMPTY_DIR yes" >> "$REC"
+  else
+    echo "CWD_EMPTY_DIR no ($cwd)" >> "$REC"
+  fi
+  if [ -n "$pf" ] && grep -q "GENERATE_MARKER_HTML" "$pf"; then
+    echo "PROMPT_FILE_HAS_HTML yes" >> "$REC"
+  else
+    echo "PROMPT_FILE_HAS_HTML no" >> "$REC"
+  fi
+  echo '{"v":1,"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","text":"{\"config_name\":\"gen\",\"fields\":{\"title\":{\"xpath\":\"//title\",\"type\":\"text\",\"data\":null}}}"}'
+  echo '{"v":1,"type":"done","exit_code":0}'
+  exit 0
+fi
+echo 'unsupported invocation' >&2
+exit 2
+`
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake monomind: %v", err)
+	}
+	return bin
+}
+
+// TestGenerateConfigSandboxesAgentExec is the RB3 sandboxing regression
+// test: the exec turn must run with no tools (--tools none, never
+// monomind's default), in a fresh empty temp cwd, under a spend cap, and
+// with the HTML prompt delivered via --prompt-file rather than argv.
+func TestGenerateConfigSandboxesAgentExec(t *testing.T) {
+	record := filepath.Join(t.TempDir(), "record.txt")
+	t.Setenv("AGENTGEN_RECORD", record)
+	t.Setenv(monomind.EnvOverride, writeRecordingMonomind(t))
+	t.Setenv(RuntimeEnvVar, "claude")
+
+	g := NewAgentGenerator(zerolog.Nop())
+	m, err := g.GenerateConfig(context.Background(), "test-config", "<html>GENERATE_MARKER_HTML</html>", "extract title", nil)
+	if err != nil {
+		t.Fatalf("GenerateConfig: %v", err)
+	}
+	if m["config_name"] != "gen" {
+		t.Errorf("config_name = %v, want %q", m["config_name"], "gen")
+	}
+
+	raw, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatalf("read exec record: %v", err)
+	}
+	rec := string(raw)
+
+	// Prompt: via --prompt-file, never --prompt argv.
+	if strings.Contains(rec, "ARG --prompt\n") {
+		t.Errorf("exec passed --prompt argv; prompt must go via --prompt-file:\n%s", rec)
+	}
+	if !strings.Contains(rec, "ARG --prompt-file\n") || !strings.Contains(rec, "PROMPT_FILE_HAS_HTML yes") {
+		t.Errorf("exec missing --prompt-file carrying the HTML prompt:\n%s", rec)
+	}
+	// Tools: explicitly none.
+	if !strings.Contains(rec, "ARG --tools\n") || !strings.Contains(rec, "ARG none\n") {
+		t.Errorf("exec missing explicit --tools none:\n%s", rec)
+	}
+	// Cwd: a fresh empty directory.
+	if !strings.Contains(rec, "CWD_EMPTY_DIR yes") {
+		t.Errorf("exec --cwd was not a fresh empty dir:\n%s", rec)
+	}
+	// Budget: hard spend cap present.
+	if !strings.Contains(rec, "ARG --budget-usd\n") {
+		t.Errorf("exec missing --budget-usd spend cap:\n%s", rec)
+	}
+}

@@ -18,7 +18,6 @@
       { "name": "commentText", "type": "string", "default": "", "description": "Comment text (if comment in engagementActions)" },
       { "name": "target", "type": "string", "default": "posts", "enum": ["posts","reels"], "description": "Target content type" },
       { "name": "minLikes", "type": "number", "default": 0, "min": 0, "description": "Skip posts with fewer likes" },
-      { "name": "maxLikes", "type": "number", "default": 0, "min": 0, "description": "Skip posts with more likes (0=unlimited)" },
       { "name": "sessionDelay", "type": "number", "default": 30, "min": 5, "max": 300, "description": "Seconds to wait between engagement sessions" }
     ]
   },
@@ -274,6 +273,12 @@
       "type": "scroll",
       "elementRef": "find_posts",
       "waitFor": "time"
+    },
+    {
+      "id": "wait_between_engagements",
+      "type": "wait",
+      "duration": "{{sessionDelay or 30}}",
+      "waitFor": "time"
     }
   ],
   "loops": [
@@ -281,13 +286,15 @@
       "id": "process_content",
       "iterator": "extract_post_list",
       "indexVar": "reachedIndex",
+      "maxItems": "{{maxContentCount or 0}}",
       "steps": [
         "open_post",
         "tier2_like_post",
         "tier2_click_like",
         "tier2_determine_comment",
         "tier2_set_result",
-        "check_t2"
+        "check_t2",
+        "wait_between_engagements"
       ],
       "onComplete": "update_action_state"
     }

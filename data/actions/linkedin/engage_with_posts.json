@@ -157,6 +157,7 @@
       "id": "process_content",
       "iterator": "extract_post_list",
       "indexVar": "reachedIndex",
+      "maxItems": "{{maxContentCount or 0}}",
       "steps": [
         "process_post",
         "determine_interaction_type"

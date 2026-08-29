@@ -238,6 +238,12 @@
       "type": "click",
       "elementRef": "tier3_find_post_button",
       "waitFor": "comment_posted"
+    },
+    {
+      "id": "wait_between_posts",
+      "type": "wait",
+      "duration": "{{delayBetweenPosts or 5}}",
+      "waitFor": "time"
     }
   ],
   "loops": [
@@ -245,13 +251,15 @@
       "id": "loop_process_content",
       "iterator": "extract_post_list",
       "indexVar": "reachedIndex",
+      "maxItems": "{{maxContentCount or 0}}",
       "steps": [
         "open_post",
         "tier2_like_post",
         "tier2_click_like",
         "tier2_check_comment",
         "set_t2_result",
-        "check_t2"
+        "check_t2",
+        "wait_between_posts"
       ],
       "onComplete": "update_action_state"
     }

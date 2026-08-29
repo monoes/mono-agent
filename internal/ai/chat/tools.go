@@ -4,11 +4,14 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/monoes/mono-agent/internal/ai"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // NodeTypeInfo describes a node type available in the system.
@@ -59,7 +62,8 @@ func (ct *CanvasTools) SetNodeTypes(types []NodeTypeInfo) {
 // checkWorkflowOwnership verifies that workflowID belongs to the active profile,
 // preventing the AI chat tools from reading or mutating another profile's workflow.
 // "general" and "draft" are placeholder IDs used before a real workflow exists
-// (see systemPromptTemplate) and are always allowed through.
+// (see systemPromptTemplate) and are always allowed through for read-only use;
+// mutating tools additionally reject them via rejectPlaceholderWorkflowID.
 func (ct *CanvasTools) checkWorkflowOwnership(workflowID string) error {
 	if workflowID == "general" || workflowID == "draft" {
 		return nil
@@ -74,6 +78,17 @@ func (ct *CanvasTools) checkWorkflowOwnership(workflowID string) error {
 	}
 	if err != nil {
 		return fmt.Errorf("check workflow ownership: %w", err)
+	}
+	return nil
+}
+
+// rejectPlaceholderWorkflowID blocks mutating tools from operating on the
+// "general"/"draft" placeholder IDs — those only exist before
+// create_workflow, so any mutation against them would silently target
+// nothing instead of prompting the model to create a workflow first.
+func rejectPlaceholderWorkflowID(workflowID string) error {
+	if workflowID == "general" || workflowID == "draft" {
+		return fmt.Errorf("workflow_id %q is a placeholder — call create_workflow first", workflowID)
 	}
 	return nil
 }
@@ -309,7 +324,7 @@ func (ct *CanvasTools) getWorkflowState(args string) (string, error) {
 		if configStr != "" {
 			var cfg interface{}
 			if err := json.Unmarshal([]byte(configStr), &cfg); err == nil {
-				n.Config = cfg
+				n.Config = redactConfigSecrets(cfg)
 			} else {
 				n.Config = configStr
 			}
@@ -356,6 +371,18 @@ type createWorkflowArgs struct {
 	Description string `json:"description"`
 }
 
+// redactConfigSecrets masks credential values in a parsed node config
+// (api_key/token/secret/password/authorization/cookie/…) before the state
+// crosses the LLM boundary, reusing the workflow store's key-name
+// redactor so both stay in sync. Non-map configs pass through untouched.
+func redactConfigSecrets(cfg interface{}) interface{} {
+	m, ok := cfg.(map[string]interface{})
+	if !ok {
+		return cfg
+	}
+	return workflow.RedactItems([]map[string]interface{}{m})[0]
+}
+
 func (ct *CanvasTools) createWorkflow(args string) (string, error) {
 	var a createWorkflowArgs
 	if err := json.Unmarshal([]byte(args), &a); err != nil {
@@ -396,8 +423,24 @@ func (ct *CanvasTools) createNodes(args string) (string, error) {
 	if err := json.Unmarshal([]byte(args), &a); err != nil {
 		return "", fmt.Errorf("invalid args: %w", err)
 	}
+	if err := rejectPlaceholderWorkflowID(a.WorkflowID); err != nil {
+		return "", err
+	}
 	if err := ct.checkWorkflowOwnership(a.WorkflowID); err != nil {
 		return "", err
+	}
+	// Validate node types against the registry (when one has been provided)
+	// so a hallucinated type can't insert a node the engine can't run.
+	if len(ct.nodeTypes) > 0 {
+		known := make(map[string]bool, len(ct.nodeTypes))
+		for _, nt := range ct.nodeTypes {
+			known[nt.Type] = true
+		}
+		for _, n := range a.Nodes {
+			if !known[n.NodeType] {
+				return "", fmt.Errorf("unknown node_type %q — call list_available_nodes for valid types", n.NodeType)
+			}
+		}
 	}
 
 	now := time.Now().UTC()
@@ -454,6 +497,9 @@ func (ct *CanvasTools) updateNodeConfig(args string) (string, error) {
 	if err := json.Unmarshal([]byte(args), &a); err != nil {
 		return "", fmt.Errorf("invalid args: %w", err)
 	}
+	if err := rejectPlaceholderWorkflowID(a.WorkflowID); err != nil {
+		return "", err
+	}
 	if err := ct.checkWorkflowOwnership(a.WorkflowID); err != nil {
 		return "", err
 	}
@@ -497,7 +543,7 @@ func (ct *CanvasTools) updateNodeConfig(args string) (string, error) {
 
 	result := map[string]interface{}{
 		"node_id": a.NodeID,
-		"config":  existing,
+		"config":  redactConfigSecrets(existing),
 	}
 	return marshalJSON(result)
 }
@@ -507,10 +553,75 @@ type deleteNodesArgs struct {
 	NodeIDs    []string `json:"node_ids"`
 }
 
+// aiBackupDir resolves the directory holding AI-delete snapshots
+// (~/.monoagent/workflows, next to the exported workflow JSON files).
+// Package var so tests can redirect it.
+var aiBackupDir = func() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".monoagent", "workflows"), nil
+}
+
+// maxAIBackupSnapshots bounds the per-workflow rotation of AI-delete
+// snapshots kept in <id>.ai-backup.json.
+const maxAIBackupSnapshots = 3
+
+// deleteBackup is the on-disk shape of <workflow>.ai-backup.json: the most
+// recent maxAIBackupSnapshots delete operations, newest first.
+type deleteBackup struct {
+	WorkflowID string           `json:"workflow_id"`
+	Snapshots  []deleteSnapshot `json:"snapshots"`
+}
+
+type deleteSnapshot struct {
+	CreatedAt   string          `json:"created_at"`
+	Nodes       []nodeRow       `json:"nodes"`
+	Connections []connectionRow `json:"connections"`
+}
+
+// saveDeleteBackup persists snap as the newest entry in the workflow's
+// ai-backup sidecar (rotation keeps the last maxAIBackupSnapshots). The
+// removed nodes/connections are recoverable from it by hand, so a wrong
+// delete_nodes call is no longer irreversible.
+func saveDeleteBackup(workflowID string, snap deleteSnapshot) (string, error) {
+	dir, err := aiBackupDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve backup dir: %w", err)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("create backup dir: %w", err)
+	}
+	path := filepath.Join(dir, workflowID+".ai-backup.json")
+
+	var backup deleteBackup
+	if raw, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(raw, &backup) // corrupt sidecar: start a fresh rotation
+	}
+	snap.CreatedAt = time.Now().UTC().Format(time.RFC3339)
+	backup.WorkflowID = workflowID
+	backup.Snapshots = append([]deleteSnapshot{snap}, backup.Snapshots...)
+	if len(backup.Snapshots) > maxAIBackupSnapshots {
+		backup.Snapshots = backup.Snapshots[:maxAIBackupSnapshots]
+	}
+	b, err := json.MarshalIndent(backup, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("marshal backup: %w", err)
+	}
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		return "", fmt.Errorf("write backup: %w", err)
+	}
+	return path, nil
+}
+
 func (ct *CanvasTools) deleteNodes(args string) (string, error) {
 	var a deleteNodesArgs
 	if err := json.Unmarshal([]byte(args), &a); err != nil {
 		return "", fmt.Errorf("invalid args: %w", err)
+	}
+	if err := rejectPlaceholderWorkflowID(a.WorkflowID); err != nil {
+		return "", err
 	}
 	if err := ct.checkWorkflowOwnership(a.WorkflowID); err != nil {
 		return "", err
@@ -522,7 +633,55 @@ func (ct *CanvasTools) deleteNodes(args string) (string, error) {
 	}
 	defer tx.Rollback()
 
+	// Snapshot the affected nodes + connections BEFORE deleting so the
+	// operation is reversible; a backup failure aborts the delete (fail
+	// closed — an irreversible op must not proceed unsnapshotted).
+	snap := deleteSnapshot{Nodes: []nodeRow{}, Connections: []connectionRow{}}
 	for _, nodeID := range a.NodeIDs {
+		var n nodeRow
+		var configStr string
+		err := tx.QueryRow(
+			`SELECT id, node_type, name, config, position_x, position_y, disabled
+			 FROM workflow_nodes WHERE id = ? AND workflow_id = ?`,
+			nodeID, a.WorkflowID).Scan(&n.ID, &n.NodeType, &n.Name, &configStr, &n.PositionX, &n.PositionY, &n.Disabled)
+		if err == sql.ErrNoRows {
+			continue // nothing to delete under this id
+		}
+		if err != nil {
+			return "", fmt.Errorf("query node %s: %w", nodeID, err)
+		}
+		if configStr != "" {
+			var cfg interface{}
+			if err := json.Unmarshal([]byte(configStr), &cfg); err == nil {
+				n.Config = cfg
+			} else {
+				n.Config = configStr
+			}
+		} else {
+			n.Config = map[string]interface{}{}
+		}
+		snap.Nodes = append(snap.Nodes, n)
+
+		connRows, err := tx.Query(
+			`SELECT id, source_node_id, source_handle, target_node_id, target_handle, position
+			 FROM workflow_connections WHERE workflow_id = ? AND (source_node_id = ? OR target_node_id = ?)`,
+			a.WorkflowID, nodeID, nodeID)
+		if err != nil {
+			return "", fmt.Errorf("query connections for node %s: %w", nodeID, err)
+		}
+		for connRows.Next() {
+			var c connectionRow
+			if err := connRows.Scan(&c.ID, &c.SourceNodeID, &c.SourceHandle, &c.TargetNodeID, &c.TargetHandle, &c.Position); err != nil {
+				connRows.Close()
+				return "", fmt.Errorf("scan connection: %w", err)
+			}
+			snap.Connections = append(snap.Connections, c)
+		}
+		connRows.Close()
+		if err := connRows.Err(); err != nil {
+			return "", fmt.Errorf("iterate connections: %w", err)
+		}
+
 		// Delete connections involving this node
 		if _, err := tx.Exec(
 			`DELETE FROM workflow_connections WHERE workflow_id = ? AND (source_node_id = ? OR target_node_id = ?)`,
@@ -537,12 +696,20 @@ func (ct *CanvasTools) deleteNodes(args string) (string, error) {
 		}
 	}
 
+	backupPath, err := saveDeleteBackup(a.WorkflowID, snap)
+	if err != nil {
+		return "", fmt.Errorf("snapshot before delete: %w", err)
+	}
+
 	if err := tx.Commit(); err != nil {
 		return "", fmt.Errorf("commit: %w", err)
 	}
 
 	result := map[string]interface{}{
-		"deleted_node_ids": a.NodeIDs,
+		"deleted_node_ids":    a.NodeIDs,
+		"deleted_nodes":       snap.Nodes,
+		"deleted_connections": snap.Connections,
+		"backup_path":         backupPath,
 	}
 	return marshalJSON(result)
 }
@@ -560,8 +727,25 @@ func (ct *CanvasTools) connectNodes(args string) (string, error) {
 	if err := json.Unmarshal([]byte(args), &a); err != nil {
 		return "", fmt.Errorf("invalid args: %w", err)
 	}
+	if err := rejectPlaceholderWorkflowID(a.WorkflowID); err != nil {
+		return "", err
+	}
 	if err := ct.checkWorkflowOwnership(a.WorkflowID); err != nil {
 		return "", err
+	}
+	// Both endpoints must exist before wiring a connection — otherwise a
+	// hallucinated node id creates a dangling edge the canvas can't render.
+	for _, nodeID := range []string{a.SourceNodeID, a.TargetNodeID} {
+		var exists int
+		err := ct.db.QueryRow(
+			`SELECT 1 FROM workflow_nodes WHERE id = ? AND workflow_id = ?`,
+			nodeID, a.WorkflowID).Scan(&exists)
+		if err == sql.ErrNoRows {
+			return "", fmt.Errorf("cannot connect: node %s not found in workflow %s", nodeID, a.WorkflowID)
+		}
+		if err != nil {
+			return "", fmt.Errorf("check node %s: %w", nodeID, err)
+		}
 	}
 
 	id := uuid.New().String()
@@ -588,6 +772,9 @@ func (ct *CanvasTools) disconnectNodes(args string) (string, error) {
 	var a disconnectNodesArgs
 	if err := json.Unmarshal([]byte(args), &a); err != nil {
 		return "", fmt.Errorf("invalid args: %w", err)
+	}
+	if err := rejectPlaceholderWorkflowID(a.WorkflowID); err != nil {
+		return "", err
 	}
 	if err := ct.checkWorkflowOwnership(a.WorkflowID); err != nil {
 		return "", err
@@ -632,10 +819,21 @@ func (ct *CanvasTools) listAvailableNodes(args string) (string, error) {
 	return marshalJSON(map[string]interface{}{"node_types": filtered})
 }
 
+// maxToolResultBytes caps a marshaled tool result before it enters the LLM
+// conversation; oversized results (e.g. a full workflow state dump) are cut
+// so both the live turn and the persisted history stay bounded.
+const maxToolResultBytes = 32 * 1024
+
+// truncatedResultMarker terminates any result cut at maxToolResultBytes.
+const truncatedResultMarker = "...[truncated]"
+
 func marshalJSON(v interface{}) (string, error) {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return "", fmt.Errorf("marshal result: %w", err)
+	}
+	if len(b) > maxToolResultBytes {
+		b = append(b[:maxToolResultBytes:maxToolResultBytes], truncatedResultMarker...)
 	}
 	return string(b), nil
 }

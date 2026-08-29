@@ -159,12 +159,6 @@
       "variable_name": "t2Result",
       "value": {
         "success": true
-      },
-      "onSuccess": {
-        "variable": "t2Result",
-        "value": {
-          "success": true
-        }
       }
     },
     {
@@ -244,6 +238,12 @@
       "type": "log",
       "description": "Comment posted successfully",
       "value": "Post URL: {{item.url}}"
+    },
+    {
+      "id": "wait_between_comments",
+      "type": "wait",
+      "duration": "{{delayBetweenComments or 10}}",
+      "waitFor": "time"
     }
   ],
   "loops": [
@@ -251,10 +251,12 @@
       "id": "process_posts",
       "iterator": "selectedListItems",
       "indexVar": "reachedIndex",
+      "maxItems": "{{maxCommentsPerSession or 20}}",
       "steps": [
         "t1_comment_post",
         "check_t1",
-        "log_success"
+        "log_success",
+        "wait_between_comments"
       ],
       "onComplete": "update_action_state"
     }

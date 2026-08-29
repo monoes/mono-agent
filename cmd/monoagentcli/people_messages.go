@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/monoes/mono-agent/internal/connections"
@@ -548,10 +549,7 @@ func newPeopleMessagesComposeCmd(cfg *globalConfig) *cobra.Command {
 					return err
 				}
 
-				var externalID string
-				if len(outputs) > 0 && len(outputs[0].Items) > 0 {
-					externalID = getStr(outputs[0].Items[0].JSON, "id")
-				}
+				externalID := outlookResultMessageID(outputs)
 				metaBytes, _ := json.Marshal(map[string]string{"connection_id": connectionID})
 
 				replySubject := orig.Subject
@@ -564,12 +562,16 @@ func newPeopleMessagesComposeCmd(cfg *globalConfig) *cobra.Command {
 					Source:     "outlook",
 					ExternalID: externalID,
 					Direction:  "outbound",
-					Sender:     orig.Sender,
-					Subject:    replySubject,
-					Body:       body,
-					Metadata:   string(metaBytes),
-					Status:     status,
-					SentAt:     time.Now().UTC(),
+					// Outbound sender is the connected account, never the
+					// counterparty (orig.Sender) — left empty here; the true
+					// from-address is recorded when the sent mail syncs back
+					// via people.sync_outlook_message.
+					Sender:   "",
+					Subject:  replySubject,
+					Body:     body,
+					Metadata: string(metaBytes),
+					Status:   status,
+					SentAt:   time.Now().UTC(),
 				}
 				if err := db.UpsertPersonMessage(msg, cfg.ProfileID); err != nil {
 					return fmt.Errorf("saving message: %w", err)
@@ -599,6 +601,13 @@ func newPeopleMessagesComposeCmd(cfg *globalConfig) *cobra.Command {
 			}
 			if toOverride != "" {
 				toAddr = toOverride
+			}
+			// platform_username holds whatever handle the contact was created
+			// with — often not an email address. Graph needs a real address,
+			// so refuse to "send" to a non-address instead of silently
+			// bouncing.
+			if !strings.Contains(toAddr, "@") {
+				return fmt.Errorf("contact has no email address — set one or pass --to")
 			}
 
 			operation, status := "send_message", "sent"
@@ -638,12 +647,16 @@ func newPeopleMessagesComposeCmd(cfg *globalConfig) *cobra.Command {
 				Source:     "outlook",
 				ExternalID: externalID,
 				Direction:  "outbound",
-				Sender:     toAddr,
-				Subject:    subject,
-				Body:       body,
-				Metadata:   string(metaBytes),
-				Status:     status,
-				SentAt:     time.Now().UTC(),
+				// The sender is the connected account, not the recipient
+				// (toAddr) — left empty here; the true from-address is
+				// recorded when the sent mail syncs back via
+				// people.sync_outlook_message.
+				Sender:   "",
+				Subject:  subject,
+				Body:     body,
+				Metadata: string(metaBytes),
+				Status:   status,
+				SentAt:   time.Now().UTC(),
 			}
 			if err := db.UpsertPersonMessage(msg, cfg.ProfileID); err != nil {
 				return fmt.Errorf("saving message: %w", err)
@@ -743,10 +756,7 @@ func newPeopleMessagesReplyCmd(cfg *globalConfig) *cobra.Command {
 				return err
 			}
 
-			var externalID string
-			if len(outputs) > 0 && len(outputs[0].Items) > 0 {
-				externalID = getStr(outputs[0].Items[0].JSON, "id")
-			}
+			externalID := outlookResultMessageID(outputs)
 			metaBytes, _ := json.Marshal(map[string]string{"connection_id": resolvedConnectionID})
 
 			subject := msg.Subject
@@ -759,12 +769,16 @@ func newPeopleMessagesReplyCmd(cfg *globalConfig) *cobra.Command {
 				Source:     "outlook",
 				ExternalID: externalID,
 				Direction:  "outbound",
-				Sender:     msg.Sender,
-				Subject:    subject,
-				Body:       body,
-				Metadata:   string(metaBytes),
-				Status:     status,
-				SentAt:     time.Now().UTC(),
+				// Outbound sender is the connected account, never the
+				// counterparty (msg.Sender) — left empty here; the true
+				// from-address is recorded when the sent mail syncs back
+				// via people.sync_outlook_message.
+				Sender:   "",
+				Subject:  subject,
+				Body:     body,
+				Metadata: string(metaBytes),
+				Status:   status,
+				SentAt:   time.Now().UTC(),
 			}
 			if err := db.UpsertPersonMessage(reply, cfg.ProfileID); err != nil {
 				return fmt.Errorf("saving message: %w", err)
@@ -880,8 +894,18 @@ func newPeopleMessagesSendDraftCmd(cfg *globalConfig) *cobra.Command {
 			}
 
 			config := map[string]interface{}{"operation": "send_draft", "message_id": msg.ExternalID}
+			// Flip the draft to "sending" before the Graph call so a
+			// concurrent send-draft/reject-draft on the same row sees a
+			// non-draft and bails, instead of double-sending. Restore the
+			// draft status if the send fails so it can be retried.
+			if err := db.UpdatePersonMessageStatus(args[0], "sending"); err != nil {
+				return fmt.Errorf("updating status: %w", err)
+			}
 			outputs, err := runOutlookNode(cmd, cfg, db.DB, connectionID, config)
 			if err != nil {
+				if rErr := db.UpdatePersonMessageStatus(args[0], "draft"); rErr != nil {
+					return fmt.Errorf("%w (restoring draft status also failed: %v)", err, rErr)
+				}
 				return err
 			}
 
@@ -928,6 +952,12 @@ func newPeopleMessagesRejectDraftCmd(cfg *globalConfig) *cobra.Command {
 			}
 			if err := assertMessageInProfile(db.DB, args[0], cfg.ProfileID); err != nil {
 				return err
+			}
+			// Only drafts may be discarded: without this guard reject-draft
+			// would delete ANY message row (and best-effort delete the mail
+			// itself) — a synced inbox message is not a draft to reject.
+			if msg.Status != "draft" {
+				return fmt.Errorf("message %s is not a draft (status: %s)", args[0], msg.Status)
 			}
 			if connectionID, cErr := draftMessageConnectionID(msg); cErr == nil && msg.ExternalID != "" {
 				config := map[string]interface{}{"operation": "delete_message", "message_id": msg.ExternalID}
@@ -981,11 +1011,28 @@ func draftMessageConnectionID(msg *storage.PersonMessage) (string, error) {
 	return meta.ConnectionID, nil
 }
 
+// outlookResultMessageID extracts the Graph message id from a
+// service.outlook_mail output item. Immediately-sending operations report
+// {status, message_id, reply_all}; draft-creating operations return the full
+// Graph message object, whose id lives under "id". Read both so a reply's
+// history row always carries the Graph id a later reply/send-draft needs.
+func outlookResultMessageID(outputs []workflow.NodeOutput) string {
+	if len(outputs) == 0 || len(outputs[0].Items) == 0 {
+		return ""
+	}
+	j := outputs[0].Items[0].JSON
+	if id := getStr(j, "message_id"); id != "" {
+		return id
+	}
+	return getStr(j, "id")
+}
+
 // runOutlookNode resolves credentials for the given connection ID/platform
 // name (scoped to cfg.ProfileID) and executes service.outlook_mail with the
 // given config, in-process — shared by compose/send-draft/reject-draft so
-// none of them duplicate credential resolution or node dispatch.
-func runOutlookNode(cmd *cobra.Command, cfg *globalConfig, db *sql.DB, connectionID string, config map[string]interface{}) ([]workflow.NodeOutput, error) {
+// none of them duplicate credential resolution or node dispatch. It is a
+// var so tests can stub the Graph call without a real connection.
+var runOutlookNode = func(cmd *cobra.Command, cfg *globalConfig, db *sql.DB, connectionID string, config map[string]interface{}) ([]workflow.NodeOutput, error) {
 	if connectionID == "" {
 		connectionID = "outlook"
 	}

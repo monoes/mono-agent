@@ -25,7 +25,8 @@ type ExecOptions struct {
 	// SystemPrompt, when set, is written to a temp file and passed via
 	// --system-file (avoids argv limits).
 	SystemPrompt string
-	// Tools enables the stdio bridge (§4); empty means --tools none.
+	// Tools enables the stdio bridge (§4); empty passes --tools none
+	// explicitly so the turn never inherits monomind's default toolset.
 	Tools []ToolSpec
 	// OnToolCall executes bridged tool calls; required when Tools is set.
 	OnToolCall ToolHandler
@@ -90,7 +91,7 @@ func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResu
 		return nil, fmt.Errorf("ExecOptions.OnToolCall is required when Tools is set")
 	}
 
-	args := []string{"agent", "exec", "--runtime", opts.Runtime, "--prompt", opts.Prompt}
+	args := []string{"agent", "exec", "--runtime", opts.Runtime}
 	if opts.Model != "" {
 		args = append(args, "--model", opts.Model)
 	}
@@ -116,6 +117,23 @@ func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResu
 			f()
 		}
 	}()
+
+	// The prompt always travels via --prompt-file (written to a temp file),
+	// mirroring --system-file: large prompts (e.g. agentgen's HTML payload)
+	// must never hit argv limits.
+	promptF, err := os.CreateTemp("", "monoagent-prompt-*.md")
+	if err != nil {
+		return nil, fmt.Errorf("write prompt file: %w", err)
+	}
+	if _, err := promptF.WriteString(opts.Prompt); err != nil {
+		promptF.Close()
+		os.Remove(promptF.Name())
+		return nil, fmt.Errorf("write prompt file: %w", err)
+	}
+	promptF.Close()
+	promptName := promptF.Name()
+	cleanup = append(cleanup, func() { os.Remove(promptName) })
+	args = append(args, "--prompt-file", promptName)
 
 	if opts.SystemPrompt != "" {
 		f, err := os.CreateTemp("", "monoagent-system-*.md")
@@ -151,6 +169,8 @@ func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResu
 		name := f.Name()
 		cleanup = append(cleanup, func() { os.Remove(name) })
 		args = append(args, "--tools", "stdio", "--tools-file", name)
+	} else {
+		args = append(args, "--tools", "none")
 	}
 
 	cmd := exec.Command(bin, args...)

@@ -39,6 +39,22 @@ The social action definitions in `data/actions/` ship with conservative
 default caps and delays. These exist to protect **your** account from
 triggering platform spam defenses. The defaults (which you can change):
 
+### How these numbers are enforced
+
+- **Per-session caps are enforced by the executor.** The loop that drives
+  each of these actions stops when the cap is hit and records where it
+  stopped, so the next run resumes at the boundary instead of redoing (and
+  re-sending) capped items. Enforced today: `send_dms` (30),
+  `comment_on_posts` (20), `like_posts` (50), `like_comments_on_posts`
+  (100), `follow_users` (50), `unfollow_users` (50) — all on Instagram.
+- **Daily caps are advisory, not yet enforced.** The `maxFollowsPerDay`
+  (150), `maxUnfollowsPerDay` (150), and `maxRepliesPerDay` (100) inputs
+  exist on their actions, but nothing counts usage across days yet — no
+  daily counter is persisted. Treat them as your own budget until daily
+  enforcement lands.
+- **Delays are enforced** as wait steps between items; the table below
+  lists the default values exactly as they ship in the JSON.
+
 ### Instagram
 
 | Action | Per-session cap | Delay | Daily cap |
@@ -47,15 +63,18 @@ triggering platform spam defenses. The defaults (which you can change):
 | `comment_on_posts` | 20 comments | 10 s between comments | — |
 | `like_posts` | 50 likes | 3 s between likes | — |
 | `like_comments_on_posts` | 100 likes | 2 s between likes | — |
-| `follow_users` | 50 follows | 5 s between follows | 150 |
-| `unfollow_users` | 50 unfollows | 5 s between unfollows | 150 |
-| `auto_reply_dms` | — | 5 s before each reply | 100 replies |
+| `follow_users` | 50 follows | 5 s between follows | 150 *(advisory)* |
+| `unfollow_users` | 50 unfollows | 5 s between unfollows | 150 *(advisory)* |
+| `auto_reply_dms` | — | 5 s before each reply | 100 *(advisory)* |
 | `engage_with_posts` | — | 30 s between engagement sessions | — |
 | `engage_user_posts` | — | 5 s between posts | — |
 | `reply_to_comments` | — | 10 s between replies | — |
 | `watch_stories` | — | 3 s between stories / 5 s between profiles | — |
 | `extract_post_data` | — | 2 s between posts | — |
 | `list_post_comments` / `list_user_posts` | — | 3 s between posts | — |
+
+Per-session caps in this table are executor-enforced (see above); rows
+showing "—" ship without a session cap.
 
 ### LinkedIn
 

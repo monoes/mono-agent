@@ -3,6 +3,10 @@ package chat
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -299,6 +303,11 @@ func TestDisconnectNodes(t *testing.T) {
 }
 
 func TestDeleteNodes(t *testing.T) {
+	backupDir := t.TempDir()
+	old := aiBackupDir
+	aiBackupDir = func() (string, error) { return backupDir, nil }
+	t.Cleanup(func() { aiBackupDir = old })
+
 	db := setupTestDB(t)
 	ct := NewCanvasTools(db)
 
@@ -442,6 +451,267 @@ func TestExecuteUnknownTool(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unknown tool")
 	}
+}
+
+// TestGetWorkflowStateRedactsSecrets is the RB3 leak regression test: node
+// config values under credential-like keys must never cross the LLM
+// boundary in get_workflow_state output.
+func TestGetWorkflowStateRedactsSecrets(t *testing.T) {
+	db := setupTestDB(t)
+	ct := NewCanvasTools(db)
+
+	_, err := db.Exec(
+		`INSERT INTO workflow_nodes (id, workflow_id, node_type, name, config) VALUES ('n1', 'wf-1', 'ai.chat', 'Chat', '{"model":"gpt-4o","api_key":"sk-live-SUPERSECRET","password":"hunter2","nested":{"token":"tok-123"}}')`)
+	if err != nil {
+		t.Fatalf("insert node: %v", err)
+	}
+
+	result, err := ct.Execute("get_workflow_state", `{"workflow_id":"wf-1"}`)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if strings.Contains(result, "sk-live-SUPERSECRET") || strings.Contains(result, "hunter2") || strings.Contains(result, "tok-123") {
+		t.Errorf("workflow state leaked a secret: %s", result)
+	}
+	if !strings.Contains(result, "***") {
+		t.Errorf("expected redaction marker *** in state: %s", result)
+	}
+	if !strings.Contains(result, "gpt-4o") {
+		t.Errorf("non-secret config value was over-redacted: %s", result)
+	}
+}
+
+// TestDeleteNodesSnapshotsToSidecar verifies delete_nodes persists the
+// removed nodes+connections to <id>.ai-backup.json (last 3 kept) AND
+// returns them in the tool result, so a wrong delete is recoverable.
+func TestDeleteNodesSnapshotsToSidecar(t *testing.T) {
+	backupDir := t.TempDir()
+	old := aiBackupDir
+	aiBackupDir = func() (string, error) { return backupDir, nil }
+	t.Cleanup(func() { aiBackupDir = old })
+
+	db := setupTestDB(t)
+	ct := NewCanvasTools(db)
+
+	if _, err := db.Exec(
+		`INSERT INTO workflow_nodes (id, workflow_id, node_type, name, config) VALUES ('n1', 'wf-1', 'ai.chat', 'Chat', '{"model":"gpt-4o"}')`); err != nil {
+		t.Fatalf("insert node: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO workflow_connections (id, workflow_id, source_node_id, source_handle, target_node_id, target_handle, position)
+		 VALUES ('c1', 'wf-1', 'n1', 'main', 'n1', 'main', 0)`); err != nil {
+		t.Fatalf("insert conn: %v", err)
+	}
+
+	result, err := ct.Execute("delete_nodes", `{"workflow_id":"wf-1","node_ids":["n1"]}`)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	// Tool result carries the removed entities.
+	if !strings.Contains(result, `"id":"n1"`) || !strings.Contains(result, `"id":"c1"`) {
+		t.Errorf("result missing removed node/connection: %s", result)
+	}
+
+	// Sidecar contains the snapshot.
+	raw, err := os.ReadFile(filepath.Join(backupDir, "wf-1.ai-backup.json"))
+	if err != nil {
+		t.Fatalf("read sidecar: %v", err)
+	}
+	var backup deleteBackup
+	if err := json.Unmarshal(raw, &backup); err != nil {
+		t.Fatalf("parse sidecar: %v", err)
+	}
+	if backup.WorkflowID != "wf-1" || len(backup.Snapshots) != 1 {
+		t.Fatalf("backup = %+v, want wf-1 with 1 snapshot", backup)
+	}
+	snap := backup.Snapshots[0]
+	if len(snap.Nodes) != 1 || snap.Nodes[0].ID != "n1" || snap.Nodes[0].NodeType != "ai.chat" {
+		t.Errorf("snapshot nodes = %+v, want n1/ai.chat", snap.Nodes)
+	}
+	if len(snap.Connections) != 1 || snap.Connections[0].ID != "c1" {
+		t.Errorf("snapshot connections = %+v, want c1", snap.Connections)
+	}
+
+	// Rotation: 3 more deletes keep only the last 3 snapshots.
+	for i := 0; i < 3; i++ {
+		nodeID := fmt.Sprintf("rot%d", i)
+		if _, err := db.Exec(
+			`INSERT INTO workflow_nodes (id, workflow_id, node_type, name, config) VALUES (?, 'wf-1', 'core.set', 'X', '{}')`, nodeID); err != nil {
+			t.Fatalf("insert rot node: %v", err)
+		}
+		if _, err := ct.Execute("delete_nodes", fmt.Sprintf(`{"workflow_id":"wf-1","node_ids":[%q]}`, nodeID)); err != nil {
+			t.Fatalf("delete rot %d: %v", i, err)
+		}
+	}
+	raw, err = os.ReadFile(filepath.Join(backupDir, "wf-1.ai-backup.json"))
+	if err != nil {
+		t.Fatalf("reread sidecar: %v", err)
+	}
+	if err := json.Unmarshal(raw, &backup); err != nil {
+		t.Fatalf("reparse sidecar: %v", err)
+	}
+	if len(backup.Snapshots) != maxAIBackupSnapshots {
+		t.Errorf("snapshots = %d, want capped at %d", len(backup.Snapshots), maxAIBackupSnapshots)
+	}
+	if backup.Snapshots[0].Nodes[0].ID != "rot2" {
+		t.Errorf("newest snapshot = %+v, want rot2 first", backup.Snapshots[0].Nodes)
+	}
+}
+
+// TestDeleteNodesBackupFailureAbortsDelete verifies fail-closed behavior:
+// if the pre-delete snapshot cannot be persisted, nothing is deleted.
+func TestDeleteNodesBackupFailureAbortsDelete(t *testing.T) {
+	old := aiBackupDir
+	aiBackupDir = func() (string, error) { return "", fmt.Errorf("no home") }
+	t.Cleanup(func() { aiBackupDir = old })
+
+	db := setupTestDB(t)
+	ct := NewCanvasTools(db)
+	if _, err := db.Exec(
+		`INSERT INTO workflow_nodes (id, workflow_id, node_type, name, config) VALUES ('n1', 'wf-1', 'core.set', 'X', '{}')`); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	if _, err := ct.Execute("delete_nodes", `{"workflow_id":"wf-1","node_ids":["n1"]}`); err == nil {
+		t.Fatal("expected error when backup cannot be persisted")
+	}
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM workflow_nodes WHERE id='n1'`).Scan(&count); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if count != 1 {
+		t.Error("node was deleted despite backup failure")
+	}
+}
+
+// TestMarshalJSONTruncatesOversizedResults verifies every tool result is
+// capped at 32KB with an explicit truncation marker.
+func TestMarshalJSONTruncatesOversizedResults(t *testing.T) {
+	big := map[string]interface{}{"blob": strings.Repeat("x", 64*1024)}
+	out, err := marshalJSON(big)
+	if err != nil {
+		t.Fatalf("marshalJSON: %v", err)
+	}
+	if len(out) > maxToolResultBytes+len(truncatedResultMarker) {
+		t.Errorf("result len = %d, want <= %d", len(out), maxToolResultBytes+len(truncatedResultMarker))
+	}
+	if !strings.HasSuffix(out, truncatedResultMarker) {
+		t.Error("oversized result missing ...[truncated] marker")
+	}
+
+	small, err := marshalJSON(map[string]interface{}{"a": 1})
+	if err != nil {
+		t.Fatalf("marshalJSON small: %v", err)
+	}
+	if strings.Contains(small, truncatedResultMarker) {
+		t.Error("small result must not be truncated")
+	}
+}
+
+// TestCreateNodesRejectsUnknownNodeType verifies create_nodes validates
+// node_type against the provided node-type registry.
+func TestCreateNodesRejectsUnknownNodeType(t *testing.T) {
+	db := setupTestDB(t)
+	ct := NewCanvasTools(db)
+	ct.SetNodeTypes([]NodeTypeInfo{
+		{Type: "trigger.manual", Label: "Manual", Category: "trigger", Description: ""},
+		{Type: "core.set", Label: "Set", Category: "control", Description: ""},
+	})
+
+	_, err := ct.Execute("create_nodes", `{"workflow_id":"wf-1","nodes":[{"node_type":"not.a.real.node","name":"X"}]}`)
+	if err == nil {
+		t.Fatal("expected error for unknown node_type")
+	}
+	if !strings.Contains(err.Error(), "unknown node_type") {
+		t.Errorf("error = %v, want unknown node_type rejection", err)
+	}
+
+	// Known types still succeed.
+	if _, err := ct.Execute("create_nodes", `{"workflow_id":"wf-1","nodes":[{"node_type":"core.set","name":"OK"}]}`); err != nil {
+		t.Fatalf("valid node_type rejected: %v", err)
+	}
+
+	// No registry provided (e.g. CLI without node types): validation skips.
+	ct2 := NewCanvasTools(db)
+	if _, err := ct2.Execute("create_nodes", `{"workflow_id":"wf-1","nodes":[{"node_type":"anything","name":"X"}]}`); err != nil {
+		t.Fatalf("validation should skip when registry is empty: %v", err)
+	}
+}
+
+// TestConnectNodesRequiresExistingEndpoints verifies connect_nodes refuses
+// to wire connections to node ids that don't exist in the workflow.
+func TestConnectNodesRequiresExistingEndpoints(t *testing.T) {
+	db := setupTestDB(t)
+	ct := NewCanvasTools(db)
+	if _, err := db.Exec(
+		`INSERT INTO workflow_nodes (id, workflow_id, node_type, name, config) VALUES ('n1', 'wf-1', 'trigger.manual', 'Start', '{}')`); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	_, err := ct.Execute("connect_nodes", `{
+		"workflow_id": "wf-1",
+		"source_node_id": "n1",
+		"source_handle": "main",
+		"target_node_id": "ghost",
+		"target_handle": "main"
+	}`)
+	if err == nil {
+		t.Fatal("expected error connecting to a nonexistent node")
+	}
+	if !strings.Contains(err.Error(), "ghost") {
+		t.Errorf("error = %v, want it to name the missing node", err)
+	}
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM workflow_connections WHERE workflow_id='wf-1'`).Scan(&count); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if count != 0 {
+		t.Error("connection was inserted despite missing endpoint")
+	}
+}
+
+// TestMutatingToolsRejectPlaceholderWorkflowIDs verifies the "general"/
+// "draft" placeholders are read-only: every mutating tool must refuse them
+// so the model is forced through create_workflow first.
+func TestMutatingToolsRejectPlaceholderWorkflowIDs(t *testing.T) {
+	db := setupTestDB(t)
+	ct := NewCanvasTools(db)
+
+	mutations := []struct {
+		tool, args string
+	}{
+		{"create_nodes", `{"workflow_id":"general","nodes":[{"node_type":"core.set","name":"x"}]}`},
+		{"create_nodes", `{"workflow_id":"draft","nodes":[{"node_type":"core.set","name":"x"}]}`},
+		{"update_node_config", `{"workflow_id":"general","node_id":"n1","config":{"a":1}}`},
+		{"update_node_config", `{"workflow_id":"draft","node_id":"n1","config":{"a":1}}`},
+		{"delete_nodes", `{"workflow_id":"general","node_ids":["n1"]}`},
+		{"delete_nodes", `{"workflow_id":"draft","node_ids":["n1"]}`},
+		{"connect_nodes", `{"workflow_id":"general","source_node_id":"a","source_handle":"main","target_node_id":"b","target_handle":"main"}`},
+		{"connect_nodes", `{"workflow_id":"draft","source_node_id":"a","source_handle":"main","target_node_id":"b","target_handle":"main"}`},
+		{"disconnect_nodes", `{"workflow_id":"general","source_node_id":"a","target_node_id":"b"}`},
+		{"disconnect_nodes", `{"workflow_id":"draft","source_node_id":"a","target_node_id":"b"}`},
+	}
+	for _, m := range mutations {
+		if _, err := ct.Execute(m.tool, m.args); err == nil {
+			t.Errorf("%s on placeholder %q: expected error, got nil", m.tool, jsonArgWorkflowID(t, m.args))
+		}
+	}
+
+	// Read-only access to placeholders remains allowed (state is empty).
+	if _, err := ct.Execute("get_workflow_state", `{"workflow_id":"general"}`); err != nil {
+		t.Errorf("get_workflow_state on placeholder: unexpected error: %v", err)
+	}
+}
+
+func jsonArgWorkflowID(t *testing.T, args string) string {
+	t.Helper()
+	var a struct {
+		WorkflowID string `json:"workflow_id"`
+	}
+	_ = json.Unmarshal([]byte(args), &a)
+	return a.WorkflowID
 }
 
 // TestCanvasToolsRejectCrossProfileWorkflow is a regression test: a CanvasTools

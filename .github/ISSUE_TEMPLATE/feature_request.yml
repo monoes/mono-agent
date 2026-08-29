@@ -1,0 +1,52 @@
+name: Feature request
+description: Suggest a node type, CLI capability, or other improvement.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion. Mono Agent values focus — a request that
+        fits the project's shape (local-first, single binary, CLI-drivable)
+        lands better than one that fights it. Skim
+        [README.md](https://github.com/monoes/mono-agent/blob/main/README.md)
+        and [`monoagentcli ref`](https://github.com/monoes/mono-agent/blob/main/AGENTS.md)
+        first to make sure it doesn't already exist.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to accomplish, and what stops you today? "I can't X" beats "add Y".
+      placeholder: I'm trying to …, but the closest thing today is … which fails/needs …
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: What should exist instead? A node type, a CLI flag, a behavior change, …
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you've considered
+      description: Other tools, workarounds, or existing nodes you tried — and why they fall short.
+    validations:
+      required: false
+
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Workflow use case
+      description: >
+        Describe the concrete workflow this enables (trigger → nodes →
+        outcome). Requests grounded in a real automation get priority.
+        If the workflow involves social platforms, note that those nodes
+        are opt-in (`-tags social`) and must follow
+        [docs/USAGE_POLICY.md](https://github.com/monoes/mono-agent/blob/main/docs/USAGE_POLICY.md).
+      placeholder: When a webhook fires → look up … → post/approve via HIL → …
+    validations:
+      required: false

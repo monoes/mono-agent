@@ -2,7 +2,10 @@
 
 package instagram
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestTrackStagnation is a regression test: FetchFollowersList previously
 // compared len(results) == len(seen) to detect scroll stagnation, which is a
@@ -37,5 +40,80 @@ func TestTrackStagnation(t *testing.T) {
 	prevCount, noChangeRounds = trackStagnation(25, prevCount, noChangeRounds)
 	if noChangeRounds != 0 || prevCount != 25 {
 		t.Fatalf("after growth: prevCount=%d, noChangeRounds=%d, want 25, 0", prevCount, noChangeRounds)
+	}
+}
+
+// TestResolveCommentTargetState is an outbound-safety regression test:
+// LikeComment and ReplyToComment previously fell back to the most recent
+// comment whenever the requested commentAuthor had no match, silently
+// liking/replying to the wrong person. Table covers the found, no-comments,
+// author-not-found, and unexpected-state cases.
+func TestResolveCommentTargetState(t *testing.T) {
+	cases := []struct {
+		name          string
+		state         string
+		commentAuthor string
+		wantMarked    bool
+		wantErr       string
+	}{
+		{
+			name:       "author found and marked",
+			state:      "marked",
+			wantMarked: true,
+		},
+		{
+			name:  "no candidate comments on page — no-op",
+			state: "not_found",
+		},
+		{
+			name:          "author specified but unmatched",
+			state:         "author_not_found",
+			commentAuthor: "somebody",
+			wantErr:       "no comment by author \"somebody\" found",
+		},
+		{
+			name:    "unexpected state surfaces as error",
+			state:   "weird",
+			wantErr: "unexpected comment lookup state",
+		},
+	}
+	for _, c := range cases {
+		marked, err := resolveCommentTargetState(c.state, c.commentAuthor, "https://www.instagram.com/p/abc123/", "like")
+		if c.wantErr != "" {
+			if err == nil || !strings.Contains(err.Error(), c.wantErr) {
+				t.Errorf("%s: expected error containing %q, got: %v", c.name, c.wantErr, err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%s: unexpected error: %v", c.name, err)
+		}
+		if marked != c.wantMarked {
+			t.Errorf("%s: marked = %v, want %v", c.name, marked, c.wantMarked)
+		}
+	}
+}
+
+// TestSendVerified covers the honest post-send gate: a cleared composer
+// confirms the send, a rendered bubble confirms the send, and anything else
+// is a verification failure that must surface as an error.
+func TestSendVerified(t *testing.T) {
+	cases := []struct {
+		name     string
+		composer string
+		bubbles  []string
+		message  string
+		want     bool
+	}{
+		{"composer cleared", "", nil, "hello", true},
+		{"composer whitespace only", "   \n", nil, "hello", true},
+		{"bubble contains message", "hello", []string{"earlier msg", "hello"}, "hello", true},
+		{"composer uncleared, no bubbles", "hello", nil, "hello", false},
+		{"composer uncleared, bubble mismatch", "hello", []string{"different"}, "hello", false},
+	}
+	for _, c := range cases {
+		if got := sendVerified(c.composer, c.bubbles, c.message); got != c.want {
+			t.Errorf("%s: sendVerified(%q, %v, %q) = %v, want %v", c.name, c.composer, c.bubbles, c.message, got, c.want)
+		}
 	}
 }

@@ -27,42 +27,6 @@
         "type": "string",
         "default": "",
         "description": "Location tag for the post"
-      },
-      {
-        "name": "altText",
-        "type": "string",
-        "default": "",
-        "description": "Alt text for accessibility"
-      },
-      {
-        "name": "enableComments",
-        "type": "boolean",
-        "default": true,
-        "description": "Allow comments on post"
-      },
-      {
-        "name": "hideLikeCount",
-        "type": "boolean",
-        "default": false,
-        "description": "Hide like count from viewers"
-      },
-      {
-        "name": "scheduledTime",
-        "type": "string",
-        "default": "",
-        "description": "Schedule publish time (ISO 8601)"
-      },
-      {
-        "name": "tags",
-        "type": "string",
-        "default": "",
-        "description": "Comma-separated hashtags to append"
-      },
-      {
-        "name": "mentionUsers",
-        "type": "string",
-        "default": "",
-        "description": "Comma-separated usernames to mention"
       }
     ]
   },

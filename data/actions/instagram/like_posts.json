@@ -130,7 +130,7 @@
     {
       "id": "wait_between_likes",
       "type": "wait",
-      "duration": "{{delayBetweenLikes or 2}}",
+      "duration": "{{delayBetweenLikes or 3}}",
       "waitFor": "time"
     },
     {
@@ -145,6 +145,7 @@
       "id": "process_posts",
       "iterator": "selectedListItems",
       "indexVar": "reachedIndex",
+      "maxItems": "{{maxLikesPerSession or 50}}",
       "steps": [
         "t1_like_post",
         "check_t1_result",

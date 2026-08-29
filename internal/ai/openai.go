@@ -99,24 +99,16 @@ func (c *OpenAIClient) Complete(ctx context.Context, req CompletionRequest) (Com
 		return CompletionResponse{}, fmt.Errorf("marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
+	respBody, err := completeWithRetry(ctx, c.httpClient, "openai", func() (*http.Request, error) {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		c.setHeaders(httpReq)
+		return httpReq, nil
+	}, nil)
 	if err != nil {
-		return CompletionResponse{}, fmt.Errorf("create request: %w", err)
-	}
-	c.setHeaders(httpReq)
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return CompletionResponse{}, fmt.Errorf("do request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return CompletionResponse{}, fmt.Errorf("read response: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return CompletionResponse{}, fmt.Errorf("openai: status %d: %s", resp.StatusCode, string(respBody))
+		return CompletionResponse{}, err
 	}
 
 	var oResp openAIResponse

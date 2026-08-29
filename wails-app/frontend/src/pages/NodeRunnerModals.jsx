@@ -59,11 +59,11 @@ export function SaveModal({ initialName, onConfirm, onClose }) {
 
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
           <button
-            onMouseDown={onClose}
+            onClick={onClose}
             style={{ background: 'transparent', border: '1px solid rgba(0,180,216,0.15)', borderRadius: 6, padding: '6px 16px', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}
           >Cancel</button>
           <button
-            onMouseDown={() => { if (name.trim()) submit() }}
+            onClick={() => { if (name.trim()) submit() }}
             style={{ background: 'rgba(0,180,216,0.15)', border: '1px solid rgba(0,180,216,0.3)', borderRadius: 6, padding: '6px 20px', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 11, color: '#00b4d8' }}
           >Save</button>
         </div>
@@ -87,6 +87,13 @@ export function WorkflowsModal({ currentId, onLoad, onDelete, onClose }) {
     ListWorkflows().then(d => { setList(d || []); setLoading(false) }).catch(() => setLoading(false))
     ListWorkflowTemplates().then(d => { setTemplates(d || []); setTemplatesLoading(false) }).catch(() => setTemplatesLoading(false))
   }, [])
+
+  // Esc closes the modal
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
 
   const useTemplate = async (id) => {
     setUsingTemplate(id)
@@ -124,7 +131,7 @@ export function WorkflowsModal({ currentId, onLoad, onDelete, onClose }) {
         <div style={{ padding: '12px 16px', borderBottom: '1px solid rgba(0,180,216,0.1)', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
           {execsFor ? (
             <>
-              <button onMouseDown={() => { setExecsFor(null); setExecs([]) }} style={{ background:'transparent',border:'none',cursor:'pointer',color:'var(--text-muted)',display:'flex',alignItems:'center',gap:4,fontFamily:'var(--font-mono)',fontSize:10 }}>
+              <button onClick={() => { setExecsFor(null); setExecs([]) }} style={{ background:'transparent',border:'none',cursor:'pointer',color:'var(--text-muted)',display:'flex',alignItems:'center',gap:4,fontFamily:'var(--font-mono)',fontSize:10 }}>
                 ← BACK
               </button>
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: '#e2e8f0' }}>EXECUTIONS</span>
@@ -134,17 +141,17 @@ export function WorkflowsModal({ currentId, onLoad, onDelete, onClose }) {
               <List size={13} color="#00b4d8" />
               <div style={{ display: 'flex', gap: 4, flex: 1 }}>
                 <button
-                  onMouseDown={() => setTab('saved')}
+                  onClick={() => setTab('saved')}
                   style={{ background: tab === 'saved' ? 'rgba(0,180,216,0.15)' : 'transparent', border: 'none', borderRadius: 5, cursor: 'pointer', color: tab === 'saved' ? '#00b4d8' : 'var(--text-muted)', padding: '4px 10px', fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700 }}
                 >SAVED WORKFLOWS</button>
                 <button
-                  onMouseDown={() => setTab('templates')}
+                  onClick={() => setTab('templates')}
                   style={{ background: tab === 'templates' ? 'rgba(0,180,216,0.15)' : 'transparent', border: 'none', borderRadius: 5, cursor: 'pointer', color: tab === 'templates' ? '#00b4d8' : 'var(--text-muted)', padding: '4px 10px', fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700 }}
                 >TEMPLATES</button>
               </div>
             </>
           )}
-          <button onMouseDown={onClose} aria-label="Close" style={{ background:'transparent',border:'none',cursor:'pointer',color:'var(--text-muted)',display:'flex' }}><X size={14} /></button>
+          <button onClick={onClose} aria-label="Close" style={{ background:'transparent',border:'none',cursor:'pointer',color:'var(--text-muted)',display:'flex' }}><X size={14} /></button>
         </div>
 
         {/* Body */}
@@ -177,7 +184,7 @@ export function WorkflowsModal({ currentId, onLoad, onDelete, onClose }) {
                   </div>
                 </div>
                 <button
-                  onMouseDown={() => useTemplate(t.id)}
+                  onClick={() => useTemplate(t.id)}
                   disabled={usingTemplate === t.id}
                   style={{ background:'rgba(0,180,216,0.08)',border:'1px solid rgba(0,180,216,0.2)',borderRadius:5,cursor:'pointer',color:'#00b4d8',padding:'3px 10px',fontFamily:'var(--font-mono)',fontSize:10,flexShrink:0,opacity: usingTemplate === t.id ? 0.5 : 1 }}
                   onMouseEnter={e => e.currentTarget.style.background='rgba(0,180,216,0.18)'}
@@ -207,20 +214,25 @@ export function WorkflowsModal({ currentId, onLoad, onDelete, onClose }) {
                 </div>
               </div>
               <button
-                onMouseDown={e => { e.stopPropagation(); showExecs(wf.id) }}
+                onClick={e => { e.stopPropagation(); showExecs(wf.id) }}
                 title="View executions"
                 style={{ background:'transparent',border:'none',cursor:'pointer',color:'var(--text-muted)',padding:4,display:'flex',alignItems:'center' }}
                 onMouseEnter={e => e.currentTarget.style.color='#00b4d8'}
                 onMouseLeave={e => e.currentTarget.style.color='var(--text-muted)'}
               ><List size={11} /></button>
               <button
-                onMouseDown={e => { e.stopPropagation(); onLoad(wf.id) }}
+                onClick={e => { e.stopPropagation(); onLoad(wf.id) }}
                 style={{ background:'rgba(0,180,216,0.08)',border:'1px solid rgba(0,180,216,0.2)',borderRadius:5,cursor:'pointer',color:'#00b4d8',padding:'3px 10px',fontFamily:'var(--font-mono)',fontSize:10 }}
                 onMouseEnter={e => e.currentTarget.style.background='rgba(0,180,216,0.18)'}
                 onMouseLeave={e => e.currentTarget.style.background='rgba(0,180,216,0.08)'}
               >Open</button>
               <button
-                onMouseDown={e => { e.stopPropagation(); onDelete(wf.id).then(() => setList(l => l.filter(w => w.id !== wf.id))) }}
+                onClick={e => {
+                  e.stopPropagation()
+                  // onDelete confirms and resolves false when cancelled — only
+                  // drop the row from the list when it was actually deleted.
+                  onDelete(wf.id).then(deleted => { if (deleted) setList(l => l.filter(w => w.id !== wf.id)) })
+                }}
                 title="Delete"
                 style={{ background:'transparent',border:'none',cursor:'pointer',color:'rgba(239,68,68,0.4)',padding:4,display:'flex',alignItems:'center' }}
                 onMouseEnter={e => e.currentTarget.style.color='#ef4444'}

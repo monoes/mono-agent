@@ -107,13 +107,6 @@ type WorkflowStore interface {
 	UpdateExecutionNode(ctx context.Context, en *WorkflowExecutionNode) error
 	SetExecutionNodeFinished(ctx context.Context, id string, status string, outputItems []Item, errMsg string) error
 
-	// Credentials
-	CreateCredential(ctx context.Context, c *Credential) error
-	GetCredential(ctx context.Context, id string) (*Credential, error)
-	ListCredentials(ctx context.Context, credType string) ([]Credential, error)
-	UpdateCredential(ctx context.Context, c *Credential) error
-	DeleteCredential(ctx context.Context, id string) error
-
 	// Recovery
 	RecoverStaleExecutions(ctx context.Context) error
 	ReapStaleRunningExecutions(ctx context.Context, olderThan time.Time) error
@@ -756,127 +749,6 @@ func (s *SQLiteWorkflowStore) loadExecutionNodes(ctx context.Context, executionI
 	return out, rows.Err()
 }
 
-// ---------------------------------------------------------------------------
-// Credentials
-// ---------------------------------------------------------------------------
-
-// CreateCredential inserts a new credential record.
-// If c.ID is empty a UUID is generated.
-func (s *SQLiteWorkflowStore) CreateCredential(ctx context.Context, c *Credential) error {
-	if c.ID == "" {
-		c.ID = newID()
-	}
-	now := time.Now().UTC()
-	c.CreatedAt = now
-	c.UpdatedAt = now
-
-	dataRaw, err := marshalCredentialData(c.Data)
-	if err != nil {
-		return fmt.Errorf("marshalling credential data for %s: %w", c.ID, err)
-	}
-	c.DataRaw = dataRaw
-
-	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO workflow_credentials (id, name, type, data, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)`,
-		c.ID, c.Name, c.Type, c.DataRaw, c.CreatedAt, c.UpdatedAt,
-	)
-	if err != nil {
-		return fmt.Errorf("creating credential %s: %w", c.ID, err)
-	}
-	return nil
-}
-
-// GetCredential retrieves a single credential by ID.
-// Returns nil, nil when not found.
-func (s *SQLiteWorkflowStore) GetCredential(ctx context.Context, id string) (*Credential, error) {
-	c := &Credential{}
-	var createdAt, updatedAt sqliteTime
-	err := s.db.QueryRowContext(ctx, `
-		SELECT id, name, type, data, created_at, updated_at
-		FROM workflow_credentials WHERE id = ?`, id,
-	).Scan(&c.ID, &c.Name, &c.Type, &c.DataRaw, &createdAt, &updatedAt)
-	c.CreatedAt = createdAt.Time
-	c.UpdatedAt = updatedAt.Time
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("getting credential %s: %w", id, err)
-	}
-	if err := parseCredentialData(c); err != nil {
-		return nil, fmt.Errorf("parsing credential data for %s: %w", id, err)
-	}
-	return c, nil
-}
-
-// ListCredentials returns all credentials, optionally filtered by type.
-// Pass an empty string to return all types.
-func (s *SQLiteWorkflowStore) ListCredentials(ctx context.Context, credType string) ([]Credential, error) {
-	query := "SELECT id, name, type, data, created_at, updated_at FROM workflow_credentials"
-	var args []interface{}
-	if credType != "" {
-		query += " WHERE type = ?"
-		args = append(args, credType)
-	}
-	query += " ORDER BY name ASC"
-
-	rows, err := s.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("listing credentials: %w", err)
-	}
-	defer rows.Close()
-
-	var out []Credential
-	for rows.Next() {
-		c := Credential{}
-		var createdAt, updatedAt sqliteTime
-		if err := rows.Scan(&c.ID, &c.Name, &c.Type, &c.DataRaw, &createdAt, &updatedAt); err != nil {
-			return nil, fmt.Errorf("scanning credential row: %w", err)
-		}
-		c.CreatedAt = createdAt.Time
-		c.UpdatedAt = updatedAt.Time
-		if err := parseCredentialData(&c); err != nil {
-			return nil, fmt.Errorf("parsing credential data for %s: %w", c.ID, err)
-		}
-		out = append(out, c)
-	}
-	return out, rows.Err()
-}
-
-// UpdateCredential updates the mutable fields of a credential.
-func (s *SQLiteWorkflowStore) UpdateCredential(ctx context.Context, c *Credential) error {
-	c.UpdatedAt = time.Now().UTC()
-
-	dataRaw, err := marshalCredentialData(c.Data)
-	if err != nil {
-		return fmt.Errorf("marshalling credential data for %s: %w", c.ID, err)
-	}
-	c.DataRaw = dataRaw
-
-	_, err = s.db.ExecContext(ctx, `
-		UPDATE workflow_credentials SET name = ?, type = ?, data = ?, updated_at = ? WHERE id = ?`,
-		c.Name, c.Type, c.DataRaw, c.UpdatedAt, c.ID,
-	)
-	if err != nil {
-		return fmt.Errorf("updating credential %s: %w", c.ID, err)
-	}
-	return nil
-}
-
-// DeleteCredential removes a credential by ID.
-func (s *SQLiteWorkflowStore) DeleteCredential(ctx context.Context, id string) error {
-	result, err := s.db.ExecContext(ctx, "DELETE FROM workflow_credentials WHERE id = ?", id)
-	if err != nil {
-		return fmt.Errorf("deleting credential %s: %w", id, err)
-	}
-	n, _ := result.RowsAffected()
-	if n == 0 {
-		return fmt.Errorf("credential %s not found", id)
-	}
-	return nil
-}
-
 // ListAdoptableExecutions returns the IDs of QUEUED executions that have no
 // owner (pid 0/NULL) and no resume_state. These are the rows
 // `workflow run --no-wait` persists before exiting, waiting for any live
@@ -1169,30 +1041,4 @@ func marshalItems(items []Item) (string, error) {
 		return "", err
 	}
 	return string(b), nil
-}
-
-// marshalCredentialData encodes a credential data map to a JSON string.
-func marshalCredentialData(data map[string]interface{}) (string, error) {
-	if data == nil {
-		return "{}", nil
-	}
-	b, err := json.Marshal(data)
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
-}
-
-// parseCredentialData unmarshals DataRaw JSON into Data.
-func parseCredentialData(c *Credential) error {
-	if c.DataRaw == "" {
-		c.Data = make(map[string]interface{})
-		return nil
-	}
-	var d map[string]interface{}
-	if err := json.Unmarshal([]byte(c.DataRaw), &d); err != nil {
-		return err
-	}
-	c.Data = d
-	return nil
 }

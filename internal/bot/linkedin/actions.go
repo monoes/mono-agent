@@ -146,9 +146,7 @@ func (b *LinkedInBot) ListUserPosts(ctx context.Context, page browser.PageInterf
 		}
 
 		if len(allPosts) < maxCount {
-			if _, scrollErr := page.Eval(`() => window.scrollBy(0, window.innerHeight * 2)`); scrollErr != nil {
-				fmt.Println("linkedin: smooth scroll failed, continuing:", scrollErr)
-			}
+			_, _ = page.Eval(`() => window.scrollBy(0, window.innerHeight * 2)`)
 			time.Sleep(2 * time.Second)
 		}
 	}

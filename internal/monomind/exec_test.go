@@ -291,6 +291,76 @@ func TestExecErrorTurnMapsProtocolError(t *testing.T) {
 	}
 }
 
+// TestExecFlagMappingSandboxing verifies the argv Exec builds for
+// `agent exec`: the prompt travels via --prompt-file (never --prompt argv),
+// and an empty Tools list passes --tools none explicitly instead of
+// letting monomind apply its own default toolset.
+func TestExecFlagMappingSandboxing(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake monomind is a shell script")
+	}
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "monomind")
+	record := filepath.Join(dir, "argv.txt")
+	script := "#!/bin/sh\n" +
+		"if [ \"$1\" = \"--version\" ] && [ \"$2\" = \"--json\" ]; then echo '{\"v\":1,\"version\":\"2.10.0\",\"min_caller\":\"1.0.0\",\"capabilities\":[\"agent-exec\",\"agent-scan\",\"org-json-v1\"]}'; exit 0; fi\n" +
+		"if [ \"$1\" = \"agent\" ] && [ \"$2\" = \"exec\" ]; then\n" +
+		"  printf '%s\\n' \"$@\" > \"" + record + "\"\n" +
+		"  pf=\"\"; prev=\"\"\n" +
+		"  for a in \"$@\"; do if [ \"$prev\" = \"--prompt-file\" ]; then pf=\"$a\"; fi; prev=\"$a\"; done\n" +
+		"  if [ -n \"$pf\" ] && grep -q 'GENERATE_MARKER_HTML' \"$pf\"; then echo 'PROMPT_FILE_HAS_PROMPT yes' >> \"" + record + "\"; else echo 'PROMPT_FILE_HAS_PROMPT no' >> \"" + record + "\"; fi\n" +
+		"  echo '{\"v\":1,\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"stop_reason\":\"end_turn\",\"text\":\"ok\"}'\n" +
+		"  echo '{\"v\":1,\"type\":\"done\",\"exit_code\":0}'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"echo 'unsupported' >&2; exit 2\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Exec(context.Background(), ExecOptions{
+		Bin:     bin,
+		Runtime: "claude",
+		Prompt:  "GENERATE_MARKER_HTML <html></html>",
+	}, nil)
+	if err != nil {
+		t.Fatalf("exec: %v", err)
+	}
+	if res.Err != nil || res.ExitCode != 0 {
+		t.Fatalf("turn result = %+v, want clean success", res)
+	}
+
+	raw, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatalf("read recorded argv: %v", err)
+	}
+	argv := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	has := func(want string) bool {
+		for _, a := range argv {
+			if a == want {
+				return true
+			}
+		}
+		return false
+	}
+
+	if has("--prompt") {
+		t.Errorf("argv passed --prompt (prompt must go via --prompt-file): %v", argv)
+	}
+	if !has("--prompt-file") {
+		t.Errorf("argv missing --prompt-file: %v", argv)
+	}
+	if !has("--tools") || !has("none") {
+		t.Errorf("argv missing explicit '--tools none': %v", argv)
+	}
+
+	// The prompt file (probed by the fake binary; the temp file is removed
+	// once Exec returns) must have carried the prompt text.
+	if !strings.Contains(string(raw), "PROMPT_FILE_HAS_PROMPT yes") {
+		t.Errorf("prompt file did not contain the prompt:\n%s", raw)
+	}
+}
+
 func fields(s string) []string {
 	var out []string
 	cur := ""

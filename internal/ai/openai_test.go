@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // TestOpenAIStreamLargeLine verifies a single SSE data line larger than the
@@ -302,5 +304,83 @@ func TestNewClient(t *testing.T) {
 	})
 	if err == nil {
 		t.Error("NewClient(unknown known) should return error")
+	}
+}
+
+// shrinkRetryDelays speeds retry tests up; restore with the returned func.
+func shrinkRetryDelays(t *testing.T) {
+	t.Helper()
+	old := completeRetryDelays
+	completeRetryDelays = []time.Duration{time.Millisecond, time.Millisecond}
+	t.Cleanup(func() { completeRetryDelays = old })
+}
+
+// TestOpenAICompleteRetriesOn429 verifies non-streaming Complete retries a
+// 429 with backoff and succeeds once the server recovers, and gives up
+// after the retry budget is exhausted.
+func TestOpenAICompleteRetriesOn429(t *testing.T) {
+	shrinkRetryDelays(t)
+
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&hits, 1)
+		if n == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			w.Write([]byte(`{"error":{"message":"rate limited"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"choices": []map[string]interface{}{
+				{
+					"message":       map[string]interface{}{"role": "assistant", "content": "recovered!"},
+					"finish_reason": "stop",
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	client := NewOpenAIClient("test-key", srv.URL, "")
+	resp, err := client.Complete(context.Background(), CompletionRequest{
+		Model:    "gpt-4o",
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if resp.Content != "recovered!" {
+		t.Errorf("Content = %q, want %q", resp.Content, "recovered!")
+	}
+	if atomic.LoadInt32(&hits) != 2 {
+		t.Errorf("server hits = %d, want 2 (one 429 + one success)", hits)
+	}
+}
+
+// TestOpenAICompleteRetryExhaustion verifies the retry budget is finite.
+func TestOpenAICompleteRetryExhaustion(t *testing.T) {
+	shrinkRetryDelays(t)
+
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`boom`))
+	}))
+	defer srv.Close()
+
+	client := NewOpenAIClient("test-key", srv.URL, "")
+	_, err := client.Complete(context.Background(), CompletionRequest{
+		Model:    "gpt-4o",
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+	})
+	if err == nil {
+		t.Fatal("expected error after retry exhaustion")
+	}
+	if !strings.Contains(err.Error(), "status 500") {
+		t.Errorf("error = %v, want status 500 detail", err)
+	}
+	if atomic.LoadInt32(&hits) != 3 { // initial attempt + 2 retries
+		t.Errorf("server hits = %d, want 3", hits)
 	}
 }

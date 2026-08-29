@@ -342,26 +342,51 @@ func (b *TikTokBot) LikeComment(ctx context.Context, page browser.PageInterface,
 		}
 	}
 
+	// Mark the like button from JS, then click it with a native CDP mouse
+	// event. A JS el.click() does not reliably trigger TikTok's React
+	// handlers — the same lesson learned on Instagram's like buttons.
 	result, err := page.Eval(fmt.Sprintf(`() => {
 		const id = %q;
 		const items = document.querySelectorAll('[data-e2e="comment-item"]');
 		for (const el of items) {
 			if (el.getAttribute('data-comment-id') === id || el.id === id) {
 				const likeBtn = el.querySelector('[data-e2e="comment-like-btn"]');
-				if (likeBtn) { likeBtn.click(); return true; }
+				if (!likeBtn) return 'no_like_btn';
+				likeBtn.setAttribute('data-monoagent-comment-like', 'true');
+				return 'marked';
 			}
 		}
-		return false;
+		return 'not_found';
 	}`, commentID))
 	if err != nil {
-		return fmt.Errorf("tiktok: failed to like comment %s: %w", commentID, err)
+		return fmt.Errorf("tiktok: failed to locate like button for comment %s: %w", commentID, err)
 	}
-	if result != nil {
-		if !result.Bool() {
-			return fmt.Errorf("tiktok: comment %s not found on page %s", commentID, videoURL)
-		}
+
+	switch result.Str() {
+	case "marked":
+	case "not_found":
+		return fmt.Errorf("tiktok: comment %s not found on page %s", commentID, videoURL)
+	default:
+		return fmt.Errorf("tiktok: like button for comment %s not found on page %s (%s)", commentID, videoURL, result.Str())
+	}
+
+	likeBtn, err := page.Element("[data-monoagent-comment-like='true']", 5*time.Second)
+	if err != nil {
+		return fmt.Errorf("tiktok: marked comment like button not found: %w", err)
+	}
+	if err := likeBtn.ScrollIntoView(); err != nil {
+		return fmt.Errorf("tiktok: failed to scroll comment like button into view: %w", err)
+	}
+	if err := likeBtn.Click(); err != nil {
+		return fmt.Errorf("tiktok: failed to click comment like button: %w", err)
 	}
 	time.Sleep(1 * time.Second)
+
+	// Clean up marker.
+	_, _ = page.Eval(`() => {
+		const el = document.querySelector('[data-monoagent-comment-like]');
+		if (el) el.removeAttribute('data-monoagent-comment-like');
+	}`)
 	return nil
 }
 
@@ -384,21 +409,23 @@ func openShareModal(page browser.PageInterface, videoURL string) error {
 }
 
 // StitchVideo navigates to a TikTok video page, opens the share modal, and
-// clicks the Stitch option to open the stitch creator.
-func (b *TikTokBot) StitchVideo(ctx context.Context, page browser.PageInterface, videoURL string) error {
+// clicks the Stitch option to open the stitch creator. It returns the honest
+// status "opened_stitch_editor" — the stitch itself is not published; the
+// editor requires further human interaction.
+func (b *TikTokBot) StitchVideo(ctx context.Context, page browser.PageInterface, videoURL string) (map[string]interface{}, error) {
 	if videoURL == "" {
-		return fmt.Errorf("tiktok: videoURL is required")
+		return nil, fmt.Errorf("tiktok: videoURL is required")
 	}
 	if err := page.Navigate(videoURL); err != nil {
-		return fmt.Errorf("tiktok: navigate to %s: %w", videoURL, err)
+		return nil, fmt.Errorf("tiktok: navigate to %s: %w", videoURL, err)
 	}
 	if err := page.WaitLoad(); err != nil {
-		return fmt.Errorf("tiktok: page load failed: %w", err)
+		return nil, fmt.Errorf("tiktok: page load failed: %w", err)
 	}
 	time.Sleep(3 * time.Second)
 
 	if err := openShareModal(page, videoURL); err != nil {
-		return err
+		return nil, err
 	}
 
 	stitchSelectors := []string{
@@ -410,29 +437,34 @@ func (b *TikTokBot) StitchVideo(ctx context.Context, page browser.PageInterface,
 		if err == nil && el != nil {
 			if clickErr := el.Click(); clickErr == nil {
 				time.Sleep(2 * time.Second)
-				return nil
+				return map[string]interface{}{
+					"status":   "opened_stitch_editor",
+					"videoURL": videoURL,
+				}, nil
 			}
 		}
 	}
-	return fmt.Errorf("tiktok: stitch option not found in share modal for %s", videoURL)
+	return nil, fmt.Errorf("tiktok: stitch option not found in share modal for %s", videoURL)
 }
 
 // DuetVideo navigates to a TikTok video page, opens the share modal, and
-// clicks the Duet option to open the duet creator.
-func (b *TikTokBot) DuetVideo(ctx context.Context, page browser.PageInterface, videoURL string) error {
+// clicks the Duet option to open the duet creator. It returns the honest
+// status "opened_duet_editor" — the duet itself is not published; the editor
+// requires further human interaction.
+func (b *TikTokBot) DuetVideo(ctx context.Context, page browser.PageInterface, videoURL string) (map[string]interface{}, error) {
 	if videoURL == "" {
-		return fmt.Errorf("tiktok: videoURL is required")
+		return nil, fmt.Errorf("tiktok: videoURL is required")
 	}
 	if err := page.Navigate(videoURL); err != nil {
-		return fmt.Errorf("tiktok: navigate to %s: %w", videoURL, err)
+		return nil, fmt.Errorf("tiktok: navigate to %s: %w", videoURL, err)
 	}
 	if err := page.WaitLoad(); err != nil {
-		return fmt.Errorf("tiktok: page load failed: %w", err)
+		return nil, fmt.Errorf("tiktok: page load failed: %w", err)
 	}
 	time.Sleep(3 * time.Second)
 
 	if err := openShareModal(page, videoURL); err != nil {
-		return err
+		return nil, err
 	}
 
 	duetSelectors := []string{
@@ -444,11 +476,14 @@ func (b *TikTokBot) DuetVideo(ctx context.Context, page browser.PageInterface, v
 		if err == nil && el != nil {
 			if clickErr := el.Click(); clickErr == nil {
 				time.Sleep(2 * time.Second)
-				return nil
+				return map[string]interface{}{
+					"status":   "opened_duet_editor",
+					"videoURL": videoURL,
+				}, nil
 			}
 		}
 	}
-	return fmt.Errorf("tiktok: duet option not found in share modal for %s", videoURL)
+	return nil, fmt.Errorf("tiktok: duet option not found in share modal for %s", videoURL)
 }
 
 // ShareVideo navigates to a TikTok video page, opens the share modal, and

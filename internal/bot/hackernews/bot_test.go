@@ -2,7 +2,10 @@
 
 package hackernews
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestExtractItemID(t *testing.T) {
 	cases := map[string]string{
@@ -29,5 +32,36 @@ func TestHackerNewsResolveURL(t *testing.T) {
 	}
 	if got := b.ResolveURL("https://news.ycombinator.com/item?id=1"); got != "https://news.ycombinator.com/item?id=1" {
 		t.Errorf("ResolveURL absolute changed unexpectedly: %q", got)
+	}
+}
+
+// TestParseSubmittedItem is an honesty regression test: SubmitPost previously
+// returned a nil map with a nil error when the read-back script found no
+// tr.athing row (HN rejected the submission — duplicate URL, rate limit),
+// which callers interpreted as success with no item. A null read-back must
+// now surface as an explicit "submission not confirmed" error.
+func TestParseSubmittedItem(t *testing.T) {
+	// Confirmed submission → parsed map.
+	item, err := parseSubmittedItem(`{"id":"42","title":"Hello","url":"https://news.ycombinator.com/item?id=42"}`)
+	if err != nil {
+		t.Fatalf("valid item should parse, got: %v", err)
+	}
+	if item["id"] != "42" {
+		t.Fatalf("expected id 42, got %v", item["id"])
+	}
+
+	// Null read-back (nothing submitted) → error, not silent success.
+	_, err = parseSubmittedItem(`null`)
+	if err == nil {
+		t.Fatal("null read-back must be an error, not a nil result")
+	}
+	if !strings.Contains(err.Error(), "submission not confirmed") {
+		t.Fatalf("expected 'submission not confirmed' error, got: %v", err)
+	}
+
+	// Malformed JSON → parse error.
+	_, err = parseSubmittedItem(`{not json`)
+	if err == nil || !strings.Contains(err.Error(), "parsing submitted item JSON") {
+		t.Fatalf("expected JSON parse error, got: %v", err)
 	}
 }

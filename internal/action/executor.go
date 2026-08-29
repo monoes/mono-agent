@@ -2,8 +2,12 @@ package action
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -54,12 +58,16 @@ type StepDef struct {
 
 // LoopDef defines an iteration over a collection of items, executing a subset
 // of the action's steps for each item.
+//
+// NOTE: a legacy "onComplete" field appears in some shipped loop JSONs. It is
+// deliberately NOT modeled here — it was historically parsed but never
+// executed, so json.Unmarshal now silently ignores it for JSON compatibility.
 type LoopDef struct {
-	ID         string      `json:"id"`
-	Iterator   string      `json:"iterator"`
-	IndexVar   string      `json:"indexVar"`
-	Steps      []string    `json:"steps"`
-	OnComplete interface{} `json:"onComplete,omitempty"`
+	ID       string   `json:"id"`
+	Iterator string   `json:"iterator"`
+	IndexVar string   `json:"indexVar"`
+	Steps    []string `json:"steps"`
+	MaxItems string   `json:"maxItems,omitempty"`
 }
 
 // ConditionDef describes a conditional expression for condition steps.
@@ -308,6 +316,10 @@ type ActionExecutor struct {
 	action       *StorageAction
 	actionDef    *ActionDef
 	startTime    time.Time
+	// reachedIndexByLoop tracks per-loop progress within a single Execute
+	// run so that multiple loops (or a re-triggered loop) do not share one
+	// reached index.
+	reachedIndexByLoop map[string]int
 }
 
 // NewActionExecutor creates a fully initialised executor. The page must already
@@ -324,17 +336,18 @@ func NewActionExecutor(
 ) *ActionExecutor {
 	execCtx := NewExecutionContext()
 	ae := &ActionExecutor{
-		ctx:          ctx,
-		page:         page,
-		db:           db,
-		configMgr:    configMgr,
-		events:       events,
-		botAdapter:   botAdapter,
-		logger:       logger.With().Str("component", "executor").Logger(),
-		execCtx:      execCtx,
-		resolver:     NewVariableResolver(execCtx),
-		errorHandler: NewErrorHandler(),
-		handlers:     make(map[string]StepHandler),
+		ctx:                ctx,
+		page:               page,
+		db:                 db,
+		configMgr:          configMgr,
+		events:             events,
+		botAdapter:         botAdapter,
+		logger:             logger.With().Str("component", "executor").Logger(),
+		execCtx:            execCtx,
+		resolver:           NewVariableResolver(execCtx),
+		errorHandler:       NewErrorHandler(),
+		handlers:           make(map[string]StepHandler),
+		reachedIndexByLoop: make(map[string]int),
 	}
 	ae.initHandlers()
 	return ae
@@ -389,6 +402,12 @@ func (ae *ActionExecutor) Execute(action *StorageAction) (*ExecutionResult, erro
 
 	// Seed the execution context with action fields.
 	ae.seedVariables(action)
+
+	// Validate declared required inputs before executing anything.
+	if err := ae.validateRequiredInputs(actionDef); err != nil {
+		ae.logger.Error().Err(err).Msg("required input validation failed")
+		return nil, err
+	}
 
 	ae.emitEvent(ExecutionEvent{
 		Type:     "action_start",
@@ -446,6 +465,15 @@ func (ae *ActionExecutor) Execute(action *StorageAction) (*ExecutionResult, erro
 			}
 			return ae.buildResult(), err
 		}
+		if isContextError(err) {
+			ae.logger.Error().Err(err).Msg("action cancelled/timed out during initial steps")
+			if ae.db != nil {
+				if serr := ae.db.UpdateActionState(action.ID, "FAILED"); serr != nil {
+					ae.logger.Error().Err(serr).Str("actionID", action.ID).Msg("failed to persist action state FAILED — action may appear stuck")
+				}
+			}
+			return ae.buildResult(), err
+		}
 		ae.logger.Warn().Err(err).Msg("error during initial steps (continuing to loops)")
 	}
 
@@ -454,6 +482,15 @@ func (ae *ActionExecutor) Execute(action *StorageAction) (*ExecutionResult, erro
 		if err := ae.executeLoop(ae.ctx, loop, actionDef.Steps); err != nil {
 			if err == ErrAbort {
 				ae.logger.Error().Str("loopID", loop.ID).Msg("action aborted during loop")
+				if ae.db != nil {
+					if serr := ae.db.UpdateActionState(action.ID, "FAILED"); serr != nil {
+						ae.logger.Error().Err(serr).Str("actionID", action.ID).Msg("failed to persist action state FAILED — action may appear stuck")
+					}
+				}
+				return ae.buildResult(), err
+			}
+			if isContextError(err) {
+				ae.logger.Error().Err(err).Str("loopID", loop.ID).Msg("action cancelled/timed out during loop")
 				if ae.db != nil {
 					if serr := ae.db.UpdateActionState(action.ID, "FAILED"); serr != nil {
 						ae.logger.Error().Err(serr).Str("actionID", action.ID).Msg("failed to persist action state FAILED — action may appear stuck")
@@ -479,6 +516,13 @@ func (ae *ActionExecutor) Execute(action *StorageAction) (*ExecutionResult, erro
 	})
 
 	return ae.buildResult(), nil
+}
+
+// isContextError reports whether err is a context cancellation or deadline
+// exhaustion (possibly wrapped), used to persist an honest FAILED state
+// instead of COMPLETED for cancelled/timed-out runs.
+func isContextError(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 // seedVariables populates the execution context with initial values from the
@@ -509,10 +553,68 @@ func (ae *ActionExecutor) seedVariables(action *StorageAction) {
 	if action.ContentBlobURLs != "" {
 		ae.execCtx.SetVariable("contentBlobUrls", action.ContentBlobURLs)
 	}
+	// Seed scheduling fields consumed by date-bounded actions (auto_reply_dms).
+	if action.StartDate != "" {
+		ae.execCtx.SetVariable("startDate", action.StartDate)
+	}
+	if action.EndDate != "" {
+		ae.execCtx.SetVariable("endDate", action.EndDate)
+	}
+	if action.ExecutionInterval > 0 {
+		ae.execCtx.SetVariable("pollInterval", action.ExecutionInterval)
+	}
 	// Seed all custom params as execution variables.
 	for k, v := range action.Params {
 		ae.execCtx.SetVariable(k, v)
 	}
+}
+
+// validateRequiredInputs checks that every input declared as required by the
+// action definition is present (non-empty) in the execution context. Required
+// entries may be plain strings (legacy format) or objects with a "name" field.
+func (ae *ActionExecutor) validateRequiredInputs(def *ActionDef) error {
+	if def.Inputs == nil {
+		return nil
+	}
+	var missing []string
+	for _, raw := range def.Inputs.Required {
+		name := requiredInputName(raw)
+		if name == "" {
+			continue
+		}
+		v, ok := ae.execCtx.GetVariable(name)
+		if !ok || v == nil {
+			missing = append(missing, name)
+			continue
+		}
+		if s, isStr := v.(string); isStr && s == "" {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	if len(missing) == 1 {
+		return fmt.Errorf("missing required input '%s'", missing[0])
+	}
+	return fmt.Errorf("missing required inputs '%s'", strings.Join(missing, "', '"))
+}
+
+// requiredInputName extracts the input name from a required-input entry,
+// accepting both the legacy string form ("messageText") and the object form
+// ({"name": "messageText", ...}).
+func requiredInputName(raw json.RawMessage) string {
+	var name string
+	if err := json.Unmarshal(raw, &name); err == nil {
+		return strings.TrimSpace(name)
+	}
+	var obj struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(raw, &obj); err == nil {
+		return strings.TrimSpace(obj.Name)
+	}
+	return ""
 }
 
 // executeSteps runs a slice of steps sequentially. It handles variable
@@ -661,7 +763,9 @@ func (ae *ActionExecutor) handleOnSuccess(sa *SuccessAction) {
 
 // executeLoop runs a single loop definition. It resolves the iterator to a
 // slice, then executes the loop's steps for each item starting from
-// the action's reached index.
+// the action's reached index. If the loop declares a maxItems cap, at most
+// that many items are processed per session before the loop exits with a
+// "cap reached" note.
 func (ae *ActionExecutor) executeLoop(ctx context.Context, loop LoopDef, allSteps []StepDef) error {
 	// Resolve the iterator to get the collection to iterate over.
 	items := ae.resolveIterator(loop.Iterator)
@@ -679,11 +783,18 @@ func (ae *ActionExecutor) executeLoop(ctx context.Context, loop LoopDef, allStep
 		return nil
 	}
 
-	// Determine the starting index (for resume support).
+	// Determine the starting index (for resume support), keyed per loop ID:
+	// a loop that has already run in this execution resumes from its own
+	// progress; a loop's first run seeds from the action-level reached index.
 	startIdx := 0
-	if ae.action != nil && ae.action.ReachedIndex > 0 {
+	if reached, ok := ae.reachedIndexByLoop[loop.ID]; ok {
+		startIdx = reached
+	} else if ae.action != nil && ae.action.ReachedIndex > 0 {
 		startIdx = ae.action.ReachedIndex
 	}
+
+	// Resolve the per-session item cap (0 or unresolvable → unlimited).
+	maxItems := ae.resolveLoopCap(loop.MaxItems)
 
 	loopSteps := ae.getStepsByIDs(allSteps, loop.Steps)
 
@@ -691,14 +802,30 @@ func (ae *ActionExecutor) executeLoop(ctx context.Context, loop LoopDef, allStep
 		Str("loopID", loop.ID).
 		Int("total", len(collection)).
 		Int("startIndex", startIdx).
+		Int("maxItems", maxItems).
 		Int("stepCount", len(loopSteps)).
 		Msg("starting loop execution")
 
+	processed := 0
 	for idx := startIdx; idx < len(collection); idx++ {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
+		}
+
+		// Per-session cap: stop before processing more items than allowed.
+		if maxItems > 0 && processed >= maxItems {
+			ae.noteLoopCapReached(loop, maxItems, idx)
+			ae.reachedIndexByLoop[loop.ID] = idx
+			// Persist the cap boundary so a later run (e.g. with a raised
+			// cap) resumes from here instead of redoing capped items.
+			if ae.db != nil && ae.action != nil {
+				if err := ae.db.UpdateActionReachedIndex(ae.action.ID, idx); err != nil {
+					ae.logger.Warn().Err(err).Int("index", idx).Msg("failed to update reached index at cap")
+				}
+			}
+			return nil
 		}
 
 		item := collection[idx]
@@ -729,6 +856,9 @@ func (ae *ActionExecutor) executeLoop(ctx context.Context, loop LoopDef, allStep
 				Msg("loop iteration failed")
 		}
 
+		processed++
+		ae.reachedIndexByLoop[loop.ID] = idx + 1
+
 		// Update reached index in storage for resume support.
 		// Batch writes: persist every 50 iterations or on the last item to avoid N+1 DB writes.
 		if ae.db != nil && ae.action != nil {
@@ -741,6 +871,64 @@ func (ae *ActionExecutor) executeLoop(ctx context.Context, loop LoopDef, allStep
 	}
 
 	return nil
+}
+
+// resolveLoopCap resolves a loop's maxItems template (e.g.
+// "{{maxMessagesPerSession or 30}}") to an integer cap. Empty, missing, or
+// non-numeric values resolve to 0, meaning unlimited.
+func (ae *ActionExecutor) resolveLoopCap(template string) int {
+	if strings.TrimSpace(template) == "" {
+		return 0
+	}
+	return toInt(ae.resolver.ResolveValue(template))
+}
+
+// toInt coerces common numeric types (including numeric strings from CLI
+// params) to an int, returning 0 for anything unrecognised.
+func toInt(v interface{}) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case float64:
+		return int(n)
+	case string:
+		i, err := strconv.Atoi(strings.TrimSpace(n))
+		if err != nil {
+			return 0
+		}
+		return i
+	default:
+		return 0
+	}
+}
+
+// noteLoopCapReached records that a loop exited early because its per-session
+// cap was reached. The note is logged, emitted as an event for monitors, and
+// stored in the execution context (Data + Variables) so it surfaces in the
+// action's result metadata.
+func (ae *ActionExecutor) noteLoopCapReached(loop LoopDef, cap, idx int) {
+	note := map[string]interface{}{
+		"loopId":     loop.ID,
+		"cap":        cap,
+		"startIndex": idx,
+		"reason":     "per-session cap reached",
+	}
+	ae.execCtx.SetData("loopCapReached", note)
+	ae.execCtx.SetVariable("capReached", loop.ID)
+	ae.logger.Info().
+		Str("loopID", loop.ID).
+		Int("cap", cap).
+		Int("index", idx).
+		Msg("loop stopped: per-session cap reached")
+	ae.emitEvent(ExecutionEvent{
+		Type:     "loop_cap_reached",
+		ActionID: ae.action.ID,
+		StepID:   loop.ID,
+		Index:    idx,
+		Message:  fmt.Sprintf("Loop %s stopped at item %d: per-session cap of %d reached", loop.ID, idx, cap),
+	})
 }
 
 // resolveIterator resolves the loop iterator path to its underlying value.
@@ -820,6 +1008,10 @@ func (ae *ActionExecutor) getStepsByIDs(allSteps []StepDef, ids []string) []Step
 	for _, id := range ids {
 		if step, ok := stepMap[id]; ok {
 			result = append(result, step)
+		} else {
+			ae.logger.Warn().
+				Str("stepID", id).
+				Msg("referenced step id has no definition, dropping reference")
 		}
 	}
 	return result

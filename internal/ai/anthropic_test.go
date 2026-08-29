@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 )
 
@@ -403,5 +404,43 @@ func TestAnthropicStreamComplete(t *testing.T) {
 	}
 	if !gotDone {
 		t.Error("expected Done=true chunk")
+	}
+}
+
+// TestAnthropicCompleteRetriesOn429 verifies non-streaming Complete retries
+// a 429 with backoff and succeeds once the server recovers.
+func TestAnthropicCompleteRetriesOn429(t *testing.T) {
+	shrinkRetryDelays(t)
+
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&hits, 1) == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			w.Write([]byte(`{"type":"error","error":{"type":"rate_limit_error"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"content": []map[string]interface{}{
+				{"type": "text", "text": "recovered!"},
+			},
+			"stop_reason": "end_turn",
+		})
+	}))
+	defer srv.Close()
+
+	client := NewAnthropicClient("test-key", srv.URL)
+	resp, err := client.Complete(context.Background(), CompletionRequest{
+		Model:    "claude-sonnet-4-6",
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if resp.Content != "recovered!" {
+		t.Errorf("Content = %q, want %q", resp.Content, "recovered!")
+	}
+	if atomic.LoadInt32(&hits) != 2 {
+		t.Errorf("server hits = %d, want 2", hits)
 	}
 }

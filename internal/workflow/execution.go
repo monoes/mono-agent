@@ -227,45 +227,27 @@ func RunExecution(
 		}
 
 		// Inject credential data if credential_id is present.
-		// Lookup order:
-		//   1. If credID does NOT start with "wc_", try the new connections table first.
-		//   2. Fall back to the legacy workflow_credentials table (backward compat).
+		// GetOrResolve looks up the connections table by id or platform
+		// name and auto-refreshes expired OAuth tokens. It is scoped to
+		// the execution's profile so a workflow under profile B never
+		// resolves profile A's credentials.
 		if credIDRaw, ok := config["credential_id"]; ok {
 			if credID, ok := credIDRaw.(string); ok && credID != "" {
 				injected := false
 
-				// Try the connections table unless the ID looks like a legacy wc_ credential.
-				// GetOrResolve also looks up by platform name and auto-refreshes
-				// expired OAuth tokens. Scoped to the execution's profile so a
-				// workflow under profile B never resolves profile A's credentials.
-				if !strings.HasPrefix(credID, "wc_") && connStore != nil {
+				if connStore != nil {
 					conn, err := connStore.GetOrResolve(ctx, credID, vault.ProfileIDFromContext(ctx))
 					if err != nil {
-						// DB error — log and fall back to legacy table
 						logger.Warn().Err(err).
 							Str("credential_id", credID).
-							Msg("connections lookup failed; falling back to workflow_credentials")
-						// fall through: conn is nil, injected stays false, legacy path below will run
+							Msg("connections lookup failed")
+						// conn is nil; injected stays false, miss handling below runs
 					} else if conn != nil {
 						// Merge all connection Data fields directly into config.
 						for k, v := range conn.Data {
 							config[k] = v
 						}
 						config["credential"] = conn.Data
-						injected = true
-					}
-				}
-
-				// Fall back to the legacy workflow_credentials table. That
-				// table has no profile column (it predates profiles — current
-				// migrations do not even create it), so this lookup cannot be
-				// scoped to the execution's profile; the miss log below
-				// includes the profile so cross-profile resolution failures
-				// are diagnosable.
-				if !injected {
-					cred, err := store.GetCredential(ctx, credID)
-					if err == nil && cred != nil {
-						config["credential"] = cred.Data
 						injected = true
 					}
 				}
@@ -287,14 +269,12 @@ func RunExecution(
 
 				if !injected {
 					// Miss on every path. Include the execution's profile in
-					// the log: the legacy workflow_credentials fallback above
-					// is not profile-scoped, so a hit there under profile B
-					// for a profile-A run is indistinguishable from a miss
-					// without it.
+					// the log so cross-profile resolution failures are
+					// diagnosable.
 					logger.Warn().
 						Str("credential_id", credID).
 						Str("profile", vault.ProfileIDFromContext(ctx)).
-						Msg("credential not resolved for profile (connections and legacy workflow_credentials both missed)")
+						Msg("credential not resolved for profile")
 				}
 			}
 		}

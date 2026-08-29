@@ -352,8 +352,9 @@ func (s *storageAdapter) UpdateActionState(id, state string) error {
 }
 
 func (s *storageAdapter) UpdateActionReachedIndex(id string, index int) error {
+	// Monotonic: never lower a previously reached index (resume corruption guard).
 	_, err := s.db.DB.Exec(
-		"UPDATE actions SET reached_index = ?, updated_at_ts = CURRENT_TIMESTAMP WHERE id = ? AND profile_id = ?",
+		"UPDATE actions SET reached_index = MAX(reached_index, ?), updated_at_ts = CURRENT_TIMESTAMP WHERE id = ? AND profile_id = ?",
 		index, id, s.profileID,
 	)
 	return err
@@ -591,6 +592,8 @@ func executeAction(
 			case "loop_iteration":
 				elapsed := time.Since(startTime).Truncate(time.Second)
 				fmt.Fprintf(os.Stderr, "\r  [%s] %s", elapsed, evt.Message)
+			case "loop_cap_reached":
+				fmt.Fprintf(os.Stderr, "\n  [cap] %s\n", evt.Message)
 			case "action_complete":
 				fmt.Fprintf(os.Stderr, "\n  %s\n", evt.Message)
 			}
@@ -704,15 +707,37 @@ func executeAction(
 	}
 
 	// Update final state.
-	if _, err := db.DB.Exec(
-		"UPDATE actions SET state = ?, reached_index = ?, action_execution_count = action_execution_count + 1, updated_at_ts = CURRENT_TIMESTAMP WHERE id = ? AND profile_id = ?",
-		finalState, extracted+failed, act.ID, cfg.ProfileID,
-	); err != nil {
-		return fmt.Errorf("updating action final state: %w", err)
+	if err := finalizeActionState(db, cfg.ProfileID, act.ID, finalState, extracted+failed); err != nil {
+		return err
 	}
 
 	elapsed := time.Since(startTime)
 	return printActionResult(cfg, act, finalState, extracted+failed, extracted, failed, elapsed)
+}
+
+// finalizeActionState persists the terminal action state and final progress
+// index. reached_index is monotonic: a run that processed fewer items than a
+// previous attempt never lowers the persisted high-water mark, so a resumed
+// action continues from the furthest position reached instead of restarting
+// from the beginning. A completed run that processed nothing resets the index
+// so the action can be re-run from the start.
+func finalizeActionState(db *storage.Database, profileID, actionID, finalState string, processed int) error {
+	if profileID == "" {
+		profileID = "default"
+	}
+	var query string
+	var args []interface{}
+	if finalState == "COMPLETED" && processed == 0 {
+		query = `UPDATE actions SET state = ?, reached_index = 0, action_execution_count = action_execution_count + 1, updated_at_ts = CURRENT_TIMESTAMP WHERE id = ? AND profile_id = ?`
+		args = []interface{}{finalState, actionID, profileID}
+	} else {
+		query = `UPDATE actions SET state = ?, reached_index = MAX(reached_index, ?), action_execution_count = action_execution_count + 1, updated_at_ts = CURRENT_TIMESTAMP WHERE id = ? AND profile_id = ?`
+		args = []interface{}{finalState, processed, actionID, profileID}
+	}
+	if _, err := db.DB.Exec(query, args...); err != nil {
+		return fmt.Errorf("updating action final state: %w", err)
+	}
+	return nil
 }
 
 // printActionResult displays the execution summary.

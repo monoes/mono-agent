@@ -267,10 +267,13 @@ func (s *AIStore) SaveChatMessage(m ChatMessage) error {
 	return err
 }
 
-// GetChatHistory returns all messages for a workflow ordered by created_at ascending.
+// GetChatHistory returns all messages for a workflow ordered by created_at
+// ascending. rowid is the tiebreaker: SQLite rowids are monotonic for
+// inserts, so messages saved within the same timestamp (RFC3339 has second
+// granularity) still come back in insert order — no seq column needed.
 func (s *AIStore) GetChatHistory(workflowID string) ([]ChatMessage, error) {
 	const q = `SELECT id, workflow_id, role, content, tool_calls, tool_call_id, provider_id, model, token_count, created_at
-		FROM ai_chat_messages WHERE workflow_id = ? ORDER BY created_at ASC`
+		FROM ai_chat_messages WHERE workflow_id = ? ORDER BY created_at ASC, rowid ASC`
 	rows, err := s.db.Query(q, workflowID)
 	if err != nil {
 		return nil, err

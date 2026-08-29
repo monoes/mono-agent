@@ -55,13 +55,18 @@ func newMessageCmd(cfg *globalConfig) *cobra.Command {
 				return fmt.Errorf("creating message action: %w", err)
 			}
 
-			// Create a single target for this user.
+			// Create a single target for this user. Metadata is JSON-encoded
+			// rather than Sprintf-built so a quote-bearing username cannot
+			// produce corrupt JSON.
+			targetMeta, err := json.Marshal(map[string]string{"username": username})
+			if err != nil {
+				return fmt.Errorf("encoding target metadata: %w", err)
+			}
 			targetID := storage.NewID()
 			_, err = db.DB.Exec(
 				`INSERT INTO action_targets (id, action_id, platform, link, status, metadata)
 				 VALUES (?, ?, ?, ?, 'PENDING', ?)`,
-				targetID, actionID, platform, username,
-				fmt.Sprintf(`{"username":"%s"}`, username),
+				targetID, actionID, platform, username, string(targetMeta),
 			)
 			if err != nil {
 				return fmt.Errorf("creating target for %s: %w", username, err)

@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -18,7 +19,15 @@ func debugLog(format string, args ...interface{}) {
 	if os.Getenv("MONOAGENT_GOOGLE_DEBUG") != "1" {
 		return
 	}
-	f, err := os.OpenFile("/tmp/monoagent-google-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	dir := filepath.Join(home, ".monoagent", "logs")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return
+	}
+	f, err := os.OpenFile(filepath.Join(dir, "google-debug.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return
 	}
@@ -125,25 +134,17 @@ func (c *GoogleClient) Complete(ctx context.Context, req CompletionRequest) (Com
 		return CompletionResponse{}, fmt.Errorf("marshal request: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/models/%s:generateContent?key=%s", c.baseURL, req.Model, c.apiKey)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	respBody, err := completeWithRetry(ctx, c.httpClient, "google", func() (*http.Request, error) {
+		url := fmt.Sprintf("%s/models/%s:generateContent?key=%s", c.baseURL, req.Model, c.apiKey)
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		return httpReq, nil
+	}, c.scrubErr)
 	if err != nil {
-		return CompletionResponse{}, fmt.Errorf("create request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return CompletionResponse{}, fmt.Errorf("do request: %w", c.scrubErr(err))
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return CompletionResponse{}, fmt.Errorf("read response: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return CompletionResponse{}, fmt.Errorf("google: status %d: %s", resp.StatusCode, string(respBody))
+		return CompletionResponse{}, err
 	}
 
 	var gResp googleResponse
@@ -193,6 +194,10 @@ func (c *GoogleClient) StreamComplete(ctx context.Context, req CompletionRequest
 
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxSSEBufferSize)
+	// callSeq is stream-scoped: Gemini function calls carry no id, so the
+	// synthetic ids must number across ALL chunks — per-chunk counters made
+	// two chunks calling the same function collide on one id.
+	callSeq := 0
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
@@ -221,13 +226,14 @@ func (c *GoogleClient) StreamComplete(ctx context.Context, req CompletionRequest
 				if part.FunctionCall != nil {
 					argsJSON, _ := json.Marshal(part.FunctionCall.Args)
 					sc.ToolCalls = append(sc.ToolCalls, ToolCall{
-						ID:   fmt.Sprintf("call_%s_%d", part.FunctionCall.Name, len(sc.ToolCalls)),
+						ID:   fmt.Sprintf("call_%s_%d", part.FunctionCall.Name, callSeq),
 						Type: "function",
 						Function: ToolCallFunc{
 							Name:      part.FunctionCall.Name,
 							Arguments: string(argsJSON),
 						},
 					})
+					callSeq++
 				}
 			}
 			if cand.FinishReason == "STOP" || cand.FinishReason == "MAX_TOKENS" ||

@@ -114,15 +114,23 @@
       "id": "check_t1_type",
       "type": "condition",
       "condition": { "variable": "typeResult", "operator": "not_exists" },
-      "then": ["t2_type_prompt"]
+      "then": ["t2_refind_input", "t2_type_prompt"]
+    },
+    {
+      "id": "t2_refind_input",
+      "type": "find_element",
+      "selector": "div.ql-editor[contenteditable='true']",
+      "alternatives": ["[role='textbox'][aria-label*='prompt' i]", "rich-textarea .ql-editor"],
+      "variable_name": "promptBox",
+      "timeout": 10,
+      "onError": { "action": "skip" }
     },
     {
       "id": "t2_type_prompt",
-      "type": "type_text",
-      "target": "{{promptInput}}",
+      "type": "type",
+      "elementRef": "promptBox",
       "text": "{{prompt}}",
-      "humanize": true,
-      "timeout": 15,
+      "humanLike": true,
       "onError": { "action": "mark_failed" }
     },
     {
@@ -137,30 +145,40 @@
       "id": "check_t1_send",
       "type": "condition",
       "condition": { "variable": "sendResult", "operator": "not_exists" },
-      "then": ["t2_click_send", "check_t2_send"]
+      "then": ["t2_find_send_button", "t2_click_send", "check_t2_send"]
     },
     {
-      "id": "t2_click_send",
+      "id": "t2_find_send_button",
       "type": "find_element",
       "selector": "button.send-button",
       "alternatives": ["button[aria-label='Send message']", "button[aria-label*='Send' i]"],
-      "action": "click",
-      "variable_name": "sendResult",
       "timeout": 10,
       "onError": { "action": "skip" }
+    },
+    {
+      "id": "t2_click_send",
+      "type": "click",
+      "elementRef": "t2_find_send_button",
+      "onError": { "action": "skip" },
+      "onSuccess": { "action": "set_variable", "variable": "sendResult", "value": true }
     },
     {
       "id": "check_t2_send",
       "type": "condition",
       "condition": { "variable": "sendResult", "operator": "not_exists" },
-      "then": ["t3_click_send"]
+      "then": ["t3_find_send_button", "t3_click_send"]
+    },
+    {
+      "id": "t3_find_send_button",
+      "type": "find_element",
+      "configKey": "GEMINI_CHAT_SESSION.send_button",
+      "timeout": 10,
+      "onError": { "action": "mark_failed" }
     },
     {
       "id": "t3_click_send",
-      "type": "find_element",
-      "configKey": "GEMINI_CHAT_SESSION.send_button",
-      "action": "click",
-      "timeout": 10,
+      "type": "click",
+      "elementRef": "t3_find_send_button",
       "onError": { "action": "mark_failed" }
     },
     {

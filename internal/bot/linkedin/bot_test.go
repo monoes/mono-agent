@@ -40,3 +40,27 @@ func TestGetMethodByNameAcceptsPageInterface(t *testing.T) {
 		t.Fatalf("expected the profileURL validation error, got: %v", err)
 	}
 }
+
+// TestSendVerified covers the honest post-send gate: a cleared composer
+// confirms the send, a rendered bubble confirms the send, and anything else
+// is a verification failure that must surface as an error.
+func TestSendVerified(t *testing.T) {
+	cases := []struct {
+		name     string
+		composer string
+		bubbles  []string
+		message  string
+		want     bool
+	}{
+		{"composer cleared", "", nil, "hello", true},
+		{"composer whitespace only", "   \n", nil, "hello", true},
+		{"bubble contains message", "hello", []string{"earlier msg", "hello"}, "hello", true},
+		{"composer uncleared, no bubbles", "hello", nil, "hello", false},
+		{"composer uncleared, bubble mismatch", "hello", []string{"different"}, "hello", false},
+	}
+	for _, c := range cases {
+		if got := sendVerified(c.composer, c.bubbles, c.message); got != c.want {
+			t.Errorf("%s: sendVerified(%q, %v, %q) = %v, want %v", c.name, c.composer, c.bubbles, c.message, got, c.want)
+		}
+	}
+}

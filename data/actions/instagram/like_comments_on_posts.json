@@ -173,6 +173,7 @@
       "id": "process_posts",
       "iterator": "selectedListItems",
       "indexVar": "reachedIndex",
+      "maxItems": "{{maxLikesPerSession or 100}}",
       "steps": [
         "t1_like_comment",
         "check_t1_result",

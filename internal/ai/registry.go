@@ -9,6 +9,7 @@ type ProviderDef struct {
 	Tier           string     `json:"tier"`     // "known" | "gateway"
 	DefaultBaseURL string     `json:"default_base_url"`
 	AuthLabel      string     `json:"auth_label"`
+	Description    string     `json:"description,omitempty"`
 	Models         []ModelDef `json:"models"`
 	Adapter        string     `json:"adapter"` // "openai","anthropic","google","bedrock"
 	DocsURL        string     `json:"docs_url"`
@@ -240,8 +241,9 @@ var ProviderRegistry = []ProviderDef{
 		IconEmoji:      "🪨",
 		Category:       "cloud",
 		Tier:           "known",
-		DefaultBaseURL: "https://bedrock-runtime.us-east-1.amazonaws.com",
+		DefaultBaseURL: "https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1",
 		AuthLabel:      "AWS Credentials",
+		Description:    "Experimental: requires an OpenAI-compatible Bedrock proxy; SigV4 not supported",
 		Adapter:        "bedrock",
 		DocsURL:        "https://docs.aws.amazon.com/bedrock/",
 		Models: []ModelDef{

@@ -1,0 +1,13 @@
+blank_issues_enabled: false
+# Placeholder contact links until a community venue exists (GitHub
+# Discussions vs. Discord is being decided — see the tracking issue
+# "Decide community venue" in the tracker). When the venue lands,
+# add it as the first contact link below.
+contact_links:
+  - name: "Not sure Mono Agent is the right tool? Read the comparison first"
+    url: https://github.com/monoes/mono-agent/blob/main/docs/COMPARISON.md
+    about: >
+      Honest comparison against n8n, Activepieces, Windmill, and Node-RED —
+      including when to use n8n instead. Tool-selection questions belong
+      there, not in the bug tracker. Vulnerability reports go through
+      SECURITY.md, never through issues.

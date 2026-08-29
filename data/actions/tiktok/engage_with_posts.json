@@ -159,6 +159,7 @@
       "id": "process_content",
       "iterator": "extract_video_list",
       "indexVar": "reachedIndex",
+      "maxItems": "{{maxContentCount or 0}}",
       "steps": [
         "open_video",
         "determine_interaction_type"

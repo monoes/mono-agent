@@ -84,15 +84,23 @@
       "id": "check_t1_type",
       "type": "condition",
       "condition": { "variable": "typeResult", "operator": "not_exists" },
-      "then": ["t2_type_prompt"]
+      "then": ["t2_refind_input", "t2_type_prompt"]
+    },
+    {
+      "id": "t2_refind_input",
+      "type": "find_element",
+      "selector": "div.ql-editor[contenteditable='true']",
+      "alternatives": ["[role='textbox'][aria-label*='prompt' i]", "rich-textarea .ql-editor"],
+      "variable_name": "promptBox",
+      "timeout": 10,
+      "onError": { "action": "skip" }
     },
     {
       "id": "t2_type_prompt",
-      "type": "type_text",
-      "target": "{{promptInput}}",
+      "type": "type",
+      "elementRef": "promptBox",
       "text": "{{prompt}}",
-      "humanize": true,
-      "timeout": 15,
+      "humanLike": true,
       "onError": { "action": "mark_failed" }
     },
     {
@@ -107,30 +115,40 @@
       "id": "check_t1_send",
       "type": "condition",
       "condition": { "variable": "sendResult", "operator": "not_exists" },
-      "then": ["t2_click_send", "check_t2_send"]
+      "then": ["t2_find_send_button", "t2_click_send", "check_t2_send"]
     },
     {
-      "id": "t2_click_send",
+      "id": "t2_find_send_button",
       "type": "find_element",
       "selector": "button.send-button",
       "alternatives": ["button[aria-label='Send message']"],
-      "action": "click",
-      "variable_name": "sendResult",
       "timeout": 10,
       "onError": { "action": "skip" }
+    },
+    {
+      "id": "t2_click_send",
+      "type": "click",
+      "elementRef": "t2_find_send_button",
+      "onError": { "action": "skip" },
+      "onSuccess": { "action": "set_variable", "variable": "sendResult", "value": true }
     },
     {
       "id": "check_t2_send",
       "type": "condition",
       "condition": { "variable": "sendResult", "operator": "not_exists" },
-      "then": ["t3_click_send"]
+      "then": ["t3_find_send_button", "t3_click_send"]
+    },
+    {
+      "id": "t3_find_send_button",
+      "type": "find_element",
+      "configKey": "GEMINI_GENERATE_TEXT.send_button",
+      "timeout": 10,
+      "onError": { "action": "mark_failed" }
     },
     {
       "id": "t3_click_send",
-      "type": "find_element",
-      "configKey": "GEMINI_GENERATE_TEXT.send_button",
-      "action": "click",
-      "timeout": 10,
+      "type": "click",
+      "elementRef": "t3_find_send_button",
       "onError": { "action": "mark_failed" }
     },
     {
@@ -151,11 +169,8 @@
     {
       "id": "t2_wait_response",
       "type": "wait",
-      "duration": "{{maxWaitSeconds or 60}}",
-      "condition": "element_visible",
       "selector": "message-content div.markdown.markdown-main-panel",
       "alternatives": ["message-content", "structured-content-container.model-response-text"],
-      "pollInterval": 2000,
       "timeout": 90,
       "onError": { "action": "mark_failed" }
     },
@@ -175,10 +190,9 @@
     },
     {
       "id": "t2_extract_text",
-      "type": "find_element",
+      "type": "extract_text",
       "selector": "message-content div.markdown.markdown-main-panel",
       "alternatives": ["message-content", "structured-content-container.model-response-text"],
-      "extract": "text",
       "variable_name": "extractResult",
       "timeout": 10,
       "onError": { "action": "skip" }
@@ -191,9 +205,8 @@
     },
     {
       "id": "t3_extract_text",
-      "type": "find_element",
+      "type": "extract_text",
       "configKey": "GEMINI_GENERATE_TEXT.response_text",
-      "extract": "text",
       "variable_name": "extractResult",
       "timeout": 10,
       "onError": { "action": "mark_failed" }

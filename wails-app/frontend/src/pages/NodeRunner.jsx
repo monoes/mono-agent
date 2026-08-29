@@ -7,8 +7,7 @@ import {
   MessageSquare, Braces, LayoutDashboard, Building2,
 } from 'lucide-react'
 import * as WailsApp from '../wailsjs/go/main/App'
-import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime'
-import { api, notify } from '../services/api.js'
+import { api, notify, subscribeEvent } from '../services/api.js'
 import { confirm } from '../components/ConfirmDialog.jsx'
 import AIChatPanel from '../components/AIChatPanel.jsx'
 import OrgsPanel from '../components/OrgsPanel.jsx'
@@ -81,8 +80,8 @@ const parseGoTime = (s) => {
 // ── Status badge on node ──────────────────────────────────────────────────────
 function NodeStatusBadge({ status, itemCount, durationMs }) {
   if (!status) return null
-  const color = status === 'ok' ? '#10b981' : status === 'error' ? '#ef4444' : status === 'skipped' ? '#6b7280' : '#00b4d8'
-  const icon = status === 'ok' ? '✓' : status === 'error' ? '✕' : status === 'skipped' ? '—' : '…'
+  const color = status === 'ok' ? '#10b981' : status === 'error' ? '#ef4444' : status === 'skipped' ? '#6b7280' : status === 'waiting' ? '#f59e0b' : '#00b4d8'
+  const icon = status === 'ok' ? '✓' : status === 'error' ? '✕' : status === 'skipped' ? '—' : status === 'waiting' ? '⏸' : '…'
   return (
     <div style={{
       position: 'absolute', top: -10, right: -6,
@@ -96,7 +95,7 @@ function NodeStatusBadge({ status, itemCount, durationMs }) {
       boxShadow: `0 0 8px ${color}66`,
       whiteSpace: 'nowrap',
     }}>
-      {icon} {status === 'ok' ? `${itemCount} item${itemCount !== 1 ? 's' : ''}` : status === 'running' ? 'running' : status === 'skipped' ? 'skipped' : 'error'}
+      {icon} {status === 'ok' ? `${itemCount} item${itemCount !== 1 ? 's' : ''}` : status === 'running' ? 'running' : status === 'waiting' ? 'waiting' : status === 'skipped' ? 'skipped' : 'error'}
       {durationMs != null && !isNaN(durationMs) && status === 'ok' && <span style={{ opacity: 0.7 }}> · {durationMs}ms</span>}
     </div>
   )
@@ -115,7 +114,7 @@ function CanvasNode({ node, selected, zoom, onHeaderMouseDown, onOutputPortMouse
         position: 'absolute', left: node.x, top: node.y,
         width: NODE_W, height: h,
         background: 'linear-gradient(160deg,#0d1a28 0%,#091220 100%)',
-        border: `1.5px solid ${selected ? color : status === 'error' ? '#ef444444' : status === 'ok' ? '#10b98133' : status === 'skipped' ? '#6b728033' : status === 'running' ? '#00b4d866' : 'rgba(0,180,216,0.12)'}`,
+        border: `1.5px solid ${selected ? color : status === 'error' ? '#ef444444' : status === 'ok' ? '#10b98133' : status === 'skipped' ? '#6b728033' : status === 'waiting' ? '#f59e0b66' : status === 'running' ? '#00b4d866' : 'rgba(0,180,216,0.12)'}`,
         borderRadius: 10,
         boxShadow: selected
           ? `0 0 0 1.5px ${color}55, 0 12px 32px rgba(0,0,0,.7)`
@@ -438,7 +437,7 @@ function Inspector({ node, onConfigChange, onClose, onNavigate }) {
       }}>
         <div style={{ width: 8, height: 8, borderRadius: '50%', background: color }} />
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: '#e2e8f0', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>{node.label}</span>
-        <button onMouseDown={onClose} aria-label="Close inspector" style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex', padding: 2 }}
+        <button onClick={onClose} aria-label="Close inspector" style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex', padding: 2 }}
           onMouseEnter={e => e.currentTarget.style.color = '#fff'}
           onMouseLeave={e => e.currentTarget.style.color = 'var(--text-muted)'}
         ><X size={12} /></button>
@@ -836,6 +835,12 @@ function Inspector({ node, onConfigChange, onClose, onNavigate }) {
                 <Loader size={11} style={{ animation: 'spin 0.7s linear infinite' }} /> Running…
               </div>
             )}
+            {node.runStatus === 'waiting' && (
+              <div style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', borderRadius: 6, padding: '8px 10px', display: 'flex', alignItems: 'center', gap: 5 }}>
+                <Clock size={11} color="#f59e0b" />
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#f59e0b' }}>WAITING — paused for human review</span>
+              </div>
+            )}
             {node.runStatus === 'error' && (
               <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 6, padding: '8px 10px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 4 }}>
@@ -915,25 +920,31 @@ function Label({ children, style }) {
   )
 }
 
-// ── Topological sort for execution order ──────────────────────────────────────
-function topoSort(nodes, edges) {
-  const inDeg = {}
+// ── Cycle detection: would adding edge source→target create a loop? ──────────
+// True when target already reaches source through existing edges.
+function wouldCreateCycle(edges, source, target) {
   const adj = {}
-  nodes.forEach(n => { inDeg[n.id] = 0; adj[n.id] = [] })
-  edges.forEach(e => {
-    if (adj[e.source] && inDeg[e.target] !== undefined) {
-      adj[e.source].push(e.target)
-      inDeg[e.target]++
-    }
-  })
-  const queue = nodes.filter(n => inDeg[n.id] === 0).map(n => n.id)
-  const order = []
-  while (queue.length) {
-    const id = queue.shift()
-    order.push(id)
-    adj[id].forEach(next => { if (--inDeg[next] === 0) queue.push(next) })
+  edges.forEach(e => { (adj[e.source] = adj[e.source] || []).push(e.target) })
+  const seen = new Set()
+  const stack = [target]
+  while (stack.length) {
+    const id = stack.pop()
+    if (id === source) return true
+    if (seen.has(id)) continue
+    seen.add(id)
+    ;(adj[id] || []).forEach(n => stack.push(n))
   }
-  return order
+  return false
+}
+
+// ── Resolve a stored connection handle ('main', 'true', …) to a port index ───
+// Handles are port ids, not indexes; legacy files stored numeric strings.
+function resolvePortIdx(ports, handle) {
+  if (handle == null) return 0
+  const byId = (ports || []).findIndex(p => p.id === handle)
+  if (byId !== -1) return byId
+  const n = parseInt(handle, 10)
+  return isNaN(n) ? 0 : n
 }
 
 // ── Main page ─────────────────────────────────────────────────────────────────
@@ -980,7 +991,7 @@ export default function NodeRunner({ onNavigate, navData }) {
   // Shared: map execution detail → node badges
   const applyExecDetail = (detail) => {
     if (!detail) return
-    setExecOverlay({ id: detail.id, status: detail.status, nodes: detail.nodes || [] })
+    setExecOverlay({ id: detail.id, status: detail.status, nodes: detail.nodes || [], hint: detail.hint || null })
     setNodes(prev => {
       const byId = {}; const byName = {}
       ;(detail.nodes || []).forEach(en => { byId[en.node_id] = en; byName[en.node_name] = en })
@@ -991,6 +1002,7 @@ export default function NodeRunner({ onNavigate, navData }) {
         let runStatus = null
         if (s === 'SUCCESS' || s === 'COMPLETED') runStatus = 'ok'
         else if (s === 'RUNNING') runStatus = 'running'
+        else if (s === 'WAITING') runStatus = 'waiting'
         else if (s === 'FAILED') runStatus = 'error'
         else if (s === 'SKIPPED') runStatus = 'skipped'
         let durationMs = null
@@ -1011,6 +1023,16 @@ export default function NodeRunner({ onNavigate, navData }) {
     })
   }
 
+  // Stop any active execution poll: clear the interval, the running flag,
+  // per-node run state and the execution overlay. Callers that only want to
+  // replace the poll (startExecPoll) manage the interval themselves.
+  const stopPolling = () => {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
+    setRunning(false)
+    setExecOverlay(null)
+    setNodes(prev => prev.map(n => ({ ...n, runStatus: null, runInputItems: null, runOutputs: null, runOutputItems: 0, runDuration: null, runError: null })))
+  }
+
   // Start polling an execution by ID. Returns a cleanup function.
   const startExecPoll = (execId) => {
     if (pollRef.current) clearInterval(pollRef.current)
@@ -1022,11 +1044,13 @@ export default function NodeRunner({ onNavigate, navData }) {
         if (!detail) return
         applyExecDetail(detail)
         const st = (detail.status || '').toUpperCase()
-        if (st !== 'RUNNING' && st !== 'QUEUED' && st !== 'PENDING') {
+        // WAITING (paused at a Human-in-Loop node) may resume after approval,
+        // so keep polling it alongside the active statuses.
+        if (st !== 'RUNNING' && st !== 'QUEUED' && st !== 'PENDING' && st !== 'WAITING') {
           clearInterval(iv)
           if (pollRef.current === iv) pollRef.current = null
           setRunning(false)
-          setGlobalStatus(st === 'SUCCESS' || st === 'COMPLETED' ? 'ok' : st === 'SUCCESS_WITH_ERRORS' ? 'warning' : 'error')
+          setGlobalStatus(st === 'SUCCESS' || st === 'COMPLETED' ? 'ok' : st === 'SUCCESS_WITH_ERRORS' ? 'warning' : st === 'WAITING' ? 'waiting' : 'error')
         }
       } catch (e) { console.error('Poll error', e) }
     }, 2000)
@@ -1063,11 +1087,13 @@ export default function NodeRunner({ onNavigate, navData }) {
                 runStatus: null, runInputItems: null, runOutputs: null, runOutputItems: 0, runDuration: null, runError: null,
               }
             })
+            const nodeById = {}
+            loadedNodes.forEach(n => { nodeById[n.id] = n })
             const loadedEdges = (wf.connections || []).map(c => ({
               id: c.id, source: c.source_node_id, sourcePortId: c.source_handle,
-              sourcePortIdx: parseInt(c.source_handle) || 0,
+              sourcePortIdx: resolvePortIdx(nodeById[c.source_node_id]?.outputs, c.source_handle),
               target: c.target_node_id, targetPortId: c.target_handle,
-              targetPortIdx: parseInt(c.target_handle) || 0,
+              targetPortIdx: resolvePortIdx(nodeById[c.target_node_id]?.inputs, c.target_handle),
             }))
             setWfId(wf.id)
             setWfName(wf.name || 'Untitled Workflow')
@@ -1082,7 +1108,7 @@ export default function NodeRunner({ onNavigate, navData }) {
         if (cancelled) return
         applyExecDetail(detail)
         const st = (detail.status || '').toUpperCase()
-        if (st === 'RUNNING' || st === 'QUEUED' || st === 'PENDING') {
+        if (st === 'RUNNING' || st === 'QUEUED' || st === 'PENDING' || st === 'WAITING') {
           setRunning(true)
           startExecPoll(detail.id)
         }
@@ -1100,7 +1126,7 @@ export default function NodeRunner({ onNavigate, navData }) {
       try {
         const execs = await WailsApp.GetWorkflowExecutions(wfId, 3)
         if (cancelled || !execs?.length) return
-        const active = execs.find(e => { const s = (e.status||'').toUpperCase(); return s==='RUNNING'||s==='QUEUED'||s==='PENDING' })
+        const active = execs.find(e => { const s = (e.status||'').toUpperCase(); return s==='RUNNING'||s==='QUEUED'||s==='PENDING'||s==='WAITING' })
         if (active && !cancelled) {
           setRunning(true)
           startExecPoll(active.id)
@@ -1289,6 +1315,11 @@ export default function NodeRunner({ onNavigate, navData }) {
     const sNode = nodesRef.current.find(n => n.id === sourceNodeId)
     const tNode = nodesRef.current.find(n => n.id === targetNodeId)
     if (!sNode || !tNode) { dragRef.current = null; setPendingEdge(null); return }
+    if (wouldCreateCycle(edges, sourceNodeId, targetNodeId)) {
+      notify('connect nodes', 'Connection rejected: it would create a cycle')
+      dragRef.current = null; setPendingEdge(null)
+      return
+    }
     setEdges(prev => {
       if (prev.some(e => e.source === sourceNodeId && e.sourcePortIdx === sourcePortIdx && e.target === targetNodeId && e.targetPortIdx === targetPortIdx)) return prev
       return [...prev, {
@@ -1304,17 +1335,20 @@ export default function NodeRunner({ onNavigate, navData }) {
 
   // ── RUN ──────────────────────────────────────────────────────────────────
   const handleStop = useCallback(async () => {
-    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
     const execId = execOverlay?.id
-    setRunning(false)
+    stopPolling()
     setGlobalStatus('error')
     if (execId) {
       try { await api.cancelWorkflow(execId) } catch {}
     }
   }, [execOverlay])
 
+  // Per-run token: a stale exec-started listener from an earlier run must
+  // never resolve the current one.
+  const runTokenRef = useRef(0)
+
   const handleRun = async () => {
-    if (running || nodes.length === 0 || !wfId) return
+    if (running || nodes.length === 0) return
     stopRef.current = false
     setRunning(true)
     setGlobalStatus(null)
@@ -1322,33 +1356,47 @@ export default function NodeRunner({ onNavigate, navData }) {
     setNodes(prev => prev.map(n => ({ ...n, runStatus: null, runInputItems: null, runOutputs: null, runOutputItems: 0, runDuration: null, runError: null })))
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
 
-    try {
-      let currentWfId = wfId
-      if (isDirty) {
-        const saved = await handleSave()
-        if (saved?.id) currentWfId = saved.id
-      }
-      if (!currentWfId) { setRunning(false); return }
+    const runToken = ++runTokenRef.current
 
-      // Listen for the execution ID via Wails event — emitted when CLI prints "Execution started: <id>"
+    try {
+      // Unsaved workflow (no id yet) or dirty canvas: save first, then run.
+      let currentWfId = wfId
+      if (!wfId || isDirty) {
+        const saved = await handleSave()
+        if (!saved?.id) {
+          notify('run workflow', 'Auto-save failed — workflow not run')
+          setRunning(false)
+          return
+        }
+        currentWfId = saved.id
+      }
+
+      // Listen for the execution ID via Wails event — emitted when CLI prints
+      // "Execution started: <id>". subscribeEvent returns a cancel fn that
+      // removes only this listener (EventsOff would kill all of them).
+      let offEvent = () => {}
+      let cancelTimeout = () => {}
       const execIdPromise = new Promise((resolve) => {
-        const timeout = setTimeout(() => { EventsOff('workflow:exec-started'); resolve(null) }, 60000)
-        EventsOn('workflow:exec-started', (data) => {
-          if (data?.execution_id) {
-            clearTimeout(timeout)
-            EventsOff('workflow:exec-started')
-            resolve(data.execution_id)
-          }
+        offEvent = subscribeEvent('workflow:exec-started', (data) => {
+          if (runTokenRef.current !== runToken) return // stale run's listener
+          if (data?.execution_id) resolve(data.execution_id)
         })
+        const t = setTimeout(() => resolve(null), 60000)
+        cancelTimeout = () => clearTimeout(t)
       })
 
-      await api.runWorkflow(currentWfId)
+      try {
+        await api.runWorkflow(currentWfId)
+        const execId = await execIdPromise
+        if (runTokenRef.current !== runToken) return // superseded by a newer run
+        if (!execId) { setRunning(false); return }
 
-      const execId = await execIdPromise
-      if (!execId) { setRunning(false); return }
-
-      // Start polling execution detail — simple setInterval, no React effects
-      startExecPoll(execId)
+        // Start polling execution detail — simple setInterval, no React effects
+        startExecPoll(execId)
+      } finally {
+        cancelTimeout()
+        offEvent()
+      }
     } catch (err) {
       console.error('Run failed', err)
       setRunning(false)
@@ -1406,6 +1454,10 @@ export default function NodeRunner({ onNavigate, navData }) {
 
   // ── Load workflow ─────────────────────────────────────────────────────────
   const handleLoad = useCallback(async (id) => {
+    // Guard the dirty canvas: Load (modal), template creation and AI-created
+    // workflows all funnel through here.
+    if (isDirty && !(await confirm('Discard unsaved changes?', { title: 'Load Workflow', confirmLabel: 'Discard & Load' }))) return
+    stopPolling() // a poll from a previous run must not repaint the new canvas
     try {
       const wf = await GetWorkflow(id)
       if (!wf) return
@@ -1433,15 +1485,19 @@ export default function NodeRunner({ onNavigate, navData }) {
         outputs: deriveOutputs(nt),
         runStatus: null, runInputItems: null, runOutputs: null, runOutputItems: 0, runDuration: null, runError: null,
       }})
-      // Map backend WorkflowConnectionData → canvas edge shape
+      // Map backend WorkflowConnectionData → canvas edge shape. Handles are
+      // port ids ('main', 'true', …) — resolve to indexes; legacy numeric
+      // strings fall back to the parsed index.
+      const nodeById = {}
+      loadedNodes.forEach(n => { nodeById[n.id] = n })
       const loadedEdges = (wf.connections || []).map(c => ({
         id:           c.id,
         source:       c.source_node_id,
         sourcePortId: c.source_handle,
-        sourcePortIdx: parseInt(c.source_handle) || 0,
+        sourcePortIdx: resolvePortIdx(nodeById[c.source_node_id]?.outputs, c.source_handle),
         target:       c.target_node_id,
         targetPortId: c.target_handle,
-        targetPortIdx: parseInt(c.target_handle) || 0,
+        targetPortIdx: resolvePortIdx(nodeById[c.target_node_id]?.inputs, c.target_handle),
       }))
       setNodes(loadedNodes)
       setEdges(loadedEdges)
@@ -1453,7 +1509,7 @@ export default function NodeRunner({ onNavigate, navData }) {
     } catch (e) {
       console.error('Load failed', e)
     }
-  }, [])
+  }, [isDirty]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Auto-load last workflow on mount ──────────────────────────────────────
   useEffect(() => {
@@ -1468,15 +1524,20 @@ export default function NodeRunner({ onNavigate, navData }) {
   }, [wfActive, wfId])
 
   // ── New canvas ────────────────────────────────────────────────────────────
-  const handleNew = useCallback(async () => {
-    if (isDirty && nodes.length > 0) {
-      if (!(await confirm('Create a new workflow? Unsaved changes will be lost.', { title: 'New Workflow', confirmLabel: 'Discard & New', danger: false }))) return
-    }
+  const resetCanvas = useCallback(() => {
     setWfId(null); setWfName('Untitled Workflow'); setWfActive(false)
     setNodes([]); setEdges([]); setSelectedId(null); setGlobalStatus(null)
     setIsDirty(false); setCamera({ x: 60, y: 60, zoom: 1 })
     setExecOverlay(null)
-  }, [nodes.length, isDirty])
+  }, [])
+
+  const handleNew = useCallback(async () => {
+    if (isDirty && nodes.length > 0) {
+      if (!(await confirm('Create a new workflow? Unsaved changes will be lost.', { title: 'New Workflow', confirmLabel: 'Discard & New', danger: false }))) return
+    }
+    stopPolling()
+    resetCanvas()
+  }, [nodes.length, isDirty, resetCanvas]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Auto-layout: topological left-to-right layout ─────────────────────────
   const handleAutoLayout = useCallback(() => {
@@ -1572,7 +1633,7 @@ export default function NodeRunner({ onNavigate, navData }) {
 
         {/* Active toggle */}
         <button
-          onMouseDown={handleToggleActive}
+          onClick={handleToggleActive}
           title={wfActive ? 'Deactivate' : 'Activate'}
           style={{ background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, color: wfActive ? '#10b981' : 'var(--text-muted)', padding: '2px 4px' }}
         >
@@ -1602,7 +1663,9 @@ export default function NodeRunner({ onNavigate, navData }) {
             ? { color: '#10b981', label: 'done', Icon: CheckCircle }
             : globalStatus === 'warning'
               ? { color: '#fbbf24', label: 'done with errors', Icon: AlertCircle }
-              : { color: '#ef4444', label: 'failed', Icon: AlertCircle }
+              : globalStatus === 'waiting'
+                ? { color: '#f59e0b', label: 'waiting for review', Icon: Clock }
+                : { color: '#ef4444', label: 'failed', Icon: AlertCircle }
           return (
             <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <g.Icon size={11} color={g.color} />
@@ -1617,21 +1680,25 @@ export default function NodeRunner({ onNavigate, navData }) {
             display: 'flex', alignItems: 'center', gap: 6,
             padding: '3px 10px',
             background: execOverlay.status === 'RUNNING' ? 'rgba(0,180,216,0.1)' :
+                        execOverlay.status === 'WAITING' ? 'rgba(245,158,11,0.1)' :
                         execOverlay.status === 'COMPLETED' || execOverlay.status === 'SUCCESS' ? 'rgba(16,185,129,0.1)' :
                         execOverlay.status === 'FAILED' ? 'rgba(239,68,68,0.1)' : 'rgba(107,114,128,0.1)',
             border: `1px solid ${
               execOverlay.status === 'RUNNING' ? 'rgba(0,180,216,0.3)' :
+              execOverlay.status === 'WAITING' ? 'rgba(245,158,11,0.3)' :
               execOverlay.status === 'COMPLETED' || execOverlay.status === 'SUCCESS' ? 'rgba(16,185,129,0.3)' :
               execOverlay.status === 'FAILED' ? 'rgba(239,68,68,0.3)' : 'rgba(107,114,128,0.3)'}`,
             borderRadius: 6,
           }}>
             {execOverlay.status === 'RUNNING' && <Loader size={10} style={{ animation: 'spin 1s linear infinite', color: 'var(--cyan)' }} />}
+            {execOverlay.status === 'WAITING' && <Clock size={10} color="#f59e0b" />}
             {(execOverlay.status === 'COMPLETED' || execOverlay.status === 'SUCCESS') && <CheckCircle size={10} color="#10b981" />}
             {execOverlay.status === 'FAILED' && <AlertCircle size={10} color="#ef4444" />}
             {execOverlay.status === 'CANCELLED' && <X size={10} color="#6b7280" />}
             <span style={{
               fontFamily: 'var(--font-mono)', fontSize: 9,
               color: execOverlay.status === 'RUNNING' ? 'var(--cyan)' :
+                     execOverlay.status === 'WAITING' ? '#f59e0b' :
                      execOverlay.status === 'COMPLETED' || execOverlay.status === 'SUCCESS' ? '#10b981' :
                      execOverlay.status === 'FAILED' ? '#ef4444' : '#6b7280',
               textTransform: 'uppercase',
@@ -1655,18 +1722,32 @@ export default function NodeRunner({ onNavigate, navData }) {
           </div>
         )}
 
+        {/* HIL pause hint — WAITING runs wait for a human, they did not fail */}
+        {execOverlay?.status === 'WAITING' && (
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: '#f59e0b', display: 'flex', alignItems: 'center', gap: 5, whiteSpace: 'nowrap' }}>
+            {execOverlay.hint || 'Paused for human review'}
+            <button
+              onClick={() => onNavigate?.('hil')}
+              style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, fontFamily: 'var(--font-mono)', fontSize: 9, color: '#00b4d8', textDecoration: 'underline' }}
+              title="Open Human in Loop page"
+            >
+              Human in Loop →
+            </button>
+          </span>
+        )}
+
         <div style={{ flex: 1 }} />
 
         {/* New */}
-        <button style={tbBtn} onMouseDown={handleNew} title="New workflow"><Plus size={13} /></button>
+        <button style={tbBtn} onClick={handleNew} title="New workflow"><Plus size={13} /></button>
 
         {/* Load */}
-        <button style={tbBtn} onMouseDown={() => setShowWfModal(true)} title="Open saved workflow"><FolderOpen size={13} /></button>
+        <button style={tbBtn} onClick={() => setShowWfModal(true)} title="Open saved workflow"><FolderOpen size={13} /></button>
 
         {/* Save */}
         <button
           style={{ ...tbBtn, color: saving ? 'var(--text-muted)' : '#00b4d8', borderColor: 'rgba(0,180,216,0.3)' }}
-          onMouseDown={() => { if (!saving) setShowSaveModal(true) }}
+          onClick={() => { if (!saving) setShowSaveModal(true) }}
           title="Save workflow"
         >
           {saving ? <Loader size={12} style={{ animation: 'spin 0.7s linear infinite' }} /> : <Save size={13} />}
@@ -1675,18 +1756,18 @@ export default function NodeRunner({ onNavigate, navData }) {
         <div style={{ width: 1, height: 16, background: 'rgba(0,180,216,0.15)' }} />
 
         {/* Zoom */}
-        <button style={tbBtn} onMouseDown={() => setCamera(c => ({ ...c, zoom: Math.max(0.25, c.zoom / 1.2) }))} title="Zoom out"><ZoomOut size={13} /></button>
+        <button style={tbBtn} onClick={() => setCamera(c => ({ ...c, zoom: Math.max(0.25, c.zoom / 1.2) }))} title="Zoom out"><ZoomOut size={13} /></button>
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)', minWidth: 32, textAlign: 'center' }}>
           {Math.round(camera.zoom * 100)}%
         </span>
-        <button style={tbBtn} onMouseDown={() => setCamera(c => ({ ...c, zoom: Math.min(2.5, c.zoom * 1.2) }))} title="Zoom in"><ZoomIn size={13} /></button>
-        <button style={tbBtn} onMouseDown={() => setCamera({ x: 60, y: 60, zoom: 1 })} title="Reset view"><RotateCcw size={13} /></button>
-        <button style={tbBtn} onMouseDown={handleAutoLayout} title="Auto-layout nodes"><LayoutDashboard size={13} /></button>
+        <button style={tbBtn} onClick={() => setCamera(c => ({ ...c, zoom: Math.min(2.5, c.zoom * 1.2) }))} title="Zoom in"><ZoomIn size={13} /></button>
+        <button style={tbBtn} onClick={() => setCamera({ x: 60, y: 60, zoom: 1 })} title="Reset view"><RotateCcw size={13} /></button>
+        <button style={tbBtn} onClick={handleAutoLayout} title="Auto-layout nodes"><LayoutDashboard size={13} /></button>
 
         {/* Clear */}
         <button
           style={{ ...tbBtn, color: nodes.length ? 'rgba(239,68,68,0.6)' : 'var(--text-muted)' }}
-          onMouseDown={async () => { if (nodes.length > 0 && !(await confirm('Clear the entire canvas?', { title: 'Clear Canvas', confirmLabel: 'Clear' }))) return; setNodes([]); setEdges([]); setSelectedId(null); setGlobalStatus(null) }}
+          onClick={async () => { if (nodes.length > 0 && !(await confirm('Clear the entire canvas?', { title: 'Clear Canvas', confirmLabel: 'Clear' }))) return; setNodes([]); setEdges([]); setSelectedId(null); setGlobalStatus(null) }}
           title="Clear canvas"
           aria-label="Clear canvas"
         >
@@ -1696,7 +1777,7 @@ export default function NodeRunner({ onNavigate, navData }) {
         {/* JSON view toggle */}
         <button
           style={{ ...tbBtn, color: jsonView ? '#00b4d8' : 'var(--text-muted)', borderColor: jsonView ? 'rgba(0,180,216,0.3)' : 'rgba(0,180,216,0.15)', background: jsonView ? 'rgba(0,180,216,0.08)' : 'transparent' }}
-          onMouseDown={() => setJsonView(v => !v)}
+          onClick={() => setJsonView(v => !v)}
           title={jsonView ? 'Switch to visual canvas' : 'Switch to JSON view'}
         >
           <Braces size={13} />
@@ -1705,7 +1786,7 @@ export default function NodeRunner({ onNavigate, navData }) {
         {/* AI Chat toggle */}
         <button
           style={{ ...tbBtn, color: chatOpen ? '#00b4d8' : 'var(--text-muted)', borderColor: chatOpen ? 'rgba(0,180,216,0.3)' : 'rgba(0,180,216,0.15)', background: chatOpen ? 'rgba(0,180,216,0.08)' : 'transparent' }}
-          onMouseDown={() => setChatOpen(o => !o)}
+          onClick={() => setChatOpen(o => !o)}
           title="AI Assistant"
         >
           <MessageSquare size={13} />
@@ -1714,7 +1795,7 @@ export default function NodeRunner({ onNavigate, navData }) {
         {/* Orgs toggle */}
         <button
           style={{ ...tbBtn, color: orgsOpen ? '#00b4d8' : 'var(--text-muted)', borderColor: orgsOpen ? 'rgba(0,180,216,0.3)' : 'rgba(0,180,216,0.15)', background: orgsOpen ? 'rgba(0,180,216,0.08)' : 'transparent' }}
-          onMouseDown={() => setOrgsOpen(o => !o)}
+          onClick={() => setOrgsOpen(o => !o)}
           title="Orgs"
         >
           <Building2 size={13} />
@@ -1723,7 +1804,7 @@ export default function NodeRunner({ onNavigate, navData }) {
         {/* Run / Stop */}
         {running ? (
           <button
-            onMouseDown={handleStop}
+            onClick={handleStop}
             style={{
               ...tbBtn,
               background: 'rgba(239,68,68,0.12)',
@@ -1740,7 +1821,7 @@ export default function NodeRunner({ onNavigate, navData }) {
           </button>
         ) : (
           <button
-            onMouseDown={handleRun}
+            onClick={handleRun}
             disabled={nodes.length === 0}
             style={{
               ...tbBtn,
@@ -1774,7 +1855,15 @@ export default function NodeRunner({ onNavigate, navData }) {
         <WorkflowsModal
           currentId={wfId}
           onLoad={handleLoad}
-          onDelete={async (id) => { await DeleteWorkflow(id); if (id === wfId) { setWfId(null); setWfName('Untitled Workflow') } }}
+          onDelete={async (id) => {
+            if (!(await confirm('Delete this workflow? This cannot be undone.', { title: 'Delete Workflow', confirmLabel: 'Delete' }))) return false
+            await DeleteWorkflow(id)
+            if (id === wfId) {
+              stopPolling()
+              resetCanvas()
+            }
+            return true
+          }}
           onClose={() => setShowWfModal(false)}
         />
       )}

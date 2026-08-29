@@ -62,11 +62,16 @@ func newCommentCmd(cfg *globalConfig) *cobra.Command {
 					continue
 				}
 				targetID := storage.NewID()
+				// JSON-encode rather than Sprintf so a quote-bearing URL
+				// cannot produce corrupt JSON.
+				targetMeta, mErr := json.Marshal(map[string]string{"url": postURL})
+				if mErr != nil {
+					return fmt.Errorf("encoding target metadata: %w", mErr)
+				}
 				_, err = db.DB.Exec(
 					`INSERT INTO action_targets (id, action_id, platform, link, status, metadata)
 					 VALUES (?, ?, ?, ?, 'PENDING', ?)`,
-					targetID, actionID, platform, postURL,
-					fmt.Sprintf(`{"url":"%s"}`, postURL),
+					targetID, actionID, platform, postURL, string(targetMeta),
 				)
 				if err != nil {
 					return fmt.Errorf("creating target for %s: %w", postURL, err)

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -142,7 +143,7 @@ func (n *OutlookMailNode) Execute(ctx context.Context, input workflow.NodeInput,
 		if len(messageOverrides) > 0 {
 			reqBody["message"] = messageOverrides
 		}
-		data, err := outlookGraphRequest(ctx, "POST", outlookGraphBaseURL+"/messages/"+messageID+"/"+endpoint, accessToken, reqBody)
+		data, err := outlookGraphRequest(ctx, "POST", outlookMessageURL(messageID, endpoint), accessToken, reqBody)
 		if err != nil {
 			return nil, fmt.Errorf("outlook_mail %s: %w", operation, err)
 		}
@@ -163,11 +164,11 @@ func (n *OutlookMailNode) Execute(ctx context.Context, input workflow.NodeInput,
 		// is stable across that move, so grab it before sending and use it
 		// to resolve the new id afterward.
 		var internetMessageID string
-		if data, err := outlookGraphRequest(ctx, "GET", outlookGraphBaseURL+"/messages/"+messageID+"?$select=internetMessageId", accessToken, nil); err == nil {
+		if data, err := outlookGraphRequest(ctx, "GET", outlookMessageURL(messageID, "")+"?$select=internetMessageId", accessToken, nil); err == nil {
 			internetMessageID, _ = data["internetMessageId"].(string)
 		}
 		// POST /messages/{id}/send sends an existing draft as-is.
-		if _, err := outlookGraphRequest(ctx, "POST", outlookGraphBaseURL+"/messages/"+messageID+"/send", accessToken, map[string]interface{}{}); err != nil {
+		if _, err := outlookGraphRequest(ctx, "POST", outlookMessageURL(messageID, "send"), accessToken, map[string]interface{}{}); err != nil {
 			return nil, fmt.Errorf("outlook_mail send_draft: %w", err)
 		}
 		sentMessageID := messageID
@@ -191,7 +192,7 @@ func (n *OutlookMailNode) Execute(ctx context.Context, input workflow.NodeInput,
 		if messageID == "" {
 			return nil, fmt.Errorf("outlook_mail: message_id is required for delete_message")
 		}
-		if _, err := outlookGraphRequest(ctx, "DELETE", outlookGraphBaseURL+"/messages/"+messageID, accessToken, nil); err != nil {
+		if _, err := outlookGraphRequest(ctx, "DELETE", outlookMessageURL(messageID, ""), accessToken, nil); err != nil {
 			return nil, fmt.Errorf("outlook_mail delete_message: %w", err)
 		}
 		items = []workflow.Item{workflow.NewItem(map[string]interface{}{"status": "deleted", "message_id": messageID})}
@@ -201,26 +202,7 @@ func (n *OutlookMailNode) Execute(ctx context.Context, input workflow.NodeInput,
 		if mailbox == "" {
 			mailbox = "inbox"
 		}
-		url := fmt.Sprintf("%s/mailFolders/%s/messages?$top=%d&$select=id,subject,from,toRecipients,receivedDateTime,body,bodyPreview,isRead,hasAttachments,webLink", outlookGraphBaseURL, mailbox, maxResults)
-		// $search (full-text over subject/body/sender, or a field-scoped query
-		// like `from:someone@x.com` or `subject:invoice`) and $filter are
-		// mutually exclusive in the same Graph request, so prefer $search when
-		// given — it covers the more common "find this email" case directly.
-		if search := strVal(config, "search"); search != "" {
-			url += "&$search=" + gmailURLEncode(`"`+search+`"`)
-		} else {
-			var filters []string
-			if unreadOnly, _ := config["unread_only"].(bool); unreadOnly {
-				filters = append(filters, "isRead eq false")
-			}
-			if from := strVal(config, "from_address"); from != "" {
-				filters = append(filters, fmt.Sprintf("from/emailAddress/address eq '%s'", from))
-			}
-			if len(filters) > 0 {
-				url += "&$filter=" + gmailURLEncode(strings.Join(filters, " and "))
-			}
-		}
-		data, err := outlookGraphRequest(ctx, "GET", url, accessToken, nil)
+		data, err := outlookGraphRequest(ctx, "GET", outlookListMessagesURL(mailbox, maxResults, config), accessToken, nil)
 		if err != nil {
 			return nil, fmt.Errorf("outlook_mail list_messages: %w", err)
 		}
@@ -253,7 +235,7 @@ func (n *OutlookMailNode) Execute(ctx context.Context, input workflow.NodeInput,
 		if messageID == "" {
 			return nil, fmt.Errorf("outlook_mail: message_id is required for get_message")
 		}
-		data, err := outlookGraphRequest(ctx, "GET", outlookGraphBaseURL+"/messages/"+messageID, accessToken, nil)
+		data, err := outlookGraphRequest(ctx, "GET", outlookMessageURL(messageID, ""), accessToken, nil)
 		if err != nil {
 			return nil, fmt.Errorf("outlook_mail get_message: %w", err)
 		}
@@ -265,6 +247,50 @@ func (n *OutlookMailNode) Execute(ctx context.Context, input workflow.NodeInput,
 	}
 
 	return []workflow.NodeOutput{{Handle: "main", Items: items}}, nil
+}
+
+// outlookMessageURL builds a /me/messages/{id}[/{action}] request URL with
+// the message id path-escaped. Graph message ids can contain '?', '#', and
+// '/', which would otherwise truncate or corrupt the URL path.
+func outlookMessageURL(messageID, action string) string {
+	u := outlookGraphBaseURL + "/messages/" + url.PathEscape(messageID)
+	if action != "" {
+		u += "/" + action
+	}
+	return u
+}
+
+// escapeODataString escapes a string for use inside a single-quoted OData
+// ($filter) literal: single quotes are doubled, per the OData v4 ABNF —
+// without this an address like o'brien@x.com breaks out of the literal.
+func escapeODataString(s string) string {
+	return strings.ReplaceAll(s, "'", "''")
+}
+
+// outlookListMessagesURL builds the list_messages request URL. $search
+// (full-text over subject/body/sender, or a field-scoped query like
+// `from:someone@x.com` or `subject:invoice`) and $filter are mutually
+// exclusive in the same Graph request, so $search wins when given — it
+// covers the more common "find this email" case directly. The mailbox
+// segment and the from-address OData literal are config-influenced, so both
+// are escaped (PathEscape and escapeODataString respectively).
+func outlookListMessagesURL(mailbox string, maxResults int, config map[string]interface{}) string {
+	u := fmt.Sprintf("%s/mailFolders/%s/messages?$top=%d&$select=id,subject,from,toRecipients,receivedDateTime,body,bodyPreview,isRead,hasAttachments,webLink",
+		outlookGraphBaseURL, url.PathEscape(mailbox), maxResults)
+	if search := strVal(config, "search"); search != "" {
+		return u + "&$search=" + gmailURLEncode(`"`+search+`"`)
+	}
+	var filters []string
+	if unreadOnly, _ := config["unread_only"].(bool); unreadOnly {
+		filters = append(filters, "isRead eq false")
+	}
+	if from := strVal(config, "from_address"); from != "" {
+		filters = append(filters, fmt.Sprintf("from/emailAddress/address eq '%s'", escapeODataString(from)))
+	}
+	if len(filters) > 0 {
+		u += "&$filter=" + gmailURLEncode(strings.Join(filters, " and "))
+	}
+	return u
 }
 
 // parseEmailAddresses splits a comma/semicolon-separated address string (as
@@ -291,9 +317,8 @@ func parseEmailAddresses(raw string) []map[string]interface{} {
 // current Graph id by its stable internetMessageId, used to recover the new
 // id Graph assigns when send_draft moves a message out of Drafts.
 func outlookFindSentIDByInternetMessageID(ctx context.Context, accessToken, internetMessageID string) (string, error) {
-	escaped := strings.ReplaceAll(internetMessageID, "'", "''")
 	url := outlookGraphBaseURL + "/mailFolders/sentitems/messages?$filter=" +
-		gmailURLEncode("internetMessageId eq '"+escaped+"'") + "&$select=id&$top=1"
+		gmailURLEncode("internetMessageId eq '"+escapeODataString(internetMessageID)+"'") + "&$select=id&$top=1"
 	data, err := outlookGraphRequest(ctx, "GET", url, accessToken, nil)
 	if err != nil {
 		return "", err
@@ -370,7 +395,7 @@ func enrichOutlookMessage(ctx context.Context, msg map[string]interface{}, acces
 // with a note instead of a path.
 func downloadOutlookAttachments(ctx context.Context, accessToken, messageID string) ([]map[string]interface{}, error) {
 	data, err := outlookGraphRequest(ctx, "GET",
-		outlookGraphBaseURL+"/messages/"+messageID+"/attachments", accessToken, nil)
+		outlookMessageURL(messageID, "attachments"), accessToken, nil)
 	if err != nil {
 		return nil, fmt.Errorf("list attachments: %w", err)
 	}

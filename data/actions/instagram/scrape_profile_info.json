@@ -13,9 +13,6 @@
       { "name": "selectedListItems", "type": "list", "description": "Profile URLs to scrape" }
     ],
     "optional": [
-      { "name": "fieldsToScrape", "type": "string", "default": "all", "enum": ["all", "basic", "followers", "posts"], "description": "Which profile fields to scrape" },
-      { "name": "includeRecentPosts", "type": "boolean", "default": false, "description": "Also scrape recent posts metadata" },
-      { "name": "maxRecentPosts", "type": "number", "default": 12, "min": 1, "max": 100, "description": "Max recent posts to scrape per profile" },
       { "name": "saveToListId", "type": "string", "default": "", "description": "Save scraped profiles to list ID" },
       { "name": "updateExisting", "type": "boolean", "default": true, "description": "Update existing records" }
     ]
@@ -159,11 +156,7 @@
       "type": "extract_attribute",
       "elementRef": "t2_find_profile_image",
       "attribute": "src",
-      "variable_name": "t2ProfileData",
-      "onSuccess": {
-        "variable": "t2ProfileData",
-        "value": true
-      }
+      "variable_name": "t2ProfileData"
     },
     {
       "id": "t2_set_result",

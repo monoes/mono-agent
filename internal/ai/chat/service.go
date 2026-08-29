@@ -38,6 +38,11 @@ TikTok: tiktok.find_by_keyword, tiktok.export_followers, tiktok.scrape_profile_i
 // preventing infinite loops.
 const maxToolRounds = 10
 
+// maxHistoryMessages caps how many prior messages are replayed to the
+// provider per turn. Older history stays persisted (GetHistory returns it)
+// but leaves the window, bounding prompt size on long conversations.
+const maxHistoryMessages = 40
+
 // NewClientFunc creates an AIClient from a provider config. It is a field on
 // ChatService so tests can inject a mock client without needing real providers.
 type NewClientFunc func(provider ai.AIProvider) (ai.AIClient, error)
@@ -95,10 +100,14 @@ func (s *ChatService) StreamChat(
 		return fmt.Errorf("create ai client: %w", err)
 	}
 
-	// 2. Load existing history.
+	// 2. Load existing history, windowed to the most recent
+	// maxHistoryMessages entries.
 	history, err := s.aiStore.GetChatHistory(workflowID)
 	if err != nil {
 		return fmt.Errorf("get chat history: %w", err)
+	}
+	if len(history) > maxHistoryMessages {
+		history = history[len(history)-maxHistoryMessages:]
 	}
 
 	// 3. Build messages array: system + history + new user message.

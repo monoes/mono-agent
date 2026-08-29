@@ -71,7 +71,7 @@ Each gets a `internal/bot/<platform>/` package (`bot.go` + `actions.go`) impleme
 step-template file per action, and relies on the existing `RegisterBrowserNodes()` /
 `action.GetLoader().ListAvailable()` mechanism for node-type registration — no new plumbing.
 DOM selectors follow the three-tier fallback (`call_bot_method` → hardcoded XPath →
-`configKey`/AI-assisted) per `THREE_TIER_FALLBACK.md`.
+`configKey`/AI-assisted) per `docs/THREE_TIER_FALLBACK.md`.
 
 ### `internal/bot/hackernews/`
 - **Actions:** `submit_post` (title, url|text), `reply_to_comment` (item_id, text),

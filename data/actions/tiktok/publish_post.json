@@ -75,10 +75,30 @@
       "id": "click_post",
       "type": "click",
       "elementRef": "find_post_button",
-      "waitFor": "post_published",
       "onSuccess": {
         "action": "update_progress"
       }
+    },
+    {
+      "id": "wait_3s_for_tiktok_post_processing",
+      "type": "wait",
+      "duration": 3,
+      "waitFor": "time"
+    },
+    {
+      "id": "check_tiktok_composer_still_open_after_post",
+      "type": "find_element",
+      "xpath": "//div[@contenteditable='true'] | //textarea",
+      "timeout": 3,
+      "variable_name": "composerStillOpen",
+      "onError": {
+        "action": "skip"
+      }
+    },
+    {
+      "id": "log_tiktok_post_outcome_unverified",
+      "type": "log",
+      "value": "Post submitted; verification limited: composer still open after 3s: {{composerStillOpen or 'no'}}"
     }
   ],
   "errorHandling": {

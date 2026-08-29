@@ -555,7 +555,7 @@ On application startup, the engine checks for executions in the `workflow_execut
 
 ## 6. New Platform Actions
 
-All new actions follow the 3-tier fallback pattern documented in `THREE_TIER_FALLBACK.md`. Each new action requires:
+All new actions follow the 3-tier fallback pattern documented in `docs/THREE_TIER_FALLBACK.md`. Each new action requires:
 1. A Go bot method in `internal/bot/<platform>/actions.go` implementing Tier 1.
 2. Registration of the method in `GetMethodByName()` in `internal/bot/<platform>/bot.go`.
 3. A schema entry in `internal/config/schemas.go` for Tier 3 configKey fields.
@@ -868,7 +868,7 @@ All new actions follow the 3-tier fallback pattern documented in `THREE_TIER_FAL
 
 ### 6.4 Three-Tier Fallback Preservation for All New Actions
 
-Every bot method listed in section 6.1–6.3 must be wrapped in the 3-tier fallback pattern in the action JSON. The action JSON structure must follow exactly the template in `THREE_TIER_FALLBACK.md`:
+Every bot method listed in section 6.1–6.3 must be wrapped in the 3-tier fallback pattern in the action JSON. The action JSON structure must follow exactly the template in `docs/THREE_TIER_FALLBACK.md`:
 
 - Tier 1 step: `call_bot_method` with `onError: {"action": "skip"}`.
 - `check_t1` condition: `{"variable": "t1Result", "operator": "not_exists"}`.

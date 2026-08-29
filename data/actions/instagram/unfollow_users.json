@@ -189,6 +189,7 @@
       "id": "process_profiles",
       "iterator": "selectedListItems",
       "indexVar": "reachedIndex",
+      "maxItems": "{{maxUnfollowsPerSession or 50}}",
       "steps": [
         "t1_unfollow_user",
         "check_t1_result",

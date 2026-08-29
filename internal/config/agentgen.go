@@ -29,9 +29,14 @@ var runtimePriority = []string{
 }
 
 // maxHTMLChars caps the HTML sent in the prompt (DOM relevant to selectors
-// is front-loaded; this keeps prompts well under argv-free --prompt-file
-// limits — Exec passes prompts via --prompt argv, so stay conservative).
+// is front-loaded; the prompt travels via --prompt-file, but the cap still
+// bounds prompt size and cost).
 const maxHTMLChars = 60_000
+
+// agentGenBudgetUSD caps spend for one config-generation turn
+// (monomind --budget-usd): a single HTML→JSON extraction task must never
+// run up unbounded cost on the user's agent runtime.
+const agentGenBudgetUSD = 2.0
 
 // AgentGenerator generates field-extraction configs with a local agent.
 type AgentGenerator struct {
@@ -120,12 +125,22 @@ func (g *AgentGenerator) GenerateConfig(
 	execCtx, cancel := context.WithTimeout(ctx, 180*time.Second)
 	defer cancel()
 
+	// Sandbox: the agent runs in a fresh empty temp dir (no access to the
+	// user's working directory) with no tools and a hard spend cap.
+	sandbox, err := os.MkdirTemp("", "monoagent-agentgen-*")
+	if err != nil {
+		return nil, fmt.Errorf("create agent sandbox dir: %w", err)
+	}
+	defer os.RemoveAll(sandbox)
+
 	var answer strings.Builder
 	res, err := monomind.Exec(execCtx, monomind.ExecOptions{
 		Bin:          bin,
 		Runtime:      runtime,
 		Prompt:       prompt,
 		SystemPrompt: agentSystemPrompt,
+		Cwd:          sandbox,
+		BudgetUSD:    agentGenBudgetUSD,
 		Timeout:      170 * time.Second,
 	}, func(ev monomind.Event) {
 		if ev.Type == monomind.EventAssistant && ev.Text != "" {

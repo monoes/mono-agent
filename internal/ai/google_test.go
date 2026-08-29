@@ -6,7 +6,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -195,5 +199,113 @@ func TestGoogleStreamComplete(t *testing.T) {
 	}
 	if !gotDone {
 		t.Error("expected Done=true chunk")
+	}
+}
+
+// TestGoogleCompleteRetriesOn429 verifies non-streaming Complete retries a
+// 429 with backoff and succeeds once the server recovers.
+func TestGoogleCompleteRetriesOn429(t *testing.T) {
+	shrinkRetryDelays(t)
+
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&hits, 1) == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			w.Write([]byte(`{"error":{"code":429}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"recovered!"}],"role":"model"},"finishReason":"STOP"}]}`))
+	}))
+	defer srv.Close()
+
+	client := NewGoogleClient("test-key", srv.URL)
+	resp, err := client.Complete(context.Background(), CompletionRequest{
+		Model:    "gemini-2.0-flash",
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if resp.Content != "recovered!" {
+		t.Errorf("Content = %q, want %q", resp.Content, "recovered!")
+	}
+	if atomic.LoadInt32(&hits) != 2 {
+		t.Errorf("server hits = %d, want 2", hits)
+	}
+}
+
+// TestGoogleStreamToolCallIDsDistinct is the RB3 collision regression
+// test: Gemini function calls carry no ids, so synthetic ids must be
+// unique for every call in the stream — multiple calls to the SAME
+// function (here: two parts in one candidate, plus a follow-up chunk)
+// must not collide.
+func TestGoogleStreamToolCallIDsDistinct(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		chunks := []string{
+			`data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"create_nodes","args":{"a":1}}},{"functionCall":{"name":"create_nodes","args":{"a":2}}}],"role":"model"}}]}`,
+			`data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"create_nodes","args":{"a":3}}}],"role":"model"}}]}`,
+			`data: {"candidates":[{"content":{"parts":[],"role":"model"},"finishReason":"STOP"}]}`,
+		}
+		for _, chunk := range chunks {
+			w.Write([]byte(chunk + "\n\n"))
+			flusher.Flush()
+		}
+	}))
+	defer srv.Close()
+
+	client := NewGoogleClient("test-key", srv.URL)
+	var ids []string
+	err := client.StreamComplete(context.Background(), CompletionRequest{
+		Model:    "gemini-2.0-flash",
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+	}, func(chunk StreamChunk) {
+		for _, tc := range chunk.ToolCalls {
+			ids = append(ids, tc.ID)
+		}
+	})
+	if err != nil {
+		t.Fatalf("StreamComplete: %v", err)
+	}
+	if len(ids) < 2 {
+		t.Fatalf("got %d tool call ids, want >= 2", len(ids))
+	}
+	seen := make(map[string]bool)
+	for _, id := range ids {
+		if seen[id] {
+			t.Errorf("tool call ids collided: %v", ids)
+		}
+		seen[id] = true
+	}
+}
+
+// TestDebugLogSecurePath verifies the opt-in debug log lands under
+// ~/.monoagent/logs/ with 0600 perms instead of a world-readable /tmp file.
+func TestDebugLogSecurePath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix-style HOME override")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MONOAGENT_GOOGLE_DEBUG", "1")
+
+	debugLog("probe %s", "hello")
+
+	path := filepath.Join(home, ".monoagent", "logs", "google-debug.log")
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("debug log not created at %s: %v", path, err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("debug log perms = %o, want 600", perm)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read debug log: %v", err)
+	}
+	if !strings.Contains(string(raw), "probe hello") {
+		t.Errorf("debug log content = %q, want the probe line", raw)
 	}
 }

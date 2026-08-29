@@ -3,8 +3,10 @@ package chat
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/zalando/go-keyring"
 
@@ -183,6 +185,81 @@ func TestGetHistory(t *testing.T) {
 	}
 	if history[3].Content != "Response 2" {
 		t.Errorf("history[3].Content = %q, want %q", history[3].Content, "Response 2")
+	}
+}
+
+// capturingAIClient records every request it serves, for windowing checks.
+type capturingAIClient struct {
+	mockAIClient
+	requests []ai.CompletionRequest
+}
+
+func (c *capturingAIClient) Complete(ctx context.Context, req ai.CompletionRequest) (ai.CompletionResponse, error) {
+	c.requests = append(c.requests, req)
+	return ai.CompletionResponse{Content: c.mockAIClient.response, FinishReason: "stop"}, nil
+}
+
+func (c *capturingAIClient) StreamComplete(ctx context.Context, req ai.CompletionRequest, onChunk func(ai.StreamChunk)) error {
+	c.requests = append(c.requests, req)
+	onChunk(ai.StreamChunk{Content: c.mockAIClient.response, Done: true})
+	return nil
+}
+
+// TestStreamChatWindowsHistory is the RB3 unbounded-history regression
+// test: a long persisted history is replayed to the provider windowed to
+// the last maxHistoryMessages entries, not in full.
+func TestStreamChatWindowsHistory(t *testing.T) {
+	svc := newTestService(t, "ok", "wf-win")
+	mock := &capturingAIClient{mockAIClient: mockAIClient{response: "ok"}}
+	svc.newClientFn = func(provider ai.AIProvider) (ai.AIClient, error) {
+		return mock, nil
+	}
+
+	// Seed 60 history messages directly in the store.
+	base := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < 60; i++ {
+		if err := svc.aiStore.SaveChatMessage(ai.ChatMessage{
+			ID:         fmt.Sprintf("h%03d", i),
+			WorkflowID: "wf-win",
+			Role:       ai.RoleUser,
+			Content:    fmt.Sprintf("history %d", i),
+			CreatedAt:  base.Add(time.Duration(i) * time.Second).Format(time.RFC3339),
+		}); err != nil {
+			t.Fatalf("seed h%d: %v", i, err)
+		}
+	}
+
+	if err := svc.StreamChat(context.Background(), "wf-win", "new message", "test-provider", "gpt-4o", nil, nil); err != nil {
+		t.Fatalf("StreamChat: %v", err)
+	}
+	if len(mock.requests) == 0 {
+		t.Fatal("no requests captured")
+	}
+
+	msgs := mock.requests[0].Messages
+	wantTotal := 1 + maxHistoryMessages + 1 // system + windowed history + new user msg
+	if len(msgs) != wantTotal {
+		t.Fatalf("request carries %d messages, want %d (windowed)", len(msgs), wantTotal)
+	}
+	if msgs[0].Role != ai.RoleSystem {
+		t.Errorf("msgs[0].Role = %q, want system", msgs[0].Role)
+	}
+	if msgs[len(msgs)-1].Content != "new message" {
+		t.Errorf("last message = %q, want the new user message", msgs[len(msgs)-1].Content)
+	}
+	// The window must contain the NEWEST history: first history entry is #20
+	// of 60 (indexes 0-59, window drops the oldest 20).
+	if got := msgs[1].Content; got != "history 20" {
+		t.Errorf("window starts at %q, want %q", got, "history 20")
+	}
+
+	// Full history stays persisted and unwindowed via GetHistory.
+	full, err := svc.GetHistory("wf-win")
+	if err != nil {
+		t.Fatalf("GetHistory: %v", err)
+	}
+	if len(full) != 62 { // 60 seeded + new user + final assistant
+		t.Errorf("persisted history = %d messages, want 62", len(full))
 	}
 }
 

@@ -36,6 +36,106 @@ var reservedPaths = map[string]bool{
 // XBot implements botpkg.BotAdapter for X (formerly Twitter).
 type XBot struct{}
 
+// sendVerificationTimeout bounds the post-send poll that confirms a DM was
+// actually delivered (composer cleared or message bubble rendered).
+const sendVerificationTimeout = 3 * time.Second
+
+// dmBubbleSelectors are best-effort selectors for rendered DM bubbles in the
+// conversation thread, used as the "OR" branch of send verification.
+var dmBubbleSelectors = []string{
+	"div[data-testid='messageEntry']",
+	"div[data-testid='DmActivityContainer'] div[dir='ltr']",
+}
+
+// handleTextMatches reports whether the text of a search-result row contains
+// the target username (case-insensitive, ignoring the "@" prefix). It mirrors
+// Instagram's approach of embedding the username in the search-result
+// selector so a wrong-recipient click can never happen.
+func handleTextMatches(resultText, target string) bool {
+	if target == "" {
+		return false
+	}
+	normalize := func(s string) string {
+		return strings.TrimPrefix(strings.ToLower(strings.TrimSpace(s)), "@")
+	}
+	return strings.Contains(normalize(resultText), normalize(target))
+}
+
+// truncateForError shortens a string for inclusion in error messages.
+func truncateForError(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max]) + "…"
+}
+
+// messageSnippet returns the searchable portion of a message used to match a
+// rendered message bubble (long messages may be visually truncated by the UI).
+func messageSnippet(message string) string {
+	const maxSnippet = 80
+	r := []rune(message)
+	if len(r) > maxSnippet {
+		return string(r[:maxSnippet])
+	}
+	return message
+}
+
+// sendVerified reports whether the observable page state confirms the message
+// was sent: the composer is cleared, or a message bubble containing the
+// message snippet has rendered in the thread.
+func sendVerified(composerText string, bubbleTexts []string, message string) bool {
+	if strings.TrimSpace(composerText) == "" {
+		return true
+	}
+	snippet := messageSnippet(message)
+	for _, bubble := range bubbleTexts {
+		if strings.Contains(bubble, snippet) {
+			return true
+		}
+	}
+	return false
+}
+
+// composerText reads the current text of a message composer element,
+// handling both contenteditable divs (innerText) and textareas (value).
+func composerText(el *rod.Element) string {
+	if el == nil {
+		return ""
+	}
+	res, err := el.Eval(`() => this.value !== undefined ? this.value : (this.innerText || '')`)
+	if err != nil || res == nil {
+		return ""
+	}
+	return res.Value.Str()
+}
+
+// verifyMessageSent polls the page for up to sendVerificationTimeout to
+// confirm the message was actually sent. Verification failure is an error —
+// a send we cannot observe is reported as "not sent", never as success.
+func verifyMessageSent(page *rod.Page, msgInput *rod.Element, message string) error {
+	deadline := time.Now().Add(sendVerificationTimeout)
+	for time.Now().Before(deadline) {
+		var bubbleTexts []string
+		for _, sel := range dmBubbleSelectors {
+			els, err := page.Elements(sel)
+			if err != nil {
+				continue
+			}
+			for _, el := range els {
+				if text, tErr := el.Text(); tErr == nil {
+					bubbleTexts = append(bubbleTexts, text)
+				}
+			}
+		}
+		if sendVerified(composerText(msgInput), bubbleTexts, message) {
+			return nil
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	return fmt.Errorf("x: send could not be verified (composer not cleared and no message bubble rendered within %s)", sendVerificationTimeout)
+}
+
 func init() {
 	botpkg.PlatformRegistry["X"] = func() botpkg.BotAdapter {
 		return &XBot{}
@@ -195,7 +295,10 @@ func (b *XBot) SendMessage(ctx context.Context, p browser.PageInterface, usernam
 	}
 	time.Sleep(2 * time.Second)
 
-	// Select the first result from the user search.
+	// Select the first search result whose handle matches the target
+	// username. Clicking a result without verifying its handle risks DM-ing
+	// the wrong user, so mismatched results are skipped and a fully
+	// mismatched result set is a hard error — the message is never typed.
 	resultSelectors := []string{
 		"div[data-testid='TypeaheadUser']",
 		"div[role='option']",
@@ -203,32 +306,71 @@ func (b *XBot) SendMessage(ctx context.Context, p browser.PageInterface, usernam
 	}
 
 	clicked := false
+	var firstResultText string
 	for _, sel := range resultSelectors {
-		resultEl, rErr := page.Timeout(5 * time.Second).Element(sel)
-		if rErr == nil && resultEl != nil {
+		resultEls, rErr := page.Timeout(5 * time.Second).Elements(sel)
+		if rErr != nil || len(resultEls) == 0 {
+			continue
+		}
+		for _, resultEl := range resultEls {
+			text, tErr := resultEl.Text()
+			if tErr != nil {
+				continue
+			}
+			trimmed := strings.TrimSpace(text)
+			if firstResultText == "" {
+				firstResultText = trimmed
+			}
+			if !handleTextMatches(trimmed, username) {
+				continue
+			}
 			if clickErr := resultEl.Click(proto.InputMouseButtonLeft, 1); clickErr == nil {
 				clicked = true
 				break
 			}
 		}
+		if clicked {
+			break
+		}
 	}
 
 	if !clicked {
+		if firstResultText != "" {
+			return fmt.Errorf("x: search result '%s' does not match target username '%s'", truncateForError(firstResultText, 80), username)
+		}
 		return fmt.Errorf("x: could not select user %q from search results", username)
 	}
 	time.Sleep(1 * time.Second)
 
 	// Click the "Next" button to open the conversation.
-	nextBtnSelectors := []string{
+	nextBtnCSS := []string{
 		"div[data-testid='nextButton']",
 		"button[data-testid='nextButton']",
-		"div[role='button']:has-text('Next')",
 	}
-	for _, sel := range nextBtnSelectors {
+	nextBtnXPaths := []string{
+		"//div[@role='button'][normalize-space(.)='Next']",
+	}
+	nextClicked := false
+	for _, sel := range nextBtnCSS {
 		nextBtn, nErr := page.Timeout(3 * time.Second).Element(sel)
 		if nErr == nil && nextBtn != nil {
-			_ = nextBtn.Click(proto.InputMouseButtonLeft, 1)
-			break
+			if clickErr := nextBtn.Click(proto.InputMouseButtonLeft, 1); clickErr == nil {
+				nextClicked = true
+				break
+			}
+		}
+	}
+	if !nextClicked {
+		for _, xp := range nextBtnXPaths {
+			tryErr := rod.Try(func() {
+				btn := page.Timeout(3 * time.Second).MustElementX(xp)
+				if clickErr := btn.Click(proto.InputMouseButtonLeft, 1); clickErr == nil {
+					nextClicked = true
+				}
+			})
+			if tryErr == nil && nextClicked {
+				break
+			}
 		}
 	}
 	time.Sleep(2 * time.Second)
@@ -293,8 +435,7 @@ func (b *XBot) SendMessage(ctx context.Context, p browser.PageInterface, usernam
 		}
 	}
 
-	time.Sleep(1 * time.Second)
-	return nil
+	return verifyMessageSent(page, msgInput, message)
 }
 
 // GetProfileData scrapes the currently loaded X profile page and returns

@@ -3,6 +3,7 @@ package ai
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -273,6 +274,45 @@ func TestChatMessageCRUD(t *testing.T) {
 	}
 	if len(history) != 0 {
 		t.Errorf("GetChatHistory after clear: len = %d, want 0", len(history))
+	}
+}
+
+// TestChatHistorySameTimestampKeepsInsertOrder is the RB3 tie-ordering
+// regression test: messages saved within the same second must come back in
+// insert order after reload (rowid tiebreak, not an unstable sort).
+func TestChatHistorySameTimestampKeepsInsertOrder(t *testing.T) {
+	db := openTestDB(t)
+	store, err := NewAIStore(db)
+	if err != nil {
+		t.Fatalf("NewAIStore: %v", err)
+	}
+
+	const wfID = "wf-order"
+	const sameSecond = "2025-06-15T12:00:00Z"
+	for i := 0; i < 5; i++ {
+		m := ChatMessage{
+			ID:         fmt.Sprintf("m%d", i),
+			WorkflowID: wfID,
+			Role:       "user",
+			Content:    fmt.Sprintf("message %d", i),
+			CreatedAt:  sameSecond,
+		}
+		if err := store.SaveChatMessage(m); err != nil {
+			t.Fatalf("SaveChatMessage m%d: %v", i, err)
+		}
+	}
+
+	history, err := store.GetChatHistory(wfID)
+	if err != nil {
+		t.Fatalf("GetChatHistory: %v", err)
+	}
+	if len(history) != 5 {
+		t.Fatalf("GetChatHistory len = %d, want 5", len(history))
+	}
+	for i, m := range history {
+		if m.ID != fmt.Sprintf("m%d", i) {
+			t.Errorf("history[%d].ID = %q, want m%d (insert order not preserved)", i, m.ID, i)
+		}
 	}
 }
 

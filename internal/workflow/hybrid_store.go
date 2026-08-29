@@ -222,30 +222,6 @@ func (h *HybridWorkflowStore) SetExecutionNodeFinished(ctx context.Context, id s
 }
 
 // ---------------------------------------------------------------------------
-// Credentials — always SQLite
-// ---------------------------------------------------------------------------
-
-func (h *HybridWorkflowStore) CreateCredential(ctx context.Context, c *Credential) error {
-	return h.sql.CreateCredential(ctx, c)
-}
-
-func (h *HybridWorkflowStore) GetCredential(ctx context.Context, id string) (*Credential, error) {
-	return h.sql.GetCredential(ctx, id)
-}
-
-func (h *HybridWorkflowStore) ListCredentials(ctx context.Context, credType string) ([]Credential, error) {
-	return h.sql.ListCredentials(ctx, credType)
-}
-
-func (h *HybridWorkflowStore) UpdateCredential(ctx context.Context, c *Credential) error {
-	return h.sql.UpdateCredential(ctx, c)
-}
-
-func (h *HybridWorkflowStore) DeleteCredential(ctx context.Context, id string) error {
-	return h.sql.DeleteCredential(ctx, id)
-}
-
-// ---------------------------------------------------------------------------
 // Maintenance — SQLite
 // ---------------------------------------------------------------------------
 

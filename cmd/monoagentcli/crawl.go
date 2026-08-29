@@ -40,9 +40,18 @@ For the full guide:  monoagent ref crawling`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rawURL := args[0]
 
+			if waitSecs < 0 || waitSecs > 120 {
+				return fmt.Errorf("--wait must be between 0 and 120 seconds, got %d", waitSecs)
+			}
+
 			parsed, err := url.Parse(rawURL)
 			if err != nil {
 				return fmt.Errorf("invalid URL %q: %w", rawURL, err)
+			}
+			// file://, javascript:, and friends would point Rod at local or
+			// non-web content; only plain web pages make sense to crawl.
+			if parsed.Scheme != "http" && parsed.Scheme != "https" {
+				return fmt.Errorf("unsupported URL scheme %q — only http and https can be crawled", parsed.Scheme)
 			}
 
 			domain := strings.ReplaceAll(parsed.Hostname(), ".", "_")

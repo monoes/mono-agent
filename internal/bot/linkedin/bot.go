@@ -19,6 +19,113 @@ import (
 // LinkedInBot implements botpkg.BotAdapter for LinkedIn.
 type LinkedInBot struct{}
 
+// sendVerificationTimeout bounds the post-send poll that confirms a message
+// was actually delivered (composer cleared or message bubble rendered).
+const sendVerificationTimeout = 3 * time.Second
+
+// dmBubbleSelectors are best-effort selectors for rendered message bubbles in
+// the conversation thread, used as the "OR" branch of send verification.
+var dmBubbleSelectors = []string{
+	"div.msg-s-message-list__message",
+	"p.msg-s-message-list__body",
+}
+
+// messageSnippet returns the searchable portion of a message used to match a
+// rendered message bubble (long messages may be visually truncated by the UI).
+func messageSnippet(message string) string {
+	const maxSnippet = 80
+	r := []rune(message)
+	if len(r) > maxSnippet {
+		return string(r[:maxSnippet])
+	}
+	return message
+}
+
+// sendVerified reports whether the observable page state confirms the message
+// was sent: the composer is cleared, or a message bubble containing the
+// message snippet has rendered in the thread.
+func sendVerified(composerText string, bubbleTexts []string, message string) bool {
+	if strings.TrimSpace(composerText) == "" {
+		return true
+	}
+	snippet := messageSnippet(message)
+	for _, bubble := range bubbleTexts {
+		if strings.Contains(bubble, snippet) {
+			return true
+		}
+	}
+	return false
+}
+
+// composerText reads the current text of a message composer element,
+// handling both contenteditable divs (innerText) and textareas (value).
+func composerText(el *rod.Element) string {
+	if el == nil {
+		return ""
+	}
+	res, err := el.Eval(`() => this.value !== undefined ? this.value : (this.innerText || '')`)
+	if err != nil || res == nil {
+		return ""
+	}
+	return res.Value.Str()
+}
+
+// verifyMessageSent polls the page for up to sendVerificationTimeout to
+// confirm the message was actually sent. Verification failure is an error —
+// a send we cannot observe is reported as "not sent", never as success.
+func verifyMessageSent(page *rod.Page, msgInput *rod.Element, message string) error {
+	deadline := time.Now().Add(sendVerificationTimeout)
+	for time.Now().Before(deadline) {
+		var bubbleTexts []string
+		for _, sel := range dmBubbleSelectors {
+			els, err := page.Elements(sel)
+			if err != nil {
+				continue
+			}
+			for _, el := range els {
+				if text, tErr := el.Text(); tErr == nil {
+					bubbleTexts = append(bubbleTexts, text)
+				}
+			}
+		}
+		if sendVerified(composerText(msgInput), bubbleTexts, message) {
+			return nil
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	return fmt.Errorf("linkedin: send could not be verified (composer not cleared and no message bubble rendered within %s)", sendVerificationTimeout)
+}
+
+// firstElementText returns the trimmed text of the first element matching any
+// CSS selector (tried in order) or, failing those, any XPath expression.
+// It returns "" when nothing matches or all matches have empty text.
+func firstElementText(page *rod.Page, timeout time.Duration, css, xpaths []string) string {
+	for _, sel := range css {
+		el, err := page.Timeout(timeout).Element(sel)
+		if err != nil || el == nil {
+			continue
+		}
+		if text, tErr := el.Text(); tErr == nil {
+			if trimmed := strings.TrimSpace(text); trimmed != "" {
+				return trimmed
+			}
+		}
+	}
+	for _, xp := range xpaths {
+		var text string
+		tryErr := rod.Try(func() {
+			el := page.Timeout(timeout).MustElementX(xp)
+			if t, tErr := el.Text(); tErr == nil {
+				text = strings.TrimSpace(t)
+			}
+		})
+		if tryErr == nil && text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
 func init() {
 	botpkg.PlatformRegistry["LINKEDIN"] = func() botpkg.BotAdapter {
 		return &LinkedInBot{}
@@ -144,21 +251,38 @@ func (b *LinkedInBot) SendMessage(ctx context.Context, p browser.PageInterface, 
 	}
 	time.Sleep(3 * time.Second)
 
-	// Look for and click the "Message" button on the profile.
-	msgBtnSelectors := []string{
+	// Look for and click the "Message" button on the profile. Text-matching
+	// lookups use XPath — ":has-text()" is a Playwright pseudo-class, not
+	// valid CSS, and silently never matches in rod.
+	msgBtnCSS := []string{
 		"button.message-anywhere-button",
 		"a.message-anywhere-button",
-		"button:has-text('Message')",
 		"button[aria-label*='Message']",
-		"div.pvs-profile-actions button:has-text('Message')",
+	}
+	msgBtnXPaths := []string{
+		"//button[normalize-space(.)='Message']",
+		"//div[contains(@class, 'pvs-profile-actions')]//button[normalize-space(.)='Message']",
 	}
 
 	clicked := false
-	for _, sel := range msgBtnSelectors {
+	for _, sel := range msgBtnCSS {
 		btn, findErr := page.Timeout(5 * time.Second).Element(sel)
 		if findErr == nil && btn != nil {
 			if clickErr := btn.Click(proto.InputMouseButtonLeft, 1); clickErr == nil {
 				clicked = true
+				break
+			}
+		}
+	}
+	if !clicked {
+		for _, xp := range msgBtnXPaths {
+			tryErr := rod.Try(func() {
+				btn := page.Timeout(5 * time.Second).MustElementX(xp)
+				if clickErr := btn.Click(proto.InputMouseButtonLeft, 1); clickErr == nil {
+					clicked = true
+				}
+			})
+			if tryErr == nil && clicked {
 				break
 			}
 		}
@@ -240,8 +364,7 @@ func (b *LinkedInBot) SendMessage(ctx context.Context, p browser.PageInterface, 
 		}
 	}
 
-	time.Sleep(1 * time.Second)
-	return nil
+	return verifyMessageSent(page, msgInput, message)
 }
 
 // GetProfileData scrapes the currently loaded LinkedIn profile page and
@@ -312,37 +435,28 @@ func (b *LinkedInBot) GetProfileData(ctx context.Context, p browser.PageInterfac
 		}
 	}
 
-	// Connection count.
-	connectionSelectors := []string{
-		"span.t-bold:has-text('connections')",
+	// Connection count. The text-filtered lookup uses XPath because
+	// ":has-text()" is not valid CSS and would never match.
+	connectionCSS := []string{
 		"li.text-body-small span.t-bold",
 		"span.pv-top-card--list-bullet span.t-bold",
 	}
-	for _, sel := range connectionSelectors {
-		el, findErr := page.Timeout(3 * time.Second).Element(sel)
-		if findErr == nil && el != nil {
-			text, tErr := el.Text()
-			if tErr == nil && strings.TrimSpace(text) != "" {
-				data["connection_count"] = strings.TrimSpace(text)
-				break
-			}
-		}
+	connectionXPaths := []string{
+		"//span[contains(@class, 't-bold')][contains(normalize-space(.), 'connection')]",
+	}
+	if text := firstElementText(page, 3*time.Second, connectionCSS, connectionXPaths); text != "" {
+		data["connection_count"] = text
 	}
 
 	// Follower count.
-	followerSelectors := []string{
-		"span:has-text('followers')",
+	followerCSS := []string{
 		"p.pvs-header-actions__subtitle span",
 	}
-	for _, sel := range followerSelectors {
-		el, findErr := page.Timeout(3 * time.Second).Element(sel)
-		if findErr == nil && el != nil {
-			text, tErr := el.Text()
-			if tErr == nil && strings.TrimSpace(text) != "" {
-				data["follower_count"] = strings.TrimSpace(text)
-				break
-			}
-		}
+	followerXPaths := []string{
+		"//span[contains(normalize-space(.), 'follower')]",
+	}
+	if text := firstElementText(page, 3*time.Second, followerCSS, followerXPaths); text != "" {
+		data["follower_count"] = text
 	}
 
 	// About / summary section.

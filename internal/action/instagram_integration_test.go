@@ -154,8 +154,8 @@ func newTestExecutor(
 	return executor, sa, events
 }
 
-// drainEvents reads and logs all events from the channel until it's closed.
-func drainEvents(t *testing.T, events chan ExecutionEvent) {
+// drainIntegrationEvents reads and logs all events from the channel until it's closed.
+func drainIntegrationEvents(t *testing.T, events chan ExecutionEvent) {
 	t.Helper()
 	for evt := range events {
 		t.Logf("  [event] %s: %s", evt.Type, evt.Message)
@@ -223,7 +223,7 @@ func TestInstagramPostCommenting(t *testing.T) {
 	defer cancel()
 
 	executor, sa, events := newTestExecutor(t, ctx, page, logger)
-	go drainEvents(t, events)
+	go drainIntegrationEvents(t, events)
 
 	// Test data: comment on mortezanoes' post.
 	postURL := "https://www.instagram.com/p/CFEtpoYKB53/"
@@ -290,7 +290,7 @@ func TestInstagramPostLiking(t *testing.T) {
 	defer cancel()
 
 	executor, sa, events := newTestExecutor(t, ctx, page, logger)
-	go drainEvents(t, events)
+	go drainIntegrationEvents(t, events)
 
 	// Test data: like a post on mortezanoes' account.
 	postURL := "https://www.instagram.com/p/CFEtpoYKB53/"
@@ -349,7 +349,7 @@ func TestInstagramBulkMessaging(t *testing.T) {
 	defer cancel()
 
 	executor, sa, events := newTestExecutor(t, ctx, page, logger)
-	go drainEvents(t, events)
+	go drainIntegrationEvents(t, events)
 
 	// Test data: send a DM to mortezanoes (user's own account).
 	profileURL := "https://www.instagram.com/mortezanoes/"
@@ -411,7 +411,7 @@ func TestInstagramCommentPost(t *testing.T) {
 	defer cancel()
 
 	executor, sa, events := newTestExecutor(t, ctx, page, logger)
-	go drainEvents(t, events)
+	go drainIntegrationEvents(t, events)
 
 	// Test data: comment on mortezanoes' post.
 	postURL := "https://www.instagram.com/p/CFEtpoYKB53/"
@@ -469,7 +469,7 @@ func TestInstagramFetchFollowers(t *testing.T) {
 	defer cancel()
 
 	executor, sa, events := newTestExecutor(t, ctx, page, logger)
-	go drainEvents(t, events)
+	go drainIntegrationEvents(t, events)
 
 	// Test data: fetch followers from mortezanoes' profile.
 	profileURL := "https://www.instagram.com/mortezanoes/"
@@ -518,7 +518,7 @@ func TestInstagramPublishContent(t *testing.T) {
 	defer cancel()
 
 	executor, sa, events := newTestExecutor(t, ctx, page, logger)
-	go drainEvents(t, events)
+	go drainIntegrationEvents(t, events)
 
 	// Test data: publish a test post.
 	// NOTE: Replace with a valid local image path before running.
@@ -570,7 +570,7 @@ func TestInstagramInteractWithPosts(t *testing.T) {
 	defer cancel()
 
 	executor, sa, events := newTestExecutor(t, ctx, page, logger)
-	go drainEvents(t, events)
+	go drainIntegrationEvents(t, events)
 
 	// Test data: interact with posts tagged "test".
 	keyword := "test"
@@ -622,7 +622,7 @@ func TestInstagramBulkReplying(t *testing.T) {
 	defer cancel()
 
 	executor, sa, events := newTestExecutor(t, ctx, page, logger)
-	go drainEvents(t, events)
+	go drainIntegrationEvents(t, events)
 
 	// Test data: reply to a conversation in DM inbox.
 	// Use a known conversation URL (a DM thread with yourself or a test account).
@@ -684,7 +684,7 @@ func TestInstagramProfileSearch(t *testing.T) {
 	defer cancel()
 
 	executor, sa, events := newTestExecutor(t, ctx, page, logger)
-	go drainEvents(t, events)
+	go drainIntegrationEvents(t, events)
 
 	// Test data: search profile info for mortezanoes.
 	profileURL := "https://www.instagram.com/mortezanoes/"
@@ -739,7 +739,7 @@ func TestInstagramKeywordSearch(t *testing.T) {
 	defer cancel()
 
 	executor, sa, events := newTestExecutor(t, ctx, page, logger)
-	go drainEvents(t, events)
+	go drainIntegrationEvents(t, events)
 
 	// Test data: search for posts tagged "travel" and extract profile info.
 	keyword := "travel"
@@ -787,7 +787,7 @@ func TestInstagramUserPostsInteraction(t *testing.T) {
 	defer cancel()
 
 	executor, sa, events := newTestExecutor(t, ctx, page, logger)
-	go drainEvents(t, events)
+	go drainIntegrationEvents(t, events)
 
 	// Test data: interact with posts from mortezanoes' profile.
 	username := "mortezanoes"
@@ -836,7 +836,7 @@ func TestInstagramBulkFollowing(t *testing.T) {
 	defer cancel()
 
 	executor, sa, events := newTestExecutor(t, ctx, page, logger)
-	go drainEvents(t, events)
+	go drainIntegrationEvents(t, events)
 
 	// Test data: follow mortezanoes profile.
 	profileURL := "https://www.instagram.com/mortezanoes/"
@@ -891,7 +891,7 @@ func TestInstagramBulkUnfollowing(t *testing.T) {
 	defer cancel()
 
 	executor, sa, events := newTestExecutor(t, ctx, page, logger)
-	go drainEvents(t, events)
+	go drainIntegrationEvents(t, events)
 
 	// Test data: unfollow mortezanoes profile.
 	profileURL := "https://www.instagram.com/mortezanoes/"
@@ -946,7 +946,7 @@ func TestInstagramStoryViewing(t *testing.T) {
 	defer cancel()
 
 	executor, sa, events := newTestExecutor(t, ctx, page, logger)
-	go drainEvents(t, events)
+	go drainIntegrationEvents(t, events)
 
 	// Test data: view stories on a profile that likely has active stories.
 	// Using instagram's own account as it typically has stories.
@@ -998,7 +998,7 @@ func TestInstagramPostScraping(t *testing.T) {
 	defer cancel()
 
 	executor, sa, events := newTestExecutor(t, ctx, page, logger)
-	go drainEvents(t, events)
+	go drainIntegrationEvents(t, events)
 
 	// Test data: scrape data from mortezanoes' post.
 	postURL := "https://www.instagram.com/p/CFEtpoYKB53/"
@@ -1053,7 +1053,7 @@ func TestInstagramCommentLiking(t *testing.T) {
 	defer cancel()
 
 	executor, sa, events := newTestExecutor(t, ctx, page, logger)
-	go drainEvents(t, events)
+	go drainIntegrationEvents(t, events)
 
 	// Test data: like a comment on mortezanoes' post.
 	postURL := "https://www.instagram.com/p/CFEtpoYKB53/"

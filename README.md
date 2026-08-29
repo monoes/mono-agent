@@ -528,9 +528,12 @@ Workflow triggers (`trigger.schedule`, `trigger.webhook`) only fire while a proc
 
 `chrome-extension/` lets workflow nodes drive **your real, already-logged-in Chrome browser** — the same model as consumer RPA tools. No separate automation profile, no re-authenticating for sites (like Google) that invalidate sessions ported into a scripted browser.
 
-- **Loopback only** — the extension connects to `ws://127.0.0.1:9222/monoagent` on your machine; nothing leaves localhost
+- **Loopback by default** — the bridge server binds loopback, and the extension refuses non-loopback servers. A per-session "Allow non-loopback server (unsafe)" checkbox in the popup overrides this for one save; it is never persisted
+- **Unauthenticated channel (same-user trust)** — the bridge carries no authentication: any process on your machine running as your user can connect and drive the browser through it. Don't expose or port-forward the bridge port
 - **Broad host permissions by design** — workflows can target any site, so the extension needs access to all tabs; it acts only when a `monoagentcli` process you started requests it
 - **Shared connection** — multiple CLI processes share one extension connection instead of fighting over the browser
+
+Pairing-based authentication between `monoagentcli` and the extension is planned and [tracked in issues](https://github.com/monoes/mono-agent/issues); until it lands, treat the channel as accessible to anything running as your user.
 
 Install (unpacked, not on the Web Store):
 
@@ -678,6 +681,7 @@ mono-agent/
 - [x] Outlook integration — read and send email via Microsoft Graph
 - [x] Encrypted Secrets Vault — OS keyring + AES-256-GCM + portable encrypted export
 - [x] MCP server — AI agents can list, run, and validate workflows
+- [x] Bluesky/Mastodon publishing nodes (`comm.bluesky`, `comm.mastodon`) — official APIs (ATProto/ActivityPub)
 
 **Coming next**
 - [ ] More trigger types — email, file watcher, database change
@@ -685,7 +689,7 @@ mono-agent/
 - [ ] Sub-workflow / reusable workflow node
 - [ ] Visual debugger — step-through execution in GUI
 - [ ] Marketplace — shareable workflow templates
-- [ ] Official-API publishing for Bluesky/Mastodon (ATProto/ActivityPub)
+- [ ] MCP registry listing + agent tool marketplace
 - [ ] Metrics dashboard — success rates, throughput, latency per profile
 
 ---
