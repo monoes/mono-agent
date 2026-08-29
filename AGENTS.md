@@ -156,9 +156,15 @@ monoagentcli secret add --kind secret --name aws \
 Note: `--value` exists as a shorthand but leaks through process listings
 and shell history — prefer stdin or the interactive prompt for real secrets.
 
-The vault requires the host OS keychain (macOS Keychain, Linux Secret
-Service, or Windows Credential Manager) — there is no headless bypass yet,
-tracked as a follow-up. On a machine without a keyring, `secret add` fails.
+The vault prefers the host OS keychain (macOS Keychain, Linux Secret
+Service, or Windows Credential Manager). On machines without one (headless
+CI, containers), setting `MONOAGENT_ALLOW_FILE_KEYRING=1` enables a
+file-based KEK fallback stored at `~/.monoagent/vault/.file-keyring`
+(permissions 0600); the CLI prints a loud warning whenever it is used.
+This is weaker than a real keychain — any process running as the same
+user, or anything with read access to the volume, can read the file — so
+treat it as a CI/container escape hatch, not a default. Without the env
+var, `secret add` fails closed.
 
 ## Profiles
 
@@ -203,6 +209,14 @@ gofmt -l .
 The desktop GUI (`wails-app/`) is optional and needs the Wails toolchain;
 the CLI is fully usable without it. State always lives in `~/.monoagent/`
 regardless of where the binary runs from.
+
+### Runtime environment variables
+
+| Variable | Effect |
+|---|---|
+| `MONOAGENT_WEBHOOK_ADDR` | Bind address (`host:port`) for the webhook trigger server. Default `127.0.0.1:9321` (loopback only). Override it under Docker/VMs so published ports actually forward. |
+| `MONOAGENT_WEBHOOK_ALLOWED_ORIGINS` | Comma-separated CORS allowlist for the webhook server. Default: unset — no CORS headers are sent. |
+| `MONOAGENT_ALLOW_FILE_KEYRING` | Set to `1` to allow the file-based keyring fallback when no OS keyring exists (see [Secrets](#secrets)). Default: unset — `secret add` fails closed on machines without a keyring. |
 
 ## Resource limits
 

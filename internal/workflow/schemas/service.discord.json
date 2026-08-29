@@ -1,0 +1,13 @@
+{
+  "credential_platform": "discord",
+  "fields": [
+    { "key": "credential_id", "label": "Discord Connection", "type": "credential_picker", "required": true },
+    { "key": "operation", "label": "Operation", "type": "select", "required": true, "options": ["send_message", "list_messages", "add_reaction", "list_channels"], "default": "send_message" },
+    { "key": "channel_id", "label": "Channel ID", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["send_message", "list_messages", "add_reaction"] } },
+    { "key": "text", "label": "Message", "type": "textarea", "required": false, "rows": 3, "depends_on": { "key": "operation", "values": ["send_message"] } },
+    { "key": "limit", "label": "Limit", "type": "number", "required": false, "default": 50, "depends_on": { "key": "operation", "values": ["list_messages"] } },
+    { "key": "message_id", "label": "Message ID", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["add_reaction"] } },
+    { "key": "emoji", "label": "Emoji", "type": "text", "required": false, "placeholder": "e.g. 👍 or unicode name", "depends_on": { "key": "operation", "values": ["add_reaction"] } },
+    { "key": "guild_id", "label": "Server (Guild) ID", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["list_channels"] } }
+  ]
+}

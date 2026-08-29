@@ -75,11 +75,24 @@ var keyringIOMu sync.Mutex
 // fails on demand to exercise the retry-after-failure path below.
 var fetchKEK = fetchOrCreateKEK
 
+// keyringGet/keyringSet are the raw OS keychain operations every KEK path
+// goes through. Package-level variables (rather than direct keyring.Get /
+// keyring.Set calls) so tests can substitute stubs that fail the way a host
+// without an OS keyring does, exercising the file-based fallback behind
+// peekKEK/fetchOrCreateKEK — the same stub-a-package-var pattern fetchKEK
+// above uses.
+var (
+	keyringGet = keyring.Get
+	keyringSet = keyring.Set
+)
+
 // getOrCreateKEK returns the 32-byte Key Encryption Key stored in the OS
 // keychain (macOS Keychain / Linux Secret Service / Windows Credential
 // Manager, via zalando/go-keyring — no cgo), generating and storing a new
 // one on first use. The KEK never touches disk; only the DEK it wraps does
-// (see dek.go).
+// (see dek.go) — except under the explicitly opted-in file-based fallback
+// for hosts with no OS keyring (see filekeyring.go), where the KEK lives in
+// a 0600 file under the vault directory instead.
 func getOrCreateKEK() ([]byte, error) {
 	kekMu.Lock()
 	attempt := currentKEKAttempt
@@ -103,15 +116,21 @@ func getOrCreateKEK() ([]byte, error) {
 // peekKEK reads the KEK from the OS keychain without creating one if it's
 // missing — a pure read used by fetchOrCreateDEK's fast path (dek.go) to
 // decide whether cross-process bootstrap locking is needed at all. Bypasses
-// the in-process memoization layer, same as fetchOrCreateKEK.
+// the in-process memoization layer, same as fetchOrCreateKEK. If the OS
+// keyring itself is unavailable and MONOAGENT_ALLOW_FILE_KEYRING=1 is set,
+// falls back to reading the file-based KEK (see filekeyring.go); without
+// the env it fails closed.
 func peekKEK() (kek []byte, found bool, err error) {
 	keyringIOMu.Lock()
 	defer keyringIOMu.Unlock()
 
-	stored, err := keyring.Get(keyringService, keyringAccount)
+	stored, err := keyringGet(keyringService, keyringAccount)
 	if err != nil {
 		if errors.Is(err, keyring.ErrNotFound) {
 			return nil, false, nil
+		}
+		if fileKeyringEnabled() {
+			return peekFileKEK()
 		}
 		return nil, false, fmt.Errorf("secrets: reading KEK from keychain: %w", err)
 	}
@@ -126,7 +145,7 @@ func fetchOrCreateKEK() ([]byte, error) {
 	keyringIOMu.Lock()
 	defer keyringIOMu.Unlock()
 
-	stored, err := keyring.Get(keyringService, keyringAccount)
+	stored, err := keyringGet(keyringService, keyringAccount)
 	if err == nil {
 		key, decodeErr := hex.DecodeString(stored)
 		if decodeErr != nil {
@@ -135,6 +154,12 @@ func fetchOrCreateKEK() ([]byte, error) {
 		return key, nil
 	}
 	if !errors.Is(err, keyring.ErrNotFound) {
+		// The OS keyring is unavailable (not merely empty). With the
+		// explicit opt-in env, fall back to the file-based KEK; otherwise
+		// fail closed exactly as before the fallback existed.
+		if fileKeyringEnabled() {
+			return fetchOrCreateFileKEK()
+		}
 		return nil, fmt.Errorf("secrets: reading KEK from keychain: %w", err)
 	}
 
@@ -142,7 +167,7 @@ func fetchOrCreateKEK() ([]byte, error) {
 	if _, err := rand.Read(kek); err != nil {
 		return nil, fmt.Errorf("secrets: generating KEK: %w", err)
 	}
-	if err := keyring.Set(keyringService, keyringAccount, hex.EncodeToString(kek)); err != nil {
+	if err := keyringSet(keyringService, keyringAccount, hex.EncodeToString(kek)); err != nil {
 		return nil, fmt.Errorf("secrets: storing KEK in keychain: %w", err)
 	}
 	return kek, nil

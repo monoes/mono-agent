@@ -12,6 +12,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"syscall"
@@ -34,19 +35,25 @@ type WebhookRegistration struct {
 
 // WebhookServer is a standalone net/http server on a configurable port.
 type WebhookServer struct {
-	addr   string
-	mu     sync.RWMutex
-	routes map[string]*WebhookRegistration // path → registration
-	server *http.Server
-	logger zerolog.Logger
+	addr string
+	// allowedOrigins is the CORS allowlist parsed once from
+	// MONOAGENT_WEBHOOK_ALLOWED_ORIGINS. nil (unset/empty env) means NO CORS
+	// headers are ever emitted — cross-origin browser callers are locked out,
+	// which is correct for loopback/server-to-server webhook use.
+	allowedOrigins map[string]struct{}
+	mu             sync.RWMutex
+	routes         map[string]*WebhookRegistration // path → registration
+	server         *http.Server
+	logger         zerolog.Logger
 }
 
 // NewWebhookServer creates a server that will listen on addr (e.g. ":9321").
 func NewWebhookServer(addr string, logger zerolog.Logger) *WebhookServer {
 	s := &WebhookServer{
-		addr:   addr,
-		routes: make(map[string]*WebhookRegistration),
-		logger: logger,
+		addr:           addr,
+		allowedOrigins: parseWebhookAllowedOrigins(os.Getenv("MONOAGENT_WEBHOOK_ALLOWED_ORIGINS")),
+		routes:         make(map[string]*WebhookRegistration),
+		logger:         logger,
 	}
 	s.server = &http.Server{
 		Addr:         addr,
@@ -150,14 +157,20 @@ func (s *WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	reg, ok := s.routes[pathKey]
 	s.mu.RUnlock()
 
-	// Set CORS headers only when the webhook has authentication configured.
-	if ok && (reg.HMACSecret != "" || reg.AuthHeader != "") {
-		origin := r.Header.Get("Origin")
-		if origin != "" {
+	// CORS (hardened, RA2-8): emit NO CORS headers by default. Webhooks are
+	// meant for loopback/server-to-server callers, so browsers cannot call
+	// them cross-origin unless the operator configures an explicit origin
+	// allowlist via MONOAGENT_WEBHOOK_ALLOWED_ORIGINS — in which case only
+	// listed origins are reflected, never arbitrary ones.
+	if origin := r.Header.Get("Origin"); origin != "" {
+		if _, allowed := s.allowedOrigins[origin]; allowed {
 			allowedHeaders := "Content-Type, X-Hub-Signature-256"
-			if reg.AuthHeader != "" {
+			if ok && reg.AuthHeader != "" {
 				allowedHeaders += ", " + reg.AuthHeader
 			}
+			// The response varies with the Origin header; without Vary a
+			// shared cache could replay this at a disallowed origin.
+			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", allowedHeaders)
@@ -247,6 +260,23 @@ func (s *WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(`{"success":true}`))
+}
+
+// parseWebhookAllowedOrigins parses MONOAGENT_WEBHOOK_ALLOWED_ORIGINS — a
+// comma-separated list of origins (e.g. "https://app.example.com") that may
+// call the webhooks from a browser. Empty/unset (or all-empty entries)
+// yields nil: no CORS headers at all.
+func parseWebhookAllowedOrigins(v string) map[string]struct{} {
+	var out map[string]struct{}
+	for _, o := range strings.Split(v, ",") {
+		if o = strings.TrimSpace(o); o != "" {
+			if out == nil {
+				out = make(map[string]struct{})
+			}
+			out[o] = struct{}{}
+		}
+	}
+	return out
 }
 
 // validateHMAC checks the X-Hub-Signature-256 header against the body and secret.

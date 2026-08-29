@@ -2,13 +2,15 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -358,6 +360,138 @@ func (a *App) SetWorkflowActive(id string, active bool) error {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Workflow import/export
+// ─────────────────────────────────────────────────────────────────────────────
+
+// WorkflowImportResult is the {id, name} pair `workflow import --json` emits.
+type WorkflowImportResult struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// workflowFileFromStore converts a stored *workflow.Workflow into the
+// documented WorkflowFile JSON shape — the same shape `monoagentcli workflow
+// export` emits and `workflow import` parses natively — so GUI exports
+// roundtrip through the CLI losslessly.
+func workflowFileFromStore(wf *workflow.Workflow) workflow.WorkflowFile {
+	file := workflow.WorkflowFile{
+		ID:          wf.ID,
+		Name:        wf.Name,
+		Description: wf.Description,
+		Version:     wf.Version,
+		IsActive:    wf.IsActive,
+		ProfileID:   wf.ProfileID,
+		CreatedAt:   wf.CreatedAt,
+		UpdatedAt:   wf.UpdatedAt,
+	}
+	for _, n := range wf.Nodes {
+		fn := workflow.WorkflowFileNode{
+			ID:       n.ID,
+			Type:     n.Type,
+			Name:     n.Name,
+			Disabled: n.Disabled,
+			Config:   n.Config,
+			Schema:   n.Schema,
+		}
+		fn.Position.X = n.PositionX
+		fn.Position.Y = n.PositionY
+		if fn.Config == nil {
+			fn.Config = map[string]interface{}{}
+		}
+		file.Nodes = append(file.Nodes, fn)
+	}
+	for _, c := range wf.Connections {
+		file.Connections = append(file.Connections, workflow.WorkflowFileEdge{
+			ID:           c.ID,
+			Source:       c.SourceNodeID,
+			SourceHandle: c.SourceHandle,
+			Target:       c.TargetNodeID,
+			TargetHandle: c.TargetHandle,
+		})
+	}
+	return file
+}
+
+// ExportWorkflow returns the workflow as JSON in the documented WorkflowFile
+// format — the same output `monoagentcli workflow export <id>` emits.
+func (a *App) ExportWorkflow(workflowID string) (string, error) {
+	if a.wfStore == nil {
+		return "", fmt.Errorf("workflow store not available")
+	}
+	ctx := context.Background()
+	wf, err := a.wfStore.GetWorkflow(ctx, workflowID)
+	if err != nil {
+		return "", err
+	}
+	if wf == nil {
+		return "", fmt.Errorf("workflow %s not found", workflowID)
+	}
+	// Verify caller owns this workflow (same check as GetWorkflow).
+	if a.db != nil {
+		var wfProfile string
+		_ = a.db.QueryRow(`SELECT profile_id FROM workflows WHERE id = ?`, workflowID).Scan(&wfProfile)
+		if wfProfile != "" && wfProfile != a.getActiveProfileID() {
+			return "", fmt.Errorf("workflow %s not found", workflowID)
+		}
+	}
+	data, err := json.MarshalIndent(workflowFileFromStore(wf), "", "  ")
+	if err != nil {
+		return "", err
+	}
+	a.emitLog("WORKFLOW", "INFO", fmt.Sprintf("Exported workflow: %s [%s]", wf.Name, wf.ID))
+	return string(data), nil
+}
+
+// ImportWorkflow imports a workflow from raw WorkflowFile JSON or a path to
+// a JSON file, by feeding it to `monoagentcli workflow import` on stdin (the
+// CLI import reads stdin when --file is absent) — the same path a CLI import
+// takes, including legacy-format normalization and node-id collision
+// remapping. Returns the imported workflow's {id, name}.
+func (a *App) ImportWorkflow(jsonOrPath string) (*WorkflowImportResult, error) {
+	jsonOrPath = strings.TrimSpace(jsonOrPath)
+	if jsonOrPath == "" {
+		return nil, fmt.Errorf("import input is empty — pass workflow JSON or a path to a JSON file")
+	}
+	raw := []byte(jsonOrPath)
+	if fileExists(jsonOrPath) {
+		data, err := os.ReadFile(jsonOrPath)
+		if err != nil {
+			return nil, fmt.Errorf("read workflow file: %w", err)
+		}
+		raw = data
+	}
+	if !json.Valid(raw) {
+		return nil, fmt.Errorf("import input is neither an existing file nor valid workflow JSON")
+	}
+
+	cliBin, err := findMonoAgentCLI()
+	if err != nil {
+		return nil, err
+	}
+
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cmd := exec.CommandContext(ctx, cliBin, "--profile", a.getActiveProfileID(), "--json", "workflow", "import")
+	cmd.Stdin = bytes.NewReader(raw)
+	out, err := cmd.Output()
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && len(ee.Stderr) > 0 {
+			return nil, fmt.Errorf("workflow import failed: %s", strings.TrimSpace(string(ee.Stderr)))
+		}
+		return nil, fmt.Errorf("workflow import failed: %w", err)
+	}
+	var res WorkflowImportResult
+	if err := json.Unmarshal(out, &res); err != nil {
+		return nil, fmt.Errorf("unexpected workflow import output: %w", err)
+	}
+	a.emitLog("WORKFLOW", "INFO", fmt.Sprintf("Imported workflow: %s [%s]", res.Name, res.ID))
+	return &res, nil
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Workflow execution (subprocess)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -633,10 +767,14 @@ func (a *App) CancelWorkflow(executionID string) error {
 	}
 	a.runningMu.Unlock()
 
-	// Kill external CLI process via PID stored in the DB.
+	// Kill external CLI process via PID stored in the DB — but only after
+	// verifying the pid still belongs to a monoagent binary: a stale pid can
+	// have been reused by the OS for an unrelated process, and signaling it
+	// would kill someone else's work. On refusal nothing is marked cancelled.
 	if !killed && pid > 0 {
-		if proc, err := os.FindProcess(pid); err == nil {
-			_ = proc.Signal(syscall.SIGTERM)
+		if err := signalWorkflowPID(pid); err != nil {
+			a.emitLog("WORKFLOW", "ERROR", fmt.Sprintf("Execution %s: %v", executionID, err))
+			return err
 		}
 	}
 

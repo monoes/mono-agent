@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,6 +15,10 @@ import (
 
 	"github.com/spf13/cobra"
 )
+
+// sha256SumsAssetName is the checksum manifest published with every
+// release (see .github/workflows/release.yml "Flatten and checksum").
+const sha256SumsAssetName = "SHA256SUMS.txt"
 
 func newUpdateCmd() *cobra.Command {
 	return &cobra.Command{
@@ -95,16 +101,35 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("locate binary: %w", err)
 	}
 
-	fmt.Printf("Downloading %s...\n", assetName)
-	dlResp, err := http.Get(downloadURL) //nolint:gosec
-	if err != nil {
-		return fmt.Errorf("download: %w", err)
+	// Pre-flight: the release must publish a checksum manifest, otherwise
+	// the downloaded binary cannot be verified. Hard-fail like install.sh —
+	// never silently skip integrity verification.
+	sumsURL := ""
+	for _, a := range release.Assets {
+		if a.Name == sha256SumsAssetName {
+			sumsURL = a.BrowserDownloadURL
+			break
+		}
 	}
-	defer dlResp.Body.Close()
+	if sumsURL == "" {
+		return fmt.Errorf("release %s has no %s asset — cannot verify download integrity, refusing to update", release.TagName, sha256SumsAssetName)
+	}
 
-	if dlResp.StatusCode != 200 {
-		return fmt.Errorf("download failed: GitHub returned %d for %s", dlResp.StatusCode, downloadURL)
+	fmt.Printf("Downloading %s...\n", assetName)
+	data, err := httpGetAll(downloadURL)
+	if err != nil {
+		return err
 	}
+
+	sumsData, err := httpGetAll(sumsURL)
+	if err != nil {
+		return fmt.Errorf("fetch %s: %w", sha256SumsAssetName, err)
+	}
+
+	if err := verifyReleaseDigest(data, sumsData, assetName); err != nil {
+		return err
+	}
+	fmt.Printf("Checksum verified: %s SHA256 %s\n", assetName, sha256Hex(data))
 
 	tmp, err := os.CreateTemp("", "monoagentcli-update-*")
 	if err != nil {
@@ -112,7 +137,7 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 	}
 	tmpPath := tmp.Name()
 
-	if _, err := io.Copy(tmp, dlResp.Body); err != nil {
+	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
 		os.Remove(tmpPath)
 		return fmt.Errorf("write download: %w", err)
@@ -137,6 +162,82 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 	os.Remove(bak)
 
 	fmt.Printf("Updated to %s\n", release.TagName)
+	return nil
+}
+
+// httpGetAll fetches url and returns the full response body. Non-200
+// statuses are errors.
+func httpGetAll(url string) ([]byte, error) {
+	resp, err := http.Get(url) //nolint:gosec
+	if err != nil {
+		return nil, fmt.Errorf("download: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("download failed: GitHub returned %d for %s", resp.StatusCode, url)
+	}
+	return io.ReadAll(resp.Body)
+}
+
+// sha256Hex returns the lowercase hex-encoded SHA-256 digest of data.
+func sha256Hex(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+// parseSHA256Sums parses the contents of a SHA256SUMS.txt file as written
+// by sha256sum(1) (release.yml: "sha256sum * > SHA256SUMS.txt"): one
+// "<64 hex chars>  <filename>" entry per line, where the separator is two
+// spaces (text mode) or space + '*' (binary mode). Malformed lines are
+// skipped; digests are normalized to lowercase.
+func parseSHA256Sums(data []byte) map[string]string {
+	sums := make(map[string]string)
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimRight(line, "\r")
+		if len(line) < 66 || line[64] != ' ' {
+			continue
+		}
+		digest := line[:64]
+		name := line[65:]
+		if name[0] == ' ' || name[0] == '*' {
+			name = name[1:]
+		}
+		if name == "" || !isHex64(digest) {
+			continue
+		}
+		sums[name] = strings.ToLower(digest)
+	}
+	return sums
+}
+
+func isHex64(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= '0' && c <= '9', c >= 'a' && c <= 'f', c >= 'A' && c <= 'F':
+		default:
+			return false
+		}
+	}
+	return len(s) == 64
+}
+
+// verifyReleaseDigest checks the downloaded bytes against the entry for
+// the exact asset name in the release's SHA256SUMS.txt. A missing entry
+// or a digest mismatch hard-fails (install.sh policy: never install an
+// unverified binary); on mismatch both digests are reported.
+func verifyReleaseDigest(data, sums []byte, assetName string) error {
+	expected, ok := parseSHA256Sums(sums)[assetName]
+	if !ok {
+		return fmt.Errorf("integrity check failed: %s has no entry for %s — refusing to install unverified binary",
+			sha256SumsAssetName, assetName)
+	}
+	actual := sha256Hex(data)
+	if !strings.EqualFold(actual, expected) {
+		return fmt.Errorf("integrity check failed for %s: SHA-256 mismatch (expected %s, got %s) — download may be corrupted or tampered; nothing was installed",
+			assetName, expected, actual)
+	}
 	return nil
 }
 

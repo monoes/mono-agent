@@ -1,0 +1,16 @@
+{
+  "credential_platform": "hashnode",
+  "fields": [
+    { "key": "credential_id", "label": "Hashnode Connection", "type": "credential_picker", "required": true },
+    { "key": "operation", "label": "Operation", "type": "select", "required": true, "options": ["publish_post", "list_posts", "get_post"], "default": "publish_post" },
+    { "key": "publication_id", "label": "Publication ID", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["publish_post"] } },
+    { "key": "title", "label": "Title", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["publish_post"] } },
+    { "key": "content_markdown", "label": "Content (Markdown)", "type": "textarea", "required": false, "rows": 8, "depends_on": { "key": "operation", "values": ["publish_post"] } },
+    { "key": "tags", "label": "Tags", "type": "array", "required": false, "item_type": "text", "help": "Tag slugs (e.g. go, webdev).", "depends_on": { "key": "operation", "values": ["publish_post"] } },
+    { "key": "subtitle", "label": "Subtitle", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["publish_post"] } },
+    { "key": "slug", "label": "Slug", "type": "text", "required": false, "help": "Custom slug for publish_post, or the post slug to fetch for get_post.", "depends_on": { "key": "operation", "values": ["publish_post", "get_post"] } },
+    { "key": "publication_host", "label": "Publication Host", "type": "text", "required": false, "placeholder": "e.g. myblog.hashnode.dev", "depends_on": { "key": "operation", "values": ["list_posts", "get_post"] } },
+    { "key": "first", "label": "First", "type": "number", "required": false, "default": 10, "depends_on": { "key": "operation", "values": ["list_posts"] } },
+    { "key": "token", "label": "Personal Access Token", "type": "text", "required": false, "help": "Hashnode token. Resolved from the saved connection when omitted." }
+  ]
+}

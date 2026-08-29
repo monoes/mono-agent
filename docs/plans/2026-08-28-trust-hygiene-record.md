@@ -170,3 +170,64 @@ verification. Same rules as above: each item describes the end state.
   documented in AGENTS.md and SECURITY.md with matching numbers.
 - FEATURE_n8n.md labeled as a porting reference, not a status tracker;
   README and docs/COMPARISON.md link phrasing aligned to that.
+
+## Round 3 record (2026-08-29)
+
+Third wave, landed by parallel fixers. Same rules as above: each item
+describes the end state.
+
+### What changed
+
+- Webhook server environment overrides: `MONOAGENT_WEBHOOK_ADDR` sets the
+  bind address (`host:port`, default `127.0.0.1:9321`) and
+  `MONOAGENT_WEBHOOK_ALLOWED_ORIGINS` sets a CORS allowlist (default: no
+  CORS headers). The Docker compose file now serves webhook triggers on a
+  published port without host networking.
+- File-based keyring fallback: `MONOAGENT_ALLOW_FILE_KEYRING=1` stores the
+  vault key-encryption key at `~/.monoagent/vault/.file-keyring` (0600)
+  with a loud warning on use; without the variable the vault fails closed
+  on machines with no OS keyring. Headless/CI `secret add` is now
+  possible.
+- Store-level node saves preserve edges; the CLI re-save workaround is
+  removed. SQLite expression-index migration 024 added; `workflow list`
+  now caches parsed workflow JSON.
+- Node schema coverage completed: all default-build node types resolve
+  schemas (16 added: `image.*`,
+  `service.{reddit,devto,discord,bluesky,mastodon,hashnode,producthunt}`,
+  `gemini.chat_session`, `gemini.chat_session_many`).
+- Self-update verifies the release `SHA256SUMS.txt`; a checksum mismatch
+  or a missing checksums file is a hard failure.
+- GUI fixes: ImportWorkflow/ExportWorkflow bindings, subprocess PID
+  verification, cancellable RunNode.
+- `monoes_apis/` extracted to the private repository `monoes/monoes-apis`;
+  this tree cleaned.
+
+### Deferred-items disposition
+
+| Deferred item | Disposition |
+|---|---|
+| Store-level `SaveWorkflowNodes` edge preservation | Done (this round) |
+| Webhook bind/CORS env overrides (`MONOAGENT_WEBHOOK_ADDR`, `MONOAGENT_WEBHOOK_ALLOWED_ORIGINS`) | Done (this round) |
+| Headless keyring bypass for `secret add` (`MONOAGENT_ALLOW_FILE_KEYRING`) | Done (this round; opt-in file keyring) |
+| Daemon SIGTERM shutdown / Chrome probe gating | Done (Round 2) |
+| Fate of `monoes_apis/` | Done — moved to private `monoes/monoes-apis` |
+| `go.sum` tidy | Done |
+| HTTP/REST API surface for external agents | Remaining (draft issue 01) |
+| Webhook TLS support and remote-bind hardening docs | Remaining (draft issue 02) |
+| Passphrase-wrapped KEK for file-keyring mode | Remaining (draft issue 03) |
+| monomind orgs integration: commit or remove | Remaining (draft issue 04) |
+| Node schemas generated from Go structs | Remaining (draft issue 05) |
+| Workflow marketplace curation policy | Remaining (draft issue 06) |
+| i18n for GUI and CLI help text | Remaining (draft issue 07) |
+| Release code-signing and notarization | Remaining (draft issue 08) |
+| Benchmark suite + CI bench job | Remaining (draft issue 09) |
+| Community venue decision | Remaining (draft issue 10) |
+| `core.code` engine-level memory ceiling | Remaining — vendored goja revision lacks `SetMemoryLimit` (`internal/nodes/control/code.go`) |
+| `comm.email_read` IMAP dependency | Remaining — still experimental |
+| Roadmap: more trigger types, workflow versioning, sub-workflow node, visual debugger, metrics dashboard | Remaining |
+| Roadmap: official-API publishing for Bluesky/Mastodon | Functionality shipped (`comm.`/`service.` bluesky and mastodon nodes); the README roadmap line still lists it and is due for cleanup |
+| Headless-CI vault test coverage (keychain check was environment-blocked) | Remaining — file keyring now makes it possible; CI job not yet updated |
+| Owner: `git filter-repo` history rewrite + force-push, repo metadata, CI-green confirmation | Remaining (owner action, see Owner actions above) |
+
+Draft issues 01–10 above live in `/tmp/github-issues/`; the tracking
+issue for this round is `/tmp/github-issues/00-tracking-round3-changelog.md`.

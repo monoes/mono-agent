@@ -28,6 +28,16 @@ func newSecretCmd(cfg *globalConfig) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "secret",
 		Short: "Manage encrypted secrets and logins in the vault",
+		Long: "Manage encrypted secrets and logins in the vault.\n" +
+			"\n" +
+			"The vault's data key is wrapped by a key stored in the OS keychain (macOS\n" +
+			"Keychain, Linux Secret Service, Windows Credential Manager). On hosts with\n" +
+			"no usable keyring (e.g. headless CI), secret commands fail closed unless\n" +
+			"MONOAGENT_ALLOW_FILE_KEYRING=1 is set, which opts in to a weaker file-based\n" +
+			"keyring: the key encryption key is stored as 32 random bytes in\n" +
+			"~/.monoagent/vault/.file-keyring (file mode 0600, vault dir 0700). Every use\n" +
+			"prints a warning to stderr; only enable this where the file is protected by\n" +
+			"full-disk encryption and restrictive file permissions.",
 	}
 	cmd.AddCommand(
 		newSecretAddCmd(cfg),

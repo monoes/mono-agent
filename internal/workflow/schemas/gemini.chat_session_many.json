@@ -1,0 +1,10 @@
+{
+  "credential_platform": "gemini",
+  "fields": [
+    { "key": "prompts", "label": "Prompts", "type": "array", "required": true, "item_type": "text", "help": "Prompts sent in order to a single chat session, so context and style carry across every answer." },
+    { "key": "session_id", "label": "Session ID", "type": "text", "required": false, "help": "Existing chat session to continue (from a previous run's session_id output). Omit to start a new chat." },
+    { "key": "mode", "label": "Response Mode", "type": "select", "required": false, "options": ["text", "image"], "default": "text", "help": "image mode waits for generated images and downloads them to downloadDir." },
+    { "key": "maxWaitSeconds", "label": "Max Wait (seconds)", "type": "number", "required": false, "default": 90, "min": 10, "max": 300, "help": "Maximum time to wait for each response in the loop." },
+    { "key": "downloadDir", "label": "Download Directory", "type": "text", "required": false, "default": "~/.monoagent/downloads", "help": "Where to save generated images (image mode only)." }
+  ]
+}

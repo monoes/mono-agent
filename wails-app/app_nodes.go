@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -259,6 +261,7 @@ type NodeRunResult struct {
 	Outputs    []NodeRunOutput `json:"outputs"`
 	Error      string          `json:"error,omitempty"`
 	DurationMs int64           `json:"duration_ms"`
+	RunID      string          `json:"run_id,omitempty"` // pass to StopNodeRun to cancel the run
 }
 
 // NodeRunOutput is one output handle's items.
@@ -349,15 +352,39 @@ func (a *App) RunNode(req NodeRunRequest) NodeRunResult {
 	}
 	cmd := exec.Command(cliBin, args...)
 	cmd.Stdin = bytes.NewReader(payload)
-	out, runErr := cmd.Output()
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	// Register the subprocess under a counter-based run id so the frontend
+	// can cancel it with StopNodeRun (RA1-9). Namespaced "noderun:" in the
+	// shared registry — like "action:" — so shutdown reaps it too.
+	runID := strconv.FormatInt(a.nodeRunCounter.Add(1), 10)
+	runKey := "noderun:" + runID
+	a.runningMu.Lock()
+	a.runningCmds[runKey] = cmd
+	a.runningMu.Unlock()
+
+	startErr := cmd.Start()
+	if startErr != nil {
+		a.runningMu.Lock()
+		delete(a.runningCmds, runKey)
+		a.runningMu.Unlock()
+		return NodeRunResult{Error: "failed to start node run: " + startErr.Error(), RunID: runID}
+	}
+	runErr := cmd.Wait()
+	a.runningMu.Lock()
+	delete(a.runningCmds, runKey)
+	a.runningMu.Unlock()
 	elapsed := time.Since(start).Milliseconds()
+	out := stdout.Bytes()
 
 	if runErr != nil {
 		msg := runErr.Error()
-		if exitErr, ok := runErr.(*exec.ExitError); ok && len(exitErr.Stderr) > 0 {
-			msg = strings.TrimSpace(string(exitErr.Stderr))
+		if _, ok := runErr.(*exec.ExitError); ok && stderr.Len() > 0 {
+			msg = strings.TrimSpace(stderr.String())
 		}
-		return NodeRunResult{Error: msg, DurationMs: elapsed}
+		return NodeRunResult{Error: msg, DurationMs: elapsed, RunID: runID}
 	}
 
 	var raw map[string][]struct {
@@ -376,5 +403,25 @@ func (a *App) RunNode(req NodeRunRequest) NodeRunResult {
 		outputs = append(outputs, NodeRunOutput{Handle: handle, Items: flat})
 	}
 	sort.Slice(outputs, func(i, j int) bool { return outputs[i].Handle < outputs[j].Handle })
-	return NodeRunResult{Outputs: outputs, DurationMs: elapsed}
+	return NodeRunResult{Outputs: outputs, DurationMs: elapsed, RunID: runID}
+}
+
+// StopNodeRun kills the subprocess started by RunNode for the given run id
+// (NodeRunResult.run_id). The interrupted RunNode call returns with its Error
+// field set to the kill signal.
+func (a *App) StopNodeRun(runID string) error {
+	runKey := "noderun:" + runID
+	a.runningMu.Lock()
+	cmd, ok := a.runningCmds[runKey]
+	if ok {
+		delete(a.runningCmds, runKey)
+	}
+	a.runningMu.Unlock()
+	if !ok || cmd.Process == nil {
+		return fmt.Errorf("node run %s is not running", runID)
+	}
+	if err := cmd.Process.Kill(); err != nil {
+		return fmt.Errorf("stop node run %s: %w", runID, err)
+	}
+	return nil
 }

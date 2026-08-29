@@ -1,0 +1,15 @@
+{
+  "credential_platform": "producthunt",
+  "fields": [
+    { "key": "credential_id", "label": "Product Hunt Connection", "type": "credential_picker", "required": true },
+    { "key": "operation", "label": "Operation", "type": "select", "required": true, "options": ["get_post", "list_posts", "get_post_metrics", "create_comment"], "default": "get_post" },
+    { "key": "slug", "label": "Post Slug", "type": "text", "required": false, "help": "Product slug. At least one of slug or id is required.", "depends_on": { "key": "operation", "values": ["get_post", "get_post_metrics"] } },
+    { "key": "id", "label": "Post ID", "type": "text", "required": false, "help": "Product ID. At least one of slug or id is required.", "depends_on": { "key": "operation", "values": ["get_post", "get_post_metrics"] } },
+    { "key": "order", "label": "Order", "type": "select", "required": false, "options": ["RANKING", "NEWEST"], "default": "RANKING", "depends_on": { "key": "operation", "values": ["list_posts"] } },
+    { "key": "first", "label": "First", "type": "number", "required": false, "default": 10, "depends_on": { "key": "operation", "values": ["list_posts"] } },
+    { "key": "topic", "label": "Topic Slug", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["list_posts"] } },
+    { "key": "post_id", "label": "Post ID", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["create_comment"] } },
+    { "key": "body", "label": "Comment", "type": "textarea", "required": false, "rows": 3, "depends_on": { "key": "operation", "values": ["create_comment"] } },
+    { "key": "access_token", "label": "Developer Token", "type": "text", "required": false, "help": "OAuth2 or developer token. Resolved from the saved connection when omitted." }
+  ]
+}

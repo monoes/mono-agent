@@ -1,0 +1,11 @@
+{
+  "credential_platform": "gemini",
+  "fields": [
+    { "key": "prompt", "label": "Prompt", "type": "textarea", "required": true, "rows": 4, "placeholder": "Ask Gemini anything..." },
+    { "key": "session_id", "label": "Session ID", "type": "text", "required": false, "help": "Existing chat session to continue (from a previous run's session_id output). Omit to start a new chat." },
+    { "key": "mode", "label": "Response Mode", "type": "select", "required": false, "options": ["text", "image"], "default": "text", "help": "image mode waits for generated images and downloads them to downloadDir." },
+    { "key": "referenceImagePath", "label": "Reference Image Path", "type": "text", "required": false, "help": "Local image to upload before the prompt is sent (e.g. for style transfer)." },
+    { "key": "maxWaitSeconds", "label": "Max Wait (seconds)", "type": "number", "required": false, "default": 90, "min": 10, "max": 300, "help": "Maximum time to wait for each Gemini response." },
+    { "key": "downloadDir", "label": "Download Directory", "type": "text", "required": false, "default": "~/.monoagent/downloads", "help": "Where to save generated images (image mode only)." }
+  ]
+}

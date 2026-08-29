@@ -1,0 +1,11 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "field", "label": "Image Path Field", "type": "text", "required": false, "help": "Item field holding the local image path. Defaults to image_path, path, file_path, or media_path (first non-empty)." },
+    { "key": "width", "label": "Width (px)", "type": "number", "required": false, "help": "Target width. At least one of width or height is required." },
+    { "key": "height", "label": "Height (px)", "type": "number", "required": false, "help": "Target height. At least one of width or height is required." },
+    { "key": "fit", "label": "Fit Mode", "type": "select", "required": false, "options": ["contain", "cover", "fill", "width", "height"], "default": "contain", "help": "contain: fit within bounds keeping aspect ratio; cover: fill and center-crop; fill: stretch to exact size; width/height: set only that dimension." },
+    { "key": "output_field", "label": "Output Field", "type": "text", "required": false, "default": "image_path", "help": "Item field where the output file path is written." },
+    { "key": "output_dir", "label": "Output Directory", "type": "text", "required": false, "help": "Directory for the resized file. Defaults to the source image's directory. ~ is expanded." }
+  ]
+}

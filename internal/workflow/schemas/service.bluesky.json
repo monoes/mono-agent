@@ -1,0 +1,14 @@
+{
+  "credential_platform": "bluesky",
+  "fields": [
+    { "key": "credential_id", "label": "Bluesky Connection", "type": "credential_picker", "required": true },
+    { "key": "operation", "label": "Operation", "type": "select", "required": true, "options": ["create_post", "get_timeline", "get_profile", "like_post", "repost"], "default": "create_post" },
+    { "key": "text", "label": "Post Text", "type": "textarea", "required": false, "rows": 4, "depends_on": { "key": "operation", "values": ["create_post"] } },
+    { "key": "limit", "label": "Limit", "type": "number", "required": false, "default": 30, "depends_on": { "key": "operation", "values": ["get_timeline"] } },
+    { "key": "actor", "label": "Actor", "type": "text", "required": false, "help": "Handle or DID to fetch.", "depends_on": { "key": "operation", "values": ["get_profile"] } },
+    { "key": "uri", "label": "Post URI (at://...)", "type": "text", "required": false, "help": "Subject record URI.", "depends_on": { "key": "operation", "values": ["like_post", "repost"] } },
+    { "key": "cid", "label": "Post CID", "type": "text", "required": false, "help": "Subject record CID.", "depends_on": { "key": "operation", "values": ["like_post", "repost"] } },
+    { "key": "identifier", "label": "Handle", "type": "text", "required": false, "help": "Bluesky handle. Resolved from the saved connection when omitted." },
+    { "key": "app_password", "label": "App Password", "type": "text", "required": false, "help": "App password from Bluesky settings. Resolved from the saved connection when omitted." }
+  ]
+}

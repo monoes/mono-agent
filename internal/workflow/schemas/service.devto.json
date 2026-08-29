@@ -1,0 +1,16 @@
+{
+  "credential_platform": "devto",
+  "fields": [
+    { "key": "credential_id", "label": "Dev.to Connection", "type": "credential_picker", "required": true },
+    { "key": "operation", "label": "Operation", "type": "select", "required": true, "options": ["publish_article", "list_articles", "get_article", "list_comments", "create_comment"], "default": "publish_article" },
+    { "key": "title", "label": "Title", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["publish_article"] } },
+    { "key": "body_markdown", "label": "Body (Markdown)", "type": "textarea", "required": false, "rows": 8, "help": "Article body for publish_article, or comment text for create_comment.", "depends_on": { "key": "operation", "values": ["publish_article", "create_comment"] } },
+    { "key": "tags", "label": "Tags", "type": "text", "required": false, "placeholder": "e.g. go, webdev, tutorial", "help": "Comma-separated tags for the article.", "depends_on": { "key": "operation", "values": ["publish_article"] } },
+    { "key": "series", "label": "Series", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["publish_article"] } },
+    { "key": "published", "label": "Published", "type": "boolean", "required": false, "default": true, "help": "false saves the article as a draft.", "depends_on": { "key": "operation", "values": ["publish_article"] } },
+    { "key": "canonical_url", "label": "Canonical URL", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["publish_article"] } },
+    { "key": "page", "label": "Page", "type": "number", "required": false, "default": 1, "depends_on": { "key": "operation", "values": ["list_articles"] } },
+    { "key": "per_page", "label": "Per Page", "type": "number", "required": false, "default": 30, "depends_on": { "key": "operation", "values": ["list_articles"] } },
+    { "key": "article_id", "label": "Article ID", "type": "text", "required": false, "help": "Numeric Dev.to article id.", "depends_on": { "key": "operation", "values": ["get_article", "list_comments", "create_comment"] } }
+  ]
+}

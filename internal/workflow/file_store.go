@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -50,10 +51,21 @@ type WorkflowFileEdge struct {
 	TargetHandle string `json:"target_handle"`
 }
 
+// fileCacheEntry caches one parsed workflow keyed by its file identity
+// (modtime + size), so ListWorkflows skips re-parsing unchanged files.
+type fileCacheEntry struct {
+	modTime time.Time
+	size    int64
+	wf      *Workflow
+}
+
 // WorkflowFileStore implements workflow CRUD using JSON files.
 // Does NOT handle executions or credentials — use SQLiteWorkflowStore for those.
 type WorkflowFileStore struct {
 	dir string
+
+	mu    sync.Mutex
+	cache map[string]fileCacheEntry
 }
 
 // NewWorkflowFileStore creates a WorkflowFileStore backed by the given directory.
@@ -62,7 +74,7 @@ func NewWorkflowFileStore(dir string) (*WorkflowFileStore, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("file_store: create dir %s: %w", dir, err)
 	}
-	return &WorkflowFileStore{dir: dir}, nil
+	return &WorkflowFileStore{dir: dir, cache: make(map[string]fileCacheEntry)}, nil
 }
 
 // filePath maps a workflow ID to its on-disk JSON file. The ID must be a plain
@@ -152,6 +164,7 @@ func (s *WorkflowFileStore) SaveWorkflow(ctx context.Context, wf *Workflow) erro
 		_ = os.Remove(tmp)
 		return fmt.Errorf("file_store: rename %s: %w", wf.ID, err)
 	}
+	s.invalidate(path)
 	return nil
 }
 
@@ -172,7 +185,9 @@ func (s *WorkflowFileStore) GetWorkflow(ctx context.Context, id string) (*Workfl
 	return parseWorkflowFile(data)
 }
 
-// ListWorkflows scans the directory and returns all workflows sorted by UpdatedAt desc.
+// ListWorkflows scans the directory and returns all workflows sorted by
+// UpdatedAt desc. Parsed workflows are cached per file and reused while the
+// file's modtime and size are unchanged.
 func (s *WorkflowFileStore) ListWorkflows(ctx context.Context) ([]*Workflow, error) {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
@@ -183,11 +198,7 @@ func (s *WorkflowFileStore) ListWorkflows(ctx context.Context) ([]*Workflow, err
 		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(s.dir, e.Name()))
-		if err != nil {
-			continue
-		}
-		wf, err := parseWorkflowFile(data)
+		wf, err := s.cachedWorkflow(e)
 		if err != nil {
 			continue
 		}
@@ -199,6 +210,42 @@ func (s *WorkflowFileStore) ListWorkflows(ctx context.Context) ([]*Workflow, err
 	return wfs, nil
 }
 
+// cachedWorkflow returns the parsed workflow for a directory entry, serving
+// it from the cache when the file's modtime and size match the cached entry.
+func (s *WorkflowFileStore) cachedWorkflow(e os.DirEntry) (*Workflow, error) {
+	path := filepath.Join(s.dir, e.Name())
+	info, err := e.Info()
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	c, ok := s.cache[path]
+	s.mu.Unlock()
+	if ok && c.size == info.Size() && c.modTime.Equal(info.ModTime()) {
+		return c.wf, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	wf, err := parseWorkflowFile(data)
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	s.cache[path] = fileCacheEntry{modTime: info.ModTime(), size: info.Size(), wf: wf}
+	s.mu.Unlock()
+	return wf, nil
+}
+
+// invalidate drops the cached parse for path (called on save/delete, where
+// the on-disk file has just been rewritten or removed).
+func (s *WorkflowFileStore) invalidate(path string) {
+	s.mu.Lock()
+	delete(s.cache, path)
+	s.mu.Unlock()
+}
+
 // DeleteWorkflow removes the workflow JSON file.
 func (s *WorkflowFileStore) DeleteWorkflow(ctx context.Context, id string) error {
 	path, err := s.filePath(id)
@@ -208,6 +255,9 @@ func (s *WorkflowFileStore) DeleteWorkflow(ctx context.Context, id string) error
 	err = os.Remove(path)
 	if os.IsNotExist(err) {
 		return nil
+	}
+	if err == nil {
+		s.invalidate(path)
 	}
 	return err
 }

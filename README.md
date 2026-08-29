@@ -572,6 +572,18 @@ wails dev      # development mode
 wails build    # production build
 ```
 
+### Docker
+
+```bash
+docker compose up -d --build   # daemon + persistent /data volume
+
+# Webhook triggers: the server binds 127.0.0.1:9321 by default —
+# set the bind address so the published port is reachable:
+MONOAGENT_WEBHOOK_ADDR=0.0.0.0:9321 docker compose up -d --build
+```
+
+Browser-based webhook callers additionally need `MONOAGENT_WEBHOOK_ALLOWED_ORIGINS` (a comma-separated CORS allowlist; unset by default — no CORS headers are sent). See [docker-compose.yml](docker-compose.yml) and the env-var table in [AGENTS.md](AGENTS.md).
+
 ---
 
 ## Architecture

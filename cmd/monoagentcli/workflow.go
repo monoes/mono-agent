@@ -1529,12 +1529,6 @@ func newWorkflowNodeAddCmd(cfg *globalConfig) *cobra.Command {
 			if err := store.SaveWorkflowNodes(ctx, workflowID, existing); err != nil {
 				return fmt.Errorf("save nodes: %w", err)
 			}
-			// SaveWorkflowNodes deletes+reinserts rows in workflow_nodes, and
-			// workflow_connections cascades on node delete — re-save the
-			// untouched connections so adding a node doesn't drop every edge.
-			if err := store.SaveWorkflowConnections(ctx, workflowID, wf.Connections); err != nil {
-				return fmt.Errorf("save connections: %w", err)
-			}
 
 			if cfg.JSONOutput {
 				return json.NewEncoder(os.Stdout).Encode(newNode)
@@ -1659,12 +1653,6 @@ func newWorkflowNodeSetCmd(cfg *globalConfig) *cobra.Command {
 
 			if err := store.SaveWorkflowNodes(ctx, workflowID, wf.Nodes); err != nil {
 				return fmt.Errorf("save nodes: %w", err)
-			}
-			// SaveWorkflowNodes deletes+reinserts rows in workflow_nodes, and
-			// workflow_connections cascades on node delete — re-save the
-			// untouched connections so updating a node doesn't drop every edge.
-			if err := store.SaveWorkflowConnections(ctx, workflowID, wf.Connections); err != nil {
-				return fmt.Errorf("save connections: %w", err)
 			}
 			if cfg.JSONOutput {
 				for i := range wf.Nodes {

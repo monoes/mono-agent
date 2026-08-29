@@ -16,23 +16,31 @@ services:
     restart: unless-stopped
 
     # ── Webhook trigger endpoint ────────────────────────────────────────────
-    # The workflow engine's webhook server currently binds 127.0.0.1:9321
-    # (internal/workflow/engine.go applyEngineDefaults) — loopback-only by
-    # design. Under the default Docker bridge network that means the mapping
-    # below does NOT forward: the listener is on the container's loopback,
-    # not its external interface. Options today:
+    # The engine's webhook server binds 127.0.0.1:9321 by default
+    # (internal/workflow/engine.go applyEngineDefaults) — loopback-only, so
+    # under Docker's default bridge network a plain `ports` mapping cannot
+    # reach it. MONOAGENT_WEBHOOK_ADDR overrides the bind (env > config >
+    # default), so binding 0.0.0.0 inside the container makes the published
+    # port below genuinely forward.
     #
-    #   a) Linux hosts: use host networking instead — comment out `ports` and
-    #      uncomment `network_mode` below. The loopback bind then lands on
-    #      the host itself and webhooks are reachable at
-    #      http://127.0.0.1:9321/webhook/<path>.
-    #   b) Any host: fire webhooks from inside the container:
-    #      docker exec monoagent curl -s http://127.0.0.1:9321/webhook/<path> \
-    #        -H 'Content-Type: application/json' -d '{"hello":"world"}'
-    #   c) Publish once the engine grows a configurable bind address.
+    # SECURITY:
+    #   - 0.0.0.0 here is only the container's interface; exposure is still
+    #     governed by the `ports` mapping. Prefer publishing to host
+    #     loopback ("127.0.0.1:9321:9321") unless remote callers are really
+    #     needed, and give webhook nodes an auth secret (auth_header/
+    #     auth_token) or HMAC secret — anyone who can reach the port can
+    #     fire an unauthenticated webhook.
+    #   - Browser-based callers need MONOAGENT_WEBHOOK_ALLOWED_ORIGINS (a
+    #     comma-separated origin allowlist); without it the server emits NO
+    #     CORS headers, so cross-origin browser requests are blocked.
+    environment:
+      MONOAGENT_WEBHOOK_ADDR: "0.0.0.0:9321"
+      # MONOAGENT_WEBHOOK_ALLOWED_ORIGINS: "https://app.example.com"
     ports:
-      - "9321:9321"
-    # network_mode: host   # Linux only; replaces `ports` (and the bridge net)
+      - "127.0.0.1:9321:9321"
+      # Remote callers instead of host loopback only — pair with webhook
+      # auth secrets before using:
+      # - "9321:9321"
 
     volumes:
       - monoagent-data:/data

@@ -1,0 +1,10 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "field", "label": "Image Path Field", "type": "text", "required": false, "help": "Item field holding the local image path. Defaults to image_path, path, file_path, or media_path (first non-empty)." },
+    { "key": "format", "label": "Target Format", "type": "select", "required": true, "options": ["jpeg", "png", "gif", "tiff", "bmp"], "help": "Output image format. jpg is accepted as an alias for jpeg; webp can be decoded but not written." },
+    { "key": "quality", "label": "JPEG Quality", "type": "number", "required": false, "default": 85, "min": 1, "max": 100, "help": "JPEG encode quality (only used when format is jpeg)." },
+    { "key": "output_field", "label": "Output Field", "type": "text", "required": false, "default": "image_path", "help": "Item field where the output file path is written." },
+    { "key": "output_dir", "label": "Output Directory", "type": "text", "required": false, "help": "Directory for the converted file. Defaults to the source image's directory. ~ is expanded." }
+  ]
+}

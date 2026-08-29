@@ -56,6 +56,20 @@ and implemented in [`internal/secrets`](internal/secrets):
 - Plaintext values are only decrypted in memory when a workflow runs or when
   you explicitly run `monoagentcli secret reveal <name> --reveal`
 
+### File-based keyring fallback (weaker posture)
+
+When `MONOAGENT_ALLOW_FILE_KEYRING=1` is set and no OS keyring is
+available, the key-encryption key is stored in a file at
+`~/.monoagent/vault/.file-keyring` (permissions 0600) instead of the OS
+keyring, and the CLI prints a warning whenever it uses it. This is a
+weaker posture and is deliberately opt-in: any process running as the same
+user, or anyone with read access to the disk volume or its backups, can
+retrieve the KEK and decrypt the vault — key and ciphertext then live on
+the same volume. Payloads remain AES-256-GCM encrypted, but the OS
+keyring's process-scoped access control is lost. Use the fallback only
+where no keyring exists (headless CI, containers); without the variable
+set, secret operations fail closed.
+
 ## Telemetry and crash reporting
 
 **Default: no telemetry.** There are no analytics, phone-home checks, or

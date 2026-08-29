@@ -34,6 +34,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SUCCESS`.
 - `core.filter` now surfaces evaluation errors from its condition instead
   of passing items through silently.
+- Store-level node saves preserve edges: `SaveWorkflowNodes` updates nodes
+  in place instead of delete+reinsert (which cascaded deletes through
+  `workflow_connections`); the CLI workaround that re-saved connections
+  afterwards is removed.
+- `workflow list` performance: workflow JSON files are parsed once and
+  cached, and a SQLite expression index (migration 024) speeds up
+  expression-based lookups.
 
 Repository hygiene and packaging wave: social bot implementations moved
 behind the opt-in `social` build tag (default builds exclude them),
@@ -70,6 +77,25 @@ CLI behavior and docs.
   enforced by the vendored JS runtime; `system.execute_command` output
   capped at 10 MB per channel (stdout and stderr). Stored outputs are
   persisted in full but display-truncated at 4 KB.
+- Webhook server environment overrides: `MONOAGENT_WEBHOOK_ADDR` sets the
+  bind address (`host:port`, default `127.0.0.1:9321`) and
+  `MONOAGENT_WEBHOOK_ALLOWED_ORIGINS` sets a comma-separated CORS
+  allowlist (default: no CORS headers). Docker port mappings for webhook
+  triggers now work without host networking.
+- Opt-in file-based keyring fallback for headless environments:
+  `MONOAGENT_ALLOW_FILE_KEYRING=1` stores the vault key-encryption key at
+  `~/.monoagent/vault/.file-keyring` (0600) with a loud warning, so
+  `secret add` works in CI/containers; without the variable the vault
+  fails closed on machines with no OS keyring.
+- Node schema coverage completed: every default-build node type now
+  resolves a schema — 16 added (`image.*`, `service.reddit`,
+  `service.devto`, `service.discord`, `service.bluesky`,
+  `service.mastodon`, `service.hashnode`, `service.producthunt`,
+  `gemini.chat_session`, `gemini.chat_session_many`).
+- GUI (`wails-app`): ImportWorkflow/ExportWorkflow bindings, subprocess
+  PID verification, and a cancellable RunNode.
+- `update` verifies downloads against the release `SHA256SUMS.txt` and
+  hard-fails on a checksum mismatch or a missing checksums file.
 
 ### Changed
 
@@ -94,6 +120,8 @@ CLI behavior and docs.
   `secret rm`/`secret update`, and `workflow delete` return 2 on unknown
   ids; a run ending `CANCELLED` exits 1.
 - `wails-app` Go module fixed so the desktop app builds as its own module.
+- `monoes_apis/` development scripts extracted to the private repository
+  `monoes/monoes-apis`; this tree no longer carries them.
 
 ### Removed
 

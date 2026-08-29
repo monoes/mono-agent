@@ -5,6 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -55,7 +58,12 @@ type EngineConfig struct {
 // WorkflowStore. Use this when you need a HybridWorkflowStore (file store +
 // SQLite). db is still required for the connections store.
 func NewWorkflowEngineWithStore(store WorkflowStore, db *sql.DB, scheduler SchedulerInterface, registry *NodeTypeRegistry, cfg EngineConfig, logger zerolog.Logger) *WorkflowEngine {
-	applyEngineDefaults(&cfg)
+	if err := applyEngineDefaults(&cfg); err != nil {
+		// Invalid MONOAGENT_WEBHOOK_ADDR: applyEngineDefaults has already
+		// fallen back to the config value / loopback default, so the engine
+		// still starts — surfacing the error loudly rather than dying.
+		logger.Error().Err(err).Msg("engine: webhook address override rejected, using config/default instead")
+	}
 	connStore := connections.NewStore(db)
 	webhookServer := NewWebhookServer(cfg.WebhookAddr, logger)
 	profileID := cfg.ProfileID
@@ -86,7 +94,16 @@ func NewWorkflowEngineWithStore(store WorkflowStore, db *sql.DB, scheduler Sched
 	return e
 }
 
-func applyEngineDefaults(cfg *EngineConfig) {
+// defaultWebhookAddr binds the webhook server to loopback so triggers aren't
+// reachable from the LAN without auth; operators can opt into a wider bind
+// via MONOAGENT_WEBHOOK_ADDR (e.g. "0.0.0.0:9321") or EngineConfig.WebhookAddr.
+const defaultWebhookAddr = "127.0.0.1:9321"
+
+// applyEngineDefaults fills zero-valued EngineConfig fields. WebhookAddr
+// resolution order is env MONOAGENT_WEBHOOK_ADDR > cfg.WebhookAddr >
+// defaultWebhookAddr. An env value that fails host:port validation returns an
+// error and leaves the config/default value in place.
+func applyEngineDefaults(cfg *EngineConfig) error {
 	if cfg.MaxConcurrent <= 0 {
 		cfg.MaxConcurrent = 3
 	}
@@ -103,14 +120,21 @@ func applyEngineDefaults(cfg *EngineConfig) {
 		cfg.MaxExecHistory = 500
 	}
 	if cfg.WebhookAddr == "" {
-		// Bind loopback by default so webhook triggers aren't reachable from the
-		// LAN without auth; operators can opt into ":9321" explicitly.
-		cfg.WebhookAddr = "127.0.0.1:9321"
+		cfg.WebhookAddr = defaultWebhookAddr
 	}
+	if envAddr := strings.TrimSpace(os.Getenv("MONOAGENT_WEBHOOK_ADDR")); envAddr != "" {
+		if _, _, err := net.SplitHostPort(envAddr); err != nil {
+			return fmt.Errorf("invalid MONOAGENT_WEBHOOK_ADDR %q (want host:port, e.g. 0.0.0.0:9321): %w", envAddr, err)
+		}
+		cfg.WebhookAddr = envAddr
+	}
+	return nil
 }
 
 func NewWorkflowEngine(db *sql.DB, scheduler SchedulerInterface, registry *NodeTypeRegistry, cfg EngineConfig, logger zerolog.Logger) *WorkflowEngine {
-	applyEngineDefaults(&cfg)
+	if err := applyEngineDefaults(&cfg); err != nil {
+		logger.Error().Err(err).Msg("engine: webhook address override rejected, using config/default instead")
+	}
 
 	store := NewSQLiteWorkflowStore(db)
 	connStore := connections.NewStore(db)
@@ -169,7 +193,7 @@ func (e *WorkflowEngine) Start(ctx context.Context) error {
 		if !isAddrInUse(err) {
 			return fmt.Errorf("engine: start webhook server: %w", err)
 		}
-		e.logger.Warn().Err(err).
+		e.logger.Warn().Err(err).Str("addr", e.webhookServer.addr).
 			Msg("engine: webhook port already in use by another monoagent process — this engine will not serve webhooks yet, retrying every 30s, everything else runs normally")
 		go e.webhookRetryLoop(e.ctx)
 	}

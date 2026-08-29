@@ -299,29 +299,37 @@ func (s *SQLiteWorkflowStore) SetWorkflowActive(ctx context.Context, id string, 
 // Nodes & Connections
 // ---------------------------------------------------------------------------
 
-// SaveWorkflowNodes replaces all nodes for a workflow atomically.
-// Existing nodes are deleted and the supplied slice is inserted fresh.
+// SaveWorkflowNodes upserts all supplied nodes for a workflow atomically and
+// deletes only the nodes that are no longer present. Connections of
+// surviving nodes are untouched; connections of deleted nodes cascade via
+// the source/target FKs as before.
 func (s *SQLiteWorkflowStore) SaveWorkflowNodes(ctx context.Context, workflowID string, nodes []WorkflowNode) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("beginning save-nodes transaction: %w", err)
 	}
 
-	if _, err := tx.ExecContext(ctx, "DELETE FROM workflow_nodes WHERE workflow_id = ?", workflowID); err != nil {
-		tx.Rollback()
-		return fmt.Errorf("deleting old nodes for workflow %s: %w", workflowID, err)
-	}
-
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO workflow_nodes
 			(id, workflow_id, node_type, name, config, position_x, position_y, disabled, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			workflow_id = excluded.workflow_id,
+			node_type   = excluded.node_type,
+			name        = excluded.name,
+			config      = excluded.config,
+			position_x  = excluded.position_x,
+			position_y  = excluded.position_y,
+			disabled    = excluded.disabled,
+			updated_at  = excluded.updated_at`)
 	if err != nil {
 		tx.Rollback()
-		return fmt.Errorf("preparing node insert: %w", err)
+		return fmt.Errorf("preparing node upsert: %w", err)
 	}
 	defer stmt.Close()
 
+	args := make([]interface{}, 0, len(nodes)+1)
+	args = append(args, workflowID)
 	now := time.Now().UTC()
 	for i := range nodes {
 		n := &nodes[i]
@@ -342,8 +350,22 @@ func (s *SQLiteWorkflowStore) SaveWorkflowNodes(ctx context.Context, workflowID 
 			n.CreatedAt, n.UpdatedAt,
 		); err != nil {
 			tx.Rollback()
-			return fmt.Errorf("inserting node %s: %w", n.ID, err)
+			return fmt.Errorf("upserting node %s: %w", n.ID, err)
 		}
+		args = append(args, n.ID)
+	}
+
+	// Delete only genuinely-removed nodes; their connections cascade via FK.
+	var delSQL string
+	if len(nodes) == 0 {
+		delSQL = "DELETE FROM workflow_nodes WHERE workflow_id = ?"
+	} else {
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(nodes)), ",")
+		delSQL = "DELETE FROM workflow_nodes WHERE workflow_id = ? AND id NOT IN (" + placeholders + ")"
+	}
+	if _, err := tx.ExecContext(ctx, delSQL, args...); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("deleting removed nodes for workflow %s: %w", workflowID, err)
 	}
 
 	if err := tx.Commit(); err != nil {

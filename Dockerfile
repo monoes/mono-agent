@@ -49,11 +49,11 @@ WORKDIR /app
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD monoagentcli version
 
-# Webhook trigger port. Caveat: the engine currently binds the webhook
-# server to 127.0.0.1:9321 (internal/workflow/engine.go, applyEngineDefaults)
-# — loopback-only by design. Under Docker's default bridge network this port
-# is NOT reachable from outside the container; see docker-compose.yml for
-# the host-networking option that makes it reachable on Linux hosts.
+# Webhook trigger port. The engine binds 127.0.0.1:9321 by default
+# (internal/workflow/engine.go applyEngineDefaults); set
+# MONOAGENT_WEBHOOK_ADDR=0.0.0.0:9321 (see docker-compose.yml) so the
+# published port is reachable from outside the container. Secure webhook
+# nodes (auth token / HMAC secret) before exposing the port further.
 EXPOSE 9321
 
 ENTRYPOINT ["/usr/local/bin/monoagentcli", "daemon"]

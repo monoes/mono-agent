@@ -40,8 +40,9 @@ type App struct {
 	chatService *aichat.ChatService
 	wfStore     *workflow.HybridWorkflowStore
 
-	runningMu   sync.Mutex
-	runningCmds map[string]*exec.Cmd // workflowID → running subprocess
+	runningMu      sync.Mutex
+	runningCmds    map[string]*exec.Cmd // workflowID / "action:<id>" / "noderun:<id>" → running subprocess
+	nodeRunCounter atomic.Int64         // source of RunNode run ids (NodeRunResult.run_id)
 
 	chatCancels sync.Map // workflowID → *cancelHandle for in-flight AI chat streams
 
