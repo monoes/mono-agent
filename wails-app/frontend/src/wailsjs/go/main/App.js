@@ -94,10 +94,6 @@ export function DeleteAction(arg1) {
   return window['go']['main']['App']['DeleteAction'](arg1);
 }
 
-export function DeleteCredential(arg1) {
-  return window['go']['main']['App']['DeleteCredential'](arg1);
-}
-
 export function DeleteSecret(arg1) {
   return window['go']['main']['App']['DeleteSecret'](arg1);
 }
@@ -302,10 +298,6 @@ export function GetRecentExecutions(arg1) {
   return window['go']['main']['App']['GetRecentExecutions'](arg1);
 }
 
-export function GetRunLogs(arg1) {
-  return window['go']['main']['App']['GetRunLogs'](arg1);
-}
-
 export function GetSecretFields(arg1) {
   return window['go']['main']['App']['GetSecretFields'](arg1);
 }
@@ -368,10 +360,6 @@ export function ListAIProviders() {
 
 export function ListConnections(arg1) {
   return window['go']['main']['App']['ListConnections'](arg1);
-}
-
-export function ListCredentials() {
-  return window['go']['main']['App']['ListCredentials']();
 }
 
 export function ListCredentialsForNode(arg1) {
@@ -448,10 +436,6 @@ export function SaveAIProvider(arg1) {
 
 export function SaveConnectionDirect(arg1, arg2, arg3) {
   return window['go']['main']['App']['SaveConnectionDirect'](arg1, arg2, arg3);
-}
-
-export function SaveCredential(arg1) {
-  return window['go']['main']['App']['SaveCredential'](arg1);
 }
 
 export function SaveVaultImageToFile(arg1, arg2) {

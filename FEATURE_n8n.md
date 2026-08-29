@@ -1,6 +1,6 @@
 # Feature Map: n8n
 
-_Line refs from repository at /Users/morteza/Desktop/monoes/n8n_
+_Line refs from the upstream n8n repository (v2.12)_
 
 > **What this file is:** a feature-by-feature map of n8n v2.12 (nodes,
 > triggers, expressions, credentials, internals) built as the porting

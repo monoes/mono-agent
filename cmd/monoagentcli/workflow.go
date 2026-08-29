@@ -782,7 +782,15 @@ func newWorkflowRunCmd(cfg *globalConfig) *cobra.Command {
 			}
 			defer engine.Stop() //nolint:errcheck
 
-			executionID, err := engine.TriggerWorkflow(ctx, workflowID, triggerData)
+			var executionID string
+			if noWait {
+				// --no-wait must not enqueue into this process's queue — the
+				// CLI exits right after, cancelling the run. Persist the
+				// execution QUEUED (pid 0) and let a live engine adopt it.
+				executionID, err = engine.TriggerWorkflowPersistOnly(ctx, workflowID, triggerData)
+			} else {
+				executionID, err = engine.TriggerWorkflow(ctx, workflowID, triggerData)
+			}
 			if err != nil {
 				// Keeps the engine's ErrWorkflowNotFound chain → exit 2.
 				if errors.Is(err, workflow.ErrWorkflowInactive) {
@@ -792,14 +800,7 @@ func newWorkflowRunCmd(cfg *globalConfig) *cobra.Command {
 			}
 
 			if noWait {
-				status := "RUNNING"
-				if exec, gerr := engine.GetExecution(ctx, executionID); gerr == nil && exec != nil && exec.Status != "" {
-					status = exec.Status
-				}
-				// printExecutionNoWait appends the daemon hint to both the
-				// human and JSON records: the run is only enqueued in-process
-				// here and completes only while an engine stays alive.
-				return printExecutionNoWait(cfg, workflowID, executionID, status)
+				return printExecutionNoWait(cfg, workflowID, executionID, "QUEUED")
 			}
 
 			if !cfg.JSONOutput {

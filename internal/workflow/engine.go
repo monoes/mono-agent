@@ -261,6 +261,7 @@ func (e *WorkflowEngine) staleReapLoop(ctx context.Context) {
 // (Human-in-Loop items) have all been resolved, so they continue from where
 // they paused. This is what makes an approval — from the GUI or the CLI, in any
 // process — actually resume the run, and lets paused runs survive a restart.
+// Each tick also adopts unowned QUEUED executions (--no-wait persistence).
 func (e *WorkflowEngine) resumeLoop(ctx context.Context) {
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
@@ -269,6 +270,7 @@ func (e *WorkflowEngine) resumeLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			e.adoptQueuedExecutions(ctx)
 			ids, err := e.store.ListResumableExecutions(ctx)
 			if err != nil {
 				e.logger.Warn().Err(err).Msg("engine: listing resumable executions")
@@ -280,6 +282,59 @@ func (e *WorkflowEngine) resumeLoop(ctx context.Context) {
 				}
 			}
 		}
+	}
+}
+
+// adoptQueuedExecutions claims unowned QUEUED executions (pid 0, no resume
+// state — the rows `workflow run --no-wait` persists before exiting) and
+// enqueues them locally, so a live engine (the daemon, or any sufficiently
+// long-lived engine command) picks the run up. Each row is claimed with a
+// CAS (pid 0 → self) so among engines sharing the DB exactly one adopts it.
+//
+// It piggybacks the resume loop rather than running synchronously in Start:
+// a startup pass would let short-lived commands (e.g. `workflow activate`)
+// adopt runs they cancel milliseconds later at exit; the first 3s tick is
+// immediate enough for any persistent engine.
+func (e *WorkflowEngine) adoptQueuedExecutions(ctx context.Context) {
+	dctx, cancel := dbCtx()
+	defer cancel()
+	ids, err := e.store.ListAdoptableExecutions(dctx)
+	if err != nil {
+		e.logger.Warn().Err(err).Msg("engine: listing adoptable QUEUED executions")
+		return
+	}
+	for _, id := range ids {
+		exec, err := e.store.GetExecution(dctx, id)
+		if err != nil || exec == nil {
+			continue
+		}
+		// Leave executions of other profiles' workflows for a matching
+		// engine (the daemon serves all profiles and takes them itself).
+		if wf, werr := e.store.GetWorkflow(dctx, exec.WorkflowID); werr == nil && wf != nil {
+			if perr := e.checkWorkflowProfile(wf); perr != nil {
+				continue
+			}
+		}
+		claimed, err := e.store.ClaimQueuedExecution(dctx, id)
+		if err != nil {
+			e.logger.Warn().Err(err).Str("execution_id", id).Msg("engine: claiming queued execution")
+			continue
+		}
+		if !claimed {
+			continue // another engine won the CAS
+		}
+		req := ExecutionRequest{
+			WorkflowID:  exec.WorkflowID,
+			ExecutionID: id,
+			TriggerType: exec.TriggerType,
+			TriggerData: exec.TriggerData,
+		}
+		if err := e.queue.Enqueue(req); err != nil {
+			e.logger.Warn().Err(err).Str("execution_id", id).Msg("engine: adopted execution could not be enqueued")
+			e.persistExecutionFinished(e.logger, id, "FAILED", "queue full")
+			continue
+		}
+		e.logger.Info().Str("execution_id", id).Msg("engine: adopted unowned QUEUED execution")
 	}
 }
 
@@ -502,26 +557,28 @@ func (e *WorkflowEngine) handleExecution(ctx context.Context, req ExecutionReque
 		return
 	}
 
-	// Detached context for DB writes so status persistence succeeds even if
-	// the execution context is cancelled mid-dispatch (e.g. engine shutdown).
-	persistCtx, persistCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer persistCancel()
+	// Persistence contexts are detached AND non-expiring, created fresh per
+	// call: a deadline minted at dispatch (the old 10s persistCtx) expired
+	// under any run longer than 10s, so the final SetExecutionFinished
+	// silently failed and the row stayed RUNNING forever (zombie execution;
+	// the CLI wait hung and the next startup marked it FAILED).
+	persistCtx := func() context.Context { return context.WithoutCancel(ctx) }
 
 	// 1. Load the workflow.
 	wf, err := e.store.GetWorkflow(ctx, req.WorkflowID)
 	if err != nil {
 		log.Error().Err(err).Msg("engine: handleExecution: failed to load workflow")
-		_ = e.store.SetExecutionFinished(ctx, req.ExecutionID, "FAILED", fmt.Sprintf("load workflow: %s", err.Error()))
+		e.persistExecutionFinished(log, req.ExecutionID, "FAILED", fmt.Sprintf("load workflow: %s", err.Error()))
 		return
 	}
 	if wf == nil {
 		log.Error().Msg("engine: handleExecution: workflow not found")
-		_ = e.store.SetExecutionFinished(ctx, req.ExecutionID, "FAILED", "workflow not found")
+		e.persistExecutionFinished(log, req.ExecutionID, "FAILED", "workflow not found")
 		return
 	}
 
 	// 2. Update execution status to RUNNING, record started_at.
-	if err := e.store.SetExecutionStarted(persistCtx, req.ExecutionID); err != nil {
+	if err := e.store.SetExecutionStarted(persistCtx(), req.ExecutionID); err != nil {
 		log.Error().Err(err).Msg("engine: handleExecution: failed to mark execution as RUNNING")
 		// Non-fatal — attempt to continue.
 	}
@@ -530,15 +587,15 @@ func (e *WorkflowEngine) handleExecution(ctx context.Context, req ExecutionReque
 	dag, err := BuildDAG(wf.Nodes, wf.Connections)
 	if err != nil {
 		log.Error().Err(err).Msg("engine: handleExecution: failed to build DAG")
-		_ = e.store.SetExecutionFinished(ctx, req.ExecutionID, "FAILED", fmt.Sprintf("build dag: %s", err.Error()))
+		e.persistExecutionFinished(log, req.ExecutionID, "FAILED", fmt.Sprintf("build dag: %s", err.Error()))
 		return
 	}
 
 	// Load the full execution record (with trigger data) so runExecution has it.
-	exec, err := e.store.GetExecution(persistCtx, req.ExecutionID)
+	exec, err := e.store.GetExecution(persistCtx(), req.ExecutionID)
 	if err != nil || exec == nil {
 		log.Error().Err(err).Msg("engine: handleExecution: failed to load execution record")
-		_ = e.store.SetExecutionFinished(ctx, req.ExecutionID, "FAILED", "could not load execution record")
+		e.persistExecutionFinished(log, req.ExecutionID, "FAILED", "could not load execution record")
 		return
 	}
 	// TriggerNodeID isn't persisted; carry it from the request so RunExecution
@@ -549,14 +606,14 @@ func (e *WorkflowEngine) handleExecution(ctx context.Context, req ExecutionReque
 	runErr := e.runExecution(ctx, exec, wf, dag)
 
 	// 5. On completion: update execution status to SUCCESS or FAILED.
-	// persistCtx (created at the top of handleExecution) is detached from the
-	// execution context so DB writes succeed even if it was cancelled (e.g. by
-	// engine shutdown or a browser panic).
+	// persistExecutionFinished writes with a detached, non-expiring context
+	// so the terminal status lands even if the execution context was
+	// cancelled (engine shutdown) — and never discards a failure silently.
 	var partialErr *PartialFailureError
 	switch {
 	case runErr == nil:
 		log.Info().Msg("engine: execution finished successfully")
-		_ = e.store.SetExecutionFinished(persistCtx, req.ExecutionID, "SUCCESS", "")
+		e.persistExecutionFinished(log, req.ExecutionID, "SUCCESS", "")
 	case errors.Is(runErr, ErrExecutionPaused):
 		// The run suspended at a pause point (e.g. Human-in-Loop). RunExecution
 		// already persisted WAITING + resume state; leave it for the resume loop.
@@ -565,13 +622,37 @@ func (e *WorkflowEngine) handleExecution(ctx context.Context, req ExecutionReque
 		// The run completed but nodes failed under on_error=continue/skip/error_branch.
 		// Surface that rather than a misleading green SUCCESS.
 		log.Warn().Err(runErr).Msg("engine: execution finished with non-fatal node failures")
-		_ = e.store.SetExecutionFinished(persistCtx, req.ExecutionID, "SUCCESS_WITH_ERRORS", runErr.Error())
+		e.persistExecutionFinished(log, req.ExecutionID, "SUCCESS_WITH_ERRORS", runErr.Error())
 	case errors.Is(runErr, ErrExecutionCancelled):
 		log.Warn().Err(runErr).Str("final_status", "CANCELLED").Msg("engine: execution cancelled")
-		_ = e.store.SetExecutionFinished(persistCtx, req.ExecutionID, "CANCELLED", runErr.Error())
+		e.persistExecutionFinished(log, req.ExecutionID, "CANCELLED", runErr.Error())
 	default:
 		log.Warn().Err(runErr).Str("final_status", "FAILED").Msg("engine: execution finished with error")
-		_ = e.store.SetExecutionFinished(persistCtx, req.ExecutionID, "FAILED", runErr.Error())
+		e.persistExecutionFinished(log, req.ExecutionID, "FAILED", runErr.Error())
+	}
+}
+
+// persistExecutionFinished records an execution's terminal status using a
+// detached, non-expiring context (WithoutCancel, fresh per call), and does
+// not give up silently: a lost final-status write leaves the row RUNNING
+// forever — the CLI wait hangs and the next startup's recovery marks it
+// FAILED. A failed write is logged at error level and retried once.
+func (e *WorkflowEngine) persistExecutionFinished(log zerolog.Logger, executionID, status, errMsg string) {
+	persistCtx := context.WithoutCancel(context.Background())
+	err := e.store.SetExecutionFinished(persistCtx, executionID, status, errMsg)
+	if err == nil {
+		return
+	}
+	log.Error().Err(err).
+		Str("execution_id", executionID).
+		Str("status", status).
+		Msg("engine: failed to persist final execution status — retrying once")
+	time.Sleep(250 * time.Millisecond)
+	if err = e.store.SetExecutionFinished(persistCtx, executionID, status, errMsg); err != nil {
+		log.Error().Err(err).
+			Str("execution_id", executionID).
+			Str("status", status).
+			Msg("engine: final execution status could not be persisted — the row may stay RUNNING and be recovered as FAILED on next startup")
 	}
 }
 
@@ -784,18 +865,64 @@ func (e *WorkflowEngine) DeactivateWorkflow(ctx context.Context, id string) erro
 // TriggerWorkflow manually triggers a workflow (for manual trigger nodes).
 // Returns the new execution ID.
 func (e *WorkflowEngine) TriggerWorkflow(ctx context.Context, workflowID string, data map[string]interface{}) (string, error) {
+	exec, err := e.newManualExecution(ctx, workflowID, data)
+	if err != nil {
+		return "", err
+	}
+
+	req := ExecutionRequest{
+		WorkflowID:  workflowID,
+		ExecutionID: exec.ID,
+		TriggerType: "trigger.manual",
+		TriggerData: exec.TriggerData,
+	}
+
+	if err := e.queue.Enqueue(req); err != nil {
+		e.persistExecutionFinished(e.logger, exec.ID, "FAILED", "queue full")
+		return exec.ID, fmt.Errorf("engine: trigger workflow: %w", ErrQueueFull)
+	}
+
+	e.logger.Info().
+		Str("workflow_id", workflowID).
+		Str("execution_id", exec.ID).
+		Msg("engine: manual trigger queued")
+	return exec.ID, nil
+}
+
+// TriggerWorkflowPersistOnly creates a QUEUED execution for workflowID
+// WITHOUT enqueueing it locally. This backs `workflow run --no-wait`: the
+// calling CLI exits right after, so a local enqueue would be cancelled with
+// the process mid-run; instead the unowned row (pid 0) is adopted and run by
+// whichever engine is alive — see adoptQueuedExecutions. Returns the new
+// execution ID.
+func (e *WorkflowEngine) TriggerWorkflowPersistOnly(ctx context.Context, workflowID string, data map[string]interface{}) (string, error) {
+	exec, err := e.newManualExecution(ctx, workflowID, data)
+	if err != nil {
+		return "", err
+	}
+	e.logger.Info().
+		Str("workflow_id", workflowID).
+		Str("execution_id", exec.ID).
+		Msg("engine: manual trigger persisted (unowned QUEUED, awaiting adoption)")
+	return exec.ID, nil
+}
+
+// newManualExecution validates the workflow and persists a QUEUED execution
+// row for a manual trigger. Shared by TriggerWorkflow and
+// TriggerWorkflowPersistOnly.
+func (e *WorkflowEngine) newManualExecution(ctx context.Context, workflowID string, data map[string]interface{}) (*WorkflowExecution, error) {
 	wf, err := e.store.GetWorkflow(ctx, workflowID)
 	if err != nil {
-		return "", fmt.Errorf("engine: trigger workflow: %w", err)
+		return nil, fmt.Errorf("engine: trigger workflow: %w", err)
 	}
 	if wf == nil {
-		return "", fmt.Errorf("engine: trigger workflow: %w", ErrWorkflowNotFound)
+		return nil, fmt.Errorf("engine: trigger workflow: %w", ErrWorkflowNotFound)
 	}
 	if err := e.checkWorkflowProfile(wf); err != nil {
-		return "", fmt.Errorf("engine: trigger workflow: %w", err)
+		return nil, fmt.Errorf("engine: trigger workflow: %w", err)
 	}
 	if !wf.IsActive {
-		return "", fmt.Errorf("engine: trigger workflow: %w", ErrWorkflowInactive)
+		return nil, fmt.Errorf("engine: trigger workflow: %w", ErrWorkflowInactive)
 	}
 
 	if data == nil {
@@ -810,26 +937,9 @@ func (e *WorkflowEngine) TriggerWorkflow(ctx context.Context, workflowID string,
 	}
 
 	if err := e.store.CreateExecution(ctx, exec); err != nil {
-		return "", fmt.Errorf("engine: trigger workflow: create execution: %w", err)
+		return nil, fmt.Errorf("engine: trigger workflow: create execution: %w", err)
 	}
-
-	req := ExecutionRequest{
-		WorkflowID:  workflowID,
-		ExecutionID: exec.ID,
-		TriggerType: "trigger.manual",
-		TriggerData: data,
-	}
-
-	if err := e.queue.Enqueue(req); err != nil {
-		_ = e.store.SetExecutionFinished(ctx, exec.ID, "FAILED", "queue full")
-		return exec.ID, fmt.Errorf("engine: trigger workflow: %w", ErrQueueFull)
-	}
-
-	e.logger.Info().
-		Str("workflow_id", workflowID).
-		Str("execution_id", exec.ID).
-		Msg("engine: manual trigger queued")
-	return exec.ID, nil
+	return exec, nil
 }
 
 // CancelExecution signals an in-flight execution to stop.
@@ -896,7 +1006,7 @@ func (e *WorkflowEngine) RetryExecution(ctx context.Context, executionID string)
 	}
 
 	if err := e.queue.Enqueue(req); err != nil {
-		_ = e.store.SetExecutionFinished(ctx, exec.ID, "FAILED", "queue full")
+		e.persistExecutionFinished(e.logger, exec.ID, "FAILED", "queue full")
 		return exec.ID, fmt.Errorf("engine: retry execution: %w", ErrQueueFull)
 	}
 

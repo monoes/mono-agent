@@ -50,25 +50,26 @@ func loadWorkflowDefinition(ctx context.Context, cfg *globalConfig, workflowID s
 	return wf, nil
 }
 
-// parseWorkflowFileJSON reads a workflow JSON file (--file) into a Workflow
-// without saving it. It accepts both the current file format ("type",
-// "source", "target" keys) and legacy exports ("node_type", "source_node_id").
-func parseWorkflowFileJSON(raw []byte) (*workflow.Workflow, error) {
-	wf, err := workflow.ParseWorkflowFileBytes(raw)
-	if err != nil {
-		var legacyWF workflow.Workflow
-		if err2 := json.Unmarshal(raw, &legacyWF); err2 != nil {
-			return nil, errInvalidInput("parse workflow JSON: %v", err)
+// normalizeConnectionHandles defaults empty connection handles to "main",
+// matching the engine's runtime routing (an unset handle means the "main"
+// port) so validation checks the same post-normalization shape `workflow
+// import` accepts and the engine executes.
+func normalizeConnectionHandles(wf *workflow.Workflow) {
+	for i := range wf.Connections {
+		if wf.Connections[i].SourceHandle == "" {
+			wf.Connections[i].SourceHandle = "main"
 		}
-		wf = legacyWF
+		if wf.Connections[i].TargetHandle == "" {
+			wf.Connections[i].TargetHandle = "main"
+		}
 	}
-	return &wf, nil
 }
 
 // dryRunSteps validates wf with ValidateForActivation and computes its
 // topological execution order. Returns the validation/DAG error when invalid.
 // Nothing is executed.
 func dryRunSteps(wf *workflow.Workflow) ([]planStep, error) {
+	normalizeConnectionHandles(wf)
 	if err := workflow.ValidateForActivation(wf); err != nil {
 		return nil, err
 	}
@@ -89,6 +90,9 @@ func dryRunSteps(wf *workflow.Workflow) ([]planStep, error) {
 
 // newWorkflowValidateCmd validates a saved workflow (<id>) or a JSON file
 // (--file, without saving) against the same rules activation enforces.
+// File input goes through the same normalization `workflow import` uses
+// (legacy key conversion; connection handles default to "main"), so a file
+// that imports cleanly also validates.
 func newWorkflowValidateCmd(cfg *globalConfig) *cobra.Command {
 	var inputFile string
 
@@ -97,6 +101,9 @@ func newWorkflowValidateCmd(cfg *globalConfig) *cobra.Command {
 		Short: "Validate a workflow (structure, DAG, triggers) without saving or running it",
 		Long: "Runs the full activation validation: unique node ids, resolvable connections, " +
 			"no cycles, a trigger node present, and required trigger config (cron/path). " +
+			"Files are normalized the same way `workflow import` does it (legacy key " +
+			"conversion; unset connection handles default to \"main\"), so validate " +
+			"checks the post-normalization shape. " +
 			"Exit 0 when valid, 2 when the workflow is not found, 3 when invalid.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -109,10 +116,11 @@ func newWorkflowValidateCmd(cfg *globalConfig) *cobra.Command {
 					}
 					return fmt.Errorf("read workflow file: %w", err)
 				}
-				wf, err = parseWorkflowFileJSON(raw)
+				parsed, err := parseWorkflowDefinition(raw)
 				if err != nil {
 					return err
 				}
+				wf = &parsed
 			} else {
 				if len(args) != 1 {
 					return errInvalidInput("pass a workflow id, or --file <workflow.json>")
@@ -123,6 +131,8 @@ func newWorkflowValidateCmd(cfg *globalConfig) *cobra.Command {
 					return err
 				}
 			}
+
+			normalizeConnectionHandles(wf)
 
 			if err := workflow.ValidateForActivation(wf); err != nil {
 				if cfg.JSONOutput {

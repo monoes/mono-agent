@@ -33,7 +33,7 @@ func newRootCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "monoagentcli",
 		Short: "Local-first workflow automation agent (n8n alternative)",
-		Long: `Mono Agent — local-first workflow automation (n8n alternative) in a single Go binary. Build, schedule, and run DAG workflows (90+ node types) from CLI, GUI, or MCP. Social platform actions are an opt-in build (-tags social) for your own accounts — see docs/USAGE_POLICY.md.
+		Long: `Mono Agent — local-first workflow automation (n8n alternative) in a single Go binary. Build, schedule, and run DAG workflows (90 node types; 150 with the optional social build) from CLI, GUI, or MCP. Social platform actions are an opt-in build (-tags social) for your own accounts — see docs/USAGE_POLICY.md.
 
 START HERE — what can this already do?
 

@@ -51,8 +51,6 @@ export function DeleteAIProvider(arg1:string):Promise<string>;
 
 export function DeleteAction(arg1:string):Promise<void>;
 
-export function DeleteCredential(arg1:string):Promise<void>;
-
 export function DeleteSecret(arg1:string):Promise<void>;
 
 export function DeleteSession(arg1:number):Promise<void>;
@@ -155,8 +153,6 @@ export function GetProfiles():Promise<Array<main.ProfileInfo>>;
 
 export function GetRecentExecutions(arg1:number):Promise<Array<main.WorkflowExecutionSummary>>;
 
-export function GetRunLogs(arg1:number):Promise<Array<main.LogEntry>>;
-
 export function GetSecretFields(arg1:string):Promise<main.VaultFieldsAndNotes>;
 
 export function GetSessions():Promise<Array<main.SessionInfo>>;
@@ -188,8 +184,6 @@ export function IsDBConnected():Promise<boolean>;
 export function ListAIProviders():Promise<string>;
 
 export function ListConnections(arg1:string):Promise<Array<connections.SafeConnection>>;
-
-export function ListCredentials():Promise<Array<main.CredentialSummary>>;
 
 export function ListCredentialsForNode(arg1:string):Promise<Array<main.CredentialOption>>;
 
@@ -228,8 +222,6 @@ export function RunWorkflow(arg1:string):Promise<void>;
 export function SaveAIProvider(arg1:string):Promise<string>;
 
 export function SaveConnectionDirect(arg1:string,arg2:string,arg3:string):Promise<string>;
-
-export function SaveCredential(arg1:main.SaveCredentialRequest):Promise<main.CredentialSummary>;
 
 export function SaveVaultImageToFile(arg1:string,arg2:string):Promise<string>;
 

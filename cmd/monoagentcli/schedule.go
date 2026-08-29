@@ -132,8 +132,8 @@ func newScheduleAddCmd(cfg *globalConfig) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add <action-id>",
 		Short: "Schedule an action",
-		Example: `  monoagentcli schedule add abc-123 --cron "0 9 * * *"
-  monoagentcli schedule add abc-123 --cron "0 9 * * *" --start-date 2025-01-01 --end-date 2025-12-31`,
+		Example: `  monoagentcli schedule add abc-123 --cron "0 0 9 * * *"
+  monoagentcli schedule add abc-123 --cron "0 0 9 * * *" --start-date 2025-01-01 --end-date 2025-12-31`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			actionID := args[0]

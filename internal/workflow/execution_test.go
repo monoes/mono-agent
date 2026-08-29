@@ -1,15 +1,19 @@
 package workflow
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/rs/zerolog"
+
+	"github.com/monoes/mono-agent/internal/vault"
 )
 
 // stubStore is a no-op WorkflowStore that only records the execution-node rows
@@ -26,6 +30,32 @@ func (s *stubStore) CreateExecutionNode(ctx context.Context, en *WorkflowExecuti
 	cp := *en
 	s.nodes = append(s.nodes, &cp)
 	return nil
+}
+
+func (s *stubStore) SetExecutionNodeFinished(ctx context.Context, id string, status string, outputItems []Item, errMsg string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, n := range s.nodes {
+		if n.ID == id {
+			n.Status = status
+			n.ErrorMessage = errMsg
+			n.OutputItems = outputItems
+		}
+	}
+	return nil
+}
+
+// nodeRecord returns the recorded execution-node row for nodeID, or nil.
+func (s *stubStore) nodeRecord(nodeID string) *WorkflowExecutionNode {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var rec *WorkflowExecutionNode
+	for _, n := range s.nodes {
+		if n.NodeID == nodeID {
+			rec = n
+		}
+	}
+	return rec
 }
 
 func (s *stubStore) CreateWorkflow(context.Context, *Workflow) error           { return nil }
@@ -52,11 +82,8 @@ func (s *stubStore) UpdateExecutionStatus(context.Context, string, string, strin
 func (s *stubStore) SetExecutionStarted(context.Context, string) error                   { return nil }
 func (s *stubStore) SetExecutionFinished(context.Context, string, string, string) error  { return nil }
 func (s *stubStore) UpdateExecutionNode(context.Context, *WorkflowExecutionNode) error   { return nil }
-func (s *stubStore) SetExecutionNodeFinished(context.Context, string, string, []Item, string) error {
-	return nil
-}
-func (s *stubStore) CreateCredential(context.Context, *Credential) error        { return nil }
-func (s *stubStore) GetCredential(context.Context, string) (*Credential, error) { return nil, nil }
+func (s *stubStore) CreateCredential(context.Context, *Credential) error                 { return nil }
+func (s *stubStore) GetCredential(context.Context, string) (*Credential, error)          { return nil, nil }
 func (s *stubStore) ListCredentials(context.Context, string) ([]Credential, error) {
 	return nil, nil
 }
@@ -73,6 +100,8 @@ func (s *stubStore) SetExecutionWaiting(_ context.Context, _ string, state strin
 }
 func (s *stubStore) ListResumableExecutions(context.Context) ([]string, error)    { return nil, nil }
 func (s *stubStore) ResumeWaitingExecution(context.Context, string) (bool, error) { return true, nil }
+func (s *stubStore) ListAdoptableExecutions(context.Context) ([]string, error)    { return nil, nil }
+func (s *stubStore) ClaimQueuedExecution(context.Context, string) (bool, error)   { return false, nil }
 func (s *stubStore) PruneExecutions(context.Context, string, int) error           { return nil }
 func (s *stubStore) RawDB() *sql.DB                                               { return nil }
 
@@ -128,6 +157,220 @@ func (c countNode) Type() string { return "test.count" }
 func (c countNode) Execute(_ context.Context, in NodeInput, _ map[string]interface{}) ([]NodeOutput, error) {
 	*c.count++
 	return []NodeOutput{{Handle: "main", Items: in.Items}}, nil
+}
+
+// errorEmitNode succeeds but routes one item to the "error" handle — the
+// failure convention of http.request (connection refused, cap breach) and
+// system.execute_command (non-zero exit).
+type errorEmitNode struct{}
+
+func (errorEmitNode) Type() string { return "test.erroremit" }
+func (errorEmitNode) Execute(_ context.Context, _ NodeInput, _ map[string]interface{}) ([]NodeOutput, error) {
+	return []NodeOutput{{
+		Handle: "error",
+		Items:  []Item{NewItem(map[string]interface{}{"error": "dial tcp: connection refused"})},
+	}}, nil
+}
+
+// captureItemsNode records the items it receives and passes them through.
+type captureItemsNode struct{ got *[]Item }
+
+func (captureItemsNode) Type() string { return "test.capture.items" }
+func (c captureItemsNode) Execute(_ context.Context, in NodeInput, _ map[string]interface{}) ([]NodeOutput, error) {
+	*c.got = append(*c.got, in.Items...)
+	return []NodeOutput{{Handle: "main", Items: in.Items}}, nil
+}
+
+// TestRunExecution_ErrorHandleUnwiredFailsNode is the regression guard for
+// V3-F3/F7: a node routing failures to its "error" output with NO edge wired
+// from that handle used to have its error items silently dropped while
+// reporting SUCCESS with 0 items. It must now FAIL with the routed error,
+// and the execution must reflect it.
+func TestRunExecution_ErrorHandleUnwiredFailsNode(t *testing.T) {
+	reg := NewNodeTypeRegistry()
+	reg.Register("test.erroremit", func() NodeExecutor { return errorEmitNode{} })
+
+	wf := &Workflow{
+		ID:   "wf-err-unwired",
+		Name: "err-unwired",
+		Nodes: []WorkflowNode{
+			{ID: "t", WorkflowID: "wf-err-unwired", Type: "trigger.manual", Name: "T"},
+			{ID: "emit", WorkflowID: "wf-err-unwired", Type: "test.erroremit", Name: "Emit"},
+		},
+		Connections: []WorkflowConnection{
+			{SourceNodeID: "t", SourceHandle: "main", TargetNodeID: "emit", TargetHandle: "main"},
+		},
+	}
+	dag, err := BuildDAG(wf.Nodes, wf.Connections)
+	if err != nil {
+		t.Fatalf("BuildDAG: %v", err)
+	}
+	store := &stubStore{}
+	exec := &WorkflowExecution{ID: "e-err-unwired", WorkflowID: wf.ID, TriggerNodeID: "t"}
+	err = RunExecution(context.Background(), exec, wf, dag, reg, store, nil, NewExpressionEngine(), zerolog.Nop())
+
+	if err == nil {
+		t.Fatal("RunExecution error = nil, want failure from the dropped error output")
+	}
+	if !strings.Contains(err.Error(), "dial tcp: connection refused") {
+		t.Errorf("error should surface the routed failure, got: %v", err)
+	}
+	rec := store.nodeRecord("emit")
+	if rec == nil {
+		t.Fatal("no execution-node record for the emitting node")
+	}
+	if rec.Status != "FAILED" {
+		t.Errorf("emitting node status = %s, want FAILED (was silently SUCCESS)", rec.Status)
+	}
+	if rec.ErrorMessage == "" {
+		t.Error("emitting node record carries no error message")
+	}
+}
+
+// TestRunExecution_ErrorHandleWiredRoutesNotFailed preserves the wired
+// behaviour: with an edge from the "error" handle, the error item routes to
+// the successor and the node does NOT fail.
+func TestRunExecution_ErrorHandleWiredRoutesNotFailed(t *testing.T) {
+	reg := NewNodeTypeRegistry()
+	reg.Register("test.erroremit", func() NodeExecutor { return errorEmitNode{} })
+	var captured []Item
+	reg.Register("test.capture.items", func() NodeExecutor { return captureItemsNode{got: &captured} })
+
+	wf := &Workflow{
+		ID:   "wf-err-wired",
+		Name: "err-wired",
+		Nodes: []WorkflowNode{
+			{ID: "t", WorkflowID: "wf-err-wired", Type: "trigger.manual", Name: "T"},
+			{ID: "emit", WorkflowID: "wf-err-wired", Type: "test.erroremit", Name: "Emit"},
+			{ID: "cap", WorkflowID: "wf-err-wired", Type: "test.capture.items", Name: "Cap"},
+		},
+		Connections: []WorkflowConnection{
+			{SourceNodeID: "t", SourceHandle: "main", TargetNodeID: "emit", TargetHandle: "main"},
+			{SourceNodeID: "emit", SourceHandle: "error", TargetNodeID: "cap", TargetHandle: "main"},
+		},
+	}
+	dag, err := BuildDAG(wf.Nodes, wf.Connections)
+	if err != nil {
+		t.Fatalf("BuildDAG: %v", err)
+	}
+	store := &stubStore{}
+	exec := &WorkflowExecution{ID: "e-err-wired", WorkflowID: wf.ID, TriggerNodeID: "t"}
+	if err := RunExecution(context.Background(), exec, wf, dag, reg, store, nil, NewExpressionEngine(), zerolog.Nop()); err != nil {
+		t.Fatalf("RunExecution: %v (wired error edge must not fail the run)", err)
+	}
+	if len(captured) != 1 {
+		t.Fatalf("error-edge successor captured %d items, want 1", len(captured))
+	}
+	if msg, _ := captured[0].JSON["error"].(string); msg == "" {
+		t.Errorf("routed error item has no error field: %+v", captured[0].JSON)
+	}
+	if rec := store.nodeRecord("emit"); rec != nil && rec.Status == "FAILED" {
+		t.Errorf("emitting node status = FAILED with a wired error edge; want not-failed (got %s)", rec.Status)
+	}
+}
+
+// TestRunExecution_ErrorHandleUnwiredContinuePolicyKept preserves the
+// explicit opt-out: with on_error=continue and an unwired error handle the
+// dropped error output stays non-fatal.
+func TestRunExecution_ErrorHandleUnwiredContinuePolicyKept(t *testing.T) {
+	reg := NewNodeTypeRegistry()
+	reg.Register("test.erroremit", func() NodeExecutor { return errorEmitNode{} })
+
+	wf := &Workflow{
+		ID:   "wf-err-continue",
+		Name: "err-continue",
+		Nodes: []WorkflowNode{
+			{ID: "t", WorkflowID: "wf-err-continue", Type: "trigger.manual", Name: "T"},
+			{ID: "emit", WorkflowID: "wf-err-continue", Type: "test.erroremit", Name: "Emit", Config: map[string]interface{}{"on_error": "continue"}},
+		},
+		Connections: []WorkflowConnection{
+			{SourceNodeID: "t", SourceHandle: "main", TargetNodeID: "emit", TargetHandle: "main"},
+		},
+	}
+	dag, err := BuildDAG(wf.Nodes, wf.Connections)
+	if err != nil {
+		t.Fatalf("BuildDAG: %v", err)
+	}
+	store := &stubStore{}
+	exec := &WorkflowExecution{ID: "e-err-continue", WorkflowID: wf.ID, TriggerNodeID: "t"}
+	if err := RunExecution(context.Background(), exec, wf, dag, reg, store, nil, NewExpressionEngine(), zerolog.Nop()); err != nil {
+		t.Fatalf("RunExecution: %v (explicit on_error=continue must tolerate the unwired error output)", err)
+	}
+	if rec := store.nodeRecord("emit"); rec != nil && rec.Status == "FAILED" {
+		t.Errorf("emitting node FAILED under on_error=continue; want preserved non-fatal behaviour")
+	}
+}
+
+// TestRunExecution_ExecutorErrorBranchUnwiredFails covers the other half of
+// V3-F3: a node whose Execute returns an error under on_error=error_branch
+// with no edge wired from the error handle used to have the failure
+// discarded as non-fatal; it must now fail the run.
+func TestRunExecution_ExecutorErrorBranchUnwiredFails(t *testing.T) {
+	reg := NewNodeTypeRegistry()
+	reg.Register("test.fail", func() NodeExecutor { return fakeFailNode{} })
+
+	wf := &Workflow{
+		ID:   "wf-eb-unwired",
+		Name: "eb-unwired",
+		Nodes: []WorkflowNode{
+			{ID: "t", WorkflowID: "wf-eb-unwired", Type: "trigger.manual", Name: "T"},
+			{ID: "n1", WorkflowID: "wf-eb-unwired", Type: "test.fail", Name: "Flaky", Config: map[string]interface{}{"on_error": "error_branch"}},
+		},
+		Connections: []WorkflowConnection{
+			{SourceNodeID: "t", SourceHandle: "main", TargetNodeID: "n1", TargetHandle: "main"},
+		},
+	}
+	dag, err := BuildDAG(wf.Nodes, wf.Connections)
+	if err != nil {
+		t.Fatalf("BuildDAG: %v", err)
+	}
+	exec := &WorkflowExecution{ID: "e-eb-unwired", WorkflowID: wf.ID, TriggerNodeID: "t"}
+	err = RunExecution(context.Background(), exec, wf, dag, reg, &stubStore{}, nil, NewExpressionEngine(), zerolog.Nop())
+	if err == nil {
+		t.Fatal("RunExecution error = nil, want failure (error_branch with no wired error edge must not discard)")
+	}
+	if !errors.Is(err, errTestNodeFail) {
+		t.Errorf("error should wrap the node failure, got: %v", err)
+	}
+}
+
+// TestRunExecution_CredentialMissLogsProfile guards the legacy-credential
+// scoping note (V3-F6): the workflow_credentials fallback has no profile
+// column, so a full miss must log the execution's profile for
+// diagnosability.
+func TestRunExecution_CredentialMissLogsProfile(t *testing.T) {
+	var buf bytes.Buffer
+	logger := zerolog.New(&buf)
+
+	reg := NewNodeTypeRegistry()
+	reg.Register("test.count", func() NodeExecutor { return countNode{new(int)} })
+
+	wf := &Workflow{
+		ID:   "wf-credmiss",
+		Name: "credmiss",
+		Nodes: []WorkflowNode{
+			{ID: "t", WorkflowID: "wf-credmiss", Type: "trigger.manual", Name: "T"},
+			{ID: "n", WorkflowID: "wf-credmiss", Type: "test.count", Name: "N", Config: map[string]interface{}{"credential_id": "wc_missing"}},
+		},
+		Connections: []WorkflowConnection{
+			{SourceNodeID: "t", SourceHandle: "main", TargetNodeID: "n", TargetHandle: "main"},
+		},
+	}
+	dag, err := BuildDAG(wf.Nodes, wf.Connections)
+	if err != nil {
+		t.Fatalf("BuildDAG: %v", err)
+	}
+	ctx := vault.ContextWithProfileID(context.Background(), "profile-x")
+	exec := &WorkflowExecution{ID: "e-credmiss", WorkflowID: wf.ID, TriggerNodeID: "t"}
+	if err := RunExecution(ctx, exec, wf, dag, reg, &stubStore{}, nil, NewExpressionEngine(), logger); err != nil {
+		t.Fatalf("RunExecution: %v", err)
+	}
+	if !strings.Contains(buf.String(), "profile-x") {
+		t.Errorf("credential miss log should include the execution's profile, got: %s", buf.String())
+	}
+	if !strings.Contains(buf.String(), "wc_missing") {
+		t.Errorf("credential miss log should include the credential id, got: %s", buf.String())
+	}
 }
 
 // gateNode pauses (ErrNodePaused) until *open is true, then passes items through

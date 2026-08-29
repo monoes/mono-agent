@@ -182,6 +182,7 @@ profiles or credentials.
 | Code | Meaning |
 |---|---|
 | 0 | success |
+| 0 | run paused at a HIL node — status `WAITING` (paused for human review); the output carries a `hint` field pointing at `hil list` |
 | 1 | general error — also the exit for a run that ends `CANCELLED` |
 | 2 | not found (workflow, node type, HIL item, secret name, …). Includes `hil approve`/`hil reject`, `secret rm`/`secret update`, and `workflow delete` on unknown ids |
 | 3 | invalid input / validation failure |
@@ -209,8 +210,10 @@ Runs are capped to bound the blast radius of an imported or misbehaving
 workflow:
 
 - HTTP node bodies: 64 MB default (configurable).
-- `core.code` nodes: 512 MB memory and 30 s CPU defaults, and at most
-  10,000 items of 16 MB per item per execution.
+- `core.code` nodes: 30 s default timeout (configurable via
+  `timeout_seconds`), at most 10,000 returned items of 16 MB per item per
+  execution; an engine-level memory ceiling is not yet enforced by the
+  vendored JS runtime.
 - `system.execute_command` output: 10 MB per channel (stdout and stderr).
 - Stored outputs are persisted in full but display-truncated at 4 KB.
 

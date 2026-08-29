@@ -273,6 +273,14 @@ func (h *HybridWorkflowStore) ListResumableExecutions(ctx context.Context) ([]st
 	return h.sql.ListResumableExecutions(ctx)
 }
 
+func (h *HybridWorkflowStore) ListAdoptableExecutions(ctx context.Context) ([]string, error) {
+	return h.sql.ListAdoptableExecutions(ctx)
+}
+
+func (h *HybridWorkflowStore) ClaimQueuedExecution(ctx context.Context, id string) (bool, error) {
+	return h.sql.ClaimQueuedExecution(ctx, id)
+}
+
 func (h *HybridWorkflowStore) PruneExecutions(ctx context.Context, workflowID string, keepCount int) error {
 	return h.sql.PruneExecutions(ctx, workflowID, keepCount)
 }

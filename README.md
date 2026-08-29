@@ -59,6 +59,7 @@ go build -o monoagentcli ./cmd/monoagentcli
 ./monoagentcli workflow import --file examples/morning-briefing.json
 ./monoagentcli workflow activate <id>              # enable its triggers
 ./monoagentcli workflow run <id>                   # run it now
+# Note: the full flagship run needs an OpenRouter API key (`connect openrouter`) — without one it fails cleanly at the summarize step.
 
 # Run the scheduler daemon (keeps cron/webhook triggers alive)
 ./monoagentcli daemon
@@ -500,6 +501,7 @@ Full agent documentation: [AGENTS.md](AGENTS.md).
 | Code | Meaning |
 |------|---------|
 | `0` | Success |
+| `0` | Run paused at a human-in-the-loop node — status `WAITING` (paused for human review); the output carries a `hint` field pointing at `hil list` |
 | `1` | General error (including a run that ends `CANCELLED`) |
 | `2` | Not found — e.g. `hil approve`/`hil reject`, `secret rm`/`secret update`, or `workflow delete` on an unknown id |
 | `3` | Invalid input / validation failure |
@@ -511,7 +513,7 @@ Full agent documentation: [AGENTS.md](AGENTS.md).
 <summary><strong>Scheduling</strong></summary>
 
 ```bash
-monoagentcli schedule add <action-id> --cron "0 9 * * *"
+monoagentcli schedule add <action-id> --cron "0 0 9 * * *"
 monoagentcli schedule list
 monoagentcli daemon                # keep all workflow triggers alive; blocks until Ctrl+C
 ```

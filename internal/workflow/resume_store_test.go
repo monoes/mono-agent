@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"database/sql"
+	"os"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -114,5 +115,57 @@ func TestListResumableExecutions_OnlyWaiting(t *testing.T) {
 	}
 	if len(ids) != 1 || ids[0] != "wait" {
 		t.Fatalf("resumable = %v, want [wait]", ids)
+	}
+}
+
+// TestAdoptableExecutions_ListAndClaim guards the --no-wait adoption store
+// primitives (V3-F2): only unowned, plain-QUEUED rows are listed, and the
+// pid CAS makes the claim exclusive — exactly one engine can win a row.
+func TestAdoptableExecutions_ListAndClaim(t *testing.T) {
+	s := newExecStore(t)
+	ctx := context.Background()
+
+	insertExec(t, s, "adopt-me", "QUEUED", "")         // unowned --no-wait row
+	insertExec(t, s, "resume-residue", "QUEUED", "{}") // crash-resume residue — not adoptable
+	insertExec(t, s, "waiting", "WAITING", "{}")       // paused — not adoptable
+	insertExec(t, s, "done", "SUCCESS", "")            // terminal — not adoptable
+	// A QUEUED row already owned by a live process must not be listed.
+	if _, err := s.db.Exec(`INSERT INTO workflow_executions (id, workflow_id, status, pid) VALUES ('owned', 'wf', 'QUEUED', ?)`, os.Getpid()); err != nil {
+		t.Fatalf("insert owned: %v", err)
+	}
+
+	ids, err := s.ListAdoptableExecutions(ctx)
+	if err != nil {
+		t.Fatalf("ListAdoptableExecutions: %v", err)
+	}
+	if len(ids) != 1 || ids[0] != "adopt-me" {
+		t.Fatalf("adoptable = %v, want [adopt-me]", ids)
+	}
+
+	// First claim wins and stamps the pid.
+	claimed, err := s.ClaimQueuedExecution(ctx, "adopt-me")
+	if err != nil || !claimed {
+		t.Fatalf("ClaimQueuedExecution(adopt-me) = %v,%v; want true,nil", claimed, err)
+	}
+	var pid int
+	if err := s.db.QueryRow(`SELECT COALESCE(pid,0) FROM workflow_executions WHERE id='adopt-me'`).Scan(&pid); err != nil {
+		t.Fatalf("read pid: %v", err)
+	}
+	if pid != os.Getpid() {
+		t.Errorf("claimed row pid = %d, want %d", pid, os.Getpid())
+	}
+
+	// Second claim loses the CAS (pid no longer 0/NULL) — the exclusivity
+	// that makes two-engine adoption safe.
+	claimed, err = s.ClaimQueuedExecution(ctx, "adopt-me")
+	if err != nil {
+		t.Fatalf("second claim err: %v", err)
+	}
+	if claimed {
+		t.Error("second ClaimQueuedExecution won; want false (already claimed)")
+	}
+	// A row owned by a live foreign-looking pid is not claimable either.
+	if claimed, _ := s.ClaimQueuedExecution(ctx, "owned"); claimed {
+		t.Error("ClaimQueuedExecution(owned) = true; want false (pid already set)")
 	}
 }

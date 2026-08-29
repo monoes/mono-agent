@@ -97,6 +97,11 @@ type WorkflowStore interface {
 	ResumeWaitingExecution(ctx context.Context, id string) (bool, error)
 	ListResumableExecutions(ctx context.Context) ([]string, error)
 
+	// Adoption: unowned QUEUED executions (pid 0, no resume state) are
+	// claimed and run by whichever engine is alive.
+	ListAdoptableExecutions(ctx context.Context) ([]string, error)
+	ClaimQueuedExecution(ctx context.Context, id string) (bool, error)
+
 	// Execution nodes
 	CreateExecutionNode(ctx context.Context, en *WorkflowExecutionNode) error
 	UpdateExecutionNode(ctx context.Context, en *WorkflowExecutionNode) error
@@ -850,18 +855,64 @@ func (s *SQLiteWorkflowStore) DeleteCredential(ctx context.Context, id string) e
 	return nil
 }
 
+// ListAdoptableExecutions returns the IDs of QUEUED executions that have no
+// owner (pid 0/NULL) and no resume_state. These are the rows
+// `workflow run --no-wait` persists before exiting, waiting for any live
+// engine to claim them; crash-resume residue (QUEUED with resume_state) is
+// excluded — RecoverStaleExecutions flips those back to WAITING for the
+// resume loop instead.
+func (s *SQLiteWorkflowStore) ListAdoptableExecutions(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id FROM workflow_executions
+		WHERE status = 'QUEUED'
+		  AND COALESCE(pid, 0) = 0
+		  AND COALESCE(resume_state, '') = ''`)
+	if err != nil {
+		return nil, fmt.Errorf("listing adoptable executions: %w", err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scanning adoptable execution: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// ClaimQueuedExecution atomically claims an unowned QUEUED execution for this
+// process: a CAS on pid 0/NULL → self. Among engines sharing the DB exactly
+// one wins the claim; losers get false. The status stays QUEUED —
+// SetExecutionStarted flips it to RUNNING (and re-stamps pid) once the run
+// actually dispatches.
+func (s *SQLiteWorkflowStore) ClaimQueuedExecution(ctx context.Context, id string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE workflow_executions SET pid = ? WHERE id = ? AND status = 'QUEUED' AND (pid = 0 OR pid IS NULL)`,
+		os.Getpid(), id)
+	if err != nil {
+		return false, fmt.Errorf("claiming queued execution %s: %w", id, err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 // ---------------------------------------------------------------------------
 // Recovery & maintenance
 // ---------------------------------------------------------------------------
 
-// RecoverStaleExecutions transitions any RUNNING or QUEUED executions to FAILED.
-// This should be called once on process startup to handle executions that were
-// interrupted by a previous crash or restart.
+// RecoverStaleExecutions transitions stale RUNNING or QUEUED executions to
+// FAILED. This should be called once on process startup to handle executions
+// that were interrupted by a previous crash or restart.
 //
-// One exception: a QUEUED execution with a persisted resume_state and no pid
-// is the residue of a crash between the resume CAS (WAITING → QUEUED) and the
-// enqueue — the approved Human-in-Loop run would otherwise be destroyed.
-// Such rows are flipped back to WAITING so the resume loop re-enqueues them.
+// Two exceptions for QUEUED rows with no pid:
+//   - with a persisted resume_state it is the residue of a crash between the
+//     resume CAS (WAITING → QUEUED) and the enqueue — flipped back to WAITING
+//     so the resume loop re-enqueues the approved Human-in-Loop run;
+//   - without one it is an unowned row awaiting adoption (`workflow run
+//     --no-wait` persists one and exits). It is left QUEUED — failing it here
+//     would destroy the run before any daemon ever saw it.
 func (s *SQLiteWorkflowStore) RecoverStaleExecutions(ctx context.Context) error {
 	// Only fail executions whose owning process is no longer alive. A concurrent
 	// engine (e.g. the `daemon` process) may legitimately have RUNNING executions;
@@ -888,13 +939,17 @@ func (s *SQLiteWorkflowStore) RecoverStaleExecutions(ctx context.Context) error 
 			continue // never fail our own in-flight rows
 		}
 		if !processAlive(pid) {
-			// Crashed between resume-CAS and Enqueue: flip back to WAITING so
-			// the resume loop re-enqueues the approved run.
-			if status == "QUEUED" && pid == 0 && resumeState != "" {
-				resumableIDs = append(resumableIDs, id)
-			} else {
-				staleIDs = append(staleIDs, id)
+			if status == "QUEUED" && pid == 0 {
+				if resumeState != "" {
+					// Crashed between resume-CAS and Enqueue: flip back to
+					// WAITING so the resume loop re-enqueues the approved run.
+					resumableIDs = append(resumableIDs, id)
+				}
+				// else: unowned --no-wait row — an adoption candidate, not
+				// stale. Leave it QUEUED for a live engine to claim.
+				continue
 			}
+			staleIDs = append(staleIDs, id)
 		}
 	}
 	if err := rows.Err(); err != nil {

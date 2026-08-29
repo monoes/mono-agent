@@ -51,6 +51,33 @@ const noTriggerWorkflowFile = `{
   "connections": []
 }`
 
+// handlelessWorkflowFile: connections without source_handle/target_handle,
+// like the README flagship example — import accepts them and the engine
+// routes on the "main" port, so validate must accept them too.
+const handlelessWorkflowFile = `{
+  "name": "handleless-wf",
+  "nodes": [
+    {"id": "trigger", "type": "trigger.schedule", "name": "Cron", "position": {"x": 0, "y": 0}, "config": {"cron": "0 0 9 * * *"}},
+    {"id": "a", "type": "core.set", "name": "A", "position": {"x": 1, "y": 0}, "config": {}}
+  ],
+  "connections": [
+    {"id": "c1", "source": "trigger", "target": "a"}
+  ]
+}`
+
+// legacyHandlelessWorkflowFile: legacy export keys AND no connection
+// handles — validate must normalize keys (like import) before checking.
+const legacyHandlelessWorkflowFile = `{
+  "name": "legacy-handleless-wf",
+  "nodes": [
+    {"id": "trigger", "node_type": "trigger.manual", "name": "Manual", "position_x": 0, "position_y": 0, "config": {}},
+    {"id": "a", "node_type": "core.set", "name": "A", "position_x": 1, "position_y": 0, "config": {}}
+  ],
+  "connections": [
+    {"id": "c1", "source_node_id": "trigger", "target_node_id": "a"}
+  ]
+}`
+
 func writeTempWorkflow(t *testing.T, content string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "workflow.json")
@@ -143,6 +170,28 @@ func TestWorkflowValidateFile_InvalidJSONIsInvalidInput(t *testing.T) {
 	}
 	if code := exitCodeFor(err); code != 3 {
 		t.Fatalf("expected exit code 3 for invalid JSON, got %d (%v)", code, err)
+	}
+}
+
+func TestWorkflowValidateFile_HandlelessConnectionsDefaultToMain(t *testing.T) {
+	path := writeTempWorkflow(t, handlelessWorkflowFile)
+	out, err := runValidateCmd(t, false, "--file", path)
+	if err != nil {
+		t.Fatalf("expected handle-less connections to validate (handles default to main), got error: %v", err)
+	}
+	if !strings.Contains(out, "Workflow is valid.") {
+		t.Fatalf("expected success message, got: %q", out)
+	}
+}
+
+func TestWorkflowValidateFile_LegacyKeysNormalizedLikeImport(t *testing.T) {
+	path := writeTempWorkflow(t, legacyHandlelessWorkflowFile)
+	out, err := runValidateCmd(t, false, "--file", path)
+	if err != nil {
+		t.Fatalf("expected legacy-key workflow to validate via normalization, got error: %v", err)
+	}
+	if !strings.Contains(out, "Workflow is valid.") {
+		t.Fatalf("expected success message, got: %q", out)
 	}
 }
 
@@ -653,6 +702,56 @@ func TestWorkflowDeleteNonexistentIsNotFound(t *testing.T) {
 	}
 	if code := exitCodeFor(err); code != 2 {
 		t.Fatalf("expected exit code 2, got %d (%v)", code, err)
+	}
+}
+
+// TestWorkflowRunNoWaitPersistsUnownedQueued guards the --no-wait fix
+// (V3-F2): the command must persist the execution as an unowned QUEUED row
+// (pid 0) for a live engine to adopt — NOT enqueue it into its own
+// short-lived engine, where the run died cancelled the moment the CLI exited.
+func TestWorkflowRunNoWaitPersistsUnownedQueued(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dbPath := filepath.Join(t.TempDir(), "nowait.db")
+	cfg := &globalConfig{DBPath: dbPath, JSONOutput: true, ProfileID: "default"}
+
+	path := writeTempWorkflow(t, validWorkflowFile)
+	var imported struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(runWorkflowSubcmd(t, cfg, "import", "--file", path)), &imported); err != nil {
+		t.Fatalf("parse import output: %v", err)
+	}
+	runWorkflowSubcmd(t, cfg, "activate", imported.ID)
+
+	var noWait struct {
+		ExecutionID string `json:"execution_id"`
+		Status      string `json:"status"`
+	}
+	if err := json.Unmarshal([]byte(runWorkflowSubcmd(t, cfg, "run", imported.ID, "--no-wait")), &noWait); err != nil {
+		t.Fatalf("parse run --no-wait output: %v", err)
+	}
+	if noWait.Status != "QUEUED" {
+		t.Errorf("run --no-wait reported status %q, want QUEUED", noWait.Status)
+	}
+
+	db, err := storage.NewDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+	var status string
+	var pid int
+	if err := db.DB.QueryRow(
+		`SELECT status, COALESCE(pid, 0) FROM workflow_executions WHERE id = ?`, noWait.ExecutionID,
+	).Scan(&status, &pid); err != nil {
+		t.Fatalf("read execution row: %v", err)
+	}
+	if status != "QUEUED" {
+		t.Errorf("persisted status = %q, want QUEUED (the CLI must not run it locally)", status)
+	}
+	if pid != 0 {
+		t.Errorf("persisted pid = %d, want 0 (unowned row awaiting adoption)", pid)
 	}
 }
 

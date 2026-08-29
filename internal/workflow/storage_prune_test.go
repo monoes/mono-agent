@@ -139,7 +139,8 @@ func TestRecoverStaleExecutions_ResumableQueued(t *testing.T) {
 		"resumable", "wf", `{"completedNodes":{}}`); err != nil {
 		t.Fatalf("insert: %v", err)
 	}
-	// A QUEUED row without resume_state is an ordinary stale queued run.
+	// A plain QUEUED row without resume_state is an unowned --no-wait row
+	// awaiting adoption by a live engine.
 	if _, err := s.db.Exec(
 		`INSERT INTO workflow_executions (id, workflow_id, status, resume_state, pid) VALUES (?,?, 'QUEUED', '', NULL)`,
 		"plain-queued", "wf"); err != nil {
@@ -160,8 +161,8 @@ func TestRecoverStaleExecutions_ResumableQueued(t *testing.T) {
 	if rs == "" {
 		t.Error("resume_state of the recovered WAITING execution was cleared; want preserved")
 	}
-	if got := statusOf(t, s, "plain-queued"); got != "FAILED" {
-		t.Errorf("plain stale QUEUED execution recovered to %q, want FAILED", got)
+	if got := statusOf(t, s, "plain-queued"); got != "QUEUED" {
+		t.Errorf("unowned plain QUEUED execution recovered to %q, want QUEUED (adoption candidate)", got)
 	}
 }
 

@@ -91,7 +91,8 @@ workflows can run shell commands, inline JavaScript, and HTTP calls, so
 only import workflows from sources you trust. To bound the blast radius of
 untrusted or misbehaving workflows, runs are resource-capped: HTTP node
 bodies are limited to 64 MB by default (configurable); `core.code` nodes
-are limited to 512 MB of memory and 30 s of CPU by default and process at
-most 10,000 items of 16 MB per item; `system.execute_command` output is
+run with a 30 s default timeout (configurable) and process at most 10,000
+items of 16 MB per item — an engine-level memory ceiling is not yet
+enforced by the vendored JS runtime; `system.execute_command` output is
 capped at 10 MB per channel (stdout and stderr). Stored outputs are
 persisted in full but display-truncated at 4 KB.

@@ -256,7 +256,12 @@ func RunExecution(
 					}
 				}
 
-				// Fall back to legacy workflow_credentials table.
+				// Fall back to the legacy workflow_credentials table. That
+				// table has no profile column (it predates profiles — current
+				// migrations do not even create it), so this lookup cannot be
+				// scoped to the execution's profile; the miss log below
+				// includes the profile so cross-profile resolution failures
+				// are diagnosable.
 				if !injected {
 					cred, err := store.GetCredential(ctx, credID)
 					if err == nil && cred != nil {
@@ -278,6 +283,18 @@ func RunExecution(
 						config["username"] = credID
 						injected = true
 					}
+				}
+
+				if !injected {
+					// Miss on every path. Include the execution's profile in
+					// the log: the legacy workflow_credentials fallback above
+					// is not profile-scoped, so a hit there under profile B
+					// for a profile-A run is indistinguishable from a miss
+					// without it.
+					logger.Warn().
+						Str("credential_id", credID).
+						Str("profile", vault.ProfileIDFromContext(ctx)).
+						Msg("credential not resolved for profile (connections and legacy workflow_credentials both missed)")
 				}
 			}
 		}
@@ -463,6 +480,15 @@ func RunExecution(
 
 			case "error_branch":
 				// Route an error item to successors on the "error" handle.
+				errorSuccessors := dag.SuccessorsOnHandle(node.ID, "error")
+				if len(errorSuccessors) == 0 {
+					// No edge wired from the error handle: the failure output
+					// has nowhere to go and would be silently discarded while
+					// the node reports SUCCESS. Fail the node instead so the
+					// run reflects the error (wire an error edge to opt back
+					// into routing).
+					return fmt.Errorf("node %s (%s): on_error=error_branch but no edge is wired from the 'error' handle: %w", node.ID, node.Name, execErr)
+				}
 				nonFatalFailures = append(nonFatalFailures, node.Name)
 				errorItems := []Item{
 					NewItem(map[string]interface{}{
@@ -470,13 +496,6 @@ func RunExecution(
 						"node_id": node.ID,
 						"node":    node.Name,
 					}),
-				}
-				errorSuccessors := dag.SuccessorsOnHandle(node.ID, "error")
-				if len(errorSuccessors) == 0 {
-					logger.Warn().
-						Str("node_id", node.ID).
-						Str("node_name", node.Name).
-						Msg("on_error=error_branch but no edge is wired to the 'error' handle — failure output is discarded")
 				}
 				for _, succ := range errorSuccessors {
 					pendingInputs[succ.ID] = append(pendingInputs[succ.ID], errorItems...)
@@ -490,13 +509,51 @@ func RunExecution(
 			}
 		}
 
-		// Collect all items emitted on the "main" handle for nodeOutputs.
+		// Collect items per handle: "main" feeds nodeOutputs and the success
+		// record; "error" is the failure-output convention shared by nodes
+		// that report per-item failures instead of returning an error
+		// (http.request connection failures and cap breaches,
+		// system.execute_command non-zero exits, …).
 		var mainItems []Item
+		var errorHandleItems []Item
 		for _, out := range outputs {
-			if out.Handle == "main" || out.Handle == "" {
+			switch out.Handle {
+			case "error":
+				errorHandleItems = append(errorHandleItems, out.Items...)
+			case "main", "":
 				mainItems = append(mainItems, out.Items...)
 			}
 		}
+
+		// A node that routed failures to its "error" output must not report
+		// SUCCESS when that output has nowhere to go: with no edge wired from
+		// the error handle the items used to be silently dropped and the node
+		// went green with 0 items. Preserved cases: a wired error edge (the
+		// items route normally below) and an explicit on_error=continue/skip
+		// policy. Anything else fails the node with the routed error, which
+		// then follows the normal default (stop) handling for the run.
+		if len(errorHandleItems) > 0 &&
+			len(dag.SuccessorsOnHandle(node.ID, "error")) == 0 &&
+			onError != "continue" && onError != "skip" {
+			msg := errorHandleMessage(errorHandleItems)
+			if msg == "" {
+				msg = fmt.Sprintf("routed %d item(s) to the 'error' output", len(errorHandleItems))
+			}
+			nodeErr := fmt.Errorf("node %s (%s): %s", node.ID, node.Name, msg)
+			logger.Error().Err(nodeErr).
+				Str("node_id", node.ID).
+				Str("node_name", node.Name).
+				Msg("node emitted error output with no edge wired from the 'error' handle — failing node (wire an error edge or set on_error=continue/skip to tolerate)")
+			fctx, fcancel := dbCtx()
+			if storeErr := store.SetExecutionNodeFinished(fctx, execNode.ID, "FAILED", nil, nodeErr.Error()); storeErr != nil {
+				logger.Error().Err(storeErr).
+					Str("node_id", node.ID).
+					Msg("failed to persist node failure")
+			}
+			fcancel()
+			return nodeErr
+		}
+
 		nodeOutputs[node.Name] = mainItems
 
 		// Persist success.
@@ -718,6 +775,22 @@ func extractOnError(config map[string]interface{}) string {
 		}
 	}
 	return "stop"
+}
+
+// errorHandleMessage extracts a human-readable failure message from the
+// items a node routed to its "error" output. The convention is an "error"
+// JSON field (http.request, system.execute_command emit it); items without
+// one yield "" so the caller can fall back to a generic message.
+func errorHandleMessage(items []Item) string {
+	for _, it := range items {
+		if it.JSON == nil {
+			continue
+		}
+		if msg, ok := it.JSON["error"].(string); ok && msg != "" {
+			return msg
+		}
+	}
+	return ""
 }
 
 // perItemFieldState is the token extractPerItemFields returns, holding the

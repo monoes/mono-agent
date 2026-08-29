@@ -22,6 +22,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   required `workflow activate` step before starting the daemon.
 - `node schema core.set` output corrected to match the node's actual
   configuration fields.
+- `workflow validate --file` now runs the same legacy-format
+  normalization as `workflow import` (legacy `node_type` /
+  `source_node_id` keys converted) and defaults unset connection handles
+  to `main`, so any file that imports cleanly also validates — including
+  the README flagship example, whose connections omit handles.
+- Error routing is honest: `on_error=error_branch` with no edge wired to
+  the node's `error` handle is reported instead of silently discarding
+  the failure output, and runs that continue past per-node failures (via
+  `on_error=continue`/`skip`) end `SUCCESS_WITH_ERRORS` rather than
+  `SUCCESS`.
 - `core.filter` now surfaces evaluation errors from its condition instead
   of passing items through silently.
 
@@ -45,14 +55,21 @@ CLI behavior and docs.
 - CLI agent-experience improvements: `workflow run --json/--dry-run/--no-wait`,
   `workflow validate`, `node schema`, enriched `--json` output, and granular
   exit codes.
+- `workflow run --no-wait` enqueues the run (status `QUEUED`), prints the
+  execution id with a hint that a live engine (e.g. `monoagentcli daemon`)
+  completes it, and exits 0 immediately — adopted in the docs as the
+  agent pattern for fire-and-forget runs. A run that pauses at a
+  human-in-the-loop node ends the wait with status `WAITING`, exit 0, and
+  a `hint` field pointing at the approval queue.
 - Example workflows (`examples/`) and Docker/install distribution files.
 - `workflow templates run` now honors `--json`.
 - Sandbox resource caps: HTTP node bodies capped at 64 MB by default
-  (configurable); `core.code` nodes limited to 512 MB memory and 30 s
-  by default, with at most 10,000 items of 16 MB each per execution;
-  `system.execute_command` output capped at 10 MB per channel (stdout and
-  stderr). Stored outputs are persisted in full but display-truncated at
-  4 KB.
+  (configurable); `core.code` nodes run with a 30 s default timeout
+  (configurable via `timeout_seconds`) and return at most 10,000 items of
+  16 MB each per execution — an engine-level memory ceiling is not yet
+  enforced by the vendored JS runtime; `system.execute_command` output
+  capped at 10 MB per channel (stdout and stderr). Stored outputs are
+  persisted in full but display-truncated at 4 KB.
 
 ### Changed
 

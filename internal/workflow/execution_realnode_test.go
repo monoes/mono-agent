@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/monoes/mono-agent/internal/nodes/control"
 	httpnodes "github.com/monoes/mono-agent/internal/nodes/http"
+	"github.com/monoes/mono-agent/internal/nodes/system"
 	"github.com/monoes/mono-agent/internal/workflow"
 )
 
@@ -83,6 +85,8 @@ func (fakeStore) CancelQueuedExecution(context.Context, string) (bool, error)  {
 func (fakeStore) SetExecutionWaiting(context.Context, string, string) error    { return nil }
 func (fakeStore) ListResumableExecutions(context.Context) ([]string, error)    { return nil, nil }
 func (fakeStore) ResumeWaitingExecution(context.Context, string) (bool, error) { return true, nil }
+func (fakeStore) ListAdoptableExecutions(context.Context) ([]string, error)    { return nil, nil }
+func (fakeStore) ClaimQueuedExecution(context.Context, string) (bool, error)   { return false, nil }
 func (fakeStore) PruneExecutions(context.Context, string, int) error           { return nil }
 func (fakeStore) RawDB() *sql.DB                                               { return nil }
 
@@ -230,5 +234,160 @@ func TestRunExecution_RequestNode_PerItemURLResolution(t *testing.T) {
 	}
 	if gotPaths[0] == gotPaths[1] {
 		t.Fatalf("both requests hit path %q — per-item URL resolution collapsed to a single item's value (the bug this test guards against)", gotPaths[0])
+	}
+}
+
+// httpWorkflow builds trigger.manual → http.request against a closed port,
+// optionally wiring the request's "error" handle to a capture node.
+func httpWorkflow(wireError bool) *workflow.Workflow {
+	wf := &workflow.Workflow{
+		ID:   "wf-http-closed",
+		Name: "http-closed",
+		Nodes: []workflow.WorkflowNode{
+			{ID: "t", WorkflowID: "wf-http-closed", Type: "trigger.manual", Name: "T"},
+			{ID: "r", WorkflowID: "wf-http-closed", Type: "http.request", Name: "Req", Config: map[string]interface{}{
+				"method": "GET",
+				// Port 1 is never bound on a dev machine: connection refused.
+				"url": "http://127.0.0.1:1/ping",
+			}},
+		},
+		Connections: []workflow.WorkflowConnection{
+			{SourceNodeID: "t", SourceHandle: "main", TargetNodeID: "r", TargetHandle: "main"},
+		},
+	}
+	if !wireError {
+		return wf
+	}
+	wf.Nodes = append(wf.Nodes, workflow.WorkflowNode{
+		ID: "cap", WorkflowID: "wf-http-closed", Type: "test.capture", Name: "Cap",
+	})
+	wf.Connections = append(wf.Connections, workflow.WorkflowConnection{
+		SourceNodeID: "r", SourceHandle: "error", TargetNodeID: "cap", TargetHandle: "main",
+	})
+	return wf
+}
+
+// TestRunExecution_HTTPClosedPort_NoErrorEdgeFails is the real-node half of
+// the V3-F3/F7 regression: http.request against a closed port routes the
+// failure to its "error" handle; with no error edge wired the node must FAIL
+// and the run must reflect it, not report SUCCESS with 0 items.
+func TestRunExecution_HTTPClosedPort_NoErrorEdgeFails(t *testing.T) {
+	reg := workflow.NewNodeTypeRegistry()
+	reg.Register("http.request", func() workflow.NodeExecutor { return &httpnodes.RequestNode{} })
+
+	wf := httpWorkflow(false)
+	dag, err := workflow.BuildDAG(wf.Nodes, wf.Connections)
+	if err != nil {
+		t.Fatalf("BuildDAG: %v", err)
+	}
+	exec := &workflow.WorkflowExecution{ID: "e-http-closed", WorkflowID: wf.ID, TriggerNodeID: "t"}
+	err = workflow.RunExecution(context.Background(), exec, wf, dag, reg, fakeStore{}, nil, workflow.NewExpressionEngine(), zerolog.Nop())
+	if err == nil {
+		t.Fatal("RunExecution error = nil, want failure from the dropped http error output")
+	}
+	if !strings.Contains(err.Error(), "connection refused") {
+		t.Errorf("error should surface the connection failure, got: %v", err)
+	}
+}
+
+// TestRunExecution_HTTPClosedPort_ErrorEdgeRoutes preserves the wired
+// behaviour: with an error edge, the failure item routes downstream and the
+// run does not fail.
+func TestRunExecution_HTTPClosedPort_ErrorEdgeRoutes(t *testing.T) {
+	reg := workflow.NewNodeTypeRegistry()
+	reg.Register("http.request", func() workflow.NodeExecutor { return &httpnodes.RequestNode{} })
+	wf := httpWorkflow(true)
+	var captured []workflow.Item
+	reg.Register("test.capture", func() workflow.NodeExecutor { return captureNode{got: &captured} })
+
+	dag, err := workflow.BuildDAG(wf.Nodes, wf.Connections)
+	if err != nil {
+		t.Fatalf("BuildDAG: %v", err)
+	}
+	exec := &workflow.WorkflowExecution{ID: "e-http-closed-wired", WorkflowID: wf.ID, TriggerNodeID: "t"}
+	if err := workflow.RunExecution(context.Background(), exec, wf, dag, reg, fakeStore{}, nil, workflow.NewExpressionEngine(), zerolog.Nop()); err != nil {
+		t.Fatalf("RunExecution: %v (wired error edge must not fail the run)", err)
+	}
+	if len(captured) != 1 {
+		t.Fatalf("error-edge successor captured %d items, want 1", len(captured))
+	}
+	if msg, _ := captured[0].JSON["error"].(string); msg == "" {
+		t.Errorf("routed http error item has no error field: %+v", captured[0].JSON)
+	}
+}
+
+// execCommandWorkflow builds trigger.manual → system.execute_command running
+// a command that exits non-zero, optionally wiring the "error" handle.
+func execCommandWorkflow(wireError bool) *workflow.Workflow {
+	wf := &workflow.Workflow{
+		ID:   "wf-exec-fail",
+		Name: "exec-fail",
+		Nodes: []workflow.WorkflowNode{
+			{ID: "t", WorkflowID: "wf-exec-fail", Type: "trigger.manual", Name: "T"},
+			{ID: "x", WorkflowID: "wf-exec-fail", Type: "system.execute_command", Name: "Cmd", Config: map[string]interface{}{
+				"command": "false", // exits 1 on every POSIX machine
+			}},
+		},
+		Connections: []workflow.WorkflowConnection{
+			{SourceNodeID: "t", SourceHandle: "main", TargetNodeID: "x", TargetHandle: "main"},
+		},
+	}
+	if !wireError {
+		return wf
+	}
+	wf.Nodes = append(wf.Nodes, workflow.WorkflowNode{
+		ID: "cap", WorkflowID: "wf-exec-fail", Type: "test.capture", Name: "Cap",
+	})
+	wf.Connections = append(wf.Connections, workflow.WorkflowConnection{
+		SourceNodeID: "x", SourceHandle: "error", TargetNodeID: "cap", TargetHandle: "main",
+	})
+	return wf
+}
+
+// TestRunExecution_ExecuteCommandFail_NoErrorEdgeFails: a failing
+// system.execute_command with no error edge wired must fail the run instead
+// of silently reporting SUCCESS.
+func TestRunExecution_ExecuteCommandFail_NoErrorEdgeFails(t *testing.T) {
+	reg := workflow.NewNodeTypeRegistry()
+	reg.Register("system.execute_command", func() workflow.NodeExecutor { return &system.ExecuteCommandNode{} })
+
+	wf := execCommandWorkflow(false)
+	dag, err := workflow.BuildDAG(wf.Nodes, wf.Connections)
+	if err != nil {
+		t.Fatalf("BuildDAG: %v", err)
+	}
+	exec := &workflow.WorkflowExecution{ID: "e-exec-fail", WorkflowID: wf.ID, TriggerNodeID: "t"}
+	err = workflow.RunExecution(context.Background(), exec, wf, dag, reg, fakeStore{}, nil, workflow.NewExpressionEngine(), zerolog.Nop())
+	if err == nil {
+		t.Fatal("RunExecution error = nil, want failure from the dropped execute_command error output")
+	}
+	if !strings.Contains(err.Error(), "'error' output") {
+		t.Errorf("error should name the dropped error output, got: %v", err)
+	}
+}
+
+// TestRunExecution_ExecuteCommandFail_ErrorEdgeRoutes: with an error edge
+// wired, the failing command's result item routes downstream and the run
+// succeeds.
+func TestRunExecution_ExecuteCommandFail_ErrorEdgeRoutes(t *testing.T) {
+	reg := workflow.NewNodeTypeRegistry()
+	reg.Register("system.execute_command", func() workflow.NodeExecutor { return &system.ExecuteCommandNode{} })
+	wf := execCommandWorkflow(true)
+	var captured []workflow.Item
+	reg.Register("test.capture", func() workflow.NodeExecutor { return captureNode{got: &captured} })
+
+	dag, err := workflow.BuildDAG(wf.Nodes, wf.Connections)
+	if err != nil {
+		t.Fatalf("BuildDAG: %v", err)
+	}
+	exec := &workflow.WorkflowExecution{ID: "e-exec-fail-wired", WorkflowID: wf.ID, TriggerNodeID: "t"}
+	if err := workflow.RunExecution(context.Background(), exec, wf, dag, reg, fakeStore{}, nil, workflow.NewExpressionEngine(), zerolog.Nop()); err != nil {
+		t.Fatalf("RunExecution: %v (wired error edge must not fail the run)", err)
+	}
+	if len(captured) != 1 {
+		t.Fatalf("error-edge successor captured %d items, want 1", len(captured))
+	}
+	if code, _ := captured[0].JSON["exit_code"].(int); code != 1 {
+		t.Errorf("routed item exit_code = %v, want 1", captured[0].JSON["exit_code"])
 	}
 }

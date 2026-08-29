@@ -365,24 +365,6 @@ export namespace main {
 	        this.created_at = source["created_at"];
 	    }
 	}
-	export class SaveCredentialRequest {
-	    id: string;
-	    name: string;
-	    service_type: string;
-	    data: Record<string, any>;
-	
-	    static createFrom(source: any = {}) {
-	        return new SaveCredentialRequest(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.name = source["name"];
-	        this.service_type = source["service_type"];
-	        this.data = source["data"];
-	    }
-	}
 	export class WorkflowConnectionData {
 	    id: string;
 	    source_node_id: string;
