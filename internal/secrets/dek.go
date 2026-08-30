@@ -9,32 +9,36 @@ import (
 	"time"
 )
 
-// dekEntry holds the memoized result of one db's fetchOrCreateDEK call,
-// guarded by its own sync.Once so that call runs at most once no matter how
-// many goroutines race on it. This is the same retry-on-failure/
-// share-in-flight-result pattern keyring.go's getOrCreateKEK uses, scoped
-// per-DB since (unlike the KEK) the DEK is per-db, not process-wide.
+// dekEntry holds the memoized result of one (db, profile) pair's
+// fetchOrCreateDEK call, guarded by its own sync.Once so that call runs at
+// most once no matter how many goroutines race on it. Same pattern
+// keyring.go's getOrCreateKEK uses, scoped per-(db, profile) since each
+// profile now has its own DEK.
 type dekEntry struct {
 	once sync.Once
 	dek  []byte
 	err  error
 }
 
-// dekEntries memoizes getOrCreateDEK per *sql.DB: unlike the KEK, a process
-// may legitimately hold several distinct DBs open at once (e.g. a test suite
-// opening multiple in-memory SQLite databases), each with its own DEK, so
-// entries are keyed by the *sql.DB pointer rather than shared process-wide.
-// Only the map lookup/insert itself is guarded by dekEntriesMu — a short
-// critical section; the expensive fetchOrCreateDEK call runs inside that
-// db's own dekEntry.once.Do, outside the mutex. Without this, two goroutines
-// racing on the very first use of a given db (e.g. two workflow executions
-// resolving @secret: refs concurrently) could both see sql.ErrNoRows on the
-// SELECT and both attempt to INSERT the id=1 singleton vault_keys row; the
-// loser's INSERT would fail and that call would return a spurious error
-// instead of the real DEK.
+// dekKey identifies one memoized DEK attempt: a given db may hold several
+// profiles' secrets, each under its own DEK.
+type dekKey struct {
+	db        *sql.DB
+	profileID string
+}
+
+// dekEntries memoizes getOrCreateDEK per (db, profileID). Only the map
+// lookup/insert itself is guarded by dekEntriesMu — a short critical
+// section; the expensive fetchOrCreateDEK call runs inside that entry's own
+// once.Do, outside the mutex. Without this, two goroutines racing on the
+// very first use of a given (db, profile) pair (e.g. two workflow
+// executions resolving @secret: refs concurrently) could both see
+// sql.ErrNoRows on the SELECT and both attempt to INSERT that profile's
+// vault_keys row; the loser's INSERT would fail and that call would return a
+// spurious error instead of the real DEK.
 var (
 	dekEntriesMu sync.Mutex
-	dekEntries   = map[*sql.DB]*dekEntry{}
+	dekEntries   = map[dekKey]*dekEntry{}
 )
 
 // fetchDEK is the function getOrCreateDEK invokes to actually resolve the
@@ -43,33 +47,34 @@ var (
 // fails on demand to exercise the retry-after-failure path below.
 var fetchDEK = fetchOrCreateDEK
 
-// getOrCreateDEK returns the unwrapped 32-byte Data Encryption Key, reading
-// and unwrapping the singleton vault_keys row if present, or generating a
-// new DEK (wrapped under the KEK from the OS keychain) and persisting it
-// if this is the first use. A successful result is cached per db so
-// repeated calls within a process skip the keychain/table round trip. A
-// failed attempt is NOT cached: all callers racing on that one attempt
-// observe the same error (via the shared sync.Once), but the next call
-// after it completes gets a fresh attempt instead of being stuck forever
-// with a stale transient error (e.g. a momentarily locked keychain or a
-// SQLITE_BUSY on vault_keys).
-func getOrCreateDEK(ctx context.Context, db *sql.DB) ([]byte, error) {
+// getOrCreateDEK returns profileID's unwrapped 32-byte Data Encryption Key,
+// reading and unwrapping its vault_keys row if present, or generating a new
+// DEK (wrapped under that profile's own KEK from the OS keychain) and
+// persisting it if this is the first use. A successful result is cached per
+// (db, profile) so repeated calls within a process skip the keychain/table
+// round trip. A failed attempt is NOT cached: all callers racing on that one
+// attempt observe the same error (via the shared sync.Once), but the next
+// call after it completes gets a fresh attempt instead of being stuck
+// forever with a stale transient error (e.g. a momentarily locked keychain
+// or a SQLITE_BUSY on vault_keys).
+func getOrCreateDEK(ctx context.Context, db *sql.DB, profileID string) ([]byte, error) {
+	key := dekKey{db: db, profileID: profileID}
 	dekEntriesMu.Lock()
-	entry, ok := dekEntries[db]
+	entry, ok := dekEntries[key]
 	if !ok {
 		entry = &dekEntry{}
-		dekEntries[db] = entry
+		dekEntries[key] = entry
 	}
 	dekEntriesMu.Unlock()
 
 	entry.once.Do(func() {
-		entry.dek, entry.err = fetchDEK(ctx, db)
+		entry.dek, entry.err = fetchDEK(ctx, db, profileID)
 	})
 
 	if entry.err != nil {
 		dekEntriesMu.Lock()
-		if dekEntries[db] == entry {
-			delete(dekEntries, db)
+		if dekEntries[key] == entry {
+			delete(dekEntries, key)
 		}
 		dekEntriesMu.Unlock()
 	}
@@ -81,30 +86,30 @@ func getOrCreateDEK(ctx context.Context, db *sql.DB) ([]byte, error) {
 // pure reads and needs no lock — the common case after first bootstrap. The
 // slow path (either is still missing) hands off to bootstrapDEKLocked,
 // which serializes the *entire* bootstrap — keychain and vault_keys
-// together — across every process sharing db.
+// together — across every process sharing db, for this profile.
 //
 // Before this, getOrCreateKEK and the SELECT-then-INSERT on vault_keys each
 // raced independently with no cross-process lock at all: two processes
-// bootstrapping the same vault for the first time concurrently could each
-// generate a different KEK, each call keyring.Set with no compare-and-swap
-// (last write silently wins), and each attempt to INSERT the id=1 singleton
-// DEK row wrapped under whichever KEK *they* generated (only one INSERT
-// actually wins). Nothing errors at the moment of that race — the process
-// whose own INSERT won stays internally self-consistent (via its own
-// in-process memoization) for the rest of its lifetime — but the keychain
-// may now hold the *other* process's KEK, wrapping nothing. The mismatch
-// only surfaces later, on a different process (or that same process's own
-// next launch), as an unrecoverable "cipher: message authentication
-// failed" — silently destroying every stored secret except from an Export
-// backup.
-func fetchOrCreateDEK(ctx context.Context, db *sql.DB) ([]byte, error) {
-	kek, kekFound, err := peekKEK()
+// bootstrapping the same profile's vault for the first time concurrently
+// could each generate a different KEK, each call keyring.Set with no
+// compare-and-swap (last write silently wins), and each attempt to INSERT
+// that profile's vault_keys row wrapped under whichever KEK *they*
+// generated (only one INSERT actually wins). Nothing errors at the moment
+// of that race — the process whose own INSERT won stays internally
+// self-consistent (via its own in-process memoization) for the rest of its
+// lifetime — but the keychain may now hold the *other* process's KEK,
+// wrapping nothing. The mismatch only surfaces later, on a different
+// process (or that same process's own next launch), as an unrecoverable
+// "cipher: message authentication failed" — silently destroying every
+// stored secret except from an Export backup.
+func fetchOrCreateDEK(ctx context.Context, db *sql.DB, profileID string) ([]byte, error) {
+	kek, kekFound, err := peekKEK(profileID)
 	if err != nil {
 		return nil, fmt.Errorf("secrets: getOrCreateDEK: %w", err)
 	}
 	if kekFound {
 		var wrappedDEK, wrappedNonce []byte
-		err := db.QueryRowContext(ctx, `SELECT wrapped_dek, wrapped_nonce FROM vault_keys WHERE id = 1`).
+		err := db.QueryRowContext(ctx, `SELECT wrapped_dek, wrapped_nonce FROM vault_keys WHERE profile_id = ?`, profileID).
 			Scan(&wrappedDEK, &wrappedNonce)
 		switch {
 		case err == nil:
@@ -118,22 +123,24 @@ func fetchOrCreateDEK(ctx context.Context, db *sql.DB) ([]byte, error) {
 		}
 	}
 
-	return bootstrapDEKLocked(ctx, db)
+	return bootstrapDEKLocked(ctx, db, profileID)
 }
 
 // bootstrapDEKLocked serializes first-time KEK/DEK creation across every
-// process sharing db, reusing the same BEGIN IMMEDIATE pattern
-// vault.Register (internal/vault/vault.go) and secrets.addEntry use for
-// cross-process singleton allocation — see either for why BEGIN IMMEDIATE
-// specifically is required (it acquires SQLite's write lock up front,
-// unlike the default DEFERRED transaction). Non-DB work (the keychain round
-// trip) running inside the transaction has the same precedent: vault.Register
-// does its file copy inside its own BEGIN IMMEDIATE for the identical reason.
+// process sharing db, for one profile, reusing the same BEGIN IMMEDIATE
+// pattern vault.Register (internal/vault/vault.go) and secrets.addEntry use
+// for cross-process singleton allocation — see either for why BEGIN
+// IMMEDIATE specifically is required (it acquires SQLite's write lock up
+// front, unlike the default DEFERRED transaction). Non-DB work (the
+// keychain round trip) running inside the transaction has the same
+// precedent: vault.Register does its file copy inside its own BEGIN
+// IMMEDIATE for the identical reason.
 //
 // Re-checks both the keychain and vault_keys after acquiring the lock,
-// since another process may have completed bootstrap in the window between
-// fetchOrCreateDEK's fast-path peek and this function acquiring the lock.
-func bootstrapDEKLocked(ctx context.Context, db *sql.DB) ([]byte, error) {
+// since another process may have completed this profile's bootstrap in the
+// window between fetchOrCreateDEK's fast-path peek and this function
+// acquiring the lock.
+func bootstrapDEKLocked(ctx context.Context, db *sql.DB, profileID string) ([]byte, error) {
 	conn, err := db.Conn(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("secrets: bootstrapDEKLocked: get conn: %w", err)
@@ -152,19 +159,19 @@ func bootstrapDEKLocked(ctx context.Context, db *sql.DB) ([]byte, error) {
 
 	// fetchOrCreateKEK (not the memoized getOrCreateKEK): we're already
 	// holding a cross-process lock stronger than its in-process sync.Once.
-	kek, err := fetchOrCreateKEK()
+	kek, err := fetchOrCreateKEK(profileID)
 	if err != nil {
 		return nil, fmt.Errorf("secrets: bootstrapDEKLocked: %w", err)
 	}
 
 	var wrappedDEK, wrappedNonce []byte
-	err = conn.QueryRowContext(ctx, `SELECT wrapped_dek, wrapped_nonce FROM vault_keys WHERE id = 1`).
+	err = conn.QueryRowContext(ctx, `SELECT wrapped_dek, wrapped_nonce FROM vault_keys WHERE profile_id = ?`, profileID).
 		Scan(&wrappedDEK, &wrappedNonce)
 
 	var dek []byte
 	switch {
 	case err == sql.ErrNoRows:
-		dek, err = createDEK(ctx, conn, kek)
+		dek, err = createDEK(ctx, conn, kek, profileID)
 		if err != nil {
 			return nil, err
 		}
@@ -193,7 +200,7 @@ type dbExecer interface {
 	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
 }
 
-func createDEK(ctx context.Context, execer dbExecer, kek []byte) ([]byte, error) {
+func createDEK(ctx context.Context, execer dbExecer, kek []byte, profileID string) ([]byte, error) {
 	dek := make([]byte, 32)
 	if _, err := rand.Read(dek); err != nil {
 		return nil, fmt.Errorf("secrets: generating DEK: %w", err)
@@ -203,11 +210,42 @@ func createDEK(ctx context.Context, execer dbExecer, kek []byte) ([]byte, error)
 		return nil, fmt.Errorf("secrets: wrapping DEK: %w", err)
 	}
 	_, err = execer.ExecContext(ctx,
-		`INSERT INTO vault_keys (id, wrapped_dek, wrapped_nonce, created_at) VALUES (1, ?, ?, ?)`,
-		wrappedDEK, wrappedNonce, time.Now().UTC().Format(time.RFC3339),
+		`INSERT INTO vault_keys (profile_id, wrapped_dek, wrapped_nonce, created_at) VALUES (?, ?, ?, ?)`,
+		profileID, wrappedDEK, wrappedNonce, time.Now().UTC().Format(time.RFC3339),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("secrets: storing wrapped DEK: %w", err)
 	}
 	return dek, nil
+}
+
+// fetchLegacyDEK returns the single pre-per-profile DEK every profile used
+// to share, unwrapped under the legacy KEK and read from vault_keys_legacy
+// (id=1, preserved as-is by migration 023). Read-only, no memoization — used
+// only by the vault-key migration to decrypt existing secrets before
+// re-encrypting them under a fresh per-profile key. Returns found=false if
+// this database was never migrated from the pre-per-profile scheme (a fresh
+// install, or one that already completed migration and has no legacy row).
+func fetchLegacyDEK(ctx context.Context, db *sql.DB) (dek []byte, found bool, err error) {
+	kek, kekFound, err := fetchLegacyKEK()
+	if err != nil {
+		return nil, false, fmt.Errorf("secrets: fetchLegacyDEK: %w", err)
+	}
+	if !kekFound {
+		return nil, false, nil
+	}
+	var wrappedDEK, wrappedNonce []byte
+	err = db.QueryRowContext(ctx, `SELECT wrapped_dek, wrapped_nonce FROM vault_keys_legacy WHERE id = 1`).
+		Scan(&wrappedDEK, &wrappedNonce)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("secrets: fetchLegacyDEK: reading vault_keys_legacy: %w", err)
+	}
+	dek, err = Decrypt(kek, wrappedDEK, wrappedNonce)
+	if err != nil {
+		return nil, false, fmt.Errorf("secrets: fetchLegacyDEK: unwrapping: %w", err)
+	}
+	return dek, true, nil
 }

@@ -29,7 +29,7 @@ const crashReportOptIn = "MONOAGENT_CRASH_REPORT"
 // fallback: npx is never invoked.
 func reportCrash(panicValue interface{}, stack []byte) {
 	title := fmt.Sprintf("panic: %v", panicValue)
-	body := fmt.Sprintf("Uncaught panic in `monoagentcli`.\n\nVersion: %s (built %s)\n\n```\n%s\n```\n", version, buildDate, stack)
+	body := fmt.Sprintf("Uncaught panic in `monoagentcli`.\n\nVersion: %s (built %s)\n\n```\n%s\n```\n", getVersion(), getBuildDate(), stack)
 
 	if os.Getenv(crashReportOptIn) == "1" {
 		if monomindPath, err := exec.LookPath("monomind"); err == nil {

@@ -180,7 +180,7 @@ func (s *Store) Save(ctx context.Context, c *Connection) error {
 	if err != nil {
 		return fmt.Errorf("connections.Save: marshal data: %w", err)
 	}
-	encodedData, err := secrets.EncryptBlob(ctx, s.db, dataBytes)
+	encodedData, err := secrets.EncryptBlob(ctx, s.db, c.ProfileID, dataBytes)
 	if err != nil {
 		return fmt.Errorf("connections.Save: encrypting data: %w", err)
 	}
@@ -466,7 +466,7 @@ func (s *Store) GetOAuthClient(ctx context.Context, platform, profileID string) 
 	).Scan(&clientID, &storedSecret)
 	if storedSecret != "" {
 		// Decrypt; legacy plaintext rows pass through unchanged.
-		if plain, err := secrets.DecryptBlob(ctx, s.db, storedSecret); err == nil {
+		if plain, err := secrets.DecryptBlob(ctx, s.db, profileID, storedSecret); err == nil {
 			clientSecret = string(plain)
 		}
 	}
@@ -497,7 +497,7 @@ func (s *Store) SaveOAuthClient(ctx context.Context, platform, profileID, client
 	// data); an empty secret (PKCE-only platforms) stays empty.
 	encSecret := clientSecret
 	if clientSecret != "" {
-		enc, encErr := secrets.EncryptBlob(ctx, s.db, []byte(clientSecret))
+		enc, encErr := secrets.EncryptBlob(ctx, s.db, profileID, []byte(clientSecret))
 		if encErr != nil {
 			return fmt.Errorf("connections.SaveOAuthClient: encrypting secret: %w", encErr)
 		}
@@ -628,7 +628,7 @@ func scanConnection(ctx context.Context, db *sql.DB, row *sql.Row) (*Connection,
 		return nil, fmt.Errorf("scanConnection: %w", err)
 	}
 	c.Method = AuthMethod(method)
-	decoded, err := secrets.DecryptBlob(ctx, db, dataJSON)
+	decoded, err := secrets.DecryptBlob(ctx, db, c.ProfileID, dataJSON)
 	if err != nil {
 		return nil, fmt.Errorf("scanConnection: decrypting data: %w", err)
 	}
@@ -680,7 +680,7 @@ func scanConnections(ctx context.Context, db *sql.DB, rows *sql.Rows) ([]Connect
 			return nil, fmt.Errorf("scanConnections: %w", err)
 		}
 		c.Method = AuthMethod(method)
-		decoded, err := secrets.DecryptBlob(ctx, db, dataJSON)
+		decoded, err := secrets.DecryptBlob(ctx, db, c.ProfileID, dataJSON)
 		if err != nil {
 			return nil, fmt.Errorf("scanConnections: decrypting data: %w", err)
 		}

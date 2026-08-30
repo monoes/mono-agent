@@ -51,7 +51,7 @@ func addEntry(ctx context.Context, db *sql.DB, profileID, kind, name string, fie
 		}
 	}
 
-	dek, err := getOrCreateDEK(ctx, db)
+	dek, err := getOrCreateDEK(ctx, db, profileID)
 	if err != nil {
 		return "", fmt.Errorf("secrets.addEntry: %w", err)
 	}
@@ -117,7 +117,7 @@ func addEntry(ctx context.Context, db *sql.DB, profileID, kind, name string, fie
 // one DEK fetch. This and Update are the only functions in this package
 // that ever return or accept plaintext field values.
 func DecryptFields(ctx context.Context, db *sql.DB, profileID, id string) (map[string]string, string, error) {
-	dek, err := getOrCreateDEK(ctx, db)
+	dek, err := getOrCreateDEK(ctx, db, profileID)
 	if err != nil {
 		return nil, "", fmt.Errorf("secrets.DecryptFields: %w", err)
 	}
@@ -175,7 +175,7 @@ func Update(ctx context.Context, db *sql.DB, profileID, id string, name, usernam
 	var dek []byte
 	if notes != nil || fields != nil {
 		var err error
-		dek, err = getOrCreateDEK(ctx, db)
+		dek, err = getOrCreateDEK(ctx, db, profileID)
 		if err != nil {
 			return fmt.Errorf("secrets.Update: %w", err)
 		}

@@ -140,8 +140,15 @@ type WorkflowConnection struct {
 
 // WorkflowExecution is a single run of a workflow.
 type WorkflowExecution struct {
-	ID          string `json:"id" db:"id"`
-	WorkflowID  string `json:"workflow_id" db:"workflow_id"`
+	ID         string `json:"id" db:"id"`
+	WorkflowID string `json:"workflow_id" db:"workflow_id"`
+	// ProfileID is the owning workflow's profile — stamped at creation from
+	// the workflow record, not the engine's own (single, possibly ambiguous
+	// in a multi-profile daemon) profileID. Left empty, it silently falls
+	// back to the profile_id column's SQL default ('default'), which made
+	// every scheduled/triggered execution unreachable by GetExecutionDetail
+	// (profile-scoped lookup) for any profile other than 'default'.
+	ProfileID   string `json:"profile_id" db:"profile_id"`
 	Status      string `json:"status" db:"status"` // QUEUED, RUNNING, SUCCESS, FAILED, CANCELLED
 	TriggerType string `json:"trigger_type" db:"trigger_type"`
 	// TriggerNodeID is the trigger node that fired this run (in-memory only; not

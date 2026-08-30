@@ -260,11 +260,12 @@ func TestSaveWorkflowNodes_EmptySetClearsAll(t *testing.T) {
 	}
 }
 
-// TestMigration024_ProfileDefaultIndex guards the ListWorkflows profile
-// predicate: migration 024 must exist (fresh + pre-024 upgrade, idempotent on
+// TestMigration026_ProfileDefaultIndex guards the ListWorkflows profile
+// predicate: migration 026 (renumbered from 024 when the merge added
+// 023/024 upstream) must exist (fresh + pre-026 upgrade, idempotent on
 // re-run) and the query planner must serve COALESCE(profile_id,'default')=?
 // from the expression index.
-func TestMigration024_ProfileDefaultIndex(t *testing.T) {
+func TestMigration026_ProfileDefaultIndex(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "migrate.db")
 	db, err := storage.NewDatabase(dbPath)
 	if err != nil {
@@ -292,23 +293,23 @@ func TestMigration024_ProfileDefaultIndex(t *testing.T) {
 	}
 	assertIndex("second run")
 
-	// Simulate an existing pre-024 database: 024 not recorded, index absent.
-	if _, err := db.DB.Exec(`DELETE FROM schema_migrations WHERE version = 24`); err != nil {
-		t.Fatalf("unrecord 024: %v", err)
+	// Simulate an existing pre-026 database: 026 not recorded, index absent.
+	if _, err := db.DB.Exec(`DELETE FROM schema_migrations WHERE version = 26`); err != nil {
+		t.Fatalf("unrecord 026: %v", err)
 	}
 	if _, err := db.DB.Exec(`DROP INDEX idx_workflows_profile_default`); err != nil {
 		t.Fatalf("drop index: %v", err)
 	}
 	if err := db.ApplyMigrations(); err != nil {
-		t.Fatalf("ApplyMigrations (pre-024 upgrade): %v", err)
+		t.Fatalf("ApplyMigrations (pre-026 upgrade): %v", err)
 	}
-	assertIndex("pre-024 upgrade")
+	assertIndex("pre-026 upgrade")
 	var applied int
-	if err := db.DB.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version = 24`).Scan(&applied); err != nil {
+	if err := db.DB.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version = 26`).Scan(&applied); err != nil {
 		t.Fatalf("check schema_migrations: %v", err)
 	}
 	if applied != 1 {
-		t.Fatalf("migration 024 recorded %d times, want 1", applied)
+		t.Fatalf("migration 026 recorded %d times, want 1", applied)
 	}
 
 	// The ListWorkflows predicate must use the expression index.

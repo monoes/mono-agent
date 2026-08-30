@@ -22,6 +22,12 @@ type stubStore struct {
 	mu           sync.Mutex
 	nodes        []*WorkflowExecutionNode
 	waitingState string // captured by SetExecutionWaiting
+
+	// workflowToReturn, if set, is what GetWorkflow returns for any ID.
+	workflowToReturn *Workflow
+	// createdExecs captures every exec passed to CreateExecution, for
+	// asserting what the engine actually persists (e.g. ProfileID).
+	createdExecs []*WorkflowExecution
 }
 
 func (s *stubStore) CreateExecutionNode(ctx context.Context, en *WorkflowExecutionNode) error {
@@ -58,8 +64,10 @@ func (s *stubStore) nodeRecord(nodeID string) *WorkflowExecutionNode {
 	return rec
 }
 
-func (s *stubStore) CreateWorkflow(context.Context, *Workflow) error           { return nil }
-func (s *stubStore) GetWorkflow(context.Context, string) (*Workflow, error)    { return nil, nil }
+func (s *stubStore) CreateWorkflow(context.Context, *Workflow) error { return nil }
+func (s *stubStore) GetWorkflow(context.Context, string) (*Workflow, error) {
+	return s.workflowToReturn, nil
+}
 func (s *stubStore) ListWorkflows(context.Context, string) ([]Workflow, error) { return nil, nil }
 func (s *stubStore) UpdateWorkflow(context.Context, *Workflow) error           { return nil }
 func (s *stubStore) DeleteWorkflow(context.Context, string) error              { return nil }
@@ -70,7 +78,16 @@ func (s *stubStore) SaveWorkflowNodes(context.Context, string, []WorkflowNode) e
 func (s *stubStore) SaveWorkflowConnections(context.Context, string, []WorkflowConnection) error {
 	return nil
 }
-func (s *stubStore) CreateExecution(context.Context, *WorkflowExecution) error { return nil }
+func (s *stubStore) CreateExecution(ctx context.Context, e *WorkflowExecution) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if e.ID == "" {
+		e.ID = fmt.Sprintf("exec-%d", len(s.createdExecs)+1)
+	}
+	cp := *e
+	s.createdExecs = append(s.createdExecs, &cp)
+	return nil
+}
 func (s *stubStore) GetExecution(context.Context, string) (*WorkflowExecution, error) {
 	return nil, nil
 }

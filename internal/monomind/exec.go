@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 )
@@ -174,9 +176,20 @@ func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResu
 	}
 
 	cmd := exec.Command(bin, args...)
-	if len(opts.Env) > 0 {
-		cmd.Env = append(os.Environ(), envSlice(opts.Env)...)
-	}
+	// Always build a filtered environment (not only when opts.Env is set):
+	// when a Claude Code session (this app itself, or anything upstream)
+	// runs monoagentcli, its own CLAUDECODE/CLAUDE_CODE_*/CLAUDE_PID session
+	// markers are ambient in the process environment — set globally for the
+	// whole login session (confirmed directly: still present even in a
+	// process launched via `open`, with PPID=1, completely detached from
+	// any parent shell). The `claude` CLI reads these as "I'm already
+	// running inside a Claude Code session" and changes its own auth
+	// resolution accordingly, which surfaces as "Not logged in" for a
+	// separate, independently-launched `claude` login — even though the
+	// user's own Keychain-stored credentials are perfectly valid. Stripping
+	// them here means every chat/agent turn gets a clean environment
+	// regardless of what launched monoagentcli.
+	cmd.Env = append(filteredEnviron(), envSlice(opts.Env)...)
 	setProcessGroup(cmd)
 
 	stdin, err := cmd.StdinPipe()
@@ -311,6 +324,47 @@ func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResu
 		}
 		return res, nil
 	}
+}
+
+// sessionMarkerEnvVars are Claude Code's own session-identity env vars —
+// see the comment at Exec's cmd.Env construction for why these must never
+// reach a spawned `claude` CLI invocation.
+var sessionMarkerEnvVars = []string{
+	"CLAUDECODE",
+	"CLAUDE_PID",
+	"CLAUDE_EFFORT",
+}
+
+// sessionMarkerEnvPrefixes catches every CLAUDE_CODE_* variant without
+// needing to enumerate them (new ones can be added by Claude Code itself
+// without this list going stale).
+var sessionMarkerEnvPrefixes = []string{
+	"CLAUDE_CODE_",
+}
+
+// filteredEnviron returns the current process environment with Claude
+// Code's own session-marker variables removed.
+func filteredEnviron() []string {
+	env := os.Environ()
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		key, _, _ := strings.Cut(kv, "=")
+		if slices.Contains(sessionMarkerEnvVars, key) {
+			continue
+		}
+		skip := false
+		for _, prefix := range sessionMarkerEnvPrefixes {
+			if strings.HasPrefix(key, prefix) {
+				skip = true
+				break
+			}
+		}
+		if skip {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
 }
 
 // envSlice flattens a map into KEY=VALUE strings.

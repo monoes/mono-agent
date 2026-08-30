@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -411,7 +412,17 @@ type createNodesArgs struct {
 }
 
 type createNodeSpec struct {
-	NodeType  string                 `json:"node_type"`
+	NodeType string `json:"node_type"`
+	// Type is a tolerated alias for NodeType. Measured live against both
+	// Claude and Codex building the same workflow: both independently sent
+	// "type" instead of "node_type" — the same "mistake" from two unrelated
+	// models is a schema-ambiguity problem, not a model-competence one.
+	// Every earlier version of this tool silently accepted the resulting
+	// empty NodeType and persisted a broken, non-executable node with no
+	// error — production data corruption with a 100% success-looking
+	// response. Accepting the alias fixes the common case outright; the
+	// validation below still catches anything neither key covers.
+	Type      string                 `json:"type"`
 	Name      string                 `json:"name"`
 	Config    map[string]interface{} `json:"config"`
 	PositionX float64                `json:"position_x"`
@@ -429,18 +440,43 @@ func (ct *CanvasTools) createNodes(args string) (string, error) {
 	if err := ct.checkWorkflowOwnership(a.WorkflowID); err != nil {
 		return "", err
 	}
-	// Validate node types against the registry (when one has been provided)
-	// so a hallucinated type can't insert a node the engine can't run.
-	if len(ct.nodeTypes) > 0 {
-		known := make(map[string]bool, len(ct.nodeTypes))
-		for _, nt := range ct.nodeTypes {
-			known[nt.Type] = true
+	knownTypes := make(map[string]bool, len(ct.nodeTypes))
+	for _, t := range ct.nodeTypes {
+		knownTypes[t.Type] = true
+	}
+
+	// Resolve and validate every node before writing anything — a batch
+	// either fully succeeds or fails clearly, never leaving some nodes
+	// created and others silently skipped/broken.
+	resolvedTypes := make([]string, len(a.Nodes))
+	resolvedNames := make([]string, len(a.Nodes))
+	for i, n := range a.Nodes {
+		nodeType := n.NodeType
+		if nodeType == "" {
+			nodeType = n.Type
 		}
-		for _, n := range a.Nodes {
-			if !known[n.NodeType] {
-				return "", fmt.Errorf("unknown node_type %q — call list_available_nodes for valid types", n.NodeType)
-			}
+		if nodeType == "" {
+			return "", fmt.Errorf("nodes[%d]: node_type is required — call list_available_nodes for valid values", i)
 		}
+		// Trigger nodes (trigger.manual/schedule/webhook) are a separate
+		// subsystem from the generic executor registry list_available_nodes
+		// draws from — internal/workflow/trigger_manager.go and validator.go
+		// both recognize them by this same "trigger." prefix rather than
+		// registry membership. Registry-checking them here would reject a
+		// node type that real workflows in this DB already use — verified
+		// live: an existing "Gemini — Generate One Image" workflow has a
+		// trigger.manual node, but registryNodeTypes()/list_available_nodes
+		// return no trigger.* entries at all.
+		isTrigger := strings.HasPrefix(nodeType, "trigger.")
+		if len(knownTypes) > 0 && !knownTypes[nodeType] && !isTrigger {
+			return "", fmt.Errorf("nodes[%d]: unknown node_type %q — call list_available_nodes for valid values", i, nodeType)
+		}
+		resolvedTypes[i] = nodeType
+		name := n.Name
+		if name == "" {
+			name = nodeType
+		}
+		resolvedNames[i] = name
 	}
 
 	now := time.Now().UTC()
@@ -460,7 +496,7 @@ func (ct *CanvasTools) createNodes(args string) (string, error) {
 	}
 	defer stmt.Close()
 
-	for _, n := range a.Nodes {
+	for i, n := range a.Nodes {
 		id := uuid.New().String()
 		configJSON := "{}"
 		if n.Config != nil {
@@ -470,7 +506,7 @@ func (ct *CanvasTools) createNodes(args string) (string, error) {
 			}
 			configJSON = string(b)
 		}
-		if _, err := stmt.Exec(id, a.WorkflowID, n.NodeType, n.Name, configJSON, n.PositionX, n.PositionY, now, now); err != nil {
+		if _, err := stmt.Exec(id, a.WorkflowID, resolvedTypes[i], resolvedNames[i], configJSON, n.PositionX, n.PositionY, now, now); err != nil {
 			return "", fmt.Errorf("insert node: %w", err)
 		}
 		createdIDs = append(createdIDs, id)

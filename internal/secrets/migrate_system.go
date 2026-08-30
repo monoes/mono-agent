@@ -44,7 +44,10 @@ func MigrateSessionsToVault(ctx context.Context, db *sql.DB) (migrated, total in
 	}
 
 	for _, r := range toMigrate {
-		plaintextCookies, decErr := DecryptBlob(ctx, db, r.cookiesJSON)
+		// Pre-dates per-profile keys entirely (written before any vault
+		// entry existed for it) — always under the legacy singleton DEK,
+		// regardless of which profile now owns the row.
+		plaintextCookies, decErr := DecryptBlobLegacy(ctx, db, r.cookiesJSON)
 		if decErr != nil {
 			fmt.Fprintf(os.Stderr, "warning: skipping session migration for %s/%s: %v\n", r.platform, r.username, decErr)
 			continue

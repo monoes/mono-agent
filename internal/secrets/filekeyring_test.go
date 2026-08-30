@@ -80,7 +80,9 @@ func TestFileKeyringFallback_RoundTrip(t *testing.T) {
 		t.Fatalf("got fields=%q notes=%q, want secret v-ci1 / ci note", fields["secret"], notes)
 	}
 
-	kekPath := filepath.Join(home, ".monoagent", "vault", ".file-keyring")
+	// The fallback is profile-scoped: one KEK file per profile under the
+	// default vault dir (.file-keyring-<profileID>).
+	kekPath := filepath.Join(home, ".monoagent", "vault", ".file-keyring-default")
 	info, err := os.Stat(kekPath)
 	if err != nil {
 		t.Fatalf("KEK file not created: %v", err)

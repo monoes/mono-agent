@@ -522,6 +522,7 @@ export namespace main {
 	    name: string;
 	    is_active: boolean;
 	    created_at: string;
+	    root_dir: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ProfileInfo(source);
@@ -533,6 +534,7 @@ export namespace main {
 	        this.name = source["name"];
 	        this.is_active = source["is_active"];
 	        this.created_at = source["created_at"];
+	        this.root_dir = source["root_dir"];
 	    }
 	}
 	export class ResourceItem {

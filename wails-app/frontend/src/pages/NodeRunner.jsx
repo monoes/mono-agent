@@ -1060,6 +1060,51 @@ export default function NodeRunner({ onNavigate, navData }) {
   // Cleanup polling on unmount
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current) }, [])
 
+  // When arriving from Dashboard with only a workflowId (no executionId —
+  // e.g. clicking a workflow row that has never run yet), load that
+  // workflow directly. Mirrors handleLoad below (defined later in this
+  // component, so not callable from here) rather than reordering it.
+  useEffect(() => {
+    if (!navData?.workflowId || navData?.executionId) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const wf = await WailsApp.GetWorkflow(navData.workflowId)
+        if (cancelled || !wf) return
+        const prefixToCat = { core: 'control', db: 'database', comm: 'communication', service: 'services', data: 'data', http: 'http', system: 'system', trigger: 'triggers', ai: 'ai', instagram: 'instagram', linkedin: 'linkedin', x: 'x', tiktok: 'tiktok' }
+        const loadedNodes = (wf.nodes || []).map(n => {
+          const nt = normalizeNodeType(n.node_type || n.type || '')
+          const prefix = nt.split('.')[0]
+          const cat = prefixToCat[prefix] || prefix
+          return {
+            id: n.id, label: n.name, subtype: nt, category: cat,
+            x: n.position_x, y: n.position_y,
+            config: n.config || {}, color: catColor(cat),
+            schema: n.schema || null,
+            configFields: n.schema?.fields ? n.schema.fields : getConfigFields(nt),
+            inputs: deriveInputs(nt), outputs: deriveOutputs(nt),
+            runStatus: null, runInputItems: null, runOutputs: null, runOutputItems: 0, runDuration: null, runError: null,
+          }
+        })
+        const loadedEdges = (wf.connections || []).map(c => ({
+          id: c.id, source: c.source_node_id, sourcePortId: c.source_handle,
+          sourcePortIdx: parseInt(c.source_handle) || 0,
+          target: c.target_node_id, targetPortId: c.target_handle,
+          targetPortIdx: parseInt(c.target_handle) || 0,
+        }))
+        setWfId(wf.id)
+        setWfName(wf.name || 'Untitled Workflow')
+        setWfActive(!!wf.is_active)
+        setNodes(loadedNodes)
+        setEdges(loadedEdges)
+        setSelectedId(null)
+        setIsDirty(false)
+        setCamera({ x: 60, y: 60, zoom: 1 })
+      } catch (e) { console.error('Failed to load workflow from navData', e) }
+    })()
+    return () => { cancelled = true }
+  }, [navData?.workflowId, navData?.executionId]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // When arriving from Dashboard with an executionId, load workflow + overlay
   useEffect(() => {
     if (!navData?.executionId) return

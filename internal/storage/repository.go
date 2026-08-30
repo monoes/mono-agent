@@ -1,11 +1,14 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/monoes/mono-agent/internal/monomind"
 )
 
 // ---------------------------------------------------------------------------
@@ -409,6 +412,28 @@ func (d *Database) BatchCreateActionTargets(targets []*ActionTarget) error {
 // UpsertPerson inserts a new person or updates an existing one matched by
 // platform_username + platform + profile_id (person.ProfileID; defaults to
 // "default" if unset).
+// personKGDisplayName returns the best available human-readable name for a
+// knowledge-graph node representing a person.
+func personKGDisplayName(p *Person) string {
+	if p.FullName != "" {
+		return p.FullName
+	}
+	return p.PlatformUsername
+}
+
+// personKGDescription summarizes a person's known fields for a
+// knowledge-graph node description.
+func personKGDescription(p *Person) string {
+	desc := fmt.Sprintf("%s on %s", personKGDisplayName(p), p.Platform)
+	if p.JobTitle != "" {
+		desc += fmt.Sprintf(", %s", p.JobTitle)
+	}
+	if p.Introduction != "" {
+		desc += fmt.Sprintf(" — %s", p.Introduction)
+	}
+	return desc
+}
+
 func (d *Database) UpsertPerson(person *Person) error {
 	if person.ID == "" {
 		person.ID = NewID()
@@ -450,6 +475,12 @@ func (d *Database) UpsertPerson(person *Person) error {
 	if err != nil {
 		return fmt.Errorf("upserting person %s/%s: %w", person.Platform, person.PlatformUsername, err)
 	}
+
+	go func() {
+		node := monomind.KGNode{Name: personKGDisplayName(person), Type: "person", Description: personKGDescription(person)}
+		_ = monomind.SyncToKnowledgeGraph(context.Background(), d.DB, person.ProfileID, []monomind.KGNode{node}, nil, "person:"+person.ID)
+	}()
+
 	return nil
 }
 
@@ -610,6 +641,9 @@ func (d *Database) ListPeople(platform, search string, limit, offset int) ([]*Pe
 }
 
 // DeletePerson removes a person by ID.
+// DeletePerson removes a person row. Knowledge-graph entries created for
+// this person are intentionally left in place as a historical record —
+// there is no KG delete/rollback wired up here (out of scope).
 func (d *Database) DeletePerson(id string) error {
 	result, err := d.DB.Exec("DELETE FROM people WHERE id = ?", id)
 	if err != nil {
@@ -683,7 +717,24 @@ func (d *Database) BatchUpsertPeople(people []*Person) error {
 		}
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	go func() {
+		// Batches are expected to belong to a single profile in practice;
+		// group by profile defensively rather than assuming that.
+		byProfile := make(map[string][]monomind.KGNode)
+		for _, p := range people {
+			node := monomind.KGNode{Name: personKGDisplayName(p), Type: "person", Description: personKGDescription(p)}
+			byProfile[p.ProfileID] = append(byProfile[p.ProfileID], node)
+		}
+		for profileID, nodes := range byProfile {
+			_ = monomind.SyncToKnowledgeGraph(context.Background(), d.DB, profileID, nodes, nil, "people-batch:"+people[0].ID)
+		}
+	}()
+
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -744,6 +795,27 @@ func (d *Database) UpsertPersonMessage(msg *PersonMessage, profileID string) err
 	if err != nil {
 		return fmt.Errorf("upserting message for person %s: %w", msg.PersonID, err)
 	}
+
+	go func() {
+		label := msg.Subject
+		if label == "" {
+			label = msg.ID
+		}
+		desc := fmt.Sprintf("%s message (%s) via %s", msg.Direction, msg.Status, msg.Source)
+		if msg.Sender != "" {
+			desc += fmt.Sprintf(", from %s", msg.Sender)
+		}
+		if msg.Body != "" {
+			desc += ": " + msg.Body
+		}
+		node := monomind.KGNode{Name: label, Type: "message", Description: desc}
+		// Target is the person's row ID, not display name: PersonMessage
+		// only carries PersonID, and fetching the display name here would
+		// add an extra query for a best-effort sync.
+		edge := monomind.KGEdge{Source: label, Target: msg.PersonID, Relation: "sent_to", Description: msg.Source}
+		_ = monomind.SyncToKnowledgeGraph(context.Background(), d.DB, profileID, []monomind.KGNode{node}, []monomind.KGEdge{edge}, "message:"+msg.ID)
+	}()
+
 	return nil
 }
 
@@ -827,6 +899,10 @@ func (d *Database) GetPersonMessage(id string) (*PersonMessage, error) {
 }
 
 // UpdatePersonMessageStatus transitions a message's status (e.g. "draft" -> "sent").
+// UpdatePersonMessageStatus is not synced to the knowledge graph: it only
+// has the message ID and new status in scope, and re-fetching the full
+// message/profile just to sync a status change isn't worth the extra query
+// for a best-effort update.
 func (d *Database) UpdatePersonMessageStatus(id, status string) error {
 	result, err := d.DB.Exec(`UPDATE person_messages SET status = ? WHERE id = ?`, status, id)
 	if err != nil {
@@ -1011,6 +1087,11 @@ func (d *Database) AddPersonStatusUpdate(personID, profileID, text string) (*Per
 	if err != nil {
 		return nil, fmt.Errorf("saving status update for person %s: %w", personID, err)
 	}
+
+	// Not synced to the knowledge graph: the existing person KG node is
+	// keyed by display name, which isn't in scope here (only personID is) —
+	// re-fetching the person just to sync this status text isn't worth the
+	// extra query for a best-effort update.
 	return u, nil
 }
 

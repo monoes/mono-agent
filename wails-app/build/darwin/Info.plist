@@ -23,6 +23,13 @@
         <string>true</string>
         <key>NSHumanReadableCopyright</key>
         <string>{{.Info.Copyright}}</string>
+        <!-- App Nap throttles this process's CPU/timer scheduling (and the
+             claude/codex subprocesses it spawns) once the window loses
+             focus, turning a normal ~40s agent turn into several minutes —
+             measured directly: a chat turn that took 43s in the foreground
+             via a terminal ran for 5+ minutes while the app sat backgrounded. -->
+        <key>NSAppSleepDisabled</key>
+        <true/>
         {{if .Info.FileAssociations}}
         <key>CFBundleDocumentTypes</key>
         <array>

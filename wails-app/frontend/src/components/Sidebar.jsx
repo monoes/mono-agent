@@ -3,15 +3,18 @@ import { createPortal } from 'react-dom'
 import {
   LayoutDashboard, Users,
   Terminal, PlayCircle, Settings, Image, UserCheck, Mail, KeyRound, Zap,
-  ChevronDown, Plus, Check, Bot, Building2
+  ChevronDown, Plus, Check, Bot, Building2, FolderOpen, FolderCog, Loader2
 } from 'lucide-react'
 import { GetVersion } from '../wailsjs/go/main/App'
 import * as WailsApp from '../wailsjs/go/main/App'
 
-const GetHILItems    = WailsApp.GetHILItems    ?? (async () => [])
-const GetProfiles    = WailsApp.GetProfiles    ?? (async () => [])
-const CreateProfile  = WailsApp.CreateProfile  ?? (async () => {})
-const SwitchProfile  = WailsApp.SwitchProfile  ?? (async () => {})
+const GetHILItems          = WailsApp.GetHILItems          ?? (async () => [])
+const GetProfiles          = WailsApp.GetProfiles          ?? (async () => [])
+const CreateProfile        = WailsApp.CreateProfile        ?? (async () => {})
+const SwitchProfile        = WailsApp.SwitchProfile        ?? (async () => {})
+const ChooseProfileFolder  = WailsApp.ChooseProfileFolder  ?? (async () => '')
+const MoveProfileFolder    = WailsApp.MoveProfileFolder    ?? (async () => {})
+const RevealProfileFolder  = WailsApp.RevealProfileFolder  ?? (async () => {})
 
 const NAV_ITEMS = [
   { id: 'dashboard',   label: 'Dashboard',   icon: LayoutDashboard, section: 'MAIN' },
@@ -52,8 +55,10 @@ export default function Sidebar({ activePage, onNavigate, stats, dbConnected, sh
   const [activeProfileID, setActiveProfileID] = useState('default')
   const [profileOpen, setProfileOpen] = useState(false)
   const [newProfileName, setNewProfileName] = useState('')
+  const [newProfileFolder, setNewProfileFolder] = useState('')
   const [creatingProfile, setCreatingProfile] = useState(false)
   const [profileError, setProfileError] = useState('')
+  const [movingProfileID, setMovingProfileID] = useState(null)
   const [dropPos, setDropPos] = useState({ top: 0, left: 0, width: 0 })
   const profileDropRef = useRef(null)
   const profileBtnRef = useRef(null)
@@ -83,6 +88,7 @@ export default function Sidebar({ activePage, onNavigate, stats, dbConnected, sh
         setProfileOpen(false)
         setCreatingProfile(false)
         setNewProfileName('')
+        setNewProfileFolder('')
       }
     }
     document.addEventListener('mousedown', handler)
@@ -101,6 +107,7 @@ export default function Sidebar({ activePage, onNavigate, stats, dbConnected, sh
     setProfileOpen(v => !v)
     setCreatingProfile(false)
     setNewProfileName('')
+    setNewProfileFolder('')
     setProfileError('')
   }
 
@@ -129,13 +136,47 @@ export default function Sidebar({ activePage, onNavigate, stats, dbConnected, sh
     if (!name) return
     setProfileError('')
     try {
-      const p = await CreateProfile(name)
+      const p = await CreateProfile(name, newProfileFolder || '')
       setNewProfileName('')
+      setNewProfileFolder('')
       setCreatingProfile(false)
       await loadProfiles()
       await handleSwitchProfile(p.id)
     } catch (e) {
       setProfileError(e?.message || 'Failed to create profile')
+    }
+  }
+
+  const handleChooseFolderForCreate = async () => {
+    try {
+      const path = await ChooseProfileFolder()
+      if (path) setNewProfileFolder(path)
+    } catch (e) {
+      setProfileError(e?.message || 'Failed to choose folder')
+    }
+  }
+
+  const handleMoveProfileFolder = async (id) => {
+    if (movingProfileID) return
+    try {
+      const path = await ChooseProfileFolder()
+      if (!path) return
+      setProfileError('')
+      setMovingProfileID(id)
+      await MoveProfileFolder(id, path)
+      await loadProfiles()
+    } catch (e) {
+      setProfileError(e?.message || 'Failed to move profile folder')
+    } finally {
+      setMovingProfileID(null)
+    }
+  }
+
+  const handleRevealFolder = async (id) => {
+    try {
+      await RevealProfileFolder(id)
+    } catch (e) {
+      setProfileError(e?.message || 'Failed to open folder')
     }
   }
 
@@ -226,7 +267,47 @@ export default function Sidebar({ activePage, onNavigate, stats, dbConnected, sh
                 onMouseLeave={e => { e.currentTarget.style.background = p.id === activeProfileID ? 'rgba(0,180,216,0.07)' : 'transparent' }}
               >
                 {p.id === activeProfileID ? <Check size={11} color="#00b4d8" /> : <span style={{ width: 11 }} />}
-                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
+                  {p.root_dir && (
+                    <div
+                      title={p.root_dir}
+                      style={{
+                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        fontSize: 10, color: 'var(--text-muted)', marginTop: 1, cursor: 'default',
+                      }}
+                    >{p.root_dir}</div>
+                  )}
+                </div>
+                <button
+                  onClick={e => { e.stopPropagation(); handleRevealFolder(p.id) }}
+                  title="Show in Finder"
+                  style={{
+                    flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    width: 20, height: 20, padding: 0, background: 'transparent', border: 'none',
+                    color: 'var(--text-muted)', cursor: 'pointer',
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.color = 'var(--text-secondary)' }}
+                  onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-muted)' }}
+                >
+                  <FolderOpen size={12} />
+                </button>
+                <button
+                  onClick={e => { e.stopPropagation(); handleMoveProfileFolder(p.id) }}
+                  disabled={movingProfileID === p.id}
+                  title="Change profile folder location"
+                  style={{
+                    flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    width: 20, height: 20, padding: 0, background: 'transparent', border: 'none',
+                    color: 'var(--text-muted)', cursor: movingProfileID === p.id ? 'default' : 'pointer',
+                  }}
+                  onMouseEnter={e => { if (movingProfileID !== p.id) e.currentTarget.style.color = 'var(--text-secondary)' }}
+                  onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-muted)' }}
+                >
+                  {movingProfileID === p.id
+                    ? <Loader2 size={12} style={{ animation: 'spin 0.7s linear infinite' }} />
+                    : <FolderCog size={12} />}
+                </button>
               </div>
             ))}
 
@@ -237,27 +318,52 @@ export default function Sidebar({ activePage, onNavigate, stats, dbConnected, sh
             )}
             <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', padding: '8px' }}>
               {creatingProfile ? (
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <input
-                    autoFocus
-                    value={newProfileName}
-                    onChange={e => setNewProfileName(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') handleCreateProfile(); if (e.key === 'Escape') { setCreatingProfile(false); setNewProfileName('') } }}
-                    placeholder="Profile name…"
-                    style={{
-                      flex: 1, padding: '5px 8px', background: 'rgba(255,255,255,0.06)',
-                      border: '1px solid rgba(0,180,216,0.3)', borderRadius: 4,
-                      color: 'var(--text-primary)', fontSize: 12, outline: 'none',
-                    }}
-                  />
-                  <button
-                    onClick={handleCreateProfile}
-                    style={{
-                      padding: '5px 10px', background: 'rgba(0,180,216,0.2)',
-                      border: '1px solid rgba(0,180,216,0.4)', borderRadius: 4,
-                      color: '#00b4d8', fontSize: 12, cursor: 'pointer',
-                    }}
-                  >Create</button>
+                <div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <input
+                      autoFocus
+                      value={newProfileName}
+                      onChange={e => setNewProfileName(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') handleCreateProfile(); if (e.key === 'Escape') { setCreatingProfile(false); setNewProfileName(''); setNewProfileFolder('') } }}
+                      placeholder="Profile name…"
+                      style={{
+                        flex: 1, padding: '5px 8px', background: 'rgba(255,255,255,0.06)',
+                        border: '1px solid rgba(0,180,216,0.3)', borderRadius: 4,
+                        color: 'var(--text-primary)', fontSize: 12, outline: 'none',
+                      }}
+                    />
+                    <button
+                      onClick={handleChooseFolderForCreate}
+                      title="Choose folder"
+                      style={{
+                        flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        width: 26, padding: '5px 0', background: 'rgba(255,255,255,0.06)',
+                        border: '1px solid rgba(255,255,255,0.12)', borderRadius: 4,
+                        color: 'var(--text-secondary)', cursor: 'pointer',
+                      }}
+                    ><FolderOpen size={12} /></button>
+                    <button
+                      onClick={handleCreateProfile}
+                      style={{
+                        padding: '5px 10px', background: 'rgba(0,180,216,0.2)',
+                        border: '1px solid rgba(0,180,216,0.4)', borderRadius: 4,
+                        color: '#00b4d8', fontSize: 12, cursor: 'pointer',
+                      }}
+                    >Create</button>
+                  </div>
+                  {newProfileFolder && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4, padding: '0 2px' }}>
+                      <span style={{
+                        flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap', fontSize: 10, color: 'var(--text-muted)',
+                      }}>→ {newProfileFolder}</span>
+                      <span
+                        onClick={() => setNewProfileFolder('')}
+                        title="Use default location"
+                        style={{ flexShrink: 0, fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer' }}
+                      >×</span>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <button

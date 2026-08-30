@@ -768,10 +768,21 @@ func (a *App) CancelWorkflow(executionID string) error {
 	a.runningMu.Unlock()
 
 	// Kill external CLI process via PID stored in the DB — but only after
-	// verifying the pid still belongs to a monoagent binary: a stale pid can
-	// have been reused by the OS for an unrelated process, and signaling it
-	// would kill someone else's work. On refusal nothing is marked cancelled.
-	if !killed && pid > 0 {
+	// two safety checks:
+	//  1. The PID must not be the daemon itself: the long-running daemon
+	//     stamps its own PID on every execution it runs in-process for
+	//     scheduled/webhook triggers (SetExecutionStarted records
+	//     os.Getpid()), so a stuck scheduled execution's "pid" is the
+	//     daemon — signalling it kills the whole daemon (and every other
+	//     profile's active triggers with it), which then gets respawned,
+	//     re-launching Chrome and re-touching Keychain-backed vault secrets
+	//     on every restart.
+	//  2. The PID must still belong to a monoagent binary: a stale pid can
+	//     have been reused by the OS for an unrelated process, and
+	//     signaling it would kill someone else's work (signalWorkflowPID
+	//     verifies before signalling).
+	// On refusal nothing is marked cancelled.
+	if !killed && pid > 0 && !isMonoagentDaemonProcess(pid) {
 		if err := signalWorkflowPID(pid); err != nil {
 			a.emitLog("WORKFLOW", "ERROR", fmt.Sprintf("Execution %s: %v", executionID, err))
 			return err
@@ -784,6 +795,20 @@ func (a *App) CancelWorkflow(executionID string) error {
 	_, _ = a.db.Exec(`UPDATE hil_pending SET status='rejected', updated_at=CURRENT_TIMESTAMP WHERE execution_id=? AND status='pending' AND profile_id = ?`, executionID, a.getActiveProfileID())
 	a.emitLog("WORKFLOW", "INFO", fmt.Sprintf("Execution %s cancelled", executionID))
 	return nil
+}
+
+// isMonoagentDaemonProcess reports whether pid is a running `monoagentcli
+// daemon` process, so CancelWorkflow's PID-signal fallback can refuse to
+// kill it — that PID column is also stamped (as the current process's own
+// PID) on every execution the daemon runs in-process for scheduled/webhook
+// triggers, and signalling it would take down the whole daemon.
+func isMonoagentDaemonProcess(pid int) bool {
+	out, err := exec.Command("ps", "-p", fmt.Sprintf("%d", pid), "-o", "command=").Output()
+	if err != nil {
+		return false
+	}
+	cmdline := string(out)
+	return strings.Contains(cmdline, "monoagentcli") && strings.Contains(cmdline, "daemon")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -56,7 +56,7 @@ func newFullEngineStore(t *testing.T) *SQLiteWorkflowStore {
 		`CREATE TABLE workflows (id TEXT PRIMARY KEY, name TEXT, description TEXT DEFAULT '', is_active INTEGER DEFAULT 0, version INTEGER DEFAULT 1, profile_id TEXT, created_at TIMESTAMP, updated_at TIMESTAMP)`,
 		`CREATE TABLE workflow_nodes (id TEXT PRIMARY KEY, workflow_id TEXT, node_type TEXT, name TEXT, config TEXT DEFAULT '{}', position_x REAL DEFAULT 0, position_y REAL DEFAULT 0, disabled INTEGER DEFAULT 0, created_at TIMESTAMP, updated_at TIMESTAMP)`,
 		`CREATE TABLE workflow_connections (id TEXT PRIMARY KEY, workflow_id TEXT, source_node_id TEXT, source_handle TEXT DEFAULT 'main', target_node_id TEXT, target_handle TEXT DEFAULT 'main', position INTEGER DEFAULT 0)`,
-		`CREATE TABLE workflow_executions (id TEXT PRIMARY KEY, workflow_id TEXT, status TEXT, trigger_type TEXT, trigger_data TEXT DEFAULT '{}', started_at TIMESTAMP, finished_at TIMESTAMP, error_message TEXT DEFAULT '', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, pid INTEGER, resume_state TEXT NOT NULL DEFAULT '')`,
+		`CREATE TABLE workflow_executions (id TEXT PRIMARY KEY, workflow_id TEXT, status TEXT, trigger_type TEXT, trigger_data TEXT DEFAULT '{}', started_at TIMESTAMP, finished_at TIMESTAMP, error_message TEXT DEFAULT '', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, pid INTEGER, resume_state TEXT NOT NULL DEFAULT '', profile_id TEXT NOT NULL DEFAULT 'default')`,
 		`CREATE TABLE workflow_execution_nodes (id TEXT PRIMARY KEY, execution_id TEXT, node_id TEXT, node_name TEXT, status TEXT DEFAULT 'PENDING', input_items TEXT DEFAULT '[]', output_items TEXT DEFAULT '[]', error_message TEXT, started_at TIMESTAMP, finished_at TIMESTAMP, retry_count INTEGER DEFAULT 0)`,
 		`CREATE TABLE hil_pending (id TEXT PRIMARY KEY, execution_id TEXT, status TEXT DEFAULT 'pending')`,
 	} {
@@ -263,5 +263,63 @@ func TestEngine_AdoptionRunsExactlyOnce_TwoEngines(t *testing.T) {
 	}
 	if n := atomic.LoadInt32(&runs); n != 1 {
 		t.Errorf("node ran %d times across two adopting engines, want exactly 1", n)
+	}
+}
+
+// TestExecutionProfileID is a regression test for a bug where every new
+// WorkflowExecution silently fell back to the profile_id column's SQL
+// default ('default') because nothing ever set it — breaking
+// GetExecutionDetail's profile-scoped lookup for any workflow not owned by
+// the 'default' profile, and specifically for a long-running daemon's single
+// engine instance (RestoreActiveWorkflows) handling many profiles' scheduled
+// triggers at once, where the engine's own profileID is not the right value
+// for most of those workflows.
+func TestExecutionProfileID(t *testing.T) {
+	cases := []struct {
+		name            string
+		wf              *Workflow
+		engineProfileID string
+		want            string
+	}{
+		{"workflow has its own profile", &Workflow{ID: "wf-1", ProfileID: "halansari"}, "default", "halansari"},
+		{"workflow profile differs from engine's", &Workflow{ID: "wf-2", ProfileID: "monoes"}, "halansari", "monoes"},
+		{"legacy workflow with no profile falls back to engine's", &Workflow{ID: "wf-3", ProfileID: ""}, "default", "default"},
+		{"nil workflow falls back to engine's", nil, "edge", "edge"},
+	}
+	for _, tc := range cases {
+		if got := executionProfileID(tc.wf, tc.engineProfileID); got != tc.want {
+			t.Errorf("%s: executionProfileID() = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestTriggerWorkflow_StampsWorkflowsOwnProfile is an integration-level
+// regression test proving TriggerWorkflow actually persists the workflow's
+// own ProfileID on the created execution (not the engine's), via the real
+// CreateExecution call path.
+func TestTriggerWorkflow_StampsWorkflowsOwnProfile(t *testing.T) {
+	store := &stubStore{
+		workflowToReturn: &Workflow{ID: "wf-halansari", ProfileID: "halansari", IsActive: true},
+	}
+	e := &WorkflowEngine{
+		profileID:        "default", // the daemon's own engine profile — must NOT end up on the exec
+		allowAllProfiles: true,
+		store:            store,
+		queue:            NewExecutionQueue(1, 1, func(context.Context, ExecutionRequest) {}, zerolog.Nop()),
+		logger:           zerolog.Nop(),
+	}
+	execID, err := e.TriggerWorkflow(context.Background(), "wf-halansari", nil)
+	if err != nil {
+		t.Fatalf("TriggerWorkflow: %v", err)
+	}
+	if len(store.createdExecs) != 1 {
+		t.Fatalf("expected 1 created execution, got %d", len(store.createdExecs))
+	}
+	got := store.createdExecs[0]
+	if got.ID != execID {
+		t.Errorf("returned execID %q doesn't match created execution %q", execID, got.ID)
+	}
+	if got.ProfileID != "halansari" {
+		t.Errorf("execution ProfileID = %q, want %q (the workflow's own profile, not the engine's %q)", got.ProfileID, "halansari", e.profileID)
 	}
 }

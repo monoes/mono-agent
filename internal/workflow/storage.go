@@ -487,12 +487,16 @@ func (s *SQLiteWorkflowStore) CreateExecution(ctx context.Context, e *WorkflowEx
 		return fmt.Errorf("marshalling trigger data for execution %s: %w", e.ID, err)
 	}
 
+	profileID := e.ProfileID
+	if profileID == "" {
+		profileID = "default"
+	}
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO workflow_executions
-			(id, workflow_id, status, trigger_type, trigger_data, started_at, finished_at, error_message, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			(id, workflow_id, status, trigger_type, trigger_data, started_at, finished_at, error_message, created_at, profile_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.ID, e.WorkflowID, e.Status, e.TriggerType, e.TriggerDataRaw,
-		e.StartedAt, e.FinishedAt, e.ErrorMessage, e.CreatedAt,
+		e.StartedAt, e.FinishedAt, e.ErrorMessage, e.CreatedAt, profileID,
 	)
 	if err != nil {
 		return fmt.Errorf("creating execution %s: %w", e.ID, err)
@@ -506,11 +510,11 @@ func (s *SQLiteWorkflowStore) GetExecution(ctx context.Context, id string) (*Wor
 	e := &WorkflowExecution{}
 	var createdAt sqliteTime
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, workflow_id, status, trigger_type, trigger_data, started_at, finished_at, error_message, created_at, COALESCE(resume_state,'')
+		SELECT id, workflow_id, status, trigger_type, trigger_data, started_at, finished_at, error_message, created_at, COALESCE(resume_state,''), COALESCE(profile_id,'default')
 		FROM workflow_executions WHERE id = ?`, id,
 	).Scan(
 		&e.ID, &e.WorkflowID, &e.Status, &e.TriggerType, &e.TriggerDataRaw,
-		newSqliteNullTime(&e.StartedAt), newSqliteNullTime(&e.FinishedAt), &e.ErrorMessage, &createdAt, &e.ResumeState,
+		newSqliteNullTime(&e.StartedAt), newSqliteNullTime(&e.FinishedAt), &e.ErrorMessage, &createdAt, &e.ResumeState, &e.ProfileID,
 	)
 	e.CreatedAt = createdAt.Time
 	if err == sql.ErrNoRows {

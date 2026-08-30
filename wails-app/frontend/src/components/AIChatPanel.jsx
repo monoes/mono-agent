@@ -1,6 +1,43 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { X, Send, Trash2, ChevronDown, ChevronRight, Loader, Square } from 'lucide-react'
-import { api, onAIChunk, onAITool, onAIError } from '../services/api.js'
+import { X, Send, Trash2, ChevronDown, ChevronRight, Loader, Square, Plus, History } from 'lucide-react'
+import { api, onAIChunk, onAITool, onAIError, onAgentSession } from '../services/api.js'
+
+// Renders a chat message list into the panel's display shape (role/content/toolCalls),
+// dropping internal tool-result rows and parsing tool_calls JSON — shared by the
+// session-history loader and (previously) the flat-history loader.
+function toDisplayMessages(history) {
+  if (!Array.isArray(history)) return []
+  return history
+    .filter(m => m.role !== 'tool')
+    .map(m => {
+      let toolCalls = null
+      if (m.tool_calls) {
+        try {
+          const parsed = JSON.parse(m.tool_calls)
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            toolCalls = parsed.map(tc => ({
+              tool: tc.function?.name || tc.id || 'unknown',
+              args: tc.function?.arguments || '',
+              result: null,
+            }))
+          }
+        } catch { /* ignore malformed */ }
+      }
+      return { role: m.role, content: m.content || '', toolCalls }
+    })
+}
+
+// Relative time for the past-sessions list ("5m ago", "3d ago").
+function relativeTime(iso) {
+  if (!iso) return ''
+  const diffMs = Date.now() - new Date(iso).getTime()
+  const mins = Math.floor(diffMs / 60000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours}h ago`
+  return `${Math.floor(hours / 24)}d ago`
+}
 
 // ── Tool call card (collapsible) ───────────────────────────────────────────────
 function ToolCallCard({ tool, args, result }) {
@@ -119,10 +156,27 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
   const [selectedRuntime, setSelectedRuntime] = useState('')
   const [useAgents, setUseAgents]           = useState(false)
   const [monomindMissing, setMonomindMissing] = useState(false)
+  // sessionId is the underlying agent runtime's resumable session id (from
+  // monomind's agent:session event) — kept until the user starts a new
+  // chat or changes runtime/model, so consecutive messages continue the
+  // same real conversation instead of each being a stateless one-shot turn.
+  // sessionRuntime is tracked alongside it: a session id is only ever valid
+  // to resume under the runtime that created it (mixing them fails fast —
+  // "No conversation found with session ID: ..." — rather than answering),
+  // and selectedRuntime can drift from sessionRuntime via more than one
+  // path (initialRuntime overriding a loaded session's own runtime, or the
+  // runtime-scan mount effect racing the session-list mount effect), so
+  // send() re-checks the pairing at the point of use rather than trusting
+  // every sessionId setter to have kept them in sync.
+  const [sessionId, setSessionId]           = useState('')
+  const [sessionRuntime, setSessionRuntime] = useState('')
+  const [pastSessions, setPastSessions]     = useState([])
+  const [showSessions, setShowSessions]     = useState(false)
 
   const messagesEndRef   = useRef(null)
   const textareaRef      = useRef(null)
   const createdWfIdRef   = useRef(null)
+  const modelAtFocusRef  = useRef('')
 
   // ── Load local agent runtimes on mount (monomind delegation) ───────────
   useEffect(() => {
@@ -152,38 +206,53 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
     })
   }, [])
 
-  // ── Load chat history when workflowID changes ───────────────────────────
+  // ── Load a specific past session into the panel ─────────────────────────
+  const loadSession = useCallback((session) => {
+    if (!workflowID || !session?.session_id) return
+    api.getChatSessionMessages(workflowID, session.session_id).then(history => {
+      setMessages(toDisplayMessages(history))
+      // initialRuntime (e.g. the Agents-page "Chat" button picking a specific
+      // runtime) wins over a past session's own runtime; otherwise resume
+      // with whatever the session was actually using. Either way, sessionId
+      // and sessionRuntime are set together so send() can verify the pairing
+      // still matches selectedRuntime before ever passing --resume — a
+      // session id is only valid to resume under the exact runtime that
+      // created it (mismatched, it fails fast: "No conversation found").
+      if (session.runtime && !initialRuntime) setSelectedRuntime(session.runtime)
+      if (session.model) setSelectedModel(session.model)
+      setSessionId(session.session_id)
+      setSessionRuntime(session.runtime || '')
+      setCurrentContent('')
+      setCurrentToolCalls([])
+      setShowSessions(false)
+    })
+  }, [workflowID, initialRuntime])
+
+  // ── Start a fresh chat: clears the visible transcript and active session,
+  //     but leaves prior sessions in the history — they stay reachable via
+  //     the past-sessions list. The next send() omits --resume, so the
+  //     runtime allocates a brand new session. ─────────────────────────────
+  const startNewSession = useCallback(() => {
+    setSessionId('')
+    setSessionRuntime('')
+    setMessages([])
+    setCurrentContent('')
+    setCurrentToolCalls([])
+  }, [])
+
+  // ── Load past sessions + auto-continue the most recent one when the
+  //     panel switches to a new workflowID (chat-history bucket) ──────────
   useEffect(() => {
     if (!workflowID) return
-    api.getAIChatHistory(workflowID).then(history => {
-      if (!Array.isArray(history)) { setMessages([]); return }
-      // Filter out raw tool-result messages (role=tool) — they are internal.
-      // For assistant messages, parse tool_calls JSON and map to display shape.
-      setMessages(
-        history
-          .filter(m => m.role !== 'tool')
-          .map(m => {
-            let toolCalls = null
-            if (m.tool_calls) {
-              try {
-                const parsed = JSON.parse(m.tool_calls)
-                if (Array.isArray(parsed) && parsed.length > 0) {
-                  toolCalls = parsed.map(tc => ({
-                    tool: tc.function?.name || tc.id || 'unknown',
-                    args: tc.function?.arguments || '',
-                    result: null,
-                  }))
-                }
-              } catch { /* ignore malformed */ }
-            }
-            return {
-              role: m.role,
-              content: m.content || '',
-              toolCalls,
-            }
-          })
-      )
+    api.listChatSessions(workflowID).then(sessions => {
+      const list = Array.isArray(sessions) ? sessions : []
+      setPastSessions(list)
+      if (list.length > 0) loadSession(list[0])
     })
+    // Intentionally excludes loadSession: this effect should only run when
+    // the panel's workflowID (chat-history bucket) actually changes, not
+    // every time loadSession's own deps (e.g. initialRuntime) change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workflowID])
 
   // ── Subscribe to streaming events ───────────────────────────────────────
@@ -246,7 +315,20 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
       ])
     })
 
-    return () => { offChunk(); offTool(); offError() }
+    // Captures the resumable session id monomind assigns/confirms each
+    // turn — the next send() reuses it as --resume until the user resets.
+    // data.runtime is the runtime that actually produced this session
+    // (app_ai.go's StreamAgentChat emits its own agentRuntime param here,
+    // not whatever selectedRuntime happens to be at listener-fire time).
+    const offSession = onAgentSession((data) => {
+      if (data.workflowID !== workflowID) return
+      if (data.session_id) {
+        setSessionId(data.session_id)
+        setSessionRuntime(data.runtime || '')
+      }
+    })
+
+    return () => { offChunk(); offTool(); offError(); offSession() }
   }, [workflowID])
 
   // ── Auto-scroll to bottom ───────────────────────────────────────────────
@@ -269,7 +351,19 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
 
     try {
       if (useAgents) {
-        await api.streamAgentChat(workflowID, text, selectedRuntime, selectedModel, canvasMode)
+        // A session id is only valid to resume under the exact runtime that
+        // created it — mismatched, monomind fails fast ("No conversation
+        // found with session ID: ..."). sessionRuntime can drift out of
+        // sync with selectedRuntime (initialRuntime overriding a loaded
+        // past session's runtime, or a mount-order race between the
+        // runtime-scan and session-list effects), so re-verify here rather
+        // than trusting every earlier sessionId setter to have kept them
+        // paired — silently starting fresh beats erroring out.
+        const resumeID = sessionRuntime === selectedRuntime ? sessionId : ''
+        await api.streamAgentChat(workflowID, text, selectedRuntime, selectedModel, resumeID, canvasMode)
+        // Refresh the past-sessions list now that this turn has been
+        // persisted (new session, or another message added to the active one).
+        api.listChatSessions(workflowID).then(list => setPastSessions(Array.isArray(list) ? list : []))
       } else {
         await api.streamAIChat(workflowID, text, selectedProvider, selectedModel)
       }
@@ -280,7 +374,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
         { role: 'error', content: String(err) },
       ])
     }
-  }, [input, streaming, workflowID, useAgents, selectedRuntime, selectedProvider, selectedModel, canvasMode])
+  }, [input, streaming, workflowID, useAgents, selectedRuntime, selectedProvider, selectedModel, canvasMode, sessionId, sessionRuntime])
 
   // Whether a backend is actually selected for the current mode — gates the
   // input, matching send()'s own guard (useAgents ? selectedRuntime : selectedProvider).
@@ -338,6 +432,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
         borderBottom: '1px solid rgba(0,180,216,0.1)',
         display: 'flex', alignItems: 'center', gap: 8,
         flexShrink: 0,
+        position: 'relative',
       }}>
         <span style={{
           fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700,
@@ -345,6 +440,72 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
         }}>
           AI ASSISTANT
         </span>
+        <button
+          onClick={startNewSession}
+          title="New chat"
+          style={{
+            background: 'transparent', border: 'none', cursor: 'pointer',
+            color: 'var(--text-muted)', padding: 2, display: 'flex', alignItems: 'center',
+            transition: 'color 100ms',
+          }}
+          onMouseEnter={e => e.currentTarget.style.color = '#00b4d8'}
+          onMouseLeave={e => e.currentTarget.style.color = 'var(--text-muted)'}
+        >
+          <Plus size={13} />
+        </button>
+        <button
+          onClick={() => setShowSessions(s => !s)}
+          title="Past sessions"
+          style={{
+            background: showSessions ? 'rgba(0,180,216,0.12)' : 'transparent',
+            border: 'none', borderRadius: 4, cursor: 'pointer',
+            color: showSessions ? '#00b4d8' : 'var(--text-muted)', padding: 2, display: 'flex', alignItems: 'center',
+            transition: 'color 100ms',
+          }}
+          onMouseEnter={e => e.currentTarget.style.color = '#00b4d8'}
+          onMouseLeave={e => e.currentTarget.style.color = showSessions ? '#00b4d8' : 'var(--text-muted)'}
+        >
+          <History size={12} />
+        </button>
+        {showSessions && (
+          <div style={{
+            position: 'absolute', top: '100%', right: 8, marginTop: 4,
+            width: 280, maxHeight: 260, overflowY: 'auto',
+            background: '#0a1018', border: '1px solid rgba(0,180,216,0.2)',
+            borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+            zIndex: 20, padding: 4,
+          }}>
+            {pastSessions.length === 0 ? (
+              <div style={{ padding: 10, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)' }}>
+                No past sessions yet
+              </div>
+            ) : (
+              pastSessions.map(s => (
+                <div
+                  key={s.session_id}
+                  onClick={() => loadSession(s)}
+                  style={{
+                    padding: '7px 9px', borderRadius: 6, cursor: 'pointer',
+                    background: s.session_id === sessionId ? 'rgba(0,180,216,0.1)' : 'transparent',
+                  }}
+                  onMouseEnter={e => { if (s.session_id !== sessionId) e.currentTarget.style.background = 'rgba(255,255,255,0.04)' }}
+                  onMouseLeave={e => { if (s.session_id !== sessionId) e.currentTarget.style.background = 'transparent' }}
+                >
+                  <div style={{
+                    fontFamily: 'var(--font-mono)', fontSize: 10.5, color: '#e2e8f0',
+                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                  }}>
+                    {s.preview || '(no preview)'}
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, marginTop: 2 }}>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: '#00b4d8' }}>{s.runtime}</span>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-muted)' }}>{relativeTime(s.updated_at)}</span>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
         <button
           onClick={clearHistory}
           title="Clear chat history"
@@ -402,7 +563,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
         {useAgents ? (
           <select
             value={selectedRuntime}
-            onChange={e => setSelectedRuntime(e.target.value)}
+            onChange={e => { setSelectedRuntime(e.target.value); startNewSession() }}
             title="Locally installed AI agent (via monomind)"
             style={{
               flex: 1,
@@ -449,6 +610,8 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
           type="text"
           value={selectedModel}
           onChange={e => setSelectedModel(e.target.value)}
+          onFocus={e => { modelAtFocusRef.current = e.target.value }}
+          onBlur={e => { if (e.target.value !== modelAtFocusRef.current) startNewSession() }}
           placeholder="Model"
           style={{
             flex: 1,

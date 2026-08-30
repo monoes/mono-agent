@@ -68,7 +68,7 @@ func newVaultTestDB(t *testing.T) *sql.DB {
 		t.Fatalf("open db: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
-	if _, err := db.Exec(`CREATE TABLE vault_images (id TEXT PRIMARY KEY, path TEXT, profile_id TEXT DEFAULT 'default')`); err != nil {
+	if _, err := db.Exec(`CREATE TABLE vault_images (id TEXT PRIMARY KEY, path TEXT, filename TEXT, profile_id TEXT DEFAULT 'default')`); err != nil {
 		t.Fatalf("create table: %v", err)
 	}
 	return db

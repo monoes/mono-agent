@@ -106,8 +106,10 @@ export const api = {
   clearAIChatHistory: (workflowID) => GoApp.ClearAIChatHistory(workflowID).then(s => JSON.parse(s)),
   // Agent Chat (monomind delegation — local AI agent runtimes)
   scanAgentRuntimes:  () => GoApp.ScanAgentRuntimes().then(s => JSON.parse(s)).catch(guard('scan agent runtimes', null)),
-  streamAgentChat:    (workflowID, message, runtime, model, canvas = true) => GoApp.StreamAgentChat(workflowID, message, runtime, model, canvas).then(s => JSON.parse(s)),
+  streamAgentChat:    (workflowID, message, runtime, model, resumeSessionID = '', canvas = true, monoagentTools = true) => GoApp.StreamAgentChat(workflowID, message, runtime, model, resumeSessionID, canvas, monoagentTools).then(s => JSON.parse(s)),
   stopAgentChat:      (workflowID) => GoApp.StopAgentChat(workflowID).then(s => JSON.parse(s)).catch(guard('stop agent chat', null)),
+  listChatSessions:      (workflowID) => GoApp.ListChatSessions(workflowID).then(s => JSON.parse(s)).catch(guard('list chat sessions', [])),
+  getChatSessionMessages: (workflowID, sessionID) => GoApp.GetChatSessionMessages(workflowID, sessionID).then(s => JSON.parse(s)).catch(guard('chat session messages', [])),
   // Orgs (monomind Org Runtime v2)
   listOrgs:           () => GoApp.ListOrgs().then(s => JSON.parse(s)).catch(guard('list orgs', null)),
   getOrgStatus:       (name = '') => GoApp.GetOrgStatus(name).then(s => JSON.parse(s)).catch(guard('org status', null)),
@@ -184,6 +186,10 @@ export function onAIError(callback) {
 
 export function onOrgEvent(callback) {
   return subscribeEvent('org:event', callback)
+}
+
+export function onAgentSession(callback) {
+  return subscribeEvent('agent:session', callback)
 }
 
 export function onOrgEventsClosed(callback) {

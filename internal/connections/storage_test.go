@@ -43,7 +43,7 @@ func newTestDB(t *testing.T) *sql.DB {
 	}
 	const createVaultKeysTable = `
 CREATE TABLE IF NOT EXISTS vault_keys (
-    id            INTEGER PRIMARY KEY CHECK (id = 1),
+    profile_id    TEXT PRIMARY KEY,
     wrapped_dek   BLOB NOT NULL,
     wrapped_nonce BLOB NOT NULL,
     created_at    TEXT NOT NULL

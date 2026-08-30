@@ -2,8 +2,56 @@ package secrets
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/hex"
 	"testing"
+	"time"
+
+	"github.com/monoes/mono-agent/internal/storage"
+
+	"github.com/zalando/go-keyring"
 )
+
+// seedLegacyEncryptedBlob encrypts plaintext under a fresh legacy-scheme
+// DEK/KEK (the fixed pre-per-profile "kek" keychain account + a
+// vault_keys_legacy row) and returns the encoded blob — reproducing exactly
+// what data written before the per-profile redesign looks like, so
+// MigrateSessionsToVault's DecryptBlobLegacy path has something real to
+// decrypt.
+func seedLegacyEncryptedBlob(t *testing.T, db *storage.Database, plaintext []byte) string {
+	t.Helper()
+	ctx := context.Background()
+
+	kek := make([]byte, 32)
+	for i := range kek {
+		kek[i] = byte(i + 1)
+	}
+	if err := keyring.Set(keyringService, legacyKeyringAccount, hex.EncodeToString(kek)); err != nil {
+		t.Fatalf("seeding legacy KEK: %v", err)
+	}
+
+	dek := make([]byte, 32)
+	for i := range dek {
+		dek[i] = byte(255 - i)
+	}
+	wrappedDEK, wrappedNonce, err := Encrypt(kek, dek)
+	if err != nil {
+		t.Fatalf("wrapping legacy DEK: %v", err)
+	}
+	if _, err := db.DB.ExecContext(ctx,
+		`INSERT INTO vault_keys_legacy (id, wrapped_dek, wrapped_nonce, created_at) VALUES (1, ?, ?, ?)`,
+		wrappedDEK, wrappedNonce, time.Now().UTC().Format(time.RFC3339),
+	); err != nil {
+		t.Fatalf("seeding vault_keys_legacy: %v", err)
+	}
+
+	ciphertext, nonce, err := Encrypt(dek, plaintext)
+	if err != nil {
+		t.Fatalf("encrypting legacy blob: %v", err)
+	}
+	combined := append(nonce, ciphertext...)
+	return blobPrefix + base64.StdEncoding.EncodeToString(combined)
+}
 
 func TestMigrateSessionsToVault_NoOpWhenNoLegacyRows(t *testing.T) {
 	db := newSecretsTestDB(t)
@@ -23,11 +71,8 @@ func TestMigrateSessionsToVault_MigratesLegacyEncryptedCookies(t *testing.T) {
 	ctx := context.Background()
 
 	legacyCookies := []byte(`[{"name":"sid","value":"legacy"}]`)
-	encCookies, err := EncryptBlob(ctx, db.DB, legacyCookies)
-	if err != nil {
-		t.Fatalf("EncryptBlob: %v", err)
-	}
-	_, err = db.DB.Exec(
+	encCookies := seedLegacyEncryptedBlob(t, db, legacyCookies)
+	_, err := db.DB.Exec(
 		`INSERT INTO crawler_sessions (username, platform, cookies_json, expiry, profile_id) VALUES (?, ?, ?, ?, ?)`,
 		"alice", "instagram", encCookies, "2099-01-01 00:00:00", "default",
 	)
@@ -82,10 +127,7 @@ func TestMigrateSessionsToVault_ContinuesPastPerRowFailure(t *testing.T) {
 		t.Fatalf("seeding broken session: %v", err)
 	}
 	goodCookies := []byte(`[{"name":"sid","value":"ok"}]`)
-	encCookies, err := EncryptBlob(ctx, db.DB, goodCookies)
-	if err != nil {
-		t.Fatalf("EncryptBlob: %v", err)
-	}
+	encCookies := seedLegacyEncryptedBlob(t, db, goodCookies)
 	_, err = db.DB.Exec(
 		`INSERT INTO crawler_sessions (username, platform, cookies_json, expiry, profile_id) VALUES (?, ?, ?, ?, ?)`,
 		"good-user", "instagram", encCookies, "2099-01-01 00:00:00", "default",

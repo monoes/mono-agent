@@ -60,18 +60,19 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("parse response: %w", err)
 	}
 
+	v := getVersion()
 	latest := strings.TrimPrefix(release.TagName, "v")
-	current := strings.TrimPrefix(version, "v")
+	current := strings.TrimPrefix(v, "v")
 
-	if version == "dev" {
+	if v == "dev" {
 		fmt.Println("Running a dev build (no embedded version) — skipping update check.")
 		return nil
 	}
 	if latest == current {
-		fmt.Printf("Already on latest version (%s)\n", version)
+		fmt.Printf("Already on latest version (%s)\n", v)
 		return nil
 	}
-	fmt.Printf("Update available: %s → %s\n", version, release.TagName)
+	fmt.Printf("Update available: %s → %s\n", v, release.TagName)
 
 	assetName := updateAssetName()
 	var downloadURL string

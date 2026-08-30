@@ -8,26 +8,52 @@ import (
 	"os/signal"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
 
+// version/buildDate are set via -ldflags in release builds (see
+// .github/workflows/release.yml); empty in a plain `go build`.
 var (
 	version   = ""
 	buildDate = ""
 )
 
-func init() {
-	if version == "" {
+// getVersion/getBuildDate resolve version/buildDate lazily via sync.Once
+// rather than an unconditional `init()`, which used to shell out to `git
+// describe` on EVERY invocation regardless of subcommand — including a bare
+// `--help` — costing up to several seconds on a cold cache. monoagentcli is
+// spawned as a subprocess repeatedly by the Wails app (each chat message,
+// each agent scan, each org observe call), so that fixed per-invocation tax
+// was a real, compounding source of UI latency in dev builds. Release
+// builds never hit this path at all since version is baked in via ldflags.
+var (
+	versionOnce sync.Once
+	buildOnce   sync.Once
+)
+
+func getVersion() string {
+	versionOnce.Do(func() {
+		if version != "" {
+			return
+		}
 		if out, err := exec.Command("git", "describe", "--tags", "--always").Output(); err == nil {
 			version = strings.TrimSpace(string(out))
 		} else {
 			version = "dev"
 		}
-	}
-	if buildDate == "" {
-		buildDate = time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	}
+	})
+	return version
+}
+
+func getBuildDate() string {
+	buildOnce.Do(func() {
+		if buildDate == "" {
+			buildDate = time.Now().UTC().Format("2006-01-02T15:04:05Z")
+		}
+	})
+	return buildDate
 }
 
 func main() {

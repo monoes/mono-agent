@@ -30,7 +30,7 @@ func TestEncryptDecryptBlob_RoundTrip(t *testing.T) {
 	ctx := context.Background()
 	plaintext := []byte(`{"access_token":"abc123"}`)
 
-	encoded, err := EncryptBlob(ctx, db.DB, plaintext)
+	encoded, err := EncryptBlob(ctx, db.DB, "default", plaintext)
 	if err != nil {
 		t.Fatalf("EncryptBlob: %v", err)
 	}
@@ -38,7 +38,7 @@ func TestEncryptDecryptBlob_RoundTrip(t *testing.T) {
 		t.Fatal("encoded blob must not equal plaintext")
 	}
 
-	got, err := DecryptBlob(ctx, db.DB, encoded)
+	got, err := DecryptBlob(ctx, db.DB, "default", encoded)
 	if err != nil {
 		t.Fatalf("DecryptBlob: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestDecryptBlob_PassesThroughLegacyPlaintext(t *testing.T) {
 	ctx := context.Background()
 	legacy := `{"access_token":"legacy-plaintext"}`
 
-	got, err := DecryptBlob(ctx, db.DB, legacy)
+	got, err := DecryptBlob(ctx, db.DB, "default", legacy)
 	if err != nil {
 		t.Fatalf("DecryptBlob on legacy plaintext: %v", err)
 	}
