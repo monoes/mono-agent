@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { ListResources, CreateResource, ConnectPlatformOAuth } from '../wailsjs/go/main/App'
-import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime'
+import { EventsOn } from '../wailsjs/runtime/runtime'
 
 /**
  * ResourcePickerField — searchable dropdown + expand button for external resources.

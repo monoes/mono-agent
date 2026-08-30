@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { api, STATE_COLORS, PLATFORM_COLORS } from '../services/api.js'
 import { GetVersion } from '../wailsjs/go/main/App'
+import { usePageVisibleRef, useVisibleCatchUp } from '../lib/usePageVisible.js'
 
 // ── Status dot for execution ──────────────────────────────────────────────────
 function ExecStatusDot({ status }) {
@@ -256,6 +257,7 @@ export default function Dashboard({ stats, onRefresh, onNavigate }) {
   const [workflows, setWorkflows]       = useState([])
   const [executions, setExecutions]     = useState([])
   const [ver, setVer]                   = useState(null)
+  const pageVisibleRef = usePageVisibleRef()
 
   useEffect(() => { GetVersion().then(setVer).catch(() => {}) }, [])
   const [execMap, setExecMap]           = useState({})   // workflowID → last execution[]
@@ -282,17 +284,26 @@ export default function Dashboard({ stats, onRefresh, onNavigate }) {
 
   useEffect(() => { load() }, [load])
 
+  // One catch-up refresh when the page becomes visible again after being
+  // hidden — the interval ticks below were gated the whole time.
+  useVisibleCatchUp(load)
+
   // Auto-poll: 2s while any execution is RUNNING/QUEUED, 5s baseline to catch
   // new CLI runs that start externally without a manual trigger from this UI.
+  // Individual ticks are gated on page visibility so a hidden window stops
+  // hitting the backend.
   useEffect(() => {
     const hasRunning = executions.some(e => {
       const s = (e.status || '').toUpperCase()
       return s === 'RUNNING' || s === 'QUEUED' || s === 'PENDING'
     })
     const interval = hasRunning ? 2000 : 5000
-    const t = setInterval(load, interval)
+    const t = setInterval(() => {
+      if (!pageVisibleRef.current) return
+      load()
+    }, interval)
     return () => clearInterval(t)
-  }, [executions, load])
+  }, [executions, load, pageVisibleRef])
 
   const handleRefresh = async () => {
     setRefreshing(true)

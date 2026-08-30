@@ -171,6 +171,7 @@ func initDB(cfg *globalConfig) (*storage.Database, error) {
 	if _, _, err := ai.MigrateProvidersToVault(context.Background(), db.DB); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: ai providers migration: %v\n", err)
 	}
+	migrateProfilesToPerProfileKeys(db)
 	// Resolve active profile if not overridden on the command line.
 	if cfg.ProfileID == "" {
 		var id string
@@ -193,6 +194,59 @@ func initDB(cfg *globalConfig) (*storage.Database, error) {
 		cfg.ProfileID = resolved
 	}
 	return db, nil
+}
+
+// migrateProfilesToPerProfileKeys mirrors the wails app's per-profile vault
+// migration (wails-app/app.go migrateProfilesToPerProfileLayout): every
+// profile's secrets and connection blobs are re-encrypted off the shared
+// legacy key onto the profile's own key. Each pass is idempotent and
+// settles into a cheap no-op once a profile is fully migrated, so running
+// it on every CLI invocation is safe. Non-fatal per profile: failures are
+// logged to stderr and never block the command.
+func migrateProfilesToPerProfileKeys(db *storage.Database) {
+	ctx := context.Background()
+
+	// Without a vault_keys_legacy table no row can be under the legacy key
+	// (fresh install) — skip the per-profile loop entirely.
+	var legacy int
+	if err := db.DB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'vault_keys_legacy'`).Scan(&legacy); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: vault key migration: %v\n", err)
+		return
+	}
+	if legacy == 0 {
+		return
+	}
+
+	rows, err := db.DB.QueryContext(ctx, `SELECT id FROM profiles`)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: vault key migration: listing profiles: %v\n", err)
+		return
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if rows.Scan(&id) == nil {
+			ids = append(ids, id)
+		}
+	}
+	rows.Close()
+
+	for _, id := range ids {
+		if migrated, errs := secrets.MigrateProfileVaultKeys(ctx, db.DB, id); migrated > 0 || len(errs) > 0 {
+			for _, e := range errs {
+				fmt.Fprintf(os.Stderr, "warning: profile %s: vault key migration: %v\n", id, e)
+			}
+			if migrated > 0 {
+				fmt.Fprintf(os.Stderr, "profile %s: re-encrypted %d secret(s) under its own key\n", id, migrated)
+			}
+		}
+		if migrated, errs := connections.MigrateProfileBlobs(ctx, db.DB, id); migrated > 0 || len(errs) > 0 {
+			for _, e := range errs {
+				fmt.Fprintf(os.Stderr, "warning: profile %s: connection data migration: %v\n", id, e)
+			}
+		}
+	}
 }
 
 // resolveProfileID accepts either a profile's ID or its name and returns the

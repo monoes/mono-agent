@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { RefreshCw, Bot, MessageSquare, KeyRound, Terminal } from 'lucide-react'
-import { api } from '../services/api.js'
+import { cachedAgentScan } from '../lib/agentRuntimes.js'
 import AIProviders from './AIProviders.jsx'
 
 function statusColor(installed) {
@@ -89,7 +89,9 @@ export default function Agents({ onOpenChat }) {
   const loadAgents = useCallback(async (silent = false) => {
     if (!silent) setLoading(true)
     try {
-      const res = await api.scanAgentRuntimes()
+      // Shared TTL-cached scan — an AIChatPanel first-open right after this
+      // page scanned reconciles against the same result, no second 7s scan.
+      const res = await cachedAgentScan()
       if (!res || res.error) {
         setScanError(res?.error || 'Unable to reach monomind.')
         setAgents([])
@@ -167,9 +169,13 @@ export default function Agents({ onOpenChat }) {
                 </div>
                 <div className="empty-state-desc" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   <span>
+                    {/* Fallback copy aligned with internal/monomind/find.go's
+                        ErrNotFound / update prescriptions; the backend's own
+                        error text (which embeds the exact command) is rendered
+                        verbatim below. */}
                     Agents run through the local monomind engine. {/not found/i.test(scanError)
-                      ? <>Install it with <code>npm install -g monomind</code>.</>
-                      : <>Update it with <code>npm install -g monomind@latest</code>.</>}
+                      ? <>Install it with <code>npm install -g @monoes/monomindcli</code>.</>
+                      : <>Update it with <code>npm install -g @monoes/monomindcli@latest</code>.</>}
                   </span>
                   <code style={{ fontSize: 10, color: 'var(--text-muted)', wordBreak: 'break-word', textAlign: 'left' }}>{scanError}</code>
                 </div>

@@ -1,6 +1,7 @@
 // Thin wrapper around Wails Go bindings with error handling.
 import * as GoApp from '../wailsjs/go/main/App'
 import { EventsOn } from '../wailsjs/runtime/runtime'
+import { getAssistantTools, getAssistantAllowRuns } from '../lib/assistantTools.js'
 
 // Global error bus. Read methods degrade to safe defaults ([]/null/0) so pages
 // keep rendering, but every failure is also broadcast on `api:error` so a toast
@@ -106,7 +107,13 @@ export const api = {
   clearAIChatHistory: (workflowID) => GoApp.ClearAIChatHistory(workflowID).then(s => JSON.parse(s)),
   // Agent Chat (monomind delegation — local AI agent runtimes)
   scanAgentRuntimes:  () => GoApp.ScanAgentRuntimes().then(s => JSON.parse(s)).catch(guard('scan agent runtimes', null)),
-  streamAgentChat:    (workflowID, message, runtime, model, resumeSessionID = '', canvas = true, monoagentTools = true) => GoApp.StreamAgentChat(workflowID, message, runtime, model, resumeSessionID, canvas, monoagentTools).then(s => JSON.parse(s)),
+  // GX2 contract: monoagentTools/allowRuns both default OFF; a null arg means
+  // "use the persisted Assistant tool access settings" (Settings page).
+  streamAgentChat: (workflowID, message, runtime, model, resumeSessionID = '', canvas = true, monoagentTools = null, allowRuns = null) => {
+    const tools = monoagentTools ?? getAssistantTools()
+    const runs = allowRuns ?? getAssistantAllowRuns()
+    return GoApp.StreamAgentChat(workflowID, message, runtime, model, resumeSessionID, canvas, tools, runs).then(s => JSON.parse(s))
+  },
   stopAgentChat:      (workflowID) => GoApp.StopAgentChat(workflowID).then(s => JSON.parse(s)).catch(guard('stop agent chat', null)),
   listChatSessions:      (workflowID) => GoApp.ListChatSessions(workflowID).then(s => JSON.parse(s)).catch(guard('list chat sessions', [])),
   getChatSessionMessages: (workflowID, sessionID) => GoApp.GetChatSessionMessages(workflowID, sessionID).then(s => JSON.parse(s)).catch(guard('chat session messages', [])),

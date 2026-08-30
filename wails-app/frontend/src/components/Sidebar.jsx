@@ -7,6 +7,8 @@ import {
 } from 'lucide-react'
 import { GetVersion } from '../wailsjs/go/main/App'
 import * as WailsApp from '../wailsjs/go/main/App'
+import { notify } from '../services/api.js'
+import { confirm } from './ConfirmDialog.jsx'
 
 const GetHILItems          = WailsApp.GetHILItems          ?? (async () => [])
 const GetProfiles          = WailsApp.GetProfiles          ?? (async () => [])
@@ -161,12 +163,21 @@ export default function Sidebar({ activePage, onNavigate, stats, dbConnected, sh
     try {
       const path = await ChooseProfileFolder()
       if (!path) return
-      setProfileError('')
+      // Moving the profile folder is destructive to anything currently
+      // running out of it — confirm before proceeding, and surface the
+      // outcome on the app toast bus rather than the dropdown's inline
+      // error line (which closes with the dropdown and is easy to miss).
+      const ok = await confirm(
+        'This moves the entire profile folder — workflows keep running may fail. Continue?',
+        { title: 'Move profile folder', confirmLabel: 'Move', danger: true },
+      )
+      if (!ok) return
       setMovingProfileID(id)
       await MoveProfileFolder(id, path)
+      notify('profile move', `Profile folder moved to ${path}`)
       await loadProfiles()
     } catch (e) {
-      setProfileError(e?.message || 'Failed to move profile folder')
+      notify('profile move', e?.message || 'Failed to move profile folder')
     } finally {
       setMovingProfileID(null)
     }

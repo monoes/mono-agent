@@ -100,8 +100,11 @@ func runKGTool(ctx context.Context, bin, name string, args json.RawMessage, prof
 		// silently falling back to a shared default. See kgsync.go for the
 		// same fix on the ingest side, where this was directly confirmed:
 		// without it, two different profiles' searches returned identical
-		// (wrong) results.
-		cmd.Env = append(os.Environ(), "MONOMIND_CWD="+profileMonomindDir)
+		// (wrong) results. FilteredEnviron() strips any ambient MONOMIND_*
+		// overrides first so the explicit value below is the only one the
+		// child sees (a duplicate inherited entry could otherwise shadow
+		// the per-profile scoping).
+		cmd.Env = append(monomind.FilteredEnviron(), "MONOMIND_CWD="+profileMonomindDir)
 		out, err := cmd.Output()
 		if err != nil {
 			return "", fmt.Errorf("memory_kg_search: %w", err)

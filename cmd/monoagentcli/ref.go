@@ -2043,7 +2043,8 @@ BUILT-IN VARIABLES
   $node["NodeName"].json.f    access a previous node's first output item
   $workflow.id                workflow ID string
   $execution.id               execution run ID string
-  $env.MY_VAR                 OS environment variable
+  $env.MY_VAR                 OS environment variable; gated — resolves
+                              to empty unless MONOAGENT_ALLOW_ENV_TEMPLATES=1
 
 ENCODING
   json <value>                marshal Go value to JSON string

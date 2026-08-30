@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { CheckCircle, XCircle, Clock, RefreshCw, ChevronDown, ChevronRight, AlertTriangle, Mail } from 'lucide-react'
 import * as WailsApp from '../wailsjs/go/main/App'
+import { usePageVisibleRef, useVisibleCatchUp } from '../lib/usePageVisible.js'
 
 const GetHILItems = WailsApp.GetHILItems ?? (async () => [])
 const ApproveHIL  = WailsApp.ApproveHIL  ?? (async () => {})
@@ -337,6 +338,7 @@ export default function HumanInLoop() {
   const [drafts, setDrafts] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const pageVisibleRef = usePageVisibleRef()
 
   const load = useCallback(async (background = false) => {
     // Background refreshes (3s poll) don't toggle `loading` — otherwise the
@@ -354,12 +356,21 @@ export default function HumanInLoop() {
     }
   }, [])
 
-  // Auto-refresh every 3 seconds while the page is open.
+  // One catch-up refresh when the page becomes visible again after being
+  // hidden (ticks were gated the whole time — see the interval below).
+  useVisibleCatchUp(() => load(true))
+
+  // Auto-refresh every 3 seconds while the page is open. Individual ticks
+  // are gated on page visibility — a hidden window stops polling the
+  // backend; becoming visible again triggers one catch-up refresh above.
   useEffect(() => {
     load()
-    const interval = setInterval(() => load(true), 3000)
+    const interval = setInterval(() => {
+      if (!pageVisibleRef.current) return
+      load(true)
+    }, 3000)
     return () => clearInterval(interval)
-  }, [load])
+  }, [load, pageVisibleRef])
 
   const handleApprove = async (id, editedJSON) => {
     try {

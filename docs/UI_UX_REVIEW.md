@@ -1,3 +1,5 @@
+Historical review record (2026-04-03) — see docs/plans/ for current state.
+
 # Mono Agent — UI/UX Architecture Review
 
 **Date:** 2026-04-03  

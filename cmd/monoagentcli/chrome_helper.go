@@ -70,9 +70,15 @@ func isChromeRunning() bool {
 	switch runtime.GOOS {
 	case "darwin", "linux":
 		// Match the main executable binary paths to avoid false positives on helpers
-		// like chrome-native-host.
-		pattern := "(Google Chrome.app/Contents/MacOS/Google Chrome|google-chrome|chromium|brave-browser|msedge)"
-		cmd := exec.Command("pgrep", "-f", pattern)
+		// like chrome-native-host. -i makes the match case-insensitive so
+		// "Chromium"/"Google Chrome Canary"/"Brave Browser" (macOS) and the
+		// lowercase Linux binary names all match one pattern.
+		pattern := "(Google Chrome( Canary)?\\.app/Contents/MacOS/|" +
+			"Chromium\\.app/Contents/MacOS/|" +
+			"Brave Browser\\.app/Contents/MacOS/|" +
+			"Microsoft Edge\\.app/Contents/MacOS/|" +
+			"google-chrome|chromium|brave-browser|microsoft-edge|msedge)"
+		cmd := exec.Command("pgrep", "-i", "-f", pattern)
 		out, err := cmd.Output()
 		if err == nil && len(strings.TrimSpace(string(out))) > 0 {
 			return true
@@ -201,7 +207,6 @@ func isExtensionInPreferencesFile(prefPath string) bool {
 	var root struct {
 		Extensions struct {
 			Settings map[string]struct {
-				Path     string `json:"path"`
 				Manifest struct {
 					Name        string `json:"name"`
 					Description string `json:"description"`
@@ -214,10 +219,10 @@ func isExtensionInPreferencesFile(prefPath string) bool {
 	}
 
 	for _, setting := range root.Extensions.Settings {
-		p := strings.ToLower(setting.Path)
-		if p != "" && (strings.Contains(p, "chrome-extension") || strings.Contains(p, "monoagent") || strings.Contains(p, "mono-agent")) {
-			return true
-		}
+		// Name/description only: the "path" of an unpacked extension can be
+		// any user-chosen folder, so matching on path fragments produced
+		// false positives (e.g. any extension loaded from a directory whose
+		// name contains "chrome-extension").
 		name := strings.ToLower(setting.Manifest.Name)
 		if strings.Contains(name, "monoagent") || strings.Contains(name, "mono-agent") || strings.Contains(name, "mono agent") {
 			return true
@@ -303,9 +308,12 @@ func ensureExtensionConnected(bridge connChecker, timeout time.Duration) error {
 	}
 
 	fmt.Fprintln(os.Stderr, "Chrome is not running — launching it to connect the MonoAgent extension...")
-	if err := exec.Command(chromePath).Start(); err != nil {
+	chromeCmd := exec.Command(chromePath)
+	if err := chromeCmd.Start(); err != nil {
 		return fmt.Errorf("launching Chrome: %w", err)
 	}
+	// Reap the launched browser so it never lingers as a zombie child.
+	go func() { _ = chromeCmd.Wait() }()
 
 	deadline := time.Now().Add(timeout)
 	for !bridge.IsConnected() && time.Now().Before(deadline) {

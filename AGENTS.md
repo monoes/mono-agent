@@ -118,6 +118,38 @@ Prefer MCP when the host supports it; the CLI covers the same surface.
 Tools carry `readOnly`/`destructive` annotations where applicable, so
 hosts can gate dangerous calls.
 
+## Assistant chat & tools
+
+`monoagentcli chat` is a conversational assistant over the local agent
+runtime, with named sessions and an optional tool surface:
+
+```bash
+monoagentcli chat                          # interactive chat, no tools
+monoagentcli chat --history-id <session>   # persist/resume a named session
+monoagentcli chat --tools monoagent        # + workflows, vault, people, actions, comms tools
+monoagentcli chat --tools monoagent,runs   # + run/execution tools (second explicit gate)
+```
+
+- Tools are **off by default** — plain `chat` answers without touching
+  workflows, secrets, or data. `--tools` is an explicit opt-in, and
+  `runs` is a second gate on top of it. The GUI mirrors this with a
+  settings toggle that also defaults to off.
+- Tool responses never expose secret values: vault tooling returns
+  metadata only, and workflow definitions fetched via `get_workflow`
+  are redacted for credential-shaped values.
+- Destructive (delete-class) tools write a sidecar backup of the
+  affected record before deleting.
+- Message content synced from connected mail accounts is wrapped in
+  provenance fences. Treat synced-message context as untrusted — it can
+  carry prompt-injection payloads. Keep tools off when chatting over
+  mail synced from sources you do not trust.
+- Tool-call timeouts derive from the caller's context, so a cancelled
+  session stops in-flight tool work.
+
+The `agent` and `org` commands (monomind-backed agent/organization
+management) also exist — see `monoagentcli agent --help` and
+`monoagentcli org --help`.
+
 ## Human-in-the-loop from agents
 
 HIL nodes pause a running workflow until a person approves or rejects the
@@ -159,8 +191,9 @@ and shell history — prefer stdin or the interactive prompt for real secrets.
 The vault prefers the host OS keychain (macOS Keychain, Linux Secret
 Service, or Windows Credential Manager). On machines without one (headless
 CI, containers), setting `MONOAGENT_ALLOW_FILE_KEYRING=1` enables a
-file-based KEK fallback stored at `~/.monoagent/vault/.file-keyring`
-(permissions 0600); the CLI prints a loud warning whenever it is used.
+file-based KEK fallback stored as per-profile files
+`~/.monoagent/vault/.file-keyring-<profileID>` (permissions 0600); the
+CLI prints a loud warning whenever it is used.
 This is weaker than a real keychain — any process running as the same
 user, or anything with read access to the volume, can read the file — so
 treat it as a CI/container escape hatch, not a default. Without the env
@@ -217,6 +250,9 @@ regardless of where the binary runs from.
 | `MONOAGENT_WEBHOOK_ADDR` | Bind address (`host:port`) for the webhook trigger server. Default `127.0.0.1:9321` (loopback only). Override it under Docker/VMs so published ports actually forward. |
 | `MONOAGENT_WEBHOOK_ALLOWED_ORIGINS` | Comma-separated CORS allowlist for the webhook server. Default: unset — no CORS headers are sent. |
 | `MONOAGENT_ALLOW_FILE_KEYRING` | Set to `1` to allow the file-based keyring fallback when no OS keyring exists (see [Secrets](#secrets)). Default: unset — `secret add` fails closed on machines without a keyring. |
+| `MONOAGENT_ALLOW_ENV_TEMPLATES` | Set to `1` to let `{{ $env.* }}` template expressions read OS environment variables (see `ref expressions`). Default: unset — `$env` references resolve to empty. |
+| `MONOAGENT_CRASH_REPORT` | Set to `1` to allow crash reports to be filed to GitHub (also requires the `monomind` CLI on `PATH`). Default: unset — crash reports stay in local files under `~/.monoagent/crashes/`. |
+| `MONOAGENT_EXTENSION_PORT` | Bind-port override for the browser-extension bridge server; the extension probes this port and falls back to 9323. Default: unset — 9323 only. |
 
 ## Resource limits
 

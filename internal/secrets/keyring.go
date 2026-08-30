@@ -184,7 +184,7 @@ func fetchLegacyKEK() (kek []byte, found bool, err error) {
 	keyringIOMu.Lock()
 	defer keyringIOMu.Unlock()
 
-	stored, err := keyring.Get(keyringService, legacyKeyringAccount)
+	stored, err := keyringGet(keyringService, legacyKeyringAccount)
 	if err != nil {
 		if errors.Is(err, keyring.ErrNotFound) {
 			return nil, false, nil

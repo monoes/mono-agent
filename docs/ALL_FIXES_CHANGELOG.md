@@ -1,3 +1,5 @@
+Historical review record (2026-04-03) — see docs/plans/ for current state.
+
 # Mono Agent — Complete Fixes Changelog
 
 **Date:** 2026-04-03  

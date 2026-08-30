@@ -1,3 +1,5 @@
+Historical review record (2026-04-02) — see docs/plans/ for current state.
+
 # Mono Agent — Node Architecture & Best Practices Review
 
 **Date:** 2026-04-02  

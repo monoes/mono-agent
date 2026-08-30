@@ -231,3 +231,81 @@ describes the end state.
 
 Draft issues 01–10 above live in `/tmp/github-issues/`; the tracking
 issue for this round is `/tmp/github-issues/00-tracking-round3-changelog.md`.
+
+## Round 4 record (2026-08-30)
+
+Fourth wave (merge + finalize), landed by parallel fixers and recorded
+from their verified end-state reports; the documentation items were
+landed by the docs fixer. Same rules as above: each item describes the
+end state.
+
+### What changed
+
+- Migration healing: a Go-side schema reconcile repairs drifted SQLite
+  schemas on startup; the vault migrations are renumbered 027/028; and
+  the CLI and MCP entry points run the vault migration, so databases
+  from older installs converge on upgrade without manual steps.
+- Per-profile vault: each profile's secrets are sealed with their own
+  key-encryption key under per-profile vault folders, entries are
+  re-encrypted when they move between profiles, and the file-keyring
+  fallback is per profile (`~/.monoagent/vault/.file-keyring-<profileID>`
+  — previously a single `~/.monoagent/vault/.file-keyring`). The
+  file-keyring path is corrected accordingly in AGENTS.md, SECURITY.md,
+  CHANGELOG.md, and the `secret` command help.
+- Executions are stamped with their owning profile as they run; a
+  migration backfills the profile stamp onto existing execution rows.
+- Assistant tool surface (`chat --tools`): tools are off by default;
+  `--tools monoagent` opts in to workflow/vault/people/actions/comms
+  tooling and `--tools monoagent,runs` additionally opts in to
+  run/execution tools; the GUI settings carry an assistant-tools toggle
+  that also defaults to off. Within the tool surface: `get_workflow`
+  output is redacted for credential-shaped values, vault tools return
+  metadata only (values never returned), delete-class tools write a
+  sidecar backup of the affected record, synced message content is
+  wrapped in provenance fences, and tool-call timeouts derive from the
+  caller's context. Chat sessions persist and resume via
+  `chat --history-id <session>`.
+- Extension bridge: the extension server honors `MONOAGENT_EXTENSION_PORT`
+  and keeps 9323 as the fallback port; the extension client tries the
+  configured port and then 9323.
+- Frontend: background polling is gated on page visibility; the
+  assistant agent scan runs on page open; the legacy duplicate panel is
+  removed; an empty active profile is normalized instead of erroring;
+  assistant-tools settings added.
+- Browser-node helper: pgrep process-name variants extended (Chromium,
+  Brave, Edge alongside Chrome); the helper fails fast with a clear
+  error when no supported browser is running.
+- Monomind-backed `agent` and `org` top-level commands exist in the CLI;
+  documentation points at their `--help` rather than duplicating it
+  (partially resolves draft issue 04).
+- Documentation wave (this fixer): file-keyring path corrected in four
+  places; `MONOAGENT_ALLOW_ENV_TEMPLATES`, `MONOAGENT_CRASH_REPORT`, and
+  `MONOAGENT_EXTENSION_PORT` added to the AGENTS.md env-var table; the
+  `ref expressions` `$env` entry states the
+  `MONOAGENT_ALLOW_ENV_TEMPLATES` gate; AGENTS.md gains an "Assistant
+  chat & tools" section; README gains per-profile-vault and
+  assistant-tool bullets plus a GUI profile-folders note; SECURITY.md
+  adds the assistant-tools surface with the residual prompt-injection
+  risk stated; CHANGELOG `[Unreleased]` carries the merge/finalize
+  entries; the five docs/ root review artifacts carry historical-record
+  markers.
+
+### Known-cosmetic (no code change)
+
+- `monoagentcli --version` derives its string from
+  `git describe --tags --always` when not baked in via ldflags
+  (`cmd/monoagentcli/main.go`), so worktree builds show stale-looking
+  `v0.30.0-1-g…`-style strings until a real tag is cut; tagged release
+  builds self-heal. Recorded here only; deliberately left alone.
+
+### Verification (plain results)
+
+- `grep -rn ".file-keyring[^-]" AGENTS.md SECURITY.md CHANGELOG.md
+  cmd/monoagentcli/secret.go` returns no matches (all four call sites
+  use the per-profile `.file-keyring-<profileID>` form).
+- Env-var table names match the code names exactly:
+  `MONOAGENT_WEBHOOK_ADDR`, `MONOAGENT_WEBHOOK_ALLOWED_ORIGINS`,
+  `MONOAGENT_ALLOW_FILE_KEYRING`, `MONOAGENT_ALLOW_ENV_TEMPLATES`,
+  `MONOAGENT_CRASH_REPORT`, `MONOAGENT_EXTENSION_PORT`.
+- Documentation claims were checked against the fixer end-state reports
+  listed above; no claim extends beyond them.

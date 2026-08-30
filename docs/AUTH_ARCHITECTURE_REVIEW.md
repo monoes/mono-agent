@@ -1,3 +1,5 @@
+Historical review record (2026-04-02) — see docs/plans/ for current state.
+
 # Mono Agent — Authentication Architecture & Security Review
 
 **Date:** 2026-04-02  

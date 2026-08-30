@@ -1,3 +1,5 @@
+Historical review record — see docs/plans/ for current state.
+
 # Chrome Extension Refactor Plan
 
 ## Overview

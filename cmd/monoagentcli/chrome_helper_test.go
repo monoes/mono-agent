@@ -154,8 +154,10 @@ func TestEnsureExtensionConnected_NotInstalled(t *testing.T) {
 	// Set CHROME_USER_DATA_DIR to an empty temp dir and test behavior
 	emptyUserDataDir := t.TempDir()
 	t.Setenv("CHROME_USER_DATA_DIR", emptyUserDataDir)
-	// Also override HOME to empty dir during test to ensure default paths aren't found
+	// Also override HOME (and USERPROFILE for Windows, where os.UserHomeDir
+	// looks there) to an empty dir during the test so default paths aren't found
 	t.Setenv("HOME", emptyUserDataDir)
+	t.Setenv("USERPROFILE", emptyUserDataDir)
 
 	bridge := &mockBridge{connected: false}
 	err := ensureExtensionConnected(bridge, 100*time.Millisecond)

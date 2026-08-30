@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   X, RefreshCw, Building2, CheckCircle2, XCircle, Circle,
   MessageCircleQuestion, ShieldAlert, Coins, GitBranch, ScrollText, ListTree,
@@ -61,7 +61,14 @@ function Card({ children }) {
   )
 }
 
-export default function OrgsPanel({ embedded = false, isOpen = true, onClose }) {
+export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pageActive = true }) {
+  // Effective openness: an embedded panel is open when its isOpen prop says
+  // so; a page-mode panel (rendered by the Orgs page) stays mounted under
+  // App.jsx's keep-alive navigation, so for it "open" additionally requires
+  // the Orgs page to be the active tab — otherwise its SSE stream would
+  // keep running (and the event tail growing) forever after the user
+  // navigated away (FV4-10).
+  const effectiveOpen = embedded ? isOpen : pageActive
   const [orgs, setOrgs] = useState([])
   const [loadingOrgs, setLoadingOrgs] = useState(true)
   const [selected, setSelected] = useState(null) // org name
@@ -81,7 +88,15 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose }) 
     }
   }, [])
 
-  useEffect(() => { if (isOpen) loadOrgs() }, [isOpen, loadOrgs])
+  // First activation loads with the spinner; every later re-activation
+  // (coming back to the Orgs page / reopening an embedded panel) silently
+  // refreshes the org list so it doesn't drift while hidden.
+  const firstLoadRef = useRef(true)
+  useEffect(() => {
+    if (!effectiveOpen) return
+    loadOrgs(firstLoadRef.current)
+    firstLoadRef.current = false
+  }, [effectiveOpen, loadOrgs])
 
   // ── Tab data loading ──
   const loadTab = useCallback(async (orgName, tabId) => {
@@ -112,8 +127,9 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose }) 
   // ── Live event tail ──
   useEffect(() => {
     // Embedded panels render null when closed, but hooks still run — guard the
-    // SSE stream + listeners on isOpen so a closed panel stops streaming.
-    if (!selected || !isOpen) return
+    // SSE stream + listeners on effectiveOpen so a closed panel (or a page-mode
+    // panel whose page isn't active) stops streaming.
+    if (!selected || !effectiveOpen) return
     setEvents([])
     api.streamOrgEvents(selected)
     const offEvent = onOrgEvent((payload) => {
@@ -129,7 +145,7 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose }) 
       offClosed()
       api.stopOrgEvents(selected)
     }
-  }, [selected, isOpen])
+  }, [selected, effectiveOpen])
 
   const selectOrg = (name) => {
     setSelected(name)

@@ -15,6 +15,7 @@ import ResourcePickerField from '../components/ResourcePickerField.jsx'
 import ImagePickerModal from '../components/ImagePickerModal'
 import { NODE_CONFIG_FIELDS, BROWSER_NODE_GENERIC } from './nodeConfigFields.js'
 import { SaveModal, WorkflowsModal } from './NodeRunnerModals.jsx'
+import { usePageVisibleRef } from '../lib/usePageVisible.js'
 
 // ── Wails bindings with mock fallback ────────────────────────────────────────
 const RunNode               = WailsApp.RunNode               ?? (async (req) => ({ outputs: [{ handle: 'main', items: [{ mock: true, node_type: req.node_type }] }], duration_ms: 42 }))
@@ -987,6 +988,7 @@ export default function NodeRunner({ onNavigate, navData }) {
   // ── Execution overlay ───────────────────────────────────────────────────
   const [execOverlay, setExecOverlay] = useState(null) // { id, status, nodes: [] }
   const pollRef = useRef(null) // setInterval id for execution polling
+  const pageVisibleRef = usePageVisibleRef() // gates poll ticks while hidden
 
   // Shared: map execution detail → node badges
   const applyExecDetail = (detail) => {
@@ -1039,6 +1041,9 @@ export default function NodeRunner({ onNavigate, navData }) {
     // Immediate first fetch
     api.getExecutionDetail(execId).then(d => d && applyExecDetail(d)).catch(() => {})
     const iv = setInterval(async () => {
+      // Tick gated on page visibility — a hidden window stops polling; the
+      // next tick after returning visible picks the execution back up.
+      if (!pageVisibleRef.current) return
       try {
         const detail = await api.getExecutionDetail(execId)
         if (!detail) return

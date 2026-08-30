@@ -161,6 +161,7 @@ More ready-to-run workflows (RSS→AI→email, Sheets→Gmail, Stripe→Sheets s
 ### 🔐 Encrypted Secrets Vault
 - Secrets stored in your **OS keyring** (macOS Keychain / Windows Credential Manager / Linux secret service)
 - **AES-256-GCM envelope encryption** (DEK/KEK) for data at rest
+- **Per-profile vault**: each workspace gets its own KEK and vault folder; entries re-encrypt on profile moves
 - Encrypted, passphrase-protected portable export (`secret export` / `secret import`)
 - One-command migration: `secret encrypt-connections` seals legacy plaintext credentials in place
 - Manageable from the CLI (`secret`) or the GUI Vault page
@@ -202,6 +203,7 @@ More ready-to-run workflows (RSS→AI→email, Sheets→Gmail, Stripe→Sheets s
 
 ### 🤖 AI Canvas Chat + Desktop GUI
 - Conversational workflow builder: describe the workflow in chat, AI wires the nodes
+- Built-in assistant (`monoagentcli chat`) with named sessions and **explicit opt-in tools** (`--tools monoagent[,runs]`) — tool access is off by default
 - OpenRouter (200+ models), HuggingFace, Gemini
 - Wails 2 desktop app: canvas editor, HIL review panel, Vault, People, Image Vault
 - Dark-themed, keyboard-navigable, fully local
@@ -574,6 +576,8 @@ go install github.com/wailsapp/wails/v2/cmd/wails@latest
 wails dev      # development mode
 wails build    # production build
 ```
+
+Profile folders (per-profile vault and data) and the assistant-tools toggle are managed in the GUI's Settings.
 
 ### Docker
 

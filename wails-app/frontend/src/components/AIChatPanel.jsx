@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { X, Send, Trash2, ChevronDown, ChevronRight, Loader, Square, Plus, History } from 'lucide-react'
-import { api, onAIChunk, onAITool, onAIError, onAgentSession } from '../services/api.js'
+import { api, onAIChunk, onAITool, onAIError, onAgentSession, notify } from '../services/api.js'
+import { cachedAgentScan } from '../lib/agentRuntimes.js'
+import { getAssistantTools, getAssistantAllowRuns } from '../lib/assistantTools.js'
 
 // Renders a chat message list into the panel's display shape (role/content/toolCalls),
 // dropping internal tool-result rows and parsing tool_calls JSON — shared by the
@@ -177,10 +179,39 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
   const textareaRef      = useRef(null)
   const createdWfIdRef   = useRef(null)
   const modelAtFocusRef  = useRef('')
+  // The global panel instance mounts hidden at app boot and every instance
+  // stays mounted under keep-alive navigation — expensive loads below key
+  // off these latches so a never-opened panel costs (almost) nothing:
+  // hasOpenedRef latches on the first isOpen false→true transition,
+  // hasScannedRef/providersLoadedRef make the runtime scan and provider
+  // list one-shot per panel lifetime (FV4-3/4).
+  const hasOpenedRef      = useRef(false)
+  const hasScannedRef     = useRef(false)
+  const providersLoadedRef = useRef(false)
+  // Latest-value mirrors for guards inside callbacks/effects that must not
+  // re-run (or go stale) when the underlying state changes:
+  // streamingRef — mid-stream switch guards (FV4-6); activeStreamRef — the
+  // { workflowID, mode } of the in-flight stream, so a workflowID change can
+  // stop the right bucket with the right stop call (FV4-7).
+  const streamingRef  = useRef(false)
+  streamingRef.current = streaming
+  const activeStreamRef = useRef(null)
 
-  // ── Load local agent runtimes on mount (monomind delegation) ───────────
+  // ── Latch the first open: isOpen's first false→true transition ─────────
   useEffect(() => {
-    api.scanAgentRuntimes().then(res => {
+    if (isOpen) hasOpenedRef.current = true
+  }, [isOpen])
+
+  // ── First open: scan local agent runtimes (monomind delegation) ────────
+  // Deferred until first open because `agent scan` spawns monomind and
+  // probes every known agent CLI (~6-7s) — a cost the app used to pay on
+  // boot for the hidden global panel. Served from the shared TTL cache, so
+  // e.g. an Agents-page "Chat" click right after that page scanned
+  // reconciles instantly instead of rescanning.
+  useEffect(() => {
+    if (!isOpen || hasScannedRef.current) return
+    hasScannedRef.current = true
+    cachedAgentScan().then(res => {
       if (!res || res.error) { setMonomindMissing(true); return }
       const installed = (res.agents || []).filter(a => a.installed)
       setRuntimes(installed)
@@ -192,10 +223,25 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
         setUseAgents(true) // prefer local agents when any is installed
       }
     })
-  }, [initialRuntime])
+    // initialRuntime intentionally excluded: changes to it are reconciled
+    // against the already-loaded runtime list by the effect below — no rescan.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen])
 
-  // ── Load providers on mount ──────────────────────────────────────────────
+  // ── Agents-page "Chat" click targets a specific runtime: apply it
+  //     against the cached runtime list without rescanning ────────────────
   useEffect(() => {
+    if (!initialRuntime) return
+    if (runtimes.some(r => r.id === initialRuntime)) {
+      setSelectedRuntime(initialRuntime)
+      setUseAgents(true)
+    }
+  }, [initialRuntime, runtimes])
+
+  // ── Load providers on first open ─────────────────────────────────────────
+  useEffect(() => {
+    if (!isOpen || providersLoadedRef.current) return
+    providersLoadedRef.current = true
     api.listAIProviders().then(list => {
       const active = (list || []).filter(p => p.status === 'active')
       setProviders(active)
@@ -204,11 +250,19 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
         setSelectedModel(active[0].default_model || '')
       }
     })
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen])
 
   // ── Load a specific past session into the panel ─────────────────────────
   const loadSession = useCallback((session) => {
     if (!workflowID || !session?.session_id) return
+    // Switching the active session mid-stream would let chunks of the
+    // in-flight answer land in the newly loaded transcript (crosstalk) —
+    // block the switch and tell the user to stop first (FV4-6).
+    if (streamingRef.current) {
+      notify('chat', 'Stop the current response first')
+      return
+    }
     api.getChatSessionMessages(workflowID, session.session_id).then(history => {
       setMessages(toDisplayMessages(history))
       // initialRuntime (e.g. the Agents-page "Chat" button picking a specific
@@ -231,8 +285,13 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
   // ── Start a fresh chat: clears the visible transcript and active session,
   //     but leaves prior sessions in the history — they stay reachable via
   //     the past-sessions list. The next send() omits --resume, so the
-  //     runtime allocates a brand new session. ─────────────────────────────
+  //     runtime allocates a brand new session. Blocked while a response is
+  //     streaming (FV4-6) for the same crosstalk reason as loadSession. ────
   const startNewSession = useCallback(() => {
+    if (streamingRef.current) {
+      notify('chat', 'Stop the current response first')
+      return
+    }
     setSessionId('')
     setSessionRuntime('')
     setMessages([])
@@ -242,8 +301,16 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
 
   // ── Load past sessions + auto-continue the most recent one when the
   //     panel switches to a new workflowID (chat-history bucket) ──────────
+  const sessionsFetchedRef = useRef(null) // workflowID bucket last fetched for
   useEffect(() => {
     if (!workflowID) return
+    // Deferred until the panel has been opened at least once — a
+    // mounted-but-never-opened panel (the global assistant at app boot)
+    // skips the history fetch (FV4-3/4). After that, only an actual
+    // workflowID change refetches: close/reopen transitions must not
+    // rebind the active session out from under the user.
+    if ((!isOpen && !hasOpenedRef.current) || sessionsFetchedRef.current === workflowID) return
+    sessionsFetchedRef.current = workflowID
     api.listChatSessions(workflowID).then(sessions => {
       const list = Array.isArray(sessions) ? sessions : []
       setPastSessions(list)
@@ -253,6 +320,28 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
     // the panel's workflowID (chat-history bucket) actually changes, not
     // every time loadSession's own deps (e.g. initialRuntime) change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workflowID, isOpen])
+
+  // ── Canvas re-key / workflow switch must not orphan an in-flight stream ──
+  // This panel's event filters key on workflowID, so chunks for the OLD
+  // bucket would arrive into nothing — the stream would keep running with
+  // no visible output and no stop button. Stop the old bucket (with the
+  // stop call matching the mode that started it) and reset local stream
+  // state so the new bucket starts clean (FV4-7).
+  const prevWorkflowIDRef = useRef(workflowID)
+  useEffect(() => {
+    const prev = prevWorkflowIDRef.current
+    prevWorkflowIDRef.current = workflowID
+    if (!prev || prev === workflowID) return
+    const active = activeStreamRef.current
+    if (streamingRef.current && active?.workflowID === prev) {
+      if (active.mode === 'agents') api.stopAgentChat(prev)
+      else api.stopAIChat(prev)
+      activeStreamRef.current = null
+      setStreaming(false)
+      setCurrentContent('')
+      setCurrentToolCalls([])
+    }
   }, [workflowID])
 
   // ── Subscribe to streaming events ───────────────────────────────────────
@@ -360,11 +449,18 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
         // than trusting every earlier sessionId setter to have kept them
         // paired — silently starting fresh beats erroring out.
         const resumeID = sessionRuntime === selectedRuntime ? sessionId : ''
+        // Remember which bucket + mode owns this stream so a workflowID
+        // change (canvas re-key) can stop the right one (FV4-7).
+        activeStreamRef.current = { workflowID, mode: 'agents' }
+        // Tool flags (monoagentTools/allowRuns) are resolved from the
+        // persisted Assistant tool access settings inside api.js at call
+        // time — always current, never a stale closure.
         await api.streamAgentChat(workflowID, text, selectedRuntime, selectedModel, resumeID, canvasMode)
         // Refresh the past-sessions list now that this turn has been
         // persisted (new session, or another message added to the active one).
         api.listChatSessions(workflowID).then(list => setPastSessions(Array.isArray(list) ? list : []))
       } else {
+        activeStreamRef.current = { workflowID, mode: 'providers' }
         await api.streamAIChat(workflowID, text, selectedProvider, selectedModel)
       }
     } catch (err) {
@@ -379,6 +475,11 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
   // Whether a backend is actually selected for the current mode — gates the
   // input, matching send()'s own guard (useAgents ? selectedRuntime : selectedProvider).
   const hasBackend = useAgents ? !!selectedRuntime : !!selectedProvider
+
+  // Assistant tool access (Settings → "Assistant tool access", GX2 contract):
+  // read per render so toggling it there applies here without a remount.
+  const assistantToolsOn   = getAssistantTools()
+  const assistantAllowRuns = getAssistantAllowRuns()
 
   // ── Stop an in-flight stream ──────────────────────────────────────────────
   const stop = useCallback(async () => {
@@ -440,6 +541,19 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
         }}>
           AI ASSISTANT
         </span>
+        {assistantToolsOn && (
+          <span
+            title={`monoagent tools enabled${assistantAllowRuns ? ' — including running workflows/actions from chat' : ''}`}
+            style={{
+              fontFamily: 'var(--font-mono)', fontSize: 8.5, fontWeight: 700, letterSpacing: 1,
+              color: '#00b4d8', background: 'rgba(0,180,216,0.08)',
+              border: '1px solid rgba(0,180,216,0.35)',
+              borderRadius: 4, padding: '2px 5px', flexShrink: 0,
+            }}
+          >
+            TOOLS{assistantAllowRuns ? '+RUN' : ''}
+          </span>
+        )}
         <button
           onClick={startNewSession}
           title="New chat"
@@ -563,7 +677,16 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
         {useAgents ? (
           <select
             value={selectedRuntime}
-            onChange={e => { setSelectedRuntime(e.target.value); startNewSession() }}
+            onChange={e => {
+              // Runtime change resets the session — blocked mid-stream for
+              // the same crosstalk reason as loadSession (FV4-6).
+              if (streamingRef.current) {
+                notify('chat', 'Stop the current response first')
+                return
+              }
+              setSelectedRuntime(e.target.value)
+              startNewSession()
+            }}
             title="Locally installed AI agent (via monomind)"
             style={{
               flex: 1,

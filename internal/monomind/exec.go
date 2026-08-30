@@ -189,7 +189,7 @@ func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResu
 	// user's own Keychain-stored credentials are perfectly valid. Stripping
 	// them here means every chat/agent turn gets a clean environment
 	// regardless of what launched monoagentcli.
-	cmd.Env = append(filteredEnviron(), envSlice(opts.Env)...)
+	cmd.Env = append(FilteredEnviron(), envSlice(opts.Env)...)
 	setProcessGroup(cmd)
 
 	stdin, err := cmd.StdinPipe()
@@ -337,14 +337,22 @@ var sessionMarkerEnvVars = []string{
 
 // sessionMarkerEnvPrefixes catches every CLAUDE_CODE_* variant without
 // needing to enumerate them (new ones can be added by Claude Code itself
-// without this list going stale).
+// without this list going stale), and every MONOMIND_* scoping override
+// (notably MONOMIND_CWD): those are per-call configuration, set
+// explicitly via opts.Env / individual command builders — an ambient value
+// inherited from whatever launched this process must not reach the child,
+// where a duplicate entry could shadow the intended per-profile scoping.
 var sessionMarkerEnvPrefixes = []string{
 	"CLAUDE_CODE_",
+	"MONOMIND_",
 }
 
-// filteredEnviron returns the current process environment with Claude
-// Code's own session-marker variables removed.
-func filteredEnviron() []string {
+// FilteredEnviron returns the current process environment with Claude
+// Code's session-marker variables and ambient MONOMIND_* overrides
+// removed. Exported so command builders outside this package (e.g. the
+// chat KG tools) build children with the identical stripped base before
+// appending their own explicit MONOMIND_* values.
+func FilteredEnviron() []string {
 	env := os.Environ()
 	out := make([]string, 0, len(env))
 	for _, kv := range env {

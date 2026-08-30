@@ -1,0 +1,15 @@
+-- 028_profiles_root_dir.sql
+-- (Renumbered from 024_profiles_root_dir.sql; see 027's header for why the
+-- slots moved. Slots 023/024 stay deliberately empty; nothing re-uses them.)
+--
+-- Lets a profile's folder live somewhere other than the default
+-- ~/.monoagent/profiles/<id>/ — e.g. an external drive or synced folder.
+-- Empty (the default) means "use the default path", exactly today's
+-- behavior — fully backward compatible for every existing profile.
+--
+-- ALTER TABLE ... ADD COLUMN cannot be guarded with IF NOT EXISTS in SQL,
+-- and databases that already carry root_dir (recorded as the other branch's
+-- 024) would fail the unguarded statement outright. The column addition
+-- therefore lives in storage.ReconcileSchema, which PRAGMA-checks the actual
+-- table shape on every database open; this file reserves the version slot
+-- and records the intent.

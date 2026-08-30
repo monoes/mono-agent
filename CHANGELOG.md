@@ -41,6 +41,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `workflow list` performance: workflow JSON files are parsed once and
   cached, and a SQLite expression index (migration 024) speeds up
   expression-based lookups.
+- Migration healing on upgrade: a Go-side schema reconcile repairs
+  drifted SQLite schemas; the vault migrations are renumbered 027/028;
+  and the CLI and MCP entry points now run the vault migration, so
+  databases from older installs converge without manual steps.
+- Executions are stamped with their owning profile as they run, and a
+  migration backfills the profile stamp onto existing execution rows.
+- Browser-node helper matches more pgrep process-name variants
+  (Chromium, Brave, Edge alongside Chrome) and fails fast with a clear
+  error when no supported browser is running, instead of hanging.
+- GUI: background polling is gated on page visibility and the assistant
+  agent scan runs on page open; the legacy duplicate panel is removed;
+  an empty active profile is normalized instead of erroring.
+- Extension bridge port resilience: the server honors
+  `MONOAGENT_EXTENSION_PORT` and the extension tries that port before
+  falling back to 9323, so a custom port no longer strands the
+  extension.
 
 Repository hygiene and packaging wave: social bot implementations moved
 behind the opt-in `social` build tag (default builds exclude them),
@@ -83,10 +99,11 @@ CLI behavior and docs.
   allowlist (default: no CORS headers). Docker port mappings for webhook
   triggers now work without host networking.
 - Opt-in file-based keyring fallback for headless environments:
-  `MONOAGENT_ALLOW_FILE_KEYRING=1` stores the vault key-encryption key at
-  `~/.monoagent/vault/.file-keyring` (0600) with a loud warning, so
-  `secret add` works in CI/containers; without the variable the vault
-  fails closed on machines with no OS keyring.
+  `MONOAGENT_ALLOW_FILE_KEYRING=1` stores the vault key-encryption key in
+  a per-profile file `~/.monoagent/vault/.file-keyring-<profileID>`
+  (0600) with a loud warning, so `secret add` works in CI/containers;
+  without the variable the vault fails closed on machines with no OS
+  keyring.
 - Node schema coverage completed: every default-build node type now
   resolves a schema — 16 added (`image.*`, `service.reddit`,
   `service.devto`, `service.discord`, `service.bluesky`,
@@ -96,6 +113,21 @@ CLI behavior and docs.
   PID verification, and a cancellable RunNode.
 - `update` verifies downloads against the release `SHA256SUMS.txt` and
   hard-fails on a checksum mismatch or a missing checksums file.
+- Per-profile encrypted vault: each profile's secrets are sealed with
+  their own key-encryption key under per-profile vault folders, entries
+  are re-encrypted when they move between profiles, and the file-keyring
+  fallback is likewise per profile
+  (`~/.monoagent/vault/.file-keyring-<profileID>`).
+- Profile folders: the GUI settings gain per-profile folder management.
+- Assistant chat sessions: `chat --history-id <session>` persists and
+  resumes named sessions.
+- Assistant tools (explicit opt-in): `chat --tools monoagent` exposes
+  workflow/vault/people/actions/comms tooling to the model;
+  `--tools monoagent,runs` additionally opts in to run/execution tools.
+  Off by default; the GUI settings toggle mirrors the gate and also
+  defaults to off. `get_workflow` output is redacted, delete-class tools
+  write sidecar backups, synced message content carries provenance
+  fences, and tool-call timeouts derive from the caller's context.
 
 ### Changed
 
@@ -143,6 +175,14 @@ CLI behavior and docs.
   arguments (visible in process lists).
 - Output redaction (above) keeps credential-shaped values out of `--json`
   and MCP results unless `--full-outputs` is passed.
+- Assistant tool surface is gated and value-safe: tools are off unless
+  explicitly enabled, vault tools return metadata only (values never
+  reach the model), deletes are sidecar-backed, and synced message
+  content is provenance-fenced (see SECURITY.md for the residual
+  injection risk).
+
+Review-fix rounds 2–4 are itemized in
+[docs/plans/2026-08-28-trust-hygiene-record.md](docs/plans/2026-08-28-trust-hygiene-record.md).
 
 ## [0.31.0] - 2026-08-25
 

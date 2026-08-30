@@ -51,6 +51,53 @@ func expandHome(path string) string {
 	return path
 }
 
+// migrateProfilesToPerProfileKeys mirrors the wails app's per-profile vault
+// migration (wails-app/app.go migrateProfilesToPerProfileLayout) and the
+// CLI's (cmd/monoagentcli initDB): every profile's secrets and connection
+// blobs are re-encrypted off the shared legacy key onto the profile's own
+// key, before any vault use. Idempotent and cheap once fully migrated;
+// non-fatal per profile.
+func migrateProfilesToPerProfileKeys(ctx context.Context, db *sql.DB) {
+	// Without a vault_keys_legacy table no row can be under the legacy key
+	// (fresh install) — skip the per-profile loop entirely.
+	var legacy int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'vault_keys_legacy'`).Scan(&legacy); err != nil {
+		fmt.Fprintf(os.Stderr, "mcp: warning: vault key migration: %v\n", err)
+		return
+	}
+	if legacy == 0 {
+		return
+	}
+
+	rows, err := db.QueryContext(ctx, `SELECT id FROM profiles`)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "mcp: warning: vault key migration: listing profiles: %v\n", err)
+		return
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if rows.Scan(&id) == nil {
+			ids = append(ids, id)
+		}
+	}
+	rows.Close()
+
+	for _, id := range ids {
+		if migrated, errs := secrets.MigrateProfileVaultKeys(ctx, db, id); migrated > 0 || len(errs) > 0 {
+			for _, e := range errs {
+				fmt.Fprintf(os.Stderr, "mcp: warning: profile %s: vault key migration: %v\n", id, e)
+			}
+		}
+		if migrated, errs := connections.MigrateProfileBlobs(ctx, db, id); migrated > 0 || len(errs) > 0 {
+			for _, e := range errs {
+				fmt.Fprintf(os.Stderr, "mcp: warning: profile %s: connection data migration: %v\n", id, e)
+			}
+		}
+	}
+}
+
 // runtime lazily bootstraps and caches the shared runtime for a server.
 // It is race-safe: request handlers run on separate goroutines and may
 // call it simultaneously on first use.
@@ -124,6 +171,7 @@ func newRuntime(opts Options) (*runtime, error) {
 	if _, _, err := ai.MigrateProvidersToVault(ctx, db.DB); err != nil {
 		fmt.Fprintf(os.Stderr, "mcp: warning: ai providers migration: %v\n", err)
 	}
+	migrateProfilesToPerProfileKeys(ctx, db.DB)
 
 	profile := opts.Profile
 	if profile == "" {

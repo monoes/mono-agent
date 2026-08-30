@@ -139,7 +139,30 @@ func resolveCredentialData(ctx context.Context, store *connections.Store, creden
 	return conn.Data, nil
 }
 
-const extensionServerAddr = "http://127.0.0.1:9222"
+// extensionListenAddr is the address this process's own extension server
+// tries to bind: the env override (extension.ExtensionPortEnv) when set,
+// otherwise the shared default port — whose EADDRINUSE fallback to 9323
+// (e.g. when Chrome's own CDP holds 9222) lives in extension.Server.
+func extensionListenAddr() string {
+	if p := strings.TrimSpace(os.Getenv(extension.ExtensionPortEnv)); p != "" {
+		return "127.0.0.1:" + p
+	}
+	return "127.0.0.1:" + extension.DefaultExtensionPort
+}
+
+// extensionProbeAddrs lists the HTTP base URLs where an already-running
+// monoagent relay may be found: the env-overridden port when set, otherwise
+// the default port and its 9323 fallback (mirroring extension.Server's bind
+// candidates).
+func extensionProbeAddrs() []string {
+	if p := strings.TrimSpace(os.Getenv(extension.ExtensionPortEnv)); p != "" {
+		return []string{"http://127.0.0.1:" + p}
+	}
+	return []string{
+		"http://127.0.0.1:" + extension.DefaultExtensionPort,
+		"http://127.0.0.1:" + extension.FallbackExtensionPort,
+	}
+}
 
 // waitForRelay polls addr until a monoagent relay answers its health endpoint,
 // returning a bridge through it, or nil if none appears within timeout. The
@@ -166,12 +189,15 @@ func waitForRelay(addr string, timeout time.Duration) browserpkg.ExtensionBridge
 // leave IsConnected() reporting false, since there is no Rod/Chromium
 // fallback to degrade to.
 func setupExtensionBridge(logger zerolog.Logger, waitForConnection time.Duration) browserpkg.ExtensionBridge {
-	if extension.Probe(extensionServerAddr) {
-		fmt.Fprintln(os.Stderr, "  Reusing existing extension connection (shared with another monoagentcli process)")
-		return &extension.RemoteBridge{Sender: extension.NewRemoteSender(extensionServerAddr)}
+	probeAddrs := extensionProbeAddrs()
+	for _, addr := range probeAddrs {
+		if extension.Probe(addr) {
+			fmt.Fprintln(os.Stderr, "  Reusing existing extension connection (shared with another monoagentcli process)")
+			return &extension.RemoteBridge{Sender: extension.NewRemoteSender(addr)}
+		}
 	}
 
-	extServer := extension.NewServer("127.0.0.1:9222", logger)
+	extServer := extension.NewServer(extensionListenAddr(), logger)
 	errCh := extServer.StartAsync(context.Background())
 
 	// The probe above and the bind below are not atomic: another process can
@@ -186,12 +212,16 @@ func setupExtensionBridge(logger zerolog.Logger, waitForConnection time.Duration
 	select {
 	case err := <-errCh:
 		if err != nil {
-			if remote := waitForRelay(extensionServerAddr, 5*time.Second); remote != nil {
-				fmt.Fprintln(os.Stderr, "  Reusing existing extension connection (another process owns the extension port)")
-				return remote
+			// Note: with the server-side fallback (9222 → 9323) an errCh
+			// delivery now means BOTH candidate ports failed to bind.
+			for _, addr := range probeAddrs {
+				if remote := waitForRelay(addr, 5*time.Second); remote != nil {
+					fmt.Fprintln(os.Stderr, "  Reusing existing extension connection (another process owns the extension port)")
+					return remote
+				}
 			}
-			fmt.Fprintf(os.Stderr, "  Extension port 9222 is held by a process that is not a monoagent relay (%v)\n", err)
-			fmt.Fprintln(os.Stderr, "  Free it (e.g. a Chrome started with --remote-debugging-port=9222) and retry.")
+			fmt.Fprintf(os.Stderr, "  Extension ports %s are held by processes that are not monoagent relays (%v)\n", strings.Join(probeAddrs, ", "), err)
+			fmt.Fprintln(os.Stderr, "  Free them (e.g. a Chrome started with --remote-debugging-port=9222) or set MONOAGENT_EXTENSION_PORT, and retry.")
 		}
 	case <-connCh:
 	}

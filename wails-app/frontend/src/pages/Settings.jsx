@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Link2, Brain, ExternalLink, Download } from 'lucide-react'
 import { api } from '../services/api.js'
 import { GetVersion, CheckForUpdate, AppSelfUpdate } from '../wailsjs/go/main/App'
+import { getAssistantTools, getAssistantAllowRuns, setAssistantTools, setAssistantAllowRuns } from '../lib/assistantTools.js'
 
 // ── VersionRow ──────────────────────────────────────────────────────────────
 
@@ -145,6 +146,64 @@ function ExportRow() {
   )
 }
 
+// ── AssistantToolsSection ────────────────────────────────────────────────────
+
+// GX2 contract: StreamAgentChat takes monoagentTools + allowRuns flags (both
+// default OFF on the backend). Persisted to localStorage and read by the AI
+// chat panels at send time; a visible indicator in the panel shows when
+// tools are active. Toggling applies to the next message sent.
+function AssistantToolsSection() {
+  const [tools, setTools] = useState(() => getAssistantTools())
+  const [allowRuns, setAllowRuns] = useState(() => getAssistantAllowRuns())
+
+  const toggleTools = (on) => {
+    setAssistantTools(on)
+    setTools(on)
+    if (!on) setAllowRuns(false)
+  }
+
+  const toggleAllowRuns = (on) => {
+    setAssistantAllowRuns(on)
+    setAllowRuns(on && tools)
+  }
+
+  const checkbox = (checked, disabled, onChange) => ({
+    type: 'checkbox',
+    checked, disabled,
+    onChange: e => onChange(e.target.checked),
+    style: { marginTop: 2, accentColor: '#00b4d8', flexShrink: 0 },
+  })
+
+  return (
+    <div style={{
+      background: 'var(--surface)',
+      border: '1px solid var(--border)',
+      borderRadius: 'var(--radius-lg)',
+      padding: '16px 20px',
+      display: 'flex', flexDirection: 'column', gap: 12,
+      marginBottom: 16,
+    }}>
+      <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
+        <input {...checkbox(tools, false, toggleTools)} />
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+          Enable monoagent tools (workflows, people, vault metadata)
+        </span>
+      </label>
+      <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: tools ? 'pointer' : 'default', opacity: tools ? 1 : 0.45, paddingLeft: 24 }}>
+        <input {...checkbox(allowRuns, !tools, toggleAllowRuns)} />
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+          Allow running workflows/actions from chat
+        </span>
+      </label>
+      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--text-muted)', lineHeight: 1.6 }}>
+        Both options are off by default. When enabled, the AI assistant can read your
+        workflows, people and vault metadata; the second option additionally lets it
+        trigger workflow runs and actions from chat.
+      </div>
+    </div>
+  )
+}
+
 // ── QuickAccessCard ─────────────────────────────────────────────────────────
 
 function QuickAccessCard({ icon: Icon, title, description, stats, onClick }) {
@@ -245,6 +304,16 @@ export default function Settings({ onNavigate }) {
             onClick={() => onNavigate?.('ai')}
           />
         </div>
+
+        {/* Assistant tool access */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: 2 }}>
+            Assistant Tool Access
+          </span>
+          <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+        </div>
+
+        <AssistantToolsSection />
 
         {/* Application Info */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>

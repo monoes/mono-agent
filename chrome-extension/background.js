@@ -21,6 +21,12 @@ let keepAliveInterval = null;
 
 const KEEP_ALIVE_INTERVAL = 20000; // 20s ping to prevent WS idle timeout
 const DEFAULT_WS_URL = "ws://127.0.0.1:9222/monoagent";
+// The Go server falls back to this port when 9222 is already held by another
+// process (usually Chrome's own CDP on --remote-debugging-port=9222), so the
+// connection loop tries it after repeated failures on the default port.
+const FALLBACK_WS_URL = "ws://127.0.0.1:9323/monoagent";
+const WS_CANDIDATES = [DEFAULT_WS_URL, FALLBACK_WS_URL];
+const PORT_SWITCH_AFTER_FAILURES = 10; // failed attempts before trying the other candidate
 const COMMAND_TIMEOUT = 30000; // 30s default timeout for pending commands
 // content.js is given the same cmd.params.timeout to bound its own internal
 // polling (e.g. findElement's while-loop). Without headroom here, this outer
@@ -127,12 +133,51 @@ async function assertLoopbackAllowed(url) {
 // WebSocket connection
 // ---------------------------------------------------------------------------
 
+// Port candidate state: wsCandidate indexes WS_CANDIDATES; connectFailures
+// counts consecutive attempts that never opened. Once a candidate connects,
+// it is persisted (chrome.storage.local "workingWsUrl") so the next service
+// worker start goes straight to the port that works.
+let wsCandidate = 0;
+let connectFailures = 0;
+
+// Resolves once the persisted sticky candidate (if any) has been loaded.
+const stickyLoaded = (async () => {
+  try {
+    const { workingWsUrl } = await chrome.storage.local.get("workingWsUrl");
+    const idx = WS_CANDIDATES.indexOf(workingWsUrl);
+    if (idx !== -1) wsCandidate = idx;
+  } catch {
+    // storage unavailable — default candidate stays 0
+  }
+})();
+
 async function getWsUrl() {
+  // Explicit user config (popup) always wins.
   try {
     const result = await chrome.storage.local.get("wsUrl");
-    return result.wsUrl || DEFAULT_WS_URL;
+    if (result.wsUrl) return result.wsUrl;
   } catch {
-    return DEFAULT_WS_URL;
+    // fall through to candidates
+  }
+  return WS_CANDIDATES[wsCandidate];
+}
+
+// A candidate failed to connect: after enough consecutive failures, rotate
+// to the other one (and forget the sticky port if it stopped answering).
+function markCandidateFailed() {
+  connectFailures++;
+  if (connectFailures >= PORT_SWITCH_AFTER_FAILURES) {
+    connectFailures = 0;
+    wsCandidate = (wsCandidate + 1) % WS_CANDIDATES.length;
+    chrome.storage.local.remove("workingWsUrl").catch(() => {});
+  }
+}
+
+// A candidate connected: remember it as the sticky port.
+function markCandidateConnected(url) {
+  connectFailures = 0;
+  if (WS_CANDIDATES.includes(url)) {
+    chrome.storage.local.set({ workingWsUrl: url }).catch(() => {});
   }
 }
 
@@ -157,6 +202,7 @@ async function doConnect() {
   connectionStatus = "connecting";
   broadcastStatus();
 
+  await stickyLoaded;
   const url = await getWsUrl();
 
   try {
@@ -178,9 +224,13 @@ async function doConnect() {
     return;
   }
 
+  let opened = false;
+
   ws.onopen = () => {
+    opened = true;
     connectionStatus = "connected";
     fastRetryCount = FAST_RETRY_MAX; // Stop fast retry — we're connected
+    markCandidateConnected(url);
     console.log("[monoagent] Connected to backend at", url);
     broadcastStatus();
     startKeepAlive();
@@ -207,6 +257,7 @@ async function doConnect() {
     connectionStatus = "disconnected";
     broadcastStatus();
     stopKeepAlive();
+    if (!opened) markCandidateFailed();
     // Don't schedule reconnect via setTimeout — the alarm handles it.
     // But do restart fast retry if we disconnected unexpectedly early.
     if (fastRetryCount < FAST_RETRY_MAX) {
@@ -695,6 +746,8 @@ async function setWsUrl(url) {
   await assertLoopbackAllowed(url); // throws a visible message for the popup
   try {
     await chrome.storage.local.set({ wsUrl: url });
+    // Explicit config replaces the auto-detected sticky port.
+    chrome.storage.local.remove("workingWsUrl").catch(() => {});
   } catch (err) {
     throw new Error("Failed to save URL: " + err.message);
   }

@@ -100,6 +100,23 @@ func (d *Database) ApplyMigrations() error {
 		return fmt.Errorf("ensuring schema_migrations table: %w", err)
 	}
 
+	// Runner hardening: record each applied migration's FILENAME alongside
+	// its version. schema_migrations keys on the version INT alone, which is
+	// how two branches shipping different files at 023/024 silently skipped
+	// each other's migrations on merged binaries — the version said
+	// "applied" while the shape said otherwise. The version stays the dedup
+	// key (no behavior change); the filename only makes future version
+	// collisions detectable, via the aliasing WARN below.
+	fnameCols, err := columnExistsOn(ctx, conn, "schema_migrations", "filename")
+	if err != nil {
+		return fmt.Errorf("inspecting schema_migrations: %w", err)
+	}
+	if !fnameCols {
+		if _, err := conn.ExecContext(ctx, `ALTER TABLE schema_migrations ADD COLUMN filename TEXT`); err != nil {
+			return fmt.Errorf("adding schema_migrations.filename: %w", err)
+		}
+	}
+
 	// Discover migration files from the embedded filesystem.
 	entries, err := data.MigrationsFS.ReadDir("migrations")
 	if err != nil {
@@ -141,6 +158,42 @@ func (d *Database) ApplyMigrations() error {
 		return migrations[i].version < migrations[j].version
 	})
 
+	// Aliasing detection: a recorded version whose (non-empty) filename
+	// doesn't match the current file at that version — or whose file has
+	// vanished from the set entirely — means two branches shipped different
+	// migrations under one number. Rows recorded before the filename column
+	// existed have no filename to compare and are skipped.
+	currentFile := make(map[int]string, len(migrations))
+	for _, m := range migrations {
+		currentFile[m.version] = m.filename
+	}
+	recRows, err := conn.QueryContext(ctx, `SELECT version, filename FROM schema_migrations`)
+	if err != nil {
+		return fmt.Errorf("reading schema_migrations: %w", err)
+	}
+	for recRows.Next() {
+		var version int
+		var filename sql.NullString
+		if err := recRows.Scan(&version, &filename); err != nil {
+			recRows.Close()
+			return fmt.Errorf("scanning schema_migrations: %w", err)
+		}
+		if !filename.Valid || filename.String == "" {
+			continue
+		}
+		cur, ok := currentFile[version]
+		switch {
+		case !ok:
+			log.Printf("WARN: schema_migrations version %d recorded as %q but no migration file with that version exists anymore — version aliasing suspected", version, filename.String)
+		case cur != filename.String:
+			log.Printf("WARN: schema_migrations version %d recorded as %q but the current migration file is %q — version aliasing suspected", version, filename.String, cur)
+		}
+	}
+	recRows.Close()
+	if err := recRows.Err(); err != nil {
+		return fmt.Errorf("iterating schema_migrations: %w", err)
+	}
+
 	for _, m := range migrations {
 		// Check if this version has already been applied.
 		var exists int
@@ -180,7 +233,7 @@ func (d *Database) ApplyMigrations() error {
 		}
 
 		// Record the migration as applied.
-		if _, err := tx.Exec("INSERT INTO schema_migrations (version) VALUES (?)", m.version); err != nil {
+		if _, err := tx.Exec("INSERT INTO schema_migrations (version, filename) VALUES (?, ?)", m.version, m.filename); err != nil {
 			tx.Rollback()
 			return fmt.Errorf("recording migration %d: %w", m.version, err)
 		}
@@ -192,7 +245,11 @@ func (d *Database) ApplyMigrations() error {
 		log.Printf("applied migration %03d (%s)", m.version, m.filename)
 	}
 
-	return nil
+	// Heal any schema-shape drift the recorded versions can't see (see
+	// reconcile.go for why versions alone lie). Runs on every open — every
+	// ApplyMigrations call site (CLI initDB, MCP bootstrap, wails startup)
+	// funnels through here, making this the single chokepoint.
+	return d.ReconcileSchema(ctx)
 }
 
 // splitStatements splits a SQL script by semicolons while respecting quoted

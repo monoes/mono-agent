@@ -361,6 +361,36 @@ func TestExecFlagMappingSandboxing(t *testing.T) {
 	}
 }
 
+// TestFilteredEnvironStripsMonomindOverrides guards the env-injection fix:
+// ambient MONOMIND_* values (and Claude session markers) must never reach
+// a spawned monomind child, where a duplicate entry could shadow the
+// explicit per-profile MONOMIND_CWD set by the caller.
+func TestFilteredEnvironStripsMonomindOverrides(t *testing.T) {
+	t.Setenv("MONOMIND_CWD", "/attacker/controlled")
+	t.Setenv("MONOMIND_HOME", "/attacker/controlled")
+	t.Setenv("CLAUDECODE", "1")
+	t.Setenv("CLAUDE_CODE_SESSION", "abc")
+	t.Setenv("MONOTOOL_BENIGN_VAR", "keep")
+
+	env := FilteredEnviron()
+	benignSeen := false
+	for _, kv := range env {
+		key, _, _ := strings.Cut(kv, "=")
+		if strings.HasPrefix(key, "MONOMIND_") {
+			t.Errorf("MONOMIND_* override %q leaked through FilteredEnviron", key)
+		}
+		if strings.HasPrefix(key, "CLAUDE_CODE_") || key == "CLAUDECODE" {
+			t.Errorf("Claude session marker %q leaked through FilteredEnviron", key)
+		}
+		if key == "MONOTOOL_BENIGN_VAR" {
+			benignSeen = true
+		}
+	}
+	if !benignSeen {
+		t.Error("benign environment variable disappeared from FilteredEnviron")
+	}
+}
+
 func fields(s string) []string {
 	var out []string
 	cur := ""

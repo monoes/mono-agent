@@ -34,6 +34,8 @@ machine. In scope:
 - The workflow engine, node implementations, and CLI surface
 - The MCP server (stdio JSON-RPC) for AI agents
 - The encrypted secrets vault (see below)
+- The assistant chat tool surface (`monoagentcli chat --tools` — see
+  [Assistant tools](#assistant-tools-chat---tools) below)
 - The browser-extension bridge and bundled deployment scripts
 
 Out of scope:
@@ -59,9 +61,10 @@ and implemented in [`internal/secrets`](internal/secrets):
 ### File-based keyring fallback (weaker posture)
 
 When `MONOAGENT_ALLOW_FILE_KEYRING=1` is set and no OS keyring is
-available, the key-encryption key is stored in a file at
-`~/.monoagent/vault/.file-keyring` (permissions 0600) instead of the OS
-keyring, and the CLI prints a warning whenever it uses it. This is a
+available, the key-encryption key is stored in a per-profile file at
+`~/.monoagent/vault/.file-keyring-<profileID>` (permissions 0600)
+instead of the OS keyring, and the CLI prints a warning whenever it uses
+it. This is a
 weaker posture and is deliberately opt-in: any process running as the same
 user, or anyone with read access to the disk volume or its backups, can
 retrieve the KEK and decrypt the vault — key and ciphertext then live on
@@ -69,6 +72,34 @@ the same volume. Payloads remain AES-256-GCM encrypted, but the OS
 keyring's process-scoped access control is lost. Use the fallback only
 where no keyring exists (headless CI, containers); without the variable
 set, secret operations fail closed.
+
+## Assistant tools (chat `--tools`)
+
+The `chat` command can expose a monoagent tool surface to the assistant
+model. Guardrails:
+
+- Tools are **off by default**; enabling them is explicit (CLI
+  `--tools monoagent`; run/execution tools additionally require
+  `--tools monoagent,runs`). The GUI settings toggle mirrors the gate
+  and also defaults to off.
+- Vault tooling returns entry **metadata only** — secret values are
+  never returned to the model.
+- Workflow definitions returned by `get_workflow` are redacted for
+  credential-shaped values.
+- Destructive (delete-class) tools write a sidecar backup of the
+  affected record before deleting.
+- Message content synced from connected mail accounts is wrapped in
+  provenance fences so the model can attribute it.
+- Tool-call timeouts derive from the caller's context, so cancelled
+  sessions stop in-flight tool work.
+
+**Residual risk, stated honestly:** prompt injection cannot be fully
+eliminated when assistant context includes synced message content — a
+crafted message can attempt to steer the model toward whatever tools are
+enabled. The gates above bound the blast radius, not the attempt. The
+recommendation is to keep tools off (the default) when chatting over
+mail synced from sources you do not trust, and to enable `runs` only in
+trusted sessions.
 
 ## Telemetry and crash reporting
 

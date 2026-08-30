@@ -4,11 +4,16 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
+	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -95,6 +100,74 @@ func loopbackAddr(addr string) string {
 	return net.JoinHostPort(host, port)
 }
 
+// DefaultExtensionPort is the port the extension server and the Chrome
+// extension both prefer; FallbackExtensionPort is tried instead when that
+// port is already taken — most commonly by a Chrome started with
+// --remote-debugging-port=9222, which also speaks WebSocket there.
+const (
+	DefaultExtensionPort  = "9222"
+	FallbackExtensionPort = "9323"
+)
+
+// ExtensionPortEnv overrides the default extension listen port (validated
+// integer). When set, the EADDRINUSE fallback does not apply: an explicit
+// port that is busy is an operator error worth surfacing, not papering over.
+const ExtensionPortEnv = "MONOAGENT_EXTENSION_PORT"
+
+// resolveListenAddr applies ExtensionPortEnv to addr, replacing its port.
+func resolveListenAddr(addr string) (string, error) {
+	raw := strings.TrimSpace(os.Getenv(ExtensionPortEnv))
+	if raw == "" {
+		return addr, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 || n > 65535 {
+		return "", fmt.Errorf("invalid %s %q: want an integer between 1 and 65535", ExtensionPortEnv, raw)
+	}
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		// No port component to override.
+		return addr, nil
+	}
+	return net.JoinHostPort(host, raw), nil
+}
+
+// listenCandidates returns the bind addresses to try for addr, in order:
+// the (env-overridden) address itself, plus the fallback port when the
+// primary is the default port.
+func listenCandidates(addr string) ([]string, error) {
+	addr, err := resolveListenAddr(addr)
+	if err != nil {
+		return nil, err
+	}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return []string{addr}, nil
+	}
+	if port == DefaultExtensionPort {
+		return []string{addr, net.JoinHostPort(host, FallbackExtensionPort)}, nil
+	}
+	return []string{addr}, nil
+}
+
+// tryListen binds the first address in addrs it can. Only EADDRINUSE moves
+// on to the next candidate; any other error (e.g. permission denied) fails
+// immediately with that error.
+func tryListen(addrs []string) (net.Listener, string, error) {
+	var lastErr error
+	for _, a := range addrs {
+		l, err := net.Listen("tcp", a)
+		if err == nil {
+			return l, a, nil
+		}
+		lastErr = err
+		if !errors.Is(err, syscall.EADDRINUSE) {
+			return nil, "", err
+		}
+	}
+	return nil, "", lastErr
+}
+
 // NewServer creates a new extension WebSocket server. Addr should be a
 // host:port string such as ":9222".
 func NewServer(addr string, logger zerolog.Logger) *Server {
@@ -132,11 +205,24 @@ func (s *Server) Start(ctx context.Context) error {
 	// Listen and Serve are split (instead of the equivalent ListenAndServe)
 	// so the token is only generated after this process has actually won
 	// the port bind — a process that loses the bind never writes a token
-	// that could otherwise race with and clobber the winner's.
-	listener, err := net.Listen("tcp", addr)
+	// that could otherwise race with and clobber the winner's. On EADDRINUSE
+	// for the default port the fallback (see listenCandidates) is tried
+	// before giving up, so a Chrome holding --remote-debugging-port=9222
+	// no longer blocks the extension channel entirely.
+	candidates, err := listenCandidates(addr)
 	if err != nil {
 		return err
 	}
+	listener, boundAddr, err := tryListen(candidates)
+	if err != nil {
+		return err
+	}
+	if boundAddr != candidates[0] {
+		s.logger.Warn().Str("addr", boundAddr).
+			Msgf("extension port %s busy, fell back to %s", candidates[0], boundAddr)
+	}
+	addr = boundAddr
+	s.server.Addr = addr
 
 	token, err := generateToken()
 	if err != nil {

@@ -112,7 +112,7 @@ func (p *lazyBrowserSessionProvider) GetPage(ctx context.Context, platform, user
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.inner == nil {
-		bridge := setupExtensionBridge(p.logger, 30*time.Second)
+		bridge := setupExtensionBridge(p.logger, 3*time.Second)
 		if !bridge.IsConnected() {
 			// No throwaway automation browser — launch the user's real
 			// Chrome (same mechanism as `login`) so the extension can
@@ -981,6 +981,20 @@ func newWorkflowExecutionsCmd(cfg *globalConfig) *cobra.Command {
 
 			store := newHybridStore(db)
 			ctx := context.Background()
+
+			// Load the workflow and enforce the profile boundary before
+			// listing executions — otherwise an ID guessed from another
+			// profile leaks that profile's execution history here.
+			wf, err := store.GetWorkflow(ctx, args[0])
+			if err != nil {
+				return fmt.Errorf("get workflow: %w", err)
+			}
+			if wf == nil {
+				return errNotFound("workflow %q not found", args[0])
+			}
+			if wf.ProfileID != "" && wf.ProfileID != cfg.ProfileID {
+				return errNotFound("workflow %q not found", args[0])
+			}
 
 			executions, err := store.ListExecutions(ctx, args[0], limit)
 			if err != nil {

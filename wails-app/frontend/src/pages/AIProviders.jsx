@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { X, CheckCircle, Loader, Trash2, RefreshCw, ExternalLink, Search, Brain, MessageSquare } from 'lucide-react'
+import { X, CheckCircle, Loader, Trash2, RefreshCw, ExternalLink, Search, Brain } from 'lucide-react'
 import { api } from '../services/api.js'
-import AIChatPanel from '../components/AIChatPanel.jsx'
 
 const CATEGORY_ORDER = ['frontier', 'cloud', 'inference', 'gateway']
 const CATEGORY_LABELS = { frontier: 'Frontier', cloud: 'Cloud', inference: 'Inference', gateway: 'Gateway' }
@@ -519,7 +518,6 @@ export default function AIProviders({ embedded = false }) {
   const [showAdd, setShowAdd]     = useState(false)
   const [addPreselect, setAddPreselect] = useState(null)
   const [selected, setSelected]   = useState(null)
-  const [chatOpen, setChatOpen]   = useState(false)
 
   const loadAll = useCallback(async (silent = false) => {
     if (!silent) setLoading(true)
@@ -570,8 +568,6 @@ export default function AIProviders({ embedded = false }) {
     }
   }
 
-  const hasActiveProvider = providers.some(p => p.status === 'active')
-
   return (
     <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -582,21 +578,6 @@ export default function AIProviders({ embedded = false }) {
               <div className="page-subtitle">{loading ? 'Loading…' : `${totalConnected} / ${registry.length} connected`}</div>
             </div>
             <div className="page-header-right" style={{ display: 'flex', gap: 6 }}>
-              {hasActiveProvider && (
-                <button
-                  className="btn btn-sm"
-                  onClick={() => setChatOpen(o => !o)}
-                  title="Chat with AI"
-                  style={{
-                    gap: 5,
-                    color: chatOpen ? '#00b4d8' : 'var(--text-muted)',
-                    borderColor: chatOpen ? 'rgba(0,180,216,0.3)' : 'var(--border)',
-                    background: chatOpen ? 'rgba(0,180,216,0.08)' : 'transparent',
-                  }}
-                >
-                  <MessageSquare size={12} /> Chat
-                </button>
-              )}
               <button className="btn btn-ghost btn-sm" onClick={() => loadAll()} style={{ gap: 5 }}><RefreshCw size={12} /> Refresh</button>
             </div>
           </div>
@@ -644,12 +625,6 @@ export default function AIProviders({ embedded = false }) {
           )}
         </div>
       </div>
-
-      <AIChatPanel
-        workflowID="general"
-        isOpen={chatOpen}
-        onClose={() => setChatOpen(false)}
-      />
 
       {showAdd && (
         <AddModal

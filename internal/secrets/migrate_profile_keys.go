@@ -8,28 +8,59 @@ import (
 
 // MigrateProfileVaultKeys moves one profile's vault_secrets rows off the
 // single pre-per-profile DEK (preserved read-only in vault_keys_legacy by
-// migration 023) onto a fresh DEK/KEK generated exclusively for this
-// profile. Idempotent: if profileID already has a vault_keys row, this is a
-// no-op (already migrated, or a profile that only ever existed under the
-// per-profile scheme and never had legacy data to begin with).
+// migration 027's reconcile) onto a fresh DEK/KEK generated exclusively for
+// this profile.
 //
-// Every row is decrypted under the legacy key and re-encrypted under the new
-// one, with an immediate round-trip decrypt of the freshly-written
-// ciphertext before it's considered successful — this is the guarantee the
-// per-profile encryption redesign depends on: a profile's secrets must never
-// be left readable under any key other than its own once migration reports
-// success. A per-row failure is logged by the caller via the returned error
-// list and that row is left untouched under the legacy key rather than
-// losing it — the caller can retry the whole profile safely since this
-// function is idempotent per already-migrated row too (a row already
-// re-encrypted under the new key simply fails to decrypt under the legacy
-// key on a retry and is skipped, having already succeeded).
+// Marker-before-data ordering: the profile's own vault_keys row is created
+// (via getOrCreateDEK, under its own cross-process lock) BEFORE any row is
+// re-encrypted, and correctness does not depend on that ordering being
+// atomic with the data pass — each row is individually idempotent:
+//
+//   - decrypt under the legacy key succeeds → re-encrypt under the new key
+//     (with an immediate round-trip decrypt of the freshly-written
+//     ciphertext before it's considered successful);
+//   - legacy decrypt fails but the NEW key decrypts → already migrated
+//     (e.g. a previous pass wrote the marker, migrated some rows, then
+//     crashed before finishing) — skip;
+//   - neither key decrypts → per-row error; the row is left untouched
+//     rather than lost, and the caller can retry the whole profile safely.
+//
+// A profile that already has a vault_keys row and no secret rows returns
+// early (cheap no-op), and a database with no vault_keys_legacy table never
+// knew the legacy scheme at all (fresh install) — also a no-op. A profile
+// with no secrets still gets its own key created so it's fully independent
+// going forward instead of implicitly depending on the legacy key existing.
+//
+// The re-encryption pass runs inside one BEGIN IMMEDIATE transaction per
+// profile — the same cross-process write-lock pattern bootstrapDEKLocked and
+// secrets.addEntry use — so two processes migrating the same profile
+// concurrently serialize instead of racing row UPDATEs (the loser observes
+// the winner's committed rows and skips them via the already-migrated path
+// above).
 func MigrateProfileVaultKeys(ctx context.Context, db *sql.DB, profileID string) (migrated int, errs []error) {
-	var alreadyMigrated int
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM vault_keys WHERE profile_id = ?`, profileID).Scan(&alreadyMigrated); err != nil {
+	// Fast path: no vault_keys_legacy table → this database never knew the
+	// pre-per-profile scheme (fresh install, or pre-017). Nothing to migrate;
+	// the profile's own key is created lazily on first real use, as normal.
+	var legacyTable int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'vault_keys_legacy'`).Scan(&legacyTable); err != nil {
+		return 0, []error{fmt.Errorf("secrets.MigrateProfileVaultKeys: checking legacy table: %w", err)}
+	}
+	if legacyTable == 0 {
+		return 0, nil
+	}
+
+	// Cheap guard (NOT the correctness check — that's per-row above): a
+	// profile that already has its own key and no secret rows can never have
+	// anything to re-encrypt, so skip the keychain round trips entirely.
+	var hasKey, rowCount int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM vault_keys WHERE profile_id = ?`, profileID).Scan(&hasKey); err != nil {
 		return 0, []error{fmt.Errorf("secrets.MigrateProfileVaultKeys: checking existing key: %w", err)}
 	}
-	if alreadyMigrated > 0 {
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM vault_secrets WHERE profile_id = ?`, profileID).Scan(&rowCount); err != nil {
+		return 0, []error{fmt.Errorf("secrets.MigrateProfileVaultKeys: counting rows: %w", err)}
+	}
+	if hasKey > 0 && rowCount == 0 {
 		return 0, nil
 	}
 
@@ -38,13 +69,33 @@ func MigrateProfileVaultKeys(ctx context.Context, db *sql.DB, profileID string) 
 		return 0, []error{fmt.Errorf("secrets.MigrateProfileVaultKeys: %w", err)}
 	}
 	if !found {
-		// No legacy key ever existed for this database (a fresh install) —
-		// nothing to migrate. The profile's own key gets created lazily on
-		// its first real Add/EncryptBlob call, as normal.
+		// No legacy key ever existed for this database — nothing to migrate.
 		return 0, nil
 	}
 
-	rows, err := db.QueryContext(ctx,
+	// Create this profile's own key (the marker) before touching any data.
+	newDEK, err := getOrCreateDEK(ctx, db, profileID)
+	if err != nil {
+		return 0, []error{fmt.Errorf("secrets.MigrateProfileVaultKeys: creating new key: %w", err)}
+	}
+
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return 0, []error{fmt.Errorf("secrets.MigrateProfileVaultKeys: get conn: %w", err)}
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return 0, []error{fmt.Errorf("secrets.MigrateProfileVaultKeys: begin tx: %w", err)}
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
+		}
+	}()
+
+	rows, err := conn.QueryContext(ctx,
 		`SELECT id, ciphertext, nonce, notes_ciphertext, notes_nonce FROM vault_secrets WHERE profile_id = ?`, profileID)
 	if err != nil {
 		return 0, []error{fmt.Errorf("secrets.MigrateProfileVaultKeys: listing rows: %w", err)}
@@ -65,24 +116,16 @@ func MigrateProfileVaultKeys(ctx context.Context, db *sql.DB, profileID string) 
 	if err := rows.Err(); err != nil {
 		errs = append(errs, fmt.Errorf("secrets.MigrateProfileVaultKeys: iterating rows: %w", err))
 	}
-	if len(toMigrate) == 0 {
-		// No secrets to migrate for this profile — still create its own key
-		// so it's fully independent going forward instead of implicitly
-		// depending on the legacy key ever existing.
-		if _, err := getOrCreateDEK(ctx, db, profileID); err != nil {
-			errs = append(errs, fmt.Errorf("secrets.MigrateProfileVaultKeys: creating key for empty profile: %w", err))
-		}
-		return 0, errs
-	}
-
-	newDEK, err := getOrCreateDEK(ctx, db, profileID)
-	if err != nil {
-		return 0, append(errs, fmt.Errorf("secrets.MigrateProfileVaultKeys: creating new key: %w", err))
-	}
 
 	for _, r := range toMigrate {
 		plainFields, decErr := Decrypt(legacyDEK, r.ciphertext, r.nonce)
 		if decErr != nil {
+			// Not decryptable under the legacy key. If the profile's NEW
+			// key decrypts it, the row was already re-encrypted by an
+			// earlier (possibly crashed mid-pass) run — skip it.
+			if _, vErr := Decrypt(newDEK, r.ciphertext, r.nonce); vErr == nil {
+				continue
+			}
 			errs = append(errs, fmt.Errorf("secrets.MigrateProfileVaultKeys: decrypting %s under legacy key: %w", r.id, decErr))
 			continue
 		}
@@ -115,7 +158,7 @@ func MigrateProfileVaultKeys(ctx context.Context, db *sql.DB, profileID string) 
 			}
 		}
 
-		if _, err := db.ExecContext(ctx,
+		if _, err := conn.ExecContext(ctx,
 			`UPDATE vault_secrets SET ciphertext = ?, nonce = ?, notes_ciphertext = ?, notes_nonce = ? WHERE id = ?`,
 			newCiphertext, newNonce, newNotesCiphertext, newNotesNonce, r.id,
 		); err != nil {
@@ -124,5 +167,10 @@ func MigrateProfileVaultKeys(ctx context.Context, db *sql.DB, profileID string) 
 		}
 		migrated++
 	}
+
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return 0, append(errs, fmt.Errorf("secrets.MigrateProfileVaultKeys: commit: %w", err))
+	}
+	committed = true
 	return migrated, errs
 }

@@ -278,12 +278,17 @@ func (a *App) ScanAgentRuntimes() string {
 // (frontend-compatible), plus agent:session carrying the resumable session
 // id. monoagentTools, when true, additionally wires the MonoagentTools
 // surface (--tools monoagent) — workflow/vault/people/actions/communications
-// access — composable with canvas mode. resumeSessionID, when non-empty,
-// continues that prior agent session (real conversational memory in the
-// runtime itself, not just replayed transcript) instead of starting a new
-// one — the frontend supplies whatever it last learned from an agent:session
-// event, and clears it to start a fresh conversation.
-func (a *App) StreamAgentChat(workflowID, message, agentRuntime, model, resumeSessionID string, canvas bool, monoagentTools bool) string {
+// access, read/write but NO run execution — composable with canvas mode.
+// allowRuns, when true AND monoagentTools is also true, upgrades the flag
+// to --tools monoagent,runs so run_workflow/run_action may execute; it
+// must only ever come from an explicit, persisted user setting (default
+// false) — never from anything a chat turn can influence, and it has no
+// effect on its own. resumeSessionID, when non-empty, continues that prior
+// agent session (real conversational memory in the runtime itself, not
+// just replayed transcript) instead of starting a new one — the frontend
+// supplies whatever it last learned from an agent:session event, and
+// clears it to start a fresh conversation.
+func (a *App) StreamAgentChat(workflowID, message, agentRuntime, model, resumeSessionID string, canvas bool, monoagentTools bool, allowRuns bool) string {
 	cliBin, err := findMonoAgentCLI()
 	if err != nil {
 		return aiError(err)
@@ -293,7 +298,11 @@ func (a *App) StreamAgentChat(workflowID, message, agentRuntime, model, resumeSe
 		args = append(args, "--canvas", workflowID)
 	}
 	if monoagentTools {
-		args = append(args, "--tools", "monoagent")
+		toolsFlag := "monoagent"
+		if allowRuns {
+			toolsFlag = "monoagent,runs"
+		}
+		args = append(args, "--tools", toolsFlag)
 	}
 	if resumeSessionID != "" {
 		args = append(args, "--resume", resumeSessionID)

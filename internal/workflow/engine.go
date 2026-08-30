@@ -509,18 +509,28 @@ func (e *WorkflowEngine) handleTrigger(workflowID string, nodeID string, items [
 	// node's Type field.
 	triggerType := "unknown"
 	wf, err := e.store.GetWorkflow(ctx, workflowID)
-	if err == nil && wf != nil {
-		if !wf.IsActive {
-			e.logger.Warn().
-				Str("workflow_id", workflowID).
-				Msg("engine: handleTrigger: workflow is not active, ignoring trigger")
-			return
-		}
-		for _, n := range wf.Nodes {
-			if n.ID == nodeID {
-				triggerType = n.Type
-				break
-			}
+	if err != nil {
+		e.logger.Error().Err(err).
+			Str("workflow_id", workflowID).
+			Msg("engine: handleTrigger: failed to load workflow, skipping trigger")
+		return
+	}
+	if wf == nil {
+		e.logger.Error().
+			Str("workflow_id", workflowID).
+			Msg("engine: handleTrigger: workflow not found, skipping trigger")
+		return
+	}
+	if !wf.IsActive {
+		e.logger.Warn().
+			Str("workflow_id", workflowID).
+			Msg("engine: handleTrigger: workflow is not active, ignoring trigger")
+		return
+	}
+	for _, n := range wf.Nodes {
+		if n.ID == nodeID {
+			triggerType = n.Type
+			break
 		}
 	}
 
@@ -765,7 +775,8 @@ func (e *WorkflowEngine) SaveWorkflow(ctx context.Context, w *Workflow) error {
 // many profiles' workflows at once — engineProfileID alone would be wrong
 // for anything but whichever profile the engine happened to be constructed
 // with. Falls back to engineProfileID only for a legacy workflow row with no
-// ProfileID of its own (or wf == nil, e.g. handleTrigger's best-effort load).
+// ProfileID of its own (handleTrigger skips the run entirely when the
+// workflow can't be loaded, so wf is never nil here).
 func executionProfileID(wf *Workflow, engineProfileID string) string {
 	if wf != nil && wf.ProfileID != "" {
 		return wf.ProfileID

@@ -34,8 +34,9 @@ func newSecretCmd(cfg *globalConfig) *cobra.Command {
 			"Keychain, Linux Secret Service, Windows Credential Manager). On hosts with\n" +
 			"no usable keyring (e.g. headless CI), secret commands fail closed unless\n" +
 			"MONOAGENT_ALLOW_FILE_KEYRING=1 is set, which opts in to a weaker file-based\n" +
-			"keyring: the key encryption key is stored as 32 random bytes in\n" +
-			"~/.monoagent/vault/.file-keyring (file mode 0600, vault dir 0700). Every use\n" +
+			"keyring: the key encryption key is stored as 32 random bytes in a\n" +
+			"per-profile file ~/.monoagent/vault/.file-keyring-<profileID> under the\n" +
+			"vault dir (file mode 0600, vault dir 0700). Every use\n" +
 			"prints a warning to stderr; only enable this where the file is protected by\n" +
 			"full-disk encryption and restrictive file permissions.",
 	}

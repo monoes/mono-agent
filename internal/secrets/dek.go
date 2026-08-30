@@ -58,6 +58,16 @@ var fetchDEK = fetchOrCreateDEK
 // forever with a stale transient error (e.g. a momentarily locked keychain
 // or a SQLITE_BUSY on vault_keys).
 func getOrCreateDEK(ctx context.Context, db *sql.DB, profileID string) ([]byte, error) {
+	// Single normalization point for profile IDs at the DEK boundary: an
+	// empty profile ID (a caller that resolved no profile) maps onto the
+	// "default" profile. Without this, "" silently created its own "kek-"
+	// keychain entry and an empty-profile vault_keys row that no later query
+	// scoping to "default" would ever find. Everything downstream — kekAccount,
+	// the file-keyring fallback paths, vault_keys rows, the memo key — sees
+	// the normalized value, so callers keep working unchanged.
+	if profileID == "" {
+		profileID = "default"
+	}
 	key := dekKey{db: db, profileID: profileID}
 	dekEntriesMu.Lock()
 	entry, ok := dekEntries[key]
@@ -221,12 +231,31 @@ func createDEK(ctx context.Context, execer dbExecer, kek []byte, profileID strin
 
 // fetchLegacyDEK returns the single pre-per-profile DEK every profile used
 // to share, unwrapped under the legacy KEK and read from vault_keys_legacy
-// (id=1, preserved as-is by migration 023). Read-only, no memoization — used
+// (id=1, preserved as-is by migration 027's reconcile). Read-only, used
 // only by the vault-key migration to decrypt existing secrets before
 // re-encrypting them under a fresh per-profile key. Returns found=false if
 // this database was never migrated from the pre-per-profile scheme (a fresh
 // install, or one that already completed migration and has no legacy row).
+//
+// A successful result is memoized per database for the process lifetime:
+// the legacy DEK is immutable, and the per-profile migration loops (CLI
+// initDB, MCP bootstrap, wails startup) plus DecryptBlobLegacy would
+// otherwise re-read the OS keychain once per profile/row — on macOS each
+// keyring read forks a /usr/bin/security subprocess. Failures are not
+// cached, mirroring the retry-after-failure behavior above.
+var (
+	legacyDEKMu    sync.Mutex
+	legacyDEKCache = map[*sql.DB][]byte{}
+)
+
 func fetchLegacyDEK(ctx context.Context, db *sql.DB) (dek []byte, found bool, err error) {
+	legacyDEKMu.Lock()
+	cached, ok := legacyDEKCache[db]
+	legacyDEKMu.Unlock()
+	if ok {
+		return cached, true, nil
+	}
+
 	kek, kekFound, err := fetchLegacyKEK()
 	if err != nil {
 		return nil, false, fmt.Errorf("secrets: fetchLegacyDEK: %w", err)
@@ -247,5 +276,9 @@ func fetchLegacyDEK(ctx context.Context, db *sql.DB) (dek []byte, found bool, er
 	if err != nil {
 		return nil, false, fmt.Errorf("secrets: fetchLegacyDEK: unwrapping: %w", err)
 	}
+
+	legacyDEKMu.Lock()
+	legacyDEKCache[db] = dek
+	legacyDEKMu.Unlock()
 	return dek, true, nil
 }

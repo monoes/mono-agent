@@ -157,7 +157,7 @@ export default function App() {
     vault: <ImageVault />,
     secretsVault: <Vault />,
     ai: <Agents onOpenChat={openGlobalChat} />,
-    orgs: <Orgs />,
+    orgs: <Orgs isActive={activePage === 'orgs'} />,
     logs:      <Logs logs={logs} onClear={() => { api.clearLogs(); setLogs([]) }} />,
     settings:  <SettingsPage onNavigate={setActivePage} />,
   }

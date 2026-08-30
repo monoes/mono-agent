@@ -1,6 +1,9 @@
 import OrgsPanel from '../components/OrgsPanel.jsx'
 
-export default function Orgs() {
+// isActive tells the panel whether the Orgs page is the app's active tab —
+// App.jsx keeps pages mounted (display:none) after first visit, so the
+// panel needs it to stop its SSE stream while another page is showing.
+export default function Orgs({ isActive = true }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
       <div className="page-header">
@@ -10,7 +13,7 @@ export default function Orgs() {
         </div>
       </div>
       <div className="page-body" style={{ flex: 1, overflow: 'hidden', display: 'flex' }}>
-        <OrgsPanel />
+        <OrgsPanel pageActive={isActive} />
       </div>
     </div>
   )
