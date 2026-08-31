@@ -72,7 +72,7 @@ Choosing n8n here is a correct decision, not a failure.
 We maintain a detailed feature-by-feature map of n8n — 5,780 lines covering
 nodes, triggers, expressions, credentials, and behavior — as a reference
 map of n8n's feature surface used during porting; it is not a live status
-tracker: **[FEATURE_n8n.md](../FEATURE_n8n.md)**. For what Mono Agent
+tracker: **[FEATURE_n8n.md](planning/FEATURE_n8n.md)**. For what Mono Agent
 covers today, see this document and the
 [CHANGELOG](../CHANGELOG.md).
 

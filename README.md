@@ -17,7 +17,9 @@
 
 ## What is Mono Agent?
 
-**Mono Agent** is a production-grade, local-first automation platform for humans **and** AI agents:
+**Mono Agent** is a local-first automation platform for humans **and** AI agents:
+
+> **Project status:** pre-1.0, single maintainer. Core workflow engine and node set are exercised by CI (`go test ./...`), but expect breaking changes between minor versions until 1.0.
 
 - 🔁 **DAG workflow engine** — 90 built-in node types (150 with the optional social build): services (GitHub, Google Sheets / Gmail / Drive, Stripe, Salesforce, HubSpot, Jira, Linear, Notion, Airtable), databases, HTTP, data transforms, and comms (Gmail, Outlook, Slack, Telegram, Discord, and more)
 - 📦 **Single static Go binary** — zero CGO, SQLite embedded, no Docker, no Node.js runtime, no telemetry. All data stays on your machine (crash reports default to local files — see [SECURITY.md](SECURITY.md))
@@ -401,6 +403,11 @@ The binary is `monoagentcli`. Most commands accept `--json` for machine-readable
 <details>
 <summary><strong>Workflow</strong></summary>
 
+> ⚠️ **`workflow import` runs a JSON file as a program, not as data.** Nodes like `core.code`
+> (arbitrary JS), `system.execute_command` (shell), `http.ssh`, and the `db.*` nodes execute with
+> your OS user's privileges. Treat a workflow file from anyone else the way you'd treat an
+> unreviewed shell script — read it (or `workflow validate`/`get --json` it) before importing.
+
 ```bash
 monoagentcli workflow list                          # list workflows (--json)
 monoagentcli workflow get <id>                      # print a workflow as JSON
@@ -591,6 +598,32 @@ MONOAGENT_WEBHOOK_ADDR=0.0.0.0:9321 docker compose up -d --build
 
 Browser-based webhook callers additionally need `MONOAGENT_WEBHOOK_ALLOWED_ORIGINS` (a comma-separated CORS allowlist; unset by default — no CORS headers are sent). See [docker-compose.yml](docker-compose.yml) and the env-var table in [AGENTS.md](AGENTS.md).
 
+### Uninstall & data
+
+All state lives under `~/.monoagent/` (workflows, the SQLite DB, per-profile
+credential vaults, browser sessions, and crash reports) and, on macOS/Linux,
+in your OS keychain (Keychain Access / Secret Service) for any secrets stored
+there instead of the vault. To remove Mono Agent completely:
+
+```bash
+rm /usr/local/bin/monoagentcli        # or wherever you installed it
+rm -rf ~/.monoagent                   # workflows, vault, sessions, crash reports
+```
+
+Then remove the Chrome extension from `chrome://extensions`, and delete the
+`monoagent-vault` entry from Keychain Access / Secret Service / Windows
+Credential Manager manually — that's where the vault's OS-keychain-backed
+encryption key lives, and the CLI never deletes it on uninstall since there's
+no install hook to run it from.
+
+**Personal data:** everything Mono Agent stores (contacts, message history,
+exported followers, connection credentials) stays in `~/.monoagent/` on your
+machine — nothing is sent to us, and there's no telemetry to opt out of.
+If you use the `people` / social nodes to import or export data about other
+people, you're the one responsible for having a lawful basis to hold it
+(GDPR, CCPA, or your local equivalent) — deleting the profile above purges
+it entirely, but nothing is deleted automatically or on a schedule.
+
 ---
 
 ## Architecture
@@ -648,7 +681,7 @@ mono-agent/
 | [AGENTS.md](AGENTS.md) | Canonical entrypoint for AI agents: `ref`, `--json`, MCP, exit codes |
 | [docs/USAGE_POLICY.md](docs/USAGE_POLICY.md) | Scope of use, platform ToS, rate caps, anti-spam commitments |
 | [docs/COMPARISON.md](docs/COMPARISON.md) | Honest comparison vs n8n, Activepieces, Windmill, Node-RED |
-| [FEATURE_n8n.md](FEATURE_n8n.md) | detailed n8n feature map used as our porting reference |
+| [docs/planning/FEATURE_n8n.md](docs/planning/FEATURE_n8n.md) | detailed n8n feature map used as our porting reference |
 | [examples/](examples/) | Ready-to-run workflow JSONs with webhook trigger examples |
 | [install.sh](install.sh) | One-line installer (macOS / Linux) |
 | [SECURITY.md](SECURITY.md) | Reporting, supported versions, telemetry & crash-reporting statement |

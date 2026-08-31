@@ -193,7 +193,11 @@ func Register(ctx context.Context, db *sql.DB, src, source, workflowID, executio
 // legacyVaultDir is the single flat directory every profile's files used to
 // share before per-profile folders existed. Kept only for MigrateVaultFiles.
 func legacyVaultDir() string {
-	return filepath.Join(os.Getenv("HOME"), ".monoagent", "vault")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = os.Getenv("HOME")
+	}
+	return filepath.Join(home, ".monoagent", "vault")
 }
 
 // MigrateVaultFiles moves one profile's files out of the old shared flat

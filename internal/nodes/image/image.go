@@ -33,7 +33,11 @@ func resolveImageField(json map[string]interface{}, field string) string {
 
 func expandHome(p string) string {
 	if strings.HasPrefix(p, "~/") {
-		return filepath.Join(os.Getenv("HOME"), p[2:])
+		home, err := os.UserHomeDir()
+		if err != nil {
+			home = os.Getenv("HOME")
+		}
+		return filepath.Join(home, p[2:])
 	}
 	return p
 }

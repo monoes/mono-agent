@@ -18,6 +18,14 @@ import (
 	botpkg "github.com/monoes/mono-agent/internal/bot"
 )
 
+// homeDir returns the current user's home directory, falling back to "" if
+// it can't be resolved. Unlike the raw HOME env var, os.UserHomeDir also
+// checks USERPROFILE on Windows.
+func homeDir() string {
+	home, _ := os.UserHomeDir()
+	return home
+}
+
 // GeminiBot implements botpkg.BotAdapter for Google Gemini.
 type GeminiBot struct {
 	// downloadedImages holds the content hashes of images this bot has already
@@ -814,11 +822,11 @@ func (b *GeminiBot) methodDownloadImages(ctx context.Context, args ...interface{
 		}
 	}
 
-	downloadDir := filepath.Join(os.Getenv("HOME"), ".monoagent", "downloads")
+	downloadDir := filepath.Join(homeDir(), ".monoagent", "downloads")
 	if len(args) >= 3 {
 		if dir, ok := args[2].(string); ok && dir != "" {
 			if strings.HasPrefix(dir, "~/") {
-				dir = filepath.Join(os.Getenv("HOME"), dir[2:])
+				dir = filepath.Join(homeDir(), dir[2:])
 			}
 			downloadDir = dir
 		}
@@ -939,7 +947,7 @@ func (b *GeminiBot) methodUploadImage(_ context.Context, args ...interface{}) (i
 		return map[string]interface{}{"success": true, "skipped": true, "reason": "empty image path"}, nil
 	}
 	if strings.HasPrefix(imagePath, "~/") {
-		imagePath = filepath.Join(os.Getenv("HOME"), imagePath[2:])
+		imagePath = filepath.Join(homeDir(), imagePath[2:])
 	}
 	if _, err := os.Stat(imagePath); err != nil {
 		return nil, fmt.Errorf("upload_image: image file not found: %s", imagePath)
@@ -1089,11 +1097,11 @@ func (b *GeminiBot) methodExtractAndDownloadImages(ctx context.Context, args ...
 		return nil, err
 	}
 
-	downloadDir := filepath.Join(os.Getenv("HOME"), ".monoagent", "downloads")
+	downloadDir := filepath.Join(homeDir(), ".monoagent", "downloads")
 	if len(args) >= 2 {
 		if dir, ok := args[1].(string); ok && dir != "" {
 			if strings.HasPrefix(dir, "~/") {
-				dir = filepath.Join(os.Getenv("HOME"), dir[2:])
+				dir = filepath.Join(homeDir(), dir[2:])
 			}
 			downloadDir = dir
 		}

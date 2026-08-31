@@ -1895,7 +1895,11 @@ func runWorkflowMigrate(cfg *globalConfig) func(cmd *cobra.Command, args []strin
 
 		sqliteStore := workflow.NewSQLiteWorkflowStore(db.DB)
 
-		wfDir := filepath.Join(os.Getenv("HOME"), ".monoagent", "workflows")
+		home, err := os.UserHomeDir()
+		if err != nil {
+			home = os.Getenv("HOME")
+		}
+		wfDir := filepath.Join(home, ".monoagent", "workflows")
 		fileStore, err := workflow.NewWorkflowFileStore(wfDir)
 		if err != nil {
 			return fmt.Errorf("open file store: %w", err)

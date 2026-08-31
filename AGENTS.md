@@ -125,10 +125,18 @@ runtime, with named sessions and an optional tool surface:
 
 ```bash
 monoagentcli chat                          # interactive chat, no tools
-monoagentcli chat --history-id <session>   # persist/resume a named session
+monoagentcli chat --history-id <session>   # persist this turn under a named session bucket
+monoagentcli chat --resume <session-id>    # resume a prior runtime session (provider-issued id)
 monoagentcli chat --tools monoagent        # + workflows, vault, people, actions, comms tools
 monoagentcli chat --tools monoagent,runs   # + run/execution tools (second explicit gate)
 ```
+
+Each `chat` invocation runs one turn and exits — `--history-id` only tags
+where the transcript is persisted (for later lookup/GUI display, e.g. by
+`--canvas`'s id when unset); it does not reload prior messages into the
+next turn. To actually continue a conversation across invocations, pass
+`--resume <session-id>` with the id the runtime printed in its `session`
+event.
 
 - Tools are **off by default** — plain `chat` answers without touching
   workflows, secrets, or data. `--tools` is an explicit opt-in, and
@@ -253,6 +261,11 @@ regardless of where the binary runs from.
 | `MONOAGENT_ALLOW_ENV_TEMPLATES` | Set to `1` to let `{{ $env.* }}` template expressions read OS environment variables (see `ref expressions`). Default: unset — `$env` references resolve to empty. |
 | `MONOAGENT_CRASH_REPORT` | Set to `1` to allow crash reports to be filed to GitHub (also requires the `monomind` CLI on `PATH`). Default: unset — crash reports stay in local files under `~/.monoagent/crashes/`. |
 | `MONOAGENT_EXTENSION_PORT` | Bind-port override for the browser-extension bridge server; the extension probes this port and falls back to 9323. Default: unset — 9323 only. |
+| `MONOAGENT_PROFILE` | Profile name the built-in MCP server operates against. Default: unset — the MCP server's default profile. |
+| `MONOAGENT_DEBUG` | Set to any non-empty value to enable verbose browser-adapter logging. Default: unset. |
+| `MONOAGENT_GOOGLE_DEBUG` | Set to `1` to log raw Google AI (Gemini) request/response bodies. Default: unset — off, since responses may contain user content. |
+| `MONOAGENTCLI_BIN` | Path override for the `monoagentcli` binary the desktop GUI (`wails-app/`) shells out to. Default: unset — resolved relative to the GUI binary. |
+| `CHROME_USER_DATA_DIR` | Overrides the Chrome profile directory used for browser automation. Default: unset — a dedicated Mono Agent profile under `~/.monoagent/`. |
 
 ## Resource limits
 
