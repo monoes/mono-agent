@@ -129,6 +129,60 @@ makes network requests:
 Everything else — workflow definitions, execution history, the secrets
 vault, CRM data, and crash reports — stays on your machine.
 
+## Release governance
+
+`release.yml` triggers on every push to `master`, and its `release` job
+(which publishes the GitHub Release) targets a `release` GitHub Environment.
+This is only an enforced approval gate once the following are configured in
+repo settings — until then it is a no-op:
+
+1. **Settings → Environments → New environment**, named `release`, with
+   **Required reviewers** set to at least one maintainer.
+2. **Settings → Branches → Branch protection rule** for `master`: require
+   pull request review before merging, require status checks to pass
+   (`test`, and the `mcp-pin-guard`/`vuln-scan` CI jobs), and disallow
+   force pushes and branch deletion.
+3. **Settings → Tags → New rule**: protect `v*` so a published release tag
+   cannot be silently moved or replaced.
+
+## Verifying a release
+
+Every release publishes `SHA256SUMS.txt` alongside the binaries, and the
+release workflow attaches a [SLSA build provenance
+attestation](https://github.com/actions/attest-build-provenance) to every
+file it produces (including the checksum file itself), signed via GitHub's
+OIDC-backed Sigstore integration — no maintainer-held key involved. Verify a
+downloaded artifact was actually built by this repo's release workflow from
+the commit it claims:
+
+```bash
+gh attestation verify monoagentcli-darwin-arm64 -R monoes/mono-agent
+```
+
+This proves the artifact's hash matches what GitHub Actions produced for a
+specific commit in this repository — it does **not** yet carry a personal
+code-signing identity (see below), so on macOS/Windows you will still see an
+unidentified-developer warning until that lands.
+
+### Code signing (in progress)
+
+The macOS CLI binary is currently signed ad-hoc (`codesign --sign -`), which
+satisfies Gatekeeper's local-execution requirement but carries no verifiable
+publisher identity, and Windows binaries are not yet Authenticode-signed.
+Real Developer ID signing + notarization, and Authenticode signing, are
+tracked as a follow-up (MA-07) pending the relevant certificates. Once
+available, the required repository secrets are:
+
+| Secret | Purpose |
+| --- | --- |
+| `APPLE_CERT_P12` | Base64-encoded Developer ID Application certificate (.p12) |
+| `APPLE_CERT_PASSWORD` | Password for the above .p12 |
+| `APPLE_TEAM_ID` | Apple Developer Team ID |
+| `APPLE_NOTARY_APPLE_ID` | Apple ID used for notarization |
+| `APPLE_NOTARY_PASSWORD` | App-specific password for that Apple ID |
+| `WINDOWS_CERT_PFX` | Base64-encoded Authenticode code-signing certificate (.pfx) |
+| `WINDOWS_CERT_PASSWORD` | Password for the above .pfx |
+
 ## Resource limits
 
 **Importing or running a workflow is equivalent to executing code** —

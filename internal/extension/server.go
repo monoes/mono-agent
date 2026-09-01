@@ -61,6 +61,14 @@ const (
 	pingInterval = (pongWait * 9) / 10
 )
 
+// maxMessageSize bounds every frame gorilla/websocket will accept on the
+// extension connection (auth frame and responses alike); gorilla applies no
+// limit by default, so an unbounded or malicious peer could otherwise send
+// an arbitrarily large message and force the server to buffer it entirely
+// in memory. 32MB comfortably covers the largest legitimate response
+// (full-page HTML/text dumps) with headroom.
+const maxMessageSize = 32 << 20
+
 // checkOrigin restricts the extension control channel to same-machine callers:
 // native clients that send no Origin, the browser extension itself
 // (chrome-extension:// / moz-extension://), and loopback origins. Arbitrary
@@ -224,10 +232,10 @@ func (s *Server) Start(ctx context.Context) error {
 	addr = boundAddr
 	s.server.Addr = addr
 
-	token, err := generateToken()
+	token, err := loadOrCreateToken()
 	if err != nil {
 		listener.Close()
-		return fmt.Errorf("generate extension relay token: %w", err)
+		return fmt.Errorf("load extension relay token: %w", err)
 	}
 	s.token = token
 
@@ -375,11 +383,41 @@ func (s *Server) Close() error {
 	return nil
 }
 
-// handleWS upgrades an incoming HTTP request to a WebSocket connection.
+// authTimeout bounds how long a newly-upgraded socket has to send its auth
+// frame before the server gives up and closes it.
+const authTimeout = 5 * time.Second
+
+// unauthorizedCloseCode is sent to a socket that fails the auth handshake,
+// so the extension (which knows this code) can distinguish "wrong/missing
+// token, needs pairing" from a generic disconnect.
+const unauthorizedCloseCode = 4401
+
+// authFrame is the first message an extension socket must send after
+// upgrade. Anything else — wrong type, wrong/missing token, or no message
+// within authTimeout — gets the connection closed without ever being
+// installed as s.conn, so an unauthenticated client can never replace an
+// already-authenticated one.
+type authFrame struct {
+	Type  string `json:"type"`
+	Token string `json:"token"`
+}
+
+// handleWS upgrades an incoming HTTP request to a WebSocket connection and
+// authenticates it before treating it as the extension connection. The
+// control channel otherwise has no identity check beyond same-machine
+// Origin (see checkOrigin) — any local process could open it and either
+// receive privileged automation commands meant for the real extension or
+// knock the real extension's connection out from under it.
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		s.logger.Error().Err(err).Msg("websocket upgrade failed")
+		return
+	}
+	conn.SetReadLimit(maxMessageSize)
+
+	if !s.authenticate(conn) {
+		_ = conn.Close()
 		return
 	}
 
@@ -389,7 +427,8 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 
-	// Replace any existing connection.
+	// Replace any existing connection. Only reached after authenticate
+	// succeeds, so an unauthenticated socket never gets here.
 	s.connMu.Lock()
 	old := s.conn
 	s.conn = conn
@@ -407,6 +446,33 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	go s.pingLoop(conn, done)
 	s.readLoop(conn)
 	close(done)
+}
+
+// authenticate reads exactly one frame from a freshly-upgraded connection
+// and requires it to be a well-formed authFrame carrying the current
+// extension token, compared in constant time. It never touches s.conn:
+// callers are responsible for installing the connection only on a true
+// result.
+func (s *Server) authenticate(conn *websocket.Conn) bool {
+	conn.SetReadDeadline(time.Now().Add(authTimeout))
+	_, msg, err := conn.ReadMessage()
+	if err != nil {
+		s.logger.Warn().Err(err).Msg("extension connection closed before authenticating")
+		return false
+	}
+
+	var auth authFrame
+	ok := json.Unmarshal(msg, &auth) == nil &&
+		auth.Type == "auth" &&
+		subtle.ConstantTimeCompare([]byte(auth.Token), []byte(s.token)) == 1
+	if !ok {
+		s.logger.Warn().Msg("rejected extension connection: bad or missing auth token")
+		_ = conn.WriteControl(websocket.CloseMessage,
+			websocket.FormatCloseMessage(unauthorizedCloseCode, "unauthorized"),
+			time.Now().Add(time.Second))
+		return false
+	}
+	return true
 }
 
 // pingLoop periodically pings the connection so a dead peer is detected via
@@ -499,17 +565,12 @@ func (s *Server) readLoop(conn *websocket.Conn) {
 
 		var resp Response
 		if err := json.Unmarshal(msg, &resp); err != nil {
-			s.logger.Error().Err(err).Str("raw", string(msg)).Msg("invalid response JSON")
+			// Never log the raw payload: extension responses (get_cookies,
+			// eval results, page text) can carry live session cookies or
+			// other page-derived secrets, and logs are frequently retained,
+			// uploaded in support bundles, or shipped to observability tools.
+			s.logger.Error().Err(err).Int("len", len(msg)).Msg("invalid response JSON")
 			continue
-		}
-
-		// Debug: log raw message for eval responses to diagnose data flow.
-		if resp.ID != "" {
-			rawStr := string(msg)
-			if len(rawStr) > 500 {
-				rawStr = rawStr[:500] + "..."
-			}
-			s.logger.Debug().Str("raw", rawStr).Msg("raw response")
 		}
 
 		s.logger.Debug().Str("id", resp.ID).Bool("success", resp.Success).Str("error", resp.Error).Msg("response received")

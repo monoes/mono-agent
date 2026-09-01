@@ -31,6 +31,7 @@
     .dot.connected { background: #22c55e; }
     .dot.disconnected { background: #ef4444; }
     .dot.connecting { background: #f59e0b; animation: pulse 1s infinite; }
+    .dot.unpaired { background: #ef4444; }
     @keyframes pulse {
       0%, 100% { opacity: 1; }
       50% { opacity: 0.4; }
@@ -96,6 +97,30 @@
       margin-top: 4px;
       display: none;
     }
+    .site-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      padding: 3px 0;
+      font-family: monospace;
+    }
+    .site-row span {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .site-row button {
+      margin: 0;
+      padding: 2px 6px;
+      background: #ef4444;
+      flex-shrink: 0;
+    }
+    .site-row button:hover { background: #dc2626; }
+    .empty-hint {
+      color: #999;
+      font-size: 11px;
+    }
   </style>
 </head>
 <body>
@@ -103,6 +128,20 @@
   <div class="status-row">
     <div id="dot" class="dot disconnected"></div>
     <span id="status-text" class="status-text">Checking...</span>
+  </div>
+  <div class="url-section">
+    <label for="pairing-token">Pairing token</label>
+    <input type="text" id="pairing-token" placeholder="paste output of: monoagentcli extension pair" />
+    <button id="pair-btn">Pair &amp; Reconnect</button>
+    <div id="pair-saved-msg" class="saved-msg">Saved and reconnecting...</div>
+  </div>
+  <div class="url-section">
+    <label for="site-origin">Authorize a site (e.g. https://example.com/*)</label>
+    <input type="text" id="site-origin" placeholder="https://example.com/*" />
+    <button id="grant-btn">Grant Access</button>
+    <div id="grant-error-msg" class="error-msg"></div>
+    <label style="margin-top: 10px;">Authorized sites</label>
+    <ul id="authorized-list" style="list-style: none; padding: 0; margin: 0; font-size: 12px;"></ul>
   </div>
   <div class="url-section">
     <label for="ws-url">WebSocket URL</label>

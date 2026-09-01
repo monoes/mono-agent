@@ -1,0 +1,12 @@
+# Security-sensitive paths require review from a maintainer familiar with
+# the trust model (see docs/security/threat-model.md and SECURITY.md).
+# GitHub only enforces this as a required check if branch protection on
+# `master` requires review from code owners — see SECURITY.md for the
+# settings this repo asks maintainers to enable.
+
+/internal/extension/    @nokhodian
+/internal/secrets/      @nokhodian
+/internal/chromecookies/ @nokhodian
+/chrome-extension/      @nokhodian
+/.github/workflows/     @nokhodian
+/.mcp.json              @nokhodian

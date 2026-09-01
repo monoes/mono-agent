@@ -5,6 +5,50 @@ on:
   pull_request:
 
 jobs:
+  # Guards MA-04: .mcp.json must pin an exact Monomind version. A floating
+  # `@latest`/caret/tilde reference means a future, unreviewed package
+  # publish executes locally the next time this repo's MCP server starts.
+  mcp-pin-guard:
+    name: Guard .mcp.json version pin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
+      - name: Reject floating Monomind version
+        run: |
+          if grep -qE 'monomind(cli)?@(latest|\^|~)' .mcp.json; then
+            echo "::error file=.mcp.json::Monomind must be pinned to an exact version (no @latest, ^, or ~)"
+            exit 1
+          fi
+          if ! grep -q '@monoes/monomindcli@' .mcp.json; then
+            echo "::error file=.mcp.json::.mcp.json must reference the canonical @monoes/monomindcli package"
+            exit 1
+          fi
+
+  # Scheduled + on-push dependency vulnerability scanning (MA-06/MA-11).
+  vuln-scan:
+    name: Vulnerability scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: wails-app/frontend/package-lock.json
+      - name: npm audit (frontend, production deps)
+        # --omit=dev: the frontend's only current high-severity finding is an
+        # esbuild/vite dev-server advisory (GHSA-67mh-4wv8-2f99) in build
+        # tooling that never ships, and fixing it needs a breaking vite v8
+        # bump — track it separately rather than gating CI on a dev-only
+        # dependency. Production dependencies are audited at full severity.
+        working-directory: wails-app/frontend
+        run: npm audit --omit=dev --audit-level=high
+
   # NOTE: no CGO_ENABLED=0 here. `go test -race` requires cgo ("go: -race
   # requires cgo" on Go 1.25), and ubuntu runners ship gcc — the default
   # CGO_ENABLED=1 works for modernc.org/sqlite and everything else we use.
@@ -12,9 +56,9 @@ jobs:
     name: Build & test (default)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
 
@@ -31,9 +75,9 @@ jobs:
     name: Build & test (social)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
 
@@ -55,9 +99,9 @@ jobs:
     name: Wails GUI module
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: wails-app/go.mod
 
@@ -67,7 +111,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libgtk-3-dev libwebkit2gtk-4.1-dev gcc pkg-config
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '20'
           cache: 'npm'
@@ -75,6 +119,9 @@ jobs:
 
       - name: Build frontend
         run: |
+          # npm ci --dry-run fails loudly on lockfile drift (see release.yml
+          # for why npm install, not npm ci, does the actual install).
+          npm ci --dry-run
           npm install
           npm run build
         working-directory: wails-app/frontend
