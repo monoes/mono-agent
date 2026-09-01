@@ -21,9 +21,9 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
 
@@ -38,7 +38,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libgtk-3-dev libwebkit2gtk-4.1-dev gcc pkg-config
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '20'
           cache: 'npm'
@@ -58,7 +58,12 @@ jobs:
         # won't fail loudly if package-lock.json drifts out of sync with
         # package.json the way npm ci would. Revert to npm ci once npm/cli#7622
         # ships in a released npm version.
-        run: npm install
+        run: |
+          # npm ci --dry-run fails loudly on lockfile drift (unlike npm
+          # install) without hitting the EBADPLATFORM optional-dependency
+          # bug above, since it never actually installs anything.
+          npm ci --dry-run
+          npm install
         working-directory: wails-app/frontend
 
       - name: Test and build frontend
@@ -84,7 +89,7 @@ jobs:
       tag:  ${{ steps.semver.outputs.tag }}
       prev: ${{ steps.semver.outputs.prev }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
         with:
           fetch-depth: 0
 
@@ -123,8 +128,8 @@ jobs:
     env:
       TAG: ${{ needs.version.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
 
@@ -135,7 +140,7 @@ jobs:
           GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$LD" -o dist/monoagentcli-linux-amd64    ./cmd/monoagentcli
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$LD" -o dist/monoagentcli-windows-amd64.exe ./cmd/monoagentcli
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: cli-binaries-linux-windows
           path: dist/
@@ -152,8 +157,8 @@ jobs:
     env:
       TAG: ${{ needs.version.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
 
@@ -166,7 +171,7 @@ jobs:
           codesign --force --sign - dist/monoagentcli-darwin-amd64
           codesign --force --sign - dist/monoagentcli-darwin-arm64
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: cli-binaries-macos
           path: dist/
@@ -178,13 +183,13 @@ jobs:
     env:
       TAG: ${{ needs.version.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: wails-app/go.mod
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '20'
           cache: 'npm'
@@ -207,7 +212,12 @@ jobs:
         # won't fail loudly if package-lock.json drifts out of sync with
         # package.json the way npm ci would. Revert to npm ci once npm/cli#7622
         # ships in a released npm version.
-        run: npm install
+        run: |
+          # npm ci --dry-run fails loudly on lockfile drift (unlike npm
+          # install) without hitting the EBADPLATFORM optional-dependency
+          # bug above, since it never actually installs anything.
+          npm ci --dry-run
+          npm install
         working-directory: wails-app/frontend
 
       - name: Build CLI (bundled, arm64)
@@ -228,7 +238,7 @@ jobs:
           mkdir -p dist
           (cd wails-app/build/bin && zip -r "../../../dist/MonoAgent-darwin-arm64.zip" "MonoAgent.app")
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: macos-arm64-app
           path: dist/MonoAgent-darwin-arm64.zip
@@ -243,13 +253,13 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: wails-app/go.mod
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '20'
           cache: 'npm'
@@ -272,7 +282,12 @@ jobs:
         # won't fail loudly if package-lock.json drifts out of sync with
         # package.json the way npm ci would. Revert to npm ci once npm/cli#7622
         # ships in a released npm version.
-        run: npm install
+        run: |
+          # npm ci --dry-run fails loudly on lockfile drift (unlike npm
+          # install) without hitting the EBADPLATFORM optional-dependency
+          # bug above, since it never actually installs anything.
+          npm ci --dry-run
+          npm install
         working-directory: wails-app/frontend
 
       - name: Build CLI (bundled, windows)
@@ -293,7 +308,7 @@ jobs:
           cp wails-app/build/bin/monoagent-ui.exe dist/MonoAgent-windows-amd64.exe
           cp wails-app/monoagentcli.exe dist/monoagentcli-windows-amd64-bundled.exe
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: windows-app
           path: dist/
@@ -305,13 +320,13 @@ jobs:
     env:
       TAG: ${{ needs.version.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: wails-app/go.mod
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '20'
           cache: 'npm'
@@ -341,7 +356,12 @@ jobs:
         # won't fail loudly if package-lock.json drifts out of sync with
         # package.json the way npm ci would. Revert to npm ci once npm/cli#7622
         # ships in a released npm version.
-        run: npm install
+        run: |
+          # npm ci --dry-run fails loudly on lockfile drift (unlike npm
+          # install) without hitting the EBADPLATFORM optional-dependency
+          # bug above, since it never actually installs anything.
+          npm ci --dry-run
+          npm install
         working-directory: wails-app/frontend
 
       - name: Build CLI (bundled, linux)
@@ -365,7 +385,7 @@ jobs:
           cp wails-app/monoagentcli-linux dist/monoagentcli-linux-amd64-bundled
           tar -czf dist/MonoAgent-linux-amd64.tar.gz -C dist MonoAgent-linux-amd64 monoagentcli-linux-amd64-bundled
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: linux-app
           path: |
@@ -376,14 +396,14 @@ jobs:
     needs: version
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
 
       - name: Zip chrome extension
         run: |
           mkdir -p dist
           zip -r dist/monoagent-chrome-extension.zip chrome-extension -x '*.DS_Store'
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: chrome-extension
           path: dist/monoagent-chrome-extension.zip
@@ -392,15 +412,34 @@ jobs:
   release:
     needs: [version, build-cli, build-cli-macos, build-macos-arm64, build-windows, build-linux, build-chrome-extension]
     runs-on: ubuntu-latest
+    # Gates publication on approval from whoever the `release` environment's
+    # required reviewers are set to in repo settings (MA-09): tests passing
+    # is a correctness gate, not an authorization control, for a workflow
+    # that can auto-publish on every push to master. This job blocks here
+    # until a reviewer approves — build/artifact jobs above are unaffected
+    # and still run on every push. If the `release` environment does not
+    # exist yet (or has no required reviewers configured), this has no
+    # effect and publication proceeds as before — see SECURITY.md for the
+    # exact repo settings to enable this.
+    environment: release
+    # id-token: write lets actions/attest-build-provenance mint a Sigstore
+    # signature over an OIDC token scoped to this repo/commit/workflow run;
+    # attestations: write publishes the resulting attestation to the repo
+    # (MA-13) so `gh attestation verify` can tie a downloaded artifact back
+    # to exactly this build, without needing a maintainer-held signing key.
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     env:
       TAG:  ${{ needs.version.outputs.tag }}
       PREV: ${{ needs.version.outputs.prev }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
         with:
           fetch-depth: 0
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: artifacts/
 
@@ -412,6 +451,15 @@ jobs:
           sha256sum * > SHA256SUMS.txt
           echo "--- Release files ---"
           ls -lh
+
+      # SLSA provenance attestation (MA-13): cryptographically ties every
+      # release-files/ hash — including SHA256SUMS.txt itself — to this
+      # exact repo, commit, and workflow run. Verify a downloaded artifact
+      # with: gh attestation verify <file> -R monoes/mono-agent
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: "release-files/*"
 
       - name: Generate release notes
         id: notes
@@ -486,7 +534,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.3.4
         with:
           tag_name: ${{ env.TAG }}
           body: ${{ steps.notes.outputs.NOTES }}

@@ -62,3 +62,41 @@ func loadToken() (string, error) {
 	}
 	return string(data), nil
 }
+
+// loadOrCreateToken returns the existing extension token if one is already
+// on disk, generating a fresh one only when none exists. The extension
+// WebSocket handshake (see handleWS) and the relay both authenticate against
+// this same token, and the user pairs the extension with it via
+// `monoagentcli extension pair` — reusing an existing token across restarts
+// means that pairing survives process restarts instead of forcing the user
+// to re-pair the extension every time monoagentcli starts.
+func loadOrCreateToken() (string, error) {
+	if tok, err := loadToken(); err == nil && tok != "" {
+		return tok, nil
+	}
+	return generateToken()
+}
+
+// ResetToken deletes the on-disk extension token, invalidating both the
+// relay and the paired extension's WebSocket handshake. The next server
+// start generates a fresh token and the user must re-pair the extension
+// with `monoagentcli extension pair`. This is the "security reset" escape
+// hatch: it revokes a compromised or unknown token immediately.
+func ResetToken() error {
+	path, err := tokenPath()
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove token: %w", err)
+	}
+	return nil
+}
+
+// CurrentToken returns the token the running (or next-started) server will
+// authenticate against, generating one if none exists yet. Used by
+// `monoagentcli extension pair` to print the value the user pastes into the
+// extension popup.
+func CurrentToken() (string, error) {
+	return loadOrCreateToken()
+}

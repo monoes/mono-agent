@@ -1,0 +1,46 @@
+version: 2
+
+updates:
+  # Root Go module (cmd/, internal/, data/).
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: daily
+    groups:
+      go-patch-minor:
+        update-types:
+          - "minor"
+          - "patch"
+    open-pull-requests-limit: 10
+
+  # Wails desktop GUI's separate Go module.
+  - package-ecosystem: gomod
+    directory: "/wails-app"
+    schedule:
+      interval: daily
+    groups:
+      go-patch-minor:
+        update-types:
+          - "minor"
+          - "patch"
+    open-pull-requests-limit: 10
+
+  # Wails frontend (npm).
+  - package-ecosystem: npm
+    directory: "/wails-app/frontend"
+    schedule:
+      interval: daily
+    groups:
+      npm-patch-minor:
+        update-types:
+          - "minor"
+          - "patch"
+    open-pull-requests-limit: 10
+
+  # GitHub Actions used in ci.yml / release.yml — keeps the commit-SHA pins
+  # (see MA-06) current via reviewable PRs instead of them silently aging.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
