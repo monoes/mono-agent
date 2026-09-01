@@ -291,8 +291,22 @@ func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResu
 		}
 	}()
 
+	// cmd.Wait must not run concurrently with the reader goroutine: per the
+	// os/exec docs, "Wait will close the pipe after seeing the command
+	// exit... it is thus incorrect to call Wait before all reads from the
+	// pipe have completed." Wait() closes stdout's read end as part of its
+	// cleanup once the child is reaped; if that races with the scanner's
+	// in-flight Read, the read is torn down mid-call instead of draining
+	// remaining buffered bytes and returning a clean EOF — silently
+	// dropping already-written lines (observed as res.Err/res.ExitCode
+	// staying zero-valued for a process that actually emitted them).
+	// Waiting for readerDone first serializes "drain stdout" before
+	// "reap+close", eliminating the race without risking a deadlock: the
+	// reader always terminates (natural EOF, scan error, or ctx.Done), so
+	// this can't block forever waiting to call Wait.
 	waitCh := make(chan error, 1)
 	go func() {
+		<-readerDone
 		waitCh <- cmd.Wait()
 	}()
 
