@@ -29,3 +29,54 @@ func TestResolvePathCountAndLength(t *testing.T) {
 		t.Errorf("emptyMedia.length = %v, want 0", got)
 	}
 }
+
+// TestResolveStepDefUploadJoinsArrayMedia is a regression test: schemas that
+// declare "media" as an array (e.g. facebook.json) previously broke the
+// "upload" step because ResolveStepDef stringified the resolved []string via
+// fmt.Sprintf("%v", ...), producing "[/a.png /b.png]" — not a valid path and
+// not splittable by stepUpload's comma-based parser. Array-valued media
+// should be joined with "," to match what stepUpload expects.
+func TestResolveStepDefUploadJoinsArrayMedia(t *testing.T) {
+	ctx := NewExecutionContext()
+	ctx.SetVariable("media", []string{"/a.png", "/b.png"})
+	vr := NewVariableResolver(ctx)
+
+	step := StepDef{ID: "upload_media", Type: "upload", Text: "{{media}}"}
+	resolved := vr.ResolveStepDef(step)
+
+	if resolved.Text != "/a.png,/b.png" {
+		t.Errorf("Text = %q, want %q", resolved.Text, "/a.png,/b.png")
+	}
+}
+
+// TestResolveStepDefUploadSingleStringMedia ensures the array-join special
+// case for "upload" steps doesn't regress the common case of a single-path
+// string value.
+func TestResolveStepDefUploadSingleStringMedia(t *testing.T) {
+	ctx := NewExecutionContext()
+	ctx.SetVariable("media", "/tmp/photo.jpg")
+	vr := NewVariableResolver(ctx)
+
+	step := StepDef{ID: "upload_media", Type: "upload", Text: "{{media}}"}
+	resolved := vr.ResolveStepDef(step)
+
+	if resolved.Text != "/tmp/photo.jpg" {
+		t.Errorf("Text = %q, want %q", resolved.Text, "/tmp/photo.jpg")
+	}
+}
+
+// TestResolveStepDefNonUploadStepStillStringifiesArrays confirms the
+// array-join special case is scoped to "upload" steps only — other step
+// types keep the pre-existing fmt.Sprintf("%v", ...) stringification.
+func TestResolveStepDefNonUploadStepStillStringifiesArrays(t *testing.T) {
+	ctx := NewExecutionContext()
+	ctx.SetVariable("tags", []string{"a", "b"})
+	vr := NewVariableResolver(ctx)
+
+	step := StepDef{ID: "log_tags", Type: "log", Text: "{{tags}}"}
+	resolved := vr.ResolveStepDef(step)
+
+	if resolved.Text != "[a b]" {
+		t.Errorf("Text = %q, want %q (unchanged fmt.Sprintf stringification for non-upload steps)", resolved.Text, "[a b]")
+	}
+}

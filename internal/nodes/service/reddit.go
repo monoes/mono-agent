@@ -186,9 +186,17 @@ func redditRequest(ctx context.Context, method, endpoint, accessToken, userAgent
 
 // redditPostForm builds an application/x-www-form-urlencoded POST request
 // (Reddit's write endpoints do not accept JSON bodies), sets the
-// Authorization and User-Agent headers, executes it, and returns a parsed
-// JSON object response.
+// Authorization and User-Agent headers, executes it, and returns the
+// response parsed via redditParseAPIResponse.
+//
+// api_type=json is forced on every call: Reddit's write endpoints only
+// return the structured {"json": {"errors": [...], "data": {...}}} envelope
+// (and thus only report logical failures like rate limits or validation
+// errors) when that field is present in the form. Without it, Reddit
+// returns HTTP 200 with an undocumented legacy body shape that has no
+// reliable error signal.
 func redditPostForm(ctx context.Context, endpoint, accessToken, userAgent string, form url.Values) (map[string]interface{}, error) {
+	form.Set("api_type", "json")
 	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, strings.NewReader(form.Encode()))
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
@@ -204,14 +212,35 @@ func redditPostForm(ctx context.Context, endpoint, accessToken, userAgent string
 	if err != nil {
 		return nil, err
 	}
+	return redditParseAPIResponse(respBytes)
+}
+
+// redditParseAPIResponse parses Reddit's api_type=json envelope, returning
+// the flattened "data" object, or an error built from the "errors" array if
+// Reddit reports any. Reddit returns HTTP 200 even on logical errors like
+// rate limits or validation failures, so the errors array must be checked
+// explicitly instead of relying on the HTTP status code alone.
+func redditParseAPIResponse(respBytes []byte) (map[string]interface{}, error) {
 	if len(respBytes) == 0 {
 		return map[string]interface{}{}, nil
 	}
-	var result map[string]interface{}
-	if err := json.Unmarshal(respBytes, &result); err != nil {
+	var envelope struct {
+		JSON struct {
+			Errors [][]string             `json:"errors"`
+			Data   map[string]interface{} `json:"data"`
+		} `json:"json"`
+	}
+	if err := json.Unmarshal(respBytes, &envelope); err != nil {
 		return nil, fmt.Errorf("parsing JSON response: %w (body: %s)", err, string(respBytes))
 	}
-	return result, nil
+	if len(envelope.JSON.Errors) > 0 {
+		parts := make([]string, 0, len(envelope.JSON.Errors))
+		for _, e := range envelope.JSON.Errors {
+			parts = append(parts, strings.Join(e, ": "))
+		}
+		return nil, fmt.Errorf("reddit API error: %s", strings.Join(parts, "; "))
+	}
+	return envelope.JSON.Data, nil
 }
 
 // redditDo executes req via httpClient and returns the raw response body for

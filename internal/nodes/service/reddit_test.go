@@ -368,6 +368,114 @@ func TestRedditNode_UpvoteRequiresThingID(t *testing.T) {
 	}
 }
 
+func TestRedditNode_SubmitPostSetsAPIType(t *testing.T) {
+	var gotForm map[string][]string
+	withRedditServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("ParseForm: %v", err)
+		}
+		gotForm = map[string][]string(r.PostForm)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"json": map[string]interface{}{"data": map[string]interface{}{"id": "abc123"}},
+		})
+	})
+
+	redditExecute(t, map[string]interface{}{
+		"operation":    "submit_post",
+		"access_token": "test-token",
+		"subreddit":    "golang",
+		"title":        "Hello World",
+		"text":         "This is the body",
+	})
+
+	if gotForm["api_type"] == nil || gotForm["api_type"][0] != "json" {
+		t.Errorf("api_type = %v, want [json] — Reddit only returns the structured errors envelope when this is set", gotForm["api_type"])
+	}
+}
+
+// TestRedditNode_SubmitPostRateLimitedReturnsError verifies that a
+// rate-limit/validation failure reported in the response body's "errors"
+// array causes Execute to return an error, even though Reddit responds with
+// HTTP 200 for this failure mode.
+func TestRedditNode_SubmitPostRateLimitedReturnsError(t *testing.T) {
+	withRedditServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"json": map[string]interface{}{
+				"errors": [][]string{
+					{"RATELIMITED", "you are doing that too much, try again in 9 minutes", "ratelimit"},
+				},
+				"data": map[string]interface{}{},
+			},
+		})
+	})
+
+	n := &RedditNode{}
+	_, err := n.Execute(context.Background(), workflow.NodeInput{}, map[string]interface{}{
+		"operation":    "submit_post",
+		"access_token": "test-token",
+		"subreddit":    "golang",
+		"title":        "Hello World",
+		"text":         "This is the body",
+	})
+	if err == nil {
+		t.Fatal("expected error for HTTP 200 response with a populated errors array")
+	}
+}
+
+func TestRedditNode_CommentRateLimitedReturnsError(t *testing.T) {
+	withRedditServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"json": map[string]interface{}{
+				"errors": [][]string{
+					{"RATELIMITED", "you are doing that too much, try again in 9 minutes", "ratelimit"},
+				},
+				"data": map[string]interface{}{},
+			},
+		})
+	})
+
+	n := &RedditNode{}
+	_, err := n.Execute(context.Background(), workflow.NodeInput{}, map[string]interface{}{
+		"operation":    "comment",
+		"access_token": "test-token",
+		"thing_id":     "t3_abc123",
+		"text":         "Nice post!",
+	})
+	if err == nil {
+		t.Fatal("expected error for HTTP 200 response with a populated errors array")
+	}
+}
+
+func TestRedditNode_UpvoteRateLimitedReturnsError(t *testing.T) {
+	withRedditServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"json": map[string]interface{}{
+				"errors": [][]string{
+					{"RATELIMITED", "you are doing that too much, try again in 9 minutes", "ratelimit"},
+				},
+				"data": map[string]interface{}{},
+			},
+		})
+	})
+
+	n := &RedditNode{}
+	_, err := n.Execute(context.Background(), workflow.NodeInput{}, map[string]interface{}{
+		"operation":    "upvote",
+		"access_token": "test-token",
+		"thing_id":     "t3_abc123",
+	})
+	if err == nil {
+		t.Fatal("expected error for HTTP 200 response with a populated errors array")
+	}
+}
+
 func TestRedditNode_ErrorResponsePropagates(t *testing.T) {
 	withRedditServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
