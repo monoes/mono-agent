@@ -24,6 +24,33 @@ jobs:
             exit 1
           fi
 
+  # Closes issue #23's CI gap: installs the exact Monomind version .mcp.json
+  # pins and runs the real client/server handshake (internal/monomind
+  # .Handshake), so a protocol/version mismatch between this repo and the
+  # pinned Monomind release fails CI instead of surfacing as a runtime
+  # error for users. See docs/plans/local-agent-monomind-delegation.md §11.
+  monomind-smoke:
+    name: Monomind integration smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Install pinned Monomind version
+        run: |
+          version=$(grep -oE '@monoes/monomindcli@[0-9][0-9.]*' .mcp.json | cut -d@ -f3)
+          if [ -z "$version" ]; then
+            echo "::error file=.mcp.json::could not extract a pinned @monoes/monomindcli version"
+            exit 1
+          fi
+          npm install -g "@monoes/monomindcli@${version}"
+      - name: Run handshake smoke test
+        run: MONOMIND_SMOKE=1 go test ./internal/monomind/... -run TestSmoke_RealMonomindHandshake -v
+
   # Scheduled + on-push dependency vulnerability scanning (MA-06/MA-11).
   vuln-scan:
     name: Vulnerability scan

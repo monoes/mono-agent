@@ -156,7 +156,34 @@ event.
 
 The `agent` and `org` commands (monomind-backed agent/organization
 management) also exist — see `monoagentcli agent --help` and
-`monoagentcli org --help`.
+`monoagentcli org --help`. These, plus AI chat/agent-ask, delegate to an
+external `monomind` binary — see "Monomind (external agent runtime)" below
+for the install prerequisite and version requirement.
+
+### Monomind (external agent runtime)
+
+`monoagentcli`'s AI/agent surfaces (`agent`, `org`, `chat`, `agent_ask`,
+`agent.ask` workflow node) are thin proxies over a separately-installed
+`monomind` binary (protocol handshake in `internal/monomind/`) — this repo
+does not vendor it. This is a deliberate architectural decision (see
+`docs/plans/local-agent-monomind-delegation.md`), not an oversight: it keeps
+runner-specific knowledge (which local AI CLIs are installed, how to drive
+each one) entirely out of the Go binary.
+
+- **Install**: `npm install -g @monoes/monomindcli` (requires Node.js).
+  `.mcp.json` pins the exact MCP-server version this repo was tested
+  against; the globally-installed CLI just needs to satisfy the version
+  floor below.
+- **Version floor**: `internal/monomind.MinMonomindVersion` (currently
+  `2.10.0`) — `Handshake()` rejects an older or protocol-incompatible
+  binary with a clear error rather than misbehaving silently.
+- **Graceful degradation**: if `monomind` is not found on `PATH` (or in the
+  bundled-install fallback locations under `~/.monoagent/`), every
+  monomind-backed command fails at invocation time with an actionable
+  install-hint error (`internal/monomind.ErrNotFound`) — not a panic, not a
+  silent no-op. Everything else in `monoagentcli` (the workflow engine,
+  node execution, the CLI/MCP surface) works with no `monomind` installed
+  at all.
 
 ## Human-in-the-loop from agents
 

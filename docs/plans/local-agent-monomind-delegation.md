@@ -314,3 +314,43 @@ native addons + launcher. mono-agent prefers system Node ≥20; falls back to bu
   `runningCmds`), `app_vault.go` (doctrine-compliant CLI proxy), `app_nodes.go` (RunNode
   stdin/stdout)
 - Protocol spec: `monomind:doc/agent-exec-protocol.md` (rev 2)
+
+## 11. Decision record: real integration vs. rip-out (closes issue #23)
+
+Issue #23 asked to explicitly record the choice this plan's D2/D3 already
+implied but never stated as a standalone decision: is monomind delegation a
+committed real integration, or should it be ripped out given it depends on
+an external binary this repo doesn't vendor, version-pin in CI, or
+graceful-degrade cleanly around?
+
+**Decision: Option A — real integration**, confirmed 2026-09-01. Rationale:
+
+- Phases 0 and 1 are already implemented and merged (see the Status line at
+  the top of this document) — `internal/monomind`, the `agent`/`chat`/`org`
+  CLI surface, Wails agent-chat bindings, and the frontend runtime mode all
+  exist and are exercised by `go test ./...`. Ripping this out now would
+  discard already-landed, tested work to return to a strictly worse state
+  (the old in-process `internal/ai` HTTP-provider stack this plan explicitly
+  replaces), not a neutral rollback.
+- The three gaps issue #23 actually cared about are addressed as of this
+  commit, not left open-ended:
+  - **Version floor**: `internal/monomind.MinMonomindVersion` already
+    exists and is enforced by `Handshake()` (was already true before this
+    issue; issue #23's "extend to a version floor" checkbox is satisfied).
+  - **Documented install prerequisite + graceful degradation**: added in
+    AGENTS.md ("Monomind (external agent runtime)" section) — install
+    command, version floor, and the explicit invocation-time error path
+    when the binary is absent (`internal/monomind.ErrNotFound`), matching
+    the pattern already used for the `-tags social` opt-in build.
+  - **CI exercising the integration**: `.github/workflows/ci.yml`'s
+    `monomind-smoke` job installs the pinned `@monoes/monomindcli` version
+    from `.mcp.json` and runs `monomind --version --json` through the same
+    handshake path `internal/monomind.Handshake` uses, so a protocol/version
+    mismatch between this repo and the pinned Monomind release fails CI
+    instead of surfacing as a runtime error for users.
+
+Rip-out (Option B) remains available as a future decision if monomind
+delegation turns out not to be worth its external-dependency cost in
+practice, but that is a product call for a later date, not something this
+issue-cleanup pass should decide unilaterally by deleting working,
+tested integration code.
