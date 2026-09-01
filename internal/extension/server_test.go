@@ -7,12 +7,35 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog"
 )
+
+// syncBuffer wraps bytes.Buffer with a mutex: the test goroutine reads it
+// via String() while the server's readLoop goroutine concurrently writes to
+// it through the zerolog logger, which a plain bytes.Buffer doesn't allow
+// (the race detector catches this as a real data race, not just a
+// theoretical one — it fires reliably under `go test -race`).
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.String()
+}
 
 func TestResolveListenAddr_EnvOverride(t *testing.T) {
 	t.Setenv(ExtensionPortEnv, "9500")
@@ -181,8 +204,8 @@ func TestReadLoop_NeverLogsRawPayload(t *testing.T) {
 
 	const sentinel = "sentinel-cookie-value-1a2b3c4d"
 
-	var logBuf bytes.Buffer
-	logger := zerolog.New(&logBuf).Level(zerolog.TraceLevel)
+	logBuf := &syncBuffer{}
+	logger := zerolog.New(logBuf).Level(zerolog.TraceLevel)
 
 	port := freePort(t)
 	t.Setenv(ExtensionPortEnv, strconv.Itoa(port))
