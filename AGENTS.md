@@ -228,11 +228,16 @@ Service, or Windows Credential Manager). On machines without one (headless
 CI, containers), setting `MONOAGENT_ALLOW_FILE_KEYRING=1` enables a
 file-based KEK fallback stored as per-profile files
 `~/.monoagent/vault/.file-keyring-<profileID>` (permissions 0600); the
-CLI prints a loud warning whenever it is used.
-This is weaker than a real keychain — any process running as the same
-user, or anything with read access to the volume, can read the file — so
-treat it as a CI/container escape hatch, not a default. Without the env
-var, `secret add` fails closed.
+CLI prints a loud warning whenever it is used. The file holds the KEK
+**wrapped** under an argon2id-derived key from an operator passphrase
+(read from stdin/prompt only — same anti-argv rule as secret values), not
+the raw key — see [SECURITY.md's "File-based keyring
+fallback"](SECURITY.md#file-based-keyring-fallback-weaker-posture) for the
+envelope format, the auto-migration of pre-hardening vaults, and the CI
+recipe for piping the passphrase via stdin. It is still weaker than a real
+keychain — any process running as the same user, or anything with read
+*and* the passphrase, can unlock it — so treat it as a CI/container escape
+hatch, not a default. Without the env var, `secret add` fails closed.
 
 ## Profiles
 
@@ -282,7 +287,8 @@ regardless of where the binary runs from.
 
 | Variable | Effect |
 |---|---|
-| `MONOAGENT_WEBHOOK_ADDR` | Bind address (`host:port`) for the webhook trigger server. Default `127.0.0.1:9321` (loopback only). Override it under Docker/VMs so published ports actually forward. |
+| `MONOAGENT_WEBHOOK_ADDR` | Bind address (`host:port`) for the webhook trigger server. Default `127.0.0.1:9321` (loopback only, plain HTTP). Override it under Docker/VMs so published ports actually forward — any non-loopback bind is always served over TLS (see [SECURITY.md](SECURITY.md#webhook-trigger-surface)), never plaintext. |
+| `MONOAGENT_WEBHOOK_TLS_CERT` / `MONOAGENT_WEBHOOK_TLS_KEY` | Explicit TLS certificate/key file paths for a non-loopback webhook bind. Both or neither — setting only one is a startup error. Default: unset — a non-loopback bind auto-generates and caches a self-signed certificate under `~/.monoagent/webhook-tls/` instead. |
 | `MONOAGENT_WEBHOOK_ALLOWED_ORIGINS` | Comma-separated CORS allowlist for the webhook server. Default: unset — no CORS headers are sent. |
 | `MONOAGENT_ALLOW_FILE_KEYRING` | Set to `1` to allow the file-based keyring fallback when no OS keyring exists (see [Secrets](#secrets)). Default: unset — `secret add` fails closed on machines without a keyring. |
 | `MONOAGENT_ALLOW_ENV_TEMPLATES` | Set to `1` to let `{{ $env.* }}` template expressions read OS environment variables (see `ref expressions`). Default: unset — `$env` references resolve to empty. |

@@ -80,6 +80,47 @@ curl -s http://127.0.0.1:9321/webhook/stripe \
 A `{"success":true}` response means the workflow was triggered; check the
 execution with `monoagentcli workflow executions <id>`.
 
+### Binding the webhook server remotely
+
+The default bind (`127.0.0.1:9321`, loopback-only) is same-user trust: no
+TLS, no extra ceremony, and it can't be reached from another machine.
+Override it with `MONOAGENT_WEBHOOK_ADDR` (e.g. `0.0.0.0:9321`) when the
+daemon runs somewhere callers need to reach over the network — a Docker
+container, a VM, a LAN box.
+
+**Any non-loopback bind is always served over TLS.** If you don't configure
+a certificate, the server auto-generates and caches a self-signed one under
+`~/.monoagent/webhook-tls/` (covers `localhost`/`127.0.0.1`/`::1` — a
+caller connecting by hostname or LAN IP must skip certificate verification,
+e.g. `curl -k`). There is no way to make a non-loopback bind serve plain
+HTTP — the server refuses rather than exposing webhook payloads (which can
+carry caller-attached auth headers/tokens) unencrypted on the network.
+
+For a real certificate instead of the self-signed one, set:
+
+```bash
+export MONOAGENT_WEBHOOK_TLS_CERT=/path/to/cert.pem
+export MONOAGENT_WEBHOOK_TLS_KEY=/path/to/key.pem
+```
+
+(Both or neither — setting only one is a startup error.)
+
+Either way, once bound remotely, requests need `https://` and, for the
+self-signed cert, `-k`/`--insecure` (or trust the generated cert
+explicitly) — otherwise the same request shapes as the "Firing the webhook
+examples" section above, just against `https://<host>:9321/...` instead of
+loopback.
+
+**Authentication is still the workflow's job, not the server's.** TLS
+protects the payload in transit; it does not authenticate the caller. Give
+every remotely-reachable webhook trigger node an auth header/token pair or
+an HMAC secret (see the `http-to-slack.json` / `stripe-events-to-sheets.json`
+examples above) — anyone who can reach the port and guesses the `<path>`
+segment can otherwise fire it. Pair this with
+`MONOAGENT_WEBHOOK_ALLOWED_ORIGINS` (a comma-separated origin allowlist) if
+browser-based callers need to reach it; without it the server emits no CORS
+headers at all, so cross-origin browser requests are blocked outright.
+
 ## Notes
 
 - **Credentials**: nodes with a `credential_id` field need a connection first —
