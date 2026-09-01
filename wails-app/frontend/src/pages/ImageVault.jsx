@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { Trash2, Plus, Search, Image as ImageIcon } from 'lucide-react'
 import * as WailsApp from '../wailsjs/go/main/App'
 import ImageDetailModal from '../components/ImageDetailModal'
+import RefreshButton from '../components/RefreshButton.jsx'
 
 // Lazy-loads a vault image's data URL on first render.
 function VaultThumb({ id }) {
@@ -54,6 +55,7 @@ export default function ImageVault() {
   const [dragging, setDragging] = useState(false)
   const [detail, setDetail] = useState(null)
   const [error, setError] = useState(null)
+  const [refreshing, setRefreshing] = useState(false)
   const pageRef = useRef(null)
 
   const load = useCallback(async () => {
@@ -70,6 +72,11 @@ export default function ImageVault() {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  const handleRefresh = async () => {
+    setRefreshing(true)
+    try { await load() } finally { setRefreshing(false) }
+  }
 
   const filtered = search
     ? images.filter(img =>
@@ -155,6 +162,7 @@ export default function ImageVault() {
             }}
           />
         </div>
+        <RefreshButton onClick={handleRefresh} loading={refreshing} />
         <button
           onClick={handlePickAndAdd}
           style={{

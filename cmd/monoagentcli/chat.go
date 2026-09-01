@@ -421,6 +421,13 @@ func monoagentSystemPrompt(canvasAvailable, allowRuns bool) string {
 			`string. Only build a workflow when the user actually asks for one; ` +
 			`for ordinary questions just answer directly.`
 	}
+	s += ` You can also design agent organizations: list_orgs/get_org read real ` +
+		`current designs, and create_org/add_org_role/update_org_role/` +
+		`set_role_reports_to/remove_org_role edit them. The role hierarchy must ` +
+		`stay a tree with exactly one root role (the one whose reports_to is ` +
+		`empty) — call validate_org if unsure. Design changes appear live in the ` +
+		`app's Orgs tab. Edits to an org that is currently running only take ` +
+		`effect after reload_org.`
 	return s
 }
 

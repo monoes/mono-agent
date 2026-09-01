@@ -1,11 +1,15 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
-  X, RefreshCw, Building2, CheckCircle2, XCircle, Circle,
-  MessageCircleQuestion, ShieldAlert, Coins, GitBranch, ScrollText, ListTree,
+  X, RefreshCw, Building2, CheckCircle2, XCircle, Circle, Network, Maximize2, Minimize2, Plus,
+  MessageCircleQuestion, ShieldAlert, Coins, GitBranch, ScrollText, ListTree, Play, Loader2,
 } from 'lucide-react'
-import { api, onOrgEvent, onOrgEventsClosed, notify } from '../services/api.js'
+import { api, onOrgEvent, onOrgEventsClosed, onOrgDesignUpdated, onOrgRunStatus, notify } from '../services/api.js'
+import OrgDesigner from './orgdesigner/OrgDesigner.jsx'
+import { KVBlock } from './KVBlock.jsx'
+import MonomindInitPrompt from './MonomindInitPrompt.jsx'
 
 const TABS = [
+  { id: 'design',    label: 'Design',    icon: Network },
   { id: 'overview',  label: 'Overview',  icon: Circle },
   { id: 'questions', label: 'Questions', icon: MessageCircleQuestion },
   { id: 'gates',     label: 'Gates',     icon: ShieldAlert },
@@ -36,22 +40,8 @@ function itemsOf(payload) {
 
 // ── Detail JSON dump — the org shapes are intentionally opaque JSON, so a
 // key/value table renders whatever monomind actually returned instead of
-// guessing field names and silently dropping ones we didn't anticipate. ──
-function KVBlock({ obj }) {
-  if (!obj || typeof obj !== 'object') return null
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      {Object.entries(obj).map(([k, v]) => (
-        <div key={k} style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, flexShrink: 0 }}>{k}</span>
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-secondary)', textAlign: 'right', wordBreak: 'break-word' }}>
-            {typeof v === 'object' ? JSON.stringify(v) : String(v)}
-          </span>
-        </div>
-      ))}
-    </div>
-  )
-}
+// guessing field names and silently dropping ones we didn't anticipate.
+// (KVBlock itself now lives in ./KVBlock.jsx — see that file for why.) ──
 
 function Card({ children }) {
   return (
@@ -77,11 +67,34 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
   const [tabLoading, setTabLoading] = useState(false)
   const [events, setEvents] = useState([])
   const [actionBusy, setActionBusy] = useState(null) // id of in-flight approve/deny/answer
+  const [designerFullscreen, setDesignerFullscreen] = useState(false) // Design tab: collapse the org rail + tab strip for canvas room
+  const [creatingOrg, setCreatingOrg] = useState(false)
+  const [newOrgName, setNewOrgName] = useState('')
+  const [newOrgGoal, setNewOrgGoal] = useState('')
+  const [createBusy, setCreateBusy] = useState(false)
+  const [createError, setCreateError] = useState('')
+  const [notInitialized, setNotInitialized] = useState(false)
+  const [runningOrgs, setRunningOrgs] = useState(() => new Set())
+  const [runPromptOpen, setRunPromptOpen] = useState(false)
+  const [runTaskText, setRunTaskText] = useState('')
 
   const loadOrgs = useCallback(async (silent = false) => {
     if (!silent) setLoadingOrgs(true)
     try {
-      const res = await api.listOrgs()
+      // Checked first: ListOrgDesigns silently succeeds with an empty list
+      // on a never-initialized profile (EnsureLayout creates an empty
+      // .monomind/ on every org call), so it can't distinguish "no orgs
+      // yet" from "monomind was never set up here" on its own.
+      const initialized = await api.isMonomindInitialized()
+      setNotInitialized(!initialized)
+      if (!initialized) { setOrgs([]); return }
+      // listOrgDesigns reads config files directly (wails-app/app_orgs_design.go)
+      // and so includes every org, including ones designed but never run —
+      // listOrgs (below) proxies `monoagentcli org list`'s RUNTIME view,
+      // which only knows about orgs that have actually been started at
+      // least once. The rail needs the former or a freshly-designed org is
+      // invisible until its first run.
+      const res = await api.listOrgDesigns()
       setOrgs(itemsOf(res))
     } finally {
       if (!silent) setLoadingOrgs(false)
@@ -101,6 +114,10 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
   // ── Tab data loading ──
   const loadTab = useCallback(async (orgName, tabId) => {
     if (!orgName) return
+    // The Design tab owns its own load/save lifecycle (OrgDesigner.jsx
+    // calls api.getOrgDesign itself, live-patched via onOrgDesignUpdated) —
+    // it doesn't use this generic JSON-dump-per-tab path at all.
+    if (tabId === 'design') return
     setTabLoading(true)
     try {
       let payload = null
@@ -147,13 +164,103 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
     }
   }, [selected, effectiveOpen])
 
-  const selectOrg = (name) => {
+  // ── Run status tracking — independent of `selected` so the rail's
+  // running-state indicator (if ever added) and this panel's Run button
+  // both stay correct even if the user switches orgs mid-run. ──
+  useEffect(() => {
+    return onOrgRunStatus((payload) => {
+      if (!payload?.orgName) return
+      setRunningOrgs(prev => {
+        const next = new Set(prev)
+        if (payload.status === 'running') next.add(payload.orgName)
+        else next.delete(payload.orgName)
+        return next
+      })
+      if (payload.status === 'stopped') notify('org run', `${payload.orgName} finished`)
+      else if (payload.status === 'error') notify('org run', `${payload.orgName} exited with an error`)
+    })
+  }, [])
+
+  const handleRunOrg = useCallback(async () => {
+    if (!selected) return
+    const task = runTaskText.trim()
+    setRunPromptOpen(false)
+    setRunTaskText('')
+    setRunningOrgs(prev => new Set(prev).add(selected)) // optimistic — org:runStatus confirms shortly after
+    const res = await api.runOrg(selected, task)
+    if (res?.error) {
+      notify('org run', res.error)
+      setRunningOrgs(prev => {
+        const next = new Set(prev)
+        next.delete(selected)
+        return next
+      })
+    }
+  }, [selected, runTaskText])
+
+  const selectOrg = useCallback((name, { tab: tabOverride } = {}) => {
     setSelected(name)
-    setTab('overview')
+    setTab(tabOverride || 'overview')
     setData({})
-  }
+    setRunPromptOpen(false)
+    setRunTaskText('')
+  }, [])
+
+  // New orgs created externally (e.g. by the chat, which shells out to a
+  // separate monomind subprocess) never trigger this component's own state
+  // updates — they only show up via the filesystem-watcher-driven
+  // org:designUpdated event. Auto-select any org this component doesn't
+  // already know about into the Design tab, so its role cards animate in
+  // live as the chat creates them (see OrgDesigner.jsx's applyLivePatch).
+  // Scoped to genuinely-new orgs only — an edit to an org already in the
+  // rail shouldn't yank the user's view away from what they're doing.
+  const orgsRef = useRef(orgs)
+  useEffect(() => { orgsRef.current = orgs }, [orgs])
+  useEffect(() => {
+    const off = onOrgDesignUpdated((payload) => {
+      if (!payload?.orgName) return
+      if (orgsRef.current.some(o => o.name === payload.orgName)) return
+      loadOrgs(true).then(() => selectOrg(payload.orgName, { tab: 'design' }))
+    })
+    return off
+  }, [loadOrgs, selectOrg])
 
   const refreshTab = () => loadTab(selected, tab)
+
+  // Refresh button: reload the org rail AND, if an org/tab is currently
+  // open, re-fetch that tab's data too — "refresh" should mean the whole
+  // visible page, not just the rail.
+  const [refreshingAll, setRefreshingAll] = useState(false)
+  const refreshAll = async () => {
+    setRefreshingAll(true)
+    try {
+      await loadOrgs()
+      if (selected) await loadTab(selected, tab)
+    } finally {
+      setRefreshingAll(false)
+    }
+  }
+
+  const handleCreateOrg = async () => {
+    const name = newOrgName.trim()
+    if (!name) { setCreateError('name required'); return }
+    setCreateBusy(true)
+    setCreateError('')
+    try {
+      const res = await api.createOrgDesign({ name, goal: newOrgGoal.trim() })
+      if (!res || res.error) {
+        setCreateError(res?.error || 'failed to create org')
+        return
+      }
+      setCreatingOrg(false)
+      setNewOrgName('')
+      setNewOrgGoal('')
+      await loadOrgs(true)
+      selectOrg(name, { tab: 'design' })
+    } finally {
+      setCreateBusy(false)
+    }
+  }
 
   // ── Actions ──
   const doAction = async (id, fn, successMsg) => {
@@ -182,8 +289,8 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
         <div style={{ padding: '10px 12px', borderBottom: '1px solid rgba(0,180,216,0.1)', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
           <Building2 size={13} style={{ color: 'var(--text-muted)' }} />
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700, color: '#e2e8f0', flex: 1, letterSpacing: 1 }}>ORGS</span>
-          <button onClick={() => loadOrgs()} title="Refresh" style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 2, display: 'flex' }}>
-            <RefreshCw size={12} />
+          <button onClick={refreshAll} disabled={refreshingAll} title="Refresh" style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 2, display: 'flex' }}>
+            <RefreshCw size={12} style={{ animation: refreshingAll ? 'spin 0.7s linear infinite' : 'none' }} />
           </button>
           {onClose && (
             <button onClick={onClose} title="Close panel" style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 2, display: 'flex' }}>
@@ -194,8 +301,51 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
       )}
 
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        {/* Org list */}
-        <div style={{ width: embedded ? 130 : 220, flexShrink: 0, borderRight: '1px solid var(--border)', overflowY: 'auto', padding: 8 }}>
+        {/* Org list — collapsed while the Design canvas is in fullscreen, or
+            while the profile isn't set up (the CTA below is the only thing
+            shown then — one prompt, not a rail full of "no orgs" plus a
+            second one in the detail pane). */}
+        {!notInitialized && !(designerFullscreen && tab === 'design') && (
+        <div style={{ width: embedded ? 130 : 220, flexShrink: 0, borderRight: '1px solid var(--border)', overflowY: 'auto', padding: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {!creatingOrg ? (
+            <button
+              onClick={() => setCreatingOrg(true)}
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
+                fontFamily: 'var(--font-mono)', fontSize: 10.5, padding: '6px 8px', borderRadius: 'var(--radius)',
+                background: 'var(--elevated)', border: '1px solid var(--border-active)', color: 'var(--text)', cursor: 'pointer',
+              }}
+            >
+              <Plus size={12} /> New org
+            </button>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: 8, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
+              <input
+                autoFocus
+                placeholder="org-name"
+                value={newOrgName}
+                onChange={e => setNewOrgName(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleCreateOrg(); if (e.key === 'Escape') setCreatingOrg(false) }}
+                style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, padding: '5px 6px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text)' }}
+              />
+              <input
+                placeholder="goal (optional)"
+                value={newOrgGoal}
+                onChange={e => setNewOrgGoal(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleCreateOrg(); if (e.key === 'Escape') setCreatingOrg(false) }}
+                style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, padding: '5px 6px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text)' }}
+              />
+              {createError && <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9.5, color: '#f87171' }}>{createError}</div>}
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button onClick={handleCreateOrg} disabled={createBusy} style={{ flex: 1, fontFamily: 'var(--font-mono)', fontSize: 10, padding: '5px 6px', borderRadius: 4, background: 'var(--elevated)', border: '1px solid var(--border-active)', color: 'var(--text)', cursor: createBusy ? 'default' : 'pointer' }}>
+                  {createBusy ? 'Creating…' : 'Create'}
+                </button>
+                <button onClick={() => { setCreatingOrg(false); setCreateError('') }} style={{ fontFamily: 'var(--font-mono)', fontSize: 10, padding: '5px 8px', borderRadius: 4, background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer' }}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
           {loadingOrgs ? (
             <div style={{ display: 'flex', justifyContent: 'center', padding: 16 }}><div className="spinner" /></div>
           ) : orgs.length === 0 ? (
@@ -220,10 +370,13 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
             </div>
           )}
         </div>
+        )}
 
         {/* Detail */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          {!selected ? (
+          {notInitialized ? (
+            <MonomindInitPrompt onInitialized={() => loadOrgs()} />
+          ) : !selected ? (
             <div className="empty-state" style={{ flex: 1 }}>
               <div className="empty-state-icon"><Building2 size={30} /></div>
               <div className="empty-state-title">Select an org</div>
@@ -231,6 +384,7 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
             </div>
           ) : (
             <>
+              {!(designerFullscreen && tab === 'design') && (
               <div style={{ display: 'flex', gap: 4, padding: '8px', borderBottom: '1px solid var(--border)', overflowX: 'auto', flexShrink: 0 }}>
                 {TABS.map(t => {
                   const Icon = t.icon
@@ -251,8 +405,77 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
                     </button>
                   )
                 })}
+                {runningOrgs.has(selected) ? (
+                  <button
+                    disabled
+                    style={{
+                      marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4,
+                      fontFamily: 'var(--font-mono)', fontSize: 10, padding: '5px 8px', borderRadius: 'var(--radius)',
+                      background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'default',
+                    }}
+                  >
+                    <Loader2 size={11} style={{ animation: 'spin 0.9s linear infinite' }} /> Running…
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setRunPromptOpen(v => !v)}
+                    title="Run this org"
+                    style={{
+                      marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4,
+                      fontFamily: 'var(--font-mono)', fontSize: 10, padding: '5px 8px', borderRadius: 'var(--radius)',
+                      background: runPromptOpen ? 'var(--elevated)' : 'transparent',
+                      border: runPromptOpen ? '1px solid var(--border-active)' : '1px solid var(--border)',
+                      color: 'var(--text)', cursor: 'pointer',
+                    }}
+                  >
+                    <Play size={11} /> Run
+                  </button>
+                )}
+                {tab === 'design' && (
+                  <button
+                    onClick={() => setDesignerFullscreen(v => !v)}
+                    title={designerFullscreen ? 'Exit fullscreen' : 'Fullscreen canvas'}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 4,
+                      fontFamily: 'var(--font-mono)', fontSize: 10, padding: '5px 8px', borderRadius: 'var(--radius)',
+                      background: 'transparent', border: '1px solid transparent', color: 'var(--text-muted)', cursor: 'pointer',
+                    }}
+                  >
+                    <Maximize2 size={11} />
+                  </button>
+                )}
               </div>
+              )}
 
+              {runPromptOpen && (
+                <div style={{ display: 'flex', gap: 6, padding: '6px 8px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+                  <input
+                    autoFocus
+                    type="text"
+                    value={runTaskText}
+                    onChange={e => setRunTaskText(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') handleRunOrg(); if (e.key === 'Escape') { setRunPromptOpen(false); setRunTaskText('') } }}
+                    placeholder="First message for the org (optional) — Enter to run"
+                    style={{ flex: 1, fontFamily: 'var(--font-mono)', fontSize: 11, background: 'var(--elevated)', border: '1px solid var(--border-bright)', borderRadius: 'var(--radius)', color: 'var(--text)', padding: '6px 8px', outline: 'none' }}
+                  />
+                  <button className="btn btn-primary btn-sm" onClick={handleRunOrg}>
+                    <Play size={11} /> Run
+                  </button>
+                </div>
+              )}
+
+              {tab === 'design' ? (
+                // Full-bleed canvas — owns its own scrolling/panning, so it
+                // deliberately sits outside the generic padded/overflow-auto
+                // container every other tab uses.
+                <div style={{ flex: 1, minHeight: 0, display: 'flex', position: 'relative' }}>
+                  <OrgDesigner
+                    orgName={selected}
+                    fullscreen={designerFullscreen}
+                    onToggleFullscreen={() => setDesignerFullscreen(v => !v)}
+                  />
+                </div>
+              ) : (
               <div style={{ flex: 1, overflowY: 'auto', padding: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {tabLoading && <div style={{ display: 'flex', justifyContent: 'center', padding: 8 }}><div className="spinner" /></div>}
 
@@ -356,6 +579,7 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
                     ))
                 )}
               </div>
+              )}
             </>
           )}
         </div>

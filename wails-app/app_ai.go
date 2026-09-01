@@ -342,16 +342,53 @@ func (a *App) StreamAgentChat(workflowID, message, agentRuntime, model, resumeSe
 	a.runningCmds["chat:"+workflowID] = cmd
 	a.runningMu.Unlock()
 
+	// isCurrentChatCmd reports whether cmd is still the registered subprocess
+	// for workflowID. When a new chat call supersedes an in-flight one (line
+	// ~354, killChatProcessGroup), the OLD call's reader goroutine below is
+	// never told — it just keeps scanning the killed process's stdout until
+	// it EOFs, then unconditionally used to emit its own final
+	// {done:true}. Since the frontend keys purely on workflowID (no
+	// per-call/generation id), that stale done event could race a NEWER
+	// turn's still-in-progress stream and finalize it early — the exact
+	// "spinner stops but content is still partial" symptom this guards
+	// against. Checked before every emission, not just the final one: a
+	// killed process's already-buffered-but-unread stdout bytes could still
+	// be scanned after the kill, and none of that stale output should ever
+	// reach the frontend once superseded either.
+	isCurrentChatCmd := func() bool {
+		a.runningMu.Lock()
+		defer a.runningMu.Unlock()
+		return a.runningCmds["chat:"+workflowID] == cmd
+	}
+
 	go func() {
 		defer func() {
 			a.runningMu.Lock()
-			delete(a.runningCmds, "chat:"+workflowID)
+			// Only clear the registry entry if we're still the current cmd —
+			// a superseded goroutine must not delete a newer cmd's entry.
+			if a.runningCmds["chat:"+workflowID] == cmd {
+				delete(a.runningCmds, "chat:"+workflowID)
+			}
 			a.runningMu.Unlock()
 		}()
 		sc := bufio.NewScanner(stdout)
 		sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 		sawDone := false
+		superseded := false
 		for sc.Scan() {
+			if !superseded && !isCurrentChatCmd() {
+				superseded = true
+			}
+			if superseded {
+				// Keep draining to real EOF — cmd.Wait() below still must
+				// run (it's the only thing that reaps this process;
+				// killChatProcessGroup only signals it, per proc_unix.go/
+				// proc_windows.go), and Wait() expects the pipe to have
+				// been fully read first. Just stop emitting: none of this
+				// killed/replaced process's remaining output belongs to
+				// the frontend anymore.
+				continue
+			}
 			line := sc.Bytes()
 			if len(line) == 0 || line[0] != '{' {
 				continue
@@ -409,7 +446,13 @@ func (a *App) StreamAgentChat(workflowID, message, agentRuntime, model, resumeSe
 				sawDone = true
 			}
 		}
-		waitErr := cmd.Wait()
+		if !superseded && !isCurrentChatCmd() {
+			superseded = true // supersession landed right as stdout hit real EOF
+		}
+		waitErr := cmd.Wait() // always reap, superseded or not
+		if superseded {
+			return // don't emit a stale done for a killed/replaced process
+		}
 		elapsed := time.Since(startedAt)
 		runtime.EventsEmit(a.ctx, "ai:chunk", map[string]interface{}{
 			"workflowID": workflowID,

@@ -6,6 +6,10 @@ export function AddActionTarget(arg1, arg2, arg3) {
   return window['go']['main']['App']['AddActionTarget'](arg1, arg2, arg3);
 }
 
+export function AddOrgRole(arg1, arg2) {
+  return window['go']['main']['App']['AddOrgRole'](arg1, arg2);
+}
+
 export function AddPersonMessage(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
   return window['go']['main']['App']['AddPersonMessage'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
 }
@@ -50,6 +54,10 @@ export function CheckForUpdate() {
   return window['go']['main']['App']['CheckForUpdate']();
 }
 
+export function ChooseInstructionsFile() {
+  return window['go']['main']['App']['ChooseInstructionsFile']();
+}
+
 export function ChooseProfileFolder() {
   return window['go']['main']['App']['ChooseProfileFolder']();
 }
@@ -78,6 +86,10 @@ export function CreateAction(arg1) {
   return window['go']['main']['App']['CreateAction'](arg1);
 }
 
+export function CreateOrgDesign(arg1) {
+  return window['go']['main']['App']['CreateOrgDesign'](arg1);
+}
+
 export function CreateProfile(arg1, arg2) {
   return window['go']['main']['App']['CreateProfile'](arg1, arg2);
 }
@@ -96,6 +108,10 @@ export function DeleteAIProvider(arg1) {
 
 export function DeleteAction(arg1) {
   return window['go']['main']['App']['DeleteAction'](arg1);
+}
+
+export function DeleteOrgDesign(arg1) {
+  return window['go']['main']['App']['DeleteOrgDesign'](arg1);
 }
 
 export function DeleteSecret(arg1) {
@@ -128,6 +144,10 @@ export function ExportData() {
 
 export function ExportVaultAll() {
   return window['go']['main']['App']['ExportVaultAll']();
+}
+
+export function ExportWorkflow(arg1) {
+  return window['go']['main']['App']['ExportWorkflow'](arg1);
 }
 
 export function GateApproveOrgAction(arg1, arg2, arg3) {
@@ -224,6 +244,10 @@ export function GetOrgCosts(arg1) {
 
 export function GetOrgDecisions(arg1) {
   return window['go']['main']['App']['GetOrgDecisions'](arg1);
+}
+
+export function GetOrgDesign(arg1) {
+  return window['go']['main']['App']['GetOrgDesign'](arg1);
 }
 
 export function GetOrgFlow(arg1) {
@@ -358,8 +382,20 @@ export function ImportVaultAll(arg1, arg2) {
   return window['go']['main']['App']['ImportVaultAll'](arg1, arg2);
 }
 
+export function ImportWorkflow(arg1) {
+  return window['go']['main']['App']['ImportWorkflow'](arg1);
+}
+
+export function InitializeMonomindProfile() {
+  return window['go']['main']['App']['InitializeMonomindProfile']();
+}
+
 export function IsDBConnected() {
   return window['go']['main']['App']['IsDBConnected']();
+}
+
+export function IsMonomindInitialized() {
+  return window['go']['main']['App']['IsMonomindInitialized']();
 }
 
 export function ListAIProviders() {
@@ -376,6 +412,10 @@ export function ListConnections(arg1) {
 
 export function ListCredentialsForNode(arg1) {
   return window['go']['main']['App']['ListCredentialsForNode'](arg1);
+}
+
+export function ListOrgDesigns() {
+  return window['go']['main']['App']['ListOrgDesigns']();
 }
 
 export function ListOrgs() {
@@ -422,6 +462,10 @@ export function OpenVaultImportFilePicker() {
   return window['go']['main']['App']['OpenVaultImportFilePicker']();
 }
 
+export function PromoteRoleToRoot(arg1, arg2) {
+  return window['go']['main']['App']['PromoteRoleToRoot'](arg1, arg2);
+}
+
 export function RejectDraftPersonMessage(arg1) {
   return window['go']['main']['App']['RejectDraftPersonMessage'](arg1);
 }
@@ -430,8 +474,16 @@ export function RejectHIL(arg1) {
   return window['go']['main']['App']['RejectHIL'](arg1);
 }
 
+export function ReloadOrg(arg1) {
+  return window['go']['main']['App']['ReloadOrg'](arg1);
+}
+
 export function RemoveConnection(arg1) {
   return window['go']['main']['App']['RemoveConnection'](arg1);
+}
+
+export function RemoveOrgRole(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RemoveOrgRole'](arg1, arg2, arg3);
 }
 
 export function RemovePersonTag(arg1, arg2) {
@@ -446,6 +498,10 @@ export function RunNode(arg1) {
   return window['go']['main']['App']['RunNode'](arg1);
 }
 
+export function RunOrg(arg1, arg2) {
+  return window['go']['main']['App']['RunOrg'](arg1, arg2);
+}
+
 export function RunWorkflow(arg1) {
   return window['go']['main']['App']['RunWorkflow'](arg1);
 }
@@ -456,6 +512,14 @@ export function SaveAIProvider(arg1) {
 
 export function SaveConnectionDirect(arg1, arg2, arg3) {
   return window['go']['main']['App']['SaveConnectionDirect'](arg1, arg2, arg3);
+}
+
+export function SaveOrgDesign(arg1, arg2) {
+  return window['go']['main']['App']['SaveOrgDesign'](arg1, arg2);
+}
+
+export function SaveOrgLayout(arg1, arg2) {
+  return window['go']['main']['App']['SaveOrgLayout'](arg1, arg2);
 }
 
 export function SaveVaultImageToFile(arg1, arg2) {
@@ -486,6 +550,10 @@ export function SetOAuthCredentials(arg1, arg2, arg3) {
   return window['go']['main']['App']['SetOAuthCredentials'](arg1, arg2, arg3);
 }
 
+export function SetOrgRoleReportsTo(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SetOrgRoleReportsTo'](arg1, arg2, arg3);
+}
+
 export function SetWorkflowActive(arg1, arg2) {
   return window['go']['main']['App']['SetWorkflowActive'](arg1, arg2);
 }
@@ -496,6 +564,10 @@ export function StopAIChat(arg1) {
 
 export function StopAgentChat(arg1) {
   return window['go']['main']['App']['StopAgentChat'](arg1);
+}
+
+export function StopNodeRun(arg1) {
+  return window['go']['main']['App']['StopNodeRun'](arg1);
 }
 
 export function StopOrgEvents(arg1) {
@@ -538,10 +610,18 @@ export function UpdateActionState(arg1, arg2) {
   return window['go']['main']['App']['UpdateActionState'](arg1, arg2);
 }
 
+export function UpdateOrgRole(arg1, arg2, arg3) {
+  return window['go']['main']['App']['UpdateOrgRole'](arg1, arg2, arg3);
+}
+
 export function UpdateSecret(arg1, arg2, arg3, arg4, arg5, arg6) {
   return window['go']['main']['App']['UpdateSecret'](arg1, arg2, arg3, arg4, arg5, arg6);
 }
 
 export function UpdateVaultImageLabel(arg1, arg2) {
   return window['go']['main']['App']['UpdateVaultImageLabel'](arg1, arg2);
+}
+
+export function ValidateOrgDesign(arg1) {
+  return window['go']['main']['App']['ValidateOrgDesign'](arg1);
 }

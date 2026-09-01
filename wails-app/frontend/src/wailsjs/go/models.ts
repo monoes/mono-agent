@@ -113,26 +113,6 @@ export namespace main {
 	        this.method = source["method"];
 	    }
 	}
-	export class CredentialSummary {
-	    id: string;
-	    name: string;
-	    service_type: string;
-	    created_at: string;
-	    updated_at: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new CredentialSummary(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.name = source["name"];
-	        this.service_type = source["service_type"];
-	        this.created_at = source["created_at"];
-	        this.updated_at = source["updated_at"];
-	    }
-	}
 	export class SessionSummary {
 	    platform: string;
 	    username: string;
@@ -297,6 +277,7 @@ export namespace main {
 	    outputs: NodeRunOutput[];
 	    error?: string;
 	    duration_ms: number;
+	    run_id?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new NodeRunResult(source);
@@ -307,6 +288,7 @@ export namespace main {
 	        this.outputs = this.convertValues(source["outputs"], NodeRunOutput);
 	        this.error = source["error"];
 	        this.duration_ms = source["duration_ms"];
+	        this.run_id = source["run_id"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -1027,6 +1009,20 @@ export namespace main {
 	        this.finished_at = source["finished_at"];
 	        this.error = source["error"];
 	        this.created_at = source["created_at"];
+	    }
+	}
+	export class WorkflowImportResult {
+	    id: string;
+	    name: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new WorkflowImportResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
 	    }
 	}
 	

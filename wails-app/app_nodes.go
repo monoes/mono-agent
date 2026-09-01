@@ -183,6 +183,9 @@ func (a *App) GetWorkflowNodeTypes() map[string]interface{} {
 			mkNode("people.save", "Save to People", "people", "Upsert items into the People tab"),
 			mkNode("people.sync_outlook_message", "Sync Email to People", "people", "Upsert the sender as a person and save the message to their history"),
 		},
+		"org": []nodeDesc{
+			mkNode("org.run", "Run Org", "org", "Start a monomind agent organization and wait for its boss role to signal completion"),
+		},
 	}
 
 	// Reconcile the hand-written catalog against the live node registry (the
@@ -194,7 +197,7 @@ func (a *App) GetWorkflowNodeTypes() map[string]interface{} {
 		switch prefix {
 		case "core":
 			return "control"
-		case "data", "http", "system", "db", "comm", "service", "ai", "people", "image":
+		case "data", "http", "system", "db", "comm", "service", "ai", "people", "image", "org":
 			return prefix
 		default: // platform bots: instagram, linkedin, x, tiktok, gemini, hackernews, ...
 			return "browser"

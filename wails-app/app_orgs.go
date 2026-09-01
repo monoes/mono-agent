@@ -247,3 +247,74 @@ func (a *App) StopOrgEvents(orgName string) string {
 	killChatProcessGroup(cmd)
 	return `{"ok":true}`
 }
+
+// RunOrg starts an org run (`monoagentcli org run <name> --task <task>`) as
+// a detached, tracked subprocess — mirroring StreamOrgEvents rather than
+// runOrgCLI, since a real run can block for the org's entire lifetime
+// (minutes to hours) unless a live `org serve` daemon hands it off almost
+// immediately; either way the UI can't wait synchronously for this call to
+// return. Progress is observable via the existing Logs page (stdout/stderr
+// piped through chatLogWriter) and via the org's own live event tail
+// (StreamOrgEvents) if the caller is also subscribed to that. Emits
+// "org:runStatus" so any UI can track running/stopped/error without
+// polling. There is no companion StopOrg — not needed yet.
+func (a *App) RunOrg(orgName, task string) string {
+	if orgName == "" {
+		return aiError(fmt.Errorf("org name required"))
+	}
+	key := "orgrun:" + orgName
+	a.runningMu.Lock()
+	if _, ok := a.runningCmds[key]; ok {
+		a.runningMu.Unlock()
+		return aiError(fmt.Errorf("org %q is already running", orgName))
+	}
+	a.runningMu.Unlock()
+
+	cliBin, err := findMonoAgentCLI()
+	if err != nil {
+		return aiError(err)
+	}
+	runArgs := []string{"org"}
+	projectRoot := a.orgProjectRoot()
+	logSuffix := ""
+	if projectRoot != "" {
+		runArgs = append(runArgs, "--project", projectRoot)
+		logSuffix = fmt.Sprintf(" (project: %s)", projectRoot)
+	}
+	runArgs = append(runArgs, "run", orgName, "--yes")
+	if task != "" {
+		runArgs = append(runArgs, "--task", task)
+	}
+	a.emitLog("ORG", "INFO", fmt.Sprintf("$ %s %s%s", cliBin, strings.Join(runArgs, " "), logSuffix))
+	cmd := exec.Command(cliBin, runArgs...)
+	setChatProcessGroup(cmd)
+	cmd.Stdout = a.chatLogWriter()
+	cmd.Stderr = a.chatLogWriter()
+	if err := cmd.Start(); err != nil {
+		a.emitLog("ORG", "ERROR", fmt.Sprintf("org run failed to start: %v", err))
+		return aiError(fmt.Errorf("start org run: %w", err))
+	}
+
+	a.runningMu.Lock()
+	a.runningCmds[key] = cmd
+	a.runningMu.Unlock()
+
+	runtime.EventsEmit(a.ctx, "org:runStatus", map[string]interface{}{"orgName": orgName, "status": "running"})
+
+	go func() {
+		waitErr := cmd.Wait()
+		a.runningMu.Lock()
+		delete(a.runningCmds, key)
+		a.runningMu.Unlock()
+		status := "stopped"
+		if waitErr != nil {
+			status = "error"
+			a.emitLog("ORG", "ERROR", fmt.Sprintf("org run %s exited: %v", orgName, waitErr))
+		} else {
+			a.emitLog("ORG", "INFO", fmt.Sprintf("org run %s finished", orgName))
+		}
+		runtime.EventsEmit(a.ctx, "org:runStatus", map[string]interface{}{"orgName": orgName, "status": status})
+	}()
+
+	return `{"ok":true}`
+}

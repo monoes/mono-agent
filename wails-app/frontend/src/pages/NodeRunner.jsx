@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   Play, Square, RotateCcw, ZoomIn, ZoomOut, Trash2, Search,
-  ChevronDown, ChevronRight, X, Settings2, Copy,
+  ChevronDown, ChevronRight, X, Settings2, Copy, RefreshCw,
   AlertCircle, CheckCircle, Clock, Loader, Plus,
   Save, FolderOpen, ToggleLeft, ToggleRight, List,
   MessageSquare, Braces, LayoutDashboard, Building2,
@@ -49,6 +49,7 @@ const CAT_COLOR = {
   linkedin:       '#0a66c2',
   x:              '#8899aa',
   tiktok:         '#ff0050',
+  org:            '#6366f1',
 }
 const catColor = (cat) => CAT_COLOR[cat] || '#00b4d8'
 
@@ -1566,6 +1567,14 @@ export default function NodeRunner({ onNavigate, navData }) {
     if (wfId && nodes.length === 0) handleLoad(wfId)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── Refresh: force-reload the currently open workflow from the backend ────
+  const [refreshing, setRefreshing] = useState(false)
+  const handleRefresh = useCallback(async () => {
+    if (!wfId) return
+    setRefreshing(true)
+    try { await handleLoad(wfId) } finally { setRefreshing(false) }
+  }, [wfId, handleLoad])
+
   // ── Toggle active ─────────────────────────────────────────────────────────
   const handleToggleActive = useCallback(async () => {
     const next = !wfActive
@@ -1793,6 +1802,16 @@ export default function NodeRunner({ onNavigate, navData }) {
 
         {/* Load */}
         <button style={tbBtn} onClick={() => setShowWfModal(true)} title="Open saved workflow"><FolderOpen size={13} /></button>
+
+        {/* Refresh: reload the open workflow fresh from the backend, discarding unsaved canvas edits */}
+        <button
+          style={{ ...tbBtn, opacity: wfId ? 1 : 0.4 }}
+          onClick={handleRefresh}
+          disabled={!wfId || refreshing}
+          title={wfId ? 'Reload workflow from disk' : 'No workflow open'}
+        >
+          <RefreshCw size={13} style={{ animation: refreshing ? 'spin 0.7s linear infinite' : 'none' }} />
+        </button>
 
         {/* Save */}
         <button

@@ -23,6 +23,7 @@ import (
 	aichat "github.com/monoes/mono-agent/internal/ai/chat"
 	"github.com/monoes/mono-agent/internal/connections"
 	"github.com/monoes/mono-agent/internal/monomind"
+	"github.com/monoes/mono-agent/internal/orgdesign"
 	"github.com/monoes/mono-agent/internal/profiledir"
 	"github.com/monoes/mono-agent/internal/secrets"
 	"github.com/monoes/mono-agent/internal/storage"
@@ -51,6 +52,9 @@ type App struct {
 	chatCancels sync.Map // workflowID → *cancelHandle for in-flight AI chat streams
 
 	activeProfileIDPtr atomic.Pointer[string] // currently selected profile; access via get/setActiveProfileID (read/written across Wails goroutines)
+
+	orgWatchMu sync.Mutex
+	orgWatcher *orgdesign.Watcher // polls the active profile's .monomind/orgs/ dir; see restartOrgWatcher
 }
 
 // cancelHandle wraps a stream's cancel func in a pointer so it has a comparable
@@ -177,6 +181,8 @@ func (a *App) startup(ctx context.Context) {
 
 	a.migrateProfilesToPerProfileLayout(ctx, db)
 
+	a.restartOrgWatcher()
+
 	a.emitLog("SYSTEM", "INFO", "Mono Agent UI connected to "+a.dbPath)
 
 	go a.backgroundUpdateCheck()
@@ -254,6 +260,13 @@ func (a *App) migrateProfilesToPerProfileLayout(ctx context.Context, db *sql.DB)
 }
 
 func (a *App) shutdown(_ context.Context) {
+	a.orgWatchMu.Lock()
+	if a.orgWatcher != nil {
+		a.orgWatcher.Stop()
+		a.orgWatcher = nil
+	}
+	a.orgWatchMu.Unlock()
+
 	a.runningMu.Lock()
 	for _, cmd := range a.runningCmds {
 		if cmd.Process != nil {
@@ -264,6 +277,51 @@ func (a *App) shutdown(_ context.Context) {
 	if a.db != nil {
 		_ = a.db.Close()
 	}
+}
+
+// orgsDirForActiveProfile resolves the directory the org design watcher
+// should poll for the currently active profile. Mirrors orgProjectRoot's
+// (app_orgs.go) own fallback exactly: when the active profile has no
+// resolvable root, `monoagentcli org` falls back to its own default
+// project root (`~/.monoagent`, see cmd/monoagentcli/org.go's
+// defaultOrgProjectRoot) — the watcher must watch that same directory or it
+// silently watches nothing for a profile whose layout failed to initialize.
+func (a *App) orgsDirForActiveProfile() string {
+	root := a.orgProjectRoot()
+	if root == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		root = filepath.Join(home, ".monoagent")
+	}
+	return orgdesign.OrgsDir(root)
+}
+
+// restartOrgWatcher stops any existing org design watcher and starts a new
+// one scoped to the active profile's orgs directory — the mechanism by
+// which AI-driven and externally-made org edits (both happen in a separate
+// OS process from this app; see internal/ai/chat/monoagent_tools.go) reach
+// the live "org:designUpdated" event, since no direct runtime.EventsEmit
+// call is possible from outside this process.
+func (a *App) restartOrgWatcher() {
+	a.orgWatchMu.Lock()
+	defer a.orgWatchMu.Unlock()
+
+	if a.orgWatcher != nil {
+		a.orgWatcher.Stop()
+		a.orgWatcher = nil
+	}
+
+	dir := a.orgsDirForActiveProfile()
+	if dir == "" {
+		return
+	}
+	w := orgdesign.NewWatcher(dir, 0, func(c orgdesign.Change) {
+		a.emitOrgDesignUpdated(c.Name, "external", c.Deleted, c.Doc, len(c.Errors) == 0, c.Errors)
+	})
+	w.Start()
+	a.orgWatcher = w
 }
 
 // newUUID generates a random UUID v4 without external dependencies.
@@ -1102,6 +1160,9 @@ func (a *App) MoveProfileFolder(profileID, newRootDir string) error {
 	if _, err := a.db.Exec(`UPDATE profiles SET root_dir = ? WHERE id = ?`, newRootDir, profileID); err != nil {
 		return fmt.Errorf("updating profile folder: %w", err)
 	}
+	if profileID == a.getActiveProfileID() {
+		a.restartOrgWatcher()
+	}
 	a.emitLog("SYSTEM", "INFO", fmt.Sprintf("profile %s: moved to %s", profileID, newRootDir))
 	return nil
 }
@@ -1156,6 +1217,7 @@ func (a *App) SwitchProfile(id string) error {
 		return fmt.Errorf("persist active profile: %w", err)
 	}
 	a.setActiveProfileID(id)
+	a.restartOrgWatcher()
 	a.emitLog("SYSTEM", "INFO", "Switched to profile: "+id)
 	return nil
 }

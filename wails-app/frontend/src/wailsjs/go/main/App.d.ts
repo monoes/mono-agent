@@ -7,6 +7,8 @@ import {workflow} from '../models';
 
 export function AddActionTarget(arg1:string,arg2:string,arg3:string):Promise<void>;
 
+export function AddOrgRole(arg1:string,arg2:string):Promise<string>;
+
 export function AddPersonMessage(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string,arg7:string):Promise<void>;
 
 export function AddPersonStatus(arg1:string,arg2:string):Promise<storage.PersonStatusUpdate>;
@@ -29,6 +31,8 @@ export function CancelWorkflow(arg1:string):Promise<void>;
 
 export function CheckForUpdate():Promise<main.UpdateInfo>;
 
+export function ChooseInstructionsFile():Promise<string>;
+
 export function ChooseProfileFolder():Promise<string>;
 
 export function ClearAIChatHistory(arg1:string):Promise<string>;
@@ -43,6 +47,8 @@ export function ConnectPlatformOAuth(arg1:string):Promise<string>;
 
 export function CreateAction(arg1:main.CreateActionRequest):Promise<main.ActionInfo>;
 
+export function CreateOrgDesign(arg1:string):Promise<string>;
+
 export function CreateProfile(arg1:string,arg2:string):Promise<main.ProfileInfo>;
 
 export function CreateResource(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.ResourceItemResult>;
@@ -52,6 +58,8 @@ export function CreateWorkflowFromTemplate(arg1:string):Promise<main.WorkflowSum
 export function DeleteAIProvider(arg1:string):Promise<string>;
 
 export function DeleteAction(arg1:string):Promise<void>;
+
+export function DeleteOrgDesign(arg1:string):Promise<string>;
 
 export function DeleteSecret(arg1:string):Promise<void>;
 
@@ -68,6 +76,8 @@ export function ExecuteAction(arg1:string):Promise<void>;
 export function ExportData():Promise<main.ExportResult>;
 
 export function ExportVaultAll():Promise<main.VaultExportResult>;
+
+export function ExportWorkflow(arg1:string):Promise<string>;
 
 export function GateApproveOrgAction(arg1:string,arg2:string,arg3:string):Promise<string>;
 
@@ -116,6 +126,8 @@ export function GetOAuthCredentials(arg1:string):Promise<string>;
 export function GetOrgCosts(arg1:string):Promise<string>;
 
 export function GetOrgDecisions(arg1:string):Promise<string>;
+
+export function GetOrgDesign(arg1:string):Promise<string>;
 
 export function GetOrgFlow(arg1:string):Promise<string>;
 
@@ -183,7 +195,13 @@ export function GetWorkflowNodeTypes():Promise<Record<string, any>>;
 
 export function ImportVaultAll(arg1:string,arg2:string):Promise<main.VaultImportResult>;
 
+export function ImportWorkflow(arg1:string):Promise<main.WorkflowImportResult>;
+
+export function InitializeMonomindProfile():Promise<string>;
+
 export function IsDBConnected():Promise<boolean>;
+
+export function IsMonomindInitialized():Promise<boolean>;
 
 export function ListAIProviders():Promise<string>;
 
@@ -192,6 +210,8 @@ export function ListChatSessions(arg1:string):Promise<string>;
 export function ListConnections(arg1:string):Promise<Array<connections.SafeConnection>>;
 
 export function ListCredentialsForNode(arg1:string):Promise<Array<main.CredentialOption>>;
+
+export function ListOrgDesigns():Promise<string>;
 
 export function ListOrgs():Promise<string>;
 
@@ -215,11 +235,17 @@ export function OpenVaultFilePicker():Promise<string>;
 
 export function OpenVaultImportFilePicker():Promise<string>;
 
+export function PromoteRoleToRoot(arg1:string,arg2:string):Promise<string>;
+
 export function RejectDraftPersonMessage(arg1:string):Promise<void>;
 
 export function RejectHIL(arg1:string):Promise<void>;
 
+export function ReloadOrg(arg1:string):Promise<string>;
+
 export function RemoveConnection(arg1:string):Promise<string>;
+
+export function RemoveOrgRole(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function RemovePersonTag(arg1:string,arg2:string):Promise<void>;
 
@@ -227,11 +253,17 @@ export function RevealProfileFolder(arg1:string):Promise<void>;
 
 export function RunNode(arg1:main.NodeRunRequest):Promise<main.NodeRunResult>;
 
+export function RunOrg(arg1:string,arg2:string):Promise<string>;
+
 export function RunWorkflow(arg1:string):Promise<void>;
 
 export function SaveAIProvider(arg1:string):Promise<string>;
 
 export function SaveConnectionDirect(arg1:string,arg2:string,arg3:string):Promise<string>;
+
+export function SaveOrgDesign(arg1:string,arg2:string):Promise<string>;
+
+export function SaveOrgLayout(arg1:string,arg2:string):Promise<string>;
 
 export function SaveVaultImageToFile(arg1:string,arg2:string):Promise<string>;
 
@@ -247,11 +279,15 @@ export function SendDraftPersonMessage(arg1:string):Promise<storage.PersonMessag
 
 export function SetOAuthCredentials(arg1:string,arg2:string,arg3:string):Promise<string>;
 
+export function SetOrgRoleReportsTo(arg1:string,arg2:string,arg3:string):Promise<string>;
+
 export function SetWorkflowActive(arg1:string,arg2:boolean):Promise<void>;
 
 export function StopAIChat(arg1:string):Promise<string>;
 
 export function StopAgentChat(arg1:string):Promise<string>;
+
+export function StopNodeRun(arg1:string):Promise<void>;
 
 export function StopOrgEvents(arg1:string):Promise<string>;
 
@@ -273,6 +309,10 @@ export function UpdateActionParams(arg1:string,arg2:Record<string, any>):Promise
 
 export function UpdateActionState(arg1:string,arg2:string):Promise<void>;
 
+export function UpdateOrgRole(arg1:string,arg2:string,arg3:string):Promise<string>;
+
 export function UpdateSecret(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:Record<string, string>):Promise<void>;
 
 export function UpdateVaultImageLabel(arg1:string,arg2:string):Promise<void>;
+
+export function ValidateOrgDesign(arg1:string):Promise<string>;

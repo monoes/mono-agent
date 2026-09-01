@@ -67,9 +67,110 @@ func orgCommandError(args []string, err error) error {
 	return fmt.Errorf("monomind org %s: %w", strings.Join(args, " "), err)
 }
 
+// runOrgText runs `monomind org <args...>` whose output is human text, not
+// protocol JSON (validate/reload — neither takes --format json). Mirrors
+// runOrgJSON's arg convention: callers pass the subcommand args without the
+// "org" prefix, which is added internally. Returns the trimmed
+// stdout+stderr text and a non-nil error when the exit code is non-zero,
+// using orgCommandError's stderr-extraction pattern already established for
+// runOrgJSON.
+func runOrgText(ctx context.Context, projectRoot string, args ...string) (string, error) {
+	bin, _, err := Ensure(ctx)
+	if err != nil {
+		return "", err
+	}
+	full := append([]string{"org"}, args...)
+
+	cctx, cancel := context.WithTimeout(ctx, orgTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, bin, full...)
+	cmd.Dir = projectRoot
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", orgCommandError(args, err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// OrgValidate runs `monomind org validate <name>` and returns its output
+// text. A non-nil error means validation failed (or the subprocess itself
+// failed to run) — err's message is the actionable text from the CLI.
+func OrgValidate(ctx context.Context, projectRoot, name string) (string, error) {
+	return runOrgText(ctx, projectRoot, "validate", name)
+}
+
+// OrgReload signals a running org's daemon to pick up config changes
+// without a full restart (writes the CLI's own `reload` sentinel file).
+func OrgReload(ctx context.Context, projectRoot, name string) (string, error) {
+	return runOrgText(ctx, projectRoot, "reload", name)
+}
+
 // OrgList returns every org in the project (`org list`).
 func OrgList(ctx context.Context, projectRoot string) (json.RawMessage, error) {
 	return runOrgJSON(ctx, projectRoot, "list")
+}
+
+// OrgRun starts `monomind org run <name> --yes [--task ...] [--dry-run]`,
+// blocking until it returns. Deliberately does NOT go through runOrgJSON:
+// that helper caps every call at orgTimeout (60s), but a real run blocks
+// for as long as the org takes to finish (minutes to hours) unless a `org
+// serve` daemon is already live for the project, in which case it hands
+// off and returns almost immediately — either way, the caller's own ctx is
+// the only deadline that should apply here. Callers that need a bounded
+// wait should poll OrgStatus instead of waiting on this call to return.
+func OrgRun(ctx context.Context, projectRoot, name, task string, dryRun bool) (json.RawMessage, error) {
+	bin, _, err := Ensure(ctx)
+	if err != nil {
+		return nil, err
+	}
+	args := []string{"run", name, "--yes"}
+	if task != "" {
+		args = append(args, "--task", task)
+	}
+	if dryRun {
+		args = append(args, "--dry-run")
+	}
+	full := append(append([]string{"org"}, args...), "--format", "json")
+
+	cmd := exec.CommandContext(ctx, bin, full...)
+	cmd.Dir = projectRoot
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, orgCommandError(args, err)
+	}
+	trimmed := bytes.TrimSpace(out)
+	if len(trimmed) == 0 {
+		return nil, fmt.Errorf("monomind org run %s: empty output", name)
+	}
+	return json.RawMessage(trimmed), nil
+}
+
+// OrgRunStart starts `monomind org run <name> --yes [--task ...]` as a
+// detached background process and returns as soon as it's spawned, without
+// waiting for it to finish — for callers (the org.run workflow node,
+// RunOrg's Wails binding) that poll OrgStatus separately instead of
+// blocking on OrgRun's return. The process is reaped in a background
+// goroutine so it never becomes a zombie; its exit is otherwise
+// unobserved by this function — callers that need to know when it exits
+// should poll OrgStatus for closed_by, not rely on this call.
+func OrgRunStart(ctx context.Context, projectRoot, name, task string) error {
+	bin, _, err := Ensure(ctx)
+	if err != nil {
+		return err
+	}
+	args := []string{"org", "run", name, "--yes"}
+	if task != "" {
+		args = append(args, "--task", task)
+	}
+	cmd := exec.Command(bin, args...)
+	cmd.Dir = projectRoot
+	setProcessGroup(cmd)
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start monomind org run %s: %w", name, err)
+	}
+	go func() { _ = cmd.Wait() }()
+	return nil
 }
 
 // OrgStatus returns one org's status, or every org's status when name=="".
