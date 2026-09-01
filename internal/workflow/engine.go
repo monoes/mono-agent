@@ -219,9 +219,27 @@ func (e *WorkflowEngine) Start(ctx context.Context) error {
 		}
 	}
 
-	// 4. Re-register triggers for all active workflows.
-	if err := e.reregisterTriggers(e.ctx); err != nil {
-		e.logger.Warn().Err(err).Msg("engine: failed to re-register some triggers on startup")
+	// 4. Re-register triggers for all active workflows in this engine's
+	// profile — but only for a long-running daemon-style engine.
+	// AllowAllProfiles is already the documented signal for "this is the
+	// long-running daemon process that keeps every active workflow's
+	// triggers alive" (see EngineConfig.AllowAllProfiles); reuse it here
+	// rather than adding a second flag with the same meaning. Without this
+	// guard, every one-shot engine.Start() call (`workflow run`, `activate`,
+	// `deactivate`, `delete`, `templates run` — none of which need any
+	// workflow's trigger *other* than the one they explicitly
+	// activate/deactivate themselves) would re-register every other active
+	// workflow's schedule/webhook trigger into its own short-lived
+	// TriggerManager and robfig/cron scheduler instance. Each
+	// scheduler instance is fully process-local with no cross-process
+	// guard for schedule ticks, so if a tick landed while both the daemon
+	// and the one-shot process had the same trigger registered, both would
+	// independently create an execution for it — a real-world duplicate
+	// side effect for whatever the workflow does.
+	if e.allowAllProfiles {
+		if err := e.reregisterTriggers(e.ctx); err != nil {
+			e.logger.Warn().Err(err).Msg("engine: failed to re-register some triggers on startup")
+		}
 	}
 
 	// 5. Start prune, resume, and stale-RUNNING reaper loops.

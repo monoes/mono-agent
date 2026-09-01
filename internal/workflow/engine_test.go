@@ -293,6 +293,82 @@ func TestExecutionProfileID(t *testing.T) {
 	}
 }
 
+// TestEngineStart_OneShotDoesNotReregisterOtherWorkflowsTriggers is the
+// regression guard for the trigger double-fire bug (issue #12): a one-shot
+// engine.Start() call (AllowAllProfiles: false — what every `workflow run`,
+// `activate`, `deactivate`, `delete`, and `templates run` CLI invocation
+// uses) must NOT re-register schedule triggers for workflows other than the
+// one it's about to act on. Before the fix, Start() unconditionally
+// re-registered every active workflow's triggers into its own
+// process-local scheduler, so a one-shot command sharing a profile with a
+// running daemon would independently register the daemon's already-active
+// schedule triggers — and if a tick landed while both were registered, both
+// processes would create an execution for it.
+//
+// This simulates "the daemon already has the schedule active" by
+// registering it directly on the trigger manager (mirroring what the
+// daemon's own Start()/RestoreActiveWorkflows would have done in a real
+// two-process scenario) and then starting a second, one-shot-style engine
+// against the same store and asserts its own scheduler never sees the spec.
+func TestEngineStart_OneShotDoesNotReregisterOtherWorkflowsTriggers(t *testing.T) {
+	store := newFullEngineStore(t)
+
+	daemonSched := &fakeScheduler{}
+	daemonEng := NewWorkflowEngineWithStore(store, store.RawDB(), daemonSched, NewNodeTypeRegistry(), EngineConfig{
+		ProfileID:        "default",
+		AllowAllProfiles: true,
+		WebhookAddr:      "127.0.0.1:0",
+	}, zerolog.Nop())
+	t.Cleanup(func() { _ = daemonEng.Stop() })
+
+	ctx := context.Background()
+	wf := &Workflow{
+		ID:        "wf-schedule",
+		Name:      "wf-schedule",
+		ProfileID: "default",
+		IsActive:  true,
+		Nodes: []WorkflowNode{
+			{ID: "sched", WorkflowID: "wf-schedule", Type: "trigger.schedule", Name: "Sched", Config: map[string]interface{}{
+				"cron": "0 0 9 * * *",
+			}},
+		},
+	}
+	if err := daemonEng.CreateWorkflow(ctx, wf); err != nil {
+		t.Fatalf("create workflow: %v", err)
+	}
+	if err := daemonEng.store.SetWorkflowActive(ctx, wf.ID, true); err != nil {
+		t.Fatalf("activate workflow: %v", err)
+	}
+	// Mirrors the daemon's own trigger registration for this workflow —
+	// what a real daemon process would already have done before the
+	// one-shot engine below starts.
+	if err := daemonEng.triggerMgr.ActivateWorkflow(ctx, wf); err != nil {
+		t.Fatalf("daemon activate triggers: %v", err)
+	}
+	if len(daemonSched.specs) != 1 {
+		t.Fatalf("daemon scheduler has %d specs, want 1", len(daemonSched.specs))
+	}
+
+	// The one-shot engine: same profile, same store, AllowAllProfiles unset
+	// (false) — exactly what buildEngine(cfg, false) produces for
+	// `workflow run`/`activate`/`deactivate`/`delete`/`templates run`.
+	oneShotSched := &fakeScheduler{}
+	oneShotEng := NewWorkflowEngineWithStore(store, store.RawDB(), oneShotSched, NewNodeTypeRegistry(), EngineConfig{
+		ProfileID:   "default",
+		WebhookAddr: "127.0.0.1:0",
+	}, zerolog.Nop())
+	t.Cleanup(func() { _ = oneShotEng.Stop() })
+
+	if err := oneShotEng.Start(context.Background()); err != nil {
+		t.Fatalf("one-shot engine Start: %v", err)
+	}
+
+	if len(oneShotSched.specs) != 0 {
+		t.Fatalf("one-shot engine registered %d schedule(s) into its own scheduler on Start, want 0 — "+
+			"it re-registered another process's already-active trigger, which is how the tick double-fires", len(oneShotSched.specs))
+	}
+}
+
 // TestTriggerWorkflow_StampsWorkflowsOwnProfile is an integration-level
 // regression test proving TriggerWorkflow actually persists the workflow's
 // own ProfileID on the created execution (not the engine's), via the real
