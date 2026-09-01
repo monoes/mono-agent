@@ -731,6 +731,10 @@ mono-agent/
 
 ---
 
+## Community
+
+Questions, ideas, and "is this the right tool for X" go to [GitHub Discussions](https://github.com/monoes/mono-agent/discussions) — the issue tracker is kept for bugs and well-scoped feature requests. See [SUPPORT.md](SUPPORT.md) for the full breakdown, and [SECURITY.md](SECURITY.md) for reporting vulnerabilities (never in a public issue or Discussion).
+
 ## Contributing
 
 Pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). By participating, you agree to keep Mono Agent a fair-use tool.
