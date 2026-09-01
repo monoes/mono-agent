@@ -129,7 +129,7 @@ jobs:
           GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$LD" -o dist/monoagentcli-linux-amd64    ./cmd/monoagentcli
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$LD" -o dist/monoagentcli-windows-amd64.exe ./cmd/monoagentcli
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: cli-binaries-linux-windows
           path: dist/
@@ -160,7 +160,7 @@ jobs:
           codesign --force --sign - dist/monoagentcli-darwin-amd64
           codesign --force --sign - dist/monoagentcli-darwin-arm64
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: cli-binaries-macos
           path: dist/
@@ -216,7 +216,7 @@ jobs:
           mkdir -p dist
           (cd wails-app/build/bin && zip -r "../../../dist/MonoAgent-darwin-arm64.zip" "MonoAgent.app")
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: macos-arm64-app
           path: dist/MonoAgent-darwin-arm64.zip
@@ -275,7 +275,7 @@ jobs:
           cp wails-app/build/bin/monoagent-ui.exe dist/MonoAgent-windows-amd64.exe
           cp wails-app/monoagentcli.exe dist/monoagentcli-windows-amd64-bundled.exe
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: windows-app
           path: dist/
@@ -341,7 +341,7 @@ jobs:
           cp wails-app/monoagentcli-linux dist/monoagentcli-linux-amd64-bundled
           tar -czf dist/MonoAgent-linux-amd64.tar.gz -C dist MonoAgent-linux-amd64 monoagentcli-linux-amd64-bundled
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: linux-app
           path: |
@@ -359,7 +359,7 @@ jobs:
           mkdir -p dist
           zip -r dist/monoagent-chrome-extension.zip chrome-extension -x '*.DS_Store'
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: chrome-extension
           path: dist/monoagent-chrome-extension.zip
