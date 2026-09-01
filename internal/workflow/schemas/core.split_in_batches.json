@@ -1,7 +1,15 @@
 {
+  "_generated": true,
   "credential_platform": null,
   "fields": [
-    { "key": "batch_size", "label": "Batch Size", "type": "number", "required": true, "default": 10, "min": 1 },
-    { "key": "reset", "label": "Reset on new execution", "type": "boolean", "default": true }
+    {
+      "default": 10,
+      "key": "batch_size",
+      "label": "Batch Size",
+      "max": 1000,
+      "min": 1,
+      "required": true,
+      "type": "number"
+    }
   ]
 }

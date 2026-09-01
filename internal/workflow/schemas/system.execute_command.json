@@ -1,8 +1,46 @@
 {
+  "_generated": true,
   "credential_platform": null,
   "fields": [
-    { "key": "command", "label": "Shell Command", "type": "text", "required": true, "placeholder": "echo hello world" },
-    { "key": "working_dir", "label": "Working Directory", "type": "text", "required": false, "placeholder": "/tmp" },
-    { "key": "timeout", "label": "Timeout (seconds)", "type": "number", "required": false, "default": 60 }
+    {
+      "help": "Executed directly (not via a shell) — no shell operators like pipes or redirects.",
+      "key": "command",
+      "label": "Shell Command",
+      "placeholder": "echo hello world",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "help": "Extra argv entries passed to the command, each as a separate array item (no shell quoting needed).",
+      "item_type": "text",
+      "key": "args",
+      "label": "Arguments",
+      "required": false,
+      "type": "array"
+    },
+    {
+      "key": "working_dir",
+      "label": "Working Directory",
+      "placeholder": "/tmp",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "default": 60,
+      "help": "Clamped to 3600s max. A value of 0 or blank uses the default.",
+      "key": "timeout",
+      "label": "Timeout (seconds)",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "help": "Merged on top of the process's own environment for the child command.",
+      "key": "env",
+      "label": "Extra Environment Variables (JSON object)",
+      "placeholder": "{ \"API_KEY\": \"{{$env.API_KEY}}\" }",
+      "required": false,
+      "rows": 3,
+      "type": "textarea"
+    }
   ]
 }

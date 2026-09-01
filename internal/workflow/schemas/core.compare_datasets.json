@@ -1,7 +1,21 @@
 {
+  "_generated": true,
   "credential_platform": null,
   "fields": [
-    { "key": "key_field", "label": "Key Field", "type": "text", "required": true, "placeholder": "id", "help": "Field used as the unique identifier when matching items between the two datasets." },
-    { "key": "split_at", "label": "Split Index", "type": "number", "required": false, "help": "Index at which the incoming items are split into dataset A (before) and dataset B (from this index on). Defaults to a 50/50 split." }
+    {
+      "help": "Field used as the unique identifier when matching items between the two datasets.",
+      "key": "key_field",
+      "label": "Key Field",
+      "placeholder": "id",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "help": "Index at which the incoming items are split into dataset A (before) and dataset B (from this index on). Defaults to a 50/50 split.",
+      "key": "split_at",
+      "label": "Split Index",
+      "required": false,
+      "type": "number"
+    }
   ]
 }

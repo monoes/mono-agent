@@ -1,9 +1,48 @@
 {
+  "_generated": true,
   "credential_platform": "bluesky",
   "fields": [
-    { "key": "credential_id", "label": "Bluesky Connection", "type": "credential_picker", "required": true },
-    { "key": "operation", "label": "Operation", "type": "select", "required": true, "options": ["create_post", "get_post_metrics"], "default": "create_post" },
-    { "key": "text", "label": "Post Text", "type": "textarea", "required": false, "rows": 4, "depends_on": { "key": "operation", "values": ["create_post"] } },
-    { "key": "post_uri", "label": "Post URI (at://...)", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["get_post_metrics"] } }
+    {
+      "key": "credential_id",
+      "label": "Bluesky Connection",
+      "required": true,
+      "type": "credential_picker"
+    },
+    {
+      "default": "create_post",
+      "key": "operation",
+      "label": "Operation",
+      "options": [
+        "create_post",
+        "get_post_metrics"
+      ],
+      "required": true,
+      "type": "select"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "create_post"
+        ]
+      },
+      "key": "text",
+      "label": "Post Text",
+      "required": false,
+      "rows": 4,
+      "type": "textarea"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "get_post_metrics"
+        ]
+      },
+      "key": "post_uri",
+      "label": "Post URI (at://...)",
+      "required": false,
+      "type": "text"
+    }
   ]
 }

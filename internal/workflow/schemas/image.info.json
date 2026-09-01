@@ -1,6 +1,13 @@
 {
+  "_generated": true,
   "credential_platform": null,
   "fields": [
-    { "key": "field", "label": "Image Path Field", "type": "text", "required": false, "help": "Item field holding the local image path. Defaults to image_path, path, file_path, or media_path (first non-empty)." }
+    {
+      "help": "Item field holding the local image path. Defaults to image_path, path, file_path, or media_path (first non-empty).",
+      "key": "field",
+      "label": "Image Path Field",
+      "required": false,
+      "type": "text"
+    }
   ]
 }

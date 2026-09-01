@@ -1,17 +1,236 @@
 {
+  "_generated": true,
   "credential_platform": "outlook",
   "fields": [
-    { "key": "credential_id", "label": "Outlook Account", "type": "credential_picker", "required": true },
-    { "key": "operation", "label": "Operation", "type": "select", "required": true, "options": ["list_messages", "get_message", "send_message", "create_draft", "send_draft", "delete_message", "whoami"], "default": "list_messages" },
-    { "key": "mailbox", "label": "Mailbox", "type": "text", "required": false, "default": "inbox", "help": "Any Outlook well-known folder name: inbox, drafts, sentitems, deleteditems, junkemail, archive, outbox.", "depends_on": { "key": "operation", "values": ["list_messages"] } },
-    { "key": "search", "label": "Search", "type": "text", "required": false, "help": "Full-text search, e.g. \"invoice\" or field-scoped like \"from:someone@x.com\". Takes priority over Unread Only / From Address below.", "depends_on": { "key": "operation", "values": ["list_messages"] } },
-    { "key": "from_address", "label": "From Address", "type": "text", "required": false, "help": "Only messages sent from this exact address. Ignored if Search is set.", "depends_on": { "key": "operation", "values": ["list_messages"] } },
-    { "key": "unread_only", "label": "Unread Only", "type": "boolean", "required": false, "default": false, "depends_on": { "key": "operation", "values": ["list_messages"] } },
-    { "key": "max_results", "label": "Max Results", "type": "number", "required": false, "default": 10, "depends_on": { "key": "operation", "values": ["list_messages"] } },
-    { "key": "message_id", "label": "Message ID", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["get_message", "send_draft", "delete_message"] } },
-    { "key": "to", "label": "To", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["send_message", "create_draft"] } },
-    { "key": "subject", "label": "Subject", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["send_message", "create_draft"] } },
-    { "key": "body", "label": "Body", "type": "textarea", "required": false, "rows": 5, "depends_on": { "key": "operation", "values": ["send_message", "create_draft"] } },
-    { "key": "body_type", "label": "Body Type", "type": "select", "required": false, "options": ["text", "html"], "default": "text", "depends_on": { "key": "operation", "values": ["send_message", "create_draft"] } }
+    {
+      "key": "credential_id",
+      "label": "Outlook Account",
+      "required": true,
+      "type": "credential_picker"
+    },
+    {
+      "default": "list_messages",
+      "key": "operation",
+      "label": "Operation",
+      "options": [
+        "list_messages",
+        "get_message",
+        "send_message",
+        "create_draft",
+        "create_reply",
+        "reply",
+        "send_draft",
+        "delete_message",
+        "whoami"
+      ],
+      "required": true,
+      "type": "select"
+    },
+    {
+      "default": "inbox",
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "list_messages",
+          "get_message"
+        ]
+      },
+      "help": "Any Outlook well-known folder name: inbox, drafts, sentitems, deleteditems, junkemail, archive, outbox.",
+      "key": "mailbox",
+      "label": "Mailbox",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "list_messages"
+        ]
+      },
+      "help": "Full-text search, e.g. \"invoice\" or field-scoped like \"from:someone@x.com\". Takes priority over Unread Only / From Address below.",
+      "key": "search",
+      "label": "Search",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "list_messages"
+        ]
+      },
+      "help": "Only messages sent from this exact address. Ignored if Search is set.",
+      "key": "from_address",
+      "label": "From Address",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "default": false,
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "list_messages"
+        ]
+      },
+      "key": "unread_only",
+      "label": "Unread Only",
+      "required": false,
+      "type": "boolean"
+    },
+    {
+      "default": 10,
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "list_messages"
+        ]
+      },
+      "key": "max_results",
+      "label": "Max Results",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "default": true,
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "list_messages",
+          "get_message"
+        ]
+      },
+      "help": "Download attachment files to disk when reading a message.",
+      "key": "download_attachments",
+      "label": "Download Attachments",
+      "required": false,
+      "type": "boolean"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "get_message",
+          "send_draft",
+          "delete_message",
+          "create_reply",
+          "reply"
+        ]
+      },
+      "key": "message_id",
+      "label": "Message ID",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "send_message",
+          "create_draft",
+          "create_reply",
+          "reply"
+        ]
+      },
+      "key": "to",
+      "label": "To",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "send_message",
+          "create_draft",
+          "create_reply",
+          "reply"
+        ]
+      },
+      "key": "cc",
+      "label": "Cc",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "send_message",
+          "create_draft",
+          "create_reply",
+          "reply"
+        ]
+      },
+      "key": "bcc",
+      "label": "Bcc",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "send_message",
+          "create_draft"
+        ]
+      },
+      "key": "subject",
+      "label": "Subject",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "send_message",
+          "create_draft",
+          "create_reply",
+          "reply"
+        ]
+      },
+      "help": "For create_reply/reply, this is used as the reply comment text.",
+      "key": "body",
+      "label": "Body",
+      "required": false,
+      "rows": 5,
+      "type": "textarea"
+    },
+    {
+      "default": "text",
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "send_message",
+          "create_draft"
+        ]
+      },
+      "key": "body_type",
+      "label": "Body Type",
+      "options": [
+        "text",
+        "html"
+      ],
+      "required": false,
+      "type": "select"
+    },
+    {
+      "default": false,
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "create_reply",
+          "reply"
+        ]
+      },
+      "help": "Reply to everyone on the original message instead of just the sender.",
+      "key": "reply_all",
+      "label": "Reply All",
+      "required": false,
+      "type": "boolean"
+    }
   ]
 }

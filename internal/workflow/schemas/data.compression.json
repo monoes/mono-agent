@@ -1,8 +1,48 @@
 {
+  "_generated": true,
   "credential_platform": null,
   "fields": [
-    { "key": "operation", "label": "Operation", "type": "select", "required": true, "options": ["zip", "unzip", "gzip", "gunzip"], "default": "zip" },
-    { "key": "input_field", "label": "Input Field", "type": "text", "required": true, "placeholder": "file_data" },
-    { "key": "output_field", "label": "Output Field Name", "type": "text", "required": false, "default": "compressed" }
+    {
+      "default": "zip",
+      "key": "operation",
+      "label": "Operation",
+      "options": [
+        "zip",
+        "unzip",
+        "gzip",
+        "gunzip"
+      ],
+      "required": true,
+      "type": "select"
+    },
+    {
+      "help": "Item field containing the base64-encoded input data.",
+      "key": "input_field",
+      "label": "Input Field",
+      "placeholder": "file_data",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "default": "compressed",
+      "key": "output_field",
+      "label": "Output Field Name",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "default": "data",
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "zip"
+        ]
+      },
+      "help": "Name given to the entry inside the zip archive (operation=zip only).",
+      "key": "filename",
+      "label": "Archive Entry Filename",
+      "required": false,
+      "type": "text"
+    }
   ]
 }

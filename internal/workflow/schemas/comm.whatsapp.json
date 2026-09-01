@@ -1,13 +1,87 @@
 {
+  "_generated": true,
   "credential_platform": "whatsapp",
   "fields": [
-    { "key": "phone_number_id", "label": "Phone Number ID", "type": "text", "required": true },
-    { "key": "access_token", "label": "Access Token", "type": "password", "required": true },
-    { "key": "operation", "label": "Operation", "type": "select", "required": true, "options": ["send_message", "send_template", "send_media"], "default": "send_message" },
-    { "key": "to", "label": "Recipient Number", "type": "text", "required": true, "placeholder": "+15551234567" },
-    { "key": "text", "label": "Message Text", "type": "textarea", "required": false, "rows": 3, "depends_on": { "key": "operation", "values": ["send_message"] } },
-    { "key": "template_name", "label": "Template Name", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["send_template"] } },
-    { "key": "template_language", "label": "Template Language", "type": "text", "required": false, "default": "en_US", "depends_on": { "key": "operation", "values": ["send_template"] } },
-    { "key": "media_url", "label": "Media URL", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["send_media"] } }
+    {
+      "key": "phone_number_id",
+      "label": "Phone Number ID",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "key": "access_token",
+      "label": "Access Token",
+      "required": true,
+      "type": "password"
+    },
+    {
+      "default": "send_message",
+      "key": "operation",
+      "label": "Operation",
+      "options": [
+        "send_message",
+        "send_template",
+        "send_media"
+      ],
+      "required": true,
+      "type": "select"
+    },
+    {
+      "key": "to",
+      "label": "Recipient Number",
+      "placeholder": "+15551234567",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "send_message"
+        ]
+      },
+      "key": "text",
+      "label": "Message Text",
+      "required": false,
+      "rows": 3,
+      "type": "textarea"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "send_template"
+        ]
+      },
+      "key": "template_name",
+      "label": "Template Name",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "default": "en_US",
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "send_template"
+        ]
+      },
+      "key": "template_language",
+      "label": "Template Language",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "send_media"
+        ]
+      },
+      "key": "media_url",
+      "label": "Media URL",
+      "required": false,
+      "type": "text"
+    }
   ]
 }

@@ -1,15 +1,131 @@
 {
+  "_generated": true,
   "credential_platform": "jira",
   "fields": [
-    { "key": "credential_id", "label": "Jira Connection", "type": "credential_picker", "required": true },
-    { "key": "operation", "label": "Operation", "type": "select", "required": true, "options": ["list_issues", "create_issue", "update_issue", "get_issue", "add_comment", "list_projects"], "default": "list_issues" },
-    { "key": "project_key", "label": "Project", "type": "resource_picker", "required": false, "resource": { "type": "projects", "create_label": null }, "depends_on": { "key": "operation", "values": ["list_issues", "create_issue"] } },
-    { "key": "jql", "label": "JQL Query", "type": "code", "required": false, "help": "Custom JQL; overrides project/status.", "depends_on": { "key": "operation", "values": ["list_issues"] } },
-    { "key": "status", "label": "Status", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["list_issues"] } },
-    { "key": "issue_key", "label": "Issue Key", "type": "text", "required": false, "placeholder": "PROJ-123", "depends_on": { "key": "operation", "values": ["update_issue", "get_issue", "add_comment"] } },
-    { "key": "summary", "label": "Summary", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["create_issue", "update_issue"] } },
-    { "key": "description", "label": "Description", "type": "textarea", "required": false, "depends_on": { "key": "operation", "values": ["create_issue", "update_issue"] } },
-    { "key": "issue_type", "label": "Issue Type", "type": "text", "required": false, "default": "Task", "depends_on": { "key": "operation", "values": ["create_issue"] } },
-    { "key": "comment", "label": "Comment", "type": "textarea", "required": false, "depends_on": { "key": "operation", "values": ["add_comment"] } }
+    {
+      "key": "credential_id",
+      "label": "Jira Connection",
+      "required": true,
+      "type": "credential_picker"
+    },
+    {
+      "default": "list_issues",
+      "key": "operation",
+      "label": "Operation",
+      "options": [
+        "list_issues",
+        "create_issue",
+        "update_issue",
+        "get_issue",
+        "add_comment",
+        "list_projects"
+      ],
+      "required": true,
+      "type": "select"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "list_issues",
+          "create_issue"
+        ]
+      },
+      "key": "project_key",
+      "label": "Project",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "list_issues"
+        ]
+      },
+      "help": "Custom JQL; overrides project/status.",
+      "key": "jql",
+      "label": "JQL Query",
+      "required": false,
+      "type": "code"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "list_issues"
+        ]
+      },
+      "key": "status",
+      "label": "Status",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "update_issue",
+          "get_issue",
+          "add_comment"
+        ]
+      },
+      "key": "issue_key",
+      "label": "Issue Key",
+      "placeholder": "PROJ-123",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "create_issue",
+          "update_issue"
+        ]
+      },
+      "key": "summary",
+      "label": "Summary",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "create_issue",
+          "update_issue"
+        ]
+      },
+      "key": "description",
+      "label": "Description",
+      "required": false,
+      "type": "textarea"
+    },
+    {
+      "default": "Task",
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "create_issue"
+        ]
+      },
+      "key": "issue_type",
+      "label": "Issue Type",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "add_comment"
+        ]
+      },
+      "key": "comment",
+      "label": "Comment",
+      "required": false,
+      "type": "textarea"
+    }
   ]
 }

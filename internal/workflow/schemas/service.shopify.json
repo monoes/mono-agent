@@ -1,10 +1,141 @@
 {
+  "_generated": true,
   "credential_platform": "shopify",
   "fields": [
-    { "key": "shop_domain", "label": "Shop Domain", "type": "text", "required": true, "placeholder": "mystore.myshopify.com" },
-    { "key": "access_token", "label": "Access Token", "type": "password", "required": true },
-    { "key": "operation", "label": "Operation", "type": "select", "required": true, "options": ["list_orders", "get_order", "list_products", "get_product", "list_customers", "update_order"], "default": "list_orders" },
-    { "key": "limit", "label": "Max Results", "type": "number", "required": false, "default": 20 },
-    { "key": "status", "label": "Order Status Filter", "type": "select", "required": false, "options": ["any", "open", "closed", "cancelled"], "default": "open", "depends_on": { "key": "operation", "values": ["list_orders"] } }
+    {
+      "key": "shop_domain",
+      "label": "Shop Domain",
+      "placeholder": "mystore.myshopify.com",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "key": "access_token",
+      "label": "Access Token",
+      "required": true,
+      "type": "password"
+    },
+    {
+      "default": "list_orders",
+      "key": "operation",
+      "label": "Operation",
+      "options": [
+        "list_products",
+        "get_product",
+        "create_product",
+        "update_product",
+        "list_orders",
+        "get_order",
+        "update_order",
+        "list_customers",
+        "get_customer"
+      ],
+      "required": true,
+      "type": "select"
+    },
+    {
+      "default": 50,
+      "key": "limit",
+      "label": "Max Results",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "get_product",
+          "update_product"
+        ]
+      },
+      "key": "product_id",
+      "label": "Product ID",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "create_product",
+          "update_product"
+        ]
+      },
+      "key": "title",
+      "label": "Title",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "create_product",
+          "update_product"
+        ]
+      },
+      "key": "vendor",
+      "label": "Vendor",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "create_product",
+          "update_product"
+        ]
+      },
+      "key": "product_type",
+      "label": "Product Type",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "get_order",
+          "update_order"
+        ]
+      },
+      "key": "order_id",
+      "label": "Order ID",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "default": "open",
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "list_orders",
+          "update_order"
+        ]
+      },
+      "key": "status",
+      "label": "Order Status Filter",
+      "options": [
+        "any",
+        "open",
+        "closed",
+        "cancelled"
+      ],
+      "required": false,
+      "type": "select"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "get_customer"
+        ]
+      },
+      "key": "customer_id",
+      "label": "Customer ID",
+      "required": false,
+      "type": "text"
+    }
   ]
 }

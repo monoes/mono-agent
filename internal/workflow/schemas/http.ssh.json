@@ -1,12 +1,66 @@
 {
+  "_generated": true,
   "credential_platform": "ssh",
   "fields": [
-    { "key": "host", "label": "SSH Host", "type": "text", "required": true },
-    { "key": "port", "label": "Port", "type": "number", "required": false, "default": 22 },
-    { "key": "username", "label": "Username", "type": "text", "required": true },
-    { "key": "password", "label": "Password", "type": "password", "required": false },
-    { "key": "private_key", "label": "Private Key (PEM)", "type": "textarea", "required": false, "rows": 6 },
-    { "key": "passphrase", "label": "Key Passphrase", "type": "password", "required": false },
-    { "key": "command", "label": "Command", "type": "text", "required": true, "placeholder": "ls -la /var/log" }
+    {
+      "key": "host",
+      "label": "SSH Host",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "default": 22,
+      "key": "port",
+      "label": "Port",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "key": "username",
+      "label": "Username",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "key": "password",
+      "label": "Password",
+      "required": false,
+      "type": "password"
+    },
+    {
+      "key": "private_key",
+      "label": "Private Key (PEM)",
+      "required": false,
+      "rows": 6,
+      "type": "textarea"
+    },
+    {
+      "key": "passphrase",
+      "label": "Key Passphrase",
+      "required": false,
+      "type": "password"
+    },
+    {
+      "help": "Path to a known_hosts file used to verify the server's host key. If left blank, host key verification is disabled (insecure) and a warning is logged.",
+      "key": "known_hosts",
+      "label": "Known Hosts File",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "key": "command",
+      "label": "Command",
+      "placeholder": "ls -la /var/log",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "default": 30,
+      "help": "Command is cancelled if it runs longer than this.",
+      "key": "timeout_seconds",
+      "label": "Timeout (seconds)",
+      "required": false,
+      "type": "number"
+    }
   ]
 }

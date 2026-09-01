@@ -1,8 +1,83 @@
 {
+  "_generated": true,
   "credential_platform": "mysql",
   "fields": [
-    { "key": "connection_string", "label": "Connection String", "type": "password", "required": true, "placeholder": "user:pass@tcp(host:3306)/db" },
-    { "key": "query", "label": "SQL Query", "type": "code", "required": true, "placeholder": "SELECT * FROM users WHERE active = ?" },
-    { "key": "params", "label": "Query Parameters (JSON array)", "type": "textarea", "required": false, "rows": 3, "placeholder": "[1]" }
+    {
+      "key": "connection_string",
+      "label": "Connection String",
+      "placeholder": "user:pass@tcp(host:3306)/db",
+      "required": true,
+      "type": "password"
+    },
+    {
+      "default": "select",
+      "help": "Only used to build a query from Table/Data/Where when SQL Query is blank. Ignored otherwise (the query's own verb governs execution).",
+      "key": "operation",
+      "label": "Operation",
+      "options": [
+        "select",
+        "insert",
+        "update",
+        "delete",
+        "execute"
+      ],
+      "required": false,
+      "type": "select"
+    },
+    {
+      "help": "Either this or Table must be set. Takes precedence over Table/Data/Where when both are given.",
+      "key": "query",
+      "label": "SQL Query",
+      "placeholder": "SELECT * FROM users WHERE active = ?",
+      "required": false,
+      "type": "code"
+    },
+    {
+      "key": "params",
+      "label": "Query Parameters (JSON array)",
+      "placeholder": "[1]",
+      "required": false,
+      "rows": 3,
+      "type": "textarea"
+    },
+    {
+      "help": "Used with Operation/Data/Where to build a query when SQL Query is left blank.",
+      "key": "table",
+      "label": "Table",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "insert",
+          "update"
+        ]
+      },
+      "help": "Column/value pairs for insert or update, used only in table-builder mode.",
+      "key": "data",
+      "label": "Row Data (JSON object)",
+      "placeholder": "{ \"name\": \"Ada\" }",
+      "required": false,
+      "rows": 3,
+      "type": "textarea"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "select",
+          "update",
+          "delete"
+        ]
+      },
+      "help": "Raw SQL boolean expression (no leading WHERE). Required for update/delete in table-builder mode.",
+      "key": "where",
+      "label": "Where Clause",
+      "placeholder": "id = ?",
+      "required": false,
+      "type": "text"
+    }
   ]
 }

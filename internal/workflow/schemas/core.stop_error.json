@@ -1,6 +1,13 @@
 {
+  "_generated": true,
   "credential_platform": null,
   "fields": [
-    { "key": "message", "label": "Error Message", "type": "text", "required": true, "placeholder": "Workflow stopped: condition not met" }
+    {
+      "key": "message",
+      "label": "Error Message",
+      "placeholder": "Workflow stopped: condition not met",
+      "required": true,
+      "type": "text"
+    }
   ]
 }

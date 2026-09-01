@@ -1,14 +1,103 @@
 {
+  "_generated": true,
   "credential_platform": "mongodb",
   "fields": [
-    { "key": "connection_string", "label": "MongoDB Connection String", "type": "password", "required": true, "placeholder": "mongodb://user:pass@host:27017/db" },
-    { "key": "database", "label": "Database", "type": "text", "required": true },
-    { "key": "collection", "label": "Collection", "type": "text", "required": true },
-    { "key": "operation", "label": "Operation", "type": "select", "required": true, "options": ["find", "insert_one", "insert_many", "update_one", "update_many", "delete_one", "delete_many", "aggregate"], "default": "find" },
-    { "key": "filter", "label": "Filter (JSON)", "type": "textarea", "required": false, "rows": 3, "placeholder": "{ \"status\": \"active\" }" },
-    { "key": "update", "label": "Update (JSON)", "type": "textarea", "required": false, "rows": 3, "depends_on": { "key": "operation", "values": ["update_one", "update_many"] } },
-    { "key": "document", "label": "Document (JSON)", "type": "textarea", "required": false, "rows": 3, "depends_on": { "key": "operation", "values": ["insert_one", "insert_many"] } },
-    { "key": "pipeline", "label": "Aggregation Pipeline (JSON array)", "type": "textarea", "required": false, "rows": 3, "depends_on": { "key": "operation", "values": ["aggregate"] } },
-    { "key": "limit", "label": "Limit", "type": "number", "required": false, "depends_on": { "key": "operation", "values": ["find"] } }
+    {
+      "key": "connection_string",
+      "label": "MongoDB Connection String",
+      "placeholder": "mongodb://user:pass@host:27017/db",
+      "required": true,
+      "type": "password"
+    },
+    {
+      "key": "database",
+      "label": "Database",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "key": "collection",
+      "label": "Collection",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "default": "find",
+      "key": "operation",
+      "label": "Operation",
+      "options": [
+        "find",
+        "insert_one",
+        "insert_many",
+        "update_one",
+        "update_many",
+        "delete_one",
+        "delete_many",
+        "aggregate"
+      ],
+      "required": true,
+      "type": "select"
+    },
+    {
+      "key": "filter",
+      "label": "Filter (JSON)",
+      "placeholder": "{ \"status\": \"active\" }",
+      "required": false,
+      "rows": 3,
+      "type": "textarea"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "update_one",
+          "update_many"
+        ]
+      },
+      "key": "update",
+      "label": "Update (JSON)",
+      "required": false,
+      "rows": 3,
+      "type": "textarea"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "insert_one",
+          "insert_many"
+        ]
+      },
+      "key": "document",
+      "label": "Document (JSON)",
+      "required": false,
+      "rows": 3,
+      "type": "textarea"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "aggregate"
+        ]
+      },
+      "key": "pipeline",
+      "label": "Aggregation Pipeline (JSON array)",
+      "required": false,
+      "rows": 3,
+      "type": "textarea"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "find"
+        ]
+      },
+      "key": "limit",
+      "label": "Limit",
+      "required": false,
+      "type": "number"
+    }
   ]
 }

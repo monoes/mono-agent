@@ -1,14 +1,139 @@
 {
+  "_generated": true,
   "credential_platform": "notion",
   "fields": [
-    { "key": "credential_id", "label": "Notion Connection", "type": "credential_picker", "required": true },
-    { "key": "operation", "label": "Operation", "type": "select", "required": true, "options": ["query_database", "get_database", "create_database", "create_page", "update_page", "get_page", "append_blocks"], "default": "query_database" },
-    { "key": "database_id", "label": "Database", "type": "resource_picker", "required": false, "resource": { "type": "databases", "create_label": null }, "depends_on": { "key": "operation", "values": ["query_database", "get_database", "create_page"] } },
-    { "key": "page_id", "label": "Page ID", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["update_page", "get_page", "create_database", "append_blocks"] } },
-    { "key": "parent_id", "label": "Parent ID", "type": "text", "required": false, "help": "Parent page for create_database, or parent database for create_page.", "depends_on": { "key": "operation", "values": ["create_page", "create_database"] } },
-    { "key": "properties", "label": "Page Properties (JSON)", "type": "textarea", "required": false, "rows": 5, "depends_on": { "key": "operation", "values": ["create_page", "update_page", "create_database"] } },
-    { "key": "children", "label": "Blocks (JSON)", "type": "textarea", "required": false, "rows": 5, "depends_on": { "key": "operation", "values": ["create_page", "append_blocks"] } },
-    { "key": "filter", "label": "Filter (JSON)", "type": "textarea", "required": false, "rows": 4, "depends_on": { "key": "operation", "values": ["query_database"] } },
-    { "key": "page_size", "label": "Page Size", "type": "number", "required": false, "depends_on": { "key": "operation", "values": ["query_database"] } }
+    {
+      "key": "credential_id",
+      "label": "Notion Connection",
+      "required": true,
+      "type": "credential_picker"
+    },
+    {
+      "default": "query_database",
+      "key": "operation",
+      "label": "Operation",
+      "options": [
+        "query_database",
+        "get_database",
+        "create_database",
+        "create_page",
+        "update_page",
+        "get_page",
+        "append_blocks"
+      ],
+      "required": true,
+      "type": "select"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "query_database",
+          "get_database",
+          "create_page"
+        ]
+      },
+      "key": "database_id",
+      "label": "Database",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "update_page",
+          "get_page",
+          "create_database",
+          "append_blocks"
+        ]
+      },
+      "key": "page_id",
+      "label": "Page ID",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "create_page",
+          "create_database"
+        ]
+      },
+      "help": "Parent page for create_database, or parent database for create_page.",
+      "key": "parent_id",
+      "label": "Parent ID",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "create_page",
+          "update_page",
+          "create_database"
+        ]
+      },
+      "key": "properties",
+      "label": "Page Properties (JSON)",
+      "required": false,
+      "rows": 5,
+      "type": "textarea"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "create_page",
+          "append_blocks"
+        ]
+      },
+      "key": "children",
+      "label": "Blocks (JSON)",
+      "required": false,
+      "rows": 5,
+      "type": "textarea"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "query_database"
+        ]
+      },
+      "key": "filter",
+      "label": "Filter (JSON)",
+      "required": false,
+      "rows": 4,
+      "type": "textarea"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "query_database"
+        ]
+      },
+      "help": "JSON array of Notion sort objects, e.g. [{\"property\": \"Name\", \"direction\": \"ascending\"}].",
+      "key": "sorts",
+      "label": "Sorts (JSON)",
+      "required": false,
+      "rows": 3,
+      "type": "textarea"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "query_database"
+        ]
+      },
+      "key": "page_size",
+      "label": "Page Size",
+      "required": false,
+      "type": "number"
+    }
   ]
 }

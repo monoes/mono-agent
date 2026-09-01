@@ -1,11 +1,93 @@
 {
+  "_generated": true,
   "credential_platform": "hubspot",
   "fields": [
-    { "key": "credential_id", "label": "HubSpot Connection", "type": "credential_picker", "required": true },
-    { "key": "operation", "label": "Operation", "type": "select", "required": true, "options": ["list_contacts", "get_contact", "create_contact", "update_contact", "list_deals", "create_deal", "update_deal", "list_companies", "create_company", "update_company"], "default": "list_contacts" },
-    { "key": "object_id", "label": "Object ID", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["get_contact", "update_contact", "update_deal", "update_company"] } },
-    { "key": "properties", "label": "Properties (JSON)", "type": "textarea", "required": false, "rows": 5, "depends_on": { "key": "operation", "values": ["create_contact", "update_contact", "create_deal", "update_deal", "create_company", "update_company"] } },
-    { "key": "limit", "label": "Limit", "type": "number", "required": false, "default": 10, "depends_on": { "key": "operation", "values": ["list_contacts", "list_deals", "list_companies"] } },
-    { "key": "after", "label": "Pagination Cursor", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["list_contacts", "list_deals", "list_companies"] } }
+    {
+      "key": "credential_id",
+      "label": "HubSpot Connection",
+      "required": true,
+      "type": "credential_picker"
+    },
+    {
+      "default": "list_contacts",
+      "key": "operation",
+      "label": "Operation",
+      "options": [
+        "list_contacts",
+        "get_contact",
+        "create_contact",
+        "update_contact",
+        "list_deals",
+        "create_deal",
+        "update_deal",
+        "list_companies",
+        "create_company",
+        "update_company"
+      ],
+      "required": true,
+      "type": "select"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "get_contact",
+          "update_contact",
+          "update_deal",
+          "update_company"
+        ]
+      },
+      "key": "object_id",
+      "label": "Object ID",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "create_contact",
+          "update_contact",
+          "create_deal",
+          "update_deal",
+          "create_company",
+          "update_company"
+        ]
+      },
+      "key": "properties",
+      "label": "Properties (JSON)",
+      "required": false,
+      "rows": 5,
+      "type": "textarea"
+    },
+    {
+      "default": 10,
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "list_contacts",
+          "list_deals",
+          "list_companies"
+        ]
+      },
+      "key": "limit",
+      "label": "Limit",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "list_contacts",
+          "list_deals",
+          "list_companies"
+        ]
+      },
+      "key": "after",
+      "label": "Pagination Cursor",
+      "required": false,
+      "type": "text"
+    }
   ]
 }

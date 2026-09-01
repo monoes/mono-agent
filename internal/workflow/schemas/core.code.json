@@ -1,7 +1,33 @@
 {
+  "_generated": true,
   "credential_platform": null,
   "fields": [
-    { "key": "language", "label": "Language", "type": "select", "required": true, "options": ["javascript", "python"], "default": "javascript" },
-    { "key": "code", "label": "Code", "type": "code", "required": true, "help": "Return an array of objects. Each object becomes an output item. Access input via $input.all()." }
+    {
+      "help": "Return an array of objects. Each object becomes an output item. Access input via $input.all() or $json (first item).",
+      "key": "code",
+      "label": "Code",
+      "language": "javascript",
+      "required": true,
+      "type": "code"
+    },
+    {
+      "default": 30,
+      "help": "Execution timeout in seconds.",
+      "key": "timeout_seconds",
+      "label": "Timeout (seconds)",
+      "max": 600,
+      "min": 1,
+      "required": false,
+      "type": "number"
+    },
+    {
+      "default": 512,
+      "help": "JS runtime memory limit in megabytes.",
+      "key": "memory_limit_mb",
+      "label": "Memory Limit (MB)",
+      "min": 1,
+      "required": false,
+      "type": "number"
+    }
   ]
 }

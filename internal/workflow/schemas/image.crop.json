@@ -1,14 +1,81 @@
 {
+  "_generated": true,
   "credential_platform": null,
   "fields": [
-    { "key": "field", "label": "Image Path Field", "type": "text", "required": false, "help": "Item field holding the local image path. Defaults to image_path, path, file_path, or media_path (first non-empty)." },
-    { "key": "x", "label": "Crop X (px)", "type": "number", "required": false, "help": "Left edge of the crop region. Requires y, width, and height." },
-    { "key": "y", "label": "Crop Y (px)", "type": "number", "required": false, "help": "Top edge of the crop region. Requires x, width, and height." },
-    { "key": "width", "label": "Crop Width (px)", "type": "number", "required": false, "help": "Width of the crop region (explicit region mode)." },
-    { "key": "height", "label": "Crop Height (px)", "type": "number", "required": false, "help": "Height of the crop region (explicit region mode)." },
-    { "key": "aspect_ratio", "label": "Aspect Ratio", "type": "text", "required": false, "placeholder": "e.g. 1:1, 16:9, 4:3", "help": "Crop to this aspect ratio instead of an explicit region. Provide either (x, y, width, height) or aspect_ratio." },
-    { "key": "anchor", "label": "Anchor", "type": "select", "required": false, "options": ["center", "top", "bottom", "left", "right", "topleft", "topright"], "default": "center", "help": "Which part of the image to keep when cropping by aspect ratio." },
-    { "key": "output_field", "label": "Output Field", "type": "text", "required": false, "default": "image_path", "help": "Item field where the output file path is written." },
-    { "key": "output_dir", "label": "Output Directory", "type": "text", "required": false, "help": "Directory for the cropped file. Defaults to the source image's directory. ~ is expanded." }
+    {
+      "help": "Item field holding the local image path. Defaults to image_path, path, file_path, or media_path (first non-empty).",
+      "key": "field",
+      "label": "Image Path Field",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "help": "Left edge of the crop region. Requires y, width, and height.",
+      "key": "x",
+      "label": "Crop X (px)",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "help": "Top edge of the crop region. Requires x, width, and height.",
+      "key": "y",
+      "label": "Crop Y (px)",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "help": "Width of the crop region (explicit region mode).",
+      "key": "width",
+      "label": "Crop Width (px)",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "help": "Height of the crop region (explicit region mode).",
+      "key": "height",
+      "label": "Crop Height (px)",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "help": "Crop to this aspect ratio instead of an explicit region. Provide either (x, y, width, height) or aspect_ratio.",
+      "key": "aspect_ratio",
+      "label": "Aspect Ratio",
+      "placeholder": "e.g. 1:1, 16:9, 4:3",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "default": "center",
+      "help": "Which part of the image to keep when cropping by aspect ratio.",
+      "key": "anchor",
+      "label": "Anchor",
+      "options": [
+        "center",
+        "top",
+        "bottom",
+        "left",
+        "right",
+        "topleft",
+        "topright"
+      ],
+      "required": false,
+      "type": "select"
+    },
+    {
+      "default": "image_path",
+      "help": "Item field where the output file path is written.",
+      "key": "output_field",
+      "label": "Output Field",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "help": "Directory for the cropped file. Defaults to the source image's directory. ~ is expanded.",
+      "key": "output_dir",
+      "label": "Output Directory",
+      "required": false,
+      "type": "text"
+    }
   ]
 }

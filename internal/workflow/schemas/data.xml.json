@@ -1,9 +1,44 @@
 {
+  "_generated": true,
   "credential_platform": null,
   "fields": [
-    { "key": "operation", "label": "Operation", "type": "select", "required": true, "options": ["parse", "generate"], "default": "parse" },
-    { "key": "field", "label": "XML Field", "type": "text", "required": true, "placeholder": "xml_content" },
-    { "key": "output_field", "label": "Output Field", "type": "text", "required": false, "help": "Defaults to the XML field, overwriting it." },
-    { "key": "root_element", "label": "Root Element Name", "type": "text", "required": false, "default": "root", "depends_on": { "key": "operation", "values": ["generate"] } }
+    {
+      "default": "parse",
+      "key": "operation",
+      "label": "Operation",
+      "options": [
+        "parse",
+        "generate"
+      ],
+      "required": true,
+      "type": "select"
+    },
+    {
+      "key": "field",
+      "label": "XML Field",
+      "placeholder": "xml_content",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "help": "Defaults to the XML field, overwriting it.",
+      "key": "output_field",
+      "label": "Output Field",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "default": "root",
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "generate"
+        ]
+      },
+      "key": "root_element",
+      "label": "Root Element Name",
+      "required": false,
+      "type": "text"
+    }
   ]
 }

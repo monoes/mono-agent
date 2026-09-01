@@ -1,8 +1,38 @@
 {
+  "_generated": true,
   "credential_platform": null,
   "fields": [
-    { "key": "field", "label": "Field to Switch On", "type": "text", "required": true, "placeholder": "{{ $json.status }}", "help": "Value expression to match against cases." },
-    { "key": "cases", "label": "Cases", "type": "array", "item_type": "text", "required": true, "help": "Each value becomes an output handle. Type a value and press Enter." },
-    { "key": "fallthrough", "label": "Fallthrough to 'default'", "type": "boolean", "required": false, "default": true }
+    {
+      "help": "Value expression to match against cases.",
+      "key": "field",
+      "label": "Field to Switch On",
+      "placeholder": "{{ $json.status }}",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "help": "Each value becomes an output handle. Type a value and press Enter.",
+      "item_type": "text",
+      "key": "cases",
+      "label": "Cases",
+      "required": true,
+      "type": "array"
+    },
+    {
+      "default": "default",
+      "help": "Output handle name for items that don't match any case.",
+      "key": "default_handle",
+      "label": "Default Handle",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "default": false,
+      "help": "If enabled, an item can match more than one case instead of stopping at the first match.",
+      "key": "fallthrough",
+      "label": "Fallthrough to 'default'",
+      "required": false,
+      "type": "boolean"
+    }
   ]
 }
