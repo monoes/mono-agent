@@ -1,6 +1,26 @@
 {
+  "_generated": true,
   "credential_platform": null,
   "fields": [
-    { "key": "condition", "label": "Condition Expression", "type": "text", "required": true, "placeholder": "e.g. {{ $json.status == 'active' }}", "help": "Expression evaluated against the current item. Routes to 'true' or 'false' output." }
+    {
+      "help": "Expression evaluated against the current item. Routes to 'true' or 'false' output.",
+      "key": "condition",
+      "label": "Condition Expression",
+      "placeholder": "e.g. {{ $json.status == 'active' }}",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "default": "all",
+      "help": "\"all\" evaluates the condition once against the first item and routes the whole batch (default), \"per_item\" evaluates it independently for every item.",
+      "key": "mode",
+      "label": "Mode",
+      "options": [
+        "all",
+        "per_item"
+      ],
+      "required": false,
+      "type": "select"
+    }
   ]
 }

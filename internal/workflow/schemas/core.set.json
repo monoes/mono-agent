@@ -1,7 +1,23 @@
 {
+  "_generated": true,
   "credential_platform": null,
   "fields": [
-    { "key": "assignments", "label": "Field Assignments (JSON)", "type": "textarea", "required": true, "rows": 5, "placeholder": "[\n  { \"field\": \"fullName\", \"value\": \"{{ $json.first }} {{ $json.last }}\" },\n  { \"field\": \"amount\", \"value\": \"{{ $json.total }}\", \"type\": \"number\" }\n]", "help": "JSON array of assignment objects, each with \"field\" (dot-path to set, e.g. \"a.b.c\"), \"value\" (template expression), and optional \"type\": \"string\" (default), \"number\", \"bool\", or \"json\"." },
-    { "key": "include_input", "label": "Include Input Fields", "type": "boolean", "required": false, "default": true, "help": "If false, output items contain only the assigned fields." }
+    {
+      "help": "JSON array of assignment objects, each with \"field\" (dot-path to set, e.g. \"a.b.c\"), \"value\" (template expression), and optional \"type\": \"string\" (default), \"number\", \"bool\", or \"json\".",
+      "key": "assignments",
+      "label": "Field Assignments (JSON)",
+      "placeholder": "[\n  { \"field\": \"fullName\", \"value\": \"{{ $json.first }} {{ $json.last }}\" },\n  { \"field\": \"amount\", \"value\": \"{{ $json.total }}\", \"type\": \"number\" }\n]",
+      "required": true,
+      "rows": 5,
+      "type": "textarea"
+    },
+    {
+      "default": true,
+      "help": "If false, output items contain only the assigned fields.",
+      "key": "include_input",
+      "label": "Include Input Fields",
+      "required": false,
+      "type": "boolean"
+    }
   ]
 }

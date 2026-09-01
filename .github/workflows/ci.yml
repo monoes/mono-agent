@@ -76,6 +76,28 @@ jobs:
         working-directory: wails-app/frontend
         run: npm audit --omit=dev --audit-level=high
 
+  # Issue #24: node schemas for a small, growing set of node types are
+  # generated from `schema:"..."` struct tags (internal/tools/schemagen)
+  # instead of hand-written. This regenerates just those files and fails if
+  # the committed JSON drifts from what the generator produces — e.g.
+  # someone hand-edited a generated schema file, or edited the struct tags
+  # without re-running the generator. Deliberately scoped to only the node
+  # types listed in internal/tools/schemagen.Manifest (see
+  # internal/workflow/schemas/README.md) — most schema files are still
+  # hand-written and are not touched by this check.
+  schemagen-check:
+    name: Generated node schemas up to date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+
+      - name: Check generated schemas match committed files
+        run: go run ./cmd/schemagen -check
+
   # NOTE: no CGO_ENABLED=0 here. `go test -race` requires cgo ("go: -race
   # requires cgo" on Go 1.25), and ubuntu runners ship gcc — the default
   # CGO_ENABLED=1 works for modernc.org/sqlite and everything else we use.

@@ -1,11 +1,66 @@
 {
+  "_generated": true,
   "credential_platform": null,
   "fields": [
-    { "key": "url", "label": "URL", "type": "text", "required": true, "placeholder": "https://api.example.com/data" },
-    { "key": "method", "label": "Method", "type": "select", "required": true, "options": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"], "default": "GET" },
-    { "key": "headers", "label": "Headers (JSON)", "type": "textarea", "required": false, "rows": 3, "placeholder": "{ \"Authorization\": \"Bearer {{$env.API_KEY}}\" }" },
-    { "key": "body", "label": "Request Body", "type": "textarea", "required": false, "rows": 5, "depends_on": { "key": "method", "values": ["POST", "PUT", "PATCH"] } },
-    { "key": "timeout", "label": "Timeout (seconds)", "type": "number", "required": false, "default": 30 },
-    { "key": "max_body_mb", "label": "Max Response Body (MB)", "type": "number", "required": false, "default": 64, "help": "Maximum response body size in megabytes (default 64). Larger responses fail with an error instead of exhausting memory." }
+    {
+      "key": "url",
+      "label": "URL",
+      "placeholder": "https://api.example.com/data",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "default": "GET",
+      "key": "method",
+      "label": "Method",
+      "options": [
+        "GET",
+        "POST",
+        "PUT",
+        "PATCH",
+        "DELETE",
+        "HEAD"
+      ],
+      "required": true,
+      "type": "select"
+    },
+    {
+      "key": "headers",
+      "label": "Headers (JSON)",
+      "placeholder": "{ \"Authorization\": \"Bearer {{$env.API_KEY}}\" }",
+      "required": false,
+      "rows": 3,
+      "type": "textarea"
+    },
+    {
+      "depends_on": {
+        "key": "method",
+        "values": [
+          "POST",
+          "PUT",
+          "PATCH"
+        ]
+      },
+      "key": "body",
+      "label": "Request Body",
+      "required": false,
+      "rows": 5,
+      "type": "textarea"
+    },
+    {
+      "default": 30,
+      "key": "timeout",
+      "label": "Timeout (seconds)",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "default": 64,
+      "help": "Maximum response body size in megabytes (default 64). Larger responses fail with an error instead of exhausting memory.",
+      "key": "max_body_mb",
+      "label": "Max Response Body (MB)",
+      "required": false,
+      "type": "number"
+    }
   ]
 }
