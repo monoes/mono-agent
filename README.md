@@ -725,7 +725,7 @@ mono-agent/
 - [ ] Workflow versioning and rollback
 - [ ] Sub-workflow / reusable workflow node
 - [ ] Visual debugger — step-through execution in GUI
-- [ ] Marketplace — shareable workflow templates
+- [ ] Marketplace — shareable workflow templates ([curation policy](docs/plans/workflow-marketplace-curation-policy.md) written; distribution plumbing not yet built)
 - [ ] MCP registry listing + agent tool marketplace
 - [ ] Metrics dashboard — success rates, throughput, latency per profile
 

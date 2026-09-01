@@ -55,3 +55,14 @@ default and `-tags social` modes.
 
 Found a security issue? Please do not open a public issue — see
 [SECURITY.md](SECURITY.md) for how to report it responsibly.
+
+## Sharing a workflow template
+
+The workflow marketplace's distribution plumbing isn't built yet, but its
+curation policy is — read
+[docs/plans/workflow-marketplace-curation-policy.md](docs/plans/workflow-marketplace-curation-policy.md)
+before preparing a template for submission. In short: every template needs
+a manifest declaring its node types, external calls, required credential
+kinds, and an explicit license (MIT recommended for broad reuse); templates
+using `core.code`, `system.execute_command`, `http.ssh`, or any `db.*` node
+get a mandatory security review of the exact code before publication.
