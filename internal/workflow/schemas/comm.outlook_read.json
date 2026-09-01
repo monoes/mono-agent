@@ -1,10 +1,40 @@
 {
+  "_generated": true,
   "credential_platform": "outlook",
   "fields": [
-    { "key": "email", "label": "Outlook Email Address", "type": "text", "required": true, "placeholder": "you@outlook.com" },
-    { "key": "app_password", "label": "App Password", "type": "password", "required": true },
-    { "key": "mailbox", "label": "Mailbox", "type": "text", "required": false, "default": "INBOX" },
-    { "key": "limit", "label": "Max Emails", "type": "number", "required": false, "default": 10 },
-    { "key": "unread_only", "label": "Unread Only", "type": "boolean", "required": false, "default": false }
+    {
+      "key": "email",
+      "label": "Outlook Email Address",
+      "placeholder": "you@outlook.com",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "key": "app_password",
+      "label": "App Password",
+      "required": true,
+      "type": "password"
+    },
+    {
+      "default": "INBOX",
+      "key": "mailbox",
+      "label": "Mailbox",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "default": 10,
+      "key": "limit",
+      "label": "Max Emails",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "default": false,
+      "key": "unread_only",
+      "label": "Unread Only",
+      "required": false,
+      "type": "boolean"
+    }
   ]
 }

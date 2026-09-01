@@ -1,8 +1,28 @@
 {
+  "_generated": true,
   "credential_platform": null,
   "fields": [
-    { "key": "field", "label": "Input Field (Markdown)", "type": "text", "required": true, "placeholder": "content", "help": "Converts Markdown to HTML." },
-    { "key": "output_field", "label": "Output Field", "type": "text", "required": false, "help": "Defaults to the input field, overwriting it." },
-    { "key": "unsafe", "label": "Allow Raw HTML", "type": "boolean", "required": false, "default": false }
+    {
+      "help": "Converts Markdown to HTML.",
+      "key": "field",
+      "label": "Input Field (Markdown)",
+      "placeholder": "content",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "help": "Defaults to the input field, overwriting it.",
+      "key": "output_field",
+      "label": "Output Field",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "default": false,
+      "key": "unsafe",
+      "label": "Allow Raw HTML",
+      "required": false,
+      "type": "boolean"
+    }
   ]
 }

@@ -1,9 +1,38 @@
 {
+  "_generated": true,
   "credential_platform": null,
   "fields": [
-    { "key": "file_path", "label": "File Path", "type": "text", "required": true, "placeholder": "/tmp/output.pdf" },
-    { "key": "field", "label": "Binary Data Field", "type": "text", "required": true, "placeholder": "pdf_bytes" },
-    { "key": "encoding", "label": "Field Encoding", "type": "select", "required": false, "options": ["base64", "utf8"], "default": "base64" },
-    { "key": "create_dirs", "label": "Create Parent Directories", "type": "boolean", "required": false, "default": true }
+    {
+      "key": "file_path",
+      "label": "File Path",
+      "placeholder": "/tmp/output.pdf",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "key": "field",
+      "label": "Binary Data Field",
+      "placeholder": "pdf_bytes",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "default": "base64",
+      "key": "encoding",
+      "label": "Field Encoding",
+      "options": [
+        "base64",
+        "utf8"
+      ],
+      "required": false,
+      "type": "select"
+    },
+    {
+      "default": true,
+      "key": "create_dirs",
+      "label": "Create Parent Directories",
+      "required": false,
+      "type": "boolean"
+    }
   ]
 }

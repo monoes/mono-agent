@@ -1,7 +1,37 @@
 {
+  "_generated": true,
   "credential_platform": null,
   "fields": [
-    { "key": "field", "label": "Sort By Field", "type": "text", "required": true, "placeholder": "created_at" },
-    { "key": "direction", "label": "Direction", "type": "select", "required": true, "options": ["asc", "desc"], "default": "asc" }
+    {
+      "key": "field",
+      "label": "Sort By Field",
+      "placeholder": "created_at",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "default": "asc",
+      "key": "direction",
+      "label": "Direction",
+      "options": [
+        "asc",
+        "desc"
+      ],
+      "required": true,
+      "type": "select"
+    },
+    {
+      "default": "string",
+      "help": "How field values are compared. Falls back to string comparison if a value can't be parsed as the selected type.",
+      "key": "type",
+      "label": "Value Type",
+      "options": [
+        "string",
+        "number",
+        "date"
+      ],
+      "required": false,
+      "type": "select"
+    }
   ]
 }

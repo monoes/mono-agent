@@ -216,7 +216,7 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 		// Overlay each step's result in order so the last step wins for any
 		// key that appears in multiple steps.
 		for _, raw := range result.ExtractedItems {
-			for k, v := range normalizeBrowserItem(raw, b.platform) {
+			for k, v := range NormalizeBrowserItem(raw, b.platform) {
 				merged[k] = v
 			}
 		}
@@ -237,13 +237,17 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 	}, nil
 }
 
-// normalizeBrowserItem enriches a raw extracted item with structured fields.
+// NormalizeBrowserItem enriches a raw extracted item with structured fields.
 //
 // stepExtractMultiple produces items with generic keys: "text" (visible text of
 // the DOM element) and "href" (the element's href attribute if present).
 // This function maps those to the canonical people fields that people.save
-// and SaveExtractedData expect.
-func normalizeBrowserItem(raw map[string]interface{}, platform string) map[string]interface{} {
+// and SaveExtractedData expect. Exported so cmd/monoagentcli's CLI `run`
+// path can apply the same normalization stepExtractMultiple's workflow-node
+// counterpart (BrowserNode.Execute, above) already does — the CLI path
+// previously passed raw text/href items straight to SaveExtractedData,
+// which silently skipped every row for lacking a resolvable username.
+func NormalizeBrowserItem(raw map[string]interface{}, platform string) map[string]interface{} {
 	out := make(map[string]interface{}, len(raw)+4)
 	for k, v := range raw {
 		out[k] = v

@@ -1,9 +1,54 @@
 {
+  "_generated": true,
   "credential_platform": null,
   "fields": [
-    { "key": "operation", "label": "Operation", "type": "select", "required": true, "options": ["count", "sum", "avg", "min", "max", "collect"], "default": "count" },
-    { "key": "field", "label": "Field Name", "type": "text", "required": false, "placeholder": "amount", "help": "Field to aggregate. Not needed for 'count'.", "depends_on": { "key": "operation", "values": ["sum", "avg", "min", "max", "collect"] } },
-    { "key": "output_field", "label": "Output Field", "type": "text", "required": false, "help": "Defaults to the operation name (e.g. 'sum')." },
-    { "key": "group_by", "label": "Group By Field", "type": "text", "required": false, "placeholder": "category", "help": "Optional: group results by this field." }
+    {
+      "default": "count",
+      "key": "operation",
+      "label": "Operation",
+      "options": [
+        "count",
+        "sum",
+        "avg",
+        "min",
+        "max",
+        "collect"
+      ],
+      "required": true,
+      "type": "select"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "sum",
+          "avg",
+          "min",
+          "max",
+          "collect"
+        ]
+      },
+      "help": "Field to aggregate. Not needed for 'count'.",
+      "key": "field",
+      "label": "Field Name",
+      "placeholder": "amount",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "help": "Defaults to the operation name (e.g. 'sum').",
+      "key": "output_field",
+      "label": "Output Field",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "help": "Optional: group results by this field.",
+      "key": "group_by",
+      "label": "Group By Field",
+      "placeholder": "category",
+      "required": false,
+      "type": "text"
+    }
   ]
 }

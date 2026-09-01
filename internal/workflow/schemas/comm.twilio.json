@@ -1,13 +1,83 @@
 {
+  "_generated": true,
   "credential_platform": "twilio",
   "fields": [
-    { "key": "account_sid", "label": "Account SID", "type": "text", "required": true },
-    { "key": "auth_token", "label": "Auth Token", "type": "password", "required": true },
-    { "key": "operation", "label": "Operation", "type": "select", "required": true, "options": ["send_sms", "send_whatsapp", "make_call"], "default": "send_sms" },
-    { "key": "from", "label": "From Number", "type": "text", "required": true, "placeholder": "+15551234567" },
-    { "key": "to", "label": "To Number", "type": "text", "required": true, "placeholder": "+15557654321" },
-    { "key": "body", "label": "Message", "type": "textarea", "required": false, "rows": 3, "depends_on": { "key": "operation", "values": ["send_sms", "send_whatsapp"] } },
-    { "key": "url", "label": "TwiML URL", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["make_call"] } },
-    { "key": "twiml", "label": "Inline TwiML", "type": "textarea", "required": false, "rows": 3, "depends_on": { "key": "operation", "values": ["make_call"] } }
+    {
+      "key": "account_sid",
+      "label": "Account SID",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "key": "auth_token",
+      "label": "Auth Token",
+      "required": true,
+      "type": "password"
+    },
+    {
+      "default": "send_sms",
+      "key": "operation",
+      "label": "Operation",
+      "options": [
+        "send_sms",
+        "send_whatsapp",
+        "make_call"
+      ],
+      "required": true,
+      "type": "select"
+    },
+    {
+      "key": "from",
+      "label": "From Number",
+      "placeholder": "+15551234567",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "key": "to",
+      "label": "To Number",
+      "placeholder": "+15557654321",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "send_sms",
+          "send_whatsapp"
+        ]
+      },
+      "key": "body",
+      "label": "Message",
+      "required": false,
+      "rows": 3,
+      "type": "textarea"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "make_call"
+        ]
+      },
+      "key": "url",
+      "label": "TwiML URL",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "make_call"
+        ]
+      },
+      "key": "twiml",
+      "label": "Inline TwiML",
+      "required": false,
+      "rows": 3,
+      "type": "textarea"
+    }
   ]
 }

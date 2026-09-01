@@ -1,11 +1,50 @@
 {
+  "_generated": true,
   "credential_platform": null,
   "fields": [
-    { "key": "runtime", "label": "Agent Runtime", "type": "text", "required": true, "help": "Locally-installed agent runtime id — claude, codex, kimi, qwen, … (list: monoagentcli agent scan --installed)." },
-    { "key": "prompt", "label": "Prompt", "type": "textarea", "required": true, "rows": 4, "default": "{{$json.text}}", "help": "Supports {{$json.field}} placeholders." },
-    { "key": "model", "label": "Model", "type": "text", "required": false, "help": "Falls back to the runtime's default model." },
-    { "key": "system_prompt", "label": "System Prompt", "type": "textarea", "required": false, "rows": 3 },
-    { "key": "output_key", "label": "Output Key", "type": "text", "required": false, "default": "agent_response" },
-    { "key": "timeout", "label": "Timeout (seconds)", "type": "number", "required": false, "default": 300 }
+    {
+      "help": "Locally-installed agent runtime id — claude, codex, kimi, qwen, … (list: monoagentcli agent scan --installed).",
+      "key": "runtime",
+      "label": "Agent Runtime",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "default": "{{$json.text}}",
+      "help": "Supports {{$json.field}} placeholders.",
+      "key": "prompt",
+      "label": "Prompt",
+      "required": true,
+      "rows": 4,
+      "type": "textarea"
+    },
+    {
+      "help": "Falls back to the runtime's default model.",
+      "key": "model",
+      "label": "Model",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "key": "system_prompt",
+      "label": "System Prompt",
+      "required": false,
+      "rows": 3,
+      "type": "textarea"
+    },
+    {
+      "default": "agent_response",
+      "key": "output_key",
+      "label": "Output Key",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "default": 300,
+      "key": "timeout",
+      "label": "Timeout (seconds)",
+      "required": false,
+      "type": "number"
+    }
   ]
 }

@@ -1,6 +1,26 @@
 {
+  "_generated": true,
   "credential_platform": null,
   "fields": [
-    { "key": "field", "label": "Deduplicate By Field", "type": "text", "required": true, "placeholder": "id", "help": "Items with the same value in this field are deduplicated." }
+    {
+      "help": "Items with the same value in this field are deduplicated. Leave empty to deduplicate by the entire item.",
+      "key": "field",
+      "label": "Deduplicate By Field",
+      "placeholder": "id",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "default": "first",
+      "help": "Which occurrence to keep when duplicates are found.",
+      "key": "keep",
+      "label": "Keep",
+      "options": [
+        "first",
+        "last"
+      ],
+      "required": false,
+      "type": "select"
+    }
   ]
 }

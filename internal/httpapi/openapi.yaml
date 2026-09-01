@@ -9,6 +9,9 @@ info:
     same underlying store/engine calls, with the same credential-key
     output redaction. Start the server with `monoagentcli httpapi`.
   version: "1.0.0"
+  license:
+    name: MIT
+    url: https://github.com/monoes/mono-agent/blob/master/LICENSE
 servers:
   - url: http://127.0.0.1:9322
     description: Default loopback bind. Override with --addr or MONOAGENT_HTTPAPI_ADDR.
@@ -17,6 +20,7 @@ security:
 paths:
   /health:
     get:
+      operationId: getHealth
       summary: Liveness/version check
       security: []
       responses:
@@ -30,8 +34,14 @@ paths:
                   status: { type: string, example: ok }
                   version: { type: string }
                   allow_mutations: { type: boolean }
+        "5XX":
+          description: Server error resolving runtime state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
   /workflows:
     get:
+      operationId: listWorkflows
       summary: List saved workflows for the active profile
       responses:
         "200":
@@ -44,6 +54,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
   /workflows/{id}:
     get:
+      operationId: getWorkflow
       summary: Get one saved workflow (full JSON definition)
       parameters: [{ $ref: "#/components/parameters/WorkflowID" }]
       responses:
@@ -56,6 +67,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
   /workflows/{id}/executions:
     get:
+      operationId: listWorkflowExecutions
       summary: List recent executions for a workflow
       parameters:
         - { $ref: "#/components/parameters/WorkflowID" }
@@ -74,6 +86,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
   /workflows/{id}/validate:
     post:
+      operationId: validateWorkflow
       summary: Validate a workflow
       description: >
         With an empty body, validates the saved workflow named by {id}.
@@ -101,6 +114,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
   /workflows/{id}/run:
     post:
+      operationId: runWorkflow
       summary: Trigger a workflow and wait for completion (mutating; requires --allow-mutations)
       parameters: [{ $ref: "#/components/parameters/WorkflowID" }]
       requestBody:
@@ -123,6 +137,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
   /workflows/{id}/activate:
     post:
+      operationId: activateWorkflow
       summary: Activate a workflow and start its triggers (mutating; requires --allow-mutations)
       parameters: [{ $ref: "#/components/parameters/WorkflowID" }]
       responses:
@@ -132,6 +147,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
   /workflows/{id}/deactivate:
     post:
+      operationId: deactivateWorkflow
       summary: Deactivate a workflow and stop its triggers (mutating; requires --allow-mutations)
       parameters: [{ $ref: "#/components/parameters/WorkflowID" }]
       responses:
@@ -140,6 +156,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
   /nodes:
     get:
+      operationId: listNodeTypes
       summary: List all available node types
       responses:
         "200":
@@ -157,6 +174,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
   /nodes/{type}/schema:
     get:
+      operationId: getNodeSchema
       summary: Get the embedded JSON schema (config fields) for one node type
       parameters:
         - name: type
@@ -178,6 +196,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
   /hil:
     get:
+      operationId: listHilItems
       summary: List pending Human-in-Loop items for the active profile
       responses:
         "200":
@@ -190,6 +209,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
   /hil/{id}/approve:
     post:
+      operationId: approveHilItem
       summary: Approve a pending HIL item (mutating; requires --allow-mutations)
       parameters: [{ $ref: "#/components/parameters/HilID" }]
       requestBody:
@@ -206,6 +226,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
   /hil/{id}/reject:
     post:
+      operationId: rejectHilItem
       summary: Reject a pending HIL item (mutating; requires --allow-mutations)
       parameters: [{ $ref: "#/components/parameters/HilID" }]
       responses:

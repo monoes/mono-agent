@@ -1,15 +1,127 @@
 {
+  "_generated": true,
   "credential_platform": "producthunt",
   "fields": [
-    { "key": "credential_id", "label": "Product Hunt Connection", "type": "credential_picker", "required": true },
-    { "key": "operation", "label": "Operation", "type": "select", "required": true, "options": ["get_post", "list_posts", "get_post_metrics", "create_comment"], "default": "get_post" },
-    { "key": "slug", "label": "Post Slug", "type": "text", "required": false, "help": "Product slug. At least one of slug or id is required.", "depends_on": { "key": "operation", "values": ["get_post", "get_post_metrics"] } },
-    { "key": "id", "label": "Post ID", "type": "text", "required": false, "help": "Product ID. At least one of slug or id is required.", "depends_on": { "key": "operation", "values": ["get_post", "get_post_metrics"] } },
-    { "key": "order", "label": "Order", "type": "select", "required": false, "options": ["RANKING", "NEWEST"], "default": "RANKING", "depends_on": { "key": "operation", "values": ["list_posts"] } },
-    { "key": "first", "label": "First", "type": "number", "required": false, "default": 10, "depends_on": { "key": "operation", "values": ["list_posts"] } },
-    { "key": "topic", "label": "Topic Slug", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["list_posts"] } },
-    { "key": "post_id", "label": "Post ID", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["create_comment"] } },
-    { "key": "body", "label": "Comment", "type": "textarea", "required": false, "rows": 3, "depends_on": { "key": "operation", "values": ["create_comment"] } },
-    { "key": "access_token", "label": "Developer Token", "type": "text", "required": false, "help": "OAuth2 or developer token. Resolved from the saved connection when omitted." }
+    {
+      "key": "credential_id",
+      "label": "Product Hunt Connection",
+      "required": true,
+      "type": "credential_picker"
+    },
+    {
+      "default": "get_post",
+      "key": "operation",
+      "label": "Operation",
+      "options": [
+        "get_post",
+        "list_posts",
+        "get_post_metrics",
+        "create_comment"
+      ],
+      "required": true,
+      "type": "select"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "get_post",
+          "get_post_metrics"
+        ]
+      },
+      "help": "Product slug. At least one of slug or id is required.",
+      "key": "slug",
+      "label": "Post Slug",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "get_post",
+          "get_post_metrics"
+        ]
+      },
+      "help": "Product ID. At least one of slug or id is required.",
+      "key": "id",
+      "label": "Post ID",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "default": "RANKING",
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "list_posts"
+        ]
+      },
+      "key": "order",
+      "label": "Order",
+      "options": [
+        "RANKING",
+        "NEWEST"
+      ],
+      "required": false,
+      "type": "select"
+    },
+    {
+      "default": 10,
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "list_posts"
+        ]
+      },
+      "key": "first",
+      "label": "First",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "list_posts"
+        ]
+      },
+      "key": "topic",
+      "label": "Topic Slug",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "create_comment"
+        ]
+      },
+      "key": "post_id",
+      "label": "Post ID",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "create_comment"
+        ]
+      },
+      "key": "body",
+      "label": "Comment",
+      "required": false,
+      "rows": 3,
+      "type": "textarea"
+    },
+    {
+      "help": "OAuth2 or developer token. Resolved from the saved connection when omitted.",
+      "key": "access_token",
+      "label": "Developer Token",
+      "required": false,
+      "type": "text"
+    }
   ]
 }

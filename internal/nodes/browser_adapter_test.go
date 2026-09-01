@@ -7,7 +7,7 @@ func TestNormalizeBrowserItem(t *testing.T) {
 		"text": "Alice Wonderland\nCTO at StartupCo\nBerlin",
 		"href": "https://www.linkedin.com/in/alice-wonderland/",
 	}
-	out := normalizeBrowserItem(raw, "linkedin")
+	out := NormalizeBrowserItem(raw, "linkedin")
 
 	cases := []struct {
 		key  string
@@ -22,7 +22,7 @@ func TestNormalizeBrowserItem(t *testing.T) {
 	for _, c := range cases {
 		got, _ := out[c.key].(string)
 		if got != c.want {
-			t.Errorf("normalizeBrowserItem[%q]: want %q, got %q", c.key, c.want, got)
+			t.Errorf("NormalizeBrowserItem[%q]: want %q, got %q", c.key, c.want, got)
 		}
 	}
 }
@@ -34,7 +34,7 @@ func TestNormalizeBrowserItem_PreservesExistingFields(t *testing.T) {
 		"platform":    "instagram",
 		"href":        "https://other.url/",
 	}
-	out := normalizeBrowserItem(raw, "linkedin")
+	out := NormalizeBrowserItem(raw, "linkedin")
 
 	// Should NOT overwrite existing values.
 	if out["profile_url"] != "https://existing.url/" {

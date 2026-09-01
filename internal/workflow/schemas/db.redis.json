@@ -1,13 +1,107 @@
 {
+  "_generated": true,
   "credential_platform": "redis",
   "fields": [
-    { "key": "connection_string", "label": "Redis Connection String", "type": "password", "required": true, "placeholder": "redis://:password@localhost:6379/0" },
-    { "key": "operation", "label": "Operation", "type": "select", "required": true, "options": ["get", "set", "del", "exists", "expire", "hget", "hset", "hgetall", "lpush", "lrange", "keys", "incr"], "default": "get" },
-    { "key": "key", "label": "Key / Pattern", "type": "text", "required": true, "help": "For 'keys', this is a glob pattern (default '*')." },
-    { "key": "value", "label": "Value", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["set", "hset", "lpush"] } },
-    { "key": "field", "label": "Hash Field", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["hget", "hset"] } },
-    { "key": "ttl_seconds", "label": "TTL (seconds)", "type": "number", "required": false, "depends_on": { "key": "operation", "values": ["set", "expire"] } },
-    { "key": "start", "label": "Start Index", "type": "number", "required": false, "default": 0, "depends_on": { "key": "operation", "values": ["lrange"] } },
-    { "key": "stop", "label": "Stop Index", "type": "number", "required": false, "default": -1, "depends_on": { "key": "operation", "values": ["lrange"] } }
+    {
+      "key": "connection_string",
+      "label": "Redis Connection String",
+      "placeholder": "redis://:password@localhost:6379/0",
+      "required": true,
+      "type": "password"
+    },
+    {
+      "default": "get",
+      "key": "operation",
+      "label": "Operation",
+      "options": [
+        "get",
+        "set",
+        "del",
+        "exists",
+        "expire",
+        "hget",
+        "hset",
+        "hgetall",
+        "lpush",
+        "lrange",
+        "keys",
+        "incr"
+      ],
+      "required": true,
+      "type": "select"
+    },
+    {
+      "help": "For 'keys', this is a glob pattern (default '*').",
+      "key": "key",
+      "label": "Key / Pattern",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "set",
+          "hset",
+          "lpush"
+        ]
+      },
+      "key": "value",
+      "label": "Value",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "hget",
+          "hset"
+        ]
+      },
+      "key": "field",
+      "label": "Hash Field",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "set",
+          "expire"
+        ]
+      },
+      "key": "ttl_seconds",
+      "label": "TTL (seconds)",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "default": 0,
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "lrange"
+        ]
+      },
+      "key": "start",
+      "label": "Start Index",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "default": -1,
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "lrange"
+        ]
+      },
+      "key": "stop",
+      "label": "Stop Index",
+      "required": false,
+      "type": "number"
+    }
   ]
 }

@@ -1,11 +1,84 @@
 {
+  "_generated": true,
   "credential_platform": "salesforce",
   "fields": [
-    { "key": "credential_id", "label": "Salesforce Connection", "type": "credential_picker", "required": true },
-    { "key": "operation", "label": "Operation", "type": "select", "required": true, "options": ["query", "get_record", "create_record", "update_record", "delete_record", "describe_object"], "default": "query" },
-    { "key": "object_type", "label": "Object Type", "type": "text", "required": false, "placeholder": "Contact", "depends_on": { "key": "operation", "values": ["get_record", "create_record", "update_record", "delete_record", "describe_object"] } },
-    { "key": "record_id", "label": "Record ID", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["get_record", "update_record", "delete_record"] } },
-    { "key": "soql", "label": "SOQL Query", "type": "code", "required": false, "depends_on": { "key": "operation", "values": ["query"] } },
-    { "key": "fields", "label": "Fields (JSON)", "type": "textarea", "required": false, "rows": 5, "depends_on": { "key": "operation", "values": ["create_record", "update_record"] } }
+    {
+      "key": "credential_id",
+      "label": "Salesforce Connection",
+      "required": true,
+      "type": "credential_picker"
+    },
+    {
+      "default": "query",
+      "key": "operation",
+      "label": "Operation",
+      "options": [
+        "query",
+        "get_record",
+        "create_record",
+        "update_record",
+        "delete_record",
+        "describe_object"
+      ],
+      "required": true,
+      "type": "select"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "get_record",
+          "create_record",
+          "update_record",
+          "delete_record",
+          "describe_object"
+        ]
+      },
+      "key": "object_type",
+      "label": "Object Type",
+      "placeholder": "Contact",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "get_record",
+          "update_record",
+          "delete_record"
+        ]
+      },
+      "key": "record_id",
+      "label": "Record ID",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "query"
+        ]
+      },
+      "key": "soql",
+      "label": "SOQL Query",
+      "required": false,
+      "type": "code"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "create_record",
+          "update_record"
+        ]
+      },
+      "key": "fields",
+      "label": "Fields (JSON)",
+      "required": false,
+      "rows": 5,
+      "type": "textarea"
+    }
   ]
 }

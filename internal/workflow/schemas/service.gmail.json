@@ -1,15 +1,202 @@
 {
+  "_generated": true,
   "credential_platform": "gmail",
   "fields": [
-    { "key": "credential_id", "label": "Gmail Account", "type": "credential_picker", "required": true },
-    { "key": "operation", "label": "Operation", "type": "select", "required": true, "options": ["send_message", "list_messages", "get_message", "list_labels", "trash_message"], "default": "send_message" },
-    { "key": "to", "label": "To", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["send_message"] } },
-    { "key": "from", "label": "From", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["send_message"] } },
-    { "key": "subject", "label": "Subject", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["send_message"] } },
-    { "key": "body", "label": "Body", "type": "textarea", "required": false, "rows": 5, "depends_on": { "key": "operation", "values": ["send_message"] } },
-    { "key": "body_type", "label": "Body Type", "type": "select", "required": false, "options": ["text", "html"], "default": "text", "depends_on": { "key": "operation", "values": ["send_message"] } },
-    { "key": "message_id", "label": "Message ID", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["get_message", "trash_message"] } },
-    { "key": "query", "label": "Search Query", "type": "text", "required": false, "placeholder": "is:unread from:someone@example.com", "depends_on": { "key": "operation", "values": ["list_messages"] } },
-    { "key": "max_results", "label": "Max Results", "type": "number", "required": false, "default": 10, "depends_on": { "key": "operation", "values": ["list_messages"] } }
+    {
+      "key": "credential_id",
+      "label": "Gmail Account",
+      "required": true,
+      "type": "credential_picker"
+    },
+    {
+      "default": "send_message",
+      "key": "operation",
+      "label": "Operation",
+      "options": [
+        "send_message",
+        "create_draft",
+        "send_draft",
+        "create_reply",
+        "reply",
+        "list_messages",
+        "get_message",
+        "list_labels",
+        "trash_message"
+      ],
+      "required": true,
+      "type": "select"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "send_message",
+          "create_draft"
+        ]
+      },
+      "key": "to",
+      "label": "To",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "send_message",
+          "create_draft",
+          "create_reply",
+          "reply"
+        ]
+      },
+      "key": "from",
+      "label": "From",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "send_message",
+          "create_draft"
+        ]
+      },
+      "key": "cc",
+      "label": "Cc",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "send_message",
+          "create_draft"
+        ]
+      },
+      "key": "bcc",
+      "label": "Bcc",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "send_message",
+          "create_draft"
+        ]
+      },
+      "key": "subject",
+      "label": "Subject",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "send_message",
+          "create_draft",
+          "create_reply",
+          "reply"
+        ]
+      },
+      "key": "body",
+      "label": "Body",
+      "required": false,
+      "rows": 5,
+      "type": "textarea"
+    },
+    {
+      "default": "text",
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "send_message",
+          "create_draft",
+          "create_reply",
+          "reply"
+        ]
+      },
+      "key": "body_type",
+      "label": "Body Type",
+      "options": [
+        "text",
+        "html"
+      ],
+      "required": false,
+      "type": "select"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "send_draft",
+          "create_reply",
+          "reply",
+          "get_message",
+          "trash_message"
+        ]
+      },
+      "help": "For send_draft this is the draft id returned by create_draft, not the underlying message's own id.",
+      "key": "message_id",
+      "label": "Message ID",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "create_reply",
+          "reply"
+        ]
+      },
+      "key": "reply_all",
+      "label": "Reply All",
+      "required": false,
+      "type": "boolean"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "list_messages"
+        ]
+      },
+      "key": "query",
+      "label": "Search Query",
+      "placeholder": "is:unread from:someone@example.com",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "list_messages"
+        ]
+      },
+      "item_type": "text",
+      "key": "label_ids",
+      "label": "Label IDs",
+      "required": false,
+      "type": "array"
+    },
+    {
+      "default": 10,
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "list_messages"
+        ]
+      },
+      "key": "max_results",
+      "label": "Max Results",
+      "required": false,
+      "type": "number"
+    }
   ]
 }

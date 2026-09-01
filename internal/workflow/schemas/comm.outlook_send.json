@@ -1,14 +1,82 @@
 {
+  "_generated": true,
   "credential_platform": "outlook",
   "fields": [
-    { "key": "email", "label": "Outlook Email Address", "type": "text", "required": true, "placeholder": "you@outlook.com" },
-    { "key": "app_password", "label": "App Password", "type": "password", "required": true },
-    { "key": "to", "label": "To Address(es)", "type": "text", "required": true, "placeholder": "user@example.com, other@example.com" },
-    { "key": "cc", "label": "CC Address(es)", "type": "text", "required": false },
-    { "key": "bcc", "label": "BCC Address(es)", "type": "text", "required": false },
-    { "key": "subject", "label": "Subject", "type": "text", "required": true },
-    { "key": "body", "label": "Email Body", "type": "textarea", "required": true, "rows": 6 },
-    { "key": "body_type", "label": "Body Type", "type": "select", "required": false, "default": "text", "options": ["text", "html"] },
-    { "key": "attachments", "label": "Attachment File Paths", "type": "text", "required": false }
+    {
+      "key": "email",
+      "label": "Outlook Email Address",
+      "placeholder": "you@outlook.com",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "key": "app_password",
+      "label": "App Password",
+      "required": true,
+      "type": "password"
+    },
+    {
+      "key": "to",
+      "label": "To Address(es)",
+      "placeholder": "user@example.com, other@example.com",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "key": "cc",
+      "label": "CC Address(es)",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "key": "bcc",
+      "label": "BCC Address(es)",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "key": "subject",
+      "label": "Subject",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "key": "body",
+      "label": "Email Body",
+      "required": true,
+      "rows": 6,
+      "type": "textarea"
+    },
+    {
+      "default": "text",
+      "key": "body_type",
+      "label": "Body Type",
+      "options": [
+        "text",
+        "html"
+      ],
+      "required": false,
+      "type": "select"
+    },
+    {
+      "key": "attachments",
+      "label": "Attachment File Paths",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "help": "Original message's Message-ID header (from comm.outlook_read) — threads this as a reply and prefixes the subject with \"Re: \".",
+      "key": "in_reply_to",
+      "label": "In-Reply-To (Message-ID)",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "help": "Thread's References header chain; defaults to In-Reply-To when omitted.",
+      "key": "references",
+      "label": "References",
+      "required": false,
+      "type": "text"
+    }
   ]
 }

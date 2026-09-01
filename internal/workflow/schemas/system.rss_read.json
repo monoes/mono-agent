@@ -1,7 +1,20 @@
 {
+  "_generated": true,
   "credential_platform": null,
   "fields": [
-    { "key": "url", "label": "RSS/Atom Feed URL", "type": "text", "required": true, "placeholder": "https://feeds.example.com/rss.xml" },
-    { "key": "limit", "label": "Max Items", "type": "number", "required": false, "default": 20 }
+    {
+      "key": "url",
+      "label": "RSS/Atom Feed URL",
+      "placeholder": "https://feeds.example.com/rss.xml",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "default": 20,
+      "key": "limit",
+      "label": "Max Items",
+      "required": false,
+      "type": "number"
+    }
   ]
 }

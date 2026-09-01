@@ -1,11 +1,77 @@
 {
+  "_generated": true,
   "credential_platform": "telegram",
   "fields": [
-    { "key": "bot_token", "label": "Bot Token", "type": "password", "required": true, "help": "Get from @BotFather on Telegram." },
-    { "key": "operation", "label": "Operation", "type": "select", "required": true, "options": ["send_message", "send_photo", "get_updates"], "default": "send_message" },
-    { "key": "chat_id", "label": "Chat ID", "type": "text", "required": false, "help": "Numeric chat ID or @channel_username.", "depends_on": { "key": "operation", "values": ["send_message", "send_photo"] } },
-    { "key": "message", "label": "Message", "type": "textarea", "required": false, "rows": 3, "depends_on": { "key": "operation", "values": ["send_message", "send_photo"] } },
-    { "key": "photo_url", "label": "Photo URL / File Path", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["send_photo"] } },
-    { "key": "parse_mode", "label": "Parse Mode", "type": "select", "required": false, "options": ["plain", "Markdown", "HTML"], "default": "plain" }
+    {
+      "help": "Get from @BotFather on Telegram.",
+      "key": "bot_token",
+      "label": "Bot Token",
+      "required": true,
+      "type": "password"
+    },
+    {
+      "default": "send_message",
+      "key": "operation",
+      "label": "Operation",
+      "options": [
+        "send_message",
+        "send_photo",
+        "get_updates"
+      ],
+      "required": true,
+      "type": "select"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "send_message",
+          "send_photo"
+        ]
+      },
+      "help": "Numeric chat ID or @channel_username.",
+      "key": "chat_id",
+      "label": "Chat ID",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "send_message",
+          "send_photo"
+        ]
+      },
+      "key": "message",
+      "label": "Message",
+      "required": false,
+      "rows": 3,
+      "type": "textarea"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "send_photo"
+        ]
+      },
+      "key": "photo_url",
+      "label": "Photo URL / File Path",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "default": "plain",
+      "key": "parse_mode",
+      "label": "Parse Mode",
+      "options": [
+        "plain",
+        "Markdown",
+        "HTML"
+      ],
+      "required": false,
+      "type": "select"
+    }
   ]
 }

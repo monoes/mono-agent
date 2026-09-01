@@ -1,15 +1,132 @@
 {
+  "_generated": true,
   "credential_platform": "reddit",
   "fields": [
-    { "key": "credential_id", "label": "Reddit Connection", "type": "credential_picker", "required": true },
-    { "key": "operation", "label": "Operation", "type": "select", "required": true, "options": ["submit_post", "get_hot", "comment", "upvote"], "default": "submit_post" },
-    { "key": "subreddit", "label": "Subreddit", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["submit_post", "get_hot"] } },
-    { "key": "title", "label": "Post Title", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["submit_post"] } },
-    { "key": "kind", "label": "Post Kind", "type": "select", "required": false, "options": ["self", "link"], "default": "self", "help": "self is a text post (requires text); link is a URL post (requires url).", "depends_on": { "key": "operation", "values": ["submit_post"] } },
-    { "key": "text", "label": "Text", "type": "textarea", "required": false, "rows": 4, "help": "Post body (submit_post with kind=self) or comment text.", "depends_on": { "key": "operation", "values": ["submit_post", "comment"] } },
-    { "key": "url", "label": "Link URL", "type": "text", "required": false, "help": "Required for submit_post with kind=link.", "depends_on": { "key": "operation", "values": ["submit_post"] } },
-    { "key": "thing_id", "label": "Thing ID (fullname)", "type": "text", "required": false, "placeholder": "e.g. t3_abc123 (post), t1_xyz (comment)", "help": "Parent fullname for comment, or target fullname for upvote.", "depends_on": { "key": "operation", "values": ["comment", "upvote"] } },
-    { "key": "limit", "label": "Limit", "type": "number", "required": false, "default": 25, "depends_on": { "key": "operation", "values": ["get_hot"] } },
-    { "key": "user_agent", "label": "User-Agent", "type": "text", "required": false, "default": "mono-agent/1.0", "help": "Reddit blocks generic user agents; set something descriptive." }
+    {
+      "key": "credential_id",
+      "label": "Reddit Connection",
+      "required": true,
+      "type": "credential_picker"
+    },
+    {
+      "default": "submit_post",
+      "key": "operation",
+      "label": "Operation",
+      "options": [
+        "submit_post",
+        "get_hot",
+        "comment",
+        "upvote"
+      ],
+      "required": true,
+      "type": "select"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "submit_post",
+          "get_hot"
+        ]
+      },
+      "key": "subreddit",
+      "label": "Subreddit",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "submit_post"
+        ]
+      },
+      "key": "title",
+      "label": "Post Title",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "default": "self",
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "submit_post"
+        ]
+      },
+      "help": "self is a text post (requires text); link is a URL post (requires url).",
+      "key": "kind",
+      "label": "Post Kind",
+      "options": [
+        "self",
+        "link"
+      ],
+      "required": false,
+      "type": "select"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "submit_post",
+          "comment"
+        ]
+      },
+      "help": "Post body (submit_post with kind=self) or comment text.",
+      "key": "text",
+      "label": "Text",
+      "required": false,
+      "rows": 4,
+      "type": "textarea"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "submit_post"
+        ]
+      },
+      "help": "Required for submit_post with kind=link.",
+      "key": "url",
+      "label": "Link URL",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "comment",
+          "upvote"
+        ]
+      },
+      "help": "Parent fullname for comment, or target fullname for upvote.",
+      "key": "thing_id",
+      "label": "Thing ID (fullname)",
+      "placeholder": "e.g. t3_abc123 (post), t1_xyz (comment)",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "default": 25,
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "get_hot"
+        ]
+      },
+      "key": "limit",
+      "label": "Limit",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "default": "mono-agent/1.0",
+      "help": "Reddit blocks generic user agents; set something descriptive.",
+      "key": "user_agent",
+      "label": "User-Agent",
+      "required": false,
+      "type": "text"
+    }
   ]
 }

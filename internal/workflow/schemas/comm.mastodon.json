@@ -1,11 +1,79 @@
 {
+  "_generated": true,
   "credential_platform": "mastodon",
   "fields": [
-    { "key": "credential_id", "label": "Mastodon Connection", "type": "credential_picker", "required": true },
-    { "key": "operation", "label": "Operation", "type": "select", "required": true, "options": ["create_status", "get_status_metrics"], "default": "create_status" },
-    { "key": "text", "label": "Status Text", "type": "textarea", "required": false, "rows": 4, "depends_on": { "key": "operation", "values": ["create_status"] } },
-    { "key": "visibility", "label": "Visibility", "type": "select", "required": false, "options": ["public", "unlisted", "private", "direct"], "default": "public", "depends_on": { "key": "operation", "values": ["create_status"] } },
-    { "key": "in_reply_to_id", "label": "In Reply To (status ID)", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["create_status"] } },
-    { "key": "status_id", "label": "Status ID", "type": "text", "required": false, "depends_on": { "key": "operation", "values": ["get_status_metrics"] } }
+    {
+      "key": "credential_id",
+      "label": "Mastodon Connection",
+      "required": true,
+      "type": "credential_picker"
+    },
+    {
+      "default": "create_status",
+      "key": "operation",
+      "label": "Operation",
+      "options": [
+        "create_status",
+        "get_status_metrics"
+      ],
+      "required": true,
+      "type": "select"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "create_status"
+        ]
+      },
+      "key": "text",
+      "label": "Status Text",
+      "required": false,
+      "rows": 4,
+      "type": "textarea"
+    },
+    {
+      "default": "public",
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "create_status"
+        ]
+      },
+      "key": "visibility",
+      "label": "Visibility",
+      "options": [
+        "public",
+        "unlisted",
+        "private",
+        "direct"
+      ],
+      "required": false,
+      "type": "select"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "create_status"
+        ]
+      },
+      "key": "in_reply_to_id",
+      "label": "In Reply To (status ID)",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "depends_on": {
+        "key": "operation",
+        "values": [
+          "get_status_metrics"
+        ]
+      },
+      "key": "status_id",
+      "label": "Status ID",
+      "required": false,
+      "type": "text"
+    }
   ]
 }

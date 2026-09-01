@@ -53,6 +53,7 @@ monoagentcli --help         # command list; the root help includes an agents not
 | `ref templates` | The bundled ready-to-run workflow templates |
 | `ref connections` | Profiles, OAuth, credential resolution — **read before touching `--profile` or credentials** |
 | `ref crawling` | Automating sites with no built-in node type |
+| `ref api` | HTTP API surface (`monoagentcli httpapi`) — endpoints, auth, redaction, status-code mapping |
 
 Prefer `ref` over guessing from `--help` alone.
 
@@ -138,8 +139,9 @@ secrets vault (`secret list`, name `httpapi-token`). Output items go
 through the same redaction as `workflow run --json` — pass
 `X-Full-Outputs: 1` to opt out per request, mirroring
 `workflow run --full-outputs`. Full endpoint list:
-`internal/httpapi/openapi.yaml`; curl walkthrough:
-`examples/httpapi-quickstart.md`.
+`internal/httpapi/openapi.yaml` (OpenAPI 3, validated in CI); curl
+walkthrough: `examples/httpapi-quickstart.md`; offline copy of this
+section: `monoagentcli ref api`.
 
 **Status-code mapping** (mirrors the CLI [exit codes](#exit-codes) below,
 via `cmd/monoagentcli/exitcodes.go`'s error classes):
