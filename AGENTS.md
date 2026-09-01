@@ -118,6 +118,45 @@ Prefer MCP when the host supports it; the CLI covers the same surface.
 Tools carry `readOnly`/`destructive` annotations where applicable, so
 hosts can gate dangerous calls.
 
+## HTTP API
+
+```bash
+monoagentcli httpapi    # REST/JSON server (default 127.0.0.1:9322)
+```
+
+For agents that can't speak stdio JSON-RPC. Same surface as the MCP tools
+(`internal/httpapi/` mirrors `internal/mcp/`'s conventions), plus
+`GET /workflows/{id}/executions` and `POST /workflows/{id}/activate` /
+`deactivate`. Read-only by default; mutating endpoints
+(`run`/`activate`/`deactivate`/`hil approve`/`hil reject`) are only
+registered when started with `--allow-mutations` or
+`MONOAGENT_HTTPAPI_ALLOW_MUTATIONS=1` — otherwise those paths 404 rather
+than 403, so a probe can't distinguish "opted out" from "doesn't exist".
+Every request needs `Authorization: Bearer <token>` except `GET /health`;
+the token is generated on first start and stored in the active profile's
+secrets vault (`secret list`, name `httpapi-token`). Output items go
+through the same redaction as `workflow run --json` — pass
+`X-Full-Outputs: 1` to opt out per request, mirroring
+`workflow run --full-outputs`. Full endpoint list:
+`internal/httpapi/openapi.yaml`; curl walkthrough:
+`examples/httpapi-quickstart.md`.
+
+**Status-code mapping** (mirrors the CLI [exit codes](#exit-codes) below,
+via `cmd/monoagentcli/exitcodes.go`'s error classes):
+
+| HTTP status | CLI exit code equivalent | Cause |
+|---|---|---|
+| 200 | 0 | success |
+| 400 | 3 | invalid input / validation failure (bad JSON body, `ErrNoTriggerNode`, `ErrCycleDetected`, `ErrNodeTypeUnknown`, `ErrInvalidConfig`, `ErrWorkflowInactive`) |
+| 401 | 4 (auth/connection) | missing or invalid bearer token |
+| 404 | 2 | workflow, node type, or HIL item not found (includes cross-profile lookups) |
+| 500 | 1 | unclassified engine/store error |
+
+No endpoint ever returns a generic 500 for a condition the CLI classifies
+more specifically — this repo prefers honest, mapped statuses (see the
+README's Feature Highlights on `SUCCESS_WITH_ERRORS` runs) over collapsing
+everything to 200/500.
+
 ## Assistant chat & tools
 
 `monoagentcli chat` is a conversational assistant over the local agent
