@@ -11,6 +11,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/monoes/mono-agent/internal/i18n"
 )
 
 // version/buildDate are set via -ldflags in release builds (see
@@ -67,6 +69,12 @@ func main() {
 			panic(r)
 		}
 	}()
+
+	// Locale must be resolved before newRootCmd() builds the command tree,
+	// since cobra Short/Long/Example strings are evaluated once at
+	// construction time, before flags are parsed. See internal/i18n and
+	// docs/i18n.md.
+	i18n.SetLocale(i18n.Detect(os.Args[1:]))
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()

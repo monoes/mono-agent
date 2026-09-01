@@ -1,0 +1,65 @@
+{
+  "sidebar": {
+    "nav": {
+      "dashboard": "Dashboard",
+      "noderunner": "Workflows",
+      "actions": "Actions",
+      "hil": "Human in Loop",
+      "ai": "Agents",
+      "orgs": "Orgs",
+      "people": "People",
+      "communications": "Communications",
+      "vault": "Images",
+      "secretsVault": "Vault",
+      "logs": "Live Logs",
+      "settings": "Settings"
+    },
+    "section": {
+      "MAIN": "MAIN",
+      "DATA": "DATA",
+      "DEBUG": "DEBUG",
+      "SYSTEM": "SYSTEM"
+    },
+    "showInFinder": "Show in Finder",
+    "changeProfileFolder": "Change profile folder location",
+    "profileNamePlaceholder": "Profile name…",
+    "chooseFolder": "Choose folder",
+    "useDefaultLocation": "Use default location"
+  },
+  "dashboard": {
+    "title": "Dashboard",
+    "subtitle": "Workflows & Executions",
+    "refresh": "Refresh",
+    "workflowEditor": "Workflow Editor",
+    "stat": {
+      "workflows": "Workflows",
+      "active": "Active",
+      "recentRuns": "Recent Runs",
+      "peopleFound": "People Found"
+    },
+    "workflowsSection": {
+      "title": "Workflows",
+      "openEditor": "Open Editor",
+      "emptyTitle": "No workflows yet",
+      "emptyDesc": "Build your first workflow in the editor."
+    }
+  },
+  "toasts": {
+    "failed": "Failed: {{op}}",
+    "dismiss": "Dismiss"
+  },
+  "settings": {
+    "title": "Settings",
+    "subtitle": "Application configuration and quick access",
+    "quickAccess": "Quick Access",
+    "connectionsTitle": "Connections",
+    "connectionsDesc": "Manage accounts, OAuth, API keys",
+    "aiProvidersTitle": "AI Providers",
+    "aiProvidersDesc": "Configure AI models and keys",
+    "language": {
+      "sectionTitle": "Language",
+      "label": "UI language",
+      "hint": "Pilot: English and Spanish only — see docs/i18n.md"
+    }
+  }
+}

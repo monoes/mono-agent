@@ -1,0 +1,24 @@
+{
+  "root.short": "Agente de automatización de flujos de trabajo local-first (alternativa a n8n)",
+  "root.long": "Mono Agent — automatización de flujos de trabajo local-first (alternativa a n8n) en un único binario Go. Crea, programa y ejecuta flujos de trabajo DAG (90 tipos de nodo; 150 con la compilación social opcional) desde la CLI, la GUI o MCP. Las acciones de plataformas sociales son una compilación opcional (-tags social) para tus propias cuentas — consulta docs/USAGE_POLICY.md.\n\nEMPIEZA AQUÍ — ¿qué puede hacer esto ya?\n\n  monoagentcli workflow search [consulta]   Todo lo ejecutable: plantillas\n                                            incluidas + flujos guardados, cada\n                                            uno con el comando que lo ejecuta\n  monoagentcli workflow templates show <id> Entradas, nodos y el comando exacto para ejecutarlo\n  monoagentcli ref templates                Guía de las plantillas incluidas\n\nTodo el estado (flujos de trabajo, sesiones, imágenes generadas) vive en ~/.monoagent/, por lo que\ncada comando funciona desde cualquier directorio — no hay nada que configurar por proyecto. Añade\n--json a los comandos de descubrimiento anteriores para obtener salida legible por máquina.\n\nAgentes de IA: ejecuta 'monoagentcli ref' para ver la documentación incorporada y sin conexión\nque cubre en profundidad cada comando y tipo de nodo de flujo de trabajo — incluyendo\n'monoagentcli ref connections' para el modelo de perfiles/OAuth/credenciales\n(léelo antes de escribir nada que use --profile o\n--credential) y 'monoagentcli ref examples' para patrones comunes. Esta\nes la fuente de verdad principal y más actualizada sobre cómo debe usarse la CLI — prefiérela\nantes que adivinar solo a partir de la salida de --help.",
+
+  "workflow.short": "Gestiona y ejecuta flujos de trabajo",
+  "workflow.long": "Crea, lista, ejecuta, activa, desactiva, elimina e inspecciona ejecuciones de flujos de trabajo.\n\nPara que los flujos de trabajo programados (trigger.schedule) o por webhook (trigger.webhook) se disparen por sí solos con el tiempo, `monoagentcli daemon` debe estar en ejecución de forma continua — `workflow activate` por sí solo solo registra los disparadores mientras ese comando esté en ejecución.",
+
+  "workflow.templates.short": "Explora e instancia las plantillas de flujo de trabajo incluidas y listas para usar",
+
+  "workflow.search.short": "Busca plantillas incluidas y flujos de trabajo guardados por nombre, descripción o tipo de nodo",
+  "workflow.search.long": "Busca todo lo ejecutable — plantillas incluidas y los flujos de trabajo guardados para este perfil — por nombre, descripción o los tipos de nodo implicados. Omite la consulta para listarlo todo.\n\nCada resultado incluye el comando que lo ejecuta.",
+
+  "node.short": "Invoca o inspecciona directamente tipos de nodo de flujo de trabajo",
+
+  "node.schema.short": "Imprime el esquema JSON incorporado de un tipo de nodo",
+  "node.schema.example": "  monoagentcli node schema core.if\n  monoagentcli node schema trigger.schedule",
+
+  "connect.short": "Conecta una plataforma mediante clave de API, OAuth u otros métodos",
+  "connect.long": "Autentícate en una plataforma y guarda la conexión. Ejecuta `monoagentcli connect list --all` para ver todas las plataformas admitidas.",
+  "connect.example": "  monoagentcli connect github\n  monoagentcli connect notion\n  monoagentcli connect list\n  monoagentcli connect list --all\n  monoagentcli connect test <id>\n  monoagentcli connect remove <id>\n  monoagentcli connect refresh <id>",
+
+  "schedule.short": "Gestiona la programación de acciones",
+  "schedule.long": "Lista, añade y elimina programaciones para acciones."
+}

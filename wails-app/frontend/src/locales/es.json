@@ -1,0 +1,65 @@
+{
+  "sidebar": {
+    "nav": {
+      "dashboard": "Panel",
+      "noderunner": "Flujos de trabajo",
+      "actions": "Acciones",
+      "hil": "Humano en el bucle",
+      "ai": "Agentes",
+      "orgs": "Organizaciones",
+      "people": "Personas",
+      "communications": "Comunicaciones",
+      "vault": "Imágenes",
+      "secretsVault": "Bóveda",
+      "logs": "Registros en vivo",
+      "settings": "Configuración"
+    },
+    "section": {
+      "MAIN": "PRINCIPAL",
+      "DATA": "DATOS",
+      "DEBUG": "DEPURACIÓN",
+      "SYSTEM": "SISTEMA"
+    },
+    "showInFinder": "Mostrar en Finder",
+    "changeProfileFolder": "Cambiar la ubicación de la carpeta del perfil",
+    "profileNamePlaceholder": "Nombre del perfil…",
+    "chooseFolder": "Elegir carpeta",
+    "useDefaultLocation": "Usar ubicación predeterminada"
+  },
+  "dashboard": {
+    "title": "Panel",
+    "subtitle": "Flujos de trabajo y ejecuciones",
+    "refresh": "Actualizar",
+    "workflowEditor": "Editor de flujos de trabajo",
+    "stat": {
+      "workflows": "Flujos de trabajo",
+      "active": "Activos",
+      "recentRuns": "Ejecuciones recientes",
+      "peopleFound": "Personas encontradas"
+    },
+    "workflowsSection": {
+      "title": "Flujos de trabajo",
+      "openEditor": "Abrir editor",
+      "emptyTitle": "Aún no hay flujos de trabajo",
+      "emptyDesc": "Crea tu primer flujo de trabajo en el editor."
+    }
+  },
+  "toasts": {
+    "failed": "Error: {{op}}",
+    "dismiss": "Descartar"
+  },
+  "settings": {
+    "title": "Configuración",
+    "subtitle": "Configuración de la aplicación y acceso rápido",
+    "quickAccess": "Acceso rápido",
+    "connectionsTitle": "Conexiones",
+    "connectionsDesc": "Gestiona cuentas, OAuth, claves de API",
+    "aiProvidersTitle": "Proveedores de IA",
+    "aiProvidersDesc": "Configura modelos de IA y claves",
+    "language": {
+      "sectionTitle": "Idioma",
+      "label": "Idioma de la interfaz",
+      "hint": "Piloto: solo inglés y español — consulta docs/i18n.md"
+    }
+  }
+}

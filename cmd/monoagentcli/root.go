@@ -10,6 +10,7 @@ import (
 
 	"github.com/monoes/mono-agent/internal/ai"
 	"github.com/monoes/mono-agent/internal/connections"
+	"github.com/monoes/mono-agent/internal/i18n"
 	"github.com/monoes/mono-agent/internal/secrets"
 	"github.com/monoes/mono-agent/internal/storage"
 	"github.com/spf13/cobra"
@@ -25,35 +26,16 @@ type globalConfig struct {
 	JSONOutput bool
 	LogFile    string
 	ProfileID  string // active profile; defaults to value stored in settings table
+	Lang       string // UI locale; see internal/i18n and docs/i18n.md
 }
 
 func newRootCmd() *cobra.Command {
 	cfg := &globalConfig{}
 
 	cmd := &cobra.Command{
-		Use:   "monoagentcli",
-		Short: "Local-first workflow automation agent (n8n alternative)",
-		Long: `Mono Agent — local-first workflow automation (n8n alternative) in a single Go binary. Build, schedule, and run DAG workflows (90 node types; 150 with the optional social build) from CLI, GUI, or MCP. Social platform actions are an opt-in build (-tags social) for your own accounts — see docs/USAGE_POLICY.md.
-
-START HERE — what can this already do?
-
-  monoagentcli workflow search [query]      Everything runnable: bundled
-                                            templates + saved workflows, each
-                                            with the command that runs it
-  monoagentcli workflow templates show <id> Inputs, nodes, and exact run command
-  monoagentcli ref templates                Guide to the bundled templates
-
-All state (workflows, logins, generated images) lives in ~/.monoagent/, so every
-command works from any directory — there is nothing to set up per project. Add
---json to the discovery commands above for machine-readable output.
-
-AI agents: run 'monoagentcli ref' for built-in, offline documentation
-covering every command and workflow node type in depth — including
-'monoagentcli ref connections' for the profile/OAuth/credential model
-(read this before writing anything that touches --profile or
---credential) and 'monoagentcli ref examples' for common patterns. This
-is the primary, most current source of truth for how the CLI is meant to
-be used — prefer it over guessing from --help output alone.`,
+		Use:           "monoagentcli",
+		Short:         i18n.T("root.short"),
+		Long:          i18n.T("root.long"),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
@@ -72,6 +54,7 @@ be used — prefer it over guessing from --help output alone.`,
 	cmd.PersistentFlags().BoolVar(&cfg.JSONOutput, "json", false, "Output in JSON format")
 	cmd.PersistentFlags().StringVar(&cfg.LogFile, "log-file", "", "Path to log file")
 	cmd.PersistentFlags().StringVar(&cfg.ProfileID, "profile", "", "Profile to use (defaults to the active profile in settings)")
+	cmd.PersistentFlags().StringVar(&cfg.Lang, "lang", i18n.CurrentLocale(), "UI locale for translated help text (also MONOAGENT_LANG env var); see docs/i18n.md")
 
 	// Register subcommands
 	cmd.AddCommand(
@@ -107,6 +90,7 @@ be used — prefer it over guessing from --help output alone.`,
 		newChatCmd(cfg),
 		newOrgCmd(cfg),
 		newMCPCmd(cfg),
+		newHTTPAPICmd(cfg),
 	)
 
 	// `workflow run --full-outputs`: skip credential-key redaction of

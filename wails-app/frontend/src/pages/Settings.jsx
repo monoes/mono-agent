@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Link2, Brain, ExternalLink, Download } from 'lucide-react'
 import { api } from '../services/api.js'
 import { GetVersion, CheckForUpdate, AppSelfUpdate } from '../wailsjs/go/main/App'
@@ -254,7 +255,46 @@ function QuickAccessCard({ icon: Icon, title, description, stats, onClick }) {
 
 // ── Main ─────────────────────────────────────────────────────────────────────
 
+// LanguageSection is a minimal pilot locale switcher — a real Settings UI
+// might style this like the other cards, but the goal here is proving the
+// i18next changeLanguage() mechanism works end-to-end, not visual polish.
+function LanguageSection() {
+  const { t, i18n } = useTranslation()
+  return (
+    <div style={{
+      background: 'var(--surface)',
+      border: '1px solid var(--border)',
+      borderRadius: 'var(--radius-lg)',
+      padding: '16px 20px',
+      display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16,
+      marginBottom: 28,
+    }}>
+      <div>
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-secondary)', marginBottom: 2 }}>
+          {t('settings.language.label')}
+        </div>
+        <div style={{ fontFamily: 'var(--font-body)', fontSize: 10.5, color: 'var(--text-muted)' }}>
+          {t('settings.language.hint')}
+        </div>
+      </div>
+      <select
+        value={i18n.resolvedLanguage || i18n.language}
+        onChange={e => i18n.changeLanguage(e.target.value)}
+        style={{
+          background: 'var(--elevated)', color: 'var(--text-primary)',
+          border: '1px solid var(--border)', borderRadius: 6,
+          padding: '6px 10px', fontFamily: 'var(--font-mono)', fontSize: 12,
+        }}
+      >
+        <option value="en">English</option>
+        <option value="es">Español</option>
+      </select>
+    </div>
+  )
+}
+
 export default function Settings({ onNavigate }) {
+  const { t } = useTranslation()
   const [dbPath, setDbPath] = useState('')
   const [dbConnected, setDbConnected] = useState(false)
   const [connCount, setConnCount] = useState(null)
@@ -275,8 +315,8 @@ export default function Settings({ onNavigate }) {
     <>
       <div className="page-header">
         <div className="page-header-left">
-          <div className="page-title">Settings</div>
-          <div className="page-subtitle">Application configuration and quick access</div>
+          <div className="page-title">{t('settings.title')}</div>
+          <div className="page-subtitle">{t('settings.subtitle')}</div>
         </div>
       </div>
 
@@ -284,7 +324,7 @@ export default function Settings({ onNavigate }) {
         {/* Quick access cards */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: 2 }}>
-            Quick Access
+            {t('settings.quickAccess')}
           </span>
           <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
         </div>
@@ -292,18 +332,28 @@ export default function Settings({ onNavigate }) {
         <div style={{ display: 'flex', gap: 12, marginBottom: 28 }}>
           <QuickAccessCard
             icon={Link2}
-            title="Connections"
-            description="Manage accounts, OAuth, API keys"
+            title={t('settings.connectionsTitle')}
+            description={t('settings.connectionsDesc')}
             stats={connCount}
             onClick={() => onNavigate?.('connections')}
           />
           <QuickAccessCard
             icon={Brain}
-            title="AI Providers"
-            description="Configure AI models and keys"
+            title={t('settings.aiProvidersTitle')}
+            description={t('settings.aiProvidersDesc')}
             onClick={() => onNavigate?.('ai')}
           />
         </div>
+
+        {/* Language */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: 2 }}>
+            {t('settings.language.sectionTitle')}
+          </span>
+          <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+        </div>
+
+        <LanguageSection />
 
         {/* Assistant tool access */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
