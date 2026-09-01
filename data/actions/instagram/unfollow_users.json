@@ -190,6 +190,7 @@
       "iterator": "selectedListItems",
       "indexVar": "reachedIndex",
       "maxItems": "{{maxUnfollowsPerSession or 50}}",
+      "maxItemsPerDay": "{{maxUnfollowsPerDay or 150}}",
       "steps": [
         "t1_unfollow_user",
         "check_t1_result",

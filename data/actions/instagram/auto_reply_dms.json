@@ -250,6 +250,7 @@
       "id": "process_conversations",
       "iterator": "selectedListItems",
       "indexVar": "reachedIndex",
+      "maxItemsPerDay": "{{maxRepliesPerDay or 100}}",
       "steps": [
         "tier1_reply",
         "check_t1"

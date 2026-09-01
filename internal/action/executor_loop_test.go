@@ -12,6 +12,7 @@ import (
 type capTestStorage struct {
 	stateUpdates   []string
 	reachedIndexes []int
+	dailyCounts    map[string]int
 }
 
 func (s *capTestStorage) UpdateActionState(id, state string) error {
@@ -26,6 +27,21 @@ func (s *capTestStorage) UpdateActionReachedIndex(id string, index int) error {
 
 func (s *capTestStorage) SaveExtractedData(actionID string, items []map[string]interface{}) error {
 	return nil
+}
+
+func (s *capTestStorage) GetDailyActionCount(actionType string) (int, error) {
+	if s.dailyCounts == nil {
+		return 0, nil
+	}
+	return s.dailyCounts[actionType], nil
+}
+
+func (s *capTestStorage) IncrementDailyActionCount(actionType string) (int, error) {
+	if s.dailyCounts == nil {
+		s.dailyCounts = make(map[string]int)
+	}
+	s.dailyCounts[actionType]++
+	return s.dailyCounts[actionType], nil
 }
 
 // newLoopTestExecutor builds an executor wired for loop-only tests: log steps
@@ -112,6 +128,125 @@ func TestExecuteLoopCapEnforced(t *testing.T) {
 	capNote, ok := note.(map[string]interface{})
 	if !ok || capNote["loopId"] != "process_items" || capNote["cap"] != 2 {
 		t.Fatalf("unexpected cap note: %#v", note)
+	}
+}
+
+// TestExecuteLoopDailyCapAlreadyReached verifies a loop with a daily cap
+// stops immediately (processes zero items) when the persisted daily count
+// already meets or exceeds the cap — the scenario of a second action run on
+// the same UTC day after an earlier run already used up the budget.
+func TestExecuteLoopDailyCapAlreadyReached(t *testing.T) {
+	ae, db, events := newLoopTestExecutor(t, 0)
+	ae.action.Type = "follow_users"
+	ae.SetVariable("selectedListItems", loopTestItems(5))
+	db.dailyCounts = map[string]int{"follow_users": 150}
+
+	loop := LoopDef{
+		ID:             "process_items",
+		Iterator:       "selectedListItems",
+		IndexVar:       "reachedIndex",
+		Steps:          []string{"log_step"},
+		MaxItemsPerDay: "{{dailyCap or 150}}",
+	}
+	if err := ae.executeLoop(context.Background(), loop, loopTestSteps()); err != nil {
+		t.Fatalf("executeLoop returned error: %v", err)
+	}
+
+	iterations := countLoopIterations(t, events)
+	if len(iterations) != 0 {
+		t.Fatalf("expected 0 iterations when daily cap already reached, got %d", len(iterations))
+	}
+	if db.dailyCounts["follow_users"] != 150 {
+		t.Fatalf("expected daily count to stay at 150 (no items processed), got %d", db.dailyCounts["follow_users"])
+	}
+}
+
+// TestExecuteLoopDailyCapStopsMidSession verifies a loop stops partway
+// through a session once the daily cap is hit, even though the per-session
+// cap (maxItems) would have allowed more items — the daily cap is the
+// tighter of the two here.
+func TestExecuteLoopDailyCapStopsMidSession(t *testing.T) {
+	ae, db, events := newLoopTestExecutor(t, 0)
+	ae.action.Type = "follow_users"
+	ae.SetVariable("selectedListItems", loopTestItems(5))
+	// Already at 148/150 today; only 2 more should be allowed before the
+	// loop refuses to process a 3rd, even though maxItems permits up to 4.
+	db.dailyCounts = map[string]int{"follow_users": 148}
+
+	loop := LoopDef{
+		ID:             "process_items",
+		Iterator:       "selectedListItems",
+		IndexVar:       "reachedIndex",
+		Steps:          []string{"log_step"},
+		MaxItems:       "{{sessionCap or 4}}",
+		MaxItemsPerDay: "{{dailyCap or 150}}",
+	}
+	if err := ae.executeLoop(context.Background(), loop, loopTestSteps()); err != nil {
+		t.Fatalf("executeLoop returned error: %v", err)
+	}
+
+	var iterations []int
+	sawDailyCapEvent := false
+	for _, evt := range drainEvents(t, events) {
+		if evt.Type == "loop_iteration" {
+			iterations = append(iterations, evt.Index)
+		}
+		if evt.Type == "loop_cap_reached" && strings.Contains(evt.Message, "daily cap reached") {
+			sawDailyCapEvent = true
+		}
+	}
+	if len(iterations) != 2 {
+		t.Fatalf("expected exactly 2 iterations before daily cap of 150 stopped the loop, got %d", len(iterations))
+	}
+	if db.dailyCounts["follow_users"] != 150 {
+		t.Fatalf("expected daily count to reach 150 after 2 more successful items, got %d", db.dailyCounts["follow_users"])
+	}
+	if !sawDailyCapEvent {
+		t.Fatal("expected a loop_cap_reached event with a daily-cap message")
+	}
+}
+
+// TestExecuteLoopDailyCapIncrementsAcrossRuns verifies the daily counter is
+// what makes cross-run enforcement work: running the same loop twice in
+// separate executeLoop calls (simulating two separate action runs on the
+// same day) against the same backing storage accumulates instead of
+// resetting, so the second run picks up where the first left off.
+func TestExecuteLoopDailyCapIncrementsAcrossRuns(t *testing.T) {
+	ae, db, _ := newLoopTestExecutor(t, 0)
+	ae.action.Type = "follow_users"
+	ae.SetVariable("selectedListItems", loopTestItems(3))
+
+	loop := LoopDef{
+		ID:             "process_items",
+		Iterator:       "selectedListItems",
+		IndexVar:       "reachedIndex",
+		Steps:          []string{"log_step"},
+		MaxItemsPerDay: "{{dailyCap or 5}}",
+	}
+	if err := ae.executeLoop(context.Background(), loop, loopTestSteps()); err != nil {
+		t.Fatalf("first run: executeLoop returned error: %v", err)
+	}
+	if db.dailyCounts["follow_users"] != 3 {
+		t.Fatalf("expected 3 after first run, got %d", db.dailyCounts["follow_users"])
+	}
+
+	// Second "run": fresh executor sharing the same storage, as a
+	// re-triggered action would use — must see the prior run's count.
+	events2 := make(chan ExecutionEvent, 100)
+	ae2 := NewActionExecutor(context.Background(), nil, db, nil, events2, nil, zerolog.Nop())
+	ae2.action = &StorageAction{ID: "test-action-2", Type: "follow_users"}
+	ae2.SetVariable("selectedListItems", loopTestItems(5))
+
+	if err := ae2.executeLoop(context.Background(), loop, loopTestSteps()); err != nil {
+		t.Fatalf("second run: executeLoop returned error: %v", err)
+	}
+	// Cap is 5 total; 3 already used, so only 2 more of the 5 new items run.
+	iterations := countLoopIterations(t, events2)
+	if len(iterations) != 2 {
+		t.Fatalf("expected second run to process exactly 2 items (5 - 3 already used), got %d", len(iterations))
+	}
+	if db.dailyCounts["follow_users"] != 5 {
+		t.Fatalf("expected accumulated daily count of 5 across both runs, got %d", db.dailyCounts["follow_users"])
 	}
 }
 

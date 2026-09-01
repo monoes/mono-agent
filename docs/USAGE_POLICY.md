@@ -47,11 +47,17 @@ triggering platform spam defenses. The defaults (which you can change):
   re-sending) capped items. Enforced today: `send_dms` (30),
   `comment_on_posts` (20), `like_posts` (50), `like_comments_on_posts`
   (100), `follow_users` (50), `unfollow_users` (50) — all on Instagram.
-- **Daily caps are advisory, not yet enforced.** The `maxFollowsPerDay`
-  (150), `maxUnfollowsPerDay` (150), and `maxRepliesPerDay` (100) inputs
-  exist on their actions, but nothing counts usage across days yet — no
-  daily counter is persisted. Treat them as your own budget until daily
-  enforcement lands.
+- **Daily caps are enforced.** The `maxFollowsPerDay` (150),
+  `maxUnfollowsPerDay` (150), and `maxRepliesPerDay` (100) inputs are backed
+  by a persisted counter (`action_daily_counters`, keyed by account, action
+  type, and day) that survives across separate runs and process restarts.
+  A loop stops the moment its daily cap is hit, even mid-session, and logs
+  "daily cap reached: N/cap `<action>` today".
+- **The daily boundary is UTC**, not the machine's local timezone — a day
+  resets at 00:00 UTC regardless of where you run Mono Agent. This was a
+  deliberate simplification to sidestep DST edge cases; if your account's
+  "day" runs on a different clock than UTC, budget for that in your own
+  cap value.
 - **Delays are enforced** as wait steps between items; the table below
   lists the default values exactly as they ship in the JSON.
 
@@ -63,9 +69,9 @@ triggering platform spam defenses. The defaults (which you can change):
 | `comment_on_posts` | 20 comments | 10 s between comments | — |
 | `like_posts` | 50 likes | 3 s between likes | — |
 | `like_comments_on_posts` | 100 likes | 2 s between likes | — |
-| `follow_users` | 50 follows | 5 s between follows | 150 *(advisory)* |
-| `unfollow_users` | 50 unfollows | 5 s between unfollows | 150 *(advisory)* |
-| `auto_reply_dms` | — | 5 s before each reply | 100 *(advisory)* |
+| `follow_users` | 50 follows | 5 s between follows | 150 *(enforced)* |
+| `unfollow_users` | 50 unfollows | 5 s between unfollows | 150 *(enforced)* |
+| `auto_reply_dms` | — | 5 s before each reply | 100 *(enforced)* |
 | `engage_with_posts` | — | 30 s between engagement sessions | — |
 | `engage_user_posts` | — | 5 s between posts | — |
 | `reply_to_comments` | — | 10 s between replies | — |
@@ -111,6 +117,15 @@ variants of the same message/comment (spinning slightly different wording per
 recipient). That feature was **removed from the codebase as a matter of
 policy** — sending the same message with randomized wording is a spam
 technique, and we won't ship tooling for it.
+
+**Note on `skipAlready*` inputs:** the Instagram action templates previously
+declared `skipAlreadyFollowing`, `skipAlreadyLiked`, `skipAlreadyCommented`,
+and `skipAlreadyMessaged` inputs. None of them were ever wired to real
+dedupe logic — no target-history table backed them, so setting them had no
+effect. They've been removed from the action JSON rather than shipped as
+dead config; a real implementation would need per-target interaction
+history (distinct from the daily *count* caps above, which only track "how
+many," not "who"), which is a larger, separate piece of work.
 
 ## Platform terms, stated plainly
 

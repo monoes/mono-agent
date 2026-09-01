@@ -111,3 +111,7 @@ build/
 /diag_comment_like
 edge_passwords.csv
 *.crashes
+
+# make bench output (local; CI uploads its own copy as a build artifact)
+/bench.txt
+/benchstat.txt

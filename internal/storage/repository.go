@@ -192,6 +192,51 @@ func (d *Database) UpdateActionReachedIndex(id string, index int) error {
 	return nil
 }
 
+// GetDailyActionCount returns how many times actionType has been recorded
+// today (UTC) for profileID via IncrementDailyActionCount. Returns 0 if no
+// row exists yet for today.
+func (d *Database) GetDailyActionCount(profileID, actionType string) (int, error) {
+	if profileID == "" {
+		profileID = "default"
+	}
+	day := time.Now().UTC().Format("2006-01-02")
+	var count int
+	err := d.DB.QueryRow(
+		`SELECT count FROM action_daily_counters WHERE profile_key = ? AND action_type = ? AND day = ?`,
+		profileID, actionType, day,
+	).Scan(&count)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("getting daily action count for %s/%s: %w", profileID, actionType, err)
+	}
+	return count, nil
+}
+
+// IncrementDailyActionCount increments today's (UTC) counter for
+// (profileID, actionType) by one, creating the row if it doesn't exist yet,
+// and returns the count after incrementing.
+func (d *Database) IncrementDailyActionCount(profileID, actionType string) (int, error) {
+	if profileID == "" {
+		profileID = "default"
+	}
+	day := time.Now().UTC().Format("2006-01-02")
+	now := time.Now().UTC()
+	_, err := d.DB.Exec(`
+		INSERT INTO action_daily_counters (profile_key, action_type, day, count, updated_at)
+		VALUES (?, ?, ?, 1, ?)
+		ON CONFLICT(profile_key, action_type, day) DO UPDATE SET
+			count      = count + 1,
+			updated_at = excluded.updated_at`,
+		profileID, actionType, day, now,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("incrementing daily action count for %s/%s: %w", profileID, actionType, err)
+	}
+	return d.GetDailyActionCount(profileID, actionType)
+}
+
 // DeleteAction removes an action by ID. Associated action_targets are removed
 // automatically via ON DELETE CASCADE.
 func (d *Database) DeleteAction(id string) error {

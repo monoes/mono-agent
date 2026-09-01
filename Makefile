@@ -32,6 +32,17 @@ test:
 lint:
 	golangci-lint run ./...
 
+# Benchmark suite for engine hot paths (expression evaluation, per-node item
+# throughput, workflow store save/load, secret redaction). Scoped to just
+# the packages that hold benchmarks, not the whole repo, to keep it fast.
+# -count=5 + benchstat gives a stable-enough signal for regression tracking;
+# see .github/workflows/bench.yml for the scheduled CI run.
+.PHONY: bench
+bench:
+	go test -bench=. -benchtime=3s -count=5 -run=^$$ \
+		./internal/workflow/... ./internal/nodes/control/... \
+		> bench.txt
+
 .PHONY: clean
 clean:
 	rm -rf bin/
