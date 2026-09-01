@@ -15,6 +15,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/monoes/mono-agent/internal/ai"
+	"github.com/monoes/mono-agent/internal/monomind"
+	"github.com/monoes/mono-agent/internal/orgdesign"
+	"github.com/monoes/mono-agent/internal/profiledir"
 	"github.com/monoes/mono-agent/internal/secrets"
 	"github.com/monoes/mono-agent/internal/vault"
 )
@@ -44,6 +47,9 @@ type MonoagentTools struct {
 	// refuse afterwards, since synced message bodies are untrusted
 	// user-side content and a proven prompt-injection vector.
 	sawSyncedComms bool
+	// orgProjectRoot is a test/explicit override for profileRoot(); empty
+	// means resolve normally.
+	orgProjectRoot string
 }
 
 // NewMonoagentTools creates a MonoagentTools backed by db. selfBin is the
@@ -112,6 +118,53 @@ func (mt *MonoagentTools) ProfileID() string {
 	mt.mu.RLock()
 	defer mt.mu.RUnlock()
 	return mt.profileID
+}
+
+// SetOrgProjectRoot overrides the directory the org-design tools
+// (list_orgs/get_org/create_org/...) resolve org configs under, bypassing
+// the normal profileID -> profiledir.Root resolution. Used by tests, which
+// need an isolated temp directory rather than a real profile's filesystem
+// location; production callers should leave this unset.
+func (mt *MonoagentTools) SetOrgProjectRoot(root string) {
+	mt.mu.Lock()
+	mt.orgProjectRoot = root
+	mt.mu.Unlock()
+}
+
+// homeExpand expands a leading "~/" to the current user's home directory.
+// A tiny local duplicate of cmd/monoagentcli/root.go's expandPath — that
+// helper lives in package main and can't be imported from here, and the
+// only other caller of "~" expansion in this package is this single
+// fallback path, so a shared helper isn't worth adding.
+func homeExpand(path string) string {
+	if len(path) >= 2 && path[:2] == "~/" {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, path[2:])
+		}
+	}
+	return path
+}
+
+// profileRoot resolves the filesystem root org-design tools read/write
+// under: an explicit SetOrgProjectRoot override if set (tests), otherwise
+// the active profile's root via profiledir.Root — or, when no real profile
+// is active (profileID is empty or the "default" sentinel NewMonoagentTools
+// starts with), the same "~/.monoagent" default cmd/monoagentcli/org.go
+// uses for org state when no --project/--profile is given, so AI-driven org
+// edits land in the same place the existing `monoagentcli org` commands and
+// the in-app Orgs tab already look.
+func (mt *MonoagentTools) profileRoot() string {
+	mt.mu.RLock()
+	override := mt.orgProjectRoot
+	pid := mt.profileID
+	mt.mu.RUnlock()
+	if override != "" {
+		return override
+	}
+	if pid == "" || pid == "default" {
+		return homeExpand("~/.monoagent")
+	}
+	return profiledir.Root(mt.db, pid)
 }
 
 // checkWorkflowOwnership mirrors CanvasTools' check — required here too
@@ -417,6 +470,60 @@ func (mt *MonoagentTools) ToolDefs() []ai.ToolDef {
 		// Lists / templates
 		def("list_social_lists", "List saved social/contact lists", nil, nil),
 		def("list_templates", "List message templates", nil, nil),
+
+		// Agent organizations (Org Runtime v2 designs)
+		def("list_orgs", "List the agent organizations saved in the active profile, with each org's goal, current status, schedule, and how many roles it has. Use this before get_org when you don't already know the exact org name.", nil, nil),
+		def("get_org", "Get one agent organization's full design: its goal, run configuration, and every role in its hierarchy with title, type, reports_to (the id of its manager, or null for the root), and responsibilities. Call this before editing an org so you know the current role ids and structure.", map[string]interface{}{
+			"org_name": strParam("The org's name (its config file's name, without .json)"),
+		}, []string{"org_name"}),
+		def("create_org", "Create a new agent organization with a single root role. The org starts stopped — add more roles with add_org_role before running it. Fails if an org with this name already exists (no silent overwrite).", map[string]interface{}{
+			"name":            strParam("Org name — used as its config filename, letters/digits/underscore/dash only"),
+			"goal":            strParam("The org's overall goal/mission statement"),
+			"schedule":        strParam("Optional cron-style schedule string for daemon-scheduled runs; omit for a manually-run org"),
+			"runtime":         strParam("Optional runtime identifier for the org (omit to use the default)"),
+			"workspace":       strParam("Optional workspace path the org's roles operate against"),
+			"root_role_id":    strParam("Optional id for the initial root role (default: \"lead\")"),
+			"root_role_title": strParam("Optional title for the initial root role (default: \"Lead\")"),
+		}, []string{"name", "goal"}),
+		def("add_org_role", "Add a new role to an org's hierarchy, reporting to an existing role. The hierarchy must stay a single-root tree — reports_to must name a role that already exists in the org (get_org first if unsure), or be an empty string only when this is meant to become a NEW root, which is only valid if the org has no root role yet (a normal org already has one — use set_role_reports_to to move an existing role instead of creating a second root).", map[string]interface{}{
+			"org_name":         strParam("The org's name"),
+			"id":               strParam("Optional explicit role id; if omitted, one is derived from the title. If given and already in use, the call fails rather than silently renaming it."),
+			"title":            strParam("Display title for the role, e.g. \"Content Writer\""),
+			"type":             strParam("Role type, e.g. boss, specialist, researcher, reviewer (default: specialist)"),
+			"reports_to":       strParam("The id of the existing role this one reports to; empty string only to create a second root (almost always wrong — see description)"),
+			"responsibilities": map[string]interface{}{"type": "array", "description": "List of responsibility strings for this role", "items": map[string]interface{}{"type": "string"}},
+			"model":            strParam("Optional model identifier override for this role"),
+			"runtime":          strParam("Optional runtime identifier override for this role"),
+			"icon":             strParam("Optional archetype icon id (e.g. \"security-auditor\", \"backend-dev\", \"coder\") — not just cosmetic: matching a real bundled archetype id automatically injects that archetype's researched best-practices into this role's briefing at runtime. See the createorg skill guidance for the id list; leave unset rather than guessing an id that doesn't exist."),
+		}, []string{"org_name", "title", "reports_to"}),
+		def("update_org_role", "Update an existing role's title, type, responsibilities, model, runtime, or icon. Any field left out of the call is unchanged — this is a partial patch, not a full replace. To move a role to a different manager, use set_role_reports_to instead; this tool does not change reports_to.", map[string]interface{}{
+			"org_name":         strParam("The org's name"),
+			"role_id":          strParam("The role's id"),
+			"title":            strParam("New title (omit to leave unchanged)"),
+			"type":             strParam("New role type (omit to leave unchanged)"),
+			"responsibilities": map[string]interface{}{"type": "array", "description": "New full list of responsibility strings, replacing the existing list (omit to leave unchanged)", "items": map[string]interface{}{"type": "string"}},
+			"model":            strParam("New model identifier override; pass an empty string to clear it (omit to leave unchanged)"),
+			"runtime":          strParam("New runtime identifier override; pass an empty string to clear it (omit to leave unchanged)"),
+			"icon":             strParam("New archetype icon id — see add_org_role's icon parameter for why this is worth setting deliberately, not just cosmetic (omit to leave unchanged)"),
+		}, []string{"org_name", "role_id"}),
+		def("set_role_reports_to", "Move a role under a different manager in an org's hierarchy. The hierarchy must stay a tree — an edge that would create a cycle (e.g. moving a role under one of its own descendants) is rejected with an explanation of the existing chain that would be broken. Call validate_org afterward if you're unsure the result is still a single-root tree.", map[string]interface{}{
+			"org_name":   strParam("The org's name"),
+			"role_id":    strParam("The id of the role to move"),
+			"reports_to": strParam("The id of the new manager role, or an empty string to make this role the root — only allowed if the org has no other root role"),
+		}, []string{"org_name", "role_id", "reports_to"}),
+		def("remove_org_role", "Remove a role from an org. By default (strategy \"reparent\") the removed role's direct reports are re-parented to its own manager, so the rest of the tree is preserved. Pass strategy \"cascade\" to delete the role and its entire subtree instead — since that also destroys every role beneath it, cascade additionally requires confirm:true; without confirm:true it only reports which roles would be deleted and does not remove anything.", map[string]interface{}{
+			"org_name": strParam("The org's name"),
+			"role_id":  strParam("The id of the role to remove"),
+			"strategy": strParam("\"reparent\" (default) or \"cascade\""),
+			"confirm":  boolParam("Must be true to actually perform a cascade deletion; omit/false to preview which roles would be removed. Not required for the default reparent strategy."),
+		}, []string{"org_name", "role_id"}),
+		def("validate_org", "Check an org's design against the runtime schema and structural rules (unique role ids, exactly one root, every reports_to resolving to a real role, no cycles). Returns valid:true/false plus a list of any problems found — this does not modify the org.", map[string]interface{}{
+			"org_name": strParam("The org's name"),
+		}, []string{"org_name"}),
+		def("reload_org", "Tell a running org's daemon to pick up design changes (new/edited/removed roles) without restarting it. Without confirm:true this only reports whether the org is currently running and does not touch the daemon — pass confirm:true to actually signal it. Reloading only matters for an org that is running; a stopped org already reflects its latest saved design the next time it starts.", map[string]interface{}{
+			"org_name": strParam("The org's name"),
+			"confirm":  boolParam("Must be true to actually signal the running daemon; omit/false to only check whether it's running"),
+		}, []string{"org_name"}),
 	}
 	return defs
 }
@@ -499,6 +606,24 @@ func (mt *MonoagentTools) ExecuteContext(ctx context.Context, name string, args 
 		return mt.listSocialLists(args)
 	case "list_templates":
 		return mt.listTemplates(args)
+	case "list_orgs":
+		return mt.listOrgs(args)
+	case "get_org":
+		return mt.getOrg(args)
+	case "create_org":
+		return mt.createOrg(args)
+	case "add_org_role":
+		return mt.addOrgRole(args)
+	case "update_org_role":
+		return mt.updateOrgRole(args)
+	case "set_role_reports_to":
+		return mt.setRoleReportsTo(args)
+	case "remove_org_role":
+		return mt.removeOrgRole(args)
+	case "validate_org":
+		return mt.validateOrg(args)
+	case "reload_org":
+		return mt.reloadOrg(args)
 	default:
 		return "", fmt.Errorf("unknown tool: %s", name)
 	}
@@ -1492,4 +1617,384 @@ func (mt *MonoagentTools) listTemplates(string) (string, error) {
 		out = append(out, t)
 	}
 	return marshalJSON(map[string]interface{}{"templates": out})
+}
+
+// ---------------------------------------------------------------------------
+// Agent organizations (internal/orgdesign — Org Runtime v2 designs)
+//
+// Every handler here is a thin Load -> orgdesign mutator -> Save adapter.
+// Save validates internally and returns a plain Go error on an invalid
+// result (e.g. a structural problem AddRole/SetReportsTo didn't already
+// catch); that error is returned as-is, matching every other mutation in
+// this file (checkWorkflowOwnership, secrets.Add, ...) — the chat
+// protocol's tool_result frame surfaces err.Error() to the model either
+// way, so a failed mutation reads the same as any other tool error and the
+// model can react and retry within the turn.
+// ---------------------------------------------------------------------------
+
+type roleView struct {
+	ID               string   `json:"id"`
+	Title            string   `json:"title"`
+	Type             string   `json:"type"`
+	ReportsTo        *string  `json:"reports_to"`
+	Responsibilities []string `json:"responsibilities"`
+}
+
+func roleToView(r orgdesign.Role) roleView {
+	return roleView{
+		ID:               r.ID,
+		Title:            r.Title,
+		Type:             r.Type,
+		ReportsTo:        r.ReportsTo,
+		Responsibilities: r.Responsibilities,
+	}
+}
+
+type orgSummary struct {
+	Name      string          `json:"name"`
+	Goal      string          `json:"goal"`
+	Status    string          `json:"status"`
+	Schedule  json.RawMessage `json:"schedule,omitempty"`
+	RoleCount int             `json:"role_count"`
+}
+
+func (mt *MonoagentTools) listOrgs(string) (string, error) {
+	root := mt.profileRoot()
+	names, err := orgdesign.ListOrgNames(root)
+	if err != nil {
+		return "", fmt.Errorf("list orgs: %w", err)
+	}
+	out := make([]orgSummary, 0, len(names))
+	for _, name := range names {
+		doc, err := orgdesign.Load(root, name)
+		if err != nil {
+			// Skip a config that fails to parse rather than failing the
+			// whole listing — the model can still see and work with every
+			// other org.
+			continue
+		}
+		out = append(out, orgSummary{
+			Name:      doc.Name,
+			Goal:      doc.Goal,
+			Status:    doc.Status,
+			Schedule:  doc.Schedule,
+			RoleCount: len(doc.Roles),
+		})
+	}
+	return marshalJSON(map[string]interface{}{"orgs": out})
+}
+
+type orgNameArgs struct {
+	OrgName string `json:"org_name"`
+}
+
+func (mt *MonoagentTools) getOrg(args string) (string, error) {
+	var a orgNameArgs
+	if err := json.Unmarshal([]byte(args), &a); err != nil {
+		return "", fmt.Errorf("invalid args: %w", err)
+	}
+	doc, err := orgdesign.Load(mt.profileRoot(), a.OrgName)
+	if err != nil {
+		return "", fmt.Errorf("load org %s: %w", a.OrgName, err)
+	}
+	roles := make([]roleView, 0, len(doc.Roles))
+	for _, r := range doc.Roles {
+		roles = append(roles, roleToView(r))
+	}
+	return marshalJSON(map[string]interface{}{
+		"name":     doc.Name,
+		"goal":     doc.Goal,
+		"status":   doc.Status,
+		"schedule": doc.Schedule,
+		"runtime":  doc.Runtime,
+		"roles":    roles,
+	})
+}
+
+type createOrgArgs struct {
+	Name          string `json:"name"`
+	Goal          string `json:"goal"`
+	Schedule      string `json:"schedule"`
+	Runtime       string `json:"runtime"`
+	Workspace     string `json:"workspace"`
+	RootRoleID    string `json:"root_role_id"`
+	RootRoleTitle string `json:"root_role_title"`
+}
+
+func (mt *MonoagentTools) createOrg(args string) (string, error) {
+	var a createOrgArgs
+	if err := json.Unmarshal([]byte(args), &a); err != nil {
+		return "", fmt.Errorf("invalid args: %w", err)
+	}
+	root := mt.profileRoot()
+	path, err := orgdesign.ConfigPath(root, a.Name)
+	if err != nil {
+		return "", fmt.Errorf("create org: %w", err)
+	}
+	if _, err := os.Stat(path); err == nil {
+		return "", fmt.Errorf("an org named %q already exists", a.Name)
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("checking for existing org %q: %w", a.Name, err)
+	}
+
+	opts := orgdesign.NewOrgOptions{
+		Runtime:       a.Runtime,
+		Workspace:     a.Workspace,
+		RootRoleID:    a.RootRoleID,
+		RootRoleTitle: a.RootRoleTitle,
+	}
+	if a.Schedule != "" {
+		sched, err := json.Marshal(a.Schedule)
+		if err != nil {
+			return "", fmt.Errorf("encode schedule: %w", err)
+		}
+		opts.Schedule = sched
+	}
+	doc := orgdesign.NewOrg(a.Name, a.Goal, opts)
+	if _, err := orgdesign.Save(root, doc); err != nil {
+		return "", fmt.Errorf("save org %s: %w", a.Name, err)
+	}
+	return marshalJSON(map[string]interface{}{"org_name": doc.Name, "created": true})
+}
+
+type addOrgRoleArgs struct {
+	OrgName          string   `json:"org_name"`
+	ID               string   `json:"id"`
+	Title            string   `json:"title"`
+	Type             string   `json:"type"`
+	ReportsTo        string   `json:"reports_to"`
+	Responsibilities []string `json:"responsibilities"`
+	Model            string   `json:"model"`
+	Runtime          string   `json:"runtime"`
+	Icon             string   `json:"icon"`
+}
+
+func (mt *MonoagentTools) addOrgRole(args string) (string, error) {
+	var a addOrgRoleArgs
+	if err := json.Unmarshal([]byte(args), &a); err != nil {
+		return "", fmt.Errorf("invalid args: %w", err)
+	}
+	root := mt.profileRoot()
+	doc, err := orgdesign.Load(root, a.OrgName)
+	if err != nil {
+		return "", fmt.Errorf("load org %s: %w", a.OrgName, err)
+	}
+
+	role := orgdesign.Role{
+		ID:               a.ID,
+		Title:            a.Title,
+		Type:             a.Type,
+		Responsibilities: a.Responsibilities,
+	}
+	if a.ReportsTo != "" {
+		reportsTo := a.ReportsTo
+		role.ReportsTo = &reportsTo
+	}
+	if a.Model != "" {
+		modelJSON, err := json.Marshal(a.Model)
+		if err != nil {
+			return "", fmt.Errorf("encode model: %w", err)
+		}
+		role.AdapterConfig = map[string]json.RawMessage{"model": modelJSON}
+	}
+	if a.Runtime != "" {
+		runtimeJSON, err := json.Marshal(a.Runtime)
+		if err != nil {
+			return "", fmt.Errorf("encode runtime: %w", err)
+		}
+		role.Extra = map[string]json.RawMessage{"runtime": runtimeJSON}
+	}
+	if a.Icon != "" {
+		role.UI = &orgdesign.RoleUI{Icon: a.Icon}
+	}
+
+	added, err := doc.AddRole(role)
+	if err != nil {
+		return "", fmt.Errorf("add role to org %s: %w", a.OrgName, err)
+	}
+	if _, err := orgdesign.Save(root, doc); err != nil {
+		return "", fmt.Errorf("save org %s: %w", a.OrgName, err)
+	}
+	return marshalJSON(map[string]interface{}{"org_name": a.OrgName, "role": roleToView(*added)})
+}
+
+type updateOrgRoleArgs struct {
+	OrgName          string    `json:"org_name"`
+	RoleID           string    `json:"role_id"`
+	Title            *string   `json:"title"`
+	Type             *string   `json:"type"`
+	Responsibilities *[]string `json:"responsibilities"`
+	Model            *string   `json:"model"`
+	Runtime          *string   `json:"runtime"`
+	Icon             *string   `json:"icon"`
+}
+
+func (mt *MonoagentTools) updateOrgRole(args string) (string, error) {
+	var a updateOrgRoleArgs
+	if err := json.Unmarshal([]byte(args), &a); err != nil {
+		return "", fmt.Errorf("invalid args: %w", err)
+	}
+	root := mt.profileRoot()
+	doc, err := orgdesign.Load(root, a.OrgName)
+	if err != nil {
+		return "", fmt.Errorf("load org %s: %w", a.OrgName, err)
+	}
+
+	patch := orgdesign.RolePatch{
+		Title:            a.Title,
+		Type:             a.Type,
+		Responsibilities: a.Responsibilities,
+		Runtime:          a.Runtime,
+		Model:            a.Model,
+		Icon:             a.Icon,
+	}
+	updated, err := doc.UpdateRole(a.RoleID, patch)
+	if err != nil {
+		return "", fmt.Errorf("update role in org %s: %w", a.OrgName, err)
+	}
+	if _, err := orgdesign.Save(root, doc); err != nil {
+		return "", fmt.Errorf("save org %s: %w", a.OrgName, err)
+	}
+	return marshalJSON(map[string]interface{}{"org_name": a.OrgName, "role": roleToView(*updated)})
+}
+
+type setRoleReportsToArgs struct {
+	OrgName   string `json:"org_name"`
+	RoleID    string `json:"role_id"`
+	ReportsTo string `json:"reports_to"`
+}
+
+func (mt *MonoagentTools) setRoleReportsTo(args string) (string, error) {
+	var a setRoleReportsToArgs
+	if err := json.Unmarshal([]byte(args), &a); err != nil {
+		return "", fmt.Errorf("invalid args: %w", err)
+	}
+	root := mt.profileRoot()
+	doc, err := orgdesign.Load(root, a.OrgName)
+	if err != nil {
+		return "", fmt.Errorf("load org %s: %w", a.OrgName, err)
+	}
+	if err := doc.SetReportsTo(a.RoleID, a.ReportsTo); err != nil {
+		return "", fmt.Errorf("move role in org %s: %w", a.OrgName, err)
+	}
+	if _, err := orgdesign.Save(root, doc); err != nil {
+		return "", fmt.Errorf("save org %s: %w", a.OrgName, err)
+	}
+	return marshalJSON(map[string]interface{}{"org_name": a.OrgName, "role_id": a.RoleID, "reports_to": a.ReportsTo})
+}
+
+type removeOrgRoleArgs struct {
+	OrgName  string `json:"org_name"`
+	RoleID   string `json:"role_id"`
+	Strategy string `json:"strategy"`
+	Confirm  bool   `json:"confirm"`
+}
+
+// subtreeIDs walks doc.Children starting at id (breadth-first), returning
+// every descendant's id — used to preview a cascade deletion without
+// mutating doc, since orgdesign's own descendantsOf is unexported (private
+// to RemoveRole's Cascade branch).
+func subtreeIDs(doc *orgdesign.Doc, id string) []string {
+	var out []string
+	queue := []string{id}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		for _, c := range doc.Children(cur) {
+			out = append(out, c.ID)
+			queue = append(queue, c.ID)
+		}
+	}
+	return out
+}
+
+func (mt *MonoagentTools) removeOrgRole(args string) (string, error) {
+	var a removeOrgRoleArgs
+	if err := json.Unmarshal([]byte(args), &a); err != nil {
+		return "", fmt.Errorf("invalid args: %w", err)
+	}
+	strategy := orgdesign.RemoveStrategy(a.Strategy)
+	if strategy == "" {
+		strategy = orgdesign.Reparent
+	}
+
+	root := mt.profileRoot()
+	doc, err := orgdesign.Load(root, a.OrgName)
+	if err != nil {
+		return "", fmt.Errorf("load org %s: %w", a.OrgName, err)
+	}
+
+	if strategy == orgdesign.Cascade && !a.Confirm {
+		return marshalJSON(map[string]interface{}{
+			"would_remove": true,
+			"org_name":     a.OrgName,
+			"role_id":      a.RoleID,
+			"strategy":     "cascade",
+			"also_removes": subtreeIDs(doc, a.RoleID),
+			"note":         "cascade removal of this role and its subtree requires confirm:true; call again with confirm:true to actually perform it",
+		})
+	}
+
+	removed, err := doc.RemoveRole(a.RoleID, strategy)
+	if err != nil {
+		return "", fmt.Errorf("remove role from org %s: %w", a.OrgName, err)
+	}
+	if _, err := orgdesign.Save(root, doc); err != nil {
+		return "", fmt.Errorf("save org %s: %w", a.OrgName, err)
+	}
+	return marshalJSON(map[string]interface{}{"org_name": a.OrgName, "removed_role_ids": removed})
+}
+
+func (mt *MonoagentTools) validateOrg(args string) (string, error) {
+	var a orgNameArgs
+	if err := json.Unmarshal([]byte(args), &a); err != nil {
+		return "", fmt.Errorf("invalid args: %w", err)
+	}
+	doc, err := orgdesign.Load(mt.profileRoot(), a.OrgName)
+	if err != nil {
+		return "", fmt.Errorf("load org %s: %w", a.OrgName, err)
+	}
+	if err := orgdesign.Validate(doc); err != nil {
+		return marshalJSON(map[string]interface{}{
+			"org_name": a.OrgName,
+			"valid":    false,
+			"error":    err.Error(),
+		})
+	}
+	return marshalJSON(map[string]interface{}{"org_name": a.OrgName, "valid": true})
+}
+
+type reloadOrgArgs struct {
+	OrgName string `json:"org_name"`
+	Confirm bool   `json:"confirm"`
+}
+
+func (mt *MonoagentTools) reloadOrg(args string) (string, error) {
+	var a reloadOrgArgs
+	if err := json.Unmarshal([]byte(args), &a); err != nil {
+		return "", fmt.Errorf("invalid args: %w", err)
+	}
+	root := mt.profileRoot()
+	doc, err := orgdesign.Load(root, a.OrgName)
+	if err != nil {
+		return "", fmt.Errorf("load org %s: %w", a.OrgName, err)
+	}
+	running := doc.Status == "running"
+
+	if !a.Confirm {
+		return marshalJSON(map[string]interface{}{
+			"would_reload": true,
+			"org_name":     a.OrgName,
+			"running":      running,
+			"note":         fmt.Sprintf("would reload %s — pass confirm:true to actually do it", a.OrgName),
+		})
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	out, err := monomind.OrgReload(ctx, root, a.OrgName)
+	if err != nil {
+		return "", fmt.Errorf("reload org %s: %w", a.OrgName, err)
+	}
+	return marshalJSON(map[string]interface{}{"org_name": a.OrgName, "reloaded": true, "output": out})
 }

@@ -112,6 +112,14 @@ export default function App() {
     checkActionTypes()
   }, [])
 
+  // Exposed to Logs.jsx's Refresh button — re-fetches the full log buffer
+  // from the backend (in addition to the live event stream below, which can
+  // miss entries if the app was backgrounded).
+  const refreshLogs = useCallback(async () => {
+    const l = await api.getLogs()
+    if (l) setLogs(l)
+  }, [])
+
   // Live log streaming
   useEffect(() => {
     const off = onLogEntry((entry) => {
@@ -158,7 +166,7 @@ export default function App() {
     secretsVault: <Vault />,
     ai: <Agents onOpenChat={openGlobalChat} />,
     orgs: <Orgs isActive={activePage === 'orgs'} />,
-    logs:      <Logs logs={logs} onClear={() => { api.clearLogs(); setLogs([]) }} />,
+    logs:      <Logs logs={logs} onClear={() => { api.clearLogs(); setLogs([]) }} onRefresh={refreshLogs} />,
     settings:  <SettingsPage onNavigate={setActivePage} />,
   }
 

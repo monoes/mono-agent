@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 
@@ -36,6 +37,7 @@ func newOrgCmd(cfg *globalConfig) *cobra.Command {
 	cmd.AddCommand(
 		newOrgListCmd(root),
 		newOrgStatusCmd(root),
+		newOrgRunCmd(root),
 		newOrgLogsCmd(root),
 		newOrgReportCmd(root),
 		newOrgCostsCmd(root),
@@ -50,6 +52,8 @@ func newOrgCmd(cfg *globalConfig) *cobra.Command {
 		newOrgGateApproveCmd(root),
 		newOrgGateRejectCmd(root),
 		newOrgEventsCmd(root),
+		newOrgValidateCmd(root),
+		newOrgReloadCmd(root),
 	)
 	return cmd
 }
@@ -123,6 +127,26 @@ func newOrgReportCmd(root func() string) *cobra.Command {
 		},
 	}
 	c.Flags().BoolVar(&all, "all", false, "Report on every run instead of just the latest")
+	return c
+}
+
+func newOrgRunCmd(root func() string) *cobra.Command {
+	var task string
+	var dryRun bool
+	c := &cobra.Command{
+		Use:   "run <name>",
+		Short: "Start an org run (blocks until it completes or hands off to a live serve daemon)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			out, err := monomind.OrgRun(cmd.Context(), root(), args[0], task, dryRun)
+			if err != nil {
+				return err
+			}
+			return printOrgJSON(out)
+		},
+	}
+	c.Flags().StringVar(&task, "task", "", "Initial message/goal override for this run")
+	c.Flags().BoolVar(&dryRun, "dry-run", false, "Preview role briefings without starting sessions")
 	return c
 }
 
@@ -316,6 +340,60 @@ func newOrgEventsCmd(root func() string) *cobra.Command {
 	c.Flags().BoolVarP(&follow, "follow", "f", false, "Keep streaming as new events arrive")
 	c.Flags().StringVar(&since, "since", "", "Replay from a cursor (event id or ISO timestamp)")
 	return c
+}
+
+func newOrgValidateCmd(root func() string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "validate <name>",
+		Short: "Validate an org's config against the runtime schema and structural rules",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := args[0]
+			out, valErr := monomind.OrgValidate(cmd.Context(), root(), name)
+			payload := map[string]interface{}{
+				"v":     1,
+				"org":   name,
+				"valid": valErr == nil,
+			}
+			if valErr != nil {
+				payload["error"] = valErr.Error()
+			} else {
+				payload["output"] = out
+			}
+			b, err := json.Marshal(payload)
+			if err != nil {
+				return err
+			}
+			return printOrgJSON(b)
+		},
+	}
+}
+
+func newOrgReloadCmd(root func() string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "reload <name>",
+		Short: "Signal a running org's daemon to reload its config",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := args[0]
+			out, reloadErr := monomind.OrgReload(cmd.Context(), root(), name)
+			payload := map[string]interface{}{
+				"v":        1,
+				"org":      name,
+				"reloaded": reloadErr == nil,
+			}
+			if reloadErr != nil {
+				payload["error"] = reloadErr.Error()
+			} else {
+				payload["output"] = out
+			}
+			b, err := json.Marshal(payload)
+			if err != nil {
+				return err
+			}
+			return printOrgJSON(b)
+		},
+	}
 }
 
 // joinRemainder joins trailing positional args with a space, mirroring

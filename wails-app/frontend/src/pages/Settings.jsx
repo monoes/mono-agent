@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link2, Brain, ExternalLink, Download } from 'lucide-react'
 import { api } from '../services/api.js'
 import { GetVersion, CheckForUpdate, AppSelfUpdate } from '../wailsjs/go/main/App'
 import { getAssistantTools, getAssistantAllowRuns, setAssistantTools, setAssistantAllowRuns } from '../lib/assistantTools.js'
+import RefreshButton from '../components/RefreshButton.jsx'
 
 // ── VersionRow ──────────────────────────────────────────────────────────────
 
@@ -298,12 +299,13 @@ export default function Settings({ onNavigate }) {
   const [dbPath, setDbPath] = useState('')
   const [dbConnected, setDbConnected] = useState(false)
   const [connCount, setConnCount] = useState(null)
+  const [refreshing, setRefreshing] = useState(false)
 
-  useEffect(() => {
+  const load = useCallback(async () => {
     api.getDBPath().then(p => setDbPath(p || ''))
     api.isDBConnected().then(c => setDbConnected(!!c))
     // Count active connections
-    api.listConnections('').then(conns => {
+    return api.listConnections('').then(conns => {
       if (Array.isArray(conns)) {
         const active = conns.filter(c => (c.Status || c.status) === 'active').length
         setConnCount(`${active} active connection${active !== 1 ? 's' : ''}`)
@@ -311,12 +313,22 @@ export default function Settings({ onNavigate }) {
     }).catch(() => {})
   }, [])
 
+  useEffect(() => { load() }, [load])
+
+  const handleRefresh = async () => {
+    setRefreshing(true)
+    try { await load() } finally { setRefreshing(false) }
+  }
+
   return (
     <>
       <div className="page-header">
         <div className="page-header-left">
           <div className="page-title">{t('settings.title')}</div>
           <div className="page-subtitle">{t('settings.subtitle')}</div>
+        </div>
+        <div className="page-header-right">
+          <RefreshButton onClick={handleRefresh} loading={refreshing} />
         </div>
       </div>
 

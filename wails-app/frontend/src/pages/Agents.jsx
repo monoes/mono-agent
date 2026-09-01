@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
 import { RefreshCw, Bot, MessageSquare, KeyRound, Terminal } from 'lucide-react'
 import { cachedAgentScan } from '../lib/agentRuntimes.js'
+import { api } from '../services/api.js'
 import AIProviders from './AIProviders.jsx'
+import MonomindInitPrompt from '../components/MonomindInitPrompt.jsx'
 
 function statusColor(installed) {
   return installed ? 'var(--green-neon)' : 'var(--text-muted)'
@@ -109,6 +111,15 @@ export default function Agents({ onOpenChat }) {
   // spinner) — otherwise this is the one real blocking load.
   useEffect(() => { loadAgents(!!cached) }, [loadAgents])
 
+  // Independent of the runtime scan above: monomind can be installed
+  // globally (scanError below only fires when the binary itself is
+  // missing/outdated) while this profile's own folder has never been
+  // initialized — a separate, per-profile check.
+  const [notInitialized, setNotInitialized] = useState(false)
+  useEffect(() => {
+    api.isMonomindInitialized().then(v => setNotInitialized(!v))
+  }, [])
+
   const installedCount = agents.filter(a => a.installed).length
 
   return (
@@ -180,6 +191,8 @@ export default function Agents({ onOpenChat }) {
                   <code style={{ fontSize: 10, color: 'var(--text-muted)', wordBreak: 'break-word', textAlign: 'left' }}>{scanError}</code>
                 </div>
               </div>
+            ) : notInitialized ? (
+              <MonomindInitPrompt onInitialized={() => { setNotInitialized(false); loadAgents() }} />
             ) : agents.length === 0 ? (
               <div className="empty-state">
                 <div className="empty-state-icon"><Bot size={36} /></div>

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Terminal, Trash2, ArrowDown } from 'lucide-react'
+import RefreshButton from '../components/RefreshButton.jsx'
 
 const LEVEL_COLORS = {
   INFO:   { level: 'log-level-info',   msg: 'log-msg-info' },
@@ -9,12 +10,18 @@ const LEVEL_COLORS = {
   SYSTEM: { level: 'log-level-system', msg: 'log-msg-system' },
 }
 
-export default function Logs({ logs, onClear }) {
+export default function Logs({ logs, onClear, onRefresh }) {
   const endRef = useRef(null)
   const containerRef = useRef(null)
   const [autoScroll, setAutoScroll] = useState(true)
   const [filter, setFilter] = useState('')
   const [levelFilter, setLevelFilter] = useState('all')
+  const [refreshing, setRefreshing] = useState(false)
+
+  const handleRefresh = async () => {
+    setRefreshing(true)
+    try { await onRefresh?.() } finally { setRefreshing(false) }
+  }
 
   useEffect(() => {
     if (autoScroll && endRef.current) {
@@ -53,6 +60,7 @@ export default function Logs({ logs, onClear }) {
           <div className="page-subtitle">Real-time Execution</div>
         </div>
         <div className="page-header-right">
+          <RefreshButton onClick={handleRefresh} loading={refreshing} />
           {!autoScroll && (
             <button
               className="btn btn-secondary btn-sm"

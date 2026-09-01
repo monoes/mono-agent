@@ -19,6 +19,7 @@ import (
 	dbnodes "github.com/monoes/mono-agent/internal/nodes/db"
 	httpnodes "github.com/monoes/mono-agent/internal/nodes/http"
 	imagenodes "github.com/monoes/mono-agent/internal/nodes/image"
+	orgnodes "github.com/monoes/mono-agent/internal/nodes/org"
 	peoplenodes "github.com/monoes/mono-agent/internal/nodes/people"
 	"github.com/monoes/mono-agent/internal/nodes/service"
 	"github.com/monoes/mono-agent/internal/nodes/system"
@@ -41,6 +42,9 @@ func Build(db *sql.DB) *workflow.NodeTypeRegistry {
 
 	// Local AI agent nodes (monomind delegation) — no store needed.
 	agentnodes.RegisterAll(registry)
+
+	// Org runtime node (org.run) — kicks off/manages agent orgs from workflows.
+	orgnodes.RegisterAll(registry)
 
 	// Historical ai.* provider nodes are deprecated: fail-fast stubs keep
 	// saved workflows actionable instead of "unknown node type".

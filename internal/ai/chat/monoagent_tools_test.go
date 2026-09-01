@@ -706,3 +706,180 @@ func TestMonoagentTools_RunErrorOutputTruncated(t *testing.T) {
 		t.Errorf("error string length %d exceeds the 4KB cap (+small prefix)", len(err.Error()))
 	}
 }
+
+// newOrgTestTools builds a MonoagentTools whose org-design tools are scoped
+// to a fresh temp directory (via SetOrgProjectRoot) instead of a real
+// profile's filesystem location.
+func newOrgTestTools(t *testing.T) *MonoagentTools {
+	t.Helper()
+	db := newMonoagentTestDB(t)
+	mt := NewMonoagentTools(db.DB, "")
+	mt.SetOrgProjectRoot(t.TempDir())
+	return mt
+}
+
+func TestMonoagentTools_AddOrgRole_FindableViaGetOrg(t *testing.T) {
+	mt := newOrgTestTools(t)
+
+	createArgs, _ := json.Marshal(map[string]interface{}{
+		"name": "acme",
+		"goal": "Ship the thing",
+	})
+	if _, err := mt.Execute("create_org", string(createArgs)); err != nil {
+		t.Fatalf("create_org failed: %v", err)
+	}
+
+	addArgs, _ := json.Marshal(map[string]interface{}{
+		"org_name":         "acme",
+		"title":            "Content Writer",
+		"reports_to":       "lead",
+		"responsibilities": []string{"draft posts", "edit copy"},
+	})
+	addOut, err := mt.Execute("add_org_role", string(addArgs))
+	if err != nil {
+		t.Fatalf("add_org_role failed: %v", err)
+	}
+	var addRes struct {
+		Role roleView `json:"role"`
+	}
+	mustJSON(t, addOut, &addRes)
+	if addRes.Role.ID == "" {
+		t.Fatalf("add_org_role did not return a derived role id: %s", addOut)
+	}
+	if addRes.Role.ReportsTo == nil || *addRes.Role.ReportsTo != "lead" {
+		t.Fatalf("add_org_role role has wrong reports_to: %+v", addRes.Role)
+	}
+
+	getOut, err := mt.Execute("get_org", `{"org_name":"acme"}`)
+	if err != nil {
+		t.Fatalf("get_org failed: %v", err)
+	}
+	var getRes struct {
+		Roles []roleView `json:"roles"`
+	}
+	mustJSON(t, getOut, &getRes)
+	found := false
+	for _, r := range getRes.Roles {
+		if r.ID == addRes.Role.ID && r.Title == "Content Writer" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("added role %q not found via get_org: %s", addRes.Role.ID, getOut)
+	}
+}
+
+func TestMonoagentTools_SetRoleReportsTo_RejectsCycle(t *testing.T) {
+	mt := newOrgTestTools(t)
+
+	createArgs, _ := json.Marshal(map[string]interface{}{
+		"name": "acme",
+		"goal": "Ship the thing",
+	})
+	if _, err := mt.Execute("create_org", string(createArgs)); err != nil {
+		t.Fatalf("create_org failed: %v", err)
+	}
+	addArgs, _ := json.Marshal(map[string]interface{}{
+		"org_name":   "acme",
+		"id":         "writer",
+		"title":      "Content Writer",
+		"reports_to": "lead",
+	})
+	if _, err := mt.Execute("add_org_role", string(addArgs)); err != nil {
+		t.Fatalf("add_org_role failed: %v", err)
+	}
+
+	// lead already reports to nothing (it's root); try to make lead report
+	// to writer, which itself reports to lead — a direct cycle.
+	cycleArgs, _ := json.Marshal(map[string]interface{}{
+		"org_name":   "acme",
+		"role_id":    "lead",
+		"reports_to": "writer",
+	})
+	_, err := mt.Execute("set_role_reports_to", string(cycleArgs))
+	if err == nil {
+		t.Fatal("set_role_reports_to accepted a cycle-creating edge, expected an error")
+	}
+	if !strings.Contains(err.Error(), "circular") {
+		t.Errorf("expected a cycle-related error, got: %v", err)
+	}
+
+	// The org must be unchanged: lead is still root.
+	getOut, err := mt.Execute("get_org", `{"org_name":"acme"}`)
+	if err != nil {
+		t.Fatalf("get_org failed: %v", err)
+	}
+	var getRes struct {
+		Roles []roleView `json:"roles"`
+	}
+	mustJSON(t, getOut, &getRes)
+	for _, r := range getRes.Roles {
+		if r.ID == "lead" && r.ReportsTo != nil {
+			t.Errorf("lead role was mutated despite rejected cycle: reports_to=%v", *r.ReportsTo)
+		}
+	}
+}
+
+func TestMonoagentTools_RemoveOrgRole_CascadeWithoutConfirmDoesNotMutate(t *testing.T) {
+	mt := newOrgTestTools(t)
+
+	createArgs, _ := json.Marshal(map[string]interface{}{
+		"name": "acme",
+		"goal": "Ship the thing",
+	})
+	if _, err := mt.Execute("create_org", string(createArgs)); err != nil {
+		t.Fatalf("create_org failed: %v", err)
+	}
+	addArgs, _ := json.Marshal(map[string]interface{}{
+		"org_name":   "acme",
+		"id":         "writer",
+		"title":      "Content Writer",
+		"reports_to": "lead",
+	})
+	if _, err := mt.Execute("add_org_role", string(addArgs)); err != nil {
+		t.Fatalf("add_org_role failed: %v", err)
+	}
+	addChildArgs, _ := json.Marshal(map[string]interface{}{
+		"org_name":   "acme",
+		"id":         "editor",
+		"title":      "Copy Editor",
+		"reports_to": "writer",
+	})
+	if _, err := mt.Execute("add_org_role", string(addChildArgs)); err != nil {
+		t.Fatalf("add_org_role (child) failed: %v", err)
+	}
+
+	removeArgs, _ := json.Marshal(map[string]interface{}{
+		"org_name": "acme",
+		"role_id":  "writer",
+		"strategy": "cascade",
+	})
+	removeOut, err := mt.Execute("remove_org_role", string(removeArgs))
+	if err != nil {
+		t.Fatalf("remove_org_role (unconfirmed cascade) should not error, got: %v", err)
+	}
+	var removeRes struct {
+		WouldRemove bool     `json:"would_remove"`
+		AlsoRemoves []string `json:"also_removes"`
+	}
+	mustJSON(t, removeOut, &removeRes)
+	if !removeRes.WouldRemove {
+		t.Fatalf("expected would_remove:true without confirm, got: %s", removeOut)
+	}
+	if len(removeRes.AlsoRemoves) != 1 || removeRes.AlsoRemoves[0] != "editor" {
+		t.Errorf("expected also_removes=[editor], got: %v", removeRes.AlsoRemoves)
+	}
+
+	// Nothing should have actually been removed.
+	getOut, err := mt.Execute("get_org", `{"org_name":"acme"}`)
+	if err != nil {
+		t.Fatalf("get_org failed: %v", err)
+	}
+	var getRes struct {
+		Roles []roleView `json:"roles"`
+	}
+	mustJSON(t, getOut, &getRes)
+	if len(getRes.Roles) != 3 {
+		t.Fatalf("expected all 3 roles to still exist after unconfirmed cascade, got %d: %s", len(getRes.Roles), getOut)
+	}
+}

@@ -1655,6 +1655,24 @@ body {
 .field-code { width: 100%; font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace; font-size: 11px; resize: vertical; line-height: 1.5; }
 .code-lang-badge { display: inline-block; font-size: 9px; background: rgba(0,180,216,0.15); color: var(--text, #ccc); padding: 1px 5px; border-radius: 3px; margin-left: 6px; text-transform: uppercase; vertical-align: middle; }
 
+/* ── Org Designer ── */
+@keyframes odAIPulse {
+  0%   { box-shadow: 0 0 0 0 rgba(0, 245, 212, 0.55); }
+  70%  { box-shadow: 0 0 0 10px rgba(0, 245, 212, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(0, 245, 212, 0); }
+}
+.od-node-ai-edit {
+  animation: odAIPulse 1.4s ease-out 2;
+}
+
+@keyframes odNodeEnter {
+  from { opacity: 0; transform: scale(0.85); }
+  to   { opacity: 1; transform: scale(1); }
+}
+.od-node-enter {
+  animation: odNodeEnter 220ms ease-out;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;

@@ -135,6 +135,27 @@ export const api = {
   gateRejectOrgAction:  (name, gateID, resolution = '') => GoApp.GateRejectOrgAction(name, gateID, resolution).then(s => JSON.parse(s)),
   streamOrgEvents:    (orgName) => GoApp.StreamOrgEvents(orgName).then(s => JSON.parse(s)),
   stopOrgEvents:      (orgName) => GoApp.StopOrgEvents(orgName).then(s => JSON.parse(s)).catch(guard('stop org events', null)),
+  runOrg:             (orgName, task = '') => GoApp.RunOrg(orgName, task).then(s => JSON.parse(s)),
+  // Org Designer — direct config-file read/write, distinct from the org
+  // observe/action surface above (which proxies `monoagentcli org <sub>`,
+  // read-only + question/gate actions). See wails-app/app_orgs_design.go.
+  getOrgDesign:        (name) => GoApp.GetOrgDesign(name).then(s => JSON.parse(s)).catch(guard('org design', null)),
+  listOrgDesigns:      () => GoApp.ListOrgDesigns().then(s => JSON.parse(s)).catch(guard('org designs', null)),
+  createOrgDesign:     (spec) => GoApp.CreateOrgDesign(JSON.stringify(spec)).then(s => JSON.parse(s)),
+  deleteOrgDesign:     (name) => GoApp.DeleteOrgDesign(name).then(s => JSON.parse(s)),
+  addOrgRole:          (name, role) => GoApp.AddOrgRole(name, JSON.stringify(role)).then(s => JSON.parse(s)),
+  updateOrgRole:       (name, roleID, patch) => GoApp.UpdateOrgRole(name, roleID, JSON.stringify(patch)).then(s => JSON.parse(s)),
+  removeOrgRole:       (name, roleID, strategy = 'reparent') => GoApp.RemoveOrgRole(name, roleID, strategy).then(s => JSON.parse(s)),
+  setOrgRoleReportsTo: (name, roleID, parentID = '') => GoApp.SetOrgRoleReportsTo(name, roleID, parentID).then(s => JSON.parse(s)),
+  promoteRoleToRoot:   (name, roleID) => GoApp.PromoteRoleToRoot(name, roleID).then(s => JSON.parse(s)),
+  chooseInstructionsFile: () => GoApp.ChooseInstructionsFile(),
+  saveOrgLayout:       (name, layout) => GoApp.SaveOrgLayout(name, JSON.stringify(layout)).then(s => JSON.parse(s)),
+  saveOrgDesign:       (name, doc) => GoApp.SaveOrgDesign(name, JSON.stringify(doc)).then(s => JSON.parse(s)),
+  validateOrgDesign:   (name) => GoApp.ValidateOrgDesign(name).then(s => JSON.parse(s)).catch(guard('validate org design', null)),
+  reloadOrg:           (name) => GoApp.ReloadOrg(name).then(s => JSON.parse(s)),
+  // Per-profile monomind setup — see wails-app/app_monomind_init.go.
+  isMonomindInitialized:   () => GoApp.IsMonomindInitialized().catch(guard('monomind init status', false)),
+  initializeMonomindProfile: () => GoApp.InitializeMonomindProfile().then(s => JSON.parse(s)),
 }
 
 // The Wails runtime (window.runtime / window.go) only exists inside the desktop
@@ -201,6 +222,28 @@ export function onAgentSession(callback) {
 
 export function onOrgEventsClosed(callback) {
   return subscribeEvent('org:eventsClosed', callback)
+}
+
+// onOrgRunStatus fires when RunOrg's tracked subprocess starts/exits.
+// Payload: {orgName, status: 'running' | 'stopped' | 'error'}.
+export function onOrgRunStatus(callback) {
+  return subscribeEvent('org:runStatus', callback)
+}
+
+// onOrgDesignUpdated fires for ANY change to an org's config file —
+// an in-app canvas save, an AI chat tool call, or an external
+// `monoagentcli org`/hand edit — via a single event name regardless of
+// origin (payload.origin is "ui" | "external", diagnostic only, never
+// branch UI behavior on it). Payload:
+// {v, orgName, profileID, origin, deleted, valid, errors, org}.
+export function onOrgDesignUpdated(callback) {
+  return subscribeEvent('org:designUpdated', callback)
+}
+
+// onMonomindInitEvent streams InitializeMonomindProfile's progress.
+// Payload: {kind: 'line'|'error'|'done', message}.
+export function onMonomindInitEvent(callback) {
+  return subscribeEvent('monomind:initProgress', callback)
 }
 
 export const PLATFORMS = ['INSTAGRAM', 'LINKEDIN', 'X', 'TIKTOK']
