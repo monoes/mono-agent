@@ -113,16 +113,19 @@ jobs:
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: wails-app/frontend/package-lock.json
 
       - name: Build frontend
+        # npm/cli#7622 (npm ci hard-failing with EBADPLATFORM on optional
+        # deps) was fixed by npm/cli#9262, shipped in npm 12.0.0
+        # (2026-07-08). node-version above is 22 (bumped from 20) because
+        # npm 12 requires Node >=22.22; Node 22's own bundled npm predates
+        # 12, so it's installed explicitly too.
         run: |
-          # npm ci --dry-run fails loudly on lockfile drift (see release.yml
-          # for why npm install, not npm ci, does the actual install).
-          npm ci --dry-run
-          npm install
+          npm install -g npm@12
+          npm ci
           npm run build
         working-directory: wails-app/frontend
 
