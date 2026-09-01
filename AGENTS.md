@@ -118,6 +118,45 @@ Prefer MCP when the host supports it; the CLI covers the same surface.
 Tools carry `readOnly`/`destructive` annotations where applicable, so
 hosts can gate dangerous calls.
 
+## HTTP API
+
+```bash
+monoagentcli httpapi    # REST/JSON server (default 127.0.0.1:9322)
+```
+
+For agents that can't speak stdio JSON-RPC. Same surface as the MCP tools
+(`internal/httpapi/` mirrors `internal/mcp/`'s conventions), plus
+`GET /workflows/{id}/executions` and `POST /workflows/{id}/activate` /
+`deactivate`. Read-only by default; mutating endpoints
+(`run`/`activate`/`deactivate`/`hil approve`/`hil reject`) are only
+registered when started with `--allow-mutations` or
+`MONOAGENT_HTTPAPI_ALLOW_MUTATIONS=1` — otherwise those paths 404 rather
+than 403, so a probe can't distinguish "opted out" from "doesn't exist".
+Every request needs `Authorization: Bearer <token>` except `GET /health`;
+the token is generated on first start and stored in the active profile's
+secrets vault (`secret list`, name `httpapi-token`). Output items go
+through the same redaction as `workflow run --json` — pass
+`X-Full-Outputs: 1` to opt out per request, mirroring
+`workflow run --full-outputs`. Full endpoint list:
+`internal/httpapi/openapi.yaml`; curl walkthrough:
+`examples/httpapi-quickstart.md`.
+
+**Status-code mapping** (mirrors the CLI [exit codes](#exit-codes) below,
+via `cmd/monoagentcli/exitcodes.go`'s error classes):
+
+| HTTP status | CLI exit code equivalent | Cause |
+|---|---|---|
+| 200 | 0 | success |
+| 400 | 3 | invalid input / validation failure (bad JSON body, `ErrNoTriggerNode`, `ErrCycleDetected`, `ErrNodeTypeUnknown`, `ErrInvalidConfig`, `ErrWorkflowInactive`) |
+| 401 | 4 (auth/connection) | missing or invalid bearer token |
+| 404 | 2 | workflow, node type, or HIL item not found (includes cross-profile lookups) |
+| 500 | 1 | unclassified engine/store error |
+
+No endpoint ever returns a generic 500 for a condition the CLI classifies
+more specifically — this repo prefers honest, mapped statuses (see the
+README's Feature Highlights on `SUCCESS_WITH_ERRORS` runs) over collapsing
+everything to 200/500.
+
 ## Assistant chat & tools
 
 `monoagentcli chat` is a conversational assistant over the local agent
@@ -156,7 +195,34 @@ event.
 
 The `agent` and `org` commands (monomind-backed agent/organization
 management) also exist — see `monoagentcli agent --help` and
-`monoagentcli org --help`.
+`monoagentcli org --help`. These, plus AI chat/agent-ask, delegate to an
+external `monomind` binary — see "Monomind (external agent runtime)" below
+for the install prerequisite and version requirement.
+
+### Monomind (external agent runtime)
+
+`monoagentcli`'s AI/agent surfaces (`agent`, `org`, `chat`, `agent_ask`,
+`agent.ask` workflow node) are thin proxies over a separately-installed
+`monomind` binary (protocol handshake in `internal/monomind/`) — this repo
+does not vendor it. This is a deliberate architectural decision (see
+`docs/plans/local-agent-monomind-delegation.md`), not an oversight: it keeps
+runner-specific knowledge (which local AI CLIs are installed, how to drive
+each one) entirely out of the Go binary.
+
+- **Install**: `npm install -g @monoes/monomindcli` (requires Node.js).
+  `.mcp.json` pins the exact MCP-server version this repo was tested
+  against; the globally-installed CLI just needs to satisfy the version
+  floor below.
+- **Version floor**: `internal/monomind.MinMonomindVersion` (currently
+  `2.10.0`) — `Handshake()` rejects an older or protocol-incompatible
+  binary with a clear error rather than misbehaving silently.
+- **Graceful degradation**: if `monomind` is not found on `PATH` (or in the
+  bundled-install fallback locations under `~/.monoagent/`), every
+  monomind-backed command fails at invocation time with an actionable
+  install-hint error (`internal/monomind.ErrNotFound`) — not a panic, not a
+  silent no-op. Everything else in `monoagentcli` (the workflow engine,
+  node execution, the CLI/MCP surface) works with no `monomind` installed
+  at all.
 
 ## Human-in-the-loop from agents
 
@@ -201,11 +267,16 @@ Service, or Windows Credential Manager). On machines without one (headless
 CI, containers), setting `MONOAGENT_ALLOW_FILE_KEYRING=1` enables a
 file-based KEK fallback stored as per-profile files
 `~/.monoagent/vault/.file-keyring-<profileID>` (permissions 0600); the
-CLI prints a loud warning whenever it is used.
-This is weaker than a real keychain — any process running as the same
-user, or anything with read access to the volume, can read the file — so
-treat it as a CI/container escape hatch, not a default. Without the env
-var, `secret add` fails closed.
+CLI prints a loud warning whenever it is used. The file holds the KEK
+**wrapped** under an argon2id-derived key from an operator passphrase
+(read from stdin/prompt only — same anti-argv rule as secret values), not
+the raw key — see [SECURITY.md's "File-based keyring
+fallback"](SECURITY.md#file-based-keyring-fallback-weaker-posture) for the
+envelope format, the auto-migration of pre-hardening vaults, and the CI
+recipe for piping the passphrase via stdin. It is still weaker than a real
+keychain — any process running as the same user, or anything with read
+*and* the passphrase, can unlock it — so treat it as a CI/container escape
+hatch, not a default. Without the env var, `secret add` fails closed.
 
 ## Profiles
 
@@ -255,7 +326,8 @@ regardless of where the binary runs from.
 
 | Variable | Effect |
 |---|---|
-| `MONOAGENT_WEBHOOK_ADDR` | Bind address (`host:port`) for the webhook trigger server. Default `127.0.0.1:9321` (loopback only). Override it under Docker/VMs so published ports actually forward. |
+| `MONOAGENT_WEBHOOK_ADDR` | Bind address (`host:port`) for the webhook trigger server. Default `127.0.0.1:9321` (loopback only, plain HTTP). Override it under Docker/VMs so published ports actually forward — any non-loopback bind is always served over TLS (see [SECURITY.md](SECURITY.md#webhook-trigger-surface)), never plaintext. |
+| `MONOAGENT_WEBHOOK_TLS_CERT` / `MONOAGENT_WEBHOOK_TLS_KEY` | Explicit TLS certificate/key file paths for a non-loopback webhook bind. Both or neither — setting only one is a startup error. Default: unset — a non-loopback bind auto-generates and caches a self-signed certificate under `~/.monoagent/webhook-tls/` instead. |
 | `MONOAGENT_WEBHOOK_ALLOWED_ORIGINS` | Comma-separated CORS allowlist for the webhook server. Default: unset — no CORS headers are sent. |
 | `MONOAGENT_ALLOW_FILE_KEYRING` | Set to `1` to allow the file-based keyring fallback when no OS keyring exists (see [Secrets](#secrets)). Default: unset — `secret add` fails closed on machines without a keyring. |
 | `MONOAGENT_ALLOW_ENV_TEMPLATES` | Set to `1` to let `{{ $env.* }}` template expressions read OS environment variables (see `ref expressions`). Default: unset — `$env` references resolve to empty. |

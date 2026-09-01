@@ -1,0 +1,39 @@
+name: Benchmarks
+
+# Weekly, not per-PR: benchmark noise on shared CI runners makes per-PR
+# gating unreliable, and issue #28 explicitly defers an alert threshold
+# until two baseline runs exist to compare against. This job's only job for
+# now is to capture and upload numbers on a schedule; workflow_dispatch is
+# provided so the job (and the threshold-setting work that follows it) can
+# be exercised manually without waiting for Monday.
+on:
+  schedule:
+    - cron: '0 6 * * 1' # Monday 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  bench:
+    name: Run benchmark suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+
+      - name: Run benchmarks
+        run: make bench
+
+      - name: Install benchstat
+        run: go install golang.org/x/perf/cmd/benchstat@latest
+
+      - name: Format with benchstat
+        run: benchstat bench.txt | tee benchstat.txt
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: bench-results-${{ github.run_id }}
+          path: |
+            bench.txt
+            benchstat.txt

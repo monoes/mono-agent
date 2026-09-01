@@ -38,6 +38,19 @@ type InstagramBot struct{}
 // actually delivered (composer cleared or message bubble rendered).
 const sendVerificationTimeout = 3 * time.Second
 
+// unwrapRodPage extracts the underlying *rod.Page from a browser.PageInterface.
+// Most of this bot's helper methods are written directly against the Rod API
+// and cannot operate on other drivers (e.g. the Chrome extension bridge). This
+// returns a descriptive error instead of panicking when the active page isn't
+// backed by Rod.
+func unwrapRodPage(p browser.PageInterface) (*rod.Page, error) {
+	rp, ok := p.(*browser.RodPage)
+	if !ok {
+		return nil, fmt.Errorf("instagram: this operation requires the Rod browser driver, got %T", p)
+	}
+	return rp.UnwrapRodPage(), nil
+}
+
 // dmBubbleSelectors are best-effort selectors for rendered DM bubbles in the
 // conversation thread, used as the "OR" branch of send verification.
 var dmBubbleSelectors = []string{
@@ -130,7 +143,10 @@ func (b *InstagramBot) LoginURL() string {
 // IsLoggedIn checks whether the user is authenticated on Instagram by looking
 // for navigation elements that only appear when logged in.
 func (b *InstagramBot) IsLoggedIn(p browser.PageInterface) (bool, error) {
-	page := p.(*browser.RodPage).UnwrapRodPage()
+	page, err := unwrapRodPage(p)
+	if err != nil {
+		return false, err
+	}
 	// Instagram renders a navigation bar with specific selectors when logged in.
 	// We check for the presence of the navigation element or profile avatar icon.
 	selectors := []string{
@@ -216,7 +232,10 @@ func (b *InstagramBot) SearchURL(keyword string) string {
 // Strategy 1: Navigate to profile → click "Message" button → type → send.
 // Strategy 2 (fallback): Use /direct/new/ compose flow to search for user.
 func (b *InstagramBot) SendMessage(ctx context.Context, p browser.PageInterface, username, message string) error {
-	page := p.(*browser.RodPage).UnwrapRodPage()
+	page, err := unwrapRodPage(p)
+	if err != nil {
+		return err
+	}
 	if username == "" {
 		return fmt.Errorf("instagram: username is required")
 	}
@@ -477,11 +496,14 @@ func (b *InstagramBot) typeAndSendMessage(page *rod.Page, message string) error 
 // GetProfileData scrapes the currently loaded Instagram profile page and
 // returns structured profile information.
 func (b *InstagramBot) GetProfileData(ctx context.Context, p browser.PageInterface) (map[string]interface{}, error) {
-	page := p.(*browser.RodPage).UnwrapRodPage()
+	page, err := unwrapRodPage(p)
+	if err != nil {
+		return nil, err
+	}
 	data := make(map[string]interface{})
 
 	// Wait for profile content to be present.
-	err := page.WaitLoad()
+	err = page.WaitLoad()
 	if err != nil {
 		return data, fmt.Errorf("instagram: page did not finish loading: %w", err)
 	}
@@ -1087,7 +1109,10 @@ func (b *InstagramBot) GetMethodByName(name string) (func(ctx context.Context, a
 			if !ok {
 				return nil, fmt.Errorf("get_user_info: first arg must be browser.PageInterface")
 			}
-			page := p.(*browser.RodPage).UnwrapRodPage()
+			page, err := unwrapRodPage(p)
+			if err != nil {
+				return nil, err
+			}
 			input, ok := args[1].(string)
 			if !ok {
 				return nil, fmt.Errorf("get_user_info: second arg must be string")
@@ -1112,7 +1137,10 @@ func (b *InstagramBot) GetMethodByName(name string) (func(ctx context.Context, a
 			if !ok {
 				return nil, fmt.Errorf("extract_username_from_metadata: first arg must be browser.PageInterface")
 			}
-			page := p.(*browser.RodPage).UnwrapRodPage()
+			page, err := unwrapRodPage(p)
+			if err != nil {
+				return nil, err
+			}
 			return b.ExtractUsernameFromMetadata(page)
 		}, true
 
@@ -1125,7 +1153,10 @@ func (b *InstagramBot) GetMethodByName(name string) (func(ctx context.Context, a
 			if !ok {
 				return nil, fmt.Errorf("send_message: first arg must be browser.PageInterface")
 			}
-			page := p.(*browser.RodPage).UnwrapRodPage()
+			page, err := unwrapRodPage(p)
+			if err != nil {
+				return nil, err
+			}
 			usernameOrURL, ok := args[1].(string)
 			if !ok {
 				return nil, fmt.Errorf("send_message: second arg must be string")
@@ -1142,7 +1173,7 @@ func (b *InstagramBot) GetMethodByName(name string) (func(ctx context.Context, a
 			if username == "" {
 				return nil, fmt.Errorf("send_message: could not determine username from %q", usernameOrURL)
 			}
-			err := b.SendMessage(ctx, browser.NewRodPage(page), username, message)
+			err = b.SendMessage(ctx, browser.NewRodPage(page), username, message)
 			if err != nil {
 				return nil, err
 			}
@@ -1161,12 +1192,15 @@ func (b *InstagramBot) GetMethodByName(name string) (func(ctx context.Context, a
 			if !ok {
 				return nil, fmt.Errorf("like_post: first arg must be browser.PageInterface")
 			}
-			page := p.(*browser.RodPage).UnwrapRodPage()
+			page, err := unwrapRodPage(p)
+			if err != nil {
+				return nil, err
+			}
 			postURL, ok := args[1].(string)
 			if !ok {
 				return nil, fmt.Errorf("like_post: second arg must be string")
 			}
-			err := b.LikePost(ctx, page, postURL)
+			err = b.LikePost(ctx, page, postURL)
 			if err != nil {
 				return nil, err
 			}
@@ -1185,7 +1219,10 @@ func (b *InstagramBot) GetMethodByName(name string) (func(ctx context.Context, a
 			if !ok {
 				return nil, fmt.Errorf("comment_post: first arg must be browser.PageInterface")
 			}
-			page := p.(*browser.RodPage).UnwrapRodPage()
+			page, err := unwrapRodPage(p)
+			if err != nil {
+				return nil, err
+			}
 			postURL, ok := args[1].(string)
 			if !ok {
 				return nil, fmt.Errorf("comment_post: second arg must be string")
@@ -1194,7 +1231,7 @@ func (b *InstagramBot) GetMethodByName(name string) (func(ctx context.Context, a
 			if !ok {
 				return nil, fmt.Errorf("comment_post: third arg must be string")
 			}
-			err := b.CommentPost(ctx, page, postURL, commentText)
+			err = b.CommentPost(ctx, page, postURL, commentText)
 			if err != nil {
 				return nil, err
 			}
@@ -1213,7 +1250,10 @@ func (b *InstagramBot) GetMethodByName(name string) (func(ctx context.Context, a
 			if !ok {
 				return nil, fmt.Errorf("reply_to_conversation: first arg must be browser.PageInterface")
 			}
-			page := p.(*browser.RodPage).UnwrapRodPage()
+			page, err := unwrapRodPage(p)
+			if err != nil {
+				return nil, err
+			}
 			conversationURL, ok := args[1].(string)
 			if !ok {
 				return nil, fmt.Errorf("reply_to_conversation: second arg must be string")
@@ -1222,7 +1262,7 @@ func (b *InstagramBot) GetMethodByName(name string) (func(ctx context.Context, a
 			if !ok {
 				return nil, fmt.Errorf("reply_to_conversation: third arg must be string")
 			}
-			err := b.ReplyToConversation(ctx, page, conversationURL, replyText)
+			err = b.ReplyToConversation(ctx, page, conversationURL, replyText)
 			if err != nil {
 				return nil, err
 			}
@@ -1240,7 +1280,10 @@ func (b *InstagramBot) GetMethodByName(name string) (func(ctx context.Context, a
 			if !ok {
 				return nil, fmt.Errorf("fetch_followers_list: first arg must be browser.PageInterface")
 			}
-			page := p.(*browser.RodPage).UnwrapRodPage()
+			page, err := unwrapRodPage(p)
+			if err != nil {
+				return nil, err
+			}
 			profileURL, ok := args[1].(string)
 			if !ok {
 				return nil, fmt.Errorf("fetch_followers_list: second arg must be string")
@@ -1279,7 +1322,10 @@ func (b *InstagramBot) GetMethodByName(name string) (func(ctx context.Context, a
 			if !ok {
 				return nil, fmt.Errorf("interact_with_posts: first arg must be browser.PageInterface")
 			}
-			page := p.(*browser.RodPage).UnwrapRodPage()
+			page, err := unwrapRodPage(p)
+			if err != nil {
+				return nil, err
+			}
 			keyword, ok := args[1].(string)
 			if !ok {
 				return nil, fmt.Errorf("interact_with_posts: second arg must be string")
@@ -1311,7 +1357,10 @@ func (b *InstagramBot) GetMethodByName(name string) (func(ctx context.Context, a
 			if !ok {
 				return nil, fmt.Errorf("interact_with_user_posts: first arg must be browser.PageInterface")
 			}
-			page := p.(*browser.RodPage).UnwrapRodPage()
+			page, err := unwrapRodPage(p)
+			if err != nil {
+				return nil, err
+			}
 			username, ok := args[1].(string)
 			if !ok {
 				return nil, fmt.Errorf("interact_with_user_posts: second arg must be string")
@@ -1375,12 +1424,15 @@ func (b *InstagramBot) GetMethodByName(name string) (func(ctx context.Context, a
 			if !ok {
 				return nil, fmt.Errorf("follow_user: first arg must be browser.PageInterface")
 			}
-			page := p.(*browser.RodPage).UnwrapRodPage()
+			page, err := unwrapRodPage(p)
+			if err != nil {
+				return nil, err
+			}
 			profileURL, ok := args[1].(string)
 			if !ok {
 				return nil, fmt.Errorf("follow_user: second arg must be string")
 			}
-			err := b.FollowUser(ctx, page, profileURL)
+			err = b.FollowUser(ctx, page, profileURL)
 			if err != nil {
 				return nil, err
 			}
@@ -1399,12 +1451,15 @@ func (b *InstagramBot) GetMethodByName(name string) (func(ctx context.Context, a
 			if !ok {
 				return nil, fmt.Errorf("unfollow_user: first arg must be browser.PageInterface")
 			}
-			page := p.(*browser.RodPage).UnwrapRodPage()
+			page, err := unwrapRodPage(p)
+			if err != nil {
+				return nil, err
+			}
 			profileURL, ok := args[1].(string)
 			if !ok {
 				return nil, fmt.Errorf("unfollow_user: second arg must be string")
 			}
-			err := b.UnfollowUser(ctx, page, profileURL)
+			err = b.UnfollowUser(ctx, page, profileURL)
 			if err != nil {
 				return nil, err
 			}
@@ -1423,12 +1478,15 @@ func (b *InstagramBot) GetMethodByName(name string) (func(ctx context.Context, a
 			if !ok {
 				return nil, fmt.Errorf("view_stories: first arg must be browser.PageInterface")
 			}
-			page := p.(*browser.RodPage).UnwrapRodPage()
+			page, err := unwrapRodPage(p)
+			if err != nil {
+				return nil, err
+			}
 			profileURL, ok := args[1].(string)
 			if !ok {
 				return nil, fmt.Errorf("view_stories: second arg must be string")
 			}
-			err := b.ViewStories(ctx, page, profileURL)
+			err = b.ViewStories(ctx, page, profileURL)
 			if err != nil {
 				return nil, err
 			}
@@ -1447,7 +1505,10 @@ func (b *InstagramBot) GetMethodByName(name string) (func(ctx context.Context, a
 			if !ok {
 				return nil, fmt.Errorf("scrape_post_data: first arg must be browser.PageInterface")
 			}
-			page := p.(*browser.RodPage).UnwrapRodPage()
+			page, err := unwrapRodPage(p)
+			if err != nil {
+				return nil, err
+			}
 			postURL, ok := args[1].(string)
 			if !ok {
 				return nil, fmt.Errorf("scrape_post_data: second arg must be string")
@@ -1464,7 +1525,10 @@ func (b *InstagramBot) GetMethodByName(name string) (func(ctx context.Context, a
 			if !ok {
 				return nil, fmt.Errorf("like_comment: first arg must be browser.PageInterface")
 			}
-			page := p.(*browser.RodPage).UnwrapRodPage()
+			page, err := unwrapRodPage(p)
+			if err != nil {
+				return nil, err
+			}
 			postURL, ok := args[1].(string)
 			if !ok {
 				return nil, fmt.Errorf("like_comment: second arg must be string")
@@ -1473,7 +1537,7 @@ func (b *InstagramBot) GetMethodByName(name string) (func(ctx context.Context, a
 			if !ok {
 				return nil, fmt.Errorf("like_comment: third arg must be string")
 			}
-			err := b.LikeComment(ctx, page, postURL, commentAuthor)
+			err = b.LikeComment(ctx, page, postURL, commentAuthor)
 			if err != nil {
 				return nil, err
 			}
@@ -1492,7 +1556,10 @@ func (b *InstagramBot) GetMethodByName(name string) (func(ctx context.Context, a
 			if !ok {
 				return nil, fmt.Errorf("list_user_posts: first arg must be browser.PageInterface")
 			}
-			page := p.(*browser.RodPage).UnwrapRodPage()
+			page, err := unwrapRodPage(p)
+			if err != nil {
+				return nil, err
+			}
 			username, ok := args[1].(string)
 			if !ok {
 				return nil, fmt.Errorf("list_user_posts: second arg must be string")
@@ -1524,7 +1591,10 @@ func (b *InstagramBot) GetMethodByName(name string) (func(ctx context.Context, a
 			if !ok {
 				return nil, fmt.Errorf("list_post_comments: first arg must be browser.PageInterface")
 			}
-			page := p.(*browser.RodPage).UnwrapRodPage()
+			page, err := unwrapRodPage(p)
+			if err != nil {
+				return nil, err
+			}
 			postURL, ok := args[1].(string)
 			if !ok {
 				return nil, fmt.Errorf("list_post_comments: second arg must be string")
@@ -1556,7 +1626,10 @@ func (b *InstagramBot) GetMethodByName(name string) (func(ctx context.Context, a
 			if !ok {
 				return nil, fmt.Errorf("reply_comment: first arg must be browser.PageInterface")
 			}
-			page := p.(*browser.RodPage).UnwrapRodPage()
+			page, err := unwrapRodPage(p)
+			if err != nil {
+				return nil, err
+			}
 			postURL, ok := args[1].(string)
 			if !ok {
 				return nil, fmt.Errorf("reply_comment: second arg must be string")
@@ -1569,7 +1642,7 @@ func (b *InstagramBot) GetMethodByName(name string) (func(ctx context.Context, a
 			if !ok {
 				return nil, fmt.Errorf("reply_comment: fourth arg must be string")
 			}
-			err := b.ReplyToComment(ctx, page, postURL, commentAuthor, replyText)
+			err = b.ReplyToComment(ctx, page, postURL, commentAuthor, replyText)
 			if err != nil {
 				return nil, err
 			}

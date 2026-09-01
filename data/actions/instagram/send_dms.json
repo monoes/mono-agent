@@ -15,8 +15,7 @@
     ],
     "optional": [
       { "name": "maxMessagesPerSession", "type": "number", "default": 30, "min": 1, "max": 100, "description": "Rate limit: max DMs per session" },
-      { "name": "delayBetweenMessages", "type": "number", "default": 15, "min": 5, "max": 120, "description": "Seconds to wait between messages" },
-      { "name": "skipAlreadyMessaged", "type": "boolean", "default": true, "description": "Skip users already messaged" }
+      { "name": "delayBetweenMessages", "type": "number", "default": 15, "min": 5, "max": 120, "description": "Seconds to wait between messages" }
     ]
   },
   "outputs": {

@@ -20,6 +20,7 @@ import (
 	browserpkg "github.com/monoes/mono-agent/internal/browser"
 	cfgpkg "github.com/monoes/mono-agent/internal/config"
 	"github.com/monoes/mono-agent/internal/connections"
+	"github.com/monoes/mono-agent/internal/i18n"
 	"github.com/monoes/mono-agent/internal/nodes"
 	"github.com/monoes/mono-agent/internal/scheduler"
 	"github.com/monoes/mono-agent/internal/storage"
@@ -136,11 +137,8 @@ func (p *lazyBrowserSessionProvider) Close() {}
 func newWorkflowCmd(cfg *globalConfig) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "workflow",
-		Short: "Manage and run workflows",
-		Long: "Create, list, run, activate, deactivate, delete, and inspect executions of workflows.\n\n" +
-			"For scheduled (trigger.schedule) or webhook (trigger.webhook) workflows to fire on their " +
-			"own over time, `monoagentcli daemon` must be running continuously — `workflow activate` " +
-			"alone only registers triggers for as long as that one command is running.",
+		Short: i18n.T("workflow.short"),
+		Long:  i18n.T("workflow.long"),
 	}
 
 	cmd.AddCommand(
@@ -172,7 +170,7 @@ func newWorkflowCmd(cfg *globalConfig) *cobra.Command {
 func newWorkflowTemplatesCmd(cfg *globalConfig) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "templates",
-		Short: "Browse and instantiate bundled ready-to-use workflow templates",
+		Short: i18n.T("workflow.templates.short"),
 	}
 	cmd.AddCommand(
 		newWorkflowTemplatesListCmd(cfg),
@@ -190,11 +188,9 @@ func newWorkflowTemplatesCmd(cfg *globalConfig) *cobra.Command {
 func newWorkflowSearchCmd(cfg *globalConfig) *cobra.Command {
 	return &cobra.Command{
 		Use:   "search [query]",
-		Short: "Search bundled templates and saved workflows by name, description, or node type",
-		Long: "Search everything runnable — bundled templates and the workflows saved for this profile — " +
-			"by name, description, or the node types involved. Omit the query to list everything.\n\n" +
-			"Each hit comes with the command that runs it.",
-		Args: cobra.MaximumNArgs(1),
+		Short: i18n.T("workflow.search.short"),
+		Long:  i18n.T("workflow.search.long"),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			query := ""
 			if len(args) == 1 {

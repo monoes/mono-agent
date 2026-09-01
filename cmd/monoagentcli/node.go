@@ -26,6 +26,7 @@ import (
 	cfgpkg "github.com/monoes/mono-agent/internal/config"
 	"github.com/monoes/mono-agent/internal/connections"
 	"github.com/monoes/mono-agent/internal/extension"
+	"github.com/monoes/mono-agent/internal/i18n"
 	"github.com/monoes/mono-agent/internal/noderegistry"
 	"github.com/monoes/mono-agent/internal/nodes"
 	peoplenodes "github.com/monoes/mono-agent/internal/nodes/people"
@@ -259,7 +260,7 @@ func buildNodeRegistry(_ bool, db *sql.DB) *workflow.NodeTypeRegistry {
 func newNodeCmd(cfg *globalConfig) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "node",
-		Short: "Directly invoke or inspect workflow node types",
+		Short: i18n.T("node.short"),
 	}
 	cmd.AddCommand(
 		newNodeListCmd(cfg),
@@ -272,11 +273,10 @@ func newNodeCmd(cfg *globalConfig) *cobra.Command {
 // newNodeSchemaCmd prints a node type's embedded JSON schema (pretty-printed).
 func newNodeSchemaCmd(cfg *globalConfig) *cobra.Command {
 	return &cobra.Command{
-		Use:   "schema <type>",
-		Short: "Print the embedded JSON schema for a node type",
-		Example: `  monoagentcli node schema core.if
-  monoagentcli node schema trigger.schedule`,
-		Args: cobra.ExactArgs(1),
+		Use:     "schema <type>",
+		Short:   i18n.T("node.schema.short"),
+		Example: i18n.T("node.schema.example"),
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			data, ok := workflow.ReadEmbeddedSchema(args[0])
 			if !ok {

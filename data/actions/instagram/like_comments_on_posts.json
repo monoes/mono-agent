@@ -18,7 +18,6 @@
       { "name": "maxLikesPerSession", "type": "number", "default": 100, "min": 1, "max": 500, "description": "Rate limit: max comment likes per session" },
       { "name": "delayBetweenLikes", "type": "number", "default": 2, "min": 1, "max": 30, "description": "Seconds to wait between comment likes" },
       { "name": "likeReplies", "type": "boolean", "default": false, "description": "Also like comment replies" },
-      { "name": "skipAlreadyLiked", "type": "boolean", "default": true, "description": "Skip already-liked comments" },
       { "name": "sortByNew", "type": "boolean", "default": false, "description": "Sort comments by newest first" }
     ]
   },

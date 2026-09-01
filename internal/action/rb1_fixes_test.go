@@ -37,6 +37,14 @@ func (d *fakeDB) SaveExtractedData(actionID string, items []map[string]interface
 	return nil
 }
 
+func (d *fakeDB) GetDailyActionCount(actionType string) (int, error) {
+	return 0, nil
+}
+
+func (d *fakeDB) IncrementDailyActionCount(actionType string) (int, error) {
+	return 1, nil
+}
+
 func (d *fakeDB) lastState() string {
 	if len(d.states) == 0 {
 		return ""

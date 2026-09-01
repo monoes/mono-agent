@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/monoes/mono-agent/internal/i18n"
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 )
@@ -14,8 +15,8 @@ import (
 func newScheduleCmd(cfg *globalConfig) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "schedule",
-		Short: "Manage action schedules",
-		Long:  "List, add, and remove schedules for actions.",
+		Short: i18n.T("schedule.short"),
+		Long:  i18n.T("schedule.long"),
 	}
 
 	cmd.AddCommand(

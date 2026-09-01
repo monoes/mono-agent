@@ -228,6 +228,67 @@ func TestRunExecution_RequestNode_PerItemURLResolution(t *testing.T) {
 	}
 }
 
+// TestRunExecution_SwitchNode_PerItemFieldResolution is the core.switch half
+// of the per-item config resolution regression: two items with different
+// $json.status values, routed through a switch on "field": "{{$json.status}}",
+// must land on their own matching output handles, not both follow item[0]'s
+// route.
+func TestRunExecution_SwitchNode_PerItemFieldResolution(t *testing.T) {
+	reg := workflow.NewNodeTypeRegistry()
+	reg.Register("test.fanout", func() workflow.NodeExecutor {
+		return fanOutItemsNode{items: []workflow.Item{
+			{JSON: map[string]interface{}{"status": "pending"}},
+			{JSON: map[string]interface{}{"status": "done"}},
+		}}
+	})
+	reg.Register("core.switch", func() workflow.NodeExecutor { return &control.SwitchNode{} })
+	var capturedPending, capturedDone []workflow.Item
+	reg.Register("test.capture_pending", func() workflow.NodeExecutor { return captureNode{got: &capturedPending} })
+	reg.Register("test.capture_done", func() workflow.NodeExecutor { return captureNode{got: &capturedDone} })
+
+	wf := &workflow.Workflow{
+		ID:   "wf-switch-peritem",
+		Name: "switch-per-item",
+		Nodes: []workflow.WorkflowNode{
+			{ID: "t", WorkflowID: "wf-switch-peritem", Type: "trigger.manual", Name: "Trigger"},
+			{ID: "f", WorkflowID: "wf-switch-peritem", Type: "test.fanout", Name: "Fanout"},
+			{ID: "sw", WorkflowID: "wf-switch-peritem", Type: "core.switch", Name: "Switch", Config: map[string]interface{}{
+				"field": "{{$json.status}}",
+				"cases": []interface{}{"pending", "done"},
+			}},
+			{ID: "cp", WorkflowID: "wf-switch-peritem", Type: "test.capture_pending", Name: "CapturePending"},
+			{ID: "cd", WorkflowID: "wf-switch-peritem", Type: "test.capture_done", Name: "CaptureDone"},
+		},
+		Connections: []workflow.WorkflowConnection{
+			{SourceNodeID: "t", SourceHandle: "main", TargetNodeID: "f", TargetHandle: "main"},
+			{SourceNodeID: "f", SourceHandle: "main", TargetNodeID: "sw", TargetHandle: "main"},
+			{SourceNodeID: "sw", SourceHandle: "pending", TargetNodeID: "cp", TargetHandle: "main"},
+			{SourceNodeID: "sw", SourceHandle: "done", TargetNodeID: "cd", TargetHandle: "main"},
+		},
+	}
+	dag, err := workflow.BuildDAG(wf.Nodes, wf.Connections)
+	if err != nil {
+		t.Fatalf("BuildDAG: %v", err)
+	}
+	exec := &workflow.WorkflowExecution{ID: "e-switch-peritem", WorkflowID: wf.ID, TriggerNodeID: "t"}
+	if err := workflow.RunExecution(context.Background(), exec, wf, dag, reg, fakeStore{}, nil, workflow.NewExpressionEngine(), zerolog.Nop()); err != nil {
+		t.Fatalf("RunExecution: %v", err)
+	}
+
+	if len(capturedPending) != 1 {
+		t.Fatalf("pending handle captured %d items, want 1", len(capturedPending))
+	}
+	if len(capturedDone) != 1 {
+		t.Fatalf("done handle captured %d items, want 1", len(capturedDone))
+	}
+	if got, _ := capturedPending[0].JSON["status"].(string); got != "pending" {
+		t.Errorf("pending handle item.status = %q, want %q", got, "pending")
+	}
+	if got, _ := capturedDone[0].JSON["status"].(string); got != "done" {
+		t.Errorf("done handle item.status = %q, want %q — both items collapsed to item[0]'s route (the bug this test guards against)", got, "done")
+	}
+}
+
 // httpWorkflow builds trigger.manual → http.request against a closed port,
 // optionally wiring the request's "error" handle to a capture node.
 func httpWorkflow(wireError bool) *workflow.Workflow {

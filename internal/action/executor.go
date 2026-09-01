@@ -68,6 +68,12 @@ type LoopDef struct {
 	IndexVar string   `json:"indexVar"`
 	Steps    []string `json:"steps"`
 	MaxItems string   `json:"maxItems,omitempty"`
+	// MaxItemsPerDay is an optional template (e.g. "{{maxFollowsPerDay or
+	// 150}}") resolving to a cross-run daily cap, persisted in the
+	// action_daily_counters table and keyed by (profile, action type, UTC
+	// day). Unlike MaxItems (a per-session, in-memory cap), this cap
+	// survives across separate action runs on the same day.
+	MaxItemsPerDay string `json:"maxItemsPerDay,omitempty"`
 }
 
 // ConditionDef describes a conditional expression for condition steps.
@@ -250,6 +256,13 @@ type StorageInterface interface {
 	UpdateActionState(id, state string) error
 	UpdateActionReachedIndex(id string, index int) error
 	SaveExtractedData(actionID string, items []map[string]interface{}) error
+	// GetDailyActionCount returns how many times actionType has already
+	// been recorded today (UTC, see action_daily_counters) for whatever
+	// profile this StorageInterface implementation is scoped to.
+	GetDailyActionCount(actionType string) (int, error)
+	// IncrementDailyActionCount records one more occurrence of actionType
+	// today (UTC) and returns the count after incrementing.
+	IncrementDailyActionCount(actionType string) (int, error)
 }
 
 // ConfigInterface abstracts the configuration manager.
@@ -796,6 +809,13 @@ func (ae *ActionExecutor) executeLoop(ctx context.Context, loop LoopDef, allStep
 	// Resolve the per-session item cap (0 or unresolvable → unlimited).
 	maxItems := ae.resolveLoopCap(loop.MaxItems)
 
+	// Resolve the daily cap (0 or unresolvable → unlimited) and the profile
+	// identity it's tracked against. The daily counter persists across
+	// separate action runs (unlike maxItems, which resets every run), so it
+	// requires storage; with no db configured (e.g. some tests) the daily
+	// cap is a no-op, same as the session cap already is in that case.
+	dailyCap := ae.resolveLoopCap(loop.MaxItemsPerDay)
+
 	loopSteps := ae.getStepsByIDs(allSteps, loop.Steps)
 
 	ae.logger.Info().
@@ -803,6 +823,7 @@ func (ae *ActionExecutor) executeLoop(ctx context.Context, loop LoopDef, allStep
 		Int("total", len(collection)).
 		Int("startIndex", startIdx).
 		Int("maxItems", maxItems).
+		Int("dailyCap", dailyCap).
 		Int("stepCount", len(loopSteps)).
 		Msg("starting loop execution")
 
@@ -828,6 +849,22 @@ func (ae *ActionExecutor) executeLoop(ctx context.Context, loop LoopDef, allStep
 			return nil
 		}
 
+		// Daily cap: stop before processing more items than allowed today
+		// (UTC), across however many separate action runs got here.
+		if dailyCap > 0 && ae.db != nil && ae.action != nil {
+			count, err := ae.db.GetDailyActionCount(ae.action.Type)
+			if err != nil {
+				ae.logger.Warn().Err(err).Msg("failed to read daily action count; treating as unlimited for this iteration")
+			} else if count >= dailyCap {
+				ae.noteDailyCapReached(loop, dailyCap, count, idx)
+				ae.reachedIndexByLoop[loop.ID] = idx
+				if err := ae.db.UpdateActionReachedIndex(ae.action.ID, idx); err != nil {
+					ae.logger.Warn().Err(err).Int("index", idx).Msg("failed to update reached index at daily cap")
+				}
+				return nil
+			}
+		}
+
 		item := collection[idx]
 
 		// Set loop variables.
@@ -845,15 +882,25 @@ func (ae *ActionExecutor) executeLoop(ctx context.Context, loop LoopDef, allStep
 			Message:  fmt.Sprintf("Loop %s: item %d/%d", loop.ID, idx+1, len(collection)),
 		})
 
-		if err := ae.executeSteps(ctx, loopSteps); err != nil {
-			if err == ErrAbort {
-				return err
+		stepErr := ae.executeSteps(ctx, loopSteps)
+		if stepErr != nil {
+			if stepErr == ErrAbort {
+				return stepErr
 			}
 			ae.logger.Warn().
-				Err(err).
+				Err(stepErr).
 				Int("index", idx).
 				Str("loopID", loop.ID).
 				Msg("loop iteration failed")
+		}
+
+		// Only a successfully completed iteration counts against the daily
+		// cap — a failed step (e.g. a follow button that never appeared)
+		// didn't actually perform the rate-limited action.
+		if stepErr == nil && dailyCap > 0 && ae.db != nil && ae.action != nil {
+			if _, err := ae.db.IncrementDailyActionCount(ae.action.Type); err != nil {
+				ae.logger.Warn().Err(err).Msg("failed to increment daily action count")
+			}
 		}
 
 		processed++
@@ -928,6 +975,34 @@ func (ae *ActionExecutor) noteLoopCapReached(loop LoopDef, cap, idx int) {
 		StepID:   loop.ID,
 		Index:    idx,
 		Message:  fmt.Sprintf("Loop %s stopped at item %d: per-session cap of %d reached", loop.ID, idx, cap),
+	})
+}
+
+// noteDailyCapReached records that a loop exited early because its
+// persisted daily cap (across action runs, resetting at UTC midnight) was
+// reached — the counterpart to noteLoopCapReached's per-session cap.
+func (ae *ActionExecutor) noteDailyCapReached(loop LoopDef, cap, count, idx int) {
+	note := map[string]interface{}{
+		"loopId":     loop.ID,
+		"cap":        cap,
+		"count":      count,
+		"startIndex": idx,
+		"reason":     "daily cap reached",
+	}
+	ae.execCtx.SetData("dailyCapReached", note)
+	ae.execCtx.SetVariable("dailyCapReached", loop.ID)
+	ae.logger.Info().
+		Str("loopID", loop.ID).
+		Int("cap", cap).
+		Int("count", count).
+		Int("index", idx).
+		Msg("loop stopped: daily cap reached")
+	ae.emitEvent(ExecutionEvent{
+		Type:     "loop_cap_reached",
+		ActionID: ae.action.ID,
+		StepID:   loop.ID,
+		Index:    idx,
+		Message:  fmt.Sprintf("daily cap reached: %d/%d %s today", count, cap, ae.action.Type),
 	})
 }
 

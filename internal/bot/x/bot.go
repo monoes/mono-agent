@@ -40,6 +40,19 @@ type XBot struct{}
 // actually delivered (composer cleared or message bubble rendered).
 const sendVerificationTimeout = 3 * time.Second
 
+// unwrapRodPage extracts the underlying *rod.Page from a browser.PageInterface.
+// Most of this bot's helper methods are written directly against the Rod API
+// and cannot operate on other drivers (e.g. the Chrome extension bridge). This
+// returns a descriptive error instead of panicking when the active page isn't
+// backed by Rod.
+func unwrapRodPage(p browser.PageInterface) (*rod.Page, error) {
+	rp, ok := p.(*browser.RodPage)
+	if !ok {
+		return nil, fmt.Errorf("x: this operation requires the Rod browser driver, got %T", p)
+	}
+	return rp.UnwrapRodPage(), nil
+}
+
 // dmBubbleSelectors are best-effort selectors for rendered DM bubbles in the
 // conversation thread, used as the "OR" branch of send verification.
 var dmBubbleSelectors = []string{
@@ -155,7 +168,10 @@ func (b *XBot) LoginURL() string {
 // IsLoggedIn checks whether the user is authenticated on X by looking for
 // home timeline elements that only appear when logged in.
 func (b *XBot) IsLoggedIn(p browser.PageInterface) (bool, error) {
-	page := p.(*browser.RodPage).UnwrapRodPage()
+	page, err := unwrapRodPage(p)
+	if err != nil {
+		return false, err
+	}
 	// First, check for login form elements — if present, definitely NOT logged in.
 	loginSelectors := []string{
 		"input[autocomplete='username']",
@@ -249,7 +265,10 @@ func (b *XBot) SearchURL(keyword string) string {
 // SendMessage navigates to the X Direct Messages interface and sends a message
 // to the specified user.
 func (b *XBot) SendMessage(ctx context.Context, p browser.PageInterface, username, message string) error {
-	page := p.(*browser.RodPage).UnwrapRodPage()
+	page, err := unwrapRodPage(p)
+	if err != nil {
+		return err
+	}
 	if username == "" {
 		return fmt.Errorf("x: username is required")
 	}
@@ -259,7 +278,7 @@ func (b *XBot) SendMessage(ctx context.Context, p browser.PageInterface, usernam
 
 	// Navigate to the messages compose page.
 	msgURL := "https://x.com/messages/compose"
-	err := page.Navigate(msgURL)
+	err = page.Navigate(msgURL)
 	if err != nil {
 		return fmt.Errorf("x: failed to navigate to messages compose: %w", err)
 	}
@@ -441,10 +460,13 @@ func (b *XBot) SendMessage(ctx context.Context, p browser.PageInterface, usernam
 // GetProfileData scrapes the currently loaded X profile page and returns
 // structured profile information.
 func (b *XBot) GetProfileData(ctx context.Context, p browser.PageInterface) (map[string]interface{}, error) {
-	page := p.(*browser.RodPage).UnwrapRodPage()
+	page, err := unwrapRodPage(p)
+	if err != nil {
+		return nil, err
+	}
 	data := make(map[string]interface{})
 
-	err := page.WaitLoad()
+	err = page.WaitLoad()
 	if err != nil {
 		return data, fmt.Errorf("x: page did not finish loading: %w", err)
 	}

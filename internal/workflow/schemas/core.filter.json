@@ -1,6 +1,26 @@
 {
+  "_generated": true,
   "credential_platform": null,
   "fields": [
-    { "key": "condition", "label": "Keep items where", "type": "text", "required": true, "placeholder": "{{ $json.age > 18 }}", "help": "Items where this evaluates to true are passed through." }
+    {
+      "help": "Items where this evaluates to true are passed through.",
+      "key": "condition",
+      "label": "Keep items where",
+      "placeholder": "{{ $json.age > 18 }}",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "default": "keep",
+      "help": "\"keep\" passes through items where the condition is true (default), \"remove\" passes through items where it is false.",
+      "key": "mode",
+      "label": "Mode",
+      "options": [
+        "keep",
+        "remove"
+      ],
+      "required": false,
+      "type": "select"
+    }
   ]
 }

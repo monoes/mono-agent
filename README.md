@@ -538,11 +538,11 @@ Workflow triggers (`trigger.schedule`, `trigger.webhook`) only fire while a proc
 `chrome-extension/` lets workflow nodes drive **your real, already-logged-in Chrome browser** — the same model as consumer RPA tools. No separate automation profile, no re-authenticating for sites (like Google) that invalidate sessions ported into a scripted browser.
 
 - **Loopback by default** — the bridge server binds loopback, and the extension refuses non-loopback servers. A per-session "Allow non-loopback server (unsafe)" checkbox in the popup overrides this for one save; it is never persisted
-- **Unauthenticated channel (same-user trust)** — the bridge carries no authentication: any process on your machine running as your user can connect and drive the browser through it. Don't expose or port-forward the bridge port
-- **Broad host permissions by design** — workflows can target any site, so the extension needs access to all tabs; it acts only when a `monoagentcli` process you started requests it
+- **Paired channel** — the bridge requires a shared secret (`~/.monoagent/extension.token`) as the first frame on every connection; run `monoagentcli extension pair` and paste the printed token into the extension popup once. An unpaired connection is rejected and can never replace an already-paired one. Run `monoagentcli extension reset` to revoke and re-pair
+- **Per-site host permissions** — the extension requests site access on demand (via the popup's "Authorize a site" field) rather than holding `<all_urls>` by default; grant only the sites your workflows actually target, and revoke from the same popup
 - **Shared connection** — multiple CLI processes share one extension connection instead of fighting over the browser
 
-Pairing-based authentication between `monoagentcli` and the extension is planned and [tracked in issues](https://github.com/monoes/mono-agent/issues); until it lands, treat the channel as accessible to anything running as your user.
+See [`docs/security/threat-model.md`](docs/security/threat-model.md) for the full trust-boundary breakdown.
 
 Install (unpacked, not on the Web Store):
 
@@ -725,11 +725,15 @@ mono-agent/
 - [ ] Workflow versioning and rollback
 - [ ] Sub-workflow / reusable workflow node
 - [ ] Visual debugger — step-through execution in GUI
-- [ ] Marketplace — shareable workflow templates
+- [ ] Marketplace — shareable workflow templates ([curation policy](docs/plans/workflow-marketplace-curation-policy.md) written; distribution plumbing not yet built)
 - [ ] MCP registry listing + agent tool marketplace
 - [ ] Metrics dashboard — success rates, throughput, latency per profile
 
 ---
+
+## Community
+
+Questions, ideas, and "is this the right tool for X" go to [GitHub Discussions](https://github.com/monoes/mono-agent/discussions) — the issue tracker is kept for bugs and well-scoped feature requests. See [SUPPORT.md](SUPPORT.md) for the full breakdown, and [SECURITY.md](SECURITY.md) for reporting vulnerabilities (never in a public issue or Discussion).
 
 ## Contributing
 

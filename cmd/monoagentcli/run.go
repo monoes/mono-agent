@@ -482,6 +482,14 @@ func (s *storageAdapter) SaveExtractedData(actionID string, items []map[string]i
 	return tx.Commit()
 }
 
+func (s *storageAdapter) GetDailyActionCount(actionType string) (int, error) {
+	return s.db.GetDailyActionCount(s.profileID, actionType)
+}
+
+func (s *storageAdapter) IncrementDailyActionCount(actionType string) (int, error) {
+	return s.db.IncrementDailyActionCount(s.profileID, actionType)
+}
+
 // ---------------------------------------------------------------------------
 // Browser + session management
 // ---------------------------------------------------------------------------

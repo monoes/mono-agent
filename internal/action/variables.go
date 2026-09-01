@@ -40,6 +40,44 @@ func (vr *VariableResolver) Resolve(template string) string {
 	})
 }
 
+// resolveUploadPaths resolves a template string for an "upload" step's Text
+// field, which stepUpload splits on commas into a file path list. If the
+// entire template is a single placeholder (e.g. "{{media}}") that resolves
+// to a slice — as happens when a workflow schema declares the field as an
+// array — the default Resolve behavior would stringify it via fmt.Sprintf's
+// "%v" verb (e.g. "[/a.png /b.png]"), which is not a valid, comma-splittable
+// path. Join slice-typed values with "," instead so they round-trip through
+// stepUpload correctly.
+func (vr *VariableResolver) resolveUploadPaths(template string) string {
+	matches := templatePattern.FindAllStringIndex(template, -1)
+	if len(matches) == 1 && matches[0][0] == 0 && matches[0][1] == len(template) {
+		path := strings.TrimSpace(template[2 : len(template)-2])
+		return joinUploadValue(vr.ResolvePath(path))
+	}
+	return vr.Resolve(template)
+}
+
+// joinUploadValue renders a resolved upload-step value as a comma-separated
+// path list, handling both single paths and array-valued fields.
+func joinUploadValue(val interface{}) string {
+	switch v := val.(type) {
+	case nil:
+		return ""
+	case string:
+		return v
+	case []string:
+		return strings.Join(v, ",")
+	case []interface{}:
+		parts := make([]string, len(v))
+		for i, item := range v {
+			parts[i] = fmt.Sprintf("%v", item)
+		}
+		return strings.Join(parts, ",")
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
 // ResolveValue preserves the underlying Go type when the value is a string
 // containing a single template reference (e.g. "{{extract_post_urls.data}}").
 // If the string contains mixed content or is not a string at all, it is
@@ -331,7 +369,11 @@ func (vr *VariableResolver) ResolveStepDef(step StepDef) StepDef {
 	resolved.Variable = vr.Resolve(step.Variable)
 	resolved.WaitFor = vr.Resolve(step.WaitFor)
 	resolved.WaitAfter = vr.Resolve(step.WaitAfter)
-	resolved.Text = vr.Resolve(step.Text)
+	if step.Type == "upload" {
+		resolved.Text = vr.resolveUploadPaths(step.Text)
+	} else {
+		resolved.Text = vr.Resolve(step.Text)
+	}
 	resolved.XPath = vr.Resolve(step.XPath)
 	resolved.Description = vr.Resolve(step.Description)
 	if step.Duration != nil {

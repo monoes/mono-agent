@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useMemo, memo } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   RefreshCw, Play, Users, Shield, GitBranch,
   CheckCircle, XCircle, Clock, Loader, ChevronRight,
@@ -252,6 +253,7 @@ const ExecRow = memo(function ExecRow({ exec, onNavigate }) {
 
 // ── Main dashboard ────────────────────────────────────────────────────────────
 export default function Dashboard({ stats, onRefresh, onNavigate }) {
+  const { t } = useTranslation()
   const [refreshing, setRefreshing]     = useState(false)
   const [dashLoading, setDashLoading]   = useState(true)
   const [workflows, setWorkflows]       = useState([])
@@ -342,16 +344,16 @@ export default function Dashboard({ stats, onRefresh, onNavigate }) {
     <>
       <div className="page-header">
         <div className="page-header-left">
-          <div className="page-title">Dashboard</div>
-          <div className="page-subtitle">Workflows &amp; Executions{ver ? ` · v${ver.version.replace(/^v/, '')}` : ''}</div>
+          <div className="page-title">{t('dashboard.title')}</div>
+          <div className="page-subtitle">{t('dashboard.subtitle')}{ver ? ` · v${ver.version.replace(/^v/, '')}` : ''}</div>
         </div>
         <div className="page-header-right">
           <button className="btn btn-ghost btn-sm" onClick={handleRefresh} style={{ gap: 5 }}>
             <RefreshCw size={13} style={{ animation: refreshing ? 'spin 0.7s linear infinite' : 'none' }} />
-            Refresh
+            {t('dashboard.refresh')}
           </button>
           <button className="btn btn-secondary btn-sm" onClick={() => onNavigate('noderunner')} style={{ gap: 5 }}>
-            <GitBranch size={13} /> Workflow Editor
+            <GitBranch size={13} /> {t('dashboard.workflowEditor')}
           </button>
         </div>
       </div>
@@ -359,10 +361,10 @@ export default function Dashboard({ stats, onRefresh, onNavigate }) {
       <div className="page-body">
         {/* ── Stat cards ── */}
         <div className="stat-grid">
-          <StatCard icon={Layers}     label="Workflows"        value={workflows.length} color="var(--cyan)" loading={dashLoading} />
-          <StatCard icon={GitBranch}  label="Active"           value={activeWFs}        color="var(--purple-light)" loading={dashLoading} />
-          <StatCard icon={Zap}        label="Recent Runs"      value={totalExecs}       color="#eab308" loading={dashLoading} />
-          <StatCard icon={Users}      label="People Found"     value={totalPeople}      color="var(--green-neon)" loading={dashLoading} />
+          <StatCard icon={Layers}     label={t('dashboard.stat.workflows')}    value={workflows.length} color="var(--cyan)" loading={dashLoading} />
+          <StatCard icon={GitBranch}  label={t('dashboard.stat.active')}       value={activeWFs}        color="var(--purple-light)" loading={dashLoading} />
+          <StatCard icon={Zap}        label={t('dashboard.stat.recentRuns')}   value={totalExecs}       color="#eab308" loading={dashLoading} />
+          <StatCard icon={Users}      label={t('dashboard.stat.peopleFound')}  value={totalPeople}      color="var(--green-neon)" loading={dashLoading} />
         </div>
 
         <div className="dashboard-grid">
@@ -370,23 +372,23 @@ export default function Dashboard({ stats, onRefresh, onNavigate }) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
             <div className="card" style={{ flex: 1 }}>
               <div className="section-header">
-                <div className="section-title"><GitBranch size={12} /> Workflows</div>
+                <div className="section-title"><GitBranch size={12} /> {t('dashboard.workflowsSection.title')}</div>
                 <button
                   className="btn btn-ghost btn-sm"
                   onClick={() => onNavigate('noderunner')}
                   style={{ fontSize: 11, gap: 3 }}
                 >
-                  Open Editor <ChevronRight size={11} />
+                  {t('dashboard.workflowsSection.openEditor')} <ChevronRight size={11} />
                 </button>
               </div>
 
               {workflows.length === 0 ? (
                 <div className="empty-state" style={{ padding: '32px 0' }}>
                   <GitBranch size={28} style={{ color: 'var(--text-dim)', marginBottom: 8 }} />
-                  <div className="empty-state-title" style={{ fontSize: 13 }}>No workflows yet</div>
-                  <div className="empty-state-desc" style={{ marginBottom: 12 }}>Build your first workflow in the editor.</div>
+                  <div className="empty-state-title" style={{ fontSize: 13 }}>{t('dashboard.workflowsSection.emptyTitle')}</div>
+                  <div className="empty-state-desc" style={{ marginBottom: 12 }}>{t('dashboard.workflowsSection.emptyDesc')}</div>
                   <button className="btn btn-secondary btn-sm" onClick={() => onNavigate('noderunner')} style={{ gap: 5 }}>
-                    <Play size={12} /> Open Editor
+                    <Play size={12} /> {t('dashboard.workflowsSection.openEditor')}
                   </button>
                 </div>
               ) : (

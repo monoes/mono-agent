@@ -1,0 +1,304 @@
+openapi: 3.0.3
+info:
+  title: monoagentcli HTTP API
+  description: >
+    Read-first REST/JSON surface over the mono-agent workflow engine, for
+    external agents that cannot speak the stdio MCP protocol
+    (`monoagentcli mcp`). Mirrors the MCP tool set and the `workflow`/
+    `node`/`hil` CLI commands: every handler is a thin adapter over the
+    same underlying store/engine calls, with the same credential-key
+    output redaction. Start the server with `monoagentcli httpapi`.
+  version: "1.0.0"
+servers:
+  - url: http://127.0.0.1:9322
+    description: Default loopback bind. Override with --addr or MONOAGENT_HTTPAPI_ADDR.
+security:
+  - bearerAuth: []
+paths:
+  /health:
+    get:
+      summary: Liveness/version check
+      security: []
+      responses:
+        "200":
+          description: Server is up
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  version: { type: string }
+                  allow_mutations: { type: boolean }
+  /workflows:
+    get:
+      summary: List saved workflows for the active profile
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/WorkflowSummary" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /workflows/{id}:
+    get:
+      summary: Get one saved workflow (full JSON definition)
+      parameters: [{ $ref: "#/components/parameters/WorkflowID" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Workflow" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /workflows/{id}/executions:
+    get:
+      summary: List recent executions for a workflow
+      parameters:
+        - { $ref: "#/components/parameters/WorkflowID" }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ExecutionSummary" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /workflows/{id}/validate:
+    post:
+      summary: Validate a workflow
+      description: >
+        With an empty body, validates the saved workflow named by {id}.
+        With a non-empty JSON body (a workflow document, file-store or
+        legacy DB-export shape), validates that inline document instead —
+        id is then only used to shape the URL.
+      parameters: [{ $ref: "#/components/parameters/WorkflowID" }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  valid: { type: boolean }
+                  errors: { type: array, items: { type: string } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /workflows/{id}/run:
+    post:
+      summary: Trigger a workflow and wait for completion (mutating; requires --allow-mutations)
+      parameters: [{ $ref: "#/components/parameters/WorkflowID" }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                input: { type: object, description: "Trigger data, available downstream as {{ $json.<field> }}" }
+                timeout_seconds: { type: number, description: "Wait limit in seconds (default 120, clamped to [1, 600])" }
+      responses:
+        "200":
+          description: Execution record (status may be RUNNING/QUEUED with timed_out:true if the wait limit elapsed)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExecutionResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /workflows/{id}/activate:
+    post:
+      summary: Activate a workflow and start its triggers (mutating; requires --allow-mutations)
+      parameters: [{ $ref: "#/components/parameters/WorkflowID" }]
+      responses:
+        "200": { description: Activated }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /workflows/{id}/deactivate:
+    post:
+      summary: Deactivate a workflow and stop its triggers (mutating; requires --allow-mutations)
+      parameters: [{ $ref: "#/components/parameters/WorkflowID" }]
+      responses:
+        "200": { description: Deactivated }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /nodes:
+    get:
+      summary: List all available node types
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    type: { type: string }
+                    category: { type: string }
+                    title: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /nodes/{type}/schema:
+    get:
+      summary: Get the embedded JSON schema (config fields) for one node type
+      parameters:
+        - name: type
+          in: path
+          required: true
+          schema: { type: string }
+          example: http.request
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  type: { type: string }
+                  schema: { type: object }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /hil:
+    get:
+      summary: List pending Human-in-Loop items for the active profile
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/HilItem" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /hil/{id}/approve:
+    post:
+      summary: Approve a pending HIL item (mutating; requires --allow-mutations)
+      parameters: [{ $ref: "#/components/parameters/HilID" }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                data: { type: object, description: "Overrides the item's editable data (default {})" }
+      responses:
+        "200": { description: Approved }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /hil/{id}/reject:
+    post:
+      summary: Reject a pending HIL item (mutating; requires --allow-mutations)
+      parameters: [{ $ref: "#/components/parameters/HilID" }]
+      responses:
+        "200": { description: Rejected }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: >
+        Token generated on first server start and stored in this profile's
+        secrets vault (name "httpapi-token"). Not required for GET /health.
+  parameters:
+    WorkflowID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+    HilID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+  responses:
+    Unauthorized:
+      description: Missing or invalid bearer token
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: Not found
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    BadRequest:
+      description: Invalid input / validation failure
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+    WorkflowSummary:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        active: { type: boolean }
+        node_count: { type: integer }
+    Workflow:
+      type: object
+      description: Full workflow document (nodes + connections)
+    ExecutionSummary:
+      type: object
+      properties:
+        id: { type: string }
+        workflow_id: { type: string }
+        status: { type: string, enum: [QUEUED, RUNNING, SUCCESS, FAILED, CANCELLED, WAITING] }
+        trigger_type: { type: string }
+        started_at: { type: string, format: date-time, nullable: true }
+        finished_at: { type: string, format: date-time, nullable: true }
+        error_message: { type: string }
+    ExecutionResult:
+      type: object
+      properties:
+        execution_id: { type: string }
+        status: { type: string }
+        nodes:
+          type: array
+          items:
+            type: object
+            properties:
+              node_id: { type: string }
+              type: { type: string }
+              status: { type: string }
+              output_items: { type: array, items: { type: object } }
+              error: { type: string }
+        error: { type: string }
+        timed_out: { type: boolean }
+    HilItem:
+      type: object
+      properties:
+        id: { type: string }
+        execution_id: { type: string }
+        workflow_id: { type: string }
+        workflow_name: { type: string }
+        node_id: { type: string }
+        node_name: { type: string }
+        status: { type: string }
+        readonly_data: { type: object }
+        editable_data: { type: object }
+        created_at: { type: string, format: date-time }

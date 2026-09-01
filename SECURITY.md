@@ -61,17 +61,66 @@ and implemented in [`internal/secrets`](internal/secrets):
 ### File-based keyring fallback (weaker posture)
 
 When `MONOAGENT_ALLOW_FILE_KEYRING=1` is set and no OS keyring is
-available, the key-encryption key is stored in a per-profile file at
-`~/.monoagent/vault/.file-keyring-<profileID>` (permissions 0600)
-instead of the OS keyring, and the CLI prints a warning whenever it uses
-it. This is a
-weaker posture and is deliberately opt-in: any process running as the same
-user, or anyone with read access to the disk volume or its backups, can
-retrieve the KEK and decrypt the vault — key and ciphertext then live on
-the same volume. Payloads remain AES-256-GCM encrypted, but the OS
-keyring's process-scoped access control is lost. Use the fallback only
-where no keyring exists (headless CI, containers); without the variable
-set, secret operations fail closed.
+available, the key-encryption key (KEK) is stored in a per-profile file at
+`~/.monoagent/vault/.file-keyring-<profileID>` (permissions 0600) instead
+of the OS keyring, and the CLI prints a warning whenever it uses it. This
+is deliberately opt-in and still weaker than a real OS keychain's
+process-scoped access control — but the KEK is no longer stored raw.
+
+The file holds the KEK **wrapped** with AES-256-GCM under a key derived
+from an operator-supplied passphrase via argon2id (same tuning as the
+vault export/import format — see `internal/secrets/export.go`), in a JSON
+envelope alongside its salt and nonce (`internal/secrets/filekeyring.go`).
+The passphrase is read from stdin/an interactive prompt only, never
+accepted as a CLI flag or environment variable — the same anti-argv
+pattern `secret add` and vault export/import already use, since both flags
+and env vars leak through shell history and process listings. Without the
+correct passphrase, the file alone (e.g. leaked via a backup or a
+misconfigured volume) is no longer sufficient to decrypt the vault —
+unlike the pre-hardening raw-KEK format. Payloads remain AES-256-GCM
+encrypted either way; the passphrase adds a second factor specifically for
+the KEK-at-rest.
+
+**Migration from the old raw-KEK format:** a vault created before this
+hardening has its file-based KEK stored as 32 raw bytes with no wrapping.
+The first read after upgrading detects this (the file isn't valid JSON but
+is exactly 32 bytes), prints a migration warning, prompts once for a new
+passphrase, and re-wraps the *same* KEK bytes into the new envelope format
+in place — existing `vault_keys` rows (and therefore every already-stored
+secret) keep decrypting correctly, since only the KEK's on-disk
+representation changes, not its value. Set the new passphrase when
+prompted; there is no separate manual migration step required.
+
+Use the fallback only where no keyring exists (headless CI, containers);
+without the `MONOAGENT_ALLOW_FILE_KEYRING` variable set, secret operations
+fail closed.
+
+**Headless/CI use:** pipe the passphrase via stdin from a masked CI
+secret — never as an argument or plain environment variable:
+
+```bash
+echo "$VAULT_PASSPHRASE" | monoagentcli secret reveal my-key --reveal
+```
+
+Each CLI invocation that actually needs the KEK (decrypting a secret via
+`secret reveal`/`secret get`, adding one via `secret add`, or a `workflow
+run`/`daemon` process resolving `@secret:` refs) prompts for the
+passphrase on stdin the first time that process touches it; further
+operations *within that same process* — e.g. every `@secret:` resolution
+during one `daemon` run — reuse the in-memory KEK without prompting again
+(the OS-keychain path memoizes identically — see
+`internal/secrets/keyring.go`'s `getOrCreateKEK`). Separate CLI
+invocations are separate processes, so each one prompts once. Store
+`VAULT_PASSPHRASE` as a masked/protected CI secret and pipe it into each
+invocation that needs it.
+
+This implies a stdin conflict for commands that *also* read their own
+payload from stdin (`secret add --stdin-json`, `secret update
+--stdin-json`): the KEK passphrase and the command's JSON payload cannot
+both come from the same stdin stream in one invocation. For those, use
+`--field`/`--value` (still never `--value` for real secrets outside of
+disposable CI fixtures — the JSON payload flags land in shell history the
+same way argv secrets do) or a bootstrap step that avoids `--stdin-json`.
 
 ## Assistant tools (chat `--tools`)
 
@@ -195,3 +244,38 @@ items of 16 MB per item — an engine-level memory ceiling is not yet
 enforced by the vendored JS runtime; `system.execute_command` output is
 capped at 10 MB per channel (stdout and stderr). Stored outputs are
 persisted in full but display-truncated at 4 KB.
+
+## Webhook trigger surface
+
+The webhook trigger server (`internal/workflow/webhook_server.go`) binds
+`127.0.0.1:9321` by default — loopback-only, same-user trust, plain HTTP
+with no extra ceremony (the same trust model the Chrome extension bridge
+uses). Override the bind with `MONOAGENT_WEBHOOK_ADDR` when triggers need
+to be reachable from another machine (a Docker container, a VM, a LAN box).
+
+**Any non-loopback bind is always served over TLS — there is no way to
+serve a remote bind in the clear.** Webhook payloads can carry
+caller-attached auth headers/tokens, so an unencrypted remote listener
+would leak them on the wire. If no certificate is configured, the server
+auto-generates and caches a self-signed one (ECDSA P-256, ~13 months
+validity, covering `localhost`/`127.0.0.1`/`::1` only) under
+`~/.monoagent/webhook-tls/` (key file mode 0600) on first bind, and reuses
+it until it expires. Callers connecting by LAN hostname or IP must skip
+certificate verification against this self-signed cert, or trust it
+explicitly. For a real certificate, set both `MONOAGENT_WEBHOOK_TLS_CERT`
+and `MONOAGENT_WEBHOOK_TLS_KEY` to its path/key path — setting only one of
+the pair is a startup error rather than a silent fallback.
+
+**TLS protects the payload in transit; it does not authenticate the
+caller.** The webhook server itself has no built-in auth beyond TLS — the
+existing pattern is workflow-level: give each webhook trigger node an
+`auth_header`/`auth_token` pair or an `hmac_secret` (see
+`examples/README.md`), which the server checks per-request
+(`X-Hub-Signature-256` for HMAC, or a constant-time comparison for the
+static header token). Anyone who can reach a remotely-bound port and
+guesses the trigger's `<path>` segment can otherwise fire it. Pair this
+with `MONOAGENT_WEBHOOK_ALLOWED_ORIGINS` (a comma-separated origin
+allowlist) if browser-based callers need to reach it; without it the
+server emits no CORS headers at all, so cross-origin browser requests are
+blocked outright — see [Runtime environment variables in
+AGENTS.md](AGENTS.md#runtime-environment-variables).

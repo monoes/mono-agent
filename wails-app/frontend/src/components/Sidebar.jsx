@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
+import { useTranslation } from 'react-i18next'
 import {
   LayoutDashboard, Users,
   Terminal, PlayCircle, Settings, Image, UserCheck, Mail, KeyRound, Zap,
@@ -18,19 +19,20 @@ const ChooseProfileFolder  = WailsApp.ChooseProfileFolder  ?? (async () => '')
 const MoveProfileFolder    = WailsApp.MoveProfileFolder    ?? (async () => {})
 const RevealProfileFolder  = WailsApp.RevealProfileFolder  ?? (async () => {})
 
+// labelKey indexes sidebar.nav.* in src/locales/<lang>.json — see docs/i18n.md.
 const NAV_ITEMS = [
-  { id: 'dashboard',   label: 'Dashboard',   icon: LayoutDashboard, section: 'MAIN' },
-  { id: 'noderunner',  label: 'Workflows',   icon: PlayCircle,      section: 'MAIN' },
-  { id: 'actions',     label: 'Actions',     icon: Zap,             section: 'MAIN' },
-  { id: 'hil',         label: 'Human in Loop', icon: UserCheck,     section: 'MAIN' },
-  { id: 'ai',          label: 'Agents',      icon: Bot,             section: 'MAIN' },
-  { id: 'orgs',        label: 'Orgs',        icon: Building2,       section: 'MAIN' },
-  { id: 'people',      label: 'People',      icon: Users,           section: 'DATA' },
-  { id: 'communications', label: 'Communications', icon: Mail,      section: 'DATA' },
-  { id: 'vault',       label: 'Images',      icon: Image,           section: 'DATA' },
-  { id: 'secretsVault', label: 'Vault',      icon: KeyRound,        section: 'DATA' },
-  { id: 'logs',        label: 'Live Logs',   icon: Terminal,        section: 'DEBUG' },
-  { id: 'settings',    label: 'Settings',    icon: Settings,        section: 'SYSTEM' },
+  { id: 'dashboard',   labelKey: 'dashboard',   icon: LayoutDashboard, section: 'MAIN' },
+  { id: 'noderunner',  labelKey: 'noderunner',  icon: PlayCircle,      section: 'MAIN' },
+  { id: 'actions',     labelKey: 'actions',     icon: Zap,             section: 'MAIN' },
+  { id: 'hil',         labelKey: 'hil',         icon: UserCheck,       section: 'MAIN' },
+  { id: 'ai',          labelKey: 'ai',          icon: Bot,             section: 'MAIN' },
+  { id: 'orgs',        labelKey: 'orgs',        icon: Building2,       section: 'MAIN' },
+  { id: 'people',      labelKey: 'people',      icon: Users,           section: 'DATA' },
+  { id: 'communications', labelKey: 'communications', icon: Mail,      section: 'DATA' },
+  { id: 'vault',       labelKey: 'vault',       icon: Image,           section: 'DATA' },
+  { id: 'secretsVault', labelKey: 'secretsVault', icon: KeyRound,      section: 'DATA' },
+  { id: 'logs',        labelKey: 'logs',        icon: Terminal,        section: 'DEBUG' },
+  { id: 'settings',    labelKey: 'settings',    icon: Settings,        section: 'SYSTEM' },
 ]
 
 function requestNotifyPermission() {
@@ -51,6 +53,7 @@ function notifyNewHIL(items) {
 }
 
 export default function Sidebar({ activePage, onNavigate, stats, dbConnected, showActions = true }) {
+  const { t } = useTranslation()
   const [ver, setVer] = useState(null)
   const [hilCount, setHilCount] = useState(0)
   const [profiles, setProfiles] = useState([])
@@ -292,7 +295,7 @@ export default function Sidebar({ activePage, onNavigate, stats, dbConnected, sh
                 </div>
                 <button
                   onClick={e => { e.stopPropagation(); handleRevealFolder(p.id) }}
-                  title="Show in Finder"
+                  title={t('sidebar.showInFinder')}
                   style={{
                     flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
                     width: 20, height: 20, padding: 0, background: 'transparent', border: 'none',
@@ -306,7 +309,7 @@ export default function Sidebar({ activePage, onNavigate, stats, dbConnected, sh
                 <button
                   onClick={e => { e.stopPropagation(); handleMoveProfileFolder(p.id) }}
                   disabled={movingProfileID === p.id}
-                  title="Change profile folder location"
+                  title={t('sidebar.changeProfileFolder')}
                   style={{
                     flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
                     width: 20, height: 20, padding: 0, background: 'transparent', border: 'none',
@@ -336,7 +339,7 @@ export default function Sidebar({ activePage, onNavigate, stats, dbConnected, sh
                       value={newProfileName}
                       onChange={e => setNewProfileName(e.target.value)}
                       onKeyDown={e => { if (e.key === 'Enter') handleCreateProfile(); if (e.key === 'Escape') { setCreatingProfile(false); setNewProfileName(''); setNewProfileFolder('') } }}
-                      placeholder="Profile name…"
+                      placeholder={t('sidebar.profileNamePlaceholder')}
                       style={{
                         flex: 1, padding: '5px 8px', background: 'rgba(255,255,255,0.06)',
                         border: '1px solid rgba(0,180,216,0.3)', borderRadius: 4,
@@ -345,7 +348,7 @@ export default function Sidebar({ activePage, onNavigate, stats, dbConnected, sh
                     />
                     <button
                       onClick={handleChooseFolderForCreate}
-                      title="Choose folder"
+                      title={t('sidebar.chooseFolder')}
                       style={{
                         flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
                         width: 26, padding: '5px 0', background: 'rgba(255,255,255,0.06)',
@@ -370,7 +373,7 @@ export default function Sidebar({ activePage, onNavigate, stats, dbConnected, sh
                       }}>→ {newProfileFolder}</span>
                       <span
                         onClick={() => setNewProfileFolder('')}
-                        title="Use default location"
+                        title={t('sidebar.useDefaultLocation')}
                         style={{ flexShrink: 0, fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer' }}
                       >×</span>
                     </div>
@@ -399,11 +402,12 @@ export default function Sidebar({ activePage, onNavigate, stats, dbConnected, sh
       <nav className="sidebar-nav" aria-label="Main navigation">
         {sections.map(section => (
           <div key={section}>
-            <div className="nav-section-label">{section}</div>
+            <div className="nav-section-label">{t(`sidebar.section.${section}`)}</div>
             {navItems.filter(i => i.section === section).map(item => {
               const Icon = item.icon
               const badge = getBadge(item.id)
               const isActive = activePage === item.id
+              const label = t(`sidebar.nav.${item.labelKey}`)
               return (
                 <div
                   key={item.id}
@@ -413,10 +417,10 @@ export default function Sidebar({ activePage, onNavigate, stats, dbConnected, sh
                   role="button"
                   tabIndex={0}
                   aria-current={isActive ? 'page' : undefined}
-                  aria-label={item.label}
+                  aria-label={label}
                 >
                   <Icon className="nav-icon" size={15} />
-                  <span>{item.label}</span>
+                  <span>{label}</span>
                   {badge != null && (
                     <span className="nav-badge" aria-label={`${badge} items`}>{badge > 999 ? '999+' : badge}</span>
                   )}

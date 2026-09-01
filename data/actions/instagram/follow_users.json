@@ -16,7 +16,6 @@
       { "name": "maxFollowsPerSession", "type": "number", "default": 50, "min": 1, "max": 200, "description": "Rate limit: max follows per session" },
       { "name": "maxFollowsPerDay", "type": "number", "default": 150, "min": 1, "max": 500, "description": "Rate limit: max follows per day" },
       { "name": "delayBetweenFollows", "type": "number", "default": 5, "min": 2, "max": 60, "description": "Seconds to wait between follows" },
-      { "name": "skipAlreadyFollowing", "type": "boolean", "default": true, "description": "Skip accounts already followed" },
       { "name": "skipPrivateAccounts", "type": "boolean", "default": false, "description": "Skip private accounts" }
     ]
   },
@@ -147,6 +146,7 @@
       "iterator": "selectedListItems",
       "indexVar": "reachedIndex",
       "maxItems": "{{maxFollowsPerSession or 50}}",
+      "maxItemsPerDay": "{{maxFollowsPerDay or 150}}",
       "steps": [
         "t1_follow_user",
         "check_t1_result",

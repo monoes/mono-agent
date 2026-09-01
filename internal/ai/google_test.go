@@ -3,9 +3,11 @@ package ai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -32,6 +34,46 @@ func TestGoogleErrorScrubsAPIKey(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), key) {
 		t.Errorf("error leaked API key: %v", err)
+	}
+}
+
+// TestGoogleKeyWithControlCharDoesNotLeak verifies that an API key
+// containing a control character (a realistic paste artifact, e.g. a
+// trailing newline) is percent-escaped into the request URL rather than
+// producing an unparseable URL. Before the url.QueryEscape fix, such a key
+// made http.NewRequestWithContext return a *url.Error whose message embeds
+// the full, unredacted URL — leaking the plaintext key. This also confirms
+// that if such an error were ever produced, scrubErr strips the key from it.
+func TestGoogleKeyWithControlCharDoesNotLeak(t *testing.T) {
+	const key = "AIzaSecretKey\n\x00Trailer"
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"ok"}],"role":"model"},"finishReason":"STOP"}]}`))
+	}))
+	defer srv.Close()
+
+	client := NewGoogleClient(key, srv.URL)
+	resp, err := client.Complete(context.Background(), CompletionRequest{
+		Model:    "gemini-2.0-flash",
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("Complete with control-char key: %v", err)
+	}
+	if resp.Content != "ok" {
+		t.Errorf("Content = %q, want %q", resp.Content, "ok")
+	}
+
+	// Defense in depth: scrubErr must still redact the key from any error
+	// message that happens to embed it verbatim (e.g. from future code paths).
+	scrubbed := client.scrubErr(&url.Error{
+		Op:  "Post",
+		URL: "http://example.com/models/foo:generateContent?key=" + key,
+		Err: errors.New("boom"),
+	})
+	if strings.Contains(scrubbed.Error(), key) {
+		t.Errorf("scrubErr left the key in the message: %v", scrubbed)
 	}
 }
 

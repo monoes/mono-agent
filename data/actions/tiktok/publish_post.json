@@ -38,7 +38,7 @@
     },
     {
       "id": "upload_media",
-      "type": "type",
+      "type": "upload",
       "elementRef": "find_file_input",
       "text": "{{media}}",
       "onError": {

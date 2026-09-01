@@ -3,6 +3,7 @@ package secrets
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -39,6 +40,16 @@ func captureFileKeyringWarns(t *testing.T) *bytes.Buffer {
 	return &buf
 }
 
+// stubFilePassphrase substitutes filePassphraseFunc with a fixed passphrase
+// so tests don't block on stdin — the same stub-a-package-var pattern
+// forceKeyringUnavailable above uses for keyringGet/keyringSet.
+func stubFilePassphrase(t *testing.T, passphrase string) {
+	t.Helper()
+	orig := filePassphraseFunc
+	t.Cleanup(func() { filePassphraseFunc = orig })
+	filePassphraseFunc = func() (string, error) { return passphrase, nil }
+}
+
 func warnCount(buf *bytes.Buffer) int {
 	return strings.Count(buf.String(), "WARN:")
 }
@@ -56,6 +67,7 @@ func TestFileKeyringFallback_RoundTrip(t *testing.T) {
 	t.Setenv(fileKeyringEnv, "1")
 	warns := captureFileKeyringWarns(t)
 	forceKeyringUnavailable(t)
+	stubFilePassphrase(t, "correct horse battery staple")
 	ctx := context.Background()
 
 	db := newSecretsTestDB(t)
@@ -90,8 +102,30 @@ func TestFileKeyringFallback_RoundTrip(t *testing.T) {
 	if got := info.Mode().Perm(); got != 0600 {
 		t.Fatalf("KEK file mode is %o, want 600", got)
 	}
-	if info.Size() != 32 {
-		t.Fatalf("KEK file is %d bytes, want 32", info.Size())
+	// The file now holds a passphrase-wrapped JSON envelope, not the raw
+	// 32-byte KEK — assert it's genuinely wrapped, not just copied.
+	onDisk, err := os.ReadFile(kekPath)
+	if err != nil {
+		t.Fatalf("reading KEK file: %v", err)
+	}
+	var env fileKEKEnvelope
+	if err := json.Unmarshal(onDisk, &env); err != nil {
+		t.Fatalf("KEK file is not a valid envelope: %v", err)
+	}
+	if env.Format != fileKEKFormat || env.KDF != "argon2id" {
+		t.Fatalf("unexpected envelope format=%q kdf=%q", env.Format, env.KDF)
+	}
+	// The envelope's ciphertext must not equal the raw in-memory KEK: it's
+	// genuinely wrapped, not just copied to disk.
+	kekInMemory, err := getOrCreateKEK("default")
+	if err != nil {
+		t.Fatalf("getOrCreateKEK: %v", err)
+	}
+	if bytes.Equal(env.Ciphertext, kekInMemory) {
+		t.Fatal("on-disk ciphertext equals the raw in-memory KEK; it is not wrapped")
+	}
+	if bytes.Contains(onDisk, kekInMemory) {
+		t.Fatal("raw KEK bytes appear verbatim in the on-disk file")
 	}
 	dirInfo, err := os.Stat(filepath.Join(home, ".monoagent", "vault"))
 	if err != nil {
@@ -162,6 +196,80 @@ func TestFileKeyringFallback_FailsClosedWithoutEnv(t *testing.T) {
 
 	if _, err := os.Stat(filepath.Join(home, ".monoagent")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected no vault dir/file without the fallback env, got err %v", err)
+	}
+}
+
+// TestFileKeyringFallback_MigratesLegacyRawKEK proves the auto-migration
+// path: a pre-hardening file holding the raw 32-byte KEK (no passphrase
+// protection) is transparently upgraded to the passphrase-wrapped envelope
+// on next use, without losing access to secrets already encrypted under
+// that KEK's DEK.
+func TestFileKeyringFallback_MigratesLegacyRawKEK(t *testing.T) {
+	resetKEKState(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv(fileKeyringEnv, "1")
+	warns := captureFileKeyringWarns(t)
+	forceKeyringUnavailable(t)
+	ctx := context.Background()
+
+	vaultDir := filepath.Join(home, ".monoagent", "vault")
+	if err := os.MkdirAll(vaultDir, 0700); err != nil {
+		t.Fatalf("mkdir vault dir: %v", err)
+	}
+	legacyKEK := make([]byte, 32)
+	for i := range legacyKEK {
+		legacyKEK[i] = byte(i + 1)
+	}
+	kekPath := filepath.Join(vaultDir, ".file-keyring-default")
+	if err := os.WriteFile(kekPath, legacyKEK, 0600); err != nil {
+		t.Fatalf("writing legacy raw KEK: %v", err)
+	}
+
+	stubFilePassphrase(t, "new passphrase after migration")
+
+	db := newSecretsTestDB(t)
+	id, err := Add(ctx, db.DB, "default", "secret", "post-migration", map[string]string{"secret": "still-works"}, "", "", "")
+	if err != nil {
+		t.Fatalf("Add after legacy KEK migration: %v", err)
+	}
+	fields, _, err := DecryptFields(ctx, db.DB, "default", id)
+	if err != nil {
+		t.Fatalf("DecryptFields after legacy KEK migration: %v", err)
+	}
+	if fields["secret"] != "still-works" {
+		t.Fatalf("got %q, want still-works", fields["secret"])
+	}
+
+	if !strings.Contains(warns.String(), "migrating to a passphrase-protected format") {
+		t.Fatalf("expected a migration warning, got %q", warns.String())
+	}
+
+	onDisk, err := os.ReadFile(kekPath)
+	if err != nil {
+		t.Fatalf("reading migrated KEK file: %v", err)
+	}
+	var env fileKEKEnvelope
+	if err := json.Unmarshal(onDisk, &env); err != nil {
+		t.Fatalf("migrated KEK file is not a valid envelope: %v", err)
+	}
+	if env.Format != fileKEKFormat || env.KDF != "argon2id" {
+		t.Fatalf("unexpected migrated envelope format=%q kdf=%q", env.Format, env.KDF)
+	}
+	if bytes.Contains(onDisk, legacyKEK) {
+		t.Fatal("raw legacy KEK bytes appear verbatim in the migrated file")
+	}
+
+	// A second read must use the SAME underlying KEK bytes (unwrapped via the
+	// new envelope) — proving the migration preserved the key rather than
+	// generating a fresh one that would orphan already-encrypted secrets.
+	resetKEKState(t) // force a fresh read from disk instead of the in-process memo
+	unwrapped, err := unwrapFileKEK(env, "new passphrase after migration")
+	if err != nil {
+		t.Fatalf("unwrapping migrated envelope: %v", err)
+	}
+	if !bytes.Equal(unwrapped, legacyKEK) {
+		t.Fatal("migrated envelope does not unwrap to the original legacy KEK bytes")
 	}
 }
 

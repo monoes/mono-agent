@@ -23,6 +23,19 @@ type TikTokBot struct{}
 // actually delivered (composer cleared or message bubble rendered).
 const sendVerificationTimeout = 3 * time.Second
 
+// unwrapRodPage extracts the underlying *rod.Page from a browser.PageInterface.
+// Most of this bot's helper methods are written directly against the Rod API
+// and cannot operate on other drivers (e.g. the Chrome extension bridge). This
+// returns a descriptive error instead of panicking when the active page isn't
+// backed by Rod.
+func unwrapRodPage(p browser.PageInterface) (*rod.Page, error) {
+	rp, ok := p.(*browser.RodPage)
+	if !ok {
+		return nil, fmt.Errorf("tiktok: this operation requires the Rod browser driver, got %T", p)
+	}
+	return rp.UnwrapRodPage(), nil
+}
+
 // dmBubbleSelectors are best-effort selectors for rendered message bubbles in
 // the chat thread, used as the "OR" branch of send verification.
 var dmBubbleSelectors = []string{
@@ -138,7 +151,10 @@ func (b *TikTokBot) LoginURL() string {
 // IsLoggedIn checks whether the user is authenticated on TikTok by looking
 // for user-specific elements that only appear when logged in.
 func (b *TikTokBot) IsLoggedIn(p browser.PageInterface) (bool, error) {
-	page := p.(*browser.RodPage).UnwrapRodPage()
+	page, err := unwrapRodPage(p)
+	if err != nil {
+		return false, err
+	}
 	selectors := []string{
 		// User avatar/icon in the header when logged in.
 		"div[data-e2e='profile-icon']",
@@ -231,7 +247,10 @@ func (b *TikTokBot) SearchURL(keyword string) string {
 // SendMessage navigates to the TikTok direct messaging interface and sends a
 // message to the specified user.
 func (b *TikTokBot) SendMessage(ctx context.Context, p browser.PageInterface, username, message string) error {
-	page := p.(*browser.RodPage).UnwrapRodPage()
+	page, err := unwrapRodPage(p)
+	if err != nil {
+		return err
+	}
 	if username == "" {
 		return fmt.Errorf("tiktok: username is required")
 	}
@@ -241,7 +260,7 @@ func (b *TikTokBot) SendMessage(ctx context.Context, p browser.PageInterface, us
 
 	// Navigate to the user's profile first to initiate a message.
 	profileURL := fmt.Sprintf("https://www.tiktok.com/@%s", url.PathEscape(username))
-	err := page.Navigate(profileURL)
+	err = page.Navigate(profileURL)
 	if err != nil {
 		return fmt.Errorf("tiktok: failed to navigate to profile: %w", err)
 	}
@@ -424,10 +443,13 @@ func (b *TikTokBot) SendMessage(ctx context.Context, p browser.PageInterface, us
 // GetProfileData scrapes the currently loaded TikTok profile page and returns
 // structured profile information.
 func (b *TikTokBot) GetProfileData(ctx context.Context, p browser.PageInterface) (map[string]interface{}, error) {
-	page := p.(*browser.RodPage).UnwrapRodPage()
+	page, err := unwrapRodPage(p)
+	if err != nil {
+		return nil, err
+	}
 	data := make(map[string]interface{})
 
-	err := page.WaitLoad()
+	err = page.WaitLoad()
 	if err != nil {
 		return data, fmt.Errorf("tiktok: page did not finish loading: %w", err)
 	}

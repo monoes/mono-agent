@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -135,10 +136,10 @@ func (c *GoogleClient) Complete(ctx context.Context, req CompletionRequest) (Com
 	}
 
 	respBody, err := completeWithRetry(ctx, c.httpClient, "google", func() (*http.Request, error) {
-		url := fmt.Sprintf("%s/models/%s:generateContent?key=%s", c.baseURL, req.Model, c.apiKey)
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+		reqURL := fmt.Sprintf("%s/models/%s:generateContent?key=%s", c.baseURL, req.Model, url.QueryEscape(c.apiKey))
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(body))
 		if err != nil {
-			return nil, err
+			return nil, c.scrubErr(err)
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
 		return httpReq, nil
@@ -174,10 +175,10 @@ func (c *GoogleClient) StreamComplete(ctx context.Context, req CompletionRequest
 	}
 	debugLog("[GOOGLE DEBUG] Request body (first 2000 chars): %.2000s", string(body))
 
-	url := fmt.Sprintf("%s/models/%s:streamGenerateContent?alt=sse&key=%s", c.baseURL, req.Model, c.apiKey)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	reqURL := fmt.Sprintf("%s/models/%s:streamGenerateContent?alt=sse&key=%s", c.baseURL, req.Model, url.QueryEscape(c.apiKey))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("create request: %w", err)
+		return fmt.Errorf("create request: %w", c.scrubErr(err))
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 

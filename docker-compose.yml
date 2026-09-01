@@ -30,12 +30,26 @@ services:
     #     needed, and give webhook nodes an auth secret (auth_header/
     #     auth_token) or HMAC secret — anyone who can reach the port can
     #     fire an unauthenticated webhook.
+    #   - Any non-loopback MONOAGENT_WEBHOOK_ADDR (0.0.0.0 included) is now
+    #     ALWAYS served over TLS — the server auto-generates and caches a
+    #     self-signed certificate under $HOME/.monoagent/webhook-tls/ if no
+    #     explicit one is configured, and refuses to fall back to plaintext.
+    #     Callers therefore need `https://`, and (with the self-signed cert)
+    #     must skip verification or trust that cert explicitly. For a real
+    #     certificate instead, mount it into the container and set
+    #     MONOAGENT_WEBHOOK_TLS_CERT / MONOAGENT_WEBHOOK_TLS_KEY to its path.
+    #     A loopback bind (127.0.0.1, the default) is unaffected — plain
+    #     HTTP, same-user trust, no ceremony.
     #   - Browser-based callers need MONOAGENT_WEBHOOK_ALLOWED_ORIGINS (a
     #     comma-separated origin allowlist); without it the server emits NO
     #     CORS headers, so cross-origin browser requests are blocked.
     environment:
       MONOAGENT_WEBHOOK_ADDR: "0.0.0.0:9321"
       # MONOAGENT_WEBHOOK_ALLOWED_ORIGINS: "https://app.example.com"
+      # Real certificate instead of the auto-generated self-signed one
+      # (paths inside the container — mount the cert/key via `volumes`):
+      # MONOAGENT_WEBHOOK_TLS_CERT: "/data/tls/cert.pem"
+      # MONOAGENT_WEBHOOK_TLS_KEY: "/data/tls/key.pem"
     ports:
       - "127.0.0.1:9321:9321"
       # Remote callers instead of host loopback only — pair with webhook

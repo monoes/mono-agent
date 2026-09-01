@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `core.switch`'s primary `field` config key now resolves per-item (like
+  `expression` already did), so items with different `$json` values in the
+  same batch route to different output handles instead of all following
+  item 0's route. This is a behavior change for any workflow that relied
+  on the old batch-wide routing.
 - `workflow import` now remaps node and connection ids that collide with
   ids already used by other workflows (ids are globally unique in the
   store), so multiple examples can be imported into one database; remapped

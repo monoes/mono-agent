@@ -51,6 +51,14 @@ func (s *testStorageAdapter) SaveExtractedData(actionID string, items []map[stri
 	return nil
 }
 
+func (s *testStorageAdapter) GetDailyActionCount(actionType string) (int, error) {
+	return 0, nil
+}
+
+func (s *testStorageAdapter) IncrementDailyActionCount(actionType string) (int, error) {
+	return 1, nil
+}
+
 // launchTestBrowser creates a visible Chrome browser with Instagram session
 // cookies restored. Requires a valid session in ~/.monoagent/monoagent.db.
 func launchTestBrowser(t *testing.T) (*rod.Browser, *rod.Page, func()) {

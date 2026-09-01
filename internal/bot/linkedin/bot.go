@@ -23,6 +23,19 @@ type LinkedInBot struct{}
 // was actually delivered (composer cleared or message bubble rendered).
 const sendVerificationTimeout = 3 * time.Second
 
+// unwrapRodPage extracts the underlying *rod.Page from a browser.PageInterface.
+// Most of this bot's helper methods are written directly against the Rod API
+// and cannot operate on other drivers (e.g. the Chrome extension bridge). This
+// returns a descriptive error instead of panicking when the active page isn't
+// backed by Rod.
+func unwrapRodPage(p browser.PageInterface) (*rod.Page, error) {
+	rp, ok := p.(*browser.RodPage)
+	if !ok {
+		return nil, fmt.Errorf("linkedin: this operation requires the Rod browser driver, got %T", p)
+	}
+	return rp.UnwrapRodPage(), nil
+}
+
 // dmBubbleSelectors are best-effort selectors for rendered message bubbles in
 // the conversation thread, used as the "OR" branch of send verification.
 var dmBubbleSelectors = []string{
@@ -145,7 +158,10 @@ func (b *LinkedInBot) LoginURL() string {
 // IsLoggedIn checks whether the user is authenticated on LinkedIn by looking
 // for elements that are only rendered for logged-in users.
 func (b *LinkedInBot) IsLoggedIn(p browser.PageInterface) (bool, error) {
-	page := p.(*browser.RodPage).UnwrapRodPage()
+	page, err := unwrapRodPage(p)
+	if err != nil {
+		return false, err
+	}
 	selectors := []string{
 		// Global navigation bar present on all authenticated pages.
 		"div.global-nav",
@@ -231,7 +247,10 @@ func (b *LinkedInBot) SearchURL(keyword string) string {
 // SendMessage navigates to the LinkedIn messaging interface and sends a direct
 // message to the specified user.
 func (b *LinkedInBot) SendMessage(ctx context.Context, p browser.PageInterface, username, message string) error {
-	page := p.(*browser.RodPage).UnwrapRodPage()
+	page, err := unwrapRodPage(p)
+	if err != nil {
+		return err
+	}
 	if username == "" {
 		return fmt.Errorf("linkedin: username is required")
 	}
@@ -241,7 +260,7 @@ func (b *LinkedInBot) SendMessage(ctx context.Context, p browser.PageInterface, 
 
 	// Navigate to the user's profile first.
 	profileURL := fmt.Sprintf("https://www.linkedin.com/in/%s/", url.PathEscape(username))
-	err := page.Navigate(profileURL)
+	err = page.Navigate(profileURL)
 	if err != nil {
 		return fmt.Errorf("linkedin: failed to navigate to profile: %w", err)
 	}
@@ -370,10 +389,13 @@ func (b *LinkedInBot) SendMessage(ctx context.Context, p browser.PageInterface, 
 // GetProfileData scrapes the currently loaded LinkedIn profile page and
 // returns structured profile information.
 func (b *LinkedInBot) GetProfileData(ctx context.Context, p browser.PageInterface) (map[string]interface{}, error) {
-	page := p.(*browser.RodPage).UnwrapRodPage()
+	page, err := unwrapRodPage(p)
+	if err != nil {
+		return nil, err
+	}
 	data := make(map[string]interface{})
 
-	err := page.WaitLoad()
+	err = page.WaitLoad()
 	if err != nil {
 		return data, fmt.Errorf("linkedin: page did not finish loading: %w", err)
 	}

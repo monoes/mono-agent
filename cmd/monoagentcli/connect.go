@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/monoes/mono-agent/internal/connections"
+	"github.com/monoes/mono-agent/internal/i18n"
 	"github.com/spf13/cobra"
 )
 
@@ -19,17 +20,11 @@ import (
 // Also has subcommands: list, test, remove, refresh
 func newConnectCmd(cfg *globalConfig) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "connect <platform>",
-		Short: "Connect a platform via API key, OAuth, or other methods",
-		Long:  "Authenticate to a platform and save the connection. Run `monoagentcli connect list --all` to see all supported platforms.",
-		Example: `  monoagentcli connect github
-  monoagentcli connect notion
-  monoagentcli connect list
-  monoagentcli connect list --all
-  monoagentcli connect test <id>
-  monoagentcli connect remove <id>
-  monoagentcli connect refresh <id>`,
-		Args: cobra.MaximumNArgs(1),
+		Use:     "connect <platform>",
+		Short:   i18n.T("connect.short"),
+		Long:    i18n.T("connect.long"),
+		Example: i18n.T("connect.example"),
+		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return cmd.Help()

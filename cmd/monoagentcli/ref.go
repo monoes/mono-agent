@@ -37,7 +37,7 @@ var nodeDocs = []nodeDoc{
 }`,
 		Inputs:  "none",
 		Outputs: "one empty item that triggers downstream nodes",
-		Notes:   `6-field cron: sec min hour day month weekday. Run "monoagentcli schedule run" to start the scheduler daemon.`,
+		Notes:   `6-field cron: sec min hour day month weekday. The workflow must be "activate"d and "monoagentcli daemon" must be running for this trigger to actually fire over time.`,
 	},
 
 	// ── System ────────────────────────────────────────────────────────────────
@@ -1453,47 +1453,51 @@ var cliDocs = []cmdDoc{
 	},
 	{
 		Name:  "run",
-		Short: "Run a single action by its ID",
-		Usage: "monoagentcli run <action-id> [flags]",
-		Flags: `  --platform string   Platform override
-  --list string       People list ID
-  --text string       Message or comment text
-  --verbose           Show step-by-step output`,
+		Short: "Execute one or more actions",
+		Usage: "monoagentcli run [action-id] [flags]",
+		Flags: `  --file string       Path to action JSON file (run without an action-id)
+  --queue             Run all pending actions from the queue
+  --watch             Continuously poll and execute pending actions
+  --interval duration Polling interval for --watch mode (default 30s)
+  --timeout duration  Maximum execution time per action (default 10m)
+  --param key=value   Set a custom param (repeatable)`,
 		Examples: []string{
-			"monoagentcli run POST_LIKING --platform instagram --list my-list",
-			"monoagentcli run BULK_MESSAGING --platform instagram --text 'Hi {{name}}!'",
+			"monoagentcli run abc-123",
+			"monoagentcli run --file actions.json",
+			"monoagentcli run --queue",
+			"monoagentcli run --watch --interval 30s",
 		},
 	},
 	{
 		Name:  "search",
 		Short: "Search for profiles or posts on a platform",
-		Usage: "monoagentcli search <platform> <keyword> [flags]",
-		Flags: `  --limit int     Max results (default 50)
-  --output string Output file path`,
+		Usage: "monoagentcli search <platform> --keyword <keyword> [flags]",
+		Flags: `  --keyword string    Search keyword (required)
+  --max int           Maximum number of results to collect (default 50)
+  --timeout duration  Maximum execution time (default 10m)`,
 		Examples: []string{
-			"monoagentcli search instagram 'coffee shop'",
-			"monoagentcli search linkedin 'software engineer Berlin'",
+			"monoagentcli search instagram --keyword 'coffee shop'",
+			"monoagentcli search linkedin --keyword 'software engineer Berlin'",
 		},
 	},
 	{
 		Name:  "message",
-		Short: "Send bulk direct messages",
-		Usage: "monoagentcli message <platform> [flags]",
-		Flags: `  --list string   People list ID
-  --text string   Message template (supports {{name}}, {{username}})
-  --delay int     Delay between messages in seconds (default 5)`,
+		Short: "Send a direct message to one person",
+		Usage: "monoagentcli message <platform> <username> --text <text> [flags]",
+		Flags: `  --text string       Message text to send (required)
+  --timeout duration  Maximum execution time (default 10m)`,
 		Examples: []string{
-			"monoagentcli message instagram --list leads --text 'Hi {{name}}!'",
+			"monoagentcli message instagram someuser --text 'Hi!'",
 		},
 	},
 	{
 		Name:  "comment",
-		Short: "Post comments on a list of posts",
-		Usage: "monoagentcli comment <platform> [flags]",
-		Flags: `  --list string   People/post list ID
-  --text string   Comment text`,
+		Short: "Post a comment on one or more posts",
+		Usage: "monoagentcli comment <platform> <post-url> [post-url...] --text <text> [flags]",
+		Flags: `  --text string       Comment text to post (required)
+  --timeout duration  Maximum execution time (default 10m)`,
 		Examples: []string{
-			"monoagentcli comment instagram --list posts --text 'Great content!'",
+			"monoagentcli comment instagram https://instagram.com/p/abc123 --text 'Great content!'",
 		},
 	},
 	{
@@ -1518,11 +1522,10 @@ var cliDocs = []cmdDoc{
 		Name:  "people",
 		Short: "Manage people / contact lists and their message history",
 		Usage: "monoagentcli people <subcommand>",
-		Flags: `  list                              List all people
-  add                               Add a person
-  import <file>                     Import from CSV/JSON
-  export <list-id>                  Export list to file
-  remove <id>                       Remove a person
+		Flags: `  list                              List people in the database
+  get <id>                          Show detailed information about a person
+  delete <id>                       Delete a person
+  import <file>                     Import people from CSV/JSON
   messages add <person-id>          Record a single message/interaction
   messages list <person-id>         List a person's messages (Files column = attachment count)
   messages show <message-id>        Full text + where it came from + attachment file paths
@@ -1552,11 +1555,11 @@ live under ~/.monoagent/attachments/<message>/.
 		Name:  "list",
 		Short: "Manage named lists for targeting",
 		Usage: "monoagentcli list <subcommand>",
-		Flags: `  create <name>   Create a new list
-  delete <id>     Delete a list
-  show <id>       Show list contents`,
+		Flags: `  create --name <name>   Create a new list
+  delete <id>            Delete a list
+  show <id>               Show list contents`,
 		Examples: []string{
-			"monoagentcli list create my-leads",
+			`monoagentcli list create --name "my-leads"`,
 		},
 	},
 	{
@@ -1597,12 +1600,11 @@ live under ~/.monoagent/attachments/<message>/.
 	},
 	{
 		Name:  "export",
-		Short: "Export data to CSV or JSON",
+		Short: "Export all people and actions to JSON files",
 		Usage: "monoagentcli export [flags]",
-		Flags: `  --format string   csv or json (default json)
-  --output string   Output file path`,
+		Flags: `  --output-dir string   Output directory (defaults to global --output-dir)`,
 		Examples: []string{
-			"monoagentcli export --format csv --output results.csv",
+			"monoagentcli export --output-dir ./backup   # writes people_export.json + actions_export.json",
 		},
 	},
 	{
@@ -1989,7 +1991,7 @@ CONNECTION OBJECT
 TRIGGER NODE
   trigger.schedule uses 6-field cron (sec min hour day month weekday):
   "cron": "0 0 9 * * *"   // every day at 09:00
-  Run scheduler with: monoagentcli schedule run
+  Activate the workflow, then run: monoagentcli daemon
 
 PARALLEL BRANCHES
   Connect one source to multiple targets — all run concurrently.

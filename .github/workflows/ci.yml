@@ -24,6 +24,33 @@ jobs:
             exit 1
           fi
 
+  # Closes issue #23's CI gap: installs the exact Monomind version .mcp.json
+  # pins and runs the real client/server handshake (internal/monomind
+  # .Handshake), so a protocol/version mismatch between this repo and the
+  # pinned Monomind release fails CI instead of surfacing as a runtime
+  # error for users. See docs/plans/local-agent-monomind-delegation.md §11.
+  monomind-smoke:
+    name: Monomind integration smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Install pinned Monomind version
+        run: |
+          version=$(grep -oE '@monoes/monomindcli@[0-9][0-9.]*' .mcp.json | cut -d@ -f3)
+          if [ -z "$version" ]; then
+            echo "::error file=.mcp.json::could not extract a pinned @monoes/monomindcli version"
+            exit 1
+          fi
+          npm install -g "@monoes/monomindcli@${version}"
+      - name: Run handshake smoke test
+        run: MONOMIND_SMOKE=1 go test ./internal/monomind/... -run TestSmoke_RealMonomindHandshake -v
+
   # Scheduled + on-push dependency vulnerability scanning (MA-06/MA-11).
   vuln-scan:
     name: Vulnerability scan
@@ -48,6 +75,28 @@ jobs:
         # dependency. Production dependencies are audited at full severity.
         working-directory: wails-app/frontend
         run: npm audit --omit=dev --audit-level=high
+
+  # Issue #24: node schemas for a small, growing set of node types are
+  # generated from `schema:"..."` struct tags (internal/tools/schemagen)
+  # instead of hand-written. This regenerates just those files and fails if
+  # the committed JSON drifts from what the generator produces — e.g.
+  # someone hand-edited a generated schema file, or edited the struct tags
+  # without re-running the generator. Deliberately scoped to only the node
+  # types listed in internal/tools/schemagen.Manifest (see
+  # internal/workflow/schemas/README.md) — most schema files are still
+  # hand-written and are not touched by this check.
+  schemagen-check:
+    name: Generated node schemas up to date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+
+      - name: Check generated schemas match committed files
+        run: go run ./cmd/schemagen -check
 
   # NOTE: no CGO_ENABLED=0 here. `go test -race` requires cgo ("go: -race
   # requires cgo" on Go 1.25), and ubuntu runners ship gcc — the default
@@ -113,16 +162,19 @@ jobs:
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: wails-app/frontend/package-lock.json
 
       - name: Build frontend
+        # npm/cli#7622 (npm ci hard-failing with EBADPLATFORM on optional
+        # deps) was fixed by npm/cli#9262, shipped in npm 12.0.0
+        # (2026-07-08). node-version above is 22 (bumped from 20) because
+        # npm 12 requires Node >=22.22; Node 22's own bundled npm predates
+        # 12, so it's installed explicitly too.
         run: |
-          # npm ci --dry-run fails loudly on lockfile drift (see release.yml
-          # for why npm install, not npm ci, does the actual install).
-          npm ci --dry-run
-          npm install
+          npm install -g npm@12
+          npm ci
           npm run build
         working-directory: wails-app/frontend
 

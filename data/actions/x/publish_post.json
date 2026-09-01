@@ -47,20 +47,22 @@
       "type": "condition",
       "condition": "media.length > 0",
       "then": [
+        "find_file_input",
         "upload_media"
       ],
       "else": []
     },
     {
-      "id": "upload_media",
+      "id": "find_file_input",
       "type": "find_element",
-      "xpath": "//input[@type='file'] | //button[contains(@aria-label, 'Media')]",
+      "xpath": "//input[@type='file']",
       "timeout": 10
     },
     {
-      "id": "click_upload",
-      "type": "click",
-      "elementRef": "upload_media"
+      "id": "upload_media",
+      "type": "upload",
+      "elementRef": "find_file_input",
+      "text": "{{media}}"
     },
     {
       "id": "find_tweet_button",

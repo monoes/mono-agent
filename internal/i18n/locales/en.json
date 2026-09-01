@@ -1,0 +1,24 @@
+{
+  "root.short": "Local-first workflow automation agent (n8n alternative)",
+  "root.long": "Mono Agent — local-first workflow automation (n8n alternative) in a single Go binary. Build, schedule, and run DAG workflows (90 node types; 150 with the optional social build) from CLI, GUI, or MCP. Social platform actions are an opt-in build (-tags social) for your own accounts — see docs/USAGE_POLICY.md.\n\nSTART HERE — what can this already do?\n\n  monoagentcli workflow search [query]      Everything runnable: bundled\n                                            templates + saved workflows, each\n                                            with the command that runs it\n  monoagentcli workflow templates show <id> Inputs, nodes, and exact run command\n  monoagentcli ref templates                Guide to the bundled templates\n\nAll state (workflows, logins, generated images) lives in ~/.monoagent/, so every\ncommand works from any directory — there is nothing to set up per project. Add\n--json to the discovery commands above for machine-readable output.\n\nAI agents: run 'monoagentcli ref' for built-in, offline documentation\ncovering every command and workflow node type in depth — including\n'monoagentcli ref connections' for the profile/OAuth/credential model\n(read this before writing anything that touches --profile or\n--credential) and 'monoagentcli ref examples' for common patterns. This\nis the primary, most current source of truth for how the CLI is meant to\nbe used — prefer it over guessing from --help output alone.",
+
+  "workflow.short": "Manage and run workflows",
+  "workflow.long": "Create, list, run, activate, deactivate, delete, and inspect executions of workflows.\n\nFor scheduled (trigger.schedule) or webhook (trigger.webhook) workflows to fire on their own over time, `monoagentcli daemon` must be running continuously — `workflow activate` alone only registers triggers for as long as that one command is running.",
+
+  "workflow.templates.short": "Browse and instantiate bundled ready-to-use workflow templates",
+
+  "workflow.search.short": "Search bundled templates and saved workflows by name, description, or node type",
+  "workflow.search.long": "Search everything runnable — bundled templates and the workflows saved for this profile — by name, description, or the node types involved. Omit the query to list everything.\n\nEach hit comes with the command that runs it.",
+
+  "node.short": "Directly invoke or inspect workflow node types",
+
+  "node.schema.short": "Print the embedded JSON schema for a node type",
+  "node.schema.example": "  monoagentcli node schema core.if\n  monoagentcli node schema trigger.schedule",
+
+  "connect.short": "Connect a platform via API key, OAuth, or other methods",
+  "connect.long": "Authenticate to a platform and save the connection. Run `monoagentcli connect list --all` to see all supported platforms.",
+  "connect.example": "  monoagentcli connect github\n  monoagentcli connect notion\n  monoagentcli connect list\n  monoagentcli connect list --all\n  monoagentcli connect test <id>\n  monoagentcli connect remove <id>\n  monoagentcli connect refresh <id>",
+
+  "schedule.short": "Manage action schedules",
+  "schedule.long": "List, add, and remove schedules for actions."
+}
