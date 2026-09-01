@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react'
-import { Plus, Trash2, KeyRound, Download, Upload, Copy } from 'lucide-react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import { Plus, Trash2, KeyRound, Download, Upload, Copy, Search, ArrowUp, ArrowDown } from 'lucide-react'
 import * as WailsApp from '../wailsjs/go/main/App'
 import { confirm } from '../components/ConfirmDialog.jsx'
 import KeyValueFields, { newRow, validateRows } from '../components/KeyValueFields.jsx'
@@ -10,6 +10,16 @@ const fmtDate = (s) => {
   const d = new Date(s.includes('T') ? s : s.replace(' ', 'T') + 'Z')
   if (isNaN(d)) return s
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+// updated_at/created_at come back as "2026-08-01 12:00:00" (space, no Z) or
+// ISO — normalize the same way fmtDate does so sort-by-date and the
+// displayed date always agree, and so an unparseable value sorts as
+// "oldest" instead of throwing NaN comparisons off in random directions.
+const parseDate = (s) => {
+  if (!s) return 0
+  const d = new Date(s.includes('T') ? s : s.replace(' ', 'T') + 'Z')
+  return isNaN(d) ? 0 : d.getTime()
 }
 
 const KIND_COLORS = {
@@ -26,6 +36,29 @@ const KIND_LABELS = {
   session: 'session',
   ai_provider: 'ai key',
 }
+
+// Pure so it's directly unit-testable (see Vault.test.js) without rendering
+// the component — mirrors the codebase's existing pattern of exporting the
+// filtering/validation logic out of KeyValueFields.jsx for the same reason.
+export function filterAndSortEntries(entries, { search = '', sortBy = 'name', sortDir = 'asc' } = {}) {
+  const q = search.trim().toLowerCase()
+  const filtered = q
+    ? entries.filter(e => (
+        e.name?.toLowerCase().includes(q) ||
+        e.username?.toLowerCase().includes(q) ||
+        e.kind?.toLowerCase().includes(q) ||
+        KIND_LABELS[e.kind]?.toLowerCase().includes(q)
+      ))
+    : entries
+  const sorted = [...filtered].sort((a, b) => {
+    const cmp = sortBy === 'date'
+      ? parseDate(a.updated_at) - parseDate(b.updated_at)
+      : (a.name || '').localeCompare(b.name || '')
+    return sortDir === 'asc' ? cmp : -cmp
+  })
+  return sorted
+}
+
 const kindBadge = (kind) => {
   const s = KIND_COLORS[kind] || { bg: '#1a2332', border: '#334', color: '#64748b' }
   const label = KIND_LABELS[kind] || kind
@@ -50,6 +83,26 @@ const headerBtnStyle = {
 
 const emptyForm = () => ({ kind: 'secret', name: '', fields: [newRow('secret', '')], username: '', url: '', notes: '' })
 
+// Clickable column header for the Name/Updated columns: shows an arrow for
+// whichever column is the active sort, clicking flips direction (or picks
+// this column, if it wasn't already the active one — see toggleSort).
+function SortableHeader({ col, active, dir, onClick, children, style }) {
+  const isActive = active === col
+  const Icon = dir === 'asc' ? ArrowUp : ArrowDown
+  return (
+    <div
+      onClick={() => onClick(col)}
+      style={{
+        ...style, display: 'flex', alignItems: 'center', gap: 3, cursor: 'pointer',
+        color: isActive ? '#00b4d8' : undefined, userSelect: 'none',
+      }}
+    >
+      {children}
+      {isActive && <Icon size={10} />}
+    </div>
+  )
+}
+
 export default function Vault() {
   const [entries, setEntries] = useState([])
   const [showAdd, setShowAdd] = useState(false)
@@ -60,6 +113,9 @@ export default function Vault() {
   const [importPath, setImportPath] = useState(null)
   const [importPassphrase, setImportPassphrase] = useState('')
   const [importResult, setImportResult] = useState(null)
+  const [search, setSearch] = useState('')
+  const [sortBy, setSortBy] = useState('name') // 'name' | 'date'
+  const [sortDir, setSortDir] = useState('asc') // 'asc' | 'desc'
   // Decoupled from `error`: shown only by the import passphrase modal and
   // the import-complete modal, so an unrelated later failure (e.g. a
   // delete) can never surface inside an import dialog, and an import
@@ -77,6 +133,22 @@ export default function Vault() {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  // Toggling the same column flips direction; switching columns starts each
+  // at its more useful default (name: A-Z, date: newest first).
+  const toggleSort = (col) => {
+    if (sortBy === col) {
+      setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortBy(col)
+      setSortDir(col === 'date' ? 'desc' : 'asc')
+    }
+  }
+
+  const visibleEntries = useMemo(
+    () => filterAndSortEntries(entries, { search, sortBy, sortDir }),
+    [entries, search, sortBy, sortDir]
+  )
 
   const handleAdd = async (e) => {
     e.preventDefault()
@@ -158,7 +230,9 @@ export default function Vault() {
         <div>
           <div style={{ color: '#e2e8f0', fontSize: 16, fontWeight: 600 }}>Vault</div>
           <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#475569' }}>
-            {entries.length} {entries.length === 1 ? 'entry' : 'entries'}
+            {visibleEntries.length === entries.length
+              ? `${entries.length} ${entries.length === 1 ? 'entry' : 'entries'}`
+              : `${visibleEntries.length} of ${entries.length} entries`}
           </div>
         </div>
         <div style={{ flex: 1 }} />
@@ -171,6 +245,18 @@ export default function Vault() {
         <button onClick={() => setShowAdd(true)} style={headerBtnStyle}>
           <Plus size={12} /> Add New Item
         </button>
+      </div>
+
+      <div style={{ padding: '10px 20px', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ position: 'relative', display: 'flex', alignItems: 'center', flex: 1, maxWidth: 320 }}>
+          <Search size={13} style={{ position: 'absolute', left: 10, color: '#475569', pointerEvents: 'none' }} />
+          <input
+            placeholder="Search name, username, or kind..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            style={{ ...inputStyle, width: '100%', paddingLeft: 28 }}
+          />
+        </div>
       </div>
 
       {error && (
@@ -260,11 +346,11 @@ export default function Vault() {
         fontFamily: 'var(--font-mono)', fontSize: 9, color: '#334155',
         letterSpacing: '1px', textTransform: 'uppercase',
       }}>
-        <div style={{ flex: 1 }}>Name</div>
+        <SortableHeader style={{ flex: 1 }} col="name" active={sortBy} dir={sortDir} onClick={toggleSort}>Name</SortableHeader>
         <div style={{ width: 70 }}>Kind</div>
         <div style={{ width: 110 }}>Username</div>
         <div style={{ width: 90 }}>Fields</div>
-        <div style={{ width: 56 }}>Updated</div>
+        <SortableHeader style={{ width: 56 }} col="date" active={sortBy} dir={sortDir} onClick={toggleSort}>Updated</SortableHeader>
         <div style={{ width: 28 }} />
       </div>
 
@@ -280,7 +366,18 @@ export default function Vault() {
             </div>
           </div>
         )}
-        {entries.map(entry => (
+        {entries.length > 0 && visibleEntries.length === 0 && (
+          <div style={{
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+            height: 200, gap: 12, color: '#334155',
+          }}>
+            <Search size={32} style={{ opacity: 0.3 }} />
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+              No entries match "{search}"
+            </div>
+          </div>
+        )}
+        {visibleEntries.map(entry => (
           <div
             key={entry.id}
             onClick={() => setEditingEntry(entry)}
