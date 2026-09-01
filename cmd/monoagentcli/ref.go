@@ -1775,7 +1775,8 @@ Subcommands:
   connections           Profiles, OAuth connections, credential resolution, account identity
   expressions           Template expression syntax and built-in functions
   examples              Common workflow patterns and use cases
-  crawling              How to automate scraping on new/custom platforms`,
+  crawling              How to automate scraping on new/custom platforms
+  api                   HTTP/REST API surface (monoagentcli httpapi) — endpoints, auth, status codes`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fmt.Println("monoagentcli ref — built-in reference")
 			fmt.Println()
@@ -1790,11 +1791,13 @@ Subcommands:
 			fmt.Fprintln(w, "  expressions\tTemplate expression syntax and built-in functions")
 			fmt.Fprintln(w, "  examples\tCommon workflow patterns and use cases")
 			fmt.Fprintln(w, "  crawling\tAutomate sites with no built-in node type (custom XPath configs or an AI agent)")
+			fmt.Fprintln(w, "  api\tHTTP/REST API surface (monoagentcli httpapi) — endpoints, auth, status codes")
 			w.Flush()
 			fmt.Println()
 			fmt.Println("Example:  monoagentcli ref templates")
 			fmt.Println("Example:  monoagentcli ref crawling")
 			fmt.Println("Example:  monoagentcli ref connections")
+			fmt.Println("Example:  monoagentcli ref api")
 			fmt.Println("Example:  monoagentcli ref node gemini.generate_text")
 			return nil
 		},
@@ -1810,6 +1813,7 @@ Subcommands:
 		refExpressionsCmd(),
 		refExamplesCmd(),
 		refCrawlingCmd(),
+		refAPICmd(),
 	)
 	return root
 }
@@ -2440,6 +2444,103 @@ XPATH RULES (automatically enforced by the skill)
   • Each XPath must match exactly one element
   • Do not hardcode usernames, IDs, or text content
   • Prefer structural/semantic attributes over position
+
+`)
+		},
+	}
+}
+
+func refAPICmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "api",
+		Short: "HTTP/REST API surface (monoagentcli httpapi) — endpoints, auth, status codes",
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Print(`
+╔══════════════════════════════════════════════════════════════╗
+║          monoagentcli — HTTP API (monoagentcli httpapi)            ║
+╚══════════════════════════════════════════════════════════════╝
+
+  monoagentcli httpapi    # REST/JSON server (default 127.0.0.1:9322)
+
+For agents that can't speak stdio JSON-RPC. Same surface as the MCP
+tools (internal/httpapi/ mirrors internal/mcp/'s conventions), plus
+GET /workflows/{id}/executions and POST /workflows/{id}/activate /
+deactivate.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ENDPOINTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Always registered (read-only):
+    GET  /health                          unauthenticated liveness/version check
+    GET  /workflows                       list saved workflows
+    GET  /workflows/{id}                  full workflow JSON document
+    GET  /workflows/{id}/executions       recent executions (?limit=)
+    POST /workflows/{id}/validate         validate saved or inline workflow
+    GET  /nodes                           list all node types
+    GET  /nodes/{type}/schema             embedded JSON schema for one node type
+    GET  /hil                             pending Human-in-Loop queue
+
+  Only registered with --allow-mutations / MONOAGENT_HTTPAPI_ALLOW_MUTATIONS=1:
+    POST /workflows/{id}/run              trigger a workflow, wait for completion
+    POST /workflows/{id}/activate         activate a workflow's triggers
+    POST /workflows/{id}/deactivate       deactivate a workflow's triggers
+    POST /hil/{id}/approve                approve a pending HIL item
+    POST /hil/{id}/reject                 reject a pending HIL item
+
+  An unregistered mutating path 404s, not 403s — a probe can't tell
+  "opted out" from "doesn't exist". Full spec: internal/httpapi/openapi.yaml
+  (OpenAPI 3, validated in CI). Curl walkthrough: examples/httpapi-quickstart.md
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+AUTH
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Every request needs "Authorization: Bearer <credential>" except GET
+  /health. The credential is generated on first start and stored in the
+  active profile's secrets vault (monoagentcli secret list, name
+  "httpapi-token"; monoagentcli secret reveal httpapi-token --reveal to
+  print it). Loopback-only bind by default (127.0.0.1:9322) — override
+  with --addr or MONOAGENT_HTTPAPI_ADDR.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+OUTPUT REDACTION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Output items go through the same redaction as workflow run --json
+  (credential-shaped keys masked, values truncated at 4KB). Pass header
+  "X-Full-Outputs: 1" to opt out per request, mirroring
+  workflow run --full-outputs. The caller already holds the bearer
+  credential, so no additional gate is applied beyond authentication.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STATUS-CODE MAPPING (mirrors CLI exit codes — see "ref commands")
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  HTTP status   Exit code   Cause
+  200           0           success
+  400           3           invalid input / validation failure (bad JSON
+                             body, ErrNoTriggerNode, ErrCycleDetected,
+                             ErrNodeTypeUnknown, ErrInvalidConfig,
+                             ErrWorkflowInactive)
+  401           4           missing or invalid bearer credential
+  404           2           workflow, node type, or HIL item not found
+                             (includes cross-profile lookups)
+  500           1           unclassified engine/store error
+
+  No endpoint ever returns a generic 500 for a condition the CLI
+  classifies more specifically — this repo prefers honest, mapped
+  statuses over collapsing everything to 200/500.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+EXAMPLE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  monoagentcli httpapi &
+  monoagentcli --json secret reveal httpapi-token --reveal   # copy "token"
+  curl -s http://127.0.0.1:9322/health
+  curl -s -H 'Authorization: Bearer <paste credential here>' \
+    http://127.0.0.1:9322/workflows
 
 `)
 		},

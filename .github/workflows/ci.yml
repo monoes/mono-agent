@@ -51,6 +51,23 @@ jobs:
       - name: Run handshake smoke test
         run: MONOMIND_SMOKE=1 go test ./internal/monomind/... -run TestSmoke_RealMonomindHandshake -v
 
+  # Closes issue #20's OpenAPI acceptance criterion ("OpenAPI 3 spec shipped
+  # and validated in CI"): validates internal/httpapi/openapi.yaml against
+  # the real OpenAPI 3.0 meta-schema (not just YAML syntax) so a hand-edited
+  # spec that drifts into an invalid shape fails CI instead of only being
+  # caught by a human reviewer. Pinned exact version — see mcp-pin-guard
+  # above for why this repo never runs an unpinned npm package in CI.
+  openapi-lint:
+    name: Validate HTTP API OpenAPI spec
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+      - name: Lint OpenAPI spec against the OpenAPI 3 meta-schema
+        run: npx --yes @redocly/cli@2.49.0 lint internal/httpapi/openapi.yaml
+
   # Scheduled + on-push dependency vulnerability scanning (MA-06/MA-11).
   vuln-scan:
     name: Vulnerability scan
