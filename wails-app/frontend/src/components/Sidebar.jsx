@@ -3,8 +3,8 @@ import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import {
   LayoutDashboard, Users,
-  Terminal, PlayCircle, Settings, Image, UserCheck, Mail, KeyRound, Zap,
-  ChevronDown, Plus, Check, Bot, Building2, FolderOpen, FolderCog, Loader2
+  Terminal, PlayCircle, Settings, Image, Mail, KeyRound,
+  ChevronDown, Plus, Check, Building2, FolderOpen, FolderCog, Loader2
 } from 'lucide-react'
 import { GetVersion } from '../wailsjs/go/main/App'
 import * as WailsApp from '../wailsjs/go/main/App'
@@ -23,9 +23,6 @@ const RevealProfileFolder  = WailsApp.RevealProfileFolder  ?? (async () => {})
 const NAV_ITEMS = [
   { id: 'dashboard',   labelKey: 'dashboard',   icon: LayoutDashboard, section: 'MAIN' },
   { id: 'noderunner',  labelKey: 'noderunner',  icon: PlayCircle,      section: 'MAIN' },
-  { id: 'actions',     labelKey: 'actions',     icon: Zap,             section: 'MAIN' },
-  { id: 'hil',         labelKey: 'hil',         icon: UserCheck,       section: 'MAIN' },
-  { id: 'ai',          labelKey: 'ai',          icon: Bot,             section: 'MAIN' },
   { id: 'orgs',        labelKey: 'orgs',        icon: Building2,       section: 'MAIN' },
   { id: 'people',      labelKey: 'people',      icon: Users,           section: 'DATA' },
   { id: 'communications', labelKey: 'communications', icon: Mail,      section: 'DATA' },
@@ -52,7 +49,7 @@ function notifyNewHIL(items) {
   } catch { /* sandboxed webview may block */ }
 }
 
-export default function Sidebar({ activePage, onNavigate, stats, dbConnected, showActions = true }) {
+export default function Sidebar({ activePage, onNavigate, stats, dbConnected }) {
   const { t } = useTranslation()
   const [ver, setVer] = useState(null)
   const [hilCount, setHilCount] = useState(0)
@@ -223,8 +220,7 @@ export default function Sidebar({ activePage, onNavigate, stats, dbConnected, sh
     return null
   }
 
-  const navItems = showActions ? NAV_ITEMS : NAV_ITEMS.filter(i => i.id !== 'actions')
-  const sections = [...new Set(navItems.map(i => i.section))]
+  const sections = [...new Set(NAV_ITEMS.map(i => i.section))]
 
   return (
     <aside className="sidebar">
@@ -403,7 +399,7 @@ export default function Sidebar({ activePage, onNavigate, stats, dbConnected, sh
         {sections.map(section => (
           <div key={section}>
             <div className="nav-section-label">{t(`sidebar.section.${section}`)}</div>
-            {navItems.filter(i => i.section === section).map(item => {
+            {NAV_ITEMS.filter(i => i.section === section).map(item => {
               const Icon = item.icon
               const badge = getBadge(item.id)
               const isActive = activePage === item.id

@@ -5,8 +5,6 @@ import {main} from '../models';
 import {connections} from '../models';
 import {workflow} from '../models';
 
-export function AddActionTarget(arg1:string,arg2:string,arg3:string):Promise<void>;
-
 export function AddOrgRole(arg1:string,arg2:string):Promise<string>;
 
 export function AddPersonMessage(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string,arg7:string):Promise<void>;
@@ -45,8 +43,6 @@ export function ConfirmSocialLogin(arg1:string):Promise<string>;
 
 export function ConnectPlatformOAuth(arg1:string):Promise<string>;
 
-export function CreateAction(arg1:main.CreateActionRequest):Promise<main.ActionInfo>;
-
 export function CreateOrgDesign(arg1:string):Promise<string>;
 
 export function CreateProfile(arg1:string,arg2:string):Promise<main.ProfileInfo>;
@@ -56,8 +52,6 @@ export function CreateResource(arg1:string,arg2:string,arg3:string,arg4:string):
 export function CreateWorkflowFromTemplate(arg1:string):Promise<main.WorkflowSummary>;
 
 export function DeleteAIProvider(arg1:string):Promise<string>;
-
-export function DeleteAction(arg1:string):Promise<void>;
 
 export function DeleteOrgDesign(arg1:string):Promise<string>;
 
@@ -70,8 +64,6 @@ export function DeleteVaultImage(arg1:string):Promise<void>;
 export function DeleteWorkflow(arg1:string):Promise<void>;
 
 export function DenyOrgAction(arg1:string,arg2:string,arg3:string):Promise<string>;
-
-export function ExecuteAction(arg1:string):Promise<void>;
 
 export function ExportData():Promise<main.ExportResult>;
 
@@ -89,19 +81,11 @@ export function GetAIModels(arg1:string):Promise<string>;
 
 export function GetAIRegistry():Promise<string>;
 
-export function GetAction(arg1:string):Promise<main.ActionInfo>;
-
-export function GetActionTargets(arg1:string):Promise<Array<main.TargetInfo>>;
-
-export function GetActions(arg1:string,arg2:string,arg3:number):Promise<Array<main.ActionInfo>>;
-
 export function GetActiveProfile():Promise<main.ProfileInfo>;
 
 export function GetAllPersonMessages(arg1:number):Promise<Array<storage.PersonMessageWithPerson>>;
 
 export function GetAllTags():Promise<Array<main.TagInfo>>;
-
-export function GetAvailableActionTypes():Promise<Record<string, Array<string>>>;
 
 export function GetChatSessionMessages(arg1:string,arg2:string):Promise<string>;
 
@@ -123,23 +107,25 @@ export function GetLogs():Promise<Array<main.LogEntry>>;
 
 export function GetOAuthCredentials(arg1:string):Promise<string>;
 
-export function GetOrgCosts(arg1:string):Promise<string>;
+export function GetOrgApprovals(arg1:string):Promise<string>;
 
-export function GetOrgDecisions(arg1:string):Promise<string>;
+export function GetOrgCosts(arg1:string,arg2:string):Promise<string>;
+
+export function GetOrgDecisions(arg1:string,arg2:string):Promise<string>;
 
 export function GetOrgDesign(arg1:string):Promise<string>;
 
-export function GetOrgFlow(arg1:string):Promise<string>;
+export function GetOrgFlow(arg1:string,arg2:string):Promise<string>;
 
 export function GetOrgGates(arg1:string):Promise<string>;
 
-export function GetOrgLogs(arg1:string):Promise<string>;
+export function GetOrgLogs(arg1:string,arg2:string):Promise<string>;
 
 export function GetOrgMemoryStats(arg1:string):Promise<string>;
 
 export function GetOrgQuestions(arg1:string):Promise<string>;
 
-export function GetOrgReport(arg1:string,arg2:boolean):Promise<string>;
+export function GetOrgReport(arg1:string,arg2:boolean,arg3:string):Promise<string>;
 
 export function GetOrgStatus(arg1:string):Promise<string>;
 
@@ -304,10 +290,6 @@ export function TestAIProvider(arg1:string):Promise<string>;
 export function TestConnection(arg1:string):Promise<string>;
 
 export function TestSession(arg1:number):Promise<string>;
-
-export function UpdateActionParams(arg1:string,arg2:Record<string, any>):Promise<void>;
-
-export function UpdateActionState(arg1:string,arg2:string):Promise<void>;
 
 export function UpdateOrgRole(arg1:string,arg2:string,arg3:string):Promise<string>;
 

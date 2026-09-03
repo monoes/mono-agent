@@ -47,8 +47,17 @@ function StatPill({ label, value, icon: Icon }) {
   )
 }
 
+// node_type is "<platform>.<actionType>" (e.g. "instagram.like_posts") —
+// ACTION_META is keyed by the bare actionType suffix, so strip the prefix.
+function actionTypeSuffix(nodeType) {
+  if (!nodeType) return nodeType
+  const i = nodeType.lastIndexOf('.')
+  return i === -1 ? nodeType : nodeType.slice(i + 1)
+}
+
 function InteractionRow({ item }) {
-  const meta = ACTION_META[item.action_type] || { icon: Zap, label: item.action_type }
+  const suffix = actionTypeSuffix(item.node_type)
+  const meta = ACTION_META[suffix] || { icon: Zap, label: suffix }
   const Icon = meta.icon
   const stateColor = STATE_COLORS[item.status] || '#94a3b8'
   const ts = item.last_interacted_at || item.created_at
@@ -63,8 +72,8 @@ function InteractionRow({ item }) {
       <div className="interaction-body">
         <div className="interaction-top">
           <span className="interaction-type">{meta.label}</span>
-          {item.action_title && (
-            <span className="interaction-action-title">via "{item.action_title}"</span>
+          {item.node_name && (
+            <span className="interaction-action-title">via "{item.node_name}"</span>
           )}
           <span
             className="interaction-status"
@@ -690,13 +699,13 @@ export default function Profile({ id, onBack, onOpenURL, onOpenPost }) {
   const platformColor = PLATFORM_COLORS[person.platform?.toUpperCase()] || 'var(--cyan)'
   const profileUrl = person.profile_url || PLATFORM_PROFILE_URL[person.platform?.toUpperCase()]?.(person.username)
 
-  const actionTypes = [...new Set(interactions.map(i => i.action_type).filter(Boolean))]
-  const filtered = filterType ? interactions.filter(i => i.action_type === filterType) : interactions
+  const actionTypes = [...new Set(interactions.map(i => i.node_type).filter(Boolean))]
+  const filtered = filterType ? interactions.filter(i => i.node_type === filterType) : interactions
 
   // Summarise interaction counts
   const summary = {}
   interactions.forEach(i => {
-    if (i.action_type) summary[i.action_type] = (summary[i.action_type] || 0) + 1
+    if (i.node_type) summary[i.node_type] = (summary[i.node_type] || 0) + 1
   })
 
   return (
@@ -840,7 +849,7 @@ export default function Profile({ id, onBack, onOpenURL, onOpenPost }) {
           ) : (
             <div className="interaction-list">
               {filtered.map((item, i) => (
-                <InteractionRow key={`${item.action_id}-${i}`} item={item} />
+                <InteractionRow key={`${item.execution_id}-${i}`} item={item} />
               ))}
             </div>
           )}

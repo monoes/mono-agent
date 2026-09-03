@@ -33,7 +33,7 @@ var orgArtifactSuffixes = []string{
 	"-secrets", "-budgets", "-routines", "-issues", "-projects",
 	"-workspaces", "-worktrees", "-environments", "-plugins", "-adapters",
 	"-join-requests", "-bootstrap", "-project-workspaces",
-	"-approval-comments", "-skills",
+	"-approval-comments", "-skills", "-runstate",
 }
 
 // ValidOrgName reports whether name is safe to use in a path.

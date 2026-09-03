@@ -149,8 +149,12 @@ func TestApplyMigration014PreservesChildRows(t *testing.T) {
 	if n := count(`SELECT COUNT(*) FROM people_tags WHERE person_id = 'p1'`); n != 1 {
 		t.Fatalf("people_tags cascade-deleted by migration 014: got %d, want 1", n)
 	}
-	if n := count(`SELECT COUNT(*) FROM action_targets WHERE person_id = 'p1'`); n != 1 {
-		t.Fatalf("action_targets lost by migration 014: got %d, want 1", n)
+	// action_targets itself no longer exists post-ApplyMigrations — migration
+	// 030 (internal/storage/actions_migration.go) converts every row into an
+	// equivalent workflow_node_targets row (preserving person_id) and drops
+	// the legacy table. Assert the row survived that conversion instead.
+	if n := count(`SELECT COUNT(*) FROM workflow_node_targets WHERE person_id = 'p1'`); n != 1 {
+		t.Fatalf("action_targets row lost migrating to workflow_node_targets: got %d, want 1", n)
 	}
 	if n := count(`SELECT COUNT(*) FROM posts WHERE person_id = 'p1'`); n != 1 {
 		t.Fatalf("posts lost by migration 014: got %d, want 1", n)

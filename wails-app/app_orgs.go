@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -107,22 +109,37 @@ func (a *App) GetOrgStatus(name string) string {
 	return a.runOrgCLI("status", name)
 }
 
-func (a *App) GetOrgLogs(name string) string {
+// run, when non-empty, scopes to that specific run id instead of
+// monomind's own default (the most recent run).
+func (a *App) GetOrgLogs(name, run string) string {
+	if run != "" {
+		return a.runOrgCLI("logs", name, "--run", run)
+	}
 	return a.runOrgCLI("logs", name)
 }
 
-func (a *App) GetOrgReport(name string, all bool) string {
+// run is ignored when all=true (report --all already covers every run).
+func (a *App) GetOrgReport(name string, all bool, run string) string {
 	if all {
 		return a.runOrgCLI("report", name, "--all")
+	}
+	if run != "" {
+		return a.runOrgCLI("report", name, "--run", run)
 	}
 	return a.runOrgCLI("report", name)
 }
 
-func (a *App) GetOrgCosts(name string) string {
+func (a *App) GetOrgCosts(name, run string) string {
+	if run != "" {
+		return a.runOrgCLI("costs", name, "--run", run)
+	}
 	return a.runOrgCLI("costs", name)
 }
 
-func (a *App) GetOrgFlow(name string) string {
+func (a *App) GetOrgFlow(name, run string) string {
+	if run != "" {
+		return a.runOrgCLI("flow", name, "--run", run)
+	}
 	return a.runOrgCLI("flow", name)
 }
 
@@ -130,11 +147,21 @@ func (a *App) GetOrgQuestions(name string) string {
 	return a.runOrgCLI("questions", name)
 }
 
+// GetOrgApprovals returns pending tool/action approval requests — the
+// queue that actually gates Bash/WebFetch/WebSearch/org_complete, distinct
+// from and not resolved by GetOrgQuestions/GetOrgGates.
+func (a *App) GetOrgApprovals(name string) string {
+	return a.runOrgCLI("approvals", name)
+}
+
 func (a *App) GetOrgGates(name string) string {
 	return a.runOrgCLI("gates", name)
 }
 
-func (a *App) GetOrgDecisions(name string) string {
+func (a *App) GetOrgDecisions(name, run string) string {
+	if run != "" {
+		return a.runOrgCLI("decisions", name, "--run", run)
+	}
 	return a.runOrgCLI("decisions", name)
 }
 
@@ -281,15 +308,16 @@ func (a *App) RunOrg(orgName, task string) string {
 		runArgs = append(runArgs, "--project", projectRoot)
 		logSuffix = fmt.Sprintf(" (project: %s)", projectRoot)
 	}
-	runArgs = append(runArgs, "run", orgName, "--yes")
+	runArgs = append(runArgs, "run", orgName)
 	if task != "" {
 		runArgs = append(runArgs, "--task", task)
 	}
 	a.emitLog("ORG", "INFO", fmt.Sprintf("$ %s %s%s", cliBin, strings.Join(runArgs, " "), logSuffix))
 	cmd := exec.Command(cliBin, runArgs...)
 	setChatProcessGroup(cmd)
+	stderrTail := &tailCapture{}
 	cmd.Stdout = a.chatLogWriter()
-	cmd.Stderr = a.chatLogWriter()
+	cmd.Stderr = io.MultiWriter(a.chatLogWriter(), stderrTail)
 	if err := cmd.Start(); err != nil {
 		a.emitLog("ORG", "ERROR", fmt.Sprintf("org run failed to start: %v", err))
 		return aiError(fmt.Errorf("start org run: %w", err))
@@ -307,14 +335,46 @@ func (a *App) RunOrg(orgName, task string) string {
 		delete(a.runningCmds, key)
 		a.runningMu.Unlock()
 		status := "stopped"
+		message := ""
 		if waitErr != nil {
 			status = "error"
-			a.emitLog("ORG", "ERROR", fmt.Sprintf("org run %s exited: %v", orgName, waitErr))
+			message = stderrTail.String()
+			if message == "" {
+				message = waitErr.Error()
+			}
+			a.emitLog("ORG", "ERROR", fmt.Sprintf("org run %s exited: %s", orgName, message))
 		} else {
 			a.emitLog("ORG", "INFO", fmt.Sprintf("org run %s finished", orgName))
 		}
-		runtime.EventsEmit(a.ctx, "org:runStatus", map[string]interface{}{"orgName": orgName, "status": status})
+		runtime.EventsEmit(a.ctx, "org:runStatus", map[string]interface{}{"orgName": orgName, "status": status, "message": message})
 	}()
 
 	return `{"ok":true}`
+}
+
+// tailCapture keeps the last few KB written to it — used to capture a
+// failed org run's stderr so the "error" org:runStatus event can carry the
+// real reason instead of a bare "exited with an error" (the process's exit
+// code alone tells the UI nothing actionable).
+type tailCapture struct {
+	mu  sync.Mutex
+	buf []byte
+}
+
+const tailCaptureMax = 4000
+
+func (t *tailCapture) Write(b []byte) (int, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.buf = append(t.buf, b...)
+	if len(t.buf) > tailCaptureMax {
+		t.buf = t.buf[len(t.buf)-tailCaptureMax:]
+	}
+	return len(b), nil
+}
+
+func (t *tailCapture) String() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return strings.TrimSpace(string(t.buf))
 }

@@ -277,10 +277,10 @@ func (a *App) ScanAgentRuntimes() string {
 // Emits the same ai:chunk/ai:tool/ai:error events as the provider chat
 // (frontend-compatible), plus agent:session carrying the resumable session
 // id. monoagentTools, when true, additionally wires the MonoagentTools
-// surface (--tools monoagent) — workflow/vault/people/actions/communications
+// surface (--tools monoagent) — workflow/vault/people/communications
 // access, read/write but NO run execution — composable with canvas mode.
 // allowRuns, when true AND monoagentTools is also true, upgrades the flag
-// to --tools monoagent,runs so run_workflow/run_action may execute; it
+// to --tools monoagent,runs so run_workflow may execute; it
 // must only ever come from an explicit, persisted user setting (default
 // false) — never from anything a chat turn can influence, and it has no
 // effect on its own. resumeSessionID, when non-empty, continues that prior

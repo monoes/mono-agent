@@ -37,64 +37,6 @@ export namespace connections {
 
 export namespace main {
 	
-	export class ActionInfo {
-	    id: string;
-	    title: string;
-	    type: string;
-	    state: string;
-	    platform: string;
-	    keywords: string;
-	    content_message: string;
-	    reached_index: number;
-	    exec_count: number;
-	    target_count: number;
-	    created_at: string;
-	    updated_at: string;
-	    params?: Record<string, any>;
-	
-	    static createFrom(source: any = {}) {
-	        return new ActionInfo(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.title = source["title"];
-	        this.type = source["type"];
-	        this.state = source["state"];
-	        this.platform = source["platform"];
-	        this.keywords = source["keywords"];
-	        this.content_message = source["content_message"];
-	        this.reached_index = source["reached_index"];
-	        this.exec_count = source["exec_count"];
-	        this.target_count = source["target_count"];
-	        this.created_at = source["created_at"];
-	        this.updated_at = source["updated_at"];
-	        this.params = source["params"];
-	    }
-	}
-	export class CreateActionRequest {
-	    title: string;
-	    type: string;
-	    platform: string;
-	    keywords: string;
-	    content_message: string;
-	    params?: Record<string, any>;
-	
-	    static createFrom(source: any = {}) {
-	        return new CreateActionRequest(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.title = source["title"];
-	        this.type = source["type"];
-	        this.platform = source["platform"];
-	        this.keywords = source["keywords"];
-	        this.content_message = source["content_message"];
-	        this.params = source["params"];
-	    }
-	}
 	export class CredentialOption {
 	    id: string;
 	    label: string;
@@ -111,6 +53,34 @@ export namespace main {
 	        this.label = source["label"];
 	        this.platform = source["platform"];
 	        this.method = source["method"];
+	    }
+	}
+	export class WorkflowExecutionSummary {
+	    id: string;
+	    workflow_id: string;
+	    workflow_name: string;
+	    status: string;
+	    trigger_type: string;
+	    started_at: string;
+	    finished_at: string;
+	    error: string;
+	    created_at: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new WorkflowExecutionSummary(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.workflow_id = source["workflow_id"];
+	        this.workflow_name = source["workflow_name"];
+	        this.status = source["status"];
+	        this.trigger_type = source["trigger_type"];
+	        this.started_at = source["started_at"];
+	        this.finished_at = source["finished_at"];
+	        this.error = source["error"];
+	        this.created_at = source["created_at"];
 	    }
 	}
 	export class SessionSummary {
@@ -133,12 +103,12 @@ export namespace main {
 	}
 	export class DashboardStats {
 	    active_sessions: number;
-	    total_actions: number;
-	    actions_by_state: Record<string, number>;
+	    total_workflows: number;
+	    executions_by_status: Record<string, number>;
 	    total_people: number;
 	    total_lists: number;
 	    sessions: SessionSummary[];
-	    recent_actions: ActionInfo[];
+	    recent_executions: WorkflowExecutionSummary[];
 	    db_path: string;
 	
 	    static createFrom(source: any = {}) {
@@ -148,12 +118,12 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.active_sessions = source["active_sessions"];
-	        this.total_actions = source["total_actions"];
-	        this.actions_by_state = source["actions_by_state"];
+	        this.total_workflows = source["total_workflows"];
+	        this.executions_by_status = source["executions_by_status"];
 	        this.total_people = source["total_people"];
 	        this.total_lists = source["total_lists"];
 	        this.sessions = this.convertValues(source["sessions"], SessionSummary);
-	        this.recent_actions = this.convertValues(source["recent_actions"], ActionInfo);
+	        this.recent_executions = this.convertValues(source["recent_executions"], WorkflowExecutionSummary);
 	        this.db_path = source["db_path"];
 	    }
 	
@@ -178,7 +148,6 @@ export namespace main {
 	export class ExportResult {
 	    output_dir: string;
 	    people_count: number;
-	    actions_count: number;
 	    cancelled?: boolean;
 	
 	    static createFrom(source: any = {}) {
@@ -189,7 +158,6 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.output_dir = source["output_dir"];
 	        this.people_count = source["people_count"];
-	        this.actions_count = source["actions_count"];
 	        this.cancelled = source["cancelled"];
 	    }
 	}
@@ -388,14 +356,13 @@ export namespace main {
 	    }
 	}
 	export class PersonInteraction {
-	    action_id: string;
-	    action_title: string;
-	    action_type: string;
+	    execution_id: string;
+	    node_name: string;
+	    node_type: string;
 	    platform: string;
 	    link: string;
 	    status: string;
 	    comment_text: string;
-	    source_type: string;
 	    last_interacted_at: string;
 	    created_at: string;
 	
@@ -405,14 +372,13 @@ export namespace main {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.action_id = source["action_id"];
-	        this.action_title = source["action_title"];
-	        this.action_type = source["action_type"];
+	        this.execution_id = source["execution_id"];
+	        this.node_name = source["node_name"];
+	        this.node_type = source["node_type"];
 	        this.platform = source["platform"];
 	        this.link = source["link"];
 	        this.status = source["status"];
 	        this.comment_text = source["comment_text"];
-	        this.source_type = source["source_type"];
 	        this.last_interacted_at = source["last_interacted_at"];
 	        this.created_at = source["created_at"];
 	    }
@@ -770,28 +736,6 @@ export namespace main {
 	        this.color = source["color"];
 	    }
 	}
-	export class TargetInfo {
-	    id: string;
-	    action_id: string;
-	    platform: string;
-	    link: string;
-	    status: string;
-	    created_at: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new TargetInfo(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.action_id = source["action_id"];
-	        this.platform = source["platform"];
-	        this.link = source["link"];
-	        this.status = source["status"];
-	        this.created_at = source["created_at"];
-	    }
-	}
 	export class TemplateInfo {
 	    id: number;
 	    name: string;
@@ -983,34 +927,7 @@ export namespace main {
 		    return a;
 		}
 	}
-	export class WorkflowExecutionSummary {
-	    id: string;
-	    workflow_id: string;
-	    workflow_name: string;
-	    status: string;
-	    trigger_type: string;
-	    started_at: string;
-	    finished_at: string;
-	    error: string;
-	    created_at: string;
 	
-	    static createFrom(source: any = {}) {
-	        return new WorkflowExecutionSummary(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.workflow_id = source["workflow_id"];
-	        this.workflow_name = source["workflow_name"];
-	        this.status = source["status"];
-	        this.trigger_type = source["trigger_type"];
-	        this.started_at = source["started_at"];
-	        this.finished_at = source["finished_at"];
-	        this.error = source["error"];
-	        this.created_at = source["created_at"];
-	    }
-	}
 	export class WorkflowImportResult {
 	    id: string;
 	    name: string;

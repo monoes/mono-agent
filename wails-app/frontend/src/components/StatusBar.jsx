@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react'
+import { MessageSquare } from 'lucide-react'
 import { GetVersion, CheckForUpdate, SelfUpdate } from '../wailsjs/go/main/App'
 import { subscribeEvent } from '../services/api.js'
 
-export default function StatusBar({ stats, dbConnected }) {
-  const running = stats?.actions_by_state?.RUNNING || 0
-  const total   = stats?.total_actions || 0
+export default function StatusBar({ stats, dbConnected, chatOpen, onToggleChat }) {
+  const running = stats?.executions_by_status?.RUNNING || 0
+  const total   = stats?.total_workflows || 0
   const people  = stats?.total_people || 0
   const sessions = stats?.active_sessions || 0
 
@@ -63,7 +64,7 @@ export default function StatusBar({ stats, dbConnected }) {
         <span>{dbConnected ? 'Connected' : 'Offline'}</span>
       </div>
       <div className="status-bar-item">
-        Actions: <span>{total}</span>
+        Workflows: <span>{total}</span>
       </div>
       {running > 0 && (
         <div className="status-bar-item" style={{ color: 'var(--teal)' }}>
@@ -155,6 +156,34 @@ export default function StatusBar({ stats, dbConnected }) {
         >
           MonoAgent · {versionText}
         </span>
+
+        {/* AI Assistant toggle — small icon at the far right of the bar,
+            not a separate floating overlay (that kept colliding with
+            page-specific top-right controls no matter where it was placed;
+            see App.jsx). Only rendered when a handler is actually wired
+            up, so a caller that doesn't pass onToggleChat gets no dead
+            button. */}
+        {onToggleChat && (
+          <button
+            onClick={onToggleChat}
+            title={chatOpen ? 'Close AI Assistant' : 'Open AI Assistant'}
+            aria-label={chatOpen ? 'Close AI Assistant' : 'Open AI Assistant'}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              width: 18, height: 18, padding: 0,
+              background: 'transparent',
+              border: 'none',
+              borderRadius: 3,
+              color: chatOpen ? '#00b4d8' : 'var(--text-dim)',
+              cursor: 'pointer',
+              transition: 'color .15s',
+            }}
+            onMouseEnter={e => { if (!chatOpen) e.currentTarget.style.color = '#00b4d8' }}
+            onMouseLeave={e => { if (!chatOpen) e.currentTarget.style.color = 'var(--text-dim)' }}
+          >
+            <MessageSquare size={12} />
+          </button>
+        )}
       </div>
     </div>
   )

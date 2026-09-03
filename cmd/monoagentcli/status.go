@@ -46,29 +46,6 @@ func newStatusCmd(cfg *globalConfig) *cobra.Command {
 				configCount = 0
 			}
 
-			// Action counts by state.
-			type stateCount struct {
-				State string `json:"state"`
-				Count int    `json:"count"`
-			}
-			var actionCounts []stateCount
-			var totalActions int
-
-			rows, err := db.DB.Query(
-				"SELECT state, COUNT(*) FROM actions WHERE profile_id = ? GROUP BY state ORDER BY state",
-				cfg.ProfileID,
-			)
-			if err == nil {
-				defer rows.Close()
-				for rows.Next() {
-					var sc stateCount
-					if scanErr := rows.Scan(&sc.State, &sc.Count); scanErr == nil {
-						actionCounts = append(actionCounts, sc)
-						totalActions += sc.Count
-					}
-				}
-			}
-
 			// Template count.
 			var templateCount int
 			err = db.DB.QueryRow("SELECT COUNT(*) FROM templates").Scan(&templateCount)
@@ -87,14 +64,12 @@ func newStatusCmd(cfg *globalConfig) *cobra.Command {
 				enc := json.NewEncoder(os.Stdout)
 				enc.SetIndent("", "  ")
 				return enc.Encode(map[string]interface{}{
-					"db_path":       dbPath,
-					"sessions":      sessionCount,
-					"people":        peopleCount,
-					"total_actions": totalActions,
-					"action_states": actionCounts,
-					"configs":       configCount,
-					"templates":     templateCount,
-					"social_lists":  listCount,
+					"db_path":      dbPath,
+					"sessions":     sessionCount,
+					"people":       peopleCount,
+					"configs":      configCount,
+					"templates":    templateCount,
+					"social_lists": listCount,
 				})
 			}
 
@@ -107,11 +82,6 @@ func newStatusCmd(cfg *globalConfig) *cobra.Command {
 			table.Append([]string{"Database Path", dbPath})
 			table.Append([]string{"Sessions", fmt.Sprintf("%d", sessionCount)})
 			table.Append([]string{"People", fmt.Sprintf("%d", peopleCount)})
-			table.Append([]string{"Total Actions", fmt.Sprintf("%d", totalActions)})
-
-			for _, sc := range actionCounts {
-				table.Append([]string{fmt.Sprintf("  %s", sc.State), fmt.Sprintf("%d", sc.Count)})
-			}
 
 			table.Append([]string{"Configs", fmt.Sprintf("%d", configCount)})
 			table.Append([]string{"Templates", fmt.Sprintf("%d", templateCount)})

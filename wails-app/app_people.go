@@ -49,14 +49,13 @@ type PersonDetailInfo struct {
 }
 
 type PersonInteraction struct {
-	ActionID         string `json:"action_id"`
-	ActionTitle      string `json:"action_title"`
-	ActionType       string `json:"action_type"`
+	ExecutionID      string `json:"execution_id"`
+	NodeName         string `json:"node_name"`
+	NodeType         string `json:"node_type"`
 	Platform         string `json:"platform"`
 	Link             string `json:"link"`
 	Status           string `json:"status"`
 	CommentText      string `json:"comment_text"`
-	SourceType       string `json:"source_type"`
 	LastInteractedAt string `json:"last_interacted_at"`
 	CreatedAt        string `json:"created_at"`
 }
@@ -193,15 +192,17 @@ func (a *App) GetPersonInteractions(id string) []PersonInteraction {
 		return nil
 	}
 	rows, err := a.db.Query(`
-		SELECT at.action_id, COALESCE(a.title,''), COALESCE(a.type,''),
-		       at.platform, COALESCE(at.link,''), at.status,
-		       COALESCE(at.comment_text,''), COALESCE(at.source_type,''),
-		       COALESCE(at.last_interacted_at,''), COALESCE(at.created_at,'')
-		FROM action_targets at
-		LEFT JOIN actions a ON at.action_id = a.id
-		JOIN people p ON at.person_id = p.id
-		WHERE at.person_id = ? AND p.profile_id = ?
-		ORDER BY COALESCE(at.last_interacted_at, at.created_at) DESC
+		SELECT wnt.execution_id, COALESCE(wn.name,''), COALESCE(wn.node_type,''),
+		       wnt.platform, COALESCE(wnt.link,''), wnt.status,
+		       COALESCE(wnt.comment_text,''),
+		       COALESCE(wnt.last_interacted_at,''), COALESCE(wnt.created_at,'')
+		FROM workflow_node_targets wnt
+		JOIN workflow_executions we ON wnt.execution_id = we.id
+		JOIN workflows w ON we.workflow_id = w.id
+		LEFT JOIN workflow_nodes wn ON wnt.node_id = wn.id
+		JOIN people p ON wnt.person_id = p.id
+		WHERE wnt.person_id = ? AND w.profile_id = ?
+		ORDER BY COALESCE(wnt.last_interacted_at, wnt.created_at) DESC
 		LIMIT 200`, id, a.getActiveProfileID())
 	if err != nil {
 		return nil
@@ -210,9 +211,9 @@ func (a *App) GetPersonInteractions(id string) []PersonInteraction {
 	var interactions []PersonInteraction
 	for rows.Next() {
 		var i PersonInteraction
-		if rows.Scan(&i.ActionID, &i.ActionTitle, &i.ActionType,
+		if rows.Scan(&i.ExecutionID, &i.NodeName, &i.NodeType,
 			&i.Platform, &i.Link, &i.Status,
-			&i.CommentText, &i.SourceType,
+			&i.CommentText,
 			&i.LastInteractedAt, &i.CreatedAt) == nil {
 			interactions = append(interactions, i)
 		}

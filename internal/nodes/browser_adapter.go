@@ -11,6 +11,7 @@ import (
 	"github.com/monoes/mono-agent/internal/action"
 	"github.com/monoes/mono-agent/internal/browser"
 	"github.com/monoes/mono-agent/internal/connections"
+	"github.com/monoes/mono-agent/internal/vault"
 	"github.com/monoes/mono-agent/internal/workflow"
 	"github.com/rs/zerolog"
 )
@@ -80,10 +81,15 @@ func NewBrowserNode(platform, actionType string) *BrowserNode {
 	}
 }
 
-// Type returns the node type string: "action.{platform}.{actionType}"
-// e.g. "action.instagram.KEYWORD_SEARCH"
+// Type returns the node type string this node is actually registered under
+// in the workflow registry: "{platform}.{actionType}", e.g.
+// "instagram.KEYWORD_SEARCH" — see RegisterBrowserNodes in
+// browser_register.go, which is the single source of truth for how these
+// node types are keyed. (Previously returned "action.{platform}.{actionType}",
+// which never matched the registered key — any caller trusting .Type() to
+// round-trip through the registry would have silently failed.)
 func (b *BrowserNode) Type() string {
-	return fmt.Sprintf("action.%s.%s", b.platform, b.actionType)
+	return fmt.Sprintf("%s.%s", b.platform, b.actionType)
 }
 
 // Execute runs the platform action against the bot's browser.
@@ -177,10 +183,26 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 	if os.Getenv("MONOAGENT_DEBUG") != "" {
 		logger = zerolog.New(os.Stderr).With().Timestamp().Logger()
 	}
+	// db/profileID reach BrowserNode via context, set once by the workflow
+	// engine (internal/workflow/engine.go) before any node executes — the
+	// same context-based DI pattern org.run uses (internal/nodes/org/run.go).
+	// Backing this with a real StorageInterface (rather than nil, as before)
+	// is what makes running these node types inside a workflow persist
+	// interaction history (workflow_node_targets) and honor daily rate caps
+	// (workflow_daily_counters) — previously both silently no-op'd for any
+	// node-graph run of these types, only working through the standalone
+	// Actions page's now-removed execution path.
+	storage := &workflowActionStorage{
+		db:          vault.DBFromContext(ctx),
+		profileID:   vault.ProfileIDFromContext(ctx),
+		executionID: input.ExecutionID,
+		nodeID:      input.NodeID,
+		platform:    b.platform,
+	}
 	executor := action.NewActionExecutor(
 		ctx,
 		page,
-		nil, // db: not used in workflow context (no state persistence needed here)
+		storage,
 		globalConfigMgr,
 		nil, // events: no external monitoring channel
 		botAdapter,

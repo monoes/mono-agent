@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/monoes/mono-agent/internal/ai"
 	"github.com/monoes/mono-agent/internal/monomind"
+	"github.com/monoes/mono-agent/internal/noderegistry"
 	"github.com/monoes/mono-agent/internal/orgdesign"
 	"github.com/monoes/mono-agent/internal/profiledir"
 	"github.com/monoes/mono-agent/internal/secrets"
@@ -23,22 +24,24 @@ import (
 )
 
 // MonoagentTools gives an AI chat turn tool access into the rest of a
-// running monoagent installation — workflows, the vault, people, actions,
+// running monoagent installation — workflows (including building one from
+// scratch via create_workflow/add_workflow_node, e.g. for social-platform
+// automation node types like instagram.like_posts), the vault, people,
 // communications, lists/templates — the same way CanvasTools scopes tool
 // access to one workflow's canvas. It follows CanvasTools' exact shape
 // (ToolDefs/Execute, raw SQL, profile-guarded reads/writes) rather than
 // going through storage.Database/WorkflowStore, because several of those
-// repository methods are not profile-scoped (see checkPersonOwnership,
-// checkActionOwnership below) — raw, explicitly-scoped SQL here is safer
-// than relying on callers to remember to scope every call site.
+// repository methods are not profile-scoped (see checkPersonOwnership
+// below) — raw, explicitly-scoped SQL here is safer than relying on
+// callers to remember to scope every call site.
 type MonoagentTools struct {
 	db      *sql.DB
-	selfBin string // resolved monoagentcli binary path; empty disables run_workflow/run_action
+	selfBin string // resolved monoagentcli binary path; empty disables run_workflow
 
 	mu        sync.RWMutex
 	profileID string
-	// allowRuns is the mechanical, session-start gate for run_workflow/
-	// run_action: a model-supplied confirm:true argument can never flip
+	// allowRuns is the mechanical, session-start gate for run_workflow —
+	// a model-supplied confirm:true argument can never flip
 	// it — only the chat session's explicit opt-in (CLI --tools
 	// monoagent,runs; GUI persisted setting) sets it at construction.
 	allowRuns bool
@@ -54,9 +57,9 @@ type MonoagentTools struct {
 
 // NewMonoagentTools creates a MonoagentTools backed by db. selfBin is the
 // path to the currently-running monoagentcli binary (via os.Executable()),
-// used only by run_workflow/run_action to shell back into the full,
+// used only by run_workflow to shell back into the full,
 // already-wired execution path (engine/scheduler/browser session DI lives
-// in cmd/monoagentcli, not duplicated here) — pass "" to disable both tools.
+// in cmd/monoagentcli, not duplicated here) — pass "" to disable it.
 func NewMonoagentTools(db *sql.DB, selfBin string) *MonoagentTools {
 	return &MonoagentTools{db: db, selfBin: selfBin, profileID: "default"}
 }
@@ -71,7 +74,7 @@ func (mt *MonoagentTools) SetProfileID(id string) {
 	mt.mu.Unlock()
 }
 
-// SetAllowRuns opts this session in to run_workflow/run_action execution.
+// SetAllowRuns opts this session in to run_workflow execution.
 // It must only be called from the session's explicit start-time opt-in
 // (CLI --tools monoagent,runs; GUI persisted setting), never from anything
 // a model turn can influence.
@@ -199,20 +202,6 @@ func (mt *MonoagentTools) checkPersonOwnership(personID string) error {
 	return nil
 }
 
-func (mt *MonoagentTools) checkActionOwnership(actionID string) error {
-	var exists int
-	err := mt.db.QueryRow(
-		`SELECT 1 FROM actions WHERE id = ? AND COALESCE(profile_id,'default') = ?`,
-		actionID, mt.ProfileID(),
-	).Scan(&exists)
-	if err == sql.ErrNoRows {
-		return fmt.Errorf("action %s not found", actionID)
-	}
-	if err != nil {
-		return fmt.Errorf("check action ownership: %w", err)
-	}
-	return nil
-}
 
 // ---------------------------------------------------------------------------
 // Destructive-op snapshots — every delete (and field-overwriting update)
@@ -378,6 +367,19 @@ func (mt *MonoagentTools) ToolDefs() []ai.ToolDef {
 			"workflow_id": strParam("The workflow ID"),
 			"confirm":     boolParam("Must be true to actually execute; omit/false to preview"),
 		}, []string{"workflow_id"}),
+		def("create_workflow", "Create a new, empty workflow to add nodes to. This is the only way to build a workflow from chat — add nodes to it afterward with add_workflow_node, then run it with run_workflow.", map[string]interface{}{
+			"name":        strParam("Workflow name"),
+			"description": strParam("Optional description"),
+		}, []string{"name"}),
+		def("list_node_types", "List available workflow node types, optionally filtered by category (e.g. instagram, linkedin, x, tiktok, http, control, data). Call this before add_workflow_node if you don't already know the exact node_type string to use.", map[string]interface{}{
+			"category": strParam("Optional category filter"),
+		}, nil),
+		def("add_workflow_node", "Add a node to a workflow. node_type is \"<platform>.<action>\" for social-platform automation (e.g. \"instagram.like_posts\", \"linkedin.send_dms\" — see list_node_types), or a plain type for other categories (e.g. \"http.request\"). config is a JSON object of that node type's settings — common browser-automation fields are username/credential_id (session identity), targets (list of profile URLs/usernames to act on), keywords, message.", map[string]interface{}{
+			"workflow_id": strParam("The workflow ID to add the node to"),
+			"node_type":   strParam("The node type, e.g. instagram.like_posts"),
+			"name":        strParam("A human-readable name for this node"),
+			"config":      map[string]interface{}{"type": "object", "description": "Node configuration matching the node type's schema"},
+		}, []string{"workflow_id", "node_type", "name"}),
 
 		// Vault (files/images)
 		def("list_vault_items", "List files/images stored in the vault", map[string]interface{}{
@@ -438,34 +440,6 @@ func (mt *MonoagentTools) ToolDefs() []ai.ToolDef {
 		def("get_message", "Get a single message's full body", map[string]interface{}{
 			"message_id": strParam("Message ID"),
 		}, []string{"message_id"}),
-
-		// Actions
-		def("list_actions", "List campaign-style automation actions", map[string]interface{}{
-			"state": strParam("Optional state filter, e.g. PENDING, PAUSED"),
-			"limit": intParam("Max results (default 50)"),
-		}, nil),
-		def("get_action", "Get a single action's full record", map[string]interface{}{
-			"action_id": strParam("Action ID"),
-		}, []string{"action_id"}),
-		def("create_action", "Create a new automation action", map[string]interface{}{
-			"title":           strParam("Action title"),
-			"type":            strParam("Action type"),
-			"target_platform": strParam("Target platform, e.g. instagram"),
-			"content_subject": strParam("Optional content subject"),
-			"content_message": strParam("Optional content message"),
-			"keywords":        strParam("Optional keywords"),
-		}, []string{"title", "type", "target_platform"}),
-		def("update_action_state", "Change an action's state (e.g. pause/resume)", map[string]interface{}{
-			"action_id": strParam("Action ID"),
-			"state":     strParam("New state, e.g. PENDING, PAUSED"),
-		}, []string{"action_id", "state"}),
-		def("delete_action", "Delete an action and its targets", map[string]interface{}{
-			"action_id": strParam("Action ID"),
-		}, []string{"action_id"}),
-		def("run_action", runActionDescription(mt.runsAllowed())+" Pass confirm:true to actually execute (a preview without it); execution additionally requires the session to have been started with runs explicitly enabled.", map[string]interface{}{
-			"action_id": strParam("Action ID"),
-			"confirm":   boolParam("Must be true to actually execute; omit/false to preview"),
-		}, []string{"action_id"}),
 
 		// Lists / templates
 		def("list_social_lists", "List saved social/contact lists", nil, nil),
@@ -528,21 +502,14 @@ func (mt *MonoagentTools) ToolDefs() []ai.ToolDef {
 	return defs
 }
 
-// runWorkflowDescription/runActionDescription reflect the session's
-// mechanical run gate in the tool surface itself, so the model learns
-// refusal is structural before it spends a call discovering it.
+// runWorkflowDescription reflects the session's mechanical run gate in the
+// tool surface itself, so the model learns refusal is structural before it
+// spends a call discovering it.
 func runWorkflowDescription(runsAllowed bool) string {
 	if runsAllowed {
 		return "Manually trigger a workflow run — it can drive real automation."
 	}
 	return "Manually trigger a workflow run. Execution is disabled in this session: every call will be refused until the chat is restarted with runs explicitly enabled."
-}
-
-func runActionDescription(runsAllowed bool) string {
-	if runsAllowed {
-		return "Manually execute a pending action now — it drives real platform activity."
-	}
-	return "Manually execute a pending action. Execution is disabled in this session: every call will be refused until the chat is restarted with runs explicitly enabled."
 }
 
 // Execute dispatches a monoagent-domain tool call by name. It derives from
@@ -566,6 +533,12 @@ func (mt *MonoagentTools) ExecuteContext(ctx context.Context, name string, args 
 		return mt.setWorkflowActive(args)
 	case "run_workflow":
 		return mt.runWorkflow(ctx, args)
+	case "create_workflow":
+		return mt.createWorkflow(args)
+	case "list_node_types":
+		return mt.listNodeTypes(args)
+	case "add_workflow_node":
+		return mt.addWorkflowNode(args)
 	case "list_vault_items":
 		return mt.listVaultItems(args)
 	case "get_vault_item_path":
@@ -590,18 +563,6 @@ func (mt *MonoagentTools) ExecuteContext(ctx context.Context, name string, args 
 		return mt.listMessages(args)
 	case "get_message":
 		return mt.getMessage(args)
-	case "list_actions":
-		return mt.listActions(args)
-	case "get_action":
-		return mt.getAction(args)
-	case "create_action":
-		return mt.createAction(args)
-	case "update_action_state":
-		return mt.updateActionState(args)
-	case "delete_action":
-		return mt.deleteAction(args)
-	case "run_action":
-		return mt.runAction(ctx, args)
 	case "list_social_lists":
 		return mt.listSocialLists(args)
 	case "list_templates":
@@ -822,7 +783,7 @@ type runWorkflowArgs struct {
 	Confirm    bool   `json:"confirm"`
 }
 
-// runSelfExec is the exec boundary for run_workflow/run_action — a package
+// runSelfExec is the exec boundary for run_workflow — a package
 // var so tests can stub subprocess execution without a real binary.
 var runSelfExec = func(ctx context.Context, bin string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, bin, args...)
@@ -898,6 +859,96 @@ func (mt *MonoagentTools) runWorkflow(ctx context.Context, args string) (string,
 		return "", fmt.Errorf("run workflow: %w: %s", err, truncateRunErrOutput(string(out)))
 	}
 	return marshalJSON(map[string]interface{}{"workflow_id": a.WorkflowID, "ran": true, "output": string(out)})
+}
+
+type mtCreateWorkflowArgs struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+func (mt *MonoagentTools) createWorkflow(args string) (string, error) {
+	var a mtCreateWorkflowArgs
+	if err := json.Unmarshal([]byte(args), &a); err != nil {
+		return "", fmt.Errorf("invalid args: %w", err)
+	}
+	if strings.TrimSpace(a.Name) == "" {
+		return "", fmt.Errorf("name is required")
+	}
+	id := "wf-" + uuid.New().String()
+	now := time.Now().UTC().Format(time.RFC3339)
+	// created_at/updated_at passed explicitly — their DB-level defaults are
+	// broken on existing installs (verified live; see the identical note in
+	// internal/storage/actions_migration.go), so every INSERT into
+	// workflows/workflow_nodes must set them itself.
+	if _, err := mt.db.Exec(
+		`INSERT INTO workflows (id, name, description, is_active, version, profile_id, created_at, updated_at)
+		 VALUES (?, ?, ?, 0, 1, ?, ?, ?)`,
+		id, a.Name, a.Description, mt.ProfileID(), now, now); err != nil {
+		return "", fmt.Errorf("insert workflow: %w", err)
+	}
+	return marshalJSON(map[string]interface{}{"workflow_id": id})
+}
+
+type mtListNodeTypesArgs struct {
+	Category string `json:"category"`
+}
+
+// listNodeTypes surfaces the same node-type registry the workflow engine
+// itself validates node_type against (internal/noderegistry.Build) — the
+// single source of truth for what add_workflow_node will actually accept.
+func (mt *MonoagentTools) listNodeTypes(args string) (string, error) {
+	var a mtListNodeTypesArgs
+	if args != "" {
+		if err := json.Unmarshal([]byte(args), &a); err != nil {
+			return "", fmt.Errorf("invalid args: %w", err)
+		}
+	}
+	reg := noderegistry.Build(mt.db)
+	types := reg.Types()
+	sort.Strings(types)
+	out := make([]string, 0, len(types))
+	for _, t := range types {
+		if a.Category != "" && !strings.HasPrefix(t, a.Category+".") {
+			continue
+		}
+		out = append(out, t)
+	}
+	return marshalJSON(map[string]interface{}{"node_types": out})
+}
+
+type mtAddWorkflowNodeArgs struct {
+	WorkflowID string                 `json:"workflow_id"`
+	NodeType   string                 `json:"node_type"`
+	Name       string                 `json:"name"`
+	Config     map[string]interface{} `json:"config"`
+}
+
+func (mt *MonoagentTools) addWorkflowNode(args string) (string, error) {
+	var a mtAddWorkflowNodeArgs
+	if err := json.Unmarshal([]byte(args), &a); err != nil {
+		return "", fmt.Errorf("invalid args: %w", err)
+	}
+	if err := mt.checkWorkflowOwnership(a.WorkflowID); err != nil {
+		return "", err
+	}
+	if !noderegistry.Build(mt.db).Has(a.NodeType) {
+		return "", fmt.Errorf("unknown node_type %q — call list_node_types to see what's available", a.NodeType)
+	}
+	if a.Config == nil {
+		a.Config = map[string]interface{}{}
+	}
+	configJSON, err := json.Marshal(a.Config)
+	if err != nil {
+		return "", fmt.Errorf("encoding config: %w", err)
+	}
+	id := "node-" + uuid.New().String()
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := mt.db.Exec(
+		`INSERT INTO workflow_nodes (id, workflow_id, node_type, name, config, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		id, a.WorkflowID, a.NodeType, a.Name, string(configJSON), now, now); err != nil {
+		return "", fmt.Errorf("insert node: %w", err)
+	}
+	return marshalJSON(map[string]interface{}{"node_id": id, "workflow_id": a.WorkflowID, "node_type": a.NodeType})
 }
 
 // ---------------------------------------------------------------------------
@@ -1357,212 +1408,6 @@ func (mt *MonoagentTools) getMessage(args string) (string, error) {
 		"id": id, "person_id": personID, "source": source, "direction": direction,
 		"subject": subject, "body": body, "created_at": createdAt,
 	})
-}
-
-// ---------------------------------------------------------------------------
-// Actions
-// ---------------------------------------------------------------------------
-
-type actionSummary struct {
-	ID       string `json:"id"`
-	Title    string `json:"title"`
-	Type     string `json:"type"`
-	State    string `json:"state"`
-	Platform string `json:"target_platform"`
-}
-
-type listActionsArgs struct {
-	State string `json:"state"`
-	Limit int    `json:"limit"`
-}
-
-func (mt *MonoagentTools) listActions(args string) (string, error) {
-	var a listActionsArgs
-	if args != "" {
-		if err := json.Unmarshal([]byte(args), &a); err != nil {
-			return "", fmt.Errorf("invalid args: %w", err)
-		}
-	}
-	limit := a.Limit
-	if limit <= 0 {
-		limit = 50
-	}
-	query := `SELECT id, title, type, state, target_platform FROM actions WHERE COALESCE(profile_id,'default') = ?`
-	params := []interface{}{mt.ProfileID()}
-	if a.State != "" {
-		query += " AND state = ?"
-		params = append(params, a.State)
-	}
-	query += " ORDER BY position ASC, created_at DESC LIMIT ?"
-	params = append(params, limit)
-
-	rows, err := mt.db.Query(query, params...)
-	if err != nil {
-		return "", fmt.Errorf("query actions: %w", err)
-	}
-	defer rows.Close()
-	out := make([]actionSummary, 0)
-	for rows.Next() {
-		var s actionSummary
-		if err := rows.Scan(&s.ID, &s.Title, &s.Type, &s.State, &s.Platform); err != nil {
-			return "", fmt.Errorf("scan action: %w", err)
-		}
-		out = append(out, s)
-	}
-	return marshalJSON(map[string]interface{}{"actions": out})
-}
-
-type actionIDArgs struct {
-	ActionID string `json:"action_id"`
-}
-
-func (mt *MonoagentTools) getAction(args string) (string, error) {
-	var a actionIDArgs
-	if err := json.Unmarshal([]byte(args), &a); err != nil {
-		return "", fmt.Errorf("invalid args: %w", err)
-	}
-	var id, title, typ, state, platform, subject, message, keywords string
-	if err := mt.db.QueryRow(
-		`SELECT id, title, type, state, target_platform, COALESCE(content_subject,''), COALESCE(content_message,''), COALESCE(keywords,'')
-		 FROM actions WHERE id = ? AND COALESCE(profile_id,'default') = ?`, a.ActionID, mt.ProfileID(),
-	).Scan(&id, &title, &typ, &state, &platform, &subject, &message, &keywords); err != nil {
-		if err == sql.ErrNoRows {
-			return "", fmt.Errorf("action %s not found", a.ActionID)
-		}
-		return "", fmt.Errorf("query action: %w", err)
-	}
-	return marshalJSON(map[string]interface{}{
-		"id": id, "title": title, "type": typ, "state": state, "target_platform": platform,
-		"content_subject": subject, "content_message": message, "keywords": keywords,
-	})
-}
-
-type createActionArgs struct {
-	Title          string `json:"title"`
-	Type           string `json:"type"`
-	TargetPlatform string `json:"target_platform"`
-	ContentSubject string `json:"content_subject"`
-	ContentMessage string `json:"content_message"`
-	Keywords       string `json:"keywords"`
-}
-
-func (mt *MonoagentTools) createAction(args string) (string, error) {
-	var a createActionArgs
-	if err := json.Unmarshal([]byte(args), &a); err != nil {
-		return "", fmt.Errorf("invalid args: %w", err)
-	}
-	id := "action-" + uuid.New().String()
-	now := time.Now().Unix()
-	if _, err := mt.db.Exec(
-		`INSERT INTO actions (id, created_at, title, type, state, disabled, target_platform, position,
-		                       content_subject, content_message, reached_index, keywords, action_execution_count,
-		                       profile_id, created_at_ts, updated_at_ts)
-		 VALUES (?, ?, ?, ?, 'PENDING', 0, ?, 0, ?, ?, 0, ?, 0, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-		id, now, a.Title, a.Type, a.TargetPlatform, a.ContentSubject, a.ContentMessage, a.Keywords, mt.ProfileID()); err != nil {
-		return "", fmt.Errorf("insert action: %w", err)
-	}
-	return marshalJSON(map[string]interface{}{"action_id": id})
-}
-
-type updateActionStateArgs struct {
-	ActionID string `json:"action_id"`
-	State    string `json:"state"`
-}
-
-func (mt *MonoagentTools) updateActionState(args string) (string, error) {
-	var a updateActionStateArgs
-	if err := json.Unmarshal([]byte(args), &a); err != nil {
-		return "", fmt.Errorf("invalid args: %w", err)
-	}
-	if err := mt.checkActionOwnership(a.ActionID); err != nil {
-		return "", err
-	}
-	if _, err := mt.db.Exec(
-		`UPDATE actions SET state = ?, updated_at_ts = CURRENT_TIMESTAMP WHERE id = ? AND COALESCE(profile_id,'default') = ?`,
-		a.State, a.ActionID, mt.ProfileID()); err != nil {
-		return "", fmt.Errorf("update action state: %w", err)
-	}
-	return marshalJSON(map[string]interface{}{"action_id": a.ActionID, "state": a.State})
-}
-
-func (mt *MonoagentTools) deleteAction(args string) (string, error) {
-	var a actionIDArgs
-	if err := json.Unmarshal([]byte(args), &a); err != nil {
-		return "", fmt.Errorf("invalid args: %w", err)
-	}
-	if err := mt.checkActionOwnership(a.ActionID); err != nil {
-		return "", err
-	}
-	tables := map[string][]map[string]interface{}{}
-	var err error
-	if tables["actions"], err = snapshotRows(mt.db,
-		`SELECT * FROM actions WHERE id = ? AND COALESCE(profile_id,'default') = ?`, a.ActionID, mt.ProfileID()); err != nil {
-		return "", fmt.Errorf("snapshot action: %w", err)
-	}
-	if len(tables["actions"]) == 0 {
-		return "", fmt.Errorf("action %s not found", a.ActionID)
-	}
-	if tables["action_targets"], err = snapshotRows(mt.db,
-		`SELECT * FROM action_targets WHERE action_id = ?`, a.ActionID); err != nil {
-		return "", fmt.Errorf("snapshot targets: %w", err)
-	}
-	backupPath, err := saveMonoToolBackup("action", a.ActionID, "delete", tables)
-	if err != nil {
-		return "", fmt.Errorf("snapshot before delete: %w", err)
-	}
-	tx, err := mt.db.Begin()
-	if err != nil {
-		return "", fmt.Errorf("begin tx: %w", err)
-	}
-	defer tx.Rollback()
-	if _, err := tx.Exec(`DELETE FROM action_targets WHERE action_id = ?`, a.ActionID); err != nil {
-		return "", fmt.Errorf("delete targets: %w", err)
-	}
-	if _, err := tx.Exec(`DELETE FROM actions WHERE id = ? AND COALESCE(profile_id,'default') = ?`, a.ActionID, mt.ProfileID()); err != nil {
-		return "", fmt.Errorf("delete action: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return "", fmt.Errorf("commit: %w", err)
-	}
-	return marshalJSON(map[string]interface{}{"deleted_action_id": a.ActionID, "backup_path": backupPath})
-}
-
-type runActionArgs struct {
-	ActionID string `json:"action_id"`
-	Confirm  bool   `json:"confirm"`
-}
-
-func (mt *MonoagentTools) runAction(ctx context.Context, args string) (string, error) {
-	var a runActionArgs
-	if err := json.Unmarshal([]byte(args), &a); err != nil {
-		return "", fmt.Errorf("invalid args: %w", err)
-	}
-	if err := mt.checkRunGate("run_action"); err != nil {
-		return "", err
-	}
-	if err := mt.checkActionOwnership(a.ActionID); err != nil {
-		return "", err
-	}
-	if !a.Confirm {
-		return marshalJSON(map[string]interface{}{
-			"would_run": true,
-			"action_id": a.ActionID,
-			"note":      "this would execute a real automation action against a live platform; call again with confirm:true to actually run it",
-		})
-	}
-	if mt.selfBin == "" {
-		return "", fmt.Errorf("run_action: execution is unavailable in this session")
-	}
-	cctx, cancel, err := runExecTimeoutCtx(ctx)
-	if err != nil {
-		return "", fmt.Errorf("run action: %w", err)
-	}
-	defer cancel()
-	out, err := runSelfExec(cctx, mt.selfBin, "run", a.ActionID, "--profile", mt.ProfileID())
-	if err != nil {
-		return "", fmt.Errorf("run action: %w: %s", err, truncateRunErrOutput(string(out)))
-	}
-	return marshalJSON(map[string]interface{}{"action_id": a.ActionID, "ran": true, "output": string(out)})
 }
 
 // ---------------------------------------------------------------------------

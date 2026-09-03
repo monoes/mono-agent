@@ -11,7 +11,7 @@ func TestLegacySocialCommandsVisibleSocialBuild(t *testing.T) {
 		t.Errorf("hideLegacySocialCommands() = %v in social build, want nil", got)
 	}
 	root := newRootCmd()
-	for _, name := range []string{"message", "comment", "search", "list", "template"} {
+	for _, name := range []string{"list", "template"} {
 		sub, _, err := root.Find([]string{name})
 		if err != nil || sub == nil || sub.Name() != name {
 			t.Fatalf("command %q not found on root: %v", name, err)

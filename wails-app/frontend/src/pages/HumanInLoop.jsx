@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { CheckCircle, XCircle, Clock, RefreshCw, ChevronDown, ChevronRight, AlertTriangle, Mail } from 'lucide-react'
+import { CheckCircle, XCircle, Clock, RefreshCw, ChevronDown, ChevronRight, AlertTriangle, Mail, UserCheck, X } from 'lucide-react'
 import * as WailsApp from '../wailsjs/go/main/App'
 import { usePageVisibleRef, useVisibleCatchUp } from '../lib/usePageVisible.js'
 
@@ -333,7 +333,11 @@ function DraftMessageCard({ item, onSend, onReject }) {
   )
 }
 
-export default function HumanInLoop() {
+// embedded/isOpen/onClose mirror OrgsPanel's docked-side-panel convention —
+// used when this renders inside the Workflow editor's toolbar toggle
+// instead of as its own top-level page. Standalone usage (embedded=false)
+// is unchanged.
+export default function HumanInLoop({ embedded = false, isOpen = true, onClose }) {
   const [items, setItems] = useState([])
   const [drafts, setDrafts] = useState([])
   const [loading, setLoading] = useState(false)
@@ -363,14 +367,19 @@ export default function HumanInLoop() {
   // Auto-refresh every 3 seconds while the page is open. Individual ticks
   // are gated on page visibility — a hidden window stops polling the
   // backend; becoming visible again triggers one catch-up refresh above.
+  // Embedded mode adds one more gate: while docked closed, the toolbar
+  // toggle's own independent poll (NodeRunner.jsx) already covers the
+  // pending-count badge, so there's no need to duplicate that work here
+  // too — this effect just sits idle until the panel is actually opened.
   useEffect(() => {
+    if (embedded && !isOpen) return
     load()
     const interval = setInterval(() => {
       if (!pageVisibleRef.current) return
       load(true)
     }, 3000)
     return () => clearInterval(interval)
-  }, [load, pageVisibleRef])
+  }, [load, pageVisibleRef, embedded, isOpen])
 
   const handleApprove = async (id, editedJSON) => {
     try {
@@ -408,33 +417,41 @@ export default function HumanInLoop() {
     }
   }
 
-  return (
-    <div style={{ padding: '24px 28px', maxWidth: 760 }}>
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
-        <div>
-          <h1 style={{ fontSize: 20, fontWeight: 700, color: '#e2e8f0', margin: 0 }}>Human in Loop</h1>
-          <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '4px 0 0' }}>
-            Workflows paused here are waiting for your review. Edit content if needed, then approve or reject.
-          </p>
+  if (embedded && !isOpen) return null
+
+  const containerStyle = embedded
+    ? { width: 420, flexShrink: 0, background: '#060b13', borderLeft: '1px solid rgba(0,180,216,0.1)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }
+    : { padding: '24px 28px', maxWidth: 760 }
+  const bodyStyle = embedded ? { flex: 1, overflowY: 'auto', padding: '16px 16px 24px' } : undefined
+
+  const body = (
+    <>
+      {!embedded && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
+          <div>
+            <h1 style={{ fontSize: 20, fontWeight: 700, color: '#e2e8f0', margin: 0 }}>Human in Loop</h1>
+            <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '4px 0 0' }}>
+              Workflows paused here are waiting for your review. Edit content if needed, then approve or reject.
+            </p>
+          </div>
+          <button
+            onClick={() => load()}
+            disabled={loading}
+            style={{
+              marginLeft: 'auto',
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '7px 14px',
+              background: 'rgba(255,255,255,0.06)',
+              border: '1px solid rgba(255,255,255,0.1)',
+              borderRadius: 6, cursor: loading ? 'wait' : 'pointer',
+              color: 'var(--text-secondary)', fontSize: 13,
+            }}
+          >
+            <RefreshCw size={13} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
+            Refresh
+          </button>
         </div>
-        <button
-          onClick={() => load()}
-          disabled={loading}
-          style={{
-            marginLeft: 'auto',
-            display: 'flex', alignItems: 'center', gap: 6,
-            padding: '7px 14px',
-            background: 'rgba(255,255,255,0.06)',
-            border: '1px solid rgba(255,255,255,0.1)',
-            borderRadius: 6, cursor: loading ? 'wait' : 'pointer',
-            color: 'var(--text-secondary)', fontSize: 13,
-          }}
-        >
-          <RefreshCw size={13} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
-          Refresh
-        </button>
-      </div>
+      )}
 
       {error && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 8, marginBottom: 16, color: '#ef4444', fontSize: 13 }}>
@@ -473,6 +490,26 @@ export default function HumanInLoop() {
       ))}
 
       <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+    </>
+  )
+
+  if (!embedded) return <div style={containerStyle}>{body}</div>
+
+  return (
+    <div style={containerStyle}>
+      <div style={{ padding: '10px 12px', borderBottom: '1px solid rgba(0,180,216,0.1)', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+        <UserCheck size={13} style={{ color: 'var(--text-muted)' }} />
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700, color: '#e2e8f0', flex: 1, letterSpacing: 1 }}>HUMAN IN LOOP</span>
+        <button onClick={() => load()} disabled={loading} title="Refresh" style={{ background: 'transparent', border: 'none', cursor: loading ? 'wait' : 'pointer', color: 'var(--text-muted)', padding: 2, display: 'flex' }}>
+          <RefreshCw size={12} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
+        </button>
+        {onClose && (
+          <button onClick={onClose} title="Close panel" style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 2, display: 'flex' }}>
+            <X size={14} />
+          </button>
+        )}
+      </div>
+      <div style={bodyStyle}>{body}</div>
     </div>
   )
 }

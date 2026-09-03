@@ -12,7 +12,7 @@ func TestLegacySocialCommandsHiddenDefaultBuild(t *testing.T) {
 	for _, name := range hideLegacySocialCommands() {
 		hidden[name] = true
 	}
-	for _, name := range []string{"message", "comment", "search", "list", "template"} {
+	for _, name := range []string{"list", "template"} {
 		if !hidden[name] {
 			t.Errorf("hideLegacySocialCommands() must include %q in the default build", name)
 		}

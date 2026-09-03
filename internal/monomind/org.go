@@ -184,33 +184,65 @@ func OrgStatus(ctx context.Context, projectRoot, name string) (json.RawMessage, 
 
 // OrgLogs returns the org's bus event log (`org logs <name>`). There is no
 // --tail flag on the live monomind CLI despite the plan doc's claim.
-func OrgLogs(ctx context.Context, projectRoot, name string) (json.RawMessage, error) {
-	return runOrgJSON(ctx, projectRoot, "logs", name)
-}
-
-// OrgReport returns the org's run report; all=true requests every run
-// (`org report <name> --all`) instead of just the latest.
-func OrgReport(ctx context.Context, projectRoot, name string, all bool) (json.RawMessage, error) {
-	args := []string{"report", name}
-	if all {
-		args = append(args, "--all")
+// run, when non-empty, scopes to that specific run id (`--run <id>`)
+// instead of monomind's own default of "the most recent run" (org.ts's
+// resolveRun).
+func OrgLogs(ctx context.Context, projectRoot, name, run string) (json.RawMessage, error) {
+	args := []string{"logs", name}
+	if run != "" {
+		args = append(args, "--run", run)
 	}
 	return runOrgJSON(ctx, projectRoot, args...)
 }
 
-// OrgCosts returns per-role token/cost totals (`org costs <name>`).
-func OrgCosts(ctx context.Context, projectRoot, name string) (json.RawMessage, error) {
-	return runOrgJSON(ctx, projectRoot, "costs", name)
+// OrgReport returns the org's run report; all=true requests every recorded
+// run (`org report <name> --all`) instead of just one. run, when non-empty,
+// scopes the non-all case to that specific run id (`--run <id>`) instead of
+// monomind's own default of "the most recent run" — ignored when all=true,
+// since --all already reports on every run.
+func OrgReport(ctx context.Context, projectRoot, name string, all bool, run string) (json.RawMessage, error) {
+	args := []string{"report", name}
+	if all {
+		args = append(args, "--all")
+	} else if run != "" {
+		args = append(args, "--run", run)
+	}
+	return runOrgJSON(ctx, projectRoot, args...)
+}
+
+// OrgCosts returns per-role token/cost totals (`org costs <name>`). run, when
+// non-empty, scopes to that specific run id (`--run <id>`) instead of
+// monomind's own default of "the most recent run".
+func OrgCosts(ctx context.Context, projectRoot, name, run string) (json.RawMessage, error) {
+	args := []string{"costs", name}
+	if run != "" {
+		args = append(args, "--run", run)
+	}
+	return runOrgJSON(ctx, projectRoot, args...)
 }
 
 // OrgFlow returns the org's role communication graph (`org flow <name>`).
-func OrgFlow(ctx context.Context, projectRoot, name string) (json.RawMessage, error) {
-	return runOrgJSON(ctx, projectRoot, "flow", name)
+// run, when non-empty, scopes to that specific run id (`--run <id>`) instead
+// of monomind's own default of "the most recent run".
+func OrgFlow(ctx context.Context, projectRoot, name, run string) (json.RawMessage, error) {
+	args := []string{"flow", name}
+	if run != "" {
+		args = append(args, "--run", run)
+	}
+	return runOrgJSON(ctx, projectRoot, args...)
 }
 
 // OrgQuestions returns pending human-input questions (`org questions <name>`).
 func OrgQuestions(ctx context.Context, projectRoot, name string) (json.RawMessage, error) {
 	return runOrgJSON(ctx, projectRoot, "questions", name)
+}
+
+// OrgApprovals returns pending tool/action approval requests (`org
+// approvals <name>`) — the queue checked by checkApproval for
+// Bash/WebFetch/WebSearch/org_complete, distinct from and not resolved by
+// OrgQuestions/OrgGates.
+func OrgApprovals(ctx context.Context, projectRoot, name string) (json.RawMessage, error) {
+	return runOrgJSON(ctx, projectRoot, "approvals", name)
 }
 
 // OrgGates returns pending decision gates (`org gates <name>`).
@@ -219,8 +251,14 @@ func OrgGates(ctx context.Context, projectRoot, name string) (json.RawMessage, e
 }
 
 // OrgDecisions returns the org's decision trace (`org decisions <name>`).
-func OrgDecisions(ctx context.Context, projectRoot, name string) (json.RawMessage, error) {
-	return runOrgJSON(ctx, projectRoot, "decisions", name)
+// run, when non-empty, scopes to that specific run id (`--run <id>`) instead
+// of monomind's own default of "the most recent run".
+func OrgDecisions(ctx context.Context, projectRoot, name, run string) (json.RawMessage, error) {
+	args := []string{"decisions", name}
+	if run != "" {
+		args = append(args, "--run", run)
+	}
+	return runOrgJSON(ctx, projectRoot, args...)
 }
 
 // OrgMemoryStats returns org memory statistics (`org memory <name> stats`).

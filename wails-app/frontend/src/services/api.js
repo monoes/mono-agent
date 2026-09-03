@@ -38,15 +38,6 @@ export const api = {
   getWorkflowExecutions:(id, limit = 20) => GoApp.GetWorkflowExecutions(id, limit).catch(guard('workflow executions', [])),
   getExecutionDetail:   (id) => GoApp.GetExecutionDetail(id).catch(guard('execution detail', null)),
   cancelWorkflow:       (id) => GoApp.CancelWorkflow(id).catch(e => { reportError('cancel workflow', e); return `error: ${e}` }),
-  getActions:       (platform = '', state = '', limit = 0) => GoApp.GetActions(platform, state, limit).catch(guard('get actions', null)),
-  getAction:        (id) => GoApp.GetAction(id).catch(guard('get action', null)),
-  createAction:     (req) => GoApp.CreateAction(req),
-  updateActionState:(id, state) => GoApp.UpdateActionState(id, state),
-  deleteAction:     (id) => GoApp.DeleteAction(id),
-  updateActionParams:(id, params) => GoApp.UpdateActionParams(id, params),
-  executeAction:    (id) => GoApp.ExecuteAction(id),
-  getTargets:       (actionId) => GoApp.GetActionTargets(actionId).catch(guard('get targets', null)),
-  addTarget:        (actionId, link, platform) => GoApp.AddActionTarget(actionId, link, platform),
   getPeople:        (platform = '', search = '', limit = 50, offset = 0) => GoApp.GetPeople(platform, search, limit, offset).catch(guard('get people', null)),
   getPeopleCount:   (platform = '', search = '') => GoApp.GetPeopleCount(platform, search).catch(guard('people count', 0)),
   getSessions:      () => GoApp.GetSessions().catch(guard('get sessions', null)),
@@ -55,7 +46,6 @@ export const api = {
   getTemplates:     () => GoApp.GetTemplates().catch(guard('templates', null)),
   getLogs:          () => GoApp.GetLogs().catch(guard('logs', [])),
   clearLogs:        () => GoApp.ClearLogs(),
-  getAvailableActionTypes: () => GoApp.GetAvailableActionTypes().catch(guard('action types', {})),
   getDBPath:        () => GoApp.GetDBPath().catch(guard('db path', '')),
   exportData:       () => GoApp.ExportData(),
   isDBConnected:    () => GoApp.IsDBConnected().catch(() => false),
@@ -120,13 +110,14 @@ export const api = {
   // Orgs (monomind Org Runtime v2)
   listOrgs:           () => GoApp.ListOrgs().then(s => JSON.parse(s)).catch(guard('list orgs', null)),
   getOrgStatus:       (name = '') => GoApp.GetOrgStatus(name).then(s => JSON.parse(s)).catch(guard('org status', null)),
-  getOrgLogs:         (name) => GoApp.GetOrgLogs(name).then(s => JSON.parse(s)).catch(guard('org logs', null)),
-  getOrgReport:       (name, all = false) => GoApp.GetOrgReport(name, all).then(s => JSON.parse(s)).catch(guard('org report', null)),
-  getOrgCosts:        (name) => GoApp.GetOrgCosts(name).then(s => JSON.parse(s)).catch(guard('org costs', null)),
-  getOrgFlow:         (name) => GoApp.GetOrgFlow(name).then(s => JSON.parse(s)).catch(guard('org flow', null)),
+  getOrgLogs:         (name, run = '') => GoApp.GetOrgLogs(name, run).then(s => JSON.parse(s)).catch(guard('org logs', null)),
+  getOrgReport:       (name, all = false, run = '') => GoApp.GetOrgReport(name, all, run).then(s => JSON.parse(s)).catch(guard('org report', null)),
+  getOrgCosts:        (name, run = '') => GoApp.GetOrgCosts(name, run).then(s => JSON.parse(s)).catch(guard('org costs', null)),
+  getOrgFlow:         (name, run = '') => GoApp.GetOrgFlow(name, run).then(s => JSON.parse(s)).catch(guard('org flow', null)),
   getOrgQuestions:    (name) => GoApp.GetOrgQuestions(name).then(s => JSON.parse(s)).catch(guard('org questions', null)),
+  getOrgApprovals:    (name) => GoApp.GetOrgApprovals(name).then(s => JSON.parse(s)).catch(guard('org approvals', null)),
   getOrgGates:        (name) => GoApp.GetOrgGates(name).then(s => JSON.parse(s)).catch(guard('org gates', null)),
-  getOrgDecisions:    (name) => GoApp.GetOrgDecisions(name).then(s => JSON.parse(s)).catch(guard('org decisions', null)),
+  getOrgDecisions:    (name, run = '') => GoApp.GetOrgDecisions(name, run).then(s => JSON.parse(s)).catch(guard('org decisions', null)),
   getOrgMemoryStats:  (name) => GoApp.GetOrgMemoryStats(name).then(s => JSON.parse(s)).catch(guard('org memory stats', null)),
   answerOrgQuestion:  (name, questionID, answer) => GoApp.AnswerOrgQuestion(name, questionID, answer).then(s => JSON.parse(s)),
   approveOrgAction:   (name, role, action) => GoApp.ApproveOrgAction(name, role, action).then(s => JSON.parse(s)),
@@ -182,10 +173,6 @@ export function subscribeEvent(name, callback) {
 
 export function onLogEntry(callback) {
   return subscribeEvent('log:entry', callback)
-}
-
-export function onActionComplete(callback) {
-  return subscribeEvent('action:complete', callback)
 }
 
 export function onConnectionProgress(callback) {

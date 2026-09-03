@@ -249,7 +249,18 @@ func (d *Database) ApplyMigrations() error {
 	// reconcile.go for why versions alone lie). Runs on every open — every
 	// ApplyMigrations call site (CLI initDB, MCP bootstrap, wails startup)
 	// funnels through here, making this the single chokepoint.
-	return d.ReconcileSchema(ctx)
+	if err := d.ReconcileSchema(ctx); err != nil {
+		return err
+	}
+
+	// One-time data migration: fold the legacy standalone actions/
+	// action_targets tables into workflows/workflow_executions/
+	// workflow_node_targets, then drop them. Needs real per-row branching
+	// (JSON config construction), which plain SQL migrations can't do
+	// reliably, so it runs as a Go step after the schema migrations above
+	// have created workflow_node_targets (030_workflow_action_bridge.sql).
+	// Self-idempotent: no-ops once the actions table is gone.
+	return MigrateActionsToWorkflows(ctx, d.DB)
 }
 
 // splitStatements splits a SQL script by semicolons while respecting quoted

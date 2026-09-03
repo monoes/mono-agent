@@ -80,7 +80,7 @@ func (n *OrgRunNode) Execute(ctx context.Context, input workflow.NodeInput, conf
 
 	switch {
 	case st.ClosedBy == "org-complete":
-		report, err := monomind.OrgReport(ctx, root, orgName, false)
+		report, err := monomind.OrgReport(ctx, root, orgName, false, "")
 		if err != nil {
 			return nil, fmt.Errorf("org.run (%s): completed but report fetch failed: %w", orgName, err)
 		}

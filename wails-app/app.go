@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"crypto/rand"
 	"database/sql"
@@ -12,13 +11,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/monoes/mono-agent/internal/action"
 	"github.com/monoes/mono-agent/internal/ai"
 	aichat "github.com/monoes/mono-agent/internal/ai/chat"
 	"github.com/monoes/mono-agent/internal/connections"
@@ -361,14 +358,14 @@ func (a *App) OpenURL(url string) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 type DashboardStats struct {
-	ActiveSessions int              `json:"active_sessions"`
-	TotalActions   int              `json:"total_actions"`
-	ActionsByState map[string]int   `json:"actions_by_state"`
-	TotalPeople    int              `json:"total_people"`
-	TotalLists     int              `json:"total_lists"`
-	Sessions       []SessionSummary `json:"sessions"`
-	RecentActions  []ActionInfo     `json:"recent_actions"`
-	DBPath         string           `json:"db_path"`
+	ActiveSessions     int                        `json:"active_sessions"`
+	TotalWorkflows     int                        `json:"total_workflows"`
+	ExecutionsByStatus map[string]int             `json:"executions_by_status"`
+	TotalPeople        int                        `json:"total_people"`
+	TotalLists         int                        `json:"total_lists"`
+	Sessions           []SessionSummary           `json:"sessions"`
+	RecentExecutions   []WorkflowExecutionSummary `json:"recent_executions"`
+	DBPath             string                     `json:"db_path"`
 }
 
 type SessionSummary struct {
@@ -380,8 +377,8 @@ type SessionSummary struct {
 
 func (a *App) GetDashboardStats() DashboardStats {
 	stats := DashboardStats{
-		ActionsByState: make(map[string]int),
-		DBPath:         a.dbPath,
+		ExecutionsByStatus: make(map[string]int),
+		DBPath:             a.dbPath,
 	}
 	if a.db == nil {
 		return stats
@@ -390,16 +387,18 @@ func (a *App) GetDashboardStats() DashboardStats {
 	_ = a.db.QueryRow("SELECT COUNT(*) FROM crawler_sessions WHERE expiry > datetime('now') AND profile_id = ?", a.getActiveProfileID()).Scan(&stats.ActiveSessions)
 	_ = a.db.QueryRow("SELECT COUNT(*) FROM people WHERE profile_id = ?", a.getActiveProfileID()).Scan(&stats.TotalPeople)
 	_ = a.db.QueryRow("SELECT COUNT(*) FROM social_lists WHERE profile_id = ?", a.getActiveProfileID()).Scan(&stats.TotalLists)
+	_ = a.db.QueryRow("SELECT COUNT(*) FROM workflows WHERE profile_id = ?", a.getActiveProfileID()).Scan(&stats.TotalWorkflows)
 
-	rows, _ := a.db.Query("SELECT state, COUNT(*) FROM actions WHERE profile_id = ? GROUP BY state", a.getActiveProfileID())
+	rows, _ := a.db.Query(`SELECT we.status, COUNT(*) FROM workflow_executions we
+	                        JOIN workflows w ON w.id = we.workflow_id
+	                        WHERE w.profile_id = ? GROUP BY we.status`, a.getActiveProfileID())
 	if rows != nil {
 		defer rows.Close()
 		for rows.Next() {
-			var state string
+			var status string
 			var count int
-			if rows.Scan(&state, &count) == nil {
-				stats.ActionsByState[state] = count
-				stats.TotalActions += count
+			if rows.Scan(&status, &count) == nil {
+				stats.ExecutionsByStatus[status] = count
 			}
 		}
 	}
@@ -418,7 +417,9 @@ func (a *App) GetDashboardStats() DashboardStats {
 		}
 	}
 
-	stats.RecentActions = a.GetActions("", "", 6)
+	if recent, err := a.GetRecentExecutions(6); err == nil {
+		stats.RecentExecutions = recent
+	}
 	return stats
 }
 
@@ -795,81 +796,19 @@ func nodeTypeToPlatform(nodeType string) string {
 	return nodeType
 }
 
-// ExecuteAction runs a legacy action by spawning the CLI subprocess.
-// stdout/stderr are streamed to the UI log panel in real time.
-func (a *App) ExecuteAction(id string) error {
-	if a.db == nil {
-		return fmt.Errorf("database not initialized")
-	}
-	cliBin, err := findMonoAgentCLI()
-	if err != nil {
-		return err
-	}
-
-	if _, err := a.db.Exec("UPDATE actions SET state = 'RUNNING', updated_at_ts = ? WHERE id = ? AND profile_id = ?",
-		time.Now().Format(time.RFC3339), id, a.getActiveProfileID()); err != nil {
-		a.emitLog("RUNNER", "WARN", fmt.Sprintf("failed to mark action %s RUNNING: %v", id, err))
-	}
-
-	cmd := exec.CommandContext(a.ctx, cliBin, "run", id, "--verbose")
-	stdout, _ := cmd.StdoutPipe()
-	stderr, _ := cmd.StderrPipe()
-
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("failed to start action: %w", err)
-	}
-	// Track the subprocess so shutdown kills it too. Namespaced with an
-	// "action:" prefix so it can never collide with workflow-ID keys.
-	actionKey := "action:" + id
-	a.runningMu.Lock()
-	a.runningCmds[actionKey] = cmd
-	a.runningMu.Unlock()
-	a.emitLog("RUNNER", "INFO", fmt.Sprintf("Started action %s (pid %d)", id, cmd.Process.Pid))
-
-	go func() {
-		scanner := bufio.NewScanner(stdout)
-		for scanner.Scan() {
-			a.emitLog("STDOUT", "INFO", scanner.Text())
-		}
-	}()
-	go func() {
-		scanner := bufio.NewScanner(stderr)
-		for scanner.Scan() {
-			a.emitLog("STDERR", "WARN", scanner.Text())
-		}
-	}()
-	go func() {
-		defer func() {
-			a.runningMu.Lock()
-			delete(a.runningCmds, actionKey)
-			a.runningMu.Unlock()
-		}()
-		waitErr := cmd.Wait()
-		if waitErr != nil {
-			a.emitLog("RUNNER", "ERROR", fmt.Sprintf("Action %s failed: %v", id, waitErr))
-			runtime.EventsEmit(a.ctx, "action:complete", map[string]interface{}{"action_id": id, "success": false})
-		} else {
-			a.emitLog("RUNNER", "INFO", fmt.Sprintf("Action %s completed", id))
-			runtime.EventsEmit(a.ctx, "action:complete", map[string]interface{}{"action_id": id, "success": true})
-		}
-	}()
-	return nil
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Data export
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ExportResult summarizes a completed export.
 type ExportResult struct {
-	OutputDir    string `json:"output_dir"`
-	PeopleCount  int    `json:"people_count"`
-	ActionsCount int    `json:"actions_count"`
-	Cancelled    bool   `json:"cancelled,omitempty"`
+	OutputDir   string `json:"output_dir"`
+	PeopleCount int    `json:"people_count"`
+	Cancelled   bool   `json:"cancelled,omitempty"`
 }
 
-// ExportData asks the user for a destination folder and exports all people and
-// actions to JSON files there by invoking the CLI (`monoagentcli export`).
+// ExportData asks the user for a destination folder and exports all people
+// to JSON files there by invoking the CLI (`monoagentcli export`).
 func (a *App) ExportData() (*ExportResult, error) {
 	cliBin, err := findMonoAgentCLI()
 	if err != nil {
@@ -895,7 +834,7 @@ func (a *App) ExportData() (*ExportResult, error) {
 	if err := json.Unmarshal(out, &res); err != nil {
 		return nil, fmt.Errorf("unexpected export output: %w", err)
 	}
-	a.emitLog("EXPORT", "INFO", fmt.Sprintf("Exported %d people and %d actions to %s", res.PeopleCount, res.ActionsCount, res.OutputDir))
+	a.emitLog("EXPORT", "INFO", fmt.Sprintf("Exported %d people to %s", res.PeopleCount, res.OutputDir))
 	return &res, nil
 }
 
@@ -927,30 +866,6 @@ func (a *App) ClearLogs() {
 // ─────────────────────────────────────────────────────────────────────────────
 // Metadata
 // ─────────────────────────────────────────────────────────────────────────────
-
-// GetAvailableActionTypes returns action types grouped by platform, derived from
-// the on-disk action definitions (data/actions/<platform>/<TYPE>.json plus any
-// user-installed templates) — the same source `monoagentcli node list` uses — so
-// the GUI can't drift from the platforms and actions that actually exist.
-func (a *App) GetAvailableActionTypes() map[string][]string {
-	out := map[string][]string{}
-	entries, err := action.GetLoader().ListAvailable() // "platform/action_type"
-	if err != nil {
-		return out
-	}
-	for _, e := range entries {
-		platform, actionType, ok := strings.Cut(e, "/")
-		if !ok {
-			continue
-		}
-		key := strings.ToUpper(platform)
-		out[key] = append(out[key], actionType)
-	}
-	for k := range out {
-		sort.Strings(out[k])
-	}
-	return out
-}
 
 func (a *App) GetDBPath() string {
 	return a.dbPath

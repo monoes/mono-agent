@@ -4,13 +4,12 @@ import {
   ChevronDown, ChevronRight, X, Settings2, Copy, RefreshCw,
   AlertCircle, CheckCircle, Clock, Loader, Plus,
   Save, FolderOpen, ToggleLeft, ToggleRight, List,
-  MessageSquare, Braces, LayoutDashboard, Building2,
+  Braces, LayoutDashboard, UserCheck,
 } from 'lucide-react'
 import * as WailsApp from '../wailsjs/go/main/App'
 import { api, notify, subscribeEvent } from '../services/api.js'
 import { confirm } from '../components/ConfirmDialog.jsx'
-import AIChatPanel from '../components/AIChatPanel.jsx'
-import OrgsPanel from '../components/OrgsPanel.jsx'
+import HumanInLoop from './HumanInLoop.jsx'
 import ResourcePickerField from '../components/ResourcePickerField.jsx'
 import ImagePickerModal from '../components/ImagePickerModal'
 import { NODE_CONFIG_FIELDS, BROWSER_NODE_GENERIC } from './nodeConfigFields.js'
@@ -49,6 +48,9 @@ const CAT_COLOR = {
   linkedin:       '#0a66c2',
   x:              '#8899aa',
   tiktok:         '#ff0050',
+  gemini:         '#4285f4',
+  hackernews:     '#ff6600',
+  producthunt:    '#da552f',
   org:            '#6366f1',
 }
 const catColor = (cat) => CAT_COLOR[cat] || '#00b4d8'
@@ -982,9 +984,30 @@ export default function NodeRunner({ onNavigate, navData }) {
     } catch {}
   }, [wfId])
 
-  const [chatOpen, setChatOpen] = useState(false)
-  const [orgsOpen, setOrgsOpen] = useState(false)
   const [jsonView, setJsonView] = useState(false)
+
+  // Human in Loop toggle + its toolbar badge count. Polled independently of
+  // whether the panel is open — HumanInLoop's own embedded-mode polling
+  // (see that file) only runs while docked open, so this is the only thing
+  // keeping the badge fresh while it's closed, same pattern as OrgsPanel's
+  // Approvals tab badge.
+  const [hilOpen, setHilOpen] = useState(false)
+  const [hilPendingCount, setHilPendingCount] = useState(0)
+  useEffect(() => {
+    let cancelled = false
+    const refreshCount = async () => {
+      try {
+        const [items, drafts] = await Promise.all([
+          WailsApp.GetHILItems ? WailsApp.GetHILItems() : [],
+          WailsApp.GetDraftPersonMessages ? WailsApp.GetDraftPersonMessages() : [],
+        ])
+        if (!cancelled) setHilPendingCount((items?.length ?? 0) + (drafts?.length ?? 0))
+      } catch { /* best-effort — a failed poll just leaves the last known count */ }
+    }
+    refreshCount()
+    const iv = setInterval(refreshCount, 5000)
+    return () => { cancelled = true; clearInterval(iv) }
+  }, [])
 
   // ── Execution overlay ───────────────────────────────────────────────────
   const [execOverlay, setExecOverlay] = useState(null) // { id, status, nodes: [] }
@@ -1852,22 +1875,24 @@ export default function NodeRunner({ onNavigate, navData }) {
           <Braces size={13} />
         </button>
 
-        {/* AI Chat toggle */}
+        {/* Human in Loop toggle */}
         <button
-          style={{ ...tbBtn, color: chatOpen ? '#00b4d8' : 'var(--text-muted)', borderColor: chatOpen ? 'rgba(0,180,216,0.3)' : 'rgba(0,180,216,0.15)', background: chatOpen ? 'rgba(0,180,216,0.08)' : 'transparent' }}
-          onClick={() => setChatOpen(o => !o)}
-          title="AI Assistant"
+          style={{ ...tbBtn, position: 'relative', color: hilOpen ? '#00b4d8' : 'var(--text-muted)', borderColor: hilOpen ? 'rgba(0,180,216,0.3)' : 'rgba(0,180,216,0.15)', background: hilOpen ? 'rgba(0,180,216,0.08)' : 'transparent' }}
+          onClick={() => setHilOpen(o => !o)}
+          title="Human in Loop"
         >
-          <MessageSquare size={13} />
-        </button>
-
-        {/* Orgs toggle */}
-        <button
-          style={{ ...tbBtn, color: orgsOpen ? '#00b4d8' : 'var(--text-muted)', borderColor: orgsOpen ? 'rgba(0,180,216,0.3)' : 'rgba(0,180,216,0.15)', background: orgsOpen ? 'rgba(0,180,216,0.08)' : 'transparent' }}
-          onClick={() => setOrgsOpen(o => !o)}
-          title="Orgs"
-        >
-          <Building2 size={13} />
+          <UserCheck size={13} />
+          {hilPendingCount > 0 && (
+            <span style={{
+              position: 'absolute', top: -5, right: -5,
+              minWidth: 14, height: 14, padding: '0 3px', borderRadius: 7,
+              background: 'var(--red, #ef4444)', color: '#fff',
+              fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 700, lineHeight: '14px', textAlign: 'center',
+              boxShadow: '0 0 0 2px #060b13',
+            }}>
+              {hilPendingCount > 99 ? '99+' : hilPendingCount}
+            </span>
+          )}
         </button>
 
         {/* Run / Stop */}
@@ -2076,20 +2101,13 @@ export default function NodeRunner({ onNavigate, navData }) {
           />
         )}
 
-        {/* AI Chat Panel */}
-        <AIChatPanel
-          workflowID={wfId || 'draft'}
-          isOpen={chatOpen}
-          onClose={() => setChatOpen(false)}
-          onWorkflowCreated={handleLoad}
+        {/* Human in Loop panel */}
+        <HumanInLoop
+          embedded
+          isOpen={hilOpen}
+          onClose={() => setHilOpen(false)}
         />
 
-        {/* Orgs Panel */}
-        <OrgsPanel
-          embedded
-          isOpen={orgsOpen}
-          onClose={() => setOrgsOpen(false)}
-        />
       </div>
 
       {/* Ghost node following cursor during palette drag */}

@@ -117,67 +117,92 @@ func (a *App) GetWorkflowNodeTypes() map[string]interface{} {
 			mkNode("ai.read_page", "Read Page", "ai", "Crawl a webpage and return clean readable content (markdown, links, images)"),
 			mkNode("ai.extract_page", "Extract Page", "ai", "Extract specific fields from a webpage using AI or CSS selectors"),
 		},
-		"browser": []nodeDesc{
-			// Instagram
-			mkNode("instagram.find_by_keyword", "Instagram: Find By Keyword", "browser", "Search Instagram users or posts by keyword"),
-			mkNode("instagram.export_followers", "Instagram: Export Followers", "browser", "Export a profile's follower list"),
-			mkNode("instagram.scrape_profile_info", "Instagram: Scrape Profile Info", "browser", "Collect profile metadata"),
-			mkNode("instagram.engage_with_posts", "Instagram: Engage With Posts", "browser", "Like/comment on matched posts"),
-			mkNode("instagram.send_dms", "Instagram: Send DMs", "browser", "Send direct messages"),
-			mkNode("instagram.auto_reply_dms", "Instagram: Auto Reply DMs", "browser", "Automatically reply to incoming DMs"),
-			mkNode("instagram.publish_post", "Instagram: Publish Post", "browser", "Publish a photo or reel"),
-			mkNode("instagram.like_posts", "Instagram: Like Posts", "browser", "Like a list of posts"),
-			mkNode("instagram.comment_on_posts", "Instagram: Comment On Posts", "browser", "Comment on a list of posts"),
-			mkNode("instagram.like_comments_on_posts", "Instagram: Like Comments On Posts", "browser", "Like comments on posts"),
-			mkNode("instagram.extract_post_data", "Instagram: Extract Post Data", "browser", "Extract structured data from posts"),
-			mkNode("instagram.follow_users", "Instagram: Follow Users", "browser", "Follow a list of users"),
-			mkNode("instagram.unfollow_users", "Instagram: Unfollow Users", "browser", "Unfollow a list of users"),
-			mkNode("instagram.watch_stories", "Instagram: Watch Stories", "browser", "View stories for a list of users"),
-			mkNode("instagram.engage_user_posts", "Instagram: Engage User Posts", "browser", "Engage with a specific user's posts"),
-			mkNode("instagram.list_post_comments", "Instagram: List Post Comments", "browser", "List comments on a post"),
-			mkNode("instagram.list_user_posts", "Instagram: List User Posts", "browser", "List posts from a user profile"),
-			mkNode("instagram.reply_to_comments", "Instagram: Reply To Comments", "browser", "Reply to comments on posts"),
-			// LinkedIn
-			mkNode("linkedin.find_by_keyword", "LinkedIn: Find By Keyword", "browser", "Search LinkedIn profiles by keyword"),
-			mkNode("linkedin.export_followers", "LinkedIn: Export Followers", "browser", "Export a profile's connections/followers"),
-			mkNode("linkedin.scrape_profile_info", "LinkedIn: Scrape Profile Info", "browser", "Collect LinkedIn profile metadata"),
-			mkNode("linkedin.engage_with_posts", "LinkedIn: Engage With Posts", "browser", "Like/comment on LinkedIn posts"),
-			mkNode("linkedin.send_dms", "LinkedIn: Send DMs", "browser", "Send LinkedIn direct messages"),
-			mkNode("linkedin.auto_reply_dms", "LinkedIn: Auto Reply DMs", "browser", "Automatically reply to LinkedIn messages"),
-			mkNode("linkedin.publish_post", "LinkedIn: Publish Post", "browser", "Publish a LinkedIn post"),
-			mkNode("linkedin.comment_on_posts", "LinkedIn: Comment On Posts", "browser", "Comment on LinkedIn posts"),
-			mkNode("linkedin.like_comments", "LinkedIn: Like Comments", "browser", "Like comments on LinkedIn posts"),
-			mkNode("linkedin.like_posts", "LinkedIn: Like Posts", "browser", "Like LinkedIn posts"),
-			mkNode("linkedin.list_post_comments", "LinkedIn: List Post Comments", "browser", "List comments on a LinkedIn post"),
-			mkNode("linkedin.list_user_posts", "LinkedIn: List User Posts", "browser", "List posts from a LinkedIn profile"),
-			// X (Twitter)
-			mkNode("x.find_by_keyword", "X: Find By Keyword", "browser", "Search X/Twitter by keyword"),
-			mkNode("x.export_followers", "X: Export Followers", "browser", "Export a profile's followers on X"),
-			mkNode("x.scrape_profile_info", "X: Scrape Profile Info", "browser", "Collect X profile metadata"),
-			mkNode("x.engage_with_posts", "X: Engage With Posts", "browser", "Like/reply to X posts"),
-			mkNode("x.send_dms", "X: Send DMs", "browser", "Send X direct messages"),
-			mkNode("x.auto_reply_dms", "X: Auto Reply DMs", "browser", "Automatically reply to X DMs"),
-			mkNode("x.publish_post", "X: Publish Post", "browser", "Publish a post on X"),
-			// TikTok
-			mkNode("tiktok.find_by_keyword", "TikTok: Find By Keyword", "browser", "Search TikTok by keyword"),
-			mkNode("tiktok.export_followers", "TikTok: Export Followers", "browser", "Export a TikTok profile's followers"),
-			mkNode("tiktok.scrape_profile_info", "TikTok: Scrape Profile Info", "browser", "Collect TikTok profile metadata"),
-			mkNode("tiktok.engage_with_posts", "TikTok: Engage With Posts", "browser", "Like/comment on TikTok posts"),
-			mkNode("tiktok.send_dms", "TikTok: Send DMs", "browser", "Send TikTok direct messages"),
-			mkNode("tiktok.auto_reply_dms", "TikTok: Auto Reply DMs", "browser", "Automatically reply to TikTok DMs"),
-			mkNode("tiktok.publish_post", "TikTok: Publish Post", "browser", "Publish a TikTok video"),
-			mkNode("tiktok.comment_on_video", "TikTok: Comment On Video", "browser", "Comment on a TikTok video"),
-			mkNode("tiktok.duet_video", "TikTok: Duet Video", "browser", "Create a duet with a TikTok video"),
-			mkNode("tiktok.follow_user", "TikTok: Follow User", "browser", "Follow a TikTok user"),
-			mkNode("tiktok.like_comment", "TikTok: Like Comment", "browser", "Like a comment on a TikTok video"),
-			mkNode("tiktok.like_video", "TikTok: Like Video", "browser", "Like a TikTok video"),
-			mkNode("tiktok.list_user_videos", "TikTok: List User Videos", "browser", "List videos from a TikTok profile"),
-			mkNode("tiktok.list_video_comments", "TikTok: List Video Comments", "browser", "List comments on a TikTok video"),
-			mkNode("tiktok.share_video", "TikTok: Share Video", "browser", "Share a TikTok video"),
-			mkNode("tiktok.stitch_video", "TikTok: Stitch Video", "browser", "Create a stitch with a TikTok video"),
-
-			mkNode("gemini.generate_text", "Gemini Text", "browser", "Send a prompt to Gemini and get a text response"),
-			mkNode("gemini.generate_image", "Gemini Image", "browser", "Send a prompt to Gemini and download generated images"),
+		// Social-platform automation node types are grouped one category per
+		// platform (rather than a single flat "browser" bucket) so the node
+		// palette reads like the guided form the standalone Actions page
+		// used to offer — this is what replaced that page (see Actions
+		// removal below); browsing ~60 node types in one alphabetical list
+		// would have been a real UX regression from it. Category ids here
+		// (instagram, linkedin, x, tiktok, gemini, hackernews, producthunt)
+		// must match groupOf's platform-prefix fallback below, which is also
+		// what NodeRunner.jsx's CAT_COLOR keys off of.
+		"instagram": []nodeDesc{
+			mkNode("instagram.find_by_keyword", "Find By Keyword", "instagram", "Search Instagram users or posts by keyword"),
+			mkNode("instagram.export_followers", "Export Followers", "instagram", "Export a profile's follower list"),
+			mkNode("instagram.scrape_profile_info", "Scrape Profile Info", "instagram", "Collect profile metadata"),
+			mkNode("instagram.engage_with_posts", "Engage With Posts", "instagram", "Like/comment on matched posts"),
+			mkNode("instagram.send_dms", "Send DMs", "instagram", "Send direct messages"),
+			mkNode("instagram.auto_reply_dms", "Auto Reply DMs", "instagram", "Automatically reply to incoming DMs"),
+			mkNode("instagram.publish_post", "Publish Post", "instagram", "Publish a photo or reel"),
+			mkNode("instagram.like_posts", "Like Posts", "instagram", "Like a list of posts"),
+			mkNode("instagram.comment_on_posts", "Comment On Posts", "instagram", "Comment on a list of posts"),
+			mkNode("instagram.like_comments_on_posts", "Like Comments On Posts", "instagram", "Like comments on posts"),
+			mkNode("instagram.extract_post_data", "Extract Post Data", "instagram", "Extract structured data from posts"),
+			mkNode("instagram.follow_users", "Follow Users", "instagram", "Follow a list of users"),
+			mkNode("instagram.unfollow_users", "Unfollow Users", "instagram", "Unfollow a list of users"),
+			mkNode("instagram.watch_stories", "Watch Stories", "instagram", "View stories for a list of users"),
+			mkNode("instagram.engage_user_posts", "Engage User Posts", "instagram", "Engage with a specific user's posts"),
+			mkNode("instagram.list_post_comments", "List Post Comments", "instagram", "List comments on a post"),
+			mkNode("instagram.list_user_posts", "List User Posts", "instagram", "List posts from a user profile"),
+			mkNode("instagram.reply_to_comments", "Reply To Comments", "instagram", "Reply to comments on posts"),
+		},
+		"linkedin": []nodeDesc{
+			mkNode("linkedin.find_by_keyword", "Find By Keyword", "linkedin", "Search LinkedIn profiles by keyword"),
+			mkNode("linkedin.export_followers", "Export Followers", "linkedin", "Export a profile's connections/followers"),
+			mkNode("linkedin.scrape_profile_info", "Scrape Profile Info", "linkedin", "Collect LinkedIn profile metadata"),
+			mkNode("linkedin.engage_with_posts", "Engage With Posts", "linkedin", "Like/comment on LinkedIn posts"),
+			mkNode("linkedin.send_dms", "Send DMs", "linkedin", "Send LinkedIn direct messages"),
+			mkNode("linkedin.auto_reply_dms", "Auto Reply DMs", "linkedin", "Automatically reply to LinkedIn messages"),
+			mkNode("linkedin.publish_post", "Publish Post", "linkedin", "Publish a LinkedIn post"),
+			mkNode("linkedin.comment_on_posts", "Comment On Posts", "linkedin", "Comment on LinkedIn posts"),
+			mkNode("linkedin.like_comments", "Like Comments", "linkedin", "Like comments on LinkedIn posts"),
+			mkNode("linkedin.like_posts", "Like Posts", "linkedin", "Like LinkedIn posts"),
+			mkNode("linkedin.list_post_comments", "List Post Comments", "linkedin", "List comments on a LinkedIn post"),
+			mkNode("linkedin.list_user_posts", "List User Posts", "linkedin", "List posts from a LinkedIn profile"),
+		},
+		"x": []nodeDesc{
+			mkNode("x.find_by_keyword", "Find By Keyword", "x", "Search X/Twitter by keyword"),
+			mkNode("x.export_followers", "Export Followers", "x", "Export a profile's followers on X"),
+			mkNode("x.scrape_profile_info", "Scrape Profile Info", "x", "Collect X profile metadata"),
+			mkNode("x.engage_with_posts", "Engage With Posts", "x", "Like/reply to X posts"),
+			mkNode("x.send_dms", "Send DMs", "x", "Send X direct messages"),
+			mkNode("x.auto_reply_dms", "Auto Reply DMs", "x", "Automatically reply to X DMs"),
+			mkNode("x.publish_post", "Publish Post", "x", "Publish a post on X"),
+		},
+		"tiktok": []nodeDesc{
+			mkNode("tiktok.find_by_keyword", "Find By Keyword", "tiktok", "Search TikTok by keyword"),
+			mkNode("tiktok.export_followers", "Export Followers", "tiktok", "Export a TikTok profile's followers"),
+			mkNode("tiktok.scrape_profile_info", "Scrape Profile Info", "tiktok", "Collect TikTok profile metadata"),
+			mkNode("tiktok.engage_with_posts", "Engage With Posts", "tiktok", "Like/comment on TikTok posts"),
+			mkNode("tiktok.send_dms", "Send DMs", "tiktok", "Send TikTok direct messages"),
+			mkNode("tiktok.auto_reply_dms", "Auto Reply DMs", "tiktok", "Automatically reply to TikTok DMs"),
+			mkNode("tiktok.publish_post", "Publish Post", "tiktok", "Publish a TikTok video"),
+			mkNode("tiktok.comment_on_video", "Comment On Video", "tiktok", "Comment on a TikTok video"),
+			mkNode("tiktok.duet_video", "Duet Video", "tiktok", "Create a duet with a TikTok video"),
+			mkNode("tiktok.follow_user", "Follow User", "tiktok", "Follow a TikTok user"),
+			mkNode("tiktok.like_comment", "Like Comment", "tiktok", "Like a comment on a TikTok video"),
+			mkNode("tiktok.like_video", "Like Video", "tiktok", "Like a TikTok video"),
+			mkNode("tiktok.list_user_videos", "List User Videos", "tiktok", "List videos from a TikTok profile"),
+			mkNode("tiktok.list_video_comments", "List Video Comments", "tiktok", "List comments on a TikTok video"),
+			mkNode("tiktok.share_video", "Share Video", "tiktok", "Share a TikTok video"),
+			mkNode("tiktok.stitch_video", "Stitch Video", "tiktok", "Create a stitch with a TikTok video"),
+		},
+		"gemini": []nodeDesc{
+			mkNode("gemini.generate_text", "Generate Text", "gemini", "Send a prompt to Gemini and get a text response"),
+			mkNode("gemini.generate_image", "Generate Image", "gemini", "Send a prompt to Gemini and download generated images"),
+			mkNode("gemini.chat_session", "Chat Session", "gemini", "Hold a multi-turn Gemini chat session"),
+			mkNode("gemini.chat_session_many", "Chat Session (Batch)", "gemini", "Run a Gemini chat session over multiple inputs"),
+		},
+		"hackernews": []nodeDesc{
+			mkNode("hackernews.submit_post", "Submit Post", "hackernews", "Submit a new post to Hacker News"),
+			mkNode("hackernews.list_comments", "List Comments", "hackernews", "List comments on a Hacker News post"),
+			mkNode("hackernews.reply_to_comment", "Reply To Comment", "hackernews", "Reply to a Hacker News comment"),
+			mkNode("hackernews.get_post_metrics", "Get Post Metrics", "hackernews", "Get score/comment-count metrics for a post"),
+		},
+		"producthunt": []nodeDesc{
+			mkNode("producthunt.comment_on_launch", "Comment On Launch", "producthunt", "Comment on a Product Hunt launch"),
+			mkNode("producthunt.list_comments", "List Comments", "producthunt", "List comments on a Product Hunt launch"),
+			mkNode("producthunt.get_launch_metrics", "Get Launch Metrics", "producthunt", "Get upvote/comment metrics for a launch"),
 		},
 		"people": []nodeDesc{
 			mkNode("people.save", "Save to People", "people", "Upsert items into the People tab"),
@@ -192,16 +217,20 @@ func (a *App) GetWorkflowNodeTypes() map[string]interface{} {
 	// same one the CLI runs) so the GUI always matches what can actually run:
 	// stale entries drop out, newly registered types appear with a derived label.
 	reg := noderegistry.Build(a.db)
+	infraCategories := map[string]bool{
+		"control": true, "data": true, "http": true, "system": true, "db": true,
+		"comm": true, "service": true, "ai": true, "people": true, "image": true, "org": true,
+	}
 	groupOf := func(t string) string {
 		prefix, _, _ := strings.Cut(t, ".")
-		switch prefix {
-		case "core":
+		if prefix == "core" {
 			return "control"
-		case "data", "http", "system", "db", "comm", "service", "ai", "people", "image", "org":
-			return prefix
-		default: // platform bots: instagram, linkedin, x, tiktok, gemini, hackernews, ...
-			return "browser"
 		}
+		// Anything not an infra category is a platform bot (instagram,
+		// linkedin, x, tiktok, gemini, hackernews, producthunt, ...) — its
+		// own category, one per platform, rather than a shared "browser"
+		// bucket (see the catalog above for why).
+		return prefix
 	}
 	title := func(s string) string {
 		words := strings.Split(strings.ReplaceAll(s, "_", " "), " ")
@@ -214,10 +243,10 @@ func (a *App) GetWorkflowNodeTypes() map[string]interface{} {
 	}
 	deriveLabel := func(t string) string {
 		prefix, rest, _ := strings.Cut(t, ".")
-		if groupOf(t) == "browser" {
-			return title(prefix) + ": " + title(rest)
+		if infraCategories[groupOf(t)] {
+			return title(rest)
 		}
-		return title(rest)
+		return title(prefix) + ": " + title(rest)
 	}
 
 	seen := map[string]bool{}
@@ -361,7 +390,7 @@ func (a *App) RunNode(req NodeRunRequest) NodeRunResult {
 
 	// Register the subprocess under a counter-based run id so the frontend
 	// can cancel it with StopNodeRun (RA1-9). Namespaced "noderun:" in the
-	// shared registry — like "action:" — so shutdown reaps it too.
+	// shared registry so shutdown reaps it too.
 	runID := strconv.FormatInt(a.nodeRunCounter.Add(1), 10)
 	runKey := "noderun:" + runID
 	a.runningMu.Lock()

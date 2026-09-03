@@ -3,10 +3,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 // Mock the generated Wails bindings and runtime so api.js can be tested in
 // isolation. Each binding is a vi.fn we can make resolve or reject per test.
 vi.mock('../wailsjs/go/main/App', () => ({
-  GetActions: vi.fn(),
+  GetPeople: vi.fn(),
   GetDashboardStats: vi.fn(),
   ListWorkflows: vi.fn(),
-  CreateAction: vi.fn(),
+  DeleteSession: vi.fn(),
 }))
 // Real Wails EventsOn semantics: each call registers its own listener under
 // eventName and returns a disposer that removes only that listener.
@@ -33,7 +33,7 @@ vi.mock('../wailsjs/runtime/runtime', () => ({
 }))
 
 import * as GoApp from '../wailsjs/go/main/App'
-import { api, onApiError, onActionComplete, onLogEntry } from './api.js'
+import { api, onApiError, onLogEntry, subscribeEvent } from './api.js'
 
 describe('api error handling', () => {
   beforeEach(() => {
@@ -41,9 +41,9 @@ describe('api error handling', () => {
   })
 
   it('degrades a failed read to its safe default', async () => {
-    GoApp.GetActions.mockRejectedValueOnce(new Error('db locked'))
-    const result = await api.getActions()
-    expect(result).toBeNull() // getActions falls back to null
+    GoApp.GetPeople.mockRejectedValueOnce(new Error('db locked'))
+    const result = await api.getPeople()
+    expect(result).toBeNull() // getPeople falls back to null
   })
 
   it('broadcasts a failure on the error bus instead of swallowing it silently', async () => {
@@ -66,14 +66,14 @@ describe('api error handling', () => {
   })
 
   it('does not intercept write-path methods (they propagate to the caller)', async () => {
-    GoApp.CreateAction.mockRejectedValueOnce(new Error('validation'))
-    await expect(api.createAction({})).rejects.toThrow('validation')
+    GoApp.DeleteSession.mockRejectedValueOnce(new Error('validation'))
+    await expect(api.deleteSession('s1')).rejects.toThrow('validation')
   })
 })
 
 // Regression test for issue #15: EventsOff(eventName) removes every listener
 // registered under that name, not just the caller's own. App.jsx and
-// Actions.jsx both subscribe to 'action:complete' independently; unmounting
+// People.jsx both subscribe to 'workflow:complete' independently; unmounting
 // or re-subscribing one must never silence the other.
 describe('event subscription independence (issue #15)', () => {
   beforeEach(() => {
@@ -84,35 +84,35 @@ describe('event subscription independence (issue #15)', () => {
 
   it('disposing one subscription leaves other subscribers to the same event intact', () => {
     const appReceived = []
-    const actionsPageReceived = []
+    const peoplePageReceived = []
 
-    const disposeAppListener = onActionComplete((data) => appReceived.push(data))
-    const disposeActionsPageListener = onActionComplete((data) => actionsPageReceived.push(data))
+    const disposeAppListener = subscribeEvent('workflow:complete', (data) => appReceived.push(data))
+    const disposePeoplePageListener = subscribeEvent('workflow:complete', (data) => peoplePageReceived.push(data))
 
-    // Simulate navigating away from Actions.jsx (or a filter-driven re-subscribe)
-    disposeActionsPageListener()
+    // Simulate navigating away from People.jsx (or a filter-driven re-subscribe)
+    disposePeoplePageListener()
 
-    fakeEventsEmit('action:complete', { action_id: '1' })
+    fakeEventsEmit('workflow:complete', { workflow_id: '1' })
 
-    expect(appReceived).toEqual([{ action_id: '1' }])
-    expect(actionsPageReceived).toEqual([])
+    expect(appReceived).toEqual([{ workflow_id: '1' }])
+    expect(peoplePageReceived).toEqual([])
 
     disposeAppListener()
   })
 
   it('does not cross-cancel independently subscribed events with different names', () => {
     const logReceived = []
-    const actionReceived = []
+    const workflowReceived = []
 
     const disposeLog = onLogEntry((entry) => logReceived.push(entry))
-    onActionComplete((data) => actionReceived.push(data))
+    subscribeEvent('workflow:complete', (data) => workflowReceived.push(data))
 
     disposeLog()
 
     fakeEventsEmit('log:entry', 'should not arrive')
-    fakeEventsEmit('action:complete', { action_id: '2' })
+    fakeEventsEmit('workflow:complete', { workflow_id: '2' })
 
     expect(logReceived).toEqual([])
-    expect(actionReceived).toEqual([{ action_id: '2' }])
+    expect(workflowReceived).toEqual([{ workflow_id: '2' }])
   })
 })

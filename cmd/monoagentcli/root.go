@@ -60,10 +60,6 @@ func newRootCmd() *cobra.Command {
 	cmd.AddCommand(
 		newLoginCmd(cfg),
 		newLogoutCmd(cfg),
-		newRunCmd(cfg),
-		newSearchCmd(cfg),
-		newMessageCmd(cfg),
-		newCommentCmd(cfg),
 		newActionCmd(cfg),
 		newCrawlCmd(cfg),
 		newInitCmd(),
@@ -71,7 +67,6 @@ func newRootCmd() *cobra.Command {
 		newListCmd(cfg),
 		newTemplateCmd(cfg),
 		newConfigCmd(cfg),
-		newScheduleCmd(cfg),
 		newExportCmd(cfg),
 		newStatusCmd(cfg),
 		newVersionCmd(),

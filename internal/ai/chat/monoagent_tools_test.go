@@ -49,12 +49,6 @@ func TestMonoagentTools_ProfileIsolation(t *testing.T) {
 	); err != nil {
 		t.Fatalf("seed person failed: %v", err)
 	}
-	if _, err := db.DB.Exec(
-		"INSERT INTO actions (id, created_at, title, type, state, target_platform, profile_id) VALUES ('action-a', 0, 'A action', 'dm', 'PENDING', 'instagram', 'profile-a')",
-	); err != nil {
-		t.Fatalf("seed action failed: %v", err)
-	}
-
 	mtB := NewMonoagentTools(db.DB, "")
 	mtB.SetProfileID("profile-b")
 
@@ -82,26 +76,14 @@ func TestMonoagentTools_ProfileIsolation(t *testing.T) {
 		t.Errorf("list_people leaked across profiles: got %d, want 0", len(peopleRes.People))
 	}
 
-	out, err = mtB.Execute("list_actions", "{}")
-	if err != nil {
-		t.Fatalf("list_actions failed: %v", err)
-	}
-	var actionsRes struct {
-		Actions []actionSummary `json:"actions"`
-	}
-	mustJSON(t, out, &actionsRes)
-	if len(actionsRes.Actions) != 0 {
-		t.Errorf("list_actions leaked across profiles: got %d, want 0", len(actionsRes.Actions))
-	}
-
 	if _, err := mtB.Execute("get_workflow", `{"workflow_id":"wf-a"}`); err == nil {
 		t.Error("get_workflow crossed profile boundary: expected an error, got none")
 	}
 	if _, err := mtB.Execute("get_person", `{"person_id":"person-a"}`); err == nil {
 		t.Error("get_person crossed profile boundary: expected an error, got none")
 	}
-	if _, err := mtB.Execute("get_action", `{"action_id":"action-a"}`); err == nil {
-		t.Error("get_action crossed profile boundary: expected an error, got none")
+	if _, err := mtB.Execute("add_workflow_node", `{"workflow_id":"wf-a","node_type":"http.request","name":"n"}`); err == nil {
+		t.Error("add_workflow_node crossed profile boundary: expected an error, got none")
 	}
 
 	mtA := NewMonoagentTools(db.DB, "")
@@ -234,7 +216,6 @@ func TestMonoagentTools_GetWorkflowRedactsNodeSecrets(t *testing.T) {
 func TestMonoagentTools_RunToolsRefusedWithoutSessionOptIn(t *testing.T) {
 	db := newMonoagentTestDB(t)
 	seedWorkflowWithNode(t, db, "wf-run", "node-1", `{}`)
-	seedAction(t, db, "action-run")
 	mt := NewMonoagentTools(db.DB, "fake-bin") // selfBin set: the gate must still refuse
 
 	called := false
@@ -249,7 +230,6 @@ func TestMonoagentTools_RunToolsRefusedWithoutSessionOptIn(t *testing.T) {
 	}{
 		{"run_workflow", `{"workflow_id":"wf-run","confirm":true}`},
 		{"run_workflow", `{"workflow_id":"wf-run"}`}, // even a preview is refused
-		{"run_action", `{"action_id":"action-run","confirm":true}`},
 	} {
 		out, err := mt.Execute(call.tool, call.args)
 		if err == nil {
@@ -281,10 +261,6 @@ func TestMonoagentTools_RunToolsRefusedAfterSyncedCommsRead(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "prompt-injection") {
 		t.Errorf("run_workflow error = %q, want the injection-guard refusal", err)
-	}
-	_, err = mt.Execute("run_action", `{"action_id":"x","confirm":true}`)
-	if err == nil || !strings.Contains(err.Error(), "prompt-injection") {
-		t.Errorf("run_action error = %v, want the injection-guard refusal", err)
 	}
 }
 
@@ -346,16 +322,6 @@ func seedMessage(t *testing.T, db *storage.Database, msgID, personID, body strin
 		msgID, personID, body,
 	); err != nil {
 		t.Fatalf("seed message failed: %v", err)
-	}
-}
-
-func seedAction(t *testing.T, db *storage.Database, actionID string) {
-	t.Helper()
-	if _, err := db.DB.Exec(
-		"INSERT INTO actions (id, created_at, title, type, state, target_platform, profile_id) VALUES (?, 0, 'A', 'dm', 'PENDING', 'instagram', 'default')",
-		actionID,
-	); err != nil {
-		t.Fatalf("seed action failed: %v", err)
 	}
 }
 
@@ -439,7 +405,7 @@ func TestMonoagentTools_DeleteWorkflowSnapshotsAndFailsClosed(t *testing.T) {
 	}
 }
 
-func TestMonoagentTools_DeleteSecretPersonActionBackups(t *testing.T) {
+func TestMonoagentTools_DeleteSecretPersonWorkflowBackups(t *testing.T) {
 	db := newMonoagentTestDB(t)
 	redirectBackupDir(t)
 	mt := NewMonoagentTools(db.DB, "")
@@ -484,24 +450,19 @@ func TestMonoagentTools_DeleteSecretPersonActionBackups(t *testing.T) {
 		t.Errorf("person backup wrong: %s/%s/%s %+v", kind, id, op, tables)
 	}
 
-	// action + targets
-	seedAction(t, db, "action-del")
-	if _, err := db.DB.Exec(
-		"INSERT INTO action_targets (id, action_id, platform) VALUES ('target-1', 'action-del', 'instagram')",
-	); err != nil {
-		t.Fatalf("seed target failed: %v", err)
-	}
-	out, err = mt.Execute("delete_action", `{"action_id":"action-del"}`)
+	// workflow + nodes
+	seedWorkflowWithNode(t, db, "wf-del", "node-del", `{}`)
+	out, err = mt.Execute("delete_workflow", `{"workflow_id":"wf-del"}`)
 	if err != nil {
-		t.Fatalf("delete_action failed: %v", err)
+		t.Fatalf("delete_workflow failed: %v", err)
 	}
 	mustJSON(t, out, &delRes)
 	kind, id, op, tables = readBackupEnvelope(t, delRes.BackupPath)
-	if kind != "action" || id != "action-del" || op != "delete" {
-		t.Errorf("action backup envelope = %s/%s/%s", kind, id, op)
+	if kind != "workflow" || id != "wf-del" || op != "delete" {
+		t.Errorf("workflow backup envelope = %s/%s/%s", kind, id, op)
 	}
-	if len(tables["actions"]) != 1 || len(tables["action_targets"]) != 1 {
-		t.Errorf("action backup tables wrong: %+v", tables)
+	if len(tables["workflows"]) != 1 || len(tables["workflow_nodes"]) != 1 {
+		t.Errorf("workflow backup tables wrong: %+v", tables)
 	}
 }
 

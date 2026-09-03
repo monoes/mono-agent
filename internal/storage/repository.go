@@ -192,51 +192,6 @@ func (d *Database) UpdateActionReachedIndex(id string, index int) error {
 	return nil
 }
 
-// GetDailyActionCount returns how many times actionType has been recorded
-// today (UTC) for profileID via IncrementDailyActionCount. Returns 0 if no
-// row exists yet for today.
-func (d *Database) GetDailyActionCount(profileID, actionType string) (int, error) {
-	if profileID == "" {
-		profileID = "default"
-	}
-	day := time.Now().UTC().Format("2006-01-02")
-	var count int
-	err := d.DB.QueryRow(
-		`SELECT count FROM action_daily_counters WHERE profile_key = ? AND action_type = ? AND day = ?`,
-		profileID, actionType, day,
-	).Scan(&count)
-	if err == sql.ErrNoRows {
-		return 0, nil
-	}
-	if err != nil {
-		return 0, fmt.Errorf("getting daily action count for %s/%s: %w", profileID, actionType, err)
-	}
-	return count, nil
-}
-
-// IncrementDailyActionCount increments today's (UTC) counter for
-// (profileID, actionType) by one, creating the row if it doesn't exist yet,
-// and returns the count after incrementing.
-func (d *Database) IncrementDailyActionCount(profileID, actionType string) (int, error) {
-	if profileID == "" {
-		profileID = "default"
-	}
-	day := time.Now().UTC().Format("2006-01-02")
-	now := time.Now().UTC()
-	_, err := d.DB.Exec(`
-		INSERT INTO action_daily_counters (profile_key, action_type, day, count, updated_at)
-		VALUES (?, ?, ?, 1, ?)
-		ON CONFLICT(profile_key, action_type, day) DO UPDATE SET
-			count      = count + 1,
-			updated_at = excluded.updated_at`,
-		profileID, actionType, day, now,
-	)
-	if err != nil {
-		return 0, fmt.Errorf("incrementing daily action count for %s/%s: %w", profileID, actionType, err)
-	}
-	return d.GetDailyActionCount(profileID, actionType)
-}
-
 // DeleteAction removes an action by ID. Associated action_targets are removed
 // automatically via ON DELETE CASCADE.
 func (d *Database) DeleteAction(id string) error {
@@ -324,31 +279,6 @@ func (d *Database) scanActions(query string, args ...interface{}) ([]*Action, er
 // Action Targets
 // ---------------------------------------------------------------------------
 
-// CreateActionTarget inserts a single action target row.
-func (d *Database) CreateActionTarget(target *ActionTarget) error {
-	if target.ID == "" {
-		target.ID = NewID()
-	}
-	if target.Status == "" {
-		target.Status = "PENDING"
-	}
-
-	_, err := d.DB.Exec(`
-		INSERT INTO action_targets (
-			id, action_id, person_id, platform, link, source_type,
-			status, last_interacted_at, comment_text, metadata, created_at
-		) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-		target.ID, target.ActionID, nullStr(target.PersonID), target.Platform,
-		nullStr(target.Link), nullStr(target.SourceType), target.Status,
-		nullStr(target.LastInteractedAt), nullStr(target.CommentText),
-		nullStr(target.Metadata), time.Now().UTC(),
-	)
-	if err != nil {
-		return fmt.Errorf("creating action target %s: %w", target.ID, err)
-	}
-	return nil
-}
-
 // ListActionTargets returns targets for a given action, optionally filtered by
 // status. Pass an empty status string to return all targets.
 func (d *Database) ListActionTargets(actionID string, status string) ([]*ActionTarget, error) {
@@ -390,64 +320,6 @@ func (d *Database) ListActionTargets(actionID string, status string) ([]*ActionT
 		targets = append(targets, t)
 	}
 	return targets, rows.Err()
-}
-
-// UpdateActionTargetStatus updates the status and last_interacted_at timestamp
-// of a single action target.
-func (d *Database) UpdateActionTargetStatus(id, status string) error {
-	_, err := d.DB.Exec(`
-		UPDATE action_targets SET status = ?, last_interacted_at = ? WHERE id = ?`,
-		status, time.Now().UTC().Format(time.RFC3339), id,
-	)
-	if err != nil {
-		return fmt.Errorf("updating action target status %s: %w", id, err)
-	}
-	return nil
-}
-
-// BatchCreateActionTargets inserts multiple action targets within a single
-// transaction.
-func (d *Database) BatchCreateActionTargets(targets []*ActionTarget) error {
-	if len(targets) == 0 {
-		return nil
-	}
-
-	tx, err := d.DB.Begin()
-	if err != nil {
-		return fmt.Errorf("beginning batch target transaction: %w", err)
-	}
-
-	stmt, err := tx.Prepare(`
-		INSERT INTO action_targets (
-			id, action_id, person_id, platform, link, source_type,
-			status, last_interacted_at, comment_text, metadata, created_at
-		) VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
-	if err != nil {
-		tx.Rollback()
-		return fmt.Errorf("preparing batch target insert: %w", err)
-	}
-	defer stmt.Close()
-
-	now := time.Now().UTC()
-	for _, t := range targets {
-		if t.ID == "" {
-			t.ID = NewID()
-		}
-		if t.Status == "" {
-			t.Status = "PENDING"
-		}
-		if _, err := stmt.Exec(
-			t.ID, t.ActionID, nullStr(t.PersonID), t.Platform,
-			nullStr(t.Link), nullStr(t.SourceType), t.Status,
-			nullStr(t.LastInteractedAt), nullStr(t.CommentText),
-			nullStr(t.Metadata), now,
-		); err != nil {
-			tx.Rollback()
-			return fmt.Errorf("inserting action target %s: %w", t.ID, err)
-		}
-	}
-
-	return tx.Commit()
 }
 
 // ---------------------------------------------------------------------------

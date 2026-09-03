@@ -1,5 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
-import { MessageSquare } from 'lucide-react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import Sidebar from './components/Sidebar.jsx'
 import StatusBar from './components/StatusBar.jsx'
 import Toasts from './components/Toasts.jsx'
@@ -7,7 +6,6 @@ import ErrorBoundary from './components/ErrorBoundary.jsx'
 import ConfirmHost from './components/ConfirmDialog.jsx'
 import AIChatPanel from './components/AIChatPanel.jsx'
 import Dashboard from './pages/Dashboard.jsx'
-import Actions from './pages/Actions.jsx'
 import People from './pages/People.jsx'
 import Profile from './pages/Profile.jsx'
 import PostDetail from './pages/PostDetail.jsx'
@@ -20,8 +18,7 @@ import NodeRunner from './pages/NodeRunner.jsx'
 import SettingsPage from './pages/Settings.jsx'
 import ImageVault from './pages/ImageVault.jsx'
 import Vault from './pages/Vault.jsx'
-import HumanInLoop from './pages/HumanInLoop.jsx'
-import { api, onLogEntry, onActionComplete } from './services/api.js'
+import { api, onLogEntry, onOrgDesignUpdated, subscribeEvent } from './services/api.js'
 
 export default function App() {
   const [activePage, setActivePage] = useState('dashboard')
@@ -32,7 +29,6 @@ export default function App() {
   const [stats, setStats] = useState(null)
   const [logs, setLogs] = useState([])
   const [peopleRefreshKey, setPeopleRefreshKey] = useState(0)
-  const [actionsEnabled, setActionsEnabled] = useState(null) // null = not checked yet; false = no action types in this build
   // Pages mount lazily on first visit, then stay mounted forever after —
   // avoids paying every page's initial data-fetch cost at app startup while
   // still keeping state alive once a page has actually been opened.
@@ -87,6 +83,35 @@ export default function App() {
     setVisitedPages(prev => (prev.has(activePage) ? prev : new Set(prev).add(activePage)))
   }, [activePage])
 
+  // Bring the user to a newly-created org even if they've never visited
+  // Orgs this session. Pages below only render/mount once visitedPages
+  // has seen their id (see persistentPages filter further down) — OrgsPanel
+  // has its own onOrgDesignUpdated listener that auto-selects a new org,
+  // but that listener doesn't exist until OrgsPanel has mounted at least
+  // once, which never happens if the user went straight to Chat and asked
+  // it to build an org there. This top-level listener is always mounted,
+  // so it's the only thing that can react the very first time. It tracks
+  // known org names itself (OrgsPanel's own rail state isn't reachable
+  // from here) and hands off the name to select via pendingOrgSelect,
+  // which Orgs/OrgsPanel consumes once mounted (including on this exact
+  // mount, triggered by the navigate() call below).
+  const knownOrgNamesRef = useRef(null) // null = not yet loaded
+  const [pendingOrgSelect, setPendingOrgSelect] = useState(null)
+  useEffect(() => {
+    api.listOrgDesigns().then(res => {
+      const items = Array.isArray(res) ? res : (res?.items || [])
+      knownOrgNamesRef.current = new Set(items.map(o => o.name))
+    }).catch(() => { knownOrgNamesRef.current = new Set() })
+    const off = onOrgDesignUpdated((payload) => {
+      if (!payload?.orgName || payload.deleted) return
+      if (knownOrgNamesRef.current?.has(payload.orgName)) return
+      knownOrgNamesRef.current?.add(payload.orgName)
+      setPendingOrgSelect(payload.orgName)
+      navigate('orgs')
+    })
+    return off
+  }, [navigate])
+
   // Initial data load
   useEffect(() => {
     const checkDB = async () => {
@@ -101,15 +126,9 @@ export default function App() {
       const l = await api.getLogs()
       if (l) setLogs(l)
     }
-    const checkActionTypes = async () => {
-      const types = await api.getAvailableActionTypes()
-      const hasTypes = Object.values(types || {}).some(list => Array.isArray(list) && list.length > 0)
-      setActionsEnabled(hasTypes)
-    }
     checkDB()
     loadStats()
     loadLogs()
-    checkActionTypes()
   }, [])
 
   // Exposed to Logs.jsx's Refresh button — re-fetches the full log buffer
@@ -131,9 +150,9 @@ export default function App() {
     return off
   }, [])
 
-  // Action completion refresh
+  // Workflow-run completion refresh
   useEffect(() => {
-    const off = onActionComplete(async () => {
+    const off = subscribeEvent('workflow:complete', async () => {
       const s = await api.getDashboardStats()
       if (s) setStats(s)
       setPeopleRefreshKey(k => k + 1)
@@ -157,15 +176,13 @@ export default function App() {
   const persistentPages = {
     dashboard: <Dashboard stats={stats} onRefresh={refreshStats} onNavigate={navigate} />,
     noderunner: <NodeRunner onNavigate={navigate} navData={navData} />,
-    actions: <Actions unavailable={actionsEnabled === false} onRefresh={refreshStats} />,
-    hil: <HumanInLoop />,
     people:    <People key={peopleRefreshKey} onProfile={openProfile} />,
     communications: <Communications onProfile={openProfile} />,
     connections: <Connections onRefresh={refreshStats} />,
     vault: <ImageVault />,
     secretsVault: <Vault />,
     ai: <Agents onOpenChat={openGlobalChat} />,
-    orgs: <Orgs isActive={activePage === 'orgs'} />,
+    orgs: <Orgs isActive={activePage === 'orgs'} onNavigate={navigate} pendingSelectOrgName={pendingOrgSelect} onConsumePendingSelect={() => setPendingOrgSelect(null)} />,
     logs:      <Logs logs={logs} onClear={() => { api.clearLogs(); setLogs([]) }} onRefresh={refreshLogs} />,
     settings:  <SettingsPage onNavigate={setActivePage} />,
   }
@@ -190,7 +207,6 @@ export default function App() {
         onNavigate={navigate}
         stats={stats}
         dbConnected={dbConnected}
-        showActions={actionsEnabled !== false}
       />
       <div style={{ display: 'flex', flexDirection: 'row', minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
         <main className="main-content">
@@ -226,38 +242,19 @@ export default function App() {
         />
       </div>
 
-      {/* Always-on-top toggle for the global chat — visible on every page,
-          only while the panel is closed. Once open, the panel's own header
-          has a close button, so this doesn't need to keep floating on top
-          of it (which used to land right on top of page toolbars). */}
-      {!globalChatOpen && (
-        <button
-          onClick={() => setGlobalChatOpen(true)}
-          title="Open AI Assistant"
-          aria-label="Open AI Assistant"
-          style={{
-            position: 'fixed',
-            top: 10,
-            right: 12,
-            zIndex: 1000,
-            width: 32,
-            height: 32,
-            borderRadius: '50%',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            background: 'var(--elevated)',
-            border: '1px solid var(--border-bright)',
-            color: 'var(--text-muted)',
-            cursor: 'pointer',
-            boxShadow: 'var(--shadow-glow)',
-          }}
-        >
-          <MessageSquare size={15} />
-        </button>
-      )}
-
-      <StatusBar stats={stats} dbConnected={dbConnected} />
+      {/* The global chat toggle lives inside StatusBar itself now (bottom
+          bar, far right) — a small icon there rather than a separate
+          floating overlay button, which kept colliding with whatever
+          page-specific controls happened to also live near a screen
+          corner (the Workflow editor's own toolbar, Dashboard's
+          Refresh/Workflow Editor buttons, ...) no matter where it was
+          placed. */}
+      <StatusBar
+        stats={stats}
+        dbConnected={dbConnected}
+        chatOpen={globalChatOpen}
+        onToggleChat={() => setGlobalChatOpen(v => !v)}
+      />
       <Toasts />
       <ConfirmHost />
     </div>

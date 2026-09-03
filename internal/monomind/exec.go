@@ -42,6 +42,13 @@ type ExecOptions struct {
 	Env map[string]string
 	// Bin overrides the monomind binary (tests); empty = discovery.
 	Bin string
+	// AllowBashPrefixes lets the underlying agent's own Bash tool run
+	// commands starting with one of these prefixes (e.g. "monomind",
+	// "monoagentcli"), on top of whatever Tools are wired — scoped, not a
+	// blanket Bash grant (see agent-exec.ts's canUseTool). Real shell
+	// access to a well-known CLI is far more reliable for the model to
+	// actually use than a large custom tool surface alone.
+	AllowBashPrefixes []string
 }
 
 // TurnResult is the terminal state of one exec turn.
@@ -102,6 +109,9 @@ func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResu
 	}
 	if opts.Resume != "" {
 		args = append(args, "--resume", opts.Resume)
+	}
+	if len(opts.AllowBashPrefixes) > 0 {
+		args = append(args, "--allow-bash-prefix", strings.Join(opts.AllowBashPrefixes, ","))
 	}
 	if opts.Timeout > 0 {
 		args = append(args, "--timeout", formatDuration(opts.Timeout))
