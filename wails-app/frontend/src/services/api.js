@@ -49,6 +49,7 @@ export const api = {
   getDBPath:        () => GoApp.GetDBPath().catch(guard('db path', '')),
   exportData:       () => GoApp.ExportData(),
   isDBConnected:    () => GoApp.IsDBConnected().catch(() => false),
+  isReady:          () => GoApp.IsReady().catch(() => false),
   openURL:          (url) => GoApp.OpenURL(url).catch(console.warn),
   getPersonDetail:      (id) => GoApp.GetPersonDetail(id).catch(guard('person detail', null)),
   getPersonInteractions:(id) => GoApp.GetPersonInteractions(id).catch(guard('person interactions', [])),

@@ -49,6 +49,7 @@ type App struct {
 	chatCancels sync.Map // workflowID → *cancelHandle for in-flight AI chat streams
 
 	activeProfileIDPtr atomic.Pointer[string] // currently selected profile; access via get/setActiveProfileID (read/written across Wails goroutines)
+	ready              atomic.Bool           // set once startup()'s synchronous setup has finished; see IsReady
 
 	orgWatchMu sync.Mutex
 	orgWatcher *orgdesign.Watcher // polls the active profile's .monomind/orgs/ dir; see restartOrgWatcher
@@ -182,7 +183,23 @@ func (a *App) startup(ctx context.Context) {
 
 	a.emitLog("SYSTEM", "INFO", "Mono Agent UI connected to "+a.dbPath)
 
+	// Marks synchronous startup as finished — see IsReady. Must be the last
+	// line: everything above (profile resolution in particular) needs to
+	// have already happened before any page can trust IsReady()==true.
+	a.ready.Store(true)
+
 	go a.backgroundUpdateCheck()
+}
+
+// IsReady reports whether startup() has finished its synchronous setup
+// (DB migrations, active-profile resolution, node registry, etc.). Wails
+// gives no guarantee the frontend won't become interactive before this
+// finishes — a page that queries profile-scoped data (e.g. Orgs) landing
+// before it does silently reads the wrong ("default") profile until the
+// user navigates away and back. Polled by the frontend instead of guessing
+// with a fixed delay.
+func (a *App) IsReady() bool {
+	return a.ready.Load()
 }
 
 // migrateProfilesToPerProfileLayout brings every existing profile up to the

@@ -189,6 +189,8 @@ export function IsDBConnected():Promise<boolean>;
 
 export function IsMonomindInitialized():Promise<boolean>;
 
+export function IsReady():Promise<boolean>;
+
 export function ListAIProviders():Promise<string>;
 
 export function ListChatSessions(arg1:string):Promise<string>;

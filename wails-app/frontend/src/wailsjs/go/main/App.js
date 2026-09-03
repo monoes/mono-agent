@@ -370,6 +370,10 @@ export function IsMonomindInitialized() {
   return window['go']['main']['App']['IsMonomindInitialized']();
 }
 
+export function IsReady() {
+  return window['go']['main']['App']['IsReady']();
+}
+
 export function ListAIProviders() {
   return window['go']['main']['App']['ListAIProviders']();
 }

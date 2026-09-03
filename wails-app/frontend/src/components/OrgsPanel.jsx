@@ -187,16 +187,40 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
     if (!effectiveOpen) return
     const isFirst = firstLoadRef.current
     firstLoadRef.current = false
-    loadOrgs(isFirst).then(count => {
-      // The very first load of the app's session can race Go's own
-      // startup (getActiveProfileID() defaults to "default" until
-      // App.startup() finishes resolving the real active profile — Wails
-      // doesn't guarantee the frontend waits for that) — landing on Orgs
-      // before it resolves queries the wrong, empty profile. One silent
-      // retry shortly after almost always lands after startup finishes,
-      // instead of requiring the user to navigate away and back.
-      if (isFirst && count === 0) setTimeout(() => loadOrgs(true), 700)
-    })
+    if (!isFirst) {
+      loadOrgs(true)
+      return
+    }
+    // The very first load of the app's session can race Go's own startup
+    // (getActiveProfileID() defaults to "default" until App.startup()
+    // finishes resolving the real active profile — Wails doesn't guarantee
+    // the frontend waits for that) — landing on Orgs before it resolves
+    // silently queries the wrong, empty profile, so the panel shows either
+    // an empty org list or the "not set up" prompt until the user
+    // navigates away and back. Poll App.IsReady() (cheap, in-memory,
+    // set as the very last line of startup()) instead of guessing with a
+    // fixed delay — a cold start with the social build's node-registry
+    // scan can take longer than a one-shot timer accounts for.
+    let cancelled = false
+    ;(async () => {
+      for (let i = 0; i < 30 && !cancelled; i++) { // ~6s ceiling — startup finishing this slow would be a real problem elsewhere too
+        if (await api.isReady()) break
+        await new Promise(r => setTimeout(r, 200))
+      }
+      // silent:false (the real bug this whole effect was chasing) — the
+      // prior version called loadOrgs(isFirst), which for the very first
+      // activation passes isFirst=true straight through as the silent
+      // argument. silent=true skips BOTH setLoadingOrgs(true) (harmless,
+      // already true from useState's initial value) AND, critically,
+      // setLoadingOrgs(false) in loadOrgs' own finally block — so the
+      // spinner that's already showing from mount never clears. The panel
+      // then sits on its loading state forever until some LATER activation
+      // (this effect's isFirst=false branch above) finally passes
+      // silent=false for the first time and clears it — exactly "first
+      // click shows nothing, navigate away and back and it loads".
+      if (!cancelled) loadOrgs(false)
+    })()
+    return () => { cancelled = true }
   }, [effectiveOpen, loadOrgs])
 
   // ── Tab data loading ──
