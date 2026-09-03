@@ -1,6 +1,6 @@
 module github.com/monoes/mono-agent
 
-go 1.25.0
+go 1.26.0
 
 toolchain go1.26.6
 
@@ -29,7 +29,7 @@ require (
 	github.com/yuin/goldmark v1.8.5
 	github.com/zalando/go-keyring v0.2.8
 	go.mongodb.org/mongo-driver/v2 v2.8.2
-	golang.org/x/crypto v0.55.0
+	golang.org/x/crypto v0.56.0
 	golang.org/x/sys v0.47.0
 	modernc.org/sqlite v1.57.0
 )
