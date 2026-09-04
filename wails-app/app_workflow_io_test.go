@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/monoes/mono-agent/internal/storage"
 	"github.com/monoes/mono-agent/internal/workflow"
@@ -226,6 +227,23 @@ func TestExportImportRoundtripViaCLI(t *testing.T) {
 // CancelWorkflow PID verification (RA1-8)
 // ─────────────────────────────────────────────────────────────────────────────
 
+// waitForExec blocks until pid has finished execve and its command line is
+// readable. cmd.Start() returns after fork but before exec completes, and in
+// that window /proc/<pid>/cmdline reads back empty — which
+// readProcessCommandLine reports as "not alive" (its zombie/kernel-thread
+// case), making signalWorkflowPID a no-op. Asserting straight after Start()
+// therefore races exec and fails on machines fast enough to win it.
+func waitForExec(t *testing.T, pid int) {
+	t.Helper()
+	for i := 0; i < 200; i++ {
+		if _, alive, err := readProcessCommandLine(pid); err == nil && alive {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("pid %d never became inspectable", pid)
+}
+
 // TestSignalWorkflowPID_RefusesForeignProcess: a live pid whose command line
 // is not a monoagent binary must never be signaled.
 func TestSignalWorkflowPID_RefusesForeignProcess(t *testing.T) {
@@ -237,6 +255,7 @@ func TestSignalWorkflowPID_RefusesForeignProcess(t *testing.T) {
 		t.Skipf("cannot spawn sleep: %v", err)
 	}
 	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	waitForExec(t, cmd.Process.Pid)
 
 	err := signalWorkflowPID(cmd.Process.Pid)
 	if err == nil {
