@@ -772,8 +772,17 @@ func findMonoAgentCLI() (string, error) {
 		"/usr/local/bin/monoagentcli",
 		"/opt/homebrew/bin/monoagentcli",
 	}
-	// Also check relative to executable (bundled app).
-	if execDir, err := filepath.Abs(filepath.Dir(os.Args[0])); err == nil {
+	// Also check relative to executable (bundled app). os.Executable(), not
+	// os.Args[0]: on Linux it resolves through /proc/self/exe, which the
+	// kernel already follows to the real binary, so this still finds a
+	// sibling monoagentcli when MonoAgent itself was launched through a
+	// symlink (e.g. scripts/install-linux-desktop.sh's stable-named launch
+	// symlink) — os.Args[0] would instead give the symlink's own directory.
+	if exe, err := os.Executable(); err == nil {
+		if real, err := filepath.EvalSymlinks(exe); err == nil {
+			exe = real
+		}
+		execDir := filepath.Dir(exe)
 		candidates = append(candidates,
 			filepath.Join(execDir, "monoagentcli"),
 			filepath.Join(execDir, "..", "..", "..", "cmd", "monoagentcli", "monoagentcli"),

@@ -29,6 +29,16 @@ export function notify(op, message) {
 // Wrap a binding call so failures are reported and fall back to `fallback`.
 const guard = (op, fallback) => (e) => { reportError(op, e); return fallback }
 
+// Parses a StreamAIChat/StreamAgentChat result, throwing on the synchronous
+// {"error": "..."} shape those two return when the chat process never even
+// started (see the comment on streamAIChat below) — turns that JSON payload
+// into an actual promise rejection so callers' existing catch blocks run.
+function parseStreamResult(s) {
+  const r = JSON.parse(s)
+  if (r?.error) throw new Error(r.error)
+  return r
+}
+
 export const api = {
   getDashboardStats:    () => GoApp.GetDashboardStats().catch(guard('dashboard stats', null)),
   listWorkflows:        () => GoApp.ListWorkflows().catch(guard('list workflows', [])),
@@ -92,7 +102,13 @@ export const api = {
   getAIModels:        (providerID) => GoApp.GetAIModels(providerID).then(s => JSON.parse(s)).catch(guard('AI models', [])),
   getAIRegistry:      () => GoApp.GetAIRegistry().then(s => JSON.parse(s)).catch(guard('AI registry', [])),
   // AI Chat
-  streamAIChat:       (workflowID, message, providerID, model) => GoApp.StreamAIChat(workflowID, message, providerID, model).then(s => JSON.parse(s)),
+  // Both stream* calls below return a JSON string that is {"error": "..."}
+  // on a synchronous failure (e.g. the process never even started) rather
+  // than rejecting — JSON.parse succeeds on that shape just like any other
+  // reply, so it must be checked explicitly and turned into a throw, or the
+  // caller's catch block (which stops the "streaming" spinner) never runs
+  // and the UI hangs on "Thinking..." forever with no visible error.
+  streamAIChat:       (workflowID, message, providerID, model) => GoApp.StreamAIChat(workflowID, message, providerID, model).then(parseStreamResult),
   stopAIChat:         (workflowID) => GoApp.StopAIChat(workflowID).then(s => JSON.parse(s)).catch(guard('stop AI chat', null)),
   getAIChatHistory:   (workflowID) => GoApp.GetAIChatHistory(workflowID).then(s => JSON.parse(s)).catch(guard('chat history', [])),
   clearAIChatHistory: (workflowID) => GoApp.ClearAIChatHistory(workflowID).then(s => JSON.parse(s)),
@@ -103,7 +119,7 @@ export const api = {
   streamAgentChat: (workflowID, message, runtime, model, resumeSessionID = '', canvas = true, monoagentTools = null, allowRuns = null) => {
     const tools = monoagentTools ?? getAssistantTools()
     const runs = allowRuns ?? getAssistantAllowRuns()
-    return GoApp.StreamAgentChat(workflowID, message, runtime, model, resumeSessionID, canvas, tools, runs).then(s => JSON.parse(s))
+    return GoApp.StreamAgentChat(workflowID, message, runtime, model, resumeSessionID, canvas, tools, runs).then(parseStreamResult)
   },
   stopAgentChat:      (workflowID) => GoApp.StopAgentChat(workflowID).then(s => JSON.parse(s)).catch(guard('stop agent chat', null)),
   listChatSessions:      (workflowID) => GoApp.ListChatSessions(workflowID).then(s => JSON.parse(s)).catch(guard('list chat sessions', [])),
