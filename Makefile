@@ -1,6 +1,15 @@
 VERSION := $(shell git describe --tags --always 2>/dev/null || echo "dev")
 LDFLAGS := -X main.version=$(VERSION) -X main.buildDate=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
+# Wails links against webkit2gtk. Distros from Ubuntu 24.04 / Debian 13 on
+# ship only webkit2gtk-4.1 — pkg-config for the 4.0 default then fails and
+# the GUI build dies at cgo. The webkit2_41 tag switches Wails to 4.1; probe
+# for 4.0 rather than hardcoding so older distros still build unchanged.
+# Mirrors the -tags webkit2_41 in .github/workflows/release.yml (build-linux).
+ifeq ($(shell uname -s),Linux)
+WAILS_TAGS := $(shell pkg-config --exists webkit2gtk-4.0 2>/dev/null || echo -tags webkit2_41)
+endif
+
 # Both the CLI and the Wails GUI share internal/ packages — build them together.
 .PHONY: build
 build: build-cli build-app
@@ -11,7 +20,9 @@ build-cli:
 
 .PHONY: build-app
 build-app:
-	cd wails-app && wails build -ldflags "$(LDFLAGS)" -o ../bin/MonoAgent
+	cd wails-app && wails build -ldflags "$(LDFLAGS)" $(WAILS_TAGS)
+	mkdir -p bin
+	cp wails-app/build/bin/monoagent-ui bin/MonoAgent
 
 .PHONY: dev
 dev:
@@ -22,6 +33,7 @@ build-all: build-cli
 	GOOS=darwin  GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/monoagentcli-darwin-amd64 ./cmd/monoagentcli
 	GOOS=darwin  GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/monoagentcli-darwin-arm64 ./cmd/monoagentcli
 	GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/monoagentcli-linux-amd64 ./cmd/monoagentcli
+	GOOS=linux   GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/monoagentcli-linux-arm64 ./cmd/monoagentcli
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/monoagentcli-windows-amd64.exe ./cmd/monoagentcli
 
 .PHONY: test
