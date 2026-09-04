@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -107,6 +108,55 @@ func TestIsExtensionInPreferencesFile(t *testing.T) {
 	if isExtensionInPreferencesFile(filepath.Join(tempDir, "non_existent.json")) {
 		t.Errorf("expected false for non-existent file")
 	}
+
+	// 6. Real-world unpacked shape: Chromium/Edge does not cache a "manifest"
+	// object at all for a "Load unpacked" extension (verified against an
+	// actual Edge profile — the settings entry has "path" but no "manifest"
+	// key whatsoever), so detection must fall back to reading the real
+	// manifest.json at that path from disk.
+	unpackedDir := filepath.Join(tempDir, "unpacked-ext")
+	if err := os.MkdirAll(unpackedDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(unpackedDir, "manifest.json"), []byte(`{"name": "MonoAgent Bridge"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	prefNoManifestCache := filepath.Join(tempDir, "pref_no_manifest_cache.json")
+	noManifestCacheData := fmt.Sprintf(`{
+		"extensions": {
+			"settings": {
+				"nniakjfndopplbofjmjgbbgljnmahpfg": {
+					"path": %q
+				}
+			}
+		}
+	}`, unpackedDir)
+	if err := os.WriteFile(prefNoManifestCache, []byte(noManifestCacheData), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if !isExtensionInPreferencesFile(prefNoManifestCache) {
+		t.Errorf("expected true for unpacked extension with no cached manifest (must read manifest.json from path)")
+	}
+
+	// 7. Same shape, but path is a relative "<id>/<version>" segment (how
+	// packed extensions record it) — must not be joined against an
+	// unrelated base and must not match.
+	prefRelativePath := filepath.Join(tempDir, "pref_relative_path.json")
+	relativePathData := `{
+		"extensions": {
+			"settings": {
+				"someid": {
+					"path": "someid/1.0.0_0"
+				}
+			}
+		}
+	}`
+	if err := os.WriteFile(prefRelativePath, []byte(relativePathData), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if isExtensionInPreferencesFile(prefRelativePath) {
+		t.Errorf("expected false for a relative packed-extension path with no cached manifest")
+	}
 }
 
 func TestIsExtensionInExtensionsDir(t *testing.T) {
@@ -167,5 +217,86 @@ func TestEnsureExtensionConnected_NotInstalled(t *testing.T) {
 
 	if !strings.Contains(err.Error(), "MonoAgent Chrome extension is not installed in Chrome") {
 		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+// fakePairingBridge implements both connChecker and pairingURLProvider so
+// tryOpenPairingPage's retry/give-up logic can be exercised without a real
+// extension.Server.
+type fakePairingBridge struct {
+	mockBridge
+	ready bool
+	url   string
+}
+
+func (f *fakePairingBridge) PairingURL() (string, bool) {
+	if !f.ready {
+		return "", false
+	}
+	return f.url, true
+}
+
+func TestTryOpenPairingPage_RetriesUntilReadyThenOpensOnce(t *testing.T) {
+	var openedURLs []string
+	orig := openURLInBrowser
+	openURLInBrowser = func(url string) error {
+		openedURLs = append(openedURLs, url)
+		return nil
+	}
+	defer func() { openURLInBrowser = orig }()
+
+	bridge := &fakePairingBridge{ready: false, url: "http://127.0.0.1:9222/monoagent/pair?n=abc"}
+	opened := false
+
+	// Not ready yet: must not open anything, and must not set *opened so
+	// the caller's poll loop keeps retrying.
+	tryOpenPairingPage(bridge, &opened)
+	if opened {
+		t.Fatalf("opened flag set before the bridge reported ready")
+	}
+	if len(openedURLs) != 0 {
+		t.Fatalf("openURLInBrowser called before ready: %v", openedURLs)
+	}
+
+	// Now ready: must open exactly the URL PairingURL returned, exactly once.
+	bridge.ready = true
+	tryOpenPairingPage(bridge, &opened)
+	if !opened {
+		t.Fatalf("opened flag not set after the bridge became ready")
+	}
+	if len(openedURLs) != 1 || openedURLs[0] != bridge.url {
+		t.Fatalf("openURLInBrowser calls = %v, want exactly [%q]", openedURLs, bridge.url)
+	}
+
+	// A subsequent call (e.g. the next poll iteration) must not open again.
+	tryOpenPairingPage(bridge, &opened)
+	if len(openedURLs) != 1 {
+		t.Fatalf("openURLInBrowser called again after already opened: %v", openedURLs)
+	}
+}
+
+func TestTryOpenPairingPage_GivesUpOnBridgeWithoutPairingURL(t *testing.T) {
+	var called bool
+	orig := openURLInBrowser
+	openURLInBrowser = func(url string) error { called = true; return nil }
+	defer func() { openURLInBrowser = orig }()
+
+	// A plain mockBridge doesn't implement pairingURLProvider at all — the
+	// relay-through-another-process case (RemoteBridge in production).
+	bridge := &mockBridge{connected: false}
+	opened := false
+
+	tryOpenPairingPage(bridge, &opened)
+	if !opened {
+		t.Fatalf("expected tryOpenPairingPage to give up immediately (set opened=true) for a bridge with no PairingURL")
+	}
+	if called {
+		t.Fatalf("openURLInBrowser should never be called for a bridge with no PairingURL")
+	}
+
+	// Must stay given-up on repeated calls too.
+	tryOpenPairingPage(bridge, &opened)
+	if called {
+		t.Fatalf("openURLInBrowser called on a later poll despite having given up")
 	}
 }

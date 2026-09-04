@@ -17,6 +17,60 @@ type connChecker interface {
 	IsConnected() bool
 }
 
+// pairingURLProvider is implemented only by *extension.ServerBridge (not
+// the relay-through-another-process bridge) — see its doc comment for why.
+// A plain interface here (rather than importing *extension.ServerBridge)
+// keeps ensureExtensionConnected working against the bridge.ExtensionBridge
+// abstraction it already takes.
+type pairingURLProvider interface {
+	PairingURL() (string, bool)
+}
+
+// openURLInBrowser opens url in the system's default browser, cross-platform.
+// A var, not a plain func, so tests can stub it out — tryOpenPairingPage's
+// own tests must not actually launch a browser.
+var openURLInBrowser = func(url string) error {
+	switch runtime.GOOS {
+	case "darwin":
+		return exec.Command("open", url).Start()
+	case "windows":
+		// "start" is a cmd builtin, not an executable; the empty string
+		// after it is the (required, often-empty) window-title argument —
+		// without it, a URL containing spaces or quotes gets misparsed as
+		// the title instead of the target.
+		return exec.Command("cmd", "/c", "start", "", url).Start()
+	default: // linux and other freedesktop-ish systems
+		return exec.Command("xdg-open", url).Start()
+	}
+}
+
+// tryOpenPairingPage opens the bridge's one-time auto-pairing page in the
+// user's browser, at most once per call site (tracked via the opened
+// pointer the caller owns) and only once the server has actually bound a
+// port and can mint a nonce (see PairingURL). Failures are non-fatal —
+// falling back to the popup's manual "Pairing token" field always works —
+// so this only logs, never returns an error.
+func tryOpenPairingPage(bridge connChecker, opened *bool) {
+	if *opened {
+		return
+	}
+	p, ok := bridge.(pairingURLProvider)
+	if !ok {
+		*opened = true // never will be ready (relay bridge) — stop trying
+		return
+	}
+	url, ready := p.PairingURL()
+	if !ready {
+		return // server hasn't bound yet — the caller's poll loop retries
+	}
+	*opened = true
+	if err := openURLInBrowser(url); err != nil {
+		fmt.Fprintf(os.Stderr, "  (could not auto-open the pairing page: %v — paste the token into the extension popup manually)\n", err)
+	} else {
+		fmt.Fprintln(os.Stderr, "  Opened the extension pairing page in your browser — it should pair automatically.")
+	}
+}
+
 // findLocalChromePath returns the path to the local Chrome binary, or empty string.
 func findLocalChromePath() string {
 	var candidates []string
@@ -199,6 +253,17 @@ func isExtensionInstalled() bool {
 	return false
 }
 
+// nameLooksLikeMonoAgent applies the same name/description substring match
+// both call sites below need.
+func nameLooksLikeMonoAgent(name, description string) bool {
+	name = strings.ToLower(name)
+	if strings.Contains(name, "monoagent") || strings.Contains(name, "mono-agent") || strings.Contains(name, "mono agent") {
+		return true
+	}
+	desc := strings.ToLower(description)
+	return strings.Contains(desc, "monoagent") || strings.Contains(desc, "mono-agent")
+}
+
 func isExtensionInPreferencesFile(prefPath string) bool {
 	data, err := os.ReadFile(prefPath)
 	if err != nil {
@@ -207,6 +272,7 @@ func isExtensionInPreferencesFile(prefPath string) bool {
 	var root struct {
 		Extensions struct {
 			Settings map[string]struct {
+				Path     string `json:"path"`
 				Manifest struct {
 					Name        string `json:"name"`
 					Description string `json:"description"`
@@ -219,16 +285,32 @@ func isExtensionInPreferencesFile(prefPath string) bool {
 	}
 
 	for _, setting := range root.Extensions.Settings {
-		// Name/description only: the "path" of an unpacked extension can be
-		// any user-chosen folder, so matching on path fragments produced
-		// false positives (e.g. any extension loaded from a directory whose
-		// name contains "chrome-extension").
-		name := strings.ToLower(setting.Manifest.Name)
-		if strings.Contains(name, "monoagent") || strings.Contains(name, "mono-agent") || strings.Contains(name, "mono agent") {
+		if nameLooksLikeMonoAgent(setting.Manifest.Name, setting.Manifest.Description) {
 			return true
 		}
-		desc := strings.ToLower(setting.Manifest.Description)
-		if strings.Contains(desc, "monoagent") || strings.Contains(desc, "mono-agent") {
+		// Chromium/Edge does not cache a "manifest" object at all for
+		// extensions loaded via "Load unpacked" (verified against a real
+		// profile: the entry has path set but no manifest key whatsoever) —
+		// so the check above can never match a dev-mode install, which is
+		// exactly how AGENTS.md/README tell users to install this extension.
+		// Read the real manifest.json from disk instead. Only for an
+		// absolute path (an unpacked extension's own chosen folder) — a
+		// packed extension's "path" is a relative "<id>/<version>" segment
+		// under the profile's own Extensions dir, already covered by
+		// isExtensionInExtensionsDir, and must never be joined against an
+		// arbitrary base here.
+		if setting.Path == "" || !filepath.IsAbs(setting.Path) {
+			continue
+		}
+		mData, err := os.ReadFile(filepath.Join(setting.Path, "manifest.json"))
+		if err != nil {
+			continue
+		}
+		var m struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		}
+		if json.Unmarshal(mData, &m) == nil && nameLooksLikeMonoAgent(m.Name, m.Description) {
 			return true
 		}
 	}
@@ -287,12 +369,19 @@ func ensureExtensionConnected(bridge connChecker, timeout time.Duration) error {
 		return fmt.Errorf("MonoAgent Chrome extension is not installed in Chrome.\nPlease install it before running:\n  1. Open Google Chrome and go to chrome://extensions\n  2. Enable \"Developer mode\" (toggle at top right)\n  3. Click \"Load unpacked\" and select: %s\n  4. Ensure \"MonoAgent Bridge\" is enabled", extDir)
 	}
 
+	// Tracks whether we've already opened (or given up trying to open) the
+	// auto-pairing page for this call — tryOpenPairingPage retries on its
+	// own via the wait loops below until the bridge server has bound a
+	// port and can mint a nonce, then opens at most once.
+	pairingOpened := false
+
 	// 2. Extension is installed. Check if Chrome is already running.
 	if isChromeRunning() {
 		// Chrome is already running, do NOT launch another Chrome instance.
 		// Wait for the extension bridge to connect in case the service worker is waking up.
 		deadline := time.Now().Add(timeout)
 		for !bridge.IsConnected() && time.Now().Before(deadline) {
+			tryOpenPairingPage(bridge, &pairingOpened)
 			time.Sleep(500 * time.Millisecond)
 		}
 		if !bridge.IsConnected() {
@@ -317,6 +406,7 @@ func ensureExtensionConnected(bridge connChecker, timeout time.Duration) error {
 
 	deadline := time.Now().Add(timeout)
 	for !bridge.IsConnected() && time.Now().Before(deadline) {
+		tryOpenPairingPage(bridge, &pairingOpened)
 		time.Sleep(500 * time.Millisecond)
 	}
 	if !bridge.IsConnected() {

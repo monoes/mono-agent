@@ -952,6 +952,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       .catch((err) => sendResponse({ ok: false, error: err.message }));
     return true; // async response
   }
+  if (msg.type === "auto_pair") {
+    // Only the pairing content script (pair_bridge.js, injected solely into
+    // the bridge server's own /monoagent/pair page per manifest.json) ever
+    // sends this — it already exchanged a single-use nonce for this real
+    // token, so from here it's the exact same path as the popup's manual
+    // "Pair & Reconnect" button.
+    setPairingToken(msg.token)
+      .then((result) => sendResponse(result))
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true; // async response
+  }
   return false;
 });
 
