@@ -24,6 +24,7 @@ var (
 	ErrWorkflowNotFound   = errors.New("workflow: workflow not found")
 	ErrExecutionNotFound  = errors.New("workflow: execution not found")
 	ErrCycleDetected      = errors.New("workflow: cycle detected in workflow graph")
+	ErrDanglingConnection = errors.New("workflow: connection references a node id that does not exist")
 	ErrInvalidConfig      = errors.New("workflow: invalid node configuration")
 	ErrNodeTypeUnknown    = errors.New("workflow: unknown node type")
 	ErrNoTriggerNode      = errors.New("workflow: workflow has no trigger node")

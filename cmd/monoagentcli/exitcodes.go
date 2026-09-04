@@ -62,7 +62,8 @@ func exitCodeFor(err error) int {
 	case errors.Is(err, workflow.ErrNoTriggerNode),
 		errors.Is(err, workflow.ErrCycleDetected),
 		errors.Is(err, workflow.ErrNodeTypeUnknown),
-		errors.Is(err, workflow.ErrInvalidConfig):
+		errors.Is(err, workflow.ErrInvalidConfig),
+		errors.Is(err, workflow.ErrDanglingConnection):
 		return 3
 	default:
 		return 1

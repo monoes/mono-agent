@@ -380,6 +380,45 @@ func (s *SQLiteWorkflowStore) SaveWorkflowConnections(ctx context.Context, workf
 		return fmt.Errorf("deleting old connections for workflow %s: %w", workflowID, err)
 	}
 
+	// Validate node references up front, in the same transaction the insert
+	// below would otherwise rely on: without this, a connection naming an
+	// unknown node id (a stale id after a node was renamed/removed, a typo
+	// in a hand-edited or generated workflow JSON, etc.) surfaces only as
+	// the SQLite foreign-key error itself ("constraint failed: FOREIGN KEY
+	// constraint failed (787)") — accurate but useless for finding which
+	// connection or which node id is actually wrong.
+	nodeRows, err := tx.QueryContext(ctx, "SELECT id FROM workflow_nodes WHERE workflow_id = ?", workflowID)
+	if err != nil {
+		tx.Rollback()
+		return fmt.Errorf("loading node ids for workflow %s: %w", workflowID, err)
+	}
+	validNodeIDs := make(map[string]bool)
+	for nodeRows.Next() {
+		var id string
+		if err := nodeRows.Scan(&id); err != nil {
+			nodeRows.Close()
+			tx.Rollback()
+			return fmt.Errorf("scanning node id for workflow %s: %w", workflowID, err)
+		}
+		validNodeIDs[id] = true
+	}
+	if err := nodeRows.Err(); err != nil {
+		nodeRows.Close()
+		tx.Rollback()
+		return fmt.Errorf("reading node ids for workflow %s: %w", workflowID, err)
+	}
+	nodeRows.Close()
+	for _, c := range conns {
+		if !validNodeIDs[c.SourceNodeID] {
+			tx.Rollback()
+			return fmt.Errorf("%w: connection %q references unknown source node %q", ErrDanglingConnection, c.ID, c.SourceNodeID)
+		}
+		if !validNodeIDs[c.TargetNodeID] {
+			tx.Rollback()
+			return fmt.Errorf("%w: connection %q references unknown target node %q", ErrDanglingConnection, c.ID, c.TargetNodeID)
+		}
+	}
+
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO workflow_connections
 			(id, workflow_id, source_node_id, source_handle, target_node_id, target_handle, position)

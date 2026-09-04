@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -68,6 +69,44 @@ func nodeRow(t *testing.T, db *sql.DB, id string) (name, config string, x, y flo
 		t.Fatalf("read node %s: %v", id, err)
 	}
 	return
+}
+
+// TestSaveWorkflowConnections_DanglingReferenceGivesClearError is a
+// regression guard: before this check existed, a connection naming a node
+// id that doesn't exist for this workflow (a stale id, a typo in a
+// hand-edited or generated workflow JSON) surfaced only via the SQLite
+// foreign-key constraint itself — accurate but useless for finding which
+// connection or node id was actually wrong.
+func TestSaveWorkflowConnections_DanglingReferenceGivesClearError(t *testing.T) {
+	s, _ := newMigratedStore(t)
+	ctx := context.Background()
+
+	if err := s.CreateWorkflow(ctx, &Workflow{ID: "wf", Name: "wf"}); err != nil {
+		t.Fatalf("CreateWorkflow: %v", err)
+	}
+	if err := s.SaveWorkflowNodes(ctx, "wf", []WorkflowNode{
+		testNode("a", "trigger.manual"), testNode("b", "core.set"),
+	}); err != nil {
+		t.Fatalf("save nodes: %v", err)
+	}
+
+	err := s.SaveWorkflowConnections(ctx, "wf", []WorkflowConnection{
+		{ID: "e1", SourceNodeID: "a", SourceHandle: "main", TargetNodeID: "does-not-exist", TargetHandle: "main"},
+	})
+	if err == nil {
+		t.Fatalf("expected an error for a connection targeting an unknown node id")
+	}
+	if !errors.Is(err, ErrDanglingConnection) {
+		t.Fatalf("error = %v, want errors.Is(err, ErrDanglingConnection)", err)
+	}
+	if !strings.Contains(err.Error(), "does-not-exist") {
+		t.Fatalf("error should name the unknown node id, got: %v", err)
+	}
+
+	// The failed save must not have left a stray connection row behind.
+	if n := connCount(t, s.db, "wf"); n != 0 {
+		t.Fatalf("connection count after failed save = %d, want 0", n)
+	}
 }
 
 // TestSaveWorkflowNodes_AddNodePreservesConnections is the regression guard
