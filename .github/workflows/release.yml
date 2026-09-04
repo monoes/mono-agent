@@ -64,10 +64,11 @@ jobs:
       # Must run after the frontend build: main.go has //go:embed all:frontend/dist,
       # which requires that directory to exist (with content) at compile time — go
       # vet/build fail outright otherwise, not just at runtime.
-      - name: Vet and build Wails GUI backend (separate go.mod; no test files yet)
+      - name: Vet, test and build Wails GUI backend (separate go.mod)
         working-directory: wails-app
         run: |
           go vet -tags webkit2_41 ./...
+          go test -tags webkit2_41 ./...
           go build -tags webkit2_41 ./...
 
   # ─── 1. Determine next semantic version ───────────────────────────────────
