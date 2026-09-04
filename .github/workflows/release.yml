@@ -127,6 +127,7 @@ jobs:
           LD="-X main.version=${TAG} -X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           mkdir -p dist
           GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$LD" -o dist/monoagentcli-linux-amd64    ./cmd/monoagentcli
+          GOOS=linux   GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "$LD" -o dist/monoagentcli-linux-arm64    ./cmd/monoagentcli
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$LD" -o dist/monoagentcli-windows-amd64.exe ./cmd/monoagentcli
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -472,8 +473,11 @@ jobs:
             echo "# macOS (Apple Silicon)"
             echo "curl -fsSL https://github.com/monoes/mono-agent/releases/download/${TAG}/monoagentcli-darwin-arm64 -o monoagentcli && chmod +x monoagentcli && sudo mv monoagentcli /usr/local/bin/"
             echo ""
-            echo "# Linux"
+            echo "# Linux (x86_64)"
             echo "curl -fsSL https://github.com/monoes/mono-agent/releases/download/${TAG}/monoagentcli-linux-amd64 -o monoagentcli && chmod +x monoagentcli && sudo mv monoagentcli /usr/local/bin/"
+            echo ""
+            echo "# Linux (arm64)"
+            echo "curl -fsSL https://github.com/monoes/mono-agent/releases/download/${TAG}/monoagentcli-linux-arm64 -o monoagentcli && chmod +x monoagentcli && sudo mv monoagentcli /usr/local/bin/"
             echo ""
             echo "# Self-update (once installed)"
             echo "monoagentcli update"
