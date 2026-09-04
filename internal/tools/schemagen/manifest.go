@@ -73,6 +73,12 @@ var Manifest = []ManifestEntry{
 	{NodeType: "image.remove_background", GoFile: "internal/nodes/image/remove_background_schema.go", StructName: "RemoveBackgroundNodeSchema"},
 	{NodeType: "image.resize", GoFile: "internal/nodes/image/resize_schema.go", StructName: "ImageResizeNodeSchema"},
 	{NodeType: "image.thumbnail", GoFile: "internal/nodes/image/thumbnail_schema.go", StructName: "ImageThumbnailNodeSchema"},
+	{NodeType: "image.vault_get", GoFile: "internal/nodes/image/vault_get_schema.go", StructName: "ImageVaultGetNodeSchema"},
+	{NodeType: "image.vault_save", GoFile: "internal/nodes/image/vault_save_schema.go", StructName: "ImageVaultSaveNodeSchema"},
+
+	// --- vault.* ---
+	{NodeType: "vault.secret_get", GoFile: "internal/nodes/vault/secret_get_schema.go", StructName: "SecretGetNodeSchema"},
+	{NodeType: "vault.secret_save", GoFile: "internal/nodes/vault/secret_save_schema.go", StructName: "SecretSaveNodeSchema"},
 
 	// --- people.* ---
 	{NodeType: "people.save", GoFile: "internal/nodes/people/save_schema.go", StructName: "PeopleSaveNodeSchema"},

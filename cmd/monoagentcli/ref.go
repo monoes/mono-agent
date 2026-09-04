@@ -436,6 +436,58 @@ Output is always PNG. Subsequent calls reuse cached model and ORT session.`,
 		Outputs: "output_field with path to adjusted image",
 		Notes:   "brightness/contrast/saturation range -1.0 to 1.0 (0 = no change). sharpen = sigma (0 = off). blur = sigma (0 = off). gamma default 1.0.",
 	},
+	{
+		Type:     "image.vault_save",
+		Category: "image",
+		Short:    "Save an item's image into the profile's image vault",
+		Config: `{
+  "field":        "image_path",
+  "source":       "workflow",
+  "output_field": "vault_id"
+}`,
+		Inputs:  "item with image path field",
+		Outputs: "output_field with the new vault image id (e.g. img-001)",
+		Notes:   "Copies the file into ~/.monoagent/vault/, independent of the source path. source is a free-text tag.",
+	},
+	{
+		Type:     "image.vault_get",
+		Category: "image",
+		Short:    "Resolve an image vault id back into a local file path",
+		Config: `{
+  "field":        "vault_id",
+  "output_field": "image_path"
+}`,
+		Inputs:  "item with a vault image id field (e.g. img-001, with or without a leading @)",
+		Outputs: "output_field with the resolved local file path",
+	},
+
+	// ── Vault (credentials) ───────────────────────────────────────────────────
+	{
+		Type:     "vault.secret_save",
+		Category: "vault",
+		Short:    "Encrypt item field values and save them into the credential vault",
+		Config: `{
+  "kind":         "secret",
+  "name":         "my-api-key",
+  "field_keys":   "[\"api_key\"]",
+  "output_field": "vault_id"
+}`,
+		Inputs:  "item whose fields listed in field_keys hold the values to encrypt",
+		Outputs: "output_field with the new vault entry id (e.g. sec-001)",
+		Notes:   "kind: secret (arbitrary fields) or login (adds username/url). name must be unique per profile — a repeat name fails rather than overwriting. name is fixed for the whole node call, so a multi-item batch needs a per-item-unique name or it fails on the second item.",
+	},
+	{
+		Type:     "vault.secret_get",
+		Category: "vault",
+		Short:    "Decrypt a vault entry and put its fields into the item stream",
+		Config: `{
+  "name":         "my-api-key",
+  "output_field": "credential"
+}`,
+		Inputs:  "any item (name is a fixed config value, not read from the item)",
+		Outputs: "output_field with the decrypted fields object",
+		Notes:   "WARNING: puts plaintext into the item stream — persists unmasked in execution history and flows to every downstream node. Only the ~16 conventional key names in internal/workflow/redact.go (password, token, api_key, ...) get masked, and only at the MCP/REST (unless --full-outputs)/chat-tool display boundaries.",
+	},
 
 	// ── Databases ─────────────────────────────────────────────────────────────
 	{

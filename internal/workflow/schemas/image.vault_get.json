@@ -1,0 +1,22 @@
+{
+  "_generated": true,
+  "credential_platform": null,
+  "fields": [
+    {
+      "default": "vault_id",
+      "help": "Item field holding the vault image id (e.g. img-001, with or without the leading @).",
+      "key": "field",
+      "label": "Vault Id Field",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "default": "image_path",
+      "help": "Item field where the resolved local file path is written.",
+      "key": "output_field",
+      "label": "Output Field",
+      "required": false,
+      "type": "text"
+    }
+  ]
+}

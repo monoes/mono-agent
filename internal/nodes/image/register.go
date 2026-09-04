@@ -11,4 +11,6 @@ func RegisterAll(r *workflow.NodeTypeRegistry) {
 	r.Register("image.convert", func() workflow.NodeExecutor { return &ImageConvertNode{} })
 	r.Register("image.adjust", func() workflow.NodeExecutor { return &ImageAdjustNode{} })
 	r.Register("image.remove_background", func() workflow.NodeExecutor { return &RemoveBackgroundNode{} })
+	r.Register("image.vault_save", func() workflow.NodeExecutor { return &ImageVaultSaveNode{} })
+	r.Register("image.vault_get", func() workflow.NodeExecutor { return &ImageVaultGetNode{} })
 }

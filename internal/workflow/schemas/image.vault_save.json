@@ -1,0 +1,29 @@
+{
+  "_generated": true,
+  "credential_platform": null,
+  "fields": [
+    {
+      "help": "Item field holding the local image path to save. Defaults to image_path, path, file_path, or media_path (first non-empty).",
+      "key": "field",
+      "label": "Image Path Field",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "default": "workflow",
+      "help": "Free-text tag stored alongside the vault entry (e.g. gemini, upload, workflow).",
+      "key": "source",
+      "label": "Source Tag",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "default": "vault_id",
+      "help": "Item field where the new vault image id (e.g. img-001) is written.",
+      "key": "output_field",
+      "label": "Output Field",
+      "required": false,
+      "type": "text"
+    }
+  ]
+}

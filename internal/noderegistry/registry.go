@@ -23,6 +23,7 @@ import (
 	peoplenodes "github.com/monoes/mono-agent/internal/nodes/people"
 	"github.com/monoes/mono-agent/internal/nodes/service"
 	"github.com/monoes/mono-agent/internal/nodes/system"
+	vaultnodes "github.com/monoes/mono-agent/internal/nodes/vault"
 	"github.com/monoes/mono-agent/internal/workflow"
 )
 
@@ -52,6 +53,9 @@ func Build(db *sql.DB) *workflow.NodeTypeRegistry {
 
 	// Image processing nodes (Tier 1)
 	imagenodes.RegisterAll(registry)
+
+	// Credential vault nodes (vault.secret_save / vault.secret_get)
+	vaultnodes.RegisterAll(registry)
 
 	// AI crawl nodes (natural extraction runs on a local agent)
 	crawlnodes.RegisterAll(registry, cfgpkg.NewAgentGenerator(zerolog.Nop()))
