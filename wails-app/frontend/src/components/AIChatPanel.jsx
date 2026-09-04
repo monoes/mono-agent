@@ -29,6 +29,26 @@ function toDisplayMessages(history) {
     })
 }
 
+// Shared style for the three backend/runtime/provider <select>s in the
+// selector row. Without `appearance: none`, WebKitGTK draws the closed box
+// with native GTK combo-box chrome — light background, dark text — ignoring
+// the inline background/color below entirely; the custom chevron replaces
+// the native dropdown arrow that appearance:none also removes. Same SVG
+// arrow index.css already uses for .filter-select/.form-select.
+const selectStyle = {
+  background: '#020509',
+  border: '1px solid rgba(0,180,216,0.15)',
+  borderRadius: 6,
+  padding: '4px 20px 4px 8px',
+  color: '#e2e8f0',
+  fontFamily: 'var(--font-mono)', fontSize: 10,
+  outline: 'none',
+  appearance: 'none',
+  backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%2300b4d8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E\")",
+  backgroundRepeat: 'no-repeat',
+  backgroundPosition: 'right 6px center',
+}
+
 // Relative time for the past-sessions list ("5m ago", "3d ago").
 function relativeTime(iso) {
   if (!iso) return ''
@@ -655,20 +675,14 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
         display: 'flex', gap: 6,
         flexShrink: 0,
       }}>
-        {(runtimes.length > 0 || providers.length > 0) && (
+        {/* Only a real choice when both a local runtime and a configured
+            provider exist — one-option dropdowns are noise, not a control. */}
+        {(runtimes.length > 0 && providers.length > 0) && (
           <select
             value={useAgents ? 'agents' : 'providers'}
             onChange={e => setUseAgents(e.target.value === 'agents')}
             title="Chat backend"
-            style={{
-              background: '#020509',
-              border: '1px solid rgba(0,180,216,0.15)',
-              borderRadius: 6,
-              padding: '4px 6px',
-              color: '#e2e8f0',
-              fontFamily: 'var(--font-mono)', fontSize: 10,
-              outline: 'none',
-            }}
+            style={selectStyle}
           >
             {runtimes.length > 0 && <option value="agents">agents</option>}
             {providers.length > 0 && <option value="providers">providers</option>}
@@ -688,16 +702,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
               startNewSession()
             }}
             title="Locally installed AI agent (via monomind)"
-            style={{
-              flex: 1,
-              background: '#020509',
-              border: '1px solid rgba(0,180,216,0.15)',
-              borderRadius: 6,
-              padding: '4px 8px',
-              color: '#e2e8f0',
-              fontFamily: 'var(--font-mono)', fontSize: 10,
-              outline: 'none',
-            }}
+            style={{ ...selectStyle, flex: 1 }}
           >
             {runtimes.length === 0 && (
               <option value="">
@@ -712,16 +717,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
           <select
             value={selectedProvider}
             onChange={handleProviderChange}
-            style={{
-              flex: 1,
-              background: '#020509',
-              border: '1px solid rgba(0,180,216,0.15)',
-              borderRadius: 6,
-              padding: '4px 8px',
-              color: '#e2e8f0',
-              fontFamily: 'var(--font-mono)', fontSize: 10,
-              outline: 'none',
-            }}
+            style={{ ...selectStyle, flex: 1 }}
           >
             {providers.length === 0 && <option value="">No providers</option>}
             {providers.map(p => (

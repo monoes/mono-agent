@@ -1,19 +1,21 @@
 // Assistant tool access settings (GX2 contract): whether the AI chat panels
-// pass monoagentTools / allowRuns to StreamAgentChat. Both default OFF and
+// pass monoagentTools / allowRuns to StreamAgentChat. Both default ON and
 // are persisted to localStorage; toggled from Settings → "Assistant tool
-// access" and read at render/send time by AIChatPanel.
+// access" and read at render/send time by AIChatPanel. Unset (never
+// touched) reads as ON — only an explicit '0' turns either off, so a user
+// who deliberately disabled one keeps that choice across app updates.
 
 const TOOLS_KEY = 'monoagent:assistantTools'
 const RUNS_KEY = 'monoagent:assistantAllowRuns'
 
 export function getAssistantTools() {
-  try { return localStorage.getItem(TOOLS_KEY) === '1' } catch { return false }
+  try { return localStorage.getItem(TOOLS_KEY) !== '0' } catch { return true }
 }
 
 export function getAssistantAllowRuns() {
   try {
-    return localStorage.getItem(RUNS_KEY) === '1' && getAssistantTools()
-  } catch { return false }
+    return localStorage.getItem(RUNS_KEY) !== '0' && getAssistantTools()
+  } catch { return true }
 }
 
 export function setAssistantTools(on) {

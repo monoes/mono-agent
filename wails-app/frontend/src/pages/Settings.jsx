@@ -151,9 +151,9 @@ function ExportRow() {
 // ── AssistantToolsSection ────────────────────────────────────────────────────
 
 // GX2 contract: StreamAgentChat takes monoagentTools + allowRuns flags (both
-// default OFF on the backend). Persisted to localStorage and read by the AI
-// chat panels at send time; a visible indicator in the panel shows when
-// tools are active. Toggling applies to the next message sent.
+// default ON — see lib/assistantTools.js). Persisted to localStorage and
+// read by the AI chat panels at send time; a visible indicator in the panel
+// shows when tools are active. Toggling applies to the next message sent.
 function AssistantToolsSection() {
   const [tools, setTools] = useState(() => getAssistantTools())
   const [allowRuns, setAllowRuns] = useState(() => getAssistantAllowRuns())
@@ -198,9 +198,9 @@ function AssistantToolsSection() {
         </span>
       </label>
       <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--text-muted)', lineHeight: 1.6 }}>
-        Both options are off by default. When enabled, the AI assistant can read your
-        workflows, people and vault metadata; the second option additionally lets it
-        trigger workflow runs and actions from chat.
+        Both options are on by default. The AI assistant can read your workflows,
+        people and vault metadata; the second option additionally lets it trigger
+        workflow runs and actions from chat.
       </div>
     </div>
   )
@@ -282,9 +282,17 @@ function LanguageSection() {
         value={i18n.resolvedLanguage || i18n.language}
         onChange={e => i18n.changeLanguage(e.target.value)}
         style={{
-          background: 'var(--elevated)', color: 'var(--text-primary)',
+          // backgroundColor, not the `background` shorthand: a shorthand here
+          // would reset backgroundImage below to none regardless of order.
+          backgroundColor: 'var(--elevated)', color: 'var(--text-primary)',
           border: '1px solid var(--border)', borderRadius: 6,
-          padding: '6px 10px', fontFamily: 'var(--font-mono)', fontSize: 12,
+          padding: '6px 28px 6px 10px', fontFamily: 'var(--font-mono)', fontSize: 12,
+          // WebKitGTK draws <select> with native GTK chrome (light bg, dark
+          // text) unless appearance is explicitly reset — see AIChatPanel.jsx.
+          appearance: 'none',
+          backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2300b4d8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E\")",
+          backgroundRepeat: 'no-repeat',
+          backgroundPosition: 'right 10px center',
         }}
       >
         <option value="en">English</option>

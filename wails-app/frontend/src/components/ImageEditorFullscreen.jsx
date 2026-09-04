@@ -188,7 +188,13 @@ function ResizeControls({ width, setWidth, height, setHeight, fit, setFit, natW,
       </div>
 
       <span style={lbl}>Fit mode</span>
-      <select value={fit} onChange={e => setFit(e.target.value)} style={inp}>
+      <select value={fit} onChange={e => setFit(e.target.value)} style={{
+        // WebKitGTK draws <select> with native GTK chrome (light bg, dark
+        // text) unless appearance is explicitly reset — see AIChatPanel.jsx.
+        ...inp, appearance: 'none', paddingRight: 22,
+        backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%2300b4d8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E\")",
+        backgroundRepeat: 'no-repeat', backgroundPosition: 'right 6px center',
+      }}>
         {['contain','cover','fill','width','height'].map(f => (
           <option key={f} value={f}>{f} {f==='contain'?'— letterbox':f==='cover'?'— crop to fill':f==='fill'?'— stretch':''}</option>
         ))}

@@ -278,7 +278,13 @@ export default function Vault() {
             <select
               value={form.kind}
               onChange={e => setForm({ ...form, kind: e.target.value })}
-              style={{ ...inputStyle, flex: '0 0 auto' }}
+              style={{
+                // WebKitGTK draws <select> with native GTK chrome (light bg,
+                // dark text) unless appearance is explicitly reset.
+                ...inputStyle, flex: '0 0 auto', appearance: 'none', paddingRight: 22,
+                backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%2300b4d8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E\")",
+                backgroundRepeat: 'no-repeat', backgroundPosition: 'right 6px center',
+              }}
             >
               <option value="secret">Keys</option>
               <option value="login">Login</option>

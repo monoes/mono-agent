@@ -393,7 +393,15 @@ function MessagesSection({ personId, personLabel, personPlatform }) {
                 <select
                   value={connectionId}
                   onChange={e => setConnectionId(e.target.value)}
-                  style={{ fontFamily: 'var(--font-mono)', fontSize: 11, padding: '4px 6px', borderRadius: 4, background: 'var(--bg)', border: '1px solid var(--border)', color: 'var(--text)' }}
+                  style={{
+                    fontFamily: 'var(--font-mono)', fontSize: 11, padding: '4px 22px 4px 6px', borderRadius: 4,
+                    background: 'var(--bg)', border: '1px solid var(--border)', color: 'var(--text)',
+                    // WebKitGTK draws <select> with native GTK chrome (light
+                    // bg, dark text) unless appearance is explicitly reset.
+                    appearance: 'none',
+                    backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%2300b4d8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E\")",
+                    backgroundRepeat: 'no-repeat', backgroundPosition: 'right 6px center',
+                  }}
                 >
                   <option value="">Select account…</option>
                   {connections.map(c => <option key={c.id} value={c.id}>{c.label || c.account_id || c.id}</option>)}

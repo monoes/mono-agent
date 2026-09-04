@@ -456,7 +456,7 @@ function Inspector({ node, onConfigChange, onClose, onNavigate }) {
               <select
                 value={node.config?.credential_id ?? ''}
                 onChange={e => onConfigChange(node.id, 'credential_id', String(e.target.value))}
-                style={inputStyle}
+                style={selectStyle}
                 disabled={loadingCreds}
               >
                 <option value="">— None —</option>
@@ -552,7 +552,7 @@ function Inspector({ node, onConfigChange, onClose, onNavigate }) {
                     <select
                       value={val}
                       onChange={onChange}
-                      style={inputStyle}
+                      style={selectStyle}
                     >
                       {(f.options || []).map(o => <option key={o} value={o}>{o}</option>)}
                     </select>
@@ -914,6 +914,16 @@ const inputStyle = {
   padding: '6px 8px', color: '#e2e8f0',
   fontFamily: 'var(--font-mono)', fontSize: 11, outline: 'none',
   boxSizing: 'border-box', resize: 'vertical',
+}
+
+// WebKitGTK draws <select> with native GTK chrome (light bg, dark text)
+// unless appearance is explicitly reset — see AIChatPanel.jsx. Spread over
+// inputStyle at each <select> below; not merged into inputStyle itself
+// since that's shared with plain <input>/<textarea> elements too.
+const selectStyle = {
+  ...inputStyle, appearance: 'none', paddingRight: 22,
+  backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%2300b4d8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E\")",
+  backgroundRepeat: 'no-repeat', backgroundPosition: 'right 6px center',
 }
 
 function Label({ children, style }) {
