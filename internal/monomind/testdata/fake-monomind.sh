@@ -61,18 +61,37 @@ fi
 if [ "$1" = "mcp" ] && [ "$2" = "exec" ]; then
   tool=""
   fmt=""
+  params=""
   while [ $# -gt 0 ]; do
     case "$1" in
       -t) tool="$2"; shift 2 ;;
       --format) fmt="$2"; shift 2 ;;
+      -p) params="$2"; shift 2 ;;
       *) shift ;;
     esac
   done
+  # Real monomind (verified against v2.10.10) prints these two lines to
+  # stdout ahead of the JSON envelope EVEN with --format json -- included
+  # here so a regression in the client's JSON-extraction robustness (it
+  # must locate the balanced {...} object, not assume out is pure JSON)
+  # fails a test instead of only surfacing in a real environment.
+  echo "  Parameters: $params"
+  echo ""
+  echo "[OK] Tool executed in 0.42ms"
   case "$tool" in
     knowledge_ingest)
       if [ "$INGEST_FAIL" = "1" ]; then
         echo "fake-monomind: knowledge_ingest forced failure" >&2
         exit 1
+      fi
+      if [ "$INGEST_TOOL_ERROR" = "1" ]; then
+        # Real monomind's own path-traversal guard: exits 0 but reports
+        # failure INSIDE the envelope (isError, and the inner double-encoded
+        # payload's own success:false) -- reproduces a real bug where
+        # IngestDocument trusted the exit code alone and reported
+        # "indexed: true" for a document that was never actually indexed.
+        echo '{"tool":"knowledge_ingest","result":{"content":[{"type":"text","text":"{\"success\":false,\"error\":\"Absolute path must not escape the current working directory\"}"}],"isError":true},"duration":1.0}'
+        exit 0
       fi
       echo '{"tool":"knowledge_ingest","result":{"content":[{"type":"text","text":"{\"success\":true,\"filePath\":\"/fake/path\",\"chunksIndexed\":3}"}]},"duration":1.0}'
       exit 0

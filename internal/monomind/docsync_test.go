@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/monoes/mono-agent/internal/monomind"
@@ -62,6 +63,25 @@ func TestIngestDocumentPropagatesFailure(t *testing.T) {
 
 	if err := monomind.IngestDocument(context.Background(), db, "default", "/fake/path"); err == nil {
 		t.Fatal("expected error when the fake binary reports failure, got nil")
+	}
+}
+
+// TestIngestDocumentDetectsToolLevelFailure guards against a real bug: the
+// monomind subprocess can exit 0 while its own JSON envelope reports the
+// tool call failed (e.g. its path-traversal guard rejecting a path outside
+// the resolved project root) -- IngestDocument must not treat exit code 0
+// as success on its own.
+func TestIngestDocumentDetectsToolLevelFailure(t *testing.T) {
+	setFakeMonomindOnPath(t)
+	t.Setenv("INGEST_TOOL_ERROR", "1")
+	db := newDocsyncTestDB(t)
+
+	err := monomind.IngestDocument(context.Background(), db, "default", "/fake/path")
+	if err == nil {
+		t.Fatal("expected an error when the tool reports isError/success:false despite exit code 0, got nil")
+	}
+	if !strings.Contains(err.Error(), "Absolute path must not escape") {
+		t.Fatalf("expected the tool's own error message surfaced, got: %v", err)
 	}
 }
 

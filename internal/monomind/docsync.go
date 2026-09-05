@@ -12,13 +12,33 @@ import (
 	"github.com/monoes/mono-agent/internal/profiledir"
 )
 
+// ingestPayload is the inner JSON, itself encoded as a string inside
+// cliEnvelope.Result.Content[0].Text -- monomind's knowledge_ingest tool
+// can report failure this way (e.g. its own path-traversal guard rejecting
+// a path outside the resolved project root) while the subprocess itself
+// still exits 0, so Content[0].Text must be decoded and checked, not just
+// the process exit code.
+type ingestPayload struct {
+	Success bool   `json:"success"`
+	Error   string `json:"error"`
+}
+
 // IngestDocument best-effort indexes the file at path into profileID's
 // Second Brain via `monomind mcp exec -t knowledge_ingest`. Mirrors
-// SyncToKnowledgeGraph's subprocess/env-var pattern exactly — see that
-// function's comment in kgsync.go for why MONOMIND_CWD and creating the
-// profile dir first are both required, not optional. Does not pass
-// --format json: only the exit code matters here, the inner payload is
-// unused (matching SyncToKnowledgeGraph's own fire-and-forget style).
+// SyncToKnowledgeGraph's subprocess/env-var pattern for MONOMIND_CWD and
+// creating the profile dir first — see that function's comment in
+// kgsync.go.
+//
+// cmd.Dir is set to the profile's root (the parent of both vault/ and
+// .monomind/), not just MONOMIND_CWD's value — verified directly against a
+// real monomind install: knowledge_ingest's own path-traversal guard
+// rejects any path outside the subprocess's actual OS working directory
+// ("Absolute path must not escape the current working directory"), and
+// vault documents live in a sibling directory of .monomind/, not a
+// descendant of it. Without this, every ingest attempt fails inside the
+// tool while the subprocess still exits 0 -- confirmed directly: omitting
+// cmd.Dir here silently indexes nothing, ever, no matter how many
+// documents are uploaded.
 func IngestDocument(ctx context.Context, db *sql.DB, profileID, path string) error {
 	bin, err := Find()
 	if err != nil {
@@ -38,12 +58,97 @@ func IngestDocument(ctx context.Context, db *sql.DB, profileID, path string) err
 	cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(cctx, bin, "mcp", "exec", "-t", "knowledge_ingest", "-p", string(params))
+	cmd := exec.CommandContext(cctx, bin, "mcp", "exec", "-t", "knowledge_ingest", "-p", string(params), "--format", "json")
+	cmd.Dir = profiledir.Root(db, profileID)
 	cmd.Env = append(FilteredEnviron(), "MONOMIND_CWD="+profileDir)
-	if err := cmd.Run(); err != nil {
+	out, err := cmd.Output()
+	if err != nil {
 		return fmt.Errorf("monomind.IngestDocument: knowledge_ingest: %w", err)
 	}
+
+	jsonStr, err := extractJSONObject(string(out))
+	if err != nil {
+		return fmt.Errorf("monomind.IngestDocument: %w", err)
+	}
+	var envelope cliEnvelope
+	if err := json.Unmarshal([]byte(jsonStr), &envelope); err != nil {
+		return fmt.Errorf("monomind.IngestDocument: decoding CLI envelope: %w", err)
+	}
+	if len(envelope.Result.Content) == 0 {
+		return fmt.Errorf("monomind.IngestDocument: empty response content")
+	}
+
+	var payload ingestPayload
+	if err := json.Unmarshal([]byte(envelope.Result.Content[0].Text), &payload); err != nil {
+		return fmt.Errorf("monomind.IngestDocument: decoding tool payload: %w", err)
+	}
+	// Exit code 0 alone does not mean the tool succeeded -- check both the
+	// envelope-level flag and the inner payload's own success field.
+	if envelope.Result.IsError || !payload.Success {
+		if payload.Error != "" {
+			return fmt.Errorf("monomind.IngestDocument: knowledge_ingest: %s", payload.Error)
+		}
+		return fmt.Errorf("monomind.IngestDocument: knowledge_ingest reported failure with no error message")
+	}
 	return nil
+}
+
+// extractJSONObject returns the LAST balanced top-level {...} object found
+// in s, correctly skipping over braces inside quoted string values. It
+// must be the last, not the first: real monomind's own "Parameters: ..."
+// pollution line (see below) echoes the tool's own -p argument, which is
+// itself a JSON object -- taking the first balanced object would return
+// that request echo instead of the actual response envelope that follows
+// it. Real monomind prints these human-readable "Parameters: ..." /
+// "[OK] Tool executed in Nms" lines to stdout ahead of the JSON envelope
+// even with --format json (verified directly against monomind 2.10.10) --
+// this makes both IngestDocument and SearchKnowledge robust to that
+// instead of assuming stdout is pure JSON. Duplicates internal/matching's
+// own extractJSON rather than importing it: internal/matching imports this
+// package (for its agent.ask pattern), so the reverse import would cycle.
+func extractJSONObject(s string) (string, error) {
+	var lastStart, lastEnd int
+	found := false
+	inString := false
+	escaped := false
+	depth := 0
+	start := -1
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if inString {
+			switch {
+			case escaped:
+				escaped = false
+			case c == '\\':
+				escaped = true
+			case c == '"':
+				inString = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = true
+		case '{':
+			if depth == 0 {
+				start = i
+			}
+			depth++
+		case '}':
+			if depth > 0 {
+				depth--
+				if depth == 0 && start != -1 {
+					lastStart, lastEnd = start, i+1
+					found = true
+					start = -1
+				}
+			}
+		}
+	}
+	if !found {
+		return "", fmt.Errorf("no balanced JSON object found in monomind output")
+	}
+	return s[lastStart:lastEnd], nil
 }
 
 // KnowledgeResult is one matching excerpt from SearchKnowledge.
@@ -59,6 +164,7 @@ type cliEnvelope struct {
 		Content []struct {
 			Text string `json:"text"`
 		} `json:"content"`
+		IsError bool `json:"isError"`
 	} `json:"result"`
 }
 
@@ -108,8 +214,12 @@ func SearchKnowledge(ctx context.Context, db *sql.DB, profileID, query string) (
 		return nil, fmt.Errorf("monomind.SearchKnowledge: knowledge_search: %w", err)
 	}
 
+	jsonStr, err := extractJSONObject(string(out))
+	if err != nil {
+		return nil, fmt.Errorf("monomind.SearchKnowledge: %w", err)
+	}
 	var envelope cliEnvelope
-	if err := json.Unmarshal(out, &envelope); err != nil {
+	if err := json.Unmarshal([]byte(jsonStr), &envelope); err != nil {
 		return nil, fmt.Errorf("monomind.SearchKnowledge: decoding CLI envelope: %w", err)
 	}
 	if len(envelope.Result.Content) == 0 {
