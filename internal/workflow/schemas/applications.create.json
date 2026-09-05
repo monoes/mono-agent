@@ -64,14 +64,14 @@
       "type": "number"
     },
     {
-      "help": "Currency code,e.g. USD.",
+      "help": "Currency code, e.g. USD.",
       "key": "currency",
       "label": "Currency",
       "required": false,
       "type": "text"
     },
     {
-      "help": "Job kind only: e.g. full_time,contract,internship.",
+      "help": "Job kind only: e.g. full_time, contract, internship.",
       "key": "job_type",
       "label": "Job Type",
       "required": false,
@@ -86,7 +86,7 @@
     },
     {
       "default": "manual",
-      "help": "Where this application came from,e.g. manual,linkedin.",
+      "help": "Where this application came from, e.g. manual, linkedin.",
       "key": "source",
       "label": "Source",
       "required": false,

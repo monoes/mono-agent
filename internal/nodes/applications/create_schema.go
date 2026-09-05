@@ -16,10 +16,10 @@ type CreateNodeSchema struct {
 
 	CompensationMin float64 `json:"compensation_min" schema:"label=Compensation Min,type=number,help=Job kind only: minimum compensation."`
 	CompensationMax float64 `json:"compensation_max" schema:"label=Compensation Max,type=number,help=Job kind only: maximum compensation."`
-	Currency        string  `json:"currency" schema:"label=Currency,type=text,help=Currency code，e.g. USD."`
-	JobType         string  `json:"job_type" schema:"label=Job Type,type=text,help=Job kind only: e.g. full_time，contract，internship."`
+	Currency        string  `json:"currency" schema:"label=Currency,type=text,help=Currency code， e.g. USD."`
+	JobType         string  `json:"job_type" schema:"label=Job Type,type=text,help=Job kind only: e.g. full_time， contract， internship."`
 	IsRemote        bool    `json:"is_remote" schema:"label=Is Remote,type=boolean,help=Job kind only: whether the role is remote."`
-	Source          string  `json:"source" schema:"label=Source,type=text,default=manual,help=Where this application came from，e.g. manual，linkedin."`
+	Source          string  `json:"source" schema:"label=Source,type=text,default=manual,help=Where this application came from， e.g. manual， linkedin."`
 	PostedAt        string  `json:"posted_at" schema:"label=Posted At,type=text,help=Job kind only: when the job was posted."`
 
 	IssuingOrg             string  `json:"issuing_org" schema:"label=Issuing Organization,type=text,help=Tender kind only: the organization issuing the tender (required for kind=tender)."`
