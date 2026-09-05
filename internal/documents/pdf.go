@@ -28,7 +28,18 @@ func RenderPDF(ctx context.Context, html string) ([]byte, error) {
 }
 
 func renderPDFImpl(ctx context.Context, html string) ([]byte, error) {
-	launchURL, err := launcher.New().Headless(true).Launch()
+	// NoSandbox(true): this browser only ever renders locally-generated,
+	// html/template-escaped content (never navigates to a live URL — see
+	// SetDocumentContent below) and is closed within this single call, so
+	// Chrome's sandbox provides little protection here that matters, unlike
+	// internal/apply/browser.go's interactive browser, which DOES navigate
+	// to real external job-posting URLs and must keep its sandbox. Without
+	// this, launch fails outright on CI runners that restrict unprivileged
+	// user namespaces (confirmed directly: GitHub Actions' current Ubuntu
+	// runner image rejects Chrome's own sandboxed zygote process with "No
+	// usable sandbox!" even though the same code runs fine in a dev
+	// sandbox that permits it).
+	launchURL, err := launcher.New().Headless(true).NoSandbox(true).Launch()
 	if err != nil {
 		return nil, fmt.Errorf("documents.RenderPDF: launch browser: %w", err)
 	}
