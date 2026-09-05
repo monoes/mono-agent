@@ -379,3 +379,62 @@ func (s *Store) tagsFor(ctx context.Context, id string) ([]string, error) {
 	}
 	return tags, rows.Err()
 }
+
+// List returns applications for profileID matching filter, newest first.
+// A zero-value ListFilter field matches any value. Never returns nil (an
+// empty slice on no matches).
+func (s *Store) List(ctx context.Context, profileID string, filter ListFilter) ([]Application, error) {
+	query := `SELECT DISTINCT a.id FROM applications a`
+	args := []interface{}{}
+	where := []string{"a.profile_id = ?"}
+	args = append(args, profileID)
+
+	if filter.Tag != "" {
+		query += ` JOIN application_tags t ON t.application_id = a.id`
+		where = append(where, "t.tag = ?")
+		args = append(args, filter.Tag)
+	}
+	if filter.Kind != "" {
+		where = append(where, "a.kind = ?")
+		args = append(args, string(filter.Kind))
+	}
+	if filter.Status != "" {
+		where = append(where, "a.status = ?")
+		args = append(args, string(filter.Status))
+	}
+
+	query += " WHERE " + where[0]
+	for _, w := range where[1:] {
+		query += " AND " + w
+	}
+	query += " ORDER BY a.created_at DESC"
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("applications.List: %w", err)
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("applications.List: scan: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, fmt.Errorf("applications.List: rows: %w", err)
+	}
+	rows.Close()
+
+	out := make([]Application, 0, len(ids))
+	for _, id := range ids {
+		app, err := s.Get(ctx, profileID, id)
+		if err != nil {
+			return nil, fmt.Errorf("applications.List: hydrating %s: %w", id, err)
+		}
+		out = append(out, *app)
+	}
+	return out, nil
+}

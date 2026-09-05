@@ -311,3 +311,70 @@ func TestStoreGetScopedToProfile(t *testing.T) {
 		t.Fatalf("expected ErrNotFound reading another profile's application, got %v", err)
 	}
 }
+
+func TestStoreListFilters(t *testing.T) {
+	db := newTestDB(t)
+	store := applications.NewStore(db.DB)
+	ctx := context.Background()
+
+	job := createTestJob(t, store)
+	if err := store.AddTag(ctx, "default", job.ID, "urgent"); err != nil {
+		t.Fatalf("AddTag: %v", err)
+	}
+	tender := &applications.Application{
+		ProfileID: "default", Kind: applications.KindTender,
+		Tender: &applications.TenderDetails{IssuingOrg: "Ministry", URL: "https://t.example/1", SubmissionDeadline: "2026-12-01"},
+	}
+	if err := store.Create(ctx, tender); err != nil {
+		t.Fatalf("Create tender: %v", err)
+	}
+	if err := store.SetStatus(ctx, "default", tender.ID, applications.StatusApplied, applications.ActorUser, ""); err != nil {
+		t.Fatalf("SetStatus: %v", err)
+	}
+
+	all, err := store.List(ctx, "default", applications.ListFilter{})
+	if err != nil {
+		t.Fatalf("List (no filter): %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("expected 2 applications, got %d", len(all))
+	}
+
+	jobsOnly, err := store.List(ctx, "default", applications.ListFilter{Kind: applications.KindJob})
+	if err != nil {
+		t.Fatalf("List (kind=job): %v", err)
+	}
+	if len(jobsOnly) != 1 || jobsOnly[0].ID != job.ID {
+		t.Fatalf("expected only the job application, got %v", jobsOnly)
+	}
+
+	appliedOnly, err := store.List(ctx, "default", applications.ListFilter{Status: applications.StatusApplied})
+	if err != nil {
+		t.Fatalf("List (status=applied): %v", err)
+	}
+	if len(appliedOnly) != 1 || appliedOnly[0].ID != tender.ID {
+		t.Fatalf("expected only the applied tender, got %v", appliedOnly)
+	}
+
+	taggedOnly, err := store.List(ctx, "default", applications.ListFilter{Tag: "urgent"})
+	if err != nil {
+		t.Fatalf("List (tag=urgent): %v", err)
+	}
+	if len(taggedOnly) != 1 || taggedOnly[0].ID != job.ID {
+		t.Fatalf("expected only the urgent-tagged job, got %v", taggedOnly)
+	}
+}
+
+func TestStoreListScopedToProfile(t *testing.T) {
+	db := newTestDB(t)
+	store := applications.NewStore(db.DB)
+	createTestJob(t, store)
+
+	other, err := store.List(context.Background(), "other-profile", applications.ListFilter{})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(other) != 0 {
+		t.Fatalf("expected no applications for other-profile, got %d", len(other))
+	}
+}
