@@ -274,8 +274,25 @@ func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResu
 				if ev.SessionID != "" {
 					res.SessionID = ev.SessionID
 				}
+			case EventAssistant:
+				// Fallback source for ResultText: verified directly against
+				// the currently-installed real monomind binary that its
+				// "result" event carries no "text" field at all for a plain
+				// conversational turn (only subtype/is_error/stop_reason/
+				// tokens/cost) -- only "assistant" events do. Without this,
+				// ResultText silently comes back empty and every caller
+				// that parses it (chat, applications.evaluate) fails with a
+				// confusing "no JSON object found in response (response
+				// was: )". Keep the latest assistant text; EventResult
+				// below still wins if a future/other protocol version does
+				// populate its own text.
+				if ev.Text != "" {
+					res.ResultText = ev.Text
+				}
 			case EventResult:
-				res.ResultText = ev.Text
+				if ev.Text != "" {
+					res.ResultText = ev.Text
+				}
 			case EventError:
 				res.Err = &ProtocolError{Code: ev.Code, Message: ev.ErrMessage, Fatal: ev.Fatal}
 			case EventDone:

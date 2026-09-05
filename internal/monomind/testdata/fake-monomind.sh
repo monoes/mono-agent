@@ -20,6 +20,22 @@ if [ "$1" = "agent" ] && [ "$2" = "scan" ]; then
   exit 0
 fi
 
+if [ "$1" = "agent" ] && [ "$2" = "exec" ] && [ "$FAKE_MODE" = "no_result_text" ]; then
+  # Reproduces the REAL currently-installed monomind binary's actual
+  # protocol shape for a plain conversational turn (no tool calls),
+  # verified directly: its own "result" event carries no "text" field at
+  # all -- only the "assistant" event does. Every other scenario in this
+  # script (below) still puts text on both, which is why this exact
+  # mismatch went uncaught until a real end-to-end run surfaced it.
+  echo '{"v":1,"type":"start","runtime":"claude","cwd":"/app","pid":4213}'
+  echo '{"v":1,"type":"session","session_id":"th_fake_no_result_text"}'
+  echo '{"v":1,"type":"assistant","text":"{\"ok\":true}"}'
+  echo '{"v":1,"type":"usage","input_tokens":2,"output_tokens":9,"cost_usd":0.001}'
+  echo '{"v":1,"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","input_tokens":2,"output_tokens":9,"cost_usd":0.001}'
+  echo '{"v":1,"type":"done","exit_code":0}'
+  exit 0
+fi
+
 if [ "$1" = "agent" ] && [ "$2" = "exec" ]; then
   # Drain flags; the prompt value is irrelevant to the script.
   echo '{"v":1,"type":"start","runtime":"claude","cwd":"/app","pid":4212}'

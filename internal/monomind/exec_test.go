@@ -261,6 +261,34 @@ func TestExecCancelGroupKill(t *testing.T) {
 
 // TestExecErrorTurnMapsProtocolError checks fatal error turns surface as
 // TurnResult.Err with the protocol error code.
+// TestExecCapturesTextFromAssistantEventWhenResultHasNone guards a real
+// bug found via an actual end-to-end run against the currently-installed
+// monomind binary, not caught by any existing fixture: its own "result"
+// event carries no "text" field at all for a plain conversational turn
+// (no tool calls) -- only the "assistant" event does. Exec must not
+// return an empty ResultText just because EventResult itself is silent.
+func TestExecCapturesTextFromAssistantEventWhenResultHasNone(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake monomind is a shell script")
+	}
+	t.Setenv("FAKE_MODE", "no_result_text")
+
+	res, err := Exec(context.Background(), ExecOptions{
+		Bin:     fakeBin(t, "fake-monomind.sh"),
+		Runtime: "claude",
+		Prompt:  "reply with json",
+	}, func(ev Event) {})
+	if err != nil {
+		t.Fatalf("exec: %v", err)
+	}
+	if res.Err != nil {
+		t.Fatalf("turn error: %+v", res.Err)
+	}
+	if res.ResultText != `{"ok":true}` {
+		t.Fatalf("ResultText = %q, want the assistant event's text (the result event carries none in this scenario)", res.ResultText)
+	}
+}
+
 func TestExecErrorTurnMapsProtocolError(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake monomind is a shell script")
