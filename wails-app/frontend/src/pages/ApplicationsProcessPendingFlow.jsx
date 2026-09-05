@@ -47,6 +47,15 @@ export default function ApplicationsProcessPendingFlow({ pendingApplications, on
   const [applyResult, setApplyResult] = useState(null)
   const [summary, setSummary] = useState({ applied: 0, skipped: 0, notInterested: 0, sent: 0 })
   const [error, setError] = useState(null)
+  // Guards Apply/Skip/Not Interested/Send Now/Next against a double-click
+  // firing the same mutating call twice before React re-renders the
+  // buttons away -- e.g. two concurrent ApplyToApplication calls would
+  // open two duplicate browser windows (OpenForApplication is not
+  // idempotent), and two concurrent SendApplication calls can race
+  // Store.SetStatus's read-then-write (no compare-and-swap), surfacing a
+  // confusing "invalid transition" error right after a successful send.
+  // Mirrors Sidebar.jsx's movingProfileID guard for the same class of bug.
+  const [busy, setBusy] = useState(false)
 
   const current = pendingApplications[index]
 
@@ -90,6 +99,7 @@ export default function ApplicationsProcessPendingFlow({ pendingApplications, on
   }
 
   const applyCurrent = async (item) => {
+    setBusy(true)
     setStage('applying')
     try {
       const cvData = cvPath ? await WailsApp.ReadJSONFile(cvPath) : {}
@@ -100,16 +110,21 @@ export default function ApplicationsProcessPendingFlow({ pendingApplications, on
       finishItem({ applied: summary.applied + 1 })
     } catch (e) {
       setError(String(e))
+    } finally {
+      setBusy(false)
     }
   }
 
   const decide = (decision) => {
+    if (busy) return
     const next = computeNextStep({ mode, stage: 'evaluated', decision })
     if (next === 'apply') applyCurrent(current)
     else if (next === 'cancel') {
+      setBusy(true)
       WailsApp.SetApplicationStatus(current.id, 'cancelled', '')
         .then(() => { finishItem({ notInterested: summary.notInterested + 1 }); advance() })
         .catch(e => setError(String(e)))
+        .finally(() => setBusy(false))
     } else if (next === 'next') {
       finishItem({ skipped: summary.skipped + 1 })
       advance()
@@ -117,11 +132,15 @@ export default function ApplicationsProcessPendingFlow({ pendingApplications, on
   }
 
   const sendCurrent = async () => {
+    if (busy) return
+    setBusy(true)
     try {
       await WailsApp.SendApplication(current.id, '')
       finishItem({ sent: summary.sent + 1 })
     } catch (e) {
       setError(String(e))
+    } finally {
+      setBusy(false)
     }
     advance()
   }
@@ -161,9 +180,9 @@ export default function ApplicationsProcessPendingFlow({ pendingApplications, on
             )}
             {stage === 'evaluated' && mode === 'confirm' && (
               <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-                <button style={btnStyle} onClick={() => decide('apply')}>Apply</button>
-                <button style={btnStyle} onClick={() => decide('skip')}>Skip</button>
-                <button style={{ ...btnStyle, color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)' }} onClick={() => decide('not-interested')}>Not Interested</button>
+                <button style={btnStyle} disabled={busy} onClick={() => decide('apply')}>Apply</button>
+                <button style={btnStyle} disabled={busy} onClick={() => decide('skip')}>Skip</button>
+                <button style={{ ...btnStyle, color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)' }} disabled={busy} onClick={() => decide('not-interested')}>Not Interested</button>
               </div>
             )}
             {stage === 'applying' && <div style={{ marginTop: 8 }}>Preparing documents and opening browser…</div>}
@@ -171,8 +190,8 @@ export default function ApplicationsProcessPendingFlow({ pendingApplications, on
               <div style={{ marginTop: 12 }}>
                 <div style={{ color: '#10b981' }}>Ready to send.</div>
                 <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                  <button style={{ ...btnStyle, background: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.4)', color: '#10b981' }} onClick={sendCurrent}>Send Now</button>
-                  <button style={btnStyle} onClick={advance}>Next (send later)</button>
+                  <button style={{ ...btnStyle, background: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.4)', color: '#10b981' }} disabled={busy} onClick={sendCurrent}>Send Now</button>
+                  <button style={btnStyle} disabled={busy} onClick={advance}>Next (send later)</button>
                 </div>
               </div>
             )}
