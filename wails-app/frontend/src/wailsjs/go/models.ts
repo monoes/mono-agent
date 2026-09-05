@@ -37,6 +37,126 @@ export namespace connections {
 
 export namespace main {
 	
+	export class StatusLogEntry {
+	    from_status: string;
+	    to_status: string;
+	    actor: string;
+	    note: string;
+	    created_at: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new StatusLogEntry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.from_status = source["from_status"];
+	        this.to_status = source["to_status"];
+	        this.actor = source["actor"];
+	        this.note = source["note"];
+	        this.created_at = source["created_at"];
+	    }
+	}
+	export class ApplicationDetail {
+	    id: string;
+	    kind: string;
+	    status: string;
+	    title: string;
+	    company: string;
+	    url: string;
+	    updated_at: string;
+	    tags: string[];
+	    description: string;
+	    location: string;
+	    job_type: string;
+	    issuing_org: string;
+	    submission_deadline: string;
+	    status_log: StatusLogEntry[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ApplicationDetail(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.kind = source["kind"];
+	        this.status = source["status"];
+	        this.title = source["title"];
+	        this.company = source["company"];
+	        this.url = source["url"];
+	        this.updated_at = source["updated_at"];
+	        this.tags = source["tags"];
+	        this.description = source["description"];
+	        this.location = source["location"];
+	        this.job_type = source["job_type"];
+	        this.issuing_org = source["issuing_org"];
+	        this.submission_deadline = source["submission_deadline"];
+	        this.status_log = this.convertValues(source["status_log"], StatusLogEntry);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class ApplicationSummary {
+	    id: string;
+	    kind: string;
+	    status: string;
+	    title: string;
+	    company: string;
+	    url: string;
+	    updated_at: string;
+	    tags: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ApplicationSummary(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.kind = source["kind"];
+	        this.status = source["status"];
+	        this.title = source["title"];
+	        this.company = source["company"];
+	        this.url = source["url"];
+	        this.updated_at = source["updated_at"];
+	        this.tags = source["tags"];
+	    }
+	}
+	export class ApplyResult {
+	    cv_html_document_id: string;
+	    cv_pdf_document_id: string;
+	    cover_letter_html_document_id: string;
+	    cover_letter_pdf_document_id: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ApplyResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.cv_html_document_id = source["cv_html_document_id"];
+	        this.cv_pdf_document_id = source["cv_pdf_document_id"];
+	        this.cover_letter_html_document_id = source["cover_letter_html_document_id"];
+	        this.cover_letter_pdf_document_id = source["cover_letter_pdf_document_id"];
+	    }
+	}
 	export class CredentialOption {
 	    id: string;
 	    label: string;
@@ -145,6 +265,75 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class DiscoveredApplication {
+	    id: string;
+	    title: string;
+	    company: string;
+	    url: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new DiscoveredApplication(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.title = source["title"];
+	        this.company = source["company"];
+	        this.url = source["url"];
+	    }
+	}
+	export class DiscoverResult {
+	    imported: number;
+	    skipped: number;
+	    failed: number;
+	    applications: DiscoveredApplication[];
+	
+	    static createFrom(source: any = {}) {
+	        return new DiscoverResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.imported = source["imported"];
+	        this.skipped = source["skipped"];
+	        this.failed = source["failed"];
+	        this.applications = this.convertValues(source["applications"], DiscoveredApplication);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	export class EvaluateBatchResult {
+	    evaluated: number;
+	    verdicts: Record<string, number>;
+	
+	    static createFrom(source: any = {}) {
+	        return new EvaluateBatchResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.evaluated = source["evaluated"];
+	        this.verdicts = source["verdicts"];
+	    }
+	}
 	export class ExportResult {
 	    output_dir: string;
 	    people_count: number;
@@ -159,6 +348,36 @@ export namespace main {
 	        this.output_dir = source["output_dir"];
 	        this.people_count = source["people_count"];
 	        this.cancelled = source["cancelled"];
+	    }
+	}
+	export class FitVerdictInfo {
+	    eligibility_pass: boolean;
+	    language_pass: boolean;
+	    location_pass: boolean;
+	    technical_score: number;
+	    experience_score: number;
+	    behavioral_score: number;
+	    career_score: number;
+	    overall_score: number;
+	    verdict: string;
+	    rationale: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new FitVerdictInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.eligibility_pass = source["eligibility_pass"];
+	        this.language_pass = source["language_pass"];
+	        this.location_pass = source["location_pass"];
+	        this.technical_score = source["technical_score"];
+	        this.experience_score = source["experience_score"];
+	        this.behavioral_score = source["behavioral_score"];
+	        this.career_score = source["career_score"];
+	        this.overall_score = source["overall_score"];
+	        this.verdict = source["verdict"];
+	        this.rationale = source["rationale"];
 	    }
 	}
 	export class HILItem {
@@ -720,6 +939,7 @@ export namespace main {
 	        this.created_at = source["created_at"];
 	    }
 	}
+	
 	export class TagInfo {
 	    id: string;
 	    name: string;

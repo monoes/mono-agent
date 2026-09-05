@@ -5,6 +5,8 @@ import {main} from '../models';
 import {connections} from '../models';
 import {workflow} from '../models';
 
+export function AddApplication(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string):Promise<string>;
+
 export function AddOrgRole(arg1:string,arg2:string):Promise<string>;
 
 export function AddPersonMessage(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string,arg7:string):Promise<void>;
@@ -20,6 +22,8 @@ export function AddVaultImage(arg1:string,arg2:string):Promise<Record<string, an
 export function AnswerOrgQuestion(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function AppSelfUpdate():Promise<main.UpdateResult>;
+
+export function ApplyToApplication(arg1:string,arg2:Record<string, any>,arg3:Record<string, any>):Promise<main.ApplyResult>;
 
 export function ApproveHIL(arg1:string,arg2:string):Promise<void>;
 
@@ -65,6 +69,12 @@ export function DeleteWorkflow(arg1:string):Promise<void>;
 
 export function DenyOrgAction(arg1:string,arg2:string,arg3:string):Promise<string>;
 
+export function DiscoverJobs(arg1:string,arg2:string,arg3:string,arg4:number):Promise<main.DiscoverResult>;
+
+export function EvaluateApplication(arg1:string,arg2:string):Promise<main.FitVerdictInfo>;
+
+export function EvaluatePendingApplications(arg1:string,arg2:number):Promise<main.EvaluateBatchResult>;
+
 export function ExportData():Promise<main.ExportResult>;
 
 export function ExportVaultAll():Promise<main.VaultExportResult>;
@@ -86,6 +96,10 @@ export function GetActiveProfile():Promise<main.ProfileInfo>;
 export function GetAllPersonMessages(arg1:number):Promise<Array<storage.PersonMessageWithPerson>>;
 
 export function GetAllTags():Promise<Array<main.TagInfo>>;
+
+export function GetApplication(arg1:string):Promise<main.ApplicationDetail>;
+
+export function GetApplications(arg1:string,arg2:string,arg3:string):Promise<Array<main.ApplicationSummary>>;
 
 export function GetChatSessionMessages(arg1:string,arg2:string):Promise<string>;
 
@@ -179,6 +193,8 @@ export function GetWorkflowExecutions(arg1:string,arg2:number):Promise<Array<mai
 
 export function GetWorkflowNodeTypes():Promise<Record<string, any>>;
 
+export function HasGeneratedDocuments(arg1:string):Promise<boolean>;
+
 export function ImportVaultAll(arg1:string,arg2:string):Promise<main.VaultImportResult>;
 
 export function ImportWorkflow(arg1:string):Promise<main.WorkflowImportResult>;
@@ -217,6 +233,8 @@ export function LoginSocial(arg1:string):Promise<string>;
 
 export function MoveProfileFolder(arg1:string,arg2:string):Promise<void>;
 
+export function OpenJSONFilePicker(arg1:string):Promise<string>;
+
 export function OpenURL(arg1:string):Promise<void>;
 
 export function OpenVaultFilePicker():Promise<string>;
@@ -224,6 +242,8 @@ export function OpenVaultFilePicker():Promise<string>;
 export function OpenVaultImportFilePicker():Promise<string>;
 
 export function PromoteRoleToRoot(arg1:string,arg2:string):Promise<string>;
+
+export function ReadJSONFile(arg1:string):Promise<Record<string, any>>;
 
 export function RejectDraftPersonMessage(arg1:string):Promise<void>;
 
@@ -263,7 +283,11 @@ export function SearchVaultImages(arg1:string):Promise<Array<Record<string, any>
 
 export function SelfUpdate():Promise<main.UpdateResult>;
 
+export function SendApplication(arg1:string,arg2:string):Promise<void>;
+
 export function SendDraftPersonMessage(arg1:string):Promise<storage.PersonMessage>;
+
+export function SetApplicationStatus(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function SetOAuthCredentials(arg1:string,arg2:string,arg3:string):Promise<string>;
 
@@ -286,6 +310,8 @@ export function StreamAgentChat(arg1:string,arg2:string,arg3:string,arg4:string,
 export function StreamOrgEvents(arg1:string):Promise<string>;
 
 export function SwitchProfile(arg1:string):Promise<void>;
+
+export function TagApplication(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function TestAIProvider(arg1:string):Promise<string>;
 

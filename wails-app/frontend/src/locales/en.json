@@ -11,6 +11,7 @@
       "communications": "Communications",
       "vault": "Images",
       "secretsVault": "Vault",
+      "applications": "Applications",
       "logs": "Live Logs",
       "settings": "Settings"
     },
