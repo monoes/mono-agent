@@ -42,16 +42,33 @@ func newProfileUploadDocumentCmd(cfg *globalConfig) *cobra.Command {
 					storedPath = d.Path
 				}
 			}
+
+			indexed := true
+			indexErrMsg := ""
 			if ingestErr := monomind.IngestDocument(cmd.Context(), db.DB, cfg.ProfileID, storedPath); ingestErr != nil {
+				indexed = false
+				indexErrMsg = ingestErr.Error()
 				fmt.Fprintf(cmd.ErrOrStderr(), "warning: document uploaded but indexing failed: %v\n", ingestErr)
+			}
+			if setErr := vault.SetDocumentIndexed(ctx, db.DB, cfg.ProfileID, id, indexed, indexErrMsg); setErr != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not record indexing status: %v\n", setErr)
 			}
 
 			if cfg.JSONOutput {
 				enc := json.NewEncoder(cmd.OutOrStdout())
 				enc.SetIndent("", "  ")
-				return enc.Encode(map[string]string{"id": id})
+				out := map[string]interface{}{"id": id, "indexed": indexed}
+				if indexErrMsg != "" {
+					out["index_error"] = indexErrMsg
+				}
+				return enc.Encode(out)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Uploaded %q as %s.\n", args[0], id)
+			if indexed {
+				fmt.Fprintln(cmd.OutOrStdout(), "Indexed for knowledge search.")
+			} else {
+				fmt.Fprintf(cmd.OutOrStdout(), "Not indexed — %s\n", indexErrMsg)
+			}
 			return nil
 		},
 	}

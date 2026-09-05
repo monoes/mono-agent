@@ -18,6 +18,8 @@ type DocumentEntry struct {
 	Source        string
 	ApplicationID string
 	CreatedAt     string
+	Indexed       bool
+	IndexError    string
 }
 
 // RegisterDocument copies src into the profile's vault (under a
@@ -113,7 +115,7 @@ func RegisterDocument(ctx context.Context, db *sql.DB, src, source string, appli
 // ListDocuments returns profileID's uploaded documents, newest first.
 func ListDocuments(ctx context.Context, db *sql.DB, profileID string) ([]DocumentEntry, error) {
 	rows, err := db.QueryContext(ctx,
-		`SELECT id, path, filename, size_bytes, source, COALESCE(application_id, ''), created_at
+		`SELECT id, path, filename, size_bytes, source, COALESCE(application_id, ''), created_at, indexed, COALESCE(index_error, '')
 		 FROM vault_documents WHERE profile_id = ? ORDER BY seq DESC`, profileID)
 	if err != nil {
 		return nil, fmt.Errorf("vault.ListDocuments: %w", err)
@@ -122,12 +124,36 @@ func ListDocuments(ctx context.Context, db *sql.DB, profileID string) ([]Documen
 	docs := []DocumentEntry{}
 	for rows.Next() {
 		var d DocumentEntry
-		if err := rows.Scan(&d.ID, &d.Path, &d.Filename, &d.SizeBytes, &d.Source, &d.ApplicationID, &d.CreatedAt); err != nil {
+		if err := rows.Scan(&d.ID, &d.Path, &d.Filename, &d.SizeBytes, &d.Source, &d.ApplicationID, &d.CreatedAt, &d.Indexed, &d.IndexError); err != nil {
 			return nil, fmt.Errorf("vault.ListDocuments: scan: %w", err)
 		}
 		docs = append(docs, d)
 	}
 	return docs, rows.Err()
+}
+
+// SetDocumentIndexed records the outcome of a knowledge_ingest attempt for
+// id, scoped to profileID. indexErr should be empty on success.
+func SetDocumentIndexed(ctx context.Context, db *sql.DB, profileID, id string, indexed bool, indexErr string) error {
+	var errVal interface{}
+	if indexErr != "" {
+		errVal = indexErr
+	}
+	res, err := db.ExecContext(ctx,
+		`UPDATE vault_documents SET indexed = ?, index_error = ? WHERE id = ? AND profile_id = ?`,
+		indexed, errVal, id, profileID,
+	)
+	if err != nil {
+		return fmt.Errorf("vault.SetDocumentIndexed: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("vault.SetDocumentIndexed: rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("vault.SetDocumentIndexed: id %q not found", id)
+	}
+	return nil
 }
 
 // DeleteDocument removes id's vault_documents row and its file, scoped to

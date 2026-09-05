@@ -67,6 +67,65 @@ func TestProfileUploadListDeleteDocument(t *testing.T) {
 	}
 }
 
+func TestProfileUploadDocumentRecordsIndexedStatus(t *testing.T) {
+	setFakeMonomindOnPathCLI(t)
+	dbPath := newProfileDocsCLITestDB(t)
+
+	docPath := filepath.Join(t.TempDir(), "resume.txt")
+	if err := os.WriteFile(docPath, []byte("content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	uploadOut, err := runProfileCmd(t, dbPath, "upload-document", docPath)
+	if err != nil {
+		t.Fatalf("upload-document: %v (%s)", err, uploadOut)
+	}
+	if !strings.Contains(uploadOut, `"indexed": true`) {
+		t.Fatalf("expected indexed:true in output, got: %s", uploadOut)
+	}
+
+	listOut, err := runProfileCmd(t, dbPath, "documents", "list")
+	if err != nil {
+		t.Fatalf("documents list: %v", err)
+	}
+	if !strings.Contains(listOut, `"Indexed": true`) {
+		t.Fatalf("expected Indexed:true in list output, got: %s", listOut)
+	}
+}
+
+func TestProfileUploadDocumentRecordsIndexingFailure(t *testing.T) {
+	setFakeMonomindOnPathCLI(t)
+	t.Setenv("INGEST_FAIL", "1")
+	dbPath := newProfileDocsCLITestDB(t)
+
+	docPath := filepath.Join(t.TempDir(), "resume.txt")
+	if err := os.WriteFile(docPath, []byte("content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	uploadOut, err := runProfileCmd(t, dbPath, "upload-document", docPath)
+	if err != nil {
+		t.Fatalf("upload-document should still succeed even when indexing fails: %v (%s)", err, uploadOut)
+	}
+	if !strings.Contains(uploadOut, `"indexed": false`) {
+		t.Fatalf("expected indexed:false in output, got: %s", uploadOut)
+	}
+	if !strings.Contains(uploadOut, `"index_error"`) {
+		t.Fatalf("expected index_error in output, got: %s", uploadOut)
+	}
+
+	listOut, err := runProfileCmd(t, dbPath, "documents", "list")
+	if err != nil {
+		t.Fatalf("documents list: %v", err)
+	}
+	if !strings.Contains(listOut, `"Indexed": false`) {
+		t.Fatalf("expected Indexed:false in list output, got: %s", listOut)
+	}
+	if !strings.Contains(listOut, `"IndexError"`) {
+		t.Fatalf("expected IndexError in list output, got: %s", listOut)
+	}
+}
+
 func TestProfileSearchKnowledge(t *testing.T) {
 	setFakeMonomindOnPathCLI(t)
 	dbPath := newProfileDocsCLITestDB(t)
