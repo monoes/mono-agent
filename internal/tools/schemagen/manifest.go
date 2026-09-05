@@ -125,4 +125,7 @@ var Manifest = []ManifestEntry{
 	{NodeType: "applications.set_status", GoFile: "internal/nodes/applications/set_status_schema.go", StructName: "SetStatusNodeSchema"},
 	{NodeType: "applications.tag", GoFile: "internal/nodes/applications/tag_schema.go", StructName: "TagNodeSchema"},
 	{NodeType: "applications.list", GoFile: "internal/nodes/applications/list_schema.go", StructName: "ListNodeSchema"},
+
+	// --- discovery.* ---
+	{NodeType: "discovery.search_jobs", GoFile: "internal/nodes/discovery/search_jobs_schema.go", StructName: "SearchJobsNodeSchema"},
 }
