@@ -18,6 +18,8 @@ import NodeRunner from './pages/NodeRunner.jsx'
 import SettingsPage from './pages/Settings.jsx'
 import ImageVault from './pages/ImageVault.jsx'
 import Vault from './pages/Vault.jsx'
+import Applications from './pages/Applications.jsx'
+import Documents from './pages/Documents.jsx'
 import { api, onLogEntry, onOrgDesignUpdated, subscribeEvent } from './services/api.js'
 
 export default function App() {
@@ -181,6 +183,8 @@ export default function App() {
     connections: <Connections onRefresh={refreshStats} />,
     vault: <ImageVault />,
     secretsVault: <Vault />,
+    applications: <Applications />,
+    documents: <Documents />,
     ai: <Agents onOpenChat={openGlobalChat} />,
     orgs: <Orgs isActive={activePage === 'orgs'} onNavigate={navigate} pendingSelectOrgName={pendingOrgSelect} onConsumePendingSelect={() => setPendingOrgSelect(null)} />,
     logs:      <Logs logs={logs} onClear={() => { api.clearLogs(); setLogs([]) }} onRefresh={refreshLogs} />,

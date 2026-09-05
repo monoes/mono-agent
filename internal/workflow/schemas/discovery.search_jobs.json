@@ -1,0 +1,49 @@
+{
+  "_generated": true,
+  "credential_platform": null,
+  "fields": [
+    {
+      "help": "Job search keywords, e.g. 'backend engineer'.",
+      "key": "keywords",
+      "label": "Keywords",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "help": "Job location filter.",
+      "key": "location",
+      "label": "Location",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "default": "linkedin",
+      "help": "Which job board to search.",
+      "key": "source",
+      "label": "Source",
+      "options": [
+        "linkedin",
+        "arbeitnow",
+        "jobicy"
+      ],
+      "required": false,
+      "type": "select"
+    },
+    {
+      "default": 25,
+      "help": "Maximum results to import (capped at 100).",
+      "key": "limit",
+      "label": "Limit",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "default": "default",
+      "help": "Which profile owns the imported applications.",
+      "key": "profile_id",
+      "label": "Profile ID",
+      "required": false,
+      "type": "text"
+    }
+  ]
+}

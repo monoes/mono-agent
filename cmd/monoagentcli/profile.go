@@ -27,6 +27,9 @@ func newProfileCmd(cfg *globalConfig) *cobra.Command {
 		newProfileCreateCmd(cfg),
 		newProfileSwitchCmd(cfg),
 		newProfileCurrentCmd(cfg),
+		newProfileUploadDocumentCmd(cfg),
+		newProfileDocumentsCmd(cfg),
+		newProfileSearchKnowledgeCmd(cfg),
 	)
 	return cmd
 }

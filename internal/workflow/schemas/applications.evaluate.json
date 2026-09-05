@@ -1,0 +1,29 @@
+{
+  "_generated": true,
+  "credential_platform": null,
+  "fields": [
+    {
+      "help": "The job application to score.",
+      "key": "application_id",
+      "label": "Application ID",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "default": "claude",
+      "help": "Local agent runtime to use.",
+      "key": "runtime",
+      "label": "Runtime",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "default": "default",
+      "help": "Which profile owns this application.",
+      "key": "profile_id",
+      "label": "Profile ID",
+      "required": false,
+      "type": "text"
+    }
+  ]
+}

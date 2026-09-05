@@ -1,0 +1,47 @@
+{
+  "_generated": true,
+  "credential_platform": null,
+  "fields": [
+    {
+      "help": "Leave blank to include both kinds.",
+      "key": "kind",
+      "label": "Kind Filter",
+      "options": [
+        "",
+        "job",
+        "tender"
+      ],
+      "required": false,
+      "type": "select"
+    },
+    {
+      "help": "Leave blank to include all statuses.",
+      "key": "status",
+      "label": "Status Filter",
+      "options": [
+        "",
+        "pending",
+        "applied",
+        "rejected",
+        "cancelled"
+      ],
+      "required": false,
+      "type": "select"
+    },
+    {
+      "help": "Leave blank to include all tags.",
+      "key": "tag",
+      "label": "Tag Filter",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "default": "default",
+      "help": "Which profile's applications to list.",
+      "key": "profile_id",
+      "label": "Profile ID",
+      "required": false,
+      "type": "text"
+    }
+  ]
+}

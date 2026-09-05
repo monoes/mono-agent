@@ -388,6 +388,9 @@ func (mt *MonoagentTools) ToolDefs() []ai.ToolDef {
 		def("get_vault_item_path", "Resolve a vault item id to its filesystem path", map[string]interface{}{
 			"vault_id": strParam("Vault item id, e.g. img-001"),
 		}, []string{"vault_id"}),
+		def("search_profile_documents", "Search the user's uploaded profile documents (résumé, cover letters, etc.) for relevant content.", map[string]interface{}{
+			"query": strParam("Search query"),
+		}, []string{"query"}),
 
 		// Credentials vault — metadata/reference only, never returns values
 		def("list_secrets", "List credential entries by name and metadata only. Values are never returned by any tool.", nil, nil),
@@ -543,6 +546,8 @@ func (mt *MonoagentTools) ExecuteContext(ctx context.Context, name string, args 
 		return mt.listVaultItems(args)
 	case "get_vault_item_path":
 		return mt.getVaultItemPath(args)
+	case "search_profile_documents":
+		return mt.searchProfileDocuments(args)
 	case "list_secrets":
 		return mt.listSecrets(args)
 	case "add_secret":
@@ -1015,6 +1020,23 @@ func (mt *MonoagentTools) getVaultItemPath(args string) (string, error) {
 		return "", err
 	}
 	return marshalJSON(map[string]interface{}{"vault_id": a.VaultID, "path": path})
+}
+
+func (mt *MonoagentTools) searchProfileDocuments(args string) (string, error) {
+	var params struct {
+		Query string `json:"query"`
+	}
+	if err := json.Unmarshal([]byte(args), &params); err != nil {
+		return "", fmt.Errorf("parsing args: %w", err)
+	}
+	if params.Query == "" {
+		return "", fmt.Errorf("query is required")
+	}
+	results, err := monomind.SearchKnowledge(context.Background(), mt.db, mt.ProfileID(), params.Query)
+	if err != nil {
+		return "", fmt.Errorf("searching profile documents: %w", err)
+	}
+	return marshalJSON(results)
 }
 
 // ---------------------------------------------------------------------------

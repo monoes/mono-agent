@@ -1,0 +1,28 @@
+<!-- Hand-built fixture matching LinkedIn's documented guest job-search
+     result markup (see docs/mastermind/specs/2026-09-05-discovery-design.md
+     "Known Limitation" section — this validates parsing logic against this
+     documented shape, not live-site accuracy). -->
+<ul>
+  <li>
+    <div class="base-card">
+      <h3 class="base-search-card__title">Senior Backend Engineer</h3>
+      <h4 class="base-search-card__subtitle">Acme Corp</h4>
+      <span class="job-search-card__location">Berlin, Germany</span>
+      <a class="base-card__full-link" href="https://www.linkedin.com/jobs/view/1111?trk=abc">Link</a>
+      <time class="job-search-card__listdate">2 days ago</time>
+    </div>
+  </li>
+  <li>
+    <div class="base-card">
+      <h3 class="base-search-card__title">Platform Engineer</h3>
+      <h4 class="base-search-card__subtitle">Beta Industries</h4>
+      <span class="job-search-card__location">Remote</span>
+      <a class="base-card__full-link" href="https://www.linkedin.com/jobs/view/2222">Link</a>
+      <time class="job-search-card__listdate">1 week ago</time>
+    </div>
+  </li>
+  <li>
+    <!-- Not a job card — must be skipped, not treated as an empty result. -->
+    <div class="unrelated-card">Ad content</div>
+  </li>
+</ul>

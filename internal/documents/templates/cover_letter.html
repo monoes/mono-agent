@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Cover Letter — {{.CompanyName}}</title>
+<style>
+  body { font-family: Georgia, serif; max-width: 700px; margin: 2em auto; color: #222; line-height: 1.5; }
+  .date { text-align: right; color: #555; }
+  .recipient { margin-top: 2em; }
+  p { margin-bottom: 1em; }
+  .sign-off { margin-top: 2em; }
+</style>
+</head>
+<body>
+  <div class="date">{{.Date}}</div>
+  <div class="recipient">{{.RecipientName}}<br>{{.CompanyName}}</div>
+  {{range .Paragraphs}}
+  <p>{{.}}</p>
+  {{end}}
+  <div class="sign-off">Sincerely,<br>{{.SenderName}}</div>
+</body>
+</html>

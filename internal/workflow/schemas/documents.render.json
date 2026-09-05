@@ -1,0 +1,41 @@
+{
+  "_generated": true,
+  "credential_platform": null,
+  "fields": [
+    {
+      "help": "Which document to generate.",
+      "key": "doc_type",
+      "label": "Document Type",
+      "options": [
+        "cv",
+        "cover_letter",
+        "tender_proposal"
+      ],
+      "required": true,
+      "type": "select"
+    },
+    {
+      "help": "A JSON object matching the chosen document type's fields.",
+      "key": "data",
+      "label": "Data",
+      "language": "json",
+      "required": true,
+      "type": "code"
+    },
+    {
+      "help": "Optional job/tender application to link this document to.",
+      "key": "application_id",
+      "label": "Application ID",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "default": "default",
+      "help": "Which profile owns the generated document.",
+      "key": "profile_id",
+      "label": "Profile ID",
+      "required": false,
+      "type": "text"
+    }
+  ]
+}

@@ -13,12 +13,17 @@ import (
 	"github.com/monoes/mono-agent/internal/nodes"
 	agentnodes "github.com/monoes/mono-agent/internal/nodes/agent"
 	crawlnodes "github.com/monoes/mono-agent/internal/nodes/ai/crawl"
+	applicationsnodes "github.com/monoes/mono-agent/internal/nodes/applications"
+	applynodes "github.com/monoes/mono-agent/internal/nodes/apply"
 	"github.com/monoes/mono-agent/internal/nodes/comm"
 	"github.com/monoes/mono-agent/internal/nodes/control"
 	"github.com/monoes/mono-agent/internal/nodes/data"
 	dbnodes "github.com/monoes/mono-agent/internal/nodes/db"
+	discoverynodes "github.com/monoes/mono-agent/internal/nodes/discovery"
+	documentsnodes "github.com/monoes/mono-agent/internal/nodes/documents"
 	httpnodes "github.com/monoes/mono-agent/internal/nodes/http"
 	imagenodes "github.com/monoes/mono-agent/internal/nodes/image"
+	matchingnodes "github.com/monoes/mono-agent/internal/nodes/matching"
 	orgnodes "github.com/monoes/mono-agent/internal/nodes/org"
 	peoplenodes "github.com/monoes/mono-agent/internal/nodes/people"
 	"github.com/monoes/mono-agent/internal/nodes/service"
@@ -40,6 +45,11 @@ func Build(db *sql.DB) *workflow.NodeTypeRegistry {
 	service.RegisterAll(registry)
 	nodes.RegisterBrowserNodes(registry)
 	peoplenodes.RegisterAll(registry, db)
+	applicationsnodes.RegisterAll(registry, db)
+	discoverynodes.RegisterAll(registry, db)
+	documentsnodes.RegisterAll(registry, db)
+	matchingnodes.RegisterAll(registry, db)
+	applynodes.RegisterAll(registry, db)
 
 	// Local AI agent nodes (monomind delegation) — no store needed.
 	agentnodes.RegisterAll(registry)

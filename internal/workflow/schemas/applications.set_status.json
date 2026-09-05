@@ -1,0 +1,51 @@
+{
+  "_generated": true,
+  "credential_platform": null,
+  "fields": [
+    {
+      "help": "The application to transition.",
+      "key": "id",
+      "label": "Application ID",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "help": "Must be a valid transition from the application's current status. \"applied\" is not offered here — use the application send CLI command, which requires an explicit human action.",
+      "key": "status",
+      "label": "New Status",
+      "options": [
+        "rejected",
+        "cancelled"
+      ],
+      "required": true,
+      "type": "select"
+    },
+    {
+      "default": "system",
+      "help": "Who performed this transition.",
+      "key": "actor",
+      "label": "Actor",
+      "options": [
+        "user",
+        "system"
+      ],
+      "required": false,
+      "type": "select"
+    },
+    {
+      "help": "Optional note recorded in the transition ledger.",
+      "key": "note",
+      "label": "Note",
+      "required": false,
+      "type": "textarea"
+    },
+    {
+      "default": "default",
+      "help": "Which profile owns this application.",
+      "key": "profile_id",
+      "label": "Profile ID",
+      "required": false,
+      "type": "text"
+    }
+  ]
+}
