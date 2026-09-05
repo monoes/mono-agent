@@ -1,0 +1,145 @@
+{
+  "_generated": true,
+  "credential_platform": null,
+  "fields": [
+    {
+      "help": "Which kind of application to create.",
+      "key": "kind",
+      "label": "Kind",
+      "options": [
+        "job",
+        "tender"
+      ],
+      "required": true,
+      "type": "select"
+    },
+    {
+      "default": "default",
+      "help": "Which profile owns this application. Defaults to 'default'.",
+      "key": "profile_id",
+      "label": "Profile ID",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "help": "Job kind only: the hiring company (required for kind=job).",
+      "key": "company",
+      "label": "Company",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "help": "The job posting or tender URL.",
+      "key": "url",
+      "label": "URL",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "help": "Job kind only: job location.",
+      "key": "location",
+      "label": "Location",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "help": "Free-text description.",
+      "key": "description",
+      "label": "Description",
+      "required": false,
+      "type": "textarea"
+    },
+    {
+      "help": "Job kind only: minimum compensation.",
+      "key": "compensation_min",
+      "label": "Compensation Min",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "help": "Job kind only: maximum compensation.",
+      "key": "compensation_max",
+      "label": "Compensation Max",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "help": "Currency code,e.g. USD.",
+      "key": "currency",
+      "label": "Currency",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "help": "Job kind only: e.g. full_time,contract,internship.",
+      "key": "job_type",
+      "label": "Job Type",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "help": "Job kind only: whether the role is remote.",
+      "key": "is_remote",
+      "label": "Is Remote",
+      "required": false,
+      "type": "boolean"
+    },
+    {
+      "default": "manual",
+      "help": "Where this application came from,e.g. manual,linkedin.",
+      "key": "source",
+      "label": "Source",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "help": "Job kind only: when the job was posted.",
+      "key": "posted_at",
+      "label": "Posted At",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "help": "Tender kind only: the organization issuing the tender (required for kind=tender).",
+      "key": "issuing_org",
+      "label": "Issuing Organization",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "help": "Tender kind only: required.",
+      "key": "submission_deadline",
+      "label": "Submission Deadline",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "help": "Tender kind only.",
+      "key": "estimated_value",
+      "label": "Estimated Value",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "help": "Tender kind only: comma-separated.",
+      "key": "required_certifications",
+      "label": "Required Certifications",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "help": "Tender kind only: comma-separated.",
+      "key": "bid_documents_required",
+      "label": "Bid Documents Required",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "help": "Tender kind only.",
+      "key": "published_at",
+      "label": "Published At",
+      "required": false,
+      "type": "text"
+    }
+  ]
+}

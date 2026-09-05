@@ -1,0 +1,40 @@
+{
+  "_generated": true,
+  "credential_platform": null,
+  "fields": [
+    {
+      "help": "The application to tag.",
+      "key": "id",
+      "label": "Application ID",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "help": "The tag to add or remove.",
+      "key": "tag",
+      "label": "Tag",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "default": "add",
+      "help": "Whether to add or remove the tag.",
+      "key": "action",
+      "label": "Action",
+      "options": [
+        "add",
+        "remove"
+      ],
+      "required": false,
+      "type": "select"
+    },
+    {
+      "default": "default",
+      "help": "Which profile owns this application.",
+      "key": "profile_id",
+      "label": "Profile ID",
+      "required": false,
+      "type": "text"
+    }
+  ]
+}

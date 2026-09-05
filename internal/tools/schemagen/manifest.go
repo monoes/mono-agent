@@ -119,4 +119,10 @@ var Manifest = []ManifestEntry{
 	{NodeType: "service.shopify", GoFile: "internal/nodes/service/shopify_schema.go", StructName: "ShopifyNodeSchema"},
 	{NodeType: "service.stripe", GoFile: "internal/nodes/service/stripe_schema.go", StructName: "StripeNodeSchema"},
 	{NodeType: "service.youtube", GoFile: "internal/nodes/service/youtube_schema.go", StructName: "YouTubeNodeSchema"},
+
+	// --- applications.* ---
+	{NodeType: "applications.create", GoFile: "internal/nodes/applications/create_schema.go", StructName: "CreateNodeSchema"},
+	{NodeType: "applications.set_status", GoFile: "internal/nodes/applications/set_status_schema.go", StructName: "SetStatusNodeSchema"},
+	{NodeType: "applications.tag", GoFile: "internal/nodes/applications/tag_schema.go", StructName: "TagNodeSchema"},
+	{NodeType: "applications.list", GoFile: "internal/nodes/applications/list_schema.go", StructName: "ListNodeSchema"},
 }
