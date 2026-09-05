@@ -471,7 +471,11 @@ func TestApplicationApplyConfirmModeDeclined(t *testing.T) {
 
 	cvFile := writeDataFile(t, `{"name":"Jane Doe"}`)
 	letterFile := writeDataFile(t, `{"senderName":"Jane Doe"}`)
-	out, err := runApplicationApplyCmd(t, dbPath, "apply", id, "--cv-data-file", cvFile, "--cover-letter-data-file", letterFile)
+	// --mode confirm is explicit here because runApplicationApplyCmd's cfg
+	// always sets JSONOutput: true, which the command's own default-mode
+	// logic treats as "auto" — without this flag the confirm branch (and
+	// confirmPromptFunc) would never be reached at all.
+	out, err := runApplicationApplyCmd(t, dbPath, "apply", id, "--mode", "confirm", "--cv-data-file", cvFile, "--cover-letter-data-file", letterFile)
 	if err != nil {
 		t.Fatalf("application apply (declined): %v (%s)", err, out)
 	}
