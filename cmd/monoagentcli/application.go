@@ -27,6 +27,8 @@ func newApplicationCmd(cfg *globalConfig) *cobra.Command {
 		newApplicationStatusCmd(cfg),
 		newApplicationTagCmd(cfg),
 		newApplicationDiscoverCmd(cfg),
+		newApplicationEvaluateCmd(cfg),
+		newApplicationEvaluatePendingCmd(cfg),
 	)
 	return cmd
 }
