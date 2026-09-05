@@ -45,6 +45,8 @@ func TestBrowserFileNeverClicksAnything(t *testing.T) {
 		"Eval(", "MustEval(",
 		"Press(", "MustPress(",
 		"SetValue(", "MustSetValue(",
+		"SetFiles(", "MustSetFiles(",
+		"InsertText(", "MustInsertText(",
 	}
 	for _, f := range forbidden {
 		if strings.Contains(string(src), f) {
