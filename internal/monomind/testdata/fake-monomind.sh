@@ -58,5 +58,35 @@ if [ "$1" = "org" ] && [ "$2" = "events" ] && [ "$3" = "growth" ]; then
   exit 0
 fi
 
+if [ "$1" = "mcp" ] && [ "$2" = "exec" ]; then
+  tool=""
+  fmt=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -t) tool="$2"; shift 2 ;;
+      --format) fmt="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  case "$tool" in
+    knowledge_ingest)
+      if [ "$INGEST_FAIL" = "1" ]; then
+        echo "fake-monomind: knowledge_ingest forced failure" >&2
+        exit 1
+      fi
+      echo '{"tool":"knowledge_ingest","result":{"content":[{"type":"text","text":"{\"success\":true,\"filePath\":\"/fake/path\",\"chunksIndexed\":3}"}]},"duration":1.0}'
+      exit 0
+      ;;
+    knowledge_search)
+      echo '{"tool":"knowledge_search","result":{"content":[{"type":"text","text":"{\"success\":true,\"count\":2,\"results\":[{\"kind\":\"excerpt\",\"filePath\":\"/fake/resume.txt\",\"text\":\"Experienced backend engineer with 8 years in distributed systems.\",\"similarity\":0.91},{\"kind\":\"rule\",\"key\":\"r1\",\"text\":\"unrelated rule entry\"}]}"}]},"duration":1.0}'
+      exit 0
+      ;;
+    *)
+      echo "fake-monomind: unsupported mcp tool: $tool" >&2
+      exit 2
+      ;;
+  esac
+fi
+
 echo "fake-monomind: unsupported invocation: $*" >&2
 exit 2
