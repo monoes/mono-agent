@@ -128,4 +128,7 @@ var Manifest = []ManifestEntry{
 
 	// --- discovery.* ---
 	{NodeType: "discovery.search_jobs", GoFile: "internal/nodes/discovery/search_jobs_schema.go", StructName: "SearchJobsNodeSchema"},
+
+	// --- documents.* ---
+	{NodeType: "documents.render", GoFile: "internal/nodes/documents/render_schema.go", StructName: "RenderNodeSchema"},
 }

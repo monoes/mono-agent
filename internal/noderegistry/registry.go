@@ -19,6 +19,7 @@ import (
 	"github.com/monoes/mono-agent/internal/nodes/data"
 	dbnodes "github.com/monoes/mono-agent/internal/nodes/db"
 	discoverynodes "github.com/monoes/mono-agent/internal/nodes/discovery"
+	documentsnodes "github.com/monoes/mono-agent/internal/nodes/documents"
 	httpnodes "github.com/monoes/mono-agent/internal/nodes/http"
 	imagenodes "github.com/monoes/mono-agent/internal/nodes/image"
 	orgnodes "github.com/monoes/mono-agent/internal/nodes/org"
@@ -43,6 +44,7 @@ func Build(db *sql.DB) *workflow.NodeTypeRegistry {
 	peoplenodes.RegisterAll(registry, db)
 	applicationsnodes.RegisterAll(registry, db)
 	discoverynodes.RegisterAll(registry, db)
+	documentsnodes.RegisterAll(registry, db)
 
 	// Local AI agent nodes (monomind delegation) — no store needed.
 	agentnodes.RegisterAll(registry)
