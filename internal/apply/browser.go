@@ -10,6 +10,14 @@ import (
 	"github.com/go-rod/rod/lib/proto"
 )
 
+// OpenForApplicationFunc is OpenForApplication's implementation, exposed as
+// a swappable package-level variable so callers can inject a fake in tests
+// that don't care about actually launching a browser (e.g. a CLI test
+// verifying auto-mode prompt-suppression, not browser mechanics) — mirrors
+// documents.RenderPDFFunc's convention exactly. Production code always
+// goes through this var.
+var OpenForApplicationFunc = openForApplicationImpl
+
 // OpenForApplication launches a real, VISIBLE browser window at jobURL,
 // for a human to complete the application by hand. This function
 // contains no interaction beyond navigation — a companion test in this
@@ -17,17 +25,20 @@ import (
 // form-interaction call. The browser is deliberately NOT closed before
 // returning (unlike documents.RenderPDF's throwaway headless instance)
 // — it stays open for the user to use.
-//
-// Leakless(false) is required for that to actually hold: go-rod's
-// launcher enables "leakless" by default, which force-kills the spawned
-// browser the moment THIS process exits — since the CLI command that
-// calls this function returns and exits almost immediately after opening
-// the page, the default behavior would silently close the window right
-// after it appears, defeating the entire point of this function. Verified
-// directly against go-rod's source (lib/launcher/launcher.go: "Leakless
-// will be enabled by default... If enabled, the browser will be force
-// killed after the Go process exits").
 func OpenForApplication(ctx context.Context, jobURL string) error {
+	return OpenForApplicationFunc(ctx, jobURL)
+}
+
+// Leakless(false) is required for the browser to stay open after this
+// function returns: go-rod's launcher enables "leakless" by default, which
+// force-kills the spawned browser the moment THIS process exits — since the
+// CLI command that calls this function returns and exits almost
+// immediately after opening the page, the default behavior would silently
+// close the window right after it appears, defeating the entire point of
+// this function. Verified directly against go-rod's source
+// (lib/launcher/launcher.go: "Leakless will be enabled by default... If
+// enabled, the browser will be force killed after the Go process exits").
+func openForApplicationImpl(ctx context.Context, jobURL string) error {
 	launchURL, err := launcher.New().Headless(false).Leakless(false).Launch()
 	if err != nil {
 		return fmt.Errorf("apply.OpenForApplication: launch browser: %w", err)
