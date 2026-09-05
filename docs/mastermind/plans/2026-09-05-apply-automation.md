@@ -323,11 +323,11 @@ import (
 
 // OpenForApplication launches a real, VISIBLE browser window at jobURL,
 // for a human to complete the application by hand. This function
-// contains no interaction beyond navigation — see
-// TestBrowserFileNeverClicksAnything, which mechanically enforces that
-// this file never grows a click/fill/submit call. The browser is
-// deliberately NOT closed before returning (unlike documents.RenderPDF's
-// throwaway headless instance) — it stays open for the user to use.
+// contains no interaction beyond navigation — a companion test in this
+// package mechanically enforces that this file never grows a
+// form-interaction call. The browser is deliberately NOT closed before
+// returning (unlike documents.RenderPDF's throwaway headless instance) —
+// it stays open for the user to use.
 func OpenForApplication(ctx context.Context, jobURL string) error {
 	launchURL, err := launcher.New().Headless(false).Launch()
 	if err != nil {
