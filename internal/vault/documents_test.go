@@ -110,3 +110,36 @@ func TestListDocumentsScopedToProfile(t *testing.T) {
 		t.Fatalf("expected no documents for other-profile, got %d", len(docs))
 	}
 }
+
+func TestRegisterDocumentWithApplicationID(t *testing.T) {
+	db := newTestDB(t)
+	ctx := vault.ContextWithDB(context.Background(), db.DB)
+
+	id, err := vault.RegisterDocument(ctx, db.DB, writeTestFile(t, "cv content"), "generated", "app-123")
+	if err != nil {
+		t.Fatalf("RegisterDocument: %v", err)
+	}
+	docs, err := vault.ListDocuments(ctx, db.DB, "default")
+	if err != nil {
+		t.Fatalf("ListDocuments: %v", err)
+	}
+	if len(docs) != 1 || docs[0].ID != id || docs[0].ApplicationID != "app-123" {
+		t.Fatalf("expected application_id to round-trip, got %+v", docs)
+	}
+}
+
+func TestRegisterDocumentWithoutApplicationIDStaysEmpty(t *testing.T) {
+	db := newTestDB(t)
+	ctx := vault.ContextWithDB(context.Background(), db.DB)
+
+	if _, err := vault.RegisterDocument(ctx, db.DB, writeTestFile(t, "content"), "upload"); err != nil {
+		t.Fatalf("RegisterDocument: %v", err)
+	}
+	docs, err := vault.ListDocuments(ctx, db.DB, "default")
+	if err != nil {
+		t.Fatalf("ListDocuments: %v", err)
+	}
+	if len(docs) != 1 || docs[0].ApplicationID != "" {
+		t.Fatalf("expected empty ApplicationID for a call with none supplied, got %+v", docs)
+	}
+}

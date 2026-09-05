@@ -11,26 +11,34 @@ import (
 
 // DocumentEntry is one row from vault_documents.
 type DocumentEntry struct {
-	ID        string
-	Path      string
-	Filename  string
-	SizeBytes int64
-	Source    string
-	CreatedAt string
+	ID            string
+	Path          string
+	Filename      string
+	SizeBytes     int64
+	Source        string
+	ApplicationID string
+	CreatedAt     string
 }
 
 // RegisterDocument copies src into the profile's vault (under a
 // documents/ subdirectory of the same VaultDir used for images) and
 // inserts a vault_documents row. Returns the new vault ID (e.g. "doc-001").
+// applicationID is optional (variadic, matching internal/connections.Store
+// .Get's ...string convention) — pass one string to link the document to
+// a job/tender application, or omit it for a general profile document.
 // Mirrors Register's structure exactly (same BEGIN IMMEDIATE seq-allocation
 // pattern — see Register's doc comment in vault.go for why a deferred
 // transaction would race two concurrent Registers onto the same seq).
-func RegisterDocument(ctx context.Context, db *sql.DB, src, source string) (string, error) {
+func RegisterDocument(ctx context.Context, db *sql.DB, src, source string, applicationID ...string) (string, error) {
 	if db == nil {
 		return "", fmt.Errorf("vault.RegisterDocument: db is nil")
 	}
 	if src == "" {
 		return "", fmt.Errorf("vault.RegisterDocument: src path is empty")
+	}
+	var appID string
+	if len(applicationID) > 0 {
+		appID = applicationID[0]
 	}
 	absSrc, err := filepath.Abs(src)
 	if err != nil {
@@ -78,10 +86,17 @@ func RegisterDocument(ctx context.Context, db *sql.DB, src, source string) (stri
 		return "", fmt.Errorf("vault.RegisterDocument: stat dest: %w", err)
 	}
 
+	nullStr := func(s string) interface{} {
+		if s == "" {
+			return nil
+		}
+		return s
+	}
+
 	_, err = conn.ExecContext(ctx, `
-		INSERT INTO vault_documents (id, seq, path, filename, size_bytes, source, profile_id, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
-		id, seq, destPath, filename, fi.Size(), source, profileID,
+		INSERT INTO vault_documents (id, seq, path, filename, size_bytes, source, application_id, profile_id, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+		id, seq, destPath, filename, fi.Size(), source, nullStr(appID), profileID,
 	)
 	if err != nil {
 		os.Remove(destPath)
@@ -98,7 +113,7 @@ func RegisterDocument(ctx context.Context, db *sql.DB, src, source string) (stri
 // ListDocuments returns profileID's uploaded documents, newest first.
 func ListDocuments(ctx context.Context, db *sql.DB, profileID string) ([]DocumentEntry, error) {
 	rows, err := db.QueryContext(ctx,
-		`SELECT id, path, filename, size_bytes, source, created_at
+		`SELECT id, path, filename, size_bytes, source, COALESCE(application_id, ''), created_at
 		 FROM vault_documents WHERE profile_id = ? ORDER BY seq DESC`, profileID)
 	if err != nil {
 		return nil, fmt.Errorf("vault.ListDocuments: %w", err)
@@ -107,7 +122,7 @@ func ListDocuments(ctx context.Context, db *sql.DB, profileID string) ([]Documen
 	docs := []DocumentEntry{}
 	for rows.Next() {
 		var d DocumentEntry
-		if err := rows.Scan(&d.ID, &d.Path, &d.Filename, &d.SizeBytes, &d.Source, &d.CreatedAt); err != nil {
+		if err := rows.Scan(&d.ID, &d.Path, &d.Filename, &d.SizeBytes, &d.Source, &d.ApplicationID, &d.CreatedAt); err != nil {
 			return nil, fmt.Errorf("vault.ListDocuments: scan: %w", err)
 		}
 		docs = append(docs, d)
