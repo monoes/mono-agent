@@ -115,8 +115,7 @@ export default function Applications() {
     e.preventDefault()
     setError(null)
     try {
-      const result = await WailsApp.DiscoverJobs(discoverForm.keywords, discoverForm.location, '', Number(discoverForm.limit) || 25)
-      notify('discover', `Imported ${result.imported} new job(s), skipped ${result.skipped} duplicate(s).`)
+      await WailsApp.DiscoverJobs(discoverForm.keywords, discoverForm.location, '', Number(discoverForm.limit) || 25)
       setShowDiscover(false)
       load()
     } catch (e) {
