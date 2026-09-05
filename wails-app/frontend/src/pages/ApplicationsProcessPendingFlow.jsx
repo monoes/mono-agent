@@ -107,7 +107,9 @@ export default function ApplicationsProcessPendingFlow({ pendingApplications, on
     const next = computeNextStep({ mode, stage: 'evaluated', decision })
     if (next === 'apply') applyCurrent(current)
     else if (next === 'cancel') {
-      WailsApp.SetApplicationStatus(current.id, 'cancelled', '').finally(() => { finishItem({ notInterested: summary.notInterested + 1 }); advance() })
+      WailsApp.SetApplicationStatus(current.id, 'cancelled', '')
+        .then(() => { finishItem({ notInterested: summary.notInterested + 1 }); advance() })
+        .catch(e => setError(String(e)))
     } else if (next === 'next') {
       finishItem({ skipped: summary.skipped + 1 })
       advance()
