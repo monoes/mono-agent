@@ -146,3 +146,101 @@ func (s *Store) Create(ctx context.Context, app *Application) error {
 	}
 	return nil
 }
+
+// allowedTransitions is the closed transition graph. rejected/cancelled
+// have no outgoing edges (terminal).
+var allowedTransitions = map[Status][]Status{
+	StatusPending: {StatusApplied, StatusCancelled},
+	StatusApplied: {StatusRejected, StatusCancelled},
+}
+
+func isAllowedTransition(from, to Status) bool {
+	for _, s := range allowedTransitions[from] {
+		if s == to {
+			return true
+		}
+	}
+	return false
+}
+
+// SetStatus transitions an application's status, validating against the
+// allowed transition graph and appending exactly one status_log row, both
+// in a single transaction. Returns ErrNotFound if id/profileID doesn't
+// match a row, ErrInvalidTransition if the edge isn't allowed.
+func (s *Store) SetStatus(ctx context.Context, profileID, id string, to Status, actor Actor, note string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("applications.SetStatus: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	var current string
+	err = tx.QueryRowContext(ctx,
+		`SELECT status FROM applications WHERE id = ? AND profile_id = ?`, id, profileID,
+	).Scan(&current)
+	if err == sql.ErrNoRows {
+		return fmt.Errorf("%w: application %q", ErrNotFound, id)
+	}
+	if err != nil {
+		return fmt.Errorf("applications.SetStatus: lookup: %w", err)
+	}
+
+	from := Status(current)
+	if !isAllowedTransition(from, to) {
+		return fmt.Errorf("%w: %q -> %q", ErrInvalidTransition, from, to)
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE applications SET status = ?, updated_at = ? WHERE id = ? AND profile_id = ?`,
+		string(to), now, id, profileID,
+	); err != nil {
+		return fmt.Errorf("applications.SetStatus: update: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO application_status_log (id, application_id, from_status, to_status, actor, note, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		uuid.NewString(), id, string(from), string(to), string(actor), note, now,
+	); err != nil {
+		return fmt.Errorf("applications.SetStatus: insert status log: %w", err)
+	}
+	return tx.Commit()
+}
+
+// StatusLog returns id's full transition history, oldest first. Returns
+// ErrNotFound if id/profileID doesn't match a row.
+func (s *Store) StatusLog(ctx context.Context, profileID, id string) ([]StatusLogEntry, error) {
+	var exists int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM applications WHERE id = ? AND profile_id = ?`, id, profileID,
+	).Scan(&exists); err != nil {
+		return nil, fmt.Errorf("applications.StatusLog: %w", err)
+	}
+	if exists == 0 {
+		return nil, fmt.Errorf("%w: application %q", ErrNotFound, id)
+	}
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, COALESCE(from_status, ''), to_status, actor, note, created_at
+		 FROM application_status_log WHERE application_id = ? ORDER BY created_at ASC`, id)
+	if err != nil {
+		return nil, fmt.Errorf("applications.StatusLog: query: %w", err)
+	}
+	defer rows.Close()
+
+	var out []StatusLogEntry
+	for rows.Next() {
+		var e StatusLogEntry
+		var toStatus, actor string
+		if err := rows.Scan(&e.ID, &e.FromStatus, &toStatus, &actor, &e.Note, &e.CreatedAt); err != nil {
+			return nil, fmt.Errorf("applications.StatusLog: scan: %w", err)
+		}
+		e.ToStatus = Status(toStatus)
+		e.Actor = Actor(actor)
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("applications.StatusLog: rows: %w", err)
+	}
+	return out, nil
+}
