@@ -3,7 +3,13 @@
 // docs/mastermind/specs/2026-09-05-discovery-design.md.
 package discovery
 
-import "context"
+import (
+	"context"
+	"fmt"
+	"os"
+
+	"github.com/monoes/mono-agent/internal/applications"
+)
 
 // SearchQuery is the source-agnostic search input.
 type SearchQuery struct {
@@ -33,4 +39,51 @@ type Source interface {
 	// Search returns up to query.Limit results. Implementations own their
 	// own pagination and pacing internally.
 	Search(ctx context.Context, query SearchQuery) ([]Result, error)
+}
+
+// Search runs source.Search, then for each result not already a duplicate
+// (per IsDuplicate), creates a pending job application via store.Create.
+// A source error is returned alongside whatever was already collected and
+// processed — a caller sees both the partial success and that it's
+// incomplete, never a silent partial success or a total failure that
+// discards real results. A per-result Create failure is counted in failed
+// and logged, and does not abort the rest of the batch.
+func Search(ctx context.Context, source Source, store *applications.Store, profileID string, query SearchQuery) (created []applications.Application, skipped, failed int, searchErr error) {
+	results, err := source.Search(ctx, query)
+	searchErr = err
+
+	for _, r := range results {
+		dup, dErr := IsDuplicate(ctx, store, profileID, r)
+		if dErr != nil {
+			return created, skipped, failed, fmt.Errorf("discovery.Search: checking duplicate: %w", dErr)
+		}
+		if dup {
+			skipped++
+			continue
+		}
+
+		isRemote := r.IsRemote
+		app := &applications.Application{
+			ProfileID: profileID,
+			Kind:      applications.KindJob,
+			Job: &applications.JobDetails{
+				Title:       r.Title,
+				Company:     r.Company,
+				URL:         r.URL,
+				Location:    r.Location,
+				Description: r.Description,
+				JobType:     r.JobType,
+				IsRemote:    &isRemote,
+				Source:      source.Name(),
+				PostedAt:    r.PostedAt,
+			},
+		}
+		if createErr := store.Create(ctx, app); createErr != nil {
+			fmt.Fprintf(os.Stderr, "discovery.Search: creating application for %q: %v\n", r.URL, createErr)
+			failed++
+			continue
+		}
+		created = append(created, *app)
+	}
+	return created, skipped, failed, searchErr
 }
