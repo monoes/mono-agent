@@ -80,6 +80,7 @@ func newRootCmd() *cobra.Command {
 		newProfileCmd(cfg),
 		newSecretCmd(cfg),
 		newApplicationCmd(cfg),
+		newDocumentsCmd(cfg),
 		newHILCmd(cfg),
 		newAICmd(cfg),
 		newAgentCmd(cfg),
