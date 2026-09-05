@@ -6,6 +6,7 @@ func TestTemplateInputs_FromBundledTemplates(t *testing.T) {
 	cases := map[string][]string{
 		"gemimg":     {"prompt"},
 		"gemimgmany": {"prompts"},
+		"find_jobs":  {"keywords", "location"},
 	}
 	for id, want := range cases {
 		wf, ok := GetTemplate(id)
@@ -13,8 +14,15 @@ func TestTemplateInputs_FromBundledTemplates(t *testing.T) {
 			t.Fatalf("template %q not found", id)
 		}
 		got := templateInputs(wf)
-		if len(got) != len(want) || (len(got) > 0 && got[0] != want[0]) {
+		if len(got) != len(want) {
 			t.Errorf("%s: got inputs %v, want %v", id, got, want)
+			continue
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("%s: got inputs %v, want %v", id, got, want)
+				break
+			}
 		}
 	}
 }

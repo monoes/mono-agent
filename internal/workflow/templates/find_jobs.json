@@ -1,0 +1,81 @@
+{
+  "name": "Find Jobs (All Sources)",
+  "description": "Manually trigger with keywords (and optionally a location) to search LinkedIn, Arbeitnow, and Jobicy in parallel; every non-duplicate match is saved directly as a new pending job Application. Run with: workflow run <id> --input '{\"keywords\":\"backend engineer\",\"location\":\"Berlin\"}'. Duplicate detection runs on every search, so it's safe to re-run this on the same keywords repeatedly. Each source has on_error=continue, so one source failing (e.g. a site tightening robots.txt) doesn't block results from the others.",
+  "version": 1,
+  "is_active": false,
+  "nodes": [
+    {
+      "id": "trigger",
+      "type": "trigger.manual",
+      "name": "Manual Trigger",
+      "position": { "x": 0, "y": 0 },
+      "disabled": false,
+      "config": {}
+    },
+    {
+      "id": "search_linkedin",
+      "type": "discovery.search_jobs",
+      "name": "Search LinkedIn",
+      "position": { "x": 320, "y": -160 },
+      "disabled": false,
+      "config": {
+        "keywords": "{{ $json.keywords }}",
+        "location": "{{ $json.location }}",
+        "source": "linkedin",
+        "limit": 25,
+        "on_error": "continue"
+      }
+    },
+    {
+      "id": "search_arbeitnow",
+      "type": "discovery.search_jobs",
+      "name": "Search Arbeitnow",
+      "position": { "x": 320, "y": 0 },
+      "disabled": false,
+      "config": {
+        "keywords": "{{ $json.keywords }}",
+        "location": "{{ $json.location }}",
+        "source": "arbeitnow",
+        "limit": 25,
+        "on_error": "continue"
+      }
+    },
+    {
+      "id": "search_jobicy",
+      "type": "discovery.search_jobs",
+      "name": "Search Jobicy",
+      "position": { "x": 320, "y": 160 },
+      "disabled": false,
+      "config": {
+        "keywords": "{{ $json.keywords }}",
+        "location": "{{ $json.location }}",
+        "source": "jobicy",
+        "limit": 25,
+        "on_error": "continue"
+      }
+    }
+  ],
+  "connections": [
+    {
+      "id": "trigger-to-linkedin",
+      "source": "trigger",
+      "source_handle": "main",
+      "target": "search_linkedin",
+      "target_handle": "main"
+    },
+    {
+      "id": "trigger-to-arbeitnow",
+      "source": "trigger",
+      "source_handle": "main",
+      "target": "search_arbeitnow",
+      "target_handle": "main"
+    },
+    {
+      "id": "trigger-to-jobicy",
+      "source": "trigger",
+      "source_handle": "main",
+      "target": "search_jobicy",
+      "target_handle": "main"
+    }
+  ]
+}

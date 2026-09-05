@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"strings"
 	"time"
@@ -101,16 +102,31 @@ func (s *Source) Search(ctx context.Context, query discovery.SearchQuery) ([]dis
 			}
 		}
 
-		if resp.Links.Next == nil {
+		if resp.Links.Next == nil || len(results) >= limit {
 			break
 		}
 		pageURL = *resp.Links.Next
+
+		// Paced like linkedin's Source.Search -- confirmed live that fetching
+		// pages back-to-back with no delay gets a 429 from Arbeitnow within a
+		// handful of requests.
+		select {
+		case <-ctx.Done():
+			return results, ctx.Err()
+		case <-time.After(paceDelay()):
+		}
 	}
 
 	if len(results) > limit {
 		results = results[:limit]
 	}
 	return results, nil
+}
+
+// paceDelay mirrors internal/discovery/sources/linkedin's own pacing —
+// 1.5-3.0s between requests.
+func paceDelay() time.Duration {
+	return time.Duration(1500+rand.Intn(1500)) * time.Millisecond
 }
 
 func matchesKeywords(j apiJob, keywords string) bool {
