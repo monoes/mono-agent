@@ -10,11 +10,10 @@
       "type": "text"
     },
     {
-      "help": "Must be a valid transition from the application's current status (pending is the initial state only — never a transition target).",
+      "help": "Must be a valid transition from the application's current status. \"applied\" is not offered here — use the application send CLI command, which requires an explicit human action.",
       "key": "status",
       "label": "New Status",
       "options": [
-        "applied",
         "rejected",
         "cancelled"
       ],
