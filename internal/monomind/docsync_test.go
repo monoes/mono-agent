@@ -64,3 +64,25 @@ func TestIngestDocumentPropagatesFailure(t *testing.T) {
 		t.Fatal("expected error when the fake binary reports failure, got nil")
 	}
 }
+
+func TestSearchKnowledgeReturnsExcerptsOnly(t *testing.T) {
+	setFakeMonomindOnPath(t)
+	db := newDocsyncTestDB(t)
+
+	results, err := monomind.SearchKnowledge(context.Background(), db, "default", "backend engineer")
+	if err != nil {
+		t.Fatalf("SearchKnowledge: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 excerpt result (the fake's \"rule\" kind entry must be filtered out), got %d: %+v", len(results), results)
+	}
+	if results[0].Path != "/fake/resume.txt" {
+		t.Fatalf("unexpected path: %q", results[0].Path)
+	}
+	if results[0].Excerpt != "Experienced backend engineer with 8 years in distributed systems." {
+		t.Fatalf("unexpected excerpt: %q", results[0].Excerpt)
+	}
+	if results[0].Score != 0.91 {
+		t.Fatalf("unexpected score: %v", results[0].Score)
+	}
+}
