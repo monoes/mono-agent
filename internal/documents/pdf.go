@@ -1,0 +1,53 @@
+package documents
+
+import (
+	"context"
+	"fmt"
+	"io"
+
+	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/launcher"
+	"github.com/go-rod/rod/lib/proto"
+)
+
+// RenderPDF launches a standalone, unauthenticated headless browser (the
+// same launcher.New()/rod.New() pattern cmd/monoagentcli/crawl.go already
+// uses — not the login-session infrastructure in
+// internal/nodes/browser_adapter.go), loads html directly, and returns the
+// rendered PDF bytes via Chrome's native "Print to PDF". The browser is
+// launched and closed within this single call.
+func RenderPDF(ctx context.Context, html string) ([]byte, error) {
+	launchURL, err := launcher.New().Headless(true).Launch()
+	if err != nil {
+		return nil, fmt.Errorf("documents.RenderPDF: launch browser: %w", err)
+	}
+
+	browser := rod.New().ControlURL(launchURL).Context(ctx)
+	if err := browser.Connect(); err != nil {
+		return nil, fmt.Errorf("documents.RenderPDF: connect to browser: %w", err)
+	}
+	defer browser.Close()
+
+	page, err := browser.Page(proto.TargetCreateTarget{URL: "about:blank"})
+	if err != nil {
+		return nil, fmt.Errorf("documents.RenderPDF: open page: %w", err)
+	}
+	defer page.Close()
+
+	if err := page.SetDocumentContent(html); err != nil {
+		return nil, fmt.Errorf("documents.RenderPDF: set document content: %w", err)
+	}
+	if err := page.WaitLoad(); err != nil {
+		return nil, fmt.Errorf("documents.RenderPDF: wait load: %w", err)
+	}
+
+	stream, err := page.PDF(&proto.PagePrintToPDF{PrintBackground: true})
+	if err != nil {
+		return nil, fmt.Errorf("documents.RenderPDF: print to pdf: %w", err)
+	}
+	pdfBytes, err := io.ReadAll(stream)
+	if err != nil {
+		return nil, fmt.Errorf("documents.RenderPDF: reading pdf stream: %w", err)
+	}
+	return pdfBytes, nil
+}
