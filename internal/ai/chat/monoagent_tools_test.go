@@ -844,3 +844,14 @@ func TestMonoagentTools_RemoveOrgRole_CascadeWithoutConfirmDoesNotMutate(t *test
 		t.Fatalf("expected all 3 roles to still exist after unconfirmed cascade, got %d: %s", len(getRes.Roles), getOut)
 	}
 }
+
+func TestSearchProfileDocumentsToolRequiresQuery(t *testing.T) {
+	db := newMonoagentTestDB(t)
+	mt := NewMonoagentTools(db.DB, "")
+	mt.SetProfileID("default")
+
+	_, err := mt.Execute("search_profile_documents", `{}`)
+	if err == nil {
+		t.Fatal("expected error for missing query, got nil")
+	}
+}
