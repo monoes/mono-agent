@@ -22,7 +22,9 @@
       "key": "source",
       "label": "Source",
       "options": [
-        "linkedin"
+        "linkedin",
+        "arbeitnow",
+        "jobicy"
       ],
       "required": false,
       "type": "select"

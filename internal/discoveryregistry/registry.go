@@ -12,11 +12,15 @@ import (
 	"sort"
 
 	"github.com/monoes/mono-agent/internal/discovery"
+	"github.com/monoes/mono-agent/internal/discovery/sources/arbeitnow"
+	"github.com/monoes/mono-agent/internal/discovery/sources/jobicy"
 	"github.com/monoes/mono-agent/internal/discovery/sources/linkedin"
 )
 
 var sources = map[string]discovery.Source{
-	"linkedin": linkedin.New(),
+	"linkedin":  linkedin.New(),
+	"arbeitnow": arbeitnow.New(),
+	"jobicy":    jobicy.New(),
 }
 
 // Get returns the registered Source for name, or ok=false if unknown.
