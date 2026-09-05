@@ -108,14 +108,48 @@ type KnowledgeResult struct {
 }
 
 // SearchKnowledge queries profileID's Second Brain via
-// `monomind mcp exec -t knowledge_search`, scoped to store="project" (the
-// per-profile monomind dir set via MONOMIND_CWD IS the project root for
-// this call, so "project" here means "this profile's own documents," not
-// mono-agent's own source code) — never "global" or "all", which would
-// leak the user's personal cross-project brain into a job-application
-// context that has no business reading it.
+// `monomind mcp exec -t knowledge_search --format json`, scoped to
+// store="project" (the per-profile monomind dir set via MONOMIND_CWD IS
+// the project root for this call, so "project" here means "this profile's
+// own documents," not mono-agent's own source code) — never "global" or
+// "all", which would leak the user's personal cross-project brain into a
+// job-application context that has no business reading it. See the
+// protocol note below for why the response must be decoded twice.
 func SearchKnowledge(ctx context.Context, db *sql.DB, profileID, query string) ([]KnowledgeResult, error)
 ```
+
+### Protocol note: the `mcp exec --format json` response is double-encoded
+
+Verified by reading `monomind`'s actual CLI source
+(`packages/@monomind/cli/src/commands/mcp.ts`'s `exec` command and
+`src/mcp-client.ts`'s `callMCPTool`, and the tool handler itself in
+`src/mcp-tools/knowledge-tools.ts`) rather than assumed:
+
+`monomind mcp exec -t <tool> -p '<json>' --format json` prints
+`{"tool":...,"params":...,"result":{"content":[{"type":"text","text":"<JSON string>"}]},"duration":...}`
+— the outer JSON's `result.content[0].text` is *itself* a JSON-encoded
+string (the tool handler's actual payload, e.g.
+`{"success":true,"results":[{"kind":"excerpt","filePath":...,"text":...,"similarity":...}, ...]}`
+for `knowledge_search`). `SearchKnowledge` must decode twice: once for the
+CLI's wrapper envelope, once for `content[0].text`. `IngestDocument` only
+needs to check the outer command's exit code (mirroring
+`SyncToKnowledgeGraph`'s fire-and-forget style — it doesn't need the inner
+payload at all, so it does not need `--format json`). For
+`knowledge_search`, only `results` entries with `"kind":"excerpt"` map to
+`KnowledgeResult` (`filePath`→`Path`, `text`→`Excerpt`,
+`similarity`→`Score`) — the other kinds (`triplet`, `rule`, `memory`) are
+knowledge-graph/pattern-store results outside this phase's scope (the KG
+side is already handled separately by the existing image-vault sync via
+`internal/monomind/kgsync.go`).
+
+**Known limitation**: this protocol detail was derived by reading
+`monomind`'s TypeScript source directly, not by running the real binary
+against a live query (no such capability in this environment). The
+implementation's tests validate the parsing logic against a fake `monomind`
+binary emitting this exact shape — they prove the Go code correctly
+unwraps a response shaped like this, not that today's live `monomind`
+binary still behaves exactly this way. This is the same category of
+limitation Phase 2 already flagged for LinkedIn's selectors.
 
 ### CLI
 
