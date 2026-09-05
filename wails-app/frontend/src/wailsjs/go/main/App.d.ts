@@ -71,8 +71,6 @@ export function DeleteWorkflow(arg1:string):Promise<void>;
 
 export function DenyOrgAction(arg1:string,arg2:string,arg3:string):Promise<string>;
 
-export function DiscoverJobs(arg1:string,arg2:string,arg3:string,arg4:number):Promise<main.DiscoverResult>;
-
 export function EvaluateApplication(arg1:string,arg2:string):Promise<main.FitVerdictInfo>;
 
 export function EvaluatePendingApplications(arg1:string,arg2:number):Promise<main.EvaluateBatchResult>;

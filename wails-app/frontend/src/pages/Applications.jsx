@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { Plus, Search, ExternalLink } from 'lucide-react'
+import { Plus, ExternalLink } from 'lucide-react'
 import * as WailsApp from '../wailsjs/go/main/App'
 import { confirm } from '../components/ConfirmDialog.jsx'
 import { notify } from '../services/api.js'
@@ -63,8 +63,6 @@ export default function Applications() {
   const [detail, setDetail] = useState(null)
   const [showAdd, setShowAdd] = useState(false)
   const [addForm, setAddForm] = useState(emptyAddForm())
-  const [showDiscover, setShowDiscover] = useState(false)
-  const [discoverForm, setDiscoverForm] = useState({ keywords: '', location: '', limit: 25 })
   const [showProcessPending, setShowProcessPending] = useState(false)
 
   const load = useCallback(async () => {
@@ -111,18 +109,6 @@ export default function Applications() {
     }
   }
 
-  const handleDiscover = async (e) => {
-    e.preventDefault()
-    setError(null)
-    try {
-      await WailsApp.DiscoverJobs(discoverForm.keywords, discoverForm.location, '', Number(discoverForm.limit) || 25)
-      setShowDiscover(false)
-      load()
-    } catch (e) {
-      setError('Discovery failed: ' + e)
-    }
-  }
-
   const handleSetStatus = async (id, status) => {
     if (status === 'cancelled' && !(await confirm('Mark this application as cancelled?', { title: 'Cancel Application', confirmLabel: 'Cancel Application' }))) return
     try {
@@ -139,7 +125,6 @@ export default function Applications() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <h2 style={{ margin: 0, fontSize: 16, color: 'var(--text-primary)' }}>Applications</h2>
         <div style={{ flex: 1 }} />
-        <button style={headerBtnStyle} onClick={() => setShowDiscover(true)}><Search size={13} /> Discover Jobs</button>
         <button style={headerBtnStyle} onClick={() => setShowAdd(true)}><Plus size={13} /> Add</button>
         <button style={{ ...headerBtnStyle, background: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.4)', color: '#10b981' }} onClick={() => setShowProcessPending(true)}>
           Process Pending
@@ -248,21 +233,6 @@ export default function Applications() {
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
               <button type="button" style={headerBtnStyle} onClick={() => setShowAdd(false)}>Cancel</button>
               <button type="submit" style={{ ...headerBtnStyle, background: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.4)', color: '#10b981' }}>Add</button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {showDiscover && (
-        <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setShowDiscover(false)} style={{ position: 'fixed', inset: 0, zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.55)' }}>
-          <form onSubmit={handleDiscover} style={{ background: 'var(--surface, #0d1520)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, padding: 20, width: 400, fontFamily: 'var(--font-mono)', display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <h3 style={{ margin: 0, fontSize: 14 }}>Discover Jobs</h3>
-            <input style={inputStyle} placeholder="Keywords" required value={discoverForm.keywords} onChange={e => setDiscoverForm(f => ({ ...f, keywords: e.target.value }))} />
-            <input style={inputStyle} placeholder="Location (optional)" value={discoverForm.location} onChange={e => setDiscoverForm(f => ({ ...f, location: e.target.value }))} />
-            <input style={inputStyle} type="number" placeholder="Limit" value={discoverForm.limit} onChange={e => setDiscoverForm(f => ({ ...f, limit: e.target.value }))} />
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
-              <button type="button" style={headerBtnStyle} onClick={() => setShowDiscover(false)}>Cancel</button>
-              <button type="submit" style={{ ...headerBtnStyle, background: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.4)', color: '#10b981' }}>Search</button>
             </div>
           </form>
         </div>

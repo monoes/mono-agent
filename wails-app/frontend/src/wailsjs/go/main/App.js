@@ -134,10 +134,6 @@ export function DenyOrgAction(arg1, arg2, arg3) {
   return window['go']['main']['App']['DenyOrgAction'](arg1, arg2, arg3);
 }
 
-export function DiscoverJobs(arg1, arg2, arg3, arg4) {
-  return window['go']['main']['App']['DiscoverJobs'](arg1, arg2, arg3, arg4);
-}
-
 export function EvaluateApplication(arg1, arg2) {
   return window['go']['main']['App']['EvaluateApplication'](arg1, arg2);
 }

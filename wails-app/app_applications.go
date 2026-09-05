@@ -219,46 +219,6 @@ func (a *App) TagApplication(id, tag, action string) error {
 	return a.runMonoCLI("", nil, "application", "tag", id, action, tag)
 }
 
-// DiscoveredApplication is one newly-imported job from DiscoverJobs.
-type DiscoveredApplication struct {
-	ID      string `json:"id"`
-	Title   string `json:"title"`
-	Company string `json:"company"`
-	URL     string `json:"url"`
-}
-
-// DiscoverResult is DiscoverJobs' return value.
-type DiscoverResult struct {
-	Imported     int                     `json:"imported"`
-	Skipped      int                     `json:"skipped"`
-	Failed       int                     `json:"failed"`
-	Applications []DiscoveredApplication `json:"applications"`
-}
-
-// DiscoverJobs searches a job board and imports new postings as pending
-// applications. source defaults to "linkedin" if empty; limit defaults to
-// 25 (the CLI's own default) if zero or negative.
-func (a *App) DiscoverJobs(keywords, location, source string, limit int) (*DiscoverResult, error) {
-	args := []string{"application", "discover", "--keywords", keywords}
-	if location != "" {
-		args = append(args, "--location", location)
-	}
-	if source != "" {
-		args = append(args, "--source", source)
-	}
-	if limit > 0 {
-		args = append(args, "--limit", strconv.Itoa(limit))
-	}
-	var result DiscoverResult
-	if err := a.runMonoCLI("", &result, args...); err != nil {
-		return nil, err
-	}
-	if result.Applications == nil {
-		result.Applications = []DiscoveredApplication{}
-	}
-	return &result, nil
-}
-
 // FitVerdictInfo mirrors internal/matching.FitVerdict's own json tags
 // exactly (that struct already has them, unlike Application/JobDetails).
 type FitVerdictInfo struct {
