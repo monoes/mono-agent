@@ -199,3 +199,115 @@ func TestStoreSetStatusNotFound(t *testing.T) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
 }
+
+func TestStoreAddAndRemoveTag(t *testing.T) {
+	db := newTestDB(t)
+	store := applications.NewStore(db.DB)
+	ctx := context.Background()
+	app := createTestJob(t, store)
+
+	if err := store.AddTag(ctx, "default", app.ID, "urgent"); err != nil {
+		t.Fatalf("AddTag: %v", err)
+	}
+	// Adding the same tag twice is a no-op, not an error.
+	if err := store.AddTag(ctx, "default", app.ID, "urgent"); err != nil {
+		t.Fatalf("AddTag (duplicate): %v", err)
+	}
+
+	got, err := store.Get(ctx, "default", app.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(got.Tags) != 1 || got.Tags[0] != "urgent" {
+		t.Fatalf("expected tags [urgent], got %v", got.Tags)
+	}
+
+	if err := store.RemoveTag(ctx, "default", app.ID, "urgent"); err != nil {
+		t.Fatalf("RemoveTag: %v", err)
+	}
+	got, err = store.Get(ctx, "default", app.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(got.Tags) != 0 {
+		t.Fatalf("expected no tags after removal, got %v", got.Tags)
+	}
+}
+
+func TestStoreAddTagNotFound(t *testing.T) {
+	db := newTestDB(t)
+	store := applications.NewStore(db.DB)
+	err := store.AddTag(context.Background(), "default", "does-not-exist", "urgent")
+	if !errors.Is(err, applications.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestStoreGetJobHydratesDetails(t *testing.T) {
+	db := newTestDB(t)
+	store := applications.NewStore(db.DB)
+	ctx := context.Background()
+	app := createTestJob(t, store)
+
+	got, err := store.Get(ctx, "default", app.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Kind != applications.KindJob {
+		t.Fatalf("expected kind job, got %q", got.Kind)
+	}
+	if got.Job == nil || got.Job.Company != "Acme" || got.Job.URL != "https://acme.example/1" {
+		t.Fatalf("job details not hydrated correctly: %+v", got.Job)
+	}
+	if got.Tender != nil {
+		t.Fatal("expected Tender to be nil for a job-kind application")
+	}
+}
+
+func TestStoreGetTenderHydratesDetails(t *testing.T) {
+	db := newTestDB(t)
+	store := applications.NewStore(db.DB)
+	ctx := context.Background()
+	app := &applications.Application{
+		ProfileID: "default",
+		Kind:      applications.KindTender,
+		Tender: &applications.TenderDetails{
+			IssuingOrg: "Ministry", URL: "https://tenders.example/1", SubmissionDeadline: "2026-12-01",
+		},
+	}
+	if err := store.Create(ctx, app); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, err := store.Get(ctx, "default", app.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Tender == nil || got.Tender.IssuingOrg != "Ministry" {
+		t.Fatalf("tender details not hydrated correctly: %+v", got.Tender)
+	}
+	if got.Job != nil {
+		t.Fatal("expected Job to be nil for a tender-kind application")
+	}
+}
+
+func TestStoreGetNotFound(t *testing.T) {
+	db := newTestDB(t)
+	store := applications.NewStore(db.DB)
+	_, err := store.Get(context.Background(), "default", "does-not-exist")
+	if !errors.Is(err, applications.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestStoreGetScopedToProfile(t *testing.T) {
+	db := newTestDB(t)
+	store := applications.NewStore(db.DB)
+	ctx := context.Background()
+	app := createTestJob(t, store)
+
+	_, err := store.Get(ctx, "other-profile", app.ID)
+	if !errors.Is(err, applications.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound reading another profile's application, got %v", err)
+	}
+}

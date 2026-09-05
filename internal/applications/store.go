@@ -244,3 +244,138 @@ func (s *Store) StatusLog(ctx context.Context, profileID, id string) ([]StatusLo
 	}
 	return out, nil
 }
+
+// AddTag attaches tag to id, scoped to profileID. Idempotent: adding an
+// already-present tag is a no-op, not an error.
+func (s *Store) AddTag(ctx context.Context, profileID, id, tag string) error {
+	var exists int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM applications WHERE id = ? AND profile_id = ?`, id, profileID,
+	).Scan(&exists); err != nil {
+		return fmt.Errorf("applications.AddTag: %w", err)
+	}
+	if exists == 0 {
+		return fmt.Errorf("%w: application %q", ErrNotFound, id)
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT OR IGNORE INTO application_tags (application_id, tag) VALUES (?, ?)`, id, tag,
+	); err != nil {
+		return fmt.Errorf("applications.AddTag: %w", err)
+	}
+	return nil
+}
+
+// RemoveTag detaches tag from id, scoped to profileID. A no-op if the tag
+// wasn't present.
+func (s *Store) RemoveTag(ctx context.Context, profileID, id, tag string) error {
+	var exists int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM applications WHERE id = ? AND profile_id = ?`, id, profileID,
+	).Scan(&exists); err != nil {
+		return fmt.Errorf("applications.RemoveTag: %w", err)
+	}
+	if exists == 0 {
+		return fmt.Errorf("%w: application %q", ErrNotFound, id)
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`DELETE FROM application_tags WHERE application_id = ? AND tag = ?`, id, tag,
+	); err != nil {
+		return fmt.Errorf("applications.RemoveTag: %w", err)
+	}
+	return nil
+}
+
+func floatPtr(v sql.NullFloat64) *float64 {
+	if !v.Valid {
+		return nil
+	}
+	return &v.Float64
+}
+
+func boolPtr(v sql.NullBool) *bool {
+	if !v.Valid {
+		return nil
+	}
+	return &v.Bool
+}
+
+// Get returns the fully hydrated application (tags + matching detail
+// struct) for id, scoped to profileID. Returns ErrNotFound if id doesn't
+// exist under that profile.
+func (s *Store) Get(ctx context.Context, profileID, id string) (*Application, error) {
+	var app Application
+	var kind, status string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, profile_id, kind, status, created_at, updated_at
+		 FROM applications WHERE id = ? AND profile_id = ?`, id, profileID,
+	).Scan(&app.ID, &app.ProfileID, &kind, &status, &app.CreatedAt, &app.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("%w: application %q", ErrNotFound, id)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("applications.Get: %w", err)
+	}
+	app.Kind = Kind(kind)
+	app.Status = Status(status)
+
+	switch app.Kind {
+	case KindJob:
+		var j JobDetails
+		var compMin, compMax sql.NullFloat64
+		var isRemote sql.NullBool
+		err := s.db.QueryRowContext(ctx,
+			`SELECT company, url, location, description, compensation_min, compensation_max,
+			        currency, job_type, is_remote, source, posted_at
+			 FROM job_details WHERE application_id = ?`, id,
+		).Scan(&j.Company, &j.URL, &j.Location, &j.Description, &compMin, &compMax,
+			&j.Currency, &j.JobType, &isRemote, &j.Source, &j.PostedAt)
+		if err != nil {
+			return nil, fmt.Errorf("applications.Get: job_details: %w", err)
+		}
+		j.CompensationMin = floatPtr(compMin)
+		j.CompensationMax = floatPtr(compMax)
+		j.IsRemote = boolPtr(isRemote)
+		app.Job = &j
+	case KindTender:
+		var td TenderDetails
+		var estValue sql.NullFloat64
+		err := s.db.QueryRowContext(ctx,
+			`SELECT issuing_org, url, description, submission_deadline, estimated_value,
+			        currency, required_certifications, bid_documents_required, source, published_at
+			 FROM tender_details WHERE application_id = ?`, id,
+		).Scan(&td.IssuingOrg, &td.URL, &td.Description, &td.SubmissionDeadline, &estValue,
+			&td.Currency, &td.RequiredCertifications, &td.BidDocumentsRequired, &td.Source, &td.PublishedAt)
+		if err != nil {
+			return nil, fmt.Errorf("applications.Get: tender_details: %w", err)
+		}
+		td.EstimatedValue = floatPtr(estValue)
+		app.Tender = &td
+	}
+
+	tags, err := s.tagsFor(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	app.Tags = tags
+	return &app, nil
+}
+
+// tagsFor returns id's tags, alphabetically sorted, or an empty (non-nil)
+// slice if none.
+func (s *Store) tagsFor(ctx context.Context, id string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT tag FROM application_tags WHERE application_id = ? ORDER BY tag ASC`, id)
+	if err != nil {
+		return nil, fmt.Errorf("applications.tagsFor: %w", err)
+	}
+	defer rows.Close()
+	tags := []string{}
+	for rows.Next() {
+		var tag string
+		if err := rows.Scan(&tag); err != nil {
+			return nil, fmt.Errorf("applications.tagsFor: scan: %w", err)
+		}
+		tags = append(tags, tag)
+	}
+	return tags, rows.Err()
+}
