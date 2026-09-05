@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 )
 
@@ -95,10 +94,7 @@ func newHILListCmd(cfg *globalConfig) *cobra.Command {
 				return nil
 			}
 
-			table := tablewriter.NewWriter(os.Stdout)
-			table.SetHeader([]string{"ID", "Workflow", "Node", "Created"})
-			table.SetBorder(false)
-			table.SetAutoWrapText(false)
+			table := newPlainTable(os.Stdout, []string{"ID", "Workflow", "Node", "Created"}, nil)
 			for _, it := range items {
 				shortID := it.ID
 				if len(shortID) > 8 {

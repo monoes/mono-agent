@@ -13,7 +13,6 @@ import (
 	"github.com/monoes/mono-agent/internal/bot"
 	"github.com/monoes/mono-agent/internal/chromecookies"
 	"github.com/monoes/mono-agent/internal/secrets"
-	"github.com/olekukonko/tablewriter"
 	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
 
@@ -359,10 +358,7 @@ func newLoginStatusCmd(cfg *globalConfig) *cobra.Command {
 				return nil
 			}
 
-			table := tablewriter.NewWriter(os.Stdout)
-			table.SetHeader([]string{"ID", "Platform", "Username", "Status", "Expires", "Added"})
-			table.SetBorder(false)
-			table.SetAutoWrapText(false)
+			table := newPlainTable(os.Stdout, []string{"ID", "Platform", "Username", "Status", "Expires", "Added"}, nil)
 
 			now := time.Now()
 			for _, s := range sessions {

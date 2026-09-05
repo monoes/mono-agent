@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 
 	"github.com/monoes/mono-agent/internal/monomind"
@@ -56,10 +55,7 @@ func newAgentScanCmd(cfg *globalConfig) *cobra.Command {
 				fmt.Println("No agent runtimes detected. Install monomind-visible agents (see `agent scan` without --installed).")
 				return nil
 			}
-			table := tablewriter.NewWriter(os.Stdout)
-			table.SetHeader([]string{"Runtime", "Installed", "Version", "Binary"})
-			table.SetBorder(false)
-			table.SetAutoWrapText(false)
+			table := newPlainTable(os.Stdout, []string{"Runtime", "Installed", "Version", "Binary"}, nil)
 			for _, a := range agents {
 				binary, version := "—", "—"
 				if a.Binary != nil && *a.Binary != "" {

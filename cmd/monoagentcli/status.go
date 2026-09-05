@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/olekukonko/tablewriter"
+	"github.com/olekukonko/tablewriter/tw"
 	"github.com/spf13/cobra"
 )
 
@@ -73,11 +73,7 @@ func newStatusCmd(cfg *globalConfig) *cobra.Command {
 				})
 			}
 
-			table := tablewriter.NewWriter(os.Stdout)
-			table.SetHeader([]string{"Metric", "Value"})
-			table.SetBorder(false)
-			table.SetAutoWrapText(false)
-			table.SetColumnAlignment([]int{tablewriter.ALIGN_RIGHT, tablewriter.ALIGN_LEFT})
+			table := newPlainTable(os.Stdout, []string{"Metric", "Value"}, []tw.Align{tw.AlignRight, tw.AlignLeft})
 
 			table.Append([]string{"Database Path", dbPath})
 			table.Append([]string{"Sessions", fmt.Sprintf("%d", sessionCount)})

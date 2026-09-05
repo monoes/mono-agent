@@ -15,7 +15,6 @@ import (
 	"github.com/monoes/mono-agent/internal/connections"
 	"github.com/monoes/mono-agent/internal/secrets"
 
-	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 )
 
@@ -252,9 +251,7 @@ func newSecretListCmd(cfg *globalConfig) *cobra.Command {
 				fmt.Fprintln(cmd.OutOrStdout(), "No secrets stored.")
 				return nil
 			}
-			table := tablewriter.NewWriter(cmd.OutOrStdout())
-			table.SetHeader([]string{"ID", "Kind", "Name", "Username", "Fields", "Updated"})
-			table.SetBorder(false)
+			table := newPlainTable(cmd.OutOrStdout(), []string{"ID", "Kind", "Name", "Username", "Fields", "Updated"}, nil)
 			for _, e := range entries {
 				table.Append([]string{e.ID, e.Kind, e.Name, e.Username, fmt.Sprintf("%d", e.FieldCount), e.UpdatedAt})
 			}

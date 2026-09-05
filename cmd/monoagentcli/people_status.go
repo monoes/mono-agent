@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 )
 
@@ -123,10 +122,7 @@ func newPeopleStatusHistoryCmd(cfg *globalConfig) *cobra.Command {
 				return nil
 			}
 
-			table := tablewriter.NewWriter(os.Stdout)
-			table.SetHeader([]string{"ID", "Text", "Posted At"})
-			table.SetBorder(false)
-			table.SetAutoWrapText(false)
+			table := newPlainTable(os.Stdout, []string{"ID", "Text", "Posted At"}, nil)
 			for _, u := range updates {
 				shortID := u.ID
 				if len(shortID) > 8 {

@@ -8,7 +8,6 @@ import (
 
 	"github.com/monoes/mono-agent/internal/applications"
 
-	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 )
 
@@ -154,9 +153,7 @@ func newApplicationListCmd(cfg *globalConfig) *cobra.Command {
 				fmt.Fprintln(cmd.OutOrStdout(), "No applications found.")
 				return nil
 			}
-			table := tablewriter.NewWriter(cmd.OutOrStdout())
-			table.SetHeader([]string{"ID", "Kind", "Status", "Title", "Tags", "Updated"})
-			table.SetBorder(false)
+			table := newPlainTable(cmd.OutOrStdout(), []string{"ID", "Kind", "Status", "Title", "Tags", "Updated"}, nil)
 			for _, a := range apps {
 				title := ""
 				if a.Job != nil {

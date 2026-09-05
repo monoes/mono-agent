@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/monoes/mono-agent/internal/storage"
-	"github.com/olekukonko/tablewriter"
+	"github.com/olekukonko/tablewriter/tw"
 	"github.com/spf13/cobra"
 )
 
@@ -117,10 +117,7 @@ func newPeopleListCmd(cfg *globalConfig) *cobra.Command {
 				return nil
 			}
 
-			table := tablewriter.NewWriter(os.Stdout)
-			table.SetHeader([]string{"ID", "Username", "Platform", "Name", "Followers", "Verified"})
-			table.SetBorder(false)
-			table.SetAutoWrapText(false)
+			table := newPlainTable(os.Stdout, []string{"ID", "Username", "Platform", "Name", "Followers", "Verified"}, nil)
 
 			for _, p := range people {
 				shortID := p.ID
@@ -208,11 +205,7 @@ func newPeopleGetCmd(cfg *globalConfig) *cobra.Command {
 				return enc.Encode(p)
 			}
 
-			table := tablewriter.NewWriter(os.Stdout)
-			table.SetHeader([]string{"Field", "Value"})
-			table.SetBorder(false)
-			table.SetAutoWrapText(false)
-			table.SetColumnAlignment([]int{tablewriter.ALIGN_RIGHT, tablewriter.ALIGN_LEFT})
+			table := newPlainTable(os.Stdout, []string{"Field", "Value"}, []tw.Align{tw.AlignRight, tw.AlignLeft})
 
 			table.Append([]string{"ID", p.ID})
 			table.Append([]string{"Username", p.PlatformUsername})

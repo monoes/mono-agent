@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/monoes/mono-agent/internal/storage"
-	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 )
 
@@ -78,10 +77,7 @@ func newListLsCmd(cfg *globalConfig) *cobra.Command {
 				return nil
 			}
 
-			table := tablewriter.NewWriter(os.Stdout)
-			table.SetHeader([]string{"ID", "Name", "Type", "Items", "Created"})
-			table.SetBorder(false)
-			table.SetAutoWrapText(false)
+			table := newPlainTable(os.Stdout, []string{"ID", "Name", "Type", "Items", "Created"}, nil)
 
 			for _, l := range lists {
 				shortID := l.ID
@@ -225,10 +221,7 @@ func newListShowCmd(cfg *globalConfig) *cobra.Command {
 				return nil
 			}
 
-			table := tablewriter.NewWriter(os.Stdout)
-			table.SetHeader([]string{"ID", "Username", "Platform", "Name", "Followers"})
-			table.SetBorder(false)
-			table.SetAutoWrapText(false)
+			table := newPlainTable(os.Stdout, []string{"ID", "Username", "Platform", "Name", "Followers"}, nil)
 
 			for _, item := range items {
 				shortID := item.ID

@@ -8,7 +8,6 @@ import (
 	"github.com/monoes/mono-agent/internal/monomind"
 	"github.com/monoes/mono-agent/internal/vault"
 
-	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 )
 
@@ -109,9 +108,7 @@ func newProfileDocumentsListCmd(cfg *globalConfig) *cobra.Command {
 				fmt.Fprintln(cmd.OutOrStdout(), "No documents uploaded.")
 				return nil
 			}
-			table := tablewriter.NewWriter(cmd.OutOrStdout())
-			table.SetHeader([]string{"ID", "Filename", "Source", "Uploaded"})
-			table.SetBorder(false)
+			table := newPlainTable(cmd.OutOrStdout(), []string{"ID", "Filename", "Source", "Uploaded"}, nil)
 			for _, d := range docs {
 				table.Append([]string{d.ID, d.Filename, d.Source, d.CreatedAt})
 			}

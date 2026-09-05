@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 
 	"github.com/monoes/mono-agent/internal/ai"
@@ -84,10 +83,7 @@ func newAIProviderListCmd(cfg *globalConfig) *cobra.Command {
 				fmt.Println("No AI providers configured. Add one with `ai provider add`.")
 				return nil
 			}
-			table := tablewriter.NewWriter(os.Stdout)
-			table.SetHeader([]string{"ID", "Name", "Provider", "Model", "Status"})
-			table.SetBorder(false)
-			table.SetAutoWrapText(false)
+			table := newPlainTable(os.Stdout, []string{"ID", "Name", "Provider", "Model", "Status"}, nil)
 			for _, p := range providers {
 				shortID := p.ID
 				if len(shortID) > 8 {

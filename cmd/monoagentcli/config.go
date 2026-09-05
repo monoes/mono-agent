@@ -7,7 +7,7 @@ import (
 	"os"
 
 	"github.com/monoes/mono-agent/internal/storage"
-	"github.com/olekukonko/tablewriter"
+	"github.com/olekukonko/tablewriter/tw"
 	"github.com/spf13/cobra"
 )
 
@@ -72,10 +72,7 @@ func newConfigListCmd(cfg *globalConfig) *cobra.Command {
 				return nil
 			}
 
-			table := tablewriter.NewWriter(os.Stdout)
-			table.SetHeader([]string{"Name", "Value", "Updated"})
-			table.SetBorder(false)
-			table.SetAutoWrapText(false)
+			table := newPlainTable(os.Stdout, []string{"Name", "Value", "Updated"}, nil)
 
 			for _, c := range configs {
 				table.Append([]string{
@@ -122,11 +119,7 @@ func newConfigGetCmd(cfg *globalConfig) *cobra.Command {
 				return enc.Encode(c)
 			}
 
-			table := tablewriter.NewWriter(os.Stdout)
-			table.SetHeader([]string{"Field", "Value"})
-			table.SetBorder(false)
-			table.SetAutoWrapText(false)
-			table.SetColumnAlignment([]int{tablewriter.ALIGN_RIGHT, tablewriter.ALIGN_LEFT})
+			table := newPlainTable(os.Stdout, []string{"Field", "Value"}, []tw.Align{tw.AlignRight, tw.AlignLeft})
 
 			table.Append([]string{"Name", c.Name})
 			table.Append([]string{"Value", c.ConfigData})

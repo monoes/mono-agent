@@ -11,7 +11,6 @@ import (
 	"github.com/monoes/mono-agent/internal/connections"
 	"github.com/monoes/mono-agent/internal/storage"
 	"github.com/monoes/mono-agent/internal/workflow"
-	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 )
 
@@ -73,10 +72,7 @@ func newPeopleMessagesAllCmd(cfg *globalConfig) *cobra.Command {
 				return nil
 			}
 
-			table := tablewriter.NewWriter(os.Stdout)
-			table.SetHeader([]string{"ID", "From", "Source", "Direction", "Subject", "Files", "Sent At"})
-			table.SetBorder(false)
-			table.SetAutoWrapText(false)
+			table := newPlainTable(os.Stdout, []string{"ID", "From", "Source", "Direction", "Subject", "Files", "Sent At"}, nil)
 
 			for _, m := range messages {
 				shortID := m.ID
@@ -356,10 +352,7 @@ func newPeopleMessagesListCmd(cfg *globalConfig) *cobra.Command {
 				return nil
 			}
 
-			table := tablewriter.NewWriter(os.Stdout)
-			table.SetHeader([]string{"ID", "Source", "Direction", "Sender", "Subject", "Files", "Sent At"})
-			table.SetBorder(false)
-			table.SetAutoWrapText(false)
+			table := newPlainTable(os.Stdout, []string{"ID", "Source", "Direction", "Sender", "Subject", "Files", "Sent At"}, nil)
 
 			for _, m := range messages {
 				shortID := m.ID
@@ -839,10 +832,7 @@ func newPeopleMessagesDraftsCmd(cfg *globalConfig) *cobra.Command {
 				return nil
 			}
 
-			table := tablewriter.NewWriter(os.Stdout)
-			table.SetHeader([]string{"ID", "To", "Subject", "Created"})
-			table.SetBorder(false)
-			table.SetAutoWrapText(false)
+			table := newPlainTable(os.Stdout, []string{"ID", "To", "Subject", "Created"}, nil)
 			for _, d := range drafts {
 				to := d.PersonFullName
 				if to == "" {
