@@ -49,8 +49,10 @@ type Application struct {
 	Tender    *TenderDetails
 }
 
-// JobDetails holds job-kind-specific fields. Company and URL are required.
+// JobDetails holds job-kind-specific fields. Title, Company, and URL are
+// required.
 type JobDetails struct {
+	Title           string
 	Company         string
 	URL             string
 	Location        string
@@ -64,9 +66,10 @@ type JobDetails struct {
 	PostedAt        string // free-form date string, e.g. RFC3339 or "2026-01-15"
 }
 
-// TenderDetails holds tender-kind-specific fields. IssuingOrg, URL, and
-// SubmissionDeadline are required.
+// TenderDetails holds tender-kind-specific fields. Title, IssuingOrg, URL,
+// and SubmissionDeadline are required.
 type TenderDetails struct {
+	Title                  string
 	IssuingOrg             string
 	URL                    string
 	Description            string

@@ -18,6 +18,7 @@ func TestStoreCreateJob(t *testing.T) {
 		ProfileID: "default",
 		Kind:      applications.KindJob,
 		Job: &applications.JobDetails{
+			Title:   "Senior Backend Engineer",
 			Company: "Acme Corp",
 			URL:     "https://acme.example/jobs/123",
 		},
@@ -45,6 +46,7 @@ func TestStoreCreateTender(t *testing.T) {
 		ProfileID: "default",
 		Kind:      applications.KindTender,
 		Tender: &applications.TenderDetails{
+			Title:              "Road Maintenance Tender",
 			IssuingOrg:         "Ministry of Example",
 			URL:                "https://tenders.example/t/456",
 			SubmissionDeadline: "2026-12-01",
@@ -120,7 +122,7 @@ func createTestJob(t *testing.T, store *applications.Store) *applications.Applic
 	app := &applications.Application{
 		ProfileID: "default",
 		Kind:      applications.KindJob,
-		Job:       &applications.JobDetails{Company: "Acme", URL: "https://acme.example/1"},
+		Job:       &applications.JobDetails{Title: "Backend Engineer", Company: "Acme", URL: "https://acme.example/1"},
 	}
 	if err := store.Create(context.Background(), app); err != nil {
 		t.Fatalf("Create: %v", err)
@@ -272,7 +274,7 @@ func TestStoreGetTenderHydratesDetails(t *testing.T) {
 		ProfileID: "default",
 		Kind:      applications.KindTender,
 		Tender: &applications.TenderDetails{
-			IssuingOrg: "Ministry", URL: "https://tenders.example/1", SubmissionDeadline: "2026-12-01",
+			Title: "Road Maintenance Tender", IssuingOrg: "Ministry", URL: "https://tenders.example/1", SubmissionDeadline: "2026-12-01",
 		},
 	}
 	if err := store.Create(ctx, app); err != nil {
@@ -323,7 +325,7 @@ func TestStoreListFilters(t *testing.T) {
 	}
 	tender := &applications.Application{
 		ProfileID: "default", Kind: applications.KindTender,
-		Tender: &applications.TenderDetails{IssuingOrg: "Ministry", URL: "https://t.example/1", SubmissionDeadline: "2026-12-01"},
+		Tender: &applications.TenderDetails{Title: "Road Maintenance Tender", IssuingOrg: "Ministry", URL: "https://t.example/1", SubmissionDeadline: "2026-12-01"},
 	}
 	if err := store.Create(ctx, tender); err != nil {
 		t.Fatalf("Create tender: %v", err)
@@ -376,5 +378,59 @@ func TestStoreListScopedToProfile(t *testing.T) {
 	}
 	if len(other) != 0 {
 		t.Fatalf("expected no applications for other-profile, got %d", len(other))
+	}
+}
+
+func TestStoreCreateRejectsMissingJobTitle(t *testing.T) {
+	db := newTestDB(t)
+	store := applications.NewStore(db.DB)
+	ctx := context.Background()
+
+	app := &applications.Application{
+		ProfileID: "default",
+		Kind:      applications.KindJob,
+		Job:       &applications.JobDetails{Company: "Acme", URL: "https://acme.example/1"}, // missing Title
+	}
+	if err := store.Create(ctx, app); err == nil {
+		t.Fatal("expected error for missing job title, got nil")
+	}
+}
+
+func TestStoreCreateRejectsMissingTenderTitle(t *testing.T) {
+	db := newTestDB(t)
+	store := applications.NewStore(db.DB)
+	ctx := context.Background()
+
+	app := &applications.Application{
+		ProfileID: "default",
+		Kind:      applications.KindTender,
+		Tender: &applications.TenderDetails{
+			IssuingOrg: "Ministry", URL: "https://t.example/1", SubmissionDeadline: "2026-12-01",
+		}, // missing Title
+	}
+	if err := store.Create(ctx, app); err == nil {
+		t.Fatal("expected error for missing tender title, got nil")
+	}
+}
+
+func TestStoreGetJobIncludesTitle(t *testing.T) {
+	db := newTestDB(t)
+	store := applications.NewStore(db.DB)
+	ctx := context.Background()
+
+	app := &applications.Application{
+		ProfileID: "default",
+		Kind:      applications.KindJob,
+		Job:       &applications.JobDetails{Title: "Senior Backend Engineer", Company: "Acme", URL: "https://acme.example/1"},
+	}
+	if err := store.Create(ctx, app); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	got, err := store.Get(ctx, "default", app.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Job.Title != "Senior Backend Engineer" {
+		t.Fatalf("expected title to round-trip, got %q", got.Job.Title)
 	}
 }

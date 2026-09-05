@@ -31,6 +31,7 @@ func (n *CreateNode) Execute(ctx context.Context, input workflow.NodeInput, conf
 	switch app.Kind {
 	case applications.KindJob:
 		app.Job = &applications.JobDetails{
+			Title:           configString(config, "title", ""),
 			Company:         configString(config, "company", ""),
 			URL:             configString(config, "url", ""),
 			Location:        configString(config, "location", ""),
@@ -45,6 +46,7 @@ func (n *CreateNode) Execute(ctx context.Context, input workflow.NodeInput, conf
 		}
 	case applications.KindTender:
 		app.Tender = &applications.TenderDetails{
+			Title:                  configString(config, "title", ""),
 			IssuingOrg:             configString(config, "issuing_org", ""),
 			URL:                    configString(config, "url", ""),
 			Description:            configString(config, "description", ""),

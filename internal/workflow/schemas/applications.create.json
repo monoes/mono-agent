@@ -14,6 +14,13 @@
       "type": "select"
     },
     {
+      "help": "The job title or tender reference/name.",
+      "key": "title",
+      "label": "Title",
+      "required": true,
+      "type": "text"
+    },
+    {
       "default": "default",
       "help": "Which profile owns this application. Defaults to 'default'.",
       "key": "profile_id",

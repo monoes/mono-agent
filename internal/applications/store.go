@@ -49,6 +49,9 @@ func validateAndDefault(app *Application) error {
 		if app.Job == nil {
 			return fmt.Errorf("%w: kind %q requires job details", ErrInvalidInput, KindJob)
 		}
+		if app.Job.Title == "" {
+			return fmt.Errorf("%w: job.title is required", ErrInvalidInput)
+		}
 		if app.Job.Company == "" {
 			return fmt.Errorf("%w: job.company is required", ErrInvalidInput)
 		}
@@ -61,6 +64,9 @@ func validateAndDefault(app *Application) error {
 		}
 		if app.Tender == nil {
 			return fmt.Errorf("%w: kind %q requires tender details", ErrInvalidInput, KindTender)
+		}
+		if app.Tender.Title == "" {
+			return fmt.Errorf("%w: tender.title is required", ErrInvalidInput)
 		}
 		if app.Tender.IssuingOrg == "" {
 			return fmt.Errorf("%w: tender.issuing_org is required", ErrInvalidInput)
@@ -109,10 +115,10 @@ func (s *Store) Create(ctx context.Context, app *Application) error {
 	case KindJob:
 		j := app.Job
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO job_details (application_id, company, url, location, description,
+			`INSERT INTO job_details (application_id, title, company, url, location, description,
 			        compensation_min, compensation_max, currency, job_type, is_remote, source, posted_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			app.ID, j.Company, j.URL, j.Location, j.Description,
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			app.ID, j.Title, j.Company, j.URL, j.Location, j.Description,
 			nullFloat(j.CompensationMin), nullFloat(j.CompensationMax), j.Currency, j.JobType,
 			nullBool(j.IsRemote), j.Source, j.PostedAt,
 		); err != nil {
@@ -121,11 +127,11 @@ func (s *Store) Create(ctx context.Context, app *Application) error {
 	case KindTender:
 		td := app.Tender
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO tender_details (application_id, issuing_org, url, description,
+			`INSERT INTO tender_details (application_id, title, issuing_org, url, description,
 			        submission_deadline, estimated_value, currency, required_certifications,
 			        bid_documents_required, source, published_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			app.ID, td.IssuingOrg, td.URL, td.Description, td.SubmissionDeadline,
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			app.ID, td.Title, td.IssuingOrg, td.URL, td.Description, td.SubmissionDeadline,
 			nullFloat(td.EstimatedValue), td.Currency, td.RequiredCertifications,
 			td.BidDocumentsRequired, td.Source, td.PublishedAt,
 		); err != nil {
@@ -324,10 +330,10 @@ func (s *Store) Get(ctx context.Context, profileID, id string) (*Application, er
 		var compMin, compMax sql.NullFloat64
 		var isRemote sql.NullBool
 		err := s.db.QueryRowContext(ctx,
-			`SELECT company, url, location, description, compensation_min, compensation_max,
+			`SELECT title, company, url, location, description, compensation_min, compensation_max,
 			        currency, job_type, is_remote, source, posted_at
 			 FROM job_details WHERE application_id = ?`, id,
-		).Scan(&j.Company, &j.URL, &j.Location, &j.Description, &compMin, &compMax,
+		).Scan(&j.Title, &j.Company, &j.URL, &j.Location, &j.Description, &compMin, &compMax,
 			&j.Currency, &j.JobType, &isRemote, &j.Source, &j.PostedAt)
 		if err != nil {
 			return nil, fmt.Errorf("applications.Get: job_details: %w", err)
@@ -340,10 +346,10 @@ func (s *Store) Get(ctx context.Context, profileID, id string) (*Application, er
 		var td TenderDetails
 		var estValue sql.NullFloat64
 		err := s.db.QueryRowContext(ctx,
-			`SELECT issuing_org, url, description, submission_deadline, estimated_value,
+			`SELECT title, issuing_org, url, description, submission_deadline, estimated_value,
 			        currency, required_certifications, bid_documents_required, source, published_at
 			 FROM tender_details WHERE application_id = ?`, id,
-		).Scan(&td.IssuingOrg, &td.URL, &td.Description, &td.SubmissionDeadline, &estValue,
+		).Scan(&td.Title, &td.IssuingOrg, &td.URL, &td.Description, &td.SubmissionDeadline, &estValue,
 			&td.Currency, &td.RequiredCertifications, &td.BidDocumentsRequired, &td.Source, &td.PublishedAt)
 		if err != nil {
 			return nil, fmt.Errorf("applications.Get: tender_details: %w", err)

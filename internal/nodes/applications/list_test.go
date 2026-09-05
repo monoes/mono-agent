@@ -15,11 +15,11 @@ func TestListNodeFiltersByKind(t *testing.T) {
 	applicationsnodes.SetGlobalStore(db.DB)
 	store := applications.NewStore(db.DB)
 
-	job := &applications.Application{Kind: applications.KindJob, Job: &applications.JobDetails{Company: "Acme", URL: "https://a.example"}}
+	job := &applications.Application{Kind: applications.KindJob, Job: &applications.JobDetails{Title: "Backend Engineer", Company: "Acme", URL: "https://a.example"}}
 	if err := store.Create(context.Background(), job); err != nil {
 		t.Fatalf("Create job: %v", err)
 	}
-	tender := &applications.Application{Kind: applications.KindTender, Tender: &applications.TenderDetails{IssuingOrg: "Min", URL: "https://t.example", SubmissionDeadline: "2026-12-01"}}
+	tender := &applications.Application{Kind: applications.KindTender, Tender: &applications.TenderDetails{Title: "Road Maintenance Tender", IssuingOrg: "Min", URL: "https://t.example", SubmissionDeadline: "2026-12-01"}}
 	if err := store.Create(context.Background(), tender); err != nil {
 		t.Fatalf("Create tender: %v", err)
 	}

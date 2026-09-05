@@ -37,6 +37,7 @@ func TestCreateNodeCreatesJob(t *testing.T) {
 
 	config := map[string]interface{}{
 		"kind":    "job",
+		"title":   "Backend Engineer",
 		"company": "Acme Corp",
 		"url":     "https://acme.example/jobs/1",
 	}

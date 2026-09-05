@@ -31,7 +31,7 @@ func newApplicationCmd(cfg *globalConfig) *cobra.Command {
 }
 
 func newApplicationAddCmd(cfg *globalConfig) *cobra.Command {
-	var kind, company, url, location, description, currency, jobType, source, postedAt string
+	var kind, title, company, url, location, description, currency, jobType, source, postedAt string
 	var issuingOrg, submissionDeadline, requiredCerts, bidDocs, publishedAt string
 	var compMin, compMax, estValue float64
 	var isRemote bool
@@ -63,7 +63,7 @@ func newApplicationAddCmd(cfg *globalConfig) *cobra.Command {
 					remotePtr = &isRemote
 				}
 				app.Job = &applications.JobDetails{
-					Company: company, URL: url, Location: location, Description: description,
+					Title: title, Company: company, URL: url, Location: location, Description: description,
 					CompensationMin: minPtr, CompensationMax: maxPtr, Currency: currency,
 					JobType: jobType, IsRemote: remotePtr, Source: source, PostedAt: postedAt,
 				}
@@ -73,7 +73,7 @@ func newApplicationAddCmd(cfg *globalConfig) *cobra.Command {
 					estPtr = &estValue
 				}
 				app.Tender = &applications.TenderDetails{
-					IssuingOrg: issuingOrg, URL: url, Description: description,
+					Title: title, IssuingOrg: issuingOrg, URL: url, Description: description,
 					SubmissionDeadline: submissionDeadline, EstimatedValue: estPtr, Currency: currency,
 					RequiredCertifications: requiredCerts, BidDocumentsRequired: bidDocs, Source: source, PublishedAt: publishedAt,
 				}
@@ -97,6 +97,7 @@ func newApplicationAddCmd(cfg *globalConfig) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&kind, "kind", "", "Application kind: job or tender (required)")
+	cmd.Flags().StringVar(&title, "title", "", "Job title or tender reference/name (required)")
 	cmd.Flags().StringVar(&company, "company", "", "Job kind: hiring company")
 	cmd.Flags().StringVar(&url, "url", "", "Job posting or tender URL")
 	cmd.Flags().StringVar(&location, "location", "", "Job kind: location")
@@ -115,6 +116,7 @@ func newApplicationAddCmd(cfg *globalConfig) *cobra.Command {
 	cmd.Flags().StringVar(&bidDocs, "bid-documents-required", "", "Tender kind: comma-separated")
 	cmd.Flags().StringVar(&publishedAt, "published-at", "", "Tender kind: when published")
 	cmd.MarkFlagRequired("kind")
+	cmd.MarkFlagRequired("title")
 	cmd.MarkFlagRequired("url")
 	return cmd
 }

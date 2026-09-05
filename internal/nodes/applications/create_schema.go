@@ -7,6 +7,8 @@ package applicationsnodes
 type CreateNodeSchema struct {
 	Kind string `json:"kind" schema:"label=Kind,type=select,required,options=job|tender,help=Which kind of application to create."`
 
+	Title string `json:"title" schema:"label=Title,type=text,required,help=The job title or tender reference/name."`
+
 	ProfileID string `json:"profile_id" schema:"label=Profile ID,type=text,default=default,help=Which profile owns this application. Defaults to 'default'."`
 
 	Company     string `json:"company" schema:"label=Company,type=text,help=Job kind only: the hiring company (required for kind=job)."`

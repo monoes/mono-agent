@@ -15,7 +15,7 @@ func TestTagNodeAddAndRemove(t *testing.T) {
 	applicationsnodes.SetGlobalStore(db.DB)
 	store := applications.NewStore(db.DB)
 
-	app := &applications.Application{Kind: applications.KindJob, Job: &applications.JobDetails{Company: "Acme", URL: "https://a.example"}}
+	app := &applications.Application{Kind: applications.KindJob, Job: &applications.JobDetails{Title: "Backend Engineer", Company: "Acme", URL: "https://a.example"}}
 	if err := store.Create(context.Background(), app); err != nil {
 		t.Fatalf("Create: %v", err)
 	}

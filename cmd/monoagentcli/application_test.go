@@ -40,7 +40,7 @@ func runApplicationCmd(t *testing.T, dbPath string, args ...string) (string, err
 func TestApplicationAddListGetStatusTag(t *testing.T) {
 	dbPath := newApplicationCLITestDB(t)
 
-	addOut, err := runApplicationCmd(t, dbPath, "add", "--kind", "job", "--company", "Acme", "--url", "https://acme.example/1")
+	addOut, err := runApplicationCmd(t, dbPath, "add", "--kind", "job", "--title", "Backend Engineer", "--company", "Acme", "--url", "https://acme.example/1")
 	if err != nil {
 		t.Fatalf("application add: %v (%s)", err, addOut)
 	}
@@ -96,7 +96,7 @@ func TestApplicationAddListGetStatusTag(t *testing.T) {
 
 func TestApplicationStatusRejectsInvalidTransition(t *testing.T) {
 	dbPath := newApplicationCLITestDB(t)
-	addOut, err := runApplicationCmd(t, dbPath, "add", "--kind", "job", "--company", "Acme", "--url", "https://acme.example/1")
+	addOut, err := runApplicationCmd(t, dbPath, "add", "--kind", "job", "--title", "Backend Engineer", "--company", "Acme", "--url", "https://acme.example/1")
 	if err != nil {
 		t.Fatalf("application add: %v (%s)", err, addOut)
 	}
