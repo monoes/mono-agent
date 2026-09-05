@@ -79,6 +79,7 @@ func newRootCmd() *cobra.Command {
 		newRefCmd(),
 		newProfileCmd(cfg),
 		newSecretCmd(cfg),
+		newApplicationCmd(cfg),
 		newHILCmd(cfg),
 		newAICmd(cfg),
 		newAgentCmd(cfg),
