@@ -708,6 +708,8 @@ export namespace main {
 	    source: string;
 	    application_id: string;
 	    created_at: string;
+	    indexed: boolean;
+	    index_error: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ProfileDocument(source);
@@ -722,6 +724,8 @@ export namespace main {
 	        this.source = source["source"];
 	        this.application_id = source["application_id"];
 	        this.created_at = source["created_at"];
+	        this.indexed = source["indexed"];
+	        this.index_error = source["index_error"];
 	    }
 	}
 	export class ProfileInfo {
@@ -1048,6 +1052,22 @@ export namespace main {
 	        this.success = source["success"];
 	        this.new_version = source["new_version"];
 	        this.error = source["error"];
+	    }
+	}
+	export class UploadResult {
+	    id: string;
+	    indexed: boolean;
+	    index_error: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new UploadResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.indexed = source["indexed"];
+	        this.index_error = source["index_error"];
 	    }
 	}
 	export class VaultEntry {

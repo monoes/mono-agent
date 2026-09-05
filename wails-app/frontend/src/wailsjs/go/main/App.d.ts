@@ -333,6 +333,6 @@ export function UpdateSecret(arg1:string,arg2:string,arg3:string,arg4:string,arg
 
 export function UpdateVaultImageLabel(arg1:string,arg2:string):Promise<void>;
 
-export function UploadProfileDocument(arg1:string,arg2:string):Promise<string>;
+export function UploadProfileDocument(arg1:string,arg2:string):Promise<main.UploadResult>;
 
 export function ValidateOrgDesign(arg1:string):Promise<string>;

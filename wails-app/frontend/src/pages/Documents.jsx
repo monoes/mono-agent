@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback } from 'react'
-import { Upload, Search, Trash2 } from 'lucide-react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { Upload, Search, Trash2, Sparkles, CheckCircle2, XCircle } from 'lucide-react'
 import * as WailsApp from '../wailsjs/go/main/App'
 import { confirm } from '../components/ConfirmDialog.jsx'
-import { notify } from '../services/api.js'
+import { api, notify, onMonomindInitEvent } from '../services/api.js'
 
 export function formatBytes(n) {
   if (n < 1024) return `${n} B`
@@ -21,12 +21,27 @@ const inputStyle = {
   padding: '6px 8px', color: '#e2e8f0', fontFamily: 'var(--font-mono)', fontSize: 11,
 }
 
+// Not indexed for the survivable reasons (never attempted, or a transient
+// backend hiccup) vs. because monomind genuinely isn't installed at all --
+// mirrors the fallback-copy pattern in Agents.jsx ("/not found/i.test(...)")
+// against internal/monomind/find.go's ErrNotFound message.
+export function isMonomindMissing(indexError) {
+  return /monomind not found/i.test(indexError || '')
+}
+
 export default function Documents() {
   const [docs, setDocs] = useState([])
   const [error, setError] = useState(null)
   const [query, setQuery] = useState('')
   const [results, setResults] = useState(null)
   const [searching, setSearching] = useState(false)
+  // Per-profile check, independent of any single document's own
+  // indexed/index_error outcome -- lets us suggest setup BEFORE the user
+  // uploads anything, not just after a failed upload. Mirrors Agents.jsx's
+  // identical notInitialized check.
+  const [notInitialized, setNotInitialized] = useState(false)
+  const [initStatus, setInitStatus] = useState('idle') // idle | running | error
+  const initRunningRef = useRef(false)
 
   const load = useCallback(async () => {
     try {
@@ -37,12 +52,37 @@ export default function Documents() {
   }, [])
 
   useEffect(() => { load() }, [load])
+  useEffect(() => { api.isMonomindInitialized().then(v => setNotInitialized(!v)) }, [])
+
+  useEffect(() => onMonomindInitEvent((payload) => {
+    if (!initRunningRef.current) return
+    if (payload.kind === 'error') {
+      initRunningRef.current = false
+      setInitStatus('error')
+      notify('initialize monomind', payload.message || 'failed')
+    } else if (payload.kind === 'done') {
+      initRunningRef.current = false
+      setInitStatus('idle')
+      setNotInitialized(false)
+    }
+  }), [])
+
+  const startMonomindInit = async () => {
+    initRunningRef.current = true
+    setInitStatus('running')
+    await api.initializeMonomindProfile()
+  }
 
   const handleUpload = async () => {
     const path = await WailsApp.OpenAnyFilePicker('Select a document to upload')
     if (!path) return
     try {
-      await WailsApp.UploadProfileDocument(path, '')
+      const result = await WailsApp.UploadProfileDocument(path, '')
+      if (!result.indexed) {
+        notify('upload', isMonomindMissing(result.index_error)
+          ? 'Uploaded, but not indexed for search — monomind isn\'t installed.'
+          : 'Uploaded, but indexing failed: ' + result.index_error)
+      }
       load()
     } catch (e) {
       notify('upload', 'Upload failed: ' + e)
@@ -88,6 +128,25 @@ export default function Documents() {
 
       {error && <div style={{ color: '#ff6b6b', fontSize: 12 }}>{error}</div>}
 
+      {notInitialized && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px',
+          background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', borderRadius: 6,
+        }}>
+          <Sparkles size={14} color="#f59e0b" style={{ flexShrink: 0 }} />
+          <div style={{ fontSize: 11, color: 'var(--text-secondary)', flex: 1 }}>
+            {initStatus === 'running'
+              ? 'Setting up monomind for this profile — this can take a minute or two…'
+              : 'Monomind isn\'t set up for this profile yet — uploaded documents won\'t be searchable until it is.'}
+          </div>
+          {initStatus === 'running' ? (
+            <div className="spinner" style={{ width: 14, height: 14 }} />
+          ) : (
+            <button style={{ ...btnStyle, padding: '4px 10px', flexShrink: 0 }} onClick={startMonomindInit}>Initiate monomind</button>
+          )}
+        </div>
+      )}
+
       {results && (
         <div style={{ maxHeight: '30%', overflow: 'auto', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 6, padding: 8 }}>
           {results.length === 0 && <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>No matching content found.</div>}
@@ -108,6 +167,7 @@ export default function Documents() {
               <th style={{ padding: '6px 8px' }}>Source</th>
               <th style={{ padding: '6px 8px' }}>Size</th>
               <th style={{ padding: '6px 8px' }}>Uploaded</th>
+              <th style={{ padding: '6px 8px' }}>Knowledge Graph</th>
               <th style={{ padding: '6px 8px' }} />
             </tr>
           </thead>
@@ -119,6 +179,20 @@ export default function Documents() {
                 <td style={{ padding: '8px', color: 'var(--text-muted)' }}>{formatBytes(d.size_bytes)}</td>
                 <td style={{ padding: '8px', color: 'var(--text-muted)' }}>{d.created_at}</td>
                 <td style={{ padding: '8px' }}>
+                  {d.indexed ? (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#10b981', fontSize: 10 }}>
+                      <CheckCircle2 size={12} /> Indexed
+                    </span>
+                  ) : (
+                    <span
+                      title={d.index_error || 'Not yet indexed'}
+                      style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#64748b', fontSize: 10, cursor: d.index_error ? 'help' : 'default' }}
+                    >
+                      <XCircle size={12} /> {isMonomindMissing(d.index_error) ? 'Monomind not installed' : 'Not indexed'}
+                    </span>
+                  )}
+                </td>
+                <td style={{ padding: '8px' }}>
                   <button style={{ ...btnStyle, color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', padding: '4px 8px' }} onClick={() => handleDelete(d.id, d.filename)}>
                     <Trash2 size={12} />
                   </button>
@@ -126,7 +200,7 @@ export default function Documents() {
               </tr>
             ))}
             {docs.length === 0 && (
-              <tr><td colSpan={5} style={{ padding: 16, textAlign: 'center', color: 'var(--text-muted)' }}>No documents uploaded.</td></tr>
+              <tr><td colSpan={6} style={{ padding: 16, textAlign: 'center', color: 'var(--text-muted)' }}>No documents uploaded.</td></tr>
             )}
           </tbody>
         </table>

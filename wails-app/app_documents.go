@@ -16,6 +16,8 @@ type ProfileDocument struct {
 	Source        string `json:"source"`
 	ApplicationID string `json:"application_id"`
 	CreatedAt     string `json:"created_at"`
+	Indexed       bool   `json:"indexed"`
+	IndexError    string `json:"index_error"`
 }
 
 // KnowledgeSearchResult mirrors internal/monomind.KnowledgeResult (also
@@ -30,8 +32,9 @@ type KnowledgeSearchResult struct {
 // profile's vault.
 func (a *App) ListProfileDocuments() ([]ProfileDocument, error) {
 	var raw []struct {
-		ID, Path, Filename, Source, ApplicationID, CreatedAt string
-		SizeBytes                                            int64
+		ID, Path, Filename, Source, ApplicationID, CreatedAt, IndexError string
+		SizeBytes                                                        int64
+		Indexed                                                          bool
 	}
 	if err := a.runMonoCLI("", &raw, "profile", "documents", "list"); err != nil {
 		return nil, err
@@ -41,26 +44,34 @@ func (a *App) ListProfileDocuments() ([]ProfileDocument, error) {
 		out = append(out, ProfileDocument{
 			ID: d.ID, Filename: d.Filename, Path: d.Path, SizeBytes: d.SizeBytes,
 			Source: d.Source, ApplicationID: d.ApplicationID, CreatedAt: d.CreatedAt,
+			Indexed: d.Indexed, IndexError: d.IndexError,
 		})
 	}
 	return out, nil
 }
 
+// UploadResult is UploadProfileDocument's return value.
+type UploadResult struct {
+	ID         string `json:"id"`
+	Indexed    bool   `json:"indexed"`
+	IndexError string `json:"index_error"`
+}
+
 // UploadProfileDocument registers path in the vault and indexes it for
 // knowledge search. source defaults to "upload" (the CLI's own default)
-// if empty.
-func (a *App) UploadProfileDocument(path, source string) (string, error) {
+// if empty. The upload itself succeeds even if indexing fails (e.g.
+// monomind isn't installed or this profile isn't monomind-init'd) --
+// Indexed/IndexError report that outcome so the caller can show it.
+func (a *App) UploadProfileDocument(path, source string) (*UploadResult, error) {
 	args := []string{"profile", "upload-document", path}
 	if source != "" {
 		args = append(args, "--source", source)
 	}
-	var result struct {
-		ID string `json:"id"`
-	}
+	var result UploadResult
 	if err := a.runMonoCLI("", &result, args...); err != nil {
-		return "", err
+		return nil, err
 	}
-	return result.ID, nil
+	return &result, nil
 }
 
 // DeleteProfileDocument removes a document from the vault.
