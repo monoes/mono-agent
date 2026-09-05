@@ -412,6 +412,22 @@ export namespace main {
 	        this.created_at = source["created_at"];
 	    }
 	}
+	export class KnowledgeSearchResult {
+	    path: string;
+	    excerpt: string;
+	    score: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new KnowledgeSearchResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.excerpt = source["excerpt"];
+	        this.score = source["score"];
+	    }
+	}
 	export class LogEntry {
 	    time: string;
 	    source: string;
@@ -682,6 +698,30 @@ export namespace main {
 	        this.scraped_at = source["scraped_at"];
 	        this.we_liked = source["we_liked"];
 	        this.we_commented = source["we_commented"];
+	    }
+	}
+	export class ProfileDocument {
+	    id: string;
+	    filename: string;
+	    path: string;
+	    size_bytes: number;
+	    source: string;
+	    application_id: string;
+	    created_at: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProfileDocument(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.filename = source["filename"];
+	        this.path = source["path"];
+	        this.size_bytes = source["size_bytes"];
+	        this.source = source["source"];
+	        this.application_id = source["application_id"];
+	        this.created_at = source["created_at"];
 	    }
 	}
 	export class ProfileInfo {

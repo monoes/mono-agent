@@ -12,6 +12,7 @@
       "vault": "Images",
       "secretsVault": "Vault",
       "applications": "Applications",
+      "documents": "Documents",
       "logs": "Live Logs",
       "settings": "Settings"
     },

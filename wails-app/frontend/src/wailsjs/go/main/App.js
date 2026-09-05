@@ -110,6 +110,10 @@ export function DeleteOrgDesign(arg1) {
   return window['go']['main']['App']['DeleteOrgDesign'](arg1);
 }
 
+export function DeleteProfileDocument(arg1) {
+  return window['go']['main']['App']['DeleteProfileDocument'](arg1);
+}
+
 export function DeleteSecret(arg1) {
   return window['go']['main']['App']['DeleteSecret'](arg1);
 }
@@ -434,6 +438,10 @@ export function ListPlatformsJSON(arg1) {
   return window['go']['main']['App']['ListPlatformsJSON'](arg1);
 }
 
+export function ListProfileDocuments() {
+  return window['go']['main']['App']['ListProfileDocuments']();
+}
+
 export function ListResources(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['ListResources'](arg1, arg2, arg3, arg4);
 }
@@ -456,6 +464,10 @@ export function LoginSocial(arg1) {
 
 export function MoveProfileFolder(arg1, arg2) {
   return window['go']['main']['App']['MoveProfileFolder'](arg1, arg2);
+}
+
+export function OpenAnyFilePicker(arg1) {
+  return window['go']['main']['App']['OpenAnyFilePicker'](arg1);
 }
 
 export function OpenJSONFilePicker(arg1) {
@@ -550,6 +562,10 @@ export function ScanAgentRuntimes() {
   return window['go']['main']['App']['ScanAgentRuntimes']();
 }
 
+export function SearchProfileKnowledge(arg1) {
+  return window['go']['main']['App']['SearchProfileKnowledge'](arg1);
+}
+
 export function SearchVaultImages(arg1) {
   return window['go']['main']['App']['SearchVaultImages'](arg1);
 }
@@ -640,6 +656,10 @@ export function UpdateSecret(arg1, arg2, arg3, arg4, arg5, arg6) {
 
 export function UpdateVaultImageLabel(arg1, arg2) {
   return window['go']['main']['App']['UpdateVaultImageLabel'](arg1, arg2);
+}
+
+export function UploadProfileDocument(arg1, arg2) {
+  return window['go']['main']['App']['UploadProfileDocument'](arg1, arg2);
 }
 
 export function ValidateOrgDesign(arg1) {

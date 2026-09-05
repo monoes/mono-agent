@@ -59,6 +59,8 @@ export function DeleteAIProvider(arg1:string):Promise<string>;
 
 export function DeleteOrgDesign(arg1:string):Promise<string>;
 
+export function DeleteProfileDocument(arg1:string):Promise<void>;
+
 export function DeleteSecret(arg1:string):Promise<void>;
 
 export function DeleteSession(arg1:number):Promise<void>;
@@ -221,6 +223,8 @@ export function ListOrgs():Promise<string>;
 
 export function ListPlatformsJSON(arg1:string):Promise<string>;
 
+export function ListProfileDocuments():Promise<Array<main.ProfileDocument>>;
+
 export function ListResources(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.ResourceListResult>;
 
 export function ListSecrets():Promise<Array<main.VaultEntry>>;
@@ -232,6 +236,8 @@ export function ListWorkflows():Promise<Array<main.WorkflowSummary>>;
 export function LoginSocial(arg1:string):Promise<string>;
 
 export function MoveProfileFolder(arg1:string,arg2:string):Promise<void>;
+
+export function OpenAnyFilePicker(arg1:string):Promise<string>;
 
 export function OpenJSONFilePicker(arg1:string):Promise<string>;
 
@@ -279,6 +285,8 @@ export function SaveWorkflow(arg1:main.SaveWorkflowRequest):Promise<main.Workflo
 
 export function ScanAgentRuntimes():Promise<string>;
 
+export function SearchProfileKnowledge(arg1:string):Promise<Array<main.KnowledgeSearchResult>>;
+
 export function SearchVaultImages(arg1:string):Promise<Array<Record<string, any>>>;
 
 export function SelfUpdate():Promise<main.UpdateResult>;
@@ -324,5 +332,7 @@ export function UpdateOrgRole(arg1:string,arg2:string,arg3:string):Promise<strin
 export function UpdateSecret(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:Record<string, string>):Promise<void>;
 
 export function UpdateVaultImageLabel(arg1:string,arg2:string):Promise<void>;
+
+export function UploadProfileDocument(arg1:string,arg2:string):Promise<string>;
 
 export function ValidateOrgDesign(arg1:string):Promise<string>;

@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import {
   LayoutDashboard, Users,
   Terminal, PlayCircle, Settings, Image, Mail, KeyRound,
-  ChevronDown, Plus, Check, Building2, FolderOpen, FolderCog, Loader2, Briefcase
+  ChevronDown, Plus, Check, Building2, FolderOpen, FolderCog, Loader2, Briefcase, FileText
 } from 'lucide-react'
 import { GetVersion } from '../wailsjs/go/main/App'
 import * as WailsApp from '../wailsjs/go/main/App'
@@ -29,6 +29,7 @@ const NAV_ITEMS = [
   { id: 'vault',       labelKey: 'vault',       icon: Image,           section: 'DATA' },
   { id: 'secretsVault', labelKey: 'secretsVault', icon: KeyRound,      section: 'DATA' },
   { id: 'applications', labelKey: 'applications', icon: Briefcase,     section: 'DATA' },
+  { id: 'documents',   labelKey: 'documents',   icon: FileText,        section: 'DATA' },
   { id: 'logs',        labelKey: 'logs',        icon: Terminal,        section: 'DEBUG' },
   { id: 'settings',    labelKey: 'settings',    icon: Settings,        section: 'SYSTEM' },
 ]
