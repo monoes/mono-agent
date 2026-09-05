@@ -131,4 +131,7 @@ var Manifest = []ManifestEntry{
 
 	// --- documents.* ---
 	{NodeType: "documents.render", GoFile: "internal/nodes/documents/render_schema.go", StructName: "RenderNodeSchema"},
+
+	// --- applications.evaluate (matching) ---
+	{NodeType: "applications.evaluate", GoFile: "internal/nodes/matching/evaluate_schema.go", StructName: "EvaluateNodeSchema"},
 }
