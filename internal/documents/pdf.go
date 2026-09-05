@@ -10,6 +10,13 @@ import (
 	"github.com/go-rod/rod/lib/proto"
 )
 
+// RenderPDFFunc is RenderPDF's implementation, exposed as a swappable
+// package-level variable so tests can inject a fake and exercise callers
+// like GenerateDocument without a real browser. RenderPDF always calls
+// through this var, so production code goes through whichever
+// implementation is currently assigned.
+var RenderPDFFunc = renderPDFImpl
+
 // RenderPDF launches a standalone, unauthenticated headless browser (the
 // same launcher.New()/rod.New() pattern cmd/monoagentcli/crawl.go already
 // uses — not the login-session infrastructure in
@@ -17,6 +24,10 @@ import (
 // rendered PDF bytes via Chrome's native "Print to PDF". The browser is
 // launched and closed within this single call.
 func RenderPDF(ctx context.Context, html string) ([]byte, error) {
+	return RenderPDFFunc(ctx, html)
+}
+
+func renderPDFImpl(ctx context.Context, html string) ([]byte, error) {
 	launchURL, err := launcher.New().Headless(true).Launch()
 	if err != nil {
 		return nil, fmt.Errorf("documents.RenderPDF: launch browser: %w", err)
