@@ -103,7 +103,6 @@ data/mastermind-*.jsonl
 /monoagentcli
 GRAPH_REPORT.md
 # monomind runtime — local state, tokens, and databases; never tracked
-.monomind/
 build/
 # monodesign hook cache — local, regenerated per machine
 .monodesign/
@@ -115,3 +114,42 @@ edge_passwords.csv
 # make bench output (local; CI uploads its own copy as a build artifact)
 /bench.txt
 /benchstat.txt
+# monomind runtime — exclude sensitive and machine-specific data
+.monomind/sessions/
+.monomind/security/
+.monomind/*.tmp
+.monomind/*.log
+.monomind/daemon.pid
+.monomind/*.db
+.monomind/*.db-wal
+.monomind/*.db-shm
+
+# monomind runtime state
+.monomind/data/
+.monomind/metrics/
+.monomind/knowledge/
+.monomind/*.json
+.monomind/*.jsonl
+**/.monomind/*.json
+.monomind/monoswarm/
+
+# monomind runtime — remaining gaps found during a full audit: a bare-
+# filename credential and several directories with no extension-based
+# pattern above to catch them.
+.monomind/dashboard-token
+.monomind/backups/
+.monomind/capture/
+.monomind/episodic/
+.monomind/logs/
+.monomind/orgs/
+.monomind/state/
+
+# Personal AI-assistant tool configuration (per-machine setup, not shared
+# repo content) — same treatment as .claude/ above.
+GEMINI.md
+opencode.json
+.agents/skills/
+.codex/
+.gemini/
+.kimi-code/
+.opencode/
