@@ -1,0 +1,37 @@
+{
+  "_generated": true,
+  "credential_platform": null,
+  "fields": [
+    {
+      "help": "The job application to prepare documents for.",
+      "key": "application_id",
+      "label": "Application ID",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "help": "A JSON object matching documents.CVData's fields.",
+      "key": "cv_data",
+      "label": "CV Data",
+      "language": "json",
+      "required": true,
+      "type": "code"
+    },
+    {
+      "help": "A JSON object matching documents.CoverLetterData's fields.",
+      "key": "cover_letter_data",
+      "label": "Cover Letter Data",
+      "language": "json",
+      "required": true,
+      "type": "code"
+    },
+    {
+      "default": "default",
+      "help": "Which profile owns this application.",
+      "key": "profile_id",
+      "label": "Profile ID",
+      "required": false,
+      "type": "text"
+    }
+  ]
+}
