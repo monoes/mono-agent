@@ -196,6 +196,17 @@ export default function ApplicationsProcessPendingFlow({ pendingApplications, on
               </div>
             )}
             {error && <div style={{ color: '#ff6b6b', marginTop: 8 }}>{error}</div>}
+            {error && (stage === 'evaluating' || stage === 'applying') && (
+              // 'evaluating'/'applying' render no buttons of their own while
+              // in flight -- if the underlying call throws, stage never
+              // advances past them, so without this the modal is a dead
+              // end (no backdrop-click-to-close or Escape handler either).
+              // Give the user an explicit way out of a failed item.
+              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                <button style={btnStyle} onClick={() => { setError(null); finishItem({ skipped: summary.skipped + 1 }); advance() }}>Skip This Item</button>
+                <button style={btnStyle} onClick={onClose}>Close</button>
+              </div>
+            )}
           </div>
         )}
 
