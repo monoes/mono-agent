@@ -43,7 +43,6 @@ export default function Documents() {
     if (!path) return
     try {
       await WailsApp.UploadProfileDocument(path, '')
-      notify('upload', 'Document uploaded and indexed for search.')
       load()
     } catch (e) {
       notify('upload', 'Upload failed: ' + e)
