@@ -29,7 +29,23 @@ func TestBrowserFileNeverClicksAnything(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading browser.go: %v", err)
 	}
-	forbidden := []string{"Click", "MustClick", ".Submit", "Keyboard.Type", "MustSubmit"}
+	// Trailing "(" on each substring targets the actual method call (not
+	// just the word appearing in a doc comment) and avoids matching
+	// "Keyboard.Type" against "Keyboard.MustType" style near-misses —
+	// verified against the vendored go-rod API's actual DOM-interaction
+	// surface (github.com/go-rod/rod: Element.Input/MustInput,
+	// Element.MustSelect, Page.Eval/MustEval, Keyboard.MustType/Press,
+	// etc.) rather than guessing at method names.
+	forbidden := []string{
+		"Click(", "MustClick(",
+		"Submit(", "MustSubmit(",
+		"Input(", "MustInput(",
+		"Type(", "MustType(",
+		"Select(", "MustSelect(",
+		"Eval(", "MustEval(",
+		"Press(", "MustPress(",
+		"SetValue(", "MustSetValue(",
+	}
 	for _, f := range forbidden {
 		if strings.Contains(string(src), f) {
 			t.Fatalf("internal/apply/browser.go must never call anything resembling %q — found it in the source. This file's only job is to navigate to a URL and leave the window open for a human.", f)
