@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -270,4 +271,30 @@ type ExpressionContext struct {
 	WorkflowID  string
 	ExecutionID string
 	Env         map[string]string // env var access
+}
+
+// ValidateConnectionsAgainstNodes checks that every connection's source and
+// target node id is present in nodes, returning ErrDanglingConnection
+// (naming the connection and the missing id) for the first mismatch found.
+//
+// This is purely in-memory — no store access — so a caller can (and should)
+// run it before ever calling CreateWorkflow/SaveWorkflowNodes/
+// SaveWorkflowConnections: catching a dangling reference here means the
+// operation touches nothing at all, rather than partially persisting state
+// that SaveWorkflowConnections's own (store-level, defense-in-depth) check
+// would then have to unwind.
+func ValidateConnectionsAgainstNodes(nodes []WorkflowNode, conns []WorkflowConnection) error {
+	ids := make(map[string]bool, len(nodes))
+	for _, n := range nodes {
+		ids[n.ID] = true
+	}
+	for _, c := range conns {
+		if !ids[c.SourceNodeID] {
+			return fmt.Errorf("%w: connection %q references unknown source node %q", ErrDanglingConnection, c.ID, c.SourceNodeID)
+		}
+		if !ids[c.TargetNodeID] {
+			return fmt.Errorf("%w: connection %q references unknown target node %q", ErrDanglingConnection, c.ID, c.TargetNodeID)
+		}
+	}
+	return nil
 }

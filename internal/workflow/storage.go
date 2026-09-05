@@ -271,7 +271,11 @@ func (s *SQLiteWorkflowStore) DeleteWorkflow(ctx context.Context, id string) err
 	}
 	n, _ := result.RowsAffected()
 	if n == 0 {
-		return fmt.Errorf("workflow %s not found", id)
+		// Wrapped in the package sentinel (not a bare fmt.Errorf) so callers
+		// like HybridWorkflowStore.DeleteWorkflow can distinguish "already
+		// gone, nothing to do" from a genuine deletion failure via errors.Is
+		// instead of matching on this exact message text.
+		return fmt.Errorf("%w: %s", ErrWorkflowNotFound, id)
 	}
 	return nil
 }

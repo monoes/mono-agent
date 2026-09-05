@@ -20,6 +20,49 @@ func copyMap(m map[string]interface{}) map[string]interface{} {
 	return out
 }
 
+// parseFieldKeys accepts field_keys in either shape it can legitimately
+// arrive in:
+//
+//   - []interface{} — what the real workflow engine delivers: it
+//     auto-parses any config string starting with "[" or "{" into a native
+//     Go value before Execute ever runs (ExpressionEngine.resolveValue in
+//     internal/workflow/expression.go), so a workflow-stored JSON-array
+//     string like `["api_key"]` arrives already parsed.
+//   - string — what `monoagentcli node run` delivers: it invokes a node
+//     directly with the raw --config JSON, bypassing the engine's
+//     expression-resolution pass entirely, so the exact same
+//     `field_keys: "[\"api_key\"]"` value a saved workflow would contain
+//     arrives as a literal string instead.
+//
+// Accepting both means this node behaves the same regardless of which
+// caller invokes it, rather than silently depending on one specific
+// caller's preprocessing.
+func parseFieldKeys(raw interface{}) ([]string, error) {
+	var arr []interface{}
+	switch v := raw.(type) {
+	case []interface{}:
+		arr = v
+	case string:
+		if err := json.Unmarshal([]byte(v), &arr); err != nil {
+			return nil, fmt.Errorf("field_keys must be a JSON array of item field names: %w", err)
+		}
+	default:
+		return nil, fmt.Errorf("field_keys must be a non-empty JSON array of item field names")
+	}
+	if len(arr) == 0 {
+		return nil, fmt.Errorf("field_keys must be a non-empty JSON array of item field names")
+	}
+	keys := make([]string, len(arr))
+	for i, k := range arr {
+		s, ok := k.(string)
+		if !ok {
+			return nil, fmt.Errorf("field_keys[%d] must be a string", i)
+		}
+		keys[i] = s
+	}
+	return keys, nil
+}
+
 // SecretSaveNode writes a credential into the profile's encrypted vault
 // (~/.monoagent — see internal/secrets), pulling the field values to encrypt
 // out of the current item's own JSON data (e.g. a token a prior node in the
@@ -41,24 +84,9 @@ func (n *SecretSaveNode) Execute(ctx context.Context, input workflow.NodeInput, 
 	if name == "" {
 		return nil, fmt.Errorf("vault.secret_save: name is required")
 	}
-	// The engine auto-parses any config string starting with "[" or "{"
-	// into a native Go value before Execute ever sees it (see
-	// ExpressionEngine.resolveValue in internal/workflow/expression.go) —
-	// so field_keys arrives as []interface{}, not the raw JSON string a
-	// user typed into the textarea. core.set's "assignments" field (the
-	// same type=textarea-holds-a-JSON-array shape) expects the identical
-	// pre-parsed type for the same reason.
-	rawFieldKeys, ok := config["field_keys"].([]interface{})
-	if !ok || len(rawFieldKeys) == 0 {
-		return nil, fmt.Errorf("vault.secret_save: field_keys must be a non-empty JSON array of item field names")
-	}
-	fieldKeys := make([]string, len(rawFieldKeys))
-	for i, k := range rawFieldKeys {
-		s, ok := k.(string)
-		if !ok {
-			return nil, fmt.Errorf("vault.secret_save: field_keys[%d] must be a string", i)
-		}
-		fieldKeys[i] = s
+	fieldKeys, err := parseFieldKeys(config["field_keys"])
+	if err != nil {
+		return nil, fmt.Errorf("vault.secret_save: %w", err)
 	}
 	username, _ := config["username"].(string)
 	url, _ := config["url"].(string)

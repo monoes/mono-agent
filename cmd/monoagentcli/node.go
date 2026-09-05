@@ -30,6 +30,7 @@ import (
 	"github.com/monoes/mono-agent/internal/noderegistry"
 	"github.com/monoes/mono-agent/internal/nodes"
 	peoplenodes "github.com/monoes/mono-agent/internal/nodes/people"
+	"github.com/monoes/mono-agent/internal/vault"
 	"github.com/monoes/mono-agent/internal/workflow"
 	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
@@ -624,7 +625,17 @@ platform name to override. Token refresh is handled automatically for OAuth conn
 				NodeName:    nodeType,
 			}
 
+			// The real engine injects these into ctx before every node's
+			// Execute (internal/workflow/engine.go's runExecution) — without
+			// them here too, any node touching the vault (image or
+			// credential save/get) fails with "no database in context"
+			// under `node run`, even with rawDB successfully open, since it
+			// reads the DB handle from ctx, not from a package-level var.
 			ctx := context.Background()
+			if rawDB != nil {
+				ctx = vault.ContextWithDB(ctx, rawDB)
+				ctx = vault.ContextWithProfileID(ctx, cfg.ProfileID)
+			}
 			outputs, err := executor.Execute(ctx, input, config)
 			if err != nil {
 				return fmt.Errorf("node %s failed: %w", nodeType, err)

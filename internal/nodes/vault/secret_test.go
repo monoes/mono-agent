@@ -76,23 +76,35 @@ func TestSecretSaveGet_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestSecretSave_FieldKeysMustBeParsedArray is a regression test: the engine
-// auto-parses any config string starting with "[" or "{" into a native Go
-// value before Execute ever sees it (ExpressionEngine.resolveValue), so
-// field_keys always arrives as []interface{} — never the raw JSON string a
-// user typed into the field_keys textarea. An earlier version of this node
-// read config["field_keys"] as a string and re-unmarshaled it, which failed
-// every real workflow run (config["field_keys"].(string) silently returned
-// "" since the value was already []interface{}) while passing every
-// hand-written unit test that (wrongly) passed a literal string.
-func TestSecretSave_FieldKeysMustBeParsedArray(t *testing.T) {
+// TestSecretSave_AcceptsBothFieldKeysRepresentations is a regression test
+// covering two related historical bugs:
+//
+//  1. The real workflow engine auto-parses any config string starting with
+//     "[" or "{" into a native Go value before Execute ever sees it
+//     (ExpressionEngine.resolveValue) — so field_keys arrives as
+//     []interface{} there, never the raw JSON string a user typed into the
+//     field_keys textarea. An earlier version of this node read
+//     config["field_keys"] as a string and re-unmarshaled it, which failed
+//     every real workflow run while passing every hand-written unit test
+//     that (wrongly) passed a literal string.
+//  2. `monoagentcli node run` invokes a node directly with the raw --config
+//     JSON, bypassing that engine-level auto-parse entirely — so the exact
+//     same stored-shape string (`field_keys: "[\"token\"]"`) arrives as a
+//     literal string there instead. A version of this node that only
+//     accepted []interface{} (the fix for bug 1) then failed under
+//     `node run` specifically, which is a documented, legitimate way to
+//     invoke any node type directly.
+//
+// parseFieldKeys must accept both shapes so the node behaves the same
+// regardless of which caller invokes it.
+func TestSecretSave_AcceptsBothFieldKeysRepresentations(t *testing.T) {
 	ctx := newSecretsTestCtx(t)
 	input := workflow.NodeInput{
 		Items: []workflow.Item{workflow.NewItem(map[string]interface{}{"token": "t1"})},
 	}
 	save := &SecretSaveNode{}
 
-	// The shape the engine actually delivers.
+	// The shape the real engine delivers.
 	if _, err := save.Execute(ctx, input, map[string]interface{}{
 		"name":       "regression-parsed-array",
 		"field_keys": []interface{}{"token"},
@@ -100,14 +112,13 @@ func TestSecretSave_FieldKeysMustBeParsedArray(t *testing.T) {
 		t.Fatalf("Execute with []interface{} field_keys: %v", err)
 	}
 
-	// A raw JSON string (what the engine would deliver only if resolveValue's
-	// auto-parse were ever removed) must fail with a clear error, not silently
-	// no-op or panic.
+	// The shape `node run` delivers (and what a saved workflow's own JSON
+	// literally contains, before the engine ever touches it).
 	if _, err := save.Execute(ctx, input, map[string]interface{}{
 		"name":       "regression-raw-string",
 		"field_keys": `["token"]`,
-	}); err == nil {
-		t.Fatalf("expected an error for a raw string field_keys, got none")
+	}); err != nil {
+		t.Fatalf("Execute with a raw JSON string field_keys: %v", err)
 	}
 }
 
@@ -119,6 +130,17 @@ func TestSecretSave_RejectsNonStringFieldKeyElement(t *testing.T) {
 		map[string]interface{}{"name": "n", "field_keys": []interface{}{"api_key", 42.0}})
 	if err == nil {
 		t.Fatalf("expected an error when field_keys contains a non-string element")
+	}
+}
+
+func TestSecretSave_RejectsMalformedFieldKeysString(t *testing.T) {
+	ctx := newSecretsTestCtx(t)
+	save := &SecretSaveNode{}
+	_, err := save.Execute(ctx,
+		workflow.NodeInput{Items: []workflow.Item{workflow.NewItem(map[string]interface{}{"token": "t1"})}},
+		map[string]interface{}{"name": "n", "field_keys": `[not valid json`})
+	if err == nil {
+		t.Fatalf("expected an error for a malformed field_keys JSON string")
 	}
 }
 

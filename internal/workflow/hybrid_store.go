@@ -3,6 +3,8 @@ package workflow
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"time"
 )
 
@@ -93,12 +95,27 @@ func (h *HybridWorkflowStore) SaveWorkflow(ctx context.Context, w *Workflow) err
 	return h.sql.UpdateWorkflow(ctx, w)
 }
 
+// DeleteWorkflow removes a workflow from both stores. "Already gone" from
+// either side is treated as success (the caller wanted it gone; it is) —
+// WorkflowFileStore.DeleteWorkflow already returns nil for a missing file,
+// and SQLiteWorkflowStore.DeleteWorkflow wraps ErrWorkflowNotFound for zero
+// rows affected. Any OTHER error (permission denied, disk full, a genuine
+// DB error) is propagated, not swallowed: this method previously discarded
+// every error unconditionally, which made it unsafe to use as a
+// compensating cleanup action — a caller relying on its return value to
+// know whether cleanup actually happened would be told "success" even when
+// the workflow (or its rows) are still sitting there.
 func (h *HybridWorkflowStore) DeleteWorkflow(ctx context.Context, id string) error {
+	var errs []error
 	if h.files != nil {
-		_ = h.files.DeleteWorkflow(ctx, id) // ignore not-found
+		if err := h.files.DeleteWorkflow(ctx, id); err != nil {
+			errs = append(errs, fmt.Errorf("file store: %w", err))
+		}
 	}
-	_ = h.sql.DeleteWorkflow(ctx, id) // ignore not-found
-	return nil
+	if err := h.sql.DeleteWorkflow(ctx, id); err != nil && !errors.Is(err, ErrWorkflowNotFound) {
+		errs = append(errs, fmt.Errorf("sql store: %w", err))
+	}
+	return errors.Join(errs...)
 }
 
 func (h *HybridWorkflowStore) SetWorkflowActive(ctx context.Context, id string, active bool) error {

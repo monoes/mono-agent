@@ -19,9 +19,9 @@ profile's secrets vault:
 monoagentcli secret list | grep httpapi-token
 ```
 
-There's no CLI command to print a stored secret's value directly (by
-design — see `ref connections`); read it via the vault UI, or `secret
-export` for a scripted flow.
+Reveal it with `monoagentcli secret reveal httpapi-token --reveal --json`
+(the `--reveal` flag is a deliberate confirmation step, not optional), or
+use `secret export` for a scripted bulk-export flow.
 
 ## List workflows, then run one
 

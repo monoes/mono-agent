@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -849,5 +850,310 @@ func TestWorkflowImportNodeIDCollision(t *testing.T) {
 	}
 	if edgeCount != 2 {
 		t.Fatalf("expected 2 preserved edges (one per workflow), got %d", edgeCount)
+	}
+}
+
+// duplicateConnectionWorkflowFile has two distinct connection ids (c1, c2)
+// wiring the exact same edge (trigger.main → set.main). This passes
+// workflow.ValidateConnectionsAgainstNodes (which only checks that the
+// referenced node ids exist) and the import command's id-collision remap
+// (c1 and c2 don't collide with each other or anything already stored), so
+// it reaches persistence unchanged — then fails at the real INSERT because
+// workflow_connections has UNIQUE(source_node_id, source_handle,
+// target_node_id, target_handle) (data/migrations/006_workflow_system.sql).
+// This is the "actual failure after persistence starts" case: by the time
+// SaveWorkflowConnections fails, CreateWorkflow and SaveWorkflowNodes have
+// already committed.
+const duplicateConnectionWorkflowFile = `{
+  "name": "dup-conn-wf",
+  "nodes": [
+    {"id": "trigger", "type": "trigger.manual", "name": "Manual", "position": {"x": 0, "y": 0}, "config": {}},
+    {"id": "set", "type": "core.set", "name": "Set", "position": {"x": 1, "y": 0}, "config": {"fields": {}}}
+  ],
+  "connections": [
+    {"id": "c1", "source": "trigger", "source_handle": "main", "target": "set", "target_handle": "main"},
+    {"id": "c2", "source": "trigger", "source_handle": "main", "target": "set", "target_handle": "main"}
+  ]
+}`
+
+// TestWorkflowImportAtomicity_FreshCreateCleansUpOnPersistFailure guards the
+// atomic-import fix for a brand-new workflow (no --overwrite, nothing to
+// restore): when persistence fails partway through (see
+// duplicateConnectionWorkflowFile above), createOrOverwriteWorkflowAtomically
+// must delete the workflow row, its nodes, and its file — not leave orphaned
+// nodes behind just because their connections rolled back.
+func TestWorkflowImportAtomicity_FreshCreateCleansUpOnPersistFailure(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dbPath := filepath.Join(t.TempDir(), "atomic-fresh.db")
+	cfg := &globalConfig{DBPath: dbPath, ProfileID: "default"}
+
+	path := writeTempWorkflow(t, duplicateConnectionWorkflowFile)
+	cmd := newWorkflowImportCmd(cfg)
+	cmd.SetArgs([]string{"--file", path})
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("expected import of a duplicate-edge connection set to fail")
+	}
+
+	db, err := storage.NewDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	for _, table := range []string{"workflows", "workflow_nodes", "workflow_connections"} {
+		var n int
+		if err := db.DB.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM %s", table)).Scan(&n); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if n != 0 {
+			t.Fatalf("expected zero rows in %s after a failed fresh import, got %d — orphaned rows leaked", table, n)
+		}
+	}
+
+	entries, err := os.ReadDir(filepath.Join(home, ".monoagent", "workflows"))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("read workflows dir: %v", err)
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".json") {
+			t.Fatalf("expected no leftover workflow file after a failed fresh import, found %s", e.Name())
+		}
+	}
+}
+
+// TestWorkflowImportAtomicity_OverwriteRestoresPreviousOnPersistFailure
+// guards the --overwrite half of the same fix: a failed overwrite must
+// restore the previous workflow (metadata, nodes, connections) exactly, and
+// must not touch its execution history, even though SaveWorkflowNodes had
+// already overwritten the SQL node rows with the bad version's names before
+// SaveWorkflowConnections failed and forced the rollback.
+func TestWorkflowImportAtomicity_OverwriteRestoresPreviousOnPersistFailure(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dbPath := filepath.Join(t.TempDir(), "atomic-overwrite.db")
+	cfg := &globalConfig{DBPath: dbPath, JSONOutput: true, ProfileID: "default"}
+
+	const v1 = `{
+  "id": "stable-wf-id",
+  "name": "overwrite-wf-v1",
+  "nodes": [
+    {"id": "trigger", "type": "trigger.manual", "name": "Manual", "position": {"x": 0, "y": 0}, "config": {}},
+    {"id": "set", "type": "core.set", "name": "Set", "position": {"x": 1, "y": 0}, "config": {"fields": {}}}
+  ],
+  "connections": [
+    {"id": "c1", "source": "trigger", "source_handle": "main", "target": "set", "target_handle": "main"}
+  ]
+}`
+	var imported struct {
+		ID string `json:"id"`
+	}
+	// --overwrite on the very first import of this id is what makes the CLI
+	// honor the file's explicit "id" instead of assigning a fresh UUID (see
+	// newWorkflowImportCmd: "Assign a fresh ID unless --overwrite is
+	// requested and one is present") — needed here so the second import
+	// below can target this exact workflow.
+	if err := json.Unmarshal([]byte(runWorkflowSubcmd(t, cfg, "import", "--file", writeTempWorkflow(t, v1), "--overwrite")), &imported); err != nil {
+		t.Fatalf("parse v1 import output: %v", err)
+	}
+	if imported.ID != "stable-wf-id" {
+		t.Fatalf("expected v1 to keep its explicit id, got %q", imported.ID)
+	}
+
+	db, err := storage.NewDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := db.ApplyMigrations(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if _, err := db.DB.Exec(
+		`INSERT INTO workflow_executions (id, workflow_id, profile_id, status, trigger_type, error_message, created_at)
+		 VALUES ('exec-1', 'stable-wf-id', 'default', 'SUCCESS', 'manual', '', CURRENT_TIMESTAMP)`,
+	); err != nil {
+		t.Fatalf("seed execution history: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	// Same id, --overwrite, but with the duplicate-edge bug: node names
+	// differ from v1 (Manual2/Set2) so a leaked partial write is detectable,
+	// and reusing the same node ids means SaveWorkflowNodes for v2 succeeds
+	// (an upsert by id) before SaveWorkflowConnections fails.
+	const v2Bad = `{
+  "id": "stable-wf-id",
+  "name": "overwrite-wf-v2-BAD",
+  "nodes": [
+    {"id": "trigger", "type": "trigger.manual", "name": "Manual2", "position": {"x": 0, "y": 0}, "config": {}},
+    {"id": "set", "type": "core.set", "name": "Set2", "position": {"x": 1, "y": 0}, "config": {"fields": {}}}
+  ],
+  "connections": [
+    {"id": "c1", "source": "trigger", "source_handle": "main", "target": "set", "target_handle": "main"},
+    {"id": "c2", "source": "trigger", "source_handle": "main", "target": "set", "target_handle": "main"}
+  ]
+}`
+	cmd := newWorkflowImportCmd(cfg)
+	cmd.SetArgs([]string{"--file", writeTempWorkflow(t, v2Bad), "--overwrite"})
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("expected the bad --overwrite to fail")
+	}
+
+	db2, err := initDB(cfg)
+	if err != nil {
+		t.Fatalf("reopen db: %v", err)
+	}
+	defer db2.Close()
+	store := newHybridStore(db2)
+	ctx := context.Background()
+
+	restored, err := store.GetWorkflow(ctx, "stable-wf-id")
+	if err != nil || restored == nil {
+		t.Fatalf("workflow missing after failed overwrite: %v", err)
+	}
+	if restored.Name != "overwrite-wf-v1" {
+		t.Fatalf("expected v1's name restored, got %q", restored.Name)
+	}
+	if len(restored.Connections) != 1 || restored.Connections[0].ID != "c1" {
+		t.Fatalf("expected exactly v1's single connection restored, got %+v", restored.Connections)
+	}
+
+	var nodeNames string
+	if err := db2.DB.QueryRow(
+		`SELECT group_concat(name) FROM workflow_nodes WHERE workflow_id = 'stable-wf-id' ORDER BY name`,
+	).Scan(&nodeNames); err != nil {
+		t.Fatalf("query restored nodes: %v", err)
+	}
+	if strings.Contains(nodeNames, "Manual2") || strings.Contains(nodeNames, "Set2") {
+		t.Fatalf("v2's bad node names leaked into the restored workflow: %q", nodeNames)
+	}
+	if !strings.Contains(nodeNames, "Manual") || !strings.Contains(nodeNames, "Set") {
+		t.Fatalf("v1's nodes were not restored, got: %q", nodeNames)
+	}
+
+	execs, err := store.ListExecutions(ctx, "stable-wf-id", 10)
+	if err != nil {
+		t.Fatalf("list executions: %v", err)
+	}
+	if len(execs) != 1 || execs[0].ID != "exec-1" || execs[0].Status != "SUCCESS" {
+		t.Fatalf("execution history not preserved across the failed overwrite, got %+v", execs)
+	}
+}
+
+// TestWorkflowImportAtomicity_SuccessfulOverwriteReplacesContent is the
+// happy-path companion to the two failure tests above: a valid --overwrite
+// must fully replace the previous workflow's nodes and connections, not
+// merge with or leave any of them behind.
+func TestWorkflowImportAtomicity_SuccessfulOverwriteReplacesContent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dbPath := filepath.Join(t.TempDir(), "atomic-overwrite-ok.db")
+	cfg := &globalConfig{DBPath: dbPath, JSONOutput: true, ProfileID: "default"}
+
+	const v1 = `{
+  "id": "stable-wf-id-2",
+  "name": "ok-overwrite-v1",
+  "nodes": [
+    {"id": "trigger", "type": "trigger.manual", "name": "Manual", "position": {"x": 0, "y": 0}, "config": {}},
+    {"id": "set", "type": "core.set", "name": "Set", "position": {"x": 1, "y": 0}, "config": {"fields": {}}}
+  ],
+  "connections": [
+    {"id": "c1", "source": "trigger", "source_handle": "main", "target": "set", "target_handle": "main"}
+  ]
+}`
+	// --overwrite here too, so the explicit "id" in v1's file is honored —
+	// otherwise the second import's --overwrite would target a workflow id
+	// that was never actually created, silently becoming a fresh create
+	// instead of a genuine overwrite of v1's row.
+	runWorkflowSubcmd(t, cfg, "import", "--file", writeTempWorkflow(t, v1), "--overwrite")
+
+	const v2 = `{
+  "id": "stable-wf-id-2",
+  "name": "ok-overwrite-v2",
+  "nodes": [
+    {"id": "trigger", "type": "trigger.manual", "name": "Manual", "position": {"x": 0, "y": 0}, "config": {}},
+    {"id": "extra", "type": "core.set", "name": "Extra", "position": {"x": 2, "y": 0}, "config": {"fields": {}}}
+  ],
+  "connections": [
+    {"id": "c1", "source": "trigger", "source_handle": "main", "target": "extra", "target_handle": "main"}
+  ]
+}`
+	runWorkflowSubcmd(t, cfg, "import", "--file", writeTempWorkflow(t, v2), "--overwrite")
+
+	db, err := initDB(cfg)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+	store := newHybridStore(db)
+	ctx := context.Background()
+
+	wf, err := store.GetWorkflow(ctx, "stable-wf-id-2")
+	if err != nil || wf == nil {
+		t.Fatalf("workflow missing after successful overwrite: %v", err)
+	}
+	if wf.Name != "ok-overwrite-v2" {
+		t.Fatalf("expected v2's name, got %q", wf.Name)
+	}
+	if len(wf.Nodes) != 2 {
+		t.Fatalf("expected exactly v2's 2 nodes, got %d", len(wf.Nodes))
+	}
+	var setStillPresent bool
+	for _, n := range wf.Nodes {
+		if n.ID == "set" {
+			setStillPresent = true
+		}
+	}
+	if setStillPresent {
+		t.Fatalf("v1's dropped 'set' node should not survive a successful overwrite, nodes: %+v", wf.Nodes)
+	}
+	if len(wf.Connections) != 1 || wf.Connections[0].TargetNodeID != "extra" {
+		t.Fatalf("expected v2's single connection to 'extra', got %+v", wf.Connections)
+	}
+}
+
+// TestWorkflowTemplatesUse_PersistsSuccessfully is a light happy-path check
+// that `workflow templates use` exercises the same
+// createOrOverwriteWorkflowAtomically path as `workflow import` (see
+// newWorkflowTemplatesUseCmd) and actually persists a usable workflow —
+// the atomicity guarantees above apply here for free since it's the same
+// shared helper, not a separate implementation.
+func TestWorkflowTemplatesUse_PersistsSuccessfully(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dbPath := filepath.Join(t.TempDir(), "templates-use.db")
+	cfg := &globalConfig{DBPath: dbPath, JSONOutput: true, ProfileID: "default"}
+
+	tmpls := workflow.ListTemplates()
+	if len(tmpls) == 0 {
+		t.Skip("no bundled templates registered")
+	}
+
+	var created struct {
+		ID    string `json:"id"`
+		Nodes []struct {
+			ID string `json:"id"`
+		} `json:"nodes"`
+	}
+	out := runWorkflowSubcmd(t, cfg, "templates", "use", tmpls[0].ID)
+	if err := json.Unmarshal([]byte(out), &created); err != nil {
+		t.Fatalf("parse templates use output: %v (out: %q)", err, out)
+	}
+	if created.ID == "" || len(created.Nodes) == 0 {
+		t.Fatalf("expected a persisted workflow with nodes, got: %q", out)
+	}
+
+	db, err := initDB(cfg)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+	store := newHybridStore(db)
+	wf, err := store.GetWorkflow(context.Background(), created.ID)
+	if err != nil || wf == nil {
+		t.Fatalf("template-instantiated workflow not persisted: %v", err)
+	}
+	if len(wf.Nodes) != len(created.Nodes) {
+		t.Fatalf("persisted node count %d != reported %d", len(wf.Nodes), len(created.Nodes))
 	}
 }
