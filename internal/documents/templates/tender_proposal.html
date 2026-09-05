@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>{{.TenderTitle}} — Proposal</title>
+<style>
+  body { font-family: Georgia, serif; max-width: 800px; margin: 2em auto; color: #222; }
+  .meta { color: #555; margin-bottom: 2em; }
+  h2 { border-bottom: 1px solid #ccc; padding-bottom: 0.2em; margin-top: 1.5em; }
+</style>
+</head>
+<body>
+  <h1>{{.TenderTitle}}</h1>
+  <div class="meta">Submitted by {{.CompanyName}} to {{.IssuingOrg}} &middot; {{.Date}}</div>
+  {{range .Sections}}
+  <h2>{{.Heading}}</h2>
+  {{range .Body}}<p>{{.}}</p>{{end}}
+  {{end}}
+</body>
+</html>

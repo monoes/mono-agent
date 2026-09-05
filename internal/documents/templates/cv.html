@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>{{.Name}} — CV</title>
+<style>
+  body { font-family: Georgia, serif; max-width: 800px; margin: 2em auto; color: #222; }
+  h1 { margin-bottom: 0; }
+  .contact { color: #555; margin-top: 0.2em; }
+  h2 { border-bottom: 1px solid #ccc; padding-bottom: 0.2em; margin-top: 1.5em; }
+  .entry { margin-bottom: 1em; }
+  .entry-header { display: flex; justify-content: space-between; font-weight: bold; }
+  ul { margin-top: 0.3em; }
+  .skills span { display: inline-block; background: #f0f0f0; padding: 0.2em 0.6em; margin: 0.2em; border-radius: 3px; }
+</style>
+</head>
+<body>
+  <h1>{{.Name}}</h1>
+  <div class="contact">{{.Title}} &middot; {{.Email}} &middot; {{.Phone}} &middot; {{.Location}}</div>
+
+  {{if .Summary}}
+  <h2>Summary</h2>
+  <p>{{.Summary}}</p>
+  {{end}}
+
+  {{if .Experience}}
+  <h2>Experience</h2>
+  {{range .Experience}}
+  <div class="entry">
+    <div class="entry-header"><span>{{.JobTitle}}, {{.Company}}</span><span>{{.Dates}}</span></div>
+    <ul>{{range .Bullets}}<li>{{.}}</li>{{end}}</ul>
+  </div>
+  {{end}}
+  {{end}}
+
+  {{if .Education}}
+  <h2>Education</h2>
+  {{range .Education}}
+  <div class="entry">
+    <div class="entry-header"><span>{{.Degree}}, {{.School}}</span><span>{{.Dates}}</span></div>
+  </div>
+  {{end}}
+  {{end}}
+
+  {{if .Skills}}
+  <h2>Skills</h2>
+  <div class="skills">{{range .Skills}}<span>{{.}}</span>{{end}}</div>
+  {{end}}
+</body>
+</html>
