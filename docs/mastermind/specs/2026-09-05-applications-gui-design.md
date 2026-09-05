@@ -227,13 +227,30 @@ before opening each browser tab, not whether sending is ever automatic
 `wails-app/frontend/src/components/Sidebar.jsx`'s `NAV_ITEMS` gets one
 new entry (`{ id: 'applications', labelKey: 'applications', icon:
 Briefcase, section: 'DATA' }`, grouped with `people`/`vault`/
-`secretsVault`). `wails-app/frontend/src/locales/en.json` and `es.json`
-get a `sidebar.applications` key each (matching the existing per-nav-item
-translation convention — this app's i18n coverage is otherwise opt-in
-per page, so the Applications page's own in-page text stays plain
-English like `Vault.jsx`'s, `People.jsx`'s, etc. already do).
-`wails-app/frontend/src/App.jsx`'s `persistentPages` map gets one new
-entry: `applications: <Applications />`.
+`secretsVault`) — `labelKey` indexes `sidebar.nav.<labelKey>` (verified:
+`Sidebar.jsx` renders `t(\`sidebar.nav.${item.labelKey}\`)`, not
+`sidebar.<id>` as an earlier draft of this section assumed).
+`wails-app/frontend/src/locales/en.json` and `es.json` each get a new
+`"applications"` key nested under their existing `"sidebar"."nav"` object
+(matching the existing per-nav-item translation convention — this app's
+i18n coverage is otherwise opt-in per page, so the Applications page's
+own in-page text stays plain English like `Vault.jsx`'s, `People.jsx`'s,
+etc. already do). `wails-app/frontend/src/App.jsx`'s `persistentPages`
+map gets one new entry: `applications: <Applications />`.
+
+### Regenerating Wails bindings
+
+New exported `*App` methods only become callable from the frontend
+(`wailsjs/go/main/App.js`/`.d.ts`) after running `wails generate module`
+from `wails-app/` — verified working in this environment (the `wails`
+CLI is not installed by default; install the exact version this project
+pins, `go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0`
+— checked against `wails-app/go.mod`'s `github.com/wailsapp/wails/v2`
+requirement, do not assume `@latest` matches). This command needs
+`wails-app/frontend/dist/` to already exist (it's `//go:embed`-ed by
+`main.go`) — run `cd wails-app/frontend && npm install && npm run build`
+first if that directory is missing, exactly as verified during this
+design's own research.
 
 ## Data Flow
 
