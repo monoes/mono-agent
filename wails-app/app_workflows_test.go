@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -162,5 +163,71 @@ func TestRunWorkflow_RefusesConcurrentRun(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "already running") {
 		t.Fatalf("expected error to mention an in-flight run, got: %v", err)
+	}
+}
+
+// TestGetExecutionDetail_RedactsSecretsInItems is a regression test for the
+// HIGH security finding at app_workflows.go:687 — GetExecutionDetail used to
+// put the raw input_items/output_items column strings straight into its
+// return value with no redaction, unlike every other execution-output
+// surface (cmd/monoagentcli/execution_json.go, internal/mcp/tools.go,
+// internal/httpapi/server.go), all of which redact credential-shaped keys
+// first. A node like vault.secret_get intentionally writes decrypted
+// secrets into the item stream relying on display-boundary masking, so an
+// unredacted GetExecutionDetail would leak them straight into the desktop
+// app's execution-history view.
+func TestGetExecutionDetail_RedactsSecretsInItems(t *testing.T) {
+	a := newTestApp(t)
+
+	saved, err := a.SaveWorkflow(SaveWorkflowRequest{Name: "secret-flow", IsActive: true})
+	if err != nil {
+		t.Fatalf("SaveWorkflow: %v", err)
+	}
+
+	const executionID = "exec-1"
+	if _, err := a.db.Exec(
+		`INSERT INTO workflow_executions (id, workflow_id, status, profile_id) VALUES (?, ?, 'SUCCESS', 'default')`,
+		executionID, saved.ID,
+	); err != nil {
+		t.Fatalf("inserting workflow_executions row: %v", err)
+	}
+
+	outputItems, err := json.Marshal([]workflow.Item{
+		{JSON: map[string]interface{}{
+			"api_key": "sk-live-super-secret-value",
+			"label":   "not secret",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("marshalling output items: %v", err)
+	}
+
+	if _, err := a.db.Exec(
+		`INSERT INTO workflow_execution_nodes (id, execution_id, node_id, node_name, status, input_items, output_items)
+		 VALUES (?, ?, 'n1', 'Get Secret', 'SUCCESS', '[]', ?)`,
+		"node-1", executionID, string(outputItems),
+	); err != nil {
+		t.Fatalf("inserting workflow_execution_nodes row: %v", err)
+	}
+
+	detail, err := a.GetExecutionDetail(executionID)
+	if err != nil {
+		t.Fatalf("GetExecutionDetail: %v", err)
+	}
+
+	nodes, ok := detail["nodes"].([]map[string]interface{})
+	if !ok || len(nodes) != 1 {
+		t.Fatalf("expected exactly one node in execution detail, got: %+v", detail["nodes"])
+	}
+
+	rawOutput, _ := nodes[0]["output_items"].(string)
+	if strings.Contains(rawOutput, "sk-live-super-secret-value") {
+		t.Fatalf("expected secret to be redacted from output_items, got raw value: %s", rawOutput)
+	}
+	if !strings.Contains(rawOutput, "***") {
+		t.Fatalf("expected redaction marker in output_items, got: %s", rawOutput)
+	}
+	if !strings.Contains(rawOutput, "not secret") {
+		t.Fatalf("expected non-secret value to survive redaction, got: %s", rawOutput)
 	}
 }
