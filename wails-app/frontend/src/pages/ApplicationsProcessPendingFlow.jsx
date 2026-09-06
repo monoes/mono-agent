@@ -137,12 +137,20 @@ export default function ApplicationsProcessPendingFlow({ pendingApplications, on
     try {
       await WailsApp.SendApplication(current.id, '')
       finishItem({ sent: summary.sent + 1 })
+      // Only advance past this item once the send actually succeeded --
+      // advance() -> processCurrent() clears `error` immediately (and once
+      // `stage` becomes 'done' the error block stops rendering at all), so
+      // calling it unconditionally after a failed SendApplication used to
+      // hide the failure from the user and count the item as neither sent
+      // nor skipped. On failure we stay in the 'applied' stage below, where
+      // "Send Now" (retry) and "Next (send later)" (manual skip) are still
+      // available.
+      advance()
     } catch (e) {
       setError(String(e))
     } finally {
       setBusy(false)
     }
-    advance()
   }
 
   return (
