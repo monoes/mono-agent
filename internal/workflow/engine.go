@@ -1143,6 +1143,15 @@ func (e *WorkflowEngine) ListExecutions(ctx context.Context, workflowID string, 
 // runExecution delegates to RunExecution defined in execution.go.
 func (e *WorkflowEngine) runExecution(ctx context.Context, exec *WorkflowExecution, wf *Workflow, dag *DAG) error {
 	ctx = vault.ContextWithDB(ctx, e.store.RawDB())
-	ctx = vault.ContextWithProfileID(ctx, e.profileID)
+	// Use the execution's own profile ID (stamped via executionProfileID at
+	// creation time from the owning workflow), not the engine's — a single
+	// engine instance can be running executions for many different profiles
+	// at once (AllowAllProfiles). Fall back to the engine's profile only for
+	// a legacy execution row with no ProfileID of its own.
+	profileID := exec.ProfileID
+	if profileID == "" {
+		profileID = e.profileID
+	}
+	ctx = vault.ContextWithProfileID(ctx, profileID)
 	return RunExecution(ctx, exec, wf, dag, e.registry, e.store, e.connStore, e.expr, e.logger)
 }

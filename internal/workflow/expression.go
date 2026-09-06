@@ -407,18 +407,29 @@ func (e *ExpressionEngine) ResolveConfig(config map[string]interface{}, ctx Expr
 func (e *ExpressionEngine) resolveValue(v interface{}, ctx ExpressionContext) (interface{}, error) {
 	switch t := v.(type) {
 	case string:
+		// Only a string that actually contains template syntax was subject to
+		// evaluation; EvaluateString returns any other string unchanged. A
+		// static literal (e.g. a hardcoded JSON-formatted default) that never
+		// had "{{" in it must pass through as-is and must NOT be reinterpreted
+		// as JSON below just because it happens to look like an array/object —
+		// that would silently coerce its Go type out from under node code that
+		// expects a plain string.
+		hadTemplate := strings.Contains(t, "{{")
 		s, err := e.EvaluateString(t, ctx)
 		if err != nil {
 			return nil, err
 		}
-		// If the evaluated string looks like a JSON array or object, try to
-		// parse it back to a native Go value so that downstream nodes receive
-		// the correct type (e.g. []interface{} instead of a raw string).
-		trimmed := strings.TrimSpace(s)
-		if len(trimmed) > 0 && (trimmed[0] == '[' || trimmed[0] == '{') {
-			var parsed interface{}
-			if json.Unmarshal([]byte(trimmed), &parsed) == nil {
-				return parsed, nil
+		// If the template evaluation produced a string that looks like a JSON
+		// array or object, try to parse it back to a native Go value so that
+		// downstream nodes receive the correct type (e.g. []interface{}
+		// instead of a raw string).
+		if hadTemplate {
+			trimmed := strings.TrimSpace(s)
+			if len(trimmed) > 0 && (trimmed[0] == '[' || trimmed[0] == '{') {
+				var parsed interface{}
+				if json.Unmarshal([]byte(trimmed), &parsed) == nil {
+					return parsed, nil
+				}
 			}
 		}
 		return s, nil
