@@ -319,6 +319,110 @@ func TestExecErrorTurnMapsProtocolError(t *testing.T) {
 	}
 }
 
+// fakeBinCatFixture writes a throwaway fake monomind binary that ignores
+// its arguments and streams one golden testdata/fixtures/<name>.ndjson
+// transcript to stdout, for driving Exec() end-to-end against a fixture
+// (rather than just parsing it, as fixtures_test.go's fixtureEvents does).
+func fakeBinCatFixture(t *testing.T, fixtureName string) string {
+	t.Helper()
+	fixturePath, err := filepath.Abs(filepath.Join("testdata", "fixtures", fixtureName+".ndjson"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "monomind")
+	script := "#!/bin/sh\ncat \"" + fixturePath + "\"\nexit 0\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return bin
+}
+
+// TestExecNonFatalErrorDoesNotFailTheTurn is the regression test for the
+// bug where Exec unconditionally set res.Err for ANY error event, even a
+// documented non-fatal (fatal:false) one that the stream fully recovers
+// from. The golden fixture testdata/fixtures/bad-frame.ndjson contains
+// exactly that: a mid-stream non-fatal error followed by tool_result,
+// session, assistant text, a success result, and done exit_code:0 —
+// TestFixtureExitCodesMatchContract already asserts exit code 0 is correct
+// for this fixture. Both real callers (chat.go, agent.go) treat any
+// non-nil res.Err as a hard failure, so a non-nil res.Err here would
+// discard a successful turn's ResultText.
+func TestExecNonFatalErrorDoesNotFailTheTurn(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake monomind is a shell script")
+	}
+	// The fixture also contains a tool_call (bridged normally here via
+	// Tools/OnToolCall) ahead of the non-fatal error — configuring a
+	// handler keeps this test isolated to the non-fatal-error behavior,
+	// as opposed to TestExecNilOnToolCallReportsProtocolErrorNotPanic below
+	// which deliberately leaves OnToolCall unset against the same fixture.
+	res, err := Exec(context.Background(), ExecOptions{
+		Bin:     fakeBinCatFixture(t, "bad-frame"),
+		Runtime: "codex",
+		Prompt:  "hi",
+		Tools: []ToolSpec{{
+			Name:        "create_nodes",
+			Description: "Create workflow nodes",
+			Schema:      map[string]interface{}{"type": "object"},
+		}},
+		OnToolCall: func(ctx context.Context, name string, args json.RawMessage) (string, error) {
+			return "recovered", nil
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("exec: %v", err)
+	}
+	if res.Err != nil {
+		t.Fatalf("res.Err = %+v, want nil: a non-fatal error that the stream recovers from must not fail the turn", res.Err)
+	}
+	if res.ExitCode != 0 {
+		t.Errorf("res.ExitCode = %d, want 0", res.ExitCode)
+	}
+	if res.ResultText != "result: recovered" {
+		t.Errorf("res.ResultText = %q, want %q (the fixture's assistant text)", res.ResultText, "result: recovered")
+	}
+	if res.SessionID != "th_b" {
+		t.Errorf("res.SessionID = %q, want %q", res.SessionID, "th_b")
+	}
+}
+
+// TestExecNilOnToolCallReportsProtocolErrorNotPanic is the regression test
+// for the bug where a tool_call event arriving with opts.OnToolCall nil
+// (the common no-tools case, since OnToolCall is only required when Tools
+// is set) caused Exec to call a nil function in a background goroutine,
+// panicking with an unrecovered SIGSEGV that crashes the entire hosting
+// process, not just the current turn. testdata/fixtures/bad-frame.ndjson
+// already contains a tool_call event, so it's reused here without Tools/
+// OnToolCall configured — a protocol mismatch (misbehaving/mismatched
+// binary). Exec must degrade gracefully: report a protocol error, not
+// crash the test binary. (A pre-fix run of this test would not merely
+// fail — it would take down the whole `go test` process; the -race build
+// getting a clean run here corroborates no goroutine ever panicked.)
+func TestExecNilOnToolCallReportsProtocolErrorNotPanic(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake monomind is a shell script")
+	}
+	res, err := Exec(context.Background(), ExecOptions{
+		Bin:     fakeBinCatFixture(t, "bad-frame"),
+		Runtime: "codex",
+		Prompt:  "hi",
+		// Tools/OnToolCall deliberately left unset.
+	}, nil)
+	if err != nil {
+		t.Fatalf("exec: %v", err)
+	}
+	if res == nil {
+		t.Fatal("Exec returned a nil *TurnResult")
+	}
+	if res.Err == nil {
+		t.Fatal("res.Err = nil, want a protocol error reported for the unhandled tool_call")
+	}
+	if !res.Err.Fatal {
+		t.Errorf("res.Err.Fatal = false, want true for an unhandleable protocol mismatch: %+v", res.Err)
+	}
+}
+
 // TestExecFlagMappingSandboxing verifies the argv Exec builds for
 // `agent exec`: the prompt travels via --prompt-file (never --prompt argv),
 // and an empty Tools list passes --tools none explicitly instead of

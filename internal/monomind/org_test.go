@@ -3,7 +3,10 @@ package monomind
 import (
 	"context"
 	"os"
+	"os/exec"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -73,6 +76,87 @@ func TestOrgEventsStreamsLines(t *testing.T) {
 // streaming: fake-monolith.sh never answers `--version --json`, so without
 // ctx propagation through Ensure()'s handshake this would block until the
 // script's internal 60s sleep, not return promptly.
+// TestOrgRunCancelGroupKill is the regression test for the bug where
+// OrgRun built its exec.Cmd with plain exec.CommandContext and no
+// setProcessGroup call, unlike its siblings OrgRunStart and OrgEvents:
+// OrgRun's own doc comment says it can block "minutes to hours" with the
+// caller's ctx as the only deadline, but exec.CommandContext's default
+// Cancel behavior only kills the DIRECT child on cancellation, not its
+// process group — leaking any agent-CLI grandchild `monomind org run`
+// spawned as an orphan. Mirrors TestExecCancelGroupKill's approach: spawn
+// a fake monomind that forks a long-lived grandchild, cancel mid-flight,
+// and assert zero survivors.
+func TestOrgRunCancelGroupKill(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("group kill is unix-only in this build")
+	}
+	os.Setenv(EnvOverride, fakeBin(t, "fake-monolith-org.sh"))
+	defer os.Unsetenv(EnvOverride)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := OrgRun(ctx, ".", "growth", "", false)
+		errCh <- err
+	}()
+
+	// Wait for the fake org-run process (and its sleep grandchild) to exist.
+	var pids []int
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && len(pids) < 2 {
+		pids = pids[:0]
+		out, _ := exec.Command("pgrep", "-f", "fake-monolith-org").Output()
+		for _, s := range fields(string(out)) {
+			pids = append(pids, atoi(s))
+		}
+		if len(pids) > 0 {
+			sleepOut, _ := exec.Command("sh", "-c", "pgrep -P "+itoa(pids[0])).Output()
+			for _, s := range fields(string(sleepOut)) {
+				pids = append(pids, atoi(s))
+			}
+		}
+		if len(pids) < 2 {
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	if len(pids) < 2 {
+		t.Fatalf("expected fake org-run process + child, found pids %v", pids)
+	}
+
+	cancel()
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("OrgRun() = nil error after ctx cancellation, want ctx.Err()")
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("OrgRun did not return after cancel")
+	}
+
+	// The gate: zero orphaned processes from the group.
+	deadline = time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		alive := 0
+		for _, pid := range pids {
+			if err := syscall.Kill(pid, 0); err == nil {
+				alive++
+			}
+		}
+		if alive == 0 {
+			return // success — group fully reaped
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	for _, pid := range pids {
+		if err := syscall.Kill(pid, 0); err == nil {
+			t.Errorf("orphan process %d survived the group kill", pid)
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+		}
+	}
+}
+
 func TestOrgEventsAbortsPromptlyOnCancelDuringHandshake(t *testing.T) {
 	os.Setenv(EnvOverride, fakeBin(t, "fake-monolith.sh"))
 	defer os.Unsetenv(EnvOverride)

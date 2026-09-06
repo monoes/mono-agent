@@ -294,10 +294,52 @@ func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResu
 					res.ResultText = ev.Text
 				}
 			case EventError:
-				res.Err = &ProtocolError{Code: ev.Code, Message: ev.ErrMessage, Fatal: ev.Fatal}
+				// Only a fatal error terminates the turn (protocol §3.4): a
+				// non-fatal error (fatal:false) is a recoverable, mid-stream
+				// hiccup — the golden fixture testdata/fixtures/bad-frame.
+				// ndjson demonstrates a non-fatal error followed by a full
+				// successful recovery (tool_result, assistant text, a
+				// success result, and done exit_code:0), and
+				// TestFixtureExitCodesMatchContract already asserts exit
+				// code 0 is correct for that fixture. Setting res.Err here
+				// unconditionally would make both CLI callers (chat.go,
+				// agent.go) treat that successful recovery as a hard
+				// failure and discard the good ResultText. The event has
+				// already been forwarded to onEvent above, so callers that
+				// care about non-fatal errors as they stream by still see
+				// them; only a fatal error (or a later done/process exit
+				// with no success signal, handled below) should surface as
+				// the turn's terminal res.Err.
+				if ev.Fatal {
+					res.Err = &ProtocolError{Code: ev.Code, Message: ev.ErrMessage, Fatal: ev.Fatal}
+				}
 			case EventDone:
 				res.ExitCode = ev.ExitCode
 			case EventToolCall:
+				if opts.OnToolCall == nil {
+					// Protocol mismatch: the subprocess emitted a tool_call
+					// even though this turn never enabled tools (opts.Tools
+					// is empty, so opts.OnToolCall is nil too — the common
+					// no-tools case). Calling a nil handler here would
+					// panic in this background goroutine and crash the
+					// entire hosting process (CLI or Wails GUI backend),
+					// not just this turn. Report it as a protocol error
+					// instead, and reply with an ok:false tool_result frame
+					// so a real subprocess waiting on the round-trip can
+					// react instead of hanging.
+					res.Err = &ProtocolError{
+						Code:    ErrBadFrame,
+						Message: fmt.Sprintf("received tool_call %q for %q with no OnToolCall handler configured (Tools not set on this turn)", ev.ID, ev.Name),
+						Fatal:   true,
+					}
+					frame := toolResultFrame{V: ProtocolVersion, Type: "tool_result", ID: ev.ID}
+					frame.OK = false
+					frame.Result.Text = "no tool handler configured for this turn"
+					if b, err := json.Marshal(frame); err == nil {
+						writeLine(b)
+					}
+					continue
+				}
 				toolWg.Add(1)
 				go func(ev Event) {
 					defer toolWg.Done()

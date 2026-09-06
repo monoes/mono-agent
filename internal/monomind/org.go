@@ -133,17 +133,47 @@ func OrgRun(ctx context.Context, projectRoot, name, task string, dryRun bool) (j
 	}
 	full := append(append([]string{"org"}, args...), "--format", "json")
 
-	cmd := exec.CommandContext(ctx, bin, full...)
+	// Deliberately NOT exec.CommandContext: its default Cancel behavior
+	// only kills the direct child on ctx cancellation, not its process
+	// group — leaving any agent-CLI grandchild `monomind org run` spawned
+	// as an orphan (this can block "minutes to hours" per the doc comment
+	// above, so cancellation is the only way most callers ever stop it).
+	// setProcessGroup + a manual ctx.Done()/killProcessGroup select mirrors
+	// OrgEvents below, the most similar long-running case.
+	cmd := exec.Command(bin, full...)
 	cmd.Dir = projectRoot
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, orgCommandError(args, err)
+	setProcessGroup(cmd)
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("start monomind org run %s: %w", name, err)
 	}
-	trimmed := bytes.TrimSpace(out)
-	if len(trimmed) == 0 {
-		return nil, fmt.Errorf("monomind org run %s: empty output", name)
+
+	waitCh := make(chan error, 1)
+	go func() { waitCh <- cmd.Wait() }()
+
+	select {
+	case <-ctx.Done():
+		killProcessGroup(cmd, cmd.Process.Pid)
+		<-waitCh
+		return nil, ctx.Err()
+	case err := <-waitCh:
+		if err != nil {
+			msg := strings.TrimSpace(stderr.String())
+			if msg == "" {
+				msg = err.Error()
+			}
+			return nil, fmt.Errorf("monomind org %s: %s", strings.Join(args, " "), msg)
+		}
+		trimmed := bytes.TrimSpace(stdout.Bytes())
+		if len(trimmed) == 0 {
+			return nil, fmt.Errorf("monomind org run %s: empty output", name)
+		}
+		return json.RawMessage(trimmed), nil
 	}
-	return json.RawMessage(trimmed), nil
 }
 
 // OrgRunStart starts `monomind org run <name> --yes [--task ...]` as a
