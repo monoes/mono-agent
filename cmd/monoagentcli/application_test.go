@@ -75,7 +75,11 @@ func TestApplicationAddListGetStatusTag(t *testing.T) {
 		t.Fatalf("expected get output to show pending status, got: %s", getOut)
 	}
 
-	statusOut, err := runApplicationCmd(t, dbPath, "status", id, "set", "applied")
+	// Uses "cancelled" (not "applied") here: pending->applied via the
+	// generic `status set` command is the exact bug under test in
+	// TestApplicationStatusRejectsAppliedStatus below -- this scenario only
+	// cares about a valid, non-"applied" transition plus tagging.
+	statusOut, err := runApplicationCmd(t, dbPath, "status", id, "set", "cancelled")
 	if err != nil {
 		t.Fatalf("application status set: %v (%s)", err, statusOut)
 	}
@@ -89,8 +93,51 @@ func TestApplicationAddListGetStatusTag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("application get (after status/tag): %v", err)
 	}
-	if !strings.Contains(getOut2, "applied") || !strings.Contains(getOut2, "urgent") {
+	if !strings.Contains(getOut2, "cancelled") || !strings.Contains(getOut2, "urgent") {
 		t.Fatalf("expected updated status+tag in get output, got: %s", getOut2)
+	}
+}
+
+// TestApplicationStatusRejectsAppliedStatus covers the invariant that
+// automation/generic status changes must never be able to mark an
+// application "applied" -- only `application send` (an explicit,
+// human-triggered action) may do that. Regression test for a bypass where
+// `application status <id> set applied` shelled straight through to
+// store.SetStatus with no restriction on the target status.
+func TestApplicationStatusRejectsAppliedStatus(t *testing.T) {
+	dbPath := newApplicationCLITestDB(t)
+	addOut, err := runApplicationCmd(t, dbPath, "add", "--kind", "job", "--title", "Backend Engineer", "--company", "Acme", "--url", "https://acme.example/1")
+	if err != nil {
+		t.Fatalf("application add: %v (%s)", err, addOut)
+	}
+	var id string
+	for _, tok := range strings.Split(addOut, `"`) {
+		if len(tok) == 36 && strings.Count(tok, "-") == 4 {
+			id = tok
+			break
+		}
+	}
+	if id == "" {
+		t.Fatalf("could not extract id from add output: %s", addOut)
+	}
+
+	if _, err := runApplicationCmd(t, dbPath, "status", id, "set", "applied"); err == nil {
+		t.Fatal("expected error setting status to \"applied\" via the generic status command, got nil")
+	}
+	// Case-insensitive variants must be rejected too.
+	if _, err := runApplicationCmd(t, dbPath, "status", id, "set", "Applied"); err == nil {
+		t.Fatal("expected error setting status to \"Applied\" via the generic status command, got nil")
+	}
+
+	getOut, err := runApplicationCmd(t, dbPath, "get", id)
+	if err != nil {
+		t.Fatalf("application get: %v (%s)", err, getOut)
+	}
+	if !strings.Contains(getOut, "pending") {
+		t.Fatalf("expected application to remain pending after rejected \"applied\" transition, got: %s", getOut)
+	}
+	if strings.Contains(getOut, "\"applied\"") {
+		t.Fatalf("application must not have been marked applied via generic status command, got: %s", getOut)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/monoes/mono-agent/internal/applications"
 
@@ -238,11 +239,25 @@ func newApplicationStatusCmd(cfg *globalConfig) *cobra.Command {
 		Use:     "status <id> set <status>",
 		Short:   "Transition an application's status",
 		Args:    cobra.ExactArgs(3),
-		Example: `  monoagentcli application status 1c2e... set applied`,
+		Example: `  monoagentcli application status 1c2e... set cancelled`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, verb, status := args[0], args[1], args[2]
 			if verb != "set" {
 				return errInvalidInput("expected \"set\", got %q", verb)
+			}
+			// "applied" is deliberately NOT reachable through this generic
+			// command, even though pending->applied is a valid transition
+			// at the store level: `application send` (a human-invoked
+			// command) is meant to be the only path that records an
+			// application as applied. Letting this generic command reach
+			// the same state would bypass that invariant with no document
+			// generation, no browser review, and no actual submission.
+			// Mirrors internal/nodes/applications/set_status.go's
+			// SetStatusNode guard, but compares case-insensitively (unlike
+			// that guard) since this is a human-typed CLI arg rather than a
+			// workflow-authored config value.
+			if strings.EqualFold(status, string(applications.StatusApplied)) {
+				return errInvalidInput("\"applied\" is not a valid target here -- use `application send`, which requires an explicit human action")
 			}
 			db, err := initDB(cfg)
 			if err != nil {
