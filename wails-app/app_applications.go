@@ -206,7 +206,22 @@ func (a *App) AddApplication(kind, title, company, url, issuingOrg, submissionDe
 }
 
 // SetApplicationStatus transitions an application's status.
+//
+// "applied" is deliberately rejected here before any CLI call is made:
+// every exported *App method is reachable from the renderer's JS namespace
+// unconditionally, so without this guard any JS running in the webview
+// (devtools console, a compromised dependency) could call
+// SetApplicationStatus(id, "applied", "") and flip a pending application
+// straight to "applied" -- bypassing the product invariant that only the
+// explicit, human-triggered `application send` action (SendApplication
+// below) may ever do that. `application status ... set` already rejects
+// "applied" itself (cmd/monoagentcli/application.go's
+// newApplicationStatusCmd), so this is defense-in-depth in case a future
+// caller reaches the CLI a different way.
 func (a *App) SetApplicationStatus(id, status, note string) error {
+	if strings.EqualFold(status, "applied") {
+		return fmt.Errorf("\"applied\" is not a valid target here -- use SendApplication, which requires an explicit human action")
+	}
 	args := []string{"application", "status", id, "set", status}
 	if note != "" {
 		args = append(args, "--note", note)
