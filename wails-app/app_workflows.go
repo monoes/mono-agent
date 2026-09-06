@@ -714,8 +714,8 @@ func (a *App) GetExecutionDetail(executionID string) (map[string]interface{}, er
 			"error_message": nErr,
 			"started_at":    nStarted,
 			"finished_at":   nFinished,
-			"input_items":   inputItems,
-			"output_items":  outputItems,
+			"input_items":   redactExecutionItemsJSON(inputItems),
+			"output_items":  redactExecutionItemsJSON(outputItems),
 			"retry_count":   retryCount,
 		})
 	}
@@ -734,6 +734,30 @@ func (a *App) GetExecutionDetail(executionID string) (map[string]interface{}, er
 		"created_at":   createdAt,
 		"nodes":        nodesList,
 	}, nil
+}
+
+// redactExecutionItemsJSON parses a workflow_execution_nodes input_items/
+// output_items column value (a JSON array of workflow.Item, see
+// WorkflowExecutionNode.MarshalItems) and re-serializes it after running the
+// same redaction pipeline every other execution-output surface uses —
+// cmd/monoagentcli's execution_json.go (workflow.RedactItemJSON) and
+// internal/mcp/tools.go / internal/httpapi/server.go
+// (workflow.RedactAndTruncateItems) — so nodes like vault.secret_get, which
+// intentionally put decrypted credentials into the item stream relying on
+// display-boundary masking, never show them unmasked in this desktop view.
+// If the stored JSON can't be parsed, the raw string is returned unchanged
+// rather than silently dropping data.
+func redactExecutionItemsJSON(raw string) string {
+	var items []workflow.Item
+	if err := json.Unmarshal([]byte(raw), &items); err != nil {
+		return raw
+	}
+	redacted := workflow.RedactAndTruncateItems(items)
+	b, err := json.Marshal(redacted)
+	if err != nil {
+		return raw
+	}
+	return string(b)
 }
 
 // CancelWorkflow cancels a running workflow execution.

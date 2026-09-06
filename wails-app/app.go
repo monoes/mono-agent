@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1042,7 +1043,47 @@ func (a *App) RevealProfileFolder(profileID string) error {
 	if err := profiledir.EnsureLayout(a.db, profileID); err != nil {
 		return fmt.Errorf("preparing profile folder: %w", err)
 	}
-	return exec.Command("open", dir).Run()
+	return revealFolder(dir)
+}
+
+// revealFolder shells out to the platform's file-manager "reveal" command
+// for dir. Split out from RevealProfileFolder so tests can exercise the
+// per-GOOS command selection without spawning a real GUI file manager.
+func revealFolder(dir string) error {
+	name, args := revealFolderCommand(goruntime.GOOS, dir)
+	err := exec.Command(name, args...).Run()
+	if err == nil {
+		return nil
+	}
+	if goruntime.GOOS == "windows" {
+		// explorer.exe is documented to return a non-zero exit status even
+		// when it successfully opened the folder (a known quirk unrelated
+		// to whether the folder was revealed). Only swallow that case —
+		// the process ran but reported a non-zero exit — not a failure to
+		// launch it at all (e.g. explorer missing from PATH), which should
+		// still surface to the caller.
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return nil
+		}
+	}
+	return err
+}
+
+// revealFolderCommand returns the OS-appropriate command name and arguments
+// to reveal dir in the platform's file manager: Finder ("open") on darwin,
+// "explorer" on windows, and "xdg-open" everywhere else (linux and other
+// unix-likes) — the three platforms the release pipeline ships CLI/GUI
+// builds for.
+func revealFolderCommand(goos, dir string) (string, []string) {
+	switch goos {
+	case "darwin":
+		return "open", []string{dir}
+	case "windows":
+		return "explorer", []string{dir}
+	default:
+		return "xdg-open", []string{dir}
+	}
 }
 
 // MoveProfileFolder moves an existing profile's data (vault files and its

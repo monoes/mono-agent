@@ -190,18 +190,30 @@ func (a *App) SelfUpdate() UpdateResult {
 
 // cliAssetName returns the expected GitHub release asset name for the current OS/arch.
 func cliAssetName() string {
-	switch goruntime.GOOS {
+	return cliAssetNameFor(goruntime.GOOS, goruntime.GOARCH)
+}
+
+// cliAssetNameFor returns the expected GitHub release asset name for the
+// given GOOS/GOARCH, mirroring the binaries .github/workflows/release.yml
+// publishes (darwin/linux each in amd64+arm64, windows in amd64 only). Split
+// out from cliAssetName so tests can cover every platform/arch combination
+// without cross-compiling or overriding runtime.GOOS/GOARCH.
+func cliAssetNameFor(goos, goarch string) string {
+	switch goos {
 	case "darwin":
-		if goruntime.GOARCH == "arm64" {
+		if goarch == "arm64" {
 			return "monoagentcli-darwin-arm64"
 		}
 		return "monoagentcli-darwin-amd64"
 	case "linux":
+		if goarch == "arm64" {
+			return "monoagentcli-linux-arm64"
+		}
 		return "monoagentcli-linux-amd64"
 	case "windows":
 		return "monoagentcli-windows-amd64.exe"
 	default:
-		return "monoagentcli-" + goruntime.GOOS + "-" + goruntime.GOARCH
+		return "monoagentcli-" + goos + "-" + goarch
 	}
 }
 
