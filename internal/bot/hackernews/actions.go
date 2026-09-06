@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"time"
 
 	"github.com/monoes/mono-agent/internal/browser"
@@ -103,7 +104,7 @@ func (b *HackerNewsBot) ReplyToComment(ctx context.Context, page browser.PageInt
 	if itemID == "" || text == "" {
 		return fmt.Errorf("hackernews: itemID and text are required")
 	}
-	replyURL := fmt.Sprintf("https://news.ycombinator.com/reply?id=%s&goto=item%%3Fid%%3D%s", itemID, itemID)
+	replyURL := buildReplyURL(itemID)
 	if err := page.Navigate(replyURL); err != nil {
 		return fmt.Errorf("hackernews: navigate to reply form: %w", err)
 	}
@@ -131,6 +132,19 @@ func (b *HackerNewsBot) ReplyToComment(ctx context.Context, page browser.PageInt
 		return fmt.Errorf("hackernews: page did not load after reply: %w", err)
 	}
 	return nil
+}
+
+// buildReplyURL builds the URL for an item's reply form. itemID is passed
+// through net/url's query encoding rather than being interpolated into the
+// URL with fmt.Sprintf, so a hostile itemID (e.g. containing "&", "#", or
+// other reserved URL characters) can never corrupt the query string or
+// smuggle extra parameters — it is always confined to the "id" and "goto"
+// query values, however it's spelled.
+func buildReplyURL(itemID string) string {
+	v := url.Values{}
+	v.Set("id", itemID)
+	v.Set("goto", "item?id="+itemID)
+	return "https://news.ycombinator.com/reply?" + v.Encode()
 }
 
 // ListComments navigates to an item's page and returns its top-level
@@ -185,15 +199,8 @@ func (b *HackerNewsBot) GetPostMetrics(ctx context.Context, page browser.PageInt
 	}
 	time.Sleep(1 * time.Second)
 
-	result, err := page.Eval(fmt.Sprintf(`() => {
-		const scoreEl = document.querySelector('#score_%s');
-		const commentLink = Array.from(document.querySelectorAll('.subtext a'))
-			.find(a => a.textContent.includes('comment'));
-		return JSON.stringify({
-			points: scoreEl ? parseInt(scoreEl.textContent) || 0 : 0,
-			comments: commentLink ? parseInt(commentLink.textContent) || 0 : 0,
-		});
-	}`, itemID))
+	js, args := postMetricsEvalArgs(itemID)
+	result, err := page.Eval(js, args...)
 	if err != nil {
 		return nil, fmt.Errorf("hackernews: reading metrics: %w", err)
 	}
@@ -202,4 +209,31 @@ func (b *HackerNewsBot) GetPostMetrics(ctx context.Context, page browser.PageInt
 		return nil, fmt.Errorf("hackernews: parsing metrics JSON: %w", unmarshalErr)
 	}
 	return metrics, nil
+}
+
+// postMetricsScript reads an item page's point score and comment count from
+// the subtext line under the title. itemID is declared as a function
+// parameter — never interpolated into this source string — so it must be
+// passed via page.Eval's variadic args (see postMetricsEvalArgs), which
+// go-rod delivers as real call arguments (proto.RuntimeCallFunctionOn),
+// not string concatenation. A hostile itemID therefore cannot break out of
+// a JS string literal and run arbitrary script in the authenticated
+// news.ycombinator.com session. document.getElementById avoids CSS
+// selector-string construction entirely.
+const postMetricsScript = `(itemID) => {
+	const scoreEl = document.getElementById('score_' + itemID);
+	const commentLink = Array.from(document.querySelectorAll('.subtext a'))
+		.find(a => a.textContent.includes('comment'));
+	return JSON.stringify({
+		points: scoreEl ? parseInt(scoreEl.textContent) || 0 : 0,
+		comments: commentLink ? parseInt(commentLink.textContent) || 0 : 0,
+	});
+}`
+
+// postMetricsEvalArgs returns the page.Eval(js, args...) call parameters
+// for reading a post's metrics. Split out from GetPostMetrics so the
+// string-safety property — itemID never appears inside the JS source
+// string — is directly unit-testable without a live browser page.
+func postMetricsEvalArgs(itemID string) (string, []interface{}) {
+	return postMetricsScript, []interface{}{itemID}
 }
