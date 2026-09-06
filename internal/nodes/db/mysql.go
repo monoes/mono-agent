@@ -191,6 +191,9 @@ func buildMySQLQuery(operation, table string, data map[string]interface{}, exist
 
 	case "select":
 		q := fmt.Sprintf("SELECT * FROM `%s`", table)
+		if whereClause != "" {
+			q += " WHERE " + whereClause
+		}
 		return q, existingParams, nil
 
 	default:

@@ -151,15 +151,24 @@ func twilioPost(ctx context.Context, endpoint, accountSID, authToken string, for
 		return nil, err
 	}
 
+	if resp.StatusCode >= 400 {
+		// The error body may not be JSON at all (e.g. a proxy's HTML error
+		// page for a 502/503), so don't require it to decode — surface the
+		// real status code and raw body either way, and only layer in
+		// Twilio's structured message/code when the body does parse.
+		var errBody map[string]interface{}
+		if json.Unmarshal(bodyBytes, &errBody) == nil {
+			if msg, ok := errBody["message"].(string); ok && msg != "" {
+				code, _ := errBody["code"].(float64)
+				return nil, fmt.Errorf("HTTP %d (Twilio code %d): %s", resp.StatusCode, int(code), msg)
+			}
+		}
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
 	var result map[string]interface{}
 	if err := json.Unmarshal(bodyBytes, &result); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
-	}
-
-	if resp.StatusCode >= 400 {
-		msg, _ := result["message"].(string)
-		code, _ := result["code"].(float64)
-		return nil, fmt.Errorf("HTTP %d (Twilio code %d): %s", resp.StatusCode, int(code), msg)
 	}
 	return result, nil
 }

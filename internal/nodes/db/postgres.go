@@ -205,6 +205,9 @@ func buildPostgresQuery(operation, table string, data map[string]interface{}, ex
 
 	case "select":
 		q := fmt.Sprintf(`SELECT * FROM "%s"`, table)
+		if whereClause != "" {
+			q += " WHERE " + whereClause
+		}
 		return q, existingParams, nil
 
 	default:
