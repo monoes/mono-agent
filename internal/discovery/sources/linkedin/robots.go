@@ -37,11 +37,24 @@ func fetchRobotsTxt(ctx context.Context, robotsURL string) (string, error) {
 }
 
 // isDisallowedByRobots is a minimal, prefix-match check of a robots.txt
-// body for whether path is disallowed under a "User-agent: *" block — not
-// a full RFC9309 implementation, sufficient for a hard stop/no-bypass gate.
+// body for whether path is disallowed — not a full RFC9309 implementation,
+// sufficient for a hard stop/no-bypass gate.
+//
+// Unlike the generic discovery.CheckRobotsAllowed (which only honors a
+// "User-agent: *" block, deliberately ignoring named-bot blocks — see
+// TestCheckRobotsAllowedIgnoresNamedBotBlocks), this LinkedIn-specific copy
+// honors Disallow rules under EVERY User-agent block, named or wildcard.
+// LinkedIn's real robots.txt has zero "User-agent: *" blocks — only ~36
+// named-bot sections (LinkedInBot, Googlebot, Applebot, Bingbot, etc.),
+// each disallowing /jobs-guest/ — and mono-agent's own User-Agent will
+// never match one of those names. Restricting to the wildcard block would
+// make this gate a permanent no-op for LinkedIn, its one real use case.
+// Since this is explicitly a hard stop/no-bypass gate (not a scoping
+// mechanism for "who may crawl what"), treating LinkedIn's robots.txt
+// conservatively — disallowed under ANY block disallows the fetch — is the
+// correct, safe behavior here.
 func isDisallowedByRobots(robotsTxt, path string) bool {
 	lines := strings.Split(robotsTxt, "\n")
-	inWildcardBlock := false
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -53,13 +66,8 @@ func isDisallowedByRobots(robotsTxt, path string) bool {
 		}
 		key = strings.ToLower(strings.TrimSpace(key))
 		val = strings.TrimSpace(val)
-		switch key {
-		case "user-agent":
-			inWildcardBlock = val == "*"
-		case "disallow":
-			if inWildcardBlock && val != "" && strings.HasPrefix(path, val) {
-				return true
-			}
+		if key == "disallow" && val != "" && strings.HasPrefix(path, val) {
+			return true
 		}
 	}
 	return false
