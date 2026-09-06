@@ -74,17 +74,55 @@ func buildPrompt(app *applications.Application, excerpts []monomind.KnowledgeRes
 	return b.String()
 }
 
-// extractJSON returns the first balanced top-level {...} object found in
-// s, correctly skipping over braces that appear inside quoted string
-// values (e.g. rationale text containing "{" or "}"). Local agent CLIs
-// sometimes wrap their JSON response in prose or a markdown code fence
-// despite being instructed not to — this makes parseVerdict robust to
-// that without loosening the rubric itself.
+// extractJSON scans s for top-level balanced {...} object(s), correctly
+// skipping over braces that appear inside quoted string values (e.g.
+// rationale text containing "{" or "}"). Local agent CLIs sometimes wrap
+// their JSON response in prose or a markdown code fence despite being
+// instructed not to — this makes parseVerdict robust to that without
+// loosening the rubric itself.
+//
+// Prose can also contain a stray, unrelated balanced brace pair BEFORE the
+// real verdict object (e.g. "the template uses {} placeholders..."). Since
+// "{}" itself decodes as valid-but-empty JSON, naively returning the FIRST
+// balanced group would silently hand back an empty object instead of the
+// real verdict further down. To guard against that, extractJSON keeps
+// scanning past a candidate that doesn't look like an actual verdict (no
+// non-empty "verdict" field) and prefers the first candidate that does;
+// if none do, it falls back to the first balanced candidate found (so
+// parseVerdict's own field validation, and the error message, still have
+// something concrete to report against).
 func extractJSON(s string) (string, error) {
-	start := strings.Index(s, "{")
-	if start == -1 {
-		return "", fmt.Errorf("matching: no JSON object found in response")
+	var fallback string
+	pos := 0
+	for {
+		idx := strings.Index(s[pos:], "{")
+		if idx == -1 {
+			break
+		}
+		start := pos + idx
+		end := balancedBraceEnd(s, start)
+		if end == -1 {
+			break
+		}
+		candidate := s[start : end+1]
+		if fallback == "" {
+			fallback = candidate
+		}
+		if looksLikeVerdict(candidate) {
+			return candidate, nil
+		}
+		pos = end + 1
 	}
+	if fallback != "" {
+		return fallback, nil
+	}
+	return "", fmt.Errorf("matching: no balanced JSON object found in response")
+}
+
+// balancedBraceEnd returns the index of the '}' that closes the '{' at
+// start (skipping brace-like characters inside quoted strings), or -1 if
+// s has no balanced closer for it.
+func balancedBraceEnd(s string, start int) int {
 	depth := 0
 	inString := false
 	escaped := false
@@ -109,15 +147,32 @@ func extractJSON(s string) (string, error) {
 		case '}':
 			depth--
 			if depth == 0 {
-				return s[start : i+1], nil
+				return i
 			}
 		}
 	}
-	return "", fmt.Errorf("matching: no balanced JSON object found in response")
+	return -1
+}
+
+// looksLikeVerdict reports whether candidate decodes as JSON carrying a
+// non-empty top-level "verdict" field — used by extractJSON to distinguish
+// the real FitVerdict object from an incidental, unrelated brace pair
+// (e.g. "{}") appearing earlier in an agent's prose response.
+func looksLikeVerdict(candidate string) bool {
+	var probe struct {
+		Verdict string `json:"verdict"`
+	}
+	if err := json.Unmarshal([]byte(candidate), &probe); err != nil {
+		return false
+	}
+	return probe.Verdict != ""
 }
 
 // parseVerdict extracts and decodes a FitVerdict from an agent's raw
-// response text.
+// response text. It treats a successfully-decoded but empty-"verdict"
+// result as a parse failure rather than silently returning a zero-value
+// verdict, closing the silent-corruption path even if extractJSON's
+// brace-matching ever picks the wrong candidate.
 func parseVerdict(responseText string) (*FitVerdict, error) {
 	jsonStr, err := extractJSON(responseText)
 	if err != nil {
@@ -126,6 +181,9 @@ func parseVerdict(responseText string) (*FitVerdict, error) {
 	var v FitVerdict
 	if err := json.Unmarshal([]byte(jsonStr), &v); err != nil {
 		return nil, fmt.Errorf("matching: decoding verdict JSON: %w (extracted: %.200s)", err, jsonStr)
+	}
+	if v.Verdict == "" {
+		return nil, fmt.Errorf("matching: parsed verdict is missing a required \"verdict\" field (extracted: %.200s)", jsonStr)
 	}
 	return &v, nil
 }

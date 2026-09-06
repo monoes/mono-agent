@@ -65,6 +65,37 @@ func TestParseVerdictNoJSONFound(t *testing.T) {
 	}
 }
 
+// TestParseVerdictSkipsStrayLeadingBraces is a regression test for Finding
+// 2: a stray, unrelated balanced brace pair ("{}") appearing in prose
+// BEFORE the real verdict object must not be mistaken for the verdict.
+// Naive first-balanced-group extraction would return "{}" itself (valid,
+// empty JSON) and parseVerdict would silently succeed with an all
+// zero-value FitVerdict instead of surfacing the real one.
+func TestParseVerdictSkipsStrayLeadingBraces(t *testing.T) {
+	resp := `Here's my note: the template uses {} placeholders in this posting. {"eligibility_pass":true,"language_pass":true,"location_pass":true,"technical_score":85,"experience_score":75,"behavioral_score":60,"career_score":90,"overall_score":82,"verdict":"Strong Fit","rationale":"Excellent alignment."}`
+	v, err := parseVerdict(resp)
+	if err != nil {
+		t.Fatalf("parseVerdict: %v", err)
+	}
+	if v.Verdict != "Strong Fit" {
+		t.Fatalf("expected the real verdict object past the stray {} to be extracted, got: %+v", v)
+	}
+	if v.OverallScore != 82 {
+		t.Fatalf("unexpected overall score: %+v", v)
+	}
+}
+
+// TestParseVerdictRejectsEmptyVerdictField guards the belt-and-suspenders
+// validation in parseVerdict itself: even if extraction ever picks a
+// candidate that decodes successfully but has no "verdict" field set, that
+// must be treated as an error rather than a silently-accepted zero-value
+// FitVerdict.
+func TestParseVerdictRejectsEmptyVerdictField(t *testing.T) {
+	if _, err := parseVerdict("{}"); err == nil {
+		t.Fatal("expected an error for a valid-but-empty JSON object with no verdict field, got nil")
+	}
+}
+
 func TestSlugify(t *testing.T) {
 	cases := map[string]string{
 		"Strong Fit":   "strong-fit",
