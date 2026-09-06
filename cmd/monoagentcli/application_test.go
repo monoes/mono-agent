@@ -94,6 +94,39 @@ func TestApplicationAddListGetStatusTag(t *testing.T) {
 	}
 }
 
+// TestApplicationListTableShowsJobTitle exercises the plain-text table
+// rendering path (JSONOutput: false) of `application list` and asserts the
+// TITLE column shows the job's actual title, not its company name.
+func TestApplicationListTableShowsJobTitle(t *testing.T) {
+	dbPath := newApplicationCLITestDB(t)
+
+	runCmd := func(jsonOutput bool, args ...string) (string, error) {
+		cfg := &globalConfig{DBPath: dbPath, JSONOutput: jsonOutput}
+		cmd := newApplicationCmd(cfg)
+		cmd.SetArgs(args)
+		var out bytes.Buffer
+		cmd.SetOut(&out)
+		err := cmd.Execute()
+		return out.String(), err
+	}
+
+	addOut, err := runCmd(true, "add", "--kind", "job", "--title", "Backend Engineer", "--company", "Acme", "--url", "https://acme.example/1")
+	if err != nil {
+		t.Fatalf("application add: %v (%s)", err, addOut)
+	}
+
+	listOut, err := runCmd(false, "list")
+	if err != nil {
+		t.Fatalf("application list: %v", err)
+	}
+	if !strings.Contains(listOut, "Backend Engineer") {
+		t.Fatalf("expected list table TITLE column to show the job title, got: %s", listOut)
+	}
+	if strings.Contains(listOut, "Acme") {
+		t.Fatalf("did not expect the company name in the list table output, got: %s", listOut)
+	}
+}
+
 func TestApplicationStatusRejectsInvalidTransition(t *testing.T) {
 	dbPath := newApplicationCLITestDB(t)
 	addOut, err := runApplicationCmd(t, dbPath, "add", "--kind", "job", "--title", "Backend Engineer", "--company", "Acme", "--url", "https://acme.example/1")
