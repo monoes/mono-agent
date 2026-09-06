@@ -323,6 +323,31 @@ func TestExpressionResolveConfig_ArrayStaysArray(t *testing.T) {
 	}
 }
 
+// TestExpressionResolveConfig_LiteralJSONStringStaysString is a regression
+// test: a plain, static config string that happens to look like JSON (a
+// hardcoded HTTP body, a JSON-formatted default value, etc.) but contains no
+// "{{" template syntax at all must pass through ResolveConfig completely
+// unchanged, as a string — not silently coerced to a map/slice just because
+// it starts with '{' or '['. Node code that does config["body"].(string)
+// would otherwise panic/misbehave on a value it never asked to be evaluated.
+func TestExpressionResolveConfig_LiteralJSONStringStaysString(t *testing.T) {
+	engine := NewExpressionEngine()
+	ctx := ExpressionContext{}
+
+	const literal = `["a","b"]`
+	got, err := engine.ResolveConfig(map[string]interface{}{"static_field": literal}, ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	s, ok := got["static_field"].(string)
+	if !ok {
+		t.Fatalf("static_field resolved to %T (%v), want string (unchanged, since it never contained {{)", got["static_field"], got["static_field"])
+	}
+	if s != literal {
+		t.Errorf("static_field = %q, want unchanged %q", s, literal)
+	}
+}
+
 // The OS environment must NOT leak into $env by default: a template
 // referencing a process-set variable renders empty unless the operator
 // opted in with MONOAGENT_ALLOW_ENV_TEMPLATES=1.

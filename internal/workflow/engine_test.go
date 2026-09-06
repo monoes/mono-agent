@@ -11,6 +11,8 @@ import (
 
 	"github.com/rs/zerolog"
 	_ "modernc.org/sqlite"
+
+	"github.com/monoes/mono-agent/internal/vault"
 )
 
 // TestCheckWorkflowProfile is a regression test: engine methods that load a
@@ -397,5 +399,71 @@ func TestTriggerWorkflow_StampsWorkflowsOwnProfile(t *testing.T) {
 	}
 	if got.ProfileID != "halansari" {
 		t.Errorf("execution ProfileID = %q, want %q (the workflow's own profile, not the engine's %q)", got.ProfileID, "halansari", e.profileID)
+	}
+}
+
+// capturingProfileNode records the vault profile ID present in the context it
+// was executed with, so tests can assert what runExecution actually
+// propagates downstream to nodes (and, transitively, to credential/secret
+// resolution which reads vault.ProfileIDFromContext(ctx)).
+type capturingProfileNode struct {
+	gotProfileID *string
+}
+
+func (capturingProfileNode) Type() string { return "test.capture_profile" }
+func (n capturingProfileNode) Execute(ctx context.Context, _ NodeInput, _ map[string]interface{}) ([]NodeOutput, error) {
+	*n.gotProfileID = vault.ProfileIDFromContext(ctx)
+	return []NodeOutput{{Handle: "main", Items: []Item{NewItem(map[string]interface{}{})}}}, nil
+}
+
+// TestRunExecution_UsesExecutionsOwnProfileID is a regression test for
+// runExecution stamping the vault context with e.profileID (the engine's own,
+// fixed-at-construction profile) instead of exec.ProfileID (the execution's
+// real, possibly different, profile — e.g. on a multi-profile daemon with
+// AllowAllProfiles). Downstream credential/secret resolution reads the
+// profile ID back out of this context, so a mismatch here silently resolves
+// the wrong profile's secrets.
+func TestRunExecution_UsesExecutionsOwnProfileID(t *testing.T) {
+	reg := NewNodeTypeRegistry()
+	var gotProfileID string
+	reg.Register("test.capture_profile", func() NodeExecutor { return capturingProfileNode{gotProfileID: &gotProfileID} })
+
+	wf := &Workflow{
+		ID:        "wf-multi",
+		ProfileID: "workflow-owner-profile",
+		Name:      "multi-profile",
+		Nodes: []WorkflowNode{
+			{ID: "t1", WorkflowID: "wf-multi", Type: "trigger.manual", Name: "Trigger"},
+			{ID: "n1", WorkflowID: "wf-multi", Type: "test.capture_profile", Name: "Capture"},
+		},
+		Connections: []WorkflowConnection{
+			{SourceNodeID: "t1", SourceHandle: "main", TargetNodeID: "n1", TargetHandle: "main"},
+		},
+	}
+	dag, err := BuildDAG(wf.Nodes, wf.Connections)
+	if err != nil {
+		t.Fatalf("BuildDAG: %v", err)
+	}
+	exec := &WorkflowExecution{
+		ID:            "e-multi",
+		WorkflowID:    "wf-multi",
+		ProfileID:     "execution-owner-profile", // the execution's real, stamped profile
+		TriggerNodeID: "t1",
+	}
+
+	e := &WorkflowEngine{
+		profileID: "engine-fixed-profile", // the engine's own, must NOT leak into the vault context
+		store:     &stubStore{},
+		expr:      NewExpressionEngine(),
+		registry:  reg,
+		logger:    zerolog.Nop(),
+	}
+
+	if err := e.runExecution(context.Background(), exec, wf, dag); err != nil {
+		t.Fatalf("runExecution: %v", err)
+	}
+	if gotProfileID != "execution-owner-profile" {
+		t.Errorf("vault profile ID seen by node = %q, want %q (the execution's own profile, not the engine's %q)",
+			gotProfileID, "execution-owner-profile", e.profileID)
 	}
 }

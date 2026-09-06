@@ -99,7 +99,40 @@ func ListTemplates() []Template {
 // instantiate it into a real workflow via their own save path (fresh node
 // IDs, profile_id, etc.), matching how `workflow import` already turns a
 // WorkflowFile into a saved Workflow.
+//
+// The returned value is a deep copy of the cached template: templateFiles is
+// a package-level, process-lifetime cache, and WorkflowNode.Config is a
+// map[string]interface{} — returning the cached struct by value still
+// aliases that nested map. Real call sites mutate a node's Config in place
+// (e.g. stamping their own profile_id) before saving, which would otherwise
+// permanently corrupt the shared cache for every future caller/profile and
+// race under concurrent instantiation.
 func GetTemplate(templateID string) (WorkflowFile, bool) {
 	wf, ok := templateFiles[templateID]
-	return wf, ok
+	if !ok {
+		return WorkflowFile{}, false
+	}
+	cp, err := deepCopyWorkflowFile(wf)
+	if err != nil {
+		// Should be unreachable: templateFiles was itself decoded from JSON,
+		// so it is always re-encodable. Fall back to the (aliasing) value
+		// rather than failing the caller outright.
+		return wf, true
+	}
+	return cp, true
+}
+
+// deepCopyWorkflowFile returns an independent copy of wf via a JSON
+// marshal/unmarshal round trip, so nested mutable fields (node Config maps,
+// Schema pointers) don't alias the original.
+func deepCopyWorkflowFile(wf WorkflowFile) (WorkflowFile, error) {
+	data, err := json.Marshal(wf)
+	if err != nil {
+		return WorkflowFile{}, err
+	}
+	var cp WorkflowFile
+	if err := json.Unmarshal(data, &cp); err != nil {
+		return WorkflowFile{}, err
+	}
+	return cp, nil
 }
