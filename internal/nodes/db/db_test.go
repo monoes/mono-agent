@@ -65,6 +65,66 @@ func TestMongoDBRefusesMatchAllMutations(t *testing.T) {
 	}
 }
 
+// TestBuildPostgresQuerySelectAppliesWhereClause is a regression test: a
+// select operation configured with a non-empty 'where' must filter the
+// query, not silently return the entire table. buildPostgresQuery's
+// update/delete cases already append the where clause; select previously
+// dropped it on the floor.
+func TestBuildPostgresQuerySelectAppliesWhereClause(t *testing.T) {
+	config := map[string]interface{}{"where": "id = $1"}
+	q, params, err := buildPostgresQuery("select", "users", nil, []interface{}{42}, config)
+	if err != nil {
+		t.Fatalf("buildPostgresQuery: %v", err)
+	}
+	if !strings.Contains(q, "WHERE id = $1") {
+		t.Fatalf("expected query to contain the WHERE clause, got: %q", q)
+	}
+	if len(params) != 1 || params[0] != 42 {
+		t.Fatalf("expected params to be threaded through unchanged, got: %v", params)
+	}
+}
+
+// TestBuildPostgresQuerySelectWithoutWhere ensures a select with no 'where'
+// still returns the unfiltered query (no regression for the common case).
+func TestBuildPostgresQuerySelectWithoutWhere(t *testing.T) {
+	q, _, err := buildPostgresQuery("select", "users", nil, nil, map[string]interface{}{})
+	if err != nil {
+		t.Fatalf("buildPostgresQuery: %v", err)
+	}
+	if strings.Contains(q, "WHERE") {
+		t.Fatalf("did not expect a WHERE clause when none is configured, got: %q", q)
+	}
+}
+
+// TestBuildMySQLQuerySelectAppliesWhereClause mirrors
+// TestBuildPostgresQuerySelectAppliesWhereClause for buildMySQLQuery, which
+// had the identical bug.
+func TestBuildMySQLQuerySelectAppliesWhereClause(t *testing.T) {
+	config := map[string]interface{}{"where": "id = ?"}
+	q, params, err := buildMySQLQuery("select", "users", nil, []interface{}{42}, config)
+	if err != nil {
+		t.Fatalf("buildMySQLQuery: %v", err)
+	}
+	if !strings.Contains(q, "WHERE id = ?") {
+		t.Fatalf("expected query to contain the WHERE clause, got: %q", q)
+	}
+	if len(params) != 1 || params[0] != 42 {
+		t.Fatalf("expected params to be threaded through unchanged, got: %v", params)
+	}
+}
+
+// TestBuildMySQLQuerySelectWithoutWhere ensures a select with no 'where'
+// still returns the unfiltered query (no regression for the common case).
+func TestBuildMySQLQuerySelectWithoutWhere(t *testing.T) {
+	q, _, err := buildMySQLQuery("select", "users", nil, nil, map[string]interface{}{})
+	if err != nil {
+		t.Fatalf("buildMySQLQuery: %v", err)
+	}
+	if strings.Contains(q, "WHERE") {
+		t.Fatalf("did not expect a WHERE clause when none is configured, got: %q", q)
+	}
+}
+
 // TestValidateWhereClause rejects the injection-escalation vectors (stacked
 // statements and comment truncation) while allowing legitimate boolean filters.
 func TestValidateWhereClause(t *testing.T) {
