@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { MessageSquare } from 'lucide-react'
-import { GetVersion, CheckForUpdate, SelfUpdate } from '../wailsjs/go/main/App'
+import { GetVersion, CheckForUpdate, AppSelfUpdate } from '../wailsjs/go/main/App'
 import { subscribeEvent } from '../services/api.js'
 
 export default function StatusBar({ stats, dbConnected, chatOpen, onToggleChat }) {
@@ -42,8 +42,16 @@ export default function StatusBar({ stats, dbConnected, chatOpen, onToggleChat }
   }
 
   function handleUpdate() {
+    // AppSelfUpdate replaces the running GUI app binary itself and
+    // restarts it -- SelfUpdate (used here previously) only replaces the
+    // monoagentcli CLI sidecar, which is why clicking "Update" reported
+    // success and a new version number but the app's own displayed
+    // version (versionText below, from GetVersion()) never changed even
+    // after a manual restart: the actual running executable was never
+    // touched. Settings.jsx already calls AppSelfUpdate correctly; this
+    // was the one place still calling the wrong function.
     setUpdate(u => ({ ...u, updating: true, progress: 'Starting update...' }))
-    SelfUpdate()
+    AppSelfUpdate()
       .then(result => {
         if (result.success) {
           setUpdate({ done: true, latest: result.new_version })
