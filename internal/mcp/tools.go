@@ -265,10 +265,22 @@ func toolWorkflowGet(ctx context.Context, s *Server, args json.RawMessage) (inte
 	if err != nil {
 		return nil, fmt.Errorf("get workflow: %w", err)
 	}
-	if wf == nil {
+	if wf == nil || crossProfile(wf.ProfileID, rt.profileID) {
 		return nil, fmt.Errorf("workflow %q not found", a.ID)
 	}
 	return wf, nil
+}
+
+// crossProfile reports whether a record's owning profile (empty means
+// unscoped/legacy, and is always considered in-profile) differs from the
+// active profile. A cross-profile lookup is surfaced as "not found" by
+// every caller here, matching internal/httpapi/handlers.go's
+// handleWorkflowGet/handleWorkflowExecutions and
+// internal/workflow/engine.go's checkWorkflowProfile — never a
+// distinguishable "forbidden", so a guessed or leaked ID from another
+// profile can't be used to probe for existence.
+func crossProfile(ownerProfileID, activeProfileID string) bool {
+	return ownerProfileID != "" && ownerProfileID != activeProfileID
 }
 
 // parseWorkflowBytes accepts both the file-store workflow JSON format
@@ -307,7 +319,7 @@ func toolWorkflowValidate(ctx context.Context, s *Server, args json.RawMessage) 
 		if err != nil {
 			return nil, fmt.Errorf("get workflow: %w", err)
 		}
-		if loaded == nil {
+		if loaded == nil || crossProfile(loaded.ProfileID, rt.profileID) {
 			return nil, fmt.Errorf("workflow %q not found", a.ID)
 		}
 		wf = *loaded
@@ -472,7 +484,7 @@ func toolWorkflowStatus(ctx context.Context, s *Server, args json.RawMessage) (i
 	if err != nil {
 		return nil, fmt.Errorf("get execution: %w", err)
 	}
-	if exec == nil {
+	if exec == nil || crossProfile(exec.ProfileID, rt.profileID) {
 		return nil, fmt.Errorf("execution %q not found", a.ExecutionID)
 	}
 	// Same output pipeline as workflow_run: credential-key redaction (no
