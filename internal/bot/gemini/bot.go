@@ -210,14 +210,30 @@ func (b *GeminiBot) methodTypePrompt(_ context.Context, args ...interface{}) (in
 	// Extension path: use TypeCDP (Chrome Debugger Input.insertText) which
 	// reliably triggers Gemini's Quill editor — content-script paste doesn't.
 	if ep, ok := page.(*extension.ExtensionPage); ok {
+		var lastErr error
 		for _, sel := range selectors {
 			el, err := ep.Element(sel, 5*time.Second)
-			if err == nil && el != nil {
-				if ee, ok := el.(*extension.ExtensionElement); ok {
-					_ = ep.TypeCDPOnElement(prompt, ee.ElementID())
-					return map[string]interface{}{"success": true, "typed": len(prompt)}, nil
-				}
+			if err != nil || el == nil {
+				continue
 			}
+			ee, ok := el.(*extension.ExtensionElement)
+			if !ok {
+				continue
+			}
+			// The CDP type call's error was previously discarded here (`_ =
+			// ...`), so this always reported success even when nothing was
+			// actually typed — masking real failures (e.g. a stale
+			// element, or CDP debugger attach rejected) and skipping the
+			// JSON action definition's own tier-2/tier-3 fallback selectors,
+			// which only trigger off an explicit "typeResult" failure.
+			if err := ep.TypeCDPOnElement(prompt, ee.ElementID()); err != nil {
+				lastErr = err
+				continue
+			}
+			return map[string]interface{}{"success": true, "typed": len(prompt)}, nil
+		}
+		if lastErr != nil {
+			return nil, fmt.Errorf("type_prompt: could not type into input: %w", lastErr)
 		}
 		return nil, fmt.Errorf("type_prompt: could not find input to type into")
 	}

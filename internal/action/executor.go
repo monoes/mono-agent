@@ -200,6 +200,15 @@ func (ec *ExecutionContext) AddFailedItem(item FailedItem) {
 	ec.FailedItems = append(ec.FailedItems, item)
 }
 
+// HasFailedItems reports whether any step recorded a failure via
+// AddFailedItem (the "mark_failed" onError action, and its onFailure
+// fallback) during this run.
+func (ec *ExecutionContext) HasFailedItems() bool {
+	ec.mu.Lock()
+	defer ec.mu.Unlock()
+	return len(ec.FailedItems) > 0
+}
+
 // AddExtractedItem appends an extracted data record.
 func (ec *ExecutionContext) AddExtractedItem(item map[string]interface{}) {
 	ec.mu.Lock()
@@ -515,7 +524,34 @@ func (ae *ActionExecutor) Execute(action *StorageAction) (*ExecutionResult, erro
 		}
 	}
 
-	// Phase 4: Mark completed.
+	// Phase 4: Determine the final state honestly. Individual steps that hit
+	// the "mark_failed" onError action (or exhaust retries with no other
+	// onFailure policy — see errors.go's handleOnFailure default) don't abort
+	// the run — by design, later steps and loops still execute — but they DO
+	// record a FailedItem. Reaching here with any FailedItems recorded means
+	// the action ran to completion while failing to do the thing it was
+	// actually asked to do (e.g. Gemini's generate_image action: every
+	// fallback tier for typing/sending/waiting failed), so it must be
+	// reported as FAILED, not COMPLETED — previously this branch always
+	// reported COMPLETED and returned a nil error regardless of FailedItems,
+	// which is why a workflow node wrapping this executor (BrowserNode.Execute)
+	// could show green/success even though nothing it was asked to do worked.
+	if ae.execCtx.HasFailedItems() {
+		result := ae.buildResult()
+		if ae.db != nil {
+			if serr := ae.db.UpdateActionState(action.ID, "FAILED"); serr != nil {
+				ae.logger.Error().Err(serr).Str("actionID", action.ID).Msg("failed to persist action state FAILED — action may appear stuck RUNNING")
+			}
+		}
+		summary := result.FailedItems[len(result.FailedItems)-1]
+		ae.emitEvent(ExecutionEvent{
+			Type:     "action_failed",
+			ActionID: action.ID,
+			Message:  fmt.Sprintf("%s/%s failed: %d step(s) failed, last: %s: %v", action.TargetPlatform, action.Type, len(result.FailedItems), summary.StepID, summary.Error),
+		})
+		return result, fmt.Errorf("action %s/%s: %d step(s) failed, last: %s: %w", action.TargetPlatform, action.Type, len(result.FailedItems), summary.StepID, summary.Error)
+	}
+
 	if ae.db != nil {
 		if serr := ae.db.UpdateActionState(action.ID, "COMPLETED"); serr != nil {
 			ae.logger.Error().Err(serr).Str("actionID", action.ID).Msg("failed to persist action state COMPLETED — action may appear stuck RUNNING")
