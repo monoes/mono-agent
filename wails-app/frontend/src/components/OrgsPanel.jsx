@@ -2,11 +2,36 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   X, RefreshCw, Building2, CheckCircle2, XCircle, Circle, Network, Maximize2, Minimize2, Plus,
   MessageCircleQuestion, ShieldAlert, Coins, GitBranch, ScrollText, ListTree, Play, Loader2, KeyRound,
+  ChevronLeft, ChevronRight,
 } from 'lucide-react'
 import { api, onOrgEvent, onOrgEventsClosed, onOrgDesignUpdated, onOrgRunStatus, notify } from '../services/api.js'
 import OrgDesigner from './orgdesigner/OrgDesigner.jsx'
 import { KVBlock } from './KVBlock.jsx'
 import MonomindInitPrompt from './MonomindInitPrompt.jsx'
+
+// Fold button shown atop the expanded org-list panel — mirrors
+// OrgDesigner.jsx's panelFoldBtnStyle for visual consistency between the
+// two foldable-rail patterns in this app.
+const panelFoldBtnStyle = {
+  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, flexShrink: 0,
+  fontFamily: 'var(--font-mono)', fontSize: 9.5, padding: '5px 6px',
+  background: 'transparent', border: 'none', borderBottom: '1px solid var(--border)',
+  color: 'var(--text-muted)', cursor: 'pointer',
+}
+
+// Narrow vertical strip shown in place of the folded org list — click to
+// expand. Mirrors OrgDesigner.jsx's panelStripStyle.
+function panelStripStyle(borderSide) {
+  const base = {
+    width: 26, flexShrink: 0,
+    display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: 10,
+    background: 'transparent', border: 'none',
+    color: 'var(--text-muted)', cursor: 'pointer',
+  }
+  return borderSide === 'right'
+    ? { ...base, borderRight: '1px solid var(--border)' }
+    : { ...base, borderLeft: '1px solid var(--border)' }
+}
 
 const TABS = [
   { id: 'design',     label: 'Design',     icon: Network },
@@ -126,6 +151,7 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
   const [events, setEvents] = useState([])
   const [actionBusy, setActionBusy] = useState(null) // id of in-flight approve/deny/answer
   const [designerFullscreen, setDesignerFullscreen] = useState(false) // Design tab: collapse the org rail + tab strip for canvas room
+  const [orgListOpen, setOrgListOpen] = useState(true) // manual fold, independent of designerFullscreen's auto-collapse
   const [creatingOrg, setCreatingOrg] = useState(false)
   const [newOrgName, setNewOrgName] = useState('')
   const [newOrgGoal, setNewOrgGoal] = useState('')
@@ -639,12 +665,19 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
       )}
 
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        {/* Org list — collapsed while the Design canvas is in fullscreen, or
-            while the profile isn't set up (the CTA below is the only thing
-            shown then — one prompt, not a rail full of "no orgs" plus a
-            second one in the detail pane). */}
+        {/* Org list — auto-collapsed while the Design canvas is in
+            fullscreen, or while the profile isn't set up (the CTA below is
+            the only thing shown then — one prompt, not a rail full of "no
+            orgs" plus a second one in the detail pane) — and additionally
+            manually foldable via orgListOpen for canvas room on demand,
+            mirroring OrgDesigner's palette/inspector fold pattern. */}
         {!notInitialized && !(designerFullscreen && tab === 'design') && (
-        <div style={{ width: embedded ? 130 : 220, flexShrink: 0, borderRight: '1px solid var(--border)', overflowY: 'auto', padding: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        orgListOpen ? (
+        <div style={{ width: embedded ? 130 : 220, flexShrink: 0, borderRight: '1px solid var(--border)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <button onClick={() => setOrgListOpen(false)} title="Collapse org list" style={panelFoldBtnStyle}>
+            <ChevronLeft size={11} /> Collapse
+          </button>
+          <div style={{ flex: 1, overflowY: 'auto', padding: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
           {!creatingOrg ? (
             <button
               onClick={() => setCreatingOrg(true)}
@@ -707,7 +740,17 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
               ))}
             </div>
           )}
+          </div>
         </div>
+        ) : (
+          <button
+            onClick={() => setOrgListOpen(true)}
+            title="Show org list"
+            style={panelStripStyle('right')}
+          >
+            <ChevronRight size={13} />
+          </button>
+        )
         )}
 
         {/* Detail */}
