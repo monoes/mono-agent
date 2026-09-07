@@ -3,31 +3,72 @@ package apply_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/monoes/mono-agent/internal/apply"
+	"github.com/monoes/mono-agent/internal/browser"
 )
 
-func TestOpenForApplicationLaunchesBrowser(t *testing.T) {
-	err := apply.OpenForApplication(context.Background(), "about:blank")
-	if err != nil {
-		// This browser deliberately keeps its sandbox (unlike
-		// documents.RenderPDF's PDF-only launcher): it navigates to real
-		// external job-posting URLs, so the sandbox is a meaningful
-		// security boundary here, not one to trade away just to satisfy a
-		// CI runner. Some CI environments (confirmed: GitHub Actions'
-		// current Ubuntu runner image) restrict the unprivileged user
-		// namespaces Chrome's sandboxed zygote process requires, so a
-		// launch failure with exactly this signature is an environmental
-		// limitation, not a code defect -- skip rather than fail. Any
-		// OTHER error (wrong binary, bad URL, a real regression) still
-		// fails the test.
-		if strings.Contains(err.Error(), "No usable sandbox") {
-			t.Skipf("skipping: this environment restricts Chrome's sandbox (%v) -- not a code defect, see comment", err)
-		}
-		t.Fatalf("OpenForApplication: %v (requires a headless Chrome/Chromium binary reachable by go-rod's launcher — if none is available in this environment, this is an environmental limitation, not a code defect; report it as such rather than treating it as a logic bug)", err)
+// fakeBridge is a minimal browser.ExtensionBridge test double — no real
+// extension/Chrome connection involved.
+type fakeBridge struct {
+	connected   bool
+	createErr   error
+	createdURLs []string
+}
+
+func (f *fakeBridge) IsConnected() bool { return f.connected }
+func (f *fakeBridge) CreateTab(url string) (int, error) {
+	if f.createErr != nil {
+		return 0, f.createErr
+	}
+	f.createdURLs = append(f.createdURLs, url)
+	return len(f.createdURLs), nil
+}
+func (f *fakeBridge) CloseTab(tabID int) error                { return nil }
+func (f *fakeBridge) NewPage(tabID int) browser.PageInterface { return nil }
+
+// TestOpenForApplicationRequiresConnectedExtension is a regression test:
+// OpenForApplication must never fall back to launching a local
+// Rod/Chromium browser when the extension isn't connected — see
+// internal/browser.HybridSessionProvider for the same invariant elsewhere.
+func TestOpenForApplicationRequiresConnectedExtension(t *testing.T) {
+	if err := apply.OpenForApplication(context.Background(), "https://example.com/jobs/1", nil); err == nil {
+		t.Fatal("expected an error with a nil bridge, got nil")
+	}
+	disconnected := &fakeBridge{connected: false}
+	err := apply.OpenForApplication(context.Background(), "https://example.com/jobs/1", disconnected)
+	if err == nil {
+		t.Fatal("expected an error with a disconnected bridge, got nil")
+	}
+	if !strings.Contains(err.Error(), "extension") {
+		t.Fatalf("expected the error to mention the extension, got: %v", err)
+	}
+	if len(disconnected.createdURLs) != 0 {
+		t.Fatal("CreateTab must not be called when the bridge isn't connected")
+	}
+}
+
+// TestOpenForApplicationUsesExtensionBridge verifies the happy path opens
+// jobURL as a new tab through the bridge — no browser process spawned.
+func TestOpenForApplicationUsesExtensionBridge(t *testing.T) {
+	connected := &fakeBridge{connected: true}
+	if err := apply.OpenForApplication(context.Background(), "https://example.com/jobs/1", connected); err != nil {
+		t.Fatalf("OpenForApplication: %v", err)
+	}
+	if len(connected.createdURLs) != 1 || connected.createdURLs[0] != "https://example.com/jobs/1" {
+		t.Fatalf("expected CreateTab called once with the job URL, got: %v", connected.createdURLs)
+	}
+}
+
+func TestOpenForApplicationPropagatesCreateTabError(t *testing.T) {
+	connected := &fakeBridge{connected: true, createErr: errors.New("boom")}
+	err := apply.OpenForApplication(context.Background(), "https://example.com/jobs/1", connected)
+	if err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("expected the CreateTab error to propagate, got: %v", err)
 	}
 }
 
@@ -96,19 +137,12 @@ func TestBrowserFileNeverClicksAnything(t *testing.T) {
 		"SelectAllText(", "MustSelectAllText(",
 	}
 
-	// The one narrow, audited exception to the blanket "proto." ban:
-	// browser.go opens the tab the human will act in via
-	// browser.Page(proto.TargetCreateTarget{URL: jobURL}). Creating a
-	// browsing target/tab is not a DOM interaction — it is this
-	// package's entire sanctioned job — but the call legitimately
-	// contains the literal substring "proto." that the check above must
-	// otherwise catch. Only this exact, reviewed literal is exempted;
-	// any OTHER "proto." usage (proto.InputDispatchMouseEvent,
-	// proto.RuntimeCallFunctionOn, proto.DOMSetAttributeValue, ...)
-	// still fails below, and this exempted literal is still caught if
-	// anyone ever appends ".Call(" to it directly.
-	const allowedProtoUse = "proto.TargetCreateTarget"
-
+	// browser.go now opens the tab the human will act in via the
+	// MonoAgent extension bridge's CreateTab(url) — a plain HTTP/JSON call,
+	// not a raw CDP "proto." invocation — so no exemption is needed here
+	// the way the old direct-Rod implementation required one for
+	// proto.TargetCreateTarget. Every "proto."/".Call(" occurrence below is
+	// now a real hit.
 	for _, entry := range entries {
 		name := entry.Name()
 		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
@@ -118,9 +152,9 @@ func TestBrowserFileNeverClicksAnything(t *testing.T) {
 		if err != nil {
 			t.Fatalf("reading %s: %v", name, err)
 		}
-		scrubbed := strings.ReplaceAll(string(src), allowedProtoUse, "")
+		text := string(src)
 		for _, f := range forbidden {
-			if strings.Contains(scrubbed, f) {
+			if strings.Contains(text, f) {
 				t.Fatalf("internal/apply/%s must never call anything resembling %q — found it in the source. This package's browser code must only navigate to a URL and leave the window open for a human.", name, f)
 			}
 		}

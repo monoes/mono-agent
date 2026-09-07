@@ -7,13 +7,29 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
-	"github.com/monoes/mono-agent/internal/apply"
+	browserpkg "github.com/monoes/mono-agent/internal/browser"
+
 	"github.com/monoes/mono-agent/internal/applications"
+	"github.com/monoes/mono-agent/internal/apply"
 	"github.com/monoes/mono-agent/internal/documents"
 
 	"github.com/spf13/cobra"
 )
+
+// applicationApplyBridgeFunc obtains a connected MonoAgent extension bridge
+// for `application apply` to open the job posting through — swappable for
+// tests that stub out browser mechanics entirely (see
+// TestApplicationApplyAutoModeSkipsPrompt), mirroring
+// apply.OpenForApplicationFunc/documents.RenderPDFFunc's convention.
+var applicationApplyBridgeFunc = func() (browserpkg.ExtensionBridge, error) {
+	bridge := setupExtensionBridge(newExtensionBridgeLogger(), 3*time.Second)
+	if err := ensureExtensionConnected(bridge, 30*time.Second); err != nil {
+		return nil, err
+	}
+	return bridge, nil
+}
 
 // confirmPromptFunc asks the user a y/N question on stdin/stdout, real by
 // default; swappable for tests. Returns true only on an explicit "y"/"yes"
@@ -104,7 +120,11 @@ func newApplicationApplyCmd(cfg *globalConfig) *cobra.Command {
 				return fmt.Errorf("preparing documents: %w", err)
 			}
 
-			if err := apply.OpenForApplication(cmd.Context(), app.Job.URL); err != nil {
+			bridge, err := applicationApplyBridgeFunc()
+			if err != nil {
+				return fmt.Errorf("connecting to browser extension: %w", err)
+			}
+			if err := apply.OpenForApplication(cmd.Context(), app.Job.URL, bridge); err != nil {
 				return fmt.Errorf("opening browser: %w", err)
 			}
 

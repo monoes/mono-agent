@@ -27,9 +27,9 @@ import (
 	_ "github.com/monoes/mono-agent/internal/bot/x"
 )
 
-// newExtensionLoginLogger builds the same warn-level stderr logger used by
+// newExtensionBridgeLogger builds the same warn-level stderr logger used by
 // `node run`/`workflow run` when talking to the Chrome extension bridge.
-func newExtensionLoginLogger() zerolog.Logger {
+func newExtensionBridgeLogger() zerolog.Logger {
 	return zerolog.New(os.Stderr).With().Timestamp().Str("component", "extension").Logger().Level(zerolog.WarnLevel)
 }
 
@@ -208,7 +208,7 @@ func newLoginCmd(cfg *globalConfig) *cobra.Command {
 			}
 			db.Close()
 
-			bridge := setupExtensionBridge(newExtensionLoginLogger(), 3*time.Second)
+			bridge := setupExtensionBridge(newExtensionBridgeLogger(), 3*time.Second)
 			if err := ensureExtensionConnected(bridge, 30*time.Second); err != nil {
 				return err
 			}
@@ -270,7 +270,7 @@ func newLoginConfirmCmd(cfg *globalConfig) *cobra.Command {
 				return err
 			}
 
-			bridge := setupExtensionBridge(newExtensionLoginLogger(), 3*time.Second)
+			bridge := setupExtensionBridge(newExtensionBridgeLogger(), 3*time.Second)
 			if err := ensureExtensionConnected(bridge, 30*time.Second); err != nil {
 				return err
 			}

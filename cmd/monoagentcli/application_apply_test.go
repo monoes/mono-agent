@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	browserpkg "github.com/monoes/mono-agent/internal/browser"
+
 	"github.com/monoes/mono-agent/internal/apply"
 	"github.com/monoes/mono-agent/internal/documents"
 )
@@ -39,12 +41,17 @@ func TestApplicationApplyAutoModeSkipsPrompt(t *testing.T) {
 	t.Cleanup(func() { documents.RenderPDFFunc = origPDF })
 
 	// This test's assertion is about auto-mode prompt suppression, not
-	// browser mechanics (TestOpenForApplicationLaunchesBrowser in
-	// internal/apply covers that separately) -- fake it out so the test
-	// doesn't depend on a real, sandboxed Chrome launch succeeding in
-	// whatever environment runs this suite.
+	// browser mechanics (TestOpenForApplicationUsesExtensionBridge in
+	// internal/apply covers that separately) -- fake out both the extension
+	// bridge lookup and the open call so the test doesn't depend on a real
+	// MonoAgent extension/Chrome being connected in whatever environment
+	// runs this suite.
+	origBridge := applicationApplyBridgeFunc
+	applicationApplyBridgeFunc = func() (browserpkg.ExtensionBridge, error) { return nil, nil }
+	t.Cleanup(func() { applicationApplyBridgeFunc = origBridge })
+
 	origOpen := apply.OpenForApplicationFunc
-	apply.OpenForApplicationFunc = func(ctx context.Context, jobURL string) error { return nil }
+	apply.OpenForApplicationFunc = func(ctx context.Context, jobURL string, bridge browserpkg.ExtensionBridge) error { return nil }
 	t.Cleanup(func() { apply.OpenForApplicationFunc = origOpen })
 
 	origPrompt := confirmPromptFunc

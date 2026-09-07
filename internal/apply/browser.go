@@ -5,52 +5,39 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/go-rod/rod"
-	"github.com/go-rod/rod/lib/launcher"
-	"github.com/go-rod/rod/lib/proto"
+	"github.com/monoes/mono-agent/internal/browser"
 )
 
 // OpenForApplicationFunc is OpenForApplication's implementation, exposed as
 // a swappable package-level variable so callers can inject a fake in tests
-// that don't care about actually launching a browser (e.g. a CLI test
+// that don't care about actually opening a browser tab (e.g. a CLI test
 // verifying auto-mode prompt-suppression, not browser mechanics) — mirrors
 // documents.RenderPDFFunc's convention exactly. Production code always
 // goes through this var.
 var OpenForApplicationFunc = openForApplicationImpl
 
-// OpenForApplication launches a real, VISIBLE browser window at jobURL,
-// for a human to complete the application by hand. This function
-// contains no interaction beyond navigation — a companion test in this
-// package mechanically enforces that this file never grows a
-// form-interaction call. The browser is deliberately NOT closed before
-// returning (unlike documents.RenderPDF's throwaway headless instance)
-// — it stays open for the user to use.
-func OpenForApplication(ctx context.Context, jobURL string) error {
-	return OpenForApplicationFunc(ctx, jobURL)
+// OpenForApplication opens jobURL as a new tab in the user's real,
+// already-logged-in Chrome via the MonoAgent browser extension, for a
+// human to complete the application by hand. This function contains no
+// interaction beyond navigation — a companion test in this package
+// mechanically enforces that this file never grows a form-interaction
+// call. There is no local-browser fallback: if the extension isn't
+// connected, this fails with a clear error instead of launching a fresh,
+// unauthenticated Chromium instance — matching
+// internal/browser.HybridSessionProvider's "no Rod fallback" behavior
+// elsewhere in the codebase. bridge is typically obtained via
+// setupExtensionBridge/ensureExtensionConnected (cmd/monoagentcli) so
+// Chrome is reused (or launched once, never duplicated) across calls.
+func OpenForApplication(ctx context.Context, jobURL string, bridge browser.ExtensionBridge) error {
+	return OpenForApplicationFunc(ctx, jobURL, bridge)
 }
 
-// Leakless(false) is required for the browser to stay open after this
-// function returns: go-rod's launcher enables "leakless" by default, which
-// force-kills the spawned browser the moment THIS process exits — since the
-// CLI command that calls this function returns and exits almost
-// immediately after opening the page, the default behavior would silently
-// close the window right after it appears, defeating the entire point of
-// this function. Verified directly against go-rod's source
-// (lib/launcher/launcher.go: "Leakless will be enabled by default... If
-// enabled, the browser will be force killed after the Go process exits").
-func openForApplicationImpl(ctx context.Context, jobURL string) error {
-	launchURL, err := launcher.New().Headless(false).Leakless(false).Launch()
-	if err != nil {
-		return fmt.Errorf("apply.OpenForApplication: launch browser: %w", err)
+func openForApplicationImpl(ctx context.Context, jobURL string, bridge browser.ExtensionBridge) error {
+	if bridge == nil || !bridge.IsConnected() {
+		return fmt.Errorf("apply.OpenForApplication: MonoAgent browser extension is not connected — connect it (run `monoagentcli extension` for setup/pairing instructions) so the job posting opens as a tab in your real, already-logged-in Chrome instead of a separate throwaway browser window")
 	}
-
-	browser := rod.New().ControlURL(launchURL).Context(ctx)
-	if err := browser.Connect(); err != nil {
-		return fmt.Errorf("apply.OpenForApplication: connect to browser: %w", err)
-	}
-
-	if _, err := browser.Page(proto.TargetCreateTarget{URL: jobURL}); err != nil {
-		return fmt.Errorf("apply.OpenForApplication: open page: %w", err)
+	if _, err := bridge.CreateTab(jobURL); err != nil {
+		return fmt.Errorf("apply.OpenForApplication: opening tab via extension: %w", err)
 	}
 	return nil
 }
