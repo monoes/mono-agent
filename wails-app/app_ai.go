@@ -265,6 +265,28 @@ func (a *App) ScanAgentRuntimes() string {
 	return string(b)
 }
 
+// GetAgentRuntimeModels returns the models selectable for one agent
+// runtime's --model flag, as JSON []monomind.RuntimeModel (or {error}).
+// binary is the runtime's resolved path from a prior ScanAgentRuntimes call
+// (ScanEntry.binary) — required for antigravity/codex, which discover their
+// own model catalog by shelling out to themselves; ignored for claude,
+// which has no such command and falls back to a curated list. Returns "[]"
+// (not an error) for a runtime ListModels doesn't recognize, so the
+// frontend can fall back to a plain free-text model field either way.
+func (a *App) GetAgentRuntimeModels(runtimeID, binary string) string {
+	ctx, cancel := context.WithTimeout(a.ctx, 30*time.Second)
+	defer cancel()
+	models, err := monomind.ListModels(ctx, runtimeID, binary)
+	if err != nil {
+		return aiError(err)
+	}
+	if models == nil {
+		models = []monomind.RuntimeModel{}
+	}
+	b, _ := json.Marshal(models)
+	return string(b)
+}
+
 // StreamAgentChat runs one chat turn through the locally installed agent
 // runtime. When canvas is true, the turn runs in workflow-builder mode: the
 // eight CanvasTools are wired in and the system prompt instructs the model

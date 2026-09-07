@@ -12,6 +12,7 @@ import PostDetail from './pages/PostDetail.jsx'
 import Connections from './pages/Connections.jsx'
 import Communications from './pages/Communications.jsx'
 import Agents from './pages/Agents.jsx'
+import AIProviders from './pages/AIProviders.jsx'
 import Orgs from './pages/Orgs.jsx'
 import Logs from './pages/Logs.jsx'
 import NodeRunner from './pages/NodeRunner.jsx'
@@ -186,6 +187,7 @@ export default function App() {
     applications: <Applications />,
     documents: <Documents />,
     ai: <Agents onOpenChat={openGlobalChat} />,
+    aiProviders: <AIProviders />,
     orgs: <Orgs isActive={activePage === 'orgs'} onNavigate={navigate} pendingSelectOrgName={pendingOrgSelect} onConsumePendingSelect={() => setPendingOrgSelect(null)} />,
     logs:      <Logs logs={logs} onClear={() => { api.clearLogs(); setLogs([]) }} onRefresh={refreshLogs} />,
     settings:  <SettingsPage onNavigate={setActivePage} />,

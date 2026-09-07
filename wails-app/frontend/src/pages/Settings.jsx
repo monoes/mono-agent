@@ -361,7 +361,7 @@ export default function Settings({ onNavigate }) {
             icon={Brain}
             title={t('settings.aiProvidersTitle')}
             description={t('settings.aiProvidersDesc')}
-            onClick={() => onNavigate?.('ai')}
+            onClick={() => onNavigate?.('aiProviders')}
           />
         </div>
 

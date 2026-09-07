@@ -114,6 +114,10 @@ export const api = {
   clearAIChatHistory: (workflowID) => GoApp.ClearAIChatHistory(workflowID).then(s => JSON.parse(s)),
   // Agent Chat (monomind delegation — local AI agent runtimes)
   scanAgentRuntimes:  () => GoApp.ScanAgentRuntimes().then(s => JSON.parse(s)).catch(guard('scan agent runtimes', null)),
+  // binary is a runtime's ScanEntry.binary (from scanAgentRuntimes) — required
+  // for antigravity/codex, which discover their own model catalog by shelling
+  // out to themselves; harmless to omit for claude (curated list, ignores it).
+  getAgentRuntimeModels: (runtimeID, binary) => GoApp.GetAgentRuntimeModels(runtimeID, binary || '').then(s => JSON.parse(s)).catch(guard('agent runtime models', [])),
   // GX2 contract: monoagentTools/allowRuns both default OFF; a null arg means
   // "use the persisted Assistant tool access settings" (Settings page).
   streamAgentChat: (workflowID, message, runtime, model, resumeSessionID = '', canvas = true, monoagentTools = null, allowRuns = null) => {

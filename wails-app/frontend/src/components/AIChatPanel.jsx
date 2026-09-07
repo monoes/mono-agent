@@ -176,6 +176,8 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
   const [selectedModel, setSelectedModel]   = useState('')
   const [runtimes, setRuntimes]             = useState([])
   const [selectedRuntime, setSelectedRuntime] = useState('')
+  const [runtimeModels, setRuntimeModels]   = useState([]) // models for selectedRuntime, from getAgentRuntimeModels
+  const [runtimeModelsLoading, setRuntimeModelsLoading] = useState(false)
   const [useAgents, setUseAgents]           = useState(false)
   const [monomindMissing, setMonomindMissing] = useState(false)
   // sessionId is the underlying agent runtime's resumable session id (from
@@ -257,6 +259,34 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
       setUseAgents(true)
     }
   }, [initialRuntime, runtimes])
+
+  // ── Selected runtime changed: fetch its real model list ─────────────────
+  // antigravity/codex discover their own catalog by shelling out to
+  // themselves (see internal/monomind/models.go); claude has no such
+  // command and returns a curated static list either way — the picker
+  // below doesn't need to know which. binary comes from the runtime's own
+  // ScanEntry (already fetched by the scan effect above), not re-resolved
+  // here. A stale response for a runtime the user has since switched away
+  // from is dropped rather than applied (the `current` guard).
+  useEffect(() => {
+    if (!useAgents || !selectedRuntime) { setRuntimeModels([]); return }
+    const runtime = runtimes.find(r => r.id === selectedRuntime)
+    let current = true
+    setRuntimeModelsLoading(true)
+    api.getAgentRuntimeModels(selectedRuntime, runtime?.binary || '').then(models => {
+      if (!current) return
+      const list = Array.isArray(models) ? models : []
+      setRuntimeModels(list)
+      if (list.length > 0 && !list.some(m => m.id === selectedModel)) {
+        setSelectedModel(list[0].id)
+      }
+    }).finally(() => { if (current) setRuntimeModelsLoading(false) })
+    return () => { current = false }
+    // selectedModel intentionally excluded: this effect only reacts to a
+    // runtime change, and re-including it would refetch on every keystroke
+    // if the model field is ever hand-edited.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [useAgents, selectedRuntime, runtimes])
 
   // ── Load providers on first open ─────────────────────────────────────────
   useEffect(() => {
@@ -725,24 +755,39 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
             ))}
           </select>
         )}
-        <input
-          type="text"
-          value={selectedModel}
-          onChange={e => setSelectedModel(e.target.value)}
-          onFocus={e => { modelAtFocusRef.current = e.target.value }}
-          onBlur={e => { if (e.target.value !== modelAtFocusRef.current) startNewSession() }}
-          placeholder="Model"
-          style={{
-            flex: 1,
-            background: '#020509',
-            border: '1px solid rgba(0,180,216,0.15)',
-            borderRadius: 6,
-            padding: '4px 8px',
-            color: '#e2e8f0',
-            fontFamily: 'var(--font-mono)', fontSize: 10,
-            outline: 'none',
-          }}
-        />
+        {useAgents && (runtimeModels.length > 0 || runtimeModelsLoading) ? (
+          <select
+            value={selectedModel}
+            onChange={e => { setSelectedModel(e.target.value); startNewSession() }}
+            disabled={runtimeModelsLoading}
+            title="Model available for the selected agent runtime"
+            style={{ ...selectStyle, flex: 1 }}
+          >
+            {runtimeModelsLoading && <option value="">Loading models…</option>}
+            {!runtimeModelsLoading && runtimeModels.map(m => (
+              <option key={m.id} value={m.id}>{m.label || m.id}</option>
+            ))}
+          </select>
+        ) : (
+          <input
+            type="text"
+            value={selectedModel}
+            onChange={e => setSelectedModel(e.target.value)}
+            onFocus={e => { modelAtFocusRef.current = e.target.value }}
+            onBlur={e => { if (e.target.value !== modelAtFocusRef.current) startNewSession() }}
+            placeholder="Model"
+            style={{
+              flex: 1,
+              background: '#020509',
+              border: '1px solid rgba(0,180,216,0.15)',
+              borderRadius: 6,
+              padding: '4px 8px',
+              color: '#e2e8f0',
+              fontFamily: 'var(--font-mono)', fontSize: 10,
+              outline: 'none',
+            }}
+          />
+        )}
       </div>
 
       {/* ── Messages area ── */}
@@ -758,14 +803,30 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
             display: 'flex', flexDirection: 'column',
             alignItems: 'center', justifyContent: 'center', gap: 8,
             color: 'var(--text-muted)',
+            padding: '0 16px',
           }}>
             <span style={{ fontSize: 24, opacity: 0.15 }}>AI</span>
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, textAlign: 'center', lineHeight: 1.6 }}>
-              {workflowID === 'general'
-                ? <>Chat with your connected AI providers.<br />Ask anything.</>
-                : <>Ask the AI about your workflow,<br />request changes, or get help.</>
-              }
-            </span>
+            {monomindMissing && !hasBackend ? (
+              // Local agents are the primary chat path (useAgents defaults
+              // true once any runtime is installed) — when monomind itself
+              // isn't found, staying silent here just leaves the panel
+              // looking broken with an empty "No providers" dropdown, since
+              // there's usually nothing in the providers list either for a
+              // fresh install. Surface the same fix Agents.jsx's empty
+              // state gives, right where the user is already looking.
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, textAlign: 'center', lineHeight: 1.6 }}>
+                monomind (the local AI agent engine) isn't installed.<br />
+                Install it with <code>npm install -g @monoes/monomindcli</code><br />
+                — or add an AI provider API key in Settings instead.
+              </span>
+            ) : (
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, textAlign: 'center', lineHeight: 1.6 }}>
+                {workflowID === 'general'
+                  ? <>Chat with your connected AI providers.<br />Ask anything.</>
+                  : <>Ask the AI about your workflow,<br />request changes, or get help.</>
+                }
+              </span>
+            )}
           </div>
         )}
 
@@ -813,7 +874,9 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
       }}>
         {!hasBackend && (
           <div style={{ padding: '8px 12px', background: 'rgba(251,191,36,.08)', border: '1px solid rgba(251,191,36,.2)', borderRadius: 'var(--radius)', fontFamily: 'var(--font-mono)', fontSize: 10, color: '#fbbf24' }}>
-            {useAgents ? 'Select an agent runtime above to start chatting' : 'Select an AI provider above to start chatting'}
+            {monomindMissing
+              ? <>monomind not found — install with <code>npm install -g @monoes/monomindcli</code>, or select an AI provider above</>
+              : useAgents ? 'Select an agent runtime above to start chatting' : 'Select an AI provider above to start chatting'}
           </div>
         )}
         <div style={{ display: 'flex', gap: 6 }}>

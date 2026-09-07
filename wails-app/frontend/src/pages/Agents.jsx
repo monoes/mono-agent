@@ -1,8 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
-import { RefreshCw, Bot, MessageSquare, KeyRound, Terminal } from 'lucide-react'
+import { RefreshCw, Bot, MessageSquare } from 'lucide-react'
 import { cachedAgentScan } from '../lib/agentRuntimes.js'
 import { api } from '../services/api.js'
-import AIProviders from './AIProviders.jsx'
 import MonomindInitPrompt from '../components/MonomindInitPrompt.jsx'
 
 function statusColor(installed) {
@@ -79,7 +78,6 @@ function writeScanCache(res) {
 }
 
 export default function Agents({ onOpenChat }) {
-  const [tab, setTab] = useState('agents')
   const cached = readScanCache()
   const [agents, setAgents] = useState(() => (cached && !cached.res?.error) ? (cached.res.agents || []) : [])
   const [scanError, setScanError] = useState(() => cached?.res?.error || null)
@@ -137,81 +135,44 @@ export default function Agents({ onOpenChat }) {
           </div>
         </div>
 
-        <div style={{ display: 'flex', gap: 4, padding: '8px 16px 0', borderBottom: '1px solid var(--border)' }}>
-          <button
-            onClick={() => setTab('agents')}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 5, fontFamily: 'var(--font-mono)', fontSize: 11,
-              padding: '7px 12px', borderRadius: 'var(--radius) var(--radius) 0 0',
-              background: tab === 'agents' ? 'var(--surface)' : 'transparent',
-              border: tab === 'agents' ? '1px solid var(--border)' : '1px solid transparent',
-              borderBottom: tab === 'agents' ? '1px solid var(--surface)' : 'none',
-              color: tab === 'agents' ? 'var(--text)' : 'var(--text-muted)', cursor: 'pointer',
-              marginBottom: -1,
-            }}
-          >
-            <Terminal size={11} /> Agents
-          </button>
-          <button
-            onClick={() => setTab('providers')}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 5, fontFamily: 'var(--font-mono)', fontSize: 11,
-              padding: '7px 12px', borderRadius: 'var(--radius) var(--radius) 0 0',
-              background: tab === 'providers' ? 'var(--surface)' : 'transparent',
-              border: tab === 'providers' ? '1px solid var(--border)' : '1px solid transparent',
-              borderBottom: tab === 'providers' ? '1px solid var(--surface)' : 'none',
-              color: tab === 'providers' ? 'var(--text)' : 'var(--text-muted)', cursor: 'pointer',
-              marginBottom: -1,
-            }}
-          >
-            <KeyRound size={11} /> Providers (legacy)
-          </button>
+        <div className="page-body" style={{ flex: 1, overflow: 'auto' }}>
+          {loading ? (
+            <div className="empty-state"><div className="spinner" /></div>
+          ) : scanError ? (
+            <div className="empty-state">
+              <div className="empty-state-icon"><Bot size={36} /></div>
+              <div className="empty-state-title">
+                {/not found/i.test(scanError) ? 'monomind not installed' : 'monomind is out of date'}
+              </div>
+              <div className="empty-state-desc" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <span>
+                  {/* Fallback copy aligned with internal/monomind/find.go's
+                      ErrNotFound / update prescriptions; the backend's own
+                      error text (which embeds the exact command) is rendered
+                      verbatim below. */}
+                  Agents run through the local monomind engine. {/not found/i.test(scanError)
+                    ? <>Install it with <code>npm install -g @monoes/monomindcli</code>.</>
+                    : <>Update it with <code>npm install -g @monoes/monomindcli@latest</code>.</>}
+                </span>
+                <code style={{ fontSize: 10, color: 'var(--text-muted)', wordBreak: 'break-word', textAlign: 'left' }}>{scanError}</code>
+              </div>
+            </div>
+          ) : notInitialized ? (
+            <MonomindInitPrompt onInitialized={() => { setNotInitialized(false); loadAgents() }} />
+          ) : agents.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-state-icon"><Bot size={36} /></div>
+              <div className="empty-state-title">No agent runtimes detected</div>
+              <div className="empty-state-desc">monomind is installed but found no known agent CLIs on this machine.</div>
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 10, paddingBottom: 24 }}>
+              {agents.map(a => (
+                <RuntimeTile key={a.id} agent={a} onChat={onOpenChat} />
+              ))}
+            </div>
+          )}
         </div>
-
-        {tab === 'agents' ? (
-          <div className="page-body" style={{ flex: 1, overflow: 'auto' }}>
-            {loading ? (
-              <div className="empty-state"><div className="spinner" /></div>
-            ) : scanError ? (
-              <div className="empty-state">
-                <div className="empty-state-icon"><Bot size={36} /></div>
-                <div className="empty-state-title">
-                  {/not found/i.test(scanError) ? 'monomind not installed' : 'monomind is out of date'}
-                </div>
-                <div className="empty-state-desc" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <span>
-                    {/* Fallback copy aligned with internal/monomind/find.go's
-                        ErrNotFound / update prescriptions; the backend's own
-                        error text (which embeds the exact command) is rendered
-                        verbatim below. */}
-                    Agents run through the local monomind engine. {/not found/i.test(scanError)
-                      ? <>Install it with <code>npm install -g @monoes/monomindcli</code>.</>
-                      : <>Update it with <code>npm install -g @monoes/monomindcli@latest</code>.</>}
-                  </span>
-                  <code style={{ fontSize: 10, color: 'var(--text-muted)', wordBreak: 'break-word', textAlign: 'left' }}>{scanError}</code>
-                </div>
-              </div>
-            ) : notInitialized ? (
-              <MonomindInitPrompt onInitialized={() => { setNotInitialized(false); loadAgents() }} />
-            ) : agents.length === 0 ? (
-              <div className="empty-state">
-                <div className="empty-state-icon"><Bot size={36} /></div>
-                <div className="empty-state-title">No agent runtimes detected</div>
-                <div className="empty-state-desc">monomind is installed but found no known agent CLIs on this machine.</div>
-              </div>
-            ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 10, paddingBottom: 24 }}>
-                {agents.map(a => (
-                  <RuntimeTile key={a.id} agent={a} onChat={onOpenChat} />
-                ))}
-              </div>
-            )}
-          </div>
-        ) : (
-          <div style={{ flex: 1, overflow: 'hidden' }}>
-            <AIProviders embedded />
-          </div>
-        )}
       </div>
     </div>
   )

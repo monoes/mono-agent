@@ -574,7 +574,7 @@ export default function AIProviders({ embedded = false }) {
         {!embedded && (
           <div className="page-header">
             <div className="page-header-left">
-              <div className="page-title">AI Providers (legacy)</div>
+              <div className="page-title">AI Providers</div>
               <div className="page-subtitle">{loading ? 'Loading…' : `${totalConnected} / ${registry.length} connected`}</div>
             </div>
             <div className="page-header-right" style={{ display: 'flex', gap: 6 }}>
