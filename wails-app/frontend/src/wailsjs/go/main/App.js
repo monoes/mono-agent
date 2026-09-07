@@ -178,6 +178,10 @@ export function GetActiveProfile() {
   return window['go']['main']['App']['GetActiveProfile']();
 }
 
+export function GetAgentRuntimeModels(arg1, arg2) {
+  return window['go']['main']['App']['GetAgentRuntimeModels'](arg1, arg2);
+}
+
 export function GetAllPersonMessages(arg1) {
   return window['go']['main']['App']['GetAllPersonMessages'](arg1);
 }
@@ -320,6 +324,14 @@ export function GetPostComments(arg1) {
 
 export function GetPostDetail(arg1) {
   return window['go']['main']['App']['GetPostDetail'](arg1);
+}
+
+export function GetProfileDocumentData(arg1) {
+  return window['go']['main']['App']['GetProfileDocumentData'](arg1);
+}
+
+export function GetProfileDocumentText(arg1) {
+  return window['go']['main']['App']['GetProfileDocumentText'](arg1);
 }
 
 export function GetProfiles() {
@@ -468,6 +480,10 @@ export function OpenAnyFilePicker(arg1) {
 
 export function OpenJSONFilePicker(arg1) {
   return window['go']['main']['App']['OpenJSONFilePicker'](arg1);
+}
+
+export function OpenPathWithOS(arg1) {
+  return window['go']['main']['App']['OpenPathWithOS'](arg1);
 }
 
 export function OpenURL(arg1) {

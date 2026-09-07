@@ -93,6 +93,8 @@ export function GetAIRegistry():Promise<string>;
 
 export function GetActiveProfile():Promise<main.ProfileInfo>;
 
+export function GetAgentRuntimeModels(arg1:string,arg2:string):Promise<string>;
+
 export function GetAllPersonMessages(arg1:number):Promise<Array<storage.PersonMessageWithPerson>>;
 
 export function GetAllTags():Promise<Array<main.TagInfo>>;
@@ -164,6 +166,10 @@ export function GetPersonTags(arg1:string):Promise<Array<main.TagInfo>>;
 export function GetPostComments(arg1:string):Promise<Array<main.PostComment>>;
 
 export function GetPostDetail(arg1:string):Promise<main.PostDetail>;
+
+export function GetProfileDocumentData(arg1:string):Promise<string>;
+
+export function GetProfileDocumentText(arg1:string):Promise<string>;
 
 export function GetProfiles():Promise<Array<main.ProfileInfo>>;
 
@@ -238,6 +244,8 @@ export function MoveProfileFolder(arg1:string,arg2:string):Promise<void>;
 export function OpenAnyFilePicker(arg1:string):Promise<string>;
 
 export function OpenJSONFilePicker(arg1:string):Promise<string>;
+
+export function OpenPathWithOS(arg1:string):Promise<void>;
 
 export function OpenURL(arg1:string):Promise<void>;
 
