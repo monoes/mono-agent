@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Upload, Search, Trash2, Sparkles, CheckCircle2, XCircle } from 'lucide-react'
+import { Upload, Search, Trash2, Sparkles, CheckCircle2, XCircle, Eye } from 'lucide-react'
 import * as WailsApp from '../wailsjs/go/main/App'
 import { confirm } from '../components/ConfirmDialog.jsx'
 import { api, notify, onMonomindInitEvent } from '../services/api.js'
+import FileViewerModal, { fileViewerKind } from '../components/FileViewerModal.jsx'
 
 export function formatBytes(n) {
   if (n < 1024) return `${n} B`
@@ -42,6 +43,7 @@ export default function Documents() {
   const [notInitialized, setNotInitialized] = useState(false)
   const [initStatus, setInitStatus] = useState('idle') // idle | running | error
   const initRunningRef = useRef(false)
+  const [viewingDoc, setViewingDoc] = useState(null)
 
   const load = useCallback(async () => {
     try {
@@ -97,6 +99,19 @@ export default function Documents() {
     } catch (e) {
       notify('delete', 'Delete failed: ' + e)
     }
+  }
+
+  // Double-click / View: preview in-app when a viewer exists for this file's
+  // extension; otherwise tell the user and hand the file to the OS's own
+  // default application, the same as double-clicking it in a file manager.
+  const handleOpenDocument = (d) => {
+    if (fileViewerKind(d.filename)) {
+      setViewingDoc(d)
+      return
+    }
+    const ext = d.filename.split('.').pop()?.toUpperCase() || 'this'
+    notify('open', `No built-in viewer for ${ext} files — opening "${d.filename}" with your system's default application.`)
+    WailsApp.OpenPathWithOS(d.path).catch(e => notify('open', `Could not open "${d.filename}": ${e}`))
   }
 
   const handleSearch = async (e) => {
@@ -173,7 +188,12 @@ export default function Documents() {
           </thead>
           <tbody>
             {docs.map(d => (
-              <tr key={d.id} style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+              <tr
+                key={d.id}
+                onDoubleClick={() => handleOpenDocument(d)}
+                style={{ borderTop: '1px solid rgba(255,255,255,0.05)', cursor: 'pointer' }}
+                title="Double-click to view"
+              >
                 <td style={{ padding: '8px' }}>{d.filename}</td>
                 <td style={{ padding: '8px', color: 'var(--text-muted)' }}>{d.source}</td>
                 <td style={{ padding: '8px', color: 'var(--text-muted)' }}>{formatBytes(d.size_bytes)}</td>
@@ -192,8 +212,11 @@ export default function Documents() {
                     </span>
                   )}
                 </td>
-                <td style={{ padding: '8px' }}>
-                  <button style={{ ...btnStyle, color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', padding: '4px 8px' }} onClick={() => handleDelete(d.id, d.filename)}>
+                <td style={{ padding: '8px', display: 'flex', gap: 6 }}>
+                  <button style={{ ...btnStyle, padding: '4px 8px' }} title="View" onClick={(e) => { e.stopPropagation(); handleOpenDocument(d) }}>
+                    <Eye size={12} />
+                  </button>
+                  <button style={{ ...btnStyle, color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', padding: '4px 8px' }} onClick={(e) => { e.stopPropagation(); handleDelete(d.id, d.filename) }}>
                     <Trash2 size={12} />
                   </button>
                 </td>
@@ -205,6 +228,8 @@ export default function Documents() {
           </tbody>
         </table>
       </div>
+
+      {viewingDoc && <FileViewerModal doc={viewingDoc} onClose={() => setViewingDoc(null)} />}
     </div>
   )
 }
