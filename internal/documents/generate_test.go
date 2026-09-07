@@ -13,6 +13,12 @@ import (
 
 func newGenerateTestDB(t *testing.T) *storage.Database {
 	t.Helper()
+	// vault.RegisterDocument (called by documents.GenerateDocument) resolves
+	// its storage path via profiledir.Root, which falls back to the real
+	// $HOME when the test DB has no profiles.root_dir override. Without this,
+	// every run of this test writes fake "%PDF-fake" documents into the
+	// developer's actual ~/.monoagent/profiles/default/vault/.
+	t.Setenv("HOME", t.TempDir())
 	dbPath := filepath.Join(t.TempDir(), "documents-generate-test.db")
 	db, err := storage.NewDatabase(dbPath)
 	if err != nil {

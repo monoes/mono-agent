@@ -14,6 +14,12 @@ import (
 
 func newDocumentsCLITestDB(t *testing.T) string {
 	t.Helper()
+	// "documents render" writes generated documents via
+	// vault.RegisterDocument, which resolves its path via profiledir.Root —
+	// falling back to the real $HOME when the test DB has no
+	// profiles.root_dir override. Without this, every run pollutes the
+	// developer's actual ~/.monoagent vault.
+	t.Setenv("HOME", t.TempDir())
 	dbPath := filepath.Join(t.TempDir(), "cli-documents-test.db")
 	db, err := storage.NewDatabase(dbPath)
 	if err != nil {

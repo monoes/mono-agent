@@ -15,6 +15,12 @@ import (
 
 func newTestDB(t *testing.T) *storage.Database {
 	t.Helper()
+	// applications.prepare (via apply.Prepare) writes documents through
+	// vault.RegisterDocument, which resolves its path via profiledir.Root —
+	// falling back to the real $HOME when the test DB has no
+	// profiles.root_dir override. Without this, every run pollutes the
+	// developer's actual ~/.monoagent vault.
+	t.Setenv("HOME", t.TempDir())
 	dbPath := filepath.Join(t.TempDir(), "apply-node-test.db")
 	db, err := storage.NewDatabase(dbPath)
 	if err != nil {
