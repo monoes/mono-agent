@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "MonoAgent Bridge",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Browser automation bridge for MonoAgent",
   "permissions": ["tabs", "scripting", "activeTab", "storage", "alarms", "debugger", "cookies"],
-  "optional_host_permissions": ["<all_urls>"],
+  "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js"
   },
@@ -13,6 +13,11 @@
       "matches": ["http://127.0.0.1:*/monoagent/pair*"],
       "js": ["pair_bridge.js"],
       "run_at": "document_start"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
     }
   ],
   "action": {

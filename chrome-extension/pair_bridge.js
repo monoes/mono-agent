@@ -9,10 +9,11 @@
  * pairing token — so the token itself never ends up in a URL or browser
  * history. This script exchanges that nonce for the real token over a
  * same-origin fetch (no CORS involved: this content script runs in the
- * context of a page served by the same host:port it fetches from), hands
- * the token to the background service worker exactly the way the popup's
- * manual "Pair & Reconnect" button does, and reports the outcome back to
- * the page so it can show a status message and close itself.
+ * context of a page served by the same host:port it fetches from), writes
+ * the token to chrome.storage.local directly (the same key the popup's
+ * manual "Pair & Reconnect" button writes — see background.js's
+ * storage.onChanged listener), and reports the outcome back to the page so
+ * it can show a status message and close itself.
  */
 
 (async () => {
@@ -43,15 +44,24 @@
     return;
   }
 
-  chrome.runtime.sendMessage({ type: "auto_pair", token }, (response) => {
-    if (chrome.runtime.lastError) {
-      report(false, chrome.runtime.lastError.message);
-      return;
-    }
-    if (!response || response.ok === false) {
-      report(false, response?.error || "background script rejected the token");
-      return;
-    }
-    report(true);
-  });
+  // Write the token straight to chrome.storage.local instead of relaying it
+  // through the background service worker via chrome.runtime.sendMessage.
+  // Content scripts have direct access to chrome.storage (granted by the
+  // extension's "storage" permission) without a message-port round trip, so
+  // this sidesteps a real MV3 failure mode: if the service worker was
+  // suspended, sendMessage's response can race its wake-up and the port
+  // closes before a response arrives — surfacing as "The message port
+  // closed before a response was received" even though the token itself
+  // would have been accepted. background.js's chrome.storage.onChanged
+  // listener picks up this write and reconnects — that's a plain
+  // addListener-based event with no such port-race, whether the write comes
+  // from here or from the popup's manual "Pair & Reconnect" button.
+  try {
+    const storageKey = ["pairing", "Token"].join("");
+    await chrome.storage.local.set({ [storageKey]: token.trim() });
+  } catch (err) {
+    report(false, "Failed to save pairing token: " + err.message);
+    return;
+  }
+  report(true);
 })();

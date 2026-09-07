@@ -97,30 +97,6 @@
       margin-top: 4px;
       display: none;
     }
-    .site-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 6px;
-      padding: 3px 0;
-      font-family: monospace;
-    }
-    .site-row span {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .site-row button {
-      margin: 0;
-      padding: 2px 6px;
-      background: #ef4444;
-      flex-shrink: 0;
-    }
-    .site-row button:hover { background: #dc2626; }
-    .empty-hint {
-      color: #999;
-      font-size: 11px;
-    }
   </style>
 </head>
 <body>
@@ -136,12 +112,8 @@
     <div id="pair-saved-msg" class="saved-msg">Saved and reconnecting...</div>
   </div>
   <div class="url-section">
-    <label for="site-origin">Authorize a site (e.g. https://example.com/*)</label>
-    <input type="text" id="site-origin" placeholder="https://example.com/*" />
-    <button id="grant-btn">Grant Access</button>
-    <div id="grant-error-msg" class="error-msg"></div>
-    <label style="margin-top: 10px;">Authorized sites</label>
-    <ul id="authorized-list" style="list-style: none; padding: 0; margin: 0; font-size: 12px;"></ul>
+    <label>Site access</label>
+    <div style="font-size: 12px; color: #444;">All sites are authorized by default (host_permissions: &lt;all_urls&gt;) — nothing to grant per-site.</div>
   </div>
   <div class="url-section">
     <label for="ws-url">WebSocket URL</label>

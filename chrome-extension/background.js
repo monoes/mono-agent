@@ -48,75 +48,36 @@ chrome.runtime.onInstalled.addListener(() => {
   console.log("[monoagent] Extension installed, starting connection loop");
   ensureAlarm();
   fastRetryConnect(); // calls connect() once, then schedules retries
-  syncContentScripts();
 });
 
 chrome.runtime.onStartup.addListener(() => {
   console.log("[monoagent] Chrome started, starting connection loop");
   ensureAlarm();
   fastRetryConnect(); // calls connect() once, then schedules retries
-  syncContentScripts();
 });
 
 // ---------------------------------------------------------------------------
-// Per-site authorization
+// Site authorization
 //
-// <all_urls> is optional_host_permissions (manifest.json), not a static
-// grant: a fresh install can automate no site until the user explicitly
-// authorizes one via the popup. This section keeps the runtime content
-// script registration in sync with whatever origins are currently granted,
-// and gives handleCommand a way to check a tab's origin before running a
-// command that reads page content, cookies, or attaches the debugger.
+// <all_urls> is a static host_permissions entry (manifest.json), granted
+// once up front (at install, or on reload after this was added) rather than
+// per-site through the popup — every site is authorized by default.
+// content.js is registered declaratively in manifest.json's content_scripts
+// (matches: <all_urls>) instead of dynamically here, since there is no
+// per-site grant/revoke to keep it in sync with anymore.
+//
+// isOriginAuthorized is kept as a defense-in-depth check ahead of sensitive
+// commands (chrome.debugger attach is NOT host-permission-scoped, unlike
+// cookies/scripting) — with <all_urls> granted statically it always
+// resolves true for any http(s) tab, but still correctly refuses a command
+// targeting a tab with no URL (e.g. a tab still loading).
 // ---------------------------------------------------------------------------
-
-const CONTENT_SCRIPT_ID = "monoagent-bridge-content";
-
-// Registers/unregisters the dynamic content script so it matches exactly
-// the currently-granted host permissions — called on startup (registration
-// does NOT reliably survive a full browser restart) and whenever the
-// granted permission set changes.
-async function syncContentScripts() {
-  const granted = await chrome.permissions.getAll();
-  const origins = granted.origins || [];
-  try {
-    await chrome.scripting.unregisterContentScripts({ ids: [CONTENT_SCRIPT_ID] });
-  } catch {
-    // Wasn't registered — fine.
-  }
-  if (origins.length === 0) return;
-  try {
-    await chrome.scripting.registerContentScripts([
-      {
-        id: CONTENT_SCRIPT_ID,
-        matches: origins,
-        js: ["content.js"],
-        runAt: "document_idle",
-      },
-    ]);
-  } catch (err) {
-    console.error("[monoagent] Failed to register content script:", err.message);
-  }
-}
-
-chrome.permissions.onAdded.addListener(() => {
-  syncContentScripts();
-});
-chrome.permissions.onRemoved.addListener(() => {
-  syncContentScripts();
-});
-
-// Granting/revoking origins happens directly in popup.js (chrome.permissions
-// is available there too, and chrome.permissions.request requires transient
-// user activation — the popup's click handler has that; a message relayed
-// through this service worker would not). The onAdded/onRemoved listeners
-// above are what actually keep the content script registration in sync
-// regardless of which extension page changed the grant.
 
 // Sensitive commands are only dispatched against a tab whose origin is
 // currently granted. Chrome itself already enforces this for the cookies
-// and scripting APIs once <all_urls> is optional rather than static, but
-// chrome.debugger attach is NOT host-permission-scoped — without this
-// explicit check, type_cdp/eval_cdp could still reach an unauthorized site.
+// and scripting APIs, but chrome.debugger attach is NOT host-permission-
+// scoped — without this explicit check, type_cdp/eval_cdp could still reach
+// a tab isOriginAuthorized can't resolve an origin for.
 const SENSITIVE_COMMANDS = new Set([
   "get_cookies", "set_cookies", "eval", "eval_cdp", "type_cdp",
   "element", "elements", "has", "click", "input", "text", "attribute",
@@ -883,8 +844,12 @@ async function sendToContent(tabId, cmd) {
 // Message handler for popup and internal communication
 // ---------------------------------------------------------------------------
 
-// Persist a new pairing secret (see doConnect/ws.onopen) and reconnect.
-// Sourced from `monoagentcli extension pair`.
+// Persist a new pairing secret (see doConnect/ws.onopen). Sourced from the
+// popup's manual "Pair & Reconnect" button, or `monoagentcli extension
+// pair`. Reconnecting is handled by the chrome.storage.onChanged listener
+// above, not here — it fires for this same write regardless of who made it
+// (this function, or pair_bridge.js writing directly), so there is exactly
+// one reconnect trigger to reason about instead of two racing copies.
 async function setPairingToken(secret) {
   if (!secret || typeof secret !== "string") throw new Error("pairing token is required");
   try {
@@ -895,12 +860,6 @@ async function setPairingToken(secret) {
   } catch (err) {
     throw new Error("Failed to save pairing token: " + err.message);
   }
-  if (ws) {
-    ws.close();
-  }
-  fastRetryCount = 0;
-  connect();
-  fastRetryConnect();
   return { ok: true };
 }
 
@@ -927,6 +886,21 @@ async function setWsUrl(url) {
   return { ok: true };
 }
 
+// React to the pairing token changing in storage, regardless of who wrote
+// it. This is what makes pair_bridge.js's direct-storage-write pairing path
+// (below) actually take effect immediately: storage.onChanged is a plain
+// addListener-based event, woken/dispatched the same reliable way as any
+// other extension event — unlike chrome.runtime.sendMessage's message-port
+// handshake, it has no "port closed before a response was received" race
+// against a service worker that's still waking up from suspension.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local" || !changes.pairingToken) return;
+  if (ws) ws.close();
+  fastRetryCount = 0;
+  connect();
+  fastRetryConnect();
+});
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "get_status") {
     sendResponse({ status: connectionStatus });
@@ -948,17 +922,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === "set_pairing_token") {
     setPairingToken(msg.value)
-      .then((result) => sendResponse(result))
-      .catch((err) => sendResponse({ ok: false, error: err.message }));
-    return true; // async response
-  }
-  if (msg.type === "auto_pair") {
-    // Only the pairing content script (pair_bridge.js, injected solely into
-    // the bridge server's own /monoagent/pair page per manifest.json) ever
-    // sends this — it already exchanged a single-use nonce for this real
-    // token, so from here it's the exact same path as the popup's manual
-    // "Pair & Reconnect" button.
-    setPairingToken(msg.token)
       .then((result) => sendResponse(result))
       .catch((err) => sendResponse({ ok: false, error: err.message }));
     return true; // async response
