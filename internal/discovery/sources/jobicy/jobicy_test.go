@@ -100,6 +100,48 @@ func TestSearchRespectsRobotsDisallow(t *testing.T) {
 	}
 }
 
+func TestSearchRetriesWithoutGeoOnInvalidGeoValue(t *testing.T) {
+	robots := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("User-agent: *\nDisallow:\n"))
+	}))
+	defer robots.Close()
+
+	var queries []string
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		queries = append(queries, r.URL.RawQuery)
+		if contains(r.URL.RawQuery, "geo=") {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(`{"success":false,"error":"Invalid 'geo' value. This value must contain a predefined 'geoSlug'."}`))
+			return
+		}
+		json.NewEncoder(w).Encode(apiResponse{Jobs: []apiJob{
+			{JobTitle: "Backend Engineer", CompanyName: "Acme", URL: "https://a.example/1"},
+		}})
+	}))
+	defer api.Close()
+
+	origRobotsURL, origAPIBase := robotsURL, apiBase
+	robotsURL, apiBase = robots.URL, api.URL
+	defer func() { robotsURL, apiBase = origRobotsURL, origAPIBase }()
+
+	results, err := New().Search(context.Background(), discovery.SearchQuery{Keywords: "engineer", Location: "Berlin", Limit: 10})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(results) != 1 || results[0].Title != "Backend Engineer" {
+		t.Fatalf("expected fallback results despite invalid geo, got: %+v", results)
+	}
+	if len(queries) != 2 {
+		t.Fatalf("expected 2 requests (initial + retry without geo), got %d: %v", len(queries), queries)
+	}
+	if !contains(queries[0], "geo=Berlin") {
+		t.Fatalf("expected first request to include geo=Berlin, got %q", queries[0])
+	}
+	if contains(queries[1], "geo=") {
+		t.Fatalf("expected retry request to drop geo param, got %q", queries[1])
+	}
+}
+
 func TestSourceImplementsDiscoverySource(t *testing.T) {
 	var _ discovery.Source = New()
 	if New().Name() != "jobicy" {

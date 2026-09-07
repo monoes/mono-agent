@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -75,24 +76,22 @@ func (s *Source) Search(ctx context.Context, query discovery.SearchQuery) ([]dis
 	if query.Location != "" {
 		params.Set("geo", query.Location)
 	}
-	pageURL := apiBase + "?" + params.Encode()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, pageURL, nil)
+	out, err := fetch(ctx, params)
 	if err != nil {
-		return nil, fmt.Errorf("jobicy: building request: %w", err)
-	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; MonoAgent/1.0)")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("jobicy: fetching %s: %w", pageURL, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("jobicy: fetching %s: status %d", pageURL, resp.StatusCode)
-	}
-	var out apiResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, fmt.Errorf("jobicy: decoding response: %w", err)
+		// Jobicy's geo filter only accepts a small set of predefined
+		// region/country slugs (e.g. "germany", "europe"), not arbitrary
+		// city text — a free-text location like "Berlin" (valid for other
+		// sources) always 400s here. Since Jobicy is remote-jobs-only
+		// anyway, drop the geo filter and retry rather than losing every
+		// result over a filter mismatch.
+		if isInvalidGeoError(err) && query.Location != "" {
+			params.Del("geo")
+			out, err = fetch(ctx, params)
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	results := make([]discovery.Result, 0, len(out.Jobs))
@@ -112,6 +111,48 @@ func (s *Source) Search(ctx context.Context, query discovery.SearchQuery) ([]dis
 		})
 	}
 	return results, nil
+}
+
+// invalidGeoError wraps a 400 response whose body indicates an unrecognized
+// geo slug, so Search can distinguish it from other failures and retry.
+type invalidGeoError struct{ status int }
+
+func (e *invalidGeoError) Error() string {
+	return fmt.Sprintf("jobicy: status %d: invalid geo value", e.status)
+}
+
+func isInvalidGeoError(err error) bool {
+	_, ok := err.(*invalidGeoError)
+	return ok
+}
+
+// fetch issues one request against apiBase with the given query params and
+// decodes the JSON response.
+func fetch(ctx context.Context, params url.Values) (apiResponse, error) {
+	var out apiResponse
+	pageURL := apiBase + "?" + params.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, pageURL, nil)
+	if err != nil {
+		return out, fmt.Errorf("jobicy: building request: %w", err)
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; MonoAgent/1.0)")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return out, fmt.Errorf("jobicy: fetching %s: %w", pageURL, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		if resp.StatusCode == http.StatusBadRequest && strings.Contains(string(body), "'geo' value") {
+			return out, &invalidGeoError{status: resp.StatusCode}
+		}
+		return out, fmt.Errorf("jobicy: fetching %s: status %d", pageURL, resp.StatusCode)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return out, fmt.Errorf("jobicy: decoding response: %w", err)
+	}
+	return out, nil
 }
 
 func firstNonEmpty(vals ...string) string {
