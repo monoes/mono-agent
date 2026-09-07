@@ -1413,6 +1413,127 @@ Always prefer the browser crawl method. It requires only a Google login, no bill
 		Outputs:  "post_url",
 	},
 
+	// ── Applications (jobs & tenders) ────────────────────────────────────────
+	{
+		Type:     "discovery.search_jobs",
+		Category: "applications",
+		Short:    "Search a job board and save new postings as pending Applications",
+		Description: `Searches one job board and, for every non-duplicate result, saves it
+directly as a new "pending" job Application — this node has side effects,
+it does not just return search results. Safe to re-run repeatedly on the
+same keywords: duplicate detection (by URL) skips postings already saved.
+
+Each source has different location semantics: "linkedin" and "arbeitnow"
+accept free-text city/country names; "jobicy" only accepts a small set of
+predefined region/country slugs (e.g. "germany", "europe", "usa") — an
+unrecognized value is dropped rather than failing the search, since Jobicy
+is remote-jobs-only anyway. linkedin additionally respects robots.txt and
+will fail outright if the endpoint is disallowed at request time; use
+on_error: "continue" (workflow-level, not a config field) so one source
+failing doesn't block the others when searching several in parallel — see
+the bundled "find_jobs" template for the pattern.`,
+		Config: `{
+  "keywords": "backend engineer",
+  "location": "Berlin",
+  "source":   "arbeitnow",
+  "limit":    20
+}`,
+		Inputs:  "none (query comes from config, usually templated from trigger data)",
+		Outputs: "one item per new, non-duplicate posting: id, kind (\"job\"), status (\"pending\"), title, company, url",
+		Notes:   "source: linkedin | arbeitnow | jobicy (default linkedin). limit is capped at 100. profile_id defaults to \"default\".",
+	},
+	{
+		Type:     "applications.create",
+		Category: "applications",
+		Short:    "Manually create one job or tender Application",
+		Description: `Creates a single Application from config (not from input items — one
+call makes one Application). Use discovery.search_jobs instead when
+importing postings from a job board; use this node for tenders (no
+discovery source exists for those yet) or one-off manual entries.`,
+		Config: `// kind = "job"
+{ "kind": "job", "title": "Backend Engineer", "company": "Acme", "url": "https://example.com/jobs/1", "location": "Berlin", "source": "manual" }
+
+// kind = "tender"
+{ "kind": "tender", "title": "IT Services RFP 2026", "issuing_org": "City of Berlin", "url": "https://example.com/rfp/1", "submission_deadline": "2026-12-01" }`,
+		Inputs:  "none (all fields come from config)",
+		Outputs: "id, kind, status (\"pending\"), profile_id, created_at, updated_at",
+		Notes:   "kind must be \"job\" or \"tender\". company is expected for job, issuing_org for tender, though not enforced at the node level. profile_id defaults to \"default\".",
+	},
+	{
+		Type:     "applications.list",
+		Category: "applications",
+		Short:    "List Applications, optionally filtered by kind/status/tag",
+		Config:   `{ "kind": "job", "status": "pending", "tag": "" }`,
+		Inputs:   "none",
+		Outputs:  "one item per matching Application (full record, including Job or Tender details)",
+		Notes:    "Leave kind/status/tag blank to include everything. profile_id defaults to \"default\".",
+	},
+	{
+		Type:     "applications.set_status",
+		Category: "applications",
+		Short:    "Transition an Application to rejected or cancelled",
+		Config:   `{ "id": "{{ $json.id }}", "status": "rejected", "actor": "system", "note": "no response after 30 days" }`,
+		Inputs:   "item with the application id (or hardcode id in config)",
+		Outputs:  "id, status, updated_at",
+		Notes:    `Only "rejected" and "cancelled" are valid here — moving an Application to "applied" always requires the explicit human action behind 'monoagentcli application send', never this node. Must be a legal transition from the Application's current status or the node errors.`,
+	},
+	{
+		Type:     "applications.tag",
+		Category: "applications",
+		Short:    "Add or remove a tag on an Application",
+		Config:   `{ "id": "{{ $json.id }}", "tag": "high-priority", "action": "add" }`,
+		Inputs:   "item with the application id",
+		Outputs:  "id, tags (full updated tag list)",
+		Notes:    "action: add (default) | remove.",
+	},
+	{
+		Type:     "applications.evaluate",
+		Category: "applications",
+		Short:    "Score a job Application's fit against your profile using a local AI agent",
+		Description: `Runs a local agent (via the monomind engine, same runtimes as 'monoagentcli
+agent'/'chat') to compare the job posting against your profile data and
+produce a fit verdict. Needs a working local agent runtime — see
+'monoagentcli agent' and 'monoagentcli chat' to verify one is installed
+before relying on this in an unattended workflow.`,
+		Config:  `{ "application_id": "{{ $json.id }}", "runtime": "claude" }`,
+		Inputs:  "item with application_id (or hardcode in config)",
+		Outputs: "application_id, verdict, overall_score, rationale",
+		Notes:   "runtime defaults to \"claude\". profile_id defaults to \"default\". Only meaningful for kind=job Applications.",
+	},
+	{
+		Type:     "applications.prepare",
+		Category: "applications",
+		Short:    "Generate (or reuse) an Application's CV and cover letter documents",
+		Description: `Renders a CV and cover letter tailored to one Application and stores
+both as HTML+PDF vault documents linked to it. Re-running with the same
+application_id reuses/regenerates rather than endlessly duplicating —
+see 'monoagentcli application apply' for the CLI command that wraps this
+plus opens the posting in a browser (deliberately not itself a node —
+an unattended workflow should never pop open an interactive browser
+window as a side effect).`,
+		Config: `{
+  "application_id": "{{ $json.id }}",
+  "cv_data": { "name": "Jane Doe", "summary": "...", "experience": [] },
+  "cover_letter_data": { "recipient": "Hiring Manager", "body": "..." }
+}`,
+		Inputs:  "item with application_id",
+		Outputs: "application_id, cv_html_document_id, cv_pdf_document_id, cover_letter_html_document_id, cover_letter_pdf_document_id",
+		Notes:   "cv_data / cover_letter_data must match documents.CVData / documents.CoverLetterData shapes — see documents.render for the same underlying templates.",
+	},
+	{
+		Type:     "documents.render",
+		Category: "applications",
+		Short:    "Render a CV, cover letter, or tender proposal from structured JSON data",
+		Config: `{
+  "doc_type": "cv",
+  "data": { "name": "Jane Doe", "summary": "...", "experience": [] },
+  "application_id": "{{ $json.id }}"
+}`,
+		Inputs:  "none (data comes from config)",
+		Outputs: "document_id (HTML), pdf_document_id",
+		Notes:   "doc_type: cv | cover_letter | tender_proposal. application_id is optional — link the generated document to an existing Application, or omit for a standalone document. profile_id defaults to \"default\".",
+	},
+
 	// ── People ────────────────────────────────────────────────────────────────
 	{
 		Type:     "people.save",
@@ -1916,7 +2037,7 @@ func refNodesCmd() *cobra.Command {
 			fmt.Printf("  %-38s  %s\n", "Type", "Description")
 			fmt.Println("  " + strings.Repeat("─", 70))
 
-			categories := []string{"trigger", "system", "core", "http", "data", "image", "db", "comm", "service", "ai", "gemini", "instagram", "linkedin", "x", "tiktok", "people"}
+			categories := []string{"trigger", "system", "core", "http", "data", "image", "vault", "db", "comm", "service", "applications", "ai", "gemini", "instagram", "linkedin", "x", "tiktok", "people"}
 			byCategory := make(map[string][]nodeDoc)
 			for _, n := range nodeDocs {
 				byCategory[n.Category] = append(byCategory[n.Category], n)
