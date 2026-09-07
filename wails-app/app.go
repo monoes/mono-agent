@@ -50,7 +50,7 @@ type App struct {
 	chatCancels sync.Map // workflowID → *cancelHandle for in-flight AI chat streams
 
 	activeProfileIDPtr atomic.Pointer[string] // currently selected profile; access via get/setActiveProfileID (read/written across Wails goroutines)
-	ready              atomic.Bool           // set once startup()'s synchronous setup has finished; see IsReady
+	ready              atomic.Bool            // set once startup()'s synchronous setup has finished; see IsReady
 
 	orgWatchMu sync.Mutex
 	orgWatcher *orgdesign.Watcher // polls the active profile's .monomind/orgs/ dir; see restartOrgWatcher
@@ -946,9 +946,11 @@ func (a *App) GetProfiles() ([]ProfileInfo, error) {
 
 // CreateProfile creates a new profile. rootDir, if non-empty, is the folder
 // the user picked (via ChooseProfileFolder) for this profile's data instead
-// of the default ~/.monoagent/profiles/<id>/ — it must be an absolute path
-// that either doesn't exist yet or is empty, so we never silently adopt a
-// folder that already has unrelated files in it.
+// of the default ~/.monoagent/profiles/<id>/ — it must be an absolute path;
+// see validateFolderChoice for what else is required of it (an existing
+// folder need not be empty — e.g. an existing coding project you already run
+// monomind/Claude Code in is a perfectly good choice — but it must be safe
+// to layer this profile's vault/ and .monomind/ subfolders onto).
 func (a *App) CreateProfile(name, rootDir string) (*ProfileInfo, error) {
 	if a.db == nil {
 		return nil, fmt.Errorf("database not available")
@@ -959,7 +961,7 @@ func (a *App) CreateProfile(name, rootDir string) (*ProfileInfo, error) {
 	}
 	rootDir = strings.TrimSpace(rootDir)
 	if rootDir != "" {
-		if err := validateEmptyFolderChoice(rootDir); err != nil {
+		if err := validateFolderChoice(rootDir); err != nil {
 			return nil, err
 		}
 	}
@@ -980,23 +982,38 @@ func (a *App) CreateProfile(name, rootDir string) (*ProfileInfo, error) {
 	return &ProfileInfo{ID: id, Name: name, IsActive: false, CreatedAt: now, RootDir: profiledir.Root(a.db, id)}, nil
 }
 
-// validateEmptyFolderChoice rejects a folder choice that isn't safe to hand
-// a profile's data to: must be absolute, and if it already exists, must be
-// empty (refusing to silently mix a profile's files into an unrelated
-// folder that already has content).
-func validateEmptyFolderChoice(dir string) error {
+// validateFolderChoice rejects a folder choice that isn't safe to hand a
+// profile's data to. The folder need not be empty or new — pointing a
+// profile at an existing, non-empty folder (e.g. a coding project that
+// already has its own .monomind/ from a prior `monomind init`) is fine:
+// EnsureLayout only ever adds a vault/ and a .monomind/ subfolder inside it
+// and never touches anything else there, so nothing pre-existing is at risk
+// except those two specific names. What's actually unsafe, and rejected
+// here, is a `vault` or `.monomind` entry that already exists as a plain
+// file rather than a directory — os.MkdirAll would fail confusingly on
+// that, so it's caught up front with a clear message instead.
+func validateFolderChoice(dir string) error {
 	if !filepath.IsAbs(dir) {
 		return fmt.Errorf("folder path must be absolute: %q", dir)
 	}
-	entries, err := os.ReadDir(dir)
+	info, err := os.Stat(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil // doesn't exist yet — fine, EnsureLayout creates it
 		}
 		return fmt.Errorf("checking folder %q: %w", dir, err)
 	}
-	if len(entries) > 0 {
-		return fmt.Errorf("folder %q is not empty — choose an empty folder", dir)
+	if !info.IsDir() {
+		return fmt.Errorf("%q is not a folder", dir)
+	}
+	for _, name := range []string{"vault", ".monomind"} {
+		entryInfo, err := os.Stat(filepath.Join(dir, name))
+		if err != nil {
+			continue // doesn't exist — fine, EnsureLayout creates it
+		}
+		if !entryInfo.IsDir() {
+			return fmt.Errorf("%q already contains a file named %q — move or rename it first", dir, name)
+		}
 	}
 	return nil
 }
@@ -1101,7 +1118,7 @@ func (a *App) MoveProfileFolder(profileID, newRootDir string) error {
 	if newRootDir == "" {
 		return fmt.Errorf("no folder chosen")
 	}
-	if err := validateEmptyFolderChoice(newRootDir); err != nil {
+	if err := validateFolderChoice(newRootDir); err != nil {
 		return err
 	}
 
