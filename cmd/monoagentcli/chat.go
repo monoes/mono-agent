@@ -214,7 +214,22 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 				projectRoot := profiledir.Root(db.DB, profileID)
 				opts.Env = map[string]string{"MONOMIND_CWD": monomindDir}
 				systemPromptParts = append(systemPromptParts, monoagentSystemPrompt(canvas != nil, wantRuns))
-				toolSpecs = append(toolSpecs, monoagentToolSpecs(monoTools)...)
+				// MonoagentTools and CanvasTools both define a "create_workflow"
+				// tool (CanvasTools' is the one actually wired into the
+				// canvas != nil branch's ownership/"draft"-placeholder
+				// mechanism above — see effectiveCanvasID's comment — and
+				// OnToolCall below already tries canvas.Execute before
+				// monoTools.ExecuteContext, so CanvasTools' implementation is
+				// the only one ever invoked regardless). Sending both
+				// definitions to the runtime under the identical name isn't
+				// just redundant, it's fatal: the runtime rejects the second
+				// registration outright ("Tool create_workflow is already
+				// registered"), which happens on every single turn once
+				// canvas is auto-wired (see effectiveCanvasID above) — i.e.
+				// every plain "hi" to the general assistant with monoagent
+				// tools enabled, not just real canvas sessions. appendNewToolSpecs
+				// drops any entry whose name a prior source already supplied.
+				toolSpecs = appendNewToolSpecs(toolSpecs, monoagentToolSpecs(monoTools))
 				toolSpecs = append(toolSpecs, monographSearchToolSpec(), memoryKGSearchToolSpec())
 				// Real Bash access to `monomind`/`monoagentcli` themselves, on
 				// top of the mcp__org__* tool bridge above — measured directly
@@ -441,6 +456,26 @@ func canvasToolSpecs(ct *aichat.CanvasTools) []monomind.ToolSpec {
 		})
 	}
 	return specs
+}
+
+// appendNewToolSpecs appends each of adding to existing, skipping any whose
+// Name is already present (in existing, or already appended from an earlier
+// entry in adding). Sending two ToolSpecs with the same name to the
+// runtime isn't just redundant, it's fatal — see the "create_workflow"
+// double-registration this guards against where it's called.
+func appendNewToolSpecs(existing []monomind.ToolSpec, adding []monomind.ToolSpec) []monomind.ToolSpec {
+	seen := make(map[string]bool, len(existing)+len(adding))
+	for _, ts := range existing {
+		seen[ts.Name] = true
+	}
+	for _, ts := range adding {
+		if seen[ts.Name] {
+			continue
+		}
+		seen[ts.Name] = true
+		existing = append(existing, ts)
+	}
+	return existing
 }
 
 // monoagentSystemPrompt tells the model it has real tool access into the
