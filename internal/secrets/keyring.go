@@ -165,6 +165,21 @@ func fetchOrCreateKEK(profileID string) ([]byte, error) {
 		return nil, fmt.Errorf("secrets: reading KEK from keychain: %w", err)
 	}
 
+	if fileKeyringEnabled() {
+		// Checked BEFORE attempting the real keychain write, not merely
+		// after one fails: on a headless/CI/sandboxed host with no
+		// interactive session, keyringSet below doesn't necessarily return
+		// a fast error the way the "unavailable" branch above assumes — it
+		// can trigger an interactive OS prompt that hangs indefinitely
+		// (macOS "Keychain Not Found") or fails via an authorization
+		// cancellation. Either way, an opt-in fallback that only kicks in
+		// after the write already failed can't help with the hang case, so
+		// first-use creation skips the real keychain entirely when the
+		// fallback is enabled, mirroring the read-error branch's fallback
+		// but without ever attempting the risky write.
+		return fetchOrCreateFileKEK(profileID)
+	}
+
 	kek := make([]byte, 32)
 	if _, err := rand.Read(kek); err != nil {
 		return nil, fmt.Errorf("secrets: generating KEK: %w", err)

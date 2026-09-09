@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/zalando/go-keyring"
 )
 
 // forceKeyringUnavailable stubs the keyringGet/keyringSet hooks so every OS
@@ -52,6 +54,91 @@ func stubFilePassphrase(t *testing.T, passphrase string) {
 
 func warnCount(buf *bytes.Buffer) int {
 	return strings.Count(buf.String(), "WARN:")
+}
+
+// forceKeyringFirstUseWriteFails stubs keyringGet/keyringSet to reproduce a
+// host where the OS keychain exists (so a read for a not-yet-created KEK
+// correctly reports keyring.ErrNotFound, not a generic "unavailable" error)
+// but writing a new entry fails — the signature of a headless/CI/sandboxed
+// session with no interactive authorization to approve the keychain write
+// (issue #52/#54: on macOS this is a "Keychain Not Found" GUI modal, or the
+// write hanging indefinitely rather than failing fast). Distinct from
+// forceKeyringUnavailable above, which fails the read too and exercises a
+// different fetchOrCreateKEK branch entirely.
+func forceKeyringFirstUseWriteFails(t *testing.T) {
+	t.Helper()
+	writeErr := errors.New("keychain write blocked (forced in test): no interactive session")
+	origGet, origSet := keyringGet, keyringSet
+	t.Cleanup(func() { keyringGet, keyringSet = origGet, origSet })
+	keyringGet = func(service, user string) (string, error) {
+		return "", keyring.ErrNotFound
+	}
+	keyringSet = func(service, user, password string) error {
+		return writeErr
+	}
+}
+
+// TestFileKeyringFallback_FirstUseCreationRoutesToFallback exercises the
+// regression in issue #52/#54: fetchOrCreateKEK's first-use creation branch
+// (keyringGet returns ErrNotFound, meaning no entry exists yet) must also
+// respect MONOAGENT_ALLOW_FILE_KEYRING and route to the file-based fallback
+// BEFORE ever attempting a real keychain write — not merely fall back after
+// a write failure, since a blocked interactive write can hang indefinitely
+// rather than return an error to fall back from.
+func TestFileKeyringFallback_FirstUseCreationRoutesToFallback(t *testing.T) {
+	resetKEKState(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv(fileKeyringEnv, "1")
+	warns := captureFileKeyringWarns(t)
+	forceKeyringFirstUseWriteFails(t)
+	stubFilePassphrase(t, "correct horse battery staple")
+	ctx := context.Background()
+
+	db := newSecretsTestDB(t)
+	id, err := Add(ctx, db.DB, "default", "secret", "first-use-key", map[string]string{"secret": "v1"}, "", "", "")
+	if err != nil {
+		t.Fatalf("Add on first-use KEK creation with MONOAGENT_ALLOW_FILE_KEYRING=1: %v", err)
+	}
+	fields, _, err := DecryptFields(ctx, db.DB, "default", id)
+	if err != nil {
+		t.Fatalf("DecryptFields after first-use fallback creation: %v", err)
+	}
+	if fields["secret"] != "v1" {
+		t.Fatalf("got %q, want v1", fields["secret"])
+	}
+
+	kekPath := filepath.Join(home, ".monoagent", "vault", ".file-keyring-default")
+	if _, err := os.Stat(kekPath); err != nil {
+		t.Fatalf("expected file-based KEK to be created via the fallback, got: %v", err)
+	}
+	if !strings.Contains(warns.String(), "file-based keyring fallback in use") {
+		t.Fatalf("expected the fallback warning on stderr, got %q", warns.String())
+	}
+}
+
+// TestFileKeyringFallback_FirstUseCreationFailsClosedWithoutEnv proves the
+// fix doesn't change default (opt-in not set) behavior: first-use creation
+// must still attempt the real keychain and surface its error unchanged.
+func TestFileKeyringFallback_FirstUseCreationFailsClosedWithoutEnv(t *testing.T) {
+	resetKEKState(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv(fileKeyringEnv, "")
+	forceKeyringFirstUseWriteFails(t)
+	ctx := context.Background()
+
+	db := newSecretsTestDB(t)
+	_, err := Add(ctx, db.DB, "default", "secret", "first-use-key", map[string]string{"secret": "v1"}, "", "", "")
+	if err == nil {
+		t.Fatal("expected Add to fail closed without the fallback env on first-use creation, got nil")
+	}
+	if !strings.Contains(err.Error(), "storing KEK in keychain") {
+		t.Fatalf("expected the keychain write error to surface unchanged, got %q", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".monoagent")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected no vault dir/file without the fallback env, got err %v", err)
+	}
 }
 
 // TestFileKeyringFallback_RoundTrip is the core fallback scenario: OS
