@@ -27,6 +27,7 @@ func (a *App) runMonoCLI(stdin string, result interface{}, args ...string) error
 	}
 	fullArgs := append([]string{"--profile", a.getActiveProfileID(), "--json"}, args...)
 	cmd := exec.CommandContext(a.ctx, cliBin, fullArgs...)
+	hideWindow(cmd)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	}

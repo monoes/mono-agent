@@ -179,7 +179,9 @@ func (a *App) updateAppWindows(exe, tmpPath, newVersion string) UpdateResult {
 		return UpdateResult{Error: fmt.Sprintf("write bat: %v", err)}
 	}
 
-	if err := exec.Command("cmd.exe", "/C", batPath).Start(); err != nil { //nolint:gosec
+	cmd := exec.Command("cmd.exe", "/C", batPath) //nolint:gosec
+	hideWindow(cmd)
+	if err := cmd.Start(); err != nil {
 		os.Remove(tmpPath)
 		os.Remove(batPath)
 		return UpdateResult{Error: fmt.Sprintf("start update script: %v", err)}

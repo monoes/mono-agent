@@ -474,6 +474,7 @@ func (a *App) ImportWorkflow(jsonOrPath string) (*WorkflowImportResult, error) {
 		ctx = context.Background()
 	}
 	cmd := exec.CommandContext(ctx, cliBin, "--profile", a.getActiveProfileID(), "--json", "workflow", "import")
+	hideWindow(cmd)
 	cmd.Stdin = bytes.NewReader(raw)
 	out, err := cmd.Output()
 	if err != nil {
@@ -536,6 +537,7 @@ func (a *App) RunWorkflow(id string) error {
 	a.emitLog("WORKFLOW", "INFO", fmt.Sprintf("Starting workflow %s", id))
 
 	cmd := exec.CommandContext(a.ctx, cliBin, "--profile", a.getActiveProfileID(), "workflow", "run", id)
+	hideWindow(cmd)
 	stdout, _ := cmd.StdoutPipe()
 	stderr, _ := cmd.StderrPipe()
 

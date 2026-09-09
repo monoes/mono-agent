@@ -330,6 +330,7 @@ func (a *App) ReloadOrg(orgName string) string {
 		args = append(args, "--project", root)
 	}
 	cmd := exec.Command(cliBin, args...)
+	hideWindow(cmd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return aiError(fmt.Errorf("%s", strings.TrimSpace(string(out))))
@@ -415,6 +416,7 @@ func (a *App) cliValidate(root, name string) error {
 		args = append(args, "--project", root)
 	}
 	cmd := exec.Command(cliBin, args...)
+	hideWindow(cmd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s", strings.TrimSpace(string(out)))

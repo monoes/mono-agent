@@ -13,6 +13,9 @@ import (
 	"syscall"
 )
 
+// hideWindow is a no-op on non-Windows platforms.
+func hideWindow(cmd *exec.Cmd) {}
+
 // setChatProcessGroup isolates the chat subprocess (monoagentcli → monomind
 // → agent CLI) in its own process group so a UI stop reaps the whole tree.
 func setChatProcessGroup(cmd *exec.Cmd) {
