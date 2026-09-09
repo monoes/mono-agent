@@ -849,6 +849,7 @@ func (a *App) ExportData() (*ExportResult, error) {
 		return &ExportResult{Cancelled: true}, nil
 	}
 	cmd := exec.CommandContext(a.ctx, cliBin, "--profile", a.getActiveProfileID(), "--json", "export", "--output-dir", dir)
+	hideWindow(cmd)
 	out, err := cmd.Output()
 	if err != nil {
 		var ee *exec.ExitError
@@ -1034,6 +1035,7 @@ func (a *App) bootstrapProfileMonograph(profileID string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 		cmd := exec.CommandContext(ctx, bin, "monograph", "build", "--path", profiledir.MonomindDir(db, profileID))
+		hideWindow(cmd)
 		if err := cmd.Run(); err != nil {
 			a.emitLog("SYSTEM", "WARN", fmt.Sprintf("profile %s: monograph bootstrap: %v", profileID, err))
 		}
@@ -1068,7 +1070,9 @@ func (a *App) RevealProfileFolder(profileID string) error {
 // per-GOOS command selection without spawning a real GUI file manager.
 func revealFolder(dir string) error {
 	name, args := revealFolderCommand(goruntime.GOOS, dir)
-	err := exec.Command(name, args...).Run()
+	cmd := exec.Command(name, args...)
+	hideWindow(cmd)
+	err := cmd.Run()
 	if err == nil {
 		return nil
 	}

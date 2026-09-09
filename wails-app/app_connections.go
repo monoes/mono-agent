@@ -387,6 +387,7 @@ func (a *App) LoginSocial(platform string) string {
 
 	go func() {
 		cmd := exec.CommandContext(a.ctx, cliBin, "--profile", a.getActiveProfileID(), "login", pid)
+		hideWindow(cmd)
 		stderr, _ := cmd.StderrPipe()
 
 		if startErr := cmd.Start(); startErr != nil {
@@ -433,6 +434,7 @@ func (a *App) ConfirmSocialLogin(platform string) string {
 
 	go func() {
 		cmd := exec.CommandContext(a.ctx, cliBin, "--profile", a.getActiveProfileID(), "login", "confirm", pid)
+		hideWindow(cmd)
 		stdout, _ := cmd.StdoutPipe()
 		stderr, _ := cmd.StderrPipe()
 

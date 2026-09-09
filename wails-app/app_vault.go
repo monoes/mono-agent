@@ -144,6 +144,7 @@ func (a *App) runVaultCLI(stdin string, result interface{}, args ...string) erro
 	}
 	fullArgs := append([]string{"--profile", a.getActiveProfileID(), "--json", "secret"}, args...)
 	cmd := exec.CommandContext(a.ctx, cliBin, fullArgs...)
+	hideWindow(cmd)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	}

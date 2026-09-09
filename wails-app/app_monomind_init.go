@@ -80,6 +80,7 @@ func (a *App) InitializeMonomindProfile() string {
 		// but CI=true guarantees every prompt path treats this as
 		// non-interactive even if that check changes upstream.
 		cmd := exec.CommandContext(ctx, bin, "init", "--yes", "--no-watch", "--no-install")
+		hideWindow(cmd)
 		cmd.Dir = root // monomind init has no --project flag and does not honor MONOMIND_CWD — cwd is the only way to scope it
 		cmd.Env = append(os.Environ(), "CI=true")
 
@@ -136,6 +137,7 @@ func (a *App) registerClaudeCodeProject(root string) {
 	ctx, cancel := context.WithTimeout(a.ctx, 60*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, claudeBin, "-p", "monomind initialized")
+	hideWindow(cmd)
 	cmd.Dir = root
 	if err := cmd.Run(); err != nil {
 		a.emitMonomindInitEvent("line", "(claude CLI registration step failed, non-fatal: "+err.Error()+")")
