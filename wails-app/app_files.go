@@ -25,6 +25,13 @@ func (a *App) documentPath(id string) (string, error) {
 	return path, nil
 }
 
+// maxInlinePreviewBytes caps GetProfileDocumentData's in-memory base64
+// encode. Uploaded documents were always small and user-chosen; discovery
+// (internal/docscan) can now surface anything already sitting in the
+// profile folder, including files far larger than anyone would have
+// picked from a file dialog.
+const maxInlinePreviewBytes = 25 * 1024 * 1024
+
 // GetProfileDocumentData reads a vault document from disk and returns it as
 // a base64 data URL (e.g. "data:application/pdf;base64,..."), the same
 // technique GetVaultImageData uses for images — the reliable way to load
@@ -35,6 +42,9 @@ func (a *App) GetProfileDocumentData(id string) (string, error) {
 	path, err := a.documentPath(id)
 	if err != nil {
 		return "", err
+	}
+	if fi, statErr := os.Stat(path); statErr == nil && fi.Size() > maxInlinePreviewBytes {
+		return "", fmt.Errorf("file too large to preview inline (%d MB) — open it with your system's default application instead", fi.Size()/1024/1024)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {

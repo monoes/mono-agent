@@ -2,14 +2,44 @@
 package main
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
 
 	"github.com/monoes/mono-agent/internal/monomind"
 	"github.com/monoes/mono-agent/internal/vault"
 
 	"github.com/spf13/cobra"
 )
+
+// indexDocument runs knowledge_ingest for path and records the outcome via
+// SetDocumentIndexed, stamping a real (mtime, size) staleness baseline on
+// success. Shared by upload-document (index immediately after copying in)
+// and the standalone `documents index` command (on-demand re-index).
+// os.Stat failures are non-fatal here (best-effort baseline) since a
+// missing baseline just means Stale can never trigger for this success --
+// strictly safer than failing the whole ingest over a stat error. Returns
+// setErr separately (rather than swallowing it) so each caller can decide
+// how to surface a record-keeping failure distinctly from an indexing
+// failure.
+func indexDocument(ctx context.Context, db *sql.DB, profileID, id, path string) (indexed bool, indexErrMsg string, setErr error) {
+	indexed = true
+	if ingestErr := monomind.IngestDocument(ctx, db, profileID, path); ingestErr != nil {
+		indexed = false
+		indexErrMsg = ingestErr.Error()
+	}
+	var mtime, size int64
+	if indexed {
+		if fi, statErr := os.Stat(path); statErr == nil {
+			mtime = fi.ModTime().UnixNano()
+			size = fi.Size()
+		}
+	}
+	setErr = vault.SetDocumentIndexed(ctx, db, profileID, id, indexed, indexErrMsg, mtime, size)
+	return indexed, indexErrMsg, setErr
+}
 
 func newProfileUploadDocumentCmd(cfg *globalConfig) *cobra.Command {
 	var source string
@@ -42,14 +72,11 @@ func newProfileUploadDocumentCmd(cfg *globalConfig) *cobra.Command {
 				}
 			}
 
-			indexed := true
-			indexErrMsg := ""
-			if ingestErr := monomind.IngestDocument(cmd.Context(), db.DB, cfg.ProfileID, storedPath); ingestErr != nil {
-				indexed = false
-				indexErrMsg = ingestErr.Error()
-				fmt.Fprintf(cmd.ErrOrStderr(), "warning: document uploaded but indexing failed: %v\n", ingestErr)
+			indexed, indexErrMsg, setErr := indexDocument(cmd.Context(), db.DB, cfg.ProfileID, id, storedPath)
+			if !indexed {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: document uploaded but indexing failed: %s\n", indexErrMsg)
 			}
-			if setErr := vault.SetDocumentIndexed(ctx, db.DB, cfg.ProfileID, id, indexed, indexErrMsg); setErr != nil {
+			if setErr != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not record indexing status: %v\n", setErr)
 			}
 
@@ -80,7 +107,7 @@ func newProfileDocumentsCmd(cfg *globalConfig) *cobra.Command {
 		Use:   "documents",
 		Short: "Manage uploaded profile documents",
 	}
-	cmd.AddCommand(newProfileDocumentsListCmd(cfg), newProfileDocumentsRmCmd(cfg))
+	cmd.AddCommand(newProfileDocumentsListCmd(cfg), newProfileDocumentsRmCmd(cfg), newProfileDocumentsIndexCmd(cfg))
 	return cmd
 }
 
@@ -139,6 +166,66 @@ func newProfileDocumentsRmCmd(cfg *globalConfig) *cobra.Command {
 				return enc.Encode(map[string]string{"id": args[0]})
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Deleted %q.\n", args[0])
+			return nil
+		},
+	}
+}
+
+// newProfileDocumentsIndexCmd is the on-demand indexing action for a
+// document the GUI/CLI already knows about (whether uploaded or
+// discovered by a filesystem scan) -- the "Index" button for a Not
+// indexed/Stale row. Output shape mirrors upload-document's (a lowercase
+// JSON map, not documents-list's PascalCase struct encoding): behaviorally
+// this is upload-document's sibling (both attempt one ingest and report
+// pass/fail), not list's.
+func newProfileDocumentsIndexCmd(cfg *globalConfig) *cobra.Command {
+	return &cobra.Command{
+		Use:     "index <id>",
+		Short:   "Index (or re-index) a profile document for knowledge search",
+		Args:    cobra.ExactArgs(1),
+		Example: `  monoagentcli profile documents index doc-003`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			db, err := initDB(cfg)
+			if err != nil {
+				return fmt.Errorf("initializing database: %w", err)
+			}
+			defer db.DB.Close()
+
+			docs, err := vault.ListDocuments(cmd.Context(), db.DB, cfg.ProfileID)
+			if err != nil {
+				return fmt.Errorf("looking up document: %w", err)
+			}
+			var path string
+			found := false
+			for _, d := range docs {
+				if d.ID == args[0] {
+					path = d.Path
+					found = true
+				}
+			}
+			if !found {
+				return errNotFound("document %q not found", args[0])
+			}
+
+			indexed, indexErrMsg, setErr := indexDocument(cmd.Context(), db.DB, cfg.ProfileID, args[0], path)
+			if setErr != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not record indexing status: %v\n", setErr)
+			}
+
+			if cfg.JSONOutput {
+				enc := json.NewEncoder(cmd.OutOrStdout())
+				enc.SetIndent("", "  ")
+				out := map[string]interface{}{"id": args[0], "indexed": indexed}
+				if indexErrMsg != "" {
+					out["index_error"] = indexErrMsg
+				}
+				return enc.Encode(out)
+			}
+			if indexed {
+				fmt.Fprintln(cmd.OutOrStdout(), "Indexed for knowledge search.")
+			} else {
+				fmt.Fprintf(cmd.OutOrStdout(), "Not indexed — %s\n", indexErrMsg)
+			}
 			return nil
 		},
 	}

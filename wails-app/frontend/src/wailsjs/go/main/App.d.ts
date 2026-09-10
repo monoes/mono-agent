@@ -205,6 +205,8 @@ export function ImportVaultAll(arg1:string,arg2:string):Promise<main.VaultImport
 
 export function ImportWorkflow(arg1:string):Promise<main.WorkflowImportResult>;
 
+export function IndexProfileDocument(arg1:string):Promise<main.UploadResult>;
+
 export function InitializeMonomindProfile():Promise<string>;
 
 export function IsDBConnected():Promise<boolean>;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { fileViewerKind } from './FileViewerModal.jsx'
+import { fileViewerKind, isMarkdownFile } from './FileViewerModal.jsx'
 
 describe('fileViewerKind', () => {
   it('recognizes common image extensions', () => {
@@ -29,5 +29,23 @@ describe('fileViewerKind', () => {
     expect(fileViewerKind('')).toBeNull()
     expect(fileViewerKind(undefined)).toBeNull()
     expect(fileViewerKind('README')).toBeNull()
+  })
+})
+
+describe('isMarkdownFile', () => {
+  it('recognizes .md and .markdown, case-insensitively', () => {
+    expect(isMarkdownFile('notes.md')).toBe(true)
+    expect(isMarkdownFile('NOTES.MD')).toBe(true)
+    expect(isMarkdownFile('readme.markdown')).toBe(true)
+    expect(isMarkdownFile('README.MARKDOWN')).toBe(true)
+  })
+  it('returns false for other text extensions', () => {
+    expect(isMarkdownFile('resume.txt')).toBe(false)
+    expect(isMarkdownFile('data.json')).toBe(false)
+  })
+  it('returns false for missing/extensionless filenames', () => {
+    expect(isMarkdownFile('')).toBe(false)
+    expect(isMarkdownFile(undefined)).toBe(false)
+    expect(isMarkdownFile('README')).toBe(false)
   })
 })

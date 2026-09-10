@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { X, ExternalLink, AlertTriangle } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import * as WailsApp from '../wailsjs/go/main/App'
 
 const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'ico'])
@@ -19,6 +21,55 @@ export function fileViewerKind(filename) {
   if (HTML_EXTS.has(ext)) return 'html'
   if (TEXT_EXTS.has(ext)) return 'text'
   return null
+}
+
+// Pure so it's directly unit-testable without rendering — mirrors
+// fileViewerKind above. Deliberately does NOT change what fileViewerKind
+// itself returns for .md/.markdown (stays 'text', already relied on by
+// existing tests and by the content-fetch dispatch below, which is the
+// same for every non-binary kind) -- this just decides, inside the
+// existing 'text' render branch, whether to run the content through a
+// markdown renderer instead of a bare <pre>.
+export function isMarkdownFile(filename) {
+  const ext = (filename || '').split('.').pop()?.toLowerCase() || ''
+  return ext === 'md' || ext === 'markdown'
+}
+
+// Inline-styled overrides for react-markdown's rendered elements, matching
+// this modal's existing dark theme (#e2e8f0 body text, #00b4d8 accent —
+// see the filename/Open-Externally button above) since everything in this
+// file is inline style={{...}}, no CSS module/global stylesheet to extend
+// instead. remark-gfm (tables/strikethrough/task lists/autolinks) is
+// enabled, but no rehype-raw plugin is added, so raw HTML embedded in a
+// document's markdown source is never rendered -- matching the defensive
+// posture the html viewer below already takes with its empty iframe
+// sandbox, since a "discovered" document's content isn't necessarily
+// authored by the user themselves.
+const mdComponents = {
+  h1: (p) => <h1 style={{ fontSize: 20, margin: '0.6em 0 0.4em', color: '#f1f5f9', borderBottom: '1px solid #1e3a4f', paddingBottom: 6 }} {...p} />,
+  h2: (p) => <h2 style={{ fontSize: 17, margin: '0.6em 0 0.4em', color: '#f1f5f9' }} {...p} />,
+  h3: (p) => <h3 style={{ fontSize: 14, margin: '0.6em 0 0.3em', color: '#f1f5f9' }} {...p} />,
+  p: (p) => <p style={{ margin: '0.5em 0', lineHeight: 1.6 }} {...p} />,
+  a: (p) => <a style={{ color: '#00b4d8' }} target="_blank" rel="noreferrer" {...p} />,
+  ul: (p) => <ul style={{ margin: '0.4em 0', paddingLeft: 22 }} {...p} />,
+  ol: (p) => <ol style={{ margin: '0.4em 0', paddingLeft: 22 }} {...p} />,
+  li: (p) => <li style={{ margin: '0.2em 0' }} {...p} />,
+  blockquote: (p) => <blockquote style={{ margin: '0.5em 0', paddingLeft: 12, borderLeft: '3px solid #1e3a4f', color: '#94a3b8' }} {...p} />,
+  hr: (p) => <hr style={{ border: 'none', borderTop: '1px solid #1e3a4f', margin: '1em 0' }} {...p} />,
+  // react-markdown v9+ dropped the old `inline` prop on `code` (there's no
+  // longer a reliable way to distinguish inline from fenced-block code from
+  // here alone -- see its readme's own syntax-highlighting example, which
+  // only detects a LANGUAGE-TAGGED fence via className, not an untagged
+  // one). Sidestepped rather than worked around: `code`'s background here
+  // matches `pre`'s exactly, so when a block code's <code> ends up nested
+  // inside our styled <pre> below, the two colors don't create a visible
+  // seam -- one unified style that looks right standalone (inline) AND
+  // nested (block), without needing inline/block detection at all.
+  code: (p) => <code style={{ background: '#0d1a26', padding: '1px 5px', borderRadius: 4, fontFamily: 'var(--font-mono)', fontSize: '0.9em' }} {...p} />,
+  pre: (p) => <pre style={{ background: '#0d1a26', border: '1px solid #1e3a4f', borderRadius: 6, padding: 10, overflow: 'auto' }} {...p} />,
+  table: (p) => <table style={{ borderCollapse: 'collapse', margin: '0.5em 0', fontSize: '0.95em' }} {...p} />,
+  th: (p) => <th style={{ border: '1px solid #1e3a4f', padding: '4px 8px', textAlign: 'left', background: '#0d1a26' }} {...p} />,
+  td: (p) => <td style={{ border: '1px solid #1e3a4f', padding: '4px 8px' }} {...p} />,
 }
 
 const fmtBytes = (b) => {
@@ -126,6 +177,13 @@ export default function FileViewerModal({ doc, onClose }) {
               title={doc.filename}
               style={{ width: '100%', height: '70vh', border: 'none', background: '#fff' }}
             />
+          ) : isMarkdownFile(doc.filename) ? (
+            <div style={{
+              width: '100%', maxHeight: '70vh', overflow: 'auto', padding: '14px 18px',
+              fontFamily: 'var(--font-sans, sans-serif)', fontSize: 13, color: '#e2e8f0',
+            }}>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>{content}</ReactMarkdown>
+            </div>
           ) : (
             <pre style={{
               margin: 0, padding: 14, width: '100%', maxHeight: '70vh',

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatBytes, isMonomindMissing } from './Documents.jsx'
+import { formatBytes, isMonomindMissing, documentBadgeState } from './Documents.jsx'
 
 describe('formatBytes', () => {
   it('formats bytes under 1KB as-is', () => {
@@ -29,5 +29,24 @@ describe('isMonomindMissing', () => {
   it('returns false for empty/undefined', () => {
     expect(isMonomindMissing('')).toBe(false)
     expect(isMonomindMissing(undefined)).toBe(false)
+  })
+})
+
+describe('documentBadgeState', () => {
+  it('returns indexed for an indexed, non-stale doc', () => {
+    expect(documentBadgeState({ indexed: true, stale: false }, false)).toBe('indexed')
+  })
+  it('returns stale for an indexed doc whose content changed', () => {
+    expect(documentBadgeState({ indexed: true, stale: true }, false)).toBe('stale')
+  })
+  it('returns not_indexed for a never-indexed doc when monomind is set up', () => {
+    expect(documentBadgeState({ indexed: false, stale: false }, false)).toBe('not_indexed')
+  })
+  it('returns monomind_not_set_up for a never-indexed doc when monomind is not set up', () => {
+    expect(documentBadgeState({ indexed: false, stale: false }, true)).toBe('monomind_not_set_up')
+  })
+  it('precedence: an already-indexed doc stays indexed/stale even if monomind later becomes uninitialized', () => {
+    expect(documentBadgeState({ indexed: true, stale: false }, true)).toBe('indexed')
+    expect(documentBadgeState({ indexed: true, stale: true }, true)).toBe('stale')
   })
 })

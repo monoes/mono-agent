@@ -655,6 +655,7 @@ export namespace main {
 	    created_at: string;
 	    indexed: boolean;
 	    index_error: string;
+	    stale: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new ProfileDocument(source);
@@ -671,6 +672,7 @@ export namespace main {
 	        this.created_at = source["created_at"];
 	        this.indexed = source["indexed"];
 	        this.index_error = source["index_error"];
+	        this.stale = source["stale"];
 	    }
 	}
 	export class ProfileInfo {
