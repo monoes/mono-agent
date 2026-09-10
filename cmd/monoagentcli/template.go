@@ -74,7 +74,8 @@ func newTemplateListCmd(cfg *globalConfig) *cobra.Command {
 				return nil
 			}
 
-			table := newPlainTable(os.Stdout, []string{"ID", "Name", "Subject", "Body", "Created"}, nil)
+			table := newPlainTable(cmd.OutOrStdout(), []string{"ID", "Name", "Subject", "Body", "Created"},
+				[]tw.Align{tw.AlignRight, tw.AlignLeft, tw.AlignLeft, tw.AlignLeft, tw.AlignLeft})
 
 			for _, t := range templates {
 				table.Append([]string{
@@ -86,7 +87,7 @@ func newTemplateListCmd(cfg *globalConfig) *cobra.Command {
 				})
 			}
 			table.Render()
-			fmt.Fprintf(os.Stderr, "\nTotal: %d template(s)\n", len(templates))
+			fmt.Fprintf(cmd.ErrOrStderr(), "\nTotal: %d template(s)\n", len(templates))
 			return nil
 		},
 	}

@@ -180,6 +180,44 @@ func TestApplicationListTableShowsJobTitle(t *testing.T) {
 	}
 }
 
+// TestApplicationListTableTruncatesLongValues guards against the tablewriter
+// v1 migration regression where `application list`'s TITLE/TAGS columns lost
+// their old wrap-based readability (v0.0.5 wrapped long cells; the v1
+// migration's shared newPlainTable helper hardcodes no-wrap for every
+// caller) without gaining truncation to compensate, unlike sibling commands
+// that already call truncateStr. A long title/tag must render truncated
+// ("...") rather than as one long unbroken line.
+func TestApplicationListTableTruncatesLongValues(t *testing.T) {
+	dbPath := newApplicationCLITestDB(t)
+
+	runCmd := func(jsonOutput bool, args ...string) (string, error) {
+		cfg := &globalConfig{DBPath: dbPath, JSONOutput: jsonOutput}
+		cmd := newApplicationCmd(cfg)
+		cmd.SetArgs(args)
+		var out bytes.Buffer
+		cmd.SetOut(&out)
+		err := cmd.Execute()
+		return out.String(), err
+	}
+
+	longTitle := "Senior Distinguished Principal Staff Software Engineer, Platform Infrastructure and Reliability Team"
+	addOut, err := runCmd(true, "add", "--kind", "job", "--title", longTitle, "--company", "Acme", "--url", "https://acme.example/2")
+	if err != nil {
+		t.Fatalf("application add: %v (%s)", err, addOut)
+	}
+
+	listOut, err := runCmd(false, "list")
+	if err != nil {
+		t.Fatalf("application list: %v", err)
+	}
+	if strings.Contains(listOut, longTitle) {
+		t.Fatalf("expected the long title to be truncated in table output, got the full string unbroken: %s", listOut)
+	}
+	if !strings.Contains(listOut, "...") {
+		t.Fatalf("expected a truncation marker in table output, got: %s", listOut)
+	}
+}
+
 func TestApplicationStatusRejectsInvalidTransition(t *testing.T) {
 	dbPath := newApplicationCLITestDB(t)
 	addOut, err := runApplicationCmd(t, dbPath, "add", "--kind", "job", "--title", "Backend Engineer", "--company", "Acme", "--url", "https://acme.example/1")

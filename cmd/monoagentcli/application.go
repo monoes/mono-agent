@@ -163,7 +163,7 @@ func newApplicationListCmd(cfg *globalConfig) *cobra.Command {
 				if a.Tender != nil {
 					title = a.Tender.Title
 				}
-				table.Append([]string{a.ID, string(a.Kind), string(a.Status), title, joinTags(a.Tags), a.UpdatedAt})
+				table.Append([]string{a.ID, string(a.Kind), string(a.Status), truncateStr(title, 40), truncateStr(joinTags(a.Tags), 30), a.UpdatedAt})
 			}
 			table.Render()
 			return nil
