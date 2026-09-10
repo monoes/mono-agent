@@ -41,6 +41,20 @@ func runProfileCmd(t *testing.T, dbPath string, args ...string) (string, error) 
 	return out.String(), err
 }
 
+// runProfileCmdText is runProfileCmd's JSONOutput:false counterpart, for
+// exercising the plain-text table rendering path — mirrors how
+// secret_test.go pairs runSecretCmd/runSecretCmdText.
+func runProfileCmdText(t *testing.T, dbPath string, args ...string) (string, error) {
+	t.Helper()
+	cfg := &globalConfig{DBPath: dbPath, JSONOutput: false}
+	cmd := newProfileCmd(cfg)
+	cmd.SetArgs(args)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	err := cmd.Execute()
+	return out.String(), err
+}
+
 func TestProfileUploadListDeleteDocument(t *testing.T) {
 	setFakeMonomindOnPathCLI(t)
 	dbPath := newProfileDocsCLITestDB(t)
@@ -64,6 +78,38 @@ func TestProfileUploadListDeleteDocument(t *testing.T) {
 	}
 	if !strings.Contains(listOut, "resume.txt") {
 		t.Fatalf("expected filename in list output, got: %s", listOut)
+	}
+}
+
+// TestProfileDocumentsListTableTruncatesLongFilename guards against the
+// tablewriter v1 migration regression where `documents list`'s FILENAME
+// column lost its old wrap-based readability (see the identical concern in
+// application_test.go's TestApplicationListTableTruncatesLongValues) without
+// gaining truncation to compensate.
+func TestProfileDocumentsListTableTruncatesLongFilename(t *testing.T) {
+	setFakeMonomindOnPathCLI(t)
+	dbPath := newProfileDocsCLITestDB(t)
+
+	longName := "quarterly-performance-review-and-career-development-planning-notes-final-v3.txt"
+	docPath := filepath.Join(t.TempDir(), longName)
+	if err := os.WriteFile(docPath, []byte("content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	uploadOut, err := runProfileCmd(t, dbPath, "upload-document", docPath)
+	if err != nil {
+		t.Fatalf("upload-document: %v (%s)", err, uploadOut)
+	}
+
+	listOut, err := runProfileCmdText(t, dbPath, "documents", "list")
+	if err != nil {
+		t.Fatalf("documents list: %v", err)
+	}
+	if strings.Contains(listOut, longName) {
+		t.Fatalf("expected the long filename to be truncated in table output, got the full string unbroken: %s", listOut)
+	}
+	if !strings.Contains(listOut, "...") {
+		t.Fatalf("expected a truncation marker in table output, got: %s", listOut)
 	}
 }
 

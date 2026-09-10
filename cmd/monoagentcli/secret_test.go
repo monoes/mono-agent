@@ -98,6 +98,32 @@ func TestSecretAddListGetReveal(t *testing.T) {
 	}
 }
 
+// TestSecretListTableTruncatesLongName guards against the tablewriter v1
+// migration regression where `secret list`'s NAME column lost its old
+// wrap-based readability (see the identical concern in
+// application_test.go's TestApplicationListTableTruncatesLongValues)
+// without gaining truncation to compensate.
+func TestSecretListTableTruncatesLongName(t *testing.T) {
+	dbPath := newSecretCLITestDB(t)
+
+	longName := "production-database-read-replica-connection-string-us-east-1-backup"
+	addOut, err := runSecretCmd(t, dbPath, "add", "--kind", "secret", "--name", longName, "--value", "v-test1")
+	if err != nil {
+		t.Fatalf("secret add: %v (%s)", err, addOut)
+	}
+
+	listOut, err := runSecretCmdText(t, dbPath, "list")
+	if err != nil {
+		t.Fatalf("secret list: %v", err)
+	}
+	if strings.Contains(listOut, longName) {
+		t.Fatalf("expected the long secret name to be truncated in table output, got the full string unbroken: %s", listOut)
+	}
+	if !strings.Contains(listOut, "...") {
+		t.Fatalf("expected a truncation marker in table output, got: %s", listOut)
+	}
+}
+
 // TestSecretAdd_ReadsValueFromStdinWhenFlagOmitted covers the fallback path
 // in newSecretAddCmd that reads the secret value from stdin (via
 // bufio.NewReader(os.Stdin).ReadString('\n') + strings.TrimRight) when

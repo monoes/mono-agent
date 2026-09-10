@@ -110,7 +110,7 @@ func newProfileDocumentsListCmd(cfg *globalConfig) *cobra.Command {
 			}
 			table := newPlainTable(cmd.OutOrStdout(), []string{"ID", "Filename", "Source", "Uploaded"}, nil)
 			for _, d := range docs {
-				table.Append([]string{d.ID, d.Filename, d.Source, d.CreatedAt})
+				table.Append([]string{d.ID, truncateStr(d.Filename, 50), d.Source, d.CreatedAt})
 			}
 			table.Render()
 			return nil
