@@ -402,6 +402,10 @@ export function ImportWorkflow(arg1) {
   return window['go']['main']['App']['ImportWorkflow'](arg1);
 }
 
+export function IndexProfileDocument(arg1) {
+  return window['go']['main']['App']['IndexProfileDocument'](arg1);
+}
+
 export function InitializeMonomindProfile() {
   return window['go']['main']['App']['InitializeMonomindProfile']();
 }

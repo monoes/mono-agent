@@ -1,9 +1,27 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Upload, Search, Trash2, Sparkles, CheckCircle2, XCircle, Eye } from 'lucide-react'
+import { Upload, Search, Trash2, Sparkles, CheckCircle2, AlertTriangle, XCircle, Eye, PlayCircle } from 'lucide-react'
 import * as WailsApp from '../wailsjs/go/main/App'
 import { confirm } from '../components/ConfirmDialog.jsx'
-import { api, notify, onMonomindInitEvent } from '../services/api.js'
+import { api, notify, onMonomindInitEvent, onDocumentsChanged } from '../services/api.js'
 import FileViewerModal, { fileViewerKind } from '../components/FileViewerModal.jsx'
+
+// maxInlinePreviewBytes mirrors the backend's own GetProfileDocumentData
+// cap (wails-app/app_files.go) so an oversized file is routed straight to
+// OpenPathWithOS instead of round-tripping to Go just to be rejected.
+const maxInlinePreviewBytes = 25 * 1024 * 1024
+
+// documentBadgeState classifies a document row into exactly one of four
+// Knowledge Graph badge states. The 4th state (monomind_not_set_up) only
+// overrides a NEVER-indexed row: a document that was successfully indexed
+// before keeps showing indexed/stale even if monomind later becomes
+// un-initialized for this profile, since that fact doesn't retroactively
+// change what already happened.
+export function documentBadgeState(doc, monomindNotInitialized) {
+  if (!doc.indexed && monomindNotInitialized) return 'monomind_not_set_up'
+  if (doc.indexed && doc.stale) return 'stale'
+  if (doc.indexed) return 'indexed'
+  return 'not_indexed'
+}
 
 export function formatBytes(n) {
   if (n < 1024) return `${n} B`
@@ -44,6 +62,13 @@ export default function Documents() {
   const [initStatus, setInitStatus] = useState('idle') // idle | running | error
   const initRunningRef = useRef(false)
   const [viewingDoc, setViewingDoc] = useState(null)
+  const [indexingIds, setIndexingIds] = useState(() => new Set())
+  const [selectedIds, setSelectedIds] = useState(() => new Set())
+  // null | 'index' | 'delete' — gates re-entrancy on the bulk buttons (and
+  // the per-row Index button, to avoid a race with an in-flight bulk run)
+  // and drives the running bulk button's live progress label.
+  const [bulkBusy, setBulkBusy] = useState(null)
+  const [bulkProgress, setBulkProgress] = useState({ done: 0, total: 0 })
 
   const load = useCallback(async () => {
     try {
@@ -55,6 +80,12 @@ export default function Documents() {
 
   useEffect(() => { load() }, [load])
   useEffect(() => { api.isMonomindInitialized().then(v => setNotInitialized(!v)) }, [])
+
+  // Live-refresh: the background document watcher (wails-app/app_documents_watch.go)
+  // discovers files added to the profile folder from outside the app (e.g.
+  // dropped in via Finder) and reconciles them into the same list this
+  // page reads — reload whenever it signals a change.
+  useEffect(() => onDocumentsChanged(() => load()), [load])
 
   useEffect(() => onMonomindInitEvent((payload) => {
     if (!initRunningRef.current) return
@@ -91,6 +122,109 @@ export default function Documents() {
     }
   }
 
+  // Returns whether indexing succeeded, so bulk callers (runBulkIndex) can
+  // tally failures for their own summary notify() without duplicating this
+  // function's own per-item notify/spinner/reload handling.
+  const handleIndex = async (id) => {
+    setIndexingIds(s => new Set(s).add(id))
+    try {
+      const result = await WailsApp.IndexProfileDocument(id)
+      if (!result.indexed) {
+        notify('index', isMonomindMissing(result.index_error)
+          ? "Not indexed — monomind isn't installed."
+          : 'Indexing failed: ' + result.index_error)
+      }
+      load()
+      return result.indexed
+    } catch (e) {
+      notify('index', 'Indexing failed: ' + e)
+      return false
+    } finally {
+      setIndexingIds(s => { const n = new Set(s); n.delete(id); return n })
+    }
+  }
+
+  const toggleSelected = (id) => {
+    setSelectedIds(s => {
+      const n = new Set(s)
+      if (n.has(id)) n.delete(id); else n.add(id)
+      return n
+    })
+  }
+
+  const allVisibleSelected = docs.length > 0 && docs.every(d => selectedIds.has(d.id))
+  const toggleSelectAll = () => {
+    setSelectedIds(allVisibleSelected ? new Set() : new Set(docs.map(d => d.id)))
+  }
+
+  // Shared by the always-available "Index all" button and the
+  // selection-scoped "Index selected" action -- both filter to the exact
+  // predicate documentBadgeState/the per-row Index button already use
+  // (!indexed || stale), so neither ever redundantly re-indexes an
+  // already-fresh document. Reuses handleIndex per-item, so bulk runs get
+  // the same live per-row spinner and per-item error toast it already has,
+  // for free.
+  const runBulkIndex = async (candidateDocs) => {
+    const toIndex = candidateDocs.filter(d => !d.indexed || d.stale)
+    if (toIndex.length === 0) {
+      notify('index', 'Nothing to index — already up to date.')
+      return
+    }
+    setBulkBusy('index')
+    setBulkProgress({ done: 0, total: toIndex.length })
+    let failed = 0
+    for (const d of toIndex) {
+      const ok = await handleIndex(d.id)
+      if (!ok) failed++
+      setBulkProgress(p => ({ ...p, done: p.done + 1 }))
+    }
+    notify('index', failed > 0
+      ? `Indexed ${toIndex.length - failed} of ${toIndex.length} document${toIndex.length === 1 ? '' : 's'} (${failed} failed).`
+      : `Indexed ${toIndex.length} document${toIndex.length === 1 ? '' : 's'}.`)
+    setBulkBusy(null)
+  }
+
+  // "discovered" documents aren't owned by the app (see handleDelete's
+  // single-item sibling and the per-row Delete button's own source check)
+  // -- silently skipped here rather than erroring, with the skip count
+  // surfaced in the confirm prompt so it's never a silent no-op.
+  const runBulkDelete = async (candidateDocs) => {
+    const toDelete = candidateDocs.filter(d => d.source !== 'discovered')
+    const skipped = candidateDocs.length - toDelete.length
+    if (toDelete.length === 0) {
+      notify('delete', "Nothing to delete — the selected documents are all auto-discovered and can't be deleted.")
+      return
+    }
+    const label = toDelete.length === 1 ? `"${toDelete[0].filename}"` : `${toDelete.length} documents`
+    const suffix = skipped > 0 ? ` (${skipped} auto-discovered document${skipped === 1 ? '' : 's'} in your selection will be skipped)` : ''
+    const ok = await confirm(
+      `Delete ${label}? This removes ${toDelete.length === 1 ? 'it' : 'them'} from the knowledge index too.${suffix}`,
+      { title: 'Delete Documents', confirmLabel: 'Delete', danger: true },
+    )
+    if (!ok) return
+
+    setBulkBusy('delete')
+    setBulkProgress({ done: 0, total: toDelete.length })
+    let failed = 0
+    const deletedIds = new Set()
+    for (const d of toDelete) {
+      try {
+        await WailsApp.DeleteProfileDocument(d.id)
+        deletedIds.add(d.id)
+      } catch (e) {
+        failed++
+        notify('delete', `Failed to delete "${d.filename}": ${e}`)
+      }
+      setBulkProgress(p => ({ ...p, done: p.done + 1 }))
+    }
+    load()
+    setSelectedIds(s => { const n = new Set(s); deletedIds.forEach(id => n.delete(id)); return n })
+    if (failed === 0) {
+      notify('delete', `Deleted ${toDelete.length} document${toDelete.length === 1 ? '' : 's'}.`)
+    }
+    setBulkBusy(null)
+  }
+
   const handleDelete = async (id, filename) => {
     if (!(await confirm(`Delete "${filename}"? This removes it from the knowledge index too.`, { title: 'Delete Document', confirmLabel: 'Delete', danger: true }))) return
     try {
@@ -105,12 +239,17 @@ export default function Documents() {
   // extension; otherwise tell the user and hand the file to the OS's own
   // default application, the same as double-clicking it in a file manager.
   const handleOpenDocument = (d) => {
-    if (fileViewerKind(d.filename)) {
+    if (fileViewerKind(d.filename) && d.size_bytes <= maxInlinePreviewBytes) {
       setViewingDoc(d)
       return
     }
-    const ext = d.filename.split('.').pop()?.toUpperCase() || 'this'
-    notify('open', `No built-in viewer for ${ext} files — opening "${d.filename}" with your system's default application.`)
+    const reason = d.size_bytes > maxInlinePreviewBytes
+      ? `"${d.filename}" is too large to preview in-app`
+      : (() => {
+          const ext = d.filename.split('.').pop()?.toUpperCase() || 'this'
+          return `No built-in viewer for ${ext} files`
+        })()
+    notify('open', `${reason} — opening "${d.filename}" with your system's default application.`)
     WailsApp.OpenPathWithOS(d.path).catch(e => notify('open', `Could not open "${d.filename}": ${e}`))
   }
 
@@ -133,6 +272,28 @@ export default function Documents() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <h2 style={{ margin: 0, fontSize: 16, color: 'var(--text-primary)' }}>Documents</h2>
         <div style={{ flex: 1 }} />
+        {selectedIds.size > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{selectedIds.size} selected</span>
+            <button
+              style={btnStyle}
+              disabled={bulkBusy !== null}
+              onClick={() => runBulkIndex(docs.filter(d => selectedIds.has(d.id)))}
+            >
+              <PlayCircle size={13} /> {bulkBusy === 'index' ? `Indexing… (${bulkProgress.done}/${bulkProgress.total})` : `Index selected (${selectedIds.size})`}
+            </button>
+            <button
+              style={{ ...btnStyle, color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)' }}
+              disabled={bulkBusy !== null}
+              onClick={() => runBulkDelete(docs.filter(d => selectedIds.has(d.id)))}
+            >
+              <Trash2 size={13} /> {bulkBusy === 'delete' ? `Deleting… (${bulkProgress.done}/${bulkProgress.total})` : `Delete selected (${selectedIds.size})`}
+            </button>
+          </div>
+        )}
+        <button style={btnStyle} disabled={bulkBusy !== null} onClick={() => runBulkIndex(docs)}>
+          <PlayCircle size={13} /> {bulkBusy === 'index' ? `Indexing… (${bulkProgress.done}/${bulkProgress.total})` : 'Index all'}
+        </button>
         <button style={btnStyle} onClick={handleUpload}><Upload size={13} /> Upload</button>
       </div>
 
@@ -178,6 +339,15 @@ export default function Documents() {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
           <thead>
             <tr style={{ textAlign: 'left', color: 'var(--text-muted)', fontSize: 10, textTransform: 'uppercase' }}>
+              <th style={{ padding: '6px 8px' }}>
+                <input
+                  type="checkbox"
+                  aria-label="Select all documents"
+                  style={{ accentColor: '#00b4d8', width: 14, height: 14 }}
+                  checked={allVisibleSelected}
+                  onChange={toggleSelectAll}
+                />
+              </th>
               <th style={{ padding: '6px 8px' }}>Filename</th>
               <th style={{ padding: '6px 8px' }}>Source</th>
               <th style={{ padding: '6px 8px' }}>Size</th>
@@ -194,36 +364,81 @@ export default function Documents() {
                 style={{ borderTop: '1px solid rgba(255,255,255,0.05)', cursor: 'pointer' }}
                 title="Double-click to view"
               >
+                <td style={{ padding: '8px' }}>
+                  <input
+                    type="checkbox"
+                    aria-label={`Select ${d.filename}`}
+                    style={{ accentColor: '#00b4d8', width: 14, height: 14 }}
+                    checked={selectedIds.has(d.id)}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={() => toggleSelected(d.id)}
+                  />
+                </td>
                 <td style={{ padding: '8px' }}>{d.filename}</td>
                 <td style={{ padding: '8px', color: 'var(--text-muted)' }}>{d.source}</td>
                 <td style={{ padding: '8px', color: 'var(--text-muted)' }}>{formatBytes(d.size_bytes)}</td>
                 <td style={{ padding: '8px', color: 'var(--text-muted)' }}>{d.created_at}</td>
                 <td style={{ padding: '8px' }}>
-                  {d.indexed ? (
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#10b981', fontSize: 10 }}>
-                      <CheckCircle2 size={12} /> Indexed
-                    </span>
-                  ) : (
-                    <span
-                      title={d.index_error || 'Not yet indexed'}
-                      style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#64748b', fontSize: 10, cursor: d.index_error ? 'help' : 'default' }}
-                    >
-                      <XCircle size={12} /> {isMonomindMissing(d.index_error) ? 'Monomind not installed' : 'Not indexed'}
-                    </span>
-                  )}
+                  {(() => {
+                    const state = documentBadgeState(d, notInitialized)
+                    if (state === 'indexed') {
+                      return (
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#10b981', fontSize: 10 }}>
+                          <CheckCircle2 size={12} /> Indexed
+                        </span>
+                      )
+                    }
+                    if (state === 'stale') {
+                      return (
+                        <span
+                          title={d.index_error || 'Content changed on disk since last index'}
+                          style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#f59e0b', fontSize: 10, cursor: 'help' }}
+                        >
+                          <AlertTriangle size={12} /> Stale
+                        </span>
+                      )
+                    }
+                    if (state === 'monomind_not_set_up') {
+                      return (
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#f59e0b', fontSize: 10 }}>
+                          <Sparkles size={12} /> Monomind not set up
+                        </span>
+                      )
+                    }
+                    return (
+                      <span
+                        title={d.index_error || 'Not yet indexed'}
+                        style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#64748b', fontSize: 10, cursor: d.index_error ? 'help' : 'default' }}
+                      >
+                        <XCircle size={12} /> {isMonomindMissing(d.index_error) ? 'Monomind not installed' : 'Not indexed'}
+                      </span>
+                    )
+                  })()}
                 </td>
                 <td style={{ padding: '8px', display: 'flex', gap: 6 }}>
                   <button style={{ ...btnStyle, padding: '4px 8px' }} title="View" onClick={(e) => { e.stopPropagation(); handleOpenDocument(d) }}>
                     <Eye size={12} />
                   </button>
-                  <button style={{ ...btnStyle, color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', padding: '4px 8px' }} onClick={(e) => { e.stopPropagation(); handleDelete(d.id, d.filename) }}>
-                    <Trash2 size={12} />
-                  </button>
+                  {(d.stale || !d.indexed) && (
+                    <button
+                      style={{ ...btnStyle, padding: '4px 8px' }}
+                      title={d.stale ? 'Re-index' : 'Index'}
+                      disabled={indexingIds.has(d.id) || bulkBusy !== null}
+                      onClick={(e) => { e.stopPropagation(); handleIndex(d.id) }}
+                    >
+                      {indexingIds.has(d.id) ? <div className="spinner" style={{ width: 12, height: 12 }} /> : <PlayCircle size={12} />}
+                    </button>
+                  )}
+                  {d.source !== 'discovered' && (
+                    <button style={{ ...btnStyle, color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', padding: '4px 8px' }} onClick={(e) => { e.stopPropagation(); handleDelete(d.id, d.filename) }}>
+                      <Trash2 size={12} />
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}
             {docs.length === 0 && (
-              <tr><td colSpan={6} style={{ padding: 16, textAlign: 'center', color: 'var(--text-muted)' }}>No documents uploaded.</td></tr>
+              <tr><td colSpan={7} style={{ padding: 16, textAlign: 'center', color: 'var(--text-muted)' }}>No documents uploaded.</td></tr>
             )}
           </tbody>
         </table>

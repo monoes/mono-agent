@@ -254,6 +254,15 @@ export function onMonomindInitEvent(callback) {
   return subscribeEvent('monomind:initProgress', callback)
 }
 
+// onDocumentsChanged fires when the background document watcher discovers
+// or updates files under the active profile's folder. Payload:
+// {profileID, added}. Triggers a reload; the event carries no document
+// data itself (mirrors onOrgDesignUpdated's payload-is-diagnostic-only
+// discipline) -- callers always just re-fetch via listProfileDocuments.
+export function onDocumentsChanged(callback) {
+  return subscribeEvent('documents:changed', callback)
+}
+
 export const PLATFORMS = ['INSTAGRAM', 'LINKEDIN', 'X', 'TIKTOK']
 export const STATES = ['PENDING', 'RUNNING', 'PAUSED', 'COMPLETED', 'FAILED', 'CANCELLED']
 

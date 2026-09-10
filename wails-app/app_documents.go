@@ -18,6 +18,7 @@ type ProfileDocument struct {
 	CreatedAt     string `json:"created_at"`
 	Indexed       bool   `json:"indexed"`
 	IndexError    string `json:"index_error"`
+	Stale         bool   `json:"stale"`
 }
 
 // KnowledgeSearchResult mirrors internal/monomind.KnowledgeResult (also
@@ -35,6 +36,7 @@ func (a *App) ListProfileDocuments() ([]ProfileDocument, error) {
 		ID, Path, Filename, Source, ApplicationID, CreatedAt, IndexError string
 		SizeBytes                                                        int64
 		Indexed                                                          bool
+		Stale                                                            bool
 	}
 	if err := a.runMonoCLI("", &raw, "profile", "documents", "list"); err != nil {
 		return nil, err
@@ -44,7 +46,7 @@ func (a *App) ListProfileDocuments() ([]ProfileDocument, error) {
 		out = append(out, ProfileDocument{
 			ID: d.ID, Filename: d.Filename, Path: d.Path, SizeBytes: d.SizeBytes,
 			Source: d.Source, ApplicationID: d.ApplicationID, CreatedAt: d.CreatedAt,
-			Indexed: d.Indexed, IndexError: d.IndexError,
+			Indexed: d.Indexed, IndexError: d.IndexError, Stale: d.Stale,
 		})
 	}
 	return out, nil
@@ -77,6 +79,19 @@ func (a *App) UploadProfileDocument(path, source string) (*UploadResult, error) 
 // DeleteProfileDocument removes a document from the vault.
 func (a *App) DeleteProfileDocument(id string) error {
 	return a.runMonoCLI("", nil, "profile", "documents", "rm", id)
+}
+
+// IndexProfileDocument runs (or re-runs) knowledge_ingest for a single
+// already-tracked document -- the on-demand action for a "Not indexed" or
+// "Stale" row; never triggered automatically by discovery. Reuses
+// UploadResult's shape exactly so the frontend can treat a manual index
+// and an upload's own immediate index attempt identically.
+func (a *App) IndexProfileDocument(id string) (*UploadResult, error) {
+	var result UploadResult
+	if err := a.runMonoCLI("", &result, "profile", "documents", "index", id); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 // SearchProfileKnowledge searches indexed profile documents (the same
