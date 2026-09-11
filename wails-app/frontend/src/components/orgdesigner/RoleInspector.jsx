@@ -143,7 +143,18 @@ export default function RoleInspector({ node, allNodes, onPatch, onSetReportsTo,
     setFileRead(policy.fileRead || [])
     setWebAllow(policy.webAllow || [])
     setAutoApproveTools(policy.autoApproveTools || [])
-  }, [node])
+    // Deliberately keyed on node?.id, NOT the node object itself: OrgDesigner
+    // rebuilds a fresh node object (new reference, same id) for every role on
+    // every load()/applyLivePatch()/refreshFromServer() round trip -- including
+    // the one triggered by saving a *different* field on this *same* role, or
+    // an unrelated live org-update event. Neither is gated by isInteractingRef
+    // (that guard only covers canvas drag, never these text fields). Keying on
+    // the full object would re-run this reset on every such reference churn,
+    // silently discarding whatever the user is mid-typing into another field.
+    // Keying on id means: reset when the SELECTED ROLE changes, never just
+    // because its object reference did.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [node?.id])
 
   if (!node) {
     return (
