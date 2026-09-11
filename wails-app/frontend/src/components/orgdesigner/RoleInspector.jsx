@@ -111,7 +111,23 @@ export default function RoleInspector({ node, allNodes, onPatch, onSetReportsTo,
   const [webAllow, setWebAllow] = useState([])
   const [autoApproveTools, setAutoApproveTools] = useState([])
 
+  // Remount key for the StringListField instances below (responsibilities +
+  // the six tool-policy arrays). Deliberately its OWN state, set inside this
+  // same effect rather than reading node?.id directly at the call sites:
+  // node?.id changes the INSTANT the node prop changes (same render), but
+  // the array state below (responsibilities, allowTools, ...) only catches
+  // up one render later, once this effect actually runs. Keying the remount
+  // on node?.id directly would therefore force the remount one render too
+  // early -- while the array props are still the PREVIOUS role's data --
+  // and by the time the correct data lands, the key is no longer changing,
+  // so it never reaches the (already mounted with stale defaultValue) DOM.
+  // Setting this in the same effect as the array state guarantees both land
+  // in the same batched re-render, so the remount and the correct values
+  // always arrive together.
+  const [syncedId, setSyncedId] = useState(node?.id ?? null)
+
   useEffect(() => {
+    setSyncedId(node?.id ?? null)
     setTitle(node?.title || '')
     setResponsibilities(node?.responsibilities || [])
     setRenaming(false)
@@ -340,6 +356,7 @@ export default function RoleInspector({ node, allNodes, onPatch, onSetReportsTo,
         label="Responsibilities"
         values={responsibilities}
         onChange={commitResponsibilities}
+        resetKey={syncedId}
         placeholder='e.g. "Review pull requests for security issues"'
         addLabel="+ Add responsibility"
       />
@@ -493,12 +510,12 @@ export default function RoleInspector({ node, allNodes, onPatch, onSetReportsTo,
           />
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 10 }}>
-          <StringListField label="Allow tools" values={allowTools} onChange={v => { setAllowTools(v); commitPolicy({ allowTools: v }) }} addLabel="+ Add tool" />
-          <StringListField label="Deny tools" values={denyTools} onChange={v => { setDenyTools(v); commitPolicy({ denyTools: v }) }} addLabel="+ Add tool" />
-          <StringListField label="File write globs" values={fileWrite} onChange={v => { setFileWrite(v); commitPolicy({ fileWrite: v }) }} placeholder="default: **" addLabel="+ Add glob" />
-          <StringListField label="File read globs" values={fileRead} onChange={v => { setFileRead(v); commitPolicy({ fileRead: v }) }} placeholder="default: **" addLabel="+ Add glob" />
-          <StringListField label="Web allow (hosts)" values={webAllow} onChange={v => { setWebAllow(v); commitPolicy({ webAllow: v }) }} placeholder="unset: default web access" addLabel="+ Add host" />
-          <StringListField label="Auto-approve tools" values={autoApproveTools} onChange={v => { setAutoApproveTools(v); commitPolicy({ autoApproveTools: v }) }} placeholder="skips the human-approval pause" addLabel="+ Add tool" />
+          <StringListField label="Allow tools" values={allowTools} onChange={v => { setAllowTools(v); commitPolicy({ allowTools: v }) }} resetKey={syncedId} addLabel="+ Add tool" />
+          <StringListField label="Deny tools" values={denyTools} onChange={v => { setDenyTools(v); commitPolicy({ denyTools: v }) }} resetKey={syncedId} addLabel="+ Add tool" />
+          <StringListField label="File write globs" values={fileWrite} onChange={v => { setFileWrite(v); commitPolicy({ fileWrite: v }) }} resetKey={syncedId} placeholder="default: **" addLabel="+ Add glob" />
+          <StringListField label="File read globs" values={fileRead} onChange={v => { setFileRead(v); commitPolicy({ fileRead: v }) }} resetKey={syncedId} placeholder="default: **" addLabel="+ Add glob" />
+          <StringListField label="Web allow (hosts)" values={webAllow} onChange={v => { setWebAllow(v); commitPolicy({ webAllow: v }) }} resetKey={syncedId} placeholder="unset: default web access" addLabel="+ Add host" />
+          <StringListField label="Auto-approve tools" values={autoApproveTools} onChange={v => { setAutoApproveTools(v); commitPolicy({ autoApproveTools: v }) }} resetKey={syncedId} placeholder="skips the human-approval pause" addLabel="+ Add tool" />
         </div>
       </section>
 

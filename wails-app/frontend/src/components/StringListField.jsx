@@ -5,7 +5,18 @@
 // string-array field — currently: responsibilities, and the Org Designer's
 // tool-policy arrays (allowTools/denyTools/fileWrite/fileRead/webAllow/
 // autoApproveTools).
-export default function StringListField({ label, values, onChange, placeholder, addLabel = '+ Add' }) {
+//
+// `resetKey` should be the identity of whatever this list logically belongs
+// to (e.g. the selected role's id) — NOT derived from `values` itself. Each
+// row is an uncontrolled <input defaultValue>, and React only applies
+// `defaultValue` when a row's DOM node is first created; reusing the same
+// node across a `values` prop change (which happens whenever the list
+// length at that index doesn't change) leaves it showing stale text even
+// though `values` itself updated correctly. Folding `resetKey` into each
+// row's key forces every row to remount — and reapply its defaultValue —
+// whenever the caller's identity changes, while edits within the same
+// caller (add/remove/blur-commit) keep the same key and edit in place.
+export default function StringListField({ label, values, onChange, placeholder, addLabel = '+ Add', resetKey }) {
   const items = values || []
 
   const commit = (next) => onChange(next)
@@ -15,7 +26,7 @@ export default function StringListField({ label, values, onChange, placeholder, 
       {label && <div className="form-label">{label}</div>}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
         {items.map((v, i) => (
-          <div key={i} style={{ display: 'flex', gap: 4 }}>
+          <div key={resetKey != null ? `${resetKey}:${i}` : i} style={{ display: 'flex', gap: 4 }}>
             <input
               className="form-input"
               defaultValue={v}
