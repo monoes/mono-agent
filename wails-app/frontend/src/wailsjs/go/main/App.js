@@ -90,8 +90,8 @@ export function CreateOrgDesign(arg1) {
   return window['go']['main']['App']['CreateOrgDesign'](arg1);
 }
 
-export function CreateProfile(arg1, arg2) {
-  return window['go']['main']['App']['CreateProfile'](arg1, arg2);
+export function CreateProfile(arg1, arg2, arg3) {
+  return window['go']['main']['App']['CreateProfile'](arg1, arg2, arg3);
 }
 
 export function CreateResource(arg1, arg2, arg3, arg4) {
@@ -436,6 +436,10 @@ export function ListConnections(arg1) {
 
 export function ListCredentialsForNode(arg1) {
   return window['go']['main']['App']['ListCredentialsForNode'](arg1);
+}
+
+export function ListMonomindProjects() {
+  return window['go']['main']['App']['ListMonomindProjects']();
 }
 
 export function ListOrgDesigns() {

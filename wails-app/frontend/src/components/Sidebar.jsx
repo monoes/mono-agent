@@ -10,10 +10,11 @@ import { GetVersion } from '../wailsjs/go/main/App'
 import * as WailsApp from '../wailsjs/go/main/App'
 import { notify } from '../services/api.js'
 import { confirm } from './ConfirmDialog.jsx'
+import NewProfileModal from './NewProfileModal.jsx'
+import { iconUrl } from './orgdesigner/roleIcons.js'
 
 const GetHILItems          = WailsApp.GetHILItems          ?? (async () => [])
 const GetProfiles          = WailsApp.GetProfiles          ?? (async () => [])
-const CreateProfile        = WailsApp.CreateProfile        ?? (async () => {})
 const SwitchProfile        = WailsApp.SwitchProfile        ?? (async () => {})
 const ChooseProfileFolder  = WailsApp.ChooseProfileFolder  ?? (async () => '')
 const MoveProfileFolder    = WailsApp.MoveProfileFolder    ?? (async () => {})
@@ -58,9 +59,7 @@ export default function Sidebar({ activePage, onNavigate, stats, dbConnected }) 
   const [profiles, setProfiles] = useState([])
   const [activeProfileID, setActiveProfileID] = useState('default')
   const [profileOpen, setProfileOpen] = useState(false)
-  const [newProfileName, setNewProfileName] = useState('')
-  const [newProfileFolder, setNewProfileFolder] = useState('')
-  const [creatingProfile, setCreatingProfile] = useState(false)
+  const [showNewProfileModal, setShowNewProfileModal] = useState(false)
   const [profileError, setProfileError] = useState('')
   const [movingProfileID, setMovingProfileID] = useState(null)
   const [dropPos, setDropPos] = useState({ top: 0, left: 0, width: 0 })
@@ -90,9 +89,6 @@ export default function Sidebar({ activePage, onNavigate, stats, dbConnected }) 
         profileBtnRef.current && !profileBtnRef.current.contains(e.target)
       ) {
         setProfileOpen(false)
-        setCreatingProfile(false)
-        setNewProfileName('')
-        setNewProfileFolder('')
       }
     }
     document.addEventListener('mousedown', handler)
@@ -109,9 +105,6 @@ export default function Sidebar({ activePage, onNavigate, stats, dbConnected }) 
   const toggleProfileOpen = () => {
     if (!profileOpen) updateDropPos()
     setProfileOpen(v => !v)
-    setCreatingProfile(false)
-    setNewProfileName('')
-    setNewProfileFolder('')
     setProfileError('')
   }
 
@@ -135,29 +128,9 @@ export default function Sidebar({ activePage, onNavigate, stats, dbConnected }) 
     }
   }
 
-  const handleCreateProfile = async () => {
-    const name = newProfileName.trim()
-    if (!name) return
-    setProfileError('')
-    try {
-      const p = await CreateProfile(name, newProfileFolder || '')
-      setNewProfileName('')
-      setNewProfileFolder('')
-      setCreatingProfile(false)
-      await loadProfiles()
-      await handleSwitchProfile(p.id)
-    } catch (e) {
-      setProfileError(e?.message || 'Failed to create profile')
-    }
-  }
-
-  const handleChooseFolderForCreate = async () => {
-    try {
-      const path = await ChooseProfileFolder()
-      if (path) setNewProfileFolder(path)
-    } catch (e) {
-      setProfileError(e?.message || 'Failed to choose folder')
-    }
+  const handleProfileCreated = async (profile) => {
+    await loadProfiles()
+    if (profile?.id) await handleSwitchProfile(profile.id)
   }
 
   const handleMoveProfileFolder = async (id) => {
@@ -279,6 +252,13 @@ export default function Sidebar({ activePage, onNavigate, stats, dbConnected }) 
                 onMouseLeave={e => { e.currentTarget.style.background = p.id === activeProfileID ? 'rgba(0,180,216,0.07)' : 'transparent' }}
               >
                 {p.id === activeProfileID ? <Check size={11} color="#00b4d8" /> : <span style={{ width: 11 }} />}
+                {p.icon && (
+                  <img
+                    src={iconUrl(p.icon)}
+                    alt=""
+                    style={{ width: 18, height: 18, borderRadius: '50%', flexShrink: 0 }}
+                  />
+                )}
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
                   {p.root_dir && (
@@ -329,73 +309,29 @@ export default function Sidebar({ activePage, onNavigate, stats, dbConnected }) 
               </div>
             )}
             <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', padding: '8px' }}>
-              {creatingProfile ? (
-                <div>
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    <input
-                      autoFocus
-                      value={newProfileName}
-                      onChange={e => setNewProfileName(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter') handleCreateProfile(); if (e.key === 'Escape') { setCreatingProfile(false); setNewProfileName(''); setNewProfileFolder('') } }}
-                      placeholder={t('sidebar.profileNamePlaceholder')}
-                      style={{
-                        flex: 1, padding: '5px 8px', background: 'rgba(255,255,255,0.06)',
-                        border: '1px solid rgba(0,180,216,0.3)', borderRadius: 4,
-                        color: 'var(--text-primary)', fontSize: 12, outline: 'none',
-                      }}
-                    />
-                    <button
-                      onClick={handleChooseFolderForCreate}
-                      title={t('sidebar.chooseFolder')}
-                      style={{
-                        flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        width: 26, padding: '5px 0', background: 'rgba(255,255,255,0.06)',
-                        border: '1px solid rgba(255,255,255,0.12)', borderRadius: 4,
-                        color: 'var(--text-secondary)', cursor: 'pointer',
-                      }}
-                    ><FolderOpen size={12} /></button>
-                    <button
-                      onClick={handleCreateProfile}
-                      style={{
-                        padding: '5px 10px', background: 'rgba(0,180,216,0.2)',
-                        border: '1px solid rgba(0,180,216,0.4)', borderRadius: 4,
-                        color: '#00b4d8', fontSize: 12, cursor: 'pointer',
-                      }}
-                    >Create</button>
-                  </div>
-                  {newProfileFolder && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4, padding: '0 2px' }}>
-                      <span style={{
-                        flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap', fontSize: 10, color: 'var(--text-muted)',
-                      }}>→ {newProfileFolder}</span>
-                      <span
-                        onClick={() => setNewProfileFolder('')}
-                        title={t('sidebar.useDefaultLocation')}
-                        style={{ flexShrink: 0, fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer' }}
-                      >×</span>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <button
-                  onClick={() => setCreatingProfile(true)}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 6, width: '100%',
-                    padding: '6px 4px', background: 'transparent', border: 'none',
-                    color: 'var(--text-muted)', fontSize: 12, cursor: 'pointer',
-                  }}
-                  onMouseEnter={e => { e.currentTarget.style.color = 'var(--text-secondary)' }}
-                  onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-muted)' }}
-                >
-                  <Plus size={11} /> New profile
-                </button>
-              )}
+              <button
+                onClick={() => { setProfileOpen(false); setShowNewProfileModal(true) }}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6, width: '100%',
+                  padding: '6px 4px', background: 'transparent', border: 'none',
+                  color: 'var(--text-muted)', fontSize: 12, cursor: 'pointer',
+                }}
+                onMouseEnter={e => { e.currentTarget.style.color = 'var(--text-secondary)' }}
+                onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-muted)' }}
+              >
+                <Plus size={11} /> New profile
+              </button>
             </div>
           </div>,
           document.body
         )}
       </div>
+
+      <NewProfileModal
+        open={showNewProfileModal}
+        onClose={() => setShowNewProfileModal(false)}
+        onCreated={handleProfileCreated}
+      />
 
       <nav className="sidebar-nav" aria-label="Main navigation">
         {sections.map(section => (

@@ -49,7 +49,7 @@ export function ConnectPlatformOAuth(arg1:string):Promise<string>;
 
 export function CreateOrgDesign(arg1:string):Promise<string>;
 
-export function CreateProfile(arg1:string,arg2:string):Promise<main.ProfileInfo>;
+export function CreateProfile(arg1:string,arg2:string,arg3:string):Promise<main.ProfileInfo>;
 
 export function CreateResource(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.ResourceItemResult>;
 
@@ -222,6 +222,8 @@ export function ListChatSessions(arg1:string):Promise<string>;
 export function ListConnections(arg1:string):Promise<Array<connections.SafeConnection>>;
 
 export function ListCredentialsForNode(arg1:string):Promise<Array<main.CredentialOption>>;
+
+export function ListMonomindProjects():Promise<Array<main.MonomindProjectInfo>>;
 
 export function ListOrgDesigns():Promise<string>;
 

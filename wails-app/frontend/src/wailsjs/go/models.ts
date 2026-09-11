@@ -391,6 +391,20 @@ export namespace main {
 	        this.message = source["message"];
 	    }
 	}
+	export class MonomindProjectInfo {
+	    path: string;
+	    name: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new MonomindProjectInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.name = source["name"];
+	    }
+	}
 	export class NodeRunOutput {
 	    handle: string;
 	    items: any[];
@@ -681,6 +695,7 @@ export namespace main {
 	    is_active: boolean;
 	    created_at: string;
 	    root_dir: string;
+	    icon: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ProfileInfo(source);
@@ -693,6 +708,7 @@ export namespace main {
 	        this.is_active = source["is_active"];
 	        this.created_at = source["created_at"];
 	        this.root_dir = source["root_dir"];
+	        this.icon = source["icon"];
 	    }
 	}
 	export class ResourceItem {

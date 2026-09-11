@@ -37,6 +37,9 @@ func (d *Database) ReconcileSchema(ctx context.Context) error {
 	if err := d.reconcileProfilesRootDir(ctx); err != nil {
 		return err
 	}
+	if err := d.reconcileProfilesIcon(ctx); err != nil {
+		return err
+	}
 	return d.reconcileExecutionProfiles(ctx)
 }
 
@@ -173,6 +176,62 @@ func (d *Database) reconcileProfilesRootDir(ctx context.Context) error {
 			return fmt.Errorf("storage: reconcile: adding profiles.root_dir: %w", err)
 		}
 		log.Printf("storage: reconcile: added profiles.root_dir column")
+	}
+
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return fmt.Errorf("storage: reconcile: commit: %w", err)
+	}
+	committed = true
+	return nil
+}
+
+// reconcileProfilesIcon adds profiles.icon (the 039 migration's column)
+// when missing — same ALTER-guard shape as reconcileProfilesRootDir, since
+// SQLite still can't express "ADD COLUMN IF NOT EXISTS". No-op when the
+// column is already there. Empty string means "no icon chosen", matching
+// how an empty root_dir already means "use the default location".
+func (d *Database) reconcileProfilesIcon(ctx context.Context) error {
+	exists, err := d.tableExists(ctx, "profiles")
+	if err != nil {
+		return fmt.Errorf("storage: reconcile: checking profiles: %w", err)
+	}
+	if !exists {
+		return nil
+	}
+	hasIcon, err := d.columnExists(ctx, "profiles", "icon")
+	if err != nil {
+		return fmt.Errorf("storage: reconcile: inspecting profiles: %w", err)
+	}
+	if hasIcon {
+		return nil
+	}
+
+	conn, err := d.DB.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("storage: reconcile: get conn: %w", err)
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return fmt.Errorf("storage: reconcile: begin tx: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
+		}
+	}()
+
+	// Re-check under the lock, mirroring reconcileProfilesRootDir.
+	hasIcon, err = columnExistsOn(ctx, conn, "profiles", "icon")
+	if err != nil {
+		return fmt.Errorf("storage: reconcile: re-inspecting profiles: %w", err)
+	}
+	if !hasIcon {
+		if _, err := conn.ExecContext(ctx, `ALTER TABLE profiles ADD COLUMN icon TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("storage: reconcile: adding profiles.icon: %w", err)
+		}
+		log.Printf("storage: reconcile: added profiles.icon column")
 	}
 
 	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {

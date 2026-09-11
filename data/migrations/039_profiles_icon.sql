@@ -1,0 +1,13 @@
+-- 039_profiles_icon.sql
+--
+-- Lets a profile carry an icon (an id into the shared agent-avatars.json
+-- manifest, the same one the Org Designer's role icons already use), picked
+-- at creation time. Empty (the default) means "no icon chosen" — the
+-- frontend falls back to a generic placeholder, exactly like an icon-less
+-- org role already does today.
+--
+-- ALTER TABLE ... ADD COLUMN cannot be guarded with IF NOT EXISTS in SQL.
+-- The column addition therefore lives in storage.ReconcileSchema (see
+-- reconcileProfilesIcon), which PRAGMA-checks the actual table shape on
+-- every database open — same shape as 028_profiles_root_dir.sql. This file
+-- reserves the version slot and records the intent.
