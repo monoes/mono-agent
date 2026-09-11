@@ -210,14 +210,18 @@ func (a *App) IsReady() bool {
 
 // migrateProfilesToPerProfileLayout brings every existing profile up to the
 // per-profile architecture: a dedicated folder, its files moved out of the
-// old shared vault directory, its secrets re-encrypted under its own key
-// (instead of the one every profile used to share), and an empty monomind
-// project bootstrapped for its knowledge graph. Runs once per app startup,
-// for every profile — each underlying step is already cheap and idempotent
-// once a profile is fully migrated (a handful of COUNT-first queries), the
-// same "run it every startup, no-op once done" pattern the migrations right
-// above this call already use (MigrateConnectionsToVault et al.). A failure
-// on one profile is logged and does not block the others or app startup.
+// old shared vault directory and then out of that per-profile folder's own
+// legacy vault/ into .monoagent/vault/ (so everything monoagent owns is a
+// single unit, distinct from .monomind/ and the user-visible taxonomy
+// folders), its secrets re-encrypted under its own key (instead of the one
+// every profile used to share), and an empty monomind project bootstrapped
+// for its knowledge graph. Runs once per app startup, for every profile —
+// each underlying step is already cheap and idempotent once a profile is
+// fully migrated (a handful of COUNT-first queries or a no-op MoveFiles),
+// the same "run it every startup, no-op once done" pattern the migrations
+// right above this call already use (MigrateConnectionsToVault et al.). A
+// failure on one profile is logged and does not block the others or app
+// startup.
 func (a *App) migrateProfilesToPerProfileLayout(ctx context.Context, db *sql.DB) {
 	rows, err := db.QueryContext(ctx, `SELECT id FROM profiles`)
 	if err != nil {
@@ -245,6 +249,15 @@ func (a *App) migrateProfilesToPerProfileLayout(ctx context.Context, db *sql.DB)
 			}
 			if moved > 0 {
 				a.emitLog("SYSTEM", "INFO", fmt.Sprintf("profile %s: moved %d vault file(s) into its own folder", profileID, moved))
+			}
+		}
+
+		if moved, errs := vault.MigrateVaultDirIntoMonoagent(ctx, db, profileID); moved > 0 || len(errs) > 0 {
+			for _, e := range errs {
+				a.emitLog("SYSTEM", "WARN", fmt.Sprintf("profile %s: .monoagent vault migration: %v", profileID, e))
+			}
+			if moved > 0 {
+				a.emitLog("SYSTEM", "INFO", fmt.Sprintf("profile %s: moved %d vault file(s) into its own .monoagent folder", profileID, moved))
 			}
 		}
 
@@ -931,13 +944,17 @@ type ProfileInfo struct {
 	// always populated (even for profiles using the default location), so
 	// the frontend never needs to know the fallback rule itself.
 	RootDir string `json:"root_dir"`
+	// Icon is an id into the shared agent-avatars.json manifest (the same
+	// one Org Designer role icons use), or "" if none was chosen — profiles
+	// created before this field existed are always "".
+	Icon string `json:"icon"`
 }
 
 func (a *App) GetProfiles() ([]ProfileInfo, error) {
 	if a.db == nil {
 		return nil, fmt.Errorf("database not available")
 	}
-	rows, err := a.db.Query(`SELECT id, name, created_at FROM profiles ORDER BY created_at ASC`)
+	rows, err := a.db.Query(`SELECT id, name, created_at, icon FROM profiles ORDER BY created_at ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -945,7 +962,7 @@ func (a *App) GetProfiles() ([]ProfileInfo, error) {
 	var profiles []ProfileInfo
 	for rows.Next() {
 		var p ProfileInfo
-		if rows.Scan(&p.ID, &p.Name, &p.CreatedAt) == nil {
+		if rows.Scan(&p.ID, &p.Name, &p.CreatedAt, &p.Icon) == nil {
 			p.IsActive = p.ID == a.getActiveProfileID()
 			p.RootDir = profiledir.Root(a.db, p.ID)
 			profiles = append(profiles, p)
@@ -958,13 +975,16 @@ func (a *App) GetProfiles() ([]ProfileInfo, error) {
 }
 
 // CreateProfile creates a new profile. rootDir, if non-empty, is the folder
-// the user picked (via ChooseProfileFolder) for this profile's data instead
-// of the default ~/.monoagent/profiles/<id>/ — it must be an absolute path;
-// see validateFolderChoice for what else is required of it (an existing
-// folder need not be empty — e.g. an existing coding project you already run
+// the user picked (via ChooseProfileFolder, or a suggested monomind project
+// via ListMonomindProjects) for this profile's data instead of the default
+// ~/.monoagent/profiles/<id>/ — it must be an absolute path; see
+// validateFolderChoice for what else is required of it (an existing folder
+// need not be empty — e.g. an existing coding project you already run
 // monomind/Claude Code in is a perfectly good choice — but it must be safe
-// to layer this profile's vault/ and .monomind/ subfolders onto).
-func (a *App) CreateProfile(name, rootDir string) (*ProfileInfo, error) {
+// to layer this profile's .monoagent/ and .monomind/ subfolders onto). icon,
+// if non-empty, is an id into the shared agent-avatars.json manifest;
+// leaving it empty is fine, the frontend falls back to a placeholder.
+func (a *App) CreateProfile(name, rootDir, icon string) (*ProfileInfo, error) {
 	if a.db == nil {
 		return nil, fmt.Errorf("database not available")
 	}
@@ -978,9 +998,10 @@ func (a *App) CreateProfile(name, rootDir string) (*ProfileInfo, error) {
 			return nil, err
 		}
 	}
+	icon = strings.TrimSpace(icon)
 	id := newUUID()
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	_, err := a.db.Exec(`INSERT INTO profiles (id, name, created_at, root_dir) VALUES (?, ?, ?, ?)`, id, name, now, rootDir)
+	_, err := a.db.Exec(`INSERT INTO profiles (id, name, created_at, root_dir, icon) VALUES (?, ?, ?, ?, ?)`, id, name, now, rootDir, icon)
 	if err != nil {
 		return nil, fmt.Errorf("create profile: %w", err)
 	}
@@ -992,19 +1013,19 @@ func (a *App) CreateProfile(name, rootDir string) (*ProfileInfo, error) {
 	} else {
 		a.bootstrapProfileMonograph(id)
 	}
-	return &ProfileInfo{ID: id, Name: name, IsActive: false, CreatedAt: now, RootDir: profiledir.Root(a.db, id)}, nil
+	return &ProfileInfo{ID: id, Name: name, IsActive: false, CreatedAt: now, RootDir: profiledir.Root(a.db, id), Icon: icon}, nil
 }
 
 // validateFolderChoice rejects a folder choice that isn't safe to hand a
 // profile's data to. The folder need not be empty or new — pointing a
 // profile at an existing, non-empty folder (e.g. a coding project that
 // already has its own .monomind/ from a prior `monomind init`) is fine:
-// EnsureLayout only ever adds a vault/ and a .monomind/ subfolder inside it
-// and never touches anything else there, so nothing pre-existing is at risk
-// except those two specific names. What's actually unsafe, and rejected
-// here, is a `vault` or `.monomind` entry that already exists as a plain
-// file rather than a directory — os.MkdirAll would fail confusingly on
-// that, so it's caught up front with a clear message instead.
+// EnsureLayout only ever adds a .monoagent/ and a .monomind/ subfolder
+// inside it and never touches anything else there, so nothing pre-existing
+// is at risk except those two specific names. What's actually unsafe, and
+// rejected here, is a `.monoagent` or `.monomind` entry that already exists
+// as a plain file rather than a directory — os.MkdirAll would fail
+// confusingly on that, so it's caught up front with a clear message instead.
 func validateFolderChoice(dir string) error {
 	if !filepath.IsAbs(dir) {
 		return fmt.Errorf("folder path must be absolute: %q", dir)
@@ -1019,7 +1040,7 @@ func validateFolderChoice(dir string) error {
 	if !info.IsDir() {
 		return fmt.Errorf("%q is not a folder", dir)
 	}
-	for _, name := range []string{"vault", ".monomind"} {
+	for _, name := range []string{".monoagent", ".monomind"} {
 		entryInfo, err := os.Stat(filepath.Join(dir, name))
 		if err != nil {
 			continue // doesn't exist — fine, EnsureLayout creates it
@@ -1145,7 +1166,7 @@ func (a *App) MoveProfileFolder(profileID, newRootDir string) error {
 
 	oldVaultDir := profiledir.VaultDir(a.db, profileID)
 	oldMonomindDir := profiledir.MonomindDir(a.db, profileID)
-	newVaultDir := filepath.Join(newRootDir, "vault")
+	newVaultDir := filepath.Join(newRootDir, ".monoagent", "vault")
 	newMonomindDir := filepath.Join(newRootDir, ".monomind")
 
 	if err := os.MkdirAll(newVaultDir, 0700); err != nil {

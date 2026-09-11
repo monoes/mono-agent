@@ -143,6 +143,7 @@ edge_passwords.csv
 .monomind/logs/
 .monomind/orgs/
 .monomind/state/
+.monomind/graph/.rebuild-lock
 
 # Personal AI-assistant tool configuration (per-machine setup, not shared
 # repo content) — same treatment as .claude/ above.

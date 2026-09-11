@@ -23,10 +23,18 @@
       "SYSTEM": "SYSTEM"
     },
     "showInFinder": "Show in Finder",
-    "changeProfileFolder": "Change profile folder location",
-    "profileNamePlaceholder": "Profile name…",
-    "chooseFolder": "Choose folder",
-    "useDefaultLocation": "Use default location"
+    "changeProfileFolder": "Change profile folder location"
+  },
+  "newProfileModal": {
+    "title": "New profile",
+    "chooseIcon": "Choose an icon",
+    "namePlaceholder": "Profile name",
+    "suggestedProjects": "Suggested from monomind projects",
+    "chooseDifferentFolder": "Choose a different folder…",
+    "useDefaultLocation": "Use the default location instead",
+    "cancel": "Cancel",
+    "create": "Create",
+    "creating": "Creating…"
   },
   "dashboard": {
     "title": "Dashboard",

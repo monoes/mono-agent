@@ -23,10 +23,18 @@
       "SYSTEM": "SISTEMA"
     },
     "showInFinder": "Mostrar en Finder",
-    "changeProfileFolder": "Cambiar la ubicación de la carpeta del perfil",
-    "profileNamePlaceholder": "Nombre del perfil…",
-    "chooseFolder": "Elegir carpeta",
-    "useDefaultLocation": "Usar ubicación predeterminada"
+    "changeProfileFolder": "Cambiar la ubicación de la carpeta del perfil"
+  },
+  "newProfileModal": {
+    "title": "Nuevo perfil",
+    "chooseIcon": "Elegir un ícono",
+    "namePlaceholder": "Nombre del perfil",
+    "suggestedProjects": "Sugerencias de proyectos monomind",
+    "chooseDifferentFolder": "Elegir otra carpeta…",
+    "useDefaultLocation": "Usar la ubicación predeterminada",
+    "cancel": "Cancelar",
+    "create": "Crear",
+    "creating": "Creando…"
   },
   "dashboard": {
     "title": "Panel",

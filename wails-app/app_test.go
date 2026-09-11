@@ -41,7 +41,7 @@ func TestRevealFolderCommand(t *testing.T) {
 // letting CreateProfile/MoveProfileFolder point a profile at an existing,
 // non-empty folder (e.g. a coding project already initialized with
 // `monomind init`) instead of requiring an empty one — EnsureLayout only
-// ever adds vault/ and .monomind/ alongside whatever is already there.
+// ever adds .monoagent/ and .monomind/ alongside whatever is already there.
 func TestValidateFolderChoiceAllowsNonEmptyFolders(t *testing.T) {
 	t.Run("relative path rejected", func(t *testing.T) {
 		if err := validateFolderChoice("relative/path"); err == nil {
@@ -100,13 +100,13 @@ func TestValidateFolderChoiceAllowsNonEmptyFolders(t *testing.T) {
 		}
 	})
 
-	t.Run("a plain file named vault is rejected", func(t *testing.T) {
+	t.Run("a plain file named .monoagent is rejected", func(t *testing.T) {
 		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, "vault"), []byte("x"), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, ".monoagent"), []byte("x"), 0644); err != nil {
 			t.Fatal(err)
 		}
 		if err := validateFolderChoice(dir); err == nil {
-			t.Fatal("expected an error when \"vault\" already exists as a file, got nil")
+			t.Fatal("expected an error when \".monoagent\" already exists as a file, got nil")
 		}
 	})
 

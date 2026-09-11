@@ -3,6 +3,7 @@ package storage
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"log"
 	"os"
 	"path/filepath"
@@ -294,6 +295,89 @@ func TestReconcileSchema_BackfillsExecutionProfiles(t *testing.T) {
 	}
 	if got := profile("e-stay"); got != "default" {
 		t.Fatalf("e-stay profile changed on second pass: %q", got)
+	}
+}
+
+// TestReconcileProfilesIcon_AddsMissingColumn mirrors the existing
+// root_dir column addition test technique: a plain ApplyMigrations() on a
+// fresh database already leaves profiles.icon in place (ApplyMigrations
+// itself calls ReconcileSchema at the end, same as every real DB-open path
+// does), so exercising the "column genuinely missing" case needs a
+// hand-built profiles table predating migration 039, the same way
+// reconcileProfilesRootDir's own gap would only show up on a database that
+// predates 028. reconcileProfilesIcon is called directly (this test lives
+// in package storage) against that raw shape.
+func TestReconcileProfilesIcon_AddsMissingColumn(t *testing.T) {
+	rawDB, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "old-shape.db"))
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	defer rawDB.Close()
+	if _, err := rawDB.Exec(`CREATE TABLE profiles (
+		id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL,
+		root_dir TEXT NOT NULL DEFAULT ''
+	)`); err != nil {
+		t.Fatalf("creating old-shape profiles table: %v", err)
+	}
+	if _, err := rawDB.Exec(`INSERT INTO profiles (id, name, created_at) VALUES ('p1', 'Work', '2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("seeding profile: %v", err)
+	}
+	db := &Database{DB: rawDB}
+
+	if hasColumn(t, db, "profiles", "icon") {
+		t.Fatal("test setup bug: old-shape profiles table already has icon")
+	}
+
+	if err := db.reconcileProfilesIcon(context.Background()); err != nil {
+		t.Fatalf("reconcileProfilesIcon: %v", err)
+	}
+	if !hasColumn(t, db, "profiles", "icon") {
+		t.Fatal("expected profiles.icon to exist after reconcileProfilesIcon")
+	}
+	var icon string
+	if err := db.DB.QueryRow(`SELECT icon FROM profiles WHERE id = 'p1'`).Scan(&icon); err != nil {
+		t.Fatalf("reading backfilled icon: %v", err)
+	}
+	if icon != "" {
+		t.Fatalf("icon = %q, want empty default for a pre-existing profile", icon)
+	}
+
+	// Idempotent: no error, existing data untouched.
+	if err := db.reconcileProfilesIcon(context.Background()); err != nil {
+		t.Fatalf("second reconcileProfilesIcon: %v", err)
+	}
+}
+
+// TestReconcileSchema_LeavesProfilesIconInPlace confirms the real end-to-end
+// path: a fresh database opened normally already has profiles.icon by the
+// time ApplyMigrations returns, and a value written to it survives a second
+// ReconcileSchema call untouched.
+func TestReconcileSchema_LeavesProfilesIconInPlace(t *testing.T) {
+	db, err := NewDatabase(filepath.Join(t.TempDir(), "profiles-icon.db"))
+	if err != nil {
+		t.Fatalf("NewDatabase: %v", err)
+	}
+	defer db.DB.Close()
+	if err := db.ApplyMigrations(); err != nil {
+		t.Fatalf("ApplyMigrations: %v", err)
+	}
+	if !hasColumn(t, db, "profiles", "icon") {
+		t.Fatal("expected profiles.icon to exist after ApplyMigrations")
+	}
+
+	if _, err := db.DB.Exec(`INSERT INTO profiles (id, name, created_at, icon) VALUES ('p1', 'Work', '2026-01-01T00:00:00Z', 'coder')`); err != nil {
+		t.Fatalf("inserting a profile with an icon: %v", err)
+	}
+
+	if err := db.ReconcileSchema(context.Background()); err != nil {
+		t.Fatalf("ReconcileSchema: %v", err)
+	}
+	var icon string
+	if err := db.DB.QueryRow(`SELECT icon FROM profiles WHERE id = 'p1'`).Scan(&icon); err != nil {
+		t.Fatalf("reading icon after reconcile: %v", err)
+	}
+	if icon != "coder" {
+		t.Fatalf("icon = %q, want %q", icon, "coder")
 	}
 }
 
