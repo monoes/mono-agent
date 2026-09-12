@@ -156,6 +156,17 @@ describe('AIChatPanel stop() error handling', () => {
 })
 
 describe('AIChatPanel resize/scroll/focus/Escape', () => {
+  it('keeps a persistent turn-announcement live region mounted at all times, not just while a turn is streaming', async () => {
+    // Regression: the old per-turn TurnStatus "role=status" region only
+    // existed inside {streaming && ...} — unmounted the instant a turn
+    // finished, right when its terminal content would need to be
+    // announced. A region that must announce turn completion has to
+    // already be in the DOM before that moment, not appear at it.
+    render(<AIChatPanel workflowID="general" isOpen={true} onClose={() => {}} />)
+    await screen.findByPlaceholderText('Type a message...')
+    expect(screen.getByRole('status', { name: /chat turn announcements/i })).toBeInTheDocument()
+  })
+
   it('dragging the resize handle changes the panel width without touching an in-flight turn', async () => {
     createChatConversation2.mockResolvedValue({ id: 'conv-1', backend: 'provider' })
     startChatTurn2.mockResolvedValue({ ok: true, turnId: 'ignored', status: 'active' })
@@ -278,6 +289,74 @@ describe('AIChatPanel resize/scroll/focus/Escape', () => {
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(onClose).toHaveBeenCalledTimes(1)
   })
+
+  it('the past-sessions toggle button reports its open/closed state via aria-expanded', async () => {
+    render(<AIChatPanel workflowID="general" isOpen={true} onClose={() => {}} />)
+    await screen.findByPlaceholderText('Type a message...')
+
+    const toggle = screen.getByTitle('Past sessions')
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  it('Escape closes only the past-sessions dropdown when it is open, not the whole panel', async () => {
+    const onClose = vi.fn()
+    render(<AIChatPanel workflowID="general" isOpen={true} onClose={onClose} />)
+    await screen.findByPlaceholderText('Type a message...')
+
+    fireEvent.click(screen.getByTitle('Past sessions'))
+    expect(screen.getByRole('listbox', { name: /past sessions/i })).toBeInTheDocument()
+
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('past-session rows are keyboard-focusable and activatable with Enter, not just mouse-clickable', async () => {
+    const convA = { id: 'conv-a', backend: 'provider', workflowContext: 'general', runtimeId: '', model: 'model-a', updatedAt: '2026-09-12T00:00:00.000Z' }
+    const convB = { id: 'conv-b', backend: 'provider', workflowContext: 'general', runtimeId: '', model: 'model-b', updatedAt: '2026-09-12T00:00:01.000Z' }
+    listChatConversations2.mockResolvedValueOnce({ items: [convA, convB] })
+    getChatTurns2.mockImplementation((convId) => Promise.resolve({
+      items: [{ id: `turn-${convId}`, prompt: convId === 'conv-a' ? 'from-A' : 'from-B', status: 'completed' }],
+    }))
+    getChatEvents2.mockResolvedValue({ items: [], hasMore: false })
+
+    render(<AIChatPanel workflowID="general" isOpen={true} onClose={() => {}} />)
+    await screen.findByText('from-A') // auto-continued conv-a on mount
+
+    fireEvent.click(await screen.findByTitle('Past sessions'))
+    const rowB = await screen.findByRole('option', { name: /model-b/ })
+    rowB.focus()
+    fireEvent.keyDown(rowB, { key: 'Enter' })
+
+    await screen.findByText('from-B')
+
+    getChatTurns2.mockReset().mockResolvedValue({ items: [] })
+    getChatEvents2.mockReset().mockResolvedValue({ items: [], hasMore: false })
+  })
+
+  it("marks the current conversation's row as aria-selected, not just a background tint", async () => {
+    const convA = { id: 'conv-a', backend: 'provider', workflowContext: 'general', runtimeId: '', model: 'model-a', updatedAt: '2026-09-12T00:00:00.000Z' }
+    const convB = { id: 'conv-b', backend: 'provider', workflowContext: 'general', runtimeId: '', model: 'model-b', updatedAt: '2026-09-12T00:00:01.000Z' }
+    listChatConversations2.mockResolvedValueOnce({ items: [convA, convB] })
+    getChatTurns2.mockResolvedValue({ items: [] })
+    getChatEvents2.mockResolvedValue({ items: [], hasMore: false })
+
+    render(<AIChatPanel workflowID="general" isOpen={true} onClose={() => {}} />)
+    await screen.findByPlaceholderText('Type a message...')
+
+    fireEvent.click(await screen.findByTitle('Past sessions'))
+    const rowA = await screen.findByRole('option', { name: /model-a/ })
+    const rowB = screen.getByRole('option', { name: /model-b/ })
+    expect(rowA).toHaveAttribute('aria-selected', 'true')
+    expect(rowB).toHaveAttribute('aria-selected', 'false')
+
+    getChatTurns2.mockReset().mockResolvedValue({ items: [] })
+    getChatEvents2.mockReset().mockResolvedValue({ items: [], hasMore: false })
+  })
 })
 
 // ── Chat result artifacts (Task 6) ──────────────────────────────────────────
@@ -396,6 +475,28 @@ describe('AIChatPanel chat result artifacts', () => {
     // resolution from when the card first appeared.
     await waitFor(() => expect(listOrgDesigns2).toHaveBeenCalledTimes(2))
     expect(onOpenArtifact).not.toHaveBeenCalled()
+  })
+})
+
+// ── Replayed turns must not misreport an orphaned tool call as live ────────
+describe('AIChatPanel replayed tool-call status', () => {
+  it('a call still "started" in a reopened (finalized) conversation shows Interrupted, not a live-ticking Running', async () => {
+    listChatConversations2.mockResolvedValueOnce({ items: [{ id: 'conv-6', backend: 'provider', workflowContext: 'general', runtimeId: '', model: '', updatedAt: '2026-09-12T00:00:00Z' }] })
+    getChatTurns2.mockResolvedValueOnce({ items: [{ id: 'turn-6', prompt: 'do something slow', status: 'cancelled' }] })
+    getChatEvents2.mockResolvedValueOnce({
+      items: [
+        { seq: 1, at: '2026-09-12T00:00:00Z', type: 'turn.started', payload: {} },
+        { seq: 2, at: '2026-09-12T00:00:01Z', type: 'tool.started', payload: { callId: 'call-1', name: 'slow_tool', arguments: {} } },
+        // No tool.completed — Stop landed mid-call; the turn still ended.
+        { seq: 3, at: '2026-09-12T00:00:02Z', type: 'turn.finished', payload: { status: 'cancelled', reason: 'stopped', exitCode: null, historySaved: true } },
+      ],
+      hasMore: false,
+    })
+
+    render(<AIChatPanel workflowID="general" isOpen={true} onClose={() => {}} />)
+
+    await screen.findByText(/Interrupted/i)
+    expect(screen.queryByText(/^Running$/i)).not.toBeInTheDocument()
   })
 })
 

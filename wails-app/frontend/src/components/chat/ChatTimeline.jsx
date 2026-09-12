@@ -29,7 +29,11 @@ function NoticeBanner({ notice }) {
 // kind) plus any nonfatal notices. Pure presentation over chatReducer
 // state; AIChatPanel.jsx supplies the state, live (via useChatStream) or
 // reconstructed from history (via reduceTurnEvents).
-export function ChatTimeline({ state }) {
+//
+// turnId/isLive are passed straight through to each ToolActivityCard — see
+// its own doc comment. Defaults (isLive=true) match the pre-existing
+// behavior for callers that only ever render a still-streaming turn.
+export function ChatTimeline({ state, turnId = '', isLive = true }) {
   const { parts, calls, notices } = state
   if (parts.length === 0 && (!notices || notices.length === 0)) return null
 
@@ -41,7 +45,7 @@ export function ChatTimeline({ state }) {
         }
         const call = calls[part.callId]
         if (!call) return null
-        return <ToolActivityCard key={`tool-${part.callId}`} call={call} />
+        return <ToolActivityCard key={`tool-${part.callId}`} call={call} turnId={turnId} isLive={isLive} />
       })}
       {(notices || []).map((notice, i) => (
         <NoticeBanner key={i} notice={notice} />

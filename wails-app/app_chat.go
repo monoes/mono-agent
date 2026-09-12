@@ -510,7 +510,8 @@ func (sup *chatSupervisor) writeTurnLoop(h *chatTurnHandle, msgs chan turnMsg) {
 					commit(partID, text)
 					currentPartID = ""
 				}
-				sup.appendAndEmit(h, chatevents.EventNotice, chatevents.NoticePayload{Code: ev.Code, Message: ev.ErrMessage, Severity: chatevents.SeverityWarning})
+				boundedMsg, _, _ := chatevents.BoundText(ev.ErrMessage, chatevents.MaxToolPreviewBytes)
+				sup.appendAndEmit(h, chatevents.EventNotice, chatevents.NoticePayload{Code: ev.Code, Message: boundedMsg, Severity: chatevents.SeverityWarning})
 			}
 		}
 	}

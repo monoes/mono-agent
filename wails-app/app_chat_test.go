@@ -453,6 +453,43 @@ func TestChatSupervisor_UnknownFlagLaunchFailure_ReportsDistinctNoticeThenFailed
 	}
 }
 
+// TestChatSupervisor_NonFatalErrorNoticeIsBounded guards against an
+// external adapter's error text writing an unbounded row/event payload.
+// Tool results are already bounded via BoundText (app_chat.go's
+// EventToolResult case); a non-fatal error's message was passed straight
+// through with no cap at all.
+func TestChatSupervisor_NonFatalErrorNoticeIsBounded(t *testing.T) {
+	sup, emitter, launched := newTestSupervisor(t)
+	conv, _ := sup.store.CreateConversation("default", "agent", "general", "fake-runtime", "", "")
+	proc := newFakeChatProcess("")
+	*launched = append(*launched, proc)
+
+	h, _, _ := sup.admit(conv.ID, "turn-oversized-notice")
+	h.profileID = "default"
+	sup.store.CreateTurn(conv.ID, "default", "turn-oversized-notice", sup.instanceID, "hi")
+	sup.startAgentTurn(h, conv, "turn-oversized-notice", "hi", false, false)
+
+	oversized := strings.Repeat("x", chatevents.MaxToolPreviewBytes+1000)
+	line, err := json.Marshal(map[string]interface{}{
+		"v": 1, "type": "error", "code": "adapter-error", "fatal": false, "message": oversized,
+	})
+	if err != nil {
+		t.Fatalf("marshal test NDJSON line: %v", err)
+	}
+	proc.writeLine(string(line))
+	proc.writeLine(`{"v":1,"type":"done","exit_code":0}`)
+	proc.endStream(nil)
+
+	notices := waitForType(t, emitter, chatevents.EventNotice, 2*time.Second)
+	var noticePayload chatevents.NoticePayload
+	if err := jsonUnmarshalPayload(notices[0], &noticePayload); err != nil {
+		t.Fatalf("unmarshal notice payload: %v", err)
+	}
+	if len(noticePayload.Message) > chatevents.MaxToolPreviewBytes {
+		t.Errorf("notice message is %d bytes, want <= %d (chatevents.MaxToolPreviewBytes) — an external adapter's error text must not write an unbounded event payload", len(noticePayload.Message), chatevents.MaxToolPreviewBytes)
+	}
+}
+
 // TestChatSupervisor_CommitBeforeEmit verifies the write-before-emit
 // ordering directly: at the moment each event is delivered to the emitter,
 // it must already be readable back from the durable store (its seq must be

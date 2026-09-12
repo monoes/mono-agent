@@ -514,6 +514,100 @@ fixes, both are narrower/pre-existing:
   the `AIChatPanel.jsx` extraction items above (a per-request token/ref
   would close this and is a natural fit alongside that refactor).
 
+## Pre-existing test flake found while bounding NoticePayload.Message (2026-09-12)
+
+`TestChatSupervisor_UnknownFlagLaunchFailure_ReportsDistinctNoticeThenFailed`
+fails intermittently (~3/5 runs observed) when run alongside the rest of
+`TestChatSupervisor_*`, but passes reliably in isolation. Confirmed via
+`git stash` that this reproduces identically on the round-1 commit
+(`ce2495f`), before today's `NoticePayload.Message` bounding change — not
+introduced or worsened by that fix.
+
+**Likely root cause:** `runAgentTurn` (`app_chat.go` ~line 357-399) reads
+stderr in one goroutine into a mutex-guarded `stderrBuf`, while a second
+goroutine calls `proc.Wait()` and then immediately snapshots
+`stderrBuf.String()` with no synchronization ensuring the first goroutine
+has actually finished draining the pipe by that point — a real missing
+happens-before edge, not just CI noise. For a real OS process this window
+is usually negligible (`Wait()` returning implies the process exited,
+and its pipes closing follows closely), but under enough concurrent
+goroutine scheduling pressure (many tests' fixtures running in the same
+process) the reader goroutine can lose the race, and
+`finalizeAgentTurn` sees an empty `stderrText`, missing the
+`strings.Contains(stderrText, "unknown flag")` check this specific test
+depends on.
+
+**Fix shape:** join the stderr-reader goroutine (e.g. a `sync.WaitGroup`
+or a done channel) before reading `stderrBuf` in the wait goroutine,
+rather than relying on `Wait()`'s return as an implicit signal.
+
+**Files:** `wails-app/app_chat.go`, `wails-app/app_chat_test.go`.
+
+Not fixed here — found incidentally while verifying an unrelated fix, and
+concurrent-goroutine synchronization deserves its own focused pass rather
+than a bolt-on.
+
+## Round 3 (2026-09-12): quick wins + accessibility/UX cluster
+
+Two small, low-risk mechanical fixes, plus a coherent cluster of
+accessibility/UX fixes deliberately kept together because they touch the
+same files (`AIChatPanel.jsx`, `ChatTimeline.jsx`, `ToolActivityCard.jsx`,
+`TurnStatus.jsx`) — round 1's own advisor guidance was to defer these
+rather than risk a regression by mixing them with unrelated correctness
+fixes in the same round. Each fixed with a failing test confirmed first.
+
+- **`NoticePayload.Message` bounded.** `app_chat.go`'s non-fatal-error
+  notice path now runs `ev.ErrMessage` through `chatevents.BoundText` like
+  every other field, instead of passing an external adapter's error text
+  through with no cap at all. Files: `app_chat.go`, `app_chat_test.go`.
+  (Found and documented, but did not fix, a genuine pre-existing test
+  flake while verifying this — see the dedicated section above.)
+- **`save_document`'s TOCTOU race closed.** The `os.Stat`-then-`os.WriteFile`
+  duplicate-filename check let two concurrent calls for the same filename
+  both pass the check before either wrote, silently overwriting instead of
+  refusing. Now a single atomic `os.OpenFile(..., O_CREATE|O_EXCL, ...)`.
+  Files: `monoagent_tools.go`, `monoagent_tools_test.go`.
+- **Past-sessions dropdown keyboard trap fixed.** Rows are now real
+  `role="option"` elements (`tabIndex={0}`, `aria-selected`,
+  Enter/Space-activated); the toggle button reports `aria-expanded`/
+  `aria-haspopup="listbox"`; the list itself is `role="listbox"`; Escape
+  now closes only the dropdown when it's open, not the whole panel. Files:
+  `AIChatPanel.jsx`, `ChatInteraction.render.test.jsx`.
+- **`ToolActivityCard`'s controlled panel fixed.** The panel div is now
+  always mounted (visibility toggled via `hidden`, not conditional
+  rendering), so `aria-controls` never points at a nonexistent element
+  while collapsed — the default state for every non-error card. Its id is
+  now scoped by `turnId` (threaded through `ChatTimeline` from both
+  `AIChatPanel.jsx` call sites), closing the duplicate-id risk across
+  turns reusing the same `callId`. Files: `ToolActivityCard.jsx`,
+  `ChatTimeline.jsx`, `AIChatPanel.jsx`, `ChatTimeline.render.test.jsx`.
+- **Orphaned tool calls no longer tick forever on replay.** `ToolActivityCard`
+  now takes an `isLive` prop (threaded the same way as `turnId`, default
+  `true` for backward compatibility) — a call stuck at `status:'started'`
+  in a finalized/replayed turn now shows "Interrupted" once, instead of a
+  live-ticking "Running" clock counting up from its original `startedAt`
+  indefinitely. Files: `ToolActivityCard.jsx`, `ChatTimeline.jsx`,
+  `AIChatPanel.jsx`, `ChatTimeline.render.test.jsx`,
+  `ChatInteraction.render.test.jsx`.
+- **Turn-completion is now announced to screen readers.** A single,
+  always-mounted, visually-hidden `role="status" aria-live="polite"`
+  region lives at the panel level (outside `{streaming && ...}`), fed by a
+  new pure, directly-tested `composeLiveAnnouncement(turnState)` function
+  called when a turn finalizes. This is the fix shape the accessibility
+  audit itself recommended, and it also folds in any tool failures and
+  notices already present at finalize time — which incidentally gives the
+  `historySaved:false` warning (previously a plain, non-live
+  `NoticeBanner`) its first real live-region coverage too. **Not fully
+  closed**: notices that arrive *mid-turn* (before finalize) and
+  `ChatComposer`'s disabled-reason banner still have no live-region
+  coverage — left open rather than expanding this round's scope further.
+  Files: `AIChatPanel.jsx`, `AIChatPanel.render.test.jsx`,
+  `ChatInteraction.render.test.jsx`.
+
+Full suite reconfirmed green after each fix and at the end: `go build`/
+`go vet`/`go test` from both Go modules, `npx vitest run` (262/262,
+frontend).
+
 ---
 
 ## Status
@@ -533,21 +627,31 @@ fixes, both are narrower/pre-existing:
 - [x] R1.3 `save_document` missing injection gate
 - [x] R1.4 Bucket-switch `.then()` staleness guard
 
-### Round 1 review — documented, open for a later round
+### Round 3 (quick wins + accessibility/UX cluster) — fixed
+
+- [x] `NoticePayload.Message` now bounded like every other field
+- [x] `save_document` TOCTOU race on duplicate-filename check (`O_CREATE|O_EXCL`)
+- [x] Past-sessions dropdown keyboard trap + Escape/aria-expanded/aria-selected
+- [x] `ToolActivityCard` aria-controls dangling + unscoped id cross-turn collision
+- [x] Agent-backend: orphaned tool call ticks forever on replay
+- [x] Turn-status live region mount-coupled — turn-completion + tool-failure +
+      already-present-notice announcements now fixed; mid-turn notices and
+      the composer's disabled-reason banner remain open (see below)
+
+### Round 1/3 review — documented, open for a later round
 
 - [ ] `useResolvedArtifacts` permanent null-cache on transient failure
 - [ ] `OwnerInstanceID` cross-instance admission never enforced
 - [ ] `AIChatPanel.jsx` extraction (useResolvedArtifacts, openArtifact, reduceTurnEvents/loadTurnState)
-- [ ] Past-sessions dropdown keyboard trap + Escape/aria-expanded/aria-current
 - [ ] Continuous panel-resize has no keyboard path (discrete alternative exists)
-- [ ] Turn-status live region mount-coupled; tool-failure/notice/composer announcements missing
-- [ ] `ToolActivityCard` aria-controls dangling + unscoped id cross-turn collision
+- [ ] Live-region coverage for mid-turn notices and ChatComposer's disabled-reason banner
 - [ ] Provider-backend tool elapsed time always ~0.0s
 - [ ] Provider-backend tool failures always render as success
-- [ ] Agent-backend: orphaned tool call ticks forever on replay
 - [ ] `DeleteConversation` not atomic against concurrent `StartChatTurn`
-- [ ] Tool-output truncation metadata discarded; `NoticePayload.Message` unbounded
-- [ ] Lower-confidence service.go/exec.go items (see detail above) + save_document TOCTOU
+- [ ] Tool-output truncation metadata discarded (`truncated`/`originalBytes`)
+- [ ] Lower-confidence service.go/exec.go items (round-cap status, ctx.Err()
+      checks, history-window slicing, sticky res.Err — see round-1 detail above)
+- [ ] Pre-existing flaky test: `TestChatSupervisor_UnknownFlagLaunchFailure_ReportsDistinctNoticeThenFailed` (see dedicated section above)
 
 ## Addendum: two things found outside the seven items' scope
 

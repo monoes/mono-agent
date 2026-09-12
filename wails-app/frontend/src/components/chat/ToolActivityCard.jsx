@@ -48,8 +48,23 @@ function copyToClipboard(text) {
 // same-named parallel calls each get their own independent card. A real
 // <button> header means Enter/Space activation is native; no custom key
 // handling is reimplemented here.
-export function ToolActivityCard({ call }) {
+//
+// turnId scopes the controlled panel's DOM id: callId alone is only
+// unique within one turn (the runtime numbers calls per-turn), and every
+// past turn stays mounted simultaneously (no virtualization), so two
+// tool-using turns would otherwise produce duplicate ids.
+//
+// isLive distinguishes "this call belongs to the turn currently
+// streaming" from "this call belongs to a finalized turn being replayed."
+// A call can be left at status:'started' forever (Stop mid-call, a
+// crashed subprocess, an app restart) with no tool.completed ever
+// arriving — without isLive, replaying that turn later would render a
+// live-ticking "Running" clock counting up from its original startedAt
+// indefinitely, for a call that will never run again. Defaults to true so
+// existing callers that only ever render live turns are unaffected.
+export function ToolActivityCard({ call, turnId = '', isLive = true }) {
   const failed = call.status === 'completed' && call.ok === false
+  const orphaned = !isLive && call.status === 'started'
   // Never collapse a card the user would need to see: an error stays open
   // by default, everything else starts collapsed (plan: "errors remain
   // prominent... never collapse a card the user is actively inspecting").
@@ -57,9 +72,9 @@ export function ToolActivityCard({ call }) {
 
   const argsText = formatArgs(call.arguments)
   const resultText = formatResult(call)
-  const panelId = `tool-card-${call.callId}`
+  const panelId = `tool-card-${turnId}-${call.callId}`
 
-  const running = call.status === 'started'
+  const running = isLive && call.status === 'started'
   const now = useTicker(running)
   let durationText = null
   if (call.startedAt && call.finishedAt) {
@@ -69,7 +84,10 @@ export function ToolActivityCard({ call }) {
   }
 
   let statusIcon, statusText
-  if (call.status === 'started') {
+  if (orphaned) {
+    statusIcon = <X size={11} color="var(--text-muted)" />
+    statusText = 'Interrupted'
+  } else if (call.status === 'started') {
     statusIcon = <Loader size={11} className="chat-spin" style={{ color: '#00b4d8' }} />
     statusText = 'Running'
   } else if (failed) {
@@ -120,8 +138,12 @@ export function ToolActivityCard({ call }) {
           </span>
         )}
       </button>
-      {open && (
-        <div id={panelId} style={{ padding: '0 10px 8px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {/* Always mounted (visibility toggled via `hidden`, not conditional
+          rendering) — aria-controls must resolve to a real element even
+          while collapsed, which is the default state for every non-error
+          card. */}
+      {(argsText != null || resultText != null) && (
+        <div id={panelId} hidden={!open} style={{ padding: '0 10px 8px', display: 'flex', flexDirection: 'column', gap: 6 }}>
           {argsText != null && (
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>

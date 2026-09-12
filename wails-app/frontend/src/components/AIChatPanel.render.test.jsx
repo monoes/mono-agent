@@ -2,7 +2,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import '@testing-library/jest-dom/vitest'
 import { render, screen, cleanup } from '@testing-library/react'
-import { MessageBubble, newTurnId } from './AIChatPanel.jsx'
+import { MessageBubble, newTurnId, composeLiveAnnouncement } from './AIChatPanel.jsx'
 
 // Regression test for the reported bug: assistant chat messages showed raw
 // markdown source (literal '#', '**', a plain-text URL) instead of rendered
@@ -63,5 +63,50 @@ describe('newTurnId', () => {
 
   it('never returns the same id twice in a row', () => {
     expect(newTurnId()).not.toBe(newTurnId())
+  })
+})
+
+// composeLiveAnnouncement builds the one text fired into the panel's
+// persistent aria-live region when a turn finalizes — the single moment
+// TurnStatus's own per-turn "role=status" region is guaranteed silent to
+// screen readers, since it unmounts at exactly the instant this content
+// would appear in a freshly-mounted replacement instead of mutating an
+// already-present node (a well-known AT limitation, not a jsdom-testable
+// one — this only verifies the text composed, not that it is announced).
+describe('composeLiveAnnouncement', () => {
+  const base = { terminal: { status: 'completed', reason: 'end_turn' }, calls: {}, notices: [] }
+
+  it('announces plain completion', () => {
+    expect(composeLiveAnnouncement(base)).toBe('Response completed.')
+  })
+
+  it('announces failure and stop with their own honest labels', () => {
+    expect(composeLiveAnnouncement({ ...base, terminal: { status: 'failed', reason: 'boom' } })).toBe('Response failed.')
+    expect(composeLiveAnnouncement({ ...base, terminal: { status: 'cancelled', reason: 'stopped' } })).toBe('Response stopped.')
+  })
+
+  it('adds a singular tool-failure summary', () => {
+    const calls = { c1: { callId: 'c1', status: 'completed', ok: false } }
+    expect(composeLiveAnnouncement({ ...base, calls })).toBe('Response completed. 1 tool call failed.')
+  })
+
+  it('adds a plural tool-failure summary and ignores successful calls', () => {
+    const calls = {
+      c1: { callId: 'c1', status: 'completed', ok: false },
+      c2: { callId: 'c2', status: 'completed', ok: true },
+      c3: { callId: 'c3', status: 'completed', ok: false },
+    }
+    expect(composeLiveAnnouncement({ ...base, calls })).toBe('Response completed. 2 tool calls failed.')
+  })
+
+  it('appends any notices already present at finalize time, e.g. historySaved:false', () => {
+    const notices = [{ code: 'history_not_saved', message: 'History may not have saved.', severity: 'warning' }]
+    expect(composeLiveAnnouncement({ ...base, notices })).toBe('Response completed. History may not have saved.')
+  })
+
+  it('combines a tool failure and a notice in one announcement', () => {
+    const calls = { c1: { callId: 'c1', status: 'completed', ok: false } }
+    const notices = [{ code: 'x', message: 'Something else happened.', severity: 'info' }]
+    expect(composeLiveAnnouncement({ ...base, calls, notices })).toBe('Response completed. 1 tool call failed. Something else happened.')
   })
 })

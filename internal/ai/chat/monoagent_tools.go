@@ -1180,13 +1180,24 @@ func (mt *MonoagentTools) saveDocument(args string) (string, error) {
 		return "", fmt.Errorf("prepare docs folder: %w", err)
 	}
 	dest := filepath.Join(docsDir, name)
-	if _, err := os.Stat(dest); err == nil {
-		return "", fmt.Errorf("a document named %q already exists in docs/ — choose a different filename", name)
-	} else if !os.IsNotExist(err) {
-		return "", fmt.Errorf("checking existing document %q: %w", name, err)
+	// O_EXCL makes the existence check and the write a single atomic
+	// operation — a prior Stat-then-WriteFile let two concurrent calls for
+	// the same filename both pass the check before either wrote, so the
+	// second silently overwrote the first instead of being refused.
+	f, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		if os.IsExist(err) {
+			return "", fmt.Errorf("a document named %q already exists in docs/ — choose a different filename", name)
+		}
+		return "", fmt.Errorf("create document %q: %w", name, err)
 	}
-	if err := os.WriteFile(dest, []byte(a.Content), 0600); err != nil {
-		return "", fmt.Errorf("write document: %w", err)
+	_, writeErr := f.Write([]byte(a.Content))
+	closeErr := f.Close()
+	if writeErr != nil {
+		return "", fmt.Errorf("write document: %w", writeErr)
+	}
+	if closeErr != nil {
+		return "", fmt.Errorf("write document: %w", closeErr)
 	}
 
 	resp := map[string]interface{}{"filename": name, "path": dest, "size_bytes": len(a.Content)}

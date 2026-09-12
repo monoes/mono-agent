@@ -5,7 +5,7 @@ import { useChatStream } from './chat/useChatStream.js'
 import { chatReducer, initialChatState } from './chat/chatReducer.js'
 import { ChatTimeline } from './chat/ChatTimeline.jsx'
 import { ChatMarkdown } from './chat/ChatMarkdown.jsx'
-import { TurnStatus } from './chat/TurnStatus.jsx'
+import { TurnStatus, computeStatusLabel } from './chat/TurnStatus.jsx'
 import { ChatComposer } from './chat/ChatComposer.jsx'
 import { useChatScroll } from './chat/useChatScroll.js'
 import { ChatArtifactCard } from './chat/ChatArtifactCard.jsx'
@@ -84,6 +84,30 @@ export function newTurnId() {
   bytes[8] = (bytes[8] & 0x3f) | 0x80
   const hex = [...bytes].map(b => b.toString(16).padStart(2, '0')).join('')
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
+
+// composeLiveAnnouncement builds the one text fired into the panel's
+// persistent aria-live region when a turn finalizes. TurnStatus's own
+// per-turn "role=status" region only exists while {streaming && ...} is
+// mounted — at the exact moment a turn finishes, that block unmounts and a
+// *new* TurnStatus instance mounts inside the finalized message with the
+// terminal label already baked in. Most screen readers only announce a
+// mutation inside an already-present live region, not a freshly-inserted
+// node whose content is already set, so "Completed"/"Failed" would
+// otherwise go unannounced despite mid-stream status changes working fine.
+// Folds in any notices and tool failures already present at finalize time
+// (e.g. historySaved:false) — those otherwise have no live-region coverage
+// at all (NoticeBanner is plain, non-live DOM). Exported and pure/
+// deterministic like TurnStatus's own computeStatusLabel, for the same
+// direct-unit-testability reason.
+export function composeLiveAnnouncement(turnState) {
+  const { label } = computeStatusLabel(turnState, Date.now())
+  const parts = [`Response ${label.toLowerCase()}.`]
+  const failedCount = Object.values(turnState.calls || {}).filter(c => c.status === 'completed' && c.ok === false).length
+  if (failedCount === 1) parts.push('1 tool call failed.')
+  else if (failedCount > 1) parts.push(`${failedCount} tool calls failed.`)
+  for (const notice of turnState.notices || []) parts.push(notice.message)
+  return parts.join(' ')
 }
 
 // Relative time for the past-conversations list ("5m ago", "3d ago").
@@ -212,6 +236,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
   const [conversationId, setConversationId] = useState('')
   const [activeTurnId, setActiveTurnId]     = useState('')
   const [stopRequested, setStopRequested]   = useState(false)
+  const [liveAnnouncement, setLiveAnnouncement] = useState('')
   const [providers, setProviders]           = useState([])
   const [selectedProvider, setSelectedProvider] = useState('')
   const [selectedModel, setSelectedModel]   = useState('')
@@ -535,12 +560,17 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
     if (!isOpen) return
     const onKeyDown = (e) => {
       if (e.key !== 'Escape') return
+      // The dropdown is a transient overlay on top of the panel, not a
+      // presentation state — Escape must dismiss it alone, the same way it
+      // would dismiss any other popup, without also collapsing/closing the
+      // panel underneath in the same keystroke.
+      if (showSessions) { setShowSessions(false); return }
       if (presentation === 'expanded' && !viewportNarrow) setPresentation('docked')
       else onClose()
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [isOpen, presentation, viewportNarrow, onClose])
+  }, [isOpen, presentation, viewportNarrow, onClose, showSessions])
 
   // ── Resize handle: drag the panel's left edge, clamped 380-720px ────────
   const handleResizeStart = useCallback((e) => {
@@ -579,6 +609,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
     // included. Pushed even when parts is empty: TurnStatus alone still
     // truthfully reports a silent failure/stop rather than hiding it.
     setMessages(msgs => [...msgs, { role: 'turn', turnId: activeTurnId, state: liveTurn }])
+    setLiveAnnouncement(composeLiveAnnouncement(liveTurn))
     setActiveTurnId('')
     setStopRequested(false)
     refreshPastConversations()
@@ -733,6 +764,21 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
       overflow: 'hidden',
       position: 'relative',
     }}>
+      {/* Persistent, visually-hidden live region for turn-completion
+          announcements — see composeLiveAnnouncement's doc comment for why
+          this must stay mounted at all times rather than living inside
+          the {streaming && ...} block below. */}
+      <div
+        role="status"
+        aria-live="polite"
+        aria-label="Chat turn announcements"
+        style={{
+          position: 'absolute', width: 1, height: 1, padding: 0, margin: -1,
+          overflow: 'hidden', clip: 'rect(0,0,0,0)', whiteSpace: 'nowrap', border: 0,
+        }}
+      >
+        {liveAnnouncement}
+      </div>
       {/* Resize handle — drags the panel's left edge; hidden in expanded
           mode (fixed width there) and on the narrow overlay (full width). */}
       {!viewportNarrow && presentation === 'docked' && (
@@ -803,6 +849,8 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
         <button
           onClick={() => setShowSessions(s => !s)}
           title="Past sessions"
+          aria-expanded={showSessions}
+          aria-haspopup="listbox"
           style={{
             background: showSessions ? 'rgba(0,180,216,0.12)' : 'transparent',
             border: 'none', borderRadius: 4, cursor: 'pointer',
@@ -815,7 +863,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
           <History size={12} />
         </button>
         {showSessions && (
-          <div style={{
+          <div role="listbox" aria-label="Past sessions" style={{
             position: 'absolute', top: '100%', right: 8, marginTop: 4,
             width: 280, maxHeight: 260, overflowY: 'auto',
             background: '#0a1018', border: '1px solid rgba(0,180,216,0.2)',
@@ -830,7 +878,15 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
               pastConversations.map(c => (
                 <div
                   key={c.id}
+                  role="option"
+                  tabIndex={0}
+                  aria-selected={c.id === conversationId}
                   onClick={() => loadConversation(c)}
+                  onKeyDown={(e) => {
+                    if (e.key !== 'Enter' && e.key !== ' ') return
+                    e.preventDefault()
+                    loadConversation(c)
+                  }}
                   style={{
                     padding: '7px 9px', borderRadius: 6, cursor: 'pointer',
                     background: c.id === conversationId ? 'rgba(0,180,216,0.1)' : 'transparent',
@@ -1027,7 +1083,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
         {messages.map((msg, i) => (
           msg.role === 'turn' ? (
             <div key={i} className="chat-assistant-turn">
-              <ChatTimeline state={msg.state} />
+              <ChatTimeline state={msg.state} turnId={msg.turnId} isLive={false} />
               {Object.values(msg.state.calls).map(call => {
                 const artifact = resolvedArtifacts[`${msg.turnId}:${call.callId}`]
                 return artifact
@@ -1052,7 +1108,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
             replaces the old separate "Thinking..." indicator too. */}
         {streaming && (
           <div className="chat-assistant-turn">
-            <ChatTimeline state={liveTurn} />
+            <ChatTimeline state={liveTurn} turnId={activeTurnId} isLive={true} />
             {Object.values(liveTurn.calls).map(call => {
               const artifact = resolvedArtifacts[`${activeTurnId}:${call.callId}`]
               return artifact

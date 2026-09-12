@@ -170,6 +170,51 @@ describe('ToolActivityCard', () => {
       vi.useRealTimers()
     }
   })
+
+  it('a call still "started" when replayed from a finalized turn (isLive=false) shows Interrupted, not a perpetually-ticking Running clock', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-09-12T00:00:05.000Z'))
+      render(<ToolActivityCard isLive={false} call={{ callId: 'c1', name: 'slow_tool', arguments: {}, status: 'started', ok: null, result: null, startedAt: '2026-09-12T00:00:00.000Z' }} />)
+      expect(screen.getByText(/Interrupted/i)).toBeInTheDocument()
+      expect(screen.queryByText(/Running/i)).not.toBeInTheDocument()
+      expect(screen.queryByText(/\ds\b/)).not.toBeInTheDocument() // no bogus/frozen duration either
+      act(() => { vi.advanceTimersByTime(5000) })
+      expect(screen.queryByText(/\ds\b/)).not.toBeInTheDocument() // still nothing ticking after time passes
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('the exact same started call still ticks normally when isLive=true (the still-streaming case is unaffected)', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-09-12T00:00:02.000Z'))
+      render(<ToolActivityCard isLive={true} call={{ callId: 'c1', name: 'slow_tool', arguments: {}, status: 'started', ok: null, result: null, startedAt: '2026-09-12T00:00:00.000Z' }} />)
+      expect(screen.getByText(/Running/i)).toBeInTheDocument()
+      expect(screen.getByText(/2\.0s/)).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps the aria-controls target present in the DOM even while collapsed', () => {
+    render(<ToolActivityCard turnId="t1" call={{ callId: 'c1', name: 'search_docs', arguments: {}, status: 'completed', ok: true, result: 'found 3' }} />)
+    const header = screen.getByRole('button', { name: /search_docs/ })
+    expect(header).toHaveAttribute('aria-expanded', 'false')
+    const controlsId = header.getAttribute('aria-controls')
+    expect(controlsId).toBeTruthy()
+    expect(document.getElementById(controlsId)).not.toBeNull()
+  })
+
+  it('scopes the controlled panel id by turnId, so two turns reusing the same callId never collide', () => {
+    render(<>
+      <ToolActivityCard turnId="turn-1" call={{ callId: 'c1', name: 'a', arguments: {}, status: 'completed', ok: true, result: 'x' }} />
+      <ToolActivityCard turnId="turn-2" call={{ callId: 'c1', name: 'b', arguments: {}, status: 'completed', ok: true, result: 'y' }} />
+    </>)
+    const [headerA, headerB] = screen.getAllByRole('button')
+    expect(headerA.getAttribute('aria-controls')).not.toBe(headerB.getAttribute('aria-controls'))
+  })
 })
 
 // ── TurnStatus ───────────────────────────────────────────────────────────────
@@ -292,5 +337,26 @@ describe('ChatTimeline', () => {
     ])
     render(<ChatTimeline state={state} />)
     expect(screen.getByText(/create_workflow/)).toBeInTheDocument()
+  })
+
+  it('threads turnId and isLive down to its tool cards — a replayed turn with an orphaned call shows Interrupted', () => {
+    const state = reduce([
+      ev('turn.started', { backend: 'agent', text: 'go' }, 1),
+      ev('tool.started', { callId: 'c1', name: 'slow_tool', arguments: {} }, 2),
+      // No tool.completed — this call is orphaned (e.g. Stop mid-call).
+    ])
+    render(<ChatTimeline state={state} turnId="turn-42" isLive={false} />)
+    expect(screen.getByText(/Interrupted/i)).toBeInTheDocument()
+    const header = screen.getByRole('button', { name: /slow_tool/ })
+    expect(header.getAttribute('aria-controls')).toContain('turn-42')
+  })
+
+  it('defaults to isLive=true when not passed, so an actively-streaming turn (the common call site) still shows Running', () => {
+    const state = reduce([
+      ev('turn.started', { backend: 'agent', text: 'go' }, 1),
+      ev('tool.started', { callId: 'c1', name: 'slow_tool', arguments: {} }, 2),
+    ])
+    render(<ChatTimeline state={state} />)
+    expect(screen.getByText(/Running/i)).toBeInTheDocument()
   })
 })

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -927,6 +928,45 @@ func TestSaveDocument_DuplicateFilenameErrors(t *testing.T) {
 	got, _ := os.ReadFile(filepath.Join(root, "docs", "notes.txt"))
 	if string(got) != "first" {
 		t.Errorf("original file was overwritten: %q", got)
+	}
+}
+
+// TestSaveDocument_ConcurrentDuplicateFilenameDoesNotCorruptOrSilentlyOverwrite
+// closes the TOCTOU race between the Stat-based existence check and the
+// WriteFile: two concurrent calls with the same filename must not both
+// succeed, and the file that lands must be exactly one call's content,
+// never a corrupted mix or a silent overwrite of the other's already-
+// written content.
+func TestSaveDocument_ConcurrentDuplicateFilenameDoesNotCorruptOrSilentlyOverwrite(t *testing.T) {
+	mt := newOrgTestTools(t)
+
+	argsA, _ := json.Marshal(map[string]interface{}{"filename": "race.txt", "content": "content-A"})
+	argsB, _ := json.Marshal(map[string]interface{}{"filename": "race.txt", "content": "content-B"})
+
+	var wg sync.WaitGroup
+	results := make([]error, 2)
+	wg.Add(2)
+	go func() { defer wg.Done(); _, results[0] = mt.Execute("save_document", string(argsA)) }()
+	go func() { defer wg.Done(); _, results[1] = mt.Execute("save_document", string(argsB)) }()
+	wg.Wait()
+
+	succeeded := 0
+	for _, err := range results {
+		if err == nil {
+			succeeded++
+		}
+	}
+	if succeeded != 1 {
+		t.Fatalf("got %d successful concurrent save_document calls for the same filename, want exactly 1 (TOCTOU: both can pass the existence check before either writes)", succeeded)
+	}
+
+	root := mt.profileRoot()
+	got, err := os.ReadFile(filepath.Join(root, "docs", "race.txt"))
+	if err != nil {
+		t.Fatalf("read written file: %v", err)
+	}
+	if string(got) != "content-A" && string(got) != "content-B" {
+		t.Errorf("file content is %q, want exactly one call's full, uncorrupted content", got)
 	}
 }
 
