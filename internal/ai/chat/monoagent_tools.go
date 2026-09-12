@@ -111,8 +111,20 @@ func (mt *MonoagentTools) checkRunGate(tool string) error {
 	if !mt.runsAllowed() {
 		return fmt.Errorf("%s refused: run execution is not enabled in this session — restart the chat with runs explicitly enabled (CLI: --tools monoagent,runs; GUI: enable the run-execution setting) to execute", tool)
 	}
+	return mt.checkInjectionGate(tool)
+}
+
+// checkInjectionGate refuses a tool that writes durable, potentially
+// executable state (a workflow run, a saved document) once synced
+// communications content has entered this session — untrusted content and a
+// proven prompt-injection vector. Unlike checkRunGate, it does not require
+// the "runs" opt-in: writing a document is not a workflow/action run, so
+// save_document stays available whenever MonoagentTools are on, but it must
+// not become the write primitive a prompt injection reaches for once
+// checkRunGate has already shut that door for run_workflow.
+func (mt *MonoagentTools) checkInjectionGate(tool string) error {
 	if mt.syncedCommsSeen() {
-		return fmt.Errorf("%s refused: synced communications content was read into this session (possible prompt-injection vector) — start a fresh session with runs enabled and without reading messages first to execute", tool)
+		return fmt.Errorf("%s refused: synced communications content was read into this session (possible prompt-injection vector) — start a fresh session without reading messages first to execute", tool)
 	}
 	return nil
 }
@@ -1134,6 +1146,9 @@ type saveDocumentArgs struct {
 // vault a few seconds after being "delivered". Refusing up front, with an
 // error the model can act on, is better than that silent round-trip.
 func (mt *MonoagentTools) saveDocument(args string) (string, error) {
+	if err := mt.checkInjectionGate("save_document"); err != nil {
+		return "", err
+	}
 	var a saveDocumentArgs
 	if err := json.Unmarshal([]byte(args), &a); err != nil {
 		return "", fmt.Errorf("invalid args: %w", err)

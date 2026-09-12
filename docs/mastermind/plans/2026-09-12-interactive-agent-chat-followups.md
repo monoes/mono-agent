@@ -230,6 +230,292 @@ not a loop.
 
 ---
 
+## Round 1 multi-agent review (2026-09-12): fixed vs. documented
+
+`/mastermind:review --tillend` dispatched four independent specialist
+agents (Code Reviewer, Security Engineer, Software Architect,
+Accessibility Auditor) over the full `b8f53bb..HEAD` diff (58 files,
+~9,500 insertions — commits `b955d8e`, `a024b77`, `4dc342b`, i.e. the
+seven items above plus their own review passes). All four were briefed on
+this document and told not to re-report anything already listed. Per
+advisor guidance, round 1 fixed only the four highest-severity,
+clearest-scoped findings (all independently reproduced with a failing
+test first); everything else is recorded below for a later round rather
+than crammed into one pass.
+
+### Fixed this round (TDD: failing test confirmed, then fix, then green)
+
+1. **`turn.finished` fallback event used `seq: 0`, permanently soft-locking
+   the chat panel.** When `store.FinalizeTurn` itself fails, `app_chat.go`'s
+   `finalize()` built a live-only fallback event with `Seq: 0` — always
+   `<= state.lastSeq` in `chatReducer.js`, so the reducer unconditionally
+   dropped it, `state.terminal` never got set, and `send()`'s own guard
+   then blocked every further message for the rest of the session (only a
+   restart recovers, via `reconcileOrphanedTurns`). Fixed by giving this
+   sentinel event `chatevents.MaxSafeSeq` (2^53-1, the largest value that
+   round-trips exactly through JSON into a JS Number) instead of `0`.
+   Found independently by the Code Reviewer. Files: `chatevents/event.go`,
+   `app_chat.go`, `app_chat_test.go`.
+2. **`historySaved:false` notice could render twice for one occurrence.**
+   `useChatStream.js`'s `dispatchEvent` fired its `localNotice` side effect
+   unconditionally on every call for a matching `turn.finished` payload,
+   not gated by whether the event was actually newly applied. Two
+   independent mechanisms reach this: `fillGap` has no upper bound and can
+   re-dispatch an event `dispatchLive` then dispatches again right after
+   (Code Reviewer), or a hydration-tail/live-buffer overlap at the
+   hydrating→live handoff (traced independently before the Code Reviewer's
+   report landed). Fixed by gating the side effect on the same
+   "already-seen-this-seq" check the reducer itself uses. Files:
+   `useChatStream.js`, `useChatStream.test.jsx`.
+3. **`save_document` could be reached by a prompt injection post
+   synced-comms-read.** Unlike `run_workflow`, `save_document` never called
+   `checkRunGate`, so once untrusted synced-comms content entered the
+   session, nothing stopped an injected instruction from writing a
+   malicious `.html` artifact (the new `docscan` allowlist entry is safe
+   for the in-app sandboxed preview, but `FileViewerModal`'s "Open
+   Externally" button hands the file to a real, unsandboxed browser).
+   Fixed by extracting the synced-comms check into `checkInjectionGate`
+   (shared by both tools) and calling it from `saveDocument` — without
+   also requiring the unrelated `runsAllowed()` opt-in `checkRunGate`
+   carries, since saving a document isn't a workflow/action run. Found by
+   the Security Engineer. Files: `monoagent_tools.go`,
+   `monoagent_tools_test.go`.
+4. **Bucket-switch effect's success path had no staleness guard.** Its
+   `.catch()` already checked `conversationsFetchedRef.current === bucket`
+   before acting (item 7 above); the `.then()` success path did not, so a
+   late-resolving fetch for a bucket the UI no longer shows (e.g. a quick
+   agents↔providers toggle) could fully overwrite an already-loaded,
+   correct transcript with the stale bucket's conversation — reproduced
+   exactly by a regression test before fixing. Found by the Software
+   Architect. Files: `AIChatPanel.jsx`, `ChatInteraction.render.test.jsx`.
+
+### Documented, not fixed this round
+
+**Architecture**
+
+- **`useResolvedArtifacts` permanently caches a `null` from a transient
+  failure, not just genuine non-existence** (`AIChatPanel.jsx:173-202`).
+  `resolveArtifact`'s own lookups can't distinguish "confirmed gone" from
+  "the lookup itself failed" (same ambiguity item 3 above already accepts
+  for click-time revalidation) — but unlike that case, this is the
+  *first* resolution: if it fails transiently right as a tool call
+  completes (plausible, since this often coincides with the same SQLite
+  file the chat supervisor is concurrently writing to), the Open/Copy-ID
+  card never appears at all, with no click affordance to ever retry.
+  Deferred because a correct fix needs to bound retries (an unconditional
+  retry-on-every-render risks spamming a genuinely-nonexistent lookup on
+  every unrelated re-render) — a small design decision, not a
+  one-line fix. Confirmed untested either way.
+- **`OwnerInstanceID` is written and read back but never compared to
+  anything** (`chat_events.go:53`, `app_chat.go:218/704/738`). The plan
+  requires another live instance's turn to be read-only/stoppable-only-in-
+  its-owner; the schema/scaffolding exists but `admit()`, `StopChatTurn`,
+  and `GetChatTurns`/`GetChatEvents` never consult it — two concurrently
+  live app instances can each admit a turn against the same conversation,
+  and whichever finishes last silently overwrites the other's
+  `--resume` session binding. Narrow trigger (two live instances against
+  one `~/.monoagent` DB) but a real, disclosed gap, not a documented
+  trade-off. Deferred as a design question (what should the UI show for a
+  foreign-owned active turn? should `StopChatTurn` reject it explicitly?),
+  not a mechanical bug fix.
+- **`AIChatPanel.jsx` coherence has measurably decayed**: both findings
+  above live in code that stayed in this 1,095-line file instead of being
+  extracted, while everything that *was* extracted (`chatReducer.js`,
+  `useChatStream.js`, `chatArtifacts.js`) has direct unit tests and no
+  comparable defect found in this review. Extraction candidates:
+  `useResolvedArtifacts` (beside `chatArtifacts.js`, which it exclusively
+  wraps), `openArtifact` (a generic revalidate-before-acting helper with
+  no panel-specific dependency), `reduceTurnEvents`/`loadTurnState` (a
+  second, independent "paginate getChatEvents to exhaustion" loop,
+  conceptually `useChatStream.js`'s sibling). Structural, not urgent — a
+  refactor beyond this review's fix-a-bug scope, not attempted here.
+
+**Accessibility** (all confirmed by direct source reading, not just the
+auditor's report)
+
+- **Past-sessions dropdown is a keyboard trap.** Rows are bare
+  `<div onClick>` (no `tabIndex`/`role`/`onKeyDown`); the toggle button has
+  no `aria-expanded`/`aria-haspopup`; Escape while the list is open closes
+  the whole panel instead of just the list (the handler never checks
+  `showSessions`); the active conversation is distinguished only by a 10%-
+  opacity tint, no `aria-current`. `AIChatPanel.jsx:796-848,527-536`.
+- **Continuous panel-resize drag has no keyboard path** — the *discrete*
+  Expand/Collapse toggle is keyboard-operable (380px⇄760px), so this is a
+  narrower gap than a hard block, not fixed given a working alternative
+  already exists. `AIChatPanel.jsx:731-740,539-564`.
+- **Turn-status live region is mount-coupled — likely silent exactly when
+  it matters most.** `TurnStatus`'s `role="status" aria-live="polite"` div
+  only exists inside `{streaming && ...}`; at turn-finish, that block
+  unmounts and a *new* `TurnStatus` instance mounts inside `messages.map`
+  with the terminal label already baked in — a fresh node's initial
+  content is unreliably announced by AT (a well-known ARIA gotcha), so
+  "Completed"/"Failed" likely goes unannounced despite mid-stream status
+  changes working correctly. Compounding gap: tool failures, notices
+  (including this session's own `history_not_saved` warning), and
+  `ChatComposer`'s disabled-reason banner are all plain DOM with no
+  `aria-live` anywhere. Fix shape (per the auditor, matches this
+  reviewer's own read): one persistent, always-mounted
+  `aria-live="polite"` region at the panel level, fed short strings for
+  exactly these status-message events — not sprinkled across each
+  component. Deferred because the fix threads through `AIChatPanel.jsx`
+  (same file as fix 4 above), `TurnStatus.jsx`, `ChatTimeline.jsx`, and
+  `ChatComposer.jsx`; doing it concurrently with a correctness fix in the
+  same file risked a regression in currently-100%-passing code.
+  `AIChatPanel.jsx:236,567-579,1020-1057`, `TurnStatus.jsx`,
+  `ToolActivityCard.jsx`, `ChatTimeline.jsx:16-48`, `ChatComposer.jsx:32-36`.
+- **`ToolActivityCard`'s `aria-controls` is dangling while collapsed, and
+  its id isn't turn-scoped.** The controlled `<div id={panelId}>` only
+  exists `{open && ...}` — while collapsed (the default), `aria-controls`
+  points at nothing. Separately, `panelId` is built from `call.callId`
+  alone, which this codebase's own code elsewhere documents as *not*
+  unique across turns (`AIChatPanel.jsx:158-165`'s cache key is
+  `${turnId}:${callId}` for exactly this reason) — every past turn stays
+  mounted simultaneously, so two tool-using turns produce duplicate DOM
+  ids. Fix needs threading `turnId` through `ChatTimeline` into
+  `ToolActivityCard` (both already receive/have access to it) and
+  rendering the controlled div unconditionally (toggle visibility, not
+  mount) — deferred as a dedicated pass alongside the live-region fix
+  above, same file-overlap reasoning. `ToolActivityCard.jsx:60,96-124`.
+
+**Code Reviewer** (findings 1-6 traced/verified directly; 7-10 sourced
+from the reviewer's own sub-agents — the reviewer's report was internally
+inconsistent about whether finding 7 was independently re-verified, so
+all of 7-10 are treated as lower-confidence and none were acted on here)
+
+- **Provider-backend tool cards always show ~0.0s elapsed time.**
+  `app_chat.go`'s `onToolCall` closure emits `tool.started` immediately
+  followed by `tool.completed` because the provider tool loop
+  (`service.go`) invokes the callback only once, after the tool has
+  already fully executed — there's no true start timestamp to record.
+  Root-caused to the callback signature having no separate start/end
+  hook; fixing it means changing that signature across `service.go` and
+  `app_chat.go`, not a local patch. Agent-backend elapsed time is
+  unaffected.
+- **Provider-backend tool failures always render as success.** Same
+  `onToolCall` closure hardcodes `ok := true` unconditionally;
+  `executeTool` collapses a real failure into a `{"error":...}` string
+  with no separate channel for `app_chat.go` to read. Same root cause and
+  same cross-file signature-change scope as the item above — the plan's
+  own review-resolution table calls this fixed, but only for the
+  agent/CLI backend, not the provider backend.
+- **Agent-backend: a tool call orphaned mid-turn (Stop, crash, kill)
+  ticks forever on replay.** `ToolActivityCard`'s live-ticking clock is
+  driven purely by `call.status === 'started'`, which can't distinguish
+  "belongs to the currently-streaming live turn" from "belongs to a
+  finalized historical turn being replayed." A call stuck at `started`
+  (no `tool.completed` ever arrives) shows a live-ticking "Running" clock
+  counting up from its original `startedAt` — hours or days later,
+  indefinitely, every time that conversation is reopened. Concrete,
+  testable fix (thread whether the enclosing turn is live vs. replayed
+  into `ToolActivityCard`) — deferred alongside the two `aria-controls`/
+  live-region a11y fixes above due to the same `ChatTimeline.jsx`/
+  `AIChatPanel.jsx` overlap.
+- **`DeleteConversation` isn't atomic against a concurrent
+  `StartChatTurn`.** The active-turn check
+  (`chat_events.go:249-282`) runs outside any transaction, before the
+  delete's own transaction opens; nothing locks the conversation
+  in between, and neither `ai_chat_turns` nor `ai_chat_events` has a
+  foreign key back to the conversation. A `StartChatTurn` admitted
+  in-memory but not yet DB-committed can race a `DeleteConversation` that
+  sees zero active turns, proceeds, and leaves an orphaned, invisible,
+  un-stoppable turn still writing events for a conversation_id nothing
+  can query. Real, but needs a concurrency-control design decision
+  (transactional lock scope, or a FK plus migration), not attempted here.
+- **Tool-output truncation silently discards the metadata the plan
+  requires, and one field has no bound at all.** `BoundText`'s
+  `(truncated, originalBytes)` return values are discarded at both call
+  sites, and neither `ToolStartedPayload` nor `ToolCompletedPayload` has a
+  field to carry them — contrary to the plan's explicit spec ("Oversized
+  tool content is represented by ... truncated:true"); the UI gives no
+  indication content was cut, and Copy silently copies the truncated text
+  as complete. Separately and more sharply, `NoticePayload.Message` has
+  **no bound at all** (unlike every other field), so a verbose external
+  adapter's error text can write an unbounded row/event payload. The
+  `NoticePayload.Message` half is a small, mechanical, low-risk fix
+  (apply the same bounding used elsewhere); the `truncated`/
+  `originalBytes` half is a real but larger plan-spec gap spanning Go
+  payload types, both call sites, the JS reducer, and `ToolActivityCard`
+  rendering. Neither attempted this round — bundling a small fix with a
+  larger one in the same area seemed likely to get half-done; both are
+  cleanly scoped for a dedicated pass.
+- **Lower-confidence (sub-agent-sourced, not independently re-verified at
+  the source — do not act on these without first reading the actual code
+  in `service.go`/`exec.go` directly):** provider-backend round-cap
+  (`maxToolRounds`) silently reports turn success with tool calls still
+  pending, instead of a distinct status; no `ctx.Err()` check in the
+  provider tool-calling loop between round iterations (Stop mid-round
+  lets the rest of that round run); the 40-message history window is a
+  blind positional slice with no role-awareness, which can orphan a
+  tool-result message at the window's start; `exec.go`'s
+  `ApplyEventToResult` treats `res.Err` as sticky (first `is_error:true`
+  wins for the whole turn) while other fields are last-write-wins, against
+  `TurnResult.StopReason`'s own doc comment implying multiple `result`
+  events per turn; `exec.go`'s tool-dispatch has no `ctx.Err()` check
+  before invoking `OnToolCall` (unlike `app_chat.go`'s own comments,
+  which suggest this was intended — plan Task 2 commits to context checks
+  "before tools"). One item from this group *was* narrow and mechanical
+  enough to note as safe: `save_document`'s duplicate-filename check
+  (`os.Stat` then `os.WriteFile`) is a TOCTOU race — `O_CREATE|O_EXCL`
+  would close it in one line — but wasn't bundled into this round's
+  `save_document` fix to keep that fix's diff minimal and singly-focused.
+
+**Security**
+
+- **Non-artifact tool call output is relayed to the UI without
+  independent re-verification** (`app_chat.go:496-502`, `ev.OK`/
+  `ev.Result.Text` from the external `monomind` binary's NDJSON, for any
+  tool call outside the three allowlisted artifact types). Explicitly
+  assessed by the Security Engineer as acceptable as implemented (that
+  content only ever renders inert in a `<pre>`, never triggers an action,
+  and `monomind` is a local sibling binary, not network-facing) — recorded
+  here as a named trust boundary, not a finding requiring a fix.
+
+## Round 2 verification (2026-09-12): all four round-1 fixes confirmed correct
+
+A fresh, independent Code Reviewer agent adversarially re-verified all 4
+round-1 fixes against the actual source (not just the diff) — tracing the
+exact double-dispatch mechanism for fix 2, confirming fix 4's test
+actually exercises the new guard and not the pre-existing
+`loadGenerationRef` mechanism, confirming `MaxSafeSeq`'s value and
+checking for other hardcoded-seq call sites for fix 1, and confirming
+`checkInjectionGate`'s placement and `checkRunGate`'s preserved behavior
+for fix 3. All four: **confirmed correct, no defects found.** Full
+`go build`/`go vet`/`go test` (fresh, `-count=1`) from both modules and
+`npx vitest run` (244/244) all pass.
+
+Two adjacent, lower-severity observations surfaced from directly
+answering this review's own adversarial sub-questions (not independent
+findings from an open-ended pass) — neither is a defect in the round-1
+fixes, both are narrower/pre-existing:
+
+- **Other `MonoagentTools` that write durable state aren't gated by
+  `checkInjectionGate`**: `add_secret`/`update_secret` (vault secrets),
+  `create_org`/`add_org_role`/`update_org_role`/`set_role_reports_to`/
+  `remove_org_role` (org config JSON), `create_workflow`/
+  `add_workflow_node`. Judged lower-severity than `save_document`: none
+  produce a directly-openable/executable artifact on their own — a
+  poisoned secret or workflow/org still needs a separate step (wiring the
+  secret into a node, or a human running the workflow/starting the org)
+  before it does anything, and `run_workflow`'s own gate still blocks
+  execution within the same poisoned session. Same risk profile as the
+  already-accepted, unflagged `create_workflow` risk — not a gap this
+  round's security fix was scoped to close, but worth a dedicated pass if
+  the injection-guard surface is revisited.
+- **`conversationsFetchedRef` is a single bucket-string flag, not a
+  per-request token** — a rapid **A→B→A** toggle (not just the simpler
+  A→B case fix 4 targets) can leave two overlapping in-flight requests
+  both "for bucket A"; if the older one resolves after the newer one, its
+  staleness check also reads `current === bucket` as true and can
+  redundantly re-run `loadConversation` with stale data, silently
+  overwriting a freshly-loaded correct transcript if a new conversation
+  was created in bucket A during that window. Identical exposure already
+  exists in the `.catch()` branch. Narrower than the bug fix 4 closed
+  (needs a 3-state toggle, not just 2) — fold into the same future pass as
+  the `AIChatPanel.jsx` extraction items above (a per-request token/ref
+  would close this and is a natural fit alongside that refactor).
+
+---
+
 ## Status
 
 - [x] 1. useChatStream historySaved consumption
@@ -239,6 +525,29 @@ not a loop.
 - [x] 5. Remove dead onWorkflowCreated block
 - [x] 6. Remove orphaned legacy api.js bindings
 - [x] 7. Bucket-switch retry after failure
+
+### Round 1 review — fixed
+
+- [x] R1.1 `turn.finished` fallback seq:0 soft-lock
+- [x] R1.2 Duplicate `historySaved:false` notice
+- [x] R1.3 `save_document` missing injection gate
+- [x] R1.4 Bucket-switch `.then()` staleness guard
+
+### Round 1 review — documented, open for a later round
+
+- [ ] `useResolvedArtifacts` permanent null-cache on transient failure
+- [ ] `OwnerInstanceID` cross-instance admission never enforced
+- [ ] `AIChatPanel.jsx` extraction (useResolvedArtifacts, openArtifact, reduceTurnEvents/loadTurnState)
+- [ ] Past-sessions dropdown keyboard trap + Escape/aria-expanded/aria-current
+- [ ] Continuous panel-resize has no keyboard path (discrete alternative exists)
+- [ ] Turn-status live region mount-coupled; tool-failure/notice/composer announcements missing
+- [ ] `ToolActivityCard` aria-controls dangling + unscoped id cross-turn collision
+- [ ] Provider-backend tool elapsed time always ~0.0s
+- [ ] Provider-backend tool failures always render as success
+- [ ] Agent-backend: orphaned tool call ticks forever on replay
+- [ ] `DeleteConversation` not atomic against concurrent `StartChatTurn`
+- [ ] Tool-output truncation metadata discarded; `NoticePayload.Message` unbounded
+- [ ] Lower-confidence service.go/exec.go items (see detail above) + save_document TOCTOU
 
 ## Addendum: two things found outside the seven items' scope
 

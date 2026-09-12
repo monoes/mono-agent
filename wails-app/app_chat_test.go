@@ -563,6 +563,14 @@ func TestChatSupervisor_AgentTurnStartedPersistFailure_FinalizesFailedAndRelease
 	if payload.HistorySaved {
 		t.Error("HistorySaved = true, want false — the store write itself is what failed")
 	}
+	if finished[0].Seq != chatevents.MaxSafeSeq {
+		// This live-only event was never allocated a real seq (the store
+		// write is exactly what failed) — anything below the frontend's
+		// already-applied high-water mark (e.g. the 0 this used to be) is
+		// unconditionally dropped by chatReducer.js's "ev.seq <=
+		// state.lastSeq" dedup guard, silently soft-locking the panel.
+		t.Errorf("live-only turn.finished Seq = %d, want chatevents.MaxSafeSeq so the frontend never discards it as stale", finished[0].Seq)
+	}
 	if h2 := sup.lookup(conv.ID, "turn-1"); h2 != nil {
 		t.Error("turn admission was not released after the turn.started append failed")
 	}
@@ -605,6 +613,9 @@ func TestChatSupervisor_ProviderTurnStartedPersistFailure_FinalizesFailedAndRele
 	}
 	if payload.Status != chatevents.StatusFailed {
 		t.Errorf("status = %q, want %q", payload.Status, chatevents.StatusFailed)
+	}
+	if finished[0].Seq != chatevents.MaxSafeSeq {
+		t.Errorf("live-only turn.finished Seq = %d, want chatevents.MaxSafeSeq so the frontend never discards it as stale", finished[0].Seq)
 	}
 	if h2 := sup.lookup(conv.ID, "turn-1"); h2 != nil {
 		t.Error("turn admission was not released after the turn.started append failed")

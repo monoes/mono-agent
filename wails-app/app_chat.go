@@ -562,7 +562,7 @@ func (sup *chatSupervisor) finalize(h *chatTurnHandle, res *monomind.TurnResult)
 		// this turn's terminal state (plan §248) instead of hanging. This
 		// event is never committed (the store write is exactly what just
 		// failed) — live-only, by construction.
-		liveEv, buildErr := chatevents.New(h.profileID, h.conversationID, h.turnID, 0, time.Now(), chatevents.EventTurnFinished, chatevents.TurnFinishedPayload{
+		liveEv, buildErr := chatevents.New(h.profileID, h.conversationID, h.turnID, chatevents.MaxSafeSeq, time.Now(), chatevents.EventTurnFinished, chatevents.TurnFinishedPayload{
 			Status: status, Reason: reason, ExitCode: exitCode, HistorySaved: false,
 		})
 		if buildErr == nil && sup.emit != nil {

@@ -33,6 +33,15 @@ export function useChatStream({ conversationId, turnId }) {
     }
 
     function dispatchEvent(ev) {
+      // fillGap has no upper bound on what it fetches, so the same event
+      // can legitimately reach this function twice — once via a gap-fill
+      // page that happens to already include it, once via the live
+      // delivery that triggered that gap-fill (or any other redundant
+      // re-delivery). The reducer's own 'event' case already no-ops a
+      // seq it has seen before; alreadyApplied lets the side effect below
+      // share that exact same notion of "did this call actually advance
+      // anything," instead of firing once per dispatchEvent call.
+      const alreadyApplied = typeof ev.seq === 'number' && ev.seq <= localLastSeq
       if (typeof ev.seq === 'number' && ev.seq > localLastSeq) localLastSeq = ev.seq
       dispatch({ type: 'event', event: ev })
       // historySaved:false does NOT mean this hook's own transcript is
@@ -43,7 +52,7 @@ export function useChatStream({ conversationId, turnId }) {
       // (a refetch now could only return LESS than what's already applied)
       // — the only correct response is telling the user, via the same
       // notice banner real backend 'notice' events already render.
-      if (ev.type === 'turn.finished' && ev.payload?.historySaved === false) {
+      if (!alreadyApplied && ev.type === 'turn.finished' && ev.payload?.historySaved === false) {
         dispatch({
           type: 'localNotice',
           notice: {

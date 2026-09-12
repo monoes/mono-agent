@@ -53,6 +53,18 @@ func FormatAt(t time.Time) string {
 	return t.UTC().Format("2006-01-02T15:04:05.000Z07:00")
 }
 
+// MaxSafeSeq is the largest Seq value guaranteed to round-trip exactly
+// through JSON into a JavaScript Number (2^53-1, Number.MAX_SAFE_INTEGER).
+// The Wails bridge serializes Seq as a plain JSON number and the frontend
+// reducer does numeric seq comparisons on whatever JSON.parse hands back, so
+// a larger value risks silent precision loss. Real per-turn seq values are
+// small monotonic counters far below this; MaxSafeSeq exists as a sentinel
+// for an event that was never allocated a real seq by the store (e.g.
+// wails-app/app_chat.go's finalize, when the FinalizeTurn write itself
+// fails) but must still compare as newer than anything the frontend has
+// already applied for its turn.
+const MaxSafeSeq int64 = (1 << 53) - 1
+
 // New builds a complete Event by marshaling payload into the envelope. seq
 // and at are supplied by the caller (the store allocates seq transactionally;
 // see internal/ai/chat_events.go) rather than computed here, since this

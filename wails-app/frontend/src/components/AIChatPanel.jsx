@@ -443,6 +443,13 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
     conversationsFetchedRef.current = bucket
     const backend = useAgents ? 'agent' : 'provider'
     api.listChatConversations('', 50).then(res => {
+      // A later bucket switch (e.g. a quick agents<->providers toggle) may
+      // already have moved conversationsFetchedRef on to a different
+      // bucket by the time this resolves — same staleness check the
+      // .catch() below already applies. Without it, a late-resolving fetch
+      // for a bucket the UI no longer shows can overwrite the
+      // already-loaded transcript (or wipe it via the empty-items branch).
+      if (conversationsFetchedRef.current !== bucket) return
       const items = (Array.isArray(res?.items) ? res.items : [])
         .filter(c => c.workflowContext === workflowID && c.backend === backend)
       setPastConversations(items)

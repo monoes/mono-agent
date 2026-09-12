@@ -186,6 +186,29 @@ describe('useChatStream', () => {
     expect(result.current.notices[0].message).toMatch(/history|reopen|saved/i)
   })
 
+  it('does not duplicate the historySaved:false notice when the terminal event reaches dispatchEvent twice (gap-fill, then its own triggering live delivery)', async () => {
+    // fillGap has no upper bound on what it fetches/dispatches, so when a
+    // live event jumps ahead, the gap-fill request can return (and dispatch)
+    // the very event that triggered it — dispatchLive then dispatches that
+    // same event a second time right after. The reducer's own seq dedup
+    // correctly no-ops the second 'event' dispatch, but the historySaved
+    // notice side effect in dispatchEvent isn't gated the same way, so it
+    // fired twice for one real occurrence.
+    const finishedEv = ev('turn.finished', { status: 'completed', reason: 'end_turn', exitCode: 0, historySaved: false }, 2)
+    getChatEvents
+      .mockResolvedValueOnce(page([])) // hydration: nothing committed yet
+      .mockResolvedValueOnce(page([finishedEv])) // gap-fill already returns it
+
+    const { result } = renderHook(() => useChatStream({ conversationId: 'conv-1', turnId: 'turn-1' }))
+    await waitFor(() => expect(getChatEvents).toHaveBeenCalledTimes(1))
+
+    // Live delivery of the same event the gap-fill above already applied.
+    await act(async () => { emit('chat:event', finishedEv) })
+
+    await waitFor(() => expect(result.current.terminal).not.toBeNull())
+    expect(result.current.notices).toHaveLength(1)
+  })
+
   it('does not surface a notice when turn.finished reports historySaved:true', async () => {
     getChatEvents.mockResolvedValueOnce(page([
       ev('turn.finished', { status: 'completed', reason: 'end_turn', exitCode: 0, historySaved: true }, 1),

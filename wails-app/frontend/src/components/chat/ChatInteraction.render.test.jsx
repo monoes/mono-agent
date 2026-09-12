@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import '@testing-library/jest-dom/vitest'
-import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react'
+import { render, screen, cleanup, waitFor, fireEvent, act } from '@testing-library/react'
 import { ChatComposer } from './ChatComposer.jsx'
 import AIChatPanel from '../AIChatPanel.jsx'
 
@@ -477,5 +477,43 @@ describe('AIChatPanel bucket-switch history fetch', () => {
     // Proves the retry's result was actually used (loadConversation ran),
     // not just that a second HTTP-ish call happened.
     await waitFor(() => expect(getChatTurns2).toHaveBeenCalledWith('conv-retry', '', 50))
+  })
+
+  // The .catch() above has always had this staleness check; the .then()
+  // success path did not — a late-resolving fetch for a bucket the UI no
+  // longer shows could call loadConversation (or clear state) and stomp
+  // whatever the newer, already-current bucket had just loaded.
+  it('a stale bucket fetch resolving after a newer bucket already loaded does not overwrite it', async () => {
+    const bucketA = deferred()
+    listChatConversations2.mockImplementationOnce(() => bucketA.promise) // wf-a's fetch — stays pending
+    listChatConversations2.mockResolvedValueOnce({
+      items: [{ id: 'conv-b', backend: 'provider', workflowContext: 'wf-b', runtimeId: '', model: 'model-b', updatedAt: '2026-09-12T00:00:01Z' }],
+    })
+    getChatTurns2.mockImplementation((convId) => Promise.resolve({
+      items: [{ id: `turn-${convId}`, prompt: convId === 'conv-a' ? 'from-A' : 'from-B', status: 'completed' }],
+    }))
+    getChatEvents2.mockResolvedValue({ items: [], hasMore: false })
+
+    const { rerender } = render(<AIChatPanel workflowID="wf-a" isOpen={true} onClose={() => {}} />)
+    await waitFor(() => expect(listChatConversations2).toHaveBeenCalledTimes(1))
+
+    // Switch buckets (a new workflowID, same shape of change a quick
+    // agents<->providers toggle produces) before wf-a's fetch resolves.
+    rerender(<AIChatPanel workflowID="wf-b" isOpen={true} onClose={() => {}} />)
+    await waitFor(() => expect(listChatConversations2).toHaveBeenCalledTimes(2))
+    await screen.findByText('from-B')
+
+    // The stale wf-a fetch finally resolves, with a conversation for the
+    // bucket the UI no longer shows.
+    await act(async () => {
+      bucketA.resolve({ items: [{ id: 'conv-a', backend: 'provider', workflowContext: 'wf-a', runtimeId: '', model: 'model-a', updatedAt: '2026-09-12T00:00:00Z' }] })
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    expect(screen.getByText('from-B')).toBeInTheDocument()
+    expect(screen.queryByText('from-A')).not.toBeInTheDocument()
+
+    getChatTurns2.mockReset().mockResolvedValue({ items: [] })
+    getChatEvents2.mockReset().mockResolvedValue({ items: [], hasMore: false })
   })
 })
