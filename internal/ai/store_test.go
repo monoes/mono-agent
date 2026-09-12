@@ -51,6 +51,27 @@ func openTestDB(t *testing.T) *sql.DB {
 	return db.DB
 }
 
+// Regression test: initTables' migration step used to run every
+// ALTER TABLE via a bare db.Exec(...) with both return values discarded,
+// silently swallowing any error -- not just the expected "duplicate column
+// name" one. addColumnIfMissing must still tolerate the expected case but
+// propagate a genuine failure.
+func TestAddColumnIfMissing_PropagatesRealErrorsButToleratesDuplicateColumn(t *testing.T) {
+	db := openTestDB(t)
+	if err := addColumnIfMissing(db, `ALTER TABLE no_such_table ADD COLUMN x TEXT`); err == nil {
+		t.Fatal("addColumnIfMissing against a nonexistent table unexpectedly succeeded")
+	}
+	if _, err := db.Exec(`CREATE TABLE probe (id TEXT PRIMARY KEY)`); err != nil {
+		t.Fatalf("create probe table: %v", err)
+	}
+	if err := addColumnIfMissing(db, `ALTER TABLE probe ADD COLUMN extra TEXT NOT NULL DEFAULT ''`); err != nil {
+		t.Fatalf("first ADD COLUMN: %v", err)
+	}
+	if err := addColumnIfMissing(db, `ALTER TABLE probe ADD COLUMN extra TEXT NOT NULL DEFAULT ''`); err != nil {
+		t.Errorf("second ADD COLUMN (duplicate) should be tolerated, got: %v", err)
+	}
+}
+
 func TestStoreInitTables(t *testing.T) {
 	db := openTestDB(t)
 	store, err := NewAIStore(db)
@@ -250,7 +271,7 @@ func TestChatMessageCRUD(t *testing.T) {
 	}
 
 	// Get history
-	history, err := store.GetChatHistory(wfID)
+	history, err := store.GetChatHistory(wfID, "")
 	if err != nil {
 		t.Fatalf("GetChatHistory: %v", err)
 	}
@@ -263,17 +284,156 @@ func TestChatMessageCRUD(t *testing.T) {
 	if history[1].TokenCount != 42 {
 		t.Errorf("TokenCount = %d, want 42", history[1].TokenCount)
 	}
+	if history[0].ProfileID != "default" {
+		t.Errorf("ProfileID = %q, want %q (empty normalizes to default)", history[0].ProfileID, "default")
+	}
 
 	// Clear history
-	if err := store.ClearChatHistory(wfID); err != nil {
+	if err := store.ClearChatHistory(wfID, ""); err != nil {
 		t.Fatalf("ClearChatHistory: %v", err)
 	}
-	history, err = store.GetChatHistory(wfID)
+	history, err = store.GetChatHistory(wfID, "")
 	if err != nil {
 		t.Fatalf("GetChatHistory after clear: %v", err)
 	}
 	if len(history) != 0 {
 		t.Errorf("GetChatHistory after clear: len = %d, want 0", len(history))
+	}
+}
+
+// TestChatMessageProfileIsolation is a regression test for a real
+// cross-profile data leak: ai_chat_messages had no profile scoping at all,
+// and the AI chat panel always uses the literal, non-unique workflow_id
+// "general" for its global per-profile assistant chat. Without this check,
+// switching the active profile in the GUI would show — and let you clear —
+// another profile's "general" conversation.
+func TestChatMessageProfileIsolation(t *testing.T) {
+	db := openTestDB(t)
+	store, err := NewAIStore(db)
+	if err != nil {
+		t.Fatalf("NewAIStore: %v", err)
+	}
+
+	const wf = "general"
+	if err := store.SaveChatMessage(ChatMessage{
+		ID: "a1", WorkflowID: wf, ProfileID: "profile-a", Role: "user", Content: "profile a secret",
+		SessionID: "sess-a", CreatedAt: "2026-01-01T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("SaveChatMessage (profile-a): %v", err)
+	}
+	if err := store.SaveChatMessage(ChatMessage{
+		ID: "b1", WorkflowID: wf, ProfileID: "profile-b", Role: "user", Content: "profile b secret",
+		SessionID: "sess-b", CreatedAt: "2026-01-01T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("SaveChatMessage (profile-b): %v", err)
+	}
+
+	// GetChatHistory: profile B must not see profile A's messages.
+	historyB, err := store.GetChatHistory(wf, "profile-b")
+	if err != nil {
+		t.Fatalf("GetChatHistory(profile-b): %v", err)
+	}
+	if len(historyB) != 1 || historyB[0].ID != "b1" {
+		t.Errorf("GetChatHistory(profile-b) = %+v, want only b1", historyB)
+	}
+
+	// ListChatSessions: profile B must not see profile A's session.
+	sessionsB, err := store.ListChatSessions(wf, "profile-b")
+	if err != nil {
+		t.Fatalf("ListChatSessions(profile-b): %v", err)
+	}
+	if len(sessionsB) != 1 || sessionsB[0].SessionID != "sess-b" {
+		t.Errorf("ListChatSessions(profile-b) = %+v, want only sess-b", sessionsB)
+	}
+
+	// GetSessionMessages: profile B must not read profile A's session by ID,
+	// even if it somehow learned the session ID.
+	msgs, err := store.GetSessionMessages(wf, "sess-a", "profile-b")
+	if err != nil {
+		t.Fatalf("GetSessionMessages(sess-a, profile-b): %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Errorf("GetSessionMessages(sess-a, profile-b) = %+v, want empty (cross-profile read)", msgs)
+	}
+
+	// ClearChatHistory: clearing profile B's history must not delete profile A's.
+	if err := store.ClearChatHistory(wf, "profile-b"); err != nil {
+		t.Fatalf("ClearChatHistory(profile-b): %v", err)
+	}
+	historyA, err := store.GetChatHistory(wf, "profile-a")
+	if err != nil {
+		t.Fatalf("GetChatHistory(profile-a) after profile-b clear: %v", err)
+	}
+	if len(historyA) != 1 || historyA[0].ID != "a1" {
+		t.Errorf("profile-a history after profile-b ClearChatHistory = %+v, want a1 untouched", historyA)
+	}
+}
+
+// TestChatMessageLegacyAmbiguousRowsAreExcluded is the plan-mandated
+// "legacy ambiguous exclusion" case: a row saved before profile_id existed
+// (simulated here by inserting raw SQL the way the ALTER TABLE backfill
+// would have left it, bypassing SaveChatMessage entirely) must not be
+// silently attributed to whichever profile happens to be named "default" —
+// it must be invisible to every profile, including "default" itself. This
+// is a deliberate departure from ai_providers' COALESCE(profile_id,'default')
+// convention: chat history rows are per-user content, not app config, so
+// misattributing one profile's old conversation to another is a real
+// privacy concern, not just a minor inconvenience.
+func TestChatMessageLegacyAmbiguousRowsAreExcluded(t *testing.T) {
+	db := openTestDB(t)
+	store, err := NewAIStore(db)
+	if err != nil {
+		t.Fatalf("NewAIStore: %v", err)
+	}
+
+	const wf = "general"
+	// Simulate a pre-migration row: profile_id left at the column's '' default,
+	// never touched by SaveChatMessage's normalization.
+	if _, err := db.Exec(
+		`INSERT INTO ai_chat_messages (id, workflow_id, role, content, session_id, profile_id, created_at)
+		 VALUES ('legacy1', ?, 'user', 'ambiguous old message', 'sess-legacy', '', '2025-01-01T00:00:00Z')`,
+		wf,
+	); err != nil {
+		t.Fatalf("seed legacy row: %v", err)
+	}
+
+	for _, profileID := range []string{"default", "profile-a", ""} {
+		history, err := store.GetChatHistory(wf, profileID)
+		if err != nil {
+			t.Fatalf("GetChatHistory(%q): %v", profileID, err)
+		}
+		if len(history) != 0 {
+			t.Errorf("GetChatHistory(%q) = %+v, want empty (ambiguous legacy row must never surface)", profileID, history)
+		}
+
+		sessions, err := store.ListChatSessions(wf, profileID)
+		if err != nil {
+			t.Fatalf("ListChatSessions(%q): %v", profileID, err)
+		}
+		if len(sessions) != 0 {
+			t.Errorf("ListChatSessions(%q) = %+v, want empty", profileID, sessions)
+		}
+
+		msgs, err := store.GetSessionMessages(wf, "sess-legacy", profileID)
+		if err != nil {
+			t.Fatalf("GetSessionMessages(%q): %v", profileID, err)
+		}
+		if len(msgs) != 0 {
+			t.Errorf("GetSessionMessages(%q) = %+v, want empty", profileID, msgs)
+		}
+
+		// Nor can any profile clear it away by accident.
+		if err := store.ClearChatHistory(wf, profileID); err != nil {
+			t.Fatalf("ClearChatHistory(%q): %v", profileID, err)
+		}
+	}
+
+	var stillThere int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM ai_chat_messages WHERE id = 'legacy1'`).Scan(&stillThere); err != nil {
+		t.Fatalf("count legacy row: %v", err)
+	}
+	if stillThere != 1 {
+		t.Errorf("legacy ambiguous row was deleted by a scoped ClearChatHistory call; it must survive on disk untouched")
 	}
 }
 
@@ -302,7 +462,7 @@ func TestChatHistorySameTimestampKeepsInsertOrder(t *testing.T) {
 		}
 	}
 
-	history, err := store.GetChatHistory(wfID)
+	history, err := store.GetChatHistory(wfID, "")
 	if err != nil {
 		t.Fatalf("GetChatHistory: %v", err)
 	}
@@ -481,7 +641,7 @@ func TestChatSessions(t *testing.T) {
 	// A message with no session_id (legacy row) must be excluded entirely.
 	save("m7", "user", "legacy row", "", "2026-01-03T00:00:00Z")
 
-	sessions, err := store.ListChatSessions(wf)
+	sessions, err := store.ListChatSessions(wf, "")
 	if err != nil {
 		t.Fatalf("ListChatSessions: %v", err)
 	}
@@ -504,7 +664,7 @@ func TestChatSessions(t *testing.T) {
 		t.Errorf("sessions[0].Preview not truncated: %d runes", len(got))
 	}
 
-	msgs, err := store.GetSessionMessages(wf, "s1")
+	msgs, err := store.GetSessionMessages(wf, "s1", "")
 	if err != nil {
 		t.Fatalf("GetSessionMessages: %v", err)
 	}

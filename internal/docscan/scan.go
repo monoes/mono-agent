@@ -13,17 +13,24 @@ import (
 // AllowedExtensions are the (lowercase, no dot) extensions treated as "a
 // human-readable, non-code document" for discovery and indexing purposes.
 // Deliberately separate from FileViewerModal.jsx's own fileViewerKind map:
-// that one answers "can this be previewed in-app" (and deliberately
-// includes images, HTML, and source code); this one answers "is this a
-// document worth indexing" (and deliberately excludes both). They cannot
-// share a source of truth anyway (Go vs. JS), and shouldn't even if they
-// could.
+// that one answers "can this be previewed in-app" (images, HTML, and
+// source code all qualify there); this one answers "is this a document
+// worth indexing" — still excludes images and raw source code, but html/
+// htm are included on both sides now, since a self-contained HTML file
+// (a styled report/summary, e.g. from save_document in
+// internal/ai/chat) is exactly the kind of deliverable this package
+// exists to surface. Safe to preview even for untrusted/agent-authored
+// content: FileViewerModal's iframe uses an empty sandbox="" (no
+// scripts, no same-origin), so embedded JS never executes. They cannot
+// share a Go/JS source of truth anyway, so this list still isn't
+// derived from that one.
 var AllowedExtensions = map[string]bool{
 	"md": true, "markdown": true, "txt": true, "rtf": true,
 	"doc": true, "docx": true, "odt": true,
 	"pdf": true,
 	"xls": true, "xlsx": true, "ods": true, "csv": true,
 	"ppt": true, "pptx": true,
+	"html": true, "htm": true,
 }
 
 // isDotDir reports whether name is a dot-prefixed directory (.monomind,

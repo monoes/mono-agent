@@ -293,3 +293,63 @@ func TestClearHistory(t *testing.T) {
 		t.Errorf("expected empty history after clear, got %d messages", len(history))
 	}
 }
+
+// TestStreamChatScoped_ImmuneToConcurrentSetProfileID is the regression test
+// for the mutable-shared-CanvasTools-profile bug (plan §142/§236):
+// SetProfileID on the shared service must never affect an in-flight
+// StreamChatScoped call for a different, explicitly-passed profile. The
+// seeded provider belongs to profile "default" (newTestService's
+// SaveProvider call never sets ProfileID, which normalizes to "default"),
+// so if StreamChatScoped leaked into using the shared canvasTools field
+// anywhere, the provider lookup itself would fail against "profile-b"
+// instead of merely mis-attributing history — a more sensitive failure
+// signal than checking saved rows alone.
+func TestStreamChatScoped_ImmuneToConcurrentSetProfileID(t *testing.T) {
+	svc := newTestService(t, "hi")
+	// Simulate a profile switch on the shared service happening around the
+	// same time as an in-flight scoped call under a different profile.
+	svc.SetProfileID("profile-b")
+
+	if err := svc.StreamChatScoped(context.Background(), "default", "general", "hello", "test-provider", "gpt-4o", nil, nil); err != nil {
+		t.Fatalf("StreamChatScoped: %v", err)
+	}
+
+	historyDefault, err := svc.GetHistoryScoped("default", "general")
+	if err != nil {
+		t.Fatalf("GetHistoryScoped(default): %v", err)
+	}
+	if len(historyDefault) != 2 {
+		t.Fatalf("GetHistoryScoped(default) = %d messages, want 2 (user + assistant)", len(historyDefault))
+	}
+
+	historyB, err := svc.GetHistoryScoped("profile-b", "general")
+	if err != nil {
+		t.Fatalf("GetHistoryScoped(profile-b): %v", err)
+	}
+	if len(historyB) != 0 {
+		t.Errorf("GetHistoryScoped(profile-b) = %d messages, want 0 — StreamChatScoped(default,...) must never write under the shared field's profile-b", len(historyB))
+	}
+}
+
+// TestClearHistoryScoped_DoesNotUseSharedProfile mirrors the StreamChatScoped
+// regression above for ClearHistoryScoped specifically: clearing "default"'s
+// history via the scoped method must not be redirected to whatever profile
+// the shared canvasTools field currently holds.
+func TestClearHistoryScoped_DoesNotUseSharedProfile(t *testing.T) {
+	svc := newTestService(t, "hi")
+	if err := svc.StreamChatScoped(context.Background(), "default", "general", "hello", "test-provider", "gpt-4o", nil, nil); err != nil {
+		t.Fatalf("StreamChatScoped: %v", err)
+	}
+	svc.SetProfileID("profile-b")
+
+	if err := svc.ClearHistoryScoped("default", "general"); err != nil {
+		t.Fatalf("ClearHistoryScoped(default): %v", err)
+	}
+	history, err := svc.GetHistoryScoped("default", "general")
+	if err != nil {
+		t.Fatalf("GetHistoryScoped(default): %v", err)
+	}
+	if len(history) != 0 {
+		t.Errorf("GetHistoryScoped(default) after ClearHistoryScoped(default) = %d messages, want 0", len(history))
+	}
+}

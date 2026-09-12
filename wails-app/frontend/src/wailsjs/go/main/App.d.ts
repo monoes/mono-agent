@@ -47,6 +47,8 @@ export function ConfirmSocialLogin(arg1:string):Promise<string>;
 
 export function ConnectPlatformOAuth(arg1:string):Promise<string>;
 
+export function CreateChatConversation(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string):Promise<string>;
+
 export function CreateOrgDesign(arg1:string):Promise<string>;
 
 export function CreateProfile(arg1:string,arg2:string,arg3:string):Promise<main.ProfileInfo>;
@@ -56,6 +58,8 @@ export function CreateResource(arg1:string,arg2:string,arg3:string,arg4:string):
 export function CreateWorkflowFromTemplate(arg1:string):Promise<main.WorkflowSummary>;
 
 export function DeleteAIProvider(arg1:string):Promise<string>;
+
+export function DeleteChatConversation(arg1:string):Promise<string>;
 
 export function DeleteOrgDesign(arg1:string):Promise<string>;
 
@@ -103,7 +107,11 @@ export function GetApplication(arg1:string):Promise<main.ApplicationDetail>;
 
 export function GetApplications(arg1:string,arg2:string,arg3:string):Promise<Array<main.ApplicationSummary>>;
 
+export function GetChatEvents(arg1:string,arg2:string,arg3:number,arg4:number):Promise<string>;
+
 export function GetChatSessionMessages(arg1:string,arg2:string):Promise<string>;
+
+export function GetChatTurns(arg1:string,arg2:string,arg3:number):Promise<string>;
 
 export function GetConnectionsForPlatform(arg1:string):Promise<Array<connections.SafeConnection>>;
 
@@ -217,6 +225,8 @@ export function IsReady():Promise<boolean>;
 
 export function ListAIProviders():Promise<string>;
 
+export function ListChatConversations(arg1:string,arg2:number):Promise<string>;
+
 export function ListChatSessions(arg1:string):Promise<string>;
 
 export function ListConnections(arg1:string):Promise<Array<connections.SafeConnection>>;
@@ -313,9 +323,13 @@ export function SetOrgRoleReportsTo(arg1:string,arg2:string,arg3:string):Promise
 
 export function SetWorkflowActive(arg1:string,arg2:boolean):Promise<void>;
 
+export function StartChatTurn(arg1:string,arg2:string,arg3:string,arg4:boolean,arg5:boolean):Promise<string>;
+
 export function StopAIChat(arg1:string):Promise<string>;
 
 export function StopAgentChat(arg1:string):Promise<string>;
+
+export function StopChatTurn(arg1:string,arg2:string):Promise<string>;
 
 export function StopNodeRun(arg1:string):Promise<void>;
 

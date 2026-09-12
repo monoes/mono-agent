@@ -128,6 +128,27 @@ export const api = {
   stopAgentChat:      (workflowID) => GoApp.StopAgentChat(workflowID).then(s => JSON.parse(s)).catch(guard('stop agent chat', null)),
   listChatSessions:      (workflowID) => GoApp.ListChatSessions(workflowID).then(s => JSON.parse(s)).catch(guard('list chat sessions', [])),
   getChatSessionMessages: (workflowID, sessionID) => GoApp.GetChatSessionMessages(workflowID, sessionID).then(s => JSON.parse(s)).catch(guard('chat session messages', [])),
+  // New chat bindings (interactive-agent-chat plan §"Proposed Wails
+  // bindings"). Every call goes through parseStreamResult, same as
+  // streamAIChat/streamAgentChat above: a synchronous {"error":...} shape
+  // must become a real rejection, never a resolved value the caller has to
+  // remember to check. A business-status reply (e.g. StartChatTurn's
+  // {ok:false,status:"busy"}) is NOT that shape, so it passes through as a
+  // normal value for the caller to branch on.
+  createChatConversation: (backend, workflowID, runtimeID, providerID, model) =>
+    GoApp.CreateChatConversation(backend, workflowID, runtimeID, providerID, model).then(parseStreamResult),
+  startChatTurn: (conversationID, turnID, message, tools, allowRuns) =>
+    GoApp.StartChatTurn(conversationID, turnID, message, tools, allowRuns).then(parseStreamResult),
+  stopChatTurn: (conversationID, turnID) =>
+    GoApp.StopChatTurn(conversationID, turnID).then(parseStreamResult),
+  listChatConversations: (cursor = '', limit = 50) =>
+    GoApp.ListChatConversations(cursor, limit).then(parseStreamResult),
+  getChatTurns: (conversationID, cursor = '', limit = 50) =>
+    GoApp.GetChatTurns(conversationID, cursor, limit).then(parseStreamResult),
+  getChatEvents: (conversationID, turnID, afterSeq = 0, limit = 200) =>
+    GoApp.GetChatEvents(conversationID, turnID, afterSeq, limit).then(parseStreamResult),
+  deleteChatConversation: (conversationID) =>
+    GoApp.DeleteChatConversation(conversationID).then(parseStreamResult),
   // Orgs (monomind Org Runtime v2)
   listOrgs:           () => GoApp.ListOrgs().then(s => JSON.parse(s)).catch(guard('list orgs', null)),
   getOrgStatus:       (name = '') => GoApp.GetOrgStatus(name).then(s => JSON.parse(s)).catch(guard('org status', null)),
@@ -168,6 +189,13 @@ export const api = {
   // Per-profile monomind setup — see wails-app/app_monomind_init.go.
   isMonomindInitialized:   () => GoApp.IsMonomindInitialized().catch(guard('monomind init status', false)),
   initializeMonomindProfile: () => GoApp.InitializeMonomindProfile().then(s => JSON.parse(s)),
+  // Chat result artifacts (chat/chatArtifacts.js) — both already existed as
+  // typed Go methods (GetWorkflow returns a real profile_id-checked error
+  // for a deleted/cross-profile id; ListProfileDocuments is already
+  // profile-scoped) with generated Wails bindings, just no api.js wrapper
+  // yet. Typed struct returns, not JSON strings — no .then(JSON.parse).
+  getWorkflow:            (id) => GoApp.GetWorkflow(id).catch(guard('get workflow', null)),
+  listProfileDocuments:   () => GoApp.ListProfileDocuments().catch(guard('list profile documents', [])),
 }
 
 // The Wails runtime (window.runtime / window.go) only exists inside the desktop
@@ -226,6 +254,18 @@ export function onOrgEvent(callback) {
 
 export function onAgentSession(callback) {
   return subscribeEvent('agent:session', callback)
+}
+
+// onChatEvent streams the new GUI chat supervisor's journal — one call per
+// chat:event envelope ({version,profileId,conversationId,turnId,seq,at,type,
+// payload}), covering both the agent and provider backends. useChatStream.js
+// is the sole consumer; it filters by conversationId/turnId itself rather
+// than this helper doing it, so multiple independent subscribers (this
+// panel's live turn view, a future activity/detail view) never fight over
+// one disposer (see the EventsOff footgun this file's onLogEntry-style
+// helpers already avoid).
+export function onChatEvent(callback) {
+  return subscribeEvent('chat:event', callback)
 }
 
 export function onOrgEventsClosed(callback) {

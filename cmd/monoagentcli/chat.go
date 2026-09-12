@@ -47,6 +47,7 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 		timeoutS  string
 		budget    float64
 		tools     string
+		noHistory bool
 	)
 	cmd := &cobra.Command{
 		Use:   "chat [prompt]",
@@ -164,19 +165,33 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 				}
 			}
 
-			// Deliberately no --cwd override: an earlier version of this
-			// pointed every turn at a dedicated working directory so agent
-			// CLIs' own CLAUDE.md/AGENTS.md conventions would auto-load
-			// monoagent guidance — measured to add anywhere from ~20s to
-			// ~40s of pure overhead (and tens of thousands of tokens) to
-			// every single turn, even a bare "hi": the file's presence
-			// pushed several agent CLIs into an unprompted "let me check
-			// the workspace guidance first" exploration step before
+			// No --cwd override for canvas-only turns: an earlier version of
+			// this pointed EVERY turn at a dedicated working directory so
+			// agent CLIs' own CLAUDE.md/AGENTS.md conventions would
+			// auto-load monoagent guidance — measured to add anywhere from
+			// ~20s to ~40s of pure overhead (and tens of thousands of
+			// tokens) to every single turn, even a bare "hi": the file's
+			// presence pushed several agent CLIs into an unprompted "let me
+			// check the workspace guidance first" exploration step before
 			// answering, on every call, not just the first. --canvas mode
 			// never had this problem because it only ever used
 			// opts.SystemPrompt (injected directly, not read from a file) —
 			// monoagentSystemPrompt() below does the same for tool
-			// guidance, so there's nothing left that needs a stable cwd.
+			// guidance, so a canvas-only turn has nothing that needs a
+			// stable cwd, and chatWorkingDir keeps it at "" for exactly
+			// that case.
+			//
+			// MonoagentTools turns are different: they get a real --cwd
+			// (chatWorkingDir returns projectRoot below) despite paying
+			// that same cost, because real per-file-write enforcement needs
+			// a real cwd to be relative to — see workspaceConventionPrompt.
+			// Honest caveat: reading the external agent-exec bridge's own
+			// canUseTool implementation suggests native Write/Edit are
+			// already denied outright for this exec, cwd or no cwd — so
+			// this isn't closing an open write hole so much as (a)
+			// defense-in-depth if that ever changes, and (b) the
+			// precondition for the taxonomy guidance text below to mean
+			// anything (a relative path needs something to be relative to).
 			opts := monomind.ExecOptions{
 				Bin:       bin,
 				Runtime:   runtime,
@@ -206,13 +221,29 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 				toolSpecs = append(toolSpecs, canvasToolSpecs(canvas)...)
 			}
 			if monoTools != nil {
-				// MONOMIND_CWD (not --cwd — see the load-bearing comment
-				// above) scopes monograph_search/memory_kg_search below to
-				// this profile's own knowledge-graph databases, independent
-				// of the chat subprocess's actual working directory.
+				// MONOMIND_CWD scopes monograph_search/memory_kg_search
+				// below to this profile's own knowledge-graph databases,
+				// independent of --cwd (set right below) — kept as its own
+				// env var rather than folded into --cwd since it points at
+				// .monomind/ specifically, not the project root.
 				monomindDir := profiledir.MonomindDir(db.DB, profileID)
 				projectRoot := profiledir.Root(db.DB, profileID)
 				opts.Env = map[string]string{"MONOMIND_CWD": monomindDir}
+				// EnsureLayout failing (e.g. root_dir points at an unmounted
+				// external drive or otherwise-inaccessible folder — see
+				// profiledir.Root's own doc comment on root_dir overrides)
+				// must degrade, not kill the whole turn: --cwd/the taxonomy
+				// guidance below are explicitly defense-in-depth (see the
+				// no-cwd-override comment above), never required for a turn
+				// to work — wails-app/app_orgs.go's orgProjectRoot already
+				// establishes "warn and fall back" as this codebase's
+				// precedent for this exact failure mode.
+				if err := profiledir.EnsureLayout(db.DB, profileID); err != nil {
+					fmt.Fprintf(os.Stderr, "warning: preparing profile folder for chat: %v (continuing without --cwd scoping)\n", err)
+				} else {
+					opts.Cwd = chatWorkingDir(true, projectRoot)
+					systemPromptParts = append(systemPromptParts, workspaceConventionPrompt(projectRoot))
+				}
 				systemPromptParts = append(systemPromptParts, monoagentSystemPrompt(canvas != nil, wantRuns))
 				// MonoagentTools and CanvasTools both define a "create_workflow"
 				// tool (CanvasTools' is the one actually wired into the
@@ -256,7 +287,7 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 				systemPromptParts = append(systemPromptParts, fmt.Sprintf(`You also have real Bash access, scoped ONLY to "monomind org ...", "monoagentcli org ...", or "monoagentcli workflow ..." commands — nothing else in either binary (not secret/connect/login/export/security/config/etc.) is reachable this way, and a command outside that scope is denied even if it starts with "monomind"/"monoagentcli". If the create_org/add_org_role/create_workflow-style tools above don't work or you're unsure, this is the more reliable path — but two things about it are easy to get wrong, so follow this exactly:
 
 1. NEVER call the "monomind" binary directly for anything project-scoped. It has NO --project flag at all — passing one is silently accepted and ignored, and the command resolves against this exec's own actual working directory instead (which is not your project and usually doesn't even exist as an org store), failing in confusing ways. Only "monoagentcli" subcommands understand --project.
-2. For orgs, use "monoagentcli org ..." with --project %q on every call (this exec has no working directory of its own, so a bare command without it would target nowhere). "monoagentcli org create" only scaffolds from 5 fixed templates and cannot set custom roles — for a custom-role org, use "monoagentcli org create-json <name> --project %q --json '<full JSON>'" instead, where the JSON is the exact same shape as a saved org file: {"name","goal","status":"stopped","schedule":null,"run_config":{...},"roles":[{"id","title","type","reports_to","responsibilities":[...],"policy":{...},...}]}. It validates and reports back whether the result is schema-valid.
+2. For orgs, use "monoagentcli org ..." with --project %q on every call. Your cwd IS this project's root, but pass --project explicitly anyway rather than relying on that — it's the more future-proof habit and works the same regardless of cwd. "monoagentcli org create" only scaffolds from 5 fixed templates and cannot set custom roles — for a custom-role org, use "monoagentcli org create-json <name> --project %q --json '<full JSON>'" instead, where the JSON is the exact same shape as a saved org file: {"name","goal","status":"stopped","schedule":null,"run_config":{...},"roles":[{"id","title","type","reports_to","responsibilities":[...],"policy":{...},...}]}. It validates and reports back whether the result is schema-valid.
 3. For workflows, "monoagentcli workflow ..." is scoped by --profile %s BEFORE the subcommand instead of --project, e.g. monoagentcli --profile %s workflow create <name>.
 4. Prefer the create_workflow/add_workflow_node/run_workflow tools over Bash for building a workflow — they're simpler and don't need --project/--profile. Social-platform automation (like/comment/DM/follow/scrape/publish on Instagram, LinkedIn, X, TikTok, ...) is just a node type there, shaped "<platform>.<action>" (e.g. instagram.like_posts, linkedin.send_dms) — call list_node_types if you don't already know the exact string.
 
@@ -326,20 +357,31 @@ Changes made this way appear in the app automatically — orgs are picked up liv
 			if err != nil {
 				return err
 			}
-			if res.Err != nil {
-				// Error events already streamed; surface the failure on stderr
-				// and exit with the turn's protocol code.
-				fmt.Fprintf(os.Stderr, "chat: %v\n", res.Err)
-				os.Exit(res.Err.ExitCode)
-			}
 			// Both messages are saved together, after the turn completes,
 			// so the (possibly newly-assigned) res.SessionID is known for
 			// both — simpler than saving the user turn before running and
-			// risking it never getting tagged with the right session.
-			if store != nil && effectiveHistoryID != "" {
+			// risking it never getting tagged with the right session. This
+			// runs even when res.Err != nil: a failed/cancelled turn's
+			// partial conversation (whatever assistantText accumulated
+			// before the failure) is still worth preserving, not silently
+			// dropped the way the old os.Exit(res.Err.ExitCode) below used
+			// to (it returned before this block ever ran).
+			//
+			// noHistory (--no-history) suppresses only this legacy
+			// transcript write, never store/profile/tool initialization
+			// above — the GUI supervisor passes it because its own journal
+			// (internal/ai/chat_events.go) is that caller's history source
+			// instead, and a dual writer would double-persist the same
+			// turn. Checked here, not by clearing effectiveHistoryID: that
+			// variable also gates whether `store` itself gets opened above
+			// (effectiveCanvasID != "" || wantMonoagentTools ||
+			// effectiveHistoryID != ""), which must stay unaffected by this
+			// flag.
+			if store != nil && effectiveHistoryID != "" && !noHistory {
 				if err := store.SaveChatMessage(ai.ChatMessage{
 					ID:         uuid.NewString(),
 					WorkflowID: effectiveHistoryID,
+					ProfileID:  profileID,
 					Role:       "user",
 					Content:    prompt,
 					ProviderID: runtime,
@@ -356,6 +398,7 @@ Changes made this way appear in the app automatically — orgs are picked up liv
 					if err := store.SaveChatMessage(ai.ChatMessage{
 						ID:         uuid.NewString(),
 						WorkflowID: effectiveHistoryID,
+						ProfileID:  profileID,
 						Role:       "assistant",
 						Content:    final,
 						ProviderID: runtime,
@@ -365,6 +408,16 @@ Changes made this way appear in the app automatically — orgs are picked up liv
 						fmt.Fprintf(os.Stderr, "warning: saving chat message: %v\n", err)
 					}
 				}
+			}
+			if res.Err != nil {
+				// Returned (not os.Exit'd) so every deferred cleanup above
+				// (closeDB, db.Close, temp prompt/system/tools file
+				// removal in monomind.Exec) still runs. main.go prints this
+				// to stderr and exitCodeFor maps *monomind.ProtocolError to
+				// its own ExitCode (see cmd/monoagentcli/exitcodes.go),
+				// preserving the same process exit code this used to set
+				// directly.
+				return res.Err
 			}
 			return nil
 		},
@@ -377,6 +430,7 @@ Changes made this way appear in the app automatically — orgs are picked up liv
 	cmd.Flags().StringVar(&tools, "tools", "", `Comma-separated tool surface to enable: "monoagent" gives the agent read/write access (no run execution) to workflows, vault, people, communications; append ",runs" (i.e. "monoagent,runs") to also allow run_workflow execution`)
 	cmd.Flags().StringVar(&timeoutS, "timeout", "", "Overall timeout (e.g. 90s, 10m)")
 	cmd.Flags().Float64Var(&budget, "budget-usd", 0, "Spend cap for this turn")
+	cmd.Flags().BoolVar(&noHistory, "no-history", false, "Suppress this legacy chat-history table write (the GUI supervisor's own journal is its history source instead; profile/tool init and runtime session events are unaffected)")
 	return cmd
 }
 
@@ -497,7 +551,10 @@ func monoagentSystemPrompt(canvasAvailable, allowRuns bool) string {
 		`"<platform>.<action>" (e.g. instagram.like_posts, linkedin.send_dms). ` +
 		`Use create_workflow + add_workflow_node (call list_node_types first if ` +
 		`you don't already know the exact node_type string) to build one, then ` +
-		`run_workflow to run it.`
+		`run_workflow to run it. When you produce a deliverable — a report, ` +
+		`summary, write-up, or similar — call save_document to persist it into ` +
+		`the docs/ folder instead of only printing it in chat; it shows up in ` +
+		`the Documents vault within a few seconds.`
 	if allowRuns {
 		s += ` run_workflow can drive real automation against real accounts and ` +
 			`requires an explicit confirm:true argument — without it it only ` +
@@ -525,6 +582,42 @@ func monoagentSystemPrompt(canvasAvailable, allowRuns bool) string {
 		`app's Orgs tab. Edits to an org that is currently running only take ` +
 		`effect after reload_org.`
 	return s
+}
+
+// chatWorkingDir returns the --cwd to scope a chat exec to when
+// monoToolsEnabled (real per-file-write enforcement, and the taxonomy
+// guidance in workspaceConventionPrompt, both need a real cwd to be
+// relative to), or "" otherwise — canvas-only turns keep the zero-cwd
+// performance profile described in the no-cwd-override comment in RunE.
+func chatWorkingDir(monoToolsEnabled bool, projectRoot string) string {
+	if !monoToolsEnabled {
+		return ""
+	}
+	return projectRoot
+}
+
+// workspaceConventionPrompt tells the model the standard folder taxonomy
+// for this profile's own content and forbids writing into dot-folders.
+// Generated from profiledir.TaxonomyFolders rather than hand-copied so the
+// two can't drift apart. Native Write/Edit are believed already denied for
+// this exec regardless (see the cwd comment in RunE), and Bash is scoped to
+// org/workflow subcommands only — neither can write an arbitrary file here.
+// docs/ is the one folder with a real, tool-backed path today
+// (MonoagentTools' save_document); the rest of this guidance (workingdocs/,
+// assets/, codes/) stays advisory-only, describing where a write would go
+// if one ever becomes possible through some other path, not one that
+// exists yet.
+func workspaceConventionPrompt(root string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "This chat's project root is %s. When creating new files here, "+
+		"organize them under its standard folders instead of the root or a folder "+
+		"of your own choosing:\n", root)
+	for _, f := range profiledir.TaxonomyFolders {
+		fmt.Fprintf(&b, "- %s/ — %s\n", f.Name, f.Purpose)
+	}
+	b.WriteString("Never create files inside a dot-prefixed folder (e.g. .monomind/) — " +
+		"those are reserved for internal tool state, not user or agent content.")
+	return b.String()
 }
 
 // monoagentToolSpecs converts MonoagentTools' OpenAI-shaped definitions to

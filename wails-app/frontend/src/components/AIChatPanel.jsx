@@ -1,32 +1,48 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { X, Send, Trash2, ChevronDown, ChevronRight, Loader, Square, Plus, History } from 'lucide-react'
-import { api, onAIChunk, onAITool, onAIError, onAgentSession, notify } from '../services/api.js'
+import { X, Trash2, Plus, History, Maximize2, Minimize2, ArrowDown } from 'lucide-react'
+import { api, notify } from '../services/api.js'
+import { useChatStream } from './chat/useChatStream.js'
+import { chatReducer, initialChatState } from './chat/chatReducer.js'
+import { ChatTimeline } from './chat/ChatTimeline.jsx'
+import { ChatMarkdown } from './chat/ChatMarkdown.jsx'
+import { TurnStatus } from './chat/TurnStatus.jsx'
+import { ChatComposer } from './chat/ChatComposer.jsx'
+import { useChatScroll } from './chat/useChatScroll.js'
+import { ChatArtifactCard } from './chat/ChatArtifactCard.jsx'
+import { detectArtifactCandidate, resolveArtifact } from './chat/chatArtifacts.js'
+import './chat/chat.css'
 import { cachedAgentScan } from '../lib/agentRuntimes.js'
 import { getAssistantTools, getAssistantAllowRuns } from '../lib/assistantTools.js'
 
-// Renders a chat message list into the panel's display shape (role/content/toolCalls),
-// dropping internal tool-result rows and parsing tool_calls JSON — shared by the
-// session-history loader and (previously) the flat-history loader.
-function toDisplayMessages(history) {
-  if (!Array.isArray(history)) return []
-  return history
-    .filter(m => m.role !== 'tool')
-    .map(m => {
-      let toolCalls = null
-      if (m.tool_calls) {
-        try {
-          const parsed = JSON.parse(m.tool_calls)
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            toolCalls = parsed.map(tc => ({
-              tool: tc.function?.name || tc.id || 'unknown',
-              args: tc.function?.arguments || '',
-              result: null,
-            }))
-          }
-        } catch { /* ignore malformed */ }
-      }
-      return { role: m.role, content: m.content || '', toolCalls }
-    })
+// Replays one turn's already-fetched events through chatReducer to
+// reconstruct its final state — used for history (a past turn's events,
+// fetched once) rather than live streaming (useChatStream.js owns that).
+// No scope is set: the caller already fetched precisely one turn's events
+// via getChatEvents(conversationId, turnId, ...), so every event
+// necessarily belongs here. The result is fed straight into ChatTimeline/
+// TurnStatus — the same components a live turn uses — so a reopened past
+// turn renders identically to how it looked while it was still running.
+function reduceTurnEvents(events) {
+  return events.reduce((state, event) => chatReducer(state, { type: 'event', event }), initialChatState())
+}
+
+// Fetches one turn's full event backlog (paginating past a single page,
+// same as useChatStream's own hydration) and returns its reduced state, or
+// null for a turn that produced nothing at all and never reached a
+// terminal status (defensively skipped rather than shown as a blank turn).
+async function loadTurnState(conversationId, turn) {
+  let afterSeq = 0
+  let events = []
+  for (;;) {
+    const page = await api.getChatEvents(conversationId, turn.id, afterSeq, 200)
+    const items = Array.isArray(page?.items) ? page.items : []
+    events = events.concat(items)
+    if (items.length === 0 || !page?.hasMore) break
+    afterSeq = items[items.length - 1].seq
+  }
+  const state = reduceTurnEvents(events)
+  if (state.parts.length === 0 && turn.status === 'active') return null
+  return state
 }
 
 // Shared style for the three backend/runtime/provider <select>s in the
@@ -49,7 +65,28 @@ const selectStyle = {
   backgroundPosition: 'right 6px center',
 }
 
-// Relative time for the past-sessions list ("5m ago", "3d ago").
+// Client-generated turn id (plan: "Client-created turn ID: registered
+// locally before Start"). crypto.randomUUID() is gated on a secure
+// context — Wails' custom-scheme webview origin isn't guaranteed to
+// qualify on every platform the way http://wails.localhost does on
+// Windows, so relying on it directly would make every send() throw on
+// whichever platforms don't. crypto.getRandomValues has no such
+// restriction, so build an RFC 4122 v4 string from it whenever
+// randomUUID isn't available instead of failing outright. Exported for
+// direct testing (jsdom/Node's crypto always has randomUUID, so the
+// fallback path needs to be exercised explicitly).
+export function newTurnId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  const bytes = crypto.getRandomValues(new Uint8Array(16))
+  bytes[6] = (bytes[6] & 0x0f) | 0x40
+  bytes[8] = (bytes[8] & 0x3f) | 0x80
+  const hex = [...bytes].map(b => b.toString(16).padStart(2, '0')).join('')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
+
+// Relative time for the past-conversations list ("5m ago", "3d ago").
 function relativeTime(iso) {
   if (!iso) return ''
   const diffMs = Date.now() - new Date(iso).getTime()
@@ -61,65 +98,16 @@ function relativeTime(iso) {
   return `${Math.floor(hours / 24)}d ago`
 }
 
-// ── Tool call card (collapsible) ───────────────────────────────────────────────
-function ToolCallCard({ tool, args, result }) {
-  const [open, setOpen] = useState(false)
-  return (
-    <div style={{
-      background: '#020509',
-      border: '1px solid rgba(0,180,216,0.12)',
-      borderRadius: 8,
-      marginTop: 6,
-      overflow: 'hidden',
-    }}>
-      <div
-        onClick={() => setOpen(o => !o)}
-        style={{
-          display: 'flex', alignItems: 'center', gap: 6,
-          padding: '6px 10px',
-          cursor: 'pointer',
-          userSelect: 'none',
-        }}
-      >
-        {open ? <ChevronDown size={10} color="#00b4d8" /> : <ChevronRight size={10} color="#00b4d8" />}
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#00b4d8', fontWeight: 600 }}>
-          {tool}
-        </span>
-      </div>
-      {open && (
-        <div style={{ padding: '0 10px 8px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {args && (
-            <div>
-              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: 'var(--text-muted)', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 3 }}>Args</div>
-              <pre style={{
-                margin: 0, fontFamily: 'var(--font-mono)', fontSize: 10,
-                color: '#94a3b8', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                maxHeight: 120, overflow: 'auto',
-              }}>
-                {typeof args === 'string' ? args : JSON.stringify(args, null, 2)}
-              </pre>
-            </div>
-          )}
-          {result && (
-            <div>
-              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: 'var(--text-muted)', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 3 }}>Result</div>
-              <pre style={{
-                margin: 0, fontFamily: 'var(--font-mono)', fontSize: 10,
-                color: '#94a3b8', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                maxHeight: 120, overflow: 'auto',
-              }}>
-                {typeof result === 'string' ? result : JSON.stringify(result, null, 2)}
-              </pre>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
 // ── Message bubble ─────────────────────────────────────────────────────────────
-function MessageBubble({ role, content, toolCalls, isError }) {
+// Exported (like FileViewerModal's fileViewerKind) so the markdown-vs-plain
+// rendering choice is directly unit-testable without driving the whole
+// panel's streaming/session machinery. Reachable today only for 'user' and
+// 'error' roles — the reducer/ChatTimeline path (role:'turn') fully
+// replaced the old assistant-bubble-plus-inline-tool-cards rendering this
+// component used to also handle; a prior version's now-dead `toolCalls`
+// prop and its ToolCallCard were removed for exactly that reason (nothing
+// ever constructed a message carrying one).
+export function MessageBubble({ role, content, isError }) {
   const isUser = role === 'user'
   return (
     <div style={{
@@ -144,33 +132,86 @@ function MessageBubble({ role, content, toolCalls, isError }) {
             : '1px solid rgba(0,180,216,0.08)',
         color: isError ? '#fca5a5' : '#e2e8f0',
       }}>
-        <div style={{
-          fontFamily: 'var(--font-mono)', fontSize: 11,
-          lineHeight: 1.55,
-          whiteSpace: 'pre-wrap',
-          wordBreak: 'break-word',
-        }}>
-          {content}
-        </div>
-        {toolCalls && toolCalls.length > 0 && (
-          <div style={{ marginTop: 4 }}>
-            {toolCalls.map((tc, i) => (
-              <ToolCallCard key={i} tool={tc.tool} args={tc.args} result={tc.result} />
-            ))}
+        {isUser ? (
+          // Raw pre-wrap text — never reinterpreted as markdown syntax the
+          // user didn't intend (e.g. a typed "1. foo" becoming a list).
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.55, wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>
+            {content}
           </div>
+        ) : (
+          // Error text renders through the same ChatMarkdown ChatTimeline
+          // uses for assistant text — scheme-gated links, no raw HTML, no
+          // auto-loaded images — rather than a second, less-careful
+          // markdown config (an error string ultimately traces back to a
+          // subprocess/provider failure message, not first-party copy).
+          <ChatMarkdown content={content} />
         )}
       </div>
     </div>
   )
 }
 
+// Resolves chat-result artifacts (chat/chatArtifacts.js) for every tool
+// call this panel has ever rendered — finalized turns in `messages` plus
+// the live streaming turn — lazily and once per (turnId, callId) pair.
+// Keyed on the PAIR, not the bare callId: the agent backend's callId comes
+// straight from the external monomind protocol's own per-event id with no
+// cross-turn uniqueness guarantee (plan: "Tool identity is (turnId,callId),
+// never array position or name" — a requirement that only makes sense if
+// callId alone CAN collide across turns). Caching by callId alone would
+// let a later turn that happens to reuse an earlier turn's callId silently
+// reuse its resolved artifact — wrong name, wrong Copy-ID value, wrong
+// Open target. Entries carry `entries.push({turnId, call})` pairs rather
+// than plain call objects for exactly this reason.
+//
+// Cached so a fast-moving live stream doesn't repeat a backend lookup on
+// every re-render, and a call already resolved stays resolved when its
+// turn is reopened later. A call is only ever cached once it's
+// 'completed': one still 'started' is skipped (not cached as "no
+// artifact") so it gets rechecked the moment it actually completes,
+// instead of being judged prematurely on a result that doesn't exist yet.
+function useResolvedArtifacts(entries) {
+  const [resolved, setResolved] = useState({}) // "turnId:callId" -> artifact | null
+  const inFlightRef = useRef(new Set())
+
+  useEffect(() => {
+    entries.forEach(({ turnId, call }) => {
+      if (call.status !== 'completed') return
+      const key = `${turnId}:${call.callId}`
+      if (key in resolved || inFlightRef.current.has(key)) return
+      const candidate = detectArtifactCandidate(call)
+      if (!candidate) {
+        setResolved(prev => ({ ...prev, [key]: null }))
+        return
+      }
+      inFlightRef.current.add(key)
+      // .catch before .then: a rejection here (resolveArtifact's own
+      // backend calls already degrade to null via api.js's guard(), so
+      // this is a last-resort safety net, not the expected path) must
+      // still clear inFlightRef, or this key is wedged unresolved forever.
+      resolveArtifact(candidate, api)
+        .catch(() => null)
+        .then(artifact => {
+          inFlightRef.current.delete(key)
+          setResolved(prev => ({ ...prev, [key]: artifact }))
+        })
+    })
+  })
+
+  return resolved
+}
+
 // ── Main panel ─────────────────────────────────────────────────────────────────
-export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCreated, initialRuntime, canvasMode = true }) {
+export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCreated, onOpenArtifact, initialRuntime, canvasMode = true }) {
   const [messages, setMessages]             = useState([])
   const [input, setInput]                   = useState('')
-  const [streaming, setStreaming]           = useState(false)
-  const [currentContent, setCurrentContent] = useState('')
-  const [currentToolCalls, setCurrentToolCalls] = useState([])
+  // conversationId is this panel's current app-conversation (new chat
+  // contract) — empty until the first send() lazily creates one. activeTurnId
+  // is the client-generated turn id of the in-flight turn, '' when idle;
+  // useChatStream below is the sole source of live activity for it.
+  const [conversationId, setConversationId] = useState('')
+  const [activeTurnId, setActiveTurnId]     = useState('')
+  const [stopRequested, setStopRequested]   = useState(false)
   const [providers, setProviders]           = useState([])
   const [selectedProvider, setSelectedProvider] = useState('')
   const [selectedModel, setSelectedModel]   = useState('')
@@ -180,26 +221,25 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
   const [runtimeModelsLoading, setRuntimeModelsLoading] = useState(false)
   const [useAgents, setUseAgents]           = useState(false)
   const [monomindMissing, setMonomindMissing] = useState(false)
-  // sessionId is the underlying agent runtime's resumable session id (from
-  // monomind's agent:session event) — kept until the user starts a new
-  // chat or changes runtime/model, so consecutive messages continue the
-  // same real conversation instead of each being a stateless one-shot turn.
-  // sessionRuntime is tracked alongside it: a session id is only ever valid
-  // to resume under the runtime that created it (mixing them fails fast —
-  // "No conversation found with session ID: ..." — rather than answering),
-  // and selectedRuntime can drift from sessionRuntime via more than one
-  // path (initialRuntime overriding a loaded session's own runtime, or the
-  // runtime-scan mount effect racing the session-list mount effect), so
-  // send() re-checks the pairing at the point of use rather than trusting
-  // every sessionId setter to have kept them in sync.
-  const [sessionId, setSessionId]           = useState('')
-  const [sessionRuntime, setSessionRuntime] = useState('')
-  const [pastSessions, setPastSessions]     = useState([])
+  const [pastConversations, setPastConversations] = useState([])
   const [showSessions, setShowSessions]     = useState(false)
+  // Presentation: 'docked' (resizable sidebar, 380-720px) or 'expanded' (a
+  // wider ~760px reading column, same docked layout just resized — not a
+  // separate modal, so nothing about the turn owner below ever remounts).
+  // viewportNarrow overrides either into a full-width overlay below 640px,
+  // per plan §"Layout and interaction".
+  const [panelWidth, setPanelWidth]         = useState(380)
+  const [presentation, setPresentation]     = useState('docked')
+  const [viewportNarrow, setViewportNarrow] = useState(() => typeof window !== 'undefined' && window.innerWidth < 640)
 
-  const messagesEndRef   = useRef(null)
-  const textareaRef      = useRef(null)
-  const createdWfIdRef   = useRef(null)
+  const liveTurn = useChatStream({ conversationId, turnId: activeTurnId })
+  const streaming = !!activeTurnId
+  // Changes whenever new content arrives — a finalized turn (messages
+  // grows) or a live delta/tool/notice within the current turn (lastSeq
+  // advances) — driving useChatScroll's follow-vs-unread decision below.
+  const scrollSignal = `${messages.length}:${liveTurn.lastSeq}`
+  const scroll = useChatScroll(scrollSignal)
+
   const modelAtFocusRef  = useRef('')
   // The global panel instance mounts hidden at app boot and every instance
   // stays mounted under keep-alive navigation — expensive loads below key
@@ -212,12 +252,23 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
   const providersLoadedRef = useRef(false)
   // Latest-value mirrors for guards inside callbacks/effects that must not
   // re-run (or go stale) when the underlying state changes:
-  // streamingRef — mid-stream switch guards (FV4-6); activeStreamRef — the
-  // { workflowID, mode } of the in-flight stream, so a workflowID change can
-  // stop the right bucket with the right stop call (FV4-7).
-  const streamingRef  = useRef(false)
-  streamingRef.current = streaming
+  // activeTurnIdRef — mid-stream switch guards (FV4-6); activeStreamRef — the
+  // { workflowID, conversationId, turnId } of the in-flight turn, so a
+  // workflowID change can stop the right one (FV4-7).
+  const activeTurnIdRef  = useRef('')
+  activeTurnIdRef.current = activeTurnId
   const activeStreamRef = useRef(null)
+  // Guards loadConversation's multi-await chain (getChatTurns, then one
+  // loadTurnState per turn) against a slower, superseded call clobbering a
+  // newer one's transcript — the plan's generation-token requirement (§
+  // "Guard asynchronous loads... so a slow old fetch cannot replace the
+  // newly selected transcript"), applied to the ONE async load path in this
+  // file that didn't already have an equivalent (useChatStream.js's own
+  // live-hydration path has its own `cancelled` closure for the same
+  // reason). Bumped by every competitor for "what the transcript should be
+  // right now": loadConversation itself, startNewSession, and the bucket-
+  // switch effect's own no-conversation-found branch.
+  const loadGenerationRef = useRef(0)
 
   // ── Latch the first open: isOpen's first false→true transition ─────────
   useEffect(() => {
@@ -303,224 +354,273 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen])
 
-  // ── Load a specific past session into the panel ─────────────────────────
-  const loadSession = useCallback((session) => {
-    if (!workflowID || !session?.session_id) return
-    // Switching the active session mid-stream would let chunks of the
-    // in-flight answer land in the newly loaded transcript (crosstalk) —
-    // block the switch and tell the user to stop first (FV4-6).
-    if (streamingRef.current) {
-      notify('chat', 'Stop the current response first')
-      return
-    }
-    api.getChatSessionMessages(workflowID, session.session_id).then(history => {
-      setMessages(toDisplayMessages(history))
-      // initialRuntime (e.g. the Agents-page "Chat" button picking a specific
-      // runtime) wins over a past session's own runtime; otherwise resume
-      // with whatever the session was actually using. Either way, sessionId
-      // and sessionRuntime are set together so send() can verify the pairing
-      // still matches selectedRuntime before ever passing --resume — a
-      // session id is only valid to resume under the exact runtime that
-      // created it (mismatched, it fails fast: "No conversation found").
-      if (session.runtime && !initialRuntime) setSelectedRuntime(session.runtime)
-      if (session.model) setSelectedModel(session.model)
-      setSessionId(session.session_id)
-      setSessionRuntime(session.runtime || '')
-      setCurrentContent('')
-      setCurrentToolCalls([])
-      setShowSessions(false)
-    })
-  }, [workflowID, initialRuntime])
+  // ── Refresh the past-conversations list for the current workflowID/mode ──
+  const refreshPastConversations = useCallback(() => {
+    if (!workflowID) return
+    const backend = useAgents ? 'agent' : 'provider'
+    api.listChatConversations('', 50).then(res => {
+      const items = Array.isArray(res?.items) ? res.items : []
+      setPastConversations(items.filter(c => c.workflowContext === workflowID && c.backend === backend))
+    }).catch(err => notify('chat', `Could not refresh session list: ${err}`))
+  }, [workflowID, useAgents])
 
-  // ── Start a fresh chat: clears the visible transcript and active session,
-  //     but leaves prior sessions in the history — they stay reachable via
-  //     the past-sessions list. The next send() omits --resume, so the
-  //     runtime allocates a brand new session. Blocked while a response is
-  //     streaming (FV4-6) for the same crosstalk reason as loadSession. ────
-  const startNewSession = useCallback(() => {
-    if (streamingRef.current) {
+  // ── Load one past conversation's turns into the visible transcript ──────
+  const loadConversation = useCallback((conv) => {
+    if (!conv?.id) return
+    // Switching the active conversation mid-turn would let events from the
+    // in-flight one land against the newly loaded transcript (crosstalk) —
+    // block the switch and tell the user to stop first (FV4-6).
+    if (activeTurnIdRef.current) {
       notify('chat', 'Stop the current response first')
       return
     }
-    setSessionId('')
-    setSessionRuntime('')
+    const generation = ++loadGenerationRef.current
+    api.getChatTurns(conv.id, '', 50).then(async (res) => {
+      const turns = (Array.isArray(res?.items) ? res.items : []).slice().reverse() // oldest first
+      const built = []
+      for (const turn of turns) {
+        // Bail before each further fetch once superseded — no point
+        // fetching turn N+1's events for a transcript that will never be
+        // shown.
+        if (loadGenerationRef.current !== generation) return
+        // eslint-disable-next-line no-await-in-loop
+        const state = await loadTurnState(conv.id, turn)
+        if (!state) continue
+        built.push({ role: 'user', content: turn.prompt })
+        // Same shape a live turn uses (ChatTimeline/TurnStatus read reducer
+        // state directly) — a reopened past turn renders exactly as it did
+        // while still running, ordering/errors/partial work included.
+        // turnId is carried alongside state (not read from state.scope,
+        // which reduceTurnEvents deliberately never sets) so
+        // useResolvedArtifacts can key its cache by (turnId, callId), not
+        // callId alone.
+        built.push({ role: 'turn', turnId: turn.id, state })
+      }
+      // Final check right before committing: a competing load could have
+      // started and even finished while the last turn's events were still
+      // being fetched above.
+      if (loadGenerationRef.current !== generation) return
+      setMessages(built)
+      if (conv.runtimeId && !initialRuntime) setSelectedRuntime(conv.runtimeId)
+      if (conv.model) setSelectedModel(conv.model)
+      setConversationId(conv.id)
+      setActiveTurnId('')
+      setShowSessions(false)
+    }).catch(err => {
+      if (loadGenerationRef.current !== generation) return
+      notify('chat', `Could not load session: ${err}`)
+    })
+  }, [initialRuntime])
+
+  // ── Start a fresh chat: clears the visible transcript and active
+  //     conversation, but leaves prior conversations in history — they stay
+  //     reachable via the past-conversations list. The next send() lazily
+  //     creates a brand new conversation. Blocked while a turn is active
+  //     (FV4-6) for the same crosstalk reason as loadConversation. ────────
+  const startNewSession = useCallback(() => {
+    if (activeTurnIdRef.current) {
+      notify('chat', 'Stop the current response first')
+      return
+    }
+    loadGenerationRef.current++ // invalidate any in-flight loadConversation
+    setConversationId('')
+    setActiveTurnId('')
     setMessages([])
-    setCurrentContent('')
-    setCurrentToolCalls([])
   }, [])
 
-  // ── Load past sessions + auto-continue the most recent one when the
+  // ── Load past conversations + auto-continue the most recent one when the
   //     panel switches to a new workflowID (chat-history bucket) ──────────
-  const sessionsFetchedRef = useRef(null) // workflowID bucket last fetched for
+  const conversationsFetchedRef = useRef(null) // "workflowID:mode" bucket last fetched for
   useEffect(() => {
     if (!workflowID) return
     // Deferred until the panel has been opened at least once — a
     // mounted-but-never-opened panel (the global assistant at app boot)
     // skips the history fetch (FV4-3/4). After that, only an actual
-    // workflowID change refetches: close/reopen transitions must not
-    // rebind the active session out from under the user.
-    if ((!isOpen && !hasOpenedRef.current) || sessionsFetchedRef.current === workflowID) return
-    sessionsFetchedRef.current = workflowID
-    api.listChatSessions(workflowID).then(sessions => {
-      const list = Array.isArray(sessions) ? sessions : []
-      setPastSessions(list)
-      if (list.length > 0) loadSession(list[0])
-    })
-    // Intentionally excludes loadSession: this effect should only run when
-    // the panel's workflowID (chat-history bucket) actually changes, not
-    // every time loadSession's own deps (e.g. initialRuntime) change.
+    // bucket change refetches: close/reopen transitions must not rebind
+    // the active conversation out from under the user.
+    const bucket = `${workflowID}:${useAgents ? 'agent' : 'provider'}`
+    if ((!isOpen && !hasOpenedRef.current) || conversationsFetchedRef.current === bucket) return
+    conversationsFetchedRef.current = bucket
+    const backend = useAgents ? 'agent' : 'provider'
+    api.listChatConversations('', 50).then(res => {
+      const items = (Array.isArray(res?.items) ? res.items : [])
+        .filter(c => c.workflowContext === workflowID && c.backend === backend)
+      setPastConversations(items)
+      if (items.length > 0) {
+        loadConversation(items[0])
+      } else {
+        // No conversation for this bucket yet — without this, a
+        // conversationId left over from the PREVIOUS bucket (e.g. the
+        // agent conversation, right after flipping to providers) stays
+        // bound, and the next send() would dispatch on the wrong backend
+        // (StartChatTurn branches on the stored conversation's own
+        // Backend, not on whatever this panel's useAgents currently is).
+        loadGenerationRef.current++ // invalidate any in-flight loadConversation from the PREVIOUS bucket
+        setConversationId('')
+        setActiveTurnId('')
+        setMessages([])
+      }
+    }).catch(err => notify('chat', `Could not load chat history: ${err}`))
+    // Intentionally excludes loadConversation: this effect should only run
+    // when the panel's bucket actually changes, not every time
+    // loadConversation's own deps (e.g. initialRuntime) change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workflowID, isOpen])
+  }, [workflowID, useAgents, isOpen])
 
-  // ── Canvas re-key / workflow switch must not orphan an in-flight stream ──
-  // This panel's event filters key on workflowID, so chunks for the OLD
-  // bucket would arrive into nothing — the stream would keep running with
-  // no visible output and no stop button. Stop the old bucket (with the
-  // stop call matching the mode that started it) and reset local stream
-  // state so the new bucket starts clean (FV4-7).
+  // ── Canvas re-key / workflow switch must not orphan an in-flight turn ───
+  // This panel's live turn is keyed by conversationId/turnId, not
+  // workflowID, so a bucket switch leaves the OLD turn running with no
+  // visible output and no stop button unless explicitly stopped here.
+  // Reset local state so the new bucket starts clean (FV4-7).
   const prevWorkflowIDRef = useRef(workflowID)
   useEffect(() => {
     const prev = prevWorkflowIDRef.current
     prevWorkflowIDRef.current = workflowID
     if (!prev || prev === workflowID) return
     const active = activeStreamRef.current
-    if (streamingRef.current && active?.workflowID === prev) {
-      if (active.mode === 'agents') api.stopAgentChat(prev)
-      else api.stopAIChat(prev)
-      activeStreamRef.current = null
-      setStreaming(false)
-      setCurrentContent('')
-      setCurrentToolCalls([])
+    if (activeTurnIdRef.current && active?.workflowID === prev) {
+      api.stopChatTurn(active.conversationId, active.turnId)
     }
+    activeStreamRef.current = null
+    setActiveTurnId('')
+    setStopRequested(false)
+    setConversationId('')
+    setMessages([])
   }, [workflowID])
 
-  // ── Subscribe to streaming events ───────────────────────────────────────
+  // ── Track viewport width for the narrow-overlay breakpoint ──────────────
   useEffect(() => {
-    const offChunk = onAIChunk((data) => {
-      if (data.workflowID !== workflowID) return
-      if (data.done) {
-        // Streaming finished — finalize the assistant message (guard against double-fire)
-        setStreaming(prev => {
-          if (!prev) return false // already finalized
-          setCurrentContent(content => {
-            const final = content + (data.content || '')
-            if (!final) return '' // nothing to add
-            setCurrentToolCalls(prevTC => {
-              setMessages(msgs => [
-                ...msgs,
-                { role: 'assistant', content: final, toolCalls: prevTC.length > 0 ? prevTC : null },
-              ])
-              return []
-            })
-            return ''
-          })
-          // Navigate to newly created workflow after all tool calls are done
-          if (createdWfIdRef.current && onWorkflowCreated) {
-            const id = createdWfIdRef.current
-            createdWfIdRef.current = null
-            // Small delay to let final DB writes settle
-            setTimeout(() => onWorkflowCreated(id), 300)
-          }
-          return false
-        })
-      } else {
-        setCurrentContent(prev => prev + (data.content || ''))
-      }
-    })
+    const onResize = () => setViewportNarrow(window.innerWidth < 640)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
 
-    const offTool = onAITool((data) => {
-      if (data.workflowID !== workflowID) return
-      setCurrentToolCalls(prev => [
-        ...prev,
-        { tool: data.tool, args: data.args, result: data.result },
-      ])
-      // Track newly created workflow ID for auto-navigate after stream completes
-      if (data.tool === 'create_workflow' && data.result) {
-        try {
-          const res = JSON.parse(data.result)
-          if (res.workflow_id) createdWfIdRef.current = res.workflow_id
-        } catch { /* ignore */ }
-      }
-    })
-
-    const offError = onAIError((data) => {
-      if (data.workflowID !== workflowID) return
-      setStreaming(false)
-      setCurrentContent('')
-      setCurrentToolCalls([])
-      setMessages(msgs => [
-        ...msgs,
-        { role: 'error', content: data.error || 'Unknown error' },
-      ])
-    })
-
-    // Captures the resumable session id monomind assigns/confirms each
-    // turn — the next send() reuses it as --resume until the user resets.
-    // data.runtime is the runtime that actually produced this session
-    // (app_ai.go's StreamAgentChat emits its own agentRuntime param here,
-    // not whatever selectedRuntime happens to be at listener-fire time).
-    const offSession = onAgentSession((data) => {
-      if (data.workflowID !== workflowID) return
-      if (data.session_id) {
-        setSessionId(data.session_id)
-        setSessionRuntime(data.runtime || '')
-      }
-    })
-
-    return () => { offChunk(); offTool(); offError(); offSession() }
-  }, [workflowID])
-
-  // ── Auto-scroll to bottom ───────────────────────────────────────────────
+  // ── Focus return: restore focus to whatever opened the panel once it
+  //     closes, without requiring the caller to manage this itself ───────
+  const previousFocusRef = useRef(null)
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, currentContent, currentToolCalls])
+    if (isOpen) {
+      previousFocusRef.current = document.activeElement
+    } else if (previousFocusRef.current) {
+      previousFocusRef.current.focus?.()
+      previousFocusRef.current = null
+    }
+  }, [isOpen])
+
+  // ── Escape: collapse an expanded view first, close only when already
+  //     docked — mirrors a typical "un-maximize, then dismiss" pattern so
+  //     one stray Escape can't discard an expanded reading session. When
+  //     narrow, the panel is a full-viewport overlay with no visible
+  //     expand/collapse control, so Escape must close outright — otherwise
+  //     a panel left "expanded" from a wider viewport traps the user with
+  //     no way back except the header's X button ───────────────────────
+  useEffect(() => {
+    if (!isOpen) return
+    const onKeyDown = (e) => {
+      if (e.key !== 'Escape') return
+      if (presentation === 'expanded' && !viewportNarrow) setPresentation('docked')
+      else onClose()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [isOpen, presentation, viewportNarrow, onClose])
+
+  // ── Resize handle: drag the panel's left edge, clamped 380-720px ────────
+  const handleResizeStart = useCallback((e) => {
+    e.preventDefault()
+    const startX = e.clientX
+    const startWidth = panelWidth
+    // preventDefault above only blocks selection starting inside the handle
+    // itself — once the drag crosses into the transcript or the rest of the
+    // page, native text selection kicks back in and fights the resize, so
+    // it's suppressed globally for the duration of the drag and restored on
+    // mouseup.
+    const prevUserSelect = document.body.style.userSelect
+    const prevCursor = document.body.style.cursor
+    document.body.style.userSelect = 'none'
+    document.body.style.cursor = 'ew-resize'
+    const onMove = (ev) => {
+      const dx = startX - ev.clientX // dragging left (dx>0) widens a right-docked panel
+      setPanelWidth(Math.min(720, Math.max(380, startWidth + dx)))
+    }
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      document.body.style.userSelect = prevUserSelect
+      document.body.style.cursor = prevCursor
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }, [panelWidth])
+
+  // ── Finalize the live turn into the transcript once it terminates ───────
+  useEffect(() => {
+    if (!activeTurnId || !liveTurn.terminal) return
+    // Same shape a reopened past turn uses (loadConversation above) — the
+    // just-finished turn renders identically to how it looked while still
+    // running, via ChatTimeline/TurnStatus, ordering/errors/partial work
+    // included. Pushed even when parts is empty: TurnStatus alone still
+    // truthfully reports a silent failure/stop rather than hiding it.
+    setMessages(msgs => [...msgs, { role: 'turn', turnId: activeTurnId, state: liveTurn }])
+    // Navigate to a newly created workflow once the whole turn (including
+    // any further tool calls) has settled — mirrors the previous
+    // stream-end-gated timing exactly, just driven by turn.finished instead
+    // of a synthetic "done" chunk.
+    const createWf = Object.values(liveTurn.calls).find(c => c.name === 'create_workflow' && c.result)
+    if (createWf && onWorkflowCreated) {
+      try {
+        const res = JSON.parse(createWf.result)
+        if (res.workflow_id) {
+          const id = res.workflow_id
+          setTimeout(() => onWorkflowCreated(id), 300)
+        }
+      } catch { /* ignore */ }
+    }
+    setActiveTurnId('')
+    setStopRequested(false)
+    refreshPastConversations()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTurnId, liveTurn.terminal])
 
   // ── Send message ────────────────────────────────────────────────────────
   const send = useCallback(async () => {
     const text = input.trim()
-    if (!text || streaming || !workflowID) return
+    if (!text || activeTurnId || !workflowID) return
     if (useAgents && !selectedRuntime) return
     if (!useAgents && !selectedProvider) return
 
     setMessages(msgs => [...msgs, { role: 'user', content: text }])
     setInput('')
-    setStreaming(true)
-    setCurrentContent('')
-    setCurrentToolCalls([])
+    setStopRequested(false)
 
     try {
-      if (useAgents) {
-        // A session id is only valid to resume under the exact runtime that
-        // created it — mismatched, monomind fails fast ("No conversation
-        // found with session ID: ..."). sessionRuntime can drift out of
-        // sync with selectedRuntime (initialRuntime overriding a loaded
-        // past session's runtime, or a mount-order race between the
-        // runtime-scan and session-list effects), so re-verify here rather
-        // than trusting every earlier sessionId setter to have kept them
-        // paired — silently starting fresh beats erroring out.
-        const resumeID = sessionRuntime === selectedRuntime ? sessionId : ''
-        // Remember which bucket + mode owns this stream so a workflowID
-        // change (canvas re-key) can stop the right one (FV4-7).
-        activeStreamRef.current = { workflowID, mode: 'agents' }
-        // Tool flags (monoagentTools/allowRuns) are resolved from the
-        // persisted Assistant tool access settings inside api.js at call
-        // time — always current, never a stale closure.
-        await api.streamAgentChat(workflowID, text, selectedRuntime, selectedModel, resumeID, canvasMode)
-        // Refresh the past-sessions list now that this turn has been
-        // persisted (new session, or another message added to the active one).
-        api.listChatSessions(workflowID).then(list => setPastSessions(Array.isArray(list) ? list : []))
-      } else {
-        activeStreamRef.current = { workflowID, mode: 'providers' }
-        await api.streamAIChat(workflowID, text, selectedProvider, selectedModel)
+      let convId = conversationId
+      if (!convId) {
+        const conv = useAgents
+          ? await api.createChatConversation('agent', workflowID, selectedRuntime, '', selectedModel)
+          : await api.createChatConversation('provider', workflowID, '', selectedProvider, selectedModel)
+        convId = conv.id
+        setConversationId(convId)
       }
+      const turnId = newTurnId()
+      const tools = useAgents && getAssistantTools()
+      const allowRuns = useAgents && getAssistantAllowRuns()
+      activeStreamRef.current = { workflowID, conversationId: convId, turnId }
+      const res = await api.startChatTurn(convId, turnId, text, !!tools, !!allowRuns)
+      if (res?.ok === false) {
+        activeStreamRef.current = null
+        setMessages(msgs => [...msgs, { role: 'error', content: `Could not start: ${res.status}` }])
+        return
+      }
+      setActiveTurnId(turnId)
     } catch (err) {
-      setStreaming(false)
+      activeStreamRef.current = null
       setMessages(msgs => [
         ...msgs,
         { role: 'error', content: String(err) },
       ])
     }
-  }, [input, streaming, workflowID, useAgents, selectedRuntime, selectedProvider, selectedModel, canvasMode, sessionId, sessionRuntime])
+  }, [input, activeTurnId, workflowID, useAgents, selectedRuntime, selectedProvider, selectedModel, conversationId])
 
   // Whether a backend is actually selected for the current mode — gates the
   // input, matching send()'s own guard (useAgents ? selectedRuntime : selectedProvider).
@@ -531,33 +631,40 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
   const assistantToolsOn   = getAssistantTools()
   const assistantAllowRuns = getAssistantAllowRuns()
 
-  // ── Stop an in-flight stream ──────────────────────────────────────────────
+  // ── Stop an in-flight turn ──────────────────────────────────────────────
   const stop = useCallback(async () => {
-    if (!workflowID) return
-    if (useAgents) {
-      await api.stopAgentChat(workflowID)
-    } else {
-      await api.stopAIChat(workflowID)
+    if (!conversationId || !activeTurnId) return
+    setStopRequested(true)
+    try {
+      await api.stopChatTurn(conversationId, activeTurnId)
+      // activeTurnId itself clears once turn.finished (status "cancelled")
+      // arrives through useChatStream — not here — so a stale UI never
+      // claims the turn stopped before the backend actually acknowledged it;
+      // stopRequested only drives the "Stopping" label in the meantime.
+    } catch (err) {
+      // stopChatTurn goes through parseStreamResult, which throws on a
+      // {"error":...} reply — without this catch, that rejection left
+      // stopRequested stuck true forever (activeTurnId only clears via
+      // liveTurn.terminal, which never arrives if the stop call itself
+      // failed), stranding the UI on "Stopping" with Stop now a no-op and
+      // no way back except closing the panel.
+      setStopRequested(false)
+      notify('chat', `Could not stop: ${err}`)
     }
-    setStreaming(false)
-  }, [workflowID, useAgents])
+  }, [conversationId, activeTurnId])
 
   // ── Clear history ───────────────────────────────────────────────────────
   const clearHistory = useCallback(async () => {
-    if (!workflowID) return
-    await api.clearAIChatHistory(workflowID)
+    if (!workflowID || activeTurnIdRef.current) return
+    const backend = useAgents ? 'agent' : 'provider'
+    const res = await api.listChatConversations('', 50).catch(() => null)
+    const items = (Array.isArray(res?.items) ? res.items : [])
+      .filter(c => c.workflowContext === workflowID && c.backend === backend)
+    await Promise.all(items.map(c => api.deleteChatConversation(c.id).catch(() => {})))
+    setPastConversations([])
+    setConversationId('')
     setMessages([])
-    setCurrentContent('')
-    setCurrentToolCalls([])
-  }, [workflowID])
-
-  // ── Handle key down in textarea ─────────────────────────────────────────
-  const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      send()
-    }
-  }
+  }, [workflowID, useAgents])
 
   // ── Provider change ─────────────────────────────────────────────────────
   const handleProviderChange = (e) => {
@@ -567,16 +674,48 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
     if (p) setSelectedModel(p.default_model || '')
   }
 
+  // Flat list of every call across finalized turns + the live one, each
+  // paired with the turn id it belongs to — see useResolvedArtifacts' own
+  // comment for why the cache key needs both, not just callId.
+  const artifactEntries = []
+  messages.forEach(msg => {
+    if (msg.role === 'turn') {
+      Object.values(msg.state.calls).forEach(call => artifactEntries.push({ turnId: msg.turnId, call }))
+    }
+  })
+  Object.values(liveTurn.calls).forEach(call => artifactEntries.push({ turnId: activeTurnId, call }))
+  const resolvedArtifacts = useResolvedArtifacts(artifactEntries)
+
   if (!isOpen) return null
 
   return (
-    <div style={{
-      width: 380, flexShrink: 0,
+    <div style={viewportNarrow ? {
+      position: 'fixed', inset: 0, zIndex: 50,
+      background: '#060b13',
+      display: 'flex', flexDirection: 'column',
+      overflow: 'hidden',
+    } : {
+      width: presentation === 'expanded' ? 760 : panelWidth,
+      maxWidth: '100vw',
+      flexShrink: 0,
       background: '#060b13',
       borderLeft: '1px solid rgba(0,180,216,0.1)',
       display: 'flex', flexDirection: 'column',
       overflow: 'hidden',
+      position: 'relative',
     }}>
+      {/* Resize handle — drags the panel's left edge; hidden in expanded
+          mode (fixed width there) and on the narrow overlay (full width). */}
+      {!viewportNarrow && presentation === 'docked' && (
+        <div
+          onMouseDown={handleResizeStart}
+          title="Drag to resize"
+          style={{
+            position: 'absolute', left: 0, top: 0, bottom: 0, width: 6,
+            cursor: 'ew-resize', zIndex: 1,
+          }}
+        />
+      )}
       {/* ── Header ── */}
       <div style={{
         padding: '10px 12px',
@@ -603,6 +742,21 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
           >
             TOOLS{assistantAllowRuns ? '+RUN' : ''}
           </span>
+        )}
+        {!viewportNarrow && (
+          <button
+            onClick={() => setPresentation(p => p === 'expanded' ? 'docked' : 'expanded')}
+            title={presentation === 'expanded' ? 'Collapse' : 'Expand'}
+            style={{
+              background: 'transparent', border: 'none', cursor: 'pointer',
+              color: 'var(--text-muted)', padding: 2, display: 'flex', alignItems: 'center',
+              transition: 'color 100ms',
+            }}
+            onMouseEnter={e => e.currentTarget.style.color = '#00b4d8'}
+            onMouseLeave={e => e.currentTarget.style.color = 'var(--text-muted)'}
+          >
+            {presentation === 'expanded' ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
+          </button>
         )}
         <button
           onClick={startNewSession}
@@ -639,31 +793,31 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
             borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
             zIndex: 20, padding: 4,
           }}>
-            {pastSessions.length === 0 ? (
+            {pastConversations.length === 0 ? (
               <div style={{ padding: 10, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)' }}>
                 No past sessions yet
               </div>
             ) : (
-              pastSessions.map(s => (
+              pastConversations.map(c => (
                 <div
-                  key={s.session_id}
-                  onClick={() => loadSession(s)}
+                  key={c.id}
+                  onClick={() => loadConversation(c)}
                   style={{
                     padding: '7px 9px', borderRadius: 6, cursor: 'pointer',
-                    background: s.session_id === sessionId ? 'rgba(0,180,216,0.1)' : 'transparent',
+                    background: c.id === conversationId ? 'rgba(0,180,216,0.1)' : 'transparent',
                   }}
-                  onMouseEnter={e => { if (s.session_id !== sessionId) e.currentTarget.style.background = 'rgba(255,255,255,0.04)' }}
-                  onMouseLeave={e => { if (s.session_id !== sessionId) e.currentTarget.style.background = 'transparent' }}
+                  onMouseEnter={e => { if (c.id !== conversationId) e.currentTarget.style.background = 'rgba(255,255,255,0.04)' }}
+                  onMouseLeave={e => { if (c.id !== conversationId) e.currentTarget.style.background = 'transparent' }}
                 >
                   <div style={{
                     fontFamily: 'var(--font-mono)', fontSize: 10.5, color: '#e2e8f0',
                     whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                   }}>
-                    {s.preview || '(no preview)'}
+                    {c.model || c.runtimeId || c.providerId || '(no model)'}
                   </div>
                   <div style={{ display: 'flex', gap: 6, marginTop: 2 }}>
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: '#00b4d8' }}>{s.runtime}</span>
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-muted)' }}>{relativeTime(s.updated_at)}</span>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: '#00b4d8' }}>{c.runtimeId || c.providerId}</span>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-muted)' }}>{relativeTime(c.updatedAt)}</span>
                   </div>
                 </div>
               ))
@@ -710,7 +864,17 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
         {(runtimes.length > 0 && providers.length > 0) && (
           <select
             value={useAgents ? 'agents' : 'providers'}
-            onChange={e => setUseAgents(e.target.value === 'agents')}
+            onChange={e => {
+              // Same mid-turn guard as the runtime/model selects below —
+              // flipping backends while a turn is active would otherwise
+              // fetch the OTHER bucket's conversations underneath a still-
+              // running turn instead of blocking like every other switch.
+              if (activeTurnIdRef.current) {
+                notify('chat', 'Stop the current response first')
+                return
+              }
+              setUseAgents(e.target.value === 'agents')
+            }}
             title="Chat backend"
             style={selectStyle}
           >
@@ -722,9 +886,9 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
           <select
             value={selectedRuntime}
             onChange={e => {
-              // Runtime change resets the session — blocked mid-stream for
-              // the same crosstalk reason as loadSession (FV4-6).
-              if (streamingRef.current) {
+              // Runtime change resets the conversation — blocked mid-turn
+              // for the same crosstalk reason as loadConversation (FV4-6).
+              if (activeTurnIdRef.current) {
                 notify('chat', 'Stop the current response first')
                 return
               }
@@ -791,8 +955,9 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
       </div>
 
       {/* ── Messages area ── */}
-      <div style={{
-        flex: 1,
+      <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
+      <div ref={scroll.containerRef} style={{
+        height: '100%',
         overflowY: 'auto',
         padding: '12px',
         display: 'flex', flexDirection: 'column',
@@ -831,127 +996,78 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
         )}
 
         {messages.map((msg, i) => (
-          <MessageBubble
-            key={i}
-            role={msg.role}
-            content={msg.content}
-            toolCalls={msg.toolCalls}
-            isError={msg.role === 'error'}
-          />
+          msg.role === 'turn' ? (
+            <div key={i} className="chat-assistant-turn">
+              <ChatTimeline state={msg.state} />
+              {Object.values(msg.state.calls).map(call => {
+                const artifact = resolvedArtifacts[`${msg.turnId}:${call.callId}`]
+                return artifact
+                  ? <ChatArtifactCard key={call.callId} artifact={artifact} onOpenArtifact={onOpenArtifact} />
+                  : null
+              })}
+              <TurnStatus state={msg.state} stopRequested={false} />
+            </div>
+          ) : (
+            <MessageBubble
+              key={i}
+              role={msg.role}
+              content={msg.content}
+              isError={msg.role === 'error'}
+            />
+          )
         ))}
 
-        {/* Streaming assistant bubble */}
-        {streaming && (currentContent || currentToolCalls.length > 0) && (
-          <MessageBubble
-            role="assistant"
-            content={currentContent || '...'}
-            toolCalls={currentToolCalls.length > 0 ? currentToolCalls : null}
-          />
-        )}
-
-        {/* Streaming indicator when no content yet */}
-        {streaming && !currentContent && currentToolCalls.length === 0 && (
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 6,
-            padding: '8px 0',
-          }}>
-            <Loader size={12} style={{ animation: 'spin 0.7s linear infinite', color: '#00b4d8' }} />
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)' }}>
-              Thinking...
-            </span>
+        {/* Live turn: timeline of interleaved text/tool steps plus its
+            truthful status line (Starting agent/Running <tool>/Responding/
+            Stopping/etc) — TurnStatus always renders something, so this
+            replaces the old separate "Thinking..." indicator too. */}
+        {streaming && (
+          <div className="chat-assistant-turn">
+            <ChatTimeline state={liveTurn} />
+            {Object.values(liveTurn.calls).map(call => {
+              const artifact = resolvedArtifacts[`${activeTurnId}:${call.callId}`]
+              return artifact
+                ? <ChatArtifactCard key={call.callId} artifact={artifact} onOpenArtifact={onOpenArtifact} />
+                : null
+            })}
+            <TurnStatus state={liveTurn} stopRequested={stopRequested} />
           </div>
         )}
+      </div>
 
-        <div ref={messagesEndRef} />
+      {/* Auto-follow only within 80px of the bottom; otherwise this stays
+          out of the way instead of yanking the viewport while reading
+          back through history (plan §"Layout and interaction"). */}
+      {!scroll.isFollowing && scroll.unreadCount > 0 && (
+        <button
+          onClick={scroll.jumpToLatest}
+          style={{
+            position: 'absolute', bottom: 12, left: '50%', transform: 'translateX(-50%)',
+            display: 'flex', alignItems: 'center', gap: 5,
+            background: '#0d1a28', border: '1px solid rgba(0,180,216,0.35)',
+            borderRadius: 999, padding: '5px 12px', cursor: 'pointer',
+            color: '#00b4d8', fontFamily: 'var(--font-mono)', fontSize: 10,
+            boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+          }}
+        >
+          <ArrowDown size={11} />
+          Jump to latest{scroll.unreadCount > 1 ? ` (${scroll.unreadCount})` : ''}
+        </button>
+      )}
       </div>
 
       {/* ── Input area ── */}
-      <div style={{
-        padding: '8px 12px 10px',
-        borderTop: '1px solid rgba(0,180,216,0.1)',
-        display: 'flex', flexDirection: 'column', gap: 6,
-        flexShrink: 0,
-      }}>
-        {!hasBackend && (
-          <div style={{ padding: '8px 12px', background: 'rgba(251,191,36,.08)', border: '1px solid rgba(251,191,36,.2)', borderRadius: 'var(--radius)', fontFamily: 'var(--font-mono)', fontSize: 10, color: '#fbbf24' }}>
-            {monomindMissing
-              ? <>monomind not found — install with <code>npm install -g @monoes/monomindcli</code>, or select an AI provider above</>
-              : useAgents ? 'Select an agent runtime above to start chatting' : 'Select an AI provider above to start chatting'}
-          </div>
-        )}
-        <div style={{ display: 'flex', gap: 6 }}>
-        <textarea
-          ref={textareaRef}
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Type a message..."
-          rows={1}
-          style={{
-            flex: 1,
-            background: '#020509',
-            border: '1px solid rgba(0,180,216,0.15)',
-            borderRadius: 8,
-            padding: '8px 10px',
-            color: '#e2e8f0',
-            fontFamily: 'var(--font-mono)', fontSize: 11,
-            outline: 'none',
-            resize: 'none',
-            minHeight: 36,
-            maxHeight: 120,
-            lineHeight: 1.4,
-          }}
-          onInput={e => {
-            e.target.style.height = 'auto'
-            e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px'
-          }}
-        />
-        {streaming ? (
-          <button
-            onClick={stop}
-            title="Stop generating"
-            aria-label="Stop generating"
-            style={{
-              background: 'rgba(239,68,68,0.15)',
-              border: '1px solid rgba(239,68,68,0.35)',
-              borderRadius: 8,
-              padding: '0 12px',
-              cursor: 'pointer',
-              color: '#ef4444',
-              display: 'flex', alignItems: 'center',
-              transition: 'all 100ms',
-              flexShrink: 0,
-            }}
-            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(239,68,68,0.25)' }}
-            onMouseLeave={e => { e.currentTarget.style.background = 'rgba(239,68,68,0.15)' }}
-          >
-            <Square size={12} fill="#ef4444" />
-          </button>
-        ) : (
-          <button
-            onClick={send}
-            disabled={!input.trim() || !hasBackend}
-            title={!hasBackend ? (useAgents ? 'No runtime selected' : 'No provider selected') : 'Send message'}
-            aria-label="Send message"
-            style={{
-              background: !input.trim() || !hasBackend ? 'rgba(0,180,216,0.05)' : 'rgba(0,180,216,0.15)',
-              border: `1px solid ${!input.trim() || !hasBackend ? 'rgba(0,180,216,0.08)' : 'rgba(0,180,216,0.3)'}`,
-              borderRadius: 8,
-              padding: '0 12px',
-              cursor: !input.trim() || !hasBackend ? 'default' : 'pointer',
-              color: !input.trim() || !hasBackend ? 'var(--text-muted)' : '#00b4d8',
-              display: 'flex', alignItems: 'center',
-              transition: 'all 100ms',
-              flexShrink: 0,
-            }}
-            onMouseEnter={e => { if (input.trim() && hasBackend) e.currentTarget.style.background = 'rgba(0,180,216,0.25)' }}
-            onMouseLeave={e => { if (input.trim() && hasBackend) e.currentTarget.style.background = 'rgba(0,180,216,0.15)' }}
-          >
-            <Send size={13} />
-          </button>
-        )}
-        </div>
-      </div>
+      <ChatComposer
+        value={input}
+        onChange={setInput}
+        onSend={send}
+        onStop={stop}
+        streaming={streaming}
+        disabled={!hasBackend}
+        disabledReason={monomindMissing
+          ? <>monomind not found — install with <code>npm install -g @monoes/monomindcli</code>, or select an AI provider above</>
+          : (useAgents ? 'Select an agent runtime above to start chatting' : 'Select an AI provider above to start chatting')}
+      />
     </div>
   )
 }

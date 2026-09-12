@@ -53,6 +53,11 @@ type ChatService struct {
 	db          *sql.DB
 	newClientFn NewClientFunc
 	canvasTools *CanvasTools
+	// nodeTypes mirrors whatever was last passed to SetCanvasNodeTypes, kept
+	// here (in addition to being set directly on canvasTools) so
+	// StreamChatScoped can build a fresh per-turn CanvasTools with the same
+	// registry without needing to read it back off the shared instance.
+	nodeTypes []NodeTypeInfo
 }
 
 // NewChatService creates a ChatService wired to the given store and database.
@@ -67,15 +72,23 @@ func NewChatService(aiStore *ai.AIStore, db *sql.DB) *ChatService {
 
 // SetCanvasNodeTypes provides the available node types to the canvas tools.
 func (s *ChatService) SetCanvasNodeTypes(types []NodeTypeInfo) {
+	s.nodeTypes = types
 	s.canvasTools.SetNodeTypes(types)
 }
 
 // SetProfileID sets the active profile for new workflow creation via AI chat.
+// Only affects the shared, compatibility StreamChat/GetHistory/ClearHistory
+// path — StreamChatScoped/GetHistoryScoped/ClearHistoryScoped take their
+// profile explicitly instead and never read this.
 func (s *ChatService) SetProfileID(profileID string) {
 	s.canvasTools.SetProfileID(profileID)
 }
 
-// StreamChat sends a user message to the AI provider and streams the response.
+// StreamChat sends a user message to the AI provider and streams the
+// response, scoped to whatever profile SetProfileID last set on the shared
+// CanvasTools instance. Kept as the existing compatibility binding
+// (app_ai.go's StreamAIChat) during migration — see StreamChatScoped for
+// the race-free replacement new callers should use.
 //
 // onChunk is called for each streamed token. onToolCall is called whenever the
 // model invokes a tool, receiving the tool name, arguments JSON, and result.
@@ -85,12 +98,48 @@ func (s *ChatService) StreamChat(
 	onChunk func(ai.StreamChunk),
 	onToolCall func(name, args, result string),
 ) error {
-	if err := s.canvasTools.checkWorkflowOwnership(workflowID); err != nil {
+	return s.streamChat(ctx, s.canvasTools, workflowID, userMessage, providerID, model, onChunk, onToolCall)
+}
+
+// StreamChatScoped behaves like StreamChat but takes profileID explicitly
+// and builds a fresh CanvasTools scoped to it for the duration of this one
+// call, instead of reading the shared s.canvasTools field. This is the fix
+// for a real race: SetProfileID mutates state shared by every in-flight
+// StreamChat call, so a profile switch arriving while a turn is still
+// running (e.g. during a slow tool call) would silently redirect that
+// ALREADY-RUNNING turn's remaining tool calls and history writes to the
+// newly-active profile instead of the one it actually started under (plan
+// §142/§236: "do not mutate the shared CanvasTools profile during a
+// running turn" / "Use per-turn CanvasTools with a captured profile").
+func (s *ChatService) StreamChatScoped(
+	ctx context.Context,
+	profileID, workflowID, userMessage, providerID, model string,
+	onChunk func(ai.StreamChunk),
+	onToolCall func(name, args, result string),
+) error {
+	ct := NewCanvasTools(s.db)
+	ct.SetProfileID(profileID)
+	ct.SetNodeTypes(s.nodeTypes)
+	return s.streamChat(ctx, ct, workflowID, userMessage, providerID, model, onChunk, onToolCall)
+}
+
+// streamChat is StreamChat's actual body, parameterized on which
+// CanvasTools instance to use — ct is captured once by the caller (either
+// the shared s.canvasTools, or a fresh scoped one from StreamChatScoped)
+// and used consistently for the whole turn, never re-read mid-flight.
+func (s *ChatService) streamChat(
+	ctx context.Context,
+	ct *CanvasTools,
+	workflowID, userMessage, providerID, model string,
+	onChunk func(ai.StreamChunk),
+	onToolCall func(name, args, result string),
+) error {
+	if err := ct.checkWorkflowOwnership(workflowID); err != nil {
 		return err
 	}
 
 	// 1. Resolve provider and create client.
-	provider, err := s.aiStore.GetProvider(providerID, s.canvasTools.ProfileID())
+	provider, err := s.aiStore.GetProvider(providerID, ct.ProfileID())
 	if err != nil {
 		return fmt.Errorf("get provider %s: %w", providerID, err)
 	}
@@ -102,7 +151,7 @@ func (s *ChatService) StreamChat(
 
 	// 2. Load existing history, windowed to the most recent
 	// maxHistoryMessages entries.
-	history, err := s.aiStore.GetChatHistory(workflowID)
+	history, err := s.aiStore.GetChatHistory(workflowID, ct.ProfileID())
 	if err != nil {
 		return fmt.Errorf("get chat history: %w", err)
 	}
@@ -142,6 +191,7 @@ func (s *ChatService) StreamChat(
 	if err := s.aiStore.SaveChatMessage(ai.ChatMessage{
 		ID:         uuid.New().String(),
 		WorkflowID: workflowID,
+		ProfileID:  ct.ProfileID(),
 		Role:       ai.RoleUser,
 		Content:    userMessage,
 	}); err != nil {
@@ -149,7 +199,7 @@ func (s *ChatService) StreamChat(
 	}
 
 	// 5. Build tool definitions from canvas tools.
-	toolDefs := s.canvasTools.ToolDefs()
+	toolDefs := ct.ToolDefs()
 
 	// 6. Stream the first response.
 	var accumulated string
@@ -182,6 +232,7 @@ func (s *ChatService) StreamChat(
 		if err := s.aiStore.SaveChatMessage(ai.ChatMessage{
 			ID:         uuid.New().String(),
 			WorkflowID: workflowID,
+			ProfileID:  ct.ProfileID(),
 			Role:       ai.RoleAssistant,
 			Content:    accumulated,
 			ToolCalls:  string(tcJSON),
@@ -200,7 +251,7 @@ func (s *ChatService) StreamChat(
 
 		// Execute each tool call and add results.
 		for _, tc := range toolCalls {
-			result := s.executeTool(tc.Function.Name, tc.Function.Arguments)
+			result := s.executeTool(ct, tc.Function.Name, tc.Function.Arguments)
 			if onToolCall != nil {
 				onToolCall(tc.Function.Name, tc.Function.Arguments, result)
 			}
@@ -215,6 +266,7 @@ func (s *ChatService) StreamChat(
 			if err := s.aiStore.SaveChatMessage(ai.ChatMessage{
 				ID:         uuid.New().String(),
 				WorkflowID: workflowID,
+				ProfileID:  ct.ProfileID(),
 				Role:       ai.RoleTool,
 				Content:    result,
 				ToolCallID: tc.ID,
@@ -250,6 +302,7 @@ func (s *ChatService) StreamChat(
 	if err := s.aiStore.SaveChatMessage(ai.ChatMessage{
 		ID:         uuid.New().String(),
 		WorkflowID: workflowID,
+		ProfileID:  ct.ProfileID(),
 		Role:       ai.RoleAssistant,
 		Content:    accumulated,
 		ProviderID: providerID,
@@ -261,27 +314,55 @@ func (s *ChatService) StreamChat(
 	return nil
 }
 
-// executeTool dispatches a tool call by name via CanvasTools. Returns the result string.
-func (s *ChatService) executeTool(name, argsJSON string) string {
-	result, err := s.canvasTools.Execute(name, argsJSON)
+// executeTool dispatches a tool call by name via the given CanvasTools
+// instance (the shared one for StreamChat, a per-turn one for
+// StreamChatScoped). Returns the result string.
+func (s *ChatService) executeTool(ct *CanvasTools, name, argsJSON string) string {
+	result, err := ct.Execute(name, argsJSON)
 	if err != nil {
 		return fmt.Sprintf(`{"error": %q}`, err.Error())
 	}
 	return result
 }
 
-// GetHistory returns the full chat history for a workflow.
+// GetHistory returns the full chat history for a workflow, scoped to the
+// active profile (set via SetProfileID). Compatibility binding — see
+// GetHistoryScoped for the explicit-profile replacement.
 func (s *ChatService) GetHistory(workflowID string) ([]ai.ChatMessage, error) {
 	if err := s.canvasTools.checkWorkflowOwnership(workflowID); err != nil {
 		return nil, err
 	}
-	return s.aiStore.GetChatHistory(workflowID)
+	return s.aiStore.GetChatHistory(workflowID, s.canvasTools.ProfileID())
 }
 
-// ClearHistory deletes all chat messages for a workflow.
+// ClearHistory deletes all chat messages for a workflow, scoped to the
+// active profile (set via SetProfileID). Compatibility binding — see
+// ClearHistoryScoped for the explicit-profile replacement.
 func (s *ChatService) ClearHistory(workflowID string) error {
 	if err := s.canvasTools.checkWorkflowOwnership(workflowID); err != nil {
 		return err
 	}
-	return s.aiStore.ClearChatHistory(workflowID)
+	return s.aiStore.ClearChatHistory(workflowID, s.canvasTools.ProfileID())
+}
+
+// GetHistoryScoped is GetHistory with profileID passed explicitly instead
+// of read off the shared, mutable canvasTools field.
+func (s *ChatService) GetHistoryScoped(profileID, workflowID string) ([]ai.ChatMessage, error) {
+	ct := NewCanvasTools(s.db)
+	ct.SetProfileID(profileID)
+	if err := ct.checkWorkflowOwnership(workflowID); err != nil {
+		return nil, err
+	}
+	return s.aiStore.GetChatHistory(workflowID, profileID)
+}
+
+// ClearHistoryScoped is ClearHistory with profileID passed explicitly
+// instead of read off the shared, mutable canvasTools field.
+func (s *ChatService) ClearHistoryScoped(profileID, workflowID string) error {
+	ct := NewCanvasTools(s.db)
+	ct.SetProfileID(profileID)
+	if err := ct.checkWorkflowOwnership(workflowID); err != nil {
+		return err
+	}
+	return s.aiStore.ClearChatHistory(workflowID, profileID)
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/monoes/mono-agent/internal/monomind"
 	"github.com/monoes/mono-agent/internal/workflow"
 )
 
@@ -54,6 +55,16 @@ func exitCodeFor(err error) int {
 	var ce *cliError
 	if errors.As(err, &ce) {
 		return ce.code
+	}
+	// A chat turn's terminal *monomind.ProtocolError carries the specific
+	// protocol/process exit code (e.g. 124 timeout, 130 cancelled) that
+	// `chat`'s RunE now returns instead of calling os.Exit directly, so that
+	// path's deferred cleanup (closeDB, temp-file removal, history save)
+	// still runs. Falling through to the default case here would collapse
+	// every one of those distinct codes to a generic 1.
+	var pe *monomind.ProtocolError
+	if errors.As(err, &pe) {
+		return pe.ExitCode
 	}
 	switch {
 	case errors.Is(err, workflow.ErrWorkflowNotFound),

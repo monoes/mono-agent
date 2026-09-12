@@ -1,0 +1,116 @@
+// Chat result "artifacts" — click-to-open actions for a small, explicit
+// allowlist of tool results (plan §Task 6, "Result actions that exist
+// today"). Two-phase, deliberately:
+//
+//   detectArtifactCandidate — pure, synchronous. Looks at one completed
+//   tool call and extracts an UNVALIDATED reference straight from the
+//   tool's own self-reported result. Safe against forged/malformed/
+//   unsupported results entirely on its own (never throws, never trusts
+//   the value beyond "right shape, right type").
+//
+//   resolveArtifact — async. Re-validates that reference against a real,
+//   profile-scoped backend lookup before it is ever trusted enough to
+//   navigate anywhere or open a file (plan: "resolved to trusted
+//   metadata"). A forged id, a deleted entity, or one belonging to a
+//   different profile all resolve to null here, same as an id that was
+//   never real to begin with.
+//
+// A tool call that doesn't produce a still-valid artifact is left to
+// render as a normal ToolActivityCard — this module only ever adds a
+// small extra affordance next to that, never replaces it (plan: "Keep
+// generic tool output as fallback").
+//
+// Literal tool names and result shapes below are taken directly from
+// internal/ai/chat/monoagent_tools.go (createWorkflow/createOrg/
+// saveDocument) — see that file if either ever changes shape.
+
+const ALLOWED_TOOL_NAMES = new Set(['create_workflow', 'create_org', 'save_document'])
+
+function nonEmptyString(v) {
+  return typeof v === 'string' && v.trim().length > 0
+}
+
+export function detectArtifactCandidate(call) {
+  if (!call || !ALLOWED_TOOL_NAMES.has(call.name)) return null
+  // Not completed yet, or the tool call itself failed — no real artifact
+  // to offer either way. `ok === null` (some adapters never report an
+  // explicit outcome) is treated as not-failed, same tri-state reading
+  // ToolActivityCard itself uses — resolveArtifact's own backend check is
+  // the actual authority regardless.
+  if (call.status !== 'completed' || call.ok === false) return null
+  if (typeof call.result !== 'string') return null
+
+  let parsed
+  try {
+    parsed = JSON.parse(call.result)
+  } catch {
+    return null
+  }
+  if (!parsed || typeof parsed !== 'object') return null
+
+  if (call.name === 'create_workflow') {
+    return nonEmptyString(parsed.workflow_id)
+      ? { type: 'workflow', callId: call.callId, id: parsed.workflow_id }
+      : null
+  }
+  if (call.name === 'create_org') {
+    return nonEmptyString(parsed.org_name)
+      ? { type: 'org', callId: call.callId, name: parsed.org_name }
+      : null
+  }
+  if (call.name === 'save_document') {
+    // vault_document_id is only present when the tool's own best-effort
+    // vault registration succeeded — absent is a normal, expected case
+    // (the file was still written), not a malformed result.
+    return nonEmptyString(parsed.vault_document_id)
+      ? { type: 'document', callId: call.callId, id: parsed.vault_document_id }
+      : null
+  }
+  return null
+}
+
+// resolveArtifact takes `api` explicitly (services/api.js's singleton, in
+// practice) rather than importing it, so this stays testable with a small
+// hand-built fake instead of mocking the whole api module.
+export async function resolveArtifact(candidate, api) {
+  if (!candidate) return null
+
+  if (candidate.type === 'workflow') {
+    // GetWorkflow (wails-app/app_workflows.go) does a real profile_id
+    // comparison and returns "workflow %s not found" for a deleted or
+    // cross-profile id — api.getWorkflow's own guard() turns that
+    // rejection into null.
+    const wf = await api.getWorkflow(candidate.id)
+    if (!wf || !nonEmptyString(wf.id)) return null
+    return { type: 'workflow', id: wf.id, name: nonEmptyString(wf.name) ? wf.name : wf.id }
+  }
+
+  if (candidate.type === 'org') {
+    // No single "does this org exist" lookup exists — validated the same
+    // way App.jsx's own org-watcher bookkeeping already does: check the
+    // name against the real, profile-scoped org listing (plan:
+    // "organization name validated through existing org listing").
+    const res = await api.listOrgDesigns()
+    const items = Array.isArray(res) ? res : (res?.items || [])
+    const found = items.some(o => o?.name === candidate.name)
+    return found ? { type: 'org', name: candidate.name } : null
+  }
+
+  if (candidate.type === 'document') {
+    // No single-document-by-id Go method exists yet, and the plan only
+    // calls for adding one to app_documents.go if a scoped lookup is
+    // otherwise missing. listProfileDocuments() is already fully
+    // profile-scoped (it shells out through the CLI's own active-profile
+    // context), so filtering it client-side by id gives the exact same
+    // "resolved to trusted metadata" guarantee a dedicated GetDocument(id)
+    // call would — a cross-profile or deleted id simply never appears in
+    // this list, and a forged id (e.g. a path-traversal-shaped string)
+    // never matches any real entry either.
+    const docs = await api.listProfileDocuments()
+    const doc = Array.isArray(docs) ? docs.find(d => d?.id === candidate.id) : null
+    if (!doc) return null
+    return { type: 'document', id: doc.id, filename: doc.filename, path: doc.path, sizeBytes: doc.size_bytes }
+  }
+
+  return null
+}

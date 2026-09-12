@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/monoes/mono-agent/internal/secrets"
@@ -49,6 +50,14 @@ func (p AIProvider) MarshalJSON() ([]byte, error) {
 type ChatMessage struct {
 	ID         string `json:"id"`
 	WorkflowID string `json:"workflow_id"`
+	// ProfileID scopes the message to a profile. This matters most for the
+	// "general"/"draft" placeholder workflow IDs (see CanvasTools.checkWorkflowOwnership)
+	// which are literal, non-unique strings shared by every profile — without
+	// this column, one profile's global assistant chat would read, and
+	// ClearChatHistory would delete, another profile's messages under the
+	// same workflow_id. Empty normalizes to "default", same convention as
+	// AIProvider.ProfileID.
+	ProfileID  string `json:"profile_id,omitempty"`
 	Role       string `json:"role"` // "user" | "assistant" | "tool"
 	Content    string `json:"content"`
 	ToolCalls  string `json:"tool_calls,omitempty"`   // JSON array
@@ -119,6 +128,14 @@ func (s *AIStore) initTables() error {
 		model TEXT NOT NULL DEFAULT '',
 		token_count INTEGER NOT NULL DEFAULT 0,
 		session_id TEXT NOT NULL DEFAULT '',
+		-- Unlike ai_providers' profile_id (which defaults ambiguous rows to
+		-- 'default'), this defaults to '' — a sentinel that never matches any
+		-- real profile's exact-match lookups. SaveChatMessage always writes a
+		-- real profile ID, so '' only ever occurs on rows that predate this
+		-- column; those must stay excluded from every profile's history
+		-- rather than being silently attributed to whichever profile is
+		-- named "default" (see the legacy-ambiguous-exclusion requirement).
+		profile_id TEXT NOT NULL DEFAULT '',
 		created_at TEXT NOT NULL
 	)`
 
@@ -129,12 +146,43 @@ func (s *AIStore) initTables() error {
 		return fmt.Errorf("create ai_chat_messages: %w", err)
 	}
 	// Migrate: add columns that may be missing on existing DBs. SQLite errors
-	// if the column already exists; that error is expected and ignored.
-	s.db.Exec(`ALTER TABLE ai_chat_messages ADD COLUMN tool_call_id TEXT NOT NULL DEFAULT ''`)
-	s.db.Exec(`ALTER TABLE ai_chat_messages ADD COLUMN session_id TEXT NOT NULL DEFAULT ''`)
-	s.db.Exec(`ALTER TABLE ai_providers ADD COLUMN profile_id TEXT NOT NULL DEFAULT 'default'`)
-	s.db.Exec(`ALTER TABLE ai_providers ADD COLUMN vault_ref TEXT NOT NULL DEFAULT ''`)
+	// if the column already exists ("duplicate column name: ..."); that one
+	// error is expected and ignored, but any other failure (disk full,
+	// locked DB, corrupted schema) must propagate instead of being silently
+	// swallowed alongside it.
+	if err := addColumnIfMissing(s.db, `ALTER TABLE ai_chat_messages ADD COLUMN tool_call_id TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(s.db, `ALTER TABLE ai_chat_messages ADD COLUMN session_id TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	// Backfill to an empty-string sentinel (ambiguous), not "default" — see
+	// messagesSQL's comment.
+	if err := addColumnIfMissing(s.db, `ALTER TABLE ai_chat_messages ADD COLUMN profile_id TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(s.db, `ALTER TABLE ai_providers ADD COLUMN profile_id TEXT NOT NULL DEFAULT 'default'`); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(s.db, `ALTER TABLE ai_providers ADD COLUMN vault_ref TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	if err := s.initChatEventTables(); err != nil {
+		return err
+	}
 	return nil
+}
+
+// addColumnIfMissing runs an ALTER TABLE ... ADD COLUMN statement, treating
+// SQLite's "duplicate column name" error (the column already exists, from a
+// previous run of this same migration) as success, and propagating any
+// other error instead of discarding it.
+func addColumnIfMissing(db *sql.DB, alterSQL string) error {
+	_, err := db.Exec(alterSQL)
+	if err == nil || strings.Contains(err.Error(), "duplicate column name") {
+		return nil
+	}
+	return fmt.Errorf("migrate: %s: %w", alterSQL, err)
 }
 
 // SaveProvider upserts an AI provider. If CreatedAt is empty it is set to now.
@@ -273,29 +321,40 @@ func (s *AIStore) UpdateProviderStatus(id, status, lastTested, profileID string)
 	return err
 }
 
-// SaveChatMessage inserts a chat message. If CreatedAt is empty it is set to now.
+// SaveChatMessage inserts a chat message. If CreatedAt is empty it is set to
+// now. If ProfileID is empty it defaults to "default".
 func (s *AIStore) SaveChatMessage(m ChatMessage) error {
 	if m.CreatedAt == "" {
 		m.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 	}
-	const q = `INSERT INTO ai_chat_messages (id, workflow_id, role, content, tool_calls, tool_call_id, provider_id, model, token_count, session_id, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	if m.ProfileID == "" {
+		m.ProfileID = "default"
+	}
+	const q = `INSERT INTO ai_chat_messages (id, workflow_id, role, content, tool_calls, tool_call_id, provider_id, model, token_count, session_id, profile_id, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err := s.db.Exec(q,
 		m.ID, m.WorkflowID, m.Role, m.Content,
 		m.ToolCalls, m.ToolCallID, m.ProviderID, m.Model,
-		m.TokenCount, m.SessionID, m.CreatedAt,
+		m.TokenCount, m.SessionID, m.ProfileID, m.CreatedAt,
 	)
 	return err
 }
 
-// GetChatHistory returns all messages for a workflow ordered by created_at
-// ascending. rowid is the tiebreaker: SQLite rowids are monotonic for
-// inserts, so messages saved within the same timestamp (RFC3339 has second
-// granularity) still come back in insert order — no seq column needed.
-func (s *AIStore) GetChatHistory(workflowID string) ([]ChatMessage, error) {
-	const q = `SELECT id, workflow_id, role, content, tool_calls, tool_call_id, provider_id, model, token_count, session_id, created_at
-		FROM ai_chat_messages WHERE workflow_id = ? ORDER BY created_at ASC, rowid ASC`
-	rows, err := s.db.Query(q, workflowID)
+// GetChatHistory returns all messages for a workflow, scoped to profileID
+// (empty normalizes to "default"), ordered by created_at ascending. Exact
+// match (not COALESCE) against profile_id: ambiguous legacy rows predating
+// this column carry an empty-string sentinel and are never returned, for
+// any profileID including "default" — see messagesSQL's comment. rowid is
+// the tiebreaker: SQLite rowids are monotonic for inserts, so messages
+// saved within the same timestamp (RFC3339 has second granularity) still
+// come back in insert order — no seq column needed.
+func (s *AIStore) GetChatHistory(workflowID, profileID string) ([]ChatMessage, error) {
+	if profileID == "" {
+		profileID = "default"
+	}
+	const q = `SELECT id, workflow_id, role, content, tool_calls, tool_call_id, provider_id, model, token_count, session_id, profile_id, created_at
+		FROM ai_chat_messages WHERE workflow_id = ? AND profile_id = ? ORDER BY created_at ASC, rowid ASC`
+	rows, err := s.db.Query(q, workflowID, profileID)
 	if err != nil {
 		return nil, err
 	}
@@ -307,7 +366,7 @@ func (s *AIStore) GetChatHistory(workflowID string) ([]ChatMessage, error) {
 		if err := rows.Scan(
 			&m.ID, &m.WorkflowID, &m.Role, &m.Content,
 			&m.ToolCalls, &m.ToolCallID, &m.ProviderID, &m.Model,
-			&m.TokenCount, &m.SessionID, &m.CreatedAt,
+			&m.TokenCount, &m.SessionID, &m.ProfileID, &m.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -317,11 +376,15 @@ func (s *AIStore) GetChatHistory(workflowID string) ([]ChatMessage, error) {
 }
 
 // GetSessionMessages returns messages for one resumable session within a
-// workflow, ordered by created_at ascending.
-func (s *AIStore) GetSessionMessages(workflowID, sessionID string) ([]ChatMessage, error) {
-	const q = `SELECT id, workflow_id, role, content, tool_calls, tool_call_id, provider_id, model, token_count, session_id, created_at
-		FROM ai_chat_messages WHERE workflow_id = ? AND session_id = ? ORDER BY created_at ASC`
-	rows, err := s.db.Query(q, workflowID, sessionID)
+// workflow, scoped to profileID (empty normalizes to "default"), ordered by
+// created_at ascending.
+func (s *AIStore) GetSessionMessages(workflowID, sessionID, profileID string) ([]ChatMessage, error) {
+	if profileID == "" {
+		profileID = "default"
+	}
+	const q = `SELECT id, workflow_id, role, content, tool_calls, tool_call_id, provider_id, model, token_count, session_id, profile_id, created_at
+		FROM ai_chat_messages WHERE workflow_id = ? AND session_id = ? AND profile_id = ? ORDER BY created_at ASC`
+	rows, err := s.db.Query(q, workflowID, sessionID, profileID)
 	if err != nil {
 		return nil, err
 	}
@@ -333,7 +396,7 @@ func (s *AIStore) GetSessionMessages(workflowID, sessionID string) ([]ChatMessag
 		if err := rows.Scan(
 			&m.ID, &m.WorkflowID, &m.Role, &m.Content,
 			&m.ToolCalls, &m.ToolCallID, &m.ProviderID, &m.Model,
-			&m.TokenCount, &m.SessionID, &m.CreatedAt,
+			&m.TokenCount, &m.SessionID, &m.ProfileID, &m.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -342,13 +405,13 @@ func (s *AIStore) GetSessionMessages(workflowID, sessionID string) ([]ChatMessag
 	return messages, rows.Err()
 }
 
-// ListChatSessions groups a workflow's messages by session_id into a
-// most-recently-updated-first list, for a past-sessions browser. Messages
-// with no session_id (saved before this field existed, or from a turn
-// whose runtime never returned one) are excluded — they have no id to
-// resume by.
-func (s *AIStore) ListChatSessions(workflowID string) ([]ChatSession, error) {
-	messages, err := s.GetChatHistory(workflowID)
+// ListChatSessions groups a workflow's messages, scoped to profileID, by
+// session_id into a most-recently-updated-first list, for a past-sessions
+// browser. Messages with no session_id (saved before this field existed, or
+// from a turn whose runtime never returned one) are excluded — they have no
+// id to resume by.
+func (s *AIStore) ListChatSessions(workflowID, profileID string) ([]ChatSession, error) {
+	messages, err := s.GetChatHistory(workflowID, profileID)
 	if err != nil {
 		return nil, err
 	}
@@ -396,8 +459,14 @@ func truncateChatPreview(s string) string {
 	return string(r[:maxLen]) + "…"
 }
 
-// ClearChatHistory deletes all messages for a given workflow.
-func (s *AIStore) ClearChatHistory(workflowID string) error {
-	_, err := s.db.Exec(`DELETE FROM ai_chat_messages WHERE workflow_id = ?`, workflowID)
+// ClearChatHistory deletes all messages for a given workflow, scoped to
+// profileID (empty normalizes to "default") so clearing one profile's
+// "general" chat can never delete another profile's messages under the same
+// placeholder workflow_id.
+func (s *AIStore) ClearChatHistory(workflowID, profileID string) error {
+	if profileID == "" {
+		profileID = "default"
+	}
+	_, err := s.db.Exec(`DELETE FROM ai_chat_messages WHERE workflow_id = ? AND profile_id = ?`, workflowID, profileID)
 	return err
 }

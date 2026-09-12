@@ -42,6 +42,7 @@ type App struct {
 	connMgr     *connections.Manager
 	aiStore     *ai.AIStore
 	chatService *aichat.ChatService
+	chatSup     *chatSupervisor // new conversation/turn/event supervisor; see app_chat.go
 	wfStore     *workflow.HybridWorkflowStore
 
 	runningMu      sync.Mutex
@@ -172,6 +173,7 @@ func (a *App) startup(ctx context.Context) {
 		}
 		cs.SetCanvasNodeTypes(allTypes)
 		a.chatService = cs
+		a.initChatSupervisor(db)
 	}
 
 	// Load the active profile from settings; default to 'default' if not set.
@@ -293,6 +295,10 @@ func (a *App) migrateProfilesToPerProfileLayout(ctx context.Context, db *sql.DB)
 }
 
 func (a *App) shutdown(_ context.Context) {
+	if a.chatSup != nil {
+		a.chatSup.stopAll()
+	}
+
 	a.orgWatchMu.Lock()
 	if a.orgWatcher != nil {
 		a.orgWatcher.Stop()

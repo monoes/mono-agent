@@ -11,7 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/monoes/mono-agent/internal/docscan"
+	"github.com/monoes/mono-agent/internal/profiledir"
 	"github.com/monoes/mono-agent/internal/storage"
+	"github.com/monoes/mono-agent/internal/vault"
 
 	"github.com/zalando/go-keyring"
 )
@@ -35,6 +38,54 @@ func mustJSON(t *testing.T, s string, v interface{}) {
 	t.Helper()
 	if err := json.Unmarshal([]byte(s), v); err != nil {
 		t.Fatalf("unmarshal %q failed: %v", s, err)
+	}
+}
+
+func TestRestrictFileWriteForOrgs_TrueForDefaultManagedProfile(t *testing.T) {
+	db := newMonoagentTestDB(t)
+	mt := NewMonoagentTools(db.DB, "")
+	mt.SetProfileID("profile-no-override")
+
+	if !mt.restrictFileWriteForOrgs() {
+		t.Error("a profile with no root_dir override should be treated as default-managed (restricted)")
+	}
+}
+
+func TestRestrictFileWriteForOrgs_FalseForCustomRootDirProfile(t *testing.T) {
+	db := newMonoagentTestDB(t)
+	if _, err := db.DB.Exec(
+		"INSERT INTO profiles (id, name, root_dir) VALUES ('profile-custom', 'Custom', ?)",
+		filepath.Join(t.TempDir(), "my-existing-project"),
+	); err != nil {
+		t.Fatalf("seed profile failed: %v", err)
+	}
+	mt := NewMonoagentTools(db.DB, "")
+	mt.SetProfileID("profile-custom")
+
+	if mt.restrictFileWriteForOrgs() {
+		t.Error("a profile with a root_dir override should NOT be restricted")
+	}
+}
+
+func TestRestrictFileWriteForOrgs_FalseWithOrgProjectRootOverride(t *testing.T) {
+	db := newMonoagentTestDB(t)
+	mt := NewMonoagentTools(db.DB, "")
+	mt.SetProfileID("profile-no-override")
+	mt.SetOrgProjectRoot(t.TempDir())
+
+	if mt.restrictFileWriteForOrgs() {
+		t.Error("an explicit SetOrgProjectRoot override should never be restricted")
+	}
+}
+
+func TestRestrictFileWriteForOrgs_FalseForEmptyOrDefaultProfileID(t *testing.T) {
+	db := newMonoagentTestDB(t)
+	for _, pid := range []string{"", "default"} {
+		mt := NewMonoagentTools(db.DB, "")
+		mt.SetProfileID(pid)
+		if mt.restrictFileWriteForOrgs() {
+			t.Errorf("profileID %q (legacy ~/.monoagent fallback) should never be restricted", pid)
+		}
 	}
 }
 
@@ -677,6 +728,277 @@ func newOrgTestTools(t *testing.T) *MonoagentTools {
 	mt := NewMonoagentTools(db.DB, "")
 	mt.SetOrgProjectRoot(t.TempDir())
 	return mt
+}
+
+func TestSaveDocument_WritesFileAndRegistersInVault(t *testing.T) {
+	mt := newOrgTestTools(t)
+
+	args, _ := json.Marshal(map[string]interface{}{
+		"filename": "debate-summary.md",
+		"content":  "# Summary\n\nIt went well.",
+	})
+	out, err := mt.Execute("save_document", string(args))
+	if err != nil {
+		t.Fatalf("save_document failed: %v", err)
+	}
+	var res struct {
+		Filename        string `json:"filename"`
+		Path            string `json:"path"`
+		SizeBytes       int    `json:"size_bytes"`
+		VaultDocumentID string `json:"vault_document_id"`
+	}
+	mustJSON(t, out, &res)
+	if res.Filename != "debate-summary.md" {
+		t.Errorf("filename = %q, want %q", res.Filename, "debate-summary.md")
+	}
+	if res.VaultDocumentID == "" {
+		t.Fatal("response missing vault_document_id")
+	}
+
+	got, err := os.ReadFile(res.Path)
+	if err != nil {
+		t.Fatalf("reading written file: %v", err)
+	}
+	if string(got) != "# Summary\n\nIt went well." {
+		t.Errorf("file content = %q", got)
+	}
+
+	var dbPath, source string
+	if err := mt.db.QueryRow(
+		`SELECT path, source FROM vault_documents WHERE id = ?`, res.VaultDocumentID,
+	).Scan(&dbPath, &source); err != nil {
+		t.Fatalf("vault_documents row not found: %v", err)
+	}
+	if dbPath != res.Path {
+		t.Errorf("vault_documents.path = %q, want %q", dbPath, res.Path)
+	}
+	if source != "discovered" {
+		t.Errorf("vault_documents.source = %q, want %q", source, "discovered")
+	}
+}
+
+func TestSaveDocument_RejectsDisallowedExtension(t *testing.T) {
+	mt := newOrgTestTools(t)
+
+	args, _ := json.Marshal(map[string]interface{}{
+		"filename": "report.exe",
+		"content":  "not a document",
+	})
+	_, err := mt.Execute("save_document", string(args))
+	if err == nil {
+		t.Fatal("save_document with .exe unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), "exe") {
+		t.Errorf("error should name the rejected extension: %v", err)
+	}
+
+	root := mt.profileRoot()
+	if _, statErr := os.Stat(filepath.Join(root, "docs", "report.exe")); !os.IsNotExist(statErr) {
+		t.Errorf("rejected extension must not be written to disk, stat err = %v", statErr)
+	}
+}
+
+// TestSaveDocument_AcceptsHTMLAndSurvivesWatcherReconcile proves a
+// self-contained HTML deliverable is a real, supported save_document
+// output end-to-end — not just that IsDocumentFile("x.html") flipped to
+// true. It drives the same docscan.Scan + vault.ReconcileDiscoveredDocuments
+// loop the real GUI watcher runs every 5s (see
+// TestSaveDocument_DefaultProfileSurvivesWatcherReconcile above for why
+// that matters: a document whose extension docscan.Scan doesn't recognize
+// gets its row deleted on the very next poll after being registered).
+func TestSaveDocument_AcceptsHTMLAndSurvivesWatcherReconcile(t *testing.T) {
+	mt := newOrgTestTools(t)
+
+	args, _ := json.Marshal(map[string]interface{}{
+		"filename": "debate-summary.html",
+		"content":  "<html><body><h1>Summary</h1><p>It went well.</p></body></html>",
+	})
+	out, err := mt.Execute("save_document", string(args))
+	if err != nil {
+		t.Fatalf("save_document with .html failed: %v", err)
+	}
+	var res struct {
+		Path            string `json:"path"`
+		VaultDocumentID string `json:"vault_document_id"`
+	}
+	mustJSON(t, out, &res)
+	if res.VaultDocumentID == "" {
+		t.Fatal("response missing vault_document_id — registration failed")
+	}
+
+	root := mt.profileRoot()
+	files, err := docscan.Scan(root)
+	if err != nil {
+		t.Fatalf("docscan.Scan(%q): %v", root, err)
+	}
+	found := make([]vault.DiscoveredFile, len(files))
+	for i, f := range files {
+		found[i] = vault.DiscoveredFile{Path: f.Path, Filename: f.Filename, SizeBytes: f.SizeBytes}
+	}
+	_, removed, errs := vault.ReconcileDiscoveredDocuments(context.Background(), mt.db, mt.ProfileID(), found)
+	if len(errs) > 0 {
+		t.Fatalf("ReconcileDiscoveredDocuments errors: %v", errs)
+	}
+	if removed != 0 {
+		t.Fatalf("watcher reconcile deleted %d row(s) — .html is not actually recognized as a document by docscan.Scan", removed)
+	}
+
+	var dbPath string
+	if err := mt.db.QueryRow(`SELECT path FROM vault_documents WHERE id = ?`, res.VaultDocumentID).Scan(&dbPath); err != nil {
+		t.Fatalf("vault_documents row did not survive reconcile: %v", err)
+	}
+	if dbPath != res.Path {
+		t.Errorf("vault_documents.path = %q, want %q", dbPath, res.Path)
+	}
+}
+
+func TestSaveDocument_FilenameTraversalStaysInsideDocsFolder(t *testing.T) {
+	mt := newOrgTestTools(t)
+
+	args, _ := json.Marshal(map[string]interface{}{
+		"filename": "../../evil.md",
+		"content":  "gotcha",
+	})
+	out, err := mt.Execute("save_document", string(args))
+	if err != nil {
+		t.Fatalf("save_document failed: %v", err)
+	}
+	var res struct{ Path string }
+	mustJSON(t, out, &res)
+
+	root := mt.profileRoot()
+	docsDir := filepath.Join(root, "docs")
+	if !strings.HasPrefix(res.Path, docsDir+string(filepath.Separator)) {
+		t.Fatalf("path %q escaped docs/ (%q)", res.Path, docsDir)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(root), "evil.md")); !os.IsNotExist(err) {
+		t.Errorf("traversal filename must not have escaped upward, stat err = %v", err)
+	}
+}
+
+func TestSaveDocument_DuplicateFilenameErrors(t *testing.T) {
+	mt := newOrgTestTools(t)
+	args, _ := json.Marshal(map[string]interface{}{"filename": "notes.txt", "content": "first"})
+	if _, err := mt.Execute("save_document", string(args)); err != nil {
+		t.Fatalf("first save_document failed: %v", err)
+	}
+
+	args2, _ := json.Marshal(map[string]interface{}{"filename": "notes.txt", "content": "second"})
+	_, err := mt.Execute("save_document", string(args2))
+	if err == nil {
+		t.Fatal("duplicate filename unexpectedly succeeded")
+	}
+
+	root := mt.profileRoot()
+	got, _ := os.ReadFile(filepath.Join(root, "docs", "notes.txt"))
+	if string(got) != "first" {
+		t.Errorf("original file was overwritten: %q", got)
+	}
+}
+
+func TestSaveDocument_RequiresFilenameAndContent(t *testing.T) {
+	mt := newOrgTestTools(t)
+
+	cases := []map[string]interface{}{
+		{"filename": "", "content": "x"},
+		{"filename": "notes.txt", "content": ""},
+	}
+	for _, c := range cases {
+		args, _ := json.Marshal(c)
+		if _, err := mt.Execute("save_document", string(args)); err == nil {
+			t.Errorf("case %+v unexpectedly succeeded", c)
+		}
+	}
+}
+
+func TestSaveDocument_RejectsOversizedContent(t *testing.T) {
+	mt := newOrgTestTools(t)
+
+	args, _ := json.Marshal(map[string]interface{}{
+		"filename": "big.txt",
+		"content":  strings.Repeat("x", maxSaveDocumentBytes+1),
+	})
+	_, err := mt.Execute("save_document", string(args))
+	if err == nil {
+		t.Fatal("oversized content unexpectedly succeeded")
+	}
+
+	root := mt.profileRoot()
+	if _, statErr := os.Stat(filepath.Join(root, "docs", "big.txt")); !os.IsNotExist(statErr) {
+		t.Errorf("oversized content must not be written to disk, stat err = %v", statErr)
+	}
+}
+
+// TestSaveDocument_DefaultProfileSurvivesWatcherReconcile is a regression
+// test for a root-mismatch bug caught before shipping: save_document used
+// to resolve its write location via profileRoot(), whose "" / "default"
+// branch returns the legacy ~/.monoagent org-state directory (see
+// profileRoot's doc comment) — a different path than
+// profiledir.Root(db, "default"), which is what the GUI's document watcher
+// (wails-app/App.documentRootForActiveProfile) actually scans for the
+// "default" profile. A file written under the old path sat on disk
+// untouched by the watcher, and ReconcileDiscoveredDocuments' next poll
+// found the registered row's path outside its scan results and deleted it
+// — the exact "vanishes ~5s after being delivered" failure this tool
+// exists to prevent, just reached via the default profile instead of a
+// disallowed extension. This drives the full loop — save_document, then a
+// docscan.Scan + vault.ReconcileDiscoveredDocuments exactly like the real
+// watcher's poll callback (wails-app/app_documents_watch.go) — and asserts
+// the row survives.
+func TestSaveDocument_DefaultProfileSurvivesWatcherReconcile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	db := newMonoagentTestDB(t)
+	mt := NewMonoagentTools(db.DB, "")
+
+	args, _ := json.Marshal(map[string]interface{}{
+		"filename": "default-profile-report.md",
+		"content":  "# Report\n\nDefault profile content.",
+	})
+	out, err := mt.Execute("save_document", string(args))
+	if err != nil {
+		t.Fatalf("save_document failed: %v", err)
+	}
+	var res struct {
+		Path            string `json:"path"`
+		VaultDocumentID string `json:"vault_document_id"`
+	}
+	mustJSON(t, out, &res)
+	if res.VaultDocumentID == "" {
+		t.Fatal("response missing vault_document_id — registration failed")
+	}
+
+	watcherRoot := profiledir.Root(db.DB, "default")
+	wantPrefix := filepath.Join(watcherRoot, "docs") + string(filepath.Separator)
+	if !strings.HasPrefix(res.Path, wantPrefix) {
+		t.Fatalf("save_document wrote %q, want it under the watcher's scan root %q (profiledir.Root(db, \"default\"))", res.Path, wantPrefix)
+	}
+
+	files, err := docscan.Scan(watcherRoot)
+	if err != nil {
+		t.Fatalf("docscan.Scan(%q): %v", watcherRoot, err)
+	}
+	found := make([]vault.DiscoveredFile, len(files))
+	for i, f := range files {
+		found[i] = vault.DiscoveredFile{Path: f.Path, Filename: f.Filename, SizeBytes: f.SizeBytes}
+	}
+	_, removed, errs := vault.ReconcileDiscoveredDocuments(context.Background(), db.DB, "default", found)
+	if len(errs) > 0 {
+		t.Fatalf("ReconcileDiscoveredDocuments errors: %v", errs)
+	}
+	if removed != 0 {
+		t.Fatalf("watcher reconcile deleted %d row(s) — save_document wrote outside the watcher's scan root", removed)
+	}
+
+	var dbPath string
+	if err := mt.db.QueryRow(`SELECT path FROM vault_documents WHERE id = ?`, res.VaultDocumentID).Scan(&dbPath); err != nil {
+		t.Fatalf("vault_documents row did not survive reconcile: %v", err)
+	}
+	if dbPath != res.Path {
+		t.Errorf("vault_documents.path = %q, want %q", dbPath, res.Path)
+	}
 }
 
 func TestMonoagentTools_AddOrgRole_FindableViaGetOrg(t *testing.T) {

@@ -86,6 +86,10 @@ export function ConnectPlatformOAuth(arg1) {
   return window['go']['main']['App']['ConnectPlatformOAuth'](arg1);
 }
 
+export function CreateChatConversation(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['CreateChatConversation'](arg1, arg2, arg3, arg4, arg5);
+}
+
 export function CreateOrgDesign(arg1) {
   return window['go']['main']['App']['CreateOrgDesign'](arg1);
 }
@@ -104,6 +108,10 @@ export function CreateWorkflowFromTemplate(arg1) {
 
 export function DeleteAIProvider(arg1) {
   return window['go']['main']['App']['DeleteAIProvider'](arg1);
+}
+
+export function DeleteChatConversation(arg1) {
+  return window['go']['main']['App']['DeleteChatConversation'](arg1);
 }
 
 export function DeleteOrgDesign(arg1) {
@@ -198,8 +206,16 @@ export function GetApplications(arg1, arg2, arg3) {
   return window['go']['main']['App']['GetApplications'](arg1, arg2, arg3);
 }
 
+export function GetChatEvents(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['GetChatEvents'](arg1, arg2, arg3, arg4);
+}
+
 export function GetChatSessionMessages(arg1, arg2) {
   return window['go']['main']['App']['GetChatSessionMessages'](arg1, arg2);
+}
+
+export function GetChatTurns(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GetChatTurns'](arg1, arg2, arg3);
 }
 
 export function GetConnectionsForPlatform(arg1) {
@@ -426,6 +442,10 @@ export function ListAIProviders() {
   return window['go']['main']['App']['ListAIProviders']();
 }
 
+export function ListChatConversations(arg1, arg2) {
+  return window['go']['main']['App']['ListChatConversations'](arg1, arg2);
+}
+
 export function ListChatSessions(arg1) {
   return window['go']['main']['App']['ListChatSessions'](arg1);
 }
@@ -618,12 +638,20 @@ export function SetWorkflowActive(arg1, arg2) {
   return window['go']['main']['App']['SetWorkflowActive'](arg1, arg2);
 }
 
+export function StartChatTurn(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['StartChatTurn'](arg1, arg2, arg3, arg4, arg5);
+}
+
 export function StopAIChat(arg1) {
   return window['go']['main']['App']['StopAIChat'](arg1);
 }
 
 export function StopAgentChat(arg1) {
   return window['go']['main']['App']['StopAgentChat'](arg1);
+}
+
+export function StopChatTurn(arg1, arg2) {
+  return window['go']['main']['App']['StopChatTurn'](arg1, arg2);
 }
 
 export function StopNodeRun(arg1) {

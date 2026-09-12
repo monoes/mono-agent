@@ -564,3 +564,163 @@ func itoa(n int) string {
 	}
 	return string(b)
 }
+
+// writeInlineFakeBin writes a throwaway fake monomind binary running the
+// given shell script body (only the `agent exec` case needs handling; the
+// handshake case some tests also need is added by the caller when needed).
+func writeInlineFakeBin(t *testing.T, script string) string {
+	t.Helper()
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "monomind")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"+script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return bin
+}
+
+// TestExecResultOnlyText is the plan's "result-only text" case: a runtime
+// that never puts prose on the assistant event, only on result.text (the
+// mirror image of the currently-real no_result_text scenario already
+// covered by fake-monomind.sh, where assistant carries text and result
+// doesn't). ResultText must still come through.
+func TestExecResultOnlyText(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake monomind is a shell script")
+	}
+	bin := writeInlineFakeBin(t, `echo '{"v":1,"type":"start","runtime":"codex","cwd":"/app","pid":1}'
+echo '{"v":1,"type":"session","session_id":"th_result_only"}'
+echo '{"v":1,"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","text":"the answer"}'
+echo '{"v":1,"type":"done","exit_code":0}'
+exit 0
+`)
+	res, err := Exec(context.Background(), ExecOptions{Bin: bin, Runtime: "codex", Prompt: "hi"}, nil)
+	if err != nil {
+		t.Fatalf("exec: %v", err)
+	}
+	if res.ResultText != "the answer" {
+		t.Errorf("ResultText = %q, want %q", res.ResultText, "the answer")
+	}
+	if res.Err != nil {
+		t.Errorf("Err = %+v, want nil", res.Err)
+	}
+}
+
+// TestExecUsageMetrics_ExplicitZeroVsOmitted is the plan's "explicit zero
+// versus omitted cost" case: a result reporting cost_usd:0 must come back
+// as HasCostUSD=true/CostUSD=0 (genuinely free), while a result omitting
+// cost_usd entirely must come back as HasCostUSD=false (unavailable) — the
+// two must be distinguishable, not both collapse to a zero value.
+func TestExecUsageMetrics_ExplicitZeroVsOmitted(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake monomind is a shell script")
+	}
+	t.Run("explicit zero", func(t *testing.T) {
+		bin := writeInlineFakeBin(t, `echo '{"v":1,"type":"start","runtime":"codex","cwd":"/app","pid":1}'
+echo '{"v":1,"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","text":"ok","input_tokens":10,"output_tokens":5,"cost_usd":0}'
+echo '{"v":1,"type":"done","exit_code":0}'
+exit 0
+`)
+		res, err := Exec(context.Background(), ExecOptions{Bin: bin, Runtime: "codex", Prompt: "hi"}, nil)
+		if err != nil {
+			t.Fatalf("exec: %v", err)
+		}
+		if !res.HasCostUSD || res.CostUSD != 0 {
+			t.Errorf("HasCostUSD=%v CostUSD=%v, want true/0 (explicitly reported as free)", res.HasCostUSD, res.CostUSD)
+		}
+		if !res.HasInputTokens || res.InputTokens != 10 {
+			t.Errorf("HasInputTokens=%v InputTokens=%v, want true/10", res.HasInputTokens, res.InputTokens)
+		}
+	})
+	t.Run("omitted", func(t *testing.T) {
+		bin := writeInlineFakeBin(t, `echo '{"v":1,"type":"start","runtime":"codex","cwd":"/app","pid":1}'
+echo '{"v":1,"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","text":"ok"}'
+echo '{"v":1,"type":"done","exit_code":0}'
+exit 0
+`)
+		res, err := Exec(context.Background(), ExecOptions{Bin: bin, Runtime: "codex", Prompt: "hi"}, nil)
+		if err != nil {
+			t.Fatalf("exec: %v", err)
+		}
+		if res.HasCostUSD {
+			t.Errorf("HasCostUSD = true (CostUSD=%v), want false — cost was never reported", res.CostUSD)
+		}
+		if res.HasInputTokens {
+			t.Errorf("HasInputTokens = true, want false — tokens were never reported")
+		}
+	})
+}
+
+// TestExecNonzeroDoneWithZeroProcessExit is the plan's "nonzero done with a
+// zero process exit" case: the protocol's own done.exit_code can disagree
+// with the OS process exit status. A caller that only checked cmd.Wait()'s
+// error (as the pre-fix code effectively did) would call this success.
+func TestExecNonzeroDoneWithZeroProcessExit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake monomind is a shell script")
+	}
+	bin := writeInlineFakeBin(t, `echo '{"v":1,"type":"start","runtime":"codex","cwd":"/app","pid":1}'
+echo '{"v":1,"type":"done","exit_code":5}'
+exit 0
+`)
+	res, err := Exec(context.Background(), ExecOptions{Bin: bin, Runtime: "codex", Prompt: "hi"}, nil)
+	if err != nil {
+		t.Fatalf("exec: %v", err)
+	}
+	if res.ExitCode != 5 {
+		t.Errorf("ExitCode = %d, want 5 (protocol done.exit_code, not the OS process exit)", res.ExitCode)
+	}
+	if res.Err == nil {
+		t.Fatal("Err = nil, want a protocol error for the nonzero done.exit_code despite a clean process exit")
+	}
+	if res.Err.ExitCode != 5 {
+		t.Errorf("Err.ExitCode = %d, want 5", res.Err.ExitCode)
+	}
+}
+
+// TestExecResultIsErrorMapsToFailure covers precedence rule 2 (§227-232):
+// a result explicitly marked is_error is a failure even with a clean done
+// exit_code:0 and a clean process exit — there is no fatal `error` event at
+// all in this transcript, only the result's own is_error flag.
+func TestExecResultIsErrorMapsToFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake monomind is a shell script")
+	}
+	bin := writeInlineFakeBin(t, `echo '{"v":1,"type":"start","runtime":"codex","cwd":"/app","pid":1}'
+echo '{"v":1,"type":"result","subtype":"error_during_execution","is_error":true,"stop_reason":"end_turn","text":"tool exploded"}'
+echo '{"v":1,"type":"done","exit_code":0}'
+exit 0
+`)
+	res, err := Exec(context.Background(), ExecOptions{Bin: bin, Runtime: "codex", Prompt: "hi"}, nil)
+	if err != nil {
+		t.Fatalf("exec: %v", err)
+	}
+	if res.Err == nil {
+		t.Fatal("Err = nil, want a protocol error for a result marked is_error")
+	}
+}
+
+// TestExecMissingDoneEventMeansNotSawDone covers precedence rule 3
+// (§227-232): a clean process exit that never sent a terminal `done` event
+// at all must be distinguishable from a genuinely completed turn. Exec's
+// job is only to report this honestly via SawDone — mapping it to a
+// user-visible "interrupted" status is the supervisor's job (see
+// internal/ai/chatevents/normalize.go), not Exec's.
+func TestExecMissingDoneEventMeansNotSawDone(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake monomind is a shell script")
+	}
+	bin := writeInlineFakeBin(t, `echo '{"v":1,"type":"start","runtime":"codex","cwd":"/app","pid":1}'
+echo '{"v":1,"type":"assistant","text":"partial answer before the pipe just closed"}'
+exit 0
+`)
+	res, err := Exec(context.Background(), ExecOptions{Bin: bin, Runtime: "codex", Prompt: "hi"}, nil)
+	if err != nil {
+		t.Fatalf("exec: %v", err)
+	}
+	if res.SawDone {
+		t.Error("SawDone = true, want false — no done event was ever sent")
+	}
+	if res.Err != nil {
+		t.Errorf("Err = %+v, want nil — a missing done is not itself a protocol error, just missing evidence", res.Err)
+	}
+}

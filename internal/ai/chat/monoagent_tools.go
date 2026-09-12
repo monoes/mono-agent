@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/monoes/mono-agent/internal/ai"
+	"github.com/monoes/mono-agent/internal/docscan"
 	"github.com/monoes/mono-agent/internal/monomind"
 	"github.com/monoes/mono-agent/internal/noderegistry"
 	"github.com/monoes/mono-agent/internal/orgdesign"
@@ -170,6 +171,57 @@ func (mt *MonoagentTools) profileRoot() string {
 	return profiledir.Root(mt.db, pid)
 }
 
+// documentRoot returns the directory save_document writes into and must
+// equal, byte-for-byte, what the GUI's document watcher scans for this same
+// profile — wails-app/App.documentRootForActiveProfile, which is always
+// exactly profiledir.Root(db, activeProfileID) with no "" / "default"
+// special-casing. Deliberately does NOT reuse profileRoot()'s legacy
+// "~/.monoagent" fallback for that case: profileRoot's comment above notes
+// that fallback exists to match cmd/monoagentcli/org.go's legacy org-state
+// default, which is a different directory than profiledir.Root(db,
+// "default") (typically "~/.monoagent/profiles/default"). Writing there
+// under profileRoot's path would leave the file on disk but permanently
+// invisible to the watcher — RegisterDiscoveredDocument would insert a row
+// the very next ReconcileDiscoveredDocuments poll (~5s later) deletes
+// again, since its filesystem scan never finds that path. The
+// orgProjectRoot test override still applies here, matching profileRoot,
+// since tests use it to stand in for whatever root the watcher would use.
+func (mt *MonoagentTools) documentRoot() string {
+	mt.mu.RLock()
+	override := mt.orgProjectRoot
+	pid := mt.profileID
+	mt.mu.RUnlock()
+	if override != "" {
+		return override
+	}
+	if pid == "" {
+		pid = "default"
+	}
+	return profiledir.Root(mt.db, pid)
+}
+
+// restrictFileWriteForOrgs reports whether newly-created org roles should
+// get the default taxonomy-scoped fileWrite policy (see
+// orgdesign.NewOrgOptions.RestrictFileWrite / applyRoleDefaults) — true only
+// in profileRoot's plain profiledir.Root fallthrough branch above, i.e. a
+// real, non-default profile with no orgProjectRoot override and no root_dir
+// override of its own (profiledir.IsDefaultManaged). Every other branch of
+// profileRoot (an explicit override, or the "" / "default" legacy
+// ~/.monoagent fallback, which is not the same path as
+// profiledir.Root("default") and has no established taxonomy relationship)
+// stays unrestricted — mirrors profileRoot's own branching deliberately, so
+// the two are read together rather than drifting apart.
+func (mt *MonoagentTools) restrictFileWriteForOrgs() bool {
+	mt.mu.RLock()
+	override := mt.orgProjectRoot
+	pid := mt.profileID
+	mt.mu.RUnlock()
+	if override != "" || pid == "" || pid == "default" {
+		return false
+	}
+	return profiledir.IsDefaultManaged(mt.db, pid)
+}
+
 // checkWorkflowOwnership mirrors CanvasTools' check — required here too
 // since GetWorkflow/DeleteWorkflow-shaped queries take a bare ID.
 func (mt *MonoagentTools) checkWorkflowOwnership(workflowID string) error {
@@ -201,7 +253,6 @@ func (mt *MonoagentTools) checkPersonOwnership(personID string) error {
 	}
 	return nil
 }
-
 
 // ---------------------------------------------------------------------------
 // Destructive-op snapshots — every delete (and field-overwriting update)
@@ -391,6 +442,10 @@ func (mt *MonoagentTools) ToolDefs() []ai.ToolDef {
 		def("search_profile_documents", "Search the user's uploaded profile documents (résumé, cover letters, etc.) for relevant content.", map[string]interface{}{
 			"query": strParam("Search query"),
 		}, []string{"query"}),
+		def("save_document", "Save generated content — a report, summary, write-up, or other deliverable — as a real file in this profile's docs/ folder. It appears in the Documents vault within a few seconds. Use this whenever you're asked to produce, deliver, or hand off a document; don't just print long deliverable content inline in chat. Only "+allowedDocumentExtensionsText()+" filenames are accepted (matches what the Documents vault indexes). For a styled report, use either .md, or a self-contained .html file with inline <style> and no external resources — the vault preview renders it in a sandboxed frame that strips out any <script>, so treat it as static markup only, never something that needs JavaScript to display correctly. Include the topic and date in the filename (e.g. \"iran-war-debate-2026-09-11.md\") since an exact-duplicate filename is refused rather than overwritten.", map[string]interface{}{
+			"filename": strParam("File name including extension, e.g. \"iran-war-debate-2026-09-11.md\". Any directory portion is stripped — it always lands directly in docs/."),
+			"content":  strParam("The full file content to write, as UTF-8 text."),
+		}, []string{"filename", "content"}),
 
 		// Credentials vault — metadata/reference only, never returns values
 		def("list_secrets", "List credential entries by name and metadata only. Values are never returned by any tool.", nil, nil),
@@ -548,6 +603,8 @@ func (mt *MonoagentTools) ExecuteContext(ctx context.Context, name string, args 
 		return mt.getVaultItemPath(args)
 	case "search_profile_documents":
 		return mt.searchProfileDocuments(args)
+	case "save_document":
+		return mt.saveDocument(args)
 	case "list_secrets":
 		return mt.listSecrets(args)
 	case "add_secret":
@@ -1037,6 +1094,94 @@ func (mt *MonoagentTools) searchProfileDocuments(args string) (string, error) {
 		return "", fmt.Errorf("searching profile documents: %w", err)
 	}
 	return marshalJSON(results)
+}
+
+// maxSaveDocumentBytes bounds save_document's content size — generous for a
+// text/Markdown report, small enough to reject something pathological
+// before it ever reaches disk.
+const maxSaveDocumentBytes = 5 * 1024 * 1024
+
+// allowedDocumentExtensionsText renders docscan.AllowedExtensions as a
+// sorted, human-readable list for the tool description and error messages.
+// Map iteration order isn't stable, so this is computed via sort rather
+// than hand-copied — and can never drift from the real allowlist.
+func allowedDocumentExtensionsText() string {
+	exts := make([]string, 0, len(docscan.AllowedExtensions))
+	for e := range docscan.AllowedExtensions {
+		exts = append(exts, e)
+	}
+	sort.Strings(exts)
+	return strings.Join(exts, ", ")
+}
+
+type saveDocumentArgs struct {
+	Filename string `json:"filename"`
+	Content  string `json:"content"`
+}
+
+// saveDocument writes generated content into <profile root>/docs/ and
+// registers it as a Documents-vault entry immediately, via the same
+// vault.RegisterDiscoveredDocument the docscan watcher itself calls on its
+// own 5s poll — idempotent by (profile_id, path), so that later poll
+// picking up the same file is a no-op, not a duplicate row.
+//
+// The extension is checked against docscan.AllowedExtensions up front and
+// refused otherwise (e.g. .exe, .zip — see docscan.AllowedExtensions' own
+// doc comment for the full list, which includes .html/.htm): docscan.Scan
+// wouldn't see a rejected extension as a document either, so the very next
+// ReconcileDiscoveredDocuments poll would treat this row as vanished and
+// delete it — the artifact would exist on disk but disappear from the
+// vault a few seconds after being "delivered". Refusing up front, with an
+// error the model can act on, is better than that silent round-trip.
+func (mt *MonoagentTools) saveDocument(args string) (string, error) {
+	var a saveDocumentArgs
+	if err := json.Unmarshal([]byte(args), &a); err != nil {
+		return "", fmt.Errorf("invalid args: %w", err)
+	}
+	// filepath.Base strips any directory portion — including a
+	// "../../etc/passwd"-shaped attempt, which collapses to the harmless
+	// bare name "passwd" — the same traversal guard RegisterDocument and
+	// vaultImageHandler already use elsewhere in this codebase.
+	name := filepath.Base(strings.TrimSpace(a.Filename))
+	if name == "" || name == "." || name == string(filepath.Separator) {
+		return "", fmt.Errorf("filename is required")
+	}
+	if a.Content == "" {
+		return "", fmt.Errorf("content is required")
+	}
+	if len(a.Content) > maxSaveDocumentBytes {
+		return "", fmt.Errorf("content is %d bytes, over the %d byte limit", len(a.Content), maxSaveDocumentBytes)
+	}
+	if !docscan.IsDocumentFile(name) {
+		return "", fmt.Errorf("%q has an unsupported extension for save_document — use one of: %s", name, allowedDocumentExtensionsText())
+	}
+
+	root := mt.documentRoot()
+	if root == "" {
+		return "", fmt.Errorf("no profile root resolved")
+	}
+	docsDir := filepath.Join(root, "docs")
+	if err := os.MkdirAll(docsDir, 0700); err != nil {
+		return "", fmt.Errorf("prepare docs folder: %w", err)
+	}
+	dest := filepath.Join(docsDir, name)
+	if _, err := os.Stat(dest); err == nil {
+		return "", fmt.Errorf("a document named %q already exists in docs/ — choose a different filename", name)
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("checking existing document %q: %w", name, err)
+	}
+	if err := os.WriteFile(dest, []byte(a.Content), 0600); err != nil {
+		return "", fmt.Errorf("write document: %w", err)
+	}
+
+	resp := map[string]interface{}{"filename": name, "path": dest, "size_bytes": len(a.Content)}
+	// Best-effort: the file is already written and will be picked up by
+	// the next docscan poll regardless, so a registration error here isn't
+	// worth failing the whole tool call over — just omit the id.
+	if docID, _, err := vault.RegisterDiscoveredDocument(context.Background(), mt.db, mt.ProfileID(), dest, name, int64(len(a.Content))); err == nil {
+		resp["vault_document_id"] = docID
+	}
+	return marshalJSON(resp)
 }
 
 // ---------------------------------------------------------------------------
@@ -1605,10 +1750,11 @@ func (mt *MonoagentTools) createOrg(args string) (string, error) {
 	}
 
 	opts := orgdesign.NewOrgOptions{
-		Runtime:       a.Runtime,
-		Workspace:     a.Workspace,
-		RootRoleID:    a.RootRoleID,
-		RootRoleTitle: a.RootRoleTitle,
+		Runtime:           a.Runtime,
+		Workspace:         a.Workspace,
+		RootRoleID:        a.RootRoleID,
+		RootRoleTitle:     a.RootRoleTitle,
+		RestrictFileWrite: mt.restrictFileWriteForOrgs(),
 	}
 	if a.Schedule != "" {
 		sched, err := json.Marshal(a.Schedule)
@@ -1675,7 +1821,7 @@ func (mt *MonoagentTools) addOrgRole(args string) (string, error) {
 		role.UI = &orgdesign.RoleUI{Icon: a.Icon}
 	}
 
-	added, err := doc.AddRole(role)
+	added, err := doc.AddRole(role, mt.restrictFileWriteForOrgs())
 	if err != nil {
 		return "", fmt.Errorf("add role to org %s: %w", a.OrgName, err)
 	}

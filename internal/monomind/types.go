@@ -45,10 +45,25 @@ type Event struct {
 		Text string `json:"text"`
 	} `json:"result,omitempty"`
 
-	// usage / result
+	// usage / result. Plain scalars (not pointers) so existing Go consumers
+	// that compare them directly (e.g. fixtures_test.go's
+	// result.CostUSD != 0.0041) keep compiling and working unchanged — the
+	// plan is explicit that a metric's presence must be preserved without
+	// "changing every scalar to a pointer". Presence is tracked separately
+	// in HasInputTokens/HasOutputTokens/HasCostUSD by UnmarshalJSON/
+	// MarshalJSON below: a metric reported as exactly 0 is not the same as
+	// a metric never reported at all (e.g. cost is genuinely unavailable,
+	// not $0).
 	InputTokens  int64   `json:"input_tokens,omitempty"`
 	OutputTokens int64   `json:"output_tokens,omitempty"`
 	CostUSD      float64 `json:"cost_usd,omitempty"`
+
+	// HasInputTokens/HasOutputTokens/HasCostUSD are set by UnmarshalJSON to
+	// whether the corresponding key was present in the decoded JSON object.
+	// Not part of the wire format themselves (see eventJSON).
+	HasInputTokens  bool `json:"-"`
+	HasOutputTokens bool `json:"-"`
+	HasCostUSD      bool `json:"-"`
 
 	// result
 	Subtype    string `json:"subtype,omitempty"`
@@ -62,6 +77,113 @@ type Event struct {
 
 	// done
 	ExitCode int `json:"exit_code,omitempty"`
+}
+
+// eventJSON mirrors Event's wire shape exactly, except the three optional
+// numeric metrics are pointers purely so decoding can detect whether the
+// key was present at all. It exists only inside Event's UnmarshalJSON/
+// MarshalJSON below — see Event's own field comments for why the public
+// struct keeps plain scalars instead of switching to this shape directly.
+type eventJSON struct {
+	V    int    `json:"v"`
+	Type string `json:"type"`
+
+	Runtime string `json:"runtime,omitempty"`
+	Model   string `json:"model,omitempty"`
+	Cwd     string `json:"cwd,omitempty"`
+	Resume  string `json:"resume,omitempty"`
+	Pid     int    `json:"pid,omitempty"`
+
+	SessionID string `json:"session_id,omitempty"`
+
+	Text string `json:"text,omitempty"`
+
+	ID     string          `json:"id,omitempty"`
+	Name   string          `json:"name,omitempty"`
+	Args   json.RawMessage `json:"args,omitempty"`
+	OK     *bool           `json:"ok,omitempty"`
+	Result *struct {
+		Text string `json:"text"`
+	} `json:"result,omitempty"`
+
+	InputTokens  *int64   `json:"input_tokens,omitempty"`
+	OutputTokens *int64   `json:"output_tokens,omitempty"`
+	CostUSD      *float64 `json:"cost_usd,omitempty"`
+
+	Subtype    string `json:"subtype,omitempty"`
+	IsError    bool   `json:"is_error,omitempty"`
+	StopReason string `json:"stop_reason,omitempty"`
+
+	Code       string `json:"code,omitempty"`
+	ErrMessage string `json:"message,omitempty"`
+	Fatal      bool   `json:"fatal,omitempty"`
+
+	ExitCode int `json:"exit_code,omitempty"`
+}
+
+// UnmarshalJSON decodes the wire event and records, in HasInputTokens/
+// HasOutputTokens/HasCostUSD, whether each optional metric key was actually
+// present — a plain struct-tag decode into Event directly cannot preserve
+// this distinction since a missing key and an explicit 0 both decode to the
+// Go zero value.
+func (e *Event) UnmarshalJSON(data []byte) error {
+	var w eventJSON
+	if err := json.Unmarshal(data, &w); err != nil {
+		return err
+	}
+	*e = Event{
+		V: w.V, Type: w.Type,
+		Runtime: w.Runtime, Model: w.Model, Cwd: w.Cwd, Resume: w.Resume, Pid: w.Pid,
+		SessionID: w.SessionID,
+		Text:      w.Text,
+		ID:        w.ID, Name: w.Name, Args: w.Args, OK: w.OK, Result: w.Result,
+		Subtype: w.Subtype, IsError: w.IsError, StopReason: w.StopReason,
+		Code: w.Code, ErrMessage: w.ErrMessage, Fatal: w.Fatal,
+		ExitCode: w.ExitCode,
+	}
+	if w.InputTokens != nil {
+		e.InputTokens = *w.InputTokens
+		e.HasInputTokens = true
+	}
+	if w.OutputTokens != nil {
+		e.OutputTokens = *w.OutputTokens
+		e.HasOutputTokens = true
+	}
+	if w.CostUSD != nil {
+		e.CostUSD = *w.CostUSD
+		e.HasCostUSD = true
+	}
+	return nil
+}
+
+// MarshalJSON re-encodes the event, omitting a metric key entirely when its
+// Has* flag is false — so an event that started as "cost never reported"
+// serializes back the same way instead of gaining a fabricated 0. Nothing
+// in this codebase currently re-serializes a decoded Event (verified: no
+// json.Marshal call site takes one), but this keeps decode/encode
+// symmetric, matching the plan's "preserve reported metric presence
+// through CLI decoding/serialization" requirement.
+func (e Event) MarshalJSON() ([]byte, error) {
+	w := eventJSON{
+		V: e.V, Type: e.Type,
+		Runtime: e.Runtime, Model: e.Model, Cwd: e.Cwd, Resume: e.Resume, Pid: e.Pid,
+		SessionID: e.SessionID,
+		Text:      e.Text,
+		ID:        e.ID, Name: e.Name, Args: e.Args, OK: e.OK, Result: e.Result,
+		Subtype: e.Subtype, IsError: e.IsError, StopReason: e.StopReason,
+		Code: e.Code, ErrMessage: e.ErrMessage, Fatal: e.Fatal,
+		ExitCode: e.ExitCode,
+	}
+	if e.HasInputTokens {
+		w.InputTokens = &e.InputTokens
+	}
+	if e.HasOutputTokens {
+		w.OutputTokens = &e.OutputTokens
+	}
+	if e.HasCostUSD {
+		w.CostUSD = &e.CostUSD
+	}
+	return json.Marshal(w)
 }
 
 // Event types (protocol §3.2).

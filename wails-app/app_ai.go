@@ -221,7 +221,7 @@ func (a *App) ListChatSessions(workflowID string) string {
 	if a.aiStore == nil {
 		return "[]"
 	}
-	sessions, err := a.aiStore.ListChatSessions(workflowID)
+	sessions, err := a.aiStore.ListChatSessions(workflowID, a.getActiveProfileID())
 	if err != nil {
 		return aiError(err)
 	}
@@ -235,7 +235,7 @@ func (a *App) GetChatSessionMessages(workflowID, sessionID string) string {
 	if a.aiStore == nil {
 		return "[]"
 	}
-	msgs, err := a.aiStore.GetSessionMessages(workflowID, sessionID)
+	msgs, err := a.aiStore.GetSessionMessages(workflowID, sessionID, a.getActiveProfileID())
 	if err != nil {
 		return aiError(err)
 	}
@@ -310,6 +310,29 @@ func (a *App) GetAgentRuntimeModels(runtimeID, binary string) string {
 // just replayed transcript) instead of starting a new one — the frontend
 // supplies whatever it last learned from an agent:session event, and
 // clears it to start a fresh conversation.
+
+// agentStreamEvent is one NDJSON line from monoagentcli chat's stdout (the
+// Agent Exec Protocol — doc/agent-exec-protocol.md on the monomind side).
+// Named (rather than an inline anonymous struct) so its JSON shape is
+// directly unit-testable without driving the whole streaming subprocess.
+type agentStreamEvent struct {
+	Type      string `json:"type"`
+	Text      string `json:"text"` // assistant prose only
+	SessionID string `json:"session_id"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Code      string `json:"code"`
+	Message   string `json:"message"`
+	Fatal     bool   `json:"fatal"`
+	// Result carries a tool_result frame's payload — always
+	// {"result":{"text":"..."}}, never a top-level "text" key. monomind's
+	// StdioToolBridge.call (packages/@monomind/cli/src/orgrt/agent-exec.ts)
+	// always settles with this nested shape.
+	Result struct {
+		Text string `json:"text"`
+	} `json:"result"`
+}
+
 func (a *App) StreamAgentChat(workflowID, message, agentRuntime, model, resumeSessionID string, canvas bool, monoagentTools bool, allowRuns bool) string {
 	cliBin, err := findMonoAgentCLI()
 	if err != nil {
@@ -415,16 +438,7 @@ func (a *App) StreamAgentChat(workflowID, message, agentRuntime, model, resumeSe
 			if len(line) == 0 || line[0] != '{' {
 				continue
 			}
-			var ev struct {
-				Type      string `json:"type"`
-				Text      string `json:"text"`
-				SessionID string `json:"session_id"`
-				ID        string `json:"id"`
-				Name      string `json:"name"`
-				Code      string `json:"code"`
-				Message   string `json:"message"`
-				Fatal     bool   `json:"fatal"`
-			}
+			var ev agentStreamEvent
 			if json.Unmarshal(line, &ev) != nil {
 				continue
 			}
@@ -454,7 +468,7 @@ func (a *App) StreamAgentChat(workflowID, message, agentRuntime, model, resumeSe
 				runtime.EventsEmit(a.ctx, "ai:tool", map[string]interface{}{
 					"workflowID": workflowID,
 					"tool":       ev.Name,
-					"result":     ev.Text,
+					"result":     ev.Result.Text,
 					"call_id":    ev.ID,
 				})
 			case "error":

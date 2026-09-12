@@ -1,0 +1,27 @@
+/* chat/chat.css — Task 4 additions for the interactive-agent-chat panel.
+   Most of this panel's styling stays inline (matching AIChatPanel.jsx's
+   existing convention); this file exists only for the handful of things
+   inline React style objects can't express: a shared animation keyframe
+   reference and a hover state. @keyframes spin and index.css's global
+   prefers-reduced-motion rule (zeroing animation/transition durations)
+   cover .chat-spin below unchanged — neither is redefined in this file.
+   That global rule does NOT cover this panel's other motion, though:
+   useChatScroll.js's JS-driven Element.scrollTo({behavior:'smooth'}) is a
+   separate browser feature entirely, unaffected by animation/transition
+   durations — it checks prefers-reduced-motion itself. */
+
+.chat-spin {
+  animation: spin 0.7s linear infinite;
+}
+
+.chat-assistant-turn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  max-width: 88%;
+  margin-bottom: 8px;
+}
+
+.chat-tool-card-header:hover {
+  background: rgba(0, 180, 216, 0.06);
+}

@@ -56,7 +56,142 @@ type TurnResult struct {
 	ExitCode   int
 	SessionID  string
 	ResultText string
-	Err        *ProtocolError
+	// StopReason is the last result event's stop_reason (protocol §3.2:
+	// end_turn/max_turns/tool_round_cap/cancelled/timeout), "" if no result
+	// event was ever seen. max_turns/tool_round_cap mean the turn hit a
+	// limit, not that it succeeded normally — callers must not display
+	// those as plain success.
+	StopReason string
+	// InputTokens/OutputTokens/CostUSD mirror the last usage/result event's
+	// reported metrics; Has* reports whether that metric was ever actually
+	// present in any event this turn (see Event.HasCostUSD etc.) — false
+	// means genuinely unavailable, not zero.
+	InputTokens     int64
+	OutputTokens    int64
+	CostUSD         float64
+	HasInputTokens  bool
+	HasOutputTokens bool
+	HasCostUSD      bool
+	// SawDone reports whether a terminal `done` event was ever observed.
+	// false with Err == nil means the process/stream ended (EOF, ctx
+	// cancellation notwithstanding) without ever giving terminal protocol
+	// evidence — callers must treat that as interrupted, not completed.
+	SawDone bool
+	Err     *ProtocolError
+}
+
+// ApplyEventToResult updates res's terminal-state fields (SessionID,
+// ResultText, StopReason, usage, SawDone, ExitCode, Err) from one protocol
+// event, applying exactly the same precedence Exec's own loop uses below.
+// It deliberately does NOT handle tool_call/tool_result bridging (§4) —
+// that requires writing a reply frame to the subprocess's stdin, which only
+// the process actually holding that pipe can do.
+//
+// Exported so a caller watching the identical event stream one process
+// layer removed — a GUI supervisor reading `monoagentcli chat`'s stdout,
+// which is byte-for-byte this same JSON passed through from onEvent below —
+// can accumulate an equivalent TurnResult without re-deriving this
+// precedence logic itself (internal/ai/chatevents cannot own this instead:
+// it already imports monomind for TurnResult/Event, so monomind importing
+// chatevents back would cycle).
+func ApplyEventToResult(res *TurnResult, ev Event) {
+	switch ev.Type {
+	case EventSession:
+		if ev.SessionID != "" {
+			res.SessionID = ev.SessionID
+		}
+	case EventAssistant:
+		// Fallback source for ResultText: verified directly against the
+		// currently-installed real monomind binary that its "result" event
+		// carries no "text" field at all for a plain conversational turn
+		// (only subtype/is_error/stop_reason/tokens/cost) -- only
+		// "assistant" events do. Without this, ResultText silently comes
+		// back empty and every caller that parses it (chat,
+		// applications.evaluate) fails with a confusing "no JSON object
+		// found in response (response was: )". Keep the latest assistant
+		// text; EventResult below still wins if a future/other protocol
+		// version does populate its own text.
+		if ev.Text != "" {
+			res.ResultText = ev.Text
+		}
+	case EventUsage:
+		// A snapshot, not a delta (protocol §3.2): overwrite, never
+		// accumulate — the plan is explicit that summing without verified
+		// delta semantics would double-count.
+		applyUsage(res, ev)
+	case EventResult:
+		if ev.Text != "" {
+			res.ResultText = ev.Text
+		}
+		if ev.StopReason != "" {
+			res.StopReason = ev.StopReason
+		}
+		applyUsage(res, ev)
+		// A result explicitly marked is_error is a failure even when the
+		// process later exits 0 and still sends done — e.g. the runtime
+		// reported the model's answer as an error result but terminated
+		// its own subprocess cleanly regardless. Only set this if nothing
+		// already recorded a (fatal) error, so a fatal `error` event's own
+		// code/message — richer than a bare "result reported is_error" —
+		// still wins.
+		if ev.IsError && res.Err == nil {
+			res.Err = &ProtocolError{
+				Code:    ErrRunnerError,
+				Message: fmt.Sprintf("result reported is_error (stop_reason=%q)", ev.StopReason),
+			}
+		}
+	case EventError:
+		// Only a fatal error terminates the turn (protocol §3.4): a
+		// non-fatal error (fatal:false) is a recoverable, mid-stream
+		// hiccup — the golden fixture testdata/fixtures/bad-frame.ndjson
+		// demonstrates a non-fatal error followed by a full successful
+		// recovery (tool_result, assistant text, a success result, and
+		// done exit_code:0), and TestFixtureExitCodesMatchContract already
+		// asserts exit code 0 is correct for that fixture. Setting res.Err
+		// here unconditionally would make both CLI callers (chat.go,
+		// agent.go) treat that successful recovery as a hard failure and
+		// discard the good ResultText. The event has already been
+		// forwarded to onEvent by Exec's own loop, so callers that care
+		// about non-fatal errors as they stream by still see them; only a
+		// fatal error (or a later done/process exit with no success
+		// signal) should surface as the turn's terminal res.Err.
+		if ev.Fatal {
+			res.Err = &ProtocolError{Code: ev.Code, Message: ev.ErrMessage, Fatal: ev.Fatal}
+		}
+	case EventDone:
+		res.SawDone = true
+		res.ExitCode = ev.ExitCode
+		// A nonzero protocol exit_code is a failure signal on its own,
+		// independent of the OS process's own exit status — the two can
+		// disagree (protocol says failure, process still exits 0). Only
+		// set if nothing already recorded a more specific error.
+		if ev.ExitCode != 0 && res.Err == nil {
+			res.Err = &ProtocolError{
+				Code:     ErrRunnerError,
+				Message:  fmt.Sprintf("done reported nonzero exit_code %d", ev.ExitCode),
+				ExitCode: ev.ExitCode,
+			}
+		}
+	}
+}
+
+// applyUsage overwrites res's usage snapshot from ev's metrics, field by
+// field — each field only if ev actually reported it (Has*), so a usage
+// event that reports tokens but omits cost does not clobber a cost figure
+// captured from an earlier event in the same turn.
+func applyUsage(res *TurnResult, ev Event) {
+	if ev.HasInputTokens {
+		res.InputTokens = ev.InputTokens
+		res.HasInputTokens = true
+	}
+	if ev.HasOutputTokens {
+		res.OutputTokens = ev.OutputTokens
+		res.HasOutputTokens = true
+	}
+	if ev.HasCostUSD {
+		res.CostUSD = ev.CostUSD
+		res.HasCostUSD = true
+	}
 }
 
 // toolResultFrame is the client→monomind reply for a tool_call (§4.3).
@@ -269,52 +404,8 @@ func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResu
 			if onEvent != nil {
 				onEvent(ev)
 			}
+			ApplyEventToResult(res, ev)
 			switch ev.Type {
-			case EventSession:
-				if ev.SessionID != "" {
-					res.SessionID = ev.SessionID
-				}
-			case EventAssistant:
-				// Fallback source for ResultText: verified directly against
-				// the currently-installed real monomind binary that its
-				// "result" event carries no "text" field at all for a plain
-				// conversational turn (only subtype/is_error/stop_reason/
-				// tokens/cost) -- only "assistant" events do. Without this,
-				// ResultText silently comes back empty and every caller
-				// that parses it (chat, applications.evaluate) fails with a
-				// confusing "no JSON object found in response (response
-				// was: )". Keep the latest assistant text; EventResult
-				// below still wins if a future/other protocol version does
-				// populate its own text.
-				if ev.Text != "" {
-					res.ResultText = ev.Text
-				}
-			case EventResult:
-				if ev.Text != "" {
-					res.ResultText = ev.Text
-				}
-			case EventError:
-				// Only a fatal error terminates the turn (protocol §3.4): a
-				// non-fatal error (fatal:false) is a recoverable, mid-stream
-				// hiccup — the golden fixture testdata/fixtures/bad-frame.
-				// ndjson demonstrates a non-fatal error followed by a full
-				// successful recovery (tool_result, assistant text, a
-				// success result, and done exit_code:0), and
-				// TestFixtureExitCodesMatchContract already asserts exit
-				// code 0 is correct for that fixture. Setting res.Err here
-				// unconditionally would make both CLI callers (chat.go,
-				// agent.go) treat that successful recovery as a hard
-				// failure and discard the good ResultText. The event has
-				// already been forwarded to onEvent above, so callers that
-				// care about non-fatal errors as they stream by still see
-				// them; only a fatal error (or a later done/process exit
-				// with no success signal, handled below) should surface as
-				// the turn's terminal res.Err.
-				if ev.Fatal {
-					res.Err = &ProtocolError{Code: ev.Code, Message: ev.ErrMessage, Fatal: ev.Fatal}
-				}
-			case EventDone:
-				res.ExitCode = ev.ExitCode
 			case EventToolCall:
 				if opts.OnToolCall == nil {
 					// Protocol mismatch: the subprocess emitted a tool_call

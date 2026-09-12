@@ -7,6 +7,15 @@ vi.mock('../wailsjs/go/main/App', () => ({
   GetDashboardStats: vi.fn(),
   ListWorkflows: vi.fn(),
   DeleteSession: vi.fn(),
+  CreateChatConversation: vi.fn(),
+  StartChatTurn: vi.fn(),
+  StopChatTurn: vi.fn(),
+  ListChatConversations: vi.fn(),
+  GetChatTurns: vi.fn(),
+  GetChatEvents: vi.fn(),
+  DeleteChatConversation: vi.fn(),
+  GetWorkflow: vi.fn(),
+  ListProfileDocuments: vi.fn(),
 }))
 // Real Wails EventsOn semantics: each call registers its own listener under
 // eventName and returns a disposer that removes only that listener.
@@ -33,7 +42,7 @@ vi.mock('../wailsjs/runtime/runtime', () => ({
 }))
 
 import * as GoApp from '../wailsjs/go/main/App'
-import { api, onApiError, onLogEntry, subscribeEvent } from './api.js'
+import { api, onApiError, onLogEntry, subscribeEvent, onChatEvent } from './api.js'
 
 describe('api error handling', () => {
   beforeEach(() => {
@@ -114,5 +123,94 @@ describe('event subscription independence (issue #15)', () => {
 
     expect(logReceived).toEqual([])
     expect(workflowReceived).toEqual([{ workflow_id: '2' }])
+  })
+})
+
+// New chat bindings (interactive-agent-chat plan, Task 3). These follow
+// StreamAIChat/StreamAgentChat's existing convention: a synchronous
+// {"error":"..."} JSON payload on failure must become a real promise
+// rejection via parseStreamResult, not a resolved value the caller has to
+// remember to check.
+describe('new chat bindings', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    eventListeners.clear()
+  })
+
+  it('createChatConversation parses a successful conversation payload', async () => {
+    GoApp.CreateChatConversation.mockResolvedValueOnce(JSON.stringify({ id: 'conv-1', backend: 'agent' }))
+    const conv = await api.createChatConversation('agent', 'general', 'claude', '', '')
+    expect(conv).toEqual({ id: 'conv-1', backend: 'agent' })
+  })
+
+  it('createChatConversation rejects on the {error} shape instead of resolving it', async () => {
+    GoApp.CreateChatConversation.mockResolvedValueOnce(JSON.stringify({ error: 'boom' }))
+    await expect(api.createChatConversation('agent', 'general', 'claude', '', '')).rejects.toThrow('boom')
+  })
+
+  it('startChatTurn passes through a business-status response (not an error) unchanged', async () => {
+    GoApp.StartChatTurn.mockResolvedValueOnce(JSON.stringify({ ok: false, turnId: 'turn-2', status: 'busy' }))
+    const res = await api.startChatTurn('conv-1', 'turn-2', 'hi', false, false)
+    expect(res).toEqual({ ok: false, turnId: 'turn-2', status: 'busy' })
+  })
+
+  it('startChatTurn rejects on a hard binding failure', async () => {
+    GoApp.StartChatTurn.mockResolvedValueOnce(JSON.stringify({ error: 'chat supervisor not initialized' }))
+    await expect(api.startChatTurn('conv-1', 'turn-1', 'hi', false, false)).rejects.toThrow('chat supervisor not initialized')
+  })
+
+  it('getChatEvents returns the items/hasMore/lastCommittedSeq payload', async () => {
+    const payload = { items: [{ seq: 1, type: 'turn.started' }], hasMore: false, lastCommittedSeq: 1 }
+    GoApp.GetChatEvents.mockResolvedValueOnce(JSON.stringify(payload))
+    const res = await api.getChatEvents('conv-1', 'turn-1', 0, 200)
+    expect(res).toEqual(payload)
+    expect(GoApp.GetChatEvents).toHaveBeenCalledWith('conv-1', 'turn-1', 0, 200)
+  })
+
+  it('listChatConversations returns items/nextCursor', async () => {
+    GoApp.ListChatConversations.mockResolvedValueOnce(JSON.stringify({ items: [{ id: 'conv-1' }], nextCursor: '' }))
+    const res = await api.listChatConversations('', 50)
+    expect(res).toEqual({ items: [{ id: 'conv-1' }], nextCursor: '' })
+  })
+
+  it('stopChatTurn and deleteChatConversation resolve their parsed payload', async () => {
+    GoApp.StopChatTurn.mockResolvedValueOnce(JSON.stringify({ ok: true }))
+    await expect(api.stopChatTurn('conv-1', 'turn-1')).resolves.toEqual({ ok: true })
+
+    GoApp.DeleteChatConversation.mockResolvedValueOnce(JSON.stringify({ ok: true }))
+    await expect(api.deleteChatConversation('conv-1')).resolves.toEqual({ ok: true })
+  })
+
+  it('onChatEvent subscribes under the chat:event name', () => {
+    globalThis.window = { runtime: {} }
+    const received = []
+    const off = onChatEvent((e) => received.push(e))
+    fakeEventsEmit('chat:event', { type: 'turn.started' })
+    expect(received).toEqual([{ type: 'turn.started' }])
+    off()
+  })
+
+  // getWorkflow/listProfileDocuments back chatArtifacts.js's resolveArtifact
+  // — both are typed Go returns (no JSON string to parse), so the only
+  // thing worth testing here is that a Go-side rejection degrades to the
+  // guard()'d fallback instead of throwing.
+  it('getWorkflow resolves the typed workflow object directly (no JSON.parse)', async () => {
+    GoApp.GetWorkflow.mockResolvedValueOnce({ id: 'wf-1', name: 'My Workflow' })
+    await expect(api.getWorkflow('wf-1')).resolves.toEqual({ id: 'wf-1', name: 'My Workflow' })
+  })
+
+  it('getWorkflow degrades to null for a deleted/cross-profile id instead of throwing', async () => {
+    GoApp.GetWorkflow.mockRejectedValueOnce(new Error('workflow wf-1 not found'))
+    await expect(api.getWorkflow('wf-1')).resolves.toBeNull()
+  })
+
+  it('listProfileDocuments resolves the typed document array directly', async () => {
+    GoApp.ListProfileDocuments.mockResolvedValueOnce([{ id: 'doc-001', filename: 'a.md' }])
+    await expect(api.listProfileDocuments()).resolves.toEqual([{ id: 'doc-001', filename: 'a.md' }])
+  })
+
+  it('listProfileDocuments degrades to [] on failure instead of throwing', async () => {
+    GoApp.ListProfileDocuments.mockRejectedValueOnce(new Error('boom'))
+    await expect(api.listProfileDocuments()).resolves.toEqual([])
   })
 })

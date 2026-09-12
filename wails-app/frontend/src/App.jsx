@@ -21,7 +21,14 @@ import ImageVault from './pages/ImageVault.jsx'
 import Vault from './pages/Vault.jsx'
 import Applications from './pages/Applications.jsx'
 import Documents from './pages/Documents.jsx'
-import { api, onLogEntry, onOrgDesignUpdated, subscribeEvent } from './services/api.js'
+import FileViewerModal, { fileViewerKind } from './components/FileViewerModal.jsx'
+import * as WailsApp from './wailsjs/go/main/App'
+import { api, notify, onLogEntry, onOrgDesignUpdated, subscribeEvent } from './services/api.js'
+
+// Mirrors Documents.jsx's own cap (the backend GetProfileDocumentData limit)
+// — kept as a local literal there too, so duplicating it here rather than
+// exporting a shared constant for one other call site.
+const maxInlinePreviewBytes = 25 * 1024 * 1024
 
 export default function App() {
   const [activePage, setActivePage] = useState('dashboard')
@@ -45,6 +52,11 @@ export default function App() {
   // assistant scoped to the currently open canvas — and stays separate.
   const [globalChatOpen, setGlobalChatOpen] = useState(false)
   const [globalChatRuntime, setGlobalChatRuntime] = useState('')
+  // The document a chat result artifact card asked to open (Task 6) — a
+  // separate instance from Documents.jsx's own viewingDoc, since that page
+  // may not even be mounted yet (persistentPages only mounts a page once
+  // visited) and this must work regardless of which page is active.
+  const [viewingArtifactDoc, setViewingArtifactDoc] = useState(null)
 
   const openGlobalChat = useCallback((runtimeId) => {
     if (runtimeId) setGlobalChatRuntime(runtimeId)
@@ -113,6 +125,41 @@ export default function App() {
       navigate('orgs')
     })
     return off
+  }, [navigate])
+
+  // Chat result artifact cards (Task 6) call this to open what a tool call
+  // actually produced — never a router, never a new navigation concept:
+  // org reuses the exact pendingOrgSelect+navigate('orgs') mechanism the
+  // watcher above already uses (the card only ever gets an org name that
+  // chatArtifacts.resolveArtifact already confirmed against the real org
+  // listing, so this is exactly as safe as the watcher's own usage), and
+  // document opens the same FileViewerModal Documents.jsx uses, in its own
+  // App-level instance so it works regardless of which page is active.
+  // Workflow has no "open" case: there's no workflow editor route to send
+  // it to (plan: "Metadata/Copy ID" — the card itself just copies the id),
+  // so onOpenArtifact is never even called for that artifact type.
+  const onOpenArtifact = useCallback((artifact) => {
+    if (artifact.type === 'org') {
+      knownOrgNamesRef.current?.add(artifact.name)
+      setPendingOrgSelect(artifact.name)
+      navigate('orgs')
+    } else if (artifact.type === 'document') {
+      // Same in-app-preview-or-hand-to-OS split Documents.jsx's own
+      // handleOpenDocument uses — FileViewerModal has no supported renderer
+      // for every extension docscan/save_document can produce (e.g. .docx),
+      // and its own doc comment says a caller must screen for that before
+      // opening it, or it's stuck on "Loading…" forever with no fetch ever
+      // issued.
+      if (fileViewerKind(artifact.filename) && artifact.sizeBytes <= maxInlinePreviewBytes) {
+        setViewingArtifactDoc({ id: artifact.id, filename: artifact.filename, path: artifact.path, size_bytes: artifact.sizeBytes })
+        return
+      }
+      const reason = artifact.sizeBytes > maxInlinePreviewBytes
+        ? `"${artifact.filename}" is too large to preview in-app`
+        : `No built-in viewer for ${artifact.filename.split('.').pop()?.toUpperCase() || 'this'} files`
+      notify('open', `${reason} — opening "${artifact.filename}" with your system's default application.`)
+      WailsApp.OpenPathWithOS(artifact.path).catch(e => notify('open', `Could not open "${artifact.filename}": ${e}`))
+    }
   }, [navigate])
 
   // Initial data load
@@ -245,6 +292,7 @@ export default function App() {
           isOpen={globalChatOpen}
           initialRuntime={globalChatRuntime}
           onClose={() => setGlobalChatOpen(false)}
+          onOpenArtifact={onOpenArtifact}
         />
       </div>
 
@@ -263,6 +311,9 @@ export default function App() {
       />
       <Toasts />
       <ConfirmHost />
+      {viewingArtifactDoc && (
+        <FileViewerModal doc={viewingArtifactDoc} onClose={() => setViewingArtifactDoc(null)} />
+      )}
     </div>
   )
 }
