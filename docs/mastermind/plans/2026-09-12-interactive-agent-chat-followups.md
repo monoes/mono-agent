@@ -259,6 +259,6 @@ not a loop.
   version happens to be checked out rather than a deliberate decision.
 - **An 8th orphaned `api.js` binding, `clearAIChatHistory`**, was found
   alongside the seven removed in item 6 — same dead-since-migration shape,
-  confirmed via the same grep. Left untouched since it wasn't named in
-  scope; safe to remove in a future pass with the same justification as
-  item 6.
+  confirmed via the same grep. Removed in a follow-up pass (no test
+  coverage existed for it either); full suite reconfirmed green (242/242)
+  after removal.

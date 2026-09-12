@@ -100,8 +100,6 @@ export const api = {
   testAIProvider:     (id) => GoApp.TestAIProvider(id).then(s => JSON.parse(s)),
   getAIModels:        (providerID) => GoApp.GetAIModels(providerID).then(s => JSON.parse(s)).catch(guard('AI models', [])),
   getAIRegistry:      () => GoApp.GetAIRegistry().then(s => JSON.parse(s)).catch(guard('AI registry', [])),
-  // AI Chat
-  clearAIChatHistory: (workflowID) => GoApp.ClearAIChatHistory(workflowID).then(s => JSON.parse(s)),
   // Agent Chat (monomind delegation — local AI agent runtimes)
   scanAgentRuntimes:  () => GoApp.ScanAgentRuntimes().then(s => JSON.parse(s)).catch(guard('scan agent runtimes', null)),
   // binary is a runtime's ScanEntry.binary (from scanAgentRuntimes) — required
