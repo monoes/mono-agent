@@ -175,6 +175,8 @@ export function GetPostComments(arg1:string):Promise<Array<main.PostComment>>;
 
 export function GetPostDetail(arg1:string):Promise<main.PostDetail>;
 
+export function GetProfileDocument(arg1:string):Promise<main.ProfileDocument>;
+
 export function GetProfileDocumentData(arg1:string):Promise<string>;
 
 export function GetProfileDocumentText(arg1:string):Promise<string>;

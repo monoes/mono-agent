@@ -50,6 +50,7 @@ function eventPatch(state, ev) {
           status: 'started',
           ok: null,
           result: null,
+          startedAt: ev.at,
         },
       }
       return { calls, parts: [...state.parts, { kind: 'tool', callId: payload.callId }] }
@@ -59,8 +60,13 @@ function eventPatch(state, ev) {
       const existing = state.calls[payload.callId]
       const calls = {
         ...state.calls,
+        // No startedAt/finishedAt on the unmatched-completion fallback below:
+        // a completion with no observed start has no duration to show, so
+        // leaving both undefined (rather than fabricating finishedAt alone)
+        // keeps "both timestamps present" the one signal ToolActivityCard
+        // needs to decide whether elapsed time can be shown at all.
         [payload.callId]: existing
-          ? { ...existing, status: 'completed', ok: payload.ok, result: payload.result }
+          ? { ...existing, status: 'completed', ok: payload.ok, result: payload.result, finishedAt: ev.at }
           : {
               callId: payload.callId,
               name: 'unknown',
@@ -128,6 +134,12 @@ export function chatReducer(state, action) {
       if (typeof ev.seq === 'number' && ev.seq <= state.lastSeq) return state
       return applyEvent(state, ev)
     }
+
+    // Synthesized client-side (useChatStream.js), never a wire event — has
+    // no seq of its own, so it goes through a separate action type rather
+    // than being squeezed through 'event's seq-ordering guard.
+    case 'localNotice':
+      return { ...state, notices: [...state.notices, action.notice] }
 
     default:
       return state

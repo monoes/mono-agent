@@ -97,17 +97,12 @@ export async function resolveArtifact(candidate, api) {
   }
 
   if (candidate.type === 'document') {
-    // No single-document-by-id Go method exists yet, and the plan only
-    // calls for adding one to app_documents.go if a scoped lookup is
-    // otherwise missing. listProfileDocuments() is already fully
-    // profile-scoped (it shells out through the CLI's own active-profile
-    // context), so filtering it client-side by id gives the exact same
-    // "resolved to trusted metadata" guarantee a dedicated GetDocument(id)
-    // call would — a cross-profile or deleted id simply never appears in
-    // this list, and a forged id (e.g. a path-traversal-shaped string)
-    // never matches any real entry either.
-    const docs = await api.listProfileDocuments()
-    const doc = Array.isArray(docs) ? docs.find(d => d?.id === candidate.id) : null
+    // getProfileDocument is a single-row, profile-scoped lookup (mirrors
+    // GetWorkflow's shape) rather than fetching every document in the
+    // vault and filtering client-side — a cross-profile or deleted id
+    // resolves to null the same way a forged id (e.g. a path-traversal-
+    // shaped string) never matches any real row.
+    const doc = await api.getProfileDocument(candidate.id)
     if (!doc) return null
     return { type: 'document', id: doc.id, filename: doc.filename, path: doc.path, sizeBytes: doc.size_bytes }
   }

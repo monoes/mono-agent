@@ -202,7 +202,7 @@ function useResolvedArtifacts(entries) {
 }
 
 // ── Main panel ─────────────────────────────────────────────────────────────────
-export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCreated, onOpenArtifact, initialRuntime, canvasMode = true }) {
+export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifact, initialRuntime, canvasMode = true }) {
   const [messages, setMessages]             = useState([])
   const [input, setInput]                   = useState('')
   // conversationId is this panel's current app-conversation (new chat
@@ -460,7 +460,17 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
         setActiveTurnId('')
         setMessages([])
       }
-    }).catch(err => notify('chat', `Could not load chat history: ${err}`))
+    }).catch(err => {
+      // The ref above was set synchronously, before this request resolved —
+      // left in place, this bucket would be stuck forever: same
+      // workflowID/useAgents means the same bucket string, and isOpen is
+      // the only other dep, so a plain close/reopen would never retry.
+      // Only clear it if it's still this bucket; a switch that already
+      // moved on to a different bucket while this request was in flight
+      // owns the ref now and must not be clobbered by a late failure here.
+      if (conversationsFetchedRef.current === bucket) conversationsFetchedRef.current = null
+      notify('chat', `Could not load chat history: ${err}`)
+    })
     // Intentionally excludes loadConversation: this effect should only run
     // when the panel's bucket actually changes, not every time
     // loadConversation's own deps (e.g. initialRuntime) change.
@@ -562,20 +572,6 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
     // included. Pushed even when parts is empty: TurnStatus alone still
     // truthfully reports a silent failure/stop rather than hiding it.
     setMessages(msgs => [...msgs, { role: 'turn', turnId: activeTurnId, state: liveTurn }])
-    // Navigate to a newly created workflow once the whole turn (including
-    // any further tool calls) has settled — mirrors the previous
-    // stream-end-gated timing exactly, just driven by turn.finished instead
-    // of a synthetic "done" chunk.
-    const createWf = Object.values(liveTurn.calls).find(c => c.name === 'create_workflow' && c.result)
-    if (createWf && onWorkflowCreated) {
-      try {
-        const res = JSON.parse(createWf.result)
-        if (res.workflow_id) {
-          const id = res.workflow_id
-          setTimeout(() => onWorkflowCreated(id), 300)
-        }
-      } catch { /* ignore */ }
-    }
     setActiveTurnId('')
     setStopRequested(false)
     refreshPastConversations()
@@ -685,6 +681,32 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
   })
   Object.values(liveTurn.calls).forEach(call => artifactEntries.push({ turnId: activeTurnId, call }))
   const resolvedArtifacts = useResolvedArtifacts(artifactEntries)
+
+  // useResolvedArtifacts' cache never expires — once a card resolves it
+  // stays resolved for the life of this panel, even if the underlying
+  // workflow/org/document is deleted a minute later. Re-run the same
+  // lookup right before actually acting on a click, rather than trusting
+  // the cached snapshot; on a click reusing detectArtifactCandidate off
+  // the live `call` (not the stale cached artifact) means a cross-profile
+  // or genuinely-deleted target is caught here even though the card was
+  // legitimately valid when it first appeared.
+  const openArtifact = useCallback((call, artifact) => {
+    const candidate = detectArtifactCandidate(call)
+    if (!candidate) return
+    resolveArtifact(candidate, api).catch(() => null).then(fresh => {
+      if (!fresh) {
+        // A null result here means either "genuinely gone" or "the lookup
+        // itself failed" — api.js's guard() swallows real backend errors
+        // into the same null/[] shape a clean not-found produces, so this
+        // can't claim deletion specifically without risking a false
+        // "no longer exists" on a mere transient failure (a real failure
+        // also already gets its own toast from guard's reportError).
+        notify('chat', `Couldn't confirm this ${artifact.type} still exists — not opening it.`)
+        return
+      }
+      onOpenArtifact?.(fresh)
+    })
+  }, [onOpenArtifact])
 
   if (!isOpen) return null
 
@@ -1002,7 +1024,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
               {Object.values(msg.state.calls).map(call => {
                 const artifact = resolvedArtifacts[`${msg.turnId}:${call.callId}`]
                 return artifact
-                  ? <ChatArtifactCard key={call.callId} artifact={artifact} onOpenArtifact={onOpenArtifact} />
+                  ? <ChatArtifactCard key={call.callId} artifact={artifact} onOpenArtifact={() => openArtifact(call, artifact)} />
                   : null
               })}
               <TurnStatus state={msg.state} stopRequested={false} />
@@ -1027,7 +1049,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onWorkflowCre
             {Object.values(liveTurn.calls).map(call => {
               const artifact = resolvedArtifacts[`${activeTurnId}:${call.callId}`]
               return artifact
-                ? <ChatArtifactCard key={call.callId} artifact={artifact} onOpenArtifact={onOpenArtifact} />
+                ? <ChatArtifactCard key={call.callId} artifact={artifact} onOpenArtifact={() => openArtifact(call, artifact)} />
                 : null
             })}
             <TurnStatus state={liveTurn} stopRequested={stopRequested} />

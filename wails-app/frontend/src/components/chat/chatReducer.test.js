@@ -98,6 +98,31 @@ describe('chatReducer', () => {
     expect(state.calls['orphan'].ok).toBe(false)
   })
 
+  it('captures start/finish timestamps on a call for elapsed-time display', () => {
+    const state = apply(scoped(),
+      ev('tool.started', { callId: 'c1', name: 'search', arguments: {} }, 1),
+      ev('tool.completed', { callId: 'c1', ok: true, result: 'done' }, 2),
+    )
+    expect(state.calls['c1'].startedAt).toBe('2026-09-12T00:00:01.000Z')
+    expect(state.calls['c1'].finishedAt).toBe('2026-09-12T00:00:02.000Z')
+  })
+
+  it('a still-running call has a startedAt but no finishedAt yet', () => {
+    const state = apply(scoped(),
+      ev('tool.started', { callId: 'c1', name: 'slow_tool', arguments: {} }, 1),
+    )
+    expect(state.calls['c1'].startedAt).toBe('2026-09-12T00:00:01.000Z')
+    expect(state.calls['c1'].finishedAt).toBeUndefined()
+  })
+
+  it('leaves both timestamps unset on an unmatched tool.completed — no start was ever seen, so no duration can be shown', () => {
+    const state = apply(scoped(),
+      ev('tool.completed', { callId: 'orphan', ok: false, result: '' }, 1),
+    )
+    expect(state.calls['orphan'].startedAt).toBeUndefined()
+    expect(state.calls['orphan'].finishedAt).toBeUndefined()
+  })
+
   it('treats a null ok and empty result as valid, distinct from unset', () => {
     const state = apply(scoped(),
       ev('tool.started', { callId: 'c1', name: 'noop', arguments: null }, 1),

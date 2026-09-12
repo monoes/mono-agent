@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import '@testing-library/jest-dom/vitest'
-import { render, screen, cleanup, fireEvent } from '@testing-library/react'
+import { render, screen, cleanup, fireEvent, act } from '@testing-library/react'
 
 vi.mock('../../services/api.js', () => ({ api: { openURL: vi.fn() } }))
 import { api } from '../../services/api.js'
@@ -146,6 +146,29 @@ describe('ToolActivityCard', () => {
   it('never collapses/hides an errored call — details default open on failure', () => {
     render(<ToolActivityCard call={{ callId: 'c1', name: 'run_action', arguments: {}, status: 'completed', ok: false, result: 'boom' }} />)
     expect(screen.getByText('boom')).toBeInTheDocument()
+  })
+
+  it('shows a static duration once completed, computed from startedAt/finishedAt', () => {
+    render(<ToolActivityCard call={{ callId: 'c1', name: 'search_docs', arguments: {}, status: 'completed', ok: true, result: 'ok', startedAt: '2026-09-12T00:00:00.000Z', finishedAt: '2026-09-12T00:00:01.500Z' }} />)
+    expect(screen.getByText(/1\.5s/)).toBeInTheDocument()
+  })
+
+  it('shows no duration when timestamps are missing — e.g. an unmatched completion with no observed start', () => {
+    render(<ToolActivityCard call={{ callId: 'orphan', name: 'unknown', arguments: null, status: 'completed', ok: false, result: '' }} />)
+    expect(screen.queryByText(/\ds\b/)).not.toBeInTheDocument()
+  })
+
+  it('shows a live-ticking elapsed time for a still-running call, advancing once a second', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-09-12T00:00:02.000Z'))
+      render(<ToolActivityCard call={{ callId: 'c1', name: 'slow_tool', arguments: {}, status: 'started', ok: null, result: null, startedAt: '2026-09-12T00:00:00.000Z' }} />)
+      expect(screen.getByText(/2\.0s/)).toBeInTheDocument()
+      act(() => { vi.advanceTimersByTime(1000) })
+      expect(screen.getByText(/3\.0s/)).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

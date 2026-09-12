@@ -117,6 +117,53 @@ func TestListDocumentsScopedToProfile(t *testing.T) {
 	}
 }
 
+func TestGetDocument(t *testing.T) {
+	db := newTestDB(t)
+	ctx := vault.ContextWithDB(context.Background(), db.DB)
+	id, err := vault.RegisterDocument(ctx, db.DB, writeTestFile(t, "content"), "upload")
+	if err != nil {
+		t.Fatalf("RegisterDocument: %v", err)
+	}
+
+	doc, err := vault.GetDocument(ctx, db.DB, "default", id)
+	if err != nil {
+		t.Fatalf("GetDocument: %v", err)
+	}
+	if doc == nil || doc.ID != id || doc.Filename != "resume.txt" {
+		t.Fatalf("expected matching document, got %+v", doc)
+	}
+}
+
+func TestGetDocumentNotFound(t *testing.T) {
+	db := newTestDB(t)
+	ctx := vault.ContextWithDB(context.Background(), db.DB)
+
+	doc, err := vault.GetDocument(ctx, db.DB, "default", "doc-999")
+	if err != nil {
+		t.Fatalf("GetDocument: %v", err)
+	}
+	if doc != nil {
+		t.Fatalf("expected nil for a missing document, got %+v", doc)
+	}
+}
+
+func TestGetDocumentScopedToProfile(t *testing.T) {
+	db := newTestDB(t)
+	ctx := vault.ContextWithDB(context.Background(), db.DB)
+	id, err := vault.RegisterDocument(ctx, db.DB, writeTestFile(t, "content"), "upload")
+	if err != nil {
+		t.Fatalf("RegisterDocument: %v", err)
+	}
+
+	doc, err := vault.GetDocument(ctx, db.DB, "other-profile", id)
+	if err != nil {
+		t.Fatalf("GetDocument: %v", err)
+	}
+	if doc != nil {
+		t.Fatalf("expected nil for a different profile's document, got %+v", doc)
+	}
+}
+
 func TestRegisterDocumentWithApplicationID(t *testing.T) {
 	db := newTestDB(t)
 	ctx := vault.ContextWithDB(context.Background(), db.DB)

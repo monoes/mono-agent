@@ -126,11 +126,11 @@ describe('event subscription independence (issue #15)', () => {
   })
 })
 
-// New chat bindings (interactive-agent-chat plan, Task 3). These follow
-// StreamAIChat/StreamAgentChat's existing convention: a synchronous
+// New chat bindings (interactive-agent-chat plan, Task 3): a synchronous
 // {"error":"..."} JSON payload on failure must become a real promise
 // rejection via parseStreamResult, not a resolved value the caller has to
-// remember to check.
+// remember to check — the same convention the pre-event-sourced chat API
+// used before this plan replaced it.
 describe('new chat bindings', () => {
   beforeEach(() => {
     vi.clearAllMocks()

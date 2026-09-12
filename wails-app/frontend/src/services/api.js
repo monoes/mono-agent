@@ -1,7 +1,6 @@
 // Thin wrapper around Wails Go bindings with error handling.
 import * as GoApp from '../wailsjs/go/main/App'
 import { EventsOn } from '../wailsjs/runtime/runtime'
-import { getAssistantTools, getAssistantAllowRuns } from '../lib/assistantTools.js'
 
 // Global error bus. Read methods degrade to safe defaults ([]/null/0) so pages
 // keep rendering, but every failure is also broadcast on `api:error` so a toast
@@ -102,15 +101,6 @@ export const api = {
   getAIModels:        (providerID) => GoApp.GetAIModels(providerID).then(s => JSON.parse(s)).catch(guard('AI models', [])),
   getAIRegistry:      () => GoApp.GetAIRegistry().then(s => JSON.parse(s)).catch(guard('AI registry', [])),
   // AI Chat
-  // Both stream* calls below return a JSON string that is {"error": "..."}
-  // on a synchronous failure (e.g. the process never even started) rather
-  // than rejecting — JSON.parse succeeds on that shape just like any other
-  // reply, so it must be checked explicitly and turned into a throw, or the
-  // caller's catch block (which stops the "streaming" spinner) never runs
-  // and the UI hangs on "Thinking..." forever with no visible error.
-  streamAIChat:       (workflowID, message, providerID, model) => GoApp.StreamAIChat(workflowID, message, providerID, model).then(parseStreamResult),
-  stopAIChat:         (workflowID) => GoApp.StopAIChat(workflowID).then(s => JSON.parse(s)).catch(guard('stop AI chat', null)),
-  getAIChatHistory:   (workflowID) => GoApp.GetAIChatHistory(workflowID).then(s => JSON.parse(s)).catch(guard('chat history', [])),
   clearAIChatHistory: (workflowID) => GoApp.ClearAIChatHistory(workflowID).then(s => JSON.parse(s)),
   // Agent Chat (monomind delegation — local AI agent runtimes)
   scanAgentRuntimes:  () => GoApp.ScanAgentRuntimes().then(s => JSON.parse(s)).catch(guard('scan agent runtimes', null)),
@@ -118,16 +108,6 @@ export const api = {
   // for antigravity/codex, which discover their own model catalog by shelling
   // out to themselves; harmless to omit for claude (curated list, ignores it).
   getAgentRuntimeModels: (runtimeID, binary) => GoApp.GetAgentRuntimeModels(runtimeID, binary || '').then(s => JSON.parse(s)).catch(guard('agent runtime models', [])),
-  // GX2 contract: monoagentTools/allowRuns both default OFF; a null arg means
-  // "use the persisted Assistant tool access settings" (Settings page).
-  streamAgentChat: (workflowID, message, runtime, model, resumeSessionID = '', canvas = true, monoagentTools = null, allowRuns = null) => {
-    const tools = monoagentTools ?? getAssistantTools()
-    const runs = allowRuns ?? getAssistantAllowRuns()
-    return GoApp.StreamAgentChat(workflowID, message, runtime, model, resumeSessionID, canvas, tools, runs).then(parseStreamResult)
-  },
-  stopAgentChat:      (workflowID) => GoApp.StopAgentChat(workflowID).then(s => JSON.parse(s)).catch(guard('stop agent chat', null)),
-  listChatSessions:      (workflowID) => GoApp.ListChatSessions(workflowID).then(s => JSON.parse(s)).catch(guard('list chat sessions', [])),
-  getChatSessionMessages: (workflowID, sessionID) => GoApp.GetChatSessionMessages(workflowID, sessionID).then(s => JSON.parse(s)).catch(guard('chat session messages', [])),
   // New chat bindings (interactive-agent-chat plan §"Proposed Wails
   // bindings"). Every call goes through parseStreamResult, same as
   // streamAIChat/streamAgentChat above: a synchronous {"error":...} shape
@@ -196,6 +176,7 @@ export const api = {
   // yet. Typed struct returns, not JSON strings — no .then(JSON.parse).
   getWorkflow:            (id) => GoApp.GetWorkflow(id).catch(guard('get workflow', null)),
   listProfileDocuments:   () => GoApp.ListProfileDocuments().catch(guard('list profile documents', [])),
+  getProfileDocument:     (id) => GoApp.GetProfileDocument(id).catch(guard('get profile document', null)),
 }
 
 // The Wails runtime (window.runtime / window.go) only exists inside the desktop

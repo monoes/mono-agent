@@ -35,6 +35,24 @@ export function useChatStream({ conversationId, turnId }) {
     function dispatchEvent(ev) {
       if (typeof ev.seq === 'number' && ev.seq > localLastSeq) localLastSeq = ev.seq
       dispatch({ type: 'event', event: ev })
+      // historySaved:false does NOT mean this hook's own transcript is
+      // wrong — everything applied above is the authoritative live record.
+      // It means the store's durable write fell behind, so a *future*
+      // reopen of this conversation (loadConversation -> getChatTurns) may
+      // not show everything just shown here. Nothing to reconcile against
+      // (a refetch now could only return LESS than what's already applied)
+      // — the only correct response is telling the user, via the same
+      // notice banner real backend 'notice' events already render.
+      if (ev.type === 'turn.finished' && ev.payload?.historySaved === false) {
+        dispatch({
+          type: 'localNotice',
+          notice: {
+            code: 'history_not_saved',
+            message: 'This turn finished, but its history may not have saved — reopening this conversation later might not show everything.',
+            severity: 'warning',
+          },
+        })
+      }
     }
 
     // Fetches [afterSeq+1 .. beforeSeq-1] before applying the event that

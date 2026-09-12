@@ -145,29 +145,29 @@ describe('resolveArtifact', () => {
 
   // ── document ─────────────────────────────────────────────────────────
 
-  it('resolves a document candidate to trusted metadata from the profile-scoped document list', async () => {
-    const api = { listProfileDocuments: async () => ([{ id: 'doc-001', filename: 'a.md', path: '/vault/a.md', size_bytes: 42 }]) }
+  it('resolves a document candidate to trusted metadata via the scoped by-id lookup', async () => {
+    const api = { getProfileDocument: async (id) => (id === 'doc-001' ? { id: 'doc-001', filename: 'a.md', path: '/vault/a.md', size_bytes: 42 } : null) }
     const result = await resolveArtifact({ type: 'document', id: 'doc-001' }, api)
     expect(result).toEqual({ type: 'document', id: 'doc-001', filename: 'a.md', path: '/vault/a.md', sizeBytes: 42 })
   })
 
-  it('returns null for a deleted document id no longer in the list', async () => {
-    const api = { listProfileDocuments: async () => ([{ id: 'doc-002', filename: 'b.md', path: '/vault/b.md', size_bytes: 1 }]) }
+  it('returns null for a deleted document id the lookup no longer resolves', async () => {
+    const api = { getProfileDocument: async () => null }
     expect(await resolveArtifact({ type: 'document', id: 'doc-001' }, api)).toBeNull()
   })
 
-  it('returns null for a cross-profile document id (never appears in this profile-scoped list)', async () => {
-    const api = { listProfileDocuments: async () => ([]) }
+  it('returns null for a cross-profile document id (the scoped lookup never resolves it)', async () => {
+    const api = { getProfileDocument: async () => null }
     expect(await resolveArtifact({ type: 'document', id: 'doc-other-profile' }, api)).toBeNull()
   })
 
   it('returns null for a forged path-traversal-shaped document id', async () => {
-    const api = { listProfileDocuments: async () => ([{ id: 'doc-001', filename: 'a.md', path: '/vault/a.md', size_bytes: 1 }]) }
+    const api = { getProfileDocument: async (id) => (id === 'doc-001' ? { id: 'doc-001', filename: 'a.md', path: '/vault/a.md', size_bytes: 1 } : null) }
     expect(await resolveArtifact({ type: 'document', id: '../../etc/passwd' }, api)).toBeNull()
   })
 
-  it('returns null when listProfileDocuments itself fails (guard degrades to [])', async () => {
-    const api = { listProfileDocuments: async () => [] }
+  it('returns null when getProfileDocument itself fails (guard degrades to null)', async () => {
+    const api = { getProfileDocument: async () => null }
     expect(await resolveArtifact({ type: 'document', id: 'doc-001' }, api)).toBeNull()
   })
 

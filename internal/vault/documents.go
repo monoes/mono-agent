@@ -156,6 +156,30 @@ func ListDocuments(ctx context.Context, db *sql.DB, profileID string) ([]Documen
 	return docs, rows.Err()
 }
 
+// GetDocument returns id's document entry, scoped to profileID. Returns a
+// nil entry (not an error) when no such row exists for this profile --
+// deleted, never existed, and belonging to a different profile all look
+// identical to a caller, and "not found" is an expected outcome here (a
+// stale reference resolving to nothing), not a failure worth an error
+// value. Mirrors ListDocuments' column set and stale computation, scoped
+// by (id, profile_id) the same way DeleteDocument/SetDocumentIndexed are.
+func GetDocument(ctx context.Context, db *sql.DB, profileID, id string) (*DocumentEntry, error) {
+	var d DocumentEntry
+	var indexedMTime, indexedSizeBytes sql.NullInt64
+	err := db.QueryRowContext(ctx,
+		`SELECT id, path, filename, size_bytes, source, COALESCE(application_id, ''), created_at, indexed, COALESCE(index_error, ''), indexed_mtime, indexed_size_bytes
+		 FROM vault_documents WHERE id = ? AND profile_id = ?`, id, profileID,
+	).Scan(&d.ID, &d.Path, &d.Filename, &d.SizeBytes, &d.Source, &d.ApplicationID, &d.CreatedAt, &d.Indexed, &d.IndexError, &indexedMTime, &indexedSizeBytes)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("vault.GetDocument: %w", err)
+	}
+	d.Stale = computeStale(d.Indexed, indexedMTime, indexedSizeBytes, d.Path)
+	return &d, nil
+}
+
 // SetDocumentIndexed records the outcome of a knowledge_ingest attempt for
 // id, scoped to profileID. indexErr should be empty on success.
 //

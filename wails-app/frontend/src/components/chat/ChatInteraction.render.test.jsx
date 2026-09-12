@@ -98,6 +98,7 @@ const getChatTurns2 = vi.fn().mockResolvedValue({ items: [] })
 const getChatEvents2 = vi.fn().mockResolvedValue({ items: [], hasMore: false })
 const listOrgDesigns2 = vi.fn().mockResolvedValue(null)
 const listProfileDocuments2 = vi.fn().mockResolvedValue([])
+const getProfileDocument2 = vi.fn().mockResolvedValue(null)
 const getWorkflow2 = vi.fn().mockResolvedValue(null)
 const stopChatTurn2 = vi.fn().mockResolvedValue({ ok: true })
 
@@ -117,6 +118,7 @@ vi.mock('../../services/api.js', async (importOriginal) => {
       stopChatTurn: (...args) => stopChatTurn2(...args),
       listOrgDesigns: (...args) => listOrgDesigns2(...args),
       listProfileDocuments: (...args) => listProfileDocuments2(...args),
+      getProfileDocument: (...args) => getProfileDocument2(...args),
       getWorkflow: (...args) => getWorkflow2(...args),
     },
   }
@@ -307,14 +309,18 @@ describe('AIChatPanel chat result artifacts', () => {
     listChatConversations2.mockResolvedValueOnce({ items: [{ id: 'conv-1', backend: 'provider', workflowContext: 'general', runtimeId: '', model: '', updatedAt: '2026-09-12T00:00:00Z' }] })
     getChatTurns2.mockResolvedValueOnce({ items: [{ id: 'turn-1', prompt: 'create an org called Acme', status: 'completed' }] })
     getChatEvents2.mockResolvedValueOnce({ items: turnEvents('create_org', { org_name: 'Acme', created: true }), hasMore: false })
-    listOrgDesigns2.mockResolvedValueOnce([{ name: 'Acme' }])
+    // Two calls expected: the initial resolve that builds the card, and the
+    // click-time re-validation that must also find it still there.
+    listOrgDesigns2
+      .mockResolvedValueOnce([{ name: 'Acme' }])
+      .mockResolvedValueOnce([{ name: 'Acme' }])
 
     const onOpenArtifact = vi.fn()
     render(<AIChatPanel workflowID="general" isOpen={true} onClose={() => {}} onOpenArtifact={onOpenArtifact} />)
 
     const openBtn = await screen.findByTitle('Open organization')
     fireEvent.click(openBtn)
-    expect(onOpenArtifact).toHaveBeenCalledWith({ type: 'org', name: 'Acme' })
+    await waitFor(() => expect(onOpenArtifact).toHaveBeenCalledWith({ type: 'org', name: 'Acme' }))
   })
 
   it('renders no action for a save_document result whose vault id no longer resolves (deleted/cross-profile), leaving the generic tool card as the only output', async () => {
@@ -324,14 +330,14 @@ describe('AIChatPanel chat result artifacts', () => {
       items: turnEvents('save_document', { filename: 'report.md', path: '/x/report.md', size_bytes: 10, vault_document_id: 'doc-999' }),
       hasMore: false,
     })
-    listProfileDocuments2.mockResolvedValueOnce([]) // doc-999 no longer in the profile-scoped list
+    getProfileDocument2.mockResolvedValueOnce(null) // doc-999 no longer resolves (deleted/cross-profile)
 
     render(<AIChatPanel workflowID="general" isOpen={true} onClose={() => {}} />)
 
     // The generic ToolActivityCard renders unconditionally, synchronously —
     // proves the turn actually loaded before asserting on the async part.
     await screen.findByText('save_document')
-    await waitFor(() => expect(listProfileDocuments2).toHaveBeenCalled())
+    await waitFor(() => expect(getProfileDocument2).toHaveBeenCalledWith('doc-999'))
     expect(screen.queryByTitle('Open document')).not.toBeInTheDocument()
   })
 
@@ -367,6 +373,29 @@ describe('AIChatPanel chat result artifacts', () => {
     await screen.findByTitle('Open organization')
     expect(screen.getByText('First Turn Workflow')).toBeInTheDocument()
     expect(screen.getByText('SecondTurnOrg')).toBeInTheDocument()
+  })
+
+  it('re-validates at click time — a card that resolved successfully but whose org was since deleted refuses to open', async () => {
+    listChatConversations2.mockResolvedValueOnce({ items: [{ id: 'conv-5', backend: 'provider', workflowContext: 'general', runtimeId: '', model: '', updatedAt: '2026-09-12T00:00:00Z' }] })
+    getChatTurns2.mockResolvedValueOnce({ items: [{ id: 'turn-5', prompt: 'create an org called Acme', status: 'completed' }] })
+    getChatEvents2.mockResolvedValueOnce({ items: turnEvents('create_org', { org_name: 'Acme', created: true }), hasMore: false })
+    // First call (initial resolve, while building the card) finds it;
+    // second call (re-validation on click, sometime later) no longer does —
+    // simulates the org being deleted in between.
+    listOrgDesigns2
+      .mockResolvedValueOnce([{ name: 'Acme' }])
+      .mockResolvedValueOnce([])
+
+    const onOpenArtifact = vi.fn()
+    render(<AIChatPanel workflowID="general" isOpen={true} onClose={() => {}} onOpenArtifact={onOpenArtifact} />)
+
+    const openBtn = await screen.findByTitle('Open organization')
+    fireEvent.click(openBtn)
+
+    // The click must trigger a fresh lookup, not just replay the cached
+    // resolution from when the card first appeared.
+    await waitFor(() => expect(listOrgDesigns2).toHaveBeenCalledTimes(2))
+    expect(onOpenArtifact).not.toHaveBeenCalled()
   })
 })
 
@@ -417,5 +446,36 @@ describe('AIChatPanel loadConversation race', () => {
     // test is the only one in the file using .mockImplementation on these.
     getChatTurns2.mockReset().mockResolvedValue({ items: [] })
     getChatEvents2.mockReset().mockResolvedValue({ items: [], hasMore: false })
+  })
+})
+
+// ── Bucket-switch history fetch: retry after failure ────────────────────────
+//
+// conversationsFetchedRef marks a bucket "fetched" synchronously, before the
+// request it guards even resolves — so a failure must not leave that mark in
+// place, or the bucket becomes permanently stuck: same workflowID/useAgents,
+// same bucket string, so a plain close/reopen of the panel (isOpen only)
+// never re-triggers the effect's fetch again once the ref already matches.
+describe('AIChatPanel bucket-switch history fetch', () => {
+  it('retries on close/reopen after a failed fetch, instead of leaving the bucket stuck', async () => {
+    listChatConversations2.mockRejectedValueOnce(new Error('backend unavailable'))
+    listChatConversations2.mockResolvedValueOnce({
+      items: [{ id: 'conv-retry', backend: 'provider', workflowContext: 'general', runtimeId: '', model: 'retried-model', updatedAt: '2026-09-12T00:00:00Z' }],
+    })
+    getChatTurns2.mockResolvedValue({ items: [] })
+
+    const { rerender } = render(<AIChatPanel workflowID="general" isOpen={true} onClose={() => {}} />)
+    await waitFor(() => expect(listChatConversations2).toHaveBeenCalledTimes(1))
+
+    // Close and reopen the SAME bucket (workflowID/useAgents unchanged) —
+    // the only user action a stuck ref would make unrecoverable, since
+    // isOpen toggling is the one thing that still re-runs this effect.
+    rerender(<AIChatPanel workflowID="general" isOpen={false} onClose={() => {}} />)
+    rerender(<AIChatPanel workflowID="general" isOpen={true} onClose={() => {}} />)
+
+    await waitFor(() => expect(listChatConversations2).toHaveBeenCalledTimes(2))
+    // Proves the retry's result was actually used (loadConversation ran),
+    // not just that a second HTTP-ish call happened.
+    await waitFor(() => expect(getChatTurns2).toHaveBeenCalledWith('conv-retry', '', 50))
   })
 })

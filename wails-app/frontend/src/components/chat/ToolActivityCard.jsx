@@ -1,5 +1,25 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ChevronDown, ChevronRight, Loader, Check, X, Copy } from 'lucide-react'
+
+// Same self-contained tick pattern as TurnStatus.jsx's own live "idle for
+// Ns" clock: own `now`, tick once a second only while `active`, stop
+// entirely once the call completes so a finished card never re-renders on
+// a timer it no longer needs.
+function useTicker(active) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!active) return
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [active])
+  return now
+}
+
+function formatDuration(ms) {
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`
+  const totalSeconds = Math.round(ms / 1000)
+  return `${Math.floor(totalSeconds / 60)}m ${totalSeconds % 60}s`
+}
 
 function formatArgs(args) {
   if (args === null || args === undefined) return null
@@ -38,6 +58,15 @@ export function ToolActivityCard({ call }) {
   const argsText = formatArgs(call.arguments)
   const resultText = formatResult(call)
   const panelId = `tool-card-${call.callId}`
+
+  const running = call.status === 'started'
+  const now = useTicker(running)
+  let durationText = null
+  if (call.startedAt && call.finishedAt) {
+    durationText = formatDuration(new Date(call.finishedAt).getTime() - new Date(call.startedAt).getTime())
+  } else if (running && call.startedAt) {
+    durationText = formatDuration(now - new Date(call.startedAt).getTime())
+  }
 
   let statusIcon, statusText
   if (call.status === 'started') {
@@ -85,6 +114,11 @@ export function ToolActivityCard({ call }) {
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: failed ? '#fca5a5' : 'var(--text-muted)' }}>
           {statusText}
         </span>
+        {durationText && (
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-muted)' }}>
+            {`· ${durationText}`}
+          </span>
+        )}
       </button>
       {open && (
         <div id={panelId} style={{ padding: '0 10px 8px', display: 'flex', flexDirection: 'column', gap: 6 }}>

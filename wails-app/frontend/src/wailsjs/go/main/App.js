@@ -342,6 +342,10 @@ export function GetPostDetail(arg1) {
   return window['go']['main']['App']['GetPostDetail'](arg1);
 }
 
+export function GetProfileDocument(arg1) {
+  return window['go']['main']['App']['GetProfileDocument'](arg1);
+}
+
 export function GetProfileDocumentData(arg1) {
   return window['go']['main']['App']['GetProfileDocumentData'](arg1);
 }

@@ -168,6 +168,35 @@ describe('useChatStream', () => {
     expect(result.current.parts).toEqual([])
   })
 
+  it('surfaces a notice when turn.finished reports historySaved:false', async () => {
+    // historySaved:false means the live transcript just applied IS
+    // authoritative and complete, but durable persistence fell behind —
+    // there's nothing to re-fetch or reconcile (a refetch could only ever
+    // return LESS than what's already shown). The only correct response is
+    // warning the user this turn might not fully survive a reopen.
+    getChatEvents.mockResolvedValueOnce(page([
+      ev('turn.finished', { status: 'completed', reason: 'end_turn', exitCode: 0, historySaved: false }, 1),
+    ]))
+
+    const { result } = renderHook(() => useChatStream({ conversationId: 'conv-1', turnId: 'turn-1' }))
+
+    await waitFor(() => expect(result.current.terminal).not.toBeNull())
+    expect(result.current.notices).toHaveLength(1)
+    expect(result.current.notices[0]).toMatchObject({ severity: 'warning' })
+    expect(result.current.notices[0].message).toMatch(/history|reopen|saved/i)
+  })
+
+  it('does not surface a notice when turn.finished reports historySaved:true', async () => {
+    getChatEvents.mockResolvedValueOnce(page([
+      ev('turn.finished', { status: 'completed', reason: 'end_turn', exitCode: 0, historySaved: true }, 1),
+    ]))
+
+    const { result } = renderHook(() => useChatStream({ conversationId: 'conv-1', turnId: 'turn-1' }))
+
+    await waitFor(() => expect(result.current.terminal).not.toBeNull())
+    expect(result.current.notices).toEqual([])
+  })
+
   it('two independent hook instances do not cross-talk', async () => {
     getChatEvents.mockResolvedValue(page([]))
     const a = renderHook(() => useChatStream({ conversationId: 'conv-a', turnId: 'turn-a' }))
