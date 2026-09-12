@@ -15,6 +15,14 @@ func setupTestDB(t *testing.T) *sql.DB {
 	if err != nil {
 		t.Fatalf("open test db: %v", err)
 	}
+	// A bare :memory: DSN gives each physical connection its own isolated
+	// database (no shared-cache mode) — database/sql's pool can open more
+	// than one connection under concurrent load, so a query can land on a
+	// connection that never saw this function's own CREATE TABLE, failing
+	// with "no such table" nondeterministically. Only manifests under
+	// cross-package concurrency (go test ./...), never in isolation, which
+	// is exactly why it went unnoticed until now.
+	db.SetMaxOpenConns(1)
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS people (
 		id TEXT PRIMARY KEY,
 		platform_username TEXT NOT NULL,
