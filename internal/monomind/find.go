@@ -50,6 +50,22 @@ func CandidatePaths() []string {
 			cands = append(cands, filepath.Join(home, ".nvm", "versions", "node")) // globbed below
 		}
 	}
+	if runtime.GOOS != "windows" {
+		// `npm install -g @monoes/monomindcli` — the exact command this
+		// app's own error message tells users to run — lands here whenever
+		// npm's global prefix is Homebrew-managed (the default on a `brew
+		// install node` setup): /opt/homebrew on Apple Silicon, /usr/local
+		// on Intel Macs and commonly on Linux. exec.LookPath("monomind")
+		// above already covers this for a process that inherited the
+		// user's shell PATH, but a GUI app launched via Finder/Dock/open
+		// does not — Homebrew's PATH additions come from shell rc files a
+		// non-interactive, non-login process never sources — so a binary
+		// that is genuinely installed and on the terminal's PATH can still
+		// be invisible to the running app without these as explicit
+		// fallback candidates, the same way ~/.npm-global/bin and
+		// ~/.local/bin above already are.
+		cands = append(cands, "/opt/homebrew/bin/monomind", "/usr/local/bin/monomind")
+	}
 	return cands
 }
 
