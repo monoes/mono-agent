@@ -260,6 +260,27 @@ describe('computeStatusLabel', () => {
     expect(computeStatusLabel(state, t0 + 15001).isIdleWarning).toBe(true)
     expect(computeStatusLabel({ ...state, terminal: { status: 'completed' } }, t0 + 60000).isIdleWarning).toBe(false)
   })
+
+  // Cross-instance ownership (GetChatTurns' ownedByThisInstance — see
+  // docs/mastermind/plans/2026-09-12-interactive-agent-chat-followups.md,
+  // "OwnerInstanceID is written and read back but never compared to
+  // anything"). ownedByThisInstance is merged into the state object the
+  // same way TurnStatus's own stopRequested prop is (see its call site) —
+  // it is not part of chatReducer's own event-replay state.
+  it('reports "Running in another window" for an active turn explicitly owned by a different instance, overriding any in-progress signal', () => {
+    const state = { ...base, startedAt: 't', ownedByThisInstance: false, calls: { c1: { callId: 'c1', name: 'get_workflow', status: 'started' } } }
+    expect(computeStatusLabel(state, 0)).toEqual({ label: 'Running in another window', isIdleWarning: false })
+  })
+
+  it('a terminal event always wins over ownedByThisInstance:false — a foreign turn actually observed to have finished shows its real terminal label', () => {
+    const state = { ...base, ownedByThisInstance: false, terminal: { status: 'completed', reason: 'end_turn' } }
+    expect(computeStatusLabel(state, 0).label).toBe('Completed')
+  })
+
+  it('treats ownedByThisInstance:true, or the field entirely absent, as normal — never shows the foreign-instance label', () => {
+    expect(computeStatusLabel({ ...base, startedAt: 't', ownedByThisInstance: true }, 0).label).toBe('Waiting for response')
+    expect(computeStatusLabel({ ...base, startedAt: 't' }, 0).label).toBe('Waiting for response') // field entirely absent
+  })
 })
 
 describe('TurnStatus component', () => {
@@ -286,6 +307,45 @@ describe('TurnStatus component', () => {
     render(<TurnStatus state={state} stopRequested={true} />)
     expect(screen.getByText('Stopping')).toBeInTheDocument()
     expect(screen.queryByText('Waiting for response')).not.toBeInTheDocument()
+  })
+
+  // Cross-instance ownership label (AIChatPanel.jsx's loadConversation
+  // threads GetChatTurns' ownedByThisInstance through as its own prop, the
+  // same way it already does for stopRequested — see the regression test
+  // above for why that field can't live inside chatReducer's own state).
+  it('renders the static foreign-instance label with no live spinner when ownedByThisInstance is false on an active (non-terminal) turn', () => {
+    const state = reduce([
+      ev('turn.started', { backend: 'agent', text: 'hi' }, 1),
+      ev('tool.started', { callId: 'c1', name: 'slow_tool', arguments: {} }, 2),
+    ])
+    const { container } = render(<TurnStatus state={state} stopRequested={false} ownedByThisInstance={false} />)
+    expect(screen.getByText('Running in another window')).toBeInTheDocument()
+    expect(screen.queryByText(/Running slow_tool/)).not.toBeInTheDocument()
+    // No live spinner (the Loader icon TurnStatus otherwise shows for any
+    // non-terminal turn) — a foreign-owned turn gets no liveness indicator
+    // this instance cannot actually back up.
+    expect(container.querySelector('.chat-spin')).not.toBeInTheDocument()
+  })
+
+  it('does not tick — label and idle-warning stay identical over time for a foreign-owned active turn', () => {
+    vi.useFakeTimers()
+    try {
+      const state = reduce([ev('turn.started', { backend: 'agent', text: 'hi' }, 1)])
+      render(<TurnStatus state={state} stopRequested={false} ownedByThisInstance={false} />)
+      expect(screen.getByText('Running in another window')).toBeInTheDocument()
+      act(() => { vi.advanceTimersByTime(20000) }) // past the normal 15s idle-warning threshold
+      expect(screen.getByText('Running in another window')).toBeInTheDocument()
+      expect(screen.queryByText(/No new activity/)).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('regression: defaults ownedByThisInstance to true when the prop is omitted entirely, so every existing caller is unaffected', () => {
+    const state = reduce([ev('turn.started', { backend: 'agent', text: 'hi' }, 1)])
+    const { container } = render(<TurnStatus state={state} stopRequested={false} />)
+    expect(screen.getByText('Waiting for response')).toBeInTheDocument()
+    expect(container.querySelector('.chat-spin')).toBeInTheDocument() // normal live spinner still shows
   })
 })
 

@@ -402,21 +402,26 @@ describe('AIChatPanel chat result artifacts', () => {
     await waitFor(() => expect(onOpenArtifact).toHaveBeenCalledWith({ type: 'org', name: 'Acme' }))
   })
 
-  it('renders no action for a save_document result whose vault id no longer resolves (deleted/cross-profile), leaving the generic tool card as the only output', async () => {
+  it('renders no action for a save_document result whose vault id no longer resolves on either the initial lookup or its automatic retry (deleted/cross-profile), leaving the generic tool card as the only output', async () => {
     listChatConversations2.mockResolvedValueOnce({ items: [{ id: 'conv-2', backend: 'provider', workflowContext: 'general', runtimeId: '', model: '', updatedAt: '2026-09-12T00:00:00Z' }] })
     getChatTurns2.mockResolvedValueOnce({ items: [{ id: 'turn-2', prompt: 'save a report', status: 'completed' }] })
     getChatEvents2.mockResolvedValueOnce({
       items: turnEvents('save_document', { filename: 'report.md', path: '/x/report.md', size_bytes: 10, vault_document_id: 'doc-999' }),
       hasMore: false,
     })
-    getProfileDocument2.mockResolvedValueOnce(null) // doc-999 no longer resolves (deleted/cross-profile)
+    // doc-999 no longer resolves (deleted/cross-profile) — mocked null twice
+    // so useResolvedArtifacts' own automatic one-time retry (see below) also
+    // observes a null instead of falling through to the shared base mock,
+    // and so this test waits out the whole retry window itself rather than
+    // leaving a pending retry to fire during a later test.
+    getProfileDocument2.mockResolvedValueOnce(null).mockResolvedValueOnce(null)
 
     render(<AIChatPanel workflowID="general" isOpen={true} onClose={() => {}} />)
 
     // The generic ToolActivityCard renders unconditionally, synchronously —
     // proves the turn actually loaded before asserting on the async part.
     await screen.findByText('save_document')
-    await waitFor(() => expect(getProfileDocument2).toHaveBeenCalledWith('doc-999'))
+    await waitFor(() => expect(getProfileDocument2).toHaveBeenCalledTimes(2), { timeout: 2000 })
     expect(screen.queryByTitle('Open document')).not.toBeInTheDocument()
   })
 
@@ -478,6 +483,68 @@ describe('AIChatPanel chat result artifacts', () => {
   })
 })
 
+// ── useResolvedArtifacts: one automatic retry on a transient failure ───────
+//
+// resolveArtifact's own null result is ambiguous — "confirmed gone" and
+// "the lookup itself failed" (e.g. a transient hiccup on the same SQLite
+// file the chat supervisor is concurrently writing to right as a tool call
+// completes) look identical by the time api.js's guard() is done swallowing
+// a real error into the same null shape. Unlike the click-time revalidation
+// above (which accepts that ambiguity for a re-check), this is the *first*
+// resolution — before this fix a transient failure here permanently hid the
+// card for the rest of the session. useResolvedArtifacts now gives a null
+// exactly one automatic retry before caching it.
+describe('AIChatPanel resolved-artifact retry on transient failure', () => {
+  it('retries exactly once after a transient failure and shows the card once the retry succeeds', async () => {
+    listChatConversations2.mockResolvedValueOnce({ items: [{ id: 'conv-retry-1', backend: 'provider', workflowContext: 'general', runtimeId: '', model: '', updatedAt: '2026-09-12T00:00:00Z' }] })
+    getChatTurns2.mockResolvedValueOnce({ items: [{ id: 'turn-retry-1', prompt: 'save a report', status: 'completed' }] })
+    getChatEvents2.mockResolvedValueOnce({
+      items: turnEvents('save_document', { filename: 'report.md', path: '/x/report.md', size_bytes: 10, vault_document_id: 'doc-flaky' }),
+      hasMore: false,
+    })
+    // First lookup fails transiently (not a real "not found"); the
+    // automatic retry's second attempt succeeds.
+    getProfileDocument2
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'doc-flaky', filename: 'report.md', path: '/x/report.md', size_bytes: 10 })
+
+    render(<AIChatPanel workflowID="general" isOpen={true} onClose={() => {}} />)
+
+    await screen.findByText('save_document') // generic tool card confirms the turn loaded
+    await waitFor(() => expect(getProfileDocument2).toHaveBeenCalledTimes(2), { timeout: 2000 })
+    await screen.findByTitle('Open document')
+    expect(screen.getByText('report.md')).toBeInTheDocument()
+  })
+
+  it('gives up after exactly one retry when the second attempt also fails, and never calls the lookup a third time even across later re-renders', async () => {
+    listChatConversations2.mockResolvedValueOnce({ items: [{ id: 'conv-retry-2', backend: 'provider', workflowContext: 'general', runtimeId: '', model: '', updatedAt: '2026-09-12T00:00:00Z' }] })
+    getChatTurns2.mockResolvedValueOnce({ items: [{ id: 'turn-retry-2', prompt: 'save a report', status: 'completed' }] })
+    getChatEvents2.mockResolvedValueOnce({
+      items: turnEvents('save_document', { filename: 'gone.md', path: '/x/gone.md', size_bytes: 5, vault_document_id: 'doc-really-gone' }),
+      hasMore: false,
+    })
+    getProfileDocument2
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+
+    const { rerender } = render(<AIChatPanel workflowID="general" isOpen={true} onClose={() => {}} />)
+
+    await screen.findByText('save_document')
+    await waitFor(() => expect(getProfileDocument2).toHaveBeenCalledTimes(2), { timeout: 2000 })
+    expect(screen.queryByTitle('Open document')).not.toBeInTheDocument()
+
+    // The requirement being tested is permanent caching after the second
+    // failure, not merely "no third call within some window" — force two
+    // more re-renders (the no-dependency-array effect re-runs on every one)
+    // and confirm the exhausted key is never re-attempted. This is what
+    // would catch a give-up branch that clears the in-flight guard without
+    // ever writing the permanent null into the resolved cache.
+    rerender(<AIChatPanel workflowID="general" isOpen={true} onClose={() => {}} />)
+    rerender(<AIChatPanel workflowID="general" isOpen={true} onClose={() => {}} />)
+    expect(getProfileDocument2).toHaveBeenCalledTimes(2)
+  })
+})
+
 // ── Replayed turns must not misreport an orphaned tool call as live ────────
 describe('AIChatPanel replayed tool-call status', () => {
   it('a call still "started" in a reopened (finalized) conversation shows Interrupted, not a live-ticking Running', async () => {
@@ -497,6 +564,97 @@ describe('AIChatPanel replayed tool-call status', () => {
 
     await screen.findByText(/Interrupted/i)
     expect(screen.queryByText(/^Running$/i)).not.toBeInTheDocument()
+  })
+})
+
+// ── Cross-instance ownership label ──────────────────────────────────────────
+//
+// GetChatTurns' ownedByThisInstance field (see
+// docs/mastermind/plans/2026-09-12-interactive-agent-chat-followups.md,
+// "OwnerInstanceID is written and read back but never compared to
+// anything") is false only for a turn that is genuinely still active AND
+// owned by a DIFFERENT live app instance sharing this database. This
+// instance has no event stream for that turn and cannot stop it — a
+// ticking spinner or a reachable Stop control here would misreport it as
+// something this window is actively running.
+describe('AIChatPanel cross-instance ownership label', () => {
+  // turn.started + an unfinished tool.started, no turn.finished: genuinely
+  // still active (no terminal event), matching the shape GetChatTurns would
+  // report for a turn actually still running — here or in another window.
+  function activeNoTerminalEvents() {
+    return [
+      { seq: 1, at: '2026-09-12T00:00:00Z', type: 'turn.started', payload: {} },
+      { seq: 2, at: '2026-09-12T00:00:01Z', type: 'tool.started', payload: { callId: 'call-1', name: 'slow_tool', arguments: {} } },
+    ]
+  }
+
+  it('shows a static "Running in another window" label, with no live spinner and no reachable Stop, for an active turn owned by a different instance', async () => {
+    listChatConversations2.mockResolvedValueOnce({ items: [{ id: 'conv-foreign', backend: 'provider', workflowContext: 'general', runtimeId: '', model: '', updatedAt: '2026-09-12T00:00:00Z' }] })
+    getChatTurns2.mockResolvedValueOnce({ items: [{ id: 'turn-foreign', prompt: 'do something in the other window', status: 'active', ownedByThisInstance: false }] })
+    getChatEvents2.mockResolvedValueOnce({ items: activeNoTerminalEvents(), hasMore: false })
+
+    render(<AIChatPanel workflowID="general" isOpen={true} onClose={() => {}} />)
+
+    await screen.findByText('Running in another window')
+    expect(screen.queryByText(/^Running slow_tool$/)).not.toBeInTheDocument()
+    // No live spinner for this turn's own status row (the tool card's own
+    // icon is a separate, pre-existing concern — historical turns already
+    // render with isLive=false regardless of ownership).
+    expect(document.querySelector('.chat-spin')).not.toBeInTheDocument()
+    // Documents intent rather than proving it on its own (streaming is
+    // false here regardless of ownership, so this alone would pass even
+    // unfixed) — the actual guarantee is architectural: the panel's only
+    // Stop affordance is the composer's onStop, gated on activeTurnId/
+    // streaming, and loadConversation always sets activeTurnId to '' for
+    // every reopened past conversation, foreign-owned or not. No code path
+    // promotes a historical turn (this one included) into the live/
+    // streaming slot Stop is wired to.
+    expect(screen.queryByRole('button', { name: 'Stop generating' })).not.toBeInTheDocument()
+  })
+
+  it('renders the turn (prompt bubble + label) even with zero observed parts yet, when it is active and foreign — the pre-existing empty-parts skip must not hide it', async () => {
+    // Root cause this guards: loadTurnState returns null (and
+    // loadConversation then `continue`s, dropping the turn AND its prompt
+    // bubble entirely) whenever an active turn's reduced state has zero
+    // parts — turn.started alone never adds one. That skip predates this
+    // feature and exists for a plausible different case (this instance's
+    // own turn, just admitted, with no events yet) but a foreign turn in
+    // the exact same shape (just started elsewhere, no tool/text event
+    // observed yet — routine while a subprocess launches or a model
+    // connects) would otherwise vanish with no explanation right as this
+    // window's own next send() in that conversation gets refused
+    // (ErrTurnOwnedByOtherInstance) — worse than a stale label, a fully
+    // silent one.
+    listChatConversations2.mockResolvedValueOnce({ items: [{ id: 'conv-foreign-empty', backend: 'provider', workflowContext: 'general', runtimeId: '', model: '', updatedAt: '2026-09-12T00:00:00Z' }] })
+    getChatTurns2.mockResolvedValueOnce({ items: [{ id: 'turn-foreign-empty', prompt: 'just started elsewhere', status: 'active', ownedByThisInstance: false }] })
+    getChatEvents2.mockResolvedValueOnce({ items: [{ seq: 1, at: '2026-09-12T00:00:00Z', type: 'turn.started', payload: {} }], hasMore: false })
+
+    render(<AIChatPanel workflowID="general" isOpen={true} onClose={() => {}} />)
+
+    await screen.findByText('just started elsewhere') // the user-prompt bubble
+    await screen.findByText('Running in another window')
+  })
+
+  it('regression: an active turn with ownedByThisInstance:true renders its normal live "Running <tool>" treatment, unaffected', async () => {
+    listChatConversations2.mockResolvedValueOnce({ items: [{ id: 'conv-own-1', backend: 'provider', workflowContext: 'general', runtimeId: '', model: '', updatedAt: '2026-09-12T00:00:00Z' }] })
+    getChatTurns2.mockResolvedValueOnce({ items: [{ id: 'turn-own-1', prompt: 'do something here', status: 'active', ownedByThisInstance: true }] })
+    getChatEvents2.mockResolvedValueOnce({ items: activeNoTerminalEvents(), hasMore: false })
+
+    render(<AIChatPanel workflowID="general" isOpen={true} onClose={() => {}} />)
+
+    await screen.findByText('Running slow_tool')
+    expect(screen.queryByText('Running in another window')).not.toBeInTheDocument()
+  })
+
+  it('regression: an active turn with ownedByThisInstance entirely absent (older data / backend not yet carrying the field) is treated as normal, not foreign', async () => {
+    listChatConversations2.mockResolvedValueOnce({ items: [{ id: 'conv-own-2', backend: 'provider', workflowContext: 'general', runtimeId: '', model: '', updatedAt: '2026-09-12T00:00:00Z' }] })
+    getChatTurns2.mockResolvedValueOnce({ items: [{ id: 'turn-own-2', prompt: 'do something here too', status: 'active' }] }) // no ownedByThisInstance field at all
+    getChatEvents2.mockResolvedValueOnce({ items: activeNoTerminalEvents(), hasMore: false })
+
+    render(<AIChatPanel workflowID="general" isOpen={true} onClose={() => {}} />)
+
+    await screen.findByText('Running slow_tool')
+    expect(screen.queryByText('Running in another window')).not.toBeInTheDocument()
   })
 })
 

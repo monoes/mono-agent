@@ -109,4 +109,21 @@ describe('composeLiveAnnouncement', () => {
     const notices = [{ code: 'x', message: 'Something else happened.', severity: 'info' }]
     expect(composeLiveAnnouncement({ ...base, calls, notices })).toBe('Response completed. 1 tool call failed. Something else happened.')
   })
+
+  // alreadyAnnouncedCount: notices the panel already spoke individually
+  // mid-turn (see the live-turn effect in AIChatPanel.jsx) must not be
+  // repeated in this finalize-time summary.
+  it('excludes notices already individually announced mid-turn, given alreadyAnnouncedCount', () => {
+    const notices = [
+      { code: 'a', message: 'First mid-turn notice.', severity: 'info' },
+      { code: 'b', message: 'Second mid-turn notice.', severity: 'info' },
+    ]
+    expect(composeLiveAnnouncement({ ...base, notices }, 1)).toBe('Response completed. Second mid-turn notice.')
+    expect(composeLiveAnnouncement({ ...base, notices }, 2)).toBe('Response completed.')
+  })
+
+  it('defaults alreadyAnnouncedCount to 0 when omitted, unchanged from before', () => {
+    const notices = [{ code: 'a', message: 'First mid-turn notice.', severity: 'info' }]
+    expect(composeLiveAnnouncement({ ...base, notices })).toBe('Response completed. First mid-turn notice.')
+  })
 })

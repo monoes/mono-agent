@@ -1,49 +1,18 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { X, Trash2, Plus, History, Maximize2, Minimize2, ArrowDown } from 'lucide-react'
 import { api, notify } from '../services/api.js'
-import { useChatStream } from './chat/useChatStream.js'
-import { chatReducer, initialChatState } from './chat/chatReducer.js'
+import { useChatStream, loadTurnState } from './chat/useChatStream.js'
 import { ChatTimeline } from './chat/ChatTimeline.jsx'
 import { ChatMarkdown } from './chat/ChatMarkdown.jsx'
 import { TurnStatus, computeStatusLabel } from './chat/TurnStatus.jsx'
 import { ChatComposer } from './chat/ChatComposer.jsx'
 import { useChatScroll } from './chat/useChatScroll.js'
 import { ChatArtifactCard } from './chat/ChatArtifactCard.jsx'
-import { detectArtifactCandidate, resolveArtifact } from './chat/chatArtifacts.js'
+import { openArtifact as revalidateAndOpenArtifact } from './chat/chatArtifacts.js'
+import { useResolvedArtifacts } from './chat/useResolvedArtifacts.js'
 import './chat/chat.css'
 import { cachedAgentScan } from '../lib/agentRuntimes.js'
 import { getAssistantTools, getAssistantAllowRuns } from '../lib/assistantTools.js'
-
-// Replays one turn's already-fetched events through chatReducer to
-// reconstruct its final state — used for history (a past turn's events,
-// fetched once) rather than live streaming (useChatStream.js owns that).
-// No scope is set: the caller already fetched precisely one turn's events
-// via getChatEvents(conversationId, turnId, ...), so every event
-// necessarily belongs here. The result is fed straight into ChatTimeline/
-// TurnStatus — the same components a live turn uses — so a reopened past
-// turn renders identically to how it looked while it was still running.
-function reduceTurnEvents(events) {
-  return events.reduce((state, event) => chatReducer(state, { type: 'event', event }), initialChatState())
-}
-
-// Fetches one turn's full event backlog (paginating past a single page,
-// same as useChatStream's own hydration) and returns its reduced state, or
-// null for a turn that produced nothing at all and never reached a
-// terminal status (defensively skipped rather than shown as a blank turn).
-async function loadTurnState(conversationId, turn) {
-  let afterSeq = 0
-  let events = []
-  for (;;) {
-    const page = await api.getChatEvents(conversationId, turn.id, afterSeq, 200)
-    const items = Array.isArray(page?.items) ? page.items : []
-    events = events.concat(items)
-    if (items.length === 0 || !page?.hasMore) break
-    afterSeq = items[items.length - 1].seq
-  }
-  const state = reduceTurnEvents(events)
-  if (state.parts.length === 0 && turn.status === 'active') return null
-  return state
-}
 
 // Shared style for the three backend/runtime/provider <select>s in the
 // selector row. Without `appearance: none`, WebKitGTK draws the closed box
@@ -100,13 +69,20 @@ export function newTurnId() {
 // at all (NoticeBanner is plain, non-live DOM). Exported and pure/
 // deterministic like TurnStatus's own computeStatusLabel, for the same
 // direct-unit-testability reason.
-export function composeLiveAnnouncement(turnState) {
+//
+// alreadyAnnouncedCount (default 0, so every existing caller/test is
+// unaffected) excludes the first N of turnState.notices from this summary —
+// the live-turn effect below announces mid-turn notices individually the
+// moment they arrive rather than waiting for finalize, and passes its own
+// running count here so a notice already spoken once is never repeated in
+// this finalize-time summary too.
+export function composeLiveAnnouncement(turnState, alreadyAnnouncedCount = 0) {
   const { label } = computeStatusLabel(turnState, Date.now())
   const parts = [`Response ${label.toLowerCase()}.`]
   const failedCount = Object.values(turnState.calls || {}).filter(c => c.status === 'completed' && c.ok === false).length
   if (failedCount === 1) parts.push('1 tool call failed.')
   else if (failedCount > 1) parts.push(`${failedCount} tool calls failed.`)
-  for (const notice of turnState.notices || []) parts.push(notice.message)
+  for (const notice of (turnState.notices || []).slice(alreadyAnnouncedCount)) parts.push(notice.message)
   return parts.join(' ')
 }
 
@@ -173,56 +149,6 @@ export function MessageBubble({ role, content, isError }) {
       </div>
     </div>
   )
-}
-
-// Resolves chat-result artifacts (chat/chatArtifacts.js) for every tool
-// call this panel has ever rendered — finalized turns in `messages` plus
-// the live streaming turn — lazily and once per (turnId, callId) pair.
-// Keyed on the PAIR, not the bare callId: the agent backend's callId comes
-// straight from the external monomind protocol's own per-event id with no
-// cross-turn uniqueness guarantee (plan: "Tool identity is (turnId,callId),
-// never array position or name" — a requirement that only makes sense if
-// callId alone CAN collide across turns). Caching by callId alone would
-// let a later turn that happens to reuse an earlier turn's callId silently
-// reuse its resolved artifact — wrong name, wrong Copy-ID value, wrong
-// Open target. Entries carry `entries.push({turnId, call})` pairs rather
-// than plain call objects for exactly this reason.
-//
-// Cached so a fast-moving live stream doesn't repeat a backend lookup on
-// every re-render, and a call already resolved stays resolved when its
-// turn is reopened later. A call is only ever cached once it's
-// 'completed': one still 'started' is skipped (not cached as "no
-// artifact") so it gets rechecked the moment it actually completes,
-// instead of being judged prematurely on a result that doesn't exist yet.
-function useResolvedArtifacts(entries) {
-  const [resolved, setResolved] = useState({}) // "turnId:callId" -> artifact | null
-  const inFlightRef = useRef(new Set())
-
-  useEffect(() => {
-    entries.forEach(({ turnId, call }) => {
-      if (call.status !== 'completed') return
-      const key = `${turnId}:${call.callId}`
-      if (key in resolved || inFlightRef.current.has(key)) return
-      const candidate = detectArtifactCandidate(call)
-      if (!candidate) {
-        setResolved(prev => ({ ...prev, [key]: null }))
-        return
-      }
-      inFlightRef.current.add(key)
-      // .catch before .then: a rejection here (resolveArtifact's own
-      // backend calls already degrade to null via api.js's guard(), so
-      // this is a last-resort safety net, not the expected path) must
-      // still clear inFlightRef, or this key is wedged unresolved forever.
-      resolveArtifact(candidate, api)
-        .catch(() => null)
-        .then(artifact => {
-          inFlightRef.current.delete(key)
-          setResolved(prev => ({ ...prev, [key]: artifact }))
-        })
-    })
-  })
-
-  return resolved
 }
 
 // ── Main panel ─────────────────────────────────────────────────────────────────
@@ -418,8 +344,16 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
         // turnId is carried alongside state (not read from state.scope,
         // which reduceTurnEvents deliberately never sets) so
         // useResolvedArtifacts can key its cache by (turnId, callId), not
-        // callId alone.
-        built.push({ role: 'turn', turnId: turn.id, state })
+        // callId alone. ownedByThisInstance is carried the same way
+        // (GetChatTurns' cross-instance-ownership field — see
+        // docs/mastermind/plans/2026-09-12-interactive-agent-chat-followups.md,
+        // "OwnerInstanceID is written and read back but never compared to
+        // anything" — not part of chatReducer's own event-replay state).
+        // Collapsed to a real boolean here so TurnStatus only ever sees
+        // true/false, never undefined: anything but an explicit `false` is
+        // treated as owned/normal, so older data or a mock lacking the
+        // field can never crash or mislabel an ordinary turn as foreign.
+        built.push({ role: 'turn', turnId: turn.id, state, ownedByThisInstance: turn.ownedByThisInstance !== false })
       }
       // Final check right before committing: a competing load could have
       // started and even finished while the last turn's events were still
@@ -600,21 +534,65 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
     window.addEventListener('mouseup', onUp)
   }, [panelWidth])
 
-  // ── Finalize the live turn into the transcript once it terminates ───────
+  // How many of the live turn's notices have already been individually
+  // announced mid-turn by the effect below — so composeLiveAnnouncement's
+  // finalize-time summary doesn't repeat one a second time. Reset at the
+  // START of every new turn in send() (not only on finalize below): a turn
+  // can also end via stop(), a workflow switch, or loadConversation without
+  // ever reaching the finalize branch here, so resetting only there could
+  // leave a stale non-zero count that silently suppresses the next turn's
+  // mid-turn announcements until enough new notices accumulate to exceed it.
+  const announcedNoticeCountRef = useRef(0)
+
+  // ── Announce mid-turn notices as they arrive, and finalize the live turn
+  //     into the transcript once it terminates ────────────────────────────
+  // chatReducer's state.notices used to be read only once, at finalize, by
+  // composeLiveAnnouncement below — a notice that arrives while a turn is
+  // still actively streaming (e.g. a nonfatal warning) had no live-region
+  // coverage at all until the turn ended, sometimes much later. Each new
+  // notice is now announced the moment it lands, through the same
+  // persistent region.
+  //
+  // Both concerns live in this ONE effect, rather than a second effect
+  // watching liveTurn.notices independently, because the terminal event and
+  // a notice can legitimately land in the SAME render: useChatStream's own
+  // dispatchEvent synthesizes the historySaved:false notice as a second,
+  // synchronous dispatch right alongside the turn.finished event that
+  // triggered it, and React batches both into one update — so liveTurn.
+  // terminal and a newly-appended liveTurn.notices entry can both be new in
+  // one pass. Two separate effects would each queue their own
+  // setLiveAnnouncement call in that pass, and only the later-declared
+  // effect's value would actually reach the DOM (React batches same-tick
+  // state updates into a single commit) — silently dropping whichever ran
+  // first, which for this exact case would mean the historySaved:false
+  // warning stops reaching the live region. Deciding both cases in one
+  // effect (terminal branch first) avoids that race entirely and keeps
+  // today's "Response completed. This turn finished, but its history may
+  // not have saved…" behavior exactly as it already is.
   useEffect(() => {
-    if (!activeTurnId || !liveTurn.terminal) return
-    // Same shape a reopened past turn uses (loadConversation above) — the
-    // just-finished turn renders identically to how it looked while still
-    // running, via ChatTimeline/TurnStatus, ordering/errors/partial work
-    // included. Pushed even when parts is empty: TurnStatus alone still
-    // truthfully reports a silent failure/stop rather than hiding it.
-    setMessages(msgs => [...msgs, { role: 'turn', turnId: activeTurnId, state: liveTurn }])
-    setLiveAnnouncement(composeLiveAnnouncement(liveTurn))
-    setActiveTurnId('')
-    setStopRequested(false)
-    refreshPastConversations()
+    if (!activeTurnId) return
+    if (liveTurn.terminal) {
+      // Same shape a reopened past turn uses (loadConversation above) — the
+      // just-finished turn renders identically to how it looked while still
+      // running, via ChatTimeline/TurnStatus, ordering/errors/partial work
+      // included. Pushed even when parts is empty: TurnStatus alone still
+      // truthfully reports a silent failure/stop rather than hiding it.
+      setMessages(msgs => [...msgs, { role: 'turn', turnId: activeTurnId, state: liveTurn }])
+      setLiveAnnouncement(composeLiveAnnouncement(liveTurn, announcedNoticeCountRef.current))
+      announcedNoticeCountRef.current = 0
+      setActiveTurnId('')
+      setStopRequested(false)
+      refreshPastConversations()
+      return
+    }
+    const notices = liveTurn.notices || []
+    if (notices.length > announcedNoticeCountRef.current) {
+      const newOnes = notices.slice(announcedNoticeCountRef.current)
+      announcedNoticeCountRef.current = notices.length
+      setLiveAnnouncement(newOnes.map(n => n.message).join(' '))
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTurnId, liveTurn.terminal])
+  }, [activeTurnId, liveTurn.terminal, liveTurn.notices])
 
   // ── Send message ────────────────────────────────────────────────────────
   const send = useCallback(async () => {
@@ -646,6 +624,12 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
         setMessages(msgs => [...msgs, { role: 'error', content: `Could not start: ${res.status}` }])
         return
       }
+      // Fresh slate for the mid-turn notice announcement count (see the
+      // finalize/mid-turn effect above) — not just relying on the previous
+      // turn's own finalize to have reset it, since a turn can also end via
+      // stop()/workflow-switch/loadConversation without ever reaching that
+      // branch.
+      announcedNoticeCountRef.current = 0
       setActiveTurnId(turnId)
     } catch (err) {
       activeStreamRef.current = null
@@ -660,10 +644,37 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
   // input, matching send()'s own guard (useAgents ? selectedRuntime : selectedProvider).
   const hasBackend = useAgents ? !!selectedRuntime : !!selectedProvider
 
+  // Plain-text mirror of the JSX `disabledReason` passed to <ChatComposer>
+  // below (near the bottom of this component) — kept logically in sync with
+  // that ternary by hand, since the live-region announcement effect right
+  // after this needs a flat string to compare/speak, not the JSX element
+  // the monomindMissing branch uses there (an inline <code> tag). If you
+  // change one, change the other the same way.
+  const disabledReasonText = !hasBackend
+    ? (monomindMissing
+        ? 'monomind not found — install with npm install -g @monoes/monomindcli, or select an AI provider above'
+        : (useAgents ? 'Select an agent runtime above to start chatting' : 'Select an AI provider above to start chatting'))
+    : ''
+
   // Assistant tool access (Settings → "Assistant tool access", GX2 contract):
   // read per render so toggling it there applies here without a remount.
   const assistantToolsOn   = getAssistantTools()
   const assistantAllowRuns = getAssistantAllowRuns()
+
+  // ── Announce ChatComposer's disabledReason banner as it changes ─────────
+  // The banner changes asynchronously as the runtime scan/provider list
+  // resolve (monomindMissing, hasBackend) — a user focused on the composer
+  // otherwise has no indication why Send just became enabled/disabled.
+  // Announced through the same persistent live region rather than a second
+  // one. prevDisabledReasonRef seeds from the first render's own value, so
+  // simply opening the panel in its resting state never announces anything
+  // — only an actual later change does.
+  const prevDisabledReasonRef = useRef(disabledReasonText)
+  useEffect(() => {
+    if (disabledReasonText === prevDisabledReasonRef.current) return
+    prevDisabledReasonRef.current = disabledReasonText
+    setLiveAnnouncement(disabledReasonText || 'You can send a message now.')
+  }, [disabledReasonText])
 
   // ── Stop an in-flight turn ──────────────────────────────────────────────
   const stop = useCallback(async () => {
@@ -720,30 +731,11 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
   Object.values(liveTurn.calls).forEach(call => artifactEntries.push({ turnId: activeTurnId, call }))
   const resolvedArtifacts = useResolvedArtifacts(artifactEntries)
 
-  // useResolvedArtifacts' cache never expires — once a card resolves it
-  // stays resolved for the life of this panel, even if the underlying
-  // workflow/org/document is deleted a minute later. Re-run the same
-  // lookup right before actually acting on a click, rather than trusting
-  // the cached snapshot; on a click reusing detectArtifactCandidate off
-  // the live `call` (not the stale cached artifact) means a cross-profile
-  // or genuinely-deleted target is caught here even though the card was
-  // legitimately valid when it first appeared.
+  // See chatArtifacts.js's own openArtifact doc comment for why this
+  // re-validates at click time instead of trusting useResolvedArtifacts'
+  // cached snapshot (which never expires).
   const openArtifact = useCallback((call, artifact) => {
-    const candidate = detectArtifactCandidate(call)
-    if (!candidate) return
-    resolveArtifact(candidate, api).catch(() => null).then(fresh => {
-      if (!fresh) {
-        // A null result here means either "genuinely gone" or "the lookup
-        // itself failed" — api.js's guard() swallows real backend errors
-        // into the same null/[] shape a clean not-found produces, so this
-        // can't claim deletion specifically without risking a false
-        // "no longer exists" on a mere transient failure (a real failure
-        // also already gets its own toast from guard's reportError).
-        notify('chat', `Couldn't confirm this ${artifact.type} still exists — not opening it.`)
-        return
-      }
-      onOpenArtifact?.(fresh)
-    })
+    revalidateAndOpenArtifact(call, artifact, { api, notify, onOpen: onOpenArtifact })
   }, [onOpenArtifact])
 
   if (!isOpen) return null
@@ -1090,7 +1082,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
                   ? <ChatArtifactCard key={call.callId} artifact={artifact} onOpenArtifact={() => openArtifact(call, artifact)} />
                   : null
               })}
-              <TurnStatus state={msg.state} stopRequested={false} />
+              <TurnStatus state={msg.state} stopRequested={false} ownedByThisInstance={msg.ownedByThisInstance} />
             </div>
           ) : (
             <MessageBubble
@@ -1149,6 +1141,9 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
         onStop={stop}
         streaming={streaming}
         disabled={!hasBackend}
+        // Kept in sync by hand with the plain-text disabledReasonText above
+        // (used by the live-region announcement effect) — update both the
+        // same way.
         disabledReason={monomindMissing
           ? <>monomind not found — install with <code>npm install -g @monoes/monomindcli</code>, or select an AI provider above</>
           : (useAgents ? 'Select an agent runtime above to start chatting' : 'Select an AI provider above to start chatting')}

@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import { detectArtifactCandidate, resolveArtifact } from './chatArtifacts.js'
+import { describe, it, expect, vi } from 'vitest'
+import { detectArtifactCandidate, resolveArtifact, openArtifact } from './chatArtifacts.js'
 
 function call(overrides) {
   return { callId: 'c1', name: 'create_workflow', status: 'completed', ok: true, result: '{}', ...overrides }
@@ -173,5 +173,89 @@ describe('resolveArtifact', () => {
 
   it('returns null for an unsupported candidate type', async () => {
     expect(await resolveArtifact({ type: 'mystery', id: 'x' }, {})).toBeNull()
+  })
+})
+
+// ── openArtifact: click-time revalidation before acting ─────────────────────
+//
+// useResolvedArtifacts.js's own cache never expires — once a card resolves
+// it stays resolved for the life of the panel, even if the underlying
+// workflow/org/document is deleted a minute later. openArtifact re-runs the
+// same detect+resolve lookup right before actually acting on a click,
+// rather than trusting the cached snapshot passed in as `artifact`. `api`,
+// `notify` and `onOpen` are injected explicitly (same reasoning as
+// resolveArtifact's own explicit `api` parameter above) so this stays a
+// generic, panel-agnostic helper with no import of services/api.js.
+describe('openArtifact', () => {
+  function call(overrides) {
+    return { callId: 'c1', name: 'create_org', status: 'completed', ok: true, result: JSON.stringify({ org_name: 'Acme' }), ...overrides }
+  }
+
+  it('re-validates and calls onOpen with the freshly-resolved artifact when it still exists', async () => {
+    const api = { listOrgDesigns: async () => ([{ name: 'Acme' }]) }
+    const notify = vi.fn()
+    const onOpen = vi.fn()
+
+    await openArtifact(call(), { type: 'org', name: 'Acme' }, { api, notify, onOpen })
+
+    expect(onOpen).toHaveBeenCalledWith({ type: 'org', name: 'Acme' })
+    expect(notify).not.toHaveBeenCalled()
+  })
+
+  it('refuses to open and notifies using the cached artifact\'s own type when the fresh lookup no longer finds it (deleted since the card resolved)', async () => {
+    const api = { listOrgDesigns: async () => ([]) } // Acme no longer present
+    const notify = vi.fn()
+    const onOpen = vi.fn()
+
+    await openArtifact(call(), { type: 'org', name: 'Acme' }, { api, notify, onOpen })
+
+    expect(onOpen).not.toHaveBeenCalled()
+    expect(notify).toHaveBeenCalledWith('chat', "Couldn't confirm this org still exists — not opening it.")
+  })
+
+  it('treats a rejected lookup the same as a null result (last-resort safety net, not the expected path)', async () => {
+    const api = { listOrgDesigns: async () => { throw new Error('boom') } }
+    const notify = vi.fn()
+    const onOpen = vi.fn()
+
+    await openArtifact(call(), { type: 'org', name: 'Acme' }, { api, notify, onOpen })
+
+    expect(onOpen).not.toHaveBeenCalled()
+    expect(notify).toHaveBeenCalledWith('chat', "Couldn't confirm this org still exists — not opening it.")
+  })
+
+  it('does nothing — no api call, no notify, no onOpen — when the call itself no longer yields a candidate', async () => {
+    const api = { listOrgDesigns: vi.fn(async () => ([{ name: 'Acme' }])) }
+    const notify = vi.fn()
+    const onOpen = vi.fn()
+
+    await openArtifact(call({ name: 'list_vault_items' }), { type: 'org', name: 'Acme' }, { api, notify, onOpen })
+
+    expect(api.listOrgDesigns).not.toHaveBeenCalled()
+    expect(notify).not.toHaveBeenCalled()
+    expect(onOpen).not.toHaveBeenCalled()
+  })
+
+  it('does not throw when onOpen is not provided and the fresh lookup succeeds', async () => {
+    const api = { listOrgDesigns: async () => ([{ name: 'Acme' }]) }
+    const notify = vi.fn()
+
+    await expect(openArtifact(call(), { type: 'org', name: 'Acme' }, { api, notify })).resolves.toBeUndefined()
+  })
+
+  it('uses the cached artifact\'s type in the notice, not the candidate\'s or the (absent) fresh result\'s', async () => {
+    // Regression guard: the message must read `artifact.type` (the second
+    // argument, the previously-cached/rendered artifact) — a rewrite that
+    // swapped in `candidate.type` would happen to read the same value for
+    // org/workflow/document today, but only because detectArtifactCandidate
+    // and resolveArtifact always agree on `type`; asserting the literal
+    // string here still pins the intended source.
+    const api = { getProfileDocument: async () => null }
+    const notify = vi.fn()
+    const documentCall = { callId: 'c2', name: 'save_document', status: 'completed', ok: true, result: JSON.stringify({ vault_document_id: 'doc-1' }) }
+
+    await openArtifact(documentCall, { type: 'document', id: 'doc-1', filename: 'a.md' }, { api, notify })
+
+    expect(notify).toHaveBeenCalledWith('chat', "Couldn't confirm this document still exists — not opening it.")
   })
 })

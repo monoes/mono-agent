@@ -109,3 +109,38 @@ export async function resolveArtifact(candidate, api) {
 
   return null
 }
+
+// openArtifact re-validates a resolved artifact's underlying reference
+// right before acting on it, rather than trusting useResolvedArtifacts.js's
+// own cache — that cache never expires, so a workflow/org/document deleted
+// after its card first resolved would otherwise still offer a stale
+// Open/Copy-ID action. A generic "revalidate before acting" operation with
+// no panel-specific dependency: `api` and `notify` are passed in explicitly
+// (same reasoning as resolveArtifact's own explicit `api` parameter above —
+// this file imports nothing, so it stays testable with small hand-built
+// fakes instead of mocking services/api.js), and `onOpen` is whatever the
+// caller wants to do with a freshly-confirmed artifact.
+//
+// Reuses detectArtifactCandidate off the live `call` (not the stale cached
+// `artifact`) so a cross-profile or genuinely-deleted target is caught here
+// even though the card was legitimately valid when it first appeared.
+export async function openArtifact(call, artifact, { api, notify, onOpen }) {
+  const candidate = detectArtifactCandidate(call)
+  if (!candidate) return
+  const fresh = await resolveArtifact(candidate, api).catch(() => null)
+  if (!fresh) {
+    // A null result here means either "genuinely gone" or "the lookup
+    // itself failed" — api.js's guard() swallows real backend errors into
+    // the same null/[] shape a clean not-found produces, so this can't
+    // claim deletion specifically without risking a false "no longer
+    // exists" on a mere transient failure (a real failure also already
+    // gets its own toast from guard's reportError). Reads `artifact.type`
+    // (the cached/rendered artifact passed in), not `candidate.type` — the
+    // candidate is a fresh re-derivation from `call` and happens to agree
+    // with `artifact.type` today, but `artifact` is the thing the user
+    // actually saw and clicked.
+    notify('chat', `Couldn't confirm this ${artifact.type} still exists — not opening it.`)
+    return
+  }
+  onOpen?.(fresh)
+}

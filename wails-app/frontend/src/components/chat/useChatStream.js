@@ -129,3 +129,62 @@ export function useChatStream({ conversationId, turnId }) {
 
   return state
 }
+
+// ── Historical turn loading ──────────────────────────────────────────────────
+//
+// reduceTurnEvents/loadTurnState are the historical sibling of hydrate()
+// above: loading a PAST turn's already-fetched events (a one-shot backlog
+// fetch, no live merge, no subscription) rather than observing a live one.
+// Used by AIChatPanel.jsx's loadConversation to rebuild each past turn's
+// state before feeding it to the same ChatTimeline/TurnStatus components a
+// live turn (via useChatStream above) uses.
+
+// Replays one turn's already-fetched events through chatReducer to
+// reconstruct its final state — used for history (a past turn's events,
+// fetched once) rather than live streaming (this file's own useChatStream
+// hook owns that). No scope is set: the caller already fetched precisely
+// one turn's events via getChatEvents(conversationId, turnId, ...), so
+// every event necessarily belongs here. The result is fed straight into
+// ChatTimeline/TurnStatus — the same components a live turn uses — so a
+// reopened past turn renders identically to how it looked while it was
+// still running.
+export function reduceTurnEvents(events) {
+  return events.reduce((state, event) => chatReducer(state, { type: 'event', event }), initialChatState())
+}
+
+// Fetches one turn's full event backlog (paginating past a single page,
+// same as hydrate() above) and returns its reduced state, or null for a
+// turn that produced nothing at all and never reached a terminal status
+// (defensively skipped rather than shown as a blank turn).
+//
+// That skip must NOT apply to a turn that is active because it is
+// genuinely still running in a DIFFERENT live instance (GetChatTurns'
+// ownedByThisInstance:false — see
+// docs/mastermind/plans/2026-09-12-interactive-agent-chat-followups.md,
+// "OwnerInstanceID is written and read back but never compared to
+// anything"): turn.started alone adds no part, so a foreign turn that has
+// only just been admitted elsewhere (routine while its subprocess launches
+// or its model connects) has exactly the zero-parts shape this skip was
+// meant for a DIFFERENT case (this instance's own turn, just admitted, no
+// events yet) — silently dropping it here would hide it entirely, right as
+// this window's own next send() in that same conversation gets refused
+// (ErrTurnOwnedByOtherInstance), with nothing on screen explaining why.
+// Same principle the live-turn finalize path already applies (see its own
+// comment in AIChatPanel.jsx: "Pushed even when parts is empty: TurnStatus
+// alone still truthfully reports a silent failure/stop rather than hiding
+// it") — an empty ChatTimeline plus the honest static TurnStatus label is
+// the correct, non-hiding rendering here too.
+export async function loadTurnState(conversationId, turn) {
+  let afterSeq = 0
+  let events = []
+  for (;;) {
+    const page = await api.getChatEvents(conversationId, turn.id, afterSeq, 200)
+    const items = Array.isArray(page?.items) ? page.items : []
+    events = events.concat(items)
+    if (items.length === 0 || !page?.hasMore) break
+    afterSeq = items[items.length - 1].seq
+  }
+  const state = reduceTurnEvents(events)
+  if (state.parts.length === 0 && turn.status === 'active' && turn.ownedByThisInstance !== false) return null
+  return state
+}

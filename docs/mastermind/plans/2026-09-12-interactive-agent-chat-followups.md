@@ -608,6 +608,134 @@ Full suite reconfirmed green after each fix and at the end: `go build`/
 `go vet`/`go test` from both Go modules, `npx vitest run` (262/262,
 frontend).
 
+## Round 4 (2026-09-12): the remaining harder-tier items, via 8 parallel agents
+
+Two file-disjoint tracks (Go backend, 4 sequential fixes; frontend, 4
+sequential fixes) run concurrently via a Workflow script, each step
+building on the previous step's already-applied changes. All 8 completed
+with TDD discipline; independently re-verified afterward (full fresh
+`go build`/`go vet`/`go test` across both Go modules, `npx vitest run`,
+plus direct code review of the two highest-stakes diffs — the schema
+migration and the provider-callback restructuring).
+
+**Backend — fixed:**
+
+- **The pre-existing flaky test is fixed.** `runAgentTurn`'s wait goroutine
+  now joins a `stderrDone` channel (closed by the stderr-reader goroutine)
+  before reading `stderrBuf`, closing the missing happens-before edge.
+  Verified with a new deterministic repro test (injects a delayed stderr
+  read) plus `-race -count=5` and 15+ repeat runs of the full
+  `TestChatSupervisor` family — zero failures where roughly half used to
+  fail. One disclosed, out-of-scope residual: a real process whose stderr
+  goroutine never gets scheduled before `Wait()` force-closes the pipe can
+  still lose kernel-buffered bytes — fixing that needs the larger
+  `Wait()`/drain-ordering restructuring already deferred, not a bolt-on.
+- **Cross-instance turn ownership is now enforced**, with a UI label
+  (frontend half below). `CreateTurn` refuses a new turn when the
+  conversation already has an active turn owned by a different,
+  identified instance (`ErrTurnOwnedByOtherInstance`); `StopChatTurn` now
+  returns an explicit failure for a foreign-active turn instead of a
+  silent `{"ok":true}`; `GetChatTurns` exposes `ownedByThisInstance` per
+  turn. **Two disclosed, accepted gaps**: (1) the admission check is a
+  plain read-then-decide, not transactional — matches this file's
+  existing precedent (`AppendEvent`, `DeleteConversation` pre-fix) and was
+  deliberately not hardened further, since a DB-level unique constraint
+  would fail migration outright on any existing database that already has
+  two active rows for one conversation; (2) **`reconcileOrphanedTurns`
+  still bypasses this fix for a newly-*launched* second instance** —
+  arguably the more common trigger than "an already-running instance
+  starts a new turn." A window B launched while window A is mid-turn will
+  have its own startup unconditionally finalize A's "active" row as
+  `interrupted` before B ever calls `StartChatTurn`, silently reverting to
+  today's broken behavior for that specific sequence. This needs a real
+  liveness/heartbeat mechanism — a separate, larger design problem than
+  this round attempted.
+- **Provider-backend tool status bugs are both fixed at their shared root
+  cause.** `internal/ai/chat/service.go`'s tool loop now calls
+  `onToolStart` before executing a tool and `onToolCall` after, with a
+  real `error` value instead of a string to sniff — `app_chat.go` derives
+  a fresh `ok` per call from that error (fixing the false-success bug) and
+  gets a true elapsed time between the two calls (fixing the ~0.0s bug).
+  `wails-app/app_ai.go`'s legacy `StreamAIChat` binding needed a mechanical
+  compile-fix for the shared signature change (verified as the only other
+  caller); zero behavior change there. Disclosed gap: no dedicated
+  `wails-app`-level test for the two new closures specifically — the
+  injection seams needed are unexported/package-private, and adding a
+  production-visible seam wasn't justified for this bug; coverage instead
+  comes from the service-level contract tests plus the full supervisor
+  suite (incl. `-race`) staying green.
+- **`DeleteConversation`'s race is closed at both levels, and both were
+  empirically proven necessary, not redundant.** `DeleteConversation`'s
+  check-then-delete now runs inside one `BEGIN IMMEDIATE` transaction, and
+  migration `040_ai_chat_conversation_foreign_keys.sql` adds real foreign
+  keys (`ai_chat_turns.conversation_id`, `ai_chat_events.conversation_id`
+  and `.turn_id`, all `ON DELETE CASCADE`) via the standard SQLite
+  rebuild-and-rename recipe, safe on both a fresh database and one with
+  existing rows (both scenarios have a dedicated migration test). The
+  concurrency test settles the "is the FK actually load-bearing" question
+  with real numbers: unfixed, 34/100 races orphaned rows; **the
+  transaction lock *alone* still left 99/100 orphaned** (`DeleteConversation`
+  grabs its write lock first, so by the time a racing `CreateTurn`'s INSERT
+  reaches the database, the delete has usually already committed and
+  released it); lock + FK together, 0/100 across repeated runs. Disclosed:
+  `CreateTurn` never validated the target conversation's existence at all,
+  race or not — now fails cleanly via the FK (a generic wrapped error) but
+  a typed sentinel for that specific case wasn't added (out of scope).
+
+**Frontend — fixed:**
+
+- **`useResolvedArtifacts` now retries once** on a null/failed resolution
+  (300ms delay) before permanently caching a negative result; the retry
+  timer is cancelled on unmount so closing the panel mid-retry can't fire
+  into a dead component.
+- **The two remaining live-region gaps are closed.** Mid-turn notices are
+  now announced as they arrive (not just at finalize), and
+  `composeLiveAnnouncement` gained an `alreadyAnnouncedCount` parameter so
+  finalize's summary never repeats one already announced live. The
+  composer's `disabledReason` banner is now announced on change too. Both
+  feed the same single live region — deliberately merged into one
+  `useEffect` rather than two, since a `historySaved:false` notice and its
+  triggering `turn.finished` land in the same React batch, and two
+  independent effects would race on which one's `setLiveAnnouncement` call
+  actually reaches the DOM. **Disclosed process deviation**: this agent
+  wrote the fix before the tests (against explicit instructions), caught
+  it before declaring done, and retroactively verified red-then-green by
+  reverting and re-applying — a real if out-of-order verification, not a
+  skipped one, but worth knowing. **Unconfirmed, low-frequency flake
+  observed**: a one-off failure in the new `AIChatPanel.liveRegion.test.jsx`
+  (written by this task), seen once by a *later* agent in ~6 full-suite
+  runs, never in isolation. Independently re-run 20 times since (12
+  full-suite, 8 isolated) with zero reproductions — noted here rather than
+  chased further.
+- **The cross-instance ownership label is rendered.** A foreign-active
+  turn now shows a static "Running in another window" label with no
+  spinner/ticking clock (`TurnStatus.jsx`), and `loadTurnState`'s
+  zero-parts skip no longer hides a foreign turn that hasn't produced any
+  event yet (a gap the assigned task didn't name explicitly but the
+  advisor caught — a foreign turn admitted moments ago would otherwise
+  vanish from the transcript entirely right as this window's own next
+  `send()` gets refused, with nothing on screen explaining why). Disclosed
+  gap: `ChatTimeline.jsx`/`ToolActivityCard.jsx` weren't touched, so an
+  individual tool call within a foreign-but-active turn still renders as
+  "Interrupted" (round 3's orphaned-call handling) rather than something
+  more precise — a real, minor, adjacent inaccuracy left for a later round.
+- **`AIChatPanel.jsx` is extracted, zero behavior change.**
+  `useResolvedArtifacts` → its own file beside `chatArtifacts.js`;
+  `openArtifact` → an exported helper in `chatArtifacts.js` itself;
+  `reduceTurnEvents`/`loadTurnState` → into `useChatStream.js`, beside its
+  own `hydrate()`. Each extracted piece now has its own direct unit tests.
+
+Verification, independently re-run after all 8 agents reported (not just
+each agent's own siloed check): `go build`/`go vet`/`go test` clean across
+both Go modules (root + `wails-app`), `wails-app` suite re-run 5x with
+zero failures, `npx vitest run` **302/302** (26 files) re-run 12x with
+zero failures. Direct code review (not just trusting the summaries) of
+the migration SQL against the live Go schema, the migration's ordering
+relative to `ApplyMigrations()`/`initTables()` in both the GUI and CLI
+boot paths, the provider callback's start/before-execution and
+call/after-execution placement, and the `CreateTurn`/`StopChatTurn`/
+`GetChatTurns` ownership logic — all confirmed correct as reported.
+
 ---
 
 ## Status
@@ -638,20 +766,25 @@ frontend).
       already-present-notice announcements now fixed; mid-turn notices and
       the composer's disabled-reason banner remain open (see below)
 
-### Round 1/3 review — documented, open for a later round
+### Round 4 (cross-instance ownership, provider tool status, delete race, artifact retry, live-region gaps, AIChatPanel extraction) — fixed
 
-- [ ] `useResolvedArtifacts` permanent null-cache on transient failure
-- [ ] `OwnerInstanceID` cross-instance admission never enforced
-- [ ] `AIChatPanel.jsx` extraction (useResolvedArtifacts, openArtifact, reduceTurnEvents/loadTurnState)
+- [x] R4.1 Pre-existing flaky test (`TestChatSupervisor_UnknownFlagLaunchFailure_...`)
+- [x] R4.2 `OwnerInstanceID` cross-instance admission enforced + UI label
+- [x] R4.3 Provider-backend tool elapsed time + false-success bugs
+- [x] R4.4 `DeleteConversation` race (transaction + FK migration)
+- [x] R4.5 `useResolvedArtifacts` permanent null-cache (bounded 1-retry)
+- [x] R4.6 Live-region coverage for mid-turn notices + composer disabled-reason
+- [x] R4.7 `AIChatPanel.jsx` extraction (useResolvedArtifacts, openArtifact, reduceTurnEvents/loadTurnState)
+
+### Documented, open for a later round
+
 - [ ] Continuous panel-resize has no keyboard path (discrete alternative exists)
-- [ ] Live-region coverage for mid-turn notices and ChatComposer's disabled-reason banner
-- [ ] Provider-backend tool elapsed time always ~0.0s
-- [ ] Provider-backend tool failures always render as success
-- [ ] `DeleteConversation` not atomic against concurrent `StartChatTurn`
+- [ ] `reconcileOrphanedTurns` bypasses R4.2's fix for a newly-launched second instance (see Round 4 detail above)
+- [ ] `ChatTimeline.jsx`/`ToolActivityCard.jsx` don't distinguish a foreign-active turn's tool calls from an ordinary orphaned one (see Round 4 detail above)
 - [ ] Tool-output truncation metadata discarded (`truncated`/`originalBytes`)
 - [ ] Lower-confidence service.go/exec.go items (round-cap status, ctx.Err()
       checks, history-window slicing, sticky res.Err — see round-1 detail above)
-- [ ] Pre-existing flaky test: `TestChatSupervisor_UnknownFlagLaunchFailure_ReportsDistinctNoticeThenFailed` (see dedicated section above)
+- [ ] Unconfirmed low-frequency flake in `AIChatPanel.liveRegion.test.jsx` (see Round 4 detail above)
 
 ## Addendum: two things found outside the seven items' scope
 

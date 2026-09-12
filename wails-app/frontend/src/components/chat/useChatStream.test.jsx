@@ -25,7 +25,7 @@ vi.mock('../../services/api.js', () => ({
   onChatEvent: (cb) => fakeSubscribe('chat:event', cb),
 }))
 
-import { useChatStream } from './useChatStream.js'
+import { useChatStream, reduceTurnEvents, loadTurnState } from './useChatStream.js'
 
 function page(items, hasMore = false) {
   return { items, hasMore, lastCommittedSeq: items.length ? items[items.length - 1].seq : 0 }
@@ -230,5 +230,93 @@ describe('useChatStream', () => {
 
     expect(a.result.current.parts[0]?.text).toBe('for-a')
     expect(b.result.current.parts).toEqual([])
+  })
+})
+
+// ── reduceTurnEvents / loadTurnState ─────────────────────────────────────────
+//
+// The historical sibling of this file's own hydrate(): loading a PAST
+// turn's already-fetched events (a one-shot backlog fetch, no live merge,
+// no subscription) rather than observing a live one. Used by
+// AIChatPanel.jsx's loadConversation to rebuild each past turn's state
+// before feeding it to the same ChatTimeline/TurnStatus components a live
+// turn uses.
+describe('reduceTurnEvents', () => {
+  it('reduces an ordered event list into final state via chatReducer, same as applying them one at a time', () => {
+    const state = reduceTurnEvents([
+      ev('assistant.delta', { partId: 'p1', text: 'hel' }, 1),
+      ev('assistant.delta', { partId: 'p1', text: 'lo' }, 2),
+      ev('turn.finished', { status: 'completed', reason: 'end_turn', exitCode: 0, historySaved: true }, 3),
+    ])
+    expect(state.parts).toEqual([{ kind: 'text', partId: 'p1', text: 'hello' }])
+    expect(state.terminal).toEqual({ status: 'completed', reason: 'end_turn', exitCode: 0, historySaved: true })
+  })
+
+  it('never sets scope, so events are applied regardless of their own conversationId/turnId', () => {
+    // The caller already fetched precisely one turn's own events via
+    // getChatEvents(conversationId, turnId, ...) — every event necessarily
+    // belongs here, so there is nothing to filter against (chatReducer's
+    // 'event' case only filters when state.scope is truthy).
+    const state = reduceTurnEvents([
+      ev('assistant.delta', { partId: 'p1', text: 'x' }, 1, { conversationId: 'other-conv', turnId: 'other-turn' }),
+    ])
+    expect(state.scope).toBeNull()
+    expect(state.parts).toEqual([{ kind: 'text', partId: 'p1', text: 'x' }])
+  })
+
+  it('returns the untouched initial state for an empty event list', () => {
+    expect(reduceTurnEvents([])).toEqual({
+      scope: null, parts: [], calls: {}, notices: [], usage: null, session: null,
+      terminal: null, startedAt: null, lastEventAt: null, lastSeq: 0,
+    })
+  })
+})
+
+describe('loadTurnState', () => {
+  it('paginates the backlog to exhaustion (same as hydrate) before reducing', async () => {
+    getChatEvents
+      .mockResolvedValueOnce(page([ev('assistant.delta', { partId: 'p1', text: 'a' }, 1)], true))
+      .mockResolvedValueOnce(page([ev('assistant.delta', { partId: 'p1', text: 'b' }, 2)], false))
+
+    const state = await loadTurnState('conv-1', { id: 'turn-1', status: 'completed' })
+
+    expect(state.parts[0].text).toBe('ab')
+    expect(getChatEvents).toHaveBeenNthCalledWith(1, 'conv-1', 'turn-1', 0, 200)
+    expect(getChatEvents).toHaveBeenNthCalledWith(2, 'conv-1', 'turn-1', 1, 200)
+  })
+
+  it('returns null for a turn that is active, owned by this instance, and produced zero observed parts', async () => {
+    getChatEvents.mockResolvedValueOnce(page([ev('turn.started', {}, 1)]))
+
+    const state = await loadTurnState('conv-1', { id: 'turn-1', status: 'active', ownedByThisInstance: true })
+
+    expect(state).toBeNull()
+  })
+
+  it('does NOT skip a zero-parts active turn when it is owned by a different (foreign) instance', async () => {
+    // Same zero-parts shape as the skip case above, but this instance has
+    // no event stream for a foreign turn and cannot stop it — silently
+    // dropping it here would hide it entirely with no explanation.
+    getChatEvents.mockResolvedValueOnce(page([ev('turn.started', {}, 1)]))
+
+    const state = await loadTurnState('conv-1', { id: 'turn-1', status: 'active', ownedByThisInstance: false })
+
+    expect(state).not.toBeNull()
+    expect(state.parts).toEqual([])
+  })
+
+  it('does not apply the zero-parts skip to a non-active (already-terminal) turn', async () => {
+    getChatEvents.mockResolvedValueOnce(page([]))
+
+    const state = await loadTurnState('conv-1', { id: 'turn-1', status: 'completed' })
+
+    expect(state).not.toBeNull()
+    expect(state.parts).toEqual([])
+  })
+
+  it('fetches starting at afterSeq 0 with the same page size hydrate() uses', async () => {
+    getChatEvents.mockResolvedValueOnce(page([]))
+    await loadTurnState('conv-9', { id: 'turn-9', status: 'completed' })
+    expect(getChatEvents).toHaveBeenCalledWith('conv-9', 'turn-9', 0, 200)
   })
 })
