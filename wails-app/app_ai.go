@@ -150,7 +150,8 @@ func (a *App) StreamAIChat(workflowID, message, providerID, model string) string
 					"done":       chunk.Done,
 				})
 			},
-			func(name, args, result string) {
+			nil, // this legacy event has always been a single post-execution "ai:tool" emission; no separate start signal to relay here.
+			func(callID, name, args, result string, toolErr error) {
 				runtime.EventsEmit(a.ctx, "ai:tool", map[string]interface{}{
 					"workflowID": workflowID,
 					"tool":       name,

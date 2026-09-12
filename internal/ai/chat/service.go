@@ -47,11 +47,36 @@ const maxHistoryMessages = 40
 // ChatService so tests can inject a mock client without needing real providers.
 type NewClientFunc func(provider ai.AIProvider) (ai.AIClient, error)
 
+// ToolExecFunc executes one resolved tool call against the given
+// CanvasTools instance, returning the result text destined for the model's
+// own tool-result message (a human-readable {"error":...} JSON body when
+// the call failed, unchanged from before) and, separately, a non-nil error
+// exactly when the call failed. It is a field on ChatService, mirroring
+// NewClientFunc's existing injection pattern, so tests can substitute a
+// fake tool (artificially slow, or one that fails) without needing a real
+// registered CanvasTools tool.
+type ToolExecFunc func(ct *CanvasTools, name, argsJSON string) (string, error)
+
+// execToolViaCanvasTools is ChatService's default ToolExecFunc: dispatch to
+// the real CanvasTools registry. A failure is still rendered into the
+// {"error":...} JSON body the model sees as this tool call's result text
+// (unchanged conversational behavior), but the raw error is now also
+// returned so callers (e.g. the provider-backend tool.completed event) can
+// report ok:false without parsing that text.
+func execToolViaCanvasTools(ct *CanvasTools, name, argsJSON string) (string, error) {
+	result, err := ct.Execute(name, argsJSON)
+	if err != nil {
+		return fmt.Sprintf(`{"error": %q}`, err.Error()), err
+	}
+	return result, nil
+}
+
 // ChatService orchestrates AI chat interactions for workflows.
 type ChatService struct {
 	aiStore     *ai.AIStore
 	db          *sql.DB
 	newClientFn NewClientFunc
+	execToolFn  ToolExecFunc
 	canvasTools *CanvasTools
 	// nodeTypes mirrors whatever was last passed to SetCanvasNodeTypes, kept
 	// here (in addition to being set directly on canvasTools) so
@@ -66,6 +91,7 @@ func NewChatService(aiStore *ai.AIStore, db *sql.DB) *ChatService {
 		aiStore:     aiStore,
 		db:          db,
 		newClientFn: ai.NewClient,
+		execToolFn:  execToolViaCanvasTools,
 		canvasTools: NewCanvasTools(db),
 	}
 }
@@ -90,15 +116,23 @@ func (s *ChatService) SetProfileID(profileID string) {
 // (app_ai.go's StreamAIChat) during migration — see StreamChatScoped for
 // the race-free replacement new callers should use.
 //
-// onChunk is called for each streamed token. onToolCall is called whenever the
-// model invokes a tool, receiving the tool name, arguments JSON, and result.
+// onChunk is called for each streamed token. onToolStart is called with the
+// tool call's ID/name/arguments immediately before that call executes, so
+// callers can record a true start time. onToolCall is called once
+// execution finishes, carrying the same call ID, the tool's result text and
+// an explicit error — non-nil exactly when the call failed. Callers must
+// use that error, not string-sniff result for an embedded error marker: the
+// result text still carries a human-readable {"error":...} body on failure
+// for the model's own conversational context, unchanged from before. Either
+// callback may be nil.
 func (s *ChatService) StreamChat(
 	ctx context.Context,
 	workflowID, userMessage, providerID, model string,
 	onChunk func(ai.StreamChunk),
-	onToolCall func(name, args, result string),
+	onToolStart func(callID, name, args string),
+	onToolCall func(callID, name, args, result string, err error),
 ) error {
-	return s.streamChat(ctx, s.canvasTools, workflowID, userMessage, providerID, model, onChunk, onToolCall)
+	return s.streamChat(ctx, s.canvasTools, workflowID, userMessage, providerID, model, onChunk, onToolStart, onToolCall)
 }
 
 // StreamChatScoped behaves like StreamChat but takes profileID explicitly
@@ -115,12 +149,13 @@ func (s *ChatService) StreamChatScoped(
 	ctx context.Context,
 	profileID, workflowID, userMessage, providerID, model string,
 	onChunk func(ai.StreamChunk),
-	onToolCall func(name, args, result string),
+	onToolStart func(callID, name, args string),
+	onToolCall func(callID, name, args, result string, err error),
 ) error {
 	ct := NewCanvasTools(s.db)
 	ct.SetProfileID(profileID)
 	ct.SetNodeTypes(s.nodeTypes)
-	return s.streamChat(ctx, ct, workflowID, userMessage, providerID, model, onChunk, onToolCall)
+	return s.streamChat(ctx, ct, workflowID, userMessage, providerID, model, onChunk, onToolStart, onToolCall)
 }
 
 // streamChat is StreamChat's actual body, parameterized on which
@@ -132,7 +167,8 @@ func (s *ChatService) streamChat(
 	ct *CanvasTools,
 	workflowID, userMessage, providerID, model string,
 	onChunk func(ai.StreamChunk),
-	onToolCall func(name, args, result string),
+	onToolStart func(callID, name, args string),
+	onToolCall func(callID, name, args, result string, err error),
 ) error {
 	if err := ct.checkWorkflowOwnership(workflowID); err != nil {
 		return err
@@ -249,11 +285,24 @@ func (s *ChatService) streamChat(
 			ToolCalls: toolCalls,
 		})
 
-		// Execute each tool call and add results.
+		// Execute each tool call and add results. callID identifies this
+		// call to onToolStart/onToolCall so a caller (e.g. app_chat.go) can
+		// pair a real start signal with its completion and derive a true
+		// elapsed time — tc.ID normally provides this (already relied on
+		// below for ToolCallID threading), with a generated fallback only
+		// for the defensive case of an adapter that omits it, so the two
+		// display callbacks never disagree on the call's identity.
 		for _, tc := range toolCalls {
-			result := s.executeTool(ct, tc.Function.Name, tc.Function.Arguments)
+			callID := tc.ID
+			if callID == "" {
+				callID = uuid.New().String()
+			}
+			if onToolStart != nil {
+				onToolStart(callID, tc.Function.Name, tc.Function.Arguments)
+			}
+			result, toolErr := s.executeTool(ct, tc.Function.Name, tc.Function.Arguments)
 			if onToolCall != nil {
-				onToolCall(tc.Function.Name, tc.Function.Arguments, result)
+				onToolCall(callID, tc.Function.Name, tc.Function.Arguments, result, toolErr)
 			}
 
 			messages = append(messages, ai.Message{
@@ -314,15 +363,14 @@ func (s *ChatService) streamChat(
 	return nil
 }
 
-// executeTool dispatches a tool call by name via the given CanvasTools
-// instance (the shared one for StreamChat, a per-turn one for
-// StreamChatScoped). Returns the result string.
-func (s *ChatService) executeTool(ct *CanvasTools, name, argsJSON string) string {
-	result, err := ct.Execute(name, argsJSON)
-	if err != nil {
-		return fmt.Sprintf(`{"error": %q}`, err.Error())
-	}
-	return result
+// executeTool dispatches a tool call by name via s.execToolFn (defaulting
+// to execToolViaCanvasTools, dispatching through the given CanvasTools
+// instance — the shared one for StreamChat, a per-turn one for
+// StreamChatScoped). Returns the result text for the model's tool message
+// and a separate, explicit error — never string-sniffed — for callers that
+// need to know whether the call actually failed.
+func (s *ChatService) executeTool(ct *CanvasTools, name, argsJSON string) (string, error) {
+	return s.execToolFn(ct, name, argsJSON)
 }
 
 // GetHistory returns the full chat history for a workflow, scoped to the

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -106,6 +107,7 @@ func TestStreamChatBasic(t *testing.T) {
 			mu.Unlock()
 		},
 		nil, // no tool calls expected
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("StreamChat: %v", err)
@@ -154,14 +156,14 @@ func TestGetHistory(t *testing.T) {
 	svc := newTestService(t, "Response 1", "wf-2")
 
 	// Send two messages to build history.
-	err := svc.StreamChat(context.Background(), "wf-2", "First message", "test-provider", "gpt-4o", nil, nil)
+	err := svc.StreamChat(context.Background(), "wf-2", "First message", "test-provider", "gpt-4o", nil, nil, nil)
 	if err != nil {
 		t.Fatalf("StreamChat 1: %v", err)
 	}
 	svc.newClientFn = func(provider ai.AIProvider) (ai.AIClient, error) {
 		return &mockAIClient{response: "Response 2"}, nil
 	}
-	err = svc.StreamChat(context.Background(), "wf-2", "Second message", "test-provider", "gpt-4o", nil, nil)
+	err = svc.StreamChat(context.Background(), "wf-2", "Second message", "test-provider", "gpt-4o", nil, nil, nil)
 	if err != nil {
 		t.Fatalf("StreamChat 2: %v", err)
 	}
@@ -229,7 +231,7 @@ func TestStreamChatWindowsHistory(t *testing.T) {
 		}
 	}
 
-	if err := svc.StreamChat(context.Background(), "wf-win", "new message", "test-provider", "gpt-4o", nil, nil); err != nil {
+	if err := svc.StreamChat(context.Background(), "wf-win", "new message", "test-provider", "gpt-4o", nil, nil, nil); err != nil {
 		t.Fatalf("StreamChat: %v", err)
 	}
 	if len(mock.requests) == 0 {
@@ -267,7 +269,7 @@ func TestClearHistory(t *testing.T) {
 	svc := newTestService(t, "Some response", "wf-3")
 
 	// Create some history.
-	err := svc.StreamChat(context.Background(), "wf-3", "Hello", "test-provider", "gpt-4o", nil, nil)
+	err := svc.StreamChat(context.Background(), "wf-3", "Hello", "test-provider", "gpt-4o", nil, nil, nil)
 	if err != nil {
 		t.Fatalf("StreamChat: %v", err)
 	}
@@ -310,7 +312,7 @@ func TestStreamChatScoped_ImmuneToConcurrentSetProfileID(t *testing.T) {
 	// same time as an in-flight scoped call under a different profile.
 	svc.SetProfileID("profile-b")
 
-	if err := svc.StreamChatScoped(context.Background(), "default", "general", "hello", "test-provider", "gpt-4o", nil, nil); err != nil {
+	if err := svc.StreamChatScoped(context.Background(), "default", "general", "hello", "test-provider", "gpt-4o", nil, nil, nil); err != nil {
 		t.Fatalf("StreamChatScoped: %v", err)
 	}
 
@@ -337,7 +339,7 @@ func TestStreamChatScoped_ImmuneToConcurrentSetProfileID(t *testing.T) {
 // the shared canvasTools field currently holds.
 func TestClearHistoryScoped_DoesNotUseSharedProfile(t *testing.T) {
 	svc := newTestService(t, "hi")
-	if err := svc.StreamChatScoped(context.Background(), "default", "general", "hello", "test-provider", "gpt-4o", nil, nil); err != nil {
+	if err := svc.StreamChatScoped(context.Background(), "default", "general", "hello", "test-provider", "gpt-4o", nil, nil, nil); err != nil {
 		t.Fatalf("StreamChatScoped: %v", err)
 	}
 	svc.SetProfileID("profile-b")
@@ -351,5 +353,141 @@ func TestClearHistoryScoped_DoesNotUseSharedProfile(t *testing.T) {
 	}
 	if len(history) != 0 {
 		t.Errorf("GetHistoryScoped(default) after ClearHistoryScoped(default) = %d messages, want 0", len(history))
+	}
+}
+
+// --- provider tool-call start/end signal regression tests ---
+//
+// Root cause (interactive-agent-chat followups, Round 1 Code Reviewer):
+// the tool-calling loop below used to invoke a single onToolCall callback
+// only AFTER executeTool had already fully run, with no separate start
+// signal and no explicit error value — app_chat.go's caller could not
+// derive a real elapsed time (both events were stamped back-to-back after
+// the fact) and had no way to know a call had failed short of parsing the
+// {"error":...} JSON text executeTool produces for the model's own benefit.
+
+// toolCallingAIClient is a fake AIClient that requests exactly one named
+// tool call on its first (streamed) response, then returns a plain final
+// answer with no further tool calls on the non-streaming continuation
+// round, so the tool loop in streamChat runs exactly once.
+type toolCallingAIClient struct {
+	toolName   string
+	toolArgs   string
+	toolCallID string
+	final      string
+}
+
+func (c *toolCallingAIClient) StreamComplete(ctx context.Context, req ai.CompletionRequest, onChunk func(ai.StreamChunk)) error {
+	onChunk(ai.StreamChunk{
+		ToolCalls: []ai.ToolCall{{
+			ID:       c.toolCallID,
+			Type:     "function",
+			Function: ai.ToolCallFunc{Name: c.toolName, Arguments: c.toolArgs},
+		}},
+		Done: true,
+	})
+	return nil
+}
+
+func (c *toolCallingAIClient) Complete(ctx context.Context, req ai.CompletionRequest) (ai.CompletionResponse, error) {
+	return ai.CompletionResponse{Content: c.final, FinishReason: "stop"}, nil
+}
+
+// TestStreamChat_ToolStart_FiresBeforeExecution_ElapsedTimeIsReal is the
+// regression test for "provider-backend tool cards always show ~0.0s
+// elapsed time": onToolStart must fire BEFORE the tool actually executes,
+// not be synthesized back-to-back with the completion callback afterward.
+// A caller (app_chat.go) deriving elapsed time from two real wall-clock
+// event timestamps only gets a true, non-zero duration if the start
+// signal genuinely precedes execution.
+func TestStreamChat_ToolStart_FiresBeforeExecution_ElapsedTimeIsReal(t *testing.T) {
+	svc := newTestService(t, "", "wf-slow")
+	svc.newClientFn = func(provider ai.AIProvider) (ai.AIClient, error) {
+		return &toolCallingAIClient{toolName: "slow_tool", toolArgs: `{}`, toolCallID: "call-1", final: "done"}, nil
+	}
+
+	// A deliberately-slow fake tool: execToolFn stands in for the real
+	// CanvasTools dispatch (mirroring newClientFn's existing injection
+	// pattern) so the test can control exactly how long "execution" takes
+	// without needing a naturally-slow real tool.
+	const delay = 60 * time.Millisecond
+	svc.execToolFn = func(ct *CanvasTools, name, argsJSON string) (string, error) {
+		time.Sleep(delay)
+		return `{"ok":true}`, nil
+	}
+
+	var startAt, endAt time.Time
+	var startCallID, endCallID string
+	err := svc.StreamChat(context.Background(), "wf-slow", "go", "test-provider", "gpt-4o",
+		nil,
+		func(callID, name, args string) {
+			startAt = time.Now()
+			startCallID = callID
+		},
+		func(callID, name, args, result string, toolErr error) {
+			endAt = time.Now()
+			endCallID = callID
+			if toolErr != nil {
+				t.Errorf("unexpected tool error: %v", toolErr)
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("StreamChat: %v", err)
+	}
+	if startAt.IsZero() {
+		t.Fatal("onToolStart was never called")
+	}
+	if endAt.IsZero() {
+		t.Fatal("onToolCall was never called")
+	}
+	if startCallID == "" || startCallID != endCallID {
+		t.Errorf("onToolStart/onToolCall callID mismatch: start=%q end=%q, want matching non-empty IDs so a caller can pair them", startCallID, endCallID)
+	}
+	if elapsed := endAt.Sub(startAt); elapsed < delay {
+		t.Errorf("elapsed between onToolStart and onToolCall = %v, want >= the tool's actual execution delay of %v (this is exactly the ~0.0s bug: both callbacks used to fire together after execution finished)", elapsed, delay)
+	}
+}
+
+// TestStreamChat_ToolExecutionError_ReportedExplicitly_NotStringSniffed is
+// the regression test for "provider-backend tool failures always render as
+// success": onToolCall must receive a real, non-nil error when the tool
+// call failed, distinct from the human-readable {"error":...} body that
+// still goes into the tool result text for the model's own conversational
+// context. No fake execToolFn override is needed here — requesting an
+// unregistered tool name drives a real failure through CanvasTools.Execute
+// unmodified, exercising the actual production error path end to end.
+func TestStreamChat_ToolExecutionError_ReportedExplicitly_NotStringSniffed(t *testing.T) {
+	svc := newTestService(t, "", "wf-err")
+	svc.newClientFn = func(provider ai.AIProvider) (ai.AIClient, error) {
+		return &toolCallingAIClient{toolName: "no_such_tool", toolArgs: `{}`, toolCallID: "call-err", final: "done"}, nil
+	}
+
+	var gotErr error
+	var gotResult string
+	called := false
+	err := svc.StreamChat(context.Background(), "wf-err", "go", "test-provider", "gpt-4o",
+		nil,
+		nil,
+		func(callID, name, args, result string, toolErr error) {
+			called = true
+			gotErr = toolErr
+			gotResult = result
+		},
+	)
+	if err != nil {
+		t.Fatalf("StreamChat: %v", err)
+	}
+	if !called {
+		t.Fatal("onToolCall was never called")
+	}
+	if gotErr == nil {
+		t.Fatal("onToolCall received a nil error for a tool call that failed — this is the ok:=true-always bug: the caller has no explicit signal and would have to string-sniff `result` instead")
+	}
+	if !strings.Contains(gotErr.Error(), "unknown tool") {
+		t.Errorf("onToolCall error = %q, want it to carry the underlying failure", gotErr.Error())
+	}
+	if !strings.Contains(gotResult, "unknown tool") {
+		t.Errorf("result text = %q, want the model-facing {\"error\":...} body preserved unchanged", gotResult)
 	}
 }

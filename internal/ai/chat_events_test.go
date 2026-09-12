@@ -2,6 +2,9 @@ package ai
 
 import (
 	"database/sql"
+	"errors"
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/zalando/go-keyring"
@@ -70,6 +73,52 @@ func TestChatEvents_CreateTurnIsIdempotentByID(t *testing.T) {
 	}
 	if count != 1 {
 		t.Errorf("duplicate Start created %d rows, want exactly 1 (never a second process/row)", count)
+	}
+}
+
+// TestChatEvents_CreateTurnRefusedWhenAnotherInstanceOwnsActiveTurn is the
+// core enforcement for docs/mastermind/plans/2026-09-12-interactive-agent-chat-followups.md's
+// "OwnerInstanceID is written and read back but never compared to
+// anything": two live app instances sharing one database must not both be
+// able to run a turn against the same conversation.
+func TestChatEvents_CreateTurnRefusedWhenAnotherInstanceOwnsActiveTurn(t *testing.T) {
+	s, _ := newChatEventStore(t)
+	conv, _ := s.CreateConversation("p1", "agent", "general", "claude", "", "")
+
+	if _, _, err := s.CreateTurn(conv.ID, "p1", "turn-a", "instance-a", "hello from a"); err != nil {
+		t.Fatalf("CreateTurn(instance-a): %v", err)
+	}
+
+	// Instance b tries to start its OWN turn (a different turn ID) against
+	// the same conversation while instance-a's turn is still active.
+	if _, _, err := s.CreateTurn(conv.ID, "p1", "turn-b", "instance-b", "hello from b"); !errors.Is(err, ErrTurnOwnedByOtherInstance) {
+		t.Fatalf("CreateTurn(instance-b) while instance-a's turn is active on the same conversation: err = %v, want ErrTurnOwnedByOtherInstance", err)
+	}
+	// Refused admission must not have inserted a row.
+	if _, err := s.GetTurn("turn-b", "p1"); !errors.Is(err, ErrTurnNotFound) {
+		t.Errorf("GetTurn(turn-b) after refused CreateTurn: err = %v, want ErrTurnNotFound (nothing should have been written)", err)
+	}
+
+	// The SAME instance may still retry/re-admit its OWN turn ID — this must
+	// remain the existing idempotent-by-ID behavior, not newly refused by
+	// comparing an owner against itself.
+	again, existed, err := s.CreateTurn(conv.ID, "p1", "turn-a", "instance-a", "hello from a, retried")
+	if err != nil {
+		t.Fatalf("CreateTurn(instance-a) retrying its own turn ID: %v", err)
+	}
+	if !existed || again.Prompt != "hello from a" {
+		t.Errorf("CreateTurn(instance-a) retry = %+v existed=%v, want the original admission returned unchanged", again, existed)
+	}
+
+	// Once instance-a's turn reaches a terminal state, the conversation is
+	// no longer "owned" by it — a different instance may now create its own
+	// active turn there. The refusal is a live-turn lock, not a permanent
+	// per-conversation assignment to whichever instance touched it first.
+	if _, _, err := s.FinalizeTurn("p1", conv.ID, "turn-a", chatevents.StatusCompleted, "", nil, true); err != nil {
+		t.Fatalf("FinalizeTurn(turn-a): %v", err)
+	}
+	if _, _, err := s.CreateTurn(conv.ID, "p1", "turn-b", "instance-b", "hello from b, retried"); err != nil {
+		t.Fatalf("CreateTurn(instance-b) after instance-a's turn finished: %v", err)
 	}
 }
 
@@ -313,4 +362,118 @@ func TestChatEvents_SchemaReinitializationIsIdempotent(t *testing.T) {
 	if _, err := NewAIStore(db); err != nil {
 		t.Fatalf("second NewAIStore on the same DB: %v", err)
 	}
+}
+
+// TestChatEvents_DeleteConversationRaceAgainstConcurrentCreateTurn is the
+// regression test for
+// docs/mastermind/plans/2026-09-12-interactive-agent-chat-followups.md's
+// "DeleteConversation isn't atomic against a concurrent StartChatTurn":
+// DeleteConversation's active-turn check used to run outside any
+// transaction, before its own delete transaction even opened, so a
+// CreateTurn admitted in between could leave an orphaned, invisible turn —
+// and, once app_chat.go went on to AppendEvent for it, orphaned events —
+// under a conversation_id nothing could query anymore.
+//
+// Every iteration races a fresh DeleteConversation against a fresh
+// CreateTurn (+ a best-effort AppendEvent, mirroring app_chat.go's real
+// StartChatTurn -> CreateTurn -> AppendEvent sequence) for the SAME
+// conversation, released from a shared start gate so the two collide as
+// tightly as two goroutines reasonably can.
+//
+// The assertion is deliberately keyed off the one fact that actually
+// matters -- did the conversation row survive -- rather than which
+// specific error each call returned: CreateTurn's failure mode when it
+// loses this race can be a wrapped generic error (an INSERT the foreign
+// key rejects) depending purely on scheduling, and AppendEvent can
+// independently return a transient error when it collides with
+// DeleteConversation's write lock (it is a read-then-write transaction —
+// SELECT MAX(seq) then INSERT — so a losing collision there is a snapshot
+// conflict, not evidence of a correctness bug); neither is what this test
+// is about, so appendErr is recorded but never asserted on. What must
+// ALWAYS hold, on every single iteration, is: if the conversation is gone,
+// its turns and events are ALL gone with it (no orphan); if the
+// conversation survived, delete was actually refused, not silently
+// skipped.
+func TestChatEvents_DeleteConversationRaceAgainstConcurrentCreateTurn(t *testing.T) {
+	s, _ := newChatEventStore(t)
+	const iterations = 100
+
+	survived, deleted := 0, 0
+	for i := 0; i < iterations; i++ {
+		conv, err := s.CreateConversation("p1", "agent", "general", "claude", "", "")
+		if err != nil {
+			t.Fatalf("iter %d: CreateConversation: %v", i, err)
+		}
+		turnID := fmt.Sprintf("turn-%d", i)
+
+		// Start gate: both goroutines signal "arrived" then block on the same
+		// channel, so closing it releases them as close to simultaneously as
+		// two goroutines reasonably can be.
+		var arrived sync.WaitGroup
+		arrived.Add(2)
+		ready := make(chan struct{})
+		var done sync.WaitGroup
+		done.Add(2)
+
+		var deleteErr, createErr, appendErr error
+
+		go func() {
+			defer done.Done()
+			arrived.Done()
+			<-ready
+			deleteErr = s.DeleteConversation(conv.ID, "p1")
+		}()
+		go func() {
+			defer done.Done()
+			arrived.Done()
+			<-ready
+			_, _, cErr := s.CreateTurn(conv.ID, "p1", turnID, "instance-a", "hello")
+			createErr = cErr
+			if cErr == nil {
+				// Mirror app_chat.go's real sequence: only a successfully
+				// admitted turn goes on to append an event.
+				_, appendErr = s.AppendEvent("p1", conv.ID, turnID, chatevents.EventAssistantDelta, chatevents.AssistantDeltaPayload{PartID: "p", Text: "x"})
+			}
+		}()
+
+		arrived.Wait()
+		close(ready)
+		done.Wait()
+
+		_, getErr := s.GetConversation(conv.ID, "p1")
+		conversationGone := errors.Is(getErr, ErrConversationNotFound)
+
+		var turnCount, eventCount int
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM ai_chat_turns WHERE conversation_id = ?`, conv.ID).Scan(&turnCount); err != nil {
+			t.Fatalf("iter %d: count turns: %v", i, err)
+		}
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM ai_chat_events WHERE conversation_id = ?`, conv.ID).Scan(&eventCount); err != nil {
+			t.Fatalf("iter %d: count events: %v", i, err)
+		}
+
+		if conversationGone {
+			deleted++
+			if deleteErr != nil {
+				t.Errorf("iter %d: conversation was deleted but DeleteConversation returned an error: %v", i, deleteErr)
+			}
+			if turnCount != 0 {
+				t.Errorf("iter %d: conversation %s deleted but %d orphaned ai_chat_turns row(s) remain (createErr=%v)", i, conv.ID, turnCount, createErr)
+			}
+			if eventCount != 0 {
+				t.Errorf("iter %d: conversation %s deleted but %d orphaned ai_chat_events row(s) remain (createErr=%v appendErr=%v)", i, conv.ID, eventCount, createErr, appendErr)
+			}
+		} else {
+			survived++
+			if deleteErr == nil {
+				t.Errorf("iter %d: conversation %s still exists but DeleteConversation reported success (nil error) -- it must refuse, never silently no-op", i, conv.ID)
+			}
+			if createErr != nil {
+				t.Errorf("iter %d: conversation survived (nothing removed its parent) but CreateTurn still failed: %v", i, createErr)
+			}
+			if got, gErr := s.GetTurn(turnID, "p1"); gErr != nil || got.Status != turnStatusActive {
+				t.Errorf("iter %d: conversation survived but its turn is missing or not active: turn=%+v err=%v", i, got, gErr)
+			}
+		}
+	}
+	t.Logf("conversation survived %d/%d iterations, deleted on %d/%d iterations", survived, iterations, deleted, iterations)
 }

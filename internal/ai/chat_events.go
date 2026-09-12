@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -25,6 +26,16 @@ var (
 	ErrConversationNotFound = errors.New("chat: conversation not found")
 	ErrTurnNotFound         = errors.New("chat: turn not found")
 )
+
+// ErrTurnOwnedByOtherInstance is returned by CreateTurn when the target
+// conversation already has an active turn owned by a DIFFERENT, identified
+// live app instance. Two GUI processes sharing one ~/.monoagent database
+// must not each admit and run a turn against the same conversation —
+// whichever finished last would otherwise silently overwrite the other's
+// --resume session binding via BindConversationSession. See
+// docs/mastermind/plans/2026-09-12-interactive-agent-chat-followups.md,
+// "OwnerInstanceID is written and read back but never compared to anything".
+var ErrTurnOwnedByOtherInstance = errors.New("chat: conversation has an active turn owned by another instance")
 
 // Conversation is one server-created app-level chat conversation — see the
 // plan's "three distinct identifiers" section. HistoryKey is the opaque
@@ -75,6 +86,18 @@ func (s *AIStore) initChatEventTables() error {
 		created_at TEXT NOT NULL,
 		updated_at TEXT NOT NULL
 	)`
+	// conversation_id carries a real foreign key back to
+	// ai_chat_conversations(id) ON DELETE CASCADE (added, for an existing
+	// database, by data/migrations/040_ai_chat_conversation_foreign_keys.sql
+	// via the standard SQLite rebuild recipe — SQLite cannot ALTER TABLE ADD
+	// FOREIGN KEY). It is declared here too so a caller that constructs
+	// AIStore directly against a database that never ran ApplyMigrations
+	// still gets the constraint on a genuinely fresh CREATE TABLE; on any
+	// database that DID run migration 040 first (every real CLI/GUI startup
+	// path), this CREATE TABLE IF NOT EXISTS is a no-op and the migration's
+	// shape is what's actually in effect. See
+	// docs/mastermind/plans/2026-09-12-interactive-agent-chat-followups.md,
+	// "DeleteConversation isn't atomic against a concurrent StartChatTurn".
 	const turnsSQL = `CREATE TABLE IF NOT EXISTS ai_chat_turns (
 		id TEXT PRIMARY KEY,
 		conversation_id TEXT NOT NULL,
@@ -85,11 +108,18 @@ func (s *AIStore) initChatEventTables() error {
 		reason TEXT NOT NULL DEFAULT '',
 		last_committed_seq INTEGER NOT NULL DEFAULT 0,
 		created_at TEXT NOT NULL,
-		updated_at TEXT NOT NULL
+		updated_at TEXT NOT NULL,
+		FOREIGN KEY (conversation_id) REFERENCES ai_chat_conversations(id) ON DELETE CASCADE
 	)`
 	// Composite primary key doubles as the unique (profile_id,
 	// conversation_id, turn_id, seq) constraint the plan requires, and gives
 	// an efficient natural index for "events after seq N" catch-up queries.
+	// conversation_id and turn_id each carry a real foreign key (see turnsSQL
+	// above for why they are declared here as well as in migration 040) —
+	// turn_id's target, ai_chat_turns, is safe to require because every
+	// AppendEvent call in this codebase (wails-app/app_chat.go's
+	// appendAndEmit, the only production writer) is already structurally
+	// downstream of a successful CreateTurn for that same turn ID.
 	const eventsSQL = `CREATE TABLE IF NOT EXISTS ai_chat_events (
 		profile_id TEXT NOT NULL,
 		conversation_id TEXT NOT NULL,
@@ -99,7 +129,9 @@ func (s *AIStore) initChatEventTables() error {
 		version INTEGER NOT NULL,
 		type TEXT NOT NULL,
 		payload TEXT NOT NULL,
-		PRIMARY KEY (profile_id, conversation_id, turn_id, seq)
+		PRIMARY KEY (profile_id, conversation_id, turn_id, seq),
+		FOREIGN KEY (conversation_id) REFERENCES ai_chat_conversations(id) ON DELETE CASCADE,
+		FOREIGN KEY (turn_id) REFERENCES ai_chat_turns(id) ON DELETE CASCADE
 	)`
 	if _, err := s.db.Exec(conversationsSQL); err != nil {
 		return fmt.Errorf("create ai_chat_conversations: %w", err)
@@ -246,15 +278,74 @@ func (s *AIStore) BindConversationSession(id, profileID, runtimeID, sessionID st
 // DeleteConversation removes a conversation and all its turns/events,
 // scoped to profileID. Refuses while any turn is still active — a
 // supervisor may be mid-write.
+//
+// The existence check, the active-turn check, and the delete itself all run
+// inside ONE BEGIN IMMEDIATE transaction — see internal/vault/vault.go's
+// Register for why IMMEDIATE, not database/sql's default DEFERRED, is
+// required: a DEFERRED transaction only acquires SQLite's write lock lazily,
+// at its first write, so the previous plain "check via one statement, delete
+// via a later separate transaction" shape left an unprotected window between
+// the two where a concurrent CreateTurn's own INSERT could commit — admitting
+// an active turn this check never saw — before the delete proceeded anyway.
+// BEGIN IMMEDIATE acquires the write lock up front, before the active-turn
+// SELECT even runs, so for the duration of this whole function no concurrent
+// writer can commit a turn for this conversation without first waiting for
+// this transaction to finish (subject to the connection's busy_timeout):
+// either CreateTurn's insert lands (and commits) entirely before this
+// transaction begins, in which case the active-turn check below sees it and
+// refuses with ErrTurnActive, or it is forced to wait until after this
+// transaction has committed or rolled back — there is no interleaving in
+// between where the delete can proceed past a turn it failed to see.
+//
+// This closes the race for any CreateTurn attempt whose insert would
+// otherwise land WHILE this function's own check-then-delete was in
+// progress. It does not by itself stop a CreateTurn insert that starts only
+// AFTER this transaction has already committed and released the lock, from
+// an admission that began racing before the delete decided anything (see the
+// followups doc's "admitted in-memory but not yet DB-committed" framing) —
+// that residual gap is why ai_chat_turns.conversation_id and
+// ai_chat_events.conversation_id/turn_id also gained real foreign keys back
+// to ai_chat_conversations (data/migrations/040_ai_chat_conversation_foreign_keys.sql):
+// a CreateTurn/AppendEvent that reaches the database only after the
+// conversation is already gone now fails outright instead of silently
+// writing an orphan. See chat_events_test.go's
+// TestChatEvents_DeleteConversationRaceAgainstConcurrentCreateTurn, which
+// exercises both layers together.
 func (s *AIStore) DeleteConversation(id, profileID string) error {
 	if profileID == "" {
 		profileID = "default"
 	}
-	if _, err := s.GetConversation(id, profileID); err != nil {
-		return err
+	ctx := context.Background()
+
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("delete conversation: get conn: %w", err)
 	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return fmt.Errorf("begin delete conversation: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
+		}
+	}()
+
+	var exists int
+	if err := conn.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM ai_chat_conversations WHERE id = ? AND profile_id = ?`,
+		id, profileID,
+	).Scan(&exists); err != nil {
+		return fmt.Errorf("check conversation exists: %w", err)
+	}
+	if exists == 0 {
+		return ErrConversationNotFound
+	}
+
 	var activeCount int
-	if err := s.db.QueryRow(
+	if err := conn.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM ai_chat_turns WHERE conversation_id = ? AND profile_id = ? AND status = ?`,
 		id, profileID, turnStatusActive,
 	).Scan(&activeCount); err != nil {
@@ -264,21 +355,20 @@ func (s *AIStore) DeleteConversation(id, profileID string) error {
 		return ErrTurnActive
 	}
 
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("begin delete conversation: %w", err)
-	}
-	defer tx.Rollback()
-	if _, err := tx.Exec(`DELETE FROM ai_chat_events WHERE conversation_id = ? AND profile_id = ?`, id, profileID); err != nil {
+	if _, err := conn.ExecContext(ctx, `DELETE FROM ai_chat_events WHERE conversation_id = ? AND profile_id = ?`, id, profileID); err != nil {
 		return fmt.Errorf("delete events: %w", err)
 	}
-	if _, err := tx.Exec(`DELETE FROM ai_chat_turns WHERE conversation_id = ? AND profile_id = ?`, id, profileID); err != nil {
+	if _, err := conn.ExecContext(ctx, `DELETE FROM ai_chat_turns WHERE conversation_id = ? AND profile_id = ?`, id, profileID); err != nil {
 		return fmt.Errorf("delete turns: %w", err)
 	}
-	if _, err := tx.Exec(`DELETE FROM ai_chat_conversations WHERE id = ? AND profile_id = ?`, id, profileID); err != nil {
+	if _, err := conn.ExecContext(ctx, `DELETE FROM ai_chat_conversations WHERE id = ? AND profile_id = ?`, id, profileID); err != nil {
 		return fmt.Errorf("delete conversation: %w", err)
 	}
-	return tx.Commit()
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return fmt.Errorf("commit delete conversation: %w", err)
+	}
+	committed = true
+	return nil
 }
 
 // CreateTurn registers a turn, idempotent by ID: "Duplicate Start with the
@@ -293,6 +383,38 @@ func (s *AIStore) CreateTurn(conversationID, profileID, turnID, ownerInstanceID,
 	}
 	if existing, getErr := s.GetTurn(turnID, profileID); getErr == nil {
 		return existing, true, nil
+	} else if !errors.Is(getErr, ErrTurnNotFound) {
+		return Turn{}, false, getErr
+	}
+
+	// Refuse a NEW turn when the conversation already has an active turn
+	// owned by a different, identified live instance (see
+	// ErrTurnOwnedByOtherInstance) — two live app instances sharing this
+	// database must not both admit a turn on the same conversation. An
+	// empty stored OwnerInstanceID (e.g. a row from before this check
+	// existed) or a match against this same requesting instance is not
+	// treated as foreign.
+	//
+	// This is a plain read-then-decide check, not wrapped in the same
+	// transaction as the INSERT below: like AppendEvent's documented
+	// sequence-allocation race (this same file, above), two near-
+	// simultaneous CreateTurn calls from two different instances could both
+	// pass this check before either inserts, admitting two active turns for
+	// one conversation. That residual window is accepted here for the same
+	// reason it already is there and in DeleteConversation's own,
+	// similarly non-atomic active-turn check: a real fix needs a DB-level
+	// constraint (e.g. a partial unique index on active turns per
+	// conversation), which was deliberately NOT added — retrofitting one
+	// against an already-installed database that (pre-fix) may already
+	// have two active rows for one conversation would fail migration
+	// outright rather than degrade gracefully. Two truly simultaneous live
+	// instances racing this exact window is a narrower trigger still than
+	// the already-accepted risk this closes (two live instances existing
+	// at all).
+	if active, getErr := s.activeTurnForConversation(conversationID, profileID); getErr == nil {
+		if active.OwnerInstanceID != "" && active.OwnerInstanceID != ownerInstanceID {
+			return Turn{}, false, ErrTurnOwnedByOtherInstance
+		}
 	} else if !errors.Is(getErr, ErrTurnNotFound) {
 		return Turn{}, false, getErr
 	}
@@ -338,6 +460,35 @@ func (s *AIStore) GetTurn(turnID, profileID string) (Turn, error) {
 	}
 	if err != nil {
 		return Turn{}, fmt.Errorf("get turn: %w", err)
+	}
+	return t, nil
+}
+
+// activeTurnForConversation returns conversationID's currently active turn,
+// if any — CreateTurn's admission-check helper (see
+// ErrTurnOwnedByOtherInstance). Returns ErrTurnNotFound when none is
+// active. Deliberately unexported: it exists to answer "is this
+// conversation currently claimed by a turn?", not as a general-purpose
+// query — GetChatTurns/GetChatEvents callers use ListTurns/GetTurn as they
+// already do. Under the normal invariant this check itself enforces, at
+// most one row can be active per conversation; if that invariant were ever
+// violated (e.g. by data predating this check), LIMIT 1 with the newest
+// row deterministically picks one rather than erroring.
+func (s *AIStore) activeTurnForConversation(conversationID, profileID string) (Turn, error) {
+	if profileID == "" {
+		profileID = "default"
+	}
+	const q = `SELECT id, conversation_id, profile_id, owner_instance_id, prompt, status, reason, last_committed_seq, created_at, updated_at
+		FROM ai_chat_turns WHERE conversation_id = ? AND profile_id = ? AND status = ? ORDER BY created_at DESC, id DESC LIMIT 1`
+	var t Turn
+	err := s.db.QueryRow(q, conversationID, profileID, turnStatusActive).Scan(
+		&t.ID, &t.ConversationID, &t.ProfileID, &t.OwnerInstanceID, &t.Prompt, &t.Status, &t.Reason, &t.LastCommittedSeq, &t.CreatedAt, &t.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Turn{}, ErrTurnNotFound
+	}
+	if err != nil {
+		return Turn{}, fmt.Errorf("get active turn for conversation: %w", err)
 	}
 	return t, nil
 }

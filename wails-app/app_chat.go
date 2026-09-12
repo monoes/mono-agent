@@ -358,8 +358,20 @@ func (sup *chatSupervisor) runAgentTurn(h *chatTurnHandle, proc chatProcess) {
 	msgs := make(chan turnMsg, 256)
 	var stderrBuf strings.Builder
 	var stderrMu sync.Mutex
+	// stderrDone is closed once the stderr-draining goroutine below returns,
+	// by any path. The wait goroutine joins on it before reading stderrBuf:
+	// proc.Wait() returning is not a signal that goroutine has finished
+	// draining the pipe, only that stderrBuf is safe to *access* under
+	// stderrMu — not that its contents are complete. Deliberately joined
+	// AFTER proc.Wait() rather than before: exec.Cmd's StderrPipe is only
+	// force-closed (unblocking a stuck Read) once Wait's closeAfterWait
+	// runs, so joining first would risk hanging forever against a real
+	// process whose stderr fd stays open past our own exit (e.g. a
+	// process-group child that inherited fd 2).
+	stderrDone := make(chan struct{})
 
 	go func() {
+		defer close(stderrDone) // first, so a panic in Read still unblocks the wait goroutine
 		stderr := proc.Stderr() // read once, outside the loop: some
 		// implementations (e.g. test fakes) return a fresh reader on every
 		// call rather than the same underlying stream, which would never
@@ -394,6 +406,7 @@ func (sup *chatSupervisor) runAgentTurn(h *chatTurnHandle, proc chatProcess) {
 			msgs <- turnMsg{ev: &evCopy}
 		}
 		waitErr := proc.Wait()
+		<-stderrDone
 		stderrMu.Lock()
 		stderrText := stderrBuf.String()
 		stderrMu.Unlock()
@@ -619,19 +632,33 @@ func (sup *chatSupervisor) startProviderTurn(h *chatTurnHandle, conv ai.Conversa
 				currentPartID = nextProviderPart(&partSeq)
 			}
 		}
-		onToolCall := func(name, args, result string) {
+		// onToolStart fires before the tool actually executes, giving a true
+		// start timestamp — service.go's tool loop now calls this
+		// separately from onToolCall below instead of synthesizing both
+		// events back-to-back after execution already finished (the root
+		// cause of tool cards always showing ~0.0s elapsed time). The
+		// pending-text flush belongs here, not in onToolCall: it closes out
+		// any assistant text that preceded this call so ordering is
+		// preserved (text, then tool.started, then — later — tool.completed).
+		onToolStart := func(callID, name, args string) {
 			if partID, text, ok := coalescer.ForceFlush(); ok {
 				sup.appendAndEmit(h, chatevents.EventAssistantDelta, chatevents.AssistantDeltaPayload{PartID: partID, Text: text})
 				currentPartID = nextProviderPart(&partSeq)
 			}
-			callID := uuid.NewString()
 			sup.appendAndEmit(h, chatevents.EventToolStarted, chatevents.ToolStartedPayload{CallID: callID, Name: name, Arguments: chatevents.RedactAndBoundJSON(json.RawMessage(args))})
+		}
+		// onToolCall fires once execution finishes. ok is now derived from
+		// the explicit error service.go's tool loop reports, not
+		// hardcoded true — the root cause of tool failures always
+		// rendering as success. ok is declared fresh inside this closure
+		// body on every call, so &ok never aliases a previous call's value.
+		onToolCall := func(callID, name, args, result string, toolErr error) {
 			bounded, _, _ := chatevents.BoundText(result, chatevents.MaxToolPreviewBytes)
-			ok := true
+			ok := toolErr == nil
 			sup.appendAndEmit(h, chatevents.EventToolCompleted, chatevents.ToolCompletedPayload{CallID: callID, OK: &ok, Result: bounded})
 		}
 
-		err := sup.chatService.StreamChatScoped(ctx, h.profileID, conv.HistoryKey, prompt, conv.ProviderID, conv.Model, onChunk, onToolCall)
+		err := sup.chatService.StreamChatScoped(ctx, h.profileID, conv.HistoryKey, prompt, conv.ProviderID, conv.Model, onChunk, onToolStart, onToolCall)
 		if partID, text, ok := coalescer.ForceFlush(); ok {
 			sup.appendAndEmit(h, chatevents.EventAssistantDelta, chatevents.AssistantDeltaPayload{PartID: partID, Text: text})
 		}
@@ -656,6 +683,33 @@ func nextProviderPart(seq *int) string {
 // otherwise a typed payload.
 
 func (a *App) chatBindingError(err error) string { return aiError(err) }
+
+// isForeignActiveTurn reports whether t is an active turn owned by a
+// DIFFERENT, identified live instance than instanceID. This is the single
+// condition — per the interactive-agent-chat followups' cross-instance-
+// ownership contract — under which another live app instance's turn (one
+// sharing this same on-disk database) must be treated as read-only here:
+// it governs both GetChatTurns' ownedByThisInstance flag and StopChatTurn's
+// explicit foreign-turn failure below. A terminal turn is never foreign
+// (finished turns are ordinary, fully-owned history, regardless who ran
+// them), and neither is an active turn with an empty stored
+// OwnerInstanceID — a row predating this check, or any other case where
+// there is simply nothing to compare against — which deliberately falls
+// back to the prior, already-idempotent "treat as mine/no-op" behavior
+// rather than guessing.
+func isForeignActiveTurn(t ai.Turn, instanceID string) bool {
+	return t.Status == "active" && t.OwnerInstanceID != "" && t.OwnerInstanceID != instanceID
+}
+
+// chatTurnListItem is one GetChatTurns response entry: the stored turn plus
+// a derived, instance-scoped ownership flag. ai.Turn.OwnerInstanceID itself
+// stays json:"-" (never exposed raw) — only whether THIS process still owns
+// an active turn here is meaningful to a UI, e.g. to label a foreign-active
+// turn read-only.
+type chatTurnListItem struct {
+	ai.Turn
+	OwnedByThisInstance bool `json:"ownedByThisInstance"`
+}
 
 // CreateChatConversation creates a new scoped conversation for either
 // backend ("agent" or "provider"). workflowID is the tool/ownership context
@@ -735,16 +789,32 @@ func (a *App) StartChatTurn(conversationID, turnID, message string, tools, allow
 }
 
 // StopChatTurn requests cancellation of a turn. Idempotent: stopping an
-// already-stopped or already-finished turn is a harmless no-op success.
+// already-stopped/already-finished turn, or an unknown turn id, remains a
+// harmless no-op success. A turn that is currently ACTIVE but owned by a
+// DIFFERENT live instance sharing this database is neither of those: this
+// instance holds no handle for it (nothing here would actually be
+// stopped), so silently returning {"ok":true} would misreport a no-op as a
+// completed stop — that specific case reports an explicit failure instead.
+// See isForeignActiveTurn.
 func (a *App) StopChatTurn(conversationID, turnID string) string {
 	if a.chatSup == nil {
 		return a.chatBindingError(fmt.Errorf("chat supervisor not initialized"))
 	}
-	h := a.chatSup.lookup(conversationID, turnID)
-	if h == nil {
+	if h := a.chatSup.lookup(conversationID, turnID); h != nil {
+		h.requestStop()
 		return `{"ok":true}`
 	}
-	h.requestStop()
+	// Not admitted in THIS instance's own registry. Consult the durable
+	// store to distinguish "already finished" / "unknown id" (both remain
+	// the existing harmless no-op) from "active right now, but owned by
+	// another live instance".
+	if a.aiStore != nil {
+		if turn, err := a.aiStore.GetTurn(turnID, a.getActiveProfileID()); err == nil {
+			if isForeignActiveTurn(turn, a.chatSup.instanceID) {
+				return `{"ok":false,"error":"this turn is running in another window and can only be stopped there"}`
+			}
+		}
+	}
 	return `{"ok":true}`
 }
 
@@ -762,7 +832,10 @@ func (a *App) ListChatConversations(cursor string, limit int) string {
 	return string(b)
 }
 
-// GetChatTurns returns one conversation's turns, most recent first.
+// GetChatTurns returns one conversation's turns, most recent first. Each
+// item carries ownedByThisInstance: true for every turn except one that is
+// currently active AND owned by a different live instance sharing this
+// database — see isForeignActiveTurn.
 func (a *App) GetChatTurns(conversationID, cursor string, limit int) string {
 	if a.aiStore == nil {
 		return `{"items":[]}`
@@ -771,7 +844,15 @@ func (a *App) GetChatTurns(conversationID, cursor string, limit int) string {
 	if err != nil {
 		return a.chatBindingError(err)
 	}
-	b, _ := json.Marshal(map[string]any{"items": items, "nextCursor": next})
+	instanceID := ""
+	if a.chatSup != nil {
+		instanceID = a.chatSup.instanceID
+	}
+	out := make([]chatTurnListItem, len(items))
+	for i, t := range items {
+		out[i] = chatTurnListItem{Turn: t, OwnedByThisInstance: !isForeignActiveTurn(t, instanceID)}
+	}
+	b, _ := json.Marshal(map[string]any{"items": out, "nextCursor": next})
 	return string(b)
 }
 

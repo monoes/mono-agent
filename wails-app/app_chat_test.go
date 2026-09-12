@@ -108,6 +108,14 @@ type fakeChatProcess struct {
 	stderr  string
 	waitErr error
 
+	// stderrDelay, when nonzero, delays the first Read from Stderr() by this
+	// duration. Used to deterministically reproduce a stderr-reader
+	// goroutine that hasn't been scheduled yet by the time runAgentTurn's
+	// wait goroutine calls proc.Wait() and reads the shared buffer, instead
+	// of depending on scheduler luck. Zero (the default) preserves the
+	// exact immediate strings.Reader behavior every other test relies on.
+	stderrDelay time.Duration
+
 	mu       sync.Mutex
 	killed   bool
 	exited   chan struct{}
@@ -120,7 +128,27 @@ func newFakeChatProcess(stderr string) *fakeChatProcess {
 }
 
 func (p *fakeChatProcess) Stdout() io.Reader { return p.stdoutR }
-func (p *fakeChatProcess) Stderr() io.Reader { return strings.NewReader(p.stderr) }
+
+func (p *fakeChatProcess) Stderr() io.Reader {
+	var r io.Reader = strings.NewReader(p.stderr)
+	if p.stderrDelay > 0 {
+		r = &delayedReader{r: r, delay: p.stderrDelay}
+	}
+	return r
+}
+
+// delayedReader sleeps once, on its first Read, before delegating to the
+// wrapped reader. See fakeChatProcess.stderrDelay.
+type delayedReader struct {
+	r     io.Reader
+	delay time.Duration
+	once  sync.Once
+}
+
+func (d *delayedReader) Read(p []byte) (int, error) {
+	d.once.Do(func() { time.Sleep(d.delay) })
+	return d.r.Read(p)
+}
 
 // writeLine pushes one NDJSON line to the stdout reader.
 func (p *fakeChatProcess) writeLine(s string) {
@@ -453,6 +481,60 @@ func TestChatSupervisor_UnknownFlagLaunchFailure_ReportsDistinctNoticeThenFailed
 	}
 }
 
+// TestChatSupervisor_UnknownFlagLaunchFailure_StderrDrainedBeforeFinalize
+// deterministically reproduces the pre-existing intermittent failure in the
+// sibling test above (documented in
+// docs/mastermind/plans/2026-09-12-interactive-agent-chat-followups.md under
+// "Pre-existing test flake found while bounding NoticePayload.Message"):
+// runAgentTurn's wait goroutine calls proc.Wait() and then immediately
+// snapshots stderrBuf, with nothing ensuring the separate stderr-draining
+// goroutine has actually finished writing to it first. stderrMu only makes
+// that access safe (no torn read/write); it says nothing about whether the
+// buffer is complete yet. Against a real process this race is usually won
+// by luck (the OS pipe already has the data buffered by the time Wait()
+// returns); this test removes the luck by delaying the stderr goroutine's
+// first Read, so it fails on every run against the pre-fix code instead of
+// only intermittently.
+func TestChatSupervisor_UnknownFlagLaunchFailure_StderrDrainedBeforeFinalize(t *testing.T) {
+	sup, emitter, launched := newTestSupervisor(t)
+	conv, _ := sup.store.CreateConversation("default", "agent", "general", "fake-runtime", "", "")
+	proc := newFakeChatProcess("Error: unknown flag: --no-history\n")
+	proc.stderrDelay = 50 * time.Millisecond
+	*launched = append(*launched, proc)
+
+	h, _, _ := sup.admit(conv.ID, "turn-slow-stderr")
+	h.profileID = "default"
+	sup.store.CreateTurn(conv.ID, "default", "turn-slow-stderr", sup.instanceID, "hi")
+	sup.startAgentTurn(h, conv, "turn-slow-stderr", "hi", false, false)
+
+	// Same setup as the sibling test above (the old CLI exits immediately,
+	// before emitting any NDJSON at all) — but here the stderr-reader
+	// goroutine won't actually put anything into stderrBuf for another
+	// 50ms, well after the wait goroutine's proc.Wait() has already
+	// returned.
+	proc.endStream(errors.New("exit status 1"))
+
+	finished := waitForType(t, emitter, chatevents.EventTurnFinished, 2*time.Second)
+	var payload chatevents.TurnFinishedPayload
+	jsonUnmarshalPayload(finished[0], &payload)
+	if payload.Status != chatevents.StatusFailed {
+		t.Errorf("status = %q, want %q", payload.Status, chatevents.StatusFailed)
+	}
+
+	notices := emitter.byType(chatevents.EventNotice)
+	if len(notices) == 0 {
+		t.Fatal("no notice event emitted for the unrecognized --no-history flag — stderrBuf was evidently read before the stderr-draining goroutine finished writing to it")
+	}
+	var noticePayload chatevents.NoticePayload
+	jsonUnmarshalPayload(notices[0], &noticePayload)
+	if noticePayload.Code != "cli-flag-unsupported" {
+		t.Errorf("notice code = %q, want %q", noticePayload.Code, "cli-flag-unsupported")
+	}
+	if noticePayload.Severity != chatevents.SeverityError {
+		t.Errorf("notice severity = %q, want %q", noticePayload.Severity, chatevents.SeverityError)
+	}
+}
+
 // TestChatSupervisor_NonFatalErrorNoticeIsBounded guards against an
 // external adapter's error text writing an unbounded row/event payload.
 // Tool results are already bounded via BoundText (app_chat.go's
@@ -749,5 +831,391 @@ func TestApp_StartChatTurn_DuplicateStartResponseIncludesTurnID(t *testing.T) {
 	}
 	if r.TurnID != "turn-1" {
 		t.Errorf("duplicate-Start response turnId = %q, want %q", r.TurnID, "turn-1")
+	}
+}
+
+// --- cross-instance turn ownership ---
+//
+// docs/mastermind/plans/2026-09-12-interactive-agent-chat-followups.md:
+// "OwnerInstanceID is written and read back but never compared to
+// anything" — two live app instances (two chatSupervisors, each with its
+// own auto-generated instanceID) sharing the SAME on-disk store simulate
+// two live GUI processes against one ~/.monoagent database. Deliberately
+// NEVER call reconcileOrphanedTurns on either supervisor in these tests:
+// that startup sweep unconditionally marks every turn left "active" in the
+// store as interrupted, regardless of owner (see this file's header
+// comment) — calling it here would erase the very cross-instance state
+// these tests set up, and is itself the reason a real second window would
+// still clobber a first window's turn at (its own) startup, which this
+// fix does not close.
+
+// newSecondInstanceApp builds an *App sharing store/chatSvc with an
+// existing one but with its OWN chatSupervisor (and therefore its own
+// instanceID) and launcher — the "second live process" half of a
+// cross-instance test.
+func newSecondInstanceApp(t *testing.T, store *ai.AIStore, chatSvc *aichat.ChatService, launcher chatProcessLauncher) *App {
+	t.Helper()
+	findCLI := func() (string, error) { return "fake-monoagentcli", nil }
+	sup := newChatSupervisor(store, chatSvc, launcher, func(chatevents.Event) {}, findCLI)
+	return &App{aiStore: store, chatService: chatSvc, chatSup: sup}
+}
+
+func neverLaunch(t *testing.T) chatProcessLauncher {
+	return func(ctx context.Context, cliBin string, args []string) (chatProcess, error) {
+		t.Fatal("this instance's launcher must not be called")
+		return nil, nil
+	}
+}
+
+func TestIsForeignActiveTurn(t *testing.T) {
+	cases := []struct {
+		name       string
+		turn       ai.Turn
+		instanceID string
+		want       bool
+	}{
+		{"active, foreign owner", ai.Turn{Status: "active", OwnerInstanceID: "other"}, "mine", true},
+		{"active, own owner", ai.Turn{Status: "active", OwnerInstanceID: "mine"}, "mine", false},
+		{"active, empty owner (predates ownership tracking)", ai.Turn{Status: "active", OwnerInstanceID: ""}, "mine", false},
+		{"completed, foreign owner", ai.Turn{Status: "completed", OwnerInstanceID: "other"}, "mine", false},
+		{"cancelled, foreign owner", ai.Turn{Status: "cancelled", OwnerInstanceID: "other"}, "mine", false},
+		{"failed, foreign owner", ai.Turn{Status: "failed", OwnerInstanceID: "other"}, "mine", false},
+		{"interrupted, foreign owner", ai.Turn{Status: "interrupted", OwnerInstanceID: "other"}, "mine", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isForeignActiveTurn(tc.turn, tc.instanceID); got != tc.want {
+				t.Errorf("isForeignActiveTurn(%+v, %q) = %v, want %v", tc.turn, tc.instanceID, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestChatTurnListItem_JSONShape pins GetChatTurns' response shape directly:
+// a promoted ai.Turn field survives embedding, the new derived field is
+// present under its documented name, and the raw owner instance id (kept
+// json:"-" on ai.Turn) never leaks into the response.
+func TestChatTurnListItem_JSONShape(t *testing.T) {
+	item := chatTurnListItem{
+		Turn: ai.Turn{
+			ID:              "turn-1",
+			ConversationID:  "conv-1",
+			ProfileID:       "default",
+			OwnerInstanceID: "instance-secret",
+			Status:          "active",
+		},
+		OwnedByThisInstance: false,
+	}
+	b, err := json.Marshal(item)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if m["status"] != "active" {
+		t.Errorf(`m["status"] = %v, want "active" (a promoted ai.Turn field)`, m["status"])
+	}
+	if v, ok := m["ownedByThisInstance"].(bool); !ok || v != false {
+		t.Errorf(`m["ownedByThisInstance"] = %v, want false`, m["ownedByThisInstance"])
+	}
+	if _, present := m["ownerInstanceId"]; present {
+		t.Error("chatTurnListItem leaked an ownerInstanceId key into JSON")
+	}
+	if strings.Contains(string(b), "instance-secret") {
+		t.Errorf("chatTurnListItem JSON leaks the raw owner instance id: %s", b)
+	}
+}
+
+func TestApp_StartChatTurn_RefusedWhenAnotherLiveInstanceOwnsActiveTurn(t *testing.T) {
+	store, db := newChatTestStore(t)
+	chatSvc := aichat.NewChatService(store, db)
+	var launchedA, launchedB []*fakeChatProcess
+	launcherA := func(ctx context.Context, cliBin string, args []string) (chatProcess, error) {
+		if len(launchedA) == 0 {
+			t.Fatal("instance A's launcher called with no queued fake process")
+		}
+		p := launchedA[0]
+		launchedA = launchedA[1:]
+		return p, nil
+	}
+	// Instance B's launcher must not be called for its REFUSED turn-b
+	// attempt below (checked via len(launchedB) staying untouched), but
+	// this test also exercises B's turn-b succeeding once A's turn goes
+	// terminal — so, unlike the launcher used in the other cross-instance
+	// tests below (which never expect a successful Start), B needs a real,
+	// queueable launcher here too.
+	launcherB := func(ctx context.Context, cliBin string, args []string) (chatProcess, error) {
+		if len(launchedB) == 0 {
+			t.Fatal("instance B's launcher called with no queued fake process")
+		}
+		p := launchedB[0]
+		launchedB = launchedB[1:]
+		return p, nil
+	}
+	appA := newSecondInstanceApp(t, store, chatSvc, launcherA)
+	appB := newSecondInstanceApp(t, store, chatSvc, launcherB)
+	if appA.chatSup.instanceID == appB.chatSup.instanceID {
+		t.Fatal("two independently constructed supervisors must have distinct instanceIDs")
+	}
+
+	convJSON := appA.CreateChatConversation("agent", "general", "fake-runtime", "", "")
+	var conv struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(convJSON), &conv); err != nil {
+		t.Fatalf("unmarshal conversation: %v (%s)", err, convJSON)
+	}
+
+	launchedA = append(launchedA, newFakeChatProcess(""))
+	respA := appA.StartChatTurn(conv.ID, "turn-a", "hi from A", false, false)
+	var rA startChatTurnResponse
+	if err := json.Unmarshal([]byte(respA), &rA); err != nil || !rA.OK {
+		t.Fatalf("instance A's Start: resp=%s err=%v, want ok", respA, err)
+	}
+
+	// Instance B is a second live app process sharing the same store. Its
+	// own local admit() succeeds (its in-memory registry has no entry for
+	// this conversation — it cannot see A's process-local state), but the
+	// durable CreateTurn check must refuse it: A's turn is still active.
+	// Deliberately no fake process queued into launchedB yet — if the
+	// refusal did NOT happen before launch, launcherB itself fails the test
+	// via t.Fatal("...no queued fake process").
+	respB := appB.StartChatTurn(conv.ID, "turn-b", "hi from B", false, false)
+	var rawB map[string]any
+	if err := json.Unmarshal([]byte(respB), &rawB); err != nil {
+		t.Fatalf("unmarshal instance B's response: %v (%s)", err, respB)
+	}
+	if ok, _ := rawB["ok"].(bool); ok {
+		t.Fatalf("instance B's Start while A's turn is active = %s, want a refusal, not a silent success", respB)
+	}
+	if _, hasError := rawB["error"]; !hasError {
+		t.Errorf("instance B's refusal response = %s, want a clear {\"error\":...}, not a bare status", respB)
+	}
+
+	// The refusal must not wedge instance B: its in-memory admission for
+	// turn-b must have been released (StartChatTurn's existing
+	// CreateTurn-error path already calls release() for any error,
+	// including this new one), so a future Start on this conversation from
+	// B is not permanently blocked by a leaked local slot.
+	if hB := appB.chatSup.lookup(conv.ID, "turn-b"); hB != nil {
+		t.Error("instance B's refused turn-b is still registered in its own supervisor — a future Start on this conversation from B would wedge as permanently busy")
+	}
+
+	// Once A's turn actually finishes, B can start its own turn on the same
+	// conversation — the refusal is a live-turn lock, not permanent.
+	if _, _, err := store.FinalizeTurn("default", conv.ID, "turn-a", chatevents.StatusCompleted, "", nil, true); err != nil {
+		t.Fatalf("FinalizeTurn(turn-a): %v", err)
+	}
+	launchedB = append(launchedB, newFakeChatProcess(""))
+	respB2 := appB.StartChatTurn(conv.ID, "turn-b", "hi from B, retried", false, false)
+	var rB2 startChatTurnResponse
+	if err := json.Unmarshal([]byte(respB2), &rB2); err != nil || !rB2.OK {
+		t.Fatalf("instance B's retried Start after A finished: resp=%s err=%v, want ok", respB2, err)
+	}
+}
+
+func TestApp_StopChatTurn_ForeignActiveTurnReturnsExplicitFailure(t *testing.T) {
+	store, db := newChatTestStore(t)
+	chatSvc := aichat.NewChatService(store, db)
+	var launchedA []*fakeChatProcess
+	launcherA := func(ctx context.Context, cliBin string, args []string) (chatProcess, error) {
+		if len(launchedA) == 0 {
+			t.Fatal("instance A's launcher called with no queued fake process")
+		}
+		p := launchedA[0]
+		launchedA = launchedA[1:]
+		return p, nil
+	}
+	appA := newSecondInstanceApp(t, store, chatSvc, launcherA)
+	appB := newSecondInstanceApp(t, store, chatSvc, neverLaunch(t))
+
+	convJSON := appA.CreateChatConversation("agent", "general", "fake-runtime", "", "")
+	var conv struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(convJSON), &conv); err != nil {
+		t.Fatalf("unmarshal conversation: %v (%s)", err, convJSON)
+	}
+
+	launchedA = append(launchedA, newFakeChatProcess(""))
+	respA := appA.StartChatTurn(conv.ID, "turn-a", "hi from A", false, false)
+	var rA startChatTurnResponse
+	if err := json.Unmarshal([]byte(respA), &rA); err != nil || !rA.OK {
+		t.Fatalf("instance A's Start failed: %s", respA)
+	}
+
+	// Instance B has no local handle for turn-a (it belongs to A's own
+	// in-memory registry) but the durable store says it's active, owned by
+	// A. Stopping it from B must not silently no-op {"ok":true}.
+	respB := appB.StopChatTurn(conv.ID, "turn-a")
+	var stopResp struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(respB), &stopResp); err != nil {
+		t.Fatalf("unmarshal StopChatTurn response: %v (%s)", err, respB)
+	}
+	if stopResp.OK {
+		t.Fatalf("instance B's StopChatTurn on A's active turn = %s, want an explicit failure, not a silent {\"ok\":true} no-op", respB)
+	}
+	if stopResp.Error == "" {
+		t.Error("StopChatTurn's foreign-turn failure carries no error message")
+	}
+
+	// The turn itself must be unaffected: still active — B's refused Stop
+	// must not have touched it.
+	turn, err := store.GetTurn("turn-a", "default")
+	if err != nil {
+		t.Fatalf("GetTurn: %v", err)
+	}
+	if turn.Status != "active" {
+		t.Errorf("turn status after B's refused Stop = %q, want still %q", turn.Status, "active")
+	}
+
+	// Sanity: A itself can still stop its own turn normally — this fix must
+	// not have disturbed the same-instance path.
+	respAStop := appA.StopChatTurn(conv.ID, "turn-a")
+	var okOnly struct {
+		OK bool `json:"ok"`
+	}
+	if err := json.Unmarshal([]byte(respAStop), &okOnly); err != nil || !okOnly.OK {
+		t.Errorf("instance A stopping its own turn: %s (err=%v), want ok:true", respAStop, err)
+	}
+}
+
+// TestApp_StopChatTurn_UnknownIDAndFinishedTurnRemainNoOpSuccess guards the
+// two cases StopChatTurn's contract explicitly keeps as a harmless no-op —
+// only the foreign-active case (tested above) gets the new explicit
+// failure.
+func TestApp_StopChatTurn_UnknownIDAndFinishedTurnRemainNoOpSuccess(t *testing.T) {
+	store, db := newChatTestStore(t)
+	chatSvc := aichat.NewChatService(store, db)
+	a := newSecondInstanceApp(t, store, chatSvc, neverLaunch(t))
+
+	resp := a.StopChatTurn("conv-nonexistent", "turn-nonexistent")
+	var r struct {
+		OK bool `json:"ok"`
+	}
+	if err := json.Unmarshal([]byte(resp), &r); err != nil || !r.OK {
+		t.Fatalf("StopChatTurn on an unknown id = %s (err=%v), want ok:true (unchanged idempotent no-op)", resp, err)
+	}
+
+	convJSON := a.CreateChatConversation("agent", "general", "fake-runtime", "", "")
+	var conv struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(convJSON), &conv); err != nil {
+		t.Fatalf("unmarshal conversation: %v (%s)", err, convJSON)
+	}
+	if _, _, err := store.CreateTurn(conv.ID, "default", "turn-done", a.chatSup.instanceID, "hi"); err != nil {
+		t.Fatalf("CreateTurn: %v", err)
+	}
+	if _, _, err := store.FinalizeTurn("default", conv.ID, "turn-done", chatevents.StatusCompleted, "", nil, true); err != nil {
+		t.Fatalf("FinalizeTurn: %v", err)
+	}
+
+	resp2 := a.StopChatTurn(conv.ID, "turn-done")
+	var r2 struct {
+		OK bool `json:"ok"`
+	}
+	if err := json.Unmarshal([]byte(resp2), &r2); err != nil || !r2.OK {
+		t.Fatalf("StopChatTurn on an already-finished OWN turn = %s (err=%v), want ok:true", resp2, err)
+	}
+}
+
+func TestApp_GetChatTurns_OwnedByThisInstance(t *testing.T) {
+	store, db := newChatTestStore(t)
+	chatSvc := aichat.NewChatService(store, db)
+	var launchedA []*fakeChatProcess
+	launcherA := func(ctx context.Context, cliBin string, args []string) (chatProcess, error) {
+		if len(launchedA) == 0 {
+			t.Fatal("instance A's launcher called with no queued fake process")
+		}
+		p := launchedA[0]
+		launchedA = launchedA[1:]
+		return p, nil
+	}
+	appA := newSecondInstanceApp(t, store, chatSvc, launcherA)
+	appB := newSecondInstanceApp(t, store, chatSvc, neverLaunch(t))
+
+	convJSON := appA.CreateChatConversation("agent", "general", "fake-runtime", "", "")
+	var conv struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(convJSON), &conv); err != nil {
+		t.Fatalf("unmarshal conversation: %v (%s)", err, convJSON)
+	}
+
+	// A previous, finished turn — ordinary history. It must read as owned
+	// (never read-only) from EITHER instance's view, regardless of who
+	// actually ran it.
+	if _, _, err := store.CreateTurn(conv.ID, "default", "turn-old", appB.chatSup.instanceID, "old, by B"); err != nil {
+		t.Fatalf("CreateTurn(turn-old): %v", err)
+	}
+	if _, _, err := store.FinalizeTurn("default", conv.ID, "turn-old", chatevents.StatusCompleted, "", nil, true); err != nil {
+		t.Fatalf("FinalizeTurn(turn-old): %v", err)
+	}
+
+	// A's own currently-active turn.
+	launchedA = append(launchedA, newFakeChatProcess(""))
+	respA := appA.StartChatTurn(conv.ID, "turn-active-a", "hi from A", false, false)
+	var rA startChatTurnResponse
+	if err := json.Unmarshal([]byte(respA), &rA); err != nil || !rA.OK {
+		t.Fatalf("instance A's Start failed: %s", respA)
+	}
+
+	type turnItem struct {
+		ID                  string `json:"id"`
+		Status              string `json:"status"`
+		OwnedByThisInstance bool   `json:"ownedByThisInstance"`
+	}
+	byID := func(items []turnItem, id string) (turnItem, bool) {
+		for _, it := range items {
+			if it.ID == id {
+				return it, true
+			}
+		}
+		return turnItem{}, false
+	}
+
+	// From A's own view: both the finished turn and A's own active turn
+	// must read as owned.
+	var gotA struct {
+		Items []turnItem `json:"items"`
+	}
+	respGetA := appA.GetChatTurns(conv.ID, "", 50)
+	if err := json.Unmarshal([]byte(respGetA), &gotA); err != nil {
+		t.Fatalf("unmarshal GetChatTurns(A): %v (%s)", err, respGetA)
+	}
+	if old, ok := byID(gotA.Items, "turn-old"); !ok || !old.OwnedByThisInstance {
+		t.Errorf("A's view of finished turn-old: %+v ok=%v, want ownedByThisInstance=true (finished turns are never read-only)", old, ok)
+	}
+	if activeA, ok := byID(gotA.Items, "turn-active-a"); !ok || !activeA.OwnedByThisInstance {
+		t.Errorf("A's view of its OWN active turn: %+v ok=%v, want ownedByThisInstance=true", activeA, ok)
+	}
+	if strings.Contains(respGetA, appA.chatSup.instanceID) || strings.Contains(respGetA, appB.chatSup.instanceID) {
+		t.Errorf("GetChatTurns(A) response leaks a raw instance ID: %s", respGetA)
+	}
+
+	// From B's view: the finished turn is still owned=true (history is
+	// never read-only), but A's currently-active turn must read as
+	// owned=false — the one case the contract calls out.
+	var gotB struct {
+		Items []turnItem `json:"items"`
+	}
+	respGetB := appB.GetChatTurns(conv.ID, "", 50)
+	if err := json.Unmarshal([]byte(respGetB), &gotB); err != nil {
+		t.Fatalf("unmarshal GetChatTurns(B): %v (%s)", err, respGetB)
+	}
+	if oldB, ok := byID(gotB.Items, "turn-old"); !ok || !oldB.OwnedByThisInstance {
+		t.Errorf("B's view of finished turn-old: %+v ok=%v, want ownedByThisInstance=true", oldB, ok)
+	}
+	if activeFromB, ok := byID(gotB.Items, "turn-active-a"); !ok || activeFromB.OwnedByThisInstance {
+		t.Errorf("B's view of A's currently-active turn: %+v ok=%v, want ownedByThisInstance=FALSE (the one case that must read read-only)", activeFromB, ok)
+	}
+	if strings.Contains(respGetB, appA.chatSup.instanceID) || strings.Contains(respGetB, appB.chatSup.instanceID) {
+		t.Errorf("GetChatTurns(B) response leaks a raw instance ID: %s", respGetB)
 	}
 }
