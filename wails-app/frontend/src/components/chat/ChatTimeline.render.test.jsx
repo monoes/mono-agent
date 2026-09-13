@@ -207,6 +207,27 @@ describe('ToolActivityCard', () => {
     expect(document.getElementById(controlsId)).not.toBeNull()
   })
 
+  it('actually visually hides the controlled panel while collapsed — the always-mounted div must not carry an inline style that overrides `hidden`', () => {
+    // Regression: the panel div was given both `hidden={!open}` AND an
+    // inline `style={{ display: 'flex', ... }}` unconditionally. An inline
+    // style always wins over the UA stylesheet's `[hidden]{display:none}`
+    // rule, so the body rendered permanently visible regardless of the
+    // toggle — collapsing/expanding the card looked like it did nothing.
+    render(<ToolActivityCard turnId="t1" call={{ callId: 'c1', name: 'search_docs', arguments: {}, status: 'completed', ok: true, result: 'found 3' }} />)
+    const header = screen.getByRole('button', { name: /search_docs/ })
+    const controlsId = header.getAttribute('aria-controls')
+    const panel = document.getElementById(controlsId)
+    expect(panel).not.toBeVisible()
+    expect(panel.style.display).not.toBe('flex')
+
+    fireEvent.click(header)
+    expect(panel).toBeVisible()
+    expect(panel.style.display).toBe('flex')
+
+    fireEvent.click(header)
+    expect(panel).not.toBeVisible()
+  })
+
   it('scopes the controlled panel id by turnId, so two turns reusing the same callId never collide', () => {
     render(<>
       <ToolActivityCard turnId="turn-1" call={{ callId: 'c1', name: 'a', arguments: {}, status: 'completed', ok: true, result: 'x' }} />

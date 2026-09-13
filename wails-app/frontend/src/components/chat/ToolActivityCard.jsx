@@ -143,7 +143,7 @@ export function ToolActivityCard({ call, turnId = '', isLive = true }) {
           while collapsed, which is the default state for every non-error
           card. */}
       {(argsText != null || resultText != null) && (
-        <div id={panelId} hidden={!open} style={{ padding: '0 10px 8px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div id={panelId} hidden={!open} style={{ padding: '0 10px 8px', display: open ? 'flex' : 'none', flexDirection: 'column', gap: 6 }}>
           {argsText != null && (
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>

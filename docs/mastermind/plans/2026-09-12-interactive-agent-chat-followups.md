@@ -736,6 +736,46 @@ boot paths, the provider callback's start/before-execution and
 call/after-execution placement, and the `CreateTurn`/`StopChatTurn`/
 `GetChatTurns` ownership logic — all confirmed correct as reported.
 
+## Post-round-4 real-usage findings (2026-09-13)
+
+Manual use of the actual built app (not just automated tests) surfaced two
+issues automated coverage missed entirely:
+
+- **`ToolActivityCard`'s collapse/expand regressed by round 3's own
+  `aria-controls` fix, and no test caught it.** The controlled panel div
+  was given both `hidden={!open}` *and* an unconditional inline
+  `style={{ display: 'flex', ... }}`. An inline style always wins over the
+  UA stylesheet's `[hidden]{display:none}` rule, so the body rendered
+  permanently visible regardless of the toggle — clicking the chevron to
+  collapse a tool card did nothing visible. Every round-3 test checked DOM
+  *presence* (`getElementById`, `getByText().toBeInTheDocument()`) or used
+  jest-dom's `toBeVisible()`, which checks the `hidden` *property* directly
+  and so didn't expose the conflict either — none checked the element's
+  actual `style.display`, which is the one place the bug was visible.
+  Fixed by making the inline style agree with `hidden` instead of fighting
+  it (`display: open ? 'flex' : 'none'`), and added a test that checks
+  `style.display` directly, specifically because the softer checks already
+  in place had proven insufficient. A reminder that DOM-presence assertions
+  and even standard visibility matchers are not a substitute for checking
+  the exact style property a bug actually touches.
+- **A generated document mentioned in an assistant's own reply text isn't
+  clickable — by design, but it's a rough edge worth knowing about.**
+  When `save_document` fails because the file already exists (e.g. the
+  model retries a name from an earlier turn/conversation), the model's
+  reply may still describe the file by path in prose. `ChatMarkdown`
+  correctly refuses to make a relative/local path clickable (the same
+  scheme-gating that blocks `javascript:`/`data:`/relative URLs generally
+  — tested, deliberate). This is not a bug, but it means the *only*
+  currently-working path to open a document from chat is a fresh,
+  successful `save_document` call's own `ChatArtifactCard` — there is no
+  fallback affordance when the call fails specifically because the
+  document already exists. A real, scoped enhancement would be: on that
+  specific failure, have `save_document` return enough information (e.g.
+  the existing file's path/vault id) for the frontend to still offer an
+  "Open existing document" affordance instead of a bare error string. Not
+  implemented — this is new scope, not a bug fix, and needs a decision on
+  the tool's response contract before building it.
+
 ---
 
 ## Status
