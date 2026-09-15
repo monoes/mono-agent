@@ -43,6 +43,13 @@ type Options struct {
 	WorkflowsDir string
 	// Version is reported in initialize serverInfo.
 	Version string
+	// AllowMutations enables mutating tools (workflow_run, hil_approve/
+	// reject, and every create/update/delete-class monoagent tool). When
+	// false (default), mutating tools are omitted from tools/list and
+	// refuse with an explanatory error if called by name. Also settable
+	// via MONOAGENT_MCP_ALLOW_MUTATIONS=="1". Mirrors internal/httpapi's
+	// identically-named/shaped AllowMutations gate.
+	AllowMutations bool
 }
 
 type rpcRequest struct {
@@ -87,6 +94,9 @@ type Server struct {
 
 // NewServer creates a Server with the given options.
 func NewServer(opts Options) *Server {
+	if !opts.AllowMutations {
+		opts.AllowMutations = os.Getenv("MONOAGENT_MCP_ALLOW_MUTATIONS") == "1"
+	}
 	return &Server{opts: opts}
 }
 
@@ -299,7 +309,7 @@ func (s *Server) handleLine(ctx context.Context, line []byte) *rpcResponse {
 		return s.result(req.ID, map[string]interface{}{})
 
 	case "tools/list":
-		return s.result(req.ID, map[string]interface{}{"tools": toolDefinitions()})
+		return s.result(req.ID, map[string]interface{}{"tools": toolDefinitions(s.opts.AllowMutations)})
 
 	case "tools/call":
 		return s.handleToolsCall(ctx, req)

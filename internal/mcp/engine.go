@@ -13,6 +13,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/monoes/mono-agent/internal/ai"
+	aichat "github.com/monoes/mono-agent/internal/ai/chat"
 	cfgpkg "github.com/monoes/mono-agent/internal/config"
 	"github.com/monoes/mono-agent/internal/connections"
 	"github.com/monoes/mono-agent/internal/noderegistry"
@@ -33,11 +34,32 @@ type runtime struct {
 	registry  *workflow.NodeTypeRegistry
 	engine    *workflow.WorkflowEngine
 	sched     *scheduler.Scheduler
+	chat      *aichat.MonoagentTools
 
-	// mu guards the lazy engine/registry/scheduler bootstrap: requests are
-	// dispatched concurrently, so several tools/call invocations may race
-	// to start the engine on first use.
+	// mu guards the lazy engine/registry/scheduler/chat bootstrap: requests
+	// are dispatched concurrently, so several tools/call invocations may
+	// race to start any of these on first use.
 	mu sync.Mutex
+}
+
+// chatTools lazily builds the shared MonoagentTools instance backing every
+// chat-tool-adapted MCP tool (monoagent_tools.go). selfBin is left empty:
+// chat's own run_workflow tool is never adapted here (the native,
+// engine-aware workflow_run supersedes it — see internal/mcp/tools.go), so
+// MonoagentTools never needs to shell back into this binary. rt.profileID
+// is set once in newRuntime and never reassigned, so setting it here at
+// first use is equivalent to setting it at construction. MonoagentTools's
+// own mutable state is behind its own sync.RWMutex and its *sql.DB handle
+// is safe for concurrent use, so sharing one instance across concurrent
+// tools/call goroutines is safe, same as rt.store/rt.registry.
+func (rt *runtime) chatTools() *aichat.MonoagentTools {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	if rt.chat == nil {
+		rt.chat = aichat.NewMonoagentTools(rt.db.DB, "")
+		rt.chat.SetProfileID(rt.profileID)
+	}
+	return rt.chat
 }
 
 func expandHome(path string) string {

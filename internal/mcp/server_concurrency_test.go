@@ -116,8 +116,10 @@ func TestServerInitializeInstructions(t *testing.T) {
 
 // TestServerToolAnnotationsPresent: every tool in tools/list carries MCP
 // annotations; the destructive/mutating hints land on the right tools.
+// AllowMutations is on so the gated tools (workflow_run, hil_approve,
+// hil_reject) are present to check hints on in the first place.
 func TestServerToolAnnotationsPresent(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerAllowMutations(t, true)
 	resps := serveLines(t, s, request(1, "tools/list", nil))
 	var res struct {
 		Tools []struct {
@@ -164,7 +166,7 @@ func TestServerToolAnnotationsPresent(t *testing.T) {
 // pings sent after it — all five requests get exactly one well-formed
 // response, with the pings answered while the run is still in flight.
 func TestServeConcurrentDispatchPingDuringSlowRun(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerAllowMutations(t, true) // exercises workflow_run, which is now gated
 	rt, err := s.runtime()
 	if err != nil {
 		t.Fatalf("runtime: %v", err)

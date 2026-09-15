@@ -103,21 +103,51 @@ Typical agent loop: `workflow search --json` → inspect template with
 ## MCP server
 
 ```bash
-monoagentcli mcp    # stdio JSON-RPC MCP server
+monoagentcli mcp                     # stdio JSON-RPC MCP server, read-only tools only
+monoagentcli mcp --allow-mutations   # also serve mutating tools
 ```
 
-Register it with any MCP client (stdio transport). Exposed tools:
+Register it with any MCP client (stdio transport). Prefer MCP when the
+host supports it; the CLI covers the same surface. Tools carry
+`readOnly`/`destructive` annotations where applicable, so hosts can gate
+dangerous calls.
 
-- `workflow_list`, `workflow_get` (fetch one workflow as JSON),
-  `workflow_run` (returns status + node outputs),
-  `workflow_status`, `workflow_validate`
-- `node_list`, `node_schema`
-- `hil_list`, `hil_approve`, `hil_reject`
+**Read-only, always exposed:**
+
+- `workflow_list`, `workflow_get`, `workflow_validate`, `workflow_status`
+- `node_list` (optional `category` filter — see the tool's own
+  description for values), `node_schema`
+- `hil_list`
+- `vault_item_list`, `vault_item_get_path`, `profile_document_search`
+- `secret_list` (metadata only — values are never returned by any tool)
+- `person_list`, `person_get`
+- `message_list`, `message_get` (results carry an untrusted-content
+  provenance fence)
+- `social_list_list`, `template_list`
+- `org_list`, `org_get`, `org_validate`
 - `docs` (browse `ref` topics)
 
-Prefer MCP when the host supports it; the CLI covers the same surface.
-Tools carry `readOnly`/`destructive` annotations where applicable, so
-hosts can gate dangerous calls.
+**Mutating — require `--allow-mutations` or
+`MONOAGENT_MCP_ALLOW_MUTATIONS=1`:** omitted from `tools/list` and refused
+with an explanatory error if called by name otherwise. This includes
+`workflow_run`, `hil_approve`, and `hil_reject`, which were exposed
+unconditionally before this flag existed — add `--allow-mutations` to an
+existing MCP client config that relies on them.
+
+- `workflow_run`, `workflow_create`, `workflow_delete`,
+  `workflow_set_active`, `workflow_node_add`
+- `hil_approve`, `hil_reject`
+- `secret_add`, `secret_update`, `secret_delete`
+- `person_upsert`, `person_delete`
+- `org_create`, `org_role_add`, `org_role_update`,
+  `org_role_set_reports_to`, `org_role_remove`, `org_reload`
+
+Most of this surface (vault, secrets, people, orgs) is the same
+implementation the chat feature already uses natively — see "Assistant
+chat & tools" below for the safety properties (metadata-only secrets,
+pre-delete backups, `confirm:true` previews on destructive/cascading
+actions, untrusted-content fencing on messages), which apply unchanged
+here; MCP is just a second transport onto the same tool implementations.
 
 ## HTTP API
 
@@ -370,3 +400,17 @@ for any outbound action. See `docs/USAGE_POLICY.md` for the full policy.
 
 If a request falls into the above categories, decline it — no workaround
 advice either.
+# monomind:start instructions:opencode
+# Monomind
+
+Use the `monomind` MCP tools for graph navigation, impact analysis, memory, and organization work.
+For multi-step work, load only the applicable `mastermind-*` skill; do not load all workflows at once.
+If MCP is unavailable, run `npx -y monomind@latest doctor` and use `npx -y monomind@latest` commands.
+# monomind:end instructions:opencode
+# monomind:start instructions:codex
+# Monomind
+
+Use the `monomind` MCP tools for graph navigation, impact analysis, memory, and organization work.
+For multi-step work, load only the applicable `mastermind-*` skill; do not load all workflows at once.
+If MCP is unavailable, run `npx -y monomind@latest doctor` and use `npx -y monomind@latest` commands.
+# monomind:end instructions:codex

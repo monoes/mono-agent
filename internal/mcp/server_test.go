@@ -40,6 +40,34 @@ func newTestServer(t *testing.T) *Server {
 	return s
 }
 
+// newTestServerAllowMutations mirrors newTestServer but sets AllowMutations.
+// Kept separate so tests exercising the mutation gate can't accidentally
+// change newTestServer's signature out from under the ~20 tests calling it.
+func newTestServerAllowMutations(t *testing.T, allow bool) *Server {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "mcp-test.db")
+	db, err := storage.NewDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("NewDatabase: %v", err)
+	}
+	if err := db.ApplyMigrations(); err != nil {
+		t.Fatalf("ApplyMigrations: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("closing seed db: %v", err)
+	}
+
+	s := NewServer(Options{
+		DBPath:         dbPath,
+		Profile:        "default",
+		WorkflowsDir:   filepath.Join(t.TempDir(), "workflows"),
+		Version:        "test",
+		AllowMutations: allow,
+	})
+	t.Cleanup(func() { s.rt.Close() })
+	return s
+}
+
 // serveLines feeds the given JSON-RPC lines to the server and returns the
 // parsed response objects, in order.
 func serveLines(t *testing.T, s *Server, lines ...string) []map[string]json.RawMessage {
@@ -144,14 +172,17 @@ func TestServerToolsList(t *testing.T) {
 	if err := json.Unmarshal(resps[0]["result"], &res); err != nil {
 		t.Fatalf("unmarshal tools/list result: %v", err)
 	}
-	if len(res.Tools) < 10 {
-		t.Errorf("expected >= 10 tools, got %d", len(res.Tools))
+	if len(res.Tools) < 8 {
+		t.Errorf("expected >= 8 always-on (non-mutating) tools, got %d", len(res.Tools))
 	}
+	// workflow_run/hil_approve/hil_reject are mutating — gated behind
+	// AllowMutations, so not part of the always-on default surface checked
+	// here; see TestServerToolsListOmitsMutatingByDefault/IncludesMutatingWhenAllowed.
 	want := map[string]bool{
 		"workflow_list": false, "workflow_get": false, "workflow_validate": false,
-		"workflow_run": false, "workflow_status": false, "node_list": false,
-		"node_schema": false, "hil_list": false, "hil_approve": false,
-		"hil_reject": false, "docs": false,
+		"workflow_status": false, "node_list": false,
+		"node_schema": false, "hil_list": false,
+		"docs": false,
 	}
 	for _, tl := range res.Tools {
 		if _, ok := want[tl.Name]; ok {
@@ -165,6 +196,65 @@ func TestServerToolsList(t *testing.T) {
 		if !seen {
 			t.Errorf("tool %q missing from tools/list", name)
 		}
+	}
+}
+
+// mutatingToolNames are the tools that gain destructive/mutating power —
+// gated behind Options.AllowMutations. Shared by the omit/include pair below.
+func mutatingToolNames() []string {
+	return []string{"workflow_run", "hil_approve", "hil_reject"}
+}
+
+func toolsListNames(t *testing.T, s *Server) map[string]bool {
+	t.Helper()
+	resps := serveLines(t, s, request(1, "tools/list", nil))
+	var res struct {
+		Tools []struct {
+			Name string `json:"name"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(resps[0]["result"], &res); err != nil {
+		t.Fatalf("unmarshal tools/list: %v", err)
+	}
+	out := map[string]bool{}
+	for _, tl := range res.Tools {
+		out[tl.Name] = true
+	}
+	return out
+}
+
+func TestServerToolsListOmitsMutatingByDefault(t *testing.T) {
+	s := newTestServer(t)
+	names := toolsListNames(t, s)
+	for _, name := range mutatingToolNames() {
+		if names[name] {
+			t.Errorf("tools/list included mutating tool %q with AllowMutations unset (default false)", name)
+		}
+	}
+	if !names["workflow_list"] {
+		t.Errorf("tools/list missing non-mutating tool workflow_list")
+	}
+}
+
+func TestServerToolsListIncludesMutatingWhenAllowed(t *testing.T) {
+	s := newTestServerAllowMutations(t, true)
+	names := toolsListNames(t, s)
+	for _, name := range mutatingToolNames() {
+		if !names[name] {
+			t.Errorf("tools/list omitted mutating tool %q with AllowMutations=true", name)
+		}
+	}
+}
+
+func TestServerMutatingToolRefusedWithoutFlag(t *testing.T) {
+	s := newTestServer(t)
+	resps := serveLines(t, s, callToolReq(1, "secret_add", map[string]interface{}{}))
+	text, isErr := toolText(t, resps[0])
+	if !isErr {
+		t.Fatalf("secret_add without --allow-mutations must be a tool error, got success: %s", text)
+	}
+	if !strings.Contains(text, "--allow-mutations") {
+		t.Errorf("refusal text = %q, want it to mention --allow-mutations", text)
 	}
 }
 

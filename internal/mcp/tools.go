@@ -22,6 +22,7 @@ type tool struct {
 	description string
 	schema      map[string]interface{}
 	annotations map[string]bool
+	mutating    bool // gated behind Options.AllowMutations — see callTool/toolDefinitions
 	handler     toolHandler
 }
 
@@ -40,11 +41,22 @@ func objSchema(props map[string]interface{}, required ...string) map[string]inte
 	return m
 }
 
-// toolDefinitions returns the MCP tool descriptors for tools/list.
-func toolDefinitions() []map[string]interface{} {
+// toolDefinitions returns the MCP tool descriptors for tools/list. Mutating
+// tools are omitted entirely when allowMutations is false, so a model never
+// sees or attempts one it can't use — unlike internal/httpapi's equivalent
+// gate, callTool below still answers a direct call to a gated tool by name
+// with an explanatory refusal rather than "unknown tool": httpapi's
+// omit-so-it-404s design specifically defeats a *remote* prober enumerating
+// endpoints, a threat model that doesn't apply to a local stdio process the
+// user configured themselves — and a clear refusal is more useful than a
+// misleading "doesn't exist" for someone whose config used to work.
+func toolDefinitions(allowMutations bool) []map[string]interface{} {
 	tools := allTools()
 	out := make([]map[string]interface{}, 0, len(tools))
 	for _, t := range tools {
+		if t.mutating && !allowMutations {
+			continue
+		}
 		def := map[string]interface{}{
 			"name":        t.name,
 			"description": t.description,
@@ -66,6 +78,9 @@ func callTool(ctx context.Context, s *Server, name string, args json.RawMessage)
 		if t.name != name {
 			continue
 		}
+		if t.mutating && !s.opts.AllowMutations {
+			return "", fmt.Errorf("%s requires --allow-mutations (or MONOAGENT_MCP_ALLOW_MUTATIONS=1) on the mcp server", t.name)
+		}
 		result, err := t.handler(ctx, s, args)
 		if err != nil {
 			return "", err
@@ -80,7 +95,7 @@ func callTool(ctx context.Context, s *Server, name string, args json.RawMessage)
 }
 
 func allTools() []tool {
-	return []tool{
+	native := []tool{
 		{
 			name:        "workflow_list",
 			description: "List saved workflows for the active profile: [{id, name, active, node_count}]",
@@ -120,6 +135,7 @@ func allTools() []tool {
 				"timeout_seconds": map[string]interface{}{"type": "number", "description": "Wait limit in seconds (default 120, clamped to [1, 600])"},
 			}, "id"),
 			annotations: map[string]bool{"readOnlyHint": false},
+			mutating:    true,
 			handler:     toolWorkflowRun,
 		},
 		{
@@ -133,8 +149,10 @@ func allTools() []tool {
 		},
 		{
 			name:        "node_list",
-			description: "List all available node types: [{type, category, title}]",
-			schema:      objSchema(nil),
+			description: "List available node types: [{type, category, title}]. Optionally filter by category — one of: trigger, control, http, system, communication, ai, browser/social, people, database, service, data, other. category is a derived grouping, not a type-string prefix (e.g. category=\"browser/social\" returns instagram.*/linkedin.*/gemini.*/etc together; a raw type name like \"gemini\" matches nothing).",
+			schema: objSchema(map[string]interface{}{
+				"category": strParam("Optional category filter — see the tool description for valid values"),
+			}),
 			annotations: map[string]bool{"readOnlyHint": true, "idempotentHint": true},
 			handler:     toolNodeList,
 		},
@@ -165,6 +183,7 @@ func allTools() []tool {
 				},
 			}, "id"),
 			annotations: map[string]bool{"readOnlyHint": false},
+			mutating:    true,
 			handler:     toolHilApprove,
 		},
 		{
@@ -174,6 +193,7 @@ func allTools() []tool {
 				"id": strParam("HIL item ID"),
 			}, "id"),
 			annotations: map[string]bool{"readOnlyHint": false, "destructiveHint": true},
+			mutating:    true,
 			handler:     toolHilReject,
 		},
 		{
@@ -186,6 +206,7 @@ func allTools() []tool {
 			handler:     toolDocs,
 		},
 	}
+	return append(native, monoagentAdaptedTools()...)
 }
 
 func decodeArgs(args json.RawMessage, dst interface{}) error {
@@ -575,6 +596,12 @@ func nodeTitle(t string) string {
 }
 
 func toolNodeList(ctx context.Context, s *Server, args json.RawMessage) (interface{}, error) {
+	var a struct {
+		Category string `json:"category"`
+	}
+	if err := decodeArgs(args, &a); err != nil {
+		return nil, err
+	}
 	rt, err := s.runtime()
 	if err != nil {
 		return nil, err
@@ -583,9 +610,13 @@ func toolNodeList(ctx context.Context, s *Server, args json.RawMessage) (interfa
 	sort.Strings(types)
 	out := []map[string]interface{}{}
 	for _, t := range types {
+		cat := nodeCategory(t)
+		if a.Category != "" && cat != a.Category {
+			continue
+		}
 		out = append(out, map[string]interface{}{
 			"type":     t,
-			"category": nodeCategory(t),
+			"category": cat,
 			"title":    nodeTitle(t),
 		})
 	}
