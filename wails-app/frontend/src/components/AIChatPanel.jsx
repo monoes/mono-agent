@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { X, Trash2, Plus, History, Maximize2, Minimize2, ArrowDown } from 'lucide-react'
+import { X, Trash2, Plus, History, Maximize2, Minimize2, ArrowDown, Loader } from 'lucide-react'
 import { api, notify } from '../services/api.js'
 import { useChatStream, loadTurnState } from './chat/useChatStream.js'
 import { ChatTimeline } from './chat/ChatTimeline.jsx'
@@ -167,6 +167,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
   const [selectedProvider, setSelectedProvider] = useState('')
   const [selectedModel, setSelectedModel]   = useState('')
   const [runtimes, setRuntimes]             = useState([])
+  const [runtimesLoading, setRuntimesLoading] = useState(false)
   const [selectedRuntime, setSelectedRuntime] = useState('')
   const [runtimeModels, setRuntimeModels]   = useState([]) // models for selectedRuntime, from getAgentRuntimeModels
   const [runtimeModelsLoading, setRuntimeModelsLoading] = useState(false)
@@ -185,6 +186,22 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
 
   const liveTurn = useChatStream({ conversationId, turnId: activeTurnId })
   const streaming = !!activeTurnId
+  // Only meaningful for the monomind-delegated agent path (useAgents) —
+  // the older in-process provider chat (useAgents:false) is a separate
+  // backend this capability says nothing about, so it keeps TurnStatus's
+  // own default (true, today's behavior) rather than being judged by
+  // whatever agent runtime happens to be selected in the (unused, in that
+  // mode) runtime picker. Within the agent path, strict `=== true`, not
+  // `!== false`: a stale scan, an older monomind that predates this
+  // field, or any plumbing gap all decode to `undefined` — which must
+  // mean "assume non-streaming" (TurnStatus's own calmer waiting copy)
+  // rather than silently reverting to the exact misleading "No new
+  // activity" behavior this capability exists to fix. A turn always runs
+  // under whatever selectedRuntime is right now (the runtime/model
+  // selects are disabled mid-turn), so it's safe to read this at render
+  // time rather than snapshotting it onto the turn itself.
+  const activeRuntimeInfo = runtimes.find(r => r.id === selectedRuntime)
+  const activeRuntimeStreamsIncrementally = !useAgents || activeRuntimeInfo?.streams_incrementally === true
   // Changes whenever new content arrives — a finalized turn (messages
   // grows) or a live delta/tool/notice within the current turn (lastSeq
   // advances) — driving useChatScroll's follow-vs-unread decision below.
@@ -235,6 +252,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
   useEffect(() => {
     if (!isOpen || hasScannedRef.current) return
     hasScannedRef.current = true
+    setRuntimesLoading(true)
     cachedAgentScan().then(res => {
       if (!res || res.error) { setMonomindMissing(true); return }
       const installed = (res.agents || []).filter(a => a.installed)
@@ -246,7 +264,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
         setSelectedRuntime(preferred)
         setUseAgents(true) // prefer local agents when any is installed
       }
-    })
+    }).finally(() => setRuntimesLoading(false))
     // initialRuntime intentionally excluded: changes to it are reconciled
     // against the already-loaded runtime list by the effect below — no rescan.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -650,11 +668,13 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
   // after this needs a flat string to compare/speak, not the JSX element
   // the monomindMissing branch uses there (an inline <code> tag). If you
   // change one, change the other the same way.
-  const disabledReasonText = !hasBackend
-    ? (monomindMissing
-        ? 'monomind not found — install with npm install -g @monoes/monomindcli, or select an AI provider above'
-        : (useAgents ? 'Select an agent runtime above to start chatting' : 'Select an AI provider above to start chatting'))
-    : ''
+  const disabledReasonText = runtimesLoading
+    ? 'Loading available AI systems…'
+    : !hasBackend
+      ? (monomindMissing
+          ? 'monomind not found — install with npm install -g @monoes/monomindcli, or select an AI provider above'
+          : (useAgents ? 'Select an agent runtime above to start chatting' : 'Select an AI provider above to start chatting'))
+      : ''
 
   // Assistant tool access (Settings → "Assistant tool access", GX2 contract):
   // read per render so toggling it there applies here without a remount.
@@ -936,6 +956,21 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
         display: 'flex', gap: 6,
         flexShrink: 0,
       }}>
+        {/* Before the initial agent scan resolves (~6-7s: monomind spawn +
+            handshake + a parallel probe of every known agent CLI), runtimes
+            is indistinguishable from "none installed" — without this branch
+            the UI below falls straight into the providers empty-state
+            ("No providers" / "Select an AI provider above"), which actively
+            misleads a user whose real backend (agent runtimes) just hasn't
+            finished loading yet. Show a plain loading placeholder instead
+            of the real selector row until the scan settles. */}
+        {runtimesLoading ? (
+          <div style={{ ...selectStyle, flex: 1, display: 'flex', alignItems: 'center', gap: 6, color: 'rgba(226,232,240,0.55)' }}>
+            <Loader size={13} className="chat-spin" style={{ color: '#00b4d8', flexShrink: 0 }} />
+            Loading AI systems…
+          </div>
+        ) : (
+        <>
         {/* Only a real choice when both a local runtime and a configured
             provider exist — one-option dropdowns are noise, not a control. */}
         {(runtimes.length > 0 && providers.length > 0) && (
@@ -1029,6 +1064,8 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
             }}
           />
         )}
+        </>
+        )}
       </div>
 
       {/* ── Messages area ── */}
@@ -1107,7 +1144,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
                 ? <ChatArtifactCard key={call.callId} artifact={artifact} onOpenArtifact={() => openArtifact(call, artifact)} />
                 : null
             })}
-            <TurnStatus state={liveTurn} stopRequested={stopRequested} />
+            <TurnStatus state={liveTurn} stopRequested={stopRequested} streamsIncrementally={activeRuntimeStreamsIncrementally} />
           </div>
         )}
       </div>
@@ -1144,9 +1181,11 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
         // Kept in sync by hand with the plain-text disabledReasonText above
         // (used by the live-region announcement effect) — update both the
         // same way.
-        disabledReason={monomindMissing
-          ? <>monomind not found — install with <code>npm install -g @monoes/monomindcli</code>, or select an AI provider above</>
-          : (useAgents ? 'Select an agent runtime above to start chatting' : 'Select an AI provider above to start chatting')}
+        disabledReason={runtimesLoading
+          ? 'Loading available AI systems…'
+          : (monomindMissing
+              ? <>monomind not found — install with <code>npm install -g @monoes/monomindcli</code>, or select an AI provider above</>
+              : (useAgents ? 'Select an agent runtime above to start chatting' : 'Select an AI provider above to start chatting'))}
       />
     </div>
   )
