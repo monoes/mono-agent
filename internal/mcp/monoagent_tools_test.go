@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/zalando/go-keyring"
 )
 
 // TestMessageListRendersEvenThoughNotJSON pins the adapter's json.Valid
@@ -112,6 +114,13 @@ func TestServerMutatingToolSucceedsWithFlag(t *testing.T) {
 // cover workflow_get's separate, pre-existing lack of inline node-config
 // redaction — see the plan's Dedup section.
 func TestServerSecretValuesNeverReturnedViaMCP(t *testing.T) {
+	// secret_add goes through internal/secrets' real DEK/KEK machinery,
+	// which without this reads/creates the KEK from the OS keychain — fine
+	// on a dev Mac, but CI's headless Linux runner has no D-Bus Secret
+	// Service (org.freedesktop.secrets), so that call fails outright. Every
+	// other secrets-touching test in this codebase (internal/secrets'
+	// own *_test.go) calls this same MockInit() for exactly that reason.
+	keyring.MockInit()
 	s := newTestServerAllowMutations(t, true)
 	const fakeValue = "totally-not-a-real-credential-marker-9f3e7a"
 	resps := serveLines(t, s,
