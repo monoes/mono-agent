@@ -293,6 +293,41 @@ describe('computeStatusLabel', () => {
     expect(computeStatusLabel(state, 0)).toEqual({ label: 'Running in another window', isIdleWarning: false })
   })
 
+  // streamsIncrementally (agent-exec.ts protocol rev 5, runner-registry.ts's
+  // RunnerSpec.streamsIncrementally): most runtimes only ever yield a
+  // complete message at a step/turn boundary, never partial text as it
+  // generates. Waiting silently through that with the same "Waiting for
+  // response" + "No new activity for 15s" wording used for a streaming
+  // runtime implies something might be stuck when nothing is wrong — the
+  // turn was never going to show partial output. Merged into state the
+  // same way ownedByThisInstance/stopRequested are (see TurnStatus's call
+  // site), not part of chatReducer's own replay state.
+  it('reports a distinct waiting label for a non-streaming runtime, instead of the generic "Waiting for response"', () => {
+    const state = { ...base, startedAt: 't', streamsIncrementally: false }
+    expect(computeStatusLabel(state, 0).label).not.toBe('Waiting for response')
+    expect(computeStatusLabel(state, 0).label).toMatch(/full reply/i)
+  })
+
+  it('suppresses the idle-activity warning for a non-streaming runtime while waiting — silence there is normal, not evidence of a hang', () => {
+    const startedAt = '2026-09-12T00:00:00.000Z'
+    const state = { ...base, startedAt, lastEventAt: startedAt, streamsIncrementally: false }
+    const t0 = new Date(startedAt).getTime()
+    expect(computeStatusLabel(state, t0 + 15001).isIdleWarning).toBe(false)
+    expect(computeStatusLabel(state, t0 + 120000).isIdleWarning).toBe(false)
+  })
+
+  it('defaults to today\'s streaming-runtime behavior when streamsIncrementally is omitted (older data, existing callers, existing tests)', () => {
+    const state = { ...base, startedAt: 't' }
+    expect(computeStatusLabel(state, 0).label).toBe('Waiting for response')
+  })
+
+  it('once real activity arrives, a non-streaming runtime uses the same "Running <tool>"/"Responding" labels as any other turn', () => {
+    const runningState = { ...base, startedAt: 't', streamsIncrementally: false, calls: { c1: { callId: 'c1', name: 'get_workflow', status: 'started' } } }
+    expect(computeStatusLabel(runningState, 0).label).toBe('Running get_workflow')
+    const respondingState = { ...base, startedAt: 't', streamsIncrementally: false, parts: [{ kind: 'text', partId: 'p1', text: 'hi' }] }
+    expect(computeStatusLabel(respondingState, 0).label).toBe('Responding')
+  })
+
   it('a terminal event always wins over ownedByThisInstance:false — a foreign turn actually observed to have finished shows its real terminal label', () => {
     const state = { ...base, ownedByThisInstance: false, terminal: { status: 'completed', reason: 'end_turn' } }
     expect(computeStatusLabel(state, 0).label).toBe('Completed')

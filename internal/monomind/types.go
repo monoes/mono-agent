@@ -1,5 +1,5 @@
 // Package monomind is the mono-agent client for monomind's Agent Exec
-// Protocol (doc/agent-exec-protocol.md in the monomind repo, v1/rev 4): the
+// Protocol (doc/agent-exec-protocol.md in the monomind repo, v1/rev 5): the
 // subprocess contract monoagentcli uses to delegate every AI interaction to
 // a locally-installed monomind, which in turn drives the installed agent
 // CLIs. mono-agent never learns agent-CLI wire formats — only this protocol.
@@ -29,6 +29,16 @@ type Event struct {
 	Cwd     string `json:"cwd,omitempty"`
 	Resume  string `json:"resume,omitempty"`
 	Pid     int    `json:"pid,omitempty"`
+	// StreamsIncrementally (protocol rev 5): whether this runtime delivers
+	// real incremental `assistant` text as a turn streams, vs. only ever a
+	// complete message at a step/turn boundary. Deliberately no
+	// `omitempty` — unlike the other `start` fields, `false` is a real,
+	// common, meaningful value here (most runtimes don't stream), and
+	// Event has its own MarshalJSON below; `omitempty` on a bool drops the
+	// key entirely on `false`, which would silently defeat any caller that
+	// re-encodes a decoded Event (see ScanEntry's own comment on the same
+	// hazard, which is actually exercised via ScanAgentRuntimes' re-marshal).
+	StreamsIncrementally bool `json:"streams_incrementally"`
 
 	// session
 	SessionID string `json:"session_id,omitempty"`
@@ -88,11 +98,12 @@ type eventJSON struct {
 	V    int    `json:"v"`
 	Type string `json:"type"`
 
-	Runtime string `json:"runtime,omitempty"`
-	Model   string `json:"model,omitempty"`
-	Cwd     string `json:"cwd,omitempty"`
-	Resume  string `json:"resume,omitempty"`
-	Pid     int    `json:"pid,omitempty"`
+	Runtime              string `json:"runtime,omitempty"`
+	Model                string `json:"model,omitempty"`
+	Cwd                  string `json:"cwd,omitempty"`
+	Resume               string `json:"resume,omitempty"`
+	Pid                  int    `json:"pid,omitempty"`
+	StreamsIncrementally bool   `json:"streams_incrementally"`
 
 	SessionID string `json:"session_id,omitempty"`
 
@@ -134,7 +145,8 @@ func (e *Event) UnmarshalJSON(data []byte) error {
 	*e = Event{
 		V: w.V, Type: w.Type,
 		Runtime: w.Runtime, Model: w.Model, Cwd: w.Cwd, Resume: w.Resume, Pid: w.Pid,
-		SessionID: w.SessionID,
+		StreamsIncrementally: w.StreamsIncrementally,
+		SessionID:            w.SessionID,
 		Text:      w.Text,
 		ID:        w.ID, Name: w.Name, Args: w.Args, OK: w.OK, Result: w.Result,
 		Subtype: w.Subtype, IsError: w.IsError, StopReason: w.StopReason,
@@ -167,7 +179,8 @@ func (e Event) MarshalJSON() ([]byte, error) {
 	w := eventJSON{
 		V: e.V, Type: e.Type,
 		Runtime: e.Runtime, Model: e.Model, Cwd: e.Cwd, Resume: e.Resume, Pid: e.Pid,
-		SessionID: e.SessionID,
+		StreamsIncrementally: e.StreamsIncrementally,
+		SessionID:            e.SessionID,
 		Text:      e.Text,
 		ID:        e.ID, Name: e.Name, Args: e.Args, OK: e.OK, Result: e.Result,
 		Subtype: e.Subtype, IsError: e.IsError, StopReason: e.StopReason,
@@ -271,6 +284,12 @@ type ScanEntry struct {
 	Binary      *string `json:"binary"`
 	Version     *string `json:"version"`
 	InstallHint string  `json:"install_hint"`
+	// StreamsIncrementally (protocol rev 5): mirrors Event's own field —
+	// see its doc comment for why this deliberately has no `omitempty`.
+	// Static per-runtime metadata: unlike Installed/Version it never
+	// depends on probing the binary, so it's present even when
+	// Installed is false.
+	StreamsIncrementally bool `json:"streams_incrementally"`
 }
 
 // ScanResult is the `agent scan --json` payload (§6).

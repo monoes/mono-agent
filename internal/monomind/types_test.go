@@ -72,3 +72,36 @@ func TestEventJSON_RoundTripPreservesPresence(t *testing.T) {
 		t.Errorf(`"cost_usd" reappeared after round-trip, want it to stay absent`)
 	}
 }
+
+// TestEventJSON_StreamsIncrementallyPresentEvenWhenFalse guards against the
+// exact bug caught during review before this field was added: an
+// `omitempty` bool tag drops the key entirely on `false`, and this field's
+// most common real value IS false (most runtimes don't stream) — so
+// decode-then-re-encode must keep the key present and false, not silently
+// drop it the way a caller checking `!== undefined`/`=== true` could
+// mistake for "true" or "unknown".
+func TestEventJSON_StreamsIncrementallyPresentEvenWhenFalse(t *testing.T) {
+	original := `{"v":1,"type":"start","runtime":"codex","streams_incrementally":false}`
+	var ev Event
+	if err := json.Unmarshal([]byte(original), &ev); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if ev.StreamsIncrementally {
+		t.Fatalf("StreamsIncrementally = true, want false")
+	}
+	b, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(b, &raw); err != nil {
+		t.Fatalf("unmarshal to map: %v", err)
+	}
+	v, ok := raw["streams_incrementally"]
+	if !ok {
+		t.Fatalf(`"streams_incrementally" absent after re-encode, want present and false`)
+	}
+	if v != false {
+		t.Errorf(`"streams_incrementally" = %#v, want false`, v)
+	}
+}

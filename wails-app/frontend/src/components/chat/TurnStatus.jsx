@@ -21,8 +21,20 @@ const TERMINAL_LABELS = {
 // parameter rather than Date.now() for the same reason. Returns
 // { label, isIdleWarning } — the component below re-renders this on a
 // ticking clock to keep isIdleWarning current.
+//
+// streamsIncrementally (agent-exec.ts protocol rev 5 — see
+// runner-registry.ts's RunnerSpec.streamsIncrementally in the monomind
+// repo): most local agent runtimes only ever deliver a complete response
+// at a step/turn boundary, never partial text as it generates. Silently
+// waiting through that with the generic "Waiting for response" label and
+// the "No new activity for Ns" idle warning would tell the user something
+// might be stuck when nothing is wrong — that turn was never going to show
+// partial output. Defaults to `true` (today's behavior, honest for a
+// streaming-capable runtime) so old data, mocks, and any caller not
+// passing it are unaffected — only an explicit `false` changes anything,
+// same convention as ownedByThisInstance below.
 export function computeStatusLabel(state, now) {
-  const { terminal, stopRequested, startedAt, lastEventAt, parts, calls, ownedByThisInstance } = state
+  const { terminal, stopRequested, startedAt, lastEventAt, parts, calls, ownedByThisInstance, streamsIncrementally = true } = state
   if (terminal) {
     let label = TERMINAL_LABELS[terminal.status] || terminal.status
     if (terminal.status === 'completed' && terminal.reason && terminal.reason.startsWith('limit reached')) {
@@ -53,7 +65,14 @@ export function computeStatusLabel(state, now) {
   if (runningTool) label = `Running ${runningTool.name}`
   else if ((parts || []).some(p => p.kind === 'text')) label = 'Responding'
   else if (!startedAt) label = 'Starting agent'
-  else label = 'Waiting for response'
+  else if (!streamsIncrementally) {
+    // No tool running, no text yet, and this runtime never sends partial
+    // output — a minute of silence here is normal, not a stall. Skip the
+    // idle-activity annotation entirely rather than reusing "No new
+    // activity for Ns", which specifically implies something might be
+    // wrong.
+    return { label: 'Waiting for full reply — this runtime doesn’t stream partial output', isIdleWarning: false }
+  } else label = 'Waiting for response'
 
   const isIdleWarning = !!lastEventAt && (now - new Date(lastEventAt).getTime()) > IDLE_WARNING_MS
   return { label, isIdleWarning }
@@ -69,8 +88,10 @@ export function computeStatusLabel(state, now) {
 // GetChatTurns' cross-instance-ownership field. Defaulting to true means an
 // absent/undefined value (older data, a mock, or the backend half of this
 // contract not yet deployed) renders exactly like today — only an explicit
-// `false` changes anything.
-export function TurnStatus({ state, stopRequested, ownedByThisInstance = true }) {
+// `false` changes anything. streamsIncrementally (default true, same
+// convention) reflects the active runtime's own capability — see
+// computeStatusLabel's doc comment above.
+export function TurnStatus({ state, stopRequested, ownedByThisInstance = true, streamsIncrementally = true }) {
   // "Active" is whatever chatReducer state itself considers active — no
   // terminal event yet observed for this turn.
   const isForeignActive = !state.terminal && ownedByThisInstance === false
@@ -87,15 +108,17 @@ export function TurnStatus({ state, stopRequested, ownedByThisInstance = true })
     return () => clearInterval(id)
   }, [state.terminal, isForeignActive])
 
-  // computeStatusLabel reads stopRequested/ownedByThisInstance off the
-  // object it's given, not as separate arguments — but chatReducer's own
-  // state shape (see initialChatState()) has neither field; AIChatPanel.jsx
-  // tracks stopRequested as its own local UI state, and ownedByThisInstance
-  // comes from the raw GetChatTurns turn record, not from event replay.
-  // Without merging them in here, both are always undefined in the real
-  // app, and their respective labels could never actually appear — only
-  // the icon swap below would, silently.
-  const { label, isIdleWarning } = computeStatusLabel({ ...state, stopRequested, ownedByThisInstance }, now)
+  // computeStatusLabel reads stopRequested/ownedByThisInstance/
+  // streamsIncrementally off the object it's given, not as separate
+  // arguments — but chatReducer's own state shape (see initialChatState())
+  // has none of these fields; AIChatPanel.jsx tracks stopRequested as its
+  // own local UI state, ownedByThisInstance comes from the raw
+  // GetChatTurns turn record, and streamsIncrementally comes from the
+  // active runtime's scan entry — none from event replay. Without merging
+  // them in here, all three are always undefined in the real app, and
+  // their respective labels could never actually appear — only the icon
+  // swap below would, silently.
+  const { label, isIdleWarning } = computeStatusLabel({ ...state, stopRequested, ownedByThisInstance, streamsIncrementally }, now)
   const isTerminal = !!state.terminal
   const isFailure = state.terminal && state.terminal.status !== 'completed'
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -178,5 +179,26 @@ func TestScanResultHelpers(t *testing.T) {
 	}
 	if e := res.Find("ghost"); e != nil {
 		t.Errorf("Find(ghost) = %+v, want nil", e)
+	}
+}
+
+// TestScanEntryJSON_StreamsIncrementallyPresentEvenWhenFalse guards against
+// the exact bug caught during review before this field was added: ScanEntry
+// is decoded from monomind's `agent scan --json` output and then
+// RE-MARSHALED wholesale by ScanAgentRuntimes (app_ai.go) before reaching
+// the frontend — an `omitempty` tag on this bool would silently drop the
+// key for every non-streaming runtime (the majority), and the frontend's
+// own `=== true` check would then see `undefined`, not `false`. Both are
+// currently indistinguishable to a naive check, but only `false` is
+// correct: `undefined` must mean "don't know, assume non-streaming" while
+// an ACTUAL `false` must still arrive on the wire, not vanish.
+func TestScanEntryJSON_StreamsIncrementallyPresentEvenWhenFalse(t *testing.T) {
+	entry := ScanEntry{ID: "codex", Installed: true, StreamsIncrementally: false}
+	b, err := json.Marshal(entry)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(b), `"streams_incrementally":false`) {
+		t.Errorf("marshaled ScanEntry = %s, want it to contain \"streams_incrementally\":false", b)
 	}
 }
