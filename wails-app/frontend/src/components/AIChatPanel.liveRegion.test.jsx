@@ -189,10 +189,11 @@ describe('AIChatPanel live region: mid-turn notices', () => {
 
 describe('AIChatPanel live region: composer disabledReason banner', () => {
   it('announces the disabledReason banner once its text changes (e.g. once a runtime scan resolves monomind missing)', async () => {
-    // No providers this test, so hasBackend stays false throughout — the
-    // scan resolving is the only thing that changes disabledReasonText:
-    // from the initial "Select an AI provider above..." (monomindMissing
-    // still false pre-scan) to the monomind-not-found message.
+    // No providers this test, so hasBackend stays false throughout.
+    // cachedAgentScan is held pending for the whole first half — runtimesLoading
+    // (seeded from isOpen=true) makes "Loading available AI systems…" the
+    // panel's actual first-committed state, so that's the resting-state
+    // baseline; the scan settling to monomindMissing is the first real change.
     listAIProviders.mockResolvedValue([])
     let resolveScan
     cachedAgentScan.mockReturnValueOnce(new Promise(r => { resolveScan = r }))
@@ -200,10 +201,10 @@ describe('AIChatPanel live region: composer disabledReason banner', () => {
     render(<AIChatPanel workflowID="general" isOpen={true} onClose={() => {}} />)
     await screen.findByPlaceholderText('Type a message...')
 
-    expect(screen.getByText('Select an AI provider above to start chatting')).toBeInTheDocument()
+    expect(screen.getByText('Loading available AI systems…')).toBeInTheDocument()
     const region = liveRegion()
     // Nothing changed yet relative to the panel's first render — opening
-    // the panel in its resting (already-disabled) state must not itself
+    // the panel in its resting (already-loading) state must not itself
     // announce anything.
     expect(region).toBeEmptyDOMElement()
 
@@ -212,20 +213,29 @@ describe('AIChatPanel live region: composer disabledReason banner', () => {
       await new Promise(r => setTimeout(r, 0))
     })
 
-    await waitFor(() => expect(screen.queryByText('Select an AI provider above to start chatting')).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByText('Loading available AI systems…')).not.toBeInTheDocument())
     await waitFor(() => expect(region).toHaveTextContent(/monomind not found/i))
   })
 
   it('announces that Send became available once a provider finishes loading', async () => {
+    // cachedAgentScan uses the file-level default (resolves quickly, finds
+    // no agents) — that settling to "Select an AI provider..." is itself a
+    // real, legitimate announcement now (Loading… -> nothing installed),
+    // distinct from and prior to the providers-resolving announcement this
+    // test is actually about.
     let resolveProviders
     listAIProviders.mockReturnValueOnce(new Promise(r => { resolveProviders = r }))
 
     render(<AIChatPanel workflowID="general" isOpen={true} onClose={() => {}} />)
     await screen.findByPlaceholderText('Type a message...')
-    expect(screen.getByText('Select an AI provider above to start chatting')).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByText('Loading available AI systems…')).not.toBeInTheDocument())
 
+    // "Select an AI provider..." now legitimately renders in two places at
+    // once — the composer banner and this scan-settled announcement — so a
+    // bare getByText would be ambiguous; the region check below is the one
+    // that matters for this test.
     const region = liveRegion()
-    expect(region).toBeEmptyDOMElement()
+    await waitFor(() => expect(region).toHaveTextContent('Select an AI provider above to start chatting'))
 
     await act(async () => {
       resolveProviders([{ id: 1, name: 'openai', status: 'active', default_model: 'gpt' }])

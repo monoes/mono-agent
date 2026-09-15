@@ -167,7 +167,20 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
   const [selectedProvider, setSelectedProvider] = useState('')
   const [selectedModel, setSelectedModel]   = useState('')
   const [runtimes, setRuntimes]             = useState([])
-  const [runtimesLoading, setRuntimesLoading] = useState(false)
+  // Seeded from isOpen, not a flat `false`: the scan effect below fires on
+  // the very next tick whenever the component mounts already-open (isOpen
+  // true from the start — direct-open call sites, and every render/mount
+  // test), so a flat `false` here would commit one render where
+  // disabledReasonText is still the old "Select an AI provider..."/"Select
+  // an agent runtime..." text before flipping to the loading message —
+  // and prevDisabledReasonRef below seeds its "resting state" baseline
+  // from that first render. That stray transition would then read as a
+  // genuine post-mount change and get announced through the live region,
+  // even though nothing the user did caused it. Matching runtimesLoading's
+  // initial value to isOpen makes "loading" the actual first-committed
+  // state whenever a scan is about to run, so it becomes part of the
+  // resting-state baseline instead of a spurious first announcement.
+  const [runtimesLoading, setRuntimesLoading] = useState(isOpen)
   const [selectedRuntime, setSelectedRuntime] = useState('')
   const [runtimeModels, setRuntimeModels]   = useState([]) // models for selectedRuntime, from getAgentRuntimeModels
   const [runtimeModelsLoading, setRuntimeModelsLoading] = useState(false)
@@ -668,13 +681,18 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
   // after this needs a flat string to compare/speak, not the JSX element
   // the monomindMissing branch uses there (an inline <code> tag). If you
   // change one, change the other the same way.
-  const disabledReasonText = runtimesLoading
-    ? 'Loading available AI systems…'
-    : !hasBackend
-      ? (monomindMissing
-          ? 'monomind not found — install with npm install -g @monoes/monomindcli, or select an AI provider above'
-          : (useAgents ? 'Select an agent runtime above to start chatting' : 'Select an AI provider above to start chatting'))
-      : ''
+  // runtimesLoading is nested INSIDE !hasBackend, not checked first: a
+  // provider that's already resolved and selected must enable Send
+  // immediately, independent of whatever the (separate, often slower)
+  // runtime scan is still doing — the scan finishing has no bearing on an
+  // already-usable provider backend.
+  const disabledReasonText = !hasBackend
+    ? (runtimesLoading
+        ? 'Loading available AI systems…'
+        : (monomindMissing
+            ? 'monomind not found — install with npm install -g @monoes/monomindcli, or select an AI provider above'
+            : (useAgents ? 'Select an agent runtime above to start chatting' : 'Select an AI provider above to start chatting')))
+    : ''
 
   // Assistant tool access (Settings → "Assistant tool access", GX2 contract):
   // read per render so toggling it there applies here without a remount.
@@ -963,8 +981,12 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
             ("No providers" / "Select an AI provider above"), which actively
             misleads a user whose real backend (agent runtimes) just hasn't
             finished loading yet. Show a plain loading placeholder instead
-            of the real selector row until the scan settles. */}
-        {runtimesLoading ? (
+            of the real selector row until the scan settles — but only
+            while nothing is usable yet (!hasBackend): a provider that's
+            already resolved and selected must render its real dropdown
+            immediately rather than being hidden behind an unrelated,
+            often-slower runtime scan. */}
+        {(runtimesLoading && !hasBackend) ? (
           <div style={{ ...selectStyle, flex: 1, display: 'flex', alignItems: 'center', gap: 6, color: 'rgba(226,232,240,0.55)' }}>
             <Loader size={13} className="chat-spin" style={{ color: '#00b4d8', flexShrink: 0 }} />
             Loading AI systems…
@@ -1181,7 +1203,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
         // Kept in sync by hand with the plain-text disabledReasonText above
         // (used by the live-region announcement effect) — update both the
         // same way.
-        disabledReason={runtimesLoading
+        disabledReason={runtimesLoading && !hasBackend
           ? 'Loading available AI systems…'
           : (monomindMissing
               ? <>monomind not found — install with <code>npm install -g @monoes/monomindcli</code>, or select an AI provider above</>
