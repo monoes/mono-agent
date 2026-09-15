@@ -54,6 +54,22 @@ func (a *App) orgProjectRoot() string {
 	return profiledir.Root(a.db, profileID)
 }
 
+// restrictFileWriteForOrgs reports whether newly-created org roles should
+// get the default taxonomy-scoped fileWrite policy (see
+// orgdesign.NewOrgOptions.RestrictFileWrite / applyRoleDefaults) — true only
+// when there's an active, default-managed profile (no profiles.root_dir
+// override — profiledir.IsDefaultManaged). Mirrors orgProjectRoot's own
+// branching deliberately: unlike internal/ai/chat's MonoagentTools.profileRoot,
+// this has no extra override/legacy-fallback branch, so the check is just
+// "is there a profile, and is it unmanaged-custom."
+func (a *App) restrictFileWriteForOrgs() bool {
+	profileID := a.getActiveProfileID()
+	if profileID == "" {
+		return false
+	}
+	return profiledir.IsDefaultManaged(a.db, profileID)
+}
+
 // runOrgCLI runs `monoagentcli org <args...>` and returns its stdout JSON
 // verbatim, or an {"error":"..."} payload on failure (aiError shape,
 // app_ai.go) so the frontend's existing error-guard idiom applies unchanged.

@@ -107,11 +107,12 @@ func (a *App) CreateOrgDesign(specJSON string) string {
 		scheduleRaw, _ = json.Marshal(spec.Schedule)
 	}
 	d := orgdesign.NewOrg(spec.Name, spec.Goal, orgdesign.NewOrgOptions{
-		Schedule:      scheduleRaw,
-		Runtime:       spec.Runtime,
-		Workspace:     spec.Workspace,
-		RootRoleID:    spec.RootRoleID,
-		RootRoleTitle: spec.RootRoleTitle,
+		Schedule:          scheduleRaw,
+		Runtime:           spec.Runtime,
+		Workspace:         spec.Workspace,
+		RootRoleID:        spec.RootRoleID,
+		RootRoleTitle:     spec.RootRoleTitle,
+		RestrictFileWrite: a.restrictFileWriteForOrgs(),
 	})
 	return a.saveAndRespond(root, d, "ui")
 }
@@ -141,7 +142,7 @@ func (a *App) AddOrgRole(orgName, roleJSON string) string {
 	if err := json.Unmarshal([]byte(roleJSON), &r); err != nil {
 		return aiError(fmt.Errorf("invalid role: %w", err))
 	}
-	if _, err := d.AddRole(r); err != nil {
+	if _, err := d.AddRole(r, a.restrictFileWriteForOrgs()); err != nil {
 		return aiError(err)
 	}
 	return a.saveAndRespond(root, d, "ui")

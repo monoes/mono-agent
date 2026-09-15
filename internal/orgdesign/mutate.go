@@ -3,6 +3,9 @@ package orgdesign
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
+
+	"github.com/monoes/mono-agent/internal/profiledir"
 )
 
 // NewOrgOptions configures NewOrg. Zero values mean "use the default".
@@ -13,6 +16,13 @@ type NewOrgOptions struct {
 	RootRoleID    string // default "lead"
 	RootRoleTitle string // default "Lead"
 	RootRoleType  string // default "boss"
+	// RestrictFileWrite, when true, gives the root role a default
+	// Extra["policy"].fileWrite allowlist scoped to profiledir.TaxonomyFolders
+	// (see applyRoleDefaults). Callers should only set this for a
+	// default-managed profile (profiledir.IsDefaultManaged) — a profile
+	// pointed at an existing coding project via a custom root_dir must keep
+	// unrestricted write access to its own structure.
+	RestrictFileWrite bool
 }
 
 // NewOrg builds a fresh Doc with a single root role. It does not write
@@ -36,25 +46,83 @@ func NewOrg(name, goal string, opts NewOrgOptions) *Doc {
 		schedule = json.RawMessage("null")
 	}
 
+	rootRole := Role{
+		ID:        rootID,
+		Title:     rootTitle,
+		Type:      rootType,
+		ReportsTo: nil,
+	}
+	applyRoleDefaults(&rootRole, opts.RestrictFileWrite)
+
 	d := &Doc{
 		Name:     name,
 		Goal:     goal,
 		Status:   "stopped",
 		Schedule: schedule,
 		Runtime:  opts.Runtime,
-		Roles: []Role{{
-			ID:               rootID,
-			Title:            rootTitle,
-			Type:             rootType,
-			ReportsTo:        nil,
-			Responsibilities: []string{},
-		}},
+		Roles:    []Role{rootRole},
 	}
 	if opts.Workspace != "" {
 		wsJSON, _ := json.Marshal(opts.Workspace)
 		d.RunConfig = map[string]json.RawMessage{"workspace": wsJSON}
 	}
 	return d
+}
+
+// defaultFileWritePolicy returns an Extra["policy"] value restricting
+// writes to profiledir.TaxonomyFolders plus bare top-level filenames.
+func defaultFileWritePolicy() json.RawMessage {
+	globs := make([]string, 0, len(profiledir.TaxonomyFolders)+1)
+	for _, f := range profiledir.TaxonomyFolders {
+		globs = append(globs, f.Name+"/**")
+	}
+	globs = append(globs, "*") // bare top-level filenames, no subdirectory
+	b, _ := json.Marshal(map[string]interface{}{"fileWrite": globs})
+	return b
+}
+
+// defaultTaxonomyResponsibility describes profiledir.TaxonomyFolders and the
+// dot-folder prohibition as a Responsibilities entry, generated from
+// profiledir.TaxonomyFolders so it can't drift from the actual taxonomy.
+func defaultTaxonomyResponsibility() string {
+	names := make([]string, len(profiledir.TaxonomyFolders))
+	for i, f := range profiledir.TaxonomyFolders {
+		names[i] = f.Name + "/"
+	}
+	return fmt.Sprintf(
+		"Organize new files under the profile's standard folders: %s. Never create files inside a dot-prefixed folder (e.g. .monomind/) — those are reserved for internal tool state.",
+		strings.Join(names, ", "))
+}
+
+// applyRoleDefaults centralizes what every newly-created role gets, called
+// from both AddRole and NewOrg's root role so the two can never drift
+// apart. Responsibilities nil-safety and the Type default are unconditional
+// (pre-dating this feature, unrelated to it). The taxonomy pieces — both
+// the advisory Responsibilities text AND the enforced fileWrite policy —
+// are gated together on restrictFileWrite: a custom-root_dir profile (an
+// existing coding project, per the plan's correction) must not be told to
+// "organize new files under docs/, workingdocs/, ..." either, since that
+// guidance is wrong for a profile whose real structure is src/, go.mod,
+// etc. — advisory text for a convention that isn't even being enforced
+// there would be actively misleading, not harmless. Only a caller that
+// hasn't already set Extra["policy"] themselves gets the default policy.
+func applyRoleDefaults(r *Role, restrictFileWrite bool) {
+	if r.Responsibilities == nil {
+		r.Responsibilities = []string{}
+	}
+	if r.Type == "" {
+		r.Type = "specialist"
+	}
+	if !restrictFileWrite {
+		return
+	}
+	r.Responsibilities = append(r.Responsibilities, defaultTaxonomyResponsibility())
+	if _, hasPolicy := r.Extra["policy"]; !hasPolicy {
+		if r.Extra == nil {
+			r.Extra = map[string]json.RawMessage{}
+		}
+		r.Extra["policy"] = defaultFileWritePolicy()
+	}
 }
 
 // RolePatch is a shallow, patch-style update for UpdateRole. A nil field is
@@ -108,18 +176,20 @@ type RolePatch struct {
 // (in particular from an AI tool call that references it in the same turn,
 // e.g. for reports_to) must be honored or explicitly rejected, never
 // changed underneath the caller.
-func (d *Doc) AddRole(r Role) (*Role, error) {
+//
+// restrictFileWrite is a trailing optional bool (omit it entirely, or pass
+// one value) so every pre-existing call site keeps compiling unchanged and
+// keeps its exact old behavior (unrestricted, no default fileWrite policy)
+// — only a caller that explicitly opts in with true gets the taxonomy
+// default. See applyRoleDefaults and NewOrgOptions.RestrictFileWrite.
+func (d *Doc) AddRole(r Role, restrictFileWrite ...bool) (*Role, error) {
+	restrict := len(restrictFileWrite) > 0 && restrictFileWrite[0]
 	if r.ID == "" {
 		r.ID = UniqueRoleID(d, r.Title)
 	} else if _, idx := d.FindRole(r.ID); idx != -1 {
 		return nil, fmt.Errorf("duplicate role id: %s", r.ID)
 	}
-	if r.Responsibilities == nil {
-		r.Responsibilities = []string{}
-	}
-	if r.Type == "" {
-		r.Type = "specialist"
-	}
+	applyRoleDefaults(&r, restrict)
 	// "boss" is derived from tree position (see UpdateRole's matching guard,
 	// PromoteToRoot) — silently downgrade rather than error here, since a
 	// non-root add with type "boss" is never a deliberate user choice (there
