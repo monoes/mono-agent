@@ -26,3 +26,10 @@ The desktop GUI (`wails-app/`) is optional and needs the Wails toolchain.
 - CLI state lives in `~/.monoagent/` (global, not per-repo).
 - Commit messages: conventional style (`type(scope): description`).
 - Never commit secrets or `.env` files.
+# monomind:start instructions:claude
+# Monomind
+
+Use the `monomind` MCP tools for graph navigation, impact analysis, memory, and organization work.
+For multi-step work, load only the applicable `mastermind-*` skill; do not load all workflows at once.
+If MCP is unavailable, run `npx -y monomind@latest doctor` and use `npx -y monomind@latest` commands.
+# monomind:end instructions:claude
