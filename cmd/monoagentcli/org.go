@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -56,6 +57,15 @@ func newOrgCmd(cfg *globalConfig) *cobra.Command {
 		newOrgGrantCmd(env),
 		newOrgEffectiveToolsCmd(env),
 		newOrgLegacyCmd(env),
+		newOrgAutonomyCmd(env),
+		newOrgServeCmd(env),
+		newOrgLifecycleCmd(env, "stop", "Ask a running org to stop", monomind.OrgStop),
+		newOrgLifecycleCmd(env, "pause", "Pause an org: current turns finish, no new cycles start", monomind.OrgPause),
+		newOrgLifecycleCmd(env, "resume", "Resume a paused org", monomind.OrgResume),
+		newOrgSendCmd(env),
+		newOrgRenameCmd(env),
+		newOrgDeleteCmd(env),
+		newOrgAutomationRoleCmd(env),
 	)
 	return cmd
 }
@@ -432,6 +442,16 @@ func newOrgCreateJSONCmd(env *orgEnv) *cobra.Command {
 			}
 			var findings interface{}
 			if db, profileID, profileRoot, perr := env.Profile(); perr == nil {
+				if _, statErr := os.Stat(filepath.Join(orgdesign.OrgsDir(profileRoot), name+".json")); os.IsNotExist(statErr) {
+					if other, err := orgNameInUse(db.DB, name, profileID); err != nil {
+						return err
+					} else if other != "" {
+						return errInvalidInput("org name %q is already used in profile %q; org names are unique on this machine — try %s-%s", name, other, name, shortProfile(profileID))
+					}
+					if err := ensureNewOrgAutonomy(cmd.Context(), db, profileID, &d, "cli"); err != nil {
+						return err
+					}
+				}
 				// Grants, providers, and endpoints in the document only
 				// survive when a row backs them (C-3).
 				rep, err := saveOrgReconciled(cmd.Context(), db, profileID, profileRoot, &d, env.genOptions(profileID))

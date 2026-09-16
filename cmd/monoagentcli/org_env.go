@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/monoes/mono-agent/internal/daemonhb"
+	"github.com/monoes/mono-agent/internal/orgdecide"
 	"github.com/monoes/mono-agent/internal/orgdesign"
 	"github.com/monoes/mono-agent/internal/orggrant"
 	"github.com/monoes/mono-agent/internal/profiledir"
@@ -147,6 +148,16 @@ func saveOrgReconciled(ctx context.Context, db *storage.Database, profileID, roo
 	rep, err := orggrant.Reconcile(ctx, orggrant.NewStore(db.DB), doc, opts)
 	if err != nil {
 		return nil, err
+	}
+	auto, err := orgdecide.ReconcileAutonomy(ctx, orgdecide.NewStore(db.DB), profileID, doc)
+	if err != nil {
+		return nil, err
+	}
+	if auto.Lowered {
+		rep.Findings = append(rep.Findings, orggrant.Finding{Kind: "autonomy_lowered", Detail: "lowered the enforced autonomy level to match the org file"})
+	}
+	if auto.Ignored != "" {
+		rep.Findings = append(rep.Findings, orggrant.Finding{Kind: "autonomy_raise_ignored", Detail: auto.Ignored})
 	}
 	if _, err := orgdesign.Save(root, doc); err != nil {
 		return rep, err
