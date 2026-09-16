@@ -150,11 +150,14 @@ func (d *ModelDecider) Decide(ctx context.Context, p Prompt) (Outcome, error) {
 	if res.Err != nil {
 		return out, fmt.Errorf("decider %s: %s", resolver, res.Err.Error())
 	}
-	text := res.ResultText
-	if strings.TrimSpace(text) == "" {
-		text = assistant.String()
+	// Runtimes stream the reply as assistant deltas, and ResultText holds
+	// only the last one, so the accumulated text is the full reply.
+	v, err := ParseVerdict(assistant.String(), p.Allowed)
+	if err != nil && strings.TrimSpace(res.ResultText) != "" {
+		if rv, rerr := ParseVerdict(res.ResultText, p.Allowed); rerr == nil {
+			v, err = rv, nil
+		}
 	}
-	v, err := ParseVerdict(text, p.Allowed)
 	if err != nil {
 		return out, err
 	}
