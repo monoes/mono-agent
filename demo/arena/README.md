@@ -125,20 +125,21 @@ git history of this directory):
    future exception shows up in the page itself instead of silently
    freezing the canvas on its last good frame with no signal anything
    was wrong.
-7. **Herald's reviewer cannot read either studio's code from its worktree
-   path, as the design assumed.** Confirmed live: a `Read` outside its own
-   org's workdir was denied with `path escapes org workdir`. The org
-   runtime walls off `.monomind/orgs/<other-org>/` even when nominally
-   sharing a filesystem root — almost certainly deliberate, so one org's
-   agents can't browse another live org's private runtime state. The
-   reviewer worked around it in the rehearsal by scoring from the
-   submission message's content alone, which held up well enough to
-   produce real verdicts, but it's an emergent workaround, not a design
-   feature. **Not yet fixed structurally** — the clean fix is a shared
-   handoff directory outside any org's `.monomind/orgs/` tree (e.g.
-   `docs/arena/submissions/<org>/`) that a studio's CTO copies its
-   deliverables into before pitching Herald, and that the reviewer reads
-   from instead of reaching into the studio's private worktree.
+7. **Herald's reviewer never read either studio's code; it reviewed from
+   the submission messages alone.** Its one `Read` was denied with
+   `path escapes org workdir` — but the path it tried was in a *different
+   checkout* (the main repo, not the worktree the show ran in). An earlier
+   version of this note blamed a runtime wall between orgs; monomind's
+   source says otherwise. `policy.ts:206-230` confines each role's file
+   tools to its own workdir by realpath, and `daemon.ts:678-711` sets that
+   workdir to the project root for `workspace: "repo"` (Herald) and to
+   `.monomind/orgs/<org>/worktree` for `workspace: "worktree"` (the
+   studios). So Herald *can* read `.monomind/orgs/forge/worktree/...` under
+   the root it runs in, subject to `fileRead` globs; the studios cannot
+   read outside their own worktrees. **Not fixed yet:** brief Herald's
+   reviewer with paths relative to its workdir instead of leaving it to
+   guess absolute ones. Note that a studio's worktree is recreated from
+   HEAD at every org start, so a review must happen during the run.
 
 All seven are covered by tests in `scoring.test.mjs` where the fix is in
 scoring logic, or were reproduced against real evidence (the 2026-09-16
@@ -153,9 +154,9 @@ rather than claimed fixed.
   `decision: "allow"` at invocation. The map can show a file landed; it
   cannot independently confirm the tests in it are green. Don't present it
   as verified on stage.
-- **Herald's reviewer cannot read the studios' code the way the design
-  assumed** (see Correction #7). It works around this by scoring from
-  message content, which held up in rehearsal but isn't a real fix.
+- **Herald's reviewer reviews from message content, not the code** (see
+  Correction #7). It held up in rehearsal, but its briefing should give it
+  workdir-relative paths to the studios' worktrees.
 - **The sidebar clips at narrower widths** (confirmed at 1000px total —
   the fixed 300px sidebar column doesn't leave it enough room). Not a
   problem at the resolution a real projector or monitor will actually use,
