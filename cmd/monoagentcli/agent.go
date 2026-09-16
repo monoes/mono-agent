@@ -3,7 +3,9 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -109,16 +111,7 @@ func newAgentTestCmd(cfg *globalConfig) *cobra.Command {
 				Runtime: runtime,
 				Prompt:  "Reply with the single word: ok",
 				Timeout: timeout,
-			}, func(ev monomind.Event) {
-				switch ev.Type {
-				case monomind.EventAssistant:
-					fmt.Fprintln(os.Stderr, ev.Text)
-				case monomind.EventError:
-					fmt.Fprintf(os.Stderr, "error: %s: %s\n", ev.Code, ev.ErrMessage)
-				case monomind.EventDone:
-					fmt.Fprintf(os.Stderr, "exit: %d\n", ev.ExitCode)
-				}
-			})
+			}, (&turnPrinter{w: os.Stderr}).print)
 			if err != nil {
 				return err
 			}
@@ -131,4 +124,47 @@ func newAgentTestCmd(cfg *globalConfig) *cobra.Command {
 	}
 	cmd.Flags().String("timeout", "90s", "Overall timeout")
 	return cmd
+}
+
+// turnPrinter writes one turn's events for a person to read. A runtime that
+// streams (start's streams_incrementally) sends the reply in chunks, which
+// are printed as running text; otherwise each assistant event is a whole
+// message on its own line.
+type turnPrinter struct {
+	w           io.Writer
+	incremental bool
+	midLine     bool
+}
+
+func (p *turnPrinter) print(ev monomind.Event) {
+	switch ev.Type {
+	case monomind.EventStart:
+		p.incremental = ev.StreamsIncrementally
+	case monomind.EventAssistant:
+		if !p.incremental {
+			fmt.Fprintln(p.w, ev.Text)
+			return
+		}
+		if ev.Text != "" {
+			fmt.Fprint(p.w, ev.Text)
+			p.midLine = !strings.HasSuffix(ev.Text, "\n")
+		}
+	case monomind.EventToolCall:
+		p.endLine()
+	case monomind.EventError:
+		p.endLine()
+		fmt.Fprintf(p.w, "error: %s: %s\n", ev.Code, ev.ErrMessage)
+	case monomind.EventDone:
+		p.endLine()
+		fmt.Fprintf(p.w, "exit: %d\n", ev.ExitCode)
+	}
+}
+
+// endLine finishes streamed text that did not end in a newline, so the next
+// line starts at the left edge.
+func (p *turnPrinter) endLine() {
+	if p.midLine {
+		fmt.Fprintln(p.w)
+		p.midLine = false
+	}
 }
