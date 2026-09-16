@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Crown } from 'lucide-react'
 import { wouldCycle } from './orgGraph.js'
 import { iconUrl } from './roleIcons.js'
 import { KVBlock } from '../KVBlock.jsx'
 import StringListField from '../StringListField.jsx'
 import { api } from '../../services/api.js'
+import RoleAutomationsSection, { EffectiveTools } from './RoleAutomationsSection.jsx'
 
 const RUNTIME_OPTIONS = [
   'claude', 'kimicode', 'opencode', 'vercel', 'codex', 'antigravity',
@@ -25,9 +26,12 @@ const GIT_LEVEL_OPTIONS = ['none', 'read', 'commit', 'push']
 // KVBlock below so they aren't shown twice. `adapter_config` (not `model`)
 // is the real wire key — the role's model/provider-name/max_tokens live
 // nested under it, never as a flat top-level field.
+// The automation keys are shown by RoleAutomationsSection instead; `endpoint`
+// holds a capability URL, so it is never dumped into the Advanced block.
 const MODELED_REST_FIELDS = [
   'runtime', 'adapter_config', 'max_turns_per_message', 'budget_tokens', 'budget_usd',
   'policy', 'provider', 'instructions_file',
+  'kind', 'endpoint', 'automation', 'automations',
 ]
 
 function omit(obj, keys) {
@@ -78,7 +82,11 @@ function cleanObj(obj) {
  * @param {() => void} onDelete Called when the user asks to delete this role;
  *   the parent/container owns the actual DeleteRoleModal flow.
  */
-export default function RoleInspector({ node, allNodes, onPatch, onSetReportsTo, onPromoteToRoot, onOpenIconPicker, onDelete }) {
+export default function RoleInspector({
+  node, allNodes, onPatch, onSetReportsTo, onPromoteToRoot, onOpenIconPicker, onDelete,
+  // Automation props (optional — the inspector still works without them):
+  orgName, grants, automations, engineOffline, grantsVersion, onGrantsChanged, onOpenWorkflow, onEditGrant,
+}) {
   const [title, setTitle] = useState(node?.title || '')
   const [label, setLabel] = useState('')
   const [responsibilities, setResponsibilities] = useState(node?.responsibilities || [])
@@ -125,6 +133,7 @@ export default function RoleInspector({ node, allNodes, onPatch, onSetReportsTo,
   // in the same batched re-render, so the remount and the correct values
   // always arrive together.
   const [syncedId, setSyncedId] = useState(node?.id ?? null)
+  const [policyResetGen, setPolicyResetGen] = useState(0)
 
   useEffect(() => {
     setSyncedId(node?.id ?? null)
@@ -171,6 +180,28 @@ export default function RoleInspector({ node, allNodes, onPatch, onSetReportsTo,
     // because its object reference did.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [node?.id])
+
+  // Tool policy alone also re-syncs when its saved value changes for the same
+  // role (e.g. "Deny Bash" from the grant dialog), so a later policy edit
+  // here never writes back a stale denyTools list. Other fields keep the
+  // id-only rule above.
+  const policyKey = JSON.stringify(node?.rest?.policy ?? null)
+  const firstPolicySync = useRef(true)
+  useEffect(() => {
+    if (firstPolicySync.current) { firstPolicySync.current = false; return }
+    const policy = node?.rest?.policy || {}
+    setPolicyGit(policy.git ?? 'read')
+    setPolicyMaxTokens(policy.maxTokens ?? '')
+    setPolicyMaxUsd(policy.maxUsd ?? '')
+    setAllowTools(policy.allowTools || [])
+    setDenyTools(policy.denyTools || [])
+    setFileWrite(policy.fileWrite || [])
+    setFileRead(policy.fileRead || [])
+    setWebAllow(policy.webAllow || [])
+    setAutoApproveTools(policy.autoApproveTools || [])
+    setPolicyResetGen(g => g + 1)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [policyKey])
 
   if (!node) {
     return (
@@ -244,6 +275,17 @@ export default function RoleInspector({ node, allNodes, onPatch, onSetReportsTo,
 
   const otherRoles = (allNodes || []).filter(n => n.id !== node.id && !wouldCycle(allNodes, node.id, n.id))
   const advancedRest = omit(node.rest, MODELED_REST_FIELDS)
+  const policyListKey = `${syncedId}:${policyResetGen}`
+  const isEndpoint = node.rest?.kind === 'endpoint'
+  const showAutomations = !!orgName
+
+  // Plan §8 layer 8: a role holding grants should not keep Bash.
+  const denyBash = () => {
+    if (denyTools.includes('Bash')) return
+    const next = [...denyTools, 'Bash']
+    setDenyTools(next)
+    commitPolicy({ denyTools: next })
+  }
 
   return (
     <div style={{
@@ -361,6 +403,24 @@ export default function RoleInspector({ node, allNodes, onPatch, onSetReportsTo,
         addLabel="+ Add responsibility"
       />
 
+      {showAutomations && (
+        <RoleAutomationsSection
+          orgName={orgName}
+          node={node}
+          grants={grants}
+          automations={automations}
+          engineOffline={engineOffline}
+          bashDenied={denyTools.includes('Bash')}
+          onDenyBash={denyBash}
+          onChanged={onGrantsChanged}
+          onOpenWorkflow={onOpenWorkflow}
+          onEditGrant={onEditGrant}
+        />
+      )}
+
+      {/* An automation role has no session, so no runtime, model, or policy
+          (monomind validation rejects them on endpoint roles). */}
+      {!isEndpoint && (<>
       {/* Runtime */}
       <section>
         <div className="form-label">Runtime</div>
@@ -510,14 +570,16 @@ export default function RoleInspector({ node, allNodes, onPatch, onSetReportsTo,
           />
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 10 }}>
-          <StringListField label="Allow tools" values={allowTools} onChange={v => { setAllowTools(v); commitPolicy({ allowTools: v }) }} resetKey={syncedId} addLabel="+ Add tool" />
-          <StringListField label="Deny tools" values={denyTools} onChange={v => { setDenyTools(v); commitPolicy({ denyTools: v }) }} resetKey={syncedId} addLabel="+ Add tool" />
-          <StringListField label="File write globs" values={fileWrite} onChange={v => { setFileWrite(v); commitPolicy({ fileWrite: v }) }} resetKey={syncedId} placeholder="default: **" addLabel="+ Add glob" />
-          <StringListField label="File read globs" values={fileRead} onChange={v => { setFileRead(v); commitPolicy({ fileRead: v }) }} resetKey={syncedId} placeholder="default: **" addLabel="+ Add glob" />
-          <StringListField label="Web allow (hosts)" values={webAllow} onChange={v => { setWebAllow(v); commitPolicy({ webAllow: v }) }} resetKey={syncedId} placeholder="unset: default web access" addLabel="+ Add host" />
-          <StringListField label="Auto-approve tools" values={autoApproveTools} onChange={v => { setAutoApproveTools(v); commitPolicy({ autoApproveTools: v }) }} resetKey={syncedId} placeholder="skips the human-approval pause" addLabel="+ Add tool" />
+          <StringListField label="Allow tools" values={allowTools} onChange={v => { setAllowTools(v); commitPolicy({ allowTools: v }) }} resetKey={policyListKey} addLabel="+ Add tool" />
+          <StringListField label="Deny tools" values={denyTools} onChange={v => { setDenyTools(v); commitPolicy({ denyTools: v }) }} resetKey={policyListKey} addLabel="+ Add tool" />
+          <StringListField label="File write globs" values={fileWrite} onChange={v => { setFileWrite(v); commitPolicy({ fileWrite: v }) }} resetKey={policyListKey} placeholder="default: **" addLabel="+ Add glob" />
+          <StringListField label="File read globs" values={fileRead} onChange={v => { setFileRead(v); commitPolicy({ fileRead: v }) }} resetKey={policyListKey} placeholder="default: **" addLabel="+ Add glob" />
+          <StringListField label="Web allow (hosts)" values={webAllow} onChange={v => { setWebAllow(v); commitPolicy({ webAllow: v }) }} resetKey={policyListKey} placeholder="unset: default web access" addLabel="+ Add host" />
+          <StringListField label="Auto-approve tools" values={autoApproveTools} onChange={v => { setAutoApproveTools(v); commitPolicy({ autoApproveTools: v }) }} resetKey={policyListKey} placeholder="skips the human-approval pause" addLabel="+ Add tool" />
         </div>
       </section>
+
+      {showAutomations && <EffectiveTools orgName={orgName} roleId={node.id} refreshKey={`${grantsVersion ?? 0}:${policyKey}`} />}
 
       {/* Instructions file */}
       <section>
@@ -548,6 +610,7 @@ export default function RoleInspector({ node, allNodes, onPatch, onSetReportsTo,
           Saved with the role, but not yet read by the org runtime — reserved for a future release.
         </div>
       </section>
+      </>)}
 
       {/* Reports to */}
       <section>

@@ -92,6 +92,22 @@
 // NodeRunner's click-to-delete edge affordance), and a sibling <div> with a
 // matching CSS transform hosting the HTML RoleNode cards.
 
+//
+// ── Live view additions (U15) ────────────────────────────────────────────
+//   liveState        orgActivity reducer state, or null in Design mode. When
+//                     set, cards are recoloured from it and message edges
+//                     between roles are drawn; recent ones animate.
+//   liveNow          reference time for "recent" (wall clock live, last event
+//                     time on replay)
+//   readOnly         no node move / reparent / delete (live view)
+//   engineOffline    automation roles show the engine-offline warning
+//   onAutomationDrop(automation, worldX, worldY, droppedOnNodeId)
+//                     native-DnD fallback for automation drags from the drawer
+//   onViewportResize({width, height})
+//                     fired from a ResizeObserver on the canvas box — the
+//                     canvas re-renders on container resizes, not only on
+//                     window resize (the §14 demo's blank-canvas bug)
+
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   NODE_W, NODE_H,
@@ -101,6 +117,26 @@ import {
   fitCamera,
 } from './orgGraph'
 import RoleNode from './RoleNode'
+import { roleActivity, RECENT_EDGE_MS } from './orgActivity.js'
+
+/** Curved message edge between two card centres, bowed so A→B and B→A separate. */
+export function messageEdgePath(a, b) {
+  const ax = a.x + NODE_W / 2, ay = a.y + NODE_H / 2
+  const bx = b.x + NODE_W / 2, by = b.y + NODE_H / 2
+  const mx = (ax + bx) / 2, my = (ay + by) / 2
+  const cx = mx - (by - ay) * 0.2
+  const cy = my + (bx - ax) * 0.2
+  return `M${ax},${ay} Q${cx},${cy} ${bx},${by}`
+}
+
+/** Message edges between roles on this canvas, marked recent within RECENT_EDGE_MS of now. */
+export function liveEdgesFor(liveState, nodes, now) {
+  if (!liveState) return []
+  const byId = new Map(nodes.map(n => [n.id, n]))
+  return Object.values(liveState.edges || {})
+    .filter(e => byId.has(e.from) && byId.has(e.to) && e.from !== e.to)
+    .map(e => ({ ...e, path: messageEdgePath(byId.get(e.from), byId.get(e.to)), recent: now - e.lastTs <= RECENT_EDGE_MS }))
+}
 
 const GRID_SIZE = 28
 const ZOOM_MIN = 0.15
@@ -129,8 +165,15 @@ export default function OrgCanvas({
   onRoleDropFromPalette,
   onDeleteNode,
   viewportSize,
+  liveState = null,
+  liveNow = 0,
+  readOnly = false,
+  engineOffline = false,
+  onAutomationDrop,
+  onViewportResize,
 }) {
   const wrapperRef = useRef(null)
+  const [measured, setMeasured] = useState({ width: 0, height: 0 })
   const dragRef = useRef(null) // { type: 'canvas'|'node'|'edge', ... }
   const nodesRef = useRef(nodes)
   const cameraRef = useRef(camera)
@@ -209,6 +252,22 @@ export default function OrgCanvas({
     }
   }, [toWorld, onCameraChange, onNodesChange, onPendingEdgeChange, onEdgeCommit, onEdgeCycleRejected, onNodeDragEnd, pendingEdge])
 
+  // ── Container resize → re-render (ResizeObserver, not window resize) ────
+  const onViewportResizeRef = useRef(onViewportResize)
+  onViewportResizeRef.current = onViewportResize
+  useEffect(() => {
+    const el = wrapperRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver((entries) => {
+      const rect = entries[0]?.contentRect || el.getBoundingClientRect()
+      const next = { width: Math.round(rect.width), height: Math.round(rect.height) }
+      setMeasured(prev => (prev.width === next.width && prev.height === next.height ? prev : next))
+      onViewportResizeRef.current?.(next)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
   // ── Wheel zoom, cursor-anchored, clamped ────────────────────────────────
   useEffect(() => {
     const el = wrapperRef.current
@@ -259,6 +318,16 @@ export default function OrgCanvas({
   const handleDragOver = (e) => { e.preventDefault() }
   const handleDrop = (e) => {
     e.preventDefault()
+    const rawAutomation = e.dataTransfer.getData('application/x-org-automation')
+    if (rawAutomation) {
+      let automation = null
+      try { automation = JSON.parse(rawAutomation) } catch { automation = null }
+      if (!automation || readOnly) return
+      const w = toWorld(e.clientX, e.clientY)
+      const cardEl = document.elementFromPoint(e.clientX, e.clientY)?.closest?.('[data-od-node-id]')
+      onAutomationDrop?.(automation, w.x, w.y, cardEl?.dataset?.odNodeId || null)
+      return
+    }
     let paletteItem = null
     try {
       const raw = e.dataTransfer.getData('application/x-org-role') || e.dataTransfer.getData('text/plain')
@@ -301,6 +370,7 @@ export default function OrgCanvas({
     : null
 
   const singleRoot = roots.length === 1 ? roots[0] : null
+  const liveEdges = liveEdgesFor(liveState, nodes, liveNow)
 
   return (
     // absolute+inset:0 (not flex:1) so this box always exactly fills
@@ -335,6 +405,9 @@ export default function OrgCanvas({
 
       <div
         ref={wrapperRef}
+        data-testid="org-canvas"
+        data-viewport={`${measured.width}x${measured.height}`}
+        data-mode={liveState ? 'live' : 'design'}
         style={{ position: 'absolute', inset: 0, overflow: 'hidden', cursor: spaceHeldRef.current ? 'grab' : 'default' }}
         onMouseDown={(e) => {
           if (e.target !== wrapperRef.current && !e.target.dataset.bg) return
@@ -389,6 +462,20 @@ export default function OrgCanvas({
                 {pendingPath && (
                   <path d={pendingPath} stroke={pendingColor} strokeWidth={1.8} fill="none" strokeDasharray="5 4" strokeOpacity={0.8} />
                 )}
+                {liveEdges.map(e => (
+                  <g key={`live:${e.from}->${e.to}`} data-testid="live-edge" data-from={e.from} data-to={e.to} data-recent={e.recent ? '1' : '0'}>
+                    <path
+                      d={e.path}
+                      stroke={e.recent ? 'var(--green-neon, #22c55e)' : 'rgba(148,163,184,0.5)'}
+                      strokeWidth={e.recent ? 2.2 : 1}
+                      strokeOpacity={e.recent ? 0.9 : 0.25}
+                      strokeDasharray={e.recent ? '8 6' : '3 5'}
+                      fill="none"
+                      className={e.recent ? 'od-live-edge' : undefined}
+                    />
+                    <title>{`${e.from} → ${e.to}: ${e.count} message${e.count === 1 ? '' : 's'}${e.subject ? ` (last: ${e.subject})` : ''}`}</title>
+                  </g>
+                ))}
               </g>
             </svg>
 
@@ -413,6 +500,9 @@ export default function OrgCanvas({
                     onDelete={onDeleteNode}
                     isDropCandidate={pendingEdge != null && hoveredDropId === node.id}
                     isDropValid={pendingEdge?.validTargetId === node.id}
+                    live={liveState ? roleActivity(liveState, node.id) : null}
+                    engineOffline={engineOffline}
+                    readOnly={readOnly}
                     onStartEdgeDrag={(id, e) => {
                       const n = nodesRef.current.find(x => x.id === id)
                       if (!n) return
