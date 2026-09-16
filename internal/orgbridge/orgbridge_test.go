@@ -1,0 +1,195 @@
+package orgbridge
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/monoes/mono-agent/internal/monomind"
+	"github.com/monoes/mono-agent/internal/storage"
+)
+
+func newTestDB(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := storage.NewDatabase(filepath.Join(t.TempDir(), "b.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if err := db.ApplyMigrations(); err != nil {
+		t.Fatal(err)
+	}
+	return db.DB
+}
+
+func TestTraceParseAndReplace(t *testing.T) {
+	body := "hello\n[trace chn_abc_1 hop=3]\nrest"
+	tr, ok := ParseTrace(body)
+	if !ok || tr.ChainID != "chn_abc_1" || tr.Hop != 3 {
+		t.Fatalf("ParseTrace = %+v, %v", tr, ok)
+	}
+	out := WithTrace(body, Trace{ChainID: "chn_x", Hop: 4})
+	if !strings.HasPrefix(out, "[trace chn_x hop=4]\n") || strings.Count(out, "[trace") != 1 {
+		t.Fatalf("WithTrace = %q", out)
+	}
+	if _, ok := ParseTrace("[trace nope hop=1]"); ok {
+		t.Fatal("malformed chain id accepted")
+	}
+	if StripTrace(out) != "hello\n\nrest" {
+		t.Fatalf("StripTrace = %q", StripTrace(out))
+	}
+}
+
+// A forged low hop in the header cannot reset the count; the chain stops at
+// MaxHops (U10 trust rule).
+func TestLedgerHopsNeverLowered(t *testing.T) {
+	l := NewLedger(newTestDB(t))
+	ctx := context.Background()
+	lim := Limits{MaxHops: 3, MaxRepeats: 100}
+	c := Call{ProfileID: "p", Direction: DirWorkflowOut, OrgName: "hq", Trace: Trace{ChainID: "chn_loop"}}
+	for i := 1; i <= 3; i++ {
+		c.Trace.Hop = 0 // forged: always claims hop 0
+		adm, err := l.Admit(ctx, c, lim)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !adm.OK() || adm.Trace.Hop != i {
+			t.Fatalf("call %d: %+v", i, adm)
+		}
+	}
+	adm, err := l.Admit(ctx, c, lim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if adm.Status != StatusRefusedHops {
+		t.Fatalf("4th hop admitted: %+v", adm)
+	}
+}
+
+// Fresh chain ids every call still hit the per-target repeat limit.
+func TestLedgerRepeatLimitIgnoresChain(t *testing.T) {
+	l := NewLedger(newTestDB(t))
+	ctx := context.Background()
+	lim := Limits{MaxRepeats: 2, Window: time.Minute}
+	target := Call{ProfileID: "p", Direction: DirRoleTool, OrgName: "g", RoleID: "lead", WorkflowID: "wf"}
+	for i := 0; i < 2; i++ {
+		if adm, _ := l.Admit(ctx, target, lim); !adm.OK() {
+			t.Fatalf("call %d refused: %+v", i, adm)
+		}
+	}
+	adm, _ := l.Admit(ctx, target, lim)
+	if adm.Status != StatusRefusedRepeat {
+		t.Fatalf("third call to the same target admitted: %+v", adm)
+	}
+	other := target
+	other.WorkflowID = "wf2"
+	if adm, _ := l.Admit(ctx, other, lim); !adm.OK() {
+		t.Fatalf("different target refused: %+v", adm)
+	}
+}
+
+func TestSendWritesTraceAndReportsDelivery(t *testing.T) {
+	l := NewLedger(newTestDB(t))
+	var got monomind.InboxMessage
+	inboxFunc = func(ctx context.Context, root, name string, msg monomind.InboxMessage) (*monomind.InboxReceipt, error) {
+		got = msg
+		return &monomind.InboxReceipt{V: 1, Org: name, To: msg.To, From: msg.From, Delivery: "live", MessageID: "msg-1"}, nil
+	}
+	t.Cleanup(func() { inboxFunc = monomind.OrgInbox })
+
+	res, err := Send(context.Background(), l, SendRequest{
+		ProfileID: "p", Root: "/r", Org: "growth", To: "lead", From: "workflow:abc", Subject: "hi", Body: "body",
+		Trace: Trace{ChainID: "chn_in", Hop: 2},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Delivery != "live" || res.Trace.Hop != 3 || !strings.HasPrefix(got.Body, "[trace chn_in hop=3]\nbody") {
+		t.Fatalf("res=%+v body=%q", res, got.Body)
+	}
+
+	inboxFunc = func(context.Context, string, string, monomind.InboxMessage) (*monomind.InboxReceipt, error) {
+		return nil, errors.New("boom")
+	}
+	if _, err := Send(context.Background(), l, SendRequest{ProfileID: "p", Org: "growth", From: "workflow:abc"}); err == nil {
+		t.Fatal("delivery error swallowed")
+	}
+}
+
+func TestMuxSharesOneTailAndDedupes(t *testing.T) {
+	var mu sync.Mutex
+	starts := 0
+	lines := make(chan []byte, 10)
+	m := NewMux(func(ctx context.Context, root, org, since string, onLine func([]byte)) error {
+		mu.Lock()
+		starts++
+		mu.Unlock()
+		for {
+			select {
+			case <-ctx.Done():
+				return nil
+			case l := <-lines:
+				onLine(l)
+			}
+		}
+	})
+	var got1, got2 []string
+	var gm sync.Mutex
+	u1 := m.Subscribe("/r", "hq", func(ev Event) { gm.Lock(); got1 = append(got1, ev.ID); gm.Unlock() })
+	u2 := m.Subscribe("/r", "hq", func(ev Event) { gm.Lock(); got2 = append(got2, ev.ID); gm.Unlock() })
+	lines <- []byte(`{"id":"e1","type":"status","org":"hq"}`)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		gm.Lock()
+		done := len(got1) == 1 && len(got2) == 1
+		gm.Unlock()
+		if done || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	mu.Lock()
+	if starts != 1 {
+		t.Fatalf("tail started %d times for two subscribers", starts)
+	}
+	mu.Unlock()
+	if len(got1) != 1 || len(got2) != 1 {
+		t.Fatalf("got1=%v got2=%v", got1, got2)
+	}
+	u1()
+	if m.Subscribers("/r", "hq") != 1 {
+		t.Fatal("unsubscribe did not remove one subscriber")
+	}
+	u2()
+	if m.Subscribers("/r", "hq") != 0 {
+		t.Fatal("tail kept after last unsubscribe")
+	}
+
+	d := NewDeduper()
+	a := Event{Type: "xorg", From: "herald:editor", To: "forge:cto", Subject: "s", Msg: "m"}
+	if !d.FirstSighting(a) || d.FirstSighting(a) {
+		t.Fatal("content dedupe failed")
+	}
+	b := Event{Type: "xorg", Data: map[string]interface{}{"messageId": "msg-9"}, Subject: "x"}
+	c := Event{Type: "xorg", Data: map[string]interface{}{"messageId": "msg-9"}, Subject: "y"}
+	if !d.FirstSighting(b) || d.FirstSighting(c) {
+		t.Fatal("messageId dedupe failed")
+	}
+}
+
+// Real recorded buses parse and classify question kinds (C-45).
+func TestParseRecordedBusEvents(t *testing.T) {
+	approval, err := ParseEvent([]byte(`{"id":"1","type":"question","from":"dev","data":{"question":"Approval required for Bash","action":"Bash"}}`))
+	if err != nil || approval.QuestionKind() != "approval" {
+		t.Fatalf("approval kind = %q (%v)", approval.QuestionKind(), err)
+	}
+	ask, _ := ParseEvent([]byte(`{"id":"2","type":"question","from":"dev","data":{"questionId":"q-1","question":"Which?"}}`))
+	if ask.QuestionKind() != "ask_human" {
+		t.Fatalf("ask kind = %q", ask.QuestionKind())
+	}
+}

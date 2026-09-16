@@ -19,9 +19,10 @@ type SchedulerInterface interface {
 // triggerEntry holds state for an active trigger registration.
 // For schedule triggers it holds the cron EntryID; for webhook triggers the path.
 type triggerEntry struct {
-	kind        string // "schedule" or "webhook"
+	kind        string // "schedule", "webhook", or "provider"
 	cronID      cron.EntryID
 	webhookPath string
+	deactivate  func() // provider entries
 }
 
 // TriggerManager activates and deactivates triggers for workflows.
@@ -33,6 +34,7 @@ type TriggerManager struct {
 	triggerFn     func(workflowID string, nodeID string, items []Item)
 	mu            sync.Mutex
 	active        map[string]map[string]*triggerEntry // workflowID → nodeID → entry
+	providers     map[string]TriggerSource          // node type → provider
 	logger        zerolog.Logger
 }
 
@@ -51,8 +53,55 @@ func NewTriggerManager(
 		scheduler:     scheduler,
 		triggerFn:     triggerFn,
 		active:        make(map[string]map[string]*triggerEntry),
+		providers:     make(map[string]TriggerSource),
 		logger:        logger,
 	}
+}
+
+// RegisterProvider routes trigger nodes of nodeType to p.
+func (tm *TriggerManager) RegisterProvider(nodeType string, p TriggerSource) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	tm.providers[nodeType] = p
+}
+
+// activateProvider registers a provider-backed trigger node.
+func (tm *TriggerManager) activateProvider(w *Workflow, node *WorkflowNode, p TriggerSource) error {
+	if node.Config == nil {
+		if err := node.ParseConfig(); err != nil {
+			return fmt.Errorf("parse config: %w", err)
+		}
+	}
+	tm.mu.Lock()
+	if tm.active[w.ID] != nil {
+		if _, exists := tm.active[w.ID][node.ID]; exists {
+			tm.mu.Unlock()
+			return nil
+		}
+	}
+	tm.mu.Unlock()
+
+	wfID, nID := w.ID, node.ID
+	stop, err := p.Activate(w, node, func(items []Item) { tm.triggerFn(wfID, nID, items) })
+	if err != nil {
+		return err
+	}
+
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	if tm.active[w.ID] == nil {
+		tm.active[w.ID] = make(map[string]*triggerEntry)
+	}
+	if _, exists := tm.active[w.ID][node.ID]; exists {
+		// Lost a race with a concurrent activation; keep the first one.
+		if stop != nil {
+			stop()
+		}
+		return nil
+	}
+	tm.active[w.ID][node.ID] = &triggerEntry{kind: "provider", deactivate: stop}
+	tm.logger.Info().Str("workflow_id", w.ID).Str("node_id", node.ID).Str("type", node.Type).Msg("provider trigger activated")
+	return nil
 }
 
 // ActivateWorkflow registers all trigger nodes in the given workflow.
@@ -83,6 +132,16 @@ func (tm *TriggerManager) ActivateWorkflow(ctx context.Context, w *Workflow) err
 		case "trigger.webhook":
 			if err := tm.activateWebhook(w.ID, node); err != nil {
 				errs = append(errs, fmt.Errorf("node %s (%s): %w", node.ID, node.Type, err))
+			}
+
+		default:
+			tm.mu.Lock()
+			p := tm.providers[node.Type]
+			tm.mu.Unlock()
+			if p != nil {
+				if err := tm.activateProvider(w, node, p); err != nil {
+					errs = append(errs, fmt.Errorf("node %s (%s): %w", node.ID, node.Type, err))
+				}
 			}
 		}
 	}
@@ -279,10 +338,14 @@ func (tm *TriggerManager) DeactivateAll() {
 			tm.deactivateEntry(key, entry)
 		}
 	}
+	// Clear the registry so a later ActivateWorkflow (an engine restarted in
+	// the same process) registers triggers again instead of skipping them as
+	// "already active".
+	tm.active = make(map[string]map[string]*triggerEntry)
 }
 
-// deactivateEntry tears down a single trigger entry and removes it from the map.
-// Must be called with tm.mu held.
+// deactivateEntry tears down a single trigger entry. Callers remove it from
+// tm.active. Must be called with tm.mu held.
 func (tm *TriggerManager) deactivateEntry(key string, entry *triggerEntry) {
 	switch entry.kind {
 	case "schedule":
@@ -297,6 +360,13 @@ func (tm *TriggerManager) deactivateEntry(key string, entry *triggerEntry) {
 			Str("key", key).
 			Str("path", entry.webhookPath).
 			Msg("webhook trigger deactivated")
+
+	case "provider":
+		if entry.deactivate != nil {
+			entry.deactivate()
+		}
+		tm.logger.Info().
+			Str("key", key).
+			Msg("provider trigger deactivated")
 	}
-	delete(tm.active, key)
 }

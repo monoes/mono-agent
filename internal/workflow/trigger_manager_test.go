@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"context"
 	"testing"
 
 	"github.com/robfig/cron/v3"
@@ -123,5 +124,57 @@ func TestDeactivateWorkflowExactKeyOwnership(t *testing.T) {
 	}
 	if len(sched.specs) != before+1 {
 		t.Errorf("re-activating a after deactivation should register a new entry")
+	}
+}
+
+type fakeTriggerSource struct {
+	fire    func([]Item)
+	stopped int
+}
+
+func (f *fakeTriggerSource) Activate(w *Workflow, n *WorkflowNode, fire func([]Item)) (func(), error) {
+	f.fire = fire
+	return func() { f.stopped++ }, nil
+}
+
+// Source-backed trigger types (trigger.org) activate once, fire through
+// triggerFn, and stop on deactivation; DeactivateAll clears the registry so
+// a re-activation registers again.
+func TestTriggerManagerSources(t *testing.T) {
+	var fired []string
+	tm := NewTriggerManager(nil, nil, &fakeScheduler{}, func(wf, node string, items []Item) {
+		fired = append(fired, wf+"/"+node)
+	}, zerolog.Nop())
+	src := &fakeTriggerSource{}
+	tm.RegisterProvider("trigger.org", src)
+	w := &Workflow{ID: "wf", Nodes: []WorkflowNode{{ID: "t", Type: "trigger.org", Config: map[string]interface{}{}}}}
+
+	ctx := context.Background()
+	if err := tm.ActivateWorkflow(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	if err := tm.ActivateWorkflow(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	src.fire([]Item{{JSON: map[string]interface{}{"x": 1}}})
+	if len(fired) != 1 || fired[0] != "wf/t" {
+		t.Fatalf("fired = %v", fired)
+	}
+	tm.DeactivateWorkflow("wf")
+	if src.stopped != 1 {
+		t.Fatalf("stopped = %d", src.stopped)
+	}
+	if err := tm.ActivateWorkflow(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	tm.DeactivateAll()
+	if src.stopped != 2 || len(tm.active) != 0 {
+		t.Fatalf("DeactivateAll: stopped=%d active=%v", src.stopped, tm.active)
+	}
+	if err := tm.ActivateWorkflow(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	if len(tm.active["wf"]) != 1 {
+		t.Fatal("re-activation after DeactivateAll was skipped")
 	}
 }
