@@ -222,7 +222,7 @@ func (s *Store) MergeOrgTools(ctx context.Context, profileID, org, role string, 
 	return s.SetOrgTools(ctx, profileID, org, role, tools)
 }
 
-const grantCols =`id, profile_id, org_name, role_id, tools_json, org_tools_json, created_at, updated_at, revoked_at`
+const grantCols = `id, profile_id, org_name, role_id, tools_json, org_tools_json, created_at, updated_at, revoked_at`
 
 func scanGrant(sc interface{ Scan(...interface{}) error }) (*Grant, error) {
 	var g Grant
