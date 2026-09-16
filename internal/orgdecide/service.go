@@ -166,6 +166,12 @@ func (s *Service) Pending(ctx context.Context, profileID, root, org string, a *A
 	if len(errs) == 3 {
 		return nil, "", errors.New(strings.Join(errs, "; "))
 	}
+	if s.DB != nil {
+		doc, _ := orgdesign.Load(root, org)
+		if hil, err := PendingHIL(ctx, s.DB, profileID, org, doc); err == nil {
+			items = append(items, hil...)
+		}
+	}
 
 	runID := ""
 	if raw, err := s.Client.Status(ctx, root, org); err == nil {
@@ -509,11 +515,12 @@ func (s *Service) fail(ctx context.Context, root, org, level string, a *Autonomy
 // "[decided by <resolver>]" so the requesting role sees who decided even
 // without M5; with M5 the resolver is also passed as --by.
 func (s *Service) apply(ctx context.Context, root, org string, it Item, approve bool, answer, resolver, rationale string) error {
-	return ApplyVerdict(ctx, s.Client, root, org, it, approve, answer, resolver, rationale)
+	return ApplyVerdict(ctx, s.Client, s.DB, root, org, it, approve, answer, resolver, rationale)
 }
 
-// ApplyVerdict resolves one item in monomind for resolver.
-func ApplyVerdict(ctx context.Context, c Client, root, org string, it Item, approve bool, answer, resolver, rationale string) error {
+// ApplyVerdict resolves one item for resolver: org items in monomind, HIL
+// items in mono-agent's own queue.
+func ApplyVerdict(ctx context.Context, c Client, db *sql.DB, root, org string, it Item, approve bool, answer, resolver, rationale string) error {
 	opts := monomind.ResolveOptions{By: resolver, RequestID: it.RequestID}
 	prefix := "[decided by " + resolver + "] "
 	switch it.Kind {
@@ -527,6 +534,11 @@ func ApplyVerdict(ctx context.Context, c Client, root, org string, it Item, appr
 			text = rationale
 		}
 		return c.Answer(ctx, root, org, it.Ref, prefix+text, opts)
+	case KindHIL:
+		if db == nil {
+			return fmt.Errorf("orgdecide: no database to resolve HIL item %s", it.Ref)
+		}
+		return resolveHIL(ctx, db, it.Ref, approve)
 	}
 	return fmt.Errorf("orgdecide: cannot resolve %s items", it.Kind)
 }

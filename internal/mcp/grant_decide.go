@@ -125,7 +125,7 @@ func (s *Server) callDecisionTool(ctx context.Context, rt *runtime, b *orggrant.
 		rec.Verdict = orgdecide.VerdictEscalated
 	default:
 		approve := verdict == "approve" || verdict == "answer"
-		if err := orgdecide.ApplyVerdict(ctx, decisionClient, root, d.OrgName, d.Item, approve, a.Answer, resolver, a.Rationale); err != nil {
+		if err := orgdecide.ApplyVerdict(ctx, decisionClient, rt.db.DB, root, d.OrgName, d.Item, approve, a.Answer, resolver, a.Rationale); err != nil {
 			return nil, true, err
 		}
 		switch verdict {
