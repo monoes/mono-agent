@@ -885,3 +885,49 @@ exist for a live show, not for an operator running their own orgs.
 `anvil/run-20260916072841-y7mg`, `herald/run-20260916072821-sjws` (rehearsal), under
 `.claude/worktrees/org-arena/.monomind/orgs/`. That directory is gitignored and goes away with the
 worktree; copy them into `testdata/orgs/runs/` (scrubbed, §12) before removing it.
+
+---
+
+## 15. Implementation status (2026-09-16)
+
+Implemented on branch `feat/org-workflow-unification` (mono-agent) and
+`feat/mono-agent-org-integration` (monomind), against
+`2026-09-16-org-unification-contracts.md`. Nothing is merged, released, or published.
+
+| Phase | State | Evidence |
+|---|---|---|
+| 1 Org model and grants | Done | `internal/orgdesign` typed keys and validators, migration 041, `internal/orggrant`, `org automation|grant|effective-tools|legacy`, profile org root (C-31), `workflow delete` refusal (C-20), golden configs validated by the real monomind in CI (C-26) |
+| 2 Role → automation tools | Done in code; live-org gate not run | `mcp --grant` thin client with caps, trace, redaction, paging, HIL passthrough, `daemon_required`; `scripts/e2e/org-unification.sh` runs a granted tool through a real daemon |
+| 3 Workflow → org, decisions | Done in code; live-org gate not run | `org.send`, `org.ask`, `trigger.org`, `org.run` `wait`/`exclusive`, `resume_after` wake, `internal/orgbridge`, `internal/orgdecide` (levels, tiers, rule, model decider, lower-only reconcile), CLI process/autonomy commands, daemon hosting the API |
+| 4 Automation roles | Done in code; live-org gate not run | endpoint receiver with bus confirmation, reply path, `org automation-role add|remove|rotate` |
+| 5 Unified Org UI | Done; walkthrough recording not made | Wails bindings and components, 416 vitest tests, reducer replaying recorded buses |
+| 6 Holding orgs | Done in code; live-org gate not run | `internal/orggroup`, Initiator and decision tools, boss/parent delegation with fallback, report-up fallback watcher, `org group …` |
+| 7 Docs | Done | AGENTS.md, SECURITY.md, `ref org`, OpenAPI, `examples/orgs/` |
+| monomind M1–M5 | Done | 6 commits, full CLI vitest suite green, local build advertises all four capabilities |
+
+**Gates not yet run.** Every gate that needs a running org with real agent sessions (a Claude
+and a fence runner calling a granted tool; a message landing in a running org's mailbox; the
+autonomy scenarios against a live org; boss → `publisher-bot` → reply; hq starting sales).
+They spend model budget and wait on an operator decision to run them. Unit, contract, and
+real-binary tests cover the same code paths with fake runners and a real daemon.
+
+**Deviations found while implementing** (also in contracts §9):
+
+| Plan | Implementation | Why |
+|---|---|---|
+| Endpoint receiver refuses a POST with no bus event (C-4) | Returns 202 and runs the workflow only once the bus event with that `messageId` appears; refuses after 60 s | M2 emits the bus event after a 2xx, so it cannot exist when the POST arrives |
+| Repeat limit per chain over N minutes (U10) | Per target (direction, org, role, workflow), 20 per minute by default | A chain id can be forged per call; the target cannot |
+| Decider items for boss/parent tracked implicitly | New table `org_delegations` | Delegated items need an id, a deadline, and a decider identity for `decision_resolve` and the timeout fallback |
+| Group ceiling from the parent's budget | `run_config.group_budget_usd` × `budget_share` | monomind has no org-wide USD budget; `--budget-usd` is not a spend bound (C-44) |
+| Roll-up from a running total of `usage` events (U11) | `org costs` over configured roles plus decider spend, read when `org_start` is called | `org_start` runs in the grant-mode process, which holds no tail |
+| Report-up enforced softly plus a fallback | As planned; fallback triggers on the child's `org stopped` with no `xorg` to the parent in that run | — |
+| One grant id per role in provider args | One row per (role, alias); org and decision tools are one more row; the provider is addressed by the role's first row | C-22 |
+
+**Open items.**
+- C-24: there is no profile delete or folder move path in the code to hook grant revocation into.
+- C-35: the GUI does not list queued inbox messages.
+- C-36: no validator warning for child goals that are not message-driven.
+- C-46: automation input paths are not confined to the role's workdir; documented in SECURITY.md.
+- `needs-you` reports `idle_stop_in_seconds: null` (monomind exposes no idle deadline).
+- Windows: credential-file mode checks are skipped and provider process groups are not killed.
+- `docs/screenshots/` walkthrough for Phase 5.

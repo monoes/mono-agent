@@ -361,3 +361,8 @@ As plan §6.1, plus:
 | `org.ask` reply addressed `workflow:<exec>:<node>` | `org.ask` sends from its endpoint role with subject `ask:<id> …`; the receiver matches `ask:<id>` in the reply subject or body and resumes the execution | monomind cannot address a non-org sender; the endpoint role is the workflow's address (plan already requires it). |
 | `wake_kind` marker | `resume_after` timestamp column: event-woken nodes pause with a 30 s safety window | One nullable column covers both "wait for event" and back-off (C-33). |
 | Org root: CLI default `~/.monoagent` only (C-31) | CLI **and** chat/MCP tools switch to `profiledir.Root` | Chat tools used `~/.monoagent` for the default profile too. |
+| C-4: receiver refuses a POST with no bus event | 202, then run only after the bus event with that `messageId` appears; refuse after 60 s | M2 emits the bus event after the 2xx |
+| U10 repeat limit per chain | Per target, 20 calls per minute | Chain ids are forgeable, targets are not |
+| (none) | Table `org_delegations` in migration 041 | Boss/parent deciders need ids, deadlines, and decider identity |
+| Group ceiling from parent budget | `run_config.group_budget_usd` × child `budget_share` | monomind has no org-wide USD budget |
+| U11 roll-up from `usage` event totals | `org costs` over configured roles + decider spend at `org_start` time | Grant-mode process holds no event tail |
