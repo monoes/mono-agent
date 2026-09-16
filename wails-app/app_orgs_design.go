@@ -67,6 +67,9 @@ func (a *App) ListOrgDesigns() string {
 		Goal      string `json:"goal"`
 		Status    string `json:"status"`
 		RoleCount int    `json:"roleCount"`
+		// Kind is "holding" for a holding org (plan §6.1), else "" or
+		// "standard" — the org list uses it to offer the group view.
+		Kind string `json:"kind,omitempty"`
 	}
 	items := make([]item, 0, len(names))
 	for _, name := range names {
@@ -74,13 +77,29 @@ func (a *App) ListOrgDesigns() string {
 		if err != nil {
 			continue // skip a config that fails to parse rather than failing the whole list
 		}
-		items = append(items, item{Name: d.Name, Goal: d.Goal, Status: d.Status, RoleCount: len(d.Roles)})
+		items = append(items, item{Name: d.Name, Goal: d.Goal, Status: d.Status, RoleCount: len(d.Roles), Kind: orgDocKind(d)})
 	}
 	b, err := json.Marshal(map[string]interface{}{"v": 1, "items": items})
 	if err != nil {
 		return aiError(err)
 	}
 	return string(b)
+}
+
+// orgDocKind reads the top-level `kind` key from a doc's JSON form, so it
+// works whether orgdesign keeps `kind` in Extra or models it as a field.
+func orgDocKind(d *orgdesign.Doc) string {
+	b, err := json.Marshal(d)
+	if err != nil {
+		return ""
+	}
+	var probe struct {
+		Kind string `json:"kind"`
+	}
+	if json.Unmarshal(b, &probe) != nil {
+		return ""
+	}
+	return probe.Kind
 }
 
 // CreateOrgDesign creates a new org with a single root role. specJSON:

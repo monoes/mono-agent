@@ -28,6 +28,10 @@ export function notify(op, message) {
 // Wrap a binding call so failures are reported and fall back to `fallback`.
 const guard = (op, fallback) => (e) => { reportError(op, e); return fallback }
 
+// Mutation fallback: a thrown binding call (or unparseable output) becomes the
+// same {error} shape the Go side returns, so callers have one check.
+const asError = (e) => ({ error: e?.message || String(e) })
+
 // Parses a StreamAIChat/StreamAgentChat result, throwing on the synchronous
 // {"error": "..."} shape those two return when the chat process never even
 // started (see the comment on streamAIChat below) — turns that JSON payload
@@ -164,6 +168,31 @@ export const api = {
   saveOrgDesign:       (name, doc) => GoApp.SaveOrgDesign(name, JSON.stringify(doc)).then(s => JSON.parse(s)),
   validateOrgDesign:   (name) => GoApp.ValidateOrgDesign(name).then(s => JSON.parse(s)).catch(guard('validate org design', null)),
   reloadOrg:           (name) => GoApp.ReloadOrg(name).then(s => JSON.parse(s)),
+  // Org × workflow unification — grants, automations, automation roles,
+  // autonomy, holding groups. Every call shells `monoagentcli org …` (see
+  // wails-app/app_org_unification.go). Reads fall back to null and toast;
+  // mutations resolve to the CLI's JSON or {error} so callers check res.error.
+  listOrgAutomations:        (org) => GoApp.ListOrgAutomations(org).then(s => JSON.parse(s)).catch(guard('org automations', null)),
+  listUnassignedAutomations: () => GoApp.ListUnassignedAutomations().then(s => JSON.parse(s)).catch(guard('unassigned automations', null)),
+  addOrgAutomation:          (org, workflowID, alias) => GoApp.AddOrgAutomation(org, workflowID, alias).then(s => JSON.parse(s)).catch(asError),
+  removeOrgAutomation:       (org, alias) => GoApp.RemoveOrgAutomation(org, alias).then(s => JSON.parse(s)).catch(asError),
+  listOrgGrants:             (org) => GoApp.ListOrgGrants(org).then(s => JSON.parse(s)).catch(guard('org grants', null)),
+  setOrgGrant:               (org, spec) => GoApp.SetOrgGrant(org, JSON.stringify(spec)).then(s => JSON.parse(s)).catch(asError),
+  removeOrgGrant:            (org, role, alias) => GoApp.RemoveOrgGrant(org, role, alias).then(s => JSON.parse(s)).catch(asError),
+  addAutomationRole:         (org, spec) => GoApp.AddAutomationRole(org, JSON.stringify(spec)).then(s => JSON.parse(s)).catch(asError),
+  removeAutomationRole:      (org, roleID) => GoApp.RemoveAutomationRole(org, roleID).then(s => JSON.parse(s)).catch(asError),
+  getEffectiveTools:         (org, roleID) => GoApp.GetEffectiveTools(org, roleID).then(s => JSON.parse(s)).catch(guard('effective tools', null)),
+  getOrgAutonomy:            (org) => GoApp.GetOrgAutonomy(org).then(s => JSON.parse(s)).catch(guard('org autonomy', null)),
+  setOrgAutonomy:            (org, spec) => GoApp.SetOrgAutonomy(org, JSON.stringify(spec)).then(s => JSON.parse(s)).catch(asError),
+  pauseOrgAutonomy:          (org, duration = '') => GoApp.PauseOrgAutonomy(org, duration).then(s => JSON.parse(s)).catch(asError),
+  resumeOrgAutonomy:         (org) => GoApp.ResumeOrgAutonomy(org).then(s => JSON.parse(s)).catch(asError),
+  listOrgDecisionLog:        (org, run = '') => GoApp.ListOrgDecisionLog(org, run).then(s => JSON.parse(s)).catch(guard('decision log', null)),
+  listNeedsYou:              (org) => GoApp.ListNeedsYou(org).then(s => JSON.parse(s)).catch(guard('needs you', null)),
+  startOrgGroup:             (holding) => GoApp.StartOrgGroup(holding).then(s => JSON.parse(s)).catch(asError),
+  stopOrgGroup:              (holding) => GoApp.StopOrgGroup(holding).then(s => JSON.parse(s)).catch(asError),
+  orgGroupStatus:            (holding) => GoApp.OrgGroupStatus(holding).then(s => JSON.parse(s)).catch(guard('org group status', null)),
+  sendOrgMessage:            (org, spec) => GoApp.SendOrgMessage(org, JSON.stringify(spec)).then(s => JSON.parse(s)).catch(asError),
+  getDaemonStatus:           () => GoApp.GetDaemonStatus().then(s => JSON.parse(s)).catch(guard('daemon status', null)),
   // Per-profile monomind setup — see wails-app/app_monomind_init.go.
   isMonomindInitialized:   () => GoApp.IsMonomindInitialized().catch(guard('monomind init status', false)),
   initializeMonomindProfile: () => GoApp.InitializeMonomindProfile().then(s => JSON.parse(s)),
