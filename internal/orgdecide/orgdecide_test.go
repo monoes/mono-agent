@@ -294,7 +294,9 @@ func TestRepeatDenialAndLimits(t *testing.T) {
 
 func TestTierTableAndRouting(t *testing.T) {
 	facts := TierFacts{
-		GrantTier:            func(alias string) string { return map[string]string{"post": "irreversible", "sum": "consequential"}[alias] },
+		GrantTier: func(alias string) string {
+			return map[string]string{"post": "irreversible", "sum": "consequential"}[alias]
+		},
 		RoleHasGrantsAndBash: func(role string) bool { return role == "writer" },
 	}
 	cases := []struct{ class, role, want string }{
