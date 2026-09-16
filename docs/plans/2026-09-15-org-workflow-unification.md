@@ -1,0 +1,587 @@
+# Org × Workflow Unification and Multi-Org — Design & Implementation Plan
+
+- **Status**: **v8 — review cycle complete** (written 2026-09-15 23:44 CEST; seven review passes 00:30–06:57). Ready for the user's decision on §11; implementation starts at Phase 1. Hourly review passes until 06:30 are
+  appended in §13 (Review log); each pass may amend any section and bumps the version.
+- **Scope**: mono-agent (`github.com/monoes/mono-agent`) plus the monomind-side changes it
+  needs (`~/projects/monoes/monomind`, org runtime v2). Every "current state" claim below was
+  verified against live source on 2026-09-15/16; file refs are given so a reviewer can re-check.
+- **Companion docs**: `docs/plans/local-agent-monomind-delegation.md` (doctrine, D1–D12 —
+  this plan extends it and does not reopen its decisions), monomind
+  `doc/concepts/org-runtime.md`, `doc/commands/org.md`.
+
+---
+
+## 1. Goal in one paragraph
+
+Today mono-agent has two separate top-level things: **workflows** (n8n-style DAGs run by the Go
+engine) and **orgs** (monomind Org Runtime v2 agent hierarchies, designed in the Org Designer
+and run by the monomind daemon). They can touch each other in exactly one direction and one
+way (`org.run` workflow node, `internal/nodes/org/run.go`). This plan makes them one product
+concept — the **Org** — in which:
+
+1. Workflows become **Automations** that live inside an org.
+2. An automation can be **granted to a role** as a tool the role calls directly (synchronous,
+   result returned into the agent's turn), under the org's existing policy/approval/budget
+   engine.
+3. An automation can also be an **Automation Role** — a first-class node on the org chart that
+   receives messages like any role and answers with its workflow output (asynchronous,
+   message-driven).
+4. Workflows gain nodes and a trigger to drive orgs the other way (`org.send`, `trigger.org`,
+   existing `org.run`).
+5. A **Holding Org** (multi-org) lets a designated boss initiate, message, and supervise other
+   orgs, using monomind's already-existing `org:role` cross-org addressing, and mono-agent
+   fixes the naming/identity/loop/budget gaps that today make that unsafe across profiles.
+
+The single word the UI, CLI, and docs use for the container is **org**. "Workflow" survives as
+the technical name of the DAG artifact (files, engine, CLI `workflow` namespace stay); the
+Org UI calls a workflow that is a member of an org an **automation**.
+
+---
+
+## 2. Vocabulary (normative)
+
+| Term | Meaning | Where it lives |
+|---|---|---|
+| **Org** | The container: agent roles + automation roles + automations + grants + settings. | `<profile root>/.monomind/orgs/<name>.json` (monomind-owned schema, passthrough extras). |
+| **Role** (agent role) | An LLM session with a runtime, model, policy, budget. Unchanged from today. | `roles[]` in the org config. |
+| **Automation** | A mono-agent workflow (`internal/workflow` DAG) that is a member of an org. | Workflow stays in the mono-agent store; membership is recorded in the org config under `automations[]`. |
+| **Grant** | "Role R may invoke automation A (and/or tool T) with these limits." | `roles[].automations` in the org config + a mono-agent-side grant record (`org_grants` table) that the MCP server enforces. |
+| **Automation Role** | A `roles[]` entry with `kind: "endpoint"` (cosmetic `type: "automation"`) — a workflow that acts as a role: it has a mailbox address, receives `org_send` messages, and replies. | `roles[]` in the org config (`kind`, `automation` fields) + monomind **endpoint delivery** (new). |
+| **Holding Org** | An org whose root role is an **Initiator** allowed to start/stop/message other orgs ("child orgs"). | Ordinary org config with `kind: "holding"` and `children[]`. |
+| **Org Group** | The set {holding org, its children}: one UI surface, one budget roll-up, one daemon. | Derived from the holding org's `children[]`; no separate file. |
+| **Profile** | mono-agent's existing isolation unit; orgs, workflows, secrets are per profile. Unchanged. | `internal/profiledir`. |
+
+Naming rule: **an automation's `alias` is a role-id-shaped slug** (`^[a-z0-9][a-z0-9_-]*$`), unique
+among both role ids and automation aliases in the org, so it can be used as an `org_send`
+address and as a tool name suffix without a second namespace.
+
+---
+
+## 3. Verified current state (what we build on)
+
+### 3.1 mono-agent
+
+| Area | Fact | Ref |
+|---|---|---|
+| Org config I/O | `internal/orgdesign` reads/mutates/validates org JSON with an `Extra` bucket on both `Doc` and `Role`, so **any new top-level or role-level key round-trips** without touching monomind. | `internal/orgdesign/types.go` (`docKnownKeys`, `roleKnownKeys`) |
+| Org config path | `<profileRoot>/.monomind/orgs/<name>.json`; profile root = `~/.monoagent/profiles/<id>/` or a user override (`profiles.root_dir`). | `internal/orgdesign/store.go`, `internal/profiledir/profiledir.go` |
+| Org commands | `monoagentcli org …` is a thin JSON proxy over `monomind org … --format json`, always with `--project <root>` → cwd. There is **no `serve`, `stop`, `pause`, `resume`, `inbox`, `delete` proxy yet**. | `cmd/monoagentcli/org.go`, `internal/monomind/org.go` |
+| Workflow → org | `org.run` node: starts a run via `OrgRunStart` and pauses the execution (`ErrNodePaused`) until `closed_by == "org-complete"`. One node invocation = one org run. | `internal/nodes/org/run.go` |
+| Agent node | `agent.ask` node: one-shot `monomind agent exec` per item. | `internal/nodes/agent/ask.go` |
+| Workflow engine | Triggers: `trigger.manual`, `trigger.schedule`, `trigger.webhook`; pausing via `ErrNodePaused` + `ResumeState`; HIL rows in SQLite (`core.human_in_loop`). Triggers only stay registered while `monoagentcli daemon` is running. **The GUI does not host the engine or triggers**: it builds a store (`wails-app/app.go:136-141`), runs workflows through `monoagentcli workflow run` subprocesses, and only *detects* an external daemon (`isMonoagentDaemonProcess`, `app_workflows.go:826-838`) — it never starts one. Every CLI command that runs a workflow bootstraps its **own** engine instance (`internal/mcp/engine.go`, `workflow run`); paused (`WAITING`) executions are resumed by **any** live engine's 3-second `resumeLoop`, so a run started by a short-lived process is picked up by the daemon's engine. **Resume is a poll, not a wake**: `ListResumableExecutions` returns every `WAITING` execution with no pending HIL row (`storage.go:678-696`), so an execution paused by `org.run` is re-enqueued every 3 s and the node re-runs `monomind org status` each time until the org completes. **Hand-off without an engine exists**: `workflow run --no-wait` persists a `QUEUED` row with `pid 0` and exits; a live engine's `adoptQueuedExecutions` claims it by CAS on the next 3-second tick (`engine.go:330-352`, `workflow.go:850-926`). GUI `CancelWorkflow` signals the execution's `PID` and only protects the daemon's pid (`app_workflows.go:826-838`). | `internal/workflow/trigger_manager.go`, `execution.go`, `cmd/monoagentcli/daemon.go` |
+| Processes | `monoagentcli daemon` (engine + triggers, all profiles), `monoagentcli httpapi` (REST, one profile, loopback `127.0.0.1:9322`), `monoagentcli mcp` (stdio, one profile) are **separate commands**; the daemon has no HTTP listener. | `cmd/monoagentcli/daemon.go`, `httpapi.go:24-45`, `mcp.go` |
+| Org root divergence | The CLI's `org --project` default is `~/.monoagent` (`cmd/monoagentcli/org.go:defaultOrgProjectRoot`), while the GUI, chat tools, and the `org.run` node use the **profile root** (`~/.monoagent/profiles/<id>/`). A CLI-only user and the GUI therefore see different org directories for the same profile. | `cmd/monoagentcli/org.go:15-19`, `wails-app/app_orgs.go:45-60`, `internal/nodes/org/run.go:70-74` |
+| Tool surfaces | Same tool implementations exposed three ways: chat tools (`internal/ai/chat/monoagent_tools.go`), MCP stdio server (`internal/mcp`, `--allow-mutations`), HTTP API (`internal/httpapi`, bearer token in vault as `httpapi-token`). MCP has `workflow_run` etc. but **no per-workflow allowlist**: mutations are all-or-nothing. `tools/call` reads only `name` and `arguments` (`server.go:329-340`); `_meta` is ignored today. | `internal/mcp/server.go:46-52`, `tools.go` |
+| Org design tools | Chat/MCP expose `create_org`, `add_org_role`, `update_org_role`, `set_role_reports_to`, `remove_org_role`, `validate_org`, `reload_org`. **No `org_run`/`org_status`/`org_send` tools.** | `internal/mcp/monoagent_tools.go:270-380` |
+| GUI | Sidebar: Dashboard / Node Runner (workflow editor, `pages/NodeRunner.jsx`) / Orgs (`OrgsPanel.jsx` + `orgdesigner/*`). Org designer already has palette, inspector, `RoleInspector` shows policy ("tool-policy") fields. | `wails-app/frontend/src/components/Sidebar.jsx:25-27`, `orgdesigner/OrgDesigner.jsx` |
+| Doctrine | UI never imports `internal/monomind`; it shells `monoagentcli org …`. New surfaces must be CLI-first. | `wails-app/app_orgs.go` header comment; delegation plan D10 |
+
+### 3.2 monomind (org runtime v2, installed v2.10.30, source at `~/projects/monoes/monomind`)
+
+| Area | Fact | Ref |
+|---|---|---|
+| Schemas | `OrgDefSchema` and `RoleSchema` are Zod `.passthrough()` — unknown keys survive parse and `org migrate`. | `packages/@monomind/cli/src/orgrt/types.ts` |
+| Role tools | Every role gets exactly: the runner's built-ins (Bash/Read/Write/WebFetch/… for Claude) **plus** the `org` MCP server built from `buildOrgTools()` (`org_send`, `ask_human`, task DAG tools, `org_complete` for the boss, memory tools). The Claude runner sets `settingSources: []`, `strictMcpConfig: true`, `mcpServers: { org }` → **no user MCP servers, no way to add a tool from config today.** | `orgrt/session.ts:864-1155`, `orgrt/agent-runner.ts:146-207` |
+| Tool gating | `gatedCanUseTool` = pending gate → fence → `PolicyEngine.decide` (allow/denyTools, fileRead/Write globs, git level, webAllow, token/USD budget) → `checkApproval` (sensitive: `Bash`, `WebFetch`, `WebSearch`, `org_complete`; `autoApproveTools` skips the pause). Org tools arrive as `mcp__org__<name>` and are normalised. | `orgrt/session.ts:112-190`, `orgrt/policy.ts`, `orgrt/approvals.ts:113-148` |
+| Bash policy | Only classifies **git** subcommands; there is **no general Bash command allow/deny pattern**. A role with Bash can run any binary, including `monoagentcli`. | `orgrt/policy.ts:85-105, 203-283` |
+| Cross-org messaging | `org_send to:"org:role"`; `deliver()` resolves: same daemon (in-process) → broker registry (`~/.monomind/orgrt-broker/<org>.json`, HTTP `POST /api/xdeliver`, per-org credential + sender identity check) → local org def not running → **queue to `inbox.jsonl` + `autoWake`** → SSH `remote-hosts.json` → error. `org inbox <name> --json` subcommand exists (the "known issue" note in `org-runtime.md` §6 is stale) — **but its live path is broken against a running org**: it POSTs `/api/xdeliver` without `fromCredential`, `receiveRemote()` rejects the sender as "failed identity verification", and the command silently falls back to the offline queue, which is only drained at the next org start. Only `/api/human-message` (operator credential, fixed sender `human`) delivers live today. | `orgrt/cross-org.ts:deliver/receiveRemote`, `orgrt/broker.ts`, `orgrt/inbox.ts`, `commands/org.ts:2337`, `commands/org-observe.ts:823-930` (inboxAction), `orgrt/server.ts:216-224` |
+| Broker keying | Registry is keyed by **bare org name, machine-global** (`~/.monomind/orgrt-broker/`). Two profiles each owning an org named `sales` collide. | `orgrt/broker.ts:defaultRegistryDir` |
+| Inbox drain | `inbox.jsonl` is drained in exactly one place: `startOrg` (`daemon.ts:1273`). Nothing drains it for a running org. | `orgrt/daemon.ts:1273`, `orgrt/inbox.ts` |
+| Daemon topology | `org run` = one foreground daemon per org (hands off to a live `org serve` if its heartbeat is fresh); `org serve` = one daemon per project root hosting all its orgs + scheduler + xdeliver HTTP server; mutual exclusion via `.monomind/serve-heartbeat.json`. | `commands/org.ts:101-160, 255-291`, `orgrt/scheduler.ts` |
+| Boss | Root role (`reports_to: null`, type `boss`) spawns first; others lazy-spawn on first message; only boss gets `org_complete`. `org_respawn_role`, `org_gate`, `ask_human`. | `orgrt/daemon.ts` startOrg, `session.ts:938` |
+| Human decision auth | One header, `x-monomind-cred`, carries either an org's agent credential or the operator credential (`isAgentOrOperator`); only the operator credential (separate dir, never in broker) unlocks `/api/set-approval`, `/api/resolve-gate`, `/api/answer-question`, `/api/human-message`. Host-header loopback check defeats DNS rebinding. | `orgrt/server.ts:14-41, 71-76, 142-180`, `broker.ts:defaultOperatorDir` |
+| Fence | A role's prompt-injection fence exists only when configured: merged from the global `.monomind` fence config, the org's `fence`, and `policy.fence` (`daemon.ts:905-932`); with none configured there is no `RoleFence` and inbound messages are not scanned. | `orgrt/daemon.ts:905-932`, `orgrt/fence.ts` |
+| Budgets | Per-role token split of `run_config.budget_tokens`, optional `budget_usd`; **no cross-org roll-up**. | `types.ts` RoleSchema, `policy.ts` |
+| Stdio tool bridge | `agent exec --tools-file` bridges caller tools as `tool_call`/`tool_result` frames — but only for `agent exec`, not for org daemons. | `orgrt/agent-exec.ts:155-280` |
+| MCP client | monomind's CLI package has **no direct `@modelcontextprotocol/sdk` dependency**; it is present transitively via `@anthropic-ai/claude-agent-sdk` (`node_modules/.pnpm/node_modules/@modelcontextprotocol`). Must be promoted to a direct dependency if used. | `packages/@monomind/cli/package.json` |
+
+---
+
+## 4. Decisions register
+
+| # | Decision | Rationale / alternative rejected |
+|---|---|---|
+| U1 | **The container is called "Org"; workflows inside it are "automations".** Standalone workflows keep working and are shown as an "Unassigned" library. No forced migration. | User requirement. Forcing every workflow into an org would break existing CLI scripts (`workflow run <id>`) and templates. |
+| U2 | **All org-side data lives in the org JSON** (`automations[]`, `roles[].automations`, `roles[].kind`, `kind`, `children[]`) as passthrough keys, **plus** a mono-agent SQLite `org_grants` table that is the enforcement copy. The JSON is the design source of truth; the table is derived (rebuilt from JSON on every save and on startup reconciliation). | One editable artifact (portable, diffable, survives `org migrate`); enforcement needs a fast indexed lookup by grant id and must not trust a file an agent with Write access could edit — see C-3. |
+| U3 | **Role → automation tools are delivered through an MCP tool provider in monomind** (`roles[].tool_providers[]`, kind `mcp-stdio`), spawning `monoagentcli mcp --grant <id>`; monomind wraps every listed MCP tool as an `OrgToolDef`, so native (Claude) and fence runners get identical wiring, and every call passes `gatedCanUseTool` → policy → approvals → bus audit. | Alternatives: (a) role calls `monoagentcli` via Bash — no per-workflow scoping, no audit, invisible to approvals; (b) monomind adds mono-agent-specific tools — violates "zero product knowledge in the engine"; (c) Claude-only `mcpServers` injection — breaks fence runners and bypasses `OrgToolDef` handler-level gating. |
+| U4 | **Grant enforcement is in Go**: the MCP server started with `--grant` only lists/serves the tools and workflow ids in that grant, regardless of `--allow-mutations`. monomind's `allowTools/denyTools` is a second, independent layer. | Defense in depth: monomind config is editable by roles with file write; the grant record is not. |
+| U5 | **Automation Roles are delivered by a generic monomind "endpoint role"** (`roles[].kind: "endpoint"`, `endpoint: {url, credential_file?}`): the daemon POSTs the message instead of pushing to a mailbox; the endpoint replies later through `/api/xdeliver` **authenticated with the operator credential** (monomind M3 — see C-21; `org inbox` cannot do this today). mono-agent maps an endpoint role onto a workflow with a `trigger.org` node. | Keeps monomind generic (any HTTP endpoint can be a role), reuses the existing inbound path, and needs no mailbox/session for a role that has no LLM. |
+| U6 | **Reverse direction = workflow nodes**: keep `org.run`; add `org.send` (fire-and-forget message to `org:role`), `org.ask` (send + wait for the reply addressed back to the execution), `trigger.org` (workflow starts on an inbound org message or a bus event filter). Live delivery uses the M3 operator-authenticated `/api/xdeliver` path; until M3 ships, `org.send` degrades to `/api/human-message` (sender shown as `human`) or the offline queue. | Symmetric with U3/U5; all implemented in Go over `monoagentcli org …` proxies and the org events stream already in `internal/monomind/org.go`. |
+| U7 | **Multi-org = Holding Org.** A holding org is an ordinary org whose root role is an Initiator with granted org tools (`org_start`, `org_stop`, `org_status`, `org_report`; messaging uses monomind's native `org_send to:"child:role"`, which every role already has) exposed by mono-agent's MCP server under a grant scoped to `children[]`. Child orgs are unchanged. | Reuses U3 and monomind's cross-org delivery; no new engine concept ("org of orgs") in monomind. |
+| U8 | **One `monomind org serve` daemon per profile root**, supervised by mono-agent (`monoagentcli org serve` proxy + GUI lifecycle). `org run` from workflows/CLI hands off to it when alive. **One profile root = one trust domain**: every org under the same `org serve` may message every other (monomind delivers in-process; mono-agent is not in that path and cannot gate it). Cross-root messaging (broker/SSH) is also monomind-internal, so `federation.allow_from/allow_to` can only be enforced by monomind (**M4**, capability `org-federation`, Phase 6); until M4 ships, cross-root delivery stays as it is today (credential-verified, unrestricted by org policy) and the GUI labels it so. | In-process delivery for the common case (one profile), scheduler and inbox drain in one place, one process to kill, and no pretence that Go can filter traffic it never sees. |
+| U9 | **Org names are made globally unique per machine** by mono-agent at create time (`<slug>` must be unique across all profiles it knows about; a conflict is refused with a suggestion `<slug>-<profileShort>`). The broker entry is written by monomind, so mono-agent cannot tag it; M4 adds the hosting `root` to the entry and rejects a mismatch in `receiveRemote`. | Fixes the broker collision (C-9) without changing monomind's addressing grammar `org:role`. |
+| U10 | **Loop and storm control for org↔automation↔org chains**: every message/tool call carries a `trace` (`origin_org`, `hop`, `chain_id`); mono-agent refuses to run an automation or forward a message when `hop > max_hops` (default 8) or when `chain_id` already appears in the last N minutes for the same target more than `max_repeats` (default 20). | Without this, `trigger.org` → `org.send` → role `org_send` → `trigger.org` is an unbounded loop that also lazy-spawns roles and burns budget. |
+| U11 | **Budgets roll up**: the holding org's `run_config.budget_tokens/usd` is a ceiling over its own roles **plus** child runs it initiated; mono-agent enforces at initiation (`org_start` refused when the group is over ceiling, read from `org costs`) and the GUI shows the roll-up. monomind stays per-org. | Cheap to implement in Go from existing `org costs --format json`; avoids a monomind cross-org budget engine. |
+| U12 | **Human approval stays with the org that acts.** A grant may set `approval: "human"`, in which case the automation call is a monomind sensitive action (added to the role's approval list via `policy.approvalTools`, new) and pauses in that org's approval queue; HIL nodes inside the automation stay mono-agent HIL items and are **never** approvable by an agent role unless explicitly granted `hil_approve` (default: not granted, GUI warns). | Two different human queues (org approvals vs workflow HIL) is an accepted caveat (C-6); merging them is a later UX task, not a semantics change. |
+| U13 | **Secrets never cross the boundary.** Grants reference workflow ids, not credentials; the MCP server runs in the user's own session with vault access, output goes through the existing redaction (`internal/workflow/redact.go`) before returning to the role. Roles never see connection/credential values. | Existing MCP safety property extended unchanged. |
+| U14 | **Phasing is additive and reversible.** No schema removal, no DB drop; every new key is optional; a build without the monomind-side features degrades to today's behaviour with an actionable error (`ErrFeatureNeedsMonomind`, version-gated by `Handshake()` capabilities). | Mirrors the delegation plan's graceful-degradation rule. |
+
+---
+
+## 5. Target architecture
+
+```
+                         ┌──────────────── Org (one JSON file) ────────────────┐
+                         │ kind: standard | holding                            │
+                         │ roles[]   kind: agent | endpoint(automation)         │
+                         │ automations[]  {workflow_id, alias, ...}             │
+                         │ roles[].automations (grants) / tool_providers (gen.) │
+                         │ children[] (holding only) / federation{}             │
+                         └───────────────┬──────────────────────┬──────────────┘
+                                         │ design/save          │ run/observe
+ ┌──────────── monoagentcli (Go) ────────┴──────────┐   ┌───────┴──── monomind org serve ─────────┐
+ │ internal/orgdesign   (+automations, grants,      │   │ OrgDaemon per profile root              │
+ │                        endpoint roles, holding)  │   │  roles: agent sessions (unchanged)      │
+ │ internal/orggrant    NEW  grant store+enforcer   │   │  NEW endpoint roles → HTTP POST         │
+ │ internal/mcp         --grant <id> scoped server  │◄──┤  NEW tool_providers[mcp-stdio] → spawn  │
+ │ internal/nodes/org   org.run, NEW org.send/ask   │   │      `monoagentcli mcp --grant …`       │
+ │ internal/workflow    NEW trigger.org             │   │  cross-org: in-proc | broker | inbox    │
+ │ internal/orgbridge   NEW org-events → triggers,  │──►│  /api/xdeliver (M3: operator-auth sender)│
+ │                      endpoint receiver (HTTP)    │   │  policy/approvals/budget (unchanged)    │
+ │ cmd: org serve|stop|pause|resume|send|rename|group│   └─────────────────────────────────────────┘
+ │ httpapi: /orgs/…, /org-endpoint/{id}  (in daemon) │
+ └────────────────────────┬─────────────────────────┘
+                          │ `monoagentcli …` subprocess (doctrine)
+                 ┌────────┴────────┐
+                 │ Wails GUI       │  "Org" tab = chart (agent + automation roles)
+                 │                 │  + Automations drawer + Grants matrix + Group view
+                 └─────────────────┘
+```
+
+Process topology per profile after Phase 3: `monoagentcli daemon` (workflow engine, triggers,
+HTTP API + endpoint receiver — today the API is a third, separate `httpapi` process, folded into
+the daemon in Phase 3) and `monomind org serve` (org daemon). The GUI starts both; CLI users run both (documented). The
+two talk only over documented surfaces: mono-agent → monomind via `monoagentcli org …`
+(subprocess) and the events NDJSON stream; monomind → mono-agent via spawning `monoagentcli mcp
+--grant` (stdio) and HTTP POST to the endpoint receiver.
+
+---
+
+## 6. Data model
+
+### 6.1 Org config additions (all optional, all passthrough for monomind)
+
+```jsonc
+{
+  "name": "growth",
+  "kind": "standard",                       // "standard" | "holding"   (default standard)
+  "goal": "...",
+  "roles": [
+    { "id": "lead", "type": "boss", "reports_to": null, "responsibilities": ["..."],
+      "automations": [                       // GRANTS (mono-agent semantics; enforced in Go)
+        { "alias": "publish_post", "mode": "run",           // run | trigger | status
+          "wait": true, "timeout_seconds": 600,
+          "approval": "auto",                             // auto | human
+          "input_schema": {"type":"object","properties":{"text":{"type":"string"}}},
+          "max_calls_per_run": 20 }
+      ],
+      "tool_providers": [                    // GENERIC (monomind semantics; consumed by monomind)
+        { "kind": "mcp-stdio", "name": "monoagent",
+          "command": "monoagentcli", "args": ["mcp", "--grant", "grt_7f3…", "--profile", "<id>"],
+          "env": {},                          // never secrets; grant id is not a secret (see C-3)
+          "allow": ["automation_publish_post", "automation_status"],
+          "prefix": "monoagent" }
+      ],
+      "policy": { "denyTools": ["Bash"], "approvalTools": ["monoagent__automation_publish_post"] }   // bare name: approvals.ts strips mcp__org__
+    },
+    { "id": "publisher-bot", "kind": "endpoint", "title": "Publisher (automation)",
+      "reports_to": "lead", "type": "automation",
+      "endpoint": { "url": "http://127.0.0.1:9322/org-endpoint/ep_<128-bit>", "credential_file": null },   // capability URL; credential_file (0600) only for non-loopback
+      "automation": { "workflow_id": "3f0c…", "reply": "last_node" }   // mono-agent semantics
+    }
+  ],
+  "automations": [                           // MEMBERSHIP
+    { "workflow_id": "3f0c…", "alias": "publish_post", "owned": true }
+  ],
+  "children": [ { "org": "sales", "start": "on_demand", "budget_share": 0.5 } ],  // holding only
+  "federation": { "allow_from": ["hq"], "allow_to": ["*"] },                     // cross-ROOT policy, enforced by monomind M4 (same root = one trust domain)
+  "run_config": { "...": "unchanged", "max_hops": 8 }
+}
+```
+
+Validation (mono-agent `orgdesign.Validate`, extended):
+- `automations[].alias` unique and disjoint from `roles[].id`.
+- Every `roles[].automations[].alias` and every endpoint role's `automation.workflow_id` resolves
+  to an `automations[]` entry / an existing workflow **in the same profile**.
+- Endpoint roles may not be root (a workflow cannot be the boss — it cannot call `org_complete`),
+  may not have `policy`, `runtime`, `adapter_config`, `budget_*` (validation error, not silent).
+- `kind: "holding"` requires `children[]` non-empty; a child may not list its parent as a child
+  (cycle check over the holding graph, same three-colour walk as `DetectCycles`).
+- `tool_providers[].args` must contain a grant id that exists in `org_grants` for this org and
+  role; mono-agent regenerates this block on save — it is never hand-edited (C-3).
+
+### 6.2 mono-agent SQLite
+
+```sql
+-- migration NNN_org_grants.sql (additive)
+CREATE TABLE IF NOT EXISTS org_grants (
+  id            TEXT PRIMARY KEY,           -- "grt_" + 22 base32 chars
+  profile_id    TEXT NOT NULL,
+  org_name      TEXT NOT NULL,
+  role_id       TEXT NOT NULL,
+  tools_json    TEXT NOT NULL,              -- [{"tool":"automation_run","workflow_id":"…","alias":"…","mode":"run","wait":true,"timeout":600,"approval":"auto","max_calls_per_run":20}]
+  org_tools_json TEXT NOT NULL DEFAULT '[]',-- holding-org tools: [{"tool":"org_start","orgs":["sales"]}]
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL,
+  revoked_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS org_grants_org ON org_grants(profile_id, org_name, role_id);
+
+CREATE TABLE IF NOT EXISTS org_endpoints (
+  id            TEXT PRIMARY KEY,           -- "ep_" + 26 base32 chars (128-bit capability, appears in the URL path)
+  profile_id    TEXT NOT NULL,              -- the receiver resolves the profile FROM THIS ROW, never from the server's own --profile
+  org_name      TEXT NOT NULL,
+  role_id       TEXT NOT NULL,
+  workflow_id   TEXT NOT NULL,
+  credential_file TEXT,                     -- optional 0600 file path for non-loopback binds (§7.2); NULL on loopback
+  rotated_from  TEXT,                       -- previous id, kept 5 min so an in-flight delivery is not lost mid-rotation
+  created_at    TEXT NOT NULL,
+  revoked_at    TEXT
+);
+
+CREATE TABLE IF NOT EXISTS org_bridge_calls (  -- audit + loop control (U10)
+  id            TEXT PRIMARY KEY,
+  profile_id    TEXT NOT NULL,
+  chain_id      TEXT NOT NULL,
+  hop           INTEGER NOT NULL,
+  origin_org    TEXT NOT NULL,
+  direction     TEXT NOT NULL,              -- role_tool | endpoint_in | workflow_out | org_start
+  org_name      TEXT, role_id TEXT, workflow_id TEXT, execution_id TEXT,
+  grant_id      TEXT, endpoint_id TEXT,
+  status        TEXT NOT NULL,              -- ok | refused_hops | refused_repeat | refused_grant | error
+  created_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS org_bridge_chain ON org_bridge_calls(profile_id, chain_id, created_at);
+```
+
+Grants and endpoints are **derived from the org JSON on every save** (`orgdesign.Save` →
+`orggrant.Reconcile(doc)`): rows whose (org, role, alias) vanished are marked `revoked_at`;
+new ones are inserted and the generated `tool_providers`/`endpoint` blocks are written back
+into the JSON before the atomic rename. Startup runs the same reconcile for every profile
+(cheap; orgs dir is tiny) so a JSON edited by hand or by an agent cannot mint a grant (C-3).
+
+### 6.3 Trace envelope (U10)
+
+Attached to every bridge crossing as JSON in a reserved field:
+
+```json
+{ "chain_id": "chn_…", "hop": 3, "origin": {"org":"hq","role":"ceo"}, "path": ["hq:ceo","sales:lead","wf:3f0c…"] }
+```
+
+- Role tool call → MCP request `_meta.trace` (MCP allows `_meta`); mono-agent increments `hop`.
+- **Trust rule**: the header is advisory. A role can write any `[trace …]` line into an `org_send`
+  body, so the bridge never *lowers* its own count from a header: `hop = max(header.hop,
+  bridge's count for chain_id in org_bridge_calls) + 1`, and the repeat limiter keys on
+  (target, window) which cannot be forged at all.
+- Workflow → org: `org.send`/`org.ask` put it in the message header line
+  `[trace chn_… hop=4]` (monomind treats it as body text; endpoint receiver and `trigger.org`
+  parse it back). No monomind change needed.
+- Endpoint delivery: monomind forwards the message body verbatim, so the header survives.
+
+---
+
+## 7. Component design
+
+### 7.1 Grants: role → automation tools (U3, U4)
+
+**mono-agent**
+1. `internal/orggrant/` (new, ≤500 lines/file): `Store` (CRUD over `org_grants`),
+   `Reconcile(profileID, doc)`, `Enforcer` (`Allowed(grantID, toolName, workflowID) (Grant, error)`),
+   `NewGrantID()`.
+2. `monoagentcli mcp --grant <id>`: server starts in **grant mode**: `tools/list` returns only
+   the grant's materialised tools; every tool name is `automation_<alias>` (one tool per granted
+   automation, with `input_schema` from the grant so the model gets typed args) plus
+   `automation_status` (poll an execution id returned by a non-waiting call) and, for holding
+   grants, `org_start/org_stop/org_status/org_report`. Any other tool name → error
+   `refused_grant`. `--allow-mutations` is implied only for the granted tools.
+   The `--profile` is fixed by the grant row; a mismatching `--profile` flag is an error.
+   `tools/call` gains `_meta.trace` parsing (today only `name`/`arguments` are read — §3.1).
+3. Handler `automation_<alias>`: builds trigger data `{ "org": {name, role, grant}, "input": args,
+   "trace": … }` and **enqueues** the execution exactly like `workflow run --no-wait` (a `QUEUED`
+   row with `pid 0`, `trigger_type: "org_tool"`), to be adopted by the daemon's engine (§3.1). The
+   grant-mode process therefore never bootstraps an engine, never opens the vault or a browser, and
+   is never the `PID` a GUI cancel would signal (C-38); it refuses with `daemon_required` when no
+   engine heartbeat is fresh (the daemon writes `~/.monoagent/daemon-heartbeat.json`, new, mirroring
+   monomind's serve heartbeat). It honours `wait/timeout` by watching the execution row (DB poll
+   1 s, event wake when Phase 3's `wake_kind` lands), redacts outputs (`internal/workflow/redact.go`),
+   and returns
+   `{execution_id, status, outputs?, hil?: {id, hint}}`. A `WAITING` (HIL) status is returned
+   immediately with the HIL id — the role cannot approve it (U12). Outputs returned into the model's
+   context are bounded (default 16 KB after redaction, per-grant `max_output_bytes`); larger results
+   are truncated with a pointer and retrievable page-wise via `automation_output(execution_id,
+   node?, offset?)`, so one chatty HTTP node cannot blow the role's context or `bus.jsonl`.
+4. Per-run call cap (`max_calls_per_run`): counted per (grant, org run id) in `org_bridge_calls`;
+   run id comes from monomind's `MONOMIND_ORG_RUN` env if present, else from `org status`.
+5. CLI: `monoagentcli org grant list|add|remove <org> --role <id> --automation <alias> [--mode …]`
+   — the CLI path the GUI and chat tools call; chat/MCP tool `org_grant_set`.
+
+**monomind (M-series, new; version-gated capability `org-tool-providers`)**
+1. `RoleSchema.tool_providers?: ToolProviderSchema[]` with `kind: 'mcp-stdio'`, `command`,
+   `args`, `env` (values only, no expansion of secrets), `allow[]`, `prefix`, `timeout_ms`.
+2. `orgrt/tool-providers.ts`: at role session start, spawn the process (stdio MCP client from
+   `@modelcontextprotocol/sdk`, promoted to a direct dependency), `initialize` + `tools/list`,
+   filter by `allow[]`, wrap each as `OrgToolDef{ name: <prefix>__<tool>, schema: from inputSchema,
+   handler: tools/call }`; kill on session end; restart once on crash; every call emits the
+   existing `tool` bus event via `policy.decide` (name `mcp__org__<prefix>__<tool>`).
+3. `RolePolicySchema.approvalTools?: string[]` — extra names treated as sensitive by
+   `checkApproval` (U12). Existing `autoApproveTools` semantics unchanged.
+4. `MONOMIND_ORG_RUN=<run id>` and `MONOMIND_ORG_ROLE=<role id>` set in the provider's env so the
+   Go side can attribute calls without parsing; the provider passes `{run, role, chain_id}` as
+   `_meta.trace` on every `tools/call` and copies `chain_id` into the `tool` bus event's `data`, so
+   `bus.jsonl` and `org_bridge_calls` can be joined on one id.
+5. Fence runners: nothing extra — `OrgToolDef` is already runner-agnostic.
+6. Provider lifecycle: spawn **lazily on the role's first granted tool call**, not at session start (an org with 8 roles must not fork 8 idle `monoagentcli` processes); exit after `idle_ms` (default 5 min) and respawn on demand; the Go side keeps no in-memory state a respawn would lose (grant, caps, traces are in SQLite).
+7. **M3 (small, ships with M1)**: when the `x-monomind-cred` header carries the **operator credential**, `receiveRemote()` skips the broker identity check and trusts `fromQualified` as given (a human-authority sender may speak as any local identity, e.g. `growth:publisher-bot` or `workflow:<exec>`); `org inbox` uses it too, fixing its live path (§3.2). Without M3, live delivery from mono-agent is only possible as sender `human` via `/api/human-message`.
+
+### 7.2 Automation roles (U5)
+
+**monomind (capability `org-endpoint-roles`)**
+1. `RoleSchema.kind?: 'agent' | 'endpoint'` (default agent), `endpoint?: { url, credential_file?,
+   timeout_ms? }`. `credential_file` (absolute path, must be 0600 and owned by the daemon's user,
+   read at delivery time so rotation needs no daemon restart) is sent as a bearer; `credential_env`
+   was rejected because the daemon's environment is fixed at `org serve` start while endpoints are
+   created and rotated while it runs.
+2. Daemon: an endpoint role has no session, mailbox, policy engine, or budget; it is excluded from
+   `pendingRoles`, `max_concurrent_agents`, respawn, idle nudges, and cost tables. `deliver()` to it:
+   POST `{orgName, run, from, to, subject, body, messageId}` (bearer from `credential_file` if set); 2xx = "delivered", otherwise queue to `inbox.jsonl` (existing) and
+   retry with backoff (3×), then `audit` event `endpoint-unreachable`. Endpoint roles are never
+   lazy-spawned, never counted in `max_concurrent_agents`, never respawned, never idle-nudged.
+3. Replies come back through `/api/xdeliver` with the operator credential (M3) and
+   `fromQualified: "<org>:<endpoint role>"` — the receiving role sees a normal
+   `[message from publisher-bot]`. (`org inbox` is not used: §3.2.)
+4. Boss briefing lists endpoint roles with a one-line "this role is an automation; message it
+   with the input it expects: <input_schema summary>".
+
+**mono-agent**
+1. `internal/orgbridge/` (new): HTTP receiver mounted in `internal/httpapi` at
+   `POST /org-endpoint/{endpointID}`. Auth = the 128-bit random endpoint id itself (capability
+   URL, constant-time compare, rotate = new id written into the org JSON + `org reload`), listener
+   loopback-only by default; a bearer from `credential_file` is required only when the API is bound
+   non-loopback. **Registered even without `--allow-mutations`** because it is its own auth domain
+   — documented in `ref api`. Hosting: today `daemon` and `httpapi` are separate processes (§3.1),
+   so Phase 3 makes **`monoagentcli daemon` host the HTTP API in-process** (`--api` on by default,
+   same token, same port; a separately started `httpapi` refuses to bind if the daemon already
+   serves it). The receiver resolves profile/org/workflow **from the endpoint row**, not from the
+   server's `--profile`, because the daemon spans all profiles. The GUI does not host it (§3.1).
+   Validates the endpoint row, parses the trace header, applies U10 limits, then fires the
+   workflow whose `trigger.org` node matches (trigger data = message + trace).
+2. Reply: when the execution finishes, if the endpoint role's `automation.reply` is
+   `last_node` (default) or `node:<name>`, the bridge delivers via `monoagentcli org send` (M3 path:
+   `/api/xdeliver` + operator credential read from `~/.monomind/orgrt-operator/<org>.json`, 0600,
+   same user) with `from: "<org>:<role>"`, `subject: "re: <subject>"`, `body: <redacted output as JSON or
+   text>`; failure/HIL states are reported as a reply too (`"status": "failed"|"waiting"`), so
+   the agent role is never left waiting silently.
+3. The engine must be running (`monoagentcli daemon` or GUI) for endpoint roles to work; the
+   GUI shows a red badge on automation roles when it is not.
+
+### 7.3 Workflow → org nodes (U6)
+
+| Node | Config | Behaviour |
+|---|---|---|
+| `org.run` (exists) | `org_name, task, output_key` | Unchanged; add `trace` propagation into `--task` header and a `wait: false` option that returns the run id. |
+| `org.send` (new) | `org_name, role, subject, message` (templated) | `monoagentcli org send` → live `/api/xdeliver` with operator credential (M3), else offline queue (`inbox.jsonl`, delivered at next org start — receipt says so). Fire-and-forget; output = receipt with `delivered|queued`. Sender identity = `"workflow:<execution short id>"` unless the workflow is an automation role of that org, in which case its role id. |
+| `org.ask` (new) | `org_name, role, question, timeout` | `org.send` + pause (`ErrNodePaused`) until a reply arrives at the bridge addressed `to: "workflow:<execID>:<nodeID>"`. Requires the workflow to be an automation role in that org (so the reply has an address) — validator enforces it. Wake is **event-driven**: the bridge calls `ResumeExecution` when the reply lands; the engine's 3-second resume poll (§3.1) is suppressed for `org.ask`/`org.run` pauses by a `wake_kind` marker on the execution so the node does not spawn `monomind org status` every 3 s (C-34). |
+| `trigger.org` (new) | `org_name?, role?, subject_match?, event_types?` | Two modes: (a) **endpoint mode** — fires on messages delivered to this workflow's endpoint role; (b) **event mode** — subscribes to `org events --follow` (existing `OrgEvents` stream) via the bridge and fires on filtered bus events (`status`, `gate`, `question`, `asset`, `xorg`). Registered by `TriggerManager` like schedule/webhook; needs the daemon. |
+
+### 7.4 Unified Org UI
+
+- Sidebar: `Orgs` renamed **Org**; `Node Runner` stays as the automation editor but is reached
+  from an org's **Automations** drawer and from the "Unassigned automations" library.
+- Org canvas: automation roles render with a distinct node (workflow icon, execution badge,
+  "engine offline" warning). Dragging an automation from the drawer onto the canvas creates an
+  endpoint role; dropping it onto an agent role opens the **grant** dialog (mode, wait,
+  approval, per-run cap).
+- Role inspector: new **Automations** section (grants list + "open workflow") and a read-only
+  **Effective tools** list (org tools + granted tools) so the operator sees exactly what the
+  model sees.
+- Grants matrix view (roles × automations) for orgs with many roles.
+- Group view (holding org): child orgs as collapsed cards with status, cost roll-up, start/stop.
+- All actions go through `monoagentcli org …` subprocesses (doctrine); the Wails bindings are
+  thin wrappers: `SetOrgGrant`, `RemoveOrgGrant`, `AddAutomationRole`, `ListOrgAutomations`,
+  `StartOrgGroup`, `OrgGroupStatus`.
+
+### 7.5 Multi-org / holding org (U7–U11)
+
+- **Initiator tools** (mono-agent MCP, grant-scoped to `children[]`): `org_start(org, task?)`,
+  `org_stop(org)`, `org_status(org)`, `org_report(org, run?)` (messaging: native `org_send`, U7). They call the existing `internal/monomind` proxies with the child's
+  project root (= same profile root; cross-profile children are refused in v1 — C-10).
+- `org_start` is a **sensitive action** by default (`approvalTools`), so the human sees "hq:ceo
+  wants to start sales with task …" in the approval queue; the operator may set
+  `autoApproveTools` per child.
+- **Messaging between orgs** needs no new mechanism: `org_send to:"sales:lead"` already works
+  in-process under one `org serve`, for every role. mono-agent adds only U9 unique names and the
+  trace header on messages it originates. **M4 (monomind, Phase 6)**: honour `federation`
+  (`allow_to` in `deliver()`, `allow_from` in `receiveRemote()`, hosting `root` in the broker
+  entry) so cross-root traffic can be restricted; same-root traffic is deliberately unrestricted.
+- **Child lifecycle**: `children[].start` = `on_demand` (only when messaged/`org_start`, using
+  monomind autoWake — which is a **full `startOrg` with the child's own `goal`**, not a
+  message-scoped run (C-36)) | `with_parent` (started by mono-agent right after the parent) |
+  `manual`. Stop: stopping the parent stops `with_parent` children; `on_demand` children are
+  left to their own idle watchdog.
+- **Reporting up**: a child's boss, on `org_complete`, is instructed (a **managed responsibility
+  line** that `orggrant.Reconcile` inserts/updates in the boss role's `responsibilities[]`, tagged
+  `[managed:report-up]` so it is never duplicated and is removed when the org stops being a child) to `org_send` its summary to `<parent>:<initiator>`
+  before completing. Enforced softly (briefing) + hard fallback: the bridge watches the child's
+  `status` bus event `org stopped` and sends a synthetic summary message to the parent if none
+  was sent (event mode of `trigger.org` reused internally).
+- **Budget roll-up** (U11): before `org_start`, sum `org costs` of the parent + children runs in
+  this group run; refuse when over `budget_share × parent budget`.
+
+### 7.6 Process lifecycle
+
+- **Org root**: the CLI's `org --project` default becomes the **active profile root** (same as the
+  GUI, chat tools, and `org.run`); `~/.monoagent` stays reachable with an explicit `--project`.
+  Existing orgs found there are listed under a "legacy root" banner with a one-click move (C-31).
+- `monoagentcli daemon` writes `~/.monoagent/daemon-heartbeat.json` (`pid`, `ts`, every 10 s);
+  readers treat it as live only if `ts` is < 30 s old **and** the pid is alive (same rule monomind
+  applies to `serve-heartbeat.json`), so a crashed daemon never looks alive.
+- New CLI proxies: `monoagentcli org serve` (starts `monomind org serve` for the profile root,
+  writes a pid file under `~/.monoagent/`, `--cross-process` on by default), `org stop|pause|
+  resume|send|rename|delete`, `org group start|stop|status <holding>`.
+- GUI: on profile activation, ensure `org serve` for that profile (respecting monomind's own
+  heartbeat mutual exclusion — if a foreign daemon owns the root, show it, do not start a
+  second). On profile switch, the previous daemon keeps running (orgs may be mid-run); a
+  "running daemons" list in Settings allows stopping them.
+- `monoagentcli daemon` (workflow engine + HTTP API + endpoint receiver) must also be up for
+  automation roles, `trigger.org`, and scheduled automations. **Today neither the GUI nor anything
+  else starts it** (§3.1); Phase 4 adds GUI-managed lifecycle for both daemons (start on profile
+  activation, status pills, stop from Settings) and CLI `monoagentcli status` reports both.
+  Document the two-daemon requirement in AGENTS.md and `ref api`.
+
+---
+
+## 8. Security and policy model (defense in depth)
+
+| Layer | Enforces | Where |
+|---|---|---|
+| 1. Grant row | Which workflows/org tools a role may call, wait/timeout, per-run cap, approval mode. Not editable by agents. | Go, `internal/orggrant` |
+| 2. MCP server in grant mode | Tool list = grant only; profile pinned; outputs redacted; secrets never returned. | Go, `internal/mcp` |
+| 3. monomind policy | `allowTools/denyTools`, `approvalTools` (pause for human), `autoApproveTools`, budgets; audit `tool` events. | monomind `policy.ts`, `approvals.ts` |
+| 4. Endpoint auth | Capability URL (128-bit endpoint id, constant-time compare), loopback-only listener by default, optional 0600 credential file for non-loopback binds; 1 MB body cap; rotation = new id + `org reload`. | Go, `internal/orgbridge` |
+| 5. Federation | Same root = one trust domain (no gate). Cross-root: `allow_from/allow_to` enforced by monomind M4; cross-profile children refused by the validator (C-10). | monomind `cross-org.ts` (M4); Go validator |
+| 6. Loop control | `max_hops`, `max_repeats` per chain; refused calls audited. | Go, `org_bridge_calls` |
+| 7. Fence | monomind's prompt-injection fence scans inbound messages **only when a fence is configured** (§3.2); orgs that contain automations get `fence: {enabled: true, scanMessages: true}` pre-filled on save (operator can remove it), so replies from automations — **untrusted content**, wrapped by the bridge in the same provenance fence mono-agent uses for synced mail — are scanned. | monomind `fence.ts`, Go bridge + reconcile |
+| 8. Bash escape hatch | A role with `Bash` can run `monoagentcli` with the user's full rights. Default for any role that has a grant: `denyTools: ["Bash"]` is **suggested and pre-filled**, GUI warns loudly if Bash is re-enabled ("this role can bypass its grants"). Long-term fix is a monomind `policy.bashAllow[]` pattern list (C-2, monomind backlog). | GUI + docs; monomind later |
+
+---
+
+## 9. Caveats register (must all be closed or explicitly accepted before "done")
+
+| # | Caveat | Impact | Mitigation / decision | Owner |
+|---|---|---|---|---|
+| C-1 | monomind roles cannot receive config-defined tools today (`strictMcpConfig`, tools only from `buildOrgTools`). | Blocks U3 until monomind ships `tool_providers`. | Capability-gated (`Handshake` capability `org-tool-providers`); mono-agent shows "needs monomind ≥ X" and hides grant UI until then. Phase 2 cannot ship before M1. | monomind |
+| C-2 | Bash bypass: `PolicyEngine` cannot restrict which binaries Bash runs. | A granted role can run arbitrary `monoagentcli` commands. | Default `denyTools: ["Bash"]` for granted roles + loud GUI warning (§8 layer 8); monomind backlog item `policy.bashAllow`. Accepted for v1. | both |
+| C-3 | Org JSON is writable by any role whose `fileWrite` covers `.monomind/` (default policy for custom-root profiles is `**`). A role could add itself a `tool_providers` entry or edit `automations`. | Privilege escalation. | Grants are enforced from the DB row, not the JSON (U2/U4); `tool_providers` args carry only a grant id that must exist for exactly that (org, role); reconcile on save and startup revokes rows with no JSON counterpart but **never creates rows from JSON alone** — creation only via CLI/GUI/chat tool. Default `fileWrite` for new orgs excludes `.monomind/**` (already the taxonomy policy for managed profiles; extend to custom-root profiles with an explicit deny glob). | mono-agent |
+| C-4 | The grant id is visible in the org JSON and to the model (it is in the spawn args). | If treated as a secret it leaks. | It is **not** a secret: it only selects a scope, the MCP process runs under the user anyway. Document. Endpoint **ids** *are* capabilities: they appear in the org JSON (readable by roles with file read), so a role could POST to a sibling automation role's endpoint directly, bypassing `org_send` policy/fence. Mitigation: the receiver requires the `messageId` to exist on that org's `bus.jsonl` (`xorg`/`message` event addressed to the endpoint role) before firing — a forged direct POST has no bus event and is refused. | mono-agent |
+| C-5 | Synchronous `wait: true` automation calls hold a tool call open for up to `timeout_seconds`; runners have their own turn timeout (2 h) and the 4-minute silent-session watchdog. | A long automation can trip the watchdog. | Default `timeout_seconds` 600; `tool_providers.timeout_ms` set to timeout + 30 s; for longer work use `wait: false` + `automation_status`, or an automation role (async). Documented in the grant dialog. | mono-agent |
+| C-6 | Two human queues: org approvals/gates/questions (monomind) vs workflow HIL (mono-agent). | Operator confusion; an automation paused at HIL looks "stuck" to the role. | Role gets an explicit `hil` object in the tool result and a reply message on resume; GUI "Inbox" merges both queues (Phase 5 stretch). Accepted. | mono-agent |
+| C-7 | Loops: org → automation → org chains can recurse indefinitely and lazy-spawn/auto-wake orgs (cost). | Runaway spend. | U10 trace + hop/repeat limits; autoWake counted as a hop; GUI shows chain traces. | mono-agent |
+| C-8 | `org.run`'s idempotency is "org already running → keep waiting"; two workflows targeting the same org share one run and both complete on it. | Wrong attribution, surprising results. | Document; `org.run` gains `exclusive` (schema default **false** so existing workflows keep today's join behaviour; the GUI pre-fills `true` for new nodes) that refuses when a run it did not start is live. | mono-agent |
+| C-9 | Broker registry keyed by bare org name, machine-global; two profiles with the same org name collide silently (messages go to the wrong org). | Wrong-org delivery. | U9 global-unique names enforced by mono-agent at create/rename (the DB's `profiles` table lists every root, so uniqueness is checkable across profiles); `org list` across profiles surfaces duplicates as errors with a rename action; monomind M4 adds the hosting `root` to the broker entry and rejects mismatches. | mono-agent + monomind (M4) |
+| C-10 | Cross-profile orgs have different vaults, secrets, workflows; a holding org in profile A cannot grant profile B's automations, and mono-agent is not in the delivery path between roots. | Feature limit; unrestricted cross-root messaging until M4. | v1: children must be in the same profile (validator). Cross-root messaging keeps today's monomind behaviour (credential-verified, no org-level allowlist) until M4 lands; the GUI shows cross-root links as "unrestricted" until then. | monomind (M4) |
+| C-11 | Endpoint roles depend on the mono-agent engine/HTTP receiver being up; monomind will queue to `inbox.jsonl` but its retry is bounded. | Messages stall while the engine is down. | monomind keeps queued entries for endpoint roles in `inbox.jsonl` and **redelivers them itself** on its existing drain point (`startOrg`) plus a new periodic retry (every 60 s while the org runs) — mono-agent never reads or rewrites monomind-owned files (delegation-plan invariant). The engine-offline badge tells the operator why deliveries are pending. | monomind |
+| C-12 | Redaction: automation outputs may contain PII/credentials from nodes (HTTP bodies). | Leaks into agent context and bus.jsonl. | Existing `redact.go` + display truncation applied to tool results and endpoint replies; `X-Full-Outputs`-style opt-out is **not** exposed to roles. | mono-agent |
+| C-13 | `org migrate` and monomind `org validate` do not know the new keys; a future strict schema would drop them. | Silent data loss. | Both schemas are `.passthrough()` today; add a monomind test that asserts passthrough of `automations`, `tool_providers`, `kind`, `endpoint`, `children`, `federation`. | monomind |
+| C-14 | Windows: process-group kill for `monomind org serve` children and the stdio MCP provider spawned by monomind; both repos are unix-tested. `credential_file` "0600" has no direct Windows equivalent (ACLs). | Orphans on Windows; unenforceable file mode. | Best-effort tag as in the delegation plan; Job Object for the serve daemon reuses `wails-app/proc_windows.go`. | both |
+| C-15 | Name collision between a role id and an automation alias, or an alias that shadows an org tool name. | Address ambiguity. | Validator: aliases disjoint from role ids and from the reserved set {org tools, `human`, `workflow`}. | mono-agent |
+| C-16 | Per-run call cap needs the org run id; `MONOMIND_ORG_RUN` env does not exist yet. | Cap counted per grant globally until M1 ships. | Fallback: `org status <name>` `run` field at first call, cached per process. | both |
+| C-17 | Long-running processes: today three (`daemon`, `httpapi`, `monomind org serve`); after Phase 3 two. CLI-only users may run none. | Silent non-delivery. | Fold the API into `daemon` (§7.2); `monoagentcli status` reports both remaining daemons; `org run` / `workflow activate` / grant creation warn when the relevant daemon is absent; supervisor units documented (monomind already generates `org supervisor`; mono-agent adds `daemon supervisor`). | mono-agent |
+| C-18 | Endpoint-role replies race the org's stop: an automation finishing after `org_complete` posts to a stopped org. | Message queued to inbox, delivered next run — possibly confusing. | Bridge checks `org status` before reply; if stopped, append to the execution's output `reply_deferred: true` and still queue (monomind semantics). Documented. | mono-agent |
+| C-19 | Budget roll-up relies on `org costs` which is per run and only known after usage events flush. | Ceiling check is approximate. | Documented as soft ceiling; hard ceilings remain per org in monomind. | — |
+| C-20 | Deleting a workflow that is an automation/endpoint of an org. | Dangling references. | `workflow delete` refuses when referenced (exit 3) unless `--force`; force also revokes grants/endpoints and marks the role `broken` in the JSON (validator error shown in the canvas). | mono-agent |
+| C-21 | **`org inbox` live delivery is broken** (verified 00:30): no `fromCredential` → `receiveRemote` rejects → silent fallback to the offline queue, drained only at the next org start. Every reverse-direction feature (U5 replies, U6 `org.send`, U7 messaging from initiator tools) would otherwise "work" in tests against a stopped org and stall against a running one. | Messages to running orgs never arrive live. | M3 operator-authenticated `/api/xdeliver`; mono-agent never shells `org inbox`, it calls the HTTP route itself via `monoagentcli org send` and reports `delivered` vs `queued` honestly. Phase 3/4 gates test against a **running** org. | monomind + mono-agent |
+| C-22 | Provider process fan-out: one `monoagentcli mcp --grant` per role session × N roles × M orgs. | Resource use, SQLite contention. | Grant-mode is a thin client (§7.1 item 3: enqueue + watch a row, no engine, no vault, no keychain), plus lazy spawn + idle exit (§7.1 item 6); the daemon runs every automation, so there is one engine per machine regardless of role count. | both |
+| C-23 | Org rename / export / import: grants and endpoints are keyed by `org_name`; the filename is the name. Renaming by editing JSON or importing an org exported elsewhere carries grant ids that do not exist here. | Dangling or foreign grant ids. | `monoagentcli org rename` (new) updates rows + broker entry atomically; import reconcile **strips** unknown grant/endpoint ids and lists them in the import report so the operator re-grants deliberately. | mono-agent |
+| C-24 | Profile deletion / root_dir move: grants, endpoints, vault tokens, and a running `org serve` for that root. | Orphaned daemon, dead tokens. | Profile delete = stop that root's `org serve`, revoke rows, delete vault tokens; `MoveProfileFolder` re-points the daemon (restart) and rewrites `tool_providers.args --profile`. | mono-agent |
+| C-25 | UI rename "Orgs" → "Org" touches i18n (`locales/en.json`, `es.json`, `Sidebar.jsx labelKey 'orgs'`) and any docs/screenshots that say "Orgs tab". | Stale strings. | Change the label value only, keep the key `orgs`; grep docs for "Orgs tab" in Phase 5. | mono-agent |
+| C-27 | `trigger.org` event mode holds a `monomind org events --follow` subprocess per subscription; N workflows watching one org = N tails of the same `bus.jsonl`. | Process fan-out. | The bridge multiplexes: one tail per org per profile, fan-out in Go; subscription refcount drops the tail when the last trigger deactivates. | mono-agent |
+| C-28 | monomind observe commands (`costs`, `flow`, `report`, `dry-run` briefings) do not know endpoint roles and will list them as agents with zero usage; `org migrate` may add agent-only defaults to them. | Cosmetic noise; possible validator complaints later. | M2 excludes `kind: endpoint` from role-session paths and cost tables; mono-agent's `org validate` proxy strips known-cosmetic warnings. Accepted for v1. | monomind |
+| C-29 | Grant changes while a role session is live: the provider fetched `tools/list` at spawn and the model's context already contains the old tool names. A revoked tool is refused server-side (`refused_grant`), a newly granted one is invisible until the provider respawns (idle exit) or the session restarts. | Confusing "tool not found" until respawn. | The refusal text says "grant changed — the tool list refreshes on your next turn"; M1 provider re-lists tools on every spawn; GUI shows "pending until role restarts". Accepted. | both |
+| C-30 | `org.run` default behaviour is relied on by existing workflows (join a running run). | Silent semantic change if `exclusive` defaulted to true. | Schema default `false` (C-8); changelog entry. | mono-agent |
+| C-31 | Org root divergence (§3.1): CLI default `~/.monoagent/.monomind/orgs`, GUI/nodes/chat use the profile root. Grants keyed by `(profile_id, org_name)` would silently point at the wrong directory for CLI-created orgs. | Wrong org file edited/run. | §7.6 changes the CLI default to the active profile root in Phase 1 (before any grant exists); legacy-root orgs surfaced with a move action; `org list` shows the resolved root in its JSON. | mono-agent |
+| C-32 | Profile resolution in the HTTP receiver and grant-mode MCP server: `httpapi`/`mcp` serve one profile chosen by flag/env, but endpoint rows and grants belong to specific profiles and the daemon spans all. | Cross-profile confusion (vault of the wrong profile). | Receiver and grant server resolve everything from the row and refuse a `--profile` that disagrees (§6.2, §7.1 item 2). | mono-agent |
+| C-33 | Paused-execution polling: every `org.run`-paused execution re-runs its node every 3 s, spawning `monomind org status` (Node startup ≈ 0.3–1 s) — ten paused workflows ≈ a permanently busy core. Pre-existing, but this plan multiplies paused executions (`org.ask`, waiting automations). | CPU burn, log noise. | `wake_kind` marker + event-driven `ResumeExecution` from the bridge (§7.3); poll interval for marked executions backs off to 30 s as a safety net. | mono-agent |
+| C-34 | Automations have real-world side effects (emails, posts, payments) that monomind's budget engine does not see and that a `human` approval on `org_send` never covers. | Irreversible actions triggered by an agent with no human gate. | Grant dialog defaults `approval: human` when the workflow contains outbound nodes (`comm.*`, `service.*` write actions, social nodes) — same recommendation USAGE_POLICY already makes for HIL; `max_calls_per_run` default 20; per-grant `max_calls_per_day` (default 200). | mono-agent |
+| C-35 | A stopped org's inbox is drained only at `startOrg` (§3.2). An automation reply that arrives while the org is stopped, or an `org.send` to a stopped org that is *not* auto-woken (holding child with `start: manual`), waits for the next manual start. | Replies look lost. | Receipt says `queued (delivered at next start)`; the GUI Inbox lists queued messages per org from `inbox.jsonl` (read-only) with a "start org now" action. | mono-agent |
+| C-36 | `autoWake` is `startOrg(name)` (`scheduler-integration.ts:49-60`): a message to a stopped org starts a **full goal-driven run**, then drains the queue into the boss mailbox. A child whose goal is "ship the Q4 roadmap" will pursue that goal every time the holding org pings it, and autoWake only fires when the *sender's* daemon hosts the child's def (same project root). | Unintended runs and spend; no cross-root wake. | Validator warns when a holding child's goal is not phrased for message-driven operation; templates ship children with goals like "handle requests from `<parent>`; when idle, complete"; `org_start(org, task)` is the tool for task-specific runs; `idle_minutes` default 10 keeps woken children short. Cross-root wake is out of scope (C-10). | mono-agent |
+| C-37 | `org reload` (`daemon.ts:reloadOrgDef`) applies only `goal`, `run_config`, added roles, and removed-role bookkeeping — **changes to existing roles are ignored** while the org runs. An endpoint id rotation, a new/changed `tool_providers` block, or `approvalTools` on a live role take effect only at the next org start. | Rotation "+ `org reload`" (§7.2) silently does nothing; grant edits look applied but are not. | M1 extends `reloadOrgDef` to diff and apply `tool_providers`, `endpoint`, and `policy` on existing roles (effective at the next provider spawn / next delivery / next tool call); until then mono-agent keeps `rotated_from` valid until the org restarts and the GUI says "applies on next org start". | monomind + mono-agent |
+| C-38 | If grant-mode ran the engine in-process, the execution's `PID` column would be the provider process; a GUI/CLI cancel signals that pid (`app_workflows.go`) and would kill the role's tool provider mid-session, taking every in-flight call with it. | Collateral kill of a role's tools. | §7.1 item 3: executions are enqueued and adopted by the daemon, so the pid is always the daemon's (already protected from cancel-signalling); cancel uses the engine's cooperative `CancelExecution`. | mono-agent |
+| C-39 | A child org listed by two holding orgs: two initiators, two budget shares, two report-up targets. | Ambiguous ownership. | Validator: a child belongs to at most one holding org per profile (v1); the second `children[]` reference is a validation error naming the first owner. | mono-agent |
+| C-40 | New `trigger_type` values (`org_tool`, `org_message`, `org_event`) on `workflow_executions` — existing GUI/CLI filters and the Logs page assume `manual|schedule|webhook`. | Runs hidden or mislabeled. | Phase 2/4 add the values to the execution list filters, Logs page, and `ref workflow`; unknown values render as their raw string, never hidden. | mono-agent |
+| C-26 | The CI `monomind-smoke` job only runs the version handshake today; nothing in CI runs `monomind org validate` against a config with the new keys. | Passthrough regression (C-13) would go unnoticed on the mono-agent side. | Phase 1 gate extends the job: install pinned monomind, run `org validate` on `testdata/orgs/*.json` golden configs. | mono-agent |
+
+---
+
+## 10. Phases, deliverables, gates
+
+Effort sizes are relative (S ≤ 1 day, M ≤ 3 days, L ≤ 1 week). Order is dependency-driven; 1, 3
+and 6-prep can proceed before any monomind release.
+
+| Phase | Deliverables | Gate (must be green) |
+|---|---|---|
+| **0 — Spec freeze (this doc)** | Decisions U1–U14, schema §6, caveats §9 reviewed hourly until 06:30. Open questions §11 answered or defaulted. | User sign-off on §11 defaults. |
+| **1 — Org model & grants store (mono-agent, M)** | `orgdesign`: `automations[]`, `roles[].automations`, `kind`, `endpoint`, `children`, `federation` typed (not Extra) + validators (§6.1). `internal/orggrant` store + reconcile + migration. CLI `org grant …`, `org automation add|remove|list`. Chat/MCP tools `org_grant_set`, `org_automation_add`. | `go test ./...`; round-trip test: JSON with all new keys survives `orgdesign.Save` and `monomind org validate` (real binary; **extend** the CI `monomind-smoke` job, which today only runs the handshake — C-26); reconcile test: hand-added `tool_providers` entry with unknown grant id is stripped and reported. |
+| **2 — Role → automation tools** | mono-agent: `mcp --grant` thin-client mode (enqueue + watch, `daemon-heartbeat.json`, `daemon_required` error), `automation_<alias>` tools, `automation_status`, `automation_output`, redaction, per-run cap, trace, `trigger_type: org_tool` in filters/Logs (C-40). monomind **M1**: `tool_providers[mcp-stdio]`, `approvalTools`, `MONOMIND_ORG_RUN/ROLE` env, capability flag, passthrough tests (C-13). | Contract test in mono-agent using a fake MCP client (tools/list ⊆ grant); e2e (with `monoagentcli daemon` running): a Claude role and one fence runner (codex) both call `automation_publish_post`, the bus `tool` event and the `org_bridge_calls` row share a `chain_id`, and the call pauses for approval when `approval: human`; with the daemon stopped the call returns `daemon_required` within 1 s; grant revoked mid-run → next call `refused_grant`. |
+| **3 — Workflow → org nodes (mono-agent, M)** | `org.send`, `org.ask`, `trigger.org` (event mode), `org.run` `exclusive`/`wait:false`; `daemon --api` hosting the HTTP API in-process; `wake_kind` event-driven resume; CLI proxies `org serve|stop|pause|resume|send|rename`; trace header. | Node tests with the fake monomind script (`internal/monomind/testdata/fake-monomind.sh` pattern); e2e: schedule-triggered workflow messages a **running** org (under `org serve`) and the recipient's mailbox receives it within 10 s (`org logs` shows `xorg`/`message`), plus the stopped-org case returns `queued`. |
+| **4 — Automation roles** | monomind **M2**: endpoint roles (`kind`, `endpoint`, POST delivery, inbox skip rule C-11). mono-agent: `internal/orgbridge` receiver, vault tokens, reply path, `trigger.org` endpoint mode, engine-offline badge data. | e2e: boss messages `publisher-bot`, workflow runs, reply lands in boss mailbox with `[message from publisher-bot]`; engine down → message queued, delivered after engine start; endpoint id rotation makes the old URL 404; a direct POST with a fabricated `messageId` (no bus event) is refused. |
+| **5 — Unified Org UI (L)** | Sidebar rename, Automations drawer, drag-to-grant, automation role node, inspector sections, grants matrix, effective-tools list, Inbox merge (stretch). All through `monoagentcli` subprocesses. | Vitest render tests for new components; manual walkthrough recorded in `docs/screenshots/`; no Wails binding imports `internal/monomind` (lint grep in CI). |
+| **6 — Multi-org / holding** | Initiator tools in grant mode; `kind: holding`, `children[]`, U9 unique names, U10 limits, U11 roll-up, child→parent report-up, `org group …` CLI, group view UI. monomind **M4** (`federation` in `deliver`/`receiveRemote`, broker `root` tag) — optional for the gate, required before cross-root use is documented as safe. | e2e with two orgs under one `org serve`: hq boss `org_start`s sales (approval pause → approve), sales boss reports up, hq completes; loop test: hq↔sales ping-pong stops at `max_hops` with audited refusals; duplicate-name test refused across two profiles. |
+| **7 — Hardening & docs** | AGENTS.md, `ref org`/`ref api` topics, SECURITY.md (new trust boundary section), templates: "content team with publisher automation", "holding: hq + sales + support". Windows best-effort pass. | `go vet`, `gofmt -l`, all e2e above in CI where a runtime is available (fake runners otherwise); security review checklist §8 signed. |
+
+Dependencies: 2 ← 1 + M1; 3 ← M3 for live delivery (offline-queue mode works without it, and the gate must run against a **running** org — C-21); 4 ← 1, 3 (daemon-hosted API, event-driven resume) + M2 + M3; 6 ← 2, 3; 5 can start after 1 with mocked data. Ship M1+M3 in one monomind release (capability `org-tool-providers`), M2 in the next (`org-endpoint-roles`).
+
+---
+
+## 11. Open questions (defaults apply if unanswered by 06:30)
+
+| # | Question | Default |
+|---|---|---|
+| Q1 | Should a workflow be allowed to belong to several orgs? | **Yes** (membership by reference); `owned: true` on at most one for lifecycle. |
+| Q2 | Should granted roles be denied Bash by default? | **Yes, pre-filled `denyTools: ["Bash"]`**, operator can re-enable with a warning. |
+| Q3 | Sidebar label: "Org" or "Orgs"? | **Org** (singular, product concept; the page lists orgs). |
+| Q4 | Cross-profile children in v1? | **No** (C-10). |
+| Q5 | Should `org_start` require human approval by default? | **Yes** (`approvalTools`), per-child `autoApproveTools` opt-out. |
+| Q6 | How are automation-role endpoints authenticated? | **Capability URL + bus-event check** (C-4); optional 0600 credential file only for non-loopback binds. |
+| Q7 | Should the mono-agent HTTP receiver be a separate listener from `httpapi` (different auth)? | **Same server, separate route group + separate token domain**; simpler ops. |
+
+---
+
+## 12. Test strategy summary
+
+- Unit: `orgdesign` validators (aliases, endpoint-root, holding cycles), `orggrant` reconcile
+  matrix (JSON vs DB in all four states), trace hop/repeat limiter, redaction on tool results.
+- Contract: fake MCP client ↔ `mcp --grant`; fake monomind script exercising `inbox`, `status`,
+  `events` for the bridge and nodes; golden JSON for every new org config shape validated by the
+  real `monomind org validate` in CI.
+- E2E (opt-in, needs runtimes): the four scenarios in §10 gates 2/4/6.
+- Security: attempted self-grant via file write (C-3), bearer replay after rotation (C-4/§8),
+  loop bomb (C-7), alias shadowing (C-15), cross-profile same-name (C-9).
+
+---
+
+## 13. Review log (hourly until 06:30)
+
+**Closing summary (06:57).** Seven passes re-verified 20+ current-state claims against live source in
+both repos and found six facts that changed the design: `org inbox` cannot deliver live to a running
+org (C-21 → M3); the GUI hosts neither the workflow engine nor triggers, and the REST API is a third
+process (→ daemon hosts the API, GUI-managed lifecycle); paused executions poll rather than wake
+(→ `wake_kind` + event-driven resume); `autoWake` is a full goal-driven run (C-36); `org reload`
+ignores changes to existing roles (C-37); and mono-agent is not in monomind's delivery path, so
+federation must be a monomind feature (M4). Two designs were replaced outright: env-var endpoint
+credentials → capability URLs with a bus-event check, and an in-process engine per grant provider →
+a thin client that enqueues for the daemon. The caveat register grew from 20 to 40 entries, each with
+an owner and a mitigation. Remaining risk is concentrated in the four monomind changes (M1 tool
+providers + reload diff, M2 endpoint roles, M3 operator-authenticated sender, M4 federation); every
+mono-agent phase degrades gracefully without them. Nothing in this plan has been implemented.
+
+
+| Time | Version | Changes |
+|---|---|---|
+| 2026-09-15 23:44 | v1 | Initial draft. |
+| 2026-09-16 00:30 | v2 | Verified `org inbox` live path is broken (no `fromCredential` → identity rejection → silent offline queue): added C-21, monomind M3 (operator-authenticated xdeliver), rewired U5/U6/§7.2/§7.3 reply and send paths and the Phase 3 gate to a running org. Verified engine `resumeLoop` adopts WAITING runs from any process (§3.1). Fixed `approvalTools` example to the bare name approvals.ts expects. Added C-22 provider fan-out (+ lazy spawn/idle exit), C-23 rename/import, C-24 profile deletion, C-25 i18n, C-26 CI gap. |
+| 2026-09-16 01:30 | v3 | Corrected §3.1: the GUI does **not** host the engine/triggers (builds a store, shells `workflow run`, only detects an external daemon) — §7.6 now adds GUI-managed lifecycle for both daemons in Phase 4. Verified `x-monomind-cred` is the single credential header (M3 wording fixed). Replaced endpoint `credential_env` (daemon env is static) with capability-URL ids + bus-event existence check (C-4 rewritten, §8 layer 4, Q6, Phase 4 gate). Made trace hops forge-resistant (U10 trust rule). `org.run exclusive` defaults false (C-8/C-30). Specified the managed report-up responsibility line. Added C-27 event-tail fan-out, C-28 observe-command noise, C-29 live grant changes. |
+| 2026-09-16 02:30 | v4 | Verified: `daemon` and `httpapi` are separate processes (daemon has no listener) → Phase 3 folds the API into the daemon and the receiver resolves profile from the endpoint row (C-32); CLI `org --project` defaults to `~/.monoagent` while GUI/nodes use the profile root → C-31 + Phase 1 default change; resume is a 3-second poll re-running the node (`storage.go:678`) → event-driven wake + `wake_kind` (C-33); inbox drained only at `startOrg` (C-35). Fixed the stale `org_endpoints` schema (token column → capability id, rotation grace). Bounded tool outputs (`max_output_bytes`, `automation_output`). Added C-34 side-effect approval defaults. |
+| 2026-09-16 03:30 | v5 | Full read-through for cross-pass drift: fixed stale `kind: "automation"` (§2), `credential_env` in U5, `org inbox` in §5/§7.2/§7.6, `{token}` in §5; cleaned C-11 (monomind redelivers endpoint entries; mono-agent never rewrites monomind files). Verified `autoWake` = full `startOrg` with the org's goal (C-36, §7.5) and that `reloadOrgDef` ignores changes to existing roles (C-37 — rotation and grant edits need an M1 reload extension or wait for restart). |
+| 2026-09-16 04:30 | v6 | Verified `workflow run --no-wait` + `adoptQueuedExecutions` (CAS on pid 0) and that GUI cancel signals the execution pid: redesigned grant-mode MCP as a **thin client** that enqueues and watches a row instead of running an engine in-process — removes vault/keychain access and engine fan-out from providers (C-22 rewritten) and avoids cancel killing a role's provider (C-38); adds a daemon heartbeat + `daemon_required` error. Added C-39 (child in two holdings), C-40 (new trigger types vs filters); Windows note on `credential_file` (C-14). |
+| 2026-09-16 05:30 | v7 | Verified fences exist only when configured (`daemon.ts:905-932`) → §8 layer 7 pre-fills a fence for orgs with automations; verified `internal/mcp` ignores `_meta` today (§3.1, §7.1). Fixed a design hole: mono-agent is not in monomind's delivery path, so `federation` cannot be enforced in Go — same root is now one trust domain, cross-root filtering becomes monomind M4 (U8, U9, §6.1, §7.5, §8, C-10, Phase 6). Dropped the redundant `org_send` initiator tool (native `org_send` already reaches child orgs). Added `chain_id` on bus `tool` events (M1) and daemon heartbeat liveness rule (§7.6); Phase 2 gate now covers `daemon_required`. |
+| 2026-09-16 06:57 | v8 (final) | Verified boss selection (`daemon.ts:955-957`) and that the Role Inspector already edits `policy` (`RoleInspector.jsx:30,103`). Removed the last two stale references from the federation/org_send rework (§7.5 initiator list, C-9 mitigation). Wrote the closing summary. Review job removed. |
