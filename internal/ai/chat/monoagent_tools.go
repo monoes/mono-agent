@@ -163,12 +163,13 @@ func homeExpand(path string) string {
 
 // profileRoot resolves the filesystem root org-design tools read/write
 // under: an explicit SetOrgProjectRoot override if set (tests), otherwise
-// the active profile's root via profiledir.Root — or, when no real profile
-// is active (profileID is empty or the "default" sentinel NewMonoagentTools
-// starts with), the same "~/.monoagent" default cmd/monoagentcli/org.go
-// uses for org state when no --project/--profile is given, so AI-driven org
-// edits land in the same place the existing `monoagentcli org` commands and
-// the in-app Orgs tab already look.
+// the active profile's root via profiledir.Root — "" meaning the "default"
+// profile. This is the same folder `monoagentcli org` (no --project), the
+// GUI's Orgs tab, and the org.run node resolve, so grants, which are keyed
+// by profile, always describe the org file the tool edited (C-31). Before
+// the org × workflow unification the "" / "default" case used the legacy
+// ~/.monoagent folder; orgs left there are found by `monoagentcli org
+// legacy list`.
 func (mt *MonoagentTools) profileRoot() string {
 	mt.mu.RLock()
 	override := mt.orgProjectRoot
@@ -177,8 +178,8 @@ func (mt *MonoagentTools) profileRoot() string {
 	if override != "" {
 		return override
 	}
-	if pid == "" || pid == "default" {
-		return homeExpand("~/.monoagent")
+	if pid == "" {
+		pid = "default"
 	}
 	return profiledir.Root(mt.db, pid)
 }
@@ -187,17 +188,11 @@ func (mt *MonoagentTools) profileRoot() string {
 // equal, byte-for-byte, what the GUI's document watcher scans for this same
 // profile — wails-app/App.documentRootForActiveProfile, which is always
 // exactly profiledir.Root(db, activeProfileID) with no "" / "default"
-// special-casing. Deliberately does NOT reuse profileRoot()'s legacy
-// "~/.monoagent" fallback for that case: profileRoot's comment above notes
-// that fallback exists to match cmd/monoagentcli/org.go's legacy org-state
-// default, which is a different directory than profiledir.Root(db,
-// "default") (typically "~/.monoagent/profiles/default"). Writing there
-// under profileRoot's path would leave the file on disk but permanently
-// invisible to the watcher — RegisterDiscoveredDocument would insert a row
-// the very next ReconcileDiscoveredDocuments poll (~5s later) deletes
-// again, since its filesystem scan never finds that path. The
-// orgProjectRoot test override still applies here, matching profileRoot,
-// since tests use it to stand in for whatever root the watcher would use.
+// special-casing. profileRoot resolves to
+// the same folder now; documentRoot stays a separate function because the
+// two answer different questions (where org configs live vs. where the
+// document watcher scans), and a past divergence between them made saved
+// documents vanish. The orgProjectRoot test override applies to both.
 func (mt *MonoagentTools) documentRoot() string {
 	mt.mu.RLock()
 	override := mt.orgProjectRoot
@@ -214,22 +209,20 @@ func (mt *MonoagentTools) documentRoot() string {
 
 // restrictFileWriteForOrgs reports whether newly-created org roles should
 // get the default taxonomy-scoped fileWrite policy (see
-// orgdesign.NewOrgOptions.RestrictFileWrite / applyRoleDefaults) — true only
-// in profileRoot's plain profiledir.Root fallthrough branch above, i.e. a
-// real, non-default profile with no orgProjectRoot override and no root_dir
-// override of its own (profiledir.IsDefaultManaged). Every other branch of
-// profileRoot (an explicit override, or the "" / "default" legacy
-// ~/.monoagent fallback, which is not the same path as
-// profiledir.Root("default") and has no established taxonomy relationship)
-// stays unrestricted — mirrors profileRoot's own branching deliberately, so
-// the two are read together rather than drifting apart.
+// orgdesign.NewOrgOptions.RestrictFileWrite / applyRoleDefaults) — true for
+// a profile with no root_dir override (profiledir.IsDefaultManaged), the
+// same rule wails-app's own restrictFileWriteForOrgs applies. An explicit
+// orgProjectRoot override (tests) stays unrestricted.
 func (mt *MonoagentTools) restrictFileWriteForOrgs() bool {
 	mt.mu.RLock()
 	override := mt.orgProjectRoot
 	pid := mt.profileID
 	mt.mu.RUnlock()
-	if override != "" || pid == "" || pid == "default" {
+	if override != "" {
 		return false
+	}
+	if pid == "" {
+		pid = "default"
 	}
 	return profiledir.IsDefaultManaged(mt.db, pid)
 }
@@ -569,6 +562,7 @@ func (mt *MonoagentTools) ToolDefs() []ai.ToolDef {
 			"confirm":  boolParam("Must be true to actually signal the running daemon; omit/false to only check whether it's running"),
 		}, []string{"org_name"}),
 	}
+	defs = append(defs, orgUnificationToolDefs(def)...)
 	return defs
 }
 
@@ -660,6 +654,9 @@ func (mt *MonoagentTools) ExecuteContext(ctx context.Context, name string, args 
 	case "reload_org":
 		return mt.reloadOrg(args)
 	default:
+		if out, ok, err := mt.executeOrgUnification(ctx, name, args); ok {
+			return out, err
+		}
 		return "", fmt.Errorf("unknown tool: %s", name)
 	}
 }

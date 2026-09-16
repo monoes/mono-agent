@@ -1,0 +1,21 @@
+{
+  "name": "hq",
+  "kind": "holding",
+  "goal": "Coordinate sales and growth.",
+  "status": "stopped",
+  "schedule": null,
+  "roles": [
+    {
+      "id": "ceo",
+      "title": "CEO",
+      "type": "boss",
+      "reports_to": null,
+      "responsibilities": ["Start child orgs when their work is needed."]
+    }
+  ],
+  "children": [
+    { "org": "growth", "start": "on_demand", "budget_share": 0.5 },
+    { "org": "sales", "start": "manual", "budget_share": 0.5 }
+  ],
+  "autonomy": { "level": "manual" }
+}

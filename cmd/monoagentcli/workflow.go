@@ -1022,6 +1022,9 @@ func newWorkflowDeleteCmd(cfg *globalConfig) *cobra.Command {
 			if closeErr != nil {
 				return fmt.Errorf("close database: %w", closeErr)
 			}
+			if err := checkWorkflowOrgReferences(cmd.Context(), cfg, workflowID, force); err != nil {
+				return err
+			}
 
 			if !force {
 				fmt.Fprintf(os.Stdout, "Delete workflow %q? This is irreversible. [y/N] ", workflowID)
