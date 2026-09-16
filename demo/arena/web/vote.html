@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Org Arena — Vote</title>
+<style>
+  :root { --bg:#0A1022; --panel:#111A33; --line:#2A3450; --ink:#E8EAF2; --ink-2:#C8D0E6; --accent:#E8A33D; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: -apple-system, system-ui, sans-serif; padding: 16px; padding-bottom: 48px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p.sub { color: var(--ink-2); font-size: 13px; margin: 0 0 20px; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin-bottom: 16px; }
+  section h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--accent); margin: 0 0 10px; }
+  .card { display: flex; justify-content: space-between; align-items: center; padding: 10px 4px; border-bottom: 1px solid var(--line); }
+  .card:last-child { border-bottom: 0; }
+  .card .name { font-weight: 600; font-size: 15px; }
+  .card .desc { font-size: 12px; color: var(--ink-2); margin-top: 2px; }
+  button { background: #1E2B4F; color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; font-size: 14px; min-width: 64px; }
+  button.voted { background: var(--accent); color: #0A1022; border-color: var(--accent); font-weight: bold; }
+  .tally { font-size: 12px; color: var(--ink-2); margin-left: 8px; }
+  #q-box { display: none; }
+  #q-box.show { display: block; }
+  #q-text { font-size: 15px; margin-bottom: 12px; }
+  .yn { display: flex; gap: 10px; }
+  .yn button { flex: 1; padding: 14px; font-size: 16px; }
+  #q-empty { color: var(--ink-2); font-size: 13px; }
+</style>
+</head>
+<body>
+<h1>Org Arena — you're the crowd</h1>
+<p class="sub">Vote on the current question, and on which chaos card the host should play next.</p>
+
+<section>
+  <h2>Live question</h2>
+  <div id="q-empty">No question on the floor right now.</div>
+  <div id="q-box">
+    <div id="q-text"></div>
+    <div class="yn">
+      <button onclick="vote('question','yes')" id="q-yes">Yes / with it</button>
+      <button onclick="vote('question','no')" id="q-no">No / without</button>
+    </div>
+    <div class="tally" id="q-tally"></div>
+  </div>
+</section>
+
+<section>
+  <h2>Chaos cards</h2>
+  <div id="cards"></div>
+</section>
+
+<script>
+const CARDS = [
+  { key: 'power-cut', name: 'Power Cut', desc: 'Pause a district for 90 seconds.' },
+  { key: 'rumor', name: 'Rumor', desc: 'A deadline just moved up 5 minutes.' },
+  { key: 'mole', name: 'Mole', desc: 'Someone tries to slip in a bad instruction.' },
+  { key: 'budget-squeeze', name: 'Budget Squeeze', desc: 'Cut a studio’s budget live, no restart.' },
+  { key: 'reorg', name: 'Reorg', desc: 'Hot-reload a studio with a role added or removed.' },
+  { key: 'second-opinion', name: 'Second Opinion', desc: 'The crowd answers an ask_human question directly.' },
+];
+
+const cardsEl = document.getElementById('cards');
+cardsEl.innerHTML = CARDS.map((c) => `
+  <div class="card">
+    <div>
+      <div class="name">${c.name}</div>
+      <div class="desc">${c.desc}</div>
+    </div>
+    <div style="text-align:right">
+      <button data-key="${c.key}" onclick="vote('card','${c.key}')">Vote</button>
+      <div class="tally" id="tally-${c.key}">0</div>
+    </div>
+  </div>`).join('');
+
+let myCardVote = null;
+async function vote(kind, choice) {
+  if (kind === 'card') myCardVote = choice;
+  await fetch('/api/vote', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind, choice }) });
+  if (kind === 'question') {
+    document.getElementById('q-yes').classList.toggle('voted', choice === 'yes');
+    document.getElementById('q-no').classList.toggle('voted', choice === 'no');
+  }
+  render(lastState);
+}
+
+let lastState = null;
+function render(state) {
+  if (!state) return;
+  lastState = state;
+  const votes = state.cardVotes || {};
+  for (const c of CARDS) {
+    document.getElementById(`tally-${c.key}`).textContent = votes[c.key] || 0;
+    const btn = document.querySelector(`button[data-key="${c.key}"]`);
+    btn.classList.toggle('voted', myCardVote === c.key);
+  }
+  const q = state.activeQuestion;
+  document.getElementById('q-empty').style.display = q ? 'none' : 'block';
+  document.getElementById('q-box').classList.toggle('show', !!q);
+  if (q) {
+    document.getElementById('q-text').textContent = `${q.org}/${q.role}: ${q.question}`;
+    const y = q.tally.yes || 0, n = q.tally.no || 0;
+    document.getElementById('q-tally').textContent = `${y} yes · ${n} no`;
+  }
+}
+
+const es = new EventSource('/events');
+es.onmessage = (e) => render(JSON.parse(e.data));
+</script>
+</body>
+</html>
