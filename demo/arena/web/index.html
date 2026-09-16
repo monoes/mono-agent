@@ -66,7 +66,14 @@ function resize() {
   canvas.style.height = stage.clientHeight + 'px';
   ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
 }
-window.addEventListener('resize', resize);
+// A plain `window resize` listener misses some legitimate size changes to
+// #stage — confirmed live 2026-09-16: a CDP viewport override (headless
+// testing, but the same class of thing as an OS window snapping to a new
+// monitor mid-show) resized the layout without firing a `resize` event,
+// leaving the canvas's backing buffer stale and the map blank until a
+// reload. ResizeObserver reacts to the element's actual box size instead
+// of guessing at what causes it to change.
+new ResizeObserver(resize).observe(document.getElementById('stage'));
 resize();
 
 let latest = null;
@@ -178,9 +185,19 @@ function draw() {
     }
   }
 
-  requestAnimationFrame(draw);
+  requestAnimationFrame(drawSafe);
 }
-requestAnimationFrame(draw);
+function drawSafe() {
+  try { draw(); }
+  catch (err) {
+    document.getElementById('conn').textContent = 'DRAW ERROR: ' + (err && err.message);
+    document.getElementById('conn').style.color = '#F06A66';
+    console.error('[arena draw error]', err);
+    // Keep trying next frame so a transient bad state doesn't permanently freeze the map.
+    requestAnimationFrame(drawSafe);
+  }
+}
+requestAnimationFrame(drawSafe);
 
 function roundRect(x, y, w, h, r) {
   ctx.beginPath();

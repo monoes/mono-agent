@@ -108,10 +108,43 @@ git history of this directory):
    snapshot function didn't include the field the vote page reads. Votes
    were being counted and silently never shown. Fixed and covered by a
    regression test.
+6. **The map rendered as a blank canvas on first load, in a real browser,
+   the first time anyone actually opened it.** Confirmed by screenshotting
+   `http://localhost:4300/` with `monomind browse`: the sidebar (a live
+   SSE feed, proven working) rendered fine; the Canvas next to it was
+   solid background with nothing drawn on it. Root cause: `resize()` was
+   only wired to the `window` `resize` event, which doesn't reliably fire
+   for every way `#stage`'s box can change size (reproduced by changing
+   the CDP viewport right after page load) — the canvas's backing buffer
+   stayed stale while the CSS layout moved on, so every draw call landed
+   outside it. Fixed by observing `#stage` with a `ResizeObserver`
+   instead, which reacts to the box's actual size regardless of cause.
+   Verified by reproducing the exact failing sequence twice — broken
+   before the fix, correct after — with screenshots each time. Also added
+   a visible on-page error trap (`drawSafe`) around the draw loop so a
+   future exception shows up in the page itself instead of silently
+   freezing the canvas on its last good frame with no signal anything
+   was wrong.
+7. **Herald's reviewer cannot read either studio's code from its worktree
+   path, as the design assumed.** Confirmed live: a `Read` outside its own
+   org's workdir was denied with `path escapes org workdir`. The org
+   runtime walls off `.monomind/orgs/<other-org>/` even when nominally
+   sharing a filesystem root — almost certainly deliberate, so one org's
+   agents can't browse another live org's private runtime state. The
+   reviewer worked around it in the rehearsal by scoring from the
+   submission message's content alone, which held up well enough to
+   produce real verdicts, but it's an emergent workaround, not a design
+   feature. **Not yet fixed structurally** — the clean fix is a shared
+   handoff directory outside any org's `.monomind/orgs/` tree (e.g.
+   `docs/arena/submissions/<org>/`) that a studio's CTO copies its
+   deliverables into before pitching Herald, and that the reviewer reads
+   from instead of reaching into the studio's private worktree.
 
-All five are covered by tests in `scoring.test.mjs`, or were reproduced
-live via the bridge's replay mode against the actual 2026-09-16 smoke-test
-recordings before being called fixed.
+All seven are covered by tests in `scoring.test.mjs` where the fix is in
+scoring logic, or were reproduced against real evidence (the 2026-09-16
+smoke test's recordings, or a live full rehearsal, or a real browser
+screenshot) before being called fixed. #7 is left open and documented
+rather than claimed fixed.
 
 ## Known limitations, stated plainly
 
@@ -120,13 +153,43 @@ recordings before being called fixed.
   `decision: "allow"` at invocation. The map can show a file landed; it
   cannot independently confirm the tests in it are green. Don't present it
   as verified on stage.
-- **The map hasn't been opened in a real browser by an agent** — it was
-  verified by driving the bridge's HTTP/SSE/vote API directly with `curl`
-  and unit-testing the scoring logic, which confirms the data pipeline and
-  every scoring rule, but not the Canvas rendering itself. Open
-  `http://localhost:4300/` once before a real show to eyeball layout and
-  legibility on the actual screen you'll project onto.
-- **No full 25-minute rehearsal has been run.** Every mechanic has been
-  proven individually (cross-org messaging, the idle watchdog, asset
-  scoring, the vote/tally pipeline, branch-and-replay), but not end to end
-  on the clock. Run `run-show.sh` once, in full, before the real thing.
+- **Herald's reviewer cannot read the studios' code the way the design
+  assumed** (see Correction #7). It works around this by scoring from
+  message content, which held up in rehearsal but isn't a real fix.
+- **The sidebar clips at narrower widths** (confirmed at 1000px total —
+  the fixed 300px sidebar column doesn't leave it enough room). Not a
+  problem at the resolution a real projector or monitor will actually use,
+  but don't resize the browser window mid-show expecting it to reflow
+  cleanly.
+- A full rehearsal has been run once end to end (2026-09-16, see below)
+  and reached the publish gate. It has not yet been run a second time to
+  confirm the first wasn't a fluke, and no show has run with a live human
+  audience.
+
+## 2026-09-16 rehearsal log
+
+Ran `run-show.sh 5` for real, three live orgs, ~28 minutes wall clock,
+about $4.50 total spend against the $15 cap. Result: the scenario played
+out further than either the smoke test or any prior expectation —
+
+- Both studios found the real node convention independently, wrote
+  working, tested, documented `core.delay_until` nodes, and pitched Herald
+  competitively (Anvil pitched first, true to its "move fast" brief).
+- Herald's editor correctly refused to announce a winner early, twice,
+  when each studio asked prematurely after its own approval — holding the
+  process together exactly as designed, not because it was told to refuse
+  in those exact words.
+- Forge got sent back for one specific documentation gap, fixed it in
+  about two minutes, and got approved on resubmission — real back-and-
+  forth, not scripted.
+- The judge scored both (Anvil 96/100, Forge 95/100, decided by
+  completeness — RFC3339Nano support and no artificial delay cap) and
+  raised the `publish-launch-post` gate, which correctly blocked only the
+  judge's own further messages while every other role kept working.
+- Screenshotting the live map with `monomind browse` caught the
+  ResizeObserver bug above — the one thing in this whole build that had
+  never been checked in an actual browser turned out to have a real bug.
+
+The gate was left pending for a human decision rather than auto-approved
+by any script — that's the one moment in the whole design a human is
+supposed to press the button.
