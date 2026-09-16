@@ -897,19 +897,36 @@ Implemented on branch `feat/org-workflow-unification` (mono-agent) and
 | Phase | State | Evidence |
 |---|---|---|
 | 1 Org model and grants | Done | `internal/orgdesign` typed keys and validators, migration 041, `internal/orggrant`, `org automation|grant|effective-tools|legacy`, profile org root (C-31), `workflow delete` refusal (C-20), golden configs validated by the real monomind in CI (C-26) |
-| 2 Role → automation tools | Done in code; live-org gate not run | `mcp --grant` thin client with caps, trace, redaction, paging, HIL passthrough, `daemon_required`; `scripts/e2e/org-unification.sh` runs a granted tool through a real daemon |
-| 3 Workflow → org, decisions | Done in code; live-org gate not run | `org.send`, `org.ask`, `trigger.org`, `org.run` `wait`/`exclusive`, `resume_after` wake, `internal/orgbridge`, `internal/orgdecide` (levels, tiers, rule, model decider, lower-only reconcile), CLI process/autonomy commands, daemon hosting the API |
-| 4 Automation roles | Done in code; live-org gate not run | endpoint receiver with bus confirmation, reply path, `org automation-role add|remove|rotate` |
+| 2 Role → automation tools | Done; live gate passed (Claude runner) | `mcp --grant` thin client with caps, trace, redaction, paging, HIL passthrough, `daemon_required`; `scripts/e2e/org-unification.sh` runs a granted tool through a real daemon |
+| 3 Workflow → org, decisions | Done; live gate passed | `org.send`, `org.ask`, `trigger.org`, `org.run` `wait`/`exclusive`, `resume_after` wake, `internal/orgbridge`, `internal/orgdecide` (levels, tiers, rule, model decider, lower-only reconcile), CLI process/autonomy commands, daemon hosting the API |
+| 4 Automation roles | Done; live gate passed | endpoint receiver with bus confirmation, reply path, `org automation-role add|remove|rotate` |
 | 5 Unified Org UI | Done; walkthrough recording not made | Wails bindings and components, 416 vitest tests, reducer replaying recorded buses |
-| 6 Holding orgs | Done in code; live-org gate not run | `internal/orggroup`, Initiator and decision tools, boss/parent delegation with fallback, report-up fallback watcher, `org group …` |
+| 6 Holding orgs | Done; live gate passed | `internal/orggroup`, Initiator and decision tools, boss/parent delegation with fallback, report-up fallback watcher, `org group …` |
 | 7 Docs | Done | AGENTS.md, SECURITY.md, `ref org`, OpenAPI, `examples/orgs/` |
 | monomind M1–M5 | Done | 6 commits, full CLI vitest suite green, local build advertises all four capabilities |
 
-**Gates not yet run.** Every gate that needs a running org with real agent sessions (a Claude
-and a fence runner calling a granted tool; a message landing in a running org's mailbox; the
-autonomy scenarios against a live org; boss → `publisher-bot` → reply; hq starting sales).
-They spend model budget and wait on an operator decision to run them. Unit, contract, and
-real-binary tests cover the same code paths with fake runners and a real daemon.
+**Live-org gates (2026-09-16, 21:17–21:29 CEST).** Real Claude sessions (`claude-haiku-4-5`,
+roles and model decider) under a local monomind build and `monoagentcli daemon`, isolated home
+folder. Total spend about $0.40.
+
+| Scenario | Result |
+|---|---|
+| **growth** — boss with a `required` grant, an automation role, Bash, `ask_human`, autonomy mid, model decider | The grant call paused; the decider approved it (`decision-resolved`, resolver `model:…`); the retried call ran as an `org_tool` execution in the daemon and its output reached the boss. The bus `tool` event and the `role_tool` ledger row share one `chain_id`. The message to `formatter-bot` ran its workflow and the reply `re: format` arrived with `[trace … hop=2]` and the run output. `org send` mid-run: `delivery: live`; after the org stopped: `queued`. Bash was raised to consequential (role holds a grant) and approved by the decider; the `ask_human` question was answered `[decided by model:…]`; `org_complete` approved. |
+| **hq / sales** — holding org, `org group init`, sales with decider `parent`, hq gate | hq's `org_start` was a decision, approved by the model; sales started and reported `the answer is 42` to `hq:ceo`. hq's gate at mid got an `escalated` row and waited; raising hq to full re-routed it and the decider approved it. Sales' `org_complete` arrived while hq's CEO had that gate pending, so it went to the model fallback (C-50). Group roll-up $0.12 of $5. |
+| **hq / sales, no gate** | Sales' `org_complete` was delegated to hq's CEO (`[decision needed]` message); the CEO called `decision_list` and `decision_resolve`; monomind recorded resolver `parent:hq:ceo`. |
+
+Bugs these runs found, both fixed with regression tests: `automation-role add` produced a role id
+equal to an alias without underscores (validator rejection); the model decider parsed only the
+last streamed assistant delta (every decision failed as "no JSON object").
+
+Not exercised live (unit, contract, or real-binary tests only): a fence runner (codex) calling a
+grant; the 5-minute idle-watchdog hold; engine-down queueing and redelivery; rotated endpoint 404
+after the grace window; a hop-limit ping-pong loop; decider failure at full.
+
+Observed, outside this plan: monomind's unreleased main streams assistant text as deltas, and
+`monomind.Exec` keeps only the last one in `ResultText`, so `agent.ask` and other `ResultText`
+readers will return fragments once that monomind ships (the released 2.10.30 sends whole
+messages). `monomind org serve` starts a dashboard on port 4242 that outlives it.
 
 **Deviations found while implementing** (also in contracts §9):
 
