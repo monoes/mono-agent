@@ -32,7 +32,7 @@ import (
 // aliasPattern is the role-id-shaped slug an automation alias must match
 // (plan §2 naming rule). Checked here so a bad value fails fast with a clear
 // message instead of a CLI round trip.
-var aliasPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+var aliasPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,39}$`)
 
 // durationPattern accepts the pause durations the GUI offers (30m, 2h) and
 // any other whole number of minutes or hours.
@@ -57,7 +57,7 @@ func requireOrg(org string) error {
 
 func requireAlias(alias string) error {
 	if !aliasPattern.MatchString(alias) {
-		return fmt.Errorf("invalid automation alias %q: use lowercase letters, digits, '-' or '_'", alias)
+		return fmt.Errorf("invalid automation alias %q: start with a letter, then lowercase letters, digits, or underscores (40 max)", alias)
 	}
 	return nil
 }
@@ -265,7 +265,7 @@ func autonomySetArgs(org, specJSON string) ([]string, error) {
 	if err := json.Unmarshal([]byte(specJSON), &s); err != nil {
 		return nil, fmt.Errorf("invalid autonomy spec: %w", err)
 	}
-	args := []string{"autonomy", "set", org}
+	args := []string{"autonomy", "set", org, "--by", "gui"}
 	if s.Level != "" {
 		if !validLevels[s.Level] {
 			return nil, fmt.Errorf("autonomy spec: level must be manual, mid, or full")
@@ -337,7 +337,7 @@ func autonomySetArgs(org, specJSON string) ([]string, error) {
 			args = append(args, "--max-decider-usd", strconv.FormatFloat(*l.MaxDeciderUSDPerRun, 'f', -1, 64))
 		}
 	}
-	if len(args) == 3 {
+	if len(args) == 5 { // "autonomy", "set", org, "--by", "gui"
 		return nil, fmt.Errorf("autonomy spec: nothing to change")
 	}
 	return args, nil

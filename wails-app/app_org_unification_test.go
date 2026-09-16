@@ -92,12 +92,12 @@ func TestGrantRemoveArgs(t *testing.T) {
 }
 
 func TestAutomationRoleArgs(t *testing.T) {
-	a, err := automationRoleAddArgs("growth", `{"alias":"publisher-bot","reports_to":"lead","title":"Publisher","reply":"node:Format"}`)
+	a, err := automationRoleAddArgs("growth", `{"alias":"publisher_bot","reports_to":"lead","title":"Publisher","reply":"node:Format"}`)
 	eqArgs(t, a, err, []string{
-		"automation-role", "add", "growth", "--alias", "publisher-bot", "--reports-to", "lead",
+		"automation-role", "add", "growth", "--alias", "publisher_bot", "--reports-to", "lead",
 		"--title", "Publisher", "--reply", "node:Format",
 	})
-	a, err = automationRoleAddArgs("growth", `{"alias":"publisher-bot"}`)
+	a, err = automationRoleAddArgs("growth", `{"alias":"publisher_bot"}`)
 	wantErr(t, a, err, "reports_to required")
 	a, err = automationRoleAddArgs("growth", `{"alias":"p","reports_to":"lead","reply":"first"}`)
 	wantErr(t, a, err, "reply must be")
@@ -121,7 +121,7 @@ func TestAutonomySetArgs_Full(t *testing.T) {
 	}`
 	a, err := autonomySetArgs("growth", spec)
 	eqArgs(t, a, err, []string{
-		"autonomy", "set", "growth", "--level", "mid",
+		"autonomy", "set", "growth", "--by", "gui", "--level", "mid",
 		"--decider", "model", "--decider-runtime", "claude", "--decider-model", "claude-fable-5-1",
 		"--fallback", "model", "--decider-timeout", "120",
 		"--policy", "Never approve spend over $50.",
@@ -134,12 +134,12 @@ func TestAutonomySetArgs_Full(t *testing.T) {
 
 func TestAutonomySetArgs_LevelOnly(t *testing.T) {
 	a, err := autonomySetArgs("growth", `{"level":"full"}`)
-	eqArgs(t, a, err, []string{"autonomy", "set", "growth", "--level", "full"})
+	eqArgs(t, a, err, []string{"autonomy", "set", "growth", "--by", "gui", "--level", "full"})
 }
 
 func TestAutonomySetArgs_EmptyPolicyIsSentToClear(t *testing.T) {
 	a, err := autonomySetArgs("growth", `{"policy":""}`)
-	eqArgs(t, a, err, []string{"autonomy", "set", "growth", "--policy", ""})
+	eqArgs(t, a, err, []string{"autonomy", "set", "growth", "--by", "gui", "--policy", ""})
 }
 
 func TestAutonomySetArgs_Rejects(t *testing.T) {

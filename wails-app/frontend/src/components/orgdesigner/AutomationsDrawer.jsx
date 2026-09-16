@@ -15,12 +15,12 @@ export function slugifyAlias(name) {
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '')
     .slice(0, 40)
-  return /^[a-z0-9]/.test(s) ? s : `automation_${s || 'new'}`.replace(/_+$/, '')
+  return /^[a-z]/.test(s) ? s : `automation_${s || 'new'}`.replace(/_+$/, '').slice(0, 40)
 }
 
 function LibraryRow({ wf, onAdd, busy }) {
   const [alias, setAlias] = useState(() => slugifyAlias(wf.name))
-  const valid = /^[a-z0-9][a-z0-9_-]*$/.test(alias)
+  const valid = /^[a-z][a-z0-9_]{0,39}$/.test(alias) && !['human', 'workflow', 'status', 'output'].includes(alias)
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 8px', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
       <span style={{ ...mono, fontSize: 11, color: 'var(--text)' }}>{wf.name || wf.id}</span>

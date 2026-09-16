@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os/exec"
@@ -8,7 +9,10 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"github.com/monoes/mono-agent/internal/orgdecide"
 	"github.com/monoes/mono-agent/internal/orgdesign"
+	"github.com/monoes/mono-agent/internal/orggrant"
+	"github.com/monoes/mono-agent/internal/profiledir"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -397,6 +401,9 @@ func (a *App) saveOrgDoc(root string, d *orgdesign.Doc) (sha string, err error) 
 		preImage = existing
 	}
 
+	if err := a.reconcileOrgDoc(root, d, preImage == nil); err != nil {
+		return "", err
+	}
 	sha, err = orgdesign.Save(root, d)
 	if err != nil {
 		return "", err
@@ -418,6 +425,44 @@ func (a *App) saveOrgDoc(root string, d *orgdesign.Doc) (sha string, err error) 
 		return "", fmt.Errorf("monomind rejected this change: %s", cliErr.Error())
 	}
 	return sha, nil
+}
+
+// reconcileOrgDoc brings a full-document save from the canvas into line with
+// the grant, endpoint, and autonomy rows before it reaches disk, exactly as
+// every CLI save does: a stale or hand-edited document can never carry
+// grants, tool providers, or an autonomy level no row backs (C-3, C-54).
+// A new org gets its starting autonomy row (mid, Q8).
+func (a *App) reconcileOrgDoc(root string, d *orgdesign.Doc, isNew bool) error {
+	if a.db == nil {
+		return nil
+	}
+	profileID := a.getActiveProfileID()
+	if profileID == "" || profiledir.Root(a.db, profileID) != root {
+		return nil
+	}
+	ctx := context.Background()
+	store := orgdecide.NewStore(a.db)
+	if isNew {
+		if row, err := store.Get(ctx, profileID, d.Name); err == nil && !row.Stored {
+			row.Level = orgdesign.LevelMid
+			if err := store.Put(ctx, row, "gui"); err != nil {
+				return err
+			}
+		}
+	}
+	cli, _ := findMonoAgentCLI()
+	apiAddr := orggrant.DefaultAPIAddr
+	var v string
+	if err := a.db.QueryRow(`SELECT value FROM settings WHERE key = 'daemon_api_addr'`).Scan(&v); err == nil && v != "" {
+		apiAddr = v
+	}
+	if _, err := orggrant.Reconcile(ctx, orggrant.NewStore(a.db), d, orggrant.GenOptions{ProfileID: profileID, CLIPath: cli, APIAddr: apiAddr}); err != nil {
+		return fmt.Errorf("reconcile grants: %w", err)
+	}
+	if _, err := orgdecide.ReconcileAutonomy(ctx, store, profileID, d); err != nil {
+		return fmt.Errorf("reconcile autonomy: %w", err)
+	}
+	return nil
 }
 
 // cliValidate runs `monoagentcli org validate <name>` and returns a non-nil
