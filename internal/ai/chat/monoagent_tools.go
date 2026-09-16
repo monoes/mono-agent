@@ -18,6 +18,7 @@ import (
 	"github.com/monoes/mono-agent/internal/docscan"
 	"github.com/monoes/mono-agent/internal/monomind"
 	"github.com/monoes/mono-agent/internal/noderegistry"
+	"github.com/monoes/mono-agent/internal/orgdecide"
 	"github.com/monoes/mono-agent/internal/orgdesign"
 	"github.com/monoes/mono-agent/internal/profiledir"
 	"github.com/monoes/mono-agent/internal/secrets"
@@ -145,6 +146,13 @@ func (mt *MonoagentTools) SetOrgProjectRoot(root string) {
 	mt.mu.Lock()
 	mt.orgProjectRoot = root
 	mt.mu.Unlock()
+}
+
+// orgProjectRootOverride returns the test override, if any.
+func (mt *MonoagentTools) orgProjectRootOverride() string {
+	mt.mu.RLock()
+	defer mt.mu.RUnlock()
+	return mt.orgProjectRoot
 }
 
 // homeExpand expands a leading "~/" to the current user's home directory.
@@ -1789,6 +1797,15 @@ func (mt *MonoagentTools) createOrg(args string) (string, error) {
 	doc := orgdesign.NewOrg(a.Name, a.Goal, opts)
 	if _, err := orgdesign.Save(root, doc); err != nil {
 		return "", fmt.Errorf("save org %s: %w", a.Name, err)
+	}
+	// New orgs start at autonomy level mid (plan Q8); existing orgs without
+	// a row stay manual.
+	if mt.db != nil && mt.orgProjectRootOverride() == "" {
+		store := orgdecide.NewStore(mt.db)
+		if row, err := store.Get(context.Background(), mt.ProfileID(), doc.Name); err == nil && !row.Stored {
+			row.Level = orgdesign.LevelMid
+			_ = store.Put(context.Background(), row, "chat")
+		}
 	}
 	return marshalJSON(map[string]interface{}{"org_name": doc.Name, "created": true})
 }
