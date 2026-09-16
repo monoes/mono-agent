@@ -166,6 +166,9 @@ func newOrgAutonomySetCmd(env *orgEnv) *cobra.Command {
 			if err := store.Put(ctx, a, by); err != nil {
 				return err
 			}
+			if err := grantDeciderTools(ctx, env, db, profileID, root, doc, a); err != nil {
+				return err
+			}
 			doc.Autonomy = orgdecide.DisplayCopy(a, doc.Autonomy)
 			if _, err := saveOrgReconciled(ctx, db, profileID, root, doc, env.genOptions(profileID)); err != nil {
 				return err

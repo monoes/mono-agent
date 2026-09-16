@@ -114,3 +114,40 @@ func TestNewOrgStartsAtMid(t *testing.T) {
 		t.Fatalf("new org level = %v", got)
 	}
 }
+
+func TestOrgGroupInitAndParentDecider(t *testing.T) {
+	f := newOrgCLIFixture(t)
+	f.mustRun(t, "create-json", "hq", "--json", `{"name":"hq","kind":"holding","goal":"g","status":"stopped","schedule":null,"roles":[{"id":"ceo","title":"CEO","type":"boss","reports_to":null,"responsibilities":[]}],"children":[{"org":"growth","start":"on_demand","budget_share":0.5}]}`)
+
+	out := f.mustRun(t, "group", "init", "hq")
+	if out["initiator"] != "ceo" || strings.Join(toStrings(out["children"]), ",") != "growth" {
+		t.Fatalf("group init = %v", out)
+	}
+	hq, err := orgdesign.Load(f.root, "hq")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ceo, _ := hq.FindRole("ceo")
+	if len(ceo.ToolProviders) != 1 || !strings.Contains(strings.Join(ceo.ToolProviders[0].Allow, ","), "org_start") {
+		t.Fatalf("initiator provider = %+v", ceo.ToolProviders)
+	}
+	if got := ceo.PolicyStrings("approvalTools"); strings.Join(got, ",") != "monoagent__org_start" {
+		t.Fatalf("org_start is not a decision: %v", got)
+	}
+	lead, _ := f.load(t).FindRole("lead")
+	if !strings.Contains(strings.Join(lead.Responsibilities, "\n"), "hq:ceo") {
+		t.Fatalf("child boss has no report-up line: %v", lead.Responsibilities)
+	}
+
+	f.mustRun(t, "autonomy", "set", "growth", "--decider", "parent")
+	hq, _ = orgdesign.Load(f.root, "hq")
+	ceo, _ = hq.FindRole("ceo")
+	allow := strings.Join(ceo.ToolProviders[0].Allow, ",")
+	if !strings.Contains(allow, "decision_resolve") || !strings.Contains(allow, "org_start") {
+		t.Fatalf("parent decider tools not merged into the initiator's grant: %s", allow)
+	}
+
+	if _, err := f.run(t, "group", "status", "growth"); err == nil {
+		t.Fatal("group status on a standard org")
+	}
+}

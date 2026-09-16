@@ -104,6 +104,23 @@ CREATE INDEX IF NOT EXISTS org_decisions_org ON org_decisions(profile_id, org_na
 CREATE INDEX IF NOT EXISTS org_decisions_repeat ON org_decisions(profile_id, org_name, run_id, item_hash);
 CREATE INDEX IF NOT EXISTS org_decisions_item ON org_decisions(profile_id, org_name, item_kind, item_ref);
 
+CREATE TABLE IF NOT EXISTS org_delegations (  -- items handed to a boss or parent decider role (U17)
+  id           TEXT PRIMARY KEY,
+  profile_id   TEXT NOT NULL,
+  org_name     TEXT NOT NULL,              -- org the item belongs to
+  item_kind    TEXT NOT NULL,
+  item_ref     TEXT NOT NULL,
+  item_json    TEXT NOT NULL,              -- the routed item (kind, class, tier, requester, action, request id, summary)
+  level        TEXT NOT NULL,
+  decider_org  TEXT NOT NULL,              -- org of the deciding role
+  decider_role TEXT NOT NULL,
+  status       TEXT NOT NULL,              -- pending | resolved | expired
+  created_at   TEXT NOT NULL,
+  deadline_at  TEXT NOT NULL,
+  resolved_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS org_delegations_decider ON org_delegations(profile_id, decider_org, decider_role, status);
+
 CREATE TABLE IF NOT EXISTS org_asks (
   id               TEXT PRIMARY KEY,
   profile_id       TEXT NOT NULL,

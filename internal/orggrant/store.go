@@ -183,7 +183,46 @@ func (s *Store) SetOrgTools(ctx context.Context, profileID, org, role string, to
 	return s.GetGrant(ctx, id)
 }
 
-const grantCols = `id, profile_id, org_name, role_id, tools_json, org_tools_json, created_at, updated_at, revoked_at`
+// MergeOrgTools adds tools (and the orgs each may act on) to a role's
+// org-tool grant, keeping what it already holds.
+func (s *Store) MergeOrgTools(ctx context.Context, profileID, org, role string, add []OrgTool) (*Grant, error) {
+	grants, err := s.ListGrants(ctx, profileID, org, role)
+	if err != nil {
+		return nil, err
+	}
+	var tools []OrgTool
+	for _, g := range grants {
+		if len(g.Tools) == 0 {
+			tools = append(tools, g.OrgTools...)
+		}
+	}
+	for _, a := range add {
+		idx := -1
+		for i := range tools {
+			if tools[i].Tool == a.Tool {
+				idx = i
+			}
+		}
+		if idx < 0 {
+			tools = append(tools, OrgTool{Tool: a.Tool})
+			idx = len(tools) - 1
+		}
+		for _, o := range a.Orgs {
+			found := false
+			for _, have := range tools[idx].Orgs {
+				if have == o {
+					found = true
+				}
+			}
+			if !found {
+				tools[idx].Orgs = append(tools[idx].Orgs, o)
+			}
+		}
+	}
+	return s.SetOrgTools(ctx, profileID, org, role, tools)
+}
+
+const grantCols =`id, profile_id, org_name, role_id, tools_json, org_tools_json, created_at, updated_at, revoked_at`
 
 func scanGrant(sc interface{ Scan(...interface{}) error }) (*Grant, error) {
 	var g Grant

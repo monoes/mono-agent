@@ -163,6 +163,8 @@ func (s *Server) grantToolDefinitions(ctx context.Context) []map[string]interfac
 				}, "execution_id"),
 			})
 	}
+	out = append(out, orgToolDefinitions(b)...)
+	out = append(out, decisionToolDefinitions(b)...)
 	sort.SliceStable(out, func(i, j int) bool { return out[i]["name"].(string) < out[j]["name"].(string) })
 	if out == nil {
 		out = []map[string]interface{}{}
@@ -183,7 +185,12 @@ func (s *Server) callGrantTool(ctx context.Context, name string, args json.RawMe
 	case "automation_output":
 		result, err = s.grantOutput(ctx, rt, b, args)
 	default:
-		result, err = s.grantRun(ctx, rt, b, name, args)
+		var handled bool
+		if result, handled, err = s.callOrgTool(ctx, rt, b, name, args); !handled {
+			if result, handled, err = s.callDecisionTool(ctx, rt, b, name, args); !handled {
+				result, err = s.grantRun(ctx, rt, b, name, args)
+			}
+		}
 	}
 	if err != nil {
 		return "", err

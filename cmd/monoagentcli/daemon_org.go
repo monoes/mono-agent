@@ -14,6 +14,7 @@ import (
 	"github.com/monoes/mono-agent/internal/orgdecide"
 	"github.com/monoes/mono-agent/internal/orgdesign"
 	"github.com/monoes/mono-agent/internal/orggrant"
+	"github.com/monoes/mono-agent/internal/orggroup"
 	"github.com/monoes/mono-agent/internal/profiledir"
 	"github.com/monoes/mono-agent/internal/storage"
 	"github.com/monoes/mono-agent/internal/workflow"
@@ -93,7 +94,7 @@ func (s *orgServices) start(ctx context.Context, engine *workflow.WorkflowEngine
 			if c.Deleted || c.Doc == nil {
 				return
 			}
-			s.reconcileDoc(ctx, pr, c.Doc)
+			s.reconcileDoc(ctx, pr, c.Doc, false)
 		})
 		w.Start()
 		s.mu.Lock()
@@ -108,6 +109,19 @@ func (s *orgServices) start(ctx context.Context, engine *workflow.WorkflowEngine
 	}
 	go waker.Run(ctx)
 	go s.receiver.Run(ctx)
+
+	reportUp := &orggroup.ReportUpWatcher{
+		DB: s.db.DB, Mux: s.mux, Logf: s.logf,
+		Roots: func(context.Context) ([]orggroup.ProfileRoot, error) {
+			roots, err := profileRoots(s.db.DB)
+			out := make([]orggroup.ProfileRoot, 0, len(roots))
+			for _, r := range roots {
+				out = append(out, orggroup.ProfileRoot{ProfileID: r.ProfileID, Root: r.Root})
+			}
+			return out, err
+		},
+	}
+	go reportUp.Run(ctx)
 
 	svc := orgdecide.NewService(s.db.DB, func(context.Context) ([]orgdecide.ProfileRoot, error) {
 		return profileRoots(s.db.DB)
@@ -139,12 +153,16 @@ func (s *orgServices) reconcileProfile(ctx context.Context, pr orgdecide.Profile
 	for name, e := range bad {
 		s.logf("org services: %s/%s: unreadable org file: %v", pr.ProfileID, name, e)
 	}
+	forced := map[string]bool{}
+	for _, d := range orggroup.ApplyReportUp(docs) {
+		forced[d.Name] = true
+	}
 	for _, d := range docs {
-		s.reconcileDoc(ctx, pr, d)
+		s.reconcileDoc(ctx, pr, d, forced[d.Name])
 	}
 }
 
-func (s *orgServices) reconcileDoc(ctx context.Context, pr orgdecide.ProfileRoot, d *orgdesign.Doc) {
+func (s *orgServices) reconcileDoc(ctx context.Context, pr orgdecide.ProfileRoot, d *orgdesign.Doc, force bool) {
 	rep, err := orggrant.Reconcile(ctx, orggrant.NewStore(s.db.DB), d, orggrant.GenOptions{
 		ProfileID: pr.ProfileID, CLIPath: selfExecutable(), APIAddr: orgAPIAddr(s.db),
 	})
@@ -160,7 +178,7 @@ func (s *orgServices) reconcileDoc(ctx context.Context, pr orgdecide.ProfileRoot
 	if auto.Ignored != "" {
 		s.logf("org services: %s: %s", d.Name, auto.Ignored)
 	}
-	if !rep.Changed && !auto.DocChanged {
+	if !force && !rep.Changed && !auto.DocChanged {
 		return
 	}
 	for _, f := range rep.Findings {
