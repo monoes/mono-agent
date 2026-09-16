@@ -1,7 +1,9 @@
 # Org × Workflow Unification and Multi-Org — Design & Implementation Plan
 
-- **Status**: **v8 — review cycle complete** (written 2026-09-15 23:44 CEST; seven review passes 00:30–06:57). Ready for the user's decision on §11; implementation starts at Phase 1. Hourly review passes until 06:30 are
-  appended in §13 (Review log); each pass may amend any section and bumps the version.
+- **Status**: **v9** (written 2026-09-15 23:44 CEST; seven review passes 00:30–06:57; v9 at 12:02
+  folds in evidence from two live multi-org runs, §14). Ready for the user's decision on §11;
+  implementation starts at Phase 1. Review passes are appended in §13 (Review log); each pass may
+  amend any section and bumps the version.
 - **Scope**: mono-agent (`github.com/monoes/mono-agent`) plus the monomind-side changes it
   needs (`~/projects/monoes/monomind`, org runtime v2). Every "current state" claim below was
   verified against live source on 2026-09-15/16; file refs are given so a reviewer can re-check.
@@ -75,6 +77,8 @@ address and as a tool name suffix without a second namespace.
 | Org design tools | Chat/MCP expose `create_org`, `add_org_role`, `update_org_role`, `set_role_reports_to`, `remove_org_role`, `validate_org`, `reload_org`. **No `org_run`/`org_status`/`org_send` tools.** | `internal/mcp/monoagent_tools.go:270-380` |
 | GUI | Sidebar: Dashboard / Node Runner (workflow editor, `pages/NodeRunner.jsx`) / Orgs (`OrgsPanel.jsx` + `orgdesigner/*`). Org designer already has palette, inspector, `RoleInspector` shows policy ("tool-policy") fields. | `wails-app/frontend/src/components/Sidebar.jsx:25-27`, `orgdesigner/OrgDesigner.jsx` |
 | Doctrine | UI never imports `internal/monomind`; it shells `monoagentcli org …`. New surfaces must be CLI-first. | `wails-app/app_orgs.go` header comment; delegation plan D10 |
+| GUI event tail (v9) | The Orgs panel already tails a selected org's bus: `StreamOrgEvents` runs `monoagentcli org --project <root> events <org> --follow` (one subprocess per subscription) and re-emits each line as a Wails `org:event`. The panel renders it as a text list. The design canvas (`OrgCanvas`, `RoleNode`) shows no runtime state. | `wails-app/app_orgs.go:215-236`, `OrgsPanel.jsx:961-975`, `orgdesigner/OrgCanvas.jsx`, `RoleNode.jsx` |
+| GUI auto-approve (v9) | The Orgs panel has a per-org "Auto-approve" toggle ("Auto-approve everything pending, as it arrives"). While it is on and the Approvals tab is open, it resolves **every** pending item every 4 s: tool approvals are approved, gates are approved with an empty resolution, and `ask_human` questions are answered with the fixed text "Approved — proceed autonomously." | `wails-app/frontend/src/components/OrgsPanel.jsx:495-524, 864-878` |
 
 ### 3.2 monomind (org runtime v2, installed v2.10.30, source at `~/projects/monoes/monomind`)
 
@@ -94,6 +98,13 @@ address and as a tool name suffix without a second namespace.
 | Budgets | Per-role token split of `run_config.budget_tokens`, optional `budget_usd`; **no cross-org roll-up**. | `types.ts` RoleSchema, `policy.ts` |
 | Stdio tool bridge | `agent exec --tools-file` bridges caller tools as `tool_call`/`tool_result` frames — but only for `agent exec`, not for org daemons. | `orgrt/agent-exec.ts:155-280` |
 | MCP client | monomind's CLI package has **no direct `@modelcontextprotocol/sdk` dependency**; it is present transitively via `@anthropic-ai/claude-agent-sdk` (`node_modules/.pnpm/node_modules/@modelcontextprotocol`). Must be promoted to a direct dependency if used. | `packages/@monomind/cli/package.json` |
+| Bus event shapes (v9) | `question` is emitted for **two different things**: a sensitive-tool approval `{data: {question: "Approval required for <action>", action}}` and an `ask_human` question `{data: {questionId, question}}`. A `gate` carries its id at `data.gateId`. `asset` is emitted by `policy.decide` for every Write/Edit with a path, **before** the write runs; a Write carries up to 20 000 chars of the file in `data.content` (secret-redacted). `usage` is per turn: `data: {tokens, cost_usd, subtype}`, subtype `success` or `error_max_turns`. `audit` puts several causes behind one `reason: "decision-trace"` (pending approval, gate block, workdir escape, git-level denial); `idle-nudge`, `idle-stop`, `session-result-error` are separate reasons. | `orgrt/approvals.ts:138-144`, `questions.ts:82`, `policy.ts:21,180`, `daemon.ts:1154,1233-1237`; live buses (§14) |
+| Cross-org events (v9) | A cross-org `org_send` is written to **both** buses — the sender org's and the recipient's — with different event `id`s and no shared message id. In the live runs the two copies were 1 ms apart. | `cross-org.ts:397-398, 548`; §14 |
+| Idle watchdog (v9) | `idle_minutes` defaults to 10. The boss gets up to 3 nudges; a nudge followed by another idle period, or idling again after 3 nudges, stops the run (`idle-stop`). **Exempt**: pending gates, pending `ask_human` questions, an active `org_task_block`. **Not exempt**: pending tool approvals (`checkApproval` → `approvals.json`), and any wait on something outside the org. | `orgrt/daemon.ts:1143-1250` |
+| Role workdir confinement (v9) | Read/Write/Edit/Glob/Grep are denied outside the role's workdir by realpath comparison (`path escapes org workdir`), whatever the `fileRead`/`fileWrite` globs say. Workdir is the project root for `workspace: "repo"`, `.monomind/orgs/<org>/worktree` for `"worktree"` (recreated from HEAD at every org start), `.monomind/orgs/<org>/workspace` for `"isolated"`, or an absolute path. So `repo` roles can read other orgs' files under the root; `worktree`/`isolated` roles cannot read the root. | `orgrt/policy.ts:206-230`, `daemon.ts:678-711`; §14 |
+| Upfront cost gate (v9) | `org run --budget-usd N` refuses to start when a static estimate exceeds N. The CLI prints its formula (roles × turns × ~2 000 tokens × a hardcoded rate table flagged "stale rates") and caps turns at 30 — the estimate was identical with `max_turns_per_message` 40 and 60. It never bounds actual spend. Live: $2.10 (3 roles) and $2.40 (4 roles) estimated; $1.05–$1.94 per org actually spent in the rehearsal, $0.15–$0.56 in the smoke test. | `org run --help` and its output; §14 |
+| Cross-process delivery (v9) | Three separate `org run` daemons (no `org serve`) in one project root exchanged cross-org `org_send` messages live, in both directions. Agent-originated delivery between daemons works; only the CLI `org inbox` path is broken (C-21). | §14 |
+| Cost tables (v9) | `org report --by-role` and `org costs` list cross-org senders as zero-cost pseudo-roles of the receiving org (live: Forge's table listed Herald's `editor` and `reviewer`). | §14 |
 
 ---
 
@@ -115,6 +126,8 @@ address and as a tool name suffix without a second namespace.
 | U12 | **Human approval stays with the org that acts.** A grant may set `approval: "human"`, in which case the automation call is a monomind sensitive action (added to the role's approval list via `policy.approvalTools`, new) and pauses in that org's approval queue; HIL nodes inside the automation stay mono-agent HIL items and are **never** approvable by an agent role unless explicitly granted `hil_approve` (default: not granted, GUI warns). | Two different human queues (org approvals vs workflow HIL) is an accepted caveat (C-6); merging them is a later UX task, not a semantics change. |
 | U13 | **Secrets never cross the boundary.** Grants reference workflow ids, not credentials; the MCP server runs in the user's own session with vault access, output goes through the existing redaction (`internal/workflow/redact.go`) before returning to the role. Roles never see connection/credential values. | Existing MCP safety property extended unchanged. |
 | U14 | **Phasing is additive and reversible.** No schema removal, no DB drop; every new key is optional; a build without the monomind-side features degrades to today's behaviour with an actionable error (`ErrFeatureNeedsMonomind`, version-gated by `Handshake()` capabilities). | Mirrors the delegation plan's graceful-degradation rule. |
+| U15 | **Runtime visibility reuses the design canvas and one pure event reducer** (v9). Live state (role status, gates, message and cross-org traffic, file drops, chain traces) is derived by `applyEvent(state, org, event)` over bus events the GUI already receives (`StreamOrgEvents`, §3.1), drawn on the existing `OrgCanvas`/`RoleNode` layout, and the same reducer replays a finished run from its logs. | The plan adds chains, hops, endpoint roles, and child orgs that an operator must debug, and C-7 promises "GUI shows chain traces" with no design. A text log does not show who is waiting on whom. Rejected: a separate spectator server with its own tail and push channel (built and run as a demo, §14) — it adds a process (C-17) and a second event pipeline beside the doctrine's `monoagentcli` subprocess path. |
+| U16 | **The GUI auto-approve toggle never resolves human-required items** (v9). It skips approvals for `approvalTools` names (every `approval: human` grant, `org_start`), skips gates unless the operator opts in for that org, and never answers `ask_human` questions with canned text. Skipped items stay in a "needs you" list. | Today the toggle resolves everything (§3.1). Left as is, Phase 2 would silently defeat U12, C-34, and Q5 for any operator who turned it on to stop Bash prompts. Rejected: keep blanket behaviour behind a warning — the toggle's whole purpose is not watching. |
 
 ---
 
@@ -324,14 +337,17 @@ Attached to every bridge crossing as JSON in a reserved field:
    handler: tools/call }`; kill on session end; restart once on crash; every call emits the
    existing `tool` bus event via `policy.decide` (name `mcp__org__<prefix>__<tool>`).
 3. `RolePolicySchema.approvalTools?: string[]` — extra names treated as sensitive by
-   `checkApproval` (U12). Existing `autoApproveTools` semantics unchanged.
+   `checkApproval` (U12). Existing `autoApproveTools` semantics unchanged. **(v9)** Pending
+   approvals join pending gates and questions in the idle watchdog's exemption list
+   (`daemon.ts:1162-1175`), so an org whose role waits on a human-gated grant or `org_start` is
+   not idle-stopped while the human decides (C-41).
 4. `MONOMIND_ORG_RUN=<run id>` and `MONOMIND_ORG_ROLE=<role id>` set in the provider's env so the
    Go side can attribute calls without parsing; the provider passes `{run, role, chain_id}` as
    `_meta.trace` on every `tools/call` and copies `chain_id` into the `tool` bus event's `data`, so
    `bus.jsonl` and `org_bridge_calls` can be joined on one id.
 5. Fence runners: nothing extra — `OrgToolDef` is already runner-agnostic.
 6. Provider lifecycle: spawn **lazily on the role's first granted tool call**, not at session start (an org with 8 roles must not fork 8 idle `monoagentcli` processes); exit after `idle_ms` (default 5 min) and respawn on demand; the Go side keeps no in-memory state a respawn would lose (grant, caps, traces are in SQLite).
-7. **M3 (small, ships with M1)**: when the `x-monomind-cred` header carries the **operator credential**, `receiveRemote()` skips the broker identity check and trusts `fromQualified` as given (a human-authority sender may speak as any local identity, e.g. `growth:publisher-bot` or `workflow:<exec>`); `org inbox` uses it too, fixing its live path (§3.2). Without M3, live delivery from mono-agent is only possible as sender `human` via `/api/human-message`.
+7. **M3 (small, ships with M1)**: when the `x-monomind-cred` header carries the **operator credential**, `receiveRemote()` skips the broker identity check and trusts `fromQualified` as given (a human-authority sender may speak as any local identity, e.g. `growth:publisher-bot` or `workflow:<exec>`); `org inbox` uses it too, fixing its live path (§3.2). Without M3, live delivery from mono-agent is only possible as sender `human` via `/api/human-message`. **(v9)** M3 also stamps one `messageId` on both bus copies of a cross-org message (`cross-org.ts:397-398, 548`), so the bridge and the GUI can dedupe exactly instead of by content (C-43).
 
 ### 7.2 Automation roles (U5)
 
@@ -346,6 +362,9 @@ Attached to every bridge crossing as JSON in a reserved field:
    POST `{orgName, run, from, to, subject, body, messageId}` (bearer from `credential_file` if set); 2xx = "delivered", otherwise queue to `inbox.jsonl` (existing) and
    retry with backoff (3×), then `audit` event `endpoint-unreachable`. Endpoint roles are never
    lazy-spawned, never counted in `max_concurrent_agents`, never respawned, never idle-nudged.
+   **(v9)** A delivery to an endpoint role holds off the org's idle watchdog until its reply
+   arrives or `endpoint.timeout_ms` passes, so a long automation does not get the org stopped
+   while the sender waits (C-41).
 3. Replies come back through `/api/xdeliver` with the operator credential (M3) and
    `fromQualified: "<org>:<endpoint role>"` — the receiving role sees a normal
    `[message from publisher-bot]`. (`org inbox` is not used: §3.2.)
@@ -381,7 +400,7 @@ Attached to every bridge crossing as JSON in a reserved field:
 | `org.run` (exists) | `org_name, task, output_key` | Unchanged; add `trace` propagation into `--task` header and a `wait: false` option that returns the run id. |
 | `org.send` (new) | `org_name, role, subject, message` (templated) | `monoagentcli org send` → live `/api/xdeliver` with operator credential (M3), else offline queue (`inbox.jsonl`, delivered at next org start — receipt says so). Fire-and-forget; output = receipt with `delivered|queued`. Sender identity = `"workflow:<execution short id>"` unless the workflow is an automation role of that org, in which case its role id. |
 | `org.ask` (new) | `org_name, role, question, timeout` | `org.send` + pause (`ErrNodePaused`) until a reply arrives at the bridge addressed `to: "workflow:<execID>:<nodeID>"`. Requires the workflow to be an automation role in that org (so the reply has an address) — validator enforces it. Wake is **event-driven**: the bridge calls `ResumeExecution` when the reply lands; the engine's 3-second resume poll (§3.1) is suppressed for `org.ask`/`org.run` pauses by a `wake_kind` marker on the execution so the node does not spawn `monomind org status` every 3 s (C-34). |
-| `trigger.org` (new) | `org_name?, role?, subject_match?, event_types?` | Two modes: (a) **endpoint mode** — fires on messages delivered to this workflow's endpoint role; (b) **event mode** — subscribes to `org events --follow` (existing `OrgEvents` stream) via the bridge and fires on filtered bus events (`status`, `gate`, `question`, `asset`, `xorg`). Registered by `TriggerManager` like schedule/webhook; needs the daemon. |
+| `trigger.org` (new) | `org_name?, role?, subject_match?, event_types?` | Two modes: (a) **endpoint mode** — fires on messages delivered to this workflow's endpoint role; (b) **event mode** — subscribes to `org events --follow` (existing `OrgEvents` stream) via the bridge and fires on filtered bus events (`status`, `gate`, `question`, `asset`, `xorg`). Registered by `TriggerManager` like schedule/webhook; needs the daemon. **Filter details (v9, §3.2):** `question` takes `question_kind: ask_human \| approval` (default `ask_human`, keyed on `data.questionId` vs `data.action`), because approvals for Bash and every `approval: human` grant are also `question` events (C-45); gate ids come from `data.gateId`; `asset` means "write attempted", and its `data.content` is capped at the 16 KB tool-output bound in trigger data (C-47); a trigger watching several orgs dedupes `xorg` copies from both buses (C-43). |
 
 ### 7.4 Unified Org UI
 
@@ -396,6 +415,20 @@ Attached to every bridge crossing as JSON in a reserved field:
   model sees.
 - Grants matrix view (roles × automations) for orgs with many roles.
 - Group view (holding org): child orgs as collapsed cards with status, cost roll-up, start/stop.
+- **Live view (U15, v9)**: the org canvas gets a Design / Live toggle. Live keeps the saved role
+  positions and recolours `RoleNode` from `status` events (`idle`, `working`, `blocked`,
+  `completed`), marks a role that has a pending gate, animates `message` edges between roles, and
+  drops a file marker on `asset`. It is fed by the existing `StreamOrgEvents` tail, so a single
+  org needs no new Wails binding; the text log stays as the detail pane. Picking a past run in
+  the Overview replays its logs through the same reducer. No scoring or game elements.
+- **Group view live traffic (Phase 6, v9)**: child org cards show live status and draw `xorg`
+  arcs between cards (deduped, C-43). Automation calls and endpoint deliveries draw as edges keyed
+  by `chain_id` (M1 puts it on the `tool` event), with refused hops in red. This is the design for
+  C-7's "GUI shows chain traces".
+- **Waiting items (v9)**: pending approvals and gates show how long they have waited and, until
+  M1's watchdog exemption ships, how long until the org idle-stops (C-41).
+- **Auto-approve (U16, v9)**: the existing toggle skips human-required items and lists them under
+  "needs you" with a count badge on the org.
 - All actions go through `monoagentcli org …` subprocesses (doctrine); the Wails bindings are
   thin wrappers: `SetOrgGrant`, `RemoveOrgGrant`, `AddAutomationRole`, `ListOrgAutomations`,
   `StartOrgGroup`, `OrgGroupStatus`.
@@ -425,7 +458,12 @@ Attached to every bridge crossing as JSON in a reserved field:
   `status` bus event `org stopped` and sends a synthetic summary message to the parent if none
   was sent (event mode of `trigger.org` reused internally).
 - **Budget roll-up** (U11): before `org_start`, sum `org costs` of the parent + children runs in
-  this group run; refuse when over `budget_share × parent budget`.
+  this group run; refuse when over `budget_share × parent budget`. **(v9)** Sum only role ids
+  defined in each org's config, because cost tables also list cross-org senders (C-48). The
+  bridge keeps a running total from `usage` events on the tail it already holds (C-27), so the
+  check does not wait for `org costs`, which stays the reconciliation source (narrows C-19).
+  `budget_share` is never passed as `org run --budget-usd`, an upfront estimate gate that does
+  not bound spend (C-44).
 
 ### 7.6 Process lifecycle
 
@@ -509,6 +547,14 @@ Attached to every bridge crossing as JSON in a reserved field:
 | C-39 | A child org listed by two holding orgs: two initiators, two budget shares, two report-up targets. | Ambiguous ownership. | Validator: a child belongs to at most one holding org per profile (v1); the second `children[]` reference is a validation error naming the first owner. | mono-agent |
 | C-40 | New `trigger_type` values (`org_tool`, `org_message`, `org_event`) on `workflow_executions` — existing GUI/CLI filters and the Logs page assume `manual|schedule|webhook`. | Runs hidden or mislabeled. | Phase 2/4 add the values to the execution list filters, Logs page, and `ref workflow`; unknown values render as their raw string, never hidden. | mono-agent |
 | C-26 | The CI `monomind-smoke` job only runs the version handshake today; nothing in CI runs `monomind org validate` against a config with the new keys. | Passthrough regression (C-13) would go unnoticed on the mono-agent side. | Phase 1 gate extends the job: install pinned monomind, run `org validate` on `testdata/orgs/*.json` golden configs. | mono-agent |
+| C-41 | The idle watchdog does not exempt pending tool approvals or waits on anything outside the org (§3.2). A role paused on an `approval: human` grant or an `org_start` approval, or waiting on an endpoint role's reply or a `wait: false` execution, leaves the org idle. After the nudge cycle (about 2 × `idle_minutes`, 20 min by default) the run is stopped. Verified in source; not reproduced live. | Human-gated calls fail exactly when the operator is slow; long async automations get their org stopped mid-wait. | M1 adds pending approvals to the exemption list (§7.1 item 3); M2 holds off the watchdog during endpoint deliveries (§7.2). Until then, the grant dialog and endpoint-role briefing tell roles to `org_task_block` while waiting, and the GUI shows the idle-stop countdown on waiting items (§7.4). | monomind + mono-agent |
+| C-42 | The GUI auto-approve toggle resolves every pending approval, gate, and `ask_human` question every 4 s (§3.1). | After Phase 2 it would silently approve `approval: human` grants (U12, C-34 side effects) and `org_start` (Q5), and answer agents' real questions with canned text. | U16; Phase 5 gate tests it. | mono-agent |
+| C-43 | Cross-org messages land on both buses with different ids and no shared message id (§3.2). | The C-27 multiplexer, the group view, and any `xorg` counting see each message twice with nothing exact to join on. | Dedupe on (from, to, subject, body hash) within 5 s until M3 stamps a shared `messageId` on both copies (§7.1 item 7). | monomind + mono-agent |
+| C-44 | `org run --budget-usd` is an upfront estimate gate built on a hardcoded rate table the CLI itself flags as stale (§3.2). | Mapping `budget_share` onto it would refuse runs that cost a fraction of the estimate and still not bound actual spend. | U11 ceilings use `usage` events and `org costs` only (§7.5); `org.run` and `org_start` never pass `--budget-usd`. | mono-agent |
+| C-45 | `question` events cover both tool approvals and `ask_human` (§3.2). | A `trigger.org` subscription on `question` fires on every Bash or WebFetch approval and every `approval: human` grant call, not only on agent questions. | `question_kind` filter, default `ask_human` (§7.3). | mono-agent |
+| C-46 | Granted automations run in mono-agent's daemon, outside monomind's role workdir confinement (§3.2). A role confined to its worktree can pass any file path as an automation argument. Inferred from source; not reproduced. | A filesystem confinement bypass through a grant, parallel to the Bash hatch (C-2). | The grant dialog flags workflows whose file-reading or file-writing nodes take paths from trigger input; the grant handler passes the role's workdir as `org.workdir` in trigger data so those nodes can confine to it; SECURITY.md lists this next to C-2. | mono-agent |
+| C-47 | `asset` events are emitted at policy decision time, before the write runs, and a Write carries up to 20 000 chars of the file (§3.2). | `trigger.org` on `asset` can fire for a write that then failed, and copies file contents into trigger data and execution logs. | Document `asset` as "write attempted"; cap its content in trigger data at the 16 KB tool-output bound, through the same redaction path (C-12). | mono-agent |
+| C-48 | Cost tables list cross-org senders as zero-cost pseudo-roles of the receiving org (§3.2). | The group view and the U11 roll-up over-count roles; a holding org's table lists every child boss that reports up. | Roll-up and group view key on role ids from each org's config (§7.5). | mono-agent |
 
 ---
 
@@ -521,11 +567,11 @@ and 6-prep can proceed before any monomind release.
 |---|---|---|
 | **0 — Spec freeze (this doc)** | Decisions U1–U14, schema §6, caveats §9 reviewed hourly until 06:30. Open questions §11 answered or defaulted. | User sign-off on §11 defaults. |
 | **1 — Org model & grants store (mono-agent, M)** | `orgdesign`: `automations[]`, `roles[].automations`, `kind`, `endpoint`, `children`, `federation` typed (not Extra) + validators (§6.1). `internal/orggrant` store + reconcile + migration. CLI `org grant …`, `org automation add|remove|list`. Chat/MCP tools `org_grant_set`, `org_automation_add`. | `go test ./...`; round-trip test: JSON with all new keys survives `orgdesign.Save` and `monomind org validate` (real binary; **extend** the CI `monomind-smoke` job, which today only runs the handshake — C-26); reconcile test: hand-added `tool_providers` entry with unknown grant id is stripped and reported. |
-| **2 — Role → automation tools** | mono-agent: `mcp --grant` thin-client mode (enqueue + watch, `daemon-heartbeat.json`, `daemon_required` error), `automation_<alias>` tools, `automation_status`, `automation_output`, redaction, per-run cap, trace, `trigger_type: org_tool` in filters/Logs (C-40). monomind **M1**: `tool_providers[mcp-stdio]`, `approvalTools`, `MONOMIND_ORG_RUN/ROLE` env, capability flag, passthrough tests (C-13). | Contract test in mono-agent using a fake MCP client (tools/list ⊆ grant); e2e (with `monoagentcli daemon` running): a Claude role and one fence runner (codex) both call `automation_publish_post`, the bus `tool` event and the `org_bridge_calls` row share a `chain_id`, and the call pauses for approval when `approval: human`; with the daemon stopped the call returns `daemon_required` within 1 s; grant revoked mid-run → next call `refused_grant`. |
-| **3 — Workflow → org nodes (mono-agent, M)** | `org.send`, `org.ask`, `trigger.org` (event mode), `org.run` `exclusive`/`wait:false`; `daemon --api` hosting the HTTP API in-process; `wake_kind` event-driven resume; CLI proxies `org serve|stop|pause|resume|send|rename`; trace header. | Node tests with the fake monomind script (`internal/monomind/testdata/fake-monomind.sh` pattern); e2e: schedule-triggered workflow messages a **running** org (under `org serve`) and the recipient's mailbox receives it within 10 s (`org logs` shows `xorg`/`message`), plus the stopped-org case returns `queued`. |
+| **2 — Role → automation tools** | mono-agent: `mcp --grant` thin-client mode (enqueue + watch, `daemon-heartbeat.json`, `daemon_required` error), `automation_<alias>` tools, `automation_status`, `automation_output`, redaction, per-run cap, trace, `trigger_type: org_tool` in filters/Logs (C-40). monomind **M1**: `tool_providers[mcp-stdio]`, `approvalTools`, `MONOMIND_ORG_RUN/ROLE` env, capability flag, passthrough tests (C-13). | Contract test in mono-agent using a fake MCP client (tools/list ⊆ grant); e2e (with `monoagentcli daemon` running): a Claude role and one fence runner (codex) both call `automation_publish_post`, the bus `tool` event and the `org_bridge_calls` row share a `chain_id`, and the call pauses for approval when `approval: human`; with the daemon stopped the call returns `daemon_required` within 1 s; grant revoked mid-run → next call `refused_grant`; **(v9)** with `idle_minutes: 1`, a role left waiting on an `approval: human` call for 5 minutes is not idle-stopped (C-41, needs M1). |
+| **3 — Workflow → org nodes (mono-agent, M)** | `org.send`, `org.ask`, `trigger.org` (event mode), `org.run` `exclusive`/`wait:false`; `daemon --api` hosting the HTTP API in-process; `wake_kind` event-driven resume; CLI proxies `org serve|stop|pause|resume|send|rename`; trace header. | Node tests with the fake monomind script (`internal/monomind/testdata/fake-monomind.sh` pattern); e2e: schedule-triggered workflow messages a **running** org (under `org serve`) and the recipient's mailbox receives it within 10 s (`org logs` shows `xorg`/`message`), plus the stopped-org case returns `queued`; **(v9)** a `trigger.org` subscription on `question` does not fire on a Bash approval (C-45). |
 | **4 — Automation roles** | monomind **M2**: endpoint roles (`kind`, `endpoint`, POST delivery, inbox skip rule C-11). mono-agent: `internal/orgbridge` receiver, vault tokens, reply path, `trigger.org` endpoint mode, engine-offline badge data. | e2e: boss messages `publisher-bot`, workflow runs, reply lands in boss mailbox with `[message from publisher-bot]`; engine down → message queued, delivered after engine start; endpoint id rotation makes the old URL 404; a direct POST with a fabricated `messageId` (no bus event) is refused. |
-| **5 — Unified Org UI (L)** | Sidebar rename, Automations drawer, drag-to-grant, automation role node, inspector sections, grants matrix, effective-tools list, Inbox merge (stretch). All through `monoagentcli` subprocesses. | Vitest render tests for new components; manual walkthrough recorded in `docs/screenshots/`; no Wails binding imports `internal/monomind` (lint grep in CI). |
-| **6 — Multi-org / holding** | Initiator tools in grant mode; `kind: holding`, `children[]`, U9 unique names, U10 limits, U11 roll-up, child→parent report-up, `org group …` CLI, group view UI. monomind **M4** (`federation` in `deliver`/`receiveRemote`, broker `root` tag) — optional for the gate, required before cross-root use is documented as safe. | e2e with two orgs under one `org serve`: hq boss `org_start`s sales (approval pause → approve), sales boss reports up, hq completes; loop test: hq↔sales ping-pong stops at `max_hops` with audited refusals; duplicate-name test refused across two profiles. |
+| **5 — Unified Org UI (L)** | Sidebar rename, Automations drawer, drag-to-grant, automation role node, inspector sections, grants matrix, effective-tools list, Inbox merge (stretch). **(v9)** Live view on the org canvas and run replay through one reducer (U15); auto-approve restricted to non-human items (U16); waiting-item timers (C-41). All through `monoagentcli` subprocesses. | Vitest render tests for new components; manual walkthrough recorded in `docs/screenshots/`; no Wails binding imports `internal/monomind` (lint grep in CI). **(v9)** Reducer tests replay the recorded §14 buses to the expected final role states; with auto-approve on, a Bash approval resolves while an `approval: human` grant call and a gate stay pending (C-42); the live canvas renders after a viewport change without a reload (the demo's canvas did not — §14). |
+| **6 — Multi-org / holding** | Initiator tools in grant mode; `kind: holding`, `children[]`, U9 unique names, U10 limits, U11 roll-up, child→parent report-up, `org group …` CLI, group view UI. **(v9)** Group view live traffic with `xorg` dedupe (C-43) and chain-trace edges (C-7); roll-up from `usage` events keyed on configured roles (C-48). monomind **M4** (`federation` in `deliver`/`receiveRemote`, broker `root` tag) — optional for the gate, required before cross-root use is documented as safe. | e2e with two orgs under one `org serve`: hq boss `org_start`s sales (approval pause → approve), sales boss reports up, hq completes; loop test: hq↔sales ping-pong stops at `max_hops` with audited refusals; duplicate-name test refused across two profiles; **(v9)** the group view and roll-up count each hq→sales message and each role once (C-43, C-48). |
 | **7 — Hardening & docs** | AGENTS.md, `ref org`/`ref api` topics, SECURITY.md (new trust boundary section), templates: "content team with publisher automation", "holding: hq + sales + support". Windows best-effort pass. | `go vet`, `gofmt -l`, all e2e above in CI where a runtime is available (fake runners otherwise); security review checklist §8 signed. |
 
 Dependencies: 2 ← 1 + M1; 3 ← M3 for live delivery (offline-queue mode works without it, and the gate must run against a **running** org — C-21); 4 ← 1, 3 (daemon-hosted API, event-driven resume) + M2 + M3; 6 ← 2, 3; 5 can start after 1 with mocked data. Ship M1+M3 in one monomind release (capability `org-tool-providers`), M2 in the next (`org-endpoint-roles`).
@@ -543,6 +589,8 @@ Dependencies: 2 ← 1 + M1; 3 ← M3 for live delivery (offline-queue mode works
 | Q5 | Should `org_start` require human approval by default? | **Yes** (`approvalTools`), per-child `autoApproveTools` opt-out. |
 | Q6 | How are automation-role endpoints authenticated? | **Capability URL + bus-event check** (C-4); optional 0600 credential file only for non-loopback binds. |
 | Q7 | Should the mono-agent HTTP receiver be a separate listener from `httpapi` (different auth)? | **Same server, separate route group + separate token domain**; simpler ops. |
+| Q8 | May the GUI auto-approve toggle resolve human-required items (`approval: human` grants, `org_start`, gates)? (v9) | **No** (U16); gates only with a per-org opt-in and a warning. |
+| Q9 | How much runtime visualisation is in v1? (v9) | **Single-org live canvas and run replay in Phase 5; cross-org traffic and chain traces in the Phase 6 group view.** No scoring or game elements. |
 
 ---
 
@@ -555,7 +603,14 @@ Dependencies: 2 ← 1 + M1; 3 ← M3 for live delivery (offline-queue mode works
   real `monomind org validate` in CI.
 - E2E (opt-in, needs runtimes): the four scenarios in §10 gates 2/4/6.
 - Security: attempted self-grant via file write (C-3), bearer replay after rotation (C-4/§8),
-  loop bomb (C-7), alias shadowing (C-15), cross-profile same-name (C-9).
+  loop bomb (C-7), alias shadowing (C-15), cross-profile same-name (C-9), auto-approve leaving
+  human-required items pending (C-42), automation argument path outside the role workdir (C-46).
+- Recorded runs (v9): real `bus.jsonl` captures — the six from §14, then one per phase gate — are
+  checked in under `testdata/orgs/runs/` and replayed through the live-view reducer, the
+  `trigger.org` filters, and the C-27 multiplexer. The event shapes §14 turned up (two `question`
+  kinds, `xorg` on both buses, `gateId` under `data`) were invisible to the fake-monomind script,
+  so replaying real captures catches drift the script cannot. Captures are scrubbed before commit:
+  `asset` contents removed, absolute paths replaced.
 
 ---
 
@@ -585,3 +640,44 @@ mono-agent phase degrades gracefully without them. Nothing in this plan has been
 | 2026-09-16 04:30 | v6 | Verified `workflow run --no-wait` + `adoptQueuedExecutions` (CAS on pid 0) and that GUI cancel signals the execution pid: redesigned grant-mode MCP as a **thin client** that enqueues and watches a row instead of running an engine in-process — removes vault/keychain access and engine fan-out from providers (C-22 rewritten) and avoids cancel killing a role's provider (C-38); adds a daemon heartbeat + `daemon_required` error. Added C-39 (child in two holdings), C-40 (new trigger types vs filters); Windows note on `credential_file` (C-14). |
 | 2026-09-16 05:30 | v7 | Verified fences exist only when configured (`daemon.ts:905-932`) → §8 layer 7 pre-fills a fence for orgs with automations; verified `internal/mcp` ignores `_meta` today (§3.1, §7.1). Fixed a design hole: mono-agent is not in monomind's delivery path, so `federation` cannot be enforced in Go — same root is now one trust domain, cross-root filtering becomes monomind M4 (U8, U9, §6.1, §7.5, §8, C-10, Phase 6). Dropped the redundant `org_send` initiator tool (native `org_send` already reaches child orgs). Added `chain_id` on bus `tool` events (M1) and daemon heartbeat liveness rule (§7.6); Phase 2 gate now covers `daemon_required`. |
 | 2026-09-16 06:57 | v8 (final) | Verified boss selection (`daemon.ts:955-957`) and that the Role Inspector already edits `policy` (`RoleInspector.jsx:30,103`). Removed the last two stale references from the federation/org_send rework (§7.5 initiator list, C-9 mitigation). Wrote the closing summary. Review job removed. |
+| 2026-09-16 12:02 | v9 | Added §14 (two live runs of three cross-messaging orgs) and folded its findings in, each re-checked against monomind source. §3.1: the GUI already tails org buses, and its auto-approve toggle resolves every pending item. §3.2: two `question` shapes, `gateId` under `data`, `asset` at decide time, both-bus `xorg`, idle-watchdog exemptions (pending approvals are not exempt), per-mode workdir confinement, `--budget-usd` is an upfront estimate, cost tables list foreign senders, cross-process delivery works without `org serve`. New U15 (live view on the design canvas, one reducer, replay) and U16 (auto-approve never resolves human-required items). M1 watchdog exemption for approvals, M2 watchdog hold during endpoint deliveries, M3 shared `messageId`. `trigger.org` question kinds, asset cap, dedupe. §7.4 live and group-traffic views; §7.5 roll-up from `usage` events. C-41–C-48, Phase 2/3/5/6 deliverables and gates, Q8–Q9, §12 security cases and recorded-run fixtures. |
+
+---
+
+## 14. Evidence from live multi-org runs (Org Arena, 2026-09-16)
+
+Two real runs of three orgs that message each other, under monomind v2.10.30. They were built as a
+spectator demo on branch `worktree-org-arena` (`demo/arena/`: org configs, an event reducer, a map
+page, launch scripts). Nothing in `internal/`, `cmd/`, or `wails-app/` changed.
+
+| Run | Setup | What happened |
+|---|---|---|
+| Smoke test, 08:29–08:35 CEST | `forge` and `anvil` (boss, dev, qa; `workspace: "worktree"`), `herald` (editor, reviewer, writer, judge; `workspace: "repo"`). Three separate `org run` daemons, no `org serve`, `--budget-usd 3` each. Goal: studios ship a `core.delay_until` node, Herald reviews and announces the better one. | Cross-org pitches and replies within seconds, both ways. Both dev roles found `internal/nodes/control/` and wrote a registered node with tests in their worktrees. Herald's boss was idle-nudged. Stopped by a 5-minute timeout before review. Spend $0.56 / $0.44 / $0.15. |
+| Rehearsal, from 09:28 CEST | Same orgs; `max_turns_per_message` 60; `autoApproveTools: ["Bash"]` on hands-on roles; `--budget-usd 5` each. | Both studios submitted to Herald's reviewer, which never read their code (its one `Read` was denied: a guessed absolute path in another checkout) and reviewed from message content. One studio was sent back for a docs file and approved on resubmission. Herald's editor twice refused a studio's request to announce early. At 09:40 the judge scored 96 / 95 and raised a publish gate, which blocked only the judge's tools, including its own `org_send`, while the other roles kept messaging it for status. Anvil's dev hit `error_max_turns` at 60 turns while iterating on tests (Forge's had hit it at 40 in the smoke test). Gate left pending for a human; spend at 10:50 $1.94 / $1.05 / $1.53. |
+
+Checking the demo's map page in a real browser also showed its canvas staying blank after a
+viewport change until reload, because it listened only for the window `resize` event; that is why
+the Phase 5 gate checks the live canvas after a viewport change.
+
+**Where each finding landed in this plan**
+
+| Finding | Landed in |
+|---|---|
+| `question` covers approvals and `ask_human`; `gateId` under `data`; `asset` at decide time with content | §3.2, §7.3, C-45, C-47 |
+| Cross-org messages on both buses, no shared id | §3.2, M3, C-43 |
+| Idle watchdog does not exempt pending approvals or outside waits (source) | §3.2, M1, M2, C-41, Phase 2 gate |
+| GUI auto-approve resolves everything | §3.1, U16, C-42, Q8, Phase 5 |
+| Role file tools confined to a per-mode workdir | §3.2, C-46 |
+| `--budget-usd` is an upfront estimate; actual spend well below it | §3.2, §7.5, C-44 |
+| Cost tables list foreign senders | §3.2, §7.5, C-48 |
+| Separate `org run` daemons deliver cross-org live | §3.2 |
+| A pure reducer over bus events gave correct live state and replayed recorded runs identically; the GUI already has the tail but shows only text | §3.1, U15, §7.4, Q9, §12 |
+
+**Not carried over**: the demo's scoring, achievements, audience voting, and "chaos cards". They
+exist for a live show, not for an operator running their own orgs.
+
+**Captures**: `bus.jsonl` for runs `forge/run-20260916062954-4zyd`, `anvil/run-20260916062958-rblu`,
+`herald/run-20260916062942-t4nn` (smoke test) and `forge/run-20260916072831-s6u2`,
+`anvil/run-20260916072841-y7mg`, `herald/run-20260916072821-sjws` (rehearsal), under
+`.claude/worktrees/org-arena/.monomind/orgs/`. That directory is gitignored and goes away with the
+worktree; copy them into `testdata/orgs/runs/` (scrubbed, §12) before removing it.
