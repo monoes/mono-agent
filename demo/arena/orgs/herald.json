@@ -1,0 +1,83 @@
+{
+  "name": "herald",
+  "goal": "Review both studios' delay-until node submissions, score them, and publish a launch post for the winner once the publish gate is approved.",
+  "status": "stopped",
+  "schedule": null,
+  "run_config": {
+    "max_concurrent_agents": 4,
+    "budget_tokens": 500000,
+    "max_turns_per_message": 60,
+    "workspace": "repo",
+    "idle_minutes": 3,
+    "stale_base_threshold": 0,
+    "max_role_respawns": 2,
+    "respawn_drain_timeout_ms": 30000,
+    "respawn_force_stop_timeout_ms": 5000,
+    "respawn_start_timeout_ms": 60000,
+    "circuit_breaker": {
+      "failure_threshold": 6,
+      "cooldown_ms": 60000
+    },
+    "memory_namespace": "org:herald"
+  },
+  "roles": [
+    {
+      "id": "editor",
+      "title": "Editor in Chief",
+      "type": "boss",
+      "reports_to": null,
+      "responsibilities": [
+        "Decide review order when both forge:cto and anvil:cto pitch for priority",
+        "Assign each studio's submission to the reviewer as it arrives via org_task",
+        "Hand the reviewer's verdict and the judge's score to the writer once the judge approves"
+      ],
+      "adapter_config": {
+        "model": "claude-haiku-4-5-20251001"
+      }
+    },
+    {
+      "id": "reviewer",
+      "title": "Reviewer",
+      "type": "reviewer",
+      "reports_to": "editor",
+      "responsibilities": [
+        "Read the studio's delay-until node from its worktree (.monomind/orgs/forge/worktree or .monomind/orgs/anvil/worktree) plus its test output",
+        "Write a short verdict to docs/arena/verdict-<org>.md: approve or request one specific change",
+        "Send the verdict back to the studio's cto via org_send"
+      ],
+      "adapter_config": {
+        "model": "claude-haiku-4-5-20251001"
+      },
+      "policy": {
+        "autoApproveTools": ["Bash"]
+      }
+    },
+    {
+      "id": "writer",
+      "title": "Staff Writer",
+      "type": "specialist",
+      "reports_to": "editor",
+      "responsibilities": [
+        "Draft a short launch post for the studio the judge scores highest",
+        "Write it to docs/arena/launch.md only after the judge's publish gate is approved"
+      ],
+      "adapter_config": {
+        "model": "claude-haiku-4-5-20251001"
+      }
+    },
+    {
+      "id": "judge",
+      "title": "Judge",
+      "type": "judge",
+      "reports_to": "editor",
+      "responsibilities": [
+        "Score both studios' reviewed submissions on correctness, test coverage, docs, and turnaround speed",
+        "Before instructing the writer to publish, call org_gate with name 'publish-launch-post' and a description of both scores",
+        "Never write code or publish anything yourself; only score and gate"
+      ],
+      "adapter_config": {
+        "model": "claude-fable-5-1"
+      }
+    }
+  ]
+}

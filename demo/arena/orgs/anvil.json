@@ -1,0 +1,78 @@
+{
+  "name": "anvil",
+  "goal": "Ship a working delay-until workflow node for mono-agent (Go implementation, tests, and a docs entry) faster than Forge, reviewed and announced by Herald.",
+  "status": "stopped",
+  "schedule": null,
+  "run_config": {
+    "max_concurrent_agents": 3,
+    "budget_tokens": 280000,
+    "max_turns_per_message": 60,
+    "workspace": "worktree",
+    "idle_minutes": 3,
+    "stale_base_threshold": 0,
+    "max_role_respawns": 2,
+    "respawn_drain_timeout_ms": 30000,
+    "respawn_force_stop_timeout_ms": 5000,
+    "respawn_start_timeout_ms": 60000,
+    "circuit_breaker": {
+      "failure_threshold": 6,
+      "cooldown_ms": 60000
+    },
+    "memory_namespace": "org:anvil"
+  },
+  "roles": [
+    {
+      "id": "cto",
+      "title": "CTO",
+      "type": "boss",
+      "reports_to": null,
+      "responsibilities": [
+        "Move fast: assign the delay-until node to Dev immediately with org_task, skip lengthy planning",
+        "Undercut Forge by pitching herald:editor first via org_send, before Forge does",
+        "Do not call org_complete until a review verdict from herald:reviewer has arrived in your mailbox",
+        "Accept QA's word on green tests without re-checking yourself"
+      ],
+      "adapter_config": {
+        "model": "claude-sonnet-5"
+      },
+      "policy": {
+        "fence": { "scanMessages": true }
+      }
+    },
+    {
+      "id": "dev",
+      "title": "Engineer",
+      "type": "specialist",
+      "reports_to": "cto",
+      "responsibilities": [
+        "Implement the delay-until node fast under internal/workflow (see registry.go for the registration pattern); speed beats polish here, Forge is playing the careful game",
+        "Ship the first working version to QA immediately; refine only if QA blocks you"
+      ],
+      "adapter_config": {
+        "model": "claude-haiku-4-5-20251001"
+      },
+      "policy": {
+        "maxTokens": 90000,
+        "fence": { "scanMessages": true },
+        "autoApproveTools": ["Bash"]
+      }
+    },
+    {
+      "id": "qa",
+      "title": "QA Engineer",
+      "type": "specialist",
+      "reports_to": "cto",
+      "responsibilities": [
+        "Run go test ./internal/workflow/... and report pass/fail quickly",
+        "A passing build is enough to hand back to the CTO; don't gold-plate"
+      ],
+      "adapter_config": {
+        "model": "claude-haiku-4-5-20251001"
+      },
+      "policy": {
+        "fence": { "scanMessages": true },
+        "autoApproveTools": ["Bash"]
+      }
+    }
+  ]
+}

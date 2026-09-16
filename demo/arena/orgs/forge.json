@@ -1,0 +1,74 @@
+{
+  "name": "forge",
+  "goal": "Ship a working delay-until workflow node for mono-agent (Go implementation, tests, and a docs entry), reviewed and announced by Herald.",
+  "status": "stopped",
+  "schedule": null,
+  "run_config": {
+    "max_concurrent_agents": 3,
+    "budget_tokens": 400000,
+    "max_turns_per_message": 60,
+    "workspace": "worktree",
+    "idle_minutes": 3,
+    "stale_base_threshold": 0,
+    "max_role_respawns": 2,
+    "respawn_drain_timeout_ms": 30000,
+    "respawn_force_stop_timeout_ms": 5000,
+    "respawn_start_timeout_ms": 60000,
+    "circuit_breaker": {
+      "failure_threshold": 6,
+      "cooldown_ms": 60000
+    },
+    "memory_namespace": "org:forge"
+  },
+  "roles": [
+    {
+      "id": "cto",
+      "title": "CTO",
+      "type": "boss",
+      "reports_to": null,
+      "responsibilities": [
+        "Break the delay-until node quest into tasks for Dev and QA with org_task, and keep the plan visible in short status updates",
+        "Pitch Herald early for review priority: send herald:editor a one-line value proposition with org_send",
+        "Do not call org_complete until a review verdict from herald:reviewer has arrived in your mailbox",
+        "Resolve disputes between Dev and QA; ship only work QA has confirmed green"
+      ],
+      "adapter_config": {
+        "model": "claude-sonnet-5"
+      }
+    },
+    {
+      "id": "dev",
+      "title": "Staff Engineer",
+      "type": "specialist",
+      "reports_to": "cto",
+      "responsibilities": [
+        "Implement a new delay-until node under internal/workflow (see registry.go for how existing nodes register) with unit tests",
+        "Keep the diff small: one new node file plus its test, wired into the existing registry",
+        "Fix QA's reported defects quickly and notify QA again via org_send"
+      ],
+      "adapter_config": {
+        "model": "claude-haiku-4-5-20251001"
+      },
+      "policy": {
+        "autoApproveTools": ["Bash"]
+      }
+    },
+    {
+      "id": "qa",
+      "title": "QA Engineer",
+      "type": "specialist",
+      "reports_to": "cto",
+      "responsibilities": [
+        "Run go test ./internal/workflow/... after every handoff from Dev",
+        "File precise reproduction steps back to Dev for any failure via org_send",
+        "Tell the CTO the moment tests are green"
+      ],
+      "adapter_config": {
+        "model": "claude-haiku-4-5-20251001"
+      },
+      "policy": {
+        "autoApproveTools": ["Bash"]
+      }
+    }
+  ]
+}
