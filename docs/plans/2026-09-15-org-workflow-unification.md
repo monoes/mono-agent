@@ -923,10 +923,13 @@ Not exercised live (unit, contract, or real-binary tests only): a fence runner (
 grant; the 5-minute idle-watchdog hold; engine-down queueing and redelivery; rotated endpoint 404
 after the grace window; a hop-limit ping-pong loop; decider failure at full.
 
-Observed, outside this plan: monomind's unreleased main streams assistant text as deltas, and
-`monomind.Exec` keeps only the last one in `ResultText`, so `agent.ask` and other `ResultText`
-readers will return fragments once that monomind ships (the released 2.10.30 sends whole
-messages). `monomind org serve` starts a dashboard on port 4242 that outlives it.
+Observed, outside this plan: monomind (2.10.23 and later, including the released 2.10.30)
+streams assistant text as deltas for incremental runtimes, and its `result` event has no `text`,
+although the protocol says it should (monomind issue #245). `monomind.Exec` kept only the last
+delta in `ResultText`, so `agent.ask`, chat, matching evaluation and agent generation returned
+fragments. Fixed on the mono-agent side: when `start` reports `streams_incrementally`, the deltas
+after the last tool call are joined; a `result` with text still wins. `monomind org serve`
+starts a dashboard on port 4242 that outlives it.
 
 **Deviations found while implementing** (also in contracts §9):
 

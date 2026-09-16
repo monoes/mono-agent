@@ -150,8 +150,9 @@ func (d *ModelDecider) Decide(ctx context.Context, p Prompt) (Outcome, error) {
 	if res.Err != nil {
 		return out, fmt.Errorf("decider %s: %s", resolver, res.Err.Error())
 	}
-	// Runtimes stream the reply as assistant deltas, and ResultText holds
-	// only the last one, so the accumulated text is the full reply.
+	// Parse every assistant delta joined first: older mono-agent builds kept
+	// only the last delta in ResultText, and a streamed reply without a
+	// start event still does. ResultText is the fallback.
 	v, err := ParseVerdict(assistant.String(), p.Allowed)
 	if err != nil && strings.TrimSpace(res.ResultText) != "" {
 		if rv, rerr := ParseVerdict(res.ResultText, p.Allowed); rerr == nil {
