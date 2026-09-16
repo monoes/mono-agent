@@ -49,6 +49,20 @@ func TestOrgAutomationRoleLifecycle(t *testing.T) {
 	}
 }
 
+// An alias without an underscore must not become a role id equal to the
+// alias (found in a live run: "formatter").
+func TestAutomationRoleIDNeverEqualsAlias(t *testing.T) {
+	f := newOrgCLIFixture(t)
+	f.mustRun(t, "automation", "add", "growth", "--workflow", f.plainWF, "--alias", "formatter")
+	out := f.mustRun(t, "automation-role", "add", "growth", "--alias", "formatter", "--reports-to", "lead")
+	if id := out["role"].(map[string]interface{})["id"]; id != "formatter-bot" {
+		t.Fatalf("role id = %v", id)
+	}
+	if err := orgdesign.Validate(f.load(t)); err != nil {
+		t.Fatalf("saved org invalid: %v", err)
+	}
+}
+
 func TestOrgAutonomyCommands(t *testing.T) {
 	f := newOrgCLIFixture(t)
 	show := f.mustRun(t, "autonomy", "show", "growth")

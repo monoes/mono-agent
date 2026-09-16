@@ -61,7 +61,7 @@ func newOrgAutomationRoleAddCmd(env *orgEnv) *cobra.Command {
 			if title == "" {
 				title = wf.Name + " (automation)"
 			}
-			id := orgdesign.UniqueRoleID(doc, strings.ReplaceAll(alias, "_", "-"))
+			id := automationRoleID(doc, alias)
 			ep, err := orggrant.NewStore(db.DB).CreateEndpoint(ctx, profileID, doc.Name, id, ref.WorkflowID)
 			if err != nil {
 				return err
@@ -96,6 +96,22 @@ func newOrgAutomationRoleAddCmd(env *orgEnv) *cobra.Command {
 	_ = c.MarkFlagRequired("alias")
 	_ = c.MarkFlagRequired("reports-to")
 	return c
+}
+
+// automationRoleID derives the role id for an automation role from its
+// alias. Role ids and automation aliases share one namespace (C-15), so an
+// alias with no underscore ("formatter") gets a "-bot" suffix, and any id an
+// existing role or alias already uses is numbered.
+func automationRoleID(doc *orgdesign.Doc, alias string) string {
+	base := strings.ReplaceAll(alias, "_", "-")
+	if base == alias {
+		base += "-bot"
+	}
+	id := orgdesign.UniqueRoleID(doc, base)
+	for n := 2; doc.FindAutomation(id) != nil; n++ {
+		id = orgdesign.UniqueRoleID(doc, fmt.Sprintf("%s-%d", base, n))
+	}
+	return id
 }
 
 func firstSentence(s string) string {
