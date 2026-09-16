@@ -24,8 +24,17 @@
 //      setOrgRoleReportsTo calls for each direct child, then a 'reparent'
 //      removal (which is then a no-op reparent since no children remain).
 
+//
+// Automations (plan §7.4): the left panel also hosts the Automations drawer.
+// Dropping an automation on empty canvas creates an automation role
+// (AddAutomationRole); on an agent role it opens the grant dialog
+// (SetOrgGrant). Grants and automation roles never go through
+// UpdateOrgRole — their enforcement lives in the CLI's DB rows (C-3).
+// Design / Live / Grants switches the centre between the editable canvas,
+// the same canvas recoloured from the org's bus (U15), and the grants matrix.
+
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Maximize2, Minimize2, GitBranch, Milestone, RefreshCw, Search, SlidersHorizontal, ChevronLeft, ChevronRight } from 'lucide-react'
+import { GitBranch, Search, SlidersHorizontal, ChevronLeft, ChevronRight, Workflow } from 'lucide-react'
 import { api, onOrgDesignUpdated, notify } from '../../services/api.js'
 import { hydrate, tidyTree, validateStructure, buildTree, wouldCycle } from './orgGraph.js'
 import { suggestIcon, loadIconManifest, CATEGORY_TYPE, iconUrl } from './roleIcons.js'
@@ -34,6 +43,13 @@ import RolePalette from './RolePalette.jsx'
 import RoleInspector from './RoleInspector.jsx'
 import IconPickerModal from './IconPickerModal.jsx'
 import DeleteRoleModal from './DeleteRoleModal.jsx'
+import AutomationsDrawer from './AutomationsDrawer.jsx'
+import GrantDialog from './GrantDialog.jsx'
+import GrantsMatrix from './GrantsMatrix.jsx'
+import DesignerToolbar from './DesignerToolbar.jsx'
+import { isAutomationNode } from './RoleNode.jsx'
+import useOrgAutomations from './useOrgAutomations.js'
+import useOrgActivity from './useOrgActivity.js'
 
 const EDGE_STYLE_KEY = 'od-edge-style'
 const PALETTE_PANEL_OPEN_KEY = 'od-palette-panel-open'
@@ -60,8 +76,14 @@ async function hydrateWithIcons(roles) {
   return nodes
 }
 
-export default function OrgDesigner({ orgName, fullscreen = false, onToggleFullscreen }) {
+export default function OrgDesigner({ orgName, fullscreen = false, onToggleFullscreen, onOpenWorkflow }) {
   const [loading, setLoading] = useState(true)
+  const [viewMode, setViewMode] = useState('design') // 'design' | 'live' | 'matrix'
+  const [liveSource, setLiveSource] = useState('live') // 'live' or a past run id
+  const [runs, setRuns] = useState([])
+  const [leftTab, setLeftTab] = useState('roles') // 'roles' | 'automations'
+  const [grantDialog, setGrantDialog] = useState(null) // { role, automation, grant }
+  const automationData = useOrgAutomations(orgName)
   const [orgMeta, setOrgMeta] = useState(null) // { name, goal, status, schedule, run_config, ... } minus roles
   const [nodes, setNodes] = useState([])
   const [camera, setCamera] = useState({ x: 0, y: 0, zoom: 1 })
@@ -99,6 +121,8 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
 
   const nodesRef = useRef(nodes)
   nodesRef.current = nodes
+  const viewModeRef = useRef(viewMode)
+  viewModeRef.current = viewMode
   const revRef = useRef(null)
   const isInteractingRef = useRef(false)
   const pendingPatchRef = useRef(null) // queued live-update payload while interacting
@@ -115,13 +139,13 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
   const canvasOuterRef = useRef(null)
   const cameraRef = useRef(camera)
   cameraRef.current = camera
-  const ghostRef = useRef(null) // { item }, mirrors ghost state for the mouseup handler closure
-  const [ghost, setGhost] = useState(null) // { item, x, y } — screen coords
+  const ghostRef = useRef(null) // { item, kind }, mirrors ghost state for the mouseup handler closure
+  const [ghost, setGhost] = useState(null) // { item, kind, x, y } — screen coords; kind 'role' | 'automation'
 
   // ── Load ──────────────────────────────────────────────────────────────
-  const load = useCallback(async () => {
+  const load = useCallback(async ({ keepSelection = false } = {}) => {
     if (!orgName) { setOrgMeta(null); setNodes([]); setLoading(false); return }
-    setLoading(true)
+    if (!keepSelection) setLoading(true)
     const res = await api.getOrgDesign(orgName)
     if (!res || !res.org) { setOrgMeta(null); setNodes([]); setLoading(false); return }
     const { roles, ...meta } = res.org
@@ -130,7 +154,7 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
     let hydrated = await hydrateWithIcons(roles || [])
     hydrated = layOutMissingPositions(hydrated)
     setNodes(hydrated)
-    setSelectedId(null)
+    if (!keepSelection) setSelectedId(null)
     setLoading(false)
   }, [orgName])
 
@@ -297,9 +321,40 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
   }, [])
 
   const handlePaletteDragStart = useCallback((item, e) => {
-    ghostRef.current = { item }
-    setGhost({ item, x: e.clientX, y: e.clientY, inBounds: isOverCanvas(e.clientX, e.clientY) })
+    ghostRef.current = { item, kind: 'role' }
+    setGhost({ item, kind: 'role', x: e.clientX, y: e.clientY, inBounds: isOverCanvas(e.clientX, e.clientY) })
   }, [isOverCanvas])
+
+  const handleAutomationDragStart = useCallback((item, e) => {
+    ghostRef.current = { item, kind: 'automation' }
+    setGhost({ item, kind: 'automation', x: e.clientX, y: e.clientY, inBounds: isOverCanvas(e.clientX, e.clientY) })
+  }, [isOverCanvas])
+
+  // ── Automation drop: empty canvas → automation role; agent role → grant ──
+  const handleAutomationDrop = useCallback(async (automation, worldX, worldY, droppedOnNodeId) => {
+    if (!orgName || !automation?.alias) return
+    if (droppedOnNodeId) {
+      const role = nodesRef.current.find(n => n.id === droppedOnNodeId)
+      if (!role) return
+      if (isAutomationNode(role)) { notify('grant automation', 'An automation role cannot hold grants. Drop onto an agent role.'); return }
+      const grant = automationData.grants.find(g => g.role === role.id && g.alias === automation.alias) || null
+      setGrantDialog({ role, automation, grant })
+      return
+    }
+    const parentId = resolveDefaultParent(null)
+    if (!parentId) { notify('add automation role', 'Add a boss role first. An automation cannot be the root.'); return }
+    const res = await api.addAutomationRole(orgName, {
+      alias: automation.alias, reports_to: parentId, title: automation.workflow_name || automation.alias,
+    })
+    if (!res || res.error) { notify('add automation role', res?.error || 'failed to add automation role'); return }
+    const roleId = res.role?.id
+    if (roleId) {
+      const saved = await api.saveOrgLayout(orgName, { [roleId]: { x: worldX, y: worldY, icon: '', color: '' } })
+      if (saved?.rev != null) revRef.current = saved.rev
+    }
+    await Promise.all([load({ keepSelection: true }), automationData.refresh()])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgName, automationData.grants, automationData.refresh])
 
   useEffect(() => {
     const onMove = (e) => {
@@ -308,10 +363,11 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
     }
     const onUp = (e) => {
       if (!ghostRef.current) return
-      const { item } = ghostRef.current
+      const { item, kind } = ghostRef.current
       ghostRef.current = null
       setGhost(null)
       if (!isOverCanvas(e.clientX, e.clientY)) return // released outside the canvas — not a drop
+      if (viewModeRef.current !== 'design') return // Live and Grants views are not drop targets
       const el = canvasOuterRef.current
       const rect = el.getBoundingClientRect()
       const cam = cameraRef.current
@@ -319,7 +375,9 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
       const wy = (e.clientY - rect.top - cam.y) / cam.zoom
       const target = document.elementFromPoint(e.clientX, e.clientY)
       const cardEl = target?.closest?.('[data-od-node-id]')
-      addRoleFromArchetype(item, wx, wy, cardEl?.dataset?.odNodeId || null)
+      const nodeId = cardEl?.dataset?.odNodeId || null
+      if (kind === 'automation') handleAutomationDrop(item, wx, wy, nodeId)
+      else addRoleFromArchetype(item, wx, wy, nodeId)
     }
     document.addEventListener('mousemove', onMove)
     document.addEventListener('mouseup', onUp)
@@ -327,7 +385,7 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
       document.removeEventListener('mousemove', onMove)
       document.removeEventListener('mouseup', onUp)
     }
-  }, [addRoleFromArchetype, isOverCanvas])
+  }, [addRoleFromArchetype, handleAutomationDrop, isOverCanvas])
 
   // ── Canvas node drag → debounced layout save ──────────────────────────
   const handleNodesChange = useCallback((updated) => {
@@ -423,6 +481,15 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
     const node = deleteTarget
     setDeleteTarget(null)
     if (!orgName || !node) return
+    // Automation roles also own an endpoint row in the CLI's DB — remove them
+    // through the CLI so the endpoint URL is revoked with the role.
+    if (isAutomationNode(node)) {
+      const res = await api.removeAutomationRole(orgName, node.id)
+      if (!res || res.error) { notify('delete automation role', res?.error || 'failed to remove automation role'); return }
+      if (selectedId === node.id) setSelectedId(null)
+      await Promise.all([load({ keepSelection: true }), automationData.refresh()])
+      return
+    }
     if (strategy === 'reassign' && reassignToId) {
       const children = nodesRef.current.filter(n => n.parentId === node.id)
       for (const c of children) {
@@ -439,7 +506,38 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
     if (!res || res.error) { notify('delete role', res?.error || 'failed to delete role'); return }
     if (selectedId === node.id) setSelectedId(null)
     refreshFromServer(res)
-  }, [orgName, deleteTarget, selectedId, refreshFromServer])
+  }, [orgName, deleteTarget, selectedId, refreshFromServer, load, automationData])
+
+  // Grant dialog "Deny Bash" (plan §8 layer 8) — a policy patch, which
+  // UpdateOrgRole does accept; the grant itself went through the CLI.
+  const handleDenyBash = useCallback((role) => {
+    const current = nodesRef.current.find(n => n.id === role.id) || role
+    const policy = current.rest?.policy || {}
+    const deny = policy.denyTools || []
+    if (deny.includes('Bash')) return
+    handlePatch(role.id, { policy: { ...policy, denyTools: [...deny, 'Bash'] } })
+  }, [handlePatch])
+
+  const handleGrantSaved = useCallback(async () => {
+    setGrantDialog(null)
+    await automationData.refresh()
+  }, [automationData])
+
+  // ── Live view: runs to replay, and the reducer feed ─────────────────────
+  useEffect(() => {
+    if (viewMode !== 'live' || !orgName) return
+    let cancelled = false
+    api.getOrgReport(orgName, true).then(res => {
+      if (cancelled) return
+      const items = Array.isArray(res?.items) ? res.items : []
+      setRuns(items.map(r => r.run).filter(Boolean))
+    })
+    return () => { cancelled = true }
+  }, [viewMode, orgName])
+  useEffect(() => { setLiveSource('live'); setViewMode('design') }, [orgName])
+
+  const activity = useOrgActivity({ orgName, nodes, enabled: viewMode === 'live', source: liveSource })
+  const engineOffline = automationData.daemonRunning === false
 
   // ── Icon picker ─────────────────────────────────────────────────────────
   const selectedNode = useMemo(() => nodes.find(n => n.id === selectedId) || null, [nodes, selectedId])
@@ -483,62 +581,82 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
     )
   }
 
+  const openAutomations = () => { setLeftTab('automations'); setPaletteOpen(true) }
+  const isLive = viewMode === 'live'
+
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-        <Milestone size={12} style={{ color: 'var(--text-muted)' }} />
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-secondary)' }}>{orgName}</span>
-        {!validation.valid && (
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9.5, color: '#f87171' }}>{validation.errors.length} issue{validation.errors.length === 1 ? '' : 's'}</span>
-        )}
-        {pendingUpdateCount > 0 && (
-          <button
-            onClick={endInteraction}
-            style={{ fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--teal, #00f5d4)', background: 'transparent', border: '1px solid currentColor', borderRadius: 4, padding: '2px 6px', cursor: 'pointer' }}
-          >
-            {pendingUpdateCount} update{pendingUpdateCount === 1 ? '' : 's'} pending
-          </button>
-        )}
-        <div style={{ flex: 1 }} />
-        <button onClick={addCustomRole} title="Define a new role directly (no icon needed)" style={toolbarBtnStyle}>+ Role</button>
-        <button onClick={handleTidy} title="Tidy layout" style={toolbarBtnStyle}>Tidy</button>
-        <button
-          onClick={() => setEdgeStylePersist(edgeStyle === 'bezier' ? 'elbow' : 'bezier')}
-          title="Toggle connector style"
-          style={toolbarBtnStyle}
-        >
-          {edgeStyle === 'bezier' ? 'Curved' : 'Elbow'}
-        </button>
-        <button onClick={load} title="Reload" style={toolbarBtnStyle}><RefreshCw size={11} /></button>
-        {onToggleFullscreen && (
-          <button onClick={onToggleFullscreen} title={fullscreen ? 'Exit fullscreen' : 'Fullscreen'} style={toolbarBtnStyle}>
-            {fullscreen ? <Minimize2 size={11} /> : <Maximize2 size={11} />}
-          </button>
-        )}
-      </div>
+      <DesignerToolbar
+        orgName={orgName}
+        validation={validation}
+        pendingUpdateCount={pendingUpdateCount}
+        onApplyPending={endInteraction}
+        viewMode={viewMode}
+        onViewMode={setViewMode}
+        liveSource={liveSource}
+        runs={runs}
+        onLiveSource={setLiveSource}
+        live={activity}
+        onAddRole={addCustomRole}
+        onTidy={handleTidy}
+        edgeStyle={edgeStyle}
+        onToggleEdgeStyle={() => setEdgeStylePersist(edgeStyle === 'bezier' ? 'elbow' : 'bezier')}
+        onReload={() => { load(); automationData.refresh() }}
+        fullscreen={fullscreen}
+        onToggleFullscreen={onToggleFullscreen}
+        onOpenAutomations={openAutomations}
+      />
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         {paletteOpen ? (
-          <div style={{ width: 220, flexShrink: 0, minHeight: 0, borderRight: '1px solid var(--border)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-            <button onClick={() => setPaletteOpen(false)} title="Collapse role search" style={panelFoldBtnStyle}>
-              <ChevronLeft size={11} /> Collapse
-            </button>
+          <div style={{ width: 240, flexShrink: 0, minHeight: 0, borderRight: '1px solid var(--border)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+              <div role="tablist" aria-label="Left panel" style={{ display: 'flex', flex: 1 }}>
+                {[['roles', 'Roles'], ['automations', 'Automations']].map(([id, label]) => (
+                  <button
+                    key={id}
+                    role="tab"
+                    aria-selected={leftTab === id}
+                    onClick={() => setLeftTab(id)}
+                    style={{ ...panelFoldBtnStyle, flex: 1, borderBottom: leftTab === id ? '2px solid var(--cyan, #00b4d8)' : '2px solid transparent', color: leftTab === id ? 'var(--text)' : 'var(--text-muted)' }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <button onClick={() => setPaletteOpen(false)} title="Collapse panel" aria-label="Collapse panel" style={{ ...panelFoldBtnStyle, borderBottom: 'none' }}>
+                <ChevronLeft size={11} />
+              </button>
+            </div>
             <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex' }}>
-              <RolePalette onDragStart={handlePaletteDragStart} onQuickAdd={quickAddRole} />
+              {leftTab === 'automations' ? (
+                <AutomationsDrawer
+                  orgName={orgName}
+                  automations={automationData.automations}
+                  grants={automationData.grants}
+                  loading={automationData.loading}
+                  error={automationData.error}
+                  onRefresh={automationData.refresh}
+                  onDragStart={handleAutomationDragStart}
+                  onOpenWorkflow={onOpenWorkflow}
+                />
+              ) : (
+                <RolePalette onDragStart={handlePaletteDragStart} onQuickAdd={quickAddRole} />
+              )}
             </div>
           </div>
         ) : (
           <button
             onClick={() => setPaletteOpen(true)}
-            title="Search / add roles"
+            title="Search / add roles and automations"
             style={panelStripStyle('right')}
           >
             <Search size={13} />
           </button>
         )}
 
-        <div ref={canvasOuterRef} style={{ flex: 1, position: 'relative', minWidth: 0 }}>
-          {ghost && (
+        <div ref={canvasOuterRef} style={{ flex: 1, position: 'relative', minWidth: 0, display: 'flex' }}>
+          {ghost && viewMode === 'design' && (
             <div style={{
               position: 'absolute', inset: 6, zIndex: 999, borderRadius: 10,
               border: `2px dashed ${ghost.inBounds ? 'var(--teal, #00f5d4)' : 'rgba(148,163,184,0.35)'}`,
@@ -547,7 +665,16 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
             }} />
           )}
           {loading ? (
-            <div style={{ display: 'flex', justifyContent: 'center', padding: 24 }}><div className="spinner" /></div>
+            <div style={{ display: 'flex', justifyContent: 'center', padding: 24, flex: 1 }}><div className="spinner" /></div>
+          ) : viewMode === 'matrix' ? (
+            <GrantsMatrix
+              orgName={orgName}
+              nodes={nodes}
+              automations={automationData.automations}
+              grants={automationData.grants}
+              onChanged={automationData.refresh}
+              onEditGrant={(role, automation, grant) => setGrantDialog({ role, automation, grant })}
+            />
           ) : (
             <OrgCanvas
               nodes={nodes}
@@ -567,6 +694,11 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
               onEdgeCycleRejected={handleEdgeCycleRejected}
               onRoleDropFromPalette={addRoleFromArchetype}
               onDeleteNode={(id) => setDeleteTarget(nodesRef.current.find(n => n.id === id) || null)}
+              liveState={isLive ? activity.state : null}
+              liveNow={activity.now}
+              readOnly={isLive}
+              engineOffline={engineOffline}
+              onAutomationDrop={handleAutomationDrop}
             />
           )}
         </div>
@@ -585,6 +717,14 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
                 onPromoteToRoot={() => selectedId && handlePromoteToRoot(selectedId)}
                 onOpenIconPicker={() => selectedId && setIconPickerFor(selectedId)}
                 onDelete={() => selectedNode && setDeleteTarget(selectedNode)}
+                orgName={orgName}
+                grants={automationData.grants}
+                automations={automationData.automations}
+                engineOffline={engineOffline}
+                grantsVersion={automationData.version}
+                onGrantsChanged={automationData.refresh}
+                onOpenWorkflow={onOpenWorkflow}
+                onEditGrant={(role, automation, grant) => setGrantDialog({ role, automation, grant })}
               />
             </div>
           </div>
@@ -612,6 +752,17 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
         onConfirm={handleDeleteConfirm}
         onClose={() => setDeleteTarget(null)}
       />
+      <GrantDialog
+        open={!!grantDialog}
+        orgName={orgName}
+        role={grantDialog?.role}
+        automation={grantDialog?.automation}
+        grant={grantDialog?.grant}
+        autonomy={automationData.autonomy}
+        onClose={() => setGrantDialog(null)}
+        onSaved={handleGrantSaved}
+        onDenyBash={handleDenyBash}
+      />
 
       {ghost && (
         <div
@@ -619,24 +770,20 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
             position: 'fixed', left: ghost.x + 12, top: ghost.y - 16, zIndex: 1000,
             pointerEvents: 'none', display: 'flex', alignItems: 'center', gap: 6,
             padding: '4px 8px 4px 4px', borderRadius: 16,
-            background: 'rgba(8,12,20,0.92)', border: '1.5px solid rgba(0,180,216,0.4)',
+            background: 'rgba(8,12,20,0.92)', border: `1.5px solid ${ghost.kind === 'automation' ? 'rgba(167,139,250,0.6)' : 'rgba(0,180,216,0.4)'}`,
             boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
           }}
         >
-          <img src={iconUrl(ghost.item.id)} alt="" style={{ width: 22, height: 22, borderRadius: '50%' }} />
+          {ghost.kind === 'automation'
+            ? <Workflow size={18} color="#a78bfa" style={{ margin: 2 }} />
+            : <img src={iconUrl(ghost.item.id)} alt="" style={{ width: 22, height: 22, borderRadius: '50%' }} />}
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: '#e2e8f0', whiteSpace: 'nowrap' }}>
-            {ghost.item.label}
+            {ghost.kind === 'automation' ? (ghost.item.workflow_name || ghost.item.alias) : ghost.item.label}
           </span>
         </div>
       )}
     </div>
   )
-}
-
-const toolbarBtnStyle = {
-  display: 'flex', alignItems: 'center', gap: 4,
-  fontFamily: 'var(--font-mono)', fontSize: 10, padding: '4px 8px', borderRadius: 'var(--radius)',
-  background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer',
 }
 
 // Collapse button shown inside an expanded palette/inspector panel.
