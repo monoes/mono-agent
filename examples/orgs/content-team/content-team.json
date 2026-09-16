@@ -1,0 +1,31 @@
+{
+  "name": "content-team",
+  "goal": "Write one useful post a day about the product and get it published.",
+  "status": "stopped",
+  "schedule": null,
+  "run_config": {
+    "idle_minutes": 10,
+    "max_hops": 8
+  },
+  "roles": [
+    {
+      "id": "editor",
+      "title": "Editor",
+      "type": "boss",
+      "reports_to": null,
+      "responsibilities": [
+        "Pick the day's topic and brief the writer.",
+        "Review the draft, then send the final text to the publisher automation role and wait for its reply before completing."
+      ]
+    },
+    {
+      "id": "writer",
+      "title": "Writer",
+      "type": "specialist",
+      "reports_to": "editor",
+      "responsibilities": [
+        "Draft the post from the editor's brief in under 200 words and send it back to the editor."
+      ]
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "name": "Publish post",
+  "description": "Send the post text in the text field. Formats the post and sends it to a Slack channel for review before it goes out.",
+  "version": 1,
+  "is_active": false,
+  "nodes": [
+    {
+      "id": "trigger",
+      "type": "trigger.manual",
+      "name": "Start",
+      "position": { "x": 0, "y": 0 },
+      "disabled": false,
+      "config": {}
+    },
+    {
+      "id": "format",
+      "type": "core.set",
+      "name": "Format post",
+      "position": { "x": 260, "y": 0 },
+      "disabled": false,
+      "config": {
+        "assignments": "[{\"field\":\"post\",\"value\":\"{{ $json.text }}{{ $json.input.text }}\"}]",
+        "include_input": false
+      }
+    },
+    {
+      "id": "review",
+      "type": "core.human_in_loop",
+      "name": "Review post",
+      "position": { "x": 520, "y": 0 },
+      "disabled": false,
+      "config": { "readonly_fields": [], "editable_fields": ["post"], "timeout_minutes": 0 }
+    },
+    {
+      "id": "send",
+      "type": "comm.slack",
+      "name": "Send to Slack",
+      "position": { "x": 780, "y": 0 },
+      "disabled": false,
+      "config": {
+        "credential_id": "",
+        "operation": "post_message",
+        "channel": "REPLACE_WITH_CHANNEL_ID",
+        "text": "{{ $json.post }}"
+      }
+    }
+  ],
+  "connections": [
+    { "id": "c1", "source": "trigger", "source_handle": "main", "target": "format", "target_handle": "main" },
+    { "id": "c2", "source": "format", "source_handle": "main", "target": "review", "target_handle": "main" },
+    { "id": "c3", "source": "review", "source_handle": "main", "target": "send", "target_handle": "main" }
+  ]
+}

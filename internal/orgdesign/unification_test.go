@@ -149,6 +149,39 @@ func TestValidateUnification(t *testing.T) {
 	}
 }
 
+// The shipped example orgs stay valid, alone and as a profile.
+func TestExampleOrgsValidate(t *testing.T) {
+	files, err := filepath.Glob(filepath.Join("..", "..", "examples", "orgs", "*", "*.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var docs []*Doc
+	for _, f := range files {
+		raw, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var probe map[string]json.RawMessage
+		if json.Unmarshal(raw, &probe) != nil || probe["roles"] == nil {
+			continue // workflow files
+		}
+		d, err := LoadPath(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := Validate(d); err != nil {
+			t.Errorf("%s: %v", f, err)
+		}
+		docs = append(docs, d)
+	}
+	if len(docs) < 4 {
+		t.Fatalf("found %d example orgs", len(docs))
+	}
+	if errs := ValidateProfileOrgs(docs); len(errs) != 0 {
+		t.Fatalf("example orgs as one profile: %v", errs)
+	}
+}
+
 func TestValidDecisionClass(t *testing.T) {
 	for _, c := range []string{"tool:Bash", "tool:*", "grant:publish_post", "grant:*", "hil:publish_post", "gate", "question", "org_start", "org_complete"} {
 		if !ValidDecisionClass(c) {

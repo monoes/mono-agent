@@ -1,0 +1,16 @@
+{
+  "name": "sales",
+  "goal": "Handle requests from hq about pricing and plans; when the request is answered, report to hq and complete.",
+  "status": "stopped",
+  "schedule": null,
+  "run_config": { "idle_minutes": 10 },
+  "roles": [
+    {
+      "id": "lead",
+      "title": "Sales Lead",
+      "type": "boss",
+      "reports_to": null,
+      "responsibilities": ["Answer the pricing or plan question in the task with concrete options."]
+    }
+  ]
+}

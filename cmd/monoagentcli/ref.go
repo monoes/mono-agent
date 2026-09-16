@@ -1949,7 +1949,8 @@ Subcommands:
   expressions           Template expression syntax and built-in functions
   examples              Common workflow patterns and use cases
   crawling              How to automate scraping on new/custom platforms
-  api                   HTTP/REST API surface (monoagentcli httpapi) — endpoints, auth, status codes`,
+  api                   HTTP/REST API surface (monoagentcli httpapi) — endpoints, auth, status codes
+  org                   Orgs, automations, grants, automation roles, autonomy, holding orgs`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fmt.Println("monoagentcli ref — built-in reference")
 			fmt.Println()
@@ -1965,6 +1966,7 @@ Subcommands:
 			fmt.Fprintln(w, "  examples\tCommon workflow patterns and use cases")
 			fmt.Fprintln(w, "  crawling\tAutomate sites with no built-in node type (custom XPath configs or an AI agent)")
 			fmt.Fprintln(w, "  api\tHTTP/REST API surface (monoagentcli httpapi) — endpoints, auth, status codes")
+			fmt.Fprintln(w, "  org\tOrgs, automations, grants, automation roles, autonomy, holding orgs")
 			w.Flush()
 			fmt.Println()
 			fmt.Println("Example:  monoagentcli ref templates")
@@ -1987,6 +1989,7 @@ Subcommands:
 		refExamplesCmd(),
 		refCrawlingCmd(),
 		refAPICmd(),
+		refOrgCmd(),
 	)
 	return root
 }
@@ -2660,6 +2663,11 @@ ENDPOINTS
     POST /workflows/{id}/deactivate       deactivate a workflow's triggers
     POST /hil/{id}/approve                approve a pending HIL item
     POST /hil/{id}/reject                 reject a pending HIL item
+
+  Served by monoagentcli daemon (on by default), always, with its own auth:
+    POST /org-endpoint/{id}               deliver an org message to an
+                                          automation role (the id is the
+                                          capability; see ref org)
 
   An unregistered mutating path 404s, not 403s — a probe can't tell
   "opted out" from "doesn't exist". Full spec: internal/httpapi/openapi.yaml

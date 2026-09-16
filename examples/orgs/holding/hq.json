@@ -1,0 +1,28 @@
+{
+  "name": "hq",
+  "kind": "holding",
+  "goal": "Handle incoming customer requests by starting sales or support, and summarize what each did.",
+  "status": "stopped",
+  "schedule": null,
+  "run_config": {
+    "idle_minutes": 10,
+    "max_hops": 8,
+    "group_budget_usd": 10
+  },
+  "roles": [
+    {
+      "id": "ceo",
+      "title": "CEO",
+      "type": "boss",
+      "reports_to": null,
+      "responsibilities": [
+        "Read the task, decide whether it is a sales or a support matter, and start that org with org_start and a clear task.",
+        "Wait for the child's report, then summarize the outcome and complete."
+      ]
+    }
+  ],
+  "children": [
+    { "org": "sales", "start": "on_demand", "budget_share": 0.5 },
+    { "org": "support", "start": "on_demand", "budget_share": 0.5 }
+  ]
+}

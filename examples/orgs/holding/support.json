@@ -1,0 +1,16 @@
+{
+  "name": "support",
+  "goal": "Handle support requests from hq; when the issue is resolved or escalated, report to hq and complete.",
+  "status": "stopped",
+  "schedule": null,
+  "run_config": { "idle_minutes": 10 },
+  "roles": [
+    {
+      "id": "lead",
+      "title": "Support Lead",
+      "type": "boss",
+      "reports_to": null,
+      "responsibilities": ["Diagnose the problem in the task and give step-by-step instructions to fix it."]
+    }
+  ]
+}
