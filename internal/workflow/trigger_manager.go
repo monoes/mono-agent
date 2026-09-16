@@ -34,7 +34,7 @@ type TriggerManager struct {
 	triggerFn     func(workflowID string, nodeID string, items []Item)
 	mu            sync.Mutex
 	active        map[string]map[string]*triggerEntry // workflowID → nodeID → entry
-	providers     map[string]TriggerSource          // node type → provider
+	providers     map[string]TriggerSource            // node type → provider
 	logger        zerolog.Logger
 }
 

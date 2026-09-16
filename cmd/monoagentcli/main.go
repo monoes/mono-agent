@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -81,6 +82,28 @@ func main() {
 
 	if err := newRootCmd().ExecuteContext(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		if wantsJSONError(os.Args[1:]) {
+			b, _ := json.Marshal(map[string]string{"error": err.Error()})
+			fmt.Fprintln(os.Stdout, string(b))
+		}
 		os.Exit(exitCodeFor(err))
 	}
+}
+
+// wantsJSONError reports whether a failed command should also print
+// {"error": …} on stdout: `org` commands (whose success output is always
+// JSON) and `status`, when --json is passed. The GUI passes that output
+// straight to the page (contracts §4).
+func wantsJSONError(args []string) bool {
+	hasJSON, sub := false, ""
+	for _, a := range args {
+		if a == "--json" || a == "--json=true" {
+			hasJSON = true
+			continue
+		}
+		if sub == "" && !strings.HasPrefix(a, "-") {
+			sub = a
+		}
+	}
+	return hasJSON && (sub == "org" || sub == "status")
 }
