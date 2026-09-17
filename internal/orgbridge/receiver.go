@@ -334,14 +334,15 @@ type replyJob struct {
 }
 
 // sendReplies answers every finished automation-role run that has not
-// replied yet (the reply's own workflow_out crossing is the marker).
+// replied yet (the reply's own endpoint_reply crossing is the marker; the
+// run's own org.send crossings are workflow_out and do not count).
 func (r *Receiver) sendReplies(ctx context.Context) error {
 	rows, err := r.DB.QueryContext(ctx, `
 		SELECT c.profile_id, c.org_name, c.role_id, c.execution_id, c.chain_id, c.hop
 		FROM org_bridge_calls c JOIN workflow_executions e ON e.id = c.execution_id
 		WHERE c.direction = ? AND c.status = 'ok' AND e.status IN ('SUCCESS', 'FAILED', 'CANCELLED')
 		  AND NOT EXISTS (SELECT 1 FROM org_bridge_calls x WHERE x.execution_id = c.execution_id AND x.direction = ?)`,
-		DirEndpointIn, DirWorkflowOut)
+		DirEndpointIn, DirEndpointReply)
 	if err != nil {
 		return err
 	}
@@ -387,7 +388,7 @@ func (r *Receiver) reply(ctx context.Context, j replyJob) error {
 	_, err = Send(ctx, NewLedger(r.DB), SendRequest{
 		ProfileID: j.profileID, Root: root, Org: targetOrg, To: to, From: j.org + ":" + j.role,
 		Subject: "re: " + subject, Body: body, Trace: Trace{ChainID: j.chainID, Hop: j.hop},
-		OriginOrg: j.org, Direction: DirWorkflowOut, WorkflowID: exec.WorkflowID, ExecutionID: exec.ID,
+		OriginOrg: j.org, Direction: DirEndpointReply, WorkflowID: exec.WorkflowID, ExecutionID: exec.ID,
 	})
 	return err
 }

@@ -134,6 +134,60 @@ func TestReceiverVerifiesDispatchesAndReplies(t *testing.T) {
 	}
 }
 
+// An automation role whose workflow itself sends org messages must still
+// reply to its sender: the workflow's own org.send crossing is not the
+// reply (found in a no-model ping/pong run, where no role ever got a reply
+// from a workflow that used org.send).
+func TestReceiverRepliesWhenWorkflowAlsoSends(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	if _, err := db.Exec(`INSERT INTO workflows (id, name, profile_id, is_active) VALUES ('wf-ping', 'Ping', 'p', 0)`); err != nil {
+		t.Fatal(err)
+	}
+	ep, err := orggrant.NewStore(db).CreateEndpoint(ctx, "p", "h3", "ping-bot", "wf-ping")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := workflow.NewSQLiteWorkflowStore(db)
+	rcv := &Receiver{DB: db, Store: store, RootOf: func(string) string { return t.TempDir() },
+		Mux: NewMux(func(ctx context.Context, _, _, _ string, _ func([]byte)) error { <-ctx.Done(); return nil })}
+	row, err := orggrant.NewStore(db).LookupEndpoint(ctx, ep.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rcv.dispatch(ctx, *row, EndpointDelivery{OrgName: "h3", Run: "run-1", From: "lead", To: "ping-bot", Subject: "start", Body: "start", MessageID: "msg-1"})
+	var execID string
+	if err := db.QueryRow(`SELECT id FROM workflow_executions`).Scan(&execID); err != nil {
+		t.Fatalf("no execution: %v", err)
+	}
+
+	var sent []monomind.InboxMessage
+	inboxFunc = func(_ context.Context, _, name string, msg monomind.InboxMessage) (*monomind.InboxReceipt, error) {
+		sent = append(sent, msg)
+		return &monomind.InboxReceipt{V: 1, Org: name, Delivery: "live"}, nil
+	}
+	t.Cleanup(func() { inboxFunc = monomind.OrgInbox })
+
+	// The run's org.send node messages pong-bot, then the run finishes.
+	if _, err := Send(ctx, NewLedger(db), SendRequest{ProfileID: "p", Root: t.TempDir(), Org: "h3", To: "pong-bot", From: "h3:ping-bot",
+		Subject: "ping", Body: "ping", Trace: Trace{ChainID: "chn_x", Hop: 1}, WorkflowID: "wf-ping", ExecutionID: execID}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE workflow_executions SET status = 'SUCCESS' WHERE id = ?`, execID); err != nil {
+		t.Fatal(err)
+	}
+	sent = nil
+	rcv.Sweep(ctx)
+	if len(sent) != 1 || sent[0].To != "lead" || sent[0].Subject != "re: start" {
+		t.Fatalf("replies after sweep = %+v, want one reply to lead", sent)
+	}
+	sent = nil
+	rcv.Sweep(ctx)
+	if len(sent) != 0 {
+		t.Fatalf("replied twice: %+v", sent)
+	}
+}
+
 func TestReceiverAnswersOrgAsk(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()

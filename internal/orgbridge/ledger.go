@@ -11,10 +11,11 @@ import (
 
 // Crossing directions recorded in org_bridge_calls.
 const (
-	DirRoleTool    = "role_tool"    // a role called a granted automation
-	DirEndpointIn  = "endpoint_in"  // a message reached an automation role
-	DirWorkflowOut = "workflow_out" // a workflow node messaged or started an org
-	DirOrgStart    = "org_start"    // a holding org started a child
+	DirRoleTool      = "role_tool"      // a role called a granted automation
+	DirEndpointIn    = "endpoint_in"    // a message reached an automation role
+	DirWorkflowOut   = "workflow_out"   // a workflow node messaged or started an org
+	DirEndpointReply = "endpoint_reply" // an automation role replied to its sender
+	DirOrgStart      = "org_start"      // a holding org started a child
 )
 
 // Call statuses.

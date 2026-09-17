@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS org_bridge_calls (
   chain_id     TEXT NOT NULL,
   hop          INTEGER NOT NULL,
   origin_org   TEXT NOT NULL,
-  direction    TEXT NOT NULL,                -- role_tool | endpoint_in | workflow_out | org_start
+  direction    TEXT NOT NULL,                -- role_tool | endpoint_in | workflow_out | endpoint_reply | org_start
   org_name     TEXT,
   role_id      TEXT,
   workflow_id  TEXT,
