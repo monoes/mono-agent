@@ -5,10 +5,11 @@ import (
 	"encoding/csv"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 
 	"github.com/monoes/mono-agent/internal/workflow"
-	"github.com/xuri/excelize/v2"
+	"github.com/monoes/mono-agent/internal/xlsx"
 )
 
 // SpreadsheetNode reads or writes CSV/XLSX files.
@@ -96,13 +97,13 @@ func (n *SpreadsheetNode) writeCSV(filePath string, items []workflow.Item, hasHe
 }
 
 func (n *SpreadsheetNode) readXLSX(filePath, sheet string, hasHeader bool) ([]workflow.NodeOutput, error) {
-	xl, err := excelize.OpenFile(filePath)
+	xl, err := xlsx.OpenFile(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("data.spreadsheet read_xlsx: open %q: %w", filePath, err)
 	}
 	defer xl.Close()
 
-	rows, err := xl.GetRows(sheet)
+	rows, err := xl.Rows(sheet)
 	if err != nil {
 		return nil, fmt.Errorf("data.spreadsheet read_xlsx: get rows from sheet %q: %w", sheet, err)
 	}
@@ -112,35 +113,17 @@ func (n *SpreadsheetNode) readXLSX(filePath, sheet string, hasHeader bool) ([]wo
 }
 
 func (n *SpreadsheetNode) writeXLSX(filePath, sheet string, items []workflow.Item, hasHeader bool) ([]workflow.NodeOutput, error) {
-	xl := excelize.NewFile()
-	defer xl.Close()
-
-	// Rename default sheet or create new
-	defaultSheet := xl.GetSheetName(0)
-	if defaultSheet != sheet {
-		xl.SetSheetName(defaultSheet, sheet)
-	}
-
 	rows, headers := itemsToRows(items, hasHeader)
-	rowNum := 1
 
+	sheetRows := make([][]any, 0, len(rows)+1)
 	if hasHeader && len(headers) > 0 {
-		for col, h := range headers {
-			cell, _ := excelize.CoordinatesToCellName(col+1, rowNum)
-			xl.SetCellValue(sheet, cell, h)
-		}
-		rowNum++
+		sheetRows = append(sheetRows, toAnyRow(headers))
 	}
-
 	for _, row := range rows {
-		for col, val := range row {
-			cell, _ := excelize.CoordinatesToCellName(col+1, rowNum)
-			xl.SetCellValue(sheet, cell, val)
-		}
-		rowNum++
+		sheetRows = append(sheetRows, toAnyRow(row))
 	}
 
-	if err := xl.SaveAs(filePath); err != nil {
+	if err := xlsx.WriteFile(filePath, sheet, sheetRows); err != nil {
 		return nil, fmt.Errorf("data.spreadsheet write_xlsx: save %q: %w", filePath, err)
 	}
 
@@ -192,9 +175,14 @@ func itemsToRows(items []workflow.Item, hasHeader bool) ([][]string, []string) {
 		return nil, nil
 	}
 
-	// Collect all unique keys to form stable headers
-	keyOrder := make([]string, 0)
+	// Collect all unique keys to form stable headers. Ranging a map yields
+	// its keys in a random order, so the columns have to be sorted or the
+	// same items write different column orders from run to run. Items read
+	// back without a header are keyed by column index ("0", "1", … "10"),
+	// which must stay in numeric order rather than lexical, or column 10
+	// would land between 1 and 2.
 	keySet := make(map[string]bool)
+	keyOrder := make([]string, 0)
 	for _, item := range items {
 		for k := range item.JSON {
 			if !keySet[k] {
@@ -203,6 +191,17 @@ func itemsToRows(items []workflow.Item, hasHeader bool) ([][]string, []string) {
 			}
 		}
 	}
+	sort.Slice(keyOrder, func(i, j int) bool {
+		a, aErr := strconv.Atoi(keyOrder[i])
+		b, bErr := strconv.Atoi(keyOrder[j])
+		if aErr == nil && bErr == nil {
+			return a < b
+		}
+		if aErr == nil != (bErr == nil) {
+			return aErr == nil // numeric columns first, then named ones
+		}
+		return keyOrder[i] < keyOrder[j]
+	})
 
 	rows := make([][]string, 0, len(items))
 	for _, item := range items {
@@ -216,4 +215,15 @@ func itemsToRows(items []workflow.Item, hasHeader bool) ([][]string, []string) {
 	}
 
 	return rows, keyOrder
+}
+
+// toAnyRow widens a row of cell text for the xlsx writer. itemsToRows has
+// already rendered every value as a string, so cells are written as text —
+// the same as before, when excelize was handed strings too.
+func toAnyRow(row []string) []any {
+	out := make([]any, len(row))
+	for i, v := range row {
+		out[i] = v
+	}
+	return out
 }

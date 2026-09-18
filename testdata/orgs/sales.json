@@ -1,0 +1,16 @@
+{
+  "name": "sales",
+  "goal": "Handle requests from hq; when idle, complete.",
+  "status": "stopped",
+  "schedule": null,
+  "roles": [
+    {
+      "id": "lead",
+      "title": "Sales Lead",
+      "type": "boss",
+      "reports_to": null,
+      "responsibilities": ["Answer hq."]
+    }
+  ],
+  "autonomy": { "level": "mid", "decider": { "kind": "parent", "fallback": "model" } }
+}

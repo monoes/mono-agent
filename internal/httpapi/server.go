@@ -76,6 +76,12 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("httpapi: listen on %s: %w", s.addr, err)
 	}
+	return s.Serve(ctx, ln)
+}
+
+// Serve serves on an already-bound listener until ctx is cancelled, then
+// gracefully shuts down.
+func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	httpSrv := &http.Server{
 		Handler:      s.mux,
 		ReadTimeout:  30 * time.Second,
@@ -122,6 +128,10 @@ func (s *Server) routes() *http.ServeMux {
 		mux.Handle("POST /workflows/{id}/deactivate", s.auth(s.handleWorkflowDeactivate))
 		mux.Handle("POST /hil/{id}/approve", s.auth(s.handleHilApprove))
 		mux.Handle("POST /hil/{id}/reject", s.auth(s.handleHilReject))
+	}
+
+	if s.opts.ExtraRoutes != nil {
+		s.opts.ExtraRoutes(mux)
 	}
 
 	return mux

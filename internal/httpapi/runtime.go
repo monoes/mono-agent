@@ -16,6 +16,8 @@ import (
 	"sync"
 	"time"
 
+	"net/http"
+
 	"github.com/rs/zerolog"
 
 	"github.com/monoes/mono-agent/internal/ai"
@@ -50,6 +52,20 @@ type Options struct {
 	AllowMutations bool
 	// Version is reported by /health.
 	Version string
+
+	// DB, Store, and Engine let a host process (`monoagentcli daemon`) serve
+	// the API over its own database and already-running engine instead of
+	// opening a second one: two engines in one process would race to adopt
+	// the same queued executions. The host owns their lifecycle; Close
+	// leaves them open.
+	DB     *storage.Database
+	Store  *workflow.HybridWorkflowStore
+	Engine *workflow.WorkflowEngine
+
+	// ExtraRoutes registers routes with their own authentication (the
+	// automation-role endpoint receiver). They are registered whether or
+	// not AllowMutations is set.
+	ExtraRoutes func(mux *http.ServeMux)
 }
 
 // runtime holds the lazily-bootstrapped database, profile, store, and (on
@@ -65,6 +81,7 @@ type runtime struct {
 	registry  *workflow.NodeTypeRegistry
 	engine    *workflow.WorkflowEngine
 	sched     *scheduler.Scheduler
+	hosted    bool // DB and engine belong to the host process
 
 	// mu guards the lazy engine/registry/scheduler bootstrap: HTTP
 	// requests are handled concurrently, so several mutating requests may
@@ -131,6 +148,17 @@ func migrateProfilesToPerProfileKeys(ctx context.Context, db *sql.DB) {
 // profile, and builds the hybrid workflow store. Mirrors internal/mcp's
 // newRuntime.
 func newRuntime(opts Options) (*runtime, error) {
+	if opts.DB != nil {
+		profile := opts.Profile
+		if profile == "" {
+			profile = "default"
+		}
+		store := opts.Store
+		if store == nil {
+			store = workflow.NewHybridWorkflowStore(nil, workflow.NewSQLiteWorkflowStore(opts.DB.DB))
+		}
+		return &runtime{db: opts.DB, profileID: profile, store: store, engine: opts.Engine, hosted: true}, nil
+	}
 	dbPath := opts.DBPath
 	if dbPath == "" {
 		dbPath = "~/.monoagent/monoagent.db"
@@ -221,6 +249,10 @@ func (rt *runtime) Close() {
 	}
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
+	if rt.hosted {
+		rt.engine, rt.db = nil, nil
+		return
+	}
 	if rt.engine != nil {
 		_ = rt.engine.Stop()
 		rt.engine = nil

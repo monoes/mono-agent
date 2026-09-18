@@ -233,6 +233,83 @@ paths:
         "200": { description: Rejected }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /org-endpoint/{id}:
+    post:
+      operationId: deliverToAutomationRole
+      summary: Deliver an org message to an automation role (served by monoagentcli daemon)
+      description: >
+        Called by monomind when a role messages an automation role. Not
+        bearer-token protected: the endpoint id in the path is the
+        capability. Non-loopback callers must send the endpoint's
+        credential file contents as a bearer. The workflow starts only after
+        a bus event with the same messageId, addressed to that role, confirms
+        the message went through the org; unconfirmed deliveries are refused
+        after a minute. Registered whether or not mutations are allowed.
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, pattern: "^ep_[a-z2-7]{26}$" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [orgName, from, to, messageId]
+              properties:
+                orgName: { type: string }
+                run: { type: string }
+                from: { type: string, description: "Sender, role or org:role" }
+                to: { type: string, description: "The automation role, role or org:role" }
+                subject: { type: string }
+                body: { type: string }
+                messageId: { type: string }
+      responses:
+        "200":
+          description: Duplicate of a message already dispatched
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accepted: { type: boolean }
+                  duplicate: { type: boolean }
+        "202":
+          description: Accepted; verified is false until the bus event arrives
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accepted: { type: boolean }
+                  verified: { type: boolean }
+        "400":
+          description: Body is not a delivery, or lacks from or messageId
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          description: Missing or wrong credential for an endpoint that has one
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: Non-loopback caller for an endpoint without a credential file
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Unknown or revoked endpoint, or the delivery names another org or role
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: The endpoint's credential file is missing or not mode 0600
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 components:
   securitySchemes:
     bearerAuth:

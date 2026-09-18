@@ -100,7 +100,7 @@ github.com/monoes/mono-agent/
 │       │   ├── html.go                — data.html (goquery)
 │       │   ├── xml.go                 — data.xml (encoding/xml)
 │       │   ├── markdown.go            — data.markdown (goldmark)
-│       │   ├── spreadsheet.go         — data.spreadsheet (excelize)
+│       │   ├── spreadsheet.go         — data.spreadsheet (encoding/csv, internal/xlsx)
 │       │   ├── compression.go         — data.compression (compress/gzip, archive/zip)
 │       │   └── write_binary_file.go   — data.write_binary_file
 │       ├── http/
@@ -1961,7 +1961,6 @@ go get github.com/dop251/goja@latest                    # core.code: JavaScript 
 # Data nodes
 go get github.com/PuerkitoBio/goquery@latest            # data.html: HTML parsing
 go get github.com/yuin/goldmark@latest                  # data.markdown: Markdown→HTML
-go get github.com/xuri/excelize/v2@latest               # data.spreadsheet: XLSX read/write
 
 # HTTP/System nodes
 go get github.com/jlaffaye/ftp@latest                   # http.ftp
@@ -1995,7 +1994,6 @@ cd /Users/morteza/Desktop/monoes/mono-agent/newmonoes
 go get github.com/dop251/goja@latest
 go get github.com/PuerkitoBio/goquery@latest
 go get github.com/yuin/goldmark@latest
-go get github.com/xuri/excelize/v2@latest
 go get github.com/jlaffaye/ftp@latest
 go get golang.org/x/crypto@latest
 go get github.com/mmcdole/gofeed@latest
@@ -2093,7 +2091,7 @@ Waves are ordered by dependency. Items within a wave can be implemented in paral
 | W5-C | `internal/nodes/data/html.go` | `data.html`: parse with goquery, CSS selector extract, attribute extract, generate HTML |
 | W5-D | `internal/nodes/data/xml.go` | `data.xml`: parse XML → map, map → XML marshal via encoding/xml |
 | W5-E | `internal/nodes/data/markdown.go` | `data.markdown`: goldmark Markdown→HTML conversion |
-| W5-F | `internal/nodes/data/spreadsheet.go` | `data.spreadsheet`: read CSV (encoding/csv), read/write XLSX (excelize) |
+| W5-F | `internal/nodes/data/spreadsheet.go` | `data.spreadsheet`: read CSV (encoding/csv), read/write XLSX (internal/xlsx) |
 | W5-G | `internal/nodes/data/compression.go` | `data.compression`: gzip/zip compress and decompress (stdlib compress/gzip, archive/zip) |
 | W5-H | `internal/nodes/data/write_binary_file.go` | `data.write_binary_file`: write base64-decoded or raw bytes to file path |
 | W5-I | `internal/nodes/http/request.go` | `http.request`: full HTTP client — method, URL, headers, body (JSON/form/text), basic/bearer/API-key auth, follow redirects, response as item |

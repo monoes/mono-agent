@@ -1,0 +1,241 @@
+package orgbridge
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+// Crossing directions recorded in org_bridge_calls.
+const (
+	DirRoleTool      = "role_tool"      // a role called a granted automation
+	DirEndpointIn    = "endpoint_in"    // a message reached an automation role
+	DirWorkflowOut   = "workflow_out"   // a workflow node messaged or started an org
+	DirEndpointReply = "endpoint_reply" // an automation role replied to its sender
+	DirOrgStart      = "org_start"      // a holding org started a child
+)
+
+// Call statuses.
+const (
+	StatusOK            = "ok"
+	StatusRefusedHops   = "refused_hops"
+	StatusRefusedRepeat = "refused_repeat"
+	StatusRefusedGrant  = "refused_grant"
+	StatusRefusedCap    = "refused_cap"
+	StatusError         = "error"
+)
+
+// Ceilings on what an org may raise loop control to. run_config.max_hops
+// and max_repeats come from the org JSON, which any role whose fileWrite
+// reaches .monomind/ can edit (C-3, C-54), so a role could otherwise
+// disarm U10 by writing a huge number into its own org file.
+const (
+	MaxHopsCeiling    = 32
+	MaxRepeatsCeiling = 200
+)
+
+// Limits bound chains (U10). Zero fields take defaults; values above the
+// ceilings are clamped.
+type Limits struct {
+	MaxHops    int           // default 8, at most MaxHopsCeiling
+	MaxRepeats int           // same target within Window; default 20, at most MaxRepeatsCeiling
+	Window     time.Duration // default 1 minute
+}
+
+func (l Limits) withDefaults() Limits {
+	if l.MaxHops <= 0 {
+		l.MaxHops = 8
+	} else if l.MaxHops > MaxHopsCeiling {
+		l.MaxHops = MaxHopsCeiling
+	}
+	if l.MaxRepeats <= 0 {
+		l.MaxRepeats = 20
+	} else if l.MaxRepeats > MaxRepeatsCeiling {
+		l.MaxRepeats = MaxRepeatsCeiling
+	}
+	if l.Window <= 0 {
+		l.Window = time.Minute
+	}
+	return l
+}
+
+// Call describes one crossing.
+type Call struct {
+	ProfileID   string
+	Trace       Trace // header as received; Hop is advisory
+	OriginOrg   string
+	Direction   string
+	OrgName     string
+	RoleID      string
+	WorkflowID  string
+	ExecutionID string
+	GrantID     string
+	EndpointID  string
+	RunID       string
+}
+
+// Admission is the outcome of Ledger.Admit.
+type Admission struct {
+	ID     string // org_bridge_calls row id
+	Trace  Trace  // chain and the hop this crossing is at
+	Status string // StatusOK or a refusal
+	Reason string // human-readable refusal
+}
+
+// OK reports whether the crossing may proceed.
+func (a Admission) OK() bool { return a.Status == StatusOK }
+
+// Ledger is the org_bridge_calls audit and loop-control table.
+type Ledger struct {
+	db  *sql.DB
+	now func() time.Time
+}
+
+// NewLedger returns a Ledger over db (migration 041 applied). A nil db
+// gives a ledger that admits everything and records nothing — node tests
+// and callers without a database.
+func NewLedger(db *sql.DB) *Ledger { return &Ledger{db: db, now: time.Now} }
+
+// Admit records one crossing and decides whether it may proceed. The hop
+// is never lowered by the header a caller supplies — a role can write any
+// trace line into a message — so hop = max(header hop, highest hop already
+// recorded for the chain) + 1. The repeat limit counts crossings to the
+// same target in the window regardless of chain, because a chain id can be
+// forged fresh on every call but the target cannot.
+func (l *Ledger) Admit(ctx context.Context, c Call, lim Limits) (Admission, error) {
+	lim = lim.withDefaults()
+	tr := c.Trace
+	if tr.ChainID == "" {
+		tr = NewTrace()
+	}
+	if l.db == nil {
+		return Admission{Trace: Trace{ChainID: tr.ChainID, Hop: tr.Hop + 1}, Status: StatusOK}, nil
+	}
+	var recorded sql.NullInt64
+	if err := l.db.QueryRowContext(ctx,
+		`SELECT MAX(hop) FROM org_bridge_calls WHERE profile_id = ? AND chain_id = ?`,
+		c.ProfileID, tr.ChainID).Scan(&recorded); err != nil {
+		return Admission{}, fmt.Errorf("orgbridge: ledger: %w", err)
+	}
+	hop := tr.Hop
+	if recorded.Valid && int(recorded.Int64) > hop {
+		hop = int(recorded.Int64)
+	}
+	hop++
+	adm := Admission{ID: uuid.NewString(), Trace: Trace{ChainID: tr.ChainID, Hop: hop}, Status: StatusOK}
+
+	if hop > lim.MaxHops {
+		adm.Status = StatusRefusedHops
+		adm.Reason = fmt.Sprintf("chain %s reached hop %d, over the limit of %d — this looks like a loop between orgs and automations", tr.ChainID, hop, lim.MaxHops)
+	} else {
+		since := l.now().Add(-lim.Window).UTC().Format(time.RFC3339Nano)
+		var n int
+		if err := l.db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM org_bridge_calls
+			 WHERE profile_id = ? AND direction = ? AND COALESCE(org_name,'') = ? AND COALESCE(role_id,'') = ?
+			   AND COALESCE(workflow_id,'') = ? AND status = 'ok' AND created_at >= ?`,
+			c.ProfileID, c.Direction, c.OrgName, c.RoleID, c.WorkflowID, since).Scan(&n); err != nil {
+			return Admission{}, fmt.Errorf("orgbridge: ledger: %w", err)
+		}
+		if n >= lim.MaxRepeats {
+			adm.Status = StatusRefusedRepeat
+			adm.Reason = fmt.Sprintf("%d calls to the same target in the last %s (limit %d) — slow down or raise run_config.max_repeats", n, lim.Window, lim.MaxRepeats)
+		}
+	}
+	if err := l.insert(ctx, adm.ID, c, adm.Trace, adm.Status); err != nil {
+		return Admission{}, err
+	}
+	return adm, nil
+}
+
+// Refuse records a crossing refused before admission (grant revoked, cap
+// reached).
+func (l *Ledger) Refuse(ctx context.Context, c Call, status string) error {
+	if l.db == nil {
+		return nil
+	}
+	tr := c.Trace
+	if tr.ChainID == "" {
+		tr = NewTrace()
+	}
+	return l.insert(ctx, uuid.NewString(), c, tr, status)
+}
+
+// SetStatus updates a recorded crossing (e.g. to error after admission).
+func (l *Ledger) SetStatus(ctx context.Context, id, status string) error {
+	if l.db == nil {
+		return nil
+	}
+	_, err := l.db.ExecContext(ctx, `UPDATE org_bridge_calls SET status = ? WHERE id = ?`, status, id)
+	return err
+}
+
+// SetExecution attaches the execution a crossing started.
+func (l *Ledger) SetExecution(ctx context.Context, id, executionID string) error {
+	if l.db == nil {
+		return nil
+	}
+	_, err := l.db.ExecContext(ctx, `UPDATE org_bridge_calls SET execution_id = ? WHERE id = ?`, executionID, id)
+	return err
+}
+
+func (l *Ledger) insert(ctx context.Context, id string, c Call, tr Trace, status string) error {
+	origin := c.OriginOrg
+	if origin == "" {
+		origin = c.OrgName
+	}
+	_, err := l.db.ExecContext(ctx,
+		`INSERT INTO org_bridge_calls (id, profile_id, chain_id, hop, origin_org, direction, org_name, role_id,
+		   workflow_id, execution_id, grant_id, endpoint_id, run_id, status, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, c.ProfileID, tr.ChainID, tr.Hop, origin, c.Direction, nullStr(c.OrgName), nullStr(c.RoleID),
+		nullStr(c.WorkflowID), nullStr(c.ExecutionID), nullStr(c.GrantID), nullStr(c.EndpointID), nullStr(c.RunID),
+		status, l.now().UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return fmt.Errorf("orgbridge: record crossing: %w", err)
+	}
+	return nil
+}
+
+// CountGrantCalls counts admitted calls of a grant — in one org run when
+// runID is set, else since the given time.
+func (l *Ledger) CountGrantCalls(ctx context.Context, grantID, runID string, since time.Time) (int, error) {
+	if l.db == nil {
+		return 0, nil
+	}
+	var n int
+	var err error
+	if runID != "" {
+		err = l.db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM org_bridge_calls WHERE grant_id = ? AND run_id = ? AND status = 'ok'`,
+			grantID, runID).Scan(&n)
+	} else {
+		err = l.db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM org_bridge_calls WHERE grant_id = ? AND status = 'ok' AND created_at >= ?`,
+			grantID, since.UTC().Format(time.RFC3339Nano)).Scan(&n)
+	}
+	return n, err
+}
+
+// HasCrossing reports whether an execution already made a crossing of
+// direction into org (org.run's exclusive check).
+func (l *Ledger) HasCrossing(ctx context.Context, executionID, direction, org string) (bool, error) {
+	if l.db == nil {
+		return false, nil
+	}
+	var n int
+	err := l.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM org_bridge_calls WHERE execution_id = ? AND direction = ? AND org_name = ? AND status = 'ok'`,
+		executionID, direction, org).Scan(&n)
+	return n > 0, err
+}
+
+func nullStr(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
+}

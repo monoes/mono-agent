@@ -36,6 +36,19 @@ if [ "$1" = "agent" ] && [ "$2" = "exec" ] && [ "$FAKE_MODE" = "no_result_text" 
   exit 0
 fi
 
+if [ "$1" = "agent" ] && [ "$2" = "exec" ] && [ "$FAKE_MODE" = "streamed_deltas" ]; then
+  # monomind 2.10.23+ for an incremental runtime: the reply arrives as
+  # assistant deltas and the result event has no text.
+  echo '{"v":1,"type":"start","runtime":"claude","cwd":"/app","pid":4214,"streams_incrementally":true}'
+  echo '{"v":1,"type":"session","session_id":"th_fake_streamed"}'
+  echo '{"v":1,"type":"assistant","text":"{\"ok\""}'
+  echo '{"v":1,"type":"assistant","text":": tr"}'
+  echo '{"v":1,"type":"assistant","text":"ue}"}'
+  echo '{"v":1,"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","input_tokens":2,"output_tokens":9,"cost_usd":0.001}'
+  echo '{"v":1,"type":"done","exit_code":0}'
+  exit 0
+fi
+
 if [ "$1" = "agent" ] && [ "$2" = "exec" ]; then
   # Drain flags; the prompt value is irrelevant to the script.
   echo '{"v":1,"type":"start","runtime":"claude","cwd":"/app","pid":4212}'

@@ -1,13 +1,19 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
-  X, RefreshCw, Building2, CheckCircle2, XCircle, Circle, Network, Maximize2, Minimize2, Plus,
-  MessageCircleQuestion, ShieldAlert, Coins, GitBranch, ScrollText, ListTree, Play, Loader2, KeyRound,
+  X, RefreshCw, Building2, Circle, Network, Maximize2, Plus,
+  Coins, GitBranch, ScrollText, ListTree, Play, Loader2, UserCheck, Gavel, Boxes,
   ChevronLeft, ChevronRight,
 } from 'lucide-react'
 import { api, onOrgEvent, onOrgEventsClosed, onOrgDesignUpdated, onOrgRunStatus, notify } from '../services/api.js'
 import OrgDesigner from './orgdesigner/OrgDesigner.jsx'
 import { KVBlock } from './KVBlock.jsx'
 import MonomindInitPrompt from './MonomindInitPrompt.jsx'
+import AutonomyBar from './orgs/AutonomyBar.jsx'
+import NeedsYouPanel from './orgs/NeedsYouPanel.jsx'
+import DecisionsFeed from './orgs/DecisionsFeed.jsx'
+import GroupView from './orgs/GroupView.jsx'
+import useNeedsYouCounts from './orgs/useNeedsYouCounts.js'
+import { Badge, Chip } from './orgs/ui.jsx'
 
 // Fold button shown atop the expanded org-list panel — mirrors
 // OrgDesigner.jsx's panelFoldBtnStyle for visual consistency between the
@@ -33,14 +39,20 @@ function panelStripStyle(borderSide) {
     : { ...base, borderLeft: '1px solid var(--border)' }
 }
 
+// `needs` replaces the old Approvals tab (its auto-approve toggle is gone —
+// C-42; autonomy levels resolve decisions in the daemon instead). `decisions`
+// is the autonomy decision log; monomind's own decision trace moved to
+// `trace`. `group` only shows for holding orgs.
 const TABS = [
   { id: 'design',     label: 'Design',     icon: Network },
   { id: 'overview',   label: 'Overview',   icon: Circle },
-  { id: 'approvals',  label: 'Approvals',  icon: ShieldAlert },
+  { id: 'group',      label: 'Group',      icon: Boxes, holdingOnly: true },
+  { id: 'needs',      label: 'Needs you',  icon: UserCheck },
+  { id: 'decisions',  label: 'Decisions',  icon: Gavel },
   { id: 'logs',       label: 'Logs',       icon: ScrollText },
   { id: 'costs',      label: 'Costs',      icon: Coins },
   { id: 'flow',       label: 'Flow',       icon: GitBranch },
-  { id: 'decisions',  label: 'Decisions',  icon: ListTree },
+  { id: 'trace',      label: 'Trace',      icon: ListTree },
 ]
 
 function statusColor(status) {
@@ -60,16 +72,6 @@ function itemsOf(payload) {
   if (Array.isArray(payload.items)) return payload.items
   if (Array.isArray(payload)) return payload
   return []
-}
-
-// The merged Approvals tab's three source shapes each identify an item
-// differently — questions/gates have a real id field, but approvals.json
-// entries don't (they're keyed by role+action instead).
-function approvalItemId(item, index) {
-  if (item.kind === 'question') return item.questionId || String(index)
-  if (item.kind === 'gate') return item.id || String(index)
-  if (item.kind === 'approval') return `${item.roleId}:${item.action}`
-  return String(index)
 }
 
 // The org's actual deliverable (the post/document/answer it produced) isn't
@@ -149,7 +151,6 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
   const [data, setData] = useState({}) // { [tab]: payload }
   const [tabLoading, setTabLoading] = useState(false)
   const [events, setEvents] = useState([])
-  const [actionBusy, setActionBusy] = useState(null) // id of in-flight approve/deny/answer
   const [designerFullscreen, setDesignerFullscreen] = useState(false) // Design tab: collapse the org rail + tab strip for canvas room
   const [orgListOpen, setOrgListOpen] = useState(true) // manual fold, independent of designerFullscreen's auto-collapse
   const [creatingOrg, setCreatingOrg] = useState(false)
@@ -159,14 +160,6 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
   const [createError, setCreateError] = useState('')
   const [notInitialized, setNotInitialized] = useState(false)
   const [runningOrgs, setRunningOrgs] = useState(() => new Set())
-  // Org names with the Approvals tab's auto-approve toggle on — in-memory
-  // only (mirrors runningOrgs), naturally persists across tab switches
-  // within the session since OrgsPanel stays mounted.
-  const [autoApproveOrgs, setAutoApproveOrgs] = useState(() => new Set())
-  // Pending count for the selected org's Approvals tab badge — tracked
-  // independently of which tab is active (the whole point of a badge is
-  // to notice something without having to click into the tab first).
-  const [pendingApprovalCount, setPendingApprovalCount] = useState(0)
   const [runPromptOpen, setRunPromptOpen] = useState(false)
   const [runTaskText, setRunTaskText] = useState('')
   // Overview's run picker: runsList is every run (current + historical).
@@ -276,7 +269,8 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
     // The Design tab owns its own load/save lifecycle (OrgDesigner.jsx
     // calls api.getOrgDesign itself, live-patched via onOrgDesignUpdated) —
     // it doesn't use this generic JSON-dump-per-tab path at all.
-    if (tabId === 'design') return
+    // Needs you, Decisions, and Group likewise load and poll on their own.
+    if (tabId === 'design' || tabId === 'needs' || tabId === 'decisions' || tabId === 'group') return
     setTabLoading(true)
     try {
       let payload = null
@@ -311,23 +305,6 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
           setSelectedRun(prev => (prev === null && historyItems.length > 0) ? historyItems[0].run : prev)
           break
         }
-        case 'approvals': {
-          // Three separate human-in-loop channels, merged into one list —
-          // see doAction/render below for why each kind needs its own
-          // resolve action (answering a question or approving a gate does
-          // NOT touch approvals.json, and vice versa).
-          const [questions, gates, approvals] = await Promise.all([
-            api.getOrgQuestions(orgName),
-            api.getOrgGates(orgName),
-            api.getOrgApprovals(orgName),
-          ])
-          payload = [
-            ...itemsOf(questions).map(q => ({ kind: 'question', ...q })),
-            ...itemsOf(gates).map(g => ({ kind: 'gate', ...g })),
-            ...itemsOf(approvals).map(a => ({ kind: 'approval', ...a })),
-          ]
-          break
-        }
         // Scoped to whichever run is selected in the (shared, tab-strip-level)
         // run picker — 'live' means "let the CLI default to the newest run"
         // (matches what Live is already tailing), same as Overview's own
@@ -349,7 +326,7 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
           payload = run || selectedRun === 'live' ? await api.getOrgFlow(orgName, run) : null
           break
         }
-        case 'decisions': {
+        case 'trace': {
           const run = selectedRun === 'live' ? '' : selectedRun
           payload = run || selectedRun === 'live' ? await api.getOrgDecisions(orgName, run) : null
           break
@@ -412,29 +389,17 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
     }
   }, [selected, effectiveOpen, streamGeneration])
 
-  // ── Approvals tab badge count — polls independently of which tab is
-  // active, so the notification shows up without having to click in. ──
-  useEffect(() => {
-    if (!selected || !effectiveOpen) { setPendingApprovalCount(0); return }
-    const org = selected
-    let cancelled = false
-    const refreshCount = async () => {
-      const [questions, gates, approvals] = await Promise.all([
-        api.getOrgQuestions(org),
-        api.getOrgGates(org),
-        api.getOrgApprovals(org),
-      ])
-      if (cancelled) return
-      const count =
-        itemsOf(questions).filter(q => q.answer === null).length +
-        itemsOf(gates).filter(g => g.status === 'pending').length +
-        itemsOf(approvals).filter(a => a.approved === null).length
-      setPendingApprovalCount(count)
-    }
-    refreshCount()
-    const iv = setInterval(refreshCount, 6000)
-    return () => { cancelled = true; clearInterval(iv) }
-  }, [selected, effectiveOpen])
+  // ── Needs you counts — one badge per org in the list, polled whichever
+  // tab is open so waiting work is visible without clicking in. The open
+  // Needs you tab reports fresher counts for its own org as it polls. ──
+  const orgNames = orgs.map(o => o.name)
+  const [needsYouCounts, setNeedsYouCounts] = useNeedsYouCounts(orgNames, effectiveOpen && !notInitialized)
+  const handleNeedsYouCount = useCallback((count) => {
+    if (!selected) return
+    setNeedsYouCounts(prev => (prev[selected] === count ? prev : { ...prev, [selected]: count }))
+  }, [selected, setNeedsYouCounts])
+  const selectedOrgMeta = orgs.find(o => o.name === selected) || null
+  const isHolding = selectedOrgMeta?.kind === 'holding'
 
   // ── Run status tracking — independent of `selected` so the rail's
   // running-state indicator (if ever added) and this panel's Run button
@@ -491,37 +456,6 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
       }
     })
   }, [selected, tab, selectedRun, loadTab])
-
-  // ── Auto-approve: while ON for the selected org and the Approvals tab is
-  // open, periodically re-check for pending items and resolve them
-  // immediately — questions get a generic "proceed" reply (they need real
-  // text, not a yes/no), gates and tool-approvals resolve as clean yes.
-  // No dedup bookkeeping needed: a resolved item stops appearing as
-  // pending on the next fetch, so the loop naturally converges to empty. ──
-  useEffect(() => {
-    if (tab !== 'approvals' || !selected || !autoApproveOrgs.has(selected)) return
-    const org = selected
-    const resolveAllPending = async () => {
-      const [questions, gates, approvals] = await Promise.all([
-        api.getOrgQuestions(org),
-        api.getOrgGates(org),
-        api.getOrgApprovals(org),
-      ])
-      const pendingQuestions = itemsOf(questions).filter(q => q.answer === null)
-      const pendingGates = itemsOf(gates).filter(g => g.status === 'pending')
-      const pendingApprovals = itemsOf(approvals).filter(a => a.approved === null)
-      if (!pendingQuestions.length && !pendingGates.length && !pendingApprovals.length) return
-      await Promise.all([
-        ...pendingQuestions.map(q => api.answerOrgQuestion(org, q.questionId, 'Approved — proceed autonomously.')),
-        ...pendingGates.map(g => api.gateApproveOrgAction(org, g.id, '')),
-        ...pendingApprovals.map(a => api.approveOrgAction(org, a.roleId, a.action)),
-      ])
-      if (org === selected) loadTab(org, 'approvals')
-    }
-    resolveAllPending()
-    const iv = setInterval(resolveAllPending, 4000)
-    return () => clearInterval(iv)
-  }, [tab, selected, autoApproveOrgs, loadTab])
 
   const handleRunOrg = useCallback(async () => {
     if (!selected) return
@@ -606,7 +540,6 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
     onConsumePendingSelect?.()
   }, [pendingSelectOrgName, loadOrgs, selectOrg, onConsumePendingSelect])
 
-  const refreshTab = () => loadTab(selected, tab)
 
   // Refresh button: reload the org rail AND, if an org/tab is currently
   // open, re-fetch that tab's data too — "refresh" should mean the whole
@@ -640,25 +573,6 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
       selectOrg(name, { tab: 'design' })
     } finally {
       setCreateBusy(false)
-    }
-  }
-
-  // ── Actions ──
-  const doAction = async (id, fn) => {
-    setActionBusy(id)
-    try {
-      const res = await fn()
-      // Success has no toast — notify() only feeds the app's error-toast
-      // bus (Toasts.jsx renders everything it gets as "Failed: ..."), so a
-      // real success would render identically to a failure. refreshTab()
-      // below already reflects the change (item disappears/updates), which
-      // is the same feedback pattern used everywhere else in this file.
-      if (res?.error) notify('org action', res.error)
-      await refreshTab()
-    } catch (e) {
-      notify('org action', e.message || String(e))
-    } finally {
-      setActionBusy(null)
     }
   }
 
@@ -756,7 +670,9 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
                   }}
                 >
                   <StatusDot status={o.status} />
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.name}</span>
+                  <span style={{ flex: 1, minWidth: 0, fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.name}</span>
+                  {o.kind === 'holding' && <Boxes size={10} style={{ color: 'var(--text-muted)', flexShrink: 0 }} aria-label="holding org" />}
+                  <Badge count={needsYouCounts[o.name] || 0} style={{ flexShrink: 0 }} />
                 </button>
               ))}
             </div>
@@ -787,11 +703,20 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
           ) : (
             <>
               {!(designerFullscreen && tab === 'design') && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px', borderBottom: '1px solid var(--border)', flexWrap: 'wrap', flexShrink: 0 }}>
+                <Building2 size={12} style={{ color: 'var(--text-muted)' }} />
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, fontWeight: 600, color: 'var(--text)' }}>{selected}</span>
+                {isHolding && <Chip>holding</Chip>}
+                <span style={{ flex: 1 }} />
+                <AutonomyBar orgName={selected} />
+              </div>
+              )}
+              {!(designerFullscreen && tab === 'design') && (
               <div style={{ display: 'flex', gap: 4, padding: '8px', borderBottom: '1px solid var(--border)', overflowX: 'auto', flexShrink: 0 }}>
-                {TABS.map(t => {
+                {TABS.filter(t => !t.holdingOnly || isHolding).map(t => {
                   const Icon = t.icon
                   const active = tab === t.id
-                  const badgeCount = t.id === 'approvals' ? pendingApprovalCount : 0
+                  const badgeCount = t.id === 'needs' ? (needsYouCounts[selected] || 0) : 0
                   return (
                     <button
                       key={t.id}
@@ -859,25 +784,6 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
                     <Maximize2 size={11} />
                   </button>
                 )}
-                {tab === 'approvals' && (
-                  <button
-                    onClick={() => setAutoApproveOrgs(prev => {
-                      const next = new Set(prev)
-                      next.has(selected) ? next.delete(selected) : next.add(selected)
-                      return next
-                    })}
-                    title={autoApproveOrgs.has(selected) ? 'Stop auto-approving — resolve each item by hand' : 'Auto-approve everything pending, as it arrives'}
-                    style={{
-                      marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4,
-                      fontFamily: 'var(--font-mono)', fontSize: 10, padding: '5px 8px', borderRadius: 'var(--radius)',
-                      background: autoApproveOrgs.has(selected) ? 'rgba(0,245,212,0.1)' : 'transparent',
-                      border: autoApproveOrgs.has(selected) ? '1px solid rgba(0,245,212,0.3)' : '1px solid var(--border)',
-                      color: autoApproveOrgs.has(selected) ? 'var(--teal, #00f5d4)' : 'var(--text-muted)', cursor: 'pointer',
-                    }}
-                  >
-                    <CheckCircle2 size={11} /> Auto-approve {autoApproveOrgs.has(selected) ? 'ON' : 'OFF'}
-                  </button>
-                )}
               </div>
               )}
 
@@ -898,7 +804,7 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
                 </div>
               )}
 
-              {tab !== 'design' && (runningOrgs.has(selected) || runsList.length > 0) && (
+              {!['design', 'needs', 'group'].includes(tab) && (runningOrgs.has(selected) || runsList.length > 0) && (
                 // Shared run context — which run every tab (not just
                 // Overview) is scoped to. Logs/Costs/Flow/Decisions all read
                 // selectedRun too now, so this needs to be visible no matter
@@ -942,6 +848,7 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
                     orgName={selected}
                     fullscreen={designerFullscreen}
                     onToggleFullscreen={() => setDesignerFullscreen(v => !v)}
+                    onOpenWorkflow={onNavigate ? (workflowId) => { if (workflowId) onNavigate('noderunner', { workflowId }) } : undefined}
                   />
                 </div>
               ) : (
@@ -1006,54 +913,16 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
                   </>
                 )}
 
-                {!tabLoading && tab === 'approvals' && (
-                  itemsOf(data.approvals).length === 0
-                    ? <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>Nothing pending.</div>
-                    : itemsOf(data.approvals).map((item, i) => {
-                      const id = approvalItemId(item, i)
-                      const Icon = item.kind === 'question' ? MessageCircleQuestion : item.kind === 'gate' ? ShieldAlert : KeyRound
-                      return (
-                        <Card key={id}>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                              <Icon size={11} style={{ color: 'var(--text-muted)' }} />
-                              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1 }}>{item.kind}</span>
-                            </div>
-                            <KVBlock obj={item} />
-                            {item.kind === 'question' && (
-                              <QuestionAnswer
-                                busy={actionBusy === id}
-                                onSubmit={(answer) => doAction(id, () => api.answerOrgQuestion(selected, item.questionId, answer))}
-                              />
-                            )}
-                            {item.kind === 'gate' && (
-                              <div style={{ display: 'flex', gap: 6 }}>
-                                <button className="btn btn-primary btn-sm" disabled={actionBusy === id}
-                                  onClick={() => doAction(id, () => api.gateApproveOrgAction(selected, item.id, ''))}>
-                                  <CheckCircle2 size={11} /> Approve
-                                </button>
-                                <button className="btn btn-danger btn-sm" disabled={actionBusy === id}
-                                  onClick={() => doAction(id, () => api.gateRejectOrgAction(selected, item.id, ''))}>
-                                  <XCircle size={11} /> Reject
-                                </button>
-                              </div>
-                            )}
-                            {item.kind === 'approval' && (
-                              <div style={{ display: 'flex', gap: 6 }}>
-                                <button className="btn btn-primary btn-sm" disabled={actionBusy === id}
-                                  onClick={() => doAction(id, () => api.approveOrgAction(selected, item.roleId, item.action))}>
-                                  <CheckCircle2 size={11} /> Approve
-                                </button>
-                                <button className="btn btn-danger btn-sm" disabled={actionBusy === id}
-                                  onClick={() => doAction(id, () => api.denyOrgAction(selected, item.roleId, item.action))}>
-                                  <XCircle size={11} /> Deny
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        </Card>
-                      )
-                    })
+                {tab === 'needs' && (
+                  <NeedsYouPanel orgName={selected} onCountChange={handleNeedsYouCount} />
+                )}
+
+                {tab === 'decisions' && (
+                  <DecisionsFeed orgName={selected} run={selectedRun && selectedRun !== 'live' ? selectedRun : ''} />
+                )}
+
+                {tab === 'group' && isHolding && (
+                  <GroupView holding={selected} onOpenOrg={(name) => selectOrg(name)} />
                 )}
 
                 {!tabLoading && tab === 'logs' && (
@@ -1087,10 +956,10 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
                     ))
                 )}
 
-                {!tabLoading && tab === 'decisions' && (
-                  itemsOf(data.decisions).length === 0
-                    ? <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>No decisions recorded.</div>
-                    : itemsOf(data.decisions).map((d, i) => (
+                {!tabLoading && tab === 'trace' && (
+                  itemsOf(data.trace).length === 0
+                    ? <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>No decision trace recorded.</div>
+                    : itemsOf(data.trace).map((d, i) => (
                       <Card key={i}><KVBlock obj={d} /></Card>
                     ))
                 )}
@@ -1100,28 +969,6 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
           )}
         </div>
       </div>
-    </div>
-  )
-}
-
-function QuestionAnswer({ onSubmit, busy }) {
-  const [text, setText] = useState('')
-  return (
-    <div style={{ display: 'flex', gap: 6 }}>
-      <input
-        type="text"
-        value={text}
-        onChange={e => setText(e.target.value)}
-        placeholder="Type an answer…"
-        style={{ flex: 1, fontFamily: 'var(--font-mono)', fontSize: 11, background: 'var(--elevated)', border: '1px solid var(--border-bright)', borderRadius: 'var(--radius)', color: 'var(--text)', padding: '6px 8px', outline: 'none' }}
-      />
-      <button
-        className="btn btn-primary btn-sm"
-        disabled={busy || !text.trim()}
-        onClick={() => { onSubmit(text.trim()); setText('') }}
-      >
-        Answer
-      </button>
     </div>
   )
 }
