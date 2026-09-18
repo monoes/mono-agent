@@ -11,12 +11,12 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/monoes/mono-agent/internal/credfile"
 	"github.com/monoes/mono-agent/internal/orgdesign"
 	"github.com/monoes/mono-agent/internal/orggrant"
 	"github.com/monoes/mono-agent/internal/workflow"
@@ -158,8 +158,11 @@ func checkEndpointAuth(req *http.Request, row *orggrant.EndpointRow) (string, in
 		if err != nil {
 			return "endpoint credential unavailable", http.StatusServiceUnavailable
 		}
-		if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
-			return "endpoint credential file must be mode 0600", http.StatusServiceUnavailable
+		if err := credfile.CheckOwnerOnly(row.CredentialFile, info); err != nil {
+			if errors.Is(err, credfile.ErrInsecure) {
+				return "endpoint credential file " + err.Error(), http.StatusServiceUnavailable
+			}
+			return "endpoint credential unavailable", http.StatusServiceUnavailable
 		}
 		want, err := os.ReadFile(row.CredentialFile)
 		if err != nil {
@@ -344,17 +347,24 @@ func (r *Receiver) dispatch(ctx context.Context, row orggrant.EndpointRow, d End
 		r.Logf("orgbridge: endpoint %s:%s: %s", row.OrgName, row.RoleID, adm.Reason)
 		return
 	}
+	trigger := map[string]interface{}{
+		"trigger_type": workflow.TriggerTypeOrgMessage,
+		"org_message": map[string]interface{}{
+			"org": row.OrgName, "run": d.Run, "from": d.From, "to": d.To, "role": row.RoleID,
+			"subject": d.Subject, "body": StripTrace(d.Body), "message_id": d.MessageID,
+		},
+		"text":  StripTrace(d.Body),
+		"trace": map[string]interface{}{"chain_id": adm.Trace.ChainID, "hop": adm.Trace.Hop},
+	}
+	// C-46: the run's file nodes confine to the sender's workdir.
+	if r.RootOf != nil {
+		if wd, ok := senderWorkdir(r.RootOf(row.ProfileID), row.OrgName, d.From); ok {
+			trigger["org"] = map[string]interface{}{"name": row.OrgName, "role": row.RoleID, "workdir": wd}
+		}
+	}
 	exec, err := workflow.CreateUnownedExecution(ctx, r.Store, workflow.UnownedExecutionOptions{
 		WorkflowID: row.WorkflowID, ProfileID: row.ProfileID, TriggerType: workflow.TriggerTypeOrgMessage, AllowInactive: true,
-		TriggerData: map[string]interface{}{
-			"trigger_type": workflow.TriggerTypeOrgMessage,
-			"org_message": map[string]interface{}{
-				"org": row.OrgName, "run": d.Run, "from": d.From, "to": d.To, "role": row.RoleID,
-				"subject": d.Subject, "body": StripTrace(d.Body), "message_id": d.MessageID,
-			},
-			"text":  StripTrace(d.Body),
-			"trace": map[string]interface{}{"chain_id": adm.Trace.ChainID, "hop": adm.Trace.Hop},
-		},
+		TriggerData: trigger,
 	})
 	if err != nil {
 		_ = ledger.SetStatus(ctx, adm.ID, StatusError)

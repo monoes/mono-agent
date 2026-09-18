@@ -172,6 +172,7 @@ func OrgServeRun(ctx context.Context, projectRoot string) error {
 	if err := cmd.Start(); err != nil {
 		return err
 	}
+	defer attachProcessGroup(cmd)()
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	select {

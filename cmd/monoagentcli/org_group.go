@@ -40,6 +40,17 @@ func validateGroup(root string) ([]*orgdesign.Doc, error) {
 	return docs, nil
 }
 
+// childGoalWarnings returns the non-fatal C-36 warnings that concern org
+// name — as a holding org or as one's child — for the orgs under root. An
+// unreadable orgs folder yields none: warnings never fail a command.
+func childGoalWarnings(root, name string) []string {
+	docs, _, err := orgdesign.LoadAll(root)
+	if err != nil {
+		return nil
+	}
+	return orgdesign.ChildGoalWarnings(docs, name)
+}
+
 // saveReportUp writes the managed report-up lines into child bosses.
 func saveReportUp(ctx context.Context, env *orgEnv, db *storage.Database, profileID, root string, docs []*orgdesign.Doc) error {
 	for _, d := range orggroup.ApplyReportUp(docs) {
@@ -93,8 +104,9 @@ func newOrgGroupInitCmd(env *orgEnv) *cobra.Command {
 			}
 			return printJSONValue(map[string]interface{}{
 				"v": 1, "holding": h.Name, "initiator": initiator.ID, "children": children,
-				"tools":    orggroup.InitiatorTools,
-				"warnings": nonNilStrings(capabilityWarnings(ctx, monomind.CapOrgToolProviders, "Initiator org tools")),
+				"tools": orggroup.InitiatorTools,
+				"warnings": nonNilStrings(append(capabilityWarnings(ctx, monomind.CapOrgToolProviders, "Initiator org tools"),
+					orgdesign.ChildGoalWarnings(docs, h.Name)...)),
 			})
 		},
 	}

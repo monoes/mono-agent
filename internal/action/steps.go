@@ -15,6 +15,7 @@ import (
 	"github.com/monoes/mono-agent/internal/bot"
 	"github.com/monoes/mono-agent/internal/browser"
 	extpkg "github.com/monoes/mono-agent/internal/extension"
+	"github.com/monoes/mono-agent/internal/fsconfine"
 	"github.com/monoes/mono-agent/internal/util"
 )
 
@@ -633,6 +634,14 @@ func (ae *ActionExecutor) stepType(ctx context.Context, step StepDef) (*StepResu
 // ---------------------------------------------------------------------------
 
 func (ae *ActionExecutor) stepUpload(ctx context.Context, step StepDef) (*StepResult, error) {
+	// C-46: uploaded files leave the machine through the page; in a run a
+	// role's grant started they must come from the role's workdir. Checked
+	// before the page is touched.
+	files, err := fsconfine.Paths(ctx, splitUploadPaths(step))
+	if err != nil {
+		return &StepResult{Success: false, StepID: step.ID, Error: fmt.Errorf("upload step %s: %w", step.ID, err)}, nil
+	}
+
 	elem, resolveErr := ae.resolveElement(step)
 	if elem == nil {
 		return &StepResult{
@@ -642,28 +651,12 @@ func (ae *ActionExecutor) stepUpload(ctx context.Context, step StepDef) (*StepRe
 		}, nil
 	}
 
-	// Resolve the file path(s) from step.Text or step.Value.
-	filePath := step.Text
-	if filePath == "" {
-		if s, ok := step.Value.(string); ok {
-			filePath = s
-		}
-	}
-	if filePath == "" {
+	if len(files) == 0 {
 		return &StepResult{
 			Success: false,
 			StepID:  step.ID,
 			Error:   fmt.Errorf("upload step %s: no file path provided", step.ID),
 		}, nil
-	}
-
-	// Support multiple files separated by commas.
-	var files []string
-	for _, f := range strings.Split(filePath, ",") {
-		f = strings.TrimSpace(f)
-		if f != "" {
-			files = append(files, f)
-		}
 	}
 
 	ae.logger.Debug().
@@ -672,8 +665,7 @@ func (ae *ActionExecutor) stepUpload(ctx context.Context, step StepDef) (*StepRe
 		Msg("uploading files")
 
 	// Rod's SetFiles sets file paths on an <input type="file"> element.
-	err := elem.SetFiles(files)
-	if err != nil {
+	if err := elem.SetFiles(files); err != nil {
 		return &StepResult{
 			Success: false,
 			StepID:  step.ID,

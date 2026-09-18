@@ -265,13 +265,26 @@ org autonomy needs-you <org>
 ### Processes, messaging, holding orgs, legacy root
 ```
 org serve [--foreground]      → {"v":1,"root","pid","status":"started"|"already-running"}
+org serve --stop              → {"v":1,"root","pid","status":"stopped"|"not-running"|"error","stopped_orgs","warnings"}
+org reconcile                 → {"v":1,"profile","root","orgs":[{"org","saved","findings","error"?}],"warnings"}
+org teardown-profile [--dry-run]
+  → {"v":1,"profile","root","dry_run","revoked":{"grants","endpoints","autonomy","delegations"},
+     "org_serve":{"pid","status"},"stopped_orgs","running_orgs"? (dry run),"org_files_rewritten"?,"warnings"}
 org stop <org> | pause <org> | resume <org>   → {"v":1,"org","ok":true,…}
 org send <org> --to <role> [--from <org:role>] --subject S --body B
   → {"v":1,"org","to","from","delivery":"live"|"queued","receipt","messageId"}
+org queued <org>              (C-35; read-only over <root>/.monomind/orgs/<org>/inbox.jsonl[.draining])
+  → {"v":1,"org","count","skipped","delivery":"at next start",
+     "messages":[{"messageId","from","to","subject","body","trace"?,"ts","queued_at","endpoint","draining"?}]}
 org rename <org> <new>        → {"v":1,"org","renamed_to"}
 org delete <org> [--force]    → {"v":1,"org","deleted":true}
 org group start|stop|status <holding>
   → {"v":1,"holding","children":[{"org","status","run","start","budget_share","cost_usd"}],"rollup_usd"}
+org validate <org>            → {"v":1,"org","valid","warnings":[string],"output"|"error"}
+org create-json <org> --json J → {"v":1,"org","sha256","valid","warnings":[string],…}
+org group init <holding>      → {"v":1,"holding","initiator","children","tools","warnings":[string]}
+  (warnings never change valid or the exit code; they include C-36 child-goal warnings for
+   the org as a holding org or as a child)
 org legacy list               → {"v":1,"legacy_root","orgs":[…]}
 org legacy move <org>         → {"v":1,"org","moved_to"}
 
@@ -303,6 +316,7 @@ daemon [--api=true] [--api-addr 127.0.0.1:9322] [--allow-mutations]
 | `ListNeedsYou(org)` | `org autonomy needs-you` |
 | `StartOrgGroup(h)` / `StopOrgGroup(h)` / `OrgGroupStatus(h)` | `org group …` |
 | `SendOrgMessage(org, specJSON)` | `org send` |
+| `ListOrgQueuedMessages(org)` | `org queued` |
 | `GetDaemonStatus()` | `status --json` |
 
 Runtime events: existing `org:event` feeds the live view. No new Go→JS events are required.

@@ -1153,6 +1153,11 @@ func revealFolderCommand(goos, dir string) (string, []string) {
 // through, root_dir is left unchanged so the database never points
 // somewhere the files didn't actually make it to; the old location stays
 // authoritative and the caller can retry.
+//
+// Orgs run out of the folder, so before anything moves the folder's running
+// orgs and its `org serve` daemon are stopped (the move is refused if that
+// fails), and afterwards the org files are reconciled and the daemon is
+// restarted wherever the folder ended up (C-24, app_org_profile.go).
 func (a *App) MoveProfileFolder(profileID, newRootDir string) error {
 	if a.db == nil {
 		return fmt.Errorf("database not available")
@@ -1169,6 +1174,14 @@ func (a *App) MoveProfileFolder(profileID, newRootDir string) error {
 	if newRootDir == oldRoot {
 		return fmt.Errorf("that's already this profile's folder")
 	}
+
+	wasServing, err := a.stopProfileOrgs(profileID)
+	if err != nil {
+		return fmt.Errorf("stopping this profile's orgs before the move: %w", err)
+	}
+	// Whether or not the move lands, the orgs resume at whatever folder
+	// profiles.root_dir names once this returns.
+	defer a.resumeProfileOrgs(profileID, wasServing)
 
 	oldVaultDir := profiledir.VaultDir(a.db, profileID)
 	oldMonomindDir := profiledir.MonomindDir(a.db, profileID)

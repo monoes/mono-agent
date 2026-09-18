@@ -76,6 +76,18 @@ if [ "$1" = "org" ] && [ "$2" = "status" ] && [ "$3" = "growth" ]; then
   exit 0
 fi
 
+# `org status` with no name: every org of the project.
+if [ "$1" = "org" ] && [ "$2" = "status" ] && [ "$3" = "--format" ]; then
+  echo '{"v":1,"items":[{"name":"growth","status":"running"},{"name":"idle","status":"stopped"}]}'
+  exit 0
+fi
+
+if [ "$1" = "org" ] && [ "$2" = "stop" ]; then
+  if [ -n "$FAKE_STOP_LOG" ]; then echo "$3" >> "$FAKE_STOP_LOG"; fi
+  echo "stop requested for $3"
+  exit 0
+fi
+
 if [ "$1" = "org" ] && [ "$2" = "status" ] && [ "$3" = "missing-org" ]; then
   echo "org 'missing-org' not found" >&2
   exit 1

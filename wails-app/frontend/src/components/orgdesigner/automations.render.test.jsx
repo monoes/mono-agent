@@ -119,6 +119,16 @@ describe('AutomationsDrawer', () => {
     expect(screen.getByText(/org-tool-providers/)).toBeInTheDocument()
   })
 
+  it('points to the Workflows page when the library is empty', async () => {
+    api.listUnassignedAutomations.mockResolvedValue({ v: 1, workflows: [] })
+    const onCreateWorkflow = vi.fn()
+    render(<AutomationsDrawer {...props({ automations: [], onCreateWorkflow })} />)
+    fireEvent.click(screen.getByRole('button', { name: /Add from library/ }))
+    expect(await screen.findByText(/No unassigned workflows in this profile/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Open Workflows/ }))
+    expect(onCreateWorkflow).toHaveBeenCalled()
+  })
+
   it('toasts a failed add', async () => {
     api.addOrgAutomation.mockResolvedValue({ error: 'alias "lead" collides with a role id' })
     render(<AutomationsDrawer {...props()} />)

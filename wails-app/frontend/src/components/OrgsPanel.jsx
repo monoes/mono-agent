@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   X, RefreshCw, Building2, Circle, Network, Maximize2, Plus,
   Coins, GitBranch, ScrollText, ListTree, Play, Loader2, UserCheck, Gavel, Boxes,
-  ChevronLeft, ChevronRight,
+  ChevronLeft, ChevronRight, Inbox,
 } from 'lucide-react'
 import { api, onOrgEvent, onOrgEventsClosed, onOrgDesignUpdated, onOrgRunStatus, notify } from '../services/api.js'
 import OrgDesigner from './orgdesigner/OrgDesigner.jsx'
@@ -12,6 +12,7 @@ import AutonomyBar from './orgs/AutonomyBar.jsx'
 import NeedsYouPanel from './orgs/NeedsYouPanel.jsx'
 import DecisionsFeed from './orgs/DecisionsFeed.jsx'
 import GroupView from './orgs/GroupView.jsx'
+import QueuedMessagesPanel from './orgs/QueuedMessagesPanel.jsx'
 import useNeedsYouCounts from './orgs/useNeedsYouCounts.js'
 import { Badge, Chip } from './orgs/ui.jsx'
 
@@ -42,12 +43,14 @@ function panelStripStyle(borderSide) {
 // `needs` replaces the old Approvals tab (its auto-approve toggle is gone —
 // C-42; autonomy levels resolve decisions in the daemon instead). `decisions`
 // is the autonomy decision log; monomind's own decision trace moved to
-// `trace`. `group` only shows for holding orgs.
+// `trace`. `group` only shows for holding orgs. `queued` lists messages
+// waiting for the org's next start (C-35).
 const TABS = [
   { id: 'design',     label: 'Design',     icon: Network },
   { id: 'overview',   label: 'Overview',   icon: Circle },
   { id: 'group',      label: 'Group',      icon: Boxes, holdingOnly: true },
   { id: 'needs',      label: 'Needs you',  icon: UserCheck },
+  { id: 'queued',     label: 'Queued',     icon: Inbox },
   { id: 'decisions',  label: 'Decisions',  icon: Gavel },
   { id: 'logs',       label: 'Logs',       icon: ScrollText },
   { id: 'costs',      label: 'Costs',      icon: Coins },
@@ -804,7 +807,7 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
                 </div>
               )}
 
-              {!['design', 'needs', 'group'].includes(tab) && (runningOrgs.has(selected) || runsList.length > 0) && (
+              {!['design', 'needs', 'queued', 'group'].includes(tab) && (runningOrgs.has(selected) || runsList.length > 0) && (
                 // Shared run context — which run every tab (not just
                 // Overview) is scoped to. Logs/Costs/Flow/Decisions all read
                 // selectedRun too now, so this needs to be visible no matter
@@ -849,6 +852,7 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
                     fullscreen={designerFullscreen}
                     onToggleFullscreen={() => setDesignerFullscreen(v => !v)}
                     onOpenWorkflow={onNavigate ? (workflowId) => { if (workflowId) onNavigate('noderunner', { workflowId }) } : undefined}
+                    onCreateWorkflow={onNavigate ? () => onNavigate('noderunner') : undefined}
                   />
                 </div>
               ) : (
@@ -915,6 +919,10 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
 
                 {tab === 'needs' && (
                   <NeedsYouPanel orgName={selected} onCountChange={handleNeedsYouCount} />
+                )}
+
+                {tab === 'queued' && (
+                  <QueuedMessagesPanel orgName={selected} running={runningOrgs.has(selected)} onStartOrg={handleRunOrg} />
                 )}
 
                 {tab === 'decisions' && (

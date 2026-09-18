@@ -292,6 +292,12 @@ monoagentcli org automation-role add growth --alias publish_post --reports-to le
   `monoagentcli` directly and bypass every grant. Workflows with outbound
   nodes (email, chat, social, service writes, non-GET HTTP, shell) default
   to `--approval required`.
+- A granted run (and an automation role's run started by a role's
+  message) carries the role's workdir as `org.workdir`; file nodes refuse
+  paths that resolve outside it (`path escapes org workdir`). Shell
+  commands are not confined. `org automation list`, `org grant add|list`,
+  and `org effective-tools` report `file_input_nodes` — nodes whose paths
+  come from the run's input (C-46, see SECURITY.md).
 - Workflow nodes go the other way: `org.run` (now with `wait` and
   `exclusive`), `org.send`, `org.ask` (the workflow must be an automation
   role of that org), and the `trigger.org` trigger (events of an org, or
@@ -327,7 +333,9 @@ commands raise a level — an edit to the org file can only lower it.
 `org group init <holding>` gives the root role `org_start`, `org_stop`,
 `org_status`, and `org_report` over its children and adds a report-up line
 to each child's boss; `run_config.group_budget_usd` and each child's
-`budget_share` cap spend before a child starts.
+`budget_share` cap spend before a child starts. A message wakes a stopped
+child with a full run of its own goal, so phrase child goals for messages
+("Handle requests from hq; when idle, complete."); `org validate` warns otherwise.
 
 **Two long-running processes.** Org features need both:
 
@@ -335,7 +343,14 @@ to each child's boss; `run_config.group_budget_usd` and each child's
 monoagentcli org serve   # the org daemon (monomind) for the active profile's folder
 monoagentcli daemon      # workflow engine, HTTP API, automation-role endpoint, decisions
 monoagentcli --json status   # reports both
+monoagentcli org serve --stop   # stop the folder's running orgs and its org daemon
 ```
+
+Before deleting a profile, run `monoagentcli --profile <id> org teardown-profile`
+(`--dry-run` previews). It revokes the profile's grants, endpoints, and
+autonomy settings and stops its orgs. The GUI's "Move profile folder" stops
+the orgs before the move, then runs `org reconcile` and restarts `org serve`
+at the new folder.
 
 Without `monoagentcli daemon`, granted tools return `daemon_required`,
 automation roles cannot run, and every org behaves as `manual`. Grants,

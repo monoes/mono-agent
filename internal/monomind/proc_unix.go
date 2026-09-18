@@ -28,3 +28,26 @@ func killProcessGroup(cmd *exec.Cmd, pgid int) {
 	_ = syscall.Kill(-pgid, syscall.SIGTERM)
 	_ = syscall.Kill(-pgid, syscall.SIGKILL)
 }
+
+// attachProcessGroup is called right after cmd.Start for a child this process
+// will kill with killProcessGroup. Setpgid already made the group, so there
+// is nothing to attach on unix; the returned release is a no-op.
+func attachProcessGroup(*exec.Cmd) (release func()) { return func() {} }
+
+// signalServe sends SIGTERM (or SIGKILL when kill) to a serve daemon's
+// process group, falling back to the pid alone when it leads no group (a
+// serve started by hand, outside OrgServeStart).
+func signalServe(pid int, kill bool) error {
+	sig := syscall.SIGTERM
+	if kill {
+		sig = syscall.SIGKILL
+	}
+	err := syscall.Kill(-pid, sig)
+	if err == syscall.ESRCH {
+		err = syscall.Kill(pid, sig)
+	}
+	if err == syscall.ESRCH {
+		return nil // already gone
+	}
+	return err
+}

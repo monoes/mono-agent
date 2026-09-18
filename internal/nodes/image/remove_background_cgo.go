@@ -387,7 +387,7 @@ func extractGlobFromTGZ(tgzPath, globPat, destDir string) (string, error) {
 
 // ── node ───────────────────────────────────────────────────────────────────────
 
-func (n *RemoveBackgroundNode) Execute(_ context.Context, input workflow.NodeInput, config map[string]interface{}) ([]workflow.NodeOutput, error) {
+func (n *RemoveBackgroundNode) Execute(ctx context.Context, input workflow.NodeInput, config map[string]interface{}) ([]workflow.NodeOutput, error) {
 	field, _ := config["field"].(string)
 	outputField, _ := config["output_field"].(string)
 	outputDir, _ := config["output_dir"].(string)
@@ -414,12 +414,15 @@ func (n *RemoveBackgroundNode) Execute(_ context.Context, input workflow.NodeInp
 	for _, item := range input.Items {
 		newJSON := copyMap(item.JSON)
 
-		srcPath := expandHome(resolveImageField(item.JSON, field))
+		srcPath, err := imagePath(ctx, item.JSON, field)
+		if err != nil {
+			return nil, fmt.Errorf("image.remove_background: %w", err)
+		}
 		if srcPath == "" {
 			return nil, fmt.Errorf("image.remove_background: no image path in item (tried field=%q)", field)
 		}
 
-		result, err := removeBackground(srcPath, outputDir, bgColor)
+		result, err := removeBackground(ctx, srcPath, outputDir, bgColor)
 		if err != nil {
 			return nil, fmt.Errorf("image.remove_background: %w", err)
 		}
@@ -433,7 +436,7 @@ func (n *RemoveBackgroundNode) Execute(_ context.Context, input workflow.NodeInp
 
 // removeBackground runs the full pipeline for a single image and returns the
 // output file path.
-func removeBackground(srcPath, outputDir, bgColor string) (string, error) {
+func removeBackground(ctx context.Context, srcPath, outputDir, bgColor string) (string, error) {
 	// 1. Open source image
 	f, err := os.Open(srcPath)
 	if err != nil {
@@ -477,7 +480,10 @@ func removeBackground(srcPath, outputDir, bgColor string) (string, error) {
 	}
 
 	// 7. Save
-	outPath := buildOutputPath(srcPath, outputDir, "_nobg", ".png")
+	outPath, err := buildOutputPath(ctx, srcPath, outputDir, "_nobg", ".png")
+	if err != nil {
+		return "", err
+	}
 	if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
 		return "", fmt.Errorf("mkdir: %w", err)
 	}

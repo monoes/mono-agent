@@ -9,7 +9,6 @@ import (
 	"runtime"
 	"strings"
 	"sync/atomic"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -238,25 +237,7 @@ func TestExecCancelGroupKill(t *testing.T) {
 	}
 
 	// The gate: zero orphaned processes from the group.
-	deadline = time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		alive := 0
-		for _, pid := range pids {
-			if err := syscall.Kill(pid, 0); err == nil {
-				alive++
-			}
-		}
-		if alive == 0 {
-			return // success — group fully reaped
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	for _, pid := range pids {
-		if err := syscall.Kill(pid, 0); err == nil {
-			t.Errorf("orphan process %d survived the group kill", pid)
-			_ = syscall.Kill(pid, syscall.SIGKILL)
-		}
-	}
+	assertGroupReaped(t, pids)
 }
 
 // TestExecErrorTurnMapsProtocolError checks fatal error turns surface as

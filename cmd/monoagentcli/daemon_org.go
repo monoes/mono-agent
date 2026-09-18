@@ -142,58 +142,79 @@ func (s *orgServices) start(ctx context.Context, engine *workflow.WorkflowEngine
 	}()
 }
 
+// orgReconcileOutcome is what reconciling one org file did — the daemon
+// logs it, `org reconcile` prints it.
+type orgReconcileOutcome struct {
+	Org      string             `json:"org"`
+	Saved    bool               `json:"saved"`
+	Findings []orggrant.Finding `json:"findings"`
+	Error    string             `json:"error,omitempty"`
+}
+
 // reconcileProfile reconciles every org of a profile at startup, so grants,
 // providers, approvalTools, and autonomy agree with the enforcement rows
 // even after the org files were edited while no daemon ran (C-3, C-54).
-func (s *orgServices) reconcileProfile(ctx context.Context, pr orgdecide.ProfileRoot) {
+// `org reconcile` runs the same pass after a profile folder moves (C-24).
+func (s *orgServices) reconcileProfile(ctx context.Context, pr orgdecide.ProfileRoot) []orgReconcileOutcome {
 	docs, bad, err := orgdesign.LoadAll(pr.Root)
 	if err != nil {
-		return
+		return nil
 	}
+	var out []orgReconcileOutcome
 	for name, e := range bad {
 		s.logf("org services: %s/%s: unreadable org file: %v", pr.ProfileID, name, e)
+		out = append(out, orgReconcileOutcome{Org: name, Error: "unreadable org file: " + e.Error()})
 	}
 	forced := map[string]bool{}
 	for _, d := range orggroup.ApplyReportUp(docs) {
 		forced[d.Name] = true
 	}
 	for _, d := range docs {
-		s.reconcileDoc(ctx, pr, d, forced[d.Name])
+		out = append(out, s.reconcileDoc(ctx, pr, d, forced[d.Name]))
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Org < out[j].Org })
+	return out
 }
 
-func (s *orgServices) reconcileDoc(ctx context.Context, pr orgdecide.ProfileRoot, d *orgdesign.Doc, force bool) {
+func (s *orgServices) reconcileDoc(ctx context.Context, pr orgdecide.ProfileRoot, d *orgdesign.Doc, force bool) orgReconcileOutcome {
+	res := orgReconcileOutcome{Org: d.Name, Findings: []orggrant.Finding{}}
+	fail := func(format string, err error) orgReconcileOutcome {
+		s.logf(format, d.Name, err)
+		res.Error = err.Error()
+		return res
+	}
 	rep, err := orggrant.Reconcile(ctx, orggrant.NewStore(s.db.DB), d, orggrant.GenOptions{
 		ProfileID: pr.ProfileID, CLIPath: selfExecutable(), APIAddr: orgAPIAddr(s.db),
 	})
 	if err != nil {
-		s.logf("org services: reconcile %s: %v", d.Name, err)
-		return
+		return fail("org services: reconcile %s: %v", err)
 	}
+	res.Findings = append(res.Findings, rep.Findings...)
 	auto, err := orgdecide.ReconcileAutonomy(ctx, orgdecide.NewStore(s.db.DB), pr.ProfileID, d)
 	if err != nil {
-		s.logf("org services: autonomy reconcile %s: %v", d.Name, err)
-		return
+		return fail("org services: autonomy reconcile %s: %v", err)
 	}
 	if auto.Ignored != "" {
 		s.logf("org services: %s: %s", d.Name, auto.Ignored)
+		res.Findings = append(res.Findings, orggrant.Finding{Kind: "autonomy_raise_ignored", Detail: auto.Ignored})
 	}
 	if !force && !rep.Changed && !auto.DocChanged {
-		return
+		return res
 	}
 	for _, f := range rep.Findings {
 		s.logf("org services: %s: %s %s", d.Name, f.Kind, f.Detail)
 	}
 	sha, err := orgdesign.Save(pr.Root, d)
 	if err != nil {
-		s.logf("org services: saving reconciled %s: %v", d.Name, err)
-		return
+		return fail("org services: saving reconciled %s: %v", err)
 	}
+	res.Saved = true
 	s.mu.Lock()
 	for _, w := range s.watchers {
 		w.MarkSelfWrite(d.Name, sha)
 	}
 	s.mu.Unlock()
+	return res
 }
 
 // workflowFacts describes a workflow for the decider prompt from the DB.

@@ -25,6 +25,7 @@ PROCESSES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   monoagentcli org serve            start monomind's org daemon for the folder
+  monoagentcli org serve --stop     stop the folder's running orgs and daemon
   monoagentcli daemon               engine + HTTP API + automation-role endpoint
                                     + autonomy decisions (writes a heartbeat)
   monoagentcli --json status        both daemons' state
@@ -53,6 +54,16 @@ AUTOMATIONS AND GRANTS
   workflow, status, or output. Workflows with outbound nodes default to
   --approval required (each call is a decision). The first grant of a
   role pre-fills denyTools Bash.
+
+  A granted run gets the calling role's workdir (its run_config.workspace
+  directory) as org.workdir in its trigger data; so does an automation
+  role's run started by a message from a role. File nodes (spreadsheet,
+  write file, image, attachments, uploads, FTP local paths, browser
+  uploads) then refuse any path that resolves outside it, after following
+  .. and symlinks; relative paths are taken from the workdir. Shell
+  commands cannot be confined. automation list, grant add/list and
+  effective-tools report file_input_nodes: nodes whose paths come from
+  the run's input.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 AUTOMATION ROLES
@@ -85,10 +96,17 @@ MESSAGES AND LIFECYCLE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   org send <org> --to <role> [--from org:role] --subject S --body B
+  org queued <org>                  messages waiting for the org's next start
+                                    (read-only view of monomind's inbox.jsonl)
   org stop|pause|resume <org>
   org rename <org> <new>            org names are unique on this machine
   org delete <org> [--force]
   org legacy list | legacy move <org>
+  org reconcile                     rewrite every org file's generated blocks
+                                    from the grant rows (after a folder move)
+  org teardown-profile [--dry-run]  the org half of deleting a profile: revoke
+                                    its grants, endpoints, autonomy; stop its
+                                    orgs and org daemon
 
   Crossings carry "[trace chn_… hop=N]" and stop at run_config.max_hops
   (default 8) or max_repeats calls to one target per minute (default 20).
@@ -129,6 +147,14 @@ HOLDING ORGS
   org group start|stop|status <holding>
 
   A child belongs to at most one holding org, in the same profile.
+
+  A message to a stopped child starts a full run of the child's own goal,
+  so phrase child goals for messages: "Handle requests from hq; when idle,
+  complete." and use org_start(org, task) for task-specific runs.
+  validate, create-json, and group init add a non-fatal entry to
+  "warnings" for a child goal that lacks a request word (request, message,
+  ask, inquiry, respond, reply) or lacks the parent's name, idle, or
+  complete. run_config.idle_minutes (default 10) keeps a woken child short.
 
 `)
 		},

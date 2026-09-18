@@ -275,11 +275,15 @@ func (s *Server) grantRun(ctx context.Context, rt *runtime, b *orggrant.Bundle, 
 	if len(args) > 0 {
 		_ = json.Unmarshal(args, &input)
 	}
+	// C-46: the run's file nodes confine their paths to the role's workdir.
+	// It sits under org, which the role's arguments (under input) cannot set.
+	orgTrigger := map[string]interface{}{"name": b.OrgName, "role": b.RoleID, "grant": grant.ID, "run": runID,
+		"automation": tool.Alias, "workdir": grantWorkdir(rt.db.DB, b)}
 	exec, err := workflow.CreateUnownedExecution(ctx, rt.store, workflow.UnownedExecutionOptions{
 		WorkflowID: tool.WorkflowID, ProfileID: b.ProfileID, TriggerType: workflow.TriggerTypeOrgTool, AllowInactive: true,
 		TriggerData: map[string]interface{}{
 			"trigger_type": workflow.TriggerTypeOrgTool,
-			"org":          map[string]interface{}{"name": b.OrgName, "role": b.RoleID, "grant": grant.ID, "run": runID, "automation": tool.Alias},
+			"org":          orgTrigger,
 			"input":        input,
 			"trace":        map[string]interface{}{"chain_id": adm.Trace.ChainID, "hop": adm.Trace.Hop},
 		},

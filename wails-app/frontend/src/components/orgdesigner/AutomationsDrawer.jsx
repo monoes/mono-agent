@@ -40,7 +40,7 @@ function LibraryRow({ wf, onAdd, busy }) {
   )
 }
 
-export default function AutomationsDrawer({ orgName, automations, grants, loading, error, onRefresh, onDragStart, onOpenWorkflow }) {
+export default function AutomationsDrawer({ orgName, automations, grants, loading, error, onRefresh, onDragStart, onOpenWorkflow, onCreateWorkflow }) {
   const [libraryOpen, setLibraryOpen] = useState(false)
   const [library, setLibrary] = useState(null)
   const [libraryError, setLibraryError] = useState('')
@@ -145,7 +145,16 @@ export default function AutomationsDrawer({ orgName, automations, grants, loadin
           <span style={sectionLabel}>Unassigned</span>
           {library === null && <div style={{ display: 'flex', justifyContent: 'center', padding: 6 }}><div className="spinner" /></div>}
           {libraryError && <div style={{ ...mono, fontSize: 10.5, color: '#f87171' }}>{libraryError}</div>}
-          {library && !libraryError && library.length === 0 && <div style={mutedText}>Every workflow already belongs to an org.</div>}
+          {library && !libraryError && library.length === 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={mutedText}>No unassigned workflows in this profile. Create one in Workflows, then add it here.</div>
+              {onCreateWorkflow && (
+                <button style={{ ...smallBtn, justifyContent: 'center' }} onClick={onCreateWorkflow}>
+                  <ExternalLink size={10} /> Open Workflows
+                </button>
+              )}
+            </div>
+          )}
           {(library || []).map(wf => <LibraryRow key={wf.id} wf={wf} busy={busy} onAdd={add} />)}
         </div>
       )}

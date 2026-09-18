@@ -71,5 +71,37 @@
       "label": "Idioma de la interfaz",
       "hint": "Piloto: solo inglés y español — consulta docs/i18n.md"
     }
+  },
+  "orgs": {
+    "queued": {
+      "title": "Mensajes en cola",
+      "deliveredAtStart": "Enviados mientras la organización estaba detenida. Se entregan cuando la organización vuelva a iniciarse.",
+      "runningNote": "La organización está en marcha. Estos mensajes se pusieron en cola antes de que iniciara y se entregan en su próximo inicio.",
+      "startNow": "Iniciar organización ahora",
+      "starting": "Iniciando…",
+      "empty": "No hay mensajes esperando a esta organización.",
+      "refresh": "Actualizar",
+      "endpoint": "rol de automatización",
+      "draining": "entrega interrumpida",
+      "hop": "salto {{hop}}",
+      "skipped": "Se omitieron {{count}} línea(s) ilegibles del archivo de cola.",
+      "waited": "en cola hace {{duration}}",
+      "loadFailed": "No se pudieron leer los mensajes en cola.",
+      "to": "para",
+      "noSubject": "(sin asunto)"
+    }
+  },
+  "grantDialog": {
+    "fileInput": {
+      "title": "Este flujo de trabajo lee o escribe archivos en rutas tomadas de su entrada.",
+      "confined": "Cuando {{role}} lo llama, esos nodos quedan confinados al directorio de trabajo del rol; las rutas fuera de él se rechazan.",
+      "unconfined": "{{nodes}} no se puede confinar y puede llegar a cualquier archivo al que tú llegues.",
+      "access": {
+        "read": "lee",
+        "write": "escribe",
+        "read_write": "lee y escribe",
+        "exec": "ejecuta un comando"
+      }
+    }
   }
 }

@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/monoes/mono-agent/internal/fsconfine"
 	"github.com/monoes/mono-agent/internal/workflow"
 )
 
@@ -103,6 +104,12 @@ func (n *EmailSendNode) Execute(ctx context.Context, input workflow.NodeInput, c
 				}
 			}
 		}
+	}
+	// C-46: attachments are local files sent away; confine them to the org
+	// workdir when a role's grant started this run.
+	attachmentPaths, err := fsconfine.Paths(ctx, attachmentPaths)
+	if err != nil {
+		return nil, fmt.Errorf("comm.email_send: attachments: %w", err)
 	}
 
 	// Optional threading: pass the original message's Message-ID header (get
