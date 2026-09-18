@@ -5,6 +5,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 
 	"github.com/monoes/mono-agent/internal/workflow"
@@ -174,9 +175,14 @@ func itemsToRows(items []workflow.Item, hasHeader bool) ([][]string, []string) {
 		return nil, nil
 	}
 
-	// Collect all unique keys to form stable headers
-	keyOrder := make([]string, 0)
+	// Collect all unique keys to form stable headers. Ranging a map yields
+	// its keys in a random order, so the columns have to be sorted or the
+	// same items write different column orders from run to run. Items read
+	// back without a header are keyed by column index ("0", "1", … "10"),
+	// which must stay in numeric order rather than lexical, or column 10
+	// would land between 1 and 2.
 	keySet := make(map[string]bool)
+	keyOrder := make([]string, 0)
 	for _, item := range items {
 		for k := range item.JSON {
 			if !keySet[k] {
@@ -185,6 +191,17 @@ func itemsToRows(items []workflow.Item, hasHeader bool) ([][]string, []string) {
 			}
 		}
 	}
+	sort.Slice(keyOrder, func(i, j int) bool {
+		a, aErr := strconv.Atoi(keyOrder[i])
+		b, bErr := strconv.Atoi(keyOrder[j])
+		if aErr == nil && bErr == nil {
+			return a < b
+		}
+		if aErr == nil != (bErr == nil) {
+			return aErr == nil // numeric columns first, then named ones
+		}
+		return keyOrder[i] < keyOrder[j]
+	})
 
 	rows := make([][]string, 0, len(items))
 	for _, item := range items {

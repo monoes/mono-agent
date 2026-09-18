@@ -266,3 +266,36 @@ func TestSpreadsheetCSVStillWorks(t *testing.T) {
 		t.Errorf("items = %v", out[0].Items)
 	}
 }
+
+// Ranging a map is randomised per run, so columns derived from item keys have
+// to be sorted: without it the same items wrote a different column order from
+// run to run, which CI caught as a flaky round-trip. Index keys sort
+// numerically so column 10 does not land between 1 and 2.
+func TestItemsToRowsOrdersColumnsDeterministically(t *testing.T) {
+	indexed := []workflow.Item{workflow.NewItem(map[string]interface{}{
+		"0": "a", "1": "b", "2": "c", "10": "k", "11": "l",
+	})}
+	named := []workflow.Item{
+		workflow.NewItem(map[string]interface{}{"name": "ada", "age": 36}),
+		workflow.NewItem(map[string]interface{}{"city": "london", "name": "grace"}),
+	}
+
+	// Repeated because the bug only shows when the random order differs.
+	for i := 0; i < 50; i++ {
+		rows, headers := itemsToRows(indexed, false)
+		if got := strings.Join(headers, ","); got != "0,1,2,10,11" {
+			t.Fatalf("index columns = %q, want numeric order", got)
+		}
+		if got := strings.Join(rows[0], ","); got != "a,b,c,k,l" {
+			t.Fatalf("index row = %q", got)
+		}
+
+		rows, headers = itemsToRows(named, true)
+		if got := strings.Join(headers, ","); got != "age,city,name" {
+			t.Fatalf("named columns = %q, want sorted", got)
+		}
+		if got := strings.Join(rows[0], ","); got != "36,,ada" {
+			t.Fatalf("named row = %q", got)
+		}
+	}
+}
