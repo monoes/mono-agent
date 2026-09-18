@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/monoes/mono-agent/internal/fsconfine"
 	"github.com/monoes/mono-agent/internal/workflow"
 )
 
@@ -20,6 +21,10 @@ func (n *WriteBinaryFileNode) Execute(ctx context.Context, input workflow.NodeIn
 	filePath, _ := config["file_path"].(string)
 	if filePath == "" {
 		return nil, fmt.Errorf("data.write_binary_file: file_path is required")
+	}
+	filePath, err := fsconfine.Path(ctx, filePath)
+	if err != nil {
+		return nil, fmt.Errorf("data.write_binary_file: %w", err)
 	}
 
 	field, _ := config["field"].(string)
@@ -46,7 +51,6 @@ func (n *WriteBinaryFileNode) Execute(ctx context.Context, input workflow.NodeIn
 	}
 
 	var content []byte
-	var err error
 
 	switch encoding {
 	case "base64":

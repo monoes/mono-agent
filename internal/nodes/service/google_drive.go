@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/monoes/mono-agent/internal/fsconfine"
 	"github.com/monoes/mono-agent/internal/workflow"
 )
 
@@ -73,6 +74,11 @@ func (n *GoogleDriveNode) Execute(ctx context.Context, input workflow.NodeInput,
 		filePath := strVal(config, "file_path")
 		if filePath == "" {
 			return nil, fmt.Errorf("google_drive: file_path is required for upload_file")
+		}
+		// C-46: the upload sends a local file away; confine it first.
+		filePath, err := fsconfine.Path(ctx, filePath)
+		if err != nil {
+			return nil, fmt.Errorf("google_drive upload_file: %w", err)
 		}
 		fileName := strVal(config, "file_name")
 		if fileName == "" {

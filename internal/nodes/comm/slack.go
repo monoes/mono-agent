@@ -7,6 +7,7 @@ import (
 
 	slackgo "github.com/slack-go/slack"
 
+	"github.com/monoes/mono-agent/internal/fsconfine"
 	"github.com/monoes/mono-agent/internal/workflow"
 )
 
@@ -81,6 +82,10 @@ func (n *SlackNode) Execute(ctx context.Context, input workflow.NodeInput, confi
 		filename, _ := config["filename"].(string)
 		if filename == "" {
 			filename = filePath
+		}
+		filePath, err := fsconfine.Path(ctx, filePath)
+		if err != nil {
+			return nil, fmt.Errorf("comm.slack: upload_file: %w", err)
 		}
 
 		params := slackgo.UploadFileParameters{

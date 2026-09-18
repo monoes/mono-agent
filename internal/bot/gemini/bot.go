@@ -13,6 +13,7 @@ import (
 
 	"github.com/monoes/mono-agent/internal/browser"
 	"github.com/monoes/mono-agent/internal/extension"
+	"github.com/monoes/mono-agent/internal/fsconfine"
 	"github.com/monoes/mono-agent/internal/vault"
 
 	botpkg "github.com/monoes/mono-agent/internal/bot"
@@ -947,7 +948,7 @@ func (b *GeminiBot) methodDownloadImages(ctx context.Context, args ...interface{
 //  3. A hidden <input type="file" name="Filedata"> appears in the DOM
 //  4. Call SetFiles on that input to trigger the upload
 //  5. Wait for the image thumbnail to appear in the chat input area
-func (b *GeminiBot) methodUploadImage(_ context.Context, args ...interface{}) (interface{}, error) {
+func (b *GeminiBot) methodUploadImage(ctx context.Context, args ...interface{}) (interface{}, error) {
 	page, err := extractPage(args, "upload_image")
 	if err != nil {
 		return nil, err
@@ -964,6 +965,11 @@ func (b *GeminiBot) methodUploadImage(_ context.Context, args ...interface{}) (i
 	}
 	if strings.HasPrefix(imagePath, "~/") {
 		imagePath = filepath.Join(homeDir(), imagePath[2:])
+	}
+	// C-46: the image is a local file handed to a web page; confine it to
+	// the org workdir when a role's grant started this run.
+	if imagePath, err = fsconfine.Path(ctx, imagePath); err != nil {
+		return nil, fmt.Errorf("upload_image: %w", err)
 	}
 	if _, err := os.Stat(imagePath); err != nil {
 		return nil, fmt.Errorf("upload_image: image file not found: %s", imagePath)
