@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -71,7 +72,10 @@ func TestInitiatorToolsAreScopedAndBudgeted(t *testing.T) {
 	}
 }
 
-type recordingClient struct{ calls []string }
+type recordingClient struct {
+	calls []string
+	fail  bool // every resolution fails, as a transient monomind failure does
+}
 
 func (r *recordingClient) Status(context.Context, string, string) (json.RawMessage, error) {
 	return nil, nil
@@ -86,6 +90,9 @@ func (r *recordingClient) Gates(context.Context, string, string) (json.RawMessag
 	return nil, nil
 }
 func (r *recordingClient) Approve(_ context.Context, _, org, role, action string, approve bool, o monomind.ResolveOptions) error {
+	if r.fail {
+		return errors.New("monomind is unreachable")
+	}
 	r.calls = append(r.calls, org+":"+role+":"+action+":"+map[bool]string{true: "approve", false: "deny"}[approve]+":"+o.By)
 	return nil
 }
@@ -145,5 +152,48 @@ func TestDecisionToolsResolveDelegatedItems(t *testing.T) {
 	}
 	if _, err := s.callGrantTool(ctx, orgdecide.ToolDecisionResolve, json.RawMessage(`{"id":"`+mine.ID+`","verdict":"deny","rationale":"again"}`)); err == nil {
 		t.Fatal("resolved twice")
+	}
+}
+
+// A verdict that could not be applied must leave the item reachable: the
+// delegation was closed before the apply, so a transient failure stranded
+// it — the sweep skips a resolved delegation and ProcessOrg sees the
+// escalated row at the current level.
+func TestDecisionResolveKeepsItemPendingWhenApplyFails(t *testing.T) {
+	s, db := newOrgToolServer(t, []orggrant.OrgTool{
+		{Tool: orgdecide.ToolDecisionList, Orgs: []string{"sales"}},
+		{Tool: orgdecide.ToolDecisionResolve, Orgs: []string{"sales"}},
+	})
+	ctx := context.Background()
+	client := &recordingClient{fail: true}
+	old := decisionClient
+	decisionClient = client
+	t.Cleanup(func() { decisionClient = old })
+
+	store := orgdecide.NewStore(db.DB)
+	item := orgdecide.Item{Kind: orgdecide.KindApproval, Ref: "lead:org_complete:1", Requester: "lead", Class: "org_complete", Tier: "consequential", Action: "org_complete"}
+	d, err := store.Delegate(ctx, "default", "sales", "full", "hq", "ceo", item, time.Now().Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := json.RawMessage(`{"id":"` + d.ID + `","verdict":"approve","rationale":"work is done"}`)
+	if _, err := s.callGrantTool(ctx, orgdecide.ToolDecisionResolve, args); err == nil {
+		t.Fatal("a failed apply reported success")
+	}
+	got, err := store.GetDelegation(ctx, d.ID)
+	if err != nil || got == nil || got.Status != orgdecide.DelegationPending {
+		t.Fatalf("delegation after a failed apply = %+v %v", got, err)
+	}
+	if ds, _ := store.List(ctx, "default", "sales", orgdecide.DecisionFilter{}); len(ds) != 0 {
+		t.Fatalf("decision recorded although nothing was applied: %+v", ds)
+	}
+
+	// Once monomind answers again the same decider resolves it.
+	client.fail = false
+	if _, err := s.callGrantTool(ctx, orgdecide.ToolDecisionResolve, args); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := store.GetDelegation(ctx, d.ID); got.Status != orgdecide.DelegationResolved {
+		t.Fatalf("delegation not resolved on the retry: %+v", got)
 	}
 }
