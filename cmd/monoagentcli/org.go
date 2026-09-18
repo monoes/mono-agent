@@ -396,6 +396,8 @@ func newOrgValidateCmd(root func() string) *cobra.Command {
 				"v":     1,
 				"org":   name,
 				"valid": valErr == nil,
+				// Non-fatal: never flips valid (C-36).
+				"warnings": nonNilStrings(childGoalWarnings(root(), name)),
 			}
 			if valErr != nil {
 				payload["error"] = valErr.Error()
@@ -473,6 +475,7 @@ func newOrgCreateJSONCmd(env *orgEnv) *cobra.Command {
 			out, valErr := monomind.OrgValidate(cmd.Context(), root(), name)
 			payload := map[string]interface{}{
 				"v": 1, "org": name, "sha256": sha, "valid": valErr == nil,
+				"warnings": nonNilStrings(childGoalWarnings(root(), name)),
 			}
 			if findings != nil {
 				payload["reconcile"] = findings
