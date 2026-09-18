@@ -646,6 +646,10 @@ export function RunWorkflow(arg1) {
   return window['go']['main']['App']['RunWorkflow'](arg1);
 }
 
+export function RunWorkflowWithInput(arg1, arg2) {
+  return window['go']['main']['App']['RunWorkflowWithInput'](arg1, arg2);
+}
+
 export function SaveAIProvider(arg1) {
   return window['go']['main']['App']['SaveAIProvider'](arg1);
 }

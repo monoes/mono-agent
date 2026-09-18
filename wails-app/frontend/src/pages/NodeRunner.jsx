@@ -13,7 +13,8 @@ import HumanInLoop from './HumanInLoop.jsx'
 import ResourcePickerField from '../components/ResourcePickerField.jsx'
 import ImagePickerModal from '../components/ImagePickerModal'
 import { NODE_CONFIG_FIELDS, BROWSER_NODE_GENERIC } from './nodeConfigFields.js'
-import { SaveModal, WorkflowsModal } from './NodeRunnerModals.jsx'
+import { SaveModal, WorkflowsModal, TriggerInputModal } from './NodeRunnerModals.jsx'
+import { collectTriggerFields, rememberTriggerInput, rememberedTriggerInput } from './triggerInput.js'
 import { usePageVisibleRef } from '../lib/usePageVisible.js'
 
 // ── Wails bindings with mock fallback ────────────────────────────────────────
@@ -984,6 +985,9 @@ export default function NodeRunner({ onNavigate, navData }) {
   const [saveMsg,       setSaveMsg]       = useState(null) // { ok: bool, text: string }
   const [showWfModal,   setShowWfModal]   = useState(false)
   const [showSaveModal, setShowSaveModal] = useState(false)
+  // { asked, fields, value } — asked flips once the modal has been answered
+  // for this run, so a re-run doesn't re-prompt mid-flight.
+  const [triggerInput, setTriggerInput] = useState({ asked: false, fields: [], value: '' })
   const [isDirty, setIsDirty] = useState(false)
 
   // Persist last loaded workflow ID so it restores on next visit
@@ -1431,7 +1435,25 @@ export default function NodeRunner({ onNavigate, navData }) {
   // never resolve the current one.
   const runTokenRef = useRef(0)
 
+  // A workflow whose nodes read {{ $json.<field> }} needs trigger data; ask
+  // for it once, then run. Without this the run button sent nothing and such
+  // a workflow completed having done nothing at all.
   const handleRun = async () => {
+    if (running || nodes.length === 0) return
+    const fields = collectTriggerFields(nodes)
+    if (fields.length > 0) {
+      // The modal is the only path to a run for these workflows, and it hands
+      // startRun the edited value directly — so nothing here ever runs with a
+      // stale one, and a second Run while it is open is a no-op.
+      if (!triggerInput.asked) {
+        setTriggerInput({ asked: true, fields, value: rememberedTriggerInput(wfId, fields) })
+      }
+      return
+    }
+    await startRun('')
+  }
+
+  const startRun = async (inputJSON) => {
     if (running || nodes.length === 0) return
     stopRef.current = false
     setRunning(true)
@@ -1470,7 +1492,8 @@ export default function NodeRunner({ onNavigate, navData }) {
       })
 
       try {
-        await api.runWorkflow(currentWfId)
+        await api.runWorkflowWithInput(currentWfId, inputJSON)
+        rememberTriggerInput(currentWfId, inputJSON)
         const execId = await execIdPromise
         if (runTokenRef.current !== runToken) return // superseded by a newer run
         if (!execId) { setRunning(false); return }
@@ -1951,6 +1974,19 @@ export default function NodeRunner({ onNavigate, navData }) {
           initialName={wfName}
           onConfirm={handleSave}
           onClose={() => setShowSaveModal(false)}
+        />
+      )}
+
+      {/* ── TRIGGER INPUT MODAL ── */}
+      {triggerInput.asked && triggerInput.fields.length > 0 && (
+        <TriggerInputModal
+          fields={triggerInput.fields}
+          initialValue={triggerInput.value}
+          onRun={(value) => {
+            setTriggerInput({ asked: false, fields: [], value: '' })
+            startRun(value)
+          }}
+          onClose={() => setTriggerInput({ asked: false, fields: [], value: '' })}
         />
       )}
 

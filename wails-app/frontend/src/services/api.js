@@ -46,6 +46,7 @@ export const api = {
   getDashboardStats:    () => GoApp.GetDashboardStats().catch(guard('dashboard stats', null)),
   listWorkflows:        () => GoApp.ListWorkflows().catch(guard('list workflows', [])),
   runWorkflow:          (id) => GoApp.RunWorkflow(id).catch(e => { reportError('run workflow', e); return `error: ${e}` }),
+  runWorkflowWithInput: (id, input) => GoApp.RunWorkflowWithInput(id, input || '').catch(e => { reportError('run workflow', e); return `error: ${e}` }),
   setWorkflowActive:    (id, active) => GoApp.SetWorkflowActive(id, active),
   getRecentExecutions:  (limit = 20) => GoApp.GetRecentExecutions(limit).catch(guard('recent executions', [])),
   getWorkflowExecutions:(id, limit = 20) => GoApp.GetWorkflowExecutions(id, limit).catch(guard('workflow executions', [])),

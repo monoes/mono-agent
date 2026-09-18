@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { List, X, Trash2 } from 'lucide-react'
 import * as WailsApp from '../wailsjs/go/main/App'
 import { notify } from '../services/api.js'
+import { parseTriggerInput } from './triggerInput.js'
 
 // Wails bindings used by the workflow modals, with dev fallbacks.
 const ListWorkflows = WailsApp.ListWorkflows ?? (async () => [])
@@ -240,6 +241,98 @@ export function WorkflowsModal({ currentId, onLoad, onDelete, onClose }) {
               ><Trash2 size={11} /></button>
             </div>
           ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Trigger input modal ───────────────────────────────────────────────────────
+// Shown before running a workflow whose nodes read {{ $json.<field> }}. Such a
+// workflow is unrunnable without data — the run button used to send none, so
+// every expression resolved to nothing and the run did nothing while
+// reporting success.
+export function TriggerInputModal({ fields, initialValue, onRun, onClose }) {
+  const [text, setText] = useState(initialValue || '{}')
+  const [error, setError] = useState('')
+  const areaRef = useRef(null)
+  useEffect(() => { areaRef.current?.focus(); areaRef.current?.select() }, [])
+
+  const submit = () => {
+    const parsed = parseTriggerInput(text)
+    if (!parsed.ok) { setError(parsed.error); return }
+    onRun(parsed.value)
+  }
+
+  return (
+    <div style={{
+      position: 'absolute', inset: 0, zIndex: 200,
+      background: 'rgba(2,5,9,0.8)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+    }} onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}>
+      <div role="dialog" aria-modal="true" aria-label="Run with input" style={{
+        width: 440,
+        background: '#080d16',
+        border: '1px solid rgba(0,180,216,0.25)',
+        borderRadius: 12,
+        padding: '20px 20px 16px',
+        boxShadow: '0 24px 60px rgba(0,0,0,.85)',
+        display: 'flex', flexDirection: 'column', gap: 14,
+      }}>
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 700, color: '#e2e8f0', letterSpacing: 1 }}>
+          RUN WITH INPUT
+        </div>
+
+        <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+          {fields.length === 1
+            ? <>This workflow reads <code style={{ color: '#00b4d8' }}>{fields[0].name}</code> from the trigger.</>
+            : <>This workflow reads {fields.map((f, i) => (
+                <span key={f.name}>
+                  {i > 0 && ', '}<code style={{ color: '#00b4d8' }}>{f.name}</code>
+                </span>
+              ))} from the trigger.</>}
+          {' '}Without them it runs but does nothing.
+        </div>
+
+        <div>
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-muted)', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 6 }}>
+            Trigger Data (JSON)
+          </div>
+          <textarea
+            ref={areaRef}
+            value={text}
+            onChange={e => { setText(e.target.value); if (error) setError('') }}
+            onKeyDown={e => {
+              if (e.key === 'Escape') onClose()
+              if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) submit()
+            }}
+            spellCheck={false}
+            rows={7}
+            style={{
+              width: '100%', boxSizing: 'border-box', resize: 'vertical',
+              background: '#020509',
+              border: `1px solid ${error ? 'rgba(239,68,68,0.5)' : 'rgba(0,180,216,0.2)'}`,
+              borderRadius: 6, padding: '8px 10px',
+              color: '#e2e8f0', fontFamily: 'var(--font-mono)', fontSize: 12,
+              outline: 'none',
+            }}
+          />
+          {error && (
+            <div role="alert" style={{ marginTop: 6, fontSize: 10, color: '#f87171', fontFamily: 'var(--font-mono)' }}>
+              {error}
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <button
+            onClick={onClose}
+            style={{ background: 'transparent', border: '1px solid rgba(148,163,184,0.25)', borderRadius: 6, padding: '6px 16px', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}
+          >Cancel</button>
+          <button
+            onClick={submit}
+            style={{ background: 'rgba(0,180,216,0.15)', border: '1px solid rgba(0,180,216,0.3)', borderRadius: 6, padding: '6px 20px', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 11, color: '#00b4d8' }}
+          >Run</button>
         </div>
       </div>
     </div>

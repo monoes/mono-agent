@@ -496,9 +496,32 @@ func (a *App) ImportWorkflow(jsonOrPath string) (*WorkflowImportResult, error) {
 // Workflow execution (subprocess)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// RunWorkflow spawns `monoagentcli workflow run <id>` as a subprocess.
-// Stdout/stderr stream to the UI. The subprocess can be killed via CancelWorkflow.
+// RunWorkflow spawns `monoagentcli workflow run <id>` as a subprocess with no
+// trigger data. Kept as its own binding so existing callers (the Dashboard's
+// run button) are unchanged.
 func (a *App) RunWorkflow(id string) error {
+	return a.RunWorkflowWithInput(id, "")
+}
+
+// RunWorkflowWithInput is RunWorkflow with trigger data — the GUI equivalent
+// of `workflow run <id> --input '{"prompts":[…]}'`.
+//
+// Without it a manual-trigger workflow whose nodes read {{ $json.<field> }}
+// was simply unrunnable from the GUI: the run button sent nothing, every such
+// expression resolved to nothing, and the run did nothing. inputJSON must be
+// a JSON object; empty means no trigger data.
+func (a *App) RunWorkflowWithInput(id, inputJSON string) error {
+	trimmed := strings.TrimSpace(inputJSON)
+	if trimmed != "" {
+		var probe map[string]interface{}
+		if err := json.Unmarshal([]byte(trimmed), &probe); err != nil {
+			return fmt.Errorf("trigger input must be a JSON object: %w", err)
+		}
+	}
+	return a.runWorkflowProcess(id, trimmed)
+}
+
+func (a *App) runWorkflowProcess(id, inputJSON string) error {
 	if a.wfStore == nil {
 		return fmt.Errorf("workflow store not available")
 	}
@@ -536,7 +559,11 @@ func (a *App) RunWorkflow(id string) error {
 
 	a.emitLog("WORKFLOW", "INFO", fmt.Sprintf("Starting workflow %s", id))
 
-	cmd := exec.CommandContext(a.ctx, cliBin, "--profile", a.getActiveProfileID(), "workflow", "run", id)
+	runArgs := []string{"--profile", a.getActiveProfileID(), "workflow", "run", id}
+	if inputJSON != "" {
+		runArgs = append(runArgs, "--input", inputJSON)
+	}
+	cmd := exec.CommandContext(a.ctx, cliBin, runArgs...)
 	hideWindow(cmd)
 	stdout, _ := cmd.StdoutPipe()
 	stderr, _ := cmd.StderrPipe()

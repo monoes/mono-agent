@@ -239,18 +239,7 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 	}
 
 	if len(result.ExtractedItems) > 0 {
-		merged := make(map[string]interface{})
-		// Start with input fields.
-		for k, v := range inputJSON {
-			merged[k] = v
-		}
-		// Overlay each step's result in order so the last step wins for any
-		// key that appears in multiple steps.
-		for _, raw := range result.ExtractedItems {
-			for k, v := range NormalizeBrowserItem(raw, b.platform) {
-				merged[k] = v
-			}
-		}
+		merged := mergeStepResults(inputJSON, result.ExtractedItems, b.platform)
 		return []workflow.NodeOutput{
 			{Handle: "main", Items: []workflow.Item{workflow.NewItem(merged)}},
 		}, nil
@@ -266,6 +255,54 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 	return []workflow.NodeOutput{
 		{Handle: "main", Items: []workflow.Item{}},
 	}, nil
+}
+
+// mergeStepResults folds the input item and every step's extracted result
+// into the single item a downstream node sees (rather than fanning out "3
+// items for 3 steps"). Later steps win for any key they share.
+//
+// A step's own bookkeeping never becomes the node's answer. A no-op step —
+// navigating to a session id that wasn't supplied, uploading a reference
+// image that wasn't set — reports {"success":true,"skipped":true,"reason":…},
+// and merging that verbatim is how a Gemini run that saved a 1MB image
+// announced itself as "skipped":true,"reason":"empty session_id" next to
+// "image_count":1. That is also what made the same node, on a run that
+// genuinely did nothing, look like it had merely skipped a step.
+func mergeStepResults(inputJSON map[string]interface{}, extracted []map[string]interface{}, platform string) map[string]interface{} {
+	merged := make(map[string]interface{}, len(inputJSON)+8)
+	for k, v := range inputJSON {
+		merged[k] = v
+	}
+	for _, raw := range extracted {
+		if skipped, _ := raw["skipped"].(bool); skipped {
+			continue
+		}
+		for k, v := range NormalizeBrowserItem(raw, platform) {
+			if stepBookkeepingKeys[k] {
+				continue
+			}
+			merged[k] = v
+		}
+	}
+	return merged
+}
+
+// stepBookkeepingKeys are fields a bot step reports about *how* it worked —
+// which selector matched, how many characters it typed, whether a response had
+// rendered — rather than what the node produced. They belong in logs, and as a
+// node's output they are noise at best: a Gemini run that saved an image
+// presented "skipped":true and "reason":"empty session_id" alongside
+// "image_count":1, because a no-op step's map was merged in wholesale.
+//
+// "success" is deliberately absent: it is bookkeeping too, but a workflow may
+// already branch on it, so it keeps surfacing.
+var stepBookkeepingKeys = map[string]bool{
+	"selector": true,
+	"method":   true,
+	"typed":    true,
+	"ready":    true,
+	"skipped":  true,
+	"reason":   true,
 }
 
 // NormalizeBrowserItem enriches a raw extracted item with structured fields.
