@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/monoes/mono-agent/internal/daemonhb"
+	"github.com/monoes/mono-agent/internal/orgdesign"
 	"github.com/monoes/mono-agent/internal/orggrant"
+	"github.com/monoes/mono-agent/internal/profiledir"
 	"github.com/monoes/mono-agent/internal/storage"
 	"github.com/monoes/mono-agent/internal/workflow"
 )
@@ -258,5 +260,28 @@ func TestGrantModeRefusesWhenTheCapCannotBeRead(t *testing.T) {
 	_ = f.db.DB.QueryRow(`SELECT COUNT(*) FROM workflow_executions`).Scan(&execs)
 	if execs != 0 {
 		t.Fatalf("%d executions started behind an unreadable cap", execs)
+	}
+}
+
+// run_config lives in the org JSON, which any role whose fileWrite reaches
+// `.monomind/` can edit — the reason grants, endpoints and autonomy moved
+// to the database — so what it may ask for is clamped: a role must not be
+// able to raise U10's loop control out of the way.
+func TestOrgLimitsAreClampedToACeiling(t *testing.T) {
+	f := newGrantFixture(t, orggrant.Tool{})
+	ctx := context.Background()
+	root := profiledir.Root(f.db.DB, "default")
+	doc := &orgdesign.Doc{Name: "growth", Status: "stopped", Schedule: json.RawMessage("null"),
+		RunConfig: map[string]json.RawMessage{"max_hops": json.RawMessage("999999"), "max_repeats": json.RawMessage("1000000")},
+		Roles:     []orgdesign.Role{{ID: "writer", Title: "Writer", Type: "boss", Responsibilities: []string{"Write."}}}}
+	if _, err := orgdesign.Save(root, doc); err != nil {
+		t.Fatal(err)
+	}
+	b, _, err := f.server.grantScope(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lim := orgLimitsFor(f.db.DB, b); lim.MaxHops != maxHopsCeiling || lim.MaxRepeats != maxRepeatsCeiling {
+		t.Fatalf("limits the org file asked for = %+v", lim)
 	}
 }
