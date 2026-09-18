@@ -69,7 +69,10 @@ func metaFrom(ctx context.Context) callMeta {
 // grantScope resolves the bundle and checks it against the process: the
 // --profile flag and the org/role monomind put in the environment must name
 // the bundle's own scope, so copying a grant id into another role's provider
-// block buys nothing (C-3).
+// block buys nothing (C-3). The environment is required, not merely checked
+// when present: a grant id is not a secret — it sits in every role's
+// provider args in the org JSON — so an unset variable must refuse rather
+// than wave the call through.
 func (s *Server) grantScope(ctx context.Context) (*orggrant.Bundle, *runtime, error) {
 	rt, err := s.runtime()
 	if err != nil {
@@ -85,10 +88,17 @@ func (s *Server) grantScope(ctx context.Context) (*orggrant.Bundle, *runtime, er
 	if s.opts.Profile != "" && s.opts.Profile != b.ProfileID {
 		return nil, nil, fmt.Errorf("%s: grant %s belongs to profile %q, not %q", codeRefusedGrant, s.opts.Grant, b.ProfileID, s.opts.Profile)
 	}
-	if org := os.Getenv("MONOMIND_ORG_NAME"); org != "" && org != b.OrgName {
+	org, role := os.Getenv("MONOMIND_ORG_NAME"), os.Getenv("MONOMIND_ORG_ROLE")
+	if org == "" {
+		return nil, nil, fmt.Errorf("%s: grant mode needs MONOMIND_ORG_NAME in the environment; monomind sets it for a role's tool provider", codeRefusedGrant)
+	}
+	if role == "" {
+		return nil, nil, fmt.Errorf("%s: grant mode needs MONOMIND_ORG_ROLE in the environment; monomind sets it for a role's tool provider", codeRefusedGrant)
+	}
+	if org != b.OrgName {
 		return nil, nil, fmt.Errorf("%s: grant %s is for org %q, not %q", codeRefusedGrant, s.opts.Grant, b.OrgName, org)
 	}
-	if role := os.Getenv("MONOMIND_ORG_ROLE"); role != "" && role != b.RoleID {
+	if role != b.RoleID {
 		return nil, nil, fmt.Errorf("%s: grant %s is for role %q, not %q", codeRefusedGrant, s.opts.Grant, b.RoleID, role)
 	}
 	return b, rt, nil
@@ -230,13 +240,26 @@ func (s *Server) grantRun(ctx context.Context, rt *runtime, b *orggrant.Bundle, 
 		OriginOrg: b.OrgName, Direction: orgbridge.DirRoleTool, OrgName: b.OrgName, RoleID: b.RoleID,
 		WorkflowID: tool.WorkflowID, GrantID: grant.ID, RunID: runID,
 	}
+	// A cap that cannot be read refuses: these two counts are the only
+	// quantity bound on a granted automation, and a transient read failure
+	// (SQLite "database is locked" while the daemon writes) must not lift
+	// it for that call. The role can call again on its next turn, which is
+	// cheaper than holding its turn open on a retry loop here.
 	if runID != "" {
-		if n, err := ledger.CountGrantCalls(ctx, grant.ID, runID, time.Time{}); err == nil && n >= tool.MaxCallsPerRun {
+		n, err := ledger.CountGrantCalls(ctx, grant.ID, runID, time.Time{})
+		if err != nil {
+			return nil, fmt.Errorf("%s: cannot read this run's call count for %s: %v", codeRefusedCap, name, err)
+		}
+		if n >= tool.MaxCallsPerRun {
 			_ = ledger.Refuse(ctx, call, orgbridge.StatusRefusedCap)
 			return nil, fmt.Errorf("%s: %s already ran %d times this org run (limit %d)", codeRefusedCap, name, n, tool.MaxCallsPerRun)
 		}
 	}
-	if n, err := ledger.CountGrantCalls(ctx, grant.ID, "", time.Now().Add(-24*time.Hour)); err == nil && n >= tool.MaxCallsPerDay {
+	n, err := ledger.CountGrantCalls(ctx, grant.ID, "", time.Now().Add(-24*time.Hour))
+	if err != nil {
+		return nil, fmt.Errorf("%s: cannot read the daily call count for %s: %v", codeRefusedCap, name, err)
+	}
+	if n >= tool.MaxCallsPerDay {
 		_ = ledger.Refuse(ctx, call, orgbridge.StatusRefusedCap)
 		return nil, fmt.Errorf("%s: %s already ran %d times in 24 hours (limit %d)", codeRefusedCap, name, n, tool.MaxCallsPerDay)
 	}
@@ -289,6 +312,21 @@ func (s *Server) grantRun(ctx context.Context, rt *runtime, b *orggrant.Bundle, 
 	}
 }
 
+// Ceilings on the loop control the org file may ask for. run_config is in
+// the org JSON, which any role whose fileWrite reaches `.monomind/` can
+// edit — the reason grants, endpoints and autonomy live in the database —
+// so a role must not be able to raise U10's limits out of the way. Well
+// above orgbridge's defaults of 8 and 20, and far below a number that
+// would let a loop run free.
+//
+// These mirror orgbridge.MaxHopsCeiling/MaxRepeatsCeiling, which clamp the
+// same values inside Limits.withDefaults for every caller; replace them
+// with the orgbridge constants once that lands, so the pair cannot drift.
+const (
+	maxHopsCeiling    = 32
+	maxRepeatsCeiling = 200
+)
+
 func orgLimitsFor(db *sql.DB, b *orggrant.Bundle) orgbridge.Limits {
 	var lim orgbridge.Limits
 	doc, err := orgdesign.Load(profiledir.Root(db, b.ProfileID), b.OrgName)
@@ -300,6 +338,12 @@ func orgLimitsFor(db *sql.DB, b *orggrant.Bundle) orgbridge.Limits {
 	}
 	if v, ok := doc.RunConfig["max_repeats"]; ok {
 		_ = json.Unmarshal(v, &lim.MaxRepeats)
+	}
+	if lim.MaxHops > maxHopsCeiling {
+		lim.MaxHops = maxHopsCeiling
+	}
+	if lim.MaxRepeats > maxRepeatsCeiling {
+		lim.MaxRepeats = maxRepeatsCeiling
 	}
 	return lim
 }

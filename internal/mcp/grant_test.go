@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/monoes/mono-agent/internal/daemonhb"
+	"github.com/monoes/mono-agent/internal/orgdesign"
 	"github.com/monoes/mono-agent/internal/orggrant"
+	"github.com/monoes/mono-agent/internal/profiledir"
 	"github.com/monoes/mono-agent/internal/storage"
 	"github.com/monoes/mono-agent/internal/workflow"
 )
@@ -27,8 +29,10 @@ func newGrantFixture(t *testing.T, tool orggrant.Tool) *grantFixture {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("MONOAGENT_DAEMON_HEARTBEAT", filepath.Join(home, "hb.json"))
-	t.Setenv("MONOMIND_ORG_NAME", "")
-	t.Setenv("MONOMIND_ORG_ROLE", "")
+	// The env monomind gives a role's tool provider; grant mode refuses to
+	// serve without it.
+	t.Setenv("MONOMIND_ORG_NAME", "growth")
+	t.Setenv("MONOMIND_ORG_ROLE", "writer")
 	t.Setenv("MONOMIND_ORG_RUN", "")
 	dbPath := filepath.Join(t.TempDir(), "grant.db")
 	db, err := storage.NewDatabase(dbPath)
@@ -203,5 +207,81 @@ func TestGrantModeReturnsHILImmediately(t *testing.T) {
 	}
 	if !strings.Contains(out, `"hil"`) || !strings.Contains(out, "hil-1") || time.Since(start) > 10*time.Second {
 		t.Fatalf("HIL result = %s", out)
+	}
+}
+
+// Grant ids are not secrets — they sit in every role's provider args in
+// the org JSON — so grant mode must fail closed when the environment that
+// names the role is missing: an unset variable used to skip the check
+// entirely, so a role that still holds Bash could serve another role's
+// grant by clearing it (C-3).
+func TestGrantModeRefusesWithoutOrgEnvironment(t *testing.T) {
+	f := newGrantFixture(t, orggrant.Tool{})
+	ctx := context.Background()
+	liveHeartbeat(t)
+
+	t.Setenv("MONOMIND_ORG_NAME", "")
+	if defs := f.server.grantToolDefinitions(ctx); len(defs) != 0 {
+		t.Fatalf("tools listed with no org in the environment: %v", defs)
+	}
+	if _, err := f.server.callGrantTool(ctx, "automation_publish", nil); err == nil || !strings.Contains(err.Error(), "MONOMIND_ORG_NAME") {
+		t.Fatalf("served a grant with no org in the environment: %v", err)
+	}
+	t.Setenv("MONOMIND_ORG_NAME", "growth")
+	t.Setenv("MONOMIND_ORG_ROLE", "")
+	if _, err := f.server.callGrantTool(ctx, "automation_publish", nil); err == nil || !strings.Contains(err.Error(), "MONOMIND_ORG_ROLE") {
+		t.Fatalf("served a grant with no role in the environment: %v", err)
+	}
+}
+
+// The per-run and per-day caps are the only quantity bound on a granted
+// automation, so a ledger read that fails must refuse rather than skip
+// them — "database is locked" under concurrent daemon writes used to lift
+// the cap for that call.
+func TestGrantModeRefusesWhenTheCapCannotBeRead(t *testing.T) {
+	f := newGrantFixture(t, orggrant.Tool{MaxCallsPerRun: 5})
+	ctx := context.Background()
+	liveHeartbeat(t)
+	// Make every ledger read fail, as a locked database does.
+	if _, err := f.db.DB.Exec(`ALTER TABLE org_bridge_calls RENAME TO org_bridge_calls_unreadable`); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MONOMIND_ORG_RUN", "run-1")
+	if _, err := f.server.callGrantTool(ctx, "automation_publish", nil); err == nil || !strings.HasPrefix(err.Error(), codeRefusedCap) {
+		t.Fatalf("ran with an unreadable per-run cap: %v", err)
+	}
+	// With no run id only the daily cap stands between the role and the
+	// automation.
+	t.Setenv("MONOMIND_ORG_RUN", "")
+	if _, err := f.server.callGrantTool(ctx, "automation_publish", nil); err == nil || !strings.HasPrefix(err.Error(), codeRefusedCap) {
+		t.Fatalf("ran with an unreadable daily cap: %v", err)
+	}
+	var execs int
+	_ = f.db.DB.QueryRow(`SELECT COUNT(*) FROM workflow_executions`).Scan(&execs)
+	if execs != 0 {
+		t.Fatalf("%d executions started behind an unreadable cap", execs)
+	}
+}
+
+// run_config lives in the org JSON, which any role whose fileWrite reaches
+// `.monomind/` can edit — the reason grants, endpoints and autonomy moved
+// to the database — so what it may ask for is clamped: a role must not be
+// able to raise U10's loop control out of the way.
+func TestOrgLimitsAreClampedToACeiling(t *testing.T) {
+	f := newGrantFixture(t, orggrant.Tool{})
+	ctx := context.Background()
+	root := profiledir.Root(f.db.DB, "default")
+	doc := &orgdesign.Doc{Name: "growth", Status: "stopped", Schedule: json.RawMessage("null"),
+		RunConfig: map[string]json.RawMessage{"max_hops": json.RawMessage("999999"), "max_repeats": json.RawMessage("1000000")},
+		Roles:     []orgdesign.Role{{ID: "writer", Title: "Writer", Type: "boss", Responsibilities: []string{"Write."}}}}
+	if _, err := orgdesign.Save(root, doc); err != nil {
+		t.Fatal(err)
+	}
+	b, _, err := f.server.grantScope(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lim := orgLimitsFor(f.db.DB, b); lim.MaxHops != maxHopsCeiling || lim.MaxRepeats != maxRepeatsCeiling {
+		t.Fatalf("limits the org file asked for = %+v", lim)
 	}
 }
