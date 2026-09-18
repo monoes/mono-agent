@@ -33,6 +33,13 @@ const MODELED_REST_FIELDS = [
   'policy', 'provider', 'instructions_file',
   'kind', 'endpoint', 'automation', 'automations',
 ]
+// The `policy` keys this panel has controls for. Everything else in a saved
+// policy is preserved verbatim by commitPolicy, since a role patch replaces
+// `policy` wholesale.
+const MODELED_POLICY_FIELDS = [
+  'git', 'maxTokens', 'maxUsd',
+  'allowTools', 'denyTools', 'fileWrite', 'fileRead', 'webAllow', 'autoApproveTools',
+]
 
 function omit(obj, keys) {
   if (!obj) return obj
@@ -256,16 +263,20 @@ export default function RoleInspector({
     onPatch({ provider: null })
   }
 
-  // Tool policy — same whole-object-replace shape as provider.
+  // Tool policy — same whole-object-replace shape as provider, so every key
+  // the saved policy carries has to be resent, including the ones this panel
+  // has no control for (`approvalTools`, which internal/orggrant's reconcile
+  // manages, and anything monomind or a hand edit added). Dropping them here
+  // would silently strip them on the next field change.
   const commitPolicy = (overrides) => {
-    const merged = {
+    const merged = cleanObj({
       git: policyGit,
       maxTokens: numOrUndefined(policyMaxTokens),
       maxUsd: numOrUndefined(policyMaxUsd),
       allowTools, denyTools, fileWrite, fileRead, webAllow, autoApproveTools,
       ...overrides,
-    }
-    onPatch({ policy: cleanObj(merged) })
+    })
+    onPatch({ policy: { ...omit(node.rest?.policy, MODELED_POLICY_FIELDS), ...merged } })
   }
   const clearPolicy = () => {
     setPolicyGit('read'); setPolicyMaxTokens(''); setPolicyMaxUsd('')
