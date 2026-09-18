@@ -287,3 +287,39 @@ func TestRenameOrgMovesRows(t *testing.T) {
 		t.Fatalf("grant not moved: %v", gs)
 	}
 }
+
+// insertDelegation writes one pending org_delegations row. orgdecide owns
+// the table but imports this package, so the test writes it directly.
+func insertDelegation(t *testing.T, db *sql.DB, id, org, deciderOrg string) {
+	t.Helper()
+	if _, err := db.Exec(
+		`INSERT INTO org_delegations (id, profile_id, org_name, item_kind, item_ref, item_json, level, decider_org, decider_role, status, created_at, deadline_at)
+		 VALUES (?, 'default', ?, 'approval', 'appr-1', '{}', 'mid', ?, 'lead', 'pending', '2026-09-18T10:00:00Z', '2026-09-18T11:00:00Z')`,
+		id, org, deciderOrg); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A pending delegation names the org twice — the org the item belongs to
+// and the org of the deciding role. A rename that moves neither hides the
+// item from its decider for good: PendingFor stops listing it and
+// SweepDelegations cannot resolve it.
+func TestRenameOrgMovesDelegations(t *testing.T) {
+	s, db := newTestStore(t)
+	ctx := context.Background()
+	insertDelegation(t, db, "d-own", "growth", "hq")
+	insertDelegation(t, db, "d-decide", "sales", "growth")
+	if err := s.RenameOrg(ctx, "default", "growth", "growth2"); err != nil {
+		t.Fatal(err)
+	}
+	var org, decider string
+	if err := db.QueryRow(`SELECT org_name FROM org_delegations WHERE id = 'd-own'`).Scan(&org); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT decider_org FROM org_delegations WHERE id = 'd-decide'`).Scan(&decider); err != nil {
+		t.Fatal(err)
+	}
+	if org != "growth2" || decider != "growth2" {
+		t.Fatalf("delegation left behind: org_name = %q, decider_org = %q", org, decider)
+	}
+}

@@ -390,10 +390,16 @@ func (s *Store) RenameOrg(ctx context.Context, profileID, org, newName string) e
 		return err
 	}
 	defer tx.Rollback()
-	for _, table := range []string{"org_grants", "org_endpoints", "org_autonomy", "org_decisions", "org_asks"} {
+	for _, table := range []string{"org_grants", "org_endpoints", "org_autonomy", "org_decisions", "org_asks", "org_delegations"} {
 		if _, err := tx.ExecContext(ctx, `UPDATE `+table+` SET org_name = ? WHERE profile_id = ? AND org_name = ?`, newName, profileID, org); err != nil {
 			return fmt.Errorf("orggrant: rename in %s: %w", table, err)
 		}
+	}
+	// A delegation also names the org of the deciding role. Left on the old
+	// name, PendingFor stops showing the item to its decider and
+	// SweepDelegations cannot resolve it, so it is never decided.
+	if _, err := tx.ExecContext(ctx, `UPDATE org_delegations SET decider_org = ? WHERE profile_id = ? AND decider_org = ?`, newName, profileID, org); err != nil {
+		return fmt.Errorf("orggrant: rename decider in org_delegations: %w", err)
 	}
 	return tx.Commit()
 }
