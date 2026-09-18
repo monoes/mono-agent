@@ -130,6 +130,14 @@ HOLDING ORGS
 
   A child belongs to at most one holding org, in the same profile.
 
+  A message to a stopped child starts a full run of the child's own goal,
+  so phrase child goals for messages: "Handle requests from hq; when idle,
+  complete." and use org_start(org, task) for task-specific runs.
+  validate, create-json, and group init add a non-fatal entry to
+  "warnings" for a child goal that lacks a request word (request, message,
+  ask, inquiry, respond, reply) or lacks the parent's name, idle, or
+  complete. run_config.idle_minutes (default 10) keeps a woken child short.
+
 `)
 		},
 	}
