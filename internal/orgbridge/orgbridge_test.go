@@ -251,3 +251,29 @@ func TestMuxSamplesResumeCursorBeforeStartingTheTail(t *testing.T) {
 		t.Fatal("the tail never started")
 	}
 }
+
+// run_config.max_hops / max_repeats reach Admit straight from the org JSON,
+// which any role whose fileWrite reaches .monomind/ can edit (C-3), so a
+// role could otherwise disarm U10 by raising its own limits.
+func TestLedgerClampsOrgSuppliedLimits(t *testing.T) {
+	huge := Limits{MaxHops: 1 << 30, MaxRepeats: 1 << 30}
+	if got := huge.withDefaults(); got.MaxHops != MaxHopsCeiling || got.MaxRepeats != MaxRepeatsCeiling {
+		t.Fatalf("withDefaults = %+v, want MaxHops %d and MaxRepeats %d", got, MaxHopsCeiling, MaxRepeatsCeiling)
+	}
+
+	db := newTestDB(t)
+	ctx := context.Background()
+	l := NewLedger(db)
+	tr := NewTrace()
+	var last Admission
+	for i := 0; i <= MaxHopsCeiling; i++ {
+		a, err := l.Admit(ctx, Call{ProfileID: "p", Trace: tr, Direction: DirWorkflowOut, OrgName: "o", RoleID: "r"}, huge)
+		if err != nil {
+			t.Fatal(err)
+		}
+		last = a
+	}
+	if last.Status != StatusRefusedHops {
+		t.Fatalf("hop %d admitted as %q — an org that raises max_hops is never stopped", last.Trace.Hop, last.Status)
+	}
+}

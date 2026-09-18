@@ -85,7 +85,10 @@ func incomingTrace(item workflow.Item) orgbridge.Trace {
 	return orgbridge.Trace{}
 }
 
-// orgLimits reads run_config.max_hops / max_repeats from the org.
+// orgLimits reads run_config.max_hops / max_repeats from the org. The org
+// JSON is writable by any role whose fileWrite reaches .monomind/, so these
+// are requests, not guarantees: Limits.withDefaults clamps them to
+// orgbridge.MaxHopsCeiling / MaxRepeatsCeiling before Admit uses them.
 func orgLimits(root, org string) orgbridge.Limits {
 	var lim orgbridge.Limits
 	doc, err := orgdesign.Load(root, org)

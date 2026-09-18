@@ -28,19 +28,33 @@ const (
 	StatusError         = "error"
 )
 
-// Limits bound chains (U10). Zero fields take defaults.
+// Ceilings on what an org may raise loop control to. run_config.max_hops
+// and max_repeats come from the org JSON, which any role whose fileWrite
+// reaches .monomind/ can edit (C-3, C-54), so a role could otherwise
+// disarm U10 by writing a huge number into its own org file.
+const (
+	MaxHopsCeiling    = 32
+	MaxRepeatsCeiling = 200
+)
+
+// Limits bound chains (U10). Zero fields take defaults; values above the
+// ceilings are clamped.
 type Limits struct {
-	MaxHops    int           // default 8
-	MaxRepeats int           // same target within Window; default 20
+	MaxHops    int           // default 8, at most MaxHopsCeiling
+	MaxRepeats int           // same target within Window; default 20, at most MaxRepeatsCeiling
 	Window     time.Duration // default 1 minute
 }
 
 func (l Limits) withDefaults() Limits {
 	if l.MaxHops <= 0 {
 		l.MaxHops = 8
+	} else if l.MaxHops > MaxHopsCeiling {
+		l.MaxHops = MaxHopsCeiling
 	}
 	if l.MaxRepeats <= 0 {
 		l.MaxRepeats = 20
+	} else if l.MaxRepeats > MaxRepeatsCeiling {
+		l.MaxRepeats = MaxRepeatsCeiling
 	}
 	if l.Window <= 0 {
 		l.Window = time.Minute

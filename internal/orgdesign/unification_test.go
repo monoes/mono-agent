@@ -130,6 +130,15 @@ func TestValidateUnification(t *testing.T) {
 		{"endpoint without url", func(d *Doc) { d.Roles[1].Endpoint.URL = "" }, "needs endpoint.url"},
 		{"endpoint workflow not member", func(d *Doc) { d.Roles[1].Automation.WorkflowID = "other" }, "not in this org's automations"},
 		{"endpoint keys on agent role", func(d *Doc) { d.Roles[0].Endpoint = &Endpoint{URL: "http://x"} }, "only allowed when kind is \"endpoint\""},
+		// automationRoleFor returns the first automation role running a
+		// workflow, so a second one never gets a sender address of its own:
+		// org.ask stamps its return address as the first role and the reply
+		// to the second never matches the ask.
+		{"two endpoint roles on one workflow", func(d *Doc) {
+			twin := d.Roles[1]
+			twin.ID = "publisher-bot-2"
+			d.Roles = append(d.Roles, twin)
+		}, "already runs automation role"},
 		{"provider kind", func(d *Doc) { d.Roles[0].ToolProviders[0].Kind = "http" }, "kind must be mcp-stdio"},
 		{"children on standard org", func(d *Doc) { d.ChildOrgs = []ChildOrg{{Org: "x"}} }, "only allowed when kind is \"holding\""},
 		{"holding without children", func(d *Doc) { d.Kind = OrgKindHolding }, "needs at least one entry in children"},
