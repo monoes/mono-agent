@@ -98,9 +98,9 @@ func TestParseVerdictRejectsEmptyVerdictField(t *testing.T) {
 
 func TestSlugify(t *testing.T) {
 	cases := map[string]string{
-		"Strong Fit":   "strong-fit",
-		"Poor Fit":     "poor-fit",
-		"Ineligible":   "ineligible",
+		"Strong Fit": "strong-fit",
+		"Poor Fit":   "poor-fit",
+		"Ineligible": "ineligible",
 	}
 	for in, want := range cases {
 		if got := slugify(in); got != want {

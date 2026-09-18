@@ -68,7 +68,7 @@ func (n *PrepareNode) Execute(ctx context.Context, input workflow.NodeInput, con
 	}
 
 	out := map[string]interface{}{
-		"application_id": applicationID,
+		"application_id":      applicationID,
 		"cv_html_document_id": cvHTML, "cv_pdf_document_id": cvPDF,
 		"cover_letter_html_document_id": letterHTML, "cover_letter_pdf_document_id": letterPDF,
 	}
