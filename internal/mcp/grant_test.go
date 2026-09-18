@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/monoes/mono-agent/internal/daemonhb"
+	"github.com/monoes/mono-agent/internal/orgbridge"
 	"github.com/monoes/mono-agent/internal/orgdesign"
 	"github.com/monoes/mono-agent/internal/orggrant"
 	"github.com/monoes/mono-agent/internal/profiledir"
@@ -281,7 +282,7 @@ func TestOrgLimitsAreClampedToACeiling(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if lim := orgLimitsFor(f.db.DB, b); lim.MaxHops != maxHopsCeiling || lim.MaxRepeats != maxRepeatsCeiling {
+	if lim := orgLimitsFor(f.db.DB, b); lim.MaxHops != orgbridge.MaxHopsCeiling || lim.MaxRepeats != orgbridge.MaxRepeatsCeiling {
 		t.Fatalf("limits the org file asked for = %+v", lim)
 	}
 }

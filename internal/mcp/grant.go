@@ -312,21 +312,6 @@ func (s *Server) grantRun(ctx context.Context, rt *runtime, b *orggrant.Bundle, 
 	}
 }
 
-// Ceilings on the loop control the org file may ask for. run_config is in
-// the org JSON, which any role whose fileWrite reaches `.monomind/` can
-// edit — the reason grants, endpoints and autonomy live in the database —
-// so a role must not be able to raise U10's limits out of the way. Well
-// above orgbridge's defaults of 8 and 20, and far below a number that
-// would let a loop run free.
-//
-// These mirror orgbridge.MaxHopsCeiling/MaxRepeatsCeiling, which clamp the
-// same values inside Limits.withDefaults for every caller; replace them
-// with the orgbridge constants once that lands, so the pair cannot drift.
-const (
-	maxHopsCeiling    = 32
-	maxRepeatsCeiling = 200
-)
-
 func orgLimitsFor(db *sql.DB, b *orggrant.Bundle) orgbridge.Limits {
 	var lim orgbridge.Limits
 	doc, err := orgdesign.Load(profiledir.Root(db, b.ProfileID), b.OrgName)
@@ -339,11 +324,15 @@ func orgLimitsFor(db *sql.DB, b *orggrant.Bundle) orgbridge.Limits {
 	if v, ok := doc.RunConfig["max_repeats"]; ok {
 		_ = json.Unmarshal(v, &lim.MaxRepeats)
 	}
-	if lim.MaxHops > maxHopsCeiling {
-		lim.MaxHops = maxHopsCeiling
+	// run_config is in the org JSON, which any role whose fileWrite reaches
+	// `.monomind/` can edit — the reason grants, endpoints and autonomy live
+	// in the database — so clamp here as well as in Limits.withDefaults,
+	// which bounds every Admit caller.
+	if lim.MaxHops > orgbridge.MaxHopsCeiling {
+		lim.MaxHops = orgbridge.MaxHopsCeiling
 	}
-	if lim.MaxRepeats > maxRepeatsCeiling {
-		lim.MaxRepeats = maxRepeatsCeiling
+	if lim.MaxRepeats > orgbridge.MaxRepeatsCeiling {
+		lim.MaxRepeats = orgbridge.MaxRepeatsCeiling
 	}
 	return lim
 }
