@@ -292,6 +292,12 @@ monoagentcli org automation-role add growth --alias publish_post --reports-to le
   `monoagentcli` directly and bypass every grant. Workflows with outbound
   nodes (email, chat, social, service writes, non-GET HTTP, shell) default
   to `--approval required`.
+- A granted run (and an automation role's run started by a role's
+  message) carries the role's workdir as `org.workdir`; file nodes refuse
+  paths that resolve outside it (`path escapes org workdir`). Shell
+  commands are not confined. `org automation list`, `org grant add|list`,
+  and `org effective-tools` report `file_input_nodes` — nodes whose paths
+  come from the run's input (C-46, see SECURITY.md).
 - Workflow nodes go the other way: `org.run` (now with `wait` and
   `exclusive`), `org.send`, `org.ask` (the workflow must be an automation
   role of that org), and the `trigger.org` trigger (events of an org, or
