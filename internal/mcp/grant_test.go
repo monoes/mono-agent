@@ -27,8 +27,10 @@ func newGrantFixture(t *testing.T, tool orggrant.Tool) *grantFixture {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("MONOAGENT_DAEMON_HEARTBEAT", filepath.Join(home, "hb.json"))
-	t.Setenv("MONOMIND_ORG_NAME", "")
-	t.Setenv("MONOMIND_ORG_ROLE", "")
+	// The env monomind gives a role's tool provider; grant mode refuses to
+	// serve without it.
+	t.Setenv("MONOMIND_ORG_NAME", "growth")
+	t.Setenv("MONOMIND_ORG_ROLE", "writer")
 	t.Setenv("MONOMIND_ORG_RUN", "")
 	dbPath := filepath.Join(t.TempDir(), "grant.db")
 	db, err := storage.NewDatabase(dbPath)
@@ -203,5 +205,29 @@ func TestGrantModeReturnsHILImmediately(t *testing.T) {
 	}
 	if !strings.Contains(out, `"hil"`) || !strings.Contains(out, "hil-1") || time.Since(start) > 10*time.Second {
 		t.Fatalf("HIL result = %s", out)
+	}
+}
+
+// Grant ids are not secrets — they sit in every role's provider args in
+// the org JSON — so grant mode must fail closed when the environment that
+// names the role is missing: an unset variable used to skip the check
+// entirely, so a role that still holds Bash could serve another role's
+// grant by clearing it (C-3).
+func TestGrantModeRefusesWithoutOrgEnvironment(t *testing.T) {
+	f := newGrantFixture(t, orggrant.Tool{})
+	ctx := context.Background()
+	liveHeartbeat(t)
+
+	t.Setenv("MONOMIND_ORG_NAME", "")
+	if defs := f.server.grantToolDefinitions(ctx); len(defs) != 0 {
+		t.Fatalf("tools listed with no org in the environment: %v", defs)
+	}
+	if _, err := f.server.callGrantTool(ctx, "automation_publish", nil); err == nil || !strings.Contains(err.Error(), "MONOMIND_ORG_NAME") {
+		t.Fatalf("served a grant with no org in the environment: %v", err)
+	}
+	t.Setenv("MONOMIND_ORG_NAME", "growth")
+	t.Setenv("MONOMIND_ORG_ROLE", "")
+	if _, err := f.server.callGrantTool(ctx, "automation_publish", nil); err == nil || !strings.Contains(err.Error(), "MONOMIND_ORG_ROLE") {
+		t.Fatalf("served a grant with no role in the environment: %v", err)
 	}
 }

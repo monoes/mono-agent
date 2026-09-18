@@ -18,6 +18,8 @@ import (
 func newOrgToolServer(t *testing.T, tools []orggrant.OrgTool) (*Server, *storage.Database) {
 	t.Helper()
 	f := newGrantFixture(t, orggrant.Tool{})
+	t.Setenv("MONOMIND_ORG_NAME", "hq")
+	t.Setenv("MONOMIND_ORG_ROLE", "ceo")
 	g, err := f.store.SetOrgTools(context.Background(), "default", "hq", "ceo", tools)
 	if err != nil {
 		t.Fatal(err)

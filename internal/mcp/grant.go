@@ -69,7 +69,10 @@ func metaFrom(ctx context.Context) callMeta {
 // grantScope resolves the bundle and checks it against the process: the
 // --profile flag and the org/role monomind put in the environment must name
 // the bundle's own scope, so copying a grant id into another role's provider
-// block buys nothing (C-3).
+// block buys nothing (C-3). The environment is required, not merely checked
+// when present: a grant id is not a secret — it sits in every role's
+// provider args in the org JSON — so an unset variable must refuse rather
+// than wave the call through.
 func (s *Server) grantScope(ctx context.Context) (*orggrant.Bundle, *runtime, error) {
 	rt, err := s.runtime()
 	if err != nil {
@@ -85,10 +88,17 @@ func (s *Server) grantScope(ctx context.Context) (*orggrant.Bundle, *runtime, er
 	if s.opts.Profile != "" && s.opts.Profile != b.ProfileID {
 		return nil, nil, fmt.Errorf("%s: grant %s belongs to profile %q, not %q", codeRefusedGrant, s.opts.Grant, b.ProfileID, s.opts.Profile)
 	}
-	if org := os.Getenv("MONOMIND_ORG_NAME"); org != "" && org != b.OrgName {
+	org, role := os.Getenv("MONOMIND_ORG_NAME"), os.Getenv("MONOMIND_ORG_ROLE")
+	if org == "" {
+		return nil, nil, fmt.Errorf("%s: grant mode needs MONOMIND_ORG_NAME in the environment; monomind sets it for a role's tool provider", codeRefusedGrant)
+	}
+	if role == "" {
+		return nil, nil, fmt.Errorf("%s: grant mode needs MONOMIND_ORG_ROLE in the environment; monomind sets it for a role's tool provider", codeRefusedGrant)
+	}
+	if org != b.OrgName {
 		return nil, nil, fmt.Errorf("%s: grant %s is for org %q, not %q", codeRefusedGrant, s.opts.Grant, b.OrgName, org)
 	}
-	if role := os.Getenv("MONOMIND_ORG_ROLE"); role != "" && role != b.RoleID {
+	if role != b.RoleID {
 		return nil, nil, fmt.Errorf("%s: grant %s is for role %q, not %q", codeRefusedGrant, s.opts.Grant, b.RoleID, role)
 	}
 	return b, rt, nil
