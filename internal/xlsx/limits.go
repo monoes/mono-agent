@@ -37,3 +37,8 @@ const (
 	// maxNumFmts bounds the custom number-format table in xl/styles.xml.
 	maxNumFmts = 65536
 )
+
+// decompressionBudget is the allowance a newly opened file starts with. It is
+// a variable only so tests can lower it and prove the refusal without building
+// half a gigabyte of fixture; nothing outside tests changes it.
+var decompressionBudget int64 = maxDecompressedBytes

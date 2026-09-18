@@ -440,11 +440,17 @@ func TestBrokenStylesFallBackToRawValues(t *testing.T) {
 // TestZipBombIsRefused checks the decompression budget: a small container that
 // inflates past the cap is an error, not an out-of-memory kill.
 func TestZipBombIsRefused(t *testing.T) {
+	// The budget is lowered rather than fed half a gigabyte of fixture: the
+	// behaviour under test is the refusal, not the size of the number.
+	restore := decompressionBudget
+	decompressionBudget = 64 << 10
+	t.Cleanup(func() { decompressionBudget = restore })
+
 	// A highly compressible sheet far larger than the budget allows.
 	var sb strings.Builder
 	sb.WriteString(xmlHeader)
 	sb.WriteString(`<worksheet xmlns="` + sheetNS + `"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>`)
-	sb.WriteString(strings.Repeat("A", maxDecompressedBytes+(1<<20)))
+	sb.WriteString(strings.Repeat("A", int(decompressionBudget)+(1<<20)))
 	sb.WriteString(`</t></is></c></row></sheetData></worksheet>`)
 
 	b := book{sheets: []bookSheet{{name: "S", rows: ``}}}

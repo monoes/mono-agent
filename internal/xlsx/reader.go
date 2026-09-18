@@ -41,6 +41,10 @@ type File struct {
 	zr    *zip.ReadCloser
 	parts map[string]*zip.File
 
+	// limit is the allowance this file started with, kept for the error
+	// message so it names the budget that was actually applied.
+	limit int64
+
 	// budget is the shared decompression allowance for the whole file, so a
 	// bomb split across many parts is caught just the same as one big part.
 	budget int64
@@ -70,7 +74,8 @@ func OpenFile(name string) (*File, error) {
 	f := &File{
 		zr:     zr,
 		parts:  make(map[string]*zip.File),
-		budget: maxDecompressedBytes,
+		budget: decompressionBudget,
+		limit:  decompressionBudget,
 	}
 	if len(zr.File) > maxZipEntries {
 		zr.Close()
@@ -115,7 +120,7 @@ func (f *File) open(part string) (io.ReadCloser, bool, error) {
 	if err != nil {
 		return nil, false, fmt.Errorf("xlsx: open %s: %w", part, err)
 	}
-	return &budgetReader{r: rc, c: rc, part: part, budget: &f.budget}, true, nil
+	return &budgetReader{r: rc, c: rc, part: part, budget: &f.budget, limit: f.limit}, true, nil
 }
 
 // budgetReader draws every byte it yields from a shared allowance. The
@@ -126,6 +131,7 @@ type budgetReader struct {
 	c      io.Closer
 	part   string
 	budget *int64
+	limit  int64
 }
 
 func (b *budgetReader) Read(p []byte) (int, error) {
@@ -140,7 +146,7 @@ func (b *budgetReader) Read(p []byte) (int, error) {
 		if n, err := b.r.Read(probe[:]); n == 0 && err == io.EOF {
 			return 0, io.EOF
 		}
-		return 0, fmt.Errorf("xlsx: %s: decompressed size exceeds %d bytes", b.part, int64(maxDecompressedBytes))
+		return 0, fmt.Errorf("xlsx: %s: decompressed size exceeds %d bytes", b.part, b.limit)
 	}
 	if int64(len(p)) > *b.budget {
 		p = p[:*b.budget]
