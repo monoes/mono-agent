@@ -382,3 +382,43 @@ func TestRevokeOrgClearsAutonomyAndPendingDelegations(t *testing.T) {
 		t.Fatalf("unrelated delegation = %q", got)
 	}
 }
+
+// A rotated-away id stays usable for RotationGrace so a delivery already
+// in flight is not lost, but an explicit revoke ends that grace.
+// LookupEndpoint is the only auth on the delivery path, so otherwise
+// rotating a leaked id and then removing the role — or deleting the org —
+// leaves the leaked id accepting POSTs and starting runs for five minutes.
+func TestRevokeEndsRotationGrace(t *testing.T) {
+	s, _ := newTestStore(t)
+	ctx := context.Background()
+	now := time.Now()
+	s.now = func() time.Time { return now }
+
+	leaked, err := s.CreateEndpoint(ctx, "default", "growth", "bot", "wf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RotateEndpoint(ctx, "default", "growth", "bot"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RevokeEndpoint(ctx, "default", "growth", "bot"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.LookupEndpoint(ctx, leaked.ID); err != ErrNotFound {
+		t.Fatalf("rotated-away id still accepted after revoking the role: %v", err)
+	}
+
+	leaked2, err := s.CreateEndpoint(ctx, "default", "growth", "bot2", "wf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RotateEndpoint(ctx, "default", "growth", "bot2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RevokeOrg(ctx, "default", "growth"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.LookupEndpoint(ctx, leaked2.ID); err != ErrNotFound {
+		t.Fatalf("rotated-away id still accepted after deleting the org: %v", err)
+	}
+}

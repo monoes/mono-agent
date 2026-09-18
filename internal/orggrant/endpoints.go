@@ -54,6 +54,15 @@ func EndpointIDFromURL(u string) string {
 
 const endpointCols = `id, profile_id, org_name, role_id, workflow_id, credential_file, rotated_from, created_at, revoked_at`
 
+// usableEndpoint matches every row LookupEndpoint would still accept: a
+// live one, or a rotated-away one whose grace window has not run out. Every
+// revoke must cover both, or a leaked id keeps starting runs after its role
+// or org is gone. Takes one bound parameter, the current time. The string
+// comparison is safe here: a grace window is RotationGrace long, so a
+// revoked_at still in the future differs from now in a fixed-width field
+// well before RFC3339Nano's variable-length fraction.
+const usableEndpoint = `(revoked_at IS NULL OR revoked_at > ?)`
+
 func scanEndpoint(sc interface{ Scan(...interface{}) error }) (*EndpointRow, error) {
 	var e EndpointRow
 	var cred, rotated, revoked sql.NullString
@@ -72,13 +81,14 @@ func scanEndpoint(sc interface{ Scan(...interface{}) error }) (*EndpointRow, err
 }
 
 // CreateEndpoint registers a new live endpoint for an automation role,
-// revoking any previous live endpoint of that role.
+// revoking any previous endpoint of that role — one still inside a rotation
+// grace window included, since the new id replaces it outright.
 func (s *Store) CreateEndpoint(ctx context.Context, profileID, org, role, workflowID string) (*EndpointRow, error) {
 	if profileID == "" || org == "" || role == "" || workflowID == "" {
 		return nil, fmt.Errorf("orggrant: profile, org, role, and workflow are required")
 	}
 	now := nowString(s.now())
-	if _, err := s.db.ExecContext(ctx, `UPDATE org_endpoints SET revoked_at = ? WHERE profile_id = ? AND org_name = ? AND role_id = ? AND revoked_at IS NULL`, now, profileID, org, role); err != nil {
+	if _, err := s.db.ExecContext(ctx, `UPDATE org_endpoints SET revoked_at = ? WHERE profile_id = ? AND org_name = ? AND role_id = ? AND `+usableEndpoint, now, profileID, org, role, now); err != nil {
 		return nil, err
 	}
 	id := NewEndpointID()
@@ -207,9 +217,11 @@ func (s *Store) EndpointsForWorkflow(ctx context.Context, workflowID string) ([]
 	return out, rows.Err()
 }
 
-// RevokeEndpoint revokes the role's live endpoint immediately.
+// RevokeEndpoint revokes the role's endpoints immediately, a rotated-away
+// one still inside its grace window included.
 func (s *Store) RevokeEndpoint(ctx context.Context, profileID, org, role string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE org_endpoints SET revoked_at = ? WHERE profile_id = ? AND org_name = ? AND role_id = ? AND revoked_at IS NULL`,
-		nowString(s.now()), profileID, org, role)
+	now := nowString(s.now())
+	_, err := s.db.ExecContext(ctx, `UPDATE org_endpoints SET revoked_at = ? WHERE profile_id = ? AND org_name = ? AND role_id = ? AND `+usableEndpoint,
+		now, profileID, org, role, now)
 	return err
 }

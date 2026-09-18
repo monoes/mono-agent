@@ -417,7 +417,7 @@ func (s *Store) RevokeOrg(ctx context.Context, profileID, org string) error {
 	if _, err := s.db.ExecContext(ctx, `UPDATE org_grants SET revoked_at = ?, updated_at = ? WHERE profile_id = ? AND org_name = ? AND revoked_at IS NULL`, now, now, profileID, org); err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE org_endpoints SET revoked_at = ? WHERE profile_id = ? AND org_name = ? AND revoked_at IS NULL`, now, profileID, org); err != nil {
+	if _, err := s.db.ExecContext(ctx, `UPDATE org_endpoints SET revoked_at = ? WHERE profile_id = ? AND org_name = ? AND `+usableEndpoint, now, profileID, org, now); err != nil {
 		return err
 	}
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM org_autonomy WHERE profile_id = ? AND org_name = ?`, profileID, org); err != nil {
