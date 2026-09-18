@@ -61,7 +61,7 @@ func TestSearchSkipsDuplicates(t *testing.T) {
 	}
 
 	source := &fakeSource{results: []discovery.Result{
-		{Title: "Backend Engineer", Company: "Acme", URL: "https://acme.example/1"}, // exact URL dup
+		{Title: "Backend Engineer", Company: "Acme", URL: "https://acme.example/1"},  // exact URL dup
 		{Title: "Frontend Engineer", Company: "Acme", URL: "https://acme.example/2"}, // new
 	}}
 

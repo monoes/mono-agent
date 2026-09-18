@@ -8,8 +8,8 @@ import (
 
 	"github.com/monoes/mono-agent/internal/applications"
 	"github.com/monoes/mono-agent/internal/matching"
-	matchingnodes "github.com/monoes/mono-agent/internal/nodes/matching"
 	"github.com/monoes/mono-agent/internal/monomind"
+	matchingnodes "github.com/monoes/mono-agent/internal/nodes/matching"
 	"github.com/monoes/mono-agent/internal/storage"
 	"github.com/monoes/mono-agent/internal/workflow"
 )

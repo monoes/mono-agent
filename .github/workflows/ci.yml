@@ -151,6 +151,19 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      # CLAUDE.md lists `gofmt -l .` as a check, but nothing enforced it, so
+      # five files had drifted out of gofmt shape on master. Listing files is
+      # the whole check: gofmt -l prints the offenders and exits 0 either way,
+      # so the emptiness of its output is what has to be asserted.
+      - name: Formatting
+        run: |
+          unformatted="$(gofmt -l . | grep -v '^wails-app/frontend/node_modules/' || true)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::these files are not gofmt-formatted — run: gofmt -w ."
+            echo "$unformatted"
+            exit 1
+          fi
+
       - name: Test
         run: go test ./... -race
 
