@@ -151,6 +151,7 @@ func OrgRun(ctx context.Context, projectRoot, name, task string, dryRun bool) (j
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start monomind org run %s: %w", name, err)
 	}
+	defer attachProcessGroup(cmd)()
 
 	waitCh := make(chan error, 1)
 	go func() { waitCh <- cmd.Wait() }()
@@ -375,6 +376,7 @@ func OrgEvents(ctx context.Context, projectRoot, name string, opts OrgEventsOpti
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start monomind org events: %w", err)
 	}
+	defer attachProcessGroup(cmd)()
 
 	readerDone := make(chan struct{})
 	go func() {

@@ -367,6 +367,7 @@ func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResu
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start monomind: %w", err)
 	}
+	defer attachProcessGroup(cmd)()
 
 	res := &TurnResult{}
 	events := make(chan Event, 64)
