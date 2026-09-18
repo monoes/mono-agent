@@ -118,7 +118,7 @@ func (s *Server) callDecisionTool(ctx context.Context, rt *runtime, b *orggrant.
 	}
 	root := profiledir.Root(rt.db.DB, b.ProfileID)
 	rec := &orgdecide.Decision{
-		ProfileID: b.ProfileID, OrgName: d.OrgName, ItemKind: d.Item.Kind, ItemRef: d.Item.Ref, ItemHash: d.Item.Hash,
+		ProfileID: b.ProfileID, OrgName: d.OrgName, RunID: itemRun(ctx, root, d.OrgName), ItemKind: d.Item.Kind, ItemRef: d.Item.Ref, ItemHash: d.Item.Hash,
 		Requester: d.Item.Requester, Class: d.Item.Class, Tier: d.Item.Tier, Level: d.Level, Resolver: resolver, Rationale: a.Rationale,
 	}
 	switch verdict {
@@ -147,6 +147,22 @@ func (s *Server) callDecisionTool(ctx context.Context, rt *runtime, b *orggrant.
 		return nil, true, err
 	}
 	return map[string]interface{}{"id": d.ID, "org": d.OrgName, "verdict": rec.Verdict, "resolver": resolver}, true, nil
+}
+
+// itemRun is the current run of the org the item belongs to — the run the
+// repeat-denial rule and the decider budget key on, the same way
+// orgdecide.Service.Pending reads it. MONOMIND_ORG_RUN is the decider
+// org's run and would file the row under the wrong org's.
+func itemRun(ctx context.Context, root, org string) string {
+	raw, err := decisionClient.Status(ctx, root, org)
+	if err != nil {
+		return ""
+	}
+	var st struct {
+		Run string `json:"run"`
+	}
+	_ = json.Unmarshal(raw, &st)
+	return st.Run
 }
 
 // reopenDelegation undoes the close that claims an item against a racing

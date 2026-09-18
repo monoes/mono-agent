@@ -77,8 +77,8 @@ type recordingClient struct {
 	fail  bool // every resolution fails, as a transient monomind failure does
 }
 
-func (r *recordingClient) Status(context.Context, string, string) (json.RawMessage, error) {
-	return nil, nil
+func (r *recordingClient) Status(_ context.Context, _, org string) (json.RawMessage, error) {
+	return json.RawMessage(`{"status":"running","run":"run-` + org + `"}`), nil
 }
 func (r *recordingClient) Approvals(context.Context, string, string) (json.RawMessage, error) {
 	return nil, nil
@@ -195,5 +195,37 @@ func TestDecisionResolveKeepsItemPendingWhenApplyFails(t *testing.T) {
 	}
 	if got, _ := store.GetDelegation(ctx, d.ID); got.Status != orgdecide.DelegationResolved {
 		t.Fatalf("delegation not resolved on the retry: %+v", got)
+	}
+}
+
+// The repeat-denial rule counts org_decisions rows by the run of the org
+// the item belongs to, so a boss or parent decider's row has to carry that
+// run — not the decider org's — or a role can re-request a denied action
+// for the rest of the run.
+func TestDecisionResolveRecordsTheItemsRun(t *testing.T) {
+	s, db := newOrgToolServer(t, []orggrant.OrgTool{
+		{Tool: orgdecide.ToolDecisionResolve, Orgs: []string{"sales"}},
+	})
+	t.Setenv("MONOMIND_ORG_RUN", "run-hq") // the decider org's run, not the item's
+	ctx := context.Background()
+	old := decisionClient
+	decisionClient = &recordingClient{}
+	t.Cleanup(func() { decisionClient = old })
+
+	store := orgdecide.NewStore(db.DB)
+	item := orgdecide.Item{Kind: orgdecide.KindApproval, Ref: "lead:send_email:1", Requester: "lead", Class: "tool:send_email", Tier: "consequential", Action: "send_email", Hash: "h1"}
+	d, err := store.Delegate(ctx, "default", "sales", "full", "hq", "ceo", item, time.Now().Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.callGrantTool(ctx, orgdecide.ToolDecisionResolve, json.RawMessage(`{"id":"`+d.ID+`","verdict":"deny","rationale":"too risky"}`)); err != nil {
+		t.Fatal(err)
+	}
+	ds, _ := store.List(ctx, "default", "sales", orgdecide.DecisionFilter{})
+	if len(ds) != 1 || ds[0].RunID != "run-sales" {
+		t.Fatalf("decision rows = %+v", ds)
+	}
+	if n, err := store.DeniedCount(ctx, "default", "sales", "run-sales", "h1"); err != nil || n != 1 {
+		t.Fatalf("denial not counted toward the repeat rule: %d %v", n, err)
 	}
 }
