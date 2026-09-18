@@ -96,9 +96,19 @@ func main() {
 // straight to the page (contracts §4).
 func wantsJSONError(args []string) bool {
 	hasJSON, sub := false, ""
-	for _, a := range args {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
 		if a == "--json" || a == "--json=true" {
 			hasJSON = true
+			continue
+		}
+		// A global flag written `--profile X` puts its value in the next
+		// arg; without this skip the value would be mistaken for the
+		// subcommand and `--profile p --json org …` would never qualify.
+		if name, isFlag := valueFlagName(a); isFlag {
+			if name != "" {
+				i++
+			}
 			continue
 		}
 		if sub == "" && !strings.HasPrefix(a, "-") {
@@ -106,4 +116,22 @@ func wantsJSONError(args []string) bool {
 		}
 	}
 	return hasJSON && (sub == "org" || sub == "status")
+}
+
+// globalValueFlags are the root persistent flags that take a separate value
+// argument (root.go). Boolean flags are absent on purpose: they never consume
+// the next arg.
+var globalValueFlags = map[string]bool{
+	"--log-file": true, "--db-path": true, "--output-dir": true,
+	"--config-dir": true, "--workers": true, "--profile": true, "--lang": true,
+}
+
+// valueFlagName reports whether arg is one of those flags, and returns its
+// name when the value is still to come in the next arg ("" for `--flag=value`,
+// which carries its own).
+func valueFlagName(arg string) (string, bool) {
+	if name, _, ok := strings.Cut(arg, "="); ok {
+		return "", globalValueFlags[name]
+	}
+	return arg, globalValueFlags[arg]
 }

@@ -111,6 +111,11 @@ func (a *App) runOrgCLI(args ...string) string {
 		a.emitLog("ORG", "WARN", fmt.Sprintf("org %s returned empty output after %s", strings.Join(args, " "), elapsed))
 		return aiError(fmt.Errorf("org %s: empty output", strings.Join(args, " ")))
 	}
+	if !looksLikeJSON(trimmed) {
+		err := notJSONError(cliBin, trimmed)
+		a.emitLog("ORG", "ERROR", fmt.Sprintf("org %s: %v", strings.Join(args, " "), err))
+		return aiError(err)
+	}
 	a.emitLog("ORG", "INFO", fmt.Sprintf("org %s finished in %s", strings.Join(args, " "), elapsed))
 	return trimmed
 }
