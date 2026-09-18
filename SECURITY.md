@@ -259,8 +259,10 @@ layers, from strongest:
    rows from the file.
 2. **Grant-mode MCP server.** `mcp --grant` serves only the granted tools,
    takes its scope from the grant row, refuses a grant used by another org
-   or role (checked against monomind's `MONOMIND_ORG_NAME`/`ROLE`), caps
-   calls per run and per day, and returns redacted, size-bounded outputs.
+   or role (checked against monomind's `MONOMIND_ORG_NAME`/`ROLE`, which it
+   requires — an unset variable refuses the call rather than skipping the
+   check), caps calls per run and per day — a cap it cannot read refuses
+   too — and returns redacted, size-bounded outputs.
    It runs no engine and holds no vault access; the daemon runs the
    workflow.
 3. **monomind policy.** `denyTools`, `approvalTools` (managed by mono-agent
@@ -275,7 +277,9 @@ layers, from strongest:
    cannot POST around `org_send`. Rotation keeps the old id for 5 minutes.
 5. **Loop control.** Every crossing carries a trace; hops a header claims
    are never trusted below the recorded count, and repeat limits key on
-   the target, which a caller cannot forge.
+   the target, which a caller cannot forge. `run_config`'s `max_hops` and
+   `max_repeats` are read from the org file, so they are clamped to hard
+   ceilings — raising them there cannot switch loop control off.
 6. **Autonomy.** The level, decider, tiers, and policy are enforced from
    `org_autonomy`; an edit to the org file can only lower the level. Tiers
    are computed from the grant row and the workflow's nodes before any
@@ -288,7 +292,12 @@ layers, from strongest:
 
 - **Bash.** A role allowed Bash can run `monoagentcli` with your rights and
   bypass its grants. A role's first grant pre-fills `denyTools: ["Bash"]`
-  and the GUI warns when Bash is re-enabled.
+  and the GUI warns when Bash is re-enabled. The org/role check in layer 2
+  is no barrier to it either: grant ids are not secrets (every role's
+  provider args in the org file carry one), and a role that can run
+  commands can also set `MONOMIND_ORG_NAME`/`ROLE` to match a sibling's
+  grant. That check catches a copied id and a misconfigured provider, not a
+  role that already has a shell.
 - **File paths in automation input.** Automations run in the daemon, outside
   the role's workdir confinement. A workflow that reads or writes a path
   taken from its input can reach files the role itself cannot.
