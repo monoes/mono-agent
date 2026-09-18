@@ -83,6 +83,12 @@ export default function GrantDialog({ open, orgName, role, automation, grant, au
       approval: needsDecisionToApproval(needsDecision),
       max_calls_per_run: num(cap, GRANT_DEFAULTS.max_calls_per_run),
     }
+    // `org grant add` is an upsert that rebuilds the whole row from its
+    // flags, so caps this dialog doesn't model have to be resent verbatim —
+    // otherwise editing the timeout here silently resets a daily or output
+    // cap the operator set on the CLI back to the CLI's own default.
+    if (grant?.max_calls_per_day > 0) spec.max_calls_per_day = grant.max_calls_per_day
+    if (grant?.max_output_bytes > 0) spec.max_output_bytes = grant.max_output_bytes
     const res = await api.setOrgGrant(orgName, spec)
     setSaving(false)
     if (!res || res.error) {

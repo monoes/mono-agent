@@ -102,7 +102,10 @@ func grantListArgs(org string) ([]string, error) {
 }
 
 // grantSpec is SetOrgGrant's specJSON (contracts §5). Pointer fields are
-// optional: absent means "let the CLI apply its default".
+// optional: absent means "let the CLI apply its default". Note that `grant
+// add` is an upsert which rebuilds the whole row from its flags, so an edit
+// that omits a field resets it to that default rather than keeping what the
+// row already held — the caller has to resend everything it wants preserved.
 type grantSpec struct {
 	Role           string `json:"role"`
 	Automation     string `json:"automation"`
@@ -111,6 +114,8 @@ type grantSpec struct {
 	TimeoutSeconds *int   `json:"timeout_seconds"`
 	Approval       string `json:"approval"`
 	MaxCallsPerRun *int   `json:"max_calls_per_run"`
+	MaxCallsPerDay *int   `json:"max_calls_per_day"`
+	MaxOutputBytes *int   `json:"max_output_bytes"`
 }
 
 func grantAddArgs(org, specJSON string) ([]string, error) {
@@ -154,6 +159,18 @@ func grantAddArgs(org, specJSON string) ([]string, error) {
 			return nil, fmt.Errorf("grant spec: max_calls_per_run must be positive")
 		}
 		args = append(args, "--max-calls-per-run", strconv.Itoa(*s.MaxCallsPerRun))
+	}
+	if s.MaxCallsPerDay != nil {
+		if *s.MaxCallsPerDay <= 0 {
+			return nil, fmt.Errorf("grant spec: max_calls_per_day must be positive")
+		}
+		args = append(args, "--max-calls-per-day", strconv.Itoa(*s.MaxCallsPerDay))
+	}
+	if s.MaxOutputBytes != nil {
+		if *s.MaxOutputBytes <= 0 {
+			return nil, fmt.Errorf("grant spec: max_output_bytes must be positive")
+		}
+		args = append(args, "--max-output-bytes", strconv.Itoa(*s.MaxOutputBytes))
 	}
 	return args, nil
 }

@@ -58,6 +58,17 @@ func TestGrantAddArgs_Full(t *testing.T) {
 	})
 }
 
+// `org grant add` is an upsert that rebuilds the whole row from its flags, so
+// a GUI edit that omits the daily cap or the output cap silently resets an
+// operator's CLI-set values to cobra's defaults.
+func TestGrantAddArgs_CarriesDailyAndOutputCaps(t *testing.T) {
+	a, err := grantAddArgs("growth", `{"role":"lead","automation":"publish_post","max_calls_per_day":5,"max_output_bytes":2048}`)
+	eqArgs(t, a, err, []string{
+		"grant", "add", "growth", "--role", "lead", "--automation", "publish_post",
+		"--max-calls-per-day", "5", "--max-output-bytes", "2048",
+	})
+}
+
 func TestGrantAddArgs_MinimalLeavesDefaultsToCLI(t *testing.T) {
 	a, err := grantAddArgs("growth", `{"role":"lead","automation":"publish_post"}`)
 	eqArgs(t, a, err, []string{"grant", "add", "growth", "--role", "lead", "--automation", "publish_post"})
@@ -76,6 +87,8 @@ func TestGrantAddArgs_Rejects(t *testing.T) {
 		`{"role":"lead","automation":"x","approval":"ok"}`:        "approval must be",
 		`{"role":"lead","automation":"x","timeout_seconds":0}`:    "timeout_seconds must be positive",
 		`{"role":"lead","automation":"x","max_calls_per_run":-1}`: "max_calls_per_run must be positive",
+		`{"role":"lead","automation":"x","max_calls_per_day":0}`:  "max_calls_per_day must be positive",
+		`{"role":"lead","automation":"x","max_output_bytes":-8}`:  "max_output_bytes must be positive",
 		`not json`: "invalid grant spec",
 	}
 	for spec, contains := range cases {
