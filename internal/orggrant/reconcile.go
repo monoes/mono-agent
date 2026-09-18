@@ -37,6 +37,7 @@ const (
 	FindingProviderStripped     = "provider_stripped"
 	FindingProviderWritten      = "provider_written"
 	FindingApprovalToolsUpdated = "approval_tools_updated"
+	FindingOrgToolsNarrowed     = "org_tools_narrowed"
 	FindingEndpointRevoked      = "endpoint_revoked"
 	FindingEndpointUnregistered = "endpoint_unregistered"
 	FindingEndpointURLUpdated   = "endpoint_url_updated"
@@ -107,7 +108,12 @@ func Reconcile(ctx context.Context, s *Store, doc *orgdesign.Doc, opts GenOption
 		live[g.RoleID] = append(live[g.RoleID], g)
 	}
 
-	// 2–4. Per role: display copies, provider block, approvalTools.
+	// 2. Narrow org-tool scopes to the orgs doc still names.
+	if err := narrowOrgToolScope(ctx, s, rep, doc, opts, live); err != nil {
+		return nil, err
+	}
+
+	// 3–5. Per role: display copies, provider block, approvalTools.
 	for i := range doc.Roles {
 		r := &doc.Roles[i]
 		roleGrants := live[r.ID]
@@ -116,7 +122,7 @@ func Reconcile(ctx context.Context, s *Store, doc *orgdesign.Doc, opts GenOption
 		syncApprovalTools(rep, r, roleGrants)
 	}
 
-	// 5. Endpoints.
+	// 6. Endpoints.
 	if err := syncEndpoints(ctx, s, rep, doc, opts); err != nil {
 		return nil, err
 	}
@@ -127,6 +133,65 @@ func Reconcile(ctx context.Context, s *Store, doc *orgdesign.Doc, opts GenOption
 	}
 	rep.Changed = string(before) != string(after)
 	return rep, nil
+}
+
+// narrowOrgToolScope drops every org from a role's org-tool grant that doc
+// no longer connects the role to. A role is only ever given org tools over
+// its own org (a boss decider) or over a child of its holding org (the
+// Initiator, a parent decider), so anything else is left over from a config
+// that has since changed: nothing else shrinks these grants — MergeOrgTools
+// only adds — so removing a child from `children` otherwise left the
+// Initiator holding org_stop, org_status and org_report over it for good.
+// It also drops the grant entirely once nothing is left in scope.
+func narrowOrgToolScope(ctx context.Context, s *Store, rep *Report, doc *orgdesign.Doc, opts GenOptions, live map[string][]Grant) error {
+	named := map[string]bool{doc.Name: true}
+	for _, c := range doc.ChildOrgs {
+		named[c.Org] = true
+	}
+	for roleID, grants := range live {
+		kept := grants[:0:0]
+		var dropped []string
+		for _, g := range grants {
+			if len(g.OrgTools) == 0 {
+				kept = append(kept, g)
+				continue
+			}
+			var tools []OrgTool
+			var gone []string
+			for _, ot := range g.OrgTools {
+				narrowed := OrgTool{Tool: ot.Tool}
+				for _, o := range ot.Orgs {
+					if named[o] {
+						narrowed.Orgs = append(narrowed.Orgs, o)
+						continue
+					}
+					gone = append(gone, ot.Tool+" over "+o)
+				}
+				if len(narrowed.Orgs) > 0 {
+					tools = append(tools, narrowed)
+				}
+			}
+			if len(gone) == 0 {
+				kept = append(kept, g)
+				continue
+			}
+			dropped = append(dropped, gone...)
+			if _, err := s.SetOrgTools(ctx, opts.ProfileID, doc.Name, roleID, tools); err != nil {
+				return err
+			}
+			if len(tools) > 0 {
+				g.OrgTools = tools
+				kept = append(kept, g)
+			}
+		}
+		if len(dropped) == 0 {
+			continue
+		}
+		sort.Strings(dropped)
+		rep.add(FindingOrgToolsNarrowed, roleID, "dropped %s: %s no longer names that org as itself or a child", strings.Join(uniqueSorted(dropped), ", "), doc.Name)
+		live[roleID] = kept
+	}
+	return nil
 }
 
 func syncGrantSpecs(rep *Report, r *orgdesign.Role, grants []Grant) {

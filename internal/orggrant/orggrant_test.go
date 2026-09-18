@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -420,5 +421,84 @@ func TestRevokeEndsRotationGrace(t *testing.T) {
 	}
 	if _, err := s.LookupEndpoint(ctx, leaked2.ID); err != ErrNotFound {
 		t.Fatalf("rotated-away id still accepted after deleting the org: %v", err)
+	}
+}
+
+func orgToolScope(g Grant) string {
+	var out []string
+	for _, ot := range g.OrgTools {
+		out = append(out, ot.Tool+"="+strings.Join(ot.Orgs, "+"))
+	}
+	sort.Strings(out)
+	return strings.Join(out, ",")
+}
+
+// Nothing ever shrank an org-tool grant: MergeOrgTools only adds, so
+// removing a child from a holding org's children and re-running
+// `org group init` left its Initiator holding org_stop, org_status and
+// org_report over the org the holding no longer owns.
+func TestReconcileNarrowsOrgToolScopeToTheConfig(t *testing.T) {
+	s, _ := newTestStore(t)
+	ctx := context.Background()
+	d := &orgdesign.Doc{
+		Name:      "hq",
+		Kind:      orgdesign.OrgKindHolding,
+		ChildOrgs: []orgdesign.ChildOrg{{Org: "sales"}},
+		Roles:     []orgdesign.Role{{ID: "initiator"}},
+	}
+	if _, err := s.SetOrgTools(ctx, "default", "hq", "initiator", []OrgTool{
+		{Tool: "org_start", Orgs: []string{"sales", "growth"}},
+		{Tool: "org_stop", Orgs: []string{"growth"}},
+		{Tool: "decision_list", Orgs: []string{"hq"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := Reconcile(ctx, s, d, testOpts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(findingKinds(rep), FindingOrgToolsNarrowed+"@initiator") {
+		t.Fatalf("no narrowing reported: %s", findingKinds(rep))
+	}
+	gs, err := s.ListGrants(ctx, "default", "hq", "initiator")
+	if err != nil || len(gs) != 1 {
+		t.Fatalf("grants = %v, %v", gs, err)
+	}
+	if got := orgToolScope(gs[0]); got != "decision_list=hq,org_start=sales" {
+		t.Fatalf("scope after reconcile = %q", got)
+	}
+	init, _ := d.FindRole("initiator")
+	if len(init.ToolProviders) != 1 || strings.Join(init.ToolProviders[0].Allow, ",") != "decision_list,org_start" {
+		t.Fatalf("provider allow list = %+v", init.ToolProviders)
+	}
+
+	// Idempotent: a second pass finds nothing left to narrow.
+	rep2, err := Reconcile(ctx, s, d, testOpts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(findingKinds(rep2), FindingOrgToolsNarrowed) {
+		t.Fatalf("narrowing repeated: %s", findingKinds(rep2))
+	}
+}
+
+// The last org leaving a role's scope leaves no org-tool grant at all, so
+// no provider keeps pointing at a row that grants nothing.
+func TestReconcileRevokesAnEmptiedOrgToolGrant(t *testing.T) {
+	s, _ := newTestStore(t)
+	ctx := context.Background()
+	d := &orgdesign.Doc{Name: "hq", Kind: orgdesign.OrgKindHolding, Roles: []orgdesign.Role{{ID: "initiator"}}}
+	if _, err := s.SetOrgTools(ctx, "default", "hq", "initiator", []OrgTool{{Tool: "org_stop", Orgs: []string{"growth"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Reconcile(ctx, s, d, testOpts); err != nil {
+		t.Fatal(err)
+	}
+	if gs, _ := s.ListGrants(ctx, "default", "hq", "initiator"); len(gs) != 0 {
+		t.Fatalf("emptied grant survived: %v", gs)
+	}
+	if init, _ := d.FindRole("initiator"); len(init.ToolProviders) != 0 {
+		t.Fatalf("provider kept: %+v", init.ToolProviders)
 	}
 }
