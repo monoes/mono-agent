@@ -300,3 +300,38 @@ func TestTryOpenPairingPage_GivesUpOnBridgeWithoutPairingURL(t *testing.T) {
 		t.Fatalf("openURLInBrowser called on a later poll despite having given up")
 	}
 }
+
+// addrBridge is a bridge that also reports the address it bound, like the
+// real *extension.ServerBridge.
+type addrBridge struct {
+	mockBridge
+	addr  string
+	bound bool
+}
+
+func (a *addrBridge) Addr() (string, bool) { return a.addr, a.bound }
+
+// When another program holds 9222 the bridge quietly takes 9323, and the
+// extension — which tries 9222 first, and gets an answer there rather than a
+// refusal — never turns up. "Enable it in chrome://extensions" is then advice
+// about the one thing that isn't broken, so the failure has to name the port.
+func TestFallbackPortHint(t *testing.T) {
+	hint := fallbackPortHint(&addrBridge{addr: "127.0.0.1:9323", bound: true})
+	for _, want := range []string{"127.0.0.1:9323", "9222", "--remote-debugging-port", "ws://127.0.0.1:9323/monoagent"} {
+		if !strings.Contains(hint, want) {
+			t.Fatalf("hint %q missing %q", hint, want)
+		}
+	}
+
+	// Nothing to explain when the bridge got the port everyone expects,
+	// before it has bound at all, or for a relay bridge with no address.
+	if got := fallbackPortHint(&addrBridge{addr: "127.0.0.1:9222", bound: true}); got != "" {
+		t.Fatalf("default port should produce no hint, got %q", got)
+	}
+	if got := fallbackPortHint(&addrBridge{addr: "", bound: false}); got != "" {
+		t.Fatalf("unbound bridge should produce no hint, got %q", got)
+	}
+	if got := fallbackPortHint(&mockBridge{}); got != "" {
+		t.Fatalf("relay bridge should produce no hint, got %q", got)
+	}
+}

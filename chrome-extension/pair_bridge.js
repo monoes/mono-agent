@@ -58,7 +58,20 @@
   // from here or from the popup's manual "Pair & Reconnect" button.
   try {
     const storageKey = ["pairing", "Token"].join("");
-    await chrome.storage.local.set({ [storageKey]: token.trim() });
+    const update = { [storageKey]: token.trim() };
+    // Record where the bridge actually is, not just how to authenticate to
+    // it. This page is served by the bridge itself, so its origin names the
+    // port that won the bind — which is not necessarily the port the
+    // background worker guesses first: 9222 is regularly held by some other
+    // Chrome's --remote-debugging-port, and a port held by a foreign server
+    // *answers* (ours got an HTTP 403 from a stray headless Chromium) rather
+    // than refusing, so the worker only rotates to 9323 after
+    // PORT_SWITCH_AFTER_FAILURES attempts — minutes once retries are
+    // alarm-driven, long past the CLI's 30s wait. Teaching it the port here
+    // turns that guess into a fact.
+    const wsUrl = location.origin.replace(/^http/, "ws") + "/monoagent";
+    update.pairedWsUrl = wsUrl;
+    await chrome.storage.local.set(update);
   } catch (err) {
     report(false, "Failed to save pairing token: " + err.message);
     return;
