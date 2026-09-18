@@ -72,34 +72,49 @@ func (tm *TriggerManager) activateProvider(w *Workflow, node *WorkflowNode, p Tr
 			return fmt.Errorf("parse config: %w", err)
 		}
 	}
+	// Claim the slot before activating, so only one caller ever reaches
+	// p.Activate for a node. Activating first and discarding the loser's
+	// registration is not safe: a provider may key its registry by workflow
+	// ID (trigger.org does), and then the loser's stop() tears down the
+	// winner's registration, leaving tm.active populated and the provider
+	// empty.
 	tm.mu.Lock()
-	if tm.active[w.ID] != nil {
-		if _, exists := tm.active[w.ID][node.ID]; exists {
-			tm.mu.Unlock()
-			return nil
-		}
+	if tm.active[w.ID] == nil {
+		tm.active[w.ID] = make(map[string]*triggerEntry)
 	}
+	if _, exists := tm.active[w.ID][node.ID]; exists {
+		tm.mu.Unlock()
+		return nil
+	}
+	entry := &triggerEntry{kind: "provider"}
+	tm.active[w.ID][node.ID] = entry
 	tm.mu.Unlock()
 
 	wfID, nID := w.ID, node.ID
 	stop, err := p.Activate(w, node, func(items []Item) { tm.triggerFn(wfID, nID, items) })
 	if err != nil {
+		tm.mu.Lock()
+		if tm.active[w.ID][node.ID] == entry {
+			delete(tm.active[w.ID], node.ID)
+			if len(tm.active[w.ID]) == 0 {
+				delete(tm.active, w.ID)
+			}
+		}
+		tm.mu.Unlock()
 		return err
 	}
 
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
-	if tm.active[w.ID] == nil {
-		tm.active[w.ID] = make(map[string]*triggerEntry)
-	}
-	if _, exists := tm.active[w.ID][node.ID]; exists {
-		// Lost a race with a concurrent activation; keep the first one.
+	if tm.active[w.ID][node.ID] != entry {
+		// Deactivated while we were activating — the teardown could not see
+		// a stop function yet, so undo the registration here.
 		if stop != nil {
 			stop()
 		}
 		return nil
 	}
-	tm.active[w.ID][node.ID] = &triggerEntry{kind: "provider", deactivate: stop}
+	entry.deactivate = stop
 	tm.logger.Info().Str("workflow_id", w.ID).Str("node_id", node.ID).Str("type", node.Type).Msg("provider trigger activated")
 	return nil
 }
