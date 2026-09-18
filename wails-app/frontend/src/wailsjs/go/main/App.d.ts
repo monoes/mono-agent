@@ -257,6 +257,8 @@ export function ListOrgDesigns():Promise<string>;
 
 export function ListOrgGrants(arg1:string):Promise<string>;
 
+export function ListOrgQueuedMessages(arg1:string):Promise<string>;
+
 export function ListOrgs():Promise<string>;
 
 export function ListPlatformsJSON(arg1:string):Promise<string>;

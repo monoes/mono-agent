@@ -188,6 +188,8 @@ export const api = {
   resumeOrgAutonomy:         (org) => GoApp.ResumeOrgAutonomy(org).then(s => JSON.parse(s)).catch(asError),
   listOrgDecisionLog:        (org, run = '') => GoApp.ListOrgDecisionLog(org, run).then(s => JSON.parse(s)).catch(guard('decision log', null)),
   listNeedsYou:              (org) => GoApp.ListNeedsYou(org).then(s => JSON.parse(s)).catch(guard('needs you', null)),
+  // C-35: messages queued for the org's next start (read-only `org queued`).
+  listOrgQueuedMessages:     (org) => GoApp.ListOrgQueuedMessages(org).then(s => JSON.parse(s)).catch(asError),
   startOrgGroup:             (holding) => GoApp.StartOrgGroup(holding).then(s => JSON.parse(s)).catch(asError),
   stopOrgGroup:              (holding) => GoApp.StopOrgGroup(holding).then(s => JSON.parse(s)).catch(asError),
   orgGroupStatus:            (holding) => GoApp.OrgGroupStatus(holding).then(s => JSON.parse(s)).catch(guard('org group status', null)),

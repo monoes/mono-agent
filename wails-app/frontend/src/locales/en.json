@@ -71,5 +71,24 @@
       "label": "UI language",
       "hint": "Pilot: English and Spanish only — see docs/i18n.md"
     }
+  },
+  "orgs": {
+    "queued": {
+      "title": "Queued messages",
+      "deliveredAtStart": "Sent while the org was stopped. They are delivered when the org next starts.",
+      "runningNote": "The org is running. These were queued before it started and are delivered at its next start.",
+      "startNow": "Start org now",
+      "starting": "Starting…",
+      "empty": "No messages are waiting for this org.",
+      "refresh": "Refresh",
+      "endpoint": "automation role",
+      "draining": "interrupted delivery",
+      "hop": "hop {{hop}}",
+      "skipped": "{{count}} unreadable line(s) in the queue file were skipped.",
+      "waited": "queued {{duration}} ago",
+      "loadFailed": "Could not read the queued messages.",
+      "to": "to",
+      "noSubject": "(no subject)"
+    }
   }
 }
