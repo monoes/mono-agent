@@ -119,22 +119,7 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 		username = "unknown"
 	}
 
-	// 2. Get a session (browser page) via the SessionProvider.
-	// Each call opens a fresh tab (no reuse across nodes), so close it once
-	// this node is done rather than leaving it open for the process lifetime.
-	page, err := globalSessionProvider.GetPage(ctx, b.platform, username)
-	if err != nil {
-		return nil, fmt.Errorf("nodes: getting page for %s/%s: %w", b.platform, username, err)
-	}
-	defer page.Close() //nolint:errcheck
-
-	// 3. Get the appropriate bot adapter via the BotRegistry (optional — not all platforms need it).
-	var botAdapter action.BotAdapter
-	if globalBotRegistry != nil {
-		botAdapter, _ = globalBotRegistry.GetAdapter(b.platform)
-	}
-
-	// 4. Build a StorageAction from config fields.
+	// 2. Build a StorageAction from config fields.
 	storageAction := &action.StorageAction{
 		ID:             uuid.New().String(),
 		Type:           b.actionType,
@@ -178,7 +163,31 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 	}
 	storageAction.Params = params
 
-	// 5. Create ActionExecutor and call Execute.
+	// 3. Check required inputs before a session exists. A node whose config
+	// resolves to nothing — a {{ json $json.prompts }} that rendered "null",
+	// say — used to open a browser tab, run zero loop iterations and still
+	// report success. Failing first costs nothing and names what is missing.
+	if err := action.ValidateActionInputs(b.platform, b.actionType, storageAction,
+		map[string]interface{}{"selectedListItems": selectedListItems}); err != nil {
+		return nil, fmt.Errorf("nodes: %s/%s: %w", b.platform, b.actionType, err)
+	}
+
+	// 4. Get a session (browser page) via the SessionProvider.
+	// Each call opens a fresh tab (no reuse across nodes), so close it once
+	// this node is done rather than leaving it open for the process lifetime.
+	page, err := globalSessionProvider.GetPage(ctx, b.platform, username)
+	if err != nil {
+		return nil, fmt.Errorf("nodes: getting page for %s/%s: %w", b.platform, username, err)
+	}
+	defer page.Close() //nolint:errcheck
+
+	// 5. Get the appropriate bot adapter via the BotRegistry (optional — not all platforms need it).
+	var botAdapter action.BotAdapter
+	if globalBotRegistry != nil {
+		botAdapter, _ = globalBotRegistry.GetAdapter(b.platform)
+	}
+
+	// 6. Create ActionExecutor and call Execute.
 	logger := newNopLogger()
 	if os.Getenv("MONOAGENT_DEBUG") != "" {
 		logger = zerolog.New(os.Stderr).With().Timestamp().Logger()
@@ -219,7 +228,7 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 		return nil, fmt.Errorf("nodes: BrowserNode execute %s/%s: %w", b.platform, b.actionType, err)
 	}
 
-	// 6. Convert and normalize ExtractedItems to a single output item.
+	// 7. Convert and normalize ExtractedItems to a single output item.
 	// All extracted items (one per bot method step) are merged together so the
 	// downstream node sees a single item with all fields — including both the
 	// input data (sheet row, prompts) and the action results (image_count,
