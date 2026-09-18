@@ -63,8 +63,10 @@ jobs:
           for f in testdata/orgs/*.json; do
             name="$(basename "$f" .json)"
             (cd "$proj" && monomind org validate "$name")
+            # Compare file by file: testdata/orgs also holds non-org
+            # fixtures (runs/), which a directory diff would report.
+            diff "$f" "$proj/.monomind/orgs/$(basename "$f")"
           done
-          diff -r testdata/orgs "$proj/.monomind/orgs"
 
   # Closes issue #20's OpenAPI acceptance criterion ("OpenAPI 3 spec shipped
   # and validated in CI"): validates internal/httpapi/openapi.yaml against
