@@ -42,6 +42,11 @@ export function ChatComposer({ value, onChange, onSend, onStop, streaming, disab
           onKeyDown={handleKeyDown}
           onCompositionStart={() => { composingRef.current = true }}
           onCompositionEnd={() => { composingRef.current = false }}
+          // Typing is blocked too, not just Send: with no usable backend
+          // there is nothing a draft can be sent to, and a composer that
+          // accepts text while refusing to send it reads as a broken app
+          // rather than an unavailable one.
+          disabled={disabled}
           placeholder="Type a message..."
           rows={1}
           style={{
