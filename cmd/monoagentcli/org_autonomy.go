@@ -339,7 +339,7 @@ func needsYou(ctx context.Context, db *storage.Database, profileID, root, org st
 	if err != nil {
 		return nil, err
 	}
-	pending, _, err := svc.Pending(ctx, profileID, root, org, a)
+	pending, _, _, err := svc.Pending(ctx, profileID, root, org, a)
 	if err != nil {
 		return nil, err
 	}

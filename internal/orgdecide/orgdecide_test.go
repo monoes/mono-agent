@@ -37,6 +37,9 @@ type fakeOrg struct {
 	gates     []map[string]interface{}
 	resolved  []string
 	notified  []string
+	// approvalsErr makes the approvals fetch fail, so Pending returns a
+	// partial list (one source down, the others fine).
+	approvalsErr error
 }
 
 func (f *fakeOrg) payload(items []map[string]interface{}) json.RawMessage {
@@ -49,6 +52,9 @@ func (f *fakeOrg) Status(context.Context, string, string) (json.RawMessage, erro
 func (f *fakeOrg) Approvals(context.Context, string, string) (json.RawMessage, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.approvalsErr != nil {
+		return nil, f.approvalsErr
+	}
 	return f.payload(f.approvals), nil
 }
 func (f *fakeOrg) Questions(context.Context, string, string) (json.RawMessage, error) {
@@ -314,7 +320,7 @@ func TestRepeatDenialAndLimits(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	items, run, _ := s.Pending(ctx, "p", "", "growth", a)
+	items, run, _, _ := s.Pending(ctx, "p", "", "growth", a)
 	for i := 0; i < 3; i++ {
 		if err := s.Store.Record(ctx, &Decision{ProfileID: "p", OrgName: "growth", RunID: run, ItemKind: KindApproval, ItemRef: "old", ItemHash: items[0].Hash, Class: "tool:WebFetch", Tier: "consequential", Level: "full", Resolver: "model:test", Verdict: VerdictDenied}); err != nil {
 			t.Fatal(err)

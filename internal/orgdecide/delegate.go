@@ -42,18 +42,23 @@ type Delegation struct {
 	DeadlineAt  time.Time `json:"deadline_at"`
 }
 
-// storedItem keeps the fields json:"-" hides on Item.
+// storedItem keeps the fields json:"-" hides on Item. Inputs belongs here
+// too: it carries what the requester actually wants to run, which is the
+// evidence a decider role reads through decision_list (C-55).
 type storedItem struct {
 	Item
-	Action    string `json:"action"`
-	RequestID string `json:"request_id"`
-	Text      string `json:"text"`
-	Name      string `json:"name"`
-	Hash      string `json:"hash"`
+	Action    string                   `json:"action"`
+	RequestID string                   `json:"request_id"`
+	Text      string                   `json:"text"`
+	Name      string                   `json:"name"`
+	Hash      string                   `json:"hash"`
+	Inputs    []map[string]interface{} `json:"inputs,omitempty"`
+	WaitingMS int64                    `json:"waiting_ms,omitempty"`
 }
 
 func encodeItem(it Item) string {
-	b, _ := json.Marshal(storedItem{Item: it, Action: it.Action, RequestID: it.RequestID, Text: it.Text, Name: it.Name, Hash: it.Hash})
+	b, _ := json.Marshal(storedItem{Item: it, Action: it.Action, RequestID: it.RequestID, Text: it.Text,
+		Name: it.Name, Hash: it.Hash, Inputs: it.Inputs, WaitingMS: it.WaitingMS})
 	return string(b)
 }
 
@@ -62,6 +67,7 @@ func decodeItem(s string) Item {
 	_ = json.Unmarshal([]byte(s), &si)
 	it := si.Item
 	it.Action, it.RequestID, it.Text, it.Name, it.Hash = si.Action, si.RequestID, si.Text, si.Name, si.Hash
+	it.Inputs, it.WaitingMS = si.Inputs, si.WaitingMS
 	return it
 }
 

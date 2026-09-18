@@ -156,8 +156,10 @@ func (s *Service) Tick(ctx context.Context) error {
 	return nil
 }
 
-// Pending collects an org's pending items with tiers assigned.
-func (s *Service) Pending(ctx context.Context, profileID, root, org string, a *Autonomy) ([]Item, string, error) {
+// Pending collects an org's pending items with tiers assigned. The bool
+// reports a partial list: at least one source failed, so an item's absence
+// here does not mean it is gone.
+func (s *Service) Pending(ctx context.Context, profileID, root, org string, a *Autonomy) ([]Item, string, bool, error) {
 	var items []Item
 	var errs []string
 	collect := func(name string, fetch func(context.Context, string, string) (json.RawMessage, error), parse func([]byte) ([]Item, error)) {
@@ -177,11 +179,17 @@ func (s *Service) Pending(ctx context.Context, profileID, root, org string, a *A
 	collect("questions", s.Client.Questions, ParseQuestions)
 	collect("gates", s.Client.Gates, ParseGates)
 	if len(errs) == 3 {
-		return nil, "", errors.New(strings.Join(errs, "; "))
+		return nil, "", false, errors.New(strings.Join(errs, "; "))
 	}
+	// A partial fetch still routes what it did see — an item missed this tick
+	// is picked up on the next one — but a caller that reads "absent" as
+	// "resolved elsewhere" must know the list is incomplete (SweepDelegations).
+	partial := len(errs) > 0
 	if s.DB != nil {
 		doc, _ := orgdesign.Load(root, org)
-		if hil, err := PendingHIL(ctx, s.DB, profileID, org, doc); err == nil {
+		if hil, err := PendingHIL(ctx, s.DB, profileID, org, doc); err != nil {
+			partial = true
+		} else {
 			items = append(items, hil...)
 		}
 	}
@@ -200,7 +208,7 @@ func (s *Service) Pending(ctx context.Context, profileID, root, org string, a *A
 		items[i].Tier = TierFor(items[i].Class, items[i].Requester, a.Tiers, facts)
 	}
 	SortItems(items)
-	return items, runID, nil
+	return items, runID, partial, nil
 }
 
 func (s *Service) tierFacts(ctx context.Context, profileID, root, org string) TierFacts {
@@ -248,7 +256,7 @@ func (s *Service) ProcessOrg(ctx context.Context, profileID, root, org string) (
 		return nil, err
 	}
 	level := a.EffectiveLevel(s.clock())
-	items, runID, err := s.Pending(ctx, profileID, root, org, a)
+	items, runID, _, err := s.Pending(ctx, profileID, root, org, a)
 	if err != nil {
 		return nil, err
 	}
@@ -476,8 +484,15 @@ func (s *Service) SweepDelegations(ctx context.Context, profileID, root string) 
 		if err != nil {
 			continue
 		}
-		items, runID, err := s.Pending(ctx, profileID, root, org, a)
+		items, runID, partial, err := s.Pending(ctx, profileID, root, org, a)
 		if err != nil {
+			continue
+		}
+		// The pause brake applies here too: a paused org decides nothing, so
+		// a delegation waits rather than falling back to the model. The level
+		// is read now, not the one captured when the item was delegated.
+		level := a.EffectiveLevel(s.clock())
+		if level == orgdesign.LevelManual {
 			continue
 		}
 		live := map[string]Item{}
@@ -488,6 +503,13 @@ func (s *Service) SweepDelegations(ctx context.Context, profileID, root string) 
 		for _, d := range dels {
 			it, stillPending := live[d.Item.Kind+"|"+d.Item.Ref]
 			if !stillPending {
+				// A partial list cannot tell "resolved elsewhere" from "the
+				// source that holds it failed this tick"; closing here would
+				// strand the item, because ProcessOrg skips anything whose
+				// latest decision is an escalation at the current level.
+				if partial {
+					continue
+				}
 				_, _ = s.Store.CloseDelegation(ctx, d.ID, DelegationResolved)
 				continue
 			}
@@ -499,7 +521,7 @@ func (s *Service) SweepDelegations(ctx context.Context, profileID, root string) 
 			}
 			fallback := *a
 			fallback.Decider.Kind = orgdesign.DeciderModel
-			if _, err := s.decide(ctx, profileID, root, org, runID, d.Level, &fallback, doc, it); err != nil {
+			if _, err := s.decide(ctx, profileID, root, org, runID, level, &fallback, doc, it); err != nil {
 				s.Logf("orgdecide: fallback for %s: %v", d.ID, err)
 			}
 		}
