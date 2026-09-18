@@ -395,36 +395,60 @@ func (a *App) saveAndRespond(root string, d *orgdesign.Doc, origin string) strin
 // validation failure, restores the pre-write bytes so an org config
 // monomind itself can't load is never left on disk, and returns the CLI's
 // error text.
+//
+// The CLI check deliberately runs BEFORE reconcileOrgDoc: reconcile revokes
+// the grant rows a document no longer backs, and rollback can only restore
+// the FILE. Reconciling first would mean a rejected save leaves the pre-image
+// on disk — still listing the role and its `automations` display copies —
+// while the rows behind them are gone for good, so the role silently loses
+// its tools at runtime with no error anywhere.
 func (a *App) saveOrgDoc(root string, d *orgdesign.Doc) (sha string, err error) {
 	var preImage *orgdesign.Doc
 	if existing, loadErr := orgdesign.Load(root, d.Name); loadErr == nil {
 		preImage = existing
 	}
 
-	if err := a.reconcileOrgDoc(root, d, preImage == nil); err != nil {
+	if _, err := a.writeOrgDoc(root, d); err != nil {
 		return "", err
 	}
-	sha, err = orgdesign.Save(root, d)
+	if cliErr := a.cliValidate(root, d.Name); cliErr != nil {
+		a.rollbackOrgDoc(root, d.Name, preImage)
+		return "", fmt.Errorf("monomind rejected this change: %s", cliErr.Error())
+	}
+
+	// Only now touch rows — and write the document again, since reconcile
+	// rewrites the display copies it just matched against them.
+	if err := a.reconcileOrgDoc(root, d, preImage == nil); err != nil {
+		a.rollbackOrgDoc(root, d.Name, preImage)
+		return "", err
+	}
+	return a.writeOrgDoc(root, d)
+}
+
+// writeOrgDoc saves d and registers the write with the watcher so it doesn't
+// re-announce our own change as an external edit.
+func (a *App) writeOrgDoc(root string, d *orgdesign.Doc) (string, error) {
+	sha, err := orgdesign.Save(root, d)
 	if err != nil {
 		return "", err
 	}
 	if a.orgWatcher != nil {
 		a.orgWatcher.MarkSelfWrite(d.Name, sha)
 	}
-
-	if cliErr := a.cliValidate(root, d.Name); cliErr != nil {
-		if preImage != nil {
-			// Roll back to the pre-write bytes — never leave a config on
-			// disk that monomind's own schema rejects, even transiently.
-			if rollbackSha, rerr := orgdesign.Save(root, preImage); rerr == nil && a.orgWatcher != nil {
-				a.orgWatcher.MarkSelfWrite(d.Name, rollbackSha)
-			}
-		} else {
-			_ = orgdesign.Delete(root, d.Name)
-		}
-		return "", fmt.Errorf("monomind rejected this change: %s", cliErr.Error())
-	}
 	return sha, nil
+}
+
+// rollbackOrgDoc restores the pre-write bytes — never leave a config on disk
+// that monomind's own schema rejects, even transiently. A save that created
+// the file (no pre-image) removes it instead.
+func (a *App) rollbackOrgDoc(root, name string, preImage *orgdesign.Doc) {
+	if preImage == nil {
+		_ = orgdesign.Delete(root, name)
+		return
+	}
+	if sha, err := orgdesign.Save(root, preImage); err == nil && a.orgWatcher != nil {
+		a.orgWatcher.MarkSelfWrite(name, sha)
+	}
 }
 
 // reconcileOrgDoc brings a full-document save from the canvas into line with
