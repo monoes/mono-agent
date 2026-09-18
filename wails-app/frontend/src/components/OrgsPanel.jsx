@@ -852,6 +852,7 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
                     fullscreen={designerFullscreen}
                     onToggleFullscreen={() => setDesignerFullscreen(v => !v)}
                     onOpenWorkflow={onNavigate ? (workflowId) => { if (workflowId) onNavigate('noderunner', { workflowId }) } : undefined}
+                    onCreateWorkflow={onNavigate ? () => onNavigate('noderunner') : undefined}
                   />
                 </div>
               ) : (

@@ -76,7 +76,7 @@ async function hydrateWithIcons(roles) {
   return nodes
 }
 
-export default function OrgDesigner({ orgName, fullscreen = false, onToggleFullscreen, onOpenWorkflow }) {
+export default function OrgDesigner({ orgName, fullscreen = false, onToggleFullscreen, onOpenWorkflow, onCreateWorkflow }) {
   const [loading, setLoading] = useState(true)
   const [viewMode, setViewMode] = useState('design') // 'design' | 'live' | 'matrix'
   const [liveSource, setLiveSource] = useState('live') // 'live' or a past run id
@@ -639,6 +639,7 @@ export default function OrgDesigner({ orgName, fullscreen = false, onToggleFulls
                   onRefresh={automationData.refresh}
                   onDragStart={handleAutomationDragStart}
                   onOpenWorkflow={onOpenWorkflow}
+                  onCreateWorkflow={onCreateWorkflow}
                 />
               ) : (
                 <RolePalette onDragStart={handlePaletteDragStart} onQuickAdd={quickAddRole} />
