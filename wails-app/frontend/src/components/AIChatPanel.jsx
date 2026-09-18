@@ -642,7 +642,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
     const text = input.trim()
     if (!text || activeTurnId || !workflowID) return
     if (useAgents && !selectedRuntime) return
-    if (useAgents && runtimeUninitialized) return
+    if (runtimeUninitialized) return // implies useAgents
     if (!useAgents && !selectedProvider) return
 
     setMessages(msgs => [...msgs, { role: 'user', content: text }])
@@ -1068,7 +1068,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
             ))}
           </select>
         )}
-        {useAgents && runtimeUninitialized ? (
+        {runtimeUninitialized ? (
           // No model id exists for this runtime, so there is nothing to pick
           // and nothing to type: say so where the picker would be, rather
           // than leaving the previous runtime's model sitting in a field that
