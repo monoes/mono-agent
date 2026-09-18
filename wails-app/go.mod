@@ -7,7 +7,8 @@ toolchain go1.26.6
 require (
 	github.com/google/uuid v1.6.0
 	github.com/monoes/mono-agent v0.0.0
-	github.com/wailsapp/wails/v2 v2.15.0
+	github.com/wailsapp/wails/v2 v2.16.0
+	github.com/zalando/go-keyring v0.2.8
 	modernc.org/sqlite v1.58.0
 )
 
@@ -80,7 +81,6 @@ require (
 	github.com/ysmood/gson v0.7.3 // indirect
 	github.com/ysmood/leakless v0.9.0 // indirect
 	github.com/yuin/goldmark v1.8.5 // indirect
-	github.com/zalando/go-keyring v0.2.8 // indirect
 	go.mongodb.org/mongo-driver/v2 v2.8.2 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	golang.org/x/crypto v0.56.0 // indirect
