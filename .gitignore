@@ -114,15 +114,11 @@ edge_passwords.csv
 # make bench output (local; CI uploads its own copy as a build artifact)
 /bench.txt
 /benchstat.txt
-# monomind runtime — exclude sensitive and machine-specific data
-.monomind/sessions/
-.monomind/security/
-.monomind/*.tmp
-.monomind/*.log
-.monomind/daemon.pid
-.monomind/*.db
-.monomind/*.db-wal
-.monomind/*.db-shm
+# monomind runtime — local state this repo never tracks. Listing individual
+# paths meant every new directory monomind started writing (neural/, system/,
+# dashboard-token-<port>, …) showed up as untracked noise until someone added
+# a line for it. Nothing under .monomind/ is tracked here, so ignore the lot.
+.monomind/
 
 # monomind runtime state
 .monomind/data/
