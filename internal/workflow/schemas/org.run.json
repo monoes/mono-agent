@@ -3,6 +3,8 @@
   "fields": [
     { "key": "org_name", "label": "Org Name", "type": "text", "required": true, "help": "The target org's name (see the Orgs tab)." },
     { "key": "task", "label": "Task", "type": "textarea", "required": false, "rows": 4, "default": "{{$json.text}}", "help": "Initial message/goal override for this run. Supports {{$json.field}} placeholders." },
-    { "key": "output_key", "label": "Output Key", "type": "text", "required": false, "default": "org_result", "help": "Where the org's run report is stored on the output item once the boss role signals completion." }
+    { "key": "output_key", "label": "Output Key", "type": "text", "required": false, "default": "org_result", "help": "Where the org's run report is stored on the output item once the boss role signals completion." },
+    { "key": "wait", "label": "Wait For Completion", "type": "boolean", "required": false, "default": true, "help": "Off: continue as soon as the run has started." },
+    { "key": "exclusive", "label": "Exclusive", "type": "boolean", "required": false, "default": false, "help": "On: fail instead of joining when the org is already running a run this workflow did not start." }
   ]
 }

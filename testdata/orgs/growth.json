@@ -1,0 +1,83 @@
+{
+  "name": "growth",
+  "kind": "standard",
+  "goal": "Publish one useful post a day.",
+  "status": "stopped",
+  "schedule": null,
+  "run_config": {
+    "idle_minutes": 10,
+    "max_hops": 8
+  },
+  "roles": [
+    {
+      "id": "lead",
+      "title": "Lead",
+      "type": "boss",
+      "reports_to": null,
+      "responsibilities": ["Decide what to publish."],
+      "automations": [
+        {
+          "alias": "publish_post",
+          "mode": "run",
+          "wait": true,
+          "timeout_seconds": 600,
+          "approval": "required",
+          "max_calls_per_run": 20,
+          "max_calls_per_day": 200,
+          "max_output_bytes": 16384
+        }
+      ],
+      "tool_providers": [
+        {
+          "kind": "mcp-stdio",
+          "name": "monoagent",
+          "command": "/usr/local/bin/monoagentcli",
+          "args": ["mcp", "--grant", "grt_aaaaaaaaaaaaaaaaaaaaaa", "--profile", "default"],
+          "allow": ["automation_publish_post", "automation_status", "automation_output"],
+          "prefix": "monoagent",
+          "timeout_ms": 630000
+        }
+      ],
+      "policy": {
+        "denyTools": ["Bash"],
+        "approvalTools": ["monoagent__automation_publish_post"]
+      }
+    },
+    {
+      "id": "publisher-bot",
+      "kind": "endpoint",
+      "title": "Publisher (automation)",
+      "type": "automation",
+      "reports_to": "lead",
+      "responsibilities": [],
+      "endpoint": {
+        "url": "http://127.0.0.1:9322/org-endpoint/ep_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "input_hint": "Send the post text."
+      },
+      "automation": {
+        "workflow_id": "wf-publish",
+        "reply": "last_node",
+        "alias": "publisher_bot"
+      }
+    }
+  ],
+  "automations": [
+    { "workflow_id": "wf-publish", "alias": "publish_post", "owned": true }
+  ],
+  "federation": { "allow_from": ["hq"], "allow_to": ["*"] },
+  "autonomy": {
+    "level": "mid",
+    "decider": {
+      "kind": "model",
+      "runtime": "claude",
+      "model": "claude-fable-5-1",
+      "fallback": "model",
+      "timeout_seconds": 120
+    },
+    "tiers": { "tool:WebFetch": "consequential" },
+    "policy": "Never approve spend over $50.",
+    "on_decider_failure": "deny",
+    "limits": { "max_decisions_per_run": 200, "max_decider_usd_per_run": 2 },
+    "future_key": { "kept": true }
+  }
+}

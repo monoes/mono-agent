@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os/exec"
@@ -8,7 +9,10 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"github.com/monoes/mono-agent/internal/orgdecide"
 	"github.com/monoes/mono-agent/internal/orgdesign"
+	"github.com/monoes/mono-agent/internal/orggrant"
+	"github.com/monoes/mono-agent/internal/profiledir"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -67,6 +71,9 @@ func (a *App) ListOrgDesigns() string {
 		Goal      string `json:"goal"`
 		Status    string `json:"status"`
 		RoleCount int    `json:"roleCount"`
+		// Kind is "holding" for a holding org (plan §6.1), else "" or
+		// "standard" — the org list uses it to offer the group view.
+		Kind string `json:"kind,omitempty"`
 	}
 	items := make([]item, 0, len(names))
 	for _, name := range names {
@@ -74,13 +81,29 @@ func (a *App) ListOrgDesigns() string {
 		if err != nil {
 			continue // skip a config that fails to parse rather than failing the whole list
 		}
-		items = append(items, item{Name: d.Name, Goal: d.Goal, Status: d.Status, RoleCount: len(d.Roles)})
+		items = append(items, item{Name: d.Name, Goal: d.Goal, Status: d.Status, RoleCount: len(d.Roles), Kind: orgDocKind(d)})
 	}
 	b, err := json.Marshal(map[string]interface{}{"v": 1, "items": items})
 	if err != nil {
 		return aiError(err)
 	}
 	return string(b)
+}
+
+// orgDocKind reads the top-level `kind` key from a doc's JSON form, so it
+// works whether orgdesign keeps `kind` in Extra or models it as a field.
+func orgDocKind(d *orgdesign.Doc) string {
+	b, err := json.Marshal(d)
+	if err != nil {
+		return ""
+	}
+	var probe struct {
+		Kind string `json:"kind"`
+	}
+	if json.Unmarshal(b, &probe) != nil {
+		return ""
+	}
+	return probe.Kind
 }
 
 // CreateOrgDesign creates a new org with a single root role. specJSON:
@@ -372,33 +395,108 @@ func (a *App) saveAndRespond(root string, d *orgdesign.Doc, origin string) strin
 // validation failure, restores the pre-write bytes so an org config
 // monomind itself can't load is never left on disk, and returns the CLI's
 // error text.
+//
+// The CLI check deliberately runs BEFORE reconcileOrgDoc: reconcile revokes
+// the grant rows a document no longer backs, and rollback can only restore
+// the FILE. Reconciling first would mean a rejected save leaves the pre-image
+// on disk — still listing the role and its `automations` display copies —
+// while the rows behind them are gone for good, so the role silently loses
+// its tools at runtime with no error anywhere.
 func (a *App) saveOrgDoc(root string, d *orgdesign.Doc) (sha string, err error) {
 	var preImage *orgdesign.Doc
 	if existing, loadErr := orgdesign.Load(root, d.Name); loadErr == nil {
 		preImage = existing
 	}
 
-	sha, err = orgdesign.Save(root, d)
+	if _, err := a.writeOrgDoc(root, d); err != nil {
+		return "", err
+	}
+	if cliErr := a.cliValidate(root, d.Name); cliErr != nil {
+		a.rollbackOrgDoc(root, d.Name, preImage)
+		return "", fmt.Errorf("monomind rejected this change: %s", cliErr.Error())
+	}
+
+	// Only now touch rows — and write the document again, since reconcile
+	// rewrites the display copies it just matched against them.
+	if err := a.reconcileOrgDoc(root, d, preImage == nil); err != nil {
+		a.rollbackOrgDoc(root, d.Name, preImage)
+		return "", err
+	}
+	return a.writeOrgDoc(root, d)
+}
+
+// writeOrgDoc saves d and registers the write with the watcher so it doesn't
+// re-announce our own change as an external edit.
+func (a *App) writeOrgDoc(root string, d *orgdesign.Doc) (string, error) {
+	sha, err := orgdesign.Save(root, d)
 	if err != nil {
 		return "", err
 	}
 	if a.orgWatcher != nil {
 		a.orgWatcher.MarkSelfWrite(d.Name, sha)
 	}
-
-	if cliErr := a.cliValidate(root, d.Name); cliErr != nil {
-		if preImage != nil {
-			// Roll back to the pre-write bytes — never leave a config on
-			// disk that monomind's own schema rejects, even transiently.
-			if rollbackSha, rerr := orgdesign.Save(root, preImage); rerr == nil && a.orgWatcher != nil {
-				a.orgWatcher.MarkSelfWrite(d.Name, rollbackSha)
-			}
-		} else {
-			_ = orgdesign.Delete(root, d.Name)
-		}
-		return "", fmt.Errorf("monomind rejected this change: %s", cliErr.Error())
-	}
 	return sha, nil
+}
+
+// rollbackOrgDoc restores the pre-write bytes — never leave a config on disk
+// that monomind's own schema rejects, even transiently. A save that created
+// the file (no pre-image) removes it instead.
+func (a *App) rollbackOrgDoc(root, name string, preImage *orgdesign.Doc) {
+	if preImage == nil {
+		_ = orgdesign.Delete(root, name)
+		return
+	}
+	if sha, err := orgdesign.Save(root, preImage); err == nil && a.orgWatcher != nil {
+		a.orgWatcher.MarkSelfWrite(name, sha)
+	}
+}
+
+// reconcileOrgDoc brings a full-document save from the canvas into line with
+// the grant, endpoint, and autonomy rows before it reaches disk, exactly as
+// every CLI save does: a stale or hand-edited document can never carry
+// grants, tool providers, or an autonomy level no row backs (C-3, C-54).
+// A new org gets its starting autonomy row (mid, Q8).
+func (a *App) reconcileOrgDoc(root string, d *orgdesign.Doc, isNew bool) error {
+	if a.db == nil {
+		return nil
+	}
+	profileID := a.getActiveProfileID()
+	if profileID == "" || profiledir.Root(a.db, profileID) != root {
+		return nil
+	}
+	ctx := context.Background()
+	store := orgdecide.NewStore(a.db)
+	if isNew {
+		// Same rule as cmd/monoagentcli's ensureNewOrgAutonomy: mid by
+		// default (Q8), manual when the document asks for it, and the
+		// document's decider policy text carried over — a document can never
+		// start an org at full.
+		if row, err := store.Get(ctx, profileID, d.Name); err == nil && !row.Stored {
+			row.Level = orgdesign.LevelMid
+			if d.Autonomy != nil && d.Autonomy.Level == orgdesign.LevelManual {
+				row.Level = orgdesign.LevelManual
+			}
+			if d.Autonomy != nil && d.Autonomy.Policy != "" {
+				row.Policy = d.Autonomy.Policy
+			}
+			if err := store.Put(ctx, row, "gui"); err != nil {
+				return err
+			}
+		}
+	}
+	cli, _ := findMonoAgentCLI()
+	apiAddr := orggrant.DefaultAPIAddr
+	var v string
+	if err := a.db.QueryRow(`SELECT value FROM settings WHERE key = 'daemon_api_addr'`).Scan(&v); err == nil && v != "" {
+		apiAddr = v
+	}
+	if _, err := orggrant.Reconcile(ctx, orggrant.NewStore(a.db), d, orggrant.GenOptions{ProfileID: profileID, CLIPath: cli, APIAddr: apiAddr}); err != nil {
+		return fmt.Errorf("reconcile grants: %w", err)
+	}
+	if _, err := orgdecide.ReconcileAutonomy(ctx, store, profileID, d); err != nil {
+		return fmt.Errorf("reconcile autonomy: %w", err)
+	}
+	return nil
 }
 
 // cliValidate runs `monoagentcli org validate <name>` and returns a non-nil

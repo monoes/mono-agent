@@ -1,0 +1,10 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "org_name", "label": "Org Name", "type": "text", "required": true, "help": "The org to ask. This workflow must be one of its automation roles, so the answer has somewhere to go." },
+    { "key": "role", "label": "Ask Role", "type": "text", "required": false, "help": "Role id to ask. Leave empty for the org's coordinator." },
+    { "key": "question", "label": "Question", "type": "textarea", "required": true, "rows": 5, "default": "{{$json.text}}", "help": "Supports {{$json.field}} placeholders. The run pauses until the role replies." },
+    { "key": "timeout_seconds", "label": "Timeout (seconds)", "type": "number", "required": false, "default": 600, "help": "How long to wait for a reply before the node fails." },
+    { "key": "output_key", "label": "Output Key", "type": "text", "required": false, "default": "org_reply", "help": "Where the reply is stored on the output item." }
+  ]
+}

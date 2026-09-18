@@ -1,0 +1,11 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "mode", "label": "Start When", "type": "select", "required": false, "default": "event", "options": ["event", "endpoint"], "help": "event: something happens in an org (needs Org Name). endpoint: a message reaches this workflow's automation role." },
+    { "key": "org_name", "label": "Org Name", "type": "text", "required": false, "help": "The org to watch (event mode)." },
+    { "key": "event_types", "label": "Event Types", "type": "text", "required": false, "placeholder": "gate, question, xorg", "help": "Comma-separated: status, message, xorg, gate, question, asset, tool, usage, audit. Empty = all." },
+    { "key": "role", "label": "Role", "type": "text", "required": false, "help": "Only events from or to this role." },
+    { "key": "subject_match", "label": "Subject Contains", "type": "text", "required": false, "help": "Only messages whose subject (or gates whose name) contains this text." },
+    { "key": "question_kind", "label": "Question Kind", "type": "select", "required": false, "default": "ask_human", "options": ["ask_human", "approval", "any"], "help": "For question events: ask_human questions only (default), tool approvals only, or both." }
+  ]
+}

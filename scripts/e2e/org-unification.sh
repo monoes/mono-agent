@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+# End-to-end check of the org × workflow unification with real binaries and
+# no LLM calls: builds monoagentcli, runs it against an isolated HOME and a
+# locally built monomind (MONOMIND_WORKTREE, e.g. a checkout of
+# feat/mono-agent-org-integration after `npm run build` in
+# packages/@monomind/cli), starts `monoagentcli daemon`, and exercises grants,
+# grant-mode MCP calls, automation-role endpoints, and autonomy reconcile.
+# Needs go, node, python3, sqlite3, curl. Uses 127.0.0.1:19322.
+#
+#   MONOMIND_WORKTREE=~/src/monomind scripts/e2e/org-unification.sh
+set -u
+export GOMODCACHE="$(go env GOMODCACHE)" GOCACHE="$(go env GOCACHE)" GOPATH="$(go env GOPATH)"
+E2E="${E2E_DIR:-$(mktemp -d)}"
+REPO="$(cd "$(dirname "$0")/../.." && pwd)"
+MM="${MONOMIND_WORKTREE:?set MONOMIND_WORKTREE to a built monomind checkout}"
+rm -rf "$E2E/home" && mkdir -p "$E2E/home"
+export HOME="$E2E/home"
+export MONOMIND_BIN="$E2E/monomind"
+printf '#!/bin/sh\nexec node %s/packages/@monomind/cli/bin/cli.js "$@"\n' "$MM" > "$MONOMIND_BIN"
+chmod +x "$MONOMIND_BIN"
+export MONOAGENT_API_ADDR=127.0.0.1:19322
+CLI="$E2E/monoagentcli"
+pass=0; fail=0
+check() { if [ "$1" = ok ]; then pass=$((pass+1)); echo "PASS $2"; else fail=$((fail+1)); echo "FAIL $2 :: $3"; fi; }
+
+(cd "$REPO" && go build -o "$CLI" ./cmd/monoagentcli) || { echo "build failed"; exit 1; }
+"$MONOMIND_BIN" --version --json | grep -q org-tool-providers && check ok "local monomind advertises org-tool-providers" || check no "monomind capabilities" "$("$MONOMIND_BIN" --version --json)"
+
+cat > "$E2E/wf.json" <<'EOF'
+{"name":"Publish post","description":"Publishes a post.","version":1,"is_active":false,
+ "nodes":[{"id":"t","type":"trigger.manual","name":"Start","position":{"x":0,"y":0},"config":{}},
+          {"id":"s","type":"core.set","name":"Publish","position":{"x":200,"y":0},
+           "config":{"assignments":"[{\"field\":\"result\",\"value\":\"published {{ $json.input.text }}\"}]","include_input":false}}],
+ "connections":[{"id":"c","source":"t","source_handle":"main","target":"s","target_handle":"main"}]}
+EOF
+WF=$("$CLI" --json workflow import --file "$E2E/wf.json" 2>/dev/null | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')
+[ -n "$WF" ] && check ok "workflow imported ($WF)" || check no "workflow import" ""
+
+ROOT="$HOME/.monoagent/profiles/default"
+"$CLI" org create-json growth --json '{"name":"growth","goal":"Publish posts.","status":"stopped","schedule":null,"roles":[{"id":"lead","title":"Lead","type":"boss","reports_to":null,"responsibilities":["Decide what to publish."]},{"id":"writer","title":"Writer","type":"specialist","reports_to":"lead","responsibilities":["Write posts."]}]}' > "$E2E/create.json" 2>"$E2E/create.err"
+grep -q '"valid":true' "$E2E/create.json" && check ok "org created in the profile folder and valid for monomind" || check no "create-json" "$(cat "$E2E/create.json" "$E2E/create.err")"
+[ -f "$ROOT/.monomind/orgs/growth.json" ] && check ok "org file under profiles/default (C-31)" || check no "org root" "$(find "$HOME" -name growth.json)"
+
+"$CLI" org automation add growth --workflow "$WF" --alias publish_post >/dev/null 2>"$E2E/err" || check no "automation add" "$(cat "$E2E/err")"
+G=$("$CLI" org grant add growth --role writer --automation publish_post --approval none 2>"$E2E/err")
+GID=$(echo "$G" | python3 -c 'import sys,json; print(json.load(sys.stdin)["grant"]["id"])' 2>/dev/null)
+[ -n "$GID" ] && check ok "grant created ($GID)" || check no "grant add" "$G $(cat "$E2E/err")"
+(cd "$ROOT" && "$MONOMIND_BIN" org validate growth) > "$E2E/validate.txt" 2>&1 && check ok "monomind validates the org with generated tool_providers" || check no "monomind validate" "$(cat "$E2E/validate.txt")"
+python3 - "$ROOT/.monomind/orgs/growth.json" "$CLI" "$GID" <<'EOF' && check ok "provider block points at this binary and grant" || check no "provider block" ""
+import json,sys
+d=json.load(open(sys.argv[1]))
+w=[r for r in d["roles"] if r["id"]=="writer"][0]
+p=w["tool_providers"][0]
+assert p["command"]==sys.argv[2] and p["args"]==["mcp","--grant",sys.argv[3],"--profile","default"], p
+assert "Bash" in w["policy"]["denyTools"]
+EOF
+
+# Grant mode without a daemon refuses fast.
+REQ='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
+{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"automation_publish_post","arguments":{"text":"hello"},"_meta":{"trace":{"org":"growth","run":"run-e2e","role":"writer","chain_id":"chn_e2etest","hop":1}}}}'
+OUT=$(printf '%s\n' "$REQ" | MONOMIND_ORG_NAME=growth MONOMIND_ORG_ROLE=writer "$CLI" mcp --grant "$GID" --profile default 2>/dev/null)
+echo "$OUT" | grep -q 'daemon_required' && check ok "grant call without daemon returns daemon_required" || check no "daemon_required" "$OUT"
+echo "$OUT" | grep -q '"automation_publish_post"' && check ok "tools/list serves the granted tool" || check no "tools/list" "$OUT"
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | MONOMIND_ORG_NAME=growth "$CLI" mcp >/dev/null 2>"$E2E/err" && check no "plain mcp for a role" "served" || check ok "plain mcp refuses to serve an org role"
+
+# Daemon.
+"$CLI" daemon --api-addr 127.0.0.1:19322 > "$E2E/daemon.log" 2>&1 &
+DPID=$!
+for i in $(seq 1 60); do [ -f "$HOME/.monoagent/daemon-heartbeat.json" ] && break; sleep 0.5; done
+ST=$("$CLI" --json status 2>/dev/null)
+echo "$ST" | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["daemon"]["running"] and d["daemon"]["api_addr"]=="127.0.0.1:19322"' 2>/dev/null && check ok "status --json reports the daemon and its API" || check no "status" "$ST"
+
+OUT=$(printf '%s\n' "$REQ" | MONOMIND_ORG_NAME=growth MONOMIND_ORG_ROLE=writer MONOMIND_ORG_RUN=run-e2e timeout 60 "$CLI" mcp --grant "$GID" --profile default 2>"$E2E/mcp.err")
+echo "$OUT" | grep -q 'published hello' && check ok "role tool call ran the workflow in the daemon and returned its output" || check no "grant run" "$OUT $(cat "$E2E/mcp.err") $(tail -5 "$E2E/daemon.log")"
+sqlite3 "$HOME/.monoagent/monoagent.db" "select chain_id, hop, run_id, status from org_bridge_calls where direction='role_tool'" > "$E2E/ledger.txt" 2>&1
+grep -q 'chn_e2etest|2|run-e2e|ok' "$E2E/ledger.txt" && check ok "ledger row carries the role's chain, next hop, and run" || check no "ledger" "$(cat "$E2E/ledger.txt")"
+sqlite3 "$HOME/.monoagent/monoagent.db" "select trigger_type, status, pid from workflow_executions" > "$E2E/exec.txt" 2>&1
+grep -q '^org_tool|SUCCESS|' "$E2E/exec.txt" && check ok "execution is an org_tool run adopted by the daemon" || check no "execution row" "$(cat "$E2E/exec.txt")"
+
+# Automation role + endpoint receiver.
+AR=$("$CLI" org automation-role add growth --alias publish_post --reports-to lead 2>"$E2E/err")
+URL=$(echo "$AR" | python3 -c 'import sys,json; print(json.load(sys.stdin)["endpoint_url"])' 2>/dev/null)
+[ -n "$URL" ] && check ok "automation role registered ($URL)" || check no "automation-role add" "$AR $(cat "$E2E/err")"
+(cd "$ROOT" && "$MONOMIND_BIN" org validate growth) > "$E2E/validate2.txt" 2>&1 && check ok "monomind validates the org with an endpoint role" || check no "validate endpoint role" "$(cat "$E2E/validate2.txt")"
+CODE=$(curl -s -o "$E2E/post.json" -w '%{http_code}' -X POST "$URL" -H 'content-type: application/json' -d '{"orgName":"growth","run":"r","from":"lead","to":"growth:publish-post","subject":"s","body":"b","messageId":"msg-forged"}')
+[ "$CODE" = 202 ] && grep -q '"verified":false' "$E2E/post.json" && check ok "direct POST is held unverified (no bus event)" || check no "endpoint POST" "$CODE $(cat "$E2E/post.json")"
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:19322/org-endpoint/ep_aaaaaaaaaaaaaaaaaaaaaaaaaa" -d '{}')
+[ "$CODE" = 404 ] && check ok "unknown endpoint id is 404" || check no "unknown endpoint" "$CODE"
+ROT=$("$CLI" org automation-role rotate growth --role publish-post 2>/dev/null | python3 -c 'import sys,json; print(json.load(sys.stdin)["endpoint_url"])')
+[ -n "$ROT" ] && [ "$ROT" != "$URL" ] && check ok "rotation issues a new endpoint URL" || check no "rotate" "$ROT"
+
+# Autonomy.
+"$CLI" org autonomy set growth --level full --tier gate=consequential >/dev/null 2>"$E2E/err" || check no "autonomy set" "$(cat "$E2E/err")"
+python3 - "$ROOT/.monomind/orgs/growth.json" <<'EOF'
+import json,sys
+p=sys.argv[1]; d=json.load(open(p)); d["autonomy"]["level"]="manual"; json.dump(d,open(p,"w"),indent=2)
+EOF
+sleep 4
+LVL=$("$CLI" org autonomy show growth | python3 -c 'import sys,json; print(json.load(sys.stdin)["level"])')
+[ "$LVL" = manual ] && check ok "daemon watcher applied a hand-edited lowering" || check no "lowering via watcher" "$LVL"
+python3 - "$ROOT/.monomind/orgs/growth.json" <<'EOF'
+import json,sys
+p=sys.argv[1]; d=json.load(open(p)); d["autonomy"]["level"]="full"; json.dump(d,open(p,"w"),indent=2)
+EOF
+sleep 4
+LVL=$("$CLI" org autonomy show growth | python3 -c 'import sys,json; print(json.load(sys.stdin)["level"])')
+FILELVL=$(python3 -c "import json; print(json.load(open('$ROOT/.monomind/orgs/growth.json'))['autonomy']['level'])")
+[ "$LVL" = manual ] && [ "$FILELVL" = manual ] && check ok "hand-edited raise ignored and the file restored (C-54)" || check no "raise via watcher" "db=$LVL file=$FILELVL"
+
+# C-3: hand-added provider stripped by the daemon.
+python3 - "$ROOT/.monomind/orgs/growth.json" <<'EOF'
+import json,sys
+p=sys.argv[1]; d=json.load(open(p))
+lead=[r for r in d["roles"] if r["id"]=="lead"][0]
+lead["tool_providers"]=[{"kind":"mcp-stdio","name":"sneaky","command":"monoagentcli","args":["mcp","--allow-mutations"]}]
+json.dump(d,open(p,"w"),indent=2)
+EOF
+sleep 4
+python3 -c "import json; d=json.load(open('$ROOT/.monomind/orgs/growth.json')); lead=[r for r in d['roles'] if r['id']=='lead'][0]; assert not lead.get('tool_providers')" 2>/dev/null && check ok "daemon stripped a hand-added monoagentcli provider (C-3)" || check no "provider strip" "$(grep -n sneaky "$ROOT/.monomind/orgs/growth.json")"
+
+kill $DPID; wait $DPID 2>/dev/null
+sleep 1
+[ ! -f "$HOME/.monoagent/daemon-heartbeat.json" ] && check ok "daemon removed its heartbeat on shutdown" || check no "heartbeat cleanup" ""
+echo "RESULT pass=$pass fail=$fail"
+[ "$fail" -eq 0 ]

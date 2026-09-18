@@ -3,13 +3,18 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/spf13/cobra"
 
+	"github.com/monoes/mono-agent/internal/daemonhb"
+	"github.com/monoes/mono-agent/internal/httpapi"
 	"github.com/monoes/mono-agent/internal/scheduler"
+	"github.com/monoes/mono-agent/internal/storage"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // newDaemonCmd runs the workflow engine as a long-running foreground process,
@@ -19,14 +24,21 @@ import (
 // engine deactivates all triggers on Stop(), which happens as soon as the
 // activating command exits.
 func newDaemonCmd(cfg *globalConfig) *cobra.Command {
-	return &cobra.Command{
+	var apiOn, allowMutations bool
+	var apiAddr string
+	c := &cobra.Command{
 		Use:   "daemon",
 		Short: "Run the workflow engine in the foreground, keeping scheduled/webhook triggers alive",
 		Long: "Starts the workflow engine and restores every active workflow's triggers (across all " +
 			"profiles), then blocks until interrupted (Ctrl+C). This is what actually makes " +
 			"`workflow activate` schedules fire over time — without a daemon running, an activated " +
-			"workflow's cron/webhook triggers only live for the instant the activating command runs.",
-		Example: "  monoagentcli daemon",
+			"workflow's cron/webhook triggers only live for the instant the activating command runs.\n\n" +
+			"The daemon also serves the HTTP API (--api, on by default, same token and routes as " +
+			"`monoagentcli httpapi`), runs org automations that roles call and trigger.org workflows, " +
+			"resumes org.run/org.ask pauses when their org event arrives, reconciles org files with their " +
+			"grants, and makes autonomy decisions. Without it every org behaves as autonomy level manual. " +
+			"It writes ~/.monoagent/daemon-heartbeat.json every 10 seconds.",
+		Example: "  monoagentcli daemon\n  monoagentcli daemon --api=false\n  monoagentcli daemon --api-addr 127.0.0.1:9400 --allow-mutations",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			engine, closeBrowsers, err := buildEngine(cfg, true)
 			if err != nil {
@@ -65,6 +77,13 @@ func newDaemonCmd(cfg *globalConfig) *cobra.Command {
 			}()
 			defer close(shutdownDone)
 
+			db, err := initDB(cfg)
+			if err != nil {
+				return fmt.Errorf("open database: %w", err)
+			}
+			defer db.Close()
+			orgs := newOrgServices(db, engine)
+
 			if err := engine.Start(ctx); err != nil {
 				return fmt.Errorf("start engine: %w", err)
 			}
@@ -74,10 +93,56 @@ func newDaemonCmd(cfg *globalConfig) *cobra.Command {
 				return fmt.Errorf("restore active workflows: %w", err)
 			}
 
-			fmt.Fprintln(os.Stdout, "Daemon running. Active workflows' triggers are live. Press Ctrl+C to stop.")
+			servingAddr := ""
+			if apiOn {
+				addr, err := startDaemonAPI(ctx, cfg, db, engine, orgs, apiAddr, allowMutations)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "warning: HTTP API not served: %v\n", err)
+				} else {
+					servingAddr = addr
+				}
+			}
+			go daemonhb.Run(ctx, daemonhb.Heartbeat{APIAddr: servingAddr, Version: getVersion()})
+			orgs.start(ctx, engine)
+
+			msg := "Daemon running. Active workflows' triggers are live."
+			if servingAddr != "" {
+				msg += " HTTP API on " + servingAddr + "."
+			}
+			fmt.Fprintln(os.Stdout, msg+" Press Ctrl+C to stop.")
 			<-ctx.Done()
 			fmt.Fprintln(os.Stdout, "Shutting down...")
 			return nil
 		},
 	}
+	c.Flags().BoolVar(&apiOn, "api", true, "Serve the HTTP API and the automation-role endpoint receiver in this process")
+	c.Flags().StringVar(&apiAddr, "api-addr", "", "HTTP API address (default 127.0.0.1:9322, or MONOAGENT_HTTPAPI_ADDR)")
+	c.Flags().BoolVar(&allowMutations, "allow-mutations", false, "Serve mutating HTTP API endpoints (the endpoint receiver is served either way)")
+	return c
+}
+
+// startDaemonAPI binds the HTTP API over the daemon's own database and
+// engine, records the address for endpoint URLs, and serves until ctx ends.
+func startDaemonAPI(ctx context.Context, cfg *globalConfig, db *storage.Database, engine *workflow.WorkflowEngine, orgs *orgServices, addr string, allowMutations bool) (string, error) {
+	srv, err := httpapi.NewServer(httpapi.Options{
+		DB: db, Store: newHybridStore(db), Engine: engine, Profile: cfg.ProfileID,
+		Addr: addr, AllowMutations: allowMutations, Version: getVersion(),
+		ExtraRoutes: orgs.registerRoutes,
+	})
+	if err != nil {
+		return "", err
+	}
+	ln, err := net.Listen("tcp", srv.Addr())
+	if err != nil {
+		return "", fmt.Errorf("listen on %s: %w (is another daemon or `monoagentcli httpapi` using it?)", srv.Addr(), err)
+	}
+	if _, err := db.DB.Exec(`INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, daemonAPIAddrSetting, srv.Addr()); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: recording API address: %v\n", err)
+	}
+	go func() {
+		if err := srv.Serve(ctx, ln); err != nil && ctx.Err() == nil {
+			fmt.Fprintf(os.Stderr, "HTTP API stopped: %v\n", err)
+		}
+	}()
+	return srv.Addr(), nil
 }

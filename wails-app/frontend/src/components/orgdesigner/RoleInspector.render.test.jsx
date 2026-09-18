@@ -122,3 +122,33 @@ it('updates responsibilities text when switching to a role with a same-length li
   expect(screen.getByDisplayValue('Design prompts')).toBeInTheDocument()
   expect(screen.getByDisplayValue('Hand off copy')).toBeInTheDocument()
 })
+
+// UpdateOrgRole replaces `policy` wholesale, so commitPolicy has to resend
+// every key the saved policy carries -- not just the nine this panel models.
+// `approvalTools` is reconcile-managed (internal/orggrant's syncApprovalTools)
+// and would otherwise be dropped by any inspector policy edit, silently
+// letting a grant that "needs a decision" run without one.
+it('keeps policy keys it does not model when a modeled one changes', () => {
+  const onPatch = vi.fn()
+  const node = makeNode({
+    rest: {
+      adapter_config: { model: 'gpt-4' },
+      policy: {
+        git: 'read',
+        denyTools: ['Bash'],
+        approvalTools: ['monoagent__automation_publish_post'],
+        sandbox: { network: false },
+      },
+    },
+  })
+  renderInspector({ node, allNodes: [node], onPatch })
+
+  fireEvent.change(screen.getByDisplayValue('git: read'), { target: { value: 'commit' } })
+
+  expect(onPatch).toHaveBeenCalledTimes(1)
+  const { policy } = onPatch.mock.calls[0][0]
+  expect(policy.git).toBe('commit')
+  expect(policy.denyTools).toEqual(['Bash'])
+  expect(policy.approvalTools).toEqual(['monoagent__automation_publish_post'])
+  expect(policy.sandbox).toEqual({ network: false })
+})

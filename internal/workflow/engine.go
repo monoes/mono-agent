@@ -894,6 +894,12 @@ func (e *WorkflowEngine) ActivateWorkflow(ctx context.Context, id string) error 
 	wf.IsActive = true
 
 	if err := e.triggerMgr.ActivateWorkflow(ctx, wf); err != nil {
+		// Registration is per node and best-effort, so the nodes before the
+		// failing one are already live. Tear them down before reverting the
+		// flag: an inactive workflow whose cron keeps firing is invisible
+		// (nothing lists it as active) and DeleteWorkflow only deactivates
+		// `if existing.IsActive`, so the trigger would survive deletion.
+		e.triggerMgr.DeactivateWorkflow(id)
 		// Revert the active flag so the DB stays consistent.
 		_ = e.store.SetWorkflowActive(ctx, id, false)
 		return fmt.Errorf("engine: activate workflow: register triggers: %w", err)

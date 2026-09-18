@@ -78,6 +78,14 @@ type TurnResult struct {
 	// evidence — callers must treat that as interrupted, not completed.
 	SawDone bool
 	Err     *ProtocolError
+
+	// incremental is the start event's streams_incrementally: assistant
+	// events are deltas of one reply, not whole messages.
+	incremental bool
+	// streamed holds the deltas since the last tool call, and resultText
+	// whether a result event supplied its own text (which then wins).
+	streamed   []byte
+	resultText bool
 }
 
 // ApplyEventToResult updates res's terminal-state fields (SessionID,
@@ -100,20 +108,28 @@ func ApplyEventToResult(res *TurnResult, ev Event) {
 		if ev.SessionID != "" {
 			res.SessionID = ev.SessionID
 		}
+	case EventStart:
+		res.incremental = ev.StreamsIncrementally
 	case EventAssistant:
-		// Fallback source for ResultText: verified directly against the
-		// currently-installed real monomind binary that its "result" event
-		// carries no "text" field at all for a plain conversational turn
-		// (only subtype/is_error/stop_reason/tokens/cost) -- only
-		// "assistant" events do. Without this, ResultText silently comes
-		// back empty and every caller that parses it (chat,
-		// applications.evaluate) fails with a confusing "no JSON object
-		// found in response (response was: )". Keep the latest assistant
-		// text; EventResult below still wins if a future/other protocol
-		// version does populate its own text.
-		if ev.Text != "" {
+		// Fallback source for ResultText: monomind's result event often has
+		// no text (only assistant events do), so ResultText would otherwise
+		// come back empty. An incremental runtime (start's
+		// streams_incrementally) sends the reply as deltas, so they are
+		// joined; otherwise each event is a whole message and the latest one
+		// is the answer. A result event with its own text still wins.
+		if ev.Text == "" || res.resultText {
+			break
+		}
+		if res.incremental {
+			res.streamed = append(res.streamed, ev.Text...)
+			res.ResultText = string(res.streamed)
+		} else {
 			res.ResultText = ev.Text
 		}
+	case EventToolCall:
+		// Text before a tool call is narration; the answer is the text
+		// after the last tool round.
+		res.streamed = res.streamed[:0]
 	case EventUsage:
 		// A snapshot, not a delta (protocol §3.2): overwrite, never
 		// accumulate — the plan is explicit that summing without verified
@@ -122,6 +138,7 @@ func ApplyEventToResult(res *TurnResult, ev Event) {
 	case EventResult:
 		if ev.Text != "" {
 			res.ResultText = ev.Text
+			res.resultText = true
 		}
 		if ev.StopReason != "" {
 			res.StopReason = ev.StopReason

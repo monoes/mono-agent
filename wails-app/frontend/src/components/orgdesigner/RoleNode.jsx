@@ -39,14 +39,38 @@
 // positions this component's wrapper; RoleNode only renders the NODE_W x
 // NODE_H card itself so it can be reused inside a transformed layer.
 
-import { Crown, X } from 'lucide-react'
+//   (automation / live additions)
+//   live             optional orgActivity.roleActivity() result — when set,
+//                     the card is recoloured by status and shows a padlock
+//                     for a pending gate, a file marker for assets, and a key
+//                     badge for pending tool approvals
+//   engineOffline    bool — automation roles show an "engine offline" warning
+//   readOnly         bool — live view: select only, no move/reparent/delete
+//
+// An automation role (node.rest.kind === 'endpoint') renders with a workflow
+// icon and an "automation" chip instead of an avatar and type.
+
+import { Crown, X, Workflow, Lock, FileText, KeyRound, WifiOff } from 'lucide-react'
 import { NODE_W, NODE_H } from './orgGraph'
 import { iconUrl } from './roleIcons'
 
 const FLASH_WINDOW_MS = 1500
+export const AUTOMATION_COLOR = '#a78bfa'
+
+export const LIVE_STATUS_COLORS = {
+  working: 'var(--green-neon, #22c55e)',
+  blocked: 'var(--red, #ef4444)',
+  idle: 'rgba(0,180,216,0.55)',
+  completed: 'var(--teal, #00f5d4)',
+  offline: 'rgba(148,163,184,0.25)',
+}
 
 function typeChip(type) {
   return type || 'role'
+}
+
+export function isAutomationNode(node) {
+  return node?.rest?.kind === 'endpoint'
 }
 
 export default function RoleNode({
@@ -61,20 +85,29 @@ export default function RoleNode({
   onDropTarget,
   isDropCandidate = false,
   isDropValid = true,
+  live = null,
+  engineOffline = false,
+  readOnly = false,
 }) {
-  const color = node.color || (isRoot ? 'var(--yellow)' : 'var(--cyan)')
+  const isAutomation = isAutomationNode(node)
+  const color = node.color || (isAutomation ? AUTOMATION_COLOR : isRoot ? 'var(--yellow)' : 'var(--cyan)')
   const isOrphan = !isRoot && node.parentId == null
   const isFlashing = node._flashAt && (Date.now() - node._flashAt < FLASH_WINDOW_MS)
+  const liveStatus = live ? (live.status || 'offline') : null
 
   const borderColor = isDropCandidate
     ? (isDropValid ? 'var(--green)' : 'var(--red)')
     : isSelected
       ? 'var(--cyan-bright)'
-      : isRoot
-        ? 'var(--yellow)'
-        : isOrphan
-          ? 'var(--yellow)'
-          : 'rgba(0,180,216,0.14)'
+      : liveStatus
+        ? (live.pendingGate ? 'var(--red, #ef4444)' : LIVE_STATUS_COLORS[liveStatus] || LIVE_STATUS_COLORS.offline)
+        : isAutomation
+          ? `${AUTOMATION_COLOR}88`
+          : isRoot
+            ? 'var(--yellow)'
+            : isOrphan
+              ? 'var(--yellow)'
+              : 'rgba(0,180,216,0.14)'
 
   const boxShadow = isDropCandidate
     ? `0 0 0 1.5px ${isDropValid ? 'var(--green)' : 'var(--red)'}55, 0 12px 32px rgba(0,0,0,.7)`
@@ -87,37 +120,53 @@ export default function RoleNode({
   const classNames = [
     isFlashing ? 'od-node-ai-edit' : null,
     node._isNew ? 'od-node-enter' : null,
+    liveStatus === 'working' ? 'od-live-working' : null,
   ].filter(Boolean).join(' ')
+
+  const lastAsset = live?.assets?.length ? live.assets[live.assets.length - 1] : null
 
   return (
     <div
       className={classNames || undefined}
+      data-live-status={liveStatus || undefined}
+      data-kind={isAutomation ? 'automation' : 'agent'}
       style={{
         position: 'relative',
         width: NODE_W,
         height: NODE_H,
-        background: 'linear-gradient(160deg,#0d1a28 0%,#091220 100%)',
+        background: isAutomation
+          ? 'linear-gradient(160deg,#171430 0%,#0d0f22 100%)'
+          : 'linear-gradient(160deg,#0d1a28 0%,#091220 100%)',
         border: `1.5px ${isOrphan ? 'dashed' : 'solid'} ${borderColor}`,
-        borderRadius: 10,
+        borderRadius: isAutomation ? 4 : 10,
         boxShadow,
+        opacity: liveStatus === 'offline' ? 0.7 : 1,
         userSelect: 'none',
         overflow: 'visible',
-        transition: 'border-color 140ms, box-shadow 140ms',
+        transition: 'border-color 140ms, box-shadow 140ms, opacity 140ms',
         display: 'flex',
         alignItems: 'center',
         gap: 8,
         padding: '0 10px',
-        cursor: 'grab',
+        cursor: readOnly ? 'pointer' : 'grab',
       }}
       onMouseDown={(e) => {
         e.stopPropagation()
         onSelect?.(node.id)
-        onStartMove?.(node.id, e)
+        if (!readOnly) onStartMove?.(node.id, e)
       }}
       onMouseUp={() => onDropTarget?.(node.id)}
       onMouseEnter={(e) => { e.currentTarget.dataset.hover = '1' }}
       onMouseLeave={(e) => { delete e.currentTarget.dataset.hover }}
     >
+      {isAutomation ? (
+        <div aria-label="automation" style={{
+          width: 40, height: 40, borderRadius: 8, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: '#120f26', border: `1px solid ${AUTOMATION_COLOR}66`,
+        }}>
+          <Workflow size={20} color={AUTOMATION_COLOR} />
+        </div>
+      ) : (<>
       {/* Avatar — always <img>, never inlined SVG (clipPath id collisions) */}
       <img
         src={iconUrl(node.icon || 'coder')}
@@ -139,6 +188,7 @@ export default function RoleNode({
       }}>
         {isRoot ? '👑' : '🙂'}
       </div>
+      </>)}
 
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
         <span style={{
@@ -147,18 +197,48 @@ export default function RoleNode({
         }}>
           {node.title || 'Untitled role'}
         </span>
-        <span style={{
-          alignSelf: 'flex-start',
-          fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-muted)',
-          background: 'rgba(0,180,216,0.08)', border: '1px solid rgba(0,180,216,0.16)',
-          borderRadius: 8, padding: '1px 6px', textTransform: 'lowercase',
-        }}>
-          {isRoot ? 'ROOT' : typeChip(node.type)}
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{
+            alignSelf: 'flex-start',
+            fontFamily: 'var(--font-mono)', fontSize: 9,
+            color: isAutomation ? AUTOMATION_COLOR : 'var(--text-muted)',
+            background: isAutomation ? `${AUTOMATION_COLOR}14` : 'rgba(0,180,216,0.08)',
+            border: `1px solid ${isAutomation ? `${AUTOMATION_COLOR}55` : 'rgba(0,180,216,0.16)'}`,
+            borderRadius: 8, padding: '1px 6px', textTransform: 'lowercase',
+          }}>
+            {isAutomation ? 'automation' : isRoot ? 'ROOT' : typeChip(node.type)}
+          </span>
+          {liveStatus && (
+            <span data-testid="live-status" style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: LIVE_STATUS_COLORS[liveStatus] || 'var(--text-muted)' }}>
+              {liveStatus}
+            </span>
+          )}
+        </div>
       </div>
 
+      {/* Live markers: pending gate (padlock), assets (file), approvals (key) */}
+      {live && (live.pendingGate || live.assetCount > 0 || live.pendingApprovals > 0 || live.pendingQuestions > 0) && (
+        <div style={{ position: 'absolute', top: -9, left: 8, display: 'flex', gap: 4, pointerEvents: 'auto' }}>
+          {live.pendingGate && (
+            <span data-testid="live-gate" title={`Gate pending: ${live.pendingGate.name || live.pendingGate.gateId}`} style={markerStyle('var(--red, #ef4444)')}>
+              <Lock size={10} />
+            </span>
+          )}
+          {(live.pendingApprovals > 0 || live.pendingQuestions > 0) && (
+            <span data-testid="live-approvals" title={`${live.pendingApprovals} approval(s), ${live.pendingQuestions} question(s) waiting`} style={markerStyle('#eab308')}>
+              <KeyRound size={9} />{live.pendingApprovals + live.pendingQuestions}
+            </span>
+          )}
+          {live.assetCount > 0 && (
+            <span data-testid="live-asset" title={lastAsset ? `Last file: ${lastAsset.path}` : 'Files written'} style={markerStyle('var(--cyan, #00b4d8)')}>
+              <FileText size={9} />{live.assetCount}
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Delete button — hover-revealed, matches NodeRunner's card affordance */}
-      <button
+      {!readOnly && <button
         onMouseDown={e => e.stopPropagation()}
         onClick={e => { e.stopPropagation(); onDelete?.(node.id) }}
         title="Delete role"
@@ -175,7 +255,7 @@ export default function RoleNode({
         onMouseLeave={e => { e.currentTarget.style.color = 'rgba(148,163,184,.7)'; e.currentTarget.style.borderColor = 'rgba(148,163,184,.3)' }}
       >
         <X size={11} />
-      </button>
+      </button>}
 
       {/* Top handle: Crown for root, else reports_to drag handle */}
       {isRoot ? (
@@ -188,8 +268,8 @@ export default function RoleNode({
         </div>
       ) : (
         <div
-          onMouseDown={(e) => { e.stopPropagation(); onStartEdgeDrag?.(node.id, e) }}
-          title="Drag to set reports-to"
+          onMouseDown={(e) => { e.stopPropagation(); if (!readOnly) onStartEdgeDrag?.(node.id, e) }}
+          title={readOnly ? undefined : 'Drag to set reports-to'}
           style={{
             position: 'absolute', top: -6, left: '50%', transform: 'translateX(-50%)',
             width: 12, height: 12, borderRadius: '50%',
@@ -219,14 +299,20 @@ export default function RoleNode({
         </div>
       )}
 
-      {/* Orphan warning */}
-      {isOrphan && (
+      {/* Orphan / engine-offline warnings */}
+      {(isOrphan || (isAutomation && engineOffline)) && (
         <div style={{
           position: 'absolute', top: NODE_H + 4, left: 0, right: 0,
-          textAlign: 'center', fontSize: 9.5, color: 'var(--yellow)',
+          display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1,
+          fontSize: 9.5, color: 'var(--yellow)',
           fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap', pointerEvents: 'none',
         }}>
-          ⚠ no manager
+          {isOrphan && <span>⚠ no manager</span>}
+          {isAutomation && engineOffline && (
+            <span data-testid="engine-offline" title="Start monoagentcli daemon; messages queue until then" style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+              <WifiOff size={9} /> engine offline
+            </span>
+          )}
         </div>
       )}
 
@@ -235,4 +321,12 @@ export default function RoleNode({
       `}</style>
     </div>
   )
+}
+
+function markerStyle(color) {
+  return {
+    display: 'inline-flex', alignItems: 'center', gap: 2, height: 16, padding: '0 4px', borderRadius: 8,
+    fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 700,
+    color, background: '#0a1420', border: `1px solid ${color}`,
+  }
 }

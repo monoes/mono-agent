@@ -7,10 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"time"
 
 	"github.com/monoes/mono-agent/internal/monomind"
-	"github.com/monoes/mono-agent/internal/profiledir"
-	"github.com/monoes/mono-agent/internal/vault"
+	"github.com/monoes/mono-agent/internal/orgbridge"
 	"github.com/monoes/mono-agent/internal/workflow"
 )
 
@@ -40,6 +40,10 @@ type orgStatus struct {
 //	  Supports {{$json.FIELD}} placeholders, expanded from the first input
 //	  item — one org run corresponds to one node invocation, not one per item.
 //	"output_key" (string): key to store the run report under (default "org_result").
+//	"exclusive" (bool, default false): refuse when the org is already running a
+//	  run this node did not start, instead of joining it (C-8).
+//	"wait" (bool, default true): false returns as soon as the run has started,
+//	  with the org's status, instead of pausing until it completes.
 //
 // Resilience: idempotency is derived purely from the org's own live status
 // (no separate pending-run table) — if it's already "running" this node
@@ -48,6 +52,11 @@ type orgStatus struct {
 // tracking: the workflow engine's resume checks are several seconds apart
 // in practice, so the check-then-start race is a non-issue day to day.
 type OrgRunNode struct{}
+
+// orgRunPollWindow is how long a paused org.run waits before the engine's
+// resume poll checks the org again; the bridge wakes it at once when the
+// org's run ends (C-33).
+const orgRunPollWindow = 30 * time.Second
 
 func (n *OrgRunNode) Type() string { return "org.run" }
 
@@ -59,15 +68,16 @@ func (n *OrgRunNode) Execute(ctx context.Context, input workflow.NodeInput, conf
 	taskTemplate := configString(config, "task", "")
 	outputKey := configString(config, "output_key", "org_result")
 
-	db := vault.DBFromContext(ctx)
-	profileID := vault.ProfileIDFromContext(ctx)
-	if profileID == "" {
-		profileID = "default"
+	exclusive := configBool(config, "exclusive", false)
+	wait := configBool(config, "wait", true)
+
+	env, err := resolveOrgEnv(ctx, "org.run")
+	if err != nil {
+		return nil, err
 	}
-	if err := profiledir.EnsureLayout(db, profileID); err != nil {
-		return nil, fmt.Errorf("org.run: could not prepare profile folder for %q: %w", profileID, err)
-	}
-	root := profiledir.Root(db, profileID)
+	root := env.root
+	ledger := orgbridge.NewLedger(env.db)
+	startedHere, _ := ledger.HasCrossing(ctx, input.ExecutionID, orgbridge.DirWorkflowOut, orgName)
 
 	raw, err := monomind.OrgStatus(ctx, root, orgName)
 	if err != nil {
@@ -104,15 +114,53 @@ func (n *OrgRunNode) Execute(ctx context.Context, input workflow.NodeInput, conf
 		return nil, fmt.Errorf("org.run (%s): %s", orgName, msg)
 
 	case st.Status == "running":
-		return nil, workflow.ErrNodePaused
+		if exclusive && !startedHere {
+			return nil, fmt.Errorf("org.run (%s): the org is already running a run this node did not start (exclusive is on)", orgName)
+		}
+		if !wait {
+			return startedOutput(input, outputKey, orgName, raw), nil
+		}
+		return nil, workflow.PauseFor(orgRunPollWindow, "waiting for org "+orgName)
 
 	default:
-		task := expandTemplate(taskTemplate, firstItem(input.Items))
-		if err := monomind.OrgRunStart(ctx, root, orgName, task); err != nil {
+		item := firstItem(input.Items)
+		adm, err := ledger.Admit(ctx, orgbridge.Call{
+			ProfileID: env.profileID, Trace: incomingTrace(item), Direction: orgbridge.DirWorkflowOut,
+			OrgName: orgName, WorkflowID: input.WorkflowID, ExecutionID: input.ExecutionID,
+		}, orgLimits(root, orgName))
+		if err != nil {
 			return nil, fmt.Errorf("org.run (%s): %w", orgName, err)
 		}
-		return nil, workflow.ErrNodePaused
+		if !adm.OK() {
+			return nil, fmt.Errorf("org.run (%s): refused by loop control: %s", orgName, adm.Reason)
+		}
+		task := expandTemplate(taskTemplate, item)
+		if task != "" {
+			task = orgbridge.WithTrace(task, adm.Trace)
+		}
+		if err := monomind.OrgRunStart(ctx, root, orgName, task); err != nil {
+			_ = ledger.SetStatus(ctx, adm.ID, orgbridge.StatusError)
+			return nil, fmt.Errorf("org.run (%s): %w", orgName, err)
+		}
+		if !wait {
+			return startedOutput(input, outputKey, orgName, nil), nil
+		}
+		return nil, workflow.PauseFor(orgRunPollWindow, "waiting for org "+orgName)
 	}
+}
+
+// startedOutput is org.run's result with wait:false.
+func startedOutput(input workflow.NodeInput, outputKey, orgName string, status json.RawMessage) []workflow.NodeOutput {
+	out := copyItemJSON(firstItem(input.Items))
+	result := map[string]interface{}{"org": orgName, "started": true}
+	if len(status) > 0 {
+		var v interface{}
+		if json.Unmarshal(status, &v) == nil {
+			result["status"] = v
+		}
+	}
+	out[outputKey] = result
+	return []workflow.NodeOutput{{Handle: "main", Items: []workflow.Item{{JSON: out}}}}
 }
 
 func firstItem(items []workflow.Item) workflow.Item {
@@ -159,4 +207,6 @@ func copyItemJSON(item workflow.Item) map[string]interface{} {
 // RegisterAll registers the org node types into the given registry.
 func RegisterAll(r *workflow.NodeTypeRegistry) {
 	r.Register("org.run", func() workflow.NodeExecutor { return &OrgRunNode{} })
+	r.Register("org.send", func() workflow.NodeExecutor { return &OrgSendNode{} })
+	r.Register("org.ask", func() workflow.NodeExecutor { return &OrgAskNode{} })
 }

@@ -1,0 +1,64 @@
+// Polls how many items need the operator in each org, for the count badge in
+// the org list. Uses `org autonomy needs-you`; when that is unavailable (older
+// CLI, broken daemon DB) it falls back to the raw pending questions, gates,
+// and approvals, which is what a manual org routes to a human anyway.
+import { useEffect, useRef, useState } from 'react'
+import { api } from '../../services/api.js'
+import { pendingRawItems } from './needsYouModel.js'
+
+export const NEEDS_YOU_POLL_MS = 20_000
+
+export async function fetchNeedsYouCount(orgName) {
+  const res = await api.listNeedsYou(orgName)
+  if (res && !res.error && Array.isArray(res.items)) return res.items.length
+  const [questions, gates, approvals] = await Promise.all([
+    api.getOrgQuestions(orgName),
+    api.getOrgGates(orgName),
+    api.getOrgApprovals(orgName),
+  ])
+  return pendingRawItems(questions, gates, approvals).length
+}
+
+/** Map of org name → count. Orgs are polled one after another, never in parallel. */
+export default function useNeedsYouCounts(orgNames, enabled = true, intervalMs = NEEDS_YOU_POLL_MS) {
+  const [counts, setCounts] = useState({})
+  const key = (orgNames || []).join('\u0000')
+  const namesRef = useRef(orgNames)
+  namesRef.current = orgNames
+
+  useEffect(() => {
+    if (!enabled || !key) return
+    let cancelled = false
+    // One poll walks every org one after another and each fetch can take up
+    // to the CLI's own 60s timeout, so a tick that arrives mid-poll must be
+    // skipped: otherwise polls stack subprocesses, and since each ends by
+    // replacing the whole map, a slower older one lands last and freezes the
+    // badges on stale counts. Scoped to this effect run, not a ref, so a new
+    // org list starts polling immediately instead of waiting out the poll
+    // the previous effect left in flight.
+    let inFlight = false
+    const poll = async () => {
+      if (inFlight) return
+      inFlight = true
+      try {
+        const next = {}
+        for (const name of namesRef.current || []) {
+          if (cancelled) return
+          try {
+            next[name] = await fetchNeedsYouCount(name)
+          } catch {
+            next[name] = 0
+          }
+        }
+        if (!cancelled) setCounts(next)
+      } finally {
+        inFlight = false
+      }
+    }
+    poll()
+    const iv = setInterval(poll, intervalMs)
+    return () => { cancelled = true; clearInterval(iv) }
+  }, [key, enabled, intervalMs])
+
+  return [counts, setCounts]
+}

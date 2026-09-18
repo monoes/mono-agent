@@ -1,0 +1,71 @@
+// Small shared presentational bits for the org unification UI, matching the
+// inline-style language of OrgsPanel / orgdesigner (mono font, CSS vars).
+import { TIER_COLORS } from './autonomyModel.js'
+
+export const mono = { fontFamily: 'var(--font-mono)' }
+
+export const smallBtn = {
+  display: 'flex', alignItems: 'center', gap: 4,
+  fontFamily: 'var(--font-mono)', fontSize: 10, padding: '4px 8px', borderRadius: 'var(--radius)',
+  background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer',
+  whiteSpace: 'nowrap',
+}
+
+export const sectionLabel = {
+  fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)',
+  textTransform: 'uppercase', letterSpacing: 1,
+}
+
+export const mutedText = { fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-muted)' }
+
+export function Chip({ children, color = 'var(--text-muted)', title, style }) {
+  return (
+    <span
+      title={title}
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 3,
+        fontFamily: 'var(--font-mono)', fontSize: 9, color, lineHeight: '14px',
+        border: `1px solid ${color}`, borderRadius: 8, padding: '0 6px', whiteSpace: 'nowrap',
+        ...style,
+      }}
+    >
+      {children}
+    </span>
+  )
+}
+
+export function TierChip({ tier }) {
+  if (!tier) return null
+  return <Chip color={TIER_COLORS[tier] || 'var(--text-muted)'} title={`Tier: ${tier}`}>{tier}</Chip>
+}
+
+export function Badge({ count, style }) {
+  if (!count) return null
+  return (
+    <span
+      aria-label={`${count} waiting`}
+      style={{
+        minWidth: 14, height: 14, padding: '0 3px', borderRadius: 7,
+        background: 'var(--red, #ef4444)', color: '#fff',
+        fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 700, lineHeight: '14px', textAlign: 'center',
+        ...style,
+      }}
+    >
+      {count > 99 ? '99+' : count}
+    </span>
+  )
+}
+
+export function Card({ children, style }) {
+  return (
+    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: '10px 14px', ...style }}>
+      {children}
+    </div>
+  )
+}
+
+/** Payload helper shared by org components: CLI {error} or a null read. */
+export function errorOf(res, fallback = 'request failed') {
+  if (res == null) return fallback
+  return res.error || null
+}

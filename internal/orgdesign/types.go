@@ -31,6 +31,13 @@ type Doc struct {
 	Roles     []Role                     `json:"roles"`
 	Runtime   string                     `json:"runtime,omitempty"`
 
+	// Unification keys (unification.go). All optional.
+	Kind        string          `json:"kind,omitempty"`
+	Automations []AutomationRef `json:"automations,omitempty"`
+	ChildOrgs   []ChildOrg      `json:"children,omitempty"`
+	Federation  *Federation     `json:"federation,omitempty"`
+	Autonomy    *Autonomy       `json:"autonomy,omitempty"`
+
 	// Extra holds every top-level key not modeled above, verbatim, so a
 	// save never drops something monomind or a hand edit put there (e.g.
 	// `fence`).
@@ -43,6 +50,8 @@ type Doc struct {
 var docKnownKeys = map[string]bool{
 	"name": true, "goal": true, "status": true, "schedule": true,
 	"run_config": true, "roles": true, "runtime": true,
+	"kind": true, "automations": true, "children": true, "federation": true,
+	"autonomy": true,
 }
 
 // RoleUI is the org designer canvas's own per-role state — never read or
@@ -69,6 +78,13 @@ type Role struct {
 	AdapterConfig    map[string]json.RawMessage `json:"adapter_config,omitempty"`
 	UI               *RoleUI                    `json:"ui,omitempty"`
 
+	// Unification keys (unification.go). All optional.
+	Kind          string              `json:"kind,omitempty"`
+	Automations   []GrantSpec         `json:"automations,omitempty"`
+	ToolProviders []ToolProvider      `json:"tool_providers,omitempty"`
+	Endpoint      *Endpoint           `json:"endpoint,omitempty"`
+	Automation    *EndpointAutomation `json:"automation,omitempty"`
+
 	// Extra holds every role-level key not modeled above (policy, provider,
 	// instructions_file, runtime, max_turns_per_message, budget_tokens,
 	// budget_usd, ...) verbatim.
@@ -78,6 +94,8 @@ type Role struct {
 var roleKnownKeys = map[string]bool{
 	"id": true, "title": true, "type": true, "reports_to": true,
 	"responsibilities": true, "adapter_config": true, "ui": true,
+	"kind": true, "automations": true, "tool_providers": true, "endpoint": true,
+	"automation": true,
 }
 
 // UnmarshalJSON decodes a Doc, routing every key not in docKnownKeys into

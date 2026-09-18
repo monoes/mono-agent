@@ -141,6 +141,15 @@ existing MCP client config that relies on them.
 - `person_upsert`, `person_delete`
 - `org_create`, `org_role_add`, `org_role_update`,
   `org_role_set_reports_to`, `org_role_remove`, `org_reload`
+- `org_automation_add`, `org_grant_set`, `org_autonomy_set` (the last two
+  preview unless `confirm:true`)
+
+**Grant mode.** `monoagentcli mcp --grant <id> --profile <id>` is the tool
+provider monomind spawns for an org role. It serves only that role's
+granted automations (`automation_<alias>`, `automation_status`,
+`automation_output`, plus Initiator and decision tools when granted), runs
+calls in `monoagentcli daemon`, and refuses a grant used by another org or
+role. Plain `mcp` refuses to start inside an org role's process.
 
 Most of this surface (vault, secrets, people, orgs) is the same
 implementation the chat feature already uses natively — see "Assistant
@@ -255,6 +264,85 @@ each one) entirely out of the Go binary.
   silent no-op. Everything else in `monoagentcli` (the workflow engine,
   node execution, the CLI/MCP surface) works with no `monomind` installed
   at all.
+
+## Orgs, automations, and autonomy
+
+An **org** is a team of agent roles run by monomind (`monomind org serve`).
+Its config lives in the active profile's folder:
+`<profile folder>/.monomind/orgs/<name>.json` (`org` commands use that
+folder unless you pass `--project`; orgs left in the old `~/.monoagent`
+folder are listed by `org legacy list` and moved by `org legacy move`).
+Workflows join an org as **automations**; roles use them three ways:
+
+```bash
+# 1. Membership: the workflow belongs to the org under an alias.
+monoagentcli org automation add growth --workflow <id> --alias publish_post
+# 2. Grant: a role calls it as the tool monoagent__automation_publish_post.
+monoagentcli org grant add growth --role writer --automation publish_post
+# 3. Automation role: a role in the chart that is the workflow; messages to
+#    it start the run, and the run's output comes back as a reply.
+monoagentcli org automation-role add growth --alias publish_post --reports-to lead
+```
+
+- Grants and automation roles are enforced from mono-agent's database, not
+  the org file. Saves, the daemon's startup pass, and its file watcher
+  strip any grant, tool provider, or endpoint the file carries without a
+  row, and never create one from the file.
+- A role's first grant pre-fills `denyTools: ["Bash"]`: Bash can run
+  `monoagentcli` directly and bypass every grant. Workflows with outbound
+  nodes (email, chat, social, service writes, non-GET HTTP, shell) default
+  to `--approval required`.
+- Workflow nodes go the other way: `org.run` (now with `wait` and
+  `exclusive`), `org.send`, `org.ask` (the workflow must be an automation
+  role of that org), and the `trigger.org` trigger (events of an org, or
+  messages to the workflow's automation role).
+- Every crossing carries a `[trace chn_… hop=N]` header; chains stop at
+  `run_config.max_hops` (8) and at `max_repeats` calls to one target per
+  minute (20). Refusals are recorded in `org_bridge_calls`.
+
+**Autonomy** decides who resolves an org's approvals, questions, gates,
+and HIL items inside runs the org started:
+
+| Level | routine | consequential | irreversible |
+|---|---|---|---|
+| `manual` | person | person | person |
+| `mid` | rule approves | decider | person |
+| `full` | rule approves | decider | decider |
+
+```bash
+monoagentcli org autonomy set growth --level mid --decider model --policy "Never approve spend over \$50."
+monoagentcli org autonomy pause growth --for 30m     # drop to manual now
+monoagentcli org autonomy needs-you growth           # items waiting for a person
+monoagentcli org autonomy decisions growth           # resolver, tier, verdict, rationale, cost
+```
+
+The decider is `model` (a one-shot `monomind agent exec`), `boss` (the org's
+root role through `decision_list`/`decision_resolve` tools), or `parent`
+(a holding org's Initiator). A decider never resolves its own request, and
+items it cannot take go to the `model` fallback. Orgs that predate
+autonomy stay `manual`; new orgs start at `mid`. Only CLI, GUI, and chat
+commands raise a level — an edit to the org file can only lower it.
+
+**Holding orgs** (`"kind": "holding"`, `children[]`) run other orgs:
+`org group init <holding>` gives the root role `org_start`, `org_stop`,
+`org_status`, and `org_report` over its children and adds a report-up line
+to each child's boss; `run_config.group_budget_usd` and each child's
+`budget_share` cap spend before a child starts.
+
+**Two long-running processes.** Org features need both:
+
+```bash
+monoagentcli org serve   # the org daemon (monomind) for the active profile's folder
+monoagentcli daemon      # workflow engine, HTTP API, automation-role endpoint, decisions
+monoagentcli --json status   # reports both
+```
+
+Without `monoagentcli daemon`, granted tools return `daemon_required`,
+automation roles cannot run, and every org behaves as `manual`. Grants,
+live `org send`, and boss/parent deciders need monomind with capability
+`org-tool-providers`; automation roles need `org-endpoint-roles`. Commands
+warn when the installed monomind lacks them. Offline copy:
+`monoagentcli ref org`.
 
 ## Human-in-the-loop from agents
 

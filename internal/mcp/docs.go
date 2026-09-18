@@ -148,4 +148,26 @@ Secrets for config values: prefer the vault (secret add, value via stdin) —
 never paste tokens into workflow JSON. Browser-based nodes (gemini.*, and
 social platforms in -tags social builds) need a saved login session
 ('monoagentcli login <platform>') instead of API keys.`,
+	"org": `ORGS, AUTOMATIONS & AUTONOMY (full text: monoagentcli ref org)
+
+An org is a team of agent roles run by monomind; config at
+<profile folder>/.monomind/orgs/<name>.json. Needs 'monoagentcli org serve'
+(org daemon) and 'monoagentcli daemon' (runs automations, endpoint, decisions).
+
+Automations: 'org automation add <org> --workflow <id> --alias <alias>'.
+Grants: 'org grant add <org> --role <id> --automation <alias>' gives the role
+the tool monoagent__automation_<alias>; outbound workflows need a decision per
+call by default. Automation roles: 'org automation-role add <org> --alias <a>
+--reports-to <role>' — messages to the role run the workflow, and its output
+is the reply. Grants and endpoints are enforced from the database; edits to
+the org file cannot create them.
+
+Nodes: org.run (wait, exclusive), org.send, org.ask, trigger.org (event or
+endpoint mode). Crossings carry [trace chn_… hop=N]; max_hops 8.
+
+Autonomy: 'org autonomy set <org> --level manual|mid|full --decider
+model|boss|parent'. mid: rules approve routine, the decider handles
+consequential, a person irreversible. full: the decider handles everything
+above routine. 'org autonomy pause <org> --for 30m' drops to manual.
+Holding orgs: kind "holding", children[]; 'org group init <holding>'.`,
 }

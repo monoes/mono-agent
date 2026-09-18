@@ -3,8 +3,10 @@ package workflow
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -20,7 +22,7 @@ func newExecStore(t *testing.T) *SQLiteWorkflowStore {
 		id TEXT PRIMARY KEY, workflow_id TEXT, status TEXT, trigger_type TEXT,
 		trigger_data TEXT DEFAULT '{}', started_at TIMESTAMP, finished_at TIMESTAMP,
 		error_message TEXT DEFAULT '', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		pid INTEGER, resume_state TEXT NOT NULL DEFAULT '')`); err != nil {
+		pid INTEGER, resume_state TEXT NOT NULL DEFAULT '', resume_after TEXT)`); err != nil {
 		t.Fatalf("create table: %v", err)
 	}
 	if _, err := db.Exec(`CREATE TABLE hil_pending (id TEXT PRIMARY KEY, execution_id TEXT, status TEXT DEFAULT 'pending')`); err != nil {
@@ -115,6 +117,40 @@ func TestListResumableExecutions_OnlyWaiting(t *testing.T) {
 	}
 	if len(ids) != 1 || ids[0] != "wait" {
 		t.Fatalf("resumable = %v, want [wait]", ids)
+	}
+}
+
+// TestListResumableExecutions_HonorsResumeAfter: a PauseError window keeps
+// the poll away until it passes; clearing it resumes normally (C-33).
+func TestListResumableExecutions_HonorsResumeAfter(t *testing.T) {
+	s := newExecStore(t)
+	ctx := context.Background()
+	insertExec(t, s, "later", "WAITING", "{}")
+	insertExec(t, s, "past", "WAITING", "{}")
+	future := time.Now().Add(time.Minute)
+	past := time.Now().Add(-time.Minute)
+	if err := s.SetExecutionResumeAfter(ctx, "later", &future); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetExecutionResumeAfter(ctx, "past", &past); err != nil {
+		t.Fatal(err)
+	}
+	ids, err := s.ListResumableExecutions(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 1 || ids[0] != "past" {
+		t.Fatalf("resumable = %v, want [past]", ids)
+	}
+	if err := s.SetExecutionResumeAfter(ctx, "later", nil); err != nil {
+		t.Fatal(err)
+	}
+	if ids, _ := s.ListResumableExecutions(ctx); len(ids) != 2 {
+		t.Fatalf("after clearing, resumable = %v", ids)
+	}
+	var pe *PauseError
+	if err := PauseFor(time.Second, "x"); !errors.As(err, &pe) || !errors.Is(err, ErrNodePaused) {
+		t.Fatal("PauseFor must be a PauseError that matches ErrNodePaused")
 	}
 }
 

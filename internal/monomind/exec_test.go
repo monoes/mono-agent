@@ -289,6 +289,56 @@ func TestExecCapturesTextFromAssistantEventWhenResultHasNone(t *testing.T) {
 	}
 }
 
+func TestExecJoinsIncrementalAssistantDeltas(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake monomind is a shell script")
+	}
+	t.Setenv("FAKE_MODE", "streamed_deltas")
+
+	res, err := Exec(context.Background(), ExecOptions{
+		Bin:     fakeBin(t, "fake-monomind.sh"),
+		Runtime: "claude",
+		Prompt:  "reply with json",
+	}, func(ev Event) {})
+	if err != nil {
+		t.Fatalf("exec: %v", err)
+	}
+	if res.Err != nil {
+		t.Fatalf("turn error: %+v", res.Err)
+	}
+	if res.ResultText != `{"ok": true}` {
+		t.Fatalf("ResultText = %q, want the joined deltas", res.ResultText)
+	}
+}
+
+func TestApplyEventToResultAssistantText(t *testing.T) {
+	start := func(incremental bool) Event { return Event{Type: EventStart, StreamsIncrementally: incremental} }
+	say := func(text string) Event { return Event{Type: EventAssistant, Text: text} }
+	cases := []struct {
+		name   string
+		events []Event
+		want   string
+	}{
+		{"whole messages keep the latest", []Event{start(false), say("Checking."), say("The answer is 42.")}, "The answer is 42."},
+		{"no start event keeps the latest", []Event{say("one"), say("two")}, "two"},
+		{"deltas are joined", []Event{start(true), say("The ans"), say("wer is "), say("42.")}, "The answer is 42."},
+		{"deltas restart after a tool call", []Event{start(true), say("Let me "), say("check."), {Type: EventToolCall}, {Type: EventToolResult}, say("It is "), say("42.")}, "It is 42."},
+		{"text before an unanswered tool call is kept", []Event{start(true), say("Let me check."), {Type: EventToolCall}}, "Let me check."},
+		{"result text wins", []Event{start(true), say("fragment"), {Type: EventResult, Text: "full reply"}, say(" late")}, "full reply"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res := &TurnResult{}
+			for _, ev := range tc.events {
+				ApplyEventToResult(res, ev)
+			}
+			if res.ResultText != tc.want {
+				t.Fatalf("ResultText = %q, want %q", res.ResultText, tc.want)
+			}
+		})
+	}
+}
+
 func TestExecErrorTurnMapsProtocolError(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake monomind is a shell script")

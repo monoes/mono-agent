@@ -1,0 +1,10 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "org_name", "label": "Org Name", "type": "text", "required": true, "help": "The org to message (see the Org tab)." },
+    { "key": "role", "label": "To Role", "type": "text", "required": false, "help": "Role id to deliver to. Leave empty for the org's coordinator." },
+    { "key": "subject", "label": "Subject", "type": "text", "required": false, "default": "", "help": "Supports {{$json.field}} placeholders." },
+    { "key": "message", "label": "Message", "type": "textarea", "required": true, "rows": 5, "default": "{{$json.text}}", "help": "Supports {{$json.field}} placeholders. A running org gets it now; a stopped org gets it at its next start — the output says which." },
+    { "key": "output_key", "label": "Output Key", "type": "text", "required": false, "default": "org_send", "help": "Where the delivery receipt (delivery: live or queued) is stored on the output item." }
+  ]
+}
