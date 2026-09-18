@@ -206,8 +206,14 @@ const stickyLoaded = (async () => {
 async function getWsUrl() {
   // Explicit user config (popup) always wins.
   try {
-    const result = await chrome.storage.local.get("wsUrl");
+    const result = await chrome.storage.local.get(["wsUrl", "pairedWsUrl"]);
     if (result.wsUrl) return result.wsUrl;
+    // Learned from the pairing page, which the CLI serves from the port it
+    // actually bound — authoritative, and the only way to know a port that
+    // isn't one of the two candidates (MONOAGENT_EXTENSION_PORT). Ranked
+    // below the popup's explicit setting and cleared by markCandidateFailed
+    // so a port that stops answering can't wedge us here.
+    if (result.pairedWsUrl) return result.pairedWsUrl;
   } catch {
     // fall through to candidates
   }
@@ -215,13 +221,20 @@ async function getWsUrl() {
 }
 
 // A candidate failed to connect: after enough consecutive failures, rotate
-// to the other one (and forget the sticky port if it stopped answering).
+// to the other one (and forget the sticky and paired ports if they stopped
+// answering).
 function markCandidateFailed() {
   connectFailures++;
-  if (connectFailures >= PORT_SWITCH_AFTER_FAILURES) {
+  // Inside the 500ms fast-retry window a run of misses is normal (the server
+  // may still be binding), so a candidate gets PORT_SWITCH_AFTER_FAILURES
+  // tries. Once retries are alarm-driven — a minute or more apart — spending
+  // that same budget would take ten minutes, and the CLI gives up after 30s,
+  // so alternate on every failure instead.
+  const budget = fastRetryCount < FAST_RETRY_MAX ? PORT_SWITCH_AFTER_FAILURES : 1;
+  if (connectFailures >= budget) {
     connectFailures = 0;
     wsCandidate = (wsCandidate + 1) % WS_CANDIDATES.length;
-    chrome.storage.local.remove("workingWsUrl").catch(() => {});
+    chrome.storage.local.remove(["workingWsUrl", "pairedWsUrl"]).catch(() => {});
   }
 }
 
@@ -894,7 +907,11 @@ async function setWsUrl(url) {
 // handshake, it has no "port closed before a response was received" race
 // against a service worker that's still waking up from suspension.
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area !== "local" || !changes.pairingToken) return;
+  // pairedWsUrl is written by the same pair_bridge.js pairing write, and
+  // matters just as much: it is what redirects us off a port that another
+  // process holds (a Chrome CDP on 9222, say) onto the one the bridge
+  // actually bound, without waiting out PORT_SWITCH_AFTER_FAILURES.
+  if (area !== "local" || (!changes.pairingToken && !changes.pairedWsUrl)) return;
   if (ws) ws.close();
   fastRetryCount = 0;
   connect();

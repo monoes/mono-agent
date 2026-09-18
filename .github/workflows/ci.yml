@@ -85,6 +85,22 @@ jobs:
       - name: Lint OpenAPI spec against the OpenAPI 3 meta-schema
         run: npx --yes @redocly/cli@2.49.0 lint internal/httpapi/openapi.yaml
 
+  # The Chrome extension ships in releases but no job built or exercised it,
+  # so its JS was the one part of the repo nothing checked. node:test needs no
+  # dependencies and no install step.
+  extension-test:
+    name: Chrome extension
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+      - name: Check every extension script parses
+        run: for f in chrome-extension/*.js; do node --check "$f"; done
+      - name: Run extension tests
+        run: node --test chrome-extension/
+
   # Scheduled + on-push dependency vulnerability scanning (MA-06/MA-11).
   vuln-scan:
     name: Vulnerability scan

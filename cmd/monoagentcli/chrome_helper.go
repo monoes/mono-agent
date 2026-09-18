@@ -3,12 +3,15 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/monoes/mono-agent/internal/extension"
 )
 
 // connChecker is the minimal slice of browser.ExtensionBridge that
@@ -24,6 +27,39 @@ type connChecker interface {
 // abstraction it already takes.
 type pairingURLProvider interface {
 	PairingURL() (string, bool)
+}
+
+// addrProvider is implemented by the bridge that owns the extension server
+// (*extension.ServerBridge); the relay bridge doesn't bind anything itself.
+type addrProvider interface {
+	Addr() (string, bool)
+}
+
+// fallbackPortHint explains a bridge that had to take the fallback port.
+// Without it "make sure the extension is enabled in chrome://extensions"
+// sends people to the one place that has nothing wrong with it: the usual
+// cause is another program holding 9222 — commonly a Chrome or Chromium
+// started with --remote-debugging-port=9222, which *answers* the extension's
+// handshake (with an HTTP 403) instead of refusing it, so the extension sits
+// on the wrong port. Returns "" when the bridge is on the expected port, or
+// when it can't say.
+func fallbackPortHint(bridge connChecker) string {
+	p, ok := bridge.(addrProvider)
+	if !ok {
+		return ""
+	}
+	addr, bound := p.Addr()
+	if !bound {
+		return ""
+	}
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil || port == extension.DefaultExtensionPort {
+		return ""
+	}
+	return fmt.Sprintf("\nNote: the bridge is listening on %s, not the usual port %s, because another program already holds %s "+
+		"(most often a Chrome or Chromium started with --remote-debugging-port=%s). Close that program, or open the extension "+
+		"popup and set the server URL to ws://%s/monoagent.",
+		addr, extension.DefaultExtensionPort, extension.DefaultExtensionPort, extension.DefaultExtensionPort, addr)
 }
 
 // openURLInBrowser opens url in the system's default browser, cross-platform.
@@ -385,7 +421,7 @@ func ensureExtensionConnected(bridge connChecker, timeout time.Duration) error {
 			time.Sleep(500 * time.Millisecond)
 		}
 		if !bridge.IsConnected() {
-			return fmt.Errorf("Chrome is running, but the MonoAgent extension did not connect within %s — make sure the extension is enabled in chrome://extensions and reload it if necessary", timeout)
+			return fmt.Errorf("Chrome is running, but the MonoAgent extension did not connect within %s — make sure the extension is enabled in chrome://extensions and reload it if necessary%s", timeout, fallbackPortHint(bridge))
 		}
 		return nil
 	}
@@ -410,7 +446,7 @@ func ensureExtensionConnected(bridge connChecker, timeout time.Duration) error {
 		time.Sleep(500 * time.Millisecond)
 	}
 	if !bridge.IsConnected() {
-		return fmt.Errorf("Chrome was opened, but the MonoAgent extension did not connect within %s — make sure it is enabled in chrome://extensions and reload it if necessary", timeout)
+		return fmt.Errorf("Chrome was opened, but the MonoAgent extension did not connect within %s — make sure it is enabled in chrome://extensions and reload it if necessary%s", timeout, fallbackPortHint(bridge))
 	}
 	return nil
 }

@@ -27,6 +27,15 @@ func (b *ServerBridge) CloseTab(tabID int) error {
 	return b.Server.CloseTab(tabID)
 }
 
+// Addr returns the address this server bound, or ("", false) before it has
+// bound one. The port is not always the default: listenCandidates falls back
+// to FallbackExtensionPort when another process already holds 9222, and
+// ensureExtensionConnected uses this to say where the bridge actually is
+// when the extension fails to turn up.
+func (b *ServerBridge) Addr() (string, bool) {
+	return b.Server.Addr()
+}
+
 // PairingURL returns the one-time auto-pairing URL for this server, or
 // ("", false) if the server hasn't finished binding yet (the caller is
 // expected to retry — see ensureExtensionConnected's poll loop in
