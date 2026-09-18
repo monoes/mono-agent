@@ -310,6 +310,12 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
       if (!current) return
       const list = Array.isArray(models) ? models : []
       setRuntimeModels(list)
+      // An empty list is deliberately NOT written back into selectedModel:
+      // that state is shared with the provider backend, so clearing it here
+      // wipes the provider's model too (caught by AIChatPanel.mount.test).
+      // The stale id is instead made unusable — runtimeUninitialized hides it
+      // behind the "Not initialized" label and blocks send — so it can never
+      // reach --model as this runtime's model.
       if (list.length > 0 && !list.some(m => m.id === selectedModel)) {
         setSelectedModel(list[0].id)
       }
@@ -625,11 +631,18 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTurnId, liveTurn.terminal, liveTurn.notices])
 
+  // An agent runtime that resolved to zero models cannot be chatted with:
+  // there is no model id to send. Distinct from "still loading" so the panel
+  // does not flash the message while the scan is in flight.
+  const runtimeUninitialized =
+    useAgents && !!selectedRuntime && !runtimeModelsLoading && runtimeModels.length === 0
+
   // ── Send message ────────────────────────────────────────────────────────
   const send = useCallback(async () => {
     const text = input.trim()
     if (!text || activeTurnId || !workflowID) return
     if (useAgents && !selectedRuntime) return
+    if (runtimeUninitialized) return // implies useAgents
     if (!useAgents && !selectedProvider) return
 
     setMessages(msgs => [...msgs, { role: 'user', content: text }])
@@ -669,7 +682,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
         { role: 'error', content: String(err) },
       ])
     }
-  }, [input, activeTurnId, workflowID, useAgents, selectedRuntime, selectedProvider, selectedModel, conversationId])
+  }, [input, activeTurnId, workflowID, useAgents, selectedRuntime, runtimeUninitialized, selectedProvider, selectedModel, conversationId])
 
   // Whether a backend is actually selected for the current mode — gates the
   // input, matching send()'s own guard (useAgents ? selectedRuntime : selectedProvider).
@@ -686,7 +699,9 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
   // immediately, independent of whatever the (separate, often slower)
   // runtime scan is still doing — the scan finishing has no bearing on an
   // already-usable provider backend.
-  const disabledReasonText = !hasBackend
+  const disabledReasonText = runtimeUninitialized
+    ? 'This runtime reports no models — it is not initialized, so chatting is unavailable'
+    : !hasBackend
     ? (runtimesLoading
         ? 'Loading available AI systems…'
         : (monomindMissing
@@ -1053,7 +1068,27 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
             ))}
           </select>
         )}
-        {useAgents && (runtimeModels.length > 0 || runtimeModelsLoading) ? (
+        {runtimeUninitialized ? (
+          // No model id exists for this runtime, so there is nothing to pick
+          // and nothing to type: say so where the picker would be, rather
+          // than leaving the previous runtime's model sitting in a field that
+          // reads as this one's.
+          <span
+            title="This runtime reports no models — install or configure it, then rescan"
+            style={{
+              flex: 1,
+              padding: '4px 8px',
+              borderRadius: 6,
+              border: '1px solid rgba(148,163,184,0.2)',
+              background: '#020509',
+              color: '#94a3b8',
+              fontFamily: 'var(--font-mono)',
+              fontSize: 10,
+            }}
+          >
+            Not initialized
+          </span>
+        ) : useAgents && (runtimeModels.length > 0 || runtimeModelsLoading) ? (
           <select
             value={selectedModel}
             onChange={e => { setSelectedModel(e.target.value); startNewSession() }}
@@ -1199,11 +1234,13 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
         onSend={send}
         onStop={stop}
         streaming={streaming}
-        disabled={!hasBackend}
+        disabled={!hasBackend || runtimeUninitialized}
         // Kept in sync by hand with the plain-text disabledReasonText above
         // (used by the live-region announcement effect) — update both the
         // same way.
-        disabledReason={runtimesLoading && !hasBackend
+        disabledReason={runtimeUninitialized
+          ? 'This runtime reports no models — it is not initialized, so chatting is unavailable'
+          : runtimesLoading && !hasBackend
           ? 'Loading available AI systems…'
           : (monomindMissing
               ? <>monomind not found — install with <code>npm install -g @monoes/monomindcli</code>, or select an AI provider above</>
