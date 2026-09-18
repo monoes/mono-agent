@@ -98,8 +98,11 @@ jobs:
           node-version: '22'
       - name: Check every extension script parses
         run: for f in chrome-extension/*.js; do node --check "$f"; done
+      # An explicit glob, not the directory: Node 22 tries to load a bare
+      # directory argument as a module ("Cannot find module …/chrome-extension")
+      # where newer Node walks it.
       - name: Run extension tests
-        run: node --test chrome-extension/
+        run: node --test 'chrome-extension/*.test.mjs'
 
   # Scheduled + on-push dependency vulnerability scanning (MA-06/MA-11).
   vuln-scan:
