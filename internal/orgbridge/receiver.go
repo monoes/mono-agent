@@ -344,17 +344,24 @@ func (r *Receiver) dispatch(ctx context.Context, row orggrant.EndpointRow, d End
 		r.Logf("orgbridge: endpoint %s:%s: %s", row.OrgName, row.RoleID, adm.Reason)
 		return
 	}
+	trigger := map[string]interface{}{
+		"trigger_type": workflow.TriggerTypeOrgMessage,
+		"org_message": map[string]interface{}{
+			"org": row.OrgName, "run": d.Run, "from": d.From, "to": d.To, "role": row.RoleID,
+			"subject": d.Subject, "body": StripTrace(d.Body), "message_id": d.MessageID,
+		},
+		"text":  StripTrace(d.Body),
+		"trace": map[string]interface{}{"chain_id": adm.Trace.ChainID, "hop": adm.Trace.Hop},
+	}
+	// C-46: the run's file nodes confine to the sender's workdir.
+	if r.RootOf != nil {
+		if wd, ok := senderWorkdir(r.RootOf(row.ProfileID), row.OrgName, d.From); ok {
+			trigger["org"] = map[string]interface{}{"name": row.OrgName, "role": row.RoleID, "workdir": wd}
+		}
+	}
 	exec, err := workflow.CreateUnownedExecution(ctx, r.Store, workflow.UnownedExecutionOptions{
 		WorkflowID: row.WorkflowID, ProfileID: row.ProfileID, TriggerType: workflow.TriggerTypeOrgMessage, AllowInactive: true,
-		TriggerData: map[string]interface{}{
-			"trigger_type": workflow.TriggerTypeOrgMessage,
-			"org_message": map[string]interface{}{
-				"org": row.OrgName, "run": d.Run, "from": d.From, "to": d.To, "role": row.RoleID,
-				"subject": d.Subject, "body": StripTrace(d.Body), "message_id": d.MessageID,
-			},
-			"text":  StripTrace(d.Body),
-			"trace": map[string]interface{}{"chain_id": adm.Trace.ChainID, "hop": adm.Trace.Hop},
-		},
+		TriggerData: trigger,
 	})
 	if err != nil {
 		_ = ledger.SetStatus(ctx, adm.ID, StatusError)
