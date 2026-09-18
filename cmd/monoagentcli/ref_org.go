@@ -85,6 +85,8 @@ MESSAGES AND LIFECYCLE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   org send <org> --to <role> [--from org:role] --subject S --body B
+  org queued <org>                  messages waiting for the org's next start
+                                    (read-only view of monomind's inbox.jsonl)
   org stop|pause|resume <org>
   org rename <org> <new>            org names are unique on this machine
   org delete <org> [--force]
