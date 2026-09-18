@@ -8,6 +8,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/monoes/mono-agent v0.0.0
 	github.com/wailsapp/wails/v2 v2.15.0
+	github.com/zalando/go-keyring v0.2.8
 	modernc.org/sqlite v1.58.0
 )
 
@@ -29,14 +30,14 @@ require (
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/go-rod/rod v0.116.2 // indirect
 	github.com/go-sourcemap/sourcemap v2.1.3+incompatible // indirect
-	github.com/go-sql-driver/mysql v1.10.0 // indirect
+	github.com/go-sql-driver/mysql v1.10.1 // indirect
 	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1 // indirect
 	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/google/pprof v0.0.0-20260802141513-ef3492d7dac3 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/jchv/go-winloader v0.0.0-20210711035445-715c2860da7e // indirect
 	github.com/jlaffaye/ftp v0.2.4 // indirect
-	github.com/klauspost/compress v1.17.6 // indirect
+	github.com/klauspost/compress v1.19.2 // indirect
 	github.com/labstack/echo/v4 v4.13.3 // indirect
 	github.com/labstack/gommon v0.4.2 // indirect
 	github.com/leaanthony/go-ansi-parser v1.6.1 // indirect
@@ -72,23 +73,22 @@ require (
 	github.com/xuri/efp v0.0.1 // indirect
 	github.com/xuri/excelize/v2 v2.11.0 // indirect
 	github.com/xuri/nfp v0.0.2-0.20250530014748-2ddeb826f9a9 // indirect
-	github.com/yalue/onnxruntime_go v1.35.0 // indirect
+	github.com/yalue/onnxruntime_go v1.36.0 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
 	github.com/ysmood/fetchup v0.2.3 // indirect
 	github.com/ysmood/goob v0.4.0 // indirect
 	github.com/ysmood/got v0.40.0 // indirect
 	github.com/ysmood/gson v0.7.3 // indirect
 	github.com/ysmood/leakless v0.9.0 // indirect
-	github.com/yuin/goldmark v1.8.5 // indirect
-	github.com/zalando/go-keyring v0.2.8 // indirect
-	go.mongodb.org/mongo-driver/v2 v2.8.2 // indirect
+	github.com/yuin/goldmark v1.8.6 // indirect
+	go.mongodb.org/mongo-driver/v2 v2.9.1 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
-	golang.org/x/crypto v0.56.0 // indirect
+	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/image v0.45.0 // indirect
 	golang.org/x/net v0.58.0 // indirect
-	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.41.0 // indirect
+	golang.org/x/sync v0.23.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 	modernc.org/libc v1.75.6 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
