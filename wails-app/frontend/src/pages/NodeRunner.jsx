@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import {
   Play, Square, RotateCcw, ZoomIn, ZoomOut, Trash2, Search,
   ChevronDown, ChevronRight, X, Settings2, Copy, RefreshCw,
@@ -372,10 +372,12 @@ function fieldIsVisible(field, config) {
 // ── Derive platformId for credential/session picker ──────────────────────────
 const BROWSER_PLATFORMS = ['instagram', 'linkedin', 'x', 'tiktok', 'gemini']
 
-function derivePlatformId(node) {
+function derivePlatformId(node, liveSchemas) {
   if (!node) return null
-  // Schema-defined takes priority
-  if (node.schema?.credential_platform) return node.schema.credential_platform
+  // Schema-defined takes priority — the catalog's copy over the one saved
+  // inside the workflow (see resolveSchema).
+  const resolved = resolveSchema(node, liveSchemas)
+  if (resolved?.credential_platform) return resolved.credential_platform
   // Hardcoded map fallback
   if (CREDENTIAL_PLATFORMS[node.subtype]) return CREDENTIAL_PLATFORMS[node.subtype]
   // Browser node pattern: "instagram.like_posts" → "instagram"
@@ -386,7 +388,18 @@ function derivePlatformId(node) {
 }
 
 // ── Inspector panel (right side) ──────────────────────────────────────────────
-function Inspector({ node, onConfigChange, onClose, onNavigate }) {
+// liveSchema resolves a node's schema from the node catalog rather than the
+// copy saved inside the workflow. Schemas are code: a workflow file keeps the
+// snapshot taken when it was saved, so without this every schema improvement
+// — a new field, better help, the example prompts a user is meant to start
+// from — stays invisible in every workflow saved before it. The stored copy
+// remains the fallback for a node type the catalog doesn't know.
+function resolveSchema(node, liveSchemas) {
+  return liveSchemas?.[node?.subtype] || node?.schema || null
+}
+
+function Inspector({ node, onConfigChange, onClose, onNavigate, liveSchemas }) {
+  const schema = resolveSchema(node, liveSchemas)
   const [copied, setCopied] = useState(false)
   const [connections, setConnections] = useState([])
   const [loadingCreds, setLoadingCreds] = useState(false)
@@ -394,7 +407,7 @@ function Inspector({ node, onConfigChange, onClose, onNavigate }) {
   const [atAC, setAtAC] = useState({ open: false, query: '', fieldKey: null })
   const [pickerField, setPickerField] = useState(null)
 
-  const platformId = derivePlatformId(node)
+  const platformId = derivePlatformId(node, liveSchemas)
   const isBrowserPlatform = BROWSER_PLATFORMS.includes(platformId)
 
   useEffect(() => {
@@ -490,7 +503,7 @@ function Inspector({ node, onConfigChange, onClose, onNavigate }) {
 
         {/* Config fields */}
         {(() => {
-          const fields = node.schema?.fields || node.configFields || []
+          const fields = schema?.fields || node.configFields || []
           if (fields.length === 0) {
             return (
               <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)', marginBottom: 12 }}>
@@ -524,6 +537,7 @@ function Inspector({ node, onConfigChange, onClose, onNavigate }) {
                       value={val}
                       onChange={onChange}
                       rows={f.rows || 3}
+                      placeholder={f.placeholder || ''}
                       style={inputStyle}
                     />
                   )
@@ -618,6 +632,20 @@ function Inspector({ node, onConfigChange, onClose, onNavigate }) {
                           ))}
                         </div>
                       )}
+                      {f.examples?.length > 0 && (
+                        <div className="field-examples">
+                          <span className="field-examples-label">Examples — click to add</span>
+                          {f.examples.map((ex, i) => (
+                            <button
+                              key={i}
+                              type="button"
+                              className="field-example"
+                              title="Add this prompt"
+                              onClick={() => onConfigChange(node.id, f.key, [...arrValue, ex])}
+                            >{ex}</button>
+                          ))}
+                        </div>
+                      )}
                       {f.help && <p className="field-help">{f.help}</p>}
                     </div>
                   )
@@ -675,7 +703,7 @@ function Inspector({ node, onConfigChange, onClose, onNavigate }) {
                       value={node.config?.[f.key] || ''}
                       onChange={v => onConfigChange(node.id, f.key, v)}
                       credentialId={node.config?.credential_id || ''}
-                      platform={node.schema?.credential_platform || ''}
+                      platform={schema?.credential_platform || ''}
                       nodeConfig={node.config}
                     />
                   )
@@ -710,6 +738,7 @@ function Inspector({ node, onConfigChange, onClose, onNavigate }) {
                           value={val}
                           onChange={handleAtChange}
                           onBlur={() => setTimeout(() => setAtAC({ open: false, query: '', fieldKey: null }), 150)}
+                          placeholder={f.placeholder || ''}
                           style={{ ...inputStyle, flex: 1 }}
                         />
                         <button
@@ -772,6 +801,20 @@ function Inspector({ node, onConfigChange, onClose, onNavigate }) {
                       {f.label}{f.required ? ' *' : ''}
                     </div>
                     {inputEl}
+                    {f.examples?.length > 0 && (
+                      <div className="field-examples">
+                        <span className="field-examples-label">Examples — click to use</span>
+                        {f.examples.map((ex, i) => (
+                          <button
+                            key={i}
+                            type="button"
+                            className="field-example"
+                            title="Use this as the value"
+                            onClick={() => onConfigChange(node.id, f.key, ex)}
+                          >{ex}</button>
+                        ))}
+                      </div>
+                    )}
                     {f.help && <p className="field-help">{f.help}</p>}
                   </div>
                 )
@@ -965,6 +1008,18 @@ function resolvePortIdx(ports, handle) {
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function NodeRunner({ onNavigate, navData }) {
   const [categories, setCategories] = useState([])
+  // type -> schema, from the node catalog. The workflow file carries the
+  // schema each node had when it was saved; the catalog is what the running
+  // build actually defines, so the inspector reads from here (resolveSchema).
+  const liveSchemas = useMemo(() => {
+    const byType = {}
+    for (const cat of categories) {
+      for (const n of cat.nodes || []) {
+        if (n.subtype && n.schema) byType[n.subtype] = n.schema
+      }
+    }
+    return byType
+  }, [categories])
   const [nodes, setNodes]           = useState([])
   const [edges, setEdges]           = useState([])
   const [selectedId, setSelectedId] = useState(null)
@@ -1440,7 +1495,7 @@ export default function NodeRunner({ onNavigate, navData }) {
   // a workflow completed having done nothing at all.
   const handleRun = async () => {
     if (running || nodes.length === 0) return
-    const fields = collectTriggerFields(nodes)
+    const fields = collectTriggerFields(nodes, liveSchemas)
     if (fields.length > 0) {
       // The modal is the only path to a run for these workflows, and it hands
       // startRun the edited value directly — so nothing here ever runs with a
@@ -2144,6 +2199,7 @@ export default function NodeRunner({ onNavigate, navData }) {
             onConfigChange={updateConfig}
             onClose={() => setInspectorOpen(false)}
             onNavigate={onNavigate}
+            liveSchemas={liveSchemas}
           />
         )}
 

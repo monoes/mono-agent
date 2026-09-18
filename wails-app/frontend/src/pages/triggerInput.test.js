@@ -12,7 +12,7 @@ const geminiNodes = [
 
 describe('collectTriggerFields', () => {
   it('finds the fields a node reads from the trigger', () => {
-    expect(collectTriggerFields(geminiNodes)).toEqual([{ name: 'prompts', structured: true }])
+    expect(collectTriggerFields(geminiNodes)).toEqual([{ name: 'prompts', structured: true, examples: [] }])
   })
 
   it('marks a bare reference as a plain value and a json-wrapped one as a collection', () => {
@@ -20,8 +20,8 @@ describe('collectTriggerFields', () => {
       { config: { subject: '{{ $json.topic }}', items: '{{ json $json.rows }}' } },
     ])
     expect(fields).toEqual([
-      { name: 'topic', structured: false },
-      { name: 'rows', structured: true },
+      { name: 'topic', structured: false, examples: [] },
+      { name: 'rows', structured: true, examples: [] },
     ])
   })
 
@@ -48,7 +48,7 @@ describe('collectTriggerFields', () => {
 describe('triggerInputSkeleton', () => {
   it('offers an array for a json-wrapped field and a string otherwise', () => {
     expect(triggerInputSkeleton(collectTriggerFields(geminiNodes))).toBe('{\n  "prompts": []\n}')
-    expect(triggerInputSkeleton([{ name: 'topic', structured: false }])).toBe('{\n  "topic": ""\n}')
+    expect(triggerInputSkeleton([{ name: 'topic', structured: false, examples: [] }])).toBe('{\n  "topic": ""\n}')
     expect(triggerInputSkeleton([])).toBe('{}')
   })
 })
@@ -97,5 +97,97 @@ describe('remembering trigger input', () => {
     } finally {
       Storage.prototype.getItem = getItem
     }
+  })
+})
+
+// The point of the whole exercise: the box the user is asked to fill should
+// show them what to write, not an empty array. The examples come from the
+// node schema of the very field the trigger data feeds.
+describe('examples carried from the node schema', () => {
+  const nodeWithExamples = {
+    type: 'gemini.chat_session_many',
+    config: { prompts: '{{ json $json.prompts }}', mode: 'image' },
+    schema: {
+      fields: [
+        {
+          key: 'prompts',
+          type: 'array',
+          examples: [
+            'generate an image that: a wizard in a blue robe casting a fire spell',
+            'generate an image that: the same wizard riding a red dragon over a burning castle',
+          ],
+        },
+        { key: 'mode', type: 'select' },
+      ],
+    },
+  }
+
+  it('attaches the schema examples of the config key the reference sits in', () => {
+    const [field] = collectTriggerFields([nodeWithExamples])
+    expect(field.name).toBe('prompts')
+    expect(field.examples).toHaveLength(2)
+    expect(field.examples[0]).toMatch(/^generate an image that: /)
+  })
+
+  it('prefills the modal with two editable sample prompts', () => {
+    const skeleton = triggerInputSkeleton(collectTriggerFields([nodeWithExamples]))
+    expect(JSON.parse(skeleton)).toEqual({
+      prompts: [
+        'generate an image that: a wizard in a blue robe casting a fire spell',
+        'generate an image that: the same wizard riding a red dragon over a burning castle',
+      ],
+    })
+  })
+
+  it('uses a single example as the value for a non-collection field', () => {
+    const fields = collectTriggerFields([{
+      config: { prompt: '{{ $json.subject }}' },
+      schema: { fields: [{ key: 'prompt', examples: ['a red bicycle in Paris'] }] },
+    }])
+    expect(JSON.parse(triggerInputSkeleton(fields))).toEqual({ subject: 'a red bicycle in Paris' })
+  })
+
+  it('still produces an empty skeleton when the schema offers nothing', () => {
+    const fields = collectTriggerFields([{ config: { prompts: '{{ json $json.prompts }}' } }])
+    expect(JSON.parse(triggerInputSkeleton(fields))).toEqual({ prompts: [] })
+  })
+})
+
+// A workflow file stores the schema each node had when it was saved. The one
+// that matters is the running build's — otherwise the workflow saved before a
+// field grew examples, whose user most needs them, is the one that never sees
+// them.
+describe('live schemas override the copy saved in the workflow', () => {
+  const savedWorkflowNode = {
+    subtype: 'gemini.chat_session_many',
+    config: { prompts: '{{ json $json.prompts }}' },
+    schema: { fields: [{ key: 'prompts', type: 'array' }] }, // saved before examples existed
+  }
+  const liveSchemas = {
+    'gemini.chat_session_many': {
+      fields: [{ key: 'prompts', type: 'array', examples: ['generate an image that: a wizard', 'generate an image that: a dragon'] }],
+    },
+  }
+
+  it('prefills from the catalog even when the stored snapshot has none', () => {
+    const fields = collectTriggerFields([savedWorkflowNode], liveSchemas)
+    expect(fields[0].examples).toHaveLength(2)
+    expect(JSON.parse(triggerInputSkeleton(fields)).prompts).toEqual([
+      'generate an image that: a wizard',
+      'generate an image that: a dragon',
+    ])
+  })
+
+  it('falls back to the stored snapshot for a type the catalog does not know', () => {
+    const fields = collectTriggerFields([{
+      subtype: 'some.retired_node',
+      config: { prompt: '{{ $json.text }}' },
+      schema: { fields: [{ key: 'prompt', examples: ['from the snapshot'] }] },
+    }], liveSchemas)
+    expect(fields[0].examples).toEqual(['from the snapshot'])
+  })
+
+  it('works with no catalog at all', () => {
+    expect(collectTriggerFields([savedWorkflowNode], undefined)[0].examples).toEqual([])
   })
 })

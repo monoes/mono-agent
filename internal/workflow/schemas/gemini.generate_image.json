@@ -1,8 +1,32 @@
 {
   "credential_platform": "gemini",
   "fields": [
-    {"key": "prompt", "label": "Prompt", "type": "textarea", "required": true, "rows": 4, "placeholder": "Describe the image to generate..."},
-    {"key": "maxWaitSeconds", "label": "Max Wait (seconds)", "type": "number", "default": 120, "help": "Maximum time to wait for image generation."},
-    {"key": "downloadDir", "label": "Download Directory", "type": "text", "default": "~/.monoagent/downloads", "help": "Where to save generated images."}
+    {
+      "key": "prompt",
+      "label": "Prompt",
+      "type": "textarea",
+      "required": true,
+      "rows": 4,
+      "placeholder": "generate an image that: a wizard in a blue robe casting a fire spell",
+      "examples": [
+        "generate an image that: a wizard in a blue robe casting a fire spell",
+        "generate an image that: a red bicycle leaning on a Paris café window at dawn"
+      ],
+      "help": "Describe the image in one short English sentence. Long or non-English prompts trigger a reasoning model that cannot generate images."
+    },
+    {
+      "key": "maxWaitSeconds",
+      "label": "Max Wait (seconds)",
+      "type": "number",
+      "default": 120,
+      "help": "Maximum time to wait for image generation."
+    },
+    {
+      "key": "downloadDir",
+      "label": "Download Directory",
+      "type": "text",
+      "default": "~/.monoagent/downloads",
+      "help": "Where to save generated images."
+    }
   ]
 }
