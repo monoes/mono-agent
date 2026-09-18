@@ -8,6 +8,7 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
+	"github.com/monoes/mono-agent/internal/fsconfine"
 	"github.com/monoes/mono-agent/internal/workflow"
 )
 
@@ -38,6 +39,16 @@ func (n *TelegramNode) Execute(ctx context.Context, input workflow.NodeInput, co
 	operation, _ := config["operation"].(string)
 	if operation == "" {
 		operation = "send_message"
+	}
+
+	// C-46: a local photo is a file sent away; confine it to the org workdir
+	// before the first network call. Unconfined, photoPath is photo_url.
+	photoPath, _ := config["photo_url"].(string)
+	if operation == "send_photo" && photoPath != "" {
+		var err error
+		if photoPath, err = fsconfine.Path(ctx, photoPath); err != nil {
+			return nil, fmt.Errorf("comm.telegram: send_photo: %w", err)
+		}
 	}
 
 	bot, err := tgbotapi.NewBotAPI(token)
@@ -83,9 +94,9 @@ func (n *TelegramNode) Execute(ctx context.Context, input workflow.NodeInput, co
 		text := telegramText(config)
 
 		var fileData tgbotapi.RequestFileData
-		if _, err := os.Stat(photoURL); err == nil {
+		if _, err := os.Stat(photoPath); err == nil {
 			// Local file.
-			fileData = tgbotapi.FilePath(photoURL)
+			fileData = tgbotapi.FilePath(photoPath)
 		} else {
 			// Treat as URL.
 			fileData = tgbotapi.FileURL(photoURL)

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/monoes/mono-agent/internal/connections"
+	"github.com/monoes/mono-agent/internal/fsconfine"
 	"github.com/monoes/mono-agent/internal/secrets"
 	"github.com/monoes/mono-agent/internal/vault"
 	"github.com/rs/zerolog"
@@ -71,6 +72,9 @@ func RunExecution(
 
 	// Enrich context with workflow and execution IDs for vault registration.
 	ctx = vault.ContextWithExecIDs(ctx, wf.ID, exec.ID)
+	// C-46: a run an org role started through a grant carries the role's
+	// workdir as org.workdir; file-touching nodes confine their paths to it.
+	ctx = fsconfine.FromTriggerData(ctx, exec.TriggerData)
 
 	// Phase 2: BFS execution loop — process nodes in topological order.
 	order, err := dag.TopologicalSort()

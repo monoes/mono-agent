@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 
+	"github.com/monoes/mono-agent/internal/fsconfine"
 	"github.com/monoes/mono-agent/internal/workflow"
 	"github.com/monoes/mono-agent/internal/xlsx"
 )
@@ -21,6 +22,10 @@ func (n *SpreadsheetNode) Type() string { return "data.spreadsheet" }
 func (n *SpreadsheetNode) Execute(ctx context.Context, input workflow.NodeInput, config map[string]interface{}) ([]workflow.NodeOutput, error) {
 	operation, _ := config["operation"].(string)
 	filePath, _ := config["file_path"].(string)
+	filePath, err := fsconfine.Path(ctx, filePath)
+	if err != nil {
+		return nil, fmt.Errorf("data.spreadsheet: %w", err)
+	}
 	sheet, _ := config["sheet_name"].(string)
 	if sheet == "" {
 		sheet, _ = config["sheet"].(string)

@@ -90,5 +90,18 @@
       "to": "to",
       "noSubject": "(no subject)"
     }
+  },
+  "grantDialog": {
+    "fileInput": {
+      "title": "This workflow reads or writes files at paths taken from its input.",
+      "confined": "When {{role}} calls it, those nodes are confined to the role’s workdir; paths outside it are refused.",
+      "unconfined": "{{nodes}} cannot be confined and can reach any file you can.",
+      "access": {
+        "read": "reads",
+        "write": "writes",
+        "read_write": "reads and writes",
+        "exec": "runs a command"
+      }
+    }
   }
 }

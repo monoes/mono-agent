@@ -282,7 +282,26 @@ layers, from strongest:
    the target, which a caller cannot forge. `run_config`'s `max_hops` and
    `max_repeats` are read from the org file, so they are clamped to hard
    ceilings — raising them there cannot switch loop control off.
-6. **Autonomy.** The level, decider, tiers, and policy are enforced from
+6. **Workdir confinement of automation file paths (C-46).** Automations run
+   in the daemon, outside monomind's per-role workdir confinement. So the
+   grant handler puts the calling role's workdir (computed from the
+   profile root in the database and the org's `run_config.workspace`,
+   never from the provider's environment) in the run's trigger data as
+   `org.workdir`, under `org`, which the role's arguments cannot set. An
+   automation role's run gets the sending role's workdir the same way. The
+   engine confines every file-touching node of such a run
+   (`internal/fsconfine`): spreadsheet read/write, write file, image nodes
+   and their output folders, image vault save, email and Outlook
+   attachments, Slack and Telegram uploads, FTP local paths, YouTube and
+   Drive uploads, browser upload steps, and Gemini reference images. A
+   path is resolved relative to the workdir, `..` and symlinks are
+   followed, a dangling symlink is refused, and anything that resolves
+   outside the workdir is refused with `path escapes org workdir` before
+   the file is opened or any request is sent. Runs without `org.workdir`
+   behave exactly as before. `org automation list`, `org grant add|list`,
+   `org effective-tools`, and the GUI grant dialog flag workflows whose
+   file nodes take their paths from the run's input.
+7. **Autonomy.** The level, decider, tiers, and policy are enforced from
    `org_autonomy`; an edit to the org file can only lower the level. Tiers
    are computed from the grant row and the workflow's nodes before any
    decider runs, agent-written text sits inside an untrusted fence in the
@@ -300,9 +319,17 @@ layers, from strongest:
   commands can also set `MONOMIND_ORG_NAME`/`ROLE` to match a sibling's
   grant. That check catches a copied id and a misconfigured provider, not a
   role that already has a shell.
-- **File paths in automation input.** Automations run in the daemon, outside
-  the role's workdir confinement. A workflow that reads or writes a path
-  taken from its input can reach files the role itself cannot.
+- **File paths in automation input (C-46), what confinement does not
+  cover.** Layer 6 holds file nodes to the role's workdir; it does not
+  hold `system.execute_command`, which runs a shell command with your
+  rights — a granted workflow that passes its input to a command can reach
+  any file, as a role with Bash can (the grant dialog names such nodes).
+  A process that swaps a directory for a symlink between the check and the
+  open is not stopped. The workdir is read from the org file, so a role
+  that can write that file (workspace `repo`) can widen it — the same
+  edit widens its own confinement at the next org start. A message from
+  an org this profile folder cannot resolve is held to the profile folder,
+  and a message from a person is not confined.
 - **Level full.** At `full` a model decides irreversible items (gates,
   grants whose workflows send email or post) with no person involved. The
   fence and tiers reduce prompt-injection risk; they do not remove it.

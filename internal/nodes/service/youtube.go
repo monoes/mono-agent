@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 
+	"github.com/monoes/mono-agent/internal/fsconfine"
 	"github.com/monoes/mono-agent/internal/workflow"
 )
 
@@ -54,6 +55,11 @@ func (n *YouTubeNode) Execute(ctx context.Context, input workflow.NodeInput, con
 		videoPath := strVal(config, "video_file_path")
 		if title == "" || videoPath == "" {
 			return nil, fmt.Errorf("youtube: title and video_file_path are required for upload_video")
+		}
+		// C-46: the upload sends a local file away; confine it first.
+		videoPath, err := fsconfine.Path(ctx, videoPath)
+		if err != nil {
+			return nil, fmt.Errorf("youtube upload_video: %w", err)
 		}
 		categoryID := strVal(config, "category_id")
 		if categoryID == "" {

@@ -3,7 +3,8 @@
 // the tier the call will get and who decides it at the org's current level.
 // Saves through `org grant add` only — never a JSON edit (C-3).
 import { useEffect, useState } from 'react'
-import { KeyRound, AlertTriangle } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
+import { KeyRound, AlertTriangle, FileWarning } from 'lucide-react'
 import { api } from '../../services/api.js'
 import {
   tierForClass, effectiveLevel, routeFor, routeLabel, needsDecisionToApproval, approvalToNeedsDecision,
@@ -34,12 +35,23 @@ export function defaultGrantSpec(roleId, automation) {
   }
 }
 
+/**
+ * File nodes of the automation whose paths come from the run's input
+ * (`org automation list` → file_input_nodes, C-46), and those among them
+ * that cannot be confined to the calling role's workdir.
+ */
+export function fileInputSummary(automation) {
+  const nodes = Array.isArray(automation?.file_input_nodes) ? automation.file_input_nodes : []
+  return { nodes, unconfined: nodes.filter(n => !n.confined) }
+}
+
 function num(v, fallback) {
   const n = Number(v)
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback
 }
 
 export default function GrantDialog({ open, orgName, role, automation, grant, autonomy, onClose, onSaved, onDenyBash }) {
+  const { t } = useTranslation()
   const [mode, setMode] = useState(GRANT_DEFAULTS.mode)
   const [wait, setWait] = useState(GRANT_DEFAULTS.wait)
   const [timeout, setTimeoutSec] = useState(String(GRANT_DEFAULTS.timeout_seconds))
@@ -70,6 +82,7 @@ export default function GrantDialog({ open, orgName, role, automation, grant, au
   const level = effectiveLevel(autonomy)
   const route = routeFor(level, tier)
   const showBash = bashAllowed(role)
+  const fileInputs = fileInputSummary(automation)
 
   const save = async () => {
     setSaving(true)
@@ -155,6 +168,25 @@ export default function GrantDialog({ open, orgName, role, automation, grant, au
               <div style={{ ...mono, fontSize: 10.5, color: '#eab308' }}>This workflow sends outside mono-agent.</div>
             )}
           </div>
+
+          {fileInputs.nodes.length > 0 && (
+            <div data-testid="grant-file-inputs" style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '8px 10px', border: '1px solid #eab308', borderRadius: 'var(--radius)', background: 'rgba(234,179,8,0.08)' }}>
+              <div style={{ ...mono, fontSize: 11, color: '#eab308', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <FileWarning size={12} /> {t('grantDialog.fileInput.title')}
+              </div>
+              <ul style={{ ...mono, fontSize: 10.5, color: 'var(--text-secondary)', margin: 0, paddingLeft: 18 }}>
+                {fileInputs.nodes.map(n => (
+                  <li key={`${n.node}:${n.field}`}>{n.node}: {t(`grantDialog.fileInput.access.${n.access}`)} <code>{n.field}</code></li>
+                ))}
+              </ul>
+              <div style={{ ...mutedText, fontSize: 10.5 }}>{t('grantDialog.fileInput.confined', { role: role.title || role.id })}</div>
+              {fileInputs.unconfined.length > 0 && (
+                <div style={{ ...mono, fontSize: 10.5, color: 'var(--red, #ef4444)' }}>
+                  {t('grantDialog.fileInput.unconfined', { nodes: fileInputs.unconfined.map(n => n.node).join(', ') })}
+                </div>
+              )}
+            </div>
+          )}
 
           <label style={label}>
             Per-run cap

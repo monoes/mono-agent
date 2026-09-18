@@ -55,6 +55,16 @@ AUTOMATIONS AND GRANTS
   --approval required (each call is a decision). The first grant of a
   role pre-fills denyTools Bash.
 
+  A granted run gets the calling role's workdir (its run_config.workspace
+  directory) as org.workdir in its trigger data; so does an automation
+  role's run started by a message from a role. File nodes (spreadsheet,
+  write file, image, attachments, uploads, FTP local paths, browser
+  uploads) then refuse any path that resolves outside it, after following
+  .. and symlinks; relative paths are taken from the workdir. Shell
+  commands cannot be confined. automation list, grant add/list and
+  effective-tools report file_input_nodes: nodes whose paths come from
+  the run's input.
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 AUTOMATION ROLES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

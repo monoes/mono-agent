@@ -743,7 +743,7 @@ tools, so no role can change its own org's level (C-54).
 | C-43 | Cross-org messages land on both buses with different ids and no shared message id (§3.2). | The C-27 multiplexer, the group view, and any `xorg` counting see each message twice with nothing exact to join on. | Dedupe on (from, to, subject, body hash) within 5 s until M3 stamps a shared `messageId` on both copies (§7.1 item 7). | monomind + mono-agent |
 | C-44 | `org run --budget-usd` is an upfront estimate gate built on a hardcoded rate table the CLI itself flags as stale (§3.2). | Mapping `budget_share` onto it would refuse runs that cost a fraction of the estimate and still not bound actual spend. | U11 ceilings use `usage` events and `org costs` only (§7.5); `org.run` and `org_start` never pass `--budget-usd`. | mono-agent |
 | C-45 | `question` events cover both tool approvals and `ask_human` (§3.2). | A `trigger.org` subscription on `question` fires on every Bash or WebFetch approval and every `approval: "required"` grant call, not only on agent questions. | `question_kind` filter, default `ask_human` (§7.3). | mono-agent |
-| C-46 | Granted automations run in mono-agent's daemon, outside monomind's role workdir confinement (§3.2). A role confined to its worktree can pass any file path as an automation argument. Inferred from source; not reproduced. | A filesystem confinement bypass through a grant, parallel to the Bash hatch (C-2). | The grant dialog flags workflows whose file-reading or file-writing nodes take paths from trigger input; the grant handler passes the role's workdir as `org.workdir` in trigger data so those nodes can confine to it; SECURITY.md lists this next to C-2. | mono-agent |
+| C-46 | Granted automations run in mono-agent's daemon, outside monomind's role workdir confinement (§3.2). A role confined to its worktree can pass any file path as an automation argument. Inferred from source; not reproduced. | A filesystem confinement bypass through a grant, parallel to the Bash hatch (C-2). | The grant dialog flags workflows whose file-reading or file-writing nodes take paths from trigger input; the grant handler passes the role's workdir as `org.workdir` in trigger data so those nodes can confine to it; SECURITY.md lists this next to C-2. **Closed 2026-09-18** (§15): enforced, not only documented. | mono-agent |
 | C-47 | `asset` events are emitted at policy decision time, before the write runs, and a Write carries up to 20 000 chars of the file (§3.2). | `trigger.org` on `asset` can fire for a write that then failed, and copies file contents into trigger data and execution logs. | Document `asset` as "write attempted"; cap its content in trigger data at the 16 KB tool-output bound, through the same redaction path (C-12). | mono-agent |
 | C-48 | Cost tables list cross-org senders as zero-cost pseudo-roles of the receiving org (§3.2). | The group view and the U11 roll-up over-count roles; a holding org's table lists every child boss that reports up. | Roll-up and group view key on role ids from each org's config (§7.5). | mono-agent |
 
@@ -1005,7 +1005,16 @@ ordinary `startOrg` runs.
   already says `queued for <role> (delivered when the org next runs)`. Not done: no count badge
   on the tab or org rail, and the tab label is not translated (the other org tab labels are not
   either).
-- C-46: automation input paths are not confined to the role's workdir; documented in SECURITY.md.
+- C-46 closed (2026-09-18, branch `fix/org-c46-workdir-confinement`): the grant handler and the
+  automation-role receiver put the calling role's workdir in trigger data as `org.workdir`
+  (`orgdesign.RoleWorkdir`, mirroring monomind's `workspaceSetting`); the engine confines the run's
+  context (`internal/fsconfine`) and every file-touching node resolves `..` and symlinks and refuses
+  paths outside it; `orggrant.FileInputNodes` flags workflows whose file nodes take paths from input
+  in `org automation list`, `org grant add|list`, `org effective-tools` and the GUI grant dialog;
+  SECURITY.md layer 6. Residual, accepted: `system.execute_command` cannot be confined (flagged as
+  such); check-then-open races (TOCTOU); the workdir is read from the org file, which a `repo`
+  role can edit (it widens its own confinement the same way); senders from an org the profile folder
+  cannot resolve are held to the profile folder; not exercised in a live org run yet.
 - `needs-you` reports `idle_stop_in_seconds: null` (monomind exposes no idle deadline).
 - Windows (C-14), closed 2026-09-18 on the mono-agent side, verified only by cross-compiling
   (`GOOS=windows` build, vet and `go test -c`); the Windows-only tests have not been run on

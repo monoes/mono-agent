@@ -9,6 +9,7 @@ import (
 	"time"
 
 	goftp "github.com/jlaffaye/ftp"
+	"github.com/monoes/mono-agent/internal/fsconfine"
 	"github.com/monoes/mono-agent/internal/workflow"
 )
 
@@ -41,6 +42,13 @@ func (n *FTPNode) Execute(ctx context.Context, input workflow.NodeInput, config 
 		return nil, fmt.Errorf("http.ftp: 'remote_path' is required")
 	}
 	localPath, _ := config["local_path"].(string)
+	// C-46: confine the local side to the org workdir before dialling.
+	if localPath != "" {
+		var err error
+		if localPath, err = fsconfine.Path(ctx, localPath); err != nil {
+			return nil, fmt.Errorf("http.ftp: local_path: %w", err)
+		}
+	}
 
 	addr := fmt.Sprintf("%s:%d", host, port)
 

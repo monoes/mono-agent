@@ -35,7 +35,10 @@ func (n *ImageVaultSaveNode) Execute(ctx context.Context, input workflow.NodeInp
 	outItems := make([]workflow.Item, 0, len(input.Items))
 	for _, item := range input.Items {
 		newJSON := copyMap(item.JSON)
-		imgPath := expandHome(resolveImageField(item.JSON, field))
+		imgPath, err := imagePath(ctx, item.JSON, field)
+		if err != nil {
+			return nil, fmt.Errorf("image.vault_save: %w", err)
+		}
 		if imgPath == "" {
 			return nil, fmt.Errorf("image.vault_save: no image path found in item")
 		}
