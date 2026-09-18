@@ -192,6 +192,19 @@ describe('GrantDialog', () => {
     expect(screen.getByRole('button', { name: 'Save grant' })).toBeInTheDocument()
   })
 
+  // `org grant add` is an upsert that rebuilds the row from its flags, so an
+  // edit that does not resend the daily and output caps resets whatever the
+  // operator set on the CLI back to 200 / 16384.
+  it('resends an existing grant’s daily and output caps when only the timeout changes', async () => {
+    render(<GrantDialog open orgName="growth" role={writer} automation={PUBLISH} grant={{ ...GRANT, role: 'writer', max_calls_per_day: 5, max_output_bytes: 2048 }} autonomy={autonomyMid} onClose={vi.fn()} />)
+    fireEvent.change(screen.getByLabelText('Timeout seconds'), { target: { value: '30' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save grant' }))
+    await waitFor(() => expect(api.setOrgGrant).toHaveBeenCalledWith('growth', {
+      role: 'writer', automation: 'publish_post', mode: 'run', wait: true, timeout_seconds: 30, approval: 'required',
+      max_calls_per_run: 20, max_calls_per_day: 5, max_output_bytes: 2048,
+    }))
+  })
+
   it('exposes pure helpers', () => {
     expect(defaultGrantSpec('lead', PUBLISH)).toEqual({ role: 'lead', automation: 'publish_post', mode: 'run', wait: true, timeout_seconds: 600, max_calls_per_run: 20, approval: 'required' })
     expect(defaultGrantSpec('lead', SUMMARIZE).approval).toBe('none')
