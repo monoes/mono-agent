@@ -971,7 +971,14 @@ ordinary `startOrg` runs.
 
 **Open items.**
 - C-24: there is no profile delete or folder move path in the code to hook grant revocation into.
-- C-35: the GUI does not list queued inbox messages.
+- ~~C-35: the GUI does not list queued inbox messages.~~ Closed 2026-09-18: `org queued <org>`
+  reads `inbox.jsonl` (and an interrupted drain's `.draining`) read-only and prints JSON; the
+  Wails binding `ListOrgQueuedMessages` shells it; the org view's **Queued** tab lists each
+  message (sender, role, subject, body, trace hop, age, automation-role and interrupted-drain
+  markers) with **Start org now** through the existing `RunOrg` path. The `org send` receipt
+  already says `queued for <role> (delivered when the org next runs)`. Not done: no count badge
+  on the tab or org rail, and the tab label is not translated (the other org tab labels are not
+  either).
 - C-46: automation input paths are not confined to the role's workdir; documented in SECURITY.md.
 - `needs-you` reports `idle_stop_in_seconds: null` (monomind exposes no idle deadline).
 - Windows: credential-file mode checks are skipped and provider process groups are not killed.

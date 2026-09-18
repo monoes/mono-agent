@@ -63,6 +63,7 @@ func newOrgCmd(cfg *globalConfig) *cobra.Command {
 		newOrgLifecycleCmd(env, "pause", "Pause an org: current turns finish, no new cycles start", monomind.OrgPause),
 		newOrgLifecycleCmd(env, "resume", "Resume a paused org", monomind.OrgResume),
 		newOrgSendCmd(env),
+		newOrgQueuedCmd(env),
 		newOrgRenameCmd(env),
 		newOrgDeleteCmd(env),
 		newOrgAutomationRoleCmd(env),

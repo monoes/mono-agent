@@ -506,6 +506,10 @@ export function ListOrgGrants(arg1) {
   return window['go']['main']['App']['ListOrgGrants'](arg1);
 }
 
+export function ListOrgQueuedMessages(arg1) {
+  return window['go']['main']['App']['ListOrgQueuedMessages'](arg1);
+}
+
 export function ListOrgs() {
   return window['go']['main']['App']['ListOrgs']();
 }

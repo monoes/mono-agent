@@ -268,6 +268,9 @@ org serve [--foreground]      → {"v":1,"root","pid","status":"started"|"alread
 org stop <org> | pause <org> | resume <org>   → {"v":1,"org","ok":true,…}
 org send <org> --to <role> [--from <org:role>] --subject S --body B
   → {"v":1,"org","to","from","delivery":"live"|"queued","receipt","messageId"}
+org queued <org>              (C-35; read-only over <root>/.monomind/orgs/<org>/inbox.jsonl[.draining])
+  → {"v":1,"org","count","skipped","delivery":"at next start",
+     "messages":[{"messageId","from","to","subject","body","trace"?,"ts","queued_at","endpoint","draining"?}]}
 org rename <org> <new>        → {"v":1,"org","renamed_to"}
 org delete <org> [--force]    → {"v":1,"org","deleted":true}
 org group start|stop|status <holding>
@@ -308,6 +311,7 @@ daemon [--api=true] [--api-addr 127.0.0.1:9322] [--allow-mutations]
 | `ListNeedsYou(org)` | `org autonomy needs-you` |
 | `StartOrgGroup(h)` / `StopOrgGroup(h)` / `OrgGroupStatus(h)` | `org group …` |
 | `SendOrgMessage(org, specJSON)` | `org send` |
+| `ListOrgQueuedMessages(org)` | `org queued` |
 | `GetDaemonStatus()` | `status --json` |
 
 Runtime events: existing `org:event` feeds the live view. No new Go→JS events are required.
