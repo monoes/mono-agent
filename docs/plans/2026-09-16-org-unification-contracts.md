@@ -272,6 +272,11 @@ org rename <org> <new>        → {"v":1,"org","renamed_to"}
 org delete <org> [--force]    → {"v":1,"org","deleted":true}
 org group start|stop|status <holding>
   → {"v":1,"holding","children":[{"org","status","run","start","budget_share","cost_usd"}],"rollup_usd"}
+org validate <org>            → {"v":1,"org","valid","warnings":[string],"output"|"error"}
+org create-json <org> --json J → {"v":1,"org","sha256","valid","warnings":[string],…}
+org group init <holding>      → {"v":1,"holding","initiator","children","tools","warnings":[string]}
+  (warnings never change valid or the exit code; they include C-36 child-goal warnings for
+   the org as a holding org or as a child)
 org legacy list               → {"v":1,"legacy_root","orgs":[…]}
 org legacy move <org>         → {"v":1,"org","moved_to"}
 

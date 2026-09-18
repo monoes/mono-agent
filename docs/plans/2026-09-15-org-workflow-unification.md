@@ -960,10 +960,18 @@ starts a dashboard on port 4242 that outlives it.
 | Report-up enforced softly plus a fallback | As planned; fallback triggers on the child's `org stopped` with no `xorg` to the parent in that run | — |
 | One grant id per role in provider args | One row per (role, alias); org and decision tools are one more row; the provider is addressed by the role's first row | C-22 |
 
+**Closed after the gates (2026-09-18).** C-36: `orgdesign.ChildGoalWarnings` warns, without
+failing, when a holding org's child has a goal that is not message-driven. The goal must contain
+a request word (request, message, ask, inquiry, respond, reply, and their plurals) and either the
+parent's name, `idle`, or `complete`, matched as whole words. `org validate`, `org create-json`,
+and `org group init` list the warning in `warnings`. The shipped `examples/orgs/holding` children
+already pass, and a test keeps them passing. The `idle_minutes` default of 10 was checked in
+monomind (`daemon.ts:1257`, installed 2.11.7), and it applies to autoWake runs because they are
+ordinary `startOrg` runs.
+
 **Open items.**
 - C-24: there is no profile delete or folder move path in the code to hook grant revocation into.
 - C-35: the GUI does not list queued inbox messages.
-- C-36: no validator warning for child goals that are not message-driven.
 - C-46: automation input paths are not confined to the role's workdir; documented in SECURITY.md.
 - `needs-you` reports `idle_stop_in_seconds: null` (monomind exposes no idle deadline).
 - Windows: credential-file mode checks are skipped and provider process groups are not killed.

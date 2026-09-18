@@ -327,7 +327,9 @@ commands raise a level — an edit to the org file can only lower it.
 `org group init <holding>` gives the root role `org_start`, `org_stop`,
 `org_status`, and `org_report` over its children and adds a report-up line
 to each child's boss; `run_config.group_budget_usd` and each child's
-`budget_share` cap spend before a child starts.
+`budget_share` cap spend before a child starts. A message wakes a stopped
+child with a full run of its own goal, so phrase child goals for messages
+("Handle requests from hq; when idle, complete."); `org validate` warns otherwise.
 
 **Two long-running processes.** Org features need both:
 
