@@ -28,6 +28,10 @@ const maxEndpointBody = 1 << 20
 // maxReplyBytes bounds an automation's reply, like grant tool outputs.
 const maxReplyBytes = 16 * 1024
 
+// maxReplyAttempts bounds how often a failed reply is retried, so an org
+// that stays unreachable cannot grow the append-only ledger forever.
+const maxReplyAttempts = 5
+
 // EndpointDelivery is what monomind M2 POSTs to an automation role.
 type EndpointDelivery struct {
 	OrgName   string `json:"orgName"`
@@ -335,14 +339,23 @@ type replyJob struct {
 
 // sendReplies answers every finished automation-role run that has not
 // replied yet (the reply's own endpoint_reply crossing is the marker; the
-// run's own org.send crossings are workflow_out and do not count).
+// run's own org.send crossings are workflow_out and do not count). The
+// marker is a crossing that settled as anything but an error: Ledger.Admit
+// records the row inside Send BEFORE the delivery and only a failed
+// delivery flips it to 'error', so counting the bare row dropped a reply
+// permanently on one transient `monomind org inbox` failure and left the
+// sender waiting. A refusal (hop or repeat limit) is deliberate and final,
+// so it still counts; errors are retried up to maxReplyAttempts times.
 func (r *Receiver) sendReplies(ctx context.Context) error {
 	rows, err := r.DB.QueryContext(ctx, `
 		SELECT c.profile_id, c.org_name, c.role_id, c.execution_id, c.chain_id, c.hop
 		FROM org_bridge_calls c JOIN workflow_executions e ON e.id = c.execution_id
 		WHERE c.direction = ? AND c.status = 'ok' AND e.status IN ('SUCCESS', 'FAILED', 'CANCELLED')
-		  AND NOT EXISTS (SELECT 1 FROM org_bridge_calls x WHERE x.execution_id = c.execution_id AND x.direction = ?)`,
-		DirEndpointIn, DirEndpointReply)
+		  AND NOT EXISTS (SELECT 1 FROM org_bridge_calls x
+		                  WHERE x.execution_id = c.execution_id AND x.direction = ? AND x.status <> 'error')
+		  AND (SELECT COUNT(*) FROM org_bridge_calls x
+		       WHERE x.execution_id = c.execution_id AND x.direction = ?) < ?`,
+		DirEndpointIn, DirEndpointReply, DirEndpointReply, maxReplyAttempts)
 	if err != nil {
 		return err
 	}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -211,5 +212,94 @@ func TestReceiverAnswersOrgAsk(t *testing.T) {
 	_ = db.QueryRow(`SELECT COUNT(*) FROM workflow_executions WHERE trigger_type = ?`, workflow.TriggerTypeOrgMessage).Scan(&n)
 	if n != 0 {
 		t.Fatal("an ask reply started a new automation run")
+	}
+}
+
+// One failed `monomind org inbox` delivery must not drop an automation
+// role's reply. Ledger.Admit records the endpoint_reply row inside Send
+// BEFORE the delivery is attempted and a failed delivery only flips that
+// row to 'error', so treating the bare row as the has-replied marker made
+// a single transient failure permanent and left the sender waiting forever.
+func TestReceiverRetriesReplyAfterDeliveryFailure(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	if _, err := db.Exec(`INSERT INTO workflows (id, name, profile_id, is_active) VALUES ('wf-retry', 'Retry', 'p', 0)`); err != nil {
+		t.Fatal(err)
+	}
+	ep, err := orggrant.NewStore(db).CreateEndpoint(ctx, "p", "growth", "bot", "wf-retry")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rcv := &Receiver{DB: db, Store: workflow.NewSQLiteWorkflowStore(db), RootOf: func(string) string { return t.TempDir() },
+		Mux: NewMux(func(ctx context.Context, _, _, _ string, _ func([]byte)) error { <-ctx.Done(); return nil })}
+	rcv.dispatch(ctx, *ep, EndpointDelivery{OrgName: "growth", Run: "run-1", From: "lead", To: "bot", Subject: "go", Body: "go", MessageID: "msg-1"})
+	var execID string
+	if err := db.QueryRow(`SELECT id FROM workflow_executions`).Scan(&execID); err != nil {
+		t.Fatalf("no execution: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE workflow_executions SET status = 'SUCCESS' WHERE id = ?`, execID); err != nil {
+		t.Fatal(err)
+	}
+
+	var sent []monomind.InboxMessage
+	down := true
+	inboxFunc = func(_ context.Context, _, name string, msg monomind.InboxMessage) (*monomind.InboxReceipt, error) {
+		if down {
+			return nil, errors.New("monomind org inbox: connection refused")
+		}
+		sent = append(sent, msg)
+		return &monomind.InboxReceipt{V: 1, Org: name, Delivery: "live"}, nil
+	}
+	t.Cleanup(func() { inboxFunc = monomind.OrgInbox })
+
+	rcv.Sweep(ctx)
+	if len(sent) != 0 {
+		t.Fatalf("a failed delivery counted as a reply: %+v", sent)
+	}
+	down = false
+	rcv.Sweep(ctx)
+	if len(sent) != 1 || sent[0].To != "lead" || sent[0].Subject != "re: go" {
+		t.Fatalf("replies once the org came back = %+v, want one reply to lead", sent)
+	}
+	rcv.Sweep(ctx)
+	if len(sent) != 1 {
+		t.Fatalf("replied again after a delivered reply: %+v", sent)
+	}
+}
+
+// A permanently unreachable org must not be retried forever: the ledger is
+// append-only and every attempt inserts a row.
+func TestReceiverGivesUpReplyingAfterMaxAttempts(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	if _, err := db.Exec(`INSERT INTO workflows (id, name, profile_id, is_active) VALUES ('wf-down', 'Down', 'p', 0)`); err != nil {
+		t.Fatal(err)
+	}
+	ep, err := orggrant.NewStore(db).CreateEndpoint(ctx, "p", "growth", "bot", "wf-down")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rcv := &Receiver{DB: db, Store: workflow.NewSQLiteWorkflowStore(db), RootOf: func(string) string { return t.TempDir() },
+		Mux: NewMux(func(ctx context.Context, _, _, _ string, _ func([]byte)) error { <-ctx.Done(); return nil })}
+	rcv.dispatch(ctx, *ep, EndpointDelivery{OrgName: "growth", Run: "run-1", From: "lead", To: "bot", Subject: "go", Body: "go", MessageID: "msg-1"})
+	var execID string
+	if err := db.QueryRow(`SELECT id FROM workflow_executions`).Scan(&execID); err != nil {
+		t.Fatalf("no execution: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE workflow_executions SET status = 'SUCCESS' WHERE id = ?`, execID); err != nil {
+		t.Fatal(err)
+	}
+	var attempts int
+	inboxFunc = func(context.Context, string, string, monomind.InboxMessage) (*monomind.InboxReceipt, error) {
+		attempts++
+		return nil, errors.New("monomind org inbox: connection refused")
+	}
+	t.Cleanup(func() { inboxFunc = monomind.OrgInbox })
+
+	for i := 0; i < maxReplyAttempts+3; i++ {
+		rcv.Sweep(ctx)
+	}
+	if attempts != maxReplyAttempts {
+		t.Fatalf("attempted the reply %d times, want %d", attempts, maxReplyAttempts)
 	}
 }
