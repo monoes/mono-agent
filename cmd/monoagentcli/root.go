@@ -106,7 +106,38 @@ func newRootCmd() *cobra.Command {
 		}
 	}
 
+	rejectUnknownSubcommands(cmd)
+
 	return cmd
+}
+
+// rejectUnknownSubcommands makes every grouping command (one that only holds
+// subcommands, like `org` or `org autonomy`) fail on an unrecognized
+// subcommand instead of silently printing its own help.
+//
+// Cobra's default for a *non-root* parent is legacyArgs, which accepts any
+// leftover args; with no Run to handle them the parent just prints help — to
+// STDOUT, with exit code 0. That is indistinguishable from success for any
+// caller that pipes us into a parser: the GUI shells out to whatever
+// `monoagentcli` it finds on PATH, so an older binary that predates a
+// subcommand answered `org autonomy needs-you X` with the help text of `org`,
+// and the Org tab reported `JSON Parse error: Unexpected identifier "Observe"`
+// (the first word of that help). cobra.NoArgs turns it into a real
+// "unknown command" error on stderr with a non-zero exit, which every caller
+// already handles. A bare `monoagentcli org` still prints help, as before.
+//
+// cobra.NoArgs alone is not enough: execute() returns flag.ErrHelp for any
+// command that isn't Runnable *before* it validates args, so a group needs a
+// RunE for its Args check to be reached at all. The RunE is only ever hit
+// with zero args, where it does what cobra did — print help.
+func rejectUnknownSubcommands(cmd *cobra.Command) {
+	for _, sub := range cmd.Commands() {
+		rejectUnknownSubcommands(sub)
+	}
+	if cmd.HasSubCommands() && cmd.Args == nil && cmd.Run == nil && cmd.RunE == nil {
+		cmd.Args = cobra.NoArgs
+		cmd.RunE = func(c *cobra.Command, _ []string) error { return c.Help() }
+	}
 }
 
 // expandPath expands ~ to the user's home directory.
