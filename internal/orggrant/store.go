@@ -390,20 +390,46 @@ func (s *Store) RenameOrg(ctx context.Context, profileID, org, newName string) e
 		return err
 	}
 	defer tx.Rollback()
-	for _, table := range []string{"org_grants", "org_endpoints", "org_autonomy", "org_decisions", "org_asks"} {
+	for _, table := range []string{"org_grants", "org_endpoints", "org_autonomy", "org_decisions", "org_asks", "org_delegations"} {
 		if _, err := tx.ExecContext(ctx, `UPDATE `+table+` SET org_name = ? WHERE profile_id = ? AND org_name = ?`, newName, profileID, org); err != nil {
 			return fmt.Errorf("orggrant: rename in %s: %w", table, err)
 		}
 	}
+	// A delegation also names the org of the deciding role. Left on the old
+	// name, PendingFor stops showing the item to its decider and
+	// SweepDelegations cannot resolve it, so it is never decided.
+	if _, err := tx.ExecContext(ctx, `UPDATE org_delegations SET decider_org = ? WHERE profile_id = ? AND decider_org = ?`, newName, profileID, org); err != nil {
+		return fmt.Errorf("orggrant: rename decider in org_delegations: %w", err)
+	}
 	return tx.Commit()
 }
 
-// RevokeOrg revokes every live grant and endpoint of org (org delete).
+// RevokeOrg revokes every live grant and endpoint of org and drops the
+// state an org of the same name must never inherit (org delete): the
+// autonomy row — level, decider, tier overrides, policy and paused_until —
+// so a new org starts at mid again (Q8), and every delegation the deleted
+// org can no longer take part in. org_decisions rows stay: they are the
+// audit ledger of what the org did. org_asks rows stay too — the waker
+// times a waiting ask out at its deadline and resumes the execution that
+// waits on it, which expiring the row here would skip.
 func (s *Store) RevokeOrg(ctx context.Context, profileID, org string) error {
 	now := nowString(s.now())
 	if _, err := s.db.ExecContext(ctx, `UPDATE org_grants SET revoked_at = ?, updated_at = ? WHERE profile_id = ? AND org_name = ? AND revoked_at IS NULL`, now, now, profileID, org); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE org_endpoints SET revoked_at = ? WHERE profile_id = ? AND org_name = ? AND revoked_at IS NULL`, now, profileID, org)
+	if _, err := s.db.ExecContext(ctx, `UPDATE org_endpoints SET revoked_at = ? WHERE profile_id = ? AND org_name = ? AND `+usableEndpoint, now, profileID, org, now); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM org_autonomy WHERE profile_id = ? AND org_name = ?`, profileID, org); err != nil {
+		return fmt.Errorf("orggrant: clear autonomy: %w", err)
+	}
+	// Pending either way round: the item belongs to the deleted org, or it
+	// waits on a decider role inside it. Neither can ever be resolved —
+	// SweepDelegations gives up on the missing org — and both would
+	// resurface to the next org of this name.
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE org_delegations SET status = 'expired', resolved_at = ?
+		 WHERE profile_id = ? AND status = 'pending' AND (org_name = ? OR decider_org = ?)`,
+		now, profileID, org, org)
 	return err
 }

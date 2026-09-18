@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -112,7 +111,7 @@ func legacyOrgPaths(dir, name string) ([]string, error) {
 		switch {
 		case n == name+".json", n == name && e.IsDir():
 			out = append(out, n)
-		case strings.HasPrefix(n, name+"-") && strings.HasSuffix(n, ".json") && !orgdesign.IsOrgConfigFile(n):
+		case orgdesign.IsOrgArtifactFile(name, n):
 			out = append(out, n)
 		}
 	}

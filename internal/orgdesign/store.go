@@ -81,6 +81,28 @@ func IsOrgConfigFile(filename string) bool {
 	return true
 }
 
+// IsOrgArtifactFile reports whether filename is org's own artifact file —
+// exactly org's name followed by one of monomind's artifact suffixes. Org
+// names nest ("app" is a prefix of "app-eu"), so a caller moving an org's
+// files must ask this rather than test the "<org>-" prefix: "app-eu-state.json"
+// is org "app-eu"'s state, never org "app"'s.
+func IsOrgArtifactFile(org, filename string) bool {
+	rest, ok := strings.CutPrefix(filename, org)
+	if !ok || !strings.HasSuffix(rest, ".json") {
+		return false
+	}
+	return containsSuffix(orgArtifactSuffixes, strings.TrimSuffix(rest, ".json"))
+}
+
+func containsSuffix(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
 // ListOrgNames returns every real org config's name (file stem) under
 // profileRoot's orgs directory, sorted. Returns an empty slice (not an
 // error) if the directory doesn't exist yet.
