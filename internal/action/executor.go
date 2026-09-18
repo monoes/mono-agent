@@ -636,7 +636,7 @@ func (ae *ActionExecutor) validateRequiredInputs(def *ActionDef) error {
 			missing = append(missing, name)
 			continue
 		}
-		if s, isStr := v.(string); isStr && s == "" {
+		if isEmptyRequiredValue(v) {
 			missing = append(missing, name)
 		}
 	}
@@ -647,6 +647,37 @@ func (ae *ActionExecutor) validateRequiredInputs(def *ActionDef) error {
 		return fmt.Errorf("missing required input '%s'", missing[0])
 	}
 	return fmt.Errorf("missing required inputs '%s'", strings.Join(missing, "', '"))
+}
+
+// isEmptyRequiredValue reports whether a present value still amounts to
+// "nothing was supplied" for a required input.
+//
+// Checking only for the empty string used to let two shapes through, both of
+// which then ran an action that did nothing and reported success:
+//
+//   - An empty collection. `prompts: []` satisfies "present and not empty
+//     string", and a loop over it runs zero times.
+//   - The four characters "null". A node config of {{ json $json.prompts }}
+//     renders exactly that when the field is absent, because that is what
+//     json.Marshal(nil) produces — so the workflow that failed here passed a
+//     required "prompts" of "null", iterated nothing, generated no images,
+//     and finished green. A required input is never legitimately the literal
+//     "null"; that string only ever means an expression found nothing.
+func isEmptyRequiredValue(v interface{}) bool {
+	switch val := v.(type) {
+	case string:
+		s := strings.TrimSpace(val)
+		return s == "" || s == "null"
+	case []interface{}:
+		return len(val) == 0
+	case []string:
+		return len(val) == 0
+	case []map[string]interface{}:
+		return len(val) == 0
+	case map[string]interface{}:
+		return len(val) == 0
+	}
+	return false
 }
 
 // requiredInputName extracts the input name from a required-input entry,
@@ -828,6 +859,16 @@ func (ae *ActionExecutor) executeLoop(ctx context.Context, loop LoopDef, allStep
 
 	collection := toSlice(items)
 	if len(collection) == 0 {
+		// toSlice yields nil both for a genuinely empty collection and for a
+		// value that simply isn't one (a string, a number). Only the first is
+		// legitimately zero work; the second is a misconfigured iterator that
+		// otherwise runs no steps, produces nothing, and still reports
+		// success — how a Gemini batch whose prompts rendered to the string
+		// "null" came back green with no images.
+		if !isIterable(items) {
+			return fmt.Errorf("loop %q: iterator %q resolved to %T (%v), which cannot be iterated — expected an array",
+				loop.ID, loop.Iterator, items, truncateForError(items))
+		}
 		ae.logger.Info().Str("loopID", loop.ID).Msg("loop collection is empty")
 		return nil
 	}
@@ -1048,6 +1089,27 @@ func (ae *ActionExecutor) resolveIterator(iteratorPath string) interface{} {
 }
 
 // toSlice converts various collection types to []interface{}.
+// isIterable reports whether val is one of the collection shapes toSlice
+// understands — i.e. whether an empty result from toSlice means "no items"
+// rather than "not a collection at all".
+func isIterable(val interface{}) bool {
+	switch val.(type) {
+	case []interface{}, []string, []map[string]interface{}:
+		return true
+	}
+	return false
+}
+
+// truncateForError keeps a misconfigured iterator's value readable in an
+// error without pasting a whole document into it.
+func truncateForError(v interface{}) string {
+	s := fmt.Sprintf("%v", v)
+	if len(s) > 80 {
+		return s[:80] + "…"
+	}
+	return s
+}
+
 func toSlice(val interface{}) []interface{} {
 	switch v := val.(type) {
 	case []interface{}:
@@ -1161,4 +1223,26 @@ func (ae *ActionExecutor) buildResult() *ExecutionResult {
 		TotalProcessed: len(extracted) + len(failed),
 		Duration:       time.Since(ae.startTime),
 	}
+}
+
+// ValidateActionInputs reports whether act supplies every input that
+// platform/actionType declares required, plus any extras the caller has
+// already resolved (selectedListItems and friends, keyed as the definition
+// names them).
+//
+// It builds no browser session and runs no step, so a caller can check a
+// misconfigured node before paying for a page: internal/nodes'
+// BrowserNode.Execute otherwise opens a tab, then discovers the action had
+// nothing to work with.
+func ValidateActionInputs(platform, actionType string, act *StorageAction, extras map[string]interface{}) error {
+	def, err := GetLoader().Load(platform, actionType)
+	if err != nil {
+		return fmt.Errorf("loading action definition: %w", err)
+	}
+	ae := NewActionExecutor(context.Background(), nil, nil, nil, nil, nil, zerolog.Nop())
+	ae.seedVariables(act)
+	for k, v := range extras {
+		ae.SetVariable(k, v)
+	}
+	return ae.validateRequiredInputs(def)
 }

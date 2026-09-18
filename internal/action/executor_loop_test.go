@@ -461,3 +461,112 @@ func TestAllEmbeddedActionJSONsLoad(t *testing.T) {
 		}
 	}
 }
+
+// A Gemini multi-image run finished green having produced nothing: the
+// template {{ json $json.prompts }} rendered the string "null" (json.Marshal
+// of a missing field), which satisfied "required input is present and not an
+// empty string", and the loop then iterated a non-collection zero times. Both
+// halves of that are covered here.
+func TestRequiredInputRejectsValuesThatMeanNothing(t *testing.T) {
+	empty := []interface{}{"null", "  null  ", "", "   ",
+		[]interface{}{}, []string{}, []map[string]interface{}{}, map[string]interface{}{}}
+	for _, v := range empty {
+		if !isEmptyRequiredValue(v) {
+			t.Errorf("%#v should count as missing for a required input", v)
+		}
+	}
+
+	present := []interface{}{"a wizard casting a fire spell", "nullable", "0", 0, false,
+		[]interface{}{"one"}, []string{"one"}, map[string]interface{}{"k": "v"}}
+	for _, v := range present {
+		if isEmptyRequiredValue(v) {
+			t.Errorf("%#v is a real value and must pass validation", v)
+		}
+	}
+}
+
+func TestValidateRequiredInputsRejectsJSONNullString(t *testing.T) {
+	ae, _, _ := newLoopTestExecutor(t, 0)
+	sendDms, err := GetLoader().Load("instagram", "send_dms")
+	if err != nil {
+		t.Fatalf("loading send_dms def: %v", err)
+	}
+	act := &StorageAction{ContentMessage: "hello there"}
+	act.Params = map[string]interface{}{}
+	ae.seedVariables(act)
+	ae.SetVariable("selectedListItems", loopTestItems(2))
+	if err := ae.validateRequiredInputs(sendDms); err != nil {
+		t.Fatalf("baseline should pass: %v", err)
+	}
+
+	// Exactly what an unresolved {{ json $json.items }} hands the executor.
+	ae.SetVariable("selectedListItems", "null")
+	err = ae.validateRequiredInputs(sendDms)
+	if err == nil {
+		t.Fatal(`a required input of "null" must be treated as missing`)
+	}
+	if !strings.Contains(err.Error(), "selectedListItems") {
+		t.Fatalf("error should name the input, got: %v", err)
+	}
+
+	ae.SetVariable("selectedListItems", []interface{}{})
+	if err := ae.validateRequiredInputs(sendDms); err == nil {
+		t.Fatal("a required input of [] must be treated as missing")
+	}
+}
+
+// A loop handed something it cannot iterate has always run zero steps and
+// returned success. It must say so instead.
+func TestLoopOverNonIterableFails(t *testing.T) {
+	ae, _, _ := newLoopTestExecutor(t, 0)
+	loop := LoopDef{ID: "prompts_loop", Iterator: "prompts"}
+
+	ae.SetVariable("prompts", "null")
+	err := ae.executeLoop(context.Background(), loop, nil)
+	if err == nil {
+		t.Fatal("iterating the string \"null\" should fail, not quietly do nothing")
+	}
+	for _, want := range []string{"prompts_loop", "prompts", "cannot be iterated"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q missing %q", err.Error(), want)
+		}
+	}
+
+	// A genuinely empty collection is zero work, not an error, and an absent
+	// optional iterator still skips.
+	ae.SetVariable("prompts", []interface{}{})
+	if err := ae.executeLoop(context.Background(), loop, nil); err != nil {
+		t.Fatalf("an empty collection is legitimate zero work, got: %v", err)
+	}
+	ae.SetVariable("prompts", nil)
+	if err := ae.executeLoop(context.Background(), loop, nil); err != nil {
+		t.Fatalf("an absent iterator should skip, got: %v", err)
+	}
+}
+
+// ValidateActionInputs is what BrowserNode calls before it opens a browser
+// tab, so it has to reach the same verdict as Execute's own check without a
+// page, a db, or a bot adapter.
+func TestValidateActionInputsNeedsNoBrowser(t *testing.T) {
+	withItems := &StorageAction{ContentMessage: "hello there"}
+	if err := ValidateActionInputs("instagram", "send_dms", withItems,
+		map[string]interface{}{"selectedListItems": loopTestItems(2)}); err != nil {
+		t.Fatalf("valid inputs should pass: %v", err)
+	}
+
+	if err := ValidateActionInputs("instagram", "send_dms", withItems,
+		map[string]interface{}{"selectedListItems": "null"}); err == nil {
+		t.Fatal(`"null" targets should fail before any browser work`)
+	}
+
+	noMessage := &StorageAction{}
+	err := ValidateActionInputs("instagram", "send_dms", noMessage,
+		map[string]interface{}{"selectedListItems": loopTestItems(1)})
+	if err == nil || !strings.Contains(err.Error(), "messageText") {
+		t.Fatalf("expected a missing messageText error, got: %v", err)
+	}
+
+	if err := ValidateActionInputs("instagram", "no_such_action", withItems, nil); err == nil {
+		t.Fatal("an unknown action type should error")
+	}
+}
