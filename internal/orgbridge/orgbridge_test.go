@@ -277,3 +277,45 @@ func TestLedgerClampsOrgSuppliedLimits(t *testing.T) {
 		t.Fatalf("hop %d admitted as %q — an org that raises max_hops is never stopped", last.Trace.Hop, last.Status)
 	}
 }
+
+// queryPlan returns the EXPLAIN QUERY PLAN detail lines for q.
+func queryPlan(t *testing.T, db *sql.DB, q string, args ...interface{}) string {
+	t.Helper()
+	rows, err := db.Query("EXPLAIN QUERY PLAN "+q, args...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	cols, err := rows.Columns()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for rows.Next() {
+		cells := make([]interface{}, len(cols))
+		for i := range cells {
+			cells[i] = new(sql.NullString)
+		}
+		if err := rows.Scan(cells...); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, cells[len(cells)-1].(*sql.NullString).String)
+	}
+	return strings.Join(out, "\n")
+}
+
+// org_bridge_calls is an append-only audit log with no pruning, and org.run
+// asks HasCrossing on every execution — including every 30s resume-poll
+// wake — so its execution_id lookup must not scan the whole table.
+func TestBridgeCallsExecutionLookupUsesAnIndex(t *testing.T) {
+	db := newTestDB(t)
+	for q, args := range map[string][]interface{}{
+		`SELECT COUNT(*) FROM org_bridge_calls WHERE execution_id = ? AND direction = ? AND org_name = ? AND status = 'ok'`: {"exec-1", DirWorkflowOut, "growth"},
+		`SELECT 1 FROM org_bridge_calls x WHERE x.execution_id = ? AND x.direction = ?`:                                     {"exec-1", DirEndpointReply},
+	} {
+		plan := queryPlan(t, db, q, args...)
+		if strings.Contains(plan, "SCAN") {
+			t.Errorf("%s\nplans as a table scan:\n%s", q, plan)
+		}
+	}
+}

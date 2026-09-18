@@ -63,6 +63,11 @@ CREATE TABLE IF NOT EXISTS org_bridge_calls (
 );
 CREATE INDEX IF NOT EXISTS org_bridge_chain ON org_bridge_calls(profile_id, chain_id, created_at);
 CREATE INDEX IF NOT EXISTS org_bridge_grant ON org_bridge_calls(grant_id, created_at);
+-- HasCrossing (org.run's exclusive check, asked on every execution and on
+-- every 30s resume-poll wake) and the receiver's reply bookkeeping both
+-- look a crossing up by execution. The table is append-only with no
+-- pruning, so without this the lookup scans everything ever recorded.
+CREATE INDEX IF NOT EXISTS org_bridge_exec ON org_bridge_calls(execution_id, direction);
 
 CREATE TABLE IF NOT EXISTS org_autonomy (
   profile_id         TEXT NOT NULL,
