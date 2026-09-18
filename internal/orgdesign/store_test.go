@@ -208,6 +208,39 @@ func TestIsOrgConfigFile(t *testing.T) {
 	}
 }
 
+func TestIsOrgArtifactFile(t *testing.T) {
+	cases := []struct {
+		org, file string
+		want      bool
+	}{
+		{"app", "app-state.json", true},
+		{"app", "app-goals.json", true},
+		{"app", "app-project-workspaces.json", true},
+		// Org names nest: app-eu's files are app-eu's, never app's.
+		{"app", "app-eu-state.json", false},
+		{"app", "app-eu.json", false},
+		{"app-eu", "app-eu-state.json", true},
+		// "-workspaces" is itself a suffix of "-project-workspaces", so the
+		// match must be on the whole segment, not the longest tail of it.
+		{"app-project", "app-project-workspaces.json", true},
+		{"app-project", "app-workspaces.json", false},
+		{"app", "app-workspaces.json", true},
+		// The config file is the org, not one of its artifacts.
+		{"app", "app.json", false},
+		{"app", "app.v1.json", false},
+		// Neither a known suffix nor this org's file at all.
+		{"app", "app-unknown.json", false},
+		{"app", "app-state.txt", false},
+		{"app", "other-state.json", false},
+		{"app", "state.json", false},
+	}
+	for _, c := range cases {
+		if got := IsOrgArtifactFile(c.org, c.file); got != c.want {
+			t.Errorf("IsOrgArtifactFile(%q, %q) = %v, want %v", c.org, c.file, got, c.want)
+		}
+	}
+}
+
 func TestSaveLoadRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	d := NewOrg("test-org", "test goal", NewOrgOptions{})

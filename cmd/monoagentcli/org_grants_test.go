@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/monoes/mono-agent/internal/orgdesign"
+	"github.com/monoes/mono-agent/internal/orggrant"
 	"github.com/monoes/mono-agent/internal/profiledir"
 	"github.com/monoes/mono-agent/internal/storage"
 	"github.com/monoes/mono-agent/internal/workflow"
@@ -318,4 +320,67 @@ func toStrings(v interface{}) []string {
 		out = append(out, x.(string))
 	}
 	return out
+}
+
+// orgToolScopeOf renders a role's org-tool grant as "tool=org+org,..." .
+func orgToolScopeOf(t *testing.T, f *orgCLIFixture, org, role string) string {
+	t.Helper()
+	db, err := storage.NewDatabase(f.cfg.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	grants, err := orggrant.NewStore(db.DB).ListGrants(context.Background(), "default", org, role)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, g := range grants {
+		for _, ot := range g.OrgTools {
+			out = append(out, ot.Tool+"="+strings.Join(ot.Orgs, "+"))
+		}
+	}
+	sort.Strings(out)
+	return strings.Join(out, ",")
+}
+
+// Dropping a child from a holding org and re-running `org group init` must
+// take that child off the Initiator. Nothing used to shrink an org-tool
+// grant, so the Initiator kept org_stop, org_status and org_report over an
+// org the holding no longer owns (only org_start was separately blocked,
+// by CheckStart).
+func TestOrgGroupInitDropsARemovedChild(t *testing.T) {
+	f := newOrgCLIFixture(t)
+	for _, child := range []string{"sales", "support"} {
+		if _, err := orgdesign.Save(f.root, orgdesign.NewOrg(child, "work", orgdesign.NewOrgOptions{})); err != nil {
+			t.Fatal(err)
+		}
+	}
+	hq := orgdesign.NewOrg("hq", "own the group", orgdesign.NewOrgOptions{RootRoleID: "initiator", RootRoleTitle: "Initiator"})
+	hq.Kind = orgdesign.OrgKindHolding
+	hq.ChildOrgs = []orgdesign.ChildOrg{{Org: "sales"}, {Org: "support"}}
+	if _, err := orgdesign.Save(f.root, hq); err != nil {
+		t.Fatal(err)
+	}
+
+	f.mustRun(t, "group", "init", "hq")
+	want := "org_report=sales+support,org_start=sales+support,org_status=sales+support,org_stop=sales+support"
+	if got := orgToolScopeOf(t, f, "hq", "initiator"); got != want {
+		t.Fatalf("scope after first init = %q", got)
+	}
+
+	hq, err := orgdesign.Load(f.root, "hq")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hq.ChildOrgs = []orgdesign.ChildOrg{{Org: "sales"}}
+	if _, err := orgdesign.Save(f.root, hq); err != nil {
+		t.Fatal(err)
+	}
+	f.mustRun(t, "group", "init", "hq")
+
+	want = "org_report=sales,org_start=sales,org_status=sales,org_stop=sales"
+	if got := orgToolScopeOf(t, f, "hq", "initiator"); got != want {
+		t.Fatalf("scope after removing support = %q, want %q", got, want)
+	}
 }

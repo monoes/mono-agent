@@ -502,3 +502,52 @@ func TestReconcileRevokesAnEmptiedOrgToolGrant(t *testing.T) {
 		t.Fatalf("provider kept: %+v", init.ToolProviders)
 	}
 }
+
+// `org group init` knows the Initiator's whole scope, so it must be able
+// to shrink it: SetOrgToolScope replaces the orgs of every tool it names
+// and leaves the rest of the grant — a decider's tools, say — untouched.
+func TestSetOrgToolScopeReplacesOnlyTheToolsItNames(t *testing.T) {
+	s, _ := newTestStore(t)
+	ctx := context.Background()
+	if _, err := s.SetOrgTools(ctx, "default", "hq", "initiator", []OrgTool{
+		{Tool: "org_start", Orgs: []string{"sales", "growth"}},
+		{Tool: "org_stop", Orgs: []string{"sales", "growth"}},
+		{Tool: "decision_list", Orgs: []string{"growth"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	g, err := s.SetOrgToolScope(ctx, "default", "hq", "initiator", []OrgTool{
+		{Tool: "org_start", Orgs: []string{"sales"}},
+		{Tool: "org_stop"}, // no orgs left: the tool goes
+		{Tool: "org_status", Orgs: []string{"sales"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := orgToolScope(*g); got != "decision_list=growth,org_start=sales,org_status=sales" {
+		t.Fatalf("scope = %q", got)
+	}
+}
+
+// The decider path must stay additive: `org autonomy set --decider parent`
+// runs once per child org, so the second child must not take the first
+// child's decision tools away.
+func TestMergeOrgToolsStaysAdditiveAcrossChildren(t *testing.T) {
+	s, _ := newTestStore(t)
+	ctx := context.Background()
+	for _, child := range []string{"growth", "sales"} {
+		if _, err := s.MergeOrgTools(ctx, "default", "hq", "initiator", []OrgTool{
+			{Tool: "decision_list", Orgs: []string{child}},
+			{Tool: "decision_resolve", Orgs: []string{child}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gs, err := s.ListGrants(ctx, "default", "hq", "initiator")
+	if err != nil || len(gs) != 1 {
+		t.Fatalf("grants = %v, %v", gs, err)
+	}
+	if got := orgToolScope(gs[0]); got != "decision_list=growth+sales,decision_resolve=growth+sales" {
+		t.Fatalf("scope = %q", got)
+	}
+}
