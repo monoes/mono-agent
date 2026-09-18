@@ -2,12 +2,16 @@ package orggroup
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/monoes/mono-agent/internal/orgbridge"
 	"github.com/monoes/mono-agent/internal/orgdesign"
+	"github.com/monoes/mono-agent/internal/storage"
 )
 
 func share(v float64) *float64 { return &v }
@@ -149,5 +153,61 @@ func TestReportUpWatcherFallback(t *testing.T) {
 	w.Handle(ctx, key, orgbridge.Event{Type: "status", Run: "r2", Msg: "org stopped"})
 	if len(sent) != 1 || sent[0].Org != "hq" || sent[0].To != "ceo" || sent[0].From != "sales:lead" || !strings.Contains(sent[0].Body, "done") {
 		t.Fatalf("fallback = %+v", sent)
+	}
+}
+
+// decisionsDB returns a database holding one org_decisions row per
+// (org, run, cost) triple in rows.
+func decisionsDB(t *testing.T, rows []struct {
+	Org  string
+	Run  string
+	Cost float64
+}) *sql.DB {
+	t.Helper()
+	db, err := storage.NewDatabase(filepath.Join(t.TempDir(), "group.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if err := db.ApplyMigrations(); err != nil {
+		t.Fatal(err)
+	}
+	for i, r := range rows {
+		if _, err := db.DB.Exec(
+			`INSERT INTO org_decisions (id, profile_id, org_name, run_id, item_kind, item_ref, item_hash, class, tier, level, resolver, verdict, cost_usd, created_at)
+			 VALUES (?, 'p', ?, ?, 'approval', 'ref', 'h', 'c', 'consequential', 'full', 'model:test', 'approved', ?, '2026-09-18T00:00:00Z')`,
+			fmt.Sprintf("d%d", i), r.Org, r.Run, r.Cost); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return db.DB
+}
+
+// The group budget is per run: decider spend from earlier runs must not
+// be rolled up, or a group is refused forever once its lifetime decider
+// spend passes the ceiling.
+func TestRollupCountsOnlyThisRunsDeciderSpend(t *testing.T) {
+	root := t.TempDir()
+	writeGroup(t, root)
+	db := decisionsDB(t, []struct {
+		Org  string
+		Run  string
+		Cost float64
+	}{
+		{"sales", "run-sales", 1},   // this run
+		{"sales", "run-older", 100}, // a finished run
+		{"hq", "run-hq", 2},
+	})
+	env := costsEnv(root, map[string]string{"sales": `{"items":[{"role":"lead","cost_usd":1}]}`})
+	env.DB = db
+	st, err := env.GroupStatus(context.Background(), "hq")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.HolderUS != 2 || st.Children[0].CostUSD != 2 || st.RollupUS != 4 {
+		t.Fatalf("status = %+v", st)
+	}
+	if err := env.CheckStart(context.Background(), "hq", "sales"); err != nil {
+		t.Fatalf("a fresh run refused over a finished run's decider spend: %v", err)
 	}
 }

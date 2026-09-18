@@ -18,9 +18,12 @@ import (
 )
 
 // GroupBudgetKey is the holding org's run_config key for the group's USD
-// ceiling. budget_share on each child is a fraction of it. It is never
-// passed to monomind's `org run --budget-usd`, an upfront estimate gate
-// that does not bound spend (C-44).
+// ceiling, spent per run: both halves of the roll-up — monomind's `org
+// costs` and the decider spend in org_decisions — are scoped to each org's
+// current run, so a finished run's spend never refuses a fresh one.
+// budget_share on each child is a fraction of it. It is never passed to
+// monomind's `org run --budget-usd`, an upfront estimate gate that does
+// not bound spend (C-44).
 const GroupBudgetKey = "group_budget_usd"
 
 // Initiator tool names.
@@ -62,13 +65,17 @@ func ConfiguredCost(raw json.RawMessage, doc *orgdesign.Doc) float64 {
 	return sum
 }
 
-// DeciderSpend is the decider cost recorded for an org (U11 counts it).
-func DeciderSpend(ctx context.Context, db *sql.DB, profileID, org string) float64 {
+// DeciderSpend is the decider cost recorded for one org run (U11 counts
+// it). run matches org_decisions.run_id the way orgdecide.Store.Usage
+// does, so rows an earlier run wrote stay out of this run's roll-up.
+func DeciderSpend(ctx context.Context, db *sql.DB, profileID, org, run string) float64 {
 	if db == nil {
 		return 0
 	}
 	var v sql.NullFloat64
-	_ = db.QueryRowContext(ctx, `SELECT SUM(cost_usd) FROM org_decisions WHERE profile_id = ? AND org_name = ?`, profileID, org).Scan(&v)
+	_ = db.QueryRowContext(ctx,
+		`SELECT SUM(cost_usd) FROM org_decisions WHERE profile_id = ? AND org_name = ? AND COALESCE(run_id,'') = ?`,
+		profileID, org, run).Scan(&v)
 	return v.Float64
 }
 
@@ -124,9 +131,26 @@ func NewEnv(db *sql.DB, profileID, root string) *Env {
 	}
 }
 
-func (e *Env) orgCost(ctx context.Context, org string) float64 {
+// runOf returns an org's status and current run id, both empty when its
+// status is unreadable.
+func (e *Env) runOf(ctx context.Context, org string) (status, run string) {
+	raw, err := e.StatusFn(ctx, e.Root, org)
+	if err != nil {
+		return "", ""
+	}
+	var s struct {
+		Status string `json:"status"`
+		Run    string `json:"run"`
+	}
+	if json.Unmarshal(raw, &s) != nil {
+		return "", ""
+	}
+	return s.Status, s.Run
+}
+
+func (e *Env) orgCost(ctx context.Context, org, run string) float64 {
 	doc, _ := orgdesign.Load(e.Root, org)
-	cost := DeciderSpend(ctx, e.DB, e.ProfileID, org)
+	cost := DeciderSpend(ctx, e.DB, e.ProfileID, org, run)
 	if raw, err := e.Costs(ctx, e.Root, org); err == nil {
 		cost += ConfiguredCost(raw, doc)
 	}
@@ -152,23 +176,18 @@ func (e *Env) GroupStatus(ctx context.Context, holding string) (*Status, error) 
 		return nil, err
 	}
 	st := &Status{V: 1, Holding: h.Name, Children: []ChildStatus{}, Budget: GroupBudget(h)}
-	st.HolderUS = e.orgCost(ctx, h.Name)
+	_, holdingRun := e.runOf(ctx, h.Name)
+	st.HolderUS = e.orgCost(ctx, h.Name, holdingRun)
 	st.RollupUS = st.HolderUS
 	for _, c := range h.ChildOrgs {
 		cs := ChildStatus{Org: c.Org, Start: c.Start, BudgetShare: c.BudgetShare, Status: "unknown"}
 		if cs.Start == "" {
 			cs.Start = "on_demand"
 		}
-		if raw, err := e.StatusFn(ctx, e.Root, c.Org); err == nil {
-			var s struct {
-				Status string `json:"status"`
-				Run    string `json:"run"`
-			}
-			if json.Unmarshal(raw, &s) == nil {
-				cs.Status, cs.Run = s.Status, s.Run
-			}
+		if status, run := e.runOf(ctx, c.Org); status != "" || run != "" {
+			cs.Status, cs.Run = status, run
 		}
-		cs.CostUSD = e.orgCost(ctx, c.Org)
+		cs.CostUSD = e.orgCost(ctx, c.Org, cs.Run)
 		st.RollupUS += cs.CostUSD
 		st.Children = append(st.Children, cs)
 	}
