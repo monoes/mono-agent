@@ -323,3 +323,62 @@ func TestRenameOrgMovesDelegations(t *testing.T) {
 		t.Fatalf("delegation left behind: org_name = %q, decider_org = %q", org, decider)
 	}
 }
+
+func delegationStatus(t *testing.T, db *sql.DB, id string) string {
+	t.Helper()
+	var st string
+	if err := db.QueryRow(`SELECT status FROM org_delegations WHERE id = ?`, id).Scan(&st); err != nil {
+		t.Fatal(err)
+	}
+	return st
+}
+
+// insertAutonomy writes one org_autonomy row at level.
+func insertAutonomy(t *testing.T, db *sql.DB, org, level string) {
+	t.Helper()
+	if _, err := db.Exec(
+		`INSERT INTO org_autonomy (profile_id, org_name, level, decider_json, updated_at, updated_by)
+		 VALUES ('default', ?, ?, '{"kind":"boss"}', '2026-09-18T10:00:00Z', 'cli')`, org, level); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Q8: deleting an org must leave nothing that grants power, or the next
+// org of the same name silently inherits the deleted one's level, decider,
+// tier overrides, policy and pause instead of starting at mid —
+// ensureNewOrgAutonomy returns early whenever a row already exists.
+func TestRevokeOrgClearsAutonomyAndPendingDelegations(t *testing.T) {
+	s, db := newTestStore(t)
+	ctx := context.Background()
+	insertAutonomy(t, db, "growth", "full")
+	insertAutonomy(t, db, "sales", "full")
+	insertDelegation(t, db, "d-own", "growth", "hq")
+	insertDelegation(t, db, "d-decide", "sales", "growth")
+	insertDelegation(t, db, "d-other", "sales", "hq")
+
+	if err := s.RevokeOrg(ctx, "default", "growth"); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM org_autonomy WHERE profile_id = 'default' AND org_name = 'growth'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("autonomy row survived org delete: %d rows", n)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM org_autonomy WHERE org_name = 'sales'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatal("another org's autonomy row was cleared")
+	}
+	if got := delegationStatus(t, db, "d-own"); got != "expired" {
+		t.Fatalf("delegation of the deleted org = %q", got)
+	}
+	if got := delegationStatus(t, db, "d-decide"); got != "expired" {
+		t.Fatalf("delegation waiting on the deleted decider = %q", got)
+	}
+	if got := delegationStatus(t, db, "d-other"); got != "pending" {
+		t.Fatalf("unrelated delegation = %q", got)
+	}
+}
