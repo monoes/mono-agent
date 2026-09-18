@@ -28,6 +28,10 @@ const maxEndpointBody = 1 << 20
 // maxReplyBytes bounds an automation's reply, like grant tool outputs.
 const maxReplyBytes = 16 * 1024
 
+// maxReplyAttempts bounds how often a failed reply is retried, so an org
+// that stays unreachable cannot grow the append-only ledger forever.
+const maxReplyAttempts = 5
+
 // EndpointDelivery is what monomind M2 POSTs to an automation role.
 type EndpointDelivery struct {
 	OrgName   string `json:"orgName"`
@@ -131,7 +135,7 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		writeJSONStatus(w, http.StatusOK, map[string]interface{}{"accepted": true, "duplicate": true})
 		return
 	}
-	r.ensureSubscribedLocked(*row)
+	r.ensureSubscribedLocked(row.ProfileID, row.OrgName)
 	verified := r.seenLocked(d.MessageID, row.OrgName, row.RoleID)
 	if !verified {
 		r.pending[d.MessageID] = &pendingDelivery{row: *row, d: d, deadline: time.Now().Add(r.VerifyWindow)}
@@ -184,14 +188,44 @@ func (r *Receiver) seenLocked(messageID, org, role string) bool {
 	return ok
 }
 
-func (r *Receiver) ensureSubscribedLocked(row orggrant.EndpointRow) {
-	root := r.RootOf(row.ProfileID)
-	k := tailKey{root, row.OrgName}
+func (r *Receiver) ensureSubscribedLocked(profileID, org string) {
+	root := r.RootOf(profileID)
+	k := tailKey{root, org}
 	if _, ok := r.subs[k]; ok {
 		return
 	}
-	org := row.OrgName
 	r.subs[k] = r.Mux.Subscribe(root, org, func(ev Event) { r.onEvent(org, ev) })
+}
+
+// subscribeLiveEndpoints starts a tail for every org that has a live
+// automation-role endpoint. Subscribing lazily on the first POST loses that
+// delivery's confirming bus event — Mux.Subscribe does not replay and
+// monomind emits the event right after its 202 — so the first delivery to
+// an org after each daemon start expired in Sweep as refused_grant and the
+// automation never ran.
+func (r *Receiver) subscribeLiveEndpoints(ctx context.Context) {
+	r.mu.Lock()
+	r.init()
+	r.mu.Unlock()
+	rows, err := r.DB.QueryContext(ctx, `SELECT DISTINCT profile_id, org_name FROM org_endpoints WHERE revoked_at IS NULL`)
+	if err != nil {
+		r.Logf("orgbridge: watching endpoint orgs: %v", err)
+		return
+	}
+	type orgRef struct{ profileID, org string }
+	var refs []orgRef
+	for rows.Next() {
+		var ref orgRef
+		if err := rows.Scan(&ref.profileID, &ref.org); err == nil {
+			refs = append(refs, ref)
+		}
+	}
+	rows.Close()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, ref := range refs {
+		r.ensureSubscribedLocked(ref.profileID, ref.org)
+	}
 }
 
 // onEvent marks bus-confirmed messages and dispatches deliveries waiting
@@ -257,8 +291,10 @@ func (r *Receiver) Sweep(ctx context.Context) {
 	}
 }
 
-// Run sweeps every few seconds until ctx ends.
+// Run watches every org with a live automation-role endpoint and sweeps
+// every few seconds until ctx ends.
 func (r *Receiver) Run(ctx context.Context) {
+	r.subscribeLiveEndpoints(ctx)
 	t := time.NewTicker(5 * time.Second)
 	defer t.Stop()
 	for {
@@ -335,14 +371,23 @@ type replyJob struct {
 
 // sendReplies answers every finished automation-role run that has not
 // replied yet (the reply's own endpoint_reply crossing is the marker; the
-// run's own org.send crossings are workflow_out and do not count).
+// run's own org.send crossings are workflow_out and do not count). The
+// marker is a crossing that settled as anything but an error: Ledger.Admit
+// records the row inside Send BEFORE the delivery and only a failed
+// delivery flips it to 'error', so counting the bare row dropped a reply
+// permanently on one transient `monomind org inbox` failure and left the
+// sender waiting. A refusal (hop or repeat limit) is deliberate and final,
+// so it still counts; errors are retried up to maxReplyAttempts times.
 func (r *Receiver) sendReplies(ctx context.Context) error {
 	rows, err := r.DB.QueryContext(ctx, `
 		SELECT c.profile_id, c.org_name, c.role_id, c.execution_id, c.chain_id, c.hop
 		FROM org_bridge_calls c JOIN workflow_executions e ON e.id = c.execution_id
 		WHERE c.direction = ? AND c.status = 'ok' AND e.status IN ('SUCCESS', 'FAILED', 'CANCELLED')
-		  AND NOT EXISTS (SELECT 1 FROM org_bridge_calls x WHERE x.execution_id = c.execution_id AND x.direction = ?)`,
-		DirEndpointIn, DirEndpointReply)
+		  AND NOT EXISTS (SELECT 1 FROM org_bridge_calls x
+		                  WHERE x.execution_id = c.execution_id AND x.direction = ? AND x.status <> 'error')
+		  AND (SELECT COUNT(*) FROM org_bridge_calls x
+		       WHERE x.execution_id = c.execution_id AND x.direction = ?) < ?`,
+		DirEndpointIn, DirEndpointReply, DirEndpointReply, maxReplyAttempts)
 	if err != nil {
 		return err
 	}

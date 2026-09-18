@@ -116,8 +116,23 @@ func validateUnification(d *Doc) []string {
 		workflowIDs[a.WorkflowID] = true
 	}
 
+	// One workflow may back only one automation role. Two roles on the same
+	// workflow are indistinguishable at run time: automationRoleFor returns
+	// the first match, so every org.send/org.ask from that workflow is
+	// stamped as the first role and org.ask's return address is that role —
+	// a reply to the second role never matches the ask and it times out.
+	endpointWorkflows := map[string]string{}
 	for i := range d.Roles {
-		errs = append(errs, validateRoleUnification(d, &d.Roles[i], aliases, workflowIDs)...)
+		r := &d.Roles[i]
+		errs = append(errs, validateRoleUnification(d, r, aliases, workflowIDs)...)
+		if !r.IsEndpoint() || r.Automation == nil || r.Automation.WorkflowID == "" {
+			continue
+		}
+		if first, ok := endpointWorkflows[r.Automation.WorkflowID]; ok {
+			errs = append(errs, fmt.Sprintf("role %q: workflow %q already runs automation role %q — an automation role needs a workflow of its own", r.ID, r.Automation.WorkflowID, first))
+		} else {
+			endpointWorkflows[r.Automation.WorkflowID] = r.ID
+		}
 	}
 
 	if d.IsHolding() {

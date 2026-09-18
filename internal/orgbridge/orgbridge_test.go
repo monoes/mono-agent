@@ -193,3 +193,129 @@ func TestParseRecordedBusEvents(t *testing.T) {
 		t.Fatalf("ask kind = %q", ask.QuestionKind())
 	}
 }
+
+// TestMuxSamplesResumeCursorBeforeStartingTheTail is a regression test: the
+// tail sampled its `since` cursor inside the spawned goroutine, so an event
+// the caller causes right after Subscribe returns — monomind emits the
+// confirming bus event immediately after its 202 — could be stamped before
+// the cursor and skipped as "older than the tail". The endpoint delivery
+// then sat pending for the whole VerifyWindow and Sweep refused it as
+// refused_grant, so the automation never ran and no reply was sent.
+func TestMuxSamplesResumeCursorBeforeStartingTheTail(t *testing.T) {
+	t0 := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
+	release := make(chan struct{})
+	var clockMu sync.Mutex
+	clock := t0
+	since := make(chan string, 1)
+
+	m := NewMux(func(ctx context.Context, _, _, s string, _ func([]byte)) error {
+		since <- s
+		<-ctx.Done()
+		return nil
+	})
+	// now() reads the clock and then parks until the test releases it, so a
+	// cursor sampled inside Subscribe parks Subscribe itself.
+	m.now = func() time.Time {
+		clockMu.Lock()
+		v := clock
+		clockMu.Unlock()
+		<-release
+		return v
+	}
+
+	subscribed := make(chan func(), 1)
+	go func() { subscribed <- m.Subscribe("/root", "growth", func(Event) {}) }()
+
+	select {
+	case <-subscribed:
+		t.Fatal("Subscribe returned without sampling the tail's resume cursor: it is sampled inside the goroutine, " +
+			"so an event the caller causes right after Subscribe returns is skipped as older than the tail")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	// Time moves on before the tail goroutine runs; the cursor must still
+	// be the one taken while Subscribe was running.
+	clockMu.Lock()
+	clock = t0.Add(time.Hour)
+	clockMu.Unlock()
+	close(release)
+
+	unsub := <-subscribed
+	defer unsub()
+	select {
+	case got := <-since:
+		if want := t0.Format(time.RFC3339Nano); got != want {
+			t.Fatalf("tail resumed from %q, want %q", got, want)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the tail never started")
+	}
+}
+
+// run_config.max_hops / max_repeats reach Admit straight from the org JSON,
+// which any role whose fileWrite reaches .monomind/ can edit (C-3), so a
+// role could otherwise disarm U10 by raising its own limits.
+func TestLedgerClampsOrgSuppliedLimits(t *testing.T) {
+	huge := Limits{MaxHops: 1 << 30, MaxRepeats: 1 << 30}
+	if got := huge.withDefaults(); got.MaxHops != MaxHopsCeiling || got.MaxRepeats != MaxRepeatsCeiling {
+		t.Fatalf("withDefaults = %+v, want MaxHops %d and MaxRepeats %d", got, MaxHopsCeiling, MaxRepeatsCeiling)
+	}
+
+	db := newTestDB(t)
+	ctx := context.Background()
+	l := NewLedger(db)
+	tr := NewTrace()
+	var last Admission
+	for i := 0; i <= MaxHopsCeiling; i++ {
+		a, err := l.Admit(ctx, Call{ProfileID: "p", Trace: tr, Direction: DirWorkflowOut, OrgName: "o", RoleID: "r"}, huge)
+		if err != nil {
+			t.Fatal(err)
+		}
+		last = a
+	}
+	if last.Status != StatusRefusedHops {
+		t.Fatalf("hop %d admitted as %q — an org that raises max_hops is never stopped", last.Trace.Hop, last.Status)
+	}
+}
+
+// queryPlan returns the EXPLAIN QUERY PLAN detail lines for q.
+func queryPlan(t *testing.T, db *sql.DB, q string, args ...interface{}) string {
+	t.Helper()
+	rows, err := db.Query("EXPLAIN QUERY PLAN "+q, args...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	cols, err := rows.Columns()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for rows.Next() {
+		cells := make([]interface{}, len(cols))
+		for i := range cells {
+			cells[i] = new(sql.NullString)
+		}
+		if err := rows.Scan(cells...); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, cells[len(cells)-1].(*sql.NullString).String)
+	}
+	return strings.Join(out, "\n")
+}
+
+// org_bridge_calls is an append-only audit log with no pruning, and org.run
+// asks HasCrossing on every execution — including every 30s resume-poll
+// wake — so its execution_id lookup must not scan the whole table.
+func TestBridgeCallsExecutionLookupUsesAnIndex(t *testing.T) {
+	db := newTestDB(t)
+	for q, args := range map[string][]interface{}{
+		`SELECT COUNT(*) FROM org_bridge_calls WHERE execution_id = ? AND direction = ? AND org_name = ? AND status = 'ok'`: {"exec-1", DirWorkflowOut, "growth"},
+		`SELECT 1 FROM org_bridge_calls x WHERE x.execution_id = ? AND x.direction = ?`:                                     {"exec-1", DirEndpointReply},
+	} {
+		plan := queryPlan(t, db, q, args...)
+		if strings.Contains(plan, "SCAN") {
+			t.Errorf("%s\nplans as a table scan:\n%s", q, plan)
+		}
+	}
+}

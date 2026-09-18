@@ -63,7 +63,11 @@ func (m *Mux) Subscribe(root, org string, h Handler) (unsubscribe func()) {
 		ctx, cancel := context.WithCancel(context.Background())
 		t = &tail{cancel: cancel, subs: map[int]Handler{}}
 		m.tails[k] = t
-		go m.run(ctx, k, t)
+		// Sample the resume cursor here, not inside the goroutine: the
+		// caller's very next action can make an event happen (monomind
+		// emits the confirming bus event right after its 202), and a
+		// cursor taken after that would skip it as older than the tail.
+		go m.run(ctx, k, t, m.now().UTC().Format(time.RFC3339Nano))
 	}
 	id := t.next
 	t.next++
@@ -92,8 +96,7 @@ func (m *Mux) Subscribers(root, org string) int {
 	return 0
 }
 
-func (m *Mux) run(ctx context.Context, k tailKey, t *tail) {
-	since := m.now().UTC().Format(time.RFC3339Nano)
+func (m *Mux) run(ctx context.Context, k tailKey, t *tail, since string) {
 	backoff := 2 * time.Second
 	for ctx.Err() == nil {
 		started := m.now()

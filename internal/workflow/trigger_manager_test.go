@@ -2,7 +2,9 @@ package workflow
 
 import (
 	"context"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/robfig/cron/v3"
 	"github.com/rs/zerolog"
@@ -176,5 +178,89 @@ func TestTriggerManagerSources(t *testing.T) {
 	}
 	if len(tm.active["wf"]) != 1 {
 		t.Fatal("re-activation after DeactivateAll was skipped")
+	}
+}
+
+// endpointRegistrySource models orgbridge's trigger.org source: it keys
+// live registrations by workflow ID and its stop closure deletes that key,
+// so a stop() belonging to a losing racer tears down the winner's
+// registration. Activate blocks on gate so two activations of the same
+// workflow are guaranteed to overlap.
+type endpointRegistrySource struct {
+	gate chan struct{}
+
+	mu    sync.Mutex
+	calls int
+	live  map[string]bool
+}
+
+func (s *endpointRegistrySource) Activate(w *Workflow, _ *WorkflowNode, _ func([]Item)) (func(), error) {
+	s.mu.Lock()
+	s.calls++
+	s.mu.Unlock()
+	<-s.gate
+	s.mu.Lock()
+	s.live[w.ID] = true
+	s.mu.Unlock()
+	return func() {
+		s.mu.Lock()
+		delete(s.live, w.ID)
+		s.mu.Unlock()
+	}, nil
+}
+
+func (s *endpointRegistrySource) state() (calls int, live bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls, s.live["wf"]
+}
+
+// TestActivateProviderIsSingleFlightPerNode is a regression test:
+// activateProvider called p.Activate outside tm.mu and, on losing the race,
+// discarded its registration by calling stop(). Because trigger.org keys
+// endpoints by workflow ID and its stop closure deletes that key, two
+// concurrent activations of one workflow (the API plus
+// RestoreActiveWorkflows, or the CLI plus the API) left tm.active populated
+// while the endpoint registry was empty — FireEndpoint then returned false
+// forever and messages to that automation role silently never ran.
+func TestActivateProviderIsSingleFlightPerNode(t *testing.T) {
+	src := &endpointRegistrySource{gate: make(chan struct{}), live: map[string]bool{}}
+	tm := NewTriggerManager(nil, nil, &fakeScheduler{}, func(string, string, []Item) {}, zerolog.Nop())
+	tm.RegisterProvider("trigger.org", src)
+	w := &Workflow{ID: "wf", Nodes: []WorkflowNode{{ID: "t", Type: "trigger.org", Config: map[string]interface{}{}}}}
+
+	ctx := context.Background()
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := tm.ActivateWorkflow(ctx, w); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	// Give both racers the chance to reach Activate — which they only can
+	// while the first is still blocked inside it — then release them.
+	deadline := time.Now().Add(200 * time.Millisecond)
+	for {
+		if calls, _ := src.state(); calls >= 2 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	close(src.gate)
+	wg.Wait()
+
+	calls, live := src.state()
+	if calls != 1 {
+		t.Errorf("provider Activate ran %d times for one workflow node, want 1", calls)
+	}
+	if !live {
+		t.Error("the workflow has an active provider entry but no live registration — " +
+			"the losing racer's stop() deleted the winner's, so FireEndpoint returns false forever")
+	}
+	if n := len(tm.active["wf"]); n != 1 {
+		t.Errorf("tm.active holds %d entries for the workflow, want 1", n)
 	}
 }
