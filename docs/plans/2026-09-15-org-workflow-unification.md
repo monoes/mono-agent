@@ -970,7 +970,33 @@ monomind (`daemon.ts:1257`, installed 2.11.7), and it applies to autoWake runs b
 ordinary `startOrg` runs.
 
 **Open items.**
-- C-24: there is no profile delete or folder move path in the code to hook grant revocation into.
+- C-24 (closed 2026-09-18, branch `fix/org-c24-profile-lifecycle`), with two gaps below. The claim
+  that there was no move path was wrong: the GUI's "Move profile folder" (`App.MoveProfileFolder`)
+  moved `.monomind/` under a running `org serve`. There is no profile delete in the CLI or GUI, so
+  the delete side is an entry point for one to call. What exists now:
+  - `org serve --stop` stops the folder's running orgs (`monomind org stop`) and its serve daemon,
+    found through its heartbeat (SIGTERM to the process group, SIGKILL after 10 s;
+    `monomind.OrgServeStop`). monomind has no stop command for `org serve`.
+  - `org reconcile` runs the daemon's startup reconcile pass over the profile's folder. Provider
+    args carry the profile id, not the folder, so a move changes no `--profile`. The pass
+    regenerates the provider command and args anyway.
+  - `MoveProfileFolder` runs `org serve --stop` before moving anything and refuses to move if that
+    fails. Afterwards it runs `org reconcile` and restarts `org serve` at the folder `root_dir`
+    names, if one was running before. Orgs that were stopped are logged and not restarted.
+  - `org teardown-profile [--dry-run]` is the org half of a profile delete. It calls
+    `orggrant.RevokeProfile`, which in one transaction revokes the profile's grants and every
+    usable endpoint (grace-window ids included), drops its autonomy rows, and expires its pending
+    delegations. Then it stops the orgs and `org serve`, and strips the dead provider blocks from
+    the org files. A future profile delete must call it before removing the profile row.
+  - "Vault tokens": mono-agent stores no org secrets in the vault. The endpoint id in
+    `org_endpoints` is the capability, and revoking the row kills it. `credential_file` is
+    user-supplied, so teardown leaves the file alone.
+- C-24 gap: `monoagentcli daemon` sets up its org-file watchers once at startup, one per profile
+  folder. After a move it keeps watching the old folder until the daemon restarts, so edits at the
+  new folder are reconciled only at the next save through the CLI/GUI or the next daemon start. A
+  profile created while the daemon runs is not watched either (this predates C-24).
+- C-24 gap (closed at merge): on Windows `OrgServeStop` now kills the serve pid's tree with
+  `taskkill /T` (the Windows pass's helper), so its agent-CLI children go with it.
 - ~~C-35: the GUI does not list queued inbox messages.~~ Closed 2026-09-18: `org queued <org>`
   reads `inbox.jsonl` (and an interrupted drain's `.draining`) read-only and prints JSON; the
   Wails binding `ListOrgQueuedMessages` shells it; the org view's **Queued** tab lists each

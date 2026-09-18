@@ -265,6 +265,11 @@ org autonomy needs-you <org>
 ### Processes, messaging, holding orgs, legacy root
 ```
 org serve [--foreground]      → {"v":1,"root","pid","status":"started"|"already-running"}
+org serve --stop              → {"v":1,"root","pid","status":"stopped"|"not-running"|"error","stopped_orgs","warnings"}
+org reconcile                 → {"v":1,"profile","root","orgs":[{"org","saved","findings","error"?}],"warnings"}
+org teardown-profile [--dry-run]
+  → {"v":1,"profile","root","dry_run","revoked":{"grants","endpoints","autonomy","delegations"},
+     "org_serve":{"pid","status"},"stopped_orgs","running_orgs"? (dry run),"org_files_rewritten"?,"warnings"}
 org stop <org> | pause <org> | resume <org>   → {"v":1,"org","ok":true,…}
 org send <org> --to <role> [--from <org:role>] --subject S --body B
   → {"v":1,"org","to","from","delivery":"live"|"queued","receipt","messageId"}

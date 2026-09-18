@@ -23,19 +23,30 @@ import (
 )
 
 func newOrgServeCmd(env *orgEnv) *cobra.Command {
-	var foreground bool
+	var foreground, stop bool
 	c := &cobra.Command{
 		Use:   "serve",
 		Short: "Start the org daemon (monomind org serve) for the active profile's folder",
 		Long: "One org daemon per profile folder runs every org, delivers messages between them, and fires " +
 			"scheduled orgs. Without --foreground it starts in the background (log: <folder>/.monomind/serve.log) " +
-			"unless one is already running.",
+			"unless one is already running. --stop asks every org running out of the folder to stop, then stops " +
+			"the folder's daemon (SIGTERM, then SIGKILL after 10 s).",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			root := env.Root()
+			if stop {
+				if foreground {
+					return errInvalidInput("--stop and --foreground cannot be combined")
+				}
+				rep := stopRootOrgs(cmd.Context(), root, false)
+				if err := printJSONValue(rep.json(root)); err != nil {
+					return err
+				}
+				return rep.serveStopErr
+			}
 			if foreground {
-				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
-				defer stop()
+				ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+				defer cancel()
 				return monomind.OrgServeRun(ctx, root)
 			}
 			pid, already, err := monomind.OrgServeStart(cmd.Context(), root)
@@ -50,6 +61,7 @@ func newOrgServeCmd(env *orgEnv) *cobra.Command {
 		},
 	}
 	c.Flags().BoolVar(&foreground, "foreground", false, "Run in this terminal until interrupted")
+	c.Flags().BoolVar(&stop, "stop", false, "Stop the folder's running orgs and its org daemon instead of starting one")
 	return c
 }
 

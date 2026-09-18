@@ -3,6 +3,7 @@
 package monomind
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -162,4 +163,19 @@ func taskkillTree(pid int) {
 	tk := exec.Command(filepath.Join(root, "System32", "taskkill.exe"), "/T", "/F", "/PID", strconv.Itoa(pid))
 	tk.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
 	_ = tk.Run()
+}
+
+// signalServe kills a serve daemon and its agent-CLI descendants by pid.
+// Windows has no SIGTERM, so both steps are a tree kill: taskkill /T follows
+// parent pids, then the daemon itself is killed if taskkill missed it.
+func signalServe(pid int, _ bool) error {
+	taskkillTree(pid)
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return nil // already gone
+	}
+	if err := p.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		return err
+	}
+	return nil
 }
