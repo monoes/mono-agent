@@ -464,15 +464,43 @@ func statusCLIArgs(profileID string) []string {
 	return append(full, "--json", "status")
 }
 
+// looksLikeJSON reports whether the CLI's stdout is the JSON document every
+// `org`/`status` subcommand promises (contracts §4) rather than prose.
+func looksLikeJSON(out string) bool {
+	return strings.HasPrefix(out, "{") || strings.HasPrefix(out, "[")
+}
+
+// notJSONError explains stdout that parses as neither. The realistic cause is
+// a monoagentcli on PATH older than this GUI: a cobra parent command given a
+// subcommand it doesn't know prints its own help — on stdout, exit code 0 —
+// so the page used to fail with `JSON Parse error: Unexpected identifier
+// "Observe"` (the first word of `org`'s help) with nothing pointing at the
+// stale binary. Name the binary and quote what it actually said.
+func notJSONError(cliBin, out string) error {
+	first, _, _ := strings.Cut(out, "\n")
+	first = strings.TrimSpace(first)
+	if len(first) > 160 {
+		first = first[:160] + "…"
+	}
+	if cliBin == "" {
+		cliBin = "monoagentcli"
+	}
+	return fmt.Errorf("%s printed text instead of JSON — it is most likely an older build that lacks this command; reinstall it from this checkout (go build -o %s ./cmd/monoagentcli). It said: %s",
+		cliBin, cliBin, first)
+}
+
 // cliResultJSON turns one CLI invocation's outcome into the string handed to
 // the frontend: stdout verbatim on success; on failure the CLI's own
 // {"error":…} stdout payload when it printed one (contracts §4), else stderr,
 // else the exec error — always as the aiError shape.
-func cliResultJSON(stdout []byte, runErr error) string {
+func cliResultJSON(cliBin string, stdout []byte, runErr error) string {
 	trimmed := strings.TrimSpace(string(stdout))
 	if runErr == nil {
 		if trimmed == "" {
 			return aiError(fmt.Errorf("empty output"))
+		}
+		if !looksLikeJSON(trimmed) {
+			return aiError(notJSONError(cliBin, trimmed))
 		}
 		return trimmed
 	}
@@ -512,7 +540,7 @@ func (a *App) runUnifiedCLI(label string, fullArgs []string) string {
 	hideWindow(cmd)
 	out, runErr := cmd.Output()
 	elapsed := time.Since(startedAt).Round(time.Millisecond)
-	res := cliResultJSON(out, runErr)
+	res := cliResultJSON(cliBin, out, runErr)
 	if runErr != nil {
 		a.emitLog("ORG", "ERROR", fmt.Sprintf("%s failed after %s: %s", label, elapsed, res))
 	} else {

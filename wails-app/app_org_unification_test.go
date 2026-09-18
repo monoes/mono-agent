@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -227,18 +228,41 @@ func TestOrgCLIArgs_GlobalFlagsBeforeOrg(t *testing.T) {
 }
 
 func TestCLIResultJSON(t *testing.T) {
-	if got := cliResultJSON([]byte(" {\"v\":1}\n"), nil); got != `{"v":1}` {
+	if got := cliResultJSON("/usr/bin/monoagentcli", []byte(" {\"v\":1}\n"), nil); got != `{"v":1}` {
 		t.Fatalf("success passthrough: %q", got)
 	}
-	if got := cliResultJSON(nil, nil); !strings.Contains(got, "empty output") {
+	if got := cliResultJSON("/usr/bin/monoagentcli", nil, nil); !strings.Contains(got, "empty output") {
 		t.Fatalf("empty: %q", got)
 	}
 	// The CLI's own {"error"} stdout payload wins over a bare exit error.
-	if got := cliResultJSON([]byte(`{"error":"grant needs monomind"}`), errors.New("exit status 1")); got != `{"error":"grant needs monomind"}` {
+	if got := cliResultJSON("/usr/bin/monoagentcli", []byte(`{"error":"grant needs monomind"}`), errors.New("exit status 1")); got != `{"error":"grant needs monomind"}` {
 		t.Fatalf("stdout error payload: %q", got)
 	}
-	if got := cliResultJSON([]byte("not json"), errors.New("exit status 2")); got != `{"error":"exit status 2"}` {
+	if got := cliResultJSON("/usr/bin/monoagentcli", []byte("not json"), errors.New("exit status 2")); got != `{"error":"exit status 2"}` {
 		t.Fatalf("fallback: %q", got)
+	}
+}
+
+// A monoagentcli older than this GUI answers a subcommand it doesn't know
+// with its parent's help text — on stdout, exit code 0. That must surface as
+// an error naming the stale binary, not get handed to the page's JSON.parse.
+func TestCLIResultJSONRejectsHelpTextOnStdout(t *testing.T) {
+	help := "Observe and act on monomind-managed agent organizations — status, logs, costs,\n\nUsage:\n  monoagentcli org [command]\n"
+	got := cliResultJSON("/home/u/.local/bin/monoagentcli", []byte(help), nil)
+	var probe struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(got), &probe); err != nil {
+		t.Fatalf("result is not JSON: %q", got)
+	}
+	for _, want := range []string{"/home/u/.local/bin/monoagentcli", "older build", "Observe and act on"} {
+		if !strings.Contains(probe.Error, want) {
+			t.Fatalf("error %q missing %q", probe.Error, want)
+		}
+	}
+	// A JSON array is a legitimate document, not prose.
+	if got := cliResultJSON("cli", []byte("[1,2]"), nil); got != "[1,2]" {
+		t.Fatalf("array passthrough: %q", got)
 	}
 }
 
