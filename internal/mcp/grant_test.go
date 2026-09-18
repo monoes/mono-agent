@@ -231,3 +231,32 @@ func TestGrantModeRefusesWithoutOrgEnvironment(t *testing.T) {
 		t.Fatalf("served a grant with no role in the environment: %v", err)
 	}
 }
+
+// The per-run and per-day caps are the only quantity bound on a granted
+// automation, so a ledger read that fails must refuse rather than skip
+// them — "database is locked" under concurrent daemon writes used to lift
+// the cap for that call.
+func TestGrantModeRefusesWhenTheCapCannotBeRead(t *testing.T) {
+	f := newGrantFixture(t, orggrant.Tool{MaxCallsPerRun: 5})
+	ctx := context.Background()
+	liveHeartbeat(t)
+	// Make every ledger read fail, as a locked database does.
+	if _, err := f.db.DB.Exec(`ALTER TABLE org_bridge_calls RENAME TO org_bridge_calls_unreadable`); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MONOMIND_ORG_RUN", "run-1")
+	if _, err := f.server.callGrantTool(ctx, "automation_publish", nil); err == nil || !strings.HasPrefix(err.Error(), codeRefusedCap) {
+		t.Fatalf("ran with an unreadable per-run cap: %v", err)
+	}
+	// With no run id only the daily cap stands between the role and the
+	// automation.
+	t.Setenv("MONOMIND_ORG_RUN", "")
+	if _, err := f.server.callGrantTool(ctx, "automation_publish", nil); err == nil || !strings.HasPrefix(err.Error(), codeRefusedCap) {
+		t.Fatalf("ran with an unreadable daily cap: %v", err)
+	}
+	var execs int
+	_ = f.db.DB.QueryRow(`SELECT COUNT(*) FROM workflow_executions`).Scan(&execs)
+	if execs != 0 {
+		t.Fatalf("%d executions started behind an unreadable cap", execs)
+	}
+}

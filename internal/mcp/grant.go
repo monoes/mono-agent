@@ -240,13 +240,26 @@ func (s *Server) grantRun(ctx context.Context, rt *runtime, b *orggrant.Bundle, 
 		OriginOrg: b.OrgName, Direction: orgbridge.DirRoleTool, OrgName: b.OrgName, RoleID: b.RoleID,
 		WorkflowID: tool.WorkflowID, GrantID: grant.ID, RunID: runID,
 	}
+	// A cap that cannot be read refuses: these two counts are the only
+	// quantity bound on a granted automation, and a transient read failure
+	// (SQLite "database is locked" while the daemon writes) must not lift
+	// it for that call. The role can call again on its next turn, which is
+	// cheaper than holding its turn open on a retry loop here.
 	if runID != "" {
-		if n, err := ledger.CountGrantCalls(ctx, grant.ID, runID, time.Time{}); err == nil && n >= tool.MaxCallsPerRun {
+		n, err := ledger.CountGrantCalls(ctx, grant.ID, runID, time.Time{})
+		if err != nil {
+			return nil, fmt.Errorf("%s: cannot read this run's call count for %s: %v", codeRefusedCap, name, err)
+		}
+		if n >= tool.MaxCallsPerRun {
 			_ = ledger.Refuse(ctx, call, orgbridge.StatusRefusedCap)
 			return nil, fmt.Errorf("%s: %s already ran %d times this org run (limit %d)", codeRefusedCap, name, n, tool.MaxCallsPerRun)
 		}
 	}
-	if n, err := ledger.CountGrantCalls(ctx, grant.ID, "", time.Now().Add(-24*time.Hour)); err == nil && n >= tool.MaxCallsPerDay {
+	n, err := ledger.CountGrantCalls(ctx, grant.ID, "", time.Now().Add(-24*time.Hour))
+	if err != nil {
+		return nil, fmt.Errorf("%s: cannot read the daily call count for %s: %v", codeRefusedCap, name, err)
+	}
+	if n >= tool.MaxCallsPerDay {
 		_ = ledger.Refuse(ctx, call, orgbridge.StatusRefusedCap)
 		return nil, fmt.Errorf("%s: %s already ran %d times in 24 hours (limit %d)", codeRefusedCap, name, n, tool.MaxCallsPerDay)
 	}
