@@ -63,9 +63,8 @@ func (n *AskNode) Execute(ctx context.Context, input workflow.NodeInput, config 
 	for _, item := range input.Items {
 		prompt := expandTemplate(promptTemplate, item)
 
-		// Subprocess runners' result events carry usage but not always text —
-		// accumulate assistant prose as the fallback answer.
-		var assistant strings.Builder
+		// ResultText holds the reply even when the result event has no text:
+		// monomind.ApplyEventToResult assembles it from the assistant events.
 		res, err := monomind.Exec(ctx, monomind.ExecOptions{
 			Bin:          bin,
 			Runtime:      runtime,
@@ -73,14 +72,7 @@ func (n *AskNode) Execute(ctx context.Context, input workflow.NodeInput, config 
 			Prompt:       prompt,
 			SystemPrompt: systemPrompt,
 			Timeout:      time.Duration(timeoutSec) * time.Second,
-		}, func(ev monomind.Event) {
-			if ev.Type == monomind.EventAssistant && ev.Text != "" {
-				assistant.WriteString(ev.Text)
-				if !strings.HasSuffix(ev.Text, "\n") {
-					assistant.WriteString("\n")
-				}
-			}
-		})
+		}, nil)
 		if err != nil {
 			return nil, fmt.Errorf("agent.ask (%s): %w", runtime, err)
 		}
@@ -88,9 +80,6 @@ func (n *AskNode) Execute(ctx context.Context, input workflow.NodeInput, config 
 			return nil, fmt.Errorf("agent.ask (%s) turn failed: %s", runtime, res.Err.Error())
 		}
 		answer := strings.TrimSpace(res.ResultText)
-		if answer == "" {
-			answer = strings.TrimSpace(assistant.String())
-		}
 
 		outJSON := copyItemJSON(item)
 		outJSON[outputKey] = answer

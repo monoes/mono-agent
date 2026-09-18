@@ -54,14 +54,11 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/redis/go-redis/v9 v9.22.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	github.com/richardlehane/mscfb v1.0.7 // indirect
-	github.com/richardlehane/msoleps v1.0.6 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/robfig/cron/v3 v3.0.1 // indirect
 	github.com/rs/zerolog v1.35.1 // indirect
 	github.com/samber/lo v1.49.1 // indirect
 	github.com/slack-go/slack v0.29.0 // indirect
-	github.com/tiendc/go-deepcopy v1.7.2 // indirect
 	github.com/tkrajina/go-reflector v0.5.8 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasttemplate v1.2.2 // indirect
@@ -70,9 +67,6 @@ require (
 	github.com/xdg-go/pbkdf2 v1.0.0 // indirect
 	github.com/xdg-go/scram v1.2.0 // indirect
 	github.com/xdg-go/stringprep v1.0.4 // indirect
-	github.com/xuri/efp v0.0.1 // indirect
-	github.com/xuri/excelize/v2 v2.11.0 // indirect
-	github.com/xuri/nfp v0.0.2-0.20250530014748-2ddeb826f9a9 // indirect
 	github.com/yalue/onnxruntime_go v1.36.0 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
 	github.com/ysmood/fetchup v0.2.3 // indirect

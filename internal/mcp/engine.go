@@ -179,8 +179,12 @@ func newRuntime(opts Options) (*runtime, error) {
 		return nil, fmt.Errorf("mcp: apply migrations: %w", err)
 	}
 
-	// Best-effort vault migrations, mirroring the CLI's initDB.
+	// Best-effort vault migrations, mirroring the CLI's initDB. Grant mode
+	// never touches the vault or keychain (C-22), so it skips them.
 	ctx := context.Background()
+	if opts.Grant != "" {
+		return grantRuntime(db, opts)
+	}
 	if _, _, err := connections.MigrateConnectionsToVault(ctx, db.DB); err != nil {
 		fmt.Fprintf(os.Stderr, "mcp: warning: connections migration: %v\n", err)
 	}

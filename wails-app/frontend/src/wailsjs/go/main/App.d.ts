@@ -7,6 +7,10 @@ import {workflow} from '../models';
 
 export function AddApplication(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string):Promise<string>;
 
+export function AddAutomationRole(arg1:string,arg2:string):Promise<string>;
+
+export function AddOrgAutomation(arg1:string,arg2:string,arg3:string):Promise<string>;
+
 export function AddOrgRole(arg1:string,arg2:string):Promise<string>;
 
 export function AddPersonMessage(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string,arg7:string):Promise<void>;
@@ -117,9 +121,13 @@ export function GetConnectionsForPlatform(arg1:string):Promise<Array<connections
 
 export function GetDBPath():Promise<string>;
 
+export function GetDaemonStatus():Promise<string>;
+
 export function GetDashboardStats():Promise<main.DashboardStats>;
 
 export function GetDraftPersonMessages():Promise<Array<storage.PersonMessageWithPerson>>;
+
+export function GetEffectiveTools(arg1:string,arg2:string):Promise<string>;
 
 export function GetExecutionDetail(arg1:string):Promise<Record<string, any>>;
 
@@ -132,6 +140,8 @@ export function GetLogs():Promise<Array<main.LogEntry>>;
 export function GetOAuthCredentials(arg1:string):Promise<string>;
 
 export function GetOrgApprovals(arg1:string):Promise<string>;
+
+export function GetOrgAutonomy(arg1:string):Promise<string>;
 
 export function GetOrgCosts(arg1:string,arg2:string):Promise<string>;
 
@@ -237,7 +247,15 @@ export function ListCredentialsForNode(arg1:string):Promise<Array<main.Credentia
 
 export function ListMonomindProjects():Promise<Array<main.MonomindProjectInfo>>;
 
+export function ListNeedsYou(arg1:string):Promise<string>;
+
+export function ListOrgAutomations(arg1:string):Promise<string>;
+
+export function ListOrgDecisionLog(arg1:string,arg2:string):Promise<string>;
+
 export function ListOrgDesigns():Promise<string>;
+
+export function ListOrgGrants(arg1:string):Promise<string>;
 
 export function ListOrgs():Promise<string>;
 
@@ -248,6 +266,8 @@ export function ListProfileDocuments():Promise<Array<main.ProfileDocument>>;
 export function ListResources(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.ResourceListResult>;
 
 export function ListSecrets():Promise<Array<main.VaultEntry>>;
+
+export function ListUnassignedAutomations():Promise<string>;
 
 export function ListWorkflowTemplates():Promise<Array<workflow.Template>>;
 
@@ -269,6 +289,10 @@ export function OpenVaultFilePicker():Promise<string>;
 
 export function OpenVaultImportFilePicker():Promise<string>;
 
+export function OrgGroupStatus(arg1:string):Promise<string>;
+
+export function PauseOrgAutonomy(arg1:string,arg2:string):Promise<string>;
+
 export function PromoteRoleToRoot(arg1:string,arg2:string):Promise<string>;
 
 export function ReadJSONFile(arg1:string):Promise<Record<string, any>>;
@@ -279,11 +303,19 @@ export function RejectHIL(arg1:string):Promise<void>;
 
 export function ReloadOrg(arg1:string):Promise<string>;
 
+export function RemoveAutomationRole(arg1:string,arg2:string):Promise<string>;
+
 export function RemoveConnection(arg1:string):Promise<string>;
+
+export function RemoveOrgAutomation(arg1:string,arg2:string):Promise<string>;
+
+export function RemoveOrgGrant(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function RemoveOrgRole(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function RemovePersonTag(arg1:string,arg2:string):Promise<void>;
+
+export function ResumeOrgAutonomy(arg1:string):Promise<string>;
 
 export function RevealProfileFolder(arg1:string):Promise<void>;
 
@@ -317,15 +349,23 @@ export function SendApplication(arg1:string,arg2:string):Promise<void>;
 
 export function SendDraftPersonMessage(arg1:string):Promise<storage.PersonMessage>;
 
+export function SendOrgMessage(arg1:string,arg2:string):Promise<string>;
+
 export function SetApplicationStatus(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function SetOAuthCredentials(arg1:string,arg2:string,arg3:string):Promise<string>;
+
+export function SetOrgAutonomy(arg1:string,arg2:string):Promise<string>;
+
+export function SetOrgGrant(arg1:string,arg2:string):Promise<string>;
 
 export function SetOrgRoleReportsTo(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function SetWorkflowActive(arg1:string,arg2:boolean):Promise<void>;
 
 export function StartChatTurn(arg1:string,arg2:string,arg3:string,arg4:boolean,arg5:boolean):Promise<string>;
+
+export function StartOrgGroup(arg1:string):Promise<string>;
 
 export function StopAIChat(arg1:string):Promise<string>;
 
@@ -336,6 +376,8 @@ export function StopChatTurn(arg1:string,arg2:string):Promise<string>;
 export function StopNodeRun(arg1:string):Promise<void>;
 
 export function StopOrgEvents(arg1:string):Promise<string>;
+
+export function StopOrgGroup(arg1:string):Promise<string>;
 
 export function StreamAIChat(arg1:string,arg2:string,arg3:string,arg4:string):Promise<string>;
 

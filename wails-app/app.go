@@ -328,18 +328,18 @@ func (a *App) shutdown(_ context.Context) {
 // orgsDirForActiveProfile resolves the directory the org design watcher
 // should poll for the currently active profile. Mirrors orgProjectRoot's
 // (app_orgs.go) own fallback exactly: when the active profile has no
-// resolvable root, `monoagentcli org` falls back to its own default
-// project root (`~/.monoagent`, see cmd/monoagentcli/org.go's
-// defaultOrgProjectRoot) — the watcher must watch that same directory or it
-// silently watches nothing for a profile whose layout failed to initialize.
+// resolvable root, `monoagentcli org` (called without --project) resolves
+// the active profile's folder itself, which for an unset profile is the
+// "default" profile's folder — the watcher must watch that same directory
+// or it silently watches nothing for a profile whose layout failed to
+// initialize.
 func (a *App) orgsDirForActiveProfile() string {
 	root := a.orgProjectRoot()
 	if root == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return ""
-		}
-		root = filepath.Join(home, ".monoagent")
+		root = profiledir.Root(a.db, "default")
+	}
+	if root == "" {
+		return ""
 	}
 	return orgdesign.OrgsDir(root)
 }

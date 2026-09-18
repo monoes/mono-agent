@@ -7,6 +7,8 @@ import (
 
 	"github.com/olekukonko/tablewriter/tw"
 	"github.com/spf13/cobra"
+
+	"github.com/monoes/mono-agent/internal/profiledir"
 )
 
 func newStatusCmd(cfg *globalConfig) *cobra.Command {
@@ -63,14 +65,20 @@ func newStatusCmd(cfg *globalConfig) *cobra.Command {
 			if cfg.JSONOutput {
 				enc := json.NewEncoder(os.Stdout)
 				enc.SetIndent("", "  ")
-				return enc.Encode(map[string]interface{}{
+				out := map[string]interface{}{
 					"db_path":      dbPath,
 					"sessions":     sessionCount,
 					"people":       peopleCount,
 					"configs":      configCount,
 					"templates":    templateCount,
 					"social_lists": listCount,
-				})
+				}
+				// Both long-running processes the org features need
+				// (contracts §4): the workflow daemon and the org daemon.
+				for k, v := range statusDaemons(profiledir.Root(db.DB, cfg.ProfileID)) {
+					out[k] = v
+				}
+				return enc.Encode(out)
 			}
 
 			table := newPlainTable(os.Stdout, []string{"Metric", "Value"}, []tw.Align{tw.AlignRight, tw.AlignLeft})

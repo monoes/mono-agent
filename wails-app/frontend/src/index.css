@@ -1673,6 +1673,21 @@ body {
   animation: odNodeEnter 220ms ease-out;
 }
 
+/* Live view: recent message edges flow toward the recipient; a working role pulses. */
+@keyframes odLiveDash {
+  to { stroke-dashoffset: -22; }
+}
+.od-live-edge {
+  animation: odLiveDash 0.9s linear infinite;
+}
+@keyframes odLiveWorking {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.45); }
+  50%      { box-shadow: 0 0 0 6px rgba(34, 197, 94, 0); }
+}
+.od-live-working {
+  animation: odLiveWorking 1.6s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;

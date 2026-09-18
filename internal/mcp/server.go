@@ -50,6 +50,10 @@ type Options struct {
 	// via MONOAGENT_MCP_ALLOW_MUTATIONS=="1". Mirrors internal/httpapi's
 	// identically-named/shaped AllowMutations gate.
 	AllowMutations bool
+	// Grant, when set, serves grant mode: only the automations of that
+	// grant's (org, role) bundle, for monomind's role tool provider. See
+	// grant.go.
+	Grant string
 }
 
 type rpcRequest struct {
@@ -302,13 +306,16 @@ func (s *Server) handleLine(ctx context.Context, line []byte) *rpcResponse {
 				"name":    "monoagentcli",
 				"version": s.version(),
 			},
-			"instructions": "Start with docs(topic) or workflow_list; validate before run; hil_list for pending approvals.",
+			"instructions": s.instructions(),
 		})
 
 	case "ping":
 		return s.result(req.ID, map[string]interface{}{})
 
 	case "tools/list":
+		if s.opts.Grant != "" {
+			return s.result(req.ID, map[string]interface{}{"tools": s.grantToolDefinitions(ctx)})
+		}
 		return s.result(req.ID, map[string]interface{}{"tools": toolDefinitions(s.opts.AllowMutations)})
 
 	case "tools/call":
@@ -327,6 +334,7 @@ func (s *Server) handleToolsCall(ctx context.Context, req rpcRequest) *rpcRespon
 	var params struct {
 		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"arguments,omitempty"`
+		Meta      json.RawMessage `json:"_meta,omitempty"`
 	}
 	if len(req.Params) > 0 {
 		if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -337,7 +345,13 @@ func (s *Server) handleToolsCall(ctx context.Context, req rpcRequest) *rpcRespon
 			}
 		}
 	}
-	result, err := callTool(ctx, s, params.Name, params.Arguments)
+	var result string
+	var err error
+	if s.opts.Grant != "" {
+		result, err = s.callGrantTool(withMeta(ctx, params.Meta), params.Name, params.Arguments)
+	} else {
+		result, err = callTool(ctx, s, params.Name, params.Arguments)
+	}
 	text := result
 	if err != nil {
 		text = err.Error()
@@ -356,6 +370,13 @@ func (s *Server) closeRuntime() {
 	rt := s.rt
 	s.rtMu.Unlock()
 	rt.Close()
+}
+
+func (s *Server) instructions() string {
+	if s.opts.Grant != "" {
+		return "Tools here run automations your org granted you. Each call starts a workflow run; outputs are redacted and bounded."
+	}
+	return "Start with docs(topic) or workflow_list; validate before run; hil_list for pending approvals."
 }
 
 func (s *Server) result(id json.RawMessage, result interface{}) *rpcResponse {

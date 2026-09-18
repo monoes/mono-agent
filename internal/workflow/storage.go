@@ -674,12 +674,16 @@ func (s *SQLiteWorkflowStore) SetExecutionWaiting(ctx context.Context, id string
 
 // ListResumableExecutions returns the IDs of WAITING executions that have no
 // still-pending Human-in-Loop items — i.e. every pause point has been resolved
-// (approved or rejected), so the execution can be resumed.
+// (approved or rejected), so the execution can be resumed — and whose
+// resume_after poll window (PauseError) has passed. Event-woken pauses are
+// resumed directly by ResumeExecution and never wait for the window.
 func (s *SQLiteWorkflowStore) ListResumableExecutions(ctx context.Context) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id FROM workflow_executions
 		WHERE status = 'WAITING'
-		  AND id NOT IN (SELECT execution_id FROM hil_pending WHERE status = 'pending')`)
+		  AND (resume_after IS NULL OR resume_after <= ?)
+		  AND id NOT IN (SELECT execution_id FROM hil_pending WHERE status = 'pending')`,
+		formatResumeAfter(time.Now()))
 	if err != nil {
 		return nil, fmt.Errorf("listing resumable executions: %w", err)
 	}

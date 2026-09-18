@@ -342,17 +342,11 @@ Changes made this way appear in the app automatically — orgs are picked up liv
 				b, _ := json.Marshal(v)
 				fmt.Println(string(b))
 			}
-			// Subprocess runners' result events carry usage but not always
-			// text — accumulate assistant prose for history persistence.
-			var assistantText strings.Builder
+			// res.ResultText holds the reply even when the result event has
+			// no text (monomind.ApplyEventToResult assembles it from the
+			// assistant events), including a failed turn's partial reply.
 			res, err := monomind.Exec(ctx, opts, func(ev monomind.Event) {
 				emit(ev)
-				if ev.Type == monomind.EventAssistant && ev.Text != "" {
-					assistantText.WriteString(ev.Text)
-					if !strings.HasSuffix(ev.Text, "\n") {
-						assistantText.WriteString("\n")
-					}
-				}
 			})
 			if err != nil {
 				return err
@@ -362,8 +356,8 @@ Changes made this way appear in the app automatically — orgs are picked up liv
 			// both — simpler than saving the user turn before running and
 			// risking it never getting tagged with the right session. This
 			// runs even when res.Err != nil: a failed/cancelled turn's
-			// partial conversation (whatever assistantText accumulated
-			// before the failure) is still worth preserving, not silently
+			// partial conversation (whatever reply text arrived before the
+			// failure) is still worth preserving, not silently
 			// dropped the way the old os.Exit(res.Err.ExitCode) below used
 			// to (it returned before this block ever ran).
 			//
@@ -390,11 +384,7 @@ Changes made this way appear in the app automatically — orgs are picked up liv
 				}); err != nil {
 					fmt.Fprintf(os.Stderr, "warning: saving chat message: %v\n", err)
 				}
-				final := res.ResultText
-				if final == "" {
-					final = assistantText.String()
-				}
-				if final != "" {
+				if final := res.ResultText; final != "" {
 					if err := store.SaveChatMessage(ai.ChatMessage{
 						ID:         uuid.NewString(),
 						WorkflowID: effectiveHistoryID,

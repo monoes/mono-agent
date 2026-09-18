@@ -50,6 +50,23 @@ jobs:
           npm install -g "@monoes/monomindcli@${version}"
       - name: Run handshake smoke test
         run: MONOMIND_SMOKE=1 go test ./internal/monomind/... -run TestSmoke_RealMonomindHandshake -v
+      # C-26 / C-13: every org config shape mono-agent writes (automations,
+      # grants, tool providers, endpoint roles, holding orgs, federation,
+      # autonomy) must pass the real `monomind org validate` and come out
+      # byte-identical — a stricter monomind schema that dropped or rejected
+      # these keys would otherwise go unnoticed.
+      - name: Validate golden org configs with the real monomind
+        run: |
+          proj="$(mktemp -d)"
+          mkdir -p "$proj/.monomind/orgs"
+          cp testdata/orgs/*.json "$proj/.monomind/orgs/"
+          for f in testdata/orgs/*.json; do
+            name="$(basename "$f" .json)"
+            (cd "$proj" && monomind org validate "$name")
+            # Compare file by file: testdata/orgs also holds non-org
+            # fixtures (runs/), which a directory diff would report.
+            diff "$f" "$proj/.monomind/orgs/$(basename "$f")"
+          done
 
   # Closes issue #20's OpenAPI acceptance criterion ("OpenAPI 3 spec shipped
   # and validated in CI"): validates internal/httpapi/openapi.yaml against

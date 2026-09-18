@@ -245,6 +245,71 @@ enforced by the vendored JS runtime; `system.execute_command` output is
 capped at 10 MB per channel (stdout and stderr). Stored outputs are
 persisted in full but display-truncated at 4 KB.
 
+## Org automations and autonomy
+
+Org roles are AI agents run by monomind. Letting them call workflows, and
+letting a model resolve their approvals, crosses a trust boundary. The
+layers, from strongest:
+
+1. **Grant rows.** Which automations a role may run, how often, and
+   whether a call needs a decision live in mono-agent's database
+   (`org_grants`). The org file is only a display copy: any role whose file
+   write reaches `.monomind/` can edit it, so saves and the daemon strip
+   grants, tool providers, and endpoints no row backs, and never create
+   rows from the file.
+2. **Grant-mode MCP server.** `mcp --grant` serves only the granted tools,
+   takes its scope from the grant row, refuses a grant used by another org
+   or role (checked against monomind's `MONOMIND_ORG_NAME`/`ROLE`, which it
+   requires — an unset variable refuses the call rather than skipping the
+   check), caps calls per run and per day — a cap it cannot read refuses
+   too — and returns redacted, size-bounded outputs.
+   It runs no engine and holds no vault access; the daemon runs the
+   workflow.
+3. **monomind policy.** `denyTools`, `approvalTools` (managed by mono-agent
+   for `approval: required` grants and `org_start`), budgets, and the
+   message fence, which is turned on the first time an org gains an
+   automation.
+4. **Automation-role endpoints.** `POST /org-endpoint/{id}` on the daemon's
+   API. The id is a 130-bit capability, checked in constant time;
+   non-loopback callers need the endpoint's 0600 credential file. A
+   delivery runs only after the same `messageId` appears on the org's bus
+   addressed to that role, so a role that read the id from the org file
+   cannot POST around `org_send`. Rotation keeps the old id for 5 minutes.
+5. **Loop control.** Every crossing carries a trace; hops a header claims
+   are never trusted below the recorded count, and repeat limits key on
+   the target, which a caller cannot forge. `run_config`'s `max_hops` and
+   `max_repeats` are read from the org file, so they are clamped to hard
+   ceilings — raising them there cannot switch loop control off.
+6. **Autonomy.** The level, decider, tiers, and policy are enforced from
+   `org_autonomy`; an edit to the org file can only lower the level. Tiers
+   are computed from the grant row and the workflow's nodes before any
+   decider runs, agent-written text sits inside an untrusted fence in the
+   decider prompt, a decider never resolves its own request, and every
+   routed item is recorded in `org_decisions`. `org autonomy pause` drops
+   an org to manual at once.
+
+**Known gaps (accepted for now):**
+
+- **Bash.** A role allowed Bash can run `monoagentcli` with your rights and
+  bypass its grants. A role's first grant pre-fills `denyTools: ["Bash"]`
+  and the GUI warns when Bash is re-enabled. The org/role check in layer 2
+  is no barrier to it either: grant ids are not secrets (every role's
+  provider args in the org file carry one), and a role that can run
+  commands can also set `MONOMIND_ORG_NAME`/`ROLE` to match a sibling's
+  grant. That check catches a copied id and a misconfigured provider, not a
+  role that already has a shell.
+- **File paths in automation input.** Automations run in the daemon, outside
+  the role's workdir confinement. A workflow that reads or writes a path
+  taken from its input can reach files the role itself cannot.
+- **Level full.** At `full` a model decides irreversible items (gates,
+  grants whose workflows send email or post) with no person involved. The
+  fence and tiers reduce prompt-injection risk; they do not remove it.
+  Choose `full` only for orgs whose automations you would accept being run
+  on a wrong decision.
+- **Cross-root messaging.** Orgs under the same profile folder can always
+  message each other. Restricting messages between profile folders needs
+  monomind with capability `org-federation`.
+
 ## Webhook trigger surface
 
 The webhook trigger server (`internal/workflow/webhook_server.go`) binds

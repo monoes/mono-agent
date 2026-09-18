@@ -99,6 +99,8 @@ func Validate(d *Doc) error {
 		errs = append(errs, fmt.Sprintf("circular reporting: %s", strings.Join(cyc, " -> ")))
 	}
 
+	errs = append(errs, validateUnification(d)...)
+
 	if len(errs) > 0 {
 		return &ValidationError{Errors: errs}
 	}

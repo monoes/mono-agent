@@ -79,13 +79,22 @@ func TestRestrictFileWriteForOrgs_FalseWithOrgProjectRootOverride(t *testing.T) 
 	}
 }
 
-func TestRestrictFileWriteForOrgs_FalseForEmptyOrDefaultProfileID(t *testing.T) {
+// The "" / "default" profile resolves to profiledir.Root like any other
+// profile since the org root unification (C-31), so it follows the same
+// default-managed rule as the GUI.
+func TestRestrictFileWriteForOrgs_DefaultProfileFollowsProfileRoot(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	db := newMonoagentTestDB(t)
 	for _, pid := range []string{"", "default"} {
 		mt := NewMonoagentTools(db.DB, "")
 		mt.SetProfileID(pid)
-		if mt.restrictFileWriteForOrgs() {
-			t.Errorf("profileID %q (legacy ~/.monoagent fallback) should never be restricted", pid)
+		if !mt.restrictFileWriteForOrgs() {
+			t.Errorf("profileID %q with no root_dir override should be restricted", pid)
+		}
+		if got, want := mt.profileRoot(), profiledir.Root(db.DB, "default"); got != want {
+			t.Errorf("profileID %q: profileRoot = %q, want %q", pid, got, want)
 		}
 	}
 }

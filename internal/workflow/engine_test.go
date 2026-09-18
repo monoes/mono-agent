@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -465,5 +466,59 @@ func TestRunExecution_UsesExecutionsOwnProfileID(t *testing.T) {
 	if gotProfileID != "execution-owner-profile" {
 		t.Errorf("vault profile ID seen by node = %q, want %q (the execution's own profile, not the engine's %q)",
 			gotProfileID, "execution-owner-profile", e.profileID)
+	}
+}
+
+// erroringTriggerSource fails every Activate. A trigger.org node in event
+// mode with a blank org_name is exactly this — and schemas/trigger.org.json
+// defaults mode to "event" without requiring org_name, so it is a config a
+// user can build in the editor.
+type erroringTriggerSource struct{}
+
+func (erroringTriggerSource) Activate(*Workflow, *WorkflowNode, func([]Item)) (func(), error) {
+	return nil, errors.New("trigger.org: event mode needs a valid org_name")
+}
+
+// TestActivateWorkflow_RollsBackTriggersWhenRegistrationFails is a
+// regression test: the failure path reverted the stored is_active flag but
+// never called DeactivateWorkflow, so triggers registered before the
+// failing one stayed live. A workflow with trigger.schedule (*/5) plus a
+// trigger.org the manager cannot activate showed as inactive while its cron
+// kept firing for the life of the process — and DeleteWorkflow only
+// deactivates `if existing.IsActive`, so the cron survived deletion too.
+func TestActivateWorkflow_RollsBackTriggersWhenRegistrationFails(t *testing.T) {
+	sched := &fakeScheduler{}
+	wf := &Workflow{
+		ID:        "wf-partial",
+		Name:      "partial",
+		ProfileID: "default",
+		Nodes: []WorkflowNode{
+			{ID: "cron", WorkflowID: "wf-partial", Type: "trigger.schedule", Name: "Every 5m",
+				Config: map[string]interface{}{"cron": "0 */5 * * * *"}},
+			{ID: "org", WorkflowID: "wf-partial", Type: "trigger.org", Name: "Org",
+				Config: map[string]interface{}{"mode": "event", "org_name": ""}},
+		},
+	}
+	tm := NewTriggerManager(nil, nil, sched, func(string, string, []Item) {}, zerolog.Nop())
+	tm.RegisterProvider("trigger.org", erroringTriggerSource{})
+	e := &WorkflowEngine{
+		profileID:  "default",
+		store:      &stubStore{workflowToReturn: wf},
+		triggerMgr: tm,
+		logger:     zerolog.Nop(),
+	}
+
+	if err := e.ActivateWorkflow(context.Background(), wf.ID); err == nil {
+		t.Fatal("ActivateWorkflow: want the failing trigger.org node to fail activation")
+	}
+	if len(sched.specs) != 1 {
+		t.Fatalf("scheduler registered %d cron jobs, want 1", len(sched.specs))
+	}
+	if len(sched.removed) != 1 {
+		t.Errorf("failed activation left the schedule registered: %d cron jobs added, %d removed — "+
+			"the workflow reads inactive but keeps firing every 5 minutes", len(sched.specs), len(sched.removed))
+	}
+	if n := len(tm.active[wf.ID]); n != 0 {
+		t.Errorf("trigger manager still holds %d trigger(s) for a workflow whose activation failed", n)
 	}
 }

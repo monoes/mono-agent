@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -11,29 +12,24 @@ import (
 	"github.com/monoes/mono-agent/internal/orgdesign"
 )
 
-// defaultOrgProjectRoot is the project root org state resolves under
-// (`<root>/.monomind/orgs/`, protocol §7.1) when --project is not given.
-// mono-agent has no per-workflow project directory of its own, so orgs live
-// under the app's home data dir by default, same as configs/output.
-const defaultOrgProjectRoot = "~/.monoagent"
-
 // newOrgCmd exposes monomind's org observe/action surface: thin proxies over
 // `monomind org <sub> [<name>] --format json` (protocol §7). Output is
 // always JSON — these commands exist for monoagentcli's own Wails bindings
 // and for scripting, not interactive table browsing (mirrors the doctrine
 // established by `chat`: the CLI's machine output IS the UI contract).
 func newOrgCmd(cfg *globalConfig) *cobra.Command {
-	var projectRoot string
+	env := &orgEnv{cfg: cfg}
 	cmd := &cobra.Command{
 		Use:   "org",
 		Short: "Local agent organizations (via the monomind engine)",
 		Long: "Observe and act on monomind-managed agent organizations — status, logs, costs, " +
 			"pending questions/gates, and a live event tail. Every subcommand prints JSON to " +
 			"stdout; there is no human table mode.",
+		PersistentPostRun: func(cmd *cobra.Command, args []string) { env.Close() },
 	}
-	cmd.PersistentFlags().StringVar(&projectRoot, "project", defaultOrgProjectRoot,
-		"Project root orgs resolve under (<root>/.monomind/orgs/)")
-	root := func() string { return expandPath(projectRoot) }
+	cmd.PersistentFlags().StringVar(&env.projectFlag, "project", "",
+		"Project root orgs resolve under (<root>/.monomind/orgs/); default: the active profile's folder")
+	root := env.Root
 
 	cmd.AddCommand(
 		newOrgListCmd(root),
@@ -56,7 +52,21 @@ func newOrgCmd(cfg *globalConfig) *cobra.Command {
 		newOrgEventsCmd(root),
 		newOrgValidateCmd(root),
 		newOrgReloadCmd(root),
-		newOrgCreateJSONCmd(root),
+		newOrgCreateJSONCmd(env),
+		newOrgAutomationCmd(env),
+		newOrgGrantCmd(env),
+		newOrgEffectiveToolsCmd(env),
+		newOrgLegacyCmd(env),
+		newOrgAutonomyCmd(env),
+		newOrgServeCmd(env),
+		newOrgLifecycleCmd(env, "stop", "Ask a running org to stop", monomind.OrgStop),
+		newOrgLifecycleCmd(env, "pause", "Pause an org: current turns finish, no new cycles start", monomind.OrgPause),
+		newOrgLifecycleCmd(env, "resume", "Resume a paused org", monomind.OrgResume),
+		newOrgSendCmd(env),
+		newOrgRenameCmd(env),
+		newOrgDeleteCmd(env),
+		newOrgAutomationRoleCmd(env),
+		newOrgGroupCmd(env),
 	)
 	return cmd
 }
@@ -413,7 +423,8 @@ func newOrgValidateCmd(root func() string) *cobra.Command {
 // SaveOrgDesign already goes through (wails-app/app_orgs_design.go) — then
 // still runs monomind's real `org validate` afterward so the response
 // reflects the same schema/structural checks every other org gets.
-func newOrgCreateJSONCmd(root func() string) *cobra.Command {
+func newOrgCreateJSONCmd(env *orgEnv) *cobra.Command {
+	root := env.Root
 	var jsonBlob string
 	c := &cobra.Command{
 		Use:   "create-json <name>",
@@ -430,13 +441,41 @@ func newOrgCreateJSONCmd(root func() string) *cobra.Command {
 			} else if d.Name != name {
 				return fmt.Errorf("org name %q in --json does not match the <name> argument %q", d.Name, name)
 			}
-			sha, err := orgdesign.Save(root(), &d)
+			var findings interface{}
+			if db, profileID, profileRoot, perr := env.Profile(); perr == nil {
+				if _, statErr := os.Stat(filepath.Join(orgdesign.OrgsDir(profileRoot), name+".json")); os.IsNotExist(statErr) {
+					if other, err := orgNameInUse(db.DB, name, profileID); err != nil {
+						return err
+					} else if other != "" {
+						return errInvalidInput("org name %q is already used in profile %q; org names are unique on this machine — try %s-%s", name, other, name, shortProfile(profileID))
+					}
+					if err := ensureNewOrgAutonomy(cmd.Context(), db, profileID, &d, "cli"); err != nil {
+						return err
+					}
+				}
+				// Grants, providers, and endpoints in the document only
+				// survive when a row backs them (C-3).
+				rep, err := saveOrgReconciled(cmd.Context(), db, profileID, profileRoot, &d, env.genOptions(profileID))
+				if err != nil {
+					return err
+				}
+				findings = rep.Findings
+			} else if docCarriesEnforcedKeys(&d) {
+				return fmt.Errorf("this document carries grants, tool providers, or automation roles, which need the active profile's org folder: %w", perr)
+			} else if _, err := orgdesign.Save(root(), &d); err != nil {
+				return err
+			}
+			path, _ := orgdesign.ConfigPath(root(), name)
+			sha, err := fileSHA256(path)
 			if err != nil {
 				return err
 			}
 			out, valErr := monomind.OrgValidate(cmd.Context(), root(), name)
 			payload := map[string]interface{}{
 				"v": 1, "org": name, "sha256": sha, "valid": valErr == nil,
+			}
+			if findings != nil {
+				payload["reconcile"] = findings
 			}
 			if valErr != nil {
 				payload["validate_error"] = valErr.Error()
