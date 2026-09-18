@@ -25,6 +25,7 @@ PROCESSES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   monoagentcli org serve            start monomind's org daemon for the folder
+  monoagentcli org serve --stop     stop the folder's running orgs and daemon
   monoagentcli daemon               engine + HTTP API + automation-role endpoint
                                     + autonomy decisions (writes a heartbeat)
   monoagentcli --json status        both daemons' state
@@ -89,6 +90,11 @@ MESSAGES AND LIFECYCLE
   org rename <org> <new>            org names are unique on this machine
   org delete <org> [--force]
   org legacy list | legacy move <org>
+  org reconcile                     rewrite every org file's generated blocks
+                                    from the grant rows (after a folder move)
+  org teardown-profile [--dry-run]  the org half of deleting a profile: revoke
+                                    its grants, endpoints, autonomy; stop its
+                                    orgs and org daemon
 
   Crossings carry "[trace chn_… hop=N]" and stop at run_config.max_hops
   (default 8) or max_repeats calls to one target per minute (default 20).

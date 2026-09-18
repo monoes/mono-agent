@@ -961,7 +961,33 @@ starts a dashboard on port 4242 that outlives it.
 | One grant id per role in provider args | One row per (role, alias); org and decision tools are one more row; the provider is addressed by the role's first row | C-22 |
 
 **Open items.**
-- C-24: there is no profile delete or folder move path in the code to hook grant revocation into.
+- C-24 (closed 2026-09-18, branch `fix/org-c24-profile-lifecycle`), with two gaps below. The claim
+  that there was no move path was wrong: the GUI's "Move profile folder" (`App.MoveProfileFolder`)
+  moved `.monomind/` under a running `org serve`. There is no profile delete in the CLI or GUI, so
+  the delete side is an entry point for one to call. What exists now:
+  - `org serve --stop` stops the folder's running orgs (`monomind org stop`) and its serve daemon,
+    found through its heartbeat (SIGTERM to the process group, SIGKILL after 10 s;
+    `monomind.OrgServeStop`). monomind has no stop command for `org serve`.
+  - `org reconcile` runs the daemon's startup reconcile pass over the profile's folder. Provider
+    args carry the profile id, not the folder, so a move changes no `--profile`. The pass
+    regenerates the provider command and args anyway.
+  - `MoveProfileFolder` runs `org serve --stop` before moving anything and refuses to move if that
+    fails. Afterwards it runs `org reconcile` and restarts `org serve` at the folder `root_dir`
+    names, if one was running before. Orgs that were stopped are logged and not restarted.
+  - `org teardown-profile [--dry-run]` is the org half of a profile delete. It calls
+    `orggrant.RevokeProfile`, which in one transaction revokes the profile's grants and every
+    usable endpoint (grace-window ids included), drops its autonomy rows, and expires its pending
+    delegations. Then it stops the orgs and `org serve`, and strips the dead provider blocks from
+    the org files. A future profile delete must call it before removing the profile row.
+  - "Vault tokens": mono-agent stores no org secrets in the vault. The endpoint id in
+    `org_endpoints` is the capability, and revoking the row kills it. `credential_file` is
+    user-supplied, so teardown leaves the file alone.
+- C-24 gap: `monoagentcli daemon` sets up its org-file watchers once at startup, one per profile
+  folder. After a move it keeps watching the old folder until the daemon restarts, so edits at the
+  new folder are reconciled only at the next save through the CLI/GUI or the next daemon start. A
+  profile created while the daemon runs is not watched either (this predates C-24).
+- C-24 gap: on Windows `OrgServeStop` kills only the serve pid, not its agent-CLI children (same
+  limitation as provider process groups below).
 - C-35: the GUI does not list queued inbox messages.
 - C-36: no validator warning for child goals that are not message-driven.
 - C-46: automation input paths are not confined to the role's workdir; documented in SECURITY.md.

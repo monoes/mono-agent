@@ -335,7 +335,14 @@ to each child's boss; `run_config.group_budget_usd` and each child's
 monoagentcli org serve   # the org daemon (monomind) for the active profile's folder
 monoagentcli daemon      # workflow engine, HTTP API, automation-role endpoint, decisions
 monoagentcli --json status   # reports both
+monoagentcli org serve --stop   # stop the folder's running orgs and its org daemon
 ```
+
+Before deleting a profile, run `monoagentcli --profile <id> org teardown-profile`
+(`--dry-run` previews). It revokes the profile's grants, endpoints, and
+autonomy settings and stops its orgs. The GUI's "Move profile folder" stops
+the orgs before the move, then runs `org reconcile` and restarts `org serve`
+at the new folder.
 
 Without `monoagentcli daemon`, granted tools return `daemon_required`,
 automation roles cannot run, and every org behaves as `manual`. Grants,
