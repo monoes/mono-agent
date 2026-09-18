@@ -91,6 +91,10 @@ func (r *recordingClient) Answer(_ context.Context, _, org, id, answer string, _
 	r.calls = append(r.calls, org+":"+id+":"+answer)
 	return nil
 }
+func (r *recordingClient) Notify(_ context.Context, _, org, role, subject, body string) error {
+	r.calls = append(r.calls, org+":"+role+":"+subject+":"+body)
+	return nil
+}
 func (r *recordingClient) Gate(_ context.Context, _, org, id string, approve bool, text string, _ monomind.ResolveOptions) error {
 	r.calls = append(r.calls, org+":"+id+":"+text)
 	return nil

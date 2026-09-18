@@ -36,6 +36,7 @@ type fakeOrg struct {
 	questions []map[string]interface{}
 	gates     []map[string]interface{}
 	resolved  []string
+	notified  []string
 }
 
 func (f *fakeOrg) payload(items []map[string]interface{}) json.RawMessage {
@@ -70,6 +71,12 @@ func (f *fakeOrg) Answer(_ context.Context, _, _, qid, answer string, _ monomind
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.resolved = append(f.resolved, "answer:"+qid+":"+answer)
+	return nil
+}
+func (f *fakeOrg) Notify(_ context.Context, _, _, role, subject, body string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.notified = append(f.notified, role+":"+subject+":"+body)
 	return nil
 }
 func (f *fakeOrg) Gate(_ context.Context, _, _, id string, approve bool, text string, _ monomind.ResolveOptions) error {
@@ -213,6 +220,49 @@ func TestFullDecidesGatesAndFailsClosed(t *testing.T) {
 	}
 	if len(org2.resolved) != 1 || !strings.Contains(org2.resolved[0], "gate:gate-1:reject:[decided by model:test] decider failed: unusable decider reply") {
 		t.Fatalf("resolution = %v", org2.resolved)
+	}
+}
+
+// A denied approval carries no text in monomind's approve/deny, so the
+// requester is told why in a message instead (C-52). Found in a no-model run
+// where a failed decider left the role with only "org_complete: DENIED".
+func TestFullApprovalFailureTellsRequesterWhy(t *testing.T) {
+	org := standardItems()
+	org.questions, org.gates = nil, nil
+	// org_complete is consequential, so it goes to the decider at full
+	// (a Bash approval is routine and never reaches one).
+	org.approvals = []map[string]interface{}{{"roleId": "dev", "action": "org_complete", "question": "Approval required for org_complete", "ts": 1, "approved": nil}}
+	dec := &scriptedDecider{err: errors.New("timeout")}
+	s := newTestService(t, org, dec)
+	setLevel(t, s, orgdesign.LevelFull)
+	ds, _ := s.ProcessOrg(context.Background(), "p", t.TempDir(), "growth")
+	if verdicts(ds)[KindApproval] != "model:test/failed" {
+		t.Fatalf("verdicts = %v", verdicts(ds))
+	}
+	if len(org.resolved) != 1 || !strings.Contains(org.resolved[0], "approval:dev:org_complete:deny") {
+		t.Fatalf("resolved = %v", org.resolved)
+	}
+	if len(org.notified) != 1 || !strings.HasPrefix(org.notified[0], "dev:") ||
+		!strings.Contains(org.notified[0], "org_complete") || !strings.Contains(org.notified[0], "timeout") ||
+		!strings.Contains(org.notified[0], "[decided by model:test]") {
+		t.Fatalf("notified = %v", org.notified)
+	}
+}
+
+// An approval the decider resolves normally is not messaged: the role
+// already sees monomind's own approved/denied result.
+func TestFullApprovalDecidedDoesNotMessageRequester(t *testing.T) {
+	org := standardItems()
+	org.questions, org.gates = nil, nil
+	org.approvals = []map[string]interface{}{{"roleId": "dev", "action": "org_complete", "question": "Approval required for org_complete", "ts": 1, "approved": nil}}
+	dec := &scriptedDecider{replies: map[string]string{KindApproval: `{"verdict":"deny","rationale":"not in policy"}`}}
+	s := newTestService(t, org, dec)
+	setLevel(t, s, orgdesign.LevelFull)
+	if _, err := s.ProcessOrg(context.Background(), "p", t.TempDir(), "growth"); err != nil {
+		t.Fatal(err)
+	}
+	if len(org.notified) != 0 {
+		t.Fatalf("notified on a normal decision: %v", org.notified)
 	}
 }
 

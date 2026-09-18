@@ -24,7 +24,14 @@ type Client interface {
 	Approve(ctx context.Context, root, org, role, action string, approve bool, opts monomind.ResolveOptions) error
 	Answer(ctx context.Context, root, org, questionID, answer string, opts monomind.ResolveOptions) error
 	Gate(ctx context.Context, root, org, gateID string, approve bool, resolution string, opts monomind.ResolveOptions) error
+	// Notify messages a role — how a denied approval carries its reason,
+	// which monomind's approve/deny cannot (C-52).
+	Notify(ctx context.Context, root, org, role, subject, body string) error
 }
+
+// autonomySender is the sender role of decision-service messages, so a
+// requester can tell them from another agent's message.
+const autonomySender = "autonomy"
 
 // MonomindClient is Client over the monomind proxies.
 type MonomindClient struct{}
@@ -48,6 +55,12 @@ func (MonomindClient) Approve(ctx context.Context, root, org, role, action strin
 	} else {
 		_, err = monomind.OrgDenyWith(ctx, root, org, role, action, opts)
 	}
+	return err
+}
+func (MonomindClient) Notify(ctx context.Context, root, org, role, subject, body string) error {
+	_, err := monomind.OrgInbox(ctx, root, org, monomind.InboxMessage{
+		To: role, From: org + ":" + autonomySender, Subject: subject, Body: body,
+	})
 	return err
 }
 func (MonomindClient) Answer(ctx context.Context, root, org, questionID, answer string, opts monomind.ResolveOptions) error {
@@ -506,6 +519,15 @@ func (s *Service) fail(ctx context.Context, root, org, level string, a *Autonomy
 		}
 		if err := s.apply(ctx, root, org, it, false, text, resolver, "decider failed: "+reason); err != nil {
 			return nil, err
+		}
+		// A question's answer and a gate's resolution already carry the
+		// reason; monomind's approve/deny carries nothing, so the requester
+		// only sees "DENIED" unless it is also messaged (C-52).
+		if it.Kind == KindApproval && it.Requester != "" {
+			body := fmt.Sprintf("[decided by %s] %q was denied: no decision could be made (%s). Continue without it, or stop.", resolver, it.Action, reason)
+			if err := s.Client.Notify(ctx, root, org, it.Requester, "denied: "+it.Action, body); err != nil {
+				s.Logf("orgdecide: telling %s why %s was denied: %v", it.Requester, it.Action, err)
+			}
 		}
 	}
 	return record(resolver, VerdictFailed, "", reason, cost, lat)

@@ -919,9 +919,26 @@ Bugs these runs found, both fixed with regression tests: `automation-role add` p
 equal to an alias without underscores (validator rejection); the model decider parsed only the
 last streamed assistant delta (every decision failed as "no JSON object").
 
-Not exercised live (unit, contract, or real-binary tests only): a fence runner (codex) calling a
-grant; the 5-minute idle-watchdog hold; engine-down queueing and redelivery; rotated endpoint 404
-after the grace window; a hop-limit ping-pong loop; decider failure at full.
+**No-model gates (2026-09-17/18).** Four of those gaps were closed without model spend: a stub
+`pi` binary (`PI_CLI_BIN`) played every role and the model decider, under monomind 2.11.0/2.11.1,
+`monoagentcli daemon` and an isolated home with no credentials. Scripts: `~/scratch/nomodel`.
+
+| Gate | Result |
+|---|---|
+| **Engine down** | The lead's message queued in `inbox.jsonl` (`endpoint: true`); monomind logged `endpoint-unreachable` after its 3 retries; the 60 s periodic retry delivered it 36 s after the engine started, the workflow ran, and the reply reached the lead at hop 2. |
+| **Endpoint rotation** | Old id accepted during the 5-minute grace and 404 after it; unknown id 404; two forged POSTs (no bus event) refused after the verify window with no execution. |
+| **Hop limit** | ping-bot ↔ pong-bot ran to hop 8 and hop 9 was refused (`refused_hops`), one chain, no runaway. |
+| **Decider failure at full** | `deny`: the question was answered "No decision could be made (…)", `org_complete` denied, both recorded `failed`; `human`: the item stayed pending. |
+
+Bugs these gates found: the receiver treated a run's own `org.send` as its reply, so an automation
+role whose workflow sends messages never answered its sender (fixed, `endpoint_reply` direction);
+a denied approval reached the requester as bare "DENIED" because monomind's approve/deny carries no
+text (fixed, C-52 message from `<org>:autonomy`); and monomind's `org reload` was a no-op under
+`org run`, so a rotated endpoint kept receiving at the old URL (fixed upstream in monomind 2.11.1,
+PR #254 — mono-agent's `rotate --applies now` is only truthful from that version on).
+
+Still not exercised live: a fence runner (codex) calling a grant, and the 5-minute idle-watchdog
+hold.
 
 Observed, outside this plan: monomind (2.10.23 and later, including the released 2.10.30)
 streams assistant text as deltas for incremental runtimes, and its `result` event has no `text`,
