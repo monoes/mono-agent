@@ -74,7 +74,10 @@ func newOrgGroupInitCmd(env *orgEnv) *cobra.Command {
 			if !ok {
 				return errInvalidInput("holding org %q needs exactly one root role", h.Name)
 			}
-			if _, err := orggrant.NewStore(db.DB).MergeOrgTools(ctx, profileID, h.Name, initiator.ID, orggroup.InitiatorOrgTools(h)); err != nil {
+			// Scope, not merge: init passes every Initiator tool over the
+			// holding org's current children, so a child removed from the
+			// config loses the Initiator on the next init.
+			if _, err := orggrant.NewStore(db.DB).SetOrgToolScope(ctx, profileID, h.Name, initiator.ID, orggroup.InitiatorOrgTools(h)); err != nil {
 				return err
 			}
 			if err := saveReportUp(ctx, env, db, profileID, root, docs); err != nil {

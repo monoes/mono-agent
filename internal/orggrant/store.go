@@ -183,6 +183,41 @@ func (s *Store) SetOrgTools(ctx context.Context, profileID, org, role string, to
 	return s.GetGrant(ctx, id)
 }
 
+// SetOrgToolScope sets the exact orgs each tool it names may act on,
+// leaving tools it does not name alone and dropping a named tool left with
+// no orgs. It is for callers that know a tool's whole current scope —
+// `org group init`, which passes every Initiator tool over the holding
+// org's children, so dropping a child takes the child back off the
+// Initiator. MergeOrgTools stays additive for callers that only ever know
+// one org at a time, such as a decider configured per child org.
+func (s *Store) SetOrgToolScope(ctx context.Context, profileID, org, role string, tools []OrgTool) (*Grant, error) {
+	grants, err := s.ListGrants(ctx, profileID, org, role)
+	if err != nil {
+		return nil, err
+	}
+	named := map[string]bool{}
+	for _, t := range tools {
+		named[t.Tool] = true
+	}
+	var out []OrgTool
+	for _, g := range grants {
+		if len(g.Tools) > 0 {
+			continue
+		}
+		for _, ot := range g.OrgTools {
+			if !named[ot.Tool] {
+				out = append(out, ot)
+			}
+		}
+	}
+	for _, t := range tools {
+		if len(t.Orgs) > 0 {
+			out = append(out, t)
+		}
+	}
+	return s.SetOrgTools(ctx, profileID, org, role, out)
+}
+
 // MergeOrgTools adds tools (and the orgs each may act on) to a role's
 // org-tool grant, keeping what it already holds.
 func (s *Store) MergeOrgTools(ctx context.Context, profileID, org, role string, add []OrgTool) (*Grant, error) {
