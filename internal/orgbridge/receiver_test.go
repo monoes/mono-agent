@@ -303,3 +303,38 @@ func TestReceiverGivesUpReplyingAfterMaxAttempts(t *testing.T) {
 		t.Fatalf("attempted the reply %d times, want %d", attempts, maxReplyAttempts)
 	}
 }
+
+// The daemon must already be watching an org that has a live automation
+// endpoint. Mux.Subscribe does not replay, and monomind emits the
+// confirming bus event right after its 202, so subscribing lazily on the
+// first POST loses that event: the first delivery to an org after each
+// daemon start sat pending for the whole VerifyWindow and Sweep refused it
+// as refused_grant ("direct POST?").
+func TestReceiverSubscribesEndpointOrgsAtStartup(t *testing.T) {
+	db := newTestDB(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if _, err := orggrant.NewStore(db).CreateEndpoint(ctx, "p", "growth", "bot", "wf"); err != nil {
+		t.Fatal(err)
+	}
+	followed := make(chan string, 4)
+	mux := NewMux(func(ctx context.Context, _, org, _ string, _ func([]byte)) error {
+		followed <- org
+		<-ctx.Done()
+		return nil
+	})
+	root := t.TempDir()
+	rcv := &Receiver{DB: db, Store: workflow.NewSQLiteWorkflowStore(db), Mux: mux,
+		RootOf: func(string) string { return root }}
+	go rcv.Run(ctx)
+
+	select {
+	case org := <-followed:
+		if org != "growth" {
+			t.Fatalf("followed %q, want growth", org)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no tail for the org of a live automation endpoint at startup — the first delivery's " +
+			"confirming bus event is missed and Sweep refuses it as refused_grant")
+	}
+}

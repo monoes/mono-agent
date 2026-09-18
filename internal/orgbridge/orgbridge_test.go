@@ -193,3 +193,61 @@ func TestParseRecordedBusEvents(t *testing.T) {
 		t.Fatalf("ask kind = %q", ask.QuestionKind())
 	}
 }
+
+// TestMuxSamplesResumeCursorBeforeStartingTheTail is a regression test: the
+// tail sampled its `since` cursor inside the spawned goroutine, so an event
+// the caller causes right after Subscribe returns — monomind emits the
+// confirming bus event immediately after its 202 — could be stamped before
+// the cursor and skipped as "older than the tail". The endpoint delivery
+// then sat pending for the whole VerifyWindow and Sweep refused it as
+// refused_grant, so the automation never ran and no reply was sent.
+func TestMuxSamplesResumeCursorBeforeStartingTheTail(t *testing.T) {
+	t0 := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
+	release := make(chan struct{})
+	var clockMu sync.Mutex
+	clock := t0
+	since := make(chan string, 1)
+
+	m := NewMux(func(ctx context.Context, _, _, s string, _ func([]byte)) error {
+		since <- s
+		<-ctx.Done()
+		return nil
+	})
+	// now() reads the clock and then parks until the test releases it, so a
+	// cursor sampled inside Subscribe parks Subscribe itself.
+	m.now = func() time.Time {
+		clockMu.Lock()
+		v := clock
+		clockMu.Unlock()
+		<-release
+		return v
+	}
+
+	subscribed := make(chan func(), 1)
+	go func() { subscribed <- m.Subscribe("/root", "growth", func(Event) {}) }()
+
+	select {
+	case <-subscribed:
+		t.Fatal("Subscribe returned without sampling the tail's resume cursor: it is sampled inside the goroutine, " +
+			"so an event the caller causes right after Subscribe returns is skipped as older than the tail")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	// Time moves on before the tail goroutine runs; the cursor must still
+	// be the one taken while Subscribe was running.
+	clockMu.Lock()
+	clock = t0.Add(time.Hour)
+	clockMu.Unlock()
+	close(release)
+
+	unsub := <-subscribed
+	defer unsub()
+	select {
+	case got := <-since:
+		if want := t0.Format(time.RFC3339Nano); got != want {
+			t.Fatalf("tail resumed from %q, want %q", got, want)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the tail never started")
+	}
+}

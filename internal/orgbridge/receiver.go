@@ -135,7 +135,7 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		writeJSONStatus(w, http.StatusOK, map[string]interface{}{"accepted": true, "duplicate": true})
 		return
 	}
-	r.ensureSubscribedLocked(*row)
+	r.ensureSubscribedLocked(row.ProfileID, row.OrgName)
 	verified := r.seenLocked(d.MessageID, row.OrgName, row.RoleID)
 	if !verified {
 		r.pending[d.MessageID] = &pendingDelivery{row: *row, d: d, deadline: time.Now().Add(r.VerifyWindow)}
@@ -188,14 +188,44 @@ func (r *Receiver) seenLocked(messageID, org, role string) bool {
 	return ok
 }
 
-func (r *Receiver) ensureSubscribedLocked(row orggrant.EndpointRow) {
-	root := r.RootOf(row.ProfileID)
-	k := tailKey{root, row.OrgName}
+func (r *Receiver) ensureSubscribedLocked(profileID, org string) {
+	root := r.RootOf(profileID)
+	k := tailKey{root, org}
 	if _, ok := r.subs[k]; ok {
 		return
 	}
-	org := row.OrgName
 	r.subs[k] = r.Mux.Subscribe(root, org, func(ev Event) { r.onEvent(org, ev) })
+}
+
+// subscribeLiveEndpoints starts a tail for every org that has a live
+// automation-role endpoint. Subscribing lazily on the first POST loses that
+// delivery's confirming bus event — Mux.Subscribe does not replay and
+// monomind emits the event right after its 202 — so the first delivery to
+// an org after each daemon start expired in Sweep as refused_grant and the
+// automation never ran.
+func (r *Receiver) subscribeLiveEndpoints(ctx context.Context) {
+	r.mu.Lock()
+	r.init()
+	r.mu.Unlock()
+	rows, err := r.DB.QueryContext(ctx, `SELECT DISTINCT profile_id, org_name FROM org_endpoints WHERE revoked_at IS NULL`)
+	if err != nil {
+		r.Logf("orgbridge: watching endpoint orgs: %v", err)
+		return
+	}
+	type orgRef struct{ profileID, org string }
+	var refs []orgRef
+	for rows.Next() {
+		var ref orgRef
+		if err := rows.Scan(&ref.profileID, &ref.org); err == nil {
+			refs = append(refs, ref)
+		}
+	}
+	rows.Close()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, ref := range refs {
+		r.ensureSubscribedLocked(ref.profileID, ref.org)
+	}
 }
 
 // onEvent marks bus-confirmed messages and dispatches deliveries waiting
@@ -261,8 +291,10 @@ func (r *Receiver) Sweep(ctx context.Context) {
 	}
 }
 
-// Run sweeps every few seconds until ctx ends.
+// Run watches every org with a live automation-role endpoint and sweeps
+// every few seconds until ctx ends.
 func (r *Receiver) Run(ctx context.Context) {
+	r.subscribeLiveEndpoints(ctx)
 	t := time.NewTicker(5 * time.Second)
 	defer t.Stop()
 	for {
