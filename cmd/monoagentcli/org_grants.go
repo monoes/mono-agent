@@ -4,12 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"sort"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -92,234 +89,6 @@ func capabilityWarnings(ctx context.Context, cap, feature string) []string {
 	return nil
 }
 
-// ─── org automation ──────────────────────────────────────────────────────
-
-func newOrgAutomationCmd(env *orgEnv) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "automation",
-		Short: "Manage the workflows that belong to an org (its automations)",
-	}
-	cmd.AddCommand(newOrgAutomationListCmd(env), newOrgAutomationUnassignedCmd(env),
-		newOrgAutomationAddCmd(env), newOrgAutomationRemoveCmd(env))
-	return cmd
-}
-
-type automationView struct {
-	WorkflowID       string   `json:"workflow_id"`
-	Alias            string   `json:"alias"`
-	Owned            bool     `json:"owned"`
-	WorkflowName     string   `json:"workflow_name"`
-	HasOutboundNodes bool     `json:"has_outbound_nodes"`
-	OutboundNodes    []string `json:"outbound_nodes"`
-	Exists           bool     `json:"exists"`
-}
-
-func viewAutomation(ctx context.Context, db *storage.Database, profileID string, a orgdesign.AutomationRef) automationView {
-	v := automationView{WorkflowID: a.WorkflowID, Alias: a.Alias, Owned: a.Owned, OutboundNodes: []string{}}
-	if wf, err := orgWorkflowIn(ctx, db, profileID, a.WorkflowID); err == nil {
-		v.Exists = true
-		v.WorkflowName = wf.Name
-		if out := orggrant.OutboundNodes(wf); len(out) > 0 {
-			v.OutboundNodes = out
-			v.HasOutboundNodes = true
-		}
-	}
-	return v
-}
-
-func newOrgAutomationListCmd(env *orgEnv) *cobra.Command {
-	return &cobra.Command{
-		Use:   "list <org>",
-		Short: "List an org's automations",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			db, profileID, _, doc, err := loadOrgForEdit(env, args[0])
-			if err != nil {
-				return err
-			}
-			items := []automationView{}
-			for _, a := range doc.Automations {
-				items = append(items, viewAutomation(cmd.Context(), db, profileID, a))
-			}
-			return printJSONValue(map[string]interface{}{"v": 1, "org": doc.Name, "automations": items})
-		},
-	}
-}
-
-func newOrgAutomationUnassignedCmd(env *orgEnv) *cobra.Command {
-	return &cobra.Command{
-		Use:   "unassigned",
-		Short: "List workflows in this profile that belong to no org",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			db, profileID, root, err := env.Profile()
-			if err != nil {
-				return err
-			}
-			docs, _, err := orgdesign.LoadAll(root)
-			if err != nil {
-				return err
-			}
-			member := map[string]bool{}
-			for _, d := range docs {
-				for _, a := range d.Automations {
-					member[a.WorkflowID] = true
-				}
-			}
-			wfs, err := newHybridStore(db).ListWorkflows(cmd.Context(), profileID)
-			if err != nil {
-				return err
-			}
-			type item struct {
-				ID       string `json:"id"`
-				Name     string `json:"name"`
-				IsActive bool   `json:"is_active"`
-			}
-			out := []item{}
-			for _, wf := range wfs {
-				owner := wf.ProfileID
-				if owner == "" {
-					owner = "default"
-				}
-				if owner != profileID || member[wf.ID] {
-					continue
-				}
-				out = append(out, item{ID: wf.ID, Name: wf.Name, IsActive: wf.IsActive})
-			}
-			sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name) })
-			return printJSONValue(map[string]interface{}{"v": 1, "workflows": out})
-		},
-	}
-}
-
-func newOrgAutomationAddCmd(env *orgEnv) *cobra.Command {
-	var workflowID, alias string
-	var owned bool
-	c := &cobra.Command{
-		Use:   "add <org>",
-		Short: "Add a workflow to an org as an automation",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
-			db, profileID, root, doc, err := loadOrgForEdit(env, args[0])
-			if err != nil {
-				return err
-			}
-			if !orgdesign.ValidAlias(alias) {
-				return fmt.Errorf("alias %q must be lowercase letters, digits, and underscores, start with a letter, and not be human, workflow, status, or output", alias)
-			}
-			if doc.FindAutomation(alias) != nil {
-				return fmt.Errorf("org %q already has an automation called %q", doc.Name, alias)
-			}
-			if r, _ := doc.FindRole(alias); r != nil {
-				return fmt.Errorf("alias %q is already a role id in org %q", alias, doc.Name)
-			}
-			if _, err := orgWorkflowIn(ctx, db, profileID, workflowID); err != nil {
-				return err
-			}
-			for _, a := range doc.Automations {
-				if a.WorkflowID == workflowID {
-					return fmt.Errorf("workflow %q is already automation %q of org %q", workflowID, a.Alias, doc.Name)
-				}
-			}
-			if owned {
-				docs, _, err := orgdesign.LoadAll(root)
-				if err != nil {
-					return err
-				}
-				for _, other := range docs {
-					if other.Name == doc.Name {
-						continue
-					}
-					for _, a := range other.Automations {
-						if a.WorkflowID == workflowID && a.Owned {
-							return fmt.Errorf("workflow %q is already owned by org %q; an automation has at most one owner", workflowID, other.Name)
-						}
-					}
-				}
-			}
-			ref := orgdesign.AutomationRef{WorkflowID: workflowID, Alias: alias, Owned: owned}
-			doc.Automations = append(doc.Automations, ref)
-			prefillFence(doc)
-			if _, err := saveOrgReconciled(ctx, db, profileID, root, doc, env.genOptions(profileID)); err != nil {
-				return err
-			}
-			return printJSONValue(map[string]interface{}{"v": 1, "org": doc.Name, "automation": viewAutomation(ctx, db, profileID, ref)})
-		},
-	}
-	c.Flags().StringVar(&workflowID, "workflow", "", "Workflow id")
-	c.Flags().StringVar(&alias, "alias", "", "Name the org uses for it (becomes the tool automation_<alias>)")
-	c.Flags().BoolVar(&owned, "owned", false, "This org owns the workflow's lifecycle")
-	_ = c.MarkFlagRequired("workflow")
-	_ = c.MarkFlagRequired("alias")
-	return c
-}
-
-// prefillFence turns on monomind's message fence for an org the first time
-// it gains an automation: automation replies are untrusted content (§8
-// layer 7). An operator who removes the fence key keeps it removed — this
-// only fills a missing key.
-func prefillFence(doc *orgdesign.Doc) {
-	if _, ok := doc.Extra["fence"]; ok {
-		return
-	}
-	if doc.Extra == nil {
-		doc.Extra = map[string]json.RawMessage{}
-	}
-	doc.Extra["fence"] = json.RawMessage(`{"enabled":true,"scanMessages":true}`)
-}
-
-func newOrgAutomationRemoveCmd(env *orgEnv) *cobra.Command {
-	var alias string
-	c := &cobra.Command{
-		Use:   "remove <org>",
-		Short: "Remove an automation from an org, revoking every grant to it",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
-			db, profileID, root, doc, err := loadOrgForEdit(env, args[0])
-			if err != nil {
-				return err
-			}
-			ref := doc.FindAutomation(alias)
-			if ref == nil {
-				return fmt.Errorf("org %q has no automation %q", doc.Name, alias)
-			}
-			for _, r := range doc.Roles {
-				if r.IsEndpoint() && r.Automation != nil && r.Automation.WorkflowID == ref.WorkflowID {
-					return fmt.Errorf("automation role %q runs this workflow; remove it first with `org automation-role remove %s --role %s`", r.ID, doc.Name, r.ID)
-				}
-			}
-			kept := doc.Automations[:0:0]
-			for _, a := range doc.Automations {
-				if a.Alias != alias {
-					kept = append(kept, a)
-				}
-			}
-			doc.Automations = kept
-			for i := range doc.Roles {
-				specs := doc.Roles[i].Automations[:0:0]
-				for _, g := range doc.Roles[i].Automations {
-					if g.Alias != alias {
-						specs = append(specs, g)
-					}
-				}
-				doc.Roles[i].Automations = specs
-			}
-			if _, err := orggrant.NewStore(db.DB).RevokeAlias(ctx, profileID, doc.Name, alias); err != nil {
-				return err
-			}
-			if _, err := saveOrgReconciled(ctx, db, profileID, root, doc, env.genOptions(profileID)); err != nil {
-				return err
-			}
-			return printJSONValue(map[string]interface{}{"v": 1, "org": doc.Name, "removed": true})
-		},
-	}
-	c.Flags().StringVar(&alias, "alias", "", "Automation alias")
-	_ = c.MarkFlagRequired("alias")
-	return c
-}
-
 // ─── org grant ───────────────────────────────────────────────────────────
 
 func newOrgGrantCmd(env *orgEnv) *cobra.Command {
@@ -348,6 +117,8 @@ type grantView struct {
 	MaxOutputBytes  int    `json:"max_output_bytes"`
 	CreatedAt       string `json:"created_at"`
 	WorkflowMissing bool   `json:"workflow_missing,omitempty"`
+	// FileInputNodes: see automationView (C-46).
+	FileInputNodes []orggrant.FileInputNode `json:"file_input_nodes"`
 }
 
 func viewGrant(ctx context.Context, db *storage.Database, g orggrant.Grant) grantView {
@@ -356,7 +127,8 @@ func viewGrant(ctx context.Context, db *storage.Database, g orggrant.Grant) gran
 		ID: g.ID, Org: g.OrgName, Role: g.RoleID, Alias: t.Alias, WorkflowID: t.WorkflowID,
 		Mode: t.Mode, Wait: t.Wait, TimeoutSeconds: t.Timeout, Approval: t.Approval, Tier: t.Tier,
 		MaxCallsPerRun: t.MaxCallsPerRun, MaxCallsPerDay: t.MaxCallsPerDay, MaxOutputBytes: t.MaxOutputBytes,
-		CreatedAt: g.CreatedAt.UTC().Format(time.RFC3339),
+		CreatedAt:      g.CreatedAt.UTC().Format(time.RFC3339),
+		FileInputNodes: []orggrant.FileInputNode{},
 	}
 	// The tier follows the workflow as it is now, not as it was at grant
 	// time: adding an email node to a granted workflow raises its calls to
@@ -364,6 +136,9 @@ func viewGrant(ctx context.Context, db *storage.Database, g orggrant.Grant) gran
 	if wf, err := orgWorkflowIn(ctx, db, g.ProfileID, t.WorkflowID); err == nil {
 		v.WorkflowName = wf.Name
 		v.Tier = orggrant.GrantTier(orggrant.OutboundNodes(wf))
+		if fi := orggrant.FileInputNodes(wf); len(fi) > 0 {
+			v.FileInputNodes = fi
+		}
 	} else {
 		v.WorkflowMissing = true
 	}
@@ -478,6 +253,9 @@ func newOrgGrantAddCmd(env *orgEnv) *cobra.Command {
 			if !containsString(r.PolicyStrings("denyTools"), "Bash") {
 				warnings = append(warnings, fmt.Sprintf("role %q can use Bash, which can run monoagentcli directly and bypass its grants", role))
 			}
+			if w := orggrant.FileInputWarning(orggrant.FileInputNodes(wf)); w != "" {
+				warnings = append(warnings, w) // C-46
+			}
 			return printJSONValue(map[string]interface{}{
 				"v": 1, "org": doc.Name, "grant": viewGrant(ctx, db, *g),
 				"tool_name": orgdesign.ProviderName + "__automation_" + alias,
@@ -530,89 +308,6 @@ func newOrgGrantRemoveCmd(env *orgEnv) *cobra.Command {
 	c.Flags().StringVar(&alias, "automation", "", "Automation alias")
 	_ = c.MarkFlagRequired("role")
 	_ = c.MarkFlagRequired("automation")
-	return c
-}
-
-// ─── org effective-tools ─────────────────────────────────────────────────
-
-// orgToolNames are the tools monomind's buildOrgTools gives every agent
-// role (session.ts), and bossOrgTools the ones only the boss gets. Kept here
-// as a display list; monomind remains the authority.
-var orgToolNames = []string{
-	"org_send", "ask_human", "org_gate", "org_task", "org_task_done", "org_tasks",
-	"org_task_split", "org_task_merge", "org_task_cancel", "org_task_block", "org_plan_graph",
-	"org_recall", "org_remember", "org_learn",
-}
-var bossOrgTools = []string{"org_complete", "org_respawn_role", "org_list_runtime_options"}
-
-// builtinRuntimeTools are the runtime's own tools a role has unless policy
-// denies them.
-var builtinRuntimeTools = []string{"Read", "Write", "Edit", "Glob", "Grep", "Bash", "WebFetch", "WebSearch"}
-
-func newOrgEffectiveToolsCmd(env *orgEnv) *cobra.Command {
-	var role string
-	c := &cobra.Command{
-		Use:   "effective-tools <org>",
-		Short: "List the tools a role's model sees: org tools, granted automations, and runtime tools",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			db, profileID, _, doc, err := loadOrgForEdit(env, args[0])
-			if err != nil {
-				return err
-			}
-			r, _ := doc.FindRole(role)
-			if r == nil {
-				return fmt.Errorf("org %q has no role %q", doc.Name, role)
-			}
-			type tool struct {
-				Name        string `json:"name"`
-				Source      string `json:"source"`
-				Description string `json:"description"`
-			}
-			tools := []tool{}
-			if r.IsEndpoint() {
-				return printJSONValue(map[string]interface{}{"v": 1, "org": doc.Name, "role": role, "tools": tools})
-			}
-			deny := map[string]bool{}
-			for _, d := range r.PolicyStrings("denyTools") {
-				deny[d] = true
-			}
-			allow := r.PolicyStrings("allowTools")
-			for _, n := range orgToolNames {
-				tools = append(tools, tool{Name: n, Source: "org", Description: "monomind org tool"})
-			}
-			if r.ReportsTo == nil {
-				for _, n := range bossOrgTools {
-					tools = append(tools, tool{Name: n, Source: "org", Description: "monomind org tool (boss only)"})
-				}
-			}
-			grants, err := orggrant.NewStore(db.DB).ListGrants(cmd.Context(), profileID, doc.Name, role)
-			if err != nil {
-				return err
-			}
-			for _, name := range orggrant.ProviderToolNames(grants) {
-				desc := "granted automation tool"
-				for _, g := range grants {
-					if t := g.Automation(); t != nil && t.Tool == name {
-						desc = fmt.Sprintf("runs automation %q (%s, approval %s)", t.Alias, t.Mode, t.Approval)
-					}
-				}
-				if deny[orgdesign.ProviderName+"__"+name] {
-					continue
-				}
-				tools = append(tools, tool{Name: orgdesign.ProviderName + "__" + name, Source: "grant", Description: desc})
-			}
-			for _, n := range builtinRuntimeTools {
-				if deny[n] || (len(allow) > 0 && !containsString(allow, n)) {
-					continue
-				}
-				tools = append(tools, tool{Name: n, Source: "builtin", Description: "runtime tool"})
-			}
-			return printJSONValue(map[string]interface{}{"v": 1, "org": doc.Name, "role": role, "tools": tools})
-		},
-	}
-	c.Flags().StringVar(&role, "role", "", "Role id")
-	_ = c.MarkFlagRequired("role")
 	return c
 }
 

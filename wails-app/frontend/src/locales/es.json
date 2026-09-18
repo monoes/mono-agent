@@ -71,5 +71,18 @@
       "label": "Idioma de la interfaz",
       "hint": "Piloto: solo inglés y español — consulta docs/i18n.md"
     }
+  },
+  "grantDialog": {
+    "fileInput": {
+      "title": "Este flujo de trabajo lee o escribe archivos en rutas tomadas de su entrada.",
+      "confined": "Cuando {{role}} lo llama, esos nodos quedan confinados al directorio de trabajo del rol; las rutas fuera de él se rechazan.",
+      "unconfined": "{{nodes}} no se puede confinar y puede llegar a cualquier archivo al que tú llegues.",
+      "access": {
+        "read": "lee",
+        "write": "escribe",
+        "read_write": "lee y escribe",
+        "exec": "ejecuta un comando"
+      }
+    }
   }
 }
