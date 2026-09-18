@@ -8,7 +8,7 @@ import (
 	"strconv"
 
 	"github.com/monoes/mono-agent/internal/workflow"
-	"github.com/xuri/excelize/v2"
+	"github.com/monoes/mono-agent/internal/xlsx"
 )
 
 // SpreadsheetNode reads or writes CSV/XLSX files.
@@ -96,13 +96,13 @@ func (n *SpreadsheetNode) writeCSV(filePath string, items []workflow.Item, hasHe
 }
 
 func (n *SpreadsheetNode) readXLSX(filePath, sheet string, hasHeader bool) ([]workflow.NodeOutput, error) {
-	xl, err := excelize.OpenFile(filePath)
+	xl, err := xlsx.OpenFile(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("data.spreadsheet read_xlsx: open %q: %w", filePath, err)
 	}
 	defer xl.Close()
 
-	rows, err := xl.GetRows(sheet)
+	rows, err := xl.Rows(sheet)
 	if err != nil {
 		return nil, fmt.Errorf("data.spreadsheet read_xlsx: get rows from sheet %q: %w", sheet, err)
 	}
@@ -112,35 +112,17 @@ func (n *SpreadsheetNode) readXLSX(filePath, sheet string, hasHeader bool) ([]wo
 }
 
 func (n *SpreadsheetNode) writeXLSX(filePath, sheet string, items []workflow.Item, hasHeader bool) ([]workflow.NodeOutput, error) {
-	xl := excelize.NewFile()
-	defer xl.Close()
-
-	// Rename default sheet or create new
-	defaultSheet := xl.GetSheetName(0)
-	if defaultSheet != sheet {
-		xl.SetSheetName(defaultSheet, sheet)
-	}
-
 	rows, headers := itemsToRows(items, hasHeader)
-	rowNum := 1
 
+	sheetRows := make([][]any, 0, len(rows)+1)
 	if hasHeader && len(headers) > 0 {
-		for col, h := range headers {
-			cell, _ := excelize.CoordinatesToCellName(col+1, rowNum)
-			xl.SetCellValue(sheet, cell, h)
-		}
-		rowNum++
+		sheetRows = append(sheetRows, toAnyRow(headers))
 	}
-
 	for _, row := range rows {
-		for col, val := range row {
-			cell, _ := excelize.CoordinatesToCellName(col+1, rowNum)
-			xl.SetCellValue(sheet, cell, val)
-		}
-		rowNum++
+		sheetRows = append(sheetRows, toAnyRow(row))
 	}
 
-	if err := xl.SaveAs(filePath); err != nil {
+	if err := xlsx.WriteFile(filePath, sheet, sheetRows); err != nil {
 		return nil, fmt.Errorf("data.spreadsheet write_xlsx: save %q: %w", filePath, err)
 	}
 
@@ -216,4 +198,15 @@ func itemsToRows(items []workflow.Item, hasHeader bool) ([][]string, []string) {
 	}
 
 	return rows, keyOrder
+}
+
+// toAnyRow widens a row of cell text for the xlsx writer. itemsToRows has
+// already rendered every value as a string, so cells are written as text —
+// the same as before, when excelize was handed strings too.
+func toAnyRow(row []string) []any {
+	out := make([]any, len(row))
+	for i, v := range row {
+		out[i] = v
+	}
+	return out
 }
