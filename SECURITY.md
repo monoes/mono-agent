@@ -271,7 +271,9 @@ layers, from strongest:
    automation.
 4. **Automation-role endpoints.** `POST /org-endpoint/{id}` on the daemon's
    API. The id is a 130-bit capability, checked in constant time;
-   non-loopback callers need the endpoint's 0600 credential file. A
+   non-loopback callers need the endpoint's 0600 credential file (on
+   Windows: owned by the daemon user, SYSTEM or Administrators, with no
+   ACE granting anyone else access). A
    delivery runs only after the same `messageId` appears on the org's bus
    addressed to that role, so a role that read the id from the org file
    cannot POST around `org_send`. Rotation keeps the old id for 5 minutes.

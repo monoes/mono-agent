@@ -11,12 +11,12 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/monoes/mono-agent/internal/credfile"
 	"github.com/monoes/mono-agent/internal/orgdesign"
 	"github.com/monoes/mono-agent/internal/orggrant"
 	"github.com/monoes/mono-agent/internal/workflow"
@@ -158,8 +158,11 @@ func checkEndpointAuth(req *http.Request, row *orggrant.EndpointRow) (string, in
 		if err != nil {
 			return "endpoint credential unavailable", http.StatusServiceUnavailable
 		}
-		if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
-			return "endpoint credential file must be mode 0600", http.StatusServiceUnavailable
+		if err := credfile.CheckOwnerOnly(row.CredentialFile, info); err != nil {
+			if errors.Is(err, credfile.ErrInsecure) {
+				return "endpoint credential file " + err.Error(), http.StatusServiceUnavailable
+			}
+			return "endpoint credential unavailable", http.StatusServiceUnavailable
 		}
 		want, err := os.ReadFile(row.CredentialFile)
 		if err != nil {

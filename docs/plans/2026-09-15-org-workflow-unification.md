@@ -981,5 +981,15 @@ ordinary `startOrg` runs.
   either).
 - C-46: automation input paths are not confined to the role's workdir; documented in SECURITY.md.
 - `needs-you` reports `idle_stop_in_seconds: null` (monomind exposes no idle deadline).
-- Windows: credential-file mode checks are skipped and provider process groups are not killed.
+- Windows (C-14), closed 2026-09-18 on the mono-agent side, verified only by cross-compiling
+  (`GOOS=windows` build, vet and `go test -c`); the Windows-only tests have not been run on
+  Windows. The endpoint receiver's credential-file check (`internal/credfile`) reads the owner
+  and DACL there: the owner must be the current user, SYSTEM or Administrators, and no allow ACE
+  may name another account. Children mono-agent kills (`monomind.Exec`, `OrgRun`, `OrgEvents`,
+  `OrgServeRun`) run in a Job Object with KILL_ON_JOB_CLOSE and BREAKAWAY_OK, and a kill
+  terminates the job (fallback `taskkill /T /F`). Still open: a grandchild spawned before the
+  job assignment right after `Start` escapes it; the detached `OrgServeStart`/`OrgRunStart`
+  children get no job (as on unix, nothing here kills them); `wails-app`'s chat subprocess
+  still kills only the direct child on Windows; monomind's own `credential_file` check (M2)
+  is in the monomind repo.
 - `docs/screenshots/` walkthrough for Phase 5.

@@ -28,3 +28,8 @@ func killProcessGroup(cmd *exec.Cmd, pgid int) {
 	_ = syscall.Kill(-pgid, syscall.SIGTERM)
 	_ = syscall.Kill(-pgid, syscall.SIGKILL)
 }
+
+// attachProcessGroup is called right after cmd.Start for a child this process
+// will kill with killProcessGroup. Setpgid already made the group, so there
+// is nothing to attach on unix; the returned release is a no-op.
+func attachProcessGroup(*exec.Cmd) (release func()) { return func() {} }
