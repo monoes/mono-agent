@@ -467,8 +467,18 @@ func (a *App) reconcileOrgDoc(root string, d *orgdesign.Doc, isNew bool) error {
 	ctx := context.Background()
 	store := orgdecide.NewStore(a.db)
 	if isNew {
+		// Same rule as cmd/monoagentcli's ensureNewOrgAutonomy: mid by
+		// default (Q8), manual when the document asks for it, and the
+		// document's decider policy text carried over — a document can never
+		// start an org at full.
 		if row, err := store.Get(ctx, profileID, d.Name); err == nil && !row.Stored {
 			row.Level = orgdesign.LevelMid
+			if d.Autonomy != nil && d.Autonomy.Level == orgdesign.LevelManual {
+				row.Level = orgdesign.LevelManual
+			}
+			if d.Autonomy != nil && d.Autonomy.Policy != "" {
+				row.Policy = d.Autonomy.Policy
+			}
 			if err := store.Put(ctx, row, "gui"); err != nil {
 				return err
 			}

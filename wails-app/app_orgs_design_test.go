@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/monoes/mono-agent/internal/orgdecide"
 	"github.com/monoes/mono-agent/internal/orgdesign"
 	"github.com/monoes/mono-agent/internal/orggrant"
 )
@@ -104,5 +105,31 @@ func TestSaveOrgDoc_RejectedSaveLeavesGrantRowsIntact(t *testing.T) {
 	}
 	if len(back.Roles) != 2 {
 		t.Fatalf("rolled-back file has %d roles, want 2", len(back.Roles))
+	}
+}
+
+// TestReconcileOrgDoc_NewOrgKeepsDocumentAutonomyPolicy: creating an org from
+// a document that carries an autonomy block must keep its decider policy
+// text, exactly as cmd/monoagentcli's ensureNewOrgAutonomy does.
+func TestReconcileOrgDoc_NewOrgKeepsDocumentAutonomyPolicy(t *testing.T) {
+	fakeValidateCLI(t, `{"v":1,"org":"growth","valid":true}`)
+	a, root := newOrgDesignApp(t)
+	ctx := context.Background()
+
+	d := twoRoleDoc()
+	d.Autonomy = &orgdesign.Autonomy{Level: orgdesign.LevelManual, Policy: "never spend money without asking"}
+	if _, err := a.saveOrgDoc(root, d); err != nil {
+		t.Fatalf("saveOrgDoc: %v", err)
+	}
+
+	row, err := orgdecide.NewStore(a.db).Get(ctx, "gui", "growth")
+	if err != nil {
+		t.Fatalf("autonomy Get: %v", err)
+	}
+	if row.Policy != "never spend money without asking" {
+		t.Errorf("starting autonomy policy = %q, want the document's policy text", row.Policy)
+	}
+	if row.Level != orgdesign.LevelManual {
+		t.Errorf("starting autonomy level = %q, want manual (the document asked for it)", row.Level)
 	}
 }
