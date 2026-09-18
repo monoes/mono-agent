@@ -28,3 +28,21 @@ func killProcessGroup(cmd *exec.Cmd, pgid int) {
 	_ = syscall.Kill(-pgid, syscall.SIGTERM)
 	_ = syscall.Kill(-pgid, syscall.SIGKILL)
 }
+
+// signalServe sends SIGTERM (or SIGKILL when kill) to a serve daemon's
+// process group, falling back to the pid alone when it leads no group (a
+// serve started by hand, outside OrgServeStart).
+func signalServe(pid int, kill bool) error {
+	sig := syscall.SIGTERM
+	if kill {
+		sig = syscall.SIGKILL
+	}
+	err := syscall.Kill(-pid, sig)
+	if err == syscall.ESRCH {
+		err = syscall.Kill(pid, sig)
+	}
+	if err == syscall.ESRCH {
+		return nil // already gone
+	}
+	return err
+}

@@ -3,6 +3,7 @@
 package monomind
 
 import (
+	"os"
 	"os/exec"
 )
 
@@ -17,4 +18,15 @@ func killProcessGroup(cmd *exec.Cmd, _ int) {
 	if cmd.Process != nil {
 		_ = cmd.Process.Kill()
 	}
+}
+
+// signalServe kills a serve daemon by pid: Windows has no SIGTERM, so both
+// steps are a kill, and its agent-CLI grandchildren are not reached (plan
+// §15 "Windows: provider process groups are not killed").
+func signalServe(pid int, _ bool) error {
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return nil // already gone
+	}
+	return p.Kill()
 }
