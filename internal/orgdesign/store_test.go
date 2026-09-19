@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"testing"
 )
 
@@ -200,6 +202,18 @@ func TestIsOrgConfigFile(t *testing.T) {
 		"issues-triage.json":          true, // substring "issues" but not the "-issues" SUFFIX
 		"x.json.tmp":                  false,
 		"notjson.txt":                 false,
+		// A .json in the orgs folder is not automatically an org. Any stem
+		// that could not be an org name never was one: monomind refuses
+		// every operation on it ("invalid org name"), so listing it only
+		// produced a phantom the designer then flagged as an org with no
+		// root role.
+		".mcp.json":          false,
+		".claude.json":       false,
+		".DS_Store.json":     false,
+		"-leading-dash.json": false,
+		"has space.json":     false,
+		"weird@name.json":    false,
+		"UPPER_and-9.json":   true,
 	}
 	for name, want := range cases {
 		if got := IsOrgConfigFile(name); got != want {
@@ -288,5 +302,42 @@ func TestSaveRefusesInvalidDoc(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, orgDir, "bad.json")); !os.IsNotExist(err) {
 		t.Fatal("Save must not write a file when validation fails")
+	}
+}
+
+// A real orgs folder holds more than orgs: tool configs, dot-directories,
+// whatever a user drops in. Listing a .mcp.json as an org named ".mcp" is
+// what put a permanently broken entry at the top of the GUI's org list —
+// "no root role — exactly one role must have reports_to: null" — while every
+// actual org was fine.
+func TestListOrgNamesSkipsFilesThatAreNotOrgs(t *testing.T) {
+	root := t.TempDir()
+	dir := OrgsDir(root)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{
+		"growth.json", "docs-team.json", // real orgs
+		".mcp.json", ".claude.json", // tool configs that live alongside them
+		"growth-state.json", "growth-threads.json", // org artifacts
+		"notes.txt", // not json at all
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(`{"name":"x"}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A dot-directory alongside them must not confuse the walk either.
+	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	names, err := ListOrgNames(root)
+	if err != nil {
+		t.Fatalf("ListOrgNames: %v", err)
+	}
+	want := []string{"docs-team", "growth"}
+	sort.Strings(names)
+	if !reflect.DeepEqual(names, want) {
+		t.Fatalf("ListOrgNames = %v, want %v", names, want)
 	}
 }
