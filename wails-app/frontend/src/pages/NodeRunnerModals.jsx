@@ -211,7 +211,7 @@ export function WorkflowsModal({ currentId, onLoad, onDelete, onClose }) {
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: '#e2e8f0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{wf.name || 'Untitled'}</div>
                 <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-muted)', marginTop: 2 }}>
-                  {(wf.nodes || []).length} nodes · v{wf.version || 1} · {wf.updated_at ? new Date(wf.updated_at).toLocaleString() : ''}
+                  {wf.node_count ?? (wf.nodes || []).length} nodes · v{wf.version || 1} · {wf.updated_at ? new Date(wf.updated_at).toLocaleString() : ''}
                 </div>
               </div>
               <button

@@ -1132,6 +1132,7 @@ export namespace main {
 	    version: number;
 	    created_at: string;
 	    updated_at: string;
+	    node_count: number;
 	    nodes: WorkflowNodeData[];
 	    connections: WorkflowConnectionData[];
 	
@@ -1148,6 +1149,7 @@ export namespace main {
 	        this.version = source["version"];
 	        this.created_at = source["created_at"];
 	        this.updated_at = source["updated_at"];
+	        this.node_count = source["node_count"];
 	        this.nodes = this.convertValues(source["nodes"], WorkflowNodeData);
 	        this.connections = this.convertValues(source["connections"], WorkflowConnectionData);
 	    }
@@ -1194,6 +1196,7 @@ export namespace main {
 	    version: number;
 	    created_at: string;
 	    updated_at: string;
+	    node_count: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new WorkflowSummary(source);
@@ -1208,6 +1211,7 @@ export namespace main {
 	        this.version = source["version"];
 	        this.created_at = source["created_at"];
 	        this.updated_at = source["updated_at"];
+	        this.node_count = source["node_count"];
 	    }
 	}
 

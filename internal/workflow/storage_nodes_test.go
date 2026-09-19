@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -392,5 +393,59 @@ func TestMigration026_ProfileDefaultIndex(t *testing.T) {
 	}
 	if len(listed) != 2 {
 		t.Fatalf("expected 2 workflows for profile default, got %d", len(listed))
+	}
+}
+
+// ListWorkflows leaves Nodes unpopulated so listing stays cheap, which left
+// the GUI's workflow list with nothing to count: it showed "0 nodes" for
+// every workflow, including a freshly created two-node one.
+func TestNodeCounts(t *testing.T) {
+	s, _ := newMigratedStore(t)
+	ctx := context.Background()
+
+	for _, wf := range []struct {
+		id, profile string
+		nodes       int
+	}{
+		{"two-nodes", "p1", 2},
+		{"empty", "p1", 0},
+		{"other-profile", "p2", 3},
+	} {
+		if err := s.CreateWorkflow(ctx, &Workflow{ID: wf.id, Name: wf.id, ProfileID: wf.profile}); err != nil {
+			t.Fatalf("create %s: %v", wf.id, err)
+		}
+		nodes := make([]WorkflowNode, 0, wf.nodes)
+		for i := 0; i < wf.nodes; i++ {
+			nodes = append(nodes, testNode(fmt.Sprintf("%s-n%d", wf.id, i), "trigger.manual"))
+		}
+		if len(nodes) > 0 {
+			if err := s.SaveWorkflowNodes(ctx, wf.id, nodes); err != nil {
+				t.Fatalf("save nodes for %s: %v", wf.id, err)
+			}
+		}
+	}
+
+	counts, err := s.NodeCounts(ctx, "p1")
+	if err != nil {
+		t.Fatalf("NodeCounts: %v", err)
+	}
+	if counts["two-nodes"] != 2 {
+		t.Errorf("two-nodes = %d, want 2", counts["two-nodes"])
+	}
+	// A workflow with no nodes must still be present as 0, not missing —
+	// "0 nodes" is the right answer for it, unlike for the one above.
+	if n, ok := counts["empty"]; !ok || n != 0 {
+		t.Errorf("empty = %d (present %v), want 0 and present", n, ok)
+	}
+	if _, leaked := counts["other-profile"]; leaked {
+		t.Error("another profile's workflow leaked into the counts")
+	}
+
+	all, err := s.NodeCounts(ctx, "")
+	if err != nil {
+		t.Fatalf("NodeCounts(all): %v", err)
+	}
+	if all["other-profile"] != 3 || all["two-nodes"] != 2 {
+		t.Errorf("unscoped counts = %v", all)
 	}
 }
