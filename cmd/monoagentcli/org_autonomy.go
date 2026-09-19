@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -226,6 +227,7 @@ func checkDeciderAvailable(ctx context.Context, root, org string, a *orgdecide.A
 var (
 	scanAgentRuntimes = monomind.Scan
 	listRuntimeModels = monomind.ListModels
+	orgStatusJSON     = monomind.OrgStatus
 )
 
 // checkDeciderModel rejects a model the decider's runtime does not have.
@@ -410,6 +412,7 @@ func needsYou(ctx context.Context, db *storage.Database, profileID, root, org st
 	}
 	_, daemonLive := daemonhb.Read()
 	level := a.EffectiveLevel(time.Now())
+	idleSeconds, idleHold := idleDeadline(ctx, root, org)
 	out := []map[string]interface{}{}
 	for _, it := range pending {
 		human := !daemonLive || orgdecide.Route(level, it.Tier) == orgdecide.RouteHuman
@@ -430,10 +433,46 @@ func needsYou(ctx context.Context, db *storage.Database, profileID, root, org st
 		}
 		out = append(out, map[string]interface{}{
 			"kind": it.Kind, "ref": it.Ref, "requester": it.Requester, "class": it.Class, "tier": it.Tier,
-			"summary": it.Summary, "waiting_since": waiting, "idle_stop_in_seconds": nil,
+			"summary": it.Summary, "waiting_since": waiting,
+			"idle_stop_in_seconds": idleSeconds, "idle_hold": idleHold,
 		})
 	}
 	return out, nil
+}
+
+// idleDeadline reports how long a running org has before its idle watchdog
+// stops it, and what is holding the watchdog off.
+//
+// "Answer this or the org stops in N seconds" is the difference between a
+// pending item and a deadline, and needs-you reported it as null for every
+// item because nothing ever filled it in. monomind publishes both in `org
+// status --json` under the org-idle-deadline capability; a legitimate wait
+// (a pending approval, question or gate) reports a hold and no deadline,
+// which is exactly what a person needs to see.
+//
+// Both are nil when the org is not running, when monomind is older than the
+// capability, or when status cannot be read — the list is worth showing
+// without them.
+func idleDeadline(ctx context.Context, root, org string) (interface{}, interface{}) {
+	raw, err := orgStatusJSON(ctx, root, org)
+	if err != nil {
+		return nil, nil
+	}
+	var st struct {
+		IdleStopInSeconds *float64 `json:"idle_stop_in_seconds"`
+		IdleHold          *string  `json:"idle_hold"`
+	}
+	if err := json.Unmarshal(raw, &st); err != nil {
+		return nil, nil
+	}
+	var seconds, hold interface{}
+	if st.IdleStopInSeconds != nil {
+		seconds = *st.IdleStopInSeconds
+	}
+	if st.IdleHold != nil && *st.IdleHold != "" {
+		hold = *st.IdleHold
+	}
+	return seconds, hold
 }
 
 // ensureNewOrgAutonomy gives an org created by an explicit command its
