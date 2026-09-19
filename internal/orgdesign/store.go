@@ -78,7 +78,12 @@ func IsOrgConfigFile(filename string) bool {
 			return false
 		}
 	}
-	return true
+	// The stem has to be a name an org could actually have. Any other .json
+	// that happens to sit in the orgs folder — .mcp.json, a tool's config,
+	// something a user dropped there — is not an org, and listing it produced
+	// a phantom that monomind then refused every operation on ("invalid org
+	// name") while the designer reported it as an org with no root role.
+	return ValidOrgName(strings.TrimSuffix(filename, ".json"))
 }
 
 // IsOrgArtifactFile reports whether filename is org's own artifact file —
