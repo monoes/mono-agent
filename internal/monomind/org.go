@@ -461,16 +461,24 @@ func OrgEvents(ctx context.Context, projectRoot, name string, opts OrgEventsOpti
 	}()
 
 	waitCh := make(chan error, 1)
-	go func() { waitCh <- cmd.Wait() }()
+	go func() {
+		// Wait closes the stdout pipe as soon as the process exits, and the
+		// os/exec docs are explicit that calling it before every read has
+		// completed is incorrect. Running it concurrently with the scanner
+		// meant a fast-exiting `org events` could have its last lines closed
+		// out from under the reader: the caller silently saw fewer events, or
+		// none. It showed up as a CI-only test failure ("delivered 0 lines,
+		// want 2") because losing the race needs the machine to be busy.
+		<-readerDone
+		waitCh <- cmd.Wait()
+	}()
 
 	select {
 	case <-ctx.Done():
 		killProcessGroup(cmd, cmd.Process.Pid)
-		<-readerDone
-		<-waitCh
+		<-waitCh // the reader has already finished; waitCh implies readerDone
 		return ctx.Err()
 	case err := <-waitCh:
-		<-readerDone
 		if err != nil {
 			msg := strings.TrimSpace(stderr.String())
 			if msg == "" {
