@@ -971,8 +971,28 @@ does not offer) only failed at the first decision. `checkDeciderAvailable` vette
 `boss` deciders but not the `model` one; it now checks the name against the runtime's own catalog
 and fails open when it cannot look.
 
-Still not exercised live: the 5-minute idle-watchdog hold (C-41), which needs monomind M1's
-watchdog exemption.
+**Idle-watchdog gate (2026-09-19).** The second gap is closed too, in two runs because the
+released monomind cannot show its own reasoning. A role left waiting on a `required` call routed
+to a human (autonomy `manual`), `idle_minutes: 1`.
+
+| Run | Result |
+|---|---|
+| **monomind 2.11.7** (released), codex role | The org ran **303 s** — five idle windows — with the approval pending and was never idle-stopped. 2.11.7 does not advertise `org-idle-deadline`, so it writes no `idle-watchdog.json` and reports no deadline: the hold works, but nothing about it is observable. |
+| **monomind 2.11.8** (local build), stub `pi` runtime, no model spend | Same hold — **333 s** — plus the bookkeeping: `idle-watchdog.json` reads `{"idle_minutes":1,"idle_stop_at":null,"hold":"pending-approval"}`, and `org autonomy needs-you` reports `idle_hold: "pending-approval"` with no deadline. Before the watchdog registers the hold it reports a real countdown (`idle_stop_in_seconds: 118`), so both shapes were seen. |
+
+Gap this gate closed on our side: `needs-you` wrote `"idle_stop_in_seconds": nil` as a literal and
+nothing ever filled it in, so the one thing that makes a pending item urgent was never available
+to the person the list is for. It now reports what monomind publishes, plus `idle_hold` — without
+that, a null deadline is indistinguishable from "nobody knows", when the watchdog is in fact
+waiting for that very approval. Both stay nil on 2.11.7 and on any monomind predating the
+capability.
+
+Worth knowing when reading a run: the watchdog publishes a countdown first and records the hold on
+a later check (checks run every `min(idle/2, 30 s)`), so a needs-you read taken the instant an
+approval appears can legitimately show a deadline rather than a hold.
+
+Both of #83's gates are now exercised live. Scripts: `~/scratch/gate83` (`gate5.sh` released
+monomind + codex, `gate6.sh` local monomind + stub runtime).
 
 Observed, outside this plan: monomind (2.10.23 and later, including the released 2.10.30)
 streams assistant text as deltas for incremental runtimes, and its `result` event has no `text`,
