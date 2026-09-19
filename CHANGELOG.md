@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.49.0] - 2026-09-19
+
+This entry also covers work that shipped in 0.32–0.48, which were cut
+automatically on every push to master without changelog entries of
+their own. Dates in that range belong to those releases, not to this
+one.
+
+### Fixed
+
+- The Org tab no longer fails with `JSON Parse error: Unexpected identifier
+  "Observe"`. A `monoagentcli` on PATH older than the GUI answered an unknown
+  subcommand with its parent's help — on stdout, exit code 0 — which the page
+  then parsed as JSON. Grouping commands now reject unknown subcommands, and
+  the GUI refuses non-JSON stdout with an error naming the stale binary.
+- The Chrome extension finds the bridge when another program holds port 9222.
+  The pairing page now tells the extension which port the bridge actually
+  bound, rotation alternates candidates once retries are alarm-driven, and the
+  CLI's timeout message names the port instead of blaming the extension.
+- A workflow node given nothing to work with fails instead of reporting
+  success. A required input that resolves to an empty collection or to the
+  string `"null"` — what `{{ json $json.field }}` renders for a missing field
+  — is now missing, and a loop over a value that cannot be iterated is an
+  error rather than silent zero work. A Gemini image workflow used to finish
+  green having generated nothing.
+- A node's output no longer carries its steps' bookkeeping: a skipped step
+  contributes nothing, so a run that saved an image stops reporting
+  `"skipped": true` beside `"image_count": 1`.
+- `org list` and `org status` drop entries that could never be an org, so a
+  `.mcp.json` sitting in the orgs folder no longer appears as an org named
+  `.mcp` that the designer flags as having no root role.
+- The workflow list counts nodes instead of always reporting `0 nodes`.
+- `org autonomy set` rejects a decider model the runtime does not offer,
+  listing the ones it does, instead of failing at the first decision with
+  `runner-error: done reported nonzero exit_code 1`.
+- `org autonomy needs-you` reports the idle-watchdog deadline and the reason
+  there is none (`idle_hold`), where it previously reported `null` for every
+  item. Requires a monomind advertising `org-idle-deadline`.
+- Spreadsheet columns are ordered deterministically, and the GUI's node
+  inspector reads a node's schema from the running build rather than the copy
+  saved inside the workflow, so schema improvements reach existing workflows.
+
+### Added
+
+- Run a workflow with trigger input from the GUI. A workflow whose nodes read
+  `{{ $json.<field> }}` was unrunnable from the run button; the editor now
+  asks for the fields it reads, pre-filled with the reading node's example
+  values, and remembers what was run last time. What a workflow reads is
+  reported by `monoagentcli workflow inputs <id>`, so a script, a test and the
+  dialog all get the same answer.
+- Node schema fields can carry `examples` — ready-made values the editor
+  offers under the field, click to insert. Gemini's prompt fields ship a pair
+  each, written so the shape is as clear as the wording.
+- Releases take their notes from this file when the version has a section
+  here, falling back to the generated commit summary when it does not.
+
 ### Fixed
 
 - `core.switch`'s primary `field` config key now resolves per-item (like
