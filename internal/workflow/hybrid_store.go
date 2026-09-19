@@ -80,6 +80,34 @@ func (h *HybridWorkflowStore) ListWorkflows(ctx context.Context, profileID strin
 	return result, nil
 }
 
+// NodeCounts returns each workflow's node count, keyed by workflow id,
+// following the same precedence as ListWorkflows: a workflow present in the
+// file store is the file store's, and SQLite supplies the rest. File-store
+// workflows are parsed whole, so their count is already in hand; only the
+// SQLite half needs a query.
+func (h *HybridWorkflowStore) NodeCounts(ctx context.Context, profileID string) (map[string]int, error) {
+	counts := make(map[string]int)
+	if h.files != nil {
+		filePtrs, err := h.files.ListWorkflows(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, wf := range filePtrs {
+			counts[wf.ID] = len(wf.Nodes)
+		}
+	}
+	sqlCounts, err := h.sql.NodeCounts(ctx, profileID)
+	if err != nil {
+		return nil, err
+	}
+	for id, n := range sqlCounts {
+		if _, fromFile := counts[id]; !fromFile {
+			counts[id] = n
+		}
+	}
+	return counts, nil
+}
+
 func (h *HybridWorkflowStore) UpdateWorkflow(ctx context.Context, w *Workflow) error {
 	if h.files != nil {
 		return h.files.SaveWorkflow(ctx, w)

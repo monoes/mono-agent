@@ -243,6 +243,46 @@ func (s *SQLiteWorkflowStore) ListWorkflows(ctx context.Context, profileID strin
 	return out, rows.Err()
 }
 
+// NodeCounts returns each workflow's node count, keyed by workflow id, for
+// profileID (or every workflow when profileID is empty).
+//
+// ListWorkflows deliberately leaves Nodes unpopulated so listing stays cheap,
+// which left callers with no way to show a count — the GUI's workflow list
+// rendered "0 nodes" for every workflow, including ones with nodes. This
+// answers that in one grouped query rather than a GetWorkflow per row.
+func (s *SQLiteWorkflowStore) NodeCounts(ctx context.Context, profileID string) (map[string]int, error) {
+	const base = `
+		SELECT w.id, COUNT(n.id)
+		FROM workflows w
+		LEFT JOIN workflow_nodes n ON n.workflow_id = w.id`
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if profileID != "" {
+		rows, err = s.db.QueryContext(ctx, base+`
+			WHERE COALESCE(w.profile_id,'default') = ?
+			GROUP BY w.id`, profileID)
+	} else {
+		rows, err = s.db.QueryContext(ctx, base+` GROUP BY w.id`)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("counting workflow nodes: %w", err)
+	}
+	defer rows.Close()
+
+	counts := make(map[string]int)
+	for rows.Next() {
+		var id string
+		var n int
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, fmt.Errorf("scanning node count row: %w", err)
+		}
+		counts[id] = n
+	}
+	return counts, rows.Err()
+}
+
 // UpdateWorkflow updates the mutable fields of an existing workflow.
 // Nodes and Connections are not touched; use SaveWorkflowNodes /
 // SaveWorkflowConnections for that.

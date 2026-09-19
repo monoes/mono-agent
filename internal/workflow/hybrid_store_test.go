@@ -79,3 +79,47 @@ func TestHybridWorkflowStore_DeleteWorkflow_SurfacesFileCleanupError(t *testing.
 		t.Fatalf("expected the SQL row gone (nil, nil), got wf=%+v err=%v", wf, sqlErr)
 	}
 }
+
+// The GUI lists through the hybrid store, so this is the path that produced
+// "0 nodes" for every workflow. File-backed workflows are parsed whole and
+// carry their nodes; SQL-backed ones need the grouped count query.
+func TestHybridWorkflowStore_NodeCounts(t *testing.T) {
+	dir := t.TempDir()
+	files, err := NewWorkflowFileStore(dir)
+	if err != nil {
+		t.Fatalf("NewWorkflowFileStore: %v", err)
+	}
+	sqlStore, _ := newMigratedStore(t)
+	store := NewHybridWorkflowStore(files, sqlStore)
+	ctx := context.Background()
+
+	// A file-backed workflow, saved with its nodes.
+	fileWF := &Workflow{
+		ID: "from-file", Name: "from-file", ProfileID: "p1",
+		Nodes: []WorkflowNode{testNode("a", "trigger.manual"), testNode("b", "gemini.chat_session")},
+	}
+	if err := files.SaveWorkflow(ctx, fileWF); err != nil {
+		t.Fatalf("SaveWorkflow: %v", err)
+	}
+
+	// A SQL-only workflow with three nodes.
+	if err := sqlStore.CreateWorkflow(ctx, &Workflow{ID: "from-sql", Name: "from-sql", ProfileID: "p1"}); err != nil {
+		t.Fatalf("CreateWorkflow: %v", err)
+	}
+	if err := sqlStore.SaveWorkflowNodes(ctx, "from-sql", []WorkflowNode{
+		testNode("n1", "trigger.manual"), testNode("n2", "http.request"), testNode("n3", "gemini.generate_image"),
+	}); err != nil {
+		t.Fatalf("SaveWorkflowNodes: %v", err)
+	}
+
+	counts, err := store.NodeCounts(ctx, "p1")
+	if err != nil {
+		t.Fatalf("NodeCounts: %v", err)
+	}
+	if counts["from-file"] != 2 {
+		t.Errorf("file-backed count = %d, want 2", counts["from-file"])
+	}
+	if counts["from-sql"] != 3 {
+		t.Errorf("sql-backed count = %d, want 3", counts["from-sql"])
+	}
+}

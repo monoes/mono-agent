@@ -30,6 +30,10 @@ type WorkflowSummary struct {
 	Version     int    `json:"version"`
 	CreatedAt   string `json:"created_at"`
 	UpdatedAt   string `json:"updated_at"`
+	// NodeCount is how many nodes the workflow has. The list query leaves
+	// Nodes unpopulated on purpose, so the UI had nothing to count and
+	// showed "0 nodes" for every workflow.
+	NodeCount int `json:"node_count"`
 }
 
 type WorkflowNodeData struct {
@@ -193,6 +197,13 @@ func (a *App) ListWorkflows() ([]WorkflowSummary, error) {
 		return nil, err
 	}
 	profileID := a.getActiveProfileID()
+	// One grouped query for every row, rather than a GetWorkflow per row.
+	// A failure here costs the counts, not the list.
+	nodeCounts, err := a.wfStore.NodeCounts(context.Background(), profileID)
+	if err != nil {
+		a.emitLog("WORKFLOW", "WARN", fmt.Sprintf("could not count workflow nodes: %v", err))
+		nodeCounts = map[string]int{}
+	}
 	summaries := make([]WorkflowSummary, 0, len(wfs))
 	for _, wf := range wfs {
 		// The hybrid store's file half has no profile filter — apply the
@@ -212,6 +223,7 @@ func (a *App) ListWorkflows() ([]WorkflowSummary, error) {
 			Version:     wf.Version,
 			CreatedAt:   wf.CreatedAt.Format(time.RFC3339),
 			UpdatedAt:   wf.UpdatedAt.Format(time.RFC3339),
+			NodeCount:   nodeCounts[wf.ID],
 		})
 	}
 	sort.Slice(summaries, func(i, j int) bool {
