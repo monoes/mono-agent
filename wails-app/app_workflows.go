@@ -262,6 +262,15 @@ func (a *App) SaveWorkflow(req SaveWorkflowRequest) (*WorkflowSummary, error) {
 		IsActive:    req.IsActive,
 		ProfileID:   a.getActiveProfileID(),
 	}
+	// Saving an existing workflow edits its definition, not its activation —
+	// that is SetWorkflowActive's job. The editor never sends is_active, so
+	// honouring req.IsActive here deactivated the workflow on every
+	// auto-save-before-run, and the run then failed as "inactive".
+	if req.ID != "" {
+		if existing, err := a.wfStore.GetWorkflow(ctx, req.ID); err == nil && existing != nil {
+			wf.IsActive = existing.IsActive
+		}
+	}
 	for _, n := range req.Nodes {
 		node := workflow.WorkflowNode{
 			ID:        n.ID,

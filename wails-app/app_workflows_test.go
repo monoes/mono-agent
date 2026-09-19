@@ -231,3 +231,42 @@ func TestGetExecutionDetail_RedactsSecretsInItems(t *testing.T) {
 		t.Fatalf("expected non-secret value to survive redaction, got: %s", rawOutput)
 	}
 }
+
+// TestSaveWorkflow_EditKeepsActivation: the editor auto-saves a dirty canvas
+// before every run and never sends is_active. That save must not deactivate
+// the workflow, or the run that follows fails as "inactive" until the user
+// toggles it off and on again.
+func TestSaveWorkflow_EditKeepsActivation(t *testing.T) {
+	a := newTestApp(t)
+
+	saved, err := a.SaveWorkflow(SaveWorkflowRequest{Name: "prompted", IsActive: true})
+	if err != nil {
+		t.Fatalf("SaveWorkflow: %v", err)
+	}
+	// What the editor sends after the user changes a prompt: no is_active.
+	edited, err := a.SaveWorkflow(SaveWorkflowRequest{ID: saved.ID, Name: "prompted"})
+	if err != nil {
+		t.Fatalf("SaveWorkflow (edit): %v", err)
+	}
+	if !edited.IsActive {
+		t.Fatalf("edit reported the workflow inactive: %+v", edited)
+	}
+	wf, err := a.wfStore.GetWorkflow(t.Context(), saved.ID)
+	if err != nil || wf == nil {
+		t.Fatalf("GetWorkflow: %v", err)
+	}
+	if !wf.IsActive {
+		t.Fatal("saving an edit deactivated the workflow")
+	}
+
+	// And the reverse: an edit must not activate a deactivated workflow.
+	if err := a.SetWorkflowActive(saved.ID, false); err != nil {
+		t.Fatalf("SetWorkflowActive: %v", err)
+	}
+	if _, err := a.SaveWorkflow(SaveWorkflowRequest{ID: saved.ID, Name: "prompted", IsActive: true}); err != nil {
+		t.Fatalf("SaveWorkflow (edit): %v", err)
+	}
+	if wf, _ := a.wfStore.GetWorkflow(t.Context(), saved.ID); wf == nil || wf.IsActive {
+		t.Fatal("saving an edit activated a deactivated workflow")
+	}
+}
