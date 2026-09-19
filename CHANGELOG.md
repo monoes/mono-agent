@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.49.0] - 2026-09-19
+## [0.49.0] - 2026-09-20
 
 This entry also covers work that shipped in 0.32–0.48, which were cut
 automatically on every push to master without changelog entries of
@@ -44,6 +44,11 @@ one.
 - `org autonomy needs-you` reports the idle-watchdog deadline and the reason
   there is none (`idle_hold`), where it previously reported `null` for every
   item. Requires a monomind advertising `org-idle-deadline`.
+- `OrgEvents` delivers every line the subprocess wrote. `cmd.Wait` closes the
+  stdout pipe as soon as the process exits, and it ran concurrently with the
+  reader, so a fast-exiting `org events` could have its output closed out
+  from under the scanner — the tail of a run's bus, the part that says how it
+  ended, was the most likely to go missing.
 - Spreadsheet columns are ordered deterministically, and the GUI's node
   inspector reads a node's schema from the running build rather than the copy
   saved inside the workflow, so schema improvements reach existing workflows.
