@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -215,8 +216,74 @@ func checkDeciderAvailable(ctx context.Context, root, org string, a *orgdecide.A
 		if err := set.Require(monomind.CapOrgToolProviders, "the boss decider"); err != nil {
 			return err
 		}
+	case orgdesign.DeciderModel:
+		return checkDeciderModel(ctx, a)
 	}
 	return nil
+}
+
+// Seams for checkDeciderModel's tests: both shell out to a runtime binary,
+// which a unit test has no business doing.
+var (
+	scanAgentRuntimes = monomind.Scan
+	listRuntimeModels = monomind.ListModels
+	orgStatusJSON     = monomind.OrgStatus
+)
+
+// checkDeciderModel rejects a model the decider's runtime does not have.
+//
+// A model decider is only as good as its model name, and a wrong one was
+// accepted in silence: it surfaced mid-run as "decider failed: … runner-error:
+// done reported nonzero exit_code 1", which reads like a broken decider rather
+// than a name that never existed. Two easy ways in — a typo, and
+// `--decider-runtime codex` on an org whose decider still carries the default
+// Claude model — so the check pays for itself.
+//
+// Deliberately fail-open on our own inability to look: a runtime with no
+// discovery command, an uninstalled binary, or a listing that errors leaves
+// the model as typed. Only a definite mismatch is refused.
+func checkDeciderModel(ctx context.Context, a *orgdecide.Autonomy) error {
+	model := strings.TrimSpace(a.Decider.Model)
+	runtimeID := strings.TrimSpace(a.Decider.Runtime)
+	if model == "" || runtimeID == "" {
+		return nil
+	}
+	scan, err := scanAgentRuntimes(ctx)
+	if err != nil || scan == nil {
+		return nil
+	}
+	binary := ""
+	for _, e := range scan.Agents {
+		if e.ID == runtimeID {
+			if !e.Installed {
+				return errInvalidInput("decider runtime %q is not installed%s", runtimeID, installHint(e.InstallHint))
+			}
+			if e.Binary != nil {
+				binary = *e.Binary
+			}
+			break
+		}
+	}
+	models, err := listRuntimeModels(ctx, runtimeID, binary)
+	if err != nil || len(models) == 0 {
+		return nil // no catalog to check against — leave the name as typed
+	}
+	names := make([]string, 0, len(models))
+	for _, m := range models {
+		if m.ID == model {
+			return nil
+		}
+		names = append(names, m.ID)
+	}
+	return errInvalidInput("decider model %q is not one %s offers; available: %s",
+		model, runtimeID, strings.Join(names, ", "))
+}
+
+func installHint(hint string) string {
+	if strings.TrimSpace(hint) == "" {
+		return ""
+	}
+	return " — " + hint
 }
 
 func newOrgAutonomyPauseCmd(env *orgEnv, pause bool) *cobra.Command {
@@ -345,6 +412,7 @@ func needsYou(ctx context.Context, db *storage.Database, profileID, root, org st
 	}
 	_, daemonLive := daemonhb.Read()
 	level := a.EffectiveLevel(time.Now())
+	idleSeconds, idleHold := idleDeadline(ctx, root, org)
 	out := []map[string]interface{}{}
 	for _, it := range pending {
 		human := !daemonLive || orgdecide.Route(level, it.Tier) == orgdecide.RouteHuman
@@ -365,10 +433,46 @@ func needsYou(ctx context.Context, db *storage.Database, profileID, root, org st
 		}
 		out = append(out, map[string]interface{}{
 			"kind": it.Kind, "ref": it.Ref, "requester": it.Requester, "class": it.Class, "tier": it.Tier,
-			"summary": it.Summary, "waiting_since": waiting, "idle_stop_in_seconds": nil,
+			"summary": it.Summary, "waiting_since": waiting,
+			"idle_stop_in_seconds": idleSeconds, "idle_hold": idleHold,
 		})
 	}
 	return out, nil
+}
+
+// idleDeadline reports how long a running org has before its idle watchdog
+// stops it, and what is holding the watchdog off.
+//
+// "Answer this or the org stops in N seconds" is the difference between a
+// pending item and a deadline, and needs-you reported it as null for every
+// item because nothing ever filled it in. monomind publishes both in `org
+// status --json` under the org-idle-deadline capability; a legitimate wait
+// (a pending approval, question or gate) reports a hold and no deadline,
+// which is exactly what a person needs to see.
+//
+// Both are nil when the org is not running, when monomind is older than the
+// capability, or when status cannot be read — the list is worth showing
+// without them.
+func idleDeadline(ctx context.Context, root, org string) (interface{}, interface{}) {
+	raw, err := orgStatusJSON(ctx, root, org)
+	if err != nil {
+		return nil, nil
+	}
+	var st struct {
+		IdleStopInSeconds *float64 `json:"idle_stop_in_seconds"`
+		IdleHold          *string  `json:"idle_hold"`
+	}
+	if err := json.Unmarshal(raw, &st); err != nil {
+		return nil, nil
+	}
+	var seconds, hold interface{}
+	if st.IdleStopInSeconds != nil {
+		seconds = *st.IdleStopInSeconds
+	}
+	if st.IdleHold != nil && *st.IdleHold != "" {
+		hold = *st.IdleHold
+	}
+	return seconds, hold
 }
 
 // ensureNewOrgAutonomy gives an org created by an explicit command its

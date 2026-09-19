@@ -937,8 +937,62 @@ text (fixed, C-52 message from `<org>:autonomy`); and monomind's `org reload` wa
 `org run`, so a rotated endpoint kept receiving at the old URL (fixed upstream in monomind 2.11.1,
 PR #254 — mono-agent's `rotate --applies now` is only truthful from that version on).
 
-Still not exercised live: a fence runner (codex) calling a grant, and the 5-minute idle-watchdog
-hold.
+**Fence-runner gate (2026-09-19).** The first of the two gaps above is closed: a real codex role
+calling a grant, under monomind 2.11.7, `monoagentcli daemon`, and an isolated HOME (with
+`CODEX_HOME` left pointing at the real codex login, since what needs isolating is mono-agent's
+state, not codex's credentials). Scripts: `~/scratch/gate83`. The passing run cost 618k tokens,
+about $0.60; four attempts and a wrong turn cost roughly 2.5M in total.
+
+| Check (issue #83) | Result |
+|---|---|
+| `tools/list` is a subset of the grant | The granted alias is served and a second automation added to the org but deliberately **not** granted is absent. `automation_status`/`automation_output` also appear — companions of holding any grant (`internal/mcp/grant.go`), not extra reach. |
+| The call pauses for a decision, then runs as an `org_tool` execution | Live codex: the role's call raised an approval, the codex decider (`model:gpt-5.6-luna`) resolved it, and the call ran — `role_tool … ok` at 10:39:03, `org_tool SUCCESS` one second later. |
+| The bus `tool` event and the ledger row share one `chain_id` | `chn_l3ntb5v7vbcfkxcqxhv2` in both. Re-checked without a model: `role_tool\|chn_gatec83\|2\|run-gatec\|ok` with the hop incremented and the run id carried. |
+| With the daemon stopped, the call returns `daemon_required` within 1 s | **11 ms**. |
+| After the grant is revoked mid-run, the next call returns `refused_grant` | Yes. |
+
+What the attempts taught, beyond the checks:
+
+- **A model decider is only as useful as the org's policy.** With no `policy` set, the decider
+  denied an unexplained "publish" call — defensible of it, and fatal to the run: one lead turned
+  the denial into "do not publish", the writer complied, and the run ended `partial`. One sentence
+  of policy naming the automation as an internal test flipped it to approved and the call ran.
+- **Codex roles are token-hungry here** — 170k–620k tokens per session, mostly re-sent context. A
+  `budget_tokens` set below that denies the tool by org policy (`[org-policy] token budget
+  exhausted (461154/250000)`) before the decider ever weighs it, which looks like a decision
+  failure and is not one.
+- **An org whose roles run on codex still gets a Claude model decider by default**, and
+  `--decider-runtime codex` alone leaves the Claude *model* name behind. Both surface only mid-run
+  as `runner-error: done reported nonzero exit_code 1`.
+
+Bug this gate found, fixed with regression tests: `org autonomy set` accepted any
+`--decider-model`, so a name the runtime does not have (`gpt-5`, which a codex ChatGPT account
+does not offer) only failed at the first decision. `checkDeciderAvailable` vetted the `parent` and
+`boss` deciders but not the `model` one; it now checks the name against the runtime's own catalog
+and fails open when it cannot look.
+
+**Idle-watchdog gate (2026-09-19).** The second gap is closed too, in two runs because the
+released monomind cannot show its own reasoning. A role left waiting on a `required` call routed
+to a human (autonomy `manual`), `idle_minutes: 1`.
+
+| Run | Result |
+|---|---|
+| **monomind 2.11.7** (released), codex role | The org ran **303 s** — five idle windows — with the approval pending and was never idle-stopped. 2.11.7 does not advertise `org-idle-deadline`, so it writes no `idle-watchdog.json` and reports no deadline: the hold works, but nothing about it is observable. |
+| **monomind 2.11.8** (local build), stub `pi` runtime, no model spend | Same hold — **333 s** — plus the bookkeeping: `idle-watchdog.json` reads `{"idle_minutes":1,"idle_stop_at":null,"hold":"pending-approval"}`, and `org autonomy needs-you` reports `idle_hold: "pending-approval"` with no deadline. Before the watchdog registers the hold it reports a real countdown (`idle_stop_in_seconds: 118`), so both shapes were seen. |
+
+Gap this gate closed on our side: `needs-you` wrote `"idle_stop_in_seconds": nil` as a literal and
+nothing ever filled it in, so the one thing that makes a pending item urgent was never available
+to the person the list is for. It now reports what monomind publishes, plus `idle_hold` — without
+that, a null deadline is indistinguishable from "nobody knows", when the watchdog is in fact
+waiting for that very approval. Both stay nil on 2.11.7 and on any monomind predating the
+capability.
+
+Worth knowing when reading a run: the watchdog publishes a countdown first and records the hold on
+a later check (checks run every `min(idle/2, 30 s)`), so a needs-you read taken the instant an
+approval appears can legitimately show a deadline rather than a hold.
+
+Both of #83's gates are now exercised live. Scripts: `~/scratch/gate83` (`gate5.sh` released
+monomind + codex, `gate6.sh` local monomind + stub runtime).
 
 Observed, outside this plan: monomind (2.10.23 and later, including the released 2.10.30)
 streams assistant text as deltas for incremental runtimes, and its `result` event has no `text`,
