@@ -62,7 +62,19 @@ func TestOrgServeStopTerminatesTheServeProcessGroup(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("serve process still running")
 	}
-	if err := syscall.Kill(-cmd.Process.Pid, 0); err == nil {
+	// The shell has exited (done above), but its backgrounded children are
+	// reaped a moment later, so poll rather than check the instant Wait
+	// returns — on a loaded machine that single check failed in CI while
+	// passing everywhere else.
+	groupGone := false
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+		if err := syscall.Kill(-cmd.Process.Pid, 0); err != nil {
+			groupGone = true
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !groupGone {
 		t.Fatal("a process of the serve group survived")
 	}
 	if _, live := ReadServeHeartbeat(root); live {
