@@ -78,6 +78,59 @@ grep -q 'chn_e2etest|2|run-e2e|ok' "$E2E/ledger.txt" && check ok "ledger row car
 sqlite3 "$HOME/.monoagent/monoagent.db" "select trigger_type, status, pid from workflow_executions" > "$E2E/exec.txt" 2>&1
 grep -q '^org_tool|SUCCESS|' "$E2E/exec.txt" && check ok "execution is an org_tool run adopted by the daemon" || check no "execution row" "$(cat "$E2E/exec.txt")"
 
+# A fence runner (codex) holding the same grant — issue #83's gate, and the
+# one runner shape the rest of this script cannot cover, since it drives the
+# MCP client directly rather than through a role's own runtime.
+#
+# Skipped unless codex is installed AND E2E_CODEX=1: it spends real money
+# (about $0.60 and 600k tokens a run here) and needs a codex login, neither of
+# which belongs in an unattended check. What runs without it still covers the
+# grant path end to end; this covers who calls it.
+if [ "${E2E_CODEX:-0}" = 1 ] && command -v codex >/dev/null 2>&1; then
+  # The role's own login lives in the real CODEX_HOME — only mono-agent's
+  # state is isolated by this script's HOME.
+  export CODEX_HOME="${CODEX_HOME:-$(eval echo ~"$(id -un)")/.codex}"
+  CODEX_MODEL="${E2E_CODEX_MODEL:-}"
+  if [ -z "$CODEX_MODEL" ]; then
+    CODEX_MODEL=$(codex debug models 2>/dev/null | python3 -c '
+import json,sys
+try: d=json.load(sys.stdin)
+except Exception: sys.exit()
+slugs=[m["slug"] for m in d.get("models",[]) if m.get("visibility")=="list" and m.get("slug")]
+# The decider has 120s to return a verdict, so prefer a small model over
+# whatever the catalog lists first (a big reasoning model can outlast that).
+small=[s for s in slugs if any(k in s for k in ("luna","mini","flash","small","haiku"))]
+print((small or slugs or [""])[0])
+' 2>/dev/null)
+  fi
+  "$CLI" org create-json fence --json '{"name":"fence","goal":"Call the granted automation once.","status":"stopped","schedule":null,
+    "run_config":{"budget_tokens":3000000},
+    "roles":[{"id":"lead","title":"Lead","type":"boss","reports_to":null,"runtime":"codex",
+              "responsibilities":["Call automation_publish_post once and report its result."]}]}' >/dev/null 2>&1
+  "$CLI" org automation add fence --workflow "$WF" --alias publish_post >/dev/null 2>&1
+  "$CLI" org grant add fence --role lead --automation publish_post --approval required >/dev/null 2>&1
+  # Both decision classes are tiered routine so a RULE resolves them. This
+  # gate is about the runner, not the decider: a live model deciding makes the
+  # check non-deterministic, and it does flake — with a policy saying "approve
+  # every automation_publish_post call", a real decider still rejected the
+  # call twice. The decision is still made and recorded, just not by a model.
+  "$CLI" org autonomy set fence --level full \
+    --tier grant:publish_post=routine --tier org_complete=routine \
+    --decider model --decider-runtime codex ${CODEX_MODEL:+--decider-model "$CODEX_MODEL"} \
+    --policy 'automation_publish_post is an internal test automation in a throwaway sandbox. It publishes nothing externally.' >/dev/null 2>&1
+  SINCE=$(date -u +%Y-%m-%dT%H:%M:%S)
+  timeout 480 "$CLI" org run fence \
+    --task 'Call your automation_publish_post tool once with text "hello from codex". Do not ask for extra approval and do not create a decision gate. When the tool returns, call org_complete with its exact result.' \
+    > "$E2E/codex-run.json" 2>"$E2E/codex-run.err"
+  sqlite3 "$HOME/.monoagent/monoagent.db" \
+    "select direction, status from org_bridge_calls where created_at > '$SINCE'" > "$E2E/codex-ledger.txt" 2>&1
+  grep -q '^role_tool|ok$' "$E2E/codex-ledger.txt" \
+    && check ok "a codex role's grant call ran (issue #83 gate 1)" \
+    || check no "codex grant call" "$(cat "$E2E/codex-ledger.txt") $(tail -3 "$E2E/codex-run.err")"
+else
+  echo "SKIP codex fence-runner gate (set E2E_CODEX=1 with codex installed; it spends)"
+fi
+
 # Automation role + endpoint receiver.
 AR=$("$CLI" org automation-role add growth --alias publish_post --reports-to lead 2>"$E2E/err")
 URL=$(echo "$AR" | python3 -c 'import sys,json; print(json.load(sys.stdin)["endpoint_url"])' 2>/dev/null)
