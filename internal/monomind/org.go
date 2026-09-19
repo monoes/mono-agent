@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/monoes/mono-agent/internal/orgdesign"
 )
 
 // Org observe/action commands (protocol §7): thin proxies over
@@ -108,7 +110,63 @@ func OrgReload(ctx context.Context, projectRoot, name string) (string, error) {
 
 // OrgList returns every org in the project (`org list`).
 func OrgList(ctx context.Context, projectRoot string) (json.RawMessage, error) {
-	return runOrgJSON(ctx, projectRoot, "list")
+	raw, err := runOrgJSON(ctx, projectRoot, "list")
+	if err != nil {
+		return nil, err
+	}
+	return dropUnnamableOrgs(raw), nil
+}
+
+// dropUnnamableOrgs removes list items whose name could not belong to an org.
+//
+// The orgs folder holds more than orgs — a .mcp.json tool config, whatever
+// else a user drops beside them — and monomind's own lister takes every
+// .json in it, so `org list` offered ".mcp" as an org with no roles. The
+// designer then reported it, correctly for an empty config, as having no
+// root role; it sorts before every letter, so it was the entry the GUI
+// selected by default and the error a user saw constantly while every real
+// org was fine. monomind itself refuses to act on such a name ("invalid org
+// name"), so listing it can only mislead.
+//
+// Unparseable or unexpected output is passed through untouched: this filters
+// a known bad entry, it does not police the protocol.
+func dropUnnamableOrgs(raw json.RawMessage) json.RawMessage {
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return raw
+	}
+	itemsRaw, ok := envelope["items"]
+	if !ok {
+		return raw
+	}
+	var items []json.RawMessage
+	if err := json.Unmarshal(itemsRaw, &items); err != nil {
+		return raw
+	}
+	kept := make([]json.RawMessage, 0, len(items))
+	for _, item := range items {
+		var probe struct {
+			Name string `json:"name"`
+		}
+		// An item we cannot read a name from stays — dropping it would hide
+		// an org over a shape we simply did not expect.
+		if err := json.Unmarshal(item, &probe); err != nil || probe.Name == "" || orgdesign.ValidOrgName(probe.Name) {
+			kept = append(kept, item)
+		}
+	}
+	if len(kept) == len(items) {
+		return raw
+	}
+	filtered, err := json.Marshal(kept)
+	if err != nil {
+		return raw
+	}
+	envelope["items"] = filtered
+	out, err := json.Marshal(envelope)
+	if err != nil {
+		return raw
+	}
+	return out
 }
 
 // OrgRun starts `monomind org run <name> --yes [--task ...] [--dry-run]`,
@@ -210,7 +268,15 @@ func OrgStatus(ctx context.Context, projectRoot, name string) (json.RawMessage, 
 	if name != "" {
 		args = append(args, name)
 	}
-	return runOrgJSON(ctx, projectRoot, args...)
+	raw, err := runOrgJSON(ctx, projectRoot, args...)
+	if err != nil {
+		return nil, err
+	}
+	// `status` with no name is a list too, and carries the same phantoms.
+	if name == "" {
+		return dropUnnamableOrgs(raw), nil
+	}
+	return raw, nil
 }
 
 // OrgLogs returns the org's bus event log (`org logs <name>`). There is no
