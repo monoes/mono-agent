@@ -434,26 +434,40 @@ jobs:
           BUILDS=$(echo "$COMMITS" | grep -E '^[0-9a-f]+ build(\(.+\))?:' | sed 's/^[0-9a-f]* //')
           OTHERS=$(echo "$COMMITS" | grep -vE '^[0-9a-f]+ (feat|fix|docs?|build)(\(.+\))?:' | sed 's/^[0-9a-f]* //')
 
+          # A CHANGELOG section for this version is written by a person and
+          # says what the release means; the generated list below is a commit
+          # dump. Prefer the section when it exists, fall back when it does
+          # not, so nothing depends on remembering to write one.
+          CHANGELOG_SECTION=$(awk -v ver="${TAG#v}" '
+            $0 ~ "^## \\[" ver "\\]" { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md 2>/dev/null | sed '/^[[:space:]]*$/{ /./!d }')
+
           {
             echo 'NOTES<<RELEASE_EOF'
             echo "## What's New in ${TAG}"
             echo ""
-            if [ -n "$FEATS" ]; then
+            if [ -n "$CHANGELOG_SECTION" ]; then
+              echo "$CHANGELOG_SECTION"
+              echo ""
+            fi
+            if [ -z "$CHANGELOG_SECTION" ] && [ -n "$FEATS" ]; then
               echo "### ✨ New Features"
               echo "$FEATS" | while read -r l; do echo "- $(echo "$l" | sed 's/^feat([^)]*): //;s/^feat: //')"; done
               echo ""
             fi
-            if [ -n "$FIXES" ]; then
+            if [ -z "$CHANGELOG_SECTION" ] && [ -n "$FIXES" ]; then
               echo "### 🐛 Bug Fixes"
               echo "$FIXES" | while read -r l; do echo "- $(echo "$l" | sed 's/^fix([^)]*): //;s/^fix: //')"; done
               echo ""
             fi
-            if [ -n "$BUILDS" ]; then
+            if [ -z "$CHANGELOG_SECTION" ] && [ -n "$BUILDS" ]; then
               echo "### 🔧 Build & CI"
               echo "$BUILDS" | while read -r l; do echo "- $(echo "$l" | sed 's/^build([^)]*): //;s/^build: //')"; done
               echo ""
             fi
-            if [ -n "$OTHERS" ]; then
+            if [ -z "$CHANGELOG_SECTION" ] && [ -n "$OTHERS" ]; then
               echo "### 🔄 Other Changes"
               echo "$OTHERS" | while read -r l; do [ -n "$l" ] && echo "- $l"; done
               echo ""
