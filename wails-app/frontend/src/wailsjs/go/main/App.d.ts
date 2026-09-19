@@ -219,6 +219,8 @@ export function GetWorkflowExecutions(arg1:string,arg2:number):Promise<Array<mai
 
 export function GetWorkflowNodeTypes():Promise<Record<string, any>>;
 
+export function GetWorkflowTriggerInputs(arg1:string):Promise<string>;
+
 export function HasGeneratedDocuments(arg1:string):Promise<boolean>;
 
 export function ImportVaultAll(arg1:string,arg2:string):Promise<main.VaultImportResult>;
@@ -326,6 +328,8 @@ export function RunNode(arg1:main.NodeRunRequest):Promise<main.NodeRunResult>;
 export function RunOrg(arg1:string,arg2:string):Promise<string>;
 
 export function RunWorkflow(arg1:string):Promise<void>;
+
+export function RunWorkflowWithInput(arg1:string,arg2:string):Promise<void>;
 
 export function SaveAIProvider(arg1:string):Promise<string>;
 

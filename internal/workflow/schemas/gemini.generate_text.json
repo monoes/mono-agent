@@ -1,7 +1,24 @@
 {
   "credential_platform": "gemini",
   "fields": [
-    {"key": "prompt", "label": "Prompt", "type": "textarea", "required": true, "rows": 4, "placeholder": "Ask Gemini anything..."},
-    {"key": "maxWaitSeconds", "label": "Max Wait (seconds)", "type": "number", "default": 60, "help": "Maximum time to wait for Gemini to respond."}
+    {
+      "key": "prompt",
+      "label": "Prompt",
+      "type": "textarea",
+      "required": true,
+      "rows": 4,
+      "placeholder": "Ask Gemini anything...",
+      "examples": [
+        "Summarise this week’s AI news in five bullet points",
+        "Rewrite this paragraph for a non-technical reader: …"
+      ]
+    },
+    {
+      "key": "maxWaitSeconds",
+      "label": "Max Wait (seconds)",
+      "type": "number",
+      "default": 60,
+      "help": "Maximum time to wait for Gemini to respond."
+    }
   ]
 }

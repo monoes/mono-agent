@@ -12,21 +12,25 @@ var embeddedSchemas embed.FS
 
 // NodeSchemaField represents one configurable field in a node's schema.
 type NodeSchemaField struct {
-	Key         string                `json:"key"`
-	Label       string                `json:"label"`
-	Type        string                `json:"type"`
-	Required    bool                  `json:"required"`
-	Default     interface{}           `json:"default,omitempty"`
-	Placeholder string                `json:"placeholder,omitempty"`
-	Help        string                `json:"help,omitempty"`
-	Options     []string              `json:"options,omitempty"`
-	Language    string                `json:"language,omitempty"`
-	Rows        int                   `json:"rows,omitempty"`
-	Min         *float64              `json:"min,omitempty"`
-	Max         *float64              `json:"max,omitempty"`
-	ItemType    string                `json:"item_type,omitempty"`
-	Resource    *ResourcePickerConfig `json:"resource,omitempty"`
-	DependsOn   *FieldDependency      `json:"depends_on,omitempty"`
+	Key         string      `json:"key"`
+	Label       string      `json:"label"`
+	Type        string      `json:"type"`
+	Required    bool        `json:"required"`
+	Default     interface{} `json:"default,omitempty"`
+	Placeholder string      `json:"placeholder,omitempty"`
+	// Examples are ready-made values the editor offers to insert. A field
+	// whose shape is not obvious from its label — a list of image prompts,
+	// say — is otherwise an empty box the user has to guess at.
+	Examples  []string              `json:"examples,omitempty"`
+	Help      string                `json:"help,omitempty"`
+	Options   []string              `json:"options,omitempty"`
+	Language  string                `json:"language,omitempty"`
+	Rows      int                   `json:"rows,omitempty"`
+	Min       *float64              `json:"min,omitempty"`
+	Max       *float64              `json:"max,omitempty"`
+	ItemType  string                `json:"item_type,omitempty"`
+	Resource  *ResourcePickerConfig `json:"resource,omitempty"`
+	DependsOn *FieldDependency      `json:"depends_on,omitempty"`
 }
 
 // ResourcePickerConfig configures a resource_picker field.

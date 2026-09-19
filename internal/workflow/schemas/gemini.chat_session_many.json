@@ -1,7 +1,13 @@
 {
   "credential_platform": "gemini",
   "fields": [
-    { "key": "prompts", "label": "Prompts", "type": "array", "required": true, "item_type": "text", "help": "Prompts sent in order to a single chat session, so context and style carry across every answer." },
+    { "key": "prompts", "label": "Prompts", "type": "array", "required": true, "item_type": "text",
+      "placeholder": "generate an image that: a wizard in a blue robe casting a fire spell",
+      "examples": [
+        "generate an image that: a wizard in a blue robe casting a fire spell",
+        "generate an image that: the same wizard riding a red dragon over a burning castle"
+      ],
+      "help": "One prompt per image, added in order and sent to a single chat session, so the character and style carry across every answer — write the second as a change to the first (\"the same wizard, now …\"). Short English prompts work best." },
     { "key": "session_id", "label": "Session ID", "type": "text", "required": false, "help": "Existing chat session to continue (from a previous run's session_id output). Omit to start a new chat." },
     { "key": "mode", "label": "Response Mode", "type": "select", "required": false, "options": ["text", "image"], "default": "text", "help": "image mode waits for generated images and downloads them to downloadDir." },
     { "key": "maxWaitSeconds", "label": "Max Wait (seconds)", "type": "number", "required": false, "default": 90, "min": 10, "max": 300, "help": "Maximum time to wait for each response in the loop." },

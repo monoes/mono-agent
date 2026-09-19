@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import {
   Play, Square, RotateCcw, ZoomIn, ZoomOut, Trash2, Search,
   ChevronDown, ChevronRight, X, Settings2, Copy, RefreshCw,
@@ -13,7 +13,8 @@ import HumanInLoop from './HumanInLoop.jsx'
 import ResourcePickerField from '../components/ResourcePickerField.jsx'
 import ImagePickerModal from '../components/ImagePickerModal'
 import { NODE_CONFIG_FIELDS, BROWSER_NODE_GENERIC } from './nodeConfigFields.js'
-import { SaveModal, WorkflowsModal } from './NodeRunnerModals.jsx'
+import { SaveModal, WorkflowsModal, TriggerInputModal } from './NodeRunnerModals.jsx'
+import { rememberTriggerInput, rememberedTriggerInput } from './triggerInput.js'
 import { usePageVisibleRef } from '../lib/usePageVisible.js'
 
 // ── Wails bindings with mock fallback ────────────────────────────────────────
@@ -371,10 +372,12 @@ function fieldIsVisible(field, config) {
 // ── Derive platformId for credential/session picker ──────────────────────────
 const BROWSER_PLATFORMS = ['instagram', 'linkedin', 'x', 'tiktok', 'gemini']
 
-function derivePlatformId(node) {
+function derivePlatformId(node, liveSchemas) {
   if (!node) return null
-  // Schema-defined takes priority
-  if (node.schema?.credential_platform) return node.schema.credential_platform
+  // Schema-defined takes priority — the catalog's copy over the one saved
+  // inside the workflow (see resolveSchema).
+  const resolved = resolveSchema(node, liveSchemas)
+  if (resolved?.credential_platform) return resolved.credential_platform
   // Hardcoded map fallback
   if (CREDENTIAL_PLATFORMS[node.subtype]) return CREDENTIAL_PLATFORMS[node.subtype]
   // Browser node pattern: "instagram.like_posts" → "instagram"
@@ -385,7 +388,18 @@ function derivePlatformId(node) {
 }
 
 // ── Inspector panel (right side) ──────────────────────────────────────────────
-function Inspector({ node, onConfigChange, onClose, onNavigate }) {
+// liveSchema resolves a node's schema from the node catalog rather than the
+// copy saved inside the workflow. Schemas are code: a workflow file keeps the
+// snapshot taken when it was saved, so without this every schema improvement
+// — a new field, better help, the example prompts a user is meant to start
+// from — stays invisible in every workflow saved before it. The stored copy
+// remains the fallback for a node type the catalog doesn't know.
+function resolveSchema(node, liveSchemas) {
+  return liveSchemas?.[node?.subtype] || node?.schema || null
+}
+
+function Inspector({ node, onConfigChange, onClose, onNavigate, liveSchemas }) {
+  const schema = resolveSchema(node, liveSchemas)
   const [copied, setCopied] = useState(false)
   const [connections, setConnections] = useState([])
   const [loadingCreds, setLoadingCreds] = useState(false)
@@ -393,7 +407,7 @@ function Inspector({ node, onConfigChange, onClose, onNavigate }) {
   const [atAC, setAtAC] = useState({ open: false, query: '', fieldKey: null })
   const [pickerField, setPickerField] = useState(null)
 
-  const platformId = derivePlatformId(node)
+  const platformId = derivePlatformId(node, liveSchemas)
   const isBrowserPlatform = BROWSER_PLATFORMS.includes(platformId)
 
   useEffect(() => {
@@ -489,7 +503,7 @@ function Inspector({ node, onConfigChange, onClose, onNavigate }) {
 
         {/* Config fields */}
         {(() => {
-          const fields = node.schema?.fields || node.configFields || []
+          const fields = schema?.fields || node.configFields || []
           if (fields.length === 0) {
             return (
               <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)', marginBottom: 12 }}>
@@ -523,6 +537,7 @@ function Inspector({ node, onConfigChange, onClose, onNavigate }) {
                       value={val}
                       onChange={onChange}
                       rows={f.rows || 3}
+                      placeholder={f.placeholder || ''}
                       style={inputStyle}
                     />
                   )
@@ -617,6 +632,20 @@ function Inspector({ node, onConfigChange, onClose, onNavigate }) {
                           ))}
                         </div>
                       )}
+                      {f.examples?.length > 0 && (
+                        <div className="field-examples">
+                          <span className="field-examples-label">Examples — click to add</span>
+                          {f.examples.map((ex, i) => (
+                            <button
+                              key={i}
+                              type="button"
+                              className="field-example"
+                              title="Add this prompt"
+                              onClick={() => onConfigChange(node.id, f.key, [...arrValue, ex])}
+                            >{ex}</button>
+                          ))}
+                        </div>
+                      )}
                       {f.help && <p className="field-help">{f.help}</p>}
                     </div>
                   )
@@ -674,7 +703,7 @@ function Inspector({ node, onConfigChange, onClose, onNavigate }) {
                       value={node.config?.[f.key] || ''}
                       onChange={v => onConfigChange(node.id, f.key, v)}
                       credentialId={node.config?.credential_id || ''}
-                      platform={node.schema?.credential_platform || ''}
+                      platform={schema?.credential_platform || ''}
                       nodeConfig={node.config}
                     />
                   )
@@ -709,6 +738,7 @@ function Inspector({ node, onConfigChange, onClose, onNavigate }) {
                           value={val}
                           onChange={handleAtChange}
                           onBlur={() => setTimeout(() => setAtAC({ open: false, query: '', fieldKey: null }), 150)}
+                          placeholder={f.placeholder || ''}
                           style={{ ...inputStyle, flex: 1 }}
                         />
                         <button
@@ -771,6 +801,20 @@ function Inspector({ node, onConfigChange, onClose, onNavigate }) {
                       {f.label}{f.required ? ' *' : ''}
                     </div>
                     {inputEl}
+                    {f.examples?.length > 0 && (
+                      <div className="field-examples">
+                        <span className="field-examples-label">Examples — click to use</span>
+                        {f.examples.map((ex, i) => (
+                          <button
+                            key={i}
+                            type="button"
+                            className="field-example"
+                            title="Use this as the value"
+                            onClick={() => onConfigChange(node.id, f.key, ex)}
+                          >{ex}</button>
+                        ))}
+                      </div>
+                    )}
                     {f.help && <p className="field-help">{f.help}</p>}
                   </div>
                 )
@@ -964,6 +1008,18 @@ function resolvePortIdx(ports, handle) {
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function NodeRunner({ onNavigate, navData }) {
   const [categories, setCategories] = useState([])
+  // type -> schema, from the node catalog. The workflow file carries the
+  // schema each node had when it was saved; the catalog is what the running
+  // build actually defines, so the inspector reads from here (resolveSchema).
+  const liveSchemas = useMemo(() => {
+    const byType = {}
+    for (const cat of categories) {
+      for (const n of cat.nodes || []) {
+        if (n.subtype && n.schema) byType[n.subtype] = n.schema
+      }
+    }
+    return byType
+  }, [categories])
   const [nodes, setNodes]           = useState([])
   const [edges, setEdges]           = useState([])
   const [selectedId, setSelectedId] = useState(null)
@@ -984,6 +1040,9 @@ export default function NodeRunner({ onNavigate, navData }) {
   const [saveMsg,       setSaveMsg]       = useState(null) // { ok: bool, text: string }
   const [showWfModal,   setShowWfModal]   = useState(false)
   const [showSaveModal, setShowSaveModal] = useState(false)
+  // { asked, fields, value } — asked flips once the modal has been answered
+  // for this run, so a re-run doesn't re-prompt mid-flight.
+  const [triggerInput, setTriggerInput] = useState({ asked: false, fields: [], value: '' })
   const [isDirty, setIsDirty] = useState(false)
 
   // Persist last loaded workflow ID so it restores on next visit
@@ -1431,7 +1490,32 @@ export default function NodeRunner({ onNavigate, navData }) {
   // never resolve the current one.
   const runTokenRef = useRef(0)
 
+  // A workflow whose nodes read {{ $json.<field> }} needs trigger data; ask
+  // for it once, then run. Without this the run button sent nothing and such
+  // a workflow completed having done nothing at all.
+  //
+  // What it reads is the CLI's answer (`workflow inputs --json`), not
+  // something derived here — the dialog only renders it. A workflow that has
+  // never been saved has no id to ask about, and an unreachable CLI must not
+  // block a run, so both fall through to running with no input.
   const handleRun = async () => {
+    if (running || nodes.length === 0) return
+    if (triggerInput.asked) return // dialog already open; it drives the run
+    if (wfId && !isDirty) {
+      const inputs = await api.getWorkflowTriggerInputs(wfId)
+      if (inputs?.fields?.length > 0) {
+        setTriggerInput({
+          asked: true,
+          fields: inputs.fields,
+          value: rememberedTriggerInput(wfId, inputs.skeleton),
+        })
+        return
+      }
+    }
+    await startRun('')
+  }
+
+  const startRun = async (inputJSON) => {
     if (running || nodes.length === 0) return
     stopRef.current = false
     setRunning(true)
@@ -1470,7 +1554,8 @@ export default function NodeRunner({ onNavigate, navData }) {
       })
 
       try {
-        await api.runWorkflow(currentWfId)
+        await api.runWorkflowWithInput(currentWfId, inputJSON)
+        rememberTriggerInput(currentWfId, inputJSON)
         const execId = await execIdPromise
         if (runTokenRef.current !== runToken) return // superseded by a newer run
         if (!execId) { setRunning(false); return }
@@ -1954,6 +2039,19 @@ export default function NodeRunner({ onNavigate, navData }) {
         />
       )}
 
+      {/* ── TRIGGER INPUT MODAL ── */}
+      {triggerInput.asked && triggerInput.fields.length > 0 && (
+        <TriggerInputModal
+          fields={triggerInput.fields}
+          initialValue={triggerInput.value}
+          onRun={(value) => {
+            setTriggerInput({ asked: false, fields: [], value: '' })
+            startRun(value)
+          }}
+          onClose={() => setTriggerInput({ asked: false, fields: [], value: '' })}
+        />
+      )}
+
       {/* ── WORKFLOWS MODAL ── */}
       {showWfModal && (
         <WorkflowsModal
@@ -2108,6 +2206,7 @@ export default function NodeRunner({ onNavigate, navData }) {
             onConfigChange={updateConfig}
             onClose={() => setInspectorOpen(false)}
             onNavigate={onNavigate}
+            liveSchemas={liveSchemas}
           />
         )}
 

@@ -1615,6 +1615,22 @@ body {
   margin-bottom: 0;
 }
 
+/* Ready-made values a field offers (NodeSchemaField.Examples) — click to
+   insert. A list of image prompts is otherwise an empty box to guess at. */
+.field-examples { display: flex; flex-direction: column; gap: 3px; margin-top: 5px; }
+.field-examples-label {
+  font-family: var(--font-mono); font-size: 9px; letter-spacing: 1.2;
+  text-transform: uppercase; color: var(--text-muted, #888);
+}
+.field-example {
+  display: block; width: 100%; text-align: left; cursor: pointer;
+  background: rgba(0,180,216,0.05);
+  border: 1px dashed rgba(0,180,216,0.25);
+  border-radius: 6px; padding: 4px 7px;
+  font-size: 11px; line-height: 1.35; color: var(--text-muted, #888);
+}
+.field-example:hover { background: rgba(0,180,216,0.12); color: var(--text, #ccc); border-style: solid; }
+
 .field-code {
   font-family: var(--font-mono);
   font-size: 11px;
