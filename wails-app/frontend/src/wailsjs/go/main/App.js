@@ -430,6 +430,10 @@ export function GetWorkflowNodeTypes() {
   return window['go']['main']['App']['GetWorkflowNodeTypes']();
 }
 
+export function GetWorkflowTriggerInputs(arg1) {
+  return window['go']['main']['App']['GetWorkflowTriggerInputs'](arg1);
+}
+
 export function HasGeneratedDocuments(arg1) {
   return window['go']['main']['App']['HasGeneratedDocuments'](arg1);
 }

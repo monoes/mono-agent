@@ -14,7 +14,7 @@ import ResourcePickerField from '../components/ResourcePickerField.jsx'
 import ImagePickerModal from '../components/ImagePickerModal'
 import { NODE_CONFIG_FIELDS, BROWSER_NODE_GENERIC } from './nodeConfigFields.js'
 import { SaveModal, WorkflowsModal, TriggerInputModal } from './NodeRunnerModals.jsx'
-import { collectTriggerFields, rememberTriggerInput, rememberedTriggerInput } from './triggerInput.js'
+import { rememberTriggerInput, rememberedTriggerInput } from './triggerInput.js'
 import { usePageVisibleRef } from '../lib/usePageVisible.js'
 
 // ── Wails bindings with mock fallback ────────────────────────────────────────
@@ -1493,17 +1493,24 @@ export default function NodeRunner({ onNavigate, navData }) {
   // A workflow whose nodes read {{ $json.<field> }} needs trigger data; ask
   // for it once, then run. Without this the run button sent nothing and such
   // a workflow completed having done nothing at all.
+  //
+  // What it reads is the CLI's answer (`workflow inputs --json`), not
+  // something derived here — the dialog only renders it. A workflow that has
+  // never been saved has no id to ask about, and an unreachable CLI must not
+  // block a run, so both fall through to running with no input.
   const handleRun = async () => {
     if (running || nodes.length === 0) return
-    const fields = collectTriggerFields(nodes, liveSchemas)
-    if (fields.length > 0) {
-      // The modal is the only path to a run for these workflows, and it hands
-      // startRun the edited value directly — so nothing here ever runs with a
-      // stale one, and a second Run while it is open is a no-op.
-      if (!triggerInput.asked) {
-        setTriggerInput({ asked: true, fields, value: rememberedTriggerInput(wfId, fields) })
+    if (triggerInput.asked) return // dialog already open; it drives the run
+    if (wfId && !isDirty) {
+      const inputs = await api.getWorkflowTriggerInputs(wfId)
+      if (inputs?.fields?.length > 0) {
+        setTriggerInput({
+          asked: true,
+          fields: inputs.fields,
+          value: rememberedTriggerInput(wfId, inputs.skeleton),
+        })
+        return
       }
-      return
     }
     await startRun('')
   }

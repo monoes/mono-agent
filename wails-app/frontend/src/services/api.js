@@ -47,6 +47,19 @@ export const api = {
   listWorkflows:        () => GoApp.ListWorkflows().catch(guard('list workflows', [])),
   runWorkflow:          (id) => GoApp.RunWorkflow(id).catch(e => { reportError('run workflow', e); return `error: ${e}` }),
   runWorkflowWithInput: (id, input) => GoApp.RunWorkflowWithInput(id, input || '').catch(e => { reportError('run workflow', e); return `error: ${e}` }),
+  // `workflow inputs --json`: which trigger fields a workflow reads, plus a
+  // skeleton payload. Returns null rather than throwing — a run must not be
+  // blocked because the question could not be asked.
+  getWorkflowTriggerInputs: async (id) => {
+    try {
+      const raw = await GoApp.GetWorkflowTriggerInputs(id)
+      const parsed = JSON.parse(raw)
+      return parsed?.error ? null : parsed
+    } catch (e) {
+      console.warn('workflow inputs unavailable', e)
+      return null
+    }
+  },
   setWorkflowActive:    (id, active) => GoApp.SetWorkflowActive(id, active),
   getRecentExecutions:  (limit = 20) => GoApp.GetRecentExecutions(limit).catch(guard('recent executions', [])),
   getWorkflowExecutions:(id, limit = 20) => GoApp.GetWorkflowExecutions(id, limit).catch(guard('workflow executions', [])),

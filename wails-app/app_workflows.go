@@ -496,6 +496,30 @@ func (a *App) ImportWorkflow(jsonOrPath string) (*WorkflowImportResult, error) {
 // Workflow execution (subprocess)
 // ─────────────────────────────────────────────────────────────────────────────
 
+// GetWorkflowTriggerInputs returns `monoagentcli workflow inputs <id> --json`
+// verbatim: which trigger fields the workflow reads, and a skeleton payload
+// filled from the reading nodes' schema examples.
+//
+// The detection lives in the CLI, not here — the editor only renders what it
+// is told, so the same answer is available to a script, a test, and the
+// dialog (see internal/workflow/trigger_inputs.go).
+func (a *App) GetWorkflowTriggerInputs(id string) string {
+	if strings.TrimSpace(id) == "" {
+		return aiError(fmt.Errorf("workflow id required"))
+	}
+	cliBin, err := findMonoAgentCLI()
+	if err != nil {
+		return aiError(err)
+	}
+	ctx, cancel := context.WithTimeout(a.ctx, 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, cliBin,
+		"--profile", a.getActiveProfileID(), "--json", "workflow", "inputs", id)
+	hideWindow(cmd)
+	out, runErr := cmd.Output()
+	return cliResultJSON(cliBin, out, runErr)
+}
+
 // RunWorkflow spawns `monoagentcli workflow run <id>` as a subprocess with no
 // trigger data. Kept as its own binding so existing callers (the Dashboard's
 // run button) are unchanged.

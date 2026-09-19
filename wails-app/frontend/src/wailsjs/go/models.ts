@@ -1408,6 +1408,7 @@ export namespace workflow {
 	    required: boolean;
 	    default?: any;
 	    placeholder?: string;
+	    examples?: string[];
 	    help?: string;
 	    options?: string[];
 	    language?: string;
@@ -1430,6 +1431,7 @@ export namespace workflow {
 	        this.required = source["required"];
 	        this.default = source["default"];
 	        this.placeholder = source["placeholder"];
+	        this.examples = source["examples"];
 	        this.help = source["help"];
 	        this.options = source["options"];
 	        this.language = source["language"];

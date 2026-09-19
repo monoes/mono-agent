@@ -219,6 +219,8 @@ export function GetWorkflowExecutions(arg1:string,arg2:number):Promise<Array<mai
 
 export function GetWorkflowNodeTypes():Promise<Record<string, any>>;
 
+export function GetWorkflowTriggerInputs(arg1:string):Promise<string>;
+
 export function HasGeneratedDocuments(arg1:string):Promise<boolean>;
 
 export function ImportVaultAll(arg1:string,arg2:string):Promise<main.VaultImportResult>;
