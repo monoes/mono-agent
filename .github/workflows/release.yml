@@ -442,7 +442,7 @@ jobs:
             $0 ~ "^## \\[" ver "\\]" { found = 1; next }
             found && /^## \[/ { exit }
             found { print }
-          ' CHANGELOG.md 2>/dev/null | sed '/^[[:space:]]*$/{ /./!d }')
+          ' CHANGELOG.md 2>/dev/null)
 
           {
             echo 'NOTES<<RELEASE_EOF'
