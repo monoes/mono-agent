@@ -44,8 +44,15 @@
   const attr = (n, name) => (n && n.attrs && n.attrs[name]) || "";
   const clean = (s) => String(s || "").replace(/\s+/g, " ").trim();
 
+  // A cell holds a value; <script>/<style> hold source. capture_page.js hands
+  // this module the *unpruned* tree — readable.js does its own dropping on a
+  // clone — so nothing has removed them before we get here, and a tracking
+  // snippet inside a <td> used to be written out as data.
+  const NOT_TEXT = new Set(["script", "noscript", "style", "template"]);
+
   function textOf(node) {
     if (isText(node)) return node.text || "";
+    if (NOT_TEXT.has(node.tag)) return "";
     if (node.tag === "br") return " ";
     return kids(node).map(textOf).join("");
   }
@@ -124,7 +131,11 @@
         while (taken.has(`${r}:${c}`)) c++;
         if (c >= MAX_COLS) break;
         const cols = Math.min(spanOf(cell, "colspan"), MAX_COLS - c);
-        const spanRows = Math.min(spanOf(cell, "rowspan"), MAX_ROWS - r);
+        // Bounded by the rows the table actually has, not by MAX_ROWS: a
+        // single `rowspan="500"` used to yield a 500-row CSV, and one row
+        // carrying one big rowspan slipped past the "single row" filter by
+        // pretending to be five hundred.
+        const spanRows = Math.min(spanOf(cell, "rowspan"), rows.length - r);
         const text = cellText(cell);
         for (let dr = 0; dr < spanRows; dr++) {
           for (let dc = 0; dc < cols; dc++) {
@@ -151,17 +162,31 @@
   }
 
   /**
+   * structuralReason is the half of the layout judgement the markup answers on
+   * its own. Split out from layoutReason so extract() can refuse a table — or
+   * find it is over the cap — before paying to expand its grid.
+   */
+  function structuralReason(table) {
+    if (/(^|\s)(presentation|none)(\s|$)/i.test(attr(table, "role"))) return "role=presentation";
+    if (hasTag(table, "table")) return "wraps another table";
+    if (!hasTag(table, "th")) return "no header cell";
+    return "";
+  }
+
+  /** shapeReason is the other half: what only the expanded rectangle knows. */
+  function shapeReason(grid) {
+    if (grid.length < 2) return "single row";
+    if (!grid[0] || grid[0].length < 2) return "single column";
+    return "";
+  }
+
+  /**
    * layoutReason names why a table is not data, or returns "" for one that
    * is. A reason rather than a boolean, so a skipped table is reported
    * instead of silently vanishing.
    */
   function layoutReason(table, grid) {
-    if (/(^|\s)(presentation|none)(\s|$)/i.test(attr(table, "role"))) return "role=presentation";
-    if (hasTag(table, "table")) return "wraps another table";
-    if (!hasTag(table, "th")) return "no header cell";
-    if (grid.length < 2) return "single row";
-    if (!grid[0] || grid[0].length < 2) return "single column";
-    return "";
+    return structuralReason(table) || shapeReason(grid);
   }
 
   /** captionOf prefers the table's own caption, then its label, then the heading above it. */
@@ -193,8 +218,19 @@
 
   const NEEDS_QUOTE = /[",\r\n]/;
 
+  // Excel, Sheets and LibreOffice all read a cell beginning = + - @ as a
+  // formula, and a leading tab or CR is skipped as whitespace before that
+  // test — so `=HYPERLINK("http://evil.test","click")` in a <td> is code in
+  // the file this module exists to hand a spreadsheet. A leading apostrophe
+  // forces it back to text.
+  const FORMULA = /^[=+\-@\t\r]/;
+  // …except a number, which is data. `'-12` would stop being a number, and a
+  // column of negatives is the ordinary case, not the attack.
+  const NUMBER = /^[+-]?(\d+(\.\d+)?|\.\d+)([eE][+-]?\d+)?$/;
+
   function csvField(value) {
-    const s = value === undefined || value === null ? "" : String(value);
+    let s = value === undefined || value === null ? "" : String(value);
+    if (FORMULA.test(s) && !NUMBER.test(s)) s = `'${s}`;
     if (!NEEDS_QUOTE.test(s)) return s;
     return `"${s.replace(/"/g, '""')}"`;
   }
@@ -219,14 +255,22 @@
     const skipped = [];
 
     for (const { node, heading } of collect(tree)) {
-      const grid = gridOf(node);
-      const reason = layoutReason(node, grid);
-      if (reason) {
-        skipped.push({ caption: captionOf(node, heading) || null, reason });
+      const structural = structuralReason(node);
+      if (structural) {
+        skipped.push({ caption: captionOf(node, heading) || null, reason: structural });
         continue;
       }
+      // Before gridOf, not after: a page carrying a hundred big tables used
+      // to pay to expand every one of them and then throw all but the first
+      // twenty-five away.
       if (tables.length >= o.maxTables) {
         skipped.push({ caption: captionOf(node, heading) || null, reason: `over the ${o.maxTables}-table limit` });
+        continue;
+      }
+      const grid = gridOf(node);
+      const shape = shapeReason(grid);
+      if (shape) {
+        skipped.push({ caption: captionOf(node, heading) || null, reason: shape });
         continue;
       }
       tables.push({
@@ -248,6 +292,7 @@
 
   root.MonoTables = {
     extract, metaEntries, toCsv, csvField, gridOf, layoutReason, captionOf,
+    structuralReason, shapeReason,
     MAX_TABLES, MAX_ROWS, MAX_COLS,
   };
 })(globalThis);

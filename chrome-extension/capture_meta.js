@@ -44,13 +44,18 @@
 
   const clean = (s) => String(s || "").replace(/\s+/g, " ").trim();
 
-  function absolute(href, base) {
-    if (!href) return "";
+  function parseUrl(href, base) {
+    if (!href) return null;
     try {
-      return new URL(href, base || undefined).href;
+      return new URL(href, base || undefined);
     } catch {
-      return "";
+      return null;
     }
+  }
+
+  function absolute(href, base) {
+    const url = parseUrl(href, base);
+    return url ? url.href : "";
   }
 
   /** metaContent returns the first non-empty <meta> value among `keys`. */
@@ -122,11 +127,28 @@
     return parsed.toISOString();
   }
 
+  /**
+   * canonicalOf resolves the URL this capture is filed under. It is half the
+   * dedupe key, and capture.js keys the reader's saved highlights on it
+   * (capture.js:308) — so a page that declares someone else's URL as its
+   * canonical would pull that page's annotations into its own capture. The
+   * page's claim is therefore honoured only when it is
+   *
+   *   - addressable at all: http(s), not `javascript:` or `data:`, the same
+   *     allowlist markdown.js applies to links; and
+   *   - about a document on the same host, so an https upgrade or a path
+   *     rewrite is fine and a hop to another site is not.
+   *
+   * Anything else falls through to the normalized address bar, which is the
+   * one URL we watched the browser go to.
+   */
   function canonicalOf(tree, url) {
     const declared = linkHref(tree, /(^|\s)canonical(\s|$)/) || metaContent(tree, ["og:url"]);
-    const resolved = absolute(declared, url);
-    if (resolved) return resolved;
-    // No declared canonical: normalize the address bar instead — drop the
+    const claimed = parseUrl(declared, url);
+    const page = parseUrl(url);
+    const addressable = claimed && (claimed.protocol === "https:" || claimed.protocol === "http:");
+    if (addressable && (!page || page.hostname === claimed.hostname)) return claimed.href;
+    // No usable canonical: normalize the address bar instead — drop the
     // fragment and the campaign parameters, keep everything that addresses
     // the document.
     try {

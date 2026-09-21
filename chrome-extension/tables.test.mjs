@@ -142,6 +142,81 @@ test("a pathological span cannot blow the grid up", () => {
   assert.equal(tables[0].rows, 2);
 });
 
+test("a rowspan cannot invent rows the table does not have", () => {
+  const { tables } = MonoTables.extract(
+    parse(`<table>
+      <tr><th>Keeper</th><th>Years</th></tr>
+      <tr><td rowspan="500">Ada</td><td>12</td></tr>
+      <tr><td>7</td></tr>
+    </table>`)
+  );
+  // Three <tr> on the page is three rows in the CSV, whatever the span says.
+  assert.equal(tables[0].rows, 3, `rows = ${tables[0].rows}`);
+  assert.deepEqual(rowsOf(tables[0].csv), ["Keeper,Years", "Ada,12", "Ada,7"]);
+});
+
+test("a lone rowspan does not smuggle a layout table past the filter", () => {
+  // One row, one giant rowspan: the grid used to come out 500 rows tall, so
+  // the "single row" check never fired.
+  const { tables, skipped } = MonoTables.extract(
+    parse(`<table><tr><th rowspan="500">nav</th><th>logo</th></tr></table>`)
+  );
+  assert.equal(tables.length, 0);
+  assert.equal(skipped[0].reason, "single row");
+});
+
+test("the table cap is checked before the grids are built", () => {
+  const big = `<table>${`<tr><th>a</th><th>b</th></tr>`.repeat(4000)}</table>`;
+  const html = `<table><tr><th>a</th><th>b</th></tr><tr><td>1</td><td>2</td></tr></table>${big.repeat(40)}`;
+  const tree = parse(html);
+
+  const started = Date.now();
+  const { tables, skipped } = MonoTables.extract(tree, { maxTables: 1 });
+  const elapsed = Date.now() - started;
+
+  assert.equal(tables.length, 1);
+  assert.equal(skipped.length, 40);
+  assert.ok(elapsed < 250, `building grids nobody wanted took ${elapsed}ms`);
+});
+
+test("script and style source never lands in a cell", () => {
+  // capture_page.js hands the *unpruned* tree here, so the stripping that
+  // readable.js does for Markdown has not happened yet.
+  const { tables } = MonoTables.extract(
+    parse(`<table>
+      <tr><th>Keeper</th><th>Years</th></tr>
+      <tr><td>Ada<script>window.tracker = 1;</script></td><td>12<style>.x{color:red}</style></td></tr>
+    </table>`)
+  );
+  assert.deepEqual(rowsOf(tables[0].csv), ["Keeper,Years", "Ada,12"]);
+});
+
+test("a cell that reads as a spreadsheet formula is neutralised", () => {
+  // The CSV is opened in a spreadsheet; a leading = + - @ is code there.
+  assert.equal(MonoTables.csvField("=1+1"), "'=1+1");
+  assert.equal(MonoTables.csvField('=HYPERLINK("http://evil.test","click")'), '"\'=HYPERLINK(""http://evil.test"",""click"")"');
+  assert.equal(MonoTables.csvField("@SUM(A1)"), "'@SUM(A1)");
+  assert.equal(MonoTables.csvField("+1+1"), "'+1+1");
+  assert.equal(MonoTables.csvField("-2+3"), "'-2+3");
+  // …but a number is data, not a formula, and must stay a number.
+  assert.equal(MonoTables.csvField("-12"), "-12");
+  assert.equal(MonoTables.csvField("+0.5"), "+0.5");
+  assert.equal(MonoTables.csvField("-1.5e3"), "-1.5e3");
+  assert.equal(MonoTables.csvField("12"), "12");
+});
+
+test("formula-shaped cells are neutralised through the real extraction", () => {
+  const { tables } = MonoTables.extract(
+    parse(`<table>
+      <tr><th>Item</th><th>Change</th></tr>
+      <tr><td>=cmd|'/c calc'!A1</td><td>-12</td></tr>
+    </table>`)
+  );
+  // No comma or quote in the value, so RFC4180 quoting is not triggered —
+  // the apostrophe is doing the work on its own.
+  assert.deepEqual(rowsOf(tables[0].csv)[1], `'=cmd|'/c calc'!A1,-12`);
+});
+
 // --- the wiring: page tables become envelope artifacts --------------------
 
 /** captureCtx is the smallest Chrome stand-in that reaches the artifact list. */

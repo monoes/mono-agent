@@ -58,7 +58,14 @@
         const code = body[1] === "x" || body[1] === "X"
           ? parseInt(body.slice(2), 16)
           : parseInt(body.slice(1), 10);
-        return Number.isFinite(code) && code > 0 ? String.fromCodePoint(code) : whole;
+        // Above U+10FFFF String.fromCodePoint throws a RangeError, and
+        // `&#1114112;` on a page used to take the whole extraction with it.
+        // A lone surrogate does not throw but produces a string no UTF-8
+        // encoder will accept. Either way the reference is left as written:
+        // unreadable beats unencodable, and beats crashing.
+        if (!Number.isFinite(code) || code <= 0 || code > 0x10ffff) return whole;
+        if (code >= 0xd800 && code <= 0xdfff) return whole;
+        return String.fromCodePoint(code);
       }
       const named = NAMED_ENTITIES[body.toLowerCase()];
       return named === undefined ? whole : named;
@@ -101,10 +108,20 @@
     return { tag, attrs, selfClose };
   }
 
+  // How deep the tree may nest. Every consumer of this tree recurses over it
+  // — readable.js, markdown.js, tables.js, capture_meta.js — and a page can
+  // ship a few thousand unclosed wrappers. Past the cap an element is still
+  // emitted, so no text is lost; its children just become its siblings.
+  const MAX_DEPTH = 512;
+
   function parse(html) {
     const document = { tag: "#root", attrs: {}, children: [] };
     const stack = [document];
     const top = () => stack[stack.length - 1];
+    // html.toLowerCase() used to run once per raw-text element, rebuilding
+    // the whole document each time: 2.7 seconds for 437 KiB. Once, lazily.
+    let lowered = null;
+    const lowerHtml = () => (lowered === null ? (lowered = html.toLowerCase()) : lowered);
     const addText = (text) => {
       if (!text) return;
       top().children.push({ tag: "#text", text: decodeEntities(text) });
@@ -162,7 +179,7 @@
       if (VOID.has(open.tag) || open.selfClose) continue;
 
       if (RAW_TEXT.has(open.tag)) {
-        const close = html.toLowerCase().indexOf(`</${open.tag}`, i);
+        const close = lowerHtml().indexOf(`</${open.tag}`, i);
         const text = html.slice(i, close < 0 ? html.length : close);
         if (text) node.children.push({ tag: "#text", text });
         if (close < 0) {
@@ -174,7 +191,7 @@
         continue;
       }
 
-      stack.push(node);
+      if (stack.length < MAX_DEPTH) stack.push(node);
     }
     return document;
   }

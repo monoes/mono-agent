@@ -118,3 +118,32 @@ test("meta carries every field the envelope contract names", async () => {
   }
   assert.match(meta.capturedAt, /^\d{4}-\d{2}-\d{2}T.*Z$/);
 });
+
+
+// --- the canonical URL is the dedupe key, so the page does not get to lie ---
+
+test("a canonical with an unaddressable scheme is refused", () => {
+  for (const href of ["javascript:alert(1)", "data:text/html,<b>x", "file:///etc/passwd", "jav\tascript:alert(1)"]) {
+    const tree = parse(`<html><head><link rel="canonical" href="${href.replace(/"/g, "&quot;")}"></head><body></body></html>`);
+    const canonical = MonoMeta.canonicalOf(tree, "https://paper.test/lighthouse?utm_source=x#a");
+    assert.equal(canonical, "https://paper.test/lighthouse", `accepted ${JSON.stringify(href)}`);
+  }
+});
+
+test("a cross-site canonical cannot hijack another page's dedupe key", () => {
+  // capture.js keys highlights on meta.canonicalUrl, so a page that claims a
+  // canonical on someone else's host pulls their annotations into its capture.
+  const tree = parse(`<html><head><link rel="canonical" href="https://bank.test/account"></head><body></body></html>`);
+  assert.equal(MonoMeta.canonicalOf(tree, "https://evil.test/page"), "https://evil.test/page");
+
+  const viaOg = parse(`<html><head><meta property="og:url" content="https://bank.test/account"></head><body></body></html>`);
+  assert.equal(MonoMeta.canonicalOf(viaOg, "https://evil.test/page"), "https://evil.test/page");
+});
+
+test("a same-host canonical is still honoured, including an https upgrade", () => {
+  const relative = parse(`<html><head><link rel="canonical" href="/clean"></head><body></body></html>`);
+  assert.equal(MonoMeta.canonicalOf(relative, "https://paper.test/messy?utm_source=x"), "https://paper.test/clean");
+
+  const upgrade = parse(`<html><head><link rel="canonical" href="https://paper.test/clean"></head><body></body></html>`);
+  assert.equal(MonoMeta.canonicalOf(upgrade, "http://paper.test/messy"), "https://paper.test/clean");
+});

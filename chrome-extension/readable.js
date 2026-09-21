@@ -43,28 +43,124 @@
   const isText = (n) => n.tag === "#text";
   const kids = (n) => n.children || [];
   const attr = (n, name) => (n.attrs && n.attrs[name]) || "";
+  const hasAttr = (n, name) => !!(n.attrs && Object.prototype.hasOwnProperty.call(n.attrs, name));
+
+  // Every walk here recurses, and pages really do nest a few thousand
+  // wrappers. The cap turns a stack overflow into a slightly flatter capture.
+  // domlite.js caps its own nesting lower, so this is a backstop for trees
+  // that arrive from somewhere else.
+  const MAX_DEPTH = 1024;
+
+  // --- measurements --------------------------------------------------------
+  //
+  // textOf used to rebuild a node's entire subtree string every time it was
+  // asked, and the scorer asks once per node: quadratic, and a 189 KiB page
+  // took 58 seconds inside a content script. Each node's measurements are now
+  // computed once and cached here.
+  //
+  // The cache is only sound because it is dropped in step with the tree: the
+  // two functions that mutate children — prune() and cleanup() — forget a
+  // node *after* they have finished rewriting it, bottom-up, so no cached
+  // value is ever read across a change to the subtree it describes.
+  let measures = new WeakMap();
+
+  function measureOf(node) {
+    let m = measures.get(node);
+    if (!m) {
+      m = {};
+      measures.set(node, m);
+    }
+    return m;
+  }
+
+  const forget = (node) => measures.delete(node);
 
   function textOf(node) {
     if (isText(node)) return node.text || "";
-    return kids(node).map(textOf).join("");
+    const m = measureOf(node);
+    if (m.text === undefined) m.text = kids(node).map(textOf).join("");
+    return m.text;
+  }
+
+  // Memoizing textOf() alone is not enough: building each node's string once
+  // still copies every character once per level of nesting, which for a deeply
+  // wrapped page is the same quadratic in a quieter coat. Almost every caller
+  // only wants the *length*, so measure that without ever building the string.
+  //
+  // A span describes `textOf(node).replace(/\s+/g, " ")` — its length, and
+  // whether it begins or ends with the single space a run of whitespace
+  // collapses to. Two spans concatenate by adding their lengths and merging
+  // one space where the join has a space on both sides, which is what makes
+  // the measurement exactly equal to collapsing the built string.
+  const EMPTY_SPAN = { len: 0, lead: false, trail: false };
+
+  function collapsedSpan(node) {
+    if (isText(node)) {
+      const text = (node.text || "").replace(/\s+/g, " ");
+      if (!text) return EMPTY_SPAN;
+      return { len: text.length, lead: text[0] === " ", trail: text[text.length - 1] === " " };
+    }
+    const m = measureOf(node);
+    if (m.span === undefined) {
+      let span = EMPTY_SPAN;
+      for (const child of kids(node)) {
+        const next = collapsedSpan(child);
+        if (!next.len) continue;
+        span = span.len
+          ? {
+              len: span.len + next.len - (span.trail && next.lead ? 1 : 0),
+              lead: span.lead,
+              trail: next.trail,
+            }
+          : next;
+      }
+      m.span = span;
+    }
+    return m.span;
   }
 
   function textLength(node) {
-    return textOf(node).replace(/\s+/g, " ").trim().length;
+    const span = collapsedSpan(node);
+    return Math.max(0, span.len - (span.lead ? 1 : 0) - (span.trail ? 1 : 0));
+  }
+
+  // The text inside this node that sits in a link. Nested <a> is not counted
+  // twice, which is what the hand-written walk did before.
+  function linkedLength(node) {
+    if (isText(node)) return 0;
+    const m = measureOf(node);
+    if (m.linked === undefined) {
+      let linked = 0;
+      for (const c of kids(node)) {
+        if (isText(c)) continue;
+        linked += c.tag === "a" ? textLength(c) : linkedLength(c);
+      }
+      m.linked = linked;
+    }
+    return m.linked;
   }
 
   function linkDensity(node) {
     const total = textLength(node);
     if (!total) return 0;
-    let linked = 0;
-    (function walk(n) {
-      for (const c of kids(n)) {
+    return Math.min(1, linkedLength(node) / total);
+  }
+
+  /** hasImageWithin is firstOf(node, img) without the per-node subtree walk. */
+  function hasImageWithin(node) {
+    if (isText(node)) return false;
+    const m = measureOf(node);
+    if (m.img === undefined) {
+      m.img = false;
+      for (const c of kids(node)) {
         if (isText(c)) continue;
-        if (c.tag === "a") linked += textLength(c);
-        else walk(c);
+        if (c.tag === "img" || hasImageWithin(c)) {
+          m.img = true;
+          break;
+        }
       }
-    })(node);
-    return Math.min(1, linked / total);
+    }
+    return m.img;
   }
 
   function signature(node) {
@@ -80,12 +176,13 @@
     return weight;
   }
 
-  function cloneTree(node) {
+  function cloneTree(node, depth) {
+    const d = depth || 0;
     if (isText(node)) return { tag: "#text", text: node.text };
     return {
       tag: node.tag,
       attrs: Object.assign({}, node.attrs),
-      children: kids(node).map(cloneTree),
+      children: d >= MAX_DEPTH ? [] : kids(node).map((c) => cloneTree(c, d + 1)),
       hidden: node.hidden,
       fixed: node.fixed,
     };
@@ -100,7 +197,12 @@
     // newsletter nag) — never the article body.
     if (node.fixed) return true;
     if (attr(node, "aria-hidden") === "true" && textLength(node) < 500) return true;
-    if (attr(node, "hidden") !== "") return true;
+    // `hidden` is a boolean attribute: its presence hides the element,
+    // whatever the value — except `until-found`, which only collapses it.
+    // The old test was `attr(node, "hidden") !== ""`, which is true for an
+    // *absent* attribute and false for the commonest form of all, `<div
+    // hidden>`, so the one case that matters was the one it let through.
+    if (hasAttr(node, "hidden") && attr(node, "hidden").toLowerCase() !== "until-found") return true;
     if (HIDDEN_ROLES.has(attr(node, "role").toLowerCase())) return true;
     if (FURNITURE.has(node.tag)) return true;
     if (node.tag === "header" && !SHELTERS_HEADER.has(parentTag)) return true;
@@ -118,6 +220,10 @@
       prune(child, opts, node.tag);
       return true;
     });
+    // This node's children just changed, and prune() has already forgotten
+    // every descendant on its way back up, so anything measured during the
+    // pass above is discarded rather than believed.
+    forget(node);
     return node;
   }
 
@@ -136,12 +242,13 @@
       for (const child of kids(node)) {
         if (isText(child)) continue;
         if (PARAGRAPH_TAGS.has(child.tag)) {
-          const text = textOf(child).replace(/\s+/g, " ").trim();
           // `div`/`section` only count for their own loose text, otherwise a
-          // wrapper would be scored once per nesting level.
-          const own = child.tag === "div" || child.tag === "section" || child.tag === "article"
+          // wrapper would be scored once per nesting level — and the subtree
+          // string they used to build first was then thrown away unread.
+          const loose = child.tag === "div" || child.tag === "section" || child.tag === "article";
+          const own = loose
             ? kids(child).filter(isText).map((t) => t.text).join(" ").replace(/\s+/g, " ").trim()
-            : text;
+            : textOf(child).replace(/\s+/g, " ").trim();
           if (own.length >= MIN_PARAGRAPH) {
             const base = 1 + (own.match(/[,，、]/g) || []).length + Math.min(Math.floor(own.length / 100), 3);
             bump(child, base);
@@ -238,15 +345,18 @@
   function cleanup(node) {
     node.children = kids(node).filter((child) => {
       if (isText(child)) return true;
+      // cleanup() forgets `child` on its way out, so these three measurements
+      // are recomputed from the subtree as it now stands, not as it arrived.
       cleanup(child);
       if (child.tag === "a" || child.tag === "img" || child.tag === "br" || child.tag === "hr") return true;
       const len = textLength(child);
-      if (!len && !firstOf(child, (n) => n.tag === "img")) return false;
+      if (!len && !hasImageWithin(child)) return false;
       // A dense block of links inside the article is a "related stories" rail
       // that survived pruning.
       if (len < 120 && linkDensity(child) > 0.5) return false;
       return true;
     });
+    forget(node);
     return node;
   }
 
@@ -265,6 +375,7 @@
   function extract(tree, opts) {
     const options = Object.assign({ baseUrl: "", minLength: 250, selectionOnly: false }, opts || {});
     const run = (keepUnlikely) => {
+      measures = new WeakMap();
       const working = prune(cloneTree(tree), { keepUnlikely });
       const contentRoot = options.selectionOnly
         ? working
@@ -349,7 +460,7 @@
           if (style.position === "fixed" || style.position === "sticky") out.fixed = true;
         }
       }
-      if (!out.hidden) {
+      if (!out.hidden && depth < MAX_DEPTH) {
         for (const child of node.childNodes) {
           const converted = convert(child, depth + 1);
           if (converted) out.children.push(converted);
@@ -362,10 +473,34 @@
   }
 
   /**
-   * stripScripts removes everything executable from an HTML string, for the
-   * paths where we hand HTML on rather than Markdown (TRU-03).
+   * defangHtmlSource deletes the obvious executable constructs from an HTML
+   * *string*, by pattern. It is a source-level scrub, not a sanitizer, and
+   * the difference is the whole reason it is no longer called stripScripts —
+   * that name read as a guarantee it has never been able to make.
+   *
+   * What it does remove, as it appears literally in the source: `<script>`
+   * and `<noscript>` elements, `on*=` handler attributes, and `javascript:`
+   * in an href/src/action.
+   *
+   * What it does not, each verified and pinned in readable.test.mjs:
+   *
+   *   - it never decodes entities, so any part of a scheme written as one
+   *     walks past — `jav&#x09;ascript:`, `&#106;avascript:`,
+   *     `java&#115;cript:`, `javascript&colon;`;
+   *   - it only looks at href/src/action, so `style="…url(javascript:…)"`
+   *     and every other attribute that resolves a URL are untouched;
+   *   - it matches attribute *names*, so SVG's indirection —
+   *     `<set attributeName="onload" to="…">` — says nothing it recognises;
+   *   - it treats attribute values as opaque, so markup carried inside one
+   *     (`<iframe srcdoc="&lt;script&gt;…&lt;/script&gt;">`) survives whole.
+   *
+   * So: fine for tidying markup already trusted, nowhere near enough to
+   * render attacker-controlled HTML. Anything that must actually be safe has
+   * to be rebuilt from the parsed tree (domlite.js) rather than patched in
+   * source — which is exactly what the capture path does. It emits Markdown
+   * and hands no HTML on at all, which is why nothing here calls this.
    */
-  function stripScripts(html) {
+  function defangHtmlSource(html) {
     return String(html)
       .replace(/<script\b[\s\S]*?<\/script\s*>/gi, "")
       .replace(/<script\b[^>]*\/?>/gi, "")
@@ -375,7 +510,7 @@
   }
 
   root.MonoReadable = {
-    extract, fromHTML, snapshot, stripScripts, plainText,
+    extract, fromHTML, snapshot, defangHtmlSource, plainText,
     textOf, textLength, linkDensity,
   };
 })(globalThis);

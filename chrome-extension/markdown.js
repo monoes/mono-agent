@@ -30,9 +30,42 @@
     "ul",
   ]);
 
-  // URL schemes that are executable rather than addressable. A saved page is
-  // a photograph, not a program, so these never become links (TRU-03).
-  const UNSAFE_URL = /^\s*(javascript|vbscript|data:text\/html|file):/i;
+  // The schemes a saved page may link to (TRU-03). An allowlist, checked
+  // after the URL has been normalised — which is the whole point, because the
+  // denylist this replaces was checked against the raw href and could be
+  // walked past twice over: browsers strip ASCII control characters out of a
+  // URL before parsing it, so a tab, a newline or a NUL spliced into
+  // "javascript:" still navigated; and factoring the colon out of the
+  // alternation meant `data:text/html;base64,...` never matched at all.
+  //
+  // This is the policy the Go crawler already applies — see resolveAgainst in
+  // internal/crawlsite/extract.go — plus mailto:, which a saved article does
+  // legitimately carry.
+  const SAFE_SCHEMES = new Set(["http:", "https:", "mailto:"]);
+
+  // Drop the ASCII control characters a browser would drop anyway, so the
+  // scheme decision is made about the URL that would actually be followed.
+  function stripControl(s) {
+    let out = "";
+    for (const ch of String(s)) {
+      const code = ch.codePointAt(0);
+      if (code > 31 && code !== 127) out += ch;
+    }
+    return out;
+  }
+
+  // Markdown ends a link target at the first ")", so a ")" inside an href
+  // closes the link early and lets everything after it be read as markup:
+  // `[safe](/ok) [CLICK ME](https://evil.test/steal)` out of a single <a>.
+  // Percent-encode the characters that can end or reshape a target.
+  const URL_BREAKERS = /[()<>"'`\\\s]/g;
+
+  function encodeUrl(url) {
+    if (!url) return "";
+    return url.replace(URL_BREAKERS, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`);
+  }
+
+  const SCHEME_LIKE = /^[a-zA-Z][a-zA-Z0-9+.\-]*:/;
 
   function isText(node) {
     return node && node.tag === "#text";
@@ -49,6 +82,12 @@
   // Escape the characters that would otherwise be read as Markdown syntax.
   // Intentionally conservative: over-escaping makes prose unreadable, and the
   // output is consumed by a chunker and a human, not a strict parser.
+  //
+  // `(` and `)` are deliberately not escaped. They only carry meaning
+  // immediately after a `]`, and a label cannot reach that position because
+  // `[` and `]` are escaped here; the place a stray `)` really did break out
+  // was the link *target*, and that is fixed where targets are written, by
+  // encodeUrl(), rather than by escaping every parenthesis in every sentence.
   function escapeText(s) {
     return s.replace(/([\\`*_[\]])/g, "\\$1");
   }
@@ -59,20 +98,25 @@
 
   function resolveUrl(href, base) {
     if (!href) return "";
-    if (UNSAFE_URL.test(href)) return "";
-    if (!base) return href.trim();
+    const raw = stripControl(href).trim();
+    if (!raw) return "";
+    let url;
     try {
-      return new URL(href, base).href;
+      url = new URL(raw, base || undefined);
     } catch {
-      return href.trim();
+      // Unparseable and nothing to resolve against: a relative reference,
+      // which names no scheme and so can execute nothing. Pass it on.
+      return SCHEME_LIKE.test(raw) ? "" : raw;
     }
+    return SAFE_SCHEMES.has(url.protocol) ? url.href : "";
   }
 
-  // A long data: URI (a base64 image inlined in the markup) would bloat
+  // A data: URI is bytes, not an address. It can carry a whole document
+  // (`data:image/svg+xml,<svg onload=...>`), and inlined base64 would bloat
   // readable.md past the point of usefulness — the bytes already live in
   // page.mhtml, which is where fidelity belongs.
   function imageSrc(src, base) {
-    if (/^data:/i.test(src) && src.length > 512) return "#embedded-image";
+    if (/^data:/i.test(stripControl(src || "").trim())) return "#embedded-image";
     return resolveUrl(src, base);
   }
 
@@ -84,7 +128,7 @@
       const src = imageSrc(attr(node, "src") || attr(node, "data-src"), ctx.baseUrl);
       const alt = collapse(attr(node, "alt")).trim();
       if (!src && !alt) return "";
-      return `![${escapeText(alt)}](${src})`;
+      return `![${escapeText(alt)}](${encodeUrl(src)})`;
     }
     const inner = childrenOf(node).map((c) => inline(c, ctx)).join("");
     switch (tag) {
@@ -107,7 +151,7 @@
         const href = resolveUrl(attr(node, "href"), ctx.baseUrl);
         const label = inner.trim();
         if (!label) return "";
-        return href ? `[${label}](${href})` : label;
+        return href ? `[${label}](${encodeUrl(href)})` : label;
       }
       default:
         return inner;
@@ -186,23 +230,36 @@
       .trim();
   }
 
-  function collectRows(node, rows) {
+  // Bounds for one rendered table. Without them 130k <tr> overflowed the
+  // stack inside `Math.max(...rows)`, and 1 MB of HTML became 360 MB of
+  // Markdown in 2.4 seconds. Past these sizes a pipe table has stopped being
+  // something a reader can read anyway.
+  const MAX_TABLE_ROWS = 2000;
+  const MAX_TABLE_COLS = 100;
+
+  function collectRows(node, rows, depth) {
+    const d = depth || 0;
     for (const child of childrenOf(node)) {
+      if (rows.length >= MAX_TABLE_ROWS) return rows;
       if (isText(child)) continue;
       if (child.tag === "tr") rows.push(child);
-      else collectRows(child, rows);
+      else if (d < 64) collectRows(child, rows, d + 1);
     }
     return rows;
   }
 
   function renderTable(node, ctx) {
-    const rows = collectRows(node, []).map((tr) =>
+    const rows = collectRows(node, [], 0).map((tr) =>
       childrenOf(tr)
         .filter((c) => !isText(c) && (c.tag === "td" || c.tag === "th"))
+        .slice(0, MAX_TABLE_COLS)
         .map((c) => cell(c, ctx))
     );
     if (!rows.length) return "";
-    const width = Math.max(...rows.map((r) => r.length));
+    // A fold, not `Math.max(...rows)`: the spread is an argument list, and an
+    // argument list that long is a stack overflow.
+    let width = 0;
+    for (const r of rows) width = Math.max(width, r.length);
     if (width === 0) return "";
     const pad = (r) => r.concat(Array(width - r.length).fill(""));
     const head = pad(rows[0]);
@@ -268,5 +325,5 @@
     return body.replace(/\n{3,}/g, "\n\n").trim();
   }
 
-  root.MonoMarkdown = { toMarkdown, textOf, escapeText, resolveUrl };
+  root.MonoMarkdown = { toMarkdown, textOf, escapeText, resolveUrl, encodeUrl };
 })(globalThis);
