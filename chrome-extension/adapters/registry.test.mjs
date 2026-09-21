@@ -147,3 +147,53 @@ test("register rejects a malformed adapter rather than storing it", () => {
   assert.throws(() => reg.register({ match: () => true, extract: () => null }), /name/);
   assert.equal(reg.all().length, 0);
 });
+
+// validArtifactName is the guard the comment above it claims it is: the Go
+// receiver rejects the whole envelope on a bad name, so this predicate is the
+// line between "an adapter lost its artifact" and "the capture was lost".
+test("validArtifactName accepts the names the adapters actually emit", () => {
+  const reg = fresh();
+  for (const name of ["items.csv", "items.json", "transcript.txt", "a", "A-b_c.1", "x".repeat(64)]) {
+    assert.equal(reg.validArtifactName(name), true, `${JSON.stringify(name)} should be accepted`);
+  }
+});
+
+test("validArtifactName rejects traversal, reserved and malformed names", () => {
+  const reg = fresh();
+  const bad = [
+    "", ".", "..", "../escape.csv", "a/../b", "./a.csv", "a/b.csv", "a\\b.csv",
+    ".hidden", "trailing.", "meta.json", "x".repeat(65), "sp ace.csv",
+    "semi;colon.csv", `nul${String.fromCharCode(0)}.csv`, "a\nb.csv",
+    "CON", "con.txt", "NUL.json", "lpt9.csv", "COM1.tar.gz",
+    null, undefined, 42, {}, ["items.csv"],
+  ];
+  for (const name of bad) {
+    assert.equal(reg.validArtifactName(name), false, `${JSON.stringify(String(name))} should be rejected`);
+  }
+});
+
+test("validArtifactName is exactly what normalizeArtifacts enforces", () => {
+  // The two must not be able to drift: whatever the predicate rejects has to
+  // be what run() drops.
+  const reg = fresh();
+  reg.register({
+    name: "probe",
+    match: () => true,
+    extract: () => ({
+      markdown: "# body",
+      artifacts: [
+        { name: "CON.csv", text: "x" },
+        { name: ".hidden", text: "x" },
+        { name: "a/b.csv", text: "x" },
+        { name: "items.csv", text: "ok" },
+      ],
+    }),
+  });
+
+  const out = reg.run(ctx());
+  assert.deepEqual(out.artifacts.map((a) => a.name), ["items.csv"]);
+  assert.equal(out.warnings.length, 3);
+  for (const name of ["CON.csv", ".hidden", "a/b.csv"]) {
+    assert.equal(reg.validArtifactName(name), false);
+  }
+});

@@ -51,7 +51,10 @@
   /** route reads everything reliable straight out of the URL. */
   function route(url) {
     if (U.hostOf(url) !== "github.com") return null;
-    const parts = U.pathOf(url).split("/").filter(Boolean).map(decodeURIComponent);
+    // safeDecode, not decodeURIComponent: route() runs via match() on every
+    // page the extension captures, and one stray `%ZZ` in any URL would
+    // otherwise throw straight out of the adapter registry.
+    const parts = U.pathOf(url).split("/").filter(Boolean).map(U.safeDecode);
     if (parts.length < 2) return null;
     const [owner, repo, section, ...rest] = parts;
     if (RESERVED.has(owner.toLowerCase())) return null;
@@ -80,6 +83,20 @@
 
   // --- repo ---------------------------------------------------------------
 
+  const SCALE = { k: 1e3, m: 1e6, b: 1e9 };
+
+  /**
+   * starCount reads GitHub's own label. "4,182" is exact; "4.2k" is rounded
+   * and has to be scaled, because stripping its non-digits gives 42 — off by
+   * two orders of magnitude and indistinguishable from a real count.
+   */
+  function starCount(label) {
+    const s = String(label).replace(/[\s, ]/g, "");
+    if (/^\d+$/.test(s)) return Number(s);
+    const m = s.match(/^(\d+(?:\.\d+)?)([kmb])$/i);
+    return m ? Math.round(Number(m[1]) * SCALE[m[2].toLowerCase()]) : null;
+  }
+
   function starsOf(tree) {
     const counter = U.pick(tree, [
       { id: "repo-stars-counter-star" },
@@ -89,9 +106,10 @@
     // The visible label is rounded ("4.2k"); the title attribute is exact,
     // and a capture is a record of a moment, so exact is what belongs in it.
     const exact = U.clean(U.attr(counter, "title")) || U.text(counter);
-    const digits = exact.replace(/[^\d]/g, "");
-    if (!digits) return null;
-    return { label: exact, count: Number(digits) };
+    const count = starCount(exact);
+    // A label with no number in it is the Star *button*, not a count.
+    if (count === null && !/\d/.test(exact)) return null;
+    return { label: exact, count };
   }
 
   function languageOf(tree) {
@@ -127,14 +145,16 @@
     const warnings = [];
     if (!body) warnings.push(`github: ${at.slug} has no rendered README on this page, so the capture is its facts only`);
 
-    const facts = [`**Repository:** ${ctx.url}`];
-    if (stars) facts.push(`**Stars:** ${stars.label}`);
-    if (language) facts.push(`**Language:** ${language}`);
+    // Slug, description, stars and language all come off the page or out of
+    // the URL, so none of them are concatenated into Markdown unescaped.
+    const facts = [`**Repository:** ${U.mdText(ctx.url)}`];
+    if (stars) facts.push(`**Stars:** ${U.mdText(stars.label)}`);
+    if (language) facts.push(`**Language:** ${U.mdText(language)}`);
 
     return {
       markdown: U.blocks([
-        `# ${at.slug}`,
-        description,
+        `# ${U.mdText(at.slug)}`,
+        U.mdText(description),
         facts.join("  \n"),
         body ? `## README\n\n${body}` : "",
       ]),
@@ -182,13 +202,20 @@
     const source = sourceOf(ctx.tree);
     if (!source) return null;
     const [fence, language] = languageFor(at.path);
-    const longest = Math.max(0, ...(source.match(/`+/g) || []).map((r) => r.length));
+    // A loop rather than Math.max(...runs): the spread throws RangeError past
+    // about 125k arguments, and a blob page is whatever bytes the repo holds.
+    let longest = 0;
+    for (const run of source.match(/`+/g) || []) if (run.length > longest) longest = run.length;
     const ticks = "`".repeat(Math.max(3, longest + 1));
 
     return {
       markdown: U.blocks([
-        `# ${at.path}`,
-        [`**Repository:** [${at.slug}](https://github.com/${at.slug})`, `**Ref:** ${at.ref}`, `**URL:** ${ctx.url}`].join("  \n"),
+        `# ${U.mdText(at.path)}`,
+        [
+          `**Repository:** ${U.mdLink(at.slug, `https://github.com/${at.slug}`)}`,
+          `**Ref:** ${U.mdText(at.ref)}`,
+          `**URL:** ${U.mdText(ctx.url)}`,
+        ].join("  \n"),
         `${ticks}${fence}\n${source}\n${ticks}`,
       ]),
       title: `${at.slug} — ${at.path}`,
@@ -259,16 +286,20 @@
     }
 
     const heading = title || `${at.slug}#${at.number}`;
-    const facts = [`**Repository:** [${at.slug}](https://github.com/${at.slug})`];
-    if (state) facts.push(`**State:** ${state}`);
-    facts.push(`**URL:** ${ctx.url}`);
+    const facts = [`**Repository:** ${U.mdLink(at.slug, `https://github.com/${at.slug}`)}`];
+    if (state) facts.push(`**State:** ${U.mdText(state)}`);
+    facts.push(`**URL:** ${U.mdText(ctx.url)}`);
 
+    // A comment author's own name is page text, and it is what a heading is
+    // built out of — so it is escaped rather than interpolated.
     const thread = comments
-      .map((c) => U.blocks([`## ${c.author || "unknown"}${c.at ? ` — ${c.at}` : ""}`, c.body]))
+      .map((c) =>
+        U.blocks([`## ${U.mdText(c.author) || "unknown"}${c.at ? ` — ${U.mdText(c.at)}` : ""}`, c.body])
+      )
       .join("\n\n");
 
     return {
-      markdown: U.blocks([`# ${heading}`, facts.join("  \n"), thread]),
+      markdown: U.blocks([`# ${U.mdText(heading)}`, facts.join("  \n"), thread]),
       title: `${at.slug}#${at.number}: ${heading}`,
       meta: {
         kind: at.kind,

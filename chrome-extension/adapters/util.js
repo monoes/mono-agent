@@ -130,6 +130,125 @@
     }
   }
 
+  /**
+   * safeDecode is decodeURIComponent that survives a malformed escape. A
+   * stray `%ZZ` in a path must cost the adapter one unreadable character, not
+   * the whole capture — and route()-style helpers run on every page.
+   */
+  function safeDecode(value) {
+    const s = String(value === null || value === undefined ? "" : value);
+    try {
+      return decodeURIComponent(s);
+    } catch {
+      // Decode what is decodable and leave the rest exactly as written.
+      return s.replace(/(%[0-9a-f]{2})+/gi, (run) => {
+        try {
+          return decodeURIComponent(run);
+        } catch {
+          return run;
+        }
+      });
+    }
+  }
+
+  // --- Markdown-safe interpolation ----------------------------------------
+  //
+  // Everything an adapter reads off a page is attacker-controlled: an `alt`
+  // attribute, a display name, a path segment. Building Markdown by
+  // concatenating those into `[...](...)` lets any of them close the
+  // construct early and open a new one — `![](x) [pwn](javascript:...)` is a
+  // live link in the archive. So text and targets go through the helpers
+  // below, never through a template literal.
+
+  // What a link may point at. A saved page is a photograph, not a program.
+  const SAFE_SCHEME = /^(?:https?|mailto):$/i;
+  const HTTP_SCHEME = /^https?:$/i;
+
+  // The characters that would end a Markdown `(...)` target early. Note that
+  // encodeURIComponent leaves parentheses alone, which is precisely the
+  // problem, so they are mapped by hand.
+  const TARGET_ESCAPES = { "(": "%28", ")": "%29", "<": "%3C", ">": "%3E" };
+
+  /**
+   * mdText makes page text safe to interpolate into Markdown. It routes
+   * through the shared renderer's escaper — the one place the escaping rules
+   * are written down — and then makes certain the brackets really did come
+   * back escaped, because a link forged out of a stolen attribute is the
+   * whole risk and the renderer is not this file's to guarantee.
+   */
+  function mdText(value) {
+    const s = clean(value);
+    if (!s) return "";
+    const shared =
+      root.MonoMarkdown && typeof root.MonoMarkdown.escapeText === "function"
+        ? root.MonoMarkdown.escapeText(s)
+        : s.replace(/([\\`*_[\]])/g, "\\$1");
+    // Idempotent: an already-escaped bracket is left as it is.
+    return shared.replace(/(\\?)([[\]])/g, (m, escaped, ch) => (escaped ? m : `\\${ch}`));
+  }
+
+  /**
+   * mdUrl resolves a page-supplied href and returns it only if it is a safe,
+   * addressable target, with the punctuation that would break out of a
+   * `(...)` target percent-encoded. "" means "do not link this".
+   */
+  function mdUrl(href, base, schemes) {
+    const raw = String(href || "").trim();
+    if (!raw) return "";
+    // The shared renderer owns the executable-scheme denial (TRU-03); ask it
+    // first, then apply this file's own allowlist on top.
+    if (root.MonoMarkdown && typeof root.MonoMarkdown.resolveUrl === "function") {
+      if (!root.MonoMarkdown.resolveUrl(raw, base || undefined)) return "";
+    }
+    let url;
+    try {
+      url = new URL(raw, base || undefined);
+    } catch {
+      return "";
+    }
+    if (!(schemes || SAFE_SCHEME).test(url.protocol)) return "";
+    return url.href.replace(/[()<>]/g, (c) => TARGET_ESCAPES[c]).replace(/\s/g, "%20");
+  }
+
+  /**
+   * httpUrl is the same allowlist without the Markdown encoding, for a URL
+   * that is a fetch instruction for the receiver rather than a link in a
+   * document — `meta.resolvedPdfUrl` above all. `file:///etc/shadow` is not a
+   * paper, whatever the page claims.
+   */
+  function httpUrl(href, base) {
+    const raw = String(href || "").trim();
+    if (!raw) return "";
+    try {
+      const url = new URL(raw, base || undefined);
+      return HTTP_SCHEME.test(url.protocol) ? url.href : "";
+    } catch {
+      return "";
+    }
+  }
+
+  /** mdLink builds `[label](target)` from parts that are not to be trusted. */
+  function mdLink(label, href, base) {
+    const text = mdText(label);
+    if (!text) return "";
+    const target = mdUrl(href, base);
+    return target ? `[${text}](${target})` : text;
+  }
+
+  /**
+   * mdImage builds `![alt](src)`. Inlined bytes never reach readable.md — the
+   * page's own copy lives in page.mhtml — so a data: URI keeps its alt text
+   * and loses its payload.
+   */
+  function mdImage(alt, src, base) {
+    const text = mdText(alt);
+    const raw = String(src || "").trim();
+    if (/^data:/i.test(raw)) return text ? `![${text}](#embedded-image)` : "";
+    const target = mdUrl(raw, base, HTTP_SCHEME);
+    if (!target) return "";
+    return `![${text}](${target})`;
+  }
+
   /** metaContent reads a <meta> value by property/name/itemprop. */
   function metaContent(tree, keys) {
     const wanted = keys.map((k) => k.toLowerCase());
@@ -195,5 +314,6 @@
     isText, kids, attr, clean, textOf, text, walk, findAll, find,
     classes, hasClass, matcher, pick, pickAll, pickText, absolute,
     metaContent, metaAll, markdownOf, blocks, hostOf, pathOf,
+    safeDecode, mdText, mdUrl, mdLink, mdImage, httpUrl,
   };
 })(globalThis);

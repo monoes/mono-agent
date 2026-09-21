@@ -259,8 +259,17 @@
 
   // --- CSV ----------------------------------------------------------------
 
+  // items.csv exists to be opened in a spreadsheet, which is exactly why a
+  // scraped cell must not be able to become a formula there: `=`, `+`, `-`,
+  // `@` and a leading tab or CR all start one in Excel, LibreOffice and
+  // Sheets. A leading apostrophe makes all three read the cell as text.
+  const FORMULA = /^[=+\-@\t\r]/;
+  // ...except for a plain number, because a negative price is not an attack.
+  const NUMERIC = /^[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?$/;
+
   function csvCell(value) {
-    const s = value === null || value === undefined ? "" : String(value);
+    let s = value === null || value === undefined ? "" : String(value);
+    if (FORMULA.test(s) && !NUMERIC.test(s)) s = `'${s}`;
     return /[",\n\r]|^\s|\s$/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   }
 
@@ -343,12 +352,69 @@
     return U.absolute(href, currentUrl);
   }
 
+  /**
+   * sameOrigin refuses to compare a URL with itself. The guard used to be
+   * called as `sameOrigin(next, o.url || next)`, which on a call with no
+   * `url` compared the next link with itself and was therefore always true —
+   * and since the fetch below carries cookies, "always true" meant the page
+   * chose the address of a credentialed request.
+   */
   function sameOrigin(a, b) {
+    if (!a || !b || a === b) return false;
     try {
       return new URL(a).origin === new URL(b).origin;
     } catch {
       return false;
     }
+  }
+
+  // Defence in depth behind the origin check: a page hosted on a private
+  // address must not be able to aim a cookie-bearing fetch at the metadata
+  // service or at whatever else is listening on the loopback interface.
+  function isPublicHttpUrl(url) {
+    let u;
+    try {
+      u = new URL(url);
+    } catch {
+      return false;
+    }
+    if (u.protocol !== "http:" && u.protocol !== "https:") return false;
+
+    const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+    if (host === "localhost" || /\.(localhost|local|internal|home\.arpa)$/.test(host)) return false;
+    if (host === "::" || host === "::1") return false;
+    if (/^f[cd][0-9a-f]{2}:/.test(host)) return false; // fc00::/7, unique local
+    if (/^fe[89ab][0-9a-f]:/.test(host)) return false; // fe80::/10, link local
+
+    // The URL parser has already normalized 0x7f.1, 2130706433 and the like.
+    const v4 = host.match(/^(?:::ffff:)?(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (!v4) return true;
+    const [a, b] = v4.slice(1).map(Number);
+    if (a === 0 || a === 10 || a === 127 || a >= 224) return false;
+    if (a === 169 && b === 254) return false; // link local, incl. 169.254.169.254
+    if (a === 172 && b >= 16 && b <= 31) return false;
+    if (a === 192 && (b === 168 || b === 0)) return false;
+    if (a === 100 && b >= 64 && b <= 127) return false; // carrier-grade NAT
+    if (a === 198 && (b === 18 || b === 19)) return false; // benchmarking
+    return true;
+  }
+
+  /**
+   * pageCap turns whatever the caller passed into a bound that exists. A
+   * non-numeric maxPages used to produce NaN, and `pages.length >= NaN` is
+   * false forever — so the hard cap the comment at the top of this file calls
+   * "a bound the caller cannot raise" simply evaporated.
+   */
+  function pageCap(value, warnings) {
+    if (value === undefined || value === null) return DEFAULT_MAX_PAGES;
+    const n = typeof value === "number" || typeof value === "string" ? Math.floor(Number(value)) : NaN;
+    if (!Number.isFinite(n) || n < 1) {
+      warnings.push(
+        `extract-items: ignored an unusable maxPages (${JSON.stringify(value) ?? String(value)}), using ${DEFAULT_MAX_PAGES}`
+      );
+      return DEFAULT_MAX_PAGES;
+    }
+    return Math.min(n, HARD_MAX_PAGES);
   }
 
   const rowKey = (entries) => JSON.stringify(entries.map((e) => [e.key, e.value]));
@@ -359,11 +425,22 @@
     return root.MonoReadable.snapshot(doc.documentElement);
   }
 
-  function defaultFetch(url) {
-    return fetch(url, { credentials: "include", redirect: "follow" }).then((r) => {
-      if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
-      return r.text();
-    });
+  // A server that accepts the connection and then answers a byte a minute
+  // would otherwise pin this promise — and the crawl behind it — for as long
+  // as the tab stays open. The timer covers reading the body too, which is
+  // where a slow-loris actually stalls.
+  const FETCH_TIMEOUT_MS = 15000;
+
+  function defaultFetch(url, timeoutMs) {
+    const ms = Math.max(1, Math.floor(Number(timeoutMs)) || FETCH_TIMEOUT_MS);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), ms);
+    return fetch(url, { credentials: "include", redirect: "follow", signal: controller.signal })
+      .then((r) => {
+        if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+        return r.text();
+      })
+      .finally(() => clearTimeout(timer));
   }
 
   /**
@@ -375,28 +452,41 @@
     const o = opts || {};
     const first = fromTree(tree, o);
     const warnings = first.warnings.slice();
-    const cap = Math.min(Math.max(1, o.maxPages || DEFAULT_MAX_PAGES), HARD_MAX_PAGES);
+    const base = typeof o.url === "string" ? o.url.trim() : "";
+    const cap = pageCap(o.maxPages, warnings);
     const parseHtml = o.parseHtml || defaultParse;
-    const fetchPage = o.fetchPage || defaultFetch;
+    const fetchPage = o.fetchPage || ((u) => defaultFetch(u, o.fetchTimeoutMs));
 
     const raw = first.raw.slice();
     const keys = new Set(raw.map(rowKey));
-    const pages = [o.url || ""];
+    const pages = [base];
     const visited = new Set(pages);
 
     let currentTree = tree;
-    let currentUrl = o.url || "";
+    let currentUrl = base;
     let capped = false;
 
     while (first.selector) {
+      // Fail closed: without the page's own address there is nothing to check
+      // a next link against, and the fetch below carries the user's cookies.
+      if (!base) {
+        warnings.push(
+          "extract-items: pagination needs the page's own URL to check a next link's origin against, and none was given"
+        );
+        break;
+      }
       if (pages.length >= cap) {
         capped = !!nextLinkOf(currentTree, currentUrl);
         break;
       }
       const next = nextLinkOf(currentTree, currentUrl);
       if (!next || visited.has(next)) break;
-      if (!sameOrigin(next, o.url || next)) {
+      if (!sameOrigin(next, base)) {
         warnings.push(`extract-items: stopped at an off-origin next link (${next})`);
+        break;
+      }
+      if (!isPublicHttpUrl(next)) {
+        warnings.push(`extract-items: refused a next link that is not a public http(s) address (${next})`);
         break;
       }
 
@@ -458,7 +548,13 @@
       if (!had) element.removeAttribute(PICK_ATTR);
     }
 
-    const opts = Object.assign({ url: location.href, baseUrl: document.baseURI || location.href }, o);
+    // The defaults go last on purpose: with `o` last, an options object that
+    // merely *mentions* `url: undefined` overwrote the safe default with
+    // nothing, and an absent URL is what disabled the same-origin guard.
+    const opts = Object.assign({}, o, {
+      url: o.url || location.href,
+      baseUrl: o.baseUrl || document.baseURI || location.href,
+    });
     const result = o.paginate ? await fromTreeWithPagination(tree, opts) : fromTree(tree, opts);
     return Object.assign({}, result, { raw: undefined, artifacts: artifactsFor(result) });
   }
@@ -484,6 +580,7 @@
     fromElement, fromTree, fromTreeWithPagination,
     toCsv, artifactsFor, stash, takeStash,
     inferItems, buildFields, nextLinkOf, selectorOf,
-    PICK_ATTR, DEFAULT_MAX_PAGES, HARD_MAX_PAGES,
+    defaultFetch, isPublicHttpUrl,
+    PICK_ATTR, DEFAULT_MAX_PAGES, HARD_MAX_PAGES, FETCH_TIMEOUT_MS,
   };
 })(globalThis);

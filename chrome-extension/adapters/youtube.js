@@ -25,6 +25,11 @@
 
   const VIDEO_HOSTS = /^(m\.|music\.)?youtube\.com$|^youtube-nocookie\.com$/;
 
+  // An id is an opaque token, and it is interpolated into the watch URL that
+  // every transcript line then links to. So anything that is not one is not
+  // an id, rather than being passed straight through into a link target.
+  const VIDEO_ID = /^[A-Za-z0-9_-]{1,32}$/;
+
   /** videoId pulls the eleven-character id out of every URL shape YouTube uses. */
   function videoId(url) {
     let u;
@@ -34,11 +39,13 @@
       return "";
     }
     const host = u.hostname.replace(/^www\./i, "").toLowerCase();
-    if (host === "youtu.be") return u.pathname.slice(1).split("/")[0] || "";
-    const v = u.searchParams.get("v");
-    if (v) return v;
-    const m = u.pathname.match(/^\/(?:shorts|embed|live|v)\/([^/?#]+)/);
-    return m ? m[1] : "";
+    const id =
+      host === "youtu.be"
+        ? u.pathname.slice(1).split("/")[0] || ""
+        : u.searchParams.get("v") ||
+          (u.pathname.match(/^\/(?:shorts|embed|live|v)\/([^/?#]+)/) || [])[1] ||
+          "";
+    return VIDEO_ID.test(id) ? id : "";
   }
 
   function match(ctx) {
@@ -109,7 +116,9 @@
     ]);
     const rendered = node ? U.markdownOf(node, baseUrl) : "";
     if (rendered) return rendered;
-    return U.metaContent(tree, ["og:description", "description"]);
+    // The meta fallback has not been through the renderer, so it is escaped
+    // here rather than dropped into the document as-is.
+    return U.mdText(U.metaContent(tree, ["og:description", "description"]));
   }
 
   function titleOf(tree) {
@@ -138,14 +147,16 @@
     // nothing rather than emit a title over an empty document.
     if (!title && !description && !lines.length) return null;
 
+    // `id` has been validated, so the watch URL is this file's own string;
+    // ctx.url is not, which is why it is escaped where it stands in for one.
     const watchUrl = id ? `https://www.youtube.com/watch?v=${id}` : ctx.url;
-    const parts = [title ? `# ${title}` : ""];
+    const parts = [title ? `# ${U.mdText(title)}` : ""];
 
     const facts = [];
     if (channel.name) {
-      facts.push(channel.url ? `**Channel:** [${channel.name}](${channel.url})` : `**Channel:** ${channel.name}`);
+      facts.push(`**Channel:** ${U.mdLink(channel.name, channel.url, baseUrl) || U.mdText(channel.name)}`);
     }
-    facts.push(`**Video:** ${watchUrl}`);
+    facts.push(`**Video:** ${U.mdText(watchUrl)}`);
     parts.push(facts.join("  \n"));
 
     if (description) parts.push(`## Description\n\n${description}`);
@@ -155,8 +166,8 @@
       const body = lines
         .map((line) =>
           line.at === null
-            ? `${line.stamp} ${line.text}`
-            : `[${line.stamp}](${watchUrl}&t=${line.at}s) ${line.text}`
+            ? `${U.mdText(line.stamp)} ${U.mdText(line.text)}`
+            : `${U.mdLink(line.stamp, `${watchUrl}&t=${line.at}s`, baseUrl)} ${U.mdText(line.text)}`
         )
         .join("\n\n");
       parts.push(`## Transcript\n\n${body}`);

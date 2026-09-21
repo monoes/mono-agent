@@ -29,11 +29,18 @@
     "its", "this", "that", "towards", "toward", "using", "via", "when",
   ]);
 
+  // An eprint id is interpolated into https://arxiv.org/abs/<id>, so a page
+  // that declares one is effectively writing a link target. Anything not
+  // shaped like an arXiv id — new "2403.00219", old "math.GT/0309136" — is
+  // not treated as one.
+  const ARXIV_ID = /^[A-Za-z0-9][A-Za-z0-9._/-]{2,40}$/;
+
   function arxivId(url, tree) {
     const declared = U.metaContent(tree, ["citation_arxiv_id", "citation_technical_report_number"]);
-    if (declared) return declared.replace(/^arxiv:/i, "").replace(/v\d+$/i, "");
-    const m = U.pathOf(url).match(/^\/(?:abs|pdf)\/(.+?)(?:v\d+)?(?:\.pdf)?$/i);
-    return m ? m[1] : "";
+    const id = declared
+      ? declared.replace(/^arxiv:/i, "").replace(/v\d+$/i, "")
+      : (U.pathOf(url).match(/^\/(?:abs|pdf)\/(.+?)(?:v\d+)?(?:\.pdf)?$/i) || [])[1] || "";
+    return ARXIV_ID.test(id) ? id : "";
   }
 
   function match(ctx) {
@@ -108,7 +115,9 @@
       .replace(/^\*{0,2}abstract\*{0,2}\s*:\s*/i, "")
       .trim();
     if (body) return body;
-    return U.metaContent(tree, ["citation_abstract", "dc.description", "og:description", "description"]);
+    // The meta fallback never went through the renderer, so it is escaped
+    // here rather than dropped into the document as-is.
+    return U.mdText(U.metaContent(tree, ["citation_abstract", "dc.description", "og:description", "description"]));
   }
 
   function subjectsOf(tree) {
@@ -143,7 +152,11 @@
   }
 
   function bibtex(entry) {
-    const fields = entry.fields.filter(([, value]) => value !== "" && value !== null && value !== undefined);
+    const fields = entry.fields
+      // A backtick or a newline in a field would end the ```bibtex fence this
+      // entry is rendered inside, and everything after it would be document.
+      .map(([name, value]) => [name, String(value === null || value === undefined ? "" : value).replace(/[`\r\n]+/g, " ").trim()])
+      .filter(([, value]) => value !== "");
     if (!fields.length) return "";
     const pad = Math.max(...fields.map(([name]) => name.length));
     const lines = fields.map(([name, value]) => `  ${name.padEnd(pad)} = {${value}},`);
@@ -168,8 +181,13 @@
     const year = yearOf(tree);
     const subjects = subjectsOf(tree);
     const journal = U.metaContent(tree, ["citation_journal_title", "citation_conference_title"]);
-    const pdfUrl =
-      U.metaContent(tree, ["citation_pdf_url"]) || (eprint ? `https://arxiv.org/pdf/${eprint}` : "");
+    // resolvedPdfUrl is a fetch instruction for the receiver and the page
+    // supplies it, so it has to be an address the receiver should be willing
+    // to go to: file:///etc/shadow is not a paper.
+    const pdfUrl = U.httpUrl(
+      U.metaContent(tree, ["citation_pdf_url"]) || (eprint ? `https://arxiv.org/pdf/${eprint}` : ""),
+      baseUrl
+    );
     const absUrl = eprint ? `https://arxiv.org/abs/${eprint}` : "";
     const doiUrl = doi ? `https://doi.org/${doi}` : "";
     const key = citationKey(authors, year, title);
@@ -190,7 +208,7 @@
             ["pages", first && last ? `${first}--${last}` : first],
             ["publisher", bib(U.metaContent(tree, ["citation_publisher"]))],
             ["doi", doi],
-            ["url", doiUrl || ctx.url],
+            ["url", bib(doiUrl || ctx.url)],
           ],
         }
       : {
@@ -203,23 +221,26 @@
             ["eprint", eprint],
             ["archivePrefix", eprint ? "arXiv" : ""],
             ["primaryClass", primaryClassOf(tree)],
-            ["url", absUrl || ctx.url],
+            ["url", bib(absUrl || ctx.url)],
           ],
         };
 
+    // Author names, subjects and identifiers are all page-supplied strings.
+    // A display name of `Renn, Ada](javascript:…)` would otherwise close the
+    // construct it sits in and open a live link.
     const facts = [];
-    if (authors.length) facts.push(`**Authors:** ${authors.map((a) => a.display).join(", ")}`);
-    if (subjects) facts.push(`**Subjects:** ${subjects}`);
-    if (eprint) facts.push(`**arXiv:** [${eprint}](${absUrl})`);
-    if (doi) facts.push(`**DOI:** [${doi}](${doiUrl})`);
-    if (pdfUrl) facts.push(`**PDF:** ${pdfUrl}`);
+    if (authors.length) facts.push(`**Authors:** ${authors.map((a) => U.mdText(a.display)).join(", ")}`);
+    if (subjects) facts.push(`**Subjects:** ${U.mdText(subjects)}`);
+    if (eprint) facts.push(`**arXiv:** ${U.mdLink(eprint, absUrl, baseUrl)}`);
+    if (doi) facts.push(`**DOI:** ${U.mdLink(doi, doiUrl, baseUrl)}`);
+    if (pdfUrl) facts.push(`**PDF:** ${U.mdText(pdfUrl)}`);
 
     const warnings = [];
     if (!abstract) warnings.push("arxiv: this landing page did not expose an abstract, so the capture has only the citation");
 
     const rendered = bibtex(entry);
     const markdown = U.blocks([
-      `# ${title}`,
+      `# ${U.mdText(title)}`,
       facts.join("  \n"),
       abstract ? `## Abstract\n\n${abstract}` : "",
       rendered ? `## Citation\n\n\`\`\`bibtex\n${rendered}\n\`\`\`` : "",

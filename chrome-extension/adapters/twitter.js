@@ -131,11 +131,18 @@
 
     const lead = posts[0];
     const leadLabel = label(lead.author);
+    // Every part of a post below is an attribute or a run of text the site
+    // handed over, so none of it is concatenated into Markdown directly: an
+    // `alt` of `](x) [pwn](javascript:…)` would otherwise close this image
+    // and open a live link inside the archive.
     const sections = posts.map((post, i) => {
-      const who = label(post.author) || `Post ${i + 1}`;
-      const heading = post.author.at ? `## ${who} — ${post.author.at}` : `## ${who}`;
-      const media = post.images.map((img) => `![${img.alt}](${img.src})`).join("\n\n");
-      return U.blocks([heading, post.body, media, post.author.url]);
+      const who = U.mdText(label(post.author)) || `Post ${i + 1}`;
+      const heading = post.author.at ? `## ${who} — ${U.mdText(post.author.at)}` : `## ${who}`;
+      const media = post.images
+        .map((img) => U.mdImage(img.alt, img.src, baseUrl))
+        .filter(Boolean)
+        .join("\n\n");
+      return U.blocks([heading, post.body, media, U.mdUrl(post.author.url, baseUrl)]);
     });
 
     const participants = [...new Set(posts.map((p) => p.author.handle).filter(Boolean))];
@@ -143,8 +150,8 @@
 
     return {
       markdown: U.blocks([
-        `# ${leadLabel || U.metaContent(tree, ["og:title"]) || "Thread"}`,
-        `**Thread:** ${posts.length} post${posts.length === 1 ? "" : "s"} · ${ctx.url}`,
+        `# ${U.mdText(leadLabel || U.metaContent(tree, ["og:title"])) || "Thread"}`,
+        `**Thread:** ${posts.length} post${posts.length === 1 ? "" : "s"} · ${U.mdText(ctx.url)}`,
         sections.join("\n\n"),
       ]),
       title: title || null,

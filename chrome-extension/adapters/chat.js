@@ -127,16 +127,19 @@
     if (!turns.length) return null;
 
     const title = titleOf(tree, service);
+    // The page titles itself and names its own model, so neither reaches the
+    // document unescaped: a title of `x](javascript:…)` would otherwise be a
+    // live link in the archive.
     const facts = [`**Service:** ${service ? service.name : "Chat"} · ${turns.length} turn${turns.length === 1 ? "" : "s"}`];
-    if (model) facts.push(`**Model:** ${model}`);
-    facts.push(`**URL:** ${ctx.url}`);
+    if (model) facts.push(`**Model:** ${U.mdText(model)}`);
+    facts.push(`**URL:** ${U.mdText(ctx.url)}`);
 
     const body = turns
       .map((t) => `## ${t.role === "user" ? "User" : "Assistant"}\n\n${t.body}`)
       .join("\n\n");
 
     return {
-      markdown: U.blocks([`# ${title}`, facts.join("  \n"), body]),
+      markdown: U.blocks([`# ${U.mdText(title)}`, facts.join("  \n"), body]),
       title: title || null,
       meta: {
         service: service ? service.name : null,
