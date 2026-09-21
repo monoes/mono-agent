@@ -32,7 +32,21 @@
 
   const MARK_CLASS = "monoagent-highlight";
   const UI_ID = "monoagent-highlight-ui";
-  const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEXTAREA", "SELECT", "SVG"]);
+  const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEXTAREA", "SELECT"]);
+  /** Elements whose text starts a new line. Crossing one reads as a space
+   *  even when the markup has no whitespace there. */
+  const BLOCKS =
+    "address,article,aside,blockquote,dd,details,div,dl,dt,fieldset,figcaption," +
+    "figure,footer,form,h1,h2,h3,h4,h5,h6,header,li,main,nav,ol,p,pre,section," +
+    "summary,table,td,th,tr,ul";
+  const WS = /\s/;
+  /** The common cases without a regex call: this runs per character. */
+  function isSpace(value, at) {
+    const code = value.charCodeAt(at);
+    if (code === 32 || (code >= 9 && code <= 13)) return true;
+    return code > 127 && WS.test(value[at]);
+  }
+  const NEXT = Symbol("the space belongs to whatever comes next");
   const TINT = {
     yellow: "rgba(255, 214, 0, .38)",
     green: "rgba(46, 139, 87, .30)",
@@ -59,54 +73,162 @@
 
   // ── The page as text ─────────────────────────────────────────────
 
-  /**
-   * textMap walks the visible text nodes once and returns the page's text
-   * plus, for each node, where it starts in that text. Offsets measured and
-   * resolved against the same walk always agree, which is why the map is
-   * built here rather than read off innerText.
-   */
-  function textMap() {
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
-      acceptNode(node) {
-        const parent = node.parentElement;
-        if (!parent || SKIP_TAGS.has(parent.tagName)) return NodeFilter.FILTER_REJECT;
-        if (parent.closest(`#${UI_ID}`)) return NodeFilter.FILTER_REJECT;
-        if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
-        return NodeFilter.FILTER_ACCEPT;
-      },
-    });
-    const nodes = [];
-    let text = "";
-    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-      nodes.push({ node, start: text.length, length: node.nodeValue.length });
-      text += node.nodeValue;
-    }
-    return { text, nodes };
+  /** hidden: text the reader cannot see is text they cannot have selected. */
+  function hidden(el) {
+    if (typeof el.checkVisibility !== "function") return false;
+    return !el.checkVisibility({ visibilityProperty: true, contentVisibilityAuto: true });
   }
 
-  /** offsetOf gives the position of a (node, offset) pair in the map's text. */
-  function offsetOf(map, node, offset) {
-    for (const entry of map.nodes) {
-      if (entry.node === node) return entry.start + offset;
+  /**
+   * textMap walks the visible text once and returns the page as a single
+   * string, plus where each run of it came from.
+   *
+   * The string is WHITESPACE-COLLAPSED, and that is the whole point. A
+   * quote is stored collapsed (highlights.js `collapse`s it, because that
+   * is what the reader saw, not what the markup happened to indent), and
+   * `locate`/`relocate` match it by plain substring search. So the haystack
+   * has to be in the same shape as the needle: a page whose source wraps a
+   * sentence across two lines has "a\n  selection" in its text nodes and
+   * "a selection" in the selection, and matching raw node data against a
+   * collapsed quote finds nothing — every multi-line highlight silently
+   * fails to paint, which is exactly what it did.
+   *
+   * `segments` maps back: each is a run of characters contiguous in both
+   * the collapsed text and its source node, so painting can find the nodes
+   * again and split them at the right offsets.
+   */
+  function textMap() {
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        if (node.nodeType === Node.TEXT_NODE) {
+          return node.nodeValue ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+        }
+        // REJECT on an element skips its subtree, which is what these want.
+        if (SKIP_TAGS.has(node.tagName) || node.id === UI_ID) return NodeFilter.FILTER_REJECT;
+        if (node.ownerSVGElement || node.tagName === "svg") return NodeFilter.FILTER_REJECT;
+        if (hidden(node)) return NodeFilter.FILTER_REJECT;
+        if (node.tagName === "BR") return NodeFilter.FILTER_ACCEPT; // a line break is a space
+        return NodeFilter.FILTER_SKIP; // descend, but emit nothing of its own
+      },
+    });
+
+    const segments = [];
+    const blocks = new Map(); // one closest() per parent, not per text node
+    let text = "";
+    let pending = null; // whitespace seen but not yet emitted
+    let block = null;
+
+    function push(node, offset, ch) {
+      const last = segments[segments.length - 1];
+      if (last && last.node === node && last.nodeEnd === offset) last.nodeEnd = offset + 1;
+      else segments.push({ node, nodeStart: offset, nodeEnd: offset + 1, textStart: text.length });
+      text += ch;
     }
-    return NaN;
+
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (node.nodeType === Node.ELEMENT_NODE) {
+        if (!pending) pending = NEXT; // <br>
+        continue;
+      }
+      const parent = node.parentElement;
+      if (parent && !blocks.has(parent)) blocks.set(parent, parent.closest(BLOCKS));
+      const owner = parent ? blocks.get(parent) : null;
+      if (block !== null && owner !== block && !pending) pending = NEXT;
+      block = owner;
+
+      const value = node.nodeValue;
+      for (let i = 0; i < value.length; i++) {
+        const ch = value[i];
+        if (isSpace(value, i)) {
+          if (!pending) pending = { node, offset: i };
+          continue;
+        }
+        if (pending) {
+          // Leading whitespace is dropped, the way `collapse` trims it.
+          if (text) {
+            const at = pending === NEXT ? { node, offset: i } : pending;
+            push(at.node, at.offset, " ");
+          }
+          pending = null;
+        }
+        push(node, i, ch);
+      }
+    }
+    return { text, segments };
+  }
+
+  /**
+   * offsetOf places a Range boundary in the map's text. A boundary that
+   * landed in collapsed whitespace, or on an element, answers with the
+   * nearest mapped position rather than giving up: the map is what the
+   * reader saw, and that is the space the quote has to be measured in.
+   */
+  function offsetOf(map, node, offset) {
+    if (!node) return NaN;
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      // A boundary on an element sits BEFORE childNodes[offset].
+      const child = node.childNodes[offset];
+      return child ? edgeOf(map, child, "start") : edgeOf(map, node, "end");
+    }
+    let after = NaN;
+    for (const seg of map.segments) {
+      if (seg.node !== node) continue;
+      if (offset < seg.nodeStart) return seg.textStart;
+      if (offset < seg.nodeEnd) return seg.textStart + (offset - seg.nodeStart);
+      after = seg.textStart + (seg.nodeEnd - seg.nodeStart);
+    }
+    return after;
+  }
+
+  /** Where a subtree begins or ends in the map's text. */
+  function edgeOf(map, root, which) {
+    let end = NaN;
+    for (const seg of map.segments) {
+      if (seg.node !== root && !root.contains(seg.node)) continue;
+      if (which === "start") return seg.textStart;
+      end = seg.textStart + (seg.nodeEnd - seg.nodeStart);
+    }
+    return end;
   }
 
   // ── Painting ─────────────────────────────────────────────────────
 
-  /** wrap puts a <mark> around [start, end) of the mapped text, across as
-   *  many text nodes as the range spans. */
-  function wrap(map, start, end, record) {
-    const marks = [];
-    for (const entry of map.nodes) {
-      const from = Math.max(start, entry.start);
-      const to = Math.min(end, entry.start + entry.length);
+  /**
+   * rangesIn turns [start, end) of the mapped text into the node ranges it
+   * covers — which nodes to cut, and where.
+   */
+  function rangesIn(map, start, end) {
+    // At most one range per text node, so a passage becomes as few marks
+    // as the markup allows rather than one per whitespace run.
+    const ranges = [];
+    for (const seg of map.segments) {
+      const length = seg.nodeEnd - seg.nodeStart;
+      const from = Math.max(start, seg.textStart);
+      const to = Math.min(end, seg.textStart + length);
       if (from >= to) continue;
-      let node = entry.node;
-      // splitText leaves the page's characters exactly as they were; it
-      // only changes which node holds them.
-      if (from > entry.start) node = node.splitText(from - entry.start);
-      if (to - from < node.nodeValue.length) node.splitText(to - from);
+      const last = ranges[ranges.length - 1];
+      const nodeTo = seg.nodeStart + (to - seg.textStart);
+      if (last && last.node === seg.node) last.to = Math.max(last.to, nodeTo);
+      else ranges.push({ node: seg.node, from: seg.nodeStart + (from - seg.textStart), to: nodeTo });
+    }
+    return ranges;
+  }
+
+  /**
+   * paint puts a <mark> around each of those ranges. The page's characters
+   * are never rewritten: nodes are split, which only changes which node
+   * holds them.
+   */
+  function paint(ranges, record) {
+    const marks = [];
+    for (const range of ranges) {
+      // The formatting whitespace between two blocks is inside the passage
+      // but has nothing to show. Wrapping it would put an element between
+      // two siblings and quietly break the page's own `p + p` rules.
+      if (!/\S/.test(range.node.nodeValue)) continue;
+      let node = range.node;
+      if (range.from > 0) node = node.splitText(range.from);
+      if (range.to - range.from < node.nodeValue.length) node.splitText(range.to - range.from);
 
       const mark = document.createElement("mark");
       mark.className = MARK_CLASS;
@@ -143,12 +265,36 @@
    * cheap at the counts involved, and correct, which reusing it is not.
    */
   function restore(records) {
+    let map = null;
+    const split = new Set(); // text nodes an earlier highlight has already cut
+
     for (const record of records || []) {
-      const map = textMap();
-      const at = H.relocate(map.text, record.anchor);
+      // Already on the page. The worker re-sends the list on navigation and
+      // `add` returns a record that may already be painted; painting it a
+      // second time would nest a mark inside itself.
+      if (painted.some((p) => p.id === record.id)) continue;
+      if (!map) map = textMap();
+
+      let at = H.relocate(map.text, record.anchor);
       if (at === -1) continue; // gone from the page: draw nothing
-      const nodes = wrap(map, at, at + record.anchor.quote.length, record);
+      let ranges = rangesIn(map, at, at + record.anchor.quote.length);
+
+      // Painting does not change a single character, so the map's TEXT
+      // stays true for the whole pass — only the offsets into a node that
+      // has been split go stale. Rebuilding for a passage that lands in
+      // one of those, and only then, is what keeps a page with three
+      // hundred highlights from rebuilding the map three hundred times.
+      if (ranges.some((range) => split.has(range.node))) {
+        map = textMap();
+        split.clear();
+        at = H.relocate(map.text, record.anchor);
+        if (at === -1) continue;
+        ranges = rangesIn(map, at, at + record.anchor.quote.length);
+      }
+
+      const nodes = paint(ranges, record);
       if (nodes.length) painted.push({ id: record.id, nodes });
+      for (const range of ranges) split.add(range.node);
     }
   }
 
@@ -213,12 +359,20 @@
   async function saveSelection(range, color, withNote) {
     const map = textMap();
     const start = offsetOf(map, range.startContainer, range.startOffset);
-    const quote = String(range.toString() || "").replace(/\s+/g, " ").trim();
+    const end = offsetOf(map, range.endContainer, range.endOffset);
+
+    // The quote is read off the MAP, not off `range.toString()`. The range
+    // gives the raw data of the text nodes it spans, which keeps text the
+    // reader cannot see (a display:none span between two words) and drops
+    // the breaks they can (a <br>, or two blocks whose markup has no
+    // whitespace between them) — so the quote would be a sentence nobody
+    // read, and one that no later visit can find again.
+    const mapped = Number.isNaN(start) || Number.isNaN(end) ? "" : map.text.slice(start, end).trim();
+    const quote = mapped || String(range.toString() || "").replace(/\s+/g, " ").trim();
     dismiss();
     if (!quote) return;
 
-    // The selection's own offset is only a hint — locate re-measures it
-    // against the same walk the restore path will use.
+    // Measured against the same walk the restore path will use.
     const anchor = H.locate(map.text, quote, Number.isNaN(start) ? undefined : start) || {};
     const comment = withNote ? window.prompt("Note for this highlight:", "") || "" : "";
 
