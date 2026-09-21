@@ -200,6 +200,11 @@ func setupExtensionBridge(logger zerolog.Logger, waitForConnection time.Duration
 	}
 
 	extServer := extension.NewServer(extensionListenAddr(), logger)
+	// The extension's profile picker asks this process which profiles exist
+	// (profile.list). With no source installed the method is not advertised
+	// at all, and the popup quietly saves into the default profile — see
+	// internal/extension/profile_list.go.
+	extServer.SetProfileSource(extensionProfileSource(defaultDBPath))
 	errCh := extServer.StartAsync(context.Background())
 
 	// The probe above and the bind below are not atomic: another process can

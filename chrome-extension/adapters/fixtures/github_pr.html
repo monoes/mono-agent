@@ -1,0 +1,69 @@
+<!-- Trimmed from a github.com/<owner>/<repo>/pull/<n> "Conversation" tab:
+     the title, the state pill, the opening comment and two replies. The
+     diff, the checks summary, the merge box, the reviewers sidebar and every
+     "added a commit" event are gone. -->
+<!doctype html>
+<html lang="en"><head>
+<title>fix(capture): keep blank lines out of the readable artifact by monoes · Pull Request #96 · monoes/mono-agent</title>
+<link rel="canonical" href="https://github.com/monoes/mono-agent/pull/96">
+</head>
+<body>
+<div id="partial-discussion-header">
+  <h1 class="gh-header-title">
+    <bdi class="js-issue-title markdown-title">fix(capture): keep blank lines out of the readable artifact</bdi>
+    <span class="f1-light color-fg-muted">#96</span>
+  </h1>
+  <div class="gh-header-meta">
+    <span class="State State--merged" title="Status: Merged">
+      <svg class="octicon octicon-git-merge"></svg> Merged
+    </span>
+    <div class="flex-auto min-width-0 mb-2">
+      <a class="author Link--secondary" href="/adarenn">adarenn</a> merged 3 commits into
+      <span class="commit-ref"><span>master</span></span> from
+      <span class="commit-ref head-ref"><span>fix/readable-blank-lines</span></span>
+      <relative-time datetime="2024-03-04T14:02:11Z">Mar 4, 2024</relative-time>
+    </div>
+  </div>
+</div>
+
+<div class="js-discussion">
+  <div class="timeline-comment-group js-comment-container">
+    <div class="timeline-comment">
+      <h3 class="timeline-comment-header-text">
+        <strong><a class="author Link--primary" href="/adarenn">adarenn</a></strong>
+        commented <relative-time datetime="2024-03-03T10:11:00Z">Mar 3, 2024</relative-time>
+      </h3>
+      <task-lists><div class="comment-body markdown-body js-comment-body">
+        <p>The Markdown renderer was collapsing every run of blank lines, which turns a
+        two-paragraph quote into one paragraph.</p>
+        <p>Repro:</p>
+        <pre><code class="language-bash">monoagentcli capture --url https://example.test/quote</code></pre>
+      </div></task-lists>
+    </div>
+  </div>
+
+  <div class="timeline-comment-group js-comment-container">
+    <div class="timeline-comment">
+      <h3 class="timeline-comment-header-text">
+        <strong><a class="author Link--primary" href="/kitmoreau">kitmoreau</a></strong>
+        commented <relative-time datetime="2024-03-03T16:40:30Z">Mar 3, 2024</relative-time>
+      </h3>
+      <div class="comment-body markdown-body js-comment-body">
+        <p>Good catch. Does this also cover the <code>&lt;br&gt;</code> case?</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="timeline-comment-group js-comment-container">
+    <div class="timeline-comment">
+      <h3 class="timeline-comment-header-text">
+        <strong><a class="author Link--primary" href="/adarenn">adarenn</a></strong>
+        commented <relative-time datetime="2024-03-04T09:05:00Z">Mar 4, 2024</relative-time>
+      </h3>
+      <div class="comment-body markdown-body js-comment-body">
+        <p>It does — there is a test for it now.</p>
+      </div>
+    </div>
+  </div>
+</div>
+</body></html>

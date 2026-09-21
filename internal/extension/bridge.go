@@ -1,6 +1,9 @@
 package extension
 
-import "github.com/monoes/mono-agent/internal/browser"
+import (
+	"github.com/monoes/mono-agent/internal/browser"
+	"github.com/monoes/mono-agent/internal/capture"
+)
 
 // ServerBridge adapts *Server to satisfy browser.ExtensionBridge, breaking the
 // import cycle between the browser and extension packages.
@@ -8,8 +11,14 @@ type ServerBridge struct {
 	Server *Server
 }
 
-// Compile-time check.
-var _ browser.ExtensionBridge = (*ServerBridge)(nil)
+// Compile-time checks. Capturer is deliberately not part of
+// browser.ExtensionBridge: capturing is specific to the extension (only a
+// real, logged-in Chrome can produce an MHTML archive of a page the user
+// is signed into), so callers type-assert for it instead.
+var (
+	_ browser.ExtensionBridge = (*ServerBridge)(nil)
+	_ Capturer                = (*ServerBridge)(nil)
+)
 
 func (b *ServerBridge) IsConnected() bool {
 	return b.Server.IsConnected()
@@ -25,6 +34,12 @@ func (b *ServerBridge) NewPage(tabID int) browser.PageInterface {
 
 func (b *ServerBridge) CloseTab(tabID int) error {
 	return b.Server.CloseTab(tabID)
+}
+
+// CapturePage captures a tab through this process's own extension
+// connection and writes the envelope to the inbox.
+func (b *ServerBridge) CapturePage(req CaptureRequest) (*capture.Result, error) {
+	return b.Server.CapturePage(req)
 }
 
 // Addr returns the address this server bound, or ("", false) before it has

@@ -39,7 +39,7 @@ jobs:
           go-version-file: go.mod
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '22'
+          node-version-file: .node-version
       - name: Install pinned Monomind version
         run: |
           version=$(grep -oE '@monoes/monomindcli@[0-9][0-9.]*' .mcp.json | cut -d@ -f3)
@@ -81,7 +81,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '22'
+          node-version-file: .node-version
       - name: Lint OpenAPI spec against the OpenAPI 3 meta-schema
         run: npx --yes @redocly/cli@2.49.0 lint internal/httpapi/openapi.yaml
 
@@ -95,14 +95,26 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '22'
+          node-version-file: .node-version
       - name: Check every extension script parses
-        run: for f in chrome-extension/*.js; do node --check "$f"; done
+        run: find chrome-extension -name '*.js' -exec node --check {} +
       # An explicit glob, not the directory: Node 22 tries to load a bare
       # directory argument as a module ("Cannot find module …/chrome-extension")
-      # where newer Node walks it.
+      # where newer Node walks it. The glob must be '**' — a single '*' skips
+      # chrome-extension/adapters/, silently running none of its tests.
       - name: Run extension tests
-        run: node --test 'chrome-extension/*.test.mjs'
+        run: |
+          # `node --test` with a glob that matches nothing EXITS 0, so a typo in
+          # the pattern below would silently run zero tests and still go green —
+          # which is exactly how the adapters suite went unrun before. Assert a
+          # floor first; the count only ever grows.
+          count=$(find chrome-extension -name '*.test.mjs' | wc -l)
+          if [ "$count" -lt 20 ]; then
+            echo "::error::expected at least 20 extension test files, found $count"
+            exit 1
+          fi
+          echo "running $count extension test files"
+          node --test 'chrome-extension/**/*.test.mjs'
 
   # Scheduled + on-push dependency vulnerability scanning (MA-06/MA-11).
   vuln-scan:
@@ -228,7 +240,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '22'
+          node-version-file: .node-version
           cache: 'npm'
           cache-dependency-path: wails-app/frontend/package-lock.json
 

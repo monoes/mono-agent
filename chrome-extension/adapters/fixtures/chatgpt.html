@@ -1,0 +1,35 @@
+<!-- Trimmed from a chatgpt.com/c/<id> conversation: three turns, with the
+     composer, the sidebar, the model picker and every feedback button gone.
+     The nested <pre> shape is kept exactly as ChatGPT emits it — the fence
+     language and the word "Copy code" are sibling divs *inside* the <pre>,
+     which is why a naive textOf() on it produces a corrupted code block. -->
+<!doctype html>
+<html lang="en"><head><title>Lighthouse ledgers - ChatGPT</title></head>
+<body><div id="__next"><main><div class="flex flex-col text-sm">
+
+  <article class="w-full" data-testid="conversation-turn-2" dir="auto">
+    <div data-message-author-role="user" data-message-id="c1a1" dir="auto">
+      <div class="whitespace-pre-wrap">Why did the Dunmore ledger survive when the rest of the station's records did not?</div>
+    </div>
+  </article>
+
+  <article class="w-full" data-testid="conversation-turn-3" dir="auto">
+    <div data-message-author-role="assistant" data-message-id="c1a2" data-message-model-slug="gpt-4o">
+      <div class="markdown prose w-full break-words">
+        <p>Survival bias, mostly. The ledger was in a drawer that had been painted shut during a
+        1974 refit, so it was not in the pile that went to the tip.</p>
+        <p>You can test that claim against the decommissioning dates:</p>
+        <pre><div class="contain-inline-size rounded-md"><div class="flex items-center px-4 py-2 text-xs">python</div><div class="sticky top-9"><span data-state="closed"><button>Copy code</button></span></div><div class="overflow-y-auto p-4"><code class="!whitespace-pre language-python">survivors = [s for s in stations if s.decommissioned &lt; 1975]
+print(len(survivors))</code></div></div></pre>
+        <ul><li>Stations closed before 1975 kept their logbooks on site.</li><li>Later closures were centralised, and centralised means skipped.</li></ul>
+      </div>
+    </div>
+  </article>
+
+  <article class="w-full" data-testid="conversation-turn-4" dir="auto">
+    <div data-message-author-role="user" data-message-id="c1a3" dir="auto">
+      <div class="whitespace-pre-wrap">Is that documented anywhere I can cite?</div>
+    </div>
+  </article>
+
+</div></main></div></body></html>

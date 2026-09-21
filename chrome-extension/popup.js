@@ -1,21 +1,48 @@
 /**
  * MonoAgent Bridge — Popup Script
  *
- * Displays connection status and allows configuring the WebSocket URL.
+ * Connection status, the save form (CLIP-07), batch capture (CLIP-06) and
+ * the pending-capture list (CLIP-08). Deliberately thin: a popup is torn
+ * down the instant it loses focus, so it asks the service worker to do
+ * everything and only draws the answers. Anything here that looked like
+ * state would be lost mid-capture.
+ *
  * Non-loopback servers are rejected unless the (unsafe, session-only)
  * override checkbox is enabled at save time.
  */
 
-const dot = document.getElementById("dot");
-const statusText = document.getElementById("status-text");
-const wsUrlInput = document.getElementById("ws-url");
-const saveBtn = document.getElementById("save-btn");
-const savedMsg = document.getElementById("saved-msg");
-const errorMsg = document.getElementById("error-msg");
-const allowRemoteCheckbox = document.getElementById("allow-remote");
-const pairingTokenInput = document.getElementById("pairing-token");
-const pairBtn = document.getElementById("pair-btn");
-const pairSavedMsg = document.getElementById("pair-saved-msg");
+const $ = (id) => document.getElementById(id);
+
+const dot = $("dot");
+const statusText = $("status-text");
+const wsUrlInput = $("ws-url");
+const saveBtn = $("save-btn");
+const savedMsg = $("saved-msg");
+const errorMsg = $("error-msg");
+const allowRemoteCheckbox = $("allow-remote");
+const pairingTokenInput = $("pairing-token");
+const pairBtn = $("pair-btn");
+const pairSavedMsg = $("pair-saved-msg");
+const captureBtn = $("capture-btn");
+const captureMsg = $("capture-msg");
+const noteInput = $("note");
+const tagsInput = $("tags");
+const collectionInput = $("collection");
+const collectionList = $("collection-list");
+const profileField = $("profile-field");
+const profileSelect = $("profile");
+const profileNote = $("profile-note");
+const tagChips = $("tag-chips");
+const batchWindowBtn = $("batch-window");
+const batchGroupBtn = $("batch-group");
+const batchCancelBtn = $("batch-cancel");
+const batchProgress = $("batch-progress");
+const batchLabel = $("batch-label");
+const batchMsg = $("batch-msg");
+const queueBox = $("queue");
+const queueList = $("queue-list");
+const queueCounts = $("queue-counts");
+const queueClearBtn = $("queue-clear");
 
 const STATUS_LABELS = {
   connected: "Connected",
@@ -35,7 +62,346 @@ function showError(message) {
   errorMsg.style.display = "block";
 }
 
-// Load current status and saved URL on popup open
+function show(el, kind, text) {
+  el.className = `capture-msg ${kind}`;
+  el.textContent = text;
+  el.style.display = text ? "block" : "none";
+}
+
+const showCapture = (kind, text) => show(captureMsg, kind, text);
+const showBatch = (kind, text) => show(batchMsg, kind, text);
+
+/** ask sends one message to the worker and resolves with its answer. */
+function ask(message) {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(message, (response) => {
+      if (chrome.runtime.lastError) {
+        resolve({ ok: false, error: chrome.runtime.lastError.message });
+        return;
+      }
+      resolve(response || { ok: false, error: "no answer from the extension" });
+    });
+  });
+}
+
+// The form always carries `profile`, including the empty string for "no
+// profile": the worker treats its presence as this save's choice and makes
+// it the sticky one, so the picker means the same thing whether it was
+// touched or left where it was.
+const form = () => ({
+  note: noteInput.value,
+  tags: tagsInput.value,
+  collection: collectionInput.value,
+  profile: profileSelect.value || "",
+});
+
+/**
+ * drawProfiles fills the "Save into" picker. It is hidden outright when
+ * there is nothing to choose between — a single-profile install should not
+ * grow a control that can only be set one way — and the choice is only ever
+ * pre-selected, never forced: the capture saves whatever is showing.
+ */
+function drawProfiles(state) {
+  const profiles = state.profiles || [];
+  profileSelect.textContent = "";
+  if (!profiles.length) {
+    profileField.style.display = "none";
+    return;
+  }
+  profileField.style.display = "block";
+
+  for (const profile of profiles) {
+    const option = document.createElement("option");
+    option.value = profile.id;
+    option.textContent = profile.default ? `${profile.name} (default)` : profile.name;
+    profileSelect.appendChild(option);
+  }
+  const none = document.createElement("option");
+  none.value = "";
+  none.textContent = "No profile";
+  none.title = "Save to the shared inbox, as captures were before profiles";
+  profileSelect.appendChild(none);
+
+  profileSelect.value = state.profile || "";
+
+  // Two things are worth saying out loud, and nothing else is: the profile
+  // last saved into has been deleted, and the bridge could not be asked so
+  // this list may be stale.
+  const message = state.profileChanged
+    ? state.profileReason
+    : state.profilesOffline
+    ? "monoagent is not connected — this list is the last one it gave."
+    : "";
+  profileNote.textContent = message;
+  profileNote.style.display = message ? "block" : "none";
+}
+
+// --- CLIP-07: the snapshot starts while the note is still being typed -----
+
+let began = false;
+
+/**
+ * beginEarly asks the worker to photograph the page now. The page is only
+ * going to get further from what the person is looking at, and the note
+ * field is about to hold their attention for a while.
+ */
+function beginEarly() {
+  if (began) return;
+  began = true;
+  ask({ type: "capture_begin" });
+}
+
+for (const field of [noteInput, tagsInput, collectionInput]) {
+  field.addEventListener("focus", beginEarly, { once: true });
+  field.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") captureBtn.click();
+  });
+}
+
+// The picker starts the snapshot like the other fields, but deliberately
+// does not save on Enter: Enter is how a keyboard user commits a choice in
+// a <select>, and it must not also commit the capture.
+profileSelect.addEventListener("focus", beginEarly, { once: true });
+
+function drawTagSuggestions(recent) {
+  tagChips.textContent = "";
+  const chosen = tagsInput.value;
+  const query = chosen.split(/[,\s]+/).pop() || "";
+  const suggestions = MonoSuggest(recent, query, chosen);
+  for (const tag of suggestions) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "chip";
+    chip.textContent = tag;
+    chip.addEventListener("click", () => {
+      const parts = tagsInput.value.split(/,\s*/).filter(Boolean);
+      // Replace the fragment being typed, if that is what the chip matched.
+      if (query && !tagsInput.value.endsWith(", ") && parts.length) parts.pop();
+      parts.push(tag);
+      tagsInput.value = `${parts.join(", ")}, `;
+      tagsInput.focus();
+      drawTagSuggestions(recent);
+    });
+    tagChips.appendChild(chip);
+  }
+}
+
+/**
+ * MonoSuggest is the popup's copy of the ranking rule. The worker owns the
+ * canonical one (capture_form.js); a popup cannot importScripts, and this
+ * is small enough that duplicating it beats a message round-trip per
+ * keystroke.
+ */
+function MonoSuggest(recent, query, chosen) {
+  const taken = new Set(
+    String(chosen || "")
+      .split(/[,\s]+/)
+      .map((t) => t.replace(/^#+/, "").toLowerCase())
+      .filter(Boolean)
+  );
+  const q = String(query || "").replace(/^#+/, "").trim().toLowerCase();
+  const prefix = [];
+  const contains = [];
+  for (const tag of recent || []) {
+    const key = String(tag).toLowerCase();
+    if (!key || taken.has(key)) continue;
+    if (!q || key.startsWith(q)) prefix.push(tag);
+    else if (key.includes(q)) contains.push(tag);
+  }
+  return prefix.concat(contains).slice(0, 8);
+}
+
+// --- CLIP-08: the pending list --------------------------------------------
+
+function drawQueue(state) {
+  const items = (state.queued || []).concat(state.failed || []);
+  queueList.textContent = "";
+  if (!items.length) {
+    queueBox.style.display = "none";
+    return;
+  }
+  queueBox.style.display = "block";
+
+  const counts = state.counts || { queued: 0, failed: 0 };
+  const parts = [];
+  if (counts.queued) parts.push(`${counts.queued} waiting`);
+  if (counts.failed) parts.push(`${counts.failed} failed`);
+  queueCounts.textContent = parts.join(" · ");
+  queueClearBtn.style.display = counts.failed ? "inline-block" : "none";
+
+  for (const item of items) {
+    const li = document.createElement("li");
+    li.className = `queue-item ${item.status}`;
+
+    const title = document.createElement("div");
+    title.className = "title";
+    title.textContent = item.title;
+    title.title = item.url || "";
+    li.appendChild(title);
+
+    const why = document.createElement("div");
+    why.className = "why";
+    why.textContent =
+      item.status === "failed"
+        ? `Failed: ${item.reason || "no reason recorded"}`
+        : item.reason
+        ? `Waiting — last attempt: ${item.reason}`
+        : "Waiting for the bridge to reconnect";
+    li.appendChild(why);
+
+    const actions = document.createElement("div");
+    actions.className = "actions";
+    const retry = document.createElement("button");
+    retry.className = "secondary tiny";
+    retry.textContent = "Retry now";
+    retry.addEventListener("click", async () => {
+      retry.disabled = true;
+      const result = await ask({ type: "queue_retry", key: item.key });
+      if (!result.ok) {
+        why.textContent = `Could not send: ${result.reason || result.error}`;
+        retry.disabled = false;
+      }
+      await refreshQueue();
+    });
+    const del = document.createElement("button");
+    del.className = "secondary tiny";
+    del.textContent = "Delete";
+    del.title = "Discard this capture without sending it";
+    del.addEventListener("click", async () => {
+      await ask({ type: "queue_delete", key: item.key });
+      await refreshQueue();
+    });
+    actions.appendChild(retry);
+    actions.appendChild(del);
+    li.appendChild(actions);
+
+    queueList.appendChild(li);
+  }
+}
+
+async function refreshQueue() {
+  drawQueue(await ask({ type: "queue_state" }));
+}
+
+queueClearBtn.addEventListener("click", async () => {
+  await ask({ type: "queue_clear_failures" });
+  await refreshQueue();
+});
+
+// --- saving ---------------------------------------------------------------
+
+captureBtn.addEventListener("click", async () => {
+  captureBtn.disabled = true;
+  showCapture("ok", "Capturing...");
+
+  const result = await ask({ type: "capture_commit", form: form() });
+  captureBtn.disabled = false;
+  began = false;
+
+  if (!result || result.ok === false) {
+    showCapture("err", result?.error || result?.warnings?.join("; ") || "Capture failed");
+    await refreshQueue();
+    return;
+  }
+
+  const title = result.title ? `Saved: ${result.title}` : "Saved";
+  if (result.queued) {
+    showCapture("warn", `${title} — queued until the bridge reconnects`);
+  } else if (result.warnings?.length) {
+    showCapture("warn", `${title} — ${result.warnings.join("; ")}`);
+  } else {
+    showCapture("ok", title);
+  }
+  noteInput.value = "";
+  tagsInput.value = "";
+  await Promise.all([refreshQueue(), loadFormState()]);
+});
+
+// --- CLIP-06: batch capture -----------------------------------------------
+
+function batchRunning(running) {
+  batchWindowBtn.disabled = running;
+  batchGroupBtn.disabled = running;
+  batchProgress.style.display = running ? "flex" : "none";
+  batchCancelBtn.disabled = false;
+}
+
+async function startBatch(scope) {
+  batchRunning(true);
+  batchLabel.textContent = "Starting...";
+  showBatch("ok", "");
+
+  const result = await ask({ type: "capture_batch", scope, form: form() });
+  batchRunning(false);
+
+  if (!result || result.ok === false) {
+    showBatch("err", result?.error || "Batch capture failed");
+  } else {
+    const report = result.report || {};
+    showBatch(report.failed?.length || report.skipped?.length ? "warn" : "ok", result.summary);
+    drawSkips(report);
+  }
+  await Promise.all([refreshQueue(), loadFormState()]);
+}
+
+/** drawSkips names every tab that was not captured — a skip is never silent. */
+function drawSkips(report) {
+  const skipped = (report.skipped || []).concat(report.failed || []);
+  if (!skipped.length) return;
+  const details = document.createElement("details");
+  const summary = document.createElement("summary");
+  summary.textContent = `${skipped.length} not saved`;
+  details.appendChild(summary);
+  for (const item of skipped) {
+    const line = document.createElement("div");
+    line.textContent = `${item.title} — ${item.reason}`;
+    details.appendChild(line);
+  }
+  batchMsg.appendChild(details);
+}
+
+batchWindowBtn.addEventListener("click", () => startBatch("window"));
+batchGroupBtn.addEventListener("click", () => startBatch("group"));
+batchCancelBtn.addEventListener("click", async () => {
+  batchCancelBtn.disabled = true;
+  batchLabel.textContent = "Cancelling after this tab...";
+  await ask({ type: "capture_batch_cancel" });
+});
+
+// --- live messages from the worker ----------------------------------------
+
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.type === "status") {
+    updateUI(msg.status);
+    return;
+  }
+  if (msg.type === "capture_batch_progress") {
+    const s = msg.state || {};
+    batchRunning(s.phase !== "done");
+    batchLabel.textContent =
+      s.phase === "done"
+        ? `${s.done} of ${s.total} saved`
+        : `${s.completed} of ${s.total}${s.title ? ` — ${s.title}` : ""}`;
+  }
+});
+
+// --- startup --------------------------------------------------------------
+
+async function loadFormState() {
+  const state = await ask({ type: "capture_form_state" });
+  if (!state || state.ok === false) return;
+  drawTagSuggestions(state.recentTags || []);
+  drawProfiles(state);
+  tagsInput.addEventListener("input", () => drawTagSuggestions(state.recentTags || []));
+  collectionList.textContent = "";
+  for (const name of state.collections || []) {
+    const option = document.createElement("option");
+    option.value = name;
+    collectionList.appendChild(option);
+  }
+  drawQueue(state);
+}
+
 async function init() {
   // The non-loopback override is session-scoped and must be re-enabled
   // each time — reset it whenever the popup opens.
@@ -45,7 +411,6 @@ async function init() {
     // storage unavailable — background treats a missing flag as no override
   }
 
-  // Get connection status from background
   chrome.runtime.sendMessage({ type: "get_status" }, (response) => {
     if (chrome.runtime.lastError || !response?.status) {
       updateUI("disconnected");
@@ -54,25 +419,27 @@ async function init() {
     updateUI(response.status);
   });
 
-  // Load saved URL
   const result = await chrome.storage.local.get("wsUrl");
   wsUrlInput.value = result.wsUrl || "ws://127.0.0.1:9222/monoagent";
+
+  await loadFormState();
 }
 
-// Listen for live status updates from background
-chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.type === "status") {
-    updateUI(msg.status);
-  }
+// A capture begun for a note that was never saved is dropped rather than
+// left pinned in the worker's memory. Nothing was promised: only a
+// committed capture is a capture.
+window.addEventListener("pagehide", () => {
+  if (began) chrome.runtime.sendMessage({ type: "capture_discard" });
 });
 
-// Pair button handler — sends the token typed into the field, never reads
-// it back out of storage, so the popup never displays a previously-saved
-// secret.
+// --- connection settings ---------------------------------------------------
+
 pairBtn.addEventListener("click", async () => {
   const value = pairingTokenInput.value.trim();
   if (!value) return;
 
+  // Sends the token typed into the field, never reads it back out of
+  // storage, so the popup never displays a previously-saved secret.
   chrome.runtime.sendMessage({ type: "set_pairing_token", value }, (response) => {
     if (chrome.runtime.lastError) {
       showError(chrome.runtime.lastError.message);
@@ -92,7 +459,6 @@ pairBtn.addEventListener("click", async () => {
   });
 });
 
-// Save button handler
 saveBtn.addEventListener("click", async () => {
   const url = wsUrlInput.value.trim();
   if (!url) return;

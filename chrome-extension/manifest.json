@@ -1,22 +1,59 @@
 {
   "manifest_version": 3,
   "name": "MonoAgent Bridge",
-  "version": "1.1.0",
+  "version": "1.3.0",
   "description": "Browser automation bridge for MonoAgent",
-  "permissions": ["tabs", "scripting", "activeTab", "storage", "alarms", "debugger", "cookies"],
-  "host_permissions": ["<all_urls>"],
+  "permissions": [
+    "tabs",
+    "scripting",
+    "activeTab",
+    "storage",
+    "alarms",
+    "debugger",
+    "cookies",
+    "contextMenus",
+    "tabGroups"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
   "background": {
     "service_worker": "background.js"
   },
+  "commands": {
+    "capture-page": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+S",
+        "mac": "Command+Shift+S"
+      },
+      "description": "Save this page to monomind"
+    },
+    "capture-selection": {
+      "description": "Save the selected text to monomind"
+    },
+    "highlight-selection": {
+      "description": "Highlight the selected text and save it as a note"
+    }
+  },
   "content_scripts": [
     {
-      "matches": ["http://127.0.0.1:*/monoagent/pair*"],
-      "js": ["pair_bridge.js"],
+      "matches": [
+        "http://127.0.0.1:*/monoagent/pair*"
+      ],
+      "js": [
+        "pair_bridge.js"
+      ],
       "run_at": "document_start"
     },
     {
-      "matches": ["<all_urls>"],
-      "js": ["content.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js",
+        "highlights.js",
+        "highlight_page.js"
+      ],
       "run_at": "document_idle"
     }
   ],

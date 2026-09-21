@@ -14,7 +14,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newCrawlCmd(_ *globalConfig) *cobra.Command {
+func newCrawlCmd(cfg *globalConfig) *cobra.Command {
 	var headless bool
 	var waitSecs int
 
@@ -135,6 +135,8 @@ For the full guide:  monoagent ref crawling`,
 			return nil
 		},
 	}
+
+	cmd.AddCommand(newCrawlCaptureCmd(cfg))
 
 	cmd.Flags().BoolVar(&headless, "headless", false, "Run browser headlessly (no window)")
 	cmd.Flags().IntVar(&waitSecs, "wait", 8, "Seconds to wait for JS rendering")

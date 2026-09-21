@@ -21,6 +21,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog"
+
+	"github.com/monoes/mono-agent/internal/capture"
 )
 
 // Server is a WebSocket server that accepts a single connection from the
@@ -36,16 +38,43 @@ type Server struct {
 	connected chan struct{} // closed when first connection arrives
 	connOnce  sync.Once
 
+	// Capture plumbing (see capture.go). streams carries the multi-message
+	// page_capture responses, which pending cannot: it is single-shot, and
+	// one capture may span many messages under one id. Both are guarded by
+	// pendMu, as is onCapture.
+	streams        map[string]chan *Response
+	assembler      *capture.Assembler
+	captureWriter  *capture.Writer
+	captureInbox   string
+	captureOptions capture.Options
+	onCapture      func(*capture.Result, error)
+
 	// token authenticates /monoagent/relay requests (see handleRelay). Set
 	// once Start has won the port bind; empty (and thus relay-rejecting)
 	// before that.
 	token string
+
+	// cdpClients are the sockets subscribed to the CDP relay (see cdp.go).
+	// Debugger events are fanned out to all of them; command replies go
+	// only to the client that asked.
+	cdpClients map[*cdpClient]struct{}
+	cdpMu      sync.Mutex
 
 	// boundAddr is the address actually bound (may differ from the
 	// requested addr on EADDRINUSE fallback — see listenCandidates). Set
 	// alongside token, once Start has won the port bind; empty before that.
 	boundAddr string
 	addrMu    sync.Mutex
+
+	// handlerState is the extension→Go request channel (see request.go):
+	// the method registry and the in-flight bound. Embedded so the channel
+	// reads as one unit in its own file rather than as four more fields
+	// here.
+	handlerState
+
+	// knowledgeState is the monomind runner those handlers ask (see
+	// knowledge.go).
+	knowledgeState
 
 	// pairingNonces backs the one-time, loopback-only auto-pairing flow
 	// (see handlePairPage/handlePairExchange): a short-lived, single-use
@@ -206,12 +235,18 @@ func tryListen(addrs []string) (net.Listener, string, error) {
 // NewServer creates a new extension WebSocket server. Addr should be a
 // host:port string such as ":9222".
 func NewServer(addr string, logger zerolog.Logger) *Server {
-	return &Server{
+	s := &Server{
 		addr:      addr,
 		pending:   make(map[string]chan *Response),
 		connected: make(chan struct{}),
 		logger:    logger.With().Str("component", "extension-server").Logger(),
 	}
+	// The extension→Go request channel is on by default (see request.go).
+	// Nothing at the call site has to switch it on: a question the browser
+	// can only ask when someone remembered to wire it up is a question
+	// that silently goes unanswered on most installs.
+	s.registerBuiltinHandlers()
+	return s
 }
 
 // Start starts the HTTP/WebSocket server and blocks until the context is
@@ -223,6 +258,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/monoagent", s.handleWS)
 	mux.HandleFunc("/monoagent/health", s.handleHealth)
 	mux.HandleFunc("/monoagent/relay", s.handleRelay)
+	mux.HandleFunc("/monoagent/cdp", s.handleCdpSocket)
 	mux.HandleFunc("/monoagent/pair", s.handlePairPage)
 	mux.HandleFunc("/monoagent/pair/exchange", s.handlePairExchange)
 
@@ -332,24 +368,8 @@ func (s *Server) SendCommand(cmd *Command, timeout time.Duration) (*Response, er
 		s.pendMu.Unlock()
 	}()
 
-	data, err := json.Marshal(cmd)
-	if err != nil {
-		return nil, fmt.Errorf("marshal command: %w", err)
-	}
-
-	s.connMu.Lock()
-	conn := s.conn
-	s.connMu.Unlock()
-
-	if conn == nil {
-		return nil, fmt.Errorf("no extension connected")
-	}
-
-	s.writeMu.Lock()
-	err = conn.WriteMessage(websocket.TextMessage, data)
-	s.writeMu.Unlock()
-	if err != nil {
-		return nil, fmt.Errorf("write command: %w", err)
+	if err := s.writeCommand(cmd); err != nil {
+		return nil, err
 	}
 
 	s.logger.Debug().Str("id", cmd.ID).Str("type", cmd.Type).Msg("command sent")
@@ -515,6 +535,10 @@ func (s *Server) pingLoop(conn *websocket.Conn, done <-chan struct{}) {
 	for {
 		select {
 		case <-ticker.C:
+			// Piggybacked on the ping: a capture whose chunks stopped
+			// arriving has nobody waiting on it when it was the extension
+			// flushing its queue, so something has to time it out.
+			s.sweepCaptures()
 			s.writeMu.Lock()
 			err := conn.WriteMessage(websocket.PingMessage, nil)
 			s.writeMu.Unlock()
@@ -713,6 +737,13 @@ func (s *Server) handleRelay(w http.ResponseWriter, r *http.Request) {
 			timeout = n
 		}
 	}
+	// A relayed capture is executed and *written* here, by the process
+	// that owns the extension connection, so the caller gets back a small
+	// Result instead of a multi-megabyte envelope over loopback HTTP.
+	if cmd.Type == CmdPageCapture {
+		s.serveRelayCapture(w, &cmd, timeout, r.URL.Query().Get("inbox"))
+		return
+	}
 	resp, err := s.SendCommand(&cmd, timeout)
 	w.Header().Set("Content-Type", "application/json")
 	if resp == nil {
@@ -746,6 +777,15 @@ func (s *Server) readLoop(conn *websocket.Conn) {
 			return
 		}
 
+		// A frame the extension originated, expecting an answer back
+		// (see request.go). Checked before the Response decode because a
+		// request has no `success` field and would otherwise land in
+		// dispatch as an unmatched failure.
+		if isRequestFrame(msg) {
+			s.serveRequest(msg)
+			continue
+		}
+
 		var resp Response
 		if err := json.Unmarshal(msg, &resp); err != nil {
 			// Never log the raw payload: extension responses (get_cookies,
@@ -758,14 +798,6 @@ func (s *Server) readLoop(conn *websocket.Conn) {
 
 		s.logger.Debug().Str("id", resp.ID).Bool("success", resp.Success).Str("error", resp.Error).Msg("response received")
 
-		s.pendMu.Lock()
-		ch, ok := s.pending[resp.ID]
-		s.pendMu.Unlock()
-
-		if ok {
-			ch <- &resp
-		} else {
-			s.logger.Warn().Str("id", resp.ID).Msg("no pending request for response")
-		}
+		s.dispatch(&resp)
 	}
 }

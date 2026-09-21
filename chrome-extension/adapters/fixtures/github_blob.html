@@ -1,0 +1,39 @@
+<!-- Trimmed from a github.com/<owner>/<repo>/blob/<ref>/<path> page.
+
+     The current React blob view keeps the raw file in a read-only <textarea>
+     and paints the syntax highlighting over it, which is a gift: the
+     textarea is the exact bytes, with no per-line markup to reassemble. The
+     legacy `table.js-file-line-container` view is covered by
+     github_blob_legacy.html. -->
+<!doctype html>
+<html lang="en"><head>
+<title>mono-agent/internal/capture/envelope.go at master · monoes/mono-agent</title>
+<link rel="canonical" href="https://github.com/monoes/mono-agent/blob/master/internal/capture/envelope.go">
+</head>
+<body>
+<div id="repo-content-pjax-container">
+  <div class="react-code-view-header">
+    <h2 class="sr-only">Path in repository</h2>
+    <nav aria-label="Breadcrumbs">
+      <a href="/monoes/mono-agent/tree/master/internal">internal</a> /
+      <a href="/monoes/mono-agent/tree/master/internal/capture">capture</a> /
+      <h1 class="file-name">envelope.go</h1>
+    </nav>
+    <div class="text-mono f6">64 lines (52 loc) · 1.7 KB</div>
+  </div>
+
+  <div class="react-code-file-contents">
+    <textarea data-testid="read-only-cursor-text-area" aria-label="file content" readonly>package capture
+
+// ValidArtifactName reports whether name is safe to use as a file name
+// inside an envelope directory.
+func ValidArtifactName(name string) bool {
+	if name == "" {
+		return false
+	}
+	return !strings.Contains(name, "..")
+}
+</textarea>
+  </div>
+</div>
+</body></html>
