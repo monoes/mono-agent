@@ -2,7 +2,10 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
+	"strings"
 	"testing"
 )
 
@@ -26,5 +29,20 @@ func TestIsMonomindInitializedAt(t *testing.T) {
 	}
 	if !isMonomindInitializedAt(root) {
 		t.Fatal("expected true once .monomind/config.yaml exists")
+	}
+}
+
+// TestInitFailureMessage_127KeepsOutputAndHints guards the reported
+// "Failed: initialize monomind / exit status 127" with nothing else to go on.
+func TestInitFailureMessage_127KeepsOutputAndHints(t *testing.T) {
+	if goruntime.GOOS == "windows" {
+		t.Skip("needs sh")
+	}
+	err := exec.Command("sh", "-c", "exit 127").Run()
+	msg := initFailureMessage("/x/bin/monomind", err, []string{"env: node: No such file or directory"})
+	for _, want := range []string{"exit status 127", "/x/bin/monomind", "node", "env: node: No such file or directory"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("message %q missing %q", msg, want)
+		}
 	}
 }
