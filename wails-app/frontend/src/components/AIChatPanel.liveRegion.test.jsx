@@ -225,7 +225,7 @@ describe('AIChatPanel live region: composer disabledReason banner', () => {
     render(<AIChatPanel workflowID="general" isOpen={true} onClose={() => {}} />)
     await screen.findByPlaceholderText('Type a message...')
 
-    await waitFor(() => expect(liveRegion()).toHaveTextContent(/installed but unusable: monomind 2\.1\.0 is too old/))
+    await waitFor(() => expect(liveRegion()).toHaveTextContent(/couldn't be used: monomind 2\.1\.0 is too old/))
     expect(screen.queryByText(/isn't installed/)).not.toBeInTheDocument()
     expect(screen.queryByText(/monomind not found/)).not.toBeInTheDocument()
   })
