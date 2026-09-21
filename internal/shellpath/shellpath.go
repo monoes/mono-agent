@@ -38,8 +38,7 @@ func LoginPath(ctx context.Context) (string, error) {
 	defer cancel()
 	// -i so interactive-only rc files (.zshrc/.bashrc, where nvm lives)
 	// are sourced; -l for the profile files (Homebrew shellenv).
-	cmd := exec.CommandContext(ctx, shell, "-ilc",
-		`printf '%s%s%s' "`+startMarker+`" "$PATH" "`+endMarker+`"`)
+	cmd := exec.CommandContext(ctx, shell, "-ilc", printPathCommand(shell))
 	// rc files can spawn background helpers that hold stdout open; don't
 	// let them keep Output blocked past the timeout.
 	cmd.WaitDelay = time.Second
@@ -48,6 +47,15 @@ func LoginPath(ctx context.Context) (string, error) {
 		return "", err
 	}
 	return extract(string(out)), nil
+}
+
+// printPathCommand prints PATH colon-joined between the markers. fish keeps
+// PATH as a list and "$PATH" there joins with spaces, so it needs its own form.
+func printPathCommand(shell string) string {
+	if filepath.Base(shell) == "fish" {
+		return `printf '%s%s%s' "` + startMarker + `" (string join : $PATH) "` + endMarker + `"`
+	}
+	return `printf '%s%s%s' "` + startMarker + `" "$PATH" "` + endMarker + `"`
 }
 
 func extract(out string) string {

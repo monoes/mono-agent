@@ -66,3 +66,12 @@ func TestLoginPath_ReadsShellRc(t *testing.T) {
 		t.Fatalf("LoginPath = %q, want it to start with %q", got, extra)
 	}
 }
+
+func TestPrintPathCommand_FishJoinsWithColons(t *testing.T) {
+	if got := printPathCommand("/opt/homebrew/bin/fish"); !strings.Contains(got, "string join : $PATH") {
+		t.Fatalf("fish command = %q, want colon-joined PATH", got)
+	}
+	if got := printPathCommand("/bin/zsh"); !strings.Contains(got, `"$PATH"`) {
+		t.Fatalf("zsh command = %q, want \"$PATH\"", got)
+	}
+}

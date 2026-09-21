@@ -87,7 +87,7 @@ func nvmCandidates(root string) []string {
 		}
 	}
 	sort.Slice(versions, func(i, j int) bool {
-		return versionAtLeast(versions[i], versions[j]) && versions[i] != versions[j]
+		return !versionAtLeast(versions[j], versions[i]) // strictly newer first
 	})
 	cands := make([]string, 0, len(versions))
 	for _, v := range versions {
