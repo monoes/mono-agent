@@ -199,7 +199,8 @@
           });
         }
       }, options.debounceMs === undefined ? DEBOUNCE_MS : options.debounceMs);
-      if (timer && timer.unref) timer.unref();
+      // NOT unref'd: this timer resolves the promise the caller awaits, so
+      // it must keep the event loop alive until it fires. See ask.js.
       timers.set(tabId, { timer, resolve, url });
     });
   }

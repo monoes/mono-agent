@@ -92,8 +92,11 @@
       const found = settle(id);
       if (found) found.reject(askError(message, code));
     }, ms);
-    // Node's timers keep the process alive; a worker's do not care.
-    if (timer && timer.unref) timer.unref();
+    // NOT unref'd. This timer is the only thing that settles the promise
+    // the caller is awaiting, so it has to hold the event loop open until
+    // it fires; unref'd, node:test sees a pending promise with an idle loop
+    // and cancels the run. (`unref` does not exist on a worker's timer
+    // anyway, so it only ever changed what the tests could observe.)
     return timer;
   }
 
