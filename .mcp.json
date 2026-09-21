@@ -4,7 +4,8 @@
       "command": "npx",
       "args": [
         "-y",
-        "@monoes/monomindcli@2.11.1",
+        "--package=@monoes/monomindcli@2.11.1",
+        "monomind",
         "mcp",
         "start"
       ],
