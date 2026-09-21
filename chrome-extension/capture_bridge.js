@@ -97,6 +97,22 @@
       throw err;
     }
 
+    // The zero-interaction path: a shortcut capture is filed into whichever
+    // profile was last chosen, read from storage alone. Nothing here waits
+    // on the bridge — the profile is a label on an envelope, and a capture
+    // must never be held up by a question about filing.
+    if (root.MonoCaptureProfile) {
+      const profile =
+        params.profile !== undefined
+          ? params.profile
+          : await root.MonoCaptureProfile.stickyOrAsk(
+              root.MonoAsk,
+              chrome.storage.local,
+              deps.isConnected()
+            );
+      root.MonoCaptureProfile.applyToMeta(result.meta, profile);
+    }
+
     const id = `ext-${(crypto.randomUUID && crypto.randomUUID()) || Date.now()}`;
     if (deps.isConnected()) {
       sendEnvelope(id, result, PUSH_TYPE);

@@ -62,6 +62,7 @@ function world(options = {}) {
       "capture_meta.js",
       "capture.js",
       "capture_form.js",
+      "capture_profile.js",
       "capture_batch.js",
       "capture_queue.js",
       "capture_actions.js",
@@ -103,6 +104,9 @@ function world(options = {}) {
 
   return {
     ...sandbox,
+    // The worker's own global, for a test that has to install something
+    // into it (MonoAsk) — the spread above is a copy, not the sandbox.
+    sandbox,
     store,
     badge,
     frames,
@@ -282,4 +286,75 @@ test("a capture that throws is reported, not swallowed", async () => {
 test("an unknown message is not this module's to answer", async () => {
   const w = world();
   assert.equal(await w.ask({ type: "get_status" }), null);
+});
+
+// --- the profile a capture is filed into ---------------------------------
+
+test("the picked profile rides the envelope and becomes the sticky choice", async () => {
+  const w = world();
+  await w.ask({ type: "capture_commit", form: { profile: "p-work" } });
+
+  assert.equal(w.frames[0].data.meta.profile, "p-work");
+  assert.equal(w.store[w.MonoCaptureProfile.PROFILE_KEY], "p-work");
+
+  // The next capture, with no picker involved at all, inherits it.
+  await w.ask({ type: "capture_commit", form: {} });
+  assert.equal(w.frames[1].data.meta.profile, "p-work");
+});
+
+test("picking 'no profile' is a choice, and is remembered as one", async () => {
+  const w = world();
+  await w.ask({ type: "capture_commit", form: { profile: "p-work" } });
+  await w.ask({ type: "capture_commit", form: { profile: "" } });
+
+  assert.equal(w.frames[1].data.meta.profile, undefined);
+  assert.equal(w.store[w.MonoCaptureProfile.PROFILE_KEY], "");
+});
+
+test("a capture with no profile anywhere is exactly what it always was", async () => {
+  const w = world();
+  const result = await w.ask({ type: "capture_commit", form: {} });
+  const meta = w.frames[0].data.meta;
+  assert.equal("profile" in meta, false, "an unprofiled capture carries no profile key");
+  assert.equal(result.profile, null);
+});
+
+test("a hostile profile id never reaches the envelope", async () => {
+  const w = world();
+  await w.ask({ type: "capture_commit", form: { profile: "../../etc/passwd" } });
+  assert.equal("profile" in w.frames[0].data.meta, false);
+  assert.equal(w.store[w.MonoCaptureProfile.PROFILE_KEY], "");
+});
+
+test("the form state carries the picker, and works with no bridge to ask", async () => {
+  const w = world();
+  const state = await w.ask({ type: "capture_form_state" });
+  assert.equal(state.ok, true);
+  assert.deepEqual(state.profiles, []);
+  assert.equal(state.profile, "");
+  assert.equal(state.profilesOffline, true);
+});
+
+test("the form state asks the backend for the real profiles", async () => {
+  const w = world();
+  w.sandbox.MonoAsk = {
+    supports: async () => true,
+    request: async () => ({
+      profiles: [
+        { id: "p-home", name: "Personal" },
+        { id: "p-work", name: "Work", default: true },
+      ],
+    }),
+  };
+  const state = await w.ask({ type: "capture_form_state" });
+  assert.deepEqual(state.profiles.map((p) => p.id), ["p-home", "p-work"]);
+  assert.equal(state.profile, "p-work", "the default is pre-selected");
+  assert.equal(state.profilesOffline, false);
+
+  // A profile that has since been deleted is reported, not silently swapped.
+  w.store[w.MonoCaptureProfile.PROFILE_KEY] = "p-gone";
+  const again = await w.ask({ type: "capture_form_state" });
+  assert.equal(again.profile, "p-work");
+  assert.equal(again.profileChanged, true);
+  assert.match(again.profileReason, /Work/);
 });

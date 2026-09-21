@@ -50,7 +50,12 @@ type Entry struct {
 	CapturedAt string   `json:"capturedAt"`
 	Bytes      int64    `json:"bytes"`
 	Artifacts  []string `json:"artifacts"`
-	Meta       Meta     `json:"meta"`
+	// Profile is the capture's profile, promoted out of Meta because it
+	// decides which inbox this entry was even found in — a listing that
+	// spans profiles is unreadable without it. Empty for a capture that
+	// named no profile.
+	Profile string `json:"profile,omitempty"`
+	Meta    Meta   `json:"meta"`
 }
 
 // ReadMeta reads one capture directory's provenance record.
@@ -121,6 +126,7 @@ func readEntry(dir string) (Entry, bool) {
 		URL:        meta.DedupeURL(),
 		Title:      meta.Title,
 		CapturedAt: meta.CapturedAt,
+		Profile:    meta.Profile,
 		Meta:       *meta,
 	}
 	files, err := os.ReadDir(dir)

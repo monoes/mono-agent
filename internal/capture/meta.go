@@ -43,6 +43,12 @@ type Meta struct {
 	Tags         []string   `json:"tags"`
 	Collection   *string    `json:"collection"`
 	Source       string     `json:"source"`
+	// Profile names the mono-agent profile this capture belongs to, and so
+	// which inbox it lands in and which knowledge store ingests it (see
+	// profile.go). Omitted entirely when the sender named no profile, so an
+	// unprofiled capture's meta.json is byte-identical to one written
+	// before this field existed.
+	Profile string `json:"profile,omitempty"`
 
 	// Extra carries everything the sender set that this struct has no home
 	// for, verbatim, so MarshalJSON can put it back into meta.json.
@@ -160,8 +166,11 @@ func marshalWithExtra(v any, extra map[string]json.RawMessage) ([]byte, error) {
 	rt := rv.Type()
 	out := make(map[string]json.RawMessage, rt.NumField()+len(extra))
 	for i := 0; i < rt.NumField(); i++ {
-		key := jsonKey(rt.Field(i))
+		key, omitEmpty := jsonKeyOpts(rt.Field(i))
 		if key == "" {
+			continue
+		}
+		if omitEmpty && rv.Field(i).IsZero() {
 			continue
 		}
 		b, err := json.Marshal(rv.Field(i).Interface())
@@ -179,14 +188,32 @@ func marshalWithExtra(v any, extra map[string]json.RawMessage) ([]byte, error) {
 // jsonKey returns the JSON object key a struct field maps to, or "" for a
 // field that is not serialized (`json:"-"`).
 func jsonKey(f reflect.StructField) string {
-	name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+	name, _ := jsonKeyOpts(f)
+	return name
+}
+
+// jsonKeyOpts is jsonKey plus whether the field carries `omitempty`.
+// marshalWithExtra honors it by hand because it renders field by field
+// rather than handing the struct to encoding/json — without this, a field
+// added later would start appearing as its zero value in every meta.json
+// ever written.
+func jsonKeyOpts(f reflect.StructField) (string, bool) {
+	name, opts, _ := strings.Cut(f.Tag.Get("json"), ",")
+	omitEmpty := false
+	for opts != "" {
+		var opt string
+		opt, opts, _ = strings.Cut(opts, ",")
+		if opt == "omitempty" {
+			omitEmpty = true
+		}
+	}
 	switch name {
 	case "-":
-		return ""
+		return "", false
 	case "":
-		return f.Name
+		return f.Name, omitEmpty
 	default:
-		return name
+		return name, omitEmpty
 	}
 }
 
@@ -202,6 +229,9 @@ func (m *Meta) Normalize(now time.Time) {
 	if m.Tags == nil {
 		m.Tags = []string{}
 	}
+	// A profile id is a path component downstream; the sender's whitespace
+	// is not part of it.
+	m.Profile = strings.TrimSpace(m.Profile)
 }
 
 // DedupeURL is the URL half of the dedupe key (canonicalUrl + contentHash):

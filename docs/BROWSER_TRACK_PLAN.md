@@ -54,12 +54,25 @@ keeping a private copy of either is how they drift.
   "url": "…", "canonicalUrl": "…", "title": "…", "byline": null,
   "publishedAt": null, "capturedAt": "ISO-8601", "httpStatus": 200,
   "contentHash": "sha256:…", "favicon": "…", "selection": null,
-  "note": null, "tags": [], "collection": null, "source": "extension|monobrowse|crawl"
+  "note": null, "tags": [], "collection": null, "source": "extension|monobrowse|crawl",
+  "profile": "<profile id>"
 }
 ```
 
 Dedupe key is `canonicalUrl` + `contentHash`. Same URL + new hash = new
 **version** of the same document, never a duplicate row.
+
+`profile` is the only optional KEY (every other field is always written,
+possibly null): it is absent entirely for a capture that named no profile,
+so an unprofiled envelope is byte-identical to one written before profiles
+existed. When present it is a mono-agent profile id, and it decides both
+where the envelope lands — that profile's own inbox,
+`<profile root>/.monomind/inbox`, resolved through `internal/profiledir` —
+and which store ingests it, monomind scope `profile:<id>`. The id is
+untrusted input that becomes a directory name: both sides validate it with
+the same rule (`profiledir.ValidProfileID` in Go,
+`isValidProfileId` in `knowledge/profile-store.ts`), and a capture carrying
+an id either side rejects is saved unprofiled rather than refused.
 
 ## Waves
 
@@ -273,3 +286,25 @@ whether RIG-12 is a day or a fortnight.
   a11y rules, run history, structural + pixel diff, flake analysis
 - `@monomind/cli` knowledge layer — HTML/MHTML ingest, provenance, versioning,
   citations with anchors, library filters, watches, MCP capture resources
+
+---
+
+## Decided and built 2026-09-21: option (1), CDP is the seam
+
+GLU-01 is done and RIG-07 falls out of it, as predicted. `CdpClient`'s
+transport is now pluggable; a bridge-backed transport carries CDP through the
+Go relay's new `/monoagent/cdp` socket into `chrome.debugger`, and debugger
+events flow back unasked-for. Every instrument works against it unchanged —
+console, network and vitals are demonstrated end-to-end over a fake bridge.
+
+The MV3 surface turned out thin in exactly two places, both documented rather
+than worked around: `HeapProfiler` and `Browser` are not domains
+`chrome.debugger` exposes, so heap snapshots and `Browser.close` do not cross
+the bridge. Everything else the instruments send does. Attaching shows the
+user a banner on their tab, and DevTools and the debugger cannot share one.
+
+Still to wire: picking the backend from the CLI and the MCP tools — one
+function, `getConnection()` in `browser-session.ts`.
+
+See **docs/BROWSER_BRIDGE_CDP.md** for the protocol, the full limitation list
+and measured latency/size costs.

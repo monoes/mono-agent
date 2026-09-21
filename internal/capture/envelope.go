@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/monoes/mono-agent/internal/profiledir"
 )
 
 // Envelope is one finished capture, ready to be written to the inbox.
@@ -102,7 +104,8 @@ const staleStagingAge = 24 * time.Hour
 // Writer writes envelopes into an inbox directory.
 type Writer struct {
 	// Inbox is the directory envelopes are created in. Empty means
-	// DefaultInbox().
+	// DefaultInbox(), or — for an envelope naming a profile — that
+	// profile's own inbox (see resolveInbox).
 	Inbox string
 	// Now supplies the current time; nil means time.Now.
 	Now func() time.Time
@@ -120,6 +123,40 @@ func (w *Writer) now() time.Time {
 		return w.Now()
 	}
 	return time.Now()
+}
+
+// resolveInbox decides where this envelope lands, and returns a warning to
+// carry back to the caller when it could not land where it asked to.
+//
+// An envelope naming a profile goes into that profile's own inbox — that
+// separation IS the feature, so it outranks the writer's configured inbox
+// only when the writer was not pointed anywhere in particular. An explicit
+// Inbox (`capture page --out`, a test) is a direct instruction about this
+// one capture and wins; the profile is still recorded in meta.json.
+//
+// A profile id the profiles root would not accept (a separator, a '..', an
+// empty string after trimming) is dropped rather than obeyed: the capture
+// lands in the default inbox, unprofiled, with a warning. Losing the page
+// over a bad id would be worse, and writing it wherever the id pointed
+// would be worse still.
+func (w *Writer) resolveInbox(meta *Meta) (string, string) {
+	profile := strings.TrimSpace(meta.Profile)
+	if profile == "" {
+		return w.inbox(), ""
+	}
+	if !profiledir.ValidProfileID(profile) {
+		meta.Profile = ""
+		return w.inbox(), fmt.Sprintf("unusable profile id %q: saved to the default inbox instead", clampID(profile))
+	}
+	if strings.TrimSpace(w.Inbox) != "" {
+		return w.Inbox, ""
+	}
+	dir, err := ProfileInbox(profile)
+	if err != nil {
+		meta.Profile = ""
+		return w.inbox(), fmt.Sprintf("%v: saved to the default inbox instead", err)
+	}
+	return dir, ""
 }
 
 // Write stages the envelope in a temporary directory inside the inbox and
@@ -149,7 +186,10 @@ func (w *Writer) Write(env *Envelope) (*Result, error) {
 		env.Meta.ContentHash = hash
 	}
 
-	inbox := w.inbox()
+	inbox, warning := w.resolveInbox(&env.Meta)
+	if warning != "" {
+		env.Warnings = append(env.Warnings, warning)
+	}
 	if err := os.MkdirAll(inbox, 0o700); err != nil {
 		return nil, fmt.Errorf("create inbox %s: %w", inbox, err)
 	}

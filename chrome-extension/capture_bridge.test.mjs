@@ -37,7 +37,12 @@ function fakeChrome() {
     },
     storage: {
       local: {
-        get: async (key) => ({ [key]: store[key] }),
+        get: async (keys) => {
+          const wanted = Array.isArray(keys) ? keys : [keys];
+          const out = {};
+          for (const k of wanted) if (k in store) out[k] = store[k];
+          return out;
+        },
         set: async (update) => Object.assign(store, update),
       },
     },
@@ -71,10 +76,14 @@ function fakeChrome() {
   return { chrome, store };
 }
 
-function bridge({ connected = true } = {}) {
+function bridge({ connected = true, seed = {} } = {}) {
   const { chrome, store } = fakeChrome();
+  Object.assign(store, seed);
   const sent = [];
-  const env = loadExtensionScripts(["capture_meta.js", "capture.js", "capture_bridge.js"], { chrome });
+  const env = loadExtensionScripts(
+    ["capture_meta.js", "capture.js", "capture_profile.js", "capture_bridge.js"],
+    { chrome }
+  );
   env.MonoCaptureBridge.install({
     send: (message) => sent.push(message),
     isConnected: () => connected,
@@ -204,4 +213,32 @@ test("a selection capture asks the page for the selection", async () => {
   await settle(() => sent.length > 0);
   assert.equal(sent.length, 1);
   assert.deepEqual(sent[0].data.warnings, [], "the page reported a selection, so there is nothing to warn about");
+});
+
+test("the keyboard shortcut files into the sticky profile, with no interaction", async () => {
+  const { env, chrome, sent } = bridge({ seed: { captureProfile: "p-work" } });
+  await chrome.listeners.command("capture-page");
+  await new Promise((r) => setTimeout(r, 30));
+
+  assert.equal(sent.length, 1, "one envelope");
+  assert.equal(sent[0].data.meta.profile, "p-work");
+  assert.ok(env.MonoCaptureProfile, "the profile module is loaded in the worker");
+});
+
+test("with nothing chosen, a shortcut capture is unprofiled — as it always was", async () => {
+  const { chrome, sent } = bridge();
+  await chrome.listeners.command("capture-page");
+  await new Promise((r) => setTimeout(r, 30));
+
+  assert.equal(sent.length, 1);
+  assert.equal("profile" in sent[0].data.meta, false);
+});
+
+test("a remembered profile that is not a usable id is ignored, not sent", async () => {
+  const { chrome, sent } = bridge({ seed: { captureProfile: "../evil" } });
+  await chrome.listeners.command("capture-page");
+  await new Promise((r) => setTimeout(r, 30));
+
+  assert.equal(sent.length, 1, "the capture still lands");
+  assert.equal("profile" in sent[0].data.meta, false);
 });

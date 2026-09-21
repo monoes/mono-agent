@@ -29,6 +29,9 @@ const noteInput = $("note");
 const tagsInput = $("tags");
 const collectionInput = $("collection");
 const collectionList = $("collection-list");
+const profileField = $("profile-field");
+const profileSelect = $("profile");
+const profileNote = $("profile-note");
 const tagChips = $("tag-chips");
 const batchWindowBtn = $("batch-window");
 const batchGroupBtn = $("batch-group");
@@ -81,11 +84,57 @@ function ask(message) {
   });
 }
 
+// The form always carries `profile`, including the empty string for "no
+// profile": the worker treats its presence as this save's choice and makes
+// it the sticky one, so the picker means the same thing whether it was
+// touched or left where it was.
 const form = () => ({
   note: noteInput.value,
   tags: tagsInput.value,
   collection: collectionInput.value,
+  profile: profileSelect.value || "",
 });
+
+/**
+ * drawProfiles fills the "Save into" picker. It is hidden outright when
+ * there is nothing to choose between — a single-profile install should not
+ * grow a control that can only be set one way — and the choice is only ever
+ * pre-selected, never forced: the capture saves whatever is showing.
+ */
+function drawProfiles(state) {
+  const profiles = state.profiles || [];
+  profileSelect.textContent = "";
+  if (!profiles.length) {
+    profileField.style.display = "none";
+    return;
+  }
+  profileField.style.display = "block";
+
+  for (const profile of profiles) {
+    const option = document.createElement("option");
+    option.value = profile.id;
+    option.textContent = profile.default ? `${profile.name} (default)` : profile.name;
+    profileSelect.appendChild(option);
+  }
+  const none = document.createElement("option");
+  none.value = "";
+  none.textContent = "No profile";
+  none.title = "Save to the shared inbox, as captures were before profiles";
+  profileSelect.appendChild(none);
+
+  profileSelect.value = state.profile || "";
+
+  // Two things are worth saying out loud, and nothing else is: the profile
+  // last saved into has been deleted, and the bridge could not be asked so
+  // this list may be stale.
+  const message = state.profileChanged
+    ? state.profileReason
+    : state.profilesOffline
+    ? "monoagent is not connected — this list is the last one it gave."
+    : "";
+  profileNote.textContent = message;
+  profileNote.style.display = message ? "block" : "none";
+}
 
 // --- CLIP-07: the snapshot starts while the note is still being typed -----
 
@@ -108,6 +157,11 @@ for (const field of [noteInput, tagsInput, collectionInput]) {
     if (e.key === "Enter") captureBtn.click();
   });
 }
+
+// The picker starts the snapshot like the other fields, but deliberately
+// does not save on Enter: Enter is how a keyboard user commits a choice in
+// a <select>, and it must not also commit the capture.
+profileSelect.addEventListener("focus", beginEarly, { once: true });
 
 function drawTagSuggestions(recent) {
   tagChips.textContent = "";
@@ -337,6 +391,7 @@ async function loadFormState() {
   const state = await ask({ type: "capture_form_state" });
   if (!state || state.ok === false) return;
   drawTagSuggestions(state.recentTags || []);
+  drawProfiles(state);
   tagsInput.addEventListener("input", () => drawTagSuggestions(state.recentTags || []));
   collectionList.textContent = "";
   for (const name of state.collections || []) {

@@ -133,10 +133,33 @@
     return finish(id, result, form);
   }
 
+  /**
+   * applyProfile settles which profile this capture is filed into.
+   *
+   * The popup sends `profile` with every save, so a picked profile (or a
+   * deliberate "no profile") wins for this save AND becomes the sticky
+   * choice for the next one — including the keyboard shortcut, which never
+   * opens a popup and reads that same stored value. A caller that sends no
+   * `profile` at all (the batch path, a test) inherits the sticky choice
+   * without changing it.
+   */
+  async function applyProfile(meta, form) {
+    const profiles = root.MonoCaptureProfile;
+    if (!profiles) return "";
+    const override = form && Object.prototype.hasOwnProperty.call(form, "profile");
+    const id = override
+      ? form.profile
+      : await profiles.stickyOrAsk(root.MonoAsk, storage(), deps.isConnected());
+    profiles.applyToMeta(meta, id);
+    if (override) await profiles.remember(storage(), id);
+    return meta.profile || "";
+  }
+
   /** finish stamps the form onto a finished capture and hands it to the queue. */
   async function finish(id, result, form) {
     root.MonoCaptureForm.applyToMeta(result.meta, form);
     await root.MonoCaptureForm.remember(storage(), form);
+    await applyProfile(result.meta, form);
 
     const envelope = { id, meta: result.meta, artifacts: result.artifacts, warnings: result.warnings };
     const delivery = await root.MonoCaptureQueue.deliver(bridge(), storage(), envelope);
@@ -149,6 +172,7 @@
       note: result.meta.note || null,
       tags: result.meta.tags || [],
       collection: result.meta.collection || null,
+      profile: result.meta.profile || null,
       warnings: (result.warnings || []).concat(delivery.failed ? [delivery.reason] : []),
       error: delivery.failed ? delivery.reason : undefined,
     };
@@ -221,7 +245,20 @@
     capture_form_state: async () => {
       const lists = await root.MonoCaptureForm.load(storage());
       const state = await root.MonoCaptureQueue.pending(storage());
-      return Object.assign({ ok: true }, lists, state);
+      // The profile list comes from the Go side, so it is asked for here
+      // (the worker owns the socket) rather than from the popup. It can
+      // fail in every ordinary way and still returns something drawable.
+      const profile = root.MonoCaptureProfile
+        ? await root.MonoCaptureProfile.refresh(root.MonoAsk, storage())
+        : { profiles: [], id: "", changed: false, reason: "", offline: true };
+      return Object.assign({ ok: true }, lists, state, {
+        profiles: profile.profiles,
+        profile: profile.id,
+        profileName: profile.name || "",
+        profileChanged: profile.changed,
+        profileReason: profile.reason,
+        profilesOffline: profile.offline,
+      });
     },
     capture_begin: (msg) => begin(msg.options),
     capture_commit: (msg) => commit(msg),
@@ -286,5 +323,5 @@
     }
   }
 
-  root.MonoCaptureActions = { install, handle, begin, commit, runBatch, PENDING_TTL_MS };
+  root.MonoCaptureActions = { install, handle, begin, commit, runBatch, applyProfile, PENDING_TTL_MS };
 })(globalThis);

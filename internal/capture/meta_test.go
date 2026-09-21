@@ -310,3 +310,57 @@ func TestMetaCapturedTimeFallback(t *testing.T) {
 		t.Fatalf("capturedTime = %v", got)
 	}
 }
+
+// TestMetaProfileRoundTrip: the extension sets `profile`, and it must reach
+// meta.json unchanged — it is what decides which store ingests the capture.
+func TestMetaProfileRoundTrip(t *testing.T) {
+	var m Meta
+	if err := json.Unmarshal([]byte(`{"url":"https://e.com","profile":"work"}`), &m); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if m.Profile != "work" {
+		t.Fatalf("Profile = %q, want %q", m.Profile, "work")
+	}
+	blob, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(blob, &raw); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if raw["profile"] != "work" {
+		t.Errorf("profile = %v, want %q", raw["profile"], "work")
+	}
+}
+
+// An unprofiled capture writes no `profile` key at all, so a meta.json from
+// this binary is indistinguishable from one written before the field
+// existed — and no reader has to special-case an empty string.
+func TestMetaProfileOmittedWhenEmpty(t *testing.T) {
+	blob, err := json.Marshal(Meta{URL: "https://e.com"})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(blob, &raw); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if _, ok := raw["profile"]; ok {
+		t.Errorf("empty profile was written: %s", blob)
+	}
+	// Every other field still ships, omitempty or not.
+	for _, key := range []string{"url", "canonicalUrl", "title", "byline", "tags", "source"} {
+		if _, ok := raw[key]; !ok {
+			t.Errorf("field %q went missing: %s", key, blob)
+		}
+	}
+}
+
+func TestMetaNormalizeTrimsProfile(t *testing.T) {
+	m := Meta{URL: "https://e.com", Profile: "  work \n"}
+	m.Normalize(time.Unix(0, 0).UTC())
+	if m.Profile != "work" {
+		t.Errorf("Profile = %q, want %q", m.Profile, "work")
+	}
+}

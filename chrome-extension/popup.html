@@ -128,6 +128,25 @@
       font-size: 12.5px;
     }
     .field { margin-bottom: 8px; }
+    select {
+      width: 100%;
+      padding: 6px 8px;
+      border: 1px solid #d1d5db;
+      border-radius: 4px;
+      font-size: 12.5px;
+      box-sizing: border-box;
+      background: #fff;
+      color: #111;
+    }
+    /* The profile a capture is filed into: shown only when there is more
+       than nothing to choose between. */
+    #profile-field { display: none; }
+    #profile-note {
+      font-size: 11px;
+      color: #92400e;
+      margin-top: 4px;
+      display: none;
+    }
     button {
       margin-top: 8px;
       padding: 6px 12px;
@@ -324,6 +343,11 @@
     <label for="tags">Tags</label>
     <input type="text" id="tags" class="prose" placeholder="comma or space separated" />
     <div id="tag-chips" class="chips"></div>
+  </div>
+  <div class="field" id="profile-field">
+    <label for="profile">Save into</label>
+    <select id="profile"></select>
+    <div id="profile-note"></div>
   </div>
   <div class="field">
     <label for="collection">Collection</label>

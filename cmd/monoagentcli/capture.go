@@ -123,7 +123,10 @@ func newCapturePageCmd(cfg *globalConfig) *cobra.Command {
 }
 
 func newCaptureListCmd(cfg *globalConfig) *cobra.Command {
-	var out string
+	var (
+		out         string
+		allProfiles bool
+	)
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List the captures waiting in the inbox",
@@ -132,45 +135,160 @@ func newCaptureListCmd(cfg *globalConfig) *cobra.Command {
 			"Captures still being written (staging directories, and any directory\n" +
 			"without a meta.json) are skipped: a capture is only real once it has been\n" +
 			"renamed into place, which is what keeps a watcher from ingesting half of\n" +
-			"one.",
-		Example: "  monoagentcli capture list\n  monoagentcli capture list --json",
+			"one.\n" +
+			"\n" +
+			"A capture saved into a profile lands in that profile's own inbox, not this\n" +
+			"one — pass --profile (the global flag, an id or a name) to read one of\n" +
+			"those, or --all-profiles to read every inbox at once.",
+		Example: "  monoagentcli capture list\n" +
+			"  monoagentcli capture list --profile work\n" +
+			"  monoagentcli capture list --all-profiles --json",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			inbox := expandPath(out)
-			if inbox == "" {
-				inbox = capture.DefaultInbox()
-			}
-			entries, err := capture.List(inbox)
+			sources, err := captureListSources(cfg, out, allProfiles)
 			if err != nil {
-				return fmt.Errorf("reading inbox: %w", err)
+				return err
 			}
 
-			if cfg.JSONOutput {
-				if entries == nil {
-					entries = []capture.Entry{}
+			entries := []capture.Entry{}
+			for _, src := range sources {
+				found, err := capture.List(src.inbox)
+				if err != nil {
+					return fmt.Errorf("reading inbox: %w", err)
 				}
+				for _, e := range found {
+					// A capture written straight into a profile's inbox
+					// (`--out`) may not name the profile itself; the
+					// directory it was found in is the better answer than
+					// a blank column.
+					if e.Profile == "" {
+						e.Profile = src.profile
+					}
+					entries = append(entries, e)
+				}
+			}
+			sortCaptureEntries(entries)
+
+			if cfg.JSONOutput {
 				enc := json.NewEncoder(cmd.OutOrStdout())
 				enc.SetIndent("", "  ")
 				return enc.Encode(entries)
 			}
 			if len(entries) == 0 {
-				fmt.Fprintf(cmd.OutOrStdout(), "No captures in %s\n", inbox)
+				fmt.Fprintf(cmd.OutOrStdout(), "No captures in %s\n", captureSourceNames(sources))
 				return nil
 			}
-			table := newPlainTable(cmd.OutOrStdout(), []string{"CAPTURED", "TITLE", "URL", "SIZE", "PATH"}, nil)
+			columns := []string{"CAPTURED", "TITLE", "URL", "SIZE", "PATH"}
+			withProfile := len(sources) > 1 || sources[0].profile != ""
+			if withProfile {
+				columns = append([]string{"PROFILE"}, columns...)
+			}
+			table := newPlainTable(cmd.OutOrStdout(), columns, nil)
 			for _, e := range entries {
-				_ = table.Append([]string{
+				row := []string{
 					e.CapturedAt,
 					truncateCaptureCell(e.Title, 40),
 					truncateCaptureCell(e.URL, 60),
 					captureHumanBytes(e.Bytes),
 					e.Path,
-				})
+				}
+				if withProfile {
+					row = append([]string{captureProfileLabel(sources, e.Profile)}, row...)
+				}
+				_ = table.Append(row)
 			}
 			return table.Render()
 		},
 	}
 	cmd.Flags().StringVar(&out, "out", "", "Inbox directory to read (default: ~/.monomind/inbox)")
+	cmd.Flags().BoolVar(&allProfiles, "all-profiles", false, "Read the default inbox and every profile's inbox")
 	return cmd
+}
+
+// captureListSource is one inbox `capture list` reads, and the profile it
+// belongs to ("" for the unprofiled default inbox).
+type captureListSource struct {
+	inbox   string
+	profile string
+	name    string
+}
+
+// captureListSources decides which inboxes to read. --out is an explicit
+// directory and wins outright; otherwise --profile names one profile's
+// inbox, --all-profiles reads the default inbox and every profile's, and
+// plain `capture list` reads the default inbox exactly as it always has.
+func captureListSources(cfg *globalConfig, out string, allProfiles bool) ([]captureListSource, error) {
+	if dir := expandPath(out); dir != "" {
+		if allProfiles {
+			return nil, errInvalidInput("--out reads one directory; drop it to use --all-profiles")
+		}
+		return []captureListSource{{inbox: dir}}, nil
+	}
+	wanted := strings.TrimSpace(cfg.ProfileID)
+	if wanted == "" && !allProfiles {
+		return []captureListSource{{inbox: capture.DefaultInbox()}}, nil
+	}
+	if wanted != "" && allProfiles {
+		return nil, errInvalidInput("--profile names one profile; drop it to use --all-profiles")
+	}
+
+	db, err := openProfileDB(cfg.DBPath)
+	if err != nil {
+		return nil, fmt.Errorf("cannot read your profiles: %w", err)
+	}
+	defer db.Close()
+
+	if wanted != "" {
+		p, err := resolveCaptureProfile(db.DB, wanted)
+		if err != nil {
+			return nil, err
+		}
+		return []captureListSource{{inbox: p.Inbox, profile: p.ID, name: p.Name}}, nil
+	}
+
+	profiles, err := captureProfileInboxes(db.DB)
+	if err != nil {
+		return nil, err
+	}
+	sources := []captureListSource{{inbox: capture.DefaultInbox()}}
+	for _, p := range profiles {
+		sources = append(sources, captureListSource{inbox: p.Inbox, profile: p.ID, name: p.Name})
+	}
+	return sources, nil
+}
+
+// sortCaptureEntries restores "newest first" across several inboxes —
+// capture.List only ever sorted within one.
+func sortCaptureEntries(entries []capture.Entry) {
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].CapturedAt != entries[j].CapturedAt {
+			return entries[i].CapturedAt > entries[j].CapturedAt
+		}
+		return entries[i].Path > entries[j].Path
+	})
+}
+
+// captureProfileLabel renders a profile column: the name a person
+// recognises when this listing knows it, the id otherwise.
+func captureProfileLabel(sources []captureListSource, profile string) string {
+	if profile == "" {
+		return "-"
+	}
+	for _, s := range sources {
+		if s.profile == profile && s.name != "" {
+			return truncateCaptureCell(s.name, 20)
+		}
+	}
+	return truncateCaptureCell(profile, 20)
+}
+
+// captureSourceNames names the inboxes that turned out to be empty, so the
+// answer says where it looked.
+func captureSourceNames(sources []captureListSource) string {
+	names := make([]string, 0, len(sources))
+	for _, s := range sources {
+		names = append(names, s.inbox)
+	}
+	return strings.Join(names, ", ")
 }
 
 // normalizeCaptureFormats validates --formats and drops duplicates, so a
