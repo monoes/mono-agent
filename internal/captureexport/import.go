@@ -389,25 +389,27 @@ func (im *importer) readManifest(tr io.Reader) error {
 }
 
 // destination resolves the final directory for a capture, stepping past an
-// existing name when renaming.
-func (im *importer) destination(name string) (string, bool, error) {
-	dest := filepath.Join(im.inbox, name)
+// existing name when renaming. exists reports whether the capture's own
+// name is taken, which is what the collision modes turn on — and which is
+// only true of this instant, never of the check that started the capture.
+func (im *importer) destination(name string) (dest string, renamed, exists bool, err error) {
+	dest = filepath.Join(im.inbox, name)
 	if _, err := os.Lstat(dest); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return dest, false, nil
+			return dest, false, false, nil
 		}
-		return "", false, fmt.Errorf("check %s: %w", dest, err)
+		return "", false, false, fmt.Errorf("check %s: %w", dest, err)
 	}
 	if im.mode != CollisionRename {
-		return dest, false, nil
+		return dest, false, true, nil
 	}
 	for n := 2; n < 1000; n++ {
 		candidate := fmt.Sprintf("%s-%d", dest, n)
 		if _, err := os.Lstat(candidate); errors.Is(err, os.ErrNotExist) {
-			return candidate, true, nil
+			return candidate, true, true, nil
 		}
 	}
-	return "", false, fmt.Errorf("captureexport: no free name for %s", name)
+	return "", false, true, fmt.Errorf("captureexport: no free name for %s", name)
 }
 
 // skip records why something in the archive was not taken. The list is

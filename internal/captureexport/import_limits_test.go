@@ -377,8 +377,8 @@ func TestImportRenamesPastANameTakenMidImport(t *testing.T) {
 	name := filepath.Base(entries[0].Path)
 
 	dst := filepath.Join(t.TempDir(), "inbox")
-	plant(t, filepath.Join(dst, name))       // the collision the import knows about
-	hook := &onStaging{                      //
+	plant(t, filepath.Join(dst, name)) // the collision the import knows about
+	hook := &onStaging{                //
 		r: iotest.OneByteReader(bytes.NewReader(blob)), inbox: dst,
 		do: func() { plant(t, filepath.Join(dst, name+"-2")) }, // and the one it does not
 	}

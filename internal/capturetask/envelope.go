@@ -24,6 +24,17 @@ type envelope struct {
 }
 
 // readEnvelope loads a capture directory, refusing anything that is not one.
+//
+// The path is resolved through any symlinks first, because it does not
+// stay here: it is written onto a board that monomind's dashboard and
+// other agents read, and a reader opens it months later. A link records
+// where a capture will be decided to have been, rather than where it is.
+//
+// The path is not required to sit inside an inbox. `capture task
+// ./capture` is a documented way to file a capture that was never in one,
+// and a containment rule that has to be argued with is worse than the
+// absolute path it would replace — what this does instead is make sure the
+// path written down is the real one, and that it is a capture at all.
 func readEnvelope(dir string) (*envelope, error) {
 	if strings.TrimSpace(dir) == "" {
 		return nil, errors.New("capturetask: no capture path given")
@@ -31,6 +42,12 @@ func readEnvelope(dir string) (*envelope, error) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, err
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = resolved
+	}
+	if info, err := os.Stat(abs); err == nil && !info.IsDir() {
+		return nil, fmt.Errorf("capturetask: %s is not a capture — a capture is a directory holding %s", abs, capture.MetaFile)
 	}
 	meta, err := capture.ReadMeta(abs)
 	if err != nil {

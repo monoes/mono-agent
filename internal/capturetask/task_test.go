@@ -292,3 +292,76 @@ func TestBoardsOnAFreshRoot(t *testing.T) {
 		t.Errorf("Boards = %v, want none", got)
 	}
 }
+
+// The board is a shared document: monomind's dashboard renders it and
+// other agents read it. What a capture puts there — an absolute path, a
+// title taken from a web page — crosses a trust boundary on the way in.
+
+// TestCreateRecordsTheRealPathNotASymlink: the path on the issue is what a
+// reader will open months from now. If it is a symlink, what it points at
+// is decided then, not now — so the resolved directory is what is written.
+func TestCreateRecordsTheRealPathNotASymlink(t *testing.T) {
+	root := orgRoot(t, "acme")
+	real := seedCapture(t, capture.Meta{URL: "https://example.com/a", Title: "A", CapturedAt: "2026-09-20T10:00:00Z"})
+	link := filepath.Join(t.TempDir(), "link-to-capture")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks are not available here: %v", err)
+	}
+
+	res, err := Create(Options{Root: root, Org: "acme", EnvelopePath: link, Now: fixedNow()})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if res.Issue.Capture.Path != real {
+		t.Errorf("issue.capture.path = %s, want the capture itself (%s)", res.Issue.Capture.Path, real)
+	}
+	for _, a := range res.Issue.Attachments {
+		if filepath.Dir(a.Path) != real {
+			t.Errorf("attachment %s sits at %s, want it under %s", a.Name, a.Path, real)
+		}
+	}
+}
+
+// TestCreateRefusesAFileAsACapture: a capture is a directory. Saying so is
+// better than the "not a directory" the join would produce.
+func TestCreateRefusesAFileAsACapture(t *testing.T) {
+	root := orgRoot(t, "acme")
+	file := filepath.Join(t.TempDir(), "meta.json")
+	if err := os.WriteFile(file, []byte(`{"url":"https://x.test/"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Create(Options{Root: root, Org: "acme", EnvelopePath: file, Now: fixedNow()})
+	if err == nil {
+		t.Fatal("a file is not a capture")
+	}
+	if !strings.Contains(err.Error(), "not a capture") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+// TestCreateBoundsAPageChosenTitle: the title comes off a web page, and it
+// lands in a file other people's tools read and render. A megabyte of it
+// is not a title.
+func TestCreateBoundsAPageChosenTitle(t *testing.T) {
+	root := orgRoot(t, "acme")
+	huge := strings.Repeat("no", 200000)
+	dir := seedCapture(t, capture.Meta{URL: "https://example.com/a", Title: huge, CapturedAt: "2026-09-20T10:00:00Z"})
+
+	res, err := Create(Options{Root: root, Org: "acme", EnvelopePath: dir, Now: fixedNow()})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if n := len([]rune(res.Issue.Title)); n > maxTitleRunes {
+		t.Errorf("the issue title is %d runes long", n)
+	}
+	if !strings.HasPrefix(res.Issue.Title, "nono") {
+		t.Errorf("the title was not kept, it was replaced: %q", res.Issue.Title)
+	}
+	blob, err := os.ReadFile(filepath.Join(root, ".monomind", "orgs", "acme-issues.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blob) > 1<<20 {
+		t.Errorf("one capture wrote a %d byte board", len(blob))
+	}
+}

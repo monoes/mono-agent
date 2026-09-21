@@ -215,7 +215,7 @@ func Create(opts Options) (*Result, error) {
 		ts := now().UTC().Format("2006-01-02T15:04:05Z")
 		issue = Issue{
 			ID:                nextID(issues, now()),
-			Title:             firstNonEmpty(opts.Title, env.meta.Title, env.meta.DedupeURL(), filepath.Base(env.dir)),
+			Title:             clampTitle(firstNonEmpty(opts.Title, env.meta.Title, env.meta.DedupeURL(), filepath.Base(env.dir))),
 			Description:       describe(opts.Description, env),
 			Status:            statusTodo,
 			Priority:          priority,
@@ -419,6 +419,23 @@ func optional(s string) *string {
 	}
 	v := strings.TrimSpace(s)
 	return &v
+}
+
+// maxTitleRunes bounds the issue title. The title is usually a page's own
+// <title>, which is to say it is chosen by whatever was captured, and it
+// ends up in a document monomind's dashboard renders and other agents
+// read. A title this long is already unreadable; one a thousand times
+// longer is a board nobody can open.
+const maxTitleRunes = 300
+
+// clampTitle keeps the front of an over-long title rather than replacing
+// it: the first line of a title is the part that identifies it.
+func clampTitle(s string) string {
+	r := []rune(s)
+	if len(r) <= maxTitleRunes {
+		return s
+	}
+	return strings.TrimSpace(string(r[:maxTitleRunes-1])) + "…"
 }
 
 func firstNonEmpty(values ...string) string {

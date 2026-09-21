@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -72,8 +73,19 @@ func newCaptureExportCmd(cfg *globalConfig) *cobra.Command {
 				dest = defaultArchiveName(time.Now())
 			}
 			if dest == "-" {
-				man, err := captureexport.Export(cmd.OutOrStdout(), opts)
+				// A file is staged and renamed, so an interrupted export
+				// never leaves something that looks like a backup. A pipe
+				// cannot be: the bytes are downstream already. So the one
+				// honest thing left is to say the stream is not an
+				// archive, before whoever is on the other end saves it.
+				piped := &countingWriter{w: cmd.OutOrStdout()}
+				man, err := captureexport.Export(piped, opts)
 				if err != nil {
+					if piped.n > 0 {
+						fmt.Fprintf(cmd.ErrOrStderr(),
+							"%s of this export reached the pipe before it failed — that stream is not a complete archive, discard it\n",
+							captureHumanBytes(piped.n))
+					}
 					return fmt.Errorf("exporting captures: %w", err)
 				}
 				reportSkipped(cmd, man)
@@ -116,6 +128,18 @@ func reportSkipped(cmd *cobra.Command, man *captureexport.Manifest) {
 	for _, n := range man.Skipped {
 		fmt.Fprintf(cmd.ErrOrStderr(), "skipped %s — %s\n", n.Name, n.Reason)
 	}
+}
+
+// countingWriter reports how much of an export already left the building.
+type countingWriter struct {
+	w io.Writer
+	n int64
+}
+
+func (c *countingWriter) Write(p []byte) (int, error) {
+	n, err := c.w.Write(p)
+	c.n += int64(n)
+	return n, err
 }
 
 // writeArchive builds the archive beside its destination and renames it
