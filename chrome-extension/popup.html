@@ -39,6 +39,70 @@
     .status-text {
       font-weight: 500;
     }
+
+    /* ── RCL-02 / RCL-05: the recall panels ─────────────────── */
+    .saved {
+      display: none;
+      margin-bottom: 12px;
+      padding: 10px;
+      border-radius: 6px;
+      background: #ecfdf5;
+      border: 1px solid #a7f3d0;
+    }
+    .saved .head {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+      font-weight: 600;
+      color: #065f46;
+    }
+    .saved .head .tick { font-size: 14px; }
+    .saved .doc-title {
+      margin-top: 4px;
+      font-weight: 600;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .saved .meta { color: #047857; font-size: 11px; margin-top: 2px; }
+    .saved .note {
+      margin-top: 6px;
+      font-style: italic;
+      color: #064e3b;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .saved .row { margin-top: 8px; }
+    .saved.unavailable {
+      background: #f8fafc;
+      border-color: #e2e8f0;
+    }
+    .saved.unavailable .head,
+    .saved.unavailable .meta { color: #64748b; }
+
+    .ask-answers { margin-top: 10px; display: grid; gap: 10px; }
+    .answer {
+      border-left: 3px solid #cbd5e1;
+      padding-left: 8px;
+    }
+    .answer .quote {
+      font-style: italic;
+      color: #1e293b;
+      word-break: break-word;
+    }
+    .answer .src {
+      margin-top: 3px;
+      font-size: 11px;
+      color: #64748b;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .answer .src a { color: #2563eb; text-decoration: none; }
+    .answer .src a:hover { text-decoration: underline; }
+    .answer .stale { color: #b45309; }
+    .ask-status { margin-top: 8px; font-size: 11px; color: #64748b; min-height: 14px; }
+    .hl-count { font-size: 11px; color: #64748b; margin-top: 6px; }
     .url-section {
       margin-top: 12px;
       padding-top: 12px;
@@ -222,6 +286,34 @@
     <span id="status-text" class="status-text">Checking...</span>
   </div>
 
+  <!-- RCL-02: what the brain already has about this page. Hidden entirely
+       when nothing is known, so an empty state is an absence, not a box
+       saying "nothing". -->
+  <div id="saved" class="saved">
+    <div class="head"><span class="tick">&#10003;</span><span id="saved-head">Already saved</span></div>
+    <div id="saved-title" class="doc-title"></div>
+    <div id="saved-meta" class="meta"></div>
+    <div id="saved-note" class="note"></div>
+    <div id="saved-chips" class="chips"></div>
+    <div class="row">
+      <button id="saved-open" class="secondary tiny">Open the archived copy</button>
+      <button id="saved-recheck" class="secondary tiny">Check again</button>
+    </div>
+    <div id="saved-highlights" class="hl-count"></div>
+  </div>
+
+  <!-- RCL-05: ask the captures a question, and get back passages that say
+       where they came from. -->
+  <div class="url-section">
+    <label for="ask-q">Ask your brain</label>
+    <div class="row">
+      <input type="text" id="ask-q" class="prose" placeholder="what did I read about&hellip;?" />
+      <button id="ask-btn" class="secondary">Ask</button>
+    </div>
+    <div id="ask-status" class="ask-status"></div>
+    <div id="ask-answers" class="ask-answers"></div>
+  </div>
+
   <!-- CLIP-07: a capture with a reason. Every field is optional — the
        button alone saves the page, exactly as the shortcut does. -->
   <div class="field">
@@ -292,5 +384,7 @@
   </details>
 
   <script src="popup.js"></script>
+  <!-- RCL-02/RCL-05. After popup.js: it shares that file's `ask` helper. -->
+  <script src="popup_recall.js"></script>
 </body>
 </html>

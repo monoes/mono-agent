@@ -22,6 +22,10 @@
 // the page, injected by capture.js, not in this worker.
 importScripts("capture_meta.js", "capture.js", "capture_bridge.js");
 importScripts("capture_form.js", "capture_batch.js", "capture_queue.js", "capture_actions.js");
+// The in-page recall group (RCL-02/04/05): the extension→Go request channel
+// and the three things that ride it. ask.js must come first — the others
+// install against it.
+importScripts("ask.js", "saved.js", "highlights.js", "recall_bridge.js");
 
 // ---------------------------------------------------------------------------
 // State
@@ -350,6 +354,7 @@ async function doConnect() {
     console.log("[monoagent] Connected to backend at", url);
     broadcastStatus();
     startKeepAlive();
+    MonoRecall.connected();
     MonoCaptureBridge.flush()
       .catch((err) => console.error("[monoagent] capture queue flush failed:", err.message))
       // The badge counts what is still waiting, so it has to be repainted
@@ -367,6 +372,9 @@ async function doConnect() {
     }
     // Ignore pong responses
     if (cmd.type === "pong") return;
+    // A reply to something THIS side asked (ask.js). Claimed before the
+    // command dispatch because a reply is not a command and has no handler.
+    if (MonoAsk.handleFrame(cmd)) return;
     handleCommand(cmd);
   };
 
@@ -376,6 +384,9 @@ async function doConnect() {
 
   ws.onclose = (event) => {
     stopKeepAlive();
+    // Everything waiting on an answer is settled here. A question outlives
+    // its socket by exactly nothing: see ask.js.
+    MonoRecall.disconnected("the bridge disconnected");
     if (event.code === UNAUTHORIZED_CLOSE_CODE) {
       // The server rejected our auth frame — retrying with the same
       // (wrong/missing) pairing secret will only fail again. Stop and wait
@@ -991,6 +1002,17 @@ MonoCaptureBridge.install({
 // Everything the popup asks for (CLIP-06/07/08). It captures through
 // MonoCaptureBridge's context, so it needs only the socket from here.
 MonoCaptureActions.install({
+  send: (message) => {
+    if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message));
+  },
+  isConnected: () => ws?.readyState === WebSocket.OPEN,
+  storage: chrome.storage.local,
+});
+
+// The recall group installs against the same socket (RCL-02/04/05). It
+// registers its own tab and message listeners; background.js only has to
+// hand it the socket.
+MonoRecall.install({
   send: (message) => {
     if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message));
   },

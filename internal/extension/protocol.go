@@ -70,3 +70,11 @@ const (
 	CmdWaitElement = "wait_element"
 	CmdRace        = "race"
 )
+
+// HighlightsArtifact is the envelope member carrying a page's saved
+// highlights (RCL-04). An ordinary artifact as far as the capture path is
+// concerned — it passes capture.ValidArtifactName's charset whitelist, so
+// nothing between the extension and the inbox has to know what it is. The
+// ingest side reads it by this name; see
+// packages/@monomind/cli/src/knowledge/highlights.ts.
+const HighlightsArtifact = "highlights.json"

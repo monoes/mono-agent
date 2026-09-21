@@ -60,6 +60,16 @@ type Server struct {
 	boundAddr string
 	addrMu    sync.Mutex
 
+	// handlerState is the extension→Go request channel (see request.go):
+	// the method registry and the in-flight bound. Embedded so the channel
+	// reads as one unit in its own file rather than as four more fields
+	// here.
+	handlerState
+
+	// knowledgeState is the monomind runner those handlers ask (see
+	// knowledge.go).
+	knowledgeState
+
 	// pairingNonces backs the one-time, loopback-only auto-pairing flow
 	// (see handlePairPage/handlePairExchange): a short-lived, single-use
 	// nonce that exchanges for the real token, so the long-lived secret
@@ -219,12 +229,18 @@ func tryListen(addrs []string) (net.Listener, string, error) {
 // NewServer creates a new extension WebSocket server. Addr should be a
 // host:port string such as ":9222".
 func NewServer(addr string, logger zerolog.Logger) *Server {
-	return &Server{
+	s := &Server{
 		addr:      addr,
 		pending:   make(map[string]chan *Response),
 		connected: make(chan struct{}),
 		logger:    logger.With().Str("component", "extension-server").Logger(),
 	}
+	// The extension→Go request channel is on by default (see request.go).
+	// Nothing at the call site has to switch it on: a question the browser
+	// can only ask when someone remembered to wire it up is a question
+	// that silently goes unanswered on most installs.
+	s.registerBuiltinHandlers()
+	return s
 }
 
 // Start starts the HTTP/WebSocket server and blocks until the context is
@@ -752,6 +768,15 @@ func (s *Server) readLoop(conn *websocket.Conn) {
 				s.logger.Error().Err(err).Msg("websocket read error")
 			}
 			return
+		}
+
+		// A frame the extension originated, expecting an answer back
+		// (see request.go). Checked before the Response decode because a
+		// request has no `success` field and would otherwise land in
+		// dispatch as an unmatched failure.
+		if isRequestFrame(msg) {
+			s.serveRequest(msg)
+			continue
 		}
 
 		var resp Response

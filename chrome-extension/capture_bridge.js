@@ -49,6 +49,10 @@
         if (!results || !results.length) throw new Error(`no result from ${fn}`);
         return results[0].result;
       },
+      // RCL-04: the page's saved highlights, as a highlights.json artifact.
+      // Absent when recall_bridge.js has not been installed, which is how
+      // capture keeps working on its own.
+      highlights: root.MonoRecall ? (url) => root.MonoRecall.highlightsArtifact(url) : null,
       attach: (tabId) => deps.attach(tabId),
       cdp: (tabId, method, params) => deps.cdp(tabId, method, params || {}),
       detach: async (tabId) => deps.detach(tabId),

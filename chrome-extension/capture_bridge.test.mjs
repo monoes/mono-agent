@@ -88,7 +88,24 @@ function bridge({ connected = true } = {}) {
   return { env, chrome, store, sent };
 }
 
-const settle = () => new Promise((r) => setTimeout(r, 20));
+/**
+ * settle waits for the async capture chain to produce an observable effect.
+ *
+ * This was a fixed 20ms sleep, and that made the suite fail under load: 20ms
+ * is plenty on an idle machine and nowhere near enough on a busy one, so the
+ * run went red for a reason that had nothing to do with the code (the capture
+ * simply had not finished yet, and `sent` was still empty). Polling the
+ * condition the test actually means is fast when the machine is fast and
+ * patient when it is not.
+ */
+async function settle(done, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    await new Promise((r) => setTimeout(r, 1));
+    if (!done || done()) return;
+    if (Date.now() > deadline) throw new Error("timed out waiting for the capture to settle");
+  }
+}
 
 test("install offers both a page and a selection context menu (CLIP-04)", () => {
   const { chrome } = bridge();
@@ -104,7 +121,7 @@ test("install offers both a page and a selection context menu (CLIP-04)", () => 
 test("the keyboard shortcut captures the tab in front of you and pushes it", async () => {
   const { chrome, sent } = bridge();
   chrome.listeners.command("capture-page");
-  await settle();
+  await settle(() => sent.length > 0);
 
   assert.equal(sent.length, 1, "one frame for a small capture");
   const push = sent[0];
@@ -125,7 +142,7 @@ test("the keyboard shortcut captures the tab in front of you and pushes it", asy
 test("the page modules are injected before the page is asked to do anything", async () => {
   const { chrome } = bridge();
   chrome.listeners.command("capture-page");
-  await settle();
+  await settle(() => chrome.record.injected.includes("capture_page.js"));
 
   const injected = chrome.record.injected;
   // Every module capture_page.js reaches for has to already be there, and
@@ -184,7 +201,7 @@ test("a capture taken with the bridge down is queued, not lost (CLIP-08)", async
 test("a selection capture asks the page for the selection", async () => {
   const { chrome, sent } = bridge();
   chrome.listeners.menu({ menuItemId: "monoagent-capture-selection" }, { id: 42 });
-  await settle();
+  await settle(() => sent.length > 0);
   assert.equal(sent.length, 1);
   assert.deepEqual(sent[0].data.warnings, [], "the page reported a selection, so there is nothing to warn about");
 });

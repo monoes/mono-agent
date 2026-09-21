@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "MonoAgent Bridge",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Browser automation bridge for MonoAgent",
   "permissions": [
     "tabs",
@@ -30,6 +30,9 @@
     },
     "capture-selection": {
       "description": "Save the selected text to monomind"
+    },
+    "highlight-selection": {
+      "description": "Highlight the selected text and save it as a note"
     }
   },
   "content_scripts": [
@@ -47,7 +50,9 @@
         "<all_urls>"
       ],
       "js": [
-        "content.js"
+        "content.js",
+        "highlights.js",
+        "highlight_page.js"
       ],
       "run_at": "document_idle"
     }

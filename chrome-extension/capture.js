@@ -299,6 +299,19 @@
 
     await safeRestore(ctx, tabId);
 
+    // RCL-04: whatever the reader highlighted on this page rides along as
+    // its own artifact. The context supplies it (recall_bridge.js) so that
+    // all three capture paths — command, shortcut and popup — get it
+    // without each having to remember to.
+    if (ctx.highlights) {
+      try {
+        const marks = await ctx.highlights(meta.canonicalUrl || meta.url);
+        if (marks) artifacts.push(marks);
+      } catch (err) {
+        warnings.push(`highlights skipped: ${err.message}`);
+      }
+    }
+
     const capped = applySizeCaps(artifacts, p.maxArtifactBytes);
     return { meta, artifacts: capped.kept, warnings: warnings.concat(capped.warnings) };
   }
