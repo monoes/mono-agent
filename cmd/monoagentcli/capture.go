@@ -331,18 +331,22 @@ func slicesContains(haystack []string, needle string) bool {
 	return false
 }
 
-// captureHumanBytes renders a byte count the way a person reads it.
+// captureHumanBytes renders a byte count the way a person reads it. The
+// units run to exabytes because an int64 of bytes does: a count that
+// outgrew the table used to index past the end of it and panic, which is a
+// silly way to lose a listing.
 func captureHumanBytes(n int64) string {
 	const unit = 1024
+	const units = "KMGTPE"
 	if n < unit {
 		return fmt.Sprintf("%d B", n)
 	}
 	div, exp := int64(unit), 0
-	for m := n / unit; m >= unit; m /= unit {
+	for m := n / unit; m >= unit && exp < len(units)-1; m /= unit {
 		div *= unit
 		exp++
 	}
-	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGT"[exp])
+	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), units[exp])
 }
 
 // truncateCaptureCell keeps one table cell from wrapping the whole row.

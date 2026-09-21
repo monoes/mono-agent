@@ -22,6 +22,26 @@ const HERE = dirname(fileURLToPath(import.meta.url));
  * loadExtensionScripts evaluates the named extension scripts, in order,
  * against one shared fake global and returns it. `extras` seeds that global
  * with whatever the scripts under test reach for (a fake `chrome`, say).
+ *
+ * Note what `extras` does and does not do. Each key is bound as a parameter,
+ * so a script's bare `chrome` finds the fake — but ONLY the names passed are
+ * shadowed. Every other free reference resolves against node's own globals,
+ * which is why a script reaching for `crypto`, `URL`, `TextEncoder` or
+ * `btoa` works here without anyone arranging it: node's are faithful enough
+ * to stand in for a worker's. The trap is the browser-only ones. A test that
+ * means to fake `document` or `location` and forgets to pass them does not
+ * fail loudly — it gets a ReferenceError from somewhere unrelated, or worse,
+ * node's `navigator`. Pass what the script touches, explicitly.
+ *
+ * What still has no coverage, and why: capture_page.js's `prepare` and
+ * `extract`. Both drive a live DOM — querySelectorAll over every element,
+ * getComputedStyle, IntersectionObserver, and MonoReadable.snapshot walking
+ * real nodes — so faking them by hand would mean writing enough of a DOM
+ * that the fake, not the code, is what the test proves. That needs either a
+ * dependency (jsdom) or the browser harness browser_harness.mjs already sets
+ * up for highlight_page.browser.test.mjs, which is the cheaper of the two
+ * and where those two functions belong. capture_page.test.mjs covers the
+ * rest.
  */
 export function loadExtensionScripts(files, extras = {}) {
   const sandbox = Object.assign({}, extras);

@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -161,11 +162,19 @@ func TestCaptureListUnknownProfile(t *testing.T) {
 	}
 }
 
-// A hostile profile id gets nowhere: it matches no profile, so nothing is
-// read and no path is built from it.
+// hostileProfileIDs are ids that must never become a path.
+var hostileProfileIDs = []string{"../evil", "../../etc", `..\evil`, "p-work/..", "p-work/../../evil"}
+
+// A hostile profile id gets nowhere. There are three gates between
+// `--profile` and a directory, and this checks all three, because the
+// first one alone hides the other two: an id that matches no row in the
+// database is refused before any path is built, so a test that only runs
+// the CLI would stay green with the path guard deleted.
 func TestCaptureListRejectsTraversalProfile(t *testing.T) {
 	cfg, home := profileFixture(t)
-	for _, id := range []string{"../evil", "../../etc", `..\evil`, "p-work/.."} {
+
+	// 1. The CLI refuses it rather than listing an empty directory.
+	for _, id := range hostileProfileIDs {
 		cfg.ProfileID = id
 		if _, err := runCaptureCmd(t, cfg, "list"); err == nil {
 			t.Errorf("--profile %q was accepted", id)
@@ -173,6 +182,47 @@ func TestCaptureListRejectsTraversalProfile(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, "evil")); err == nil {
 		t.Error("a traversal id created something outside the profiles root")
+	}
+
+	// 2. A hostile id cannot be laundered through the database either: a
+	// row holding one is not a profile, so the lookup never matches it.
+	db, err := sql.Open("sqlite", cfg.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for i, id := range hostileProfileIDs {
+		if _, err := db.Exec(`INSERT INTO profiles (id, name, created_at) VALUES (?, ?, ?)`,
+			id, fmt.Sprintf("Hostile %d", i), "2026-03-01"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i, id := range hostileProfileIDs {
+		for _, want := range []string{id, fmt.Sprintf("Hostile %d", i)} {
+			cfg.ProfileID = want
+			if _, err := runCaptureCmd(t, cfg, "list"); err == nil {
+				t.Errorf("a profile row with id %q was resolved by %q", id, want)
+			}
+		}
+	}
+	cfg.ProfileID = ""
+	cfg.JSONOutput = true
+	out, err := runCaptureCmd(t, cfg, "list", "--all-profiles")
+	if err != nil {
+		t.Fatalf("capture list --all-profiles: %v", err)
+	}
+	for _, id := range hostileProfileIDs {
+		if strings.Contains(out, id) {
+			t.Errorf("a hostile profile id reached the listing:\n%s", out)
+		}
+	}
+
+	// 3. And the guard that all of the above leans on: the id never
+	// becomes an inbox path, whatever asked for it.
+	for _, id := range hostileProfileIDs {
+		if got, err := capture.ProfileInbox(id); err == nil {
+			t.Errorf("capture.ProfileInbox(%q) = %q, want a refusal", id, got)
+		}
 	}
 }
 

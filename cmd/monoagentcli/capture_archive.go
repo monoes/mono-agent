@@ -76,6 +76,7 @@ func newCaptureExportCmd(cfg *globalConfig) *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("exporting captures: %w", err)
 				}
+				reportSkipped(cmd, man)
 				fmt.Fprintf(cmd.ErrOrStderr(), "%d capture(s), %s\n", man.Count, captureHumanBytes(man.Bytes))
 				return nil
 			}
@@ -84,6 +85,7 @@ func newCaptureExportCmd(cfg *globalConfig) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			reportSkipped(cmd, man)
 			if cfg != nil && cfg.JSONOutput {
 				enc := json.NewEncoder(cmd.OutOrStdout())
 				enc.SetIndent("", "  ")
@@ -105,6 +107,15 @@ func newCaptureExportCmd(cfg *globalConfig) *cobra.Command {
 	cmd.Flags().StringVar(&inbox, "inbox", "", "Inbox to export from (default: ~/.monomind/inbox)")
 	cmd.Flags().StringSliceVar(&only, "only", nil, "Only these capture directory names (repeatable)")
 	return cmd
+}
+
+// reportSkipped says out loud what the archive does not hold. The inbox is
+// live, so this is an ordinary outcome rather than a failure — but an
+// export that quietly left a capture behind is a backup with a hole in it.
+func reportSkipped(cmd *cobra.Command, man *captureexport.Manifest) {
+	for _, n := range man.Skipped {
+		fmt.Fprintf(cmd.ErrOrStderr(), "skipped %s — %s\n", n.Name, n.Reason)
+	}
 }
 
 // writeArchive builds the archive beside its destination and renames it

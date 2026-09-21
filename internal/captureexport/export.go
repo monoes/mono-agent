@@ -57,6 +57,13 @@ func ParseSince(s string) (time.Time, error) {
 // It reads each capture twice — once to checksum, once to copy — so that
 // the manifest can lead the archive without any capture being held in
 // memory. An export of a 2GB inbox costs one buffer, not 2GB.
+//
+// Those two passes run over a live directory: the inbox is a drop-zone, a
+// watcher ingests from it, and captures are deleted out from under a
+// reader as a matter of course. So a capture or an artifact that is gone
+// by the time it is read is left out with a note (Manifest.Skipped, and
+// skipped.json at the end of the archive) rather than taken as a reason to
+// throw away an archive that is already half written.
 func Export(w io.Writer, opts ExportOptions) (*Manifest, error) {
 	inbox := opts.Inbox
 	if strings.TrimSpace(inbox) == "" {
@@ -77,6 +84,7 @@ func Export(w io.Writer, opts ExportOptions) (*Manifest, error) {
 	}
 
 	rows := make([]ManifestRow, 0, len(entries))
+	var notes []Note
 	var total int64
 	for _, e := range entries {
 		name := filepath.Base(e.Path)
@@ -92,10 +100,15 @@ func Export(w io.Writer, opts ExportOptions) (*Manifest, error) {
 		if opts.Collection != "" && !strings.EqualFold(collectionOf(meta), opts.Collection) {
 			continue
 		}
-		row, err := describe(e.Path, name, meta)
+		row, skipped, err := describe(e.Path, name, meta)
 		if err != nil {
-			return nil, err
+			// Listed a moment ago, unreadable now: one fewer capture, not
+			// a failed export. Noted before the manifest is written, so
+			// the manifest does not claim it.
+			notes = append(notes, Note{Name: name, Reason: "not taken: " + err.Error()})
+			continue
 		}
+		notes = append(notes, skipped...)
 		rows = append(rows, row)
 		total += row.Bytes
 	}
@@ -139,9 +152,27 @@ func Export(w io.Writer, opts ExportOptions) (*Manifest, error) {
 			return nil, err
 		}
 		for _, f := range row.Files {
-			if err := copyInto(tw, path.Join(row.Dir, f.Name), filepath.Join(src, f.Name), f.Size, modTime); err != nil {
+			note, err := copyInto(tw, path.Join(row.Dir, f.Name), filepath.Join(src, f.Name), f.Size, modTime)
+			if err != nil {
 				return nil, err
 			}
+			if note != nil {
+				notes = append(notes, *note)
+			}
+		}
+	}
+	// What was left out goes in last, because it is not known until
+	// everything has been tried. The manifest at the front was written
+	// before any of this, so a capture noted here is listed there and
+	// absent from the archive — which is what this file is for.
+	man.Skipped = notes
+	if len(notes) > 0 {
+		blob, err := json.MarshalIndent(map[string]any{"skipped": notes}, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("encode %s: %w", SkippedPath, err)
+		}
+		if err := writeFileEntry(tw, SkippedPath, append(blob, '\n'), modTime); err != nil {
+			return nil, err
 		}
 	}
 	if err := tw.Close(); err != nil {
@@ -154,7 +185,10 @@ func Export(w io.Writer, opts ExportOptions) (*Manifest, error) {
 }
 
 // describe checksums one capture directory without holding it in memory.
-func describe(dir, name string, meta *capture.Meta) (ManifestRow, error) {
+// A file that cannot be read is left out of the row with a note; only the
+// directory itself being unreadable is an error, and that means the whole
+// capture is gone.
+func describe(dir, name string, meta *capture.Meta) (ManifestRow, []Note, error) {
 	row := ManifestRow{
 		Dir:          path.Join(CapturesDir, name),
 		URL:          meta.URL,
@@ -168,25 +202,29 @@ func describe(dir, name string, meta *capture.Meta) (ManifestRow, error) {
 	}
 	files, err := os.ReadDir(dir)
 	if err != nil {
-		return row, fmt.Errorf("read capture %s: %w", name, err)
+		return row, nil, err
 	}
+	var notes []Note
 	for _, f := range files {
 		if f.IsDir() || !f.Type().IsRegular() {
 			continue // an envelope is a flat directory of plain files
 		}
+		archived := path.Join(row.Dir, f.Name())
 		info, err := f.Info()
 		if err != nil {
-			return row, fmt.Errorf("stat %s/%s: %w", name, f.Name(), err)
+			notes = append(notes, Note{Name: archived, Reason: "not taken: " + err.Error()})
+			continue
 		}
 		sum, err := hashFile(filepath.Join(dir, f.Name()))
 		if err != nil {
-			return row, err
+			notes = append(notes, Note{Name: archived, Reason: "not taken: " + err.Error()})
+			continue
 		}
 		row.Files = append(row.Files, FileRow{Name: f.Name(), Size: info.Size(), SHA256: sum})
 		row.Bytes += info.Size()
 	}
 	sort.Slice(row.Files, func(i, j int) bool { return row.Files[i].Name < row.Files[j].Name })
-	return row, nil
+	return row, notes, nil
 }
 
 func hashFile(path string) (string, error) {
@@ -221,28 +259,63 @@ func writeDirEntry(tw *tar.Writer, name string, modTime time.Time) error {
 	})
 }
 
-// copyInto streams one file into the archive. The size came from the same
-// stat that built the manifest; a file that changed underneath us is an
-// error rather than a truncated archive.
-func copyInto(tw *tar.Writer, name, src string, size int64, modTime time.Time) error {
+// copyInto streams one file into the archive, returning a note when it
+// could not take it faithfully and an error only when the archive itself
+// can no longer be written.
+//
+// The size in the manifest came from an earlier stat, so the header is
+// written from a fresh one instead: between the two, the inbox is live.
+// A file that vanishes is skipped whole; one that shrinks after its header
+// is written cannot be — tar has been promised those bytes — so the entry
+// is padded and the note says the checksum will not match.
+func copyInto(tw *tar.Writer, name, src string, want int64, modTime time.Time) (*Note, error) {
 	f, err := os.Open(src)
 	if err != nil {
-		return fmt.Errorf("open %s: %w", src, err)
+		return &Note{Name: name, Reason: "not taken: " + err.Error()}, nil
 	}
 	defer f.Close()
+
+	size := want
+	var note *Note
+	if info, err := f.Stat(); err == nil && info.Size() != want {
+		size = info.Size()
+		note = &Note{Name: name, Reason: fmt.Sprintf(
+			"changed while exporting: %d bytes, the manifest says %d", size, want)}
+	}
 	hdr := &tar.Header{
 		Typeflag: tar.TypeReg, Name: name, Size: size,
 		Mode: 0o600, ModTime: modTime, Format: tar.FormatPAX,
 	}
 	if err := tw.WriteHeader(hdr); err != nil {
-		return fmt.Errorf("write %s: %w", name, err)
+		return nil, fmt.Errorf("write %s: %w", name, err)
 	}
 	n, err := io.Copy(tw, io.LimitReader(f, size))
 	if err != nil {
-		return fmt.Errorf("copy %s: %w", src, err)
+		return nil, fmt.Errorf("copy %s: %w", src, err)
 	}
-	if n != size {
-		return fmt.Errorf("%s changed size while exporting (%d of %d bytes)", src, n, size)
+	if n < size {
+		if err := padZeros(tw, size-n); err != nil {
+			return nil, fmt.Errorf("write %s: %w", name, err)
+		}
+		note = &Note{Name: name, Reason: fmt.Sprintf(
+			"truncated while exporting: %d of %d bytes, the rest is padding and the sha256 will not match", n, size)}
+	}
+	return note, nil
+}
+
+// padZeros finishes a tar entry whose file shrank after the header
+// promised its length.
+func padZeros(w io.Writer, n int64) error {
+	var zeros [32 << 10]byte
+	for n > 0 {
+		chunk := int64(len(zeros))
+		if chunk > n {
+			chunk = n
+		}
+		if _, err := w.Write(zeros[:chunk]); err != nil {
+			return err
+		}
+		n -= chunk
 	}
 	return nil
 }

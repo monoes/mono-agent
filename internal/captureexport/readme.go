@@ -19,6 +19,7 @@ Layout
   manifest.json          index of every capture in this archive (see below)
   README.txt             this file
   captures/<name>/       one directory per captured page
+  skipped.json           only if something was left out, and what (see below)
 
 Each captures/<name>/ directory is one web page, saved the moment it was
 read, and holds some of:
@@ -53,6 +54,11 @@ manifest.json lists every file with its size and sha256. After unpacking:
   sha256sum captures/<name>/readable.md
 
 should match the "sha256" field for that file in manifest.json.
+
+If skipped.json is present, it lists what this archive does NOT hold and
+why. Captures are exported from a live directory — one can be deleted while
+the archive is being written — so manifest.json may name a file that was
+gone before it could be read. skipped.json is where that is recorded.
 
 Putting it back
 ---------------

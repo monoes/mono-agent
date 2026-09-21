@@ -20,10 +20,13 @@ const (
 	Version = 1
 )
 
-// The fixed paths inside the archive.
+// The fixed paths inside the archive. SkippedPath is written only when
+// something was left out, and it is written last, because what an export
+// could not read is not known until it has tried.
 const (
 	ManifestPath = "manifest.json"
 	ReadmePath   = "README.txt"
+	SkippedPath  = "skipped.json"
 	CapturesDir  = "captures"
 )
 
@@ -40,6 +43,18 @@ type Manifest struct {
 	Count     int           `json:"count"`
 	Bytes     int64         `json:"bytes"`
 	Captures  []ManifestRow `json:"captures"`
+	// Skipped is what the export could not take: a capture deleted from a
+	// live inbox while it was being read, an artifact it could not open.
+	//
+	// It is empty in the manifest.json INSIDE an archive, and it has to
+	// be: that copy is written first, so that `tar -xzOf a.tar.gz
+	// manifest.json` answers "what is in here?" without unpacking, and by
+	// then nothing has been read yet. The archive carries the same notes
+	// at the end, as skipped.json, and Export returns them to its caller
+	// here. A capture noted after the manifest was written is listed in
+	// it but absent from the archive; that is exactly what skipped.json
+	// exists to say.
+	Skipped []Note `json:"skipped,omitempty"`
 }
 
 // Source records where the archive was made, which is provenance a reader

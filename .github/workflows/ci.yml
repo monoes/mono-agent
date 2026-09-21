@@ -103,7 +103,18 @@ jobs:
       # where newer Node walks it. The glob must be '**' — a single '*' skips
       # chrome-extension/adapters/, silently running none of its tests.
       - name: Run extension tests
-        run: node --test 'chrome-extension/**/*.test.mjs'
+        run: |
+          # `node --test` with a glob that matches nothing EXITS 0, so a typo in
+          # the pattern below would silently run zero tests and still go green —
+          # which is exactly how the adapters suite went unrun before. Assert a
+          # floor first; the count only ever grows.
+          count=$(find chrome-extension -name '*.test.mjs' | wc -l)
+          if [ "$count" -lt 20 ]; then
+            echo "::error::expected at least 20 extension test files, found $count"
+            exit 1
+          fi
+          echo "running $count extension test files"
+          node --test 'chrome-extension/**/*.test.mjs'
 
   # Scheduled + on-push dependency vulnerability scanning (MA-06/MA-11).
   vuln-scan:

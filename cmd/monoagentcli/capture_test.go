@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -133,20 +134,51 @@ func TestCaptureListSkipsHalfWrittenCaptures(t *testing.T) {
 
 // TestCapturePageRejectsBadFlagsBeforeOpeningChrome: validation must fail
 // with the invalid-input exit code without ever reaching for the browser.
+//
+// The exit code alone does not say that. A run that got as far as Chrome
+// and failed there is also an error, so each case pins the message to the
+// flag it is about, and a message that talks about a browser, a daemon or
+// a connection fails the test — those are the words of a command that went
+// looking. The inbox is pointed somewhere disposable and checked too: a
+// validation that ran too late could already have written a capture.
 func TestCapturePageRejectsBadFlagsBeforeOpeningChrome(t *testing.T) {
-	cases := [][]string{
-		{"page", "--formats", "mhtml,wat"},
-		{"page", "--formats", ","},
-		{"page", "--tab", "-3"},
+	cases := []struct {
+		args []string
+		says string
+	}{
+		{[]string{"page", "--formats", "mhtml,wat"}, "--formats"},
+		{[]string{"page", "--formats", ","}, "--formats"},
+		{[]string{"page", "--tab", "-3"}, "--tab"},
 	}
-	for _, args := range cases {
-		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			_, err := runCaptureCmd(t, nil, args...)
+	for _, tc := range cases {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			home := t.TempDir()
+			inbox := filepath.Join(home, "inbox")
+			t.Setenv(capture.InboxEnv, inbox)
+			t.Setenv(capture.HomeEnv, home)
+
+			_, err := runCaptureCmd(t, nil, tc.args...)
 			if err == nil {
 				t.Fatal("expected a validation error")
 			}
 			if got := exitCodeFor(err); got != 3 {
 				t.Fatalf("exit code = %d (%v), want 3", got, err)
+			}
+			if !strings.Contains(err.Error(), tc.says) {
+				t.Errorf("error = %v, want it to name %s", err, tc.says)
+			}
+			// ("chrome" is not in this list: --tab's own refusal names the
+			// Chrome tab id, which is the flag talking, not a browser.)
+			for _, word := range []string{"browser", "launch", "connect", "daemon", "websocket"} {
+				if strings.Contains(strings.ToLower(err.Error()), word) {
+					t.Errorf("the command reached for the browser before validating: %v", err)
+				}
+			}
+			if entries, _ := capture.List(inbox); len(entries) != 0 {
+				t.Errorf("a refused capture wrote %d envelopes", len(entries))
+			}
+			if left, _ := os.ReadDir(home); len(left) != 0 {
+				t.Errorf("a refused capture wrote %v", left)
 			}
 		})
 	}
@@ -177,6 +209,10 @@ func TestCaptureHumanBytes(t *testing.T) {
 		3 << 30:       "3.0 GB",
 		1536:          "1.5 KB",
 		1024*1024 - 1: "1024.0 KB",
+		1 << 40:       "1.0 TB",
+		1 << 50:       "1.0 PB",
+		1 << 60:       "1.0 EB",
+		math.MaxInt64: "8.0 EB",
 	}
 	for in, want := range cases {
 		if got := captureHumanBytes(in); got != want {

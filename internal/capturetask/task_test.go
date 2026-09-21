@@ -210,19 +210,37 @@ func TestCreateValidatesItsInputs(t *testing.T) {
 	root := orgRoot(t, "acme")
 	dir := seedCapture(t, capture.Meta{URL: "https://example.com/a", Title: "A", CapturedAt: "2026-09-20T10:00:00Z"})
 
-	cases := map[string]Options{
-		"no board":         {Root: root, EnvelopePath: dir},
-		"bad org name":     {Root: root, Org: "../escape", EnvelopePath: dir},
-		"bad priority":     {Root: root, Org: "acme", EnvelopePath: dir, Priority: "urgentish"},
-		"missing capture":  {Root: root, Org: "acme", EnvelopePath: filepath.Join(root, "nope")},
-		"unknown parent":   {Root: root, Org: "acme", EnvelopePath: dir, Parent: "issue-does-not-exist"},
-		"no capture given": {Root: root, Org: "acme"},
+	// Each case pins the reason as well as the refusal. "err != nil" stays
+	// true when a case quietly stops being about what it is named after —
+	// "missing capture" would keep passing if that path started failing
+	// for some entirely different reason.
+	cases := map[string]struct {
+		opts Options
+		says string
+	}{
+		"no board":         {Options{Root: root, EnvelopePath: dir}, "no board"},
+		"bad org name":     {Options{Root: root, Org: "../escape", EnvelopePath: dir}, "invalid org name"},
+		"bad priority":     {Options{Root: root, Org: "acme", EnvelopePath: dir, Priority: "urgentish"}, `priority "urgentish"`},
+		"missing capture":  {Options{Root: root, Org: "acme", EnvelopePath: filepath.Join(root, "nope")}, "is not a capture"},
+		"unknown parent":   {Options{Root: root, Org: "acme", EnvelopePath: dir, Parent: "issue-does-not-exist"}, "parent issue"},
+		"no capture given": {Options{Root: root, Org: "acme"}, "no capture path"},
 	}
-	for name, opts := range cases {
+	for name, tc := range cases {
+		opts := tc.opts
 		opts.Now = fixedNow()
-		if _, err := Create(opts); err == nil {
+		_, err := Create(opts)
+		if err == nil {
 			t.Errorf("%s should have been refused", name)
+			continue
 		}
+		if !strings.Contains(err.Error(), tc.says) {
+			t.Errorf("%s was refused for the wrong reason: %v", name, err)
+		}
+	}
+	// And no refusal reached the board — not even the one that had to open
+	// it to check the parent.
+	if _, err := os.Stat(filepath.Join(root, ".monomind", "orgs", "acme-issues.json")); err == nil {
+		t.Error("a refused task still wrote the board")
 	}
 }
 

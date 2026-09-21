@@ -14,9 +14,17 @@
 // appended, and the result is written through a temporary file and renamed,
 // so a reader never sees a half-written board and a field this build has
 // never heard of is never dropped.
+//
+// Preserving them needs more than careful encoding: appending is a
+// read-modify-write of the whole document, and monomind's dashboard and
+// the mastermind skills write it too. So the write is taken under an
+// exclusive lock on the board, the board is read inside that lock, and the
+// rename happens only if the file has not moved since. See lock.go.
 package capturetask
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,7 +34,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/monoes/mono-agent/internal/capture"
 	"github.com/monoes/mono-agent/internal/orgdesign"
 )
 
@@ -185,70 +192,112 @@ func Create(opts Options) (*Result, error) {
 		return nil, err
 	}
 
-	doc, issues, err := loadBoard(path)
+	// Everything from here to the rename happens under the board's lock,
+	// and the board is read inside it: an issue appended to a document this
+	// process read before it waited for the lock would overwrite whatever
+	// the lock holder wrote (see lock.go).
+	release, err := lockBoard(path)
 	if err != nil {
 		return nil, err
 	}
-	if opts.Parent != "" && !hasIssue(issues, opts.Parent) {
-		return nil, fmt.Errorf("capturetask: parent issue %q is not on board %q", opts.Parent, opts.Org)
-	}
+	defer release()
 
-	ts := now().UTC().Format("2006-01-02T15:04:05Z")
-	issue := Issue{
-		ID:                nextID(issues, now()),
-		Title:             firstNonEmpty(opts.Title, env.meta.Title, env.meta.DedupeURL(), filepath.Base(env.dir)),
-		Description:       describe(opts.Description, env),
-		Status:            statusTodo,
-		Priority:          priority,
-		AssigneeID:        optional(opts.Assignee),
-		ParentID:          optional(opts.Parent),
-		WorkspaceID:       optional(opts.Workspace),
-		BlockedByIssueIDs: []string{},
-		CreatedAt:         ts,
-		UpdatedAt:         ts,
-		Attachments:       env.attachments(ts),
-		Capture:           env.ref(),
-	}
+	var issue Issue
+	for attempt := 0; ; attempt++ {
+		doc, issues, stamp, err := loadBoard(path)
+		if err != nil {
+			return nil, err
+		}
+		if opts.Parent != "" && !hasIssue(issues, opts.Parent) {
+			return nil, fmt.Errorf("capturetask: parent issue %q is not on board %q", opts.Parent, opts.Org)
+		}
 
-	blob, err := json.Marshal(issue)
-	if err != nil {
-		return nil, fmt.Errorf("encode issue: %w", err)
-	}
-	issues = append(issues, blob)
-	if err := saveBoard(path, doc, issues); err != nil {
+		ts := now().UTC().Format("2006-01-02T15:04:05Z")
+		issue = Issue{
+			ID:                nextID(issues, now()),
+			Title:             firstNonEmpty(opts.Title, env.meta.Title, env.meta.DedupeURL(), filepath.Base(env.dir)),
+			Description:       describe(opts.Description, env),
+			Status:            statusTodo,
+			Priority:          priority,
+			AssigneeID:        optional(opts.Assignee),
+			ParentID:          optional(opts.Parent),
+			WorkspaceID:       optional(opts.Workspace),
+			BlockedByIssueIDs: []string{},
+			CreatedAt:         ts,
+			UpdatedAt:         ts,
+			Attachments:       env.attachments(ts),
+			Capture:           env.ref(),
+		}
+
+		blob, err := json.Marshal(issue)
+		if err != nil {
+			return nil, fmt.Errorf("encode issue: %w", err)
+		}
+		issues = append(issues, blob)
+
+		err = saveBoard(path, doc, issues, stamp)
+		if err == nil {
+			break
+		}
+		// A writer that did not take the lock moved the board underneath
+		// us. Read it again and rebuild on top of what they wrote — and if
+		// it never settles, say so rather than discard it.
+		if errors.Is(err, errBoardChanged) && attempt < saveAttempts {
+			continue
+		}
 		return nil, err
 	}
 	return &Result{Org: opts.Org, IssuesFile: path, Issue: issue}, nil
 }
 
+// saveAttempts bounds the rebuild-on-conflict loop. Each attempt is one
+// read and one write of a file someone else is also writing; a board that
+// loses this race four times running is contended by something that is not
+// about to stop.
+const saveAttempts = 3
+
 // loadBoard reads the issue store as raw JSON. Every existing issue is kept
 // as the bytes it was written as: this process knows nothing about the
 // fields monomind's own tooling adds, and re-encoding them through a Go
 // struct is how they would be lost.
-func loadBoard(path string) (map[string]json.RawMessage, []json.RawMessage, error) {
+//
+// It also returns the version of the file it read, which saveBoard checks
+// before publishing — the document it hands back is the whole board, so
+// writing it on top of a newer one deletes the difference.
+func loadBoard(path string) (map[string]json.RawMessage, []json.RawMessage, boardStamp, error) {
+	stamp, err := stampOf(path)
+	if err != nil {
+		return nil, nil, boardStamp{}, err
+	}
 	blob, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return map[string]json.RawMessage{}, nil, nil
+		return map[string]json.RawMessage{}, nil, boardStamp{}, nil
 	}
 	if err != nil {
-		return nil, nil, fmt.Errorf("read board %s: %w", path, err)
+		return nil, nil, boardStamp{}, fmt.Errorf("read board %s: %w", path, err)
 	}
 	doc := map[string]json.RawMessage{}
 	if err := json.Unmarshal(blob, &doc); err != nil {
-		return nil, nil, fmt.Errorf("read board %s: %w", path, err)
+		return nil, nil, boardStamp{}, fmt.Errorf("read board %s: %w", path, err)
 	}
 	var issues []json.RawMessage
 	if raw, ok := doc["issues"]; ok {
 		if err := json.Unmarshal(raw, &issues); err != nil {
-			return nil, nil, fmt.Errorf("read board %s: issues is not a list: %w", path, err)
+			return nil, nil, boardStamp{}, fmt.Errorf("read board %s: issues is not a list: %w", path, err)
 		}
 	}
-	return doc, issues, nil
+	return doc, issues, stamp, nil
 }
 
 // saveBoard writes the board through a temporary file in the same
 // directory and renames it, so a crash cannot leave a truncated board.
-func saveBoard(path string, doc map[string]json.RawMessage, issues []json.RawMessage) error {
+//
+// The rename is only reached if the board still looks the way loadBoard
+// left it. That check is a stat, not a content hash, and the window
+// between it and the rename is not zero — it cannot be, without a lock the
+// other writer also takes. It catches the writer that spent milliseconds
+// on the same document, which is the one that exists.
+func saveBoard(path string, doc map[string]json.RawMessage, issues []json.RawMessage, since boardStamp) error {
 	if doc == nil {
 		doc = map[string]json.RawMessage{}
 	}
@@ -287,6 +336,13 @@ func saveBoard(path string, doc map[string]json.RawMessage, issues []json.RawMes
 	if err := os.Chmod(staged, 0o600); err != nil {
 		return fmt.Errorf("secure board: %w", err)
 	}
+	now, err := stampOf(path)
+	if err != nil {
+		return err
+	}
+	if !now.same(since) {
+		return fmt.Errorf("%w: %s", errBoardChanged, path)
+	}
 	if err := os.Rename(staged, path); err != nil {
 		return fmt.Errorf("publish board %s: %w", path, err)
 	}
@@ -294,17 +350,55 @@ func saveBoard(path string, doc map[string]json.RawMessage, issues []json.RawMes
 }
 
 // nextID mints an id in monomind's own form, issue-<epoch-millis>-NNN,
-// stepping the counter past any id the board already holds — two captures
-// filed in the same millisecond must not collide.
+// stepping the counter past any id the board already holds.
+//
+// The counter alone is not unique — a millisecond is long enough for two
+// processes — so this is only safe because the caller holds the board's
+// lock and read `issues` under it: the id is unique against the board as
+// it is about to be written, not against the board as it was a moment
+// ago. The tail past 999 is random rather than counted, so a board that
+// somehow fills a millisecond still cannot hand out a duplicate.
 func nextID(issues []json.RawMessage, now time.Time) string {
+	taken := issueIDs(issues)
 	millis := now.UTC().UnixMilli()
 	for n := 1; n < 1000; n++ {
 		id := fmt.Sprintf("issue-%d-%03d", millis, n)
-		if !hasIssue(issues, id) {
+		if !taken[id] {
 			return id
 		}
 	}
-	return fmt.Sprintf("issue-%d-%d", millis, now.UnixNano()%1e6)
+	for {
+		id := fmt.Sprintf("issue-%d-999-%s", millis, randomTail())
+		if !taken[id] {
+			return id
+		}
+	}
+}
+
+// randomTail is 8 hex digits of entropy for an id that ran out of counter.
+// A clock that cannot be read and a random source that cannot be read are
+// both survivable here: the result is checked against the board either way.
+func randomTail() string {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("%08x", time.Now().UnixNano()&0xffffffff)
+	}
+	return hex.EncodeToString(b[:])
+}
+
+// issueIDs collects every id on the board once, rather than re-decoding
+// every issue for every candidate.
+func issueIDs(issues []json.RawMessage) map[string]bool {
+	out := make(map[string]bool, len(issues))
+	for _, raw := range issues {
+		var probe struct {
+			ID string `json:"id"`
+		}
+		if json.Unmarshal(raw, &probe) == nil && probe.ID != "" {
+			out[probe.ID] = true
+		}
+	}
+	return out
 }
 
 func hasIssue(issues []json.RawMessage, id string) bool {
@@ -343,138 +437,4 @@ func contains(list []string, want string) bool {
 		}
 	}
 	return false
-}
-
-// envelope is a capture directory, read once.
-type envelope struct {
-	dir   string
-	meta  capture.Meta
-	files []os.FileInfo
-}
-
-// readEnvelope loads a capture directory, refusing anything that is not one.
-func readEnvelope(dir string) (*envelope, error) {
-	if strings.TrimSpace(dir) == "" {
-		return nil, errors.New("capturetask: no capture path given")
-	}
-	abs, err := filepath.Abs(dir)
-	if err != nil {
-		return nil, err
-	}
-	meta, err := capture.ReadMeta(abs)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("capturetask: %s is not a capture — it has no %s", abs, capture.MetaFile)
-		}
-		return nil, fmt.Errorf("capturetask: %s has an unreadable %s: %w", abs, capture.MetaFile, err)
-	}
-	env := &envelope{dir: abs, meta: *meta}
-	entries, err := os.ReadDir(abs)
-	if err != nil {
-		return nil, fmt.Errorf("read capture %s: %w", abs, err)
-	}
-	for _, e := range entries {
-		if e.IsDir() || !e.Type().IsRegular() {
-			continue
-		}
-		if info, err := e.Info(); err == nil {
-			env.files = append(env.files, info)
-		}
-	}
-	sort.Slice(env.files, func(i, j int) bool { return env.files[i].Name() < env.files[j].Name() })
-	return env, nil
-}
-
-// attachments lists every file of the capture, so the task carries the
-// capture rather than only mentioning it.
-func (e *envelope) attachments(ts string) []Attachment {
-	out := make([]Attachment, 0, len(e.files))
-	for _, f := range e.files {
-		out = append(out, Attachment{
-			Type:      attachmentType(f.Name()),
-			Name:      f.Name(),
-			Path:      filepath.Join(e.dir, f.Name()),
-			SizeBytes: f.Size(),
-			AddedAt:   ts,
-		})
-	}
-	return out
-}
-
-// attachmentType names the kind of artifact, for a reader listing them.
-func attachmentType(name string) string {
-	switch strings.ToLower(filepath.Ext(name)) {
-	case ".mhtml", ".html", ".htm":
-		return "archive"
-	case ".pdf":
-		return "pdf"
-	case ".md":
-		return "markdown"
-	case ".png", ".jpg", ".jpeg", ".webp":
-		return "image"
-	case ".json":
-		return "metadata"
-	case ".csv":
-		return "table"
-	}
-	return "file"
-}
-
-func (e *envelope) ref() *CaptureRef {
-	ref := &CaptureRef{
-		Path:         e.dir,
-		URL:          e.meta.URL,
-		CanonicalURL: e.meta.CanonicalURL,
-		Title:        e.meta.Title,
-		CapturedAt:   e.meta.CapturedAt,
-		ContentHash:  e.meta.ContentHash,
-		Source:       e.meta.Source,
-		Tags:         e.meta.Tags,
-	}
-	if e.meta.Collection != nil {
-		ref.Collection = strings.TrimSpace(*e.meta.Collection)
-	}
-	return ref
-}
-
-// describe builds the issue body: what the person said, then where the
-// capture came from — a block a reader can act on without this tool.
-func describe(note string, e *envelope) string {
-	var b strings.Builder
-	if s := strings.TrimSpace(note); s != "" {
-		b.WriteString(s)
-		b.WriteString("\n\n")
-	}
-	b.WriteString("## Capture\n\n")
-	if url := e.meta.DedupeURL(); url != "" {
-		fmt.Fprintf(&b, "- Source: %s\n", url)
-	}
-	if e.meta.Title != "" {
-		fmt.Fprintf(&b, "- Title: %s\n", e.meta.Title)
-	}
-	if e.meta.Byline != nil && strings.TrimSpace(*e.meta.Byline) != "" {
-		fmt.Fprintf(&b, "- Byline: %s\n", strings.TrimSpace(*e.meta.Byline))
-	}
-	if e.meta.CapturedAt != "" {
-		fmt.Fprintf(&b, "- Captured: %s", e.meta.CapturedAt)
-		if e.meta.Source != "" {
-			fmt.Fprintf(&b, " (%s)", e.meta.Source)
-		}
-		b.WriteString("\n")
-	}
-	if len(e.meta.Tags) > 0 {
-		fmt.Fprintf(&b, "- Tags: %s\n", strings.Join(e.meta.Tags, ", "))
-	}
-	fmt.Fprintf(&b, "- Envelope: %s\n", e.dir)
-	names := make([]string, 0, len(e.files))
-	for _, f := range e.files {
-		names = append(names, f.Name())
-	}
-	if len(names) > 0 {
-		fmt.Fprintf(&b, "- Files: %s\n", strings.Join(names, ", "))
-	}
-	if note := e.meta.Note; note != nil && strings.TrimSpace(*note) != "" {
-		fmt.Fprintf(&b, "\n> %s\n", strings.TrimSpace(*note))
-	}
-	return b.String()
 }

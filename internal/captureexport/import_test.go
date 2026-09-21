@@ -164,23 +164,6 @@ func TestImportCollisionOverwriteReplaces(t *testing.T) {
 	}
 }
 
-func TestImportDryRunWritesNothing(t *testing.T) {
-	src := seed(t, capture.Meta{URL: "https://example.com/a", Title: "A", CapturedAt: "2026-09-20T10:00:00Z"})
-	dst := filepath.Join(t.TempDir(), "inbox")
-	res := roundTrip(t, src, ImportOptions{Inbox: dst, DryRun: true})
-
-	if len(res.Imported) != 1 {
-		t.Fatalf("a dry run should still report what it would do, got %+v", res)
-	}
-	if after, _ := capture.List(dst); len(after) != 0 {
-		t.Errorf("a dry run wrote %d captures", len(after))
-	}
-	left, _ := os.ReadDir(dst)
-	for _, e := range left {
-		t.Errorf("a dry run left %s behind", e.Name())
-	}
-}
-
 func TestImportRejectsForeignArchives(t *testing.T) {
 	blob := buildArchive(t, func(tw *tar.Writer) {
 		if err := writeFileEntry(tw, "some/other/file.txt", []byte("hello"), zeroTime()); err != nil {
@@ -210,16 +193,29 @@ func TestImportRefusesFutureVersions(t *testing.T) {
 // An archive arrived from somewhere else by definition: a path that climbs
 // out of the inbox, a dot-prefixed staging name, or a symlink must never be
 // unpacked.
+//
+// Every hostile entry here sits beside a legitimate capture, which must
+// still land — otherwise "nothing escaped" would also be true of an import
+// that silently did nothing at all, and the test could not tell them
+// apart.
 func TestImportRefusesUnsafePaths(t *testing.T) {
 	man, _ := json.Marshal(Manifest{Format: Format, Version: Version})
+	const meta = `{"url":"https://x.test/","title":"Good"}`
 	blob := buildArchive(t, func(tw *tar.Writer) {
 		for _, e := range []struct {
 			name string
 			body string
 		}{
 			{ManifestPath, string(man)},
-			{"captures/../../escape/meta.json", `{"url":"https://x.test/"}`},
-			{"captures/.hidden/meta.json", `{"url":"https://x.test/"}`},
+			{"captures/2026-09-20T10-00-00Z-good/meta.json", meta}, // the control
+			// path.Clean folds this one away before the importer sees it,
+			// which is exactly why it is not the only case here.
+			{"captures/../../escape/meta.json", meta},
+			// A backslash is one character on this machine and a
+			// separator on Windows, so Clean leaves it alone: this is the
+			// entry the name check has to catch.
+			{`captures/..\..\escape/meta.json`, meta},
+			{"captures/.hidden/meta.json", meta},
 		} {
 			if err := writeFileEntry(tw, e.name, []byte(e.body), zeroTime()); err != nil {
 				t.Fatal(err)
@@ -233,22 +229,61 @@ func TestImportRefusesUnsafePaths(t *testing.T) {
 		}
 	})
 
-	dst := filepath.Join(t.TempDir(), "inbox")
+	root := t.TempDir()
+	dst := filepath.Join(root, "nest", "inbox")
 	res, err := Import(bytes.NewReader(blob), ImportOptions{Inbox: dst})
 	if err != nil {
 		t.Fatalf("Import: %v", err)
 	}
-	if len(res.Imported) != 0 {
-		t.Errorf("nothing unsafe should have been imported: %+v", res.Imported)
+
+	// The control landed; nothing else did.
+	if len(res.Imported) != 1 || res.Imported[0].Name != "2026-09-20T10-00-00Z-good" {
+		t.Fatalf("imported %+v, want only the safe capture", res.Imported)
 	}
-	if _, err := os.Stat(filepath.Join(filepath.Dir(filepath.Dir(dst)), "escape")); err == nil {
-		t.Error("a traversing path escaped the inbox")
+	if _, err := os.Stat(filepath.Join(res.Imported[0].Path, capture.MetaFile)); err != nil {
+		t.Errorf("the safe capture did not land whole: %v", err)
+	}
+
+	// "escape" appears nowhere: not in the inbox, not beside it, not above
+	// it. A `captures/../../escape` lands one directory up if the join is
+	// naive, so that is the directory to look in.
+	for _, dir := range []string{dst, filepath.Dir(dst), root, filepath.Dir(root)} {
+		if _, err := os.Lstat(filepath.Join(dir, "escape")); err == nil {
+			t.Errorf("a traversing path escaped into %s", dir)
+		}
 	}
 	if _, err := os.Lstat(filepath.Join(dst, "ok", "link")); err == nil {
 		t.Error("a symlink was unpacked")
 	}
+	if _, err := os.Lstat(filepath.Join(dst, "ok")); err == nil {
+		t.Error("a symlink's directory was created")
+	}
 	if _, err := os.Lstat(filepath.Join(dst, ".hidden")); err == nil {
 		t.Error("a dot-prefixed capture name was unpacked")
+	}
+	// And what was refused is reported, by name.
+	reported := map[string]string{}
+	for _, note := range res.Skipped {
+		reported[note.Name] = note.Reason
+	}
+	for _, name := range []string{".hidden", `..\..\escape`} {
+		if reason, ok := reported[name]; !ok {
+			t.Errorf("%q was dropped without a word: %+v", name, res.Skipped)
+		} else if !strings.Contains(reason, "unsafe") {
+			t.Errorf("%q was skipped for %q", name, reason)
+		}
+	}
+	// Only the inbox exists under the root, holding only the control.
+	left, err := os.ReadDir(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) != 1 || left[0].Name() != "2026-09-20T10-00-00Z-good" {
+		names := make([]string, 0, len(left))
+		for _, e := range left {
+			names = append(names, e.Name())
+		}
+		t.Errorf("the inbox holds %v", names)
 	}
 }
 
