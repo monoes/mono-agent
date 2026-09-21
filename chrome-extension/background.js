@@ -21,11 +21,16 @@
 // answers popup.js. tables.js (CLIP-11) is absent on purpose — it runs in
 // the page, injected by capture.js, not in this worker.
 importScripts("capture_meta.js", "capture.js", "capture_bridge.js");
-importScripts("capture_form.js", "capture_batch.js", "capture_queue.js", "capture_actions.js");
+importScripts("capture_form.js", "capture_profile.js", "capture_batch.js", "capture_queue.js", "capture_actions.js");
 // The in-page recall group (RCL-02/04/05): the extension→Go request channel
 // and the three things that ride it. ask.js must come first — the others
 // install against it.
 importScripts("ask.js", "saved.js", "highlights.js", "recall_bridge.js");
+// The raw CDP proxy (GLU-01/RIG-07): the generalisation of eval_cdp/type_cdp
+// that lets monobrowse drive the user's own Chrome. Events flow back through
+// it unasked-for, which is why it needs its own module rather than another
+// case in the dispatch below.
+importScripts("cdp_proxy.js");
 
 // ---------------------------------------------------------------------------
 // State
@@ -101,7 +106,15 @@ const SENSITIVE_COMMANDS = new Set([
   "focus", "html", "property", "scroll_into_view", "insert_text",
   "get_rect", "set_files", "query_count", "query_text", "fetch_image_base64",
   "page_capture",
+  // Raw CDP is the most sensitive of the lot: it bypasses page CSP and can
+  // read anything the tab can. Same origin check as the rest.
+  "cdp", "cdp_attach", "cdp_detach",
 ]);
+
+// Commands that mean "the tab the user is looking at" when given no tabId.
+// Resolved before the origin check below, which has no tab to check without
+// one.
+const ACTIVE_TAB_COMMANDS = new Set(["page_capture", "cdp", "cdp_attach", "cdp_detach"]);
 
 async function isOriginAuthorized(tabId) {
   if (!tabId) return false;
@@ -448,7 +461,7 @@ async function handleCommand(cmd) {
   // Merge tabId into params so all handlers can access it uniformly.
   const params = { ...cmd.params, tabId: cmd.tabId || cmd.params?.tabId };
   try {
-    if (cmd.type === "page_capture" && !params.tabId) {
+    if (ACTIVE_TAB_COMMANDS.has(cmd.type) && !params.tabId) {
       const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
       params.tabId = active?.id;
     }
@@ -512,6 +525,14 @@ async function handleCommand(cmd) {
         break;
       case "eval_cdp":
         result = await evalCDP(params);
+        break;
+      // Raw CDP in both directions (cdp_proxy.js). eval_cdp/type_cdp above
+      // are the two fixed shapes this generalises; they stay for the Go
+      // page API that already calls them.
+      case "cdp":
+      case "cdp_attach":
+      case "cdp_detach":
+        result = await MonoCdpProxy.handleCommand(cmd.type, params);
         break;
       case "page_capture":
         // A capture envelope can span several frames (see
@@ -714,6 +735,11 @@ async function evalInTab({ tabId, js, expression, args }) {
 // framework (React, Lexical, Quill, etc.) — unlike synthetic JS events.
 const debuggerAttached = new Set();
 const debuggerLastUsed = new Map(); // tabId -> timestamp of last CDP command
+// Tabs a CDP relay client is listening to (cdp_proxy.js). A capture that
+// only subscribes to events — console, network, trace — sends no commands
+// for minutes at a time, and the idle sweep below would otherwise detach the
+// debugger out from under it.
+const debuggerPinned = new Set();
 const DEBUGGER_IDLE_DETACH_MS = 30000; // detach after 30s without CDP traffic
 
 async function ensureDebuggerAttached(target, tabId) {
@@ -738,6 +764,7 @@ function debuggerSend(target, tabId, method, params) {
 function forgetDebugger(tabId) {
   debuggerAttached.delete(tabId);
   debuggerLastUsed.delete(tabId);
+  debuggerPinned.delete(tabId);
 }
 
 async function detachDebugger(tabId) {
@@ -753,6 +780,7 @@ async function detachDebugger(tabId) {
 function sweepIdleDebuggers() {
   const now = Date.now();
   for (const tabId of debuggerAttached) {
+    if (debuggerPinned.has(tabId)) continue;
     if (now - (debuggerLastUsed.get(tabId) || 0) > DEBUGGER_IDLE_DETACH_MS) {
       console.log("[monoagent] Detaching idle debugger from tab", tabId);
       detachDebugger(tabId);
@@ -997,6 +1025,29 @@ MonoCaptureBridge.install({
   attach: (tabId) => ensureDebuggerAttached({ tabId }, tabId),
   cdp: (tabId, method, params) => debuggerSend({ tabId }, tabId, method, params),
   detach: (tabId) => detachDebugger(tabId),
+});
+
+// The CDP proxy gets the same debugger helpers the capture bridge does,
+// plus the pin/unpin that keeps the sweep above off a tab it is listening
+// to, and the two chrome.debugger listener registrations it relays from.
+MonoCdpProxy.install({
+  send: (message) => {
+    if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message));
+  },
+  isConnected: () => ws?.readyState === WebSocket.OPEN,
+  activeTabId: async () => {
+    const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    return active?.id;
+  },
+  attach: (tabId) => ensureDebuggerAttached({ tabId }, tabId),
+  // `session` is {tabId} for the page itself, or {tabId, sessionId} for a
+  // child session (an out-of-process iframe).
+  cdp: (session, method, params) => debuggerSend(session, session.tabId, method, params),
+  detach: (tabId) => detachDebugger(tabId),
+  pin: (tabId) => debuggerPinned.add(tabId),
+  unpin: (tabId) => debuggerPinned.delete(tabId),
+  onDebuggerEvent: (fn) => chrome.debugger.onEvent.addListener(fn),
+  onDebuggerDetach: (fn) => chrome.debugger.onDetach.addListener(fn),
 });
 
 // Everything the popup asks for (CLIP-06/07/08). It captures through

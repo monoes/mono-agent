@@ -54,6 +54,12 @@ type Server struct {
 	// before that.
 	token string
 
+	// cdpClients are the sockets subscribed to the CDP relay (see cdp.go).
+	// Debugger events are fanned out to all of them; command replies go
+	// only to the client that asked.
+	cdpClients map[*cdpClient]struct{}
+	cdpMu      sync.Mutex
+
 	// boundAddr is the address actually bound (may differ from the
 	// requested addr on EADDRINUSE fallback — see listenCandidates). Set
 	// alongside token, once Start has won the port bind; empty before that.
@@ -252,6 +258,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/monoagent", s.handleWS)
 	mux.HandleFunc("/monoagent/health", s.handleHealth)
 	mux.HandleFunc("/monoagent/relay", s.handleRelay)
+	mux.HandleFunc("/monoagent/cdp", s.handleCdpSocket)
 	mux.HandleFunc("/monoagent/pair", s.handlePairPage)
 	mux.HandleFunc("/monoagent/pair/exchange", s.handlePairExchange)
 

@@ -321,6 +321,8 @@ func (s *Server) dispatch(resp *Response) {
 		default:
 			s.logger.Warn().Str("id", resp.ID).Msg("duplicate response for an already-answered command")
 		}
+	case isCdpEvent(resp):
+		s.fanoutCdpEvent(resp)
 	case isCaptureResponse(resp):
 		s.acceptUnsolicitedCapture(resp)
 	default:
