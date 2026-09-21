@@ -1,8 +1,10 @@
 package capture
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -76,6 +78,99 @@ func TestListSkipsHalfWrittenCaptures(t *testing.T) {
 	}
 	if len(entries) != 1 || entries[0].Title != "Real" {
 		t.Fatalf("entries = %+v, want only the landed capture", entries)
+	}
+}
+
+// TestListCarriesTheWholeMeta is why Entry has a Meta field: a consumer
+// filtering by collection or tag must not have to open and parse meta.json
+// a second time, when listing the inbox already did exactly that.
+func TestListCarriesTheWholeMeta(t *testing.T) {
+	inbox := filepath.Join(t.TempDir(), "inbox")
+	collection := "reading"
+	w := &Writer{Inbox: inbox}
+	if _, err := w.Write(&Envelope{
+		Meta: Meta{
+			URL:        "https://example.com/post",
+			Title:      "A Post",
+			CapturedAt: "2026-09-21T08:00:00Z",
+			Collection: &collection,
+			Tags:       []string{"research", "browser"},
+			Source:     SourceCrawl,
+		},
+		Artifacts: map[string]Artifact{ArtifactHTML: Inline([]byte("<html></html>"))},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	entries, err := List(inbox)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries = %+v", entries)
+	}
+	got := entries[0]
+	if got.Meta.Collection == nil || *got.Meta.Collection != "reading" {
+		t.Fatalf("entry.Meta.Collection = %v", got.Meta.Collection)
+	}
+	if len(got.Meta.Tags) != 2 || got.Meta.Tags[0] != "research" {
+		t.Fatalf("entry.Meta.Tags = %v", got.Meta.Tags)
+	}
+	if got.Meta.Source != SourceCrawl {
+		t.Fatalf("entry.Meta.Source = %q", got.Meta.Source)
+	}
+	if got.Meta.ContentHash == "" {
+		t.Fatal("entry.Meta.ContentHash is empty")
+	}
+	// The display columns must still agree with the record behind them.
+	if got.Title != got.Meta.Title || got.CapturedAt != got.Meta.CapturedAt {
+		t.Fatalf("entry columns disagree with entry.Meta: %+v", got)
+	}
+	if got.Artifacts[0] != ArtifactHTML {
+		t.Fatalf("artifacts = %v", got.Artifacts)
+	}
+}
+
+func TestReadMeta(t *testing.T) {
+	inbox := filepath.Join(t.TempDir(), "inbox")
+	dir := seed(t, inbox, "https://example.com/post", "A Post", "2026-09-21T08:00:00Z")
+
+	meta, err := ReadMeta(dir)
+	if err != nil {
+		t.Fatalf("ReadMeta: %v", err)
+	}
+	if meta.Title != "A Post" || meta.DedupeURL() != "https://example.com/post" {
+		t.Fatalf("meta = %+v", meta)
+	}
+}
+
+// TestReadMetaOnANonCapture: the error has to say "not a capture" in a form
+// a caller can branch on, which is what os.ErrNotExist is for.
+func TestReadMetaOnANonCapture(t *testing.T) {
+	dir := t.TempDir()
+	_, err := ReadMeta(dir)
+	if err == nil {
+		t.Fatal("ReadMeta on a directory with no meta.json should fail")
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("err = %v, want it to wrap os.ErrNotExist", err)
+	}
+	if !strings.Contains(err.Error(), MetaFile) {
+		t.Fatalf("err = %v, want it to name %s", err, MetaFile)
+	}
+}
+
+func TestReadMetaOnUnreadableJSON(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, MetaFile), []byte("{not json"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_, err := ReadMeta(dir)
+	if err == nil {
+		t.Fatal("ReadMeta on malformed meta.json should fail")
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		t.Fatal("a malformed capture must not look like a missing one")
 	}
 }
 

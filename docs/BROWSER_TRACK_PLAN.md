@@ -32,11 +32,20 @@ Every capture, wherever it comes from, lands in `~/.monomind/inbox/<ts>-<slug>/`
 
 ```
 page.mhtml        # byte-fidelity archive (CDP Page.captureSnapshot)
+page.html         # byte-fidelity for a capture made without a browser (crawl)
 page.pdf          # optional, print fidelity (Page.printToPDF)
 readable.md       # Readability-cleaned Markdown — this is what gets chunked
 screenshot.png    # full-page, for the document card
 meta.json         # provenance (below)
 ```
+
+Every artifact is optional except `meta.json`; a capture lands with whatever
+the page could produce. `page.mhtml` and `page.html` are alternatives, not a
+pair: a crawl has no browser to ask for a snapshot, so it keeps the exact
+bytes the server sent instead. The names live in `internal/capture`
+(`ArtifactMHTML`, `ArtifactHTML`, …) and the three `source` values beside
+them (`SourceExtension`, `SourceCrawl`, `SourceMonobrowse`) — one producer
+keeping a private copy of either is how they drift.
 
 `meta.json`:
 
@@ -192,3 +201,75 @@ exits 0. The whole `src/report/**` surface is reachable from the CLI.
 `@monoes/monodesign/package.json:54` still pins monobrowse `^1.0.7` from the
 registry. Left alone deliberately — that package publishes against the
 registry copy. Revisit only if monodesign needs the report API.
+
+---
+
+# Deferred: the architecture wave (6 stories)
+
+Stopped deliberately on 2026-09-21 at the user's direction, after 38 of 44.
+Not blocked, not abandoned — these are the stories with design choices in them
+that outlive the build, and they should be shaped rather than inherited.
+
+## The decision everything else hangs off
+
+**There are three browser drivers in these two repos today:**
+
+| Driver | Where | Talks to | Strength |
+|---|---|---|---|
+| Rod | `mono-agent/internal/browser/` (Go) | its own Chrome | mature Go API, used by workflow nodes |
+| Extension bridge | `mono-agent/internal/extension/` (Go ↔ MV3) | the user's **real, logged-in** Chrome | sessions, paywalls, internal apps |
+| monobrowse | `monomind/packages/@monoes/monobrowse/` (TS) | headless Chrome over CDP | the instruments: console, network, HAR, vitals, trace, profiler |
+
+Every capability built today cost one implementation and reaches one driver.
+`browser_console` cannot see the user's logged-in tab; the extension cannot
+produce a web-vitals report. GLU-01 and RIG-07 are the same work: make the
+extension bridge a backend monobrowse can drive, so the instruments point at
+the browser the user is actually signed into.
+
+**The choice to make first — where does the seam go?**
+
+1. **CDP is the seam.** The extension bridge already speaks CDP (it holds the
+   `debugger` permission and attaches). Give monobrowse a transport that sends
+   CDP over the WS bridge instead of a local socket, and every existing
+   monobrowse module works unchanged against the user's Chrome.
+   *Cheapest, and the instruments come free. Bounded by what MV3's
+   `chrome.debugger` exposes, and an attached debugger shows the user a banner.*
+2. **A capability interface is the seam.** Define an interface
+   (navigate/snapshot/console/network/…) and implement it three times.
+   *Most flexible, most code, and each instrument must be ported per backend.*
+3. **Leave them separate; share only the report layer.** Each driver produces
+   the same JSON, and `src/report/**` renders whichever it is handed.
+   *Least disruption, no unified control, duplication stays.*
+
+Recommendation: **(1)**, with (3)'s report contract as the fallback if MV3's
+debugger surface proves too thin. Decide before writing code — it determines
+whether RIG-12 is a day or a fortnight.
+
+## The stories
+
+- **GLU-01** — one browser abstraction, three backends. See above.
+- **RIG-07** — drive the real logged-in Chrome as a test target. Falls out of
+  GLU-01 under option (1); needs its own porting effort under (2).
+- **RIG-12** — replay a user's capture + HAR to reproduce their bug locally.
+  Needs a request-interception backend: serve the MHTML and replay HAR
+  responses. `internal/capture` already stores both.
+- **GLU-02** — demonstrate an action in the browser, get a mono-agent workflow.
+  Record events through the bridge, emit workflow nodes. The action builder and
+  node system already exist to receive them. The hard part is selector
+  stability, not recording.
+- **GLU-04** — a capture triggers a workflow. Small once GLU-02 lands: the
+  inbox is the event source and the daemon already schedules.
+- **GLU-05** — approve an agent's browser action from a badge. `hil.go` has the
+  machinery; this is a surface for it, and it needs the extension→Go
+  request/response channel built for RCL-02.
+
+## What exists now that these build on
+
+- `internal/capture/` — envelopes, chunked streaming to a spool, `ReadMeta`,
+  `Entry.Meta`, source and artifact constants
+- `internal/crawlsite/` — a non-browser fetch path producing identical envelopes
+- `chrome-extension/` — capture, readability, 7 site adapters, queue, batch
+- `monobrowse/src/report/**` — collect → analyze → render, budgets, verdicts,
+  a11y rules, run history, structural + pixel diff, flake analysis
+- `@monomind/cli` knowledge layer — HTML/MHTML ingest, provenance, versioning,
+  citations with anchors, library filters, watches, MCP capture resources

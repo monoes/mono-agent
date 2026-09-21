@@ -73,7 +73,7 @@ func TestCrawlCaptureWritesEnvelopesIntoTheInbox(t *testing.T) {
 	titles := map[string]bool{}
 	for _, e := range entries {
 		titles[e.Title] = true
-		if !contains(e.Artifacts, crawlsite.ArtifactHTML) || !contains(e.Artifacts, capture.ArtifactReadable) {
+		if !contains(e.Artifacts, capture.ArtifactHTML) || !contains(e.Artifacts, capture.ArtifactReadable) {
 			t.Errorf("%s holds %v, want page.html and readable.md", e.Path, e.Artifacts)
 		}
 	}

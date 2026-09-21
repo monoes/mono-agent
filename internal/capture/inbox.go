@@ -37,6 +37,12 @@ func DefaultInbox() string {
 }
 
 // Entry is one envelope directory as `capture list` reports it.
+//
+// The scalar fields are the listing's own columns. Meta is the whole
+// provenance record the directory holds, carried along because reading it
+// is what produced those columns in the first place — a caller that needs
+// the collection, the tags or the content hash must not have to open and
+// parse meta.json a second time.
 type Entry struct {
 	Path       string   `json:"path"`
 	URL        string   `json:"url"`
@@ -44,6 +50,27 @@ type Entry struct {
 	CapturedAt string   `json:"capturedAt"`
 	Bytes      int64    `json:"bytes"`
 	Artifacts  []string `json:"artifacts"`
+	Meta       Meta     `json:"meta"`
+}
+
+// ReadMeta reads one capture directory's provenance record.
+//
+// This is the single-capture counterpart to List: a caller that was handed
+// a path (a task being filed against a capture, a staged directory during
+// an import) wants exactly this and nothing else. The error wraps
+// os.ErrNotExist when the directory holds no meta.json, which is how a
+// caller distinguishes "not a capture" from "unreadable capture".
+func ReadMeta(dir string) (*Meta, error) {
+	path := filepath.Join(dir, MetaFile)
+	blob, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	var meta Meta
+	if err := json.Unmarshal(blob, &meta); err != nil {
+		return nil, fmt.Errorf("decode %s: %w", path, err)
+	}
+	return &meta, nil
 }
 
 // List returns the envelopes in inbox, newest first. Directories still
@@ -85,12 +112,8 @@ func List(inbox string) ([]Entry, error) {
 // readEntry reads one envelope directory, reporting false for anything
 // that is not a landed capture.
 func readEntry(dir string) (Entry, bool) {
-	blob, err := os.ReadFile(filepath.Join(dir, MetaFile))
+	meta, err := ReadMeta(dir)
 	if err != nil {
-		return Entry{}, false
-	}
-	var meta Meta
-	if err := json.Unmarshal(blob, &meta); err != nil {
 		return Entry{}, false
 	}
 	entry := Entry{
@@ -98,17 +121,20 @@ func readEntry(dir string) (Entry, bool) {
 		URL:        meta.DedupeURL(),
 		Title:      meta.Title,
 		CapturedAt: meta.CapturedAt,
-		Bytes:      int64(len(blob)),
+		Meta:       *meta,
 	}
 	files, err := os.ReadDir(dir)
 	if err != nil {
 		return Entry{}, false
 	}
 	for _, f := range files {
-		if f.IsDir() || f.Name() == MetaFile {
+		if f.IsDir() {
 			continue
 		}
-		entry.Artifacts = append(entry.Artifacts, f.Name())
+		// meta.json counts towards the size but is not an artifact.
+		if f.Name() != MetaFile {
+			entry.Artifacts = append(entry.Artifacts, f.Name())
+		}
 		if info, err := f.Info(); err == nil {
 			entry.Bytes += info.Size()
 		}

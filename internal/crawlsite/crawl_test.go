@@ -240,8 +240,8 @@ func TestCrawlEnvelopeMatchesTheContract(t *testing.T) {
 	if err := json.Unmarshal(blob, &meta); err != nil {
 		t.Fatalf("decode meta: %v", err)
 	}
-	if meta.Source != SourceCrawl {
-		t.Errorf("meta.source = %q, want %q", meta.Source, SourceCrawl)
+	if meta.Source != capture.SourceCrawl {
+		t.Errorf("meta.source = %q, want %q", meta.Source, capture.SourceCrawl)
 	}
 	if meta.HTTPStatus != 200 {
 		t.Errorf("meta.httpStatus = %d", meta.HTTPStatus)
@@ -262,7 +262,7 @@ func TestCrawlEnvelopeMatchesTheContract(t *testing.T) {
 		t.Errorf("crawl provenance missing from meta: %v", meta.Extra)
 	}
 
-	for _, name := range []string{ArtifactHTML, capture.ArtifactReadable} {
+	for _, name := range []string{capture.ArtifactHTML, capture.ArtifactReadable} {
 		info, err := os.Stat(filepath.Join(dir, name))
 		if err != nil {
 			t.Fatalf("envelope is missing %s: %v", name, err)

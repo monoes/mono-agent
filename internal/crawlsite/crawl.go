@@ -13,17 +13,6 @@ import (
 	"github.com/monoes/mono-agent/internal/capture"
 )
 
-// SourceCrawl is the meta.source value for an envelope this package wrote.
-// The extension's counterpart is capture.SourceExtension; both land in the
-// same inbox, through the same writer, and differ only here.
-const SourceCrawl = "crawl"
-
-// ArtifactHTML is the crawl's byte-fidelity artifact. A crawl has no MHTML
-// to write — there is no browser to ask for one — so it keeps the exact
-// bytes the server sent instead, which is the same promise: the archive
-// outlives the tool that made it.
-const ArtifactHTML = "page.html"
-
 // Defaults for a crawl that was not told otherwise.
 const (
 	DefaultMaxDepth = 1
@@ -350,7 +339,7 @@ func (c *Crawler) envelope(f *fetched, ex *extracted, it item, canonical string)
 		HTTPStatus:   f.Status,
 		Favicon:      ex.Favicon,
 		Tags:         append([]string{}, c.opts.Tags...),
-		Source:       SourceCrawl,
+		Source:       capture.SourceCrawl,
 	}
 	if ex.Byline != "" {
 		byline := ex.Byline
@@ -369,7 +358,7 @@ func (c *Crawler) envelope(f *fetched, ex *extracted, it item, canonical string)
 	env := &capture.Envelope{
 		Meta: meta,
 		Artifacts: map[string]capture.Artifact{
-			ArtifactHTML:             capture.Inline(f.Body),
+			capture.ArtifactHTML:     capture.Inline(f.Body),
 			capture.ArtifactReadable: capture.Inline([]byte(ex.Markdown)),
 		},
 	}

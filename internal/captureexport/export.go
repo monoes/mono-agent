@@ -83,10 +83,9 @@ func Export(w io.Writer, opts ExportOptions) (*Manifest, error) {
 		if len(only) > 0 && !only[name] {
 			continue
 		}
-		meta, err := readMeta(e.Path)
-		if err != nil {
-			continue // not a landed capture; capture.List already filters most
-		}
+		// capture.List already read and decoded meta.json to build the
+		// entry; reading it again here would parse every capture twice.
+		meta := &e.Meta
 		if !opts.Since.IsZero() && !capturedAtLeast(meta, opts.Since) {
 			continue
 		}
@@ -246,19 +245,6 @@ func copyInto(tw *tar.Writer, name, src string, size int64, modTime time.Time) e
 		return fmt.Errorf("%s changed size while exporting (%d of %d bytes)", src, n, size)
 	}
 	return nil
-}
-
-// readMeta decodes one envelope's meta.json.
-func readMeta(dir string) (*capture.Meta, error) {
-	blob, err := os.ReadFile(filepath.Join(dir, capture.MetaFile))
-	if err != nil {
-		return nil, err
-	}
-	var meta capture.Meta
-	if err := json.Unmarshal(blob, &meta); err != nil {
-		return nil, err
-	}
-	return &meta, nil
 }
 
 func collectionOf(meta *capture.Meta) string {

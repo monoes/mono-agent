@@ -78,9 +78,20 @@ func (s *Selection) UnmarshalJSON(b []byte) error {
 // MarshalJSON writes the known fields plus anything preserved in Extra.
 func (s Selection) MarshalJSON() ([]byte, error) { return marshalWithExtra(s, s.Extra) }
 
-// SourceExtension is the meta.source value for a capture that came from the
-// Chrome extension bridge.
-const SourceExtension = "extension"
+// The meta.source values, one per producer of these envelopes. They live
+// together here rather than in each producer because a consumer reading an
+// inbox has to recognise all three, and a private copy in one package is
+// how the three quietly drift apart.
+const (
+	// SourceExtension is a page saved from the user's real, logged-in
+	// Chrome via the extension bridge.
+	SourceExtension = "extension"
+	// SourceCrawl is a page fetched by the crawler — no browser, so no
+	// MHTML: its byte-fidelity artifact is ArtifactHTML.
+	SourceCrawl = "crawl"
+	// SourceMonobrowse is a page captured through headless monobrowse.
+	SourceMonobrowse = "monobrowse"
+)
 
 // UnmarshalJSON decodes field by field instead of in one shot, so a single
 // field of the wrong type (a JS `httpStatus: "200"`, say) costs that one

@@ -251,7 +251,7 @@ func (im *importer) commit() error {
 		if staging == "" {
 			continue
 		}
-		meta, err := readMeta(staging)
+		meta, err := capture.ReadMeta(staging)
 		if err != nil {
 			im.skip(name, "no readable "+capture.MetaFile)
 			continue

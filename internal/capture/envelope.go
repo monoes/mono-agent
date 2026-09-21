@@ -54,7 +54,11 @@ const MetaFile = "meta.json"
 // per-site adapter may add table.csv or transcript.md) as long as they pass
 // ValidArtifactName; these are the ones the pipeline looks for by name.
 const (
-	ArtifactMHTML      = "page.mhtml"
+	ArtifactMHTML = "page.mhtml"
+	// ArtifactHTML is the byte-fidelity artifact for a capture made
+	// without a browser: the crawler has no page to snapshot, so it keeps
+	// the HTML the server actually sent instead of an MHTML archive.
+	ArtifactHTML       = "page.html"
 	ArtifactPDF        = "page.pdf"
 	ArtifactReadable   = "readable.md"
 	ArtifactScreenshot = "screenshot.png"
@@ -64,8 +68,10 @@ const (
 // sender did not compute a content hash: the readable text first, because
 // that is what gets chunked and what should decide whether two captures of
 // the same URL are the same document. An MHTML archive embeds timestamps
-// and request ids, so it hashes differently on every visit.
-var hashPreference = []string{ArtifactReadable, ArtifactMHTML, ArtifactPDF, ArtifactScreenshot}
+// and request ids, so it hashes differently on every visit; raw HTML is
+// steadier than that but still carries whatever the server varied per
+// request, so it sits behind the readable text too.
+var hashPreference = []string{ArtifactReadable, ArtifactMHTML, ArtifactHTML, ArtifactPDF, ArtifactScreenshot}
 
 // dirTimeFormat is RFC3339 with the colons swapped for dashes: still
 // sortable and still readable as a timestamp, but legal as a path segment

@@ -361,17 +361,14 @@ func readEnvelope(dir string) (*envelope, error) {
 	if err != nil {
 		return nil, err
 	}
-	blob, err := os.ReadFile(filepath.Join(abs, capture.MetaFile))
+	meta, err := capture.ReadMeta(abs)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, fmt.Errorf("capturetask: %s is not a capture — it has no %s", abs, capture.MetaFile)
 		}
-		return nil, err
-	}
-	env := &envelope{dir: abs}
-	if err := json.Unmarshal(blob, &env.meta); err != nil {
 		return nil, fmt.Errorf("capturetask: %s has an unreadable %s: %w", abs, capture.MetaFile, err)
 	}
+	env := &envelope{dir: abs, meta: *meta}
 	entries, err := os.ReadDir(abs)
 	if err != nil {
 		return nil, fmt.Errorf("read capture %s: %w", abs, err)
