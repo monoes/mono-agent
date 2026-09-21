@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <style>
     body {
-      width: 280px;
+      width: 340px;
       padding: 16px;
       font-family: system-ui, -apple-system, sans-serif;
       font-size: 13px;
@@ -59,6 +59,11 @@
       box-sizing: border-box;
       font-family: monospace;
     }
+    input.prose {
+      font-family: inherit;
+      font-size: 12.5px;
+    }
+    .field { margin-bottom: 8px; }
     button {
       margin-top: 8px;
       padding: 6px 12px;
@@ -71,6 +76,109 @@
       font-weight: 500;
     }
     button:hover { background: #1d4ed8; }
+    button.primary {
+      width: 100%;
+      margin-top: 0;
+      padding: 9px 12px;
+      font-size: 13px;
+    }
+    button:disabled { background: #93a7c7; cursor: default; }
+    button.secondary {
+      background: #eef2f7;
+      color: #1f2937;
+      border: 1px solid #d1d5db;
+    }
+    button.secondary:hover { background: #e2e8f0; }
+    button.secondary:disabled { background: #f3f4f6; color: #9ca3af; }
+    button.tiny {
+      margin-top: 0;
+      padding: 3px 7px;
+      font-size: 11px;
+    }
+    .row { display: flex; gap: 6px; }
+    .row > button { flex: 1; }
+    .hint {
+      font-size: 11px;
+      color: #666;
+      margin-top: 6px;
+    }
+    .capture-msg {
+      font-size: 11px;
+      margin-top: 6px;
+      display: none;
+      word-break: break-word;
+    }
+    .capture-msg.ok { color: #15803d; }
+    .capture-msg.warn { color: #b45309; }
+    .capture-msg.err { color: #ef4444; }
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 5px;
+    }
+    .chip {
+      font-size: 11px;
+      padding: 2px 7px;
+      border-radius: 999px;
+      border: 1px solid #d1d5db;
+      background: #f8fafc;
+      color: #334155;
+      cursor: pointer;
+      font-family: inherit;
+      margin: 0;
+      font-weight: 400;
+    }
+    .chip:hover { background: #e2e8f0; }
+    .progress {
+      display: none;
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px;
+      font-size: 11.5px;
+      color: #334155;
+    }
+    .progress .label { flex: 1; word-break: break-word; }
+    .queue { display: none; }
+    .queue-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .queue-head .counts { font-size: 11px; color: #666; }
+    .queue-list {
+      list-style: none;
+      margin: 8px 0 0;
+      padding: 0;
+      max-height: 168px;
+      overflow-y: auto;
+    }
+    .queue-item {
+      border: 1px solid #e5e5e5;
+      border-left: 3px solid #c98a00;
+      border-radius: 4px;
+      padding: 6px 8px;
+      margin-bottom: 6px;
+    }
+    .queue-item.failed { border-left-color: #ef4444; }
+    .queue-item .title {
+      font-size: 12px;
+      font-weight: 500;
+      word-break: break-word;
+    }
+    .queue-item .why {
+      font-size: 11px;
+      color: #666;
+      margin-top: 2px;
+      word-break: break-word;
+    }
+    .queue-item.failed .why { color: #b91c1c; }
+    .queue-item .actions {
+      display: flex;
+      gap: 6px;
+      margin-top: 5px;
+    }
     .saved-msg {
       color: #22c55e;
       font-size: 11px;
@@ -97,6 +205,14 @@
       margin-top: 4px;
       display: none;
     }
+    details.more > summary {
+      cursor: pointer;
+      font-size: 11px;
+      color: #666;
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid #e5e5e5;
+    }
   </style>
 </head>
 <body>
@@ -105,27 +221,76 @@
     <div id="dot" class="dot disconnected"></div>
     <span id="status-text" class="status-text">Checking...</span>
   </div>
-  <div class="url-section">
-    <label for="pairing-token">Pairing token</label>
-    <input type="text" id="pairing-token" placeholder="paste output of: monoagentcli extension pair" />
-    <button id="pair-btn">Pair &amp; Reconnect</button>
-    <div id="pair-saved-msg" class="saved-msg">Saved and reconnecting...</div>
+
+  <!-- CLIP-07: a capture with a reason. Every field is optional — the
+       button alone saves the page, exactly as the shortcut does. -->
+  <div class="field">
+    <label for="note">Note (optional)</label>
+    <input type="text" id="note" class="prose" placeholder="Why are you saving this?" />
   </div>
-  <div class="url-section">
-    <label>Site access</label>
-    <div style="font-size: 12px; color: #444;">All sites are authorized by default (host_permissions: &lt;all_urls&gt;) — nothing to grant per-site.</div>
+  <div class="field">
+    <label for="tags">Tags</label>
+    <input type="text" id="tags" class="prose" placeholder="comma or space separated" />
+    <div id="tag-chips" class="chips"></div>
   </div>
-  <div class="url-section">
-    <label for="ws-url">WebSocket URL</label>
-    <input type="text" id="ws-url" placeholder="ws://127.0.0.1:9222/monoagent" />
-    <button id="save-btn">Save &amp; Reconnect</button>
-    <label class="unsafe-override" title="Session-only: cleared when this popup reopens and when the browser restarts.">
-      <input type="checkbox" id="allow-remote" />
-      Allow non-loopback server (unsafe)
-    </label>
-    <div id="saved-msg" class="saved-msg">Saved and reconnecting...</div>
-    <div id="error-msg" class="error-msg"></div>
+  <div class="field">
+    <label for="collection">Collection</label>
+    <input type="text" id="collection" class="prose" list="collection-list" placeholder="pick one, or type a new name" />
+    <datalist id="collection-list"></datalist>
   </div>
+  <button id="capture-btn" class="primary">Save this page</button>
+  <div class="hint">Or press <b>Ctrl/&#8984;+Shift+S</b> to save with no note. Right-click a selection to save just that.</div>
+  <div id="capture-msg" class="capture-msg"></div>
+
+  <!-- CLIP-06 -->
+  <div class="url-section">
+    <label>Save everything open</label>
+    <div class="row">
+      <button id="batch-window" class="secondary">All tabs</button>
+      <button id="batch-group" class="secondary">This tab group</button>
+    </div>
+    <div id="batch-progress" class="progress">
+      <span id="batch-label" class="label">Starting...</span>
+      <button id="batch-cancel" class="secondary tiny">Cancel</button>
+    </div>
+    <div id="batch-msg" class="capture-msg"></div>
+  </div>
+
+  <!-- CLIP-08 -->
+  <div id="queue" class="url-section queue">
+    <div class="queue-head">
+      <label style="margin:0">Waiting to send</label>
+      <span id="queue-counts" class="counts"></span>
+    </div>
+    <ul id="queue-list" class="queue-list"></ul>
+    <button id="queue-clear" class="secondary tiny" style="display:none">Dismiss all failures</button>
+  </div>
+
+  <details class="more">
+    <summary>Connection settings</summary>
+    <div class="url-section">
+      <label for="pairing-token">Pairing token</label>
+      <input type="text" id="pairing-token" placeholder="paste output of: monoagentcli extension pair" />
+      <button id="pair-btn">Pair &amp; Reconnect</button>
+      <div id="pair-saved-msg" class="saved-msg">Saved and reconnecting...</div>
+    </div>
+    <div class="url-section">
+      <label>Site access</label>
+      <div style="font-size: 12px; color: #444;">All sites are authorized by default (host_permissions: &lt;all_urls&gt;) — nothing to grant per-site.</div>
+    </div>
+    <div class="url-section">
+      <label for="ws-url">WebSocket URL</label>
+      <input type="text" id="ws-url" placeholder="ws://127.0.0.1:9222/monoagent" />
+      <button id="save-btn">Save &amp; Reconnect</button>
+      <label class="unsafe-override" title="Session-only: cleared when this popup reopens and when the browser restarts.">
+        <input type="checkbox" id="allow-remote" />
+        Allow non-loopback server (unsafe)
+      </label>
+      <div id="saved-msg" class="saved-msg">Saved and reconnecting...</div>
+      <div id="error-msg" class="error-msg"></div>
+    </div>
+  </details>
+
   <script src="popup.js"></script>
 </body>
 </html>

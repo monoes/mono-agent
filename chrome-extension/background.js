@@ -11,6 +11,18 @@
  * - No exponential backoff — flat 500ms retry for aggressive reconnection
  */
 
+// Page capture (CLIP-01/03/04/05/09) lives in its own modules — this file is
+// already long enough. capture.js holds the orchestration and the envelope,
+// capture_bridge.js the Chrome wiring; both are plain scripts so the same
+// code runs under `node --test`.
+//
+// The popup's half (CLIP-06/07/08) is the second group: the save form's
+// model, batch capture, the offline queue's face, and the dispatch that
+// answers popup.js. tables.js (CLIP-11) is absent on purpose — it runs in
+// the page, injected by capture.js, not in this worker.
+importScripts("capture_meta.js", "capture.js", "capture_bridge.js");
+importScripts("capture_form.js", "capture_batch.js", "capture_queue.js", "capture_actions.js");
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
@@ -84,6 +96,7 @@ const SENSITIVE_COMMANDS = new Set([
   "scroll", "keyboard_type", "keyboard_press", "wait_element", "race",
   "focus", "html", "property", "scroll_into_view", "insert_text",
   "get_rect", "set_files", "query_count", "query_text", "fetch_image_base64",
+  "page_capture",
 ]);
 
 async function isOriginAuthorized(tabId) {
@@ -337,6 +350,11 @@ async function doConnect() {
     console.log("[monoagent] Connected to backend at", url);
     broadcastStatus();
     startKeepAlive();
+    MonoCaptureBridge.flush()
+      .catch((err) => console.error("[monoagent] capture queue flush failed:", err.message))
+      // The badge counts what is still waiting, so it has to be repainted
+      // once the flush has emptied whatever it could (CLIP-08).
+      .finally(() => MonoCaptureQueue.paintBadge(chrome.storage.local).catch(() => {}));
   };
 
   ws.onmessage = (event) => {
@@ -419,6 +437,10 @@ async function handleCommand(cmd) {
   // Merge tabId into params so all handlers can access it uniformly.
   const params = { ...cmd.params, tabId: cmd.tabId || cmd.params?.tabId };
   try {
+    if (cmd.type === "page_capture" && !params.tabId) {
+      const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      params.tabId = active?.id;
+    }
     if (SENSITIVE_COMMANDS.has(cmd.type) && !(await isOriginAuthorized(params.tabId))) {
       throw new Error(
         `Site not authorized for "${cmd.type}" — grant access to this tab's site in the ` +
@@ -480,6 +502,12 @@ async function handleCommand(cmd) {
       case "eval_cdp":
         result = await evalCDP(params);
         break;
+      case "page_capture":
+        // A capture envelope can span several frames (see
+        // MonoCapture.planMessages), so this path writes its own response
+        // rather than falling through to the single-frame sendResponse.
+        await MonoCaptureBridge.handleCommand(id, params);
+        return;
       case "get_rect":
       case "set_files":
       case "query_count":
@@ -949,6 +977,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // ---------------------------------------------------------------------------
 // Initialization — runs every time the service worker starts
 // ---------------------------------------------------------------------------
+
+MonoCaptureBridge.install({
+  send: (message) => {
+    if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message));
+  },
+  isConnected: () => ws?.readyState === WebSocket.OPEN,
+  attach: (tabId) => ensureDebuggerAttached({ tabId }, tabId),
+  cdp: (tabId, method, params) => debuggerSend({ tabId }, tabId, method, params),
+  detach: (tabId) => detachDebugger(tabId),
+});
+
+// Everything the popup asks for (CLIP-06/07/08). It captures through
+// MonoCaptureBridge's context, so it needs only the socket from here.
+MonoCaptureActions.install({
+  send: (message) => {
+    if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message));
+  },
+  isConnected: () => ws?.readyState === WebSocket.OPEN,
+  storage: chrome.storage.local,
+});
 
 ensureAlarm();
 fastRetryConnect(); // calls connect() once, then schedules retries

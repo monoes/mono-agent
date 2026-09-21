@@ -1,0 +1,64 @@
+<!-- A listing page, page 1 of 2. Four repeating cards inside a grid, each
+     with a link, an image, a heading, a price, a date and a nested repeating
+     tag list — the nested list is there on purpose: clicking a tag must
+     still infer the card as the item, not the tag.
+
+     data-mono-pick marks the element the user clicked. In the extension that
+     attribute is set on the live element just before the snapshot and
+     removed immediately after; in a fixture it is just written in. -->
+<!doctype html>
+<html lang="en"><head><title>Salvage lot 14 — Coastal Auctions</title></head>
+<body>
+<header><nav><a href="/">Home</a><a href="/lots">Lots</a></nav></header>
+<main>
+  <h1>Salvage lot 14</h1>
+  <ul class="grid" id="results">
+
+    <li class="card">
+      <a class="card-link" href="/lot/14/brass-lamp">
+        <img class="thumb" src="/img/lamp.jpg" alt="Brass lamp">
+        <h3 class="name" data-mono-pick="1">Brass lamp</h3>
+      </a>
+      <span class="price">£42.00</span>
+      <time class="listed" datetime="2024-03-02">2 Mar 2024</time>
+      <ul class="tags"><li class="tag">brass</li><li class="tag">lighting</li></ul>
+    </li>
+
+    <li class="card">
+      <a class="card-link" href="/lot/14/fog-bell">
+        <img class="thumb" src="/img/bell.jpg" alt="Fog bell">
+        <h3 class="name">Fog bell, 1931</h3>
+      </a>
+      <span class="price">£310.00</span>
+      <time class="listed" datetime="2024-03-02">2 Mar 2024</time>
+      <ul class="tags"><li class="tag">bronze</li><li class="tag">signalling</li></ul>
+    </li>
+
+    <li class="card featured">
+      <a class="card-link" href="/lot/14/keepers-ledger">
+        <img class="thumb" src="/img/ledger.jpg" alt="Keeper's ledger">
+        <h3 class="name">Keeper's ledger, 1931–1971</h3>
+      </a>
+      <span class="price">£1,250.00</span>
+      <time class="listed" datetime="2024-02-28">28 Feb 2024</time>
+      <ul class="tags"><li class="tag">paper</li><li class="tag">archive</li></ul>
+    </li>
+
+    <li class="card">
+      <a class="card-link" href="/lot/14/oil-can">
+        <img class="thumb" src="/img/can.jpg" alt="Oil can">
+        <h3 class="name">Oil can</h3>
+      </a>
+      <span class="price">£8.50</span>
+      <time class="listed" datetime="2024-02-28">28 Feb 2024</time>
+      <ul class="tags"><li class="tag">tin</li></ul>
+    </li>
+
+  </ul>
+
+  <nav class="pagination" aria-label="Pagination">
+    <span class="current">1</span>
+    <a href="/lots/14?page=2" rel="next">Next ›</a>
+  </nav>
+</main>
+</body></html>

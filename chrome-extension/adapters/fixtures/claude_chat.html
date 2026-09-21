@@ -1,0 +1,33 @@
+<!-- Trimmed from a claude.ai/chat/<uuid> conversation. Different markup from
+     ChatGPT entirely: the human turn is marked with a data-testid and the
+     assistant turn only by a class name, so the two roles have to be found
+     in one ordered pass rather than two queries. -->
+<!doctype html>
+<html lang="en"><head><title>Survival bias in logbooks \ Claude</title></head>
+<body><div class="flex-1 flex flex-col">
+
+  <div data-test-render-count="1">
+    <div class="group relative inline-flex" data-testid="user-message">
+      <p class="whitespace-pre-wrap">Summarise the survival-bias argument in two sentences.</p>
+    </div>
+  </div>
+
+  <div data-test-render-count="1">
+    <div class="font-claude-message relative leading-[1.65rem]">
+      <div class="grid-cols-1 grid gap-2.5">
+        <p>Archival climate series are built from the logbooks that happened to survive, and survival
+        is not random: it tracks when a station was decommissioned.</p>
+        <pre class="code-block__code"><code class="language-go">bias := calm / total
+fmt.Println(bias)</code></pre>
+        <p>So an uncorrected series over-represents calm decades.</p>
+      </div>
+    </div>
+  </div>
+
+  <div data-test-render-count="1">
+    <div class="group relative inline-flex" data-testid="user-message">
+      <p class="whitespace-pre-wrap">Good. Cite one paper.</p>
+    </div>
+  </div>
+
+</div></body></html>
