@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -29,13 +30,25 @@ import (
 // a relay, and a relay that parsed CDP would be a second implementation to
 // keep in sync.
 //
-// Two things it does enforce, because nothing downstream can:
+// One thing it enforces, and it is the only boundary here: the same token
+// as /monoagent/relay. This socket reaches a browser the user is signed
+// into; it is not a public port, and the token is what keeps it off one.
 //
-//   - the same token as /monoagent/relay. This socket reaches a browser the
-//     user is signed into; it is not a public port.
-//   - only the three cdp_* command types. The general relay already exists
-//     for everything else, with its own audit trail; this endpoint must not
-//     quietly become a second, unaudited path to get_cookies and eval.
+// It also accepts only the three cdp_* envelope types — be precise about
+// what that buys, because the shape of the check invites a stronger reading
+// than it deserves. It keeps this endpoint from becoming a second path to
+// the extension's OWN commands (get_cookies, eval, page_capture), which
+// have their own handling and audit trail on the general relay. It does
+// NOT narrow what CDP itself can do: the extension side forwards whatever
+// `method` an envelope names, with no allowlist (chrome-extension/
+// cdp_proxy.js), so anything holding the token can call Runtime.evaluate or
+// Network.getAllCookies through here and get exactly what it asked for —
+// which is by design, since the point is to run monobrowse's instruments
+// unmodified, and those speak the whole protocol.
+//
+// So: a routing gate, not a confinement boundary. Anyone reasoning about
+// what a compromised relay client can reach should reason about the token
+// and about chrome.debugger, not about this list of three.
 const (
 	// CmdCdp carries one CDP command through chrome.debugger.sendCommand.
 	CmdCdp = "cdp"
@@ -67,14 +80,53 @@ const cdpCommandTimeout = 60 * time.Second
 // keeps a chatty or hostile client from fanning out without limit.
 const maxInflightCdpCommands = 64
 
+// cdpWriteTimeout bounds one write to a relay client. Without it a client
+// that has stopped reading its socket parks whichever goroutine is writing
+// to it for as long as it stays connected: loopback TCP has no timeout of
+// its own, so a SIGSTOPped monobrowse blocks forever rather than failing.
+const cdpWriteTimeout = 10 * time.Second
+
+// cdpCloseTimeout bounds the courtesy close frame sent to a client being
+// dropped. Short, and skipped entirely if a write is already in flight —
+// telling a wedged client why it is going is worth a moment, never a wait.
+const cdpCloseTimeout = time.Second
+
+// cdpEventBacklog and cdpEventBacklogBytes bound what one client may have
+// queued but unwritten. Both: a trace chunk is megabytes and a console
+// message is bytes, so a frame count alone would let one client hold
+// gigabytes (maxMessageSize is 32MB), and a byte budget alone would let a
+// flood of tiny events queue without limit.
+const (
+	cdpEventBacklog      = 256
+	cdpEventBacklogBytes = 8 << 20
+)
+
 // cdpClient is one connected consumer of the relay — in practice a
 // monobrowse CdpClient behind its bridge transport.
 type cdpClient struct {
 	conn    *websocket.Conn
 	writeMu sync.Mutex
+	// events is this client's backlog: fanoutCdpEvent hands frames over
+	// without ever blocking, and writeEvents puts them on the socket. The
+	// queue exists so that the extension read loop — the only thing
+	// draining the extension connection — is never the goroutine waiting
+	// on a consumer.
+	events   chan []byte
+	queued   atomic.Int64
+	done     chan struct{}
+	doneOnce sync.Once
 	// tabs this client attached, so they can be detached if it vanishes.
 	tabsMu sync.Mutex
 	tabs   map[int]struct{}
+}
+
+func newCdpClient(conn *websocket.Conn) *cdpClient {
+	return &cdpClient{
+		conn:   conn,
+		events: make(chan []byte, cdpEventBacklog),
+		done:   make(chan struct{}),
+		tabs:   make(map[int]struct{}),
+	}
 }
 
 func (c *cdpClient) write(v any) error {
@@ -82,9 +134,80 @@ func (c *cdpClient) write(v any) error {
 	if err != nil {
 		return err
 	}
+	return c.writeFrame(data)
+}
+
+// writeFrame is the only path to the socket, and every write through it is
+// bounded by cdpWriteTimeout.
+func (c *cdpClient) writeFrame(data []byte) error {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
+	if err := c.conn.SetWriteDeadline(time.Now().Add(cdpWriteTimeout)); err != nil {
+		return err
+	}
 	return c.conn.WriteMessage(websocket.TextMessage, data)
+}
+
+// queueEvent hands one already-marshalled event frame to this client's
+// writer. It never blocks; false means the backlog is full.
+func (c *cdpClient) queueEvent(frame []byte) bool {
+	select {
+	case <-c.done:
+		return true // already going away; not a backlog problem
+	default:
+	}
+	size := int64(len(frame))
+	if c.queued.Add(size) > cdpEventBacklogBytes {
+		c.queued.Add(-size)
+		return false
+	}
+	select {
+	case c.events <- frame:
+		return true
+	default:
+		c.queued.Add(-size)
+		return false
+	}
+}
+
+// writeEvents drains the backlog onto the socket, on its own goroutine, so
+// that a slow consumer costs this client and nothing else. A failed write
+// means the client is gone or wedged past cdpWriteTimeout; either way it is
+// dropped and its read loop unwinds.
+func (c *cdpClient) writeEvents() {
+	for {
+		select {
+		case <-c.done:
+			return
+		case frame := <-c.events:
+			c.queued.Add(-int64(len(frame)))
+			if err := c.writeFrame(frame); err != nil {
+				c.drop("")
+				return
+			}
+		}
+	}
+}
+
+// drop disconnects this client. Callable from the extension read loop
+// (fanoutCdpEvent does) because it never waits: the close frame and the
+// socket close happen on their own goroutine, and the close frame is
+// skipped rather than queued behind a write already stuck on the socket.
+func (c *cdpClient) drop(reason string) {
+	c.doneOnce.Do(func() {
+		close(c.done)
+		go func() {
+			if reason != "" && c.writeMu.TryLock() {
+				_ = c.conn.SetWriteDeadline(time.Now().Add(cdpCloseTimeout))
+				_ = c.conn.WriteMessage(websocket.CloseMessage,
+					websocket.FormatCloseMessage(websocket.CloseTryAgainLater, reason))
+				c.writeMu.Unlock()
+			}
+			// Unblocks any write still parked on this socket, which is what
+			// lets the client's read loop return and clean up.
+			_ = c.conn.Close()
+		}()
+	})
 }
 
 func (c *cdpClient) rememberTab(tabID int) {
@@ -149,13 +272,30 @@ func (s *Server) fanoutCdpEvent(resp *Response) {
 	if len(clients) == 0 {
 		return
 	}
-	frame := map[string]any{"type": CdpEventType, "data": resp.Data}
+	// Marshalled once, queued per client, and never written from here: this
+	// runs on the extension read loop, and dispatch's invariant is that
+	// nothing on that loop may wait on a receiver. It used to write each
+	// client's socket synchronously, so one consumer that stopped reading
+	// stopped the whole bridge — captures, command replies and every other
+	// client with it.
+	frame, err := json.Marshal(map[string]any{"type": CdpEventType, "data": resp.Data})
+	if err != nil {
+		s.logger.Debug().Err(err).Msg("cdp event marshal failed")
+		return
+	}
 	for _, c := range clients {
-		if err := c.write(frame); err != nil {
-			// A client that cannot be written to is going away; its read
-			// loop will clean it up.
-			s.logger.Debug().Err(err).Msg("cdp event write failed")
+		if c.queueEvent(frame) {
+			continue
 		}
+		// Backlog full. The choice here is between dropping events and
+		// dropping the client, and it goes to the client: every instrument
+		// on the far side (HAR, trace, console, coverage) reconstructs
+		// state from a complete event stream, so a silent hole in it does
+		// not degrade the answer, it makes a wrong answer look right. A
+		// disconnect is the one outcome the client cannot mistake for a
+		// quiet page, and it can reconnect and re-attach to resync.
+		s.logger.Warn().Msg("cdp relay client fell behind; disconnecting it")
+		c.drop("cdp relay: event backlog overflowed, stream truncated")
 	}
 }
 
@@ -176,12 +316,14 @@ func (s *Server) handleCdpSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	conn.SetReadLimit(maxMessageSize)
 
-	client := &cdpClient{conn: conn, tabs: make(map[int]struct{})}
+	client := newCdpClient(conn)
 	s.addCdpClient(client)
+	go client.writeEvents()
 	s.logger.Debug().Msg("cdp relay client connected")
 
 	defer func() {
 		s.removeCdpClient(client)
+		client.drop("") // stops writeEvents and closes the socket
 		_ = conn.Close()
 		// Detach whatever this client left attached. Chrome shows the user
 		// a banner for every attached debuggee; a CLI that crashed mid-run

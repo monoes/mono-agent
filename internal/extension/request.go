@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -281,14 +282,18 @@ func (s *Server) serveRequest(msg []byte) {
 	}
 
 	go func() {
+		// The slot is released when runHandler returns, which it does at
+		// the deadline whatever the handler is still doing. A wedged
+		// handler costs one leaked goroutine; it does not cost a slot.
 		defer func() { <-s.requestSem() }()
 		defer func() {
-			// A handler panic must not take the whole server down, and
-			// must still settle the request — an extension waiting on a
-			// reply that never comes is the one failure mode this channel
-			// cannot recover from on its own.
+			// A panic in the dispatch machinery itself must not take the
+			// server down, and must still settle the request — an
+			// extension waiting on a reply that never comes is the one
+			// failure mode this channel cannot recover from on its own.
+			// The handler's own panic is caught beside it, in runHandler.
 			if r := recover(); r != nil {
-				s.logger.Error().Interface("panic", r).Str("method", req.Method).Msg("request handler panicked")
+				s.logger.Error().Interface("panic", r).Str("method", req.Method).Msg("request dispatch panicked")
 				s.replyError(req.ID, CodeInternal, fmt.Errorf("handler panicked"))
 			}
 		}()
@@ -296,17 +301,45 @@ func (s *Server) serveRequest(msg []byte) {
 	}()
 }
 
+// handlerOutcome is one handler's return, carried off its own goroutine.
+type handlerOutcome struct {
+	data any
+	err  error
+}
+
 // runHandler applies the deadline and turns the handler's return into
 // exactly one settling frame.
+//
+// The handler runs on its own goroutine and runHandler races it against the
+// deadline, because a context is a request and not a guarantee: a handler
+// that never selects on ctx.Done() — parked on a channel, or on an exec
+// whose stdout pipe some grandchild still holds open — would otherwise
+// never settle its request and never give its in-flight slot back. Eight of
+// those and the channel is busy for the life of the process.
+//
+// What this does not do is stop the handler: Go has no way to. A wedged
+// handler leaks one goroutine, which is the cheaper of the two failures and
+// the one the extension can recover from.
 func (s *Server) runHandler(handler RequestHandler, req *Request) {
 	base := s.ctx
 	if base == nil {
 		base = context.Background()
 	}
-	ctx, cancel := context.WithTimeout(base, requestTimeout)
+	timeout := s.requestDeadline()
+	// Cancelling on the way out is what gives a handler that DOES watch its
+	// context — every exec in knowledge.go — the signal to stop working on
+	// an answer nobody is waiting for any more.
+	ctx, cancel := context.WithTimeout(base, timeout)
 	defer cancel()
 
+	var settled atomic.Bool
 	progress := func(stage, detail string) {
+		// A handler that outlived its deadline is writing for a request the
+		// extension has already been told about; its frames are dropped
+		// rather than sent under an id nobody is holding.
+		if settled.Load() {
+			return
+		}
 		s.writeReply(&Reply{
 			Kind:     KindReply,
 			ID:       req.ID,
@@ -314,19 +347,61 @@ func (s *Server) runHandler(handler RequestHandler, req *Request) {
 		})
 	}
 
-	data, err := handler(ctx, req, progress)
-	if err != nil {
-		code := CodeInternal
-		var re *RequestError
-		if asRequestError(err, &re) {
-			code = re.Code
-		} else if ctx.Err() != nil {
-			code = CodeTimeout
+	// Buffered: nothing reads this channel once the deadline has fired, and
+	// a late handler must not block on the send forever.
+	done := make(chan handlerOutcome, 1)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				s.logger.Error().Interface("panic", r).Str("method", req.Method).Msg("request handler panicked")
+				done <- handlerOutcome{err: &RequestError{
+					Code: CodeInternal, Err: fmt.Errorf("handler panicked")}}
+			}
+		}()
+		data, err := handler(ctx, req, progress)
+		done <- handlerOutcome{data: data, err: err}
+	}()
+
+	select {
+	case out := <-done:
+		settled.Store(true)
+		if out.err != nil {
+			code := CodeInternal
+			var re *RequestError
+			if asRequestError(out.err, &re) {
+				code = re.Code
+			} else if ctx.Err() != nil {
+				code = CodeTimeout
+			}
+			s.replyError(req.ID, code, out.err)
+			return
 		}
-		s.replyError(req.ID, code, err)
-		return
+		s.writeReply(&Reply{Kind: KindReply, ID: req.ID, OK: true, Data: out.data})
+	case <-ctx.Done():
+		settled.Store(true)
+		s.logger.Warn().Str("method", req.Method).Str("id", req.ID).
+			Dur("after", timeout).Msg("request handler outlived its deadline")
+		s.replyError(req.ID, CodeTimeout,
+			fmt.Errorf("%s did not answer within %s", req.Method, timeout))
 	}
-	s.writeReply(&Reply{Kind: KindReply, ID: req.ID, OK: true, Data: data})
+}
+
+// SetRequestTimeout overrides how long a handler gets before its request is
+// settled as a timeout. Tests call it, so proving the deadline holds does
+// not cost requestTimeout of wall clock; production leaves it alone.
+func (s *Server) SetRequestTimeout(d time.Duration) {
+	s.handlerMu.Lock()
+	defer s.handlerMu.Unlock()
+	s.requestTimeout = d
+}
+
+func (s *Server) requestDeadline() time.Duration {
+	s.handlerMu.Lock()
+	defer s.handlerMu.Unlock()
+	if s.requestTimeout > 0 {
+		return s.requestTimeout
+	}
+	return requestTimeout
 }
 
 // asRequestError is errors.As specialised to *RequestError, kept local so
@@ -386,6 +461,9 @@ func (s *Server) requestSem() chan struct{} {
 type handlerState struct {
 	handlers  map[string]RequestHandler
 	handlerMu sync.Mutex
-	sem       chan struct{}
-	semOnce   sync.Once
+	// requestTimeout overrides the requestTimeout constant; zero means the
+	// constant. Guarded by handlerMu. See SetRequestTimeout.
+	requestTimeout time.Duration
+	sem            chan struct{}
+	semOnce        sync.Once
 }

@@ -2,7 +2,6 @@ package crawlsite
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -19,6 +18,17 @@ const (
 	DefaultMaxPages = 50
 	DefaultDelay    = 1 * time.Second
 	DefaultTimeout  = 30 * time.Second
+	// DefaultMaxCrawlDelay caps what a robots.txt can ask a crawl to wait.
+	// A site can slow this crawler down; it cannot park it. "Crawl-delay:
+	// 86400" is a day per page, and the crawl it stops is one a person is
+	// waiting on.
+	DefaultMaxCrawlDelay = 60 * time.Second
+	// RequestBudgetFactor turns MaxPages into a request budget when the
+	// caller gives no MaxRequests. Pages that are skipped, duplicated or
+	// unreadable still cost the site a request, so the budget has to be
+	// larger than the page cap — but it has to exist, or one canonical URL
+	// repeated across a generated site makes the frontier unbounded.
+	RequestBudgetFactor = 20
 )
 
 // Sink is where finished envelopes go. *capture.Writer satisfies it; tests
@@ -54,6 +64,18 @@ type Options struct {
 	IncludeSubdomains bool
 	// RespectRobots honours robots.txt. Default true; see the flag's help.
 	RespectRobots bool
+	// AllowPrivateHosts lets the crawl reach loopback, link-local and
+	// RFC1918 addresses. Off by default: a crawl walks URLs a page it does
+	// not control handed it, and the interesting target on a private
+	// address is never the one the operator meant. Turn it on to crawl an
+	// intranet, or a test server.
+	AllowPrivateHosts bool
+	// MaxRequests caps HTTP requests, not saves. MaxPages bounds the
+	// output; this bounds the work. Zero derives one from MaxPages.
+	MaxRequests int
+	// MaxCrawlDelay caps the Crawl-delay a robots.txt can impose. Zero
+	// means DefaultMaxCrawlDelay.
+	MaxCrawlDelay time.Duration
 	// Collection and Tags are written into every envelope's meta.
 	Collection string
 	Tags       []string
@@ -63,7 +85,8 @@ type Options struct {
 	// Client is the HTTP client; nil builds one from Timeout.
 	Client *http.Client
 	// Now and Sleep exist so a test can run a crawl with a delay without
-	// waiting for it.
+	// waiting for it. A nil Sleep waits for real, and that wait ends early
+	// on a cancelled context; a Sleep supplied here is trusted to return.
 	Now   func() time.Time
 	Sleep func(time.Duration)
 	// OnEvent, if set, is called as the crawl progresses.
@@ -134,6 +157,9 @@ type Crawler struct {
 	savedKeys map[string]bool
 	lastHit   map[string]time.Time
 	seeds     []item
+	// requests counts every page request attempted, which is what the
+	// crawl's budget is actually spent on.
+	requests int
 }
 
 type item struct {
@@ -157,6 +183,12 @@ func New(opts Options) (*Crawler, error) {
 	if opts.MaxPages <= 0 {
 		opts.MaxPages = DefaultMaxPages
 	}
+	if opts.MaxRequests <= 0 {
+		opts.MaxRequests = opts.MaxPages * RequestBudgetFactor
+	}
+	if opts.MaxCrawlDelay <= 0 {
+		opts.MaxCrawlDelay = DefaultMaxCrawlDelay
+	}
 	if opts.Delay < 0 {
 		return nil, fmt.Errorf("crawlsite: delay must not be negative, got %s", opts.Delay)
 	}
@@ -172,22 +204,26 @@ func New(opts Options) (*Crawler, error) {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
-	if opts.Sleep == nil {
-		opts.Sleep = time.Sleep
+	base := opts.Client
+	if base == nil {
+		base = &http.Client{Timeout: opts.Timeout}
 	}
-	client := opts.Client
-	if client == nil {
-		client = &http.Client{Timeout: opts.Timeout}
-	}
+	// A copy: the redirect policy and the address guard belong to this
+	// crawl, and the caller's client is the caller's.
+	client := *base
 	c := &Crawler{
 		opts:      opts,
-		client:    client,
+		client:    &client,
 		scope:     newScope(opts.IncludeSubdomains),
 		seen:      map[string]bool{},
 		savedKeys: map[string]bool{},
 		lastHit:   map[string]time.Time{},
 	}
-	c.robots = newRobotsCache(client, opts.UserAgent)
+	client.CheckRedirect = c.checkRedirect
+	if !opts.AllowPrivateHosts {
+		client.Transport = guardTransport(client.Transport, opts.Timeout)
+	}
+	c.robots = newRobotsCache(c.client, opts.UserAgent)
 	for _, h := range opts.AllowHosts {
 		c.scope.add(h)
 	}
@@ -227,17 +263,34 @@ func (c *Crawler) Run(ctx context.Context) (*Summary, error) {
 			sum.Truncated = true
 			break
 		}
+		// MaxPages bounds what is written, which is not the same as what is
+		// done: a site where every page declares one canonical URL saves
+		// once and keeps handing out links forever. The budget is spent on
+		// requests, so a crawl that saves nothing still ends.
+		if c.requests >= c.opts.MaxRequests {
+			sum.Truncated = true
+			break
+		}
 		it := queue[0]
 		queue = queue[1:]
 
 		links, err := c.visit(ctx, it, sum)
 		if err != nil {
+			if ctx.Err() != nil {
+				return sum, ctx.Err()
+			}
 			continue
 		}
 		if it.depth >= c.opts.MaxDepth {
 			continue
 		}
 		for _, link := range links {
+			if len(c.seen) >= c.opts.MaxRequests {
+				// The frontier can never usefully outgrow the budget that
+				// would have to be spent to walk it.
+				sum.Truncated = true
+				break
+			}
 			norm, nerr := normalizeURL(link)
 			if nerr != nil || c.seen[norm] {
 				continue
@@ -260,26 +313,34 @@ func (c *Crawler) visit(ctx context.Context, it item, sum *Summary) ([]string, e
 	if c.opts.RespectRobots {
 		rules := c.robots.rulesFor(ctx, it.url)
 		u, _ := url.Parse(it.url)
-		if u != nil && !rules.allowed(u.EscapedPath()) {
+		if u != nil && !rules.allowed(robotsTarget(u)) {
 			c.note(sum, &sum.Skipped, it, "disallowed by robots.txt")
 			return nil, errSkipped
 		}
-		if rules.crawlDelay > 0 {
-			c.waitFor(hostOf(it.url), rules.crawlDelay)
+		if d := rules.crawlDelay; d > 0 {
+			if d > c.opts.MaxCrawlDelay {
+				d = c.opts.MaxCrawlDelay
+			}
+			if err := c.waitFor(ctx, hostOf(it.url), d); err != nil {
+				return nil, err
+			}
 		}
 	}
-	c.waitFor(hostOf(it.url), c.opts.Delay)
+	if err := c.waitFor(ctx, hostOf(it.url), c.opts.Delay); err != nil {
+		return nil, err
+	}
 	// Marked before the request, not after: a request that fails still
 	// cost the site a connection, and the next one waits for it.
 	c.markHit(hostOf(it.url))
 
+	c.requests++
 	f, err := c.fetch(ctx, it.url)
 	if err != nil {
 		if errors.Is(err, errNotHTML) {
 			c.note(sum, &sum.Skipped, it, err.Error())
 			return nil, errSkipped
 		}
-		c.note(sum, &sum.Failed, it, err.Error())
+		c.noteDetail(sum, &sum.Failed, it, summarize(err), err.Error())
 		return nil, err
 	}
 	sum.Fetched++
@@ -289,6 +350,16 @@ func (c *Crawler) visit(ctx context.Context, it item, sum *Summary) ([]string, e
 	if f.Normalized != it.url && !c.scope.allows(hostOf(f.Normalized)) {
 		c.note(sum, &sum.Skipped, it, "redirected out of scope to "+f.Normalized)
 		return nil, errSkipped
+	}
+	// robots.txt was asked about the URL that was queued. A redirect makes
+	// the page that arrived a different URL, under rules that may be a
+	// different host's, and it is the page that arrived which gets saved.
+	if c.opts.RespectRobots && f.Normalized != it.url {
+		rules := c.robots.rulesFor(ctx, f.Normalized)
+		if !rules.allowed(robotsTarget(f.URL)) {
+			c.note(sum, &sum.Skipped, it, "redirected to "+f.Normalized+", disallowed by robots.txt")
+			return nil, errSkipped
+		}
 	}
 
 	ex, err := extractPage(f.Body, f.URL)
@@ -327,103 +398,71 @@ func (c *Crawler) visit(ctx context.Context, it item, sum *Summary) ([]string, e
 // errSkipped ends a visit without recording a failure.
 var errSkipped = errors.New("skipped")
 
-// envelope maps one fetched page onto the capture envelope contract. The
-// artifacts are the bytes the server sent and the Markdown that gets
-// chunked; everything else is provenance.
-func (c *Crawler) envelope(f *fetched, ex *extracted, it item, canonical string) *capture.Envelope {
-	meta := capture.Meta{
-		URL:          f.Normalized,
-		CanonicalURL: canonical,
-		Title:        ex.Title,
-		CapturedAt:   c.opts.Now().UTC().Format(time.RFC3339),
-		HTTPStatus:   f.Status,
-		Favicon:      ex.Favicon,
-		Tags:         append([]string{}, c.opts.Tags...),
-		Source:       capture.SourceCrawl,
-	}
-	if ex.Byline != "" {
-		byline := ex.Byline
-		meta.Byline = &byline
-	}
-	if ex.PublishedAt != "" {
-		published := ex.PublishedAt
-		meta.PublishedAt = &published
-	}
-	if c.opts.Collection != "" {
-		collection := c.opts.Collection
-		meta.Collection = &collection
-	}
-	meta.Extra = crawlExtra(f, ex, it)
-
-	env := &capture.Envelope{
-		Meta: meta,
-		Artifacts: map[string]capture.Artifact{
-			capture.ArtifactHTML:     capture.Inline(f.Body),
-			capture.ArtifactReadable: capture.Inline([]byte(ex.Markdown)),
-		},
-	}
-	if f.Truncated {
-		env.Warnings = append(env.Warnings,
-			fmt.Sprintf("%s: page exceeded the %d byte limit and was truncated", f.Normalized, c.opts.MaxBytes))
-	}
-	return env
-}
-
-// crawlExtra is the provenance a crawl knows and the envelope schema has no
-// field for. It rides in meta.json verbatim rather than being dropped: how
-// a document was reached is part of how much it should be trusted.
-func crawlExtra(f *fetched, ex *extracted, it item) map[string]json.RawMessage {
-	extra := map[string]json.RawMessage{}
-	put := func(key string, value any) {
-		if b, err := json.Marshal(value); err == nil {
-			extra[key] = b
-		}
-	}
-	if ex.Description != "" {
-		put("description", ex.Description)
-	}
-	if ex.Lang != "" {
-		put("lang", ex.Lang)
-	}
-	if ex.SiteName != "" {
-		put("siteName", ex.SiteName)
-	}
-	put("crawl", map[string]any{
-		"seed":        it.seed,
-		"depth":       it.depth,
-		"referrer":    it.referrer,
-		"contentType": f.ContentType,
-		"htmlBytes":   len(f.Body),
-		"truncated":   f.Truncated,
-	})
-	return extra
-}
-
 // waitFor holds off until at least d has passed since the last request to
 // host. Sequential and per-host: the simplest thing that is actually
 // polite, and the one whose behaviour a site operator can predict.
-func (c *Crawler) waitFor(host string, d time.Duration) {
+func (c *Crawler) waitFor(ctx context.Context, host string, d time.Duration) error {
 	if d <= 0 {
-		return
+		return nil
 	}
 	last, ok := c.lastHit[host]
 	if !ok {
-		return
+		return nil
 	}
-	if wait := d - c.opts.Now().Sub(last); wait > 0 {
+	wait := d - c.opts.Now().Sub(last)
+	if wait <= 0 {
+		return nil
+	}
+	if c.opts.Sleep != nil {
 		c.opts.Sleep(wait)
+		return ctx.Err()
+	}
+	// time.Sleep takes no context, so a crawl waiting out a delay could
+	// not be interrupted at all — and the delay is a number the site
+	// chose. This wait ends when the caller gives up.
+	t := time.NewTimer(wait)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
 	}
 }
 
 func (c *Crawler) markHit(host string) { c.lastHit[host] = c.opts.Now() }
 
+// summarizer is an error that says less in a Summary than it says to the
+// operator. The Summary is serialized and can travel — into a report, a
+// ticket, a dashboard — and a crawl is walked through URLs someone else
+// chose. What a hostname resolved to is the operator's business and not
+// the summary reader's: quoting it back confirms, to whoever induced the
+// crawl, that a guessed internal name exists and what it answers on.
+type summarizer interface{ Summary() string }
+
+// summarize is the reason an error contributes to the Summary.
+func summarize(err error) string {
+	var s summarizer
+	if errors.As(err, &s) {
+		return s.Summary()
+	}
+	return err.Error()
+}
+
+// note records one URL the crawl did not save. The Summary gets the flat
+// reason; the event, which is what the operator sees on their own
+// terminal, gets the whole error.
 func (c *Crawler) note(sum *Summary, list *[]Note, it item, reason string) {
+	c.noteDetail(sum, list, it, reason, reason)
+}
+
+func (c *Crawler) noteDetail(sum *Summary, list *[]Note, it item, reason, detail string) {
 	*list = append(*list, Note{URL: it.url, Reason: reason})
 	kind := EventSkipped
 	if list == &sum.Failed {
 		kind = EventFailed
 	}
-	c.emit(Event{Kind: kind, URL: it.url, Depth: it.depth, Reason: reason})
+	c.emit(Event{Kind: kind, URL: it.url, Depth: it.depth, Reason: detail})
 }
 
 func (c *Crawler) emit(e Event) {

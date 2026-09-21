@@ -31,6 +31,7 @@ func newCrawlCaptureCmd(cfg *globalConfig) *cobra.Command {
 		allowHosts        []string
 		includeSubdomains bool
 		robots            bool
+		allowPrivateHosts bool
 		collection        string
 		tags              []string
 		out               string
@@ -90,6 +91,7 @@ func newCrawlCaptureCmd(cfg *globalConfig) *cobra.Command {
 				AllowHosts:        allowHosts,
 				IncludeSubdomains: includeSubdomains,
 				RespectRobots:     robots,
+				AllowPrivateHosts: allowPrivateHosts,
 				Collection:        collection,
 				Tags:              tags,
 				Sink:              &capture.Writer{Inbox: inbox},
@@ -137,6 +139,12 @@ func newCrawlCaptureCmd(cfg *globalConfig) *cobra.Command {
 	cmd.Flags().StringSliceVar(&allowHosts, "allow-host", nil, "Extra host the crawl may follow links into (repeatable)")
 	cmd.Flags().BoolVar(&includeSubdomains, "include-subdomains", false, "Also follow links into subdomains of allowed hosts")
 	cmd.Flags().BoolVar(&robots, "robots", true, "Honour robots.txt")
+	// Default false: a crawl reaches loopback, link-local and private-network
+	// addresses only on purpose. Without this an in-scope hostname that
+	// resolves to a private address — an intranet name, or DNS rebinding —
+	// turns a crawl of a hostile site into a request against this machine's
+	// own network.
+	cmd.Flags().BoolVar(&allowPrivateHosts, "allow-private-hosts", false, "Allow crawling loopback, link-local and private-network addresses (an intranet, or a local test server)")
 	cmd.Flags().StringVar(&collection, "collection", "", "Collection to file every capture under")
 	cmd.Flags().StringSliceVar(&tags, "tag", nil, "Tag to store on every capture (repeatable)")
 	cmd.Flags().StringVar(&out, "out", "", "Inbox directory to write into (default: ~/.monomind/inbox)")

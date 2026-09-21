@@ -119,6 +119,14 @@ func TestExtractFallsBackToBodyWithoutProse(t *testing.T) {
 	if !strings.Contains(ex.Markdown, "# Index") {
 		t.Errorf("a page with no prose should still produce a document:\n%s", ex.Markdown)
 	}
+	// The title is prepended whatever happens, so asserting "# Index" says
+	// nothing about the fallback. What the fallback decides is the root the
+	// body is rendered from: without it the whole document is the root, and
+	// the <head> leaks in ("Index[a](…)"). Hence the exact document.
+	if want := "# Index\n\n[a](https://example.com/a)\n"; ex.Markdown != want {
+		t.Errorf("a page with no prose should render its body and nothing else:\ngot  %q\nwant %q",
+			ex.Markdown, want)
+	}
 	if ex.Favicon != "https://example.com/favicon.ico" {
 		t.Errorf("Favicon = %q, want the well-known default", ex.Favicon)
 	}

@@ -22,13 +22,20 @@ import (
 // ---------------------------------------------------------------------------
 
 func (s *Server) handleDocRelated(ctx context.Context, req *Request, _ ProgressFunc) (any, error) {
-	target := identityURL(req.String("url"))
+	target, ok := docTarget(req.String("url"))
 	if target == "" {
 		return nil, &RequestError{Code: CodeUnavailable, Err: fmt.Errorf("doc.related needs a url")}
 	}
+	// The same gate doc.lookup applies, for the same reason: nothing but an
+	// http(s) page can have a capture behind it, and anything else reaching
+	// the argv below is a flag smuggled in over the extension socket rather
+	// than a question about a page. Nothing related is the honest answer.
+	if !ok {
+		return []map[string]any{}, nil
+	}
 	limit := clamp(req.Int("limit", 3), 1, askResultLimit)
-	out, err := s.knowledgeRunner().Run(ctx, "doc", "related", target,
-		"--limit", strconv.Itoa(limit), "--json")
+	out, err := runDoc(ctx, s.knowledgeRunner(), "related",
+		[]string{"--limit", strconv.Itoa(limit), "--json"}, target)
 	if err != nil {
 		return nil, err
 	}
@@ -110,12 +117,21 @@ func (s *Server) handleDocAsk(ctx context.Context, req *Request, progress Progre
 	if query == "" {
 		return nil, &RequestError{Code: CodeUnavailable, Err: fmt.Errorf("doc.ask needs a question")}
 	}
+	// The question is a flag VALUE (`-q <query>`), which `--` cannot protect:
+	// monomind's parser reads a dash-leading value as the next flag and
+	// leaves -q set to true (parser.ts, parseFlag), so `-q --config=…` would
+	// arrive as a --config the search never asked for. A question has no
+	// business starting with a dash, so the dashes go.
+	query = strings.TrimSpace(strings.TrimLeft(query, "-"))
+	if query == "" {
+		return nil, &RequestError{Code: CodeUnavailable, Err: fmt.Errorf("doc.ask needs a question")}
+	}
 	limit := clamp(req.Int("limit", 4), 1, askResultLimit)
 	runner := s.knowledgeRunner()
 
 	progress("searching", query)
-	out, err := runner.Run(ctx, "doc", "search", "-q", query,
-		"--limit", strconv.Itoa(limit), "--json")
+	out, err := runDoc(ctx, runner, "search",
+		[]string{"-q", query, "--limit", strconv.Itoa(limit), "--json"})
 	if err != nil {
 		return nil, err
 	}
@@ -171,16 +187,22 @@ func (s *Server) cite(ctx context.Context, runner Runner, hit searchHit) AskAnsw
 		Site:       hostOf(url),
 	}
 
-	args := []string{"doc", "cite", hit.FilePath, "--json"}
-	if hit.Anchor != "" {
-		args = append(args, "--anchor", hit.Anchor)
+	// The path, anchor and scope come from monomind's own search output —
+	// not from the caller, but not from this process either, and they land
+	// in an argv the same way. Same gate: a flag-shaped anchor or scope is
+	// dropped (the chunk index and the default scope still cite the hit),
+	// and a flag-shaped path fails runDoc outright, which leaves the answer
+	// below quoting the hit's own text.
+	flags := []string{"--json"}
+	if safeArgValue(hit.Anchor) {
+		flags = append(flags, "--anchor", hit.Anchor)
 	} else {
-		args = append(args, "--chunk", strconv.Itoa(hit.ChunkIndex))
+		flags = append(flags, "--chunk", strconv.Itoa(hit.ChunkIndex))
 	}
-	if hit.Scope != "" {
-		args = append(args, "--scope", hit.Scope)
+	if safeArgValue(hit.Scope) {
+		flags = append(flags, "--scope", hit.Scope)
 	}
-	out, err := runner.Run(ctx, args...)
+	out, err := runDoc(ctx, runner, "cite", flags, hit.FilePath)
 	if err != nil {
 		return answer
 	}

@@ -298,25 +298,12 @@ func (w *mdWriter) image(n *html.Node) string {
 }
 
 // resolve makes a document-relative URL absolute, and drops the ones that
-// are not addresses at all.
+// are not addresses of documents. It is the same allowlist the crawl
+// follows links with: a URL that is not safe to fetch is not safe to write
+// into readable.md either, and two policies for one question is how they
+// end up disagreeing.
 func (w *mdWriter) resolve(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" || strings.HasPrefix(raw, "#") {
-		return ""
-	}
-	switch {
-	case strings.HasPrefix(strings.ToLower(raw), "javascript:"),
-		strings.HasPrefix(strings.ToLower(raw), "data:"):
-		return ""
-	}
-	u, err := url.Parse(raw)
-	if err != nil {
-		return ""
-	}
-	if w.base != nil {
-		u = w.base.ResolveReference(u)
-	}
-	return u.String()
+	return resolveURL(w.base, raw, true)
 }
 
 func wrapNonEmpty(s, with string) string {

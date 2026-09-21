@@ -36,6 +36,12 @@ import (
 // the tab has usually moved on.
 const monomindLookupTimeout = 8 * time.Second
 
+// monomindWaitDelay is how long a killed monomind gets to release its
+// stdout before the pipe is closed out from under whatever is still holding
+// it. Long enough that a process exiting normally always gets its output
+// read in full; short enough that a leaked grandchild is a blip.
+const monomindWaitDelay = 2 * time.Second
+
 // askResultLimit caps how many hits an ask is allowed to return, whatever
 // the caller asked for. Each hit costs a `doc cite` exec.
 const askResultLimit = 8
@@ -77,6 +83,14 @@ func (r *cliRunner) Run(ctx context.Context, args ...string) ([]byte, error) {
 	cctx, cancel := context.WithTimeout(ctx, monomindLookupTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(cctx, bin, args...)
+	// Cancelling the context kills monomind; it does not close monomind's
+	// stdout, and Output() waits on the PIPE, not on the process. monomind
+	// is node, node spawns workers, and any grandchild that inherited the
+	// pipe keeps this call blocked for as long as it lives — well past
+	// monomindLookupTimeout, holding one of the request channel's eight
+	// in-flight slots the whole time. WaitDelay is what turns "wait for
+	// whatever still has the pipe" into a bounded wait.
+	cmd.WaitDelay = monomindWaitDelay
 	out, err := cmd.Output()
 	if err != nil {
 		var ee *exec.ExitError
@@ -122,6 +136,59 @@ func (s *Server) knowledgeRunner() Runner {
 		s.knowledge = &cliRunner{}
 	}
 	return s.knowledge
+}
+
+// ---------------------------------------------------------------------------
+// The argv gate
+// ---------------------------------------------------------------------------
+
+// docTarget is the one gate a caller-supplied URL passes through before it
+// can become a word in a `monomind …` argv. It returns the identity URL and
+// whether that URL names a page the capture pipeline could ever have saved.
+//
+// Shared rather than repeated per handler on purpose. doc.related shipped
+// calling identityURL alone — which strips a fragment and nothing else — so
+// `--config=/home/victim/evil.json`, `--help` and `file:///etc/passwd` all
+// reached an exec, while doc.lookup refused exactly the same input two files
+// away. Handlers take a URL from a WebSocket frame; they do not each get to
+// decide what a URL is.
+func docTarget(raw string) (string, bool) {
+	target := identityURL(raw)
+	if target == "" || !isCapturableURL(target) {
+		return target, false
+	}
+	return target, true
+}
+
+// safeArgValue reports whether a string this process did not author may be
+// handed to monomind at all. monomind is a Node CLI with its own flag parser
+// (packages/@monomind/cli/src/parser.ts), not a shell: nothing here can be
+// quoted out of trouble, and a leading dash is the whole attack.
+func safeArgValue(v string) bool {
+	return v != "" && !strings.HasPrefix(v, "-") && !strings.ContainsAny(v, "\x00\n")
+}
+
+// runDoc runs `monomind doc <sub> <flags…> -- <values…>`.
+//
+// Values are everything this process did not author — a URL from the
+// extension, a file path from monomind's own output. They go after `--`,
+// where monomind's parser stops reading flags, and they are checked anyway:
+// `--` fixes ordering, not content, and it cannot protect a flag VALUE like
+// `-q <query>` at all. Callers pass those through safeArgValue themselves.
+func runDoc(ctx context.Context, r Runner, sub string, flags []string, values ...string) ([]byte, error) {
+	args := make([]string, 0, len(flags)+len(values)+3)
+	args = append(args, "doc", sub)
+	args = append(args, flags...)
+	if len(values) > 0 {
+		args = append(args, "--")
+		for _, v := range values {
+			if !safeArgValue(v) {
+				return nil, fmt.Errorf("doc %s: refusing %q as an argument", sub, firstLine(v))
+			}
+			args = append(args, v)
+		}
+	}
+	return r.Run(ctx, args...)
 }
 
 // registerKnowledgeHandlers installs doc.lookup, doc.ask and doc.related.
@@ -177,14 +244,14 @@ type libraryRow struct {
 }
 
 func (s *Server) handleDocLookup(ctx context.Context, req *Request, _ ProgressFunc) (any, error) {
-	target := identityURL(req.String("url"))
+	target, ok := docTarget(req.String("url"))
 	if target == "" {
 		return nil, &RequestError{Code: CodeUnavailable, Err: fmt.Errorf("doc.lookup needs a url")}
 	}
 	// Only pages that can actually have been captured. A chrome:// or
 	// about: tab is not an absence of a capture, it is not a page, and
 	// asking about one is a wasted exec on every new tab.
-	if !isCapturableURL(target) {
+	if !ok {
 		return &SavedDocument{Saved: false, URL: target}, nil
 	}
 	runner := s.knowledgeRunner()
@@ -234,7 +301,7 @@ type urlLookup struct {
 // not existing on an older monomind, which surfaces as help text where JSON
 // was expected — is an error the caller falls back from.
 func lookupViaCommand(ctx context.Context, runner Runner, target string) (*SavedDocument, error) {
-	out, err := runner.Run(ctx, "doc", "lookup", target, "--json", "--highlights")
+	out, err := runDoc(ctx, runner, "lookup", []string{"--json", "--highlights"}, target)
 	if err != nil {
 		return nil, err
 	}
@@ -276,11 +343,11 @@ func lookupViaCommand(ctx context.Context, runner Runner, target string) (*Saved
 // global one has nothing, so the common case stays at one exec.
 func lookupViaLibrary(ctx context.Context, runner Runner, target string) (*SavedDocument, error) {
 	var firstErr error
-	for _, args := range [][]string{
-		{"doc", "list", "--global", "--json"},
-		{"doc", "list", "--json"},
+	for _, flags := range [][]string{
+		{"--global", "--json"},
+		{"--json"},
 	} {
-		out, err := runner.Run(ctx, args...)
+		out, err := runDoc(ctx, runner, "list", flags)
 		if err != nil {
 			if firstErr == nil {
 				firstErr = err

@@ -91,6 +91,8 @@ func runCrawl(t *testing.T, srv *httptest.Server, tune func(*Options)) (*Summary
 		Sink:          &capture.Writer{Inbox: inbox},
 		Client:        srv.Client(),
 		Sleep:         func(time.Duration) {},
+		// The test site is an httptest server on 127.0.0.1.
+		AllowPrivateHosts: true,
 	}
 	if tune != nil {
 		tune(&opts)
@@ -280,23 +282,79 @@ func TestCrawlEnvelopeMatchesTheContract(t *testing.T) {
 	}
 }
 
+// fakeClock advances on every reading, so the elapsed-time arithmetic in
+// waitFor is actually exercised: a frozen clock makes every subtraction a
+// no-op and an unconditional sleep indistinguishable from a polite one.
+type fakeClock struct {
+	now  time.Time
+	tick time.Duration
+}
+
+func (c *fakeClock) Now() time.Time {
+	c.now = c.now.Add(c.tick)
+	return c.now
+}
+
+func (c *fakeClock) Sleep(d time.Duration) { c.now = c.now.Add(d) }
+
 func TestCrawlIsPoliteBetweenRequests(t *testing.T) {
 	srv := testSite(t)
+	clock := &fakeClock{now: time.Unix(0, 0), tick: 250 * time.Millisecond}
 	var slept []time.Duration
-	now := time.Unix(0, 0)
 	_, _ = runCrawl(t, srv, func(o *Options) {
 		o.MaxDepth = 1
 		o.Delay = 2 * time.Second
-		o.Now = func() time.Time { return now }
-		o.Sleep = func(d time.Duration) { slept = append(slept, d) }
+		o.Now = clock.Now
+		o.Sleep = func(d time.Duration) {
+			slept = append(slept, d)
+			clock.Sleep(d)
+		}
 	})
 	if len(slept) == 0 {
 		t.Fatal("a crawl with a delay should have waited between requests")
 	}
 	for _, d := range slept {
-		if d != 2*time.Second {
-			t.Errorf("waited %s, want the configured 2s", d)
+		if d <= 0 || d > 2*time.Second {
+			t.Errorf("waited %s, want a positive wait no longer than the 2s delay", d)
 		}
+		if d == 2*time.Second {
+			t.Errorf("waited the full %s without subtracting the time already elapsed", d)
+		}
+	}
+}
+
+func TestWaitForSubtractsTimeAlreadyElapsed(t *testing.T) {
+	now := time.Unix(1000, 0)
+	var slept []time.Duration
+	c := &Crawler{
+		opts: Options{
+			Now:   func() time.Time { return now },
+			Sleep: func(d time.Duration) { slept = append(slept, d) },
+		},
+		lastHit: map[string]time.Time{},
+	}
+	// Nothing fetched from this host yet: no wait at all.
+	if err := c.waitFor(context.Background(), "a.test", 2*time.Second); err != nil {
+		t.Fatalf("waitFor: %v", err)
+	}
+	if len(slept) != 0 {
+		t.Errorf("the first request to a host waits for nothing, slept %v", slept)
+	}
+	// Half a second ago: wait out the remaining 1.5s, not the whole delay.
+	c.lastHit["a.test"] = now.Add(-500 * time.Millisecond)
+	if err := c.waitFor(context.Background(), "a.test", 2*time.Second); err != nil {
+		t.Fatalf("waitFor: %v", err)
+	}
+	if len(slept) != 1 || slept[0] != 1500*time.Millisecond {
+		t.Errorf("slept %v, want one wait of 1.5s", slept)
+	}
+	// Longer ago than the delay: no wait.
+	c.lastHit["a.test"] = now.Add(-3 * time.Second)
+	if err := c.waitFor(context.Background(), "a.test", 2*time.Second); err != nil {
+		t.Fatalf("waitFor: %v", err)
+	}
+	if len(slept) != 1 {
+		t.Errorf("a host last hit longer ago than the delay needs no wait, slept %v", slept)
 	}
 }
 

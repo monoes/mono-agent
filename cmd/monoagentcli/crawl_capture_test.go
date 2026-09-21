@@ -57,7 +57,7 @@ func TestCrawlCaptureWritesEnvelopesIntoTheInbox(t *testing.T) {
 	inbox := filepath.Join(t.TempDir(), "inbox")
 
 	_, stderr, err := runCrawlCmd(t, nil, "capture", srv.URL+"/",
-		"--out", inbox, "--depth", "1", "--delay", "0", "--robots=false",
+		"--out", inbox, "--depth", "1", "--delay", "0", "--robots=false", "--allow-private-hosts",
 		"--collection", "docs", "--tag", "seeded")
 	if err != nil {
 		t.Fatalf("crawl capture: %v\n%s", err, stderr)
@@ -87,7 +87,7 @@ func TestCrawlCaptureJSONSummary(t *testing.T) {
 	inbox := filepath.Join(t.TempDir(), "inbox")
 
 	stdout, stderr, err := runCrawlCmd(t, &globalConfig{JSONOutput: true}, "capture", srv.URL+"/",
-		"--out", inbox, "--depth", "0", "--delay", "0", "--robots=false")
+		"--out", inbox, "--depth", "0", "--delay", "0", "--robots=false", "--allow-private-hosts")
 	if err != nil {
 		t.Fatalf("crawl capture --json: %v\n%s", err, stderr)
 	}

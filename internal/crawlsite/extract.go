@@ -203,9 +203,23 @@ func linksOf(doc *goquery.Document, base *url.URL) []string {
 	return out
 }
 
-// resolveAgainst makes href absolute against base, rejecting the hrefs that
-// are not documents (fragments, javascript:, mailto:, data:).
+// resolveAgainst makes href absolute against base, for a URL the crawl is
+// going to follow. The fragment goes: two links to the same document are
+// one page.
 func resolveAgainst(base *url.URL, href string) string {
+	return resolveURL(base, href, false)
+}
+
+// resolveURL makes href absolute against base and admits only the two
+// schemes that are documents. It is an allowlist and not a list of the
+// dangerous schemes to drop, because that list is never finished:
+// javascript: and data: are the ones everybody remembers, and file:,
+// vbscript: and jar: are the ones that get written into readable.md and
+// travel on to the dashboard, the chunker and an LLM's context.
+//
+// keepFragment is for rendered links, where "#section" is part of where the
+// link points and nothing follows it.
+func resolveURL(base *url.URL, href string, keepFragment bool) string {
 	href = strings.TrimSpace(href)
 	if href == "" || strings.HasPrefix(href, "#") {
 		return ""
@@ -219,7 +233,9 @@ func resolveAgainst(base *url.URL, href string) string {
 	}
 	switch strings.ToLower(u.Scheme) {
 	case "http", "https":
-		u.Fragment, u.RawFragment = "", ""
+		if !keepFragment {
+			u.Fragment, u.RawFragment = "", ""
+		}
 		return u.String()
 	}
 	return ""

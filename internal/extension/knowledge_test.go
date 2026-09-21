@@ -134,9 +134,10 @@ func TestDocLookupPrefersTheLookupCommand(t *testing.T) {
 	if doc.Envelope != "/home/u/.monomind/inbox/2026-09-20T09-00-00Z-post" {
 		t.Errorf("envelope = %q", doc.Envelope)
 	}
-	// The fragment is stripped before the URL ever reaches the CLI.
+	// The fragment is stripped before the URL ever reaches the CLI, and the
+	// URL goes last, behind the `--` (see runDoc).
 	argv := runner.argv("doc lookup")
-	if argv == nil || argv[2] != "https://example.com/post" {
+	if argv == nil || argv[len(argv)-1] != "https://example.com/post" {
 		t.Fatalf("argv = %v, want the identity URL", argv)
 	}
 	if runner.argv("doc list") != nil {

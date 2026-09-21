@@ -3,12 +3,20 @@ package crawlsite
 import (
 	"context"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
 )
+
+// maxParsedCrawlDelay bounds what a Crawl-delay can parse to. The value is
+// a float from a file the site controls: "1e10" seconds multiplied into a
+// Duration overflows int64 and comes out negative, which is silently no
+// delay at all — the opposite of what the site asked for. What a crawl
+// actually waits is capped again, and much lower, by Options.MaxCrawlDelay.
+const maxParsedCrawlDelay = 24 * time.Hour
 
 // robotsRules is one user-agent group from a robots.txt, reduced to what a
 // crawler needs: the patterns, and the delay the site asked for.
@@ -34,11 +42,48 @@ type robotsRule struct {
 // told us no.
 func allowAll() robotsRules { return robotsRules{missing: true} }
 
+// disallowAll is the ruleset for a robots.txt the site could not serve
+// because it is broken. RFC 9309 draws the distinction this pair encodes:
+// "unavailable" (4xx) means there are no rules, "unreachable" (5xx) means
+// the rules exist and we could not read them, and a crawler that cannot
+// read them stays out.
+func disallowAll() robotsRules {
+	return robotsRules{rules: []robotsRule{{pattern: "/", allow: false}}}
+}
+
+// productToken is the name a robots.txt group has to match: everything up
+// to the first "/" or space of the User-Agent header, per RFC 9309.
+func productToken(agent string) string {
+	token := strings.ToLower(strings.TrimSpace(agent))
+	if i := strings.IndexAny(token, "/ \t"); i >= 0 {
+		token = token[:i]
+	}
+	return token
+}
+
+// robotsTarget is what a rule is matched against: the path and the query,
+// which is what Google's parser documents and what every faceted-navigation
+// rule ("Disallow: /search?q=") is written for. Matching the path alone
+// makes those rules dead letters.
+func robotsTarget(u *url.URL) string {
+	if u == nil {
+		return "/"
+	}
+	target := u.EscapedPath()
+	if target == "" {
+		target = "/"
+	}
+	if u.RawQuery != "" {
+		target += "?" + u.RawQuery
+	}
+	return target
+}
+
 // parseRobots reads the groups that apply to agent, falling back to the
 // "*" group. A robots.txt may list several user-agents before one set of
 // rules; every name in that run selects the same group.
 func parseRobots(body []byte, agent string) robotsRules {
-	agent = strings.ToLower(agent)
+	token := productToken(agent)
 	var (
 		out         robotsRules
 		specific    bool // a group naming this agent beat the "*" group
@@ -74,7 +119,10 @@ func parseRobots(body []byte, agent string) robotsRules {
 			switch {
 			case name == "*":
 				inGroup, groupIsStar = true, true
-			case name != "" && strings.Contains(agent, name):
+			// A prefix match on the product token, not a substring match
+			// anywhere in the User-Agent header: "User-agent: 1" must not
+			// claim "monoagent-crawl/1 (+https://…)".
+			case name != "" && strings.HasPrefix(token, name):
 				inGroup, groupIsStar = true, false
 			}
 			continue
@@ -98,12 +146,25 @@ func parseRobots(body []byte, agent string) robotsRules {
 		case "allow":
 			out.rules = append(out.rules, robotsRule{pattern: value, allow: true})
 		case "crawl-delay":
-			if secs, err := strconv.ParseFloat(value, 64); err == nil && secs > 0 {
-				out.crawlDelay = time.Duration(secs * float64(time.Second))
+			if d, ok := parseCrawlDelay(value); ok {
+				out.crawlDelay = d
 			}
 		}
 	}
 	return out
+}
+
+// parseCrawlDelay turns a Crawl-delay value into a Duration that cannot be
+// negative, infinite or NaN however hostile the file is.
+func parseCrawlDelay(value string) (time.Duration, bool) {
+	secs, err := strconv.ParseFloat(value, 64)
+	if err != nil || math.IsNaN(secs) || math.IsInf(secs, 0) || secs <= 0 {
+		return 0, false
+	}
+	if secs >= maxParsedCrawlDelay.Seconds() {
+		return maxParsedCrawlDelay, true
+	}
+	return time.Duration(secs * float64(time.Second)), true
 }
 
 // allowed applies the longest-match rule, with Allow winning a tie — the
@@ -134,40 +195,51 @@ func (r robotsRules) allowed(path string) bool {
 
 // robotsMatch implements the two wildcards robots.txt has: "*" for any run
 // of characters and a trailing "$" anchoring the end of the path.
+//
+// The literal between two wildcards is matched at its leftmost occurrence,
+// which leaves the longest possible tail for whatever follows and so never
+// costs a match that some other alignment would have found. An anchored
+// pattern's final literal is then matched from the right — the end of the
+// path is where "$" says it is, not wherever the left-to-right scan
+// happened to stop. Scanning left-greedily to the end instead is what made
+// "Disallow: /*.pdf$" miss "/docs/report.pdf.pdf".
 func robotsMatch(pattern, path string) bool {
 	anchored := strings.HasSuffix(pattern, "$")
 	if anchored {
 		pattern = strings.TrimSuffix(pattern, "$")
 	}
 	parts := strings.Split(pattern, "*")
-	pos := 0
-	for i, part := range parts {
-		if part == "" {
-			continue
-		}
-		if i == 0 {
-			if !strings.HasPrefix(path[pos:], part) {
-				return false
-			}
-			pos += len(part)
-			continue
-		}
-		idx := strings.Index(path[pos:], part)
+	if !strings.HasPrefix(path, parts[0]) {
+		return false
+	}
+	rest := path[len(parts[0]):]
+	parts = parts[1:]
+	if len(parts) == 0 {
+		// No wildcard: an anchored pattern must have consumed the path.
+		return !anchored || rest == ""
+	}
+	tail := ""
+	if anchored {
+		tail, parts = parts[len(parts)-1], parts[:len(parts)-1]
+	}
+	for _, part := range parts {
+		idx := strings.Index(rest, part)
 		if idx < 0 {
 			return false
 		}
-		pos += idx + len(part)
+		rest = rest[idx+len(part):]
 	}
-	if anchored {
-		last := parts[len(parts)-1]
-		return strings.HasSuffix(path, last) && pos == len(path)
+	if !anchored {
+		return true
 	}
-	return true
+	return len(rest) >= len(tail) && strings.HasSuffix(rest, tail)
 }
 
 // robotsCache fetches and remembers one robots.txt per host for the life of
-// a crawl. A host is asked once; a failure is remembered as allow-all so a
-// flaky robots.txt cannot turn into a fetch per page.
+// a crawl. A host is asked once; a request that never got an answer at all
+// is remembered as allow-all, so a flaky network cannot turn into a fetch
+// of robots.txt per page. A server that answered with an error is a
+// different thing, and load() says what each answer means.
 type robotsCache struct {
 	client    *http.Client
 	userAgent string
@@ -204,6 +276,9 @@ func (rc *robotsCache) load(ctx context.Context, robotsURL string) robotsRules {
 		return allowAll()
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= 500 {
+		return disallowAll()
+	}
 	if resp.StatusCode != http.StatusOK {
 		return allowAll()
 	}
