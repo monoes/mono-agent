@@ -114,6 +114,22 @@
   // emitted, so no text is lost; its children just become its siblings.
   const MAX_DEPTH = 512;
 
+  // Counts the characters the parser lowercases. Once per document is
+  // correct; once per <script> was 2.7 seconds for 437 KiB. See
+  // MonoReadable.measureWork for why this is counted rather than timed.
+  let work = null;
+
+  /** measureWork runs `fn` with the counter on. `lowercased` is exact. */
+  function measureWork(fn) {
+    const outer = work;
+    work = { lowercased: 0 };
+    try {
+      return Object.assign({ result: fn() }, work);
+    } finally {
+      work = outer;
+    }
+  }
+
   function parse(html) {
     const document = { tag: "#root", attrs: {}, children: [] };
     const stack = [document];
@@ -121,7 +137,13 @@
     // html.toLowerCase() used to run once per raw-text element, rebuilding
     // the whole document each time: 2.7 seconds for 437 KiB. Once, lazily.
     let lowered = null;
-    const lowerHtml = () => (lowered === null ? (lowered = html.toLowerCase()) : lowered);
+    const lowerHtml = () => {
+      if (lowered === null) {
+        lowered = html.toLowerCase();
+        if (work) work.lowercased += html.length;
+      }
+      return lowered;
+    };
     const addText = (text) => {
       if (!text) return;
       top().children.push({ tag: "#text", text: decodeEntities(text) });
@@ -196,5 +218,5 @@
     return document;
   }
 
-  root.MonoDomLite = { parse, decodeEntities };
+  root.MonoDomLite = { parse, decodeEntities, measureWork };
 })(globalThis);

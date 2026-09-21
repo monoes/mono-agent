@@ -51,6 +51,43 @@
   // that arrive from somewhere else.
   const MAX_DEPTH = 1024;
 
+  // --- instrumentation -----------------------------------------------------
+  //
+  // The 58-second hang was never slow code, it was the wrong complexity:
+  // every ancestor rebuilt its whole subtree string, so the characters this
+  // layer touched grew with depth x text rather than with text. That is the
+  // property the tests need to hold, and a stopwatch cannot state it — on a
+  // shared runner a stopwatch states how busy the neighbours were. So the
+  // characters are counted instead, and the assertion is about the algorithm
+  // rather than about the machine it ran on.
+  //
+  // `work` is null everywhere except inside measureWork(), so production pays
+  // one null check per text measurement and nothing else.
+  let work = null;
+
+  function charge(chars) {
+    if (work) {
+      work.chars += chars;
+      work.measurements += 1;
+    }
+  }
+
+  /**
+   * measureWork runs `fn` with the counter on and reports what the measuring
+   * layer touched: `chars` is the page text it scanned or materialized,
+   * `measurements` is how many times it did so. Both are pure functions of
+   * the input tree, so a test can assert exact bounds on them anywhere.
+   */
+  function measureWork(fn) {
+    const outer = work;
+    work = { chars: 0, measurements: 0 };
+    try {
+      return Object.assign({ result: fn() }, work);
+    } finally {
+      work = outer;
+    }
+  }
+
   // --- measurements --------------------------------------------------------
   //
   // textOf used to rebuild a node's entire subtree string every time it was
@@ -78,7 +115,13 @@
   function textOf(node) {
     if (isText(node)) return node.text || "";
     const m = measureOf(node);
-    if (m.text === undefined) m.text = kids(node).map(textOf).join("");
+    if (m.text === undefined) {
+      m.text = kids(node).map(textOf).join("");
+      // Charged where the string is actually built. Asking every node for its
+      // subtree text — which is what textLength() used to do — charges each
+      // node its whole subtree, and that sum is the quadratic, visible.
+      charge(m.text.length);
+    }
     return m.text;
   }
 
@@ -97,6 +140,7 @@
   function collapsedSpan(node) {
     if (isText(node)) {
       const text = (node.text || "").replace(/\s+/g, " ");
+      charge(text.length);
       if (!text) return EMPTY_SPAN;
       return { len: text.length, lead: text[0] === " ", trail: text[text.length - 1] === " " };
     }
@@ -511,6 +555,6 @@
 
   root.MonoReadable = {
     extract, fromHTML, snapshot, defangHtmlSource, plainText,
-    textOf, textLength, linkDensity,
+    textOf, textLength, linkDensity, measureWork,
   };
 })(globalThis);

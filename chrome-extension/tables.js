@@ -112,6 +112,22 @@
     return found;
   }
 
+  // Counts the grids expanded. extract() must not build one for a table it
+  // has already decided to skip, and counting says so exactly where a
+  // stopwatch could only hint. See MonoReadable.measureWork.
+  let work = null;
+
+  /** measureWork runs `fn` with the counter on. `grids` and `cells` are exact. */
+  function measureWork(fn) {
+    const outer = work;
+    work = { grids: 0, cells: 0 };
+    try {
+      return Object.assign({ result: fn() }, work);
+    } finally {
+      work = outer;
+    }
+  }
+
   /**
    * gridOf expands a table into a rectangle. colspan and rowspan repeat
    * their cell's text into every position they cover, which is what a
@@ -119,6 +135,7 @@
    * all three, not one value and two blanks.
    */
   function gridOf(table) {
+    if (work) work.grids += 1;
     const grid = [];
     const taken = new Set();
     const rows = rowsOf(table).slice(0, MAX_ROWS);
@@ -137,6 +154,7 @@
         // pretending to be five hundred.
         const spanRows = Math.min(spanOf(cell, "rowspan"), rows.length - r);
         const text = cellText(cell);
+        if (work) work.cells += 1;
         for (let dr = 0; dr < spanRows; dr++) {
           for (let dc = 0; dc < cols; dc++) {
             const rr = r + dr;
@@ -292,7 +310,7 @@
 
   root.MonoTables = {
     extract, metaEntries, toCsv, csvField, gridOf, layoutReason, captionOf,
-    structuralReason, shapeReason,
+    structuralReason, shapeReason, measureWork,
     MAX_TABLES, MAX_ROWS, MAX_COLS,
   };
 })(globalThis);

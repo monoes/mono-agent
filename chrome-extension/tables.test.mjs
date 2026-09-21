@@ -170,13 +170,15 @@ test("the table cap is checked before the grids are built", () => {
   const html = `<table><tr><th>a</th><th>b</th></tr><tr><td>1</td><td>2</td></tr></table>${big.repeat(40)}`;
   const tree = parse(html);
 
-  const started = Date.now();
-  const { tables, skipped } = MonoTables.extract(tree, { maxTables: 1 });
-  const elapsed = Date.now() - started;
+  const { result, grids, cells } = MonoTables.measureWork(() => MonoTables.extract(tree, { maxTables: 1 }));
 
-  assert.equal(tables.length, 1);
-  assert.equal(skipped.length, 40);
-  assert.ok(elapsed < 250, `building grids nobody wanted took ${elapsed}ms`);
+  assert.equal(result.tables.length, 1);
+  assert.equal(result.skipped.length, 40);
+  // The count, not the clock: one table was wanted, so one grid gets built,
+  // and it holds the four cells that table has. Checking the cap after gridOf
+  // instead expands all 41 — 320,004 cells to keep 4.
+  assert.equal(grids, 1, `expanded ${grids} grids to keep 1`);
+  assert.equal(cells, 4, `expanded ${cells} cells to keep 4`);
 });
 
 test("script and style source never lands in a cell", () => {

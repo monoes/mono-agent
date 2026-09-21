@@ -250,29 +250,56 @@ function nestedArticle(depth, perLevel) {
   return `<body><main><article>${inner}</article></main></body>`;
 }
 
-test("a deeply nested 200 KiB page extracts in well under two seconds", () => {
-  const html = nestedArticle(500, 4);
-  assert.ok(html.length > 200 * 1024, `fixture is only ${html.length} bytes`);
+/**
+ * costOf extracts a fixture with the work counter on and returns what the
+ * measuring layer touched, per character of prose it recovered.
+ *
+ * Counted, not timed, on purpose. The regression this guards is a 41-second
+ * hang, but a stopwatch assertion about it says as much about what else the
+ * CI runner was doing as about the code, and it went red on a shared runner
+ * while passing on both local runtimes. `chars` is a pure function of the
+ * fixture: the numbers below are the same on every machine, every run.
+ */
+function costOf(depth) {
+  const html = nestedArticle(depth, 4);
+  const { result, chars, measurements } = MonoReadable.measureWork(() =>
+    MonoReadable.fromHTML(html, { baseUrl: "https://paper.test/x" })
+  );
+  return { html, chars, measurements, text: result.text.length, perChar: chars / result.text.length };
+}
 
-  const started = Date.now();
-  const { text } = MonoReadable.fromHTML(html, { baseUrl: "https://paper.test/x" });
-  const elapsed = Date.now() - started;
+test("measuring a 200 KiB page costs a few passes over its text, not one per level", () => {
+  const cost = costOf(500);
+  assert.ok(cost.html.length > 200 * 1024, `fixture is only ${cost.html.length} bytes`);
+  assert.ok(cost.text > 150000, `expected the prose back, got ${cost.text} chars`);
 
-  assert.ok(text.length > 150000, `expected the prose back, got ${text.length} chars`);
-  assert.ok(elapsed < 1500, `extraction took ${elapsed}ms — textOf is quadratic again`);
+  // As shipped: 588,000 characters over 195,999 of prose — 3.0x, which is the
+  // scoring pass, the link-density pass and the cleanup pass. Rebuilding each
+  // ancestor's subtree string instead takes this to 505x (98,980,000), and
+  // dropping the memo with it to 84,844x (16.6 billion) — which is what the
+  // 41 seconds were made of.
+  assert.ok(
+    cost.perChar < 8,
+    `measured ${cost.chars} characters over ${cost.text} of prose (${cost.perChar.toFixed(1)}x) — textOf is rebuilding subtrees again`
+  );
 });
 
-test("four times the nesting does not cost sixteen times the work", () => {
-  // The blow-up was in depth, not in bytes: textOf rebuilt every ancestor's
-  // whole subtree, so cost ran with depth x text, i.e. depth squared here.
-  const time = (html) => {
-    const started = Date.now();
-    MonoReadable.fromHTML(html, {});
-    return Date.now() - started;
-  };
-  const shallow = Math.max(time(nestedArticle(125, 4)), 1);
-  const deep = time(nestedArticle(500, 4));
-  assert.ok(deep < shallow * 8, `125 levels took ${shallow}ms, 500 took ${deep}ms — that is not linear`);
+test("the cost per character does not grow with nesting", () => {
+  // The blow-up was in depth, not in bytes: quadrupling the nesting used to
+  // quadruple the cost of every character. Now it changes nothing at all.
+  const shallow = costOf(125);
+  const deep = costOf(500);
+
+  // Four times the levels, so (to within the sentence that joins them) four
+  // times the prose — the fixtures differ in nothing else.
+  assert.ok(
+    Math.abs(deep.text - shallow.text * 4) < 100,
+    `fixtures are not comparable: ${shallow.text} vs ${deep.text}`
+  );
+  assert.ok(
+    deep.perChar <= shallow.perChar * 1.2,
+    `125 levels cost ${shallow.perChar.toFixed(1)}x text, 500 levels cost ${deep.perChar.toFixed(1)}x — that is not linear`
+  );
 });
 
 test("a pathologically deep tree does not overflow the stack", () => {
@@ -335,17 +362,19 @@ test("a data: image becomes a placeholder, never an inline payload", () => {
 
 // --- markdown: bounded table rendering -------------------------------------
 
-test("a monstrous table renders bounded, and fast", () => {
-  const row = `<tr>${"<td>cell</td>".repeat(40)}</tr>`;
+test("a monstrous table renders bounded", () => {
+  const row = `<tr>${"<td>cell</td>".repeat(10)}</tr>`;
   const html = `<table>${row.repeat(40000)}</table>`;
-  const tree = MonoDomLite.parse(html);
+  const md = MonoMarkdown.toMarkdown(MonoDomLite.parse(html), {});
+  const lines = md.split("\n");
 
-  const started = Date.now();
-  const md = MonoMarkdown.toMarkdown(tree, {});
-  const elapsed = Date.now() - started;
-
+  // Exactly the cap, counted rather than timed: a header row, the separator,
+  // and 1,999 body rows out of 40,000. That many <tr> used to overflow the
+  // stack inside `Math.max(...rows)` and turn the page into 360 MB of
+  // Markdown.
+  assert.equal(lines.length, 2001, `rendered ${lines.length} lines`);
+  assert.equal(lines[0].split("|").length - 2, 10, "10 columns, as the fixture has");
   assert.ok(md.length < 2 * 1024 * 1024, `${md.length} bytes of Markdown out of one table`);
-  assert.ok(elapsed < 5000, `rendering took ${elapsed}ms`);
 });
 
 // --- domlite: entities and parse cost --------------------------------------
@@ -367,13 +396,18 @@ test("an out-of-range numeric entity is left alone, not thrown on", () => {
   assert.doesNotThrow(() => MonoDomLite.parse("<p>&#1114112; &#xFFFFFFFF;</p>"));
 });
 
-test("a page full of script blocks parses in linear time", () => {
+test("a page full of script blocks is lowercased once, not once per script", () => {
   const filler = "<p>Ordinary prose that fills the document out to a realistic size.</p>";
   const html = `<body>${(filler + "<script>var x = 1;</script>").repeat(4000)}</body>`;
   assert.ok(html.length > 300 * 1024, `fixture is only ${html.length} bytes`);
 
-  const started = Date.now();
-  MonoDomLite.parse(html);
-  const elapsed = Date.now() - started;
-  assert.ok(elapsed < 1500, `parsing ${(html.length / 1024) | 0} KiB took ${elapsed}ms`);
+  const { lowercased } = MonoDomLite.measureWork(() => MonoDomLite.parse(html));
+
+  // Finding each <script>'s closing tag needs a lowercased copy of the
+  // document. One copy, reused: 4,000 copies was 2.7 seconds for 437 KiB.
+  assert.equal(
+    lowercased,
+    html.length,
+    `lowercased ${lowercased} characters of a ${html.length}-character document`
+  );
 });
