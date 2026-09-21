@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/monoes/mono-agent/internal/browser"
+	"github.com/monoes/mono-agent/internal/capture"
 )
 
 // RemoteSender dispatches Commands through another local process's Server
@@ -130,7 +131,10 @@ type RemoteBridge struct {
 	Sender *RemoteSender
 }
 
-var _ browser.ExtensionBridge = (*RemoteBridge)(nil)
+var (
+	_ browser.ExtensionBridge = (*RemoteBridge)(nil)
+	_ Capturer                = (*RemoteBridge)(nil)
+)
 
 func (b *RemoteBridge) IsConnected() bool {
 	return b.Sender.IsConnected()
@@ -146,4 +150,10 @@ func (b *RemoteBridge) NewPage(tabID int) browser.PageInterface {
 
 func (b *RemoteBridge) CloseTab(tabID int) error {
 	return b.Sender.CloseTab(tabID)
+}
+
+// CapturePage relays a capture through the process that owns the extension
+// connection; that process is the one that writes the envelope.
+func (b *RemoteBridge) CapturePage(req CaptureRequest) (*capture.Result, error) {
+	return b.Sender.CapturePage(req)
 }

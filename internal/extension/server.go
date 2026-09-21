@@ -21,6 +21,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog"
+
+	"github.com/monoes/mono-agent/internal/capture"
 )
 
 // Server is a WebSocket server that accepts a single connection from the
@@ -35,6 +37,17 @@ type Server struct {
 
 	connected chan struct{} // closed when first connection arrives
 	connOnce  sync.Once
+
+	// Capture plumbing (see capture.go). streams carries the multi-message
+	// page_capture responses, which pending cannot: it is single-shot, and
+	// one capture may span many messages under one id. Both are guarded by
+	// pendMu, as is onCapture.
+	streams        map[string]chan *Response
+	assembler      *capture.Assembler
+	captureWriter  *capture.Writer
+	captureInbox   string
+	captureOptions capture.Options
+	onCapture      func(*capture.Result, error)
 
 	// token authenticates /monoagent/relay requests (see handleRelay). Set
 	// once Start has won the port bind; empty (and thus relay-rejecting)
@@ -332,24 +345,8 @@ func (s *Server) SendCommand(cmd *Command, timeout time.Duration) (*Response, er
 		s.pendMu.Unlock()
 	}()
 
-	data, err := json.Marshal(cmd)
-	if err != nil {
-		return nil, fmt.Errorf("marshal command: %w", err)
-	}
-
-	s.connMu.Lock()
-	conn := s.conn
-	s.connMu.Unlock()
-
-	if conn == nil {
-		return nil, fmt.Errorf("no extension connected")
-	}
-
-	s.writeMu.Lock()
-	err = conn.WriteMessage(websocket.TextMessage, data)
-	s.writeMu.Unlock()
-	if err != nil {
-		return nil, fmt.Errorf("write command: %w", err)
+	if err := s.writeCommand(cmd); err != nil {
+		return nil, err
 	}
 
 	s.logger.Debug().Str("id", cmd.ID).Str("type", cmd.Type).Msg("command sent")
@@ -515,6 +512,10 @@ func (s *Server) pingLoop(conn *websocket.Conn, done <-chan struct{}) {
 	for {
 		select {
 		case <-ticker.C:
+			// Piggybacked on the ping: a capture whose chunks stopped
+			// arriving has nobody waiting on it when it was the extension
+			// flushing its queue, so something has to time it out.
+			s.sweepCaptures()
 			s.writeMu.Lock()
 			err := conn.WriteMessage(websocket.PingMessage, nil)
 			s.writeMu.Unlock()
@@ -713,6 +714,13 @@ func (s *Server) handleRelay(w http.ResponseWriter, r *http.Request) {
 			timeout = n
 		}
 	}
+	// A relayed capture is executed and *written* here, by the process
+	// that owns the extension connection, so the caller gets back a small
+	// Result instead of a multi-megabyte envelope over loopback HTTP.
+	if cmd.Type == CmdPageCapture {
+		s.serveRelayCapture(w, &cmd, timeout, r.URL.Query().Get("inbox"))
+		return
+	}
 	resp, err := s.SendCommand(&cmd, timeout)
 	w.Header().Set("Content-Type", "application/json")
 	if resp == nil {
@@ -758,14 +766,6 @@ func (s *Server) readLoop(conn *websocket.Conn) {
 
 		s.logger.Debug().Str("id", resp.ID).Bool("success", resp.Success).Str("error", resp.Error).Msg("response received")
 
-		s.pendMu.Lock()
-		ch, ok := s.pending[resp.ID]
-		s.pendMu.Unlock()
-
-		if ok {
-			ch <- &resp
-		} else {
-			s.logger.Warn().Str("id", resp.ID).Msg("no pending request for response")
-		}
+		s.dispatch(&resp)
 	}
 }
