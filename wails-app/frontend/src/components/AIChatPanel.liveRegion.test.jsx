@@ -53,7 +53,8 @@ const cachedAgentScan = vi.fn().mockResolvedValue({ agents: [] })
 // Bypasses agentRuntimes.js's own module-level TTL cache entirely — see the
 // file-level comment above for why that cache makes per-test control of a
 // scan's resolution impossible once any earlier test has warmed it.
-vi.mock('../lib/agentRuntimes.js', () => ({
+vi.mock('../lib/agentRuntimes.js', async (importOriginal) => ({
+  isMonomindNotFound: (await importOriginal()).isMonomindNotFound,
   cachedAgentScan: (...args) => cachedAgentScan(...args),
 }))
 
@@ -215,6 +216,18 @@ describe('AIChatPanel live region: composer disabledReason banner', () => {
 
     await waitFor(() => expect(screen.queryByText('Loading available AI systems…')).not.toBeInTheDocument())
     await waitFor(() => expect(region).toHaveTextContent(/monomind not found/i))
+  })
+
+  it('shows the real scan error, not "not installed", when monomind exists but is unusable', async () => {
+    listAIProviders.mockResolvedValue([])
+    cachedAgentScan.mockResolvedValueOnce({ error: 'monomind 2.1.0 is too old (need >= 2.9.0)' })
+
+    render(<AIChatPanel workflowID="general" isOpen={true} onClose={() => {}} />)
+    await screen.findByPlaceholderText('Type a message...')
+
+    await waitFor(() => expect(liveRegion()).toHaveTextContent(/couldn't be used: monomind 2\.1\.0 is too old/))
+    expect(screen.queryByText(/isn't installed/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/monomind not found/)).not.toBeInTheDocument()
   })
 
   it('announces that Send became available once a provider finishes loading', async () => {

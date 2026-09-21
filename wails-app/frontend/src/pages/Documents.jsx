@@ -4,6 +4,7 @@ import * as WailsApp from '../wailsjs/go/main/App'
 import { confirm } from '../components/ConfirmDialog.jsx'
 import { api, notify, onMonomindInitEvent, onDocumentsChanged } from '../services/api.js'
 import FileViewerModal, { fileViewerKind } from '../components/FileViewerModal.jsx'
+import { isMonomindNotFound } from '../lib/agentRuntimes.js'
 
 // maxInlinePreviewBytes mirrors the backend's own GetProfileDocumentData
 // cap (wails-app/app_files.go) so an oversized file is routed straight to
@@ -45,7 +46,7 @@ const inputStyle = {
 // mirrors the fallback-copy pattern in Agents.jsx ("/not found/i.test(...)")
 // against internal/monomind/find.go's ErrNotFound message.
 export function isMonomindMissing(indexError) {
-  return /monomind not found/i.test(indexError || '')
+  return isMonomindNotFound(indexError)
 }
 
 export default function Documents() {
