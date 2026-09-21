@@ -9,8 +9,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
+
+	"github.com/monoes/mono-agent/internal/shellpath"
 )
 
 // EnvOverride is the env var that pins the monomind binary path, checked
@@ -47,7 +50,7 @@ func CandidatePaths() []string {
 		if runtime.GOOS == "windows" {
 			cands = append(cands, filepath.Join(home, "AppData", "Roaming", "npm", "monomind.cmd"))
 		} else {
-			cands = append(cands, filepath.Join(home, ".nvm", "versions", "node")) // globbed below
+			cands = append(cands, nvmCandidates(filepath.Join(home, ".nvm", "versions", "node"))...)
 		}
 	}
 	if runtime.GOOS != "windows" {
@@ -69,20 +72,47 @@ func CandidatePaths() []string {
 	return cands
 }
 
+// nvmCandidates returns <root>/<version>/bin/monomind for every installed
+// nvm Node version, newest first. A GUI app never has nvm's bin dir on PATH
+// (nvm is wired up in .zshrc/.bashrc), so these must be probed directly.
+func nvmCandidates(root string) []string {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil
+	}
+	var versions []string
+	for _, e := range entries {
+		if e.IsDir() {
+			versions = append(versions, e.Name())
+		}
+	}
+	sort.Slice(versions, func(i, j int) bool {
+		return !versionAtLeast(versions[j], versions[i]) // strictly newer first
+	})
+	cands := make([]string, 0, len(versions))
+	for _, v := range versions {
+		cands = append(cands, filepath.Join(root, v, "bin", "monomind"))
+	}
+	return cands
+}
+
 // Find locates an executable monomind binary. The returned path is absolute
 // and verified executable.
+//
+// The binary's directory is also put on this process's PATH: monomind is a
+// `#!/usr/bin/env node` script, and for nvm/Homebrew installs `node` sits
+// right next to it. Without this, a GUI-launched app finds monomind but
+// every exec of it dies with exit status 127 (env: node: not found).
 func Find() (string, error) {
 	var tried []string
 	for _, cand := range CandidatePaths() {
 		tried = append(tried, cand)
-		if filepath.Base(cand) == "node" {
-			continue // nvm versions root — resolved via PATH already
-		}
 		if path, err := exec.LookPath(cand); err == nil {
 			abs, err := filepath.Abs(path)
 			if err != nil {
 				abs = path
 			}
+			shellpath.Prepend(filepath.Dir(abs))
 			return abs, nil
 		}
 	}

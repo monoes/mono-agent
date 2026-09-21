@@ -3,9 +3,11 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -29,6 +31,26 @@ import (
 // files and may shell out further (npx) itself — minutes, not seconds,
 // unlike the 60s org-CLI timeout.
 const monomindInitTimeout = 10 * time.Minute
+
+// initErrorTailLines is how much of monomind init's output is kept for the
+// failure message — the progress log is cleared when the run ends, so a bare
+// "exit status 127" would otherwise be all the user ever sees.
+const initErrorTailLines = 5
+
+// initFailureMessage turns a failed `monomind init` into something
+// actionable: the binary that was run, the exit error, the last output lines,
+// and a hint for exit 127 (the shebang's `node` could not be resolved).
+func initFailureMessage(bin string, err error, tail []string) string {
+	msg := err.Error() + " (" + bin + ")"
+	var xerr *exec.ExitError
+	if errors.As(err, &xerr) && xerr.ExitCode() == 127 {
+		msg += " — a command it needs was not found (usually `node`: is Node on your login shell's PATH?)"
+	}
+	if len(tail) > 0 {
+		msg += "\n" + strings.Join(tail, "\n")
+	}
+	return msg
+}
 
 // isMonomindInitializedAt is the pure check, split out from
 // IsMonomindInitialized so it's testable without an *App/*sql.DB — checks
@@ -98,12 +120,20 @@ func (a *App) InitializeMonomindProfile() string {
 
 		sc := bufio.NewScanner(stdout)
 		sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+		var tail []string
 		for sc.Scan() {
-			a.emitMonomindInitEvent("line", sc.Text())
+			line := sc.Text()
+			a.emitMonomindInitEvent("line", line)
+			if strings.TrimSpace(line) != "" {
+				tail = append(tail, line)
+				if len(tail) > initErrorTailLines {
+					tail = tail[1:]
+				}
+			}
 		}
 
 		if err := cmd.Wait(); err != nil {
-			a.emitMonomindInitEvent("error", err.Error())
+			a.emitMonomindInitEvent("error", initFailureMessage(bin, err, tail))
 			return
 		}
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"net/http"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/monoes/mono-agent/internal/shellpath"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
@@ -88,6 +90,12 @@ func vaultImageHandler(app *App) http.Handler {
 }
 
 func main() {
+	// Launched from Finder/Dock the app gets launchd's bare PATH, so
+	// monomind, node, claude and npm (nvm/Homebrew installs) are all
+	// invisible to it and to every monoagentcli child. Import the login
+	// shell's PATH before anything shells out.
+	shellpath.Apply(context.Background())
+
 	app := NewApp()
 
 	err := wails.Run(&options.App{

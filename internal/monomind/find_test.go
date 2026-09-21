@@ -1,7 +1,10 @@
 package monomind
 
 import (
+	"os"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -41,5 +44,41 @@ func TestCandidatePaths_IncludesWellKnownHomebrewLocations(t *testing.T) {
 		if !found {
 			t.Errorf("CandidatePaths() = %v, missing well-known install root %q", cands, want)
 		}
+	}
+}
+
+// TestFind_NvmInstallInvisibleToGUIPath reproduces the reported Mac mini
+// failure: monomind installed under nvm, app launched from Finder with a
+// PATH that has neither nvm's bin dir nor node. Find must locate the newest
+// nvm install and put its dir on PATH so the `env node` shebang resolves.
+func TestFind_NvmInstallInvisibleToGUIPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("nvm layout is unix-only")
+	}
+	home := t.TempDir()
+	root := filepath.Join(home, ".nvm", "versions", "node")
+	for _, v := range []string{"v9.11.2", "v22.12.0", "v18.20.4"} {
+		bin := filepath.Join(root, v, "bin")
+		if err := os.MkdirAll(bin, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(bin, "monomind"), []byte("#!/usr/bin/env node\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("HOME", home)
+	t.Setenv(EnvOverride, "")
+	t.Setenv("PATH", "/usr/bin:/bin")
+
+	got, err := Find()
+	if err != nil {
+		t.Fatalf("Find: %v", err)
+	}
+	wantDir := filepath.Join(root, "v22.12.0", "bin")
+	if got != filepath.Join(wantDir, "monomind") {
+		t.Fatalf("Find = %q, want newest nvm install under %q", got, wantDir)
+	}
+	if !strings.HasPrefix(os.Getenv("PATH"), wantDir+string(os.PathListSeparator)) {
+		t.Fatalf("PATH = %q, want %q prepended so `node` resolves", os.Getenv("PATH"), wantDir)
 	}
 }
