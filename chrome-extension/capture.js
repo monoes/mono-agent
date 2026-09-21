@@ -56,6 +56,20 @@
     return btoa(binary);
   }
 
+  /**
+   * utf8Bytes is a string's size on the wire.
+   *
+   * Not `.length`, which counts UTF-16 units: JSON.stringify does not escape
+   * non-ASCII, so a page of CJK or emoji weighs up to three times what its
+   * `.length` says. Every size gate in this file guards a byte-counted
+   * budget — the Go server's read limit, chrome.storage.local's bucket — so
+   * measuring in units lets exactly the payloads those budgets exist to stop
+   * sail through.
+   */
+  function utf8Bytes(text) {
+    return new TextEncoder().encode(String(text)).length;
+  }
+
   /** base64Bytes reports the decoded size of a base64 string, without decoding it. */
   function base64Bytes(b64) {
     if (!b64) return 0;
@@ -103,8 +117,18 @@
    * so the receiver buffers on `data.chunk` and completes on `data.final`.
    */
   function planMessages(id, meta, artifacts, warnings, opts) {
-    const o = Object.assign({ maxMessageBytes: DEFAULT_MAX_MESSAGE_BYTES, type: null }, opts || {});
-    const limit = Math.max(64 * 1024, o.maxMessageBytes);
+    const o = opts || {};
+    // NOT Object.assign over a defaults object: that copies an own property
+    // whose value is undefined straight over the default, and a caller
+    // building {type, maxMessageBytes: deps.maxMessageBytes} from an install
+    // that left the budget out hands over exactly that. The arithmetic below
+    // then runs on NaN — no comparison is ever true, the chunk loop runs
+    // zero times, and every artifact is listed as chunked with no chunks
+    // behind it. Take the value only when it is a usable size.
+    const asked = Number(o.maxMessageBytes);
+    const maxMessageBytes = Number.isFinite(asked) && asked > 0 ? asked : DEFAULT_MAX_MESSAGE_BYTES;
+    const type = o.type || null;
+    const limit = Math.max(64 * 1024, maxMessageBytes);
     const messages = [];
     const listed = [];
     // Reserve room for meta and the JSON scaffolding around the payload.
@@ -120,7 +144,7 @@
       const total = Math.max(1, Math.ceil(artifact.bytes.length / limit));
       for (let index = 0; index < total; index++) {
         const slice = artifact.bytes.slice(index * limit, (index + 1) * limit);
-        messages.push(withType(o.type, {
+        messages.push(withType(type, {
           id,
           success: true,
           data: { chunk: { index, total, of: artifact.name }, bytes: slice },
@@ -129,7 +153,7 @@
       listed.push(Object.assign(entry, { chunked: true, chunks: total }));
     }
 
-    messages.push(withType(o.type, {
+    messages.push(withType(type, {
       id,
       success: true,
       data: { meta, artifacts: listed, warnings, final: true },
@@ -332,7 +356,7 @@
   const QUEUE_MAX_ENTRY_BYTES = 4 * MB;
 
   async function queueCapture(storage, envelope) {
-    const size = JSON.stringify(envelope).length;
+    const size = utf8Bytes(JSON.stringify(envelope));
     if (size > QUEUE_MAX_ENTRY_BYTES) {
       return { queued: false, reason: `capture too large to queue offline (${mb(size)})` };
     }
@@ -345,25 +369,36 @@
   async function flushQueue(storage, send) {
     const queued = (await storage.get(QUEUE_KEY))[QUEUE_KEY] || [];
     if (!queued.length) return { flushed: 0 };
-    await storage.set({ [QUEUE_KEY]: [] });
+
+    // The queue is emptied AFTER the sending, never before. Clearing it up
+    // front and relying on the catch to put the rest back cannot work:
+    // ws.onopen calls this and an MV3 socket is routinely torn down seconds
+    // later, so the usual shape of a failed flush is the first envelope
+    // going out and the rest being dropped into a queue key that was already
+    // emptied — captures gone, and reported as flushed.
+    //
+    // The cost of this order is that a worker suspended between the last
+    // send and the write-back re-sends what it already sent. A duplicate
+    // capture is a duplicate row on the Go side; a lost one is a page the
+    // person never gets back. CLIP-08 picks the duplicate every time.
     let flushed = 0;
+    let reason = null;
     for (const entry of queued) {
       try {
         send(entry.envelope);
         flushed++;
-      } catch {
-        // Connection died mid-flush — put the rest back and try again later.
-        const left = queued.slice(flushed);
-        await storage.set({ [QUEUE_KEY]: left });
+      } catch (err) {
+        reason = err.message;
         break;
       }
     }
-    return { flushed };
+    await storage.set({ [QUEUE_KEY]: queued.slice(flushed) });
+    return reason ? { flushed, reason } : { flushed };
   }
 
   root.MonoCapture = {
     pageCapture, planMessages, applySizeCaps, queueCapture, flushQueue,
-    utf8ToBase64, base64Bytes, escapeHtml,
+    utf8ToBase64, base64Bytes, utf8Bytes, escapeHtml,
     DEFAULT_MAX_ARTIFACT_BYTES, DEFAULT_MAX_MESSAGE_BYTES, DEFAULT_FORMATS, PAGE_SCRIPTS,
   };
 })(globalThis);

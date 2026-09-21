@@ -124,13 +124,33 @@
     return payload;
   }
 
+  /**
+   * frameSize is what the frame weighs on the wire, in bytes.
+   *
+   * Not `.length`. JSON.stringify does not escape non-ASCII, so one CJK or
+   * emoji character is a single UTF-16 unit and three or four UTF-8 bytes —
+   * a payload measuring 11M units weighs 34M bytes. Counted in units it
+   * passes this guard; sent, it trips the Go server's 32MiB read limit and
+   * takes the whole extension connection down, which is precisely the
+   * outcome the guard exists to prevent.
+   *
+   * No character exceeds three UTF-8 bytes per UTF-16 unit (a surrogate pair
+   * is two units and four bytes), so a frame short enough that even three
+   * bytes each stays under the cap is reported by its unit count — a lower
+   * bound, and enough for a comparison that cannot come out true. Only the
+   * frames near the limit are encoded to find out exactly, which keeps a
+   * busy trace stream from copying every event just to measure it.
+   */
   function frameSize(value) {
+    let json;
     try {
-      return JSON.stringify(value).length;
+      json = JSON.stringify(value);
     } catch {
       // Circular or otherwise unserializable: treat as unsendable.
       return Number.POSITIVE_INFINITY;
     }
+    if (json.length * 3 <= MAX_FRAME_BYTES) return json.length;
+    return new TextEncoder().encode(json).length;
   }
 
   function push(data) {
@@ -172,9 +192,32 @@
     push({ tabId, method: "Inspector.detached", params: { reason: reason || "unknown" } });
   }
 
+  /**
+   * disconnected is called from ws.onclose, beside MonoRecall's.
+   *
+   * Every subscription in here was for that socket, and every one of them
+   * pinned its tab so background.js's 30s idle sweep would leave it alone
+   * while the client was listening. With the socket gone there is no client:
+   * left as they were, the proxy goes on formatting and serialising events
+   * for a closed socket, and — worse — the pins keep the sweep off tabs it
+   * was written to reclaim, so Chrome's debugging banner stays up until the
+   * user clears it by hand.
+   *
+   * The debugger itself is not detached here. Detaching is the sweep's job,
+   * thirty seconds from now, and doing it synchronously would yank the
+   * debugger out from under a capture that attached to the same tab for its
+   * own reasons (capture.js). Unpinning is enough to let that happen.
+   */
+  function disconnected() {
+    const tabs = [...subscribed];
+    subscribed.clear();
+    for (const tabId of tabs) deps.unpin(tabId);
+    return tabs;
+  }
+
   function subscribedTabs() {
     return [...subscribed];
   }
 
-  root.MonoCdpProxy = { install, handleCommand, subscribedTabs };
+  root.MonoCdpProxy = { install, handleCommand, disconnected, subscribedTabs };
 })(globalThis);

@@ -192,6 +192,53 @@ test("an artifact too big for one frame is chunked, and the envelope comes last"
   assert.deepEqual(envelope.data.warnings, ["pdf skipped: too large"]);
 });
 
+test("a frame budget that arrives as undefined falls back to the default, not to NaN", () => {
+  // capture_bridge.js builds its options object as {type, maxMessageBytes:
+  // deps.maxMessageBytes}. When the install left that out, the property is
+  // still there — its value is just undefined — and Object.assign copies an
+  // explicit undefined straight over a default. Everything downstream is
+  // then arithmetic on NaN: no comparison is ever true, the chunk loop runs
+  // zero times, and the envelope lists artifacts with no bytes anywhere.
+  for (const bad of [undefined, null, NaN, 0, "", "lots"]) {
+    const messages = MonoCapture.planMessages(
+      "cmd-0",
+      { url: "https://x.test/a" },
+      [{ name: "readable.md", encoding: "base64", bytes: b64("hello"), rawBytes: 5 }],
+      [],
+      { type: null, maxMessageBytes: bad }
+    );
+    const label = `maxMessageBytes: ${String(bad)}`;
+    assert.equal(messages.length, 1, `${label}: one envelope, no chunk frames`);
+    assert.equal(messages[0].data.artifacts[0].bytes, b64("hello"), `${label}: the artifact carries its bytes`);
+    assert.equal(messages[0].data.artifacts[0].chunked, undefined, `${label}: nothing was chunked`);
+  }
+});
+
+test("an artifact is never listed as chunked without its chunks", () => {
+  // The invariant the Go receiver enforces (internal/capture/chunks.go), and
+  // the one every capture broke: an envelope either carries the bytes or
+  // names the frames that do.
+  const artifacts = [
+    { name: "readable.md", encoding: "base64", bytes: b64("hello"), rawBytes: 5 },
+    { name: "page.mhtml", encoding: "base64", bytes: "Z".repeat(300 * 1024), rawBytes: 225 * 1024 },
+  ];
+  for (const opts of [{}, { maxMessageBytes: undefined }, { maxMessageBytes: 64 * 1024 }]) {
+    const messages = MonoCapture.planMessages("cmd-x", {}, artifacts, [], opts);
+    const envelope = messages[messages.length - 1];
+    const frames = messages.slice(0, -1);
+    for (const listed of envelope.data.artifacts) {
+      const mine = frames.filter((m) => m.data.chunk.of === listed.name);
+      if (listed.chunked) {
+        assert.equal(mine.length, listed.chunks, `${listed.name}: chunk count matches the frames sent`);
+        assert.ok(mine.length > 0, `${listed.name}: listed as chunked but no chunks arrived`);
+        assert.equal(mine.map((m) => m.data.bytes).join(""), artifacts.find((a) => a.name === listed.name).bytes);
+      } else {
+        assert.ok(listed.bytes, `${listed.name}: inline artifacts carry bytes`);
+      }
+    }
+  }
+});
+
 test("an extension-initiated push is tagged so the bridge can route it", () => {
   const messages = MonoCapture.planMessages("ext-1", {}, [], [], { type: "capture_push" });
   assert.equal(messages[0].type, "capture_push");
@@ -212,6 +259,40 @@ test("a capture taken with the bridge down is queued, then flushed in order", as
   assert.deepEqual(await MonoCapture.flushQueue(storage, (e) => sent.push(e.id)), { flushed: 2 });
   assert.deepEqual(sent, ["a", "b"]);
   assert.deepEqual(await MonoCapture.flushQueue(storage, () => {}), { flushed: 0 }, "the queue is drained, not replayed");
+});
+
+test("a flush stops at the first frame that does not reach the wire", async () => {
+  const store = {};
+  const storage = {
+    get: async (key) => ({ [key]: store[key] }),
+    set: async (update) => Object.assign(store, update),
+  };
+  await MonoCapture.queueCapture(storage, { id: "a" });
+  await MonoCapture.queueCapture(storage, { id: "b" });
+  await MonoCapture.queueCapture(storage, { id: "c" });
+
+  const sent = [];
+  const result = await MonoCapture.flushQueue(storage, (envelope) => {
+    if (sent.length >= 1) throw new Error("the bridge disconnected mid-send");
+    sent.push(envelope.id);
+  });
+
+  assert.equal(result.flushed, 1);
+  assert.deepEqual(sent, ["a"]);
+  // Emptying the queue before sending means this recovery can never run: the
+  // entries are already gone by the time the send fails.
+  assert.deepEqual(store.captureQueue.map((e) => e.envelope.id), ["b", "c"]);
+});
+
+test("the queue's size cap counts bytes on the wire, not UTF-16 units", async () => {
+  const storage = { get: async () => ({}), set: async () => {} };
+  // 2M CJK characters: 2M UTF-16 units — comfortably under the 4MB cap by
+  // `.length` — and 6MB of UTF-8, which is what chrome.storage.local's
+  // byte-counted bucket actually sees.
+  const envelope = { id: "cjk", meta: {}, artifacts: [{ name: "readable.md", bytes: "\u6f22".repeat(2 * 1024 * 1024) }] };
+  const result = await MonoCapture.queueCapture(storage, envelope);
+  assert.equal(result.queued, false, "6MB is over the 4MB queue cap however you spell it");
+  assert.match(result.reason, /too large to queue offline/);
 });
 
 test("a capture too big for the storage bucket is refused rather than half-written", async () => {

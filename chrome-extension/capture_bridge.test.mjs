@@ -76,22 +76,30 @@ function fakeChrome() {
   return { chrome, store };
 }
 
-function bridge({ connected = true, seed = {} } = {}) {
+function bridge({ connected = true, seed = {}, maxMessageBytes, artifact } = {}) {
   const { chrome, store } = fakeChrome();
   Object.assign(store, seed);
   const sent = [];
+  const bytes = artifact || Buffer.from("artifact").toString("base64");
   const env = loadExtensionScripts(
     ["capture_meta.js", "capture.js", "capture_profile.js", "capture_bridge.js"],
     { chrome }
   );
   env.MonoCaptureBridge.install({
-    send: (message) => sent.push(message),
+    send: (message) => {
+      sent.push(message);
+      return true;
+    },
     isConnected: () => connected,
+    // background.js hands the bridge its frame budget. A default here would
+    // hide the case that matters — an install that leaves it out — so it is
+    // passed only when a test asks for one.
+    maxMessageBytes,
     attach: async () => {},
     cdp: async (tabId, method) =>
       method === "Page.getLayoutMetrics"
         ? { cssContentSize: { width: 1000, height: 2000 } }
-        : { data: Buffer.from("artifact").toString("base64") },
+        : { data: bytes },
     detach: async () => {},
   });
   return { env, chrome, store, sent };
@@ -114,6 +122,48 @@ async function settle(done, timeoutMs = 5000) {
     if (!done || done()) return;
     if (Date.now() > deadline) throw new Error("timed out waiting for the capture to settle");
   }
+}
+
+/**
+ * collect reassembles what actually arrived on the wire.
+ *
+ * This is the receiver's job (internal/capture/chunks.go) done here, because
+ * for a long time nothing in this suite ever looked inside an artifact: the
+ * tests counted frames and compared names, both of which an envelope carrying
+ * no content at all satisfies perfectly. An artifact is either inline `bytes`
+ * on the envelope or a run of chunk frames the envelope references, and this
+ * returns the decoded text either way — so a capture that carries nothing
+ * cannot pass.
+ */
+function collect(sent) {
+  assert.ok(sent.length, "something was written to the socket");
+  const envelope = sent[sent.length - 1];
+  assert.equal(envelope.data.final, true, "the envelope is always the last frame");
+
+  const chunks = new Map();
+  for (const frame of sent.slice(0, -1)) {
+    const chunk = frame.data.chunk;
+    assert.ok(chunk, "every frame before the envelope is a chunk frame");
+    if (!chunks.has(chunk.of)) chunks.set(chunk.of, []);
+    chunks.get(chunk.of)[chunk.index] = frame.data.bytes;
+  }
+
+  const out = {};
+  for (const artifact of envelope.data.artifacts) {
+    let base64;
+    if (artifact.chunked) {
+      const parts = chunks.get(artifact.name) || [];
+      assert.equal(parts.length, artifact.chunks, `${artifact.name}: every chunk it listed arrived`);
+      assert.ok(parts.length > 0, `${artifact.name} is listed as chunked but no chunks arrived`);
+      assert.ok(parts.every((p) => typeof p === "string"), `${artifact.name}: no gaps in the chunk run`);
+      base64 = parts.join("");
+    } else {
+      assert.ok(artifact.bytes, `${artifact.name} carries bytes`);
+      base64 = artifact.bytes;
+    }
+    out[artifact.name] = Buffer.from(base64, "base64").toString("utf8");
+  }
+  return out;
 }
 
 test("install offers both a page and a selection context menu (CLIP-04)", () => {
@@ -146,6 +196,33 @@ test("the keyboard shortcut captures the tab in front of you and pushes it", asy
     "readable.md",
     "screenshot.png",
   ]);
+
+  // The names are the cheap half. install() above is background.js's own
+  // signature, so this is the envelope a real shortcut capture produces —
+  // and an envelope whose artifacts have no bytes is a capture that never
+  // happened, which the Go receiver rejects outright.
+  const got = collect(sent);
+  assert.equal(got["readable.md"], "# The Lighthouse at Dunmore");
+  // The screenshot path passes CDP's already-base64 `data` through untouched;
+  // the MHTML path base64s the text CDP handed it. So the fake's one string
+  // arrives decoded at two different depths, and both have to survive.
+  assert.equal(got["screenshot.png"], "artifact");
+  assert.equal(got["page.mhtml"], Buffer.from("artifact").toString("base64"));
+});
+
+test("a capture too big for one frame round-trips through the chunk protocol", async () => {
+  // 300KB of base64 against a 64KB frame budget: several chunk frames, then
+  // the envelope referencing them. The bytes that come out the far end have
+  // to be the bytes that went in.
+  const payload = "M".repeat(300 * 1024);
+  const big = Buffer.from(payload, "utf8").toString("base64");
+  const { chrome, sent } = bridge({ maxMessageBytes: 64 * 1024, artifact: big });
+  chrome.listeners.command("capture-page");
+  await settle(() => sent.some((m) => m.data.final));
+
+  assert.ok(sent.length > 1, "a 400KB artifact does not fit in a 64KB frame");
+  const got = collect(sent);
+  assert.equal(got["screenshot.png"], payload, "every chunk, in order, with nothing lost at the joins");
 });
 
 test("the page modules are injected before the page is asked to do anything", async () => {
@@ -205,6 +282,39 @@ test("a capture taken with the bridge down is queued, not lost (CLIP-08)", async
   assert.equal(flushed[0].type, "page_capture");
   assert.equal(flushed[0].data.meta.title, "The Lighthouse at Dunmore");
   assert.deepEqual(store.captureQueue, []);
+});
+
+test("a flush interrupted by a dying socket keeps what it could not send (CLIP-08)", async () => {
+  const { chrome, store, env } = bridge({ connected: false });
+  for (let i = 0; i < 3; i++) {
+    await new Promise((resolve) => chrome.listeners.message({ type: "capture_active_tab" }, {}, resolve));
+  }
+  assert.equal(store.captureQueue.length, 3, "three captures taken while the bridge was down");
+
+  // background.js's real send writes only while the socket is OPEN and says
+  // nothing at all when it is not — it never throws. An MV3 socket torn down
+  // seconds after ws.onopen called flush() is the ordinary case, so a flush
+  // that empties the queue up front and relies on a throw to put it back
+  // loses every capture after the first.
+  let open = true;
+  const wire = [];
+  env.MonoCaptureBridge.install({
+    send: (message) => {
+      if (!open) return false;
+      wire.push(message);
+      if (message.data && message.data.final) open = false;
+      return true;
+    },
+    isConnected: () => true,
+    attach: async () => {},
+    cdp: async () => ({ data: "" }),
+    detach: async () => {},
+  });
+
+  const result = await env.MonoCaptureBridge.flush();
+  assert.equal(result.flushed, 1, "only what reached the wire counts as flushed");
+  assert.equal(wire.length, 1, "one envelope actually went out");
+  assert.equal(store.captureQueue.length, 2, "the two that did not are still queued, not reported as sent");
 });
 
 test("a selection capture asks the page for the selection", async () => {

@@ -15,18 +15,37 @@ import { loadExtensionScripts } from "./test_helpers.mjs";
 function fakeSocket(connected = true) {
   const sent = [];
   let throws = null;
+  let swallow = false;
   return {
     sent,
     isConnected: () => connected,
     send: (frame) => {
       if (throws) throw new Error(throws);
+      if (swallow) return false;
       sent.push(frame);
+      return true;
     },
+    swallowSend: () => (swallow = true),
     disconnect: () => (connected = false),
     breakSend: (message) => (throws = message),
     last: () => sent[sent.length - 1],
   };
 }
+
+test("a question written to a socket that closed under it fails now, not in 25 seconds", async () => {
+  const { MonoAsk, socket } = freshAsk();
+  // isConnected() still says yes — that is the whole shape of the race — and
+  // background.js's send reports false rather than throwing.
+  socket.swallowSend();
+
+  const err = await MonoAsk.request("doc.lookup", { url: "https://x.test" }).then(
+    () => null,
+    (e) => e
+  );
+  assert.ok(err, "the promise settles");
+  assert.equal(err.code, MonoAsk.CODE_OFFLINE);
+  assert.equal(MonoAsk.inFlight(), 0, "nothing is left in the table to time out later");
+});
 
 function freshAsk(connected = true) {
   const { MonoAsk } = loadExtensionScripts(["ask.js"]);
@@ -232,6 +251,28 @@ test("a backend with no request channel probes empty instead of hanging", async 
   const probe = MonoAsk.probe();
   MonoAsk.disconnected("gone");
   assert.deepEqual(await probe, [], "an unanswerable probe must resolve empty, never reject");
+});
+
+test("a disconnect during a probe does not poison the cache for the worker's life", async () => {
+  const { MonoAsk, socket } = freshAsk();
+
+  // recall_bridge.js probes on every ws.onopen, so a reconnect that lands
+  // while a probe is still in flight is ordinary. disconnected() rejects the
+  // pending request and then clears the cache — but the rejection handler is
+  // a microtask, so probe()'s catch runs afterwards and writes [] back over
+  // the cleared cache. An empty array is truthy, so probe() serves it for
+  // the life of the worker, supports() is false forever, and every panel
+  // that gates on it renders as permanently absent.
+  const interrupted = MonoAsk.probe();
+  MonoAsk.disconnected("the bridge disconnected");
+  assert.deepEqual(await interrupted, [], "the interrupted probe still settles, and settles empty");
+
+  const before = socket.sent.length;
+  const second = MonoAsk.probe();
+  assert.equal(socket.sent.length, before + 1, "the reconnected backend is asked, not answered from a stale cache");
+  MonoAsk.handleFrame(reply(socket.last().id, { ok: true, data: { methods: ["ping", "doc.lookup"] } }));
+  assert.deepEqual(await second, ["ping", "doc.lookup"]);
+  assert.equal(await MonoAsk.supports("doc.lookup"), true, "supports() recovers with the connection");
 });
 
 test("disconnecting forgets the probe, so a new backend is asked again", async () => {

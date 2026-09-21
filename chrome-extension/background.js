@@ -400,6 +400,10 @@ async function doConnect() {
     // Everything waiting on an answer is settled here. A question outlives
     // its socket by exactly nothing: see ask.js.
     MonoRecall.disconnected("the bridge disconnected");
+    // The CDP relay's subscriptions belonged to that socket too, and each
+    // one pinned its tab against the idle sweep below. Left pinned, Chrome's
+    // debugging banner sits on the tab until the user clears it by hand.
+    MonoCdpProxy.disconnected("the bridge disconnected");
     if (event.code === UNAUTHORIZED_CLOSE_CODE) {
       // The server rejected our auth frame — retrying with the same
       // (wrong/missing) pairing secret will only fail again. Stop and wait
@@ -1017,11 +1021,27 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // Initialization — runs every time the service worker starts
 // ---------------------------------------------------------------------------
 
+/**
+ * sendFrame writes one frame and says whether it landed.
+ *
+ * The boolean is the whole point. This used to return nothing when the
+ * socket was closed, which made "sent" and "silently discarded" the same
+ * value to every caller — so the capture queue deleted entries it had never
+ * delivered and reported them as flushed (CLIP-08).
+ */
+function sendFrame(message) {
+  if (ws?.readyState !== WebSocket.OPEN) return false;
+  ws.send(JSON.stringify(message));
+  return true;
+}
+
 MonoCaptureBridge.install({
-  send: (message) => {
-    if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message));
-  },
+  send: sendFrame,
   isConnected: () => ws?.readyState === WebSocket.OPEN,
+  // The per-frame budget capture.js plans against. Without it the planner
+  // is handed `undefined`, every size comparison becomes NaN, and the
+  // envelope goes out listing artifacts whose bytes were never framed.
+  maxMessageBytes: MonoCapture.DEFAULT_MAX_MESSAGE_BYTES,
   attach: (tabId) => ensureDebuggerAttached({ tabId }, tabId),
   cdp: (tabId, method, params) => debuggerSend({ tabId }, tabId, method, params),
   detach: (tabId) => detachDebugger(tabId),
@@ -1031,9 +1051,7 @@ MonoCaptureBridge.install({
 // plus the pin/unpin that keeps the sweep above off a tab it is listening
 // to, and the two chrome.debugger listener registrations it relays from.
 MonoCdpProxy.install({
-  send: (message) => {
-    if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message));
-  },
+  send: sendFrame,
   isConnected: () => ws?.readyState === WebSocket.OPEN,
   activeTabId: async () => {
     const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
@@ -1053,10 +1071,9 @@ MonoCdpProxy.install({
 // Everything the popup asks for (CLIP-06/07/08). It captures through
 // MonoCaptureBridge's context, so it needs only the socket from here.
 MonoCaptureActions.install({
-  send: (message) => {
-    if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message));
-  },
+  send: sendFrame,
   isConnected: () => ws?.readyState === WebSocket.OPEN,
+  maxMessageBytes: MonoCapture.DEFAULT_MAX_MESSAGE_BYTES,
   storage: chrome.storage.local,
 });
 
@@ -1064,9 +1081,7 @@ MonoCaptureActions.install({
 // registers its own tab and message listeners; background.js only has to
 // hand it the socket.
 MonoRecall.install({
-  send: (message) => {
-    if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message));
-  },
+  send: sendFrame,
   isConnected: () => ws?.readyState === WebSocket.OPEN,
   storage: chrome.storage.local,
 });

@@ -58,11 +58,16 @@
   // "not asked yet"; an array means asked, and a panel can decide whether
   // to render at all instead of timing out against a method nobody has.
   let methods = null;
+  // Which connection the cached `methods` belongs to. A probe answers about
+  // one socket; if that socket is gone by the time the answer (or the
+  // failure) arrives, the answer is about nothing and must not be cached.
+  let connection = 0;
   let seq = 0;
 
   function install(d) {
     deps = d;
     methods = null;
+    connection += 1;
   }
 
   function newId() {
@@ -125,7 +130,13 @@
       entry.idle = arm(entry, idleMs, id, `${method} went quiet`, CODE_TIMEOUT);
 
       try {
-        deps.send({ kind: KIND_REQUEST, id, method, params: params || {} });
+        // `false` means the socket closed between the isConnected() check
+        // above and this write. Without this the question sits in the table
+        // until its 25s deadline, and whatever was waiting on it — a recall
+        // panel, a profile list — spins for the whole of that.
+        if (deps.send({ kind: KIND_REQUEST, id, method, params: params || {} }) === false) {
+          throw askError("the monoagent bridge went away mid-request", CODE_OFFLINE);
+        }
       } catch (err) {
         settle(id);
         reject(askError(err.message || "could not send the request", CODE_OFFLINE));
@@ -174,12 +185,21 @@
    * is a panel that spins forever.
    */
   function disconnected(reason) {
+    // Both of these go first, and the counter is why clearing `methods` on
+    // its own was not enough. A reject only schedules the awaiting
+    // continuation, so probe()'s catch runs after this function has returned
+    // — and wrote [] back over the cache that had just been cleared. An
+    // empty array is truthy, so probe() then served it for the life of the
+    // worker: supports() false forever, and every panel gated on it
+    // rendering as permanently absent. Moving the connection on tells that
+    // late catch its answer is stale.
+    methods = null;
+    connection += 1;
     const ids = [...pending.keys()];
     for (const id of ids) {
       const entry = settle(id);
       if (entry) entry.reject(askError(reason || "the bridge disconnected", CODE_OFFLINE));
     }
-    methods = null;
   }
 
   /**
@@ -189,14 +209,22 @@
    */
   async function probe() {
     if (methods) return methods;
+    const asked = connection;
+    let found;
     try {
       const data = await request("ping", {}, { timeoutMs: 4000, idleTimeoutMs: 4000 });
-      methods = Array.isArray(data && data.methods) ? data.methods : [];
+      found = Array.isArray(data && data.methods) ? data.methods : [];
     } catch {
       // An older backend has no ping either, so this is also how "the
       // channel is not there at all" is discovered.
-      methods = [];
+      found = [];
     }
+    // The caller still gets an answer — an interrupted probe resolves empty
+    // rather than rejecting, because "nothing is available" is the right
+    // thing for a panel to render while the bridge is down. It is only the
+    // cache that must not keep it.
+    if (asked !== connection) return found;
+    methods = found;
     return methods;
   }
 

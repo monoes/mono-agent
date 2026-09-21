@@ -41,7 +41,14 @@
     return `ext-${uuid || `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
   }
 
-  /** send frames one envelope onto the socket. The framing lives in capture.js. */
+  /**
+   * send frames one envelope onto the socket. The framing lives in capture.js.
+   *
+   * Throws when a frame does not reach the wire, which is what lets
+   * MonoCaptureQueue tell a delivery from a no-op: background.js's send
+   * writes only while the socket is OPEN and returns false otherwise, and a
+   * queue that cannot see the difference deletes captures it never sent.
+   */
   function send(envelope) {
     const messages = root.MonoCapture.planMessages(
       envelope.id,
@@ -50,7 +57,9 @@
       envelope.warnings,
       { type: PUSH_TYPE, maxMessageBytes: deps.maxMessageBytes }
     );
-    for (const message of messages) deps.send(message);
+    for (const message of messages) {
+      if (deps.send(message) === false) throw new Error("the bridge disconnected mid-send");
+    }
   }
 
   const bridge = () => ({ send, isConnected: () => deps.isConnected() });

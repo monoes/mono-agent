@@ -188,6 +188,61 @@ test("an oversized event is dropped, and the drop is reported rather than silent
   assert.ok(sent[0].data.params.bytes > 31 * 1024 * 1024);
 });
 
+// 11M CJK characters: 11M UTF-16 units, so `.length` says ~11MB and sails
+// under the 30MB guard — while the frame actually weighs ~33MB, over the Go
+// server's 32MiB read limit. JSON.stringify does not escape non-ASCII, so
+// there is nothing between the two numbers but the unit they are counted in.
+const CJK = "\u6f22".repeat(11 * 1024 * 1024);
+
+test("the result guard counts UTF-8 bytes, not UTF-16 units", async () => {
+  const { proxy } = setup({ cdp: async () => ({ value: CJK }) });
+  // Sending this would not fail the command — it would drop the whole
+  // extension connection, which is the exact outcome the guard exists for.
+  await assert.rejects(
+    () => proxy.handleCommand("cdp", { tabId: 42, method: "Runtime.evaluate", params: {} }),
+    /too large/,
+  );
+});
+
+test("the event guard counts UTF-8 bytes, not UTF-16 units", async () => {
+  const { proxy, sent, emit } = setup();
+  await proxy.handleCommand("cdp_attach", { tabId: 42 });
+  emit({ tabId: 42 }, "Tracing.dataCollected", { value: CJK });
+
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].data.method, "MonoAgent.eventDropped");
+  assert.ok(
+    sent[0].data.params.bytes > 32 * 1024 * 1024,
+    `the reported size is the wire size, got ${sent[0].data.params.bytes}`
+  );
+});
+
+test("a relay disconnect releases every tab it was holding", async () => {
+  const { proxy, record } = setup();
+  await proxy.handleCommand("cdp_attach", { tabId: 42 });
+  await proxy.handleCommand("cdp_attach", { tabId: 7 });
+  assert.deepEqual(proxy.subscribedTabs(), [42, 7]);
+
+  // ws.onclose. The subscriptions were to a socket that is gone, and the
+  // pins they took are the only thing keeping the 30s idle sweep off two
+  // tabs nothing is listening to — so Chrome's debugging banner stays up
+  // until the user intervenes.
+  proxy.disconnected("the bridge disconnected");
+
+  assert.deepEqual(proxy.subscribedTabs(), [], "nothing is still subscribed");
+  assert.deepEqual(record.unpinned, [42, 7], "the sweep is free to reclaim both tabs");
+});
+
+test("events stop being relayed once the socket that asked for them is gone", async () => {
+  const { proxy, sent, emit } = setup();
+  await proxy.handleCommand("cdp_attach", { tabId: 42 });
+  proxy.disconnected("the bridge disconnected");
+  sent.length = 0;
+
+  emit({ tabId: 42 }, "Network.responseReceived", { requestId: "1" });
+  assert.deepEqual(sent, [], "a closed socket is not formatted for");
+});
+
 test("attach failure surfaces Chrome's own message", async () => {
   const { proxy } = setup({
     attach: async () => {

@@ -25,6 +25,17 @@
    * install hands over the pieces background.js owns: send(message) writes one
    * frame to the WebSocket, isConnected() reports whether that will land, and
    * attach/cdp/detach are its existing per-tab debugger helpers.
+   *
+   * Two of those are load-bearing in ways that are easy to leave out, and
+   * both were:
+   *
+   *   maxMessageBytes — the per-frame budget capture.js splits artifacts
+   *     against. Without it every capture is planned against a budget of
+   *     NaN, which produces an envelope carrying no bytes at all.
+   *   send() — returns false when the frame did not reach the socket. A
+   *     send that quietly does nothing when the socket is closed is
+   *     indistinguishable from a successful one, and the queue then deletes
+   *     captures it never delivered (CLIP-08).
    */
   function install(d) {
     deps = d;
@@ -69,7 +80,13 @@
       type: type || null,
       maxMessageBytes: deps.maxMessageBytes,
     });
-    for (const message of messages) deps.send(message);
+    for (const message of messages) {
+      // A throw here is the only thing that tells the queue this capture is
+      // still owed. Half an envelope on the wire is not a delivery: the
+      // receiver completes on data.final, so a run that stops short leaves
+      // nothing behind on the Go side either.
+      if (deps.send(message) === false) throw new Error("the bridge disconnected mid-send");
+    }
   }
 
   /** handleCommand answers a Go-initiated page_capture. */

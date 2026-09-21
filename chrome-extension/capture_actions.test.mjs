@@ -77,9 +77,13 @@ function world(options = {}) {
   sandbox.MonoCaptureActions.install({
     storage: chrome.storage.local,
     isConnected: () => connected,
+    // background.js's real send returns false rather than throwing when the
+    // socket is not OPEN, which is the case `sendSilentlyFails` reproduces.
     send: (frame) => {
       if (options.sendThrows) throw new Error(options.sendThrows);
+      if (options.sendSilentlyFails) return false;
       frames.push(frame);
+      return true;
     },
     capture: async (params) => {
       captures.push(params);
@@ -114,6 +118,7 @@ function world(options = {}) {
     broadcasts,
     tabs,
     disconnect: () => (connected = false),
+    sendSilentlyFails: () => (options.sendSilentlyFails = true),
     connect: () => (connected = true),
     ask: (message) => sandbox.MonoCaptureActions.handle(message),
   };
@@ -357,4 +362,33 @@ test("the form state asks the backend for the real profiles", async () => {
   assert.equal(again.profile, "p-work");
   assert.equal(again.profileChanged, true);
   assert.match(again.profileReason, /Work/);
+});
+
+test("a socket that swallows the frame instead of throwing still queues the capture", async () => {
+  // isConnected() says yes and the send says nothing at all — the shape of
+  // an MV3 socket that closed between the check and the write. Reported as
+  // sent, this capture would be gone: the queue is the only copy.
+  const w = world({ sendSilentlyFails: true });
+  const result = await w.ask({ type: "capture_commit", form: { note: "worth keeping" } });
+
+  assert.equal(result.queued, true, "not delivered, so it is queued");
+  assert.equal(w.frames.length, 0, "nothing reached the wire");
+  assert.equal(w.store.captureQueue.length, 1);
+  assert.equal(w.store.captureQueue[0].envelope.meta.note, "worth keeping");
+});
+
+test("a retry against a swallowing socket leaves the capture exactly where it was", async () => {
+  const w = world({ connected: false });
+  await w.ask({ type: "capture_commit", form: {} });
+  assert.equal(w.store.captureQueue.length, 1);
+  const key = w.store.captureQueue[0].envelope.id;
+
+  // The bridge comes back, the retry goes out, and the frame lands nowhere.
+  // A retry that loses the capture is the one thing CLIP-08 cannot allow.
+  w.connect();
+  w.sendSilentlyFails();
+  const result = await w.ask({ type: "queue_retry", key });
+
+  assert.equal(result.ok, false);
+  assert.equal(w.store.captureQueue.length, 1, "still queued, not deleted on a send that did nothing");
 });
