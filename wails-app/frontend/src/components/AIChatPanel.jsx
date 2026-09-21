@@ -11,7 +11,7 @@ import { ChatArtifactCard } from './chat/ChatArtifactCard.jsx'
 import { openArtifact as revalidateAndOpenArtifact } from './chat/chatArtifacts.js'
 import { useResolvedArtifacts } from './chat/useResolvedArtifacts.js'
 import './chat/chat.css'
-import { cachedAgentScan } from '../lib/agentRuntimes.js'
+import { cachedAgentScan, isMonomindNotFound } from '../lib/agentRuntimes.js'
 import { getAssistantTools, getAssistantAllowRuns } from '../lib/assistantTools.js'
 
 // Shared style for the three backend/runtime/provider <select>s in the
@@ -186,6 +186,9 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
   const [runtimeModelsLoading, setRuntimeModelsLoading] = useState(false)
   const [useAgents, setUseAgents]           = useState(false)
   const [monomindMissing, setMonomindMissing] = useState(false)
+  // Scan failed for a reason other than "not installed" — the backend's own
+  // message (e.g. "monomind 2.1.0 is too old…"), shown verbatim.
+  const [scanError, setScanError]           = useState('')
   const [pastConversations, setPastConversations] = useState([])
   const [showSessions, setShowSessions]     = useState(false)
   // Presentation: 'docked' (resizable sidebar, 380-720px) or 'expanded' (a
@@ -267,7 +270,12 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
     hasScannedRef.current = true
     setRuntimesLoading(true)
     cachedAgentScan().then(res => {
-      if (!res || res.error) { setMonomindMissing(true); return }
+      if (!res || res.error) {
+        const msg = res?.error || ''
+        if (isMonomindNotFound(msg)) setMonomindMissing(true)
+        else setScanError(msg || 'the agent runtime scan failed')
+        return
+      }
       const installed = (res.agents || []).filter(a => a.installed)
       setRuntimes(installed)
       if (installed.length > 0) {
@@ -706,6 +714,8 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
         ? 'Loading available AI systems…'
         : (monomindMissing
             ? 'monomind not found — install with npm install -g @monoes/monomindcli, or select an AI provider above'
+            : scanError
+            ? `monomind is installed but unusable: ${scanError} — or select an AI provider above`
             : (useAgents ? 'Select an agent runtime above to start chatting' : 'Select an AI provider above to start chatting')))
     : ''
 
@@ -1049,7 +1059,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
           >
             {runtimes.length === 0 && (
               <option value="">
-                {monomindMissing ? 'monomind missing — npm i -g @monoes/monomindcli' : 'No agent runtimes'}
+                {monomindMissing ? 'monomind missing — npm i -g @monoes/monomindcli' : scanError ? 'monomind unusable — see below' : 'No agent runtimes'}
               </option>
             )}
             {runtimes.map(r => (
@@ -1155,6 +1165,12 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
                 Install it with <code>npm install -g @monoes/monomindcli</code><br />
                 — or add an AI provider API key in Settings instead.
               </span>
+            ) : scanError && !hasBackend ? (
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, textAlign: 'center', lineHeight: 1.6, wordBreak: 'break-word' }}>
+                monomind is installed but couldn't be used:<br />
+                <code>{scanError}</code><br />
+                — or add an AI provider API key in Settings instead.
+              </span>
             ) : (
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, textAlign: 'center', lineHeight: 1.6 }}>
                 {workflowID === 'general'
@@ -1244,6 +1260,8 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
           ? 'Loading available AI systems…'
           : (monomindMissing
               ? <>monomind not found — install with <code>npm install -g @monoes/monomindcli</code>, or select an AI provider above</>
+              : scanError
+              ? <>monomind is installed but unusable: <code>{scanError}</code> — or select an AI provider above</>
               : (useAgents ? 'Select an agent runtime above to start chatting' : 'Select an AI provider above to start chatting'))}
       />
     </div>

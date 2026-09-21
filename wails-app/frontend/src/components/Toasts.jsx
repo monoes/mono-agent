@@ -48,7 +48,7 @@ export default function Toasts() {
           <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 1, color: '#ef4444' }} />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ color: '#fecaca', fontWeight: 600, marginBottom: 2 }}>{t('toasts.failed', { op: toast.op })}</div>
-            <div style={{ color: '#f8a5a5', wordBreak: 'break-word', opacity: 0.85 }}>{toast.message}</div>
+            <div style={{ color: '#f8a5a5', wordBreak: 'break-word', whiteSpace: 'pre-line', opacity: 0.85 }}>{toast.message}</div>
           </div>
           <button
             onClick={() => dismiss(toast.id)}
