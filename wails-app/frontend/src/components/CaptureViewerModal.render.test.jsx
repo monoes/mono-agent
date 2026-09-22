@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import '@testing-library/jest-dom/vitest'
 import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react'
-import CaptureViewerModal, { initialCaptureTab } from './CaptureViewerModal.jsx'
+import CaptureViewerModal, { initialCaptureTab, summaryStatusText } from './CaptureViewerModal.jsx'
 import * as WailsApp from '../wailsjs/go/main/App'
 
 vi.mock('../wailsjs/go/main/App', () => ({
@@ -28,6 +28,61 @@ describe('initialCaptureTab', () => {
   })
   it('keeps short text when there is nothing else', () => {
     expect(initialCaptureTab({ readable: 'short', screenshot: '' })).toBe('text')
+  })
+  it('opens on the summary when one was written', () => {
+    expect(initialCaptureTab({ readable: longText, screenshot: shot, summary: '## TL;DR\nx' })).toBe('summary')
+  })
+  it('does not open on a summary that is not there yet', () => {
+    expect(initialCaptureTab({ readable: longText, screenshot: shot, summary: '', summary_status: { status: 'pending' } })).toBe('text')
+  })
+})
+
+describe('summaryStatusText', () => {
+  it('says where the summary is', () => {
+    expect(summaryStatusText({ status: 'done', runtime: 'claude' })).toBe('Summary by claude')
+    expect(summaryStatusText({ status: 'running', runtime: 'claude' })).toMatch(/being written by claude/)
+    expect(summaryStatusText({ status: 'error', error: 'claude: not installed' })).toBe('Summary failed: claude: not installed')
+    expect(summaryStatusText(null)).toBe('')
+  })
+})
+
+describe('CaptureViewerModal summary and transcript tabs', () => {
+  const doc = { id: 'doc-2', filename: 'Me at the zoo', url: 'https://www.youtube.com/watch?v=jNQXAC9IVRw' }
+  const video = {
+    title: 'Me at the zoo', url: doc.url, readable: longText, screenshot: shot,
+    summary: '# Summary: Me at the zoo\n\n## TL;DR\n\nElephants have long trunks.',
+    transcript: '# Transcript: Me at the zoo\n\n[0:01](https://www.youtube.com/watch?v=jNQXAC9IVRw&t=1s) All right, so here we are',
+    summary_status: { status: 'done', runtime: 'claude' },
+  }
+
+  it('opens on the summary, and the transcript is a tab away', async () => {
+    WailsApp.GetCaptureView.mockResolvedValue(video)
+    render(<CaptureViewerModal doc={doc} onClose={() => {}} />)
+    expect(await screen.findByText('Elephants have long trunks.')).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Summary' })).toHaveAttribute('aria-selected', 'true')
+    fireEvent.click(screen.getByRole('tab', { name: 'Transcript' }))
+    expect(screen.getByRole('link', { name: '0:01' })).toHaveAttribute('href', 'https://www.youtube.com/watch?v=jNQXAC9IVRw&t=1s')
+    expect(screen.getByText(/All right, so here we are/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: /^Text/ }))
+    expect(screen.getByRole('heading', { level: 1, name: 'Article' })).toBeInTheDocument()
+  })
+
+  it('has no summary or transcript tab for a plain capture', async () => {
+    WailsApp.GetCaptureView.mockResolvedValue({ title: 'Article', url: doc.url, readable: longText, screenshot: shot })
+    render(<CaptureViewerModal doc={doc} onClose={() => {}} />)
+    await screen.findByRole('heading', { level: 1, name: 'Article' })
+    expect(screen.queryByRole('tab', { name: /Summary/ })).toBeNull()
+    expect(screen.queryByRole('tab', { name: 'Transcript' })).toBeNull()
+  })
+
+  it('says why a summary is missing instead of showing nothing', async () => {
+    WailsApp.GetCaptureView.mockResolvedValue({
+      title: 'Article', url: doc.url, readable: longText, screenshot: shot, summary: '',
+      summary_status: { status: 'error', runtime: 'claude', error: 'claude: not installed' },
+    })
+    render(<CaptureViewerModal doc={doc} onClose={() => {}} />)
+    fireEvent.click(await screen.findByRole('tab', { name: 'Summary (not ready)' }))
+    expect(screen.getByRole('status')).toHaveTextContent('Summary failed: claude: not installed')
   })
 })
 

@@ -58,6 +58,53 @@ func TestReadCaptureViewToleratesMissingParts(t *testing.T) {
 	}
 }
 
+// A "Save video summary" capture: the summary, the transcript and where
+// the summary came from all reach the viewer.
+func TestReadCaptureViewReadsSummaryAndTranscript(t *testing.T) {
+	dir := writeCapture(t, map[string]string{
+		"meta.json":     `{"title":"Me at the zoo","url":"https://www.youtube.com/watch?v=jNQXAC9IVRw"}`,
+		"readable.md":   "# Me at the zoo",
+		"summary.md":    "# Summary: Me at the zoo\n\n## TL;DR\nElephants.",
+		"summary.json":  `{"status":"done","kind":"video","runtime":"claude","finishedAt":"2026-09-22T12:00:00Z"}`,
+		"transcript.md": "[0:01](https://www.youtube.com/watch?v=jNQXAC9IVRw&t=1s) All right, so here we are",
+	})
+	v, err := readCaptureView(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(v.Summary, "Elephants.") || !strings.Contains(v.Transcript, "here we are") {
+		t.Errorf("summary=%q transcript=%q", v.Summary, v.Transcript)
+	}
+	if v.SummaryStatus == nil || v.SummaryStatus.Status != "done" || v.SummaryStatus.Runtime != "claude" {
+		t.Errorf("summary status = %+v", v.SummaryStatus)
+	}
+}
+
+// A summary that failed says why; one never asked for has no status at all.
+func TestReadCaptureViewSummaryStatus(t *testing.T) {
+	failed := writeCapture(t, map[string]string{
+		"meta.json":    `{"title":"x","url":"https://x.test/"}`,
+		"readable.md":  "x",
+		"summary.json": `{"status":"error","kind":"page","runtime":"claude","error":"claude: not installed"}`,
+	})
+	v, err := readCaptureView(failed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Summary != "" || v.SummaryStatus == nil || v.SummaryStatus.Status != "error" || v.SummaryStatus.Error != "claude: not installed" {
+		t.Errorf("failed summary: %+v / %+v", v, v.SummaryStatus)
+	}
+
+	plain := writeCapture(t, map[string]string{"meta.json": `{"title":"x","url":"https://x.test/"}`, "readable.md": "x"})
+	v, err = readCaptureView(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.SummaryStatus != nil || v.Summary != "" || v.Transcript != "" {
+		t.Errorf("a plain capture grew a summary: %+v", v)
+	}
+}
+
 func TestReadCaptureViewNeedsMeta(t *testing.T) {
 	dir := writeCapture(t, map[string]string{"readable.md": "text"})
 	if _, err := readCaptureView(dir); err == nil {

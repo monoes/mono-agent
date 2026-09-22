@@ -5,20 +5,37 @@ import remarkGfm from 'remark-gfm'
 import * as WailsApp from '../wailsjs/go/main/App'
 import { mdComponents } from './FileViewerModal.jsx'
 
-// A browser capture previewed from its parts: the page's readable text and
-// its screenshot. Its primary file is often page.mhtml, which nothing
+// A browser capture previewed from its parts: the AI summary (when the
+// capture asked for one), the page's readable text, a video's transcript,
+// and the screenshot. Its primary file is often page.mhtml, which nothing
 // in-app can show and which the OS tends to hand to a text editor.
 
 // Below this many words the "text" is a leftover (a search page's one
 // snippet, an app's empty shell), and the screenshot says more.
 const MIN_READABLE_WORDS = 60
 
-// Pure, for tests: which tab a capture opens on.
+// Pure, for tests: which tab a capture opens on. A written summary is the
+// reason the capture was saved that way, so it wins.
 export function initialCaptureTab(view) {
   if (!view) return 'text'
+  if (view.summary) return 'summary'
   const words = (view.readable || '').split(/\s+/).filter(Boolean).length
   if (view.screenshot && words < MIN_READABLE_WORDS) return 'screenshot'
   return view.readable ? 'text' : 'screenshot'
+}
+
+// Pure, for tests: the one line that says where a summary is. The
+// Documents list's badge uses it too.
+export function summaryStatusText(st) {
+  if (!st || !st.status) return ''
+  switch (st.status) {
+    case 'done': return st.runtime ? `Summary by ${st.runtime}` : 'Summary'
+    case 'pending': return `Summary queued${st.runtime ? ` (${st.runtime})` : ''}`
+    case 'running': return `Summary being written${st.runtime ? ` by ${st.runtime}` : ''}…`
+    case 'stalled': return 'Summary never finished (the bridge stopped before writing it)'
+    case 'error': return `Summary failed${st.error ? `: ${st.error}` : ''}`
+    default: return st.status
+  }
 }
 
 const tabStyle = (active) => ({
@@ -86,9 +103,19 @@ export default function CaptureViewerModal({ doc, onClose }) {
 
         {view && (
           <div role="tablist" style={{ display: 'flex', gap: 6 }}>
+            {(view.summary || view.summary_status) && (
+              <button role="tab" aria-selected={tab === 'summary'} onClick={() => setTab('summary')} style={tabStyle(tab === 'summary')}>
+                Summary{view.summary ? '' : ' (not ready)'}
+              </button>
+            )}
             <button role="tab" aria-selected={tab === 'text'} disabled={!view.readable} onClick={() => setTab('text')} style={{ ...tabStyle(tab === 'text'), opacity: view.readable ? 1 : 0.4 }}>
               Text{view.readable ? '' : ' (none found)'}
             </button>
+            {view.transcript && (
+              <button role="tab" aria-selected={tab === 'transcript'} onClick={() => setTab('transcript')} style={tabStyle(tab === 'transcript')}>
+                Transcript
+              </button>
+            )}
             <button role="tab" aria-selected={tab === 'screenshot'} disabled={!view.screenshot} onClick={() => setTab('screenshot')} style={{ ...tabStyle(tab === 'screenshot'), opacity: view.screenshot ? 1 : 0.4 }}>
               Screenshot
             </button>
@@ -106,6 +133,19 @@ export default function CaptureViewerModal({ doc, onClose }) {
             </div>
           ) : view === null ? (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', color: '#334155', fontFamily: 'var(--font-mono)', fontSize: 11 }}>Loading…</div>
+          ) : tab === 'summary' ? (
+            <div style={{ width: '100%', maxHeight: '70vh', overflow: 'auto', padding: '14px 18px', fontSize: 13, color: '#e2e8f0' }}>
+              {view.summary_status && view.summary_status.status !== 'done' && (
+                <div role="status" style={{ fontFamily: 'var(--font-mono)', fontSize: 11, marginBottom: 10, color: ['error', 'stalled'].includes(view.summary_status.status) ? '#fca5a5' : '#94a3b8' }}>
+                  {summaryStatusText(view.summary_status)}
+                </div>
+              )}
+              {view.summary && <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>{view.summary}</ReactMarkdown>}
+            </div>
+          ) : tab === 'transcript' && view.transcript ? (
+            <div style={{ width: '100%', maxHeight: '70vh', overflow: 'auto', padding: '14px 18px', fontSize: 13, color: '#e2e8f0' }}>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>{view.transcript}</ReactMarkdown>
+            </div>
           ) : tab === 'screenshot' && view.screenshot ? (
             <img src={view.screenshot} alt={`Screenshot of ${view.title || doc.filename}`} style={{ width: '100%', height: 'auto', display: 'block', alignSelf: 'flex-start' }} />
           ) : view.readable ? (
