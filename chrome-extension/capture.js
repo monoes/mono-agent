@@ -268,6 +268,10 @@
     if (prepared) meta.preparation = prepared;
     if (p.selection && !page.selectionFound) warnings.push("selection requested but nothing was selected; captured the whole page");
 
+    if (p.mode) meta.captureMode = p.mode;
+    // The bridge writes summary.md after the envelope lands; this is the ask.
+    if (p.summarize) meta.summarize = { kind: p.summarize === "video" ? "video" : "page" };
+
     const artifacts = [];
     if (formats.includes("readable")) {
       const bytes = utf8ToBase64(page.markdown || "");
@@ -285,12 +289,29 @@
     // CLIP-10/12: whatever the per-site adapter or a point-and-extract run
     // produced (items.csv, items.json). The page side has already checked
     // each name against the Go receiver's rules.
-    for (const extra of page.artifacts || []) {
+    for (const extra of (!p.screenshotOnly && page.artifacts) || []) {
       const bytes = utf8ToBase64(extra.text || "");
       artifacts.push({ name: extra.name, encoding: "base64", bytes, rawBytes: base64Bytes(bytes) });
     }
     if (page.adapter) meta.adapter = page.adapter;
     warnings.push(...(page.warnings || []));
+
+    // "Save video summary": the video's record and its transcript, read from
+    // the player (youtube_transcript.js). Never fatal: a video whose
+    // captions will not come still has a title, a channel and a screenshot.
+    if (formats.includes("video")) {
+      if (ctx.youtube && root.MonoYouTubeTranscript) {
+        const video = await root.MonoYouTubeTranscript.captureVideo(meta.url, tabId, ctx.youtube);
+        if (video.meta) meta.video = video.meta;
+        if (video.markdown) {
+          const bytes = utf8ToBase64(video.markdown);
+          artifacts.push({ name: "transcript.md", encoding: "base64", bytes, rawBytes: base64Bytes(bytes) });
+        }
+        warnings.push(...video.warnings);
+      } else {
+        warnings.push("video details skipped: this build cannot read the player");
+      }
+    }
 
     const needsCdp = ["mhtml", "pdf", "screenshot"].some((f) => formats.includes(f));
     if (needsCdp) {
@@ -327,7 +348,7 @@
     // its own artifact. The context supplies it (recall_bridge.js) so that
     // all three capture paths — command, shortcut and popup — get it
     // without each having to remember to.
-    if (ctx.highlights) {
+    if (ctx.highlights && !p.screenshotOnly) {
       try {
         const marks = await ctx.highlights(meta.canonicalUrl || meta.url);
         if (marks) artifacts.push(marks);

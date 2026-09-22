@@ -1,0 +1,66 @@
+{
+ "captions": {
+  "playerCaptionsTracklistRenderer": {
+   "captionTracks": [
+    {
+     "baseUrl": "https://www.youtube.com/api/timedtext?v=aircAruvnKk&ei=vmayauOTAdibgMMPxZmtsAE&caps=asr&opi=112496729&xoaf=5&xowf=1&hl=en&ip=0.0.0.0&ipbits=0&expire=1790101806&sparams=ip,ipbits,expire,v,ei,caps,opi,xoaf&signature=197BD193715C168827C3F2415D7D48CBAE59FF9B.072A5E25D711FCF1D60FD1DBCA387218F7485FF0&key=yt8&lang=ar&fmt=srv3",
+     "name": {
+      "runs": [
+       {
+        "text": "Arabic"
+       }
+      ]
+     },
+     "vssId": ".ar",
+     "languageCode": "ar",
+     "rtl": true,
+     "isTranslatable": true,
+     "trackName": ""
+    },
+    {
+     "baseUrl": "https://www.youtube.com/api/timedtext?v=aircAruvnKk&ei=vmayauOTAdibgMMPxZmtsAE&caps=asr&opi=112496729&xoaf=5&xowf=1&hl=en&ip=0.0.0.0&ipbits=0&expire=1790101806&sparams=ip,ipbits,expire,v,ei,caps,opi,xoaf&signature=197BD193715C168827C3F2415D7D48CBAE59FF9B.072A5E25D711FCF1D60FD1DBCA387218F7485FF0&key=yt8&lang=en&fmt=srv3",
+     "name": {
+      "runs": [
+       {
+        "text": "English"
+       }
+      ]
+     },
+     "vssId": ".en",
+     "languageCode": "en",
+     "isTranslatable": true,
+     "trackName": ""
+    },
+    {
+     "baseUrl": "https://www.youtube.com/api/timedtext?v=aircAruvnKk&ei=vmayauOTAdibgMMPxZmtsAE&caps=asr&opi=112496729&xoaf=5&xowf=1&hl=en&ip=0.0.0.0&ipbits=0&expire=1790101806&sparams=ip,ipbits,expire,v,ei,caps,opi,xoaf&signature=197BD193715C168827C3F2415D7D48CBAE59FF9B.072A5E25D711FCF1D60FD1DBCA387218F7485FF0&key=yt8&kind=asr&lang=en&fmt=srv3",
+     "name": {
+      "runs": [
+       {
+        "text": "English (auto-generated)"
+       }
+      ]
+     },
+     "vssId": "a.en",
+     "languageCode": "en",
+     "kind": "asr",
+     "isTranslatable": true,
+     "trackName": ""
+    },
+    {
+     "baseUrl": "https://www.youtube.com/api/timedtext?v=aircAruvnKk&ei=vmayauOTAdibgMMPxZmtsAE&caps=asr&opi=112496729&xoaf=5&xowf=1&hl=en&ip=0.0.0.0&ipbits=0&expire=1790101806&sparams=ip,ipbits,expire,v,ei,caps,opi,xoaf&signature=197BD193715C168827C3F2415D7D48CBAE59FF9B.072A5E25D711FCF1D60FD1DBCA387218F7485FF0&key=yt8&lang=de&fmt=srv3",
+     "name": {
+      "runs": [
+       {
+        "text": "German"
+       }
+      ]
+     },
+     "vssId": ".de",
+     "languageCode": "de",
+     "isTranslatable": true,
+     "trackName": ""
+    }
+   ]
+  }
+ }
+}

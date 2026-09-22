@@ -20,7 +20,7 @@
 // form's model, batch capture, the offline queue's face, and the dispatch
 // that answers sidepanel.js. tables.js (CLIP-11) is absent on purpose — it runs in
 // the page, injected by capture.js, not in this worker.
-importScripts("capture_meta.js", "capture.js", "capture_bridge.js");
+importScripts("capture_meta.js", "capture.js", "capture_modes.js", "youtube_video.js", "youtube_transcript.js", "capture_bridge.js");
 importScripts("capture_form.js", "capture_profile.js", "capture_batch.js", "capture_queue.js", "capture_actions.js");
 // The in-page recall group (RCL-02/04/05): the extension→Go request channel
 // and the three things that ride it. ask.js must come first — the others

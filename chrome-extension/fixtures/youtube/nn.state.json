@@ -1,0 +1,650 @@
+{
+ "href": "https://www.youtube.com/watch?v=aircAruvnKk",
+ "players": [
+  {
+   "videoDetails": {
+    "videoId": "aircAruvnKk",
+    "title": "But what is a neural network? | Deep learning chapter 1",
+    "lengthSeconds": "1120",
+    "channelId": "UCYO_jab_esuFRV4b17AJtAw",
+    "isOwnerViewing": false,
+    "shortDescription": "What are the neurons, why are there layers, and what is the math underlying it?\nHelp fund future projects: https://www.patreon.com/3blue1brown\nWritten/interactive form of this series: https://www.3blue1brown.com/topics/neural-networks\n\nAdditional funding for this project was provided by Amplify Partners\n\nFor those who want to learn more, I highly recommend the book by Michael Nielsen that introduces neural networks and deep learning: https://goo.gl/Zmczdy\n\nThere are two neat things about this book.  First, it's available for free, so consider joining me in making a donation to Nielsen if you get something out of it.  And second, it's centered around walking through some code and data, which you can download yourself, and which covers the same example that I introduced in this video.  Yay for active learning!\nhttps://github.com/mnielsen/neural-networks-and-deep-learning\n\nI also highly recommend Chris Olah's blog: http://colah.github.io/\n\nFor more videos, Welch Labs also has some great series on machine learning: \nhttps://youtu.be/i8D90DkCLhI\nhttps://youtu.be/bxe2T-V8XRs\n\nFor those of you looking to go *even* deeper, check out the text \"Deep Learning\" by Goodfellow, Bengio, and Courville.  \n\nAlso, the publication Distill is just utterly beautiful: https://distill.pub/\n\nLion photo by Kevin Pluck\n\nЗвуковая дорожка на русском языке: Влад Бурмистров.\n\nThanks to these viewers for their contributions to translations\nGerman: @fpgro\nHebrew: Omer Tuchfeld\nHungarian: Máté Kaszap\nItalian: @teobucci, Teo Bucci\n\n-----------------\nTimeline: \n0:00 - Introduction example\n1:07 - Series preview\n2:42 - What are neurons?\n3:35 - Introducing layers\n5:31 - Why layers?\n8:38 - Edge detection example\n11:34 - Counting weights and biases\n12:30 - How learning relates\n13:26 - Notation and linear algebra\n15:17 - Recap\n16:27 - Some final words\n17:03 - ReLU vs Sigmoid\n\nCorrection 14:45 - The final index on the bias vector should be \"k\"\n\n------------------\nAnimations largely made using manim, a scrappy open source python library.  https://github.com/3b1b/manim\n\nIf you want to check it out, I feel compelled to warn you that it's not the most well-documented tool, and has many other quirks you might expect in a library someone wrote with only their own use in mind.\n\nMusic by Vincent Rubinetti.\nDownload the music on Bandcamp:\nhttps://vincerubinetti.bandcamp.com/album/the-music-of-3blue1brown\n\nStream the music on Spotify:\nhttps://open.spotify.com/album/1dVyjwS8FBqXhRunaG5W5u\n\nIf you want to contribute translated subtitles or to help review those that have already been made by others and need approval, you can click the gear icon in the video and go to subtitles/cc, then \"add subtitles/cc\".  I really appreciate those who do this, as it helps make the lessons accessible to more people.\n------------------\n\n3blue1brown is a channel about animating math, in all senses of the word animate.  And you know the drill with YouTube, if you want to stay posted on new videos, subscribe, and click the bell to receive notifications (if you're into that).\n\nIf you are new to this channel and want to see more, a good place to start is this playlist: http://3b1b.co/recommended\n\nVarious social media stuffs:\nWebsite: https://www.3blue1brown.com\nTwitter: https://twitter.com/3Blue1Brown\nPatreon: https://patreon.com/3blue1brown\nFacebook: https://www.facebook.com/3blue1brown\nReddit: https://www.reddit.com/r/3Blue1Brown",
+    "isCrawlable": true,
+    "allowRatings": true,
+    "viewCount": "24420475",
+    "author": "3Blue1Brown",
+    "isPrivate": false,
+    "isUnpluggedCorpus": false,
+    "isLiveContent": false,
+    "isTvfilmVideo": false
+   },
+   "microformat": {
+    "playerMicroformatRenderer": {
+     "title": {
+      "simpleText": "But what is a neural network? | Deep learning chapter 1"
+     },
+     "description": {
+      "simpleText": "What are the neurons, why are there layers, and what is the math underlying it?\nHelp fund future projects: https://www.patreon.com/3blue1brown\nWritten/interactive form of this series: https://www.3blue1brown.com/topics/neural-networks\n\nAdditional funding for this project was provided by Amplify Partners\n\nFor those who want to learn more, I highly recommend the book by Michael Nielsen that introduces neural networks and deep learning: https://goo.gl/Zmczdy\n\nThere are two neat things about this book.  First, it's available for free, so consider joining me in making a donation to Nielsen if you get something out of it.  And second, it's centered around walking through some code and data, which you can download yourself, and which covers the same example that I introduced in this video.  Yay for active learning!\nhttps://github.com/mnielsen/neural-networks-and-deep-learning\n\nI also highly recommend Chris Olah's blog: http://colah.github.io/\n\nFor more videos, Welch Labs also has some great series on machine learning: \nhttps://youtu.be/i8D90DkCLhI\nhttps://youtu.be/bxe2T-V8XRs\n\nFor those of you looking to go *even* deeper, check out the text \"Deep Learning\" by Goodfellow, Bengio, and Courville.  \n\nAlso, the publication Distill is just utterly beautiful: https://distill.pub/\n\nLion photo by Kevin Pluck\n\nЗвуковая дорожка на русском языке: Влад Бурмистров.\n\nThanks to these viewers for their contributions to translations\nGerman: @fpgro\nHebrew: Omer Tuchfeld\nHungarian: Máté Kaszap\nItalian: @teobucci, Teo Bucci\n\n-----------------\nTimeline: \n0:00 - Introduction example\n1:07 - Series preview\n2:42 - What are neurons?\n3:35 - Introducing layers\n5:31 - Why layers?\n8:38 - Edge detection example\n11:34 - Counting weights and biases\n12:30 - How learning relates\n13:26 - Notation and linear algebra\n15:17 - Recap\n16:27 - Some final words\n17:03 - ReLU vs Sigmoid\n\nCorrection 14:45 - The final index on the bias vector should be \"k\"\n\n------------------\nAnimations largely made using manim, a scrappy open source python library.  https://github.com/3b1b/manim\n\nIf you want to check it out, I feel compelled to warn you that it's not the most well-documented tool, and has many other quirks you might expect in a library someone wrote with only their own use in mind.\n\nMusic by Vincent Rubinetti.\nDownload the music on Bandcamp:\nhttps://vincerubinetti.bandcamp.com/album/the-music-of-3blue1brown\n\nStream the music on Spotify:\nhttps://open.spotify.com/album/1dVyjwS8FBqXhRunaG5W5u\n\nIf you want to contribute translated subtitles or to help review those that have already been made by others and need approval, you can click the gear icon in the video and go to subtitles/cc, then \"add subtitles/cc\".  I really appreciate those who do this, as it helps make the lessons accessible to more people.\n------------------\n\n3blue1brown is a channel about animating math, in all senses of the word animate.  And you know the drill with YouTube, if you want to stay posted on new videos, subscribe, and click the bell to receive notifications (if you're into that).\n\nIf you are new to this channel and want to see more, a good place to start is this playlist: http://3b1b.co/recommended\n\nVarious social media stuffs:\nWebsite: https://www.3blue1brown.com\nTwitter: https://twitter.com/3Blue1Brown\nPatreon: https://patreon.com/3blue1brown\nFacebook: https://www.facebook.com/3blue1brown\nReddit: https://www.reddit.com/r/3Blue1Brown"
+     },
+     "lengthSeconds": "1120",
+     "ownerProfileUrl": "http://www.youtube.com/@3blue1brown",
+     "externalChannelId": "UCYO_jab_esuFRV4b17AJtAw",
+     "isFamilySafe": true,
+     "isUnlisted": false,
+     "hasYpcMetadata": false,
+     "viewCount": "24420475",
+     "category": "Education",
+     "publishDate": "2017-10-05T08:11:25-07:00",
+     "ownerChannelName": "3Blue1Brown",
+     "uploadDate": "2017-10-05T08:11:25-07:00",
+     "isShortsEligible": false,
+     "likeCount": "562260",
+     "canonicalUrl": "https://www.youtube.com/watch?v=aircAruvnKk"
+    }
+   },
+   "captions": {
+    "playerCaptionsTracklistRenderer": {
+     "captionTracks": [
+      {
+       "baseUrl": "https://www.youtube.com/api/timedtext?v=aircAruvnKk&ei=tGayapt-7dfU8g-ewe34DA&caps=asr&opi=112496729&exp=xpe&xoaf=5&xowf=1&hl=en&ip=0.0.0.0&ipbits=0&expire=1790101796&sparams=ip,ipbits,expire,v,ei,caps,opi,exp,xoaf&signature=DFBC0C4B71CD5C05235CCE8B1430E6B32D93F23B.4FC35450C1CE82FB553953A8B01A85F786D34FF4&key=yt8&lang=ar",
+       "name": {
+        "simpleText": "Arabic"
+       },
+       "vssId": ".ar",
+       "languageCode": "ar",
+       "rtl": true,
+       "isTranslatable": true,
+       "trackName": ""
+      },
+      {
+       "baseUrl": "https://www.youtube.com/api/timedtext?v=aircAruvnKk&ei=tGayapt-7dfU8g-ewe34DA&caps=asr&opi=112496729&exp=xpe&xoaf=5&xowf=1&hl=en&ip=0.0.0.0&ipbits=0&expire=1790101796&sparams=ip,ipbits,expire,v,ei,caps,opi,exp,xoaf&signature=DFBC0C4B71CD5C05235CCE8B1430E6B32D93F23B.4FC35450C1CE82FB553953A8B01A85F786D34FF4&key=yt8&lang=en",
+       "name": {
+        "simpleText": "English"
+       },
+       "vssId": ".en",
+       "languageCode": "en",
+       "isTranslatable": true,
+       "trackName": ""
+      },
+      {
+       "baseUrl": "https://www.youtube.com/api/timedtext?v=aircAruvnKk&ei=tGayapt-7dfU8g-ewe34DA&caps=asr&opi=112496729&exp=xpe&xoaf=5&xowf=1&hl=en&ip=0.0.0.0&ipbits=0&expire=1790101796&sparams=ip,ipbits,expire,v,ei,caps,opi,exp,xoaf&signature=DFBC0C4B71CD5C05235CCE8B1430E6B32D93F23B.4FC35450C1CE82FB553953A8B01A85F786D34FF4&key=yt8&kind=asr&lang=en",
+       "name": {
+        "simpleText": "English (auto-generated)"
+       },
+       "vssId": "a.en",
+       "languageCode": "en",
+       "kind": "asr",
+       "isTranslatable": true,
+       "trackName": ""
+      },
+      {
+       "baseUrl": "https://www.youtube.com/api/timedtext?v=aircAruvnKk&ei=tGayapt-7dfU8g-ewe34DA&caps=asr&opi=112496729&exp=xpe&xoaf=5&xowf=1&hl=en&ip=0.0.0.0&ipbits=0&expire=1790101796&sparams=ip,ipbits,expire,v,ei,caps,opi,exp,xoaf&signature=DFBC0C4B71CD5C05235CCE8B1430E6B32D93F23B.4FC35450C1CE82FB553953A8B01A85F786D34FF4&key=yt8&lang=de",
+       "name": {
+        "simpleText": "German"
+       },
+       "vssId": ".de",
+       "languageCode": "de",
+       "isTranslatable": true,
+       "trackName": ""
+      }
+     ]
+    }
+   }
+  }
+ ],
+ "data": {
+  "currentVideoEndpoint": {
+   "watchEndpoint": {
+    "videoId": "aircAruvnKk"
+   }
+  },
+  "playerOverlays": {
+   "playerOverlayRenderer": {
+    "decoratedPlayerBarRenderer": {
+     "decoratedPlayerBarRenderer": {
+      "playerBar": {
+       "multiMarkersPlayerBarRenderer": {
+        "markersMap": [
+         {
+          "key": "ANIMATION_ANNOTATION_MARKERS",
+          "value": {
+           "markers": [
+            {
+             "markerRenderer": {
+              "title": {},
+              "timeRangeStartMillis": 989767
+             }
+            }
+           ],
+           "trackingParams": "CJUBEMaHBiITCKS-gf2KgpcDFSUBVQgd9sMiEg=="
+          }
+         },
+         {
+          "key": "DESCRIPTION_CHAPTERS",
+          "value": {
+           "chapters": [
+            {
+             "chapterRenderer": {
+              "title": {
+               "simpleText": "Introduction example"
+              },
+              "timeRangeStartMillis": 0
+             }
+            },
+            {
+             "chapterRenderer": {
+              "title": {
+               "simpleText": "Series preview"
+              },
+              "timeRangeStartMillis": 67000
+             }
+            },
+            {
+             "chapterRenderer": {
+              "title": {
+               "simpleText": "What are neurons?"
+              },
+              "timeRangeStartMillis": 162000
+             }
+            },
+            {
+             "chapterRenderer": {
+              "title": {
+               "simpleText": "Introducing layers"
+              },
+              "timeRangeStartMillis": 215000
+             }
+            },
+            {
+             "chapterRenderer": {
+              "title": {
+               "simpleText": "Why layers?"
+              },
+              "timeRangeStartMillis": 331000
+             }
+            },
+            {
+             "chapterRenderer": {
+              "title": {
+               "simpleText": "Edge detection example"
+              },
+              "timeRangeStartMillis": 518000
+             }
+            },
+            {
+             "chapterRenderer": {
+              "title": {
+               "simpleText": "Counting weights and biases"
+              },
+              "timeRangeStartMillis": 694000
+             }
+            },
+            {
+             "chapterRenderer": {
+              "title": {
+               "simpleText": "How learning relates"
+              },
+              "timeRangeStartMillis": 750000
+             }
+            },
+            {
+             "chapterRenderer": {
+              "title": {
+               "simpleText": "Notation and linear algebra"
+              },
+              "timeRangeStartMillis": 806000
+             }
+            },
+            {
+             "chapterRenderer": {
+              "title": {
+               "simpleText": "Recap"
+              },
+              "timeRangeStartMillis": 917000
+             }
+            },
+            {
+             "chapterRenderer": {
+              "title": {
+               "simpleText": "Some final words"
+              },
+              "timeRangeStartMillis": 987000
+             }
+            },
+            {
+             "chapterRenderer": {
+              "title": {
+               "simpleText": "ReLU vs Sigmoid"
+              },
+              "timeRangeStartMillis": 1023000
+             }
+            }
+           ],
+           "trackingParams": "CJEBEMaHBiITCKS-gf2KgpcDFSUBVQgd9sMiEg==",
+           "onChapterRepeat": {
+            "clickTrackingParams": "CJEBEMaHBiITCKS-gf2KgpcDFSUBVQgd9sMiEsoBBBnqFYY=",
+            "openPopupAction": {
+             "popup": {
+              "notificationActionRenderer": {
+               "responseText": {
+                "runs": [
+                 {
+                  "text": "Chapter repeat is on"
+                 }
+                ]
+               },
+               "actionButton": {
+                "buttonRenderer": {
+                 "style": "STYLE_BLUE_TEXT",
+                 "text": {
+                  "runs": [
+                   {
+                    "text": "Turn off"
+                   }
+                  ]
+                 },
+                 "trackingParams": "CJMBEPBbIhMIpL6B_YqClwMVJQFVCB32wyIS",
+                 "command": {
+                  "clickTrackingParams": "CJMBEPBbIhMIpL6B_YqClwMVJQFVCB32wyISygEEGeoVhg==",
+                  "repeatChapterCommand": {
+                   "repeat": "REPEAT_CHAPTER_TYPE_DISABLE_REPEAT"
+                  }
+                 }
+                }
+               },
+               "trackingParams": "CJIBELlqIhMIpL6B_YqClwMVJQFVCB32wyIS"
+              }
+             },
+             "popupType": "TOAST"
+            }
+           }
+          }
+         },
+         {
+          "key": "QUIZ_MARKERS",
+          "value": {
+           "markers": [
+            {
+             "markerRenderer": {
+              "title": {},
+              "timeRangeStartMillis": 139289,
+              "onActiveCommand": {
+               "clickTrackingParams": "CJQBEMaHBiITCKS-gf2KgpcDFSUBVQgd9sMiEsoBBBnqFYY=",
+               "setActivePanelItemAction": {
+                "panelTargetId": "",
+                "itemIndex": 0
+               }
+              },
+              "thumbnail": {
+               "thumbnails": [
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hqdefault.jpg?sqp=-oaymwEqCKgBEF5IWvKriqkDHQgBFQAAiEIYAdgBAeIBCggYEAIYBjgBQAG4AvcY&rs=AOn4CLBuIy7hPfi16qylAgCCZDALrXqG2w&usqp=CCc",
+                 "width": 168,
+                 "height": 94
+                },
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hqdefault.jpg?sqp=-oaymwErCNACELwBSFryq4qpAx0IARUAAIhCGAHYAQHiAQoIGBACGAY4AUABuAL3GA==&rs=AOn4CLBZOc209c-RgkCvFMeILAtaxCSI3Q&usqp=CCc",
+                 "width": 336,
+                 "height": 188
+                },
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hq720.jpg?sqp=-oaymwErCPIDEJgCSFryq4qpAx0IARUAAIhCGAHYAQHiAQoIGBACGAY4AUABuAL3GA==&rs=AOn4CLDhhptL899OgJQbvuTkYU-ZkJ3CRA&usqp=CCc",
+                 "width": 498,
+                 "height": 280
+                },
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hq720.jpg?sqp=-oaymwErCNAFEJQDSFryq4qpAx0IARUAAIhCGAHYAQHiAQoIGBACGAY4AUABuAL3GA==&rs=AOn4CLB3gXb8Zxc0n7hTnwi5yUcQf0cfkA&usqp=CCc",
+                 "width": 720,
+                 "height": 404
+                }
+               ]
+              }
+             }
+            },
+            {
+             "markerRenderer": {
+              "title": {},
+              "timeRangeStartMillis": 157480,
+              "onActiveCommand": {
+               "clickTrackingParams": "CJQBEMaHBiITCKS-gf2KgpcDFSUBVQgd9sMiEsoBBBnqFYY=",
+               "setActivePanelItemAction": {
+                "panelTargetId": "",
+                "itemIndex": 1
+               }
+              },
+              "thumbnail": {
+               "thumbnails": [
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hqdefault.jpg?sqp=-oaymwEqCKgBEF5IWvKriqkDHQgBFQAAiEIYAdgBAeIBCggYEAIYBjgBQAG4AvcY&rs=AOn4CLBuIy7hPfi16qylAgCCZDALrXqG2w&usqp=CCc",
+                 "width": 168,
+                 "height": 94
+                },
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hqdefault.jpg?sqp=-oaymwErCNACELwBSFryq4qpAx0IARUAAIhCGAHYAQHiAQoIGBACGAY4AUABuAL3GA==&rs=AOn4CLBZOc209c-RgkCvFMeILAtaxCSI3Q&usqp=CCc",
+                 "width": 336,
+                 "height": 188
+                },
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hq720.jpg?sqp=-oaymwErCPIDEJgCSFryq4qpAx0IARUAAIhCGAHYAQHiAQoIGBACGAY4AUABuAL3GA==&rs=AOn4CLDhhptL899OgJQbvuTkYU-ZkJ3CRA&usqp=CCc",
+                 "width": 498,
+                 "height": 280
+                },
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hq720.jpg?sqp=-oaymwErCNAFEJQDSFryq4qpAx0IARUAAIhCGAHYAQHiAQoIGBACGAY4AUABuAL3GA==&rs=AOn4CLB3gXb8Zxc0n7hTnwi5yUcQf0cfkA&usqp=CCc",
+                 "width": 720,
+                 "height": 404
+                }
+               ]
+              }
+             }
+            },
+            {
+             "markerRenderer": {
+              "title": {},
+              "timeRangeStartMillis": 252151,
+              "onActiveCommand": {
+               "clickTrackingParams": "CJQBEMaHBiITCKS-gf2KgpcDFSUBVQgd9sMiEsoBBBnqFYY=",
+               "setActivePanelItemAction": {
+                "panelTargetId": "",
+                "itemIndex": 2
+               }
+              },
+              "thumbnail": {
+               "thumbnails": [
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hqdefault.jpg?sqp=-oaymwEqCKgBEF5IWvKriqkDHQgBFQAAiEIYAdgBAeIBCggYEAIYBjgBQAG4AvcY&rs=AOn4CLBuIy7hPfi16qylAgCCZDALrXqG2w&usqp=CCc",
+                 "width": 168,
+                 "height": 94
+                },
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hqdefault.jpg?sqp=-oaymwErCNACELwBSFryq4qpAx0IARUAAIhCGAHYAQHiAQoIGBACGAY4AUABuAL3GA==&rs=AOn4CLBZOc209c-RgkCvFMeILAtaxCSI3Q&usqp=CCc",
+                 "width": 336,
+                 "height": 188
+                },
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hq720.jpg?sqp=-oaymwErCPIDEJgCSFryq4qpAx0IARUAAIhCGAHYAQHiAQoIGBACGAY4AUABuAL3GA==&rs=AOn4CLDhhptL899OgJQbvuTkYU-ZkJ3CRA&usqp=CCc",
+                 "width": 498,
+                 "height": 280
+                },
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hq720.jpg?sqp=-oaymwErCNAFEJQDSFryq4qpAx0IARUAAIhCGAHYAQHiAQoIGBACGAY4AUABuAL3GA==&rs=AOn4CLB3gXb8Zxc0n7hTnwi5yUcQf0cfkA&usqp=CCc",
+                 "width": 720,
+                 "height": 404
+                }
+               ]
+              }
+             }
+            },
+            {
+             "markerRenderer": {
+              "title": {},
+              "timeRangeStartMillis": 262943,
+              "onActiveCommand": {
+               "clickTrackingParams": "CJQBEMaHBiITCKS-gf2KgpcDFSUBVQgd9sMiEsoBBBnqFYY=",
+               "setActivePanelItemAction": {
+                "panelTargetId": "",
+                "itemIndex": 3
+               }
+              },
+              "thumbnail": {
+               "thumbnails": [
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hqdefault.jpg?sqp=-oaymwEqCKgBEF5IWvKriqkDHQgBFQAAiEIYAdgBAeIBCggYEAIYBjgBQAG4AvcY&rs=AOn4CLBuIy7hPfi16qylAgCCZDALrXqG2w&usqp=CCc",
+                 "width": 168,
+                 "height": 94
+                },
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hqdefault.jpg?sqp=-oaymwErCNACELwBSFryq4qpAx0IARUAAIhCGAHYAQHiAQoIGBACGAY4AUABuAL3GA==&rs=AOn4CLBZOc209c-RgkCvFMeILAtaxCSI3Q&usqp=CCc",
+                 "width": 336,
+                 "height": 188
+                },
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hq720.jpg?sqp=-oaymwErCPIDEJgCSFryq4qpAx0IARUAAIhCGAHYAQHiAQoIGBACGAY4AUABuAL3GA==&rs=AOn4CLDhhptL899OgJQbvuTkYU-ZkJ3CRA&usqp=CCc",
+                 "width": 498,
+                 "height": 280
+                },
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hq720.jpg?sqp=-oaymwErCNAFEJQDSFryq4qpAx0IARUAAIhCGAHYAQHiAQoIGBACGAY4AUABuAL3GA==&rs=AOn4CLB3gXb8Zxc0n7hTnwi5yUcQf0cfkA&usqp=CCc",
+                 "width": 720,
+                 "height": 404
+                }
+               ]
+              }
+             }
+            },
+            {
+             "markerRenderer": {
+              "title": {},
+              "timeRangeStartMillis": 535640,
+              "onActiveCommand": {
+               "clickTrackingParams": "CJQBEMaHBiITCKS-gf2KgpcDFSUBVQgd9sMiEsoBBBnqFYY=",
+               "setActivePanelItemAction": {
+                "panelTargetId": "",
+                "itemIndex": 4
+               }
+              },
+              "thumbnail": {
+               "thumbnails": [
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hqdefault.jpg?sqp=-oaymwEqCKgBEF5IWvKriqkDHQgBFQAAiEIYAdgBAeIBCggYEAIYBjgBQAG4AvcY&rs=AOn4CLBuIy7hPfi16qylAgCCZDALrXqG2w&usqp=CCc",
+                 "width": 168,
+                 "height": 94
+                },
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hqdefault.jpg?sqp=-oaymwErCNACELwBSFryq4qpAx0IARUAAIhCGAHYAQHiAQoIGBACGAY4AUABuAL3GA==&rs=AOn4CLBZOc209c-RgkCvFMeILAtaxCSI3Q&usqp=CCc",
+                 "width": 336,
+                 "height": 188
+                },
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hq720.jpg?sqp=-oaymwErCPIDEJgCSFryq4qpAx0IARUAAIhCGAHYAQHiAQoIGBACGAY4AUABuAL3GA==&rs=AOn4CLDhhptL899OgJQbvuTkYU-ZkJ3CRA&usqp=CCc",
+                 "width": 498,
+                 "height": 280
+                },
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hq720.jpg?sqp=-oaymwErCNAFEJQDSFryq4qpAx0IARUAAIhCGAHYAQHiAQoIGBACGAY4AUABuAL3GA==&rs=AOn4CLB3gXb8Zxc0n7hTnwi5yUcQf0cfkA&usqp=CCc",
+                 "width": 720,
+                 "height": 404
+                }
+               ]
+              }
+             }
+            },
+            {
+             "markerRenderer": {
+              "title": {},
+              "timeRangeStartMillis": 606828,
+              "onActiveCommand": {
+               "clickTrackingParams": "CJQBEMaHBiITCKS-gf2KgpcDFSUBVQgd9sMiEsoBBBnqFYY=",
+               "setActivePanelItemAction": {
+                "panelTargetId": "",
+                "itemIndex": 5
+               }
+              },
+              "thumbnail": {
+               "thumbnails": [
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hqdefault.jpg?sqp=-oaymwEqCKgBEF5IWvKriqkDHQgBFQAAiEIYAdgBAeIBCggYEAIYBjgBQAG4AvcY&rs=AOn4CLBuIy7hPfi16qylAgCCZDALrXqG2w&usqp=CCc",
+                 "width": 168,
+                 "height": 94
+                },
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hqdefault.jpg?sqp=-oaymwErCNACELwBSFryq4qpAx0IARUAAIhCGAHYAQHiAQoIGBACGAY4AUABuAL3GA==&rs=AOn4CLBZOc209c-RgkCvFMeILAtaxCSI3Q&usqp=CCc",
+                 "width": 336,
+                 "height": 188
+                },
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hq720.jpg?sqp=-oaymwErCPIDEJgCSFryq4qpAx0IARUAAIhCGAHYAQHiAQoIGBACGAY4AUABuAL3GA==&rs=AOn4CLDhhptL899OgJQbvuTkYU-ZkJ3CRA&usqp=CCc",
+                 "width": 498,
+                 "height": 280
+                },
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hq720.jpg?sqp=-oaymwErCNAFEJQDSFryq4qpAx0IARUAAIhCGAHYAQHiAQoIGBACGAY4AUABuAL3GA==&rs=AOn4CLB3gXb8Zxc0n7hTnwi5yUcQf0cfkA&usqp=CCc",
+                 "width": 720,
+                 "height": 404
+                }
+               ]
+              }
+             }
+            },
+            {
+             "markerRenderer": {
+              "title": {},
+              "timeRangeStartMillis": 621930,
+              "onActiveCommand": {
+               "clickTrackingParams": "CJQBEMaHBiITCKS-gf2KgpcDFSUBVQgd9sMiEsoBBBnqFYY=",
+               "setActivePanelItemAction": {
+                "panelTargetId": "",
+                "itemIndex": 6
+               }
+              },
+              "thumbnail": {
+               "thumbnails": [
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hqdefault.jpg?sqp=-oaymwEqCKgBEF5IWvKriqkDHQgBFQAAiEIYAdgBAeIBCggYEAIYBjgBQAG4AvcY&rs=AOn4CLBuIy7hPfi16qylAgCCZDALrXqG2w&usqp=CCc",
+                 "width": 168,
+                 "height": 94
+                },
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hqdefault.jpg?sqp=-oaymwErCNACELwBSFryq4qpAx0IARUAAIhCGAHYAQHiAQoIGBACGAY4AUABuAL3GA==&rs=AOn4CLBZOc209c-RgkCvFMeILAtaxCSI3Q&usqp=CCc",
+                 "width": 336,
+                 "height": 188
+                },
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hq720.jpg?sqp=-oaymwErCPIDEJgCSFryq4qpAx0IARUAAIhCGAHYAQHiAQoIGBACGAY4AUABuAL3GA==&rs=AOn4CLDhhptL899OgJQbvuTkYU-ZkJ3CRA&usqp=CCc",
+                 "width": 498,
+                 "height": 280
+                },
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hq720.jpg?sqp=-oaymwErCNAFEJQDSFryq4qpAx0IARUAAIhCGAHYAQHiAQoIGBACGAY4AUABuAL3GA==&rs=AOn4CLB3gXb8Zxc0n7hTnwi5yUcQf0cfkA&usqp=CCc",
+                 "width": 720,
+                 "height": 404
+                }
+               ]
+              }
+             }
+            },
+            {
+             "markerRenderer": {
+              "title": {},
+              "timeRangeStartMillis": 827836,
+              "onActiveCommand": {
+               "clickTrackingParams": "CJQBEMaHBiITCKS-gf2KgpcDFSUBVQgd9sMiEsoBBBnqFYY=",
+               "setActivePanelItemAction": {
+                "panelTargetId": "",
+                "itemIndex": 7
+               }
+              },
+              "thumbnail": {
+               "thumbnails": [
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hqdefault.jpg?sqp=-oaymwEqCKgBEF5IWvKriqkDHQgBFQAAiEIYAdgBAeIBCggYEAIYBjgBQAG4AvcY&rs=AOn4CLBuIy7hPfi16qylAgCCZDALrXqG2w&usqp=CCc",
+                 "width": 168,
+                 "height": 94
+                },
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hqdefault.jpg?sqp=-oaymwErCNACELwBSFryq4qpAx0IARUAAIhCGAHYAQHiAQoIGBACGAY4AUABuAL3GA==&rs=AOn4CLBZOc209c-RgkCvFMeILAtaxCSI3Q&usqp=CCc",
+                 "width": 336,
+                 "height": 188
+                },
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hq720.jpg?sqp=-oaymwErCPIDEJgCSFryq4qpAx0IARUAAIhCGAHYAQHiAQoIGBACGAY4AUABuAL3GA==&rs=AOn4CLDhhptL899OgJQbvuTkYU-ZkJ3CRA&usqp=CCc",
+                 "width": 498,
+                 "height": 280
+                },
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hq720.jpg?sqp=-oaymwErCNAFEJQDSFryq4qpAx0IARUAAIhCGAHYAQHiAQoIGBACGAY4AUABuAL3GA==&rs=AOn4CLB3gXb8Zxc0n7hTnwi5yUcQf0cfkA&usqp=CCc",
+                 "width": 720,
+                 "height": 404
+                }
+               ]
+              }
+             }
+            },
+            {
+             "markerRenderer": {
+              "title": {},
+              "timeRangeStartMillis": 890364,
+              "onActiveCommand": {
+               "clickTrackingParams": "CJQBEMaHBiITCKS-gf2KgpcDFSUBVQgd9sMiEsoBBBnqFYY=",
+               "setActivePanelItemAction": {
+                "panelTargetId": "",
+                "itemIndex": 8
+               }
+              },
+              "thumbnail": {
+               "thumbnails": [
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hqdefault.jpg?sqp=-oaymwEqCKgBEF5IWvKriqkDHQgBFQAAiEIYAdgBAeIBCggYEAIYBjgBQAG4AvcY&rs=AOn4CLBuIy7hPfi16qylAgCCZDALrXqG2w&usqp=CCc",
+                 "width": 168,
+                 "height": 94
+                },
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hqdefault.jpg?sqp=-oaymwErCNACELwBSFryq4qpAx0IARUAAIhCGAHYAQHiAQoIGBACGAY4AUABuAL3GA==&rs=AOn4CLBZOc209c-RgkCvFMeILAtaxCSI3Q&usqp=CCc",
+                 "width": 336,
+                 "height": 188
+                },
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hq720.jpg?sqp=-oaymwErCPIDEJgCSFryq4qpAx0IARUAAIhCGAHYAQHiAQoIGBACGAY4AUABuAL3GA==&rs=AOn4CLDhhptL899OgJQbvuTkYU-ZkJ3CRA&usqp=CCc",
+                 "width": 498,
+                 "height": 280
+                },
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hq720.jpg?sqp=-oaymwErCNAFEJQDSFryq4qpAx0IARUAAIhCGAHYAQHiAQoIGBACGAY4AUABuAL3GA==&rs=AOn4CLB3gXb8Zxc0n7hTnwi5yUcQf0cfkA&usqp=CCc",
+                 "width": 720,
+                 "height": 404
+                }
+               ]
+              }
+             }
+            },
+            {
+             "markerRenderer": {
+              "title": {},
+              "timeRangeStartMillis": 1018010,
+              "onActiveCommand": {
+               "clickTrackingParams": "CJQBEMaHBiITCKS-gf2KgpcDFSUBVQgd9sMiEsoBBBnqFYY=",
+               "setActivePanelItemAction": {
+                "panelTargetId": "",
+                "itemIndex": 9
+               }
+              },
+              "thumbnail": {
+               "thumbnails": [
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hqdefault.jpg?sqp=-oaymwEqCKgBEF5IWvKriqkDHQgBFQAAiEIYAdgBAeIBCggYEAIYBjgBQAG4AvcY&rs=AOn4CLBuIy7hPfi16qylAgCCZDALrXqG2w&usqp=CCc",
+                 "width": 168,
+                 "height": 94
+                },
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hqdefault.jpg?sqp=-oaymwErCNACELwBSFryq4qpAx0IARUAAIhCGAHYAQHiAQoIGBACGAY4AUABuAL3GA==&rs=AOn4CLBZOc209c-RgkCvFMeILAtaxCSI3Q&usqp=CCc",
+                 "width": 336,
+                 "height": 188
+                },
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hq720.jpg?sqp=-oaymwErCPIDEJgCSFryq4qpAx0IARUAAIhCGAHYAQHiAQoIGBACGAY4AUABuAL3GA==&rs=AOn4CLDhhptL899OgJQbvuTkYU-ZkJ3CRA&usqp=CCc",
+                 "width": 498,
+                 "height": 280
+                },
+                {
+                 "url": "https://i.ytimg.com/vi/aircAruvnKk/hq720.jpg?sqp=-oaymwErCNAFEJQDSFryq4qpAx0IARUAAIhCGAHYAQHiAQoIGBACGAY4AUABuAL3GA==&rs=AOn4CLB3gXb8Zxc0n7hTnwi5yUcQf0cfkA&usqp=CCc",
+                 "width": 720,
+                 "height": 404
+                }
+               ]
+              }
+             }
+            }
+           ],
+           "trackingParams": "CJQBEMaHBiITCKS-gf2KgpcDFSUBVQgd9sMiEg=="
+          }
+         }
+        ]
+       }
+      }
+     }
+    }
+   }
+  },
+  "engagementPanels": []
+ }
+}

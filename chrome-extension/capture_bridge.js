@@ -64,10 +64,38 @@
       // Absent when recall_bridge.js has not been installed, which is how
       // capture keeps working on its own.
       highlights: root.MonoRecall ? (url) => root.MonoRecall.highlightsArtifact(url) : null,
+      // The video capture reads YouTube's own globals and fetches from the
+      // page, so both run in the MAIN world: the isolated world cannot see
+      // window.ytInitialPlayerResponse, and a fetch from the page carries
+      // exactly the origin and cookies the player's own requests do.
+      youtube: root.MonoYouTubeVideo
+        ? {
+            readPage: (tabId) => mainWorld(tabId, root.MonoYouTubeVideo.readPageState, []),
+            fetchText: (tabId, url, init) => mainWorld(tabId, pageFetchText, [url, init || null]),
+          }
+        : null,
       attach: (tabId) => deps.attach(tabId),
       cdp: (tabId, method, params) => deps.cdp(tabId, method, params || {}),
       detach: async (tabId) => deps.detach(tabId),
     };
+  }
+
+  async function mainWorld(tabId, func, args) {
+    const results = await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", func, args });
+    if (!results || !results.length) throw new Error("the page did not answer");
+    return results[0].result;
+  }
+
+  /** pageFetchText runs in the page (serialized): it must close over nothing. */
+  async function pageFetchText(url, init) {
+    const res = await fetch(url, Object.assign({ credentials: "include" }, init || {}));
+    return { status: res.status, text: await res.text() };
+  }
+
+  /** withMode expands a named capture mode into its params (capture_modes.js). */
+  function withMode(params) {
+    if (!params || !params.mode || !root.MonoCaptureModes) return params;
+    return root.MonoCaptureModes.paramsFor(params);
   }
 
   async function activeTabId() {
@@ -91,7 +119,7 @@
 
   /** handleCommand answers a Go-initiated page_capture. */
   async function handleCommand(id, params) {
-    const result = await root.MonoCapture.pageCapture(params, context());
+    const result = await root.MonoCapture.pageCapture(withMode(params), context());
     sendEnvelope(id, result, null);
     return result;
   }
@@ -101,7 +129,7 @@
    * a capture is the user's work, so it is queued rather than lost (CLIP-08).
    */
   async function captureActiveTab(options) {
-    const params = Object.assign({}, options || {});
+    const params = withMode(Object.assign({}, options || {}));
     if (!params.tabId) params.tabId = await activeTabId();
     if (!params.tabId) throw new Error("no active tab");
 
@@ -172,22 +200,95 @@
 
   function registerMenus() {
     if (!chrome.contextMenus) return;
+    const modes = root.MonoCaptureModes;
+    const items = modes
+      ? modes.menuItems((root.MonoYouTubeVideo && root.MonoYouTubeVideo.MENU_PATTERNS) || ["*://*.youtube.com/watch*"])
+      : [
+          { id: MENU_PAGE, title: "Save page to monomind", contexts: ["page"] },
+          { id: MENU_SELECTION, title: "Save selection to monomind", contexts: ["selection"] },
+        ];
     chrome.contextMenus.removeAll(() => {
-      chrome.contextMenus.create({ id: MENU_PAGE, title: "Save page to monomind", contexts: ["page"] });
-      chrome.contextMenus.create({
-        id: MENU_SELECTION,
-        title: "Save selection to monomind",
-        contexts: ["selection"],
-      });
+      for (const item of items) chrome.contextMenus.create(item, () => void chrome.runtime.lastError);
       void chrome.runtime.lastError; // duplicate ids after a worker restart
     });
     chrome.contextMenus.onClicked.addListener((info, tab) => {
-      if (info.menuItemId !== MENU_PAGE && info.menuItemId !== MENU_SELECTION) return;
-      captureActiveTab({
-        tabId: tab && tab.id,
-        selection: info.menuItemId === MENU_SELECTION,
-      }).catch((err) => console.error("[monoagent] capture failed:", err.message));
+      handleMenuClick(info, tab);
     });
+  }
+
+  /**
+   * handleMenuClick is the right-click menu's whole behaviour: route the
+   * item to a capture mode, capture, and tell the person how it went — on
+   * the badge, in the page, and in the side panel if it is open. Resolves
+   * to { route, result, feedback }, or null for an item that is not ours.
+   * Never rejects: a failure is reported, not thrown into the void.
+   */
+  async function handleMenuClick(info, tab) {
+    const modes = root.MonoCaptureModes;
+    let route = modes ? modes.menuRoute(info, tab) : null;
+    if (!route && !modes && (info.menuItemId === MENU_PAGE || info.menuItemId === MENU_SELECTION)) {
+      route = { tabId: tab && tab.id, selection: info.menuItemId === MENU_SELECTION };
+    }
+    if (!route) return null;
+    let result;
+    try {
+      result = await captureActiveTab(route);
+    } catch (err) {
+      console.error("[monoagent] capture failed:", err.message);
+      result = { ok: false, error: err.message };
+    }
+    const fb = modes
+      ? modes.feedback(route.mode, result)
+      : { level: result.ok === false ? "error" : "ok", text: result.error || "Saved" };
+    announce(route.tabId, fb, route.mode, result);
+    return { route, result, feedback: fb };
+  }
+
+  /** announce shows a menu capture's outcome everywhere it can. */
+  function announce(tabId, fb, mode, result) {
+    if (fb.level === "error") badge("!", "#c0392b");
+    try {
+      chrome.action.setTitle({ title: fb.text.slice(0, 250) });
+      // Unref where the host has it (node, in tests): a cosmetic reset must
+      // not hold a process open. A service worker has no such thing.
+      const reset = setTimeout(() => chrome.action.setTitle({ title: "Open MonoAgent" }).catch(() => {}), 15000);
+      if (reset && reset.unref) reset.unref();
+    } catch {
+      // No action title — cosmetic.
+    }
+    // The side panel, if open, shows it in its own status line.
+    try {
+      const sent = chrome.runtime.sendMessage({ type: "capture_menu_result", mode, feedback: fb, result: { ok: result.ok !== false, title: result.title || null, queued: !!result.queued } });
+      if (sent && sent.catch) sent.catch(() => {});
+    } catch {
+      // No listener — the panel is closed.
+    }
+    // And in the page, where the right-click was. A restricted page
+    // (the web store, a browser page) refuses the script; the badge and
+    // the action title above still carry it.
+    if (tabId && chrome.scripting) {
+      chrome.scripting
+        .executeScript({ target: { tabId }, func: pageToast, args: [fb.text, fb.level] })
+        .catch(() => {});
+    }
+  }
+
+  /** pageToast runs in the page (serialized): it must close over nothing. */
+  function pageToast(text, level) {
+    const id = "monoagent-capture-toast";
+    const old = document.getElementById(id);
+    if (old) old.remove();
+    const el = document.createElement("div");
+    el.id = id;
+    el.setAttribute("role", level === "error" ? "alert" : "status");
+    el.textContent = text;
+    const colors = { ok: "#1f7a4d", warn: "#9a6b00", error: "#b3261e" };
+    el.style.cssText =
+      "position:fixed;z-index:2147483647;right:16px;bottom:16px;max-width:420px;padding:10px 14px;" +
+      "border-radius:8px;font:13px/1.4 system-ui,sans-serif;color:#fff;box-shadow:0 6px 24px rgba(0,0,0,.3);" +
+      `background:${colors[level] || colors.ok};`;
+    (document.body || document.documentElement).appendChild(el);
+    setTimeout(() => el.remove(), level === "error" ? 9000 : 5000);
   }
 
   function registerCommands() {
@@ -210,5 +311,5 @@
     });
   }
 
-  root.MonoCaptureBridge = { install, handleCommand, captureActiveTab, flush, context };
+  root.MonoCaptureBridge = { install, handleCommand, handleMenuClick, captureActiveTab, flush, context };
 })(globalThis);
