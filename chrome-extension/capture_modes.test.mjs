@@ -64,6 +64,8 @@ function setup({ connected = true, url = "https://paper.test/lighthouse", mainWo
           meta: { url, title: "The Lighthouse at Dunmore", capturedAt: "2026-09-22T10:00:00.000Z", tags: [] },
           markdown: "# The Lighthouse at Dunmore", text: "The Lighthouse at Dunmore",
           artifacts: [{ name: "items.json", text: "[]" }], selectionFound: !!args[1][0].selection,
+          // What adapters/youtube.js says when the transcript panel was shut.
+          warnings: url.includes("youtube.com") ? ["youtube: no transcript panel was open on this page"] : [],
         } }];
       },
     },
@@ -138,6 +140,12 @@ test("screenshot only: screenshot.png and nothing else", async () => {
   assert.equal(envelope(sent).meta.captureMode, "screenshot");
 });
 
+test("screenshot only drops the page's advice about text it did not keep", async () => {
+  const { env, sent } = setup({ url: "https://www.youtube.com/watch?v=jNQXAC9IVRw" });
+  await env.MonoCaptureBridge.handleMenuClick({ menuItemId: "monoagent-capture-screenshot" }, { id: 42 });
+  assert.deepEqual(envelope(sent).warnings, []);
+});
+
 test("page summary: the full capture, asking the bridge for a summary", async () => {
   const { env, sent, record } = setup();
   await env.MonoCaptureBridge.handleMenuClick({ menuItemId: "monoagent-capture-summary" }, { id: 42 });
@@ -171,6 +179,8 @@ test("video summary: the record in meta.video and transcript.md, read from the p
   const transcript = envelope(sent).artifacts.find((a) => a.name === "transcript.md");
   assert.match(Buffer.from(transcript.bytes, "base64").toString("utf8"), /\[0:01\]\(https:\/\/www\.youtube\.com\/watch\?v=jNQXAC9IVRw&t=1s\)/);
   assert.ok(record.main.includes("readPageState"));
+  assert.deepEqual(envelope(sent).warnings, [], "the adapter's open-the-panel advice does not apply to a transcript from the captions");
+  assert.equal(record.toasts[0].level, "ok");
   assert.ok(!artifactNames(sent).includes("page.mhtml"), "no multi-megabyte player archive");
 });
 

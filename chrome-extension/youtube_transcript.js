@@ -156,19 +156,24 @@
 
   /**
    * transcriptMarkdown renders timestamped paragraphs (a new one every
-   * ~30s, and at every chapter), each opening with a deep link to its second.
+   * ~20s, and at every chapter), each opening with a deep link to its second.
    */
   function transcriptMarkdown(fields, segments, track, opts) {
     const clock = V().clock;
     const id = fields.videoId;
     const watch = `https://www.youtube.com/watch?v=${id}`;
-    const every = (opts && opts.paragraphSeconds) || 30;
+    const every = (opts && opts.paragraphSeconds) || 20;
     const lines = [`# Transcript: ${mdEscape(fields.title || id)}`, ""];
     const facts = [`**Video:** ${watch}`];
     if (fields.channel) facts.push(`**Channel:** ${mdEscape(fields.channel)}`);
     if (fields.publishDate) facts.push(`**Published:** ${fields.publishDate}`);
     if (fields.duration) facts.push(`**Duration:** ${fields.duration}`);
-    if (track) facts.push(`**Captions:** ${mdEscape(V().txt(track.name) || track.languageCode)}${track.kind === "asr" ? " (auto-generated)" : ""}`);
+    if (track) {
+      const name = V().txt(track.name) || track.languageCode;
+      // YouTube's own name for an asr track usually already says so.
+      const auto = track.kind === "asr" && !/auto/i.test(name) ? " (auto-generated)" : "";
+      facts.push(`**Captions:** ${mdEscape(name)}${auto}`);
+    }
     lines.push(facts.join("  \n"), "");
 
     const chapters = (fields.chapters || []).slice().sort((a, b) => a.start - b.start);
@@ -221,9 +226,11 @@
       warnings.push(`youtube: could not read the player (${err.message}); fetched the watch page instead`);
     }
     let { player, data } = Vid.resolveState(state, id);
-    if (!player) {
+    if (!player || !data) {
       // Stale globals after in-app navigation, or no player at all: ask the
-      // site for this video's page and read the record from its HTML.
+      // site for this video's page and read the record from its HTML. The
+      // player API usually has the current video even then, but
+      // ytInitialData (the chapters) is only ever the first video's.
       try {
         const res = await io.fetchText(`/watch?v=${encodeURIComponent(id)}`);
         const html = (res && res.text) || "";
@@ -231,7 +238,7 @@
           { players: [Vid.extractJsonAssignment(html, "ytInitialPlayerResponse")].filter(Boolean), data: Vid.extractJsonAssignment(html, "ytInitialData") },
           id
         );
-        player = fetched.player;
+        player = player || fetched.player;
         data = data || fetched.data;
       } catch (err) {
         warnings.push(`youtube: refetching the watch page failed: ${err.message}`);

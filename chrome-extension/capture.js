@@ -294,7 +294,9 @@
       artifacts.push({ name: extra.name, encoding: "base64", bytes, rawBytes: base64Bytes(bytes) });
     }
     if (page.adapter) meta.adapter = page.adapter;
-    warnings.push(...(page.warnings || []));
+    // The page's warnings are about the text it extracted, which a
+    // screenshot-only capture does not keep.
+    warnings.push(...((!p.screenshotOnly && page.warnings) || []));
 
     // "Save video summary": the video's record and its transcript, read from
     // the player (youtube_transcript.js). Never fatal: a video whose
@@ -307,6 +309,11 @@
           const bytes = utf8ToBase64(video.markdown);
           artifacts.push({ name: "transcript.md", encoding: "base64", bytes, rawBytes: base64Bytes(bytes) });
         }
+        // The page adapter's "open the transcript panel" advice is about
+        // readable.md, and this capture gets its transcript from the
+        // caption tracks instead; its own warnings say when there is none.
+        const adapterAdvice = /^youtube: no transcript panel/;
+        for (let i = warnings.length - 1; i >= 0; i--) if (adapterAdvice.test(warnings[i])) warnings.splice(i, 1);
         warnings.push(...video.warnings);
       } else {
         warnings.push("video details skipped: this build cannot read the player");

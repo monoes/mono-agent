@@ -174,6 +174,34 @@ test("collect: stale globals after in-app navigation refetch the watch page", as
   assert.ok(out.transcript);
 });
 
+test("collect: a current player with stale ytInitialData refetches for the chapters only", async () => {
+  // What a real in-app navigation leaves (seen live 2026-09-22): the player
+  // API has moved on to the new video, ytInitialData still has the first.
+  const nn = json("nn.state.json");
+  const zoo = json("zoo.state.json");
+  const state = { href: NN, players: [nn.players[0], zoo.players[0]], data: zoo.data };
+  const html = `<script>var ytInitialData = ${JSON.stringify(nn.data)};</script>`;
+  const fake = io(NN, state, { "/watch?v=aircAruvnKk": { status: 200, text: html }, "fmt=json3": { status: 200, text: fixture("nn.json3") } });
+  const out = await T.collect(fake);
+  assert.equal(out.fields.title, nn.players[0].videoDetails.title);
+  assert.equal(out.fields.chapterSource, "youtube");
+  assert.equal(out.fields.chapters.length, 12);
+  assert.equal(fake.calls.filter((c) => c.url.startsWith("/watch")).length, 1);
+});
+
+test("collect: fresh globals need no refetch", async () => {
+  const fake = io(NN, json("nn.state.json"), { "fmt=json3": { status: 200, text: fixture("nn.json3") } });
+  await T.collect(fake);
+  assert.ok(!fake.calls.some((c) => c.url.startsWith("/watch")));
+});
+
+test("transcript.md does not say auto-generated twice", () => {
+  const md = T.transcriptMarkdown({ videoId: "x", title: "t" }, [{ start: 0, text: "hi" }], { languageCode: "en", kind: "asr", name: { simpleText: "English (auto-generated)" } });
+  assert.match(md, /\*\*Captions:\*\* English \(auto-generated\)\n/);
+  const plain = T.transcriptMarkdown({ videoId: "x", title: "t" }, [{ start: 0, text: "hi" }], { languageCode: "de", kind: "asr", name: { simpleText: "Deutsch" } });
+  assert.match(plain, /Deutsch \(auto-generated\)/);
+});
+
 test("collect: no captions still returns the record, and says so", async () => {
   const state = json("zoo.state.json");
   state.players[0].captions = null;
