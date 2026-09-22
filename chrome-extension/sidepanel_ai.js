@@ -42,6 +42,10 @@
   let pageUrl = "";
   // A later answer wins; an earlier one arriving late is dropped.
   let generation = 0;
+  // "X is no longer installed" is said once by the worker (it then stores
+  // the fallback), but stays on screen until the person picks something:
+  // the panel reloads its lists more than once while it opens.
+  let fallbackReason = "";
 
   function askWorker(message) {
     return new Promise((resolve) => {
@@ -102,13 +106,15 @@
     const mine = ++generation;
     const answer = await askWorker({ type: "summary_ai_state", live });
     if (mine !== generation || !answer || answer.ok === false) return;
-    state = answer;
+    if (answer.changed && answer.reason) fallbackReason = answer.reason;
+    state = fallbackReason ? Object.assign({}, answer, { changed: true, reason: fallbackReason }) : answer;
     draw();
   }
 
   async function choose(runtime, model) {
     const answer = await askWorker({ type: "summary_ai_set", runtime, model });
     if (answer && answer.ok && state) {
+      fallbackReason = "";
       state = Object.assign({}, state, { choice: answer.choice, changed: false, reason: "" });
     }
     return answer;
