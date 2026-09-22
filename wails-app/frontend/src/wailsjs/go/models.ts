@@ -670,6 +670,8 @@ export namespace main {
 	    indexed: boolean;
 	    index_error: string;
 	    stale: boolean;
+	    url: string;
+	    capture_dir: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ProfileDocument(source);
@@ -687,6 +689,8 @@ export namespace main {
 	        this.indexed = source["indexed"];
 	        this.index_error = source["index_error"];
 	        this.stale = source["stale"];
+	        this.url = source["url"];
+	        this.capture_dir = source["capture_dir"];
 	    }
 	}
 	export class ProfileInfo {
