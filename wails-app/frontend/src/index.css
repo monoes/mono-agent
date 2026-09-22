@@ -648,6 +648,13 @@ body {
   background-position: right 8px center;
 }
 
+/* The open list is drawn by the platform (WebKitGTK paints it white);
+   give it the app's colours too. */
+.filter-select option {
+  background: var(--elevated);
+  color: var(--text);
+}
+
 .filter-select:focus {
   outline: none;
   border-color: var(--border-bright);

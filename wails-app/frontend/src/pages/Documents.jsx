@@ -328,7 +328,8 @@ export default function Documents() {
         <button type="submit" style={btnStyle} disabled={searching}><Search size={13} /> Search</button>
         <select
           aria-label="Filter by source"
-          style={{ ...inputStyle, cursor: 'pointer' }}
+          className="filter-select"
+          style={{ fontFamily: 'var(--font-mono)', fontSize: 11, colorScheme: 'dark' }}
           value={sourceFilter}
           onChange={e => setSourceFilter(e.target.value)}
         >
