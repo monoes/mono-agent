@@ -78,7 +78,11 @@ func TestPrimaryArtifact(t *testing.T) {
 		{[]string{"page.mhtml", "screenshot.png"}, "page.mhtml"},
 		{[]string{"page.html"}, "page.html"},
 		{[]string{"screenshot.png"}, "screenshot.png"},
-		{[]string{"table.csv", "transcript.md"}, "table.csv"},
+		{[]string{"table.csv", "transcript.md"}, "transcript.md"},
+		// A summary arrives after the capture; it must not take the row over.
+		{[]string{"readable.md", "screenshot.png", "summary.json", "summary.md", "transcript.md"}, "readable.md"},
+		{[]string{"screenshot.png", "summary.json", "summary.md"}, "summary.md"},
+		{[]string{"table.csv", "zz.txt"}, "table.csv"},
 		{nil, ""},
 	}
 	for _, c := range cases {

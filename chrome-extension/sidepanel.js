@@ -809,6 +809,14 @@ chrome.runtime.onMessage.addListener((msg) => {
     settle();
     return;
   }
+  // A right-click menu capture (capture_bridge.js announce): its outcome
+  // lands in the same line as a save from this panel.
+  if (msg.type === "capture_menu_result" && msg.feedback) {
+    const level = { ok: "ok", warn: "warn", error: "err" }[msg.feedback.level] || "ok";
+    showCapture(level, msg.feedback.text);
+    if (msg.result && msg.result.ok) refreshQueue();
+    return;
+  }
   if (msg.type === "capture_batch_progress") {
     const s = msg.state || {};
     batchRunning(s.phase !== "done");

@@ -27,6 +27,9 @@ type ProfileDocument struct {
 	// was saved from, and its envelope directory in the profile's inbox.
 	URL        string `json:"url"`
 	CaptureDir string `json:"capture_dir"`
+	// SummaryStatus is a capture's AI summary state (pending, running,
+	// done, error, stalled), "" when none was asked for.
+	SummaryStatus string `json:"summary_status"`
 }
 
 // KnowledgeSearchResult mirrors internal/monomind.KnowledgeResult (also
@@ -42,10 +45,10 @@ type KnowledgeSearchResult struct {
 // profile's capture inbox into the list before returning it).
 func (a *App) ListProfileDocuments() ([]ProfileDocument, error) {
 	var raw []struct {
-		ID, Path, Filename, Source, ApplicationID, CreatedAt, IndexError, URL, CaptureDir string
-		SizeBytes                                                                         int64
-		Indexed                                                                           bool
-		Stale                                                                             bool
+		ID, Path, Filename, Source, ApplicationID, CreatedAt, IndexError, URL, CaptureDir, SummaryStatus string
+		SizeBytes                                                                                        int64
+		Indexed                                                                                          bool
+		Stale                                                                                            bool
 	}
 	if err := a.runMonoCLI("", &raw, "profile", "documents", "list"); err != nil {
 		return nil, err
@@ -56,7 +59,7 @@ func (a *App) ListProfileDocuments() ([]ProfileDocument, error) {
 			ID: d.ID, Filename: d.Filename, Path: d.Path, SizeBytes: d.SizeBytes,
 			Source: d.Source, ApplicationID: d.ApplicationID, CreatedAt: d.CreatedAt,
 			Indexed: d.Indexed, IndexError: d.IndexError, Stale: d.Stale,
-			URL: d.URL, CaptureDir: d.CaptureDir,
+			URL: d.URL, CaptureDir: d.CaptureDir, SummaryStatus: d.SummaryStatus,
 		})
 	}
 	return out, nil

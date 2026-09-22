@@ -29,11 +29,21 @@ import (
 // capture is listed, opened and indexed as: the readable text first (it
 // previews in-app and indexes well), then the byte-fidelity renderings,
 // and the screenshot only when nothing else was captured.
+//
+// summary.md is deliberately NOT preferred over readable.md, though it
+// previews nicely. It is written minutes after the capture lands, so
+// preferring it would move the row's path once the summary arrived and
+// re-index the capture as a few hundred words standing in for the whole
+// page — search wants the full text, and the viewer shows the summary on
+// its own tab anyway. transcript.md and summary.md rank only above the
+// screenshot, for a capture that has no page text at all.
 var primaryPreference = []string{
 	capture.ArtifactReadable,
 	capture.ArtifactPDF,
 	capture.ArtifactMHTML,
 	capture.ArtifactHTML,
+	"transcript.md",
+	"summary.md",
 	capture.ArtifactScreenshot,
 }
 

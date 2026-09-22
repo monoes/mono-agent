@@ -84,6 +84,15 @@ describe('Documents: browser captures', () => {
     expect(WailsApp.OpenPathWithOS).not.toHaveBeenCalled()
   })
 
+  it("shows a summarized capture's summary state, and nothing on other rows", async () => {
+    WailsApp.ListProfileDocuments.mockResolvedValue([upload, { ...readableCapture, summary_status: 'running' }, { ...capture, summary_status: 'error' }])
+    await renderLoaded()
+    const badges = screen.getAllByTestId('summary-status')
+    expect(badges.map(b => b.textContent)).toEqual(expect.arrayContaining(['Summarizing…', 'Summary failed']))
+    expect(badges).toHaveLength(2)
+    expect(within(screen.getByText('resume.pdf').closest('tr')).queryByTestId('summary-status')).toBeNull()
+  })
+
   it('labels the delete button as a delete, not a double-click hint', async () => {
     await renderLoaded()
     const del = screen.getByRole('button', { name: 'Delete Jev Picker Plan' })

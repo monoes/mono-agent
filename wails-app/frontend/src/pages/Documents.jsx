@@ -4,7 +4,7 @@ import * as WailsApp from '../wailsjs/go/main/App'
 import { confirm } from '../components/ConfirmDialog.jsx'
 import { api, notify, onMonomindInitEvent, onDocumentsChanged } from '../services/api.js'
 import FileViewerModal, { fileViewerKind } from '../components/FileViewerModal.jsx'
-import CaptureViewerModal from '../components/CaptureViewerModal.jsx'
+import CaptureViewerModal, { summaryStatusText } from '../components/CaptureViewerModal.jsx'
 import { isMonomindNotFound } from '../lib/agentRuntimes.js'
 import SortableTh from '../components/SortableTh.jsx'
 import {
@@ -412,6 +412,15 @@ export default function Documents() {
                 </td>
                 <td style={{ padding: '8px' }} title="Double-click to view">
                   <div>{d.filename}</div>
+                  {d.summary_status && (
+                    <div
+                      data-testid="summary-status"
+                      title={summaryStatusText({ status: d.summary_status })}
+                      style={{ fontSize: 10, color: ['error', 'stalled'].includes(d.summary_status) ? '#f87171' : d.summary_status === 'done' ? '#10b981' : '#94a3b8' }}
+                    >
+                      {{ done: 'Summary ready', pending: 'Summary queued', running: 'Summarizing…', error: 'Summary failed', stalled: 'Summary stalled' }[d.summary_status] || d.summary_status}
+                    </div>
+                  )}
                   {d.url && (
                     <div style={{ fontSize: 10, color: 'var(--text-muted)', maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={d.url}>
                       {d.url}

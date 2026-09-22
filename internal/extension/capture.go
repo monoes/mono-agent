@@ -20,8 +20,15 @@ import (
 //	Go → extension
 //	  {"id": …, "type": "page_capture", "tabId": 12,
 //	   "params": {"formats": ["mhtml","pdf","readable","screenshot"],
-//	              "selection": false, "note": "", "tags": [], "collection": ""}}
-//	  tabId is omitted to mean "the active tab".
+//	              "selection": false, "note": "", "tags": [], "collection": "",
+//	              "mode": "video"}}
+//	  tabId is omitted to mean "the active tab". mode is optional (see
+//	  CaptureRequest.Mode); with it, formats is omitted unless set.
+//
+//	A capture whose meta carries "summarize": {"kind": "page"|"video"} is
+//	written and acknowledged like any other; the after-write hook
+//	(SetAfterWrite, wired to internal/capturesummary) then adds summary.md
+//	and summary.json to its envelope in the background.
 //
 //	extension → Go, one chunk of an artifact too big for one frame (zero or
 //	more, all before that capture's closing message)
@@ -72,7 +79,12 @@ type CaptureRequest struct {
 	Note       string
 	Tags       []string
 	Collection string
-	Timeout    time.Duration
+	// Mode names one of the extension's capture modes (full, screenshot,
+	// summary, video — chrome-extension/capture_modes.js). With a mode and
+	// no Formats, the extension picks the mode's formats; "summary" and
+	// "video" also ask the bridge for a summary.md.
+	Mode    string
+	Timeout time.Duration
 	// Inbox overrides where the envelope is written. It is deliberately
 	// not part of the params the extension sees — the browser has no
 	// business knowing about this machine's filesystem — so it rides the
@@ -108,17 +120,25 @@ func (r CaptureRequest) command() *Command {
 	if tags == nil {
 		tags = []string{}
 	}
+	params := map[string]interface{}{
+		"selection":  r.Selection,
+		"note":       r.Note,
+		"tags":       tags,
+		"collection": r.Collection,
+	}
+	// A mode brings its own formats; sending the defaults alongside it
+	// would override them (capture_modes.js paramsFor keeps explicit ones).
+	if r.Mode == "" || len(r.Formats) > 0 {
+		params["formats"] = r.formats()
+	}
+	if r.Mode != "" {
+		params["mode"] = r.Mode
+	}
 	return &Command{
-		ID:    uuid.New().String(),
-		Type:  CmdPageCapture,
-		TabID: r.TabID,
-		Params: map[string]interface{}{
-			"formats":    r.formats(),
-			"selection":  r.Selection,
-			"note":       r.Note,
-			"tags":       tags,
-			"collection": r.Collection,
-		},
+		ID:     uuid.New().String(),
+		Type:   CmdPageCapture,
+		TabID:  r.TabID,
+		Params: params,
 	}
 }
 
@@ -136,6 +156,7 @@ func captureRequestFromCommand(cmd *Command, timeout time.Duration, inbox string
 	req.Selection, _ = p["selection"].(bool)
 	req.Note, _ = p["note"].(string)
 	req.Collection, _ = p["collection"].(string)
+	req.Mode, _ = p["mode"].(string)
 	return req
 }
 
@@ -222,6 +243,34 @@ func (s *Server) OnCapture(fn func(*capture.Result, error)) {
 	s.pendMu.Unlock()
 }
 
+// SetAfterWrite registers a hook run for every envelope that lands on disk,
+// requested or flushed, after it is written and before anyone waits on it
+// further. It must return quickly: the summary job (internal/capturesummary)
+// only queues work here, so a capture is acknowledged exactly as fast as it
+// was before summaries existed.
+func (s *Server) SetAfterWrite(fn func(*capture.Result)) {
+	s.pendMu.Lock()
+	s.afterWrite = fn
+	s.pendMu.Unlock()
+}
+
+// written runs the after-write hook, if any. A panicking hook is contained:
+// the capture it was told about is already safely on disk.
+func (s *Server) written(res *capture.Result) {
+	s.pendMu.Lock()
+	fn := s.afterWrite
+	s.pendMu.Unlock()
+	if fn == nil || res == nil {
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			s.logger.Error().Interface("panic", r).Str("path", res.Path).Msg("capture after-write hook panicked")
+		}
+	}()
+	fn(res)
+}
+
 // CapturePage asks the extension to capture a tab and writes the resulting
 // envelope into the inbox, returning where it landed.
 func (s *Server) CapturePage(req CaptureRequest) (*capture.Result, error) {
@@ -265,7 +314,11 @@ func (s *Server) CapturePage(req CaptureRequest) (*capture.Result, error) {
 			if env == nil {
 				continue // more chunks to come
 			}
-			return writer.Write(env)
+			res, err := writer.Write(env)
+			if err == nil {
+				s.written(res)
+			}
+			return res, err
 		case <-deadline.C:
 			return nil, fmt.Errorf("page_capture timed out after %s", req.timeout())
 		}
@@ -382,6 +435,7 @@ func (s *Server) acceptUnsolicitedCapture(resp *Response) {
 			s.logger.Error().Err(err).Str("id", resp.ID).Msg("queued capture could not be written")
 		} else {
 			s.logger.Info().Str("path", res.Path).Msg("wrote a capture the extension had queued")
+			s.written(res)
 		}
 		s.reportCapture(res, err)
 	}()

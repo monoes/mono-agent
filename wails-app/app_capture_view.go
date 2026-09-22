@@ -9,10 +9,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
+
+	"github.com/monoes/mono-agent/internal/capturesummary"
 )
 
 // CaptureView is everything the Documents page shows for one browser
-// capture: the page's readable text and its screenshot, side by side.
+// capture: the page's readable text and its screenshot, side by side, plus
+// the AI summary and the video transcript for captures saved with "Save
+// page summary" / "Save video summary".
 // A capture's primary file is often page.mhtml (no readable text was
 // found), which no in-app viewer can show and which the OS tends to hand
 // to a text editor — so the capture is previewed from its parts instead.
@@ -23,6 +28,21 @@ type CaptureView struct {
 	WordCount  int    `json:"word_count"`
 	Readable   string `json:"readable"`   // readable.md, "" when absent
 	Screenshot string `json:"screenshot"` // data URL of screenshot.png, "" when absent
+	Summary    string `json:"summary"`    // summary.md, "" when absent
+	Transcript string `json:"transcript"` // transcript.md, "" when absent
+	// SummaryStatus is where the summary is, when one was asked for
+	// (summary.json); nil for a capture that never asked.
+	SummaryStatus *CaptureSummaryStatus `json:"summary_status"`
+}
+
+// CaptureSummaryStatus is summary.json, as the viewer needs it. Status is
+// pending, running, done, error, or stalled (pending/running for longer
+// than any bridge could still be working on it).
+type CaptureSummaryStatus struct {
+	Status     string `json:"status"`
+	Runtime    string `json:"runtime"`
+	Error      string `json:"error"`
+	FinishedAt string `json:"finished_at"`
 }
 
 // maxCaptureReadableBytes caps the text sent to the webview; a capture's
@@ -68,6 +88,20 @@ func readCaptureView(dir string) (*CaptureView, error) {
 		v.Readable = string(text)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
+	}
+	for name, dst := range map[string]*string{capturesummary.SummaryFile: &v.Summary, "transcript.md": &v.Transcript} {
+		if text, err := readCapped(filepath.Join(dir, name), maxCaptureReadableBytes); err == nil {
+			*dst = string(text)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+	}
+	if st, err := capturesummary.ReadStatus(dir); err == nil {
+		v.SummaryStatus = &CaptureSummaryStatus{
+			Status: capturesummary.StateOf(dir, time.Now()), Runtime: st.Runtime, Error: st.Error, FinishedAt: st.FinishedAt,
+		}
+	} else if v.Summary != "" {
+		v.SummaryStatus = &CaptureSummaryStatus{Status: capturesummary.StateDone}
 	}
 	if png, err := readCapped(filepath.Join(dir, "screenshot.png"), maxInlinePreviewBytes); err == nil {
 		v.Screenshot = "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)

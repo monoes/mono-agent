@@ -68,6 +68,10 @@ func newExtensionServer(logger zerolog.Logger) *extension.Server {
 	// profile — see internal/extension/profile_list.go.
 	srv.SetProfileSource(extensionProfileSource(defaultDBPath))
 	srv.SetVersion(getVersion())
+	// Every bridge that owns the connection writes the summaries its
+	// captures ask for. `extension serve` re-installs this with its own
+	// narration (runExtensionServe).
+	installCaptureSummaries(srv, loggerLogf(logger))
 	return srv
 }
 
@@ -85,7 +89,7 @@ func findRunningBridge() (extension.Status, string, bool) {
 }
 
 func newExtensionServeCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Run the extension bridge in the foreground so the browser stays connected",
 		Long: "Holds the extension bridge port open until interrupted (Ctrl+C), so the\n" +
@@ -106,15 +110,24 @@ func newExtensionServeCmd() *cobra.Command {
 			"\n" +
 			"The extension's service worker is suspended by Chrome whenever it goes idle\n" +
 			"and respawns on the next event, so the socket dropping and coming back is\n" +
-			"normal and is reported as such, not as an error.",
-		Example: "  monoagentcli extension serve\n  MONOAGENT_EXTENSION_PORT=9400 monoagentcli extension serve",
-		Args:    cobra.NoArgs,
+			"normal and is reported as such, not as an error.\n" +
+			"\n" +
+			"Captures saved with \"Save page summary\" or \"Save video summary\" get an AI\n" +
+			"summary (summary.md) written beside them in the background, one at a time, by\n" +
+			"the agent runtime named by --summary-runtime, else $" + summaryRuntimeEnv + ", else\n" +
+			"\"claude\" (see `agent scan --installed`; \"off\" disables them).",
+		Example: "  monoagentcli extension serve\n  MONOAGENT_EXTENSION_PORT=9400 monoagentcli extension serve\n" +
+			"  monoagentcli extension serve --summary-runtime codex",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 			return runExtensionServe(ctx, cmd.OutOrStdout())
 		},
 	}
+	cmd.Flags().StringVar(&summaryRuntimeFlag, "summary-runtime", "",
+		"Agent runtime that writes capture summaries (default: $"+summaryRuntimeEnv+", else claude; \"off\" disables)")
+	return cmd
 }
 
 // runExtensionServe is the body of `extension serve`, split out so its
@@ -133,6 +146,8 @@ func runExtensionServe(ctx context.Context, out io.Writer) error {
 	}
 
 	srv := newExtensionServer(newBridgeServeLogger())
+	summaries := installCaptureSummaries(srv, narrateLogf(out))
+	defer summaries.Close()
 	errCh := srv.StartAsync(ctx)
 	defer srv.Close() //nolint:errcheck
 
@@ -157,6 +172,7 @@ func runExtensionServe(ctx context.Context, out io.Writer) error {
 	fmt.Fprintf(out, "  Extension socket: ws://%s/monoagent\n", addr)
 	fmt.Fprintf(out, "  Pairing token:    monoagentcli extension pair (paste it into the extension side panel)\n")
 	fmt.Fprintf(out, "  Status:           monoagentcli extension status\n")
+	fmt.Fprintf(out, "  Summaries:        %s (--summary-runtime / %s)\n", configuredSummaryRuntime(), summaryRuntimeEnv)
 	fmt.Fprintln(out, "Waiting for the extension. Press Ctrl+C to stop.")
 
 	watchBridgeConnection(ctx, srv, out)
