@@ -321,6 +321,9 @@ func (s *Server) dispatch(resp *Response) {
 		default:
 			s.logger.Warn().Str("id", resp.ID).Msg("duplicate response for an already-answered command")
 		}
+	case resp.Type == keepalivePingType:
+		// The extension's own keepalive (background.js, every 20s): it
+		// only keeps the socket busy, so there is nothing to route.
 	case isCdpEvent(resp):
 		s.fanoutCdpEvent(resp)
 	case isCaptureResponse(resp):
@@ -329,6 +332,10 @@ func (s *Server) dispatch(resp *Response) {
 		s.logger.Warn().Str("id", resp.ID).Msg("no pending request for response")
 	}
 }
+
+// keepalivePingType is the type of the application-level ping the
+// extension sends every 20s to keep its service worker's socket alive.
+const keepalivePingType = "ping"
 
 // isCaptureResponse reports whether a response that matches no pending
 // command is a page_capture message. The type field settles it outright;

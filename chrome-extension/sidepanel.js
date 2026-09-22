@@ -399,7 +399,9 @@ function drawProfiles(state) {
   profileCommand.textContent = (note && note.command) || "";
   profileCopy.setAttribute("aria-label", `Copy the command ${(note && note.command) || ""}`);
 
-  captureLabel.textContent = profiles.saveLabel;
+  // Mid-save or just saved, the button's own words win; flashDone puts
+  // the save label back when it is done.
+  if (!captureBtn.dataset.busy && !captureBtn.dataset.done) captureLabel.textContent = profiles.saveLabel;
   batchDest.textContent = current.id ? current.name : "the shared inbox";
 }
 
@@ -443,6 +445,11 @@ profileOptions.addEventListener("change", async (event) => {
   if (lastFormState) lastFormState = Object.assign({}, lastFormState, { profile: id, profileChanged: false });
   await ask({ type: "capture_profile_set", profile: id });
 });
+
+// Pressing on a row must not move focus: the rows are labels, so the press
+// would blur the checked radio to <body>, the focusout below would close
+// the menu, and the click would land on nothing — the choice silently lost.
+profileOptions.addEventListener("mousedown", (event) => event.preventDefault());
 
 // A pointer choice is a finished choice; so is Enter or Space on a row.
 // Arrow keys alone are browsing, and leave the list open.
@@ -673,18 +680,39 @@ queueRetryAllBtn.addEventListener("click", async () => {
 
 // --- saving ---------------------------------------------------------------
 
+let doneTimer = 0;
+
+/**
+ * flashDone turns the save button green with a tick for a moment. The
+ * outcome line under it is easy to miss; the button someone just pressed
+ * is not.
+ */
+function flashDone(label) {
+  captureBtn.dataset.done = "true";
+  captureLabel.textContent = "✓ " + label.replace(/^Save\b/, "Saved");
+  doneTimer = setTimeout(() => {
+    delete captureBtn.dataset.done;
+    captureLabel.textContent = profiles.saveLabel || label;
+  }, 2500);
+}
+
 captureBtn.addEventListener("click", async () => {
   if (!page.capturable) return;
   const target = page;
+  const label = captureLabel.textContent;
   captureBtn.disabled = true;
   captureBtn.dataset.busy = "true";
-  showCapture("ok", "Capturing…");
+  delete captureBtn.dataset.done;
+  clearTimeout(doneTimer);
+  captureLabel.textContent = "Saving…";
+  showCapture("ok", "");
 
   // The tab is named, not left to the worker's idea of focus: with a panel
   // open, the last focused window may be another one entirely.
   const result = await ask({ type: "capture_commit", form: form(), options: { tabId: target.tabId } });
   delete captureBtn.dataset.busy;
   captureBtn.disabled = !page.capturable;
+  captureLabel.textContent = label;
   began = false;
 
   if (!result || result.ok === false) {
@@ -699,8 +727,9 @@ captureBtn.addEventListener("click", async () => {
   } else if (result.warnings?.length) {
     showCapture("warn", `${title} — ${result.warnings.join("; ")}`);
   } else {
-    showCapture("ok", title);
+    showCapture("ok", `${title} — in ${profiles.current && profiles.current.id ? profiles.current.name : "the shared inbox"}`);
   }
+  if (!result.queued) flashDone(label);
   noteInput.value = "";
   tagsInput.value = "";
   await Promise.all([refreshQueue(), loadFormState()]);
