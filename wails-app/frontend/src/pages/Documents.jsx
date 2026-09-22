@@ -1,10 +1,15 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
-import { Upload, Search, Trash2, Sparkles, CheckCircle2, AlertTriangle, XCircle, Eye, PlayCircle } from 'lucide-react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { Upload, Search, Trash2, Sparkles, CheckCircle2, AlertTriangle, XCircle, Eye, PlayCircle, ExternalLink } from 'lucide-react'
 import * as WailsApp from '../wailsjs/go/main/App'
 import { confirm } from '../components/ConfirmDialog.jsx'
 import { api, notify, onMonomindInitEvent, onDocumentsChanged } from '../services/api.js'
 import FileViewerModal, { fileViewerKind } from '../components/FileViewerModal.jsx'
 import { isMonomindNotFound } from '../lib/agentRuntimes.js'
+import SortableTh from '../components/SortableTh.jsx'
+import {
+  sourceLabel, documentType, viewerFilename, isCapture, sortDocuments, nextSort,
+  loadSort, saveSort, sourceOptions, filterBySource,
+} from '../lib/documentSort.js'
 
 // maxInlinePreviewBytes mirrors the backend's own GetProfileDocumentData
 // cap (wails-app/app_files.go) so an oversized file is routed straight to
@@ -70,6 +75,21 @@ export default function Documents() {
   // and drives the running bulk button's live progress label.
   const [bulkBusy, setBulkBusy] = useState(null)
   const [bulkProgress, setBulkProgress] = useState({ done: 0, total: 0 })
+  const [sort, setSort] = useState(() => loadSort())
+  const [sourceFilter, setSourceFilter] = useState('')
+
+  const onSort = (key) => setSort(cur => {
+    const next = nextSort(cur, key)
+    saveSort(next)
+    return next
+  })
+  // What the table shows: filtered by source, then sorted. Selection and
+  // select-all work on this list; "Index all" still covers every document.
+  const visibleDocs = useMemo(
+    () => sortDocuments(filterBySource(docs, sourceFilter), sort),
+    [docs, sourceFilter, sort],
+  )
+  const sources = useMemo(() => sourceOptions(docs), [docs])
 
   const load = useCallback(async () => {
     try {
@@ -153,9 +173,9 @@ export default function Documents() {
     })
   }
 
-  const allVisibleSelected = docs.length > 0 && docs.every(d => selectedIds.has(d.id))
+  const allVisibleSelected = visibleDocs.length > 0 && visibleDocs.every(d => selectedIds.has(d.id))
   const toggleSelectAll = () => {
-    setSelectedIds(allVisibleSelected ? new Set() : new Set(docs.map(d => d.id)))
+    setSelectedIds(allVisibleSelected ? new Set() : new Set(visibleDocs.map(d => d.id)))
   }
 
   // Shared by the always-available "Index all" button and the
@@ -198,8 +218,10 @@ export default function Documents() {
     }
     const label = toDelete.length === 1 ? `"${toDelete[0].filename}"` : `${toDelete.length} documents`
     const suffix = skipped > 0 ? ` (${skipped} auto-discovered document${skipped === 1 ? '' : 's'} in your selection will be skipped)` : ''
+    const captures = toDelete.filter(isCapture).length
+    const captureNote = captures > 0 ? ` Browser captures are deleted with all their saved files.` : ''
     const ok = await confirm(
-      `Delete ${label}? This removes ${toDelete.length === 1 ? 'it' : 'them'} from the knowledge index too.${suffix}`,
+      `Delete ${label}? This removes ${toDelete.length === 1 ? 'it' : 'them'} from the knowledge index too.${captureNote}${suffix}`,
       { title: 'Delete Documents', confirmLabel: 'Delete', danger: true },
     )
     if (!ok) return
@@ -226,8 +248,9 @@ export default function Documents() {
     setBulkBusy(null)
   }
 
-  const handleDelete = async (id, filename) => {
-    if (!(await confirm(`Delete "${filename}"? This removes it from the knowledge index too.`, { title: 'Delete Document', confirmLabel: 'Delete', danger: true }))) return
+  const handleDelete = async (id, filename, capture = false) => {
+    const note = capture ? ' The saved page (all of its captured files) is deleted too.' : ''
+    if (!(await confirm(`Delete "${filename}"? This removes it from the knowledge index too.${note}`, { title: 'Delete Document', confirmLabel: 'Delete', danger: true }))) return
     try {
       await WailsApp.DeleteProfileDocument(id)
       load()
@@ -239,17 +262,17 @@ export default function Documents() {
   // Double-click / View: preview in-app when a viewer exists for this file's
   // extension; otherwise tell the user and hand the file to the OS's own
   // default application, the same as double-clicking it in a file manager.
+  // A browser capture previews as its primary artifact (readable.md in-app;
+  // an MHTML archive goes to the OS, which opens it in a browser).
   const handleOpenDocument = (d) => {
-    if (fileViewerKind(d.filename) && d.size_bytes <= maxInlinePreviewBytes) {
-      setViewingDoc(d)
+    const name = viewerFilename(d)
+    if (fileViewerKind(name) && d.size_bytes <= maxInlinePreviewBytes) {
+      setViewingDoc({ ...d, filename: name })
       return
     }
     const reason = d.size_bytes > maxInlinePreviewBytes
       ? `"${d.filename}" is too large to preview in-app`
-      : (() => {
-          const ext = d.filename.split('.').pop()?.toUpperCase() || 'this'
-          return `No built-in viewer for ${ext} files`
-        })()
+      : `No built-in viewer for ${documentType(d).toUpperCase() || 'this kind of'} files`
     notify('open', `${reason} — opening "${d.filename}" with your system's default application.`)
     WailsApp.OpenPathWithOS(d.path).catch(e => notify('open', `Could not open "${d.filename}": ${e}`))
   }
@@ -301,6 +324,15 @@ export default function Documents() {
       <form onSubmit={handleSearch} style={{ display: 'flex', gap: 8 }}>
         <input style={{ ...inputStyle, flex: 1 }} placeholder="Search your uploaded documents..." value={query} onChange={e => setQuery(e.target.value)} />
         <button type="submit" style={btnStyle} disabled={searching}><Search size={13} /> Search</button>
+        <select
+          aria-label="Filter by source"
+          style={{ ...inputStyle, cursor: 'pointer' }}
+          value={sourceFilter}
+          onChange={e => setSourceFilter(e.target.value)}
+        >
+          <option value="">All sources</option>
+          {sources.map(src => <option key={src} value={src}>{sourceLabel(src)}</option>)}
+        </select>
       </form>
 
       {error && <div style={{ color: '#ff6b6b', fontSize: 12 }}>{error}</div>}
@@ -349,16 +381,17 @@ export default function Documents() {
                   onChange={toggleSelectAll}
                 />
               </th>
-              <th style={{ padding: '6px 8px' }}>Filename</th>
-              <th style={{ padding: '6px 8px' }}>Source</th>
+              <SortableTh label="Name" sortKey="name" sort={sort} onSort={onSort} />
+              <SortableTh label="Type" sortKey="type" sort={sort} onSort={onSort} />
+              <SortableTh label="Source" sortKey="source" sort={sort} onSort={onSort} />
               <th style={{ padding: '6px 8px' }}>Size</th>
-              <th style={{ padding: '6px 8px' }}>Uploaded</th>
+              <SortableTh label="Date" sortKey="date" sort={sort} onSort={onSort} />
               <th style={{ padding: '6px 8px' }}>Knowledge Graph</th>
               <th style={{ padding: '6px 8px' }} />
             </tr>
           </thead>
           <tbody>
-            {docs.map(d => (
+            {visibleDocs.map(d => (
               <tr
                 key={d.id}
                 onDoubleClick={() => handleOpenDocument(d)}
@@ -375,8 +408,16 @@ export default function Documents() {
                     onChange={() => toggleSelected(d.id)}
                   />
                 </td>
-                <td style={{ padding: '8px' }}>{d.filename}</td>
-                <td style={{ padding: '8px', color: 'var(--text-muted)' }}>{d.source}</td>
+                <td style={{ padding: '8px' }}>
+                  <div>{d.filename}</div>
+                  {d.url && (
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={d.url}>
+                      {d.url}
+                    </div>
+                  )}
+                </td>
+                <td style={{ padding: '8px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: 10 }}>{documentType(d).toUpperCase() || '—'}</td>
+                <td style={{ padding: '8px', color: 'var(--text-muted)' }} title={d.source}>{sourceLabel(d.source)}</td>
                 <td style={{ padding: '8px', color: 'var(--text-muted)' }}>{formatBytes(d.size_bytes)}</td>
                 <td style={{ padding: '8px', color: 'var(--text-muted)' }}>{d.created_at}</td>
                 <td style={{ padding: '8px' }}>
@@ -420,6 +461,11 @@ export default function Documents() {
                   <button style={{ ...btnStyle, padding: '4px 8px' }} title="View" onClick={(e) => { e.stopPropagation(); handleOpenDocument(d) }}>
                     <Eye size={12} />
                   </button>
+                  {d.url && (
+                    <button style={{ ...btnStyle, padding: '4px 8px' }} title="Open the original page" onClick={(e) => { e.stopPropagation(); api.openURL(d.url) }}>
+                      <ExternalLink size={12} />
+                    </button>
+                  )}
                   {(d.stale || !d.indexed) && (
                     <button
                       style={{ ...btnStyle, padding: '4px 8px' }}
@@ -431,15 +477,17 @@ export default function Documents() {
                     </button>
                   )}
                   {d.source !== 'discovered' && (
-                    <button style={{ ...btnStyle, color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', padding: '4px 8px' }} onClick={(e) => { e.stopPropagation(); handleDelete(d.id, d.filename) }}>
+                    <button style={{ ...btnStyle, color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', padding: '4px 8px' }} onClick={(e) => { e.stopPropagation(); handleDelete(d.id, d.filename, isCapture(d)) }}>
                       <Trash2 size={12} />
                     </button>
                   )}
                 </td>
               </tr>
             ))}
-            {docs.length === 0 && (
-              <tr><td colSpan={7} style={{ padding: 16, textAlign: 'center', color: 'var(--text-muted)' }}>No documents uploaded.</td></tr>
+            {visibleDocs.length === 0 && (
+              <tr><td colSpan={8} style={{ padding: 16, textAlign: 'center', color: 'var(--text-muted)' }}>
+                {docs.length === 0 ? 'No documents yet.' : 'No documents from this source.'}
+              </td></tr>
             )}
           </tbody>
         </table>
