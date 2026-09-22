@@ -16,9 +16,9 @@
 // capture_bridge.js the Chrome wiring; both are plain scripts so the same
 // code runs under `node --test`.
 //
-// The popup's half (CLIP-06/07/08) is the second group: the save form's
-// model, batch capture, the offline queue's face, and the dispatch that
-// answers popup.js. tables.js (CLIP-11) is absent on purpose — it runs in
+// The side panel's half (CLIP-06/07/08) is the second group: the save
+// form's model, batch capture, the offline queue's face, and the dispatch
+// that answers sidepanel.js. tables.js (CLIP-11) is absent on purpose — it runs in
 // the page, injected by capture.js, not in this worker.
 importScripts("capture_meta.js", "capture.js", "capture_bridge.js");
 importScripts("capture_form.js", "capture_profile.js", "capture_batch.js", "capture_queue.js", "capture_actions.js");
@@ -31,7 +31,7 @@ importScripts("ask.js", "saved.js", "highlights.js", "recall_bridge.js");
 // it unasked-for, which is why it needs its own module rather than another
 // case in the dispatch below.
 importScripts("cdp_proxy.js");
-// Asked before every dial; see doConnect. The same module the popup uses,
+// Asked before every dial; see doConnect. The same module the side panel uses,
 // so "is that really the bridge?" has exactly one implementation.
 importScripts("bridge_health.js");
 
@@ -45,11 +45,11 @@ let connectionStatus = "disconnected"; // "connected" | "disconnected" | "connec
 // never reports the reason a handshake failed, so this is inferred from the
 // one thing that is observable: whether onopen ever fired before onclose. A
 // socket that never opened, on a loopback port, means nothing is listening;
-// one that opened and then closed means the bridge went away. The popup
+// one that opened and then closed means the bridge went away. The side panel
 // turns these into the sentence it shows, and treats an empty reason as
 // "unknown" rather than as any particular cause.
 let connectionReason = "";
-// When the current state began, so the popup can tell a momentary drop
+// When the current state began, so the side panel can tell a momentary drop
 // (a service worker being recycled) from a bridge that is really gone.
 let connectionSince = Date.now();
 let keepAliveInterval = null;
@@ -96,7 +96,7 @@ chrome.runtime.onStartup.addListener(() => {
 //
 // <all_urls> is a static host_permissions entry (manifest.json), granted
 // once up front (at install, or on reload after this was added) rather than
-// per-site through the popup — every site is authorized by default.
+// per-site through the side panel — every site is authorized by default.
 // content.js is registered declaratively in manifest.json's content_scripts
 // (matches: <all_urls>) instead of dynamically here, since there is no
 // per-site grant/revoke to keep it in sync with anymore.
@@ -188,8 +188,8 @@ function fastRetryConnect() {
 
 // The bridge is an unauthenticated same-user channel; refusing non-loopback
 // servers keeps it from silently becoming a remote one. The only override is
-// a session-scoped flag set by the popup's unsafe checkbox (never persisted,
-// cleared when the popup reopens and when the browser restarts).
+// a session-scoped flag set by the side panel's unsafe checkbox (never persisted,
+// cleared when the side panel reopens and when the browser restarts).
 function parseWsUrl(urlStr) {
   try {
     const u = new URL(urlStr);
@@ -221,7 +221,7 @@ async function assertLoopbackAllowed(url) {
   if (await getNonLoopbackOverride()) return;
   throw new Error(
     `Refusing non-loopback server "${parsed.host}" — only 127.0.0.1, localhost, or ::1 are allowed. ` +
-      "To override, enable 'Allow non-loopback server (unsafe)' in the popup and save again."
+      "To override, tick 'Allow a bridge that isn't on this machine' in the side panel's connection settings and save again."
   );
 }
 
@@ -248,14 +248,14 @@ const stickyLoaded = (async () => {
 })();
 
 async function getWsUrl() {
-  // Explicit user config (popup) always wins.
+  // Explicit user config (side panel) always wins.
   try {
     const result = await chrome.storage.local.get(["wsUrl", "pairedWsUrl"]);
     if (result.wsUrl) return result.wsUrl;
     // Learned from the pairing page, which the CLI serves from the port it
     // actually bound — authoritative, and the only way to know a port that
     // isn't one of the two candidates (MONOAGENT_EXTENSION_PORT). Ranked
-    // below the popup's explicit setting and cleared by markCandidateFailed
+    // below the side panel's explicit setting and cleared by markCandidateFailed
     // so a port that stops answering can't wedge us here.
     if (result.pairedWsUrl) return result.pairedWsUrl;
   } catch {
@@ -359,7 +359,7 @@ async function doConnect() {
   }
 
   // The bridge says where its socket is, which beats guessing between the two
-  // candidate ports. An address the user set explicitly in the popup still wins.
+  // candidate ports. An address the user set explicitly in the side panel still wins.
   let url = await getWsUrl();
   if (!known.wsUrl && health.wsUrl) url = health.wsUrl;
 
@@ -442,14 +442,14 @@ async function doConnect() {
     if (event.code === UNAUTHORIZED_CLOSE_CODE) {
       // The server rejected our auth frame — retrying with the same
       // (wrong/missing) pairing secret will only fail again. Stop and wait
-      // for the user to re-pair via the popup instead of hammering it.
+      // for the user to re-pair via the side panel instead of hammering it.
       setStatus("unpaired", "auth_rejected");
       fastRetryCount = FAST_RETRY_MAX;
       return;
     }
     // The only thing a browser lets us observe about a failed connection is
     // whether it ever opened. Never opened, on loopback, is overwhelmingly
-    // "nothing is listening" — which is the difference between the popup
+    // "nothing is listening" — which is the difference between the side panel
     // saying "start the bridge" and saying nothing useful at all.
     setStatus("disconnected", opened ? "socket_closed" : "no_bridge");
     if (!opened) markCandidateFailed();
@@ -490,7 +490,7 @@ function sendResponse(id, success, data, error) {
 /**
  * setStatus records a connection state and tells anyone listening. `since`
  * is only re-stamped when the state actually changes, so a status that is
- * re-broadcast while unchanged does not keep resetting the popup's sense of
+ * re-broadcast while unchanged does not keep resetting the side panel's sense of
  * how long it has been true.
  */
 function setStatus(status, reason = "") {
@@ -513,7 +513,7 @@ function statusPayload() {
 
 function broadcastStatus() {
   chrome.runtime.sendMessage(Object.assign({ type: "status" }, statusPayload())).catch(() => {
-    // popup not open — ignore
+    // side panel not open — ignore
   });
 }
 
@@ -533,7 +533,7 @@ async function handleCommand(cmd) {
     if (SENSITIVE_COMMANDS.has(cmd.type) && !(await isOriginAuthorized(params.tabId))) {
       throw new Error(
         `Site not authorized for "${cmd.type}" — grant access to this tab's site in the ` +
-          "MonoAgent Bridge extension popup first."
+          "MonoAgent side panel first."
       );
     }
     let result;
@@ -986,11 +986,11 @@ async function sendToContent(tabId, cmd) {
 }
 
 // ---------------------------------------------------------------------------
-// Message handler for popup and internal communication
+// Message handler for the side panel and internal communication
 // ---------------------------------------------------------------------------
 
 // Persist a new pairing secret (see doConnect/ws.onopen). Sourced from the
-// popup's manual "Pair & Reconnect" button, or `monoagentcli extension
+// side panel's manual "Pair & reconnect" button, or `monoagentcli extension
 // pair`. Reconnecting is handled by the chrome.storage.onChanged listener
 // above, not here — it fires for this same write regardless of who made it
 // (this function, or pair_bridge.js writing directly), so there is exactly
@@ -1012,7 +1012,7 @@ async function setPairingToken(secret) {
 async function setWsUrl(url) {
   if (!url || typeof url !== "string") throw new Error("url is required");
   if (!parseWsUrl(url)) throw new Error(`Invalid WebSocket URL: ${url}`);
-  await assertLoopbackAllowed(url); // throws a visible message for the popup
+  await assertLoopbackAllowed(url); // throws a visible message for the side panel
   try {
     await chrome.storage.local.set({ wsUrl: url });
     // Explicit config replaces the auto-detected sticky port.
@@ -1053,7 +1053,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "get_status") {
     sendResponse(statusPayload());
-    // Someone just opened the popup, which is the moment they care whether
+    // Someone just opened the side panel, which is the moment they care whether
     // this is connected. A suspended worker otherwise only dials again on its
     // next alarm — up to half a minute after the bridge was started, which is
     // exactly the "I started it and nothing changed" gap. Dialling is silent
@@ -1136,7 +1136,7 @@ MonoCdpProxy.install({
   onDebuggerDetach: (fn) => chrome.debugger.onDetach.addListener(fn),
 });
 
-// Everything the popup asks for (CLIP-06/07/08). It captures through
+// Everything the side panel asks for (CLIP-06/07/08). It captures through
 // MonoCaptureBridge's context, so it needs only the socket from here.
 MonoCaptureActions.install({
   send: sendFrame,
@@ -1153,6 +1153,17 @@ MonoRecall.install({
   isConnected: () => ws?.readyState === WebSocket.OPEN,
   storage: chrome.storage.local,
 });
+
+// The toolbar button opens the side panel rather than a popup: a panel
+// stays open beside the page while the person reads, switches tabs and
+// comes back, where a popup vanished the moment it lost focus. Set on every
+// worker start — it is idempotent, and a stored behaviour from an older
+// version must not be left in charge. No-op where there is no side panel.
+if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
+  chrome.sidePanel
+    .setPanelBehavior({ openPanelOnActionClick: true })
+    .catch((err) => console.warn("[monoagent] side panel behaviour:", err.message));
+}
 
 ensureAlarm();
 fastRetryConnect(); // calls connect() once, then schedules retries

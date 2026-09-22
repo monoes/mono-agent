@@ -1,9 +1,10 @@
 /**
- * MonoAgent Bridge — what the popup asks the worker to do (CLIP-06/07/08)
+ * MonoAgent Bridge — what the side panel asks the worker to do (CLIP-06/07/08)
  *
- * The popup is a document that can be closed at any moment; the service
+ * The panel is a document that can be closed at any moment; the service
  * worker is the only thing that outlives it. So every action with
- * consequences lives here, and popup.js is left doing nothing but drawing.
+ * consequences lives here, and sidepanel.js is left doing nothing but
+ * drawing.
  *
  * The one piece of timing worth explaining is CLIP-07's. A note is typed
  * *before* a capture is saved, and waiting for someone to finish typing
@@ -189,9 +190,20 @@
 
   // --- CLIP-06: a window, or a group, as one collection --------------------
 
-  async function tabsFor(scope) {
+  /**
+   * tabsFor lists what a batch covers. `where` is the side panel's own
+   * window and the tab it is showing: a panel stays open while focus moves
+   * to other windows, so "the last focused window" can be a different one
+   * from the window whose panel the button was pressed in. Absent (a test,
+   * an older caller), it falls back to the last focused window as before.
+   */
+  async function tabsFor(scope, where) {
+    const at = where || {};
+    const windowQuery = at.windowId ? { windowId: at.windowId } : { lastFocusedWindow: true };
     if (scope === "group") {
-      const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      const active = at.tabId
+        ? await chrome.tabs.get(at.tabId).catch(() => null)
+        : (await chrome.tabs.query(Object.assign({ active: true }, windowQuery)))[0];
       const groupId = active && active.groupId;
       if (groupId === undefined || groupId === null || groupId === -1) {
         throw new Error("this tab is not in a tab group");
@@ -206,7 +218,7 @@
       return { tabs: await chrome.tabs.query({ groupId }), scope: { kind: "group", groupTitle } };
     }
     return {
-      tabs: await chrome.tabs.query({ lastFocusedWindow: true }),
+      tabs: await chrome.tabs.query(windowQuery),
       scope: { kind: "window" },
     };
   }
@@ -227,7 +239,10 @@
     // same task queue, and an async guard would let both through.
     batch = { cancelled: false };
     try {
-      const { tabs, scope } = await tabsFor((message && message.scope) || "window");
+      const { tabs, scope } = await tabsFor((message && message.scope) || "window", {
+        windowId: message && message.windowId,
+        tabId: message && message.tabId,
+      });
       const form = (message && message.form) || {};
       const plan = root.MonoCaptureBatch.planBatch(tabs, {
         scope,
@@ -268,6 +283,14 @@
         profileReason: profile.reason,
         profilesOffline: profile.offline,
       });
+    },
+    // The side panel's picker is always on screen, so choosing in it is
+    // the choice — remembered now, not at the next save, so the keyboard
+    // shortcut agrees with the header the moment it changes.
+    capture_profile_set: async (msg) => {
+      const profiles = root.MonoCaptureProfile;
+      if (!profiles) return { ok: false, error: "profiles are not available" };
+      return { ok: true, profile: await profiles.remember(storage(), msg.profile) };
     },
     capture_begin: (msg) => begin(msg.options),
     capture_commit: (msg) => commit(msg),

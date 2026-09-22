@@ -38,9 +38,9 @@ import (
 // why or what to do, and the answer is almost always this one: nothing is
 // holding the bridge open.
 const bridgeAdvice = "\n\nThe bridge only exists while something is running it. To keep the browser wired up " +
-	"(capture shortcut, popup, recall panel), run `monoagentcli extension serve` in a terminal and leave it " +
+	"(capture shortcut, side panel, recall), run `monoagentcli extension serve` in a terminal and leave it " +
 	"running. `monoagentcli extension status` says whether one is up and whether the extension is attached, " +
-	"and `monoagentcli extension pair` prints the token the extension popup needs."
+	"and `monoagentcli extension pair` prints the token the extension side panel needs."
 
 // bridgeLifetimeHint returns the advice above, but only for a bridge this
 // process owns. When the caller is relaying through someone else's bridge
@@ -92,7 +92,7 @@ func newExtensionServeCmd() *cobra.Command {
 			"MonoAgent Bridge extension can stay connected whether or not a workflow is\n" +
 			"running. Without this, the bridge only exists for the lifetime of the command\n" +
 			"that started it, and the extension reports \"Disconnected\" the rest of the\n" +
-			"time — which is why the capture shortcut, the popup's save button and the\n" +
+			"time — which is why the capture shortcut, the side panel's save button and the\n" +
 			"recall panel appeared to do nothing.\n" +
 			"\n" +
 			"Other monoagentcli commands (`workflow run`, `capture page`, `login`) detect a\n" +
@@ -155,7 +155,7 @@ func runExtensionServe(ctx context.Context, out io.Writer) error {
 
 	fmt.Fprintf(out, "MonoAgent bridge listening on %s\n", addr)
 	fmt.Fprintf(out, "  Extension socket: ws://%s/monoagent\n", addr)
-	fmt.Fprintf(out, "  Pairing token:    monoagentcli extension pair (paste it into the extension popup)\n")
+	fmt.Fprintf(out, "  Pairing token:    monoagentcli extension pair (paste it into the extension side panel)\n")
 	fmt.Fprintf(out, "  Status:           monoagentcli extension status\n")
 	fmt.Fprintln(out, "Waiting for the extension. Press Ctrl+C to stop.")
 
@@ -263,7 +263,7 @@ func newExtensionStatusCmd(cfg *globalConfig) *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
 		Short: "Report whether a bridge is running and whether the extension is attached",
-		Long: "Says which of the three situations you are in, which the extension popup's\n" +
+		Long: "Says which of the three situations you are in, which the extension side panel's\n" +
 			"\"Disconnected\" could not previously tell apart:\n" +
 			"\n" +
 			"  - no bridge is running at all (start one with `extension serve`);\n" +
@@ -305,7 +305,7 @@ func runExtensionStatus(out io.Writer, asJSON bool) error {
 		bridgeAddr(st, base), st.PID, bridgeUptime(st))
 	fmt.Fprintf(out, "  Extension: %s\n", bridgeExtensionLine(st))
 	if st.Status == extension.StatusUnpaired {
-		fmt.Fprintln(out, "  Pair it with: monoagentcli extension pair (paste the token into the extension popup)")
+		fmt.Fprintln(out, "  Pair it with: monoagentcli extension pair (paste the token into the extension side panel)")
 	}
 	return nil
 }

@@ -211,19 +211,27 @@
     if (methods) return methods;
     const asked = connection;
     let found;
+    let answered = true;
     try {
       const data = await request("ping", {}, { timeoutMs: 4000, idleTimeoutMs: 4000 });
       found = Array.isArray(data && data.methods) ? data.methods : [];
-    } catch {
+    } catch (err) {
       // An older backend has no ping either, so this is also how "the
       // channel is not there at all" is discovered.
       found = [];
+      // ...but only a backend that answered "no" has said so. A ping that
+      // never reached it (the socket was not open at that instant — a
+      // reconnect race in the worker) or never came back has said nothing,
+      // and caching its empty list made supports() false for the rest of
+      // the connection: a side panel open beside a working bridge showed
+      // a stale profile list and no "ask" for as long as it stayed open.
+      answered = !isOffline(err);
     }
     // The caller still gets an answer — an interrupted probe resolves empty
     // rather than rejecting, because "nothing is available" is the right
     // thing for a panel to render while the bridge is down. It is only the
     // cache that must not keep it.
-    if (asked !== connection) return found;
+    if (asked !== connection || !answered) return found;
     methods = found;
     return methods;
   }

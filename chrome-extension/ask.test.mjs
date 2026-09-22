@@ -26,6 +26,7 @@ function fakeSocket(connected = true) {
       return true;
     },
     swallowSend: () => (swallow = true),
+    restoreSend: () => (swallow = false),
     disconnect: () => (connected = false),
     breakSend: (message) => (throws = message),
     last: () => sent[sent.length - 1],
@@ -288,4 +289,34 @@ test("disconnecting forgets the probe, so a new backend is asked again", async (
   assert.equal(socket.sent.length, before + 1, "a reconnect must re-probe");
   MonoAsk.handleFrame(reply(socket.last().id, { ok: true, data: { methods: ["ping", "doc.ask"] } }));
   assert.deepEqual(await second, ["ping", "doc.ask"]);
+});
+
+test("a probe that never reached the backend is not remembered as its answer", async () => {
+  const { MonoAsk, socket } = freshAsk();
+
+  // The socket reports open but swallows the write — the shape of a
+  // reconnect race, where the probe on ws.onopen meets a socket that is
+  // not the open one. The probe settles empty (offline) at once...
+  socket.swallowSend();
+  assert.deepEqual(await MonoAsk.probe(), []);
+
+  // ...and the next question asks again rather than serving that [] for
+  // the rest of the connection.
+  socket.restoreSend();
+  const before = socket.sent.length;
+  const second = MonoAsk.probe();
+  assert.equal(socket.sent.length, before + 1, "a failed probe must not be cached");
+  MonoAsk.handleFrame(reply(socket.last().id, { ok: true, data: { methods: ["ping", "profile.list"] } }));
+  assert.deepEqual(await second, ["ping", "profile.list"]);
+  assert.equal(await MonoAsk.supports("profile.list"), true);
+});
+
+test("a backend that refuses the probe outright is believed", async () => {
+  const { MonoAsk, socket } = freshAsk();
+  const first = MonoAsk.probe();
+  MonoAsk.handleFrame(reply(socket.last().id, { ok: false, error: "unknown method: ping", code: "unknown_method" }));
+  assert.deepEqual(await first, []);
+  const before = socket.sent.length;
+  assert.deepEqual(await MonoAsk.probe(), []);
+  assert.equal(socket.sent.length, before, "an explicit refusal is an answer, and is cached");
 });
