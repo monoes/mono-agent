@@ -157,6 +157,15 @@
             );
       root.MonoCaptureProfile.applyToMeta(result.meta, profile);
     }
+    // Likewise the AI that writes a summary: the panel's sticky choice,
+    // from storage alone, unless the caller named one.
+    if (root.MonoSummaryAI && result.meta.summarize) {
+      const choice =
+        params.summaryRuntime !== undefined
+          ? { runtime: params.summaryRuntime, model: params.summaryModel }
+          : await root.MonoSummaryAI.sticky(chrome.storage.local);
+      root.MonoSummaryAI.applyToMeta(result.meta, choice);
+    }
 
     const id = `ext-${(crypto.randomUUID && crypto.randomUUID()) || Date.now()}`;
     if (deps.isConnected()) {

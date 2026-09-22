@@ -204,7 +204,10 @@ function drawStatus() {
   // as fresh as the bridge could make it. A panel that was opened while the
   // bridge was down would keep the cached list for good, so it asks again
   // the moment the bridge becomes reachable.
-  if (view.tone === "ok" && was && was !== "ok") loadFormState();
+  if (view.tone === "ok" && was && was !== "ok") {
+    loadFormState();
+    document.dispatchEvent(new CustomEvent("panel:bridge-up"));
+  }
 }
 
 /**
@@ -493,7 +496,7 @@ let began = false;
 function beginEarly() {
   if (began || !page.capturable) return;
   began = true;
-  ask({ type: "capture_begin", options: { tabId: page.tabId } });
+  ask({ type: "capture_begin", options: { tabId: page.tabId, mode: saveMode().mode } });
 }
 
 for (const field of [noteInput, tagsInput, collectionInput]) {
@@ -696,9 +699,15 @@ function flashDone(label) {
   }, 2500);
 }
 
+/** saveMode is the mode chosen beside Save (sidepanel_ai.js). */
+function saveMode() {
+  return globalThis.MonoPanelAI ? MonoPanelAI.captureMode() : { mode: "full", summarizes: false };
+}
+
 captureBtn.addEventListener("click", async () => {
   if (!page.capturable) return;
   const target = page;
+  const mode = saveMode();
   const label = captureLabel.textContent;
   captureBtn.disabled = true;
   captureBtn.dataset.busy = "true";
@@ -709,7 +718,7 @@ captureBtn.addEventListener("click", async () => {
 
   // The tab is named, not left to the worker's idea of focus: with a panel
   // open, the last focused window may be another one entirely.
-  const result = await ask({ type: "capture_commit", form: form(), options: { tabId: target.tabId } });
+  const result = await ask({ type: "capture_commit", form: form(), options: { tabId: target.tabId, mode: mode.mode } });
   delete captureBtn.dataset.busy;
   captureBtn.disabled = !page.capturable;
   captureLabel.textContent = label;
@@ -721,7 +730,8 @@ captureBtn.addEventListener("click", async () => {
     return;
   }
 
-  const title = result.title ? `Saved: ${result.title}` : "Saved";
+  const by = mode.summarizes && globalThis.MonoPanelAI ? MonoPanelAI.summaryBy() : "";
+  const title = (result.title ? `Saved: ${result.title}` : "Saved") + (by ? ` — ${by} is writing the summary` : "");
   if (result.queued) {
     showCapture("warn", `${title} — waiting for the bridge`);
   } else if (result.warnings?.length) {

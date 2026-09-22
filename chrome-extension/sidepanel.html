@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>MonoAgent</title>
   <link rel="stylesheet" href="sidepanel.css" />
+  <link rel="stylesheet" href="sidepanel_ai.css" />
 </head>
 <body>
   <!--
@@ -52,6 +53,38 @@
         <div id="profile-command-row" class="command" hidden>
           <code id="profile-command"></code>
           <button type="button" id="profile-copy" class="btn-secondary btn-tiny">Copy</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Which AI writes a summary: the desktop chat box's runtime → model
+         choice. Sticky like the profile, and used by every save that asks
+         for a summary, the right-click ones included (summary_ai.js). -->
+    <div class="dest ai" id="ai">
+      <button type="button" id="ai-btn" class="dest-btn ai-btn" aria-expanded="false" aria-controls="ai-menu">
+        <span class="avatar avatar-sm ai-glyph" aria-hidden="true"></span>
+        <span class="dest-text">
+          <span class="dest-label">AI for summaries</span>
+          <span id="ai-name" class="dest-name">…</span>
+        </span>
+        <span class="caret" aria-hidden="true"></span>
+      </button>
+      <div id="ai-menu" class="dest-menu ai-menu" hidden>
+        <div class="field">
+          <label for="ai-runtime">Runtime</label>
+          <select id="ai-runtime" class="ai-select"></select>
+        </div>
+        <div class="field">
+          <label for="ai-model-select" id="ai-model-label">Model</label>
+          <select id="ai-model-select" class="ai-select" aria-labelledby="ai-model-label"></select>
+          <input type="text" id="ai-model-text" class="mono" aria-labelledby="ai-model-label" hidden />
+        </div>
+      </div>
+      <div id="ai-note" class="dest-note" aria-live="polite" hidden>
+        <p id="ai-note-text"></p>
+        <div id="ai-command-row" class="command" hidden>
+          <code id="ai-command"></code>
+          <button type="button" id="ai-copy" class="btn-secondary btn-tiny">Copy</button>
         </div>
       </div>
     </div>
@@ -125,6 +158,15 @@
           <datalist id="collection-list"></datalist>
         </div>
       </div>
+
+      <!-- The right-click menu's modes, for this button. Not remembered:
+           a summary costs a model run, so each panel starts on Full page. -->
+      <fieldset class="modes" id="modes">
+        <legend class="sr-only">What to save</legend>
+        <label class="mode"><input type="radio" name="capture-mode" value="full" checked /><span>Full page</span></label>
+        <label class="mode"><input type="radio" name="capture-mode" value="screenshot" /><span>Screenshot</span></label>
+        <label class="mode"><input type="radio" name="capture-mode" value="summary" /><span id="mode-summary-label">Summary</span></label>
+      </fieldset>
 
       <button type="button" id="capture-btn" class="btn-primary">
         <span id="capture-label">Save this page</span>
@@ -241,6 +283,8 @@
   <script src="sidepanel_status.js"></script>
   <script src="sidepanel_view.js"></script>
   <script src="bridge_health.js"></script>
+  <script src="summary_ai.js"></script>
+  <script src="sidepanel_ai.js"></script>
   <script src="sidepanel.js"></script>
   <!-- RCL-02/RCL-05. After sidepanel.js: it shares that file's `ask`
        helper and listens for the page it announces. -->

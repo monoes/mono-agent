@@ -270,7 +270,13 @@
 
     if (p.mode) meta.captureMode = p.mode;
     // The bridge writes summary.md after the envelope lands; this is the ask.
-    if (p.summarize) meta.summarize = { kind: p.summarize === "video" ? "video" : "page" };
+    // A Go-initiated capture may name the AI that writes it (capture page
+    // --summary-runtime/--summary-model); the bridge checks both.
+    if (p.summarize) {
+      meta.summarize = { kind: p.summarize === "video" ? "video" : "page" };
+      if (typeof p.summaryRuntime === "string" && p.summaryRuntime.trim()) meta.summarize.runtime = p.summaryRuntime.trim();
+      if (typeof p.summaryModel === "string" && p.summaryModel.trim()) meta.summarize.model = p.summaryModel.trim();
+    }
 
     const artifacts = [];
     if (formats.includes("readable")) {

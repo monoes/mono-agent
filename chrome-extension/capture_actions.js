@@ -65,10 +65,15 @@
 
   const bridge = () => ({ send, isConnected: () => deps.isConnected() });
 
-  /** capture takes one page, through the injected capture function in tests. */
+  /**
+   * capture takes one page, through the injected capture function in tests.
+   * A named mode (the panel's Full page / Screenshot / Summary) is expanded
+   * into its params here, exactly as the right-click menu expands it.
+   */
   async function capture(params) {
-    if (deps.capture) return deps.capture(params);
-    return root.MonoCapture.pageCapture(params, root.MonoCaptureBridge.context());
+    const p = params && params.mode && root.MonoCaptureModes ? root.MonoCaptureModes.paramsFor(params) : params;
+    if (deps.capture) return deps.capture(p);
+    return root.MonoCapture.pageCapture(p, root.MonoCaptureBridge.context());
   }
 
   async function activeTabId() {
@@ -95,7 +100,7 @@
     if (!params.tabId) throw new Error("no active tab");
 
     const id = newId();
-    const record = { id, tabId: params.tabId, result: null, error: null, startedAt: Date.now() };
+    const record = { id, tabId: params.tabId, mode: params.mode || "", result: null, error: null, startedAt: Date.now() };
     record.promise = capture(params).then(
       (result) => {
         record.result = result;
@@ -127,7 +132,9 @@
 
     let id;
     let result;
-    if (pending && (!tabId || pending.tabId === tabId)) {
+    // A snapshot begun in another mode (the person switched from Full page
+    // to Screenshot while typing) is not what they are saving now.
+    if (pending && (!tabId || pending.tabId === tabId) && pending.mode === (options.mode || "")) {
       const use = pending;
       clearPending();
       await use.promise;
@@ -170,6 +177,11 @@
     root.MonoCaptureForm.applyToMeta(result.meta, form);
     await root.MonoCaptureForm.remember(storage(), form);
     await applyProfile(result.meta, form);
+    // The AI that writes the summary is read at commit, not at the early
+    // snapshot, so a choice changed while the note was typed still counts.
+    if (root.MonoSummaryAI && result.meta.summarize) {
+      root.MonoSummaryAI.applyToMeta(result.meta, await root.MonoSummaryAI.sticky(storage()));
+    }
 
     const envelope = { id, meta: result.meta, artifacts: result.artifacts, warnings: result.warnings };
     const delivery = await root.MonoCaptureQueue.deliver(bridge(), storage(), envelope);
@@ -292,6 +304,14 @@
       if (!profiles) return { ok: false, error: "profiles are not available" };
       return { ok: true, profile: await profiles.remember(storage(), msg.profile) };
     },
+    // The side panel's "AI for summaries" picker (summary_ai.js). The lists
+    // come from the bridge, so the worker, which owns the socket, asks.
+    summary_ai_state: async (msg) =>
+      Object.assign({ ok: true }, await root.MonoSummaryAI.state(root.MonoAsk, storage(), !!msg.live)),
+    summary_ai_models: async (msg) =>
+      Object.assign({ ok: true }, await root.MonoSummaryAI.modelsFor(root.MonoAsk, storage(), msg.runtime)),
+    summary_ai_set: async (msg) =>
+      ({ ok: true, choice: await root.MonoSummaryAI.remember(storage(), { runtime: msg.runtime, model: msg.model }) }),
     capture_begin: (msg) => begin(msg.options),
     capture_commit: (msg) => commit(msg),
     capture_discard: async () => {
