@@ -17,7 +17,7 @@ const DefaultBudgetUSD = 1.0
 var nowFunc = time.Now
 
 // ExecRunner runs a summary as one `monomind agent exec` turn — the same
-// path `monoagentcli chat --runtime <r> --no-history` takes, called
+// path `monoagentcli chat --runtime <r> [--model <m>] --no-history` takes, called
 // in-process rather than by shelling out to ourselves. No tools are wired
 // (ExecOptions.Tools empty sends `--tools none`), no session is resumed,
 // and nothing is written to chat history.
@@ -25,14 +25,15 @@ func ExecRunner(budgetUSD float64) RunFunc {
 	if budgetUSD <= 0 {
 		budgetUSD = DefaultBudgetUSD
 	}
-	return func(ctx context.Context, runtime, prompt string) (Answer, error) {
+	return func(ctx context.Context, t Target, prompt string) (Answer, error) {
 		bin, _, err := monomind.Ensure(ctx)
 		if err != nil {
 			return Answer{}, err
 		}
 		opts := monomind.ExecOptions{
 			Bin:       bin,
-			Runtime:   runtime,
+			Runtime:   t.Runtime,
+			Model:     t.Model,
 			Prompt:    prompt,
 			BudgetUSD: budgetUSD,
 		}

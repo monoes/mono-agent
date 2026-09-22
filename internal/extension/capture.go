@@ -83,8 +83,14 @@ type CaptureRequest struct {
 	// summary, video — chrome-extension/capture_modes.js). With a mode and
 	// no Formats, the extension picks the mode's formats; "summary" and
 	// "video" also ask the bridge for a summary.md.
-	Mode    string
-	Timeout time.Duration
+	Mode string
+	// SummaryRuntime and SummaryModel pick the AI that writes a "summary" or
+	// "video" capture's summary.md (the extension stamps them into
+	// meta.summarize). Empty means the bridge's default runtime and the
+	// runtime's own default model; the bridge checks both before use.
+	SummaryRuntime string
+	SummaryModel   string
+	Timeout        time.Duration
 	// Inbox overrides where the envelope is written. It is deliberately
 	// not part of the params the extension sees — the browser has no
 	// business knowing about this machine's filesystem — so it rides the
@@ -134,6 +140,12 @@ func (r CaptureRequest) command() *Command {
 	if r.Mode != "" {
 		params["mode"] = r.Mode
 	}
+	if r.SummaryRuntime != "" {
+		params["summaryRuntime"] = r.SummaryRuntime
+	}
+	if r.SummaryModel != "" {
+		params["summaryModel"] = r.SummaryModel
+	}
 	return &Command{
 		ID:     uuid.New().String(),
 		Type:   CmdPageCapture,
@@ -157,6 +169,8 @@ func captureRequestFromCommand(cmd *Command, timeout time.Duration, inbox string
 	req.Note, _ = p["note"].(string)
 	req.Collection, _ = p["collection"].(string)
 	req.Mode, _ = p["mode"].(string)
+	req.SummaryRuntime, _ = p["summaryRuntime"].(string)
+	req.SummaryModel, _ = p["summaryModel"].(string)
 	return req
 }
 

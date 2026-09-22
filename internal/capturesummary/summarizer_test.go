@@ -52,7 +52,7 @@ type stub struct {
 	maxSeen atomic.Int32
 }
 
-func (s *stub) run(ctx context.Context, runtime, prompt string) (Answer, error) {
+func (s *stub) run(ctx context.Context, target Target, prompt string) (Answer, error) {
 	n := s.running.Add(1)
 	defer s.running.Add(-1)
 	for {
@@ -62,7 +62,7 @@ func (s *stub) run(ctx context.Context, runtime, prompt string) (Answer, error) 
 		}
 	}
 	s.mu.Lock()
-	s.prompts = append(s.prompts, runtime+"\n"+prompt)
+	s.prompts = append(s.prompts, target.String()+"\n"+prompt)
 	s.mu.Unlock()
 	if s.block != nil {
 		select {
