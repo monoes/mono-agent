@@ -64,7 +64,7 @@ func fallbackPortHint(bridge connChecker) string {
 	}
 	return fmt.Sprintf("\nNote: the bridge is listening on %s, not the usual port %s, because another program already holds %s "+
 		"(most often a Chrome or Chromium started with --remote-debugging-port=%s). Close that program, or open the extension "+
-		"popup and set the server URL to ws://%s/monoagent.",
+		"side panel and set the server URL to ws://%s/monoagent.",
 		addr, extension.DefaultExtensionPort, extension.DefaultExtensionPort, extension.DefaultExtensionPort, addr)
 }
 
@@ -107,7 +107,7 @@ func tryOpenPairingPage(bridge connChecker, opened *bool) {
 	}
 	*opened = true
 	if err := openURLInBrowser(url); err != nil {
-		fmt.Fprintf(os.Stderr, "  (could not auto-open the pairing page: %v — paste the token into the extension popup manually)\n", err)
+		fmt.Fprintf(os.Stderr, "  (could not auto-open the pairing page: %v — paste the token into the extension side panel manually)\n", err)
 	} else {
 		fmt.Fprintln(os.Stderr, "  Opened the extension pairing page in your browser — it should pair automatically.")
 	}

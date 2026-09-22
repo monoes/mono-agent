@@ -1,16 +1,23 @@
 /**
- * MonoAgent Bridge — Popup Script
+ * MonoAgent Bridge — Side panel script
  *
- * Connection status, the save form (CLIP-07), batch capture (CLIP-06) and
- * the pending-capture list (CLIP-08). Deliberately thin: a popup is torn
- * down the instant it loses focus, so it asks the service worker to do
- * everything and only draws the answers. Anything here that looked like
- * state would be lost mid-capture.
+ * Connection status, the profile switcher, the save form (CLIP-07), batch
+ * capture (CLIP-06) and the pending-capture list (CLIP-08). Deliberately
+ * thin: the panel can be closed at any moment, so it asks the service
+ * worker to do everything and only draws the answers. Anything here that
+ * looked like state would be lost mid-capture.
  *
- * The one piece of judgement it does keep is in popup_status.js, which
- * turns a status word into a sentence and an action. This file only draws
- * what that decides, so the wording and the state machine can be tested
- * without a DOM.
+ * The judgement lives next door, where it can be tested without a DOM:
+ * sidepanel_status.js turns a status word into a sentence and an action,
+ * sidepanel_view.js turns a tab and a profile list into what the card and
+ * the header say. This file only draws what they decide.
+ *
+ * What is new here, compared with the popup this grew out of: the panel
+ * is one document per window that stays open while the person moves
+ * between tabs. So "this page" is not fixed at open — it is the window's
+ * active tab, followed through chrome.tabs events, and every capture,
+ * lookup and batch names the tab and window it means instead of asking
+ * the worker to guess from focus.
  *
  * Non-loopback servers are rejected unless the (unsafe, session-only)
  * override checkbox is enabled at save time.
@@ -18,7 +25,8 @@
 
 const $ = (id) => document.getElementById(id);
 
-const Status = globalThis.MonoPopupStatus;
+const Status = globalThis.MonoPanelStatus;
+const View = globalThis.MonoPanelView;
 
 const statusPill = $("status-pill");
 const statusLabel = $("status-label");
@@ -42,16 +50,33 @@ const pairSavedMsg = $("pair-saved-msg");
 const settingsPanel = $("settings-panel");
 
 const captureBtn = $("capture-btn");
+const captureLabel = $("capture-label");
 const captureMsg = $("capture-msg");
+const shortcutKey = $("shortcut-key");
+const hintNoShortcut = $("hint-noshortcut");
+const shortcutSet = $("shortcut-set");
+
+const pageIcon = $("page-icon");
+const pageMonogram = $("page-monogram");
+const pageTitle = $("page-title");
+const pageHost = $("page-host");
+const pageWhy = $("page-why");
 const hintQueues = $("hint-queues");
 const hintShortcut = $("hint-shortcut");
 const noteInput = $("note");
 const tagsInput = $("tags");
 const collectionInput = $("collection");
 const collectionList = $("collection-list");
-const profileField = $("profile-field");
-const profileSelect = $("profile");
+const profileBtn = $("profile-btn");
+const profileAvatar = $("profile-avatar");
+const profileName = $("profile-name");
+const profileMenu = $("profile-menu");
+const profileOptions = $("profile-options");
 const profileNote = $("profile-note");
+const profileNoteText = $("profile-note-text");
+const profileCommandRow = $("profile-command-row");
+const profileCommand = $("profile-command");
+const profileCopy = $("profile-copy");
 const tagChips = $("tag-chips");
 
 const batchWindowBtn = $("batch-window");
@@ -59,7 +84,10 @@ const batchGroupBtn = $("batch-group");
 const batchCancelBtn = $("batch-cancel");
 const batchProgress = $("batch-progress");
 const batchLabel = $("batch-label");
+const batchBar = $("batch-bar");
 const batchMsg = $("batch-msg");
+const batchGroupWhy = $("batch-group-why");
+const batchDest = $("batch-dest");
 
 const queuePanel = $("queue-panel");
 const queueList = $("queue-list");
@@ -70,7 +98,7 @@ const queueRetryAllBtn = $("queue-retry-all");
 // --- connection status -----------------------------------------------------
 
 /**
- * What the popup knows about the connection. `since` is stamped here rather
+ * What the panel knows about the connection. `since` is stamped here rather
  * than taken on faith from the worker, because the worker does not send one
  * today — and the grace period that stops a service-worker respawn flashing
  * red needs to know how long this state has been true. A status that has
@@ -89,13 +117,13 @@ const connection = {
 let shown = null;
 
 /**
- * The popup's two sources, kept apart so neither can silently overwrite the
+ * The panel's two sources, kept apart so neither can silently overwrite the
  * other. The worker reports what its own socket did; the health probe says
  * whether a bridge process is running at all. They disagree constantly while
  * no bridge is running — the worker retries and broadcasts on every attempt
  * — so every repaint goes through Status.arbitrate, which lets each source
  * answer only the question it can actually know. Letting the last message
- * win made the popup flicker between two sentences for the same fact.
+ * win made the panel flicker between two sentences for the same fact.
  */
 let workerState = null;
 let healthState = null;
@@ -130,6 +158,7 @@ function noteStatus(update) {
 }
 
 function drawStatus() {
+  const was = shown && shown.tone;
   const view = Status.describe({
     status: connection.status,
     reason: connection.reason,
@@ -168,37 +197,52 @@ function drawStatus() {
   // bridge to send it to still succeeds — it is kept and sent later — and
   // saying so here is the difference between a queue and a surprise.
   hintQueues.hidden = !view.queues;
-  hintShortcut.hidden = view.queues;
+  hintShortcut.hidden = view.queues || !shortcutKey.textContent;
+  hintNoShortcut.hidden = view.queues || !!shortcutKey.textContent || !shortcutKnown;
+
+  // The popup was reopened for every look, so its profile list was always
+  // as fresh as the bridge could make it. A panel that was opened while the
+  // bridge was down would keep the cached list for good, so it asks again
+  // the moment the bridge becomes reachable.
+  if (view.tone === "ok" && was && was !== "ok") loadFormState();
 }
 
 /**
  * The grace period expires on a timer as well as on the next event: with no
  * further status broadcast, a socket that never came back would otherwise
- * sit on "Reconnecting…" for as long as the popup stayed open.
+ * sit on "Reconnecting…" for as long as the panel stayed open.
  */
 setInterval(() => {
   if (shown && shown.key === "reconnecting") drawStatus();
 }, 1000);
 
-noticeCopy.addEventListener("click", async () => {
-  if (!shown || !shown.command) return;
+/**
+ * copyCommand puts a command on the clipboard and says so on the button.
+ * Clipboard refused (no permission, no focus): the command is selected
+ * instead so the keyboard can finish the job — never a dead button.
+ */
+async function copyCommand(button, code, text) {
+  if (!text) return;
   try {
-    await navigator.clipboard.writeText(shown.command);
-    noticeCopy.textContent = "Copied";
+    await navigator.clipboard.writeText(text);
+    button.textContent = "Copied";
     setTimeout(() => {
-      noticeCopy.textContent = "Copy";
+      button.textContent = "Copy";
     }, 1600);
   } catch {
-    // Clipboard refused (no permission, no focus). Select it instead so the
-    // keyboard can finish the job — never a dead button.
     const range = document.createRange();
-    range.selectNodeContents(noticeCommand);
+    range.selectNodeContents(code);
     const selection = window.getSelection();
     selection.removeAllRanges();
     selection.addRange(range);
-    noticeCopy.textContent = "Press ⌘/Ctrl+C";
+    button.textContent = "Press ⌘/Ctrl+C";
   }
-});
+}
+
+noticeCopy.addEventListener("click", () => copyCommand(noticeCopy, noticeCommand, shown && shown.command));
+profileCopy.addEventListener("click", () =>
+  copyCommand(profileCopy, profileCommand, profileCommand.textContent)
+);
 
 noticeAction.addEventListener("click", async () => {
   const which = noticeAction.dataset.action;
@@ -215,7 +259,7 @@ noticeAction.addEventListener("click", async () => {
     return;
   }
   if (which === Status.ACTIONS.RETRY) {
-    // Re-saving the address we already have is how the popup asks the
+    // Re-saving the address we already have is how the panel asks the
     // worker to drop the socket and dial again, using only the message the
     // worker already answers.
     noteStatus({ status: "connecting" });
@@ -266,49 +310,165 @@ const form = () => ({
   note: noteInput.value,
   tags: tagsInput.value,
   collection: collectionInput.value,
-  profile: profileSelect.value || "",
+  profile: profiles.current ? profiles.current.id : "",
 });
 
+// --- the profile switcher --------------------------------------------------
+
+/** What the header last drew, from View.describeProfiles. */
+let profiles = { current: null, options: [], interactive: false };
+let lastFormState = null;
+
 /**
- * drawProfiles fills the "Save into" picker. It is hidden outright when
- * there is nothing to choose between — a single-profile install should not
- * grow a control that can only be set one way — and the choice is only ever
- * pre-selected, never forced: the capture saves whatever is showing.
+ * paintAvatar draws a profile's initial on its own colour, or the inbox
+ * glyph for "no profile". The hue is an identity (View.avatarHue), set as
+ * a custom property so both themes derive their own lightness from it.
+ */
+function paintAvatar(el, option) {
+  el.textContent = option && option.initial ? option.initial : "";
+  el.dataset.kind = option && option.id ? "profile" : "inbox";
+  if (option && option.hue >= 0) el.style.setProperty("--h", String(option.hue));
+  else el.style.removeProperty("--h");
+}
+
+/**
+ * drawProfiles fills the header's switcher from capture_form_state. The
+ * choice is only ever pre-selected, never forced: a capture saves into
+ * whatever the header shows, and the header shows what the worker will use
+ * for the keyboard shortcut too.
  */
 function drawProfiles(state) {
-  const profiles = state.profiles || [];
-  profileSelect.textContent = "";
-  if (!profiles.length) {
-    profileField.hidden = true;
-    return;
+  lastFormState = state;
+  profiles = View.describeProfiles(state);
+  const { current, options, interactive, note } = profiles;
+
+  profileName.textContent = View.displayName(current.name);
+  paintAvatar(profileAvatar, current);
+  profileBtn.disabled = !interactive;
+  profileBtn.dataset.interactive = String(interactive);
+  if (!interactive) closeProfileMenu(false);
+
+  profileOptions.textContent = "";
+  for (const option of options) {
+    const row = document.createElement("label");
+    row.className = "dest-option";
+
+    const radio = document.createElement("input");
+    radio.type = "radio";
+    radio.name = "profile";
+    radio.value = option.id;
+    radio.checked = option.id === current.id;
+    radio.className = "sr-only";
+    row.appendChild(radio);
+
+    const avatar = document.createElement("span");
+    avatar.className = "avatar avatar-sm";
+    avatar.setAttribute("aria-hidden", "true");
+    paintAvatar(avatar, option);
+    row.appendChild(avatar);
+
+    const text = document.createElement("span");
+    text.className = "dest-option-text";
+    const name = document.createElement("span");
+    name.className = "dest-option-name";
+    name.textContent = option.name;
+    text.appendChild(name);
+    if (option.hint || option.isDefault) {
+      const sub = document.createElement("span");
+      sub.className = "dest-option-hint";
+      // The bridge's "default" is monoagent's current profile (the one
+      // `profile list` stars), not a profile called Default — which may
+      // also exist, and would make "Default profile" a riddle.
+      sub.textContent = option.isDefault ? "monoagent's current profile" : option.hint;
+      text.appendChild(sub);
+    }
+    row.appendChild(text);
+
+    const tick = document.createElement("span");
+    tick.className = "tick";
+    tick.setAttribute("aria-hidden", "true");
+    row.appendChild(tick);
+
+    profileOptions.appendChild(row);
   }
-  profileField.hidden = false;
 
-  for (const profile of profiles) {
-    const option = document.createElement("option");
-    option.value = profile.id;
-    option.textContent = profile.default ? `${profile.name} (default)` : profile.name;
-    profileSelect.appendChild(option);
-  }
-  const none = document.createElement("option");
-  none.value = "";
-  none.textContent = "No profile";
-  none.title = "Save to the shared inbox, as captures were before profiles";
-  profileSelect.appendChild(none);
+  profileNote.dataset.tone = note ? note.tone : "";
+  profileNote.hidden = !note;
+  profileNoteText.textContent = note ? note.text : "";
+  profileCommandRow.hidden = !(note && note.command);
+  profileCommand.textContent = (note && note.command) || "";
+  profileCopy.setAttribute("aria-label", `Copy the command ${(note && note.command) || ""}`);
 
-  profileSelect.value = state.profile || "";
-
-  // Two things are worth saying out loud, and nothing else is: the profile
-  // last saved into has been deleted, and the bridge could not be asked so
-  // this list may be stale.
-  const message = state.profileChanged
-    ? state.profileReason
-    : state.profilesOffline
-    ? "monoagent is not connected — this list is the last one it gave."
-    : "";
-  profileNote.textContent = message;
-  profileNote.hidden = !message;
+  captureLabel.textContent = profiles.saveLabel;
+  batchDest.textContent = current.id ? current.name : "the shared inbox";
 }
+
+function openProfileMenu() {
+  if (profileBtn.disabled) return;
+  profileMenu.hidden = false;
+  profileBtn.setAttribute("aria-expanded", "true");
+  const checked = profileOptions.querySelector("input:checked") || profileOptions.querySelector("input");
+  if (checked) checked.focus();
+}
+
+function closeProfileMenu(returnFocus) {
+  if (profileMenu.hidden) return;
+  profileMenu.hidden = true;
+  profileBtn.setAttribute("aria-expanded", "false");
+  if (returnFocus) profileBtn.focus();
+}
+
+profileBtn.addEventListener("click", () => {
+  if (profileMenu.hidden) openProfileMenu();
+  else closeProfileMenu(true);
+});
+
+// Arrow keys move the choice (a radio group's own behaviour) and each move
+// is applied at once: the header, the button and the stored sticky choice
+// all follow, so there is never a "picked but not saved" state to explain.
+profileOptions.addEventListener("change", async (event) => {
+  const id = event.target && event.target.value;
+  if (typeof id !== "string") return;
+  const option = profiles.options.find((o) => o.id === id);
+  if (!option) return;
+  profiles.current = option;
+  profileName.textContent = option.name;
+  paintAvatar(profileAvatar, option);
+  captureLabel.textContent = View.describeProfiles(
+    Object.assign({}, lastFormState, { profile: id, profileChanged: false })
+  ).saveLabel;
+  batchDest.textContent = option.id ? option.name : "the shared inbox";
+  // A choice made here supersedes a "your profile was deleted" note.
+  if (profileNote.dataset.tone === "warn") profileNote.hidden = true;
+  if (lastFormState) lastFormState = Object.assign({}, lastFormState, { profile: id, profileChanged: false });
+  await ask({ type: "capture_profile_set", profile: id });
+});
+
+// A pointer choice is a finished choice; so is Enter or Space on a row.
+// Arrow keys alone are browsing, and leave the list open.
+profileOptions.addEventListener("click", (event) => {
+  if (event.target && event.target.matches("input[type=radio]") && event.detail > 0) closeProfileMenu(true);
+});
+profileOptions.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    closeProfileMenu(true);
+  }
+});
+$("dest").addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !profileMenu.hidden) {
+    event.preventDefault();
+    closeProfileMenu(true);
+  }
+});
+// Focus leaving the switcher closes it, so it is never left hanging open
+// over the page card while someone types a note.
+$("dest").addEventListener("focusout", (event) => {
+  if (!$("dest").contains(event.relatedTarget)) closeProfileMenu(false);
+});
+document.addEventListener("pointerdown", (event) => {
+  if (!$("dest").contains(event.target)) closeProfileMenu(false);
+});
 
 // --- CLIP-07: the snapshot starts while the note is still being typed -----
 
@@ -318,24 +478,23 @@ let began = false;
  * beginEarly asks the worker to photograph the page now. The page is only
  * going to get further from what the person is looking at, and the note
  * field is about to hold their attention for a while.
+ *
+ * Not a one-shot listener, as it was in the popup: a panel sees many pages
+ * and many captures, so every page gets its own early snapshot. `began`
+ * is cleared when the page changes (followTab) and after each save.
  */
 function beginEarly() {
-  if (began) return;
+  if (began || !page.capturable) return;
   began = true;
-  ask({ type: "capture_begin" });
+  ask({ type: "capture_begin", options: { tabId: page.tabId } });
 }
 
 for (const field of [noteInput, tagsInput, collectionInput]) {
-  field.addEventListener("focus", beginEarly, { once: true });
+  field.addEventListener("focus", beginEarly);
   field.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") captureBtn.click();
+    if (e.key === "Enter" && !captureBtn.disabled) captureBtn.click();
   });
 }
-
-// The picker starts the snapshot like the other fields, but deliberately
-// does not save on Enter: Enter is how a keyboard user commits a choice in
-// a <select>, and it must not also commit the capture.
-profileSelect.addEventListener("focus", beginEarly, { once: true });
 
 function drawTagSuggestions(recent) {
   tagChips.textContent = "";
@@ -364,8 +523,8 @@ function drawTagSuggestions(recent) {
 }
 
 /**
- * MonoSuggest is the popup's copy of the ranking rule. The worker owns the
- * canonical one (capture_form.js); a popup cannot importScripts, and this
+ * MonoSuggest is the panel's copy of the ranking rule. The worker owns the
+ * canonical one (capture_form.js); a panel page cannot importScripts, and this
  * is small enough that duplicating it beats a message round-trip per
  * keystroke.
  */
@@ -405,14 +564,40 @@ function drawQueue(state) {
   if (summary) {
     queueCounts.textContent = summary.text;
     queueCounts.dataset.tone = summary.tone;
-    // Captures that could not be sent are the only thing in this popup that
+    // Captures that could not be sent are the only thing in this panel that
     // will not resolve itself, so that is the one case that opens its own
     // drawer. A queue merely waiting on a reconnect does not.
     if (summary.failed) queuePanel.open = true;
   }
   queueClearBtn.hidden = !counts.failed;
 
+  // Every row has a "Retry now" and a "Delete", and read aloud in a list
+  // they must say which capture they act on. The title alone is not
+  // enough — two sites can share one, and the same page can be saved twice
+  // — so the label carries the site and the time, and, when even those
+  // collide, which of the identical rows it is.
+  const whenOf = (item) => {
+    const at = item.at ? new Date(item.at) : null;
+    return at && !Number.isNaN(at.getTime())
+      ? at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      : "";
+  };
+  const nameOf = (item) => {
+    const site = View.hostOf(item.url);
+    const when = whenOf(item);
+    return [item.title, site && `from ${site}`, when && `saved at ${when}`].filter(Boolean).join(", ");
+  };
+  const totals = new Map();
+  for (const item of items) totals.set(nameOf(item), (totals.get(nameOf(item)) || 0) + 1);
+  const seen = new Map();
+
   for (const item of items) {
+    const when = whenOf(item);
+    const base = nameOf(item);
+    const nth = (seen.get(base) || 0) + 1;
+    seen.set(base, nth);
+    const which = totals.get(base) > 1 ? `${base} (${nth} of ${totals.get(base)})` : base;
+
     const li = document.createElement("li");
     li.className = `queue-item ${item.status}`;
 
@@ -425,11 +610,11 @@ function drawQueue(state) {
     const why = document.createElement("div");
     why.className = "why";
     why.textContent =
-      item.status === "failed"
+      (item.status === "failed"
         ? `Failed: ${item.reason || "no reason recorded"}`
         : item.reason
         ? `Waiting — last attempt: ${item.reason}`
-        : "Waiting for the bridge to reconnect";
+        : "Waiting for the bridge to reconnect") + (when ? ` · ${when}` : "");
     li.appendChild(why);
 
     const actions = document.createElement("div");
@@ -438,9 +623,7 @@ function drawQueue(state) {
     retry.type = "button";
     retry.className = "btn-secondary btn-tiny";
     retry.textContent = "Retry now";
-    // Every row has a "Retry now" and a "Delete". Read aloud in a list they
-    // are indistinguishable, so each one names the capture it acts on.
-    retry.setAttribute("aria-label", `Retry sending ${item.title}`);
+    retry.setAttribute("aria-label", `Retry sending ${which}`);
     retry.addEventListener("click", async () => {
       retry.disabled = true;
       const result = await ask({ type: "queue_retry", key: item.key });
@@ -455,7 +638,7 @@ function drawQueue(state) {
     del.className = "btn-secondary btn-tiny";
     del.textContent = "Delete";
     del.title = "Discard this capture without sending it";
-    del.setAttribute("aria-label", `Discard ${item.title} without sending it`);
+    del.setAttribute("aria-label", `Discard ${which} without sending it`);
     del.addEventListener("click", async () => {
       await ask({ type: "queue_delete", key: item.key });
       await refreshQueue();
@@ -491,11 +674,17 @@ queueRetryAllBtn.addEventListener("click", async () => {
 // --- saving ---------------------------------------------------------------
 
 captureBtn.addEventListener("click", async () => {
+  if (!page.capturable) return;
+  const target = page;
   captureBtn.disabled = true;
-  showCapture("ok", "Capturing...");
+  captureBtn.dataset.busy = "true";
+  showCapture("ok", "Capturing…");
 
-  const result = await ask({ type: "capture_commit", form: form() });
-  captureBtn.disabled = false;
+  // The tab is named, not left to the worker's idea of focus: with a panel
+  // open, the last focused window may be another one entirely.
+  const result = await ask({ type: "capture_commit", form: form(), options: { tabId: target.tabId } });
+  delete captureBtn.dataset.busy;
+  captureBtn.disabled = !page.capturable;
   began = false;
 
   if (!result || result.ok === false) {
@@ -515,23 +704,38 @@ captureBtn.addEventListener("click", async () => {
   noteInput.value = "";
   tagsInput.value = "";
   await Promise.all([refreshQueue(), loadFormState()]);
+  // The worker re-asks the brain about this page a few seconds after a
+  // capture lands; the "already saved" band catches up with it then.
+  setTimeout(() => {
+    if (page.key === target.key) document.dispatchEvent(new CustomEvent("panel:recheck"));
+  }, 4500);
 });
 
 // --- CLIP-06: batch capture -----------------------------------------------
 
+let batching = false;
+
 function batchRunning(running) {
+  batching = running;
   batchWindowBtn.disabled = running;
-  batchGroupBtn.disabled = running;
+  batchGroupBtn.disabled = running || page.groupId === -1;
   batchProgress.dataset.running = String(running);
   batchCancelBtn.disabled = false;
+  if (!running) batchBar.value = 0;
 }
 
 async function startBatch(scope) {
   batchRunning(true);
-  batchLabel.textContent = "Starting...";
+  batchLabel.textContent = "Starting…";
   showBatch("ok", "");
 
-  const result = await ask({ type: "capture_batch", scope, form: form() });
+  const result = await ask({
+    type: "capture_batch",
+    scope,
+    form: form(),
+    windowId: here.windowId,
+    tabId: page.tabId || undefined,
+  });
   batchRunning(false);
 
   if (!result || result.ok === false) {
@@ -564,7 +768,7 @@ batchWindowBtn.addEventListener("click", () => startBatch("window"));
 batchGroupBtn.addEventListener("click", () => startBatch("group"));
 batchCancelBtn.addEventListener("click", async () => {
   batchCancelBtn.disabled = true;
-  batchLabel.textContent = "Cancelling after this tab...";
+  batchLabel.textContent = "Cancelling after this tab…";
   await ask({ type: "capture_batch_cancel" });
 });
 
@@ -579,6 +783,10 @@ chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === "capture_batch_progress") {
     const s = msg.state || {};
     batchRunning(s.phase !== "done");
+    if (s.total) {
+      batchBar.max = s.total;
+      batchBar.value = s.phase === "done" ? s.total : s.completed || 0;
+    }
     batchLabel.textContent =
       s.phase === "done"
         ? `${s.done} of ${s.total} saved`
@@ -588,12 +796,15 @@ chrome.runtime.onMessage.addListener((msg) => {
 
 // --- startup --------------------------------------------------------------
 
+let recentTags = [];
+tagsInput.addEventListener("input", () => drawTagSuggestions(recentTags));
+
 async function loadFormState() {
   const state = await ask({ type: "capture_form_state" });
   if (!state || state.ok === false) return;
-  drawTagSuggestions(state.recentTags || []);
+  recentTags = state.recentTags || [];
+  drawTagSuggestions(recentTags);
   drawProfiles(state);
-  tagsInput.addEventListener("input", () => drawTagSuggestions(state.recentTags || []));
   collectionList.textContent = "";
   for (const name of state.collections || []) {
     const option = document.createElement("option");
@@ -604,9 +815,9 @@ async function loadFormState() {
 }
 
 /**
- * How often the popup re-asks the bridge while it is not connected. A probe
+ * How often the panel re-asks the bridge while it is not connected. A probe
  * taken only at open went stale the moment someone started the bridge in a
- * terminal with the popup still showing, which is exactly when they are
+ * terminal with the panel still showing, which is exactly when they are
  * looking at it. Loopback and short, so it costs nothing.
  */
 const HEALTH_POLL_MS = 2000;
@@ -617,7 +828,7 @@ let probing = false;
 
 /**
  * checkHealth asks the bridge directly whether it is running, and is the
- * authoritative answer to the only question this popup's status exists to
+ * authoritative answer to the only question this panel's status exists to
  * answer. It cannot fail: a probe that finds nothing IS the "no bridge"
  * result, which is the most common state and has to feel instant, so there
  * is no error path and nothing to wait on.
@@ -633,7 +844,7 @@ async function checkHealth() {
     // A bridge that has just appeared: ask the worker to dial now, the same
     // way "Try again" does, rather than leave it to its next scheduled
     // retry — which can be half a minute away once the fast retries are
-    // spent, and is exactly the wait that made the popup look broken.
+    // spent, and is exactly the wait that made the panel look broken.
     if (before && before.reason === "no_bridge" && healthState.reason !== "no_bridge") {
       ask({ type: "set_ws_url", url: wsUrlInput.value.trim() || Status.DEFAULT_WS_URL });
     }
@@ -648,7 +859,7 @@ setInterval(() => {
 
 async function init() {
   // The non-loopback override is session-scoped and must be re-enabled
-  // each time — reset it whenever the popup opens.
+  // each time — reset it whenever the panel opens.
   try {
     await chrome.storage.session.set({ allowNonLoopback: false });
   } catch {
@@ -662,7 +873,7 @@ async function init() {
     // the probe cannot. A worker that has just been woken to answer this
     // reports its boot-time "disconnected" with no reason — true, stale, and
     // exactly what used to flash "Not connected" at someone opening the
-    // popup. Hold "Checking…" instead; the probe is already on its way.
+    // panel. Hold "Checking…" instead; the probe is already on its way.
     if (workerState || chrome.runtime.lastError || !response?.status) return;
     const informative =
       response.status === "connected" || response.status === "unpaired" || !!response.reason;
@@ -677,12 +888,13 @@ async function init() {
 
   // Ask the bridge itself, rather than asking our own socket about it. This
   // is what makes "no bridge is running" a statement instead of a guess —
-  // and it is deliberately not awaited before the form loads, so the popup
+  // and it is deliberately not awaited before the form loads, so the panel
   // is never waiting on the network to become usable.
   probeHints = stored;
   checkHealth();
 
-  await loadFormState();
+  drawShortcut();
+  await Promise.all([startFollowing(), loadFormState()]);
 }
 
 // A capture begun for a note that was never saved is dropped rather than
@@ -691,6 +903,170 @@ async function init() {
 window.addEventListener("pagehide", () => {
   if (began) chrome.runtime.sendMessage({ type: "capture_discard" });
 });
+
+// --- the page this panel is following ---------------------------------------
+
+/** The window this panel belongs to. Set once: a panel never changes window. */
+const here = { windowId: null };
+
+/** What the card is showing, from View.describeTab. */
+let page = View.describeTab(null);
+
+/**
+ * drawPage paints the card's head for the tab in front of the person, and
+ * gates the button on whether that page can be saved at all.
+ */
+function drawPage(view) {
+  pageTitle.textContent = view.title;
+  pageTitle.title = view.url || "";
+  pageHost.textContent = view.loading && view.host ? `${view.host} · loading…` : view.host;
+  pageHost.hidden = !view.host;
+  pageWhy.textContent = view.why;
+  pageWhy.hidden = !view.why;
+
+  pageMonogram.textContent = View.initialOf(view.host || view.title);
+  drawFavicon(view.favicon);
+
+  captureBtn.disabled = !view.capturable || captureBtn.dataset.busy === "true";
+  batchGroupBtn.disabled = batching || view.groupId === -1;
+  batchGroupWhy.hidden = view.groupId !== -1;
+}
+
+/**
+ * drawFavicon puts the site's icon over its letter, but only once the icon
+ * has actually loaded: a broken image in the one place the page is
+ * identified looks like a broken page. An icon that arrives after the
+ * person has moved to another tab is dropped.
+ */
+function drawFavicon(url) {
+  const current = pageIcon.querySelector("img");
+  if (current && current.dataset.src === url) return;
+  if (current) current.remove();
+  if (!url) return;
+  const img = new Image(18, 18);
+  img.alt = "";
+  img.dataset.src = url;
+  img.addEventListener("load", () => {
+    if (page.favicon === url && !pageIcon.querySelector("img")) pageIcon.appendChild(img);
+  });
+  img.src = url;
+}
+
+/**
+ * followTab makes `tab` the page this panel is about. When it is a
+ * different page from before, everything learned about the old one goes:
+ * the early snapshot (it is of the wrong page), the capture message (it was
+ * about the wrong page), and the "already saved" band, which
+ * sidepanel_recall.js re-asks for on the event below.
+ */
+function followTab(tab, recheck) {
+  const next = View.describeTab(tab);
+  const moved = next.key !== page.key;
+  page = next;
+  drawPage(next);
+  if (!moved && !recheck) return;
+
+  if (moved) {
+    if (began) ask({ type: "capture_discard" });
+    began = false;
+    showCapture("ok", "");
+    captureMsg.textContent = "";
+  }
+  document.dispatchEvent(new CustomEvent("panel:page", { detail: next }));
+}
+
+async function refreshActiveTab(recheck) {
+  if (here.windowId === null) return;
+  const [tab] = await chrome.tabs.query({ active: true, windowId: here.windowId });
+  followTab(tab || null, recheck);
+}
+
+async function startFollowing() {
+  try {
+    const win = await chrome.windows.getCurrent();
+    here.windowId = win.id;
+  } catch {
+    // No window (the panel is being torn down). Nothing to follow.
+    return;
+  }
+
+  // Another tab in this window came to the front.
+  chrome.tabs.onActivated.addListener(({ tabId, windowId }) => {
+    if (windowId !== here.windowId) return;
+    chrome.tabs.get(tabId).then(
+      (tab) => followTab(tab, true),
+      () => refreshActiveTab(true)
+    );
+  });
+
+  // The tab in front navigated, finished loading, or was retitled.
+  chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
+    if (tabId !== page.tabId) return;
+    const what = View.tabChange(change);
+    if (what.redraw) followTab(tab, what.recheck);
+  });
+
+  // A tab dragged into or out of this window changes what is in front.
+  chrome.tabs.onAttached.addListener((tabId, info) => {
+    if (info.newWindowId === here.windowId) refreshActiveTab(true);
+  });
+  chrome.tabs.onDetached.addListener((tabId, info) => {
+    if (info.oldWindowId === here.windowId) refreshActiveTab(true);
+  });
+
+  await refreshActiveTab(true);
+}
+
+/** The panel's window and tab, for sidepanel_recall.js. */
+globalThis.MonoPanelPage = {
+  current: () => page,
+  windowId: () => here.windowId,
+};
+
+// --- things that change behind the panel's back -----------------------------
+
+// Captures also arrive through the shortcut and the context menu, and the
+// profile can be changed from another window's panel. The popup never saw
+// either — it was closed — but a panel is open while they happen.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local") return;
+  if (changes.captureQueue || changes.captureFailures) refreshQueue();
+  if (changes.captureProfile && lastFormState) {
+    const id = changes.captureProfile.newValue || "";
+    if (!profiles.current || profiles.current.id !== id) {
+      drawProfiles(Object.assign({}, lastFormState, { profile: id, profileChanged: false }));
+    }
+  }
+});
+
+/**
+ * drawShortcut shows the capture shortcut the browser actually has, which
+ * is whatever the person set in the browser's shortcut settings — or none,
+ * in which case the sentence is not drawn rather than naming a key that
+ * does nothing.
+ */
+let shortcutKnown = false;
+
+async function drawShortcut() {
+  try {
+    const commands = await chrome.commands.getAll();
+    const capture = commands.find((c) => c.name === "capture-page");
+    shortcutKey.textContent = (capture && capture.shortcut) || "";
+    shortcutKnown = true;
+  } catch {
+    shortcutKey.textContent = "";
+  }
+  drawStatus();
+}
+
+// The browser's own shortcuts page. chrome:// is the address every
+// Chromium browser answers to, Edge included (it shows edge://).
+shortcutSet.addEventListener("click", () => {
+  chrome.tabs.create({ url: "chrome://extensions/shortcuts" });
+});
+
+// Changed on that page, and the panel is still open: pick it up on return.
+window.addEventListener("focus", drawShortcut);
 
 // --- connection settings ---------------------------------------------------
 
@@ -703,7 +1079,7 @@ pairBtn.addEventListener("click", async () => {
   }
 
   // Sends the token typed into the field, never reads it back out of
-  // storage, so the popup never displays a previously-saved secret.
+  // storage, so the panel never displays a previously-saved secret.
   chrome.runtime.sendMessage({ type: "set_pairing_token", value }, (response) => {
     if (chrome.runtime.lastError) {
       showError(chrome.runtime.lastError.message);
@@ -726,7 +1102,7 @@ saveBtn.addEventListener("click", async () => {
   if (!url) return;
 
   // Session-only override flag — mirrors the checkbox, never persisted to
-  // local storage, and cleared again when the popup reopens.
+  // local storage, and cleared again when the panel reopens.
   try {
     await chrome.storage.session.set({ allowNonLoopback: allowRemoteCheckbox.checked });
   } catch {

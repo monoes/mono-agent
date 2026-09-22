@@ -1,17 +1,23 @@
 /**
- * MonoAgent Bridge — popup styles
+ * MonoAgent — side panel styles
  *
  * A separate file rather than a <style> block because MV3's CSP makes the
- * stylesheet the one part of a popup that can grow without argument, and
- * because the tokens below are the design: everything downstream refers to
- * them, so both themes are one block of values rather than two stylesheets
- * that drift.
+ * stylesheet the one part of an extension page that can grow without
+ * argument, and because the tokens below are the design: everything
+ * downstream refers to them, so both themes are one block of values rather
+ * than two stylesheets that drift.
  *
  * The palette is the app's own (the desktop GUI's cyan on deep navy),
  * pulled into a restrained product range: cool-tinted neutrals carrying the
- * surface, one accent doing primary action and focus and nothing else.
+ * surface, one accent doing primary action, selection and focus and
+ * nothing else. The one exception is the profile avatars, whose hues are
+ * identity (which brain is this going into?) rather than decoration.
  * Every text/background pair below was checked against WCAG AA at its real
  * size before it was written down.
+ *
+ * The popup was one fixed width. A side panel is as wide as the person
+ * drags it — 320px to half the screen — so nothing here sets a width; the
+ * page is a single column that reads the same at any of them.
  */
 
 /* ── tokens ────────────────────────────────────────────────────────── */
@@ -19,9 +25,12 @@
 :root {
   color-scheme: light dark;
 
-  /* Surfaces, coolest to warmest-forward. Tinted toward the brand's own
-     hue rather than toward "warm", which is how every tool ends up beige. */
+  /* Surfaces. Tinted toward the brand's own hue rather than toward
+     "warm", which is how every tool ends up beige. --chrome is the second
+     neutral layer: the header sits on it, so the part of the panel that
+     never scrolls reads as the panel's frame rather than its content. */
   --bg: oklch(0.99 0.004 230);
+  --chrome: oklch(0.965 0.008 232);
   --surface: oklch(0.975 0.006 230);
   --surface-2: oklch(0.945 0.01 230);
   --line: oklch(0.9 0.012 230);
@@ -45,20 +54,29 @@
   --err: oklch(0.52 0.18 25);
   --err-wash: oklch(0.96 0.03 25);
 
+  /* Profile avatars: one lightness and chroma for every hue, so no profile
+     looks more important than another, and white initials clear 4.5:1 on
+     all twelve. */
+  --avatar-l: 0.5;
+  --avatar-c: 0.12;
+  --avatar-ink: oklch(1 0 0);
+
   --focus: var(--accent);
 
-  /* Type. Fixed px: a popup is one size at one DPI, and fluid type in a
-     340px window is a solution to a problem nobody has. */
+  /* Type. Fixed px: a panel is read at one DPI, and fluid type in a column
+     the person sized themselves is a solution to a problem nobody has. */
   --t-xs: 11px;
   --t-sm: 12px;
   --t-base: 13px;
   --t-md: 14px;
+  --t-lg: 15px;
 
   --sp-1: 4px;
   --sp-2: 6px;
   --sp-3: 8px;
   --sp-4: 12px;
   --sp-5: 16px;
+  --sp-6: 20px;
 
   --r-sm: 5px;
   --r: 7px;
@@ -66,6 +84,10 @@
   --r-pill: 999px;
 
   --shadow: 0 1px 2px oklch(0.26 0.02 250 / 0.06), 0 2px 8px oklch(0.26 0.02 250 / 0.05);
+  --shadow-menu: 0 2px 4px oklch(0.26 0.02 250 / 0.06), 0 8px 24px oklch(0.26 0.02 250 / 0.1);
+
+  /* Stacking, named: the header over the scrolling page, nothing else. */
+  --z-sticky: 10;
 
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
   --fast: 140ms;
@@ -78,6 +100,7 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: oklch(0.195 0.018 252);
+    --chrome: oklch(0.225 0.02 252);
     --surface: oklch(0.245 0.02 252);
     --surface-2: oklch(0.295 0.022 252);
     --line: oklch(0.33 0.022 252);
@@ -99,7 +122,12 @@
     --err: oklch(0.74 0.15 25);
     --err-wash: oklch(0.3 0.06 25);
 
+    --avatar-l: 0.74;
+    --avatar-c: 0.11;
+    --avatar-ink: oklch(0.2 0.02 250);
+
     --shadow: 0 1px 2px oklch(0 0 0 / 0.4), 0 2px 8px oklch(0 0 0 / 0.3);
+    --shadow-menu: 0 2px 4px oklch(0 0 0 / 0.4), 0 8px 24px oklch(0 0 0 / 0.45);
   }
 }
 
@@ -116,8 +144,13 @@
   display: none !important;
 }
 
+html {
+  background: var(--bg);
+}
+
 body {
-  width: 360px;
+  min-width: 280px;
+  min-height: 100vh;
   margin: 0;
   padding: 0;
   font-family: var(--ui);
@@ -140,23 +173,49 @@ body {
   outline: none;
 }
 
-/* ── header: wordmark + the status pill ────────────────────────────── */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── header: wordmark, status, and where captures go ───────────────── */
 
 .top {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  padding: var(--sp-4) var(--sp-5) var(--sp-4);
+  background: var(--chrome);
+  border-bottom: 1px solid var(--line);
+}
+
+.brandbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--sp-3);
-  padding: var(--sp-4) var(--sp-5);
-  border-bottom: 1px solid var(--line);
-  background: var(--surface);
 }
 
 .wordmark {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
   margin: 0;
   font-size: var(--t-md);
-  font-weight: 600;
+  font-weight: 650;
   letter-spacing: -0.01em;
+}
+
+.wordmark img {
+  flex: none;
+  border-radius: var(--r-sm);
 }
 
 /* The pill is the whole of the status when nothing needs explaining, which
@@ -166,6 +225,7 @@ body {
   display: inline-flex;
   align-items: center;
   gap: var(--sp-2);
+  min-width: 0;
   padding: 3px 9px 3px 7px;
   border-radius: var(--r-pill);
   border: 1px solid var(--line);
@@ -226,12 +286,245 @@ body {
   }
 }
 
-/* ── the explanation block ─────────────────────────────────────────── */
+/* ── the profile switcher ──────────────────────────────────────────── */
 
+.dest {
+  margin-top: var(--sp-4);
+}
+
+/* A full-width control, the size of a list row in a workspace switcher:
+   the avatar answers "which one" before the name is read. */
+.dest-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  width: 100%;
+  padding: var(--sp-2) var(--sp-3) var(--sp-2) var(--sp-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg);
+  background: var(--bg);
+  color: var(--ink);
+  text-align: left;
+}
+
+.dest-btn:hover:not(:disabled) {
+  border-color: color-mix(in oklch, var(--accent) 45%, var(--line-strong));
+  background: color-mix(in oklch, var(--accent) 4%, var(--bg));
+}
+
+.dest-btn[aria-expanded="true"] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 18%, transparent);
+}
+
+/* Not a picker when there is nothing to pick: the same shape, read-only,
+   at full strength. It still states where captures go. */
+.dest-btn:disabled {
+  opacity: 1;
+  cursor: default;
+  background: transparent;
+  border-style: dashed;
+}
+
+.dest-btn:disabled .caret {
+  display: none;
+}
+
+.dest-text {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.dest-label {
+  font-size: var(--t-xs);
+  color: var(--ink-2);
+}
+
+.dest-name {
+  font-size: var(--t-md);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.caret {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin: 0 var(--sp-2) 3px 0;
+  border-right: 1.5px solid var(--ink-2);
+  border-bottom: 1.5px solid var(--ink-2);
+  transform: rotate(45deg);
+  transition: transform var(--normal) var(--ease);
+}
+
+.dest-btn[aria-expanded="true"] .caret {
+  transform: translateY(3px) rotate(-135deg);
+}
+
+.avatar {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--r);
+  font-size: var(--t-md);
+  font-weight: 700;
+  color: var(--avatar-ink);
+  background: oklch(var(--avatar-l) var(--avatar-c) var(--h, 240));
+}
+
+.avatar-sm {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--r-sm);
+  font-size: var(--t-sm);
+}
+
+/* "No profile": the shared inbox, drawn as a tray rather than a letter,
+   so it never reads as a profile called "S". */
+.avatar[data-kind="inbox"] {
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  color: var(--ink-2);
+}
+
+.avatar[data-kind="inbox"]::before {
+  content: "";
+  width: 45%;
+  height: 32%;
+  margin-top: 12%;
+  border: 1.5px solid currentColor;
+  border-top: 0;
+  border-radius: 0 0 2px 2px;
+}
+
+/* The list opens in place, under the button, rather than floating over the
+   page: the header is sticky, so it stays in reach however far down the
+   page the person has scrolled, and nothing it covers is ever hidden. */
+.dest-menu {
+  margin: var(--sp-2) 0 0;
+  padding: var(--sp-1);
+  min-width: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg);
+  background: var(--bg);
+  box-shadow: var(--shadow-menu);
+  max-height: min(50vh, 320px);
+  overflow-y: auto;
+  animation: menu-in var(--normal) var(--ease);
+}
+
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+.dest-options {
+  display: grid;
+  gap: 1px;
+}
+
+.dest-option {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin: 0;
+  padding: var(--sp-2) var(--sp-3) var(--sp-2) var(--sp-2);
+  border-radius: var(--r);
+  font-size: var(--t-base);
+  font-weight: 500;
+  color: var(--ink);
+  cursor: pointer;
+  transition: background-color var(--fast) var(--ease);
+}
+
+.dest-option:hover {
+  background: var(--surface-2);
+}
+
+.dest-option:has(input:checked) {
+  background: var(--accent-wash);
+}
+
+/* The radio itself is visually hidden (it is still what the keyboard and a
+   screen reader operate), so its focus ring is drawn on the row. */
+.dest-option:has(input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.dest-option-text {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  line-height: 1.3;
+}
+
+.dest-option-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dest-option-hint {
+  font-size: var(--t-xs);
+  font-weight: 400;
+  color: var(--ink-2);
+}
+
+.dest-option .tick {
+  flex: none;
+  width: 10px;
+  height: 6px;
+  margin: 0 var(--sp-1) 3px 0;
+  border-left: 2px solid var(--accent-ink);
+  border-bottom: 2px solid var(--accent-ink);
+  transform: rotate(-45deg);
+  visibility: hidden;
+}
+
+.dest-option:has(input:checked) .tick {
+  visibility: visible;
+}
+
+.dest-note {
+  margin-top: var(--sp-2);
+  font-size: var(--t-xs);
+  color: var(--ink-2);
+}
+
+.dest-note p {
+  margin: 0;
+  text-wrap: pretty;
+}
+
+.dest-note[data-tone="warn"] {
+  color: var(--warn);
+  font-weight: 500;
+}
+
+.dest-note .command {
+  margin-top: var(--sp-2);
+}
+
+/* ── the page ──────────────────────────────────────────────────────── */
+
+/* Block flow with the spacing on the things that are drawn, not a grid
+   gap: the status live region is always in the tree (a region added later
+   is often not announced), and an empty grid item still costs a gap. */
 main {
   padding: var(--sp-5);
-  display: grid;
-  gap: var(--sp-5);
+}
+
+.panels {
+  margin-top: var(--sp-5);
 }
 
 /* Drawn only when there is something to say. No full-width colour bar, no
@@ -247,6 +540,7 @@ main {
 
 .notice[data-open="true"] {
   display: block;
+  margin-bottom: var(--sp-5);
 }
 
 .notice[data-tone="warn"] {
@@ -264,7 +558,7 @@ main {
 
 .notice-title {
   margin: 0;
-  font-size: var(--t-base);
+  font-size: var(--t-md);
   font-weight: 600;
   text-wrap: balance;
 }
@@ -274,6 +568,7 @@ main {
   font-size: var(--t-sm);
   color: var(--ink-2);
   text-wrap: pretty;
+  max-width: 65ch;
 }
 
 .notice[data-tone="warn"] .notice-body,
@@ -327,9 +622,9 @@ label,
   margin-bottom: var(--sp-1);
 }
 
-input[type="text"],
-select {
+input[type="text"] {
   width: 100%;
+  min-width: 0;
   padding: 7px 9px;
   border: 1px solid var(--line-strong);
   border-radius: var(--r);
@@ -348,20 +643,18 @@ input[type="text"]::placeholder {
   color: var(--ink-2);
 }
 
-input[type="text"]:hover,
-select:hover {
+input[type="text"]:hover {
   border-color: color-mix(in oklch, var(--accent) 40%, var(--line-strong));
 }
 
-input[type="text"]:focus-visible,
-select:focus-visible {
+input[type="text"]:focus-visible {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 25%, transparent);
 }
 
 .field + .field {
-  margin-top: var(--sp-3);
+  margin-top: var(--sp-4);
 }
 
 button {
@@ -381,9 +674,14 @@ button:disabled {
 }
 
 .btn-primary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
   width: 100%;
+  min-height: 40px;
   padding: 10px 14px;
-  font-size: var(--t-base);
+  font-size: var(--t-md);
   font-weight: 600;
   background: var(--accent);
   color: var(--on-accent);
@@ -391,6 +689,39 @@ button:disabled {
 
 .btn-primary:hover:not(:disabled) {
   background: var(--accent-hover);
+}
+
+.btn-primary:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+#capture-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* In progress: a spinner-free cue. The label stays; a sweep of light across
+   the button says "working" without moving the text. */
+.btn-primary[data-busy="true"] {
+  opacity: 1;
+  background: linear-gradient(
+      100deg,
+      transparent 30%,
+      color-mix(in oklch, var(--on-accent) 22%, transparent) 50%,
+      transparent 70%
+    )
+    0 0 / 250% 100% var(--accent);
+  animation: sweep 1.2s linear infinite;
+}
+
+@keyframes sweep {
+  from {
+    background-position: 125% 0;
+  }
+  to {
+    background-position: -125% 0;
+  }
 }
 
 .btn-secondary {
@@ -419,8 +750,14 @@ button:disabled {
   flex: 1;
 }
 
+/* Actions that belong to a list sit at its start at their own width; a
+   lone "Retry all" stretched across the panel reads as the primary action. */
+.row-start > button {
+  flex: 0 1 auto;
+}
+
 .hint {
-  margin: var(--sp-2) 0 0;
+  margin: var(--sp-3) 0 0;
   font-size: var(--t-xs);
   color: var(--ink-2);
   text-wrap: pretty;
@@ -435,6 +772,23 @@ button:disabled {
   border-radius: var(--r-sm);
   background: var(--surface-2);
   color: var(--ink);
+  white-space: nowrap;
+}
+
+/* A button that reads as part of a sentence. Underlined, in the accent
+   ink, so it is never mistaken for plain text. */
+button.link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--accent-ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+button.link:hover {
+  color: var(--accent-hover);
 }
 
 /* ── inline messages ───────────────────────────────────────────────── */
@@ -442,7 +796,7 @@ button:disabled {
 .msg {
   display: none;
   margin-top: var(--sp-2);
-  font-size: var(--t-xs);
+  font-size: var(--t-sm);
   word-break: break-word;
 }
 
@@ -498,41 +852,112 @@ button.chip:hover {
   color: var(--accent-ink);
 }
 
-/* ── the capture block: the reason the popup exists ────────────────── */
+/* ── the capture card: the reason the panel exists ─────────────────── */
 
 .capture {
-  padding: var(--sp-4);
+  padding: var(--sp-5);
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
   background: var(--surface);
   box-shadow: var(--shadow);
 }
 
+/* The page it will save, named the way the tab strip names it, so the
+   person can check at a glance that the panel is talking about the tab in
+   front of them — the one thing a panel can get wrong that a popup could
+   not. */
+.page {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  animation: page-in var(--normal) var(--ease);
+}
+
+@keyframes page-in {
+  from {
+    opacity: 0.35;
+  }
+}
+
+.page-icon {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--r);
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1px var(--line);
+  font-size: var(--t-md);
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.page-icon img {
+  position: absolute;
+  inset: 8px;
+  width: 18px;
+  height: 18px;
+  background: var(--bg);
+}
+
+.page-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.page-title {
+  margin: 0;
+  font-size: var(--t-lg);
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.005em;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.page-host {
+  margin: 2px 0 0;
+  font-size: var(--t-sm);
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.page-why {
+  margin: var(--sp-3) 0 0;
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--r);
+  background: var(--surface-2);
+  font-size: var(--t-sm);
+  color: var(--ink);
+  text-wrap: pretty;
+}
+
+.fields {
+  margin-top: var(--sp-5);
+}
+
 .capture .btn-primary {
-  margin-top: var(--sp-4);
-}
-
-#profile-field[hidden] {
-  display: none;
-}
-
-#profile-note {
-  margin: var(--sp-1) 0 0;
-  font-size: var(--t-xs);
-  color: var(--warn);
+  margin-top: var(--sp-5);
 }
 
 /* ── already saved / recall ────────────────────────────────────────── */
 
+/* A band across the card rather than a card inside it: the same page, a
+   fact about it. Full-bleed to the card's edges, ruled top and bottom. */
 .saved {
-  padding: var(--sp-4);
-  border: 1px solid color-mix(in oklch, var(--ok) 30%, var(--line));
-  border-radius: var(--r-lg);
-  background: var(--ok-wash);
-}
-
-.saved[hidden] {
-  display: none;
+  margin: var(--sp-4) calc(-1 * var(--sp-5)) 0;
+  padding: var(--sp-4) var(--sp-5);
+  border-block: 1px solid color-mix(in oklch, var(--ok) 25%, var(--line));
+  /* Mixed from the card's own surface rather than the stock wash: at full
+     bleed the wash reads as a slab of green in the dark theme. */
+  background: color-mix(in oklch, var(--ok) 9%, var(--surface));
 }
 
 .saved-head {
@@ -544,13 +969,26 @@ button.chip:hover {
   color: var(--ok);
 }
 
+.saved-mark {
+  width: 9px;
+  height: 5px;
+  margin: 0 2px 3px 1px;
+  border-left: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg);
+}
+
 .saved.unavailable {
   border-color: var(--line);
-  background: var(--surface);
+  background: var(--surface-2);
 }
 
 .saved.unavailable .saved-head {
   color: var(--ink-2);
+}
+
+.saved.unavailable .saved-mark {
+  display: none;
 }
 
 .doc-title {
@@ -560,6 +998,10 @@ button.chip:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.doc-title:empty {
+  display: none;
 }
 
 .saved .meta {
@@ -581,8 +1023,12 @@ button.chip:hover {
   display: none;
 }
 
-.saved .row {
+.saved-actions {
   margin-top: var(--sp-3);
+}
+
+.saved-actions > button {
+  flex: 0 1 auto;
 }
 
 .hl-count {
@@ -606,8 +1052,12 @@ button.chip:hover {
 
 .ask-answers {
   display: grid;
-  gap: var(--sp-3);
+  gap: var(--sp-4);
   margin-top: var(--sp-3);
+}
+
+.ask-answers:empty {
+  display: none;
 }
 
 /* A passage is set as a quotation, not decorated with a coloured edge: an
@@ -629,11 +1079,12 @@ button.chip:hover {
 }
 
 .answer .quote {
-  font-size: var(--t-sm);
+  font-size: var(--t-base);
   font-style: italic;
   color: var(--ink);
   word-break: break-word;
   text-wrap: pretty;
+  max-width: 65ch;
 }
 
 .answer .src {
@@ -661,12 +1112,12 @@ button.chip:hover {
 
 /* ── the queue ─────────────────────────────────────────────────────── */
 
-/* No inner scroll region. A Chrome popup already scrolls at its own height
-   limit, and a second scrollbar inside the first traps the wheel and slices
-   the last row in half. The list is as long as it is. */
+/* No inner scroll region. The panel already scrolls, and a second
+   scrollbar inside the first traps the wheel and slices the last row in
+   half. The list is as long as it is. */
 .queue-list {
   list-style: none;
-  margin: var(--sp-3) 0 0;
+  margin: 0;
   padding: 0;
   display: grid;
   gap: var(--sp-2);
@@ -675,7 +1126,7 @@ button.chip:hover {
 .queue-item {
   border: 1px solid var(--line);
   border-radius: var(--r);
-  padding: var(--sp-2) var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
   background: var(--surface);
 }
 
@@ -711,27 +1162,50 @@ button.chip:hover {
 
 .progress {
   display: none;
-  align-items: center;
-  gap: var(--sp-3);
-  margin-top: var(--sp-3);
   font-size: var(--t-sm);
   color: var(--ink-2);
 }
 
 .progress[data-running="true"] {
+  display: grid;
+  gap: var(--sp-2);
+}
+
+.progress-line {
   display: flex;
+  align-items: center;
+  gap: var(--sp-3);
 }
 
 .progress .label {
   flex: 1;
+  min-width: 0;
   word-break: break-word;
+}
+
+progress {
+  width: 100%;
+  height: 4px;
+  border: 0;
+  border-radius: var(--r-pill);
+  overflow: hidden;
+  background: var(--surface-2);
+  accent-color: var(--accent);
+}
+
+progress::-webkit-progress-bar {
+  background: var(--surface-2);
+}
+
+progress::-webkit-progress-value {
+  background: var(--accent);
+  border-radius: var(--r-pill);
 }
 
 /* ── disclosures ───────────────────────────────────────────────────── */
 
 .panels {
   display: grid;
-  gap: 0;
   border-top: 1px solid var(--line);
 }
 
@@ -740,7 +1214,7 @@ button.chip:hover {
 }
 
 /* No trailing rule under the last disclosure: it would draw a line across
-   the bottom of the window with nothing beneath it. */
+   the bottom of the panel with nothing beneath it. */
 .panel:last-of-type {
   border-bottom: 0;
 }
@@ -748,9 +1222,9 @@ button.chip:hover {
 .panel > summary {
   display: flex;
   align-items: center;
-  gap: var(--sp-2);
-  padding: var(--sp-3) 0;
-  font-size: var(--t-sm);
+  gap: var(--sp-3);
+  padding: var(--sp-4) 0;
+  font-size: var(--t-base);
   font-weight: 500;
   color: var(--ink);
   cursor: pointer;
@@ -768,6 +1242,7 @@ button.chip:hover {
   width: 6px;
   height: 6px;
   flex: none;
+  margin-left: 2px;
   border-right: 1.5px solid var(--ink-2);
   border-bottom: 1.5px solid var(--ink-2);
   transform: rotate(-45deg);
@@ -801,11 +1276,15 @@ button.chip:hover {
 }
 
 .panel-body {
-  padding: 0 0 var(--sp-4);
+  padding: 0 0 var(--sp-5);
 }
 
 .panel-body > * + * {
   margin-top: var(--sp-4);
+}
+
+.panel-body > .field + .field {
+  margin-top: var(--sp-5);
 }
 
 .note-line {
@@ -813,6 +1292,20 @@ button.chip:hover {
   color: var(--ink-2);
   margin: var(--sp-1) 0 0;
   text-wrap: pretty;
+}
+
+.note-line strong {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.note-line code {
+  font-family: var(--mono);
+  color: var(--ink);
+}
+
+.field > .btn-tiny {
+  margin-top: var(--sp-2);
 }
 
 .check {
@@ -848,5 +1341,10 @@ button.chip:hover {
   .pill[data-busy="true"] .dot {
     background: transparent;
     box-shadow: inset 0 0 0 2px currentColor;
+  }
+
+  /* Likewise the capture button's sweep: a static tint instead. */
+  .btn-primary[data-busy="true"] {
+    background: var(--accent-hover);
   }
 }

@@ -1,6 +1,8 @@
 /**
  * MonoAgent Bridge — what the connection state MEANS
  *
+ * (Written for the popup; the side panel draws exactly the same states.)
+ *
  * The popup used to print one word per status: "Disconnected", in red, with
  * nothing to do about it. That word was usually correct and never useful —
  * the common cause is simply that no bridge is running, which is not an
@@ -53,6 +55,7 @@
    */
   const START_COMMAND = "monoagentcli extension serve";
   const PAIR_COMMAND = "monoagentcli extension pair";
+  const PROFILE_COMMAND = "monoagentcli profile create <name>";
 
   const DEFAULT_WS_URL = "ws://127.0.0.1:9222/monoagent";
 
@@ -324,11 +327,19 @@
 
     if (!h) return w || { status: "checking", reason: "" };
 
-    if (h.status === "waiting" && w && w.status === "connecting") return w;
-    return h;
+    // The probe's "connected" means a browser is attached to the bridge —
+    // not that this one is. The bridge keeps one extension connection, so
+    // with the extension in two browsers (or a second bridge on the
+    // default port) it can be somebody else's socket. Once this worker has
+    // said it is not attached, the most the probe knows is that a bridge
+    // is up, which is what "waiting" means.
+    const probe = h.status === "connected" && w ? Object.assign({}, h, { status: "waiting" }) : h;
+
+    if (probe.status === "waiting" && w && w.status === "connecting") return w;
+    return probe;
   }
 
-  root.MonoPopupStatus = {
+  root.MonoPanelStatus = {
     arbitrate,
     describe,
     describeQueue,
@@ -336,6 +347,7 @@
     RECONNECT_GRACE_MS,
     START_COMMAND,
     PAIR_COMMAND,
+    PROFILE_COMMAND,
     DEFAULT_WS_URL,
     ACTIONS,
   };

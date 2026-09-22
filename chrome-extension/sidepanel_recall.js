@@ -1,16 +1,22 @@
 /**
- * MonoAgent Bridge — the recall panels in the popup (RCL-02, RCL-05)
+ * MonoAgent Bridge — the recall parts of the side panel (RCL-02, RCL-05)
  *
- * Its own file because popup.js is already the length it should be, and
- * because these two panels share nothing with the save form beyond the
+ * Its own file because sidepanel.js is already the length it should be,
+ * and because these two parts share nothing with the save form beyond the
  * `ask` helper and the document they both draw into. Both are plain
  * scripts, so that helper is simply in scope.
  *
- * As thin as the rest of the popup: a popup is torn down the moment it
- * loses focus, so nothing here holds state the worker does not also hold.
- * The ask panel in particular has to survive being closed mid-question —
- * the request keeps running in the worker, and reopening asks again rather
- * than trying to reattach to something that may already be gone.
+ * As thin as the rest of the panel: nothing here holds state the worker
+ * does not also hold. The ask section has to survive being closed
+ * mid-question — the request keeps running in the worker, and reopening
+ * asks again rather than trying to reattach to something that may already
+ * be gone.
+ *
+ * "Already saved" is about the page in front of the person, and in a panel
+ * that page changes underneath it. sidepanel.js announces each new page
+ * (`panel:page`); every lookup is stamped with the page it was for, and an
+ * answer that comes back after the person has moved on is dropped rather
+ * than drawn over the page they are actually looking at.
  */
 
 (function () {
@@ -34,6 +40,7 @@
   const askAnswers = el("ask-answers");
 
   let current = null; // the record the panel is currently showing
+  let asking = ""; // the page key the latest lookup was for
 
   // ── RCL-02: already saved ────────────────────────────────────────
 
@@ -81,7 +88,11 @@
     }
 
     savedHead.textContent = record.versions > 1 ? `Saved ${record.versions} times` : "Already saved";
-    savedTitle.textContent = record.title || record.url || "";
+    // The card already names the page just above. The saved title is only
+    // worth repeating when it differs — a page retitled since it was saved.
+    const page = pageNow();
+    const title = record.title || record.url || "";
+    savedTitle.textContent = page && page.title === title ? "" : title;
     savedTitle.title = record.url || "";
 
     const bits = [];
@@ -99,25 +110,55 @@
     savedOpen.hidden = !record.envelope;
   }
 
+  const pageNow = () => (globalThis.MonoPanelPage ? globalThis.MonoPanelPage.current() : null);
+
   async function loadSaved(force) {
-    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-    if (!tab || !tab.id) return;
+    const page = pageNow();
+    const key = page ? page.key : "";
+    asking = key;
+
+    // A page that could never have been saved (a new tab, settings) has
+    // nothing to look up. Whatever was drawn belonged to the last page.
+    if (!page || !page.tabId || !page.capturable) {
+      drawSaved(null);
+      return;
+    }
     if (force) savedMeta.textContent = "checking…";
-    const reply = await ask({ type: "saved_get", tabId: tab.id, force: !!force });
+    else drawSaved(null);
+
+    const [reply, highlights] = await Promise.all([
+      ask({ type: "saved_get", tabId: page.tabId, force: !!force }),
+      // The page's URL is sent because the panel is not a tab: the worker
+      // cannot read it off the sender, as it does for a content script.
+      ask({ type: "highlight_list", url: page.url }),
+    ]);
+    if (asking !== key) return; // the person has moved on; this is stale
+
     drawSaved(reply && reply.ok ? reply.record : null);
-    drawHighlightCount();
+    drawHighlightCount(highlights);
   }
 
-  async function drawHighlightCount() {
-    const reply = await ask({ type: "highlight_list" });
+  function drawHighlightCount(reply) {
     const count = reply && reply.ok ? (reply.records || []).length : 0;
     if (!count) return;
+    if (!current || (!current.saved && !current.unavailable)) {
+      // Highlights with no capture behind them. The band is shown for the
+      // highlights, so its heading must not claim the page is saved.
+      savedBox.classList.add("unavailable");
+      savedHead.textContent = "Not saved yet";
+      savedTitle.textContent = "";
+      savedMeta.textContent = "";
+      savedNote.textContent = "";
+      savedOpen.hidden = true;
+    }
     savedBox.hidden = false;
     savedHighlights.textContent =
       count === 1 ? "1 highlight on this page" : `${count} highlights on this page`;
   }
 
   savedRecheck.addEventListener("click", () => loadSaved(true));
+  document.addEventListener("panel:page", () => loadSaved(false));
+  document.addEventListener("panel:recheck", () => loadSaved(true));
 
   savedOpen.addEventListener("click", async () => {
     if (!current || !current.envelope) return;
@@ -208,5 +249,4 @@
     askStatus.textContent = detail ? `${stage} — ${detail}` : `${stage}…`;
   });
 
-  loadSaved(false);
 })();

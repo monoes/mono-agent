@@ -31,9 +31,17 @@ function world(options = {}) {
     },
     tabs: {
       query: async (q) => {
-        if (q.active) return tabs.filter((t) => t.active);
+        // A tab with no windowId is in window 1, so the older fixtures
+        // need not say where they are.
+        const inWindow = (t) => q.windowId === undefined || (t.windowId || 1) === q.windowId;
+        if (q.active) return tabs.filter((t) => t.active && inWindow(t));
         if (q.groupId !== undefined) return tabs.filter((t) => t.groupId === q.groupId);
-        return tabs;
+        return tabs.filter(inWindow);
+      },
+      get: async (id) => {
+        const tab = tabs.find((t) => t.id === id);
+        if (!tab) throw new Error(`No tab with id: ${id}`);
+        return tab;
       },
     },
     tabGroups: { get: async () => ({ title: "Reading" }) },
@@ -391,4 +399,64 @@ test("a retry against a swallowing socket leaves the capture exactly where it wa
 
   assert.equal(result.ok, false);
   assert.equal(w.store.captureQueue.length, 1, "still queued, not deleted on a send that did nothing");
+});
+
+// ── the side panel's own window ─────────────────────────────────────
+//
+// A side panel outlives the tab and the focus that opened it. "The last
+// focused window" is whichever window the person touched last, which is
+// not necessarily the one whose panel the button was pressed in — so the
+// panel says which window and which tab it means.
+
+const twoWindows = () => [
+  { id: 1, url: "https://paper.test/a", title: "A", active: true, groupId: -1, windowId: 1 },
+  { id: 2, url: "https://paper.test/b", title: "B", groupId: -1, windowId: 1 },
+  { id: 10, url: "https://other.test/x", title: "X", active: true, groupId: 4, windowId: 2 },
+  { id: 11, url: "https://other.test/y", title: "Y", groupId: 4, windowId: 2 },
+  { id: 12, url: "https://other.test/z", title: "Z", groupId: -1, windowId: 2 },
+];
+
+test("a batch from a panel covers that panel's window, not the last focused one", async () => {
+  const w = world({ tabs: twoWindows() });
+  const { report } = await w.ask({ type: "capture_batch", scope: "window", windowId: 2 });
+  assert.deepEqual(report.done.map((d) => d.tabId), [10, 11, 12]);
+});
+
+test("a group batch uses the tab the panel is showing", async () => {
+  const w = world({ tabs: twoWindows() });
+  const { report } = await w.ask({ type: "capture_batch", scope: "group", windowId: 2, tabId: 10 });
+  assert.deepEqual(report.done.map((d) => d.tabId), [10, 11]);
+});
+
+test("a group batch on a tab outside any group says so", async () => {
+  const w = world({ tabs: twoWindows() });
+  const result = await w.ask({ type: "capture_batch", scope: "group", windowId: 1, tabId: 1 });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /not in a tab group/);
+});
+
+test("the panel's commit captures the tab it names, even with another pending", async () => {
+  const w = world({ tabs: twoWindows() });
+  await w.ask({ type: "capture_begin", options: { tabId: 1 } });
+  // The person switched tabs after touching the note field.
+  await w.ask({ type: "capture_commit", form: {}, options: { tabId: 10 } });
+  assert.equal(w.frames[0].data.meta.url, "https://other.test/x");
+});
+
+test("choosing a profile in the panel is remembered before any save", async () => {
+  const w = world();
+  const result = await w.ask({ type: "capture_profile_set", profile: "p-work" });
+  assert.deepEqual(result, { ok: true, profile: "p-work" });
+  assert.equal(w.store[w.MonoCaptureProfile.PROFILE_KEY], "p-work");
+
+  // The shortcut's path — no form, no picker — now files into it.
+  await w.ask({ type: "capture_commit", form: {} });
+  assert.equal(w.frames[0].data.meta.profile, "p-work");
+});
+
+test("choosing a hostile profile id in the panel remembers nothing usable", async () => {
+  const w = world();
+  const result = await w.ask({ type: "capture_profile_set", profile: "../escape" });
+  assert.equal(result.profile, "");
+  assert.equal(w.store[w.MonoCaptureProfile.PROFILE_KEY], "");
 });

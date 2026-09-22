@@ -40,9 +40,9 @@ func newExtensionCmd(cfg *globalConfig) *cobra.Command {
 func newExtensionPairCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "pair",
-		Short: "Print the pairing token to paste into the extension popup",
+		Short: "Print the pairing token to paste into the extension side panel",
 		Long: "Prints the extension bridge's pairing token. Paste this into the MonoAgent\n" +
-			"Bridge extension's popup (\"Pairing token\" field) to authenticate it — an\n" +
+			"Bridge extension's side panel (\"Pairing token\" field, under Connection settings) to authenticate it — an\n" +
 			"unpaired extension cannot connect, and no other local process can\n" +
 			"impersonate it without this token.\n" +
 			"\n" +
@@ -68,7 +68,7 @@ func newExtensionResetCmd() *cobra.Command {
 		Long: "Deletes the extension bridge's pairing token. The currently-connected\n" +
 			"extension (if any) is not immediately disconnected, but it can no longer\n" +
 			"reconnect or be relayed through until you run `extension pair` again and\n" +
-			"paste the new token into the extension popup.\n" +
+			"paste the new token into the extension side panel.\n" +
 			"\n" +
 			"Use this if you suspect the token has leaked, or as a general \"security\n" +
 			"reset\" before handing this machine to someone else.",

@@ -12,7 +12,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { loadExtensionScripts } from "./test_helpers.mjs";
 
-const { MonoPopupStatus: S } = loadExtensionScripts(["popup_status.js"]);
+const { MonoPanelStatus: S } = loadExtensionScripts(["sidepanel_status.js"]);
 
 const at = (since, now) => ({ since, now });
 
@@ -325,4 +325,18 @@ test("before the probe answers, the worker's word stands in", () => {
 test("the probe's own verdict passes through when the worker is silent", () => {
   assert.equal(S.arbitrate(null, noBridge).reason, "no_bridge");
   assert.equal(S.arbitrate(null, { status: "unpaired" }).status, "unpaired");
+});
+
+test("a bridge attached to another browser does not make this one connected", () => {
+  // The health endpoint reports "connected" whenever any extension holds
+  // the bridge's one connection. The worker knows whether it is this one.
+  const elsewhere = { status: "connected", reason: "" };
+  const view = S.describe(S.arbitrate({ status: "disconnected", reason: "socket_closed" }, elsewhere));
+  assert.notEqual(view.key, "connected");
+  assert.equal(view.key, "waiting");
+  assert.equal(S.describe(S.arbitrate({ status: "connecting" }, elsewhere)).label, "Connecting…");
+  // Before the worker has said anything, the probe is the best word there is.
+  assert.equal(S.arbitrate(null, elsewhere).status, "connected");
+  // And this worker's own attach still outranks everything.
+  assert.equal(S.arbitrate({ status: "connected" }, elsewhere).status, "connected");
 });

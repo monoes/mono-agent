@@ -537,9 +537,9 @@ Workflow triggers (`trigger.schedule`, `trigger.webhook`) only fire while a proc
 
 `chrome-extension/` lets workflow nodes drive **your real, already-logged-in Chrome browser** — the same model as consumer RPA tools. No separate automation profile, no re-authenticating for sites (like Google) that invalidate sessions ported into a scripted browser.
 
-- **Loopback by default** — the bridge server binds loopback, and the extension refuses non-loopback servers. A per-session "Allow non-loopback server (unsafe)" checkbox in the popup overrides this for one save; it is never persisted
-- **Paired channel** — the bridge requires a shared secret (`~/.monoagent/extension.token`) as the first frame on every connection; run `monoagentcli extension pair` and paste the printed token into the extension popup once. An unpaired connection is rejected and can never replace an already-paired one. Run `monoagentcli extension reset` to revoke and re-pair
-- **Per-site host permissions** — the extension requests site access on demand (via the popup's "Authorize a site" field) rather than holding `<all_urls>` by default; grant only the sites your workflows actually target, and revoke from the same popup
+- **Loopback by default** — the bridge server binds loopback, and the extension refuses non-loopback servers. A per-session "Allow non-loopback server (unsafe)" checkbox in the side panel overrides this for one save; it is never persisted
+- **Paired channel** — the bridge requires a shared secret (`~/.monoagent/extension.token`) as the first frame on every connection; run `monoagentcli extension pair` and paste the printed token into the extension side panel once. An unpaired connection is rejected and can never replace an already-paired one. Run `monoagentcli extension reset` to revoke and re-pair
+- **Per-site host permissions** — the extension requests site access on demand (via the side panel's "Authorize a site" field) rather than holding `<all_urls>` by default; grant only the sites your workflows actually target, and revoke from the same side panel
 - **Shared connection** — multiple CLI processes share one extension connection instead of fighting over the browser
 
 See [`docs/security/threat-model.md`](docs/security/threat-model.md) for the full trust-boundary breakdown.
