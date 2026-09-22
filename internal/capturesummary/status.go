@@ -51,6 +51,7 @@ type Status struct {
 	Status      string  `json:"status"`
 	Kind        string  `json:"kind"`
 	Runtime     string  `json:"runtime,omitempty"`
+	Model       string  `json:"model,omitempty"` // --model passed; empty is the runtime's default
 	RequestedAt string  `json:"requestedAt,omitempty"`
 	StartedAt   string  `json:"startedAt,omitempty"`
 	FinishedAt  string  `json:"finishedAt,omitempty"`
@@ -65,27 +66,46 @@ type Status struct {
 // which kind. A bare `true` means a page summary; an unknown kind falls
 // back to page rather than being ignored.
 func Requested(meta capture.Meta) (string, bool) {
+	req, ok := RequestOf(meta)
+	return req.Kind, ok
+}
+
+// Request is a capture's meta.summarize: the kind of summary, and
+// optionally which runtime and model should write it (the extension's
+// "AI for summaries" choice). Runtime and Model are as the browser sent
+// them — unchecked until Summarizer.resolve.
+type Request struct {
+	Kind    string
+	Runtime string
+	Model   string
+}
+
+// RequestOf parses meta.summarize. ok is false when no summary was asked for.
+func RequestOf(meta capture.Meta) (Request, bool) {
 	raw, ok := meta.Extra["summarize"]
 	if !ok {
-		return "", false
+		return Request{}, false
 	}
 	var flag bool
 	if json.Unmarshal(raw, &flag) == nil {
 		if flag {
-			return KindPage, true
+			return Request{Kind: KindPage}, true
 		}
-		return "", false
+		return Request{}, false
 	}
 	var obj struct {
-		Kind string `json:"kind"`
+		Kind    string `json:"kind"`
+		Runtime string `json:"runtime"`
+		Model   string `json:"model"`
 	}
 	if err := json.Unmarshal(raw, &obj); err != nil {
-		return "", false
+		return Request{}, false
 	}
+	req := Request{Kind: KindPage, Runtime: strings.TrimSpace(obj.Runtime), Model: strings.TrimSpace(obj.Model)}
 	if strings.TrimSpace(obj.Kind) == KindVideo {
-		return KindVideo, true
+		req.Kind = KindVideo
 	}
-	return KindPage, true
+	return req, true
 }
 
 // ReadStatus reads a capture's summary.json. os.ErrNotExist (wrapped) means

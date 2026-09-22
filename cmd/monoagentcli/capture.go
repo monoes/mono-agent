@@ -53,6 +53,8 @@ func newCapturePageCmd(cfg *globalConfig) *cobra.Command {
 		collection string
 		out        string
 		mode       string
+		sumRuntime string
+		sumModel   string
 		timeout    time.Duration
 	)
 	cmd := &cobra.Command{
@@ -80,6 +82,9 @@ func newCapturePageCmd(cfg *globalConfig) *cobra.Command {
 			if mode != "" && !slices.Contains(captureModes, mode) {
 				return errInvalidInput("--mode must be one of %s, got %q", strings.Join(captureModes, ", "), mode)
 			}
+			if err := checkSummaryChoice(mode, sumRuntime, sumModel); err != nil {
+				return err
+			}
 
 			bridge := setupExtensionBridge(newExtensionBridgeLogger(), 3*time.Second)
 			capturer, ok := bridge.(extension.Capturer)
@@ -91,15 +96,17 @@ func newCapturePageCmd(cfg *globalConfig) *cobra.Command {
 			}
 
 			res, err := capturer.CapturePage(extension.CaptureRequest{
-				TabID:      tab,
-				Formats:    formats,
-				Selection:  selection,
-				Note:       note,
-				Tags:       tags,
-				Collection: collection,
-				Mode:       mode,
-				Timeout:    timeout,
-				Inbox:      expandPath(out),
+				TabID:          tab,
+				Formats:        formats,
+				Selection:      selection,
+				Note:           note,
+				Tags:           tags,
+				Collection:     collection,
+				Mode:           mode,
+				SummaryRuntime: sumRuntime,
+				SummaryModel:   sumModel,
+				Timeout:        timeout,
+				Inbox:          expandPath(out),
 			})
 			if err != nil {
 				// A capture that fails with the extension gone is almost
@@ -140,6 +147,10 @@ func newCapturePageCmd(cfg *globalConfig) *cobra.Command {
 	cmd.Flags().StringVar(&mode, "mode", "",
 		"Capture mode, as in the extension's right-click menu: "+strings.Join(captureModes, ", ")+
 			" (summary and video also get an AI summary.md from the bridge)")
+	cmd.Flags().StringVar(&sumRuntime, "summary-runtime", "",
+		"With --mode summary|video: the agent runtime that writes the summary (default: the bridge's)")
+	cmd.Flags().StringVar(&sumModel, "summary-model", "",
+		"With --mode summary|video: the model passed to that runtime (default: the runtime's own)")
 	cmd.Flags().DurationVar(&timeout, "timeout", extension.DefaultCaptureTimeout,
 		"How long to wait for the browser to finish the capture")
 	return cmd

@@ -18,7 +18,7 @@ func TestSummaryIsWrittenAfterTheCaptureLands(t *testing.T) {
 	srv, ext, _ := startCaptureServer(t)
 
 	release := make(chan struct{})
-	sum := capturesummary.New("stubtime", func(ctx context.Context, runtime, prompt string) (capturesummary.Answer, error) {
+	sum := capturesummary.New("stubtime", func(ctx context.Context, _ capturesummary.Target, prompt string) (capturesummary.Answer, error) {
 		<-release
 		return capturesummary.Answer{Text: "## TL;DR\nA post about posts."}, nil
 	})

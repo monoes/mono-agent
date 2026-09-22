@@ -39,10 +39,19 @@ func configuredSummaryRuntime() string {
 
 // installCaptureSummaries wires a summarizer into srv's after-write hook
 // and returns it. logf receives one line per summary outcome.
+//
+// The same catalog of installed runtimes backs the extension's "AI for
+// summaries" picker (summary.runtimes / summary.models) and the check a
+// capture's own runtime choice has to pass, so the picker never offers
+// something the summarizer would then refuse.
 func installCaptureSummaries(srv *extension.Server, logf func(string, ...any)) *capturesummary.Summarizer {
-	sum := capturesummary.New(configuredSummaryRuntime(), capturesummary.ExecRunner(0))
+	runtime := configuredSummaryRuntime()
+	catalog := capturesummary.MonomindCatalog()
+	sum := capturesummary.New(runtime, capturesummary.ExecRunner(0))
+	sum.Catalog = catalog
 	sum.Logf = logf
 	srv.SetAfterWrite(sum.Handle)
+	srv.SetSummaryCatalog(catalog, runtime)
 	return sum
 }
 
@@ -57,4 +66,25 @@ func narrateLogf(out io.Writer) func(string, ...any) {
 	return func(format string, args ...any) {
 		fmt.Fprintf(out, "[%s] %s\n", time.Now().Format("15:04:05"), fmt.Sprintf(format, args...))
 	}
+}
+
+// checkSummaryChoice validates `capture page --summary-runtime/--summary-model`
+// before anything is sent: the flags only mean something for a capture that
+// asks for a summary, and their values must be shaped like a runtime id and a
+// model id. Whether the runtime is installed is the bridge's check (it owns
+// the scan), and a capture that fails it records why in summary.json.
+func checkSummaryChoice(mode, runtime, model string) error {
+	if runtime == "" && model == "" {
+		return nil
+	}
+	if mode != "summary" && mode != "video" {
+		return errInvalidInput("--summary-runtime and --summary-model need --mode summary or --mode video")
+	}
+	if runtime != "" && !capturesummary.ValidRuntimeID(runtime) {
+		return errInvalidInput("--summary-runtime %q is not an agent runtime id (see `agent scan --installed`)", runtime)
+	}
+	if model != "" && !capturesummary.ValidModel(model) {
+		return errInvalidInput("--summary-model %q is not a model id", model)
+	}
+	return nil
 }

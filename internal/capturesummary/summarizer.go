@@ -17,16 +17,33 @@ type Answer struct {
 	CostUSD float64
 }
 
-// RunFunc asks runtime for a completion of prompt. The production one is
+// Target is the runtime, and optionally the model, that writes a summary.
+type Target struct {
+	Runtime string
+	// Model is passed as --model; empty leaves it to the runtime.
+	Model string
+}
+
+// String names the target the way summary.md's footer does:
+// "claude" or "claude (claude-haiku-4-5-20251001)".
+func (t Target) String() string {
+	if t.Model == "" {
+		return t.Runtime
+	}
+	return fmt.Sprintf("%s (%s)", t.Runtime, t.Model)
+}
+
+// RunFunc asks t for a completion of prompt. The production one is
 // ExecRunner (monomind agent exec); tests substitute a stub.
-type RunFunc func(ctx context.Context, runtime, prompt string) (Answer, error)
+type RunFunc func(ctx context.Context, t Target, prompt string) (Answer, error)
 
 // DefaultRuntime is the agent runtime summaries use unless configured.
 const DefaultRuntime = "claude"
 
-// Disabled runtime values: a bridge configured with one of these records
-// every requested summary as an error saying so, rather than ignoring it.
-func isDisabled(runtime string) bool {
+// IsDisabled reports a runtime value that turns summaries off: a bridge
+// configured with one of these records every requested summary as an
+// error saying so, rather than ignoring it.
+func IsDisabled(runtime string) bool {
 	switch strings.ToLower(strings.TrimSpace(runtime)) {
 	case "off", "none", "disabled", "0", "false":
 		return true
@@ -51,8 +68,12 @@ type job struct {
 
 // Summarizer runs capture summaries one at a time in the background.
 type Summarizer struct {
-	Runtime       string
-	Run           RunFunc
+	Runtime string
+	Run     RunFunc
+	// Catalog checks a runtime a capture names itself (meta.summarize
+	// .runtime) against what is installed. Nil means only the default
+	// runtime may be used.
+	Catalog       *Catalog
 	MaxInputChars int
 	Timeout       time.Duration
 	// Now supplies the time; nil means time.Now.
@@ -130,9 +151,13 @@ func (s *Summarizer) Handle(res *capture.Result) {
 // with the queue full, or summaries turned off, the reason is written to
 // summary.json and returned.
 func (s *Summarizer) Enqueue(dir string, meta capture.Meta, kind string) error {
-	st := Status{Status: StatePending, Kind: kind, Runtime: s.Runtime, RequestedAt: stamp(s.now())}
-	if isDisabled(s.Runtime) {
-		st.Status, st.Runtime = StateError, ""
+	req, _ := RequestOf(meta)
+	st := Status{Status: StatePending, Kind: kind, Runtime: s.Runtime, Model: req.Model, RequestedAt: stamp(s.now())}
+	if req.Runtime != "" {
+		st.Runtime = req.Runtime
+	}
+	if IsDisabled(s.Runtime) {
+		st.Status, st.Runtime, st.Model = StateError, "", ""
 		st.Error = "summaries are turned off on this bridge (MONOAGENT_SUMMARY_RUNTIME / --summary-runtime)"
 		st.FinishedAt = st.RequestedAt
 		return errors.Join(errors.New(st.Error), writeStatus(dir, st))
@@ -164,7 +189,7 @@ func (s *Summarizer) worker() {
 		case j := <-s.queue:
 			st := s.Summarize(s.ctx, j.dir, j.meta, j.kind)
 			if st.Status == StateDone {
-				s.logf("summary written for %s (%s, $%.2f)", j.dir, s.Runtime, st.CostUSD)
+				s.logf("summary written for %s (%s, $%.2f)", j.dir, Target{st.Runtime, st.Model}, st.CostUSD)
 			} else {
 				s.logf("summary failed for %s: %s", j.dir, st.Error)
 			}
@@ -179,7 +204,11 @@ func (s *Summarizer) worker() {
 // the status it recorded. The capture is never modified beyond summary.md
 // and summary.json.
 func (s *Summarizer) Summarize(ctx context.Context, dir string, meta capture.Meta, kind string) Status {
-	st := Status{Status: StateRunning, Kind: kind, Runtime: s.Runtime, StartedAt: stamp(s.now())}
+	req, _ := RequestOf(meta)
+	st := Status{Status: StateRunning, Kind: kind, Runtime: s.Runtime, Model: req.Model, StartedAt: stamp(s.now())}
+	if req.Runtime != "" {
+		st.Runtime = req.Runtime
+	}
 	if prev, err := ReadStatus(dir); err == nil {
 		st.RequestedAt = prev.RequestedAt
 	}
@@ -190,6 +219,12 @@ func (s *Summarizer) Summarize(ctx context.Context, dir string, meta capture.Met
 		}
 		return st
 	}
+
+	target, err := s.resolve(ctx, req)
+	if err != nil {
+		return fail(err)
+	}
+	st.Runtime, st.Model = target.Runtime, target.Model
 
 	in, err := LoadInput(dir, meta, kind, s.MaxInputChars)
 	if err != nil {
@@ -206,18 +241,18 @@ func (s *Summarizer) Summarize(ctx context.Context, dir string, meta capture.Met
 	}
 	turnCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	answer, err := s.Run(turnCtx, s.Runtime, Prompt(in))
+	answer, err := s.Run(turnCtx, target, Prompt(in))
 	st.CostUSD = answer.CostUSD
 	if err != nil {
 		if errors.Is(turnCtx.Err(), context.DeadlineExceeded) {
-			return fail(fmt.Errorf("%s did not answer within %s", s.Runtime, timeout))
+			return fail(fmt.Errorf("%s did not answer within %s", target, timeout))
 		}
-		return fail(fmt.Errorf("%s: %w", s.Runtime, err))
+		return fail(fmt.Errorf("%s: %w", target, err))
 	}
 	if strings.TrimSpace(answer.Text) == "" {
-		return fail(fmt.Errorf("%s returned an empty summary", s.Runtime))
+		return fail(fmt.Errorf("%s returned an empty summary", target))
 	}
-	doc := Document(in, s.Runtime, answer.Text, s.now().UTC().Format("2006-01-02"))
+	doc := Document(in, target.String(), answer.Text, s.now().UTC().Format("2006-01-02"))
 	if err := writeAtomic(dir, SummaryFile, []byte(doc)); err != nil {
 		return fail(fmt.Errorf("write %s: %w", SummaryFile, err))
 	}
@@ -226,4 +261,35 @@ func (s *Summarizer) Summarize(ctx context.Context, dir string, meta capture.Met
 		return fail(err)
 	}
 	return st
+}
+
+// resolve settles which runtime and model write this summary: the
+// capture's own choice when it made one and it checks out, else the
+// bridge's default runtime with no model override. A choice that does not
+// check out fails the summary with the reason, rather than quietly using a
+// different AI from the one picked.
+func (s *Summarizer) resolve(ctx context.Context, req Request) (Target, error) {
+	t := Target{Runtime: s.Runtime, Model: strings.TrimSpace(req.Model)}
+	if t.Model != "" && !ValidModel(t.Model) {
+		return t, fmt.Errorf("%q is not a model id", t.Model)
+	}
+	id := strings.TrimSpace(req.Runtime)
+	if id == "" || id == s.Runtime {
+		return t, nil
+	}
+	if !ValidRuntimeID(id) {
+		return t, fmt.Errorf("%q is not an agent runtime id", id)
+	}
+	if s.Catalog == nil {
+		return t, fmt.Errorf("this bridge only writes summaries with %s, not %s", s.Runtime, id)
+	}
+	rt, err := s.Catalog.Lookup(ctx, id)
+	if errors.Is(err, ErrUnknownRuntime) {
+		return t, fmt.Errorf("%s is not installed on this machine (agent scan)", id)
+	}
+	if err != nil {
+		return t, fmt.Errorf("cannot check that %s is installed: %w", id, err)
+	}
+	t.Runtime = rt.ID
+	return t, nil
 }
