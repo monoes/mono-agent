@@ -715,6 +715,13 @@ button:disabled {
   animation: sweep 1.2s linear infinite;
 }
 
+/* Just saved: the button itself turns green and says so for a moment. */
+.btn-primary[data-done="true"],
+.btn-primary[data-done="true"]:hover:not(:disabled) {
+  background: var(--ok);
+  color: var(--ok-wash);
+}
+
 @keyframes sweep {
   from {
     background-position: 125% 0;
@@ -804,14 +811,32 @@ button.link:hover {
   display: block;
 }
 
+/* An outcome is a small tinted card, not a loose line of coloured text: a
+   save that only changed one line under the button went unnoticed. */
+.msg[data-kind="ok"],
+.msg[data-kind="warn"],
+.msg[data-kind="err"] {
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid;
+  border-radius: var(--r-sm);
+}
 .msg[data-kind="ok"] {
   color: var(--ok);
+  background: var(--ok-wash);
+  border-color: color-mix(in oklch, var(--ok) 35%, var(--line));
 }
 .msg[data-kind="warn"] {
   color: var(--warn);
+  background: var(--warn-wash);
+  border-color: color-mix(in oklch, var(--warn) 35%, var(--line));
 }
 .msg[data-kind="err"] {
   color: var(--err);
+  background: var(--err-wash);
+  border-color: color-mix(in oklch, var(--err) 35%, var(--line));
+}
+.msg:empty {
+  display: none;
 }
 
 .msg details {
