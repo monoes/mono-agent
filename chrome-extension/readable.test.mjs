@@ -411,3 +411,21 @@ test("a page full of script blocks is lowercased once, not once per script", () 
     `lowercased ${lowercased} characters of a ${html.length}-character document`
   );
 });
+
+// A paragraph is evidence about its container, not a candidate itself. When
+// the paragraph was also scored, it tied with the container holding it, and
+// the container then lost on link density for merely holding a link — so on
+// a short page the extractor kept one <p> and dropped the heading and every
+// linked paragraph beside it. Found capturing example.com through the real
+// extension: the crawler kept all three blocks, the extension kept one.
+test("a short page keeps its heading and its linked paragraph", () => {
+  const html = `<!doctype html><html><head><title>Example Domain</title></head><body><div>
+    <h1>Example Domain</h1>
+    <p>This domain is for use in documentation examples without needing permission. Avoid use in operations.</p>
+    <p><a href="https://iana.org/domains/example">Learn more</a></p>
+  </div></body></html>`;
+  const { markdown } = MonoReadable.fromHTML(html, { url: "https://example.com/" });
+  assert.match(markdown, /^# Example Domain/m, "the heading survives");
+  assert.match(markdown, /This domain is for use in documentation examples/, "the body survives");
+  assert.match(markdown, /\[Learn more\]\(https:\/\/iana\.org\/domains\/example\)/, "the link survives");
+});
