@@ -214,6 +214,10 @@ export function GetApplications(arg1, arg2, arg3) {
   return window['go']['main']['App']['GetApplications'](arg1, arg2, arg3);
 }
 
+export function GetCaptureView(arg1) {
+  return window['go']['main']['App']['GetCaptureView'](arg1);
+}
+
 export function GetChatEvents(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['GetChatEvents'](arg1, arg2, arg3, arg4);
 }

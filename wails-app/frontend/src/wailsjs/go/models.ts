@@ -157,6 +157,28 @@ export namespace main {
 	        this.cover_letter_pdf_document_id = source["cover_letter_pdf_document_id"];
 	    }
 	}
+	export class CaptureView {
+	    title: string;
+	    url: string;
+	    captured_at: string;
+	    word_count: number;
+	    readable: string;
+	    screenshot: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CaptureView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.title = source["title"];
+	        this.url = source["url"];
+	        this.captured_at = source["captured_at"];
+	        this.word_count = source["word_count"];
+	        this.readable = source["readable"];
+	        this.screenshot = source["screenshot"];
+	    }
+	}
 	export class CredentialOption {
 	    id: string;
 	    label: string;
