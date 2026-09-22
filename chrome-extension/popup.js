@@ -7,24 +7,44 @@
  * everything and only draws the answers. Anything here that looked like
  * state would be lost mid-capture.
  *
+ * The one piece of judgement it does keep is in popup_status.js, which
+ * turns a status word into a sentence and an action. This file only draws
+ * what that decides, so the wording and the state machine can be tested
+ * without a DOM.
+ *
  * Non-loopback servers are rejected unless the (unsafe, session-only)
  * override checkbox is enabled at save time.
  */
 
 const $ = (id) => document.getElementById(id);
 
-const dot = $("dot");
-const statusText = $("status-text");
+const Status = globalThis.MonoPopupStatus;
+
+const statusPill = $("status-pill");
+const statusLabel = $("status-label");
+const notice = $("notice");
+const noticeTitle = $("notice-title");
+const noticeBody = $("notice-body");
+const noticeCommandRow = $("notice-command-row");
+const noticeCommand = $("notice-command");
+const noticeCopy = $("notice-copy");
+const noticeActions = $("notice-actions");
+const noticeAction = $("notice-action");
+
 const wsUrlInput = $("ws-url");
 const saveBtn = $("save-btn");
-const savedMsg = $("saved-msg");
-const errorMsg = $("error-msg");
+const wsSavedMsg = $("ws-saved-msg");
+const wsErrorMsg = $("ws-error-msg");
 const allowRemoteCheckbox = $("allow-remote");
 const pairingTokenInput = $("pairing-token");
 const pairBtn = $("pair-btn");
 const pairSavedMsg = $("pair-saved-msg");
+const settingsPanel = $("settings-panel");
+
 const captureBtn = $("capture-btn");
 const captureMsg = $("capture-msg");
+const hintQueues = $("hint-queues");
+const hintShortcut = $("hint-shortcut");
 const noteInput = $("note");
 const tagsInput = $("tags");
 const collectionInput = $("collection");
@@ -33,39 +53,193 @@ const profileField = $("profile-field");
 const profileSelect = $("profile");
 const profileNote = $("profile-note");
 const tagChips = $("tag-chips");
+
 const batchWindowBtn = $("batch-window");
 const batchGroupBtn = $("batch-group");
 const batchCancelBtn = $("batch-cancel");
 const batchProgress = $("batch-progress");
 const batchLabel = $("batch-label");
 const batchMsg = $("batch-msg");
-const queueBox = $("queue");
+
+const queuePanel = $("queue-panel");
 const queueList = $("queue-list");
 const queueCounts = $("queue-counts");
 const queueClearBtn = $("queue-clear");
+const queueRetryAllBtn = $("queue-retry-all");
 
-const STATUS_LABELS = {
-  connected: "Connected",
-  disconnected: "Disconnected",
-  connecting: "Connecting...",
-  unpaired: "Needs pairing",
+// --- connection status -----------------------------------------------------
+
+/**
+ * What the popup knows about the connection. `since` is stamped here rather
+ * than taken on faith from the worker, because the worker does not send one
+ * today — and the grace period that stops a service-worker respawn flashing
+ * red needs to know how long this state has been true. A status that has
+ * not changed keeps its original stamp.
+ */
+const connection = {
+  status: "",
+  reason: "",
+  detail: "",
+  since: Date.now(),
+  everConnected: false,
+  wsUrl: "",
 };
 
-function updateUI(status) {
-  dot.className = `dot ${status}`;
-  statusText.textContent = STATUS_LABELS[status] || status;
+/** The last thing describe() returned, so the action button knows its job. */
+let shown = null;
+
+/**
+ * The popup's two sources, kept apart so neither can silently overwrite the
+ * other. The worker reports what its own socket did; the health probe says
+ * whether a bridge process is running at all. They disagree constantly while
+ * no bridge is running — the worker retries and broadcasts on every attempt
+ * — so every repaint goes through Status.arbitrate, which lets each source
+ * answer only the question it can actually know. Letting the last message
+ * win made the popup flicker between two sentences for the same fact.
+ */
+let workerState = null;
+let healthState = null;
+
+function settle() {
+  noteStatus(Status.arbitrate(workerState, healthState));
 }
 
+/**
+ * noteStatus records a status update, preserving `since` across repeats of
+ * the same state so that a worker re-broadcasting "disconnected" every few
+ * seconds cannot hold the UI in its grace period forever.
+ */
+function noteStatus(update) {
+  const next = update || {};
+  const status = String(next.status || "");
+  const reason = String(next.reason || "");
+  const changed = status !== connection.status || reason !== connection.reason;
+
+  connection.status = status;
+  connection.reason = reason;
+  connection.detail = next.detail || "";
+  if (typeof next.since === "number" && next.since > 0) {
+    connection.since = next.since;
+  } else if (changed) {
+    connection.since = Date.now();
+  }
+  if (next.wsUrl) connection.wsUrl = next.wsUrl;
+  if (status === "connected") connection.everConnected = true;
+
+  drawStatus();
+}
+
+function drawStatus() {
+  const view = Status.describe({
+    status: connection.status,
+    reason: connection.reason,
+    detail: connection.detail,
+    since: connection.since,
+    everConnected: connection.everConnected,
+    wsUrl: connection.wsUrl || wsUrlInput.value,
+  });
+  shown = view;
+
+  statusPill.dataset.tone = view.tone;
+  statusPill.dataset.busy = String(view.busy);
+  statusLabel.textContent = view.label;
+
+  notice.dataset.open = String(!!view.title);
+  notice.dataset.tone = view.tone === "busy" || view.tone === "ok" ? "idle" : view.tone;
+  noticeTitle.textContent = view.title;
+  noticeBody.textContent = view.body;
+  noticeBody.hidden = !view.body;
+
+  noticeCommand.textContent = view.command;
+  noticeCommandRow.hidden = !view.command;
+  noticeCopy.setAttribute("aria-label", `Copy the command ${view.command}`);
+
+  // The button is hidden as well as its row: a button with no label is a
+  // control our own accessibility checker is right to complain about, and
+  // leaving it in the tree to be skipped by a wrapper is not an answer.
+  noticeActions.hidden = !view.action;
+  noticeAction.hidden = !view.action;
+  if (view.action) {
+    noticeAction.textContent = view.action.label;
+    noticeAction.dataset.action = view.action.id;
+  }
+
+  // The button never lies about what it is about to do. A capture with no
+  // bridge to send it to still succeeds — it is kept and sent later — and
+  // saying so here is the difference between a queue and a surprise.
+  hintQueues.hidden = !view.queues;
+  hintShortcut.hidden = view.queues;
+}
+
+/**
+ * The grace period expires on a timer as well as on the next event: with no
+ * further status broadcast, a socket that never came back would otherwise
+ * sit on "Reconnecting…" for as long as the popup stayed open.
+ */
+setInterval(() => {
+  if (shown && shown.key === "reconnecting") drawStatus();
+}, 1000);
+
+noticeCopy.addEventListener("click", async () => {
+  if (!shown || !shown.command) return;
+  try {
+    await navigator.clipboard.writeText(shown.command);
+    noticeCopy.textContent = "Copied";
+    setTimeout(() => {
+      noticeCopy.textContent = "Copy";
+    }, 1600);
+  } catch {
+    // Clipboard refused (no permission, no focus). Select it instead so the
+    // keyboard can finish the job — never a dead button.
+    const range = document.createRange();
+    range.selectNodeContents(noticeCommand);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    noticeCopy.textContent = "Press ⌘/Ctrl+C";
+  }
+});
+
+noticeAction.addEventListener("click", async () => {
+  const which = noticeAction.dataset.action;
+  if (which === Status.ACTIONS.PAIR) {
+    settingsPanel.open = true;
+    pairingTokenInput.focus();
+    pairingTokenInput.scrollIntoView({ block: "nearest" });
+    return;
+  }
+  if (which === Status.ACTIONS.SETTINGS) {
+    settingsPanel.open = true;
+    wsUrlInput.focus();
+    wsUrlInput.scrollIntoView({ block: "nearest" });
+    return;
+  }
+  if (which === Status.ACTIONS.RETRY) {
+    // Re-saving the address we already have is how the popup asks the
+    // worker to drop the socket and dial again, using only the message the
+    // worker already answers.
+    noteStatus({ status: "connecting" });
+    await ask({ type: "set_ws_url", url: wsUrlInput.value.trim() || Status.DEFAULT_WS_URL });
+  }
+});
+
 function showError(message) {
-  savedMsg.style.display = "none";
-  errorMsg.textContent = message;
-  errorMsg.style.display = "block";
+  hide(wsSavedMsg);
+  wsErrorMsg.textContent = message;
+  wsErrorMsg.dataset.kind = "err";
 }
 
 function show(el, kind, text) {
-  el.className = `capture-msg ${kind}`;
+  if (!text) {
+    hide(el);
+    return;
+  }
   el.textContent = text;
-  el.style.display = text ? "block" : "none";
+  el.dataset.kind = kind;
+}
+
+function hide(el) {
+  delete el.dataset.kind;
 }
 
 const showCapture = (kind, text) => show(captureMsg, kind, text);
@@ -105,10 +279,10 @@ function drawProfiles(state) {
   const profiles = state.profiles || [];
   profileSelect.textContent = "";
   if (!profiles.length) {
-    profileField.style.display = "none";
+    profileField.hidden = true;
     return;
   }
-  profileField.style.display = "block";
+  profileField.hidden = false;
 
   for (const profile of profiles) {
     const option = document.createElement("option");
@@ -133,7 +307,7 @@ function drawProfiles(state) {
     ? "monoagent is not connected — this list is the last one it gave."
     : "";
   profileNote.textContent = message;
-  profileNote.style.display = message ? "block" : "none";
+  profileNote.hidden = !message;
 }
 
 // --- CLIP-07: the snapshot starts while the note is still being typed -----
@@ -173,6 +347,9 @@ function drawTagSuggestions(recent) {
     chip.type = "button";
     chip.className = "chip";
     chip.textContent = tag;
+    // Eight buttons that a screen reader reads as eight bare words are
+    // eight guesses. The label says what pressing one does.
+    chip.setAttribute("aria-label", `Add the tag ${tag}`);
     chip.addEventListener("click", () => {
       const parts = tagsInput.value.split(/,\s*/).filter(Boolean);
       // Replace the fragment being typed, if that is what the chip matched.
@@ -217,17 +394,23 @@ function drawQueue(state) {
   const items = (state.queued || []).concat(state.failed || []);
   queueList.textContent = "";
   if (!items.length) {
-    queueBox.style.display = "none";
+    queuePanel.hidden = true;
+    queuePanel.open = false;
     return;
   }
-  queueBox.style.display = "block";
+  queuePanel.hidden = false;
 
   const counts = state.counts || { queued: 0, failed: 0 };
-  const parts = [];
-  if (counts.queued) parts.push(`${counts.queued} waiting`);
-  if (counts.failed) parts.push(`${counts.failed} failed`);
-  queueCounts.textContent = parts.join(" · ");
-  queueClearBtn.style.display = counts.failed ? "inline-block" : "none";
+  const summary = Status.describeQueue(counts);
+  if (summary) {
+    queueCounts.textContent = summary.text;
+    queueCounts.dataset.tone = summary.tone;
+    // Captures that could not be sent are the only thing in this popup that
+    // will not resolve itself, so that is the one case that opens its own
+    // drawer. A queue merely waiting on a reconnect does not.
+    if (summary.failed) queuePanel.open = true;
+  }
+  queueClearBtn.hidden = !counts.failed;
 
   for (const item of items) {
     const li = document.createElement("li");
@@ -252,8 +435,12 @@ function drawQueue(state) {
     const actions = document.createElement("div");
     actions.className = "actions";
     const retry = document.createElement("button");
-    retry.className = "secondary tiny";
+    retry.type = "button";
+    retry.className = "btn-secondary btn-tiny";
     retry.textContent = "Retry now";
+    // Every row has a "Retry now" and a "Delete". Read aloud in a list they
+    // are indistinguishable, so each one names the capture it acts on.
+    retry.setAttribute("aria-label", `Retry sending ${item.title}`);
     retry.addEventListener("click", async () => {
       retry.disabled = true;
       const result = await ask({ type: "queue_retry", key: item.key });
@@ -264,9 +451,11 @@ function drawQueue(state) {
       await refreshQueue();
     });
     const del = document.createElement("button");
-    del.className = "secondary tiny";
+    del.type = "button";
+    del.className = "btn-secondary btn-tiny";
     del.textContent = "Delete";
     del.title = "Discard this capture without sending it";
+    del.setAttribute("aria-label", `Discard ${item.title} without sending it`);
     del.addEventListener("click", async () => {
       await ask({ type: "queue_delete", key: item.key });
       await refreshQueue();
@@ -288,6 +477,17 @@ queueClearBtn.addEventListener("click", async () => {
   await refreshQueue();
 });
 
+queueRetryAllBtn.addEventListener("click", async () => {
+  queueRetryAllBtn.disabled = true;
+  const state = await ask({ type: "queue_state" });
+  const items = (state.queued || []).concat(state.failed || []);
+  for (const item of items) {
+    await ask({ type: "queue_retry", key: item.key });
+  }
+  queueRetryAllBtn.disabled = false;
+  await refreshQueue();
+});
+
 // --- saving ---------------------------------------------------------------
 
 captureBtn.addEventListener("click", async () => {
@@ -306,7 +506,7 @@ captureBtn.addEventListener("click", async () => {
 
   const title = result.title ? `Saved: ${result.title}` : "Saved";
   if (result.queued) {
-    showCapture("warn", `${title} — queued until the bridge reconnects`);
+    showCapture("warn", `${title} — waiting for the bridge`);
   } else if (result.warnings?.length) {
     showCapture("warn", `${title} — ${result.warnings.join("; ")}`);
   } else {
@@ -322,7 +522,7 @@ captureBtn.addEventListener("click", async () => {
 function batchRunning(running) {
   batchWindowBtn.disabled = running;
   batchGroupBtn.disabled = running;
-  batchProgress.style.display = running ? "flex" : "none";
+  batchProgress.dataset.running = String(running);
   batchCancelBtn.disabled = false;
 }
 
@@ -372,7 +572,8 @@ batchCancelBtn.addEventListener("click", async () => {
 
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === "status") {
-    updateUI(msg.status);
+    workerState = msg;
+    settle();
     return;
   }
   if (msg.type === "capture_batch_progress") {
@@ -402,6 +603,49 @@ async function loadFormState() {
   drawQueue(state);
 }
 
+/**
+ * How often the popup re-asks the bridge while it is not connected. A probe
+ * taken only at open went stale the moment someone started the bridge in a
+ * terminal with the popup still showing, which is exactly when they are
+ * looking at it. Loopback and short, so it costs nothing.
+ */
+const HEALTH_POLL_MS = 2000;
+
+/** The storage hints the probe was first given, reused by every poll. */
+let probeHints = {};
+let probing = false;
+
+/**
+ * checkHealth asks the bridge directly whether it is running, and is the
+ * authoritative answer to the only question this popup's status exists to
+ * answer. It cannot fail: a probe that finds nothing IS the "no bridge"
+ * result, which is the most common state and has to feel instant, so there
+ * is no error path and nothing to wait on.
+ */
+async function checkHealth() {
+  if (probing) return;
+  probing = true;
+  try {
+    const health = await MonoBridgeHealth.probe({ known: probeHints });
+    const before = healthState;
+    healthState = MonoBridgeHealth.toStatus(health);
+    settle();
+    // A bridge that has just appeared: ask the worker to dial now, the same
+    // way "Try again" does, rather than leave it to its next scheduled
+    // retry — which can be half a minute away once the fast retries are
+    // spent, and is exactly the wait that made the popup look broken.
+    if (before && before.reason === "no_bridge" && healthState.reason !== "no_bridge") {
+      ask({ type: "set_ws_url", url: wsUrlInput.value.trim() || Status.DEFAULT_WS_URL });
+    }
+  } finally {
+    probing = false;
+  }
+}
+
+setInterval(() => {
+  if (connection.status !== "connected") checkHealth();
+}, HEALTH_POLL_MS);
+
 async function init() {
   // The non-loopback override is session-scoped and must be re-enabled
   // each time — reset it whenever the popup opens.
@@ -411,16 +655,32 @@ async function init() {
     // storage unavailable — background treats a missing flag as no override
   }
 
+  drawStatus();
+
   chrome.runtime.sendMessage({ type: "get_status" }, (response) => {
-    if (chrome.runtime.lastError || !response?.status) {
-      updateUI("disconnected");
-      return;
-    }
-    updateUI(response.status);
+    // A stand-in until the probe answers, and only when it says something
+    // the probe cannot. A worker that has just been woken to answer this
+    // reports its boot-time "disconnected" with no reason — true, stale, and
+    // exactly what used to flash "Not connected" at someone opening the
+    // popup. Hold "Checking…" instead; the probe is already on its way.
+    if (workerState || chrome.runtime.lastError || !response?.status) return;
+    const informative =
+      response.status === "connected" || response.status === "unpaired" || !!response.reason;
+    if (!informative) return;
+    workerState = response;
+    settle();
   });
 
-  const result = await chrome.storage.local.get("wsUrl");
-  wsUrlInput.value = result.wsUrl || "ws://127.0.0.1:9222/monoagent";
+  const stored = await chrome.storage.local.get(["wsUrl", "pairedWsUrl", "workingWsUrl"]);
+  wsUrlInput.value = stored.wsUrl || Status.DEFAULT_WS_URL;
+  connection.wsUrl = wsUrlInput.value;
+
+  // Ask the bridge itself, rather than asking our own socket about it. This
+  // is what makes "no bridge is running" a statement instead of a guess —
+  // and it is deliberately not awaited before the form loads, so the popup
+  // is never waiting on the network to become usable.
+  probeHints = stored;
+  checkHealth();
 
   await loadFormState();
 }
@@ -436,7 +696,11 @@ window.addEventListener("pagehide", () => {
 
 pairBtn.addEventListener("click", async () => {
   const value = pairingTokenInput.value.trim();
-  if (!value) return;
+  if (!value) {
+    pairingTokenInput.focus();
+    showError("Paste the token printed by: " + Status.PAIR_COMMAND);
+    return;
+  }
 
   // Sends the token typed into the field, never reads it back out of
   // storage, so the popup never displays a previously-saved secret.
@@ -449,13 +713,11 @@ pairBtn.addEventListener("click", async () => {
       showError(response?.error || "Failed to save pairing token");
       return;
     }
-    errorMsg.style.display = "none";
+    hide(wsErrorMsg);
     pairingTokenInput.value = "";
-    pairSavedMsg.style.display = "block";
-    updateUI("connecting");
-    setTimeout(() => {
-      pairSavedMsg.style.display = "none";
-    }, 2000);
+    show(pairSavedMsg, "ok", "Saved — reconnecting…");
+    noteStatus({ status: "connecting" });
+    setTimeout(() => hide(pairSavedMsg), 2000);
   });
 });
 
@@ -480,12 +742,11 @@ saveBtn.addEventListener("click", async () => {
       showError(response?.error || "Failed to save URL");
       return;
     }
-    errorMsg.style.display = "none";
-    savedMsg.style.display = "block";
-    updateUI("connecting");
-    setTimeout(() => {
-      savedMsg.style.display = "none";
-    }, 2000);
+    hide(wsErrorMsg);
+    connection.wsUrl = url;
+    show(wsSavedMsg, "ok", "Saved — reconnecting…");
+    noteStatus({ status: "connecting" });
+    setTimeout(() => hide(wsSavedMsg), 2000);
   });
 });
 

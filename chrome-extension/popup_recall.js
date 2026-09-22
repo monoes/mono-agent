@@ -62,11 +62,11 @@
     // Nothing known and nothing wrong: the panel is not there at all. An
     // empty box saying "not saved" is noise on every page you visit.
     if (!record || (!record.saved && !record.unavailable)) {
-      savedBox.style.display = "none";
+      savedBox.hidden = true;
       return;
     }
 
-    savedBox.style.display = "block";
+    savedBox.hidden = false;
     savedBox.classList.toggle("unavailable", !record.saved);
 
     if (!record.saved) {
@@ -76,7 +76,7 @@
       savedTitle.textContent = "";
       savedMeta.textContent = record.reason || "";
       savedNote.textContent = "";
-      savedOpen.style.display = "none";
+      savedOpen.hidden = true;
       return;
     }
 
@@ -92,11 +92,11 @@
     savedMeta.textContent = bits.join(" · ");
 
     savedNote.textContent = record.note || "";
-    savedNote.style.display = record.note ? "block" : "none";
+    savedNote.hidden = !record.note;
 
     for (const tag of record.tags || []) savedChips.appendChild(chip(tag));
 
-    savedOpen.style.display = record.envelope ? "inline-block" : "none";
+    savedOpen.hidden = !record.envelope;
   }
 
   async function loadSaved(force) {
@@ -112,7 +112,7 @@
     const reply = await ask({ type: "highlight_list" });
     const count = reply && reply.ok ? (reply.records || []).length : 0;
     if (!count) return;
-    savedBox.style.display = "block";
+    savedBox.hidden = false;
     savedHighlights.textContent =
       count === 1 ? "1 highlight on this page" : `${count} highlights on this page`;
   }

@@ -83,6 +83,14 @@ type Server struct {
 	pairingNonces map[string]pairingNonceEntry
 	pairingMu     sync.Mutex
 
+	// The self-description served at /monoagent/health (see status.go).
+	// lastAuthFailure is what lets that endpoint say "running, but this
+	// extension is not paired with me" instead of a bare "not connected".
+	startedAt       time.Time
+	version         string
+	lastAuthFailure time.Time
+	statusMu        sync.Mutex
+
 	logger zerolog.Logger
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -239,6 +247,7 @@ func NewServer(addr string, logger zerolog.Logger) *Server {
 		addr:      addr,
 		pending:   make(map[string]chan *Response),
 		connected: make(chan struct{}),
+		startedAt: time.Now(),
 		logger:    logger.With().Str("component", "extension-server").Logger(),
 	}
 	// The extension→Go request channel is on by default (see request.go).
@@ -487,7 +496,10 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	s.connMu.Unlock()
 
 	if old != nil {
-		s.logger.Warn().Msg("replacing existing extension connection")
+		// Routine, not suspicious: an MV3 service worker that respawns
+		// before its previous socket has been reaped reconnects on top of
+		// itself many times a day.
+		s.logger.Info().Msg("replacing the previous extension connection")
 		_ = old.Close()
 	}
 
@@ -509,6 +521,7 @@ func (s *Server) authenticate(conn *websocket.Conn) bool {
 	conn.SetReadDeadline(time.Now().Add(authTimeout))
 	_, msg, err := conn.ReadMessage()
 	if err != nil {
+		s.noteAuthFailure()
 		s.logger.Warn().Err(err).Msg("extension connection closed before authenticating")
 		return false
 	}
@@ -518,6 +531,7 @@ func (s *Server) authenticate(conn *websocket.Conn) bool {
 		auth.Type == "auth" &&
 		subtle.ConstantTimeCompare([]byte(auth.Token), []byte(s.token)) == 1
 	if !ok {
+		s.noteAuthFailure()
 		s.logger.Warn().Msg("rejected extension connection: bad or missing auth token")
 		_ = conn.WriteControl(websocket.CloseMessage,
 			websocket.FormatCloseMessage(unauthorizedCloseCode, "unauthorized"),
@@ -556,9 +570,12 @@ func (s *Server) pingLoop(conn *websocket.Conn, done <-chan struct{}) {
 // this before deciding whether to relay through this server instead of
 // starting their own (which would otherwise race for the same port and leave
 // the extension connected to only one of them).
+//
+// It also answers the extension popup's "what is going on?" — see Status in
+// status.go for the shape and for why it is safe to serve without auth.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]bool{"connected": s.IsConnected()})
+	_ = json.NewEncoder(w).Encode(s.Status())
 }
 
 // Addr returns the address this server actually bound (which may differ
@@ -771,7 +788,16 @@ func (s *Server) readLoop(conn *websocket.Conn) {
 	for {
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
+			// CloseAbnormalClosure/CloseNoStatusReceived are on this list
+			// because that is what Chrome suspending an idle MV3 service
+			// worker looks like from here: the socket simply stops, with
+			// no close frame. It happens constantly and by design, so it
+			// is not an error — it is the extension being an extension.
+			if websocket.IsUnexpectedCloseError(err,
+				websocket.CloseGoingAway,
+				websocket.CloseNormalClosure,
+				websocket.CloseAbnormalClosure,
+				websocket.CloseNoStatusReceived) {
 				s.logger.Error().Err(err).Msg("websocket read error")
 			}
 			return

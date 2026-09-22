@@ -35,15 +35,13 @@ func NewRemoteSender(baseURL string) *RemoteSender {
 
 // Probe reports whether a Server is actually listening and reachable at
 // baseURL. Used to decide whether to relay through an existing process or
-// fall back to starting a local server.
+// fall back to starting a local server. It goes through FetchStatus so
+// "something answered" is never mistaken for "a bridge answered": relaying
+// commands into a Chrome CDP (or anything else that happens to hold the
+// port) would wait forever for a reply that cannot come.
 func Probe(baseURL string) bool {
-	client := &http.Client{Timeout: 800 * time.Millisecond}
-	resp, err := client.Get(baseURL + "/monoagent/health")
-	if err != nil {
-		return false
-	}
-	defer resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+	_, err := FetchStatus(baseURL)
+	return err == nil
 }
 
 func (r *RemoteSender) SendCommand(cmd *Command, timeout time.Duration) (*Response, error) {
@@ -77,19 +75,15 @@ func (r *RemoteSender) SendCommand(cmd *Command, timeout time.Duration) (*Respon
 // IsConnected reports whether the remote server currently has a live
 // extension connection.
 func (r *RemoteSender) IsConnected() bool {
-	client := &http.Client{Timeout: 800 * time.Millisecond}
-	resp, err := client.Get(r.baseURL + "/monoagent/health")
-	if err != nil {
-		return false
-	}
-	defer resp.Body.Close()
-	var status struct {
-		Connected bool `json:"connected"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
-		return false
-	}
-	return status.Connected
+	st, err := FetchStatus(r.baseURL)
+	return err == nil && st.Connected
+}
+
+// Status returns the remote bridge's full self-description — what it bound,
+// how long it has been up, and whether it is connected, waiting or turning
+// the extension away unpaired. See status.go.
+func (r *RemoteSender) Status() (Status, error) {
+	return FetchStatus(r.baseURL)
 }
 
 // CreateTab asks the remote server's extension to open a new tab.

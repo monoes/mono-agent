@@ -31,13 +31,27 @@ importScripts("ask.js", "saved.js", "highlights.js", "recall_bridge.js");
 // it unasked-for, which is why it needs its own module rather than another
 // case in the dispatch below.
 importScripts("cdp_proxy.js");
+// Asked before every dial; see doConnect. The same module the popup uses,
+// so "is that really the bridge?" has exactly one implementation.
+importScripts("bridge_health.js");
 
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 
 let ws = null;
-let connectionStatus = "disconnected"; // "connected" | "disconnected" | "connecting"
+let connectionStatus = "disconnected"; // "connected" | "disconnected" | "connecting" | "unpaired"
+// Why we are in that state, when the socket can tell. A browser WebSocket
+// never reports the reason a handshake failed, so this is inferred from the
+// one thing that is observable: whether onopen ever fired before onclose. A
+// socket that never opened, on a loopback port, means nothing is listening;
+// one that opened and then closed means the bridge went away. The popup
+// turns these into the sentence it shows, and treats an empty reason as
+// "unknown" rather than as any particular cause.
+let connectionReason = "";
+// When the current state began, so the popup can tell a momentary drop
+// (a service worker being recycled) from a bridge that is really gone.
+let connectionSince = Date.now();
 let keepAliveInterval = null;
 
 const KEEP_ALIVE_INTERVAL = 20000; // 20s ping to prevent WS idle timeout
@@ -310,29 +324,50 @@ function connect() {
 }
 
 async function doConnect() {
-  connectionStatus = "connecting";
-  broadcastStatus();
+  setStatus("connecting");
 
   const pairingSecret = await getPairingToken();
   if (!pairingSecret) {
     // Nothing to authenticate the WebSocket handshake with — the server
     // will reject us immediately. Surface "unpaired" instead of spinning
     // the fast-retry loop against a socket we can't ever open.
-    connectionStatus = "unpaired";
-    broadcastStatus();
+    setStatus("unpaired");
     fastRetryCount = FAST_RETRY_MAX;
     return;
   }
 
   await stickyLoaded;
-  const url = await getWsUrl();
+
+  // Ask before dialling. Chrome logs every WebSocket that fails to connect as
+  // an extension error — twice, once for the browser and once for onerror —
+  // so a worker retrying against an empty port every 500ms filled the red
+  // Errors badge in chrome://extensions with "connection refused", which
+  // reads as broken when it only means the bridge is not running. A failed
+  // fetch is silent, and the health document also settles what a socket
+  // never can: whether anything is there at all, and whether it is really
+  // the bridge rather than something else answering on the port.
+  let known = {};
+  try {
+    known = await chrome.storage.local.get(["wsUrl", "pairedWsUrl", "workingWsUrl"]);
+  } catch {
+    // storage unavailable — probe the default candidates
+  }
+  const health = await MonoBridgeHealth.probe({ known });
+  if (!health) {
+    setStatus("disconnected", "no_bridge");
+    return;
+  }
+
+  // The bridge says where its socket is, which beats guessing between the two
+  // candidate ports. An address the user set explicitly in the popup still wins.
+  let url = await getWsUrl();
+  if (!known.wsUrl && health.wsUrl) url = health.wsUrl;
 
   try {
     await assertLoopbackAllowed(url);
   } catch (err) {
     console.error("[monoagent]", err.message);
-    connectionStatus = "disconnected";
-    broadcastStatus();
+    setStatus("disconnected", "bad_url");
     fastRetryCount = FAST_RETRY_MAX; // retrying a refused URL is pointless
     return;
   }
@@ -341,8 +376,7 @@ async function doConnect() {
     ws = new WebSocket(url);
   } catch (err) {
     console.error("[monoagent] WebSocket constructor error:", err.message);
-    connectionStatus = "disconnected";
-    broadcastStatus();
+    setStatus("disconnected", "bad_url");
     return;
   }
 
@@ -361,11 +395,10 @@ async function doConnect() {
     const secretFieldName = ["to", "ken"].join("");
     authFrame[secretFieldName] = pairingSecret;
     ws.send(JSON.stringify(authFrame));
-    connectionStatus = "connected";
+    setStatus("connected");
     fastRetryCount = FAST_RETRY_MAX; // Stop fast retry — we're connected
     markCandidateConnected(url);
     console.log("[monoagent] Connected to backend at", url);
-    broadcastStatus();
     startKeepAlive();
     MonoRecall.connected();
     MonoCaptureBridge.flush()
@@ -391,9 +424,11 @@ async function doConnect() {
     handleCommand(cmd);
   };
 
-  ws.onerror = (err) => {
-    console.error("[monoagent] WebSocket error:", err);
-  };
+  // onerror always arrives alongside onclose, carries nothing a browser is
+  // willing to explain, and every case it could mean is handled in onclose.
+  // Logging it as an error only put noise behind chrome://extensions' red
+  // Errors button — once per failed attempt — for a state that is not a fault.
+  ws.onerror = () => {};
 
   ws.onclose = (event) => {
     stopKeepAlive();
@@ -408,13 +443,15 @@ async function doConnect() {
       // The server rejected our auth frame — retrying with the same
       // (wrong/missing) pairing secret will only fail again. Stop and wait
       // for the user to re-pair via the popup instead of hammering it.
-      connectionStatus = "unpaired";
-      broadcastStatus();
+      setStatus("unpaired", "auth_rejected");
       fastRetryCount = FAST_RETRY_MAX;
       return;
     }
-    connectionStatus = "disconnected";
-    broadcastStatus();
+    // The only thing a browser lets us observe about a failed connection is
+    // whether it ever opened. Never opened, on loopback, is overwhelmingly
+    // "nothing is listening" — which is the difference between the popup
+    // saying "start the bridge" and saying nothing useful at all.
+    setStatus("disconnected", opened ? "socket_closed" : "no_bridge");
     if (!opened) markCandidateFailed();
     // Don't schedule reconnect via setTimeout — the alarm handles it.
     // But do restart fast retry if we disconnected unexpectedly early.
@@ -450,8 +487,32 @@ function sendResponse(id, success, data, error) {
   }
 }
 
+/**
+ * setStatus records a connection state and tells anyone listening. `since`
+ * is only re-stamped when the state actually changes, so a status that is
+ * re-broadcast while unchanged does not keep resetting the popup's sense of
+ * how long it has been true.
+ */
+function setStatus(status, reason = "") {
+  if (status !== connectionStatus || reason !== connectionReason) {
+    connectionSince = Date.now();
+  }
+  connectionStatus = status;
+  connectionReason = reason;
+  broadcastStatus();
+}
+
+/** statusPayload is the one shape both the broadcast and get_status use. */
+function statusPayload() {
+  return {
+    status: connectionStatus,
+    reason: connectionReason,
+    since: connectionSince,
+  };
+}
+
 function broadcastStatus() {
-  chrome.runtime.sendMessage({ type: "status", status: connectionStatus }).catch(() => {
+  chrome.runtime.sendMessage(Object.assign({ type: "status" }, statusPayload())).catch(() => {
     // popup not open — ignore
   });
 }
@@ -991,7 +1052,14 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "get_status") {
-    sendResponse({ status: connectionStatus });
+    sendResponse(statusPayload());
+    // Someone just opened the popup, which is the moment they care whether
+    // this is connected. A suspended worker otherwise only dials again on its
+    // next alarm — up to half a minute after the bridge was started, which is
+    // exactly the "I started it and nothing changed" gap. Dialling is silent
+    // now (see doConnect), so trying on every open costs nothing; an unpaired
+    // worker is left alone until it is given a token.
+    if (connectionStatus !== "connected" && connectionStatus !== "unpaired") connect();
     return false;
   }
   // Handle file read requests from content script (for file upload)

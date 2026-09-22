@@ -1,0 +1,852 @@
+/**
+ * MonoAgent Bridge — popup styles
+ *
+ * A separate file rather than a <style> block because MV3's CSP makes the
+ * stylesheet the one part of a popup that can grow without argument, and
+ * because the tokens below are the design: everything downstream refers to
+ * them, so both themes are one block of values rather than two stylesheets
+ * that drift.
+ *
+ * The palette is the app's own (the desktop GUI's cyan on deep navy),
+ * pulled into a restrained product range: cool-tinted neutrals carrying the
+ * surface, one accent doing primary action and focus and nothing else.
+ * Every text/background pair below was checked against WCAG AA at its real
+ * size before it was written down.
+ */
+
+/* ── tokens ────────────────────────────────────────────────────────── */
+
+:root {
+  color-scheme: light dark;
+
+  /* Surfaces, coolest to warmest-forward. Tinted toward the brand's own
+     hue rather than toward "warm", which is how every tool ends up beige. */
+  --bg: oklch(0.99 0.004 230);
+  --surface: oklch(0.975 0.006 230);
+  --surface-2: oklch(0.945 0.01 230);
+  --line: oklch(0.9 0.012 230);
+  --line-strong: oklch(0.82 0.016 230);
+
+  /* Ink. --ink-2 is the floor for anything a person has to read, including
+     placeholders — nothing in this file is allowed to be fainter. */
+  --ink: oklch(0.26 0.02 250);
+  --ink-2: oklch(0.47 0.022 250);
+
+  --accent: oklch(0.52 0.125 240);
+  --accent-hover: oklch(0.46 0.13 240);
+  --accent-ink: oklch(0.44 0.13 240);
+  --accent-wash: oklch(0.96 0.02 235);
+  --on-accent: oklch(1 0 0);
+
+  --ok: oklch(0.48 0.12 150);
+  --ok-wash: oklch(0.96 0.03 150);
+  --warn: oklch(0.5 0.12 70);
+  --warn-wash: oklch(0.96 0.035 80);
+  --err: oklch(0.52 0.18 25);
+  --err-wash: oklch(0.96 0.03 25);
+
+  --focus: var(--accent);
+
+  /* Type. Fixed px: a popup is one size at one DPI, and fluid type in a
+     340px window is a solution to a problem nobody has. */
+  --t-xs: 11px;
+  --t-sm: 12px;
+  --t-base: 13px;
+  --t-md: 14px;
+
+  --sp-1: 4px;
+  --sp-2: 6px;
+  --sp-3: 8px;
+  --sp-4: 12px;
+  --sp-5: 16px;
+
+  --r-sm: 5px;
+  --r: 7px;
+  --r-lg: 10px;
+  --r-pill: 999px;
+
+  --shadow: 0 1px 2px oklch(0.26 0.02 250 / 0.06), 0 2px 8px oklch(0.26 0.02 250 / 0.05);
+
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --fast: 140ms;
+  --normal: 200ms;
+
+  --ui: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: oklch(0.195 0.018 252);
+    --surface: oklch(0.245 0.02 252);
+    --surface-2: oklch(0.295 0.022 252);
+    --line: oklch(0.33 0.022 252);
+    --line-strong: oklch(0.42 0.025 252);
+
+    --ink: oklch(0.935 0.012 240);
+    --ink-2: oklch(0.745 0.02 245);
+
+    --accent: oklch(0.76 0.115 226);
+    --accent-hover: oklch(0.82 0.11 226);
+    --accent-ink: oklch(0.78 0.11 226);
+    --accent-wash: oklch(0.3 0.045 232);
+    --on-accent: oklch(0.17 0.02 250);
+
+    --ok: oklch(0.8 0.14 155);
+    --ok-wash: oklch(0.29 0.05 158);
+    --warn: oklch(0.83 0.13 80);
+    --warn-wash: oklch(0.3 0.05 78);
+    --err: oklch(0.74 0.15 25);
+    --err-wash: oklch(0.3 0.06 25);
+
+    --shadow: 0 1px 2px oklch(0 0 0 / 0.4), 0 2px 8px oklch(0 0 0 / 0.3);
+  }
+}
+
+/* ── base ──────────────────────────────────────────────────────────── */
+
+* {
+  box-sizing: border-box;
+}
+
+/* Several blocks below set `display` unconditionally, which silently beats
+   the `hidden` attribute and leaves empty buttons and stray panels on
+   screen. Hidden means hidden. */
+[hidden] {
+  display: none !important;
+}
+
+body {
+  width: 360px;
+  margin: 0;
+  padding: 0;
+  font-family: var(--ui);
+  font-size: var(--t-base);
+  line-height: 1.45;
+  color: var(--ink);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+/* Focus is never removed, only replaced — every control below either uses
+   the ring above or draws its own with at least as much contrast. */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* ── header: wordmark + the status pill ────────────────────────────── */
+
+.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-4) var(--sp-5);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.wordmark {
+  margin: 0;
+  font-size: var(--t-md);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* The pill is the whole of the status when nothing needs explaining, which
+   is most of the time. Text always carries the meaning; the dot is colour
+   on top of a word, never colour instead of one. */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 3px 9px 3px 7px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line);
+  background: var(--bg);
+  font-size: var(--t-xs);
+  font-weight: 500;
+  color: var(--ink-2);
+  white-space: nowrap;
+  transition: color var(--normal) var(--ease), border-color var(--normal) var(--ease),
+    background-color var(--normal) var(--ease);
+}
+
+.pill .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+
+.pill[data-tone="ok"] {
+  color: var(--ok);
+  border-color: color-mix(in oklch, var(--ok) 35%, var(--line));
+  background: var(--ok-wash);
+}
+.pill[data-tone="busy"] {
+  color: var(--warn);
+  border-color: color-mix(in oklch, var(--warn) 30%, var(--line));
+  background: var(--warn-wash);
+}
+.pill[data-tone="idle"] {
+  color: var(--ink-2);
+}
+.pill[data-tone="warn"] {
+  color: var(--warn);
+  border-color: color-mix(in oklch, var(--warn) 35%, var(--line));
+  background: var(--warn-wash);
+}
+.pill[data-tone="error"] {
+  color: var(--err);
+  border-color: color-mix(in oklch, var(--err) 35%, var(--line));
+  background: var(--err-wash);
+}
+
+/* Breathing, not blinking: a slow opacity drift reads as "working" where a
+   1s hard pulse reads as an alarm. */
+.pill[data-busy="true"] .dot {
+  animation: breathe 1.6s var(--ease) infinite;
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* ── the explanation block ─────────────────────────────────────────── */
+
+main {
+  padding: var(--sp-5);
+  display: grid;
+  gap: var(--sp-5);
+}
+
+/* Drawn only when there is something to say. No full-width colour bar, no
+   side stripe: a bordered panel with a tinted ground and a heading that is
+   a sentence, because a state you have to explain deserves a sentence. */
+.notice {
+  display: none;
+  padding: var(--sp-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+}
+
+.notice[data-open="true"] {
+  display: block;
+}
+
+.notice[data-tone="warn"] {
+  border-color: color-mix(in oklch, var(--warn) 30%, var(--line));
+  background: var(--warn-wash);
+}
+.notice[data-tone="error"] {
+  border-color: color-mix(in oklch, var(--err) 30%, var(--line));
+  background: var(--err-wash);
+}
+.notice[data-tone="idle"] {
+  border-color: var(--line);
+  background: var(--surface);
+}
+
+.notice-title {
+  margin: 0;
+  font-size: var(--t-base);
+  font-weight: 600;
+  text-wrap: balance;
+}
+
+.notice-body {
+  margin: var(--sp-2) 0 0;
+  font-size: var(--t-sm);
+  color: var(--ink-2);
+  text-wrap: pretty;
+}
+
+.notice[data-tone="warn"] .notice-body,
+.notice[data-tone="error"] .notice-body {
+  color: var(--ink);
+}
+
+/* The command. Selectable text first, copy button second — someone reading
+   over a shoulder needs to be able to read it, not just copy it. */
+.command {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-top: var(--sp-3);
+  padding: var(--sp-2) var(--sp-2) var(--sp-2) var(--sp-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--bg);
+}
+
+.command code {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+  color: var(--ink);
+  overflow-x: auto;
+  white-space: nowrap;
+  scrollbar-width: none;
+  user-select: all;
+}
+
+.command code::-webkit-scrollbar {
+  display: none;
+}
+
+.notice-actions {
+  display: flex;
+  gap: var(--sp-2);
+  margin-top: var(--sp-3);
+}
+
+/* ── controls ──────────────────────────────────────────────────────── */
+
+label,
+.label {
+  display: block;
+  font-size: var(--t-xs);
+  font-weight: 500;
+  color: var(--ink-2);
+  margin-bottom: var(--sp-1);
+}
+
+input[type="text"],
+select {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r);
+  font-family: var(--ui);
+  font-size: var(--t-sm);
+  color: var(--ink);
+  background: var(--bg);
+  transition: border-color var(--fast) var(--ease), box-shadow var(--fast) var(--ease);
+}
+
+input[type="text"].mono {
+  font-family: var(--mono);
+}
+
+input[type="text"]::placeholder {
+  color: var(--ink-2);
+}
+
+input[type="text"]:hover,
+select:hover {
+  border-color: color-mix(in oklch, var(--accent) 40%, var(--line-strong));
+}
+
+input[type="text"]:focus-visible,
+select:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 25%, transparent);
+}
+
+.field + .field {
+  margin-top: var(--sp-3);
+}
+
+button {
+  font-family: var(--ui);
+  font-size: var(--t-sm);
+  font-weight: 500;
+  border-radius: var(--r);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background-color var(--fast) var(--ease), border-color var(--fast) var(--ease),
+    color var(--fast) var(--ease);
+}
+
+button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.btn-primary {
+  width: 100%;
+  padding: 10px 14px;
+  font-size: var(--t-base);
+  font-weight: 600;
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.btn-secondary {
+  padding: 6px 11px;
+  background: var(--surface-2);
+  color: var(--ink);
+  border-color: var(--line-strong);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--accent) 12%, var(--surface-2));
+  border-color: color-mix(in oklch, var(--accent) 45%, var(--line-strong));
+}
+
+.btn-tiny {
+  padding: 3px 8px;
+  font-size: var(--t-xs);
+}
+
+.row {
+  display: flex;
+  gap: var(--sp-2);
+}
+
+.row > button {
+  flex: 1;
+}
+
+.hint {
+  margin: var(--sp-2) 0 0;
+  font-size: var(--t-xs);
+  color: var(--ink-2);
+  text-wrap: pretty;
+}
+
+.hint kbd {
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 1px 4px;
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+/* ── inline messages ───────────────────────────────────────────────── */
+
+.msg {
+  display: none;
+  margin-top: var(--sp-2);
+  font-size: var(--t-xs);
+  word-break: break-word;
+}
+
+.msg[data-kind] {
+  display: block;
+}
+
+.msg[data-kind="ok"] {
+  color: var(--ok);
+}
+.msg[data-kind="warn"] {
+  color: var(--warn);
+}
+.msg[data-kind="err"] {
+  color: var(--err);
+}
+
+.msg details {
+  margin-top: var(--sp-1);
+  color: var(--ink-2);
+}
+
+.msg summary {
+  cursor: pointer;
+}
+
+/* ── chips ─────────────────────────────────────────────────────────── */
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+  margin-top: var(--sp-2);
+}
+
+.chips:empty {
+  display: none;
+}
+
+.chip {
+  font-size: var(--t-xs);
+  font-weight: 400;
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  color: var(--ink-2);
+}
+
+button.chip:hover {
+  background: var(--accent-wash);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* ── the capture block: the reason the popup exists ────────────────── */
+
+.capture {
+  padding: var(--sp-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.capture .btn-primary {
+  margin-top: var(--sp-4);
+}
+
+#profile-field[hidden] {
+  display: none;
+}
+
+#profile-note {
+  margin: var(--sp-1) 0 0;
+  font-size: var(--t-xs);
+  color: var(--warn);
+}
+
+/* ── already saved / recall ────────────────────────────────────────── */
+
+.saved {
+  padding: var(--sp-4);
+  border: 1px solid color-mix(in oklch, var(--ok) 30%, var(--line));
+  border-radius: var(--r-lg);
+  background: var(--ok-wash);
+}
+
+.saved[hidden] {
+  display: none;
+}
+
+.saved-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--t-sm);
+  font-weight: 600;
+  color: var(--ok);
+}
+
+.saved.unavailable {
+  border-color: var(--line);
+  background: var(--surface);
+}
+
+.saved.unavailable .saved-head {
+  color: var(--ink-2);
+}
+
+.doc-title {
+  margin-top: var(--sp-1);
+  font-weight: 600;
+  font-size: var(--t-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.saved .meta {
+  font-size: var(--t-xs);
+  color: var(--ink-2);
+  margin-top: 1px;
+}
+
+.saved .note {
+  margin-top: var(--sp-2);
+  font-size: var(--t-sm);
+  font-style: italic;
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.saved .note:empty {
+  display: none;
+}
+
+.saved .row {
+  margin-top: var(--sp-3);
+}
+
+.hl-count {
+  font-size: var(--t-xs);
+  color: var(--ink-2);
+  margin-top: var(--sp-2);
+}
+
+.hl-count:empty {
+  display: none;
+}
+
+/* ── ask your brain ────────────────────────────────────────────────── */
+
+.ask-status {
+  margin-top: var(--sp-2);
+  font-size: var(--t-xs);
+  color: var(--ink-2);
+  min-height: 15px;
+}
+
+.ask-answers {
+  display: grid;
+  gap: var(--sp-3);
+  margin-top: var(--sp-3);
+}
+
+/* A passage is set as a quotation, not decorated with a coloured edge: an
+   indent and a real quote mark say "this is someone else's words" in a way
+   a stripe never did. */
+.answer {
+  position: relative;
+  padding-left: var(--sp-4);
+}
+
+.answer::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 4px;
+  bottom: 4px;
+  width: 1px;
+  background: var(--line-strong);
+}
+
+.answer .quote {
+  font-size: var(--t-sm);
+  font-style: italic;
+  color: var(--ink);
+  word-break: break-word;
+  text-wrap: pretty;
+}
+
+.answer .src {
+  margin-top: 3px;
+  font-size: var(--t-xs);
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.answer .src a {
+  color: var(--accent-ink);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.answer .src a:hover {
+  text-decoration: underline;
+}
+
+.answer .stale {
+  color: var(--warn);
+}
+
+/* ── the queue ─────────────────────────────────────────────────────── */
+
+/* No inner scroll region. A Chrome popup already scrolls at its own height
+   limit, and a second scrollbar inside the first traps the wheel and slices
+   the last row in half. The list is as long as it is. */
+.queue-list {
+  list-style: none;
+  margin: var(--sp-3) 0 0;
+  padding: 0;
+  display: grid;
+  gap: var(--sp-2);
+}
+
+.queue-item {
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--surface);
+}
+
+.queue-item.failed {
+  border-color: color-mix(in oklch, var(--err) 30%, var(--line));
+  background: var(--err-wash);
+}
+
+.queue-item .title {
+  font-size: var(--t-sm);
+  font-weight: 500;
+  word-break: break-word;
+}
+
+.queue-item .why {
+  font-size: var(--t-xs);
+  color: var(--ink-2);
+  margin-top: 1px;
+  word-break: break-word;
+}
+
+.queue-item.failed .why {
+  color: var(--err);
+}
+
+.queue-item .actions {
+  display: flex;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+}
+
+/* ── batch progress ────────────────────────────────────────────────── */
+
+.progress {
+  display: none;
+  align-items: center;
+  gap: var(--sp-3);
+  margin-top: var(--sp-3);
+  font-size: var(--t-sm);
+  color: var(--ink-2);
+}
+
+.progress[data-running="true"] {
+  display: flex;
+}
+
+.progress .label {
+  flex: 1;
+  word-break: break-word;
+}
+
+/* ── disclosures ───────────────────────────────────────────────────── */
+
+.panels {
+  display: grid;
+  gap: 0;
+  border-top: 1px solid var(--line);
+}
+
+.panel {
+  border-bottom: 1px solid var(--line);
+}
+
+/* No trailing rule under the last disclosure: it would draw a line across
+   the bottom of the window with nothing beneath it. */
+.panel:last-of-type {
+  border-bottom: 0;
+}
+
+.panel > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-3) 0;
+  font-size: var(--t-sm);
+  font-weight: 500;
+  color: var(--ink);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.panel > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* The disclosure caret, drawn rather than typed so it rotates. */
+.panel > summary::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-right: 1.5px solid var(--ink-2);
+  border-bottom: 1.5px solid var(--ink-2);
+  transform: rotate(-45deg);
+  transition: transform var(--normal) var(--ease);
+}
+
+.panel[open] > summary::before {
+  transform: rotate(45deg);
+}
+
+.panel > summary:hover {
+  color: var(--accent-ink);
+}
+
+.panel > summary:hover::before {
+  border-color: var(--accent);
+}
+
+.panel-count {
+  margin-left: auto;
+  font-size: var(--t-xs);
+  font-weight: 500;
+  color: var(--ink-2);
+}
+
+.panel-count[data-tone="warn"] {
+  color: var(--warn);
+}
+.panel-count[data-tone="error"] {
+  color: var(--err);
+}
+
+.panel-body {
+  padding: 0 0 var(--sp-4);
+}
+
+.panel-body > * + * {
+  margin-top: var(--sp-4);
+}
+
+.note-line {
+  font-size: var(--t-xs);
+  color: var(--ink-2);
+  margin: var(--sp-1) 0 0;
+  text-wrap: pretty;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-top: var(--sp-3);
+  font-size: var(--t-xs);
+  color: var(--warn);
+  cursor: pointer;
+}
+
+.check input {
+  margin: 0;
+  flex: none;
+  accent-color: var(--accent);
+}
+
+/* ── reduced motion ────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  /* The breathing dot is the one piece of motion carrying meaning, so it is
+     replaced rather than removed: a hollow ring reads as "in progress"
+     without moving. */
+  .pill[data-busy="true"] .dot {
+    background: transparent;
+    box-shadow: inset 0 0 0 2px currentColor;
+  }
+}

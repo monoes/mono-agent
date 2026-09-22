@@ -38,6 +38,8 @@
 
   // Elements dense enough to carry an article's weight.
   const PARAGRAPH_TAGS = new Set(["p", "pre", "td", "blockquote", "article", "section", "div"]);
+  // Blocks that can be a surviving link rail rather than prose; see cleanup().
+  const RAIL_TAGS = new Set(["div", "section", "aside", "nav", "ul", "ol", "table", "form", "header", "footer"]);
   const MIN_PARAGRAPH = 25;
 
   const isText = (n) => n.tag === "#text";
@@ -295,7 +297,14 @@
             : textOf(child).replace(/\s+/g, " ").trim();
           if (own.length >= MIN_PARAGRAPH) {
             const base = 1 + (own.match(/[,，、]/g) || []).length + Math.min(Math.floor(own.length / 100), 3);
-            bump(child, base);
+            // A paragraph is evidence about its container, not a candidate
+            // itself — only its ancestors score, as in Readability. Scoring
+            // it too tied it with the container holding it, which then lost
+            // on link density for merely holding a link, so a short page kept
+            // one <p> and dropped its heading and every linked paragraph. A
+            // loose div/section/article is different: for its own loose text
+            // it IS the container, so it still scores itself.
+            if (loose) bump(child, base);
             bump(stack[stack.length - 1], base);
             bump(stack[stack.length - 2], base / 2);
             bump(stack[stack.length - 3], base / 3);
@@ -396,8 +405,11 @@
       const len = textLength(child);
       if (!len && !hasImageWithin(child)) return false;
       // A dense block of links inside the article is a "related stories" rail
-      // that survived pruning.
-      if (len < 120 && linkDensity(child) > 0.5) return false;
+      // that survived pruning. A rail is a container, so only containers are
+      // judged this way, as in Readability: applied to every block, it also
+      // deleted each paragraph that is just a link — the "Learn more" or
+      // "Read the full report" line that closes an article — which is content.
+      if (RAIL_TAGS.has(child.tag) && len < 120 && linkDensity(child) > 0.5) return false;
       return true;
     });
     forget(node);

@@ -8,8 +8,9 @@ import (
 	"github.com/monoes/mono-agent/internal/extension"
 )
 
-// newExtensionCmd groups pairing/reset operations for the Chrome extension
-// bridge (the loopback WebSocket at ~9222/monoagent). The bridge is
+// newExtensionCmd groups the Chrome extension bridge (the loopback
+// WebSocket at ~9222/monoagent): running it (`serve`), inspecting it
+// (`status`), and pairing with it (`pair`/`reset`). The bridge is
 // otherwise only reachable by same-machine callers (loopback bind + Origin
 // check), which is not an identity check — any local process could
 // impersonate the extension. Pairing gives it one: the server and the
@@ -17,10 +18,19 @@ import (
 // ~/.monoagent/extension.token.
 func newExtensionCmd(cfg *globalConfig) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "extension",
-		Short: "Manage pairing with the MonoAgent Bridge Chrome extension",
+		Use: "extension",
+		// The product calls itself "MonoAgent Bridge" everywhere a user
+		// sees it — the extension's name, the pairing page, `extension
+		// serve`'s own first line — so someone reading that output and
+		// typing `monoagentcli bridge status` deserves an answer rather
+		// than "unknown command". `extension` stays canonical: it is what
+		// `extension pair` already shipped as, and what the popup prints.
+		Aliases: []string{"bridge"},
+		Short:   "Run, inspect and pair the MonoAgent Bridge Chrome extension channel",
 	}
 	cmd.AddCommand(
+		newExtensionServeCmd(),
+		newExtensionStatusCmd(cfg),
 		newExtensionPairCmd(),
 		newExtensionResetCmd(),
 	)

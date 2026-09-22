@@ -56,6 +56,12 @@ func fallbackPortHint(bridge connChecker) string {
 	if err != nil || port == extension.DefaultExtensionPort {
 		return ""
 	}
+	// An operator who set the port themselves has not "fallen back" to
+	// anything, and telling them a Chrome is holding 9222 when they asked
+	// for 9400 sends them after a problem they do not have.
+	if strings.TrimSpace(os.Getenv(extension.ExtensionPortEnv)) != "" {
+		return ""
+	}
 	return fmt.Sprintf("\nNote: the bridge is listening on %s, not the usual port %s, because another program already holds %s "+
 		"(most often a Chrome or Chromium started with --remote-debugging-port=%s). Close that program, or open the extension "+
 		"popup and set the server URL to ws://%s/monoagent.",
@@ -421,7 +427,7 @@ func ensureExtensionConnected(bridge connChecker, timeout time.Duration) error {
 			time.Sleep(500 * time.Millisecond)
 		}
 		if !bridge.IsConnected() {
-			return fmt.Errorf("Chrome is running, but the MonoAgent extension did not connect within %s — make sure the extension is enabled in chrome://extensions and reload it if necessary%s", timeout, fallbackPortHint(bridge))
+			return fmt.Errorf("Chrome is running, but the MonoAgent extension did not connect within %s — make sure the extension is enabled in chrome://extensions and reload it if necessary%s%s", timeout, fallbackPortHint(bridge), bridgeLifetimeHint(bridge))
 		}
 		return nil
 	}
@@ -446,7 +452,7 @@ func ensureExtensionConnected(bridge connChecker, timeout time.Duration) error {
 		time.Sleep(500 * time.Millisecond)
 	}
 	if !bridge.IsConnected() {
-		return fmt.Errorf("Chrome was opened, but the MonoAgent extension did not connect within %s — make sure it is enabled in chrome://extensions and reload it if necessary%s", timeout, fallbackPortHint(bridge))
+		return fmt.Errorf("Chrome was opened, but the MonoAgent extension did not connect within %s — make sure it is enabled in chrome://extensions and reload it if necessary%s%s", timeout, fallbackPortHint(bridge), bridgeLifetimeHint(bridge))
 	}
 	return nil
 }
