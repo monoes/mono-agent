@@ -157,6 +157,24 @@ export namespace main {
 	        this.cover_letter_pdf_document_id = source["cover_letter_pdf_document_id"];
 	    }
 	}
+	export class CaptureSummaryStatus {
+	    status: string;
+	    runtime: string;
+	    error: string;
+	    finished_at: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CaptureSummaryStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.status = source["status"];
+	        this.runtime = source["runtime"];
+	        this.error = source["error"];
+	        this.finished_at = source["finished_at"];
+	    }
+	}
 	export class CaptureView {
 	    title: string;
 	    url: string;
@@ -164,6 +182,9 @@ export namespace main {
 	    word_count: number;
 	    readable: string;
 	    screenshot: string;
+	    summary: string;
+	    transcript: string;
+	    summary_status?: CaptureSummaryStatus;
 	
 	    static createFrom(source: any = {}) {
 	        return new CaptureView(source);
@@ -177,7 +198,28 @@ export namespace main {
 	        this.word_count = source["word_count"];
 	        this.readable = source["readable"];
 	        this.screenshot = source["screenshot"];
+	        this.summary = source["summary"];
+	        this.transcript = source["transcript"];
+	        this.summary_status = this.convertValues(source["summary_status"], CaptureSummaryStatus);
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class CredentialOption {
 	    id: string;
@@ -694,6 +736,7 @@ export namespace main {
 	    stale: boolean;
 	    url: string;
 	    capture_dir: string;
+	    summary_status: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ProfileDocument(source);
@@ -713,6 +756,7 @@ export namespace main {
 	        this.stale = source["stale"];
 	        this.url = source["url"];
 	        this.capture_dir = source["capture_dir"];
+	        this.summary_status = source["summary_status"];
 	    }
 	}
 	export class ProfileInfo {
