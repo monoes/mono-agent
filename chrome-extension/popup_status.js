@@ -298,7 +298,38 @@
     };
   }
 
+  /**
+   * arbitrate decides which of the popup's two sources answers, given the
+   * worker's last broadcast and the health probe's last reading (either may
+   * be null). It exists because they disagree in the most common case.
+   *
+   * The probe answers "is a bridge process running?" and knows. The worker
+   * reports only what its own socket just did — and with no bridge running
+   * it retries constantly, broadcasting "connecting" with no reason, then a
+   * result, then "connecting" again. Letting every broadcast repaint the
+   * popup made it flicker between "Bridge not running" and "Not connected"
+   * for as long as it stayed open.
+   *
+   * So each source answers only what it can know:
+   * - the socket alone knows it has attached, or that a token was refused;
+   * - the probe alone knows whether anything is there to attach to;
+   * - until the probe has answered, the worker stands in for it.
+   */
+  function arbitrate(worker, health) {
+    const w = worker || null;
+    const h = health || null;
+
+    if (w && w.status === "connected") return w;
+    if (w && (w.status === "unpaired" || w.reason === "auth_rejected")) return w;
+
+    if (!h) return w || { status: "checking", reason: "" };
+
+    if (h.status === "waiting" && w && w.status === "connecting") return w;
+    return h;
+  }
+
   root.MonoPopupStatus = {
+    arbitrate,
     describe,
     describeQueue,
     hostOf,

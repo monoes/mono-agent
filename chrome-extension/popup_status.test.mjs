@@ -260,3 +260,69 @@ test("nonsense counts do not produce nonsense sentences", () => {
   assert.equal(S.describeQueue({ queued: -3, failed: 0 }), null);
   assert.equal(S.describeQueue({ queued: "2", failed: null }).text, "2 captures are waiting to send");
 });
+
+// --- who gets the last word ------------------------------------------------
+//
+// The popup has two sources and they disagree in the most common case of
+// all. The health probe asks "is a bridge process running?" and knows the
+// answer. The worker only reports what its own socket just did, and while no
+// bridge is running it retries constantly — broadcasting "connecting" with no
+// reason, then a result, then "connecting" again. Letting every broadcast
+// overwrite the display made the popup flicker between "Bridge not running"
+// and "Not connected" for as long as it was open, which is what a user saw
+// the first time they opened it. arbitrate() decides which source is allowed
+// to answer which question.
+
+const noBridge = { status: "disconnected", reason: "no_bridge" };
+const bridgeUp = { status: "waiting", reason: "" };
+
+test("with no bridge running, the worker's retry churn cannot move the display", () => {
+  // The exact sequence a retrying worker broadcasts against an empty port.
+  const churn = [
+    { status: "connecting", reason: "" },
+    { status: "disconnected", reason: "no_bridge" },
+    { status: "connecting", reason: "" },
+    { status: "disconnected", reason: "socket_closed" },
+    { status: "disconnected", reason: "" },
+  ];
+  const labels = new Set(
+    churn.map((worker) => S.describe(S.arbitrate(worker, noBridge)).label),
+  );
+  assert.deepEqual([...labels], ["Bridge not running"]);
+});
+
+test("a socket that attached outranks a probe taken before it did", () => {
+  // The probe is a snapshot; a live attach is newer and only the socket
+  // can know it happened.
+  assert.equal(S.arbitrate({ status: "connected" }, bridgeUp).status, "connected");
+  assert.equal(S.arbitrate({ status: "connected" }, noBridge).status, "connected");
+});
+
+test("only the socket can say a token was refused", () => {
+  const rejected = { status: "unpaired", reason: "auth_rejected" };
+  assert.equal(S.arbitrate(rejected, bridgeUp).reason, "auth_rejected");
+  assert.equal(S.arbitrate({ status: "unpaired" }, bridgeUp).status, "unpaired");
+});
+
+test("a running bridge with nothing attached reads as ready, not as a fault", () => {
+  // The worker has not dialled since the bridge came up, so it still holds
+  // its last failure. The probe knows better.
+  const view = S.describe(S.arbitrate(noBridge, bridgeUp));
+  assert.equal(view.key, "waiting");
+  assert.equal(view.tone, "ok");
+});
+
+test("a running bridge the worker is actively dialling reads as connecting", () => {
+  const view = S.describe(S.arbitrate({ status: "connecting" }, bridgeUp));
+  assert.equal(view.label, "Connecting…");
+});
+
+test("before the probe answers, the worker's word stands in", () => {
+  assert.equal(S.arbitrate({ status: "connecting" }, null).status, "connecting");
+  assert.equal(S.arbitrate(null, null).status, "checking");
+});
+
+test("the probe's own verdict passes through when the worker is silent", () => {
+  assert.equal(S.arbitrate(null, noBridge).reason, "no_bridge");
+  assert.equal(S.arbitrate(null, { status: "unpaired" }).status, "unpaired");
+});

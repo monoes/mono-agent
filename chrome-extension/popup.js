@@ -89,13 +89,20 @@ const connection = {
 let shown = null;
 
 /**
- * Whether the worker has pushed a status since the popup opened. A push is
- * a real event — the socket genuinely changed — so it outranks the health
- * probe's answer, which is only ever a snapshot taken at open. Without this
- * a slow probe could land after a successful connection and talk the UI
- * back down to "Bridge ready".
+ * The popup's two sources, kept apart so neither can silently overwrite the
+ * other. The worker reports what its own socket did; the health probe says
+ * whether a bridge process is running at all. They disagree constantly while
+ * no bridge is running — the worker retries and broadcasts on every attempt
+ * — so every repaint goes through Status.arbitrate, which lets each source
+ * answer only the question it can actually know. Letting the last message
+ * win made the popup flicker between two sentences for the same fact.
  */
-let livePush = false;
+let workerState = null;
+let healthState = null;
+
+function settle() {
+  noteStatus(Status.arbitrate(workerState, healthState));
+}
 
 /**
  * noteStatus records a status update, preserving `since` across repeats of
@@ -565,8 +572,8 @@ batchCancelBtn.addEventListener("click", async () => {
 
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === "status") {
-    livePush = true;
-    noteStatus(msg);
+    workerState = msg;
+    settle();
     return;
   }
   if (msg.type === "capture_batch_progress") {
@@ -596,8 +603,17 @@ async function loadFormState() {
   drawQueue(state);
 }
 
-/** Set once the health probe has answered, either way. */
-let probed = false;
+/**
+ * How often the popup re-asks the bridge while it is not connected. A probe
+ * taken only at open went stale the moment someone started the bridge in a
+ * terminal with the popup still showing, which is exactly when they are
+ * looking at it. Loopback and short, so it costs nothing.
+ */
+const HEALTH_POLL_MS = 2000;
+
+/** The storage hints the probe was first given, reused by every poll. */
+let probeHints = {};
+let probing = false;
 
 /**
  * checkHealth asks the bridge directly whether it is running, and is the
@@ -606,14 +622,29 @@ let probed = false;
  * result, which is the most common state and has to feel instant, so there
  * is no error path and nothing to wait on.
  */
-async function checkHealth(stored) {
-  const health = await MonoBridgeHealth.probe({ known: stored });
-  probed = true;
-  // A real socket event that has already arrived is newer than this
-  // snapshot and wins; see `livePush`.
-  if (livePush) return;
-  noteStatus(MonoBridgeHealth.toStatus(health));
+async function checkHealth() {
+  if (probing) return;
+  probing = true;
+  try {
+    const health = await MonoBridgeHealth.probe({ known: probeHints });
+    const before = healthState;
+    healthState = MonoBridgeHealth.toStatus(health);
+    settle();
+    // A bridge that has just appeared: ask the worker to dial now, the same
+    // way "Try again" does, rather than leave it to its next scheduled
+    // retry — which can be half a minute away once the fast retries are
+    // spent, and is exactly the wait that made the popup look broken.
+    if (before && before.reason === "no_bridge" && healthState.reason !== "no_bridge") {
+      ask({ type: "set_ws_url", url: wsUrlInput.value.trim() || Status.DEFAULT_WS_URL });
+    }
+  } finally {
+    probing = false;
+  }
 }
+
+setInterval(() => {
+  if (connection.status !== "connected") checkHealth();
+}, HEALTH_POLL_MS);
 
 async function init() {
   // The non-loopback override is session-scoped and must be re-enabled
@@ -627,18 +658,17 @@ async function init() {
   drawStatus();
 
   chrome.runtime.sendMessage({ type: "get_status" }, (response) => {
-    // Only a stand-in until the health probe answers, and never allowed to
-    // overrule it: the worker can only report what its own socket did,
-    // which is exactly the inference the probe exists to replace.
-    if (probed) return;
-    if (chrome.runtime.lastError || !response?.status) {
-      // No answer at all means the worker is asleep or gone, which is not
-      // the same as a bridge that refused us — and it is about to wake up
-      // and tell us properly. Hold the calm state rather than guessing.
-      noteStatus({ status: "connecting" });
-      return;
-    }
-    noteStatus(response);
+    // A stand-in until the probe answers, and only when it says something
+    // the probe cannot. A worker that has just been woken to answer this
+    // reports its boot-time "disconnected" with no reason — true, stale, and
+    // exactly what used to flash "Not connected" at someone opening the
+    // popup. Hold "Checking…" instead; the probe is already on its way.
+    if (workerState || chrome.runtime.lastError || !response?.status) return;
+    const informative =
+      response.status === "connected" || response.status === "unpaired" || !!response.reason;
+    if (!informative) return;
+    workerState = response;
+    settle();
   });
 
   const stored = await chrome.storage.local.get(["wsUrl", "pairedWsUrl", "workingWsUrl"]);
@@ -649,7 +679,8 @@ async function init() {
   // is what makes "no bridge is running" a statement instead of a guess —
   // and it is deliberately not awaited before the form loads, so the popup
   // is never waiting on the network to become usable.
-  checkHealth(stored);
+  probeHints = stored;
+  checkHealth();
 
   await loadFormState();
 }
