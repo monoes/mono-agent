@@ -31,6 +31,9 @@ importScripts("ask.js", "saved.js", "highlights.js", "recall_bridge.js");
 // it unasked-for, which is why it needs its own module rather than another
 // case in the dispatch below.
 importScripts("cdp_proxy.js");
+// Asked before every dial; see doConnect. The same module the popup uses,
+// so "is that really the bridge?" has exactly one implementation.
+importScripts("bridge_health.js");
 
 // ---------------------------------------------------------------------------
 // State
@@ -334,7 +337,31 @@ async function doConnect() {
   }
 
   await stickyLoaded;
-  const url = await getWsUrl();
+
+  // Ask before dialling. Chrome logs every WebSocket that fails to connect as
+  // an extension error — twice, once for the browser and once for onerror —
+  // so a worker retrying against an empty port every 500ms filled the red
+  // Errors badge in chrome://extensions with "connection refused", which
+  // reads as broken when it only means the bridge is not running. A failed
+  // fetch is silent, and the health document also settles what a socket
+  // never can: whether anything is there at all, and whether it is really
+  // the bridge rather than something else answering on the port.
+  let known = {};
+  try {
+    known = await chrome.storage.local.get(["wsUrl", "pairedWsUrl", "workingWsUrl"]);
+  } catch {
+    // storage unavailable — probe the default candidates
+  }
+  const health = await MonoBridgeHealth.probe({ known });
+  if (!health) {
+    setStatus("disconnected", "no_bridge");
+    return;
+  }
+
+  // The bridge says where its socket is, which beats guessing between the two
+  // candidate ports. An address the user set explicitly in the popup still wins.
+  let url = await getWsUrl();
+  if (!known.wsUrl && health.wsUrl) url = health.wsUrl;
 
   try {
     await assertLoopbackAllowed(url);
@@ -397,9 +424,11 @@ async function doConnect() {
     handleCommand(cmd);
   };
 
-  ws.onerror = (err) => {
-    console.error("[monoagent] WebSocket error:", err);
-  };
+  // onerror always arrives alongside onclose, carries nothing a browser is
+  // willing to explain, and every case it could mean is handled in onclose.
+  // Logging it as an error only put noise behind chrome://extensions' red
+  // Errors button — once per failed attempt — for a state that is not a fault.
+  ws.onerror = () => {};
 
   ws.onclose = (event) => {
     stopKeepAlive();
@@ -1024,6 +1053,13 @@ chrome.storage.onChanged.addListener((changes, area) => {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "get_status") {
     sendResponse(statusPayload());
+    // Someone just opened the popup, which is the moment they care whether
+    // this is connected. A suspended worker otherwise only dials again on its
+    // next alarm — up to half a minute after the bridge was started, which is
+    // exactly the "I started it and nothing changed" gap. Dialling is silent
+    // now (see doConnect), so trying on every open costs nothing; an unpaired
+    // worker is left alone until it is given a token.
+    if (connectionStatus !== "connected" && connectionStatus !== "unpaired") connect();
     return false;
   }
   // Handle file read requests from content script (for file upload)
