@@ -111,6 +111,8 @@ export function GetApplication(arg1:string):Promise<main.ApplicationDetail>;
 
 export function GetApplications(arg1:string,arg2:string,arg3:string):Promise<Array<main.ApplicationSummary>>;
 
+export function GetCaptureView(arg1:string):Promise<main.CaptureView>;
+
 export function GetChatEvents(arg1:string,arg2:string,arg3:number,arg4:number):Promise<string>;
 
 export function GetChatSessionMessages(arg1:string,arg2:string):Promise<string>;

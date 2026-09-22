@@ -19,6 +19,7 @@ vi.mock('../wailsjs/go/main/App', () => ({
   OpenPathWithOS: vi.fn(() => Promise.resolve()),
   OpenURL: vi.fn(() => Promise.resolve()),
   GetProfileDocumentText: vi.fn(() => Promise.resolve('# Captured page')),
+  GetCaptureView: vi.fn(() => Promise.resolve({ title: 'Captured', url: '', readable: '# Captured page', screenshot: '' })),
   GetProfileDocumentData: vi.fn(() => Promise.resolve('')),
   IsMonomindInitialized: vi.fn(() => Promise.resolve(true)),
 }))
@@ -72,13 +73,22 @@ describe('Documents: browser captures', () => {
     expect(WailsApp.OpenURL).toHaveBeenCalledWith(capture.url)
   })
 
-  it('previews a readable.md capture in-app and hands an MHTML one to the OS', async () => {
+  it('previews every capture in-app from its parts, never through the OS', async () => {
     await renderLoaded()
     fireEvent.doubleClick(screen.getByText('An article').closest('tr'))
-    await waitFor(() => expect(WailsApp.GetProfileDocumentText).toHaveBeenCalledWith('doc-10'))
+    await waitFor(() => expect(WailsApp.GetCaptureView).toHaveBeenCalledWith('doc-10'))
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
 
     fireEvent.doubleClick(screen.getByText('Jev Picker Plan').closest('tr'))
-    expect(WailsApp.OpenPathWithOS).toHaveBeenCalledWith(capture.path)
+    await waitFor(() => expect(screen.getByRole('dialog', { name: 'Capture preview' })).toBeInTheDocument())
+    expect(WailsApp.OpenPathWithOS).not.toHaveBeenCalled()
+  })
+
+  it('labels the delete button as a delete, not a double-click hint', async () => {
+    await renderLoaded()
+    const del = screen.getByRole('button', { name: 'Delete Jev Picker Plan' })
+    expect(del).toHaveAttribute('title', 'Delete this capture')
+    expect(del.closest('[title="Double-click to view"]')).toBeNull()
   })
 })
 

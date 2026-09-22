@@ -45,7 +45,7 @@ export function isMarkdownFile(filename) {
 // posture the html viewer below already takes with its empty iframe
 // sandbox, since a "discovered" document's content isn't necessarily
 // authored by the user themselves.
-const mdComponents = {
+export const mdComponents = {
   h1: (p) => <h1 style={{ fontSize: 20, margin: '0.6em 0 0.4em', color: '#f1f5f9', borderBottom: '1px solid #1e3a4f', paddingBottom: 6 }} {...p} />,
   h2: (p) => <h2 style={{ fontSize: 17, margin: '0.6em 0 0.4em', color: '#f1f5f9' }} {...p} />,
   h3: (p) => <h3 style={{ fontSize: 14, margin: '0.6em 0 0.3em', color: '#f1f5f9' }} {...p} />,

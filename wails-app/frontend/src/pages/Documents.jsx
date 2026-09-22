@@ -4,6 +4,7 @@ import * as WailsApp from '../wailsjs/go/main/App'
 import { confirm } from '../components/ConfirmDialog.jsx'
 import { api, notify, onMonomindInitEvent, onDocumentsChanged } from '../services/api.js'
 import FileViewerModal, { fileViewerKind } from '../components/FileViewerModal.jsx'
+import CaptureViewerModal from '../components/CaptureViewerModal.jsx'
 import { isMonomindNotFound } from '../lib/agentRuntimes.js'
 import SortableTh from '../components/SortableTh.jsx'
 import {
@@ -265,6 +266,7 @@ export default function Documents() {
   // A browser capture previews as its primary artifact (readable.md in-app;
   // an MHTML archive goes to the OS, which opens it in a browser).
   const handleOpenDocument = (d) => {
+    if (isCapture(d)) return setViewingDoc({ ...d, capture: true })
     const name = viewerFilename(d)
     if (fileViewerKind(name) && d.size_bytes <= maxInlinePreviewBytes) {
       setViewingDoc({ ...d, filename: name })
@@ -326,7 +328,8 @@ export default function Documents() {
         <button type="submit" style={btnStyle} disabled={searching}><Search size={13} /> Search</button>
         <select
           aria-label="Filter by source"
-          style={{ ...inputStyle, cursor: 'pointer' }}
+          className="filter-select"
+          style={{ fontFamily: 'var(--font-mono)', fontSize: 11, colorScheme: 'dark' }}
           value={sourceFilter}
           onChange={e => setSourceFilter(e.target.value)}
         >
@@ -396,7 +399,6 @@ export default function Documents() {
                 key={d.id}
                 onDoubleClick={() => handleOpenDocument(d)}
                 style={{ borderTop: '1px solid rgba(255,255,255,0.05)', cursor: 'pointer' }}
-                title="Double-click to view"
               >
                 <td style={{ padding: '8px' }}>
                   <input
@@ -408,7 +410,7 @@ export default function Documents() {
                     onChange={() => toggleSelected(d.id)}
                   />
                 </td>
-                <td style={{ padding: '8px' }}>
+                <td style={{ padding: '8px' }} title="Double-click to view">
                   <div>{d.filename}</div>
                   {d.url && (
                     <div style={{ fontSize: 10, color: 'var(--text-muted)', maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={d.url}>
@@ -477,7 +479,7 @@ export default function Documents() {
                     </button>
                   )}
                   {d.source !== 'discovered' && (
-                    <button style={{ ...btnStyle, color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', padding: '4px 8px' }} onClick={(e) => { e.stopPropagation(); handleDelete(d.id, d.filename, isCapture(d)) }}>
+                    <button style={{ ...btnStyle, color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', padding: '4px 8px' }} title={isCapture(d) ? 'Delete this capture' : 'Delete'} aria-label={`Delete ${d.filename}`} onClick={(e) => { e.stopPropagation(); handleDelete(d.id, d.filename, isCapture(d)) }}>
                       <Trash2 size={12} />
                     </button>
                   )}
@@ -493,7 +495,8 @@ export default function Documents() {
         </table>
       </div>
 
-      {viewingDoc && <FileViewerModal doc={viewingDoc} onClose={() => setViewingDoc(null)} />}
+      {viewingDoc?.capture && <CaptureViewerModal doc={viewingDoc} onClose={() => setViewingDoc(null)} />}
+      {viewingDoc && !viewingDoc.capture && <FileViewerModal doc={viewingDoc} onClose={() => setViewingDoc(null)} />}
     </div>
   )
 }
