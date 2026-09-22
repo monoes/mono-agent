@@ -75,7 +75,7 @@ func newCapturePageCmd(cfg *globalConfig) *cobra.Command {
 			bridge := setupExtensionBridge(newExtensionBridgeLogger(), 3*time.Second)
 			capturer, ok := bridge.(extension.Capturer)
 			if !ok {
-				return fmt.Errorf("this extension bridge cannot capture pages (%T)", bridge)
+				return errAuthConnection("this extension bridge cannot capture pages (%T)%s", bridge, bridgeAdvice)
 			}
 			if err := ensureExtensionConnected(bridge, 30*time.Second); err != nil {
 				return errAuthConnection("%v", err)
@@ -92,6 +92,16 @@ func newCapturePageCmd(cfg *globalConfig) *cobra.Command {
 				Inbox:      expandPath(out),
 			})
 			if err != nil {
+				// A capture that fails with the extension gone is almost
+				// always the extension going away mid-capture (Chrome
+				// suspends an idle service worker), not a bad page — and
+				// the bare timeout that used to come back said nothing
+				// about either. Exit code 4, not 1: this is a connection
+				// failure.
+				if !bridge.IsConnected() {
+					return errAuthConnection("capturing page: %v\n\nThe browser extension is no longer connected to this process.%s",
+						err, bridgeLifetimeHint(bridge))
+				}
 				return fmt.Errorf("capturing page: %w", err)
 			}
 

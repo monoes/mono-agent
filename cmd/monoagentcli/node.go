@@ -184,12 +184,12 @@ func waitForRelay(addr string, timeout time.Duration) browserpkg.ExtensionBridge
 }
 
 // setupExtensionBridge returns a browser.ExtensionBridge for talking to the
-// Chrome extension. If another local monoagentcli process (typically the
-// daemon) already owns the extension connection, it relays through that
-// process's server instead of starting a second one — starting a second
-// server would just fail to bind the fixed extension port and silently
-// leave IsConnected() reporting false, since there is no Rod/Chromium
-// fallback to degrade to.
+// Chrome extension. If another local monoagentcli process (typically a
+// `monoagentcli extension serve` bridge, or the daemon) already owns the
+// extension connection, it relays through that process's server instead of
+// starting a second one — starting a second server would just fail to bind
+// the fixed extension port and silently leave IsConnected() reporting
+// false, since there is no Rod/Chromium fallback to degrade to.
 func setupExtensionBridge(logger zerolog.Logger, waitForConnection time.Duration) browserpkg.ExtensionBridge {
 	probeAddrs := extensionProbeAddrs()
 	for _, addr := range probeAddrs {
@@ -199,12 +199,10 @@ func setupExtensionBridge(logger zerolog.Logger, waitForConnection time.Duration
 		}
 	}
 
-	extServer := extension.NewServer(extensionListenAddr(), logger)
-	// The extension's profile picker asks this process which profiles exist
-	// (profile.list). With no source installed the method is not advertised
-	// at all, and the popup quietly saves into the default profile — see
-	// internal/extension/profile_list.go.
-	extServer.SetProfileSource(extensionProfileSource(defaultDBPath))
+	// Same wiring an `extension serve` bridge gets (see extension_serve.go),
+	// so a workflow that has to start its own bridge is not a lesser one
+	// than the bridge it would otherwise have relayed through.
+	extServer := newExtensionServer(logger)
 	errCh := extServer.StartAsync(context.Background())
 
 	// The probe above and the bind below are not atomic: another process can
