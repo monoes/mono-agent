@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -39,6 +40,9 @@ func newCaptureCmd(cfg *globalConfig) *cobra.Command {
 // knownCaptureFormats are the artifact kinds the extension can produce.
 var knownCaptureFormats = []string{"mhtml", "pdf", "readable", "screenshot"}
 
+// captureModes mirrors chrome-extension/capture_modes.js MODES.
+var captureModes = []string{"full", "screenshot", "summary", "video"}
+
 func newCapturePageCmd(cfg *globalConfig) *cobra.Command {
 	var (
 		tab        int
@@ -48,6 +52,7 @@ func newCapturePageCmd(cfg *globalConfig) *cobra.Command {
 		tags       []string
 		collection string
 		out        string
+		mode       string
 		timeout    time.Duration
 	)
 	cmd := &cobra.Command{
@@ -62,7 +67,8 @@ func newCapturePageCmd(cfg *globalConfig) *cobra.Command {
 			"still lands.",
 		Example: "  monoagentcli capture page\n" +
 			"  monoagentcli capture page --formats mhtml,readable --note \"for the Q4 memo\" --tag research\n" +
-			"  monoagentcli capture page --tab 42 --selection --collection reading --json",
+			"  monoagentcli capture page --tab 42 --selection --collection reading --json\n" +
+			"  monoagentcli capture page --mode video   # a YouTube tab: transcript + AI summary",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if tab < 0 {
 				return errInvalidInput("--tab must be a positive Chrome tab id, got %d", tab)
@@ -70,6 +76,9 @@ func newCapturePageCmd(cfg *globalConfig) *cobra.Command {
 			formats, err := normalizeCaptureFormats(formats)
 			if err != nil {
 				return err
+			}
+			if mode != "" && !slices.Contains(captureModes, mode) {
+				return errInvalidInput("--mode must be one of %s, got %q", strings.Join(captureModes, ", "), mode)
 			}
 
 			bridge := setupExtensionBridge(newExtensionBridgeLogger(), 3*time.Second)
@@ -88,6 +97,7 @@ func newCapturePageCmd(cfg *globalConfig) *cobra.Command {
 				Note:       note,
 				Tags:       tags,
 				Collection: collection,
+				Mode:       mode,
 				Timeout:    timeout,
 				Inbox:      expandPath(out),
 			})
@@ -127,6 +137,9 @@ func newCapturePageCmd(cfg *globalConfig) *cobra.Command {
 	cmd.Flags().StringSliceVar(&tags, "tag", nil, "Tag to store alongside the capture (repeatable)")
 	cmd.Flags().StringVar(&collection, "collection", "", "Collection to file the capture under")
 	cmd.Flags().StringVar(&out, "out", "", "Inbox directory to write into (default: ~/.monomind/inbox)")
+	cmd.Flags().StringVar(&mode, "mode", "",
+		"Capture mode, as in the extension's right-click menu: "+strings.Join(captureModes, ", ")+
+			" (summary and video also get an AI summary.md from the bridge)")
 	cmd.Flags().DurationVar(&timeout, "timeout", extension.DefaultCaptureTimeout,
 		"How long to wait for the browser to finish the capture")
 	return cmd

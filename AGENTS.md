@@ -468,6 +468,7 @@ regardless of where the binary runs from.
 | `MONOAGENT_ALLOW_ENV_TEMPLATES` | Set to `1` to let `{{ $env.* }}` template expressions read OS environment variables (see `ref expressions`). Default: unset — `$env` references resolve to empty. |
 | `MONOAGENT_CRASH_REPORT` | Set to `1` to allow crash reports to be filed to GitHub (also requires the `monomind` CLI on `PATH`). Default: unset — crash reports stay in local files under `~/.monoagent/crashes/`. |
 | `MONOAGENT_EXTENSION_PORT` | Bind-port override for the browser-extension bridge server; the extension probes this port and falls back to 9323. Default: unset — 9323 only. |
+| `MONOAGENT_SUMMARY_RUNTIME` | Agent runtime the extension bridge uses to write `summary.md` for captures saved with "Save page summary" / "Save video summary" (`extension serve --summary-runtime` wins over it). `off` disables summaries; each capture that asked then records why in `summary.json`. Default: unset — `claude`. |
 | `MONOAGENT_PROFILE` | Profile name the built-in MCP server operates against. Default: unset — the MCP server's default profile. |
 | `MONOAGENT_DEBUG` | Set to any non-empty value to enable verbose browser-adapter logging. Default: unset. |
 | `MONOAGENT_GOOGLE_DEBUG` | Set to `1` to log raw Google AI (Gemini) request/response bodies. Default: unset — off, since responses may contain user content. |

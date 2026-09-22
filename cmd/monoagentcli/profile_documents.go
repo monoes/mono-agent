@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/monoes/mono-agent/internal/capturedocs"
+	"github.com/monoes/mono-agent/internal/capturesummary"
 	"github.com/monoes/mono-agent/internal/monomind"
 	"github.com/monoes/mono-agent/internal/vault"
 
@@ -139,7 +141,7 @@ func newProfileDocumentsListCmd(cfg *globalConfig) *cobra.Command {
 			if cfg.JSONOutput {
 				enc := json.NewEncoder(cmd.OutOrStdout())
 				enc.SetIndent("", "  ")
-				return enc.Encode(docs)
+				return enc.Encode(withSummaryState(docs, time.Now()))
 			}
 			if len(docs) == 0 {
 				fmt.Fprintln(cmd.OutOrStdout(), "No documents uploaded.")
@@ -153,6 +155,25 @@ func newProfileDocumentsListCmd(cfg *globalConfig) *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// listedDocument is one `profile documents list --json` row: the vault
+// entry plus, for a browser capture that asked for an AI summary, where
+// that summary is (capturesummary.StateOf). Omitted for every other row, so
+// the output is unchanged for anything that is not a summarized capture.
+type listedDocument struct {
+	vault.DocumentEntry
+	SummaryStatus string `json:",omitempty"`
+}
+
+// withSummaryState reads each capture row's summary.json: one small file
+// per capture, and only for capture rows.
+func withSummaryState(docs []vault.DocumentEntry, now time.Time) []listedDocument {
+	out := make([]listedDocument, 0, len(docs))
+	for _, d := range docs {
+		out = append(out, listedDocument{DocumentEntry: d, SummaryStatus: capturesummary.StateOf(d.CaptureDir, now)})
+	}
+	return out
 }
 
 func newProfileDocumentsRmCmd(cfg *globalConfig) *cobra.Command {
