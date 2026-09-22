@@ -19,6 +19,7 @@ import (
 
 	"github.com/monoes/mono-agent/internal/ai"
 	aichat "github.com/monoes/mono-agent/internal/ai/chat"
+	"github.com/monoes/mono-agent/internal/capturedocs"
 	"github.com/monoes/mono-agent/internal/connections"
 	"github.com/monoes/mono-agent/internal/docscan"
 	"github.com/monoes/mono-agent/internal/monomind"
@@ -58,7 +59,8 @@ type App struct {
 	orgWatcher *orgdesign.Watcher // polls the active profile's .monomind/orgs/ dir; see restartOrgWatcher
 
 	docWatchMu sync.Mutex
-	docWatcher *docscan.Watcher // polls the active profile's whole folder (minus .monomind/) for document changes; see restartDocumentWatcher
+	docWatcher *docscan.Watcher     // polls the active profile's whole folder (minus .monomind/) for document changes; see restartDocumentWatcher
+	capWatcher *capturedocs.Watcher // polls the active profile's browser-capture inbox; see restartDocumentWatcher
 }
 
 // cancelHandle wraps a stream's cancel func in a pointer so it has a comparable
@@ -310,6 +312,10 @@ func (a *App) shutdown(_ context.Context) {
 	if a.docWatcher != nil {
 		a.docWatcher.Stop()
 		a.docWatcher = nil
+	}
+	if a.capWatcher != nil {
+		a.capWatcher.Stop()
+		a.capWatcher = nil
 	}
 	a.docWatchMu.Unlock()
 

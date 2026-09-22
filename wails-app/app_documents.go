@@ -23,6 +23,10 @@ type ProfileDocument struct {
 	Indexed       bool   `json:"indexed"`
 	IndexError    string `json:"index_error"`
 	Stale         bool   `json:"stale"`
+	// URL and CaptureDir are set only for a browser capture: the page it
+	// was saved from, and its envelope directory in the profile's inbox.
+	URL        string `json:"url"`
+	CaptureDir string `json:"capture_dir"`
 }
 
 // KnowledgeSearchResult mirrors internal/monomind.KnowledgeResult (also
@@ -33,14 +37,15 @@ type KnowledgeSearchResult struct {
 	Score   float64 `json:"score"`
 }
 
-// ListProfileDocuments lists every document uploaded to the active
-// profile's vault.
+// ListProfileDocuments lists the active profile's documents: uploads,
+// files discovered in its folder, and browser captures (the CLI syncs the
+// profile's capture inbox into the list before returning it).
 func (a *App) ListProfileDocuments() ([]ProfileDocument, error) {
 	var raw []struct {
-		ID, Path, Filename, Source, ApplicationID, CreatedAt, IndexError string
-		SizeBytes                                                        int64
-		Indexed                                                          bool
-		Stale                                                            bool
+		ID, Path, Filename, Source, ApplicationID, CreatedAt, IndexError, URL, CaptureDir string
+		SizeBytes                                                                         int64
+		Indexed                                                                           bool
+		Stale                                                                             bool
 	}
 	if err := a.runMonoCLI("", &raw, "profile", "documents", "list"); err != nil {
 		return nil, err
@@ -51,6 +56,7 @@ func (a *App) ListProfileDocuments() ([]ProfileDocument, error) {
 			ID: d.ID, Filename: d.Filename, Path: d.Path, SizeBytes: d.SizeBytes,
 			Source: d.Source, ApplicationID: d.ApplicationID, CreatedAt: d.CreatedAt,
 			Indexed: d.Indexed, IndexError: d.IndexError, Stale: d.Stale,
+			URL: d.URL, CaptureDir: d.CaptureDir,
 		})
 	}
 	return out, nil
@@ -76,6 +82,7 @@ func (a *App) GetProfileDocument(id string) (*ProfileDocument, error) {
 		ID: doc.ID, Filename: doc.Filename, Path: doc.Path, SizeBytes: doc.SizeBytes,
 		Source: doc.Source, ApplicationID: doc.ApplicationID, CreatedAt: doc.CreatedAt,
 		Indexed: doc.Indexed, IndexError: doc.IndexError, Stale: doc.Stale,
+		URL: doc.URL, CaptureDir: doc.CaptureDir,
 	}, nil
 }
 

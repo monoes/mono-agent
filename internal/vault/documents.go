@@ -20,7 +20,27 @@ type DocumentEntry struct {
 	CreatedAt     string
 	Indexed       bool
 	IndexError    string
-	Stale         bool // computed at read time, not a DB column -- see computeStale
+	// URL is the page a browser capture was taken from; empty for every
+	// other row. CaptureDir is the capture's envelope directory, non-empty
+	// exactly for capture-backed rows (see ReconcileCaptureDocuments).
+	URL        string
+	CaptureDir string
+	Stale      bool // computed at read time, not a DB column -- see computeStale
+}
+
+// documentColumns is the column list ListDocuments and GetDocument select,
+// in the order scanDocument reads them.
+const documentColumns = `id, path, filename, size_bytes, source, COALESCE(application_id, ''), created_at, indexed, COALESCE(index_error, ''), indexed_mtime, indexed_size_bytes, COALESCE(url, ''), COALESCE(capture_dir, '')`
+
+// scanDocument reads one documentColumns row and computes its Stale flag.
+func scanDocument(scan func(dest ...any) error) (DocumentEntry, error) {
+	var d DocumentEntry
+	var indexedMTime, indexedSizeBytes sql.NullInt64
+	if err := scan(&d.ID, &d.Path, &d.Filename, &d.SizeBytes, &d.Source, &d.ApplicationID, &d.CreatedAt, &d.Indexed, &d.IndexError, &indexedMTime, &indexedSizeBytes, &d.URL, &d.CaptureDir); err != nil {
+		return d, err
+	}
+	d.Stale = computeStale(d.Indexed, indexedMTime, indexedSizeBytes, d.Path)
+	return d, nil
 }
 
 // computeStale reports whether an indexed document's content has changed
@@ -137,20 +157,17 @@ func RegisterDocument(ctx context.Context, db *sql.DB, src, source string, appli
 // ListDocuments returns profileID's uploaded documents, newest first.
 func ListDocuments(ctx context.Context, db *sql.DB, profileID string) ([]DocumentEntry, error) {
 	rows, err := db.QueryContext(ctx,
-		`SELECT id, path, filename, size_bytes, source, COALESCE(application_id, ''), created_at, indexed, COALESCE(index_error, ''), indexed_mtime, indexed_size_bytes
-		 FROM vault_documents WHERE profile_id = ? ORDER BY seq DESC`, profileID)
+		`SELECT `+documentColumns+` FROM vault_documents WHERE profile_id = ? ORDER BY seq DESC`, profileID)
 	if err != nil {
 		return nil, fmt.Errorf("vault.ListDocuments: %w", err)
 	}
 	defer rows.Close()
 	docs := []DocumentEntry{}
 	for rows.Next() {
-		var d DocumentEntry
-		var indexedMTime, indexedSizeBytes sql.NullInt64
-		if err := rows.Scan(&d.ID, &d.Path, &d.Filename, &d.SizeBytes, &d.Source, &d.ApplicationID, &d.CreatedAt, &d.Indexed, &d.IndexError, &indexedMTime, &indexedSizeBytes); err != nil {
+		d, err := scanDocument(rows.Scan)
+		if err != nil {
 			return nil, fmt.Errorf("vault.ListDocuments: scan: %w", err)
 		}
-		d.Stale = computeStale(d.Indexed, indexedMTime, indexedSizeBytes, d.Path)
 		docs = append(docs, d)
 	}
 	return docs, rows.Err()
@@ -164,19 +181,15 @@ func ListDocuments(ctx context.Context, db *sql.DB, profileID string) ([]Documen
 // value. Mirrors ListDocuments' column set and stale computation, scoped
 // by (id, profile_id) the same way DeleteDocument/SetDocumentIndexed are.
 func GetDocument(ctx context.Context, db *sql.DB, profileID, id string) (*DocumentEntry, error) {
-	var d DocumentEntry
-	var indexedMTime, indexedSizeBytes sql.NullInt64
-	err := db.QueryRowContext(ctx,
-		`SELECT id, path, filename, size_bytes, source, COALESCE(application_id, ''), created_at, indexed, COALESCE(index_error, ''), indexed_mtime, indexed_size_bytes
-		 FROM vault_documents WHERE id = ? AND profile_id = ?`, id, profileID,
-	).Scan(&d.ID, &d.Path, &d.Filename, &d.SizeBytes, &d.Source, &d.ApplicationID, &d.CreatedAt, &d.Indexed, &d.IndexError, &indexedMTime, &indexedSizeBytes)
+	d, err := scanDocument(db.QueryRowContext(ctx,
+		`SELECT `+documentColumns+` FROM vault_documents WHERE id = ? AND profile_id = ?`, id, profileID,
+	).Scan)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("vault.GetDocument: %w", err)
 	}
-	d.Stale = computeStale(d.Indexed, indexedMTime, indexedSizeBytes, d.Path)
 	return &d, nil
 }
 
@@ -227,7 +240,8 @@ func SetDocumentIndexed(ctx context.Context, db *sql.DB, profileID, id string, i
 }
 
 // DeleteDocument removes id's vault_documents row, scoped to profileID.
-// Returns an error if the row does not exist. The underlying file is only
+// Returns an error if the row does not exist. A browser capture's row
+// (CaptureDir set) takes its whole envelope directory with it. Otherwise the underlying file is only
 // removed when the document's source is not "discovered": a discovered
 // document's path is the user's ORIGINAL file (never copied into the
 // vault — see RegisterDiscoveredDocument), so deleting the row must never
@@ -235,10 +249,10 @@ func SetDocumentIndexed(ctx context.Context, db *sql.DB, profileID, id string, i
 // documents' files, by contrast, are vault copies this app itself created
 // and owns, and are removed as before.
 func DeleteDocument(ctx context.Context, db *sql.DB, profileID, id string) error {
-	var path, source string
+	var path, source, captureDir string
 	err := db.QueryRowContext(ctx,
-		`SELECT path, source FROM vault_documents WHERE id = ? AND profile_id = ?`, id, profileID,
-	).Scan(&path, &source)
+		`SELECT path, source, COALESCE(capture_dir, '') FROM vault_documents WHERE id = ? AND profile_id = ?`, id, profileID,
+	).Scan(&path, &source, &captureDir)
 	if err == sql.ErrNoRows {
 		return fmt.Errorf("vault.DeleteDocument: id %q not found", id)
 	}
@@ -247,6 +261,15 @@ func DeleteDocument(ctx context.Context, db *sql.DB, profileID, id string) error
 	}
 	if _, err := db.ExecContext(ctx, `DELETE FROM vault_documents WHERE id = ? AND profile_id = ?`, id, profileID); err != nil {
 		return fmt.Errorf("vault.DeleteDocument: %w", err)
+	}
+	if captureDir != "" {
+		// A capture is one envelope, not one file: removing only the
+		// primary artifact would let the next inbox sync re-register the
+		// capture under its next-best artifact. See removeCaptureDir.
+		if err := removeCaptureDir(captureDir, path); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: document %s deleted from index but its capture could not be removed: %v\n", id, err)
+		}
+		return nil
 	}
 	if source != "discovered" {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {

@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/monoes/mono-agent/internal/capture"
+	"github.com/monoes/mono-agent/internal/capturedocs"
 	"github.com/monoes/mono-agent/internal/docscan"
 	"github.com/monoes/mono-agent/internal/profiledir"
 	"github.com/monoes/mono-agent/internal/vault"
@@ -34,12 +36,18 @@ func (a *App) restartDocumentWatcher() {
 		a.docWatcher.Stop()
 		a.docWatcher = nil
 	}
+	if a.capWatcher != nil {
+		a.capWatcher.Stop()
+		a.capWatcher = nil
+	}
+
+	profileID := a.getActiveProfileID()
+	a.startCaptureWatcher(profileID)
 
 	root := a.documentRootForActiveProfile()
 	if root == "" {
 		return
 	}
-	profileID := a.getActiveProfileID()
 
 	w := docscan.NewWatcher(root, 0, func(files []docscan.FileInfo) {
 		found := make([]vault.DiscoveredFile, len(files))
@@ -54,4 +62,21 @@ func (a *App) restartDocumentWatcher() {
 	})
 	w.Start()
 	a.docWatcher = w
+}
+
+// startCaptureWatcher watches the profile's browser-capture inbox, which
+// the folder scan above skips (it is under .monomind/). It only signals:
+// the page answers documents:changed by re-fetching the list, and
+// `profile documents list` is what syncs captures into the vault, so the
+// GUI never writes capture rows itself. Caller holds docWatchMu.
+func (a *App) startCaptureWatcher(profileID string) {
+	inbox, err := capture.ProfileInbox(profileID)
+	if err != nil {
+		return // no usable profile id, so no inbox to watch
+	}
+	w := capturedocs.NewWatcher(inbox, 0, func() {
+		runtime.EventsEmit(a.ctx, "documents:changed", map[string]interface{}{"profileID": profileID, "captures": true})
+	})
+	w.Start()
+	a.capWatcher = w
 }

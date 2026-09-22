@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/monoes/mono-agent/internal/capturedocs"
 	"github.com/monoes/mono-agent/internal/monomind"
 	"github.com/monoes/mono-agent/internal/vault"
 
@@ -114,13 +115,22 @@ func newProfileDocumentsCmd(cfg *globalConfig) *cobra.Command {
 func newProfileDocumentsListCmd(cfg *globalConfig) *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
-		Short: "List uploaded profile documents",
+		Short: "List profile documents (uploads, discovered files, browser captures)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			db, err := initDB(cfg)
 			if err != nil {
 				return fmt.Errorf("initializing database: %w", err)
 			}
 			defer db.DB.Close()
+
+			// Browser captures live in the profile's inbox, which the
+			// folder scan skips; bring their rows up to date first so the
+			// listing always includes every capture (and backfills ones
+			// saved before this existed). A failed sync still lists.
+			_, _, syncErrs := capturedocs.Sync(cmd.Context(), db.DB, cfg.ProfileID)
+			for _, e := range syncErrs {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: syncing browser captures: %v\n", e)
+			}
 
 			docs, err := vault.ListDocuments(cmd.Context(), db.DB, cfg.ProfileID)
 			if err != nil {
@@ -135,7 +145,7 @@ func newProfileDocumentsListCmd(cfg *globalConfig) *cobra.Command {
 				fmt.Fprintln(cmd.OutOrStdout(), "No documents uploaded.")
 				return nil
 			}
-			table := newPlainTable(cmd.OutOrStdout(), []string{"ID", "Filename", "Source", "Uploaded"}, nil)
+			table := newPlainTable(cmd.OutOrStdout(), []string{"ID", "Filename", "Source", "Added"}, nil)
 			for _, d := range docs {
 				table.Append([]string{d.ID, truncateStr(d.Filename, 50), d.Source, d.CreatedAt})
 			}
