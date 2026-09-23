@@ -24,7 +24,7 @@ import (
 // engine deactivates all triggers on Stop(), which happens as soon as the
 // activating command exits.
 func newDaemonCmd(cfg *globalConfig) *cobra.Command {
-	var apiOn, allowMutations bool
+	var apiOn, allowMutations, bridgeOn bool
 	var apiAddr string
 	c := &cobra.Command{
 		Use:   "daemon",
@@ -37,8 +37,15 @@ func newDaemonCmd(cfg *globalConfig) *cobra.Command {
 			"`monoagentcli httpapi`), runs org automations that roles call and trigger.org workflows, " +
 			"resumes org.run/org.ask pauses when their org event arrives, reconciles org files with their " +
 			"grants, and makes autonomy decisions. Without it every org behaves as autonomy level manual. " +
-			"It writes ~/.monoagent/daemon-heartbeat.json every 10 seconds.",
-		Example: "  monoagentcli daemon\n  monoagentcli daemon --api=false\n  monoagentcli daemon --api-addr 127.0.0.1:9400 --allow-mutations",
+			"It writes ~/.monoagent/daemon-heartbeat.json every 10 seconds.\n\n" +
+			"It also holds the Chrome extension bridge open (--bridge, on by default, same bridge " +
+			"`monoagentcli extension serve` runs standalone), so the MonoAgent Bridge extension stays " +
+			"connected for as long as the daemon runs instead of needing a separate `extension serve` " +
+			"left open in another terminal. `monoagentcli daemon install` registers the daemon itself " +
+			"to start at login (see `daemon install --help`), which is what makes this persist across " +
+			"reboots and on a fresh machine, not just this one terminal.",
+		Example: "  monoagentcli daemon\n  monoagentcli daemon --api=false\n  monoagentcli daemon --api-addr 127.0.0.1:9400 --allow-mutations\n" +
+			"  monoagentcli daemon --bridge=false\n  monoagentcli daemon install",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			engine, closeBrowsers, err := buildEngine(cfg, true)
 			if err != nil {
@@ -102,12 +109,27 @@ func newDaemonCmd(cfg *globalConfig) *cobra.Command {
 					servingAddr = addr
 				}
 			}
-			go daemonhb.Run(ctx, daemonhb.Heartbeat{APIAddr: servingAddr, Version: getVersion()})
+
+			bridgeServingAddr := ""
+			if bridgeOn {
+				addr, closeBridge, err := startDaemonBridge(ctx)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "warning: extension bridge not served: %v\n", err)
+				} else {
+					defer closeBridge()
+					bridgeServingAddr = addr
+				}
+			}
+
+			go daemonhb.Run(ctx, daemonhb.Heartbeat{APIAddr: servingAddr, BridgeAddr: bridgeServingAddr, Version: getVersion()})
 			orgs.start(ctx, engine)
 
 			msg := "Daemon running. Active workflows' triggers are live."
 			if servingAddr != "" {
 				msg += " HTTP API on " + servingAddr + "."
+			}
+			if bridgeServingAddr != "" {
+				msg += " Extension bridge on " + bridgeServingAddr + "."
 			}
 			fmt.Fprintln(os.Stdout, msg+" Press Ctrl+C to stop.")
 			<-ctx.Done()
@@ -118,7 +140,46 @@ func newDaemonCmd(cfg *globalConfig) *cobra.Command {
 	c.Flags().BoolVar(&apiOn, "api", true, "Serve the HTTP API and the automation-role endpoint receiver in this process")
 	c.Flags().StringVar(&apiAddr, "api-addr", "", "HTTP API address (default 127.0.0.1:9322, or MONOAGENT_HTTPAPI_ADDR)")
 	c.Flags().BoolVar(&allowMutations, "allow-mutations", false, "Serve mutating HTTP API endpoints (the endpoint receiver is served either way)")
+	c.Flags().BoolVar(&bridgeOn, "bridge", true, "Hold the Chrome extension bridge open in this process (same bridge `extension serve` runs standalone)")
+	c.AddCommand(newDaemonInstallCmd(), newDaemonUninstallCmd())
 	return c
+}
+
+// startDaemonBridge starts the Chrome extension bridge (see
+// extension_serve.go) so the MonoAgent Bridge extension stays connected for
+// as long as the daemon runs, instead of needing a separate
+// `monoagentcli extension serve` left open in another terminal —
+// setupExtensionBridge's own comment already named "the daemon" as one of
+// the processes a bridge might belong to (node.go). Probes first exactly as
+// runExtensionServe does: if something else already owns the port (a stray
+// `extension serve`, or another daemon), relay through it rather than racing
+// for a bind that would only fail.
+//
+// Unlike startDaemonAPI, the caller gets a closeFn back rather than this
+// function blocking or backgrounding its own cleanup: the daemon's RunE
+// already defers every other component's shutdown in the order it started
+// them (engine, db, scheduler), and the bridge fits that same pattern rather
+// than inventing a second shutdown path.
+func startDaemonBridge(ctx context.Context) (addr string, closeFn func(), err error) {
+	if st, base, ok := findRunningBridge(); ok {
+		return bridgeAddr(st, base), func() {}, nil
+	}
+
+	logger := newBridgeServeLogger()
+	srv := newExtensionServer(logger)
+	summaries := installCaptureSummaries(srv, loggerLogf(logger))
+	closeFn = func() {
+		summaries.Close()
+		srv.Close() //nolint:errcheck
+	}
+
+	errCh := srv.StartAsync(ctx)
+	addr, err = waitForBridgeBind(ctx, srv, errCh)
+	if err != nil {
+		closeFn()
+		return "", func() {}, err
+	}
+	return addr, closeFn, nil
 }
 
 // startDaemonAPI binds the HTTP API over the daemon's own database and
