@@ -29,10 +29,19 @@ func killProcessGroup(cmd *exec.Cmd, pgid int) {
 	_ = syscall.Kill(-pgid, syscall.SIGKILL)
 }
 
-// attachProcessGroup is called right after cmd.Start for a child this process
-// will kill with killProcessGroup. Setpgid already made the group, so there
-// is nothing to attach on unix; the returned release is a no-op.
-func attachProcessGroup(*exec.Cmd) (release func()) { return func() {} }
+// startProcessGroup starts a child this process will kill with
+// killProcessGroup. Setpgid already makes the group at fork, so it is a
+// plain Start on unix; the returned release is a no-op.
+func startProcessGroup(cmd *exec.Cmd) (release func(), err error) {
+	return func() {}, cmd.Start()
+}
+
+// startDetached starts a child that must outlive this process in its own
+// process group, so no group kill aimed at this process reaches it.
+func startDetached(cmd *exec.Cmd) (*exec.Cmd, error) {
+	setProcessGroup(cmd)
+	return cmd, cmd.Start()
+}
 
 // signalServe sends SIGTERM (or SIGKILL when kill) to a serve daemon's
 // process group, falling back to the pid alone when it leads no group (a
