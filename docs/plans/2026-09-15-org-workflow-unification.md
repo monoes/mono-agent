@@ -1087,9 +1087,20 @@ ordinary `startOrg` runs.
   and DACL there: the owner must be the current user, SYSTEM or Administrators, and no allow ACE
   may name another account. Children mono-agent kills (`monomind.Exec`, `OrgRun`, `OrgEvents`,
   `OrgServeRun`) run in a Job Object with KILL_ON_JOB_CLOSE and BREAKAWAY_OK, and a kill
-  terminates the job (fallback `taskkill /T /F`). Still open: a grandchild spawned before the
-  job assignment right after `Start` escapes it; the detached `OrgServeStart`/`OrgRunStart`
-  children get no job (as on unix, nothing here kills them); `wails-app`'s chat subprocess
-  still kills only the direct child on Windows; monomind's own `credential_file` check (M2)
-  is in the monomind repo.
+  terminates the job (fallback `taskkill /T /F`). Follow-ups closed 2026-09-23, again only
+  cross-compiled: (1) those children now start with `CREATE_SUSPENDED`, are assigned to the job
+  and only then resumed (`NtResumeProcess`; a child that cannot be resumed is killed and
+  reaped), so no grandchild can start outside the job; (2) the detached `OrgServeStart`/
+  `OrgRunStart` children deliberately get no job of their own (KILL_ON_JOB_CLOSE would end them
+  with the caller) and now start with `CREATE_BREAKAWAY_FROM_JOB`, retried without it when the
+  enclosing job forbids breakaway, so killing a chat turn whose MCP server started them no
+  longer takes them along (the unix setsid equivalent). Their stop paths already take the
+  tree: `OrgServeStop` runs `taskkill /T /F` on the live daemon, and an org run is stopped
+  cooperatively by `monomind org stop`; (3) `wails-app`'s chat, org-events and org-run
+  subprocesses are killed with `monomind.KillProcessTree` (`taskkill /T /F`, then the direct
+  child), and a `CommandContext` cancel does the same tree kill instead of Go's direct-child
+  kill. The tree kill is skipped once the child has been waited for, since its pid may be
+  reused. Still open: the GUI's subprocesses get no Job Object, so a descendant whose parent
+  already exited escapes `taskkill /T` (as it does for the serve daemon); monomind's own
+  `credential_file` check (M2) is in the monomind repo.
 - `docs/screenshots/` walkthrough for Phase 5.

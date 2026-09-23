@@ -206,10 +206,11 @@ func OrgRun(ctx context.Context, projectRoot, name, task string, dryRun bool) (j
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	if err := cmd.Start(); err != nil {
+	release, err := startProcessGroup(cmd)
+	if err != nil {
 		return nil, fmt.Errorf("start monomind org run %s: %w", name, err)
 	}
-	defer attachProcessGroup(cmd)()
+	defer release()
 
 	waitCh := make(chan error, 1)
 	go func() { waitCh <- cmd.Wait() }()
@@ -242,7 +243,9 @@ func OrgRun(ctx context.Context, projectRoot, name, task string, dryRun bool) (j
 // blocking on OrgRun's return. The process is reaped in a background
 // goroutine so it never becomes a zombie; its exit is otherwise
 // unobserved by this function — callers that need to know when it exits
-// should poll OrgStatus for closed_by, not rely on this call.
+// should poll OrgStatus for closed_by, not rely on this call. Nothing
+// here kills it: OrgStop (`monomind org stop`) ends it cooperatively, the
+// same on every platform, so startDetached keeps it out of our jobs.
 func OrgRunStart(ctx context.Context, projectRoot, name, task string) error {
 	bin, _, err := Ensure(ctx)
 	if err != nil {
@@ -254,8 +257,8 @@ func OrgRunStart(ctx context.Context, projectRoot, name, task string) error {
 	}
 	cmd := exec.Command(bin, args...)
 	cmd.Dir = projectRoot
-	setProcessGroup(cmd)
-	if err := cmd.Start(); err != nil {
+	cmd, err = startDetached(cmd)
+	if err != nil {
 		return fmt.Errorf("start monomind org run %s: %w", name, err)
 	}
 	go func() { _ = cmd.Wait() }()
@@ -439,10 +442,11 @@ func OrgEvents(ctx context.Context, projectRoot, name string, opts OrgEventsOpti
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
-	if err := cmd.Start(); err != nil {
+	release, err := startProcessGroup(cmd)
+	if err != nil {
 		return fmt.Errorf("start monomind org events: %w", err)
 	}
-	defer attachProcessGroup(cmd)()
+	defer release()
 
 	readerDone := make(chan struct{})
 	go func() {
