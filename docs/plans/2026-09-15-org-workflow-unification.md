@@ -1103,4 +1103,4 @@ ordinary `startOrg` runs.
   reused. Still open: the GUI's subprocesses get no Job Object, so a descendant whose parent
   already exited escapes `taskkill /T` (as it does for the serve daemon); monomind's own
   `credential_file` check (M2) is in the monomind repo.
-- `docs/screenshots/` walkthrough for Phase 5.
+- ~~`docs/screenshots/` walkthrough for Phase 5.~~ Done 2026-09-23: [`docs/screenshots/org-walkthrough/`](../screenshots/org-walkthrough/README.md) has 12 screens from `wails dev` against a real `monoagentcli` in a separate home folder. Needs you items and Decisions rows are seeded by hand, since no org was run; the README says which.
