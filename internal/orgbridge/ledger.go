@@ -117,6 +117,15 @@ func (l *Ledger) Admit(ctx context.Context, c Call, lim Limits) (Admission, erro
 	if tr.ChainID == "" {
 		tr = NewTrace()
 	}
+	// A header hop is only ever raised to, never trusted lower; past the
+	// ceiling it is refused anyway, so clamp it there before arithmetic: a
+	// forged hop=MaxInt64 would otherwise wrap to a negative hop and pass.
+	if tr.Hop > MaxHopsCeiling+1 {
+		tr.Hop = MaxHopsCeiling + 1
+	}
+	if tr.Hop < 0 {
+		tr.Hop = 0
+	}
 	if l.db == nil {
 		return Admission{Trace: Trace{ChainID: tr.ChainID, Hop: tr.Hop + 1}, Status: StatusOK}, nil
 	}
@@ -132,7 +141,11 @@ func (l *Ledger) Admit(ctx context.Context, c Call, lim Limits) (Admission, erro
 	// and one that comes back through a recorded crossing (the workflow's
 	// workflow_out) climbs from that row as before. The per-grant call caps
 	// (max_calls_per_run, max_calls_per_day) bound it too.
-	q := `SELECT MAX(hop) FROM org_bridge_calls WHERE profile_id = ? AND chain_id = ?`
+	// Refused crossings do not set the chain's depth. A refused row records
+	// a hop that never happened, and counting it let one forged crossing
+	// (hop=999) kill a chain for every caller on it; a real loop refused at
+	// hop N is still refused at hop N next time.
+	q := `SELECT MAX(hop) FROM org_bridge_calls WHERE profile_id = ? AND chain_id = ? AND status NOT LIKE 'refused%'`
 	args := []interface{}{c.ProfileID, tr.ChainID}
 	own := 0
 	if c.Direction == DirRoleTool {

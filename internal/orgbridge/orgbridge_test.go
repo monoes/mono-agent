@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"math"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -376,8 +377,8 @@ func TestLedgerSlowUnrecordedLoopIsStillRefused(t *testing.T) {
 func TestLedgerRoleToolQueriesUseAnIndex(t *testing.T) {
 	db := newTestDB(t)
 	for q, args := range map[string][]interface{}{
-		`SELECT MAX(hop) FROM org_bridge_calls WHERE profile_id = ? AND chain_id = ? AND NOT (direction = ? AND COALESCE(org_name,'') = ? AND COALESCE(role_id,'') = ?)`: {"p", "chn", DirRoleTool, "g", "r"},
-		`SELECT COUNT(*) FROM org_bridge_calls WHERE profile_id = ? AND chain_id = ? AND direction = ? AND COALESCE(org_name,'') = ? AND COALESCE(role_id,'') = ?`:       {"p", "chn", DirRoleTool, "g", "r"},
+		`SELECT MAX(hop) FROM org_bridge_calls WHERE profile_id = ? AND chain_id = ? AND status NOT LIKE 'refused%' AND NOT (direction = ? AND COALESCE(org_name,'') = ? AND COALESCE(role_id,'') = ?)`: {"p", "chn", DirRoleTool, "g", "r"},
+		`SELECT COUNT(*) FROM org_bridge_calls WHERE profile_id = ? AND chain_id = ? AND direction = ? AND COALESCE(org_name,'') = ? AND COALESCE(role_id,'') = ?`:                                      {"p", "chn", DirRoleTool, "g", "r"},
 	} {
 		if plan := queryPlan(t, db, q, args...); strings.Contains(plan, "SCAN") {
 			t.Errorf("%s\nplans as a table scan:\n%s", q, plan)
@@ -415,5 +416,24 @@ func TestLedgerRoleToolLoopStillStops(t *testing.T) {
 	}
 	if last.Status != StatusRefusedHops {
 		t.Fatalf("role → automation → org loop never refused: %+v", last)
+	}
+}
+
+// A forged header hop cannot wrap around to a small number, and a refused
+// forged crossing does not poison the chain for everyone else on it.
+func TestLedgerForgedHugeHopIsClampedAndDoesNotPoisonTheChain(t *testing.T) {
+	l := NewLedger(newTestDB(t))
+	ctx := context.Background()
+	forged := Call{ProfileID: "p", Direction: DirWorkflowOut, OrgName: "g", Trace: Trace{ChainID: "chn_victim", Hop: math.MaxInt64}}
+	adm, err := l.Admit(ctx, forged, Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if adm.Status != StatusRefusedHops || adm.Trace.Hop <= 0 {
+		t.Fatalf("forged huge hop: %+v, want refused at a positive hop", adm)
+	}
+	honest := Call{ProfileID: "p", Direction: DirWorkflowOut, OrgName: "g", Trace: Trace{ChainID: "chn_victim"}}
+	if adm, _ := l.Admit(ctx, honest, Limits{}); !adm.OK() || adm.Trace.Hop != 1 {
+		t.Fatalf("honest call after a refused forged one: %+v, want admitted at hop 1", adm)
 	}
 }

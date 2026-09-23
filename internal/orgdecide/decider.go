@@ -179,8 +179,8 @@ func (d *ModelDecider) Decide(ctx context.Context, p Prompt) (Outcome, error) {
 	return out, nil
 }
 
-// deciderDir returns ~/.monoagent/decider, the empty folder model deciders
-// run in, creating it if needed.
+// deciderDir returns ~/.monoagent/decider, the folder model deciders run
+// in, created if needed and emptied of anything a previous run left there.
 func deciderDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -189,6 +189,15 @@ func deciderDir() (string, error) {
 	dir := filepath.Join(home, ".monoagent", "decider")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("create %s: %w", dir, err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", dir, err)
+	}
+	for _, e := range entries {
+		if err := os.RemoveAll(filepath.Join(dir, e.Name())); err != nil {
+			return "", fmt.Errorf("empty %s: %w", dir, err)
+		}
 	}
 	return dir, nil
 }

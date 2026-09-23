@@ -1048,9 +1048,13 @@ What the runs taught, beyond the checks:
   (`fix/org-sibling-hops`, #123). monomind keeps one chain per role for its whole run
   (`roleTrace`), so "siblings" are all of a role's granted calls until a traced message reaches
   it. A role's granted call therefore leaves its own earlier granted calls out of the recorded
-  maximum and adds one hop per `SiblingCallsPerHop` (8) of them: a busy role gets 64 calls on
-  one chain at the default `max_hops`, and a loop whose way back is never recorded here
-  (monomind's native `org_send`, a sync result) is still refused, after 64 calls instead of 8.
+  maximum and adds one hop per `SiblingCallsPerHop` (8) of them: a busy role gets
+  8 × (`max_hops` − the hop its last message arrived at) calls on one chain, 64 at the defaults
+  from hop 0, and a loop whose way back is never recorded here (monomind's native `org_send`, a
+  sync result) is still refused, after 64 calls instead of 8. Two roles alternating on one
+  chain still climb one hop per call, since each counts in the other's maximum. Refused rows
+  no longer count in the maximum (one forged hop=999 crossing used to kill a chain for every
+  caller), and a forged header hop is clamped before arithmetic (MaxInt64 used to wrap).
   A loop back through a recorded crossing (`workflow_out`) climbs from that row as before. The
   per-grant `max_calls_per_run`/`max_calls_per_day` caps bound it too; `max_repeats` does not
   (a loop paced under 20 a minute never reaches it). An adversarial review found the first
@@ -1066,9 +1070,9 @@ What the runs taught, beyond the checks:
   (`noop*.sh`), a gdb catchpoint on the daemon's `openat` (the daemon itself never opened the
   directory), and a `monomind` shim logging every invocation (`monomind-shim.sh`) traced it to the
   decider. With autonomy `manual` it is gone. It opened no file, only the directory. **Fixed
-  2026-09-24** (`fix/org-sibling-hops`, #123): the model decider now runs in `~/.monoagent/decider`, an
-  empty folder of its own (fixed, so agent CLIs do not keep session state per decision)
-  of its own.
+  2026-09-24** (`fix/org-sibling-hops`, #123): the model decider now runs in `~/.monoagent/decider`, a
+  fixed folder emptied before each decision (fixed, so agent CLIs do not keep session state
+  per decision).
 - The same stray monomind dashboard (`ui/server.mjs 4242`) outlived `org stop` again, so it was
   stopped by PID.
 

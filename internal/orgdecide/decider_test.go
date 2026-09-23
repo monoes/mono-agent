@@ -39,6 +39,11 @@ func TestModelDeciderParsesStreamedDeltas(t *testing.T) {
 func TestModelDeciderRunsInAnEmptyFolder(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	// Something a previous decision left behind is cleared first.
+	leftover := filepath.Join(home, ".monoagent", "decider", "leftover")
+	if err := os.MkdirAll(leftover, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	var dirs []string
 	d := &ModelDecider{Runtime: "claude", Model: "m", Exec: func(ctx context.Context, opts monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
 		dirs = append(dirs, opts.Cwd)
