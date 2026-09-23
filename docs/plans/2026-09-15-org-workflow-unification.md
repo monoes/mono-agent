@@ -1059,6 +1059,17 @@ What the runs taught, beyond the checks:
   per-grant `max_calls_per_run`/`max_calls_per_day` caps bound it too; `max_repeats` does not
   (a loop paced under 20 a minute never reaches it). An adversarial review found the first
   version of this fix, which exempted siblings entirely, left such loops unbounded by hops.
+- **Two places started a fresh chain where the old one should have gone on** (found by the
+  review of #123; fixed 2026-09-24, #124). `trigger.org` took a trace only from a message's
+  `[trace …]` line, so a workflow started from a granted call's tool event began a new chain.
+  It now reads `data.chain_id`/`hop` from tool events of granted calls only (`monoagent__…`):
+  monomind stamps every tool event with the role's run-long chain, and an audit workflow on
+  every Bash call would otherwise climb it until the role's own granted calls were refused.
+  `org.send`/`org.ask`/`org.run` read the trace only from their first input item, so any node
+  in between that dropped `trace` started a new chain; they now fall back to the execution's
+  trigger data. As a result several org nodes in one execution share the trigger's chain and
+  climb one hop each. Still open on monomind's side: native `org_send` does not stamp the
+  sender's trace (monoes/monomind#327), and a webhook caller can choose the chain it starts on.
 - **monomind stops a fence runner after 10 tool-call rounds per message** and says so on the bus
   (`tool-call round cap (10) reached — dropping 1 pending tool call(s)`). A task needing more
   calls needs another message. A configurable cap is requested in monoes/monomind#326.

@@ -48,3 +48,9 @@ func WithTrace(body string, t Trace) string {
 func StripTrace(body string) string {
 	return strings.TrimLeft(traceLineRe.ReplaceAllString(body, ""), "\n")
 }
+
+var chainIDRe = regexp.MustCompile(`^chn_[A-Za-z0-9_-]+$`)
+
+// validChainID reports whether s has the shape of a chain id, the same one
+// a trace line accepts.
+func validChainID(s string) bool { return chainIDRe.MatchString(s) }
