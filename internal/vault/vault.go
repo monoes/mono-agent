@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/monoes/mono-agent/internal/monomind"
 	"github.com/monoes/mono-agent/internal/profiledir"
@@ -175,7 +176,9 @@ func Register(ctx context.Context, db *sql.DB, src, source, workflowID, executio
 	}
 	committed = true
 
+	background.Add(1)
 	go func() {
+		defer background.Done()
 		desc := "source: " + source
 		if workflowID != "" {
 			desc += ", workflow: " + workflowID
@@ -401,3 +404,13 @@ func copyFile(src, dst string) (retErr error) {
 	_, err = io.Copy(out, in)
 	return err
 }
+
+// background tracks Register's knowledge-graph syncs, which run after it
+// returns and write under the profile's folder.
+var background sync.WaitGroup
+
+// Wait blocks until every knowledge-graph sync Register started has
+// finished. Tests call it before their temporary HOME is removed, since a
+// sync still writing there makes the cleanup fail; a process that is about
+// to exit can call it to let the syncs land.
+func Wait() { background.Wait() }

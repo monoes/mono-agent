@@ -18,6 +18,11 @@ import (
 func newImageVaultTestCtx(t *testing.T) context.Context {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
+	// The vault syncs each file into the knowledge graph in the background:
+	// run a no-op instead of the real monomind, and let it finish before HOME
+	// is removed.
+	t.Setenv("MONOMIND_BIN", "true")
+	t.Cleanup(vault.Wait)
 
 	dbPath := filepath.Join(t.TempDir(), "vault-test.db")
 	db, err := storage.NewDatabase(dbPath)
