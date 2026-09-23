@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"math"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -317,5 +318,122 @@ func TestBridgeCallsExecutionLookupUsesAnIndex(t *testing.T) {
 		if strings.Contains(plan, "SCAN") {
 			t.Errorf("%s\nplans as a table scan:\n%s", q, plan)
 		}
+	}
+}
+
+// A role's granted calls pile up on one chain (monomind keeps a role's
+// trace for its whole run), so a busy role gets SiblingCallsPerHop calls per
+// hop instead of being refused as a loop at its (MaxHops+1)th call.
+func TestLedgerSiblingRoleCallsShareAHop(t *testing.T) {
+	l := NewLedger(newTestDB(t))
+	ctx := context.Background()
+	lim := Limits{MaxHops: 3, MaxRepeats: 100}
+	c := Call{ProfileID: "p", Direction: DirRoleTool, OrgName: "g", RoleID: "writer", WorkflowID: "wf", Trace: Trace{ChainID: "chn_task"}}
+	for i := 0; i < 2*SiblingCallsPerHop; i++ {
+		adm, err := l.Admit(ctx, c, lim)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := 1 + i/SiblingCallsPerHop; !adm.OK() || adm.Trace.Hop != want {
+			t.Fatalf("call %d: %+v, want hop %d", i+1, adm, want)
+		}
+	}
+	// Another role in the same chain starts from this role's highest hop.
+	other := c
+	other.RoleID = "editor"
+	if adm, _ := l.Admit(ctx, other, lim); adm.Trace.Hop != 3 {
+		t.Fatalf("another role's call: %+v, want hop 3", adm)
+	}
+}
+
+// A loop whose way back to the role is never recorded here (monomind's own
+// org_send, a sync automation result) leaves only the role's own rows on
+// the chain. Paced under the repeat limit, it must still be refused: the
+// hop grows once per SiblingCallsPerHop calls.
+func TestLedgerSlowUnrecordedLoopIsStillRefused(t *testing.T) {
+	l := NewLedger(newTestDB(t))
+	clock := time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC)
+	l.now = func() time.Time { return clock }
+	ctx := context.Background()
+	c := Call{ProfileID: "p", Direction: DirRoleTool, OrgName: "hq", RoleID: "writer", WorkflowID: "wf", Trace: Trace{ChainID: "chn_role"}}
+	limit := 8 * SiblingCallsPerHop // default MaxHops
+	for i := 1; i <= limit+1; i++ {
+		clock = clock.Add(5 * time.Second) // 12 a minute, under the default 20
+		adm, err := l.Admit(ctx, c, Limits{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i <= limit && !adm.OK() {
+			t.Fatalf("call %d refused early: %+v", i, adm)
+		}
+		if i == limit+1 && adm.Status != StatusRefusedHops {
+			t.Fatalf("call %d admitted: %+v — a slow loop is never stopped", i, adm)
+		}
+	}
+}
+
+// Admit's role_tool queries run on every granted call; they must use the
+// chain index, not scan the audit log.
+func TestLedgerRoleToolQueriesUseAnIndex(t *testing.T) {
+	db := newTestDB(t)
+	for q, args := range map[string][]interface{}{
+		`SELECT MAX(hop) FROM org_bridge_calls WHERE profile_id = ? AND chain_id = ? AND status NOT LIKE 'refused%' AND NOT (direction = ? AND COALESCE(org_name,'') = ? AND COALESCE(role_id,'') = ?)`: {"p", "chn", DirRoleTool, "g", "r"},
+		`SELECT COUNT(*) FROM org_bridge_calls WHERE profile_id = ? AND chain_id = ? AND direction = ? AND COALESCE(org_name,'') = ? AND COALESCE(role_id,'') = ?`:                                      {"p", "chn", DirRoleTool, "g", "r"},
+	} {
+		if plan := queryPlan(t, db, q, args...); strings.Contains(plan, "SCAN") {
+			t.Errorf("%s\nplans as a table scan:\n%s", q, plan)
+		}
+	}
+}
+
+// A loop through a granted automation still climbs and stops: the workflow's
+// message back into the org is recorded under its own crossing, so the
+// role's next call is a hop further even though its own calls are left out.
+func TestLedgerRoleToolLoopStillStops(t *testing.T) {
+	l := NewLedger(newTestDB(t))
+	ctx := context.Background()
+	lim := Limits{MaxHops: 6, MaxRepeats: 100}
+	role := Call{ProfileID: "p", Direction: DirRoleTool, OrgName: "g", RoleID: "writer", WorkflowID: "wf", Trace: Trace{ChainID: "chn_loop2"}}
+	back := Call{ProfileID: "p", Direction: DirWorkflowOut, OrgName: "g", RoleID: "writer", WorkflowID: "wf", Trace: Trace{ChainID: "chn_loop2"}}
+	var last Admission
+	for i := 0; i < 10; i++ {
+		role.Trace.Hop = 0 // forged low every time
+		a, err := l.Admit(ctx, role, lim)
+		if err != nil {
+			t.Fatal(err)
+		}
+		last = a
+		if !a.OK() {
+			break
+		}
+		back.Trace = a.Trace
+		if b, err := l.Admit(ctx, back, lim); err != nil {
+			t.Fatal(err)
+		} else if !b.OK() {
+			last = b
+			break
+		}
+	}
+	if last.Status != StatusRefusedHops {
+		t.Fatalf("role → automation → org loop never refused: %+v", last)
+	}
+}
+
+// A forged header hop cannot wrap around to a small number, and a refused
+// forged crossing does not poison the chain for everyone else on it.
+func TestLedgerForgedHugeHopIsClampedAndDoesNotPoisonTheChain(t *testing.T) {
+	l := NewLedger(newTestDB(t))
+	ctx := context.Background()
+	forged := Call{ProfileID: "p", Direction: DirWorkflowOut, OrgName: "g", Trace: Trace{ChainID: "chn_victim", Hop: math.MaxInt64}}
+	adm, err := l.Admit(ctx, forged, Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if adm.Status != StatusRefusedHops || adm.Trace.Hop <= 0 {
+		t.Fatalf("forged huge hop: %+v, want refused at a positive hop", adm)
+	}
+	honest := Call{ProfileID: "p", Direction: DirWorkflowOut, OrgName: "g", Trace: Trace{ChainID: "chn_victim"}}
+	if adm, _ := l.Admit(ctx, honest, Limits{}); !adm.OK() || adm.Trace.Hop != 1 {
+		t.Fatalf("honest call after a refused forged one: %+v, want admitted at hop 1", adm)
 	}
 }

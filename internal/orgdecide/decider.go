@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -130,6 +132,16 @@ func (d *ModelDecider) Decide(ctx context.Context, p Prompt) (Outcome, error) {
 	}
 	started := time.Now()
 	resolver := "model:" + d.Model
+	// The decider needs no files. Run it in an empty folder of its own:
+	// otherwise the agent CLI starts in the daemon's working directory and
+	// indexes whatever is there (seen in the C-46 live gate, where it listed
+	// a folder the org's roles were confined away from). One fixed folder,
+	// not a new temp one per decision: agent CLIs keep per-folder session
+	// state (e.g. ~/.claude/projects/<folder>), which would pile up.
+	sandbox, err := deciderDir()
+	if err != nil {
+		return Outcome{Resolver: resolver}, fmt.Errorf("decider %s: %w", resolver, err)
+	}
 	var assistant strings.Builder
 	res, err := exec(ctx, monomind.ExecOptions{
 		Runtime:      d.Runtime,
@@ -137,6 +149,7 @@ func (d *ModelDecider) Decide(ctx context.Context, p Prompt) (Outcome, error) {
 		Prompt:       p.User,
 		SystemPrompt: p.System,
 		Timeout:      d.Timeout,
+		Cwd:          sandbox,
 	}, func(ev monomind.Event) {
 		if ev.Type == monomind.EventAssistant {
 			assistant.WriteString(ev.Text)
@@ -164,4 +177,27 @@ func (d *ModelDecider) Decide(ctx context.Context, p Prompt) (Outcome, error) {
 	}
 	out.Verdict = v
 	return out, nil
+}
+
+// deciderDir returns ~/.monoagent/decider, the folder model deciders run
+// in, created if needed and emptied of anything a previous run left there.
+func deciderDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home directory: %w", err)
+	}
+	dir := filepath.Join(home, ".monoagent", "decider")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("create %s: %w", dir, err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", dir, err)
+	}
+	for _, e := range entries {
+		if err := os.RemoveAll(filepath.Join(dir, e.Name())); err != nil {
+			return "", fmt.Errorf("empty %s: %w", dir, err)
+		}
+	}
+	return dir, nil
 }
