@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/monoes/mono-agent/internal/orgbridge"
 	"github.com/monoes/mono-agent/internal/orgdecide"
@@ -56,8 +57,12 @@ type orgServices struct {
 	receiver *orgbridge.Receiver
 	logf     func(format string, args ...interface{})
 
+	// resyncInterval and watchInterval are 0 (the defaults) outside tests.
+	resyncInterval time.Duration
+	watchInterval  time.Duration
+
 	mu       sync.Mutex
-	watchers []*orgdesign.Watcher
+	watchers map[string]*orgWatch // by profile id; see daemon_org_watch.go
 }
 
 // newOrgServices registers trigger.org with the engine; call before
@@ -80,27 +85,10 @@ func newOrgServices(db *storage.Database, engine *workflow.WorkflowEngine) *orgS
 // daemon's HTTP API.
 func (s *orgServices) registerRoutes(mux *http.ServeMux) { s.receiver.Register(mux) }
 
-// start runs reconcile, the org file watchers, the waker, and the decision
+// start runs reconcile and the org file watchers (daemon_org_watch.go), the waker, and the decision
 // service until ctx ends.
 func (s *orgServices) start(ctx context.Context, engine *workflow.WorkflowEngine) {
-	roots, err := profileRoots(s.db.DB)
-	if err != nil {
-		s.logf("org services: listing profiles: %v", err)
-	}
-	for _, pr := range roots {
-		s.reconcileProfile(ctx, pr)
-		pr := pr
-		w := orgdesign.NewWatcher(orgdesign.OrgsDir(pr.Root), 0, func(c orgdesign.Change) {
-			if c.Deleted || c.Doc == nil {
-				return
-			}
-			s.reconcileDoc(ctx, pr, c.Doc, false)
-		})
-		w.Start()
-		s.mu.Lock()
-		s.watchers = append(s.watchers, w)
-		s.mu.Unlock()
-	}
+	s.watchOrgFiles(ctx)
 
 	waker := &orgbridge.Waker{
 		DB: s.db.DB, Mux: s.mux, Resume: engine.ResumeExecution,
@@ -132,14 +120,6 @@ func (s *orgServices) start(ctx context.Context, engine *workflow.WorkflowEngine
 	}
 	go svc.Run(ctx)
 
-	go func() {
-		<-ctx.Done()
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		for _, w := range s.watchers {
-			w.Stop()
-		}
-	}()
 }
 
 // orgReconcileOutcome is what reconciling one org file did — the daemon
@@ -209,11 +189,7 @@ func (s *orgServices) reconcileDoc(ctx context.Context, pr orgdecide.ProfileRoot
 		return fail("org services: saving reconciled %s: %v", err)
 	}
 	res.Saved = true
-	s.mu.Lock()
-	for _, w := range s.watchers {
-		w.MarkSelfWrite(d.Name, sha)
-	}
-	s.mu.Unlock()
+	s.markSelfWrite(pr.ProfileID, d.Name, sha)
 	return res
 }
 
