@@ -363,3 +363,15 @@ test("a Go-initiated capture's own choice wins over the sticky one", async () =>
   await env.MonoCaptureBridge.handleCommand("cmd-1", { tabId: 42, mode: "summary", summaryRuntime: "codex", summaryModel: "gpt-5.1-codex" });
   assert.deepEqual(sent.at(-1).data.meta.summarize, { kind: "page", runtime: "codex", model: "gpt-5.1-codex" });
 });
+
+// --- an old worker behind a newer panel --------------------------------------
+
+test("only a worker that never answered is taken for an old one", () => {
+  // No listener knew the message: Chrome reports it, or nothing arrives.
+  assert.equal(AI.unanswered(undefined, { message: "The message port closed before a response was received." }), true);
+  assert.equal(AI.unanswered(undefined, undefined), true);
+  assert.equal(AI.unanswered(null, undefined), true);
+  // A handler that ran and failed is a failure, not an old worker.
+  assert.equal(AI.unanswered({ ok: false, error: "storage is unavailable" }, undefined), false);
+  assert.equal(AI.unanswered({ ok: true, choice: {} }, undefined), false);
+});

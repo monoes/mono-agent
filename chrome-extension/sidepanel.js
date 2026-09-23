@@ -49,6 +49,7 @@ const pairBtn = $("pair-btn");
 const pairSavedMsg = $("pair-saved-msg");
 const settingsPanel = $("settings-panel");
 
+const staleNotice = $("stale-notice");
 const captureBtn = $("capture-btn");
 const captureLabel = $("capture-label");
 const captureMsg = $("capture-msg");
@@ -478,6 +479,13 @@ $("dest").addEventListener("focusout", (event) => {
 });
 document.addEventListener("pointerdown", (event) => {
   if (!$("dest").contains(event.target)) closeProfileMenu(false);
+});
+
+// The panel's own code is newer than the running worker's (see
+// sidepanel_ai.js). Everything the older worker does know still works, so
+// this is a banner rather than a blockade.
+document.addEventListener("panel:stale-worker", () => {
+  staleNotice.hidden = false;
 });
 
 // --- CLIP-07: the snapshot starts while the note is still being typed -----
