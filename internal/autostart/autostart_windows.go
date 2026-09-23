@@ -50,6 +50,10 @@ func (windowsInstaller) Install(ctx context.Context) (Result, error) {
 }
 
 func (windowsInstaller) Uninstall(ctx context.Context) error {
+	// Stop the running daemon first, as systemctl disable --now and
+	// launchctl bootout do: deleting the task alone leaves it running
+	// until the next logoff. Fails harmlessly when it is not running.
+	_ = exec.CommandContext(ctx, "schtasks", "/end", "/tn", taskName).Run()
 	cmd := exec.CommandContext(ctx, "schtasks", "/delete", "/tn", taskName, "/f")
 	out, err := cmd.CombinedOutput()
 	if err != nil {

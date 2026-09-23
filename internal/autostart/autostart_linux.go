@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"text/template"
 )
 
@@ -29,6 +30,26 @@ RestartSec=5
 [Install]
 WantedBy=default.target
 `
+
+// renderUnit returns the unit file for the binary at exe. The path is
+// quoted for systemd, which splits ExecStart on spaces and expands % and $:
+// a binary under a folder with a space in its name would otherwise not run.
+func renderUnit(exe string) (string, error) {
+	var b strings.Builder
+	tmpl := template.Must(template.New("unit").Parse(linuxUnitTemplate))
+	if err := tmpl.Execute(&b, struct{ Exe string }{systemdQuote(exe)}); err != nil {
+		return "", err
+	}
+	return b.String(), nil
+}
+
+// systemdQuote quotes one ExecStart word: backslashes and double quotes
+// are escaped inside the quotes, % becomes %% (specifier) and $ becomes $$
+// (variable expansion).
+func systemdQuote(s string) string {
+	s = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "%", "%%", "$", "$$").Replace(s)
+	return `"` + s + `"`
+}
 
 func unitPath() (string, error) {
 	home, err := os.UserHomeDir()
@@ -66,18 +87,12 @@ func (linuxInstaller) Install(ctx context.Context) (Result, error) {
 		return Result{}, fmt.Errorf("create %s: %w", filepath.Dir(path), err)
 	}
 
-	tmpl := template.Must(template.New("unit").Parse(linuxUnitTemplate))
-	f, err := os.Create(path)
+	unit, err := renderUnit(exe)
 	if err != nil {
 		return Result{}, fmt.Errorf("write %s: %w", path, err)
 	}
-	execErr := tmpl.Execute(f, struct{ Exe string }{exe})
-	closeErr := f.Close()
-	if execErr != nil {
-		return Result{}, fmt.Errorf("write %s: %w", path, execErr)
-	}
-	if closeErr != nil {
-		return Result{}, fmt.Errorf("write %s: %w", path, closeErr)
+	if err := os.WriteFile(path, []byte(unit), 0o644); err != nil {
+		return Result{}, fmt.Errorf("write %s: %w", path, err)
 	}
 
 	for _, args := range [][]string{
