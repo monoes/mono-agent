@@ -51,7 +51,7 @@ func (n *OrgSendNode) Execute(ctx context.Context, input workflow.NodeInput, con
 		From:        senderFor(env.root, orgName, input),
 		Subject:     expandTemplate(configString(config, "subject", ""), item),
 		Body:        expandTemplate(msgTemplate, item),
-		Trace:       incomingTrace(item),
+		Trace:       incomingTrace(ctx, item),
 		WorkflowID:  input.WorkflowID,
 		ExecutionID: input.ExecutionID,
 		Limits:      orgLimits(env.root, orgName),

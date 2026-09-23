@@ -75,6 +75,9 @@ func RunExecution(
 	// C-46: a run an org role started through a grant carries the role's
 	// workdir as org.workdir; file-touching nodes confine their paths to it.
 	ctx = fsconfine.FromTriggerData(ctx, exec.TriggerData)
+	// Org nodes continue the chain trace of whatever started the run, even
+	// when a node between the trigger and them drops the `trace` field.
+	ctx = WithTriggerData(ctx, exec.TriggerData)
 
 	// Phase 2: BFS execution loop — process nodes in topological order.
 	order, err := dag.TopologicalSort()

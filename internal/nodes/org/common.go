@@ -66,23 +66,38 @@ func senderFor(root, org string, input workflow.NodeInput) string {
 }
 
 // incomingTrace continues the chain of whatever started this execution: a
-// trace object on the first input item (trigger.org and grant tool calls
-// put one there), else a fresh chain.
-func incomingTrace(item workflow.Item) orgbridge.Trace {
-	if m, ok := item.JSON["trace"].(map[string]interface{}); ok {
-		chain, _ := m["chain_id"].(string)
-		var hop int
-		switch h := m["hop"].(type) {
-		case float64:
-			hop = int(h)
-		case int:
-			hop = h
-		}
-		if strings.HasPrefix(chain, "chn_") && hop >= 0 {
-			return orgbridge.Trace{ChainID: chain, Hop: hop}
-		}
+// trace object on the node's first input item (trigger.org and grant tool
+// calls put one there), else the one in the execution's trigger data (a
+// node in between may not have passed `trace` through), else a fresh
+// chain. Losing it would start a new chain on every loop iteration and
+// defeat the hop limit (U10).
+func incomingTrace(ctx context.Context, item workflow.Item) orgbridge.Trace {
+	if tr, ok := traceField(item.JSON); ok {
+		return tr
+	}
+	if tr, ok := traceField(workflow.TriggerDataFrom(ctx)); ok {
+		return tr
 	}
 	return orgbridge.Trace{}
+}
+
+func traceField(m map[string]interface{}) (orgbridge.Trace, bool) {
+	t, ok := m["trace"].(map[string]interface{})
+	if !ok {
+		return orgbridge.Trace{}, false
+	}
+	chain, _ := t["chain_id"].(string)
+	var hop int
+	switch h := t["hop"].(type) {
+	case float64:
+		hop = int(h)
+	case int:
+		hop = h
+	}
+	if strings.HasPrefix(chain, "chn_") && hop >= 0 {
+		return orgbridge.Trace{ChainID: chain, Hop: hop}, true
+	}
+	return orgbridge.Trace{}, false
 }
 
 // orgLimits reads run_config.max_hops / max_repeats from the org. The org

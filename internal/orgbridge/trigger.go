@@ -131,7 +131,7 @@ func TriggerItems(ev Event) []workflow.Item {
 	if ev.Type == "question" {
 		item["question_kind"] = ev.QuestionKind()
 	}
-	if tr, ok := ParseTrace(ev.Msg); ok {
+	if tr, ok := eventTrace(ev); ok {
 		item["trace"] = map[string]interface{}{"chain_id": tr.ChainID, "hop": tr.Hop}
 	}
 	return []workflow.Item{workflow.RedactItemJSON(workflow.Item{JSON: item})}
@@ -205,4 +205,29 @@ func (s *TriggerSource) FireEndpoint(workflowID string, items []workflow.Item) b
 	}
 	fire(items)
 	return true
+}
+
+// eventTrace is the chain an org event belongs to: the `[trace …]` line of
+// a message, else the chain_id/hop monomind puts in a tool event's data
+// (orgrt/policy.ts). Without the second, a workflow started by a role's
+// tool call began a fresh chain, and a loop through it never climbed.
+func eventTrace(ev Event) (Trace, bool) {
+	if tr, ok := ParseTrace(ev.Msg); ok {
+		return tr, true
+	}
+	chain, _ := ev.Data["chain_id"].(string)
+	if !validChainID(chain) {
+		return Trace{}, false
+	}
+	hop := -1
+	switch h := ev.Data["hop"].(type) {
+	case float64:
+		hop = int(h)
+	case int:
+		hop = h
+	}
+	if hop < 0 {
+		return Trace{}, false
+	}
+	return Trace{ChainID: chain, Hop: hop}, true
 }

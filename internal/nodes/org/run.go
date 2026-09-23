@@ -125,7 +125,7 @@ func (n *OrgRunNode) Execute(ctx context.Context, input workflow.NodeInput, conf
 	default:
 		item := firstItem(input.Items)
 		adm, err := ledger.Admit(ctx, orgbridge.Call{
-			ProfileID: env.profileID, Trace: incomingTrace(item), Direction: orgbridge.DirWorkflowOut,
+			ProfileID: env.profileID, Trace: incomingTrace(ctx, item), Direction: orgbridge.DirWorkflowOut,
 			OrgName: orgName, WorkflowID: input.WorkflowID, ExecutionID: input.ExecutionID,
 		}, orgLimits(root, orgName))
 		if err != nil {

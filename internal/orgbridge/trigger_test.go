@@ -114,3 +114,31 @@ func TestTriggerItemsCapsAssetContentAndStripsTrace(t *testing.T) {
 		t.Fatalf("trace not lifted out of the message: %v", it)
 	}
 }
+
+// A tool event carries its chain in data, not in a trace line. trigger.org
+// must continue that chain, or a loop through a workflow started by a
+// role's tool call begins a fresh chain every round.
+func TestTriggerItemsTakeATrace(t *testing.T) {
+	trace := func(ev Event) interface{} { return TriggerItems(ev)[0].JSON["trace"] }
+
+	tool := Event{ID: "t", Org: "g", Type: "tool", Msg: "role_tool publish ok", Data: map[string]interface{}{"chain_id": "chn_tool1", "hop": float64(3)}}
+	if got, ok := trace(tool).(map[string]interface{}); !ok || got["chain_id"] != "chn_tool1" || got["hop"] != 3 {
+		t.Fatalf("tool event trace = %v", trace(tool))
+	}
+	// A trace line in the message wins over data.
+	both := Event{ID: "b", Org: "g", Type: "message", Msg: "[trace chn_msg hop=5]\nhi", Data: map[string]interface{}{"chain_id": "chn_tool1", "hop": float64(1)}}
+	if got := trace(both).(map[string]interface{}); got["chain_id"] != "chn_msg" || got["hop"] != 5 {
+		t.Fatalf("message trace = %v", got)
+	}
+	for name, data := range map[string]map[string]interface{}{
+		"no chain":     {"hop": float64(1)},
+		"bad chain":    {"chain_id": "../../etc", "hop": float64(1)},
+		"no hop":       {"chain_id": "chn_x"},
+		"negative hop": {"chain_id": "chn_x", "hop": float64(-1)},
+		"string hop":   {"chain_id": "chn_x", "hop": "2"},
+	} {
+		if got := trace(Event{ID: "x", Org: "g", Type: "tool", Data: data}); got != nil {
+			t.Errorf("%s: trace = %v, want none", name, got)
+		}
+	}
+}

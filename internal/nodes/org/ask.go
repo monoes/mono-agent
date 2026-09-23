@@ -95,7 +95,7 @@ func (n *OrgAskNode) Execute(ctx context.Context, input workflow.NodeInput, conf
 		From:        orgName + ":" + endpoint.ID,
 		Subject:     subject,
 		Body:        body + "\n\nReply with org_send to " + endpoint.ID + " and keep \"ask:" + id + "\" in the subject.",
-		Trace:       incomingTrace(item),
+		Trace:       incomingTrace(ctx, item),
 		WorkflowID:  input.WorkflowID,
 		ExecutionID: input.ExecutionID,
 		Limits:      orgLimits(env.root, orgName),
