@@ -1044,7 +1044,21 @@ What the runs taught, beyond the checks:
   9th granted call in one task was refused `refused_hops` ("this looks like a loop between orgs
   and automations") at the default `max_hops` of 8, although nothing looped. The gate set
   `run_config.max_hops: 20`. That is deliberate hardening (a caller-supplied hop is never
-  trusted), but a busy role hits it before any real loop would. Not changed here.
+  trusted), but a busy role hits it before any real loop would. **Fixed 2026-09-24**
+  (`fix/org-sibling-hops`, #123). monomind keeps one chain per role for its whole run
+  (`roleTrace`), so "siblings" are all of a role's granted calls until a traced message reaches
+  it. A role's granted call therefore leaves its own earlier granted calls out of the recorded
+  maximum and adds one hop per `SiblingCallsPerHop` (8) of them: a busy role gets
+  8 × (`max_hops` − the hop its last message arrived at) calls on one chain, 64 at the defaults
+  from hop 0, and a loop whose way back is never recorded here (monomind's native `org_send`, a
+  sync result) is still refused, after 64 calls instead of 8. Two roles alternating on one
+  chain still climb one hop per call, since each counts in the other's maximum. Refused rows
+  no longer count in the maximum (one forged hop=999 crossing used to kill a chain for every
+  caller), and a forged header hop is clamped before arithmetic (MaxInt64 used to wrap).
+  A loop back through a recorded crossing (`workflow_out`) climbs from that row as before. The
+  per-grant `max_calls_per_run`/`max_calls_per_day` caps bound it too; `max_repeats` does not
+  (a loop paced under 20 a minute never reaches it). An adversarial review found the first
+  version of this fix, which exempted siblings entirely, left such loops unbounded by hops.
 - **monomind stops a fence runner after 10 tool-call rounds per message** and says so on the bus
   (`tool-call round cap (10) reached — dropping 1 pending tool call(s)`). A task needing more
   calls needs another message. A configurable cap is requested in monoes/monomind#326.
@@ -1055,7 +1069,10 @@ What the runs taught, beyond the checks:
   `sandbox/outside`. That listing first looked like an escape. Controls with no grant and no call
   (`noop*.sh`), a gdb catchpoint on the daemon's `openat` (the daemon itself never opened the
   directory), and a `monomind` shim logging every invocation (`monomind-shim.sh`) traced it to the
-  decider. With autonomy `manual` it is gone. It opened no file, only the directory.
+  decider. With autonomy `manual` it is gone. It opened no file, only the directory. **Fixed
+  2026-09-24** (`fix/org-sibling-hops`, #123): the model decider now runs in `~/.monoagent/decider`, a
+  fixed folder emptied before each decision (fixed, so agent CLIs do not keep session state
+  per decision).
 - The same stray monomind dashboard (`ui/server.mjs 4242`) outlived `org stop` again, so it was
   stopped by PID.
 

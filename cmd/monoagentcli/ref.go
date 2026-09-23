@@ -1891,12 +1891,34 @@ generations at once) without the runs interfering.`,
 	},
 	{
 		Name:  "daemon",
-		Short: "Keep scheduled/webhook workflow triggers alive continuously, across ALL profiles",
-		Usage: "monoagentcli daemon",
-		Flags: `  (no subcommands — runs in the foreground until interrupted)`,
+		Short: "Keep scheduled/webhook workflow triggers and the extension bridge alive continuously, across ALL profiles",
+		Usage: "monoagentcli daemon [subcommand]",
+		Flags: `  install          Register the daemon to start automatically at login (macOS/Linux/Windows) and start it now
+  uninstall        Stop it and remove the login registration
+  --api=false      Don't serve the HTTP API in this process
+  --bridge=false   Don't hold the Chrome extension bridge open in this process`,
 		Examples: []string{
 			"monoagentcli daemon",
-			"# run as a background/system service (macOS launchd, systemd, etc.) for it to survive logout/reboot",
+			"monoagentcli daemon install     # auto-start at login on this machine or a fresh one — see \"daemon install\" below",
+			"monoagentcli daemon uninstall",
+		},
+	},
+	{
+		Name:  "daemon install",
+		Short: "Register the daemon to start automatically at login, and start it now",
+		Usage: "monoagentcli daemon install",
+		Flags: `  (no flags)`,
+		Examples: []string{
+			"monoagentcli daemon install     # writes a per-user LaunchAgent (macOS), systemd --user unit (Linux), or Scheduled Task (Windows)",
+		},
+	},
+	{
+		Name:  "daemon uninstall",
+		Short: "Stop the daemon and remove its login-time auto-start registration",
+		Usage: "monoagentcli daemon uninstall",
+		Flags: `  (no flags)`,
+		Examples: []string{
+			"monoagentcli daemon uninstall",
 		},
 	},
 	{
