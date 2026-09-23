@@ -19,6 +19,11 @@ func newTestDB(t *testing.T) *storage.Database {
 	// profiles.root_dir override. Without this, every run of this test
 	// writes real files into the developer's actual ~/.monoagent vault.
 	t.Setenv("HOME", t.TempDir())
+	// The vault syncs each file into the knowledge graph in the background:
+	// run a no-op instead of the real monomind, and let it finish before HOME
+	// is removed.
+	t.Setenv("MONOMIND_BIN", "true")
+	t.Cleanup(vault.Wait)
 	dbPath := filepath.Join(t.TempDir(), "vault-documents-test.db")
 	db, err := storage.NewDatabase(dbPath)
 	if err != nil {

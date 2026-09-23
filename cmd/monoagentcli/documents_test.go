@@ -10,6 +10,7 @@ import (
 
 	"github.com/monoes/mono-agent/internal/documents"
 	"github.com/monoes/mono-agent/internal/storage"
+	"github.com/monoes/mono-agent/internal/vault"
 )
 
 func newDocumentsCLITestDB(t *testing.T) string {
@@ -20,6 +21,10 @@ func newDocumentsCLITestDB(t *testing.T) string {
 	// profiles.root_dir override. Without this, every run pollutes the
 	// developer's actual ~/.monoagent vault.
 	t.Setenv("HOME", t.TempDir())
+	// The vault syncs each file into the knowledge graph in the background;
+	// let it finish before HOME is removed. (MONOMIND_BIN is left alone:
+	// tests sharing this helper put their own fake monomind on PATH.)
+	t.Cleanup(vault.Wait)
 	dbPath := filepath.Join(t.TempDir(), "cli-documents-test.db")
 	db, err := storage.NewDatabase(dbPath)
 	if err != nil {

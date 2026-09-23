@@ -10,6 +10,7 @@ import (
 	"github.com/monoes/mono-agent/internal/documents"
 	applynodes "github.com/monoes/mono-agent/internal/nodes/apply"
 	"github.com/monoes/mono-agent/internal/storage"
+	"github.com/monoes/mono-agent/internal/vault"
 	"github.com/monoes/mono-agent/internal/workflow"
 )
 
@@ -21,6 +22,11 @@ func newTestDB(t *testing.T) *storage.Database {
 	// profiles.root_dir override. Without this, every run pollutes the
 	// developer's actual ~/.monoagent vault.
 	t.Setenv("HOME", t.TempDir())
+	// The vault syncs each file into the knowledge graph in the background:
+	// run a no-op instead of the real monomind, and let it finish before HOME
+	// is removed.
+	t.Setenv("MONOMIND_BIN", "true")
+	t.Cleanup(vault.Wait)
 	dbPath := filepath.Join(t.TempDir(), "apply-node-test.db")
 	db, err := storage.NewDatabase(dbPath)
 	if err != nil {
