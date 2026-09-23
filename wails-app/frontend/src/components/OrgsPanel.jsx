@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   X, RefreshCw, Building2, Circle, Network, Maximize2, Plus,
   Coins, GitBranch, ScrollText, ListTree, Play, Loader2, UserCheck, Gavel, Boxes,
@@ -14,6 +15,7 @@ import DecisionsFeed from './orgs/DecisionsFeed.jsx'
 import GroupView from './orgs/GroupView.jsx'
 import QueuedMessagesPanel from './orgs/QueuedMessagesPanel.jsx'
 import useNeedsYouCounts from './orgs/useNeedsYouCounts.js'
+import useQueuedCount from './orgs/useQueuedCount.js'
 import { Badge, Chip } from './orgs/ui.jsx'
 
 // Fold button shown atop the expanded org-list panel — mirrors
@@ -46,16 +48,16 @@ function panelStripStyle(borderSide) {
 // `trace`. `group` only shows for holding orgs. `queued` lists messages
 // waiting for the org's next start (C-35).
 const TABS = [
-  { id: 'design',     label: 'Design',     icon: Network },
-  { id: 'overview',   label: 'Overview',   icon: Circle },
-  { id: 'group',      label: 'Group',      icon: Boxes, holdingOnly: true },
-  { id: 'needs',      label: 'Needs you',  icon: UserCheck },
-  { id: 'queued',     label: 'Queued',     icon: Inbox },
-  { id: 'decisions',  label: 'Decisions',  icon: Gavel },
-  { id: 'logs',       label: 'Logs',       icon: ScrollText },
-  { id: 'costs',      label: 'Costs',      icon: Coins },
-  { id: 'flow',       label: 'Flow',       icon: GitBranch },
-  { id: 'trace',      label: 'Trace',      icon: ListTree },
+  { id: 'design',     labelKey: 'orgs.tabs.design',     icon: Network },
+  { id: 'overview',   labelKey: 'orgs.tabs.overview',   icon: Circle },
+  { id: 'group',      labelKey: 'orgs.tabs.group',      icon: Boxes, holdingOnly: true },
+  { id: 'needs',      labelKey: 'orgs.tabs.needs',      icon: UserCheck },
+  { id: 'queued',     labelKey: 'orgs.tabs.queued',     icon: Inbox },
+  { id: 'decisions',  labelKey: 'orgs.tabs.decisions',  icon: Gavel },
+  { id: 'logs',       labelKey: 'orgs.tabs.logs',       icon: ScrollText },
+  { id: 'costs',      labelKey: 'orgs.tabs.costs',      icon: Coins },
+  { id: 'flow',       labelKey: 'orgs.tabs.flow',       icon: GitBranch },
+  { id: 'trace',      labelKey: 'orgs.tabs.trace',      icon: ListTree },
 ]
 
 function statusColor(status) {
@@ -150,6 +152,7 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
   const [orgs, setOrgs] = useState([])
   const [loadingOrgs, setLoadingOrgs] = useState(true)
   const [selected, setSelected] = useState(null) // org name
+  const { t } = useTranslation()
   const [tab, setTab] = useState('overview')
   const [data, setData] = useState({}) // { [tab]: payload }
   const [tabLoading, setTabLoading] = useState(false)
@@ -401,6 +404,9 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
     if (!selected) return
     setNeedsYouCounts(prev => (prev[selected] === count ? prev : { ...prev, [selected]: count }))
   }, [selected, setNeedsYouCounts])
+  // Messages waiting for the selected org's next start (C-35), counted on
+  // its Queued tab. The open tab reports fresher counts as it reloads.
+  const [queuedCount, setQueuedCount] = useQueuedCount(selected, effectiveOpen && !notInitialized)
   const selectedOrgMeta = orgs.find(o => o.name === selected) || null
   const isHolding = selectedOrgMeta?.kind === 'holding'
 
@@ -716,14 +722,19 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
               )}
               {!(designerFullscreen && tab === 'design') && (
               <div style={{ display: 'flex', gap: 4, padding: '8px', borderBottom: '1px solid var(--border)', overflowX: 'auto', flexShrink: 0 }}>
-                {TABS.filter(t => !t.holdingOnly || isHolding).map(t => {
-                  const Icon = t.icon
-                  const active = tab === t.id
-                  const badgeCount = t.id === 'needs' ? (needsYouCounts[selected] || 0) : 0
+                {TABS.filter(tabDef => !tabDef.holdingOnly || isHolding).map(tabDef => {
+                  const Icon = tabDef.icon
+                  const active = tab === tabDef.id
+                  const badgeCount = tabDef.id === 'needs' ? (needsYouCounts[selected] || 0)
+                    : tabDef.id === 'queued' ? queuedCount : 0
+                  // Needs you is waiting on the person; a queued message
+                  // only waits for the org to start, so it is not red.
+                  const badgeBg = tabDef.id === 'queued' ? 'var(--text-muted)' : 'var(--red, #ef4444)'
+                  const badgeFg = tabDef.id === 'queued' ? 'var(--surface, #060b13)' : '#fff'
                   return (
                     <button
-                      key={t.id}
-                      onClick={() => setTab(t.id)}
+                      key={tabDef.id}
+                      onClick={() => setTab(tabDef.id)}
                       style={{
                         position: 'relative',
                         display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap',
@@ -733,12 +744,12 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
                         color: active ? 'var(--text)' : 'var(--text-muted)', cursor: 'pointer',
                       }}
                     >
-                      <Icon size={11} /> {t.label}
+                      <Icon size={11} /> {t(tabDef.labelKey)}
                       {badgeCount > 0 && (
                         <span style={{
                           position: 'absolute', top: -5, right: -5,
                           minWidth: 14, height: 14, padding: '0 3px', borderRadius: 7,
-                          background: 'var(--red, #ef4444)', color: '#fff',
+                          background: badgeBg, color: badgeFg,
                           fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 700, lineHeight: '14px', textAlign: 'center',
                           boxShadow: '0 0 0 2px var(--surface, #060b13)',
                         }}>
@@ -757,12 +768,12 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
                       background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'default',
                     }}
                   >
-                    <Loader2 size={11} style={{ animation: 'spin 0.9s linear infinite' }} /> Running…
+                    <Loader2 size={11} style={{ animation: 'spin 0.9s linear infinite' }} /> {t('orgs.tabBar.running')}
                   </button>
                 ) : (
                   <button
                     onClick={() => setRunPromptOpen(v => !v)}
-                    title="Run this org"
+                    title={t('orgs.tabBar.runTitle')}
                     style={{
                       marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4,
                       fontFamily: 'var(--font-mono)', fontSize: 10, padding: '5px 8px', borderRadius: 'var(--radius)',
@@ -771,13 +782,13 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
                       color: 'var(--text)', cursor: 'pointer',
                     }}
                   >
-                    <Play size={11} /> Run
+                    <Play size={11} /> {t('orgs.tabBar.run')}
                   </button>
                 )}
                 {tab === 'design' && (
                   <button
                     onClick={() => setDesignerFullscreen(v => !v)}
-                    title={designerFullscreen ? 'Exit fullscreen' : 'Fullscreen canvas'}
+                    title={designerFullscreen ? t('orgs.tabBar.exitFullscreen') : t('orgs.tabBar.fullscreen')}
                     style={{
                       display: 'flex', alignItems: 'center', gap: 4,
                       fontFamily: 'var(--font-mono)', fontSize: 10, padding: '5px 8px', borderRadius: 'var(--radius)',
@@ -922,7 +933,7 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
                 )}
 
                 {tab === 'queued' && (
-                  <QueuedMessagesPanel orgName={selected} running={runningOrgs.has(selected)} onStartOrg={handleRunOrg} />
+                  <QueuedMessagesPanel orgName={selected} running={runningOrgs.has(selected)} onStartOrg={handleRunOrg} onCountChange={setQueuedCount} />
                 )}
 
                 {tab === 'decisions' && (

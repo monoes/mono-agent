@@ -17,18 +17,19 @@ import (
 
 // Windows has no process groups a signal can target. A child this process
 // will kill (Exec, OrgRun, OrgEvents, OrgServeRun) is put in a Job Object
-// right after it starts; killProcessGroup terminates the job, which takes
+// by startProcessGroup (proc_windows_start.go) before its first instruction
+// runs; killProcessGroup terminates the job, which takes
 // every descendant with it. The job also has KILL_ON_JOB_CLOSE, so if this
 // process dies without cleaning up, Windows closes the handle and kills the
 // tree instead of orphaning it. On a normal exit release lifts that limit
 // before closing the handle, so descendants that outlive the child behave as
 // on unix. BREAKAWAY_OK lets a descendant that asks to leave the job
 // (CREATE_BREAKAWAY_FROM_JOB, e.g. a deliberately detached daemon) do so, as
-// setsid escapes a process group on unix.
+// setsid escapes a process group on unix; startDetached does exactly that
+// for the children that must outlive this process.
 //
-// The child runs briefly before it is assigned: a grandchild it spawns in
-// that window is outside the job. killProcessGroup's taskkill fallback covers
-// the case where assignment failed altogether.
+// killProcessGroup's taskkill fallback covers the case where making or
+// assigning the job failed altogether.
 
 // setProcessGroup starts the child in a new console process group, so a
 // Ctrl+C in this console does not reach it, as with Setpgid on unix.
@@ -53,9 +54,9 @@ type jobGroup struct {
 // jobs maps a started *exec.Cmd to its *jobGroup.
 var jobs sync.Map
 
-// attachProcessGroup puts the started child in a new Job Object. If that
-// fails the child still runs, and killProcessGroup falls back to taskkill.
-// Call release once the child has been waited for.
+// attachProcessGroup puts the started (still suspended) child in a new Job
+// Object. If that fails the child still runs, and killProcessGroup falls
+// back to taskkill. Call release once the child has been waited for.
 func attachProcessGroup(cmd *exec.Cmd) (release func()) {
 	if cmd.Process == nil {
 		return func() {}
@@ -143,8 +144,15 @@ func killProcessGroup(cmd *exec.Cmd, pid int) {
 	if v, ok := jobs.Load(cmd); ok && v.(*jobGroup).terminate() {
 		return
 	}
-	if pid == 0 && cmd.Process != nil {
-		pid = cmd.Process.Pid
+	if cmd.Process != nil {
+		// Once Wait has reaped the child its handle is closed and the pid
+		// may already name an unrelated process: taskkill must not touch it.
+		if err := cmd.Process.Signal(syscall.Signal(0)); errors.Is(err, os.ErrProcessDone) {
+			return
+		}
+		if pid == 0 {
+			pid = cmd.Process.Pid
+		}
 	}
 	if pid != 0 {
 		taskkillTree(pid)
@@ -167,7 +175,12 @@ func taskkillTree(pid int) {
 
 // signalServe kills a serve daemon and its agent-CLI descendants by pid.
 // Windows has no SIGTERM, so both steps are a tree kill: taskkill /T follows
-// parent pids, then the daemon itself is killed if taskkill missed it.
+// parent pids, then the daemon itself is killed if taskkill missed it. The
+// daemon is alive when this runs (OrgServeStop only signals a live
+// heartbeat), so its children are found through it; the one gap is a
+// descendant whose own parent already exited, which taskkill cannot link
+// back. OrgServeStart deliberately gives the daemon no job to close that
+// gap: a job this process holds would kill the daemon when we exit.
 func signalServe(pid int, _ bool) error {
 	taskkillTree(pid)
 	p, err := os.FindProcess(pid)

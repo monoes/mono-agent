@@ -5,6 +5,8 @@ package main
 import (
 	"os/exec"
 	"syscall"
+
+	"github.com/monoes/mono-agent/internal/monomind"
 )
 
 // hideWindow configures cmd so that no visible console window is created on Windows.
@@ -19,16 +21,29 @@ func hideWindow(cmd *exec.Cmd) {
 	cmd.SysProcAttr.CreationFlags |= 0x08000000 // CREATE_NO_WINDOW
 }
 
-// setChatProcessGroup configures the chat subprocess to run without showing a console window on Windows.
+// setChatProcessGroup configures the chat subprocess to run without showing
+// a console window on Windows. For a command made with exec.CommandContext
+// it also replaces the default ctx cancel, which kills only the direct
+// child: the chat supervisor cancels the turn's ctx before it calls Kill,
+// and once monoagentcli is gone taskkill /T can no longer find the
+// monomind and agent-CLI processes under it.
 func setChatProcessGroup(cmd *exec.Cmd) {
 	hideWindow(cmd)
+	if cmd.Cancel != nil {
+		cmd.Cancel = func() error {
+			killChatProcessGroup(cmd)
+			return nil
+		}
+	}
 }
 
-// killChatProcessGroup kills the direct child only on Windows.
+// killChatProcessGroup kills the chat subprocess and everything under it
+// (monoagentcli → monomind → agent CLI) with the same helper the CLI uses
+// for its own children. The GUI does not put the chat in a Job Object, so
+// this is taskkill /T /F by parent pid, then the direct child. It is safe
+// to call after the child has exited.
 func killChatProcessGroup(cmd *exec.Cmd) {
-	if cmd.Process != nil {
-		_ = cmd.Process.Kill()
-	}
+	monomind.KillProcessTree(cmd)
 }
 
 // readProcessCommandLine is a stub on Windows where /proc and ps are unavailable.

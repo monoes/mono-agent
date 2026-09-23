@@ -50,11 +50,12 @@
   function askWorker(message) {
     return new Promise((resolve) => {
       chrome.runtime.sendMessage(message, (response) => {
-        if (chrome.runtime.lastError) {
-          resolve({ ok: false, error: chrome.runtime.lastError.message });
+        const lastError = chrome.runtime.lastError;
+        if (AI.unanswered(response, lastError)) {
+          resolve({ ok: false, unanswered: true, error: lastError ? lastError.message : "" });
           return;
         }
-        resolve(response || { ok: false });
+        resolve(response);
       });
     });
   }
@@ -105,7 +106,19 @@
   async function load(live) {
     const mine = ++generation;
     const answer = await askWorker({ type: "summary_ai_state", live });
-    if (mine !== generation || !answer || answer.ok === false) return;
+    if (mine !== generation) return;
+    // An unpacked extension keeps running the background worker it was
+    // loaded with, while this document is read from disk every time the
+    // panel opens. After an update on disk, the newer panel asks for
+    // things the older worker has never heard of — so say the one thing
+    // that fixes it instead of quietly dropping the picker.
+    if (answer.unanswered) {
+      box.hidden = true;
+      document.dispatchEvent(new CustomEvent("panel:stale-worker"));
+      return;
+    }
+    if (answer.ok === false) return;
+    box.hidden = false;
     if (answer.changed && answer.reason) fallbackReason = answer.reason;
     state = fallbackReason ? Object.assign({}, answer, { changed: true, reason: fallbackReason }) : answer;
     draw();

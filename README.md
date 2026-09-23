@@ -687,7 +687,7 @@ mono-agent/
 | [SECURITY.md](SECURITY.md) | Reporting, supported versions, telemetry & crash-reporting statement |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Build/test commands (incl. `-tags social`), PR guidelines |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
-| [docs/screenshots/](docs/screenshots/) | GUI screenshots |
+| [docs/screenshots/](docs/screenshots/) | GUI screenshots, including a [walkthrough of the Org page](docs/screenshots/org-walkthrough/README.md) |
 
 ---
 

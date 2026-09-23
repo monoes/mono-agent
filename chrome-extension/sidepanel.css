@@ -1373,3 +1373,15 @@ progress::-webkit-progress-value {
     background: var(--accent-hover);
   }
 }
+
+/* The extension's files changed under a running worker (unpacked installs
+   only). Warn-toned, one line, above the card it affects. */
+.stale-notice {
+  margin: 0 0 var(--sp-5);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid color-mix(in oklch, var(--warn) 35%, var(--line));
+  border-radius: var(--r-sm);
+  background: var(--warn-wash);
+  color: var(--warn);
+  font-size: var(--t-sm);
+}
