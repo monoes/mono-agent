@@ -286,3 +286,45 @@ func TestOrgLimitsAreClampedToACeiling(t *testing.T) {
 		t.Fatalf("limits the org file asked for = %+v", lim)
 	}
 }
+
+// C-46 live gate: a grant with no input_schema advertised a schema without
+// properties, and monomind — which keeps only listed arguments — delivered
+// every call as input: {}. The tool now lists the input fields the
+// workflow's templates read.
+func TestGrantModeAdvertisesTheWorkflowsInputFields(t *testing.T) {
+	f := newGrantFixture(t, orggrant.Tool{Wait: true})
+	ws := workflow.NewSQLiteWorkflowStore(f.db.DB)
+	if err := ws.SaveWorkflowNodes(context.Background(), "wf-pub", []workflow.WorkflowNode{
+		{ID: "t", Type: "trigger.manual", Name: "Start", Config: map[string]interface{}{}},
+		{ID: "w", Type: "data.write_binary_file", Name: "Write", Config: map[string]interface{}{
+			"file_path": "{{ $json.input.path }}", "field": "content"}},
+		{ID: "s", Type: "core.set", Name: "Content", Config: map[string]interface{}{
+			"assignments": `[{"field":"content","value":"{{ $json.input.text }}"}]`}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	resps := serveLines(t, f.server, request(1, "tools/list", map[string]interface{}{}))
+	var res struct {
+		Tools []struct {
+			Name        string                 `json:"name"`
+			InputSchema map[string]interface{} `json:"inputSchema"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(resps[0]["result"], &res); err != nil {
+		t.Fatal(err)
+	}
+	for _, tl := range res.Tools {
+		if tl.Name != "automation_publish" {
+			continue
+		}
+		props, _ := tl.InputSchema["properties"].(map[string]interface{})
+		if props["path"] == nil || props["text"] == nil || len(props) != 2 {
+			t.Fatalf("automation_publish properties = %v, want path and text", props)
+		}
+		if tl.InputSchema["additionalProperties"] != true {
+			t.Fatalf("schema must still accept other fields: %v", tl.InputSchema)
+		}
+		return
+	}
+	t.Fatal("automation_publish not listed")
+}

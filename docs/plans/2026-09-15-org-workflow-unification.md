@@ -743,7 +743,7 @@ tools, so no role can change its own org's level (C-54).
 | C-43 | Cross-org messages land on both buses with different ids and no shared message id (§3.2). | The C-27 multiplexer, the group view, and any `xorg` counting see each message twice with nothing exact to join on. | Dedupe on (from, to, subject, body hash) within 5 s until M3 stamps a shared `messageId` on both copies (§7.1 item 7). | monomind + mono-agent |
 | C-44 | `org run --budget-usd` is an upfront estimate gate built on a hardcoded rate table the CLI itself flags as stale (§3.2). | Mapping `budget_share` onto it would refuse runs that cost a fraction of the estimate and still not bound actual spend. | U11 ceilings use `usage` events and `org costs` only (§7.5); `org.run` and `org_start` never pass `--budget-usd`. | mono-agent |
 | C-45 | `question` events cover both tool approvals and `ask_human` (§3.2). | A `trigger.org` subscription on `question` fires on every Bash or WebFetch approval and every `approval: "required"` grant call, not only on agent questions. | `question_kind` filter, default `ask_human` (§7.3). | mono-agent |
-| C-46 | Granted automations run in mono-agent's daemon, outside monomind's role workdir confinement (§3.2). A role confined to its worktree can pass any file path as an automation argument. Inferred from source; not reproduced. | A filesystem confinement bypass through a grant, parallel to the Bash hatch (C-2). | The grant dialog flags workflows whose file-reading or file-writing nodes take paths from trigger input; the grant handler passes the role's workdir as `org.workdir` in trigger data so those nodes can confine to it; SECURITY.md lists this next to C-2. **Closed 2026-09-18** (§15): enforced, not only documented. | mono-agent |
+| C-46 | Granted automations run in mono-agent's daemon, outside monomind's role workdir confinement (§3.2). A role confined to its worktree can pass any file path as an automation argument. Inferred from source; not reproduced. | A filesystem confinement bypass through a grant, parallel to the Bash hatch (C-2). | The grant dialog flags workflows whose file-reading or file-writing nodes take paths from trigger input; the grant handler passes the role's workdir as `org.workdir` in trigger data so those nodes can confine to it; SECURITY.md lists this next to C-2. **Closed 2026-09-18** (§15): enforced, not only documented; live gate passed 2026-09-23 (§15). | mono-agent |
 | C-47 | `asset` events are emitted at policy decision time, before the write runs, and a Write carries up to 20 000 chars of the file (§3.2). | `trigger.org` on `asset` can fire for a write that then failed, and copies file contents into trigger data and execution logs. | Document `asset` as "write attempted"; cap its content in trigger data at the 16 KB tool-output bound, through the same redaction path (C-12). | mono-agent |
 | C-48 | Cost tables list cross-org senders as zero-cost pseudo-roles of the receiving org (§3.2). | The group view and the U11 roll-up over-count roles; a holding org's table lists every child boss that reports up. | Roll-up and group view key on role ids from each org's config (§7.5). | mono-agent |
 
@@ -994,6 +994,71 @@ approval appears can legitimately show a deadline rather than a hold.
 Both of #83's gates are now exercised live. Scripts: `~/scratch/gate83` (`gate5.sh` released
 monomind + codex, `gate6.sh` local monomind + stub runtime).
 
+**C-46 live gate (2026-09-23).** A role calling granted file automations in a running org,
+under the released monomind 2.15.5, `monoagentcli daemon` (API on 9340, webhooks on 9341) and an
+isolated HOME with no credentials. The role ran on the stub `pi` runtime, scripted to make one
+tool call per turn, so there was **no model spend**. Autonomy `manual`, so no decider ran either.
+The org's `run_config.workspace` was an absolute `sandbox/wd`. Next to it, `sandbox/outside`
+held `secret.csv`. Inside `wd` were a directory symlink `escape -> ../outside`, a file symlink
+`secret-link.csv -> ../outside/secret.csv` and a dangling `new-link.txt ->
+../outside/pwned-dangling.txt`. Two grants, both `--approval none`: `read_csv`
+(`data.spreadsheet` `read_csv`, `file_path: {{ $json.input.path }}`) and `write_note`
+(`core.set` then `data.write_binary_file`, same templated path). There were 13 calls in two
+messages, because monomind stops a fence runner after 10 tool-call rounds per message. The org's
+task carried the first 7 calls and an `org send` carried the rest. `inotifywait` watched
+`sandbox/outside` for the whole run. Scripts: `/home/monoes/scratch/c46-gate` (`gate.sh`, final run
+`r5`, 24/24 checks; `r0-before-fix` is the run that found the bug below).
+
+| Check | Result |
+|---|---|
+| Inside the workdir: relative `data.csv`, absolute `wd/data.csv`, write `wd/out/note.txt` | All three `org_tool` executions `SUCCESS`, each with `org.workdir` = `sandbox/wd` in its trigger data. The role got the row back (`[{"name":"inside","value":"1"}]`), and `out/note.txt` holds `inside-ok`. |
+| Absolute path outside: read `outside/secret.csv`, write `outside/pwned-abs.txt` | `FAILED`: `data.spreadsheet: path escapes org workdir: <sb>/outside/secret.csv resolves to <sb>/outside/secret.csv, outside the org workdir <sb>/wd`. The write error is the same, from `data.write_binary_file`. |
+| `..` escapes: `../outside/secret.csv`, `wd/../outside/secret.csv`, write `out/../../outside/pwned-dotdot.txt` | `FAILED`, each `… resolves to <sb>/outside/…, outside the org workdir <sb>/wd`. |
+| Symlink inside the workdir pointing out: read `escape/secret.csv`, read `wd/secret-link.csv`, write `escape/pwned-link.txt` | `FAILED`: `<sb>/wd/escape/secret.csv resolves to <sb>/outside/secret.csv, outside the org workdir`, and likewise for the other two. |
+| Dangling symlink: write `new-link.txt` | `FAILED`: `<sb>/wd/new-link.txt is a symlink to a path that does not exist`. |
+| An `org: {workdir: "/"}` argument next to an outside path | `FAILED` (outside the workdir). The `org` key never got past monomind, which passes only listed arguments (below). mono-agent puts arguments under `input` either way. |
+| Nothing outside was read or written | `outside/` still holds only `secret.csv`, and its sha256 is unchanged. `inotifywait` on `outside/` saw **no** event during the org run. The secret string is in no tool result, bus event, execution row or node output. As a control, the same workflow run by hand (`workflow run --input`, no org, unconfined) returned the secret, and `inotifywait` logged `OPEN`/`ACCESS` on `secret.csv`, so the watcher does see a read when one happens. |
+| `org automation list` / `org grant list` / `org grant add` flag both workflows | `file_input_nodes`: `Read (data.spreadsheet)` `file_path` `read` `confined:true`, and `Write (data.write_binary_file)` `file_path` `write` `confined:true`. `grant add` also warns `the workflow reads or writes files at paths taken from its input (1 node(s)); in runs a role starts, those nodes are confined to the role's workdir`. |
+| Records | 13 `org_tool` executions. 13 `role_tool` ledger rows `ok` over two chains, one per message; the `org send` adds a `workflow_out` row. The 13 bus `tool` events for these calls (plus one for `org_complete`) carry the role's arguments (`{"input":{"path":"escape/secret.csv"}}`). The daemon log has a `node execution failed` / `path escapes org workdir` pair for each refusal. The stub logged `cwd: <sb>/wd` for each role turn: monomind ran the role in the same directory the automations were held to. |
+
+Bug this gate found, fixed with regression tests: **no granted call's arguments ever reached
+the workflow.** A grant without a declared `input_schema` advertised
+`{type: object, additionalProperties: true}` with no `properties`. monomind turns a provider
+tool's `inputSchema` into a zod object of its listed properties (`tool-providers.ts`
+`jsonSchemaToZodShape`). It then validates each call with `z.object(shape)`
+(`tool-fence.ts`), which drops every key not listed (reported as monoes/monomind#325). So every
+call ran with `input: {}`, whatever the role passed. In the first run the templated path rendered as `<no value>`: reads failed with
+`open …/wd/<no value>: no such file or directory`, and the write created a file named
+`wd/<no value>` inside the workdir. Earlier gates did not notice. The fence-runner gate's live
+codex call also has `"input":{}` in its execution row; only its direct MCP re-check had
+arguments. The tool now lists as properties the input fields the workflow's templates read
+(`orggrant.InputFields`: `input.x`, `input["x"]` inside `{{ }}`), and still allows additional
+ones. A workflow that reads its input another way (a code node) needs `input_schema` on the
+role's `automations` entry. The monomind side (honouring `additionalProperties`) is not changed
+here.
+
+What the runs taught, beyond the checks:
+
+- **Hops count sibling calls, not depth.** The ledger sets hop = highest hop recorded for the
+  chain + 1, and a role's calls in reply to one message share that message's chain. So the role's
+  9th granted call in one task was refused `refused_hops` ("this looks like a loop between orgs
+  and automations") at the default `max_hops` of 8, although nothing looped. The gate set
+  `run_config.max_hops: 20`. That is deliberate hardening (a caller-supplied hop is never
+  trusted), but a busy role hits it before any real loop would. Not changed here.
+- **monomind stops a fence runner after 10 tool-call rounds per message** and says so on the bus
+  (`tool-call round cap (10) reached — dropping 1 pending tool call(s)`). A task needing more
+  calls needs another message. A configurable cap is requested in monoes/monomind#326.
+- **At the default autonomy, a role's `org_complete` goes to the Claude model decider**, which
+  the daemon runs as `monomind agent exec --runtime claude` in the daemon's own working
+  directory. With no credentials it failed (`runner-error`, `cost_usd` 0). But the claude CLI
+  indexes that directory on start-up, and here that directory was the gate folder, so it listed
+  `sandbox/outside`. That listing first looked like an escape. Controls with no grant and no call
+  (`noop*.sh`), a gdb catchpoint on the daemon's `openat` (the daemon itself never opened the
+  directory), and a `monomind` shim logging every invocation (`monomind-shim.sh`) traced it to the
+  decider. With autonomy `manual` it is gone. It opened no file, only the directory.
+- The same stray monomind dashboard (`ui/server.mjs 4242`) outlived `org stop` again, so it was
+  stopped by PID.
+
 Observed, outside this plan: monomind (2.10.23 and later, including the released 2.10.30)
 streams assistant text as deltas for incremental runtimes, and its `result` event has no `text`,
 although the protocol says it should (monomind issue #245). `monomind.Exec` kept only the last
@@ -1072,7 +1137,9 @@ ordinary `startOrg` runs.
   SECURITY.md layer 6. Residual, accepted: `system.execute_command` cannot be confined (flagged as
   such); check-then-open races (TOCTOU); the workdir is read from the org file, which a `repo`
   role can edit (it widens its own confinement the same way); senders from an org the profile folder
-  cannot resolve are held to the profile folder; not exercised in a live org run yet.
+  cannot resolve are held to the profile folder. Exercised in a live org run on 2026-09-23
+  ("C-46 live gate" above), which also found and fixed a bug that had kept every granted call's
+  arguments from reaching the workflow.
 - ~~`needs-you` reports `idle_stop_in_seconds: null`.~~ Closed: monomind 2.11.8 reports the
   deadline in `org status --json` (capability `org-idle-deadline`), `needs-you` reads it (#91),
   and monomind's human-readable `org status` prints it too (monoes/monomind#296, closed

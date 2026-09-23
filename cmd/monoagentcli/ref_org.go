@@ -55,6 +55,12 @@ AUTOMATIONS AND GRANTS
   --approval required (each call is a decision). The first grant of a
   role pre-fills denyTools Bash.
 
+  The tool's arguments reach the workflow as input in its trigger data.
+  monomind passes only the arguments a tool's schema lists, so the tool
+  lists the input fields the workflow's templates read (input.<field>);
+  a workflow that reads its input some other way (a code node) needs an
+  input_schema on the role's automations entry in the org file.
+
   A granted run gets the calling role's workdir (its run_config.workspace
   directory) as org.workdir in its trigger data; so does an automation
   role's run started by a message from a role. File nodes (spreadsheet,

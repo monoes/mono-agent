@@ -130,8 +130,10 @@ func (s *Server) grantToolDefinitions(ctx context.Context) []map[string]interfac
 		}
 		hasAutomation = true
 		name := "the workflow"
+		var fields []string
 		if wf, err := rt.store.GetWorkflow(ctx, t.WorkflowID); err == nil && wf != nil {
 			name = fmt.Sprintf("workflow %q", wf.Name)
+			fields = orggrant.InputFields(wf)
 		}
 		desc := fmt.Sprintf("Run automation %q (%s). ", t.Alias, name)
 		if t.Wait && t.Mode == "run" {
@@ -147,6 +149,17 @@ func (s *Server) grantToolDefinitions(ctx context.Context) []map[string]interfac
 			"type":                 "object",
 			"additionalProperties": true,
 			"description":          "Input passed to the workflow as trigger data (field input).",
+		}
+		// monomind keeps only the arguments a tool's schema lists as
+		// properties (a zod object strips the rest), so a schema without
+		// properties delivers input: {} whatever the role passed. Advertise
+		// the input fields the workflow's templates read.
+		if len(fields) > 0 {
+			props := make(map[string]interface{}, len(fields))
+			for _, f := range fields {
+				props[f] = map[string]interface{}{"description": fmt.Sprintf("Workflow input field %q (the workflow reads input.%s).", f, f)}
+			}
+			schema["properties"] = props
 		}
 		if spec, ok := specs[t.Alias]; ok && len(spec.InputSchema) > 0 {
 			var custom map[string]interface{}

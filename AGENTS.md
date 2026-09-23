@@ -292,6 +292,11 @@ monoagentcli org automation-role add growth --alias publish_post --reports-to le
   `monoagentcli` directly and bypass every grant. Workflows with outbound
   nodes (email, chat, social, service writes, non-GET HTTP, shell) default
   to `--approval required`.
+- A granted tool's arguments reach the workflow as `input`. monomind
+  passes only the arguments the tool's schema lists, so the tool lists the
+  fields the workflow's templates read (`{{ $json.input.<field> }}`); a
+  workflow that reads its input another way needs an `input_schema` on the
+  role's `automations` entry in the org file.
 - A granted run (and an automation role's run started by a role's
   message) carries the role's workdir as `org.workdir`; file nodes refuse
   paths that resolve outside it (`path escapes org workdir`). Shell
