@@ -14,6 +14,7 @@ import DecisionsFeed from './orgs/DecisionsFeed.jsx'
 import GroupView from './orgs/GroupView.jsx'
 import QueuedMessagesPanel from './orgs/QueuedMessagesPanel.jsx'
 import useNeedsYouCounts from './orgs/useNeedsYouCounts.js'
+import useQueuedCount from './orgs/useQueuedCount.js'
 import { Badge, Chip } from './orgs/ui.jsx'
 
 // Fold button shown atop the expanded org-list panel — mirrors
@@ -401,6 +402,9 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
     if (!selected) return
     setNeedsYouCounts(prev => (prev[selected] === count ? prev : { ...prev, [selected]: count }))
   }, [selected, setNeedsYouCounts])
+  // Messages waiting for the selected org's next start (C-35), counted on
+  // its Queued tab. The open tab reports fresher counts as it reloads.
+  const [queuedCount, setQueuedCount] = useQueuedCount(selected, effectiveOpen && !notInitialized)
   const selectedOrgMeta = orgs.find(o => o.name === selected) || null
   const isHolding = selectedOrgMeta?.kind === 'holding'
 
@@ -719,7 +723,12 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
                 {TABS.filter(t => !t.holdingOnly || isHolding).map(t => {
                   const Icon = t.icon
                   const active = tab === t.id
-                  const badgeCount = t.id === 'needs' ? (needsYouCounts[selected] || 0) : 0
+                  const badgeCount = t.id === 'needs' ? (needsYouCounts[selected] || 0)
+                    : t.id === 'queued' ? queuedCount : 0
+                  // Needs you is waiting on the person; a queued message
+                  // only waits for the org to start, so it is not red.
+                  const badgeBg = t.id === 'queued' ? 'var(--text-muted)' : 'var(--red, #ef4444)'
+                  const badgeFg = t.id === 'queued' ? 'var(--surface, #060b13)' : '#fff'
                   return (
                     <button
                       key={t.id}
@@ -738,7 +747,7 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
                         <span style={{
                           position: 'absolute', top: -5, right: -5,
                           minWidth: 14, height: 14, padding: '0 3px', borderRadius: 7,
-                          background: 'var(--red, #ef4444)', color: '#fff',
+                          background: badgeBg, color: badgeFg,
                           fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 700, lineHeight: '14px', textAlign: 'center',
                           boxShadow: '0 0 0 2px var(--surface, #060b13)',
                         }}>
@@ -922,7 +931,7 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
                 )}
 
                 {tab === 'queued' && (
-                  <QueuedMessagesPanel orgName={selected} running={runningOrgs.has(selected)} onStartOrg={handleRunOrg} />
+                  <QueuedMessagesPanel orgName={selected} running={runningOrgs.has(selected)} onStartOrg={handleRunOrg} onCountChange={setQueuedCount} />
                 )}
 
                 {tab === 'decisions' && (

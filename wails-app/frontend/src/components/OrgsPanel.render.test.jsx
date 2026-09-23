@@ -21,6 +21,7 @@ vi.mock('../services/api.js', () => ({
     getOrgApprovals: vi.fn(() => Promise.resolve({ approvals: [] })),
     getOrgAutonomy: vi.fn(() => Promise.resolve({ v: 1, org: 'test-org', level: 'manual', decider: { kind: 'model' }, daemon_running: true })),
     getOrgStatus: vi.fn(() => Promise.resolve({ status: 'stopped' })),
+    listOrgQueuedMessages: vi.fn(() => Promise.resolve({ v: 1, org: 'test-org', count: 0, messages: [] })),
     getOrgReport: vi.fn(() => Promise.resolve({ items: [] })),
     streamOrgEvents: vi.fn(() => Promise.resolve({ ok: true })),
     stopOrgEvents: vi.fn(() => Promise.resolve({ ok: true })),
@@ -124,6 +125,20 @@ describe('org unification in OrgsPanel', () => {
     expect(screen.queryByText(/Auto-approve/i)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^Group$/ })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Trace/ })).toBeInTheDocument()
+  })
+
+  it('counts queued messages on the Queued tab, and nothing when the queue is empty (C-35)', async () => {
+    api.listOrgQueuedMessages.mockResolvedValue({ v: 1, org: 'test-org', count: 3, messages: [{ messageId: 'a' }, { messageId: 'b' }, { messageId: 'c' }] })
+    render(<OrgsPanel />)
+    fireEvent.click(await screen.findByText('test-org'))
+    expect(await screen.findByRole('button', { name: /^Queued\s*3$/ })).toBeInTheDocument()
+    expect(api.listOrgQueuedMessages).toHaveBeenCalledWith('test-org')
+  })
+
+  it('shows no count on the Queued tab when nothing waits', async () => {
+    render(<OrgsPanel />)
+    fireEvent.click(await screen.findByText('test-org'))
+    expect(await screen.findByRole('button', { name: /^Queued$/ })).toBeInTheDocument()
   })
 
   it('offers the Group tab only for holding orgs', async () => {

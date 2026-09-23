@@ -1056,9 +1056,11 @@ ordinary `startOrg` runs.
   Wails binding `ListOrgQueuedMessages` shells it; the org view's **Queued** tab lists each
   message (sender, role, subject, body, trace hop, age, automation-role and interrupted-drain
   markers) with **Start org now** through the existing `RunOrg` path. The `org send` receipt
-  already says `queued for <role> (delivered when the org next runs)`. Not done: no count badge
-  on the tab or org rail, and the tab label is not translated (the other org tab labels are not
-  either).
+  already says `queued for <role> (delivered when the org next runs)`. The Queued tab counts the
+  selected org's waiting messages (`useQueuedCount`, polled every 20 s, closed 2026-09-23). The org
+  rail has no queued count, on purpose: its one badge is Needs you, which waits on the person,
+  while a queued message only waits for the org to start. Not done: the tab label is not
+  translated (the other org tab labels are not either).
 - C-46 closed (2026-09-18, branch `fix/org-c46-workdir-confinement`): the grant handler and the
   automation-role receiver put the calling role's workdir in trigger data as `org.workdir`
   (`orgdesign.RoleWorkdir`, mirroring monomind's `workspaceSetting`); the engine confines the run's
