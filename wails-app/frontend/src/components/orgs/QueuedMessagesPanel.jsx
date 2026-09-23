@@ -3,11 +3,12 @@
 // stopped org waits there. This lists the queue read-only through
 // `monoagentcli org queued` and offers "Start org now", which is the org
 // view's own run path (RunOrg) passed in as onStartOrg.
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Inbox, Play, RefreshCw, ArrowRight, Clock } from 'lucide-react'
 import { api } from '../../services/api.js'
 import { formatDuration, toMillis } from './waiting.js'
+import { queuedCount } from './useQueuedCount.js'
 import { Card, Chip, errorOf, mono, mutedText, sectionLabel, smallBtn } from './ui.jsx'
 
 function QueuedCard({ msg, now, t }) {
@@ -41,7 +42,7 @@ function QueuedCard({ msg, now, t }) {
   )
 }
 
-export default function QueuedMessagesPanel({ orgName, running = false, onStartOrg }) {
+export default function QueuedMessagesPanel({ orgName, running = false, onStartOrg, onCountChange }) {
   const { t } = useTranslation()
   const [data, setData] = useState(null)
   const [error, setError] = useState('')
@@ -49,6 +50,9 @@ export default function QueuedMessagesPanel({ orgName, running = false, onStartO
   const [orgRunning, setOrgRunning] = useState(false)
   const [starting, setStarting] = useState(false)
   const [now, setNow] = useState(Date.now())
+  // The tab's count badge follows what this list just read.
+  const onCountRef = useRef(onCountChange)
+  onCountRef.current = onCountChange
 
   const load = useCallback(async () => {
     if (!orgName) return
@@ -63,6 +67,7 @@ export default function QueuedMessagesPanel({ orgName, running = false, onStartO
     } else {
       setError('')
       setData(res)
+      onCountRef.current?.(queuedCount(res))
     }
     setOrgRunning(status?.status === 'running')
     setNow(Date.now())
