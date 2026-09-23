@@ -1044,7 +1044,10 @@ What the runs taught, beyond the checks:
   9th granted call in one task was refused `refused_hops` ("this looks like a loop between orgs
   and automations") at the default `max_hops` of 8, although nothing looped. The gate set
   `run_config.max_hops: 20`. That is deliberate hardening (a caller-supplied hop is never
-  trusted), but a busy role hits it before any real loop would. Not changed here.
+  trusted), but a busy role hits it before any real loop would. **Fixed 2026-09-24**
+  (`fix/org-sibling-hops`): a role's granted call leaves its own earlier granted calls in the
+  chain out of the maximum, so siblings share a hop; a loop through the automation still climbs
+  through the workflow's own recorded crossing, and the per-target repeat limit bounds bursts.
 - **monomind stops a fence runner after 10 tool-call rounds per message** and says so on the bus
   (`tool-call round cap (10) reached — dropping 1 pending tool call(s)`). A task needing more
   calls needs another message. A configurable cap is requested in monoes/monomind#326.
@@ -1055,7 +1058,9 @@ What the runs taught, beyond the checks:
   `sandbox/outside`. That listing first looked like an escape. Controls with no grant and no call
   (`noop*.sh`), a gdb catchpoint on the daemon's `openat` (the daemon itself never opened the
   directory), and a `monomind` shim logging every invocation (`monomind-shim.sh`) traced it to the
-  decider. With autonomy `manual` it is gone. It opened no file, only the directory.
+  decider. With autonomy `manual` it is gone. It opened no file, only the directory. **Fixed
+  2026-09-24** (`fix/org-sibling-hops`): the model decider now runs in an empty temporary folder
+  of its own.
 - The same stray monomind dashboard (`ui/server.mjs 4242`) outlived `org stop` again, so it was
   stopped by PID.
 
