@@ -1045,10 +1045,12 @@ ordinary `startOrg` runs.
   - "Vault tokens": mono-agent stores no org secrets in the vault. The endpoint id in
     `org_endpoints` is the capability, and revoking the row kills it. `credential_file` is
     user-supplied, so teardown leaves the file alone.
-- C-24 gap: `monoagentcli daemon` sets up its org-file watchers once at startup, one per profile
-  folder. After a move it keeps watching the old folder until the daemon restarts, so edits at the
-  new folder are reconciled only at the next save through the CLI/GUI or the next daemon start. A
-  profile created while the daemon runs is not watched either (this predates C-24).
+- ~~C-24 gap: the daemon's org-file watchers were set up once at startup.~~ Closed 2026-09-23
+  (branch `fix/daemon-org-watchers`): the daemon re-reads the profile list every 10 s
+  (`watcherResyncInterval`, `cmd/monoagentcli/daemon_org_watch.go`). A moved folder gets a
+  watcher at its new place, a profile created while the daemon runs gets one, and a removed
+  profile's watcher stops; a newly watched folder is reconciled once first, since edits made
+  there while nothing watched it were never seen.
 - C-24 gap (closed at merge): on Windows `OrgServeStop` now kills the serve pid's tree with
   `taskkill /T` (the Windows pass's helper), so its agent-CLI children go with it.
 - ~~C-35: the GUI does not list queued inbox messages.~~ Closed 2026-09-18: `org queued <org>`
