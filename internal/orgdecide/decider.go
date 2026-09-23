@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -130,6 +131,15 @@ func (d *ModelDecider) Decide(ctx context.Context, p Prompt) (Outcome, error) {
 	}
 	started := time.Now()
 	resolver := "model:" + d.Model
+	// The decider needs no files. Run it in an empty folder of its own:
+	// otherwise the agent CLI starts in the daemon's working directory and
+	// indexes whatever is there (seen in the C-46 live gate, where it listed
+	// a folder the org's roles were confined away from).
+	sandbox, err := os.MkdirTemp("", "monoagent-decider-*")
+	if err != nil {
+		return Outcome{Resolver: resolver}, fmt.Errorf("decider %s: create sandbox dir: %w", resolver, err)
+	}
+	defer os.RemoveAll(sandbox)
 	var assistant strings.Builder
 	res, err := exec(ctx, monomind.ExecOptions{
 		Runtime:      d.Runtime,
@@ -137,6 +147,7 @@ func (d *ModelDecider) Decide(ctx context.Context, p Prompt) (Outcome, error) {
 		Prompt:       p.User,
 		SystemPrompt: p.System,
 		Timeout:      d.Timeout,
+		Cwd:          sandbox,
 	}, func(ev monomind.Event) {
 		if ev.Type == monomind.EventAssistant {
 			assistant.WriteString(ev.Text)

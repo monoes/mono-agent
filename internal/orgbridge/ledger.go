@@ -102,7 +102,8 @@ func NewLedger(db *sql.DB) *Ledger { return &Ledger{db: db, now: time.Now} }
 // Admit records one crossing and decides whether it may proceed. The hop
 // is never lowered by the header a caller supplies — a role can write any
 // trace line into a message — so hop = max(header hop, highest hop already
-// recorded for the chain) + 1. The repeat limit counts crossings to the
+// recorded for the chain) + 1, where a role's granted call leaves its own
+// earlier granted calls in the chain out of that maximum. The repeat limit counts crossings to the
 // same target in the window regardless of chain, because a chain id can be
 // forged fresh on every call but the target cannot.
 func (l *Ledger) Admit(ctx context.Context, c Call, lim Limits) (Admission, error) {
@@ -114,10 +115,21 @@ func (l *Ledger) Admit(ctx context.Context, c Call, lim Limits) (Admission, erro
 	if l.db == nil {
 		return Admission{Trace: Trace{ChainID: tr.ChainID, Hop: tr.Hop + 1}, Status: StatusOK}, nil
 	}
+	// A role's own earlier granted calls in the chain are its siblings,
+	// not links of a loop: all of them answer the same inbound message, so
+	// they share its hop. Only role_tool crossings are exempted this way. A
+	// loop through a granted automation comes back into the org through a
+	// crossing someone else records (the workflow's workflow_out, an
+	// endpoint reply), and that row still raises the hop; a burst of
+	// siblings is bounded by the repeat limit below.
+	q := `SELECT MAX(hop) FROM org_bridge_calls WHERE profile_id = ? AND chain_id = ?`
+	args := []interface{}{c.ProfileID, tr.ChainID}
+	if c.Direction == DirRoleTool {
+		q += ` AND NOT (direction = ? AND COALESCE(org_name,'') = ? AND COALESCE(role_id,'') = ?)`
+		args = append(args, DirRoleTool, c.OrgName, c.RoleID)
+	}
 	var recorded sql.NullInt64
-	if err := l.db.QueryRowContext(ctx,
-		`SELECT MAX(hop) FROM org_bridge_calls WHERE profile_id = ? AND chain_id = ?`,
-		c.ProfileID, tr.ChainID).Scan(&recorded); err != nil {
+	if err := l.db.QueryRowContext(ctx, q, args...).Scan(&recorded); err != nil {
 		return Admission{}, fmt.Errorf("orgbridge: ledger: %w", err)
 	}
 	hop := tr.Hop

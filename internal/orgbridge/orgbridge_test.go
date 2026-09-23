@@ -319,3 +319,60 @@ func TestBridgeCallsExecutionLookupUsesAnIndex(t *testing.T) {
 		}
 	}
 }
+
+// A role's granted calls in reply to one message are siblings: they share a
+// hop, so a busy role is not refused as a loop after max_hops calls.
+func TestLedgerSiblingRoleCallsShareAHop(t *testing.T) {
+	l := NewLedger(newTestDB(t))
+	ctx := context.Background()
+	lim := Limits{MaxHops: 3, MaxRepeats: 100}
+	c := Call{ProfileID: "p", Direction: DirRoleTool, OrgName: "g", RoleID: "writer", WorkflowID: "wf", Trace: Trace{ChainID: "chn_task"}}
+	for i := 0; i < 10; i++ {
+		adm, err := l.Admit(ctx, c, lim)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !adm.OK() || adm.Trace.Hop != 1 {
+			t.Fatalf("sibling call %d: %+v", i+1, adm)
+		}
+	}
+	// Another role in the same chain is not this role's sibling.
+	other := c
+	other.RoleID = "editor"
+	if adm, _ := l.Admit(ctx, other, lim); adm.Trace.Hop != 2 {
+		t.Fatalf("another role's call: %+v, want hop 2", adm)
+	}
+}
+
+// A loop through a granted automation still climbs and stops: the workflow's
+// message back into the org is recorded under its own crossing, so the
+// role's next call is a hop further even though its own calls are left out.
+func TestLedgerRoleToolLoopStillStops(t *testing.T) {
+	l := NewLedger(newTestDB(t))
+	ctx := context.Background()
+	lim := Limits{MaxHops: 6, MaxRepeats: 100}
+	role := Call{ProfileID: "p", Direction: DirRoleTool, OrgName: "g", RoleID: "writer", WorkflowID: "wf", Trace: Trace{ChainID: "chn_loop2"}}
+	back := Call{ProfileID: "p", Direction: DirWorkflowOut, OrgName: "g", RoleID: "writer", WorkflowID: "wf", Trace: Trace{ChainID: "chn_loop2"}}
+	var last Admission
+	for i := 0; i < 10; i++ {
+		role.Trace.Hop = 0 // forged low every time
+		a, err := l.Admit(ctx, role, lim)
+		if err != nil {
+			t.Fatal(err)
+		}
+		last = a
+		if !a.OK() {
+			break
+		}
+		back.Trace = a.Trace
+		if b, err := l.Admit(ctx, back, lim); err != nil {
+			t.Fatal(err)
+		} else if !b.OK() {
+			last = b
+			break
+		}
+	}
+	if last.Status != StatusRefusedHops {
+		t.Fatalf("role → automation → org loop never refused: %+v", last)
+	}
+}
