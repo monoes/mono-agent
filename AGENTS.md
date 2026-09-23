@@ -309,7 +309,8 @@ monoagentcli org automation-role add growth --alias publish_post --reports-to le
   messages to the workflow's automation role).
 - Every crossing carries a `[trace chn_… hop=N]` header; chains stop at
   `run_config.max_hops` (8) and at `max_repeats` calls to one target per
-  minute (20). Refusals are recorded in `org_bridge_calls`.
+  minute (20). A role's own granted calls on one chain count one hop per 8
+  (a busy role is not a loop). Refusals are recorded in `org_bridge_calls`.
 
 **Autonomy** decides who resolves an org's approvals, questions, gates,
 and HIL items inside runs the org started:

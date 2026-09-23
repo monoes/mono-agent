@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -134,12 +135,13 @@ func (d *ModelDecider) Decide(ctx context.Context, p Prompt) (Outcome, error) {
 	// The decider needs no files. Run it in an empty folder of its own:
 	// otherwise the agent CLI starts in the daemon's working directory and
 	// indexes whatever is there (seen in the C-46 live gate, where it listed
-	// a folder the org's roles were confined away from).
-	sandbox, err := os.MkdirTemp("", "monoagent-decider-*")
+	// a folder the org's roles were confined away from). One fixed folder,
+	// not a new temp one per decision: agent CLIs keep per-folder session
+	// state (e.g. ~/.claude/projects/<folder>), which would pile up.
+	sandbox, err := deciderDir()
 	if err != nil {
-		return Outcome{Resolver: resolver}, fmt.Errorf("decider %s: create sandbox dir: %w", resolver, err)
+		return Outcome{Resolver: resolver}, fmt.Errorf("decider %s: %w", resolver, err)
 	}
-	defer os.RemoveAll(sandbox)
 	var assistant strings.Builder
 	res, err := exec(ctx, monomind.ExecOptions{
 		Runtime:      d.Runtime,
@@ -175,4 +177,18 @@ func (d *ModelDecider) Decide(ctx context.Context, p Prompt) (Outcome, error) {
 	}
 	out.Verdict = v
 	return out, nil
+}
+
+// deciderDir returns ~/.monoagent/decider, the empty folder model deciders
+// run in, creating it if needed.
+func deciderDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home directory: %w", err)
+	}
+	dir := filepath.Join(home, ".monoagent", "decider")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("create %s: %w", dir, err)
+	}
+	return dir, nil
 }

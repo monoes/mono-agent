@@ -320,27 +320,68 @@ func TestBridgeCallsExecutionLookupUsesAnIndex(t *testing.T) {
 	}
 }
 
-// A role's granted calls in reply to one message are siblings: they share a
-// hop, so a busy role is not refused as a loop after max_hops calls.
+// A role's granted calls pile up on one chain (monomind keeps a role's
+// trace for its whole run), so a busy role gets SiblingCallsPerHop calls per
+// hop instead of being refused as a loop at its (MaxHops+1)th call.
 func TestLedgerSiblingRoleCallsShareAHop(t *testing.T) {
 	l := NewLedger(newTestDB(t))
 	ctx := context.Background()
 	lim := Limits{MaxHops: 3, MaxRepeats: 100}
 	c := Call{ProfileID: "p", Direction: DirRoleTool, OrgName: "g", RoleID: "writer", WorkflowID: "wf", Trace: Trace{ChainID: "chn_task"}}
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 2*SiblingCallsPerHop; i++ {
 		adm, err := l.Admit(ctx, c, lim)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !adm.OK() || adm.Trace.Hop != 1 {
-			t.Fatalf("sibling call %d: %+v", i+1, adm)
+		if want := 1 + i/SiblingCallsPerHop; !adm.OK() || adm.Trace.Hop != want {
+			t.Fatalf("call %d: %+v, want hop %d", i+1, adm, want)
 		}
 	}
-	// Another role in the same chain is not this role's sibling.
+	// Another role in the same chain starts from this role's highest hop.
 	other := c
 	other.RoleID = "editor"
-	if adm, _ := l.Admit(ctx, other, lim); adm.Trace.Hop != 2 {
-		t.Fatalf("another role's call: %+v, want hop 2", adm)
+	if adm, _ := l.Admit(ctx, other, lim); adm.Trace.Hop != 3 {
+		t.Fatalf("another role's call: %+v, want hop 3", adm)
+	}
+}
+
+// A loop whose way back to the role is never recorded here (monomind's own
+// org_send, a sync automation result) leaves only the role's own rows on
+// the chain. Paced under the repeat limit, it must still be refused: the
+// hop grows once per SiblingCallsPerHop calls.
+func TestLedgerSlowUnrecordedLoopIsStillRefused(t *testing.T) {
+	l := NewLedger(newTestDB(t))
+	clock := time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC)
+	l.now = func() time.Time { return clock }
+	ctx := context.Background()
+	c := Call{ProfileID: "p", Direction: DirRoleTool, OrgName: "hq", RoleID: "writer", WorkflowID: "wf", Trace: Trace{ChainID: "chn_role"}}
+	limit := 8 * SiblingCallsPerHop // default MaxHops
+	for i := 1; i <= limit+1; i++ {
+		clock = clock.Add(5 * time.Second) // 12 a minute, under the default 20
+		adm, err := l.Admit(ctx, c, Limits{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i <= limit && !adm.OK() {
+			t.Fatalf("call %d refused early: %+v", i, adm)
+		}
+		if i == limit+1 && adm.Status != StatusRefusedHops {
+			t.Fatalf("call %d admitted: %+v — a slow loop is never stopped", i, adm)
+		}
+	}
+}
+
+// Admit's role_tool queries run on every granted call; they must use the
+// chain index, not scan the audit log.
+func TestLedgerRoleToolQueriesUseAnIndex(t *testing.T) {
+	db := newTestDB(t)
+	for q, args := range map[string][]interface{}{
+		`SELECT MAX(hop) FROM org_bridge_calls WHERE profile_id = ? AND chain_id = ? AND NOT (direction = ? AND COALESCE(org_name,'') = ? AND COALESCE(role_id,'') = ?)`: {"p", "chn", DirRoleTool, "g", "r"},
+		`SELECT COUNT(*) FROM org_bridge_calls WHERE profile_id = ? AND chain_id = ? AND direction = ? AND COALESCE(org_name,'') = ? AND COALESCE(role_id,'') = ?`:       {"p", "chn", DirRoleTool, "g", "r"},
+	} {
+		if plan := queryPlan(t, db, q, args...); strings.Contains(plan, "SCAN") {
+			t.Errorf("%s\nplans as a table scan:\n%s", q, plan)
+		}
 	}
 }
 

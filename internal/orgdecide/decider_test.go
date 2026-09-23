@@ -3,6 +3,7 @@ package orgdecide
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/monoes/mono-agent/internal/monomind"
@@ -32,27 +33,29 @@ func TestModelDeciderParsesStreamedDeltas(t *testing.T) {
 	}
 }
 
-// The decider runs in an empty folder of its own, not the daemon's working
-// directory, and the folder is gone afterwards (C-46 live gate).
+// The decider runs in an empty folder of its own under ~/.monoagent, not
+// the daemon's working directory, and the same one every time so agent CLIs
+// do not collect session state per decision (C-46 live gate).
 func TestModelDeciderRunsInAnEmptyFolder(t *testing.T) {
-	var cwd string
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	var dirs []string
 	d := &ModelDecider{Runtime: "claude", Model: "m", Exec: func(ctx context.Context, opts monomind.ExecOptions, onEvent func(monomind.Event)) (*monomind.TurnResult, error) {
-		cwd = opts.Cwd
-		entries, err := os.ReadDir(cwd)
+		dirs = append(dirs, opts.Cwd)
+		entries, err := os.ReadDir(opts.Cwd)
 		if err != nil || len(entries) != 0 {
-			t.Errorf("decider folder %q: %d entries, err %v", cwd, len(entries), err)
+			t.Errorf("decider folder %q: %d entries, err %v", opts.Cwd, len(entries), err)
 		}
 		onEvent(monomind.Event{Type: monomind.EventAssistant, Text: `{"verdict": "deny", "rationale": "no"}`})
 		return &monomind.TurnResult{}, nil
 	}}
-	if _, err := d.Decide(context.Background(), Prompt{Allowed: []string{"approve", "deny"}}); err != nil {
-		t.Fatal(err)
+	for i := 0; i < 2; i++ {
+		if _, err := d.Decide(context.Background(), Prompt{Allowed: []string{"approve", "deny"}}); err != nil {
+			t.Fatal(err)
+		}
 	}
-	wd, _ := os.Getwd()
-	if cwd == "" || cwd == wd {
-		t.Fatalf("decider ran in %q, want an empty folder of its own", cwd)
-	}
-	if _, err := os.Stat(cwd); !os.IsNotExist(err) {
-		t.Fatalf("decider folder %q left behind", cwd)
+	want := filepath.Join(home, ".monoagent", "decider")
+	if len(dirs) != 2 || dirs[0] != want || dirs[1] != want {
+		t.Fatalf("decider ran in %v, want %s both times", dirs, want)
 	}
 }

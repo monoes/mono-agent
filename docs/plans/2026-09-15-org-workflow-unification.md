@@ -1045,9 +1045,16 @@ What the runs taught, beyond the checks:
   and automations") at the default `max_hops` of 8, although nothing looped. The gate set
   `run_config.max_hops: 20`. That is deliberate hardening (a caller-supplied hop is never
   trusted), but a busy role hits it before any real loop would. **Fixed 2026-09-24**
-  (`fix/org-sibling-hops`): a role's granted call leaves its own earlier granted calls in the
-  chain out of the maximum, so siblings share a hop; a loop through the automation still climbs
-  through the workflow's own recorded crossing, and the per-target repeat limit bounds bursts.
+  (`fix/org-sibling-hops`, #123). monomind keeps one chain per role for its whole run
+  (`roleTrace`), so "siblings" are all of a role's granted calls until a traced message reaches
+  it. A role's granted call therefore leaves its own earlier granted calls out of the recorded
+  maximum and adds one hop per `SiblingCallsPerHop` (8) of them: a busy role gets 64 calls on
+  one chain at the default `max_hops`, and a loop whose way back is never recorded here
+  (monomind's native `org_send`, a sync result) is still refused, after 64 calls instead of 8.
+  A loop back through a recorded crossing (`workflow_out`) climbs from that row as before. The
+  per-grant `max_calls_per_run`/`max_calls_per_day` caps bound it too; `max_repeats` does not
+  (a loop paced under 20 a minute never reaches it). An adversarial review found the first
+  version of this fix, which exempted siblings entirely, left such loops unbounded by hops.
 - **monomind stops a fence runner after 10 tool-call rounds per message** and says so on the bus
   (`tool-call round cap (10) reached — dropping 1 pending tool call(s)`). A task needing more
   calls needs another message. A configurable cap is requested in monoes/monomind#326.
@@ -1059,7 +1066,8 @@ What the runs taught, beyond the checks:
   (`noop*.sh`), a gdb catchpoint on the daemon's `openat` (the daemon itself never opened the
   directory), and a `monomind` shim logging every invocation (`monomind-shim.sh`) traced it to the
   decider. With autonomy `manual` it is gone. It opened no file, only the directory. **Fixed
-  2026-09-24** (`fix/org-sibling-hops`): the model decider now runs in an empty temporary folder
+  2026-09-24** (`fix/org-sibling-hops`, #123): the model decider now runs in `~/.monoagent/decider`, an
+  empty folder of its own (fixed, so agent CLIs do not keep session state per decision)
   of its own.
 - The same stray monomind dashboard (`ui/server.mjs 4242`) outlived `org stop` again, so it was
   stopped by PID.
