@@ -115,29 +115,44 @@ func TestTriggerItemsCapsAssetContentAndStripsTrace(t *testing.T) {
 	}
 }
 
-// A tool event carries its chain in data, not in a trace line. trigger.org
-// must continue that chain, or a loop through a workflow started by a
-// role's tool call begins a fresh chain every round.
+// A granted call's tool event carries its chain in data, not in a trace
+// line. trigger.org must continue that chain, or a loop through a workflow
+// started by the call begins a fresh chain every round. Other tool events
+// carry the role's run-long chain too, and must not: an audit workflow on
+// every Bash call would climb it and get the role refused as a loop.
 func TestTriggerItemsTakeATrace(t *testing.T) {
 	trace := func(ev Event) interface{} { return TriggerItems(ev)[0].JSON["trace"] }
+	data := func(chain string, hop interface{}) map[string]interface{} {
+		return map[string]interface{}{"chain_id": chain, "hop": hop}
+	}
 
-	tool := Event{ID: "t", Org: "g", Type: "tool", Msg: "role_tool publish ok", Data: map[string]interface{}{"chain_id": "chn_tool1", "hop": float64(3)}}
-	if got, ok := trace(tool).(map[string]interface{}); !ok || got["chain_id"] != "chn_tool1" || got["hop"] != 3 {
-		t.Fatalf("tool event trace = %v", trace(tool))
+	for _, name := range []string{"monoagent__automation_publish", "mcp__monoagent__automation_publish", "monoagent__org_start"} {
+		tool := Event{ID: "t", Org: "g", Type: "tool", Tool: name, Data: data("chn_tool1", float64(3))}
+		if got, ok := trace(tool).(map[string]interface{}); !ok || got["chain_id"] != "chn_tool1" || got["hop"] != 3 {
+			t.Fatalf("%s: trace = %v", name, trace(tool))
+		}
+	}
+	for _, name := range []string{"Bash", "Read", "other__automation_x", "monoagentx__y", ""} {
+		if got := trace(Event{ID: "t", Org: "g", Type: "tool", Tool: name, Data: data("chn_tool1", float64(3))}); got != nil {
+			t.Errorf("%s: trace = %v, want none (not a granted call)", name, got)
+		}
+	}
+	if got := trace(Event{ID: "s", Org: "g", Type: "status", Tool: "monoagent__x", Data: data("chn_tool1", float64(3))}); got != nil {
+		t.Errorf("non-tool event: trace = %v, want none", got)
 	}
 	// A trace line in the message wins over data.
-	both := Event{ID: "b", Org: "g", Type: "message", Msg: "[trace chn_msg hop=5]\nhi", Data: map[string]interface{}{"chain_id": "chn_tool1", "hop": float64(1)}}
+	both := Event{ID: "b", Org: "g", Type: "message", Msg: "[trace chn_msg hop=5]\nhi", Data: data("chn_tool1", float64(1))}
 	if got := trace(both).(map[string]interface{}); got["chain_id"] != "chn_msg" || got["hop"] != 5 {
 		t.Fatalf("message trace = %v", got)
 	}
-	for name, data := range map[string]map[string]interface{}{
+	for name, d := range map[string]map[string]interface{}{
 		"no chain":     {"hop": float64(1)},
-		"bad chain":    {"chain_id": "../../etc", "hop": float64(1)},
+		"bad chain":    data("../../etc", float64(1)),
 		"no hop":       {"chain_id": "chn_x"},
-		"negative hop": {"chain_id": "chn_x", "hop": float64(-1)},
-		"string hop":   {"chain_id": "chn_x", "hop": "2"},
+		"negative hop": data("chn_x", float64(-1)),
+		"string hop":   data("chn_x", "2"),
 	} {
-		if got := trace(Event{ID: "x", Org: "g", Type: "tool", Data: data}); got != nil {
+		if got := trace(Event{ID: "x", Org: "g", Type: "tool", Tool: "monoagent__a", Data: d}); got != nil {
 			t.Errorf("%s: trace = %v, want none", name, got)
 		}
 	}

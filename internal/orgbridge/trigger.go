@@ -208,12 +208,21 @@ func (s *TriggerSource) FireEndpoint(workflowID string, items []workflow.Item) b
 }
 
 // eventTrace is the chain an org event belongs to: the `[trace …]` line of
-// a message, else the chain_id/hop monomind puts in a tool event's data
-// (orgrt/policy.ts). Without the second, a workflow started by a role's
-// tool call began a fresh chain, and a loop through it never climbed.
+// a message, else, for a tool event of a granted call, the chain_id/hop
+// monomind puts in its data (orgrt/policy.ts). Without the second, a
+// workflow started by a granted call's event began a fresh chain, and a
+// loop through it never climbed.
+//
+// Only granted calls: monomind stamps every tool event of a role (Bash,
+// file reads, …) with the role's run-long chain, so an ordinary audit
+// workflow on tool events would otherwise climb that chain once per event
+// and soon get the role's own granted calls refused as a loop.
 func eventTrace(ev Event) (Trace, bool) {
 	if tr, ok := ParseTrace(ev.Msg); ok {
 		return tr, true
+	}
+	if ev.Type != "tool" || !isGrantedTool(ev.Tool) {
+		return Trace{}, false
 	}
 	chain, _ := ev.Data["chain_id"].(string)
 	if !validChainID(chain) {
@@ -230,4 +239,12 @@ func eventTrace(ev Event) (Trace, bool) {
 		return Trace{}, false
 	}
 	return Trace{ChainID: chain, Hop: hop}, true
+}
+
+// isGrantedTool reports whether a tool event's tool name is one of the
+// tools mono-agent's own provider serves: `monoagent__<tool>`, or with a
+// runtime's MCP prefix in front (`mcp__monoagent__<tool>`).
+func isGrantedTool(name string) bool {
+	prefix := orgdesign.ProviderName + "__"
+	return strings.HasPrefix(name, prefix) || strings.Contains(name, "__"+prefix)
 }
