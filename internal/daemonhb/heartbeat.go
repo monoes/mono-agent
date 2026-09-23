@@ -20,11 +20,12 @@ const (
 
 // Heartbeat is the file's content.
 type Heartbeat struct {
-	V       int       `json:"v"`
-	PID     int       `json:"pid"`
-	TS      time.Time `json:"ts"`
-	APIAddr string    `json:"api_addr,omitempty"` // "" when the API is off
-	Version string    `json:"version,omitempty"`
+	V          int       `json:"v"`
+	PID        int       `json:"pid"`
+	TS         time.Time `json:"ts"`
+	APIAddr    string    `json:"api_addr,omitempty"`    // "" when the API is off
+	BridgeAddr string    `json:"bridge_addr,omitempty"` // "" when the extension bridge is off
+	Version    string    `json:"version,omitempty"`
 }
 
 // Path returns the heartbeat file path. MONOAGENT_DAEMON_HEARTBEAT
