@@ -364,10 +364,11 @@ func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResu
 	}
 	cmd.Stderr = os.Stderr // monomind keeps diagnostics off stdout (§3)
 
-	if err := cmd.Start(); err != nil {
+	release, err := startProcessGroup(cmd)
+	if err != nil {
 		return nil, fmt.Errorf("start monomind: %w", err)
 	}
-	defer attachProcessGroup(cmd)()
+	defer release()
 
 	res := &TurnResult{}
 	events := make(chan Event, 64)

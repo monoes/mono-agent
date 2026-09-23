@@ -1045,10 +1045,12 @@ ordinary `startOrg` runs.
   - "Vault tokens": mono-agent stores no org secrets in the vault. The endpoint id in
     `org_endpoints` is the capability, and revoking the row kills it. `credential_file` is
     user-supplied, so teardown leaves the file alone.
-- C-24 gap: `monoagentcli daemon` sets up its org-file watchers once at startup, one per profile
-  folder. After a move it keeps watching the old folder until the daemon restarts, so edits at the
-  new folder are reconciled only at the next save through the CLI/GUI or the next daemon start. A
-  profile created while the daemon runs is not watched either (this predates C-24).
+- ~~C-24 gap: the daemon's org-file watchers were set up once at startup.~~ Closed 2026-09-23
+  (branch `fix/daemon-org-watchers`): the daemon re-reads the profile list every 10 s
+  (`watcherResyncInterval`, `cmd/monoagentcli/daemon_org_watch.go`). A moved folder gets a
+  watcher at its new place, a profile created while the daemon runs gets one, and a removed
+  profile's watcher stops; a newly watched folder is reconciled once first, since edits made
+  there while nothing watched it were never seen.
 - C-24 gap (closed at merge): on Windows `OrgServeStop` now kills the serve pid's tree with
   `taskkill /T` (the Windows pass's helper), so its agent-CLI children go with it.
 - ~~C-35: the GUI does not list queued inbox messages.~~ Closed 2026-09-18: `org queued <org>`
@@ -1056,9 +1058,11 @@ ordinary `startOrg` runs.
   Wails binding `ListOrgQueuedMessages` shells it; the org view's **Queued** tab lists each
   message (sender, role, subject, body, trace hop, age, automation-role and interrupted-drain
   markers) with **Start org now** through the existing `RunOrg` path. The `org send` receipt
-  already says `queued for <role> (delivered when the org next runs)`. Not done: no count badge
-  on the tab or org rail, and the tab label is not translated (the other org tab labels are not
-  either).
+  already says `queued for <role> (delivered when the org next runs)`. The Queued tab counts the
+  selected org's waiting messages (`useQueuedCount`, polled every 20 s, closed 2026-09-23). The org
+  rail has no queued count, on purpose: its one badge is Needs you, which waits on the person,
+  while a queued message only waits for the org to start. Not done: the tab label is not
+  translated (the other org tab labels are not either).
 - C-46 closed (2026-09-18, branch `fix/org-c46-workdir-confinement`): the grant handler and the
   automation-role receiver put the calling role's workdir in trigger data as `org.workdir`
   (`orgdesign.RoleWorkdir`, mirroring monomind's `workspaceSetting`); the engine confines the run's
@@ -1069,19 +1073,34 @@ ordinary `startOrg` runs.
   such); check-then-open races (TOCTOU); the workdir is read from the org file, which a `repo`
   role can edit (it widens its own confinement the same way); senders from an org the profile folder
   cannot resolve are held to the profile folder; not exercised in a live org run yet.
-- `needs-you` reports `idle_stop_in_seconds: null` (monomind exposes no idle deadline;
-  tracked in monoes/monomind#296).
-- Live gates not yet run (a fence runner calling a grant, the 5-minute idle-watchdog hold):
-  tracked in #83.
+- ~~`needs-you` reports `idle_stop_in_seconds: null`.~~ Closed: monomind 2.11.8 reports the
+  deadline in `org status --json` (capability `org-idle-deadline`), `needs-you` reads it (#91),
+  and monomind's human-readable `org status` prints it too (monoes/monomind#296, closed
+  2026-09-21).
+- ~~Live gates not yet run (a fence runner calling a grant, the 5-minute idle-watchdog hold).~~
+  Closed 2026-09-19 (#83): both run live, recorded in the gate tables above; the two bugs found
+  were fixed in #91, and `scripts/e2e/org-unification.sh` covers the codex case with
+  `E2E_CODEX=1` (#92).
 - Windows (C-14), closed 2026-09-18 on the mono-agent side, verified only by cross-compiling
   (`GOOS=windows` build, vet and `go test -c`); the Windows-only tests have not been run on
   Windows. The endpoint receiver's credential-file check (`internal/credfile`) reads the owner
   and DACL there: the owner must be the current user, SYSTEM or Administrators, and no allow ACE
   may name another account. Children mono-agent kills (`monomind.Exec`, `OrgRun`, `OrgEvents`,
   `OrgServeRun`) run in a Job Object with KILL_ON_JOB_CLOSE and BREAKAWAY_OK, and a kill
-  terminates the job (fallback `taskkill /T /F`). Still open: a grandchild spawned before the
-  job assignment right after `Start` escapes it; the detached `OrgServeStart`/`OrgRunStart`
-  children get no job (as on unix, nothing here kills them); `wails-app`'s chat subprocess
-  still kills only the direct child on Windows; monomind's own `credential_file` check (M2)
-  is in the monomind repo.
+  terminates the job (fallback `taskkill /T /F`). Follow-ups closed 2026-09-23, again only
+  cross-compiled: (1) those children now start with `CREATE_SUSPENDED`, are assigned to the job
+  and only then resumed (`NtResumeProcess`; a child that cannot be resumed is killed and
+  reaped), so no grandchild can start outside the job; (2) the detached `OrgServeStart`/
+  `OrgRunStart` children deliberately get no job of their own (KILL_ON_JOB_CLOSE would end them
+  with the caller) and now start with `CREATE_BREAKAWAY_FROM_JOB`, retried without it when the
+  enclosing job forbids breakaway, so killing a chat turn whose MCP server started them no
+  longer takes them along (the unix setsid equivalent). Their stop paths already take the
+  tree: `OrgServeStop` runs `taskkill /T /F` on the live daemon, and an org run is stopped
+  cooperatively by `monomind org stop`; (3) `wails-app`'s chat, org-events and org-run
+  subprocesses are killed with `monomind.KillProcessTree` (`taskkill /T /F`, then the direct
+  child), and a `CommandContext` cancel does the same tree kill instead of Go's direct-child
+  kill. The tree kill is skipped once the child has been waited for, since its pid may be
+  reused. Still open: the GUI's subprocesses get no Job Object, so a descendant whose parent
+  already exited escapes `taskkill /T` (as it does for the serve daemon); monomind's own
+  `credential_file` check (M2) is in the monomind repo.
 - ~~`docs/screenshots/` walkthrough for Phase 5.~~ Done 2026-09-23: [`docs/screenshots/org-walkthrough/`](../screenshots/org-walkthrough/README.md) has 12 screens from `wails dev` against a real `monoagentcli` in a separate home folder. Needs you items and Decisions rows are seeded by hand, since no org was run; the README says which.

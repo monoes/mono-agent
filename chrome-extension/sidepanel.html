@@ -106,6 +106,13 @@
           <button type="button" id="notice-action" class="btn-secondary btn-tiny"></button>
         </div>
       </section>
+
+      <!-- Shown when the worker predates this document: see
+           sidepanel_ai.js's load(). -->
+      <p id="stale-notice" class="stale-notice" hidden>
+        MonoAgent was updated on disk. Reload it on your browser's extensions
+        page to get the newest version.
+      </p>
     </div>
 
     <!-- CLIP-07: a capture with a reason. Every field is optional — the

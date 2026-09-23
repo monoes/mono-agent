@@ -80,6 +80,12 @@ describe('QueuedMessagesPanel', () => {
     expect(screen.queryByRole('button', { name: /orgs\.queued\.startNow/ })).toBeNull()
   })
 
+  it('reports how many messages it read, for the tab badge', async () => {
+    const onCountChange = vi.fn()
+    render(<QueuedMessagesPanel orgName="growth" onStartOrg={vi.fn()} onCountChange={onCountChange} />)
+    await waitFor(() => expect(onCountChange).toHaveBeenCalledWith(2))
+  })
+
   it('shows the CLI error', async () => {
     api.listOrgQueuedMessages.mockResolvedValue({ error: 'org "growth" not found' })
     render(<QueuedMessagesPanel orgName="growth" onStartOrg={vi.fn()} />)

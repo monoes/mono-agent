@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -22,10 +23,18 @@ const procHelperEnv = "MONOMIND_PROC_TEST_HELPER"
 
 func TestProcHelperProcess(t *testing.T) {
 	switch os.Getenv(procHelperEnv) {
-	case "parent":
+	case "parent", "detach-parent":
+		// The child is spawned at once, before anything else runs: the
+		// window in which it used to escape a job assigned after Start.
 		child := exec.Command(os.Args[0], "-test.run=^TestProcHelperProcess$")
 		child.Env = append(os.Environ(), procHelperEnv+"=child")
-		if err := child.Start(); err != nil {
+		var err error
+		if os.Getenv(procHelperEnv) == "detach-parent" {
+			child, err = startDetached(child)
+		} else {
+			err = child.Start()
+		}
+		if err != nil {
 			fmt.Println("error", err)
 			os.Exit(1)
 		}
@@ -41,20 +50,26 @@ func TestProcHelperProcess(t *testing.T) {
 // startHelperTree starts parent → child and returns the parent's cmd and the
 // child's pid.
 func startHelperTree(t *testing.T, attach bool) (*exec.Cmd, int, func()) {
+	return startHelperTreeMode(t, "parent", attach)
+}
+
+func startHelperTreeMode(t *testing.T, mode string, attach bool) (*exec.Cmd, int, func()) {
 	t.Helper()
 	cmd := exec.Command(os.Args[0], "-test.run=^TestProcHelperProcess$")
-	cmd.Env = append(os.Environ(), procHelperEnv+"=parent")
+	cmd.Env = append(os.Environ(), procHelperEnv+"="+mode)
 	setProcessGroup(cmd)
 	out, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
 	release := func() {}
 	if attach {
-		release = attachProcessGroup(cmd)
+		release, err = startProcessGroup(cmd)
+	} else {
+		err = cmd.Start()
+	}
+	if err != nil {
+		t.Fatal(err)
 	}
 	line, err := bufio.NewReader(out).ReadString('\n')
 	if err != nil {
@@ -120,8 +135,64 @@ func TestReleaseLeavesSurvivorsRunning(t *testing.T) {
 	if waitGone(t, childPid, time.Second) {
 		t.Fatalf("closing the released job killed grandchild %d", childPid)
 	}
-	if h, err := windows.OpenProcess(windows.PROCESS_TERMINATE, false, uint32(childPid)); err == nil {
+	terminatePid(childPid)
+}
+
+func terminatePid(pid int) {
+	if h, err := windows.OpenProcess(windows.PROCESS_TERMINATE, false, uint32(pid)); err == nil {
 		_ = windows.TerminateProcess(h, 1)
 		_ = windows.CloseHandle(h)
+	}
+}
+
+var procIsProcessInJob = windows.NewLazySystemDLL("kernel32.dll").NewProc("IsProcessInJob")
+
+// inJob reports whether pid is a member of job.
+func inJob(t *testing.T, pid int, job windows.Handle) bool {
+	t.Helper()
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
+	if err != nil {
+		t.Fatalf("open pid %d: %v", pid, err)
+	}
+	defer windows.CloseHandle(h)
+	var result int32
+	r, _, callErr := procIsProcessInJob.Call(uintptr(h), uintptr(job), uintptr(unsafe.Pointer(&result)))
+	if r == 0 {
+		t.Fatalf("IsProcessInJob: %v", callErr)
+	}
+	return result != 0
+}
+
+// The helper spawns its child as its very first act, so before the suspend
+// → assign → resume start the child regularly landed outside the job.
+func TestStartProcessGroupGrandchildIsInJob(t *testing.T) {
+	cmd, childPid, release := startHelperTree(t, true)
+	defer func() {
+		killProcessGroup(cmd, cmd.Process.Pid)
+		_ = cmd.Wait()
+		release()
+	}()
+	v, ok := jobs.Load(cmd)
+	if !ok {
+		t.Fatal("startProcessGroup did not record a job")
+	}
+	if !inJob(t, childPid, v.(*jobGroup).job) {
+		t.Fatalf("grandchild %d started outside the job", childPid)
+	}
+	if cmd.SysProcAttr.CreationFlags&windows.CREATE_SUSPENDED != 0 {
+		t.Fatal("CREATE_SUSPENDED left set on the command")
+	}
+}
+
+// A detached start from inside one of our jobs breaks away, so terminating
+// that job (a killed chat turn) leaves the detached org run or serve alive.
+func TestStartDetachedBreaksAwayFromJob(t *testing.T) {
+	cmd, childPid, release := startHelperTreeMode(t, "detach-parent", true)
+	defer release()
+	defer terminatePid(childPid)
+	killProcessGroup(cmd, 0)
+	_ = cmd.Wait()
+	if waitGone(t, childPid, time.Second) {
+		t.Fatalf("detached child %d died with the job it broke away from", childPid)
 	}
 }

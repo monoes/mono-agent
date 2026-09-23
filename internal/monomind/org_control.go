@@ -150,8 +150,10 @@ func OrgServeStart(ctx context.Context, projectRoot string) (pid int, alreadyRun
 	cmd.Dir = projectRoot
 	cmd.Stdout = logf
 	cmd.Stderr = logf
-	setProcessGroup(cmd)
-	if err := cmd.Start(); err != nil {
+	// Detached: the daemon must outlive this process, so it gets no job or
+	// group tied to us. OrgServeStop takes its tree down (signalServe).
+	cmd, err = startDetached(cmd)
+	if err != nil {
 		return 0, false, fmt.Errorf("start monomind org serve: %w", err)
 	}
 	go func() { _ = cmd.Wait() }()
@@ -169,10 +171,11 @@ func OrgServeRun(ctx context.Context, projectRoot string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	setProcessGroup(cmd)
-	if err := cmd.Start(); err != nil {
+	release, err := startProcessGroup(cmd)
+	if err != nil {
 		return err
 	}
-	defer attachProcessGroup(cmd)()
+	defer release()
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	select {

@@ -7,6 +7,11 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import OrgsPanel from './OrgsPanel.jsx'
 import { api } from '../services/api.js'
+// The real i18n setup, as main.jsx loads it, so the panel's tab labels come
+// from src/locales/*.json and the English names below stay findable.
+import i18n from '../i18n.js'
+import en from '../locales/en.json'
+import es from '../locales/es.json'
 
 vi.mock('../services/api.js', () => ({
   api: {
@@ -21,6 +26,7 @@ vi.mock('../services/api.js', () => ({
     getOrgApprovals: vi.fn(() => Promise.resolve({ approvals: [] })),
     getOrgAutonomy: vi.fn(() => Promise.resolve({ v: 1, org: 'test-org', level: 'manual', decider: { kind: 'model' }, daemon_running: true })),
     getOrgStatus: vi.fn(() => Promise.resolve({ status: 'stopped' })),
+    listOrgQueuedMessages: vi.fn(() => Promise.resolve({ v: 1, org: 'test-org', count: 0, messages: [] })),
     getOrgReport: vi.fn(() => Promise.resolve({ items: [] })),
     streamOrgEvents: vi.fn(() => Promise.resolve({ ok: true })),
     stopOrgEvents: vi.fn(() => Promise.resolve({ ok: true })),
@@ -34,8 +40,9 @@ vi.mock('../services/api.js', () => ({
   notify: vi.fn(),
 }))
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks()
+  await i18n.changeLanguage('en')
 })
 
 afterEach(() => {
@@ -126,6 +133,20 @@ describe('org unification in OrgsPanel', () => {
     expect(screen.getByRole('button', { name: /Trace/ })).toBeInTheDocument()
   })
 
+  it('counts queued messages on the Queued tab, and nothing when the queue is empty (C-35)', async () => {
+    api.listOrgQueuedMessages.mockResolvedValue({ v: 1, org: 'test-org', count: 3, messages: [{ messageId: 'a' }, { messageId: 'b' }, { messageId: 'c' }] })
+    render(<OrgsPanel />)
+    fireEvent.click(await screen.findByText('test-org'))
+    expect(await screen.findByRole('button', { name: /^Queued\s*3$/ })).toBeInTheDocument()
+    expect(api.listOrgQueuedMessages).toHaveBeenCalledWith('test-org')
+  })
+
+  it('shows no count on the Queued tab when nothing waits', async () => {
+    render(<OrgsPanel />)
+    fireEvent.click(await screen.findByText('test-org'))
+    expect(await screen.findByRole('button', { name: /^Queued$/ })).toBeInTheDocument()
+  })
+
   it('offers the Group tab only for holding orgs', async () => {
     api.listOrgDesigns.mockResolvedValue({ items: [{ name: 'hq', status: 'active', roleCount: 1, kind: 'holding' }] })
     render(<OrgsPanel />)
@@ -133,6 +154,32 @@ describe('org unification in OrgsPanel', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Group/ }))
     expect(await screen.findByText('This holding org has no child orgs yet.')).toBeInTheDocument()
     expect(api.orgGroupStatus).toHaveBeenCalledWith('hq')
+  })
+
+  it('has every tab-bar string in both locales', () => {
+    const tabs = ['design', 'overview', 'group', 'needs', 'queued', 'decisions', 'logs', 'costs', 'flow', 'trace']
+    const bar = ['running', 'run', 'runTitle', 'fullscreen', 'exitFullscreen']
+    for (const k of tabs) {
+      expect(en.orgs.tabs[k], `en tabs.${k}`).toBeTruthy()
+      expect(es.orgs.tabs[k], `es tabs.${k}`).toBeTruthy()
+    }
+    for (const k of bar) {
+      expect(en.orgs.tabBar[k], `en tabBar.${k}`).toBeTruthy()
+      expect(es.orgs.tabBar[k], `es tabBar.${k}`).toBeTruthy()
+    }
+  })
+
+  it('labels the tabs and the Run button from the locale files', async () => {
+    api.listOrgDesigns.mockResolvedValue({ items: [{ name: 'test-org', status: 'active', roleCount: 1 }] })
+    api.listOrgQueuedMessages.mockResolvedValue({ v: 1, org: 'test-org', count: 0, messages: [] })
+    await act(() => i18n.changeLanguage('es'))
+    render(<OrgsPanel />)
+    fireEvent.click(await screen.findByText('test-org'))
+    for (const k of ['design', 'overview', 'needs', 'queued', 'decisions', 'logs', 'costs', 'flow', 'trace']) {
+      expect(await screen.findByRole('button', { name: es.orgs.tabs[k] })).toBeInTheDocument()
+    }
+    expect(screen.getByRole('button', { name: es.orgs.tabBar.run })).toHaveAttribute('title', es.orgs.tabBar.runTitle)
+    expect(screen.queryByRole('button', { name: /^Needs you$/ })).not.toBeInTheDocument()
   })
 
   it('has no auto-resolve code left in the panel source (C-42)', () => {

@@ -89,6 +89,25 @@
       "loadFailed": "No se pudieron leer los mensajes en cola.",
       "to": "para",
       "noSubject": "(sin asunto)"
+    },
+    "tabs": {
+      "design": "Diseño",
+      "overview": "Resumen",
+      "group": "Grupo",
+      "needs": "Te necesita",
+      "queued": "En cola",
+      "decisions": "Decisiones",
+      "logs": "Registros",
+      "costs": "Costos",
+      "flow": "Flujo",
+      "trace": "Traza"
+    },
+    "tabBar": {
+      "running": "En marcha…",
+      "run": "Ejecutar",
+      "runTitle": "Ejecutar esta organización",
+      "fullscreen": "Lienzo a pantalla completa",
+      "exitFullscreen": "Salir de pantalla completa"
     }
   },
   "grantDialog": {

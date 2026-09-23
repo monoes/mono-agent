@@ -370,10 +370,21 @@
     return { models: got.models, offline: false, modelsError: got.error || "" };
   }
 
+  /**
+   * unanswered says the worker has no handler for what the panel asked.
+   * Chrome then reports an error instead of a reply (every listener
+   * returned false), or delivers nothing. A handler that ran and failed
+   * answers `{ ok: false, error }`, which is a real failure, not an old
+   * worker, and must not be mistaken for one.
+   */
+  function unanswered(response, lastError) {
+    return !!lastError || response === undefined || response === null;
+  }
+
   root.MonoSummaryAI = {
     isValidRuntimeId, isValidModel, normalizeRuntimes, normalizeModels, normalizeChoice, normalizeCatalog,
     choose, effectiveRuntime, describePicker, applyToMeta, panelMode,
-    load, remember, cacheCatalog, sticky, fetchRuntimes, fetchModels, state, modelsFor,
+    load, remember, cacheCatalog, sticky, fetchRuntimes, fetchModels, state, modelsFor, unanswered,
     CHOICE_KEY, CACHE_KEY, METHOD_RUNTIMES, METHOD_MODELS, DEFAULT_MODEL_LABEL,
   };
 })(globalThis);
