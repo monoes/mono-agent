@@ -89,6 +89,25 @@
       "loadFailed": "Could not read the queued messages.",
       "to": "to",
       "noSubject": "(no subject)"
+    },
+    "tabs": {
+      "design": "Design",
+      "overview": "Overview",
+      "group": "Group",
+      "needs": "Needs you",
+      "queued": "Queued",
+      "decisions": "Decisions",
+      "logs": "Logs",
+      "costs": "Costs",
+      "flow": "Flow",
+      "trace": "Trace"
+    },
+    "tabBar": {
+      "running": "Running…",
+      "run": "Run",
+      "runTitle": "Run this org",
+      "fullscreen": "Fullscreen canvas",
+      "exitFullscreen": "Exit fullscreen"
     }
   },
   "grantDialog": {
