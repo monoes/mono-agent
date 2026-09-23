@@ -1069,10 +1069,14 @@ ordinary `startOrg` runs.
   such); check-then-open races (TOCTOU); the workdir is read from the org file, which a `repo`
   role can edit (it widens its own confinement the same way); senders from an org the profile folder
   cannot resolve are held to the profile folder; not exercised in a live org run yet.
-- `needs-you` reports `idle_stop_in_seconds: null` (monomind exposes no idle deadline;
-  tracked in monoes/monomind#296).
-- Live gates not yet run (a fence runner calling a grant, the 5-minute idle-watchdog hold):
-  tracked in #83.
+- ~~`needs-you` reports `idle_stop_in_seconds: null`.~~ Closed: monomind 2.11.8 reports the
+  deadline in `org status --json` (capability `org-idle-deadline`), `needs-you` reads it (#91),
+  and monomind's human-readable `org status` prints it too (monoes/monomind#296, closed
+  2026-09-21).
+- ~~Live gates not yet run (a fence runner calling a grant, the 5-minute idle-watchdog hold).~~
+  Closed 2026-09-19 (#83): both run live, recorded in the gate tables above; the two bugs found
+  were fixed in #91, and `scripts/e2e/org-unification.sh` covers the codex case with
+  `E2E_CODEX=1` (#92).
 - Windows (C-14), closed 2026-09-18 on the mono-agent side, verified only by cross-compiling
   (`GOOS=windows` build, vet and `go test -c`); the Windows-only tests have not been run on
   Windows. The endpoint receiver's credential-file check (`internal/credfile`) reads the owner
