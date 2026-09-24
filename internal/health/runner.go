@@ -185,6 +185,9 @@ func (r *Registry) Run(ctx context.Context, env *Env, opts Options) *Report {
 			if ch.FixID != "" && ch.Status != StatusOK && ch.Status != StatusSkip {
 				if f, ok := r.Fix(ch.FixID); ok {
 					info := f.FixInfo
+					if ch.FixCommand != "" {
+						info.Command = ch.FixCommand
+					}
 					ch.Fix = &info
 				}
 			}
@@ -246,6 +249,9 @@ func (r *Registry) finish(c Check, res Result, took time.Duration) Result {
 	if res.FixID != "" && res.Status != StatusOK && res.Status != StatusSkip {
 		if f, ok := r.Fix(res.FixID); ok {
 			info := f.FixInfo
+			if res.FixCommand != "" {
+				info.Command = res.FixCommand
+			}
 			res.Fix = &info
 		}
 	}

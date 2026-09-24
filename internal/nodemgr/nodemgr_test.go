@@ -175,20 +175,64 @@ func TestInstallRejectsBadChecksum(t *testing.T) {
 }
 
 func TestInstallRejectsEscapingArchive(t *testing.T) {
-	m := testManager(t)
+	if runtime.GOOS == "windows" {
+		t.Skip("tar symlinks are a unix install path")
+	}
 	for _, entries := range [][]tarEntry{
 		{{name: "../evil", body: "x"}},
 		{{name: "node-v24.1.0/bin/npm", link: "../../../../etc/passwd"}},
 		{{name: "node-v24.1.0/bin/npm", link: "/etc/passwd"}},
+		// Each link is inside the folder as text, but they chain: x/y is
+		// the folder itself, so x/y/z -> .. is its parent, and x/y/z/pwned
+		// would land outside.
+		{{name: "x/", dir: true}, {name: "x/y", link: ".."}, {name: "x/y/z", link: ".."}, {name: "x/y/z/pwned", body: "x"}},
 	} {
 		arch := makeTarGz(t, entries)
 		path := filepath.Join(t.TempDir(), "a.tar.gz")
 		os.WriteFile(path, arch, 0o644)
-		if err := untarGz(path, t.TempDir()); err == nil {
+		// The staging folder sits inside a parent the test watches, so a
+		// write that escapes it is seen.
+		parent := t.TempDir()
+		staging := filepath.Join(parent, "staging")
+		if err := os.Mkdir(staging, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := untarGz(path, staging); err == nil {
 			t.Errorf("entries %+v: want rejection", entries)
 		}
+		for _, escaped := range []string{filepath.Join(parent, "pwned"), filepath.Join(parent, "evil")} {
+			if _, err := os.Lstat(escaped); err == nil {
+				t.Errorf("entries %+v: wrote %s outside the staging folder", entries, escaped)
+			}
+		}
 	}
-	_ = m
+}
+
+// remove takes only a version: anything else used to name a folder above
+// the managed Node (`remove ..` deleted all of ~/.monoagent).
+func TestRemoveAndUseTakeOnlyAVersion(t *testing.T) {
+	m := testManager(t)
+	sentinel := filepath.Join(filepath.Dir(m.Root), "monoagent.db")
+	if err := os.MkdirAll(m.Root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sentinel, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{"..", "../..", "../node", ".", "v..", "24", "24.1", "24.1.0/..", "/tmp", "24.1.0.1", "-1.0.0"} {
+		if err := m.Remove(bad); err == nil {
+			t.Errorf("Remove(%q) succeeded", bad)
+		}
+		if err := m.Use(bad); err == nil {
+			t.Errorf("Use(%q) succeeded", bad)
+		}
+	}
+	if _, err := os.Stat(sentinel); err != nil {
+		t.Fatalf("a file next to the managed Node was deleted: %v", err)
+	}
+	if err := m.Remove("24.9.9"); err == nil || !strings.Contains(err.Error(), "not installed") {
+		t.Fatalf("Remove of a version not installed = %v, want an error", err)
+	}
 }
 
 func TestCompareAndSuitable(t *testing.T) {
@@ -214,9 +258,22 @@ func TestActivatePrefersSuitableSystemNode(t *testing.T) {
 	sys := t.TempDir()
 	os.WriteFile(filepath.Join(sys, "node"), []byte("#!/bin/sh\necho v20.0.0\n"), 0o755)
 	t.Setenv("PATH", sys+string(os.PathListSeparator)+"/bin:/usr/bin")
+	t.Setenv("NPM_CONFIG_PREFIX", "")
+	t.Setenv("npm_config_prefix", "")
 	Activate(context.Background())
 	if first := filepath.SplitList(os.Getenv("PATH"))[0]; first != m.BinDir("24.1.0") {
 		t.Fatalf("old system node: PATH starts with %s", first)
+	}
+	// npm installs globally under npm-global, not inside the version folder
+	// that `nodejs update` prunes.
+	if got := os.Getenv("NPM_CONFIG_PREFIX"); got != m.NpmRoot {
+		t.Fatalf("NPM_CONFIG_PREFIX = %q, want %q", got, m.NpmRoot)
+	}
+	// A prefix the user set is kept.
+	t.Setenv("NPM_CONFIG_PREFIX", "/home/me/.npm-global")
+	Activate(context.Background())
+	if got := os.Getenv("NPM_CONFIG_PREFIX"); got != "/home/me/.npm-global" {
+		t.Fatalf("the user's own prefix was replaced with %q", got)
 	}
 
 	// Suitable system node: it stays first, managed is appended.

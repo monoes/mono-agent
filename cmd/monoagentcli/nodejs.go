@@ -19,7 +19,7 @@ func newNodejsCmd(cfg *globalConfig) *cobra.Command {
 		Short: "Manage the private Node.js runtime monoagent can install for monomind",
 		Long: `monomind and the npm-based AI agent CLIs need Node.js >= ` + nodemgr.MinVersion + `.
 When the machine has no suitable Node, monoagent can download one into
-~/.monoagent/node (official nodejs.org build, SHA-256 verified). It is only
+~/.monoagent/node (official nodejs.org build over HTTPS, checked against nodejs.org's SHASUMS256). It is only
 used by processes monoagent starts and never touches your shell config; a
 suitable system Node always takes precedence.`,
 	}
