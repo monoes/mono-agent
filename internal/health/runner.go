@@ -182,7 +182,7 @@ func (r *Registry) Run(ctx context.Context, env *Env, opts Options) *Report {
 		rep.Results = append(rep.Results, res)
 		rep.Summary[res.Status]++
 		for _, ch := range children {
-			ch.Group = c.Group
+			ch.Group, ch.Parent = c.Group, c.ID
 			if ch.Source == "" {
 				ch.Source = res.Source
 			}

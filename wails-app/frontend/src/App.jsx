@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import Sidebar from './components/Sidebar.jsx'
 import StatusBar from './components/StatusBar.jsx'
+import { startBackgroundHealth, subscribeHealth, summarize, isFixing } from './lib/health.js'
 import Toasts from './components/Toasts.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import ConfirmHost from './components/ConfirmDialog.jsx'
@@ -98,6 +99,21 @@ export default function App() {
     setVisitedPages(prev => (prev.has(activePage) ? prev : new Set(prev).add(activePage)))
   }, [activePage])
 
+  // System health: check on start and every 30 minutes (lib/health.js).
+  // The first time a check this session finds setup unfinished (a required
+  // item missing, or no monoagentcli at all), open Settings where the
+  // System health section can finish it.
+  useEffect(() => {
+    const stop = startBackgroundHealth()
+    let opened = false
+    const off = subscribeHealth(h => {
+      if (opened || (!h.report && !h.cliMissing)) return
+      opened = true
+      if (h.cliMissing || summarize(h.report).level === 'broken') navigate('settings')
+    })
+    return () => { off(); stop() }
+  }, [navigate])
+
   // Bring the user to a newly-created org even if they've never visited
   // Orgs this session. Pages below only render/mount once visitedPages
   // has seen their id (see persistentPages filter further down) — OrgsPanel
@@ -121,6 +137,9 @@ export default function App() {
       if (!payload?.orgName || payload.deleted) return
       if (knownOrgNamesRef.current?.has(payload.orgName)) return
       knownOrgNamesRef.current?.add(payload.orgName)
+      // A System health fix (monomind init) can create a sample org; don't
+      // pull the user out of Settings while it runs.
+      if (isFixing()) return
       setPendingOrgSelect(payload.orgName)
       navigate('orgs')
     })
@@ -308,6 +327,7 @@ export default function App() {
         dbConnected={dbConnected}
         chatOpen={globalChatOpen}
         onToggleChat={() => setGlobalChatOpen(v => !v)}
+        onOpenHealth={() => navigate('settings')}
       />
       <Toasts />
       <ConfirmHost />

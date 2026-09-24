@@ -325,6 +325,10 @@ export function ResumeOrgAutonomy(arg1:string):Promise<string>;
 
 export function RevealProfileFolder(arg1:string):Promise<void>;
 
+export function RunHealthCheck(arg1:boolean,arg2:boolean):Promise<string>;
+
+export function RunHealthFix(arg1:string):Promise<string>;
+
 export function RunNode(arg1:main.NodeRunRequest):Promise<main.NodeRunResult>;
 
 export function RunOrg(arg1:string,arg2:string):Promise<string>;
