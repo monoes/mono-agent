@@ -80,3 +80,19 @@ func TestResolveStepDefNonUploadStepStillStringifiesArrays(t *testing.T) {
 		t.Errorf("Text = %q, want %q (unchanged fmt.Sprintf stringification for non-upload steps)", resolved.Text, "[a b]")
 	}
 }
+
+// TestResolvePathStringItemUrl verifies that when item is a string URL,
+// path accesses like item.url, item.href, item.link, and item.username resolve to the string itself.
+func TestResolvePathStringItemUrl(t *testing.T) {
+	ctx := NewExecutionContext()
+	rawURL := "https://www.linkedin.com/in/berlin-founder/"
+	ctx.SetVariable("item", rawURL)
+	vr := NewVariableResolver(ctx)
+
+	for _, key := range []string{"item.url", "item.href", "item.link", "item.username", "item"} {
+		got := vr.ResolvePath(key)
+		if got != rawURL {
+			t.Errorf("ResolvePath(%q) = %v, want %q", key, got, rawURL)
+		}
+	}
+}

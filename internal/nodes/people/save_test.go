@@ -224,3 +224,42 @@ func TestPeopleSaveNode_ConfigPlatformOverride(t *testing.T) {
 		t.Fatalf("expected platform LINKEDIN, got %q", platform)
 	}
 }
+
+func TestPeopleSaveNode_CategoryAndIntroduction(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	SetGlobalPeopleDB(db)
+
+	node := &PeopleSaveNode{}
+	items := []workflow.Item{
+		workflow.NewItem(map[string]interface{}{
+			"profile_url": "https://www.linkedin.com/in/charlie-founder/",
+			"name":        "Charlie Founder",
+			"platform":    "linkedin",
+			"pitch":       "Excited about your new startup!",
+		}),
+	}
+
+	_, err := node.Execute(context.Background(), workflow.NodeInput{Items: items}, map[string]interface{}{
+		"category":     "pending_approval",
+		"introduction": "{{ $json.pitch }}",
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	var category, introduction, fullName string
+	err = db.QueryRow("SELECT category, introduction, full_name FROM people WHERE platform_username = 'charlie-founder'").Scan(&category, &introduction, &fullName)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if category != "pending_approval" {
+		t.Fatalf("expected category 'pending_approval', got %q", category)
+	}
+	if introduction != "Excited about your new startup!" {
+		t.Fatalf("expected introduction 'Excited about your new startup!', got %q", introduction)
+	}
+	if fullName != "Charlie Founder" {
+		t.Fatalf("expected full_name 'Charlie Founder', got %q", fullName)
+	}
+}

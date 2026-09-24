@@ -1109,6 +1109,7 @@ func (ae *ActionExecutor) stepExtractMultiple(ctx context.Context, step StepDef)
 	}
 	ae.execCtx.SetStepResult(step.ID, result)
 	ae.execCtx.SetVariable(step.ID+".count", count)
+	ae.execCtx.SetVariable("resultsCount", len(ae.execCtx.ExtractedItems))
 
 	return result, nil
 }
@@ -1154,6 +1155,29 @@ func (ae *ActionExecutor) stepCondition(ctx context.Context, step StepDef) (*Ste
 			Int("count", count).
 			Msg("max recursion depth reached for condition")
 		return &StepResult{Success: true, Data: condResult, StepID: step.ID}, nil
+	}
+
+	// For pagination loops (checking resultsCount < maxResultsCount), if no new
+	// items were added since the previous iteration, break early rather than
+	// continuously scrolling an ended page.
+	condStr, isStr := step.Condition.(string)
+	if isStr && strings.Contains(condStr, "resultsCount") && count > 1 {
+		lastCountKey := fmt.Sprintf("last_extracted_%s", recursionKey)
+		currentExtracted := len(ae.execCtx.ExtractedItems)
+		if prevVal, ok := ae.execCtx.GetVariable(lastCountKey); ok {
+			if prevCount, ok := prevVal.(int); ok && currentExtracted <= prevCount {
+				ae.logger.Debug().
+					Str("stepID", step.ID).
+					Int("current", currentExtracted).
+					Int("prev", prevCount).
+					Msg("pagination reached end of results — ending pagination loop early")
+				return &StepResult{Success: true, Data: false, StepID: step.ID}, nil
+			}
+		}
+		ae.execCtx.SetVariable(lastCountKey, currentExtracted)
+	} else if isStr && strings.Contains(condStr, "resultsCount") {
+		lastCountKey := fmt.Sprintf("last_extracted_%s", recursionKey)
+		ae.execCtx.SetVariable(lastCountKey, len(ae.execCtx.ExtractedItems))
 	}
 
 	// Resolve branch IDs to steps and loops, and execute in order. A branch id

@@ -6,6 +6,7 @@ import Toasts from './components/Toasts.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import ConfirmHost from './components/ConfirmDialog.jsx'
 import AIChatPanel from './components/AIChatPanel.jsx'
+import HumanInLoop from './pages/HumanInLoop.jsx'
 import Dashboard from './pages/Dashboard.jsx'
 import People from './pages/People.jsx'
 import Profile from './pages/Profile.jsx'
@@ -53,6 +54,8 @@ export default function App() {
   // assistant scoped to the currently open canvas — and stays separate.
   const [globalChatOpen, setGlobalChatOpen] = useState(false)
   const [globalChatRuntime, setGlobalChatRuntime] = useState('')
+  const [globalHilOpen, setGlobalHilOpen] = useState(false)
+  const [globalHilCount, setGlobalHilCount] = useState(0)
   // The document a chat result artifact card asked to open (Task 6) — a
   // separate instance from Documents.jsx's own viewingDoc, since that page
   // may not even be mounted yet (persistentPages only mounts a page once
@@ -302,6 +305,15 @@ export default function App() {
           </ErrorBoundary>
         </main>
 
+        {/* Global Human in Loop — central review and approval queue accessible from anywhere */}
+        <HumanInLoop
+          embedded
+          isOpen={globalHilOpen}
+          onClose={() => setGlobalHilOpen(false)}
+          onPendingCountChange={setGlobalHilCount}
+          onProfile={openProfile}
+        />
+
         {/* Global AI Assistant — always available, opened/closed via the
             fixed toggle button below; state and conversation persist across
             page navigation since this is mounted once at the App level. */}
@@ -315,18 +327,17 @@ export default function App() {
         />
       </div>
 
-      {/* The global chat toggle lives inside StatusBar itself now (bottom
-          bar, far right) — a small icon there rather than a separate
-          floating overlay button, which kept colliding with whatever
-          page-specific controls happened to also live near a screen
-          corner (the Workflow editor's own toolbar, Dashboard's
-          Refresh/Workflow Editor buttons, ...) no matter where it was
-          placed. */}
+      {/* The global chat and human-in-loop toggles live inside StatusBar itself
+          now (bottom bar, far right) — small icons there rather than separate
+          floating overlay buttons, reachable from anywhere in the app. */}
       <StatusBar
         stats={stats}
         dbConnected={dbConnected}
         chatOpen={globalChatOpen}
         onToggleChat={() => setGlobalChatOpen(v => !v)}
+        hilOpen={globalHilOpen}
+        hilCount={globalHilCount}
+        onToggleHil={() => setGlobalHilOpen(v => !v)}
         onOpenHealth={() => navigate('settings')}
       />
       <Toasts />

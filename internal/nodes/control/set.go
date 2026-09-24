@@ -27,13 +27,27 @@ func (n *SetNode) Type() string { return "core.set" }
 func (n *SetNode) PerItemConfigFields() []string { return []string{"assignments[].value"} }
 
 func (n *SetNode) Execute(ctx context.Context, input workflow.NodeInput, config map[string]interface{}) ([]workflow.NodeOutput, error) {
-	rawAssignments, ok := config["assignments"]
-	if !ok {
-		return nil, fmt.Errorf("%w: set node requires \"assignments\"", workflow.ErrInvalidConfig)
-	}
-	assignments, ok := rawAssignments.([]interface{})
-	if !ok {
-		return nil, fmt.Errorf("%w: set node \"assignments\" must be an array", workflow.ErrInvalidConfig)
+	var assignments []interface{}
+	if rawAssignments, ok := config["assignments"]; ok {
+		var isArray bool
+		assignments, isArray = rawAssignments.([]interface{})
+		if !isArray {
+			return nil, fmt.Errorf("%w: set node \"assignments\" must be an array", workflow.ErrInvalidConfig)
+		}
+	} else {
+		for k, v := range config {
+			if k == "include_input" || k == "assignments" || strings.HasPrefix(k, "_") {
+				continue
+			}
+			assignments = append(assignments, map[string]interface{}{
+				"field": k,
+				"value": fmt.Sprintf("%v", v),
+				"type":  "string",
+			})
+		}
+		if len(assignments) == 0 {
+			return nil, fmt.Errorf("%w: set node requires \"assignments\"", workflow.ErrInvalidConfig)
+		}
 	}
 
 	includeInput := true

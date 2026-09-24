@@ -1,11 +1,16 @@
 import { useState, useEffect, useCallback } from 'react'
-import { CheckCircle, XCircle, Clock, RefreshCw, ChevronDown, ChevronRight, AlertTriangle, Mail, UserCheck, X } from 'lucide-react'
+import {
+  CheckCircle, XCircle, Clock, RefreshCw, ChevronDown, ChevronRight,
+  AlertTriangle, Mail, UserCheck, X, Send, ExternalLink, Users,
+  MessageCircleQuestion, ShieldAlert, KeyRound,
+} from 'lucide-react'
 import * as WailsApp from '../wailsjs/go/main/App'
+import { api, notify } from '../services/api.js'
 import { usePageVisibleRef, useVisibleCatchUp } from '../lib/usePageVisible.js'
 
-const GetHILItems = WailsApp.GetHILItems ?? (async () => [])
-const ApproveHIL  = WailsApp.ApproveHIL  ?? (async () => {})
-const RejectHIL   = WailsApp.RejectHIL   ?? (async () => {})
+const GetHILItems          = WailsApp.GetHILItems          ?? (async () => [])
+const ApproveHIL           = WailsApp.ApproveHIL           ?? (async () => {})
+const RejectHIL            = WailsApp.RejectHIL            ?? (async () => {})
 const GetDraftPersonMessages   = WailsApp.GetDraftPersonMessages   ?? (async () => [])
 const SendDraftPersonMessage   = WailsApp.SendDraftPersonMessage   ?? (async () => {})
 const RejectDraftPersonMessage = WailsApp.RejectDraftPersonMessage ?? (async () => {})
@@ -85,6 +90,7 @@ function EditableField({ label, value, onChange }) {
   )
 }
 
+// ── 1. Workflow Pause Card ────────────────────────────────────
 function HILCard({ item, onApprove, onReject }) {
   const [expanded, setExpanded] = useState(true)
   const [editedValues, setEditedValues] = useState({ ...item.editable_data })
@@ -96,8 +102,6 @@ function HILCard({ item, onApprove, onReject }) {
   const handleApprove = async () => {
     setLoading('approve')
     try {
-      // Re-parse each edited string back to its original JSON type (number, bool, object)
-      // so downstream nodes don't receive stringified values where they expect typed data.
       const typed = Object.fromEntries(
         Object.entries(editedValues).map(([k, v]) => {
           if (typeof v !== 'string') return [k, v]
@@ -139,7 +143,7 @@ function HILCard({ item, onApprove, onReject }) {
         onClick={() => setExpanded(v => !v)}
       >
         <Clock size={14} color="#00b4d8" style={{ flexShrink: 0 }} />
-        <div style={{ flex: 1 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>
             {item.node_name}
             {item.workflow_name && (
@@ -155,14 +159,13 @@ function HILCard({ item, onApprove, onReject }) {
         <span style={{
           padding: '2px 8px', borderRadius: 10,
           background: 'rgba(0,180,216,0.12)', color: '#00b4d8',
-          fontSize: 11, fontFamily: 'var(--font-mono)',
-        }}>pending</span>
+          fontSize: 11, fontFamily: 'var(--font-mono)', flexShrink: 0,
+        }}>workflow</span>
         {expanded ? <ChevronDown size={14} color="var(--text-muted)" /> : <ChevronRight size={14} color="var(--text-muted)" />}
       </div>
 
       {expanded && (
         <div style={{ padding: 16 }}>
-          {/* Read-only section */}
           {readonlyKeys.length > 0 && (
             <div style={{ marginBottom: 20 }}>
               <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10, paddingBottom: 6, borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
@@ -174,7 +177,6 @@ function HILCard({ item, onApprove, onReject }) {
             </div>
           )}
 
-          {/* Editable section */}
           {editableKeys.length > 0 && (
             <div style={{ marginBottom: 20 }}>
               <div style={{ fontSize: 11, color: '#00b4d8', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10, paddingBottom: 6, borderBottom: '1px solid rgba(0,180,216,0.1)' }}>
@@ -191,7 +193,6 @@ function HILCard({ item, onApprove, onReject }) {
             </div>
           )}
 
-          {/* Actions */}
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', paddingTop: 8, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
             <button
               onClick={handleReject}
@@ -232,6 +233,7 @@ function HILCard({ item, onApprove, onReject }) {
   )
 }
 
+// ── 2. Draft Outbound Message Card ────────────────────────────
 function DraftMessageCard({ item, onSend, onReject }) {
   const [expanded, setExpanded] = useState(true)
   const [loading, setLoading] = useState(null) // 'send' | 'reject'
@@ -264,7 +266,7 @@ function DraftMessageCard({ item, onSend, onReject }) {
         onClick={() => setExpanded(v => !v)}
       >
         <Mail size={14} color="#f59e0b" style={{ flexShrink: 0 }} />
-        <div style={{ flex: 1 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>
             {item.subject || '(no subject)'}
             <span style={{ fontWeight: 400, color: 'var(--text-muted)', marginLeft: 6 }}>
@@ -278,7 +280,7 @@ function DraftMessageCard({ item, onSend, onReject }) {
         <span style={{
           padding: '2px 8px', borderRadius: 10,
           background: 'rgba(245,158,11,0.15)', color: '#f59e0b',
-          fontSize: 11, fontFamily: 'var(--font-mono)',
+          fontSize: 11, fontFamily: 'var(--font-mono)', flexShrink: 0,
         }}>draft</span>
         {expanded ? <ChevronDown size={14} color="var(--text-muted)" /> : <ChevronRight size={14} color="var(--text-muted)" />}
       </div>
@@ -333,78 +335,500 @@ function DraftMessageCard({ item, onSend, onReject }) {
   )
 }
 
-// embedded/isOpen/onClose mirror OrgsPanel's docked-side-panel convention —
-// used when this renders inside the Workflow editor's toolbar toggle
-// instead of as its own top-level page. Standalone usage (embedded=false)
-// is unchanged.
-export default function HumanInLoop({ embedded = false, isOpen = true, onClose }) {
+// ── 3. Lead / Candidate Outreach Approval Card ────────────────
+function LeadApprovalCard({ item, onApprove, onReject, onOpenProfile }) {
+  const [expanded, setExpanded] = useState(true)
+  const [editedIntro, setEditedIntro] = useState(item.introduction || '')
+  const [loading, setLoading] = useState(null) // 'approve' | 'approve_send' | 'reject'
+
+  const handleApproveOnly = async () => {
+    setLoading('approve')
+    try {
+      await onApprove(item.id, editedIntro, false)
+    } finally {
+      setLoading(null)
+    }
+  }
+
+  const handleApproveAndSend = async () => {
+    setLoading('approve_send')
+    try {
+      await onApprove(item.id, editedIntro, true)
+    } finally {
+      setLoading(null)
+    }
+  }
+
+  const handleReject = async () => {
+    setLoading('reject')
+    try {
+      await onReject(item.id)
+    } finally {
+      setLoading(null)
+    }
+  }
+
+  const platformColor = item.platform?.toUpperCase() === 'LINKEDIN' ? '#0077b5' : '#00b4d8'
+
+  return (
+    <div style={{
+      background: 'linear-gradient(160deg,#0a1926 0%,#06101c 100%)',
+      border: '1.5px solid rgba(0,180,216,0.25)',
+      borderRadius: 10,
+      marginBottom: 16,
+      overflow: 'hidden',
+    }}>
+      {/* Header */}
+      <div
+        style={{
+          display: 'flex', alignItems: 'center', gap: 10,
+          padding: '12px 16px',
+          background: 'rgba(0,180,216,0.08)',
+          borderBottom: expanded ? '1px solid rgba(0,180,216,0.14)' : 'none',
+          cursor: 'pointer',
+        }}
+        onClick={() => setExpanded(v => !v)}
+      >
+        <Users size={15} color="#00b4d8" style={{ flexShrink: 0 }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>
+              {item.full_name || item.platform_username}
+            </span>
+            <span style={{
+              padding: '1px 6px', borderRadius: 4,
+              fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 600,
+              background: `${platformColor}25`, color: platformColor, border: `1px solid ${platformColor}40`,
+            }}>
+              {item.platform?.toUpperCase() || 'LEAD'}
+            </span>
+            {item.platform_username && (
+              <span style={{ fontSize: 11, color: '#00b4d8', fontFamily: 'var(--font-mono)' }}>
+                @{item.platform_username}
+              </span>
+            )}
+          </div>
+          {item.job_title && (
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {item.job_title}
+            </div>
+          )}
+        </div>
+        <span style={{
+          padding: '2px 8px', borderRadius: 10,
+          background: 'rgba(0,180,216,0.15)', color: '#00b4d8',
+          fontSize: 11, fontFamily: 'var(--font-mono)', flexShrink: 0,
+        }}>lead pitch</span>
+        {expanded ? <ChevronDown size={14} color="var(--text-muted)" /> : <ChevronRight size={14} color="var(--text-muted)" />}
+      </div>
+
+      {expanded && (
+        <div style={{ padding: 16 }}>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 12, fontSize: 11, color: 'var(--text-muted)' }}>
+            {item.profile_url && (
+              <a
+                href={item.profile_url}
+                target="_blank"
+                rel="noreferrer"
+                onClick={e => e.stopPropagation()}
+                style={{ color: '#00b4d8', display: 'inline-flex', alignItems: 'center', gap: 4, textDecoration: 'none' }}
+              >
+                View Profile <ExternalLink size={11} />
+              </a>
+            )}
+            {item.created_at && (
+              <span style={{ fontFamily: 'var(--font-mono)' }}>
+                Captured: {formatDate(item.created_at)}
+              </span>
+            )}
+            {onOpenProfile && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onOpenProfile(item.id) }}
+                style={{
+                  background: 'none', border: 'none', padding: 0,
+                  color: 'var(--text-secondary)', cursor: 'pointer',
+                  fontSize: 11, textDecoration: 'underline',
+                }}
+              >
+                Open in CRM
+              </button>
+            )}
+          </div>
+
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: '#00b4d8', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>
+              Generated Outreach Pitch <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(editable)</span>
+            </div>
+            <textarea
+              value={editedIntro}
+              onChange={e => setEditedIntro(e.target.value)}
+              rows={4}
+              style={{
+                width: '100%',
+                boxSizing: 'border-box',
+                padding: '9px 12px',
+                background: 'rgba(0,180,216,0.04)',
+                border: '1px solid rgba(0,180,216,0.25)',
+                borderRadius: 6,
+                fontSize: 13,
+                color: 'var(--text-primary)',
+                fontFamily: 'inherit',
+                resize: 'vertical',
+                outline: 'none',
+                lineHeight: 1.6,
+              }}
+              onFocus={e => { e.target.style.borderColor = 'rgba(0,180,216,0.6)' }}
+              onBlur={e => { e.target.style.borderColor = 'rgba(0,180,216,0.25)' }}
+            />
+          </div>
+
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', paddingTop: 8, borderTop: '1px solid rgba(255,255,255,0.06)', flexWrap: 'wrap' }}>
+            <button
+              onClick={handleReject}
+              disabled={!!loading}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '7px 14px',
+                background: loading === 'reject' ? 'rgba(239,68,68,0.15)' : 'rgba(239,68,68,0.1)',
+                border: '1px solid rgba(239,68,68,0.3)',
+                borderRadius: 6, cursor: loading ? 'wait' : 'pointer',
+                color: '#ef4444', fontSize: 12, fontWeight: 500,
+                opacity: loading && loading !== 'reject' ? 0.5 : 1,
+              }}
+            >
+              <XCircle size={13} />
+              {loading === 'reject' ? 'Rejecting…' : 'Reject'}
+            </button>
+            <button
+              onClick={handleApproveOnly}
+              disabled={!!loading}
+              title="Save changes and mark approved without dispatching"
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '7px 14px',
+                background: 'rgba(255,255,255,0.06)',
+                border: '1px solid rgba(255,255,255,0.15)',
+                borderRadius: 6, cursor: loading ? 'wait' : 'pointer',
+                color: 'var(--text-secondary)', fontSize: 12, fontWeight: 500,
+                opacity: loading && loading !== 'approve' ? 0.5 : 1,
+              }}
+            >
+              <CheckCircle size={13} />
+              {loading === 'approve' ? 'Saving…' : 'Approve Only'}
+            </button>
+            <button
+              onClick={handleApproveAndSend}
+              disabled={!!loading}
+              title="Save changes, approve, and trigger outreach dispatch workflow"
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '7px 16px',
+                background: loading === 'approve_send' ? 'rgba(16,185,129,0.25)' : 'rgba(16,185,129,0.15)',
+                border: '1px solid rgba(16,185,129,0.4)',
+                borderRadius: 6, cursor: loading ? 'wait' : 'pointer',
+                color: '#10b981', fontSize: 12, fontWeight: 600,
+                opacity: loading && loading !== 'approve_send' ? 0.5 : 1,
+              }}
+            >
+              <Send size={13} />
+              {loading === 'approve_send' ? 'Dispatching…' : 'Approve & Send'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── 4. Org Decision / Question / Gate Card ────────────────────
+function OrgDecisionCard({ item, onAnswerQuestion, onApproveAction, onDenyAction, onApproveGate, onRejectGate }) {
+  const [expanded, setExpanded] = useState(true)
+  const [answerText, setAnswerText] = useState('')
+  const [loading, setLoading] = useState(null)
+
+  const handleAnswer = async () => {
+    if (!answerText.trim()) return
+    setLoading('answer')
+    try {
+      await onAnswerQuestion(item.orgName, item.id, answerText.trim())
+    } finally {
+      setLoading(null)
+    }
+  }
+
+  const handleApprove = async () => {
+    setLoading('approve')
+    try {
+      if (item.kind === 'approval') {
+        await onApproveAction(item.orgName, item.role, item.action)
+      } else if (item.kind === 'gate') {
+        await onApproveGate(item.orgName, item.id)
+      }
+    } finally {
+      setLoading(null)
+    }
+  }
+
+  const handleReject = async () => {
+    setLoading('reject')
+    try {
+      if (item.kind === 'approval') {
+        await onDenyAction(item.orgName, item.role, item.action)
+      } else if (item.kind === 'gate') {
+        await onRejectGate(item.orgName, item.id)
+      }
+    } finally {
+      setLoading(null)
+    }
+  }
+
+  const KindIcon = item.kind === 'question' ? MessageCircleQuestion : item.kind === 'gate' ? ShieldAlert : KeyRound
+
+  return (
+    <div style={{
+      background: 'linear-gradient(160deg,#181024 0%,#100a1c 100%)',
+      border: '1.5px solid rgba(139,92,246,0.25)',
+      borderRadius: 10,
+      marginBottom: 16,
+      overflow: 'hidden',
+    }}>
+      <div
+        style={{
+          display: 'flex', alignItems: 'center', gap: 10,
+          padding: '12px 16px',
+          background: 'rgba(139,92,246,0.08)',
+          borderBottom: expanded ? '1px solid rgba(139,92,246,0.15)' : 'none',
+          cursor: 'pointer',
+        }}
+        onClick={() => setExpanded(v => !v)}
+      >
+        <KindIcon size={15} color="#8b5cf6" style={{ flexShrink: 0 }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{
+              padding: '1px 6px', borderRadius: 4,
+              fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 700,
+              background: 'rgba(139,92,246,0.2)', color: '#a78bfa', border: '1px solid rgba(139,92,246,0.3)',
+            }}>
+              ORG: {item.orgName}
+            </span>
+            <span style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>
+              {item.title || item.action || item.name || `${item.kind} for ${item.role}`}
+            </span>
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 2 }}>
+            Role: {item.role || 'operator'} {item.since ? `· waiting ${item.since}` : ''}
+          </div>
+        </div>
+        <span style={{
+          padding: '2px 8px', borderRadius: 10,
+          background: 'rgba(139,92,246,0.15)', color: '#a78bfa',
+          fontSize: 11, fontFamily: 'var(--font-mono)', flexShrink: 0,
+        }}>{item.kind}</span>
+        {expanded ? <ChevronDown size={14} color="var(--text-muted)" /> : <ChevronRight size={14} color="var(--text-muted)" />}
+      </div>
+
+      {expanded && (
+        <div style={{ padding: 16 }}>
+          <div style={{
+            padding: '9px 12px', background: 'rgba(255,255,255,0.04)', borderRadius: 6,
+            border: '1px solid rgba(255,255,255,0.07)', fontSize: 13, color: 'var(--text-secondary)',
+            marginBottom: 16, lineHeight: 1.5,
+          }}>
+            {item.text || item.summary || item.question || item.description}
+          </div>
+
+          {item.kind === 'question' ? (
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input
+                type="text"
+                value={answerText}
+                onChange={e => setAnswerText(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && answerText.trim()) handleAnswer() }}
+                placeholder="Type your answer…"
+                style={{
+                  flex: 1, padding: '7px 10px',
+                  background: 'rgba(139,92,246,0.05)', border: '1px solid rgba(139,92,246,0.25)',
+                  borderRadius: 6, color: 'var(--text-primary)', fontSize: 12, outline: 'none',
+                }}
+              />
+              <button
+                onClick={handleAnswer}
+                disabled={!answerText.trim() || !!loading}
+                style={{
+                  padding: '7px 16px', background: 'rgba(139,92,246,0.2)', border: '1px solid rgba(139,92,246,0.4)',
+                  borderRadius: 6, color: '#a78bfa', fontWeight: 600, fontSize: 12, cursor: !answerText.trim() ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {loading === 'answer' ? 'Answering…' : 'Submit Answer'}
+              </button>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', paddingTop: 8, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+              <button
+                onClick={handleReject}
+                disabled={!!loading}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  padding: '7px 14px',
+                  background: loading === 'reject' ? 'rgba(239,68,68,0.15)' : 'rgba(239,68,68,0.1)',
+                  border: '1px solid rgba(239,68,68,0.3)',
+                  borderRadius: 6, cursor: loading ? 'wait' : 'pointer',
+                  color: '#ef4444', fontSize: 12, fontWeight: 500,
+                  opacity: loading && loading !== 'reject' ? 0.5 : 1,
+                }}
+              >
+                <XCircle size={13} />
+                {loading === 'reject' ? 'Denying…' : (item.kind === 'gate' ? 'Reject Gate' : 'Deny')}
+              </button>
+              <button
+                onClick={handleApprove}
+                disabled={!!loading}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  padding: '7px 16px',
+                  background: loading === 'approve' ? 'rgba(16,185,129,0.25)' : 'rgba(16,185,129,0.15)',
+                  border: '1px solid rgba(16,185,129,0.4)',
+                  borderRadius: 6, cursor: loading ? 'wait' : 'pointer',
+                  color: '#10b981', fontSize: 12, fontWeight: 600,
+                  opacity: loading && loading !== 'approve' ? 0.5 : 1,
+                }}
+              >
+                <CheckCircle size={13} />
+                {loading === 'approve' ? 'Approving…' : (item.kind === 'gate' ? 'Approve Gate' : 'Approve')}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Main HumanInLoop component ────────────────────────────────
+export default function HumanInLoop({ embedded = false, isOpen = true, onClose, onPendingCountChange, onProfile }) {
   const [items, setItems] = useState([])
   const [drafts, setDrafts] = useState([])
+  const [leads, setLeads] = useState([])
+  const [orgItems, setOrgItems] = useState([])
+  const [activeFilter, setActiveFilter] = useState('all') // 'all' | 'leads' | 'workflows' | 'drafts' | 'orgs'
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const pageVisibleRef = usePageVisibleRef()
 
   const load = useCallback(async (background = false) => {
-    // Background refreshes (3s poll) don't toggle `loading` — otherwise the
-    // card list flickers into the empty state between ticks.
     if (!background) setLoading(true)
     setError(null)
     try {
-      const [data, draftData] = await Promise.all([GetHILItems(), GetDraftPersonMessages()])
-      setItems(data ?? [])
-      setDrafts(draftData ?? [])
+      const [hilRes, draftRes, leadRes, orgsRes] = await Promise.allSettled([
+        GetHILItems(),
+        GetDraftPersonMessages(),
+        api.getPendingPeopleApprovals(),
+        api.listOrgDesigns(),
+      ])
+
+      const newHil = (hilRes.status === 'fulfilled' && Array.isArray(hilRes.value)) ? hilRes.value : []
+      const newDrafts = (draftRes.status === 'fulfilled' && Array.isArray(draftRes.value)) ? draftRes.value : []
+      const newLeads = (leadRes.status === 'fulfilled' && Array.isArray(leadRes.value)) ? leadRes.value : []
+
+      let newOrgItems = []
+      if (orgsRes.status === 'fulfilled' && orgsRes.value) {
+        const orgList = Array.isArray(orgsRes.value.items)
+          ? orgsRes.value.items
+          : (Array.isArray(orgsRes.value) ? orgsRes.value : [])
+        const orgPromises = orgList.map(async (org) => {
+          const orgName = org.name
+          if (!orgName) return []
+          try {
+            const [qRes, aRes, gRes] = await Promise.allSettled([
+              api.getOrgQuestions(orgName),
+              api.getOrgApprovals(orgName),
+              api.getOrgGates(orgName),
+            ])
+            const questions = qRes.status === 'fulfilled' ? (qRes.value?.questions || []) : []
+            const approvals = aRes.status === 'fulfilled' ? (aRes.value?.approvals || []) : []
+            const gates = gRes.status === 'fulfilled' ? (gRes.value?.gates || []) : []
+
+            const res = []
+            for (const q of questions) {
+              if (q.answer == null && !q.answeredAt) {
+                res.push({ kind: 'question', id: q.questionId, orgName, role: q.role, question: q.question, text: q.question, raw: q })
+              }
+            }
+            for (const a of approvals) {
+              if (a.approved == null) {
+                res.push({ kind: 'approval', id: a.requestId || `${a.roleId}:${a.action}`, orgName, role: a.roleId, action: a.action, summary: a.question || `Approve ${a.action}?`, text: a.question || `Approve ${a.action}?`, raw: a })
+              }
+            }
+            for (const g of gates) {
+              if (g.status === 'pending') {
+                res.push({ kind: 'gate', id: g.id, orgName, role: g.roleId, name: g.name, text: g.name || g.id, raw: g })
+              }
+            }
+            return res
+          } catch {
+            return []
+          }
+        })
+        const orgResults = await Promise.all(orgPromises)
+        newOrgItems = orgResults.flat()
+      }
+
+      setItems(newHil)
+      setDrafts(newDrafts)
+      setLeads(newLeads)
+      setOrgItems(newOrgItems)
+
+      const total = newHil.length + newDrafts.length + newLeads.length + newOrgItems.length
+      onPendingCountChange?.(total)
     } catch (e) {
       setError(e?.message ?? 'Failed to load')
     } finally {
       if (!background) setLoading(false)
     }
-  }, [])
+  }, [onPendingCountChange])
 
-  // One catch-up refresh when the page becomes visible again after being
-  // hidden (ticks were gated the whole time — see the interval below).
   useVisibleCatchUp(() => load(true))
 
-  // Auto-refresh every 3 seconds while the page is open. Individual ticks
-  // are gated on page visibility — a hidden window stops polling the
-  // backend; becoming visible again triggers one catch-up refresh above.
-  // Embedded mode adds one more gate: while docked closed, the toolbar
-  // toggle's own independent poll (NodeRunner.jsx) already covers the
-  // pending-count badge, so there's no need to duplicate that work here
-  // too — this effect just sits idle until the panel is actually opened.
   useEffect(() => {
     if (embedded && !isOpen) return
     load()
     const interval = setInterval(() => {
       if (!pageVisibleRef.current) return
       load(true)
-    }, 3000)
+    }, 4000)
     return () => clearInterval(interval)
   }, [load, pageVisibleRef, embedded, isOpen])
 
-  const handleApprove = async (id, editedJSON) => {
+  // Workflow HIL resolution
+  const handleApproveHIL = async (id, editedJSON) => {
     try {
       await ApproveHIL(id, editedJSON)
       setItems(prev => prev.filter(i => i.id !== id))
+      notify('workflow', 'Workflow resumed')
     } catch (e) {
-      setError(e?.message ?? 'Failed to approve — the item may have already been resolved.')
+      setError(e?.message ?? 'Failed to approve item')
     }
   }
 
-  const handleReject = async (id) => {
+  const handleRejectHIL = async (id) => {
     try {
       await RejectHIL(id)
       setItems(prev => prev.filter(i => i.id !== id))
+      notify('workflow', 'Workflow branch rejected')
     } catch (e) {
-      setError(e?.message ?? 'Failed to reject — the item may have already been resolved.')
+      setError(e?.message ?? 'Failed to reject item')
     }
   }
 
+  // Draft Message resolution
   const handleSendDraft = async (id) => {
     try {
       await SendDraftPersonMessage(id)
       setDrafts(prev => prev.filter(d => d.id !== id))
+      notify('message', 'Draft message sent')
     } catch (e) {
-      setError(e?.message ?? 'Failed to send — the draft may have already been resolved.')
+      setError(e?.message ?? 'Failed to send draft')
     }
   }
 
@@ -412,26 +836,120 @@ export default function HumanInLoop({ embedded = false, isOpen = true, onClose }
     try {
       await RejectDraftPersonMessage(id)
       setDrafts(prev => prev.filter(d => d.id !== id))
+      notify('message', 'Draft message discarded')
     } catch (e) {
-      setError(e?.message ?? 'Failed to discard — the draft may have already been resolved.')
+      setError(e?.message ?? 'Failed to discard draft')
+    }
+  }
+
+  // Lead outreach resolution
+  const handleApproveLead = async (id, editedIntro, sendNow) => {
+    try {
+      await api.approvePendingPerson(id, editedIntro, sendNow)
+      setLeads(prev => prev.filter(l => l.id !== id))
+      notify('outreach', sendNow ? 'Approved and queued for dispatch' : 'Approved candidate')
+    } catch (e) {
+      setError(e?.message ?? 'Failed to approve lead')
+    }
+  }
+
+  const handleRejectLead = async (id) => {
+    try {
+      await api.rejectPendingPerson(id)
+      setLeads(prev => prev.filter(l => l.id !== id))
+      notify('outreach', 'Candidate rejected')
+    } catch (e) {
+      setError(e?.message ?? 'Failed to reject lead')
+    }
+  }
+
+  // Org resolution
+  const handleAnswerQuestion = async (orgName, questionId, text) => {
+    try {
+      await api.answerOrgQuestion(orgName, questionId, text)
+      setOrgItems(prev => prev.filter(i => !(i.orgName === orgName && i.id === questionId)))
+      notify('org', 'Question answered')
+    } catch (e) {
+      setError(e?.message ?? 'Failed to answer question')
+    }
+  }
+
+  const handleApproveAction = async (orgName, role, action) => {
+    try {
+      await api.approveOrgAction(orgName, role, action)
+      setOrgItems(prev => prev.filter(i => !(i.orgName === orgName && i.role === role && i.action === action)))
+      notify('org', `Approved ${action}`)
+    } catch (e) {
+      setError(e?.message ?? 'Failed to approve action')
+    }
+  }
+
+  const handleDenyAction = async (orgName, role, action) => {
+    try {
+      await api.denyOrgAction(orgName, role, action)
+      setOrgItems(prev => prev.filter(i => !(i.orgName === orgName && i.role === role && i.action === action)))
+      notify('org', `Denied ${action}`)
+    } catch (e) {
+      setError(e?.message ?? 'Failed to deny action')
+    }
+  }
+
+  const handleApproveGate = async (orgName, gateId) => {
+    try {
+      await api.gateApproveOrgAction(orgName, gateId)
+      setOrgItems(prev => prev.filter(i => !(i.orgName === orgName && i.id === gateId)))
+      notify('org', 'Gate approved')
+    } catch (e) {
+      setError(e?.message ?? 'Failed to approve gate')
+    }
+  }
+
+  const handleRejectGate = async (orgName, gateId) => {
+    try {
+      await api.gateRejectOrgAction(orgName, gateId)
+      setOrgItems(prev => prev.filter(i => !(i.orgName === orgName && i.id === gateId)))
+      notify('org', 'Gate rejected')
+    } catch (e) {
+      setError(e?.message ?? 'Failed to reject gate')
     }
   }
 
   if (embedded && !isOpen) return null
 
+  const totalCount = items.length + drafts.length + leads.length + orgItems.length
+
+  const showLeads = activeFilter === 'all' || activeFilter === 'leads'
+  const showWorkflows = activeFilter === 'all' || activeFilter === 'workflows'
+  const showDrafts = activeFilter === 'all' || activeFilter === 'drafts'
+  const showOrgs = activeFilter === 'all' || activeFilter === 'orgs'
+
   const containerStyle = embedded
-    ? { width: 420, flexShrink: 0, background: '#060b13', borderLeft: '1px solid rgba(0,180,216,0.1)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }
-    : { padding: '24px 28px', maxWidth: 760 }
-  const bodyStyle = embedded ? { flex: 1, overflowY: 'auto', padding: '16px 16px 24px' } : undefined
+    ? {
+        width: 480,
+        maxWidth: '100vw',
+        flexShrink: 0,
+        background: '#060b13',
+        borderLeft: '1px solid rgba(0,180,216,0.15)',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        position: 'relative',
+        height: '100%',
+      }
+    : { padding: '24px 28px', maxWidth: 800, margin: '0 auto', overflowY: 'auto', height: '100%' }
+
+  const bodyStyle = embedded
+    ? { flex: 1, overflowY: 'auto', padding: '16px 16px 24px' }
+    : undefined
 
   const body = (
     <>
       {!embedded && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
           <div>
             <h1 style={{ fontSize: 20, fontWeight: 700, color: '#e2e8f0', margin: 0 }}>Human in Loop</h1>
             <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '4px 0 0' }}>
-              Workflows paused here are waiting for your review. Edit content if needed, then approve or reject.
+              Central queue for all pending human reviews, lead outreach approvals, workflow pauses, and agent decisions.
             </p>
           </div>
           <button
@@ -453,25 +971,128 @@ export default function HumanInLoop({ embedded = false, isOpen = true, onClose }
         </div>
       )}
 
+      {/* Filter Tabs / Pills */}
+      {totalCount > 0 && (
+        <div style={{ display: 'flex', gap: 6, marginBottom: 16, overflowX: 'auto', paddingBottom: 4 }}>
+          <button
+            onClick={() => setActiveFilter('all')}
+            style={{
+              padding: '4px 10px', borderRadius: 20,
+              fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 600,
+              background: activeFilter === 'all' ? 'rgba(0,180,216,0.2)' : 'rgba(255,255,255,0.04)',
+              border: activeFilter === 'all' ? '1px solid rgba(0,180,216,0.4)' : '1px solid rgba(255,255,255,0.08)',
+              color: activeFilter === 'all' ? '#00b4d8' : 'var(--text-muted)',
+              cursor: 'pointer',
+            }}
+          >
+            All ({totalCount})
+          </button>
+          {leads.length > 0 && (
+            <button
+              onClick={() => setActiveFilter('leads')}
+              style={{
+                padding: '4px 10px', borderRadius: 20,
+                fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 600,
+                background: activeFilter === 'leads' ? 'rgba(0,180,216,0.2)' : 'rgba(255,255,255,0.04)',
+                border: activeFilter === 'leads' ? '1px solid rgba(0,180,216,0.4)' : '1px solid rgba(255,255,255,0.08)',
+                color: activeFilter === 'leads' ? '#00b4d8' : 'var(--text-muted)',
+                cursor: 'pointer',
+              }}
+            >
+              Leads ({leads.length})
+            </button>
+          )}
+          {items.length > 0 && (
+            <button
+              onClick={() => setActiveFilter('workflows')}
+              style={{
+                padding: '4px 10px', borderRadius: 20,
+                fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 600,
+                background: activeFilter === 'workflows' ? 'rgba(0,180,216,0.2)' : 'rgba(255,255,255,0.04)',
+                border: activeFilter === 'workflows' ? '1px solid rgba(0,180,216,0.4)' : '1px solid rgba(255,255,255,0.08)',
+                color: activeFilter === 'workflows' ? '#00b4d8' : 'var(--text-muted)',
+                cursor: 'pointer',
+              }}
+            >
+              Workflows ({items.length})
+            </button>
+          )}
+          {drafts.length > 0 && (
+            <button
+              onClick={() => setActiveFilter('drafts')}
+              style={{
+                padding: '4px 10px', borderRadius: 20,
+                fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 600,
+                background: activeFilter === 'drafts' ? 'rgba(245,158,11,0.2)' : 'rgba(255,255,255,0.04)',
+                border: activeFilter === 'drafts' ? '1px solid rgba(245,158,11,0.4)' : '1px solid rgba(255,255,255,0.08)',
+                color: activeFilter === 'drafts' ? '#f59e0b' : 'var(--text-muted)',
+                cursor: 'pointer',
+              }}
+            >
+              Messages ({drafts.length})
+            </button>
+          )}
+          {orgItems.length > 0 && (
+            <button
+              onClick={() => setActiveFilter('orgs')}
+              style={{
+                padding: '4px 10px', borderRadius: 20,
+                fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 600,
+                background: activeFilter === 'orgs' ? 'rgba(139,92,246,0.2)' : 'rgba(255,255,255,0.04)',
+                border: activeFilter === 'orgs' ? '1px solid rgba(139,92,246,0.4)' : '1px solid rgba(255,255,255,0.08)',
+                color: activeFilter === 'orgs' ? '#a78bfa' : 'var(--text-muted)',
+                cursor: 'pointer',
+              }}
+            >
+              Orgs ({orgItems.length})
+            </button>
+          )}
+        </div>
+      )}
+
       {error && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 8, marginBottom: 16, color: '#ef4444', fontSize: 13 }}>
           <AlertTriangle size={14} /> {error}
         </div>
       )}
 
-      {!loading && items.length === 0 && drafts.length === 0 && !error && (
+      {!loading && totalCount === 0 && !error && (
         <div style={{
           textAlign: 'center', padding: '60px 20px',
           border: '1px dashed rgba(255,255,255,0.1)', borderRadius: 12,
           color: 'var(--text-muted)',
         }}>
           <CheckCircle size={32} style={{ marginBottom: 12, opacity: 0.3 }} />
-          <div style={{ fontSize: 15, fontWeight: 500, marginBottom: 6 }}>No pending reviews</div>
-          <div style={{ fontSize: 13 }}>Workflows with a Human in Loop node, and drafted messages awaiting send, will appear here.</div>
+          <div style={{ fontSize: 15, fontWeight: 500, marginBottom: 6 }}>All caught up!</div>
+          <div style={{ fontSize: 13 }}>
+            No pending reviews across lead campaigns, workflow pauses, outbound drafts, or agent organizations.
+          </div>
         </div>
       )}
 
-      {drafts.map(item => (
+      {/* Lead Approvals */}
+      {showLeads && leads.map(item => (
+        <LeadApprovalCard
+          key={item.id}
+          item={item}
+          onApprove={handleApproveLead}
+          onReject={handleRejectLead}
+          onOpenProfile={onProfile}
+        />
+      ))}
+
+      {/* Workflow HIL Pauses */}
+      {showWorkflows && items.map(item => (
+        <HILCard
+          key={item.id}
+          item={item}
+          onApprove={handleApproveHIL}
+          onReject={handleRejectHIL}
+        />
+      ))}
+
+      {/* Draft Messages */}
+      {showDrafts && drafts.map(item => (
         <DraftMessageCard
           key={item.id}
           item={item}
@@ -480,12 +1101,16 @@ export default function HumanInLoop({ embedded = false, isOpen = true, onClose }
         />
       ))}
 
-      {items.map(item => (
-        <HILCard
-          key={item.id}
+      {/* Org Decisions */}
+      {showOrgs && orgItems.map(item => (
+        <OrgDecisionCard
+          key={`${item.orgName}-${item.kind}-${item.id}`}
           item={item}
-          onApprove={handleApprove}
-          onReject={handleReject}
+          onAnswerQuestion={handleAnswerQuestion}
+          onApproveAction={handleApproveAction}
+          onDenyAction={handleDenyAction}
+          onApproveGate={handleApproveGate}
+          onRejectGate={handleRejectGate}
         />
       ))}
 
@@ -497,15 +1122,26 @@ export default function HumanInLoop({ embedded = false, isOpen = true, onClose }
 
   return (
     <div style={containerStyle}>
-      <div style={{ padding: '10px 12px', borderBottom: '1px solid rgba(0,180,216,0.1)', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-        <UserCheck size={13} style={{ color: 'var(--text-muted)' }} />
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700, color: '#e2e8f0', flex: 1, letterSpacing: 1 }}>HUMAN IN LOOP</span>
-        <button onClick={() => load()} disabled={loading} title="Refresh" style={{ background: 'transparent', border: 'none', cursor: loading ? 'wait' : 'pointer', color: 'var(--text-muted)', padding: 2, display: 'flex' }}>
-          <RefreshCw size={12} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
+      <div style={{ padding: '10px 14px', borderBottom: '1px solid rgba(0,180,216,0.12)', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+        <UserCheck size={14} style={{ color: '#00b4d8' }} />
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700, color: '#e2e8f0', flex: 1, letterSpacing: 1 }}>
+          HUMAN IN LOOP
+        </span>
+        {totalCount > 0 && (
+          <span style={{
+            padding: '1px 6px', borderRadius: 10,
+            background: 'rgba(239,68,68,0.2)', color: '#ef4444',
+            fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700,
+          }}>
+            {totalCount}
+          </span>
+        )}
+        <button onClick={() => load()} disabled={loading} title="Refresh" style={{ background: 'transparent', border: 'none', cursor: loading ? 'wait' : 'pointer', color: 'var(--text-muted)', padding: 3, display: 'flex' }}>
+          <RefreshCw size={13} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
         </button>
         {onClose && (
-          <button onClick={onClose} title="Close panel" style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 2, display: 'flex' }}>
-            <X size={14} />
+          <button onClick={onClose} title="Close panel" style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 3, display: 'flex' }}>
+            <X size={15} />
           </button>
         )}
       </div>
