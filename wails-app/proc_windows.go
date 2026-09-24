@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"syscall"
 
-	"github.com/monoes/mono-agent/internal/monomind"
+	"github.com/monoes/mono-agent/internal/proctree"
 )
 
 // hideWindow configures cmd so that no visible console window is created on Windows.
@@ -38,12 +38,13 @@ func setChatProcessGroup(cmd *exec.Cmd) {
 }
 
 // killChatProcessGroup kills the chat subprocess and everything under it
-// (monoagentcli → monomind → agent CLI) with the same helper the CLI uses
-// for its own children. The GUI does not put the chat in a Job Object, so
-// this is taskkill /T /F by parent pid, then the direct child. It is safe
-// to call after the child has exited.
+// (monoagentcli → monomind → agent CLI) with internal/proctree, which the
+// CLI also uses for its own children; the GUI does not import
+// internal/monomind (see frontend/src/doctrine.test.js). The GUI does not
+// put the chat in a Job Object, so this is taskkill /T /F by parent pid,
+// then the direct child. It is safe to call after the child has exited.
 func killChatProcessGroup(cmd *exec.Cmd) {
-	monomind.KillProcessTree(cmd)
+	proctree.Kill(cmd)
 }
 
 // readProcessCommandLine is a stub on Windows where /proc and ps are unavailable.

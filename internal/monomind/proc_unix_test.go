@@ -34,11 +34,11 @@ func TestStartProcessGroupRunsAndKillTreeEndsIt(t *testing.T) {
 	defer release()
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
-	KillProcessTree(cmd)
+	killProcessGroup(cmd, 0)
 	select {
 	case <-done:
 	case <-time.After(3 * time.Second):
-		t.Fatal("KillProcessTree did not end the child")
+		t.Fatal("killProcessGroup did not end the child")
 	}
 }
 

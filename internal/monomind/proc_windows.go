@@ -6,13 +6,13 @@ import (
 	"errors"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"strconv"
 	"sync"
 	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+
+	"github.com/monoes/mono-agent/internal/proctree"
 )
 
 // Windows has no process groups a signal can target. A child this process
@@ -155,22 +155,11 @@ func killProcessGroup(cmd *exec.Cmd, pid int) {
 		}
 	}
 	if pid != 0 {
-		taskkillTree(pid)
+		proctree.TaskkillTree(pid)
 	}
 	if cmd.Process != nil {
 		_ = cmd.Process.Kill()
 	}
-}
-
-// taskkillTree runs taskkill /T /F from System32, never from PATH.
-func taskkillTree(pid int) {
-	root := os.Getenv("SystemRoot")
-	if root == "" {
-		root = `C:\Windows`
-	}
-	tk := exec.Command(filepath.Join(root, "System32", "taskkill.exe"), "/T", "/F", "/PID", strconv.Itoa(pid))
-	tk.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
-	_ = tk.Run()
 }
 
 // signalServe kills a serve daemon and its agent-CLI descendants by pid.
@@ -182,7 +171,7 @@ func taskkillTree(pid int) {
 // back. OrgServeStart deliberately gives the daemon no job to close that
 // gap: a job this process holds would kill the daemon when we exit.
 func signalServe(pid int, _ bool) error {
-	taskkillTree(pid)
+	proctree.TaskkillTree(pid)
 	p, err := os.FindProcess(pid)
 	if err != nil {
 		return nil // already gone
