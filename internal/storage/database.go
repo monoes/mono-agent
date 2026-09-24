@@ -117,46 +117,10 @@ func (d *Database) ApplyMigrations() error {
 		}
 	}
 
-	// Discover migration files from the embedded filesystem.
-	entries, err := data.MigrationsFS.ReadDir("migrations")
+	migrations, err := embeddedMigrations()
 	if err != nil {
-		return fmt.Errorf("reading embedded migrations dir: %w", err)
+		return err
 	}
-
-	// Filter to .sql files and sort by name.
-	type migration struct {
-		version  int
-		filename string
-	}
-	var migrations []migration
-	for _, e := range entries {
-		name := e.Name()
-		// macOS AppleDouble sidecar files (e.g. "._001_initial.sql") show up
-		// in the embedded FS when built on a network volume that generates
-		// them for every real file. They're never real migrations — skip
-		// silently rather than logging a "non-numeric prefix" warning for
-		// every one of them, every run.
-		if strings.HasPrefix(name, "._") {
-			continue
-		}
-		if e.IsDir() || !strings.HasSuffix(name, ".sql") {
-			continue
-		}
-		// Extract version number from the filename prefix (e.g. "001" from "001_initial.sql").
-		parts := strings.SplitN(name, "_", 2)
-		if len(parts) < 2 {
-			continue
-		}
-		ver, err := strconv.Atoi(parts[0])
-		if err != nil {
-			log.Printf("skipping migration file with non-numeric prefix: %s", name)
-			continue
-		}
-		migrations = append(migrations, migration{version: ver, filename: name})
-	}
-	sort.Slice(migrations, func(i, j int) bool {
-		return migrations[i].version < migrations[j].version
-	})
 
 	// Aliasing detection: a recorded version whose (non-empty) filename
 	// doesn't match the current file at that version — or whose file has
@@ -261,6 +225,52 @@ func (d *Database) ApplyMigrations() error {
 	// have created workflow_node_targets (030_workflow_action_bridge.sql).
 	// Self-idempotent: no-ops once the actions table is gone.
 	return MigrateActionsToWorkflows(ctx, d.DB)
+}
+
+// migration is one embedded schema migration file.
+type migration struct {
+	version  int
+	filename string
+}
+
+// embeddedMigrations lists the embedded .sql migrations sorted by version.
+func embeddedMigrations() ([]migration, error) {
+	entries, err := data.MigrationsFS.ReadDir("migrations")
+	if err != nil {
+		return nil, fmt.Errorf("reading embedded migrations dir: %w", err)
+	}
+
+	// Filter to .sql files and sort by name.
+	var migrations []migration
+	for _, e := range entries {
+		name := e.Name()
+		// macOS AppleDouble sidecar files (e.g. "._001_initial.sql") show up
+		// in the embedded FS when built on a network volume that generates
+		// them for every real file. They're never real migrations — skip
+		// silently rather than logging a "non-numeric prefix" warning for
+		// every one of them, every run.
+		if strings.HasPrefix(name, "._") {
+			continue
+		}
+		if e.IsDir() || !strings.HasSuffix(name, ".sql") {
+			continue
+		}
+		// Extract version number from the filename prefix (e.g. "001" from "001_initial.sql").
+		parts := strings.SplitN(name, "_", 2)
+		if len(parts) < 2 {
+			continue
+		}
+		ver, err := strconv.Atoi(parts[0])
+		if err != nil {
+			log.Printf("skipping migration file with non-numeric prefix: %s", name)
+			continue
+		}
+		migrations = append(migrations, migration{version: ver, filename: name})
+	}
+	sort.Slice(migrations, func(i, j int) bool {
+		return migrations[i].version < migrations[j].version
+	})
+	return migrations, nil
 }
 
 // splitStatements splits a SQL script by semicolons while respecting quoted

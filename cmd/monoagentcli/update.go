@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -31,33 +32,9 @@ func newUpdateCmd() *cobra.Command {
 func runUpdate(_ *cobra.Command, _ []string) error {
 	fmt.Println("Checking for updates...")
 
-	apiURL := "https://api.github.com/repos/monoes/mono-agent/releases/latest"
-	req, err := http.NewRequest("GET", apiURL, nil)
+	release, err := fetchLatestRelease(context.Background())
 	if err != nil {
-		return fmt.Errorf("build request: %w", err)
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("network error: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("GitHub API returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-
-	var release struct {
-		TagName string `json:"tag_name"`
-		Assets  []struct {
-			Name               string `json:"name"`
-			BrowserDownloadURL string `json:"browser_download_url"`
-		} `json:"assets"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return fmt.Errorf("parse response: %w", err)
+		return err
 	}
 
 	v := getVersion()
@@ -168,6 +145,42 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 
 // httpGetAll fetches url and returns the full response body. Non-200
 // statuses are errors.
+// latestRelease is the part of GitHub's latest-release payload we use.
+type latestRelease struct {
+	TagName string `json:"tag_name"`
+	Assets  []struct {
+		Name               string `json:"name"`
+		BrowserDownloadURL string `json:"browser_download_url"`
+	} `json:"assets"`
+}
+
+// fetchLatestRelease asks GitHub for mono-agent's latest release.
+func fetchLatestRelease(ctx context.Context) (*latestRelease, error) {
+	apiURL := "https://api.github.com/repos/monoes/mono-agent/releases/latest"
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("network error: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("GitHub API returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var release latestRelease
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return nil, fmt.Errorf("parse response: %w", err)
+	}
+	return &release, nil
+}
+
 func httpGetAll(url string) ([]byte, error) {
 	resp, err := http.Get(url) //nolint:gosec
 	if err != nil {
