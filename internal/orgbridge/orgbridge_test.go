@@ -338,7 +338,8 @@ func TestLedgerSiblingRoleCallsShareAHop(t *testing.T) {
 			t.Fatalf("call %d: %+v, want hop %d", i+1, adm, want)
 		}
 	}
-	// Another role in the same chain starts from this role's highest hop.
+	// Another role on the same chain shares the count: its call is the
+	// chain's 17th granted call, so hop 3.
 	other := c
 	other.RoleID = "editor"
 	if adm, _ := l.Admit(ctx, other, lim); adm.Trace.Hop != 3 {
@@ -377,8 +378,8 @@ func TestLedgerSlowUnrecordedLoopIsStillRefused(t *testing.T) {
 func TestLedgerRoleToolQueriesUseAnIndex(t *testing.T) {
 	db := newTestDB(t)
 	for q, args := range map[string][]interface{}{
-		`SELECT MAX(hop) FROM org_bridge_calls WHERE profile_id = ? AND chain_id = ? AND status NOT LIKE 'refused%' AND NOT (direction = ? AND COALESCE(org_name,'') = ? AND COALESCE(role_id,'') = ?)`: {"p", "chn", DirRoleTool, "g", "r"},
-		`SELECT COUNT(*) FROM org_bridge_calls WHERE profile_id = ? AND chain_id = ? AND direction = ? AND COALESCE(org_name,'') = ? AND COALESCE(role_id,'') = ?`:                                      {"p", "chn", DirRoleTool, "g", "r"},
+		`SELECT MAX(hop) FROM org_bridge_calls WHERE profile_id = ? AND chain_id = ? AND status NOT LIKE 'refused%' AND direction <> ?`: {"p", "chn", DirRoleTool},
+		`SELECT COUNT(*) FROM org_bridge_calls WHERE profile_id = ? AND chain_id = ? AND direction = ?`:                                 {"p", "chn", DirRoleTool},
 	} {
 		if plan := queryPlan(t, db, q, args...); strings.Contains(plan, "SCAN") {
 			t.Errorf("%s\nplans as a table scan:\n%s", q, plan)
@@ -435,5 +436,29 @@ func TestLedgerForgedHugeHopIsClampedAndDoesNotPoisonTheChain(t *testing.T) {
 	honest := Call{ProfileID: "p", Direction: DirWorkflowOut, OrgName: "g", Trace: Trace{ChainID: "chn_victim"}}
 	if adm, _ := l.Admit(ctx, honest, Limits{}); !adm.OK() || adm.Trace.Hop != 1 {
 		t.Fatalf("honest call after a refused forged one: %+v, want admitted at hop 1", adm)
+	}
+}
+
+// Two roles taking turns on one chain (a traced message reached both) are
+// not a loop either: their granted calls share SiblingCallsPerHop per hop,
+// instead of each call raising the other's maximum by one.
+func TestLedgerAlternatingRolesShareTheAllowance(t *testing.T) {
+	l := NewLedger(newTestDB(t))
+	ctx := context.Background()
+	lim := Limits{MaxHops: 3, MaxRepeats: 100}
+	roles := []string{"writer", "editor"}
+	allowed := lim.MaxHops * SiblingCallsPerHop
+	for i := 1; i <= allowed+1; i++ {
+		c := Call{ProfileID: "p", Direction: DirRoleTool, OrgName: "g", RoleID: roles[i%2], WorkflowID: "wf", Trace: Trace{ChainID: "chn_pair"}}
+		adm, err := l.Admit(ctx, c, lim)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i <= allowed && !adm.OK() {
+			t.Fatalf("call %d (%s) refused: %+v", i, c.RoleID, adm)
+		}
+		if i == allowed+1 && adm.Status != StatusRefusedHops {
+			t.Fatalf("call %d admitted: %+v — two roles could take turns forever", i, adm)
+		}
 	}
 }
