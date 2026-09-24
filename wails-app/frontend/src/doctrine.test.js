@@ -3,7 +3,7 @@
 // internal/monomind. Scans every wails-app/*.go file.
 //
 // KNOWN_EXCEPTIONS are the files that imported it before the doctrine was
-// written down (chat supervision, runtime scan, monomind init) — none is an
+// written down (chat supervision, runtime scan) — none is an
 // org binding. The list may only shrink: a new importer fails, and an entry
 // that no longer imports fails too, so the list stays honest.
 import { describe, it, expect } from 'vitest'
@@ -13,7 +13,7 @@ import { join } from 'node:path'
 
 const WAILS_APP_DIR = fileURLToPath(new URL('../..', import.meta.url))
 const IMPORT = '"github.com/monoes/mono-agent/internal/' + 'monomind"'
-const KNOWN_EXCEPTIONS = ['app.go', 'app_ai.go', 'app_chat.go', 'app_monomind_init.go']
+const KNOWN_EXCEPTIONS = ['app.go', 'app_ai.go', 'app_chat.go']
 
 function importers() {
   return readdirSync(WAILS_APP_DIR)
