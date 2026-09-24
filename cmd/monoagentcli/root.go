@@ -28,6 +28,10 @@ type globalConfig struct {
 	LogFile    string
 	ProfileID  string // active profile; defaults to value stored in settings table
 	Lang       string // UI locale; see internal/i18n and docs/i18n.md
+
+	// projectFilter narrows `doctor --project`: monomind projects (paths
+	// relative to the profile folder, or folder names) to check.
+	projectFilter []string
 }
 
 func newRootCmd() *cobra.Command {

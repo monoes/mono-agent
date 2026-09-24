@@ -78,7 +78,7 @@ func installRuntime(ctx context.Context, id string, force bool, confirmScript fu
 		return fmt.Sprintf("%s is already installed (%s) — use --force to reinstall", id, strPtr(entry.Version, "unknown version")), nil
 	}
 
-	recipe := agentinstall.Parse(entry.InstallHint)
+	recipe := agentinstall.ForEntry(*entry)
 	switch recipe.Kind {
 	case agentinstall.KindManual:
 		return "", errInvalidInput("%s can't be installed automatically — %s", id, entry.InstallHint)
@@ -100,7 +100,11 @@ func installRuntime(ctx context.Context, id string, force bool, confirmScript fu
 		return "", fmt.Errorf("the installer finished but monomind still doesn't see %s — open a new terminal, or check the output above", id)
 	}
 	bin := strPtr(got.Binary, id)
-	progress(fmt.Sprintf("sign in: run `%s` once in a terminal if it asks you to log in", filepath.Base(bin)))
+	if got.LoginHint != nil && *got.LoginHint != "" {
+		progress(fmt.Sprintf("sign in: %s", *got.LoginHint))
+	} else {
+		progress(fmt.Sprintf("sign in: run `%s` once in a terminal if it asks you to log in", filepath.Base(bin)))
+	}
 	return fmt.Sprintf("%s %s installed at %s", id, strPtr(got.Version, ""), bin), nil
 }
 

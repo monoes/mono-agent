@@ -79,7 +79,7 @@ func errRequiredChecksFailed(n int) error {
 
 func newDoctorCmd(cfg *globalConfig) *cobra.Command {
 	var groups, ids []string
-	var deep, fix, yes bool
+	var deep, fix, yes, projects bool
 
 	cmd := &cobra.Command{
 		// Replaces the root's pre-run, keeping only what it does to this
@@ -105,12 +105,14 @@ Exit code 1 means a required check failed.`,
   monoagentcli doctor --json
   monoagentcli doctor --group core --deep
   monoagentcli doctor --fix --yes
+  monoagentcli doctor --projects
+  monoagentcli doctor --project codes/app --fix
   monoagentcli doctor fix core.db.migrate --json`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
 			reg := health.Default()
-			opts := health.Options{Deep: deep, Groups: groups, IDs: ids}
+			opts := health.Options{Deep: deep, Groups: groups, IDs: ids, OnDemand: projects || len(cfg.projectFilter) > 0}
 			out := cmd.OutOrStdout()
 
 			rep := runHealth(ctx, cfg, reg, opts)
@@ -140,6 +142,8 @@ Exit code 1 means a required check failed.`,
 	cmd.Flags().BoolVar(&deep, "deep", false, "Include checks that use the network")
 	cmd.Flags().BoolVar(&fix, "fix", false, "Apply fixes: auto ones directly, confirm ones after asking")
 	cmd.Flags().BoolVar(&yes, "yes", false, "With --fix: accept confirm fixes without asking")
+	cmd.Flags().BoolVar(&projects, "projects", false, "Also run monomind's checks in every monomind project inside the active profile's folder")
+	cmd.Flags().StringSliceVar(&cfg.projectFilter, "project", nil, "Only these monomind projects (path relative to the profile folder, or folder name); implies --projects")
 	cmd.AddCommand(newDoctorFixCmd(cfg))
 	return cmd
 }
@@ -292,24 +296,40 @@ func printDoctorReport(w io.Writer, rep *health.Report, fixed bool) {
 	fmt.Fprintf(w, "monoagent doctor — %s · profile %s\n", rep.MonoagentVersion, rep.ProfileID)
 	group := ""
 	fixable := 0
-	// Runtimes that aren't installed are listed on one line (the JSON keeps
-	// every row); a dozen "not installed" rows would drown the report.
-	var notInstalled []string
-	flushRuntimes := func() {
-		if len(notInstalled) > 0 {
-			fmt.Fprintf(w, "  %s %-22s %s\n", statusMark[health.StatusInfo], "not installed", strings.Join(notInstalled, ", "))
-			fmt.Fprintf(w, "      install one: monoagentcli agent install <runtime>\n")
-			notInstalled = nil
+	// Uninteresting child rows are folded into one line each (the JSON keeps
+	// every row): runtimes that aren't installed, and monomind's passing
+	// checks — a dozen of either would drown the report.
+	type fold struct {
+		mark, label, hint string
+		names             []string
+	}
+	folds := []*fold{
+		{mark: statusMark[health.StatusInfo], label: "not installed", hint: "install one: monoagentcli agent install <runtime>"},
+		{mark: statusMark[health.StatusOK], label: "monomind passing"},
+	}
+	flushFolds := func() {
+		for _, f := range folds {
+			if len(f.names) > 0 {
+				fmt.Fprintf(w, "  %s %-22s %s\n", f.mark, f.label, strings.Join(f.names, ", "))
+				if f.hint != "" {
+					fmt.Fprintf(w, "      %s\n", f.hint)
+				}
+				f.names = nil
+			}
 		}
 	}
 	for _, r := range rep.Results {
 		if r.Group != group {
-			flushRuntimes()
+			flushFolds()
 			group = r.Group
 			fmt.Fprintf(w, "\n%s\n", group)
 		}
 		if r.Group == health.GroupRuntimes && r.ID != health.CheckRuntimes && r.Status == health.StatusInfo {
-			notInstalled = append(notInstalled, r.Title)
+			folds[0].names = append(folds[0].names, r.Title)
+			continue
+		}
+		if strings.HasPrefix(r.ID, health.CheckMonomindDoctor+".") && r.Status == health.StatusOK {
+			folds[1].names = append(folds[1].names, r.Title)
 			continue
 		}
 		req := ""
@@ -339,7 +359,7 @@ func printDoctorReport(w io.Writer, rep *health.Report, fixed bool) {
 			fmt.Fprintf(w, "      %s\n", line)
 		}
 	}
-	flushRuntimes()
+	flushFolds()
 	s := rep.Summary
 	fmt.Fprintf(w, "\n%d ok · %d warning · %d failed · %d skipped · %d info\n",
 		s[health.StatusOK], s[health.StatusWarn], s[health.StatusFail], s[health.StatusSkip], s[health.StatusInfo])

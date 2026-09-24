@@ -11,6 +11,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/monoes/mono-agent/internal/monomind"
 )
 
 func TestParse(t *testing.T) {
@@ -74,5 +76,24 @@ func TestInstallScriptRunsDownloadedInstaller(t *testing.T) {
 	log := strings.Join(lines, "\n")
 	if !strings.Contains(log, "sha256") || !strings.Contains(log, "installing") {
 		t.Errorf("log should show the installer's hash and output:\n%s", log)
+	}
+}
+
+func TestForEntryPrefersAndRevalidatesMonomindRecipe(t *testing.T) {
+	npm := monomind.ScanEntry{InstallHint: "anything", Install: &monomind.InstallRecipe{Kind: "npm", Packages: []string{"@openai/codex"}}}
+	if r := ForEntry(npm); r.Kind != KindNpm || r.Packages[0] != "@openai/codex" {
+		t.Errorf("npm recipe: %+v", r)
+	}
+	bad := monomind.ScanEntry{Install: &monomind.InstallRecipe{Kind: "npm", Packages: []string{"x; echo injected"}}}
+	if r := ForEntry(bad); r.Kind != KindManual {
+		t.Errorf("unsafe package accepted: %+v", r)
+	}
+	http := monomind.ScanEntry{Install: &monomind.InstallRecipe{Kind: "script", URL: "http://x/i.sh", Shell: "bash"}}
+	if r := ForEntry(http); r.Kind != KindManual {
+		t.Errorf("http script accepted: %+v", r)
+	}
+	old := monomind.ScanEntry{InstallHint: "npm install -g opencode-ai"} // monomind before rev 9
+	if r := ForEntry(old); r.Kind != KindNpm {
+		t.Errorf("fallback to hint: %+v", r)
 	}
 }
