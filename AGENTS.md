@@ -89,8 +89,15 @@ installs are optional fixes (`doctor fix runtimes.install:<id>`) and are never
 applied by `doctor --fix`.
 
 No suitable Node.js (>= 22.12) for monomind? `monoagentcli nodejs install`
-downloads a private one into `~/.monoagent/node` (from nodejs.org over HTTPS, checked against its SHASUMS256 — which catches a corrupt download; authenticity rests on TLS to nodejs.org, as with nvm; used
-only by processes monoagent starts); `nodejs status|update|remove` manage it.
+downloads a private one into `~/.monoagent/node` (from nodejs.org; the
+archive's SHA-256 must match `SHASUMS256.txt.asc`, whose signature is
+checked against the Node release keys pinned in `internal/nodemgr/keys`;
+used only by processes monoagent starts); `nodejs status|update|remove`
+manage it. Changes are serialised by a lock file in that folder, and
+remove/update keep a version a running process uses (Linux; Windows refuses
+the delete). When the system Node is missing or too old, the managed Node
+is first on PATH for every child, workflow exec nodes included; the user's
+own PATH stays in `$MONOAGENT_USER_PATH` (`nodemgr.UserEnv`/`LookPathUser`).
 
 ## Legacy top-level commands
 

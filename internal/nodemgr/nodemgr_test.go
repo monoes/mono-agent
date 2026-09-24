@@ -16,6 +16,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/ProtonMail/go-crypto/openpgp"
 )
 
 type tarEntry struct {
@@ -50,9 +52,12 @@ func makeTarGz(t *testing.T, entries []tarEntry) []byte {
 	return buf.Bytes()
 }
 
-// fakeDist serves index.json, SHASUMS256.txt and one archive per version.
+// fakeDist serves index.json, SHASUMS256.txt.asc (signed by a test key m
+// is told to trust) and one archive per version.
 func fakeDist(t *testing.T, m *Manager, archives map[string][]byte, corrupt bool) *httptest.Server {
 	t.Helper()
+	signer := testSigner(t)
+	m.keys = openpgp.EntityList{signer}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/index.json", func(w http.ResponseWriter, r *http.Request) {
 		key := m.indexFileKey()
@@ -70,9 +75,8 @@ func fakeDist(t *testing.T, m *Manager, archives map[string][]byte, corrupt bool
 			sum[0] ^= 0xff
 		}
 		data := data
-		mux.HandleFunc("/v"+v+"/SHASUMS256.txt", func(w http.ResponseWriter, r *http.Request) {
-			fmt.Fprintf(w, "%s  %s\n", hex.EncodeToString(sum[:]), name)
-		})
+		asc := clearsignText(t, signer, fmt.Sprintf("%s  %s\n", hex.EncodeToString(sum[:]), name))
+		mux.HandleFunc("/v"+v+"/SHASUMS256.txt.asc", func(w http.ResponseWriter, r *http.Request) { w.Write(asc) })
 		mux.HandleFunc("/v"+v+"/"+name, func(w http.ResponseWriter, r *http.Request) { w.Write(data) })
 	}
 	srv := httptest.NewServer(mux)
@@ -140,7 +144,7 @@ func TestInstallUseRemove(t *testing.T) {
 	// Staging and download temp files are gone.
 	entries, _ := os.ReadDir(m.Root)
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), ".") {
+		if strings.HasPrefix(e.Name(), ".") && e.Name() != lockFile && e.Name() != sysCacheFile {
 			t.Errorf("leftover %s", e.Name())
 		}
 	}
@@ -198,7 +202,7 @@ func TestInstallRejectsEscapingArchive(t *testing.T) {
 		if err := os.Mkdir(staging, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := untarGz(path, staging); err == nil {
+		if err := untarGz(path, staging, 1<<20); err == nil {
 			t.Errorf("entries %+v: want rejection", entries)
 		}
 		for _, escaped := range []string{filepath.Join(parent, "pwned"), filepath.Join(parent, "evil")} {
@@ -386,7 +390,7 @@ func TestWindowsInstallFlow(t *testing.T) {
 	// A zip entry escaping the target is refused.
 	bad := filepath.Join(t.TempDir(), "bad.zip")
 	os.WriteFile(bad, makeZip(t, map[string]string{"../evil.txt": "x"}), 0o644)
-	if err := unzip(bad, t.TempDir()); err == nil {
+	if err := unzip(bad, t.TempDir(), 1<<20); err == nil {
 		t.Error("escaping zip entry accepted")
 	}
 }

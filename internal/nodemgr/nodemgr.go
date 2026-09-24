@@ -22,6 +22,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ProtonMail/go-crypto/openpgp"
 )
 
 // MinVersion is the oldest Node monomind supports.
@@ -46,6 +48,11 @@ type Manager struct {
 	// probe runs `<node> --version`; tests replace it to exercise another
 	// OS's install flow (e.g. Windows' node.exe) on this machine.
 	probe func(ctx context.Context, node string) (string, error)
+	// Tests shrink the size caps, pin their own signing key and fake the
+	// filesystem the musl check looks at.
+	maxDownload, maxUnpacked int64
+	keys                     openpgp.EntityList
+	sysRoot                  string
 }
 
 func (m *Manager) nodeVersion(ctx context.Context, node string) (string, error) {
@@ -115,6 +122,16 @@ func (m *Manager) Use(version string) error {
 	if !isVersion(version) {
 		return fmt.Errorf("%q is not a Node version (want x.y.z)", version)
 	}
+	unlock, err := m.lock(context.Background(), nil)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	return m.use(version)
+}
+
+// use is Use for a caller already holding the lock.
+func (m *Manager) use(version string) error {
 	if _, err := os.Stat(m.NodePath(version)); err != nil {
 		return fmt.Errorf("node %s is not installed", version)
 	}
@@ -122,13 +139,12 @@ func (m *Manager) Use(version string) error {
 }
 
 // Remove deletes one managed version, or everything (the runtime and the
-// packages installed with it) when version is "".
+// packages installed with it) when version is "". A version a running
+// process uses is kept, with an *InUseError (see removeVersion for how far
+// that detection reaches on each OS).
 func (m *Manager) Remove(version string) error {
 	if version == "" {
-		if err := os.RemoveAll(m.Root); err != nil {
-			return err
-		}
-		return os.RemoveAll(m.NpmRoot)
+		return m.removeAll()
 	}
 	version = normalize(version)
 	// The version names a folder under Root that is deleted whole, so it
@@ -136,14 +152,66 @@ func (m *Manager) Remove(version string) error {
 	if !isVersion(version) {
 		return fmt.Errorf("%q is not a Node version (want x.y.z)", version)
 	}
-	dir := filepath.Join(m.Root, version)
-	if _, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(m.Root, version)); errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("node %s is not installed", version)
 	}
-	if cur, ok := m.Current(); ok && cur == version {
+	unlock, err := m.lock(context.Background(), nil)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if err := m.removeVersion(version); err != nil {
+		return err
+	}
+	if cur, err := os.ReadFile(filepath.Join(m.Root, currentFile)); err == nil && strings.TrimSpace(string(cur)) == version {
 		_ = os.Remove(filepath.Join(m.Root, currentFile))
 	}
-	return os.RemoveAll(dir)
+	return nil
+}
+
+// removeAll deletes Root and NpmRoot, refusing while a process runs from
+// either. The lock file goes last, while still held, so a process waiting
+// for it notices and starts over on a new one (see lock).
+func (m *Manager) removeAll() error {
+	if _, err := os.Stat(m.Root); errors.Is(err, os.ErrNotExist) {
+		return os.RemoveAll(m.NpmRoot)
+	}
+	unlock, err := m.lock(context.Background(), nil)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if pid, ok := processUsing(m.Root, m.NpmRoot); ok {
+		return &InUseError{PID: pid}
+	}
+	versions, err := m.Installed()
+	if err != nil {
+		return err
+	}
+	for _, v := range versions {
+		if err := m.removeVersion(v); err != nil {
+			return err
+		}
+	}
+	entries, err := os.ReadDir(m.Root)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if e.Name() != lockFile {
+			if err := os.RemoveAll(filepath.Join(m.Root, e.Name())); err != nil {
+				return err
+			}
+		}
+	}
+	if err := os.RemoveAll(m.NpmRoot); err != nil {
+		return err
+	}
+	// Windows refuses to delete the open lock file; it and Root then stay.
+	if os.Remove(filepath.Join(m.Root, lockFile)) == nil {
+		_ = os.Remove(m.Root)
+	}
+	return nil
 }
 
 // BinDir is the directory holding node/npm for a version.
@@ -197,10 +265,11 @@ func (m *Manager) NpmEnv(version string) []string {
 }
 
 // SystemNode finds a Node on PATH that is not the managed one and reports
-// its version. found is false when there is none.
+// its version (cached, see cachedNodeVersion). found is false when there
+// is none.
 func (m *Manager) SystemNode(ctx context.Context) (path, version string, found bool) {
 	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
-		if dir == "" || strings.HasPrefix(filepath.Clean(dir), filepath.Clean(m.Root)) {
+		if dir == "" || within(dir, m.Root) {
 			continue
 		}
 		name := "node"
@@ -211,7 +280,7 @@ func (m *Manager) SystemNode(ctx context.Context) (path, version string, found b
 		if info, err := os.Stat(cand); err != nil || info.IsDir() {
 			continue
 		}
-		v, err := NodeVersion(ctx, cand)
+		v, err := m.cachedNodeVersion(ctx, cand)
 		if err != nil {
 			continue
 		}
