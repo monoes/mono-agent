@@ -119,7 +119,8 @@
       "statusTitle": "System health — click to open",
       "statusBroken": "Setup incomplete",
       "statusIssues": "Issues: {{n}}",
-      "openAgents": "Install or update on the AI agents page"
+      "openAgents": "Install or update on the AI agents page",
+      "cancel": "Cancel"
     }
   },
   "orgs": {

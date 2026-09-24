@@ -63,6 +63,11 @@ type Result struct {
 	// FixID is set by a check to offer a fix; the runner resolves it into
 	// Fix from the fix registry.
 	FixID string `json:"-"`
+	// FixCommand, when set, replaces the resolved fix's Command: for a fix
+	// whose real effect depends on what the check found (which vendor
+	// script a runtime install downloads and runs), so the confirmation
+	// shows that rather than a generic wrapper command.
+	FixCommand string `json:"-"`
 	// Children are extra rows a check reports about the things it found
 	// (e.g. one per agent runtime). Each needs its own ID; the runner
 	// stamps Group/Source and lists them right after their parent.

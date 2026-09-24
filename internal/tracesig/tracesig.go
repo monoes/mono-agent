@@ -99,12 +99,14 @@ func keyAt(path string) ([]byte, error) {
 	k, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		k, err = create(path)
+	} else if err == nil {
+		err = checkPrivate(path)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("tracesig: key: %w", err)
 	}
 	if len(k) < 32 {
-		return nil, fmt.Errorf("tracesig: key %s is too short (%d bytes)", path, len(k))
+		return nil, fmt.Errorf("tracesig: key %s is too short (%d bytes); if no process is creating it right now, delete it and a new one is made", path, len(k))
 	}
 	keyCache[path] = k
 	return k, nil
@@ -142,6 +144,30 @@ func create(path string) ([]byte, error) {
 		if errors.Is(err, os.ErrExist) {
 			return os.ReadFile(path)
 		}
+		// Some filesystems (FUSE, network mounts) have no hard links. An
+		// exclusive create still lets only one process win; a loser that
+		// reads before the winner finished writing gets a short key, which
+		// keyAt rejects without caching, so the next call reads it whole.
+		return createExclusive(path, k)
+	}
+	return k, nil
+}
+
+func createExclusive(path string, k []byte) ([]byte, error) {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		return os.ReadFile(path)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if _, err := f.Write(k); err != nil {
+		f.Close()
+		os.Remove(path)
+		return nil, err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(path)
 		return nil, err
 	}
 	return k, nil

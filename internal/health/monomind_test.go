@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -150,5 +151,27 @@ func TestRuntimesCheckReportsChildren(t *testing.T) {
 	scan.Agents = scan.Agents[1:]
 	if res := checkRuntimes(context.Background(), env); res.Status != StatusFail {
 		t.Errorf("none installed: %+v", res)
+	}
+}
+
+// A runtime install's confirmation names what really runs: a vendor
+// script's URL and shell, or the npm packages, not only the wrapper.
+func TestRuntimeInstallFixShowsWhatRuns(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("script installers are not offered on Windows")
+	}
+	scan := &monomind.ScanResult{V: 1, Agents: []monomind.ScanEntry{
+		{ID: "claude", Installed: true, Binary: strp("/bin/claude"), Version: strp("2.1.0")},
+		{ID: "hermes", Installed: false, InstallHint: "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash"},
+		{ID: "codex", Installed: false, InstallHint: "npm install -g @openai/codex"},
+	}}
+	reg := NewRegistry([]Check{{ID: CheckRuntimes, Group: GroupRuntimes, Title: "AI agent runtimes", Run: checkRuntimes}}, runtimeFixes())
+	env := &Env{ScanRuntimes: func(context.Context) (*monomind.ScanResult, error) { return scan, nil }}
+	got := byID(reg.Run(context.Background(), env, Options{}))
+	if f := got["runtimes.hermes"].Fix; f == nil || !strings.Contains(f.Command, "https://hermes-agent.nousresearch.com/install.sh") || !strings.Contains(f.Command, "bash") {
+		t.Errorf("hermes fix command %+v, want the installer URL and shell", f)
+	}
+	if f := got["runtimes.codex"].Fix; f == nil || !strings.Contains(f.Command, "npm install -g @openai/codex") {
+		t.Errorf("codex fix command %+v, want the npm package", f)
 	}
 }
