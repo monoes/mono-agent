@@ -116,7 +116,8 @@
       },
       "statusTitle": "Estado del sistema — clic para abrir",
       "statusBroken": "Configuración incompleta",
-      "statusIssues": "Asuntos: {{n}}"
+      "statusIssues": "Asuntos: {{n}}",
+      "cancel": "Cancelar"
     }
   },
   "orgs": {

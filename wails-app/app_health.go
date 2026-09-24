@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -47,7 +49,8 @@ func healthFixArgs(profileID, fixID string) []string {
 	if profileID != "" {
 		args = append(args, "--profile", profileID)
 	}
-	return append(args, "--json", "doctor", "fix", fixID)
+	// "--" so a fix id can never be read as a flag.
+	return append(args, "--json", "doctor", "fix", "--", fixID)
 }
 
 // healthReportJSON returns the doctor report verbatim. doctor exits 1 when a
@@ -85,6 +88,7 @@ func (a *App) RunHealthCheck(deep, projects bool) string {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, cliBin, healthArgs(a.getActiveProfileID(), deep, projects)...)
 	hideWindow(cmd)
+	stopGracefully(cmd)
 	out, runErr := cmd.Output()
 	return healthReportJSON(cliBin, out, runErr)
 }
@@ -105,9 +109,30 @@ func (a *App) RunHealthFix(fixID string) string {
 	if err != nil {
 		return aiError(err)
 	}
+	// One run per fix: two `doctor fix` processes for the same fix would
+	// start two daemons or two npm installs into one global folder, and both
+	// would report on the same fix id.
+	if _, busy := runningFixes.LoadOrStore(fixID, true); busy {
+		return aiError(fmt.Errorf("%s is already running", fixID))
+	}
 	args := healthFixArgs(a.getActiveProfileID(), fixID)
-	go a.streamHealthFix(cliBin, fixID, args)
+	go func() {
+		defer runningFixes.Delete(fixID)
+		a.streamHealthFix(cliBin, fixID, args)
+	}()
 	return `{"ok":true}`
+}
+
+// runningFixes holds the ids of the fixes running now.
+var runningFixes sync.Map
+
+// stopGracefully makes the context's cancel (a timeout, the app closing)
+// ask the CLI to stop instead of killing it outright, so it can end the
+// installers it started; WaitDelay then kills it, and stops a child that
+// still holds the output pipe from blocking the read.
+func stopGracefully(cmd *exec.Cmd) {
+	cmd.Cancel = func() error { return terminateCLI(cmd) }
+	cmd.WaitDelay = 15 * time.Second
 }
 
 func (a *App) streamHealthFix(cliBin, fixID string, args []string) {
@@ -125,6 +150,7 @@ func (a *App) streamHealthFix(cliBin, fixID string, args []string) {
 	a.emitLog("HEALTH", "INFO", fmt.Sprintf("$ %s %s", cliBin, strings.Join(args, " ")))
 	cmd := exec.CommandContext(ctx, cliBin, args...)
 	hideWindow(cmd)
+	stopGracefully(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		emit(healthFixEvent{FixID: fixID, Kind: "error", Message: err.Error()})
@@ -149,6 +175,12 @@ func (a *App) streamHealthFix(cliBin, fixID string, args []string) {
 			finished = true
 		}
 		emit(ev)
+	}
+	if err := sc.Err(); err != nil {
+		// A line too long for the scanner: keep draining so the CLI isn't
+		// blocked writing to a full pipe until the timeout.
+		emit(healthFixEvent{FixID: fixID, Kind: "line", Message: "(output line too long to show)"})
+		_, _ = io.Copy(io.Discard, stdout)
 	}
 	waitErr := cmd.Wait()
 	if !finished {

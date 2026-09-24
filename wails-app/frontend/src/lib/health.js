@@ -129,18 +129,23 @@ export function runHealth({ deep = false, projects = false } = {}) {
   return p
 }
 
-let activeFixes = 0
+const runningFixes = new Set()
 
 /** True while a fix runs — lets the app hold back navigation it would
  * otherwise do (a fix like `monomind init` creates a sample org). */
-export function isFixing() { return activeFixes > 0 }
+export function isFixing() { return runningFixes.size > 0 }
+
+/** True while this fix runs. */
+export function isFixRunning(fixId) { return runningFixes.has(fixId) }
 
 /**
  * Apply one fix; onLine gets each progress line. Resolves to
- * { ok: true } or { ok: false, message }.
+ * { ok: true } or { ok: false, message }. A fix already running is not
+ * started again (two daemons, two npm installs into one folder).
  */
 export function runFix(fixId, onLine) {
-  activeFixes++
+  if (runningFixes.has(fixId)) return Promise.resolve({ ok: false, message: 'already running' })
+  runningFixes.add(fixId)
   return new Promise(resolve => {
     const off = subscribeEvent('health:fixProgress', ev => {
       if (!ev || ev.fix_id !== fixId) return
@@ -154,7 +159,7 @@ export function runFix(fixId, onLine) {
         if (r.error) { off(); resolve({ ok: false, message: r.error }) }
       })
       .catch(e => { off(); resolve({ ok: false, message: String(e) }) })
-  }).finally(() => { activeFixes-- })
+  }).finally(() => { runningFixes.delete(fixId) })
 }
 
 let timer = null
