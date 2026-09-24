@@ -19,6 +19,15 @@ func TestHealthArgs(t *testing.T) {
 	}
 }
 
+func TestAgentInstallArgs(t *testing.T) {
+	if got, want := agentInstallArgs("p1", "claude", true), []string{"--profile", "p1", "--json", "agent", "install", "claude", "--yes", "--force"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("agentInstallArgs = %v, want %v", got, want)
+	}
+	if got, want := agentInstallArgs("", "codex", false), []string{"--json", "agent", "install", "codex", "--yes"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("agentInstallArgs = %v, want %v", got, want)
+	}
+}
+
 func TestHealthReportJSONKeepsReportOnExit1(t *testing.T) {
 	report := `{"v":1,"results":[]}`
 	if got := healthReportJSON("monoagentcli", []byte(report+"\n"), errors.New("exit status 1")); got != report {

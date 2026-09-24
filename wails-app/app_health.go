@@ -110,6 +110,35 @@ func (a *App) RunHealthFix(fixID string) string {
 	return `{"ok":true}`
 }
 
+// agentInstallArgs builds `[--profile P] --json agent install <id> --yes
+// [--force]`. --yes: the frontend already showed the user the install
+// command and asked.
+func agentInstallArgs(profileID, runtimeID string, update bool) []string {
+	args := []string{}
+	if profileID != "" {
+		args = append(args, "--profile", profileID)
+	}
+	args = append(args, "--json", "agent", "install", runtimeID, "--yes")
+	if update {
+		args = append(args, "--force")
+	}
+	return args
+}
+
+// InstallAgentRuntime installs (update: reinstalls) one AI agent runtime in
+// the background, relaying progress as "health:fixProgress" events keyed
+// "agent.install:<id>", and returns at once.
+func (a *App) InstallAgentRuntime(runtimeID string, update bool) string {
+	cliBin, err := findMonoAgentCLI()
+	if err != nil {
+		return aiError(err)
+	}
+	go a.streamHealthFix(cliBin, "agent.install:"+runtimeID, agentInstallArgs(a.getActiveProfileID(), runtimeID, update))
+	return `{"ok":true}`
+}
+
+// streamHealthFix runs one streamed CLI command (a `doctor fix` or an
+// `agent install`, both printing NDJSON progress) and relays it.
 func (a *App) streamHealthFix(cliBin, fixID string, args []string) {
 	emit := func(ev healthFixEvent) {
 		if a.ctx != nil {

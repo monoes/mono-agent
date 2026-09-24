@@ -2,7 +2,7 @@
 // dot. Everything it knows comes from `monoagentcli doctor --json` (via the
 // RunHealthCheck/RunHealthFix bindings); this module only stores, sorts and
 // re-requests it.
-import { RunHealthCheck, RunHealthFix } from '../wailsjs/go/main/App'
+import { RunHealthCheck, RunHealthFix, InstallAgentRuntime } from '../wailsjs/go/main/App'
 import { subscribeEvent } from '../services/api.js'
 
 export const BACKGROUND_INTERVAL_MS = 30 * 60 * 1000
@@ -140,15 +140,29 @@ export function isFixing() { return activeFixes > 0 }
  * { ok: true } or { ok: false, message }.
  */
 export function runFix(fixId, onLine) {
+  return runStreamed(fixId, () => RunHealthFix(fixId), onLine)
+}
+
+/**
+ * Install (update: reinstall) an AI agent runtime via `monoagentcli agent
+ * install`; same progress events and result shape as runFix.
+ */
+export function installRuntime(runtimeId, update, onLine) {
+  return runStreamed(`agent.install:${runtimeId}`, () => InstallAgentRuntime(runtimeId, !!update), onLine)
+}
+
+// runStreamed starts a streamed CLI command and follows its
+// health:fixProgress events (keyed by fix_id) to the final done/error.
+function runStreamed(key, start, onLine) {
   activeFixes++
   return new Promise(resolve => {
     const off = subscribeEvent('health:fixProgress', ev => {
-      if (!ev || ev.fix_id !== fixId) return
+      if (!ev || ev.fix_id !== key) return
       if (ev.kind === 'line') { onLine?.(ev.message || ''); return }
       off()
-      resolve(ev.kind === 'done' ? { ok: true } : { ok: false, message: ev.message || 'failed' })
+      resolve(ev.kind === 'done' ? { ok: true, message: ev.message || '' } : { ok: false, message: ev.message || 'failed' })
     })
-    RunHealthFix(fixId)
+    start()
       .then(s => {
         const r = JSON.parse(s)
         if (r.error) { off(); resolve({ ok: false, message: r.error }) }

@@ -16,6 +16,11 @@ export function isMonomindNotFound(err) {
 
 let cached = { res: null, at: 0 }
 
+/** Forget the cached scan (after an install, or an explicit Refresh). */
+export function invalidateAgentScan() {
+  cached = { res: null, at: 0 }
+}
+
 export function cachedAgentScan() {
   if (cached.res && Date.now() - cached.at < TTL_MS) {
     return Promise.resolve(cached.res)

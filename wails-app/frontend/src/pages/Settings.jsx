@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Link2, Brain, ExternalLink, Download } from 'lucide-react'
+import { Link2, Brain, ExternalLink, Download, Bot } from 'lucide-react'
 import { api } from '../services/api.js'
 import { GetVersion, CheckForUpdate, AppSelfUpdate } from '../wailsjs/go/main/App'
 import { getAssistantTools, getAssistantAllowRuns, setAssistantTools, setAssistantAllowRuns } from '../lib/assistantTools.js'
@@ -350,7 +350,7 @@ export default function Settings({ onNavigate }) {
           <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
         </div>
 
-        <HealthSection />
+        <HealthSection onNavigate={onNavigate} />
 
         {/* Quick access cards */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
@@ -367,6 +367,12 @@ export default function Settings({ onNavigate }) {
             description={t('settings.connectionsDesc')}
             stats={connCount}
             onClick={() => onNavigate?.('connections')}
+          />
+          <QuickAccessCard
+            icon={Bot}
+            title={t('settings.aiAgentsTitle')}
+            description={t('settings.aiAgentsDesc')}
+            onClick={() => onNavigate?.('ai')}
           />
           <QuickAccessCard
             icon={Brain}

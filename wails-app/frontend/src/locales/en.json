@@ -5,7 +5,7 @@
       "noderunner": "Workflows",
       "actions": "Actions",
       "hil": "Human in Loop",
-      "ai": "Agents",
+      "ai": "AI agents",
       "orgs": "Org",
       "people": "People",
       "communications": "Communications",
@@ -64,8 +64,10 @@
     "quickAccess": "Quick Access",
     "connectionsTitle": "Connections",
     "connectionsDesc": "Manage accounts, OAuth, API keys",
-    "aiProvidersTitle": "AI Providers",
-    "aiProvidersDesc": "Configure AI models and keys",
+    "aiProvidersTitle": "AI connections (legacy)",
+    "aiProvidersDesc": "API keys used by older workflow AI nodes",
+    "aiAgentsDesc": "Install and use Claude Code, Codex and other agent runtimes",
+    "aiAgentsTitle": "AI agents",
     "language": {
       "sectionTitle": "Language",
       "label": "UI language",
@@ -116,7 +118,8 @@
       },
       "statusTitle": "System health — click to open",
       "statusBroken": "Setup incomplete",
-      "statusIssues": "Issues: {{n}}"
+      "statusIssues": "Issues: {{n}}",
+      "openAgents": "Install or update on the AI agents page"
     }
   },
   "orgs": {

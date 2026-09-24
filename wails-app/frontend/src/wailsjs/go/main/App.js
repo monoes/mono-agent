@@ -458,6 +458,10 @@ export function InitializeMonomindProfile() {
   return window['go']['main']['App']['InitializeMonomindProfile']();
 }
 
+export function InstallAgentRuntime(arg1, arg2) {
+  return window['go']['main']['App']['InstallAgentRuntime'](arg1, arg2);
+}
+
 export function IsDBConnected() {
   return window['go']['main']['App']['IsDBConnected']();
 }

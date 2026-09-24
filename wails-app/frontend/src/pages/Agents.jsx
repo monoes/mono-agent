@@ -1,17 +1,31 @@
 import { useState, useEffect, useCallback } from 'react'
-import { RefreshCw, Bot, MessageSquare } from 'lucide-react'
-import { cachedAgentScan } from '../lib/agentRuntimes.js'
+import { RefreshCw, Bot, MessageSquare, Download, Copy, Loader2, ArrowUpCircle } from 'lucide-react'
+import { cachedAgentScan, invalidateAgentScan } from '../lib/agentRuntimes.js'
+import { installRuntime, runHealth } from '../lib/health.js'
 import { api } from '../services/api.js'
+import { confirm } from '../components/ConfirmDialog.jsx'
 import MonomindInitPrompt from '../components/MonomindInitPrompt.jsx'
 
 function statusColor(installed) {
   return installed ? 'var(--green-neon)' : 'var(--text-muted)'
 }
 
-function RuntimeTile({ agent, onChat }) {
+// installKind is monomind's structured recipe kind (agent scan protocol
+// rev 9: npm | script | manual). Older monomind sends none — the Install
+// button is offered then, and monoagentcli decides (it refuses manual ones).
+function installKind(agent) {
+  return agent.install?.kind || 'unknown'
+}
+
+const tileButton = { gap: 4, marginTop: 2, fontSize: 10 }
+
+function RuntimeTile({ agent, onChat, onInstall, job }) {
   const [hov, setHov] = useState(false)
+  const kind = installKind(agent)
+  const running = job?.running
   return (
     <div
+      data-runtime={agent.id}
       onMouseEnter={() => setHov(true)}
       onMouseLeave={() => setHov(false)}
       style={{
@@ -35,16 +49,49 @@ function RuntimeTile({ agent, onChat }) {
           {agent.installed ? (agent.version || 'installed') : 'not installed'}
         </span>
       </div>
-      {agent.installed ? (
-        <button className="btn btn-sm" onClick={() => onChat(agent.id)} style={{ gap: 4, marginTop: 2 }}>
-          <MessageSquare size={11} /> Chat
-        </button>
-      ) : (
-        agent.install_hint && (
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8.5, color: 'var(--text-muted)', textAlign: 'center', lineHeight: 1.4, maxWidth: 140 }}>
-            {agent.install_hint}
-          </div>
-        )
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
+        {agent.installed && (
+          <button className="btn btn-sm" onClick={() => onChat(agent.id)} style={tileButton}>
+            <MessageSquare size={11} /> Chat
+          </button>
+        )}
+        {running ? (
+          <button className="btn btn-sm" disabled style={tileButton}>
+            <Loader2 size={11} className="spin" /> {agent.installed ? 'Updating…' : 'Installing…'}
+          </button>
+        ) : kind === 'manual' ? (
+          !agent.installed && (
+            <button className="btn btn-sm btn-ghost" onClick={() => onInstall(agent, 'copy')} title={agent.install_hint} style={tileButton}>
+              <Copy size={11} /> Copy steps
+            </button>
+          )
+        ) : agent.installed ? (
+          <button className="btn btn-sm btn-ghost" onClick={() => onInstall(agent, 'update')} title={agent.install_hint} style={tileButton}>
+            <ArrowUpCircle size={11} /> Update
+          </button>
+        ) : (
+          <button className="btn btn-sm btn-primary" onClick={() => onInstall(agent, 'install')} title={agent.install_hint} style={tileButton}>
+            <Download size={11} /> Install
+          </button>
+        )}
+      </div>
+      {agent.installed && agent.login_hint && !job && (
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8.5, color: 'var(--text-muted)', textAlign: 'center' }}>
+          sign in: {agent.login_hint}
+        </div>
+      )}
+      {!agent.installed && kind === 'manual' && agent.install_hint && !job && (
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 8.5, color: 'var(--text-muted)', textAlign: 'center', lineHeight: 1.4, maxWidth: 140 }}>
+          {agent.install_hint}
+        </div>
+      )}
+      {job && (job.line || job.error || job.done) && (
+        <div
+          title={job.error || job.line}
+          style={{ fontFamily: 'var(--font-mono)', fontSize: 8.5, textAlign: 'center', lineHeight: 1.4, maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: job.error ? 'var(--red)' : job.done ? 'var(--green-neon)' : 'var(--text-muted)' }}
+        >
+          {job.error || (job.done ? (job.message || 'done') : job.line)}
+        </div>
       )}
     </div>
   )
@@ -118,6 +165,36 @@ export default function Agents({ onOpenChat }) {
     api.isMonomindInitialized().then(v => setNotInitialized(!v))
   }, [])
 
+  // Install / update / copy-steps per runtime — all through monoagentcli
+  // (`agent install`), shown inline on the tile.
+  const [jobs, setJobs] = useState({})
+  const setJob = (id, patch) => setJobs(j => ({ ...j, [id]: patch === null ? undefined : { ...(j[id] || {}), ...patch } }))
+  const onInstall = useCallback(async (agent, action) => {
+    if (action === 'copy') {
+      try { await navigator.clipboard.writeText(agent.install_hint || '') } catch { /* clipboard may be blocked */ }
+      setJob(agent.id, { line: 'copied — run it in a terminal', done: false, error: null })
+      return
+    }
+    const script = installKind(agent) === 'script'
+    const ok = await confirm(
+      <span>
+        {action === 'update' ? `Update ${agent.id}? ` : `Install ${agent.id}? `}
+        {script ? 'This downloads and runs the vendor\u2019s install script:' : 'This runs:'}
+        <code style={{ display: 'block', marginTop: 8, padding: '6px 8px', background: 'rgba(0,0,0,.35)', borderRadius: 4, wordBreak: 'break-all' }}>
+          {agent.install_hint}
+        </code>
+      </span>,
+      { title: action === 'update' ? `Update ${agent.id}` : `Install ${agent.id}`, confirmLabel: action === 'update' ? 'Update' : 'Install', danger: false },
+    )
+    if (!ok) return
+    setJob(agent.id, { running: true, line: 'starting…', error: null, done: false })
+    const res = await installRuntime(agent.id, action === 'update', line => setJob(agent.id, { line }))
+    setJob(agent.id, { running: false, done: res.ok, error: res.ok ? null : res.message, message: res.message })
+    invalidateAgentScan()
+    loadAgents(true)
+    runHealth()
+  }, [loadAgents])
+
   const installedCount = agents.filter(a => a.installed).length
 
   return (
@@ -125,13 +202,13 @@ export default function Agents({ onOpenChat }) {
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <div className="page-header">
           <div className="page-header-left">
-            <div className="page-title">Agents</div>
+            <div className="page-title">AI agents</div>
             <div className="page-subtitle">
               {loading ? 'Loading…' : scanError ? 'monomind unavailable' : `${installedCount} / ${agents.length} runtimes installed`}
             </div>
           </div>
           <div className="page-header-right" style={{ display: 'flex', gap: 6 }}>
-            <button className="btn btn-ghost btn-sm" onClick={() => loadAgents()} style={{ gap: 5 }}><RefreshCw size={12} /> Refresh</button>
+            <button className="btn btn-ghost btn-sm" onClick={() => { invalidateAgentScan(); loadAgents() }} style={{ gap: 5 }}><RefreshCw size={12} /> Refresh</button>
           </div>
         </div>
 
@@ -168,7 +245,7 @@ export default function Agents({ onOpenChat }) {
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 10, paddingBottom: 24 }}>
               {agents.map(a => (
-                <RuntimeTile key={a.id} agent={a} onChat={onOpenChat} />
+                <RuntimeTile key={a.id} agent={a} onChat={onOpenChat} onInstall={onInstall} job={jobs[a.id]} />
               ))}
             </div>
           )}

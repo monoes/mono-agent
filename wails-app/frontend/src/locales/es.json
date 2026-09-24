@@ -5,7 +5,7 @@
       "noderunner": "Flujos de trabajo",
       "actions": "Acciones",
       "hil": "Humano en el bucle",
-      "ai": "Agentes",
+      "ai": "Agentes IA",
       "orgs": "Organización",
       "people": "Personas",
       "communications": "Comunicaciones",
@@ -64,8 +64,10 @@
     "quickAccess": "Acceso rápido",
     "connectionsTitle": "Conexiones",
     "connectionsDesc": "Gestiona cuentas, OAuth, claves de API",
-    "aiProvidersTitle": "Proveedores de IA",
-    "aiProvidersDesc": "Configura modelos de IA y claves",
+    "aiProvidersTitle": "Conexiones IA (heredadas)",
+    "aiProvidersDesc": "Claves API usadas por nodos IA de flujos antiguos",
+    "aiAgentsDesc": "Instala y usa Claude Code, Codex y otros runtimes de agentes",
+    "aiAgentsTitle": "Agentes IA",
     "language": {
       "sectionTitle": "Idioma",
       "label": "Idioma de la interfaz",
@@ -116,7 +118,8 @@
       },
       "statusTitle": "Estado del sistema — clic para abrir",
       "statusBroken": "Configuración incompleta",
-      "statusIssues": "Asuntos: {{n}}"
+      "statusIssues": "Asuntos: {{n}}",
+      "openAgents": "Instalar o actualizar en la página de agentes IA"
     }
   },
   "orgs": {
