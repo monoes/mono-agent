@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Loops through webhooks now stop. A run on an org chain sends that chain
+  on its HTTP requests to this machine as a signed `X-Monoagent-Trace`
+  header, and a webhook it reaches continues the chain and is refused with
+  HTTP 429 past the hop limit. A workflow that posts to its own webhook
+  used to run without end; it now stops after 9 runs. Sending many requests
+  from one run (a fan-out) is not a loop and is not limited.
+- Webhook runs have a `monoagent_trace` field in their trigger item: the
+  chain the run is on, set by mono-agent. A workflow that stores or
+  forwards the whole webhook payload will see it. A `monoagent_trace` field
+  in a request body is dropped; a body's own `trace` field is kept.
+- The HTTP request node has a `propagate_trace` option, off by default, to
+  send the signed chain to hosts other than this machine too (for a system
+  that calls a webhook here back with it).
+- The signing key is `~/.monoagent/trace.key` (mode 0600; a key other
+  users can read is refused). To rotate it, delete the file and restart
+  `monoagentcli daemon`.
+
 ## [0.49.0] - 2026-09-20
 
 This entry also covers work that shipped in 0.32–0.48, which were cut

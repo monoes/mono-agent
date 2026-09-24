@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/monoes/mono-agent/internal/health"
+	"github.com/monoes/mono-agent/internal/nodemgr"
 )
 
 // maxFixPasses bounds `doctor --fix`'s fix → re-check loop.
@@ -30,6 +31,15 @@ func newDoctorCmd(cfg *globalConfig) *cobra.Command {
 	var deep, fix, yes bool
 
 	cmd := &cobra.Command{
+		// Replaces the root's pre-run, keeping only what it does to this
+		// process: the managed Node on PATH, which the monomind checks need
+		// (monomind starts with `#!/usr/bin/env node`). The root's Claude
+		// first-run setup is left out, since it creates ~/.monoagent and
+		// copies skills into ~/.claude, and a check must not change
+		// anything. `doctor fix` inherits this one.
+		PersistentPreRun: func(cmd *cobra.Command, _ []string) {
+			nodemgr.Activate(cmd.Context())
+		},
 		Use:   "doctor",
 		Short: "Check (and fix) everything monoagent needs on this machine",
 		Long: `Runs health checks over every component monoagent depends on and
