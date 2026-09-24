@@ -18,6 +18,31 @@ import (
 // maxFixPasses bounds `doctor --fix`'s fix → re-check loop.
 const maxFixPasses = 4
 
+// runHealth runs the checks against a fresh environment.
+func runHealth(ctx context.Context, cfg *globalConfig, reg *health.Registry, opts health.Options) *health.Report {
+	env, closeEnv := newHealthEnv(cfg)
+	defer closeEnv()
+	return reg.Run(ctx, env, opts)
+}
+
+// fixUntilStable applies the report's (non-optional) fixes and re-checks,
+// repeating while fixes uncover more to do — a fix can unblock checks that
+// were skipped (the database appears, then the profile folder is checked).
+func fixUntilStable(ctx context.Context, cfg *globalConfig, reg *health.Registry, opts health.Options, rep *health.Report,
+	confirm func(health.FixInfo) bool, progress func(string)) (*health.Report, []fixOutcome) {
+	var outcomes []fixOutcome
+	tried := map[string]bool{}
+	for pass := 0; pass < maxFixPasses; pass++ {
+		got := applyReportFixes(ctx, cfg, reg, rep, tried, confirm, progress)
+		outcomes = append(outcomes, got...)
+		rep = runHealth(ctx, cfg, reg, opts)
+		if len(got) == 0 {
+			break
+		}
+	}
+	return rep, outcomes
+}
+
 // errRequiredChecksFailed maps a doctor run with failed required checks to
 // exit code 1 without an {"error"} JSON line on stdout (the report already
 // is the JSON output).
@@ -52,28 +77,11 @@ Exit code 1 means a required check failed.`,
 			opts := health.Options{Deep: deep, Groups: groups, IDs: ids}
 			out := cmd.OutOrStdout()
 
-			env, closeEnv := newHealthEnv(cfg)
-			rep := reg.Run(ctx, env, opts)
-			closeEnv()
-
+			rep := runHealth(ctx, cfg, reg, opts)
 			var outcomes []fixOutcome
 			if fix {
-				// A fix can unblock checks that were skipped (e.g. the
-				// database appears, then the profile folder is checked), so
-				// fix → re-check until a pass finds nothing new to do.
-				confirm := fixPrompter(cmd, yes, cfg.JSONOutput)
-				progress := progressWriter(out, cfg.JSONOutput)
-				tried := map[string]bool{}
-				for pass := 0; pass < maxFixPasses; pass++ {
-					got := applyReportFixes(ctx, cfg, reg, rep, tried, confirm, progress)
-					outcomes = append(outcomes, got...)
-					env, closeEnv = newHealthEnv(cfg)
-					rep = reg.Run(ctx, env, opts)
-					closeEnv()
-					if len(got) == 0 {
-						break
-					}
-				}
+				rep, outcomes = fixUntilStable(ctx, cfg, reg, opts, rep,
+					fixPrompter(cmd, yes, cfg.JSONOutput), progressWriter(out, cfg.JSONOutput))
 			}
 
 			if cfg.JSONOutput {
@@ -246,10 +254,25 @@ func printDoctorReport(w io.Writer, rep *health.Report, fixed bool) {
 	fmt.Fprintf(w, "monoagent doctor — %s · profile %s\n", rep.MonoagentVersion, rep.ProfileID)
 	group := ""
 	fixable := 0
+	// Runtimes that aren't installed are listed on one line (the JSON keeps
+	// every row); a dozen "not installed" rows would drown the report.
+	var notInstalled []string
+	flushRuntimes := func() {
+		if len(notInstalled) > 0 {
+			fmt.Fprintf(w, "  %s %-22s %s\n", statusMark[health.StatusInfo], "not installed", strings.Join(notInstalled, ", "))
+			fmt.Fprintf(w, "      install one: monoagentcli agent install <runtime>\n")
+			notInstalled = nil
+		}
+	}
 	for _, r := range rep.Results {
 		if r.Group != group {
+			flushRuntimes()
 			group = r.Group
 			fmt.Fprintf(w, "\n%s\n", group)
+		}
+		if r.Group == health.GroupRuntimes && r.ID != health.CheckRuntimes && r.Status == health.StatusInfo {
+			notInstalled = append(notInstalled, r.Title)
+			continue
 		}
 		req := ""
 		if r.Required && r.Status == health.StatusFail {
@@ -278,6 +301,7 @@ func printDoctorReport(w io.Writer, rep *health.Report, fixed bool) {
 			fmt.Fprintf(w, "      %s\n", line)
 		}
 	}
+	flushRuntimes()
 	s := rep.Summary
 	fmt.Fprintf(w, "\n%d ok · %d warning · %d failed · %d skipped · %d info\n",
 		s[health.StatusOK], s[health.StatusWarn], s[health.StatusFail], s[health.StatusSkip], s[health.StatusInfo])

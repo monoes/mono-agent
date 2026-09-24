@@ -3,6 +3,7 @@ package health
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -65,7 +66,11 @@ func checkExtension(_ context.Context, env *Env) Result {
 	}
 	res := Result{Status: StatusWarn, Summary: "not found in any browser profile", FixID: FixExtensionInstall}
 	if env.ExtensionDir != nil {
-		res.Detail = "load unpacked from: " + env.ExtensionDir()
+		if dir := env.ExtensionDir(); filepath.IsAbs(dir) {
+			res.Detail = "load unpacked from: " + dir
+		} else {
+			res.Detail = "load unpacked from the chrome-extension folder of the mono-agent download"
+		}
 	}
 	return res
 }

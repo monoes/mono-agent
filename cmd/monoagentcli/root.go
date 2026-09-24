@@ -75,6 +75,7 @@ func newRootCmd() *cobra.Command {
 		newExportCmd(cfg),
 		newStatusCmd(cfg),
 		newDoctorCmd(cfg),
+		newSetupCmd(cfg),
 		newNodejsCmd(cfg),
 		newVersionCmd(),
 		newUpdateCmd(),
