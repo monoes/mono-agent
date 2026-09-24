@@ -68,7 +68,10 @@ code=$?
 set -e
 [ "$code" -eq 0 ] || fail "setup with no terminal: exit $code, want 0 (124 = it hung)"
 jq -e '.v == 1' "$out/setup.json" >/dev/null || fail "setup report is not schema v1"
-jq -se 'all(.[]; .kind | type == "string")' "$out/setup.ndjson" >/dev/null || fail "setup progress is not NDJSON"
+# stderr also carries plain log lines (a CI runner has no keychain, so the
+# database setup warns there); the progress events are the JSON lines.
+grep '^{' "$out/setup.ndjson" > "$out/setup.events" || fail "setup streamed no progress events"
+jq -se 'length > 0 and all(.[]; .kind | type == "string")' "$out/setup.events" >/dev/null || fail "setup progress events are not NDJSON"
 auto_ok='["core.home.create","core.db.migrate","core.profile.layout"]'
 jq -e --argjson ok "$auto_ok" '([.fixes[] | select(.outcome == "applied") | .id] - $ok) | length == 0' "$out/setup.json" >/dev/null \
   || fail "setup with no terminal applied a fix that needs a yes: $(jq -c '[.fixes[] | select(.outcome == "applied") | .id]' "$out/setup.json")"
