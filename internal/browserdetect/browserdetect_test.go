@@ -1,0 +1,191 @@
+package browserdetect
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestFindBrowser(t *testing.T) {
+	if path := FindBrowser(); path != "" {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("FindBrowser returned non-existent path: %s", path)
+		}
+	}
+}
+
+func TestExtensionInstalledEmptyHome(t *testing.T) {
+	empty := t.TempDir()
+	t.Setenv("CHROME_USER_DATA_DIR", empty)
+	t.Setenv("HOME", empty)
+	t.Setenv("USERPROFILE", empty)
+	if ExtensionInstalled() {
+		t.Fatal("no browser profiles: want false")
+	}
+}
+
+func TestIsExtensionInPreferencesFile(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// 1. Valid unpacked MonoAgent extension
+	prefUnpacked := filepath.Join(tempDir, "pref_unpacked.json")
+	unpackedData := `{
+		"extensions": {
+			"settings": {
+				"abc123": {
+					"path": "/path/to/my/project/chrome-extension",
+					"manifest": {
+						"name": "MonoAgent Bridge"
+					}
+				}
+			}
+		}
+	}`
+	if err := os.WriteFile(prefUnpacked, []byte(unpackedData), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if !inPreferencesFile(prefUnpacked) {
+		t.Errorf("expected true for unpacked MonoAgent extension")
+	}
+
+	// 2. Packed MonoAgent extension (by manifest name)
+	prefPacked := filepath.Join(tempDir, "pref_packed.json")
+	packedData := `{
+		"extensions": {
+			"settings": {
+				"xyz789": {
+					"path": "/some/other/path",
+					"manifest": {
+						"name": "MonoAgent Bridge",
+						"description": "Browser automation bridge"
+					}
+				}
+			}
+		}
+	}`
+	if err := os.WriteFile(prefPacked, []byte(packedData), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if !inPreferencesFile(prefPacked) {
+		t.Errorf("expected true for packed MonoAgent extension")
+	}
+
+	// 3. Unrelated extensions only
+	prefOther := filepath.Join(tempDir, "pref_other.json")
+	otherData := `{
+		"extensions": {
+			"settings": {
+				"other123": {
+					"path": "/some/random/ext",
+					"manifest": {
+						"name": "Random AdBlocker",
+						"description": "Blocks ads"
+					}
+				}
+			}
+		}
+	}`
+	if err := os.WriteFile(prefOther, []byte(otherData), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if inPreferencesFile(prefOther) {
+		t.Errorf("expected false for unrelated extensions")
+	}
+
+	// 4. Corrupted / invalid JSON
+	prefInvalid := filepath.Join(tempDir, "pref_invalid.json")
+	if err := os.WriteFile(prefInvalid, []byte("{invalid json"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if inPreferencesFile(prefInvalid) {
+		t.Errorf("expected false for invalid json")
+	}
+
+	// 5. Non-existent file
+	if inPreferencesFile(filepath.Join(tempDir, "non_existent.json")) {
+		t.Errorf("expected false for non-existent file")
+	}
+
+	// 6. Real-world unpacked shape: Chromium/Edge does not cache a "manifest"
+	// object at all for a "Load unpacked" extension (verified against an
+	// actual Edge profile — the settings entry has "path" but no "manifest"
+	// key whatsoever), so detection must fall back to reading the real
+	// manifest.json at that path from disk.
+	unpackedDir := filepath.Join(tempDir, "unpacked-ext")
+	if err := os.MkdirAll(unpackedDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(unpackedDir, "manifest.json"), []byte(`{"name": "MonoAgent Bridge"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	prefNoManifestCache := filepath.Join(tempDir, "pref_no_manifest_cache.json")
+	noManifestCacheData := fmt.Sprintf(`{
+		"extensions": {
+			"settings": {
+				"nniakjfndopplbofjmjgbbgljnmahpfg": {
+					"path": %q
+				}
+			}
+		}
+	}`, unpackedDir)
+	if err := os.WriteFile(prefNoManifestCache, []byte(noManifestCacheData), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if !inPreferencesFile(prefNoManifestCache) {
+		t.Errorf("expected true for unpacked extension with no cached manifest (must read manifest.json from path)")
+	}
+
+	// 7. Same shape, but path is a relative "<id>/<version>" segment (how
+	// packed extensions record it) — must not be joined against an
+	// unrelated base and must not match.
+	prefRelativePath := filepath.Join(tempDir, "pref_relative_path.json")
+	relativePathData := `{
+		"extensions": {
+			"settings": {
+				"someid": {
+					"path": "someid/1.0.0_0"
+				}
+			}
+		}
+	}`
+	if err := os.WriteFile(prefRelativePath, []byte(relativePathData), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if inPreferencesFile(prefRelativePath) {
+		t.Errorf("expected false for a relative packed-extension path with no cached manifest")
+	}
+}
+
+func TestIsExtensionInExtensionsDir(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// 1. Directory with MonoAgent manifest
+	extSubDir := filepath.Join(tempDir, "ext1", "1.0.0")
+	if err := os.MkdirAll(extSubDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	manifestData := `{"name": "MonoAgent Bridge", "version": "1.0.0"}`
+	if err := os.WriteFile(filepath.Join(extSubDir, "manifest.json"), []byte(manifestData), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if !inExtensionsDir(tempDir) {
+		t.Errorf("expected true for valid MonoAgent extension directory")
+	}
+
+	// 2. Directory without MonoAgent manifest
+	emptyDir := t.TempDir()
+	otherSubDir := filepath.Join(emptyDir, "ext2", "1.0.0")
+	if err := os.MkdirAll(otherSubDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	otherManifest := `{"name": "Some Other Extension", "version": "2.0.0"}`
+	if err := os.WriteFile(filepath.Join(otherSubDir, "manifest.json"), []byte(otherManifest), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if inExtensionsDir(emptyDir) {
+		t.Errorf("expected false for unrelated extension directory")
+	}
+}

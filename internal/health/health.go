@@ -151,6 +151,42 @@ type Env struct {
 	InitMonomindProfile func(ctx context.Context, root string, progress func(string)) error
 	// InstallRuntime installs one agent runtime by its scan id.
 	InstallRuntime func(ctx context.Context, id string, progress func(string)) error
+
+	// Browser and the MonoAgent extension bridge.
+	FindBrowser        func() string
+	ExtensionInstalled func() bool
+	ExtensionDir       func() string
+	Bridge             func(ctx context.Context) (BridgeInfo, bool)
+
+	// Background services.
+	Daemon           func(ctx context.Context) DaemonInfo
+	APIHealth        func(ctx context.Context, addr string) error
+	AutostartStatus  func(ctx context.Context) (installed bool, where string)
+	InstallAutostart func(ctx context.Context, progress func(string)) error
+	StartDaemon      func(ctx context.Context, progress func(string)) error
+
+	// Agent-tool integrations (Claude Code).
+	ClaudeSkills        func() (claudeFound bool, missing, stale []string)
+	InstallClaudeSkills func() error
+	MCPRegistration     func() (claudeFound, registered bool, where string)
+	RegisterMCP         func(ctx context.Context, progress func(string)) error
+}
+
+// BridgeInfo is what the running extension bridge reports about itself.
+type BridgeInfo struct {
+	Addr      string
+	Status    string // connected | waiting | unpaired
+	PID       int
+	Version   string
+	UptimeSec int64
+}
+
+// DaemonInfo is the workflow daemon's heartbeat.
+type DaemonInfo struct {
+	Running bool
+	PID     int
+	APIAddr string
+	AgeMS   int64
 }
 
 // Report is the `doctor --json` payload.

@@ -115,3 +115,23 @@ func (darwinInstaller) Uninstall(ctx context.Context) error {
 	}
 	return nil
 }
+
+func (darwinInstaller) Status(context.Context) (bool, string) {
+	path, err := plistPath()
+	if err != nil {
+		return false, ""
+	}
+	_, err = os.Stat(path)
+	return err == nil, path
+}
+
+func (darwinInstaller) Start(ctx context.Context) error {
+	// kickstart starts a loaded job and is a no-op for a running one
+	// (no -k: never restart a healthy daemon).
+	target := launchdDomain() + "/" + Label
+	out, err := exec.CommandContext(ctx, "launchctl", "kickstart", target).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("launchctl kickstart %s: %w: %s", target, err, string(out))
+	}
+	return nil
+}

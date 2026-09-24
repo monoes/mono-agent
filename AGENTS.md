@@ -68,7 +68,9 @@ monoagentcli doctor fix <fix-id> --json   # one fix, progress as NDJSON {"kind":
 
 Groups: `core` (data folder, database, profile, vault, PATH, disk), `monomind`
 (Node.js, monomind install/version/features, profile `monomind init`) and
-`runtimes` (one row per AI agent runtime). `--group <g>` / `--check <id>` narrow the run; `--deep` adds network checks
+`runtimes` (one row per AI agent runtime), `browser` (browser, extension,
+bridge, pairing), `services` (daemon, start at login) and `integrations`
+(Claude Code skills, MCP registration). `--group <g>` / `--check <id>` narrow the run; `--deep` adds network checks
 (e.g. update availability). Checks never change anything — only fixes do.
 Run `doctor` first when something environment-related fails.
 

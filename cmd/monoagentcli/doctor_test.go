@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -136,5 +137,36 @@ func TestApplyReportFixesSkipsOptional(t *testing.T) {
 	}
 	if len(outcomes) != 1 || outcomes[0].ID != "a" {
 		t.Fatalf("outcomes %v", outcomes)
+	}
+}
+
+func TestClaudeSkillsStateAndMCPRegistration(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	if found, _, _ := claudeSkillsState(); found {
+		t.Fatal("no ~/.claude: want not found")
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, missing, _ := claudeSkillsState(); len(missing) != len(claudeSkillNames) {
+		t.Fatalf("missing = %v", missing)
+	}
+	if err := installClaudeSkill(false); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(home, ".claude", "skills", claudeSkillNames[0]), []byte("old"), 0o644)
+	if _, missing, stale := claudeSkillsState(); len(missing) != 0 || len(stale) != 1 {
+		t.Fatalf("missing %v stale %v", missing, stale)
+	}
+
+	if _, reg, _ := claudeMCPRegistration(); reg {
+		t.Fatal("no ~/.claude.json: not registered")
+	}
+	os.WriteFile(filepath.Join(home, ".claude.json"),
+		[]byte(`{"mcpServers":{"ma":{"command":"/usr/local/bin/monoagentcli","args":["mcp"]}}}`), 0o644)
+	if found, reg, _ := claudeMCPRegistration(); !found || !reg {
+		t.Fatalf("registered entry not detected: %v %v", found, reg)
 	}
 }

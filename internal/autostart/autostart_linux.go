@@ -127,3 +127,20 @@ func (linuxInstaller) Uninstall(ctx context.Context) error {
 	_ = exec.CommandContext(ctx, "systemctl", "--user", "daemon-reload").Run()
 	return nil
 }
+
+func (linuxInstaller) Status(context.Context) (bool, string) {
+	path, err := unitPath()
+	if err != nil {
+		return false, ""
+	}
+	_, err = os.Stat(path)
+	return err == nil, path
+}
+
+func (linuxInstaller) Start(ctx context.Context) error {
+	out, err := exec.CommandContext(ctx, "systemctl", "--user", "start", unitName).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("systemctl --user start %s: %w: %s", unitName, err, string(out))
+	}
+	return nil
+}

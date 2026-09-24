@@ -22,3 +22,7 @@ func cloneForRetry(cmd *exec.Cmd) *exec.Cmd {
 	}
 	return c
 }
+
+// StartDetached starts cmd in its own process group / detached from this
+// console so it outlives the caller (e.g. `doctor` starting the daemon).
+func StartDetached(cmd *exec.Cmd) (*exec.Cmd, error) { return startDetached(cmd) }

@@ -29,6 +29,11 @@ type Installer interface {
 	// Uninstall stops the service and removes its definition. Safe to call
 	// when nothing is installed.
 	Uninstall(ctx context.Context) error
+	// Status reports whether a registration exists and where it lives.
+	Status(ctx context.Context) (installed bool, where string)
+	// Start (re)starts the registered service now. Idempotent when it is
+	// already running.
+	Start(ctx context.Context) error
 }
 
 // Result describes what Install did, for the CLI to print.

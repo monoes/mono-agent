@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -87,10 +88,11 @@ func installClaudeSkill(verbose bool) error {
 }
 
 // runClaudeFirstRunCheck installs monoagent's Claude Code skills if Claude Code
-// is detected (~/.claude/ exists) and any of them is missing. It checks the
-// skills themselves rather than trusting the first-run marker, so a monoagent
-// version that ships a NEW skill delivers it to existing installs too. Errors
-// are silently ignored — this is best-effort.
+// is detected (~/.claude/ exists) and any of them is missing or differs from
+// the copy embedded in this binary. It checks the skills themselves rather
+// than trusting the first-run marker, so a monoagent version that ships a
+// NEW or CHANGED skill delivers it to existing installs too. Errors are
+// silently ignored — this is best-effort.
 func runClaudeFirstRunCheck() {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -110,14 +112,7 @@ func runClaudeFirstRunCheck() {
 		return
 	}
 
-	allInstalled := true
-	for _, name := range claudeSkillNames {
-		if _, err := os.Stat(filepath.Join(claudeDir, "skills", name)); err != nil {
-			allInstalled = false
-			break
-		}
-	}
-	if allInstalled {
+	if _, missing, stale := claudeSkillsState(); len(missing) == 0 && len(stale) == 0 {
 		return
 	}
 
@@ -127,4 +122,31 @@ func runClaudeFirstRunCheck() {
 
 	fmt.Fprintf(os.Stderr, "[monoagent] Claude Code detected — monoagent skills installed.\n")
 	fmt.Fprintf(os.Stderr, "[monoagent] Claude can now run: monoagentcli workflow templates list\n")
+}
+
+// claudeSkillsState compares ~/.claude/skills with the skills embedded in
+// this binary. claudeFound is false when Claude Code isn't installed.
+func claudeSkillsState() (claudeFound bool, missing, stale []string) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false, nil, nil
+	}
+	claudeDir := filepath.Join(home, ".claude")
+	if _, err := os.Stat(claudeDir); err != nil {
+		return false, nil, nil
+	}
+	for _, name := range claudeSkillNames {
+		want, err := data.SkillsFS.ReadFile("skills/" + name)
+		if err != nil {
+			continue
+		}
+		got, err := os.ReadFile(filepath.Join(claudeDir, "skills", name))
+		switch {
+		case err != nil:
+			missing = append(missing, name)
+		case !bytes.Equal(got, want):
+			stale = append(stale, name)
+		}
+	}
+	return true, missing, stale
 }

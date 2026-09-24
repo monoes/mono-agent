@@ -100,6 +100,7 @@ func newHealthEnv(cfg *globalConfig) (*health.Env, func()) {
 		_, err := installRuntime(ctx, id, false, func(agentinstall.Recipe) bool { return true }, progress)
 		return err
 	}
+	addServiceHooks(env)
 	env.ProfileRoot = func(id string) string { return profiledir.Root(env.DB, id) }
 	env.EnsureProfile = func(id string) error { return profiledir.EnsureLayout(env.DB, id) }
 
