@@ -2,12 +2,14 @@ package monomind
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeMonomind writes a shell script that records its args and cwd and
@@ -74,5 +76,34 @@ func TestProjectsUnder(t *testing.T) {
 	want := []string{filepath.Join(root, "codes", "app")}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("ProjectsUnder = %v, want %v", got, want)
+	}
+}
+
+// A report in a format this monoagent doesn't know is not read as "0
+// checks, all passed": renamed fields would parse as empty.
+func TestDoctorRejectsAnotherFormatVersion(t *testing.T) {
+	bin, _ := fakeMonomind(t, `{"v":2,"outcome":{"ok":3}}`, 0)
+	_, err := Doctor(context.Background(), bin, DoctorOptions{Dir: t.TempDir()})
+	if !errors.Is(err, ErrDoctorFormat) {
+		t.Fatalf("v2 report: err %v, want ErrDoctorFormat", err)
+	}
+}
+
+// When the deadline ends monomind, a child still holding its output pipe
+// does not keep Doctor waiting.
+func TestDoctorReturnsWhenAChildHoldsThePipe(t *testing.T) {
+	bin, _ := fakeMonomind(t, "", 0)
+	script := "#!/bin/sh\nsleep 60 &\nsleep 60\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if _, err := Doctor(ctx, bin, DoctorOptions{Dir: t.TempDir()}); err == nil {
+		t.Fatal("want an error")
+	}
+	if d := time.Since(start); d > 15*time.Second {
+		t.Fatalf("Doctor took %v after its deadline", d)
 	}
 }

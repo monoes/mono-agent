@@ -61,8 +61,9 @@ func checkRuntimes(ctx context.Context, env *Env) Result {
 			child.Status = StatusInfo
 			child.Summary = "not installed"
 			child.Detail = a.InstallHint
-			if agentinstall.ForEntry(a).Kind != agentinstall.KindManual {
+			if rec := agentinstall.ForEntry(a); rec.Kind != agentinstall.KindManual {
 				child.FixID = FixRuntimeInstall + ":" + a.ID
+				child.FixCommand = installCommand(rec, a.ID)
 			}
 		}
 		res.Children = append(res.Children, child)
@@ -83,4 +84,16 @@ func deref(s *string, def string) string {
 		return def
 	}
 	return *s
+}
+
+// installCommand says what installing a runtime really runs, for the fix's
+// confirmation: the vendor script's URL and shell, or the npm packages.
+func installCommand(r agentinstall.Recipe, id string) string {
+	switch r.Kind {
+	case agentinstall.KindScript:
+		return fmt.Sprintf("downloads and runs the vendor installer %s with %s (monoagentcli agent install %s)", r.ScriptURL, r.Shell, id)
+	case agentinstall.KindNpm:
+		return fmt.Sprintf("npm install -g %s (monoagentcli agent install %s)", strings.Join(r.Packages, " "), id)
+	}
+	return "monoagentcli agent install " + id
 }

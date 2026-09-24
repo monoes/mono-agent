@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/monoes/mono-agent/internal/tracesig"
@@ -71,5 +72,84 @@ func TestRequestNodeTraceHeaderCannotBeSetByTheWorkflow(t *testing.T) {
 	onChain := map[string]interface{}{"trace": map[string]interface{}{"chain_id": "chn_run", "hop": float64(1)}}
 	if chain, _, _ := tracesig.Verify(key, sentTraceHeader(t, workflow.TriggerTypeOrgTool, onChain, custom)); chain != "chn_run" {
 		t.Fatalf("configured header won over the run's chain: %q", chain)
+	}
+}
+
+// Only requests to this machine carry the token by default; other hosts get
+// it with propagate_trace (a system that returns it to a webhook here).
+func TestTraceHeaderStaysOnThisMachineByDefault(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MONOAGENT_WEBHOOK_ADDR", "10.0.0.5:9321")
+	ctx := workflow.WithTrigger(context.Background(), workflow.TriggerTypeOrgTool,
+		map[string]interface{}{"trace": map[string]interface{}{"chain_id": "chn_run", "hop": float64(1)}})
+	sent := func(rawURL string, config map[string]interface{}) bool {
+		req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		setTraceHeader(ctx, req, config)
+		return req.Header.Get(tracesig.Header) != ""
+	}
+	for _, u := range []string{"http://127.0.0.1:9321/webhook/x", "http://localhost/x", "http://[::1]:8080/x", "http://10.0.0.5:9321/webhook/x"} {
+		if !sent(u, nil) {
+			t.Errorf("%s: no header, want one (this machine)", u)
+		}
+	}
+	if sent("https://api.example.com/x", nil) {
+		t.Error("a third-party host got the token without propagate_trace")
+	}
+	if !sent("https://api.example.com/x", map[string]interface{}{"propagate_trace": true}) {
+		t.Error("propagate_trace did not send the token")
+	}
+}
+
+// An API-key auth header of the same name cannot replace the signed token.
+func TestTraceHeaderSurvivesAnAPIKeyHeaderOfTheSameName(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	key, _ := tracesig.Key()
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get(tracesig.Header)
+	}))
+	defer srv.Close()
+	ctx := workflow.WithTrigger(context.Background(), workflow.TriggerTypeOrgTool,
+		map[string]interface{}{"trace": map[string]interface{}{"chain_id": "chn_run", "hop": float64(1)}})
+	cfg := map[string]interface{}{"method": "GET", "url": srv.URL, "auth_type": "api_key",
+		"auth_api_key_in": "header", "auth_api_key_name": tracesig.Header, "auth_api_key_value": "v1.chn_victim.0.replayed"}
+	if _, err := (&RequestNode{}).Execute(ctx, workflow.NodeInput{Items: []workflow.Item{workflow.NewItem(map[string]interface{}{})}}, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if chain, _, ok := tracesig.Verify(key, got); !ok || chain != "chn_run" {
+		t.Fatalf("server saw %q, want the run's own signed chain", got)
+	}
+}
+
+// The token does not follow a redirect to another host.
+func TestTraceHeaderIsDroppedOnACrossHostRedirect(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	var atTarget string
+	reached := false
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		atTarget = r.Header.Get(tracesig.Header)
+	}))
+	defer target.Close()
+	// Same machine, different host string: 127.0.0.1 redirects to localhost.
+	targetURL := strings.Replace(target.URL, "127.0.0.1", "localhost", 1)
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, targetURL, http.StatusFound)
+	}))
+	defer origin.Close()
+	ctx := workflow.WithTrigger(context.Background(), workflow.TriggerTypeOrgTool,
+		map[string]interface{}{"trace": map[string]interface{}{"chain_id": "chn_run", "hop": float64(1)}})
+	if _, err := (&RequestNode{}).Execute(ctx, workflow.NodeInput{Items: []workflow.Item{workflow.NewItem(map[string]interface{}{})}},
+		map[string]interface{}{"method": "GET", "url": origin.URL}); err != nil {
+		t.Fatal(err)
+	}
+	if !reached {
+		t.Fatal("the redirect was not followed, so this test proves nothing")
+	}
+	if atTarget != "" {
+		t.Fatalf("the token followed a cross-host redirect: %q", atTarget)
 	}
 }
