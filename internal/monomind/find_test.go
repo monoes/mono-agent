@@ -103,3 +103,34 @@ func TestCandidatePaths_IncludesManagedNpmPrefix(t *testing.T) {
 	}
 	t.Errorf("CandidatePaths() = %v, missing %q", CandidatePaths(), want)
 }
+
+// FindAll lists Find's pick first, then the copies it shadows (a new one in
+// ~/.monoagent/npm-global behind an old one on PATH), each once.
+func TestFindAll_ListsShadowedCopies(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix layout")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv(EnvOverride, "")
+	sys := t.TempDir()
+	old := filepath.Join(sys, "monomind")
+	managed := filepath.Join(home, ".monoagent", "npm-global", "bin", "monomind")
+	for _, p := range []string{old, managed} {
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		os.WriteFile(p, []byte("#!/bin/sh\n"), 0o755)
+	}
+	// A symlink to the managed copy is the same binary, listed once.
+	link := filepath.Join(home, ".local", "bin", "monomind")
+	os.MkdirAll(filepath.Dir(link), 0o755)
+	os.Symlink(managed, link)
+	t.Setenv("PATH", sys)
+
+	all := FindAll()
+	if len(all) != 2 || all[0] != old || all[1] != managed {
+		t.Fatalf("FindAll() = %v, want [%s %s]", all, old, managed)
+	}
+	if got, _ := Find(); got != all[0] {
+		t.Fatalf("Find() = %s, want FindAll's first %s", got, all[0])
+	}
+}

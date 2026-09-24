@@ -163,7 +163,10 @@ type Env struct {
 	// monomind: locate the binary, handshake with it (callers memoize —
 	// several checks ask), scan agent runtimes, install/upgrade it, and
 	// run `monomind init` in a folder.
-	FindMonomind        func() (string, error)
+	FindMonomind func() (string, error)
+	// MonomindCandidates lists every monomind installed, FindMonomind's
+	// pick first (monomind.FindAll); nil when unavailable.
+	MonomindCandidates  func() []string
 	MonomindHandshake   func(ctx context.Context) (*monomind.VersionInfo, error)
 	ScanRuntimes        func(ctx context.Context) (*monomind.ScanResult, error)
 	InstallMonomind     func(ctx context.Context, progress func(string)) error
@@ -229,6 +232,9 @@ type BridgeInfo struct {
 	PID       int
 	Version   string
 	UptimeSec int64
+	// Owner says what runs it: the daemon, a service, or an `extension
+	// serve` started by hand ("" when unknown).
+	Owner string
 }
 
 // DaemonInfo is the workflow daemon's heartbeat.
@@ -237,6 +243,9 @@ type DaemonInfo struct {
 	PID     int
 	APIAddr string
 	AgeMS   int64
+	// BridgeAddr is the extension bridge it serves; "" when it runs with
+	// --bridge=false or its bridge failed to start.
+	BridgeAddr string
 }
 
 // Report is the `doctor --json` payload.

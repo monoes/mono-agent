@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -96,5 +97,45 @@ func TestIntegrationChecks(t *testing.T) {
 	env.MCPRegistration = func() (bool, bool, string) { return true, true, "x" }
 	if res := checkMCP(ctx, env); res.Status != StatusOK {
 		t.Errorf("registered: %+v", res)
+	}
+}
+
+// With a daemon running, "start the daemon" can't bring the bridge up:
+// the check says why instead of offering it.
+func TestBridgeDownWithTheDaemonRunning(t *testing.T) {
+	ctx := context.Background()
+	d := DaemonInfo{Running: true, PID: 42}
+	env := &Env{Bridge: func(context.Context) (BridgeInfo, bool) { return BridgeInfo{}, false },
+		Daemon: func(context.Context) DaemonInfo { return d }}
+	res := checkBridge(ctx, env)
+	if res.FixID != "" || !strings.Contains(res.Summary, "pid 42") || !strings.Contains(res.Detail, "--bridge=false") {
+		t.Errorf("daemon without bridge: %+v", res)
+	}
+	d.BridgeAddr = "127.0.0.1:9222"
+	if res := checkBridge(ctx, env); res.FixID != "" || !strings.Contains(res.Summary, "127.0.0.1:9222") {
+		t.Errorf("daemon bridge not answering: %+v", res)
+	}
+	d.Running = false
+	if res := checkBridge(ctx, env); res.FixID != FixDaemonStart {
+		t.Errorf("no daemon: %+v", res)
+	}
+}
+
+func TestBridgeSaysWhoRunsIt(t *testing.T) {
+	env := &Env{Bridge: func(context.Context) (BridgeInfo, bool) {
+		return BridgeInfo{Addr: "127.0.0.1:9222", PID: 7, Owner: "`monoagentcli extension serve` (pid 7), systemd service mybridge.service"}, true
+	}}
+	if res := checkBridge(context.Background(), env); !strings.Contains(res.Summary, "run by `monoagentcli extension serve`") {
+		t.Errorf("owner missing: %+v", res)
+	}
+}
+
+// A unit file systemd doesn't have enabled is not "starts at login", and
+// the row says why.
+func TestAutostartExplainsANotEnabledEntry(t *testing.T) {
+	env := &Env{AutostartStatus: func(context.Context) (bool, string) { return false, "unit exists but systemd reports it disabled" }}
+	res := checkAutostart(context.Background(), env)
+	if res.Status != StatusInfo || res.FixID != FixAutostart || !strings.Contains(res.Detail, "disabled") {
+		t.Errorf("%+v", res)
 	}
 }

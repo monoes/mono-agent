@@ -116,13 +116,30 @@ func (darwinInstaller) Uninstall(ctx context.Context) error {
 	return nil
 }
 
-func (darwinInstaller) Status(context.Context) (bool, string) {
+// launchctl runs launchctl and returns its combined output; tests replace
+// it.
+var launchctl = func(ctx context.Context, args ...string) ([]byte, error) {
+	return exec.CommandContext(ctx, "launchctl", args...).CombinedOutput()
+}
+
+// Status reports the agent installed only when its plist exists and
+// launchd has it loaded (`launchctl print` knows the job) — a plist alone
+// starts nothing until the next login, or never after a failed bootstrap
+// or a `bootout`. When it doesn't count, where says why.
+func (darwinInstaller) Status(ctx context.Context) (bool, string) {
 	path, err := plistPath()
 	if err != nil {
 		return false, ""
 	}
-	_, err = os.Stat(path)
-	return err == nil, path
+	if _, err := os.Stat(path); err != nil {
+		return false, ""
+	}
+	target := launchdDomain() + "/" + Label
+	if _, err := launchctl(ctx, "print", target); err != nil {
+		return false, fmt.Sprintf("%s exists but launchd has not loaded it (launchctl print %s: %v) — run `monoagentcli daemon install` again",
+			path, target, err)
+	}
+	return true, path
 }
 
 func (darwinInstaller) Start(ctx context.Context) error {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -187,5 +188,42 @@ func TestIsExtensionInExtensionsDir(t *testing.T) {
 
 	if inExtensionsDir(emptyDir) {
 		t.Errorf("expected false for unrelated extension directory")
+	}
+}
+
+// Edge's Linux package installs /usr/bin/microsoft-edge-stable; browsers
+// elsewhere on PATH are found by name when no well-known path exists.
+func TestFindBrowserKnowsEdgeStableAndSearchesPATH(t *testing.T) {
+	if runtime.GOOS == "linux" {
+		found := false
+		for _, c := range browserCandidates() {
+			found = found || c == "/usr/bin/microsoft-edge-stable"
+		}
+		if !found {
+			t.Error("/usr/bin/microsoft-edge-stable is not a candidate")
+		}
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-less PATH lookup uses .exe names")
+	}
+	dir := t.TempDir()
+	edge := filepath.Join(dir, "microsoft-edge-stable")
+	if err := os.WriteFile(edge, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	missing := []string{filepath.Join(t.TempDir(), "google-chrome")}
+	if got := findBrowser(missing, pathNames); got != edge {
+		t.Fatalf("findBrowser = %q, want %q from PATH", got, edge)
+	}
+	// A well-known path wins over PATH.
+	known := filepath.Join(t.TempDir(), "chrome")
+	os.WriteFile(known, []byte("x"), 0o755)
+	if got := findBrowser([]string{known}, pathNames); got != known {
+		t.Fatalf("findBrowser = %q, want the well-known %q", got, known)
+	}
+	t.Setenv("PATH", t.TempDir())
+	if got := findBrowser(missing, pathNames); got != "" {
+		t.Fatalf("nothing installed: %q", got)
 	}
 }

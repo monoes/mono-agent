@@ -3,6 +3,9 @@ package health
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -26,6 +29,7 @@ const (
 	ActionNodeUpdate       = "monomind.node.update"
 	ActionNodeRemove       = "monomind.node.remove"
 	FixMonomindInstall     = "monomind.install"
+	FixMonomindShadowed    = "monomind.shadowed"
 	FixMonomindProfileInit = "monomind.profile_init"
 )
 
@@ -78,8 +82,18 @@ func monomindFixes() []Fix {
 		}},
 		{FixInfo: FixInfo{ID: FixMonomindInstall, Label: "Install / update monomind", Safety: SafetyConfirm,
 			Command: "npm install -g " + MonomindPackage}, Apply: fixMonomindInstall},
-		{FixInfo: FixInfo{ID: FixMonomindProfileInit, Label: "Set up this profile's folder for monomind", Safety: SafetyConfirm,
-			Command: "monomind init --yes --no-watch --no-install (in the profile folder)"}, Apply: fixMonomindProfileInit},
+		{FixInfo: FixInfo{ID: FixMonomindShadowed, Label: "Remove the older monomind that comes first on PATH", Safety: SafetyManual,
+			Command: "remove the monomind that `which monomind` prints (or set " + monomind.EnvOverride + " to the newer one)"},
+			Apply: func(context.Context, *Env, func(string)) error { return fmt.Errorf("this needs to be done by hand") }},
+		// It says it contacts Claude: after init, one `claude -p` turn runs
+		// in the folder on the user's own Claude account (it registers the
+		// folder with Claude Code, see monomind.InitProfile).
+		{FixInfo: FixInfo{ID: FixMonomindProfileInit,
+			Label:  "Set up this profile's folder for monomind (also sends one short prompt through your Claude account)",
+			Safety: SafetyConfirm,
+			Command: "monomind init --yes --no-watch --no-install in the profile folder, then " +
+				"claude -p \"monomind initialized\" there (one Claude Code turn on your account, so the folder shows in monomind's dashboard)"},
+			Apply: fixMonomindProfileInit},
 	}
 }
 
@@ -133,7 +147,94 @@ func checkMonomindBinary(_ context.Context, env *Env) Result {
 		}
 		return res
 	}
-	return Result{Status: StatusOK, Summary: bin}
+	res := Result{Status: StatusOK, Summary: bin}
+	if env.MonomindCandidates != nil {
+		if all := env.MonomindCandidates(); len(all) > 1 {
+			res.Detail = "also installed, not used (" + bin + " comes first): " + strings.Join(all[1:], ", ")
+		}
+	}
+	return res
+}
+
+// offerUpdate sets the fix for a monomind that needs updating. Normally
+// that is monomind.install; but when a copy under the data folder (which
+// monomind.install installs into) is already there and an older one comes
+// first on PATH, installing again changes nothing and would be offered
+// forever — the fix then names the one to remove.
+func offerUpdate(env *Env, res *Result) {
+	res.FixID = FixMonomindInstall
+	if env.MonomindCandidates == nil || env.DataDir == "" {
+		return
+	}
+	all := env.MonomindCandidates()
+	if len(all) < 2 || underDir(all[0], env.DataDir) {
+		return
+	}
+	for _, other := range all[1:] {
+		if underDir(other, env.DataDir) {
+			res.FixID = FixMonomindShadowed
+			res.FixCommand = fmt.Sprintf("remove %s (e.g. `sudo npm uninstall -g @monoes/monomindcli`, or delete it) so %s is used — "+
+				"or set %s=%s", all[0], other, monomind.EnvOverride, other)
+			res.Detail = strings.TrimSpace(res.Detail + fmt.Sprintf("\n%s comes first on PATH and shadows the newer copy monoagent installed at %s", all[0], other))
+			return
+		}
+	}
+}
+
+// underDir reports whether path is inside dir.
+func underDir(path, dir string) bool {
+	rel, err := filepath.Rel(filepath.Clean(dir), filepath.Clean(path))
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+}
+
+// binClash finds the file npm's EEXIST is about: "File exists: <path>"
+// or "npm error path <path>" (npm ERR! in npm < 10).
+var binClash = regexp.MustCompile(`(?m)(?:File exists:|npm (?:error|ERR!) path)\s+(\S+)`)
+
+// ExplainNpmClash turns npm's EEXIST on an executable — bin/monomind
+// installed by another package, typically the `monomind` wrapper — into
+// which package owns it and what to remove. output is npm's output (the
+// error keeps only its tail). Other errors come back unchanged.
+func ExplainNpmClash(err error, output []string, pkg string) error {
+	if err == nil {
+		return nil
+	}
+	text := err.Error() + "\n" + strings.Join(output, "\n")
+	if !strings.Contains(text, "EEXIST") {
+		return err
+	}
+	m := binClash.FindStringSubmatch(text)
+	if m == nil {
+		return fmt.Errorf("npm won't overwrite a file another package installed — remove the other monomind package first "+
+			"(`npm ls -g --depth=0` lists them), then run this again: %w", err)
+	}
+	path := m[1]
+	if owner := ownerPackage(path); owner != "" && owner != strings.TrimSuffix(pkg, "@latest") {
+		return fmt.Errorf("%s belongs to the npm package %q — remove it first (`npm uninstall -g %s`, with sudo if it is root-owned), "+
+			"then run this again: %w", path, owner, owner, err)
+	}
+	return fmt.Errorf("%s already exists and npm won't replace it — remove it (`rm %s`, with sudo if it is root-owned), then run this again: %w",
+		path, path, err)
+}
+
+// ownerPackage names the npm package an installed executable belongs to,
+// read from its symlink into …/node_modules/<package>/; "" when unknown.
+func ownerPackage(bin string) string {
+	target, err := os.Readlink(bin)
+	if err != nil {
+		return ""
+	}
+	parts := strings.Split(filepath.ToSlash(target), "/")
+	for i := len(parts) - 2; i >= 0; i-- {
+		if parts[i] != "node_modules" {
+			continue
+		}
+		if strings.HasPrefix(parts[i+1], "@") && i+2 < len(parts) {
+			return parts[i+1] + "/" + parts[i+2]
+		}
+		return parts[i+1]
+	}
+	return ""
 }
 
 func checkMonomindHandshake(ctx context.Context, env *Env) Result {
@@ -146,7 +247,9 @@ func checkMonomindHandshake(ctx context.Context, env *Env) Result {
 			// The `#!/usr/bin/env node` shebang could not find node.
 			return Result{Status: StatusFail, Summary: "cannot start — `node` is not on PATH", Detail: err.Error(), FixID: FixNodeInstall}
 		}
-		return Result{Status: StatusFail, Summary: "unusable — needs an update", Detail: err.Error(), FixID: FixMonomindInstall}
+		res := Result{Status: StatusFail, Summary: "unusable — needs an update", Detail: err.Error()}
+		offerUpdate(env, &res)
+		return res
 	}
 	return Result{Status: StatusOK, Summary: fmt.Sprintf("v%s (protocol v%d, need >= %s)", vi.Version, vi.V, monomind.MinMonomindVersion)}
 }
@@ -166,8 +269,10 @@ func checkMonomindCapabilities(ctx context.Context, env *Env) Result {
 		}
 	}
 	if len(missing) > 0 {
-		return Result{Status: StatusWarn, Summary: fmt.Sprintf("%d feature(s) disabled until monomind is updated", len(missing)),
-			Detail: strings.Join(missing, "\n"), FixID: FixMonomindInstall}
+		res := Result{Status: StatusWarn, Summary: fmt.Sprintf("%d feature(s) disabled until monomind is updated", len(missing)),
+			Detail: strings.Join(missing, "\n")}
+		offerUpdate(env, &res)
+		return res
 	}
 	return Result{Status: StatusOK, Summary: fmt.Sprintf("all %d optional features available", len(optionalCapabilities))}
 }
