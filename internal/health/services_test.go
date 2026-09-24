@@ -3,17 +3,18 @@ package health
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 )
 
 func TestBrowserChecks(t *testing.T) {
 	ctx := context.Background()
 	env := &Env{FindBrowser: func() string { return "" }, ExtensionInstalled: func() bool { return false },
-		ExtensionDir: func() string { return "/x/chrome-extension" }}
+		ExtensionDir: func() string { return filepath.Join(string(filepath.Separator), "x", "chrome-extension") }}
 	if res := checkBrowser(ctx, env); res.Status != StatusWarn || res.FixID != FixBrowserInstall {
 		t.Errorf("no browser: %+v", res)
 	}
-	if res := checkExtension(ctx, env); res.Status != StatusWarn || res.Detail != "load unpacked from: /x/chrome-extension" {
+	if res := checkExtension(ctx, env); res.Status != StatusWarn || res.Detail != "load unpacked from: "+filepath.Join(string(filepath.Separator), "x", "chrome-extension") {
 		t.Errorf("no extension: %+v", res)
 	}
 

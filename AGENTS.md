@@ -64,6 +64,7 @@ monoagentcli doctor                 # check everything monoagent needs; exit 1 =
 monoagentcli doctor --json          # stable report (schema "v":1): results[] with id/group/status/summary/fix
 monoagentcli doctor --fix [--yes]   # apply fixes (auto ones directly, confirm ones after asking / with --yes)
 monoagentcli doctor fix <fix-id> --json   # one fix, progress as NDJSON {"kind":"line"|"done"|"error"}
+monoagentcli setup [--yes] [--runtime claude] [--autostart] [--mcp]  # guided: fix everything, offer extras, report
 ```
 
 Groups: `core` (data folder, database, profile, vault, PATH, disk), `monomind`
