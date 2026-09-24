@@ -101,6 +101,11 @@ func NewAIStore(db *sql.DB) (*AIStore, error) {
 	return s, nil
 }
 
+// OpenAIStore returns an AIStore over db without creating or altering any
+// table, for read-only callers such as `monoagentcli doctor` (whose checks
+// must not change the database). The tables must already exist.
+func OpenAIStore(db *sql.DB) *AIStore { return &AIStore{db: db} }
+
 func (s *AIStore) initTables() error {
 	const providersSQL = `CREATE TABLE IF NOT EXISTS ai_providers (
 		id TEXT PRIMARY KEY,

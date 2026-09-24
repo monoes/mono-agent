@@ -11,8 +11,10 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/monoes/mono-agent/internal/health"
+	"github.com/monoes/mono-agent/internal/nodemgr"
 )
 
 // maxFixPasses bounds `doctor --fix`'s fix → re-check loop.
@@ -28,16 +30,41 @@ func runHealth(ctx context.Context, cfg *globalConfig, reg *health.Registry, opt
 // fixUntilStable applies the report's (non-optional) fixes and re-checks,
 // repeating while fixes uncover more to do — a fix can unblock checks that
 // were skipped (the database appears, then the profile folder is checked).
+// withoutServiceFixes is rep with the fixes of the services group taken
+// off its rows, for the passes before everything else is fixed.
+func withoutServiceFixes(rep *health.Report) *health.Report {
+	cp := *rep
+	cp.Results = make([]health.Result, len(rep.Results))
+	for i, r := range rep.Results {
+		if r.Fix != nil && strings.HasPrefix(r.Fix.ID, health.GroupServices+".") {
+			r.Fix = nil
+		}
+		cp.Results[i] = r
+	}
+	return &cp
+}
+
 func fixUntilStable(ctx context.Context, cfg *globalConfig, reg *health.Registry, opts health.Options, rep *health.Report,
 	confirm func(health.FixInfo) bool, progress func(string)) (*health.Report, []fixOutcome) {
 	var outcomes []fixOutcome
 	tried := map[string]bool{}
-	for pass := 0; pass < maxFixPasses; pass++ {
-		got := applyReportFixes(ctx, cfg, reg, rep, tried, confirm, progress)
+	// Services (the daemon) start last: while anything else still gets
+	// fixed, their fixes wait, so the daemon never comes up before the
+	// database, the profile folder and monomind are ready.
+	holdServices := true
+	for pass := 0; pass < maxFixPasses+1; pass++ {
+		view := rep
+		if holdServices {
+			view = withoutServiceFixes(rep)
+		}
+		got := applyReportFixes(ctx, cfg, reg, view, tried, confirm, progress)
 		outcomes = append(outcomes, got...)
 		rep = runHealth(ctx, cfg, reg, opts)
 		if len(got) == 0 {
-			break
+			if !holdServices {
+				break
+			}
+			holdServices = false
 		}
 	}
 	return rep, outcomes
@@ -55,6 +82,15 @@ func newDoctorCmd(cfg *globalConfig) *cobra.Command {
 	var deep, fix, yes, projects bool
 
 	cmd := &cobra.Command{
+		// Replaces the root's pre-run, keeping only what it does to this
+		// process: the managed Node on PATH, which the monomind checks need
+		// (monomind starts with `#!/usr/bin/env node`). The root's Claude
+		// first-run setup is left out, since it creates ~/.monoagent and
+		// copies skills into ~/.claude, and a check must not change
+		// anything. `doctor fix` inherits this one.
+		PersistentPreRun: func(cmd *cobra.Command, _ []string) {
+			nodemgr.Activate(cmd.Context())
+		},
 		Use:   "doctor",
 		Short: "Check (and fix) everything monoagent needs on this machine",
 		Long: `Runs health checks over every component monoagent depends on and
@@ -187,9 +223,11 @@ func fixPrompter(cmd *cobra.Command, yes, asJSON bool) func(health.FixInfo) bool
 	}
 }
 
+// stdinIsTerminal reports whether a person can answer on stdin. A character
+// device is not enough: /dev/null is one, and a prompt read from it gets
+// end-of-file, which setup took as "no" while looking like a normal run.
 func stdinIsTerminal() bool {
-	fi, err := os.Stdin.Stat()
-	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+	return term.IsTerminal(int(os.Stdin.Fd()))
 }
 
 // applyReportFixes applies every distinct fix the report offers, in report

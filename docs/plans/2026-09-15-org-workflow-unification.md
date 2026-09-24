@@ -1091,6 +1091,14 @@ What the runs taught, beyond the checks:
   no org involved is a counted loop. Live: that self-loop ran 4,629 times in 20 s on master and
   stops after 9 runs (hop 9 refused) with this change. The chain sits under the reserved
   `monoagent_trace` key in webhook trigger data, so a payload's own `trace` field is untouched.
+  Review (#130) reworked it before merge: a `webhook_in` crossing takes the signed hop as is
+  instead of the chain's recorded maximum, since a fan-out's requests all carry the sender's
+  hop (the first version refused a 7-item fan-out to a local webhook) and is not
+  repeat-limited; the token goes only to this machine unless a node sets `propagate_trace`,
+  never follows a cross-host redirect, and is set after the auth headers; a `null` webhook body
+  no longer panics; a key other users can read is refused. Webhook crossings use the default
+  limits, so an org that raised `max_hops` still stops at 9 through a webhook; tokens do not
+  expire (rotate by deleting `~/.monoagent/trace.key` and restarting the daemon).
   Remaining: a system that drops the header breaks the chain (nothing can follow it through),
   and a role calling a webhook from Bash bypasses grants altogether (C-2); org budgets
   (`budget_usd`/`budget_tokens`) are the backstop there. `workflow run` and schedules are

@@ -162,6 +162,7 @@ func StreamCmd(cmd *exec.Cmd, progress func(string)) error {
 		}
 		io.Copy(io.Discard, pr)
 	}()
+	isolate(cmd)
 	err := cmd.Run()
 	pw.Close()
 	<-done

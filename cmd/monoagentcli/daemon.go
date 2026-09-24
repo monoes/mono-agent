@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -47,6 +48,18 @@ func newDaemonCmd(cfg *globalConfig) *cobra.Command {
 		Example: "  monoagentcli daemon\n  monoagentcli daemon --api=false\n  monoagentcli daemon --api-addr 127.0.0.1:9400 --allow-mutations\n" +
 			"  monoagentcli daemon --bridge=false\n  monoagentcli daemon install",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// One daemon per home, taken before anything starts: two would
+			// both fire the same schedules and run every workflow twice.
+			// The OS drops the lock if this process dies.
+			releaseLock, err := daemonhb.Lock()
+			if errors.Is(err, daemonhb.ErrLocked) {
+				return fmt.Errorf("%w (lock %s)", err, daemonhb.LockPath())
+			}
+			if err != nil {
+				return fmt.Errorf("daemon lock: %w", err)
+			}
+			defer releaseLock()
+
 			engine, closeBrowsers, err := buildEngine(cfg, true)
 			if err != nil {
 				return fmt.Errorf("build engine: %w", err)
