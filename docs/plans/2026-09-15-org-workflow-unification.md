@@ -1081,8 +1081,28 @@ What the runs taught, beyond the checks:
   chain (a later hop), so outside data lifted into an item cannot pick the chain either.
   Consequences: in a manual or scheduled run a second org node no longer continues the first
   one's chain (one run is a finite DAG, so hop control loses nothing; the trace view splits),
-  and a loop that passes through a webhook, `workflow run` or a schedule always starts fresh,
-  bounded only by `max_repeats` and the grant caps. Still
+  and a loop that passed through a webhook, `workflow run` or a schedule always started fresh,
+  bounded only by `max_repeats` and the grant caps. **Fixed for webhooks 2026-09-24**
+  (`feat/signed-trace`): the HTTP request node sends the run's chain as `X-Monoagent-Trace`,
+  HMAC-signed over chain and hop with a per-machine key (`~/.monoagent/trace.key`,
+  `internal/tracesig`); the webhook server continues a chain only from a header that verifies,
+  records the crossing as `webhook_in` and refuses the request (429) past the hop limit, and
+  gives every other webhook run a fresh chain, so even a workflow calling its own webhook with
+  no org involved is a counted loop. Live: that self-loop ran 4,629 times in 20 s on master and
+  stops after 9 runs (hop 9 refused) with this change. The chain sits under the reserved
+  `monoagent_trace` key in webhook trigger data, so a payload's own `trace` field is untouched.
+  Review (#130) reworked it before merge: a `webhook_in` crossing takes the signed hop as is
+  instead of the chain's recorded maximum, since a fan-out's requests all carry the sender's
+  hop (the first version refused a 7-item fan-out to a local webhook) and is not
+  repeat-limited; the token goes only to this machine unless a node sets `propagate_trace`,
+  never follows a cross-host redirect, and is set after the auth headers; a `null` webhook body
+  no longer panics; a key other users can read is refused. Webhook crossings use the default
+  limits, so an org that raised `max_hops` still stops at 9 through a webhook; tokens do not
+  expire (rotate by deleting `~/.monoagent/trace.key` and restarting the daemon).
+  Remaining: a system that drops the header breaks the chain (nothing can follow it through),
+  and a role calling a webhook from Bash bypasses grants altogether (C-2); org budgets
+  (`budget_usd`/`budget_tokens`) are the backstop there. `workflow run` and schedules are
+  not responses to anything, so they are not loop links. Still
   open on monomind's side: native `org_send` does not stamp the sender's trace
   (monoes/monomind#327).
 - **monomind stops a fence runner after 10 tool-call rounds per message** and says so on the bus

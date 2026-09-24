@@ -74,6 +74,7 @@ func newOrgServices(db *storage.Database, engine *workflow.WorkflowEngine) *orgS
 		logf: func(format string, args ...interface{}) { fmt.Fprintf(os.Stderr, format+"\n", args...) },
 	}
 	engine.RegisterTriggerSource(orgbridge.TriggerNodeType, s.trigger)
+	engine.SetTraceAdmitter(s.admitWebhookTrace)
 	s.receiver = &orgbridge.Receiver{
 		DB: db.DB, Store: newHybridStore(db), Mux: mux, Resume: engine.ResumeExecution, Logf: s.logf,
 		RootOf: func(profileID string) string { return profiledir.Root(db.DB, profileID) },
@@ -209,4 +210,27 @@ func workflowFacts(ctx context.Context, db *storage.Database, workflowID string)
 		outbound = strings.Join(out, ", ")
 	}
 	return fmt.Sprintf("workflow %q (%s); nodes: %s; outbound nodes: %s", wf.Name, wf.ID, strings.Join(types, ", "), outbound)
+}
+
+// admitWebhookTrace records a webhook request that carried a verified
+// signed trace (internal/tracesig) as a crossing on its chain, so a loop
+// that leaves through an HTTP request and comes back through a webhook
+// climbs like any other and stops at the hop limit. The limits are the
+// defaults: the target is a workflow, not an org with a run_config.
+func (s *orgServices) admitWebhookTrace(ctx context.Context, workflowID, chain string, hop int) (int, string, error) {
+	profile := "default"
+	if wf, err := newHybridStore(s.db).GetWorkflow(ctx, workflowID); err == nil && wf != nil && wf.ProfileID != "" {
+		profile = wf.ProfileID
+	}
+	adm, err := orgbridge.NewLedger(s.db.DB).Admit(ctx, orgbridge.Call{
+		ProfileID: profile, Trace: orgbridge.Trace{ChainID: chain, Hop: hop},
+		Direction: orgbridge.DirWebhookIn, WorkflowID: workflowID,
+	}, orgbridge.Limits{})
+	if err != nil {
+		return 0, "", err
+	}
+	if !adm.OK() {
+		return 0, adm.Reason, nil
+	}
+	return adm.Trace.Hop, "", nil
 }

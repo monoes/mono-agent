@@ -28,6 +28,8 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
+
+	"github.com/monoes/mono-agent/internal/tracesig"
 )
 
 // webhookTLSCertEnv/webhookTLSKeyEnv let an operator supply a real
@@ -62,6 +64,73 @@ type WebhookServer struct {
 	routes         map[string]*WebhookRegistration // path → registration
 	server         *http.Server
 	logger         zerolog.Logger
+	// traceAdmit records a signed trace's crossing into a webhook run (the
+	// daemon wires it to the org ledger). nil: signed traces are ignored and
+	// every webhook run starts a fresh chain.
+	traceAdmit TraceAdmitter
+	// keyErrorOnce makes an unusable trace key an error in the log once,
+	// rather than a warning on every request: without the key, loops
+	// through webhooks are not counted.
+	keyErrorOnce sync.Once
+}
+
+// TraceAdmitter records that a request carrying a verified trace on chain
+// at hop is starting workflowID, and decides whether it may: it returns the
+// hop the run is at, or a refusal (e.g. the chain reached its hop limit).
+type TraceAdmitter func(ctx context.Context, workflowID, chain string, hop int) (admittedHop int, refusal string, err error)
+
+// SetTraceAdmitter installs the admitter for signed traces (see
+// TraceAdmitter).
+func (s *WebhookServer) SetTraceAdmitter(fn TraceAdmitter) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.traceAdmit = fn
+}
+
+// admitTrace works out the chain a webhook run is on. A verified
+// X-Monoagent-Trace header continues its chain, recorded through the
+// admitter; anything else (no header, one that does not verify) starts a
+// fresh chain at hop 0. Every webhook run is on a chain, so a workflow that
+// calls its own webhook, or another that calls back, is a loop the ledger
+// sees from its second request on, even when nothing started it from an
+// org. A non-zero status is a refusal to send back. Without an admitter (no
+// daemon ledger) no chain is given, since nothing would count it.
+func (s *WebhookServer) admitTrace(ctx context.Context, workflowID, token string) (trace map[string]interface{}, status int, msg string) {
+	s.mu.RLock()
+	admit := s.traceAdmit
+	s.mu.RUnlock()
+	if admit == nil {
+		return nil, 0, ""
+	}
+	fresh := map[string]interface{}{"chain_id": tracesig.NewChainID(), "hop": 0}
+	if token == "" {
+		return fresh, 0, ""
+	}
+	key, err := tracesig.Key()
+	if err != nil {
+		s.keyErrorOnce.Do(func() {
+			s.logger.Error().Err(err).Msg("webhook: the trace key is unusable, so loops through webhooks are not counted until it is fixed (see ~/.monoagent/trace.key)")
+		})
+		return fresh, 0, ""
+	}
+	chain, hop, ok := tracesig.Verify(key, token)
+	if !ok {
+		// Not signed here (or by an older key): an outside caller cannot
+		// choose the chain, so the run starts a fresh one.
+		s.logger.Debug().Str("workflow_id", workflowID).Msg("webhook: unverified trace header ignored")
+		return fresh, 0, ""
+	}
+	admitted, refusal, err := admit(ctx, workflowID, chain, hop)
+	if err != nil {
+		// Fail closed: continuing without the ledger would let a loop
+		// through unrecorded.
+		s.logger.Error().Err(err).Str("workflow_id", workflowID).Msg("webhook: could not record the trace crossing")
+		return nil, http.StatusServiceUnavailable, "could not record this request's chain; try again"
+	}
+	if refusal != "" {
+		return nil, http.StatusTooManyRequests, refusal
+	}
+	return map[string]interface{}{"chain_id": chain, "hop": admitted}, 0, ""
 }
 
 // NewWebhookServer creates a server that will listen on addr (e.g. ":9321").
@@ -438,6 +507,23 @@ func (s *WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON body: %s", err.Error()))
 			return
 		}
+	}
+
+	// A body of `null` unmarshals to a nil map; the run still gets an empty
+	// item (and a chain) rather than a panic on the assignment below.
+	if data == nil {
+		data = make(map[string]interface{})
+	}
+	// The run's chain comes only from a verified signed header, never from
+	// the body: whatever the body put under the reserved key is dropped.
+	delete(data, WebhookTraceKey)
+	trace, status, msg := s.admitTrace(r.Context(), reg.WorkflowID, r.Header.Get(tracesig.Header))
+	if status != 0 {
+		writeJSONError(w, status, msg)
+		return
+	}
+	if trace != nil {
+		data[WebhookTraceKey] = trace
 	}
 
 	item := NewItem(data)

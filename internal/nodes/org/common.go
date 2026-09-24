@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strings"
 
 	"github.com/monoes/mono-agent/internal/orgbridge"
 	"github.com/monoes/mono-agent/internal/orgdesign"
@@ -66,55 +65,41 @@ func senderFor(root, org string, input workflow.NodeInput) string {
 }
 
 // incomingTrace continues the chain of whatever started this execution.
-// Only a run mono-agent's org side started carries a trace it wrote. Any
-// other run (a webhook, a manual run with input, a schedule) starts a fresh
-// chain whatever `trace` its data holds: otherwise a webhook caller could
-// join someone else's chain and push its hop to the limit, or keep a loop
-// on a chain of its choosing.
+// Only a run whose trigger data carries a trace mono-agent wrote itself
+// (workflow.CarriesChain: org-started runs, and webhook runs whose trace the
+// server set from a verified signed header) continues a chain. Any other
+// run (a manual run with input, a schedule) starts a fresh chain whatever
+// `trace` its data holds: otherwise a caller could join someone else's
+// chain and push its hop to the limit, or keep a loop on a chain of its
+// choosing.
 //
-// In an org-started run the chain is the one in the trigger data, which
-// mono-agent wrote. The node's first input item may carry a later hop on
-// that chain (a previous org node's output), and then the higher hop is
-// taken; a trace on the item naming another chain is ignored, since items
-// can hold outside data (an HTTP response lifted to the top level) and that
-// would let the outside pick the chain again. With no trace in the trigger
-// data the item's is used, and failing both a fresh chain starts. Losing
-// the chain would start a new one on every loop iteration and defeat the
-// hop limit (U10).
+// The chain is the one in the trigger data. The node's first input item
+// may carry a later hop on that chain (a previous org node's output), and
+// then the higher hop is taken; a trace on the item naming another chain is
+// ignored, since items can hold outside data (an HTTP response lifted to
+// the top level) and that would let the outside pick the chain again. With
+// no trace in the trigger data the item's is used (except in a webhook run,
+// whose first item is the request body), and failing both a fresh chain
+// starts. Losing the chain would start a new one on every loop
+// iteration and defeat the hop limit (U10).
 func incomingTrace(ctx context.Context, item workflow.Item) orgbridge.Trace {
-	if !workflow.OrgStarted(workflow.TriggerTypeFrom(ctx)) {
+	tt := workflow.TriggerTypeFrom(ctx)
+	if !workflow.CarriesChain(tt) {
 		return orgbridge.Trace{}
 	}
-	fromItem, itemOK := traceField(item.JSON)
-	fromTrigger, triggerOK := traceField(workflow.TriggerDataFrom(ctx))
+	itemChain, itemHop, itemOK := workflow.ParseTrace(item.JSON)
+	trigChain, trigHop, triggerOK := workflow.ParseTraceAt(workflow.TriggerDataFrom(ctx), workflow.TraceKey(tt))
 	switch {
-	case triggerOK && itemOK && fromItem.ChainID == fromTrigger.ChainID && fromItem.Hop > fromTrigger.Hop:
-		return fromItem
+	case triggerOK && itemOK && itemChain == trigChain && itemHop > trigHop:
+		return orgbridge.Trace{ChainID: itemChain, Hop: itemHop}
 	case triggerOK:
-		return fromTrigger
-	case itemOK:
-		return fromItem
+		return orgbridge.Trace{ChainID: trigChain, Hop: trigHop}
+	case itemOK && tt != workflow.TriggerNodeTypeWebhook:
+		// A webhook's first item is the request body: its `trace` is the
+		// sender's data, never a chain.
+		return orgbridge.Trace{ChainID: itemChain, Hop: itemHop}
 	}
 	return orgbridge.Trace{}
-}
-
-func traceField(m map[string]interface{}) (orgbridge.Trace, bool) {
-	t, ok := m["trace"].(map[string]interface{})
-	if !ok {
-		return orgbridge.Trace{}, false
-	}
-	chain, _ := t["chain_id"].(string)
-	var hop int
-	switch h := t["hop"].(type) {
-	case float64:
-		hop = int(h)
-	case int:
-		hop = h
-	}
-	if strings.HasPrefix(chain, "chn_") && hop >= 0 {
-		return orgbridge.Trace{ChainID: chain, Hop: hop}, true
-	}
-	return orgbridge.Trace{}, false
 }
 
 // orgLimits reads run_config.max_hops / max_repeats from the org. The org

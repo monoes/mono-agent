@@ -1,6 +1,9 @@
 package workflow
 
-import "context"
+import (
+	"context"
+	"strings"
+)
 
 type triggerKey struct{}
 
@@ -32,21 +35,116 @@ func TriggerTypeFrom(ctx context.Context) string {
 	return info.triggerType
 }
 
-// OrgStarted reports whether a run with this trigger type was started by
-// mono-agent's org side (a granted call, an automation-role message, a
-// trigger.org event), the only runs whose trigger data carries a chain
-// trace mono-agent wrote itself. A webhook body, a manual run's input or a
-// schedule can put any `trace` object in their data.
-func OrgStarted(triggerType string) bool {
+// CarriesChain reports whether a run with this trigger type has a chain
+// trace mono-agent itself wrote into its trigger data (under TraceKey): a
+// run the org side started (a granted call, an automation-role message, a
+// trigger.org event), or a webhook run, whose WebhookTraceKey field the
+// webhook server always sets itself, from a verified X-Monoagent-Trace
+// header (internal/tracesig), after removing whatever the body said. A
+// manual run's input or a schedule's data can hold anything, so those start
+// a fresh chain.
+func CarriesChain(triggerType string) bool {
 	switch triggerType {
 	// A trigger.org run is stored with its node type; org_event only ever
 	// appears inside trigger data, so it is not an execution trigger type.
-	case TriggerTypeOrgTool, TriggerTypeOrgMessage, TriggerNodeTypeOrg:
+	case TriggerTypeOrgTool, TriggerTypeOrgMessage, TriggerNodeTypeOrg, TriggerNodeTypeWebhook:
 		return true
 	}
 	return false
 }
 
+// WebhookTraceKey is where a webhook run's trigger data holds its chain.
+// Not `trace`: a webhook body is someone else's payload and may well have
+// a field of that name, which must reach the workflow untouched.
+const WebhookTraceKey = "monoagent_trace"
+
+// TraceKey is the trigger-data field that holds a run's chain for its
+// trigger type.
+func TraceKey(triggerType string) string {
+	if triggerType == TriggerNodeTypeWebhook {
+		return WebhookTraceKey
+	}
+	return "trace"
+}
+
+// ParseTrace reads a `trace` object ({chain_id, hop}) from m, as items and
+// org-started trigger data carry it.
+func ParseTrace(m map[string]interface{}) (chainID string, hop int, ok bool) {
+	return ParseTraceAt(m, "trace")
+}
+
+// ParseTraceAt reads a {chain_id, hop} object from m[key]. The chain id
+// must look like one and the hop be a non-negative whole number.
+func ParseTraceAt(m map[string]interface{}, key string) (chainID string, hop int, ok bool) {
+	t, isMap := m[key].(map[string]interface{})
+	if !isMap {
+		return "", 0, false
+	}
+	chain, _ := t["chain_id"].(string)
+	switch h := t["hop"].(type) {
+	case float64:
+		if h != float64(int(h)) || h < 0 || h > 1<<30 {
+			return "", 0, false
+		}
+		hop = int(h)
+	case int:
+		hop = h
+	default:
+		return "", 0, false
+	}
+	if !strings.HasPrefix(chain, "chn_") || hop < 0 {
+		return "", 0, false
+	}
+	return chain, hop, true
+}
+
+// RunTrace is the chain the running execution belongs to, from its trigger
+// data, when its trigger type carries one (CarriesChain). Nodes that send
+// work out of mono-agent (the HTTP request node) pass it on signed.
+func RunTrace(ctx context.Context) (chainID string, hop int, ok bool) {
+	tt := TriggerTypeFrom(ctx)
+	if !CarriesChain(tt) {
+		return "", 0, false
+	}
+	return ParseTraceAt(TriggerDataFrom(ctx), TraceKey(tt))
+}
+
+// TriggerNodeTypeWebhook is the webhook trigger's node type, the trigger
+// type of a run it fires.
+const TriggerNodeTypeWebhook = "trigger.webhook"
+
 // TriggerNodeTypeOrg is the trigger.org node type (orgbridge.TriggerNodeType,
 // which this package cannot import), the trigger type of a run it fires.
 const TriggerNodeTypeOrg = "trigger.org"
+
+// withoutTrace returns a copy of data without its field key.
+func withoutTrace(data map[string]interface{}, key string) map[string]interface{} {
+	out := make(map[string]interface{}, len(data))
+	for k, v := range data {
+		if k != key {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// snapshotTrigger copies trigger data for the run's context, including the
+// chain objects, so a node that edits its input item in place (the trigger
+// node's output item shares the map) cannot rewrite the chain the run signs.
+func snapshotTrigger(data map[string]interface{}) map[string]interface{} {
+	if data == nil {
+		return nil
+	}
+	out := make(map[string]interface{}, len(data))
+	for k, v := range data {
+		if m, ok := v.(map[string]interface{}); ok && (k == "trace" || k == WebhookTraceKey) {
+			cp := make(map[string]interface{}, len(m))
+			for mk, mv := range m {
+				cp[mk] = mv
+			}
+			v = cp
+		}
+		out[k] = v
+	}
+	return out
+}
