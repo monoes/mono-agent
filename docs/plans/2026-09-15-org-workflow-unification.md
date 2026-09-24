@@ -1052,7 +1052,9 @@ What the runs taught, beyond the checks:
   8 × (`max_hops` − the hop its last message arrived at) calls on one chain, 64 at the defaults
   from hop 0, and a loop whose way back is never recorded here (monomind's native `org_send`, a
   sync result) is still refused, after 64 calls instead of 8. Two roles alternating on one
-  chain still climb one hop per call, since each counts in the other's maximum. Refused rows
+  chain first still climbed one hop per call, since each counted in the other's maximum;
+  **fixed 2026-09-24** (`fix/org-chain-trust`): every granted call on a chain, by any role, is
+  left out of the maximum and they are pooled, one hop per 8 together. Refused rows
   no longer count in the maximum (one forged hop=999 crossing used to kill a chain for every
   caller), and a forged header hop is clamped before arithmetic (MaxInt64 used to wrap).
   A loop back through a recorded crossing (`workflow_out`) climbs from that row as before. The
@@ -1068,8 +1070,13 @@ What the runs taught, beyond the checks:
   `org.send`/`org.ask`/`org.run` read the trace only from their first input item, so any node
   in between that dropped `trace` started a new chain; they now fall back to the execution's
   trigger data. As a result several org nodes in one execution share the trigger's chain and
-  climb one hop each. Still open on monomind's side: native `org_send` does not stamp the
-  sender's trace (monoes/monomind#327), and a webhook caller can choose the chain it starts on.
+  climb one hop each. A webhook caller could also choose the chain its run starts on (the body
+  is the trigger data and first item, `trace` included), join someone else's chain and push
+  it to the limit; **fixed 2026-09-24** (`fix/org-chain-trust`): org nodes continue a chain
+  only in a run the org side started, judged by the execution's trigger type, which mono-agent
+  sets (`org_tool`, `org_message`, `trigger.org`), never the payload's `trigger_type`. Still
+  open on monomind's side: native `org_send` does not stamp the sender's trace
+  (monoes/monomind#327).
 - **monomind stops a fence runner after 10 tool-call rounds per message** and says so on the bus
   (`tool-call round cap (10) reached — dropping 1 pending tool call(s)`). A task needing more
   calls needs another message. A configurable cap is requested in monoes/monomind#326.

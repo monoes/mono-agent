@@ -71,7 +71,16 @@ func senderFor(root, org string, input workflow.NodeInput) string {
 // node in between may not have passed `trace` through), else a fresh
 // chain. Losing it would start a new chain on every loop iteration and
 // defeat the hop limit (U10).
+//
+// Only a run mono-agent's org side started carries a trace it wrote. Any
+// other run (a webhook, a manual run with input, a schedule) starts a fresh
+// chain whatever `trace` its data holds: otherwise a webhook caller could
+// join someone else's chain and push its hop to the limit, or keep a loop
+// on a chain of its choosing.
 func incomingTrace(ctx context.Context, item workflow.Item) orgbridge.Trace {
+	if !workflow.OrgStarted(workflow.TriggerTypeFrom(ctx)) {
+		return orgbridge.Trace{}
+	}
 	if tr, ok := traceField(item.JSON); ok {
 		return tr
 	}
