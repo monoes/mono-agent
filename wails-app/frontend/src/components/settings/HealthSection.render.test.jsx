@@ -2,7 +2,7 @@
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import '@testing-library/jest-dom/vitest'
-import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, cleanup, within } from '@testing-library/react'
 
 const mockRunHealthCheck = vi.fn()
 const mockRunHealthFix = vi.fn()
@@ -30,6 +30,8 @@ const report = {
     { id: 'monomind.node', group: 'monomind', title: 'Node.js', status: 'fail', summary: 'not found',
       fix: { id: 'monomind.node.install', label: 'Download Node', safety: 'confirm', command: 'monoagentcli nodejs install' } },
     { id: 'runtimes.agents', group: 'runtimes', title: 'AI agent runtimes', status: 'ok', summary: '1 of 2' },
+    { id: 'monomind.binary', group: 'monomind', title: 'monomind', status: 'ok', summary: '/bin/monomind',
+      actions: [{ id: 'monomind.node.update', label: 'Update managed Node.js', safety: 'confirm', optional: true, command: 'monoagentcli nodejs update' }] },
     { id: 'runtimes.codex', group: 'runtimes', parent: 'runtimes.agents', title: 'codex', status: 'info', summary: 'not installed',
       fix: { id: 'runtimes.install:codex', label: 'Install codex', safety: 'confirm', optional: true } },
   ],
@@ -61,7 +63,8 @@ describe('HealthSection', () => {
   it('runs an auto fix directly and re-checks when it is done', async () => {
     mockRunHealthFix.mockResolvedValue('{"ok":true}')
     render(<HealthSection />)
-    fireEvent.click(await screen.findByText('Create / migrate database'))
+    await screen.findByTestId('setup-steps')
+    fireEvent.click(within(document.querySelector('[data-health-row="core.db"]')).getByText('Create / migrate database'))
     await waitFor(() => expect(mockRunHealthFix).toHaveBeenCalledWith('core.db.migrate'))
     expect(mockConfirm).not.toHaveBeenCalled()
     listeners['health:fixProgress']({ fix_id: 'core.db.migrate', kind: 'line', message: 'applying migrations' })
@@ -73,9 +76,22 @@ describe('HealthSection', () => {
   it('asks before a confirm fix and does nothing when declined', async () => {
     mockConfirm.mockResolvedValue(false)
     render(<HealthSection />)
-    fireEvent.click(await screen.findByText('Download Node'))
+    await screen.findByTestId('setup-steps')
+    fireEvent.click(within(document.querySelector('[data-health-row="monomind.node"]')).getByText('Download Node'))
     await waitFor(() => expect(mockConfirm).toHaveBeenCalled())
     expect(mockRunHealthFix).not.toHaveBeenCalled()
+  })
+
+  it('lists the setup steps and runs a row action after confirming', async () => {
+    mockConfirm.mockResolvedValue(true)
+    mockRunHealthFix.mockResolvedValue('{"ok":true}')
+    render(<HealthSection />)
+    const steps = await screen.findByTestId('setup-steps')
+    expect(steps).toHaveTextContent('settings.health.finishSetup')
+    expect(steps).toHaveTextContent('Create / migrate database')
+    fireEvent.click(screen.getByText('Update managed Node.js'))
+    await waitFor(() => expect(mockRunHealthFix).toHaveBeenCalledWith('monomind.node.update'))
+    expect(mockConfirm).toHaveBeenCalled()
   })
 
   it('explains a missing CLI instead of showing checks', async () => {
@@ -88,7 +104,9 @@ describe('HealthSection', () => {
   it('shows the command, runs the fix on yes, and does not re-check after a no', async () => {
     mockConfirm.mockResolvedValueOnce(false)
     render(<HealthSection />)
-    fireEvent.click(await screen.findByText('Download Node'))
+    await screen.findByTestId('setup-steps')
+    const nodeRow = () => within(document.querySelector('[data-health-row="monomind.node"]'))
+    fireEvent.click(nodeRow().getByText('Download Node'))
     await waitFor(() => expect(mockConfirm).toHaveBeenCalledTimes(1))
     const [body] = mockConfirm.mock.calls[0]
     render(body)
@@ -98,7 +116,7 @@ describe('HealthSection', () => {
 
     mockConfirm.mockResolvedValueOnce(true)
     mockRunHealthFix.mockResolvedValue('{"ok":true}')
-    fireEvent.click(screen.getByText('Download Node'))
+    fireEvent.click(nodeRow().getByText('Download Node'))
     await waitFor(() => expect(mockRunHealthFix).toHaveBeenCalledWith('monomind.node.install'))
   })
 
@@ -127,7 +145,8 @@ describe('HealthSection', () => {
   it('does not start a fix that is already running, and holds "Fix issues" meanwhile', async () => {
     mockRunHealthFix.mockResolvedValue('{"ok":true}')
     render(<HealthSection />)
-    const button = await screen.findByText('Create / migrate database')
+    await screen.findByTestId('setup-steps')
+    const button = within(document.querySelector('[data-health-row="core.db"]')).getByText('Create / migrate database')
     fireEvent.click(button)
     await waitFor(() => expect(mockRunHealthFix).toHaveBeenCalledTimes(1))
     fireEvent.click(button)

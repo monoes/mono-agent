@@ -23,6 +23,8 @@ const (
 	CheckMonomindProfileInit  = "monomind.profile_init"
 
 	FixNodeInstall         = "monomind.node.install"
+	ActionNodeUpdate       = "monomind.node.update"
+	ActionNodeRemove       = "monomind.node.remove"
 	FixMonomindInstall     = "monomind.install"
 	FixMonomindProfileInit = "monomind.profile_init"
 )
@@ -60,6 +62,20 @@ func monomindFixes() []Fix {
 	return []Fix{
 		{FixInfo: FixInfo{ID: FixNodeInstall, Label: "Download a managed Node.js (latest LTS)", Safety: SafetyConfirm,
 			Command: "monoagentcli nodejs install"}, Apply: fixNodeInstall},
+		{FixInfo: FixInfo{ID: ActionNodeUpdate, Label: "Update managed Node.js", Safety: SafetyConfirm,
+			Command: "monoagentcli nodejs update", Optional: true}, Apply: func(ctx context.Context, env *Env, progress func(string)) error {
+			if env.UpdateNode == nil {
+				return fmt.Errorf("not available here")
+			}
+			return env.UpdateNode(ctx, progress)
+		}},
+		{FixInfo: FixInfo{ID: ActionNodeRemove, Label: "Remove managed Node.js", Safety: SafetyConfirm,
+			Command: "monoagentcli nodejs remove --yes", Optional: true}, Apply: func(ctx context.Context, env *Env, progress func(string)) error {
+			if env.RemoveNode == nil {
+				return fmt.Errorf("not available here")
+			}
+			return env.RemoveNode(ctx, progress)
+		}},
 		{FixInfo: FixInfo{ID: FixMonomindInstall, Label: "Install / update monomind", Safety: SafetyConfirm,
 			Command: "npm install -g " + MonomindPackage}, Apply: fixMonomindInstall},
 		{FixInfo: FixInfo{ID: FixMonomindProfileInit, Label: "Set up this profile's folder for monomind", Safety: SafetyConfirm,
@@ -72,11 +88,20 @@ func checkNode(ctx context.Context, env *Env) Result {
 		return Result{Status: StatusSkip, Summary: "not available"}
 	}
 	sysPath, sysVer, sysFound := env.SystemNode(ctx)
+	managedV, managedP, managed := env.ManagedNode()
 	if sysFound && nodemgr.Suitable(sysVer) {
-		return Result{Status: StatusOK, Summary: fmt.Sprintf("v%s (%s)", sysVer, sysPath)}
+		res := Result{Status: StatusOK, Summary: fmt.Sprintf("v%s (%s)", sysVer, sysPath)}
+		if managed {
+			// A managed Node is installed but unused; it can go.
+			res.Detail = fmt.Sprintf("a managed Node v%s is also installed (%s) but not used", managedV, managedP)
+			res.ActionIDs = []string{ActionNodeUpdate, ActionNodeRemove}
+		}
+		return res
 	}
-	if v, p, ok := env.ManagedNode(); ok {
-		res := Result{Status: StatusOK, Summary: fmt.Sprintf("v%s, managed by monoagent (%s)", v, p)}
+	if managed {
+		v, p := managedV, managedP
+		// It is the Node in use: update, but no remove (that would break monomind).
+		res := Result{Status: StatusOK, Summary: fmt.Sprintf("v%s, managed by monoagent (%s)", v, p), ActionIDs: []string{ActionNodeUpdate}}
 		if sysFound {
 			res.Detail = fmt.Sprintf("system Node v%s (%s) is older than %s and is not used", sysVer, sysPath, nodemgr.MinVersion)
 		}

@@ -120,6 +120,13 @@
       "statusBroken": "Configuración incompleta",
       "statusIssues": "Asuntos: {{n}}",
       "openAgents": "Instalar o actualizar en la página de agentes IA",
+      "finishSetup": "Terminar la configuración",
+      "stepsToFix": "Pasos para arreglar",
+      "stepAuto": "automático",
+      "stepAsks": "pregunta antes",
+      "stepManual": "a mano",
+      "stepRuntime": "Instala un runtime de agentes IA (Claude Code, Codex, …)",
+      "openAgentsShort": "Abrir agentes IA",
       "cancel": "Cancelar"
     }
   },

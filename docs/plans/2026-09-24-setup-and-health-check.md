@@ -12,6 +12,12 @@ protocol deliberately doesn't probe auth); runtime installs, start-at-login,
 MCP registration and monomind `--install` fixes are *optional* fixes that
 `doctor --fix` never applies.
 
+Known limits: the check titles, summaries and fix labels come from the CLI in
+English (the GUI's own text is translated, en + es). macOS and Windows code
+paths are cross-compiled and unit-tested (managed Node's zip/tar layouts,
+archive names) but autostart (launchd/schtasks), detached daemon start and
+the vendor install scripts have only run on Linux.
+
 ## Goal
 
 One place that answers "is everything mono-agent and monomind need installed,

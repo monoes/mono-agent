@@ -359,6 +359,9 @@ func printDoctorReport(w io.Writer, rep *health.Report, fixed bool) {
 			}
 			fmt.Fprintf(w, "      %s\n", line)
 		}
+		for _, a := range r.Actions {
+			fmt.Fprintf(w, "      also: %s — monoagentcli doctor fix %s\n", a.Label, a.ID)
+		}
 	}
 	flushFolds()
 	s := rep.Summary

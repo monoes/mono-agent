@@ -42,6 +42,17 @@ type Manager struct {
 	HTTP    *http.Client
 	GOOS    string
 	GOARCH  string
+
+	// probe runs `<node> --version`; tests replace it to exercise another
+	// OS's install flow (e.g. Windows' node.exe) on this machine.
+	probe func(ctx context.Context, node string) (string, error)
+}
+
+func (m *Manager) nodeVersion(ctx context.Context, node string) (string, error) {
+	if m.probe != nil {
+		return m.probe(ctx, node)
+	}
+	return NodeVersion(ctx, node)
 }
 
 // New returns a Manager for the current user and platform.

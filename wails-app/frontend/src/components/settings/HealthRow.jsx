@@ -19,7 +19,8 @@ function hasProblem(row) {
   return row.status === 'warn' || row.status === 'fail' || (row.children || []).some(hasProblem)
 }
 
-export function FixButton({ fix, state, onFix }) {
+// quiet: a row action (not a fix) — no "optional" tag, lighter styling.
+export function FixButton({ fix, state, onFix, quiet }) {
   const { t } = useTranslation()
   const running = state?.running
   const manual = fix.safety === 'manual'
@@ -32,15 +33,15 @@ export function FixButton({ fix, state, onFix }) {
       style={{
         ...mono, fontSize: 10, display: 'inline-flex', alignItems: 'center', gap: 5,
         padding: '3px 10px', borderRadius: 4, cursor: running ? 'default' : 'pointer', flexShrink: 0,
-        background: manual ? 'transparent' : 'rgba(0,180,216,.15)',
-        color: manual ? 'var(--text-secondary)' : '#00b4d8',
-        border: manual ? '1px solid var(--border)' : '1px solid rgba(0,180,216,.25)',
+        background: manual || quiet ? 'transparent' : 'rgba(0,180,216,.15)',
+        color: manual || quiet ? 'var(--text-secondary)' : '#00b4d8',
+        border: manual || quiet ? '1px solid var(--border)' : '1px solid rgba(0,180,216,.25)',
         opacity: running ? 0.6 : 1,
       }}
     >
       <Icon size={11} className={running ? 'spin' : undefined} />
       {running ? t('settings.health.fixing') : manual ? t('settings.health.copyCommand') : fix.label}
-      {fix.optional && !running && (
+      {fix.optional && !running && !quiet && (
         <span style={{ color: 'var(--text-muted)', fontSize: 9 }}>· {t('settings.health.optional')}</span>
       )}
     </button>
@@ -53,7 +54,9 @@ export default function HealthRow({ row, depth = 0, fixStates, onFix }) {
   const [open, setOpen] = useState(() => children.some(hasProblem))
   const [details, setDetails] = useState(false)
   const st = STATUS_STYLE[row.status] || STATUS_STYLE.info
-  const fixState = row.fix ? fixStates[row.fix.id] : null
+  const actions = row.actions || []
+  // The live output shown under the row: its fix's, or the latest action's.
+  const fixState = [row.fix, ...actions].filter(Boolean).map(f => fixStates[f.id]).filter(Boolean).pop() || null
   const problem = row.status === 'warn' || row.status === 'fail'
   const hasDetails = !!row.detail || (problem && row.features?.length > 0) || (row.fix?.safety === 'manual' && row.fix.command)
 
@@ -104,7 +107,8 @@ export default function HealthRow({ row, depth = 0, fixStates, onFix }) {
             {row.summary}
           </span>
         )}
-        {row.fix && <FixButton fix={row.fix} state={fixState} onFix={onFix} />}
+        {row.fix && <FixButton fix={row.fix} state={fixStates[row.fix.id]} onFix={onFix} />}
+        {actions.map(a => <FixButton key={a.id} fix={a} state={fixStates[a.id]} onFix={onFix} quiet />)}
       </div>
 
       {details && hasDetails && (
