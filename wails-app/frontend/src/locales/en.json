@@ -108,6 +108,58 @@
       "runTitle": "Run this org",
       "fullscreen": "Fullscreen canvas",
       "exitFullscreen": "Exit fullscreen"
+    },
+    "autonomy": {
+      "levelGroup": "Autonomy level",
+      "levels": {
+        "manual": "Manual",
+        "manualHint": "You decide everything.",
+        "mid": "Mid",
+        "midHint": "Routine by rule, consequential by the decider, irreversible by you.",
+        "full": "Full auto",
+        "fullHint": "Routine by rule, everything else by the decider. No human."
+      },
+      "decider": "Decider",
+      "deciders": {
+        "model": "Model",
+        "modelHint": "A separate one-shot model call.",
+        "boss": "Boss",
+        "bossHint": "The org's root role decides.",
+        "parent": "Parent",
+        "parentHint": "The holding org's initiator decides."
+      },
+      "loading": "Loading autonomy…",
+      "unavailable": "Autonomy unavailable",
+      "unreadable": "Autonomy settings could not be read.",
+      "retry": "Retry loading autonomy",
+      "paused": "Paused",
+      "pausedUntil": "Paused until {{time}}",
+      "pausedTitle": "Decisions route to you while paused",
+      "resume": "Resume",
+      "pause": "Pause autonomy",
+      "alreadyManual": "Already manual",
+      "pauseTitle": "Drop to manual now",
+      "pauseFor30m": "For 30 min",
+      "pauseFor2h": "For 2 hours",
+      "pauseUntilResumed": "Until resumed",
+      "daemonOff": "Daemon off: acts as manual",
+      "daemonOffTitle": "Start `monoagentcli daemon` so decisions are routed",
+      "actingAs": "Acting as {{level}}"
+    },
+    "fullAuto": {
+      "dialog": "Turn on full auto",
+      "title": "Full auto for {{org}}?",
+      "intro": "The {{decider}} decider will resolve these with no human:",
+      "everyGate": "Every gate a role raises",
+      "pendingNow": " — pending now: {{gates}}",
+      "running": "running",
+      "outbound": "(outbound, irreversible)",
+      "setIrreversible": "(set to irreversible)",
+      "none": "No irreversible decisions are configured.",
+      "grantsFailed": "Could not load grants.",
+      "incomplete": "The list may be incomplete.",
+      "cancel": "Cancel",
+      "confirm": "Turn on full auto"
     }
   },
   "grantDialog": {

@@ -1167,8 +1167,9 @@ ordinary `startOrg` runs.
   already says `queued for <role> (delivered when the org next runs)`. The Queued tab counts the
   selected org's waiting messages (`useQueuedCount`, polled every 20 s, closed 2026-09-23). The org
   rail has no queued count, on purpose: its one badge is Needs you, which waits on the person,
-  while a queued message only waits for the org to start. Not done: the tab label is not
-  translated (the other org tab labels are not either).
+  while a queued message only waits for the org to start. The tab labels (all of them) are
+  translated since #118, and the rest of the org header (autonomy bar) since
+  `chore/org-small-leftovers`.
 - C-46 closed (2026-09-18, branch `fix/org-c46-workdir-confinement`): the grant handler and the
   automation-role receiver put the calling role's workdir in trigger data as `org.workdir`
   (`orgdesign.RoleWorkdir`, mirroring monomind's `workspaceSetting`); the engine confines the run's
