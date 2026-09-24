@@ -135,30 +135,42 @@ func stopGracefully(cmd *exec.Cmd) {
 	cmd.WaitDelay = 15 * time.Second
 }
 
-// agentInstallArgs builds `[--profile P] --json agent install <id> --yes
-// [--force]`. --yes: the frontend already showed the user the install
-// command and asked.
-func agentInstallArgs(profileID, runtimeID string, update bool) []string {
+// agentInstallArgs builds `[--profile P] --json agent install [--force]
+// [--approve-script URL] -- <id>`. Not --yes: approveURL is the vendor
+// script the person was shown and agreed to, and the CLI runs a script only
+// if the recipe it scans now names that exact URL. An npm install needs no
+// approval flag.
+func agentInstallArgs(profileID, runtimeID string, update bool, approveURL string) []string {
 	args := []string{}
 	if profileID != "" {
 		args = append(args, "--profile", profileID)
 	}
-	args = append(args, "--json", "agent", "install", runtimeID, "--yes")
+	args = append(args, "--json", "agent", "install")
 	if update {
 		args = append(args, "--force")
 	}
-	return args
+	if approveURL != "" {
+		args = append(args, "--approve-script", approveURL)
+	}
+	return append(args, "--", runtimeID)
 }
 
 // InstallAgentRuntime installs (update: reinstalls) one AI agent runtime in
 // the background, relaying progress as "health:fixProgress" events keyed
 // "agent.install:<id>", and returns at once.
-func (a *App) InstallAgentRuntime(runtimeID string, update bool) string {
+func (a *App) InstallAgentRuntime(runtimeID string, update bool, approveURL string) string {
 	cliBin, err := findMonoAgentCLI()
 	if err != nil {
 		return aiError(err)
 	}
-	go a.streamHealthFix(cliBin, "agent.install:"+runtimeID, agentInstallArgs(a.getActiveProfileID(), runtimeID, update))
+	key := "agent.install:" + runtimeID
+	if _, busy := runningFixes.LoadOrStore(key, true); busy {
+		return aiError(fmt.Errorf("%s is already being installed", runtimeID))
+	}
+	go func() {
+		defer runningFixes.Delete(key)
+		a.streamHealthFix(cliBin, key, agentInstallArgs(a.getActiveProfileID(), runtimeID, update, approveURL))
+	}()
 	return `{"ok":true}`
 }
 
