@@ -4,14 +4,18 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+
+	"github.com/monoes/mono-agent/internal/nodemgr"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -27,20 +31,37 @@ const (
 	healthFixTimeout      = 20 * time.Minute // installs (Node, monomind, runtimes)
 )
 
-// healthArgs builds `[--profile P] --json doctor [--deep] [--projects]`.
-func healthArgs(profileID string, deep, projects bool) []string {
+// Health check modes. "background" is the GUI's own start-up and
+// 30-minute check: it leaves out the runtimes group, whose scan runs every
+// agent CLI's --version and monomind's init, and those write their own state
+// outside mono-agent (#146). "local" (Check again), "deep" and "projects"
+// are what the person asks for, so they may scan.
+const (
+	healthModeBackground = "background"
+	healthModeLocal      = "local"
+	healthModeDeep       = "deep"
+	healthModeProjects   = "projects"
+)
+
+// healthArgs builds `[--profile P] --json doctor [--skip-group runtimes |
+// --deep | --projects]` for a mode.
+func healthArgs(profileID, mode string) ([]string, error) {
 	args := []string{}
 	if profileID != "" {
 		args = append(args, "--profile", profileID)
 	}
 	args = append(args, "--json", "doctor")
-	if deep {
-		args = append(args, "--deep")
+	switch mode {
+	case healthModeBackground:
+		return append(args, "--skip-group", "runtimes"), nil
+	case healthModeLocal:
+		return args, nil
+	case healthModeDeep:
+		return append(args, "--deep"), nil
+	case healthModeProjects:
+		return append(args, "--projects"), nil
 	}
-	if projects {
-		args = append(args, "--projects")
-	}
-	return args
+	return nil, fmt.Errorf("unknown health check mode %q", mode)
 }
 
 // healthFixArgs builds `[--profile P] --json doctor fix <id>`.
@@ -67,38 +88,118 @@ func healthReportJSON(cliBin string, stdout []byte, runErr error) string {
 	return cliResultJSON(cliBin, stdout, runErr)
 }
 
-// RunHealthCheck runs every check (deep adds network checks, projects adds
-// monomind's checks per project) and returns the doctor --json report, or
-// {"error", "cli_missing"} when there is no monoagentcli to ask.
-func (a *App) RunHealthCheck(deep, projects bool) string {
+// RunHealthCheck runs the checks of one mode (see healthArgs) and returns
+// the doctor --json report, {"error", "cli_missing"} when there is no
+// monoagentcli to ask, or {"error", "cancelled"} after CancelHealthRun.
+func (a *App) RunHealthCheck(mode string) string {
 	cliBin, err := findMonoAgentCLI()
 	if err != nil {
 		b, _ := json.Marshal(map[string]any{"error": err.Error(), "cli_missing": true})
 		return string(b)
 	}
+	args, err := healthArgs(a.getActiveProfileID(), mode)
+	if err != nil {
+		return aiError(err)
+	}
 	timeout := healthCheckTimeout
-	if projects {
+	if mode == healthModeProjects {
 		timeout = healthProjectsTimeout
 	}
-	parent := a.ctx
-	if parent == nil {
-		parent = context.Background()
+	key := "check:" + mode
+	run, ctx, ok := beginHealthRun(a.parentCtx(), key, timeout)
+	if !ok {
+		return aiError(fmt.Errorf("a %s check is already running", mode))
 	}
-	ctx, cancel := context.WithTimeout(parent, timeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, cliBin, healthArgs(a.getActiveProfileID(), deep, projects)...)
+	defer endHealthRun(key, run)
+	cmd := exec.CommandContext(ctx, cliBin, args...)
 	hideWindow(cmd)
 	stopGracefully(cmd)
 	out, runErr := cmd.Output()
+	if run.cancelled.Load() {
+		return `{"error":"cancelled","cancelled":true}`
+	}
 	return healthReportJSON(cliBin, out, runErr)
+}
+
+func (a *App) parentCtx() context.Context {
+	if a.ctx != nil {
+		return a.ctx
+	}
+	return context.Background()
+}
+
+// healthRun is one running check or fix, so the person can cancel it.
+type healthRun struct {
+	cancel    context.CancelFunc
+	cancelled atomic.Bool
+}
+
+var (
+	healthRunsMu sync.Mutex
+	healthRuns   = map[string]*healthRun{} // runKey → the run
+)
+
+// runKey is the lock (and cancel) key of a run. Both ways of installing a
+// runtime, the AI agents page (agent.install:<id>) and the health runtime
+// fix (runtimes.install:<id>), share one key, so they can't overlap: two npm
+// installs into one global folder, or two vendor scripts at once.
+func runKey(id string) string {
+	for _, prefix := range []string{"agent.install:", "runtimes.install:"} {
+		if rt, ok := strings.CutPrefix(id, prefix); ok {
+			return "runtime:" + rt
+		}
+	}
+	return id
+}
+
+// beginHealthRun registers a run under key with its own cancelable
+// context; ok is false while another run holds the key.
+func beginHealthRun(parent context.Context, key string, timeout time.Duration) (*healthRun, context.Context, bool) {
+	healthRunsMu.Lock()
+	defer healthRunsMu.Unlock()
+	if _, busy := healthRuns[key]; busy {
+		return nil, nil, false
+	}
+	ctx, cancel := context.WithTimeout(parent, timeout)
+	run := &healthRun{cancel: cancel}
+	healthRuns[key] = run
+	return run, ctx, true
+}
+
+func endHealthRun(key string, run *healthRun) {
+	run.cancel()
+	healthRunsMu.Lock()
+	defer healthRunsMu.Unlock()
+	if healthRuns[key] == run {
+		delete(healthRuns, key)
+	}
+}
+
+// CancelHealthRun stops a running check ("check:<mode>") or fix (its fix
+// id, or agent.install:<id>). The CLI child gets SIGTERM, so it can end the
+// installers it started, and is killed only if it hasn't exited after
+// stopGracefully's grace period. Returns {"ok":true,"cancelled":bool}.
+func (a *App) CancelHealthRun(id string) string {
+	healthRunsMu.Lock()
+	run := healthRuns[runKey(id)]
+	healthRunsMu.Unlock()
+	if run == nil {
+		return `{"ok":true,"cancelled":false}`
+	}
+	run.cancelled.Store(true)
+	run.cancel()
+	a.emitLog("HEALTH", "INFO", "cancelled "+id)
+	return `{"ok":true,"cancelled":true}`
 }
 
 // healthFixEvent is one progress event for the frontend: the CLI's own
 // NDJSON line ({"kind":"line"|"done"|"error","message"}) tagged with the fix.
+// Cancelled marks the final error of a run the person cancelled.
 type healthFixEvent struct {
-	FixID   string `json:"fix_id"`
-	Kind    string `json:"kind"`
-	Message string `json:"message,omitempty"`
+	FixID     string `json:"fix_id"`
+	Kind      string `json:"kind"`
+	Message   string `json:"message,omitempty"`
+	Cancelled bool   `json:"cancelled,omitempty"`
 }
 
 // RunHealthFix applies one fix in the background, relaying progress as
@@ -109,31 +210,23 @@ func (a *App) RunHealthFix(fixID string) string {
 	if err != nil {
 		return aiError(err)
 	}
-	// One run per fix: two `doctor fix` processes for the same fix would
-	// start two daemons or two npm installs into one global folder, and both
-	// would report on the same fix id.
-	if _, busy := runningFixes.LoadOrStore(fixID, true); busy {
-		return aiError(fmt.Errorf("%s is already running", fixID))
-	}
-	args := healthFixArgs(a.getActiveProfileID(), fixID)
-	go func() {
-		defer runningFixes.Delete(fixID)
-		a.streamHealthFix(cliBin, fixID, args)
-	}()
-	return `{"ok":true}`
+	// One run per fix (per runtime for installs): two `doctor fix`
+	// processes for the same fix would start two daemons or two npm
+	// installs into one global folder.
+	return a.startStreamed(cliBin, fixID, healthFixArgs(a.getActiveProfileID(), fixID), fmt.Sprintf("%s is already running", fixID))
 }
 
-// runningFixes holds the ids of the fixes running now.
-var runningFixes sync.Map
-
-// stopGracefully makes the context's cancel (a timeout, the app closing)
-// ask the CLI to stop instead of killing it outright, so it can end the
-// installers it started; WaitDelay then kills it, and stops a child that
-// still holds the output pipe from blocking the read.
+// stopGracefully makes the context's cancel (Cancel, a timeout, the app
+// closing) ask the CLI to stop instead of killing it outright, so it can
+// end the installers it started; WaitDelay then kills it, and stops a child
+// that still holds the output pipe from blocking the read.
 func stopGracefully(cmd *exec.Cmd) {
 	cmd.Cancel = func() error { return terminateCLI(cmd) }
-	cmd.WaitDelay = 15 * time.Second
+	cmd.WaitDelay = healthGracePeriod
 }
+
+// healthGracePeriod is how long a cancelled CLI child gets to stop.
+var healthGracePeriod = 15 * time.Second
 
 // agentInstallArgs builds `[--profile P] --json agent install [--force]
 // [--approve-script URL] -- <id>`. Not --yes: approveURL is the vendor
@@ -163,47 +256,73 @@ func (a *App) InstallAgentRuntime(runtimeID string, update bool, approveURL stri
 	if err != nil {
 		return aiError(err)
 	}
-	key := "agent.install:" + runtimeID
-	if _, busy := runningFixes.LoadOrStore(key, true); busy {
-		return aiError(fmt.Errorf("%s is already being installed", runtimeID))
+	return a.startStreamed(cliBin, "agent.install:"+runtimeID,
+		agentInstallArgs(a.getActiveProfileID(), runtimeID, update, approveURL),
+		fmt.Sprintf("%s is already being installed", runtimeID))
+}
+
+// refreshesPath reports whether a successful fix can put new programs on
+// the managed Node's paths: Node itself, and anything npm installs into its
+// prefix (monomind, agent runtimes). The GUI then activates the managed Node
+// again, so the children it starts later find them without a restart
+// (#137 item 4).
+func refreshesPath(fixID string) bool {
+	switch fixID {
+	case "monomind.node.install", "monomind.node.update", "monomind.install":
+		return true
+	}
+	return strings.HasPrefix(runKey(fixID), "runtime:")
+}
+
+// activateNode is nodemgr.Activate (a variable for tests).
+var activateNode = nodemgr.Activate
+
+// startStreamed starts a streamed CLI command under its run key and
+// returns at once; the final event is sent after a PATH refresh, so the
+// re-check the frontend runs on it already sees what was installed.
+func (a *App) startStreamed(cliBin, fixID string, args []string, busyMsg string) string {
+	key := runKey(fixID)
+	run, ctx, ok := beginHealthRun(a.parentCtx(), key, healthFixTimeout)
+	if !ok {
+		return aiError(errors.New(busyMsg))
 	}
 	go func() {
-		defer runningFixes.Delete(key)
-		a.streamHealthFix(cliBin, key, agentInstallArgs(a.getActiveProfileID(), runtimeID, update, approveURL))
+		defer endHealthRun(key, run)
+		final := a.streamHealthFix(ctx, run, cliBin, fixID, args, a.emitFixEvent)
+		if final.Kind == "done" && refreshesPath(fixID) {
+			activateNode(a.parentCtx())
+		}
+		a.emitFixEvent(final)
 	}()
 	return `{"ok":true}`
 }
 
+func (a *App) emitFixEvent(ev healthFixEvent) {
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "health:fixProgress", ev)
+	}
+}
+
 // streamHealthFix runs one streamed CLI command (a `doctor fix` or an
-// `agent install`, both printing NDJSON progress) and relays it.
-func (a *App) streamHealthFix(cliBin, fixID string, args []string) {
-	emit := func(ev healthFixEvent) {
-		if a.ctx != nil {
-			runtime.EventsEmit(a.ctx, "health:fixProgress", ev)
-		}
-	}
-	parent := a.ctx
-	if parent == nil {
-		parent = context.Background()
-	}
-	ctx, cancel := context.WithTimeout(parent, healthFixTimeout)
-	defer cancel()
+// `agent install`, both printing NDJSON progress), relays its progress
+// lines through emit and returns its final event (done or error), which
+// the caller sends. Output that isn't an event is relayed as a line; a CLI
+// that ends without a final event becomes an error with its stderr.
+func (a *App) streamHealthFix(ctx context.Context, run *healthRun, cliBin, fixID string, args []string, emit func(healthFixEvent)) healthFixEvent {
 	a.emitLog("HEALTH", "INFO", fmt.Sprintf("$ %s %s", cliBin, strings.Join(args, " ")))
 	cmd := exec.CommandContext(ctx, cliBin, args...)
 	hideWindow(cmd)
 	stopGracefully(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		emit(healthFixEvent{FixID: fixID, Kind: "error", Message: err.Error()})
-		return
+		return healthFixEvent{FixID: fixID, Kind: "error", Message: err.Error()}
 	}
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
-		emit(healthFixEvent{FixID: fixID, Kind: "error", Message: err.Error()})
-		return
+		return healthFixEvent{FixID: fixID, Kind: "error", Message: err.Error()}
 	}
-	finished := false
+	var final *healthFixEvent
 	sc := bufio.NewScanner(stdout)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	for sc.Scan() {
@@ -213,7 +332,8 @@ func (a *App) streamHealthFix(cliBin, fixID string, args []string) {
 		}
 		ev.FixID = fixID
 		if ev.Kind == "done" || ev.Kind == "error" {
-			finished = true
+			final = &ev
+			continue
 		}
 		emit(ev)
 	}
@@ -224,20 +344,24 @@ func (a *App) streamHealthFix(cliBin, fixID string, args []string) {
 		_, _ = io.Copy(io.Discard, stdout)
 	}
 	waitErr := cmd.Wait()
-	if !finished {
-		// The CLI died without its final event (killed, timed out, crashed).
-		msg := "the fix stopped without reporting a result"
-		if waitErr != nil {
-			msg = waitErr.Error()
-		}
-		if s := strings.TrimSpace(stderr.String()); s != "" {
-			msg += ": " + s
-		}
-		emit(healthFixEvent{FixID: fixID, Kind: "error", Message: msg})
-	}
 	level := "INFO"
 	if waitErr != nil {
 		level = "ERROR"
 	}
-	a.emitLog("HEALTH", level, fmt.Sprintf("doctor fix %s finished", fixID))
+	a.emitLog("HEALTH", level, fmt.Sprintf("%s finished", fixID))
+	switch {
+	case run != nil && run.cancelled.Load():
+		return healthFixEvent{FixID: fixID, Kind: "error", Message: "cancelled", Cancelled: true}
+	case final != nil:
+		return *final
+	}
+	// The CLI died without its final event (killed, timed out, crashed).
+	msg := "the fix stopped without reporting a result"
+	if waitErr != nil {
+		msg = waitErr.Error()
+	}
+	if s := strings.TrimSpace(stderr.String()); s != "" {
+		msg += ": " + s
+	}
+	return healthFixEvent{FixID: fixID, Kind: "error", Message: msg}
 }

@@ -33,6 +33,8 @@ export function ApproveHIL(arg1:string,arg2:string):Promise<void>;
 
 export function ApproveOrgAction(arg1:string,arg2:string,arg3:string):Promise<string>;
 
+export function CancelHealthRun(arg1:string):Promise<string>;
+
 export function CancelWorkflow(arg1:string):Promise<void>;
 
 export function CheckForUpdate():Promise<main.UpdateInfo>;
@@ -327,7 +329,7 @@ export function ResumeOrgAutonomy(arg1:string):Promise<string>;
 
 export function RevealProfileFolder(arg1:string):Promise<void>;
 
-export function RunHealthCheck(arg1:boolean,arg2:boolean):Promise<string>;
+export function RunHealthCheck(arg1:string):Promise<string>;
 
 export function RunHealthFix(arg1:string):Promise<string>;
 

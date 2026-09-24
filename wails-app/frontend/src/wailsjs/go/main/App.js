@@ -58,6 +58,10 @@ export function ApproveOrgAction(arg1, arg2, arg3) {
   return window['go']['main']['App']['ApproveOrgAction'](arg1, arg2, arg3);
 }
 
+export function CancelHealthRun(arg1) {
+  return window['go']['main']['App']['CancelHealthRun'](arg1);
+}
+
 export function CancelWorkflow(arg1) {
   return window['go']['main']['App']['CancelWorkflow'](arg1);
 }
@@ -646,8 +650,8 @@ export function RevealProfileFolder(arg1) {
   return window['go']['main']['App']['RevealProfileFolder'](arg1);
 }
 
-export function RunHealthCheck(arg1, arg2) {
-  return window['go']['main']['App']['RunHealthCheck'](arg1, arg2);
+export function RunHealthCheck(arg1) {
+  return window['go']['main']['App']['RunHealthCheck'](arg1);
 }
 
 export function RunHealthFix(arg1) {

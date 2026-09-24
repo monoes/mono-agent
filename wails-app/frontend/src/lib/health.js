@@ -1,8 +1,8 @@
 // System health: state shared by Settings › System health and the status-bar
 // dot. Everything it knows comes from `monoagentcli doctor --json` (via the
-// RunHealthCheck/RunHealthFix bindings); this module only stores, sorts and
+// RunHealthCheck/RunHealthFix bindings); this module only stores, merges and
 // re-requests it.
-import { RunHealthCheck, RunHealthFix, InstallAgentRuntime } from '../wailsjs/go/main/App'
+import { RunHealthCheck, RunHealthFix, InstallAgentRuntime, CancelHealthRun } from '../wailsjs/go/main/App'
 import { subscribeEvent } from '../services/api.js'
 
 export const BACKGROUND_INTERVAL_MS = 30 * 60 * 1000
@@ -10,6 +10,11 @@ export const BACKGROUND_INTERVAL_MS = 30 * 60 * 1000
 // ── pure helpers (tested) ───────────────────────────────────────────────────
 
 const PROBLEM = new Set(['warn', 'fail'])
+
+// Groups in the order `monoagentcli doctor` registers them, so rows carried
+// over from an earlier report (appended at the end) still show in place.
+const GROUP_ORDER = ['core', 'monomind', 'runtimes', 'browser', 'services', 'integrations', 'accounts']
+const groupRank = g => { const i = GROUP_ORDER.indexOf(g); return i < 0 ? GROUP_ORDER.length : i }
 
 /** Rows of a report nested under their parent row (report.results is flat). */
 export function groupReport(report) {
@@ -35,7 +40,69 @@ export function groupReport(report) {
   for (const g of groups) {
     g.problems = countProblems(g.rows)
   }
-  return groups
+  return groups.sort((a, b) => groupRank(a.group) - groupRank(b.group))
+}
+
+/**
+ * The check a mode runs. background is the start-up and 30-minute check:
+ * it leaves out the AI agent runtimes, whose scan runs every agent CLI and
+ * writes their state outside mono-agent. The others are asked for.
+ */
+export function healthMode({ background = false, deep = false, projects = false } = {}) {
+  if (background) return 'background'
+  if (projects) return 'projects'
+  if (deep) return 'deep'
+  return 'local'
+}
+
+// What each mode's report already holds: a report never borrows rows from
+// an older report of a mode it covers (saved = the runtime rows kept from
+// the last check that scanned them).
+const COVERS = {
+  background: [],
+  saved: [],
+  local: ['background', 'saved'],
+  deep: ['background', 'local', 'saved'],
+  projects: ['background', 'local', 'saved'],
+}
+
+/**
+ * One report from the latest report of each mode: the newest-started run
+ * decides every row it has; rows only a richer or different mode produced
+ * (monomind's own checks, network checks, project rows, the runtimes the
+ * background check leaves out) are kept from older runs, marked carried.
+ * runs: [{ mode, report, startedAt }].
+ */
+export function mergeReports(runs) {
+  const sorted = runs.filter(r => r?.report).sort((a, b) => b.startedAt - a.startedAt)
+  const base = sorted.find(r => r.mode !== 'saved') // saved rows alone are no report
+  if (!base) return null
+  const older = sorted.filter(r => r !== base)
+  const results = [...(base.report.results || [])]
+  const have = new Set(results.map(r => r.id))
+  const carried = new Set()
+  const covered = new Set([base.mode, ...(COVERS[base.mode] || [])])
+  for (const run of older) {
+    if (covered.has(run.mode) || run.report.profile_id !== base.report.profile_id) continue
+    for (const r of run.report.results || []) {
+      if (have.has(r.id)) continue
+      // A newer run of the parent decides its children.
+      if (r.parent && have.has(r.parent) && !carried.has(r.parent)) continue
+      have.add(r.id)
+      carried.add(r.id)
+      results.push({ ...r, carried: true, checked_at: run.startedAt })
+    }
+    covered.add(run.mode)
+    for (const m of COVERS[run.mode] || []) covered.add(m)
+  }
+  return { ...base.report, results }
+}
+
+/** The lock key of a fix: installing one runtime from the AI agents page
+ * and from its health row share a key, so the two can't overlap. */
+export function runKey(id) {
+  const m = /^(agent\.install|runtimes\.install):(.+)$/.exec(id || '')
+  return m ? `runtime:${m[2]}` : id
 }
 
 function countProblems(rows) {
@@ -89,7 +156,7 @@ export function versionSkew(guiVersion, cliVersion) {
 
 // ── shared state ────────────────────────────────────────────────────────────
 
-let state = { report: null, error: null, cliMissing: false, loading: false, lastRun: null, mode: null }
+let state = { report: null, error: null, cliMissing: false, loading: false, lastRun: null, mode: null, checking: [] }
 const listeners = new Set()
 
 export function getHealth() { return state }
@@ -104,43 +171,122 @@ function set(patch) {
   for (const fn of listeners) fn(state)
 }
 
-const inflight = new Map() // mode key → promise
+const runs = {} // mode → { mode, report, startedAt, finishedAt }: the latest report of each
+const active = new Map() // mode → { again, cancelled }: the check running now
+
+// The runtime rows of the last check that scanned them, kept across app
+// starts: the background check doesn't scan, and would otherwise show no
+// runtimes until someone presses Check again.
+const SAVED_RUNTIMES_KEY = 'monoagent:healthRuntimes:v1'
+
+function loadSavedRuntimes() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(SAVED_RUNTIMES_KEY) || 'null')
+    if (saved?.results?.length) {
+      runs.saved = { mode: 'saved', report: { v: 1, profile_id: saved.profile_id, results: saved.results }, startedAt: saved.at }
+    }
+  } catch { /* storage unavailable — nothing saved */ }
+}
+loadSavedRuntimes()
+
+function saveRuntimes(report, at) {
+  const results = (report.results || []).filter(r => r.group === 'runtimes')
+  if (results.length === 0) return
+  try {
+    localStorage.setItem(SAVED_RUNTIMES_KEY, JSON.stringify({ at, profile_id: report.profile_id, results }))
+  } catch { /* best effort */ }
+}
+
+function publish() {
+  const report = mergeReports(Object.values(runs))
+  const base = Object.values(runs).filter(r => r.mode !== 'saved').sort((a, b) => b.startedAt - a.startedAt)[0]
+  set({ report, error: null, cliMissing: false, lastRun: base?.finishedAt || null, mode: base?.mode || null })
+}
+
+function syncLoading() {
+  set({ loading: active.size > 0, checking: [...active.keys()] })
+}
 
 /**
- * Run the checks. deep adds network checks; projects adds monomind's checks
- * per project. Concurrent calls for the same mode share one run.
+ * Run the checks: background (start-up and every 30 minutes; no runtime
+ * scan), or what the person asked for — deep adds network checks, projects
+ * monomind's checks per project, neither is Check again. A mode's report
+ * replaces only that mode's last one (see mergeReports). A request while
+ * the same mode runs is run again after it, so the latest request wins
+ * (a re-check after a fix never gets a report from before the fix).
  */
-export function runHealth({ deep = false, projects = false } = {}) {
-  const key = `${deep ? 'deep' : ''}${projects ? 'projects' : ''}` || 'local'
-  if (inflight.has(key)) return inflight.get(key)
-  set({ loading: true })
-  const p = RunHealthCheck(deep, projects)
+export function runHealth(opts = {}) {
+  const mode = healthMode(opts)
+  const cur = active.get(mode)
+  if (cur) {
+    if (!cur.again) {
+      let resolve
+      const promise = new Promise(r => { resolve = r })
+      cur.again = { promise, resolve }
+    }
+    return cur.again.promise
+  }
+  return startCheck(mode)
+}
+
+let lastStarted = 0
+
+function startCheck(mode) {
+  const entry = { again: null, cancelled: false }
+  active.set(mode, entry)
+  // Strictly increasing, so two runs started in the same millisecond still
+  // have an order (the later request wins).
+  const startedAt = lastStarted = Math.max(Date.now(), lastStarted + 1)
+  syncLoading()
+  return RunHealthCheck(mode)
     .then(s => {
       const data = JSON.parse(s)
-      if (data.error) set({ error: data.error, cliMissing: !!data.cli_missing })
-      else set({ report: data, error: null, cliMissing: false, lastRun: Date.now(), mode: key })
+      if (data.cancelled || entry.cancelled) return
+      if (data.error) { set({ error: data.error, cliMissing: !!data.cli_missing }); return }
+      runs[mode] = { mode, report: data, startedAt, finishedAt: Date.now() }
+      if (mode !== 'background') saveRuntimes(data, startedAt)
+      publish()
     })
     .catch(e => set({ error: String(e) }))
     .finally(() => {
-      inflight.delete(key)
-      set({ loading: inflight.size > 0 })
+      active.delete(mode)
+      const again = entry.again
+      if (again) {
+        if (entry.cancelled) again.resolve()
+        else startCheck(mode).then(again.resolve)
+      }
+      syncLoading()
     })
-  inflight.set(key, p)
-  return p
 }
 
-const runningFixes = new Set()
+/** Stop the running checks (the CLI gets SIGTERM, then a grace period).
+ * The last report stays. */
+export function cancelHealthCheck() {
+  const calls = []
+  for (const [mode, entry] of active) {
+    entry.cancelled = true
+    calls.push(CancelHealthRun(`check:${mode}`).catch(() => {}))
+  }
+  return Promise.all(calls)
+}
+
+const runningFixes = new Set() // run keys (see runKey)
 
 /** True while a fix runs — lets the app hold back navigation it would
  * otherwise do (a fix like `monomind init` creates a sample org). */
 export function isFixing() { return runningFixes.size > 0 }
 
-/** True while this fix runs. */
-export function isFixRunning(fixId) { return runningFixes.has(fixId) }
+/** True while this fix (or another install of the same runtime) runs. */
+export function isFixRunning(fixId) { return runningFixes.has(runKey(fixId)) }
+
+/** Stop a running fix or install; its run resolves { ok: false, cancelled: true }. */
+export function cancelFix(fixId) {
+  return CancelHealthRun(fixId).catch(() => {})
+}
 
 /**
  * Apply one fix; onLine gets each progress line. Resolves to
- * { ok: true } or { ok: false, message }. A fix already running is not
+ * { ok: true } or { ok: false, message, cancelled }. A fix already running is not
  * started again (two daemons, two npm installs into one folder).
  */
 export function runFix(fixId, onLine) {
@@ -160,14 +306,15 @@ export function installRuntime(runtimeId, update, onLine, approveURL = '') {
 // health:fixProgress events (keyed by fix_id) to the final done/error. One
 // run per key: a second start while one runs is refused.
 function runStreamed(key, start, onLine) {
-  if (runningFixes.has(key)) return Promise.resolve({ ok: false, message: 'already running' })
-  runningFixes.add(key)
+  const lock = runKey(key)
+  if (runningFixes.has(lock)) return Promise.resolve({ ok: false, busy: true, message: 'already running' })
+  runningFixes.add(lock)
   return new Promise(resolve => {
     const off = subscribeEvent('health:fixProgress', ev => {
       if (!ev || ev.fix_id !== key) return
       if (ev.kind === 'line') { onLine?.(ev.message || ''); return }
       off()
-      resolve(ev.kind === 'done' ? { ok: true, message: ev.message || '' } : { ok: false, message: ev.message || 'failed' })
+      resolve(ev.kind === 'done' ? { ok: true, message: ev.message || '' } : { ok: false, cancelled: !!ev.cancelled, message: ev.message || 'failed' })
     })
     start()
       .then(s => {
@@ -175,15 +322,17 @@ function runStreamed(key, start, onLine) {
         if (r.error) { off(); resolve({ ok: false, message: r.error }) }
       })
       .catch(e => { off(); resolve({ ok: false, message: String(e) }) })
-  }).finally(() => { runningFixes.delete(key) })
+  }).finally(() => { runningFixes.delete(lock) })
 }
 
 let timer = null
 
-/** Start the startup + every-30-minutes local check (idempotent). */
+/** Start the start-up + every-30-minutes background check (idempotent). It
+ * runs `doctor --skip-group runtimes`, which writes nothing outside
+ * ~/.monoagent. */
 export function startBackgroundHealth() {
   if (timer) return () => {}
-  runHealth()
-  timer = setInterval(() => { runHealth() }, BACKGROUND_INTERVAL_MS)
+  runHealth({ background: true })
+  timer = setInterval(() => { runHealth({ background: true }) }, BACKGROUND_INTERVAL_MS)
   return () => { clearInterval(timer); timer = null }
 }
