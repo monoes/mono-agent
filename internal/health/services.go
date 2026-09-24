@@ -44,10 +44,13 @@ func checkAutostart(ctx context.Context, env *Env) Result {
 	if env.AutostartStatus == nil {
 		return Result{Status: StatusSkip, Summary: "not available"}
 	}
-	if ok, where := env.AutostartStatus(ctx); ok {
+	ok, where := env.AutostartStatus(ctx)
+	if ok {
 		return Result{Status: StatusOK, Summary: where}
 	}
-	return Result{Status: StatusInfo, Summary: "the daemon does not start at login", FixID: FixAutostart}
+	// where, when set, says why an entry that exists doesn't count (a
+	// unit file that systemd doesn't have enabled, a plist not loaded).
+	return Result{Status: StatusInfo, Summary: "the daemon does not start at login", Detail: where, FixID: FixAutostart}
 }
 
 func checkDaemon(ctx context.Context, env *Env) Result {

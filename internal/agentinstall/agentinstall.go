@@ -49,6 +49,44 @@ var (
 	curlInstall = regexp.MustCompile(`^curl\s+-fsSL\s+(https://\S+)\s*\|\s*(bash|sh)$`)
 )
 
+// ScriptHosts are the hosts whose install scripts may run: the vendors in
+// monomind's recipes today. A script from anywhere else is shown as a
+// manual step — monomind names the URL, but what runs is decided here.
+var ScriptHosts = map[string]bool{
+	"antigravity.google":            true,
+	"hermes-agent.nousresearch.com": true,
+}
+
+// validPackage is an npm registry package spec. npm reads a spec ending in
+// .tgz/.tar/.tar.gz as a tarball path (a local file or URL), not a registry
+// package, so those are refused although the name pattern allows dots.
+func validPackage(p string) bool {
+	if !npmPkg.MatchString(p) {
+		return false
+	}
+	lower := strings.ToLower(p)
+	for _, ext := range []string{".tgz", ".tar", ".tar.gz"} {
+		if strings.HasSuffix(lower, ext) {
+			return false
+		}
+	}
+	return true
+}
+
+// validScript reports whether a script URL may run: https, from a host
+// in ScriptHosts, and not on Windows (no bash there).
+func validScript(raw, shell string) bool {
+	if runtime.GOOS == "windows" || (shell != "bash" && shell != "sh") {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
+		return false
+	}
+	// Host includes any port: an entry names the default https port only.
+	return ScriptHosts[strings.ToLower(u.Host)]
+}
+
 // Parse turns a hint into a recipe; unrecognized hints are KindManual.
 func Parse(hint string) Recipe {
 	hint = strings.TrimSpace(hint)
@@ -56,17 +94,15 @@ func Parse(hint string) Recipe {
 	fields := strings.Fields(hint)
 	if len(fields) >= 4 && fields[0] == "npm" && fields[1] == "install" && (fields[2] == "-g" || fields[2] == "--global") {
 		for _, p := range fields[3:] {
-			if !npmPkg.MatchString(p) {
+			if !validPackage(p) {
 				return r
 			}
 		}
 		r.Kind, r.Packages = KindNpm, fields[3:]
 		return r
 	}
-	if m := curlInstall.FindStringSubmatch(hint); m != nil && runtime.GOOS != "windows" {
-		if u, err := url.Parse(m[1]); err == nil && u.Scheme == "https" && u.Host != "" {
-			r.Kind, r.ScriptURL, r.Shell = KindScript, m[1], m[2]
-		}
+	if m := curlInstall.FindStringSubmatch(hint); m != nil && validScript(m[1], m[2]) {
+		r.Kind, r.ScriptURL, r.Shell = KindScript, m[1], m[2]
 	}
 	return r
 }
@@ -86,14 +122,13 @@ func ForEntry(e monomind.ScanEntry) Recipe {
 			return r
 		}
 		for _, p := range in.Packages {
-			if !npmPkg.MatchString(p) {
+			if !validPackage(p) {
 				return r
 			}
 		}
 		r.Kind, r.Packages = KindNpm, in.Packages
 	case "script":
-		u, err := url.Parse(in.URL)
-		if err != nil || u.Scheme != "https" || u.Host == "" || (in.Shell != "bash" && in.Shell != "sh") || runtime.GOOS == "windows" {
+		if !validScript(in.URL, in.Shell) {
 			return r
 		}
 		r.Kind, r.ScriptURL, r.Shell = KindScript, in.URL, in.Shell
@@ -126,13 +161,33 @@ func (in *Installer) Install(ctx context.Context, r Recipe, progress func(string
 	defer cancel()
 	switch r.Kind {
 	case KindNpm:
+		for _, p := range r.Packages {
+			if !validPackage(p) {
+				return fmt.Errorf("%w — %q is not an npm registry package", ErrManual, p)
+			}
+		}
 		_, err := in.Node.InstallGlobal(ctx, progress, r.Packages...)
 		return err
 	case KindScript:
+		// Checked again here: a Recipe can be built by hand, not only by
+		// Parse/ForEntry.
+		if !validScript(r.ScriptURL, r.Shell) {
+			return fmt.Errorf("%w — %s is not a vendor installer monoagent runs", ErrManual, r.ScriptURL)
+		}
 		return in.runScript(ctx, r, progress)
 	default:
 		return fmt.Errorf("%w — %s", ErrManual, r.Hint)
 	}
+}
+
+// NpmBinDir is where an npm recipe's executables would land now (the
+// system prefix when writable, else ~/.monoagent/npm-global/bin).
+func (in *Installer) NpmBinDir(ctx context.Context) (string, error) {
+	plan, err := in.Node.PlanGlobalInstall(ctx)
+	if err != nil {
+		return "", err
+	}
+	return plan.BinDir, nil
 }
 
 // runScript downloads the vendor installer with Go (no dependency on curl

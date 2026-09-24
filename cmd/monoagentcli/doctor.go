@@ -296,7 +296,8 @@ var statusMark = map[health.Status]string{
 func printDoctorReport(w io.Writer, rep *health.Report, fixed bool) {
 	fmt.Fprintf(w, "monoagent doctor — %s · profile %s\n", rep.MonoagentVersion, rep.ProfileID)
 	group := ""
-	fixable := 0
+	// Distinct fixes, as --fix applies each once however many rows offer it.
+	fixable, optional := map[string]bool{}, map[string]bool{}
 	// Uninteresting child rows are folded into one line each (the JSON keeps
 	// every row): runtimes that aren't installed, and monomind's passing
 	// checks — a dozen of either would drown the report.
@@ -350,8 +351,9 @@ func printDoctorReport(w io.Writer, rep *health.Report, fixed bool) {
 			kind := string(r.Fix.Safety)
 			if r.Fix.Optional {
 				kind += ", optional"
+				optional[r.Fix.ID] = true
 			} else if r.Fix.Safety != health.SafetyManual {
-				fixable++
+				fixable[r.Fix.ID] = true
 			}
 			line := fmt.Sprintf("fix [%s]: %s — monoagentcli doctor fix %s", kind, r.Fix.Label, r.Fix.ID)
 			if r.Fix.Safety == health.SafetyManual && r.Fix.Command != "" {
@@ -367,9 +369,23 @@ func printDoctorReport(w io.Writer, rep *health.Report, fixed bool) {
 	s := rep.Summary
 	fmt.Fprintf(w, "\n%d ok · %d warning · %d failed · %d skipped · %d info\n",
 		s[health.StatusOK], s[health.StatusWarn], s[health.StatusFail], s[health.StatusSkip], s[health.StatusInfo])
-	if fixable > 0 && !fixed {
-		fmt.Fprintf(w, "Run `monoagentcli doctor --fix` to repair what can be repaired.\n")
+	for _, line := range doctorFooter(len(fixable), len(optional), fixed) {
+		fmt.Fprintln(w, line)
 	}
+}
+
+// doctorFooter says what `doctor --fix` would do: it applies the auto and
+// confirm fixes, never the optional ones (those run one at a time, by id),
+// and nothing of the manual ones.
+func doctorFooter(fixable, optional int, fixed bool) []string {
+	var lines []string
+	if fixable > 0 && !fixed {
+		lines = append(lines, fmt.Sprintf("Run `monoagentcli doctor --fix` to apply %d fix(es).", fixable))
+	}
+	if optional > 0 {
+		lines = append(lines, fmt.Sprintf("%d optional fix(es) are not applied by --fix; run one with `monoagentcli doctor fix <id>`.", optional))
+	}
+	return lines
 }
 
 // captureStdLog sends the standard logger's output to progress, one call

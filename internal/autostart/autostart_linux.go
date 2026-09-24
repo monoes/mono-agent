@@ -63,9 +63,14 @@ func unitPath() (string, error) {
 // systemd. Some of the Linux binaries this project ships land on minimal or
 // non-systemd distros; failing here with a clear message beats a confusing
 // "systemctl: command not found" or a silent no-op.
-func systemdAvailable() bool {
+var systemdAvailable = func() bool {
 	_, err := os.Stat("/run/systemd/system")
 	return err == nil
+}
+
+// systemctl runs systemctl; tests replace it.
+var systemctl = func(ctx context.Context, args ...string) ([]byte, error) {
+	return exec.CommandContext(ctx, "systemctl", args...).Output()
 }
 
 func (linuxInstaller) Install(ctx context.Context) (Result, error) {
@@ -128,13 +133,33 @@ func (linuxInstaller) Uninstall(ctx context.Context) error {
 	return nil
 }
 
-func (linuxInstaller) Status(context.Context) (bool, string) {
+// Status reports the unit installed only when its file exists and systemd
+// has it enabled — a file alone starts nothing (a failed `enable`, a
+// `systemctl --user disable` since). When it doesn't count, where says why.
+func (linuxInstaller) Status(ctx context.Context) (bool, string) {
 	path, err := unitPath()
 	if err != nil {
 		return false, ""
 	}
-	_, err = os.Stat(path)
-	return err == nil, path
+	if _, err := os.Stat(path); err != nil {
+		return false, ""
+	}
+	if !systemdAvailable() {
+		return false, path + " exists, but there is no systemd user session to start it"
+	}
+	out, err := systemctl(ctx, "--user", "is-enabled", unitName)
+	state := strings.TrimSpace(string(out))
+	if err == nil && (state == "enabled" || state == "enabled-runtime") {
+		return true, path
+	}
+	if state == "" {
+		state = "unknown"
+		if err != nil {
+			state = err.Error()
+		}
+	}
+	return false, fmt.Sprintf("%s exists but systemd reports it %s (systemctl --user is-enabled %s) — run `monoagentcli daemon install` again",
+		path, state, unitName)
 }
 
 func (linuxInstaller) Start(ctx context.Context) error {

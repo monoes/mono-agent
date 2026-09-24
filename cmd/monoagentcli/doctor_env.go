@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 
 	"github.com/monoes/mono-agent/internal/agentinstall"
@@ -85,22 +86,20 @@ func newHealthEnv(cfg *globalConfig) (*health.Env, func()) {
 	var hsInfo *monomind.VersionInfo
 	var hsErr error
 	env.FindMonomind = monomind.Find
+	env.MonomindCandidates = monomind.FindAll
 	env.MonomindHandshake = func(ctx context.Context) (*monomind.VersionInfo, error) {
 		hsOnce.Do(func() { _, hsInfo, hsErr = monomind.Ensure(ctx) })
 		return hsInfo, hsErr
 	}
 	env.ScanRuntimes = monomind.Scan
 	env.InstallMonomind = func(ctx context.Context, progress func(string)) error {
-		if _, err := nm.InstallGlobal(ctx, progress, health.MonomindPackage); err != nil {
-			return err
-		}
-		monomind.ResetCapabilityCache()
-		bin, vi, err := monomind.Ensure(ctx)
-		if err != nil {
-			return fmt.Errorf("installed, but monomind still does not answer: %w", err)
-		}
-		progress(fmt.Sprintf("monomind %s ready at %s", vi.Version, bin))
-		return nil
+		return installMonomind(ctx, func(ctx context.Context, progress func(string)) (string, error) {
+			plan, err := nm.InstallGlobal(ctx, progress, health.MonomindPackage)
+			if err != nil {
+				return "", err
+			}
+			return plan.BinDir, nil
+		}, monomind.Find, monomind.Handshake, progress)
 	}
 	env.MonomindDoctor = func(ctx context.Context, o monomind.DoctorOptions) (*monomind.DoctorReport, error) {
 		bin, err := monomind.Find()
@@ -116,10 +115,10 @@ func newHealthEnv(cfg *globalConfig) (*health.Env, func()) {
 	env.InstallRuntime = func(ctx context.Context, id string, progress func(string)) error {
 		// The fix itself is the consent (it is a confirm fix), so vendor
 		// scripts are allowed here.
-		_, err := installRuntime(ctx, id, false, func(agentinstall.Recipe) bool { return true }, progress)
+		_, err := installRuntime(ctx, realRuntimeMachine(), id, false, func(agentinstall.Recipe) bool { return true }, progress)
 		return err
 	}
-	addServiceHooks(env)
+	addServiceHooks(env, cfg)
 	env.ProfileRoot = func(id string) string { return profiledir.Root(env.DB, id) }
 	env.EnsureProfile = func(id string) error { return profiledir.EnsureLayout(env.DB, id) }
 
@@ -157,7 +156,70 @@ func newHealthEnv(cfg *globalConfig) (*health.Env, func()) {
 	if env.DB != nil {
 		addAccountHooks(env, env.DB)
 	}
+	if healthEnvHook != nil {
+		healthEnvHook(env)
+	}
 	return env, closeFn
+}
+
+// healthEnvHook, when set (tests only), adjusts every environment doctor
+// builds — e.g. replaces the hooks that start processes or use the network.
+var healthEnvHook func(*health.Env)
+
+// installMonomind runs install (npm install -g, returning the folder the
+// executable went to), then checks that the monomind Find now picks is
+// the new one and answers. An older monomind earlier on PATH (a root-owned
+// /usr/bin/monomind) would otherwise still be used, and the check would
+// offer this same fix again on every run: that is reported, naming the
+// file to remove.
+func installMonomind(ctx context.Context, install func(context.Context, func(string)) (string, error),
+	find func() (string, error), handshake func(context.Context, string) (*monomind.VersionInfo, error),
+	progress func(string)) error {
+	var output []string
+	binDir, err := install(ctx, func(line string) {
+		output = append(output, line)
+		progress(line)
+	})
+	if err != nil {
+		return health.ExplainNpmClash(err, output, health.MonomindPackage)
+	}
+	monomind.ResetCapabilityCache()
+	name := "monomind"
+	if runtime.GOOS == "windows" {
+		name = "monomind.cmd"
+	}
+	installed := filepath.Join(binDir, name)
+	bin, err := find()
+	if err != nil {
+		return fmt.Errorf("installed into %s, but monomind is still not found: %w", binDir, err)
+	}
+	vi, herr := handshake(ctx, bin)
+	if _, statErr := os.Stat(installed); statErr == nil && !samePath(bin, installed) {
+		if herr != nil {
+			return fmt.Errorf("installed monomind at %s, but %s comes first on PATH and is still used, and it does not work (%v) — "+
+				"remove it (e.g. `sudo npm uninstall -g @monoes/monomindcli`, or delete it), or set %s=%s",
+				installed, bin, herr, monomind.EnvOverride, installed)
+		}
+		progress(fmt.Sprintf("note: %s (monomind %s) comes first on PATH and is the one used; the copy just installed at %s is not",
+			bin, vi.Version, installed))
+		return nil
+	}
+	if herr != nil {
+		return fmt.Errorf("installed, but monomind still does not answer: %w", herr)
+	}
+	progress(fmt.Sprintf("monomind %s ready at %s", vi.Version, bin))
+	return nil
+}
+
+// samePath compares two files after resolving symlinks.
+func samePath(a, b string) bool {
+	if ra, err := filepath.EvalSymlinks(a); err == nil {
+		a = ra
+	}
+	if rb, err := filepath.EvalSymlinks(b); err == nil {
+		b = rb
+	}
+	return filepath.Clean(a) == filepath.Clean(b)
 }
 
 // profileProjects lists the monomind projects inside the active profile's

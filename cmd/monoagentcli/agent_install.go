@@ -5,7 +5,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -13,6 +16,7 @@ import (
 
 	"github.com/monoes/mono-agent/internal/agentinstall"
 	"github.com/monoes/mono-agent/internal/monomind"
+	"github.com/monoes/mono-agent/internal/shellpath"
 )
 
 func newAgentInstallCmd(cfg *globalConfig) *cobra.Command {
@@ -39,7 +43,7 @@ With --json, progress is streamed as NDJSON like ` + "`doctor fix`" + `.`,
 			out := cmd.OutOrStdout()
 			progress := progressWriter(out, cfg.JSONOutput)
 			confirmScript := scriptConsent(yes, approveScript, !cfg.JSONOutput && stdinIsTerminal(), cmd.InOrStdin(), out)
-			msg, err := installRuntime(cmd.Context(), args[0], force, confirmScript, progress)
+			msg, err := installRuntime(cmd.Context(), realRuntimeMachine(), args[0], force, confirmScript, progress)
 			return finishStreamed(out, cfg.JSONOutput, err, msg)
 		},
 	}
@@ -49,11 +53,40 @@ With --json, progress is streamed as NDJSON like ` + "`doctor fix`" + `.`,
 	return cmd
 }
 
+// runtimeMachine is what installRuntime needs from this machine; tests
+// fake it.
+type runtimeMachine struct {
+	scan    func(ctx context.Context) (*monomind.ScanResult, error)
+	install func(ctx context.Context, r agentinstall.Recipe, progress func(string)) error
+	// npmBinDir is where an npm install would put executables now.
+	npmBinDir func(ctx context.Context) (string, error)
+	// loginPath is the user's login-shell PATH ("" when unknown).
+	loginPath func(ctx context.Context) string
+	// nodeDirFor is the folder of the `node` a Node-script binary runs
+	// with here, "" for a binary that isn't one.
+	nodeDirFor func(bin string) string
+}
+
+// realRuntimeMachine is the machine installRuntime runs on outside tests.
+func realRuntimeMachine() runtimeMachine {
+	in := agentinstall.New()
+	return runtimeMachine{
+		scan:      monomind.Scan,
+		install:   in.Install,
+		npmBinDir: in.NpmBinDir,
+		loginPath: func(ctx context.Context) string {
+			p, _ := shellpath.LoginPath(ctx)
+			return p
+		},
+		nodeDirFor: nodeDirFor,
+	}
+}
+
 // installRuntime installs one runtime by its `agent scan` id and verifies
 // it with a re-scan. confirmScript gates vendor install scripts.
-func installRuntime(ctx context.Context, id string, force bool, confirmScript func(agentinstall.Recipe) bool,
+func installRuntime(ctx context.Context, m runtimeMachine, id string, force bool, confirmScript func(agentinstall.Recipe) bool,
 	progress func(string)) (string, error) {
-	scan, err := monomind.Scan(ctx)
+	scan, err := m.scan(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -67,7 +100,8 @@ func installRuntime(ctx context.Context, id string, force bool, confirmScript fu
 		return "", errNotFound("unknown runtime %q (known: %s)", id, strings.Join(ids, ", "))
 	}
 	if entry.Installed && !force {
-		return fmt.Sprintf("%s is already installed (%s) — use --force to reinstall", id, strPtr(entry.Version, "unknown version")), nil
+		return fmt.Sprintf("%s is already installed (%s at %s) — nothing to do; use --force to reinstall",
+			id, strPtr(entry.Version, "unknown version"), strPtr(entry.Binary, "?")), nil
 	}
 
 	recipe := agentinstall.ForEntry(*entry)
@@ -79,11 +113,26 @@ func installRuntime(ctx context.Context, id string, force bool, confirmScript fu
 			return "", errInvalidInput("%s installs by running the vendor script %s — confirm, or pass --yes", id, recipe.ScriptURL)
 		}
 	}
-	if err := agentinstall.New().Install(ctx, recipe, progress); err != nil {
+	binDir := ""
+	if recipe.Kind == agentinstall.KindNpm {
+		if binDir, err = m.npmBinDir(ctx); err != nil {
+			return "", err
+		}
+	}
+	before := strPtr(entry.Binary, "")
+	// Reinstalling with npm when the runtime came from elsewhere (mise,
+	// Homebrew, a vendor installer) adds a second copy the first one still
+	// shadows on PATH: nothing would change but the report.
+	if entry.Installed && before != "" && binDir != "" && !sameDir(filepath.Dir(before), binDir) {
+		return "", errInvalidInput("%s at %s was not installed with npm into %s — --force would add a second copy there "+
+			"instead of updating this one; update it the way it was installed (mise, Homebrew, …), or remove it and run this again",
+			id, before, binDir)
+	}
+	if err := m.install(ctx, recipe, progress); err != nil {
 		return "", err
 	}
 
-	after, err := monomind.Scan(ctx)
+	after, err := m.scan(ctx)
 	if err != nil {
 		return "", fmt.Errorf("installed, but re-scanning failed: %w", err)
 	}
@@ -92,12 +141,106 @@ func installRuntime(ctx context.Context, id string, force bool, confirmScript fu
 		return "", fmt.Errorf("the installer finished but monomind still doesn't see %s — open a new terminal, or check the output above", id)
 	}
 	bin := strPtr(got.Binary, id)
-	if got.LoginHint != nil && *got.LoginHint != "" {
-		progress(fmt.Sprintf("sign in: %s", *got.LoginHint))
-	} else {
-		progress(fmt.Sprintf("sign in: run `%s` once in a terminal if it asks you to log in", filepath.Base(bin)))
+	if binDir != "" && got.Binary != nil && !sameDir(filepath.Dir(bin), binDir) {
+		progress(fmt.Sprintf("note: %s comes first on PATH, so the copy just installed into %s is not the one used", bin, binDir))
 	}
-	return fmt.Sprintf("%s %s installed at %s", id, strPtr(got.Version, ""), bin), nil
+	progress("sign in: " + signInHint(bin, strPtr(got.LoginHint, ""), m.loginPath(ctx), m.nodeDirFor(bin)))
+	oldV, newV := strPtr(entry.Version, ""), strPtr(got.Version, "")
+	switch {
+	case !entry.Installed:
+		return fmt.Sprintf("%s %s installed at %s", id, newV, bin), nil
+	case oldV != "" && oldV == newV && bin == before:
+		return fmt.Sprintf("%s reinstalled — still %s at %s (nothing newer was found)", id, newV, bin), nil
+	default:
+		return fmt.Sprintf("%s updated from %s to %s at %s", id, strPtr(entry.Version, "unknown version"), strPtr(got.Version, "unknown version"), bin), nil
+	}
+}
+
+// sameDir compares two folders after resolving symlinks.
+func sameDir(a, b string) bool {
+	if ra, err := filepath.EvalSymlinks(a); err == nil {
+		a = ra
+	}
+	if rb, err := filepath.EvalSymlinks(b); err == nil {
+		b = rb
+	}
+	return filepath.Clean(a) == filepath.Clean(b)
+}
+
+// signInHint is the sign-in command to show for a runtime just installed
+// at bin. The user runs it in their own terminal, whose PATH (loginPath)
+// may lack bin's folder (~/.monoagent/npm-global/bin) and the folder of the
+// `node` it runs with (a managed Node): then the full path is shown, with
+// node's folder put in front of PATH.
+func signInHint(bin, loginHint, loginPath, nodeDir string) string {
+	onPath := func(dir string) bool {
+		if loginPath == "" {
+			return false // unknown: say it in full
+		}
+		for _, p := range filepath.SplitList(loginPath) {
+			if p != "" && sameDir(p, dir) {
+				return true
+			}
+		}
+		return false
+	}
+	name := filepath.Base(bin)
+	command := loginHint
+	if command == "" {
+		command = strings.TrimSuffix(name, filepath.Ext(name))
+		if runtime.GOOS != "windows" {
+			command = name
+		}
+	}
+	if filepath.IsAbs(bin) && !onPath(filepath.Dir(bin)) {
+		first, rest, _ := strings.Cut(command, " ")
+		if first == name || first == strings.TrimSuffix(name, filepath.Ext(name)) {
+			command = strings.TrimSpace(shellQuote(bin) + " " + rest)
+		} else {
+			command += " (" + name + " is at " + bin + ")"
+		}
+	}
+	if nodeDir != "" && !onPath(nodeDir) {
+		if runtime.GOOS == "windows" {
+			command += " (with " + nodeDir + " on PATH)"
+		} else {
+			command = "PATH=" + shellQuote(nodeDir) + ":\"$PATH\" " + command
+		}
+	}
+	if loginHint != "" {
+		return command
+	}
+	return "run `" + command + "` once in a terminal if it asks you to log in"
+}
+
+// shellQuote quotes s for a POSIX shell when it needs it.
+func shellQuote(s string) string {
+	if s != "" && !strings.ContainsAny(s, " \t'\"$`\\!*?[]{}()<>|&;#~") {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// nodeDirFor returns the folder of the `node` bin runs with, when bin is a
+// `#!/usr/bin/env node` script (an npm package) — the `node` on this
+// process's PATH, which may be the managed one. "" otherwise.
+func nodeDirFor(bin string) string {
+	f, err := os.Open(bin)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	head := make([]byte, 128)
+	n, _ := f.Read(head)
+	line, _, _ := strings.Cut(string(head[:n]), "\n")
+	if !strings.HasPrefix(line, "#!") || !strings.Contains(line, "node") {
+		return ""
+	}
+	node, err := exec.LookPath("node")
+	if err != nil {
+		return ""
+	}
+	return filepath.Dir(node)
 }
 
 func strPtr(s *string, def string) string {
