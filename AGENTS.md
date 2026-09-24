@@ -357,9 +357,13 @@ monoagentcli org automation-role add growth --alias publish_post --reports-to le
   continue a chain; a manual or scheduled run starts a fresh one whatever
   `trace` its data holds. A webhook run continues a chain only from a
   signed `X-Monoagent-Trace` header, which the HTTP request node sends for
-  a run on a chain (`internal/tracesig`), so a loop through a webhook is
-  counted and refused (429) at the hop limit. Refusals are recorded in
-  `org_bridge_calls`.
+  a run on a chain (`internal/tracesig`; tokens expire after an hour), so
+  a loop through a webhook is counted and refused (429) at the hop limit of
+  the org the chain started in. Webhook runs and `trigger.org` event runs
+  are also limited to 200 per workflow per minute (429 for webhooks).
+  `trigger.org` runs are recorded as `org_event` / `event_start`.
+  Refusals are recorded in `org_bridge_calls` (for webhook and trigger.org
+  runs, the first of each kind per minute).
 
 **Autonomy** decides who resolves an org's approvals, questions, gates,
 and HIL items inside runs the org started:

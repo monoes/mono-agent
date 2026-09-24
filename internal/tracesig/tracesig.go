@@ -7,9 +7,9 @@
 // trace from outside is never trusted (a caller could join someone else's
 // chain, or keep a loop on a chain of its choosing). A signed one can only
 // have come from this machine: the key lives in ~/.monoagent/trace.key and
-// never leaves it. The signature covers the chain and the hop together, so
-// a replayed token can put a run on its chain at that hop or later, never
-// lower.
+// never leaves it. The signature covers the chain, the hop and an expiry
+// together, so a replayed token can put a run on its chain at that hop or
+// later, never lower, and only until it expires (TTL).
 package tracesig
 
 import (
@@ -26,19 +26,38 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Header carries a signed trace on an HTTP request.
 const Header = "X-Monoagent-Trace"
 
-const version = "v1"
+// version is the token format. v1 tokens (no expiry) are not accepted: a
+// v1 token in flight across an upgrade starts a fresh chain, which is safe.
+const version = "v2"
+
+// TTL is how long a token verifies after it was signed. A request to a
+// local webhook comes back in milliseconds; the hour is for an outside
+// system that returns the header later (propagate_trace). Past it a
+// request starts a fresh chain, as an unsigned one does: a leaked or logged
+// token cannot be replayed onto its chain for ever.
+const TTL = time.Hour
+
+// maxSkew is how far in the future a token's expiry may lie beyond TTL:
+// processes on one machine share its clock, so a token that claims more
+// was not signed by Sign.
+const maxSkew = time.Minute
+
+// now is the clock tokens are signed and checked against (tests move it).
+var now = time.Now
 
 // keyFile is the key's name under ~/.monoagent.
 const keyFile = "trace.key"
 
 var chainRe = regexp.MustCompile(`^chn_[A-Za-z0-9_-]+$`)
 
-// Sign returns the token for chain at hop under key: v1.<chain>.<hop>.<mac>.
+// Sign returns the token for chain at hop under key, valid for TTL:
+// v2.<chain>.<hop>.<expiry unix seconds>.<mac>.
 func Sign(key []byte, chain string, hop int) (string, error) {
 	if !chainRe.MatchString(chain) {
 		return "", fmt.Errorf("tracesig: not a chain id: %q", chain)
@@ -47,29 +66,39 @@ func Sign(key []byte, chain string, hop int) (string, error) {
 		return "", fmt.Errorf("tracesig: negative hop %d", hop)
 	}
 	h := strconv.Itoa(hop)
-	return version + "." + chain + "." + h + "." + mac(key, chain, h), nil
+	exp := strconv.FormatInt(now().Add(TTL).Unix(), 10)
+	return version + "." + chain + "." + h + "." + exp + "." + mac(key, chain, h, exp), nil
 }
 
-// Verify returns the chain and hop of a token signed with key.
+// Verify returns the chain and hop of a token signed with key that has not
+// expired.
 func Verify(key []byte, token string) (chain string, hop int, ok bool) {
 	parts := strings.Split(strings.TrimSpace(token), ".")
-	if len(parts) != 4 || parts[0] != version || !chainRe.MatchString(parts[1]) {
+	if len(parts) != 5 || parts[0] != version || !chainRe.MatchString(parts[1]) {
 		return "", 0, false
 	}
 	hop, err := strconv.Atoi(parts[2])
 	if err != nil || hop < 0 || strconv.Itoa(hop) != parts[2] {
 		return "", 0, false
 	}
-	want := mac(key, parts[1], parts[2])
-	if !hmac.Equal([]byte(want), []byte(parts[3])) {
+	exp, err := strconv.ParseInt(parts[3], 10, 64)
+	if err != nil || strconv.FormatInt(exp, 10) != parts[3] {
+		return "", 0, false
+	}
+	want := mac(key, parts[1], parts[2], parts[3])
+	if !hmac.Equal([]byte(want), []byte(parts[4])) {
+		return "", 0, false
+	}
+	t := now()
+	if t.Unix() >= exp || exp > t.Add(TTL+maxSkew).Unix() {
 		return "", 0, false
 	}
 	return parts[1], hop, true
 }
 
-func mac(key []byte, chain, hop string) string {
+func mac(key []byte, chain, hop, exp string) string {
 	m := hmac.New(sha256.New, key)
-	m.Write([]byte(version + "|" + chain + "|" + hop))
+	m.Write([]byte(version + "|" + chain + "|" + hop + "|" + exp))
 	return base64.RawURLEncoding.EncodeToString(m.Sum(nil))
 }
 

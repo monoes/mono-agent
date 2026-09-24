@@ -93,7 +93,9 @@ func (s *WebhookServer) SetTraceAdmitter(fn TraceAdmitter) {
 // fresh chain at hop 0. Every webhook run is on a chain, so a workflow that
 // calls its own webhook, or another that calls back, is a loop the ledger
 // sees from its second request on, even when nothing started it from an
-// org. A non-zero status is a refusal to send back. Without an admitter (no
+// org. A non-zero status is a refusal to send back: 429 when the ledger
+// refuses (hop limit, or orgbridge.TriggerRepeats runs a minute), 503 when
+// it cannot record. An expired token does not verify. Without an admitter (no
 // daemon ledger) no chain is given, since nothing would count it.
 func (s *WebhookServer) admitTrace(ctx context.Context, workflowID, token string) (trace map[string]interface{}, status int, msg string) {
 	s.mu.RLock()

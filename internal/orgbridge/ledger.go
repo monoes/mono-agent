@@ -3,6 +3,7 @@ package orgbridge
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -17,6 +18,8 @@ const (
 	DirEndpointReply = "endpoint_reply" // an automation role replied to its sender
 	DirOrgStart      = "org_start"      // a holding org started a child
 	DirWebhookIn     = "webhook_in"     // a signed trace came back in through a webhook
+	DirOrgEvent      = "org_event"      // an org event started a trigger.org run on the event's chain
+	DirEventStart    = "event_start"    // an org event started a trigger.org run on a fresh chain
 )
 
 // Call statuses.
@@ -41,6 +44,15 @@ const (
 // SiblingCallsPerHop is how many granted calls on a chain, by any of its
 // roles, add one hop (see Admit). Not settable from the org file.
 const SiblingCallsPerHop = 8
+
+// TriggerRepeats is the repeat limit for webhook_in and org_event, per
+// target (the workflow) in Limits.Window, whatever the org's max_repeats
+// says. Both start a run for every request or event, so without a limit a
+// replayed signed token, or a role making tool calls in a tight loop, grows
+// the table by a row each time. It is generous on purpose: a fan-out of one
+// run's items to a local webhook, or an audit workflow on a busy role's
+// tool events, is not a loop, and max_repeats' default of 20 would stop it.
+const TriggerRepeats = 200
 
 // Limits bound chains (U10). Zero fields take defaults; values above the
 // ceilings are clamped.
@@ -84,7 +96,7 @@ type Call struct {
 
 // Admission is the outcome of Ledger.Admit.
 type Admission struct {
-	ID     string // org_bridge_calls row id
+	ID     string // org_bridge_calls row id; empty for a refusal not recorded (see Admit)
 	Trace  Trace  // chain and the hop this crossing is at
 	Status string // StatusOK or a refusal
 	Reason string // human-readable refusal
@@ -168,7 +180,18 @@ func (l *Ledger) Admit(ctx context.Context, c Call, lim Limits) (Admission, erro
 	// a hop that never happened, and counting it let one forged crossing
 	// (hop=999) kill a chain for every caller on it; a real loop refused at
 	// hop N is still refused at hop N next time.
-	q := `SELECT MAX(hop) FROM org_bridge_calls WHERE profile_id = ? AND chain_id = ? AND status NOT LIKE 'refused%'`
+	//
+	// org_event rows do not set the chain's depth either. monomind stamps
+	// every tool event of a role with the role's chain, so an audit workflow
+	// on a busy role's events is admitted once per event; if each of those
+	// rows raised the depth the next one would climb, and the chain would
+	// die after max_hops events with no loop in sight. A trigger.org run
+	// that is part of a loop leaves the run through a crossing that is
+	// recorded (workflow_out, a signed webhook_in, org_start), and that row
+	// sets the depth. (An event_start row does count: it is the first row
+	// of a fresh chain, one per chain, so nothing piles up on it.)
+	q := `SELECT MAX(hop) FROM org_bridge_calls WHERE profile_id = ? AND chain_id = ? AND status NOT LIKE 'refused%'
+	        AND direction <> 'org_event'`
 	args := []interface{}{c.ProfileID, tr.ChainID}
 	granted := 0
 	if c.Direction == DirRoleTool {
@@ -186,18 +209,17 @@ func (l *Ledger) Admit(ctx context.Context, c Call, lim Limits) (Admission, erro
 	hop := tr.Hop
 	if c.Direction == DirWebhookIn {
 		// A webhook_in header was signed by the run that sent the request
-		// (internal/tracesig), so its hop is the hop that run was started
-		// at, and is trusted as is: the requests one run sends (a fan-out
-		// over its items) all carry the same hop and are siblings at hop+1.
-		// Taking the chain's recorded maximum here refused a plain fan-out
-		// to a local webhook after a handful of items. A loop climbs when
-		// every other leg is admitted through this ledger, since those take
-		// the recorded maximum. Not when the sender is a trigger.org run:
-		// that run's hop is the role's, read from the bus event and never
-		// admitted here, so a loop that returns to the role by a path the
-		// ledger does not record stays at one hop (as on master, where it
-		// started a fresh chain every round). Recording trigger.org runs
-		// through Admit would close that.
+		// (internal/tracesig), so its hop is the deeper of the hop that run
+		// was started at and the hop its item reached on the chain
+		// (workflow.RunTrace), and is trusted as is: the requests one run
+		// sends (a fan-out over its items) all carry the same hop and are
+		// siblings at hop+1. Taking the chain's recorded maximum here refused
+		// a plain fan-out to a local webhook after a handful of items. A loop
+		// climbs because every other leg is admitted through this ledger and
+		// takes the recorded maximum, trigger.org runs included (org_event):
+		// a loop R → tool event → trigger.org → webhook → back to R by a path
+		// the ledger does not record starts each round's trigger.org run
+		// above the previous round's webhook_in row.
 		hop++
 	} else {
 		var recorded sql.NullInt64
@@ -214,21 +236,45 @@ func (l *Ledger) Admit(ctx context.Context, c Call, lim Limits) (Admission, erro
 	if hop > lim.MaxHops {
 		adm.Status = StatusRefusedHops
 		adm.Reason = fmt.Sprintf("chain %s reached hop %d, over the limit of %d — this looks like a loop between orgs and automations", tr.ChainID, hop, lim.MaxHops)
-	} else if c.Direction != DirWebhookIn {
-		// webhook_in is not repeat-limited: a caller without a signed
-		// header can start the same workflow as often as it likes anyway.
+	} else {
+		maxRepeats := lim.MaxRepeats
+		if triggerDirection(c.Direction) {
+			maxRepeats = TriggerRepeats
+		}
 		since := l.now().Add(-lim.Window).UTC().Format(time.RFC3339Nano)
 		var n int
 		if err := conn.QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM org_bridge_calls
-			 WHERE profile_id = ? AND direction = ? AND COALESCE(org_name,'') = ? AND COALESCE(role_id,'') = ?
+			 WHERE profile_id = ? AND direction IN (?, ?) AND COALESCE(org_name,'') = ? AND COALESCE(role_id,'') = ?
 			   AND COALESCE(workflow_id,'') = ? AND status = 'ok' AND created_at >= ?`,
-			c.ProfileID, c.Direction, c.OrgName, c.RoleID, c.WorkflowID, since).Scan(&n); err != nil {
+			c.ProfileID, c.Direction, sameTarget(c.Direction), c.OrgName, c.RoleID, c.WorkflowID, since).Scan(&n); err != nil {
 			return Admission{}, fmt.Errorf("orgbridge: ledger: %w", err)
 		}
-		if n >= lim.MaxRepeats {
+		if n >= maxRepeats {
 			adm.Status = StatusRefusedRepeat
-			adm.Reason = fmt.Sprintf("%d calls to the same target in the last %s (limit %d) — slow down or raise run_config.max_repeats", n, lim.Window, lim.MaxRepeats)
+			adm.Reason = fmt.Sprintf("%d calls to the same target in the last %s (limit %d) — slow down or raise run_config.max_repeats", n, lim.Window, maxRepeats)
+			if triggerDirection(c.Direction) {
+				adm.Reason = fmt.Sprintf("%d runs of this workflow on org chains in the last %s (limit %d) — slow down", n, lim.Window, maxRepeats)
+			}
+		}
+	}
+	if !adm.OK() && triggerDirection(c.Direction) {
+		// Only the first refusal of each kind per target in the window is
+		// recorded: a row per refused replay of a token (at its hop limit or
+		// over the repeat limit) would grow the table without bound, which
+		// is what the limits are for.
+		since := l.now().Add(-lim.Window).UTC().Format(time.RFC3339Nano)
+		var refused int
+		if err := conn.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM org_bridge_calls
+			 WHERE profile_id = ? AND direction IN (?, ?) AND COALESCE(org_name,'') = ? AND COALESCE(role_id,'') = ?
+			   AND COALESCE(workflow_id,'') = ? AND status = ? AND created_at >= ?`,
+			c.ProfileID, c.Direction, sameTarget(c.Direction), c.OrgName, c.RoleID, c.WorkflowID, adm.Status, since).Scan(&refused); err != nil {
+			return Admission{}, fmt.Errorf("orgbridge: ledger: %w", err)
+		}
+		if refused > 0 {
+			adm.ID = ""
+			return adm, nil
 		}
 	}
 	if err := l.insertWith(ctx, conn, adm.ID, c, adm.Trace, adm.Status); err != nil {
@@ -239,6 +285,63 @@ func (l *Ledger) Admit(ctx context.Context, c Call, lim Limits) (Admission, erro
 	}
 	committed = true
 	return adm, nil
+}
+
+// triggerDirection reports whether a crossing starts a workflow run for
+// every request or event that arrives (webhook_in, and org_event /
+// event_start for trigger.org), and so is repeat-limited by TriggerRepeats
+// rather than the org's max_repeats.
+func triggerDirection(dir string) bool {
+	return dir == DirWebhookIn || dir == DirOrgEvent || dir == DirEventStart
+}
+
+// sameTarget is the other direction whose crossings count toward dir's
+// repeat limit: a trigger.org run is one target whether it continued the
+// event's chain or started a fresh one.
+func sameTarget(dir string) string {
+	switch dir {
+	case DirOrgEvent:
+		return DirEventStart
+	case DirEventStart:
+		return DirOrgEvent
+	}
+	return dir
+}
+
+// ChainOrigin returns the org the chain started in: the origin org of its
+// first recorded crossing that has one, or "" when none has (a chain a
+// webhook run started, or one not recorded at all).
+func (l *Ledger) ChainOrigin(ctx context.Context, profileID, chainID string) (string, error) {
+	if l.db == nil {
+		return "", nil
+	}
+	var org string
+	err := l.db.QueryRowContext(ctx,
+		`SELECT origin_org FROM org_bridge_calls WHERE profile_id = ? AND chain_id = ? AND origin_org <> ''
+		 ORDER BY rowid LIMIT 1`, profileID, chainID).Scan(&org)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return org, err
+}
+
+// StartedChain reports whether chainID's first recorded crossing is an
+// admitted event_start of workflowID: a trigger.org run of that workflow
+// started the chain fresh (see TriggerSource.eventItems). Rows are ordered
+// by rowid, the insertion order, not created_at, whose RFC 3339 text drops
+// trailing zeros and so does not sort exactly.
+func (l *Ledger) StartedChain(ctx context.Context, profileID, chainID, workflowID string) (bool, error) {
+	if l.db == nil {
+		return false, nil
+	}
+	var dir, wf, status string
+	err := l.db.QueryRowContext(ctx,
+		`SELECT direction, COALESCE(workflow_id,''), status FROM org_bridge_calls
+		 WHERE profile_id = ? AND chain_id = ? ORDER BY rowid LIMIT 1`, profileID, chainID).Scan(&dir, &wf, &status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil && dir == DirEventStart && wf == workflowID && status == StatusOK, err
 }
 
 // Refuse records a crossing refused before admission (grant revoked, cap

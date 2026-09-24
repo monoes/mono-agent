@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -9,7 +11,10 @@ import (
 	"github.com/rs/zerolog"
 
 	httpnodes "github.com/monoes/mono-agent/internal/nodes/http"
+	"github.com/monoes/mono-agent/internal/orgbridge"
+	"github.com/monoes/mono-agent/internal/orgdesign"
 	"github.com/monoes/mono-agent/internal/storage"
+	"github.com/monoes/mono-agent/internal/tracesig"
 	"github.com/monoes/mono-agent/internal/workflow"
 )
 
@@ -121,5 +126,85 @@ func TestSignedTraceThroughARealWebhook(t *testing.T) {
 	}
 	if fanRuns != 30 {
 		t.Fatalf("fan-out of 30 ran %d, want 30", fanRuns)
+	}
+}
+
+// #132 item 3: replaying one signed token at a webhook starts at most
+// orgbridge.TriggerRepeats runs a minute; the rest are refused with 429
+// Too Many Requests, and the ledger gets one row for all of those refusals.
+func TestReplayedTokenIsRateLimited(t *testing.T) {
+	f := newOrgCLIFixture(t)
+	db, err := storage.NewDatabase(f.cfg.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	s := &orgServices{db: db, logf: t.Logf}
+	hooks := workflow.NewWebhookServer("127.0.0.1:0", zerolog.Nop())
+	hooks.SetTraceAdmitter(s.admitWebhookTrace)
+	runs := 0
+	if err := hooks.Register(&workflow.WebhookRegistration{WorkflowID: f.plainWF, Path: "replayed", Method: "POST",
+		TriggerFn: func([]workflow.Item) { runs++ }}); err != nil {
+		t.Fatal(err)
+	}
+	key, err := tracesig.Key()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, _ := tracesig.Sign(key, "chn_replayed", 1)
+	codes := map[int]int{}
+	for i := 0; i < orgbridge.TriggerRepeats+25; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/webhook/replayed", strings.NewReader("{}"))
+		req.Header.Set(tracesig.Header, tok)
+		rec := httptest.NewRecorder()
+		hooks.ServeHTTP(rec, req)
+		codes[rec.Code]++
+	}
+	if runs != orgbridge.TriggerRepeats || codes[http.StatusOK] != orgbridge.TriggerRepeats || codes[http.StatusTooManyRequests] != 25 {
+		t.Fatalf("runs %d, status codes %v — want %d runs and 25 × 429", runs, codes, orgbridge.TriggerRepeats)
+	}
+	var rows int
+	if err := db.DB.QueryRow(`SELECT COUNT(*) FROM org_bridge_calls WHERE chain_id = 'chn_replayed'`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != orgbridge.TriggerRepeats+1 {
+		t.Fatalf("%d ledger rows, want %d", rows, orgbridge.TriggerRepeats+1)
+	}
+}
+
+// #132 item 5: a webhook_in crossing on a chain an org started is held to
+// that org's run_config.max_hops, not the default of 8; a chain no org
+// started keeps the default.
+func TestAdmitWebhookTraceUsesTheChainOrgsMaxHops(t *testing.T) {
+	f := newOrgCLIFixture(t)
+	doc := f.load(t)
+	if doc.RunConfig == nil {
+		doc.RunConfig = map[string]json.RawMessage{}
+	}
+	doc.RunConfig["max_hops"] = json.RawMessage("3")
+	if _, err := orgdesign.Save(f.root, doc); err != nil {
+		t.Fatal(err)
+	}
+	db, err := storage.NewDatabase(f.cfg.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	s := &orgServices{db: db, logf: t.Logf}
+	ctx := context.Background()
+	// growth sent the chain out: a workflow_out crossing it made.
+	if _, err := orgbridge.NewLedger(db.DB).Admit(ctx, orgbridge.Call{ProfileID: "default",
+		Trace: orgbridge.Trace{ChainID: "chn_growth"}, OriginOrg: "growth", Direction: orgbridge.DirWorkflowOut,
+		OrgName: "growth", WorkflowID: f.outboundWF}, orgbridge.Limits{}); err != nil {
+		t.Fatal(err)
+	}
+	if hop, refusal, err := s.admitWebhookTrace(ctx, f.plainWF, "chn_growth", 2); err != nil || refusal != "" || hop != 3 {
+		t.Fatalf("hop 3: %d %q %v", hop, refusal, err)
+	}
+	if _, refusal, err := s.admitWebhookTrace(ctx, f.plainWF, "chn_growth", 3); err != nil || !strings.Contains(refusal, "limit of 3") {
+		t.Fatalf("hop 4 under growth's max_hops 3: refusal %q, err %v", refusal, err)
+	}
+	if _, refusal, _ := s.admitWebhookTrace(ctx, f.plainWF, "chn_noorg", 3); refusal != "" {
+		t.Fatalf("a chain no org started was refused at hop 4: %q", refusal)
 	}
 }

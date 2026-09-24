@@ -113,7 +113,7 @@ func TestWebhookIgnoresAnUnverifiedHeader(t *testing.T) {
 	parts := strings.Split(good, ".")
 	for _, bad := range []string{
 		"v1.chn_loop.0.forged",
-		strings.Join([]string{parts[0], parts[1], "0", parts[3]}, "."), // hop lowered
+		strings.Join([]string{parts[0], parts[1], "0", parts[3], parts[4]}, "."), // hop lowered
 		`{"chain_id":"chn_loop","hop":0}`,
 	} {
 		if rec := post(s, `{}`, bad); rec.Code != http.StatusOK {
@@ -178,7 +178,7 @@ func TestRunTraceReadsTheRightField(t *testing.T) {
 	}
 	for _, c := range cases {
 		ctx := WithTrigger(context.Background(), c.triggerType, c.data)
-		chain, hop, ok := RunTrace(ctx)
+		chain, hop, ok := RunTrace(ctx, nil)
 		if ok != c.want || (ok && (chain != "chn_a" || hop != 2)) {
 			t.Errorf("%s %v: RunTrace = %q %d %v, want ok=%v", c.triggerType, c.data, chain, hop, ok, c.want)
 		}
@@ -212,5 +212,36 @@ func TestWebhookNullBody(t *testing.T) {
 	}
 	if _, _, ok := ParseTraceAt((*fired)[0].JSON, WebhookTraceKey); !ok {
 		t.Fatal("null body lost its chain")
+	}
+}
+
+// #132 item 2: a run that crossed again after it started (its own org.send,
+// whose output item carries the new hop) signs the deeper hop; an item on
+// another chain, or at a lower hop, changes nothing.
+func TestRunTraceTakesTheItemsDeeperHop(t *testing.T) {
+	ctx := WithTrigger(context.Background(), TriggerNodeTypeOrg,
+		map[string]interface{}{"trace": map[string]interface{}{"chain_id": "chn_a", "hop": float64(2)}})
+	item := func(chain string, hop float64) map[string]interface{} {
+		return map[string]interface{}{"trace": map[string]interface{}{"chain_id": chain, "hop": hop}}
+	}
+	for _, c := range []struct {
+		item    map[string]interface{}
+		wantHop int
+	}{
+		{nil, 2},
+		{item("chn_a", 5), 5},
+		{item("chn_a", 1), 2},
+		{item("chn_other", 7), 2},
+		{map[string]interface{}{"trace": "not a trace"}, 2},
+	} {
+		chain, hop, ok := RunTrace(ctx, c.item)
+		if !ok || chain != "chn_a" || hop != c.wantHop {
+			t.Errorf("item %v: RunTrace = %q %d %v, want chn_a at %d", c.item, chain, hop, ok, c.wantHop)
+		}
+	}
+	// A run on no chain gets none from its item either.
+	manual := WithTrigger(context.Background(), "trigger.manual", nil)
+	if _, _, ok := RunTrace(manual, item("chn_a", 5)); ok {
+		t.Error("a manual run took its item's trace")
 	}
 }

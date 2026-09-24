@@ -87,7 +87,7 @@ func TestTraceHeaderStaysOnThisMachineByDefault(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		setTraceHeader(ctx, req, config)
+		setTraceHeader(ctx, req, config, nil)
 		return req.Header.Get(tracesig.Header) != ""
 	}
 	for _, u := range []string{"http://127.0.0.1:9321/webhook/x", "http://localhost/x", "http://[::1]:8080/x", "http://10.0.0.5:9321/webhook/x"} {
@@ -151,5 +151,37 @@ func TestTraceHeaderIsDroppedOnACrossHostRedirect(t *testing.T) {
 	}
 	if atTarget != "" {
 		t.Fatalf("the token followed a cross-host redirect: %q", atTarget)
+	}
+}
+
+// #132 item 2: the token carries the deeper of the run's hop and the hop
+// its input item reached on the same chain (after the run's own org.send).
+func TestRequestNodeSignsTheItemsDeeperHop(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	key, _ := tracesig.Key()
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get(tracesig.Header)
+	}))
+	defer srv.Close()
+	ctx := workflow.WithTrigger(context.Background(), workflow.TriggerNodeTypeOrg,
+		map[string]interface{}{"trace": map[string]interface{}{"chain_id": "chn_run", "hop": float64(1)}})
+	sentAt := func(item map[string]interface{}) int {
+		t.Helper()
+		if _, err := (&RequestNode{}).Execute(ctx, workflow.NodeInput{Items: []workflow.Item{workflow.NewItem(item)}},
+			map[string]interface{}{"method": "GET", "url": srv.URL}); err != nil {
+			t.Fatal(err)
+		}
+		chain, hop, ok := tracesig.Verify(key, got)
+		if !ok || chain != "chn_run" {
+			t.Fatalf("server saw %q", got)
+		}
+		return hop
+	}
+	if hop := sentAt(map[string]interface{}{"trace": map[string]interface{}{"chain_id": "chn_run", "hop": float64(4)}}); hop != 4 {
+		t.Fatalf("signed hop %d, want the item's 4", hop)
+	}
+	if hop := sentAt(map[string]interface{}{"trace": map[string]interface{}{"chain_id": "chn_other", "hop": float64(9)}}); hop != 1 {
+		t.Fatalf("signed hop %d, want the run's 1 (the item is on another chain)", hop)
 	}
 }
