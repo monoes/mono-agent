@@ -1099,6 +1099,17 @@ What the runs taught, beyond the checks:
   no longer panics; a key other users can read is refused. Webhook crossings use the default
   limits, so an org that raised `max_hops` still stops at 9 through a webhook; tokens do not
   expire (rotate by deleting `~/.monoagent/trace.key` and restarting the daemon).
+  **Follow-ups (#132, 2026-09-25):** tokens are `v2` and expire after an hour; a
+  `webhook_in` crossing uses the `max_hops` of the org its chain started in (defaults for a
+  chain no org started) and is limited to 200 runs of a workflow a minute (429; only the
+  first refusal per minute is recorded, so replays cannot grow the table); a run signs the
+  deeper of its hop and the hop its item reached on the chain; with a wildcard
+  `MONOAGENT_WEBHOOK_ADDR` the machine's interface addresses and host name count as this
+  machine; and `trigger.org` runs are admitted (`org_event`, or `event_start` on a fresh
+  chain, same 200/min limit), so a loop out through a role's tool event and back by an
+  unrecorded path climbs. `org_event` rows never raise a chain's depth (an audit workflow on a
+  busy role would climb it), and a non-granted tool event (Bash) continues the role's chain
+  only when the workflow's own `event_start` began it, which closes the Bash-tool-event loop.
   Remaining: a system that drops the header breaks the chain (nothing can follow it through),
   and a role calling a webhook from Bash bypasses grants altogether (C-2); org budgets
   (`budget_usd`/`budget_tokens`) are the backstop there. `workflow run` and schedules are

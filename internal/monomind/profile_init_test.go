@@ -1,6 +1,7 @@
 package monomind
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,5 +42,69 @@ func TestInitFailureMessage_127KeepsOutputAndHints(t *testing.T) {
 		if !strings.Contains(msg, want) {
 			t.Errorf("message %q missing %q", msg, want)
 		}
+	}
+}
+
+// InitProfile runs `monomind init --yes --no-watch --no-install` in the
+// folder with CI=true, streams its output, then registers the folder with
+// Claude Code by one `claude -p` turn there.
+func TestInitProfile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fakes")
+	}
+	root := t.TempDir()
+	bin := t.TempDir()
+	log := filepath.Join(t.TempDir(), "calls")
+	fake := "#!/bin/sh\necho \"monomind $* ci=$CI cwd=$(pwd)\" >> " + log + "\necho copying skills\nmkdir -p .monomind && echo x > .monomind/config.yaml\n"
+	os.WriteFile(filepath.Join(bin, "monomind"), []byte(fake), 0o755)
+	os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\necho \"claude $* cwd=$(pwd)\" >> "+log+"\n"), 0o755)
+	t.Setenv(EnvOverride, filepath.Join(bin, "monomind"))
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+"/bin:/usr/bin")
+
+	var lines []string
+	if err := InitProfile(context.Background(), InitOptions{Root: root, Progress: func(l string) { lines = append(lines, l) }}); err != nil {
+		t.Fatal(err)
+	}
+	if !IsInitializedAt(root) {
+		t.Fatal("folder not initialized")
+	}
+	calls, _ := os.ReadFile(log)
+	realRoot, _ := filepath.EvalSymlinks(root)
+	for _, want := range []string{
+		"monomind init --yes --no-watch --no-install ci=true cwd=" + realRoot,
+		"claude -p monomind initialized cwd=" + realRoot,
+	} {
+		if !strings.Contains(string(calls), want) {
+			t.Errorf("calls\n%s\nmissing %q", calls, want)
+		}
+	}
+	out := strings.Join(lines, "\n")
+	if !strings.Contains(out, "copying skills") || !strings.Contains(out, "Registered with Claude Code") {
+		t.Errorf("progress:\n%s", out)
+	}
+}
+
+// Without claude on PATH the registration is skipped and said so; a
+// failing init returns its last output lines.
+func TestInitProfileWithoutClaudeAndFailing(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fakes")
+	}
+	bin := t.TempDir()
+	os.WriteFile(filepath.Join(bin, "monomind"), []byte("#!/bin/sh\necho ok\n"), 0o755)
+	t.Setenv(EnvOverride, filepath.Join(bin, "monomind"))
+	t.Setenv("PATH", t.TempDir())
+	var lines []string
+	if err := InitProfile(context.Background(), InitOptions{Root: t.TempDir(), Progress: func(l string) { lines = append(lines, l) }}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(lines, "\n"), "claude CLI not found") {
+		t.Errorf("progress should say the claude step was skipped: %q", lines)
+	}
+
+	os.WriteFile(filepath.Join(bin, "monomind"), []byte("#!/bin/sh\necho boom: no space left\nexit 3\n"), 0o755)
+	err := InitProfile(context.Background(), InitOptions{Root: t.TempDir()})
+	if err == nil || !strings.Contains(err.Error(), "exit status 3") || !strings.Contains(err.Error(), "boom: no space left") {
+		t.Fatalf("failing init: %v", err)
 	}
 }

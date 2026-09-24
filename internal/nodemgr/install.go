@@ -1,14 +1,12 @@
 package nodemgr
 
 import (
-	"archive/tar"
-	"archive/zip"
 	"bufio"
-	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -60,20 +58,11 @@ func (m *Manager) ResolveVersion(ctx context.Context, want string) (string, erro
 func (m *Manager) indexFileKey() string {
 	switch m.GOOS {
 	case "darwin":
-		return "osx-" + m.arch() + "-tar"
+		return "osx-" + m.nodeArch() + "-tar"
 	case "windows":
-		return "win-" + m.arch() + "-zip"
+		return "win-" + m.nodeArch() + "-zip"
 	default:
-		return m.GOOS + "-" + m.arch()
-	}
-}
-
-func (m *Manager) arch() string {
-	switch m.GOARCH {
-	case "amd64":
-		return "x64"
-	default:
-		return m.GOARCH
+		return m.GOOS + "-" + m.nodeArch()
 	}
 }
 
@@ -83,15 +72,42 @@ func (m *Manager) archiveName(version string) string {
 	if m.GOOS == "windows" {
 		osName, ext = "win", ".zip"
 	}
-	return fmt.Sprintf("node-v%s-%s-%s%s", version, osName, m.arch(), ext)
+	return fmt.Sprintf("node-v%s-%s-%s%s", version, osName, m.nodeArch(), ext)
 }
 
-// Install downloads, verifies (SHA-256 against the release's SHASUMS256.txt)
-// and unpacks a Node version, then makes it the active one. An already
-// installed version is only re-activated.
+// Size caps against a runaway or hostile download: a Node archive is ~30-60
+// MB, but v24's linux-x64 build already unpacks to 204 MB, so the unpacked
+// cap leaves room for Node to keep growing.
+const (
+	defaultMaxDownload = 256 << 20
+	defaultMaxUnpacked = 512 << 20
+)
+
+func (m *Manager) downloadCap() int64 {
+	if m.maxDownload > 0 {
+		return m.maxDownload
+	}
+	return defaultMaxDownload
+}
+
+func (m *Manager) unpackCap() int64 {
+	if m.maxUnpacked > 0 {
+		return m.maxUnpacked
+	}
+	return defaultMaxUnpacked
+}
+
+// Install downloads, verifies (the release's SHASUMS256.txt.asc against the
+// pinned release keys, then the archive's SHA-256 against it) and unpacks a
+// Node version, then makes it the active one. An already installed version
+// is only re-activated. It holds the managed Node's lock throughout, so two
+// installs at once run one after the other.
 func (m *Manager) Install(ctx context.Context, want string, progress func(string)) (string, error) {
 	if progress == nil {
 		progress = func(string) {}
+	}
+	if err := m.checkPlatform(); err != nil {
+		return "", err
 	}
 	version, err := m.ResolveVersion(ctx, want)
 	if err != nil {
@@ -100,20 +116,35 @@ func (m *Manager) Install(ctx context.Context, want string, progress func(string
 	if !Suitable(version) {
 		return "", fmt.Errorf("node %s is older than the minimum %s", version, MinVersion)
 	}
-	if _, err := os.Stat(m.NodePath(version)); err == nil {
-		progress("node " + version + " is already installed")
-		return version, m.Use(version)
-	}
-	if err := os.MkdirAll(m.Root, 0o755); err != nil {
+	unlock, err := m.lock(ctx, progress)
+	if err != nil {
 		return "", err
 	}
+	defer unlock()
+	// Checked under the lock: another process may just have installed it.
+	if _, err := os.Stat(m.NodePath(version)); err == nil {
+		progress("node " + version + " is already installed")
+		return version, m.use(version)
+	}
+	m.sweep()
 
 	name := m.archiveName(version)
 	base := fmt.Sprintf("%s/v%s/", m.BaseURL, version)
-	sums, err := m.getBytes(ctx, base+"SHASUMS256.txt", 1<<20)
+	asc, err := m.getBytes(ctx, base+"SHASUMS256.txt.asc", 1<<20)
 	if err != nil {
 		return "", fmt.Errorf("downloading checksums: %w", err)
 	}
+	keys := m.keys
+	if keys == nil {
+		if keys, err = ReleaseKeyring(); err != nil {
+			return "", err
+		}
+	}
+	sums, err := verifySums(asc, keys)
+	if err != nil {
+		return "", err
+	}
+	progress("release signature verified")
 	wantSum, ok := checksumFor(sums, name)
 	if !ok {
 		return "", fmt.Errorf("%s is not listed in SHASUMS256.txt", name)
@@ -142,9 +173,9 @@ func (m *Manager) Install(ctx context.Context, want string, progress func(string
 	defer os.RemoveAll(staging)
 	progress("unpacking")
 	if m.GOOS == "windows" {
-		err = unzip(tmp.Name(), staging)
+		err = unzip(tmp.Name(), staging, m.unpackCap())
 	} else {
-		err = untarGz(tmp.Name(), staging)
+		err = untarGz(tmp.Name(), staging, m.unpackCap())
 	}
 	if err != nil {
 		return "", fmt.Errorf("unpacking %s: %w", name, err)
@@ -152,34 +183,63 @@ func (m *Manager) Install(ctx context.Context, want string, progress func(string
 	// Archives hold a single top-level node-v<ver>-<os>-<arch>/ folder.
 	top := filepath.Join(staging, strings.TrimSuffix(strings.TrimSuffix(name, ".zip"), ".tar.gz"))
 	dest := filepath.Join(m.Root, version)
+	// Not installed (checked above), so anything here is a broken leftover.
 	if err := os.RemoveAll(dest); err != nil {
 		return "", err
 	}
 	if err := os.Rename(top, dest); err != nil {
 		return "", fmt.Errorf("installing into %s: %w", dest, err)
 	}
-	if got, err := NodeVersion(ctx, m.NodePath(version)); err != nil || got != version {
+	if got, err := m.nodeVersion(ctx, m.NodePath(version)); err != nil || got != version {
 		os.RemoveAll(dest)
 		return "", fmt.Errorf("installed node does not run (version %q): %v", got, err)
 	}
 	progress("installed node " + version + " in " + dest)
-	return version, m.Use(version)
+	return version, m.use(version)
 }
 
-// Prune removes every installed version except keep.
-func (m *Manager) Prune(keep string) error {
-	versions, err := m.Installed()
-	if err != nil {
-		return err
-	}
-	for _, v := range versions {
-		if v != normalize(keep) {
-			if err := os.RemoveAll(filepath.Join(m.Root, v)); err != nil {
-				return err
-			}
+// sweep deletes what an interrupted install or removal left in Root. It
+// runs under the lock, so nothing else is using these.
+func (m *Manager) sweep() {
+	for _, pattern := range []string{".download-*", ".unpack-*", ".trash-*"} {
+		found, _ := filepath.Glob(filepath.Join(m.Root, pattern))
+		for _, f := range found {
+			_ = os.RemoveAll(f)
 		}
 	}
-	return nil
+}
+
+// Prune removes every installed version except keep, and except those a
+// running process uses (see removeVersion), which are left for next time.
+func (m *Manager) Prune(keep string) error {
+	_, err := m.PruneVersions(keep)
+	return err
+}
+
+// PruneVersions is Prune, also reporting the versions it had to keep
+// because they are in use.
+func (m *Manager) PruneVersions(keep string) (kept []*InUseError, err error) {
+	unlock, err := m.lock(context.Background(), nil)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	versions, err := m.Installed()
+	if err != nil {
+		return nil, err
+	}
+	for _, v := range versions {
+		if v == normalize(keep) {
+			continue
+		}
+		var inUse *InUseError
+		if err := m.removeVersion(v); errors.As(err, &inUse) {
+			kept = append(kept, inUse)
+		} else if err != nil {
+			return kept, err
+		}
+	}
+	return kept, nil
 }
 
 func checksumFor(sums []byte, name string) (string, bool) {
@@ -227,17 +287,25 @@ func (m *Manager) getJSON(ctx context.Context, url string, v any) error {
 }
 
 // download streams url into w, reporting progress every 10%, and returns
-// the SHA-256 of what it wrote.
+// the SHA-256 of what it wrote. More than downloadCap bytes is an error.
 func (m *Manager) download(ctx context.Context, url string, w io.Writer, progress func(string)) (string, error) {
 	resp, err := m.get(ctx, url)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
+	limit := m.downloadCap()
+	if resp.ContentLength > limit {
+		return "", fmt.Errorf("%s is %d MB, over the %d MB limit", url, resp.ContentLength>>20, limit>>20)
+	}
 	h := sha256.New()
 	pw := &progressWriter{total: resp.ContentLength, report: progress}
-	if _, err := io.Copy(io.MultiWriter(w, h, pw), resp.Body); err != nil {
+	n, err := io.Copy(io.MultiWriter(w, h, pw), io.LimitReader(resp.Body, limit+1))
+	if err != nil {
 		return "", err
+	}
+	if n > limit {
+		return "", fmt.Errorf("%s is over the %d MB limit", url, limit>>20)
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
@@ -258,157 +326,6 @@ func (p *progressWriter) Write(b []byte) (int, error) {
 		}
 	}
 	return len(b), nil
-}
-
-// safeJoin resolves an archive entry name under dir, rejecting escapes.
-func safeJoin(dir, name string) (string, error) {
-	p := filepath.Join(dir, filepath.FromSlash(name))
-	if p != dir && !strings.HasPrefix(p, dir+string(os.PathSeparator)) {
-		return "", fmt.Errorf("archive entry %q escapes the target folder", name)
-	}
-	return p, nil
-}
-
-// Archives are unpacked through an os.Root on the staging folder, which
-// refuses to follow a symlink out of it, and an entry whose parent path
-// holds a symlink is refused outright: safeJoin checks names as text only,
-// and a chain of links made earlier in the same archive (x/y -> .., then
-// x/y/z -> .., then x/y/z/f) used to put f outside the folder.
-
-func untarGz(archive, dir string) error {
-	f, err := os.Open(archive)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	gz, err := gzip.NewReader(f)
-	if err != nil {
-		return err
-	}
-	defer gz.Close()
-	root, err := os.OpenRoot(dir)
-	if err != nil {
-		return err
-	}
-	defer root.Close()
-	tr := tar.NewReader(gz)
-	for {
-		hdr, err := tr.Next()
-		if err == io.EOF {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		rel, err := entryPath(root, dir, hdr.Name)
-		if err != nil {
-			return err
-		}
-		switch hdr.Typeflag {
-		case tar.TypeDir:
-			if err := root.MkdirAll(rel, 0o755); err != nil {
-				return err
-			}
-		case tar.TypeReg:
-			if err := writeFile(root, rel, tr, os.FileMode(hdr.Mode).Perm()); err != nil {
-				return err
-			}
-		case tar.TypeSymlink:
-			// Links must stay inside the tree (npm/npx → ../lib/...).
-			if filepath.IsAbs(hdr.Linkname) {
-				return fmt.Errorf("absolute symlink %q in archive", hdr.Name)
-			}
-			if _, err := safeJoin(dir, filepath.Join(filepath.Dir(hdr.Name), hdr.Linkname)); err != nil {
-				return err
-			}
-			if err := root.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
-				return err
-			}
-			if err := root.Symlink(hdr.Linkname, rel); err != nil {
-				return err
-			}
-		}
-	}
-}
-
-func unzip(archive, dir string) error {
-	zr, err := zip.OpenReader(archive)
-	if err != nil {
-		return err
-	}
-	defer zr.Close()
-	root, err := os.OpenRoot(dir)
-	if err != nil {
-		return err
-	}
-	defer root.Close()
-	for _, zf := range zr.File {
-		rel, err := entryPath(root, dir, zf.Name)
-		if err != nil {
-			return err
-		}
-		if zf.FileInfo().IsDir() {
-			if err := root.MkdirAll(rel, 0o755); err != nil {
-				return err
-			}
-			continue
-		}
-		rc, err := zf.Open()
-		if err != nil {
-			return err
-		}
-		err = writeFile(root, rel, rc, 0o755)
-		rc.Close()
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// entryPath is an archive entry's path relative to the staging folder,
-// refused when it escapes as text (safeJoin) or when a folder on its way is
-// a symlink the archive made.
-func entryPath(root *os.Root, dir, name string) (string, error) {
-	target, err := safeJoin(dir, name)
-	if err != nil {
-		return "", err
-	}
-	rel, err := filepath.Rel(dir, target)
-	if err != nil {
-		return "", err
-	}
-	parent := filepath.Dir(rel)
-	if parent == "." {
-		return rel, nil
-	}
-	prefix := ""
-	for _, part := range strings.Split(parent, string(os.PathSeparator)) {
-		prefix = filepath.Join(prefix, part)
-		info, err := root.Lstat(prefix)
-		if err != nil {
-			break // not made yet: nothing below it can be a link either
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return "", fmt.Errorf("archive entry %q goes through the symlink %q", name, prefix)
-		}
-	}
-	return rel, nil
-}
-
-func writeFile(root *os.Root, rel string, r io.Reader, mode os.FileMode) error {
-	if err := root.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
-		return err
-	}
-	f, err := root.OpenFile(rel, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode|0o200)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(f, r); err != nil {
-		f.Close()
-		return err
-	}
-	return f.Close()
 }
 
 func hasString(list []string, s string) bool {

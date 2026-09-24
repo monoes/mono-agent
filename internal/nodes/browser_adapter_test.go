@@ -110,3 +110,24 @@ func TestMergeStepResultsWithOnlySkippedSteps(t *testing.T) {
 		t.Error("nothing was produced, so no result fields should appear")
 	}
 }
+
+func TestNormalizeBrowserItem_LinkedInCardText(t *testing.T) {
+	raw := map[string]interface{}{
+		"text": "Ravinder Singh Ravinder Singh  • 2ndFounder & CEO at Baufiking | Helping People Navigate Mortgage | FinTechBerlin, Berlin, GermanyConnectCurrent: Founder Baufiking at Baufiking...",
+		"href": "https://www.linkedin.com/in/ravinder-singhberlin/",
+	}
+	out := NormalizeBrowserItem(raw, "linkedin")
+
+	if out["name"] != "Ravinder Singh" {
+		t.Errorf("expected name 'Ravinder Singh', got %q", out["name"])
+	}
+	if out["full_name"] != "Ravinder Singh" {
+		t.Errorf("expected full_name 'Ravinder Singh', got %q", out["full_name"])
+	}
+	if out["job_title"] != "Founder & CEO at Baufiking | Helping People Navigate Mortgage | FinTech" {
+		t.Errorf("unexpected job_title %q", out["job_title"])
+	}
+	if out["headline"] != "Founder & CEO at Baufiking | Helping People Navigate Mortgage | FinTech" {
+		t.Errorf("unexpected headline %q", out["headline"])
+	}
+}

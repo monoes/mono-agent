@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronRight, ChevronDown, Wrench, Copy, Loader2 } from 'lucide-react'
+import { ChevronRight, ChevronDown, Wrench, Copy, Loader2, X } from 'lucide-react'
 
 // One row of Settings › System health: a doctor check (or one of its child
 // rows), its fix button and, while a fix runs, its live output.
@@ -19,12 +19,15 @@ function hasProblem(row) {
   return row.status === 'warn' || row.status === 'fail' || (row.children || []).some(hasProblem)
 }
 
-export function FixButton({ fix, state, onFix }) {
+// quiet: a row action (not a fix) — no "optional" tag, lighter styling.
+// onCancel: while the fix runs, a Cancel button next to it stops it.
+export function FixButton({ fix, state, onFix, quiet, onCancel }) {
   const { t } = useTranslation()
   const running = state?.running
   const manual = fix.safety === 'manual'
   const Icon = running ? Loader2 : manual ? Copy : Wrench
   return (
+    <>
     <button
       onClick={() => onFix(fix)}
       disabled={running}
@@ -32,28 +35,40 @@ export function FixButton({ fix, state, onFix }) {
       style={{
         ...mono, fontSize: 10, display: 'inline-flex', alignItems: 'center', gap: 5,
         padding: '3px 10px', borderRadius: 4, cursor: running ? 'default' : 'pointer', flexShrink: 0,
-        background: manual ? 'transparent' : 'rgba(0,180,216,.15)',
-        color: manual ? 'var(--text-secondary)' : '#00b4d8',
-        border: manual ? '1px solid var(--border)' : '1px solid rgba(0,180,216,.25)',
+        background: manual || quiet ? 'transparent' : 'rgba(0,180,216,.15)',
+        color: manual || quiet ? 'var(--text-secondary)' : '#00b4d8',
+        border: manual || quiet ? '1px solid var(--border)' : '1px solid rgba(0,180,216,.25)',
         opacity: running ? 0.6 : 1,
       }}
     >
       <Icon size={11} className={running ? 'spin' : undefined} />
       {running ? t('settings.health.fixing') : manual ? t('settings.health.copyCommand') : fix.label}
-      {fix.optional && !running && (
+      {fix.optional && !running && !quiet && (
         <span style={{ color: 'var(--text-muted)', fontSize: 9 }}>· {t('settings.health.optional')}</span>
       )}
     </button>
+    {running && onCancel && (
+      <button
+        onClick={() => onCancel(fix.id)}
+        aria-label={`${t('settings.health.cancel')}: ${fix.label}`}
+        style={{ ...mono, fontSize: 10, display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 8px', borderRadius: 4, cursor: 'pointer', flexShrink: 0, background: 'transparent', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}
+      >
+        <X size={11} />{t('settings.health.cancel')}
+      </button>
+    )}
+    </>
   )
 }
 
-export default function HealthRow({ row, depth = 0, fixStates, onFix }) {
+export default function HealthRow({ row, depth = 0, fixStates, onFix, onCancel }) {
   const { t } = useTranslation()
   const children = row.children || []
   const [open, setOpen] = useState(() => children.some(hasProblem))
   const [details, setDetails] = useState(false)
   const st = STATUS_STYLE[row.status] || STATUS_STYLE.info
-  const fixState = row.fix ? fixStates[row.fix.id] : null
+  const actions = row.actions || []
+  // The live output shown under the row: its fix's, or the latest action's.
+  const fixState = [row.fix, ...actions].filter(Boolean).map(f => fixStates[f.id]).filter(Boolean).pop() || null
   const problem = row.status === 'warn' || row.status === 'fail'
   const hasDetails = !!row.detail || (problem && row.features?.length > 0) || (row.fix?.safety === 'manual' && row.fix.command)
 
@@ -82,6 +97,13 @@ export default function HealthRow({ row, depth = 0, fixStates, onFix }) {
           {row.required && row.status === 'fail' && (
             <span style={{ color: 'var(--red)', fontSize: 9, marginLeft: 6 }}>{t('settings.health.required')}</span>
           )}
+          {row.carried && depth === 0 && (
+            // Kept from an earlier (deeper, or runtime-scanning) check that
+            // the latest check didn't repeat.
+            <span title={row.checked_at ? new Date(row.checked_at).toLocaleString() : undefined} style={{ color: 'var(--text-muted)', fontSize: 9, marginLeft: 6 }}>
+              {t('settings.health.earlierCheck')}
+            </span>
+          )}
         </span>
         {hasDetails ? (
           // A button, so the details (and a manual fix's instructions) can
@@ -104,7 +126,8 @@ export default function HealthRow({ row, depth = 0, fixStates, onFix }) {
             {row.summary}
           </span>
         )}
-        {row.fix && <FixButton fix={row.fix} state={fixState} onFix={onFix} />}
+        {row.fix && <FixButton fix={row.fix} state={fixStates[row.fix.id]} onFix={onFix} onCancel={onCancel} />}
+        {actions.map(a => <FixButton key={a.id} fix={a} state={fixStates[a.id]} onFix={onFix} onCancel={onCancel} quiet />)}
       </div>
 
       {details && hasDetails && (
@@ -119,16 +142,17 @@ export default function HealthRow({ row, depth = 0, fixStates, onFix }) {
         </div>
       )}
 
-      {fixState && (fixState.running || fixState.lines?.length > 0 || fixState.error) && (
+      {fixState && (fixState.running || fixState.lines?.length > 0 || fixState.error || fixState.cancelled) && (
         <div role="status" aria-live="polite" style={{ ...mono, fontSize: 10, color: 'var(--text-muted)', margin: `0 0 8px ${depth * 18 + 24}px`, padding: '6px 10px', background: 'rgba(0,0,0,.25)', borderRadius: 4, maxHeight: 130, overflowY: 'auto', whiteSpace: 'pre-wrap' }}>
           {(fixState.lines || []).map((l, i) => <div key={i}>{l}</div>)}
           {fixState.error && <div style={{ color: 'var(--red)' }}>{fixState.error}</div>}
           {fixState.done && !fixState.error && <div style={{ color: 'var(--green-neon)' }}>✓ {t('settings.health.fixDone')}</div>}
+          {fixState.cancelled && <div>{t('settings.health.fixCancelled')}</div>}
         </div>
       )}
 
       {open && children.map(c => (
-        <HealthRow key={c.id} row={c} depth={depth + 1} fixStates={fixStates} onFix={onFix} />
+        <HealthRow key={c.id} row={c} depth={depth + 1} fixStates={fixStates} onFix={onFix} onCancel={onCancel} />
       ))}
     </div>
   )

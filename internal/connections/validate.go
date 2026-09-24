@@ -264,7 +264,7 @@ func validateGitHub(ctx context.Context, c *Connection) (string, error) {
 		return "", fmt.Errorf("validateGitHub: %w", err)
 	}
 	if status != 200 {
-		return "", fmt.Errorf("validateGitHub: unexpected status %d", status)
+		return "", fmt.Errorf("validateGitHub: %w", &StatusError{Code: status})
 	}
 	var resp struct {
 		Login string `json:"login"`
@@ -305,7 +305,7 @@ func validateNotion(ctx context.Context, c *Connection) (string, error) {
 		return "", fmt.Errorf("validateNotion: read body: %w", err)
 	}
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("validateNotion: unexpected status %d", resp.StatusCode)
+		return "", fmt.Errorf("validateNotion: %w", &StatusError{Code: resp.StatusCode})
 	}
 
 	var r struct {
@@ -338,7 +338,7 @@ func validateAirtable(ctx context.Context, c *Connection) (string, error) {
 		return "", fmt.Errorf("validateAirtable: %w", err)
 	}
 	if status != 200 {
-		return "", fmt.Errorf("validateAirtable: unexpected status %d", status)
+		return "", fmt.Errorf("validateAirtable: %w", &StatusError{Code: status})
 	}
 	var r struct {
 		ID    string `json:"id"`
@@ -387,7 +387,7 @@ func validateJira(ctx context.Context, c *Connection) (string, error) {
 		return "", fmt.Errorf("validateJira: read body: %w", err)
 	}
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("validateJira: unexpected status %d", resp.StatusCode)
+		return "", fmt.Errorf("validateJira: %w", &StatusError{Code: resp.StatusCode})
 	}
 
 	var result struct {
@@ -439,7 +439,7 @@ func validateLinear(ctx context.Context, c *Connection) (string, error) {
 		return "", fmt.Errorf("validateLinear: read body: %w", err)
 	}
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("validateLinear: unexpected status %d", resp.StatusCode)
+		return "", fmt.Errorf("validateLinear: %w", &StatusError{Code: resp.StatusCode})
 	}
 
 	var r struct {
@@ -488,7 +488,7 @@ func validateStripe(ctx context.Context, c *Connection) (string, error) {
 		return "", fmt.Errorf("validateStripe: read body: %w", err)
 	}
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("validateStripe: unexpected status %d", resp.StatusCode)
+		return "", fmt.Errorf("validateStripe: %w", &StatusError{Code: resp.StatusCode})
 	}
 
 	var result struct {
@@ -514,7 +514,7 @@ func validateSlack(ctx context.Context, c *Connection) (string, error) {
 		return "", fmt.Errorf("validateSlack: %w", err)
 	}
 	if status != 200 {
-		return "", fmt.Errorf("validateSlack: unexpected status %d", status)
+		return "", fmt.Errorf("validateSlack: %w", &StatusError{Code: status})
 	}
 
 	var resp struct {
@@ -540,7 +540,7 @@ func validateDiscord(ctx context.Context, c *Connection) (string, error) {
 		return "", fmt.Errorf("validateDiscord: %w", err)
 	}
 	if status != 200 {
-		return "", fmt.Errorf("validateDiscord: unexpected status %d", status)
+		return "", fmt.Errorf("validateDiscord: %w", &StatusError{Code: status})
 	}
 
 	var resp struct {
@@ -579,7 +579,7 @@ func validateBluesky(ctx context.Context, c *Connection) (string, error) {
 		return "", fmt.Errorf("validateBluesky: read body: %w", err)
 	}
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("validateBluesky: unexpected status %d", resp.StatusCode)
+		return "", fmt.Errorf("validateBluesky: %w", &StatusError{Code: resp.StatusCode})
 	}
 
 	var result struct {
@@ -616,7 +616,7 @@ func validateReddit(ctx context.Context, c *Connection) (string, error) {
 		return "", fmt.Errorf("validateReddit: read body: %w", err)
 	}
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("validateReddit: unexpected status %d", resp.StatusCode)
+		return "", fmt.Errorf("validateReddit: %w", &StatusError{Code: resp.StatusCode})
 	}
 
 	var result struct {
@@ -640,7 +640,7 @@ func validateMastodon(ctx context.Context, c *Connection) (string, error) {
 		return "", fmt.Errorf("validateMastodon: %w", err)
 	}
 	if status != 200 {
-		return "", fmt.Errorf("validateMastodon: unexpected status %d", status)
+		return "", fmt.Errorf("validateMastodon: %w", &StatusError{Code: status})
 	}
 
 	var resp struct {
@@ -681,7 +681,7 @@ func validateTwilio(ctx context.Context, c *Connection) (string, error) {
 		return "", fmt.Errorf("validateTwilio: read body: %w", err)
 	}
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("validateTwilio: unexpected status %d", resp.StatusCode)
+		return "", fmt.Errorf("validateTwilio: %w", &StatusError{Code: resp.StatusCode})
 	}
 
 	var result struct {
@@ -705,7 +705,7 @@ func validateTelegram(ctx context.Context, c *Connection) (string, error) {
 		return "", fmt.Errorf("validateTelegram: %w", err)
 	}
 	if status != 200 {
-		return "", fmt.Errorf("validateTelegram: invalid token (status %d)", status)
+		return "", fmt.Errorf("validateTelegram: invalid token: %w", &StatusError{Code: status})
 	}
 	var resp struct {
 		OK     bool `json:"ok"`
@@ -781,7 +781,7 @@ func validateGoogle(ctx context.Context, c *Connection) (string, error) {
 			return "", fmt.Errorf("validateGoogle: %w", err)
 		}
 		if status == 401 {
-			return "", fmt.Errorf("validateGoogle: token expired or invalid (HTTP 401)")
+			return "", fmt.Errorf("validateGoogle: token expired or invalid: %w", &StatusError{Code: status})
 		}
 		if status == 200 {
 			var r struct {
@@ -803,7 +803,7 @@ func validateGoogle(ctx context.Context, c *Connection) (string, error) {
 		return "", fmt.Errorf("validateGoogle: token expired or invalid (HTTP 401)")
 	}
 	if status != 200 {
-		return "", fmt.Errorf("validateGoogle: unexpected status %d: %s", status, string(body))
+		return "", fmt.Errorf("validateGoogle: %w", &StatusError{Code: status, Body: string(body)})
 	}
 	var r struct {
 		User struct {
@@ -831,7 +831,7 @@ func validateYouTube(ctx context.Context, c *Connection) (string, error) {
 		return "", fmt.Errorf("validateYouTube: %w", err)
 	}
 	if status != 200 {
-		return "", fmt.Errorf("validateYouTube: unexpected status %d", status)
+		return "", fmt.Errorf("validateYouTube: %w", &StatusError{Code: status})
 	}
 
 	var resp struct {
@@ -887,7 +887,7 @@ func outlookWhoAmI(ctx context.Context, token string) (address, source string, e
 		return "", "", err
 	}
 	if status != 200 {
-		return "", "", fmt.Errorf("unexpected status %d: %s", status, string(body))
+		return "", "", &StatusError{Code: status, Body: string(body)}
 	}
 	if addr := firstEmailAddressField(body, "toRecipients"); addr != "" {
 		return addr, "inbox", nil
@@ -936,7 +936,7 @@ func validateHubSpot(ctx context.Context, c *Connection) (string, error) {
 		return "", fmt.Errorf("validateHubSpot: %w", err)
 	}
 	if status != 200 {
-		return "", fmt.Errorf("validateHubSpot: unexpected status %d", status)
+		return "", fmt.Errorf("validateHubSpot: %w", &StatusError{Code: status})
 	}
 	var r struct {
 		User  string `json:"user"`
@@ -964,7 +964,7 @@ func validateSalesforce(ctx context.Context, c *Connection) (string, error) {
 		return "", fmt.Errorf("validateSalesforce: %w", err)
 	}
 	if status != 200 {
-		return "", fmt.Errorf("validateSalesforce: unexpected status %d", status)
+		return "", fmt.Errorf("validateSalesforce: %w", &StatusError{Code: status})
 	}
 	var r struct {
 		Email string `json:"email"`
@@ -994,7 +994,7 @@ func validateDevTo(ctx context.Context, c *Connection) (string, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("validateDevTo: API returned %d", resp.StatusCode)
+		return "", fmt.Errorf("validateDevTo: %w", &StatusError{Code: resp.StatusCode})
 	}
 	var r struct {
 		Username string `json:"username"`
@@ -1039,7 +1039,7 @@ func validateHashnode(ctx context.Context, c *Connection) (string, error) {
 		return "", fmt.Errorf("validateHashnode: Hashnode redirected this request to %s instead of returning data — the publication likely needs a Pro plan for API access (see https://hashnode.com/changelog/2026-05-13-graphql-api-paid-access); the token was never actually checked", resp.Header.Get("Location"))
 	}
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("validateHashnode: API returned %d", resp.StatusCode)
+		return "", fmt.Errorf("validateHashnode: %w", &StatusError{Code: resp.StatusCode})
 	}
 	var r struct {
 		Data struct {
@@ -1075,7 +1075,7 @@ func validateProductHunt(ctx context.Context, c *Connection) (string, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("validateProductHunt: API returned %d", resp.StatusCode)
+		return "", fmt.Errorf("validateProductHunt: %w", &StatusError{Code: resp.StatusCode})
 	}
 	var r struct {
 		Data struct {

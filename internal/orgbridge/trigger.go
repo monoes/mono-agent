@@ -1,6 +1,7 @@
 package orgbridge
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -143,6 +144,9 @@ func TriggerItems(ev Event) []workflow.Item {
 type TriggerSource struct {
 	Mux *Mux
 	DB  *sql.DB
+	// Logf reports event runs the ledger refused or could not record; nil
+	// discards them.
+	Logf func(format string, args ...interface{})
 
 	mu        sync.Mutex
 	endpoints map[string]func(items []workflow.Item) // workflowID -> fire
@@ -186,7 +190,9 @@ func (s *TriggerSource) Activate(w *workflow.Workflow, node *workflow.WorkflowNo
 			if !f.Match(ev) {
 				return
 			}
-			fire(TriggerItems(ev))
+			if items, ok := s.eventItems(context.Background(), profile, root, w.ID, ev); ok {
+				fire(items)
+			}
 		})
 		return unsub, nil
 	default:
@@ -221,7 +227,16 @@ func eventTrace(ev Event) (Trace, bool) {
 	if tr, ok := ParseTrace(ev.Msg); ok {
 		return tr, true
 	}
-	if ev.Type != "tool" || !isGrantedTool(ev.Tool) {
+	if !isGrantedTool(ev.Tool) {
+		return Trace{}, false
+	}
+	return toolDataTrace(ev)
+}
+
+// toolDataTrace is the chain_id/hop monomind puts in a tool event's data:
+// the role's chain, for every tool it calls.
+func toolDataTrace(ev Event) (Trace, bool) {
+	if ev.Type != "tool" {
 		return Trace{}, false
 	}
 	chain, _ := ev.Data["chain_id"].(string)

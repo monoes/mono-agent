@@ -81,15 +81,41 @@ func checkBridge(ctx context.Context, env *Env) Result {
 	}
 	b, ok := env.Bridge(ctx)
 	if !ok {
-		return Result{Status: StatusWarn, Summary: "not running",
-			Detail: "the daemon hosts it (monoagentcli daemon), or run: monoagentcli extension serve", FixID: FixDaemonStart}
+		return bridgeDown(ctx, env)
 	}
 	summary := fmt.Sprintf("%s (pid %d, up %s)", b.Addr, b.PID, time.Duration(b.UptimeSec)*time.Second)
+	if b.Owner != "" {
+		summary += " — run by " + b.Owner
+	}
 	if skewed(b.Version, env.Version) {
 		return Result{Status: StatusWarn, Summary: summary,
 			Detail: fmt.Sprintf("the bridge runs %s but this CLI is %s — restart whatever started it to pick up the new build", b.Version, env.Version)}
 	}
 	return Result{Status: StatusOK, Summary: summary}
+}
+
+// bridgeDown reports a bridge that isn't running. Starting the daemon
+// brings it up only when no daemon runs yet: a running one either has it
+// turned off (--bridge=false) or failed to open it, and starting "the
+// daemon" again would do nothing.
+func bridgeDown(ctx context.Context, env *Env) Result {
+	res := Result{Status: StatusWarn, Summary: "not running"}
+	if env.Daemon != nil {
+		if d := env.Daemon(ctx); d.Running {
+			if d.BridgeAddr == "" {
+				res.Summary = fmt.Sprintf("not running — the daemon (pid %d) runs without it", d.PID)
+				res.Detail = "it was started with --bridge=false, or its bridge failed to start (see ~/.monoagent/logs/daemon.log); " +
+					"restart the daemon without --bridge=false, or run: monoagentcli extension serve"
+			} else {
+				res.Summary = fmt.Sprintf("not answering — the daemon (pid %d) should serve it on %s", d.PID, d.BridgeAddr)
+				res.Detail = "restart the daemon, or run: monoagentcli extension serve"
+			}
+			return res
+		}
+	}
+	res.Detail = "the daemon hosts it (monoagentcli daemon), or run: monoagentcli extension serve"
+	res.FixID = FixDaemonStart
+	return res
 }
 
 // skewed reports a real version difference between two release builds.

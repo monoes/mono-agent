@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,8 +22,9 @@ import (
 )
 
 // addServiceHooks wires the browser, services and integrations checks to
-// the real machine.
-func addServiceHooks(env *health.Env) {
+// the real machine. cfg carries doctor's --db-path/--profile to a daemon
+// it starts.
+func addServiceHooks(env *health.Env, cfg *globalConfig) {
 	env.FindBrowser = browserdetect.FindBrowser
 	env.ExtensionInstalled = browserdetect.ExtensionInstalled
 	env.ExtensionDir = browserdetect.ExtensionDir
@@ -30,12 +33,18 @@ func addServiceHooks(env *health.Env) {
 		if !ok {
 			return health.BridgeInfo{}, false
 		}
-		return health.BridgeInfo{Addr: bridgeAddr(st, addr), Status: st.Status, PID: st.PID, Version: st.Version, UptimeSec: st.UptimeSec}, true
+		hb, live := daemonhb.Read()
+		daemonPID := 0
+		if live {
+			daemonPID = hb.PID
+		}
+		return health.BridgeInfo{Addr: bridgeAddr(st, addr), Status: st.Status, PID: st.PID, Version: st.Version, UptimeSec: st.UptimeSec,
+			Owner: bridgeOwner(st.PID, daemonPID, processCommand(st.PID), serviceUnit(st.PID))}, true
 	}
 
 	env.Daemon = func(context.Context) health.DaemonInfo {
 		hb, live := daemonhb.Read()
-		return health.DaemonInfo{Running: live, PID: hb.PID, APIAddr: hb.APIAddr, AgeMS: time.Since(hb.TS).Milliseconds()}
+		return health.DaemonInfo{Running: live, PID: hb.PID, APIAddr: hb.APIAddr, BridgeAddr: hb.BridgeAddr, AgeMS: time.Since(hb.TS).Milliseconds()}
 	}
 	env.APIHealth = func(ctx context.Context, addr string) error {
 		ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
@@ -63,7 +72,10 @@ func addServiceHooks(env *health.Env) {
 		progress(res.Description)
 		return nil
 	}
-	env.StartDaemon = startDaemon
+	env.StartDaemon = func(ctx context.Context, progress func(string)) error {
+		// The profile as doctor resolved it: --profile may be a name.
+		return startDaemon(ctx, daemonArgs(cfg, env.ProfileID), autostart.New(), progress)
+	}
 
 	env.ClaudeSkills = claudeSkillsState
 	env.InstallClaudeSkills = func() error { return installClaudeSkill(false) }
@@ -73,8 +85,10 @@ func addServiceHooks(env *health.Env) {
 
 // startDaemon starts `monoagentcli daemon` through its login service when
 // one is registered (idempotent), otherwise as a detached background
-// process logging to ~/.monoagent/logs/daemon.log.
-func startDaemon(ctx context.Context, progress func(string)) error {
+// process logging to ~/.monoagent/logs/daemon.log. The daemon gets
+// doctor's --db-path and --profile; the login service runs with the
+// defaults, so it is not used when those were changed.
+func startDaemon(ctx context.Context, args []string, as autostart.Installer, progress func(string)) error {
 	// A daemon that is still starting has no heartbeat yet, but it holds
 	// the lock: starting another would be refused by it anyway, and must
 	// not be spawned while one comes up (a second click, a re-check).
@@ -82,8 +96,13 @@ func startDaemon(ctx context.Context, progress func(string)) error {
 		progress("a daemon is already running or starting")
 		return nil
 	}
-	as := autostart.New()
 	if ok, where := as.Status(ctx); ok {
+		if len(args) > 1 {
+			// One daemon per home: the service's daemon would take the
+			// lock, on the default database and profile.
+			return fmt.Errorf("the registered login service (%s) runs the daemon with the default database and profile, not %s — "+
+				"start it yourself: monoagentcli %s", where, strings.Join(args[1:], " "), strings.Join(args, " "))
+		}
 		progress("starting the registered service (" + where + ")")
 		return as.Start(ctx)
 	}
@@ -102,14 +121,111 @@ func startDaemon(ctx context.Context, progress func(string)) error {
 		return err
 	}
 	defer logf.Close()
-	cmd := exec.Command(exe, "daemon")
+	cmd := exec.Command(exe, args...)
 	cmd.Stdout, cmd.Stderr = logf, logf
 	cmd, err = monomind.StartDetached(cmd)
 	if err != nil {
 		return fmt.Errorf("starting the daemon: %w", err)
 	}
-	progress(fmt.Sprintf("started `%s daemon` in the background (pid %d, log %s)", filepath.Base(exe), cmd.Process.Pid, logPath))
+	progress(fmt.Sprintf("started `%s %s` in the background (pid %d, log %s)", filepath.Base(exe), strings.Join(args, " "), cmd.Process.Pid, logPath))
 	return cmd.Process.Release()
+}
+
+// daemonArgs is `daemon` plus the --db-path and --profile doctor runs
+// with, when they were given: profileID is the profile as doctor resolved
+// it (--profile may be a name).
+func daemonArgs(cfg *globalConfig, profileID string) []string {
+	args := []string{"daemon"}
+	if cfg == nil {
+		return args
+	}
+	if cfg.DBPath != "" && expandPath(cfg.DBPath) != expandPath(defaultDBPath) {
+		args = append(args, "--db-path", expandPath(cfg.DBPath))
+	}
+	if cfg.ProfileID != "" && profileID != "" {
+		args = append(args, "--profile", profileID)
+	}
+	return args
+}
+
+// bridgeOwner says what runs the bridge process pid: the daemon (pid
+// daemonPID), an `extension serve`, under a systemd/launchd service or by
+// hand. command is its command line and unit its systemd unit ("" when
+// unknown or none).
+func bridgeOwner(pid, daemonPID int, command, unit string) string {
+	if pid <= 0 {
+		return ""
+	}
+	var what string
+	switch {
+	case pid == daemonPID:
+		what = fmt.Sprintf("the daemon (pid %d)", pid)
+	case strings.Contains(command, "extension serve"):
+		what = fmt.Sprintf("`monoagentcli extension serve` (pid %d)", pid)
+	case strings.Contains(command, " daemon"):
+		what = fmt.Sprintf("a daemon that is not this home's (pid %d: %s)", pid, command)
+	case command != "":
+		what = fmt.Sprintf("pid %d: %s", pid, command)
+	default:
+		return fmt.Sprintf("pid %d", pid)
+	}
+	switch {
+	case unit != "":
+		what += ", systemd service " + unit
+	case pid != daemonPID && command != "" && runtime.GOOS == "linux":
+		what += ", started by hand"
+	}
+	return what
+}
+
+// processCommand is pid's command line, "" when it can't be read cheaply
+// (Linux: /proc; macOS: ps; Windows: not looked up).
+func processCommand(pid int) string {
+	switch runtime.GOOS {
+	case "linux":
+		b, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(strings.ReplaceAll(string(b), "\x00", " "))
+	case "darwin":
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		out, err := exec.CommandContext(ctx, "ps", "-o", "command=", "-p", strconv.Itoa(pid)).Output()
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(string(out))
+	}
+	return ""
+}
+
+// serviceUnit is the systemd service pid runs under (Linux), from its
+// cgroup: the last path element when it is a "*.service" other than the
+// user manager itself. "" otherwise (a terminal's scope, not Linux).
+func serviceUnit(pid int) string {
+	if runtime.GOOS != "linux" {
+		return ""
+	}
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/cgroup", pid))
+	if err != nil {
+		return ""
+	}
+	return unitFromCgroup(string(b))
+}
+
+func unitFromCgroup(cgroup string) string {
+	for _, line := range strings.Split(strings.TrimSpace(cgroup), "\n") {
+		parts := strings.SplitN(line, ":", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		last := filepath.Base(parts[2])
+		if strings.HasSuffix(last, ".service") && !strings.HasPrefix(last, "user@") {
+			return last
+		}
+	}
+	return ""
 }
 
 // claudeMCPRegistration looks for a user-scope MCP server in

@@ -59,6 +59,12 @@ type Result struct {
 	// Parent is the ID of the check that reported this row as one of its
 	// children (e.g. a runtime under runtimes.agents); empty otherwise.
 	Parent string `json:"parent,omitempty"`
+	// Actions are things a user may do to this row whatever its status
+	// (e.g. update or remove the managed Node). Unlike Fix they are never
+	// applied by `doctor --fix`; run one with `doctor fix <id>`.
+	Actions []FixInfo `json:"actions,omitempty"`
+	// ActionIDs is set by a check; the runner resolves it into Actions.
+	ActionIDs []string `json:"-"`
 
 	// FixID is set by a check to offer a fix; the runner resolves it into
 	// Fix from the fix registry.
@@ -151,11 +157,16 @@ type Env struct {
 	SystemNode  func(ctx context.Context) (path, version string, found bool)
 	ManagedNode func() (version, path string, ok bool)
 	InstallNode func(ctx context.Context, progress func(string)) error
+	UpdateNode  func(ctx context.Context, progress func(string)) error // latest LTS, older versions removed
+	RemoveNode  func(ctx context.Context, progress func(string)) error // the managed Node and its npm-global
 
 	// monomind: locate the binary, handshake with it (callers memoize —
 	// several checks ask), scan agent runtimes, install/upgrade it, and
 	// run `monomind init` in a folder.
-	FindMonomind        func() (string, error)
+	FindMonomind func() (string, error)
+	// MonomindCandidates lists every monomind installed, FindMonomind's
+	// pick first (monomind.FindAll); nil when unavailable.
+	MonomindCandidates  func() []string
 	MonomindHandshake   func(ctx context.Context) (*monomind.VersionInfo, error)
 	ScanRuntimes        func(ctx context.Context) (*monomind.ScanResult, error)
 	InstallMonomind     func(ctx context.Context, progress func(string)) error
@@ -221,6 +232,9 @@ type BridgeInfo struct {
 	PID       int
 	Version   string
 	UptimeSec int64
+	// Owner says what runs it: the daemon, a service, or an `extension
+	// serve` started by hand ("" when unknown).
+	Owner string
 }
 
 // DaemonInfo is the workflow daemon's heartbeat.
@@ -229,6 +243,9 @@ type DaemonInfo struct {
 	PID     int
 	APIAddr string
 	AgeMS   int64
+	// BridgeAddr is the extension bridge it serves; "" when it runs with
+	// --bridge=false or its bridge failed to start.
+	BridgeAddr string
 }
 
 // Report is the `doctor --json` payload.

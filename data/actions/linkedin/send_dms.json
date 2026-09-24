@@ -31,7 +31,7 @@
     {
       "id": "navigate_to_profile",
       "type": "navigate",
-      "url": "{{item.url}}",
+      "url": "{{item.url or item}}",
       "waitFor": "page_load",
       "timeout": 30,
       "onError": {

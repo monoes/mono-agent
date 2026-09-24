@@ -40,8 +40,18 @@ func (a *App) SaveAIProvider(providerJSON string) string {
 	}
 	if p.ID == "" {
 		p.ID = newUUID()
-	} else if _, err := a.aiStore.GetProvider(p.ID, a.getActiveProfileID()); err != nil {
-		return aiError(fmt.Errorf("provider %s not found", p.ID))
+	} else {
+		existing, err := a.aiStore.GetProvider(p.ID, a.getActiveProfileID())
+		if err != nil {
+			return aiError(fmt.Errorf("provider %s not found", p.ID))
+		}
+		// The key never goes to the GUI, so an edit form leaves it blank
+		// unless the person types a new one: blank keeps the stored key.
+		// The vault entry is always the stored one, never the client's.
+		p.VaultRef = existing.VaultRef
+		if p.APIKey == "" && existing.VaultRef == "" {
+			p.APIKey = existing.APIKey // a pre-vault row: SaveProvider moves it into the vault
+		}
 	}
 	p.ProfileID = a.getActiveProfileID()
 	if err := a.aiStore.SaveProvider(p); err != nil {

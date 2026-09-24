@@ -52,19 +52,31 @@ func fixUntilStable(ctx context.Context, cfg *globalConfig, reg *health.Registry
 	// fixed, their fixes wait, so the daemon never comes up before the
 	// database, the profile folder and monomind are ready.
 	holdServices := true
+	settled := false
 	for pass := 0; pass < maxFixPasses+1; pass++ {
 		view := rep
 		if holdServices {
 			view = withoutServiceFixes(rep)
 		}
-		got := applyReportFixes(ctx, cfg, reg, view, tried, confirm, progress)
+		got := applyReportFixes(ctx, cfg, reg, view, tried, confirm, progress, cfg.JSONOutput)
 		outcomes = append(outcomes, got...)
 		rep = runHealth(ctx, cfg, reg, opts)
 		if len(got) == 0 {
 			if !holdServices {
+				settled = true
 				break
 			}
 			holdServices = false
+		}
+	}
+	if !settled {
+		// Every pass still fixed something: say so rather than end quietly
+		// with fixes that a later pass might have unblocked.
+		msg := fmt.Sprintf("stopped after %d passes with fixes still being applied — run doctor --fix again", maxFixPasses+1)
+		if cfg.JSONOutput {
+			writeFixEvent(os.Stderr, fixEvent{Kind: "line", Message: msg})
+		} else {
+			progress(msg)
 		}
 	}
 	return rep, outcomes
@@ -78,7 +90,7 @@ func errRequiredChecksFailed(n int) error {
 }
 
 func newDoctorCmd(cfg *globalConfig) *cobra.Command {
-	var groups, ids []string
+	var groups, skipGroups, ids []string
 	var deep, fix, yes, projects bool
 
 	cmd := &cobra.Command{
@@ -104,6 +116,7 @@ Exit code 1 means a required check failed.`,
 		Example: `  monoagentcli doctor
   monoagentcli doctor --json
   monoagentcli doctor --group core --deep
+  monoagentcli doctor --json --skip-group runtimes
   monoagentcli doctor --fix --yes
   monoagentcli doctor --projects
   monoagentcli doctor --project codes/app --fix
@@ -113,7 +126,7 @@ Exit code 1 means a required check failed.`,
 			ctx := cmd.Context()
 			reg := health.Default()
 			wantProjects := projects || len(cfg.projectFilter) > 0
-			opts := health.Options{Deep: deep, Groups: groups, IDs: ids, OnDemand: wantProjects, Monomind: wantProjects}
+			opts := health.Options{Deep: deep, Groups: groups, SkipGroups: skipGroups, IDs: ids, OnDemand: wantProjects, Monomind: wantProjects}
 			out := cmd.OutOrStdout()
 
 			rep := runHealth(ctx, cfg, reg, opts)
@@ -139,6 +152,7 @@ Exit code 1 means a required check failed.`,
 		},
 	}
 	cmd.Flags().StringSliceVar(&groups, "group", nil, "Only run checks of these groups (e.g. core)")
+	cmd.Flags().StringSliceVar(&skipGroups, "skip-group", nil, "Leave out checks of these groups (e.g. runtimes, whose scan runs every agent CLI)")
 	cmd.Flags().StringSliceVar(&ids, "check", nil, "Only run these checks (and what they depend on)")
 	cmd.Flags().BoolVar(&deep, "deep", false, "Include checks that use the network")
 	cmd.Flags().BoolVar(&fix, "fix", false, "Apply fixes: auto ones directly, confirm ones after asking")
@@ -183,9 +197,15 @@ type fixOutcome struct {
 	Error   string `json:"error,omitempty"`
 }
 
+// fixEvent is one NDJSON progress event. `doctor fix` emits line, done and
+// error; setup adds stage (a heading), fix_start and fix_end (with the
+// fix's outcome), naming the fix in fix_id. Readers skip kinds they don't
+// know.
 type fixEvent struct {
 	Kind    string `json:"kind"`
 	Message string `json:"message,omitempty"`
+	FixID   string `json:"fix_id,omitempty"`
+	Outcome string `json:"outcome,omitempty"`
 }
 
 func writeFixEvent(w io.Writer, ev fixEvent) {
@@ -234,7 +254,7 @@ func stdinIsTerminal() bool {
 // applyReportFixes applies every distinct fix the report offers, in report
 // order: auto directly, confirm when confirm() agrees, manual never.
 func applyReportFixes(ctx context.Context, cfg *globalConfig, reg *health.Registry, rep *health.Report,
-	tried map[string]bool, confirm func(health.FixInfo) bool, progress func(string)) []fixOutcome {
+	tried map[string]bool, confirm func(health.FixInfo) bool, progress func(string), fixEvents bool) []fixOutcome {
 	if cfg.JSONOutput {
 		// stdout carries the final report; keep progress off it.
 		progress = progressWriter(os.Stderr, true)
@@ -259,17 +279,26 @@ func applyReportFixes(ctx context.Context, cfg *globalConfig, reg *health.Regist
 				continue
 			}
 		}
-		if !cfg.JSONOutput {
+		if fixEvents {
+			// Same per-fix events as `setup --json` (which emits its own and
+			// passes false), on stderr beside the fix's own lines.
+			writeFixEvent(os.Stderr, fixEvent{Kind: "fix_start", FixID: f.ID, Message: f.Label})
+		} else if !cfg.JSONOutput {
 			progress("→ " + f.Label)
 		}
 		if err := applyFix(ctx, cfg, f, progress); err != nil {
 			outcomes = append(outcomes, fixOutcome{ID: f.ID, Outcome: "failed", Error: err.Error()})
-			if !cfg.JSONOutput {
+			if fixEvents {
+				writeFixEvent(os.Stderr, fixEvent{Kind: "fix_end", FixID: f.ID, Outcome: "failed", Message: err.Error()})
+			} else if !cfg.JSONOutput {
 				progress("✗ " + err.Error())
 			}
 			continue
 		}
 		outcomes = append(outcomes, fixOutcome{ID: f.ID, Outcome: "applied"})
+		if fixEvents {
+			writeFixEvent(os.Stderr, fixEvent{Kind: "fix_end", FixID: f.ID, Outcome: "applied"})
+		}
 	}
 	return outcomes
 }
@@ -296,7 +325,8 @@ var statusMark = map[health.Status]string{
 func printDoctorReport(w io.Writer, rep *health.Report, fixed bool) {
 	fmt.Fprintf(w, "monoagent doctor — %s · profile %s\n", rep.MonoagentVersion, rep.ProfileID)
 	group := ""
-	fixable := 0
+	// Distinct fixes, as --fix applies each once however many rows offer it.
+	fixable, optional := map[string]bool{}, map[string]bool{}
 	// Uninteresting child rows are folded into one line each (the JSON keeps
 	// every row): runtimes that aren't installed, and monomind's passing
 	// checks — a dozen of either would drown the report.
@@ -350,8 +380,9 @@ func printDoctorReport(w io.Writer, rep *health.Report, fixed bool) {
 			kind := string(r.Fix.Safety)
 			if r.Fix.Optional {
 				kind += ", optional"
+				optional[r.Fix.ID] = true
 			} else if r.Fix.Safety != health.SafetyManual {
-				fixable++
+				fixable[r.Fix.ID] = true
 			}
 			line := fmt.Sprintf("fix [%s]: %s — monoagentcli doctor fix %s", kind, r.Fix.Label, r.Fix.ID)
 			if r.Fix.Safety == health.SafetyManual && r.Fix.Command != "" {
@@ -359,14 +390,31 @@ func printDoctorReport(w io.Writer, rep *health.Report, fixed bool) {
 			}
 			fmt.Fprintf(w, "      %s\n", line)
 		}
+		for _, a := range r.Actions {
+			fmt.Fprintf(w, "      also: %s — monoagentcli doctor fix %s\n", a.Label, a.ID)
+		}
 	}
 	flushFolds()
 	s := rep.Summary
 	fmt.Fprintf(w, "\n%d ok · %d warning · %d failed · %d skipped · %d info\n",
 		s[health.StatusOK], s[health.StatusWarn], s[health.StatusFail], s[health.StatusSkip], s[health.StatusInfo])
-	if fixable > 0 && !fixed {
-		fmt.Fprintf(w, "Run `monoagentcli doctor --fix` to repair what can be repaired.\n")
+	for _, line := range doctorFooter(len(fixable), len(optional), fixed) {
+		fmt.Fprintln(w, line)
 	}
+}
+
+// doctorFooter says what `doctor --fix` would do: it applies the auto and
+// confirm fixes, never the optional ones (those run one at a time, by id),
+// and nothing of the manual ones.
+func doctorFooter(fixable, optional int, fixed bool) []string {
+	var lines []string
+	if fixable > 0 && !fixed {
+		lines = append(lines, fmt.Sprintf("Run `monoagentcli doctor --fix` to apply %d fix(es).", fixable))
+	}
+	if optional > 0 {
+		lines = append(lines, fmt.Sprintf("%d optional fix(es) are not applied by --fix; run one with `monoagentcli doctor fix <id>`.", optional))
+	}
+	return lines
 }
 
 // captureStdLog sends the standard logger's output to progress, one call

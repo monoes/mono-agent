@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { RefreshCw, Globe, FolderTree, Wrench, Loader2, TerminalSquare } from 'lucide-react'
+import { RefreshCw, Globe, FolderTree, Loader2, TerminalSquare, X } from 'lucide-react'
 import { GetVersion } from '../../wailsjs/go/main/App'
 import { confirm } from '../ConfirmDialog.jsx'
 import HealthRow, { STATUS_STYLE } from './HealthRow.jsx'
+import SetupSteps from './SetupSteps.jsx'
 import {
-  getHealth, subscribeHealth, runHealth, runFix, isFixRunning,
+  getHealth, subscribeHealth, runHealth, runFix, isFixRunning, cancelHealthCheck, cancelFix,
   groupReport, summarize, fixPlan, versionSkew,
 } from '../../lib/health.js'
 
@@ -51,10 +52,12 @@ export default function HealthSection({ onNavigate }) {
   const [fixingAll, setFixingAll] = useState(false)
   const [, tick] = useState(0)
   const modeRef = useRef({ deep: false, projects: false })
+  const stopAllRef = useRef(false)
 
   useEffect(() => subscribeHealth(setH), [])
   useEffect(() => {
-    if (!getHealth().report && !getHealth().loading) runHealth()
+    // Not a runtime scan: opening Settings isn't asking for one (#146).
+    if (!getHealth().report && !getHealth().loading) runHealth({ background: true })
     GetVersion().then(v => setGuiVersion(v?.version)).catch(() => {})
     const id = setInterval(() => tick(n => n + 1), 30000) // keep "checked … ago" fresh
     return () => clearInterval(id)
@@ -65,15 +68,19 @@ export default function HealthSection({ onNavigate }) {
   const patchFix = (id, patch) => setFixStates(s => ({ ...s, [id]: { ...(s[id] || {}), ...patch } }))
 
   // applyFix runs one fix: manual ones copy their command, confirm ones ask
-  // first. Resolves { ran, ok }: ran is false when nothing was run (a
-  // manual fix, a no, or the fix already running).
+  // first. Resolves { ran, ok, cancelled }: ran is false when nothing was
+  // run (a manual fix, a no, or the fix — or another install of the same
+  // runtime — already running).
   const applyFix = useCallback(async (fix, { ask = true } = {}) => {
     if (fix.safety === 'manual') {
       try { await navigator.clipboard.writeText(fix.command || '') } catch { /* clipboard may be blocked */ }
       patchFix(fix.id, { lines: [`${t('settings.health.copied')}: ${fix.command || ''}`], error: null, done: false })
       return { ran: false, ok: false }
     }
-    if (isFixRunning(fix.id)) return { ran: false, ok: false }
+    if (isFixRunning(fix.id)) {
+      patchFix(fix.id, { error: t('settings.health.alreadyRunning'), done: false })
+      return { ran: false, ok: false }
+    }
     if (fix.safety === 'confirm' && ask) {
       const ok = await confirm(
         <span>
@@ -91,8 +98,12 @@ export default function HealthSection({ onNavigate }) {
       const cur = s[fix.id] || {}
       return { ...s, [fix.id]: { ...cur, lines: [...(cur.lines || []), line].slice(-MAX_FIX_LINES) } }
     }))
-    patchFix(fix.id, { running: false, done: res.ok, error: res.ok ? null : res.message })
-    return { ran: true, ok: res.ok }
+    if (res.busy) {
+      patchFix(fix.id, { running: false, error: t('settings.health.alreadyRunning') })
+      return { ran: false, ok: false }
+    }
+    patchFix(fix.id, { running: false, done: res.ok, cancelled: !!res.cancelled, error: res.ok || res.cancelled ? null : res.message })
+    return { ran: true, ok: res.ok, cancelled: !!res.cancelled }
   }, [t])
 
   // Re-check only when something ran: a no, or a manual step, changes
@@ -107,6 +118,7 @@ export default function HealthSection({ onNavigate }) {
   // unblock checks that were waiting on it (like `monoagentcli setup`).
   const fixAll = useCallback(async () => {
     setFixingAll(true)
+    stopAllRef.current = false
     const tried = new Set()
     try {
       // Services (the daemon) start last, as in `monoagentcli setup`: their
@@ -122,8 +134,10 @@ export default function HealthSection({ onNavigate }) {
           plan = all
         }
         for (const fix of plan) {
+          if (stopAllRef.current) return
           tried.add(fix.id)
-          await applyFix(fix)
+          const res = await applyFix(fix)
+          if (res.cancelled || stopAllRef.current) return
         }
         await runHealth(modeRef.current)
       }
@@ -131,6 +145,12 @@ export default function HealthSection({ onNavigate }) {
       setFixingAll(false)
     }
   }, [applyFix])
+
+  // Cancel "Fix issues": stop after the running fix, which is cancelled.
+  const stopAll = useCallback(() => {
+    stopAllRef.current = true
+    for (const [id, st] of Object.entries(fixStates)) if (st?.running) cancelFix(id)
+  }, [fixStates])
 
   const run = mode => { modeRef.current = mode; runHealth(mode) }
 
@@ -170,11 +190,14 @@ export default function HealthSection({ onNavigate }) {
           <ToolbarButton icon={h.loading ? Loader2 : RefreshCw} label={t('settings.health.checkAgain')} onClick={() => run({ deep: false, projects: false })} disabled={h.loading || fixingAll} />
           <ToolbarButton icon={Globe} label={t('settings.health.deepCheck')} onClick={() => run({ deep: true, projects: false })} disabled={h.loading || fixingAll} />
           <ToolbarButton icon={FolderTree} label={t('settings.health.checkProjects')} onClick={() => run({ deep: false, projects: true })} disabled={h.loading || fixingAll} />
-          {sum.fixable > 0 && (
-            <ToolbarButton primary icon={fixingAll ? Loader2 : Wrench} label={fixingAll ? t('settings.health.fixing') : t('settings.health.fixIssues', { n: sum.fixable })} onClick={fixAll} disabled={h.loading || fixingAll || anyFixRunning} />
-          )}
+          {h.loading && <ToolbarButton icon={X} label={t('settings.health.cancelCheck')} onClick={cancelHealthCheck} />}
         </div>
       </div>
+
+      {report && (
+        <SetupSteps report={report} level={sum.level} fixStates={fixStates} fixingAll={fixingAll} busy={h.loading || anyFixRunning}
+          onRunAll={fixAll} onCancelAll={stopAll} onFix={onRowFix} onNavigate={onNavigate} />
+      )}
 
       {h.error && (
         <div style={{ ...mono, fontSize: 10.5, color: 'var(--red)', marginBottom: 10 }}>{h.error}</div>
@@ -202,9 +225,18 @@ export default function HealthSection({ onNavigate }) {
               </button>
             )}
           </div>
-          {g.rows.map(r => <HealthRow key={r.id} row={r} fixStates={fixStates} onFix={onRowFix} />)}
+          {g.rows.map(r => <HealthRow key={r.id} row={r} fixStates={fixStates} onFix={onRowFix} onCancel={cancelFix} />)}
         </div>
       ))}
+
+      {report && !groups.some(g => g.group === 'runtimes') && (
+        // The background check leaves the runtime scan out (it runs every
+        // agent CLI); until someone checks, say so instead of hiding it.
+        <div data-testid="runtimes-not-checked" style={{ ...mono, fontSize: 10.5, color: 'var(--text-muted)', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: '10px 18px', marginBottom: 10 }}>
+          <span style={{ fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: 1.5, marginRight: 10 }}>{t('settings.health.group.runtimes', { defaultValue: 'runtimes' })}</span>
+          {t('settings.health.runtimesNotChecked')}
+        </div>
+      )}
 
       {report && (
         <div style={{ ...mono, fontSize: 10, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>

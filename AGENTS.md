@@ -74,7 +74,8 @@ bridge, pairing), `services` (daemon, start at login) and `integrations`
 (Claude Code skills, MCP registration), `accounts` (platform login expiry;
 with `--deep` also live tests of saved connections and AI connections
 (legacy) — a failing OAuth connection with a refresh token gets a silent
-refresh fix). With a monomind that has `doctor-json`, the `monomind` group also lists
+refresh fix when the service refused its credentials (401/403) or the token
+has expired, and a refresh that asks first for other failures). With a monomind that has `doctor-json`, the `monomind` group also lists
 monomind's own checks for the profile folder (fixes: `doctor fix
 monomind.doctor.fix:<component>`); `--projects` / `--project <path|name>` run
 them in each monomind project inside the profile folder
@@ -89,8 +90,15 @@ installs are optional fixes (`doctor fix runtimes.install:<id>`) and are never
 applied by `doctor --fix`.
 
 No suitable Node.js (>= 22.12) for monomind? `monoagentcli nodejs install`
-downloads a private one into `~/.monoagent/node` (from nodejs.org over HTTPS, checked against its SHASUMS256 — which catches a corrupt download; authenticity rests on TLS to nodejs.org, as with nvm; used
-only by processes monoagent starts); `nodejs status|update|remove` manage it.
+downloads a private one into `~/.monoagent/node` (from nodejs.org; the
+archive's SHA-256 must match `SHASUMS256.txt.asc`, whose signature is
+checked against the Node release keys pinned in `internal/nodemgr/keys`;
+used only by processes monoagent starts); `nodejs status|update|remove`
+manage it. Changes are serialised by a lock file in that folder, and
+remove/update keep a version a running process uses (Linux; Windows refuses
+the delete). When the system Node is missing or too old, the managed Node
+is first on PATH for every child, workflow exec nodes included; the user's
+own PATH stays in `$MONOAGENT_USER_PATH` (`nodemgr.UserEnv`/`LookPathUser`).
 
 ## Legacy top-level commands
 
@@ -350,9 +358,13 @@ monoagentcli org automation-role add growth --alias publish_post --reports-to le
   continue a chain; a manual or scheduled run starts a fresh one whatever
   `trace` its data holds. A webhook run continues a chain only from a
   signed `X-Monoagent-Trace` header, which the HTTP request node sends for
-  a run on a chain (`internal/tracesig`), so a loop through a webhook is
-  counted and refused (429) at the hop limit. Refusals are recorded in
-  `org_bridge_calls`.
+  a run on a chain (`internal/tracesig`; tokens expire after an hour), so
+  a loop through a webhook is counted and refused (429) at the hop limit of
+  the org the chain started in. Webhook runs and `trigger.org` event runs
+  are also limited to 200 per workflow per minute (429 for webhooks).
+  `trigger.org` runs are recorded as `org_event` / `event_start`.
+  Refusals are recorded in `org_bridge_calls` (for webhook and trigger.org
+  runs, the first of each kind per minute).
 
 **Autonomy** decides who resolves an org's approvals, questions, gates,
 and HIL items inside runs the org started:

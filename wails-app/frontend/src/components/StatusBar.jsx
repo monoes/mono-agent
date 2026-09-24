@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
-import { MessageSquare } from 'lucide-react'
+import { MessageSquare, UserCheck } from 'lucide-react'
 import { getHealth, subscribeHealth, summarize } from '../lib/health.js'
 import { GetVersion, CheckForUpdate, AppSelfUpdate } from '../wailsjs/go/main/App'
 import { subscribeEvent } from '../services/api.js'
@@ -22,8 +22,9 @@ function HealthDot({ onOpen }) {
   return (
     <button
       onClick={onOpen}
+      // The accessible name carries the visible status too (#146).
       title={`${label} — ${t('settings.health.statusTitle')}`}
-      aria-label={t('settings.health.statusTitle')}
+      aria-label={`${label} — ${t('settings.health.statusTitle')}`}
       data-testid="health-dot"
       style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: 10, padding: 0 }}
     >
@@ -33,7 +34,7 @@ function HealthDot({ onOpen }) {
   )
 }
 
-export default function StatusBar({ stats, dbConnected, chatOpen, onToggleChat, onOpenHealth }) {
+export default function StatusBar({ stats, dbConnected, chatOpen, onToggleChat, hilOpen, hilCount = 0, onToggleHil, onOpenHealth }) {
   const running = stats?.executions_by_status?.RUNNING || 0
   const total   = stats?.total_workflows || 0
   const people  = stats?.total_people || 0
@@ -195,6 +196,43 @@ export default function StatusBar({ stats, dbConnected, chatOpen, onToggleChat, 
         >
           MonoAgent · {versionText}
         </span>
+
+        {/* Human in Loop toggle — beside the chat icon */}
+        {onToggleHil && (
+          <button
+            onClick={onToggleHil}
+            title={hilOpen ? 'Close Human in Loop' : (hilCount > 0 ? `${hilCount} pending review${hilCount > 1 ? 's' : ''}` : 'Human in Loop reviews')}
+            aria-label={hilOpen ? 'Close Human in Loop' : 'Open Human in Loop'}
+            data-testid="hil-status-toggle"
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              position: 'relative',
+              width: 18, height: 18, padding: 0,
+              background: 'transparent',
+              border: 'none',
+              borderRadius: 3,
+              color: hilOpen ? '#00b4d8' : (hilCount > 0 ? '#ef4444' : 'var(--text-dim)'),
+              cursor: 'pointer',
+              transition: 'color .15s',
+            }}
+            onMouseEnter={e => { if (!hilOpen && hilCount === 0) e.currentTarget.style.color = '#00b4d8' }}
+            onMouseLeave={e => { if (!hilOpen && hilCount === 0) e.currentTarget.style.color = 'var(--text-dim)' }}
+          >
+            <UserCheck size={12} />
+            {hilCount > 0 && (
+              <span style={{
+                position: 'absolute', top: -5, right: -5,
+                minWidth: 12, height: 12, padding: '0 2px', borderRadius: 6,
+                background: 'var(--red, #ef4444)', color: '#fff',
+                fontFamily: 'var(--font-mono)', fontSize: 8, fontWeight: 700,
+                lineHeight: '12px', textAlign: 'center',
+                boxShadow: '0 0 0 1.5px #060b13',
+              }}>
+                {hilCount > 99 ? '99+' : hilCount}
+              </span>
+            )}
+          </button>
+        )}
 
         {/* AI Assistant toggle — small icon at the far right of the bar,
             not a separate floating overlay (that kept colliding with

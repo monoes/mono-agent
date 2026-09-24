@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestSignVerifyRoundTrip(t *testing.T) {
@@ -28,21 +29,52 @@ func TestVerifyRejectsTampering(t *testing.T) {
 	tok, _ := Sign(key, "chn_abc", 5)
 	parts := strings.Split(tok, ".")
 	other, _ := Sign([]byte(strings.Repeat("x", 32)), "chn_abc", 5)
+	join := func(p ...string) string { return strings.Join(p, ".") }
 	for name, bad := range map[string]string{
-		"lower hop":     strings.Join([]string{parts[0], parts[1], "0", parts[3]}, "."),
-		"other chain":   strings.Join([]string{parts[0], "chn_victim", parts[2], parts[3]}, "."),
+		"lower hop":     join(parts[0], parts[1], "0", parts[3], parts[4]),
+		"other chain":   join(parts[0], "chn_victim", parts[2], parts[3], parts[4]),
+		"later expiry":  join(parts[0], parts[1], parts[2], "99999999999", parts[4]),
 		"other key":     other,
-		"version":       strings.Join([]string{"v2", parts[1], parts[2], parts[3]}, "."),
-		"leading zero":  strings.Join([]string{parts[0], parts[1], "05", parts[3]}, "."),
-		"negative hop":  strings.Join([]string{parts[0], parts[1], "-5", parts[3]}, "."),
-		"missing mac":   strings.Join(parts[:3], "."),
-		"not a chain":   strings.Join([]string{parts[0], "../etc", parts[2], parts[3]}, "."),
+		"version":       join("v1", parts[1], parts[2], parts[3], parts[4]),
+		"v1 shape":      join("v1", parts[1], parts[2], parts[4]),
+		"leading zero":  join(parts[0], parts[1], "05", parts[3], parts[4]),
+		"negative hop":  join(parts[0], parts[1], "-5", parts[3], parts[4]),
+		"missing mac":   join(parts[:4]...),
+		"not a chain":   join(parts[0], "../etc", parts[2], parts[3], parts[4]),
 		"empty":         "",
 		"unsigned json": `{"chain_id":"chn_abc","hop":0}`,
 	} {
 		if _, _, ok := Verify(key, bad); ok {
 			t.Errorf("%s: %q verified", name, bad)
 		}
+	}
+}
+
+// A token verifies for TTL after it was signed and not after, so a leaked
+// or logged token cannot be replayed onto its chain for ever.
+func TestTokensExpire(t *testing.T) {
+	key := []byte(strings.Repeat("k", 32))
+	start := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	t.Cleanup(func() { now = time.Now })
+	now = func() time.Time { return start }
+	tok, err := Sign(key, "chn_abc", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		at   time.Duration
+		want bool
+	}{{0, true}, {TTL - time.Second, true}, {TTL, false}, {TTL + time.Hour, false}} {
+		now = func() time.Time { return start.Add(c.at) }
+		if _, _, ok := Verify(key, tok); ok != c.want {
+			t.Errorf("%s after signing: verified %v, want %v", c.at, ok, c.want)
+		}
+	}
+	// An expiry further out than TTL was not written by Sign, even under
+	// the right key (a clock that jumped back a day, say).
+	now = func() time.Time { return start.Add(-24 * time.Hour) }
+	if _, _, ok := Verify(key, tok); ok {
+		t.Error("a token expiring more than TTL ahead verified")
 	}
 }
 

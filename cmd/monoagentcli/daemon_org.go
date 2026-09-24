@@ -73,6 +73,7 @@ func newOrgServices(db *storage.Database, engine *workflow.WorkflowEngine) *orgS
 		db: db, mux: mux, trigger: orgbridge.NewTriggerSource(mux, db.DB),
 		logf: func(format string, args ...interface{}) { fmt.Fprintf(os.Stderr, format+"\n", args...) },
 	}
+	s.trigger.Logf = s.logf
 	engine.RegisterTriggerSource(orgbridge.TriggerNodeType, s.trigger)
 	engine.SetTraceAdmitter(s.admitWebhookTrace)
 	s.receiver = &orgbridge.Receiver{
@@ -215,17 +216,29 @@ func workflowFacts(ctx context.Context, db *storage.Database, workflowID string)
 // admitWebhookTrace records a webhook request that carried a verified
 // signed trace (internal/tracesig) as a crossing on its chain, so a loop
 // that leaves through an HTTP request and comes back through a webhook
-// climbs like any other and stops at the hop limit. The limits are the
-// defaults: the target is a workflow, not an org with a run_config.
+// climbs like any other and stops at the hop limit. The target is a
+// workflow, not an org, so the hop limit is the run_config.max_hops of the
+// org the chain started in (orgbridge.Ledger.ChainOrigin), and the defaults
+// for a chain no org started (a webhook run's own). The repeat limit is
+// orgbridge.TriggerRepeats whatever the org says.
 func (s *orgServices) admitWebhookTrace(ctx context.Context, workflowID, chain string, hop int) (int, string, error) {
 	profile := "default"
 	if wf, err := newHybridStore(s.db).GetWorkflow(ctx, workflowID); err == nil && wf != nil && wf.ProfileID != "" {
 		profile = wf.ProfileID
 	}
-	adm, err := orgbridge.NewLedger(s.db.DB).Admit(ctx, orgbridge.Call{
-		ProfileID: profile, Trace: orgbridge.Trace{ChainID: chain, Hop: hop},
+	ledger := orgbridge.NewLedger(s.db.DB)
+	origin, err := ledger.ChainOrigin(ctx, profile, chain)
+	if err != nil {
+		return 0, "", err
+	}
+	var lim orgbridge.Limits
+	if origin != "" {
+		lim = orgbridge.LimitsFor(profiledir.Root(s.db.DB, profile), origin)
+	}
+	adm, err := ledger.Admit(ctx, orgbridge.Call{
+		ProfileID: profile, Trace: orgbridge.Trace{ChainID: chain, Hop: hop}, OriginOrg: origin,
 		Direction: orgbridge.DirWebhookIn, WorkflowID: workflowID,
-	}, orgbridge.Limits{})
+	}, lim)
 	if err != nil {
 		return 0, "", err
 	}

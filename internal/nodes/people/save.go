@@ -45,6 +45,11 @@ type PeopleSaveNode struct{}
 
 func (n *PeopleSaveNode) Type() string { return "people.save" }
 
+// PerItemConfigFields declares that "introduction", "category", and "job_title" can be template expressions evaluated per item.
+func (n *PeopleSaveNode) PerItemConfigFields() []string {
+	return []string{"introduction", "category", "job_title"}
+}
+
 func (n *PeopleSaveNode) Execute(
 	ctx context.Context,
 	input workflow.NodeInput,
@@ -85,6 +90,7 @@ func (n *PeopleSaveNode) Execute(
 		   following_count = COALESCE(excluded.following_count, people.following_count),
 		   introduction    = COALESCE(excluded.introduction,    people.introduction),
 		   is_verified     = COALESCE(excluded.is_verified,     people.is_verified),
+		   category        = COALESCE(excluded.category,        people.category),
 		   job_title       = COALESCE(excluded.job_title,       people.job_title),
 		   updated_at      = excluded.updated_at`,
 	)
@@ -95,25 +101,48 @@ func (n *PeopleSaveNode) Execute(
 
 	now := time.Now().UTC()
 	var savedItems []workflow.Item
+	exprEngine := workflow.NewExpressionEngine()
 
 	for _, item := range input.Items {
 		data := item.JSON
 
-		// Resolve platform (config override > item field).
+		exprCtx := workflow.ExpressionContext{
+			JSON:        data,
+			Node:        input.NodeOutputs,
+			WorkflowID:  input.WorkflowID,
+			ExecutionID: input.ExecutionID,
+		}
+
+		// Resolve profile URL (prefer explicit profile_url, fall back to url or href).
+		profileURL := firstString(data, "profile_url", "url", "href")
+
+		// Resolve platform (config override > URL inference > item field).
 		platform := configPlatform
+		if platform == "" && profileURL != "" {
+			lowerURL := strings.ToLower(profileURL)
+			if strings.Contains(lowerURL, "linkedin.com") {
+				platform = "LINKEDIN"
+			} else if strings.Contains(lowerURL, "instagram.com") {
+				platform = "INSTAGRAM"
+			} else if strings.Contains(lowerURL, "twitter.com") || strings.Contains(lowerURL, "x.com") {
+				platform = "X"
+			} else if strings.Contains(lowerURL, "tiktok.com") {
+				platform = "TIKTOK"
+			}
+		}
 		if platform == "" {
 			platform, _ = data["platform"].(string)
 		}
 		platformUpper := strings.ToUpper(platform)
 
-		// Resolve profile URL (prefer explicit profile_url, fall back to url or href).
-		profileURL := firstString(data, "profile_url", "url", "href")
-
 		// Extract username from profile URL via platform adapter.
 		username := ""
 		if profileURL != "" {
 			if factory, ok := bot.PlatformRegistry[platformUpper]; ok {
-				username = factory().ExtractUsername(profileURL)
+				extracted := factory().ExtractUsername(profileURL)
+				if extracted != "gemini-user" && extracted != "" {
+					username = extracted
+				}
 			}
 			if username == "" {
 				// Generic fallback: last path segment.
@@ -127,11 +156,42 @@ func (n *PeopleSaveNode) Execute(
 			continue // Cannot save without a username.
 		}
 
-		fullName, _ := data["full_name"].(string)
+		fullName := firstString(data, "full_name", "name")
 		imageURL, _ := data["image_url"].(string)
 		website, _ := data["website"].(string)
 		jobTitle := firstString(data, "job_title", "position", "headline")
-		introduction, _ := data["introduction"].(string)
+		if jobTitle == "" {
+			if jt, ok := config["job_title"].(string); ok && jt != "" {
+				if res, err := exprEngine.EvaluateString(jt, exprCtx); err == nil && res != "" {
+					jobTitle = res
+				} else {
+					jobTitle = jt
+				}
+			}
+		}
+
+		introduction := firstString(data, "introduction")
+		if introduction == "" {
+			if introTmpl, ok := config["introduction"].(string); ok && introTmpl != "" {
+				if res, err := exprEngine.EvaluateString(introTmpl, exprCtx); err == nil && res != "" {
+					introduction = res
+				} else {
+					introduction = introTmpl
+				}
+			}
+		}
+
+		category := firstString(data, "category")
+		if category == "" {
+			if catTmpl, ok := config["category"].(string); ok && catTmpl != "" {
+				if res, err := exprEngine.EvaluateString(catTmpl, exprCtx); err == nil && res != "" {
+					category = res
+				} else {
+					category = catTmpl
+				}
+			}
+		}
+
 		isVerified := nullableBool(data, "is_verified")
 
 		followerCount := toNumericString(data, "follower_count", "followers_count", "followersCount")
@@ -162,7 +222,7 @@ func (n *PeopleSaveNode) Execute(
 			nullableInt(followingInt),
 			nullableStr(introduction),
 			isVerified,
-			nil, // category
+			nullableStr(category),
 			nullableStr(jobTitle),
 			nullableStr(profileURL),
 			profileID,
@@ -174,7 +234,7 @@ func (n *PeopleSaveNode) Execute(
 		}
 
 		// Emit the saved item enriched with resolved username.
-		out := make(map[string]interface{}, len(data)+2)
+		out := make(map[string]interface{}, len(data)+4)
 		for k, v := range data {
 			out[k] = v
 		}
@@ -182,6 +242,12 @@ func (n *PeopleSaveNode) Execute(
 		out["platform"] = platformUpper
 		if profileURL != "" {
 			out["profile_url"] = profileURL
+		}
+		if category != "" {
+			out["category"] = category
+		}
+		if introduction != "" {
+			out["introduction"] = introduction
 		}
 		savedItems = append(savedItems, workflow.NewItem(out))
 	}

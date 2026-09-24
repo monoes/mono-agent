@@ -12,8 +12,46 @@ import (
 	"strings"
 )
 
+// pathNames are the browser executables looked up on PATH when none of the
+// well-known install paths exists (a distro that puts them in /usr/local,
+// /opt/…/bin on PATH, a Flatpak/Nix wrapper).
+var pathNames = []string{
+	"google-chrome", "google-chrome-stable", "chromium", "chromium-browser",
+	"brave-browser", "brave", "microsoft-edge", "microsoft-edge-stable",
+}
+
 // FindBrowser returns the path to the local Chrome binary, or empty string.
 func FindBrowser() string {
+	names := pathNames
+	if runtime.GOOS == "windows" {
+		names = []string{"chrome.exe", "msedge.exe", "brave.exe"}
+	}
+	return findBrowser(browserCandidates(), names)
+}
+
+// findBrowser returns the first existing candidate, else the first of
+// names found on PATH.
+func findBrowser(candidates, names []string) string {
+	for _, p := range candidates {
+		if p != "" {
+			if _, err := os.Stat(p); err == nil {
+				return p
+			}
+		}
+	}
+	for _, n := range names {
+		if p, err := exec.LookPath(n); err == nil {
+			if abs, err := filepath.Abs(p); err == nil {
+				return abs
+			}
+			return p
+		}
+	}
+	return ""
+}
+
+// browserCandidates are the well-known install paths on this OS.
+func browserCandidates() []string {
 	var candidates []string
 	switch runtime.GOOS {
 	case "darwin":
@@ -46,18 +84,12 @@ func FindBrowser() string {
 			"/usr/bin/chromium-browser",
 			"/usr/bin/brave-browser",
 			"/usr/bin/microsoft-edge",
+			"/usr/bin/microsoft-edge-stable",
+			"/usr/bin/microsoft-edge-beta",
 			"/snap/bin/chromium",
 		}
 	}
-
-	for _, p := range candidates {
-		if p != "" {
-			if _, err := os.Stat(p); err == nil {
-				return p
-			}
-		}
-	}
-	return ""
+	return candidates
 }
 
 // IsBrowserRunning checks if a supported Chrome/Chromium browser process is already running.

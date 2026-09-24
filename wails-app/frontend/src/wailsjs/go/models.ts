@@ -535,6 +535,36 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class PendingPersonApproval {
+	    id: string;
+	    platform: string;
+	    platform_username: string;
+	    full_name: string;
+	    image_url: string;
+	    profile_url: string;
+	    job_title: string;
+	    category: string;
+	    introduction: string;
+	    created_at: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PendingPersonApproval(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.platform = source["platform"];
+	        this.platform_username = source["platform_username"];
+	        this.full_name = source["full_name"];
+	        this.image_url = source["image_url"];
+	        this.profile_url = source["profile_url"];
+	        this.job_title = source["job_title"];
+	        this.category = source["category"];
+	        this.introduction = source["introduction"];
+	        this.created_at = source["created_at"];
+	    }
+	}
 	export class PersonDetailInfo {
 	    id: string;
 	    username: string;

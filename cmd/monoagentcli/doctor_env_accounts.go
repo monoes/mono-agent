@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net"
+	"net/http"
 	"strings"
 	"time"
 
@@ -42,13 +44,11 @@ func addAccountHooks(env *health.Env, db *sql.DB) {
 		if err != nil || conn == nil {
 			return fmt.Errorf("connection %q not found in this profile", id)
 		}
-		ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-		defer cancel()
 		// ValidateConnection, not Manager.Test: Test saves a status and a
 		// new label and prints to stdout, which would change the connection
-		// and break `doctor --json`.
+		// and break `doctor --json`. The check bounds how long it may take.
 		_, err = connections.ValidateConnection(ctx, conn)
-		return scrubSecrets(err, connectionSecrets(conn)...)
+		return classifyConnectionError(scrubSecrets(err, connectionSecrets(conn)...), err, conn, time.Now())
 	}
 	env.RefreshConnection = func(ctx context.Context, id string) error {
 		conn, err := store.Get(ctx, id, profileID)
@@ -87,9 +87,15 @@ func addAccountHooks(env *health.Env, db *sql.DB) {
 		if err != nil {
 			return err
 		}
-		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-		_, err = testAIProvider(ctx, aiStore, p, profileID, false)
+		// Listing models is free where it needs the key; elsewhere only a
+		// (paid, 5-token) completion shows whether the key works.
+		ok, err := ai.VerifyKey(ctx, p)
+		if !ok {
+			_, err = testAIProvider(ctx, aiStore, p, profileID, false)
+		}
+		if isUnreachable(err) {
+			return health.Unreachable(scrubSecrets(err, p.APIKey))
+		}
 		return scrubSecrets(err, p.APIKey)
 	}
 
@@ -113,6 +119,40 @@ func addAccountHooks(env *health.Env, db *sql.DB) {
 		}
 		return out, rows.Err()
 	}
+}
+
+// classifyConnectionError marks a failed connection test for the check:
+// credentials rejected (HTTP 401/403, or the access token is past its
+// expires_at) → a silent refresh is offered; the service not answering
+// (network, timeout, 5xx, 429) → nothing is offered. Anything else stays
+// unmarked, and a refresh is only offered after asking. scrubbed is raw
+// with the secrets removed; raw is kept for its error chain.
+func classifyConnectionError(scrubbed, raw error, conn *connections.Connection, now time.Time) error {
+	if raw == nil {
+		return nil
+	}
+	code := connections.HTTPStatus(raw)
+	switch {
+	case connections.CredentialsRejected(raw) || tokenExpired(conn, now):
+		return health.CredentialsRejected(scrubbed)
+	case code >= 500 || code == http.StatusTooManyRequests || isUnreachable(raw):
+		return health.Unreachable(scrubbed)
+	}
+	return scrubbed
+}
+
+// tokenExpired reports whether an OAuth connection's access token is past
+// its expires_at.
+func tokenExpired(conn *connections.Connection, now time.Time) bool {
+	s, _ := conn.Data["expires_at"].(string)
+	t, err := time.Parse(time.RFC3339, s)
+	return err == nil && now.After(t)
+}
+
+// isUnreachable reports a transport failure: timeout, DNS, refused.
+func isUnreachable(err error) bool {
+	var ne net.Error
+	return errors.Is(err, context.DeadlineExceeded) || errors.As(err, &ne)
 }
 
 func tableExists(ctx context.Context, db *sql.DB, name string) bool {

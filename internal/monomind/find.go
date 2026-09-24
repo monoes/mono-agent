@@ -124,6 +124,35 @@ func Find() (string, error) {
 	return "", &ErrNotFound{Tried: tried}
 }
 
+// FindAll lists every executable monomind on the discovery ladder, in
+// order and without duplicates (by real path), so Find's pick comes first.
+// A later entry is a copy that the first one shadows — e.g. one that
+// `doctor fix monomind.install` put in ~/.monoagent/npm-global behind an
+// older root-owned /usr/bin/monomind. Unlike Find it leaves PATH alone.
+func FindAll() []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, cand := range CandidatePaths() {
+		path, err := exec.LookPath(cand)
+		if err != nil {
+			continue
+		}
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			abs = path
+		}
+		key := abs
+		if real, err := filepath.EvalSymlinks(abs); err == nil {
+			key = real
+		}
+		if !seen[key] {
+			seen[key] = true
+			out = append(out, abs)
+		}
+	}
+	return out
+}
+
 // Handshake runs `monomind --version --json` and validates the payload
 // against this client's requirements (protocol §2).
 func Handshake(ctx context.Context, bin string) (*VersionInfo, error) {

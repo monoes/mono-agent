@@ -136,7 +136,7 @@ func TestApplyReportFixesSkipsOptional(t *testing.T) {
 	}}
 	t.Setenv("HOME", t.TempDir())
 	outcomes := applyReportFixes(context.Background(), &globalConfig{DBPath: "~/.monoagent/x.db"}, reg, rep,
-		map[string]bool{}, func(health.FixInfo) bool { return true }, func(string) {})
+		map[string]bool{}, func(health.FixInfo) bool { return true }, func(string) {}, false)
 	if !applied["a"] || applied["claude"] {
 		t.Fatalf("applied %v; optional runtime install must not run under --fix", applied)
 	}
@@ -264,5 +264,53 @@ func TestFirstRunCheckKeepsExistingSkills(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(skills, name)); err != nil {
 			t.Errorf("missing skill %s was not installed: %v", name, err)
 		}
+	}
+}
+
+// The footer counts only what --fix applies, each fix once however many
+// rows offer it; optional fixes are named
+// separately, since --fix skips them (a runtime that is not installed is
+// folded into one line with its own hint, and not counted).
+func TestDoctorFooterSeparatesOptionalFixes(t *testing.T) {
+	var out bytes.Buffer
+	rep := &health.Report{Summary: map[health.Status]int{}, Results: []health.Result{
+		{ID: "a", Group: "core", Title: "A", Status: health.StatusFail, Fix: &health.FixInfo{ID: "a.fix", Safety: health.SafetyAuto}},
+		{ID: "b", Group: "runtimes", Title: "B", Status: health.StatusInfo, Fix: &health.FixInfo{ID: "rt:b", Safety: health.SafetyConfirm, Optional: true}},
+		{ID: "c", Group: "runtimes", Title: "C", Status: health.StatusWarn, Fix: &health.FixInfo{ID: "rt:c", Safety: health.SafetyConfirm, Optional: true}},
+		{ID: "d", Group: "browser", Title: "D", Status: health.StatusWarn, Fix: &health.FixInfo{ID: "m", Safety: health.SafetyManual, Command: "do it"}},
+		{ID: "e", Group: "browser", Title: "E", Status: health.StatusWarn, Fix: &health.FixInfo{ID: "a.fix", Safety: health.SafetyAuto}},
+	}}
+	printDoctorReport(&out, rep, false)
+	s := out.String()
+	if !strings.Contains(s, "apply 1 fix(es)") || !strings.Contains(s, "1 optional fix(es) are not applied by --fix") {
+		t.Fatalf("footer:\n%s", s)
+	}
+	if got := doctorFooter(0, 1, false); len(got) != 1 || strings.Contains(got[0], "--fix` to") {
+		t.Fatalf("only optional fixes must not say run --fix: %q", got)
+	}
+	if got := doctorFooter(3, 0, true); len(got) != 0 {
+		t.Fatalf("after --fix: %q", got)
+	}
+}
+
+// Without a managed Node, packages a system npm put in the private prefix
+// (its own global prefix wasn't writable) are still found: doctor appends
+// ~/.monoagent/npm-global/bin to PATH, after everything already there.
+func TestDoctorActivatesNpmGlobalWithoutManagedNode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix layout")
+	}
+	keyring.MockInit()
+	home := t.TempDir()
+	npmBin := filepath.Join(home, ".monoagent", "npm-global", "bin")
+	if err := os.MkdirAll(npmBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sys := t.TempDir()
+	t.Setenv("PATH", sys)
+	_, _ = runDoctor(t, home, "doctor", "--json", "--group", "core")
+	parts := filepath.SplitList(os.Getenv("PATH"))
+	if parts[0] != sys || parts[len(parts)-1] != npmBin {
+		t.Fatalf("PATH after doctor = %v, want %s first and %s appended", parts, sys, npmBin)
 	}
 }

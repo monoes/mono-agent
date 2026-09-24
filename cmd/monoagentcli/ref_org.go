@@ -119,7 +119,10 @@ MESSAGES AND LIFECYCLE
   Granted calls on one chain add one hop per 8, whichever roles make them.
   Org-started runs continue a chain; a webhook run continues one only from
   a signed X-Monoagent-Trace header (sent by http.request), else it starts
-  fresh. A loop through a webhook is refused (HTTP 429) at the hop limit.
+  fresh. A loop through a webhook is refused (HTTP 429) at the hop limit
+  of the org the chain started in; the token expires after an hour.
+  Webhook and trigger.org runs are limited to 200 per workflow per minute
+  (HTTP 429 for a webhook).
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 AUTONOMY

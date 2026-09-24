@@ -30,3 +30,47 @@ export function cachedAgentScan() {
     return res
   })
 }
+
+// The same patterns as monoagentcli's agentinstall.Parse: with no
+// structured recipe (monomind before protocol rev 9), the CLI installs from
+// the hint only when it is exactly one of these, and treats anything else as
+// a manual step.
+const NPM_PKG = /^(@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*(@[\w.^~<>=*-]+)?$/
+const CURL_INSTALL = /^curl\s+-fsSL\s+(https:\/\/\S+)\s*\|\s*(bash|sh)$/
+
+function isWindows() {
+  return typeof navigator !== 'undefined' && /^win/i.test(navigator.platform || '')
+}
+
+/**
+ * What installing a runtime would run, as monoagentcli decides it: the
+ * structured recipe when monomind sent one, else the parsed hint.
+ * { kind: 'npm', packages } | { kind: 'script', url, shell } | { kind: 'manual' }.
+ */
+export function installRecipe(agent) {
+  const r = agent?.install
+  const noScripts = isWindows() // the CLI runs no vendor scripts on Windows
+  if (r?.kind) {
+    if (r.kind === 'npm' && r.packages?.length && r.packages.every(p => NPM_PKG.test(p))) return { kind: 'npm', packages: r.packages }
+    if (r.kind === 'script' && /^https:\/\/[^/\s]+/.test(r.url || '') && (r.shell === 'bash' || r.shell === 'sh') && !noScripts) {
+      return { kind: 'script', url: r.url, shell: r.shell }
+    }
+    return { kind: 'manual' }
+  }
+  const hint = String(agent?.install_hint || '').trim()
+  const f = hint.split(/\s+/)
+  if (f.length >= 4 && f[0] === 'npm' && f[1] === 'install' && (f[2] === '-g' || f[2] === '--global')) {
+    const packages = f.slice(3)
+    return packages.every(p => NPM_PKG.test(p)) ? { kind: 'npm', packages } : { kind: 'manual' }
+  }
+  const m = CURL_INSTALL.exec(hint)
+  if (m && !noScripts) return { kind: 'script', url: m[1], shell: m[2] }
+  return { kind: 'manual' }
+}
+
+/** The command a recipe runs, for the confirmation dialog. */
+export function recipeCommand(recipe, agent) {
+  if (recipe.kind === 'script') return `curl -fsSL ${recipe.url} | ${recipe.shell}`
+  if (recipe.kind === 'npm') return `npm install -g ${recipe.packages.join(' ')}`
+  return agent?.install_hint || ''
+}

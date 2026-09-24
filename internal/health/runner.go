@@ -72,6 +72,10 @@ type Options struct {
 	Monomind bool
 	Groups   []string // empty = all
 	IDs      []string // empty = all
+	// SkipGroups leaves these groups out, and so do checks that depend on
+	// them. The GUI's background check skips the runtimes group: its scan
+	// runs every agent CLI, which writes their own state (see #146).
+	SkipGroups []string
 }
 
 func (o Options) selects(c Check) bool {
@@ -82,6 +86,9 @@ func (o Options) selects(c Check) bool {
 		return false
 	}
 	if len(o.Groups) > 0 && !contains(o.Groups, c.Group) {
+		return false
+	}
+	if contains(o.SkipGroups, c.Group) {
 		return false
 	}
 	if len(o.IDs) > 0 && !contains(o.IDs, c.ID) {
@@ -113,7 +120,7 @@ func (r *Registry) Run(ctx context.Context, env *Env, opts Options) *Report {
 		}
 	}
 	for _, c := range r.checks {
-		if opts.selects(c) {
+		if opts.selects(c) && !needsSkipped(c, byID, opts.SkipGroups, map[string]bool{}) {
 			add(c.ID)
 		}
 	}
@@ -199,11 +206,28 @@ func (r *Registry) Run(ctx context.Context, env *Env, opts Options) *Report {
 					ch.Fix = &info
 				}
 			}
+			r.resolveActions(&ch)
 			rep.Results = append(rep.Results, ch)
 			rep.Summary[ch.Status]++
 		}
 	}
 	return rep
+}
+
+// needsSkipped reports whether c depends, directly or not, on a check of
+// a skipped group (a skipped check never runs, not even as a dependency).
+func needsSkipped(c Check, byID map[string]Check, skip []string, seen map[string]bool) bool {
+	if len(skip) == 0 || seen[c.ID] {
+		return false
+	}
+	seen[c.ID] = true
+	for _, id := range c.DependsOn {
+		d, ok := byID[id]
+		if ok && (contains(skip, d.Group) || needsSkipped(d, byID, skip, seen)) {
+			return true
+		}
+	}
+	return false
 }
 
 func blockedBy(c Check, results map[string]Result) string {
@@ -263,7 +287,18 @@ func (r *Registry) finish(c Check, res Result, took time.Duration) Result {
 			res.Fix = &info
 		}
 	}
+	r.resolveActions(&res)
 	return res
+}
+
+// resolveActions turns a result's ActionIDs into Actions.
+func (r *Registry) resolveActions(res *Result) {
+	for _, id := range res.ActionIDs {
+		if f, ok := r.Fix(id); ok {
+			res.Actions = append(res.Actions, f.FixInfo)
+		}
+	}
+	res.ActionIDs = nil
 }
 
 func contains(list []string, s string) bool {

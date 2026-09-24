@@ -2,6 +2,7 @@ package nodemgr
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -15,6 +16,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/ProtonMail/go-crypto/openpgp"
 )
 
 type tarEntry struct {
@@ -49,9 +52,12 @@ func makeTarGz(t *testing.T, entries []tarEntry) []byte {
 	return buf.Bytes()
 }
 
-// fakeDist serves index.json, SHASUMS256.txt and one archive per version.
+// fakeDist serves index.json, SHASUMS256.txt.asc (signed by a test key m
+// is told to trust) and one archive per version.
 func fakeDist(t *testing.T, m *Manager, archives map[string][]byte, corrupt bool) *httptest.Server {
 	t.Helper()
+	signer := testSigner(t)
+	m.keys = openpgp.EntityList{signer}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/index.json", func(w http.ResponseWriter, r *http.Request) {
 		key := m.indexFileKey()
@@ -69,9 +75,8 @@ func fakeDist(t *testing.T, m *Manager, archives map[string][]byte, corrupt bool
 			sum[0] ^= 0xff
 		}
 		data := data
-		mux.HandleFunc("/v"+v+"/SHASUMS256.txt", func(w http.ResponseWriter, r *http.Request) {
-			fmt.Fprintf(w, "%s  %s\n", hex.EncodeToString(sum[:]), name)
-		})
+		asc := clearsignText(t, signer, fmt.Sprintf("%s  %s\n", hex.EncodeToString(sum[:]), name))
+		mux.HandleFunc("/v"+v+"/SHASUMS256.txt.asc", func(w http.ResponseWriter, r *http.Request) { w.Write(asc) })
 		mux.HandleFunc("/v"+v+"/"+name, func(w http.ResponseWriter, r *http.Request) { w.Write(data) })
 	}
 	srv := httptest.NewServer(mux)
@@ -139,7 +144,7 @@ func TestInstallUseRemove(t *testing.T) {
 	// Staging and download temp files are gone.
 	entries, _ := os.ReadDir(m.Root)
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), ".") {
+		if strings.HasPrefix(e.Name(), ".") && e.Name() != lockFile && e.Name() != sysCacheFile {
 			t.Errorf("leftover %s", e.Name())
 		}
 	}
@@ -197,7 +202,7 @@ func TestInstallRejectsEscapingArchive(t *testing.T) {
 		if err := os.Mkdir(staging, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := untarGz(path, staging); err == nil {
+		if err := untarGz(path, staging, 1<<20); err == nil {
 			t.Errorf("entries %+v: want rejection", entries)
 		}
 		for _, escaped := range []string{filepath.Join(parent, "pwned"), filepath.Join(parent, "evil")} {
@@ -307,8 +312,16 @@ func TestPlanGlobalInstall(t *testing.T) {
 		t.Fatalf("writable system prefix: %+v, %v", plan, err)
 	}
 
-	// Unwritable prefix: fall back to the private one, never sudo.
-	os.WriteFile(filepath.Join(sys, "npm"), []byte("#!/bin/sh\necho /proc/nope\n"), 0o755)
+	// Unwritable prefix: fall back to the private one, never sudo. A
+	// read-only folder (not /proc, which macOS doesn't have).
+	if os.Geteuid() == 0 {
+		t.Skip("root can write a read-only folder")
+	}
+	locked := filepath.Join(t.TempDir(), "locked")
+	os.MkdirAll(locked, 0o755)
+	os.Chmod(locked, 0o555)
+	t.Cleanup(func() { os.Chmod(locked, 0o755) })
+	os.WriteFile(filepath.Join(sys, "npm"), []byte("#!/bin/sh\necho "+locked+"\n"), 0o755)
 	plan, err = m.PlanGlobalInstall(ctx)
 	if err != nil || plan.Prefix != m.NpmRoot || !strings.Contains(strings.Join(plan.Env, "\n"), "NPM_CONFIG_PREFIX="+m.NpmRoot) {
 		t.Fatalf("unwritable system prefix: %+v, %v", plan, err)
@@ -323,5 +336,84 @@ func TestPlanGlobalInstall(t *testing.T) {
 	plan, err = m.PlanGlobalInstall(ctx)
 	if err != nil || !plan.Managed || plan.Npm != m.NpmPath("24.1.0") {
 		t.Fatalf("managed only: %+v, %v", plan, err)
+	}
+}
+
+func makeZip(t *testing.T, files map[string]string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for name, body := range files {
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w.Write([]byte(body))
+	}
+	zw.Close()
+	return buf.Bytes()
+}
+
+// TestWindowsInstallFlow runs the Windows install path (zip, node.exe at the
+// top, npm.cmd, no bin/) on this machine with the version probe stubbed.
+func TestWindowsInstallFlow(t *testing.T) {
+	m := New()
+	dir := t.TempDir()
+	m.Root, m.NpmRoot = filepath.Join(dir, "node"), filepath.Join(dir, "npm-global")
+	m.GOOS, m.GOARCH = "windows", "amd64"
+	var probed string
+	m.probe = func(_ context.Context, node string) (string, error) { probed = node; return "24.1.0", nil }
+
+	if got := m.archiveName("24.1.0"); got != "node-v24.1.0-win-x64.zip" {
+		t.Fatalf("archive %q", got)
+	}
+	if got := m.indexFileKey(); got != "win-x64-zip" {
+		t.Fatalf("index key %q", got)
+	}
+	top := "node-v24.1.0-win-x64/"
+	m.BaseURL = fakeDist(t, m, map[string][]byte{"24.1.0": makeZip(t, map[string]string{
+		top + "node.exe": "MZ", top + "npm.cmd": "@echo npm", top + "node_modules/npm/package.json": "{}",
+	})}, false).URL
+
+	v, err := m.Install(context.Background(), "lts", nil)
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	root := filepath.Join(m.Root, "24.1.0")
+	if m.BinDir(v) != root || m.NodePath(v) != filepath.Join(root, "node.exe") || m.NpmPath(v) != filepath.Join(root, "npm.cmd") {
+		t.Fatalf("windows layout: bin %s node %s npm %s", m.BinDir(v), m.NodePath(v), m.NpmPath(v))
+	}
+	if probed != m.NodePath(v) {
+		t.Fatalf("probed %q", probed)
+	}
+	for _, f := range []string{m.NodePath(v), m.NpmPath(v)} {
+		if _, err := os.Stat(f); err != nil {
+			t.Errorf("missing %s", f)
+		}
+	}
+	if m.NpmBinDir() != m.NpmRoot {
+		t.Errorf("windows npm bin dir %s", m.NpmBinDir())
+	}
+
+	// A zip entry escaping the target is refused.
+	bad := filepath.Join(t.TempDir(), "bad.zip")
+	os.WriteFile(bad, makeZip(t, map[string]string{"../evil.txt": "x"}), 0o644)
+	if err := unzip(bad, t.TempDir(), 1<<20); err == nil {
+		t.Error("escaping zip entry accepted")
+	}
+}
+
+func TestDarwinArchiveNames(t *testing.T) {
+	m := New()
+	m.GOOS, m.GOARCH = "darwin", "arm64"
+	if got := m.archiveName("24.1.0"); got != "node-v24.1.0-darwin-arm64.tar.gz" {
+		t.Errorf("archive %q", got)
+	}
+	if got := m.indexFileKey(); got != "osx-arm64-tar" {
+		t.Errorf("index key %q", got)
+	}
+	m.GOARCH = "amd64"
+	if got := m.indexFileKey(); got != "osx-x64-tar" {
+		t.Errorf("index key %q", got)
 	}
 }

@@ -33,6 +33,10 @@ export function ApproveHIL(arg1:string,arg2:string):Promise<void>;
 
 export function ApproveOrgAction(arg1:string,arg2:string,arg3:string):Promise<string>;
 
+export function ApprovePendingPerson(arg1:string,arg2:string,arg3:boolean):Promise<void>;
+
+export function CancelHealthRun(arg1:string):Promise<string>;
+
 export function CancelWorkflow(arg1:string):Promise<void>;
 
 export function CheckForUpdate():Promise<main.UpdateInfo>;
@@ -164,6 +168,8 @@ export function GetOrgQuestions(arg1:string):Promise<string>;
 export function GetOrgReport(arg1:string,arg2:boolean,arg3:string):Promise<string>;
 
 export function GetOrgStatus(arg1:string):Promise<string>;
+
+export function GetPendingPeopleApprovals():Promise<Array<main.PendingPersonApproval>>;
 
 export function GetPeople(arg1:string,arg2:string,arg3:number,arg4:number):Promise<Array<main.PersonInfo>>;
 
@@ -309,6 +315,8 @@ export function RejectDraftPersonMessage(arg1:string):Promise<void>;
 
 export function RejectHIL(arg1:string):Promise<void>;
 
+export function RejectPendingPerson(arg1:string):Promise<void>;
+
 export function ReloadOrg(arg1:string):Promise<string>;
 
 export function RemoveAutomationRole(arg1:string,arg2:string):Promise<string>;
@@ -327,7 +335,7 @@ export function ResumeOrgAutonomy(arg1:string):Promise<string>;
 
 export function RevealProfileFolder(arg1:string):Promise<void>;
 
-export function RunHealthCheck(arg1:boolean,arg2:boolean):Promise<string>;
+export function RunHealthCheck(arg1:string):Promise<string>;
 
 export function RunHealthFix(arg1:string):Promise<string>;
 
