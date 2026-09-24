@@ -36,8 +36,13 @@ func newDoctorCmd(cfg *globalConfig) *cobra.Command {
 	var deep, fix, yes bool
 
 	cmd := &cobra.Command{
-		Use:   "doctor",
-		Short: "Check (and fix) everything monoagent needs on this machine",
+		// Replaces the root's pre-run (Claude first-run setup), which
+		// creates ~/.monoagent and copies skills into ~/.claude: a check
+		// must not change anything, and the data-folder check could never
+		// see the folder missing. `doctor fix` inherits this one.
+		PersistentPreRun: func(*cobra.Command, []string) {},
+		Use:              "doctor",
+		Short:            "Check (and fix) everything monoagent needs on this machine",
 		Long: `Runs health checks over every component monoagent depends on and
 reports what is missing or broken, with a fix for each problem it can repair.
 
@@ -311,6 +316,11 @@ func newHealthEnv(cfg *globalConfig) (*health.Env, func()) {
 			if env.ProfileID == "" {
 				var id string
 				_ = db.DB.QueryRow(`SELECT value FROM settings WHERE key = ?`, profiledir.ActiveProfileSetting).Scan(&id)
+				env.ProfileID = id
+			} else if id, err := resolveProfileID(db.DB, env.ProfileID); err == nil {
+				// --profile takes a name or an id, as it does for every other
+				// command; one that matches neither is left for the profile
+				// check to report.
 				env.ProfileID = id
 			}
 		}
