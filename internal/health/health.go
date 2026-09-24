@@ -72,6 +72,10 @@ type FixInfo struct {
 	Label   string `json:"label"`
 	Safety  Safety `json:"safety"`
 	Command string `json:"command,omitempty"`
+	// Optional fixes add something the user may not want (e.g. one more
+	// agent runtime). `doctor --fix` never applies them; only an explicit
+	// `doctor fix <id>` or a GUI button does.
+	Optional bool `json:"optional,omitempty"`
 }
 
 // Check is one health check.
@@ -91,9 +95,14 @@ type Check struct {
 }
 
 // Fix repairs what a check found.
+//
+// A parameterized fix sets ApplyArg instead of Apply and is addressed as
+// "<id>:<arg>" (e.g. "runtimes.install:claude"); "{arg}" in its Label and
+// Command is replaced by the argument.
 type Fix struct {
 	FixInfo
-	Apply func(ctx context.Context, env *Env, progress func(line string)) error
+	Apply    func(ctx context.Context, env *Env, progress func(line string)) error
+	ApplyArg func(ctx context.Context, env *Env, arg string, progress func(line string)) error
 }
 
 // DefaultTimeout bounds a single check.
@@ -140,6 +149,8 @@ type Env struct {
 	ScanRuntimes        func(ctx context.Context) (*monomind.ScanResult, error)
 	InstallMonomind     func(ctx context.Context, progress func(string)) error
 	InitMonomindProfile func(ctx context.Context, root string, progress func(string)) error
+	// InstallRuntime installs one agent runtime by its scan id.
+	InstallRuntime func(ctx context.Context, id string, progress func(string)) error
 }
 
 // Report is the `doctor --json` payload.

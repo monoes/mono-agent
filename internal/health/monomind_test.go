@@ -125,7 +125,7 @@ func TestRuntimesCheckReportsChildren(t *testing.T) {
 		{ID: "claude", Installed: true, Binary: strp("/bin/claude"), Version: strp("2.1.0")},
 		{ID: "codex", Installed: false, InstallHint: "npm install -g @openai/codex"},
 	}}
-	reg := NewRegistry([]Check{{ID: CheckRuntimes, Group: GroupRuntimes, Title: "AI agent runtimes", Run: checkRuntimes}}, nil)
+	reg := NewRegistry([]Check{{ID: CheckRuntimes, Group: GroupRuntimes, Title: "AI agent runtimes", Run: checkRuntimes}}, runtimeFixes())
 	env := &Env{ScanRuntimes: func(context.Context) (*monomind.ScanResult, error) { return scan, nil }}
 	rep := reg.Run(context.Background(), env, Options{})
 	if len(rep.Results) != 3 {
@@ -138,6 +138,10 @@ func TestRuntimesCheckReportsChildren(t *testing.T) {
 	}
 	if rep.Summary[StatusOK] != 2 || rep.Summary[StatusInfo] != 1 {
 		t.Errorf("summary counts children: %v", rep.Summary)
+	}
+
+	if f := got["runtimes.codex"].Fix; f == nil || f.ID != "runtimes.install:codex" || !f.Optional {
+		t.Errorf("codex should offer an optional install fix: %+v", f)
 	}
 
 	scan.Agents = scan.Agents[1:]

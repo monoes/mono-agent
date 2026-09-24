@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -37,10 +38,28 @@ func NewRegistry(checks []Check, fixes []Fix) *Registry {
 // Checks returns the registered checks in registration order.
 func (r *Registry) Checks() []Check { return r.checks }
 
-// Fix returns a registered fix.
+// Fix returns a registered fix, resolving "<id>:<arg>" for parameterized
+// ones.
 func (r *Registry) Fix(id string) (Fix, bool) {
-	f, ok := r.fixes[id]
-	return f, ok
+	if f, ok := r.fixes[id]; ok && f.ApplyArg == nil {
+		return f, true
+	}
+	base, arg, ok := strings.Cut(id, ":")
+	if !ok || arg == "" {
+		return Fix{}, false
+	}
+	f, ok := r.fixes[base]
+	if !ok || f.ApplyArg == nil {
+		return Fix{}, false
+	}
+	info := f.FixInfo
+	info.ID = id
+	info.Label = strings.ReplaceAll(info.Label, "{arg}", arg)
+	info.Command = strings.ReplaceAll(info.Command, "{arg}", arg)
+	applyArg := f.ApplyArg
+	return Fix{FixInfo: info, Apply: func(ctx context.Context, env *Env, progress func(string)) error {
+		return applyArg(ctx, env, arg, progress)
+	}}, true
 }
 
 // Options selects which checks run.
@@ -164,7 +183,7 @@ func (r *Registry) Run(ctx context.Context, env *Env, opts Options) *Report {
 				ch.Source = res.Source
 			}
 			if ch.FixID != "" && ch.Status != StatusOK && ch.Status != StatusSkip {
-				if f, ok := r.fixes[ch.FixID]; ok {
+				if f, ok := r.Fix(ch.FixID); ok {
 					info := f.FixInfo
 					ch.Fix = &info
 				}
@@ -225,7 +244,7 @@ func (r *Registry) finish(c Check, res Result, took time.Duration) Result {
 	}
 	res.Millis = took.Milliseconds()
 	if res.FixID != "" && res.Status != StatusOK && res.Status != StatusSkip {
-		if f, ok := r.fixes[res.FixID]; ok {
+		if f, ok := r.Fix(res.FixID); ok {
 			info := f.FixInfo
 			res.Fix = &info
 		}

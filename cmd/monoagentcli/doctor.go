@@ -195,8 +195,8 @@ func applyReportFixes(ctx context.Context, cfg *globalConfig, reg *health.Regist
 		}
 		tried[res.Fix.ID] = true
 		f, ok := reg.Fix(res.Fix.ID)
-		if !ok {
-			continue
+		if !ok || f.Optional {
+			continue // optional fixes only run when asked for by id
 		}
 		switch f.Safety {
 		case health.SafetyManual:

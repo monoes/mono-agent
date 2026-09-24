@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"path/filepath"
 	"strings"
@@ -109,5 +110,31 @@ func TestDoctorFixStreamsNDJSON(t *testing.T) {
 
 	if _, err := runDoctor(t, home, "doctor", "fix", "no.such.fix"); exitCodeFor(err) != 2 {
 		t.Fatalf("unknown fix: exit %d, want 2", exitCodeFor(err))
+	}
+}
+
+func TestApplyReportFixesSkipsOptional(t *testing.T) {
+	applied := map[string]bool{}
+	reg := health.NewRegistry(nil, []health.Fix{
+		{FixInfo: health.FixInfo{ID: "a", Safety: health.SafetyAuto},
+			Apply: func(context.Context, *health.Env, func(string)) error { applied["a"] = true; return nil }},
+		{FixInfo: health.FixInfo{ID: "rt", Safety: health.SafetyConfirm, Optional: true},
+			ApplyArg: func(_ context.Context, _ *health.Env, arg string, _ func(string)) error {
+				applied[arg] = true
+				return nil
+			}},
+	})
+	rep := &health.Report{Results: []health.Result{
+		{ID: "x", Status: health.StatusFail, Fix: &health.FixInfo{ID: "a"}},
+		{ID: "y", Status: health.StatusInfo, Fix: &health.FixInfo{ID: "rt:claude", Optional: true}},
+	}}
+	t.Setenv("HOME", t.TempDir())
+	outcomes := applyReportFixes(context.Background(), &globalConfig{DBPath: "~/.monoagent/x.db"}, reg, rep,
+		map[string]bool{}, func(health.FixInfo) bool { return true }, func(string) {})
+	if !applied["a"] || applied["claude"] {
+		t.Fatalf("applied %v; optional runtime install must not run under --fix", applied)
+	}
+	if len(outcomes) != 1 || outcomes[0].ID != "a" {
+		t.Fatalf("outcomes %v", outcomes)
 	}
 }

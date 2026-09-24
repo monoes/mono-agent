@@ -141,7 +141,7 @@ func finishStreamed(out io.Writer, asJSON bool, err error, okMsg string) error {
 	if asJSON {
 		if err != nil {
 			writeFixEvent(out, fixEvent{Kind: "error", Message: err.Error()})
-			return &cliError{code: 1, msg: err.Error()}
+			return &cliError{code: exitCodeFor(err), msg: err.Error()}
 		}
 		writeFixEvent(out, fixEvent{Kind: "done"})
 		return nil
