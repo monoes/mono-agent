@@ -71,7 +71,7 @@ monoagentcli doctor fix <fix-id> --json   # one fix, progress as NDJSON {"kind":
 Run `doctor` first when something environment-related fails.
 
 No suitable Node.js (>= 22.12) for monomind? `monoagentcli nodejs install`
-downloads a private one into `~/.monoagent/node` (checksum-verified, used
+downloads a private one into `~/.monoagent/node` (from nodejs.org over HTTPS, checked against its SHASUMS256 — which catches a corrupt download; authenticity rests on TLS to nodejs.org, as with nvm; used
 only by processes monoagent starts); `nodejs status|update|remove` manage it.
 
 ## Legacy top-level commands

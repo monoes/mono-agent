@@ -32,6 +32,13 @@ func Activate(ctx context.Context) {
 	}
 	shellpath.Prepend(npmBin)
 	shellpath.Prepend(m.BinDir(version))
+	// With the managed Node in use, npm's global prefix would otherwise be
+	// the version folder itself, so `npm install -g` (monomind included)
+	// would land there and `nodejs update` would delete it with the old
+	// version. A prefix the user set is left alone.
+	if os.Getenv("NPM_CONFIG_PREFIX") == "" && os.Getenv("npm_config_prefix") == "" {
+		_ = os.Setenv("NPM_CONFIG_PREFIX", m.NpmRoot)
+	}
 }
 
 func appendPath(dir string) {
