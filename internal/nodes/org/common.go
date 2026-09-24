@@ -65,27 +65,35 @@ func senderFor(root, org string, input workflow.NodeInput) string {
 	return "workflow:" + id
 }
 
-// incomingTrace continues the chain of whatever started this execution: a
-// trace object on the node's first input item (trigger.org and grant tool
-// calls put one there), else the one in the execution's trigger data (a
-// node in between may not have passed `trace` through), else a fresh
-// chain. Losing it would start a new chain on every loop iteration and
-// defeat the hop limit (U10).
-//
+// incomingTrace continues the chain of whatever started this execution.
 // Only a run mono-agent's org side started carries a trace it wrote. Any
 // other run (a webhook, a manual run with input, a schedule) starts a fresh
 // chain whatever `trace` its data holds: otherwise a webhook caller could
 // join someone else's chain and push its hop to the limit, or keep a loop
 // on a chain of its choosing.
+//
+// In an org-started run the chain is the one in the trigger data, which
+// mono-agent wrote. The node's first input item may carry a later hop on
+// that chain (a previous org node's output), and then the higher hop is
+// taken; a trace on the item naming another chain is ignored, since items
+// can hold outside data (an HTTP response lifted to the top level) and that
+// would let the outside pick the chain again. With no trace in the trigger
+// data the item's is used, and failing both a fresh chain starts. Losing
+// the chain would start a new one on every loop iteration and defeat the
+// hop limit (U10).
 func incomingTrace(ctx context.Context, item workflow.Item) orgbridge.Trace {
 	if !workflow.OrgStarted(workflow.TriggerTypeFrom(ctx)) {
 		return orgbridge.Trace{}
 	}
-	if tr, ok := traceField(item.JSON); ok {
-		return tr
-	}
-	if tr, ok := traceField(workflow.TriggerDataFrom(ctx)); ok {
-		return tr
+	fromItem, itemOK := traceField(item.JSON)
+	fromTrigger, triggerOK := traceField(workflow.TriggerDataFrom(ctx))
+	switch {
+	case triggerOK && itemOK && fromItem.ChainID == fromTrigger.ChainID && fromItem.Hop > fromTrigger.Hop:
+		return fromItem
+	case triggerOK:
+		return fromTrigger
+	case itemOK:
+		return fromItem
 	}
 	return orgbridge.Trace{}
 }

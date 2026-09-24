@@ -39,7 +39,9 @@ func TriggerTypeFrom(ctx context.Context) string {
 // schedule can put any `trace` object in their data.
 func OrgStarted(triggerType string) bool {
 	switch triggerType {
-	case TriggerTypeOrgTool, TriggerTypeOrgMessage, TriggerTypeOrgEvent, TriggerNodeTypeOrg:
+	// A trigger.org run is stored with its node type; org_event only ever
+	// appears inside trigger data, so it is not an execution trigger type.
+	case TriggerTypeOrgTool, TriggerTypeOrgMessage, TriggerNodeTypeOrg:
 		return true
 	}
 	return false

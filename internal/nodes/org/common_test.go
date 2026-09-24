@@ -21,9 +21,19 @@ func TestIncomingTraceFallsBackToTriggerData(t *testing.T) {
 		if tr := incomingTrace(ctx, workflow.Item{JSON: map[string]interface{}{"other": 1}}); tr.ChainID != "chn_start" || tr.Hop != 4 {
 			t.Fatalf("%s: fallback trace = %+v", tt, tr)
 		}
-		if tr := incomingTrace(ctx, workflow.Item{JSON: traced("chn_item", 7)}); tr.ChainID != "chn_item" || tr.Hop != 7 {
-			t.Fatalf("%s: item trace = %+v, want the item's own", tt, tr)
+		// A later hop on the same chain (a previous org node's output) wins.
+		if tr := incomingTrace(ctx, workflow.Item{JSON: traced("chn_start", 7)}); tr.ChainID != "chn_start" || tr.Hop != 7 {
+			t.Fatalf("%s: same-chain item trace = %+v, want hop 7", tt, tr)
 		}
+		// Another chain on the item is outside data and is ignored.
+		if tr := incomingTrace(ctx, workflow.Item{JSON: traced("chn_other", 1)}); tr.ChainID != "chn_start" || tr.Hop != 4 {
+			t.Fatalf("%s: other-chain item trace = %+v, want the trigger's chain", tt, tr)
+		}
+	}
+	// No trace in the trigger data: the item's is used.
+	noTD := workflow.WithTrigger(context.Background(), workflow.TriggerTypeOrgTool, map[string]interface{}{})
+	if tr := incomingTrace(noTD, workflow.Item{JSON: traced("chn_item", 2)}); tr.ChainID != "chn_item" || tr.Hop != 2 {
+		t.Fatalf("item trace without trigger trace = %+v", tr)
 	}
 	org := workflow.WithTrigger(context.Background(), workflow.TriggerTypeOrgTool, nil)
 	if tr := incomingTrace(org, workflow.Item{JSON: map[string]interface{}{}}); tr.ChainID != "" {
@@ -38,7 +48,7 @@ func TestIncomingTraceFallsBackToTriggerData(t *testing.T) {
 func TestIncomingTraceIgnoresTracesFromOutside(t *testing.T) {
 	body := traced("chn_victim", float64(0))
 	body["trigger_type"] = workflow.TriggerTypeOrgTool // forged in the payload
-	for _, tt := range []string{"trigger.webhook", "trigger.manual", "trigger.schedule", ""} {
+	for _, tt := range []string{"trigger.webhook", "trigger.manual", "trigger.schedule", workflow.TriggerTypeOrgEvent, ""} {
 		ctx := workflow.WithTrigger(context.Background(), tt, body)
 		if tr := incomingTrace(ctx, workflow.Item{JSON: body}); tr.ChainID != "" {
 			t.Errorf("%q run: joined chain %+v, want a fresh chain", tt, tr)

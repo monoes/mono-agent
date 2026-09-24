@@ -154,7 +154,10 @@ func (l *Ledger) Admit(ctx context.Context, c Call, lim Limits) (Admission, erro
 		q += ` AND direction <> ?`
 		args = append(args, DirRoleTool)
 		if err := l.db.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM org_bridge_calls WHERE profile_id = ? AND chain_id = ? AND direction = ?`,
+			// Refused calls never ran their automation: counting them let
+			// one role's capped retries use up every role's allowance.
+			`SELECT COUNT(*) FROM org_bridge_calls WHERE profile_id = ? AND chain_id = ? AND direction = ?
+			   AND status NOT LIKE 'refused%'`,
 			c.ProfileID, tr.ChainID, DirRoleTool).Scan(&granted); err != nil {
 			return Admission{}, fmt.Errorf("orgbridge: ledger: %w", err)
 		}

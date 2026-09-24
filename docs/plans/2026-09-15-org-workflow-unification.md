@@ -1074,7 +1074,13 @@ What the runs taught, beyond the checks:
   is the trigger data and first item, `trace` included), join someone else's chain and push
   it to the limit; **fixed 2026-09-24** (`fix/org-chain-trust`): org nodes continue a chain
   only in a run the org side started, judged by the execution's trigger type, which mono-agent
-  sets (`org_tool`, `org_message`, `trigger.org`), never the payload's `trigger_type`. Still
+  sets (`org_tool`, `org_message`, `trigger.org`), never the payload's `trigger_type`. In an
+  org-started run the chain comes from the trigger data; an item's trace counts only on that
+  chain (a later hop), so outside data lifted into an item cannot pick the chain either.
+  Consequences: in a manual or scheduled run a second org node no longer continues the first
+  one's chain (one run is a finite DAG, so hop control loses nothing; the trace view splits),
+  and a loop that passes through a webhook, `workflow run` or a schedule always starts fresh,
+  bounded only by `max_repeats` and the grant caps. Still
   open on monomind's side: native `org_send` does not stamp the sender's trace
   (monoes/monomind#327).
 - **monomind stops a fence runner after 10 tool-call rounds per message** and says so on the bus

@@ -379,7 +379,7 @@ func TestLedgerRoleToolQueriesUseAnIndex(t *testing.T) {
 	db := newTestDB(t)
 	for q, args := range map[string][]interface{}{
 		`SELECT MAX(hop) FROM org_bridge_calls WHERE profile_id = ? AND chain_id = ? AND status NOT LIKE 'refused%' AND direction <> ?`: {"p", "chn", DirRoleTool},
-		`SELECT COUNT(*) FROM org_bridge_calls WHERE profile_id = ? AND chain_id = ? AND direction = ?`:                                 {"p", "chn", DirRoleTool},
+		`SELECT COUNT(*) FROM org_bridge_calls WHERE profile_id = ? AND chain_id = ? AND direction = ? AND status NOT LIKE 'refused%'`:  {"p", "chn", DirRoleTool},
 	} {
 		if plan := queryPlan(t, db, q, args...); strings.Contains(plan, "SCAN") {
 			t.Errorf("%s\nplans as a table scan:\n%s", q, plan)
@@ -460,5 +460,23 @@ func TestLedgerAlternatingRolesShareTheAllowance(t *testing.T) {
 		if i == allowed+1 && adm.Status != StatusRefusedHops {
 			t.Fatalf("call %d admitted: %+v — two roles could take turns forever", i, adm)
 		}
+	}
+}
+
+// Refused granted calls never ran, so they do not use up the chain's shared
+// allowance: one role retrying a capped tool must not get every other role
+// on the chain refused as a loop.
+func TestLedgerRefusedGrantedCallsDoNotUseTheAllowance(t *testing.T) {
+	l := NewLedger(newTestDB(t))
+	ctx := context.Background()
+	bot := Call{ProfileID: "p", Direction: DirRoleTool, OrgName: "sales", RoleID: "bot", WorkflowID: "wf", Trace: Trace{ChainID: "chn_shared"}}
+	for i := 0; i < 8*SiblingCallsPerHop; i++ {
+		if err := l.Refuse(ctx, bot, StatusRefusedCap); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ceo := Call{ProfileID: "p", Direction: DirRoleTool, OrgName: "hq", RoleID: "ceo", WorkflowID: "wf2", Trace: Trace{ChainID: "chn_shared"}}
+	if adm, err := l.Admit(ctx, ceo, Limits{}); err != nil || !adm.OK() || adm.Trace.Hop != 1 {
+		t.Fatalf("hq:ceo after 64 refused sales:bot calls: %+v, %v — want admitted at hop 1", adm, err)
 	}
 }
