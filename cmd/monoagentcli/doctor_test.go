@@ -240,3 +240,29 @@ func TestDoctorActivatesTheManagedNode(t *testing.T) {
 		t.Fatalf("PATH after doctor starts with %q, want the managed Node's bin %q", first, bin)
 	}
 }
+
+// The check that runs before every command installs skills that are
+// missing but never rewrites one that is there: an edit the user made, or
+// a copy another monoagent binary wrote, survives every command.
+func TestFirstRunCheckKeepsExistingSkills(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	skills := filepath.Join(home, ".claude", "skills")
+	if err := os.MkdirAll(skills, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	edited := filepath.Join(skills, claudeSkillNames[0])
+	if err := os.WriteFile(edited, []byte("my own notes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runClaudeFirstRunCheck()
+	if b, _ := os.ReadFile(edited); string(b) != "my own notes" {
+		t.Fatalf("an existing skill was rewritten: %q", b)
+	}
+	for _, name := range claudeSkillNames[1:] {
+		if _, err := os.Stat(filepath.Join(skills, name)); err != nil {
+			t.Errorf("missing skill %s was not installed: %v", name, err)
+		}
+	}
+}
