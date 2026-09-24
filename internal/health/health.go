@@ -56,6 +56,9 @@ type Result struct {
 	Fix      *FixInfo `json:"fix,omitempty"`
 	Source   string   `json:"source"`
 	Millis   int64    `json:"ms"`
+	// Parent is the ID of the check that reported this row as one of its
+	// children (e.g. a runtime under runtimes.agents); empty otherwise.
+	Parent string `json:"parent,omitempty"`
 
 	// FixID is set by a check to offer a fix; the runner resolves it into
 	// Fix from the fix registry.

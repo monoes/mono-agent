@@ -112,7 +112,8 @@ Exit code 1 means a required check failed.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
 			reg := health.Default()
-			opts := health.Options{Deep: deep, Groups: groups, IDs: ids, OnDemand: projects || len(cfg.projectFilter) > 0}
+			wantProjects := projects || len(cfg.projectFilter) > 0
+			opts := health.Options{Deep: deep, Groups: groups, IDs: ids, OnDemand: wantProjects, Monomind: wantProjects}
 			out := cmd.OutOrStdout()
 
 			rep := runHealth(ctx, cfg, reg, opts)
@@ -142,7 +143,7 @@ Exit code 1 means a required check failed.`,
 	cmd.Flags().BoolVar(&deep, "deep", false, "Include checks that use the network")
 	cmd.Flags().BoolVar(&fix, "fix", false, "Apply fixes: auto ones directly, confirm ones after asking")
 	cmd.Flags().BoolVar(&yes, "yes", false, "With --fix: accept confirm fixes without asking")
-	cmd.Flags().BoolVar(&projects, "projects", false, "Also run monomind's checks in every monomind project inside the active profile's folder")
+	cmd.Flags().BoolVar(&projects, "projects", false, "Also run monomind's checks, for the profile folder and every monomind project inside it (without the rest of --deep)")
 	cmd.Flags().StringSliceVar(&cfg.projectFilter, "project", nil, "Only these monomind projects (path relative to the profile folder, or folder name); implies --projects")
 	cmd.AddCommand(newDoctorFixCmd(cfg))
 	return cmd

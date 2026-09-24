@@ -95,6 +95,12 @@ func (a *App) setActiveProfileID(id string) {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	// A first launch on a new machine has no ~/.monoagent yet; SQLite can't
+	// create the database file inside a folder that doesn't exist (the CLI's
+	// initDB makes it the same way).
+	if err := os.MkdirAll(filepath.Dir(a.dbPath), 0o700); err != nil {
+		runtime.LogErrorf(ctx, "data folder error: %v", err)
+	}
 	sdb, err := storage.NewDatabase(a.dbPath)
 	if err != nil {
 		runtime.LogErrorf(ctx, "DB open error: %v", err)

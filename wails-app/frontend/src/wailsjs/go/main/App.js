@@ -642,6 +642,14 @@ export function RevealProfileFolder(arg1) {
   return window['go']['main']['App']['RevealProfileFolder'](arg1);
 }
 
+export function RunHealthCheck(arg1, arg2) {
+  return window['go']['main']['App']['RunHealthCheck'](arg1, arg2);
+}
+
+export function RunHealthFix(arg1) {
+  return window['go']['main']['App']['RunHealthFix'](arg1);
+}
+
 export function RunNode(arg1) {
   return window['go']['main']['App']['RunNode'](arg1);
 }

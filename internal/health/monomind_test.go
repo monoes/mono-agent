@@ -137,6 +137,9 @@ func TestRuntimesCheckReportsChildren(t *testing.T) {
 		got["runtimes.codex"].Status != StatusInfo || got["runtimes.codex"].Group != GroupRuntimes {
 		t.Fatalf("results: %+v", rep.Results)
 	}
+	if got["runtimes.claude"].Parent != CheckRuntimes || got[CheckRuntimes].Parent != "" {
+		t.Errorf("parent links: %+v", got)
+	}
 	if rep.Summary[StatusOK] != 2 || rep.Summary[StatusInfo] != 1 {
 		t.Errorf("summary counts children: %v", rep.Summary)
 	}

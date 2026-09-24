@@ -5,6 +5,7 @@ import { api } from '../services/api.js'
 import { GetVersion, CheckForUpdate, AppSelfUpdate } from '../wailsjs/go/main/App'
 import { getAssistantTools, getAssistantAllowRuns, setAssistantTools, setAssistantAllowRuns } from '../lib/assistantTools.js'
 import RefreshButton from '../components/RefreshButton.jsx'
+import HealthSection from '../components/settings/HealthSection.jsx'
 
 // ── VersionRow ──────────────────────────────────────────────────────────────
 
@@ -341,6 +342,16 @@ export default function Settings({ onNavigate }) {
       </div>
 
       <div className="page-body">
+        {/* System health (monoagentcli doctor) */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: 2 }}>
+            {t('settings.health.sectionTitle')}
+          </span>
+          <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+        </div>
+
+        <HealthSection />
+
         {/* Quick access cards */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: 2 }}>

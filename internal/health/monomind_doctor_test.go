@@ -214,3 +214,17 @@ func TestMonomindFixStaysInsideThroughSymlinks(t *testing.T) {
 		t.Fatal("monomind ran outside the profile folder")
 	}
 }
+
+// --projects (Options.Monomind) runs monomind's checks without --deep, and
+// nothing else that needs --deep.
+func TestMonomindOptionRunsOnlyMonomindNetworkChecks(t *testing.T) {
+	opts := Options{OnDemand: true, Monomind: true}
+	for _, c := range Default().checks {
+		if !c.Network {
+			continue
+		}
+		if got, want := opts.selects(c), c.Group == GroupMonomind; got != want {
+			t.Errorf("%s (group %s): selected %v, want %v", c.ID, c.Group, got, want)
+		}
+	}
+}

@@ -37,6 +37,13 @@ func setChatProcessGroup(cmd *exec.Cmd) {
 	}
 }
 
+// terminateCLI ends a monoagentcli child and its tree: Windows has no
+// SIGTERM, so this is the same tree kill as for the chat.
+func terminateCLI(cmd *exec.Cmd) error {
+	killChatProcessGroup(cmd)
+	return nil
+}
+
 // killChatProcessGroup kills the chat subprocess and everything under it
 // (monoagentcli → monomind → agent CLI) with internal/proctree, which the
 // CLI also uses for its own children; the GUI does not import

@@ -1,9 +1,39 @@
 import { useState, useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 import { MessageSquare } from 'lucide-react'
+import { getHealth, subscribeHealth, summarize } from '../lib/health.js'
 import { GetVersion, CheckForUpdate, AppSelfUpdate } from '../wailsjs/go/main/App'
 import { subscribeEvent } from '../services/api.js'
 
-export default function StatusBar({ stats, dbConnected, chatOpen, onToggleChat }) {
+// HealthDot: the latest System health verdict (the background check runs on
+// start and every 30 minutes, see lib/health.js); click opens Settings.
+function HealthDot({ onOpen }) {
+  const { t } = useTranslation()
+  const [h, setH] = useState(getHealth())
+  useEffect(() => subscribeHealth(setH), [])
+  if (!h.report && !h.cliMissing) return null
+  const sum = summarize(h.report)
+  const level = h.cliMissing ? 'broken' : sum.level
+  const color = { ok: 'var(--green-neon)', issues: '#fbbf24', broken: 'var(--red)' }[level]
+  const label = h.cliMissing ? t('settings.health.cliMissingTitle')
+    : level === 'broken' ? t('settings.health.statusBroken')
+      : level === 'issues' ? t('settings.health.statusIssues', { n: sum.issues })
+        : t('settings.health.sectionTitle')
+  return (
+    <button
+      onClick={onOpen}
+      title={`${label} — ${t('settings.health.statusTitle')}`}
+      aria-label={t('settings.health.statusTitle')}
+      data-testid="health-dot"
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: 10, padding: 0 }}
+    >
+      <span style={{ width: 6, height: 6, borderRadius: '50%', background: color, boxShadow: `0 0 4px ${color}` }} />
+      {label}
+    </button>
+  )
+}
+
+export default function StatusBar({ stats, dbConnected, chatOpen, onToggleChat, onOpenHealth }) {
   const running = stats?.executions_by_status?.RUNNING || 0
   const total   = stats?.total_workflows || 0
   const people  = stats?.total_people || 0
@@ -89,6 +119,7 @@ export default function StatusBar({ stats, dbConnected, chatOpen, onToggleChat }
 
       {/* Version + update indicator */}
       <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, fontSize: 10 }}>
+        <HealthDot onOpen={onOpenHealth} />
         {/* Update status popover */}
         {update && (
           <div style={{

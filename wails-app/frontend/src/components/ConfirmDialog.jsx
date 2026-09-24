@@ -60,7 +60,11 @@ export default function ConfirmHost() {
     if (!req) return
     const onKey = (e) => {
       if (e.key === 'Escape') close(false)
-      if (e.key === 'Enter') close(true)
+      // A focused button answers Enter itself (Cancel with focus means
+      // cancel). Only Enter with no button focused confirms; the confirm
+      // button has focus when the dialog opens, so Enter still confirms by
+      // default.
+      if (e.key === 'Enter' && !(document.activeElement instanceof HTMLButtonElement)) close(true)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)

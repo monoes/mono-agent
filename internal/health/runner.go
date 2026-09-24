@@ -64,14 +64,18 @@ func (r *Registry) Fix(id string) (Fix, bool) {
 
 // Options selects which checks run.
 type Options struct {
-	Deep     bool     // include Network checks
-	OnDemand bool     // include OnDemand checks
+	Deep     bool // include Network checks
+	OnDemand bool // include OnDemand checks
+	// Monomind includes the monomind group's Network checks (monomind's
+	// own doctor) without the rest of Deep: looking at monomind projects
+	// needs them, and shouldn't also make the account checks' paid calls.
+	Monomind bool
 	Groups   []string // empty = all
 	IDs      []string // empty = all
 }
 
 func (o Options) selects(c Check) bool {
-	if c.Network && !o.Deep && len(o.IDs) == 0 {
+	if c.Network && !o.Deep && len(o.IDs) == 0 && !(o.Monomind && c.Group == GroupMonomind) {
 		return false
 	}
 	if c.OnDemand && !o.OnDemand && !contains(o.IDs, c.ID) {
@@ -182,7 +186,7 @@ func (r *Registry) Run(ctx context.Context, env *Env, opts Options) *Report {
 		rep.Results = append(rep.Results, res)
 		rep.Summary[res.Status]++
 		for _, ch := range children {
-			ch.Group = c.Group
+			ch.Group, ch.Parent = c.Group, c.ID
 			if ch.Source == "" {
 				ch.Source = res.Source
 			}

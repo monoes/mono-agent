@@ -1718,3 +1718,6 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Inline spinning icon (lucide Loader2), e.g. System health fix buttons. */
+.spin { animation: spin 0.9s linear infinite; }
