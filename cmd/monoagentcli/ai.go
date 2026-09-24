@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -192,28 +193,14 @@ func newAIProviderTestCmd(cfg *globalConfig) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("provider %q not found", args[0])
 			}
-			client, err := ai.NewClient(p)
-			if err != nil {
-				return fmt.Errorf("building client: %w", err)
+			model, testErr := testAIProvider(cmd.Context(), store, p, cfg.ProfileID, true)
+			if errors.Is(testErr, errBuildAIClient) {
+				return testErr
 			}
-			model := p.DefaultModel
-			if model == "" {
-				if def, ok := ai.GetProviderDef(p.ProviderID); ok && len(def.Models) > 0 {
-					model = def.Models[0].ID
-				} else {
-					model = "gpt-4o-mini"
-				}
-			}
-			_, testErr := client.Complete(context.Background(), ai.CompletionRequest{
-				Model:     model,
-				Messages:  []ai.Message{{Role: ai.RoleUser, Content: "Say ok"}},
-				MaxTokens: 5,
-			})
 			status := "active"
 			if testErr != nil {
 				status = "error"
 			}
-			_ = store.UpdateProviderStatus(p.ID, status, time.Now().UTC().Format(time.RFC3339), cfg.ProfileID)
 
 			if cfg.JSONOutput {
 				out := map[string]string{"id": p.ID, "status": status}
@@ -229,4 +216,42 @@ func newAIProviderTestCmd(cfg *globalConfig) *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// errBuildAIClient marks a provider whose client could not even be built
+// (bad config) as opposed to one whose test request failed.
+var errBuildAIClient = errors.New("building client")
+
+// testAIProvider sends a minimal completion through a provider and records
+// the outcome as its status — shared by `ai provider test` and doctor's
+// deep account checks.
+// testAIProvider sends one tiny completion through p. With record it saves
+// the outcome as the provider's status (`ai provider test`); doctor passes
+// false, since a check must not change anything.
+func testAIProvider(ctx context.Context, store *ai.AIStore, p ai.AIProvider, profileID string, record bool) (string, error) {
+	client, err := ai.NewClient(p)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", errBuildAIClient, err)
+	}
+	model := p.DefaultModel
+	if model == "" {
+		if def, ok := ai.GetProviderDef(p.ProviderID); ok && len(def.Models) > 0 {
+			model = def.Models[0].ID
+		} else {
+			model = "gpt-4o-mini"
+		}
+	}
+	_, testErr := client.Complete(ctx, ai.CompletionRequest{
+		Model:     model,
+		Messages:  []ai.Message{{Role: ai.RoleUser, Content: "Say ok"}},
+		MaxTokens: 5,
+	})
+	status := "active"
+	if testErr != nil {
+		status = "error"
+	}
+	if record {
+		_ = store.UpdateProviderStatus(p.ID, status, time.Now().UTC().Format(time.RFC3339), profileID)
+	}
+	return model, testErr
 }

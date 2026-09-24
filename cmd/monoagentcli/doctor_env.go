@@ -135,5 +135,8 @@ func newHealthEnv(cfg *globalConfig) (*health.Env, func()) {
 	if env.ProfileID == "" {
 		env.ProfileID = "default"
 	}
+	if env.DB != nil {
+		addAccountHooks(env, env.DB)
+	}
 	return env, closeFn
 }
