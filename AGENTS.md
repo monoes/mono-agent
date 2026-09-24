@@ -57,6 +57,19 @@ monoagentcli --help         # command list; the root help includes an agents not
 
 Prefer `ref` over guessing from `--help` alone.
 
+## Health check
+
+```bash
+monoagentcli doctor                 # check everything monoagent needs; exit 1 = a required check failed
+monoagentcli doctor --json          # stable report (schema "v":1): results[] with id/group/status/summary/fix
+monoagentcli doctor --fix [--yes]   # apply fixes (auto ones directly, confirm ones after asking / with --yes)
+monoagentcli doctor fix <fix-id> --json   # one fix, progress as NDJSON {"kind":"line"|"done"|"error"}
+```
+
+`--group <g>` / `--check <id>` narrow the run; `--deep` adds network checks
+(e.g. update availability). Checks never change anything — only fixes do.
+Run `doctor` first when something environment-related fails.
+
 ## Legacy top-level commands
 
 Older top-level commands include `message`, `comment`, `search`, `list`,
