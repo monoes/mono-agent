@@ -116,7 +116,8 @@ MESSAGES AND LIFECYCLE
 
   Crossings carry "[trace chn_… hop=N]" and stop at run_config.max_hops
   (default 8) or max_repeats calls to one target per minute (default 20).
-  A role's own granted calls on one chain add one hop per 8.
+  Granted calls on one chain add one hop per 8, whichever roles make them.
+  Only org-started runs continue a chain; a webhook run starts a fresh one.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 AUTONOMY

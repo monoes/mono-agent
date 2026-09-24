@@ -77,7 +77,7 @@ func RunExecution(
 	ctx = fsconfine.FromTriggerData(ctx, exec.TriggerData)
 	// Org nodes continue the chain trace of whatever started the run, even
 	// when a node between the trigger and them drops the `trace` field.
-	ctx = WithTriggerData(ctx, exec.TriggerData)
+	ctx = WithTrigger(ctx, exec.TriggerType, exec.TriggerData)
 
 	// Phase 2: BFS execution loop — process nodes in topological order.
 	order, err := dag.TopologicalSort()

@@ -12,7 +12,7 @@ import (
 )
 
 // TriggerNodeType is the workflow node that starts a run from an org.
-const TriggerNodeType = "trigger.org"
+const TriggerNodeType = workflow.TriggerNodeTypeOrg
 
 // maxEventContentBytes caps an asset event's file content copied into
 // trigger data — the same 16 KB bound grant tool outputs get (C-47).
