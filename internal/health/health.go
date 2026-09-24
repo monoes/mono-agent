@@ -170,6 +170,31 @@ type Env struct {
 	InstallClaudeSkills func() error
 	MCPRegistration     func() (claudeFound, registered bool, where string)
 	RegisterMCP         func(ctx context.Context, progress func(string)) error
+
+	// Accounts of the active profile.
+	Connections       func(ctx context.Context) ([]ConnectionInfo, error)
+	TestConnection    func(ctx context.Context, id string) error
+	RefreshConnection func(ctx context.Context, id string) error // silent refresh_token exchange only
+	AIProviders       func(ctx context.Context) ([]ProviderInfo, error)
+	TestAIProvider    func(ctx context.Context, id string) error
+	LoginSessions     func(ctx context.Context) ([]SessionInfo, error)
+}
+
+// ConnectionInfo is a saved connection, without any secret.
+type ConnectionInfo struct {
+	ID, Platform, Label, Method string
+	HasRefreshToken             bool
+}
+
+// ProviderInfo is an AI connection (legacy provider), without its key.
+type ProviderInfo struct {
+	ID, Name, ProviderID, Model string
+}
+
+// SessionInfo is a saved platform login session.
+type SessionInfo struct {
+	Platform, Username string
+	Expiry             time.Time
 }
 
 // BridgeInfo is what the running extension bridge reports about itself.

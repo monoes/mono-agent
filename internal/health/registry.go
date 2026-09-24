@@ -9,6 +9,7 @@ func Default() *Registry {
 	checks = append(checks, browserChecks()...)
 	checks = append(checks, serviceChecks()...)
 	checks = append(checks, integrationChecks()...)
+	checks = append(checks, accountChecks()...)
 	var fixes []Fix
 	fixes = append(fixes, coreFixes()...)
 	fixes = append(fixes, monomindFixes()...)
@@ -16,5 +17,6 @@ func Default() *Registry {
 	fixes = append(fixes, browserFixes()...)
 	fixes = append(fixes, serviceFixes()...)
 	fixes = append(fixes, integrationFixes()...)
+	fixes = append(fixes, accountFixes()...)
 	return NewRegistry(checks, fixes)
 }
