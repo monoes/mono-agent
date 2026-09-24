@@ -23,5 +23,7 @@ type RequestNodeSchema struct {
 
 	Timeout float64 `json:"timeout" schema:"label=Timeout (seconds),type=number,default=30"`
 
+	PropagateTrace bool `json:"propagate_trace" schema:"label=Pass the org chain on to other hosts,type=boolean,default=false,help=Also send this run's signed chain (X-Monoagent-Trace) to other hosts: for a system that calls a webhook here back with it. When off only requests to this machine carry it."`
+
 	MaxBodyMB float64 `json:"max_body_mb" schema:"label=Max Response Body (MB),type=number,default=64,help=Maximum response body size in megabytes (default 64). Larger responses fail with an error instead of exhausting memory."`
 }

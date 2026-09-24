@@ -193,7 +193,7 @@ func newAIProviderTestCmd(cfg *globalConfig) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("provider %q not found", args[0])
 			}
-			model, testErr := testAIProvider(cmd.Context(), store, p, cfg.ProfileID)
+			model, testErr := testAIProvider(cmd.Context(), store, p, cfg.ProfileID, true)
 			if errors.Is(testErr, errBuildAIClient) {
 				return testErr
 			}
@@ -225,7 +225,10 @@ var errBuildAIClient = errors.New("building client")
 // testAIProvider sends a minimal completion through a provider and records
 // the outcome as its status — shared by `ai provider test` and doctor's
 // deep account checks.
-func testAIProvider(ctx context.Context, store *ai.AIStore, p ai.AIProvider, profileID string) (string, error) {
+// testAIProvider sends one tiny completion through p. With record it saves
+// the outcome as the provider's status (`ai provider test`); doctor passes
+// false, since a check must not change anything.
+func testAIProvider(ctx context.Context, store *ai.AIStore, p ai.AIProvider, profileID string, record bool) (string, error) {
 	client, err := ai.NewClient(p)
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", errBuildAIClient, err)
@@ -247,6 +250,8 @@ func testAIProvider(ctx context.Context, store *ai.AIStore, p ai.AIProvider, pro
 	if testErr != nil {
 		status = "error"
 	}
-	_ = store.UpdateProviderStatus(p.ID, status, time.Now().UTC().Format(time.RFC3339), profileID)
+	if record {
+		_ = store.UpdateProviderStatus(p.ID, status, time.Now().UTC().Format(time.RFC3339), profileID)
+	}
 	return model, testErr
 }

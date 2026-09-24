@@ -55,6 +55,14 @@
       "type": "number"
     },
     {
+      "default": false,
+      "help": "Also send this run's signed chain (X-Monoagent-Trace) to other hosts: for a system that calls a webhook here back with it. When off only requests to this machine carry it.",
+      "key": "propagate_trace",
+      "label": "Pass the org chain on to other hosts",
+      "required": false,
+      "type": "boolean"
+    },
+    {
       "default": 64,
       "help": "Maximum response body size in megabytes (default 64). Larger responses fail with an error instead of exhausting memory.",
       "key": "max_body_mb",

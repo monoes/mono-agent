@@ -84,8 +84,15 @@ func New() *Installer {
 // ErrManual is returned for recipes that need the user.
 var ErrManual = errors.New("this runtime can't be installed automatically")
 
+// InstallTimeout bounds one install. Vendor installers can wait on a
+// person (a prompt, sudo); run with no terminal they fail instead, and this
+// is the backstop for anything that still hangs.
+var InstallTimeout = 15 * time.Minute
+
 // Install runs a recipe, streaming output to progress.
 func (in *Installer) Install(ctx context.Context, r Recipe, progress func(string)) error {
+	ctx, cancel := context.WithTimeout(ctx, InstallTimeout)
+	defer cancel()
 	switch r.Kind {
 	case KindNpm:
 		_, err := in.Node.InstallGlobal(ctx, progress, r.Packages...)
