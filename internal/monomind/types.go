@@ -284,6 +284,11 @@ type ScanEntry struct {
 	Binary      *string `json:"binary"`
 	Version     *string `json:"version"`
 	InstallHint string  `json:"install_hint"`
+	// Install is InstallHint as a recipe a caller can run without a shell
+	// (protocol rev 9); nil from an older monomind.
+	Install *InstallRecipe `json:"install,omitempty"`
+	// LoginHint is the runtime's own sign-in command (rev 9), when any.
+	LoginHint *string `json:"login_hint,omitempty"`
 	// StreamsIncrementally (protocol rev 5): mirrors Event's own field —
 	// see its doc comment for why this deliberately has no `omitempty`.
 	// Static per-runtime metadata: unlike Installed/Version it never
@@ -317,4 +322,13 @@ func (s *ScanResult) Find(id string) *ScanEntry {
 		}
 	}
 	return nil
+}
+
+// InstallRecipe is `agent scan`'s structured install hint (rev 9):
+// kind "npm" (Packages), "script" (URL run with Shell) or "manual".
+type InstallRecipe struct {
+	Kind     string   `json:"kind"`
+	Packages []string `json:"packages,omitempty"`
+	URL      string   `json:"url,omitempty"`
+	Shell    string   `json:"shell,omitempty"`
 }

@@ -91,6 +91,14 @@ func newHealthEnv(cfg *globalConfig) (*health.Env, func()) {
 		progress(fmt.Sprintf("monomind %s ready at %s", vi.Version, bin))
 		return nil
 	}
+	env.MonomindDoctor = func(ctx context.Context, o monomind.DoctorOptions) (*monomind.DoctorReport, error) {
+		bin, err := monomind.Find()
+		if err != nil {
+			return nil, err
+		}
+		return monomind.Doctor(ctx, bin, o)
+	}
+	env.MonomindProjects = func() []string { return profileProjects(env, cfg.projectFilter) }
 	env.InitMonomindProfile = func(ctx context.Context, root string, progress func(string)) error {
 		return monomind.InitProfile(ctx, monomind.InitOptions{Root: root, Progress: progress})
 	}
@@ -134,4 +142,35 @@ func newHealthEnv(cfg *globalConfig) (*health.Env, func()) {
 		addAccountHooks(env, env.DB)
 	}
 	return env, closeFn
+}
+
+// profileProjects lists the monomind projects inside the active profile's
+// folder, relative to it, narrowed to filter (relative paths or folder
+// names) when given.
+func profileProjects(env *health.Env, filter []string) []string {
+	root := env.ProfileRoot(env.ProfileID)
+	if root == "" {
+		return nil
+	}
+	var out []string
+	for _, abs := range monomind.ProjectsUnder(root) {
+		rel, err := filepath.Rel(root, abs)
+		if err != nil {
+			continue
+		}
+		if len(filter) == 0 || matchesProject(rel, filter) {
+			out = append(out, rel)
+		}
+	}
+	return out
+}
+
+func matchesProject(rel string, filter []string) bool {
+	for _, f := range filter {
+		f = filepath.Clean(filepath.FromSlash(f))
+		if f == rel || f == filepath.Base(rel) {
+			return true
+		}
+	}
+	return false
 }

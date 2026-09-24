@@ -64,13 +64,17 @@ func (r *Registry) Fix(id string) (Fix, bool) {
 
 // Options selects which checks run.
 type Options struct {
-	Deep   bool     // include Network checks
-	Groups []string // empty = all
-	IDs    []string // empty = all
+	Deep     bool     // include Network checks
+	OnDemand bool     // include OnDemand checks
+	Groups   []string // empty = all
+	IDs      []string // empty = all
 }
 
 func (o Options) selects(c Check) bool {
 	if c.Network && !o.Deep && len(o.IDs) == 0 {
+		return false
+	}
+	if c.OnDemand && !o.OnDemand && !contains(o.IDs, c.ID) {
 		return false
 	}
 	if len(o.Groups) > 0 && !contains(o.Groups, c.Group) {

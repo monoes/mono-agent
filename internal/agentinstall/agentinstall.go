@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/monoes/mono-agent/internal/monomind"
 	"github.com/monoes/mono-agent/internal/nodemgr"
 )
 
@@ -66,6 +67,36 @@ func Parse(hint string) Recipe {
 		if u, err := url.Parse(m[1]); err == nil && u.Scheme == "https" && u.Host != "" {
 			r.Kind, r.ScriptURL, r.Shell = KindScript, m[1], m[2]
 		}
+	}
+	return r
+}
+
+// ForEntry is the recipe for a scanned runtime: monomind's structured
+// `install` (protocol rev 9) when it sent one, re-validated here, else the
+// parsed hint. Anything that doesn't validate is manual.
+func ForEntry(e monomind.ScanEntry) Recipe {
+	in := e.Install
+	if in == nil {
+		return Parse(e.InstallHint)
+	}
+	r := Recipe{Kind: KindManual, Hint: e.InstallHint}
+	switch in.Kind {
+	case "npm":
+		if len(in.Packages) == 0 {
+			return r
+		}
+		for _, p := range in.Packages {
+			if !npmPkg.MatchString(p) {
+				return r
+			}
+		}
+		r.Kind, r.Packages = KindNpm, in.Packages
+	case "script":
+		u, err := url.Parse(in.URL)
+		if err != nil || u.Scheme != "https" || u.Host == "" || (in.Shell != "bash" && in.Shell != "sh") || runtime.GOOS == "windows" {
+			return r
+		}
+		r.Kind, r.ScriptURL, r.Shell = KindScript, in.URL, in.Shell
 	}
 	return r
 }

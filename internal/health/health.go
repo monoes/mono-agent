@@ -90,8 +90,11 @@ type Check struct {
 	// Network marks checks that call out to the network; they only run
 	// with Options.Deep.
 	Network bool
-	Timeout time.Duration // 0 = DefaultTimeout
-	Run     func(ctx context.Context, env *Env) Result
+	// OnDemand checks only run with Options.OnDemand or when named by ID
+	// (e.g. per-project monomind checks: `doctor --projects`).
+	OnDemand bool
+	Timeout  time.Duration // 0 = DefaultTimeout
+	Run      func(ctx context.Context, env *Env) Result
 }
 
 // Fix repairs what a check found.
@@ -149,6 +152,12 @@ type Env struct {
 	ScanRuntimes        func(ctx context.Context) (*monomind.ScanResult, error)
 	InstallMonomind     func(ctx context.Context, progress func(string)) error
 	InitMonomindProfile func(ctx context.Context, root string, progress func(string)) error
+	// MonomindDoctor runs `monomind doctor --json` in dir (rev 9); nil
+	// when unavailable. MonomindProjects lists the monomind projects to
+	// check inside the active profile's folder (paths relative to it).
+	MonomindDoctor   func(ctx context.Context, opts monomind.DoctorOptions) (*monomind.DoctorReport, error)
+	MonomindProjects func() []string
+
 	// InstallRuntime installs one agent runtime by its scan id.
 	InstallRuntime func(ctx context.Context, id string, progress func(string)) error
 

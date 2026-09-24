@@ -61,7 +61,7 @@ func checkRuntimes(ctx context.Context, env *Env) Result {
 			child.Status = StatusInfo
 			child.Summary = "not installed"
 			child.Detail = a.InstallHint
-			if agentinstall.Parse(a.InstallHint).Kind != agentinstall.KindManual {
+			if agentinstall.ForEntry(a).Kind != agentinstall.KindManual {
 				child.FixID = FixRuntimeInstall + ":" + a.ID
 			}
 		}
