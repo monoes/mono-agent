@@ -4,7 +4,7 @@ Thanks for your interest in improving Mono Agent.
 
 ## Prerequisites
 
-- **Go 1.25** or newer (the version pinned in [`go.mod`](go.mod))
+- **Go 1.26** or newer (the version pinned in [`go.mod`](go.mod))
 
 ## Build & Test
 

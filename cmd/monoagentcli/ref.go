@@ -790,42 +790,37 @@ running without a human watching --profile.`,
 	{
 		Type:     "ai.agent",
 		Category: "ai",
-		Short:    "Autonomous AI agent with tool access",
-		Config:   `{ "credential_id": "my-ai", "system": "You are a helpful assistant.", "prompt": "{{ $json.task }}", "max_iterations": 5 }`,
-		Inputs:   "item with task/prompt",
-		Outputs:  "result, iterations_used",
+		Short:    "DEPRECATED — fails at run time; use agent.ask",
+		Description: `Kept only so old workflows get a migration hint instead of "unknown node type".
+Running it fails with: replace it with the "agent.ask" node.`,
 	},
 	{
 		Type:     "ai.chat",
 		Category: "ai",
-		Short:    "Single-turn AI chat completion",
-		Config:   `{ "credential_id": "my-ai", "system": "You are an assistant.", "prompt": "{{ $json.question }}" }`,
-		Inputs:   "item with prompt",
-		Outputs:  "response_text",
+		Short:    "DEPRECATED — fails at run time; use agent.ask",
+		Description: `Kept only so old workflows get a migration hint instead of "unknown node type".
+Running it fails with: replace it with the "agent.ask" node (local AI agent via monomind; see "monoagentcli ref node agent.ask").`,
 	},
 	{
 		Type:     "ai.classify",
 		Category: "ai",
-		Short:    "Classify text into categories using AI",
-		Config:   `{ "credential_id": "my-ai", "field": "text", "categories": ["positive", "negative", "neutral"] }`,
-		Inputs:   "item with text field",
-		Outputs:  "category, confidence",
+		Short:    "DEPRECATED — fails at run time; use agent.ask with a classification prompt",
+		Description: `Kept only so old workflows get a migration hint instead of "unknown node type".
+Running it fails with: replace it with the "agent.ask" node whose prompt requests classification.`,
 	},
 	{
 		Type:     "ai.extract",
 		Category: "ai",
-		Short:    "Extract structured data from text using AI",
-		Config:   `{ "credential_id": "my-ai", "field": "raw_text", "schema": { "name": "string", "email": "string" } }`,
-		Inputs:   "item with text field",
-		Outputs:  "extracted fields matching schema",
+		Short:    "DEPRECATED — fails at run time; use agent.ask with a JSON-extraction prompt",
+		Description: `Kept only so old workflows get a migration hint instead of "unknown node type".
+Running it fails with: replace it with the "agent.ask" node whose prompt requests JSON extraction.`,
 	},
 	{
 		Type:     "ai.transform",
 		Category: "ai",
-		Short:    "Transform / rewrite text using AI",
-		Config:   `{ "credential_id": "my-ai", "field": "text", "instruction": "Translate to Persian" }`,
-		Inputs:   "item with text field",
-		Outputs:  "transformed_text",
+		Short:    "DEPRECATED — fails at run time; use agent.ask",
+		Description: `Kept only so old workflows get a migration hint instead of "unknown node type".
+Running it fails with: replace it with the "agent.ask" node.`,
 	},
 	{
 		Type:     "ai.read_page",
@@ -846,10 +841,9 @@ running without a human watching --profile.`,
 	{
 		Type:     "ai.embed",
 		Category: "ai",
-		Short:    "Generate vector embeddings for text",
-		Config:   `{ "credential_id": "my-ai", "field": "text", "model": "text-embedding-3-small" }`,
-		Inputs:   "item with text field",
-		Outputs:  "embedding (float array), dimensions",
+		Short:    "DEPRECATED — fails at run time; no local-agent equivalent",
+		Description: `Kept only so old workflows get a migration hint instead of "unknown node type".
+Running it fails with: no local-agent equivalent exists — remove the node, or approximate via an "agent.ask" prompt.`,
 	},
 
 	// ── Gemini (browser-automation) ───────────────────────────────────────────
@@ -1760,18 +1754,6 @@ live under ~/.monoagent/attachments/<message>/.
 		},
 	},
 	{
-		Name:  "schedule",
-		Short: "Manage action schedules",
-		Usage: "monoagentcli schedule <subcommand>",
-		Flags: `  list          List scheduled actions
-  add           Schedule an action
-  remove <id>   Remove schedule from an action`,
-		Examples: []string{
-			`monoagentcli schedule add abc-123 --cron "0 9 * * *"`,
-			"monoagentcli schedule list",
-		},
-	},
-	{
 		Name:  "export",
 		Short: "Export all people and actions to JSON files",
 		Usage: "monoagentcli export [flags]",
@@ -2062,7 +2044,7 @@ func refNodesCmd() *cobra.Command {
 			fmt.Printf("  %-38s  %s\n", "Type", "Description")
 			fmt.Println("  " + strings.Repeat("─", 70))
 
-			categories := []string{"trigger", "system", "core", "http", "data", "image", "vault", "db", "comm", "service", "applications", "ai", "gemini", "instagram", "linkedin", "x", "tiktok", "people"}
+			categories := []string{"trigger", "system", "core", "http", "data", "image", "vault", "db", "comm", "service", "applications", "agent", "org", "ai", "gemini", "instagram", "linkedin", "x", "tiktok", "hackernews", "producthunt", "people"}
 			byCategory := make(map[string][]nodeDoc)
 			for _, n := range nodeDocs {
 				byCategory[n.Category] = append(byCategory[n.Category], n)
