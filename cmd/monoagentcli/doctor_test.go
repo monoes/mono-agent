@@ -145,6 +145,37 @@ func TestApplyReportFixesSkipsOptional(t *testing.T) {
 	}
 }
 
+func TestClaudeSkillsStateAndMCPRegistration(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	if found, _, _ := claudeSkillsState(); found {
+		t.Fatal("no ~/.claude: want not found")
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, missing, _ := claudeSkillsState(); len(missing) != len(claudeSkillNames) {
+		t.Fatalf("missing = %v", missing)
+	}
+	if err := installClaudeSkill(false); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(home, ".claude", "skills", claudeSkillNames[0]), []byte("old"), 0o644)
+	if _, missing, stale := claudeSkillsState(); len(missing) != 0 || len(stale) != 1 {
+		t.Fatalf("missing %v stale %v", missing, stale)
+	}
+
+	if _, reg, _ := claudeMCPRegistration(); reg {
+		t.Fatal("no ~/.claude.json: not registered")
+	}
+	os.WriteFile(filepath.Join(home, ".claude.json"),
+		[]byte(`{"mcpServers":{"ma":{"command":"/usr/local/bin/monoagentcli","args":["mcp"]}}}`), 0o644)
+	if found, reg, _ := claudeMCPRegistration(); !found || !reg {
+		t.Fatalf("registered entry not detected: %v %v", found, reg)
+	}
+}
+
 // A plain doctor run changes nothing: not the data folder, not Claude's
 // skills folder (the root command's first-run setup is not run for it), so
 // the data-folder check can see the folder missing.
@@ -207,5 +238,31 @@ func TestDoctorActivatesTheManagedNode(t *testing.T) {
 	_, _ = runDoctor(t, home, "doctor", "--json", "--group", "core")
 	if first := filepath.SplitList(os.Getenv("PATH"))[0]; first != bin {
 		t.Fatalf("PATH after doctor starts with %q, want the managed Node's bin %q", first, bin)
+	}
+}
+
+// The check that runs before every command installs skills that are
+// missing but never rewrites one that is there: an edit the user made, or
+// a copy another monoagent binary wrote, survives every command.
+func TestFirstRunCheckKeepsExistingSkills(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	skills := filepath.Join(home, ".claude", "skills")
+	if err := os.MkdirAll(skills, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	edited := filepath.Join(skills, claudeSkillNames[0])
+	if err := os.WriteFile(edited, []byte("my own notes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runClaudeFirstRunCheck()
+	if b, _ := os.ReadFile(edited); string(b) != "my own notes" {
+		t.Fatalf("an existing skill was rewritten: %q", b)
+	}
+	for _, name := range claudeSkillNames[1:] {
+		if _, err := os.Stat(filepath.Join(skills, name)); err != nil {
+			t.Errorf("missing skill %s was not installed: %v", name, err)
+		}
 	}
 }

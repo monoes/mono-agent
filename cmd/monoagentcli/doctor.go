@@ -265,7 +265,7 @@ func printDoctorReport(w io.Writer, rep *health.Report, fixed bool) {
 		if r.Required && r.Status == health.StatusFail {
 			req = " (required)"
 		}
-		fmt.Fprintf(w, "  %s %-18s %s%s\n", statusMark[r.Status], r.Title, r.Summary, req)
+		fmt.Fprintf(w, "  %s %-22s %s%s\n", statusMark[r.Status], r.Title, r.Summary, req)
 		if r.Detail != "" && r.Status != health.StatusOK && r.Status != health.StatusSkip {
 			for _, line := range strings.Split(r.Detail, "\n") {
 				fmt.Fprintf(w, "      %s\n", line)
@@ -275,8 +275,13 @@ func printDoctorReport(w io.Writer, rep *health.Report, fixed bool) {
 			fmt.Fprintf(w, "      affects: %s\n", strings.Join(r.Features, ", "))
 		}
 		if r.Fix != nil {
-			fixable++
-			line := fmt.Sprintf("fix [%s]: %s — monoagentcli doctor fix %s", r.Fix.Safety, r.Fix.Label, r.Fix.ID)
+			kind := string(r.Fix.Safety)
+			if r.Fix.Optional {
+				kind += ", optional"
+			} else if r.Fix.Safety != health.SafetyManual {
+				fixable++
+			}
+			line := fmt.Sprintf("fix [%s]: %s — monoagentcli doctor fix %s", kind, r.Fix.Label, r.Fix.ID)
 			if r.Fix.Safety == health.SafetyManual && r.Fix.Command != "" {
 				line = "to fix: " + r.Fix.Command
 			}

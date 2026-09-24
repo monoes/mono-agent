@@ -65,3 +65,16 @@ func (windowsInstaller) Uninstall(ctx context.Context) error {
 	}
 	return nil
 }
+
+func (windowsInstaller) Status(ctx context.Context) (bool, string) {
+	err := exec.CommandContext(ctx, "schtasks", "/query", "/tn", taskName).Run()
+	return err == nil, "scheduled task " + taskName
+}
+
+func (windowsInstaller) Start(ctx context.Context) error {
+	out, err := exec.CommandContext(ctx, "schtasks", "/run", "/tn", taskName).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("schtasks /run: %w: %s", err, string(out))
+	}
+	return nil
+}

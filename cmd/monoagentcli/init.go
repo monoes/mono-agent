@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -86,11 +88,15 @@ func installClaudeSkill(verbose bool) error {
 	return nil
 }
 
-// runClaudeFirstRunCheck installs monoagent's Claude Code skills if Claude Code
-// is detected (~/.claude/ exists) and any of them is missing. It checks the
-// skills themselves rather than trusting the first-run marker, so a monoagent
-// version that ships a NEW skill delivers it to existing installs too. Errors
-// are silently ignored — this is best-effort.
+// runClaudeFirstRunCheck installs monoagent's Claude Code skills that are
+// missing, if Claude Code is detected (~/.claude/ exists). It checks the
+// skills themselves rather than trusting the first-run marker, so a
+// monoagent version that ships a NEW skill delivers it to existing installs
+// too. It runs before every command, so it never rewrites a skill that is
+// there: one the user edited, or one another monoagent binary wrote, stays
+// as it is. Refreshing a stale skill is the doctor fix
+// (integrations.claude_skills), which asks first. Errors are silently
+// ignored — this is best-effort.
 func runClaudeFirstRunCheck() {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -110,21 +116,78 @@ func runClaudeFirstRunCheck() {
 		return
 	}
 
-	allInstalled := true
-	for _, name := range claudeSkillNames {
-		if _, err := os.Stat(filepath.Join(claudeDir, "skills", name)); err != nil {
-			allInstalled = false
-			break
-		}
-	}
-	if allInstalled {
+	_, missing, _ := claudeSkillsState()
+	if len(missing) == 0 {
 		return
 	}
-
-	if err := installClaudeSkill(false); err != nil {
+	if err := installMissingClaudeSkills(missing); err != nil {
 		return
 	}
 
 	fmt.Fprintf(os.Stderr, "[monoagent] Claude Code detected — monoagent skills installed.\n")
 	fmt.Fprintf(os.Stderr, "[monoagent] Claude can now run: monoagentcli workflow templates list\n")
+}
+
+// claudeSkillsState compares ~/.claude/skills with the skills embedded in
+// this binary. claudeFound is false when Claude Code isn't installed.
+func claudeSkillsState() (claudeFound bool, missing, stale []string) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false, nil, nil
+	}
+	claudeDir := filepath.Join(home, ".claude")
+	if _, err := os.Stat(claudeDir); err != nil {
+		return false, nil, nil
+	}
+	for _, name := range claudeSkillNames {
+		want, err := data.SkillsFS.ReadFile("skills/" + name)
+		if err != nil {
+			continue
+		}
+		got, err := os.ReadFile(filepath.Join(claudeDir, "skills", name))
+		switch {
+		case err != nil:
+			missing = append(missing, name)
+		case !bytes.Equal(got, want):
+			stale = append(stale, name)
+		}
+	}
+	return true, missing, stale
+}
+
+// installMissingClaudeSkills writes only the named skills, leaving every
+// skill already in ~/.claude/skills alone.
+func installMissingClaudeSkills(names []string) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	skillsDir := filepath.Join(home, ".claude", "skills")
+	if err := os.MkdirAll(skillsDir, 0o755); err != nil {
+		return err
+	}
+	for _, name := range names {
+		content, err := data.SkillsFS.ReadFile("skills/" + name)
+		if err != nil {
+			return err
+		}
+		f, err := os.OpenFile(filepath.Join(skillsDir, name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if errors.Is(err, os.ErrExist) {
+			continue // appeared meanwhile: it is not ours to replace
+		}
+		if err != nil {
+			return err
+		}
+		_, werr := f.Write(content)
+		if cerr := f.Close(); werr == nil {
+			werr = cerr
+		}
+		if werr != nil {
+			return werr
+		}
+	}
+	monoagentDir := filepath.Join(home, ".monoagent")
+	_ = os.MkdirAll(monoagentDir, 0o755)
+	_ = os.WriteFile(filepath.Join(monoagentDir, claudeInitMarker), []byte("1"), 0o644)
+	return nil
 }
