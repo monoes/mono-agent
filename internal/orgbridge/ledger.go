@@ -183,21 +183,34 @@ func (l *Ledger) Admit(ctx context.Context, c Call, lim Limits) (Admission, erro
 			return Admission{}, fmt.Errorf("orgbridge: ledger: %w", err)
 		}
 	}
-	var recorded sql.NullInt64
-	if err := conn.QueryRowContext(ctx, q, args...).Scan(&recorded); err != nil {
-		return Admission{}, fmt.Errorf("orgbridge: ledger: %w", err)
-	}
 	hop := tr.Hop
-	if recorded.Valid && int(recorded.Int64) > hop {
-		hop = int(recorded.Int64)
+	if c.Direction == DirWebhookIn {
+		// A webhook_in header was signed by the run that sent the request
+		// (internal/tracesig), so its hop is that run's true depth and is
+		// trusted as is: the requests one run sends (a fan-out over its
+		// items) all carry the same hop and are siblings at hop+1, while a
+		// loop's return comes from a run one hop deeper each round. Taking
+		// the chain's recorded maximum here refused a plain fan-out to a
+		// local webhook after a handful of items.
+		hop++
+	} else {
+		var recorded sql.NullInt64
+		if err := conn.QueryRowContext(ctx, q, args...).Scan(&recorded); err != nil {
+			return Admission{}, fmt.Errorf("orgbridge: ledger: %w", err)
+		}
+		if recorded.Valid && int(recorded.Int64) > hop {
+			hop = int(recorded.Int64)
+		}
+		hop += 1 + granted/SiblingCallsPerHop
 	}
-	hop += 1 + granted/SiblingCallsPerHop
 	adm := Admission{ID: uuid.NewString(), Trace: Trace{ChainID: tr.ChainID, Hop: hop}, Status: StatusOK}
 
 	if hop > lim.MaxHops {
 		adm.Status = StatusRefusedHops
 		adm.Reason = fmt.Sprintf("chain %s reached hop %d, over the limit of %d — this looks like a loop between orgs and automations", tr.ChainID, hop, lim.MaxHops)
-	} else {
+	} else if c.Direction != DirWebhookIn {
+		// webhook_in is not repeat-limited: a caller without a signed
+		// header can start the same workflow as often as it likes anyway.
 		since := l.now().Add(-lim.Window).UTC().Format(time.RFC3339Nano)
 		var n int
 		if err := conn.QueryRowContext(ctx,

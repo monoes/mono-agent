@@ -127,3 +127,24 @@ func withoutTrace(data map[string]interface{}, key string) map[string]interface{
 	}
 	return out
 }
+
+// snapshotTrigger copies trigger data for the run's context, including the
+// chain objects, so a node that edits its input item in place (the trigger
+// node's output item shares the map) cannot rewrite the chain the run signs.
+func snapshotTrigger(data map[string]interface{}) map[string]interface{} {
+	if data == nil {
+		return nil
+	}
+	out := make(map[string]interface{}, len(data))
+	for k, v := range data {
+		if m, ok := v.(map[string]interface{}); ok && (k == "trace" || k == WebhookTraceKey) {
+			cp := make(map[string]interface{}, len(m))
+			for mk, mv := range m {
+				cp[mk] = mv
+			}
+			v = cp
+		}
+		out[k] = v
+	}
+	return out
+}
