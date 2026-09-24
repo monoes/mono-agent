@@ -480,3 +480,38 @@ func TestLedgerRefusedGrantedCallsDoNotUseTheAllowance(t *testing.T) {
 		t.Fatalf("hq:ceo after 64 refused sales:bot calls: %+v, %v — want admitted at hop 1", adm, err)
 	}
 }
+
+// Parallel granted calls on one chain are admitted exactly up to the
+// limit: reading the chain's state and recording the crossing happen in
+// one transaction, so they cannot all read the same count and overshoot.
+func TestLedgerParallelCallsDoNotOvershoot(t *testing.T) {
+	l := NewLedger(newTestDB(t))
+	ctx := context.Background()
+	const workers, each = 16, 8
+	var mu sync.Mutex
+	admitted := 0
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func(w int) {
+			defer wg.Done()
+			for i := 0; i < each; i++ {
+				c := Call{ProfileID: "p", Direction: DirRoleTool, OrgName: "g", RoleID: "writer", WorkflowID: "wf", Trace: Trace{ChainID: "chn_race"}}
+				adm, err := l.Admit(ctx, c, Limits{MaxRepeats: 200})
+				if err != nil {
+					t.Errorf("worker %d call %d: %v", w, i, err)
+					return
+				}
+				if adm.OK() {
+					mu.Lock()
+					admitted++
+					mu.Unlock()
+				}
+			}
+		}(w)
+	}
+	wg.Wait()
+	if want := 8 * SiblingCallsPerHop; admitted != want {
+		t.Fatalf("admitted %d of %d parallel calls, want exactly %d", admitted, workers*each, want)
+	}
+}

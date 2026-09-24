@@ -1057,6 +1057,8 @@ What the runs taught, beyond the checks:
   left out of the maximum and they are pooled, one hop per 8 together. Refused rows
   no longer count in the maximum (one forged hop=999 crossing used to kill a chain for every
   caller), and a forged header hop is clamped before arithmetic (MaxInt64 used to wrap).
+  Admit's reads and its insert run in one `BEGIN IMMEDIATE` transaction (`chore/org-small-
+  leftovers`), so parallel calls no longer overshoot (16 × 8 calls admitted 74, now exactly 64).
   A loop back through a recorded crossing (`workflow_out`) climbs from that row as before. The
   per-grant `max_calls_per_run`/`max_calls_per_day` caps bound it too; `max_repeats` does not
   (a loop paced under 20 a minute never reaches it). An adversarial review found the first
