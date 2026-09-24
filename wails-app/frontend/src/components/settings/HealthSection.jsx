@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { RefreshCw, Globe, FolderTree, Wrench, Loader2, TerminalSquare } from 'lucide-react'
+import { RefreshCw, Globe, FolderTree, Loader2, TerminalSquare } from 'lucide-react'
 import { GetVersion } from '../../wailsjs/go/main/App'
 import { confirm } from '../ConfirmDialog.jsx'
 import HealthRow, { STATUS_STYLE } from './HealthRow.jsx'
+import SetupSteps from './SetupSteps.jsx'
 import {
   getHealth, subscribeHealth, runHealth, runFix,
   groupReport, summarize, fixPlan, versionSkew,
@@ -156,11 +157,13 @@ export default function HealthSection({ onNavigate }) {
           <ToolbarButton icon={h.loading ? Loader2 : RefreshCw} label={t('settings.health.checkAgain')} onClick={() => run({ deep: false, projects: false })} disabled={h.loading || fixingAll} />
           <ToolbarButton icon={Globe} label={t('settings.health.deepCheck')} onClick={() => run({ deep: true, projects: false })} disabled={h.loading || fixingAll} />
           <ToolbarButton icon={FolderTree} label={t('settings.health.checkProjects')} onClick={() => run({ deep: false, projects: true })} disabled={h.loading || fixingAll} />
-          {sum.fixable > 0 && (
-            <ToolbarButton primary icon={fixingAll ? Loader2 : Wrench} label={fixingAll ? t('settings.health.fixing') : t('settings.health.fixIssues', { n: sum.fixable })} onClick={fixAll} disabled={h.loading || fixingAll} />
-          )}
         </div>
       </div>
+
+      {report && (
+        <SetupSteps report={report} level={sum.level} fixStates={fixStates} fixingAll={fixingAll || h.loading}
+          onRunAll={fixAll} onFix={onRowFix} onNavigate={onNavigate} />
+      )}
 
       {h.error && (
         <div style={{ ...mono, fontSize: 10.5, color: 'var(--red)', marginBottom: 10 }}>{h.error}</div>

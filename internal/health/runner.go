@@ -192,6 +192,7 @@ func (r *Registry) Run(ctx context.Context, env *Env, opts Options) *Report {
 					ch.Fix = &info
 				}
 			}
+			r.resolveActions(&ch)
 			rep.Results = append(rep.Results, ch)
 			rep.Summary[ch.Status]++
 		}
@@ -253,7 +254,18 @@ func (r *Registry) finish(c Check, res Result, took time.Duration) Result {
 			res.Fix = &info
 		}
 	}
+	r.resolveActions(&res)
 	return res
+}
+
+// resolveActions turns a result's ActionIDs into Actions.
+func (r *Registry) resolveActions(res *Result) {
+	for _, id := range res.ActionIDs {
+		if f, ok := r.Fix(id); ok {
+			res.Actions = append(res.Actions, f.FixInfo)
+		}
+	}
+	res.ActionIDs = nil
 }
 
 func contains(list []string, s string) bool {

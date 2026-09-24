@@ -61,6 +61,17 @@ func newHealthEnv(cfg *globalConfig) (*health.Env, func()) {
 		}
 		return v, nm.NodePath(v), true
 	}
+	env.UpdateNode = func(ctx context.Context, progress func(string)) error {
+		v, err := nm.Install(ctx, "lts", progress)
+		if err != nil {
+			return err
+		}
+		return nm.Prune(v)
+	}
+	env.RemoveNode = func(_ context.Context, progress func(string)) error {
+		progress("removing " + nm.Root + " and " + nm.NpmRoot)
+		return nm.Remove("")
+	}
 	env.InstallNode = func(ctx context.Context, progress func(string)) error {
 		if _, err := nm.Install(ctx, "lts", progress); err != nil {
 			return err

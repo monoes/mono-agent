@@ -152,3 +152,36 @@ func TestRuntimesCheckReportsChildren(t *testing.T) {
 		t.Errorf("none installed: %+v", res)
 	}
 }
+
+func TestNodeActions(t *testing.T) {
+	reg := Default()
+	run := func(sys, managed string) Result {
+		r := NewRegistry([]Check{{ID: CheckNode, Group: GroupMonomind, Title: "Node.js", Run: checkNode}}, reg.fixesList())
+		return r.Run(context.Background(), nodeEnv(sys, managed), Options{}).Results[0]
+	}
+	ids := func(res Result) []string {
+		var out []string
+		for _, a := range res.Actions {
+			out = append(out, a.ID)
+		}
+		return out
+	}
+	// Managed Node in use: update only (removing it would break monomind).
+	if got := ids(run("", "24.1.0")); len(got) != 1 || got[0] != ActionNodeUpdate {
+		t.Errorf("managed in use: %v", got)
+	}
+	// Managed Node installed but a suitable system Node is used: update or remove.
+	if got := ids(run("26.0.0", "24.1.0")); len(got) != 2 || got[1] != ActionNodeRemove {
+		t.Errorf("managed unused: %v", got)
+	}
+	// No managed Node: no actions.
+	if got := ids(run("26.0.0", "")); len(got) != 0 {
+		t.Errorf("system only: %v", got)
+	}
+	// Actions are optional, so doctor --fix never runs them.
+	for _, id := range []string{ActionNodeUpdate, ActionNodeRemove} {
+		if f, ok := reg.Fix(id); !ok || !f.Optional || f.Safety != SafetyConfirm {
+			t.Errorf("%s: %+v", id, f.FixInfo)
+		}
+	}
+}

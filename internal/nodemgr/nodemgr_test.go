@@ -2,6 +2,7 @@ package nodemgr
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -266,5 +267,84 @@ func TestPlanGlobalInstall(t *testing.T) {
 	plan, err = m.PlanGlobalInstall(ctx)
 	if err != nil || !plan.Managed || plan.Npm != m.NpmPath("24.1.0") {
 		t.Fatalf("managed only: %+v, %v", plan, err)
+	}
+}
+
+func makeZip(t *testing.T, files map[string]string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for name, body := range files {
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w.Write([]byte(body))
+	}
+	zw.Close()
+	return buf.Bytes()
+}
+
+// TestWindowsInstallFlow runs the Windows install path (zip, node.exe at the
+// top, npm.cmd, no bin/) on this machine with the version probe stubbed.
+func TestWindowsInstallFlow(t *testing.T) {
+	m := New()
+	dir := t.TempDir()
+	m.Root, m.NpmRoot = filepath.Join(dir, "node"), filepath.Join(dir, "npm-global")
+	m.GOOS, m.GOARCH = "windows", "amd64"
+	var probed string
+	m.probe = func(_ context.Context, node string) (string, error) { probed = node; return "24.1.0", nil }
+
+	if got := m.archiveName("24.1.0"); got != "node-v24.1.0-win-x64.zip" {
+		t.Fatalf("archive %q", got)
+	}
+	if got := m.indexFileKey(); got != "win-x64-zip" {
+		t.Fatalf("index key %q", got)
+	}
+	top := "node-v24.1.0-win-x64/"
+	m.BaseURL = fakeDist(t, m, map[string][]byte{"24.1.0": makeZip(t, map[string]string{
+		top + "node.exe": "MZ", top + "npm.cmd": "@echo npm", top + "node_modules/npm/package.json": "{}",
+	})}, false).URL
+
+	v, err := m.Install(context.Background(), "lts", nil)
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	root := filepath.Join(m.Root, "24.1.0")
+	if m.BinDir(v) != root || m.NodePath(v) != filepath.Join(root, "node.exe") || m.NpmPath(v) != filepath.Join(root, "npm.cmd") {
+		t.Fatalf("windows layout: bin %s node %s npm %s", m.BinDir(v), m.NodePath(v), m.NpmPath(v))
+	}
+	if probed != m.NodePath(v) {
+		t.Fatalf("probed %q", probed)
+	}
+	for _, f := range []string{m.NodePath(v), m.NpmPath(v)} {
+		if _, err := os.Stat(f); err != nil {
+			t.Errorf("missing %s", f)
+		}
+	}
+	if m.NpmBinDir() != m.NpmRoot {
+		t.Errorf("windows npm bin dir %s", m.NpmBinDir())
+	}
+
+	// A zip entry escaping the target is refused.
+	bad := filepath.Join(t.TempDir(), "bad.zip")
+	os.WriteFile(bad, makeZip(t, map[string]string{"../evil.txt": "x"}), 0o644)
+	if err := unzip(bad, t.TempDir()); err == nil {
+		t.Error("escaping zip entry accepted")
+	}
+}
+
+func TestDarwinArchiveNames(t *testing.T) {
+	m := New()
+	m.GOOS, m.GOARCH = "darwin", "arm64"
+	if got := m.archiveName("24.1.0"); got != "node-v24.1.0-darwin-arm64.tar.gz" {
+		t.Errorf("archive %q", got)
+	}
+	if got := m.indexFileKey(); got != "osx-arm64-tar" {
+		t.Errorf("index key %q", got)
+	}
+	m.GOARCH = "amd64"
+	if got := m.indexFileKey(); got != "osx-x64-tar" {
+		t.Errorf("index key %q", got)
 	}
 }

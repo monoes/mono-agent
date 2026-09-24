@@ -119,7 +119,14 @@
       "statusTitle": "System health — click to open",
       "statusBroken": "Setup incomplete",
       "statusIssues": "Issues: {{n}}",
-      "openAgents": "Install or update on the AI agents page"
+      "openAgents": "Install or update on the AI agents page",
+      "finishSetup": "Finish setup",
+      "stepsToFix": "Steps to fix",
+      "stepAuto": "automatic",
+      "stepAsks": "asks first",
+      "stepManual": "by hand",
+      "stepRuntime": "Install an AI agent runtime (Claude Code, Codex, …)",
+      "openAgentsShort": "Open AI agents"
     }
   },
   "orgs": {

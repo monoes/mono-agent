@@ -158,7 +158,7 @@ func (m *Manager) Install(ctx context.Context, want string, progress func(string
 	if err := os.Rename(top, dest); err != nil {
 		return "", fmt.Errorf("installing into %s: %w", dest, err)
 	}
-	if got, err := NodeVersion(ctx, m.NodePath(version)); err != nil || got != version {
+	if got, err := m.nodeVersion(ctx, m.NodePath(version)); err != nil || got != version {
 		os.RemoveAll(dest)
 		return "", fmt.Errorf("installed node does not run (version %q): %v", got, err)
 	}
