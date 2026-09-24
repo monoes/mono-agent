@@ -11,6 +11,8 @@ import (
 	"context"
 	"database/sql"
 	"time"
+
+	"github.com/monoes/mono-agent/internal/monomind"
 )
 
 // SchemaVersion is the `doctor --json` payload version. Bump it on any
@@ -58,6 +60,10 @@ type Result struct {
 	// FixID is set by a check to offer a fix; the runner resolves it into
 	// Fix from the fix registry.
 	FixID string `json:"-"`
+	// Children are extra rows a check reports about the things it found
+	// (e.g. one per agent runtime). Each needs its own ID; the runner
+	// stamps Group/Source and lists them right after their parent.
+	Children []Result `json:"-"`
 }
 
 // FixInfo describes a fix to a caller (CLI prompt, GUI button).
@@ -125,6 +131,15 @@ type Env struct {
 	SystemNode  func(ctx context.Context) (path, version string, found bool)
 	ManagedNode func() (version, path string, ok bool)
 	InstallNode func(ctx context.Context, progress func(string)) error
+
+	// monomind: locate the binary, handshake with it (callers memoize —
+	// several checks ask), scan agent runtimes, install/upgrade it, and
+	// run `monomind init` in a folder.
+	FindMonomind        func() (string, error)
+	MonomindHandshake   func(ctx context.Context) (*monomind.VersionInfo, error)
+	ScanRuntimes        func(ctx context.Context) (*monomind.ScanResult, error)
+	InstallMonomind     func(ctx context.Context, progress func(string)) error
+	InitMonomindProfile func(ctx context.Context, root string, progress func(string)) error
 }
 
 // Report is the `doctor --json` payload.

@@ -8,17 +8,12 @@ import (
 	"io"
 	"log"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/monoes/mono-agent/internal/health"
 	"github.com/monoes/mono-agent/internal/nodemgr"
-	"github.com/monoes/mono-agent/internal/profiledir"
-	"github.com/monoes/mono-agent/internal/secrets"
-	"github.com/monoes/mono-agent/internal/shellpath"
-	"github.com/monoes/mono-agent/internal/storage"
 )
 
 // maxFixPasses bounds `doctor --fix`'s fix → re-check loop.
@@ -36,13 +31,17 @@ func newDoctorCmd(cfg *globalConfig) *cobra.Command {
 	var deep, fix, yes bool
 
 	cmd := &cobra.Command{
-		// Replaces the root's pre-run (Claude first-run setup), which
-		// creates ~/.monoagent and copies skills into ~/.claude: a check
-		// must not change anything, and the data-folder check could never
-		// see the folder missing. `doctor fix` inherits this one.
-		PersistentPreRun: func(*cobra.Command, []string) {},
-		Use:              "doctor",
-		Short:            "Check (and fix) everything monoagent needs on this machine",
+		// Replaces the root's pre-run, keeping only what it does to this
+		// process: the managed Node on PATH, which the monomind checks need
+		// (monomind starts with `#!/usr/bin/env node`). The root's Claude
+		// first-run setup is left out, since it creates ~/.monoagent and
+		// copies skills into ~/.claude, and a check must not change
+		// anything. `doctor fix` inherits this one.
+		PersistentPreRun: func(cmd *cobra.Command, _ []string) {
+			nodemgr.Activate(cmd.Context())
+		},
+		Use:   "doctor",
+		Short: "Check (and fix) everything monoagent needs on this machine",
 		Long: `Runs health checks over every component monoagent depends on and
 reports what is missing or broken, with a fix for each problem it can repair.
 
@@ -248,91 +247,6 @@ func applyFix(ctx context.Context, cfg *globalConfig, f health.Fix, progress fun
 	return f.Apply(ctx, env, progress)
 }
 
-// newHealthEnv builds the real-machine environment for checks and fixes.
-// The database is opened only if it already exists and is never migrated
-// here — checks must not change anything; the migrate fix does that.
-func newHealthEnv(cfg *globalConfig) (*health.Env, func()) {
-	home, _ := os.UserHomeDir()
-	exe, _ := os.Executable()
-	dbPath := expandPath(cfg.DBPath)
-	env := &health.Env{
-		Home:       home,
-		DataDir:    filepath.Join(home, ".monoagent"),
-		DBPath:     dbPath,
-		Version:    getVersion(),
-		Executable: exe,
-		ProfileID:  cfg.ProfileID,
-		LoginPath:  shellpath.LoginPath,
-		FreeBytes:  health.FreeBytes,
-		LatestVersion: func(ctx context.Context) (string, error) {
-			rel, err := fetchLatestRelease(ctx)
-			if err != nil {
-				return "", err
-			}
-			return rel.TagName, nil
-		},
-		Migrate: func(_ context.Context, progress func(string)) error {
-			// The migration runner reports through the standard logger;
-			// route it into the fix's progress stream for the duration.
-			restore := captureStdLog(progress)
-			defer restore()
-			db, err := initDB(&globalConfig{DBPath: cfg.DBPath, ProfileID: cfg.ProfileID})
-			if err != nil {
-				return err
-			}
-			return db.Close()
-		},
-	}
-	nm := nodemgr.New()
-	env.SystemNode = nm.SystemNode
-	env.ManagedNode = func() (string, string, bool) {
-		v, ok := nm.Current()
-		if !ok {
-			return "", "", false
-		}
-		return v, nm.NodePath(v), true
-	}
-	env.InstallNode = func(ctx context.Context, progress func(string)) error {
-		_, err := nm.Install(ctx, "lts", progress)
-		return err
-	}
-	env.ProfileRoot = func(id string) string { return profiledir.Root(env.DB, id) }
-	env.EnsureProfile = func(id string) error { return profiledir.EnsureLayout(env.DB, id) }
-
-	closeFn := func() {}
-	if _, err := os.Stat(dbPath); err == nil {
-		db, err := storage.NewDatabase(dbPath)
-		if err != nil {
-			env.DBErr = err
-		} else {
-			env.DB = db.DB
-			env.PendingMigrations = db.PendingMigrations
-			env.QuickCheck = db.QuickCheck
-			env.VaultState = func(ctx context.Context, id string) (string, error) {
-				st, err := secrets.CheckVault(ctx, db.DB, id)
-				return string(st), err
-			}
-			closeFn = func() { db.Close() }
-			if env.ProfileID == "" {
-				var id string
-				_ = db.DB.QueryRow(`SELECT value FROM settings WHERE key = ?`, profiledir.ActiveProfileSetting).Scan(&id)
-				env.ProfileID = id
-			} else if id, err := resolveProfileID(db.DB, env.ProfileID); err == nil {
-				// --profile takes a name or an id, as it does for every other
-				// command; one that matches neither is left for the profile
-				// check to report.
-				env.ProfileID = id
-			}
-		}
-	} else if !os.IsNotExist(err) {
-		env.DBErr = err
-	}
-	if env.ProfileID == "" {
-		env.ProfileID = "default"
-	}
-	return env, closeFn
-}
-
 var statusMark = map[health.Status]string{
 	health.StatusOK: "✓", health.StatusWarn: "⚠", health.StatusFail: "✗",
 	health.StatusSkip: "–", health.StatusInfo: "ℹ",
@@ -352,7 +266,7 @@ func printDoctorReport(w io.Writer, rep *health.Report, fixed bool) {
 			req = " (required)"
 		}
 		fmt.Fprintf(w, "  %s %-18s %s%s\n", statusMark[r.Status], r.Title, r.Summary, req)
-		if r.Detail != "" && (r.Status == health.StatusFail || r.Status == health.StatusWarn) {
+		if r.Detail != "" && r.Status != health.StatusOK && r.Status != health.StatusSkip {
 			for _, line := range strings.Split(r.Detail, "\n") {
 				fmt.Fprintf(w, "      %s\n", line)
 			}

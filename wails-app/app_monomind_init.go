@@ -1,15 +1,6 @@
 package main
 
 import (
-	"bufio"
-	"context"
-	"errors"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"time"
-
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/monoes/mono-agent/internal/monomind"
@@ -27,38 +18,9 @@ import (
 // involvement in.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// monomindInitTimeout is generous on purpose: init copies skill/command
-// files and may shell out further (npx) itself — minutes, not seconds,
-// unlike the 60s org-CLI timeout.
-const monomindInitTimeout = 10 * time.Minute
-
-// initErrorTailLines is how much of monomind init's output is kept for the
-// failure message — the progress log is cleared when the run ends, so a bare
-// "exit status 127" would otherwise be all the user ever sees.
-const initErrorTailLines = 5
-
-// initFailureMessage turns a failed `monomind init` into something
-// actionable: the binary that was run, the exit error, the last output lines,
-// and a hint for exit 127 (the shebang's `node` could not be resolved).
-func initFailureMessage(bin string, err error, tail []string) string {
-	msg := err.Error() + " (" + bin + ")"
-	var xerr *exec.ExitError
-	if errors.As(err, &xerr) && xerr.ExitCode() == 127 {
-		msg += " — a command it needs was not found (usually `node`: is Node on your login shell's PATH?)"
-	}
-	if len(tail) > 0 {
-		msg += "\n" + strings.Join(tail, "\n")
-	}
-	return msg
-}
-
-// isMonomindInitializedAt is the pure check, split out from
-// IsMonomindInitialized so it's testable without an *App/*sql.DB — checks
-// the same on-disk marker monomind's own CLI uses (.monomind/config.yaml).
-func isMonomindInitializedAt(root string) bool {
-	_, err := os.Stat(filepath.Join(root, ".monomind", "config.yaml"))
-	return err == nil
-}
+// isMonomindInitializedAt reports whether root was set up by `monomind
+// init` (see monomind.IsInitializedAt).
+func isMonomindInitializedAt(root string) bool { return monomind.IsInitializedAt(root) }
 
 // IsMonomindInitialized reports whether the active profile's folder has
 // already been set up by `monomind init` — a direct file check, not a
@@ -78,100 +40,24 @@ func (a *App) emitMonomindInitEvent(kind, message string) {
 }
 
 // InitializeMonomindProfile runs `monomind init` scoped to the active
-// profile's folder, streaming progress via monomind:initProgress events and
-// returning immediately (fire-and-forget, mirroring StreamAgentChat in
-// app_ai.go) rather than blocking the Wails call for up to 10 minutes.
+// profile's folder (monomind.InitProfile — the same routine `monoagentcli
+// doctor fix monomind.profile_init` uses), streaming progress via
+// monomind:initProgress events and returning immediately (fire-and-forget,
+// mirroring StreamAgentChat in app_ai.go) rather than blocking the Wails
+// call for up to 10 minutes.
 func (a *App) InitializeMonomindProfile() string {
-	bin, err := monomind.Find()
-	if err != nil {
-		a.emitMonomindInitEvent("error", err.Error())
-		return `{"ok":true}`
-	}
 	root := profiledir.Root(a.db, a.getActiveProfileID())
-
 	go func() {
-		ctx, cancel := context.WithTimeout(a.ctx, monomindInitTimeout)
-		defer cancel()
-
-		// --yes suppresses the "already initialized, reinitialize?" prompt;
-		// --no-watch avoids leaving a background monograph watcher process
-		// running from a single GUI click; --no-install skips a potential
-		// global `npm install -g @anthropic-ai/claude-code`. CI=true is
-		// belt-and-braces on top of --yes: monomind's own interactive check
-		// is `stdin.isTTY ?? false`, already false for an exec.Command child,
-		// but CI=true guarantees every prompt path treats this as
-		// non-interactive even if that check changes upstream.
-		cmd := exec.CommandContext(ctx, bin, "init", "--yes", "--no-watch", "--no-install")
-		hideWindow(cmd)
-		cmd.Dir = root // monomind init has no --project flag and does not honor MONOMIND_CWD — cwd is the only way to scope it
-		cmd.Env = append(os.Environ(), "CI=true")
-
-		stdout, err := cmd.StdoutPipe()
+		err := monomind.InitProfile(a.ctx, monomind.InitOptions{
+			Root:     root,
+			Progress: func(line string) { a.emitMonomindInitEvent("line", line) },
+			Prepare:  hideWindow,
+		})
 		if err != nil {
 			a.emitMonomindInitEvent("error", err.Error())
 			return
 		}
-		cmd.Stderr = cmd.Stdout
-
-		if err := cmd.Start(); err != nil {
-			a.emitMonomindInitEvent("error", err.Error())
-			return
-		}
-
-		sc := bufio.NewScanner(stdout)
-		sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-		var tail []string
-		for sc.Scan() {
-			line := sc.Text()
-			a.emitMonomindInitEvent("line", line)
-			if strings.TrimSpace(line) != "" {
-				tail = append(tail, line)
-				if len(tail) > initErrorTailLines {
-					tail = tail[1:]
-				}
-			}
-		}
-
-		if err := cmd.Wait(); err != nil {
-			a.emitMonomindInitEvent("error", initFailureMessage(bin, err, tail))
-			return
-		}
-
-		a.registerClaudeCodeProject(root)
 		a.emitMonomindInitEvent("done", "")
 	}()
-
 	return `{"ok":true}`
-}
-
-// registerClaudeCodeProject makes root show up in monomind's own web
-// dashboard project list. That list (GET /api/projects in monomind's
-// server.mjs) is sourced entirely from ~/.claude/projects/<slug>/ — the
-// per-directory session folder Claude Code itself creates the first time
-// `claude` runs with that directory as cwd. monomind's own init never
-// touches this (it writes to a separate, unrelated ~/.monomind-projects.json
-// used only by `init upgrade --all`), so a freshly-initialized profile is
-// otherwise invisible in that dashboard until someone happens to open a
-// real Claude Code session there by hand. A single lightweight --print
-// turn is enough to create the slug directory + a session file — best
-// effort: if the `claude` binary isn't on PATH, or the call fails, this is
-// reported as a warning line (not an "error" event), since monomind init
-// itself already succeeded and this is a secondary nicety, not something
-// worth failing the whole "Initiate monomind" action over.
-func (a *App) registerClaudeCodeProject(root string) {
-	claudeBin, err := exec.LookPath("claude")
-	if err != nil {
-		a.emitMonomindInitEvent("line", "(skipped: claude CLI not found on PATH — this profile won't appear in monomind's dashboard project list until a Claude Code session is opened here)")
-		return
-	}
-	ctx, cancel := context.WithTimeout(a.ctx, 60*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, claudeBin, "-p", "monomind initialized")
-	hideWindow(cmd)
-	cmd.Dir = root
-	if err := cmd.Run(); err != nil {
-		a.emitMonomindInitEvent("line", "(claude CLI registration step failed, non-fatal: "+err.Error()+")")
-		return
-	}
-	a.emitMonomindInitEvent("line", "Registered with Claude Code's project list.")
 }

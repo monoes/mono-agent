@@ -2,8 +2,12 @@ package health
 
 // Default returns the registry of every built-in check and fix.
 func Default() *Registry {
-	return NewRegistry(
-		append(coreChecks(), monomindChecks()...),
-		append(coreFixes(), monomindFixes()...),
-	)
+	var checks []Check
+	checks = append(checks, coreChecks()...)
+	checks = append(checks, monomindChecks()...)
+	checks = append(checks, runtimeChecks()...)
+	var fixes []Fix
+	fixes = append(fixes, coreFixes()...)
+	fixes = append(fixes, monomindFixes()...)
+	return NewRegistry(checks, fixes)
 }

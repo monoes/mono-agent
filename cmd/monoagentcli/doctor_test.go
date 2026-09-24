@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -152,5 +153,32 @@ func TestDoctorProfileByName(t *testing.T) {
 	// that a new profile's folder is not made yet.
 	if r := resultByID(decodeDoctor(t, out), health.CheckProfile); r.Status == health.StatusFail || !strings.HasPrefix(r.Summary, "Work (") {
 		t.Fatalf("--profile Work: %+v, want the profile found by name", r)
+	}
+}
+
+// doctor puts a managed Node on PATH before its checks, as every other
+// command does: the monomind checks start monomind, whose shebang needs
+// `node`, and on a machine whose only Node is the managed one they would
+// otherwise report monomind broken and offer a fix that never takes.
+func TestDoctorActivatesTheManagedNode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a shell-script node")
+	}
+	keyring.MockInit()
+	home := t.TempDir()
+	bin := filepath.Join(home, ".monoagent", "node", "24.1.0", "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "node"), []byte("#!/bin/sh\necho v24.1.0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".monoagent", "node", "current"), []byte("24.1.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", t.TempDir()) // no system node
+	_, _ = runDoctor(t, home, "doctor", "--json", "--group", "core")
+	if first := filepath.SplitList(os.Getenv("PATH"))[0]; first != bin {
+		t.Fatalf("PATH after doctor starts with %q, want the managed Node's bin %q", first, bin)
 	}
 }
