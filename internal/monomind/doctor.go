@@ -56,6 +56,12 @@ type DoctorOptions struct {
 	Install   bool   // --install (confirm fixes)
 }
 
+// DoctorReportVersion is the `monomind doctor --json` format this reads.
+const DoctorReportVersion = 1
+
+// ErrDoctorFormat: monomind speaks a report format this monoagent doesn't.
+var ErrDoctorFormat = errors.New("unknown monomind doctor report format")
+
 // Doctor runs `monomind doctor --json` in opts.Dir. A failing check makes
 // monomind exit 1 but still print the report, so the report is parsed
 // whatever the exit status.
@@ -75,6 +81,15 @@ func Doctor(ctx context.Context, bin string, opts DoctorOptions) (*DoctorReport,
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = opts.Dir
 	cmd.Env = append(os.Environ(), "CI=true") // never prompt
+	// On the deadline, end everything monomind started (git, npm), and
+	// don't let a child that still holds the output pipe keep Output()
+	// waiting.
+	setProcessGroup(cmd)
+	cmd.Cancel = func() error {
+		killProcessGroup(cmd, 0)
+		return nil
+	}
+	cmd.WaitDelay = 10 * time.Second
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	out, runErr := cmd.Output()
@@ -83,7 +98,14 @@ func Doctor(ctx context.Context, bin string, opts DoctorOptions) (*DoctorReport,
 		if runErr == nil {
 			runErr = errors.New("output is not a doctor report")
 		}
-		return nil, fmt.Errorf("monomind doctor in %s: %w: %s", opts.Dir, runErr, lastLines(stderr.String(), 3))
+		msg := fmt.Sprintf("monomind doctor in %s: %v", opts.Dir, runErr)
+		if tail := lastLines(stderr.String(), 3); tail != "" {
+			msg += ": " + tail
+		}
+		return nil, errors.New(msg)
+	}
+	if rep.V != DoctorReportVersion {
+		return nil, fmt.Errorf("%w: monomind reports format v%d, this monoagent reads v%d", ErrDoctorFormat, rep.V, DoctorReportVersion)
 	}
 	return &rep, nil
 }
