@@ -40,17 +40,9 @@ func CheckVault(ctx context.Context, db *sql.DB, profileID string) (VaultState, 
 		profileID = "default"
 	}
 
-	keyringIOMu.Lock()
-	stored, kerr := keyringGet(keyringService, kekAccount(profileID))
-	keyringIOMu.Unlock()
-	kekFound := kerr == nil
-	if kerr != nil && !errors.Is(kerr, keyring.ErrNotFound) {
-		if fileKeyringEnabled() {
-			return VaultFileKeyring, nil
-		}
-		return VaultKeyringUnavailable, kerr
-	}
-
+	// The database first: a profile with no stored key never touches the
+	// keychain, so a fresh or secret-less profile cannot raise an unlock
+	// prompt (go-keyring's Linux Get unlocks the Secret Service collection).
 	var hasTable int
 	if err := db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'vault_keys'`).Scan(&hasTable); err != nil {
@@ -59,7 +51,6 @@ func CheckVault(ctx context.Context, db *sql.DB, profileID string) (VaultState, 
 	if hasTable == 0 {
 		return VaultUninitialized, nil
 	}
-
 	var wrappedDEK, wrappedNonce []byte
 	err := db.QueryRowContext(ctx,
 		`SELECT wrapped_dek, wrapped_nonce FROM vault_keys WHERE profile_id = ?`, profileID).
@@ -69,8 +60,23 @@ func CheckVault(ctx context.Context, db *sql.DB, profileID string) (VaultState, 
 		return VaultUninitialized, nil
 	case err != nil:
 		return "", fmt.Errorf("reading vault_keys: %w", err)
-	case !kekFound:
-		return VaultKeyMissing, fmt.Errorf("no keychain entry %q/%q for this profile's stored key", keyringService, kekAccount(profileID))
+	}
+
+	keyringIOMu.Lock()
+	stored, kerr := keyringGet(keyringService, kekAccount(profileID))
+	keyringIOMu.Unlock()
+	if kerr != nil {
+		// With the file keyring opted in, the real key lookup falls back to
+		// it both when the OS keyring is unreachable and when it has no
+		// entry, so neither means the secrets are unreadable. It is not
+		// unlocked here: that would prompt for its passphrase.
+		if fileKeyringEnabled() {
+			return VaultFileKeyring, nil
+		}
+		if errors.Is(kerr, keyring.ErrNotFound) {
+			return VaultKeyMissing, fmt.Errorf("no keychain entry %q/%q for this profile's stored key", keyringService, kekAccount(profileID))
+		}
+		return VaultKeyringUnavailable, kerr
 	}
 
 	kek, err := hex.DecodeString(stored)

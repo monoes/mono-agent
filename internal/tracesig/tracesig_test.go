@@ -3,6 +3,7 @@ package tracesig
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -106,5 +107,32 @@ func TestKeyRejectsAShortFile(t *testing.T) {
 	}
 	if _, err := keyAt(path); err == nil {
 		t.Fatal("accepted a 5-byte key")
+	}
+}
+
+// A key others can read is refused, like an ssh private key.
+func TestKeyRefusesAWorldReadableFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("file modes do not describe Windows ACLs")
+	}
+	path := filepath.Join(t.TempDir(), "trace.key")
+	if err := os.WriteFile(path, []byte(strings.Repeat("k", 32)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := keyAt(path); err == nil || !strings.Contains(err.Error(), "chmod 600") {
+		t.Fatalf("keyAt on a 0644 key = %v, want a refusal naming chmod 600", err)
+	}
+}
+
+// Without hard links the exclusive-create fallback still yields one key.
+func TestCreateExclusiveFallback(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "trace.key")
+	a, err := createExclusive(path, []byte(strings.Repeat("a", 32)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := createExclusive(path, []byte(strings.Repeat("b", 32)))
+	if err != nil || string(a) != string(b) {
+		t.Fatalf("second creator got %q, %v; want the first key", b, err)
 	}
 }

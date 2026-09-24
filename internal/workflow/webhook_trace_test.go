@@ -203,3 +203,14 @@ func TestWebhookGivesEveryRunAChain(t *testing.T) {
 		t.Fatalf("runs got chains %q (%v) and %q (%v), want two fresh ones", a, okA, b, okB)
 	}
 }
+
+// A JSON body of null is an empty item, as before, not a panic.
+func TestWebhookNullBody(t *testing.T) {
+	s, fired := newTraceHook(t, func(context.Context, string, string, int) (int, string, error) { return 1, "", nil })
+	if rec := post(s, `null`, signed(t, "chn_loop", 0)); rec.Code != http.StatusOK || len(*fired) != 1 {
+		t.Fatalf("null body: status %d fired %d", rec.Code, len(*fired))
+	}
+	if _, _, ok := ParseTraceAt((*fired)[0].JSON, WebhookTraceKey); !ok {
+		t.Fatal("null body lost its chain")
+	}
+}

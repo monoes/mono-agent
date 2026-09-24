@@ -68,6 +68,10 @@ type WebhookServer struct {
 	// daemon wires it to the org ledger). nil: signed traces are ignored and
 	// every webhook run starts a fresh chain.
 	traceAdmit TraceAdmitter
+	// keyErrorOnce makes an unusable trace key an error in the log once,
+	// rather than a warning on every request: without the key, loops
+	// through webhooks are not counted.
+	keyErrorOnce sync.Once
 }
 
 // TraceAdmitter records that a request carrying a verified trace on chain
@@ -104,7 +108,9 @@ func (s *WebhookServer) admitTrace(ctx context.Context, workflowID, token string
 	}
 	key, err := tracesig.Key()
 	if err != nil {
-		s.logger.Warn().Err(err).Msg("webhook: trace key unavailable; starting a fresh chain")
+		s.keyErrorOnce.Do(func() {
+			s.logger.Error().Err(err).Msg("webhook: the trace key is unusable, so loops through webhooks are not counted until it is fixed (see ~/.monoagent/trace.key)")
+		})
 		return fresh, 0, ""
 	}
 	chain, hop, ok := tracesig.Verify(key, token)
@@ -503,6 +509,11 @@ func (s *WebhookServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// A body of `null` unmarshals to a nil map; the run still gets an empty
+	// item (and a chain) rather than a panic on the assignment below.
+	if data == nil {
+		data = make(map[string]interface{})
+	}
 	// The run's chain comes only from a verified signed header, never from
 	// the body: whatever the body put under the reserved key is dropped.
 	delete(data, WebhookTraceKey)

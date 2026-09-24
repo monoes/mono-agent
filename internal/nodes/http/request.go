@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -215,9 +217,11 @@ func (n *RequestNode) resolvePerItemConfig(ctx context.Context, engine *workflow
 
 // sensitiveRedirectHeaders returns the names of request headers this node sets
 // that may carry credentials and must not follow a cross-host redirect: the
-// configured API-key header plus any explicitly supplied custom headers.
+// signed chain token, the configured API-key header, and any explicitly
+// supplied custom headers.
 func sensitiveRedirectHeaders(config map[string]interface{}, authType string) []string {
-	var names []string
+	// The signed chain token never follows a redirect to another host.
+	names := []string{tracesig.Header}
 	if authType == "api_key" {
 		if in, _ := config["auth_api_key_in"].(string); in == "header" {
 			if name, _ := config["auth_api_key_name"].(string); name != "" {
@@ -400,13 +404,6 @@ func (n *RequestNode) executeRequest(
 		}
 	}
 
-	// A run on a chain passes it on, signed, so that if this request comes
-	// back into mono-agent through a webhook (directly, or via a system
-	// that returns the header) the run it starts stays on the chain and the
-	// hop limit still applies (U10). Set after the custom headers so a
-	// workflow cannot replace it. The token names only the chain and hop.
-	setTraceHeader(ctx, req)
-
 	// Auth
 	switch authType {
 	case "basic":
@@ -424,6 +421,12 @@ func (n *RequestNode) executeRequest(
 			req.Header.Set(apiKeyName, apiKeyValue)
 		}
 	}
+
+	// A run on a chain passes it on, signed, so that if this request comes
+	// back into mono-agent through a webhook the run it starts stays on the
+	// chain and the hop limit still applies (U10). Set after every header
+	// the workflow configures (custom and auth), so none can replace it.
+	setTraceHeader(ctx, req, config)
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -494,23 +497,46 @@ func (n *RequestNode) executeRequest(
 }
 
 // setTraceHeader adds the run's chain as a signed X-Monoagent-Trace header
-// (internal/tracesig), when the run is on one. Without a key the request
-// goes out without it: the chain simply does not continue.
-func setTraceHeader(ctx context.Context, req *http.Request) {
+// (internal/tracesig), when the run is on one and the request goes where a
+// webhook of this machine can be: a loopback address, or the host of
+// MONOAGENT_WEBHOOK_ADDR. Other hosts get it only with propagate_trace (an
+// outside system that returns the header to a webhook here): the token
+// cannot lower a hop, but a third party holding one could push its chain to
+// the limit. Without a key the request goes out without it, and any header
+// of that name the workflow configured is removed either way.
+func setTraceHeader(ctx context.Context, req *http.Request, config map[string]interface{}) {
+	req.Header.Del(tracesig.Header)
 	chain, hop, ok := workflow.RunTrace(ctx)
 	if !ok {
-		req.Header.Del(tracesig.Header)
+		return
+	}
+	if propagate, _ := config["propagate_trace"].(bool); !propagate && !ownHost(req.URL.Hostname()) {
 		return
 	}
 	key, err := tracesig.Key()
 	if err != nil {
-		req.Header.Del(tracesig.Header)
 		return
 	}
 	tok, err := tracesig.Sign(key, chain, hop)
 	if err != nil {
-		req.Header.Del(tracesig.Header)
 		return
 	}
 	req.Header.Set(tracesig.Header, tok)
+}
+
+// ownHost reports whether host is a loopback address or the host this
+// machine's webhook server listens on (MONOAGENT_WEBHOOK_ADDR).
+func ownHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return true
+	}
+	if addr := strings.TrimSpace(os.Getenv("MONOAGENT_WEBHOOK_ADDR")); addr != "" {
+		if h, _, err := net.SplitHostPort(addr); err == nil && h != "" && strings.EqualFold(h, host) {
+			return true
+		}
+	}
+	return false
 }

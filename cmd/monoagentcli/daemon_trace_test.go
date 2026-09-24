@@ -2,10 +2,15 @@ package main
 
 import (
 	"context"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/rs/zerolog"
+
+	httpnodes "github.com/monoes/mono-agent/internal/nodes/http"
 	"github.com/monoes/mono-agent/internal/storage"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // A signed trace that keeps coming back in through a webhook climbs a hop
@@ -35,8 +40,86 @@ func TestAdmitWebhookTraceStopsALoop(t *testing.T) {
 	if _, refusal, err := s.admitWebhookTrace(ctx, f.plainWF, "chn_selfloop", hop); err != nil || !strings.Contains(refusal, "hop 9") {
 		t.Fatalf("9th crossing: refusal %q, err %v — want refused at hop 9", refusal, err)
 	}
-	// A replayed older token cannot restart the count.
-	if _, refusal, _ := s.admitWebhookTrace(ctx, f.plainWF, "chn_selfloop", 0); refusal == "" {
-		t.Fatal("a replayed hop-0 token was admitted on a chain at its limit")
+	// A replayed hop-0 token is only one more run at hop 1: no more than an
+	// unsigned request to the same webhook (a fresh chain at hop 0) gives.
+	if got, refusal, _ := s.admitWebhookTrace(ctx, f.plainWF, "chn_selfloop", 0); refusal != "" || got != 1 {
+		t.Fatalf("replayed hop-0 token: hop %d refusal %q, want a run at hop 1", got, refusal)
+	}
+}
+
+// One run sending many requests to a local webhook (a fan-out over its
+// items) is not a loop: every request carries the sender's hop, so each run
+// it starts is at that hop + 1, however many there are, and none is refused
+// by a repeat limit either.
+func TestAdmitWebhookTraceAllowsAFanOut(t *testing.T) {
+	f := newOrgCLIFixture(t)
+	db, err := storage.NewDatabase(f.cfg.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	s := &orgServices{db: db, logf: t.Logf}
+	for i := 1; i <= 100; i++ {
+		got, refusal, err := s.admitWebhookTrace(context.Background(), f.plainWF, "chn_fanout", 3)
+		if err != nil || refusal != "" || got != 4 {
+			t.Fatalf("request %d of a fan-out: hop %d, refusal %q, err %v — want admitted at 4", i, got, refusal, err)
+		}
+	}
+}
+
+// End to end in one process: a real http.request node posting to a real
+// webhook server whose crossings go through the daemon's ledger. A run that
+// posts to its own webhook is a loop and stops at the hop limit; a run that
+// posts many items to a webhook once is a fan-out and all of them run.
+func TestSignedTraceThroughARealWebhook(t *testing.T) {
+	f := newOrgCLIFixture(t)
+	db, err := storage.NewDatabase(f.cfg.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	s := &orgServices{db: db, logf: t.Logf}
+
+	hooks := workflow.NewWebhookServer("127.0.0.1:0", zerolog.Nop())
+	hooks.SetTraceAdmitter(s.admitWebhookTrace)
+	srv := httptest.NewServer(hooks)
+	defer srv.Close()
+
+	post := func(ctx context.Context, url string) {
+		_, _ = (&httpnodes.RequestNode{}).Execute(ctx,
+			workflow.NodeInput{Items: []workflow.Item{workflow.NewItem(map[string]interface{}{})}},
+			map[string]interface{}{"method": "POST", "url": url, "body": "{}"})
+	}
+
+	// The loop: every run posts to its own webhook once.
+	var loopRuns int
+	if err := hooks.Register(&workflow.WebhookRegistration{WorkflowID: f.plainWF, Path: "self", Method: "POST",
+		TriggerFn: func(items []workflow.Item) {
+			loopRuns++
+			if loopRuns > 50 {
+				return // a safety net for the test itself, far past the limit
+			}
+			post(workflow.WithTrigger(context.Background(), workflow.TriggerNodeTypeWebhook, items[0].JSON), srv.URL+"/webhook/self")
+		}}); err != nil {
+		t.Fatal(err)
+	}
+	post(context.Background(), srv.URL+"/webhook/self")
+	if loopRuns != 9 {
+		t.Fatalf("self-loop ran %d times, want 9 (hop 0 plus 8 returns, the 9th refused)", loopRuns)
+	}
+
+	// The fan-out: one run posts 30 items to a webhook; all 30 run.
+	var fanRuns int
+	if err := hooks.Register(&workflow.WebhookRegistration{WorkflowID: f.outboundWF, Path: "fan", Method: "POST",
+		TriggerFn: func([]workflow.Item) { fanRuns++ }}); err != nil {
+		t.Fatal(err)
+	}
+	sender := workflow.WithTrigger(context.Background(), workflow.TriggerNodeTypeWebhook,
+		map[string]interface{}{workflow.WebhookTraceKey: map[string]interface{}{"chain_id": "chn_fan", "hop": float64(2)}})
+	for i := 0; i < 30; i++ {
+		post(sender, srv.URL+"/webhook/fan")
+	}
+	if fanRuns != 30 {
+		t.Fatalf("fan-out of 30 ran %d, want 30", fanRuns)
 	}
 }
