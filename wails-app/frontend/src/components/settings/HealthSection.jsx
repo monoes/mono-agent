@@ -43,7 +43,7 @@ function ago(ts, t) {
   return m < 60 ? t('settings.health.minutesAgo', { n: m }) : t('settings.health.hoursAgo', { n: Math.round(m / 60) })
 }
 
-export default function HealthSection() {
+export default function HealthSection({ onNavigate }) {
   const { t } = useTranslation()
   const [h, setH] = useState(getHealth())
   const [guiVersion, setGuiVersion] = useState(null)
@@ -195,6 +195,11 @@ export default function HealthSection() {
               <span style={{ ...mono, fontSize: 9, color: '#fbbf24', border: '1px solid rgba(251,191,36,.3)', borderRadius: 8, padding: '0 6px' }}>
                 {t('settings.health.problemCount', { n: g.problems })}
               </span>
+            )}
+            {g.group === 'runtimes' && onNavigate && (
+              <button onClick={() => onNavigate('ai')} style={{ ...mono, fontSize: 10, marginLeft: 'auto', background: 'none', border: 'none', color: '#00b4d8', cursor: 'pointer', padding: 0 }}>
+                {t('settings.health.openAgents')} →
+              </button>
             )}
           </div>
           {g.rows.map(r => <HealthRow key={r.id} row={r} fixStates={fixStates} onFix={onRowFix} />)}

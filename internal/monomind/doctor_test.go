@@ -79,6 +79,19 @@ func TestProjectsUnder(t *testing.T) {
 	}
 }
 
+func TestJSONBodySkipsLeadingNotice(t *testing.T) {
+	out := []byte("  ↑ monomind v2.16.2 available  →  run: npm install -g monomind@latest\n{\"v\":1}\n")
+	if got := string(JSONBody(out)); got != "{\"v\":1}\n" {
+		t.Fatalf("JSONBody = %q", got)
+	}
+	if got := string(JSONBody([]byte(`{"v":1}`))); got != `{"v":1}` {
+		t.Fatalf("plain JSON changed: %q", got)
+	}
+	if got := string(JSONBody([]byte("no json here"))); got != "no json here" {
+		t.Fatalf("non-JSON must come back unchanged: %q", got)
+	}
+}
+
 // A report in a format this monoagent doesn't know is not read as "0
 // checks, all passed": renamed fields would parse as empty.
 func TestDoctorRejectsAnotherFormatVersion(t *testing.T) {

@@ -1,6 +1,7 @@
 package monomind
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -94,7 +95,7 @@ func Doctor(ctx context.Context, bin string, opts DoctorOptions) (*DoctorReport,
 	cmd.Stderr = &stderr
 	out, runErr := cmd.Output()
 	var rep DoctorReport
-	if err := json.Unmarshal(out, &rep); err != nil || rep.V == 0 {
+	if err := json.Unmarshal(JSONBody(out), &rep); err != nil || rep.V == 0 {
 		if runErr == nil {
 			runErr = errors.New("output is not a doctor report")
 		}
@@ -182,4 +183,25 @@ func registeredProjects() []string {
 		return nil
 	}
 	return f.Projects
+}
+
+// JSONBody returns out from its first line that starts a JSON document.
+// monomind releases up to 2.16.x print an "↑ … available" update notice on
+// stdout, ahead of the JSON, on the first run after a release (fixed in
+// monomind by sending it to stderr); skipping such leading lines keeps
+// those versions parseable.
+func JSONBody(out []byte) []byte {
+	rest := out
+	for len(rest) > 0 {
+		trimmed := bytes.TrimLeft(rest, " \t\r")
+		if len(trimmed) > 0 && (trimmed[0] == '{' || trimmed[0] == '[') {
+			return trimmed
+		}
+		i := bytes.IndexByte(rest, '\n')
+		if i < 0 {
+			break
+		}
+		rest = rest[i+1:]
+	}
+	return out
 }

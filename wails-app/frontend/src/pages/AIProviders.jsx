@@ -574,7 +574,7 @@ export default function AIProviders({ embedded = false }) {
         {!embedded && (
           <div className="page-header">
             <div className="page-header-left">
-              <div className="page-title">AI Providers</div>
+              <div className="page-title">AI connections (legacy)</div>
               <div className="page-subtitle">{loading ? 'Loading…' : `${totalConnected} / ${registry.length} connected`}</div>
             </div>
             <div className="page-header-right" style={{ display: 'flex', gap: 6 }}>
@@ -584,6 +584,12 @@ export default function AIProviders({ embedded = false }) {
         )}
 
         <div className="page-body" style={{ flex: 1, overflow: 'auto' }}>
+          {!embedded && (
+            <div style={{ fontFamily: 'var(--font-body)', fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.6, padding: '10px 14px', marginBottom: 14, background: 'rgba(0,245,212,.04)', border: '1px solid rgba(0,245,212,.12)', borderRadius: 'var(--radius)' }}>
+              AI agent runtimes (Claude Code, Codex, …) on the <strong style={{ color: 'var(--text-secondary)' }}>AI agents</strong> page are the recommended way to use AI.
+              These API-key connections remain for existing workflow AI nodes that use them.
+            </div>
+          )}
           {loading ? (
             <div className="empty-state"><div className="spinner" /></div>
           ) : registry.length === 0 ? (

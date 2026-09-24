@@ -606,7 +606,7 @@ func Scan(ctx context.Context) (*ScanResult, error) {
 		return nil, fmt.Errorf("agent scan failed: %w", err)
 	}
 	var res ScanResult
-	if err := json.Unmarshal(out, &res); err != nil {
+	if err := json.Unmarshal(JSONBody(out), &res); err != nil {
 		return nil, fmt.Errorf("agent scan: unparseable output: %w", err)
 	}
 	return &res, nil

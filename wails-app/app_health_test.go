@@ -19,6 +19,16 @@ func TestHealthArgs(t *testing.T) {
 	}
 }
 
+func TestAgentInstallArgs(t *testing.T) {
+	// No --yes: a script install approves only the URL the person was shown.
+	if got, want := agentInstallArgs("p1", "hermes", true, "https://hermes.example/install.sh"), []string{"--profile", "p1", "--json", "agent", "install", "--force", "--approve-script", "https://hermes.example/install.sh", "--", "hermes"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("agentInstallArgs = %v, want %v", got, want)
+	}
+	if got, want := agentInstallArgs("", "codex", false, ""), []string{"--json", "agent", "install", "--", "codex"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("agentInstallArgs = %v, want %v", got, want)
+	}
+}
+
 func TestHealthReportJSONKeepsReportOnExit1(t *testing.T) {
 	report := `{"v":1,"results":[]}`
 	if got := healthReportJSON("monoagentcli", []byte(report+"\n"), errors.New("exit status 1")); got != report {

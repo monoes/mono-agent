@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -16,6 +17,7 @@ import (
 
 func newAgentInstallCmd(cfg *globalConfig) *cobra.Command {
 	var yes, force bool
+	var approveScript string
 	cmd := &cobra.Command{
 		Use:   "install <runtime>",
 		Short: "Install an AI agent runtime (claude, codex, opencode, …)",
@@ -36,23 +38,13 @@ With --json, progress is streamed as NDJSON like ` + "`doctor fix`" + `.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
 			progress := progressWriter(out, cfg.JSONOutput)
-			confirmScript := func(r agentinstall.Recipe) bool {
-				if yes {
-					return true
-				}
-				if cfg.JSONOutput || !stdinIsTerminal() {
-					return false
-				}
-				fmt.Fprintf(out, "Run the vendor installer %s with %s? [y/N] ", r.ScriptURL, r.Shell)
-				ans, _ := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
-				a := strings.ToLower(strings.TrimSpace(ans))
-				return a == "y" || a == "yes"
-			}
+			confirmScript := scriptConsent(yes, approveScript, !cfg.JSONOutput && stdinIsTerminal(), cmd.InOrStdin(), out)
 			msg, err := installRuntime(cmd.Context(), args[0], force, confirmScript, progress)
 			return finishStreamed(out, cfg.JSONOutput, err, msg)
 		},
 	}
 	cmd.Flags().BoolVar(&yes, "yes", false, "Run vendor install scripts without asking")
+	cmd.Flags().StringVar(&approveScript, "approve-script", "", "Run the vendor install script only if it is this exact URL (what the person was shown)")
 	cmd.Flags().BoolVar(&force, "force", false, "Install even if the runtime is already installed (upgrade)")
 	return cmd
 }
@@ -113,4 +105,26 @@ func strPtr(s *string, def string) string {
 		return def
 	}
 	return *s
+}
+
+// scriptConsent decides whether a vendor install script may run: --yes
+// approves any; --approve-script approves exactly the URL the person was
+// shown (the GUI's confirmation), and a recipe that now names another is
+// refused, since consent was for what was shown, not for whatever runs;
+// otherwise a person is asked, and with nobody to ask it is refused.
+func scriptConsent(yes bool, approveURL string, canAsk bool, in io.Reader, out io.Writer) func(agentinstall.Recipe) bool {
+	return func(r agentinstall.Recipe) bool {
+		switch {
+		case yes:
+			return true
+		case approveURL != "":
+			return r.ScriptURL == approveURL
+		case !canAsk:
+			return false
+		}
+		fmt.Fprintf(out, "Run the vendor installer %s with %s? [y/N] ", r.ScriptURL, r.Shell)
+		ans, _ := bufio.NewReader(in).ReadString('\n')
+		a := strings.ToLower(strings.TrimSpace(ans))
+		return a == "y" || a == "yes"
+	}
 }

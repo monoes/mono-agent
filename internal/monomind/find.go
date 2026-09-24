@@ -134,7 +134,7 @@ func Handshake(ctx context.Context, bin string) (*VersionInfo, error) {
 		return nil, fmt.Errorf("handshake with %s failed: %w", bin, err)
 	}
 	var vi VersionInfo
-	if err := json.Unmarshal(out, &vi); err != nil {
+	if err := json.Unmarshal(JSONBody(out), &vi); err != nil {
 		return nil, fmt.Errorf("handshake: %s did not speak the protocol (unparseable --version --json): %w", bin, err)
 	}
 	if vi.V != ProtocolVersion {

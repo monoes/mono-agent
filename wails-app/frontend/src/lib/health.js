@@ -2,7 +2,7 @@
 // dot. Everything it knows comes from `monoagentcli doctor --json` (via the
 // RunHealthCheck/RunHealthFix bindings); this module only stores, sorts and
 // re-requests it.
-import { RunHealthCheck, RunHealthFix } from '../wailsjs/go/main/App'
+import { RunHealthCheck, RunHealthFix, InstallAgentRuntime } from '../wailsjs/go/main/App'
 import { subscribeEvent } from '../services/api.js'
 
 export const BACKGROUND_INTERVAL_MS = 30 * 60 * 1000
@@ -144,22 +144,38 @@ export function isFixRunning(fixId) { return runningFixes.has(fixId) }
  * started again (two daemons, two npm installs into one folder).
  */
 export function runFix(fixId, onLine) {
-  if (runningFixes.has(fixId)) return Promise.resolve({ ok: false, message: 'already running' })
-  runningFixes.add(fixId)
+  return runStreamed(fixId, () => RunHealthFix(fixId), onLine)
+}
+
+/**
+ * Install (update: reinstall) an AI agent runtime via `monoagentcli agent
+ * install`; same progress events and result shape as runFix. approveURL is
+ * the vendor script the person was shown, for a script install.
+ */
+export function installRuntime(runtimeId, update, onLine, approveURL = '') {
+  return runStreamed(`agent.install:${runtimeId}`, () => InstallAgentRuntime(runtimeId, !!update, approveURL), onLine)
+}
+
+// runStreamed starts a streamed CLI command and follows its
+// health:fixProgress events (keyed by fix_id) to the final done/error. One
+// run per key: a second start while one runs is refused.
+function runStreamed(key, start, onLine) {
+  if (runningFixes.has(key)) return Promise.resolve({ ok: false, message: 'already running' })
+  runningFixes.add(key)
   return new Promise(resolve => {
     const off = subscribeEvent('health:fixProgress', ev => {
-      if (!ev || ev.fix_id !== fixId) return
+      if (!ev || ev.fix_id !== key) return
       if (ev.kind === 'line') { onLine?.(ev.message || ''); return }
       off()
-      resolve(ev.kind === 'done' ? { ok: true } : { ok: false, message: ev.message || 'failed' })
+      resolve(ev.kind === 'done' ? { ok: true, message: ev.message || '' } : { ok: false, message: ev.message || 'failed' })
     })
-    RunHealthFix(fixId)
+    start()
       .then(s => {
         const r = JSON.parse(s)
         if (r.error) { off(); resolve({ ok: false, message: r.error }) }
       })
       .catch(e => { off(); resolve({ ok: false, message: String(e) }) })
-  }).finally(() => { runningFixes.delete(fixId) })
+  }).finally(() => { runningFixes.delete(key) })
 }
 
 let timer = null
