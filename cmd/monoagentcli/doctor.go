@@ -58,7 +58,7 @@ func fixUntilStable(ctx context.Context, cfg *globalConfig, reg *health.Registry
 		if holdServices {
 			view = withoutServiceFixes(rep)
 		}
-		got := applyReportFixes(ctx, cfg, reg, view, tried, confirm, progress)
+		got := applyReportFixes(ctx, cfg, reg, view, tried, confirm, progress, cfg.JSONOutput)
 		outcomes = append(outcomes, got...)
 		rep = runHealth(ctx, cfg, reg, opts)
 		if len(got) == 0 {
@@ -254,7 +254,7 @@ func stdinIsTerminal() bool {
 // applyReportFixes applies every distinct fix the report offers, in report
 // order: auto directly, confirm when confirm() agrees, manual never.
 func applyReportFixes(ctx context.Context, cfg *globalConfig, reg *health.Registry, rep *health.Report,
-	tried map[string]bool, confirm func(health.FixInfo) bool, progress func(string)) []fixOutcome {
+	tried map[string]bool, confirm func(health.FixInfo) bool, progress func(string), fixEvents bool) []fixOutcome {
 	if cfg.JSONOutput {
 		// stdout carries the final report; keep progress off it.
 		progress = progressWriter(os.Stderr, true)
@@ -279,24 +279,24 @@ func applyReportFixes(ctx context.Context, cfg *globalConfig, reg *health.Regist
 				continue
 			}
 		}
-		if cfg.JSONOutput {
-			// Same per-fix events as `setup --json`, on stderr beside the
-			// fix's own lines (stdout is the final report).
+		if fixEvents {
+			// Same per-fix events as `setup --json` (which emits its own and
+			// passes false), on stderr beside the fix's own lines.
 			writeFixEvent(os.Stderr, fixEvent{Kind: "fix_start", FixID: f.ID, Message: f.Label})
-		} else {
+		} else if !cfg.JSONOutput {
 			progress("→ " + f.Label)
 		}
 		if err := applyFix(ctx, cfg, f, progress); err != nil {
 			outcomes = append(outcomes, fixOutcome{ID: f.ID, Outcome: "failed", Error: err.Error()})
-			if cfg.JSONOutput {
+			if fixEvents {
 				writeFixEvent(os.Stderr, fixEvent{Kind: "fix_end", FixID: f.ID, Outcome: "failed", Message: err.Error()})
-			} else {
+			} else if !cfg.JSONOutput {
 				progress("✗ " + err.Error())
 			}
 			continue
 		}
 		outcomes = append(outcomes, fixOutcome{ID: f.ID, Outcome: "applied"})
-		if cfg.JSONOutput {
+		if fixEvents {
 			writeFixEvent(os.Stderr, fixEvent{Kind: "fix_end", FixID: f.ID, Outcome: "applied"})
 		}
 	}

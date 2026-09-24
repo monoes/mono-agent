@@ -240,7 +240,7 @@ func setupFixes(ctx context.Context, cfg *globalConfig, reg *health.Registry, op
 				return false
 			}
 			one := &health.Report{Results: []health.Result{r}}
-			for _, o := range applyReportFixes(ctx, cfg, reg, one, tried, ask, ev.progress) {
+			for _, o := range applyReportFixes(ctx, cfg, reg, one, tried, ask, ev.progress, false) {
 				got++
 				so := setupOutcome{fixOutcome: o}
 				if started && ev.json {

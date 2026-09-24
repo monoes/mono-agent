@@ -136,7 +136,7 @@ func TestApplyReportFixesSkipsOptional(t *testing.T) {
 	}}
 	t.Setenv("HOME", t.TempDir())
 	outcomes := applyReportFixes(context.Background(), &globalConfig{DBPath: "~/.monoagent/x.db"}, reg, rep,
-		map[string]bool{}, func(health.FixInfo) bool { return true }, func(string) {})
+		map[string]bool{}, func(health.FixInfo) bool { return true }, func(string) {}, false)
 	if !applied["a"] || applied["claude"] {
 		t.Fatalf("applied %v; optional runtime install must not run under --fix", applied)
 	}
