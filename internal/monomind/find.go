@@ -44,11 +44,16 @@ func CandidatePaths() []string {
 	if home, err := os.UserHomeDir(); err == nil {
 		cands = append(cands,
 			filepath.Join(home, ".monoagent", "monomind-bundle", "bin", "monomind"),
+			// `npm install -g` through monoagent's managed Node
+			// (internal/nodemgr) uses this prefix.
+			filepath.Join(home, ".monoagent", "npm-global", "bin", "monomind"),
 			filepath.Join(home, ".npm-global", "bin", "monomind"),
 			filepath.Join(home, ".local", "bin", "monomind"),
 		)
 		if runtime.GOOS == "windows" {
-			cands = append(cands, filepath.Join(home, "AppData", "Roaming", "npm", "monomind.cmd"))
+			cands = append(cands,
+				filepath.Join(home, "AppData", "Roaming", "npm", "monomind.cmd"),
+				filepath.Join(home, ".monoagent", "npm-global", "monomind.cmd"))
 		} else {
 			cands = append(cands, nvmCandidates(filepath.Join(home, ".nvm", "versions", "node"))...)
 		}

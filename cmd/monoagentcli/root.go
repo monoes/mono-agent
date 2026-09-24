@@ -11,6 +11,7 @@ import (
 	"github.com/monoes/mono-agent/internal/ai"
 	"github.com/monoes/mono-agent/internal/connections"
 	"github.com/monoes/mono-agent/internal/i18n"
+	"github.com/monoes/mono-agent/internal/nodemgr"
 	"github.com/monoes/mono-agent/internal/secrets"
 	"github.com/monoes/mono-agent/internal/storage"
 	"github.com/spf13/cobra"
@@ -41,6 +42,9 @@ func newRootCmd() *cobra.Command {
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
 			// Best-effort: install Claude Code skill on first run if Claude is detected.
 			runClaudeFirstRunCheck()
+			// Put monoagent's managed Node on PATH for every child process
+			// (monomind, npm, agent CLIs). One stat when none is installed.
+			nodemgr.Activate(cmd.Context())
 		},
 	}
 
@@ -71,6 +75,7 @@ func newRootCmd() *cobra.Command {
 		newExportCmd(cfg),
 		newStatusCmd(cfg),
 		newDoctorCmd(cfg),
+		newNodejsCmd(cfg),
 		newVersionCmd(),
 		newUpdateCmd(),
 		newWorkflowCmd(cfg),

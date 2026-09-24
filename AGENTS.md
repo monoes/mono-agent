@@ -70,6 +70,10 @@ monoagentcli doctor fix <fix-id> --json   # one fix, progress as NDJSON {"kind":
 (e.g. update availability). Checks never change anything — only fixes do.
 Run `doctor` first when something environment-related fails.
 
+No suitable Node.js (>= 22.12) for monomind? `monoagentcli nodejs install`
+downloads a private one into `~/.monoagent/node` (checksum-verified, used
+only by processes monoagent starts); `nodejs status|update|remove` manage it.
+
 ## Legacy top-level commands
 
 Older top-level commands include `message`, `comment`, `search`, `list`,

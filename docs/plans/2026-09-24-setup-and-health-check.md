@@ -167,7 +167,7 @@ monoagentcli setup                      # guided first run: required fixes in or
 monoagentcli doctor --projects          # also run full monomind doctor on every project of the active profile
 monoagentcli doctor --project <name>    # one project; combine with --fix
 monoagentcli agent install <runtime-id> [--json]          # install an AI agent runtime (§5a)
-monoagentcli node status|install|update|remove            # managed Node (§7)
+monoagentcli nodejs status|install|update|remove          # managed Node (§7; `node` is the workflow node runner)
 ```
 
 Exit codes via `exitcodes.go`: 0 all ok/warn, 1 a required check failed
@@ -270,7 +270,7 @@ Node is downloaded and managed by mono-agent, not left to the user:
 - npm global prefix for managed installs: `~/.monoagent/npm-global`, added to
   `monomind.CandidatePaths` so monomind and npm-based runtimes installed
   through it are found.
-- `monoagentcli node status|install|update|remove`; health row
+- `monoagentcli nodejs status|install|update|remove`; health row
   `monomind.node` offers it as a `confirm` fix; Settings shows it.
 - The `monomind-bundle` sidecar (`docs/plans/local-agent-monomind-delegation.md`)
   stays a possible later optimisation; managed Node removes the blocker now.
@@ -280,7 +280,7 @@ Node is downloaded and managed by mono-agent, not left to the user:
 | # | PR | Contents | Done when |
 |---|---|---|---|
 | 1 | `feat(health): check framework + core checks + doctor CLI` | `internal/health` (types, runner, Env, registry), group A, `doctor` text + `--json`, exit codes | unit tests with fake Env; `doctor --json` golden-file schema test |
-| 2 | `feat(node): managed Node runtime` | `internal/nodemgr` download/verify/activate, `node` command, PATH + npm prefix wiring, `monomind.node` check | tests with httptest dist server; real install into scratch HOME |
+| 2 | `feat(node): managed Node runtime` | `internal/nodemgr` download/verify/activate, `nodejs` command, PATH + npm prefix wiring, `monomind.node` check | tests with httptest dist server; real install into scratch HOME |
 | 3 | `feat(health): monomind + runtime checks and fixes` | group B native checks + C; move profile-init from `wails-app/app_monomind_init.go` to `internal/monomind` + `doctor fix monomind.profile_init` | fake exec runner tests; manual run |
 | 4 | `feat(agent): install agent runtimes` | `agent install <id> --json` from scan recipe (npm via system/managed Node, scripts) | tests with fake runner; install a runtime in scratch HOME |
 | 5 | `feat(health): browser, services, integration checks` | groups D, E, F; chrome helpers → `internal/browser/detect`; skill content-hash | tests; manual run on private bridge 9232 + scratch HOME (never the 9222 bridge) |

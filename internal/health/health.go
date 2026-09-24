@@ -119,6 +119,12 @@ type Env struct {
 	LoginPath         func(ctx context.Context) (string, error)
 	FreeBytes         func(path string) (uint64, error)
 	LatestVersion     func(ctx context.Context) (string, error)
+
+	// Node.js: the first node on PATH that isn't monoagent's managed one,
+	// the active managed version, and installing a managed one.
+	SystemNode  func(ctx context.Context) (path, version string, found bool)
+	ManagedNode func() (version, path string, ok bool)
+	InstallNode func(ctx context.Context, progress func(string)) error
 }
 
 // Report is the `doctor --json` payload.
