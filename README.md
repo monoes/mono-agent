@@ -8,7 +8,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-purple?style=for-the-badge)](LICENSE)
 [![CI](https://github.com/monoes/mono-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/monoes/mono-agent/actions/workflows/ci.yml)
-[![Go Version](https://img.shields.io/badge/Go-1.25-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://golang.org)
+[![Go Version](https://img.shields.io/badge/Go-1.26-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://golang.org)
 [![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-333?style=for-the-badge)](#getting-started)
 
 </div>
@@ -21,9 +21,9 @@
 
 > **Project status:** pre-1.0, single maintainer. Core workflow engine and node set are exercised by CI (`go test ./...`), but expect breaking changes between minor versions until 1.0.
 
-- 🔁 **DAG workflow engine** — 90 built-in node types (150 with the optional social build): services (GitHub, Google Sheets / Gmail / Drive, Stripe, Salesforce, HubSpot, Jira, Linear, Notion, Airtable), databases, HTTP, data transforms, and comms (Gmail, Outlook, Slack, Telegram, Discord, and more)
+- 🔁 **DAG workflow engine** — 105 built-in node types (165 with the optional social build): services (GitHub, Google Sheets / Gmail / Drive, Stripe, Salesforce, HubSpot, Jira, Linear, Notion, Airtable), databases, HTTP, data transforms, and comms (Gmail, Outlook, Slack, Telegram, Discord, and more)
 - 📦 **Single static Go binary** — zero CGO, SQLite embedded, no Docker, no Node.js runtime, no telemetry. All data stays on your machine (crash reports default to local files — see [SECURITY.md](SECURITY.md))
-- 🖥️ **Three ways to drive it** — a visual canvas editor (Wails desktop GUI), a 70+-command CLI with JSON output everywhere, and a built-in MCP server so AI agents can operate it safely
+- 🖥️ **Three ways to drive it** — a visual canvas editor (Wails desktop GUI), a 180+-command CLI with JSON output everywhere, and a built-in MCP server so AI agents can operate it safely
 - 🤝 **Human-in-the-loop as a platform primitive** — pause any workflow for review, edit the payload, then approve or reject; the queue is durable and survives restarts
 - 🌐 **Browser automation where no practical API exists** — drive *your own logged-in Chrome* via the bundled extension bridge, publishing to and reading your own accounts (same model as consumer RPA tools)
 - 📣 **Social platform nodes** (Instagram, LinkedIn, X, TikTok, Hacker News, Product Hunt) are an **opt-in** compile-time build (`-tags social`) for managing your own accounts — see [Usage Policy](docs/USAGE_POLICY.md)
@@ -46,7 +46,7 @@ Think of it as an honest, self-hosted n8n you can carry in a single file — wit
 ## Quick Start
 
 ```bash
-# Build the CLI (Go 1.25+, no CGO)
+# Build the CLI (Go 1.26+, no CGO)
 git clone https://github.com/monoes/mono-agent.git
 cd mono-agent
 go build -o monoagentcli ./cmd/monoagentcli
@@ -54,7 +54,7 @@ go build -o monoagentcli ./cmd/monoagentcli
 # Orientation
 ./monoagentcli version
 ./monoagentcli ref                       # built-in offline docs: commands, nodes, expressions
-./monoagentcli node list                 # all 90 node types
+./monoagentcli node list                 # all 105 node types
 
 # Try the flagship example workflow (prints the new workflow id)
 ./monoagentcli workflow templates list
@@ -67,7 +67,7 @@ go build -o monoagentcli ./cmd/monoagentcli
 ./monoagentcli daemon
 ```
 
-Prefer a one-line install? See [install.sh](install.sh) or [Docker](Dockerfile).
+Prefer a prebuilt binary? `curl -fsSL https://raw.githubusercontent.com/monoes/mono-agent/master/install.sh | bash` installs the latest release (macOS arm64/amd64, Linux amd64/arm64; SHA256-verified), or grab a CLI / desktop build from [releases](https://github.com/monoes/mono-agent/releases/latest). There's also [Docker](Dockerfile).
 
 ### Flagship example — "Morning Briefing"
 
@@ -205,8 +205,8 @@ More ready-to-run workflows (RSS→AI→email, Sheets→Gmail, Stripe→Sheets s
 
 ### 🤖 AI Canvas Chat + Desktop GUI
 - Conversational workflow builder: describe the workflow in chat, AI wires the nodes
-- Built-in assistant (`monoagentcli chat`) with named sessions and **explicit opt-in tools** (`--tools monoagent[,runs]`) — tool access is off by default
-- OpenRouter (200+ models), HuggingFace, Gemini
+- Built-in assistant (`monoagentcli chat`) runs on an AI agent CLI already installed on your machine (claude, codex, kimi, qwen, …) through the monomind engine, with named sessions and **explicit opt-in tools** (`--tools monoagent[,runs]`) — tool access is off by default
+- Workflow AI steps use the same local agents (`agent.ask`); OpenRouter, HuggingFace, and Gemini (your browser session) nodes are also available
 - Wails 2 desktop app: canvas editor, HIL review panel, Vault, People, Image Vault
 - Dark-themed, keyboard-navigable, fully local
 
@@ -262,7 +262,7 @@ monoagentcli hil reject <id>        # drop the item
 
 ## Node Library
 
-> 90 built-in node types (+ triggers) in the default build — 150 with the optional social build (below).
+> 105 built-in node types (+ 4 triggers) in the default build — 165 with the optional social build (below). `monoagentcli node list` prints the exact set your binary has.
 
 <details>
 <summary><strong>⚙️ Core Control (15 nodes)</strong></summary>
@@ -338,9 +338,9 @@ monoagentcli hil reject <id>        # drop the item
 </details>
 
 <details>
-<summary><strong>🖼️ Image Processing (7 nodes)</strong></summary>
+<summary><strong>🖼️ Image Processing & Image Vault (9 nodes)</strong></summary>
 
-`image.info` · `image.resize` · `image.crop` · `image.thumbnail` · `image.convert` · `image.adjust` · `image.remove_background` (U2-Net AI)
+`image.info` · `image.resize` · `image.crop` · `image.thumbnail` · `image.convert` · `image.adjust` · `image.remove_background` (U2-Net AI) · `image.vault_get` · `image.vault_save`
 
 </details>
 
@@ -352,29 +352,40 @@ monoagentcli hil reject <id>        # drop the item
 </details>
 
 <details>
-<summary><strong>🧠 AI, Gemini, System & People (17 nodes)</strong></summary>
+<summary><strong>🧠 AI Agents, Orgs, Gemini, System, People & Vault (16 nodes)</strong></summary>
 
 | Node | Description |
 |------|-------------|
+| `agent.ask` | Ask a locally-installed AI agent (claude, codex, kimi, qwen, …) — the node for AI steps |
+| `org.run` / `org.ask` / `org.send` | Start, question, or message an agent org (via the monomind engine) |
 | `ai.read_page` / `ai.extract_page` | AI-assisted page reading and structured extraction |
-| `agent.ask` | Ask an agent runtime a question mid-workflow |
+| `gemini.generate_text` · `gemini.generate_image` · `gemini.chat_session` · `gemini.chat_session_many` | Gemini via your own logged-in browser session — no API key |
 | `system.execute_command` | Run a local shell command, capture output |
 | `system.rss_read` | Fetch items from RSS / Atom feeds |
 | `people.save` | Upsert a contact into the CRM (profile-scoped) |
 | `people.sync_outlook_message` | Sync an Outlook message into People history |
+| `vault.secret_get` / `vault.secret_save` | Read or write an entry in the encrypted secrets vault |
 
-Also: `ai.agent` · `ai.chat` · `ai.classify` · `ai.embed` · `ai.extract` · `ai.transform` (LLM utilities), and `gemini.chat_session` · `gemini.chat_session_many` · `gemini.generate_image` · `gemini.generate_text` (Gemini via your own logged-in browser session — no API key).
+> **Deprecated:** `ai.chat` · `ai.extract` · `ai.classify` · `ai.transform` · `ai.agent` · `ai.embed` still exist only so old workflows fail with a migration hint — running one errors out. Use `agent.ask` (put the extraction/classification/rewrite instruction in its prompt). `ai.embed` has no replacement.
 
 </details>
 
 <details>
-<summary><strong>⏰ Triggers (3 types)</strong></summary>
+<summary><strong>📋 Applications, Jobs & Documents (8 nodes)</strong></summary>
+
+`applications.create` · `applications.list` · `applications.set_status` · `applications.tag` · `applications.evaluate` · `applications.prepare` · `discovery.search_jobs` · `documents.render` (CV, cover letter, or tender proposal)
+
+</details>
+
+<details>
+<summary><strong>⏰ Triggers (4 types)</strong></summary>
 
 | Trigger | Description |
 |---------|-------------|
 | `trigger.schedule` | Cron expression (6 fields: sec min hour dom month dow) — `0 0 9 * * *` every day at 9am |
-| `trigger.webhook` | HTTP endpoint — fire workflow on POST |
+| `trigger.webhook` | HTTP endpoint (`/webhook/<path>`, GET/POST/PUT/PATCH/DELETE, optional HMAC or header auth) |
 | `trigger.manual` | One-click run from CLI or GUI |
+| `trigger.org` | An agent-org event, or a message to this workflow's automation role |
 
 </details>
 
@@ -495,7 +506,8 @@ monoagentcli people status set <person-id> "text"   # status timeline
 <summary><strong>For AI agents</strong></summary>
 
 ```bash
-monoagentcli mcp                  # MCP server over stdio — tools/list, workflow_run, hil_approve, …
+monoagentcli mcp                  # MCP server over stdio — read-only tools by default
+monoagentcli mcp --allow-mutations   # also expose workflow_run, hil_approve, …
 monoagentcli ref                  # built-in offline docs: commands, nodes, expressions, examples
 monoagentcli ref node core.if     # detailed docs for one node type
 ```
@@ -522,9 +534,9 @@ Full agent documentation: [AGENTS.md](AGENTS.md).
 <summary><strong>Scheduling</strong></summary>
 
 ```bash
-monoagentcli schedule add <action-id> --cron "0 0 9 * * *"
-monoagentcli schedule list
-monoagentcli daemon                # keep all workflow triggers alive; blocks until Ctrl+C
+monoagentcli workflow activate <id>   # enable the workflow's trigger.schedule / trigger.webhook
+monoagentcli daemon                   # keep all workflow triggers alive; blocks until Ctrl+C
+monoagentcli daemon install           # start the daemon automatically at login
 ```
 
 Workflow triggers (`trigger.schedule`, `trigger.webhook`) only fire while a process is serving them — run `monoagentcli daemon` as a persistent background process and activated workflows fire on time, across all profiles.
@@ -558,7 +570,7 @@ No configuration needed. Run any browser node and look for `Chrome extension con
 
 ### Prerequisites
 
-- Go 1.25+ (`brew install go`)
+- Go 1.26+ (`brew install go`) — only when building from source; release binaries need nothing
 - Chrome/Chromium (for browser nodes — optional for everything else)
 - That's it — SQLite is embedded, no external database
 
@@ -573,7 +585,7 @@ go build -o monoagentcli ./cmd/monoagentcli
 go build -tags social -o monoagentcli ./cmd/monoagentcli
 ```
 
-Windows: download `monoagentcli-windows-amd64.exe` from [releases](https://github.com/monoes/mono-agent/releases/latest).
+Prebuilt: `install.sh` (macOS arm64/amd64, Linux amd64/arm64), or download from [releases](https://github.com/monoes/mono-agent/releases/latest) — CLI binaries for macOS, Linux (amd64/arm64), and Windows, plus desktop-app builds for macOS (arm64), Linux (amd64), and Windows.
 
 ### Desktop GUI
 
@@ -648,7 +660,7 @@ mono-agent/
 │   │   ├── trigger_manager.go  # cron / webhook trigger lifecycle
 │   │   ├── webhook_server.go   # loopback webhook HTTP server
 │   │   ├── templates/       # bundled ready-to-use workflows
-│   │   └── schemas/         # 90+ embedded JSON node schemas
+│   │   └── schemas/         # 120+ embedded JSON node schemas
 │   │
 │   ├── nodes/               # Node executors
 │   │   ├── control/         # if, filter, set, code, human_in_loop…
@@ -663,7 +675,7 @@ mono-agent/
 │   ├── connections/         # unified credential storage + OAuth flows
 │   ├── bot/                 # platform browser adapters (build tag: social)
 │   ├── extension/           # Chrome extension bridge server (loopback :9222)
-│   ├── ai/chat/             # AI Canvas Chat — conversational builder
+│   ├── monomind/            # client for the monomind agent engine (chat, agent.ask, orgs)
 │   └── scheduler/ · config/ · storage/
 │
 ├── wails-app/               # Desktop GUI (Wails 2 + React)
@@ -695,7 +707,7 @@ mono-agent/
 
 | Layer | Technology |
 |-------|-----------|
-| **Language** | Go 1.25 (zero CGO) |
+| **Language** | Go 1.26 (zero CGO) |
 | **Database** | [modernc.org/sqlite](https://pkg.go.dev/modernc.org/sqlite) — pure Go, embedded |
 | **CLI** | [spf13/cobra](https://github.com/spf13/cobra) |
 | **Logging** | [rs/zerolog](https://github.com/rs/zerolog) |
@@ -704,7 +716,7 @@ mono-agent/
 | **Browser** | [go-rod/rod](https://github.com/go-rod/rod) — Chrome DevTools Protocol |
 | **Keyring** | [zalando/go-keyring](https://github.com/zalando/go-keyring) — OS secret storage |
 | **Desktop GUI** | [Wails v2](https://wails.io) + React |
-| **AI APIs** | OpenRouter · HuggingFace · Google Gemini |
+| **AI** | Local agent CLIs via [monomind](https://github.com/monoes/monomind) (claude, codex, …) · OpenRouter · HuggingFace · Gemini (browser session) |
 
 ---
 
