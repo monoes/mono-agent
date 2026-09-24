@@ -1,6 +1,16 @@
 # Setup & Health Check — `monoagentcli doctor` + Settings › System health
 
-Status: plan · 2026-09-24 · decisions recorded 2026-09-24 (see §8)
+Status: implemented · 2026-09-24 · decisions recorded 2026-09-24 (see §8)
+
+Delivered as stacked PRs #131 → #133 → #134 → #135 → #136 → #138 → #139 →
+#141 → #143 → #144 → (CI) in mono-agent, and monoes/monomind#332 (`doctor
+--json`, `doctor-json` capability, scan `install`/`login_hint`, update notice
+on stderr). Deviations from the plan below: fix progress uses `--json` (no
+`--json-stream`); the CLI command is `nodejs` (`node` runs workflow nodes);
+scan exposes `login_hint` instead of an `authenticated` probe (monomind's
+protocol deliberately doesn't probe auth); runtime installs, start-at-login,
+MCP registration and monomind `--install` fixes are *optional* fixes that
+`doctor --fix` never applies.
 
 ## Goal
 
