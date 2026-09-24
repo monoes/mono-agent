@@ -2,6 +2,7 @@ package health
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -20,16 +21,32 @@ const (
 	// Parameterized by "<component>" (profile folder) or
 	// "<component>@<project path relative to the profile folder>".
 	FixMonomindDoctor        = "monomind.doctor.fix"     // auto: `monomind doctor -c <component> --fix`
+	FixMonomindDoctorConfirm = "monomind.doctor.confirm" // confirm: the same, asked first
 	FixMonomindDoctorInstall = "monomind.doctor.install" // confirm: `... --install`
 )
+
+// autoComponents are the monomind fixes monoagent applies without asking,
+// and only in the profile folder: they write the profile's own files and
+// can be run again. monomind labels more of its fixes "auto" (appledouble
+// deletes files; monoes-tools runs sudo on macOS), and fixes inside a
+// user's project touch their repository, so those are asked about or left
+// to the person — monomind's own label is not trusted on its own.
+var autoComponents = map[string]bool{"helpers": true, "gitignore": true}
+
+// manualComponents are never run from monoagent (monoes-tools installs
+// with sudo).
+var manualComponents = map[string]bool{"monoes-tools": true}
 
 const monomindDoctorTimeout = 150 * time.Second
 
 func monomindDoctorChecks() []Check {
 	return []Check{
-		{ID: CheckMonomindDoctor, Group: GroupMonomind, Title: "monomind checks",
+		// Network: `monomind doctor` itself writes .monomind/registry.json
+		// and asks npm for the latest version, so it runs only with --deep
+		// (or --check), keeping plain `doctor` free of writes and traffic.
+		{ID: CheckMonomindDoctor, Group: GroupMonomind, Title: "monomind checks", Network: true,
 			DependsOn: []string{CheckMonomindProfileInit}, Timeout: monomindDoctorTimeout, Run: checkMonomindDoctor},
-		{ID: CheckMonomindProjects, Group: GroupMonomind, Title: "monomind projects", OnDemand: true,
+		{ID: CheckMonomindProjects, Group: GroupMonomind, Title: "monomind projects", OnDemand: true, Network: true,
 			DependsOn: []string{CheckMonomindHandshake, CheckProfile}, Timeout: 10 * time.Minute, Run: checkMonomindProjects},
 	}
 }
@@ -42,6 +59,14 @@ func monomindDoctorFixes() []Fix {
 	}
 	return []Fix{
 		{FixInfo: FixInfo{ID: FixMonomindDoctor, Label: "Fix {arg} (monomind)", Safety: SafetyAuto,
+			Command: "monomind doctor -c {arg} --fix"}, ApplyArg: func(ctx context.Context, env *Env, arg string, progress func(string)) error {
+			component, project, _ := strings.Cut(arg, "@")
+			if project != "" || !autoComponents[component] {
+				return fmt.Errorf("%s is not a fix monoagent applies without asking; use %s:%s", arg, FixMonomindDoctorConfirm, arg)
+			}
+			return fixMonomindComponent(ctx, env, arg, false, progress)
+		}},
+		{FixInfo: FixInfo{ID: FixMonomindDoctorConfirm, Label: "Fix {arg} (monomind)", Safety: SafetyConfirm,
 			Command: "monomind doctor -c {arg} --fix"}, ApplyArg: apply(false)},
 		{FixInfo: FixInfo{ID: FixMonomindDoctorInstall, Label: "Install for {arg} (monomind)", Safety: SafetyConfirm,
 			Command: "monomind doctor -c {arg} --install", Optional: true}, ApplyArg: apply(true)},
@@ -69,14 +94,24 @@ func checkMonomindDoctor(ctx context.Context, env *Env) Result {
 			Detail: "needs monomind with capability " + monomind.CapDoctorJSON + ": npm install -g " + MonomindPackage}
 	}
 	root := env.ProfileRoot(env.profileID())
+	// Its checks are about a folder set up for monomind; in one that is
+	// not, every row is "not set up yet" and its automatic fixes would
+	// write monomind's files there although setting it up was declined.
+	if !monomind.IsInitializedAt(root) {
+		return Result{Status: StatusSkip, Summary: "this profile's folder is not set up for monomind yet"}
+	}
 	rep, err := env.MonomindDoctor(ctx, monomind.DoctorOptions{Dir: root})
+	if errors.Is(err, monomind.ErrDoctorFormat) {
+		return Result{Status: StatusInfo, Summary: "monomind reports its checks in a newer format — update monoagent to see them", Detail: err.Error()}
+	}
 	if err != nil {
 		return Result{Status: StatusWarn, Summary: "monomind doctor did not run", Detail: err.Error()}
 	}
 	res := summarizeDoctor(rep)
 	res.Source = "monomind"
+	keys := rowKeys(rep.Results)
 	for i, r := range rep.Results {
-		res.Children = append(res.Children, doctorRow(r, "monomind.doctor."+rowKey(r, i), ""))
+		res.Children = append(res.Children, doctorRow(r, "monomind.doctor."+keys[i], ""))
 	}
 	return res
 }
@@ -109,11 +144,12 @@ func checkMonomindProjects(ctx context.Context, env *Env) Result {
 		res.Children = append(res.Children, summary)
 		worst = worse(worst, summary.Status)
 		// Only the rows that need attention, per project.
+		keys := rowKeys(rep.Results)
 		for i, r := range rep.Results {
 			if r.Status == "pass" || r.Status == "info" {
 				continue
 			}
-			row := doctorRow(r, key+"."+rowKey(r, i), rel)
+			row := doctorRow(r, key+"."+keys[i], rel)
 			row.Title = rel + ": " + row.Title
 			res.Children = append(res.Children, row)
 		}
@@ -160,13 +196,25 @@ func doctorRow(r monomind.DoctorResult, id, project string) Result {
 	if project != "" {
 		arg += "@" + filepath.ToSlash(project)
 	}
-	switch deref(r.FixSafety, "manual") {
-	case "auto":
+	manual := func() Result {
+		row.Detail = strings.TrimSpace(row.Detail + "\nto fix: " + *r.Fix)
+		return row
+	}
+	switch {
+	case r.Component == "" || !validComponent(r.Component) || manualComponents[r.Component]:
+		return manual()
+	case r.Component == "claude" && deref(r.FixSafety, "") == "confirm":
+		// Installing Claude Code is a runtime install: the path that has
+		// no terminal, a deadline and the real command in its confirmation.
+		row.FixID = FixRuntimeInstall + ":claude"
+	case deref(r.FixSafety, "manual") == "auto" && project == "" && autoComponents[r.Component]:
 		row.FixID = FixMonomindDoctor + ":" + arg
-	case "confirm":
+	case deref(r.FixSafety, "manual") == "auto":
+		row.FixID = FixMonomindDoctorConfirm + ":" + arg
+	case deref(r.FixSafety, "manual") == "confirm":
 		row.FixID = FixMonomindDoctorInstall + ":" + arg
 	default:
-		row.Detail = strings.TrimSpace(row.Detail + "\nto fix: " + *r.Fix)
+		return manual()
 	}
 	return row
 }
@@ -181,11 +229,40 @@ func splitMessage(msg string) (summary, detail string) {
 	return first, strings.TrimSpace(rest)
 }
 
-func rowKey(r monomind.DoctorResult, i int) string {
-	if r.Component == "" {
-		return fmt.Sprintf("%d", i)
+// rowKeys gives each result a stable, unique key: its component, with the
+// index added when one component reports several results (monomind's
+// protocol allows it) or none.
+func rowKeys(results []monomind.DoctorResult) []string {
+	count := map[string]int{}
+	for _, r := range results {
+		count[r.Component]++
 	}
-	return r.Component
+	keys := make([]string, len(results))
+	for i, r := range results {
+		switch {
+		case r.Component == "":
+			keys[i] = fmt.Sprintf("%d", i)
+		case count[r.Component] > 1:
+			keys[i] = fmt.Sprintf("%s.%d", r.Component, i)
+		default:
+			keys[i] = r.Component
+		}
+	}
+	return keys
+}
+
+// validComponent is a monomind component name as it may appear in a fix
+// id and on monomind's command line.
+func validComponent(c string) bool {
+	if c == "" || len(c) > 64 {
+		return false
+	}
+	for _, r := range c {
+		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 func worse(a, b Status) Status {
@@ -203,6 +280,10 @@ func fixMonomindComponent(ctx context.Context, env *Env, arg string, install boo
 		return fmt.Errorf("monomind doctor is not available here")
 	}
 	component, project, _ := strings.Cut(arg, "@")
+	// Without a component `monomind doctor --fix` applies every fix it has.
+	if !validComponent(component) || manualComponents[component] {
+		return fmt.Errorf("%q is not a monomind fix monoagent runs", component)
+	}
 	root := env.ProfileRoot(env.profileID())
 	dir := root
 	if project != "" {
@@ -211,6 +292,16 @@ func fixMonomindComponent(ctx context.Context, env *Env, arg string, install boo
 			return fmt.Errorf("project %q is not inside the profile folder", project)
 		}
 		dir = filepath.Join(root, rel)
+		// The text check above is not enough: a symlink inside the folder
+		// can point anywhere.
+		realRoot, err1 := filepath.EvalSymlinks(root)
+		realDir, err2 := filepath.EvalSymlinks(dir)
+		if err1 != nil || err2 != nil {
+			return fmt.Errorf("project %q is not inside the profile folder", project)
+		}
+		if r, err := filepath.Rel(realRoot, realDir); err != nil || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) || filepath.IsAbs(r) {
+			return fmt.Errorf("project %q is not inside the profile folder", project)
+		}
 		if !monomind.IsInitializedAt(dir) {
 			return fmt.Errorf("%s is not a monomind project", dir)
 		}
