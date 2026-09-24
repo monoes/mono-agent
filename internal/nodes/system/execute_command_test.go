@@ -2,6 +2,10 @@ package system
 
 import (
 	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -116,4 +120,45 @@ func TestExecuteCommand_NonZeroExitRoutesToErrorHandle(t *testing.T) {
 	if j := mainJSON(t, out); j["exit_code"] == 0 {
 		t.Errorf("exit_code = %v, want non-zero", j["exit_code"])
 	}
+}
+
+// A workflow's commands see the user's PATH, not the one monoagent put its
+// managed Node in front of (nodemgr.Activate saves it in MONOAGENT_USER_PATH).
+func TestExecuteCommandUsesTheUsersPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh")
+	}
+	userDir, managedDir := t.TempDir(), t.TempDir()
+	for dir, who := range map[string]string{userDir: "user", managedDir: "managed"} {
+		if err := os.WriteFile(filepath.Join(dir, "whoami-node"), []byte("#!/bin/sh\necho "+who+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	shDir := filepath.Dir(mustLookPath(t, "sh"))
+	t.Setenv("PATH", managedDir+string(os.PathListSeparator)+userDir+string(os.PathListSeparator)+shDir)
+	t.Setenv("MONOAGENT_USER_PATH", userDir+string(os.PathListSeparator)+shDir)
+
+	out := runExecuteCommand(t, map[string]interface{}{"command": "whoami-node"})
+	if strings.TrimSpace(out) != "user" {
+		t.Fatalf("ran %q, want the user's whoami-node", out)
+	}
+	out = runExecuteCommand(t, map[string]interface{}{"command": "sh", "args": []interface{}{"-c", "whoami-node"}})
+	if strings.TrimSpace(out) != "user" {
+		t.Fatalf("child PATH: ran %q, want the user's whoami-node", out)
+	}
+}
+
+func mustLookPath(t *testing.T, name string) string {
+	t.Helper()
+	p, err := exec.LookPath(name)
+	if err != nil {
+		t.Skipf("%s not found", name)
+	}
+	return p
+}
+
+func runExecuteCommand(t *testing.T, config map[string]interface{}) string {
+	t.Helper()
+	out, _ := mainJSON(t, runCmd(t, config))["stdout"].(string)
+	return out
 }

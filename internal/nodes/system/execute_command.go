@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"time"
 
+	"github.com/monoes/mono-agent/internal/nodemgr"
 	"github.com/monoes/mono-agent/internal/workflow"
 )
 
@@ -80,7 +81,16 @@ func (n *ExecuteCommandNode) Execute(ctx context.Context, input workflow.NodeInp
 	runCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSecs)*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(runCtx, command, args...)
+	// The user's own PATH, not monoagent's: when monoagent put its managed
+	// Node first (nodemgr.Activate), a workflow's `node`/`npm` must still be
+	// the user's (docs: `monoagentcli nodejs --help`). A bare name is looked
+	// up there too, since exec resolves it against this process's PATH.
+	bin := command
+	if p, err := nodemgr.LookPathUser(command); err == nil {
+		bin = p
+	}
+	cmd := exec.CommandContext(runCtx, bin, args...)
+	cmd.Env = nodemgr.UserEnv(os.Environ())
 
 	if workingDir != "" {
 		cmd.Dir = workingDir
@@ -88,7 +98,6 @@ func (n *ExecuteCommandNode) Execute(ctx context.Context, input workflow.NodeInp
 
 	// Extra environment variables
 	if envMap, ok := config["env"].(map[string]interface{}); ok {
-		cmd.Env = os.Environ()
 		for k, v := range envMap {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%v", k, v))
 		}
