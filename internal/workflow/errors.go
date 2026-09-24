@@ -29,6 +29,11 @@ var (
 	ErrNodeTypeUnknown    = errors.New("workflow: unknown node type")
 	ErrNoTriggerNode      = errors.New("workflow: workflow has no trigger node")
 	ErrWorkflowInactive   = errors.New("workflow: workflow is not active")
+	// ErrRetryOrgStarted: a run an org role started through a grant or an
+	// automation-role message cannot be retried here, since a retry would
+	// skip the admission it went through (ledger row, grant caps, grant
+	// still in force). Re-issue it from the org side instead.
+	ErrRetryOrgStarted    = errors.New("workflow: a run started from an org cannot be retried; call the automation again from the org")
 	ErrExecutionCancelled = errors.New("workflow: execution was cancelled")
 	ErrExecutionTimeout   = errors.New("workflow: execution timed out")
 	ErrTriggerActive      = errors.New("workflow: trigger already active for this workflow")
