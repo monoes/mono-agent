@@ -186,12 +186,18 @@ func (l *Ledger) Admit(ctx context.Context, c Call, lim Limits) (Admission, erro
 	hop := tr.Hop
 	if c.Direction == DirWebhookIn {
 		// A webhook_in header was signed by the run that sent the request
-		// (internal/tracesig), so its hop is that run's true depth and is
-		// trusted as is: the requests one run sends (a fan-out over its
-		// items) all carry the same hop and are siblings at hop+1, while a
-		// loop's return comes from a run one hop deeper each round. Taking
-		// the chain's recorded maximum here refused a plain fan-out to a
-		// local webhook after a handful of items.
+		// (internal/tracesig), so its hop is the hop that run was started
+		// at, and is trusted as is: the requests one run sends (a fan-out
+		// over its items) all carry the same hop and are siblings at hop+1.
+		// Taking the chain's recorded maximum here refused a plain fan-out
+		// to a local webhook after a handful of items. A loop climbs when
+		// every other leg is admitted through this ledger, since those take
+		// the recorded maximum. Not when the sender is a trigger.org run:
+		// that run's hop is the role's, read from the bus event and never
+		// admitted here, so a loop that returns to the role by a path the
+		// ledger does not record stays at one hop (as on master, where it
+		// started a fresh chain every round). Recording trigger.org runs
+		// through Admit would close that.
 		hop++
 	} else {
 		var recorded sql.NullInt64

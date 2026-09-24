@@ -106,7 +106,7 @@ func keyAt(path string) ([]byte, error) {
 		return nil, fmt.Errorf("tracesig: key: %w", err)
 	}
 	if len(k) < 32 {
-		return nil, fmt.Errorf("tracesig: key %s is too short (%d bytes)", path, len(k))
+		return nil, fmt.Errorf("tracesig: key %s is too short (%d bytes); if no process is creating it right now, delete it and a new one is made", path, len(k))
 	}
 	keyCache[path] = k
 	return k, nil
