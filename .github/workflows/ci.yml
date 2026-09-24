@@ -68,6 +68,24 @@ jobs:
             diff "$f" "$proj/.monomind/orgs/$(basename "$f")"
           done
 
+  # Setup & health check (docs/plans/2026-09-24-setup-and-health-check.md):
+  # runs the real `monoagentcli doctor` in a throwaway HOME and asserts its
+  # JSON contract — schema v1, a required failure exits 1, `--fix` repairs
+  # it over several passes, `doctor fix` streams NDJSON — so a change that
+  # breaks what the GUI's System health section parses fails CI.
+  doctor-smoke:
+    name: Doctor smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Build monoagentcli
+        run: go build -o "$RUNNER_TEMP/monoagentcli" ./cmd/monoagentcli
+      - name: Run doctor smoke test
+        run: scripts/doctor-smoke.sh "$RUNNER_TEMP/monoagentcli"
+
   # Closes issue #20's OpenAPI acceptance criterion ("OpenAPI 3 spec shipped
   # and validated in CI"): validates internal/httpapi/openapi.yaml against
   # the real OpenAPI 3.0 meta-schema (not just YAML syntax) so a hand-edited
