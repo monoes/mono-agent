@@ -126,7 +126,7 @@ func (r *Registry) Run(ctx context.Context, env *Env, opts Options) *Report {
 		for i, c := range level {
 			done[c.ID] = true
 			if blocked := blockedBy(c, results); blocked != "" {
-				levelRes[i] = r.finish(c, Result{Status: StatusSkip, Summary: "skipped: " + blocked + " is not ok"}, 0)
+				levelRes[i] = r.finish(c, Result{Status: StatusSkip, Summary: "waiting on " + blocked}, 0)
 				continue
 			}
 			wg.Add(1)
@@ -150,9 +150,27 @@ func (r *Registry) Run(ctx context.Context, env *Env, opts Options) *Report {
 		Summary:          map[Status]int{},
 	}
 	for _, c := range r.checks { // registration order
-		if res, ok := results[c.ID]; ok {
-			rep.Results = append(rep.Results, res)
-			rep.Summary[res.Status]++
+		res, ok := results[c.ID]
+		if !ok {
+			continue
+		}
+		children := res.Children
+		res.Children = nil
+		rep.Results = append(rep.Results, res)
+		rep.Summary[res.Status]++
+		for _, ch := range children {
+			ch.Group = c.Group
+			if ch.Source == "" {
+				ch.Source = res.Source
+			}
+			if ch.FixID != "" && ch.Status != StatusOK && ch.Status != StatusSkip {
+				if f, ok := r.fixes[ch.FixID]; ok {
+					info := f.FixInfo
+					ch.Fix = &info
+				}
+			}
+			rep.Results = append(rep.Results, ch)
+			rep.Summary[ch.Status]++
 		}
 	}
 	return rep
@@ -163,6 +181,9 @@ func blockedBy(c Check, results map[string]Result) string {
 	sort.Strings(deps)
 	for _, d := range deps {
 		if res, ok := results[d]; ok && (res.Status == StatusFail || res.Status == StatusSkip) {
+			if res.Title != "" {
+				return res.Title
+			}
 			return d
 		}
 	}

@@ -8,17 +8,11 @@ import (
 	"io"
 	"log"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/monoes/mono-agent/internal/health"
-	"github.com/monoes/mono-agent/internal/nodemgr"
-	"github.com/monoes/mono-agent/internal/profiledir"
-	"github.com/monoes/mono-agent/internal/secrets"
-	"github.com/monoes/mono-agent/internal/shellpath"
-	"github.com/monoes/mono-agent/internal/storage"
 )
 
 // maxFixPasses bounds `doctor --fix`'s fix → re-check loop.
@@ -243,86 +237,6 @@ func applyFix(ctx context.Context, cfg *globalConfig, f health.Fix, progress fun
 	return f.Apply(ctx, env, progress)
 }
 
-// newHealthEnv builds the real-machine environment for checks and fixes.
-// The database is opened only if it already exists and is never migrated
-// here — checks must not change anything; the migrate fix does that.
-func newHealthEnv(cfg *globalConfig) (*health.Env, func()) {
-	home, _ := os.UserHomeDir()
-	exe, _ := os.Executable()
-	dbPath := expandPath(cfg.DBPath)
-	env := &health.Env{
-		Home:       home,
-		DataDir:    filepath.Join(home, ".monoagent"),
-		DBPath:     dbPath,
-		Version:    getVersion(),
-		Executable: exe,
-		ProfileID:  cfg.ProfileID,
-		LoginPath:  shellpath.LoginPath,
-		FreeBytes:  health.FreeBytes,
-		LatestVersion: func(ctx context.Context) (string, error) {
-			rel, err := fetchLatestRelease(ctx)
-			if err != nil {
-				return "", err
-			}
-			return rel.TagName, nil
-		},
-		Migrate: func(_ context.Context, progress func(string)) error {
-			// The migration runner reports through the standard logger;
-			// route it into the fix's progress stream for the duration.
-			restore := captureStdLog(progress)
-			defer restore()
-			db, err := initDB(&globalConfig{DBPath: cfg.DBPath, ProfileID: cfg.ProfileID})
-			if err != nil {
-				return err
-			}
-			return db.Close()
-		},
-	}
-	nm := nodemgr.New()
-	env.SystemNode = nm.SystemNode
-	env.ManagedNode = func() (string, string, bool) {
-		v, ok := nm.Current()
-		if !ok {
-			return "", "", false
-		}
-		return v, nm.NodePath(v), true
-	}
-	env.InstallNode = func(ctx context.Context, progress func(string)) error {
-		_, err := nm.Install(ctx, "lts", progress)
-		return err
-	}
-	env.ProfileRoot = func(id string) string { return profiledir.Root(env.DB, id) }
-	env.EnsureProfile = func(id string) error { return profiledir.EnsureLayout(env.DB, id) }
-
-	closeFn := func() {}
-	if _, err := os.Stat(dbPath); err == nil {
-		db, err := storage.NewDatabase(dbPath)
-		if err != nil {
-			env.DBErr = err
-		} else {
-			env.DB = db.DB
-			env.PendingMigrations = db.PendingMigrations
-			env.QuickCheck = db.QuickCheck
-			env.VaultState = func(ctx context.Context, id string) (string, error) {
-				st, err := secrets.CheckVault(ctx, db.DB, id)
-				return string(st), err
-			}
-			closeFn = func() { db.Close() }
-			if env.ProfileID == "" {
-				var id string
-				_ = db.DB.QueryRow(`SELECT value FROM settings WHERE key = ?`, profiledir.ActiveProfileSetting).Scan(&id)
-				env.ProfileID = id
-			}
-		}
-	} else if !os.IsNotExist(err) {
-		env.DBErr = err
-	}
-	if env.ProfileID == "" {
-		env.ProfileID = "default"
-	}
-	return env, closeFn
-}
-
 var statusMark = map[health.Status]string{
 	health.StatusOK: "✓", health.StatusWarn: "⚠", health.StatusFail: "✗",
 	health.StatusSkip: "–", health.StatusInfo: "ℹ",
@@ -342,7 +256,7 @@ func printDoctorReport(w io.Writer, rep *health.Report, fixed bool) {
 			req = " (required)"
 		}
 		fmt.Fprintf(w, "  %s %-18s %s%s\n", statusMark[r.Status], r.Title, r.Summary, req)
-		if r.Detail != "" && (r.Status == health.StatusFail || r.Status == health.StatusWarn) {
+		if r.Detail != "" && r.Status != health.StatusOK && r.Status != health.StatusSkip {
 			for _, line := range strings.Split(r.Detail, "\n") {
 				fmt.Fprintf(w, "      %s\n", line)
 			}

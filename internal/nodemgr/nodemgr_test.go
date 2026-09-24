@@ -228,3 +228,43 @@ func TestActivatePrefersSuitableSystemNode(t *testing.T) {
 		t.Fatalf("suitable system node: PATH = %v", parts)
 	}
 }
+
+func TestPlanGlobalInstall(t *testing.T) {
+	m := testManager(t)
+	ctx := context.Background()
+
+	// No node at all.
+	t.Setenv("PATH", t.TempDir())
+	if _, err := m.PlanGlobalInstall(ctx); err == nil {
+		t.Fatal("want an error without any Node")
+	}
+
+	// Suitable system node whose global prefix is writable: use it as-is.
+	sys := t.TempDir()
+	prefix := t.TempDir()
+	os.WriteFile(filepath.Join(sys, "node"), []byte("#!/bin/sh\necho v24.5.0\n"), 0o755)
+	os.WriteFile(filepath.Join(sys, "npm"), []byte("#!/bin/sh\necho "+prefix+"\n"), 0o755)
+	t.Setenv("PATH", sys)
+	plan, err := m.PlanGlobalInstall(ctx)
+	if err != nil || plan.Prefix != prefix || plan.Managed {
+		t.Fatalf("writable system prefix: %+v, %v", plan, err)
+	}
+
+	// Unwritable prefix: fall back to the private one, never sudo.
+	os.WriteFile(filepath.Join(sys, "npm"), []byte("#!/bin/sh\necho /proc/nope\n"), 0o755)
+	plan, err = m.PlanGlobalInstall(ctx)
+	if err != nil || plan.Prefix != m.NpmRoot || !strings.Contains(strings.Join(plan.Env, "\n"), "NPM_CONFIG_PREFIX="+m.NpmRoot) {
+		t.Fatalf("unwritable system prefix: %+v, %v", plan, err)
+	}
+
+	// Only a managed node: its npm with the private prefix.
+	m.BaseURL = fakeDist(t, m, map[string][]byte{"24.1.0": nodeArchive(t, m, "24.1.0")}, false).URL
+	if _, err := m.Install(ctx, "24.1.0", nil); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", t.TempDir())
+	plan, err = m.PlanGlobalInstall(ctx)
+	if err != nil || !plan.Managed || plan.Npm != m.NpmPath("24.1.0") {
+		t.Fatalf("managed only: %+v, %v", plan, err)
+	}
+}

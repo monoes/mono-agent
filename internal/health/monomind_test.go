@@ -2,7 +2,13 @@ package health
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/monoes/mono-agent/internal/monomind"
 )
 
 func nodeEnv(sysVer string, managed string) *Env {
@@ -50,5 +56,92 @@ func TestNodeFixCallsInstaller(t *testing.T) {
 	env := &Env{InstallNode: func(context.Context, func(string)) error { called = true; return nil }}
 	if err := fixNodeInstall(context.Background(), env, noop); err != nil || !called {
 		t.Fatalf("fix: %v, called %v", err, called)
+	}
+}
+
+func strp(s string) *string { return &s }
+
+func TestMonomindBinaryCheck(t *testing.T) {
+	env := &Env{FindMonomind: func() (string, error) { return "", &monomind.ErrNotFound{Tried: []string{"/x"}} }}
+	if res := checkMonomindBinary(context.Background(), env); res.Status != StatusFail || res.FixID != FixMonomindInstall {
+		t.Errorf("missing: %+v", res)
+	}
+	env.FindMonomind = func() (string, error) { return "/usr/bin/monomind", nil }
+	if res := checkMonomindBinary(context.Background(), env); res.Status != StatusOK {
+		t.Errorf("found: %+v", res)
+	}
+}
+
+func TestMonomindHandshakeAndCapabilities(t *testing.T) {
+	ctx := context.Background()
+	env := &Env{MonomindHandshake: func(context.Context) (*monomind.VersionInfo, error) {
+		return nil, errors.New("monomind 1.0.0 is too old")
+	}}
+	if res := checkMonomindHandshake(ctx, env); res.Status != StatusFail || res.FixID != FixMonomindInstall {
+		t.Errorf("old: %+v", res)
+	}
+
+	vi := &monomind.VersionInfo{V: 1, Version: "2.16.0", Capabilities: []string{monomind.CapOrgToolProviders}}
+	env.MonomindHandshake = func(context.Context) (*monomind.VersionInfo, error) { return vi, nil }
+	if res := checkMonomindHandshake(ctx, env); res.Status != StatusOK {
+		t.Errorf("good: %+v", res)
+	}
+	res := checkMonomindCapabilities(ctx, env)
+	if res.Status != StatusWarn || res.FixID != FixMonomindInstall || !strings.Contains(res.Detail, monomind.CapOrgFederation) {
+		t.Errorf("missing caps: %+v", res)
+	}
+	for _, oc := range optionalCapabilities {
+		vi.Capabilities = append(vi.Capabilities, oc.cap)
+	}
+	if res := checkMonomindCapabilities(ctx, env); res.Status != StatusOK {
+		t.Errorf("all caps: %+v", res)
+	}
+}
+
+func TestMonomindProfileInitCheckAndFix(t *testing.T) {
+	root := t.TempDir()
+	var initRoot string
+	env := &Env{
+		ProfileRoot: func(string) string { return root },
+		InitMonomindProfile: func(_ context.Context, r string, _ func(string)) error {
+			initRoot = r
+			os.MkdirAll(filepath.Join(r, ".monomind"), 0o700)
+			return os.WriteFile(filepath.Join(r, ".monomind", "config.yaml"), []byte("x"), 0o600)
+		},
+	}
+	if res := checkMonomindProfileInit(context.Background(), env); res.Status != StatusWarn || res.FixID != FixMonomindProfileInit {
+		t.Fatalf("uninitialized: %+v", res)
+	}
+	if err := fixMonomindProfileInit(context.Background(), env, noop); err != nil || initRoot != root {
+		t.Fatalf("fix: %v (root %q)", err, initRoot)
+	}
+	if res := checkMonomindProfileInit(context.Background(), env); res.Status != StatusOK {
+		t.Fatalf("initialized: %+v", res)
+	}
+}
+
+func TestRuntimesCheckReportsChildren(t *testing.T) {
+	scan := &monomind.ScanResult{V: 1, Agents: []monomind.ScanEntry{
+		{ID: "claude", Installed: true, Binary: strp("/bin/claude"), Version: strp("2.1.0")},
+		{ID: "codex", Installed: false, InstallHint: "npm install -g @openai/codex"},
+	}}
+	reg := NewRegistry([]Check{{ID: CheckRuntimes, Group: GroupRuntimes, Title: "AI agent runtimes", Run: checkRuntimes}}, nil)
+	env := &Env{ScanRuntimes: func(context.Context) (*monomind.ScanResult, error) { return scan, nil }}
+	rep := reg.Run(context.Background(), env, Options{})
+	if len(rep.Results) != 3 {
+		t.Fatalf("want parent + 2 children, got %+v", rep.Results)
+	}
+	got := byID(rep)
+	if got[CheckRuntimes].Status != StatusOK || got["runtimes.claude"].Status != StatusOK ||
+		got["runtimes.codex"].Status != StatusInfo || got["runtimes.codex"].Group != GroupRuntimes {
+		t.Fatalf("results: %+v", rep.Results)
+	}
+	if rep.Summary[StatusOK] != 2 || rep.Summary[StatusInfo] != 1 {
+		t.Errorf("summary counts children: %v", rep.Summary)
+	}
+
+	scan.Agents = scan.Agents[1:]
+	if res := checkRuntimes(context.Background(), env); res.Status != StatusFail {
+		t.Errorf("none installed: %+v", res)
 	}
 }
