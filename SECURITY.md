@@ -282,6 +282,17 @@ layers, from strongest:
    the target, which a caller cannot forge. `run_config`'s `max_hops` and
    `max_repeats` are read from the org file, so they are clamped to hard
    ceilings — raising them there cannot switch loop control off.
+   A chain survives a trip out over HTTP and back through a webhook: the
+   HTTP request node sends the run's chain as `X-Monoagent-Trace`, signed
+   with a per-machine key (`~/.monoagent/trace.key`, 0600,
+   `internal/tracesig`), and the webhook server continues the chain only
+   when that signature verifies, recording the crossing (`webhook_in`) and
+   refusing the request (429) past the hop limit. The signature covers
+   chain and hop, so a replayed token cannot lower the hop. A webhook
+   body can never set the chain: the server drops the reserved
+   `monoagent_trace` field and gives a run without a verified header a
+   fresh chain. The token names only a chain and hop; it is sent on every
+   outbound request of a run on a chain.
 6. **Workdir confinement of automation file paths (C-46).** Automations run
    in the daemon, outside monomind's per-role workdir confinement. So the
    grant handler puts the calling role's workdir (computed from the

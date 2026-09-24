@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/monoes/mono-agent/internal/secrets"
+	"github.com/monoes/mono-agent/internal/tracesig"
 	"github.com/monoes/mono-agent/internal/vault"
 	"github.com/monoes/mono-agent/internal/workflow"
 )
@@ -399,6 +400,13 @@ func (n *RequestNode) executeRequest(
 		}
 	}
 
+	// A run on a chain passes it on, signed, so that if this request comes
+	// back into mono-agent through a webhook (directly, or via a system
+	// that returns the header) the run it starts stays on the chain and the
+	// hop limit still applies (U10). Set after the custom headers so a
+	// workflow cannot replace it. The token names only the chain and hop.
+	setTraceHeader(ctx, req)
+
 	// Auth
 	switch authType {
 	case "basic":
@@ -483,4 +491,26 @@ func (n *RequestNode) executeRequest(
 	}
 
 	return resultItem, nil
+}
+
+// setTraceHeader adds the run's chain as a signed X-Monoagent-Trace header
+// (internal/tracesig), when the run is on one. Without a key the request
+// goes out without it: the chain simply does not continue.
+func setTraceHeader(ctx context.Context, req *http.Request) {
+	chain, hop, ok := workflow.RunTrace(ctx)
+	if !ok {
+		req.Header.Del(tracesig.Header)
+		return
+	}
+	key, err := tracesig.Key()
+	if err != nil {
+		req.Header.Del(tracesig.Header)
+		return
+	}
+	tok, err := tracesig.Sign(key, chain, hop)
+	if err != nil {
+		req.Header.Del(tracesig.Header)
+		return
+	}
+	req.Header.Set(tracesig.Header, tok)
 }

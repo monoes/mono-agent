@@ -16,6 +16,7 @@ const (
 	DirWorkflowOut   = "workflow_out"   // a workflow node messaged or started an org
 	DirEndpointReply = "endpoint_reply" // an automation role replied to its sender
 	DirOrgStart      = "org_start"      // a holding org started a child
+	DirWebhookIn     = "webhook_in"     // a signed trace came back in through a webhook
 )
 
 // Call statuses.

@@ -1069,12 +1069,19 @@ func (e *WorkflowEngine) RetryExecution(ctx context.Context, executionID string)
 		return "", fmt.Errorf("engine: retry execution: %w", err)
 	}
 
+	// A webhook run's trace was admitted through the ledger when the
+	// request came in (see WebhookServer.SetTraceAdmitter). A retry is not,
+	// so it starts a fresh chain rather than continue that one uncounted.
+	data := orig.TriggerData
+	if orig.TriggerType == TriggerNodeTypeWebhook {
+		data = withoutTrace(data, WebhookTraceKey)
+	}
 	exec := &WorkflowExecution{
 		WorkflowID:  orig.WorkflowID,
 		ProfileID:   executionProfileID(wf, e.profileID),
 		Status:      "QUEUED",
 		TriggerType: orig.TriggerType,
-		TriggerData: orig.TriggerData,
+		TriggerData: data,
 	}
 
 	if err := e.store.CreateExecution(ctx, exec); err != nil {
@@ -1085,7 +1092,7 @@ func (e *WorkflowEngine) RetryExecution(ctx context.Context, executionID string)
 		WorkflowID:  orig.WorkflowID,
 		ExecutionID: exec.ID,
 		TriggerType: orig.TriggerType,
-		TriggerData: orig.TriggerData,
+		TriggerData: data,
 	}
 
 	if err := e.queue.Enqueue(req); err != nil {
@@ -1167,4 +1174,11 @@ func (e *WorkflowEngine) runExecution(ctx context.Context, exec *WorkflowExecuti
 	}
 	ctx = vault.ContextWithProfileID(ctx, profileID)
 	return RunExecution(ctx, exec, wf, dag, e.registry, e.store, e.connStore, e.expr, e.logger)
+}
+
+// SetTraceAdmitter lets webhook runs continue a chain from a signed
+// X-Monoagent-Trace header, recording each such crossing through fn (see
+// WebhookServer.SetTraceAdmitter). The daemon wires it to the org ledger.
+func (e *WorkflowEngine) SetTraceAdmitter(fn TraceAdmitter) {
+	e.webhookServer.SetTraceAdmitter(fn)
 }

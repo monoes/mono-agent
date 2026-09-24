@@ -312,8 +312,12 @@ monoagentcli org automation-role add growth --alias publish_post --reports-to le
   minute (20). Granted calls on one chain count one hop per 8, whichever
   roles make them (a busy role is not a loop). Only runs the org side
   started (a granted call, an automation-role message, `trigger.org`)
-  continue a chain; a webhook, manual or scheduled run starts a fresh one
-  whatever `trace` its data holds. Refusals are recorded in `org_bridge_calls`.
+  continue a chain; a manual or scheduled run starts a fresh one whatever
+  `trace` its data holds. A webhook run continues a chain only from a
+  signed `X-Monoagent-Trace` header, which the HTTP request node sends for
+  a run on a chain (`internal/tracesig`), so a loop through a webhook is
+  counted and refused (429) at the hop limit. Refusals are recorded in
+  `org_bridge_calls`.
 
 **Autonomy** decides who resolves an org's approvals, questions, gates,
 and HIL items inside runs the org started:
