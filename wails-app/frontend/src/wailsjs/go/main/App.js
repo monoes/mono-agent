@@ -58,6 +58,10 @@ export function ApproveOrgAction(arg1, arg2, arg3) {
   return window['go']['main']['App']['ApproveOrgAction'](arg1, arg2, arg3);
 }
 
+export function ApprovePendingPerson(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ApprovePendingPerson'](arg1, arg2, arg3);
+}
+
 export function CancelWorkflow(arg1) {
   return window['go']['main']['App']['CancelWorkflow'](arg1);
 }
@@ -320,6 +324,10 @@ export function GetOrgReport(arg1, arg2, arg3) {
 
 export function GetOrgStatus(arg1) {
   return window['go']['main']['App']['GetOrgStatus'](arg1);
+}
+
+export function GetPendingPeopleApprovals() {
+  return window['go']['main']['App']['GetPendingPeopleApprovals']();
 }
 
 export function GetPeople(arg1, arg2, arg3, arg4) {
@@ -608,6 +616,10 @@ export function RejectDraftPersonMessage(arg1) {
 
 export function RejectHIL(arg1) {
   return window['go']['main']['App']['RejectHIL'](arg1);
+}
+
+export function RejectPendingPerson(arg1) {
+  return window['go']['main']['App']['RejectPendingPerson'](arg1);
 }
 
 export function ReloadOrg(arg1) {

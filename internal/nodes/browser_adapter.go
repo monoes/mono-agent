@@ -137,7 +137,20 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 	var selectedListItems []interface{}
 	if targetsRaw, ok := config["targets"]; ok {
 		if targets, ok := targetsRaw.([]interface{}); ok {
-			selectedListItems = targets
+			for _, t := range targets {
+				switch v := t.(type) {
+				case string:
+					selectedListItems = append(selectedListItems, map[string]interface{}{
+						"url":      v,
+						"href":     v,
+						"username": v,
+					})
+				case map[string]interface{}:
+					selectedListItems = append(selectedListItems, v)
+				default:
+					selectedListItems = append(selectedListItems, t)
+				}
+			}
 		}
 	}
 
@@ -152,6 +165,13 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 	for k, v := range config {
 		if _, skip := reserved[k]; !skip {
 			params[k] = v
+		}
+	}
+	// If maxResultsCount is not explicitly set but limit is provided, alias it
+	// so social actions requiring maxResultsCount receive the limit field from node config.
+	if _, ok := params["maxResultsCount"]; !ok {
+		if lim, ok := params["limit"]; ok {
+			params["maxResultsCount"] = lim
 		}
 	}
 	// Seed session username so {{username}} resolves in actions that reference it.
@@ -281,6 +301,12 @@ func mergeStepResults(inputJSON map[string]interface{}, extracted []map[string]i
 			if stepBookkeepingKeys[k] {
 				continue
 			}
+			// Don't overwrite an existing social profile platform with "gemini"
+			if k == "platform" && strings.ToLower(platform) == "gemini" {
+				if existingP, ok := inputJSON["platform"].(string); ok && existingP != "" {
+					continue
+				}
+			}
 			merged[k] = v
 		}
 	}
@@ -341,9 +367,70 @@ func NormalizeBrowserItem(raw map[string]interface{}, platform string) map[strin
 	// (e.g. "View X's profile", "• 2nd", "2nd degree connection").
 	// Scan past those to find the real professional headline.
 	if text, ok := raw["text"].(string); ok && text != "" {
-		lines := strings.Split(strings.TrimSpace(text), "\n")
+		trimmedText := strings.TrimSpace(text)
+
+		// Check if text is a single-line or bullet-separated LinkedIn card
+		if strings.Contains(trimmedText, "•") {
+			parts := strings.SplitN(trimmedText, "•", 2)
+			rawName := strings.TrimSpace(parts[0])
+			// Deduplicate repeated name words (e.g. "Ravinder Singh Ravinder Singh")
+			words := strings.Fields(rawName)
+			if len(words) >= 2 && len(words)%2 == 0 {
+				half := len(words) / 2
+				if strings.EqualFold(strings.Join(words[:half], " "), strings.Join(words[half:], " ")) {
+					rawName = strings.Join(words[:half], " ")
+				}
+			}
+			if _, exists := out["full_name"]; !exists && rawName != "" {
+				out["full_name"] = rawName
+			}
+			if _, exists := out["name"]; !exists && rawName != "" {
+				out["name"] = rawName
+			}
+
+			if len(parts) > 1 {
+				afterBullet := strings.TrimSpace(parts[1])
+				// Strip leading degree indicators e.g. "1st", "2nd", "3rd"
+				for _, deg := range []string{"1st", "2nd", "3rd"} {
+					if strings.HasPrefix(afterBullet, deg) {
+						afterBullet = strings.TrimSpace(strings.TrimPrefix(afterBullet, deg))
+						break
+					}
+				}
+
+				// Find boundaries for headline (Connect, Follow, Message, Current:, Past:)
+				headline := afterBullet
+				cutKeywords := []string{"Connect", "Follow", "Message", "Current:", "Past:"}
+				for _, kw := range cutKeywords {
+					if idx := strings.Index(headline, kw); idx != -1 {
+						headline = strings.TrimSpace(headline[:idx])
+					}
+				}
+				// Also check if headline ends with a location like "Berlin..."
+				lowerH := strings.ToLower(headline)
+				if idx := strings.Index(lowerH, "berlin"); idx != -1 {
+					headline = strings.TrimSpace(headline[:idx])
+				}
+				headline = strings.TrimSuffix(strings.TrimSpace(headline), "|")
+				headline = strings.TrimSpace(headline)
+
+				if _, exists := out["job_title"]; !exists && headline != "" {
+					out["job_title"] = headline
+				}
+				if _, exists := out["headline"]; !exists && headline != "" {
+					out["headline"] = headline
+				}
+			}
+		}
+
+		lines := strings.Split(trimmedText, "\n")
 		if _, exists := out["full_name"]; !exists && len(lines) > 0 {
 			out["full_name"] = strings.TrimSpace(lines[0])
+		}
+		if _, exists := out["name"]; !exists {
+			if fn, ok := out["full_name"].(string); ok && fn != "" {
+				out["name"] = fn
+			}
 		}
 		if _, exists := out["job_title"]; !exists {
 			name, _ := out["full_name"].(string)
@@ -369,6 +456,11 @@ func NormalizeBrowserItem(raw map[string]interface{}, platform string) map[strin
 				}
 				out["job_title"] = line
 				break
+			}
+		}
+		if _, exists := out["headline"]; !exists {
+			if jt, ok := out["job_title"].(string); ok && jt != "" {
+				out["headline"] = jt
 			}
 		}
 	}

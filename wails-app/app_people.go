@@ -434,6 +434,104 @@ func (a *App) RejectDraftPersonMessage(personMessageID string) error {
 	return db.DeletePersonMessage(personMessageID)
 }
 
+// PendingPersonApproval represents a lead or contact waiting for human review in Human-in-Loop.
+type PendingPersonApproval struct {
+	ID               string `json:"id"`
+	Platform         string `json:"platform"`
+	PlatformUsername string `json:"platform_username"`
+	FullName         string `json:"full_name"`
+	ImageUrl         string `json:"image_url"`
+	ProfileUrl       string `json:"profile_url"`
+	JobTitle         string `json:"job_title"`
+	Category         string `json:"category"`
+	Introduction     string `json:"introduction"`
+	CreatedAt        string `json:"created_at"`
+}
+
+// GetPendingPeopleApprovals returns all people staged with category = 'pending_approval'
+// for the active profile, for review and approval in Human in Loop.
+func (a *App) GetPendingPeopleApprovals() ([]*PendingPersonApproval, error) {
+	if a.db == nil {
+		return nil, fmt.Errorf("database not initialized")
+	}
+	rows, err := a.db.Query(`
+		SELECT id, platform, platform_username, COALESCE(full_name,''), COALESCE(image_url,''),
+		       COALESCE(profile_url,''), COALESCE(job_title,''), COALESCE(category,''),
+		       COALESCE(introduction,''), COALESCE(created_at,'')
+		FROM people
+		WHERE profile_id = ? AND category = 'pending_approval'
+		ORDER BY created_at DESC`, a.getActiveProfileID())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []*PendingPersonApproval
+	for rows.Next() {
+		var p PendingPersonApproval
+		if err := rows.Scan(&p.ID, &p.Platform, &p.PlatformUsername, &p.FullName, &p.ImageUrl,
+			&p.ProfileUrl, &p.JobTitle, &p.Category, &p.Introduction, &p.CreatedAt); err != nil {
+			continue
+		}
+		results = append(results, &p)
+	}
+	return results, nil
+}
+
+// ApprovePendingPerson saves any edits to the introduction, updates category to 'approved',
+// and optionally triggers the outreach dispatch workflow if sendNow is requested.
+func (a *App) ApprovePendingPerson(personID, editedIntroduction string, sendNow bool) error {
+	if a.db == nil {
+		return fmt.Errorf("database not initialized")
+	}
+	profileID := a.getActiveProfileID()
+	var platform, username, intro string
+	err := a.db.QueryRow(`SELECT COALESCE(platform,''), COALESCE(platform_username,''), COALESCE(introduction,'') FROM people WHERE id = ? AND profile_id = ?`, personID, profileID).Scan(&platform, &username, &intro)
+	if err != nil {
+		return fmt.Errorf("person not found: %w", err)
+	}
+
+	finalIntro := intro
+	if editedIntroduction != "" {
+		finalIntro = editedIntroduction
+	}
+
+	_, err = a.db.Exec(`UPDATE people SET introduction = ?, category = 'approved', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND profile_id = ?`, finalIntro, personID, profileID)
+	if err != nil {
+		return fmt.Errorf("failed to update person: %w", err)
+	}
+
+	if sendNow {
+		inputMap := map[string]interface{}{
+			"platform_username": username,
+			"introduction":      finalIntro,
+			"person_id":         personID,
+			"platform":          platform,
+		}
+		inputBytes, _ := json.Marshal(inputMap)
+		inputJSON := string(inputBytes)
+
+		// Check if a dispatch workflow exists (e.g. b590cf19-5330-45bf-a34e-e54cc75b6004 or name contains 'Send Approved DMs')
+		var dispatchID string
+		_ = a.db.QueryRow(`SELECT id FROM workflows WHERE (id = 'b590cf19-5330-45bf-a34e-e54cc75b6004' OR name LIKE '%Send Approved DMs%') AND profile_id = ? LIMIT 1`, profileID).Scan(&dispatchID)
+		if dispatchID != "" {
+			go func() {
+				_ = a.RunWorkflowWithInput(dispatchID, inputJSON)
+			}()
+		}
+	}
+	return nil
+}
+
+// RejectPendingPerson updates the person's category to 'rejected' so it leaves the pending queue.
+func (a *App) RejectPendingPerson(personID string) error {
+	if a.db == nil {
+		return fmt.Errorf("database not initialized")
+	}
+	_, err := a.db.Exec(`UPDATE people SET category = 'rejected', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND profile_id = ?`, personID, a.getActiveProfileID())
+	return err
+}
+
 // GetLatestPersonStatus returns the most recent status update for a person,
 // or nil if none exists yet — the GUI equivalent of `people status get`.
 func (a *App) GetLatestPersonStatus(personId string) *storage.PersonStatusUpdate {

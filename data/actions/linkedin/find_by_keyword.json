@@ -137,9 +137,7 @@
         "navigate_to_search",
         "find_search_results",
         "extract_people_data",
-        "check_more_results",
-        "scroll_for_more",
-        "skip_keyword"
+        "check_more_results"
       ],
       "onComplete": "update_action_state"
     }

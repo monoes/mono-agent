@@ -282,6 +282,11 @@ func (vr *VariableResolver) accessMap(current interface{}, key string) interface
 		return m[key]
 	case map[string]string:
 		return m[key]
+	case string:
+		if key == "url" || key == "href" || key == "link" || key == "username" {
+			return m
+		}
+		return nil
 	default:
 		return nil
 	}
