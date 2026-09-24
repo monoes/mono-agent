@@ -75,27 +75,24 @@ func (a *App) InitializeMonomindProfile() string {
 	if err != nil {
 		return fail(err)
 	}
-	// Shares the health page's one-run-per-fix guard: the same fix started
-	// from there and from here would run `monomind init` twice at once.
-	if _, busy := runningFixes.LoadOrStore(fixMonomindProfileInit, true); busy {
+	// Shares the health page's run registry: the same fix started from
+	// there and from here would run `monomind init` twice at once, and it
+	// makes this run cancellable (CancelHealthRun) like the page's fixes.
+	key := runKey(fixMonomindProfileInit)
+	run, ctx, ok := beginHealthRun(a.parentCtx(), key, monomindInitTimeout)
+	if !ok {
 		return fail(fmt.Errorf("this profile's folder is already being set up"))
 	}
 	args := healthFixArgs(a.getActiveProfileID(), fixMonomindProfileInit)
 	go func() {
-		defer runningFixes.Delete(fixMonomindProfileInit)
-		a.runMonomindInit(cliBin, args)
+		defer endHealthRun(key, run)
+		a.runMonomindInit(ctx, cliBin, args)
 	}()
 	return `{"ok":true}`
 }
 
 // runMonomindInit runs the fix and relays its NDJSON events.
-func (a *App) runMonomindInit(cliBin string, args []string) {
-	parent := a.ctx
-	if parent == nil {
-		parent = context.Background()
-	}
-	ctx, cancel := context.WithTimeout(parent, monomindInitTimeout)
-	defer cancel()
+func (a *App) runMonomindInit(ctx context.Context, cliBin string, args []string) {
 	cmd := exec.CommandContext(ctx, cliBin, args...)
 	hideWindow(cmd)
 	stopGracefully(cmd)

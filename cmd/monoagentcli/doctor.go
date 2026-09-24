@@ -52,6 +52,7 @@ func fixUntilStable(ctx context.Context, cfg *globalConfig, reg *health.Registry
 	// fixed, their fixes wait, so the daemon never comes up before the
 	// database, the profile folder and monomind are ready.
 	holdServices := true
+	settled := false
 	for pass := 0; pass < maxFixPasses+1; pass++ {
 		view := rep
 		if holdServices {
@@ -62,9 +63,20 @@ func fixUntilStable(ctx context.Context, cfg *globalConfig, reg *health.Registry
 		rep = runHealth(ctx, cfg, reg, opts)
 		if len(got) == 0 {
 			if !holdServices {
+				settled = true
 				break
 			}
 			holdServices = false
+		}
+	}
+	if !settled {
+		// Every pass still fixed something: say so rather than end quietly
+		// with fixes that a later pass might have unblocked.
+		msg := fmt.Sprintf("stopped after %d passes with fixes still being applied — run doctor --fix again", maxFixPasses+1)
+		if cfg.JSONOutput {
+			writeFixEvent(os.Stderr, fixEvent{Kind: "line", Message: msg})
+		} else {
+			progress(msg)
 		}
 	}
 	return rep, outcomes
@@ -267,17 +279,26 @@ func applyReportFixes(ctx context.Context, cfg *globalConfig, reg *health.Regist
 				continue
 			}
 		}
-		if !cfg.JSONOutput {
+		if cfg.JSONOutput {
+			// Same per-fix events as `setup --json`, on stderr beside the
+			// fix's own lines (stdout is the final report).
+			writeFixEvent(os.Stderr, fixEvent{Kind: "fix_start", FixID: f.ID, Message: f.Label})
+		} else {
 			progress("→ " + f.Label)
 		}
 		if err := applyFix(ctx, cfg, f, progress); err != nil {
 			outcomes = append(outcomes, fixOutcome{ID: f.ID, Outcome: "failed", Error: err.Error()})
-			if !cfg.JSONOutput {
+			if cfg.JSONOutput {
+				writeFixEvent(os.Stderr, fixEvent{Kind: "fix_end", FixID: f.ID, Outcome: "failed", Message: err.Error()})
+			} else {
 				progress("✗ " + err.Error())
 			}
 			continue
 		}
 		outcomes = append(outcomes, fixOutcome{ID: f.ID, Outcome: "applied"})
+		if cfg.JSONOutput {
+			writeFixEvent(os.Stderr, fixEvent{Kind: "fix_end", FixID: f.ID, Outcome: "applied"})
+		}
 	}
 	return outcomes
 }

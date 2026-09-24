@@ -312,8 +312,16 @@ func TestPlanGlobalInstall(t *testing.T) {
 		t.Fatalf("writable system prefix: %+v, %v", plan, err)
 	}
 
-	// Unwritable prefix: fall back to the private one, never sudo.
-	os.WriteFile(filepath.Join(sys, "npm"), []byte("#!/bin/sh\necho /proc/nope\n"), 0o755)
+	// Unwritable prefix: fall back to the private one, never sudo. A
+	// read-only folder (not /proc, which macOS doesn't have).
+	if os.Geteuid() == 0 {
+		t.Skip("root can write a read-only folder")
+	}
+	locked := filepath.Join(t.TempDir(), "locked")
+	os.MkdirAll(locked, 0o755)
+	os.Chmod(locked, 0o555)
+	t.Cleanup(func() { os.Chmod(locked, 0o755) })
+	os.WriteFile(filepath.Join(sys, "npm"), []byte("#!/bin/sh\necho "+locked+"\n"), 0o755)
 	plan, err = m.PlanGlobalInstall(ctx)
 	if err != nil || plan.Prefix != m.NpmRoot || !strings.Contains(strings.Join(plan.Env, "\n"), "NPM_CONFIG_PREFIX="+m.NpmRoot) {
 		t.Fatalf("unwritable system prefix: %+v, %v", plan, err)

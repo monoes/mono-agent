@@ -74,7 +74,8 @@ bridge, pairing), `services` (daemon, start at login) and `integrations`
 (Claude Code skills, MCP registration), `accounts` (platform login expiry;
 with `--deep` also live tests of saved connections and AI connections
 (legacy) — a failing OAuth connection with a refresh token gets a silent
-refresh fix). With a monomind that has `doctor-json`, the `monomind` group also lists
+refresh fix when the service refused its credentials (401/403) or the token
+has expired, and a refresh that asks first for other failures). With a monomind that has `doctor-json`, the `monomind` group also lists
 monomind's own checks for the profile folder (fixes: `doctor fix
 monomind.doctor.fix:<component>`); `--projects` / `--project <path|name>` run
 them in each monomind project inside the profile folder
