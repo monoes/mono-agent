@@ -141,6 +141,11 @@ func newHealthEnv(cfg *globalConfig) (*health.Env, func()) {
 				var id string
 				_ = db.DB.QueryRow(`SELECT value FROM settings WHERE key = ?`, profiledir.ActiveProfileSetting).Scan(&id)
 				env.ProfileID = id
+			} else if id, err := resolveProfileID(db.DB, env.ProfileID); err == nil {
+				// --profile takes a name or an id, as it does for every other
+				// command; one that matches neither is left for the profile
+				// check to report.
+				env.ProfileID = id
 			}
 		}
 	} else if !os.IsNotExist(err) {

@@ -32,7 +32,9 @@ function StepMark({ step, state, n }) {
   return <span style={{ color: step.kind === 'fix' ? '#00b4d8' : 'var(--text-muted)' }}>{n}</span>
 }
 
-export default function SetupSteps({ report, level, fixStates, fixingAll, onRunAll, onFix, onNavigate }) {
+// fixingAll: the steps are running (label says so); busy: something else
+// runs (a check or a single fix), so the button waits.
+export default function SetupSteps({ report, level, fixStates, fixingAll, busy, onRunAll, onFix, onNavigate }) {
   const { t } = useTranslation()
   const steps = setupSteps(report)
   if (steps.length === 0) return null
@@ -47,8 +49,8 @@ export default function SetupSteps({ report, level, fixStates, fixingAll, onRunA
         {runnable > 0 && (
           <button
             onClick={onRunAll}
-            disabled={fixingAll}
-            style={{ ...mono, fontSize: 10, display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 5, border: 'none', background: '#00b4d8', color: '#fff', cursor: fixingAll ? 'default' : 'pointer', opacity: fixingAll ? 0.6 : 1 }}
+            disabled={fixingAll || busy}
+            style={{ ...mono, fontSize: 10, display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 5, border: 'none', background: '#00b4d8', color: '#fff', cursor: fixingAll || busy ? 'default' : 'pointer', opacity: fixingAll || busy ? 0.6 : 1 }}
           >
             {fixingAll ? <Loader2 size={12} className="spin" /> : <Wrench size={12} />}
             {fixingAll ? t('settings.health.fixing') : t('settings.health.fixIssues', { n: runnable })}

@@ -123,6 +123,7 @@ Safe to run again at any time; it only does what is still missing.`,
 func optionalFixIDs(rep *health.Report, w setupWants, ask func(question string) string) []string {
 	offered := map[string]bool{}
 	var installable []string
+	commands := map[string]string{}
 	runtimesInstalled := false
 	for _, r := range rep.Results {
 		if r.ID == health.CheckRuntimes && r.Status == health.StatusOK {
@@ -133,7 +134,9 @@ func optionalFixIDs(rep *health.Report, w setupWants, ask func(question string) 
 		}
 		offered[r.Fix.ID] = true
 		if strings.HasPrefix(r.Fix.ID, health.FixRuntimeInstall+":") {
-			installable = append(installable, strings.TrimPrefix(r.Fix.ID, health.FixRuntimeInstall+":"))
+			id := strings.TrimPrefix(r.Fix.ID, health.FixRuntimeInstall+":")
+			installable = append(installable, id)
+			commands[id] = r.Fix.Command
 		}
 	}
 	yesTo := func(q string) bool {
@@ -144,8 +147,15 @@ func optionalFixIDs(rep *health.Report, w setupWants, ask func(question string) 
 	var ids []string
 	runtimes := w.runtimes
 	if len(runtimes) == 0 && !runtimesInstalled && len(installable) > 0 {
-		if a := ask(fmt.Sprintf("No AI agent runtime is installed. Install one? (%s, Enter to skip):",
-			strings.Join(installable, ", "))); a != "" {
+		// Name what each choice runs (a vendor script's URL, or the npm
+		// package) before anyone picks one: installing it is the consent.
+		var q strings.Builder
+		q.WriteString("No AI agent runtime is installed. These can be installed:\n")
+		for _, id := range installable {
+			fmt.Fprintf(&q, "    %s — %s\n", id, commands[id])
+		}
+		q.WriteString("  Install which? (comma-separated, Enter to skip):")
+		if a := ask(q.String()); a != "" {
 			runtimes = strings.Split(a, ",")
 		}
 	}
@@ -164,19 +174,30 @@ func optionalFixIDs(rep *health.Report, w setupWants, ask func(question string) 
 	return ids
 }
 
-// printManualSteps lists what setup could not do itself.
+// printManualSteps lists what setup could not do itself: steps only a
+// person can take, and fixes that need a yes nobody gave (no terminal to
+// ask on, or declined), so a run that fixed nothing does not look done.
 func printManualSteps(w io.Writer, rep *health.Report) {
-	var steps []string
+	var steps, declined []string
 	for _, r := range rep.Results {
-		if r.Fix != nil && r.Fix.Safety == health.SafetyManual {
+		switch {
+		case r.Fix == nil || r.Fix.Optional:
+		case r.Fix.Safety == health.SafetyManual:
 			steps = append(steps, fmt.Sprintf("  • %s: %s", r.Title, r.Fix.Command))
+		case r.Fix.Safety == health.SafetyConfirm:
+			declined = append(declined, fmt.Sprintf("  • %s: %s", r.Title, r.Fix.Label))
 		}
 	}
-	if len(steps) == 0 {
-		return
+	if len(steps) > 0 {
+		fmt.Fprintln(w, "\nStill to do by hand:")
+		for _, s := range steps {
+			fmt.Fprintln(w, s)
+		}
 	}
-	fmt.Fprintln(w, "\nStill to do by hand:")
-	for _, s := range steps {
-		fmt.Fprintln(w, s)
+	if len(declined) > 0 {
+		fmt.Fprintln(w, "\nNot done, since nobody said yes (run `monoagentcli setup` in a terminal, or add --yes to accept):")
+		for _, s := range declined {
+			fmt.Fprintln(w, s)
+		}
 	}
 }

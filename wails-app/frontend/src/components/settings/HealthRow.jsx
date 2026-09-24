@@ -69,7 +69,7 @@ export default function HealthRow({ row, depth = 0, fixStates, onFix }) {
           paddingLeft: depth * 18, borderTop: depth === 0 ? '1px solid var(--border)' : 'none',
         }}
       >
-        <span aria-label={row.status} style={{ ...mono, width: 14, textAlign: 'center', color: st.color, flexShrink: 0 }}>{st.mark}</span>
+        <span role="img" aria-label={row.status} style={{ ...mono, width: 14, textAlign: 'center', color: st.color, flexShrink: 0 }}>{st.mark}</span>
         {children.length > 0 ? (
           <button
             onClick={() => setOpen(o => !o)}
@@ -86,14 +86,27 @@ export default function HealthRow({ row, depth = 0, fixStates, onFix }) {
             <span style={{ color: 'var(--red)', fontSize: 9, marginLeft: 6 }}>{t('settings.health.required')}</span>
           )}
         </span>
-        <span
-          style={{ ...mono, fontSize: 11, color: 'var(--text-secondary)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: hasDetails ? 'pointer' : 'default' }}
-          title={row.summary}
-          onClick={() => hasDetails && setDetails(d => !d)}
-        >
-          {row.summary}
-          {hasDetails && <span style={{ color: 'var(--text-muted)', marginLeft: 6 }}>{details ? '▾' : '▸'}</span>}
-        </span>
+        {hasDetails ? (
+          // A button, so the details (and a manual fix's instructions) can
+          // be opened from the keyboard.
+          <button
+            type="button"
+            aria-expanded={details}
+            onClick={() => setDetails(d => !d)}
+            title={row.summary}
+            style={{ ...mono, fontSize: 11, color: 'var(--text-secondary)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer', background: 'none', border: 'none', padding: 0, textAlign: 'left' }}
+          >
+            {row.summary}
+            <span aria-hidden="true" style={{ color: 'var(--text-muted)', marginLeft: 6 }}>{details ? '▾' : '▸'}</span>
+          </button>
+        ) : (
+          <span
+            style={{ ...mono, fontSize: 11, color: 'var(--text-secondary)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+            title={row.summary}
+          >
+            {row.summary}
+          </span>
+        )}
         {row.fix && <FixButton fix={row.fix} state={fixStates[row.fix.id]} onFix={onFix} />}
         {actions.map(a => <FixButton key={a.id} fix={a} state={fixStates[a.id]} onFix={onFix} quiet />)}
       </div>
@@ -111,7 +124,7 @@ export default function HealthRow({ row, depth = 0, fixStates, onFix }) {
       )}
 
       {fixState && (fixState.running || fixState.lines?.length > 0 || fixState.error) && (
-        <div style={{ ...mono, fontSize: 10, color: 'var(--text-muted)', margin: `0 0 8px ${depth * 18 + 24}px`, padding: '6px 10px', background: 'rgba(0,0,0,.25)', borderRadius: 4, maxHeight: 130, overflowY: 'auto', whiteSpace: 'pre-wrap' }}>
+        <div role="status" aria-live="polite" style={{ ...mono, fontSize: 10, color: 'var(--text-muted)', margin: `0 0 8px ${depth * 18 + 24}px`, padding: '6px 10px', background: 'rgba(0,0,0,.25)', borderRadius: 4, maxHeight: 130, overflowY: 'auto', whiteSpace: 'pre-wrap' }}>
           {(fixState.lines || []).map((l, i) => <div key={i}>{l}</div>)}
           {fixState.error && <div style={{ color: 'var(--red)' }}>{fixState.error}</div>}
           {fixState.done && !fixState.error && <div style={{ color: 'var(--green-neon)' }}>✓ {t('settings.health.fixDone')}</div>}

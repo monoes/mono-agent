@@ -112,6 +112,9 @@ func (m *Manager) Current() (string, bool) {
 // Use makes an installed version the active one.
 func (m *Manager) Use(version string) error {
 	version = normalize(version)
+	if !isVersion(version) {
+		return fmt.Errorf("%q is not a Node version (want x.y.z)", version)
+	}
 	if _, err := os.Stat(m.NodePath(version)); err != nil {
 		return fmt.Errorf("node %s is not installed", version)
 	}
@@ -128,10 +131,19 @@ func (m *Manager) Remove(version string) error {
 		return os.RemoveAll(m.NpmRoot)
 	}
 	version = normalize(version)
+	// The version names a folder under Root that is deleted whole, so it
+	// must be exactly x.y.z: `remove ..` used to delete all of ~/.monoagent.
+	if !isVersion(version) {
+		return fmt.Errorf("%q is not a Node version (want x.y.z)", version)
+	}
+	dir := filepath.Join(m.Root, version)
+	if _, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("node %s is not installed", version)
+	}
 	if cur, ok := m.Current(); ok && cur == version {
 		_ = os.Remove(filepath.Join(m.Root, currentFile))
 	}
-	return os.RemoveAll(filepath.Join(m.Root, version))
+	return os.RemoveAll(dir)
 }
 
 // BinDir is the directory holding node/npm for a version.

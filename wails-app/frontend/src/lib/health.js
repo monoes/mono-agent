@@ -129,15 +129,19 @@ export function runHealth({ deep = false, projects = false } = {}) {
   return p
 }
 
-let activeFixes = 0
+const runningFixes = new Set()
 
 /** True while a fix runs — lets the app hold back navigation it would
  * otherwise do (a fix like `monomind init` creates a sample org). */
-export function isFixing() { return activeFixes > 0 }
+export function isFixing() { return runningFixes.size > 0 }
+
+/** True while this fix runs. */
+export function isFixRunning(fixId) { return runningFixes.has(fixId) }
 
 /**
  * Apply one fix; onLine gets each progress line. Resolves to
- * { ok: true } or { ok: false, message }.
+ * { ok: true } or { ok: false, message }. A fix already running is not
+ * started again (two daemons, two npm installs into one folder).
  */
 export function runFix(fixId, onLine) {
   return runStreamed(fixId, () => RunHealthFix(fixId), onLine)
@@ -145,16 +149,19 @@ export function runFix(fixId, onLine) {
 
 /**
  * Install (update: reinstall) an AI agent runtime via `monoagentcli agent
- * install`; same progress events and result shape as runFix.
+ * install`; same progress events and result shape as runFix. approveURL is
+ * the vendor script the person was shown, for a script install.
  */
-export function installRuntime(runtimeId, update, onLine) {
-  return runStreamed(`agent.install:${runtimeId}`, () => InstallAgentRuntime(runtimeId, !!update), onLine)
+export function installRuntime(runtimeId, update, onLine, approveURL = '') {
+  return runStreamed(`agent.install:${runtimeId}`, () => InstallAgentRuntime(runtimeId, !!update, approveURL), onLine)
 }
 
 // runStreamed starts a streamed CLI command and follows its
-// health:fixProgress events (keyed by fix_id) to the final done/error.
+// health:fixProgress events (keyed by fix_id) to the final done/error. One
+// run per key: a second start while one runs is refused.
 function runStreamed(key, start, onLine) {
-  activeFixes++
+  if (runningFixes.has(key)) return Promise.resolve({ ok: false, message: 'already running' })
+  runningFixes.add(key)
   return new Promise(resolve => {
     const off = subscribeEvent('health:fixProgress', ev => {
       if (!ev || ev.fix_id !== key) return
@@ -168,7 +175,7 @@ function runStreamed(key, start, onLine) {
         if (r.error) { off(); resolve({ ok: false, message: r.error }) }
       })
       .catch(e => { off(); resolve({ ok: false, message: String(e) }) })
-  }).finally(() => { activeFixes-- })
+  }).finally(() => { runningFixes.delete(key) })
 }
 
 let timer = null

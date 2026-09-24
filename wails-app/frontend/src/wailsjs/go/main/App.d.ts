@@ -233,7 +233,7 @@ export function IndexProfileDocument(arg1:string):Promise<main.UploadResult>;
 
 export function InitializeMonomindProfile():Promise<string>;
 
-export function InstallAgentRuntime(arg1:string,arg2:boolean):Promise<string>;
+export function InstallAgentRuntime(arg1:string,arg2:boolean,arg3:string):Promise<string>;
 
 export function IsDBConnected():Promise<boolean>;
 

@@ -17,6 +17,16 @@ function installKind(agent) {
   return agent.install?.kind || 'unknown'
 }
 
+// installCommand is what installing really runs, from the structured
+// recipe the CLI will act on (not the free-text hint, which can differ):
+// the vendor script's URL and shell, or the npm packages.
+export function installCommand(agent) {
+  const r = agent.install || {}
+  if (r.kind === 'script' && r.url) return `curl -fsSL ${r.url} | ${r.shell || 'sh'}`
+  if (r.kind === 'npm' && r.packages?.length) return `npm install -g ${r.packages.join(' ')}`
+  return agent.install_hint || ''
+}
+
 const tileButton = { gap: 4, marginTop: 2, fontSize: 10 }
 
 function RuntimeTile({ agent, onChat, onInstall, job }) {
@@ -176,19 +186,26 @@ export default function Agents({ onOpenChat }) {
       return
     }
     const script = installKind(agent) === 'script'
+    // A script install approves exactly the URL shown here: the CLI runs it
+    // only if its fresh scan names the same one.
+    const approveURL = script ? (agent.install?.url || '') : ''
+    if (script && !approveURL) {
+      setJob(agent.id, { running: false, done: false, error: 'no installer URL to show — install it from a terminal' })
+      return
+    }
     const ok = await confirm(
       <span>
         {action === 'update' ? `Update ${agent.id}? ` : `Install ${agent.id}? `}
         {script ? 'This downloads and runs the vendor\u2019s install script:' : 'This runs:'}
         <code style={{ display: 'block', marginTop: 8, padding: '6px 8px', background: 'rgba(0,0,0,.35)', borderRadius: 4, wordBreak: 'break-all' }}>
-          {agent.install_hint}
+          {installCommand(agent)}
         </code>
       </span>,
       { title: action === 'update' ? `Update ${agent.id}` : `Install ${agent.id}`, confirmLabel: action === 'update' ? 'Update' : 'Install', danger: false },
     )
     if (!ok) return
     setJob(agent.id, { running: true, line: 'starting…', error: null, done: false })
-    const res = await installRuntime(agent.id, action === 'update', line => setJob(agent.id, { line }))
+    const res = await installRuntime(agent.id, action === 'update', line => setJob(agent.id, { line }), approveURL)
     setJob(agent.id, { running: false, done: res.ok, error: res.ok ? null : res.message, message: res.message })
     invalidateAgentScan()
     loadAgents(true)

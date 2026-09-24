@@ -6,7 +6,7 @@ import { confirm } from '../ConfirmDialog.jsx'
 import HealthRow, { STATUS_STYLE } from './HealthRow.jsx'
 import SetupSteps from './SetupSteps.jsx'
 import {
-  getHealth, subscribeHealth, runHealth, runFix,
+  getHealth, subscribeHealth, runHealth, runFix, isFixRunning,
   groupReport, summarize, fixPlan, versionSkew,
 } from '../../lib/health.js'
 
@@ -66,13 +66,15 @@ export default function HealthSection({ onNavigate }) {
   const patchFix = (id, patch) => setFixStates(s => ({ ...s, [id]: { ...(s[id] || {}), ...patch } }))
 
   // applyFix runs one fix: manual ones copy their command, confirm ones ask
-  // first. Resolves true when the fix ran and succeeded.
+  // first. Resolves { ran, ok }: ran is false when nothing was run (a
+  // manual fix, a no, or the fix already running).
   const applyFix = useCallback(async (fix, { ask = true } = {}) => {
     if (fix.safety === 'manual') {
       try { await navigator.clipboard.writeText(fix.command || '') } catch { /* clipboard may be blocked */ }
       patchFix(fix.id, { lines: [`${t('settings.health.copied')}: ${fix.command || ''}`], error: null, done: false })
-      return false
+      return { ran: false, ok: false }
     }
+    if (isFixRunning(fix.id)) return { ran: false, ok: false }
     if (fix.safety === 'confirm' && ask) {
       const ok = await confirm(
         <span>
@@ -81,9 +83,9 @@ export default function HealthSection({ onNavigate }) {
             {fix.command || fix.id}
           </code>
         </span>,
-        { title: fix.label, confirmLabel: t('settings.health.run'), danger: false },
+        { title: fix.label, confirmLabel: t('settings.health.run'), cancelLabel: t('settings.health.cancel'), danger: false },
       )
-      if (!ok) return false
+      if (!ok) return { ran: false, ok: false }
     }
     patchFix(fix.id, { running: true, lines: [], error: null, done: false })
     const res = await runFix(fix.id, line => setFixStates(s => {
@@ -91,12 +93,14 @@ export default function HealthSection({ onNavigate }) {
       return { ...s, [fix.id]: { ...cur, lines: [...(cur.lines || []), line].slice(-MAX_FIX_LINES) } }
     }))
     patchFix(fix.id, { running: false, done: res.ok, error: res.ok ? null : res.message })
-    return res.ok
+    return { ran: true, ok: res.ok }
   }, [t])
 
+  // Re-check only when something ran: a no, or a manual step, changes
+  // nothing (and a deep re-check writes and uses the network).
   const onRowFix = useCallback(async fix => {
-    const ran = await applyFix(fix)
-    if (ran || fix.safety !== 'manual') recheck()
+    const { ran } = await applyFix(fix)
+    if (ran) recheck()
   }, [applyFix, recheck])
 
   // "Fix issues": every non-optional auto/confirm fix, in order, asking
@@ -106,9 +110,18 @@ export default function HealthSection({ onNavigate }) {
     setFixingAll(true)
     const tried = new Set()
     try {
-      for (let pass = 0; pass < MAX_FIX_PASSES; pass++) {
-        const plan = fixPlan(getHealth().report).filter(f => !tried.has(f.id))
-        if (plan.length === 0) break
+      // Services (the daemon) start last, as in `monoagentcli setup`: their
+      // fixes wait until a pass finds nothing else to fix, so the daemon
+      // never comes up before the database, profile and monomind.
+      let holdServices = true
+      for (let pass = 0; pass < MAX_FIX_PASSES + 1; pass++) {
+        const all = fixPlan(getHealth().report).filter(f => !tried.has(f.id) && !isFixRunning(f.id))
+        let plan = holdServices ? all.filter(f => !f.id.startsWith('services.')) : all
+        if (plan.length === 0) {
+          if (!holdServices || all.length === 0) break
+          holdServices = false
+          plan = all
+        }
         for (const fix of plan) {
           tried.add(fix.id)
           await applyFix(fix)
@@ -132,6 +145,7 @@ export default function HealthSection({ onNavigate }) {
     )
   }
 
+  const anyFixRunning = Object.values(fixStates).some(s => s?.running)
   const report = h.report
   const sum = summarize(report)
   const groups = groupReport(report)
@@ -161,7 +175,7 @@ export default function HealthSection({ onNavigate }) {
       </div>
 
       {report && (
-        <SetupSteps report={report} level={sum.level} fixStates={fixStates} fixingAll={fixingAll || h.loading}
+        <SetupSteps report={report} level={sum.level} fixStates={fixStates} fixingAll={fixingAll} busy={h.loading || anyFixRunning}
           onRunAll={fixAll} onFix={onRowFix} onNavigate={onNavigate} />
       )}
 

@@ -100,4 +100,58 @@ describe('HealthSection', () => {
     await screen.findByText(/settings.health.cliMissingTitle/)
     expect(screen.getByText('monoagentcli not found')).toBeInTheDocument()
   })
+
+  it('shows the command, runs the fix on yes, and does not re-check after a no', async () => {
+    mockConfirm.mockResolvedValueOnce(false)
+    render(<HealthSection />)
+    await screen.findByTestId('setup-steps')
+    const nodeRow = () => within(document.querySelector('[data-health-row="monomind.node"]'))
+    fireEvent.click(nodeRow().getByText('Download Node'))
+    await waitFor(() => expect(mockConfirm).toHaveBeenCalledTimes(1))
+    const [body] = mockConfirm.mock.calls[0]
+    render(body)
+    expect(screen.getByText('monoagentcli nodejs install')).toBeInTheDocument()
+    await new Promise(r => setTimeout(r, 20))
+    expect(mockRunHealthCheck).toHaveBeenCalledTimes(1) // no re-check after a no
+
+    mockConfirm.mockResolvedValueOnce(true)
+    mockRunHealthFix.mockResolvedValue('{"ok":true}')
+    fireEvent.click(nodeRow().getByText('Download Node'))
+    await waitFor(() => expect(mockRunHealthFix).toHaveBeenCalledWith('monomind.node.install'))
+  })
+
+  it('"Fix issues" starts the daemon only after everything else', async () => {
+    // The daemon row comes first, as in a real report on a fresh machine.
+    const withDaemon = { ...report, results: [
+      { id: 'services.daemon', group: 'services', title: 'Workflow daemon', status: 'warn', summary: 'not running',
+        fix: { id: 'services.daemon.start', label: 'Start the workflow daemon', safety: 'confirm', command: 'monoagentcli daemon' } },
+      ...report.results,
+    ] }
+    mockRunHealthCheck.mockResolvedValue(JSON.stringify(withDaemon))
+    mockConfirm.mockResolvedValue(true)
+    const order = []
+    mockRunHealthFix.mockImplementation(async id => {
+      order.push(id)
+      setTimeout(() => listeners['health:fixProgress']({ fix_id: id, kind: 'done' }), 0)
+      return '{"ok":true}'
+    })
+    render(<HealthSection />)
+    fireEvent.click(await screen.findByText('settings.health.fixIssues:3'))
+    await waitFor(() => expect(order).toContain('services.daemon.start'))
+    expect(order.indexOf('services.daemon.start')).toBe(order.length - 1)
+    expect(order.slice(0, 2).sort()).toEqual(['core.db.migrate', 'monomind.node.install'])
+  })
+
+  it('does not start a fix that is already running, and holds "Fix issues" meanwhile', async () => {
+    mockRunHealthFix.mockResolvedValue('{"ok":true}')
+    render(<HealthSection />)
+    await screen.findByTestId('setup-steps')
+    const button = within(document.querySelector('[data-health-row="core.db"]')).getByText('Create / migrate database')
+    fireEvent.click(button)
+    await waitFor(() => expect(mockRunHealthFix).toHaveBeenCalledTimes(1))
+    fireEvent.click(button)
+    await new Promise(r => setTimeout(r, 20))
+    expect(mockRunHealthFix).toHaveBeenCalledTimes(1)
+    expect(screen.getByText('settings.health.fixIssues:2').closest('button')).toBeDisabled()
+  })
 })

@@ -13,6 +13,9 @@ const scan = {
       install: { kind: 'npm', packages: ['@openai/codex'] } },
     { id: 'grok', installed: false, install_hint: 'install the Grok Build CLI per https://docs.x.ai/build/cli',
       install: { kind: 'manual' } },
+    // The hint and the recipe differ: what runs is the recipe.
+    { id: 'hermes', installed: false, install_hint: 'see https://hermes.example/docs to install',
+      install: { kind: 'script', url: 'https://other-host.example/install.sh', shell: 'bash' } },
   ],
 }
 const mockInstall = vi.fn()
@@ -56,7 +59,7 @@ describe('Agents page install actions', () => {
     render(<Agents onOpenChat={() => {}} />)
     await waitFor(() => expect(tile('codex')).toBeTruthy())
     fireEvent.click(within(tile('codex')).getByText('Install'))
-    await waitFor(() => expect(mockInstall).toHaveBeenCalledWith('codex', false, expect.any(Function)))
+    await waitFor(() => expect(mockInstall).toHaveBeenCalledWith('codex', false, expect.any(Function), ''))
     expect(mockConfirm).toHaveBeenCalledTimes(1)
     await screen.findByText('codex 1.0 installed')
   })
@@ -68,5 +71,19 @@ describe('Agents page install actions', () => {
     fireEvent.click(within(tile('claude')).getByText('Update'))
     await waitFor(() => expect(mockConfirm).toHaveBeenCalled())
     expect(mockInstall).not.toHaveBeenCalled()
+  })
+
+  // Consent is for what runs: the dialog shows the script's real URL (not
+  // the hint), and only that URL is approved to the CLI.
+  it('shows and approves the exact installer URL for a script runtime', async () => {
+    mockConfirm.mockResolvedValue(true)
+    mockInstall.mockResolvedValue({ ok: true, message: 'hermes installed' })
+    render(<Agents onOpenChat={() => {}} />)
+    await waitFor(() => expect(tile('hermes')).toBeTruthy())
+    fireEvent.click(within(tile('hermes')).getByText('Install'))
+    await waitFor(() => expect(mockConfirm).toHaveBeenCalledTimes(1))
+    render(mockConfirm.mock.calls[0][0])
+    expect(screen.getByText('curl -fsSL https://other-host.example/install.sh | bash')).toBeInTheDocument()
+    await waitFor(() => expect(mockInstall).toHaveBeenCalledWith('hermes', false, expect.any(Function), 'https://other-host.example/install.sh'))
   })
 })

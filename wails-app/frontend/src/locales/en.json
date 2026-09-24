@@ -126,7 +126,8 @@
       "stepAsks": "asks first",
       "stepManual": "by hand",
       "stepRuntime": "Install an AI agent runtime (Claude Code, Codex, …)",
-      "openAgentsShort": "Open AI agents"
+      "openAgentsShort": "Open AI agents",
+      "cancel": "Cancel"
     }
   },
   "orgs": {

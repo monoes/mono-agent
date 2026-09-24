@@ -75,6 +75,13 @@ func addServiceHooks(env *health.Env) {
 // one is registered (idempotent), otherwise as a detached background
 // process logging to ~/.monoagent/logs/daemon.log.
 func startDaemon(ctx context.Context, progress func(string)) error {
+	// A daemon that is still starting has no heartbeat yet, but it holds
+	// the lock: starting another would be refused by it anyway, and must
+	// not be spawned while one comes up (a second click, a re-check).
+	if daemonhb.Locked() {
+		progress("a daemon is already running or starting")
+		return nil
+	}
 	as := autostart.New()
 	if ok, where := as.Status(ctx); ok {
 		progress("starting the registered service (" + where + ")")

@@ -126,7 +126,8 @@
       "stepAsks": "pregunta antes",
       "stepManual": "a mano",
       "stepRuntime": "Instala un runtime de agentes IA (Claude Code, Codex, …)",
-      "openAgentsShort": "Abrir agentes IA"
+      "openAgentsShort": "Abrir agentes IA",
+      "cancel": "Cancelar"
     }
   },
   "orgs": {
