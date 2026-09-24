@@ -28,6 +28,7 @@ func newAgentCmd(cfg *globalConfig) *cobra.Command {
 	cmd.AddCommand(
 		newAgentScanCmd(cfg),
 		newAgentTestCmd(cfg),
+		newAgentInstallCmd(cfg),
 	)
 	return cmd
 }

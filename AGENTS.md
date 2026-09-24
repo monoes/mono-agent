@@ -72,6 +72,12 @@ Groups: `core` (data folder, database, profile, vault, PATH, disk), `monomind`
 (e.g. update availability). Checks never change anything — only fixes do.
 Run `doctor` first when something environment-related fails.
 
+Install an AI agent runtime: `monoagentcli agent install <runtime>` (npm
+packages via system or managed Node; vendor `https` install scripts ask first
+or take `--yes`; anything else prints manual steps). In `doctor`, per-runtime
+installs are optional fixes (`doctor fix runtimes.install:<id>`) and are never
+applied by `doctor --fix`.
+
 No suitable Node.js (>= 22.12) for monomind? `monoagentcli nodejs install`
 downloads a private one into `~/.monoagent/node` (from nodejs.org over HTTPS, checked against its SHASUMS256 — which catches a corrupt download; authenticity rests on TLS to nodejs.org, as with nvm; used
 only by processes monoagent starts); `nodejs status|update|remove` manage it.

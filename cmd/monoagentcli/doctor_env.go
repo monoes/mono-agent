@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/monoes/mono-agent/internal/agentinstall"
 	"github.com/monoes/mono-agent/internal/health"
 	"github.com/monoes/mono-agent/internal/monomind"
 	"github.com/monoes/mono-agent/internal/nodemgr"
@@ -92,6 +93,12 @@ func newHealthEnv(cfg *globalConfig) (*health.Env, func()) {
 	}
 	env.InitMonomindProfile = func(ctx context.Context, root string, progress func(string)) error {
 		return monomind.InitProfile(ctx, monomind.InitOptions{Root: root, Progress: progress})
+	}
+	env.InstallRuntime = func(ctx context.Context, id string, progress func(string)) error {
+		// The fix itself is the consent (it is a confirm fix), so vendor
+		// scripts are allowed here.
+		_, err := installRuntime(ctx, id, false, func(agentinstall.Recipe) bool { return true }, progress)
+		return err
 	}
 	env.ProfileRoot = func(id string) string { return profiledir.Root(env.DB, id) }
 	env.EnsureProfile = func(id string) error { return profiledir.EnsureLayout(env.DB, id) }

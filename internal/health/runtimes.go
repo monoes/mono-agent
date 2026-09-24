@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/monoes/mono-agent/internal/agentinstall"
 )
 
 // GroupRuntimes holds the AI agent runtimes monomind drives (claude, codex,
@@ -14,6 +16,22 @@ const GroupRuntimes = "runtimes"
 // CheckRuntimes is the aggregate runtime check; each runtime is a child row
 // "runtimes.<id>".
 const CheckRuntimes = "runtimes.agents"
+
+// FixRuntimeInstall installs one runtime: "runtimes.install:<id>".
+const FixRuntimeInstall = "runtimes.install"
+
+func runtimeFixes() []Fix {
+	return []Fix{{
+		FixInfo: FixInfo{ID: FixRuntimeInstall, Label: "Install {arg}", Safety: SafetyConfirm,
+			Command: "monoagentcli agent install {arg}", Optional: true},
+		ApplyArg: func(ctx context.Context, env *Env, id string, progress func(string)) error {
+			if env.InstallRuntime == nil {
+				return fmt.Errorf("installing runtimes is not available here")
+			}
+			return env.InstallRuntime(ctx, id, progress)
+		},
+	}}
+}
 
 func runtimeChecks() []Check {
 	return []Check{
@@ -43,13 +61,17 @@ func checkRuntimes(ctx context.Context, env *Env) Result {
 			child.Status = StatusInfo
 			child.Summary = "not installed"
 			child.Detail = a.InstallHint
+			if rec := agentinstall.Parse(a.InstallHint); rec.Kind != agentinstall.KindManual {
+				child.FixID = FixRuntimeInstall + ":" + a.ID
+				child.FixCommand = installCommand(rec, a.ID)
+			}
 		}
 		res.Children = append(res.Children, child)
 	}
 	if len(installed) == 0 {
 		res.Status = StatusFail
 		res.Summary = fmt.Sprintf("none of %d supported runtimes is installed", len(scan.Agents))
-		res.Detail = "install one from the Agents page (e.g. Claude Code: npm install -g @anthropic-ai/claude-code)"
+		res.Detail = "install one: monoagentcli agent install <runtime> (e.g. claude), or from the Agents page"
 		return res
 	}
 	res.Status = StatusOK
@@ -62,4 +84,16 @@ func deref(s *string, def string) string {
 		return def
 	}
 	return *s
+}
+
+// installCommand says what installing a runtime really runs, for the fix's
+// confirmation: the vendor script's URL and shell, or the npm packages.
+func installCommand(r agentinstall.Recipe, id string) string {
+	switch r.Kind {
+	case agentinstall.KindScript:
+		return fmt.Sprintf("downloads and runs the vendor installer %s with %s (monoagentcli agent install %s)", r.ScriptURL, r.Shell, id)
+	case agentinstall.KindNpm:
+		return fmt.Sprintf("npm install -g %s (monoagentcli agent install %s)", strings.Join(r.Packages, " "), id)
+	}
+	return "monoagentcli agent install " + id
 }

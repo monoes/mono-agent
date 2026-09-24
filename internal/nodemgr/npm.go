@@ -65,7 +65,7 @@ func (m *Manager) InstallGlobal(ctx context.Context, progress func(string), pkgs
 	progress(fmt.Sprintf("running: %s %s (prefix %s)", plan.Npm, strings.Join(args, " "), plan.Prefix))
 	cmd := exec.CommandContext(ctx, plan.Npm, args...)
 	cmd.Env = plan.Env
-	if err := streamCmd(cmd, progress); err != nil {
+	if err := StreamCmd(cmd, progress); err != nil {
 		return nil, err
 	}
 	appendPath(plan.BinDir)
@@ -139,9 +139,9 @@ func withEnv(env []string, key, val string) []string {
 	return append(out, key+"="+val)
 }
 
-// streamCmd runs cmd with stdout+stderr passed line by line to progress;
+// StreamCmd runs cmd with stdout+stderr passed line by line to progress;
 // a failure carries the last output lines.
-func streamCmd(cmd *exec.Cmd, progress func(string)) error {
+func StreamCmd(cmd *exec.Cmd, progress func(string)) error {
 	pr, pw := io.Pipe()
 	cmd.Stdout, cmd.Stderr = pw, pw
 	var mu sync.Mutex
@@ -162,6 +162,7 @@ func streamCmd(cmd *exec.Cmd, progress func(string)) error {
 		}
 		io.Copy(io.Discard, pr)
 	}()
+	isolate(cmd)
 	err := cmd.Run()
 	pw.Close()
 	<-done

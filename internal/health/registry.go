@@ -9,5 +9,6 @@ func Default() *Registry {
 	var fixes []Fix
 	fixes = append(fixes, coreFixes()...)
 	fixes = append(fixes, monomindFixes()...)
+	fixes = append(fixes, runtimeFixes()...)
 	return NewRegistry(checks, fixes)
 }

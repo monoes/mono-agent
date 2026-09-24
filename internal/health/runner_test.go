@@ -127,11 +127,31 @@ func TestDefaultRegistryIsConsistent(t *testing.T) {
 		}
 	}
 	for id, f := range reg.fixes {
-		if f.Apply == nil {
-			t.Errorf("fix %s has no Apply", id)
+		if (f.Apply == nil) == (f.ApplyArg == nil) {
+			t.Errorf("fix %s needs exactly one of Apply/ApplyArg", id)
 		}
 		if f.Safety != SafetyAuto && f.Safety != SafetyConfirm && f.Safety != SafetyManual {
 			t.Errorf("fix %s: bad safety %q", id, f.Safety)
+		}
+	}
+}
+
+func TestParameterizedFix(t *testing.T) {
+	var got string
+	reg := NewRegistry(nil, []Fix{{
+		FixInfo:  FixInfo{ID: "x.install", Label: "Install {arg}", Command: "tool install {arg}", Safety: SafetyConfirm, Optional: true},
+		ApplyArg: func(_ context.Context, _ *Env, arg string, _ func(string)) error { got = arg; return nil },
+	}})
+	f, ok := reg.Fix("x.install:claude")
+	if !ok || f.ID != "x.install:claude" || f.Label != "Install claude" || f.Command != "tool install claude" || !f.Optional {
+		t.Fatalf("resolved %+v, %v", f.FixInfo, ok)
+	}
+	if err := f.Apply(context.Background(), &Env{}, func(string) {}); err != nil || got != "claude" {
+		t.Fatalf("apply: %v, arg %q", err, got)
+	}
+	for _, id := range []string{"x.install", "x.install:", "nope:claude"} {
+		if _, ok := reg.Fix(id); ok {
+			t.Errorf("%q should not resolve", id)
 		}
 	}
 }
