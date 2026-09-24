@@ -1050,6 +1050,13 @@ func (e *WorkflowEngine) RetryExecution(ctx context.Context, executionID string)
 	if orig == nil {
 		return "", fmt.Errorf("engine: retry execution: %w", ErrExecutionNotFound)
 	}
+	// A retry copies the original trigger type and data, so an org_tool or
+	// org_message run would start its automation again without a ledger
+	// row and outside the grant's per-run and per-day caps (#127).
+	switch orig.TriggerType {
+	case TriggerTypeOrgTool, TriggerTypeOrgMessage:
+		return "", fmt.Errorf("engine: retry execution %s: %w", executionID, ErrRetryOrgStarted)
+	}
 
 	wf, err := e.store.GetWorkflow(ctx, orig.WorkflowID)
 	if err != nil {
