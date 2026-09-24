@@ -78,7 +78,7 @@ func errRequiredChecksFailed(n int) error {
 }
 
 func newDoctorCmd(cfg *globalConfig) *cobra.Command {
-	var groups, ids []string
+	var groups, skipGroups, ids []string
 	var deep, fix, yes, projects bool
 
 	cmd := &cobra.Command{
@@ -104,6 +104,7 @@ Exit code 1 means a required check failed.`,
 		Example: `  monoagentcli doctor
   monoagentcli doctor --json
   monoagentcli doctor --group core --deep
+  monoagentcli doctor --json --skip-group runtimes
   monoagentcli doctor --fix --yes
   monoagentcli doctor --projects
   monoagentcli doctor --project codes/app --fix
@@ -113,7 +114,7 @@ Exit code 1 means a required check failed.`,
 			ctx := cmd.Context()
 			reg := health.Default()
 			wantProjects := projects || len(cfg.projectFilter) > 0
-			opts := health.Options{Deep: deep, Groups: groups, IDs: ids, OnDemand: wantProjects, Monomind: wantProjects}
+			opts := health.Options{Deep: deep, Groups: groups, SkipGroups: skipGroups, IDs: ids, OnDemand: wantProjects, Monomind: wantProjects}
 			out := cmd.OutOrStdout()
 
 			rep := runHealth(ctx, cfg, reg, opts)
@@ -139,6 +140,7 @@ Exit code 1 means a required check failed.`,
 		},
 	}
 	cmd.Flags().StringSliceVar(&groups, "group", nil, "Only run checks of these groups (e.g. core)")
+	cmd.Flags().StringSliceVar(&skipGroups, "skip-group", nil, "Leave out checks of these groups (e.g. runtimes, whose scan runs every agent CLI)")
 	cmd.Flags().StringSliceVar(&ids, "check", nil, "Only run these checks (and what they depend on)")
 	cmd.Flags().BoolVar(&deep, "deep", false, "Include checks that use the network")
 	cmd.Flags().BoolVar(&fix, "fix", false, "Apply fixes: auto ones directly, confirm ones after asking")
