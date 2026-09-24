@@ -19,9 +19,21 @@ func newNodejsCmd(cfg *globalConfig) *cobra.Command {
 		Short: "Manage the private Node.js runtime monoagent can install for monomind",
 		Long: `monomind and the npm-based AI agent CLIs need Node.js >= ` + nodemgr.MinVersion + `.
 When the machine has no suitable Node, monoagent can download one into
-~/.monoagent/node (official nodejs.org build over HTTPS, checked against nodejs.org's SHASUMS256). It is only
-used by processes monoagent starts and never touches your shell config; a
-suitable system Node always takes precedence.`,
+~/.monoagent/node: the official nodejs.org build, whose SHA-256 must match
+the release's SHASUMS256.txt.asc, itself signed by a Node.js release key
+pinned in monoagent. It never touches your shell config.
+
+A suitable system Node always takes precedence: the managed one is then
+only appended to PATH. When the system Node is missing or older than
+` + nodemgr.MinVersion + `, the managed Node goes first on PATH for every process
+monoagent starts — monomind and agent CLIs, but also the commands of
+workflow exec nodes, where a bare "node" is then the managed one. The PATH
+you had before is kept in $` + nodemgr.UserPathEnv + `.
+
+Changes to ~/.monoagent/node are locked, so installs from the GUI and the
+CLI at once run one after the other, and remove/update keep a version a
+running process uses (detected on Linux; Windows refuses to delete it; on
+macOS stop monoagent's processes first).`,
 	}
 	cmd.AddCommand(newNodejsStatusCmd(cfg), newNodejsInstallCmd(cfg), newNodejsUpdateCmd(cfg), newNodejsRemoveCmd(cfg))
 	return cmd
@@ -92,8 +104,9 @@ func newNodejsInstallCmd(cfg *globalConfig) *cobra.Command {
 	return &cobra.Command{
 		Use:   "install [version]",
 		Short: "Download and activate a managed Node.js (default: latest LTS)",
-		Long: `Downloads Node.js from nodejs.org into ~/.monoagent/node, verifies its
-SHA-256 checksum, and makes it the active managed version. [version] is
+		Long: `Downloads Node.js from nodejs.org into ~/.monoagent/node, verifies the
+signed checksum list and the archive's SHA-256 against it, and makes it the
+active managed version. [version] is
 "lts" (default), a major ("24") or an exact version ("24.1.0").
 With --json, progress is streamed as NDJSON like ` + "`doctor fix`" + `.`,
 		Args: cobra.MaximumNArgs(1),
@@ -127,7 +140,11 @@ func runNodejsInstall(cmd *cobra.Command, cfg *globalConfig, want string, prune 
 	m := nodemgr.New()
 	v, err := m.Install(cmd.Context(), want, progress)
 	if err == nil && prune {
-		if perr := m.Prune(v); perr != nil {
+		kept, perr := m.PruneVersions(v)
+		for _, k := range kept {
+			progress("kept an older version: " + k.Error())
+		}
+		if perr != nil {
 			progress("could not remove older versions: " + perr.Error())
 		}
 	}
