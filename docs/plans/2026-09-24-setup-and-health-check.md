@@ -226,8 +226,12 @@ full report. Non-interactive with `--yes` for scripted installs.
   Details. "Fix all safe issues" runs every `auto` fix; `confirm` fixes open a
   dialog showing `fix.command` first. "Run deep check" button for group G.
 - Status-bar dot (`StatusBar.jsx`) driven by a cached last result; background
-  re-check on app start and every 30 min (local checks only), and after any
-  fix.
+  re-check on app start and every 30 min (local checks only, and without
+  the runtimes group: `doctor --skip-group runtimes`, since `agent scan` runs
+  every agent CLI and they write their own state outside mono-agent — #146),
+  and after any fix. The runtime rows of the last check that scanned them
+  are kept and shown; rows from a deep or projects check stay until a check
+  of that kind runs again.
 - First-run: if a required check fails on launch, open Settings › System
   health with a "Finish setup" stepper that mirrors `monoagentcli setup`.
 - Replace ad-hoc "monomind not found" / "initialize profile" prompts in
@@ -315,7 +319,7 @@ PRs 1–7 are CLI-only and shippable in order; 9 needs 8; 10 needs 1, 7 (and 9 f
 1. Agent runtimes are **installable** — from the Agents page (§5a); the old
    AI Providers page becomes **"AI connections (legacy)"**.
 2. Node is **downloaded and managed** by mono-agent (§7).
-3. GUI background re-check every **30 minutes** (local checks only).
+3. GUI background re-check every **30 minutes** (local checks only, no runtime scan).
 4. Scope is the **active profile** — its folder and its monomind projects.
 5. **All of monomind's health** is included, based on `monomind doctor`, with
    fixes both for the active profile folder and **per project** (§3 B, §5).

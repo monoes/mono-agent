@@ -127,7 +127,12 @@
       "stepManual": "by hand",
       "stepRuntime": "Install an AI agent runtime (Claude Code, Codex, …)",
       "openAgentsShort": "Open AI agents",
-      "cancel": "Cancel"
+      "cancel": "Cancel",
+      "cancelCheck": "Cancel check",
+      "alreadyRunning": "Already running (maybe from the AI agents page)",
+      "fixCancelled": "Cancelled",
+      "earlierCheck": "from an earlier check",
+      "runtimesNotChecked": "Not checked in the background, since scanning runs every agent CLI. Press Check again to scan them."
     }
   },
   "orgs": {
@@ -232,5 +237,50 @@
         "exec": "runs a command"
       }
     }
+  },
+  "agents": {
+    "title": "AI agents",
+    "loading": "Loading…",
+    "monomindUnavailable": "monomind unavailable",
+    "unreachable": "Unable to reach monomind.",
+    "installedCount": "{{installed}} / {{total}} runtimes installed",
+    "refresh": "Refresh",
+    "chat": "Chat",
+    "installed": "installed",
+    "notInstalled": "not installed",
+    "install": "Install",
+    "update": "Update",
+    "installing": "Installing…",
+    "updating": "Updating…",
+    "copySteps": "Copy steps",
+    "copied": "Copied — run it in a terminal",
+    "signIn": "sign in: {{hint}}",
+    "starting": "starting…",
+    "done": "done",
+    "installFailed": "Install failed",
+    "cancelled": "Cancelled",
+    "alreadyInstalling": "{{id}} is already being installed (from System health or this page)",
+    "confirmInstall": "Install {{id}}?",
+    "confirmUpdate": "Update {{id}}?",
+    "installTitle": "Install {{id}}",
+    "updateTitle": "Update {{id}}",
+    "runs": "This runs:",
+    "runsScript": "This downloads and runs the vendor’s install script:",
+    "cancel": "Cancel",
+    "monomindNotInstalled": "monomind not installed",
+    "monomindOutdated": "monomind is out of date",
+    "engineNote": "Agents run through the local monomind engine.",
+    "installWith": "Install it with",
+    "updateWith": "Update it with",
+    "noRuntimesTitle": "No agent runtimes detected",
+    "noRuntimesDesc": "monomind is installed but found no known agent CLIs on this machine."
+  },
+  "aiConnections": {
+    "title": "AI connections (legacy)",
+    "loading": "Loading…",
+    "connectedCount": "{{connected}} / {{total}} connected",
+    "refresh": "Refresh",
+    "banner": "AI agent runtimes (Claude Code, Codex, …) on the <strong>AI agents</strong> page are the recommended way to use AI. These API-key connections remain for existing workflow AI nodes that use them.",
+    "keyKeepPlaceholder": "Leave blank to keep the saved key"
   }
 }

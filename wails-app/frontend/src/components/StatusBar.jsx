@@ -22,8 +22,9 @@ function HealthDot({ onOpen }) {
   return (
     <button
       onClick={onOpen}
+      // The accessible name carries the visible status too (#146).
       title={`${label} — ${t('settings.health.statusTitle')}`}
-      aria-label={t('settings.health.statusTitle')}
+      aria-label={`${label} — ${t('settings.health.statusTitle')}`}
       data-testid="health-dot"
       style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: 10, padding: 0 }}
     >

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useTranslation, Trans } from 'react-i18next'
 import { X, CheckCircle, Loader, Trash2, RefreshCw, ExternalLink, Search, Brain } from 'lucide-react'
 import { api } from '../services/api.js'
 
@@ -339,9 +340,12 @@ function AddModal({ onClose, onSaved, registry, preselected }) {
 // ── Manage Modal ──────────────────────────────────────────────────────────────
 
 function ManageModal({ provider, onClose, onRefresh, onDeleted, registry }) {
+  const { t } = useTranslation()
+  // The stored key is never put in the form (the GUI never gets it): a key
+  // typed here replaces it, a blank one keeps it (SaveAIProvider).
   const [form, setForm] = useState({
     name: provider.name || '',
-    api_key: provider.api_key || '',
+    api_key: '',
     base_url: provider.base_url || '',
     default_model: provider.default_model || '',
     extra_headers: provider.extra_headers || '',
@@ -358,7 +362,7 @@ function ManageModal({ provider, onClose, onRefresh, onDeleted, registry }) {
   const save = async () => {
     setSaving(true); setError(null)
     try {
-      const payload = { ...provider, ...form }
+      const payload = { ...provider, ...form, api_key: form.api_key.trim() }
       const saved = await api.saveAIProvider(payload)
       if (!saved || saved.error) { setError(saved?.error || 'Failed to save'); setSaving(false); return }
       setSaving(false)
@@ -439,8 +443,10 @@ function ManageModal({ provider, onClose, onRefresh, onDeleted, registry }) {
             <label style={{ display: 'block', fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 4 }}>API Key</label>
             <input
               type="password"
+              aria-label="API Key"
               value={form.api_key}
               onChange={e => setForm(p => ({ ...p, api_key: e.target.value }))}
+              placeholder={t('aiConnections.keyKeepPlaceholder')}
               autoComplete="new-password"
               style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: 11, background: 'var(--surface)', border: '1px solid var(--border-bright)', borderRadius: 'var(--radius)', color: 'var(--text)', padding: '7px 10px', outline: 'none', boxSizing: 'border-box' }}
             />
@@ -512,6 +518,7 @@ function ManageModal({ provider, onClose, onRefresh, onDeleted, registry }) {
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 export default function AIProviders({ embedded = false }) {
+  const { t } = useTranslation()
   const [providers, setProviders] = useState([])
   const [registry, setRegistry]   = useState([])
   const [loading, setLoading]     = useState(true)
@@ -574,11 +581,11 @@ export default function AIProviders({ embedded = false }) {
         {!embedded && (
           <div className="page-header">
             <div className="page-header-left">
-              <div className="page-title">AI connections (legacy)</div>
-              <div className="page-subtitle">{loading ? 'Loading…' : `${totalConnected} / ${registry.length} connected`}</div>
+              <div className="page-title">{t('aiConnections.title')}</div>
+              <div className="page-subtitle">{loading ? t('aiConnections.loading') : t('aiConnections.connectedCount', { connected: totalConnected, total: registry.length })}</div>
             </div>
             <div className="page-header-right" style={{ display: 'flex', gap: 6 }}>
-              <button className="btn btn-ghost btn-sm" onClick={() => loadAll()} style={{ gap: 5 }}><RefreshCw size={12} /> Refresh</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => loadAll()} style={{ gap: 5 }}><RefreshCw size={12} /> {t('aiConnections.refresh')}</button>
             </div>
           </div>
         )}
@@ -586,8 +593,7 @@ export default function AIProviders({ embedded = false }) {
         <div className="page-body" style={{ flex: 1, overflow: 'auto' }}>
           {!embedded && (
             <div style={{ fontFamily: 'var(--font-body)', fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.6, padding: '10px 14px', marginBottom: 14, background: 'rgba(0,245,212,.04)', border: '1px solid rgba(0,245,212,.12)', borderRadius: 'var(--radius)' }}>
-              AI agent runtimes (Claude Code, Codex, …) on the <strong style={{ color: 'var(--text-secondary)' }}>AI agents</strong> page are the recommended way to use AI.
-              These API-key connections remain for existing workflow AI nodes that use them.
+              <Trans i18nKey="aiConnections.banner" components={{ strong: <strong style={{ color: 'var(--text-secondary)' }} /> }} />
             </div>
           )}
           {loading ? (

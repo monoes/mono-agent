@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next'
-import { Wrench, Loader2, Copy, Bot } from 'lucide-react'
+import { Wrench, Loader2, Copy, Bot, X } from 'lucide-react'
 import { fixPlan } from '../../lib/health.js'
 
 // "Finish setup": the problems System health can resolve, as numbered
@@ -29,12 +29,13 @@ function StepMark({ step, state, n }) {
   if (state?.running) return <Loader2 size={13} className="spin" style={{ color: '#00b4d8' }} />
   if (state?.done) return <span style={{ color: 'var(--green-neon)' }}>✓</span>
   if (state?.error) return <span style={{ color: 'var(--red)' }}>✗</span>
+  if (state?.cancelled) return <span style={{ color: 'var(--text-muted)' }}>–</span>
   return <span style={{ color: step.kind === 'fix' ? '#00b4d8' : 'var(--text-muted)' }}>{n}</span>
 }
 
 // fixingAll: the steps are running (label says so); busy: something else
 // runs (a check or a single fix), so the button waits.
-export default function SetupSteps({ report, level, fixStates, fixingAll, busy, onRunAll, onFix, onNavigate }) {
+export default function SetupSteps({ report, level, fixStates, fixingAll, busy, onRunAll, onCancelAll, onFix, onNavigate }) {
   const { t } = useTranslation()
   const steps = setupSteps(report)
   if (steps.length === 0) return null
@@ -54,6 +55,14 @@ export default function SetupSteps({ report, level, fixStates, fixingAll, busy, 
           >
             {fixingAll ? <Loader2 size={12} className="spin" /> : <Wrench size={12} />}
             {fixingAll ? t('settings.health.fixing') : t('settings.health.fixIssues', { n: runnable })}
+          </button>
+        )}
+        {fixingAll && onCancelAll && (
+          <button
+            onClick={onCancelAll}
+            style={{ ...mono, fontSize: 10, display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 5, background: 'transparent', color: 'var(--text-secondary)', border: '1px solid var(--border)', cursor: 'pointer' }}
+          >
+            <X size={12} />{t('settings.health.cancel')}
           </button>
         )}
       </div>

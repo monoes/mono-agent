@@ -127,7 +127,12 @@
       "stepManual": "a mano",
       "stepRuntime": "Instala un runtime de agentes IA (Claude Code, Codex, …)",
       "openAgentsShort": "Abrir agentes IA",
-      "cancel": "Cancelar"
+      "cancel": "Cancelar",
+      "cancelCheck": "Cancelar comprobación",
+      "alreadyRunning": "Ya se está ejecutando (quizá desde la página Agentes de IA)",
+      "fixCancelled": "Cancelado",
+      "earlierCheck": "de una comprobación anterior",
+      "runtimesNotChecked": "No se comprueban en segundo plano, porque el análisis ejecuta cada CLI de agente. Pulsa Comprobar de nuevo para analizarlos."
     }
   },
   "orgs": {
@@ -232,5 +237,50 @@
         "exec": "ejecuta un comando"
       }
     }
+  },
+  "agents": {
+    "title": "Agentes de IA",
+    "loading": "Cargando…",
+    "monomindUnavailable": "monomind no disponible",
+    "unreachable": "No se puede contactar con monomind.",
+    "installedCount": "{{installed}} / {{total}} entornos instalados",
+    "refresh": "Actualizar",
+    "chat": "Chat",
+    "installed": "instalado",
+    "notInstalled": "no instalado",
+    "install": "Instalar",
+    "update": "Actualizar",
+    "installing": "Instalando…",
+    "updating": "Actualizando…",
+    "copySteps": "Copiar pasos",
+    "copied": "Copiado: ejecútalo en una terminal",
+    "signIn": "iniciar sesión: {{hint}}",
+    "starting": "iniciando…",
+    "done": "hecho",
+    "installFailed": "La instalación falló",
+    "cancelled": "Cancelado",
+    "alreadyInstalling": "{{id}} ya se está instalando (desde Estado del sistema o desde esta página)",
+    "confirmInstall": "¿Instalar {{id}}?",
+    "confirmUpdate": "¿Actualizar {{id}}?",
+    "installTitle": "Instalar {{id}}",
+    "updateTitle": "Actualizar {{id}}",
+    "runs": "Esto ejecuta:",
+    "runsScript": "Esto descarga y ejecuta el script de instalación del proveedor:",
+    "cancel": "Cancelar",
+    "monomindNotInstalled": "monomind no está instalado",
+    "monomindOutdated": "monomind está desactualizado",
+    "engineNote": "Los agentes se ejecutan a través del motor local monomind.",
+    "installWith": "Instálalo con",
+    "updateWith": "Actualízalo con",
+    "noRuntimesTitle": "No se detectaron entornos de agentes",
+    "noRuntimesDesc": "monomind está instalado pero no encontró ninguna CLI de agente conocida en este equipo."
+  },
+  "aiConnections": {
+    "title": "Conexiones de IA (heredadas)",
+    "loading": "Cargando…",
+    "connectedCount": "{{connected}} / {{total}} conectadas",
+    "refresh": "Actualizar",
+    "banner": "Los entornos de agentes de IA (Claude Code, Codex, …) de la página <strong>Agentes de IA</strong> son la forma recomendada de usar la IA. Estas conexiones con clave de API se mantienen para los nodos de IA de flujos existentes que las usan.",
+    "keyKeepPlaceholder": "Déjalo en blanco para conservar la clave guardada"
   }
 }
