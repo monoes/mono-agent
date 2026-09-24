@@ -108,6 +108,58 @@
       "runTitle": "Ejecutar esta organización",
       "fullscreen": "Lienzo a pantalla completa",
       "exitFullscreen": "Salir de pantalla completa"
+    },
+    "autonomy": {
+      "levelGroup": "Nivel de autonomía",
+      "levels": {
+        "manual": "Manual",
+        "manualHint": "Tú lo decides todo.",
+        "mid": "Medio",
+        "midHint": "Lo rutinario por regla, lo relevante por quien decide, lo irreversible por ti.",
+        "full": "Automático total",
+        "fullHint": "Lo rutinario por regla, todo lo demás por quien decide. Sin intervención humana."
+      },
+      "decider": "Quién decide",
+      "deciders": {
+        "model": "Modelo",
+        "modelHint": "Una llamada aparte a un modelo, de una sola vez.",
+        "boss": "Jefe",
+        "bossHint": "Decide el rol raíz de la organización.",
+        "parent": "Matriz",
+        "parentHint": "Decide el iniciador de la organización matriz."
+      },
+      "loading": "Cargando autonomía…",
+      "unavailable": "Autonomía no disponible",
+      "unreadable": "No se pudo leer la configuración de autonomía.",
+      "retry": "Volver a cargar la autonomía",
+      "paused": "En pausa",
+      "pausedUntil": "En pausa hasta las {{time}}",
+      "pausedTitle": "Mientras está en pausa, las decisiones te llegan a ti",
+      "resume": "Reanudar",
+      "pause": "Pausar autonomía",
+      "alreadyManual": "Ya está en manual",
+      "pauseTitle": "Pasar a manual ahora",
+      "pauseFor30m": "Durante 30 min",
+      "pauseFor2h": "Durante 2 horas",
+      "pauseUntilResumed": "Hasta reanudar",
+      "daemonOff": "Daemon apagado: actúa como manual",
+      "daemonOffTitle": "Inicia `monoagentcli daemon` para que las decisiones se enruten",
+      "actingAs": "Actúa como {{level}}"
+    },
+    "fullAuto": {
+      "dialog": "Activar automático total",
+      "title": "¿Automático total para {{org}}?",
+      "intro": "Quién decide ({{decider}}) resolverá esto sin intervención humana:",
+      "everyGate": "Cada compuerta que plantee un rol",
+      "pendingNow": " — pendientes ahora: {{gates}}",
+      "running": "ejecuta",
+      "outbound": "(saliente, irreversible)",
+      "setIrreversible": "(marcado como irreversible)",
+      "none": "No hay decisiones irreversibles configuradas.",
+      "grantsFailed": "No se pudieron cargar los permisos.",
+      "incomplete": "La lista puede estar incompleta.",
+      "cancel": "Cancelar",
+      "confirm": "Activar automático total"
     }
   },
   "grantDialog": {

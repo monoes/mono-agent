@@ -129,6 +129,26 @@ func (l *Ledger) Admit(ctx context.Context, c Call, lim Limits) (Admission, erro
 	if l.db == nil {
 		return Admission{Trace: Trace{ChainID: tr.ChainID, Hop: tr.Hop + 1}, Status: StatusOK}, nil
 	}
+	// The reads that decide the hop and the repeat count, and the insert
+	// that records the crossing, run in one IMMEDIATE transaction: without
+	// it, parallel calls on one chain all read the same state and together
+	// overshoot the limits (16 goroutines × 8 calls admitted ~76, not 64).
+	// A concurrent Admit waits for it up to the database's busy_timeout.
+	conn, err := l.db.Conn(ctx)
+	if err != nil {
+		return Admission{}, fmt.Errorf("orgbridge: ledger: %w", err)
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return Admission{}, fmt.Errorf("orgbridge: ledger: begin: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			// A fresh context, so the rollback runs even if ctx was cancelled.
+			_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
+		}
+	}()
 	// Granted calls are not each a link of a loop: monomind gives a role
 	// one chain for its whole run (roleTrace), changed only by a traced
 	// message reaching it, so a busy role's calls pile up on one chain, and
@@ -153,7 +173,7 @@ func (l *Ledger) Admit(ctx context.Context, c Call, lim Limits) (Admission, erro
 	if c.Direction == DirRoleTool {
 		q += ` AND direction <> ?`
 		args = append(args, DirRoleTool)
-		if err := l.db.QueryRowContext(ctx,
+		if err := conn.QueryRowContext(ctx,
 			// Refused calls never ran their automation: counting them let
 			// one role's capped retries use up every role's allowance.
 			`SELECT COUNT(*) FROM org_bridge_calls WHERE profile_id = ? AND chain_id = ? AND direction = ?
@@ -163,7 +183,7 @@ func (l *Ledger) Admit(ctx context.Context, c Call, lim Limits) (Admission, erro
 		}
 	}
 	var recorded sql.NullInt64
-	if err := l.db.QueryRowContext(ctx, q, args...).Scan(&recorded); err != nil {
+	if err := conn.QueryRowContext(ctx, q, args...).Scan(&recorded); err != nil {
 		return Admission{}, fmt.Errorf("orgbridge: ledger: %w", err)
 	}
 	hop := tr.Hop
@@ -179,7 +199,7 @@ func (l *Ledger) Admit(ctx context.Context, c Call, lim Limits) (Admission, erro
 	} else {
 		since := l.now().Add(-lim.Window).UTC().Format(time.RFC3339Nano)
 		var n int
-		if err := l.db.QueryRowContext(ctx,
+		if err := conn.QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM org_bridge_calls
 			 WHERE profile_id = ? AND direction = ? AND COALESCE(org_name,'') = ? AND COALESCE(role_id,'') = ?
 			   AND COALESCE(workflow_id,'') = ? AND status = 'ok' AND created_at >= ?`,
@@ -191,9 +211,13 @@ func (l *Ledger) Admit(ctx context.Context, c Call, lim Limits) (Admission, erro
 			adm.Reason = fmt.Sprintf("%d calls to the same target in the last %s (limit %d) — slow down or raise run_config.max_repeats", n, lim.Window, lim.MaxRepeats)
 		}
 	}
-	if err := l.insert(ctx, adm.ID, c, adm.Trace, adm.Status); err != nil {
+	if err := l.insertWith(ctx, conn, adm.ID, c, adm.Trace, adm.Status); err != nil {
 		return Admission{}, err
 	}
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return Admission{}, fmt.Errorf("orgbridge: ledger: commit: %w", err)
+	}
+	committed = true
 	return adm, nil
 }
 
@@ -229,11 +253,21 @@ func (l *Ledger) SetExecution(ctx context.Context, id, executionID string) error
 }
 
 func (l *Ledger) insert(ctx context.Context, id string, c Call, tr Trace, status string) error {
+	return l.insertWith(ctx, l.db, id, c, tr, status)
+}
+
+// execer is what insertWith writes through: the database, or the
+// connection holding Admit's transaction.
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+}
+
+func (l *Ledger) insertWith(ctx context.Context, db execer, id string, c Call, tr Trace, status string) error {
 	origin := c.OriginOrg
 	if origin == "" {
 		origin = c.OrgName
 	}
-	_, err := l.db.ExecContext(ctx,
+	_, err := db.ExecContext(ctx,
 		`INSERT INTO org_bridge_calls (id, profile_id, chain_id, hop, origin_org, direction, org_name, role_id,
 		   workflow_id, execution_id, grant_id, endpoint_id, run_id, status, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,

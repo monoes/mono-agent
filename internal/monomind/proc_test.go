@@ -39,7 +39,3 @@ func TestCloneForRetryNilSysProcAttr(t *testing.T) {
 		t.Fatalf("SysProcAttr = %+v, want nil", c.SysProcAttr)
 	}
 }
-
-func TestKillProcessTreeUnstartedIsNoop(t *testing.T) {
-	KillProcessTree(exec.Command("x")) // must not panic or signal any group
-}

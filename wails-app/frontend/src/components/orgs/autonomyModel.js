@@ -3,6 +3,8 @@
 // only preview it — e.g. in the grant dialog before a grant row exists — and
 // explain where a tier is routed at each level.
 
+// label/hint are the English wording; the UI shows the locale's
+// orgs.autonomy.levels.<id> / <id>Hint (and deciders.*) instead.
 export const LEVELS = [
   { id: 'manual', label: 'Manual', hint: 'You decide everything.' },
   { id: 'mid', label: 'Mid', hint: 'Routine by rule, consequential by the decider, irreversible by you.' },

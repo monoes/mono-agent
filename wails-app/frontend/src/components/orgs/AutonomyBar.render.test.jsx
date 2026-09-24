@@ -2,9 +2,14 @@
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import '@testing-library/jest-dom/vitest'
-import { render, screen, fireEvent, waitFor, cleanup, within } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, cleanup, within, act } from '@testing-library/react'
 import AutonomyBar from './AutonomyBar.jsx'
 import { api, notify } from '../../services/api.js'
+// The real i18n setup, as main.jsx loads it, so the bar's labels come from
+// src/locales/*.json and the English names below stay findable.
+import i18n from '../../i18n.js'
+import en from '../../locales/en.json'
+import es from '../../locales/es.json'
 
 vi.mock('../../services/api.js', () => ({
   api: {
@@ -25,8 +30,9 @@ const AUTONOMY = {
   limits: {}, daemon_running: true,
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks()
+  await i18n.changeLanguage('en')
   api.getOrgAutonomy.mockResolvedValue(AUTONOMY)
   api.setOrgAutonomy.mockResolvedValue({ v: 1 })
   api.pauseOrgAutonomy.mockResolvedValue({ v: 1 })
@@ -126,5 +132,31 @@ describe('AutonomyBar', () => {
     api.getOrgAutonomy.mockResolvedValue({ error: 'unknown command "autonomy"' })
     render(<AutonomyBar orgName="growth" />)
     expect(await screen.findByText('Autonomy unavailable')).toBeInTheDocument()
+  })
+
+  it('has every string in both locales', () => {
+    for (const ns of ['autonomy', 'fullAuto']) {
+      const walk = (a, b, path) => {
+        for (const [k, v] of Object.entries(a)) {
+          if (typeof v === 'object') walk(v, b?.[k], `${path}.${k}`)
+          else expect(typeof b?.[k], `es is missing ${path}.${k}`).toBe('string')
+        }
+      }
+      walk(en.orgs[ns], es.orgs[ns], `orgs.${ns}`)
+      walk(es.orgs[ns], en.orgs[ns], `orgs.${ns}`)
+    }
+  })
+
+  it('speaks the chosen language, including the Full auto confirmation', async () => {
+    await act(() => i18n.changeLanguage('es'))
+    render(<AutonomyBar orgName="growth" />)
+    await waitFor(() => expect(screen.getByRole('radiogroup', { name: es.orgs.autonomy.levelGroup })).toBeInTheDocument())
+    expect(screen.getByRole('radio', { name: es.orgs.autonomy.levels.mid })).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByLabelText(es.orgs.autonomy.decider)).toHaveValue('model')
+    expect(screen.getByRole('button', { name: new RegExp(es.orgs.autonomy.pause) })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('radio', { name: es.orgs.autonomy.levels.full }))
+    const dialog = await screen.findByRole('dialog', { name: es.orgs.fullAuto.dialog })
+    await waitFor(() => expect(within(dialog).getByText(new RegExp(es.orgs.fullAuto.everyGate))).toBeInTheDocument())
+    expect(within(dialog).getByRole('button', { name: es.orgs.fullAuto.confirm })).toBeInTheDocument()
   })
 })

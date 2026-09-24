@@ -1057,6 +1057,8 @@ What the runs taught, beyond the checks:
   left out of the maximum and they are pooled, one hop per 8 together. Refused rows
   no longer count in the maximum (one forged hop=999 crossing used to kill a chain for every
   caller), and a forged header hop is clamped before arithmetic (MaxInt64 used to wrap).
+  Admit's reads and its insert run in one `BEGIN IMMEDIATE` transaction (`chore/org-small-
+  leftovers`), so parallel calls no longer overshoot (16 × 8 calls admitted 74, now exactly 64).
   A loop back through a recorded crossing (`workflow_out`) climbs from that row as before. The
   per-grant `max_calls_per_run`/`max_calls_per_day` caps bound it too; `max_repeats` does not
   (a loop paced under 20 a minute never reaches it). An adversarial review found the first
@@ -1167,8 +1169,9 @@ ordinary `startOrg` runs.
   already says `queued for <role> (delivered when the org next runs)`. The Queued tab counts the
   selected org's waiting messages (`useQueuedCount`, polled every 20 s, closed 2026-09-23). The org
   rail has no queued count, on purpose: its one badge is Needs you, which waits on the person,
-  while a queued message only waits for the org to start. Not done: the tab label is not
-  translated (the other org tab labels are not either).
+  while a queued message only waits for the org to start. The tab labels (all of them) are
+  translated since #118, and the rest of the org header (autonomy bar) since
+  `chore/org-small-leftovers`.
 - C-46 closed (2026-09-18, branch `fix/org-c46-workdir-confinement`): the grant handler and the
   automation-role receiver put the calling role's workdir in trigger data as `org.workdir`
   (`orgdesign.RoleWorkdir`, mirroring monomind's `workspaceSetting`); the engine confines the run's
