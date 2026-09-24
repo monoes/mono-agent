@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/monoes/mono-agent/internal/nodemgr"
 	"github.com/monoes/mono-agent/internal/shellpath"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -95,6 +96,10 @@ func main() {
 	// invisible to it and to every monoagentcli child. Import the login
 	// shell's PATH before anything shells out.
 	shellpath.Apply(context.Background())
+	// A Node that monoagent installed itself (Settings › System health)
+	// goes on PATH too — after the login PATH, so a suitable system Node
+	// still wins.
+	nodemgr.Activate(context.Background())
 
 	app := NewApp()
 

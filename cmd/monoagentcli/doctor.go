@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/monoes/mono-agent/internal/health"
+	"github.com/monoes/mono-agent/internal/nodemgr"
 	"github.com/monoes/mono-agent/internal/profiledir"
 	"github.com/monoes/mono-agent/internal/secrets"
 	"github.com/monoes/mono-agent/internal/shellpath"
@@ -126,22 +127,7 @@ func newDoctorFixCmd(cfg *globalConfig) *cobra.Command {
 			}
 			out := cmd.OutOrStdout()
 			err := applyFix(cmd.Context(), cfg, f, progressWriter(out, cfg.JSONOutput))
-			if cfg.JSONOutput {
-				ev := fixEvent{Kind: "done"}
-				if err != nil {
-					ev = fixEvent{Kind: "error", Message: err.Error()}
-				}
-				writeFixEvent(out, ev)
-				if err != nil {
-					return &cliError{code: 1, msg: err.Error()}
-				}
-				return nil
-			}
-			if err != nil {
-				return err
-			}
-			fmt.Fprintf(out, "✓ %s\n", f.Label)
-			return nil
+			return finishStreamed(out, cfg.JSONOutput, err, f.Label)
 		},
 	}
 }
@@ -296,6 +282,19 @@ func newHealthEnv(cfg *globalConfig) (*health.Env, func()) {
 			}
 			return db.Close()
 		},
+	}
+	nm := nodemgr.New()
+	env.SystemNode = nm.SystemNode
+	env.ManagedNode = func() (string, string, bool) {
+		v, ok := nm.Current()
+		if !ok {
+			return "", "", false
+		}
+		return v, nm.NodePath(v), true
+	}
+	env.InstallNode = func(ctx context.Context, progress func(string)) error {
+		_, err := nm.Install(ctx, "lts", progress)
+		return err
 	}
 	env.ProfileRoot = func(id string) string { return profiledir.Root(env.DB, id) }
 	env.EnsureProfile = func(id string) error { return profiledir.EnsureLayout(env.DB, id) }

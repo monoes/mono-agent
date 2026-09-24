@@ -82,3 +82,24 @@ func TestFind_NvmInstallInvisibleToGUIPath(t *testing.T) {
 		t.Fatalf("PATH = %q, want %q prepended so `node` resolves", os.Getenv("PATH"), wantDir)
 	}
 }
+
+// TestCandidatePaths_IncludesManagedNpmPrefix: monomind installed through
+// monoagent's managed Node (internal/nodemgr) lands under
+// ~/.monoagent/npm-global and must be found without being on PATH.
+func TestCandidatePaths_IncludesManagedNpmPrefix(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv(EnvOverride, "")
+	want := filepath.Join(home, ".monoagent", "npm-global", "bin", "monomind")
+	if runtime.GOOS == "windows" {
+		want = filepath.Join(home, ".monoagent", "npm-global", "monomind.cmd")
+	}
+	for _, c := range CandidatePaths() {
+		if c == want {
+			return
+		}
+	}
+	t.Errorf("CandidatePaths() = %v, missing %q", CandidatePaths(), want)
+}
