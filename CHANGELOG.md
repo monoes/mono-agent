@@ -7,7 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.65.0] - 2026-09-25
+
+This entry also covers work that shipped in 0.50–0.64, which were cut
+automatically on every push to master without changelog entries of their
+own.
+
+### Added
+
+- **`monoagentcli doctor`** checks everything monoagent needs and fixes what it
+  can. The groups are core (data folder, database, profile, vault, PATH,
+  disk), monomind (Node.js, monomind, its version and features, the profile's
+  `monomind init`, and monomind's own checks per profile folder and
+  `--projects`), AI agent runtimes, browser and extension, background
+  services, Claude Code integrations, and accounts.
+  - `--json` prints a versioned report.
+  - `--fix` applies fixes, repeating passes until nothing is left to fix.
+  - `doctor fix <id>` runs one fix and streams NDJSON progress.
+  - `--deep` adds the network checks.
+  - `--skip-group` leaves groups (and their dependents) out.
+  - Fixes are auto, confirm or manual. Optional ones (installing a runtime,
+    start-at-login, MCP registration) run only when asked for by id.
+- **`monoagentcli setup`** takes a machine from nothing to ready: it applies
+  the fixes (asking before it installs software, or accepting with `--yes`),
+  offers the optional extras, and reports what is left to do by hand.
+- **Managed Node.js.** `monoagentcli nodejs install|update|remove|status`
+  downloads Node LTS into `~/.monoagent/node` when there is no suitable
+  system Node.
+  - The download's checksum file is checked against the Node release team's
+    signature, the archive's size is capped, and installs are serialized.
+  - It is used only by the processes monoagent starts. Workflow commands keep
+    the user's own PATH.
+- **`monoagentcli agent install <runtime>`** installs Claude Code, Codex,
+  OpenCode, Copilot, Qwen, Pi and others from monomind's install recipe:
+  npm packages, or a vendor https script from an allow-listed host. Anything
+  else is shown as steps to do by hand.
+- **Settings › System health** in the app shows the doctor report.
+  - It has a Finish setup step list, a Fix / Copy steps button per row and
+    Update/Remove actions for the managed Node.
+  - Deep and per-project checks, cancelling a running check or fix, and a
+    status-bar dot fed by a background check. That check runs on start and
+    every 30 minutes, and writes nothing outside `~/.monoagent`.
+- **AI agents** is back in the sidebar, with Install / Update / Copy steps on
+  every runtime.
+- **Human in Loop** has a review queue for leads staged as
+  `pending_approval`: edit the introduction, then approve or reject.
+
 ### Changed
+
+- **AI Providers is now "AI connections (legacy)".** Agent runtimes on the AI
+  agents page are the recommended way to use AI.
+- A doctor account test offers the silent token refresh only when the
+  service refused the credentials (401/403) or the token expired. Other
+  failures ask first. Connections are tested in parallel, and AI keys are
+  checked with a free model-list call where the provider has one.
+- `people.save` evaluates `introduction`, `category` and `job_title` per
+  item. The browser nodes parse LinkedIn search-card text.
 
 - Loops through webhooks now stop. A run on an org chain sends that chain
   on its HTTP requests to this machine as a signed `X-Monoagent-Trace`
@@ -33,6 +88,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The signing key is `~/.monoagent/trace.key` (mode 0600; a key other
   users can read is refused). To rotate it, delete the file and restart
   `monoagentcli daemon`.
+
+### Fixed
+
+- **First launch on a new machine.** The app created no `~/.monoagent`, so
+  its database never opened and the app never finished starting.
+- **monomind's stray output.** monomind's "update available" notice, which it
+  printed on stdout ahead of its JSON, no longer breaks runtime detection.
+- **`install.sh` on linux-arm64.** It no longer refuses a linux-arm64 machine.
+- **Saved AI keys.** Leaving the key blank when editing an AI connection keeps
+  the stored key.
+- **Docs.** README, `--help` and the `ref` manual now match the code: node
+  counts, deprecated `ai.*` nodes, and ref entries for every node type.
 
 ## [0.49.0] - 2026-09-20
 
