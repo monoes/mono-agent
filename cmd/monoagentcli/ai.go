@@ -222,12 +222,11 @@ func newAIProviderTestCmd(cfg *globalConfig) *cobra.Command {
 // (bad config) as opposed to one whose test request failed.
 var errBuildAIClient = errors.New("building client")
 
-// testAIProvider sends a minimal completion through a provider and records
-// the outcome as its status — shared by `ai provider test` and doctor's
-// deep account checks.
-// testAIProvider sends one tiny completion through p. With record it saves
-// the outcome as the provider's status (`ai provider test`); doctor passes
-// false, since a check must not change anything.
+// testAIProvider sends one tiny completion through p (shared by `ai
+// provider test` and, for providers ai.VerifyKey can't check for free,
+// doctor's deep account checks). With record it saves the outcome as the
+// provider's status (`ai provider test`); doctor passes false, since a
+// check must not change anything.
 func testAIProvider(ctx context.Context, store *ai.AIStore, p ai.AIProvider, profileID string, record bool) (string, error) {
 	client, err := ai.NewClient(p)
 	if err != nil {

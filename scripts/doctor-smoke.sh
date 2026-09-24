@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Smoke test for `monoagentcli doctor` (setup & health check) against a
 # throwaway HOME: the JSON contract, the required-failure exit code, the
-# fix → re-check loop, and `doctor fix`'s NDJSON stream. Runs in CI
+# fix → re-check loop, `doctor fix`'s NDJSON stream, and `setup` from an
+# empty HOME (with no terminal, and with --yes for the core group). Runs in CI
 # (.github/workflows/ci.yml, job doctor-smoke) and locally:
 #
 #   go build -o /tmp/monoagentcli ./cmd/monoagentcli && scripts/doctor-smoke.sh /tmp/monoagentcli
@@ -75,6 +76,30 @@ jq -se 'length > 0 and all(.[]; .kind | type == "string")' "$out/setup.events" >
 auto_ok='["core.home.create","core.db.migrate","core.profile.layout"]'
 jq -e --argjson ok "$auto_ok" '([.fixes[] | select(.outcome == "applied") | .id] - $ok) | length == 0' "$out/setup.json" >/dev/null \
   || fail "setup with no terminal applied a fix that needs a yes: $(jq -c '[.fixes[] | select(.outcome == "applied") | .id]' "$out/setup.json")"
+
+echo "== setup --yes --json --group core in a clean HOME: healthy core, stage and per-fix events"
+core_home="$root/core-home"
+mkdir -p "$core_home"
+set +e
+HOME="$core_home" USERPROFILE="$core_home" timeout 120 "$cli" --db-path "$core_home/.monoagent/monoagent.db" --json setup --group core --yes --mcp \
+  < /dev/null > "$out/setup-core.json" 2> "$out/setup-core.ndjson"
+code=$?
+set -e
+[ "$code" -eq 0 ] || fail "setup --group core --yes: exit $code, want 0"
+[ ! -e "$core_home/.claude" ] || fail "setup --group core wrote ~/.claude"
+jq -e 'all(.results[]; .group == "core" and .status != "fail")' "$out/setup-core.json" >/dev/null \
+  || fail "setup --group core left a failing or non-core row: $(jq -c '[.results[] | select(.status == "fail" or .group != "core") | .id]' "$out/setup-core.json")"
+# core.home.create applied proves the first check saw the empty HOME (no pre-run made the folder first).
+jq -e '[.fixes[] | select(.outcome == "applied") | .id] == ["core.home.create","core.db.migrate","core.profile.layout"]' "$out/setup-core.json" >/dev/null \
+  || fail "setup --group core applied $(jq -c '[.fixes[] | select(.outcome == "applied") | .id]' "$out/setup-core.json")"
+jq -e '.fixes[] | select(.id == "integrations.mcp_monoagent.register") | .outcome == "skipped" and (.reason | length > 0)' "$out/setup-core.json" >/dev/null \
+  || fail "--mcp that can't be done should be reported as skipped, with a reason"
+grep '^{' "$out/setup-core.ndjson" > "$out/setup-core.events" || fail "setup streamed no events"
+jq -se '[.[] | select(.kind == "stage") | .message] | index("Fixing what is missing") != null' "$out/setup-core.events" >/dev/null \
+  || fail "setup streamed no stage events"
+jq -se '([.[] | select(.kind == "fix_start") | .fix_id] == ["core.home.create","core.db.migrate","core.profile.layout"])
+        and ([.[] | select(.kind == "fix_end" and .outcome == "applied") | .fix_id] == ["core.home.create","core.db.migrate","core.profile.layout"])' \
+  "$out/setup-core.events" >/dev/null || fail "setup's fix_start/fix_end events don't match the applied fixes"
 
 echo "== full report: every group renders as valid v1 JSON, and nothing required fails after --fix"
 set +e
