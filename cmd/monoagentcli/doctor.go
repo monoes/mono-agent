@@ -183,9 +183,15 @@ type fixOutcome struct {
 	Error   string `json:"error,omitempty"`
 }
 
+// fixEvent is one NDJSON progress event. `doctor fix` emits line, done and
+// error; setup adds stage (a heading), fix_start and fix_end (with the
+// fix's outcome), naming the fix in fix_id. Readers skip kinds they don't
+// know.
 type fixEvent struct {
 	Kind    string `json:"kind"`
 	Message string `json:"message,omitempty"`
+	FixID   string `json:"fix_id,omitempty"`
+	Outcome string `json:"outcome,omitempty"`
 }
 
 func writeFixEvent(w io.Writer, ev fixEvent) {
