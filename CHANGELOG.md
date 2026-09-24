@@ -22,6 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The HTTP request node has a `propagate_trace` option, off by default, to
   send the signed chain to hosts other than this machine too (for a system
   that calls a webhook here back with it).
+- Loop control follow-ups (#132): `trigger.org` runs are recorded in the
+  ledger (`org_event`, `event_start`), so a loop through a role's tool
+  events climbs, including one started by a Bash tool event; a run signs
+  the deeper of its hop and the hop its item reached; a replayed token
+  starts at most 200 runs of a workflow a minute, then gets HTTP 429;
+  with a wildcard `MONOAGENT_WEBHOOK_ADDR` a request to this machine's LAN
+  address or host name keeps its trace; tokens expire after an hour; and a
+  webhook crossing uses the `max_hops` of the org its chain started in.
 - The signing key is `~/.monoagent/trace.key` (mode 0600; a key other
   users can read is refused). To rotate it, delete the file and restart
   `monoagentcli daemon`.

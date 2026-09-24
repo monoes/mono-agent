@@ -7,10 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
@@ -426,7 +424,7 @@ func (n *RequestNode) executeRequest(
 	// back into mono-agent through a webhook the run it starts stays on the
 	// chain and the hop limit still applies (U10). Set after every header
 	// the workflow configures (custom and auth), so none can replace it.
-	setTraceHeader(ctx, req, config)
+	setTraceHeader(ctx, req, config, inputItem.JSON)
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -499,14 +497,17 @@ func (n *RequestNode) executeRequest(
 // setTraceHeader adds the run's chain as a signed X-Monoagent-Trace header
 // (internal/tracesig), when the run is on one and the request goes where a
 // webhook of this machine can be: a loopback address, or the host of
-// MONOAGENT_WEBHOOK_ADDR. Other hosts get it only with propagate_trace (an
-// outside system that returns the header to a webhook here): the token
-// cannot lower a hop, but a third party holding one could push its chain to
-// the limit. Without a key the request goes out without it, and any header
-// of that name the workflow configured is removed either way.
-func setTraceHeader(ctx context.Context, req *http.Request, config map[string]interface{}) {
+// MONOAGENT_WEBHOOK_ADDR (any of this machine's addresses or its name when
+// that is a wildcard bind; see ownHost). Other hosts get it only with
+// propagate_trace (an outside system that returns the header to a webhook
+// here): the token cannot lower a hop, but a third party holding one could
+// push its chain to the limit. The hop signed is the deeper of the run's
+// and the item's on the same chain (workflow.RunTrace). Without a key the
+// request goes out without it, and any header of that name the workflow
+// configured is removed either way.
+func setTraceHeader(ctx context.Context, req *http.Request, config map[string]interface{}, item map[string]interface{}) {
 	req.Header.Del(tracesig.Header)
-	chain, hop, ok := workflow.RunTrace(ctx)
+	chain, hop, ok := workflow.RunTrace(ctx, item)
 	if !ok {
 		return
 	}
@@ -522,21 +523,4 @@ func setTraceHeader(ctx context.Context, req *http.Request, config map[string]in
 		return
 	}
 	req.Header.Set(tracesig.Header, tok)
-}
-
-// ownHost reports whether host is a loopback address or the host this
-// machine's webhook server listens on (MONOAGENT_WEBHOOK_ADDR).
-func ownHost(host string) bool {
-	if strings.EqualFold(host, "localhost") {
-		return true
-	}
-	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
-		return true
-	}
-	if addr := strings.TrimSpace(os.Getenv("MONOAGENT_WEBHOOK_ADDR")); addr != "" {
-		if h, _, err := net.SplitHostPort(addr); err == nil && h != "" && strings.EqualFold(h, host) {
-			return true
-		}
-	}
-	return false
 }

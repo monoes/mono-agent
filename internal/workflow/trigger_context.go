@@ -101,12 +101,28 @@ func ParseTraceAt(m map[string]interface{}, key string) (chainID string, hop int
 // RunTrace is the chain the running execution belongs to, from its trigger
 // data, when its trigger type carries one (CarriesChain). Nodes that send
 // work out of mono-agent (the HTTP request node) pass it on signed.
-func RunTrace(ctx context.Context) (chainID string, hop int, ok bool) {
+//
+// The hop is the deeper of the trigger's and the one item (the node's
+// input item, may be nil) reached on the same chain: a run that crossed
+// again after it started (its own org.send, whose output item carries the
+// new hop) is that far down the chain, and signing the start hop would let
+// a loop through it climb one hop per round instead of two. A trace on the
+// item naming another chain is ignored, since items can hold outside data
+// (an HTTP response lifted to the top level) and that would let the
+// outside pick the chain.
+func RunTrace(ctx context.Context, item map[string]interface{}) (chainID string, hop int, ok bool) {
 	tt := TriggerTypeFrom(ctx)
 	if !CarriesChain(tt) {
 		return "", 0, false
 	}
-	return ParseTraceAt(TriggerDataFrom(ctx), TraceKey(tt))
+	chainID, hop, ok = ParseTraceAt(TriggerDataFrom(ctx), TraceKey(tt))
+	if !ok {
+		return "", 0, false
+	}
+	if c, h, itemOK := ParseTrace(item); itemOK && c == chainID && h > hop {
+		hop = h
+	}
+	return chainID, hop, true
 }
 
 // TriggerNodeTypeWebhook is the webhook trigger's node type, the trigger

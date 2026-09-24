@@ -288,18 +288,33 @@ layers, from strongest:
    `internal/tracesig`), and the webhook server continues the chain only
    when that signature verifies, recording the crossing (`webhook_in`) and
    refusing the request (429) past the hop limit. The signature covers
-   chain and hop, so a replayed token cannot lower the hop. A webhook
+   chain, hop and an expiry (one hour), so a replayed token cannot lower
+   the hop and stops verifying after the hour. A webhook
    body can never set the chain: the server drops the reserved
    `monoagent_trace` field and gives a run without a verified header a
    fresh chain. The token names only a chain and hop. It goes only to
-   this machine (loopback, or the host of `MONOAGENT_WEBHOOK_ADDR`) unless
+   this machine (loopback, or the host of `MONOAGENT_WEBHOOK_ADDR`; with a
+   wildcard bind, any of the machine's interface addresses or its host
+   name, compared and never resolved) unless
    a node sets `propagate_trace`, and never follows a cross-host redirect:
    a third party holding one could push its chain to the hop limit. A
    `webhook_in` crossing takes the signed hop as is (a run's fan-out
    requests are siblings at hop + 1; a loop's return is one hop deeper each
-   round) and uses the default limits, not an org's `max_hops`. The key is
-   refused if other users can read it; delete it and restart the daemon to
-   rotate it. Tokens do not expire.
+   round); the signed hop is the deeper of the run's and the one its item
+   reached on the chain. It is held to the `max_hops` of the org the chain
+   started in (the defaults for a chain no org started), and to 200 runs of
+   one workflow a minute (429 past that), so replaying a token cannot grow
+   `org_bridge_calls` without bound: past either limit only the first
+   refusal per minute is recorded. `trigger.org` runs are admitted too
+   (`org_event`, or `event_start` on a fresh chain), under the same
+   200-a-minute limit and the org's `max_hops`, so a loop that goes out
+   through a role's tool event and comes back by a path the ledger does not
+   record still climbs. A tool event that is not a granted call (Bash, file
+   reads) continues the role's chain only when that workflow's own
+   trigger.org run started the chain; an audit workflow is not put on a
+   role's chain, and `org_event` rows never raise a chain's depth. The key
+   is refused if other users can read it; delete it and restart the daemon
+   to rotate it.
 6. **Workdir confinement of automation file paths (C-46).** Automations run
    in the daemon, outside monomind's per-role workdir confinement. So the
    grant handler puts the calling role's workdir (computed from the

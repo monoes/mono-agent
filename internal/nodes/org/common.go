@@ -87,39 +87,20 @@ func incomingTrace(ctx context.Context, item workflow.Item) orgbridge.Trace {
 	if !workflow.CarriesChain(tt) {
 		return orgbridge.Trace{}
 	}
-	itemChain, itemHop, itemOK := workflow.ParseTrace(item.JSON)
-	trigChain, trigHop, triggerOK := workflow.ParseTraceAt(workflow.TriggerDataFrom(ctx), workflow.TraceKey(tt))
-	switch {
-	case triggerOK && itemOK && itemChain == trigChain && itemHop > trigHop:
-		return orgbridge.Trace{ChainID: itemChain, Hop: itemHop}
-	case triggerOK:
-		return orgbridge.Trace{ChainID: trigChain, Hop: trigHop}
-	case itemOK && tt != workflow.TriggerNodeTypeWebhook:
-		// A webhook's first item is the request body: its `trace` is the
-		// sender's data, never a chain.
-		return orgbridge.Trace{ChainID: itemChain, Hop: itemHop}
+	if chain, hop, ok := workflow.RunTrace(ctx, item.JSON); ok {
+		return orgbridge.Trace{ChainID: chain, Hop: hop}
+	}
+	// A webhook's first item is the request body: its `trace` is the
+	// sender's data, never a chain.
+	if chain, hop, ok := workflow.ParseTrace(item.JSON); ok && tt != workflow.TriggerNodeTypeWebhook {
+		return orgbridge.Trace{ChainID: chain, Hop: hop}
 	}
 	return orgbridge.Trace{}
 }
 
-// orgLimits reads run_config.max_hops / max_repeats from the org. The org
-// JSON is writable by any role whose fileWrite reaches .monomind/, so these
-// are requests, not guarantees: Limits.withDefaults clamps them to
-// orgbridge.MaxHopsCeiling / MaxRepeatsCeiling before Admit uses them.
-func orgLimits(root, org string) orgbridge.Limits {
-	var lim orgbridge.Limits
-	doc, err := orgdesign.Load(root, org)
-	if err != nil {
-		return lim
-	}
-	if v, ok := doc.RunConfig["max_hops"]; ok {
-		fmt.Sscan(string(v), &lim.MaxHops)
-	}
-	if v, ok := doc.RunConfig["max_repeats"]; ok {
-		fmt.Sscan(string(v), &lim.MaxRepeats)
-	}
-	return lim
-}
+// orgLimits reads run_config.max_hops / max_repeats from the org
+// (orgbridge.LimitsFor, which Admit clamps to the ceilings).
+func orgLimits(root, org string) orgbridge.Limits { return orgbridge.LimitsFor(root, org) }
 
 func configBool(config map[string]interface{}, key string, def bool) bool {
 	if v, ok := config[key].(bool); ok {
