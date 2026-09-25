@@ -110,3 +110,58 @@ func ModuleRoot(dir string) (string, error) {
 		dir = parent
 	}
 }
+
+// ParseDocTable returns the leading name(s) of each indented line of
+// typeName's doc comment in dir (a comma list names several): the table a type such as action.TransformOp keeps of
+// its allowed values (e.g. "\tmap  Map: …"). Order is preserved.
+func ParseDocTable(dir, typeName string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	fset := token.NewFileSet()
+	for _, e := range entries {
+		n := e.Name()
+		if e.IsDir() || !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, filepath.Join(dir, n), nil, parser.ParseComments)
+		if err != nil {
+			return nil, err
+		}
+		for _, decl := range f.Decls {
+			gd, ok := decl.(*ast.GenDecl)
+			if !ok || gd.Tok != token.TYPE {
+				continue
+			}
+			for _, spec := range gd.Specs {
+				ts := spec.(*ast.TypeSpec)
+				if ts.Name.Name != typeName {
+					continue
+				}
+				doc := ts.Doc
+				if doc == nil {
+					doc = gd.Doc
+				}
+				if doc == nil {
+					return nil, nil
+				}
+				var out []string
+				for _, line := range strings.Split(doc.Text(), "\n") {
+					if !strings.HasPrefix(line, "\t") {
+						continue
+					}
+					// "name  desc", or "a, b, c  desc" for ops sharing a row.
+					for _, w := range strings.Fields(line) {
+						out = append(out, strings.TrimSuffix(w, ","))
+						if !strings.HasSuffix(w, ",") {
+							break
+						}
+					}
+				}
+				return out, nil
+			}
+		}
+	}
+	return nil, nil
+}

@@ -665,8 +665,12 @@
       "type": "object"
     },
     "TransformOp": {
-      "description": "TransformOp is one operation of a transform step, applied in order to the list (or single object) the step's Input resolves to. map Map: {newField: \"{{template over the item}}\"} filter Where: condition evaluated against each item dedupe Field: key field (whole item when empty) regex_extract Field, Pattern (first capture group, else whole match), To parse_date Field, Layout (Go layout, or \"auto\"), To (RFC3339 output) parse_number Field, To (\"1.2k\" → 1200, \"3,400\" → 3400) join Field (list field), Sep, To split Field, Sep, To pick Fields: keep only these keys limit Count lower Field, To replace Field, Pattern (Go regexp), With, To tree_parent Field (depth), ID, To, Root, Carry flag Where, To (per-item true/false from the condition)",
+      "description": "TransformOp is one operation of a transform step, applied in order to the list (or single object) the step's Input resolves to. map Map: {newField: \"{{template over the item}}\"} filter Where: condition evaluated against each item dedupe Field: key field (whole item when empty) regex_extract Field, Pattern (first capture group, else whole match), To parse_date Field, Layout (Go layout, or \"auto\"), To (RFC3339 output) parse_number Field, To (\"1.2k\" → 1200, \"3,400\" → 3400) join Field (list field), Sep, To split Field, Sep, To pick Fields: keep only these keys limit Count lower Field, To replace Field, Pattern (Go regexp), With, To tree_parent Field (depth), ID, To, Root, Carry flag Where, To (per-item true/false from the condition) sort Field, Order (stable; numeric when both values are numbers, else string; missing last) add, subtract, multiply, divide Field, By, Round, To (numbers parsed like parse_number)",
       "properties": {
+        "by": {
+          "description": "add/subtract/multiply/divide: the operand",
+          "type": "number"
+        },
         "carry": {
           "description": "tree_parent: variable holding the open-ancestor stack across pages",
           "type": "string"
@@ -717,7 +721,20 @@
             "lower",
             "replace",
             "tree_parent",
-            "flag"
+            "flag",
+            "sort",
+            "add",
+            "subtract",
+            "multiply",
+            "divide"
+          ],
+          "type": "string"
+        },
+        "order": {
+          "description": "sort: \"asc\" (default) | \"desc\"",
+          "enum": [
+            "asc",
+            "desc"
           ],
           "type": "string"
         },
@@ -728,6 +745,10 @@
         "root": {
           "description": "tree_parent: template, parent of depth-0 rows",
           "type": "string"
+        },
+        "round": {
+          "description": "add/subtract/multiply/divide: round the result to an integer",
+          "type": "boolean"
         },
         "sep": {
           "description": "join / split: separator.",

@@ -1,6 +1,7 @@
 package schemagen
 
 import (
+	"fmt"
 	"path/filepath"
 	"reflect"
 
@@ -44,7 +45,6 @@ var actionEnums = map[string][]string{
 	"ConditionDef.operator":  {"exists", "not_exists", "equals", "not_equals", "greater_than", "less_than", "contains", "not_contains", "matches"},
 	"ErrorHandlerDef.action": {"retry", "try_alternative", "mark_failed", "skip", "continue", "abort"},
 	"SuccessAction.action":   {"set_variable", "increment", "save_data", "update_progress"},
-	"TransformOp.op":         {"map", "filter", "dedupe", "regex_extract", "parse_date", "parse_number", "join", "split", "pick", "limit", "lower", "replace", "tree_parent", "flag"},
 }
 
 // inputItem is one entry of inputs.required / inputs.optional: a bare name
@@ -104,6 +104,17 @@ func Specs(root string) ([]Spec, error) {
 	for k, v := range actionEnums {
 		enums[k] = v
 	}
+	// The transform ops come from the table in action.TransformOp's doc
+	// comment, so a new op needs no change here.
+	ops, err := ParseDocTable(filepath.Join(root, "internal/action"), "TransformOp")
+	if err != nil {
+		return nil, err
+	}
+	if len(ops) == 0 {
+		return nil, fmt.Errorf("schemagen: no op table in the action.TransformOp doc comment")
+	}
+	enums["TransformOp.op"] = ops
+	enums["TransformOp.order"] = []string{"asc", "desc"}
 	return []Spec{
 		{
 			File:        "automation.v1.schema.json",

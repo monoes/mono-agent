@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -202,6 +203,20 @@ func TestFieldDocsKeysExist(t *testing.T) {
 	for k := range actionEnums {
 		if !props[k] {
 			t.Errorf("actionEnums[%q]: no such property", k)
+		}
+	}
+}
+
+func TestTransformOpsFromDocTable(t *testing.T) {
+	root, _ := ModuleRoot(".")
+	ops, err := ParseDocTable(filepath.Join(root, "internal/action"), "TransformOp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"map", "filter", "flag", "dedupe", "regex_extract", "parse_date", "parse_number",
+		"lower", "replace", "join", "split", "pick", "limit", "sort", "tree_parent"} {
+		if !slices.Contains(ops, want) {
+			t.Errorf("op %q missing from %v", want, ops)
 		}
 	}
 }
