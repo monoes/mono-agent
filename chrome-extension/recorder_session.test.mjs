@@ -85,6 +85,9 @@ test("start sends a start frame, injects into the tab and shows the badge", asyn
   assert.deepEqual(hx.injected, [[7, undefined]]);
   assert.deepEqual(hx.badges, [[7, true]]);
   await assert.rejects(hx.s.start({ tabId: 8 }), /already running/);
+  hx.s.event(ev("click", { at: hx.now() }), fromTab(7));
+  await hx.s.stop("user");
+  assert.ok(hx.wire.every((f) => f.profile === "work"), "every frame names the profile, so a restarted bridge finds the spool");
 });
 
 test("events are numbered e1, e2… with seq and t, and only the recorded tab counts", async () => {

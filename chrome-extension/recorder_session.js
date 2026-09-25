@@ -152,6 +152,9 @@
     function enqueue(frame) {
       frameSeq += 1;
       const f = Object.assign({ kind: "recording", id: `${frame.recordingId}-f${frameSeq}` }, frame);
+      // On every frame, not just start: a restarted bridge re-adopts the
+      // spool by recordingId inside this profile's inbox.
+      if (state.profile && !f.profile) f.profile = state.profile;
       outbox.push(f);
       if (outbox.length > MAX_OUTBOX) {
         // Never drop an event, start or stop: the oldest DOM snippet goes first.
@@ -203,9 +206,7 @@
       });
       const frame = { op: "start", recordingId: state.id, tabId, url: state.url, title: state.title, startedAt };
       if (state.goal) frame.goal = state.goal;
-      const profile = deps.profile ? await deps.profile() : "";
-      if (profile) frame.profile = profile;
-      state.profile = profile;
+      state.profile = deps.profile ? await deps.profile() : "";
       enqueue(frame);
       changed();
       try {
