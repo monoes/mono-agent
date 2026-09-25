@@ -78,3 +78,47 @@ func TestPostStepDomainCheck(t *testing.T) {
 		t.Fatalf("err = %v, want off_domain", err)
 	}
 }
+
+func TestHostAllowedPorts(t *testing.T) {
+	d := []string{"localhost:8080", "*.acme.com"}
+	for host, want := range map[string]bool{
+		"localhost:8080": true, "localhost:9090": false, "localhost": false,
+		"a.acme.com:444": true, "acme.com": true,
+	} {
+		if got := HostAllowed(host, d); got != want {
+			t.Errorf("HostAllowed(%q) = %v, want %v", host, got, want)
+		}
+	}
+	if URLAllowed("http://localhost:8080/x", d) != nil || URLAllowed("http://localhost:9999/", d) == nil {
+		t.Error("URL port matching")
+	}
+	if URLAllowed("https://secure.test/", []string{"secure.test:443"}) != nil {
+		t.Error("scheme default port must match an explicit :443 entry")
+	}
+}
+
+func TestGlobalHostDeny(t *testing.T) {
+	SetGlobalHostDeny(func(h string) (bool, string) { return h == "instagram.com", "social build required" })
+	t.Cleanup(func() { SetGlobalHostDeny(nil) })
+	if err := URLAllowed("https://instagram.com/p/1", nil); !errors.Is(err, ErrOffDomain) {
+		t.Errorf("denied host with no domains: %v", err)
+	}
+	ae := newPkgExecutor(nil, nil)
+	if err := ae.CheckURLAllowed("https://instagram.com/"); err == nil {
+		t.Error("deny must apply without a package")
+	}
+	if err := ae.CheckURLAllowed("https://example.com/"); err != nil {
+		t.Errorf("other host: %v", err)
+	}
+}
+
+type urlErrPage struct{ markPage }
+
+func (p *urlErrPage) GetURL() (string, error) { return "", errors.New("tab gone") }
+
+func TestPageDomainFailsClosed(t *testing.T) {
+	ae := newPkgExecutor(&urlErrPage{}, &fakePkg{id: "x", domains: []string{"x.com"}})
+	if err := ae.checkPageDomain(); !errors.Is(err, ErrOffDomain) {
+		t.Fatalf("unreadable URL: %v", err)
+	}
+}
