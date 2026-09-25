@@ -126,7 +126,7 @@ func (ae *ActionExecutor) stepPageScript(ctx context.Context, step StepDef) (*St
 		return extFail(step, "page_script needs an automation package")
 	}
 	if !ae.scriptsAllowed() {
-		return extFail(step, "%s", scriptsRefused(ae.pkg))
+		return extFail(step, "%w: %s", ErrRefused, scriptsRefused(ae.pkg))
 	}
 	if ae.safeMode {
 		return ae.extSafeStop(step)
@@ -163,7 +163,7 @@ const maxFetchBody = 10 << 20
 func (ae *ActionExecutor) stepHTTPFetchInPage(ctx context.Context, step StepDef) (*StepResult, error) {
 	// A fetch with the page's session is a script capability (§8).
 	if !ae.scriptsAllowed() {
-		return extFail(step, "%s", scriptsRefused(ae.pkg))
+		return extFail(step, "%w: %s", ErrRefused, scriptsRefused(ae.pkg))
 	}
 	target, err := ae.extAbsURL(step.URL)
 	if err != nil {
@@ -281,7 +281,7 @@ const maxDownloadBytes = 25 << 20
 
 func (ae *ActionExecutor) stepDownload(ctx context.Context, step StepDef) (*StepResult, error) {
 	if !ae.DownloadsAllowed() {
-		return extFail(step, "downloads are not permitted for this automation")
+		return extFail(step, "%w: downloads are not permitted for this automation", ErrRefused)
 	}
 	if ae.safeMode {
 		return ae.extSafeStop(step)

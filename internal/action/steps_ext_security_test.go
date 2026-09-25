@@ -2,6 +2,7 @@ package action
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -249,5 +250,30 @@ func TestCallActionSwitchesDownloadPermission(t *testing.T) {
 	}
 	if !ae.DownloadsAllowed() || ae.pkg != PackageContext(caller) {
 		t.Fatal("caller's package and download permission not restored")
+	}
+}
+
+func TestExtRefusalsAreFatal(t *testing.T) {
+	cont := &ErrorHandlerDef{Action: ErrorActionContinue}
+	for _, c := range []struct {
+		name string
+		step StepDef
+	}{
+		{"page_script", StepDef{ID: "r", Type: "page_script", Script: "x.js", OnError: cont}},
+		{"http_fetch_in_page", StepDef{ID: "r", Type: "http_fetch_in_page", URL: "https://site.test/", OnError: cont}},
+		{"download", StepDef{ID: "r", Type: "download", URL: "https://site.test/f", OnError: cont}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ae := newExtExecutor(t, &extPage{})
+			ae.SetPackage(&extPkg{id: "shady", noScripts: true, scripts: map[string]string{"x.js": "return 1"}})
+			res := runExt(t, ae, c.step)
+			if !errors.Is(res.Error, ErrRefused) {
+				t.Fatalf("refusal must wrap ErrRefused: %v", res.Error)
+			}
+			err := ae.executeSteps(context.Background(), []StepDef{c.step, setVarStep("after", "after", "yes")})
+			if err == nil || getVar(ae, "after") != nil {
+				t.Fatalf("a refusal must end the run despite onError continue (err=%v)", err)
+			}
+		})
 	}
 }
