@@ -44,6 +44,12 @@ func SetGlobalSessionProvider(sp SessionProvider) {
 	globalSessionProvider = sp
 }
 
+// GlobalSessionProvider returns the provider set at startup, or nil when the
+// process runs without a browser (tests, headless tools).
+func GlobalSessionProvider() SessionProvider {
+	return globalSessionProvider
+}
+
 // SetGlobalBotRegistry sets the bot registry used by all BrowserNodes.
 // Called once during engine startup.
 func SetGlobalBotRegistry(br BotRegistry) {

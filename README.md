@@ -352,11 +352,12 @@ monoagentcli hil reject <id>        # drop the item
 </details>
 
 <details>
-<summary><strong>🧠 AI Agents, Orgs, Gemini, System, People & Vault (16 nodes)</strong></summary>
+<summary><strong>🧠 AI Agents, Orgs, Gemini, System, People & Vault (17 nodes)</strong></summary>
 
 | Node | Description |
 |------|-------------|
 | `agent.ask` | Ask a locally-installed AI agent (claude, codex, kimi, qwen, …) — the node for AI steps |
+| `browser.jev` | Browser agent: give it a URL and a goal, it clicks/types/selects its way there in your own browser (TypeSafe Jev picks each action; port of browser-use/jev-ultrafast) |
 | `org.run` / `org.ask` / `org.send` | Start, question, or message an agent org (via the monomind engine) |
 | `ai.read_page` / `ai.extract_page` | AI-assisted page reading and structured extraction |
 | `gemini.generate_text` · `gemini.generate_image` · `gemini.chat_session` · `gemini.chat_session_many` | Gemini via your own logged-in browser session — no API key |

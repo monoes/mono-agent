@@ -1,0 +1,294 @@
+// Package jev is a client for TypeSafe's Jev "System One" API
+// (https://docs.typesafe.ai/api): a model that answers typed questions about
+// a JSON state — pick one of N options (choice), yes/no (noul), or a level on
+// an ordered rubric (score) — with probabilities and a confidence, and never
+// generates text. One request can carry many independent questions.
+//
+// Every answer is validated against the question that produced it before a
+// caller sees it, so a malformed or out-of-set reply is an error, never an
+// action. There is no official Go SDK; this talks to the HTTP API directly.
+package jev
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"math"
+	"net/http"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// Question types accepted by /v1/systemone.
+const (
+	TypeChoice = "choice"
+	TypeNoul   = "noul"
+	TypeScore  = "score"
+)
+
+// DefaultModel tracks the newest Jev release.
+const DefaultModel = "jev-latest"
+
+// DefaultBaseURL is TypeSafe's API host; TYPESAFE_BASE_URL overrides it.
+var DefaultBaseURL = "https://api.typesafe.ai"
+
+// ErrNoAPIKey is returned when neither config nor TYPESAFE_API_KEY has a key.
+var ErrNoAPIKey = errors.New("jev: no TypeSafe API key (set api_key, e.g. @secret:typesafe, or TYPESAFE_API_KEY)")
+
+// ErrInvalidAnswer wraps every answer that fails validation.
+var ErrInvalidAnswer = errors.New("jev: invalid answer")
+
+// Question is one typed question. Criteria is a map[string]any of
+// option → description for choice, an ordered []string for score, and an
+// optional {"true": …, "false": …} map for noul.
+type Question struct {
+	Type         string `json:"type"`
+	Criteria     any    `json:"criteria,omitempty"`
+	Instructions any    `json:"instructions,omitempty"`
+}
+
+// Request is the /v1/systemone body.
+type Request struct {
+	Model     string              `json:"model"`
+	State     any                 `json:"state"`
+	Questions map[string]Question `json:"questions"`
+}
+
+// Answer is one question's answer. Choice/Probabilities/Confidence are set
+// for choice; Noul for noul; Score/Legend/Probabilities/Confidence for score.
+type Answer struct {
+	Type          string             `json:"type"`
+	Choice        string             `json:"choice,omitempty"`
+	Probabilities map[string]float64 `json:"probabilities,omitempty"`
+	Confidence    float64            `json:"confidence,omitempty"`
+	Noul          float64            `json:"noul,omitempty"`
+	Score         float64            `json:"score,omitempty"`
+	Legend        map[string]string  `json:"legend,omitempty"`
+}
+
+// Usage is the token accounting TypeSafe returns (output tokens are free).
+type Usage struct {
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
+}
+
+// Response is the /v1/systemone reply, with LatencyMS added by the client.
+type Response struct {
+	Model     string            `json:"model"`
+	Answers   map[string]Answer `json:"answers"`
+	Usage     Usage             `json:"usage"`
+	LatencyMS int64             `json:"-"`
+}
+
+// Client calls /v1/systemone. The zero value is not usable; use NewClient.
+type Client struct {
+	APIKey  string
+	BaseURL string
+	Model   string
+	HTTP    *http.Client
+	// Retries is how many times a 408/429/5xx is retried (default 2, as the
+	// official SDKs do). Transport errors are not retried: the caller decides.
+	Retries int
+}
+
+// NewClient builds a client. An empty apiKey falls back to TYPESAFE_API_KEY,
+// an empty model to TYPESAFE_DEFAULT_MODEL and then DefaultModel.
+func NewClient(apiKey, model string) (*Client, error) {
+	if apiKey == "" {
+		apiKey = os.Getenv("TYPESAFE_API_KEY")
+	}
+	if apiKey == "" {
+		return nil, ErrNoAPIKey
+	}
+	if model == "" {
+		model = os.Getenv("TYPESAFE_DEFAULT_MODEL")
+	}
+	if model == "" {
+		model = DefaultModel
+	}
+	base := os.Getenv("TYPESAFE_BASE_URL")
+	if base == "" {
+		base = DefaultBaseURL
+	}
+	return &Client{
+		APIKey:  apiKey,
+		BaseURL: strings.TrimRight(base, "/"),
+		Model:   model,
+		HTTP:    &http.Client{Timeout: 25 * time.Second},
+		Retries: 2,
+	}, nil
+}
+
+// Ask sends the questions about state in one request and validates every
+// answer against its question. Questions are independent: none sees another's
+// answer, so ask everything you might need at once (speculative fan-out).
+func (c *Client) Ask(ctx context.Context, state any, questions map[string]Question) (*Response, error) {
+	if len(questions) == 0 {
+		return nil, errors.New("jev: no questions")
+	}
+	body, err := json.Marshal(Request{Model: c.Model, State: state, Questions: questions})
+	if err != nil {
+		return nil, fmt.Errorf("jev: encode request: %w", err)
+	}
+	started := time.Now()
+	raw, err := c.post(ctx, body)
+	if err != nil {
+		return nil, err
+	}
+	var resp Response
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, fmt.Errorf("%w: undecodable response: %v", ErrInvalidAnswer, err)
+	}
+	resp.LatencyMS = time.Since(started).Milliseconds()
+	for id, q := range questions {
+		a, ok := resp.Answers[id]
+		if !ok {
+			return nil, fmt.Errorf("%w: no answer for %q", ErrInvalidAnswer, id)
+		}
+		if err := Validate(q, a); err != nil {
+			return nil, fmt.Errorf("%s: %w", id, err)
+		}
+	}
+	return &resp, nil
+}
+
+func (c *Client) post(ctx context.Context, body []byte) ([]byte, error) {
+	backoff := 500 * time.Millisecond
+	for attempt := 0; ; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/v1/systemone", bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+c.APIKey)
+		req.Header.Set("Content-Type", "application/json")
+		res, err := c.HTTP.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("jev: request failed: %w", err)
+		}
+		raw, readErr := io.ReadAll(io.LimitReader(res.Body, 8<<20))
+		res.Body.Close()
+		if readErr != nil {
+			return nil, fmt.Errorf("jev: read response: %w", readErr)
+		}
+		if res.StatusCode < 300 {
+			return raw, nil
+		}
+		retryable := res.StatusCode == 408 || res.StatusCode == 429 || res.StatusCode >= 500
+		if !retryable || attempt >= c.Retries {
+			return nil, fmt.Errorf("jev: HTTP %d: %s", res.StatusCode, snippet(raw))
+		}
+		wait := backoff
+		if s, err := strconv.ParseFloat(res.Header.Get("Retry-After"), 64); err == nil && s >= 0 {
+			wait = time.Duration(s * float64(time.Second))
+		}
+		if wait > 5*time.Second {
+			wait = 5 * time.Second
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(wait):
+		}
+		backoff *= 2
+	}
+}
+
+func snippet(b []byte) string {
+	s := strings.TrimSpace(string(b))
+	if len(s) > 300 {
+		s = s[:300] + "…"
+	}
+	return s
+}
+
+// Validate checks an answer against the question that produced it: the right
+// type, a choice from the offered set that is also the most probable one,
+// finite probabilities in [0,1] over exactly the offered options summing to
+// ~1, and a confidence in [0,1].
+func Validate(q Question, a Answer) error {
+	bad := func(format string, args ...any) error {
+		return fmt.Errorf("%w: "+format, append([]any{ErrInvalidAnswer}, args...)...)
+	}
+	if a.Type != "" && a.Type != q.Type {
+		return bad("type %q, want %q", a.Type, q.Type)
+	}
+	switch q.Type {
+	case TypeNoul:
+		if !unit(a.Noul) {
+			return bad("noul %v outside [0,1]", a.Noul)
+		}
+		return nil
+	case TypeChoice, TypeScore:
+	default:
+		return bad("unknown question type %q", q.Type)
+	}
+	ids := OptionIDs(q)
+	if len(a.Probabilities) != len(ids) {
+		return bad("%d probabilities for %d options", len(a.Probabilities), len(ids))
+	}
+	sum, top := 0.0, 0.0
+	for _, id := range ids {
+		p, ok := a.Probabilities[id]
+		if !ok || !unit(p) {
+			return bad("probability for %q missing or outside [0,1]", id)
+		}
+		sum += p
+		top = math.Max(top, p)
+	}
+	if math.Abs(sum-1) > 0.02 {
+		return bad("probabilities sum to %.3f", sum)
+	}
+	if !unit(a.Confidence) {
+		return bad("confidence %v outside [0,1]", a.Confidence)
+	}
+	if q.Type == TypeChoice {
+		p, ok := a.Probabilities[a.Choice]
+		if !ok {
+			return bad("choice %q was not offered", a.Choice)
+		}
+		if p < top-1e-6 {
+			return bad("choice %q is not the most probable option", a.Choice)
+		}
+	} else if a.Score < 0 || a.Score > float64(len(ids)-1) {
+		return bad("score %v outside 0..%d", a.Score, len(ids)-1)
+	}
+	return nil
+}
+
+// OptionIDs lists the answer keys a choice or score question can produce.
+func OptionIDs(q Question) []string {
+	switch c := q.Criteria.(type) {
+	case map[string]any:
+		ids := make([]string, 0, len(c))
+		for id := range c {
+			ids = append(ids, id)
+		}
+		return ids
+	case map[string]string:
+		ids := make([]string, 0, len(c))
+		for id := range c {
+			ids = append(ids, id)
+		}
+		return ids
+	case []string:
+		ids := make([]string, len(c))
+		for i := range c {
+			ids[i] = strconv.Itoa(i)
+		}
+		return ids
+	case []any:
+		ids := make([]string, len(c))
+		for i := range c {
+			ids[i] = strconv.Itoa(i)
+		}
+		return ids
+	}
+	return nil
+}
+
+func unit(f float64) bool { return !math.IsNaN(f) && !math.IsInf(f, 0) && f >= 0 && f <= 1 }

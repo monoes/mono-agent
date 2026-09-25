@@ -105,6 +105,38 @@ ask for JSON, a category, or a rewrite in the prompt itself.`,
 install one with "monoagentcli agent install <runtime>".`,
 	},
 	{
+		Type:     "browser.jev",
+		Category: "agent",
+		Short:    "Browser agent: reach a goal on any website in your own browser (TypeSafe Jev)",
+		Description: `Opens the URL in a new tab of your connected browser (the extension bridge,
+so your logins apply) and works toward the goal one action at a time. Each
+cycle reads the page as a numbered table of visible controls, and one TypeSafe
+Jev request picks the operation (CLICK, TYPE_TEXT, SELECT, SCROLL_UP/DOWN,
+WAIT, DONE, BLOCKED) and its target. Only TYPE_TEXT generates text, through a
+local agent (text_runtime). No selectors, no site scripts. Port of
+browser-use/jev-ultrafast.`,
+		Config: `{
+  "url":          "https://www.google.com/travel/flights",  // required
+  "goal":         "One-way Zurich to London on 2026-10-20…", // required
+  "api_key":      "@secret:typesafe",   // or TYPESAFE_API_KEY
+  "model":        "jev-latest",
+  "text_runtime": "claude",             // local agent for TYPE_TEXT values
+  "text_model":   "",                   // e.g. haiku
+  "max_actions":  40,                   // decisions are capped at 2×
+  "timeout":      300,                  // seconds
+  "fail_on_blocked": false
+}`,
+		Inputs: "any items (one run per item; none = one run)",
+		Outputs: `input item + status (done|blocked|budget|timeout), reason, url, title,
+page_text, steps[] (action, operation, text, probability, confidence,
+latency_ms, page_changed), decisions, jev_input_tokens, elapsed_ms`,
+		Notes: `DONE is the model's claim, not proof: check page_text downstream when it
+matters. Page text is treated as data, never instructions, but the agent acts
+in your logged-in browser, so give it goals you would trust a person with.
+Skips password/file inputs; frames, shadow DOM, canvas and uploads can block.
+Get a key at console.typesafe.ai and store it: "monoagentcli secret add --kind secret --name typesafe".`,
+	},
+	{
 		Type:     "org.run",
 		Category: "org",
 		Short:    "Start (or join) a run of an agent org",

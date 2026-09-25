@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`browser.jev` — a goal-driven browser agent.** Give it a URL and a goal
+  in plain language. It opens a tab in your connected browser and works
+  toward the goal one action at a time, with no selectors or site scripts.
+  Each step, one TypeSafe Jev request (about 300 ms) picks what to do
+  (click, type, select, scroll, wait, done, blocked) and on which element.
+  A local agent writes the text for fields. The item gets the final page
+  and a step-by-step trace. Needs a TypeSafe key
+  (`secret add --kind secret --name typesafe`). Ported from
+  browser-use/jev-ultrafast.
 - **`monoagentcli people review list|approve|reject`** drives the review
   queue for people staged as `pending_approval`. `approve --send` runs the
   dispatch workflow for the person.

@@ -242,6 +242,28 @@ func (ep *ExtensionPage) EvalCDP(js string) (interface{}, error) {
 	return data, nil
 }
 
+// CDP sends one raw Chrome DevTools Protocol command to this tab through the
+// extension's chrome.debugger relay (cdp_proxy.js) and returns its result.
+// The extension refuses it on about:blank — navigate first.
+func (ep *ExtensionPage) CDP(method string, params map[string]interface{}) (map[string]interface{}, error) {
+	if params == nil {
+		params = map[string]interface{}{}
+	}
+	resp, err := ep.server.SendCommand(&Command{
+		Type:   CmdCdp,
+		TabID:  ep.tabID,
+		Params: map[string]interface{}{"method": method, "params": params},
+	}, cdpCommandTimeout)
+	if err != nil {
+		return nil, fmt.Errorf("cdp %s: %w", method, err)
+	}
+	result, _ := resp.dataMap()["result"].(map[string]interface{})
+	if result == nil {
+		result = map[string]interface{}{}
+	}
+	return result, nil
+}
+
 // TypeCDP types text using Chrome Debugger Protocol (Input.insertText).
 // Optionally clicks the element via CDP first for real focus.
 func (ep *ExtensionPage) TypeCDP(text string) error {
