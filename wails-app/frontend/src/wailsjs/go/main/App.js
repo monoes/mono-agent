@@ -38,6 +38,10 @@ export function AddVaultImage(arg1, arg2) {
   return window['go']['main']['App']['AddVaultImage'](arg1, arg2);
 }
 
+export function AnalyzeRecording(arg1, arg2) {
+  return window['go']['main']['App']['AnalyzeRecording'](arg1, arg2);
+}
+
 export function AnswerOrgQuestion(arg1, arg2, arg3) {
   return window['go']['main']['App']['AnswerOrgQuestion'](arg1, arg2, arg3);
 }
@@ -72,6 +76,14 @@ export function CancelWorkflow(arg1) {
 
 export function CheckForUpdate() {
   return window['go']['main']['App']['CheckForUpdate']();
+}
+
+export function ChooseAutomationExportPath(arg1) {
+  return window['go']['main']['App']['ChooseAutomationExportPath'](arg1);
+}
+
+export function ChooseAutomationPackage() {
+  return window['go']['main']['App']['ChooseAutomationPackage']();
 }
 
 export function ChooseInstructionsFile() {
@@ -138,6 +150,10 @@ export function DeleteProfileDocument(arg1) {
   return window['go']['main']['App']['DeleteProfileDocument'](arg1);
 }
 
+export function DeleteRecording(arg1) {
+  return window['go']['main']['App']['DeleteRecording'](arg1);
+}
+
 export function DeleteSecret(arg1) {
   return window['go']['main']['App']['DeleteSecret'](arg1);
 }
@@ -158,12 +174,32 @@ export function DenyOrgAction(arg1, arg2, arg3) {
   return window['go']['main']['App']['DenyOrgAction'](arg1, arg2, arg3);
 }
 
+export function DisableAutomation(arg1) {
+  return window['go']['main']['App']['DisableAutomation'](arg1);
+}
+
+export function DoctorAutomations(arg1) {
+  return window['go']['main']['App']['DoctorAutomations'](arg1);
+}
+
+export function EnableAutomation(arg1) {
+  return window['go']['main']['App']['EnableAutomation'](arg1);
+}
+
 export function EvaluateApplication(arg1, arg2) {
   return window['go']['main']['App']['EvaluateApplication'](arg1, arg2);
 }
 
 export function EvaluatePendingApplications(arg1, arg2) {
   return window['go']['main']['App']['EvaluatePendingApplications'](arg1, arg2);
+}
+
+export function ExportAction(arg1, arg2) {
+  return window['go']['main']['App']['ExportAction'](arg1, arg2);
+}
+
+export function ExportAutomation(arg1, arg2) {
+  return window['go']['main']['App']['ExportAutomation'](arg1, arg2);
 }
 
 export function ExportData() {
@@ -474,6 +510,14 @@ export function InstallAgentRuntime(arg1, arg2, arg3) {
   return window['go']['main']['App']['InstallAgentRuntime'](arg1, arg2, arg3);
 }
 
+export function InstallAutomation(arg1) {
+  return window['go']['main']['App']['InstallAutomation'](arg1);
+}
+
+export function InstallAutomationDryRun(arg1) {
+  return window['go']['main']['App']['InstallAutomationDryRun'](arg1);
+}
+
 export function IsDBConnected() {
   return window['go']['main']['App']['IsDBConnected']();
 }
@@ -512,6 +556,10 @@ export function JevUsage(arg1) {
 
 export function ListAIProviders() {
   return window['go']['main']['App']['ListAIProviders']();
+}
+
+export function ListAutomations() {
+  return window['go']['main']['App']['ListAutomations']();
 }
 
 export function ListChatConversations(arg1, arg2) {
@@ -568,6 +616,10 @@ export function ListPlatformsJSON(arg1) {
 
 export function ListProfileDocuments() {
   return window['go']['main']['App']['ListProfileDocuments']();
+}
+
+export function ListRecordings() {
+  return window['go']['main']['App']['ListRecordings']();
 }
 
 export function ListResources(arg1, arg2, arg3, arg4) {
@@ -678,12 +730,20 @@ export function RemovePersonTag(arg1, arg2) {
   return window['go']['main']['App']['RemovePersonTag'](arg1, arg2);
 }
 
+export function RestoreAutomation(arg1) {
+  return window['go']['main']['App']['RestoreAutomation'](arg1);
+}
+
 export function ResumeOrgAutonomy(arg1) {
   return window['go']['main']['App']['ResumeOrgAutonomy'](arg1);
 }
 
 export function RevealProfileFolder(arg1) {
   return window['go']['main']['App']['RevealProfileFolder'](arg1);
+}
+
+export function RollbackAutomation(arg1) {
+  return window['go']['main']['App']['RollbackAutomation'](arg1);
 }
 
 export function RunHealthCheck(arg1) {
@@ -716,6 +776,10 @@ export function SaveAIProvider(arg1) {
 
 export function SaveConnectionDirect(arg1, arg2, arg3) {
   return window['go']['main']['App']['SaveConnectionDirect'](arg1, arg2, arg3);
+}
+
+export function SaveDraft(arg1, arg2) {
+  return window['go']['main']['App']['SaveDraft'](arg1, arg2);
 }
 
 export function SaveOrgDesign(arg1, arg2) {
@@ -786,6 +850,14 @@ export function SetWorkflowActive(arg1, arg2) {
   return window['go']['main']['App']['SetWorkflowActive'](arg1, arg2);
 }
 
+export function ShowAutomation(arg1) {
+  return window['go']['main']['App']['ShowAutomation'](arg1);
+}
+
+export function ShowRecording(arg1) {
+  return window['go']['main']['App']['ShowRecording'](arg1);
+}
+
 export function StartChatTurn(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['main']['App']['StartChatTurn'](arg1, arg2, arg3, arg4, arg5);
 }
@@ -842,12 +914,20 @@ export function TestAIProvider(arg1) {
   return window['go']['main']['App']['TestAIProvider'](arg1);
 }
 
+export function TestAutomation(arg1, arg2, arg3) {
+  return window['go']['main']['App']['TestAutomation'](arg1, arg2, arg3);
+}
+
 export function TestConnection(arg1) {
   return window['go']['main']['App']['TestConnection'](arg1);
 }
 
 export function TestSession(arg1) {
   return window['go']['main']['App']['TestSession'](arg1);
+}
+
+export function UninstallAutomation(arg1) {
+  return window['go']['main']['App']['UninstallAutomation'](arg1);
 }
 
 export function UpdateOrgRole(arg1, arg2, arg3) {
@@ -870,6 +950,14 @@ export function UploadProfileDocument(arg1, arg2) {
   return window['go']['main']['App']['UploadProfileDocument'](arg1, arg2);
 }
 
+export function ValidateAutomation(arg1) {
+  return window['go']['main']['App']['ValidateAutomation'](arg1);
+}
+
 export function ValidateOrgDesign(arg1) {
   return window['go']['main']['App']['ValidateOrgDesign'](arg1);
+}
+
+export function VerifyDraft(arg1, arg2) {
+  return window['go']['main']['App']['VerifyDraft'](arg1, arg2);
 }

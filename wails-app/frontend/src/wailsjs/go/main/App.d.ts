@@ -23,6 +23,8 @@ export function AddSecret(arg1:string,arg2:string,arg3:string,arg4:string,arg5:s
 
 export function AddVaultImage(arg1:string,arg2:string):Promise<Record<string, any>>;
 
+export function AnalyzeRecording(arg1:string,arg2:string):Promise<string>;
+
 export function AnswerOrgQuestion(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function AppSelfUpdate():Promise<main.UpdateResult>;
@@ -40,6 +42,10 @@ export function CancelHealthRun(arg1:string):Promise<string>;
 export function CancelWorkflow(arg1:string):Promise<void>;
 
 export function CheckForUpdate():Promise<main.UpdateInfo>;
+
+export function ChooseAutomationExportPath(arg1:string):Promise<string>;
+
+export function ChooseAutomationPackage():Promise<string>;
 
 export function ChooseInstructionsFile():Promise<string>;
 
@@ -73,6 +79,8 @@ export function DeleteOrgDesign(arg1:string):Promise<string>;
 
 export function DeleteProfileDocument(arg1:string):Promise<void>;
 
+export function DeleteRecording(arg1:string):Promise<string>;
+
 export function DeleteSecret(arg1:string):Promise<void>;
 
 export function DeleteSession(arg1:number):Promise<void>;
@@ -83,9 +91,19 @@ export function DeleteWorkflow(arg1:string):Promise<void>;
 
 export function DenyOrgAction(arg1:string,arg2:string,arg3:string):Promise<string>;
 
+export function DisableAutomation(arg1:string):Promise<string>;
+
+export function DoctorAutomations(arg1:string):Promise<string>;
+
+export function EnableAutomation(arg1:string):Promise<string>;
+
 export function EvaluateApplication(arg1:string,arg2:string):Promise<main.FitVerdictInfo>;
 
 export function EvaluatePendingApplications(arg1:string,arg2:number):Promise<main.EvaluateBatchResult>;
+
+export function ExportAction(arg1:string,arg2:string):Promise<string>;
+
+export function ExportAutomation(arg1:string,arg2:string):Promise<string>;
 
 export function ExportData():Promise<main.ExportResult>;
 
@@ -241,6 +259,10 @@ export function InitializeMonomindProfile():Promise<string>;
 
 export function InstallAgentRuntime(arg1:string,arg2:boolean,arg3:string):Promise<string>;
 
+export function InstallAutomation(arg1:string):Promise<string>;
+
+export function InstallAutomationDryRun(arg1:string):Promise<string>;
+
 export function IsDBConnected():Promise<boolean>;
 
 export function IsMonomindInitialized():Promise<boolean>;
@@ -260,6 +282,8 @@ export function JevTestKey():Promise<main.JevKeyTestResult>;
 export function JevUsage(arg1:string):Promise<main.JevUsageReport>;
 
 export function ListAIProviders():Promise<string>;
+
+export function ListAutomations():Promise<string>;
 
 export function ListChatConversations(arg1:string,arg2:number):Promise<string>;
 
@@ -288,6 +312,8 @@ export function ListOrgs():Promise<string>;
 export function ListPlatformsJSON(arg1:string):Promise<string>;
 
 export function ListProfileDocuments():Promise<Array<main.ProfileDocument>>;
+
+export function ListRecordings():Promise<string>;
 
 export function ListResources(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.ResourceListResult>;
 
@@ -343,9 +369,13 @@ export function RemoveOrgRole(arg1:string,arg2:string,arg3:string):Promise<strin
 
 export function RemovePersonTag(arg1:string,arg2:string):Promise<void>;
 
+export function RestoreAutomation(arg1:string):Promise<string>;
+
 export function ResumeOrgAutonomy(arg1:string):Promise<string>;
 
 export function RevealProfileFolder(arg1:string):Promise<void>;
+
+export function RollbackAutomation(arg1:string):Promise<string>;
 
 export function RunHealthCheck(arg1:string):Promise<string>;
 
@@ -362,6 +392,8 @@ export function RunWorkflowWithInput(arg1:string,arg2:string):Promise<void>;
 export function SaveAIProvider(arg1:string):Promise<string>;
 
 export function SaveConnectionDirect(arg1:string,arg2:string,arg3:string):Promise<string>;
+
+export function SaveDraft(arg1:string,arg2:string):Promise<string>;
 
 export function SaveOrgDesign(arg1:string,arg2:string):Promise<string>;
 
@@ -397,6 +429,10 @@ export function SetOrgRoleReportsTo(arg1:string,arg2:string,arg3:string):Promise
 
 export function SetWorkflowActive(arg1:string,arg2:boolean):Promise<void>;
 
+export function ShowAutomation(arg1:string):Promise<string>;
+
+export function ShowRecording(arg1:string):Promise<string>;
+
 export function StartChatTurn(arg1:string,arg2:string,arg3:string,arg4:boolean,arg5:boolean):Promise<string>;
 
 export function StartOrgGroup(arg1:string):Promise<string>;
@@ -425,9 +461,13 @@ export function TagApplication(arg1:string,arg2:string,arg3:string):Promise<void
 
 export function TestAIProvider(arg1:string):Promise<string>;
 
+export function TestAutomation(arg1:string,arg2:string,arg3:boolean):Promise<string>;
+
 export function TestConnection(arg1:string):Promise<string>;
 
 export function TestSession(arg1:number):Promise<string>;
+
+export function UninstallAutomation(arg1:string):Promise<string>;
 
 export function UpdateOrgRole(arg1:string,arg2:string,arg3:string):Promise<string>;
 
@@ -439,4 +479,8 @@ export function UpdateVaultImageLabel(arg1:string,arg2:string):Promise<void>;
 
 export function UploadProfileDocument(arg1:string,arg2:string):Promise<main.UploadResult>;
 
+export function ValidateAutomation(arg1:string):Promise<string>;
+
 export function ValidateOrgDesign(arg1:string):Promise<string>;
+
+export function VerifyDraft(arg1:string,arg2:boolean):Promise<string>;
