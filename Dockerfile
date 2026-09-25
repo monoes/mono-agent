@@ -5,7 +5,7 @@
 # variant, add `-tags social` to the go build line below.
 #
 # Stage 1: build (static, CGO-free → runs on any base image, incl. scratch)
-FROM golang:1.25-alpine AS build
+FROM golang:1.26-alpine AS build
 
 WORKDIR /src
 
