@@ -71,13 +71,9 @@ type healthDelta struct {
 
 var _ action.SelectorObserver = (*HealthRecorder)(nil)
 
-// candidateObserver is the optional executor-side extension that also
-// reports the matched candidate; HealthRecorder implements it.
-type candidateObserver interface {
-	ObserveSelectorCandidate(automationID, key string, c *action.SelectorCandidate, candidateIndex int, ok, healed bool)
-}
-
-var _ candidateObserver = (*HealthRecorder)(nil)
+// The executor calls ObserveSelectorCandidate instead of ObserveSelector
+// when the observer implements it, so promotions get the candidate itself.
+var _ action.SelectorCandidateObserver = (*HealthRecorder)(nil)
 
 // HealthObserver returns the selector-health observer backed by the
 // automation_selector_health table (spec §8.7). Healed candidates are
