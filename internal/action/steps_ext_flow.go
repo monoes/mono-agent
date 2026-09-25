@@ -161,7 +161,7 @@ func (ae *ActionExecutor) runActionBody(ctx context.Context, def *ActionDef) err
 			return nil
 		}
 		if err := ae.executeLoop(ctx, loop, def.Steps); err != nil {
-			if err == ErrAbort || isContextError(err) {
+			if isHalt(err) || isContextError(err) {
 				return err
 			}
 			ae.logger.Warn().Err(err).Str("loopID", loop.ID).Msg("called action loop completed with errors")

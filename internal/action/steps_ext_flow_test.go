@@ -350,3 +350,22 @@ func TestSafeModeStopsInsideNestedBodies(t *testing.T) {
 		}
 	}
 }
+
+func TestOffDomainInsideForEachHaltsRun(t *testing.T) {
+	page := &extPage{eval: func(string) (interface{}, error) { return jsOut(map[string]interface{}{"status": 200}), nil }}
+	ae := newExtExecutor(t, page)
+	ae.SetPackage(&extPkg{id: "site", domains: []string{"site.test"}})
+	ae.SetVariable("list", []interface{}{1})
+	err := ae.executeSteps(context.Background(), []StepDef{
+		{ID: "fe", Type: "for_each", Items: "list", Steps: []StepDef{
+			{ID: "f", Type: "http_fetch_in_page", URL: "https://evil.test/", OnError: &ErrorHandlerDef{Action: ErrorActionContinue}},
+		}},
+		setVarStep("after", "after", "yes"),
+	})
+	if !isHalt(err) || !strings.Contains(err.Error(), "off_domain") {
+		t.Fatalf("want fatal off_domain halt, got %v", err)
+	}
+	if getVar(ae, "after") != nil {
+		t.Fatal("steps after the halt must not run")
+	}
+}

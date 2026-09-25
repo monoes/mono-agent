@@ -123,7 +123,7 @@ func (ae *ActionExecutor) bodyResult(step StepDef, err error, data interface{}) 
 	if err == nil && ae.safeStop == nil {
 		return &StepResult{Success: true, StepID: step.ID, Data: data}, nil
 	}
-	if err == ErrAbort || ae.safeStop != nil {
+	if isHalt(err) || ae.safeStop != nil {
 		if err == nil {
 			err = fmt.Errorf("stopped before side-effect step %s", ae.safeStop.StepID)
 		}
