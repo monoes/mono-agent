@@ -388,15 +388,16 @@ is used.
 
 ### 6.4 Usage policy
 
-`docs/USAGE_POLICY.md` gates social automation behind `-tags social`.
-Importable packages must not become a way around that:
+Social platforms are part of the main build; `-tags nosocial` produces a
+build without them (`internal/bot` `PlatformCompiledIn`, since 41347ab).
+Importable packages must not become a way around a `nosocial` build:
 
 - A package with `policy.tier: "social"`, or whose `site.domains` match the
-  social list (instagram, linkedin, x/twitter, tiktok, …), installs as
-  disabled in a default build, with the same explanation the build tag
-  gives today.
-- Ship this check in the same phase as `install` (Phase 1). It must not
-  come later.
+  social list (instagram, linkedin, x/twitter, tiktok, facebook, threads),
+  installs **disabled and unavailable** in a `nosocial` build, with the
+  same explanation the build tag gives. In the main build they are allowed,
+  subject to `docs/USAGE_POLICY.md` (own accounts, caps, HIL advice).
+- Enforced at install and on every registry load (Phase 1).
 
 ## 7. Connections page split
 
