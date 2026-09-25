@@ -175,8 +175,8 @@ func TestRecordMethodArgsValidation(t *testing.T) {
 	}{
 		{recordAnalyzeArgs, map[string]any{"recordingId": "2026-09-25T09-00-00Z-x", "automation": "acme"},
 			"record analyze 2026-09-25T09-00-00Z-x --automation=acme --json"},
-		{recordVerifyArgs, map[string]any{"draftDir": draft, "full": true}, "record verify " + realDraft + " --full --json"},
-		{recordVerifyArgs, map[string]any{"draftDir": "rec-1"}, "record verify " + realDraft + " --json"},
+		{verifyArgsOnly, map[string]any{"draftDir": draft, "full": true}, "record verify " + realDraft + " --full --json"},
+		{verifyArgsOnly, map[string]any{"draftDir": "rec-1"}, "record verify " + realDraft + " --json"},
 		{recordSaveArgs, map[string]any{"draftDir": draft, "saveAs": "fragment", "new": "my-site", "name": "Create contact"},
 			"record save " + realDraft + " --as=fragment --new=my-site --name=Create contact --json"},
 	}
@@ -197,10 +197,10 @@ func TestRecordMethodArgsValidation(t *testing.T) {
 		{recordAnalyzeArgs, map[string]any{"recordingId": "ok", "automation": "--exec=x"}},
 		{recordAnalyzeArgs, map[string]any{"recordingId": "ok", "profile": "../../x"}},
 		{recordListArgs, map[string]any{"profile": "-x"}},
-		{recordVerifyArgs, map[string]any{"draftDir": "/etc"}},
-		{recordVerifyArgs, map[string]any{"draftDir": drafts + "/../"}},
-		{recordVerifyArgs, map[string]any{"draftDir": "--full"}},
-		{recordVerifyArgs, map[string]any{"draftDir": filepath.Join(drafts, "missing")}},
+		{verifyArgsOnly, map[string]any{"draftDir": "/etc"}},
+		{verifyArgsOnly, map[string]any{"draftDir": drafts + "/../"}},
+		{verifyArgsOnly, map[string]any{"draftDir": "--full"}},
+		{verifyArgsOnly, map[string]any{"draftDir": filepath.Join(drafts, "missing")}},
 		{recordSaveArgs, map[string]any{"draftDir": draft, "saveAs": "shell"}},
 		{recordSaveArgs, map[string]any{"draftDir": draft, "automation": "a1", "new": "b2"}},
 		{recordSaveArgs, map[string]any{"draftDir": draft, "new": "UPPER"}},
@@ -237,57 +237,113 @@ func TestSelfRunnerRefusesForeignBinary(t *testing.T) {
 	}
 }
 
-func TestRecordVerifyInputs(t *testing.T) {
+// verifyArgsOnly adapts recordVerifyArgs to the args-only table shape.
+func verifyArgsOnly(req *Request) ([]string, error) {
+	args, _, err := recordVerifyArgs(req)
+	return args, err
+}
+
+func TestRecordVerifyInputsValidation(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	drafts, _ := recording.DraftsDir()
-	draft := filepath.Join(drafts, "rec-1")
-	if err := os.MkdirAll(draft, 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(drafts, "rec-1"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	realDraft, _ := filepath.EvalSymlinks(draft)
-
-	args, err := recordVerifyArgs(&Request{Params: map[string]any{"draftDir": "rec-1",
+	args, inputs, err := recordVerifyArgs(&Request{Params: map[string]any{"draftDir": "rec-1",
 		"inputs": map[string]any{"query": "a=b c", "password": "hunter2"}}})
-	want := "record verify " + realDraft + " --input=password=hunter2 --input=query=a=b c --json"
-	if err != nil || strings.Join(args, " ") != want {
-		t.Fatalf("args = %q, %v; want %q", strings.Join(args, " "), err, want)
+	if err != nil || inputs["query"] != "a=b c" || inputs["password"] != "hunter2" {
+		t.Fatalf("inputs = %v, %v", inputs, err)
 	}
-	if shown := redactArgs(args); strings.Contains(shown, "hunter2") || !strings.Contains(shown, "--input=password=•••") {
+	for _, a := range args {
+		if strings.Contains(a, "hunter2") || strings.Contains(a, "a=b c") || strings.HasPrefix(a, "--input") {
+			t.Fatalf("argv carries an input: %q", args)
+		}
+	}
+	if shown := redactArgs([]string{"--input=password=hunter2"}); strings.Contains(shown, "hunter2") {
 		t.Fatalf("redacted argv = %q", shown)
 	}
-
-	for _, inputs := range []any{
+	for _, in := range []any{
 		"x=y",
 		map[string]any{"a=b": "v"},
 		map[string]any{"-x": "v"},
+		map[string]any{"a.b": "v"},
 		map[string]any{"": "v"},
 		map[string]any{"n": 3},
 		map[string]any{"n": "a\x00b"},
 		map[string]any{"n": strings.Repeat("x", maxVerifyInputBytes+1)},
 	} {
-		if args, err := recordVerifyArgs(&Request{Params: map[string]any{"draftDir": "rec-1", "inputs": inputs}}); err == nil {
-			t.Errorf("inputs %v accepted: %v", inputs, args)
+		if _, _, err := recordVerifyArgs(&Request{Params: map[string]any{"draftDir": "rec-1", "inputs": in}}); err == nil {
+			t.Errorf("inputs %v accepted", in)
 		}
 	}
 }
 
-// failRunner fails the way a CLI exit does, quoting its argv.
-type failRunner struct{}
-
-func (failRunner) Run(_ context.Context, args ...string) ([]byte, error) {
-	return nil, errors.New("monoagentcli " + redactArgs(args) + ": exit status 1")
+// fileRunner records the argv and the inputs file's state at exec time,
+// then answers with out or fails.
+type fileRunner struct {
+	mu   sync.Mutex
+	args []string
+	path string
+	mode os.FileMode
+	dir  os.FileMode
+	body map[string]string
+	fail bool
 }
 
-func TestRecordVerifyErrorNeverQuotesSecrets(t *testing.T) {
-	srv, ext, _ := startCaptureServer(t)
-	drafts, _ := recording.DraftsDir()
-	if err := os.MkdirAll(filepath.Join(drafts, "rec-1"), 0o700); err != nil {
-		t.Fatal(err)
+func (r *fileRunner) Run(_ context.Context, args ...string) ([]byte, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.args = args
+	for _, a := range args {
+		if p, ok := strings.CutPrefix(a, "--inputs-file="); ok {
+			r.path = p
+			if fi, err := os.Stat(p); err == nil {
+				r.mode = fi.Mode().Perm()
+			}
+			if fi, err := os.Stat(filepath.Dir(p)); err == nil {
+				r.dir = fi.Mode().Perm()
+			}
+			blob, _ := os.ReadFile(p)
+			_ = json.Unmarshal(blob, &r.body)
+		}
 	}
-	srv.SetRecordRunner(failRunner{})
-	ext.ask("v1", MethodRecordVerify, map[string]any{"draftDir": "rec-1", "inputs": map[string]any{"pw": "hunter2"}})
-	reply := ext.settled()
-	if reply.OK || strings.Contains(reply.Error, "hunter2") {
-		t.Fatalf("reply = %+v", reply)
+	if r.fail {
+		return nil, errors.New("monoagentcli " + redactArgs(args) + ": exit status 1")
+	}
+	return []byte(`{"ok":true,"steps":[]}`), nil
+}
+
+func TestRecordVerifyPassesInputsByPrivateFile(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		srv, ext, _ := startCaptureServer(t)
+		home, _ := os.UserHomeDir()
+		drafts, _ := recording.DraftsDir()
+		if err := os.MkdirAll(filepath.Join(drafts, "rec-1"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		run := &fileRunner{fail: fail}
+		srv.SetRecordRunner(run)
+		ext.ask("v1", MethodRecordVerify, map[string]any{"draftDir": "rec-1", "inputs": map[string]any{"pw": "hunter2", "q": "x"}})
+		reply := ext.settled()
+		if reply.OK == fail || strings.Contains(reply.Error, "hunter2") {
+			t.Fatalf("fail=%v reply = %+v", fail, reply)
+		}
+		run.mu.Lock()
+		for _, a := range run.args {
+			if strings.Contains(a, "hunter2") {
+				t.Fatalf("argv carries a value: %q", run.args)
+			}
+		}
+		if run.path == "" || filepath.Dir(run.path) != filepath.Join(home, ".monoagent", "tmp") {
+			t.Fatalf("inputs file path = %q (argv %q)", run.path, run.args)
+		}
+		if run.args[len(run.args)-1] != "--json" || run.mode != 0o600 || run.dir != 0o700 || run.body["pw"] != "hunter2" || run.body["q"] != "x" {
+			t.Fatalf("fail=%v args %q mode %o dir %o body %v", fail, run.args, run.mode, run.dir, run.body)
+		}
+		path := run.path
+		run.mu.Unlock()
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("fail=%v: inputs file still there: %v", fail, err)
+		}
 	}
 }

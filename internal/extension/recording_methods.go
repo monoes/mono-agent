@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 
@@ -94,9 +93,20 @@ func (s *Server) handleRecordAnalyze(ctx context.Context, req *Request, progress
 }
 
 func (s *Server) handleRecordVerify(ctx context.Context, req *Request, progress ProgressFunc) (any, error) {
-	args, err := recordVerifyArgs(req)
+	args, inputs, err := recordVerifyArgs(req)
 	if err != nil {
 		return nil, err
+	}
+	if len(inputs) > 0 {
+		// Inputs are usually secrets: never on argv (/proc/*/cmdline is
+		// readable by every local process), only in a private file that
+		// is gone once the command returns.
+		path, cleanup, err := writeVerifyInputs(inputs)
+		if err != nil {
+			return nil, err
+		}
+		defer cleanup()
+		args = append(args[:len(args)-1:len(args)-1], "--inputs-file="+path, "--json")
 	}
 	progress("verifying", "")
 	return runRecordJSON(ctx, s.recordRunner(), args)
@@ -158,25 +168,26 @@ func recordAnalyzeArgs(req *Request) ([]string, error) {
 	return append(args, "--json"), nil
 }
 
-func recordVerifyArgs(req *Request) ([]string, error) {
+// recordVerifyArgs builds the verify argv (ending in --json) and returns
+// the validated inputs separately: they travel in a file, never on argv.
+func recordVerifyArgs(req *Request) ([]string, map[string]string, error) {
 	args, err := profileArgs(req)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	dir, err := recording.ResolveDraftDir(req.String("draftDir"))
 	if err != nil {
-		return nil, badParam("%v", err)
+		return nil, nil, badParam("%v", err)
 	}
 	args = append(args, "record", "verify", dir)
 	if full, _ := req.Params["full"].(bool); full {
 		args = append(args, "--full")
 	}
-	inputs, err := verifyInputArgs(req.Params["inputs"])
+	inputs, err := verifyInputs(req.Params["inputs"])
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	args = append(args, inputs...)
-	return append(args, "--json"), nil
+	return append(args, "--json"), inputs, nil
 }
 
 // Bounds on record.verify's inputs: one replay's worth of form fields.
@@ -185,12 +196,14 @@ const (
 	maxVerifyInputBytes = 8 << 10
 )
 
-var inputNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]{0,63}$`)
+// inputNamePattern matches recordanalyze.ValidInputName, so a name the
+// verify command would refuse is refused here with bad_params instead.
+var inputNamePattern = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]{0,62}$`)
 
-// verifyInputArgs turns {"name": "value"} into sorted --input=name=value
-// words. Values may be one-off secrets for this replay: they are never
-// logged, and redactArgs masks them in any error that quotes the argv.
-func verifyInputArgs(raw any) ([]string, error) {
+// verifyInputs validates record.verify's {"name": "value"} inputs. Values
+// may be one-off secrets for this replay: they are never logged or put on
+// argv (see writeVerifyInputs).
+func verifyInputs(raw any) (map[string]string, error) {
 	if raw == nil {
 		return nil, nil
 	}
@@ -201,7 +214,7 @@ func verifyInputArgs(raw any) ([]string, error) {
 	if len(m) > maxVerifyInputs {
 		return nil, badParam("too many inputs (max %d)", maxVerifyInputs)
 	}
-	names := make([]string, 0, len(m))
+	out := make(map[string]string, len(m))
 	for name, v := range m {
 		if !inputNamePattern.MatchString(name) {
 			return nil, badParam("invalid input name %q", firstLine(name))
@@ -213,18 +226,63 @@ func verifyInputArgs(raw any) ([]string, error) {
 		if len(val) > maxVerifyInputBytes || strings.ContainsRune(val, 0) {
 			return nil, badParam("input %s value is too long or contains NUL", name)
 		}
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	out := make([]string, 0, len(names))
-	for _, name := range names {
-		out = append(out, "--input="+name+"="+m[name].(string))
+		out[name] = val
 	}
 	return out, nil
 }
 
-// redactArgs renders an argv for an error message with --input values
-// masked.
+// verifyInputsDir is where inputs files are written: ~/.monoagent/tmp, on
+// the user's own disk rather than a shared /tmp.
+func verifyInputsDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".monoagent", "tmp"), nil
+}
+
+// writeVerifyInputs writes inputs to a 0600 file in a 0700 directory for
+// `record verify --inputs-file`, and returns a cleanup that removes it.
+func writeVerifyInputs(inputs map[string]string) (string, func(), error) {
+	dir, err := verifyInputsDir()
+	if err != nil {
+		return "", nil, fmt.Errorf("inputs file: %w", err)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", nil, fmt.Errorf("inputs file: %w", err)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return "", nil, fmt.Errorf("inputs file: %w", err)
+	}
+	blob, err := json.Marshal(inputs)
+	if err != nil {
+		return "", nil, fmt.Errorf("inputs file: %w", err)
+	}
+	f, err := os.CreateTemp(dir, "verify-inputs-*.json")
+	if err != nil {
+		return "", nil, fmt.Errorf("inputs file: %w", err)
+	}
+	cleanup := func() { _ = os.Remove(f.Name()) }
+	if err := f.Chmod(0o600); err != nil {
+		f.Close()
+		cleanup()
+		return "", nil, fmt.Errorf("inputs file: %w", err)
+	}
+	if _, err := f.Write(blob); err != nil {
+		f.Close()
+		cleanup()
+		return "", nil, fmt.Errorf("inputs file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("inputs file: %w", err)
+	}
+	return f.Name(), cleanup, nil
+}
+
+// redactArgs renders an argv for an error message with any --input values
+// masked. The bridge itself passes inputs by file; this guards any argv
+// that still carries one.
 func redactArgs(args []string) string {
 	shown := make([]string, len(args))
 	for i, a := range args {
