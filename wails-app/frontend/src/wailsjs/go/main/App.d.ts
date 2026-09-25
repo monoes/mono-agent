@@ -247,6 +247,18 @@ export function IsMonomindInitialized():Promise<boolean>;
 
 export function IsReady():Promise<boolean>;
 
+export function JevRemoveKey():Promise<main.JevKeyRemoveResult>;
+
+export function JevSetKey(arg1:string):Promise<main.JevKeySetResult>;
+
+export function JevSetSurface(arg1:string,arg2:boolean,arg3:number):Promise<main.JevSurfaceResult>;
+
+export function JevStatus():Promise<main.JevStatusInfo>;
+
+export function JevTestKey():Promise<main.JevKeyTestResult>;
+
+export function JevUsage(arg1:string):Promise<main.JevUsageReport>;
+
 export function ListAIProviders():Promise<string>;
 
 export function ListChatConversations(arg1:string,arg2:number):Promise<string>;
