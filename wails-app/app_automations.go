@@ -111,6 +111,22 @@ func actionExportArgs(ref, path string) ([]string, error) {
 	return []string{"action", "export", ref, "-o", path}, nil
 }
 
+func recordVerifyArgs(draftDir string, full bool, inputs map[string]string) ([]string, error) {
+	if err := requireArg("draft directory", draftDir); err != nil {
+		return nil, err
+	}
+	args := []string{"record", "verify", draftDir}
+	if full {
+		args = append(args, "--full")
+	}
+	for _, name := range sortedKeys(inputs) {
+		if inputs[name] != "" {
+			args = append(args, "--input", name+"="+inputs[name])
+		}
+	}
+	return args, nil
+}
+
 // SaveDraftSpec is SaveDraft's JSON argument (one JSON string crosses the
 // Wails boundary instead of a long positional list).
 type SaveDraftSpec struct {
@@ -284,13 +300,18 @@ func (a *App) AnalyzeRecording(id, automation string) string {
 }
 
 // VerifyDraft replays a draft; full=false is safe mode (stops before the
-// first side-effecting step).
-func (a *App) VerifyDraft(draftDir string, full bool) string {
-	sub := []string{"record", "verify", draftDir}
-	if full {
-		sub = append(sub, "--full")
+// first side-effecting step). inputsJSON is an optional {name: value}
+// object for inputs the recording could not hold (secrets are never
+// recorded), passed as --input name=value.
+func (a *App) VerifyDraft(draftDir string, full bool, inputsJSON string) string {
+	var inputs map[string]string
+	if strings.TrimSpace(inputsJSON) != "" {
+		if err := json.Unmarshal([]byte(inputsJSON), &inputs); err != nil {
+			return aiError(fmt.Errorf("verify inputs: %w", err))
+		}
 	}
-	return a.runAutomationCLI(automationLongCLITimeout, sub, requireArg("draft directory", draftDir))
+	args, err := recordVerifyArgs(draftDir, full, inputs)
+	return a.runAutomationCLI(automationLongCLITimeout, args, err)
 }
 
 // SaveDraft saves a verified draft; specJSON is a SaveDraftSpec.

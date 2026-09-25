@@ -246,7 +246,8 @@ export const api = {
   showRecording:          (id) => GoApp.ShowRecording(id).then(JSON.parse).catch(asError),
   deleteRecording:        (id) => GoApp.DeleteRecording(id).then(JSON.parse).catch(asError),
   analyzeRecording:       (id, automation = '') => GoApp.AnalyzeRecording(id, automation).then(JSON.parse).catch(asError),
-  verifyDraft:            (draftDir, full = false) => GoApp.VerifyDraft(draftDir, full).then(JSON.parse).catch(asError),
+  // inputs: {name: value} for values the recording could not hold (secrets).
+  verifyDraft:            (draftDir, full = false, inputs = {}) => GoApp.VerifyDraft(draftDir, full, JSON.stringify(inputs || {})).then(JSON.parse).catch(asError),
   // spec: {as, automation, new, name, renameInputs: {aiName: userName}}
   saveDraft:              (draftDir, spec) => GoApp.SaveDraft(draftDir, JSON.stringify(spec || {})).then(JSON.parse).catch(asError),
   // Native pickers; resolve to '' when cancelled.

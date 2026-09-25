@@ -12,6 +12,13 @@ import { IssueList } from './OverviewTab.jsx'
 const VERIFY_COLORS = { pass: 'var(--green-neon)', healed: 'var(--cyan)', fail: 'var(--red)', stopped_before_side_effect: 'var(--yellow)', skipped: 'var(--text-muted)' }
 const VERIFY_LABELS = { stopped_before_side_effect: 'stopped (side effect)' }
 const RISKY = new Set(['write', 'message', 'destructive'])
+// outputList flattens ActionDef.outputs ({success: [...], ...}) or a plain list.
+function outputList(o) {
+  if (Array.isArray(o)) return o
+  if (!o || typeof o !== 'object') return []
+  return [...new Set(Object.values(o).flat().filter(x => typeof x === 'string'))]
+}
+
 const inputStyle = { ...mono, fontSize: 11, background: 'var(--surface)', border: '1px solid var(--border-bright)', borderRadius: 'var(--radius)', color: 'var(--text)', padding: '5px 8px', minWidth: 0 }
 
 function Field({ label: text, value, onChange, id }) {
@@ -59,6 +66,7 @@ export default function RecordingReview({ recording, automationId, onBack, onSav
   const [names, setNames] = useState({ action: '', automation: '', fragment: '' })
   const [inputNames, setInputNames] = useState({})
   const [saveAs, setSaveAs] = useState('action')
+  const [verifyInputs, setVerifyInputs] = useState({}) // values the recording could not hold
 
   useEffect(() => {
     let live = true
@@ -70,7 +78,7 @@ export default function RecordingReview({ recording, automationId, onBack, onSav
       setDraftDir(res.draftDir)
       setDraft(d)
       setNames({ action: d.names?.action || d.action || '', automation: d.names?.automation || d.targetAutomation || automationId, fragment: d.names?.fragment || '' })
-      setInputNames(Object.fromEntries((d.actionDef?.inputs || []).map(i => [i.name, i.name])))
+      setInputNames(Object.fromEntries((d.inputs || []).map(i => [i.name, i.name])))
       setSaveAs(d.saveAs || 'action')
       setPhase('ready')
     })()
@@ -79,13 +87,19 @@ export default function RecordingReview({ recording, automationId, onBack, onSav
 
   const def = draft?.actionDef || {}
   const steps = def.steps || []
+  const inputs = draft?.inputs || []
+  const outputs = outputList(def.outputs)
+  const recorded = draft?.recordedInputs || {}
+  // Inputs with no recorded value (secrets are never recorded) need a value
+  // for verify to get past the step that types them.
+  const missing = inputs.filter(i => recorded[i.name] === undefined && (i.default === undefined || i.default === null))
 
   const runVerify = async (full) => {
     if (full && RISKY.has(def.sideEffects) && !(await confirm(`Run the whole action for real? It has "${def.sideEffects}" side effects — it will act on the site with your login.`))) return
     setPhase('verifying'); setError('')
-    const res = await api.verifyDraft(draftDir, full)
-    if (!res || res.error) setError(res?.error || 'Verify failed.')
-    else setVerify(res)
+    const res = await api.verifyDraft(draftDir, full, verifyInputs)
+    if (!res || (res.error && !res.steps)) setError(res?.error || 'Verify failed.')
+    else { setVerify(res); if (res.error) setError(res.error) }
     setPhase('ready')
   }
 
@@ -133,19 +147,19 @@ export default function RecordingReview({ recording, automationId, onBack, onSav
             {Object.keys(inputNames).length > 0 && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <span style={label}>Inputs</span>
-                {(def.inputs || []).map(i => (
+                {inputs.map(i => (
                   <div key={i.name} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                     <input aria-label={`Name for input ${i.name}`} value={inputNames[i.name] ?? i.name} onChange={e => setInputNames(m => ({ ...m, [i.name]: e.target.value }))} style={{ ...inputStyle, width: 180 }} />
                     <span style={{ ...mono, fontSize: 10, color: 'var(--cyan)' }}>{i.type || 'string'}</span>
-                    <span style={{ ...muted, fontSize: 10, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{i.description || (draft.recordedInputs?.[i.name] !== undefined ? `recorded: ${JSON.stringify(draft.recordedInputs[i.name])}` : i.default !== undefined ? `recorded: ${JSON.stringify(i.default)}` : '')}</span>
+                    <span style={{ ...muted, fontSize: 10, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{i.description || (recorded[i.name] !== undefined ? `recorded: ${JSON.stringify(recorded[i.name])}` : i.default != null ? `default: ${JSON.stringify(i.default)}` : '')}</span>
                   </div>
                 ))}
               </div>
             )}
-            {(def.outputs || []).length > 0 && (
+            {outputs.length > 0 && (
               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
                 <span style={{ ...label, marginRight: 4 }}>Outputs</span>
-                {def.outputs.map(o => <Chip key={o} color="var(--teal)">{o}</Chip>)}
+                {outputs.map(o => <Chip key={o} color="var(--teal)">{o}</Chip>)}
               </div>
             )}
           </div>
@@ -158,9 +172,21 @@ export default function RecordingReview({ recording, automationId, onBack, onSav
               <button className="btn btn-secondary btn-sm" onClick={() => runVerify(false)} disabled={busy || !draftDir} style={{ gap: 5 }}><ShieldCheck size={11} /> Verify (safe)</button>
               <button className="btn btn-ghost btn-sm" onClick={() => runVerify(true)} disabled={busy || !draftDir} style={{ gap: 5 }}><Play size={11} /> Verify full</button>
             </div>
+            {missing.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <span style={{ ...muted, fontSize: 10 }}>Not recorded (e.g. passwords) — enter a value to verify with. It is passed to this run only, never saved.</span>
+                {missing.map(i => (
+                  <div key={i.name} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <span style={{ ...mono, fontSize: 10.5, color: 'var(--text)', width: 140, overflow: 'hidden', textOverflow: 'ellipsis' }}>{i.name}</span>
+                    <input type="password" autoComplete="new-password" aria-label={`Value for ${i.name} during verify`} value={verifyInputs[i.name] || ''}
+                      onChange={e => setVerifyInputs(m => ({ ...m, [i.name]: e.target.value }))} style={{ ...inputStyle, flex: 1 }} />
+                  </div>
+                ))}
+              </div>
+            )}
             {phase === 'verifying' && <Busy text="Replaying in your browser…" />}
             {verify && (verify.ok
-              ? <OkBox>{verify.stoppedAt ? 'Verified up to the first side-effecting step — it was not executed.' : 'All steps passed.'}</OkBox>
+              ? <OkBox>{verify.stoppedAt ? 'Verified up to the first side-effecting step — it was not executed.' : 'All steps passed.'}{verify.healed?.length ? ` ${verify.healed.length} selector${verify.healed.length === 1 ? ' was' : 's were'} healed and promoted in the draft.` : ''}</OkBox>
               : <ErrorBox>Verification found failing steps — fix or re-record them before saving.</ErrorBox>)}
             {steps.length ? <StepList steps={steps} verify={verify} /> : <span style={muted}>The draft has no steps.</span>}
           </div>

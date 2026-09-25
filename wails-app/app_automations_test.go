@@ -79,3 +79,17 @@ func TestRecordSaveArgs(t *testing.T) {
 		t.Fatal("bad save-as accepted")
 	}
 }
+
+func TestRecordVerifyArgs(t *testing.T) {
+	got, err := recordVerifyArgs("/d", true, map[string]string{"password": "s3cret", "a": "1", "empty": ""})
+	want := []string{"record", "verify", "/d", "--full", "--input", "a=1", "--input", "password=s3cret"}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v %v\nwant %v", got, err, want)
+	}
+	if got, _ := recordVerifyArgs("/d", false, nil); !reflect.DeepEqual(got, []string{"record", "verify", "/d"}) {
+		t.Fatalf("safe: %v", got)
+	}
+	if _, err := recordVerifyArgs("", false, nil); err == nil {
+		t.Fatal("empty draft dir accepted")
+	}
+}
