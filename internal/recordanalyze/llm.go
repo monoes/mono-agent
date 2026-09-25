@@ -1,0 +1,162 @@
+package recordanalyze
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/monoes/mono-agent/internal/action"
+	"github.com/monoes/mono-agent/internal/automation"
+	"github.com/monoes/mono-agent/internal/monomind"
+)
+
+// Runner asks the AI for one completion. The production runner is
+// ExecRunner (monomind agent exec); tests use a stub.
+type Runner interface {
+	Run(ctx context.Context, prompt string) (string, error)
+}
+
+// RunnerFunc adapts a function to Runner.
+type RunnerFunc func(ctx context.Context, prompt string) (string, error)
+
+func (f RunnerFunc) Run(ctx context.Context, prompt string) (string, error) { return f(ctx, prompt) }
+
+// Defaults for ExecRunner.
+const (
+	DefaultRuntime   = "claude"
+	DefaultTimeout   = 10 * time.Minute
+	DefaultBudgetUSD = 2.0
+)
+
+// ExecRunner runs the prompt as one `monomind agent exec` turn, like
+// capturesummary.ExecRunner: no tools, no session, no chat history. It is
+// the only AI backend of this package; the in-app AI provider is never used.
+type ExecRunner struct {
+	Runtime   string // default DefaultRuntime
+	Model     string // "" leaves it to the runtime
+	BudgetUSD float64
+	Timeout   time.Duration
+}
+
+func (r ExecRunner) Run(ctx context.Context, prompt string) (string, error) {
+	timeout := r.Timeout
+	if timeout <= 0 {
+		timeout = DefaultTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	bin, _, err := monomind.Ensure(ctx)
+	if err != nil {
+		return "", err
+	}
+	runtime := r.Runtime
+	if runtime == "" {
+		runtime = DefaultRuntime
+	}
+	budget := r.BudgetUSD
+	if budget <= 0 {
+		budget = DefaultBudgetUSD
+	}
+	opts := monomind.ExecOptions{Bin: bin, Runtime: runtime, Model: r.Model, Prompt: prompt, BudgetUSD: budget}
+	if deadline, ok := ctx.Deadline(); ok {
+		// Let the runtime stop itself a little before we would kill it.
+		if d := time.Until(deadline) - 5*time.Second; d > 0 {
+			opts.Timeout = d
+		}
+	}
+	res, err := monomind.Exec(ctx, opts, nil)
+	if err != nil {
+		return "", err
+	}
+	if res.Err != nil {
+		return "", fmt.Errorf("%s", strings.TrimSpace(res.Err.Code+" "+res.Err.Message))
+	}
+	switch res.StopReason {
+	case "", "end_turn":
+	default:
+		return "", fmt.Errorf("the turn stopped early (%s)", res.StopReason)
+	}
+	if !res.SawDone && res.ExitCode != 0 {
+		return "", fmt.Errorf("the runtime exited with code %d", res.ExitCode)
+	}
+	return res.ResultText, nil
+}
+
+// DraftAutomation is the automation block of the AI output.
+type DraftAutomation struct {
+	ID          string            `json:"id"`
+	Name        string            `json:"name"`
+	Description string            `json:"description,omitempty"`
+	Site        *automation.Site  `json:"site,omitempty"`
+	Login       *automation.Login `json:"login,omitempty"`
+}
+
+// Output is the strict JSON the AI returns (data/skills/record-to-action.md).
+type Output struct {
+	Automation DraftAutomation                 `json:"automation"`
+	Action     action.ActionDef                `json:"action"`
+	Selectors  map[string]action.SelectorEntry `json:"selectors"`
+	Fragments  []action.FragmentDef            `json:"fragments,omitempty"`
+	Scripts    map[string]string               `json:"scripts,omitempty"`
+	Names      map[string]string               `json:"names,omitempty"`
+}
+
+// Generate asks the runner for a draft, validates it, and on failure runs
+// one repair round fed with the validator errors. A second failure returns
+// an error carrying the validator output.
+func Generate(ctx context.Context, r Runner, prompt string, env *Env) (*Output, error) {
+	text, err := r.Run(ctx, prompt)
+	if err != nil {
+		return nil, fmt.Errorf("AI draft: %w", err)
+	}
+	out, problems := parseAndCheck(text, env)
+	if len(problems) == 0 {
+		return out, nil
+	}
+	text, err = r.Run(ctx, RepairPrompt(prompt, text, problems))
+	if err != nil {
+		return nil, fmt.Errorf("AI repair: %w", err)
+	}
+	out, problems = parseAndCheck(text, env)
+	if len(problems) > 0 {
+		return nil, fmt.Errorf("AI draft failed validation after one repair round:\n- %s", strings.Join(problems, "\n- "))
+	}
+	return out, nil
+}
+
+func parseAndCheck(text string, env *Env) (*Output, []string) {
+	raw := extractJSON(text)
+	if raw == "" {
+		return nil, []string{"the answer contains no JSON object"}
+	}
+	var out Output
+	dec := json.NewDecoder(strings.NewReader(raw))
+	if err := dec.Decode(&out); err != nil {
+		return nil, []string{"invalid JSON: " + err.Error()}
+	}
+	FixNames(&out, env)
+	return &out, CheckOutput(&out, env)
+}
+
+// extractJSON returns the JSON object in text: a ```json fence's body, or
+// the span from the first '{' to the last '}'.
+func extractJSON(text string) string {
+	t := strings.TrimSpace(text)
+	if i := strings.Index(t, "```"); i >= 0 {
+		body := t[i+3:]
+		body = strings.TrimPrefix(body, "json")
+		if j := strings.Index(body, "```"); j >= 0 {
+			body = body[:j]
+		}
+		if b := strings.TrimSpace(body); strings.HasPrefix(b, "{") {
+			return b
+		}
+	}
+	a, b := strings.IndexByte(t, '{'), strings.LastIndexByte(t, '}')
+	if a < 0 || b <= a {
+		return ""
+	}
+	return t[a : b+1]
+}

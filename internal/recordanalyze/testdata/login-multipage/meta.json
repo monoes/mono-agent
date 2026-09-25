@@ -1,0 +1,10 @@
+{
+  "url": "https://shop.example.test/login",
+  "title": "Sign in - Example Shop",
+  "goal": "get the total of my latest order",
+  "source": "recording",
+  "capturedAt": "2026-09-25T10:00:00Z",
+  "eventCount": 11,
+  "complete": true,
+  "stopReason": "user"
+}

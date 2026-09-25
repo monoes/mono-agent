@@ -1,0 +1,23 @@
+Here is the draft:
+
+```json
+{
+  "automation": {"id": "example-news", "name": "Example News"},
+  "action": {
+    "actionType": "list_top_stories",
+    "description": "List the top stories with their points",
+    "sideEffects": "read",
+    "outputs": {"items": ["title", "points"]},
+    "outputSchema": {"type": "object", "properties": {"title": {"type": "string"}, "points": {"type": "string"}}},
+    "steps": [
+      {"id": "open", "type": "navigate", "url": "https://news.example.test/"},
+      {"id": "stories", "type": "extract_table", "configKey": "news.story_row", "intent": "each story row of the front page",
+       "fields": {"title": "a.title", "points": "span.points"}, "variable_name": "items"}
+    ]
+  },
+  "selectors": {
+    "news.story_row": {"intent": "story rows", "candidates": [{"css": "ol.items > li.item", "score": 0.9}]}
+  },
+  "names": {"automation": "example-news", "action": "list_top_stories", "fragment": "read_stories"}
+}
+```
