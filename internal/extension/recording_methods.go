@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -170,7 +171,70 @@ func recordVerifyArgs(req *Request) ([]string, error) {
 	if full, _ := req.Params["full"].(bool); full {
 		args = append(args, "--full")
 	}
+	inputs, err := verifyInputArgs(req.Params["inputs"])
+	if err != nil {
+		return nil, err
+	}
+	args = append(args, inputs...)
 	return append(args, "--json"), nil
+}
+
+// Bounds on record.verify's inputs: one replay's worth of form fields.
+const (
+	maxVerifyInputs     = 64
+	maxVerifyInputBytes = 8 << 10
+)
+
+var inputNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]{0,63}$`)
+
+// verifyInputArgs turns {"name": "value"} into sorted --input=name=value
+// words. Values may be one-off secrets for this replay: they are never
+// logged, and redactArgs masks them in any error that quotes the argv.
+func verifyInputArgs(raw any) ([]string, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	m, ok := raw.(map[string]any)
+	if !ok {
+		return nil, badParam("inputs must be an object of name → string")
+	}
+	if len(m) > maxVerifyInputs {
+		return nil, badParam("too many inputs (max %d)", maxVerifyInputs)
+	}
+	names := make([]string, 0, len(m))
+	for name, v := range m {
+		if !inputNamePattern.MatchString(name) {
+			return nil, badParam("invalid input name %q", firstLine(name))
+		}
+		val, ok := v.(string)
+		if !ok {
+			return nil, badParam("input %s must be a string", name)
+		}
+		if len(val) > maxVerifyInputBytes || strings.ContainsRune(val, 0) {
+			return nil, badParam("input %s value is too long or contains NUL", name)
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		out = append(out, "--input="+name+"="+m[name].(string))
+	}
+	return out, nil
+}
+
+// redactArgs renders an argv for an error message with --input values
+// masked.
+func redactArgs(args []string) string {
+	shown := make([]string, len(args))
+	for i, a := range args {
+		if rest, ok := strings.CutPrefix(a, "--input="); ok {
+			name, _, _ := strings.Cut(rest, "=")
+			a = "--input=" + name + "=•••"
+		}
+		shown[i] = a
+	}
+	return strings.Join(shown, " ")
 }
 
 func recordSaveArgs(req *Request) ([]string, error) {
@@ -230,7 +294,7 @@ func runRecordJSON(ctx context.Context, r Runner, args []string) (any, error) {
 	}
 	var data any
 	if err := json.Unmarshal(bytes.TrimSpace(out), &data); err != nil {
-		return nil, fmt.Errorf("monoagentcli %s: output is not JSON", strings.Join(args, " "))
+		return nil, fmt.Errorf("monoagentcli %s: output is not JSON", redactArgs(args))
 	}
 	return data, nil
 }
@@ -256,7 +320,7 @@ func (selfRunner) Run(ctx context.Context, args ...string) ([]byte, error) {
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() != nil {
-			return stdout.Bytes(), &RequestError{Code: CodeTimeout, Err: fmt.Errorf("monoagentcli %s: %w", strings.Join(args, " "), ctx.Err())}
+			return stdout.Bytes(), &RequestError{Code: CodeTimeout, Err: fmt.Errorf("monoagentcli %s: %w", redactArgs(args), ctx.Err())}
 		}
 		detail := strings.TrimSpace(stderr.String())
 		if len(detail) > stderrTail {
@@ -265,7 +329,7 @@ func (selfRunner) Run(ctx context.Context, args ...string) ([]byte, error) {
 		if detail == "" {
 			detail = err.Error()
 		}
-		return stdout.Bytes(), fmt.Errorf("monoagentcli %s: %s", strings.Join(args, " "), detail)
+		return stdout.Bytes(), fmt.Errorf("monoagentcli %s: %s", redactArgs(args), detail)
 	}
 	return stdout.Bytes(), nil
 }

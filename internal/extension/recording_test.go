@@ -3,6 +3,7 @@ package extension
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -233,5 +234,60 @@ func TestSelfRunnerRefusesForeignBinary(t *testing.T) {
 	var re *RequestError
 	if err == nil || !asRequestError(err, &re) || re.Code != CodeUnavailable {
 		t.Fatalf("test binary exec'd as monoagentcli: %v", err)
+	}
+}
+
+func TestRecordVerifyInputs(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	drafts, _ := recording.DraftsDir()
+	draft := filepath.Join(drafts, "rec-1")
+	if err := os.MkdirAll(draft, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	realDraft, _ := filepath.EvalSymlinks(draft)
+
+	args, err := recordVerifyArgs(&Request{Params: map[string]any{"draftDir": "rec-1",
+		"inputs": map[string]any{"query": "a=b c", "password": "hunter2"}}})
+	want := "record verify " + realDraft + " --input=password=hunter2 --input=query=a=b c --json"
+	if err != nil || strings.Join(args, " ") != want {
+		t.Fatalf("args = %q, %v; want %q", strings.Join(args, " "), err, want)
+	}
+	if shown := redactArgs(args); strings.Contains(shown, "hunter2") || !strings.Contains(shown, "--input=password=•••") {
+		t.Fatalf("redacted argv = %q", shown)
+	}
+
+	for _, inputs := range []any{
+		"x=y",
+		map[string]any{"a=b": "v"},
+		map[string]any{"-x": "v"},
+		map[string]any{"": "v"},
+		map[string]any{"n": 3},
+		map[string]any{"n": "a\x00b"},
+		map[string]any{"n": strings.Repeat("x", maxVerifyInputBytes+1)},
+	} {
+		if args, err := recordVerifyArgs(&Request{Params: map[string]any{"draftDir": "rec-1", "inputs": inputs}}); err == nil {
+			t.Errorf("inputs %v accepted: %v", inputs, args)
+		}
+	}
+}
+
+// failRunner fails the way a CLI exit does, quoting its argv.
+type failRunner struct{}
+
+func (failRunner) Run(_ context.Context, args ...string) ([]byte, error) {
+	return nil, errors.New("monoagentcli " + redactArgs(args) + ": exit status 1")
+}
+
+func TestRecordVerifyErrorNeverQuotesSecrets(t *testing.T) {
+	srv, ext, _ := startCaptureServer(t)
+	drafts, _ := recording.DraftsDir()
+	if err := os.MkdirAll(filepath.Join(drafts, "rec-1"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	srv.SetRecordRunner(failRunner{})
+	ext.ask("v1", MethodRecordVerify, map[string]any{"draftDir": "rec-1", "inputs": map[string]any{"pw": "hunter2"}})
+	reply := ext.settled()
+	if reply.OK || strings.Contains(reply.Error, "hunter2") {
+		t.Fatalf("reply = %+v", reply)
 	}
 }
