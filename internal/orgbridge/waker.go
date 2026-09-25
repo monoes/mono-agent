@@ -23,6 +23,9 @@ type Waker struct {
 	RootOf   func(profileID string) string
 	Interval time.Duration
 	Logf     func(format string, args ...interface{})
+	// Asks links token-less replies to waiting org.asks with Jev (nil:
+	// a matcher over DB, which stays off until `jev enable asks`).
+	Asks *AskMatcher
 
 	mu   sync.Mutex
 	subs map[tailKey]func()
@@ -138,8 +141,20 @@ func (w *Waker) handle(ctx context.Context, n watched, ev Event) {
 	switch ev.Type {
 	case "message", "xorg":
 		ref := AskRef(ev.Subject, ev.Msg)
+		var linked *AskMatch
 		if ref == "" {
-			return
+			// No ask token: with `jev enable asks`, a confident Jev link
+			// to a waiting ask stands in for it (plan WS9); otherwise the
+			// message is not an ask reply, as before.
+			role, ok := localRole(n.org, ev.To)
+			if !ok {
+				return
+			}
+			m, ok := askMatcherOr(w.Asks, w.DB, w.Logf).match(ctx, ev.MessageID(), n.profileID, n.org, role, ev.Subject, ev.Msg)
+			if !ok {
+				return
+			}
+			ref, linked = m.AskID, &m
 		}
 		asks := NewAskStore(w.DB)
 		a, err := asks.Get(ctx, ref)
@@ -152,6 +167,10 @@ func (w *Waker) handle(ctx context.Context, n watched, ev Event) {
 		reply := map[string]interface{}{"from": ev.From, "subject": ev.Subject, "body": StripTrace(ev.Msg)}
 		if tr, ok := ParseTrace(ev.Msg); ok {
 			reply["trace"] = map[string]interface{}{"chain_id": tr.ChainID, "hop": tr.Hop}
+		}
+		if linked != nil {
+			reply["_jev"] = linked.jevReplyMeta()
+			logJevLink(w.Logf, n.org, a.EndpointRoleID, ev.MessageID(), ev.From, *linked)
 		}
 		if ok, _ := asks.MarkReplied(ctx, a.ID, reply); ok {
 			w.resume(a.ExecutionID)

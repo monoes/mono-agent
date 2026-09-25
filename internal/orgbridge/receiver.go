@@ -66,6 +66,10 @@ type Receiver struct {
 	// VerifyWindow is how long a delivery may wait for its bus event.
 	VerifyWindow time.Duration
 
+	// Asks links token-less replies to waiting org.asks with Jev (nil:
+	// a matcher over DB, which stays off until `jev enable asks`).
+	Asks *AskMatcher
+
 	mu         sync.Mutex
 	pending    map[string]*pendingDelivery // messageId -> delivery
 	seen       map[string]time.Time        // messageId|org:role -> bus event seen
@@ -319,10 +323,23 @@ func (r *Receiver) Run(ctx context.Context) {
 // dispatch applies loop control and starts the automation role's workflow
 // — or, when the message answers an org.ask, stores the reply instead.
 func (r *Receiver) dispatch(ctx context.Context, row orggrant.EndpointRow, d EndpointDelivery) {
-	if ref := AskRef(d.Subject, d.Body); ref != "" {
+	ref := AskRef(d.Subject, d.Body)
+	var linked *AskMatch
+	if ref == "" {
+		// No ask token: with `jev enable asks`, a confident Jev link to a
+		// waiting ask stands in for it (plan WS9); otherwise today's path.
+		if m, ok := askMatcherOr(r.Asks, r.DB, r.Logf).match(ctx, d.MessageID, row.ProfileID, row.OrgName, row.RoleID, d.Subject, d.Body); ok {
+			ref, linked = m.AskID, &m
+		}
+	}
+	if ref != "" {
 		asks := NewAskStore(r.DB)
 		if a, err := asks.Get(ctx, ref); err == nil && a != nil && a.OrgName == row.OrgName && a.EndpointRoleID == row.RoleID {
 			reply := map[string]interface{}{"from": d.From, "subject": d.Subject, "body": StripTrace(d.Body)}
+			if linked != nil {
+				reply["_jev"] = linked.jevReplyMeta()
+				logJevLink(r.Logf, row.OrgName, row.RoleID, d.MessageID, d.From, *linked)
+			}
 			if ok, _ := asks.MarkReplied(ctx, a.ID, reply); ok && r.Resume != nil {
 				_ = r.Resume(a.ExecutionID)
 			}

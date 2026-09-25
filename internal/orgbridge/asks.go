@@ -21,11 +21,15 @@ type Ask struct {
 	EndpointRoleID string // automation role the question was sent from
 	ExecutionID    string
 	NodeID         string
-	Status         string // waiting | replied | timed_out
-	Reply          map[string]interface{}
-	CreatedAt      time.Time
-	DeadlineAt     time.Time
-	RepliedAt      *time.Time
+	// Question is the text the org.ask node sent ("" for asks recorded
+	// before migration 045). Only asks with a question are offered to the
+	// Jev reply matcher.
+	Question   string
+	Status     string // waiting | replied | timed_out
+	Reply      map[string]interface{}
+	CreatedAt  time.Time
+	DeadlineAt time.Time
+	RepliedAt  *time.Time
 }
 
 // Ask statuses.
@@ -64,22 +68,24 @@ func NewAskStore(db *sql.DB) *AskStore { return &AskStore{db: db, now: time.Now}
 func (s *AskStore) Create(ctx context.Context, a Ask) error {
 	now := s.now().UTC()
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO org_asks (id, profile_id, org_name, role_id, endpoint_role_id, execution_id, node_id, status, created_at, deadline_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, 'waiting', ?, ?)`,
+		`INSERT INTO org_asks (id, profile_id, org_name, role_id, endpoint_role_id, execution_id, node_id, question, status, created_at, deadline_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'waiting', ?, ?)`,
 		a.ID, a.ProfileID, a.OrgName, a.RoleID, a.EndpointRoleID, a.ExecutionID, a.NodeID,
+		sql.NullString{String: a.Question, Valid: a.Question != ""},
 		now.Format(time.RFC3339Nano), a.DeadlineAt.UTC().Format(time.RFC3339Nano))
 	return err
 }
 
-const askCols = `id, profile_id, org_name, role_id, endpoint_role_id, execution_id, node_id, status, reply_json, created_at, deadline_at, replied_at`
+const askCols = `id, profile_id, org_name, role_id, endpoint_role_id, execution_id, node_id, question, status, reply_json, created_at, deadline_at, replied_at`
 
 func scanAsk(sc interface{ Scan(...interface{}) error }) (*Ask, error) {
 	var a Ask
-	var reply, replied sql.NullString
+	var question, reply, replied sql.NullString
 	var created, deadline string
-	if err := sc.Scan(&a.ID, &a.ProfileID, &a.OrgName, &a.RoleID, &a.EndpointRoleID, &a.ExecutionID, &a.NodeID, &a.Status, &reply, &created, &deadline, &replied); err != nil {
+	if err := sc.Scan(&a.ID, &a.ProfileID, &a.OrgName, &a.RoleID, &a.EndpointRoleID, &a.ExecutionID, &a.NodeID, &question, &a.Status, &reply, &created, &deadline, &replied); err != nil {
 		return nil, err
 	}
+	a.Question = question.String
 	if reply.Valid && reply.String != "" {
 		_ = json.Unmarshal([]byte(reply.String), &a.Reply)
 	}
@@ -115,6 +121,29 @@ func (s *AskStore) Get(ctx context.Context, id string) (*Ask, error) {
 // ListWaiting returns every waiting ask.
 func (s *AskStore) ListWaiting(ctx context.Context) ([]Ask, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+askCols+` FROM org_asks WHERE status = 'waiting' ORDER BY created_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Ask
+	for rows.Next() {
+		a, err := scanAsk(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *a)
+	}
+	return out, rows.Err()
+}
+
+// ListWaitingFor returns up to limit waiting asks of one profile, org and
+// automation role that recorded a question, most recent first — the
+// candidates a token-less reply may answer.
+func (s *AskStore) ListWaitingFor(ctx context.Context, profileID, org, endpointRoleID string, limit int) ([]Ask, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+askCols+` FROM org_asks
+		WHERE status = 'waiting' AND profile_id = ? AND org_name = ? AND endpoint_role_id = ?
+		  AND question IS NOT NULL AND question <> ''
+		ORDER BY created_at DESC LIMIT ?`, profileID, org, endpointRoleID, limit)
 	if err != nil {
 		return nil, err
 	}
