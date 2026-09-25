@@ -12,9 +12,11 @@ import (
 	cfgpkg "github.com/monoes/mono-agent/internal/config"
 	"github.com/monoes/mono-agent/internal/nodes"
 	agentnodes "github.com/monoes/mono-agent/internal/nodes/agent"
+	choosenodes "github.com/monoes/mono-agent/internal/nodes/ai/choose"
 	crawlnodes "github.com/monoes/mono-agent/internal/nodes/ai/crawl"
 	applicationsnodes "github.com/monoes/mono-agent/internal/nodes/applications"
 	applynodes "github.com/monoes/mono-agent/internal/nodes/apply"
+	"github.com/monoes/mono-agent/internal/nodes/browserjev"
 	"github.com/monoes/mono-agent/internal/nodes/comm"
 	"github.com/monoes/mono-agent/internal/nodes/control"
 	"github.com/monoes/mono-agent/internal/nodes/data"
@@ -53,6 +55,10 @@ func Build(db *sql.DB) *workflow.NodeTypeRegistry {
 
 	// Local AI agent nodes (monomind delegation) — no store needed.
 	agentnodes.RegisterAll(registry)
+
+	// Goal-driven browser agent (TypeSafe Jev) in the user's own browser.
+	browserjev.RegisterAll(registry)
+	choosenodes.RegisterAll(registry) // ai.choose: route items by a TypeSafe Jev choice
 
 	// Org runtime node (org.run) — kicks off/manages agent orgs from workflows.
 	orgnodes.RegisterAll(registry)

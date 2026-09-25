@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Messages | TikTok fixture</title>
+<!-- SYNTHETIC fixture: mimics the TikTok messages page (conversation list +
+     chat). ?u=<handle> opens the chat with that handle, as the profile's
+     Message button does. All names and messages are invented. -->
+<style>
+  body { font: 14px sans-serif; margin: 0; display: flex; }
+  .css-1-DivChatList { width: 260px; border-right: 1px solid #ccc; }
+  [data-e2e="chat-list-item"] { padding: 10px; cursor: pointer; }
+  .css-2-DivChatMain { flex: 1; padding: 12px; }
+  [data-e2e="message-input-area"] > div { min-height: 24px; border: 1px solid #aaa; padding: 4px; width: 320px; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="css-1-DivChatList" id="convs"></div>
+<div class="css-2-DivChatMain hidden" id="chat">
+  <div class="css-3-DivChatHeader"><p data-e2e="chat-nickname" id="nick"></p><p data-e2e="chat-uniqueid" id="uid"></p></div>
+  <div class="css-4-DivChatMessages" id="msgs"></div>
+  <div class="css-5-DivInputArea">
+    <div data-e2e="message-input-area"><div contenteditable="true" role="textbox" aria-label="Send a message..." id="composer"></div></div>
+    <svg data-e2e="message-send" id="send" width="24" height="24" role="button" aria-label="Send"><rect width="24" height="24"></rect></svg>
+  </div>
+</div>
+<script>
+(function () {
+  window.__events = [];
+  const log = (s) => window.__events.push(s);
+  const trusted = (e) => { if (!e.isTrusted) { log('untrusted-click'); return false; } return true; };
+  const PEOPLE = {
+    fake_creator: 'Fake Creator', fake_mute: 'Fake Mute', fake_someone_else: 'Fake Someone Else',
+    fake_ana: 'Fake Ana', fake_ben: 'Fake Ben', fake_cy: 'Fake Cy', fake_cy2: 'Fake Cy',
+  };
+  const CONVS = [
+    { user: 'fake_ana', last: 'are you around?', unread: true },
+    { user: 'fake_ben', last: 'thanks!', unread: false },
+    { user: 'fake_cy', last: 'hello?', unread: true },
+    { user: 'fake_cy2', last: 'hi again', unread: true },
+  ];
+  const convs = document.getElementById('convs');
+  for (const c of CONVS) {
+    const d = document.createElement('div');
+    d.setAttribute('data-e2e', 'chat-list-item');
+    d.innerHTML = '<p data-e2e="chat-list-item-nickname"></p><p data-e2e="chat-list-item-message"></p><span data-e2e="chat-list-item-time">2h</span>' +
+      (c.unread ? '<span data-e2e="chat-list-item-unread">1</span>' : '');
+    d.querySelector('[data-e2e="chat-list-item-nickname"]').textContent = PEOPLE[c.user];
+    d.querySelector('[data-e2e="chat-list-item-message"]').textContent = c.last;
+    d.addEventListener('click', (e) => { if (trusted(e)) openChat(c.user); });
+    convs.appendChild(d);
+  }
+  let current = '';
+  const openChat = (u) => {
+    current = u;
+    document.getElementById('nick').textContent = PEOPLE[u] || u;
+    document.getElementById('uid').textContent = '@' + u;
+    document.getElementById('msgs').innerHTML = '<div data-e2e="chat-item">older message</div>';
+    document.getElementById('chat').classList.remove('hidden');
+  };
+  const u = new URLSearchParams(location.search).get('u');
+  if (u) setTimeout(() => openChat(u), 150);
+
+  const composer = document.getElementById('composer');
+  const send = () => {
+    const text = composer.innerText.trim();
+    if (!text) return;
+    log('send:' + current + ':' + text);
+    if (current === 'fake_mute') return; // the send silently fails
+    setTimeout(() => {
+      const b = document.createElement('div');
+      b.setAttribute('data-e2e', 'chat-item');
+      b.textContent = text;
+      document.getElementById('msgs').appendChild(b);
+      composer.innerHTML = '';
+    }, 150);
+  };
+  document.getElementById('send').addEventListener('click', (e) => { if (trusted(e)) send(); });
+  composer.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.isTrusted) { e.preventDefault(); send(); } });
+})();
+</script>
+</body>
+</html>

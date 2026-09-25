@@ -28,19 +28,26 @@
     ]
   },
   "outputs": {
-    "success": ["followCount", "reachedIndex"],
-    "failure": ["failedItems"]
+    "success": [
+      "followCount",
+      "reachedIndex"
+    ],
+    "failure": [
+      "failedItems"
+    ]
   },
   "steps": [
     {
       "id": "t1_follow_user",
       "type": "call_bot_method",
       "methodName": "follow_user",
-      "args": ["{{item.url or item}}"],
+      "args": [
+        "{{item.url or item}}"
+      ],
       "variable_name": "followResult",
-      "timeout": 30,
+      "timeout": 60,
       "onError": {
-        "action": "skip"
+        "action": "mark_failed"
       }
     },
     {
@@ -60,7 +67,11 @@
       "id": "process_profiles",
       "iterator": "selectedListItems",
       "indexVar": "reachedIndex",
-      "steps": ["t1_follow_user", "wait", "log_success"],
+      "steps": [
+        "t1_follow_user",
+        "wait",
+        "log_success"
+      ],
       "onComplete": "update_action_state"
     }
   ],

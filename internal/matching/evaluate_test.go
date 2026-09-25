@@ -93,6 +93,13 @@ func TestEvaluateCreatesEvaluationAndTag(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("expected 1 evaluation row, got %d", count)
 	}
+	var runtime string
+	if err := db.QueryRow(`SELECT runtime FROM application_evaluations WHERE application_id = ?`, applicationID).Scan(&runtime); err != nil {
+		t.Fatalf("reading runtime: %v", err)
+	}
+	if runtime != "claude" {
+		t.Fatalf("agent path must store the runtime unchanged, got %q", runtime)
+	}
 }
 
 func TestEvaluateRejectsNonJobApplications(t *testing.T) {

@@ -15,7 +15,13 @@ export const DECIDERS = [
   { id: 'model', label: 'Model', hint: 'A separate one-shot model call.' },
   { id: 'boss', label: 'Boss', hint: "The org's root role decides." },
   { id: 'parent', label: 'Parent', hint: "The holding org's initiator decides." },
+  { id: 'jev', label: 'Jev', hint: 'TypeSafe Jev picks the verdict in one quick call; the model decides questions and anything Jev is unsure of.' },
 ]
+
+/** Decider kinds the CLI accepts (`org autonomy set --decider`). */
+export function isDeciderKind(kind) {
+  return DECIDERS.some(d => d.id === kind)
+}
 
 export const TIERS = ['routine', 'consequential', 'irreversible']
 

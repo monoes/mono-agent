@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Messaging | LinkedIn</title>
+<!-- SYNTHETIC fixture: the messaging inbox (/messaging/) and a full-page
+     conversation (/messaging/thread/<id>/ or /messaging/compose/…).
+     Invented people. ?draft=1 leaves an unsent draft in the composer;
+     ?broken=send makes Send do nothing. -->
+<style>
+  body { font: 14px sans-serif; }
+  .msg-form__contenteditable { min-height: 40px; border: 1px solid #999; }
+  button { min-width: 40px; min-height: 24px; }
+</style>
+</head>
+<body>
+<header id="global-nav" class="global-nav"></header>
+<main id="app"></main>
+<script>
+(function () {
+  const q = new URLSearchParams(location.search);
+  const app = document.getElementById('app');
+  const beacon = (path, body) => { try { fetch('https://www.linkedin.com/voyager/api/' + path, { method: 'POST', body: JSON.stringify(body) }); } catch (e) {} };
+  const convos = [
+    { id: '2-AAAgia', name: 'Gia Unread', snippet: 'Are you free Tuesday?', time: '10:32 AM', unread: true },
+    { id: '2-AAAhal', name: 'Hal Replied', snippet: 'You: Sure, sounds good', time: 'Sep 20', unread: false },
+    { id: '2-AAAivy', name: 'Ivy Read', snippet: 'Thanks again!', time: 'Sep 18', unread: false },
+    { id: '2-AAAjon', name: 'Jon Waiting', snippet: 'Did you get my deck?', time: 'Sep 17', unread: true },
+  ];
+  const listHTML = '<ul class="msg-conversations-container__conversations-list list-style-none">' + convos.map((c) =>
+    '<li class="msg-conversation-listitem msg-conversations-container__convo-item">' +
+    '<div class="msg-conversation-card msg-conversations-container__pillar' + (c.unread ? ' msg-conversation-card__convo-item-container--unread' : '') + '">' +
+    '<a class="msg-conversation-listitem__link" href="/messaging/thread/' + c.id + '/">' +
+    '<h3 class="msg-conversation-listitem__participant-names">' + c.name + '</h3>' +
+    '<time class="msg-conversation-listitem__time-stamp">' + c.time + '</time>' +
+    '<p class="msg-conversation-card__message-snippet">' + c.snippet + '</p>' +
+    (c.unread ? '<span class="msg-conversation-card__unread-count">1</span>' : '') +
+    '</a></div></li>').join('') + '</ul>';
+  const m = location.pathname.match(/^\/messaging\/thread\/([^/]+)/);
+  const compose = location.pathname.startsWith('/messaging/compose');
+  if (!m && !compose) {
+    app.innerHTML = '<section class="msg-conversations-container">' + listHTML + '</section>';
+    return;
+  }
+  const c = m ? (convos.find((x) => x.id === m[1]) || { id: m[1], name: 'Unknown Person' }) : { id: 'new', name: 'Dee Link' };
+  app.innerHTML = '<section class="msg-conversations-container">' + listHTML + '</section>' +
+    '<div class="msg-convo-wrapper msg-thread">' +
+    '<h2 class="msg-entity-lockup__entity-title"></h2>' +
+    '<ul class="msg-s-message-list-content"><li><p class="msg-s-event-listitem__body"></p></li></ul>' +
+    '<form class="msg-form"><div class="msg-form__msg-content-container"><div class="msg-form__contenteditable" contenteditable="true" role="textbox" aria-label="Write a message…"><p><br></p></div></div>' +
+    '<button class="msg-form__send-button artdeco-button" type="submit" disabled>Send</button></form></div>';
+  app.querySelector('.msg-entity-lockup__entity-title').textContent = c.name;
+  app.querySelector('.msg-s-event-listitem__body').textContent = c.snippet || '';
+  const ed = app.querySelector('.msg-form__contenteditable');
+  const send = app.querySelector('.msg-form__send-button');
+  if (q.get('draft') === '1') { ed.innerHTML = '<p>old unsent draft</p>'; send.disabled = false; }
+  ed.addEventListener('input', () => { send.disabled = ed.innerText.trim() === ''; });
+  app.querySelector('form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (q.get('broken') === 'send') return;
+    const text = ed.innerText.trim();
+    if (!text) return;
+    const li = document.createElement('li');
+    li.innerHTML = '<p class="msg-s-event-listitem__body"></p>';
+    li.querySelector('p').textContent = text;
+    app.querySelector('.msg-s-message-list-content').appendChild(li);
+    ed.innerHTML = '<p><br></p>';
+    send.disabled = true;
+    beacon('messaging/send', { thread: c.id, to: c.name, text });
+  });
+})();
+</script>
+</body>
+</html>

@@ -71,6 +71,7 @@
     {
       "id": "t2_find_input",
       "type": "find_element",
+      "intent": "the chat prompt input box where the next message to Gemini is typed",
       "selector": "div.ql-editor[contenteditable='true']",
       "alternatives": ["[role='textbox'][aria-label*='prompt' i]", "rich-textarea .ql-editor"],
       "variable_name": "promptInput",
@@ -109,6 +110,7 @@
     {
       "id": "t2_refind_input",
       "type": "find_element",
+      "intent": "the chat prompt input box where the next message to Gemini is typed",
       "selector": "div.ql-editor[contenteditable='true']",
       "alternatives": ["[role='textbox'][aria-label*='prompt' i]", "rich-textarea .ql-editor"],
       "variable_name": "promptBox",
@@ -140,6 +142,7 @@
     {
       "id": "t2_find_send_button",
       "type": "find_element",
+      "intent": "the Send message button that submits the typed prompt",
       "selector": "button.send-button",
       "alternatives": ["button[aria-label='Send message']", "button[aria-label*='Send' i]"],
       "timeout": 10,

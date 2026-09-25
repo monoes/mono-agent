@@ -1,0 +1,83 @@
+{
+  "_generated": true,
+  "credential_platform": null,
+  "fields": [
+    {
+      "help": "Opened in a new tab of your connected browser.",
+      "key": "url",
+      "label": "Start URL",
+      "required": true,
+      "type": "text"
+    },
+    {
+      "help": "What to achieve in plain language — include every value to enter. The run stops at DONE or BLOCKED.",
+      "key": "goal",
+      "label": "Goal",
+      "required": true,
+      "rows": 4,
+      "type": "textarea"
+    },
+    {
+      "default": "@secret:typesafe",
+      "help": "Falls back to the profile's vault secret `typesafe`, then TYPESAFE_API_KEY.",
+      "key": "api_key",
+      "label": "TypeSafe API Key",
+      "required": false,
+      "type": "password"
+    },
+    {
+      "default": "jev-latest",
+      "key": "model",
+      "label": "Jev Model",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "help": "Name → value pairs typed into matching fields instead of asking the text runtime. Jev sees only the names (typed values are shown to it as <value:NAME>). @secret: values need an email/tel field or one whose label names the value (password inputs are never observed).",
+      "key": "values",
+      "label": "Values",
+      "language": "json",
+      "placeholder": "{\"From\": \"Zurich\", \"email\": \"@secret:my-email\"}",
+      "required": false,
+      "rows": 5,
+      "type": "code"
+    },
+    {
+      "default": "claude",
+      "help": "Local agent that writes TYPE_TEXT values (monoagentcli agent scan --installed).",
+      "key": "text_runtime",
+      "label": "Text Runtime",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "help": "Model for the text runtime； a small one (e.g. haiku) keeps runs fast.",
+      "key": "text_model",
+      "label": "Text Model",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "default": 40,
+      "help": "Browser actions per run (decisions are capped at twice this).",
+      "key": "max_actions",
+      "label": "Max Actions",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "default": 300,
+      "key": "timeout",
+      "label": "Timeout (seconds)",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "help": "Error the node unless the run ends DONE (otherwise status is on the item).",
+      "key": "fail_on_blocked",
+      "label": "Fail When Not Done",
+      "required": false,
+      "type": "boolean"
+    }
+  ]
+}

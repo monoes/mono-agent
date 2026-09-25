@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Home | TikTok fixture</title></head>
+<!-- SYNTHETIC fixture: TikTok's header, logged out (?out=1) or logged in. The
+     logged-out header still links to the upload page and to "/@", as the
+     real one does. -->
+<body>
+<header>
+  <a data-e2e="nav-upload" href="/tiktokstudio/upload?from=webapp">Upload</a>
+  <a data-e2e="nav-profile" id="nav-profile" href="/@">Profile</a>
+  <button data-e2e="top-login-button" id="login">Log in</button>
+  <div data-e2e="profile-icon" id="me">me</div>
+</header>
+<script>
+  if (new URLSearchParams(location.search).get('out') === '1') document.getElementById('me').remove();
+  else { document.getElementById('login').remove(); document.getElementById('nav-profile').setAttribute('href', '/@me_tester'); }
+</script>
+</body></html>

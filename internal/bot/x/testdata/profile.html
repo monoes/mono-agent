@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Synth Alice (@synth_alice) / X</title>
+<style>body{font-family:sans-serif} button,a{display:inline-block;padding:4px;margin:2px}</style></head>
+<body>
+<!-- SYNTHETIC fixture: invented names, numbers and URLs. Mimics the
+     signed-in X profile header's data-testids. The profile is chosen by
+     path (/synth_alice has a Message button, /synth_bob does not). -->
+<div id="react-root"><header role="banner"><nav><a data-testid="AppTabBar_Profile_Link" href="/synth_me">Profile</a></nav></header>
+<main role="main">
+<div data-testid="primaryColumn">
+  <div><a href="/synth_alice/header_photo"><img src="https://pbs.example.test/banners/synthetic_1500x500.jpg" alt=""></a></div>
+  <div data-testid="UserAvatar-Container-synth_alice"><a href="/synth_alice/photo"><img src="https://pbs.example.test/avatars/synthetic_400x400.jpg" alt="Opens profile photo"></a></div>
+  <div id="actions">
+    <button data-testid="userActions" aria-label="More">…</button>
+    <button id="dm" data-testid="sendDMFromProfile" aria-label="Message">✉</button>
+    <button data-testid="1111-unfollow" aria-label="Following @synth_alice">Following</button>
+  </div>
+  <div data-testid="UserName">
+    <div><div dir="ltr"><span><span id="name">Synth Alice</span></span><svg data-testid="icon-verified" aria-label="Verified account" width="10" height="10"></svg></div></div>
+    <div><div dir="ltr"><span id="handle">@synth_alice</span></div></div>
+  </div>
+  <div data-testid="UserDescription"><span>Building imaginary things. Tea &amp; tests.</span></div>
+  <div data-testid="UserProfileHeader_Items">
+    <span data-testid="UserLocation"><span>Nowhere, Testland</span></span>
+    <a data-testid="UserUrl" href="https://t.co/synthetic1" rel="noopener"><span>synth-alice.example</span></a>
+    <span data-testid="UserJoinDate"><span>Joined March 2011</span></span>
+  </div>
+  <div>
+    <a href="/synth_alice/following" role="link"><span><span>321</span></span> <span><span>Following</span></span></a>
+    <a href="/synth_alice/verified_followers" role="link"><span><span>12.5K</span></span> <span><span>Followers</span></span></a>
+    <a href="/synth_alice/followers_you_follow" role="link"><span>Followed by 3 people you follow</span></a>
+  </div>
+</div>
+<div data-testid="sidebarColumn">
+  <div data-testid="UserCell"><a href="/synth_carol">Synth Carol</a> <span>@synth_carol</span>
+    <a href="/synth_carol/followers"><span>999</span> Followers</a></div>
+</div>
+</main></div>
+<script>
+  const who = location.pathname.split('/')[1];
+  if (who !== 'synth_alice') {
+    document.title = who;
+    document.getElementById('name').textContent = 'Synth Bob';
+    document.getElementById('handle').textContent = '@' + who;
+    for (const a of document.querySelectorAll("[data-testid='primaryColumn'] a[href^='/synth_alice']")) a.setAttribute('href', a.getAttribute('href').replace('/synth_alice', '/' + who));
+    document.getElementById('dm').remove();
+    document.querySelector("[data-testid='icon-verified']").remove();
+  }
+  document.getElementById('dm') && document.getElementById('dm').addEventListener('click', () => {
+    setTimeout(() => location.assign('/messages/100-200'), 150);
+  });
+</script>
+</body></html>

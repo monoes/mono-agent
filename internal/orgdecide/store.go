@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -28,6 +29,9 @@ const (
 	DefaultDeciderTimeout = 120
 	DefaultMaxDecisions   = 200
 	DefaultMaxDeciderUSD  = 2.0
+	// DefaultJevThreshold is the top-probability gate of a jev decider (plan
+	// §5): below it the model decider decides.
+	DefaultJevThreshold = 0.8
 )
 
 // Decider is the org_autonomy.decider_json shape.
@@ -37,6 +41,9 @@ type Decider struct {
 	Model          string `json:"model"`
 	Fallback       string `json:"fallback"`
 	TimeoutSeconds int    `json:"timeout_seconds"`
+	// Threshold is the jev decider's gate on the top verdict's probability,
+	// in (0,1]; 0 means DefaultJevThreshold. Other kinds ignore it.
+	Threshold float64 `json:"threshold,omitempty"`
 }
 
 // Limits is org_autonomy.limits_json.
@@ -98,6 +105,9 @@ func (a *Autonomy) normalize() {
 	if a.Decider.TimeoutSeconds <= 0 {
 		a.Decider.TimeoutSeconds = DefaultDeciderTimeout
 	}
+	if a.Decider.Kind == orgdesign.DeciderJev && a.Decider.Threshold == 0 {
+		a.Decider.Threshold = DefaultJevThreshold
+	}
 	if a.Tiers == nil {
 		a.Tiers = map[string]string{}
 	}
@@ -118,10 +128,11 @@ func (a *Autonomy) Validate() error {
 	if orgdesign.LevelRank(a.Level) < 0 {
 		errs = append(errs, fmt.Sprintf("level %q must be manual, mid, or full", a.Level))
 	}
-	switch a.Decider.Kind {
-	case orgdesign.DeciderModel, orgdesign.DeciderBoss, orgdesign.DeciderParent:
-	default:
-		errs = append(errs, fmt.Sprintf("decider %q must be model, boss, or parent", a.Decider.Kind))
+	if !orgdesign.ValidDeciderKind(a.Decider.Kind) {
+		errs = append(errs, fmt.Sprintf("decider %q must be model, boss, parent, or jev", a.Decider.Kind))
+	}
+	if t := a.Decider.Threshold; t < 0 || t > 1 || math.IsNaN(t) {
+		errs = append(errs, fmt.Sprintf("decider threshold %v must be in (0,1]", t))
 	}
 	if a.Decider.Fallback != orgdesign.DeciderModel {
 		errs = append(errs, "decider fallback must be model")
@@ -260,6 +271,10 @@ type Decision struct {
 	LatencyMS  *int64   `json:"latency_ms"`
 	ChainID    string   `json:"chain_id"`
 	CreatedAt  string   `json:"created_at"`
+	// Confidence and Probabilities are a jev decider's answer, kept even
+	// when the model decided below the threshold (0/nil otherwise).
+	Confidence    float64            `json:"confidence,omitempty"`
+	Probabilities map[string]float64 `json:"probabilities,omitempty"`
 }
 
 // Record inserts a decision row.
@@ -270,12 +285,24 @@ func (s *Store) Record(ctx context.Context, d *Decision) error {
 	if d.CreatedAt == "" {
 		d.CreatedAt = s.now().UTC().Format(time.RFC3339Nano)
 	}
+	var confidence, probs interface{}
+	if d.Confidence != 0 {
+		confidence = d.Confidence
+	}
+	if len(d.Probabilities) > 0 {
+		raw, err := json.Marshal(d.Probabilities)
+		if err != nil {
+			return fmt.Errorf("orgdecide: encode probabilities: %w", err)
+		}
+		probs = string(raw)
+	}
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO org_decisions (id, profile_id, org_name, run_id, item_kind, item_ref, item_hash, requester, class, tier, level,
-		   resolver, verdict, answer_text, rationale, cost_usd, latency_ms, chain_id, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		   resolver, verdict, answer_text, rationale, cost_usd, latency_ms, chain_id, created_at, confidence, probabilities)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		d.ID, d.ProfileID, d.OrgName, nullable(d.RunID), d.ItemKind, d.ItemRef, d.ItemHash, nullable(d.Requester), d.Class, d.Tier,
-		d.Level, d.Resolver, d.Verdict, nullable(d.AnswerText), nullable(d.Rationale), d.CostUSD, d.LatencyMS, nullable(d.ChainID), d.CreatedAt)
+		d.Level, d.Resolver, d.Verdict, nullable(d.AnswerText), nullable(d.Rationale), d.CostUSD, d.LatencyMS, nullable(d.ChainID), d.CreatedAt,
+		confidence, probs)
 	if err != nil {
 		return fmt.Errorf("orgdecide: record decision: %w", err)
 	}
@@ -299,7 +326,8 @@ type DecisionFilter struct {
 // List returns an org's decisions, newest first.
 func (s *Store) List(ctx context.Context, profileID, org string, f DecisionFilter) ([]Decision, error) {
 	q := `SELECT id, org_name, COALESCE(run_id,''), item_kind, item_ref, item_hash, COALESCE(requester,''), class, tier, level, resolver,
-	        verdict, COALESCE(answer_text,''), COALESCE(rationale,''), cost_usd, latency_ms, COALESCE(chain_id,''), created_at
+	        verdict, COALESCE(answer_text,''), COALESCE(rationale,''), cost_usd, latency_ms, COALESCE(chain_id,''), created_at,
+	        confidence, probabilities
 	      FROM org_decisions WHERE profile_id = ? AND org_name = ?`
 	args := []interface{}{profileID, org}
 	if f.RunID != "" {
@@ -326,9 +354,15 @@ func (s *Store) List(ctx context.Context, profileID, org string, f DecisionFilte
 		var d Decision
 		var cost sql.NullFloat64
 		var lat sql.NullInt64
+		var conf sql.NullFloat64
+		var probs sql.NullString
 		if err := rows.Scan(&d.ID, &d.OrgName, &d.RunID, &d.ItemKind, &d.ItemRef, &d.ItemHash, &d.Requester, &d.Class, &d.Tier,
-			&d.Level, &d.Resolver, &d.Verdict, &d.AnswerText, &d.Rationale, &cost, &lat, &d.ChainID, &d.CreatedAt); err != nil {
+			&d.Level, &d.Resolver, &d.Verdict, &d.AnswerText, &d.Rationale, &cost, &lat, &d.ChainID, &d.CreatedAt, &conf, &probs); err != nil {
 			return nil, err
+		}
+		d.Confidence = conf.Float64
+		if probs.Valid && probs.String != "" {
+			_ = json.Unmarshal([]byte(probs.String), &d.Probabilities)
 		}
 		if cost.Valid {
 			d.CostUSD = &cost.Float64

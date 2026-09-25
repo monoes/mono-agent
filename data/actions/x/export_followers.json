@@ -1,20 +1,19 @@
 {
   "actionType": "export_followers",
   "platform": "X",
-  "version": "1.0.0",
-  "description": "Fetch followers or following list from X (Twitter) profile",
+  "version": "2.0.0",
+  "description": "Export the followers, verified followers or following list of an X (Twitter) profile",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": true,
     "supportsRetry": true
   },
   "inputs": {
-    "required": [
-      "sourceType"
-    ],
+    "required": [],
     "optional": [
-      "maxResultsCount",
-      "listId"
+      { "name": "target_url", "type": "string", "description": "Profile URL or username whose list to export (profileUrl and targetUsername are accepted too)" },
+      { "name": "sourceType", "type": "select", "default": "FOLLOWERS_FETCH", "options": ["FOLLOWERS_FETCH", "VERIFIED_FOLLOWERS_FETCH", "FOLLOWING_FETCH"], "description": "Which list to export" },
+      { "name": "maxResultsCount", "type": "number", "default": 100, "min": 1, "max": 5000, "description": "Maximum users to export" }
     ]
   },
   "outputs": {
@@ -26,87 +25,28 @@
   },
   "steps": [
     {
-      "id": "navigate_to_profile",
-      "type": "navigate",
-      "url": "{{profileUrl}}",
-      "waitFor": "page_load",
-      "timeout": 30
-    },
-    {
-      "id": "determine_fetch_type",
-      "type": "condition",
-      "condition": "sourceType == 'FOLLOWERS_FETCH'",
-      "then": [
-        "click_followers"
+      "id": "list_followers",
+      "type": "call_bot_method",
+      "methodName": "list_followers",
+      "args": [
+        "{{target_url or profileUrl or targetUsername}}",
+        "{{sourceType or 'FOLLOWERS_FETCH'}}",
+        "{{maxResultsCount or 100}}"
       ],
-      "else": [
-        "click_following"
-      ]
-    },
-    {
-      "id": "click_followers",
-      "type": "find_element",
-      "xpath": "//a[contains(@href, '/followers')] | //span[contains(text(), 'Followers')]/parent::a",
-      "timeout": 10
-    },
-    {
-      "id": "click_followers_button",
-      "type": "click",
-      "elementRef": "click_followers",
-      "waitFor": "followers_list_visible"
-    },
-    {
-      "id": "click_following",
-      "type": "find_element",
-      "xpath": "//a[contains(@href, '/following')] | //span[contains(text(), 'Following')]/parent::a",
-      "timeout": 10
-    },
-    {
-      "id": "click_following_button",
-      "type": "click",
-      "elementRef": "click_following",
-      "waitFor": "following_list_visible"
-    },
-    {
-      "id": "wait_for_list_load",
-      "type": "wait",
-      "duration": 3.0,
-      "waitFor": "time"
-    },
-    {
-      "id": "find_users_list",
-      "type": "find_element",
-      "xpath": "//div[contains(@data-testid, 'UserCell')] | //div[contains(@role, 'listitem')]",
-      "timeout": 15
-    },
-    {
-      "id": "extract_users",
-      "type": "extract_multiple",
-      "xpath": "//div[contains(@data-testid, 'UserCell')]//a[contains(@href, '/')]",
-      "onSuccess": {
-        "action": "save_data"
+      "variable_name": "users",
+      "timeout": 900,
+      "onError": {
+        "action": "mark_failed"
       }
     },
     {
-      "id": "check_more_results",
-      "type": "condition",
-      "condition": "resultsCount < maxResultsCount",
-      "then": [
-        "scroll_list",
-        "extract_users",
-        "check_more_results"
-      ],
-      "else": []
-    },
-    {
-      "id": "scroll_list",
-      "type": "scroll",
-      "elementRef": "find_users_list",
-      "waitFor": "time"
+      "id": "save_results",
+      "type": "save_data",
+      "dataSource": "users"
     }
   ],
   "errorHandling": {
-    "globalRetries": 3,
+    "globalRetries": 1,
     "retryDelay": 2000,
     "onFinalFailure": "log_and_continue"
   }

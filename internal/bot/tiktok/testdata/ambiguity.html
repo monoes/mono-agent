@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Synthetic video (no data-e2e) | TikTok fixture</title>
+<!-- SYNTHETIC fixture for the Jev fallbacks: the video's own controls carry
+     no data-e2e attributes (as if TikTok renamed them), a comment like button
+     sits next to them, and there are two text boxes (comment and message).
+     All names and texts are invented. -->
+<style>
+  body { font: 14px sans-serif; margin: 16px; }
+  button, [role="button"] { margin: 6px; padding: 6px 10px; border: 1px solid #555; display: inline-block; }
+  [contenteditable] { min-height: 24px; border: 1px solid #aaa; padding: 4px; width: 300px; margin: 6px; }
+  .css-5e-DivCommentObjectWrapper { padding: 8px; }
+</style>
+</head>
+<body>
+<section class="css-3c-SectionActionBar">
+  <button type="button" id="video-like" aria-label="Like video" aria-pressed="false">&#9825; 1204</button>
+  <button type="button" aria-label="Read or add comments">&#128172; 1</button>
+</section>
+<div data-e2e="comment-list" id="list">
+  <div class="css-5e-DivCommentObjectWrapper">
+    <div class="css-a-DivCommentContentContainer">
+      <a href="/@fake_ana"><span data-e2e="comment-username-1">Fake Ana</span></a>
+      <span data-e2e="comment-level-1"><p>What a view</p></span>
+      <div role="button" aria-label="Like comment by Fake Ana" aria-pressed="false" data-e2e="comment-like-icon" id="comment-like">&#9825;</div>
+    </div>
+  </div>
+</div>
+<div class="css-7g-DivCommentFooter">
+  <div contenteditable="true" role="textbox" aria-label="Add comment" id="comment-box"></div>
+  <div role="button" aria-label="Post comment" id="post">Post</div>
+</div>
+<div class="css-z-DivMessageDock">
+  <div contenteditable="true" role="textbox" aria-label="Send a message" id="dm-box"></div>
+  <button type="button" aria-label="Send message">Send</button>
+</div>
+<script>
+(function () {
+  window.__events = [];
+  const log = (s) => window.__events.push(s);
+  const toggle = (el, name) => el.addEventListener('click', (e) => {
+    if (!e.isTrusted) { log('untrusted-click'); return; }
+    log(name);
+    el.setAttribute('aria-pressed', el.getAttribute('aria-pressed') === 'true' ? 'false' : 'true');
+  });
+  toggle(document.getElementById('video-like'), 'video-like-click');
+  toggle(document.getElementById('comment-like'), 'comment-like-click');
+  const box = document.getElementById('comment-box');
+  document.getElementById('post').addEventListener('click', (e) => {
+    if (!e.isTrusted) { log('untrusted-click'); return; }
+    const text = box.innerText.trim();
+    if (!text) return;
+    log('comment-post:' + text);
+    const w = document.createElement('div');
+    w.className = 'css-5e-DivCommentObjectWrapper';
+    w.innerHTML = '<div class="css-a-DivCommentContentContainer"><a href="/@me_tester"><span data-e2e="comment-username-1">Me Tester</span></a><span data-e2e="comment-level-1"><p></p></span></div>';
+    w.querySelector('p').textContent = text;
+    document.getElementById('list').appendChild(w);
+    box.innerHTML = '';
+  });
+})();
+</script>
+</body>
+</html>

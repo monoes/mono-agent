@@ -556,7 +556,7 @@ func nodeCategory(t string) string {
 		return "system"
 	case strings.HasPrefix(t, "comm."):
 		return "communication"
-	case strings.HasPrefix(t, "ai."), strings.HasPrefix(t, "agent."):
+	case strings.HasPrefix(t, "ai."), strings.HasPrefix(t, "agent."), strings.HasPrefix(t, "browser."):
 		return "ai"
 	case strings.HasPrefix(t, "instagram."), strings.HasPrefix(t, "linkedin."),
 		strings.HasPrefix(t, "x."), strings.HasPrefix(t, "tiktok."),

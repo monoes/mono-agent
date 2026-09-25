@@ -14,10 +14,19 @@ import (
 func newApplicationEvaluateCmd(cfg *globalConfig) *cobra.Command {
 	var runtime string
 	cmd := &cobra.Command{
-		Use:     "evaluate <id>",
-		Short:   "Score a job application's fit against your profile using a local AI agent",
-		Args:    cobra.ExactArgs(1),
-		Example: `  monoagentcli application evaluate 1c2e... --runtime claude`,
+		Use:   "evaluate <id>",
+		Short: "Score a job application's fit against your profile using a local AI agent or TypeSafe Jev",
+		Long: `Score a job application's fit against your profile's ingested knowledge.
+
+--runtime names a local agent runtime (default claude), or "jev" / "jev:<model>"
+to score with TypeSafe Jev: one request answers the three hard gates and the four
+rubric dimensions, and the overall score and verdict are computed with the same
+weights and bands as the agent rubric. Jev needs a TypeSafe key (vault secret
+"typesafe" or TYPESAFE_API_KEY); without one the command fails rather than
+falling back to an agent. Sends the job posting and profile excerpts to TypeSafe.`,
+		Args: cobra.ExactArgs(1),
+		Example: `  monoagentcli application evaluate 1c2e... --runtime claude
+  monoagentcli application evaluate 1c2e... --runtime jev`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			db, err := initDB(cfg)
 			if err != nil {
@@ -39,7 +48,7 @@ func newApplicationEvaluateCmd(cfg *globalConfig) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&runtime, "runtime", "claude", "Local agent runtime to use (see `monoagentcli agent scan --installed`)")
+	cmd.Flags().StringVar(&runtime, "runtime", "claude", "Local agent `runtime` (see monoagentcli agent scan --installed), or jev / jev:<model> for TypeSafe Jev")
 	return cmd
 }
 
@@ -97,7 +106,7 @@ func newApplicationEvaluatePendingCmd(cfg *globalConfig) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&runtime, "runtime", "claude", "Local agent runtime to use")
+	cmd.Flags().StringVar(&runtime, "runtime", "claude", "Local agent runtime to use, or jev / jev:<model> for TypeSafe Jev")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Maximum applications to evaluate (0 = no limit)")
 	return cmd
 }

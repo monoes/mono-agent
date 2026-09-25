@@ -30,6 +30,7 @@ func newPeopleCmd(cfg *globalConfig) *cobra.Command {
 		newPeopleStatusCmd(cfg),
 		newPeopleReviewCmd(cfg),
 		newPeopleTagCmd(cfg),
+		newPeopleLinksCmd(cfg),
 	)
 
 	return cmd
@@ -203,10 +204,14 @@ func newPeopleGetCmd(cfg *globalConfig) *cobra.Command {
 			p.Category = category.String
 			p.JobTitle = jobTitle.String
 
+			links := confirmedLinks(db, cfg.ProfileID, p.ID)
 			if cfg.JSONOutput {
 				enc := json.NewEncoder(os.Stdout)
 				enc.SetIndent("", "  ")
-				return enc.Encode(p)
+				return enc.Encode(struct {
+					storage.Person
+					Links []confirmedLink `json:"links,omitempty"`
+				}{p, links})
 			}
 
 			table := newPlainTable(os.Stdout, []string{"Field", "Value"}, []tw.Align{tw.AlignRight, tw.AlignLeft})
@@ -232,6 +237,9 @@ func newPeopleGetCmd(cfg *globalConfig) *cobra.Command {
 			}
 			if p.ImageURL != "" {
 				table.Append([]string{"Image", truncateStr(p.ImageURL, 60)})
+			}
+			for _, l := range links {
+				table.Append([]string{"Same person as", l.String()})
 			}
 			table.Append([]string{"Created", p.CreatedAt.Format("2006-01-02 15:04:05")})
 			table.Append([]string{"Updated", p.UpdatedAt.Format("2006-01-02 15:04:05")})

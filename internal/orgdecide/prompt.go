@@ -11,6 +11,9 @@ type Prompt struct {
 	System  string
 	User    string
 	Allowed []string
+	// Input is what BuildPrompt rendered, for deciders that need the facts
+	// as data rather than text (the jev decider).
+	Input *PromptInput
 }
 
 // PromptInput is assembled by the service. Trusted fields come from the DB,
@@ -105,7 +108,7 @@ func BuildPrompt(in PromptInput) Prompt {
 		policy = "(none given)"
 	}
 	b.WriteString("\nOperator policy (trusted):\n" + policy + "\n")
-	return Prompt{System: sys, User: b.String(), Allowed: allowed}
+	return Prompt{System: sys, User: b.String(), Allowed: allowed, Input: &in}
 }
 
 func quoteList(v []string) string {

@@ -1310,38 +1310,14 @@ type HILItem struct {
 	CreatedAt    string                 `json:"created_at"`
 }
 
-// GetHILItems returns all pending Human-in-Loop items, including the workflow name.
+// GetHILItems returns the active profile's pending Human-in-Loop items,
+// including the workflow name — `hil list --suggest`. A TypeSafe Jev
+// suggestion (when the profile enabled surface hil) is in
+// node_config.suggestion; the CLI stores it, so polling never re-pays.
 func (a *App) GetHILItems() ([]HILItem, error) {
-	if a.db == nil {
-		return nil, fmt.Errorf("database not available")
-	}
-	rows, err := a.db.Query(
-		`SELECT h.id, h.execution_id, h.workflow_id, h.node_id, h.node_name, h.status,
-		        h.readonly_data, h.editable_data, h.node_config, h.created_at,
-		        COALESCE(w.name, '') AS workflow_name
-		 FROM hil_pending h
-		 LEFT JOIN workflows w ON w.id = h.workflow_id
-		 WHERE h.status = 'pending' AND h.profile_id = ?
-		 ORDER BY h.created_at ASC`,
-		a.getActiveProfileID(),
-	)
-	if err != nil {
+	items := []HILItem{}
+	if err := a.runMonoCLI("", &items, "hil", "list", "--suggest"); err != nil {
 		return nil, fmt.Errorf("GetHILItems: %w", err)
-	}
-	defer rows.Close()
-
-	var items []HILItem
-	for rows.Next() {
-		var it HILItem
-		var roRaw, edRaw, cfgRaw string
-		if err := rows.Scan(&it.ID, &it.ExecutionID, &it.WorkflowID, &it.NodeID, &it.NodeName,
-			&it.Status, &roRaw, &edRaw, &cfgRaw, &it.CreatedAt, &it.WorkflowName); err != nil {
-			continue
-		}
-		json.Unmarshal([]byte(roRaw), &it.ReadonlyData) //nolint:errcheck
-		json.Unmarshal([]byte(edRaw), &it.EditableData) //nolint:errcheck
-		json.Unmarshal([]byte(cfgRaw), &it.NodeConfig)  //nolint:errcheck
-		items = append(items, it)
 	}
 	if items == nil {
 		items = []HILItem{}
@@ -1349,48 +1325,43 @@ func (a *App) GetHILItems() ([]HILItem, error) {
 	return items, nil
 }
 
-// ApproveHIL approves a pending HIL item with optional edited data (JSON string).
+// ApproveHIL approves a pending HIL item with optional edited data (JSON
+// string) — `hil approve <id> --data …`.
 func (a *App) ApproveHIL(id string, editedDataJSON string) error {
-	if a.db == nil {
-		return fmt.Errorf("database not available")
-	}
-	if editedDataJSON == "" {
-		editedDataJSON = "{}"
-	}
-	// Validate JSON.
-	var check map[string]interface{}
-	if err := json.Unmarshal([]byte(editedDataJSON), &check); err != nil {
-		return fmt.Errorf("ApproveHIL: editedDataJSON is not valid JSON: %w", err)
-	}
-	res, err := a.db.Exec(
-		`UPDATE hil_pending SET status='approved', edited_data=?, updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending' AND profile_id = ?`,
-		editedDataJSON, id, a.getActiveProfileID(),
-	)
-	if err != nil {
-		return fmt.Errorf("ApproveHIL: %w", err)
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return fmt.Errorf("ApproveHIL: item not found or already resolved")
+	if err := a.resolveHIL(id, editedDataJSON, true); err != nil {
+		return err
 	}
 	a.emitLog("HIL", "INFO", fmt.Sprintf("HIL item %s approved", id))
 	return nil
 }
 
-// RejectHIL rejects a pending HIL item, causing the workflow to error out.
+// RejectHIL rejects a pending HIL item, causing the workflow to error out —
+// `hil reject <id>`.
 func (a *App) RejectHIL(id string) error {
-	if a.db == nil {
-		return fmt.Errorf("database not available")
-	}
-	res, err := a.db.Exec(
-		`UPDATE hil_pending SET status='rejected', updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending' AND profile_id = ?`,
-		id, a.getActiveProfileID(),
-	)
-	if err != nil {
-		return fmt.Errorf("RejectHIL: %w", err)
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return fmt.Errorf("RejectHIL: item not found or already resolved")
+	if err := a.resolveHIL(id, "", false); err != nil {
+		return err
 	}
 	a.emitLog("HIL", "INFO", fmt.Sprintf("HIL item %s rejected", id))
+	return nil
+}
+
+// resolveHIL runs `hil approve|reject` for the active profile.
+func (a *App) resolveHIL(id, editedDataJSON string, approve bool) error {
+	if !approve {
+		if err := a.runMonoCLI("", nil, "hil", "reject", id); err != nil {
+			return fmt.Errorf("RejectHIL: %w", err)
+		}
+		return nil
+	}
+	if editedDataJSON == "" {
+		editedDataJSON = "{}"
+	}
+	var check map[string]interface{}
+	if err := json.Unmarshal([]byte(editedDataJSON), &check); err != nil {
+		return fmt.Errorf("ApproveHIL: editedDataJSON is not valid JSON: %w", err)
+	}
+	if err := a.runMonoCLI("", nil, "hil", "approve", id, "--data", editedDataJSON); err != nil {
+		return fmt.Errorf("ApproveHIL: %w", err)
+	}
 	return nil
 }

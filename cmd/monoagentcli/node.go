@@ -46,7 +46,7 @@ func isBrowserNodeType(t string) bool {
 	return strings.HasPrefix(t, "instagram.") || strings.HasPrefix(t, "linkedin.") ||
 		strings.HasPrefix(t, "x.") || strings.HasPrefix(t, "tiktok.") ||
 		strings.HasPrefix(t, "gemini.") || strings.HasPrefix(t, "hackernews.") ||
-		strings.HasPrefix(t, "producthunt.")
+		strings.HasPrefix(t, "producthunt.") || strings.HasPrefix(t, "browser.")
 }
 
 // nodeTypeToPlatform maps a node type to its connections-registry platform ID.

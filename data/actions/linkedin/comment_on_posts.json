@@ -48,9 +48,9 @@
       "methodName": "comment_on_post",
       "args": ["{{item.url or item}}", "{{commentText}}", "{{parentCommentId or ''}}"],
       "variable_name": "commentResult",
-      "timeout": 45,
+      "timeout": 90,
       "onError": {
-        "action": "skip"
+        "action": "mark_failed"
       }
     },
     {
@@ -70,8 +70,7 @@
       "id": "process_posts",
       "iterator": "selectedListItems",
       "indexVar": "reachedIndex",
-      "steps": ["t1_comment", "wait", "log"],
-      "onComplete": "update_action_state"
+      "steps": ["t1_comment", "wait", "log"]
     }
   ],
   "errorHandling": {

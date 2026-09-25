@@ -27,6 +27,10 @@ type Outcome struct {
 	CostUSD  float64
 	Latency  time.Duration
 	Resolver string // e.g. model:claude-fable-5-1
+	// Confidence and Probabilities carry a jev decider's answer (also when
+	// the model decided because jev was below its threshold).
+	Confidence    float64
+	Probabilities map[string]float64
 }
 
 // DeciderImpl resolves one item.

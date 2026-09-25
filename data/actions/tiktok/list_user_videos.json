@@ -36,19 +36,28 @@
     ]
   },
   "outputs": {
-    "success": ["videos", "videosCount", "reachedIndex"],
-    "failure": ["failedItems"]
+    "success": [
+      "videos",
+      "videosCount",
+      "reachedIndex"
+    ],
+    "failure": [
+      "failedItems"
+    ]
   },
   "steps": [
     {
       "id": "t1_list_videos",
       "type": "call_bot_method",
       "methodName": "list_user_videos",
-      "args": ["{{item.url or item}}", "{{maxVideos or 20}}"],
+      "args": [
+        "{{item.url or item}}",
+        "{{maxVideos or 20}}"
+      ],
       "variable_name": "videos",
-      "timeout": 120,
+      "timeout": 180,
       "onError": {
-        "action": "skip"
+        "action": "mark_failed"
       }
     },
     {
@@ -80,7 +89,13 @@
       "id": "process_profiles",
       "iterator": "selectedListItems",
       "indexVar": "reachedIndex",
-      "steps": ["t1_list_videos", "save_videos", "store_count", "wait", "log_success"],
+      "steps": [
+        "t1_list_videos",
+        "save_videos",
+        "store_count",
+        "wait",
+        "log_success"
+      ],
       "onComplete": "update_action_state"
     }
   ],

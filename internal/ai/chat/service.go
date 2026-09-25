@@ -28,7 +28,7 @@ Data: data.datetime, data.crypto, data.html, data.xml, data.markdown, data.sprea
 DB: db.mysql, db.postgres, db.mongodb, db.redis
 Comm: comm.email_send, comm.email_read, comm.slack, comm.telegram, comm.discord, comm.twilio, comm.whatsapp
 Services: service.github, service.airtable, service.notion, service.jira, service.linear, service.asana, service.stripe, service.shopify, service.salesforce, service.hubspot, service.google_sheets, service.gmail, service.google_drive
-AI: ai.chat, ai.extract, ai.classify, ai.transform, ai.embed, ai.agent
+AI: agent.ask (local AI agent turn), ai.choose (route items to cases via TypeSafe Jev), browser.jev, ai.read_page, ai.extract_page
 Instagram: instagram.find_by_keyword, instagram.export_followers, instagram.scrape_profile_info, instagram.engage_with_posts, instagram.engage_user_posts, instagram.send_dms, instagram.auto_reply_dms, instagram.publish_post, instagram.like_posts, instagram.comment_on_posts, instagram.like_comments_on_posts, instagram.follow_users, instagram.unfollow_users, instagram.extract_post_data, instagram.watch_stories
 LinkedIn: linkedin.find_by_keyword, linkedin.export_followers, linkedin.scrape_profile_info, linkedin.engage_with_posts, linkedin.send_dms, linkedin.auto_reply_dms, linkedin.publish_post
 X: x.find_by_keyword, x.export_followers, x.scrape_profile_info, x.engage_with_posts, x.send_dms, x.auto_reply_dms, x.publish_post

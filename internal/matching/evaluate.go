@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/monoes/mono-agent/internal/applications"
+	"github.com/monoes/mono-agent/internal/jev"
 	"github.com/monoes/mono-agent/internal/monomind"
 )
 
@@ -28,10 +29,15 @@ var (
 const evaluateTimeout = 120 * time.Second
 
 // Evaluate scores applicationID (must be kind=job) against profileID's
-// ingested knowledge, via a local agent runtime delegated through
-// ExecFunc. Persists the result as a new application_evaluations row and
-// tags the application "fit:<verdict-slug>". See the design spec for the
-// full rubric and rationale.
+// ingested knowledge. Persists the result as a new application_evaluations
+// row and tags the application "fit:<verdict-slug>". See the design spec for
+// the full rubric and rationale.
+//
+// runtime selects the backend: "jev" or "jev:<model>" asks TypeSafe Jev the
+// three gates and four rubric dimensions in one request and computes the
+// verdict in Go (stored runtime "jev:<model>"; a missing TypeSafe key is an
+// error, never a silent fallback). Any other value is a local agent runtime
+// delegated through ExecFunc.
 func Evaluate(ctx context.Context, db *sql.DB, profileID, applicationID, runtime string) (*FitVerdict, error) {
 	store := applications.NewStore(db)
 	app, err := store.Get(ctx, profileID, applicationID)
@@ -40,6 +46,15 @@ func Evaluate(ctx context.Context, db *sql.DB, profileID, applicationID, runtime
 	}
 	if app.Kind != applications.KindJob {
 		return nil, fmt.Errorf("matching.Evaluate: only job-kind applications can be scored by this rubric, got kind %q", app.Kind)
+	}
+
+	// Resolve the Jev key before any other work so a missing key fails fast.
+	jevModel, useJev := jevRuntime(runtime)
+	var jc *jev.Client
+	if useJev {
+		if jc, err = newJevClient(ctx, db, profileID, jevModel); err != nil {
+			return nil, fmt.Errorf("matching.Evaluate: %w", err)
+		}
 	}
 
 	bin, _, err := EnsureFunc(ctx)
@@ -60,22 +75,14 @@ func Evaluate(ctx context.Context, db *sql.DB, profileID, applicationID, runtime
 		return nil, fmt.Errorf("matching.Evaluate: searching profile knowledge: %w", err)
 	}
 
-	prompt := buildPrompt(app, excerpts)
-	res, err := ExecFunc(ctx, monomind.ExecOptions{
-		Bin:     bin,
-		Runtime: runtime,
-		Prompt:  prompt,
-		Timeout: evaluateTimeout,
-	}, func(ev monomind.Event) {})
-	if err != nil {
-		return nil, fmt.Errorf("matching.Evaluate: agent exec: %w", err)
-	}
-	if res.Err != nil {
-		return nil, fmt.Errorf("matching.Evaluate: agent turn failed: %s", res.Err.Error())
-	}
-
-	verdict, err := parseVerdict(res.ResultText)
-	if err != nil {
+	var verdict *FitVerdict
+	storedRuntime := runtime
+	if useJev {
+		verdict, storedRuntime, err = evaluateJev(ctx, jc, app, excerpts)
+		if err != nil {
+			return nil, fmt.Errorf("matching.Evaluate: %w", err)
+		}
+	} else if verdict, err = evaluateAgent(ctx, bin, runtime, app, excerpts); err != nil {
 		return nil, fmt.Errorf("matching.Evaluate: %w", err)
 	}
 
@@ -85,7 +92,7 @@ func Evaluate(ctx context.Context, db *sql.DB, profileID, applicationID, runtime
 		        technical_score, experience_score, behavioral_score, career_score, location_pass,
 		        overall_score, verdict, rationale, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		uuid.NewString(), applicationID, runtime, verdict.EligibilityPass, verdict.LanguagePass,
+		uuid.NewString(), applicationID, storedRuntime, verdict.EligibilityPass, verdict.LanguagePass,
 		verdict.TechnicalScore, verdict.ExperienceScore, verdict.BehavioralScore, verdict.CareerScore, verdict.LocationPass,
 		verdict.OverallScore, verdict.Verdict, verdict.Rationale, now,
 	)
@@ -98,4 +105,22 @@ func Evaluate(ctx context.Context, db *sql.DB, profileID, applicationID, runtime
 	}
 
 	return verdict, nil
+}
+
+// evaluateAgent runs one local agent turn with the rubric prompt and parses
+// its JSON verdict.
+func evaluateAgent(ctx context.Context, bin, runtime string, app *applications.Application, excerpts []monomind.KnowledgeResult) (*FitVerdict, error) {
+	res, err := ExecFunc(ctx, monomind.ExecOptions{
+		Bin:     bin,
+		Runtime: runtime,
+		Prompt:  buildPrompt(app, excerpts),
+		Timeout: evaluateTimeout,
+	}, func(ev monomind.Event) {})
+	if err != nil {
+		return nil, fmt.Errorf("agent exec: %w", err)
+	}
+	if res.Err != nil {
+		return nil, fmt.Errorf("agent turn failed: %s", res.Err.Error())
+	}
+	return parseVerdict(res.ResultText)
 }

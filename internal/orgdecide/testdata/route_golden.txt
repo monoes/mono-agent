@@ -1,0 +1,244 @@
+default gate=irreversible
+default org_complete=consequential
+default org_start=consequential
+default question=consequential
+default tool:*=routine
+class "Bash"=tool:Bash
+class "Read"=tool:Read
+class "WebFetch"=tool:WebFetch
+class "org_complete"=org_complete
+class "monoagent__org_start"=org_start
+class "monoagent__automation_post"=grant:post
+class "monoagent__automation_"=grant:
+class "mcp__org__monoagent__org_start"=tool:mcp__org__monoagent__org_start
+class ""=tool:
+class "org_start"=tool:org_start
+tier facts=none over=none tool:Bash/dev=routine
+tier facts=none over=none tool:Bash/writer=routine
+tier facts=none over=none tool:Read/dev=routine
+tier facts=none over=none tool:Read/writer=routine
+tier facts=none over=none tool:WebFetch/dev=routine
+tier facts=none over=none tool:WebFetch/writer=routine
+tier facts=none over=none org_complete/dev=consequential
+tier facts=none over=none org_complete/writer=consequential
+tier facts=none over=none question/dev=consequential
+tier facts=none over=none question/writer=consequential
+tier facts=none over=none org_start/dev=consequential
+tier facts=none over=none org_start/writer=consequential
+tier facts=none over=none gate/dev=irreversible
+tier facts=none over=none gate/writer=irreversible
+tier facts=none over=none grant:post/dev=irreversible
+tier facts=none over=none grant:post/writer=irreversible
+tier facts=none over=none grant:sum/dev=irreversible
+tier facts=none over=none grant:sum/writer=irreversible
+tier facts=none over=none grant:read/dev=irreversible
+tier facts=none over=none grant:read/writer=irreversible
+tier facts=none over=none grant:bad/dev=irreversible
+tier facts=none over=none grant:bad/writer=irreversible
+tier facts=none over=none grant:unknown/dev=irreversible
+tier facts=none over=none grant:unknown/writer=irreversible
+tier facts=none over=none hil:post/dev=irreversible
+tier facts=none over=none hil:post/writer=irreversible
+tier facts=none over=none hil:sum/dev=irreversible
+tier facts=none over=none hil:sum/writer=irreversible
+tier facts=none over=none hil:unknown/dev=irreversible
+tier facts=none over=none hil:unknown/writer=irreversible
+tier facts=none over=none mystery/dev=irreversible
+tier facts=none over=none mystery/writer=irreversible
+tier facts=none over=none /dev=irreversible
+tier facts=none over=none /writer=irreversible
+tier facts=none over=wild tool:Bash/dev=consequential
+tier facts=none over=wild tool:Bash/writer=consequential
+tier facts=none over=wild tool:Read/dev=consequential
+tier facts=none over=wild tool:Read/writer=consequential
+tier facts=none over=wild tool:WebFetch/dev=consequential
+tier facts=none over=wild tool:WebFetch/writer=consequential
+tier facts=none over=wild org_complete/dev=consequential
+tier facts=none over=wild org_complete/writer=consequential
+tier facts=none over=wild question/dev=consequential
+tier facts=none over=wild question/writer=consequential
+tier facts=none over=wild org_start/dev=consequential
+tier facts=none over=wild org_start/writer=consequential
+tier facts=none over=wild gate/dev=irreversible
+tier facts=none over=wild gate/writer=irreversible
+tier facts=none over=wild grant:post/dev=routine
+tier facts=none over=wild grant:post/writer=routine
+tier facts=none over=wild grant:sum/dev=routine
+tier facts=none over=wild grant:sum/writer=routine
+tier facts=none over=wild grant:read/dev=routine
+tier facts=none over=wild grant:read/writer=routine
+tier facts=none over=wild grant:bad/dev=routine
+tier facts=none over=wild grant:bad/writer=routine
+tier facts=none over=wild grant:unknown/dev=routine
+tier facts=none over=wild grant:unknown/writer=routine
+tier facts=none over=wild hil:post/dev=irreversible
+tier facts=none over=wild hil:post/writer=irreversible
+tier facts=none over=wild hil:sum/dev=irreversible
+tier facts=none over=wild hil:sum/writer=irreversible
+tier facts=none over=wild hil:unknown/dev=irreversible
+tier facts=none over=wild hil:unknown/writer=irreversible
+tier facts=none over=wild mystery/dev=irreversible
+tier facts=none over=wild mystery/writer=irreversible
+tier facts=none over=wild /dev=irreversible
+tier facts=none over=wild /writer=irreversible
+tier facts=none over=exact tool:Bash/dev=irreversible
+tier facts=none over=exact tool:Bash/writer=irreversible
+tier facts=none over=exact tool:Read/dev=irreversible
+tier facts=none over=exact tool:Read/writer=irreversible
+tier facts=none over=exact tool:WebFetch/dev=irreversible
+tier facts=none over=exact tool:WebFetch/writer=irreversible
+tier facts=none over=exact org_complete/dev=consequential
+tier facts=none over=exact org_complete/writer=consequential
+tier facts=none over=exact question/dev=routine
+tier facts=none over=exact question/writer=routine
+tier facts=none over=exact org_start/dev=consequential
+tier facts=none over=exact org_start/writer=consequential
+tier facts=none over=exact gate/dev=consequential
+tier facts=none over=exact gate/writer=consequential
+tier facts=none over=exact grant:post/dev=irreversible
+tier facts=none over=exact grant:post/writer=irreversible
+tier facts=none over=exact grant:sum/dev=irreversible
+tier facts=none over=exact grant:sum/writer=irreversible
+tier facts=none over=exact grant:read/dev=irreversible
+tier facts=none over=exact grant:read/writer=irreversible
+tier facts=none over=exact grant:bad/dev=irreversible
+tier facts=none over=exact grant:bad/writer=irreversible
+tier facts=none over=exact grant:unknown/dev=irreversible
+tier facts=none over=exact grant:unknown/writer=irreversible
+tier facts=none over=exact hil:post/dev=routine
+tier facts=none over=exact hil:post/writer=routine
+tier facts=none over=exact hil:sum/dev=irreversible
+tier facts=none over=exact hil:sum/writer=irreversible
+tier facts=none over=exact hil:unknown/dev=irreversible
+tier facts=none over=exact hil:unknown/writer=irreversible
+tier facts=none over=exact mystery/dev=irreversible
+tier facts=none over=exact mystery/writer=irreversible
+tier facts=none over=exact /dev=irreversible
+tier facts=none over=exact /writer=irreversible
+tier facts=some over=none tool:Bash/dev=routine
+tier facts=some over=none tool:Bash/writer=consequential
+tier facts=some over=none tool:Read/dev=routine
+tier facts=some over=none tool:Read/writer=routine
+tier facts=some over=none tool:WebFetch/dev=routine
+tier facts=some over=none tool:WebFetch/writer=routine
+tier facts=some over=none org_complete/dev=consequential
+tier facts=some over=none org_complete/writer=consequential
+tier facts=some over=none question/dev=consequential
+tier facts=some over=none question/writer=consequential
+tier facts=some over=none org_start/dev=consequential
+tier facts=some over=none org_start/writer=consequential
+tier facts=some over=none gate/dev=irreversible
+tier facts=some over=none gate/writer=irreversible
+tier facts=some over=none grant:post/dev=irreversible
+tier facts=some over=none grant:post/writer=irreversible
+tier facts=some over=none grant:sum/dev=consequential
+tier facts=some over=none grant:sum/writer=consequential
+tier facts=some over=none grant:read/dev=routine
+tier facts=some over=none grant:read/writer=routine
+tier facts=some over=none grant:bad/dev=irreversible
+tier facts=some over=none grant:bad/writer=irreversible
+tier facts=some over=none grant:unknown/dev=irreversible
+tier facts=some over=none grant:unknown/writer=irreversible
+tier facts=some over=none hil:post/dev=irreversible
+tier facts=some over=none hil:post/writer=irreversible
+tier facts=some over=none hil:sum/dev=consequential
+tier facts=some over=none hil:sum/writer=consequential
+tier facts=some over=none hil:unknown/dev=irreversible
+tier facts=some over=none hil:unknown/writer=irreversible
+tier facts=some over=none mystery/dev=irreversible
+tier facts=some over=none mystery/writer=irreversible
+tier facts=some over=none /dev=irreversible
+tier facts=some over=none /writer=irreversible
+tier facts=some over=wild tool:Bash/dev=consequential
+tier facts=some over=wild tool:Bash/writer=consequential
+tier facts=some over=wild tool:Read/dev=consequential
+tier facts=some over=wild tool:Read/writer=consequential
+tier facts=some over=wild tool:WebFetch/dev=consequential
+tier facts=some over=wild tool:WebFetch/writer=consequential
+tier facts=some over=wild org_complete/dev=consequential
+tier facts=some over=wild org_complete/writer=consequential
+tier facts=some over=wild question/dev=consequential
+tier facts=some over=wild question/writer=consequential
+tier facts=some over=wild org_start/dev=consequential
+tier facts=some over=wild org_start/writer=consequential
+tier facts=some over=wild gate/dev=irreversible
+tier facts=some over=wild gate/writer=irreversible
+tier facts=some over=wild grant:post/dev=routine
+tier facts=some over=wild grant:post/writer=routine
+tier facts=some over=wild grant:sum/dev=routine
+tier facts=some over=wild grant:sum/writer=routine
+tier facts=some over=wild grant:read/dev=routine
+tier facts=some over=wild grant:read/writer=routine
+tier facts=some over=wild grant:bad/dev=routine
+tier facts=some over=wild grant:bad/writer=routine
+tier facts=some over=wild grant:unknown/dev=routine
+tier facts=some over=wild grant:unknown/writer=routine
+tier facts=some over=wild hil:post/dev=irreversible
+tier facts=some over=wild hil:post/writer=irreversible
+tier facts=some over=wild hil:sum/dev=consequential
+tier facts=some over=wild hil:sum/writer=consequential
+tier facts=some over=wild hil:unknown/dev=irreversible
+tier facts=some over=wild hil:unknown/writer=irreversible
+tier facts=some over=wild mystery/dev=irreversible
+tier facts=some over=wild mystery/writer=irreversible
+tier facts=some over=wild /dev=irreversible
+tier facts=some over=wild /writer=irreversible
+tier facts=some over=exact tool:Bash/dev=irreversible
+tier facts=some over=exact tool:Bash/writer=irreversible
+tier facts=some over=exact tool:Read/dev=irreversible
+tier facts=some over=exact tool:Read/writer=irreversible
+tier facts=some over=exact tool:WebFetch/dev=irreversible
+tier facts=some over=exact tool:WebFetch/writer=irreversible
+tier facts=some over=exact org_complete/dev=consequential
+tier facts=some over=exact org_complete/writer=consequential
+tier facts=some over=exact question/dev=routine
+tier facts=some over=exact question/writer=routine
+tier facts=some over=exact org_start/dev=consequential
+tier facts=some over=exact org_start/writer=consequential
+tier facts=some over=exact gate/dev=consequential
+tier facts=some over=exact gate/writer=consequential
+tier facts=some over=exact grant:post/dev=irreversible
+tier facts=some over=exact grant:post/writer=irreversible
+tier facts=some over=exact grant:sum/dev=consequential
+tier facts=some over=exact grant:sum/writer=consequential
+tier facts=some over=exact grant:read/dev=routine
+tier facts=some over=exact grant:read/writer=routine
+tier facts=some over=exact grant:bad/dev=irreversible
+tier facts=some over=exact grant:bad/writer=irreversible
+tier facts=some over=exact grant:unknown/dev=irreversible
+tier facts=some over=exact grant:unknown/writer=irreversible
+tier facts=some over=exact hil:post/dev=routine
+tier facts=some over=exact hil:post/writer=routine
+tier facts=some over=exact hil:sum/dev=consequential
+tier facts=some over=exact hil:sum/writer=consequential
+tier facts=some over=exact hil:unknown/dev=irreversible
+tier facts=some over=exact hil:unknown/writer=irreversible
+tier facts=some over=exact mystery/dev=irreversible
+tier facts=some over=exact mystery/writer=irreversible
+tier facts=some over=exact /dev=irreversible
+tier facts=some over=exact /writer=irreversible
+route manual/routine=human
+route manual/consequential=human
+route manual/irreversible=human
+route manual/=human
+route manual/bogus=human
+route mid/routine=rule
+route mid/consequential=decider
+route mid/irreversible=human
+route mid/=human
+route mid/bogus=human
+route full/routine=rule
+route full/consequential=decider
+route full/irreversible=decider
+route full/=decider
+route full/bogus=decider
+route /routine=human
+route /consequential=human
+route /irreversible=human
+route /=human
+route /bogus=human
+route bogus/routine=human
+route bogus/consequential=human
+route bogus/irreversible=human
+route bogus/=human
+route bogus/bogus=human

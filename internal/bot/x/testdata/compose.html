@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Home / X</title>
+<style>[contenteditable]{border:1px solid #999;min-height:40px;width:300px} button{min-width:40px;min-height:20px}
+[role=dialog]{position:fixed;top:30px;left:30px;background:#fff;border:2px solid #000;padding:10px;z-index:5}</style></head>
+<body>
+<!-- SYNTHETIC fixture: X's post composers. /home has the inline composer
+     (tweetButtonInline); /compose/post additionally opens the composer
+     dialog (tweetButton) over it. Posting text containing "dup" fails with
+     an error toast and leaves the text in place; otherwise the composer
+     empties/closes and a toast links the new post. -->
+<header role="banner"><nav><a data-testid="AppTabBar_Profile_Link" href="/synth_me">Profile</a></nav></header>
+<main role="main"><div data-testid="primaryColumn">
+  <div id="inline">
+    <div data-testid="tweetTextarea_0" contenteditable="true" role="textbox" aria-label="Post text"></div>
+    <input data-testid="fileInput" type="file" style="display:none">
+    <div class="tools"><button data-testid="tweetButtonInline" aria-disabled="true">Post</button></div>
+  </div>
+  <div id="feed"></div>
+</div></main>
+<script>
+window.__posts = [];
+function wire(scope, box, btn, file, closeOnPost) {
+  box.addEventListener('input', () => btn.setAttribute('aria-disabled', box.textContent.trim() ? 'false' : 'true'));
+  file.addEventListener('change', () => {
+    const a = document.createElement('div');
+    a.setAttribute('data-testid', 'attachments');
+    a.innerHTML = [...file.files].map((f) => `<img alt="${f.name}" src="data:,">`).join('');
+    scope.appendChild(a);
+  });
+  btn.addEventListener('click', () => {
+    if (btn.getAttribute('aria-disabled') === 'true') return;
+    const text = box.textContent;
+    setTimeout(() => {
+      if (text.includes('dup')) { toast('Whoops! You already said that.'); return; }
+      window.__posts.push({ text, files: file.files.length });
+      box.textContent = '';
+      btn.setAttribute('aria-disabled', 'true');
+      if (closeOnPost) scope.remove();
+      toast('Your post was sent. <a href="/synth_me/status/5001">View</a>');
+    }, 200);
+  });
+}
+function toast(html) {
+  const t = document.createElement('div');
+  t.setAttribute('data-testid', 'toast');
+  t.setAttribute('role', 'alert');
+  t.innerHTML = html;
+  document.body.appendChild(t);
+}
+const inline = document.getElementById('inline');
+wire(inline, inline.querySelector('[contenteditable]'), inline.querySelector('button'), inline.querySelector('input'), false);
+if (location.pathname === '/compose/post') {
+  setTimeout(() => {
+    const d = document.createElement('div');
+    d.setAttribute('role', 'dialog');
+    d.setAttribute('aria-modal', 'true');
+    d.innerHTML = `<div data-testid="tweetTextarea_0" contenteditable="true" role="textbox" aria-label="Post text"></div>
+      <input data-testid="fileInput" type="file" multiple style="display:none">
+      <button data-testid="tweetButton" aria-disabled="true">Post</button>`;
+    document.body.appendChild(d);
+    wire(d, d.querySelector('[contenteditable]'), d.querySelector('button'), d.querySelector('input'), true);
+  }, 200);
+}
+</script>
+</body></html>

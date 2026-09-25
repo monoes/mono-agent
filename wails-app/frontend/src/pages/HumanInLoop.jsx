@@ -112,6 +112,53 @@ function EditableField({ label, value, onChange }) {
 }
 
 // ── 1. Workflow Pause Card ────────────────────────────────────
+// TypeSafe Jev suggestions (plan WS5). The CLI stores them: workflow items
+// carry theirs in node_config.suggestion ({choice, p, risk}), people staged
+// for review in suggestion ({suggest, p, intro_fit}). Suggestions only
+// inform the reviewer; nothing here approves or rejects on its own.
+const SUGGESTION_COLORS = {
+  approve: '#22c55e',
+  reject: '#ef4444',
+  needs_human: '#f59e0b',
+}
+
+export function suggestionOf(item) {
+  const s = item?.node_config?.suggestion
+  return s && typeof s.choice === 'string' ? s : null
+}
+
+// Most confident suggestions first; items without one keep their order after.
+export function sortBySuggestion(items) {
+  return items
+    .map((item, i) => ({ item, i, p: suggestionOf(item)?.p }))
+    .sort((a, b) => {
+      const pa = typeof a.p === 'number' ? a.p : -1
+      const pb = typeof b.p === 'number' ? b.p : -1
+      return pb - pa || a.i - b.i
+    })
+    .map(x => x.item)
+}
+
+export function SuggestionChip({ choice, p, detail }) {
+  if (!choice) return null
+  const color = SUGGESTION_COLORS[choice] || '#94a3b8'
+  const pct = typeof p === 'number' ? `${Math.round(p * 100)}%` : ''
+  const label = choice.replace(/_/g, ' ')
+  return (
+    <span
+      data-testid="jev-suggestion"
+      title={`TypeSafe Jev suggests: ${label}${pct ? ` (${pct} confident)` : ''}${detail ? ` · ${detail}` : ''}. A suggestion only; you decide.`}
+      style={{
+        padding: '2px 8px', borderRadius: 10, flexShrink: 0,
+        background: `${color}1f`, color, border: `1px solid ${color}55`,
+        fontSize: 11, fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap',
+      }}
+    >
+      Suggested: {label}{pct && ` ${pct}`}{detail && ` · ${detail}`}
+    </span>
+  )
+}
+
 function HILCard({ item, onApprove, onReject }) {
   const [expanded, setExpanded] = useState(true)
   const [editedValues, setEditedValues] = useState({ ...item.editable_data })
@@ -182,6 +229,13 @@ function HILCard({ item, onApprove, onReject }) {
           background: 'rgba(0,180,216,0.12)', color: '#00b4d8',
           fontSize: 11, fontFamily: 'var(--font-mono)', flexShrink: 0,
         }}>workflow</span>
+        {suggestionOf(item) && (
+          <SuggestionChip
+            choice={suggestionOf(item).choice}
+            p={suggestionOf(item).p}
+            detail={suggestionOf(item).risk ? `risk ${suggestionOf(item).risk}` : ''}
+          />
+        )}
         {expanded ? <ChevronDown size={14} color="var(--text-muted)" /> : <ChevronRight size={14} color="var(--text-muted)" />}
       </div>
 
@@ -467,6 +521,13 @@ function LeadApprovalCard({ item, onApprove, onReject, onOpenProfile }) {
           background: 'rgba(0,180,216,0.15)', color: '#00b4d8',
           fontSize: 11, fontFamily: 'var(--font-mono)', flexShrink: 0,
         }}>lead pitch</span>
+        {item.suggestion?.suggest && (
+          <SuggestionChip
+            choice={item.suggestion.suggest}
+            p={item.suggestion.p}
+            detail={item.suggestion.intro_fit ? `intro ${item.suggestion.intro_fit.replace(/_/g, ' ')}` : ''}
+          />
+        )}
         {expanded ? <ChevronDown size={14} color="var(--text-muted)" /> : <ChevronRight size={14} color="var(--text-muted)" />}
       </div>
 
@@ -835,7 +896,7 @@ export default function HumanInLoop({ embedded = false, isOpen = true, onClose, 
         newOrgItems = orgResults.flat()
       }
 
-      setItems(newHil)
+      setItems(sortBySuggestion(newHil))
       setDrafts(newDrafts)
       setLeads(newLeads)
       setOrgItems(newOrgItems)

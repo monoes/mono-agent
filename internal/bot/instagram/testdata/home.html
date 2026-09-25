@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- SYNTHETIC fixture: Instagram-like home page with the Create flow
+     (menu → upload → Crop → Edit → caption/location → Share). Invented content. -->
+<title>Instagram</title>
+<style>
+body { font: 14px sans-serif; margin: 0; }
+.nav { position: fixed; left: 0; top: 0; bottom: 0; width: 120px; background: #fafafa; }
+.nav a { display: block; padding: 8px; }
+main { margin-left: 140px; padding: 16px; }
+button, [role="button"], [role="link"] { cursor: pointer; }
+[role="dialog"] { position: fixed; top: 60px; left: 25%; width: 520px; min-height: 300px; background: #fff; border: 1px solid #888; z-index: 10; padding: 8px; }
+[role="menu"] { position: fixed; left: 120px; top: 200px; background: #fff; border: 1px solid #aaa; padding: 6px; z-index: 11; }
+[aria-disabled="true"] { opacity: .3; }
+[contenteditable] { min-height: 60px; border: 1px solid #ccc; }
+.sugg { display: block; padding: 6px; }
+</style>
+</head>
+<body>
+<div class="nav" role="navigation">
+  <a href="/" role="link"><svg aria-label="Home" height="24" width="24"><title>Home</title></svg><span>Home</span></a>
+  <a href="/direct/inbox/" role="link"><svg aria-label="Direct" height="24" width="24"><title>Direct</title></svg><span>Messages</span></a>
+  <a href="#" role="link" id="create"><svg aria-label="New post" height="24" width="24"><title>New post</title></svg><span>Create</span></a>
+</div>
+<main role="main"><h2>Feed</h2><p>Nothing to see here.</p></main>
+<script>
+window.FX = {{FX}};
+(function () {
+  const FX = window.FX;
+  const $ = (s) => document.querySelector(s);
+  let caption = '', location = '';
+  $('#create').addEventListener('click', (e) => {
+    e.preventDefault();
+    if ($('[role="menu"]')) return;
+    const m = document.createElement('div');
+    m.setAttribute('role', 'menu');
+    m.innerHTML = '<a href="#" role="link" id="menuPost"><svg aria-label="Post" height="16" width="16"><title>Post</title></svg><span>Post</span></a><br>' +
+      '<a href="#" role="link"><svg aria-label="AI" height="16" width="16"><title>AI</title></svg><span>AI</span></a>';
+    document.body.appendChild(m);
+    $('#menuPost').addEventListener('click', (e) => { e.preventDefault(); m.remove(); openDialog(); });
+  });
+  function openDialog() {
+    const d = document.createElement('div');
+    d.setAttribute('role', 'dialog');
+    document.body.appendChild(d);
+    stageUpload(d);
+  }
+  function stageUpload(d) {
+    d.innerHTML = '<div><h1>Create new post</h1><div>Drag photos and videos here</div>' +
+      '<button type="button">Select from computer</button><form enctype="multipart/form-data" method="POST" role="presentation">' +
+      '<input accept="image/jpeg,image/png,image/heic,image/heif,video/mp4,video/quicktime" multiple type="file" style="display:none"></form></div>';
+    d.querySelector('input[type=file]').addEventListener('change', (e) => {
+      const f = e.target.files[0];
+      window.uploaded = f ? f.name : '';
+      if (!f) return;
+      stageNext(d, 'Crop', () => stageNext(d, 'Edit', () => stageCaption(d)));
+    });
+  }
+  function stageNext(d, title, next) {
+    d.innerHTML = '<div><div><div role="button" tabindex="0">Back</div><h1>' + title + '</h1><div role="button" tabindex="0" id="next">Next</div></div><div><img alt="preview" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="300" height="300"></div></div>';
+    d.querySelector('#next').addEventListener('click', next);
+  }
+  function stageCaption(d) {
+    d.innerHTML = '<div><div><div role="button" tabindex="0">Back</div><h1>Create new post</h1><div role="button" tabindex="0" id="share">Share</div></div>' +
+      '<div><div aria-label="Write a caption..." contenteditable="true" role="textbox" spellcheck="true" tabindex="0"><p><br></p></div></div>' +
+      '<div><input placeholder="Add location" type="text" id="loc"></div><div id="suggs"></div>' +
+      '<div><span>Accessibility</span></div><div><span>Advanced settings</span></div></div>';
+    const loc = d.querySelector('#loc');
+    loc.addEventListener('input', () => {
+      const q = loc.value.toLowerCase();
+      const places = ['Fake Plaza, Testville', 'Fakeburg Station', 'Other Place'];
+      d.querySelector('#suggs').innerHTML = places.filter((p) => q && p.toLowerCase().includes(q.slice(0, 3)))
+        .map((p) => '<div role="button" tabindex="0" class="sugg">' + p + '</div>').join('');
+      d.querySelectorAll('.sugg').forEach((s) => s.addEventListener('click', () => { location = s.textContent; loc.value = location; d.querySelector('#suggs').innerHTML = ''; }));
+    });
+    d.querySelector('#share').addEventListener('click', () => {
+      caption = d.querySelector('[contenteditable]').textContent;
+      const body = 'caption=' + encodeURIComponent(caption) + '&location=' + encodeURIComponent(location) + '&file=' + encodeURIComponent(window.uploaded || '');
+      d.innerHTML = '<div><h1>Sharing</h1><div>Sharing…</div></div>';
+      fetch('/api/v1/media/configure/', { method: 'POST', body, headers: { 'content-type': 'application/x-www-form-urlencoded' } }).then(() => {
+        if (FX.noconfirm) return;
+        if (FX.fail) { d.innerHTML = '<div><h1>Post couldn\'t be shared</h1></div>'; return; }
+        d.innerHTML = '<div><h1>Post shared</h1><img alt="Animated checkmark" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="96" height="96"><span>Your post has been shared.</span></div>';
+      });
+    });
+  }
+})();
+</script>
+</body>
+</html>

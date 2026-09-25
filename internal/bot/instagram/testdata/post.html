@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- SYNTHETIC fixture: structure and aria labels modelled on Instagram's
+     logged-in post page (media, header, comment list, action bar, comment
+     form); every name, text and number is invented. -->
+<title>Instagram</title>
+<meta property="og:url" content="https://www.instagram.com/p/{{CODE}}/">
+<meta property="og:title" content="Ada Author on Instagram: &quot;A synthetic caption&quot;">
+<meta property="og:description" content="1,234 likes, 7 comments - fake.author on September 20, 2026: &quot;A synthetic caption #fixture&quot;">
+<style>
+body { font: 14px sans-serif; margin: 0; }
+.nav { position: fixed; left: 0; top: 0; bottom: 0; width: 70px; background: #fafafa; }
+main { margin-left: 90px; padding: 16px; }
+.post { display: flex; }
+.media { width: 420px; }
+.media img, .media video { width: 400px; height: 400px; background: #ccc; display: block; }
+.side { width: 480px; padding-left: 12px; }
+button, [role="button"] { cursor: pointer; display: inline-block; padding: 3px 6px; margin: 1px; border: 1px solid #ddd; background: #fff; }
+.avatar { width: 32px; height: 32px; background: #ddd; }
+.comments { max-height: 320px; overflow-y: auto; }
+.row { display: flex; align-items: flex-start; }
+.body { flex: 1; }
+textarea { width: 360px; height: 24px; }
+[aria-disabled="true"] { opacity: .3; }
+</style>
+</head>
+<body>
+<div class="nav" role="navigation">
+  <a href="/"><svg aria-label="Home" height="24" width="24"><title>Home</title></svg></a>
+  <a href="/direct/inbox/"><svg aria-label="Direct" height="24" width="24"><title>Direct</title></svg></a>
+</div>
+<main role="main"><div class="post">
+  <div class="media" id="media"></div>
+  <section class="side">
+    <header>
+      <div><a href="/{{AUTHOR}}/" role="link"><img class="avatar" alt="{{AUTHOR}}'s profile picture" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></a></div>
+      <div><a href="/{{AUTHOR}}/" role="link"><span dir="auto">{{AUTHOR}}</span></a> <div role="button" tabindex="0">Follow</div></div>
+    </header>
+    <div class="comments"><ul id="list"></ul></div>
+    <section id="bar">
+      <span><div role="button" tabindex="0" id="postLike"></div></span>
+      <span><div role="button" tabindex="0" id="commentIcon"><svg aria-label="Comment" height="24" width="24"><title>Comment</title></svg></div></span>
+      <span><div role="button" tabindex="0"><svg aria-label="Share" height="24" width="24"><title>Share</title></svg></div></span>
+      <span><div role="button" tabindex="0"><svg aria-label="Save" height="24" width="24"><title>Save</title></svg></div></span>
+    </section>
+    <section><div><span><a href="/p/{{CODE}}/liked_by/" role="link"><span id="likeCount">1,234</span> likes</a></span></div></section>
+    <div><a href="/p/{{CODE}}/" role="link"><time datetime="2026-09-20T10:00:00.000Z" title="Sep 20, 2026">September 20</time></a></div>
+    <section id="formSection"></section>
+    <div id="toast"></div>
+  </section>
+</div>
+<div><h3>More posts from {{AUTHOR}}</h3><a href="/{{AUTHOR}}/p/FXMORE01/"><img alt="More 1" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></a></div>
+</main>
+<script>
+window.FX = {{FX}};
+(function () {
+  const FX = window.FX;
+  const $ = (s) => document.querySelector(s);
+  const GIF = 'data:image/gif;base64,R0lGODlhAQABAAAAACw=';
+  const post = (path, body) => fetch(path, { method: 'POST', body: body || '', headers: { 'content-type': 'application/x-www-form-urlencoded' } });
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const heart = (liked, size, id) => '<svg aria-label="' + (liked ? 'Unlike' : 'Like') + '" height="' + size + '" width="' + size + '"' + (id ? ' data-id="' + id + '"' : '') + '><title>' + (liked ? 'Unlike' : 'Like') + '</title></svg>';
+
+  // Variants for the Jev fallback tests: an action bar the heuristics do not
+  // recognise, and a comment box outside the usual labels and form.
+  if (FX.oddBar) $('#commentIcon').innerHTML = '<svg aria-label="Discuss" height="24" width="24"><title>Discuss</title></svg>';
+  if (FX.compact) document.querySelector('.media').style.display = 'none';
+
+  // Media.
+  const media = $('#media');
+  if (FX.kind === 'carousel') {
+    media.innerHTML = '<div><ul><li><img alt="Photo 1 by Ada Author" src="https://scontent.fixture.invalid/c1.jpg" width="1080"></li><li><img alt="Photo 2 by Ada Author" src="https://scontent.fixture.invalid/c2.jpg" width="1080"></li></ul>' +
+      '<button aria-label="Next" type="button"><div><svg aria-label="Next" height="16" width="16"><title>Next</title></svg></div></button></div>';
+  } else if (FX.kind === 'reel') {
+    media.innerHTML = '<div><video src="https://scontent.fixture.invalid/reel.mp4" width="400" height="400"></video></div>';
+  } else {
+    media.innerHTML = '<div><img alt="Photo by Ada Author on September 20, 2026." src="https://scontent.fixture.invalid/p1.jpg" width="1080"></div>';
+  }
+
+  // Post like.
+  let liked = !!FX.liked;
+  const likeBtn = $('#postLike');
+  const renderLike = () => { likeBtn.innerHTML = heart(liked, 24); };
+  renderLike();
+  likeBtn.addEventListener('click', () => {
+    post('/api/v1/web/likes/FXMEDIA1/' + (liked ? 'unlike' : 'like') + '/').then(() => {
+      if (FX.noconfirm) return;
+      liked = !liked;
+      renderLike();
+    });
+  });
+
+  // Comments.
+  const list = $('#list');
+  let nextId = 900;
+  function commentHTML(c) {
+    return '<div class="row">' +
+      '<div><a href="/' + c.author + '/" role="link" tabindex="-1"><img class="avatar" alt="' + c.author + '\'s profile picture" src="' + GIF + '"></a></div>' +
+      '<div class="body"><h3 dir="auto"><a href="/' + c.author + '/" role="link">' + c.author + '</a></h3>' +
+      '<div><span dir="auto">' + esc(c.text) + '</span></div>' +
+      '<div><span><a href="/p/{{CODE}}/c/' + c.id + '/" role="link"><time datetime="' + (c.time || '2026-09-21T10:00:00.000Z') + '">4d</time></a></span>' +
+      (c.likes ? '<span><span>' + c.likes + ' likes</span></span>' : '') +
+      '<span><div role="button" tabindex="0" class="reply" data-id="' + c.id + '" data-author="' + c.author + '"><span>Reply</span></div></span>' +
+      '<div role="button" tabindex="0" aria-label="Comment Options"><svg aria-label="Comment Options" height="12" width="12"><title>Comment Options</title></svg></div></div></div>' +
+      '<span><div role="button" tabindex="0" class="clike" data-id="' + c.id + '">' + heart(c.liked, 12) + '</div></span>' +
+      '</div>';
+  }
+  function addComment(c, into) {
+    const wrap = document.createElement('div');
+    wrap.setAttribute('role', 'button');
+    wrap.setAttribute('tabindex', '-1');
+    const li = document.createElement('li');
+    li.innerHTML = commentHTML(c);
+    if (c.replies && c.replies.length) {
+      const ul = document.createElement('ul');
+      ul.innerHTML = '<li><div role="button" tabindex="0"><span>Hide replies</span></div></li>';
+      c.replies.forEach((r) => addComment(r, ul));
+      li.appendChild(ul);
+    }
+    wrap.appendChild(li);
+    into.appendChild(wrap);
+    return li;
+  }
+  // The caption: author, text, time — no Reply or Like button.
+  const cap = document.createElement('div');
+  cap.innerHTML = '<li><div class="row"><div><a href="/{{AUTHOR}}/" role="link" tabindex="-1"><img class="avatar" alt="{{AUTHOR}}\'s profile picture" src="' + GIF + '"></a></div>' +
+    '<div class="body"><h2 dir="auto"><a href="/{{AUTHOR}}/" role="link">{{AUTHOR}}</a></h2>' +
+    '<div><h1 dir="auto">' + esc(FX.caption || 'A synthetic caption for tests #fixture #synthetic with @fake.c1') + '</h1></div>' +
+    '<div><time datetime="2026-09-20T10:00:00.000Z">5d</time></div></div></div></li>';
+  list.appendChild(cap);
+  const inner = document.createElement('ul');
+  list.appendChild(inner);
+  (FX.comments || []).forEach((c) => addComment(c, inner));
+  if (FX.hidden && FX.hidden.length) {
+    const more = document.createElement('li');
+    more.innerHTML = '<div><div role="button" tabindex="0" id="loadMore"><svg aria-label="Load more comments" height="24" width="24"><title>Load more comments</title></svg></div></div>';
+    list.appendChild(more);
+    more.querySelector('#loadMore').addEventListener('click', () => { FX.hidden.forEach((c) => addComment(c, inner)); FX.hidden = []; more.remove(); });
+  }
+  list.addEventListener('click', (e) => {
+    const cl = e.target.closest('.clike');
+    if (cl) {
+      const svg = cl.querySelector('svg');
+      const was = svg.getAttribute('aria-label') === 'Unlike';
+      post('/api/v1/web/comments/' + (was ? 'unlike' : 'like') + '/' + cl.dataset.id + '/').then(() => {
+        if (FX.noconfirm) return;
+        cl.innerHTML = heart(!was, 12);
+      });
+      return;
+    }
+    const rb = e.target.closest('.reply');
+    if (rb && ta) {
+      replyTo = rb.dataset.id;
+      ta.value = '@' + rb.dataset.author + ' ';
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      ta.focus();
+    }
+  });
+
+  // Comment form.
+  let ta = null, replyTo = '';
+  if (FX.commentsOff) {
+    $('#formSection').innerHTML = '<div><span>Comments on this post have been limited.</span></div>';
+  } else {
+    $('#formSection').innerHTML = FX.oddBox
+      ? '<div><div><div><textarea aria-label="Say something nice" placeholder="Say something nice" autocomplete="off"></textarea></div>' +
+        '<div role="button" tabindex="0" id="postBtn" aria-disabled="true">Post</div></div></div>'
+      : '<div><form method="POST"><div><textarea aria-label="Add a comment…" placeholder="Add a comment…" autocomplete="off"></textarea></div>' +
+        '<div role="button" tabindex="0" id="postBtn" aria-disabled="true">Post</div></form></div>';
+    ta = $('#formSection textarea');
+    const pb = $('#postBtn');
+    ta.addEventListener('input', () => {
+      pb.setAttribute('aria-disabled', ta.value.trim() ? 'false' : 'true');
+      if (!ta.value.startsWith('@')) replyTo = '';
+    });
+    const submit = () => {
+      if (pb.getAttribute('aria-disabled') === 'true') return;
+      const text = ta.value;
+      const body = 'comment_text=' + encodeURIComponent(text) + (replyTo ? '&replied_to_comment_id=' + replyTo : '');
+      post('/api/v1/web/comments/FXMEDIA1/add/', body).then(() => {
+        if (FX.noconfirm) return;
+        if (FX.failToast) { $('#toast').textContent = "Couldn't post comment. Try again."; return; }
+        const c = { id: String(nextId++), author: 'fake.me', text: text.replace(/^@\S+\s/, replyTo ? text.match(/^@\S+\s/)[0] : '') };
+        let into = inner;
+        if (replyTo) {
+          const parent = list.querySelector('.reply[data-id="' + replyTo + '"]').closest('li');
+          into = parent.querySelector('ul') || parent.appendChild(document.createElement('ul'));
+        }
+        addComment(c, into);
+        ta.value = '';
+        replyTo = '';
+        pb.setAttribute('aria-disabled', 'true');
+      });
+    };
+    pb.addEventListener('click', submit);
+    ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } });
+    const f = $('#formSection form');
+    if (f) f.addEventListener('submit', (e) => { e.preventDefault(); submit(); });
+  }
+})();
+</script>
+</body>
+</html>

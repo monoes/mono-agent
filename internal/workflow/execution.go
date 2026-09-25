@@ -618,6 +618,10 @@ func dbCtx() (context.Context, context.CancelFunc) {
 // executeWithRetry executes a node, retrying on failure according to the
 // supplied RetryPolicy.  Panics from the executor are caught and returned
 // as errors so that DB persistence in the caller is not bypassed.
+//
+// Errors a retry cannot fix (isNonRetryable) are returned after one attempt.
+// Other errors are retried per policy, consulting RetryClassifier (when
+// installed) before each retry: it may stop retrying or override the delay.
 func executeWithRetry(
 	ctx context.Context,
 	executor NodeExecutor,
@@ -634,13 +638,15 @@ func executeWithRetry(
 	}
 
 	var lastErr error
+	var override time.Duration // classifier-chosen delay for the next retry
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
 			delay := computeDelay(attempt, policy)
-			select {
-			case <-ctx.Done():
+			if override > 0 {
+				delay = override
+			}
+			if retrySleep(ctx, delay) != nil || ctx.Err() != nil {
 				return nil, ErrExecutionCancelled
-			case <-time.After(delay):
 			}
 		}
 
@@ -663,6 +669,21 @@ func executeWithRetry(
 			return nil, ErrExecutionCancelled
 		default:
 		}
+
+		// A pause, invalid config, cancellation or Permanent error cannot be
+		// fixed by running the node again: return it as-is (the caller relies
+		// on errors.Is(err, ErrNodePaused) to suspend the run).
+		if isNonRetryable(err) {
+			return nil, err
+		}
+		if attempt == maxRetries {
+			break // no retry left: never consult the classifier for nothing
+		}
+		retry, delay := classifyRetry(ctx, executor.Type(), err, attempt+1, config)
+		if !retry {
+			return nil, err
+		}
+		override = delay
 	}
 	return nil, lastErr
 }

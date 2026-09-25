@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- SYNTHETIC fixture: an Instagram-like story viewer. Every name is invented. -->
+<title>Stories • Instagram</title>
+<style>
+body { font: 14px sans-serif; margin: 0; background: #111; color: #fff; }
+section { position: relative; width: 400px; height: 600px; margin: 20px auto; background: #333; }
+button, [role="button"] { cursor: pointer; display: inline-block; padding: 6px; background: #555; color: #fff; }
+#next { position: absolute; right: 4px; top: 280px; }
+#close { position: absolute; right: 4px; top: 4px; }
+img { width: 380px; height: 500px; background: #666; display: block; }
+</style>
+</head>
+<body>
+<section>
+  <header><a href="#" id="owner" role="link"><span></span></a> <time datetime="2026-09-25T08:00:00.000Z">2h</time></header>
+  <div><img id="story" alt="Story" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></div>
+  <div role="button" tabindex="0"><svg aria-label="Pause" height="16" width="16"><title>Pause</title></svg></div>
+  <button aria-label="Next" id="next" type="button"><svg aria-label="Next" height="16" width="16"><title>Next</title></svg></button>
+  <div role="button" tabindex="0" id="close"><svg aria-label="Close" height="24" width="24"><title>Close</title></svg></div>
+</section>
+<script>
+window.FX = {{FX}};
+(function () {
+  const FX = window.FX;
+  const ids = FX.ids || ['3001', '3002', '3003'];
+  const nextOwner = FX.nextOwner || 'fake.other';
+  const seen = (owner, id) => fetch('/api/v1/stories/reel/seen/?owner=' + owner + '&id=' + id, { method: 'POST', body: '' });
+  function current() {
+    const m = location.pathname.match(/^\/stories\/([^/]+)\/([^/]+)\//);
+    return m ? { owner: m[1], id: m[2] } : null;
+  }
+  function show() {
+    const c = current();
+    if (!c) return;
+    document.querySelector('#owner').setAttribute('href', '/' + c.owner + '/');
+    document.querySelector('#owner span').textContent = c.owner;
+    document.querySelector('#story').setAttribute('alt', 'Story ' + c.id + ' by ' + c.owner);
+    seen(c.owner, c.id);
+  }
+  document.querySelector('#next').addEventListener('click', () => {
+    const c = current();
+    const i = ids.indexOf(c.id);
+    if (c.owner !== nextOwner && i >= 0 && i < ids.length - 1) history.pushState({}, '', '/stories/' + c.owner + '/' + ids[i + 1] + '/');
+    else history.pushState({}, '', '/stories/' + nextOwner + '/4001/'); // the viewer moves on to the next account
+    show();
+  });
+  document.querySelector('#close').addEventListener('click', () => { const c = current(); location.href = '/' + (c ? c.owner : '') + '/'; });
+  show();
+})();
+</script>
+</body>
+</html>

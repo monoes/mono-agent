@@ -804,9 +804,9 @@ Running it fails with: replace it with the "agent.ask" node (local AI agent via 
 	{
 		Type:     "ai.classify",
 		Category: "ai",
-		Short:    "DEPRECATED — fails at run time; use agent.ask with a classification prompt",
+		Short:    "DEPRECATED — fails at run time; use ai.choose (TypeSafe Jev) or agent.ask",
 		Description: `Kept only so old workflows get a migration hint instead of "unknown node type".
-Running it fails with: replace it with the "agent.ask" node whose prompt requests classification.`,
+Running it fails with: replace it with the "ai.choose" node (TypeSafe Jev; see "monoagentcli ref node ai.choose") or an "agent.ask" node whose prompt requests classification.`,
 	},
 	{
 		Type:     "ai.extract",
@@ -1133,7 +1133,7 @@ Always prefer the browser crawl method. It requires only a Google login, no bill
 	{
 		Type:     "linkedin.send_dms",
 		Category: "linkedin",
-		Short:    "Send LinkedIn connection requests or messages",
+		Short:    "Send LinkedIn messages (never sends connection requests; fails when a profile offers no Message option)",
 		Config:   `{ "credential_id": "li-onetap", "selectedListItems": "{{ json $json.targets }}", "messageText": "Hi!" }`,
 		Inputs:   "item with targets array",
 		Outputs:  "sent_count",
@@ -1173,8 +1173,8 @@ Always prefer the browser crawl method. It requires only a Google login, no bill
 	{
 		Type:     "linkedin.export_followers",
 		Category: "linkedin",
-		Short:    "Export followers or connections from LinkedIn",
-		Config:   `{ "credential_id": "li-onetap", "limit": 100 }`,
+		Short:    "Export your LinkedIn followers or the people you follow",
+		Config:   `{ "credential_id": "li-onetap", "sourceType": "FOLLOWERS_FETCH", "limit": 100 }`, // or FOLLOWING_FETCH
 		Inputs:   "none",
 		Outputs:  "one item per follower",
 	},
@@ -1190,7 +1190,7 @@ Always prefer the browser crawl method. It requires only a Google login, no bill
 		Type:     "linkedin.auto_reply_dms",
 		Category: "linkedin",
 		Short:    "Auto-reply to unread LinkedIn messages",
-		Config:   `{ "credential_id": "li-onetap", "replyText": "Thanks for connecting!" }`,
+		Config:   `{ "credential_id": "li-onetap", "message": "Thanks for connecting!" }`, // seeded as replyText
 		Inputs:   "none",
 		Outputs:  "replied_count",
 	},
@@ -1198,7 +1198,7 @@ Always prefer the browser crawl method. It requires only a Google login, no bill
 		Type:     "linkedin.list_post_comments",
 		Category: "linkedin",
 		Short:    "List comments on a LinkedIn post",
-		Config:   `{ "credential_id": "li-onetap", "post_url": "{{ $json.url }}" }`,
+		Config:   `{ "credential_id": "li-onetap", "targets": ["{{ $json.url }}"], "includeReplies": false }`,
 		Inputs:   "item with post URL",
 		Outputs:  "one item per comment",
 	},
@@ -1247,7 +1247,7 @@ Always prefer the browser crawl method. It requires only a Google login, no bill
 	{
 		Type:     "x.engage_with_posts",
 		Category: "x",
-		Short:    "Like + repost X posts",
+		Short:    "Like and optionally reply to X posts",
 		Config:   `{ "credential_id": "x-onetap", "selectedListItems": "{{ json $json.posts }}" }`,
 		Inputs:   "item with posts array",
 		Outputs:  "engaged_count",

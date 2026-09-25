@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- SYNTHETIC fixture: structure and aria labels modelled on Instagram's
+     logged-in profile page; every name, number and text is invented. -->
+<title>Ada Fixture (@{{USER}}) • Instagram photos and videos</title>
+<meta property="og:title" content="Ada Fixture (@{{USER}}) • Instagram photos and videos">
+<meta property="og:description" content="1,234 followers, 56 following, 12 posts – see Instagram photos and videos from Ada Fixture (@{{USER}})">
+<meta property="og:url" content="https://www.instagram.com/{{USER}}/">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"ProfilePage","mainEntity":{"@type":"Person","name":"Ada Fixture","alternateName":"@{{USER}}"}}</script>
+<style>
+body { font: 14px sans-serif; margin: 0; }
+.nav { position: fixed; left: 0; top: 0; bottom: 0; width: 70px; background: #fafafa; }
+main { margin-left: 90px; padding: 16px; }
+button, [role="button"] { cursor: pointer; display: inline-block; padding: 4px 8px; margin: 2px; border: 1px solid #ccc; background: #fff; }
+img { width: 60px; height: 60px; background: #ddd; display: inline-block; }
+.grid a { display: inline-block; width: 180px; height: 180px; margin: 4px; background: #eee; }
+.grid img { width: 170px; height: 170px; }
+[role="dialog"] { position: fixed; top: 80px; left: 30%; width: 420px; background: #fff; border: 1px solid #888; z-index: 10; padding: 8px; }
+.scroll { height: 220px; overflow-y: auto; }
+.row { height: 44px; }
+canvas { width: 80px; height: 80px; position: absolute; }
+</style>
+</head>
+<body>
+<div class="nav" role="navigation">
+  <a href="/"><svg aria-label="Home" height="24" width="24"><title>Home</title></svg></a>
+  <a href="/direct/inbox/"><svg aria-label="Direct" height="24" width="24"><title>Direct</title></svg></a>
+  <a href="#" role="link"><svg aria-label="New post" height="24" width="24"><title>New post</title></svg><span>Create</span></a>
+</div>
+<main role="main"><div>
+<header>
+  <section id="avatar"></section>
+  <section>
+    <div><div><h2 dir="auto"><span>{{USER}}</span></h2><svg aria-label="Verified" height="12" width="12"><title>Verified</title></svg></div>
+      <div id="actions"></div></div>
+  </section>
+  <section>
+    <ul>
+      <li><span dir="auto"><span>12</span> posts</span></li>
+      <li><div><a href="/{{USER}}/followers/" role="link" id="followersLink"><span dir="auto"><span title="1,234"><span>1,234</span></span> followers</span></a></div></li>
+      <li><div><a href="/{{USER}}/following/" role="link" id="followingLink"><span dir="auto"><span><span>56</span></span> following</span></a></div></li>
+    </ul>
+  </section>
+  <section>
+    <div><span dir="auto">Ada Fixture</span></div>
+    <span dir="auto"><div role="button" tabindex="0"><span dir="auto">Synthetic bio used only by tests</span></div></span>
+    <a href="https://l.instagram.com/?u=https%3A%2F%2Fexample.test%2F" target="_blank" rel="me nofollow noopener noreferrer"><span dir="auto">example.test</span></a>
+  </section>
+  <section>
+    <ul>
+      <li><a aria-label="View fixtures highlight" href="/stories/highlights/1111/" role="link"><div role="button" tabindex="0"><canvas height="92" width="92"></canvas><img alt="{{USER}}'s highlight story picture" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></div><span>fixtures</span></a></li>
+    </ul>
+  </section>
+</header>
+<div id="private" hidden><h2>This account is private</h2><span>Follow to see their photos and videos.</span></div>
+<div id="suggested">
+  <h3>Suggested for you</h3>
+  <ul>
+    <li><a href="/fake.sugg1/" role="link"><span>fake.sugg1</span></a> <button type="button" class="sugg" data-id="7771"><div>Follow</div></button></li>
+    <li><a href="/fake.sugg2/" role="link"><span>fake.sugg2</span></a> <button type="button" class="sugg" data-id="7772"><div>Follow</div></button></li>
+  </ul>
+</div>
+<div class="grid" id="grid"></div>
+</div></main>
+<script>
+window.FX = {{FX}};
+(function () {
+  const FX = window.FX;
+  const U = '{{USER}}';
+  const $ = (s) => document.querySelector(s);
+  const post = (path, body) => fetch(path, { method: 'POST', body: body || '', headers: { 'content-type': 'application/x-www-form-urlencoded' } });
+  const GIF = 'data:image/gif;base64,R0lGODlhAQABAAAAACw=';
+
+  // FX.layout2026: the header Instagram rendered in 2026 (seen on your own
+  // profile): no <ul><li> stats — the counts are <a role="link" href="#">
+  // in plain <div>s; a Threads badge link next to the username; the website
+  // behind a link-icon button in an <h1>. The header's counts differ from
+  // the (stale) og:description on purpose.
+  if (FX.layout2026) {
+    document.querySelector('header').innerHTML =
+      '<section id="avatar"></section>' +
+      '<section><div><div><div><a href="#" role="link" tabindex="0"><h2 dir="auto"><span>' + U + '</span></h2></a>' +
+      '<a href="https://www.threads.com/@' + U + '?xmt=FAKEXMT" role="link" target="_blank" tabindex="0"><div><svg aria-label="Threads" height="16" width="16"><title>Threads</title></svg></div><span>' + U + '</span></a></div>' +
+      '<div id="actions"></div></div>' +
+      '<div><span dir="auto">Ada Fixture</span></div>' +
+      '<div><div><div><span dir="auto"><span><span>' + (FX.hdrPosts || '13') + '</span></span> posts</span></div></div>' +
+      '<div><div><a href="#" role="link" tabindex="0" id="followersLink"><span dir="auto"><span title="' + (FX.hdrFollowersExact || '1,240') + '"><span>' + (FX.hdrFollowers || '1,240') + '</span></span> followers</span></a></div></div>' +
+      '<div><div><a href="#" role="link" tabindex="0" id="followingLink"><span dir="auto"><span><span>' + (FX.hdrFollowing || '50') + '</span></span> following</span></a></div></div></div>' +
+      '<span dir="auto"><div role="button" tabindex="0"><span dir="auto">Synthetic bio used only by tests</span></div></span>' +
+      '<h1 dir="auto"><button type="button"><div><svg aria-label="Link icon" height="12" width="12"><title>Link icon</title></svg></div><div dir="auto">example.test and 1 more</div></button></h1>' +
+      '</div></section>' +
+      '<section><div role="menu"><ul><li><a aria-label="View fixtures highlight" href="/stories/highlights/1111/" role="link"><span>fixtures</span></a></li></ul></div></section>';
+  }
+
+  // Avatar: with an active story the avatar is a story ring.
+  $('#avatar').innerHTML = FX.story
+    ? '<div><div aria-label="View profile story" role="button" tabindex="0" id="ring"><canvas height="165" width="165"></canvas><span role="link" tabindex="-1"><img alt="' + U + '\'s profile picture" src="' + GIF + '"></span></div></div>'
+    : '<div><span role="link" tabindex="-1"><img alt="' + U + '\'s profile picture" src="' + GIF + '"></span></div>';
+  const ring = $('#ring');
+  if (ring) ring.addEventListener('click', () => { location.href = '/stories/' + U + '/3001/'; });
+
+  // Follow button in the header.
+  let state = FX.state || 'follow';
+  const actions = $('#actions');
+  function render() {
+    const label = { follow: 'Follow', following: 'Following', requested: 'Requested', followback: 'Follow Back' }[state];
+    const chevron = state === 'following' ? '<svg aria-label="Down chevron icon" height="12" width="12"><title>Down chevron icon</title></svg>' : '';
+    const odd = FX.oddFollow && state === 'follow';
+    actions.innerHTML = (odd ? '<a href="#" role="link" id="followBtn"><span>Follow</span></a>'
+      : '<button type="button" id="followBtn"><div><div dir="auto">' + label + '</div>' + chevron + '</div></button>') +
+      (FX.message ? '<div role="button" tabindex="0" id="msgBtn">Message</div>' : '') +
+      '<div role="button" tabindex="0" aria-label="Options"><svg aria-label="Options" height="24" width="24"><title>Options</title></svg></div>';
+    $('#followBtn').addEventListener('click', (e) => { e.preventDefault(); onFollowClick(); });
+    const mb = $('#msgBtn');
+    if (mb) mb.addEventListener('click', () => { location.href = '/direct/t/' + (FX.thread || '5001') + '/'; });
+    const priv = FX.private && state !== 'following';
+    $('#private').hidden = !priv;
+    $('#grid').hidden = priv;
+  }
+  function onFollowClick() {
+    if (state === 'follow' || state === 'followback') {
+      post('/api/v1/friendships/create/9001/').then(() => {
+        if (FX.noconfirm) return;
+        state = FX.private ? 'requested' : 'following';
+        render();
+      });
+      return;
+    }
+    openUnfollowDialog();
+  }
+  function openUnfollowDialog() {
+    const d = document.createElement('div');
+    d.setAttribute('role', 'dialog');
+    d.innerHTML = '<div><h3>' + U + '</h3>' +
+      '<div role="button" tabindex="0">Add to close friends list</div>' +
+      '<div role="button" tabindex="0">Add to favorites</div>' +
+      '<div role="button" tabindex="0">Mute</div>' +
+      '<div role="button" tabindex="0">Restrict</div>' +
+      '<div role="button" tabindex="0" id="unfollowBtn">Unfollow</div></div>';
+    document.body.appendChild(d);
+    d.querySelector('#unfollowBtn').addEventListener('click', () => {
+      post('/api/v1/friendships/destroy/9001/').then(() => {
+        if (FX.noconfirm) return;
+        d.remove();
+        state = 'follow';
+        render();
+      });
+    });
+  }
+  render();
+
+  // "Suggested for you" Follow buttons — must never be clicked by the bot.
+  document.querySelectorAll('.sugg').forEach((b) => b.addEventListener('click', () => post('/api/v1/friendships/create/' + b.dataset.id + '/')));
+
+  // Post grid, lazily extended on scroll.
+  const total = FX.posts == null ? 12 : FX.posts;
+  let shown = 0;
+  function more(n) {
+    const g = $('#grid');
+    for (let i = 0; i < n && shown < total; i++) {
+      shown++;
+      const code = 'FXPOST' + String(shown).padStart(2, '0');
+      const kind = shown % 4 === 0 ? 'reel' : 'p';
+      const a = document.createElement('a');
+      a.href = '/' + U + '/' + kind + '/' + code + '/';
+      a.setAttribute('role', 'link');
+      a.innerHTML = '<div><img alt="Photo ' + shown + ' by Ada Fixture" src="' + GIF + '#' + code + '"></div>';
+      g.appendChild(a);
+    }
+  }
+  more(6);
+  window.addEventListener('scroll', () => more(3));
+
+  // Followers / following dialog.
+  function openList(kind) {
+    if (document.querySelector('[role="dialog"]')) return;
+    const n = kind === 'followers' ? (FX.followers == null ? 25 : FX.followers) : 3;
+    const prefix = kind === 'followers' ? 'fake.f' : 'fake.g';
+    const d = document.createElement('div');
+    d.setAttribute('role', 'dialog');
+    d.innerHTML = '<div><h1>' + (kind === 'followers' ? 'Followers' : 'Following') + '</h1><div role="button" tabindex="0"><svg aria-label="Close" height="18" width="18"><title>Close</title></svg></div></div><div class="scroll" style="overflow-y: scroll"><div class="list"></div></div>';
+    document.body.appendChild(d);
+    const list = d.querySelector('.list');
+    let loaded = 0;
+    function load(k) {
+      for (let i = 0; i < k && loaded < n; i++) {
+        loaded++;
+        const u = prefix + String(loaded).padStart(2, '0');
+        const row = document.createElement('div');
+        row.className = 'row';
+        row.innerHTML = '<div><div><a href="/' + u + '/" role="link" tabindex="-1"><img alt="' + u + '\'s profile picture" src="' + GIF + '"></a></div>' +
+          '<div><div><a href="/' + u + '/" role="link"><span dir="auto">' + u + '</span></a></div><span dir="auto">Person ' + loaded + '</span></div>' +
+          '<button type="button"><div>' + (kind === 'followers' ? 'Remove' : 'Following') + '</div></button></div>';
+        list.appendChild(row);
+      }
+    }
+    load(10);
+    d.querySelector('.scroll').addEventListener('scroll', (e) => {
+      const s = e.target;
+      if (s.scrollTop + s.clientHeight >= s.scrollHeight - 5) setTimeout(() => load(10), 100);
+    });
+  }
+  $('#followersLink').addEventListener('click', (e) => { e.preventDefault(); history.pushState({}, '', '/' + U + '/followers/'); openList('followers'); });
+  $('#followingLink').addEventListener('click', (e) => { e.preventDefault(); history.pushState({}, '', '/' + U + '/following/'); openList('following'); });
+  const m = location.pathname.match(/\/(followers|following)\/$/);
+  // FX.noRoute: /<user>/followers/ renders the profile without the dialog
+  // (what your own profile does).
+  if (m && !FX.noRoute) openList(m[1]);
+})();
+</script>
+</body>
+</html>

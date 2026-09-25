@@ -106,14 +106,21 @@ func (n *OrgAskNode) Execute(ctx context.Context, input workflow.NodeInput, conf
 		}
 		return nil, fmt.Errorf("org.ask (%s): %w", orgName, err)
 	}
-	if err := asks.Create(ctx, orgbridge.Ask{
-		ID: id, ProfileID: env.profileID, OrgName: orgName, RoleID: configString(config, "role", ""),
-		EndpointRoleID: endpoint.ID, ExecutionID: input.ExecutionID, NodeID: input.NodeID,
-		DeadlineAt: time.Now().Add(timeout),
-	}); err != nil {
+	if err := asks.Create(ctx, newAskRecord(id, env.profileID, orgName, configString(config, "role", ""), endpoint.ID, input, body, timeout)); err != nil {
 		return nil, fmt.Errorf("org.ask (%s): record ask: %w", orgName, err)
 	}
 	return nil, workflow.PauseFor(minDuration(askPollWindow, timeout), "waiting for a reply from "+orgName)
+}
+
+// newAskRecord is the org_asks row for a sent question. The question text
+// (without the reply instructions) is kept so a reply that lost its ask
+// token can still be linked to it (jev `asks` surface, plan WS9).
+func newAskRecord(id, profileID, orgName, role, endpointRoleID string, input workflow.NodeInput, question string, timeout time.Duration) orgbridge.Ask {
+	return orgbridge.Ask{
+		ID: id, ProfileID: profileID, OrgName: orgName, RoleID: role,
+		EndpointRoleID: endpointRoleID, ExecutionID: input.ExecutionID, NodeID: input.NodeID,
+		Question: question, DeadlineAt: time.Now().Add(timeout),
+	}
 }
 
 func firstLine(s string, max int) string {

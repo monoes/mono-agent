@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Synthetic profile | TikTok fixture</title>
+<!-- SYNTHETIC fixture: mimics the structure and data-e2e attributes of a
+     TikTok profile page. Behaviour is keyed by the @handle in the URL (see
+     CONFIG); every handle, name, count and image is invented. -->
+<style>
+  body { font: 14px sans-serif; margin: 0; }
+  .css-1-DivShareLayoutHeader { padding: 16px; }
+  .css-2-DivButtonPanel button { margin: 4px; padding: 6px 14px; }
+  .css-3-DivCountInfo strong { margin-right: 4px; cursor: pointer; }
+  [data-e2e="user-post-item-list"] { display: grid; grid-template-columns: repeat(4, 120px); gap: 8px; padding: 16px; }
+  [data-e2e="user-post-item"] { height: 160px; background: #eee; }
+  .css-4-DivSuggested { padding: 16px; }
+  [data-e2e="follow-info-popup"] { position: fixed; top: 40px; left: 40px; width: 360px; background: #fff; border: 1px solid #333; }
+  .css-5-DivUserListContainer { max-height: 200px; overflow-y: auto; }
+  .css-5-DivUserListContainer li { height: 48px; list-style: none; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<header><button data-e2e="top-login-button" id="login" class="hidden">Log in</button><div data-e2e="profile-icon" id="me">me</div></header>
+<div class="css-1-DivShareLayoutHeader" id="header">
+  <img data-e2e="user-avatar" id="avatar" alt="" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">
+  <!-- As on tiktok.com: user-title (h1) is the DISPLAY NAME, user-subtitle
+       (h2) the @handle; the verified badge is an unlabelled svg (a
+       #20D5EC circle with a white tick) right after the subtitle. -->
+  <div class="css-6-DivUserIdentifierWrapper">
+    <div class="css-7-DivUserTextWrapper"><div class="css-7-DivUserTextWrapper"><h1 data-e2e="user-title" id="title"></h1></div>
+    <div class="css-8-DivVerifiedSubtitleDivider"></div><h2 data-e2e="user-subtitle" id="subtitle"></h2></div>
+  </div>
+  <div class="css-2-DivButtonPanel" id="buttons">
+    <button type="button" data-e2e="follow-button" id="follow">Follow</button>
+    <button type="button" data-e2e="message-button" id="message">Message</button>
+  </div>
+  <div class="css-3-DivCountInfo">
+    <div><strong data-e2e="following-count" id="following-count">87</strong><span>Following</span></div>
+    <div><strong data-e2e="followers-count" id="followers-count">1234</strong><span>Followers</span></div>
+    <div><strong data-e2e="likes-count">5.6K</strong><span>Likes</span></div>
+  </div>
+  <h2 data-e2e="user-bio" id="bio">Synthetic bio for tests only</h2>
+  <a data-e2e="user-link" href="https://example.test/fake-link">example.test/fake-link</a>
+</div>
+<div id="tabs"><p role="tab" data-e2e="videos-tab" aria-selected="true">Videos</p><p role="tab" data-e2e="liked-tab" aria-selected="false">Liked</p></div>
+<div data-e2e="user-post-item-list" id="grid"></div>
+<div id="private" class="hidden"><p>This account is private</p></div>
+<div class="css-4-DivSuggested" data-e2e="suggest-user-list">
+  <p>Suggested accounts</p>
+  <div><a href="/@fake_suggested">Fake Suggested</a><button type="button" data-e2e="follow-button">Follow</button></div>
+</div>
+<div data-e2e="follow-info-popup" id="popup" class="hidden" role="dialog">
+  <div role="tablist"><div role="tab" id="tab-following">Following</div><div role="tab" id="tab-followers">Followers</div></div>
+  <div class="css-5-DivUserListContainer" id="userlist"><ul id="ul"></ul></div>
+</div>
+<script>
+(function () {
+  const handle = decodeURIComponent((location.pathname.match(/\/@([^/?#]+)/) || [])[1] || '');
+  const CONFIG = {
+    fake_creator: { name: 'Fake Creator', videos: 30 },
+    fake_verified: { name: 'Fake Verified', verified: true, videos: 1 },
+    fake_nobio: { name: 'fake_nobio', bio: 'No bio yet.', videos: 1 },
+    fake_modern: { name: 'Fake Modern', modernList: true, videos: 1 },
+    fake_following: { name: 'Fake Following', state: 'Following', videos: 3 },
+    fake_friends: { name: 'Fake Friends', state: 'Friends', videos: 0 },
+    fake_private: { name: 'Fake Private', private: true, noMessage: true },
+    fake_stuck: { name: 'Fake Stuck', stuck: true, videos: 1 },
+    fake_foreign: { name: 'Fake Foreign', state: 'Seguir', videos: 1 },
+    fake_wrongchat: { name: 'Fake Wrongchat', chatWith: 'fake_someone_else', videos: 1 },
+    fake_mute: { name: 'Fake Mute', videos: 1 },
+    fake_nodm: { name: 'Fake NoDM', noMessage: true, videos: 1 },
+    me_loggedout: { name: 'Logged Out', loggedOut: true, videos: 1 },
+  };
+  const cfg = CONFIG[handle] || { name: 'Unknown', videos: 0 };
+  window.__events = [];
+  const log = (s) => window.__events.push(s);
+  const trusted = (e) => { if (!e.isTrusted) { log('untrusted-click'); return false; } return true; };
+
+  document.getElementById('title').textContent = cfg.name;
+  const sub = document.getElementById('subtitle');
+  sub.textContent = handle;
+  if (cfg.verified) sub.insertAdjacentHTML('afterend', '<svg width="14" data-e2e="" height="14" viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="24" fill="#20D5EC"></circle><path d="M37 16L21 32L11 22" fill="white"></path></svg>');
+  if (cfg.bio !== undefined) document.getElementById('bio').textContent = cfg.bio;
+  if (cfg.loggedOut) { document.getElementById('login').classList.remove('hidden'); document.getElementById('me').remove(); }
+
+  const follow = document.getElementById('follow');
+  if (cfg.state) follow.textContent = cfg.state;
+  follow.addEventListener('click', (e) => {
+    if (!trusted(e)) return;
+    log('follow-click:' + handle);
+    if (cfg.stuck) return;
+    const t = follow.textContent.trim();
+    setTimeout(() => { follow.textContent = (t === 'Follow') ? (cfg.private ? 'Requested' : 'Following') : 'Follow'; }, 150);
+  });
+  document.querySelector('[data-e2e="suggest-user-list"] button').addEventListener('click', (e) => {
+    if (trusted(e)) log('suggested-follow-click');
+  });
+
+  const msg = document.getElementById('message');
+  if (cfg.noMessage) msg.remove();
+  msg.addEventListener('click', (e) => {
+    if (!trusted(e)) return;
+    log('message-click');
+    location.href = '/messages?u=' + encodeURIComponent(cfg.chatWith || handle);
+  });
+
+  const grid = document.getElementById('grid');
+  if (cfg.private) {
+    grid.remove();
+    document.getElementById('tabs').remove();
+    document.getElementById('private').classList.remove('hidden');
+  }
+  let shown = 0;
+  const addVideos = (n) => {
+    for (let i = 0; i < n && shown < (cfg.videos || 0); i++, shown++) {
+      const id = String(7200000000000000000n + BigInt(shown + 1));
+      const d = document.createElement('div');
+      d.setAttribute('data-e2e', 'user-post-item');
+      d.innerHTML = '<a href="https://www.tiktok.com/@' + handle + '/video/' + id + '"><img alt="Synthetic clip ' + (shown + 1) + ' created by ' + cfg.name + ' with ' + cfg.name + '\'s original sound" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="><strong data-e2e="video-views">' + (100 + shown) + '</strong></a>';
+      grid.appendChild(d);
+    }
+  };
+  if (!cfg.private) addVideos(12);
+  window.addEventListener('scroll', () => {
+    if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 50) setTimeout(() => addVideos(12), 20);
+  });
+
+  // Followers / following popup, with lazy loading.
+  const popup = document.getElementById('popup');
+  const ul = document.getElementById('ul');
+  let listed = 0, kind = '';
+  const addUsers = (n) => {
+    for (let i = 0; i < n && listed < 14; i++, listed++) {
+      const u = 'fake_' + kind + '_' + (listed + 1);
+      const name = 'Fake ' + kind + ' ' + (listed + 1);
+      if (cfg.modernList) {
+        // Current layout: no nickname data-e2e; the avatar and the texts are
+        // separate links, the @handle comes first and the display name
+        // second. Odd rows carry TikTok's PUniqueId/PNickname class hints,
+        // even rows only hashed classes (and a div, not an li, as the row).
+        const hinted = listed % 2 === 0;
+        const row = document.createElement(hinted ? 'li' : 'div');
+        row.innerHTML = '<div class="css-10-DivUserItem">' +
+          '<a href="/@' + u + '" class="css-11-StyledUserInfoLink"><span class="css-12-SpanAvatarContainer"><img alt="" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></span></a>' +
+          '<a href="/@' + u + '" class="css-13-StyledUserInfoLink"><div class="css-14-DivUserInfo">' +
+            (hinted ? '<p class="css-15-PUniqueId">' + u + '</p><p class="css-16-PNickname">' + name + '</p>'
+                    : '<span class="css-15b-SpanA">' + u + '</span><span class="css-16b-SpanB">' + name + '</span>') +
+          '</div></a>' +
+          '<div class="css-17-DivFollowButtonWrapper"><button type="button" data-e2e="follow-button">Follow back</button></div></div>';
+        ul.appendChild(row);
+        continue;
+      }
+      const li = document.createElement('li');
+      li.innerHTML = '<a href="/@' + u + '"><span data-e2e="follow-info-nickname">' + name + '</span><p>' + u + '</p></a><button type="button">Follow</button>';
+      ul.appendChild(li);
+    }
+  };
+  for (const which of ['followers', 'following']) {
+    document.getElementById(which + '-count').addEventListener('click', (e) => {
+      if (!trusted(e)) return;
+      kind = which; listed = 0; ul.innerHTML = '';
+      popup.classList.remove('hidden');
+      if (!cfg.private) setTimeout(() => addUsers(6), 100);
+    });
+  }
+  document.getElementById('userlist').addEventListener('scroll', () => setTimeout(() => addUsers(4), 20));
+})();
+</script>
+</body>
+</html>

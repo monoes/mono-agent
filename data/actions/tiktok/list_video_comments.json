@@ -2,7 +2,7 @@
   "actionType": "list_video_comments",
   "platform": "TIKTOK",
   "version": "1.0.0",
-  "description": "List comments on TikTok videos from a list of video URLs",
+  "description": "List comments on TikTok videos from a list of video URLs: id, username, displayName, text, likes, liked. id is TikTok's own when the page carries one, otherwise a stable tth- hash of the author and the text",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
@@ -36,19 +36,28 @@
     ]
   },
   "outputs": {
-    "success": ["comments", "commentsCount", "reachedIndex"],
-    "failure": ["failedItems"]
+    "success": [
+      "comments",
+      "commentsCount",
+      "reachedIndex"
+    ],
+    "failure": [
+      "failedItems"
+    ]
   },
   "steps": [
     {
       "id": "t1_list_comments",
       "type": "call_bot_method",
       "methodName": "list_video_comments",
-      "args": ["{{item.url or item}}", "{{maxComments or 50}}"],
+      "args": [
+        "{{item.url or item}}",
+        "{{maxComments or 50}}"
+      ],
       "variable_name": "comments",
-      "timeout": 120,
+      "timeout": 180,
       "onError": {
-        "action": "skip"
+        "action": "mark_failed"
       }
     },
     {
@@ -80,7 +89,13 @@
       "id": "process_videos",
       "iterator": "selectedListItems",
       "indexVar": "reachedIndex",
-      "steps": ["t1_list_comments", "save_comments", "store_count", "wait", "log_success"],
+      "steps": [
+        "t1_list_comments",
+        "save_comments",
+        "store_count",
+        "wait",
+        "log_success"
+      ],
       "onComplete": "update_action_state"
     }
   ],
