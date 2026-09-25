@@ -7,6 +7,8 @@ package choose
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -127,15 +129,18 @@ func (n *Node) Execute(ctx context.Context, input workflow.NodeInput, raw map[st
 		errOnce  sync.Once
 		firstErr error
 	)
+	// Acquire a slot before starting the goroutine so at most cfg.concurrency
+	// goroutines exist at once, however many items come in.
+dispatch:
 	for i, item := range input.Items {
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			break dispatch
+		}
 		wg.Add(1)
 		go func(i int, item workflow.Item) {
 			defer wg.Done()
-			select {
-			case sem <- struct{}{}:
-			case <-ctx.Done():
-				return
-			}
 			defer func() { <-sem }()
 			if ctx.Err() != nil {
 				return
@@ -261,15 +266,7 @@ func itemInput(cfg *config, item workflow.Item, in workflow.NodeInput) string {
 	var s string
 	switch {
 	case cfg.input != "":
-		s = expandTemplate(cfg.input, item)
-		if strings.Contains(s, "{{") {
-			engine := workflow.NewExpressionEngine()
-			if v, err := engine.EvaluateString(s, workflow.ExpressionContext{
-				JSON: item.JSON, Node: in.NodeOutputs, WorkflowID: in.WorkflowID, ExecutionID: in.ExecutionID,
-			}); err == nil {
-				s = v
-			}
-		}
+		s = renderInput(cfg.input, item, in)
 	case len(cfg.fields) > 0:
 		proj := make(map[string]any, len(cfg.fields))
 		for _, f := range cfg.fields {
@@ -300,26 +297,59 @@ func capChars(s string, n int) string {
 	return string(r[:n]) + "…"
 }
 
-// expandTemplate replaces {{$json.KEY}} placeholders with values from item.JSON
-// (copied from agent.ask; objects and arrays render as JSON).
-func expandTemplate(template string, item workflow.Item) string {
-	return templatePattern.ReplaceAllStringFunc(template, func(match string) string {
-		parts := templatePattern.FindStringSubmatch(match)
-		if len(parts) < 2 || item.JSON == nil {
-			return match
-		}
-		val, ok := item.JSON[parts[1]]
+// renderInput renders the configured input template for one item. Item
+// content must reach Jev verbatim and never be evaluated as a template (an
+// email body holding "{{ .node.X.json.token }}" would otherwise leak that
+// value), so {{$json.field}} placeholders are first masked with random
+// per-call tokens, the configured template alone goes through the expression
+// engine, and only then are the tokens replaced — in a single pass that never
+// rescans what it inserts — by the literal field values.
+func renderInput(tmpl string, item workflow.Item, in workflow.NodeInput) string {
+	nonce := make([]byte, 8)
+	_, _ = rand.Read(nonce)
+	prefix := "\u27e6choose-" + hex.EncodeToString(nonce) + "-"
+	var pairs []string
+	masked := templatePattern.ReplaceAllStringFunc(tmpl, func(match string) string {
+		val, ok := placeholderValue(match, item)
 		if !ok {
 			return match
 		}
-		switch v := val.(type) {
-		case string:
-			return v
-		case map[string]interface{}, []interface{}:
-			return marshal(val)
-		}
-		return fmt.Sprintf("%v", val)
+		token := fmt.Sprintf("%s%d\u27e7", prefix, len(pairs)/2)
+		pairs = append(pairs, token, val)
+		return token
 	})
+	if strings.Contains(masked, "{{") {
+		engine := workflow.NewExpressionEngine()
+		if v, err := engine.EvaluateString(masked, workflow.ExpressionContext{
+			JSON: item.JSON, Node: in.NodeOutputs, WorkflowID: in.WorkflowID, ExecutionID: in.ExecutionID,
+		}); err == nil {
+			masked = v
+		}
+	}
+	if len(pairs) == 0 {
+		return masked
+	}
+	return strings.NewReplacer(pairs...).Replace(masked)
+}
+
+// placeholderValue renders the item value a {{$json.KEY}} match stands for
+// (objects and arrays as JSON); ok is false when the key is absent.
+func placeholderValue(match string, item workflow.Item) (string, bool) {
+	parts := templatePattern.FindStringSubmatch(match)
+	if len(parts) < 2 || item.JSON == nil {
+		return "", false
+	}
+	val, ok := item.JSON[parts[1]]
+	if !ok {
+		return "", false
+	}
+	switch v := val.(type) {
+	case string:
+		return v, true
+	case map[string]interface{}, []interface{}:
+		return marshal(val), true
+	}
+	return fmt.Sprintf("%v", val), true
 }
 
 // --- config parsing ---

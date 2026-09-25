@@ -79,7 +79,7 @@
     },
     {
       "default": 4,
-      "help": "Requests in flight at once (one request per item).",
+      "help": "Requests in flight at once (one request per item). If any item's request fails the whole node fails and a re-run sends every item again.",
       "key": "concurrency",
       "label": "Concurrency",
       "max": 8,

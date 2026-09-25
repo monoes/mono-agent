@@ -7,7 +7,8 @@ package choose
 // cases accepts the same shapes as core.switch: a plain string (value and
 // handle) or {value， handle， description}; description is the criterion
 // Jev judges the case by. Output handles: one per case handle plus
-// low_confidence.
+// low_confidence. One failed item request fails the whole node (no partial
+// output), so a re-run re-sends every item.
 type ChooseNodeSchema struct {
 	Cases string `json:"cases" schema:"label=Cases,type=array,item_type=text,required,help=Each value becomes an output handle. Objects {value， handle， description} set a custom handle and the criterion Jev judges by."`
 
@@ -27,5 +28,5 @@ type ChooseNodeSchema struct {
 
 	Model string `json:"model" schema:"label=Jev Model,type=text,default=jev-latest"`
 
-	Concurrency float64 `json:"concurrency" schema:"label=Concurrency,type=number,default=4,min=1,max=8,help=Requests in flight at once (one request per item)."`
+	Concurrency float64 `json:"concurrency" schema:"label=Concurrency,type=number,default=4,min=1,max=8,help=Requests in flight at once (one request per item). If any item's request fails the whole node fails and a re-run sends every item again."`
 }

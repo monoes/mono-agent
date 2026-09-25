@@ -172,7 +172,8 @@ out on the chosen case's handle; when the top probability is below
 min_confidence they go to "low_confidence" instead. Extra typed questions
 (noul = yes/no, choice, score = ordered rubric) ride along in the same request.
 The item content is sent as "untrusted_input" and treated as data, never
-instructions.`,
+instructions. If any item's request fails, the whole node fails (no partial
+output) and a re-run sends every item again.`,
 		Config: `{
   "cases": [                               // required, same shapes as core.switch
     "billing",
