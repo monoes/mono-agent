@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	browserpkg "github.com/monoes/mono-agent/internal/browser"
+	"github.com/monoes/mono-agent/internal/nodes"
 	"github.com/monoes/mono-agent/internal/recordanalyze"
 	"github.com/monoes/mono-agent/internal/recording"
 	"github.com/monoes/mono-agent/internal/workflow"
@@ -53,11 +54,17 @@ var recordVerifyExec = func(ctx context.Context, automationID string, verbose bo
 	return recordanalyze.PageExecWithSecrets(page, logger, secrets), nil
 }
 
-// recordSecretLookup returns the vault lookup for an automation's secrets
-// (namespaced by the automation id), or nil when no vault is available.
-// The returned func releases what it opened. Tests replace it.
+// recordSecretLookup returns the profile vault lookup for an automation's
+// secrets — the same one node runs use ("<automation>/<name>", then the bare
+// name unless the package is imported) — or nil when the database cannot be
+// opened. The returned func closes the database. Tests replace it.
 var recordSecretLookup = func(ctx context.Context, cfg *globalConfig, automationID string) (func(string) (string, bool), func()) {
-	return nil, func() {}
+	db, err := initDB(cfg)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "warning: vault unavailable for verify secrets:", err)
+		return nil, func() {}
+	}
+	return nodes.SecretLookup(ctx, db.DB, cfg.ProfileID, automationID), func() { db.Close() }
 }
 
 // monoagentHome is ~/.monoagent (the parent of recording-drafts).

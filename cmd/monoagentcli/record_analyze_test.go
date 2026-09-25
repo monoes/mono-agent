@@ -289,3 +289,18 @@ func TestRecordAnalyzeVerifyVaultLookup(t *testing.T) {
 		t.Errorf("--input must win: %v %v", got, err)
 	}
 }
+
+// TestRecordAnalyzeDefaultSecretLookup: the production lookup opens the
+// profile database and answers "not found" for a secret the vault lacks.
+func TestRecordAnalyzeDefaultSecretLookup(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cfg := &globalConfig{DBPath: filepath.Join(t.TempDir(), "vault.db")}
+	lookup, release := recordSecretLookup(context.Background(), cfg, "example-go")
+	defer release()
+	if lookup == nil {
+		t.Fatal("no lookup for an openable database")
+	}
+	if v, ok := lookup("pw"); ok || v != "" {
+		t.Errorf("missing secret resolved: ok=%v", ok)
+	}
+}
