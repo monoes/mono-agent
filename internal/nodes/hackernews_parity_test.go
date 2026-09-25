@@ -180,6 +180,12 @@ func TestHackerNewsParityNodeOutput(t *testing.T) {
 				page("https://news.ycombinator.com/item?id=70000001", "list_comments.html"),
 			}
 		}},
+		{"comments-no-indent", "list_comments", map[string]interface{}{"itemID": "70000001"}, func() []bottest.Route {
+			return []bottest.Route{
+				page("https://news.ycombinator.com/item?id=70000001&p=2", "item_p2.html"),
+				page("https://news.ycombinator.com/item?id=70000001", "item_noindent.html"),
+			}
+		}},
 		{"reply", "reply_to_comment", map[string]interface{}{"itemID": "70000010", "text": "Thanks for the *synthetic* write-up.\n\nSecond line here."}, func() []bottest.Route {
 			return []bottest.Route{
 				page("https://news.ycombinator.com/reply?*", "reply_to_comment.html"),

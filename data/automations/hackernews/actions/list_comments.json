@@ -114,7 +114,7 @@
     {
       "id": "read_rows",
       "type": "extract_table",
-      "description": "HN renders the thread as a flat list of rows; td.ind[indent] is the depth (not output: record false)",
+      "description": "HN renders the thread as a flat list of rows; td.ind[indent] is the depth, else the indent image's width in 40px steps (not output: record false)",
       "selector": "body",
       "value": {"rows": "tr.athing.comtr", "record": false},
       "fields": {
@@ -122,7 +122,8 @@
         "author": "a.hnuser",
         "body": ".commtext",
         "depth": "td.ind@indent",
-        "age": ".age@title"
+        "age": ".age@title",
+        "indentPx": "td.ind img@width"
       },
       "variable_name": "cRows",
       "timeout": 5,
@@ -135,6 +136,8 @@
       "input": "{{cRows}}",
       "variable_name": "cKeep",
       "ops": [
+        {"op": "divide", "field": "indentPx", "by": 40, "round": true, "to": "indentLvl"},
+        {"op": "map", "map": {"depth": "{{depth or indentLvl or 0}}"}},
         {
           "op": "tree_parent",
           "field": "depth",

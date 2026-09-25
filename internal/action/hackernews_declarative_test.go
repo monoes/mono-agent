@@ -308,6 +308,18 @@ func TestHackerNewsListComments(t *testing.T) {
 		t.Fatalf("topLevelOnly ids = %v", ids)
 	}
 
+	// Rows without td.ind[indent]: the depth comes from the indent image's
+	// width (40px per level), as with the bot.
+	p2, _ := hnBrowserPage(t,
+		fx("https://news.ycombinator.com/item?id=70000001&p=2", "item_p2.html"),
+		fx("https://news.ycombinator.com/item?id=70000001", "item_noindent.html"),
+	)
+	got, err = runHN(t, p2, "list_comments", map[string]interface{}{"itemID": "70000001"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	jsonEq(t, got, expectFile(t, "list_comments"))
+
 	_, err = runHN(t, p, "list_comments", map[string]interface{}{"itemID": "70000077"})
 	wantErr(t, err, "item 70000077 not found", "No such item.")
 	_, err = runHN(t, p, "list_comments", map[string]interface{}{"itemID": "7&x=1"})
