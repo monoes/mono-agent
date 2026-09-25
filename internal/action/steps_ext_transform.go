@@ -188,6 +188,9 @@ func applyOp(items []interface{}, op TransformOp, vars map[string]interface{}, n
 		}
 		return items, nil
 
+	case "sort":
+		return sortItems(items, op)
+
 	case "dedupe":
 		seen := map[string]bool{}
 		out := items[:0:0]

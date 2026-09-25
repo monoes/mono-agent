@@ -1,10 +1,13 @@
 package action
 
-// Value parsers for transform: human-printed numbers and dates.
+// Value parsing and ordering for transform: human-printed numbers and
+// dates, and the sort op.
 
 import (
+	"fmt"
 	"math"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -111,4 +114,64 @@ func parseDate(s, layout string, now time.Time) (time.Time, bool) {
 		}
 	}
 	return time.Time{}, false
+}
+
+// sortItems stably sorts items by Field ("" = the item itself), ascending
+// or descending by Order. Two values that both parse as numbers compare
+// numerically, otherwise as strings; missing (nil) values sort last in
+// either order.
+func sortItems(items []interface{}, op TransformOp) ([]interface{}, error) {
+	desc := false
+	switch strings.ToLower(strings.TrimSpace(op.Order)) {
+	case "", "asc":
+	case "desc":
+		desc = true
+	default:
+		return nil, fmt.Errorf("sort order %q: want asc or desc", op.Order)
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		a, b := getField(items[i], op.Field), getField(items[j], op.Field)
+		if a == nil || b == nil {
+			return a != nil && b == nil // present before missing
+		}
+		c := compareValues(a, b)
+		if desc {
+			return c > 0
+		}
+		return c < 0
+	})
+	return items, nil
+}
+
+// compareValues orders two present values: numerically when both are
+// numbers, else by their string form.
+func compareValues(a, b interface{}) int {
+	fa, okA := strictNumber(a)
+	fb, okB := strictNumber(b)
+	if okA && okB {
+		switch {
+		case fa < fb:
+			return -1
+		case fa > fb:
+			return 1
+		}
+		return 0
+	}
+	return strings.Compare(fieldString(a), fieldString(b))
+}
+
+// strictNumber parses v only when it is a number or a plain numeric string.
+func strictNumber(v interface{}) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case string:
+		f, err := strconv.ParseFloat(strings.TrimSpace(n), 64)
+		return f, err == nil
+	}
+	return 0, false
 }

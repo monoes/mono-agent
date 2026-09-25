@@ -304,3 +304,49 @@ func TestTransformFlag(t *testing.T) {
 		}
 	}
 }
+
+func TestTransformSort(t *testing.T) {
+	src := func() []interface{} {
+		return txItems(
+			txM{"id": "9", "k": "a"}, txM{"id": 10.0, "k": "b"}, txM{"k": "none1"},
+			txM{"id": "100", "k": "c"}, txM{"id": "9", "k": "d"}, txM{"k": "none2"}, txM{"id": "x", "k": "e"},
+		)
+	}
+	keys := func(v interface{}) string {
+		var out []string
+		for _, r := range v.([]interface{}) {
+			out = append(out, r.(txM)["k"].(string))
+		}
+		return strings.Join(out, ",")
+	}
+	// Numbers numerically ("9" < 10 < "100"), "x" vs numbers by string,
+	// equal keys keep input order (a before d), missing last in both orders.
+	got, err := runTransform(src(), []TransformOp{{Op: "sort", Field: "id"}}, nil, transformNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if k := keys(got); k != "a,d,b,c,e,none1,none2" {
+		t.Fatalf("asc = %s", k)
+	}
+	got, err = runTransform(src(), []TransformOp{{Op: "sort", Field: "id", Order: "desc"}}, nil, transformNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if k := keys(got); k != "e,c,b,a,d,none1,none2" {
+		t.Fatalf("desc = %s", k)
+	}
+	// Highest matching id: sort desc, limit 1.
+	got, err = runTransform(txItems(txM{"id": "41"}, txM{"id": "402"}, txM{"id": "7"}),
+		[]TransformOp{{Op: "sort", Field: "id", Order: "desc"}, {Op: "limit", Count: 1}}, nil, transformNow)
+	if err != nil || got.([]interface{})[0].(txM)["id"] != "402" {
+		t.Fatalf("highest = %v, %v", got, err)
+	}
+	// Plain values (empty field) sort too.
+	got, _ = runTransform([]interface{}{"b", "a", "c"}, []TransformOp{{Op: "sort"}}, nil, transformNow)
+	if !reflect.DeepEqual(got, []interface{}{"a", "b", "c"}) {
+		t.Fatalf("strings = %v", got)
+	}
+	if _, err := runTransform(src(), []TransformOp{{Op: "sort", Field: "id", Order: "up"}}, nil, transformNow); err == nil {
+		t.Fatal("bad order must fail")
+	}
+}
