@@ -85,6 +85,38 @@ func TestBrowserListComments(t *testing.T) {
 	}
 }
 
+// TestBrowserListCommentsThreadedReplies uses the real 2026 layout: every
+// comment (reply or not) sits in its own thread-<id> container, and a
+// reply's thread is nested inside its parent's thread rather than inside
+// the parent comment element. Replies must come back at depth 1 under the
+// enclosing thread, not at depth 0 because closest() found their own thread.
+func TestBrowserListCommentsThreadedReplies(t *testing.T) {
+	p := phPage(t, "launch_threads.html")
+	res, err := bottest.CallMethod(t, &ProductHuntBot{}, p, "list_comments", launchURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type row struct {
+		id, author, username, text, parent string
+		depth, upvotes                     int
+	}
+	var got []row
+	for _, c := range res.([]map[string]interface{}) {
+		got = append(got, row{c["id"].(string), c["author"].(string), c["username"].(string), c["text"].(string), c["parentId"].(string), c["depth"].(int), c["upvotes"].(int)})
+	}
+	want := []row{
+		{"810001", "Sam Maker", "sam_maker", "Hello testers! We built a synthetic widget.\n\nAsk us anything.", "", 0, 5},
+		{"810005", "Pat Example", "pat_example", "Shoutout to @sam_maker for this.", "810001", 1, 2},
+		{"810007", "Sam Maker", "sam_maker", "Thanks Pat! @pat_example", "810001", 1, 1},
+		{"810020", "Lee Example", "lee_example", "Does it work offline?", "", 0, 0},
+		{"810030", "Kim Example", "kim_example", "Pricing?", "", 0, 1},
+		{"810031", "Sam Maker", "sam_maker", "Free for now.", "810030", 1, 0},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("comments:\n got %+v\nwant %+v", got, want)
+	}
+}
+
 func TestBrowserLaunchMetrics(t *testing.T) {
 	p := phPage(t, "launch.html")
 	res, err := bottest.CallMethod(t, &ProductHuntBot{}, p, "get_launch_metrics", launchURL)
