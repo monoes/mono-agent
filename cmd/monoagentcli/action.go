@@ -7,13 +7,18 @@ import (
 func newActionCmd(cfg *globalConfig) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "action",
-		Short: "Manage action templates",
-		Long:  "Capture, install, and list action templates for new platforms.",
+		Short: "Export, import and template single actions",
+		Long:  "Move single actions between automations and machines, and capture action templates for new sites.",
 	}
 
 	cmd.AddCommand(
 		newActionTemplateCmd(cfg),
+		newActionExportCmd(cfg),
+		newActionImportCmd(cfg),
 	)
+	for _, sub := range cmd.Commands() {
+		withJSONErrors(cfg, sub)
+	}
 
 	return cmd
 }

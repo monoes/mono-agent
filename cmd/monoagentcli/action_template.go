@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
@@ -14,6 +13,7 @@ import (
 	"github.com/go-rod/rod/lib/launcher"
 	"github.com/go-rod/rod/lib/proto"
 	"github.com/monoes/mono-agent/internal/action"
+	"github.com/monoes/mono-agent/internal/automation"
 	"github.com/spf13/cobra"
 )
 
@@ -58,7 +58,7 @@ Workflow:
 
 	cmd.AddCommand(
 		newActionTemplateCaptureCmd(),
-		newActionTemplateInstallCmd(),
+		newActionTemplateInstallCmd(cfg),
 		newActionTemplateListCmd(cfg),
 	)
 
@@ -146,65 +146,44 @@ func newActionTemplateCaptureCmd() *cobra.Command {
 	return cmd
 }
 
-func newActionTemplateInstallCmd() *cobra.Command {
-	return &cobra.Command{
+// newActionTemplateInstallCmd is the deprecated alias kept for one release
+// (spec §5.2): the single ActionDef JSON is wrapped into a generated local
+// package (id = its automation/platform field) and merged via AddAction.
+func newActionTemplateInstallCmd(cfg *globalConfig) *cobra.Command {
+	cmd := &cobra.Command{
 		Use:     "install <file>",
-		Short:   "Install an ActionDef JSON template so 'node run <platform>.<type>' works",
+		Short:   "Install an ActionDef JSON (deprecated: use 'action import' or 'automation install')",
 		Args:    cobra.ExactArgs(1),
 		Example: `  monoagent action template install ~/Downloads/example_scrape_profile.json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			srcPath := args[0]
-
-			fileData, err := os.ReadFile(srcPath)
-			if err != nil {
-				return fmt.Errorf("read file %s: %w", srcPath, err)
-			}
-
-			var def action.ActionDef
-			if err := json.Unmarshal(fileData, &def); err != nil {
-				return fmt.Errorf("invalid ActionDef JSON: %w", err)
-			}
-			if def.Platform == "" {
-				return fmt.Errorf("ActionDef missing required field: platform")
-			}
-			if def.ActionType == "" {
-				return fmt.Errorf("ActionDef missing required field: actionType")
-			}
-			if len(def.Steps) == 0 {
-				return fmt.Errorf("ActionDef has no steps")
-			}
-
-			platform := strings.ToLower(def.Platform)
-			actionType := strings.ToLower(def.ActionType)
-
-			// Prevent directory traversal in derived paths.
-			if strings.ContainsAny(platform, "/..") || strings.ContainsAny(actionType, "/..") {
-				return fmt.Errorf("platform or actionType contains invalid characters")
-			}
-
-			installDir, err := userActionsInstallDir()
+			fmt.Fprintf(cmd.ErrOrStderr(), "note: 'action template install' is deprecated; use 'monoagentcli action import <file>' (or 'automation install' for packages)\n")
+			reg, err := openAutomationRegistry()
 			if err != nil {
 				return err
 			}
-
-			platformDir := filepath.Join(installDir, platform)
-			if err := os.MkdirAll(platformDir, 0o755); err != nil {
-				return fmt.Errorf("create platform dir: %w", err)
+			src, cleanup, err := wrapActionJSON(args[0], reg)
+			if err != nil {
+				return err
 			}
-
-			dest := filepath.Join(platformDir, actionType+".json")
-			if err := os.WriteFile(dest, fileData, 0o644); err != nil {
-				return fmt.Errorf("write template: %w", err)
+			defer cleanup()
+			res, err := addActions(reg, src.Manifest.ID, src, automation.InstallOptions{Source: automation.SourceLocal})
+			if err != nil {
+				return err
 			}
-
-			// Invalidate loader cache so the next node run picks up the new template.
-			action.GetLoader().Invalidate(platform, actionType)
-
-			fmt.Printf("Installed: %s.%s -> %s\n", platform, actionType, dest)
-			fmt.Printf("Run it: monoagent node run %s.%s\n", platform, actionType)
+			name := src.Manifest.Actions[0]
+			// Invalidate loader cache so the next node run picks up the new action.
+			action.GetLoader().Invalidate(res.ID, name)
+			out := cmd.OutOrStdout()
+			if cfg.JSONOutput {
+				return writeJSONTo(out, res)
+			}
+			fmt.Fprintf(out, "Installed: %s.%s -> %s\n", res.ID, name, res.Dir)
+			fmt.Fprintf(out, "Run it: monoagent node run %s.%s\n", res.ID, name)
 			return nil
 		},
 	}
+	withJSONErrors(cfg, cmd)
+	return cmd
 }
 
 func newActionTemplateListCmd(cfg *globalConfig) *cobra.Command {
