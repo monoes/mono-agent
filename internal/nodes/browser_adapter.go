@@ -257,6 +257,9 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 		logger,
 	)
 	attachPackage(executor, b.platform, storage.db)
+	if storage.db != nil {
+		executor.SetSecretLookup(secretLookup(ctx, storage.db, storage.profileID, strings.ToLower(b.platform)))
+	}
 
 	// Opt-in Jev element-picker fallback for steps that declare an intent
 	// (`monoagentcli jev enable action_fallback`). Disabled, or no key ⇒
