@@ -2,83 +2,67 @@ package automation
 
 import (
 	"errors"
-	"io"
-	"io/fs"
-
-	"github.com/monoes/mono-agent/internal/action"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
 )
 
-// ErrNotImplemented marks skeleton functions not yet filled in.
+// ErrNotImplemented marks functions not yet filled in.
 var ErrNotImplemented = errors.New("automation: not implemented")
 
-// Package is one opened automation package (any form).
-type Package struct {
-	Manifest Manifest
-	FS       fs.FS  // rooted at the package directory
-	Source   string // builtin | imported | local
-	Dir      string // on-disk dir when installed ("" for zip/embed)
-}
+// ErrInvalid is wrapped by Install/AddAction when the package has
+// validation errors; the returned InstallResult still carries the review
+// and the issues.
+var ErrInvalid = errors.New("automation: package has validation errors")
 
-// OpenDir opens a package directory. OpenFile opens a .mpkg (zip) file.
-// OpenFS opens a package rooted at fsys.
-func OpenDir(dir string) (*Package, error)                       { return nil, ErrNotImplemented }
-func OpenFile(path string) (*Package, error)                     { return nil, ErrNotImplemented }
-func OpenFS(fsys fs.FS, source string) (*Package, error)         { return nil, ErrNotImplemented }
-func (p *Package) Action(name string) (*action.ActionDef, error) { return nil, ErrNotImplemented }
-func (p *Package) Context() action.PackageContext                { return nil }
+// ErrNotInstalled is returned for an id with no installed package.
+var ErrNotInstalled = errors.New("automation: not installed")
 
-// Pack writes the package directory dir as a .mpkg zip (with CHECKSUMS) to w.
-func Pack(dir string, w io.Writer) error { return ErrNotImplemented }
-
-// Validate validates a package: manifest, every action (action.Validate),
-// fragments, selectors, scripts declared ↔ present, fixture tests.
-func Validate(p *Package) []IssueJSON { return nil }
-
-// PolicyAllows is the social gate (spec §6.4).
-func PolicyAllows(m Manifest) (bool, string) { return true, "" }
-
-// Registry is the installed set under <home>/automations.
+// Registry is the installed set under <home>/automations:
+//
+//	<home>/automations/index.json
+//	<home>/automations/<id>/<version>/…        current and previous version
+//	<home>/automations/<id>/overlay/selectors.json
 type Registry struct {
 	home string
+	root string
+
+	mu sync.Mutex // serialises writers inside one process (flock covers others)
 }
 
 // Open opens (creating if needed) the registry under home (normally
-// ~/.monoagent). Default opens it under the user's home dir.
-func Open(home string) (*Registry, error) { return &Registry{home: home}, nil }
-func Default() (*Registry, error)         { return nil, ErrNotImplemented }
-
-// Seed installs/updates the embedded built-ins per spec §5.1 rules.
-func (r *Registry) Seed(builtins fs.FS) error { return ErrNotImplemented }
-
-func (r *Registry) List(includeRemoved bool) ([]InstalledInfo, error) { return nil, ErrNotImplemented }
-func (r *Registry) Get(id string) (*Package, error)                   { return nil, ErrNotImplemented }
-func (r *Registry) Info(id string) (*InstalledInfo, error)            { return nil, ErrNotImplemented }
-
-// Install installs a .mpkg file, a package directory, or an http(s) URL.
-func (r *Registry) Install(src string, opts InstallOptions) (*InstallResult, error) {
-	return nil, ErrNotImplemented
+// ~/.monoagent).
+func Open(home string) (*Registry, error) {
+	if home == "" {
+		return nil, errors.New("automation: empty registry home")
+	}
+	abs, err := filepath.Abs(home)
+	if err != nil {
+		return nil, err
+	}
+	r := &Registry{home: abs, root: filepath.Join(abs, "automations")}
+	if err := os.MkdirAll(r.root, 0o755); err != nil {
+		return nil, fmt.Errorf("automation: create registry: %w", err)
+	}
+	return r, nil
 }
 
-// AddAction merges one action (and its fragment/selector/script closure)
-// from src into installed package id, bumping its patch version. When id
-// is not installed, src's manifest is used to create it (source local).
-func (r *Registry) AddAction(id string, src *Package, actionName string, opts InstallOptions) (*InstallResult, error) {
-	return nil, ErrNotImplemented
+// Default opens the registry under ~/.monoagent (honouring $HOME).
+func Default() (*Registry, error) {
+	home := os.Getenv("HOME")
+	if home == "" {
+		h, err := os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("automation: resolve home: %w", err)
+		}
+		home = h
+	}
+	return Open(filepath.Join(home, ".monoagent"))
 }
 
-func (r *Registry) Uninstall(id string) error               { return ErrNotImplemented }
-func (r *Registry) Restore(id string, builtins fs.FS) error { return ErrNotImplemented }
-func (r *Registry) SetEnabled(id string, on bool) error     { return ErrNotImplemented }
-func (r *Registry) Rollback(id string) error                { return ErrNotImplemented }
+// Home is the directory the registry was opened on (e.g. ~/.monoagent).
+func (r *Registry) Home() string { return r.home }
 
-// Export writes package id as a .mpkg to w.
-func (r *Registry) Export(id string, w io.Writer, opts ExportOptions) error { return ErrNotImplemented }
-
-// WriteOverlaySelector records a healed selector in the local overlay
-// (<dir>/../overlay/selectors.json) without touching package files.
-func (r *Registry) WriteOverlaySelector(id, key string, e action.SelectorEntry) error {
-	return ErrNotImplemented
-}
-
-// DefSource adapts the registry for action.SetDefSource.
-func (r *Registry) DefSource() action.DefSource { return nil }
+// Root is <home>/automations.
+func (r *Registry) Root() string { return r.root }
