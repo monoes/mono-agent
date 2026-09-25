@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/monoes/mono-agent/internal/secrets"
 )
 
 // Manager orchestrates all connection flows.
@@ -43,6 +45,9 @@ func (m *Manager) Connect(ctx context.Context, platformID string, opts ConnectOp
 
 	// 2. Pick method — use a single reader for all stdin interactions
 	stdinReader := bufio.NewReader(os.Stdin)
+	// stdin now feeds the connect prompts; saving the connection must not
+	// read a file-keyring passphrase from it.
+	secrets.MarkStdinConsumed()
 	method := opts.Method
 	if method == "" {
 		method = m.pickMethod(p, stdinReader)

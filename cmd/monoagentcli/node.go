@@ -30,6 +30,7 @@ import (
 	"github.com/monoes/mono-agent/internal/noderegistry"
 	"github.com/monoes/mono-agent/internal/nodes"
 	peoplenodes "github.com/monoes/mono-agent/internal/nodes/people"
+	"github.com/monoes/mono-agent/internal/secrets"
 	"github.com/monoes/mono-agent/internal/vault"
 	"github.com/monoes/mono-agent/internal/workflow"
 	"github.com/rs/zerolog"
@@ -470,6 +471,7 @@ platform name to override. Token refresh is handled automatically for OAuth conn
 			// config (DB passwords, API keys) never appear in argv, which is
 			// world-readable via ps / /proc/<pid>/cmdline.
 			if stdinPayload {
+				secrets.MarkStdinConsumed()
 				raw, err := io.ReadAll(os.Stdin)
 				if err != nil {
 					return fmt.Errorf("reading --stdin payload: %w", err)

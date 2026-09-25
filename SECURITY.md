@@ -71,7 +71,8 @@ The file holds the KEK **wrapped** with AES-256-GCM under a key derived
 from an operator-supplied passphrase via argon2id (same tuning as the
 vault export/import format — see `internal/secrets/export.go`), in a JSON
 envelope alongside its salt and nonce (`internal/secrets/filekeyring.go`).
-The passphrase is read from stdin/an interactive prompt only, never
+The passphrase is read from stdin/an interactive prompt (or a chmod-600
+file named by `MONOAGENT_FILE_KEYRING_PASSPHRASE_FILE`, see below), never
 accepted as a CLI flag or environment variable — the same anti-argv
 pattern `secret add` and vault export/import already use, since both flags
 and env vars leak through shell history and process listings. Without the
@@ -114,13 +115,23 @@ invocations are separate processes, so each one prompts once. Store
 `VAULT_PASSPHRASE` as a masked/protected CI secret and pipe it into each
 invocation that needs it.
 
-This implies a stdin conflict for commands that *also* read their own
-payload from stdin (`secret add --stdin-json`, `secret update
---stdin-json`): the KEK passphrase and the command's JSON payload cannot
-both come from the same stdin stream in one invocation. For those, use
-`--field`/`--value` (still never `--value` for real secrets outside of
-disposable CI fixtures — the JSON payload flags land in shell history the
-same way argv secrets do) or a bootstrap step that avoids `--stdin-json`.
+Commands that *also* read their own input from stdin (`secret add` reading
+the value, `secret add|update --stdin-json`, `secret import`'s export
+passphrase, `jev key set`, `node run --stdin`, `jev --request -`, the
+`mcp` server) never read the KEK passphrase from stdin: they prompt on the
+controlling terminal (`/dev/tty`) instead. Where there is no terminal
+(the desktop app, a service), store the passphrase in a file only you can
+read and point `MONOAGENT_FILE_KEYRING_PASSPHRASE_FILE` at it:
+
+```bash
+install -m 600 /dev/null ~/.config/monoagent-keyring-pass
+$EDITOR ~/.config/monoagent-keyring-pass   # passphrase on the first line
+export MONOAGENT_FILE_KEYRING_PASSPHRASE_FILE=~/.config/monoagent-keyring-pass
+```
+
+The variable holds a path, never the passphrase; a file readable by group
+or others is refused. When it is set it wins over stdin and the terminal.
+Without it, a command that has no source fails with an error naming it.
 
 ## Assistant tools (chat `--tools`)
 
