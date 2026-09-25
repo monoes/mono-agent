@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -240,5 +241,53 @@ func TestLegacyActionsWrappedOnce(t *testing.T) {
 	r.Uninstall("local-acme")
 	if rep, _ := r.SeedWithReport(seedFS("1.0.0", "a")); len(rep.LegacyWrapped) != 0 {
 		t.Errorf("wrapped twice: %+v", rep)
+	}
+}
+
+func TestSeedAllBuiltinsIncludingX(t *testing.T) {
+	sub, err := fs.Sub(data.AutomationsFS, "automations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Both the raw embed FS and the fs.Sub'd root (as startup passes it).
+	for name, builtins := range map[string]fs.FS{"embed": data.AutomationsFS, "sub": sub} {
+		t.Run(name, func(t *testing.T) {
+			r := newReg(t)
+			rep, err := r.SeedWithReport(builtins)
+			if err != nil || len(rep.Skipped) != 0 {
+				t.Fatalf("seed: %v skipped=%v", err, rep.Skipped)
+			}
+			for _, id := range []string{"gemini", "hackernews", "instagram", "linkedin", "producthunt", "tiktok", "x"} {
+				if _, err := r.Info(id); err != nil {
+					t.Errorf("%s not seeded: %v", id, err)
+				}
+			}
+		})
+	}
+}
+
+func TestSingleCharIDValid(t *testing.T) {
+	for _, id := range []string{"x", "7", "a-b"} {
+		if !ValidID(id) {
+			t.Errorf("%q rejected", id)
+		}
+	}
+	for _, id := range []string{"", "-x", "X", "a_b", strings.Repeat("a", 42)} {
+		if ValidID(id) {
+			t.Errorf("%q accepted", id)
+		}
+	}
+}
+
+func TestBrokenBuiltinIsSkippedNotFatal(t *testing.T) {
+	builtins := seedFS("1.0.0", "a")
+	builtins["automations/broken/automation.json"] = &fstest.MapFile{Data: []byte(`{"id":"Broken!","version":"x"}`)}
+	r := newReg(t)
+	rep, err := r.SeedWithReport(builtins)
+	if err != nil {
+		t.Fatalf("broken built-in failed the seed: %v", err)
+	}
+	if len(rep.Skipped) != 1 || len(rep.Installed) != 1 {
+		t.Fatalf("report: %+v", rep)
 	}
 }

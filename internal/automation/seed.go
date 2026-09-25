@@ -2,7 +2,6 @@ package automation
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -20,6 +19,7 @@ type SeedReport struct {
 	Refreshed     []string `json:"refreshed,omitempty"`     // same version, changed files (dev builds)
 	Pending       []string `json:"pending,omitempty"`       // held back: the user modified the installed copy
 	LegacyWrapped []string `json:"legacyWrapped,omitempty"` // ~/.monoagent/actions/<p> → local-<p>
+	Skipped       []string `json:"skipped,omitempty"`       // broken built-ins, skipped with the reason
 }
 
 // Changed reports whether the seed wrote anything.
@@ -27,7 +27,8 @@ func (s *SeedReport) Changed() bool {
 	return len(s.Installed)+len(s.Updated)+len(s.Refreshed)+len(s.Pending)+len(s.LegacyWrapped) > 0
 }
 
-// Seed installs/updates the embedded built-ins per spec §5.1 rules.
+// Seed installs/updates the embedded built-ins per spec §5.1 rules. A
+// broken built-in is skipped (see SeedWithReport's Skipped), never fatal.
 func (r *Registry) Seed(builtins fs.FS) error {
 	_, err := r.SeedWithReport(builtins)
 	return err
@@ -58,8 +59,11 @@ const (
 // nothing needs to change nothing is written and no lock is taken. The
 // legacy ~/.monoagent/actions directory is wrapped once.
 func (r *Registry) SeedWithReport(builtins fs.FS) (*SeedReport, error) {
-	seeds, loadErr := loadSeeds(builtins)
-	rep := &SeedReport{}
+	seeds, skipped, loadErr := loadSeeds(builtins)
+	rep := &SeedReport{Skipped: skipped}
+	if loadErr != nil {
+		return rep, loadErr
+	}
 	idx, err := r.readIndex()
 	if err != nil {
 		return rep, err
@@ -72,7 +76,7 @@ func (r *Registry) SeedWithReport(builtins fs.FS) (*SeedReport, error) {
 		}
 	}
 	if !needed {
-		return rep, loadErr
+		return rep, nil
 	}
 	err = r.update(func(idx *indexFile) (bool, error) {
 		changed := false
@@ -114,10 +118,7 @@ func (r *Registry) SeedWithReport(builtins fs.FS) (*SeedReport, error) {
 		}
 		return changed, nil
 	})
-	if err != nil {
-		return rep, err
-	}
-	return rep, loadErr
+	return rep, err
 }
 
 // decideSeed applies the seeding rules to one built-in. It hashes the
@@ -174,15 +175,16 @@ func seedRoot(builtins fs.FS) fs.FS {
 }
 
 // loadSeeds opens every <id>/automation.json package of builtins. Broken
-// seeds are skipped and reported in the joined error.
-func loadSeeds(builtins fs.FS) ([]seedPkg, error) {
+// seeds are skipped and described in skipped; err is only for an
+// unreadable root.
+func loadSeeds(builtins fs.FS) (seeds []seedPkg, skipped []string, err error) {
 	if builtins == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	root := seedRoot(builtins)
 	entries, err := fs.ReadDir(root, ".")
 	if err != nil {
-		return nil, fmt.Errorf("read built-in automations: %w", err)
+		return nil, nil, fmt.Errorf("read built-in automations: %w", err)
 	}
 	var out []seedPkg
 	var errs []error
@@ -214,13 +216,19 @@ func loadSeeds(builtins fs.FS) ([]seedPkg, error) {
 		}
 		out = append(out, seedPkg{pkg: p, files: files, hash: treeHash(files)})
 	}
-	return out, errors.Join(errs...)
+	for _, e := range errs {
+		skipped = append(skipped, e.Error())
+	}
+	return out, skipped, nil
 }
 
 // Restore reinstalls the shipped copy of a built-in from builtins (after
 // an uninstall, or to discard local edits).
 func (r *Registry) Restore(id string, builtins fs.FS) error {
-	seeds, _ := loadSeeds(builtins)
+	seeds, _, err := loadSeeds(builtins)
+	if err != nil {
+		return err
+	}
 	for _, s := range seeds {
 		if s.pkg.Manifest.ID != id {
 			continue
