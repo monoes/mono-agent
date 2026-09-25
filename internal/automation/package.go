@@ -19,9 +19,15 @@ type Package struct {
 	FS       fs.FS  // rooted at the package directory
 	Source   string // builtin | imported | local
 	Dir      string // on-disk dir when installed ("" for zip/embed)
+	// Trust is the trust tier (TrustBuiltin…TrustImported). Registry.Get
+	// sets it from the index; "" means derived from Source.
+	Trust string
 
 	reg    *Registry // set when opened through a Registry (call_action lookups)
 	sha256 string    // archive bytes hash when opened with OpenFile
+
+	scriptsFlag *bool // index scriptsAllowed (registry packages)
+	liveFlag    bool  // index liveRunConfirmed
 }
 
 // OpenDir opens a package directory (source local).

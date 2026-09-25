@@ -36,14 +36,15 @@ type indexEntry struct {
 	InstalledAt        time.Time `json:"installedAt"`
 	PendingSeedVersion string    `json:"pendingSeedVersion,omitempty"`
 	DisabledReason     string    `json:"disabledReason,omitempty"`
+	ScriptsAllowed     *bool     `json:"scriptsAllowed,omitempty"`   // explicit user choice; nil = tier default
+	LiveRunConfirmed   bool      `json:"liveRunConfirmed,omitempty"` // imported: real runs confirmed once
 }
 
-func trustFor(source string) string {
-	switch source {
-	case SourceBuiltin, SourceLocal:
-		return source
+func (e *indexEntry) trust() string {
+	if e.Trust != "" {
+		return normTrust(e.Trust)
 	}
-	return SourceImported
+	return trustFor(e.Source)
 }
 
 func (r *Registry) readIndex() (*indexFile, error) {
@@ -185,7 +186,10 @@ func (r *Registry) info(id string, e *indexEntry, hash bool) InstalledInfo {
 		ID: id, Name: e.Name, Version: e.Version, Source: e.Source, Trust: e.Trust,
 		Enabled: e.Enabled, Removed: e.Removed, InstalledAt: e.InstalledAt,
 		PreviousVersion: e.Previous, PendingUpdate: e.PendingSeedVersion,
+		ScriptsAllowed:   scriptsAllowed(e.trust(), e.ScriptsAllowed),
+		LiveRunConfirmed: liveRunConfirmed(e.trust(), e.LiveRunConfirmed),
 	}
+	info.Trust = e.trust()
 	if e.Removed {
 		info.Enabled = false
 		info.UnavailableReason = "uninstalled"
@@ -236,6 +240,8 @@ func (r *Registry) Get(id string) (*Package, error) {
 		return nil, fmt.Errorf("automation %s: %w", id, err)
 	}
 	p.Source = e.Source
+	p.Trust = e.trust()
+	p.scriptsFlag, p.liveFlag = e.ScriptsAllowed, e.LiveRunConfirmed
 	p.reg = r
 	return p, nil
 }

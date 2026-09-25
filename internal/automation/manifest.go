@@ -4,9 +4,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"net"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"golang.org/x/net/publicsuffix"
+
+	"github.com/monoes/mono-agent/internal/action"
 )
 
 // EngineVersion is the running engine's version, checked against a
@@ -243,8 +249,23 @@ func validateManifest(m Manifest, source string) []IssueJSON {
 		add("error", "bad_tier", "policy.tier must be standard or social, got %q", m.Policy.Tier)
 	}
 	for _, d := range m.Site.Domains {
-		if !validDomainPattern(d) {
-			add("error", "bad_domain", "site.domains entry %q is not a host or *.host glob", d)
+		if err := checkDomainPattern(d); err != nil {
+			add("error", "bad_domain", "site.domains entry %q: %v", d, err)
+		}
+	}
+	if len(m.Site.Domains) > 0 {
+		if err := urlInDomains(m.Site.StartURL, m.Site.Domains); err != nil {
+			add("error", "start_url_off_domain", "site.startUrl: %v", err)
+		}
+		if m.Login != nil {
+			if err := urlInDomains(m.Login.URL, m.Site.Domains); err != nil {
+				add("error", "login_url_off_domain", "login.url: %v", err)
+			}
+		}
+	}
+	for _, ref := range m.Permissions.CallActions {
+		if !validCallActionRef(ref) {
+			add("error", "bad_call_action", "permissions.callActions entry %q must be \"<automation>.<action>\"", ref)
 		}
 	}
 	if len(m.Actions) == 0 {
@@ -278,7 +299,49 @@ func validateManifest(m Manifest, source string) []IssueJSON {
 
 var hostPattern = regexp.MustCompile(`^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:\d+)?$`)
 
-func validDomainPattern(d string) bool { return hostPattern.MatchString(strings.ToLower(d)) }
+// checkDomainPattern accepts "host", "host:port" or "*.host" where host has
+// at least two labels and is not itself a public suffix ("com", "co.uk",
+// "github.io"): a glob over a public suffix would allow every site under it.
+func checkDomainPattern(d string) error {
+	d = strings.ToLower(strings.TrimSpace(d))
+	if !hostPattern.MatchString(d) {
+		return fmt.Errorf("not a host or *.host glob")
+	}
+	host := strings.TrimPrefix(d, "*.")
+	if i := strings.IndexByte(host, ':'); i >= 0 {
+		host = host[:i]
+	}
+	if net.ParseIP(host) != nil {
+		return nil
+	}
+	if strings.Count(host, ".") < 1 {
+		return fmt.Errorf("needs at least two labels")
+	}
+	if suffix, _ := publicsuffix.PublicSuffix(host); suffix == host {
+		return fmt.Errorf("%q is a public suffix", host)
+	}
+	return nil
+}
+
+// urlInDomains checks that a manifest URL ("" passes) is http(s) and its
+// host is inside domains.
+func urlInDomains(raw string, domains []string) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("unparsable URL %q", raw)
+	}
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return fmt.Errorf("URL %q must be http(s)", raw)
+	}
+	if !action.HostAllowed(u.Host, domains) {
+		return fmt.Errorf("%s is outside site.domains %v", u.Hostname(), domains)
+	}
+	return nil
+}
 
 // safeName reports whether s is a single path element safe to join under a
 // package directory.

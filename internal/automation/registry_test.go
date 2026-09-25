@@ -101,7 +101,8 @@ func TestInstallRejectsInvalid(t *testing.T) {
 func TestInstallPolicyBlockedInstallsDisabled(t *testing.T) {
 	r := newReg(t)
 	files := acmeFiles()
-	files["automation.json"] = strings.Replace(files["automation.json"], `"app.acme.com", "*.acme.com"`, `"www.linkedin.com"`, 1)
+	files["automation.json"] = strings.NewReplacer(`"app.acme.com", "*.acme.com"`, `"www.linkedin.com"`,
+		"https://app.acme.com/", "https://www.linkedin.com/").Replace(files["automation.json"])
 	files["actions/list_deals.json"] = strings.Replace(files["actions/list_deals.json"], "https://app.acme.com/deals", "https://www.linkedin.com/feed", 1)
 	files["actions/create_contact.json"] = strings.Replace(files["actions/create_contact.json"], "https://app.acme.com/contacts/new", "https://www.linkedin.com/x", 1)
 	res, err := r.Install(writeTree(t, t.TempDir(), files), InstallOptions{})

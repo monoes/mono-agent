@@ -37,11 +37,15 @@ func (r *Registry) Install(src string, opts InstallOptions) (*InstallResult, err
 	if err != nil {
 		return nil, err
 	}
+	if opts.Trust != "" && !validTrust(opts.Trust) {
+		return nil, fmt.Errorf("automation: invalid trust %q", opts.Trust)
+	}
+	p.Trust = opts.Trust
 	files, err := readTree(fsys)
 	if err != nil {
 		return nil, err
 	}
-	res, err := r.installPackage(p, files, opts.DryRun)
+	res, err := r.installPackage(p, files, opts, false)
 	if res != nil {
 		res.SHA256 = sum
 	}
@@ -160,8 +164,16 @@ func (r *Registry) download(url string) (fs.FS, string, error) {
 	return readZipSum(tmp)
 }
 
-// installPackage validates, reviews and (unless dryRun) writes p.
-func (r *Registry) installPackage(p *Package, files map[string][]byte, dryRun bool) (*InstallResult, error) {
+// ErrReplacesBuiltin is returned when an install would overwrite an
+// installed built-in or local package with less trusted content and
+// InstallOptions.ReplaceBuiltin is not set.
+var ErrReplacesBuiltin = errors.New("automation: install would replace a built-in or local package (needs ReplaceBuiltin)")
+
+// installPackage validates, reviews and (unless dryRun) writes p. merge
+// marks AddAction, where recorded content may extend a built-in or local
+// package (it lowers the package's trust) but imported content may not.
+func (r *Registry) installPackage(p *Package, files map[string][]byte, opts InstallOptions, merge bool) (*InstallResult, error) {
+	dryRun := opts.DryRun
 	m := p.Manifest
 	res := &InstallResult{ID: m.ID, Name: m.Name, Version: m.Version, DryRun: dryRun}
 	res.Issues = Validate(p)
@@ -179,7 +191,19 @@ func (r *Registry) installPackage(p *Package, files map[string][]byte, dryRun bo
 	if err != nil {
 		return nil, err
 	}
+	var replaceBlocked bool
 	if e, ok := idx.Packages[m.ID]; ok && !e.Removed {
+		incoming := p.trust()
+		res.Review.Replaces = &Replaced{ID: m.ID, Source: e.Source, Trust: e.trust(), Version: e.Version}
+		if trustRank(e.trust()) >= trustRank(TrustLocal) &&
+			(incoming == TrustImported || (incoming == TrustRecorded && !merge)) {
+			replaceBlocked = !opts.ReplaceBuiltin
+			res.Warnings = append(res.Warnings, fmt.Sprintf("REPLACES the installed %s package %q %s with %s content",
+				strings.ToUpper(e.trust()), m.ID, e.Version, incoming))
+			if replaceBlocked {
+				res.Warnings = append(res.Warnings, "replacing it requires --replace-builtin (InstallOptions.ReplaceBuiltin)")
+			}
+		}
 		res.PreviousVersion = e.Version
 		if CompareVersions(m.Version, e.Version) < 0 {
 			res.Warnings = append(res.Warnings, fmt.Sprintf("downgrades %s from %s to %s", m.ID, e.Version, m.Version))
@@ -191,6 +215,10 @@ func (r *Registry) installPackage(p *Package, files map[string][]byte, dryRun bo
 
 	if HasErrors(res.Issues) {
 		return res, fmt.Errorf("%w: %s", ErrInvalid, firstError(res.Issues))
+	}
+	if replaceBlocked && !dryRun {
+		rp := res.Review.Replaces
+		return res, fmt.Errorf("%w: %s is an installed %s package (%s)", ErrReplacesBuiltin, rp.ID, rp.Trust, rp.Version)
 	}
 	if dryRun {
 		return res, nil
@@ -233,7 +261,13 @@ func (r *Registry) commitLocked(idx *indexFile, p *Package, files map[string][]b
 	if fromSeed {
 		e.SeedSha256 = hash
 	}
-	e.Name, e.Source, e.Trust = m.Name, p.Source, trustFor(p.Source)
+	trust := p.trust()
+	if ok && (e.trust() != trust || (e.InstalledSha256 != hash && trustRank(trust) < trustRank(TrustLocal))) {
+		// New trust, or new content from a recorded/imported source: the
+		// user's script and live-run opt-ins were given for something else.
+		e.ScriptsAllowed, e.LiveRunConfirmed = nil, false
+	}
+	e.Name, e.Source, e.Trust = m.Name, p.Source, trust
 	e.InstalledSha256 = hash
 	allowed, reason := PolicyAllows(m)
 	switch {
@@ -249,71 +283,6 @@ func (r *Registry) commitLocked(idx *indexFile, p *Package, files map[string][]b
 	return dir, nil
 }
 
-func buildReview(p *Package, files map[string][]byte) Review {
-	m := p.Manifest
-	rv := Review{
-		Domains:       nonNil(m.Site.Domains),
-		Steps:         nonNil(m.Permissions.Steps),
-		Scripts:       nonNil(p.ScriptFiles()),
-		Downloads:     m.Permissions.Downloads,
-		Tier:          m.Policy.Tier,
-		ActionEffects: map[string]string{},
-		Files:         fileInfos(files),
-	}
-	if rv.Tier == "" {
-		rv.Tier = "standard"
-	}
-	if m.Publisher != nil {
-		rv.Publisher = m.Publisher.Name
-	}
-	for _, a := range m.Actions {
-		effect := "undeclared"
-		if def, err := p.Action(a); err == nil && def.SideEffects != "" {
-			effect = def.SideEffects
-		}
-		rv.ActionEffects[a] = effect
-	}
-	return rv
-}
-
-// reviewChanges is the permission/script diff of an update.
-func reviewChanges(old, next *Package) *ReviewChanges {
-	ch := &ReviewChanges{
-		AddedDomains: added(old.Manifest.Site.Domains, next.Manifest.Site.Domains),
-		AddedSteps:   added(old.Manifest.Permissions.Steps, next.Manifest.Permissions.Steps),
-	}
-	oldScripts := old.ScriptFiles()
-	for _, s := range next.ScriptFiles() {
-		if !contains(oldScripts, s) {
-			ch.AddedScripts = append(ch.AddedScripts, s)
-			continue
-		}
-		a, _ := old.Script(s)
-		b, _ := next.Script(s)
-		if a != b {
-			ch.ChangedScripts = append(ch.ChangedScripts, s)
-		}
-	}
-	return ch
-}
-
-func added(old, next []string) []string {
-	var out []string
-	for _, s := range next {
-		if !contains(old, s) {
-			out = append(out, s)
-		}
-	}
-	return out
-}
-
-func nonNil(s []string) []string {
-	if s == nil {
-		return []string{}
-	}
-	return s
-}
-
 // AddAction merges one action (and its fragment/selector/script closure)
 // from src into installed package id, bumping its patch version. When id
 // is not installed, src's manifest (cut to that action) creates it with
@@ -324,6 +293,17 @@ func (r *Registry) AddAction(id string, src *Package, actionName string, opts In
 	}
 	if err := checkPin(src.sha256, opts.ExpectSHA256); err != nil {
 		return nil, err
+	}
+	if opts.Trust != "" && !validTrust(opts.Trust) {
+		return nil, fmt.Errorf("automation: invalid trust %q", opts.Trust)
+	}
+	incoming := opts.Trust
+	switch {
+	case incoming != "":
+	case opts.Source != "":
+		incoming = trustFor(opts.Source)
+	default:
+		incoming = src.trust()
 	}
 	srcFiles, err := readTree(src.FS)
 	if err != nil {
@@ -340,6 +320,7 @@ func (r *Registry) AddAction(id string, src *Package, actionName string, opts In
 
 	var merged map[string][]byte
 	var m Manifest
+	var trust string
 	source := opts.Source
 	cur, err := r.Get(id)
 	if err == nil {
@@ -374,10 +355,15 @@ func (r *Registry) AddAction(id string, src *Package, actionName string, opts In
 		}
 		m = mergeManifest(cur.Manifest, subPkg.Manifest)
 		m.Version = bumpPatch(cur.Manifest.Version)
+		trust = lowerTrust(cur.trust(), incoming)
 	} else {
 		if source == "" {
 			source = SourceLocal
+			if src.Source == SourceImported {
+				source = SourceImported
+			}
 		}
+		trust = incoming
 		merged = sub
 		m = subPkg.Manifest
 		m.ID = id
@@ -392,7 +378,8 @@ func (r *Registry) AddAction(id string, src *Package, actionName string, opts In
 	if err != nil {
 		return nil, err
 	}
-	res, err := r.installPackage(p, merged, opts.DryRun)
+	p.Trust = trust
+	res, err := r.installPackage(p, merged, opts, true)
 	if res != nil {
 		res.SHA256 = src.sha256
 	}
@@ -420,6 +407,9 @@ func mergeManifest(base, add Manifest) Manifest {
 		base.Permissions.Steps = union(base.Permissions.Steps, add.Permissions.Steps)
 	}
 	base.Permissions.Scripts = union(base.Permissions.Scripts, add.Permissions.Scripts)
+	if len(add.Permissions.CallActions) > 0 {
+		base.Permissions.CallActions = union(base.Permissions.CallActions, add.Permissions.CallActions)
+	}
 	base.Permissions.Downloads = base.Permissions.Downloads || add.Permissions.Downloads
 	if len(add.Requires.Fragments) > 0 {
 		base.Requires.Fragments = union(base.Requires.Fragments, add.Requires.Fragments)
