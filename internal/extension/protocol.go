@@ -65,6 +65,10 @@ const (
 	// internal/capture and docs/BROWSER_TRACK_PLAN.md)
 	CmdPageCapture = "page_capture"
 
+	// Selector re-recording: the user clicks one element under a picker
+	// overlay (contracts §9; see pick.go)
+	CmdPickElement = "pick_element"
+
 	// Waiting
 	CmdWaitLoad    = "wait_load"
 	CmdWaitElement = "wait_element"
