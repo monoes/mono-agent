@@ -242,3 +242,51 @@ func TestAutomationDoctorStaleSelector(t *testing.T) {
 		t.Fatalf("human output:\n%s", human.String())
 	}
 }
+
+// After a re-record resets a selector's health, doctor reports it ok with
+// no suggestion and shows when it was re-recorded.
+func TestAutomationDoctorAfterRerecordReset(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	installTestAutomation(t)
+	cfg := &globalConfig{DBPath: filepath.Join(t.TempDir(), "doctor.db"), JSONOutput: true, ProfileID: "default"}
+	db, err := initDB(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := automation.NewHealthRecorder(db.DB, automation.HealthOptions{Interval: time.Hour})
+	rec.ObserveSelector("acme-test", "page.title", 1, true, true)
+	rec.ObserveSelector("acme-test", "page.title", 1, true, true)
+	if err := rec.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := automation.ResetSelectorHealth(db.DB, "acme-test", "page.title"); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	var out bytes.Buffer
+	cmd := newAutomationDoctorCmd(cfg)
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"acme-test"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Automations []struct {
+			Selectors []doctorSelectorJSON `json:"selectors"`
+		} `json:"automations"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range got.Automations[0].Selectors {
+		if s.Key != "page.title" {
+			continue
+		}
+		if s.Status != "ok" || s.Suggestion != "" || s.OK != 0 || s.RerecordedAt == "" {
+			t.Fatalf("page.title after reset = %+v", s)
+		}
+		return
+	}
+	t.Fatal("page.title missing from doctor output")
+}

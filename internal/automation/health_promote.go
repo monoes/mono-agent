@@ -30,9 +30,9 @@ import (
 
 // PromoteCandidate moves candidate c of selector key to the front of
 // package id's effective entry. Only a package that is the user's own
-// (source local and trust local) is rewritten in place; everything else —
-// built-in, imported, recorded, or a built-in carrying local trust — is
-// promoted through the overlay (PromoteOverlayCandidate).
+// (source local, trust local or recorded) is rewritten in place;
+// everything else — built-in, imported, or a built-in carrying local
+// trust — is promoted through the overlay (PromoteOverlayCandidate).
 func (r *Registry) PromoteCandidate(id, key string, c action.SelectorCandidate) error {
 	errNotLocal := errors.New("not a local package")
 	err := r.update(func(idx *indexFile) (bool, error) {
@@ -40,7 +40,7 @@ func (r *Registry) PromoteCandidate(id, key string, c action.SelectorCandidate) 
 		if !ok || e.Removed {
 			return false, fmt.Errorf("%w: %s", ErrNotInstalled, id)
 		}
-		if e.Source != SourceLocal || e.trust() != TrustLocal {
+		if !promotesInPlace(e) {
 			return false, errNotLocal
 		}
 		dir := r.versionDir(id, e.Version)
@@ -66,6 +66,17 @@ func (r *Registry) PromoteCandidate(id, key string, c action.SelectorCandidate) 
 		return r.PromoteOverlayCandidate(id, key, c)
 	}
 	return err
+}
+
+// promotesInPlace reports whether a package is the user's own — written
+// locally or saved from a recording — and so is promoted by rewriting its
+// selectors.json rather than through the overlay.
+func promotesInPlace(e *indexEntry) bool {
+	if e.Source != SourceLocal {
+		return false
+	}
+	t := e.trust()
+	return t == TrustLocal || t == TrustRecorded
 }
 
 // moveCandidateFirst returns entry with c moved to index 0. changed is

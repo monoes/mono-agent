@@ -43,6 +43,7 @@ type SelectorHealth struct {
 	LastFail           *time.Time `json:"lastFail"`
 	LastCandidateIndex int        `json:"lastCandidateIndex"`
 	Recent             string     `json:"recent"`
+	RerecordedAt       *time.Time `json:"rerecordedAt,omitempty"`
 	Status             string     `json:"status"`
 }
 

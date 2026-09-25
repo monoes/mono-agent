@@ -28,6 +28,8 @@ type doctorSelectorJSON struct {
 	// Stale: health data for a key the installed version no longer has
 	// (status "stale", no suggestion: there is nothing to re-record).
 	Stale bool `json:"stale,omitempty"`
+	// RerecordedAt is when the selector was last re-recorded (RFC3339, "" never).
+	RerecordedAt string `json:"rerecordedAt,omitempty"`
 }
 
 // doctorAutomationJSON is one automation of `automation doctor --json`
@@ -144,7 +146,8 @@ func doctorAutomation(reg *automation.Registry, info automation.InstalledInfo,
 	}
 	for _, h := range health {
 		s := doctorSelectorJSON{Key: h.Key, OK: h.OK, Fail: h.Fail, Healed: h.Healed,
-			LastOK: rfc3339OrEmpty(h.LastOK), LastFail: rfc3339OrEmpty(h.LastFail), Status: h.Status}
+			LastOK: rfc3339OrEmpty(h.LastOK), LastFail: rfc3339OrEmpty(h.LastFail), Status: h.Status,
+			RerecordedAt: rfc3339OrEmpty(h.RerecordedAt)}
 		if declared != nil && !declared[h.Key] {
 			s.Stale, s.Status = true, automation.HealthStale
 		}

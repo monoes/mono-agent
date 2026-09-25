@@ -11,12 +11,14 @@ import (
 //	health_status.go   the ok / decaying / broken rule
 //	health_observer.go the batched, non-blocking writer (HealthObserver)
 //	health_promote.go  promoting healed candidates (package or overlay)
+//	health_prune.go    stale rows (keys a new version no longer declares)
+//	health_reset.go    resetting a row after a re-record
 
 // LoadSelectorHealth returns the health rows of automationID ("" = all),
 // ordered by automation and key, each with its Status set.
 func LoadSelectorHealth(db *sql.DB, automationID string) ([]SelectorHealth, error) {
 	q := `SELECT automation_id, selector_key, ok_count, fail_count, healed_count,
-	             last_ok_at, last_fail_at, last_candidate_index, recent
+	             last_ok_at, last_fail_at, last_candidate_index, recent, rerecorded_at
 	      FROM automation_selector_health`
 	var args []any
 	if automationID != "" {
@@ -32,12 +34,13 @@ func LoadSelectorHealth(db *sql.DB, automationID string) ([]SelectorHealth, erro
 	var out []SelectorHealth
 	for rows.Next() {
 		var h SelectorHealth
-		var lastOK, lastFail sql.NullString
+		var lastOK, lastFail, rerecorded sql.NullString
 		if err := rows.Scan(&h.AutomationID, &h.Key, &h.OK, &h.Fail, &h.Healed,
-			&lastOK, &lastFail, &h.LastCandidateIndex, &h.Recent); err != nil {
+			&lastOK, &lastFail, &h.LastCandidateIndex, &h.Recent, &rerecorded); err != nil {
 			return nil, err
 		}
 		h.LastOK, h.LastFail = parseHealthTime(lastOK), parseHealthTime(lastFail)
+		h.RerecordedAt = parseHealthTime(rerecorded)
 		h.Status = SelectorStatus(h)
 		out = append(out, h)
 	}

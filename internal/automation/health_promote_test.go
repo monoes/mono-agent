@@ -260,3 +260,27 @@ func TestHealthPromoteBuiltinWithLocalTrustUsesOverlay(t *testing.T) {
 		t.Fatalf("overlay promotion missing: %v", got)
 	}
 }
+
+// A package saved from a recording (source local, trust recorded) is the
+// user's own: it is promoted in place, like a local one.
+func TestHealthPromoteRecordedRewritesInPlace(t *testing.T) {
+	r := newReg(t)
+	if _, err := r.Install(acmeDir(t), InstallOptions{Source: SourceLocal, Trust: TrustRecorded}); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	if e := indexEntryOf(t, r, "acme-crm"); e.Source != SourceLocal || e.trust() != TrustRecorded {
+		t.Fatalf("fixture is not a recorded package: source %s trust %s", e.Source, e.trust())
+	}
+	if err := r.PromoteCandidate("acme-crm", "contact.email", emailAria); err != nil {
+		t.Fatal(err)
+	}
+	pkg, _ := r.Get("acme-crm")
+	base, _, err := readPackageSelector(pkg.Dir, "contact.email")
+	if err != nil || base.Candidates[0].Aria == nil {
+		t.Fatalf("recorded package selectors.json not promoted in place: %+v %v", base, err)
+	}
+	want, _ := fsHash(os.DirFS(pkg.Dir))
+	if got := indexEntryOf(t, r, "acme-crm").InstalledSha256; got != want {
+		t.Fatal("installedSha256 not refreshed for the recorded package")
+	}
+}
