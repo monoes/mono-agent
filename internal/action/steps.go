@@ -1572,8 +1572,10 @@ func (ae *ActionExecutor) stepSaveData(ctx context.Context, step StepDef) (*Step
 		ae.execCtx.mu.Unlock()
 		// A single map outside a loop is one facet of the node's single
 		// item and merges, as call_bot_method does; lists are records.
+		// Legacy actions (no package / local-*) keep master's behaviour:
+		// every saved row is a record.
 		_, single := val.(map[string]interface{})
-		record := !single || ae.execCtx.inLoop()
+		record := !single || ae.execCtx.inLoop() || isLegacyPackage(ae.pkg)
 		for _, item := range dataToSave {
 			if containsExtractedItem(tracked, item) {
 				continue

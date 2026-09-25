@@ -220,3 +220,32 @@ func asValidation(err error, target **ValidationError) bool {
 	}
 	return ok
 }
+
+// Master ran legacy actions without step ids; they still validate (warning)
+// and run with synthetic ids. Packaged actions still need ids.
+func TestLegacyStepsWithoutIDs(t *testing.T) {
+	def := &ActionDef{ActionType: "bar", Platform: "foo", Steps: []StepDef{
+		{Type: "set_variable", Variable: "a", Value: 1},
+		{Type: "for_each", Items: "{{xs}}", Steps: []StepDef{{Type: "log", Text: "x"}}},
+	}}
+	for _, pkg := range []PackageContext{nil, &fakePkg{id: "local-foo"}} {
+		is := Validate(def, pkg)
+		if HasErrors(is) || !hasCode(is, "missing_id") {
+			t.Fatalf("legacy pkg=%v: %+v", pkg, is)
+		}
+	}
+	if !HasErrors(Validate(def, &fakePkg{id: "acme"})) {
+		t.Fatal("packaged action without ids must fail")
+	}
+
+	ae := newPkgExecutor(nil, nil)
+	if _, err := ae.ExecuteDef(&StorageAction{ID: "r", TargetPlatform: "foo", Type: "bar"}, def); err != nil {
+		t.Fatalf("legacy run: %v", err)
+	}
+	if ae.execCtx.GetStepResult("_s1") == nil {
+		t.Error("synthetic id _s1 not assigned")
+	}
+	if def.Steps[0].ID != "" {
+		t.Error("the shared definition was modified")
+	}
+}

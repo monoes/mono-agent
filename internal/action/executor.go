@@ -540,6 +540,7 @@ func (ae *ActionExecutor) executeDef(action *StorageAction, actionDef *ActionDef
 	if err := ae.prepareRun(action.TargetPlatform, actionDef); err != nil {
 		return nil, err
 	}
+	actionDef = ae.actionDef // prepareRun may assign synthetic step ids
 
 	// Seed the execution context with action fields.
 	ae.seedVariables(action)

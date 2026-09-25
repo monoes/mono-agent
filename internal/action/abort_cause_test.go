@@ -22,23 +22,40 @@ func TestAbortKeepsCause(t *testing.T) {
 	}
 }
 
-func TestSaveDataSingleMapMerges(t *testing.T) {
-	ae := newPkgExecutor(nil, nil)
-	ae.SetVariable("metrics", map[string]interface{}{"points": 10})
-	ae.SetVariable("rows", []interface{}{map[string]interface{}{"a": 1}, map[string]interface{}{"a": 2}})
+func TestSaveDataSingleMapMergesForPackages(t *testing.T) {
 	def := &ActionDef{ActionType: "t", SideEffects: "read", Steps: []StepDef{
 		{ID: "s", Type: "save_data", DataSource: "metrics"},
 	}}
-	res, err := ae.ExecuteDef(&StorageAction{ID: "a", TargetPlatform: "p", Type: "t"}, def)
+	act := &StorageAction{ID: "a", TargetPlatform: "p", Type: "t"}
+
+	ae := newPkgExecutor(nil, &fakePkg{id: "acme"})
+	ae.SetVariable("metrics", map[string]interface{}{"points": 10})
+	res, err := ae.ExecuteDef(act, def)
 	if err != nil || res.ListOutput || len(res.ExtractedItems) != 1 {
-		t.Fatalf("single map: res=%+v err=%v", res, err)
+		t.Fatalf("packaged single map: res=%+v err=%v", res, err)
 	}
 
-	ae2 := newPkgExecutor(nil, nil)
-	ae2.SetVariable("rows", []interface{}{map[string]interface{}{"a": 1}, map[string]interface{}{"a": 2}})
-	def.Steps[0].DataSource = "rows"
-	res, err = ae2.ExecuteDef(&StorageAction{ID: "a", TargetPlatform: "p", Type: "t"}, def)
+	ae2 := newPkgExecutor(nil, &fakePkg{id: "acme"})
+	ae2.SetVariable("metrics", []interface{}{map[string]interface{}{"a": 1}, map[string]interface{}{"a": 2}})
+	res, err = ae2.ExecuteDef(act, def)
 	if err != nil || !res.ListOutput || len(res.ExtractedItems) != 2 {
-		t.Fatalf("list: res=%+v err=%v", res, err)
+		t.Fatalf("packaged list: res=%+v err=%v", res, err)
+	}
+}
+
+// Legacy actions keep master's behaviour: every single-map save is a record.
+func TestSaveDataLegacyKeepsRecords(t *testing.T) {
+	legacyDef := &ActionDef{ActionType: "t", SideEffects: "read", Steps: []StepDef{
+		{ID: "s1", Type: "save_data", DataSource: "one"},
+		{ID: "s2", Type: "save_data", DataSource: "two"},
+	}}
+	for _, pkg := range []PackageContext{nil, &fakePkg{id: "local-foo"}} {
+		ae := newPkgExecutor(nil, pkg)
+		ae.SetVariable("one", map[string]interface{}{"x": 1})
+		ae.SetVariable("two", map[string]interface{}{"x": 2})
+		res, err := ae.ExecuteDef(&StorageAction{ID: "a", TargetPlatform: "foo", Type: "t"}, legacyDef)
+		if err != nil || !res.ListOutput || len(res.ExtractedItems) != 2 {
+			t.Fatalf("pkg=%v: res=%+v err=%v", pkg, res, err)
+		}
 	}
 }

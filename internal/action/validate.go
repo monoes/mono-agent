@@ -85,7 +85,7 @@ func Validate(def *ActionDef, pkg PackageContext) []Issue {
 	if def == nil {
 		return []Issue{{Severity: "error", Code: "nil_action", Message: "no action definition"}}
 	}
-	v := &validator{pkg: pkg, known: knownStepSet(), fragDone: map[string]bool{}}
+	v := &validator{pkg: pkg, legacy: isLegacyPackage(pkg), known: knownStepSet(), fragDone: map[string]bool{}}
 	if pkg != nil {
 		if nb, ok := pkg.(NativeBacked); ok && nb.Native() != "" {
 			v.native = true
@@ -151,6 +151,10 @@ func (v *validator) callAction(id string, s StepDef) {
 }
 
 type validator struct {
+	// legacy: no package, or a legacy-migrated local-* package. Master ran
+	// such actions without step ids, so a missing id is only a warning
+	// there (the executor assigns synthetic ids, see assignSyntheticIDs).
+	legacy   bool
 	pkg      PackageContext
 	native   bool
 	known    map[string]bool
@@ -192,7 +196,11 @@ func (v *validator) steps(prefix string, steps []StepDef, loops []LoopDef) {
 	loopIDs := map[string]bool{}
 	for i, l := range loops {
 		if l.ID == "" {
-			v.err(prefix, "missing_id", fmt.Sprintf("loop #%d has no id", i+1))
+			if v.legacy {
+				v.warn(prefix, "missing_id", fmt.Sprintf("loop #%d has no id", i+1))
+			} else {
+				v.err(prefix, "missing_id", fmt.Sprintf("loop #%d has no id", i+1))
+			}
 		}
 		loopIDs[l.ID] = true
 		for _, ref := range l.Steps {
@@ -208,7 +216,11 @@ func (v *validator) steps(prefix string, steps []StepDef, loops []LoopDef) {
 			label := prefix + s.ID
 			if s.ID == "" {
 				label = fmt.Sprintf("%s#%d", prefix+where, i+1)
-				v.err(label, "missing_id", fmt.Sprintf("step #%d (%s) has no id", i+1, s.Type))
+				if v.legacy {
+					v.warn(label, "missing_id", fmt.Sprintf("step #%d (%s) has no id; it runs as %s", i+1, s.Type, syntheticID(i)))
+				} else {
+					v.err(label, "missing_id", fmt.Sprintf("step #%d (%s) has no id", i+1, s.Type))
+				}
 			}
 			for _, ref := range append(append([]string{}, s.Then...), s.Else...) {
 				if ids[ref] == 0 && !loopIDs[ref] {
@@ -349,4 +361,53 @@ func HasErrors(issues []Issue) bool {
 		}
 	}
 	return false
+}
+
+// isLegacyPackage reports whether actions of p follow the legacy (master)
+// rules: no package, or a package migrated from ~/.monoagent/actions
+// (id "local-<platform>").
+func isLegacyPackage(p PackageContext) bool {
+	return p == nil || strings.HasPrefix(strings.ToLower(p.ID()), "local-")
+}
+
+func syntheticID(i int) string { return fmt.Sprintf("_s%d", i+1) }
+
+// assignSyntheticIDs returns def with every id-less step (nested bodies
+// included) given an id "_s<N>" (N = position in its list), copying only
+// what changes; def itself (possibly shared through the loader cache) is
+// not modified.
+func assignSyntheticIDs(def *ActionDef) *ActionDef {
+	steps, changed := withSyntheticIDs(def.Steps)
+	if !changed {
+		return def
+	}
+	cp := *def
+	cp.Steps = steps
+	return &cp
+}
+
+func withSyntheticIDs(steps []StepDef) ([]StepDef, bool) {
+	changed := false
+	var out []StepDef
+	for i, s := range steps {
+		ns := s
+		nested, nch := withSyntheticIDs(s.Steps)
+		if nch {
+			ns.Steps = nested
+		}
+		if ns.ID == "" {
+			ns.ID = syntheticID(i)
+		}
+		if nch || s.ID == "" {
+			if out == nil {
+				out = append([]StepDef(nil), steps...)
+			}
+			out[i] = ns
+			changed = true
+		}
+	}
+	if !changed {
+		return steps, false
+	}
+	return out, true
 }

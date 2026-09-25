@@ -90,6 +90,10 @@ func (ae *ActionExecutor) prepareRun(platform string, def *ActionDef) error {
 	}
 
 	issues := Validate(def, ae.pkg)
+	if !HasErrors(issues) && isLegacyPackage(ae.pkg) {
+		def = assignSyntheticIDs(def)
+		ae.actionDef = def
+	}
 	if HasErrors(issues) {
 		verr := &ValidationError{Action: platform + "/" + def.ActionType, Issues: issues}
 		ae.logger.Error().Err(verr).Msg("action definition failed validation")
