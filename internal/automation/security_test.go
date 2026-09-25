@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/monoes/mono-agent/internal/action"
 )
 
 func TestDomainPatterns(t *testing.T) {
@@ -268,5 +270,25 @@ func TestSocialPlatformForHost(t *testing.T) {
 	d["instagram.com"] = "tampered"
 	if SocialDomains()["instagram.com"] != "instagram" {
 		t.Error("SocialDomains is not a copy")
+	}
+}
+
+func TestContextDownloadsGate(t *testing.T) {
+	for _, allowed := range []bool{false, true} {
+		files := acmeFiles()
+		if allowed {
+			files["automation.json"] = strings.Replace(files["automation.json"], `"downloads": false`, `"downloads": true`, 1)
+		}
+		p, err := OpenDir(writeTree(t, t.TempDir(), files))
+		if err != nil {
+			t.Fatal(err)
+		}
+		g, ok := p.Context().(action.DownloadsGate)
+		if !ok {
+			t.Fatal("context does not implement action.DownloadsGate")
+		}
+		if g.DownloadsPermitted() != allowed {
+			t.Errorf("downloads=%v: DownloadsPermitted()=%v", allowed, g.DownloadsPermitted())
+		}
 	}
 }

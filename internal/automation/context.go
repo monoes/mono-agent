@@ -19,7 +19,11 @@ type pkgContext struct {
 	selectors map[string]action.SelectorEntry
 }
 
-var _ action.PackageContext = (*pkgContext)(nil)
+var (
+	_ action.PackageContext = (*pkgContext)(nil)
+	_ action.DownloadsGate  = (*pkgContext)(nil)
+	_ action.NativeBacked   = (*pkgContext)(nil)
+)
 
 func (c *pkgContext) ID() string                         { return c.pkg.Manifest.ID }
 func (c *pkgContext) StartURL() string                   { return c.pkg.Manifest.Site.StartURL }

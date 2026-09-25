@@ -108,6 +108,10 @@ func (c *pkgContext) ScriptsAllowed() bool { return scriptsAllowed(c.pkg.trust()
 // LiveRunConfirmed reports whether write-level actions may run for real.
 func (c *pkgContext) LiveRunConfirmed() bool { return liveRunConfirmed(c.pkg.trust(), c.pkg.liveFlag) }
 
+// DownloadsPermitted implements action.DownloadsGate: manifest
+// permissions.downloads.
+func (c *pkgContext) DownloadsPermitted() bool { return c.pkg.Manifest.Permissions.Downloads }
+
 func (p *Package) trust() string {
 	if p.Trust != "" {
 		return normTrust(p.Trust)
