@@ -15,6 +15,7 @@ import (
 	"github.com/monoes/mono-agent/internal/capture"
 	"github.com/monoes/mono-agent/internal/captureclassify"
 	"github.com/monoes/mono-agent/internal/jev/jevconf"
+	"github.com/monoes/mono-agent/internal/storage"
 )
 
 // Capture classification (Jev surface "capture", plan WS7). Off unless the
@@ -26,6 +27,11 @@ import (
 // captureClassifyTimeout bounds one background classification.
 const captureClassifyTimeout = 15 * time.Second
 
+// captureOffCacheTTL is how long the hook remembers that the capture surface
+// is off for a profile (or that there is no database), so a disabled surface
+// costs at most one database open per profile per TTL.
+const captureOffCacheTTL = 30 * time.Second
+
 // captureClassifier is the after-write hook chained after the summarizer.
 // It opens the database lazily, per capture, from dbPath: the installer has
 // no DB of its own, and a bridge that never sees a capture never opens one.
@@ -34,10 +40,51 @@ type captureClassifier struct {
 	logf    func(string, ...any)
 	timeout time.Duration
 	wg      sync.WaitGroup
+
+	// open and now are seams for tests (nil ⇒ openProfileDB, time.Now).
+	open func(string) (*storage.Database, error)
+	now  func() time.Time
+
+	mu sync.Mutex
+	// offUntil maps a capture's profile (as recorded in the capture, "" for
+	// none) to when its cached "surface off" answer expires. Only "off" is
+	// cached: an enabled surface is re-checked on the DB it opens anyway, so
+	// `jev disable capture` takes effect for the very next capture.
+	offUntil map[string]time.Time
 }
 
 func newCaptureClassifier(logf func(string, ...any)) *captureClassifier {
 	return &captureClassifier{dbPath: defaultDBPath, logf: logf, timeout: captureClassifyTimeout}
+}
+
+func (c *captureClassifier) clock() time.Time {
+	if c.now != nil {
+		return c.now()
+	}
+	return time.Now()
+}
+
+// knownOff reports whether profile was found off less than the TTL ago.
+func (c *captureClassifier) knownOff(profile string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	until, ok := c.offUntil[profile]
+	if ok && c.clock().Before(until) {
+		return true
+	}
+	if ok {
+		delete(c.offUntil, profile)
+	}
+	return false
+}
+
+func (c *captureClassifier) rememberOff(profile string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.offUntil == nil {
+		c.offUntil = map[string]time.Time{}
+	}
+	c.offUntil[profile] = c.clock().Add(captureOffCacheTTL)
 }
 
 // Handle starts the classification in the background and returns at once,
@@ -63,14 +110,24 @@ func (c *captureClassifier) run(dir, profile string) {
 			c.log("capture classification for %s panicked: %v", dir, r)
 		}
 	}()
+	key := profile
+	if c.knownOff(key) {
+		return
+	}
+	open := c.open
+	if open == nil {
+		open = openProfileDB
+	}
 	// No database yet means no profile can have enabled the surface.
-	db, err := openProfileDB(c.dbPath)
+	db, err := open(c.dbPath)
 	if err != nil {
+		c.rememberOff(key)
 		return
 	}
 	defer db.Close()
 	profile = captureClassifyProfile(db.DB, profile)
 	if !jevconf.Enabled(db.DB, profile, jevconf.Capture) {
+		c.rememberOff(key)
 		return
 	}
 	timeout := c.timeout

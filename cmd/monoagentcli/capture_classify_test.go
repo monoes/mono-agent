@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/monoes/mono-agent/internal/capture"
 	"github.com/monoes/mono-agent/internal/captureclassify"
@@ -121,6 +122,62 @@ func TestCaptureClassifierDisabledDoesNothing(t *testing.T) {
 	}
 	if srv.Calls() != 0 {
 		t.Fatal("no database must mean no Jev call")
+	}
+}
+
+// A disabled surface costs at most one database open per profile per TTL.
+func TestCaptureClassifierCachesDisabledSurface(t *testing.T) {
+	dbPath := newJevTestDB(t)
+	srv := jevtest.NewServer(t, jevtest.Fixed(map[string]string{"kind": "job_posting"}))
+	inbox := t.TempDir()
+
+	now := time.Date(2026, 9, 25, 10, 0, 0, 0, time.UTC)
+	opens := 0
+	c := newCaptureClassifier(nil)
+	c.dbPath = dbPath
+	c.now = func() time.Time { return now }
+	c.open = func(p string) (*storage.Database, error) { opens++; return openProfileDB(p) }
+	capture1 := func(name string) string {
+		dir := writeTestEnvelope(t, inbox, name, "")
+		c.Handle(&capture.Result{Path: dir})
+		c.wait()
+		return dir
+	}
+
+	a := capture1("a")
+	now = now.Add(20 * time.Second)
+	b := capture1("b")
+	if opens != 1 {
+		t.Fatalf("two captures within 30s opened the database %d times, want 1", opens)
+	}
+	now = now.Add(11 * time.Second) // 31s after the first
+	capture1("c")
+	if opens != 2 {
+		t.Fatalf("after the TTL the database should be opened again: opens=%d", opens)
+	}
+	if srv.Calls() != 0 {
+		t.Fatalf("disabled surface made %d Jev calls", srv.Calls())
+	}
+	for _, dir := range []string{a, b} {
+		if _, err := os.Stat(filepath.Join(dir, captureclassify.FileName)); !os.IsNotExist(err) {
+			t.Fatalf("classification.json written while disabled (err=%v)", err)
+		}
+	}
+
+	// Enabling takes effect once the cached answer expires.
+	enableJev(t, dbPath, "default", jevconf.Capture)
+	now = now.Add(31 * time.Second)
+	d := capture1("d")
+	if srv.Calls() != 1 || opens != 3 {
+		t.Fatalf("enabled after expiry: calls=%d opens=%d", srv.Calls(), opens)
+	}
+	if _, ok, _ := captureclassify.Read(d); !ok {
+		t.Fatal("enabled capture not classified")
+	}
+	// An enabled surface is not cached: every capture re-checks.
+	capture1("e")
+	if opens != 4 || srv.Calls() != 2 {
+		t.Fatalf("enabled captures: calls=%d opens=%d", srv.Calls(), opens)
 	}
 }
 
