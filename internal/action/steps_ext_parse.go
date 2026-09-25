@@ -175,3 +175,22 @@ func strictNumber(v interface{}) (float64, bool) {
 	}
 	return 0, false
 }
+
+// arith applies one arithmetic transform op to n, rounding to an integer
+// (half away from zero) when round is set.
+func arith(op string, n, by float64, round bool) float64 {
+	switch op {
+	case "add":
+		n += by
+	case "subtract":
+		n -= by
+	case "multiply":
+		n *= by
+	case "divide":
+		n /= by
+	}
+	if round {
+		return math.Round(n)
+	}
+	return math.Round(n*1e9) / 1e9
+}

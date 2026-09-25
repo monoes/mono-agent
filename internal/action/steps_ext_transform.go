@@ -191,6 +191,19 @@ func applyOp(items []interface{}, op TransformOp, vars map[string]interface{}, n
 	case "sort":
 		return sortItems(items, op)
 
+	case "add", "subtract", "multiply", "divide":
+		if op.Op == "divide" && op.By == 0 {
+			return nil, fmt.Errorf("divide needs a non-zero by")
+		}
+		for i, it := range items {
+			var val interface{}
+			if n, ok := parseHumanNumber(getField(it, op.Field)); ok {
+				val = arith(op.Op, n, op.By, op.Round)
+			}
+			items[i] = setField(it, op.Field, op.To, val)
+		}
+		return items, nil
+
 	case "dedupe":
 		seen := map[string]bool{}
 		out := items[:0:0]

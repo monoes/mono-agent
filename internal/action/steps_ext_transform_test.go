@@ -350,3 +350,43 @@ func TestTransformSort(t *testing.T) {
 		t.Fatal("bad order must fail")
 	}
 }
+
+func TestTransformArithmetic(t *testing.T) {
+	src := txItems(txM{"px": "80"}, txM{"px": "100px"}, txM{"px": 20.0}, txM{"px": "n/a"}, txM{})
+	got, err := runTransform(src, []TransformOp{
+		{Op: "divide", Field: "px", By: 40, Round: true, To: "depth"},
+		{Op: "divide", Field: "px", By: 40, To: "raw"},
+		{Op: "multiply", Field: "px", By: 0.5, To: "half"},
+		{Op: "add", Field: "px", By: 1, To: "plus"},
+		{Op: "subtract", Field: "px", By: 30, To: "minus"},
+	}, nil, transformNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := got.([]interface{})
+	want := []txM{
+		{"depth": 2.0, "raw": 2.0, "half": 40.0, "plus": 81.0, "minus": 50.0},
+		{"depth": 3.0, "raw": 2.5, "half": 50.0, "plus": 101.0, "minus": 70.0},
+		{"depth": 1.0, "raw": 0.5, "half": 10.0, "plus": 21.0, "minus": -10.0},
+		{"depth": nil, "raw": nil, "half": nil, "plus": nil, "minus": nil},
+		{"depth": nil, "raw": nil, "half": nil, "plus": nil, "minus": nil},
+	}
+	for i, w := range want {
+		for k, v := range w {
+			if rows[i].(txM)[k] != v {
+				t.Errorf("row %d %s = %v, want %v", i, k, rows[i].(txM)[k], v)
+			}
+		}
+	}
+	// Coalescing fallback: indent when present, else the computed depth.
+	got, _ = runTransform(txItems(txM{"indent": "0", "px": "80"}, txM{"px": "80"}), []TransformOp{
+		{Op: "divide", Field: "px", By: 40, Round: true, To: "depthPx"},
+		{Op: "map", Map: map[string]string{"depth": "{{indent or depthPx}}"}},
+	}, nil, transformNow)
+	if d0, d1 := got.([]interface{})[0].(txM)["depth"], got.([]interface{})[1].(txM)["depth"]; d0 != "0" || d1 != 2.0 {
+		t.Fatalf("coalesced depths = %v, %v", d0, d1)
+	}
+	if _, err := runTransform(src, []TransformOp{{Op: "divide", Field: "px"}}, nil, transformNow); err == nil {
+		t.Fatal("divide without by must fail")
+	}
+}
