@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Post | Feed | LinkedIn</title>
+<!-- SYNTHETIC fixture: classic (Ember) single-post page. Every name, text,
+     id and count is invented. Query switches:
+       ?state=reacted   the post already carries the viewer's Celebrate
+       ?nomenu=1        no "Open reactions menu" trigger (hover opens it)
+       ?broken=submit   the comment submit button does nothing
+       ?broken=react    reaction clicks do nothing
+       ?noreplybtn=1    comments have no Reply button
+       ?obscure=1       the post's Like button has an unrecognisable label
+-->
+<style>
+  body { font: 14px sans-serif; margin: 0; }
+  .reactions-menu { display: none; position: absolute; background: #fff; border: 1px solid #ccc; padding: 4px; }
+  .reactions-menu.open { display: flex; }
+  button { margin: 2px; min-width: 40px; min-height: 24px; }
+  .ql-editor { min-height: 40px; border: 1px solid #999; padding: 4px; }
+  article { margin: 6px 0 6px 12px; }
+</style>
+</head>
+<body>
+<header id="global-nav" class="global-nav"><nav aria-label="Primary Navigation"><a href="https://www.linkedin.com/messaging/">Messaging</a></nav></header>
+<main class="scaffold-layout__main">
+  <div class="reactions-menu" id="comment-reactions">
+    <button aria-label="Like">L</button><button aria-label="Celebrate">C</button><button aria-label="Support">S</button>
+    <button aria-label="Love">V</button><button aria-label="Insightful">I</button><button aria-label="Funny">F</button>
+  </div>
+  <div class="feed-shared-update-v2 feed-shared-update-v2--minimal-padding" role="article" data-urn="urn:li:activity:7100000000000000001">
+    <div class="update-components-actor__container">
+      <a class="update-components-actor__meta-link" aria-label="View: Nimbus Widgets 1,234 followers" href="https://www.linkedin.com/company/nimbus-widgets/posts">
+        <span class="update-components-actor__title"><span><span aria-hidden="true">Nimbus Widgets</span></span></span>
+        <span class="update-components-actor__description">1,234 followers</span>
+      </a>
+      <span class="update-components-actor__sub-description"><span>3h • </span></span>
+    </div>
+    <div class="feed-shared-update-v2__description"><div class="update-components-text"><span class="break-words">Shipping day for the new sprocket line. Tell us what you think!</span></div></div>
+    <div class="social-details-social-counts">
+      <button aria-label="42 reactions" type="button"><span class="social-details-social-counts__reactions-count" aria-hidden="true">42</span></button>
+      <button aria-label="5 comments on Nimbus Widgets’s post" type="button">5 comments</button>
+    </div>
+    <div class="feed-shared-social-action-bar">
+      <span class="reactions-react-button feed-shared-social-action-bar__action-button">
+        <button id="post-like" class="artdeco-button social-actions-button react-button__trigger" aria-label="React Like" aria-pressed="false"><span class="artdeco-button__text react-button__text" aria-hidden="true">Like</span></button>
+        <button id="post-menu" class="artdeco-button reactions-menu__trigger" aria-label="Open reactions menu" aria-expanded="false"></button>
+      </span>
+      <div class="reactions-menu" id="post-reactions">
+        <button aria-label="Like" class="reactions-menu__reaction">L</button>
+        <button aria-label="Celebrate" class="reactions-menu__reaction">C</button>
+        <button aria-label="Support" class="reactions-menu__reaction">S</button>
+        <button aria-label="Love" class="reactions-menu__reaction">V</button>
+        <button aria-label="Insightful" class="reactions-menu__reaction">I</button>
+        <button aria-label="Funny" class="reactions-menu__reaction">F</button>
+      </div>
+      <button id="post-comment" class="artdeco-button social-actions-button" role="button" aria-label="Comment">Comment</button>
+      <button class="artdeco-button social-actions-button" aria-label="Send in a private message">Send</button>
+    </div>
+    <div class="feed-shared-update-v2__comments-container">
+      <div class="comments-comment-box--cr" id="main-box">
+        <form class="comments-comment-box__form">
+          <div class="comments-comment-texteditor">
+            <div class="editor-content ql-container">
+              <div class="ql-editor ql-blank" role="textbox" aria-label="Text editor for creating content" contenteditable="true" data-placeholder="Add a comment…"><p><br></p></div>
+              <div class="ql-clipboard" contenteditable="true" tabindex="-1"></div>
+            </div>
+            <button type="button" class="comments-comment-box__submit-button--cr artdeco-button" disabled>Comment</button>
+          </div>
+        </form>
+      </div>
+      <div class="comments-comments-list comments-comments-list--cr">
+        <div class="comments-comment-list__container" id="comment-list">
+          <article class="comments-comment-entity" data-id="urn:li:comment:(ugcPost:7100000000000000009,7100000000000000101)">
+            <div class="comments-comment-meta__container">
+              <a class="comments-comment-meta__description-container" href="https://www.linkedin.com/in/avery-quill-test/">
+                <h3 class="comments-comment-meta__description"><span class="comments-comment-meta__description-title">Avery Quill</span><span class="comments-comment-meta__data">• 2nd</span></h3>
+                <div class="comments-comment-meta__description-subtitle">Gear designer at Example Works</div>
+              </a>
+              <time class="comments-comment-meta__data">2h</time>
+            </div>
+            <section class="comments-comment-entity__content"><span class="comments-comment-item__main-content"><div class="update-components-text"><span>Love the new teeth profile.</span></div></span></section>
+            <div class="comment-social-activity">
+              <div class="comments-comment-social-bar--cr">
+                <span class="reactions-react-button comments-comment-social-bar__reaction-action-button--cr">
+                  <button class="artdeco-button social-actions-button" aria-label="React Like to Avery Quill’s comment" aria-pressed="false"><span class="react-button__text" aria-hidden="true">Like</span></button>
+                  <button class="artdeco-button reactions-menu__trigger" aria-label="Open reactions menu" aria-expanded="false"></button>
+                </span>
+                <button class="comments-comment-social-bar__reactions-count--cr" aria-label="3 Reactions on Avery Quill’s comment" type="button"><span aria-hidden="true">3</span></button>
+                <button class="artdeco-button comments-comment-social-bar__reply-action-button--cr" aria-label="Reply to Avery Quill’s comment"><span aria-hidden="true">Reply</span></button>
+                <span class="comments-comment-social-bar__replies-count--cr" aria-hidden="true">1 reply</span>
+              </div>
+              <div class="comments-replies-list">
+                <article class="comments-comment-entity comments-comment-entity--reply" data-id="urn:li:comment:(ugcPost:7100000000000000009,7100000000000000102)">
+                  <div class="comments-comment-meta__container">
+                    <a class="comments-comment-meta__description-container" href="https://www.linkedin.com/company/nimbus-widgets/posts">
+                      <h3 class="comments-comment-meta__description"><span class="comments-comment-meta__description-title">Nimbus Widgets</span></h3>
+                    </a>
+                    <time class="comments-comment-meta__data">1h</time>
+                  </div>
+                  <section class="comments-comment-entity__content"><span class="comments-comment-item__main-content"><div class="update-components-text"><span>Thanks Avery!</span></div></span></section>
+                  <div class="comment-social-activity comment-social-activity--is-reply">
+                    <div class="comments-comment-social-bar--cr">
+                      <span class="reactions-react-button comments-comment-social-bar__reaction-action-button--cr">
+                        <button class="artdeco-button social-actions-button" aria-label="React Like to Nimbus Widgets’s comment" aria-pressed="false"><span class="react-button__text" aria-hidden="true">Like</span></button>
+                      </span>
+                      <button class="artdeco-button comments-comment-social-bar__reply-action-button--cr" aria-label="Reply to Nimbus Widgets’s comment"><span aria-hidden="true">Reply</span></button>
+                    </div>
+                  </div>
+                </article>
+              </div>
+            </div>
+          </article>
+          <article class="comments-comment-entity" data-id="urn:li:comment:(ugcPost:7100000000000000009,7100000000000000103)">
+            <div class="comments-comment-meta__container">
+              <a class="comments-comment-meta__description-container" href="https://www.linkedin.com/in/bram-tollen-test/">
+                <h3 class="comments-comment-meta__description"><span class="comments-comment-meta__description-title">Bram Tollen</span></h3>
+                <div class="comments-comment-meta__description-subtitle">Supply chain lead</div>
+              </a>
+              <time class="comments-comment-meta__data">1h</time>
+            </div>
+            <section class="comments-comment-entity__content"><span class="comments-comment-item__main-content"><div class="update-components-text"><span>When does it ship to Europe?</span></div></span></section>
+            <div class="comment-social-activity">
+              <div class="comments-comment-social-bar--cr">
+                <span class="reactions-react-button comments-comment-social-bar__reaction-action-button--cr">
+                  <button class="artdeco-button social-actions-button" aria-label="React Like to Bram Tollen’s comment" aria-pressed="true"><span class="react-button__text" aria-hidden="true">Like</span></button>
+                </span>
+                <button class="comments-comment-social-bar__reactions-count--cr" aria-label="1 Reaction on Bram Tollen’s comment" type="button"><span aria-hidden="true">1</span></button>
+                <button class="artdeco-button comments-comment-social-bar__reply-action-button--cr" aria-label="Reply to Bram Tollen’s comment"><span aria-hidden="true">Reply</span></button>
+                <span class="comments-comment-social-bar__replies-count--cr" aria-hidden="true">1 reply</span>
+              </div>
+              <div class="comments-replies-list" id="collapsed-replies">
+                <button class="show-prev-replies artdeco-button" type="button">Load previous replies</button>
+              </div>
+            </div>
+          </article>
+        </div>
+        <div class="comments-comment-list__load-more-container">
+          <button class="comments-comments-list__load-more-comments-button--cr artdeco-button" type="button" id="load-more">Load more comments</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+<script>
+(function () {
+  const q = new URLSearchParams(location.search);
+  const broken = q.get('broken') || '';
+  const post = (path, body) => { try { fetch('https://www.linkedin.com/voyager/api/' + path, { method: 'POST', body: JSON.stringify(body) }); } catch (e) {} };
+  const likeBtn = document.getElementById('post-like');
+  const menu = document.getElementById('post-reactions');
+  const setReacted = (btn, r) => {
+    btn.setAttribute('aria-pressed', 'true');
+    btn.setAttribute('aria-label', 'Unreact ' + r);
+    const t = btn.querySelector('.react-button__text'); if (t) t.textContent = r;
+  };
+  if (q.get('state') === 'reacted') setReacted(likeBtn, 'Celebrate');
+  if (q.get('nomenu') === '1') document.getElementById('post-menu').remove();
+  if (q.get('obscure') === '1') {
+    likeBtn.setAttribute('aria-label', 'Applaud this');
+    likeBtn.classList.remove('react-button__trigger');
+    likeBtn.parentElement.classList.remove('reactions-react-button');
+  }
+  if (q.get('noreplybtn') === '1') document.querySelectorAll('.comments-comment-social-bar__reply-action-button--cr').forEach((b) => b.remove());
+  const trig = document.getElementById('post-menu');
+  if (trig) trig.addEventListener('click', () => { menu.classList.add('open'); trig.setAttribute('aria-expanded', 'true'); });
+  let hoverT;
+  likeBtn.addEventListener('mouseenter', () => { if (!trig) hoverT = setTimeout(() => menu.classList.add('open'), 200); });
+  likeBtn.addEventListener('click', () => {
+    if (broken === 'react') return;
+    if (likeBtn.getAttribute('aria-pressed') === 'true') {
+      likeBtn.setAttribute('aria-pressed', 'false'); likeBtn.setAttribute('aria-label', 'React Like');
+      likeBtn.querySelector('.react-button__text').textContent = 'Like';
+      post('reactions?action=delete', { target: 'post' });
+      return;
+    }
+    setReacted(likeBtn, 'Like');
+    post('reactions?action=create', { target: 'post', type: 'LIKE' });
+  });
+  menu.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+    if (broken === 'react') return;
+    const r = b.getAttribute('aria-label');
+    setReacted(likeBtn, r);
+    menu.classList.remove('open');
+    post('reactions?action=create', { target: 'post', type: r.toUpperCase() });
+  }));
+
+  // Comment reaction menus react on the comment, never on the post.
+  const cmenu = document.getElementById('comment-reactions');
+  let cmenuFor = null;
+  document.querySelectorAll('article.comments-comment-entity button.reactions-menu__trigger').forEach((t) => t.addEventListener('click', () => {
+    cmenuFor = t.closest('article.comments-comment-entity');
+    cmenu.classList.add('open');
+  }));
+  cmenu.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+    cmenu.classList.remove('open');
+    post('reactions?action=create', { target: cmenuFor.getAttribute('data-id'), type: b.getAttribute('aria-label').toUpperCase() });
+  }));
+
+  // Comment likes.
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    const art = b.closest('article.comments-comment-entity');
+    if (art && /^React Like to/.test(b.getAttribute('aria-label') || '') && b.getAttribute('aria-pressed') === 'false') {
+      if (broken === 'react') return;
+      b.setAttribute('aria-pressed', 'true');
+      post('reactions?action=create', { target: art.getAttribute('data-id'), type: 'LIKE' });
+    }
+  });
+
+  // Comment boxes.
+  let seq = 900;
+  const wireBox = (box, parentArt) => {
+    const ed = box.querySelector('.ql-editor');
+    const sub = box.querySelector('.comments-comment-box__submit-button--cr');
+    ed.addEventListener('input', () => {
+      const has = ed.innerText.trim() !== '';
+      sub.disabled = !has;
+      ed.classList.toggle('ql-blank', !has);
+    });
+    sub.addEventListener('click', () => {
+      if (broken === 'submit') return;
+      const text = ed.innerText.trim();
+      if (!text) return;
+      const id = 'urn:li:comment:(ugcPost:7100000000000000009,7100000000000000' + (seq++) + ')';
+      const art = document.createElement('article');
+      art.className = 'comments-comment-entity' + (parentArt ? ' comments-comment-entity--reply' : '');
+      art.setAttribute('data-id', id);
+      art.innerHTML = '<div class="comments-comment-meta__container"><a class="comments-comment-meta__description-container" href="https://www.linkedin.com/in/test-viewer/"><h3 class="comments-comment-meta__description"><span class="comments-comment-meta__description-title">Test Viewer</span></h3></a><time>now</time></div>' +
+        '<section class="comments-comment-entity__content"><span class="comments-comment-item__main-content"><div class="update-components-text"><span></span></div></span></section>';
+      art.querySelector('.update-components-text span').textContent = text;
+      if (parentArt) {
+        let list = parentArt.querySelector('.comments-replies-list');
+        if (!list) { list = document.createElement('div'); list.className = 'comments-replies-list'; parentArt.querySelector('.comment-social-activity').appendChild(list); }
+        list.appendChild(art);
+        box.remove();
+      } else {
+        document.getElementById('comment-list').prepend(art);
+        ed.innerHTML = '<p><br></p>';
+        sub.disabled = true;
+      }
+      post('comments?action=create', { parent: parentArt ? parentArt.getAttribute('data-id') : null, text });
+    });
+  };
+  wireBox(document.getElementById('main-box'), null);
+
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('button.comments-comment-social-bar__reply-action-button--cr');
+    if (!b) return;
+    const art = b.closest('article.comments-comment-entity');
+    if (art.querySelector(':scope > .comment-social-activity > .comments-reply-box')) return;
+    const box = document.createElement('div');
+    box.className = 'comments-reply-box comments-comment-box--cr';
+    box.innerHTML = '<form class="comments-comment-box__form"><div class="comments-comment-texteditor"><div class="ql-editor ql-blank" role="textbox" aria-label="Text editor for creating content" contenteditable="true"><p><br></p></div><button type="button" class="comments-comment-box__submit-button--cr artdeco-button" disabled>Reply</button></div></form>';
+    art.querySelector('.comment-social-activity').appendChild(box);
+    wireBox(box, art);
+  });
+
+  document.getElementById('load-more').addEventListener('click', (e) => {
+    const list = document.getElementById('comment-list');
+    list.insertAdjacentHTML('beforeend',
+      '<article class="comments-comment-entity" data-id="urn:li:comment:(ugcPost:7100000000000000009,7100000000000000104)"><div class="comments-comment-meta__container"><a class="comments-comment-meta__description-container" href="https://www.linkedin.com/in/cleo-marsh-test/"><h3><span class="comments-comment-meta__description-title">Cleo Marsh</span></h3></a><time>30m</time></div><section class="comments-comment-entity__content"><span class="comments-comment-item__main-content"><div class="update-components-text"><span>Great work team.</span></div></span></section><div class="comment-social-activity"><div class="comments-comment-social-bar--cr"><span class="reactions-react-button"><button class="artdeco-button social-actions-button" aria-label="React Like to Cleo Marsh’s comment" aria-pressed="false"><span class="react-button__text">Like</span></button></span><button class="artdeco-button comments-comment-social-bar__reply-action-button--cr" aria-label="Reply to Cleo Marsh’s comment"><span aria-hidden="true">Reply</span></button></div></div></article>');
+    e.target.closest('.comments-comment-list__load-more-container').remove();
+  });
+
+  document.querySelector('#collapsed-replies .show-prev-replies').addEventListener('click', (e) => {
+    const list = document.getElementById('collapsed-replies');
+    e.target.remove();
+    list.insertAdjacentHTML('beforeend',
+      '<article class="comments-comment-entity comments-comment-entity--reply" data-id="urn:li:comment:(ugcPost:7100000000000000009,7100000000000000105)"><div class="comments-comment-meta__container"><a class="comments-comment-meta__description-container" href="https://www.linkedin.com/company/nimbus-widgets/posts"><h3><span class="comments-comment-meta__description-title">Nimbus Widgets</span></h3></a><time>20m</time></div><section class="comments-comment-entity__content"><span class="comments-comment-item__main-content"><div class="update-components-text"><span>Europe in Q3.</span></div></span></section><div class="comment-social-activity comment-social-activity--is-reply"><div class="comments-comment-social-bar--cr"><span class="reactions-react-button"><button class="artdeco-button social-actions-button" aria-label="React Like to Nimbus Widgets’s comment" aria-pressed="false"><span class="react-button__text">Like</span></button></span></div></div></article>');
+  });
+})();
+</script>
+</body>
+</html>

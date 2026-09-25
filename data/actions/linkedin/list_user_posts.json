@@ -52,7 +52,7 @@
       "variable_name": "posts",
       "timeout": 120,
       "onError": {
-        "action": "skip"
+        "action": "mark_failed"
       }
     },
     {
@@ -78,8 +78,7 @@
       "id": "process_profiles",
       "iterator": "selectedListItems",
       "indexVar": "loopIndex",
-      "steps": ["t1_list_posts", "save_posts", "store_count", "log_success"],
-      "onComplete": "update_action_state"
+      "steps": ["t1_list_posts", "save_posts", "store_count", "log_success"]
     }
   ],
   "errorHandling": {

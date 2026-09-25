@@ -36,7 +36,7 @@ func TestGetMethodByNameAcceptsPageInterface(t *testing.T) {
 	if strings.Contains(err.Error(), "must be *rod.Page") {
 		t.Fatalf("closure rejected a browser.PageInterface value: %v", err)
 	}
-	if !strings.Contains(err.Error(), "profileURL is required") {
+	if !strings.Contains(err.Error(), "profileURL") {
 		t.Fatalf("expected the profileURL validation error, got: %v", err)
 	}
 }
@@ -62,5 +62,40 @@ func TestSendVerified(t *testing.T) {
 		if got := sendVerified(c.composer, c.bubbles, c.message); got != c.want {
 			t.Errorf("%s: sendVerified(%q, %v, %q) = %v, want %v", c.name, c.composer, c.bubbles, c.message, got, c.want)
 		}
+	}
+}
+
+func TestArgCoercion(t *testing.T) {
+	for in, want := range map[string]bool{"": true, "true": true, "false": false, "0": false, "1": true, "no": false} {
+		got, err := boolArg(in, true)
+		if err != nil || got != want {
+			t.Errorf("boolArg(%q) = %v, %v; want %v", in, got, err, want)
+		}
+	}
+	if _, err := boolArg("maybe", true); err == nil {
+		t.Error("boolArg(maybe) should fail")
+	}
+	if n, err := intArg("25", 5); err != nil || n != 25 {
+		t.Errorf("intArg(25) = %d, %v", n, err)
+	}
+	if n, err := intArg("", 5); err != nil || n != 5 {
+		t.Errorf("intArg('') = %d, %v", n, err)
+	}
+}
+
+func TestActivityFeedURL(t *testing.T) {
+	cases := map[[2]string]string{
+		{"https://www.linkedin.com/in/jane-doe-test", ""}:                "https://www.linkedin.com/in/jane-doe-test/recent-activity/all/",
+		{"https://www.linkedin.com/in/jane-doe-test/details/", "shares"}: "https://www.linkedin.com/in/jane-doe-test/recent-activity/shares/",
+		{"https://www.linkedin.com/company/acme-test/about/", "all"}:     "https://www.linkedin.com/company/acme-test/posts/?feedView=all",
+	}
+	for in, want := range cases {
+		got, err := activityFeedURL(in[0], in[1])
+		if err != nil || got != want {
+			t.Errorf("activityFeedURL(%v) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	if _, err := activityFeedURL("https://www.linkedin.com/feed/", ""); err == nil {
+		t.Error("feed URL should be rejected")
 	}
 }

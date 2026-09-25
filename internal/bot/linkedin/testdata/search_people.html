@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Search | LinkedIn</title>
+<!-- SYNTHETIC fixture: people search results in the server-driven markup
+     (role=list/listitem cards, the profile link wraps the card). Page 1 has
+     three people and an upsell block, page 2 two more, page 3 none. Invented
+     people. -->
+</head>
+<body>
+<div data-testid="primary-nav"></div>
+<main>
+<div data-testid="lazy-column"><div><div role="list" id="list"></div></div></div>
+</main>
+<script>
+(function () {
+  const page = parseInt(new URLSearchParams(location.search).get('page') || '1', 10);
+  const pages = {
+    1: [['lena-ortiz-test', 'Lena Ortiz', '2nd', 'Workflow automation consultant', 'Berlin, Germany', true],
+        ['omar-quint-test', 'Omar Quint', '3rd+', 'Ops engineer | Automation', 'Madrid, Spain', false],
+        ['pia-vale-test', 'Pia Vale', '1st', 'Head of IT at Example Co', 'Vienna, Austria', false]],
+    2: [['rui-stone-test', 'Rui Stone', '2nd', 'No-code builder', 'Porto, Portugal', false],
+        ['sam-wren-test', 'Sam Wren', '2nd', 'RPA developer', 'Dublin, Ireland', false]],
+  };
+  const list = document.getElementById('list');
+  (pages[page] || []).forEach(([slug, name, deg, head, loc, premium], i) => {
+    const url = 'https://www.linkedin.com/in/' + slug + '/';
+    list.insertAdjacentHTML('beforeend',
+      '<div><div role="listitem"><div><a componentkey="k' + i + '" href="' + url + '" tabindex="0"><div>' +
+      '<div><div>' + name + '<span></span></div><figure aria-hidden="true"><img alt="" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"></figure>' +
+      '<div><p><a href="' + url + '">' + name + (premium ? '<span></span><span role="img" aria-label="Premium"></span>' : '') + '</a><span><span> • ' + deg + '</span></span></p>' +
+      '<div><p><span>' + head + '</span></p></div><div><p><span>' + loc + '</span></p></div></div></div>' +
+      '<div><ul role="presentation"><li></li></ul><p><span><a href="https://www.linkedin.com/in/mutual-one-test/">Mutual One</a> is a mutual connection</span></p></div>' +
+      '</div></a></div><hr role="presentation"></div></div>');
+    if (page === 1 && i === 1) {
+      list.insertAdjacentHTML('beforeend', '<div><div><p>Find your best-fit prospects faster</p><a href="https://www.linkedin.com/premium/products/">Try Premium</a></div></div>');
+    }
+  });
+})();
+</script>
+</body>
+</html>

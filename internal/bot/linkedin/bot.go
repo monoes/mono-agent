@@ -4,143 +4,24 @@ package linkedin
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
-	"time"
 
-	"github.com/go-rod/rod"
-	"github.com/go-rod/rod/lib/input"
-	"github.com/go-rod/rod/lib/proto"
 	botpkg "github.com/monoes/mono-agent/internal/bot"
 	"github.com/monoes/mono-agent/internal/browser"
 )
 
-// LinkedInBot implements botpkg.BotAdapter for LinkedIn. The embedded
-// JevPicker (disabled unless the node layer calls SetJevPicker) lets LikePost
-// ask Jev for the reaction controls when its selectors are not conclusive.
+// LinkedInBot implements botpkg.BotAdapter for LinkedIn. Every method works
+// on any browser.PageInterface (in production the user's own browser through
+// the extension). The embedded JevPicker (disabled unless the node layer
+// calls SetJevPicker) lets write methods ask Jev for a control their
+// selectors could not pin down; a Jev pick is always checked against the
+// intended target before anything is clicked.
 type LinkedInBot struct {
 	botpkg.JevPicker
-}
-
-// sendVerificationTimeout bounds the post-send poll that confirms a message
-// was actually delivered (composer cleared or message bubble rendered).
-const sendVerificationTimeout = 3 * time.Second
-
-// unwrapRodPage extracts the underlying *rod.Page from a browser.PageInterface.
-// Most of this bot's helper methods are written directly against the Rod API
-// and cannot operate on other drivers (e.g. the Chrome extension bridge). This
-// returns a descriptive error instead of panicking when the active page isn't
-// backed by Rod.
-func unwrapRodPage(p browser.PageInterface) (*rod.Page, error) {
-	rp, ok := p.(*browser.RodPage)
-	if !ok {
-		return nil, fmt.Errorf("linkedin: this operation requires the Rod browser driver, got %T", p)
-	}
-	return rp.UnwrapRodPage(), nil
-}
-
-// dmBubbleSelectors are best-effort selectors for rendered message bubbles in
-// the conversation thread, used as the "OR" branch of send verification.
-var dmBubbleSelectors = []string{
-	"div.msg-s-message-list__message",
-	"p.msg-s-message-list__body",
-}
-
-// messageSnippet returns the searchable portion of a message used to match a
-// rendered message bubble (long messages may be visually truncated by the UI).
-func messageSnippet(message string) string {
-	const maxSnippet = 80
-	r := []rune(message)
-	if len(r) > maxSnippet {
-		return string(r[:maxSnippet])
-	}
-	return message
-}
-
-// sendVerified reports whether the observable page state confirms the message
-// was sent: the composer is cleared, or a message bubble containing the
-// message snippet has rendered in the thread.
-func sendVerified(composerText string, bubbleTexts []string, message string) bool {
-	if strings.TrimSpace(composerText) == "" {
-		return true
-	}
-	snippet := messageSnippet(message)
-	for _, bubble := range bubbleTexts {
-		if strings.Contains(bubble, snippet) {
-			return true
-		}
-	}
-	return false
-}
-
-// composerText reads the current text of a message composer element,
-// handling both contenteditable divs (innerText) and textareas (value).
-func composerText(el *rod.Element) string {
-	if el == nil {
-		return ""
-	}
-	res, err := el.Eval(`() => this.value !== undefined ? this.value : (this.innerText || '')`)
-	if err != nil || res == nil {
-		return ""
-	}
-	return res.Value.Str()
-}
-
-// verifyMessageSent polls the page for up to sendVerificationTimeout to
-// confirm the message was actually sent. Verification failure is an error —
-// a send we cannot observe is reported as "not sent", never as success.
-func verifyMessageSent(page *rod.Page, msgInput *rod.Element, message string) error {
-	deadline := time.Now().Add(sendVerificationTimeout)
-	for time.Now().Before(deadline) {
-		var bubbleTexts []string
-		for _, sel := range dmBubbleSelectors {
-			els, err := page.Elements(sel)
-			if err != nil {
-				continue
-			}
-			for _, el := range els {
-				if text, tErr := el.Text(); tErr == nil {
-					bubbleTexts = append(bubbleTexts, text)
-				}
-			}
-		}
-		if sendVerified(composerText(msgInput), bubbleTexts, message) {
-			return nil
-		}
-		time.Sleep(300 * time.Millisecond)
-	}
-	return fmt.Errorf("linkedin: send could not be verified (composer not cleared and no message bubble rendered within %s)", sendVerificationTimeout)
-}
-
-// firstElementText returns the trimmed text of the first element matching any
-// CSS selector (tried in order) or, failing those, any XPath expression.
-// It returns "" when nothing matches or all matches have empty text.
-func firstElementText(page *rod.Page, timeout time.Duration, css, xpaths []string) string {
-	for _, sel := range css {
-		el, err := page.Timeout(timeout).Element(sel)
-		if err != nil || el == nil {
-			continue
-		}
-		if text, tErr := el.Text(); tErr == nil {
-			if trimmed := strings.TrimSpace(text); trimmed != "" {
-				return trimmed
-			}
-		}
-	}
-	for _, xp := range xpaths {
-		var text string
-		tryErr := rod.Try(func() {
-			el := page.Timeout(timeout).MustElementX(xp)
-			if t, tErr := el.Text(); tErr == nil {
-				text = strings.TrimSpace(t)
-			}
-		})
-		if tryErr == nil && text != "" {
-			return text
-		}
-	}
-	return ""
 }
 
 func init() {
@@ -162,49 +43,19 @@ func (b *LinkedInBot) LoginURL() string {
 // IsLoggedIn checks whether the user is authenticated on LinkedIn by looking
 // for elements that are only rendered for logged-in users.
 func (b *LinkedInBot) IsLoggedIn(p browser.PageInterface) (bool, error) {
-	page, err := unwrapRodPage(p)
-	if err != nil {
-		return false, err
-	}
-	selectors := []string{
-		// Global navigation bar present on all authenticated pages.
-		"div.global-nav",
-		"nav[aria-label='Primary']",
-		// Feed container.
-		"div.feed-identity-module",
-		// The "Me" profile dropdown in the navbar.
-		"div.feed-identity-module__actor-meta",
-		"img.global-nav__me-photo",
-		// Messaging icon.
-		"a[href*='/messaging/']",
-	}
-
-	for _, sel := range selectors {
-		has, _, err := page.Has(sel)
-		if err != nil {
-			continue
-		}
-		if has {
-			return true, nil
-		}
-	}
-
-	// Check for the login form — if present, we are NOT logged in.
-	loginSelectors := []string{
-		"input#username",
-		"form.login__form",
-		"input[name='session_key']",
-	}
-	for _, sel := range loginSelectors {
-		has, _, err := page.Has(sel)
-		if err != nil {
-			continue
-		}
-		if has {
+	for _, sel := range []string{"input#username", "form.login__form", "input[name='session_key']"} {
+		if has, err := p.Has(sel); err == nil && has {
 			return false, nil
 		}
 	}
-
+	for _, sel := range []string{
+		"#global-nav", "div.global-nav", "nav[aria-label='Primary']", "nav[aria-label='Primary Navigation']",
+		"[data-testid='primary-nav']", "img.global-nav__me-photo", "a[href*='/messaging/']",
+	} {
+		if has, err := p.Has(sel); err == nil && has {
+			return true, nil
+		}
+	}
 	return false, nil
 }
 
@@ -248,430 +99,186 @@ func (b *LinkedInBot) SearchURL(keyword string) string {
 	return fmt.Sprintf("https://www.linkedin.com/search/results/people/?keywords=%s", encoded)
 }
 
-// SendMessage navigates to the LinkedIn messaging interface and sends a direct
-// message to the specified user.
-func (b *LinkedInBot) SendMessage(ctx context.Context, p browser.PageInterface, username, message string) error {
-	page, err := unwrapRodPage(p)
+func jsonMarshal(v interface{}) ([]byte, error) { return json.Marshal(v) }
+
+func jsonUnmarshal(s string, v interface{}) error { return json.Unmarshal([]byte(s), v) }
+
+// intArg parses an optional numeric argument ("" ⇒ def).
+func intArg(s string, def int) (int, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return def, nil
+	}
+	f, err := strconv.ParseFloat(s, 64)
 	if err != nil {
-		return err
+		return 0, fmt.Errorf("not a number: %q", s)
 	}
-	if username == "" {
-		return fmt.Errorf("linkedin: username is required")
-	}
-	if message == "" {
-		return fmt.Errorf("linkedin: message is required")
-	}
-
-	// Navigate to the user's profile first.
-	profileURL := fmt.Sprintf("https://www.linkedin.com/in/%s/", url.PathEscape(username))
-	err = page.Navigate(profileURL)
-	if err != nil {
-		return fmt.Errorf("linkedin: failed to navigate to profile: %w", err)
-	}
-	err = page.WaitLoad()
-	if err != nil {
-		return fmt.Errorf("linkedin: profile page did not load: %w", err)
-	}
-	time.Sleep(3 * time.Second)
-
-	// Look for and click the "Message" button on the profile. Text-matching
-	// lookups use XPath — ":has-text()" is a Playwright pseudo-class, not
-	// valid CSS, and silently never matches in rod.
-	msgBtnCSS := []string{
-		"button.message-anywhere-button",
-		"a.message-anywhere-button",
-		"button[aria-label*='Message']",
-	}
-	msgBtnXPaths := []string{
-		"//button[normalize-space(.)='Message']",
-		"//div[contains(@class, 'pvs-profile-actions')]//button[normalize-space(.)='Message']",
-	}
-
-	clicked := false
-	for _, sel := range msgBtnCSS {
-		btn, findErr := page.Timeout(5 * time.Second).Element(sel)
-		if findErr == nil && btn != nil {
-			if clickErr := btn.Click(proto.InputMouseButtonLeft, 1); clickErr == nil {
-				clicked = true
-				break
-			}
-		}
-	}
-	if !clicked {
-		for _, xp := range msgBtnXPaths {
-			tryErr := rod.Try(func() {
-				btn := page.Timeout(5 * time.Second).MustElementX(xp)
-				if clickErr := btn.Click(proto.InputMouseButtonLeft, 1); clickErr == nil {
-					clicked = true
-				}
-			})
-			if tryErr == nil && clicked {
-				break
-			}
-		}
-	}
-
-	if !clicked {
-		// Fallback: navigate directly to messaging with the user.
-		msgURL := fmt.Sprintf("https://www.linkedin.com/messaging/compose/?recipient=%s", url.QueryEscape(username))
-		err = page.Navigate(msgURL)
-		if err != nil {
-			return fmt.Errorf("linkedin: failed to navigate to messaging compose: %w", err)
-		}
-		err = page.WaitLoad()
-		if err != nil {
-			return fmt.Errorf("linkedin: messaging compose page did not load: %w", err)
-		}
-	}
-
-	time.Sleep(3 * time.Second)
-
-	// Find the message input field.
-	inputSelectors := []string{
-		"div.msg-form__contenteditable[contenteditable='true']",
-		"div[role='textbox'][contenteditable='true']",
-		"div.msg-form__msg-content-container div[contenteditable='true']",
-		"form.msg-form div[contenteditable='true']",
-	}
-
-	var msgInput *rod.Element
-	for _, sel := range inputSelectors {
-		el, findErr := page.Timeout(5 * time.Second).Element(sel)
-		if findErr == nil && el != nil {
-			msgInput = el
-			break
-		}
-	}
-
-	if msgInput == nil {
-		return fmt.Errorf("linkedin: could not find message input field")
-	}
-
-	// Focus and type the message.
-	err = msgInput.Click(proto.InputMouseButtonLeft, 1)
-	if err != nil {
-		return fmt.Errorf("linkedin: failed to focus message input: %w", err)
-	}
-	time.Sleep(500 * time.Millisecond)
-
-	err = msgInput.Input(message)
-	if err != nil {
-		return fmt.Errorf("linkedin: failed to type message: %w", err)
-	}
-	time.Sleep(500 * time.Millisecond)
-
-	// Click the Send button.
-	sendBtnSelectors := []string{
-		"button.msg-form__send-button",
-		"button[type='submit'].msg-form__send-button",
-		"button:has-text('Send')",
-		"button[aria-label='Send']",
-	}
-
-	sent := false
-	for _, sel := range sendBtnSelectors {
-		sendBtn, sErr := page.Timeout(5 * time.Second).Element(sel)
-		if sErr == nil && sendBtn != nil {
-			if clickErr := sendBtn.Click(proto.InputMouseButtonLeft, 1); clickErr == nil {
-				sent = true
-				break
-			}
-		}
-	}
-
-	if !sent {
-		// Fallback: press Enter.
-		err = page.Keyboard.Press(input.Enter)
-		if err != nil {
-			return fmt.Errorf("linkedin: failed to send message: %w", err)
-		}
-	}
-
-	return verifyMessageSent(page, msgInput, message)
+	return int(f), nil
 }
 
-// GetProfileData scrapes the currently loaded LinkedIn profile page and
-// returns structured profile information.
-func (b *LinkedInBot) GetProfileData(ctx context.Context, p browser.PageInterface) (map[string]interface{}, error) {
-	page, err := unwrapRodPage(p)
-	if err != nil {
-		return nil, err
+// boolArg parses an optional boolean argument ("" ⇒ def). call_bot_method
+// passes template values as strings, so "false" must mean false.
+func boolArg(s string, def bool) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "":
+		return def, nil
+	case "true", "1", "yes", "y", "on":
+		return true, nil
+	case "false", "0", "no", "n", "off":
+		return false, nil
 	}
-	data := make(map[string]interface{})
-
-	err = page.WaitLoad()
-	if err != nil {
-		return data, fmt.Errorf("linkedin: page did not finish loading: %w", err)
-	}
-	time.Sleep(3 * time.Second)
-
-	pageURL := page.MustInfo().URL
-	data["username"] = b.ExtractUsername(pageURL)
-	data["profile_url"] = pageURL
-
-	// Full name.
-	nameSelectors := []string{
-		"h1.text-heading-xlarge",
-		"h1.top-card-layout__title",
-		"li.inline.t-24.t-black.t-normal.break-words",
-		"div.ph5 h1",
-	}
-	for _, sel := range nameSelectors {
-		el, findErr := page.Timeout(3 * time.Second).Element(sel)
-		if findErr == nil && el != nil {
-			text, tErr := el.Text()
-			if tErr == nil && strings.TrimSpace(text) != "" {
-				data["full_name"] = strings.TrimSpace(text)
-				break
-			}
-		}
-	}
-
-	// Headline (job title / tagline).
-	headlineSelectors := []string{
-		"div.text-body-medium.break-words",
-		"h2.top-card-layout__headline",
-		"div.ph5 div.text-body-medium",
-	}
-	for _, sel := range headlineSelectors {
-		el, findErr := page.Timeout(3 * time.Second).Element(sel)
-		if findErr == nil && el != nil {
-			text, tErr := el.Text()
-			if tErr == nil && strings.TrimSpace(text) != "" {
-				data["headline"] = strings.TrimSpace(text)
-				break
-			}
-		}
-	}
-
-	// Location.
-	locationSelectors := []string{
-		"span.text-body-small.inline.t-black--light.break-words",
-		"div.pb2.pv-text-details__left-panel span.text-body-small",
-		"span.top-card-layout__first-subline",
-	}
-	for _, sel := range locationSelectors {
-		el, findErr := page.Timeout(3 * time.Second).Element(sel)
-		if findErr == nil && el != nil {
-			text, tErr := el.Text()
-			if tErr == nil && strings.TrimSpace(text) != "" {
-				data["location"] = strings.TrimSpace(text)
-				break
-			}
-		}
-	}
-
-	// Connection count. The text-filtered lookup uses XPath because
-	// ":has-text()" is not valid CSS and would never match.
-	connectionCSS := []string{
-		"li.text-body-small span.t-bold",
-		"span.pv-top-card--list-bullet span.t-bold",
-	}
-	connectionXPaths := []string{
-		"//span[contains(@class, 't-bold')][contains(normalize-space(.), 'connection')]",
-	}
-	if text := firstElementText(page, 3*time.Second, connectionCSS, connectionXPaths); text != "" {
-		data["connection_count"] = text
-	}
-
-	// Follower count.
-	followerCSS := []string{
-		"p.pvs-header-actions__subtitle span",
-	}
-	followerXPaths := []string{
-		"//span[contains(normalize-space(.), 'follower')]",
-	}
-	if text := firstElementText(page, 3*time.Second, followerCSS, followerXPaths); text != "" {
-		data["follower_count"] = text
-	}
-
-	// About / summary section.
-	aboutSelectors := []string{
-		"div#about ~ div.display-flex div.inline-show-more-text span[aria-hidden='true']",
-		"section.pv-about-section div.inline-show-more-text",
-		"div.pv-shared-text-with-see-more span.visually-hidden",
-	}
-	for _, sel := range aboutSelectors {
-		el, findErr := page.Timeout(3 * time.Second).Element(sel)
-		if findErr == nil && el != nil {
-			text, tErr := el.Text()
-			if tErr == nil && strings.TrimSpace(text) != "" {
-				data["about"] = strings.TrimSpace(text)
-				break
-			}
-		}
-	}
-
-	// Profile picture URL.
-	imgSelectors := []string{
-		"img.pv-top-card-profile-picture__image",
-		"img.profile-photo-edit__preview",
-		"div.pv-top-card__photo-wrapper img",
-		"img.top-card-layout__entity-image",
-	}
-	for _, sel := range imgSelectors {
-		el, findErr := page.Timeout(3 * time.Second).Element(sel)
-		if findErr == nil && el != nil {
-			src, aErr := el.Attribute("src")
-			if aErr == nil && src != nil && *src != "" {
-				data["profile_picture_url"] = *src
-				break
-			}
-		}
-	}
-
-	// Current company / experience.
-	experienceSelectors := []string{
-		"div#experience ~ div.pvs-list__outer-container li.artdeco-list__item:first-child",
-		"section.pv-experience-section li:first-child",
-	}
-	for _, sel := range experienceSelectors {
-		el, findErr := page.Timeout(3 * time.Second).Element(sel)
-		if findErr == nil && el != nil {
-			text, tErr := el.Text()
-			if tErr == nil && strings.TrimSpace(text) != "" {
-				data["current_experience"] = strings.TrimSpace(text)
-				break
-			}
-		}
-	}
-
-	// Education.
-	educationSelectors := []string{
-		"div#education ~ div.pvs-list__outer-container li.artdeco-list__item:first-child",
-		"section.pv-education-section li:first-child",
-	}
-	for _, sel := range educationSelectors {
-		el, findErr := page.Timeout(3 * time.Second).Element(sel)
-		if findErr == nil && el != nil {
-			text, tErr := el.Text()
-			if tErr == nil && strings.TrimSpace(text) != "" {
-				data["education"] = strings.TrimSpace(text)
-				break
-			}
-		}
-	}
-
-	// Website / contact info link.
-	websiteSelectors := []string{
-		"section.ci-websites a",
-		"a[href*='contact-info']",
-	}
-	for _, sel := range websiteSelectors {
-		el, findErr := page.Timeout(2 * time.Second).Element(sel)
-		if findErr == nil && el != nil {
-			href, aErr := el.Attribute("href")
-			if aErr == nil && href != nil && *href != "" {
-				data["contact_info_url"] = *href
-				break
-			}
-		}
-	}
-
-	return data, nil
+	return false, fmt.Errorf("not a boolean: %q", s)
 }
 
-// GetMethodByName returns a dispatchable wrapper for the named LinkedIn action method.
-// This satisfies the action.BotAdapter interface so call_bot_method steps can resolve
-// LinkedIn methods at runtime.
+type method func(ctx context.Context, args ...interface{}) (interface{}, error)
+
+// GetMethodByName returns the call_bot_method entry point for name. The
+// executor passes the page first, then the step's resolved args.
 func (b *LinkedInBot) GetMethodByName(name string) (func(ctx context.Context, args ...interface{}) (interface{}, error), bool) {
-	switch name {
-	case "list_user_posts":
-		return func(ctx context.Context, args ...interface{}) (interface{}, error) {
-			if len(args) < 4 {
-				return nil, fmt.Errorf("list_user_posts requires (page, profileURL, maxCount, activityType)")
-			}
-			page, ok := args[0].(browser.PageInterface)
-			if !ok {
-				return nil, fmt.Errorf("list_user_posts: first arg must be browser.PageInterface")
-			}
-			profileURL, _ := args[1].(string)
-			maxCount := 20
-			if v, ok := args[2].(float64); ok {
-				maxCount = int(v)
-			}
-			activityType, _ := args[3].(string)
-			if activityType == "" {
-				activityType = "all"
-			}
-			return b.ListUserPosts(ctx, page, profileURL, maxCount, activityType)
-		}, true
+	m, ok := b.methods()[name]
+	return m, ok
+}
 
-	case "list_post_comments":
-		return func(ctx context.Context, args ...interface{}) (interface{}, error) {
-			if len(args) < 4 {
-				return nil, fmt.Errorf("list_post_comments requires (page, postURL, maxCount, includeReplies)")
+func (b *LinkedInBot) methods() map[string]method {
+	return map[string]method{
+		"list_user_posts": func(ctx context.Context, args ...interface{}) (interface{}, error) {
+			p, a, err := botpkg.Args(args, 3, "profileURL", "maxCount?", "activityType?")
+			if err != nil {
+				return nil, fmt.Errorf("list_user_posts: %w", err)
 			}
-			page, ok := args[0].(browser.PageInterface)
-			if !ok {
-				return nil, fmt.Errorf("list_post_comments: first arg must be browser.PageInterface")
+			n, err := intArg(a[1], 20)
+			if err != nil {
+				return nil, fmt.Errorf("list_user_posts: maxCount: %w", err)
 			}
-			postURL, _ := args[1].(string)
-			maxCount := 50
-			if v, ok := args[2].(float64); ok {
-				maxCount = int(v)
+			return b.ListUserPosts(ctx, p, a[0], n, a[2])
+		},
+		"list_post_comments": func(ctx context.Context, args ...interface{}) (interface{}, error) {
+			p, a, err := botpkg.Args(args, 3, "postURL", "maxCount?", "includeReplies?")
+			if err != nil {
+				return nil, fmt.Errorf("list_post_comments: %w", err)
 			}
-			includeReplies := true
-			if v, ok := args[3].(bool); ok {
-				includeReplies = v
+			n, err := intArg(a[1], 50)
+			if err != nil {
+				return nil, fmt.Errorf("list_post_comments: maxCount: %w", err)
 			}
-			return b.ListPostComments(ctx, page, postURL, maxCount, includeReplies)
-		}, true
-
-	case "like_post":
-		return func(ctx context.Context, args ...interface{}) (interface{}, error) {
-			if len(args) < 3 {
-				return nil, fmt.Errorf("like_post requires (page, postURL, reaction)")
+			replies, err := boolArg(a[2], true)
+			if err != nil {
+				return nil, fmt.Errorf("list_post_comments: includeReplies: %w", err)
 			}
-			page, ok := args[0].(browser.PageInterface)
-			if !ok {
-				return nil, fmt.Errorf("like_post: first arg must be browser.PageInterface")
+			return b.ListPostComments(ctx, p, a[0], n, replies)
+		},
+		"like_post": func(ctx context.Context, args ...interface{}) (interface{}, error) {
+			p, a, err := botpkg.Args(args, 2, "postURL", "reaction?")
+			if err != nil {
+				return nil, fmt.Errorf("like_post: %w", err)
 			}
-			postURL, _ := args[1].(string)
-			reaction, _ := args[2].(string)
-			if reaction == "" {
-				reaction = "like"
+			return b.LikePost(ctx, p, a[0], a[1])
+		},
+		"comment_on_post": func(ctx context.Context, args ...interface{}) (interface{}, error) {
+			p, a, err := botpkg.Args(args, 3, "postURL", "commentText", "parentCommentID?")
+			if err != nil {
+				return nil, fmt.Errorf("comment_on_post: %w", err)
 			}
-			if err := b.LikePost(ctx, page, postURL, reaction); err != nil {
+			return b.CommentOnPost(ctx, p, a[0], a[1], a[2])
+		},
+		"like_comment": func(ctx context.Context, args ...interface{}) (interface{}, error) {
+			p, a, err := botpkg.Args(args, 2, "postURL", "commentID")
+			if err != nil {
+				return nil, fmt.Errorf("like_comment: %w", err)
+			}
+			return b.LikeComment(ctx, p, a[0], a[1])
+		},
+		"send_message": func(ctx context.Context, args ...interface{}) (interface{}, error) {
+			p, a, err := botpkg.Args(args, 2, "recipient", "message")
+			if err != nil {
+				return nil, fmt.Errorf("send_message: %w", err)
+			}
+			return b.SendMessageTo(ctx, p, a[0], a[1])
+		},
+		"reply_to_conversation": func(ctx context.Context, args ...interface{}) (interface{}, error) {
+			p, a, err := botpkg.Args(args, 2, "threadURL", "message")
+			if err != nil {
+				return nil, fmt.Errorf("reply_to_conversation: %w", err)
+			}
+			if err := b.ReplyToConversation(ctx, p, a[0], a[1]); err != nil {
 				return nil, err
 			}
-			return map[string]interface{}{"success": true, "postURL": postURL, "reaction": reaction}, nil
-		}, true
-
-	case "comment_on_post":
-		return func(ctx context.Context, args ...interface{}) (interface{}, error) {
-			if len(args) < 4 {
-				return nil, fmt.Errorf("comment_on_post requires (page, postURL, commentText, parentCommentID)")
+			return map[string]interface{}{"success": true, "thread_url": a[0], "sent": true}, nil
+		},
+		"list_conversations": func(ctx context.Context, args ...interface{}) (interface{}, error) {
+			p, a, err := botpkg.Args(args, 2, "max?", "onlyUnread?")
+			if err != nil {
+				return nil, fmt.Errorf("list_conversations: %w", err)
 			}
-			page, ok := args[0].(browser.PageInterface)
-			if !ok {
-				return nil, fmt.Errorf("comment_on_post: first arg must be browser.PageInterface")
+			n, err := intArg(a[0], 20)
+			if err != nil {
+				return nil, fmt.Errorf("list_conversations: max: %w", err)
 			}
-			postURL, _ := args[1].(string)
-			commentText, _ := args[2].(string)
-			parentCommentID, _ := args[3].(string)
-			if err := b.CommentOnPost(ctx, page, postURL, commentText, parentCommentID); err != nil {
-				return nil, err
+			unread, err := boolArg(a[1], true)
+			if err != nil {
+				return nil, fmt.Errorf("list_conversations: onlyUnread: %w", err)
 			}
-			return map[string]interface{}{"success": true, "postURL": postURL}, nil
-		}, true
-
-	case "like_comment":
-		return func(ctx context.Context, args ...interface{}) (interface{}, error) {
-			if len(args) < 3 {
-				return nil, fmt.Errorf("like_comment requires (page, postURL, commentID)")
+			return b.ListConversations(ctx, p, n, unread)
+		},
+		"get_profile_data": func(ctx context.Context, args ...interface{}) (interface{}, error) {
+			p, a, err := botpkg.Args(args, 1, "profileURL")
+			if err != nil {
+				return nil, fmt.Errorf("get_profile_data: %w", err)
 			}
-			page, ok := args[0].(browser.PageInterface)
-			if !ok {
-				return nil, fmt.Errorf("like_comment: first arg must be browser.PageInterface")
+			return b.GetProfile(ctx, p, a[0])
+		},
+		"search_people": func(ctx context.Context, args ...interface{}) (interface{}, error) {
+			p, a, err := botpkg.Args(args, 2, "keyword", "max?")
+			if err != nil {
+				return nil, fmt.Errorf("search_people: %w", err)
 			}
-			postURL, _ := args[1].(string)
-			commentID, _ := args[2].(string)
-			if err := b.LikeComment(ctx, page, postURL, commentID); err != nil {
-				return nil, err
+			n, err := intArg(a[1], 10)
+			if err != nil {
+				return nil, fmt.Errorf("search_people: max: %w", err)
 			}
-			return map[string]interface{}{"success": true, "postURL": postURL, "commentID": commentID}, nil
-		}, true
+			return b.SearchPeople(ctx, p, a[0], n)
+		},
+		"search_posts": func(ctx context.Context, args ...interface{}) (interface{}, error) {
+			p, a, err := botpkg.Args(args, 2, "keyword", "max?")
+			if err != nil {
+				return nil, fmt.Errorf("search_posts: %w", err)
+			}
+			n, err := intArg(a[1], 10)
+			if err != nil {
+				return nil, fmt.Errorf("search_posts: max: %w", err)
+			}
+			return b.SearchPosts(ctx, p, a[0], n)
+		},
+		"list_followers": func(ctx context.Context, args ...interface{}) (interface{}, error) {
+			p, a, err := botpkg.Args(args, 2, "sourceType?", "max?")
+			if err != nil {
+				return nil, fmt.Errorf("list_followers: %w", err)
+			}
+			n, err := intArg(a[1], 50)
+			if err != nil {
+				return nil, fmt.Errorf("list_followers: max: %w", err)
+			}
+			return b.ListFollowers(ctx, p, a[0], n)
+		},
+		"publish_post": func(ctx context.Context, args ...interface{}) (interface{}, error) {
+			p, a, err := botpkg.Args(args, 2, "text", "media?")
+			if err != nil {
+				return nil, fmt.Errorf("publish_post: %w", err)
+			}
+			media := a[1]
+			if len(args) > 2 {
+				// A media list (schema array) arrives as a slice.
+				if list, ok := args[2].([]interface{}); ok {
+					parts := make([]string, 0, len(list))
+					for _, v := range list {
+						if s := strings.TrimSpace(fmt.Sprint(v)); s != "" {
+							parts = append(parts, s)
+						}
+					}
+					media = strings.Join(parts, ",")
+				}
+			}
+			return b.PublishPost(ctx, p, a[0], media)
+		},
 	}
-	return nil, false
 }

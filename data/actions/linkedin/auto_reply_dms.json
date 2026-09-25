@@ -1,8 +1,8 @@
 {
   "actionType": "auto_reply_dms",
   "platform": "LINKEDIN",
-  "version": "1.0.0",
-  "description": "Reply to messages in LinkedIn inbox",
+  "version": "2.0.0",
+  "description": "Reply to LinkedIn inbox conversations that are waiting for an answer (unread, last message not yours)",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": true,
@@ -10,12 +10,33 @@
   },
   "inputs": {
     "required": [
-      "startDate",
-      "endDate",
-      "pollInterval"
+      {
+        "name": "replyText",
+        "type": "string",
+        "description": "Reply to send (the node's message)"
+      }
     ],
     "optional": [
-      "selectedListItems"
+      {
+        "name": "maxConversations",
+        "type": "number",
+        "default": 10,
+        "min": 1,
+        "max": 100
+      },
+      {
+        "name": "onlyUnread",
+        "type": "boolean",
+        "default": true,
+        "description": "Only unread conversations whose last message is not yours"
+      },
+      {
+        "name": "delayBetweenReplies",
+        "type": "number",
+        "default": 10,
+        "min": 1,
+        "max": 600
+      }
     ]
   },
   "outputs": {
@@ -29,96 +50,55 @@
   },
   "steps": [
     {
-      "id": "navigate_to_messages",
-      "type": "navigate",
-      "url": "https://www.linkedin.com/messaging/",
-      "waitFor": "page_load",
-      "timeout": 30
+      "id": "list_conversations",
+      "type": "call_bot_method",
+      "methodName": "list_conversations",
+      "args": [
+        "{{maxConversations or 10}}",
+        "{{onlyUnread}}"
+      ],
+      "variable_name": "conversations",
+      "timeout": 90,
+      "onError": {
+        "action": "mark_failed"
+      }
     },
     {
-      "id": "wait_for_inbox_load",
+      "id": "reply",
+      "type": "call_bot_method",
+      "methodName": "reply_to_conversation",
+      "args": [
+        "{{item.url}}",
+        "{{replyText}}"
+      ],
+      "variable_name": "replyResult",
+      "timeout": 120,
+      "onError": {
+        "action": "mark_failed"
+      }
+    },
+    {
+      "id": "wait",
       "type": "wait",
-      "duration": 3.0,
+      "duration": "{{delayBetweenReplies or 10}}",
       "waitFor": "time"
     },
     {
-      "id": "find_conversation_list",
-      "type": "find_element",
-      "xpath": "//div[contains(@class, 'conversation-list')] | //ul[contains(@role, 'list')]",
-      "timeout": 15
-    },
-    {
-      "id": "extract_conversations",
-      "type": "extract_multiple",
-      "xpath": "//div[contains(@class, 'conversation-item')] | //li[contains(@class, 'conversation')]",
-      "onSuccess": {
-        "action": "save_data"
-      }
-    },
-    {
-      "id": "filter_by_date_range",
-      "type": "update_progress",
-      "set": {
-        "filteredConversations": "{{extract_conversations}}"
-      }
-    },
-    {
-      "id": "process_conversation",
-      "type": "navigate",
-      "url": "{{conversation.url}}",
-      "waitFor": "page_load",
-      "timeout": 15
-    },
-    {
-      "id": "find_message_input",
-      "type": "find_element",
-      "intent": "the message text box of the open direct message conversation",
-      "xpath": "//div[@contenteditable='true'] | //textarea",
-      "timeout": 10
-    },
-    {
-      "id": "type_reply",
-      "type": "type",
-      "elementRef": "find_message_input",
-      "text": "{{replyText}}",
-      "humanLike": true
-    },
-    {
-      "id": "find_send_button",
-      "type": "find_element",
-      "intent": "the Send button of the open direct message conversation",
-      "xpath": "//button[contains(@aria-label, 'Send')] | //button[@type='submit']",
-      "timeout": 10
-    },
-    {
-      "id": "click_send",
-      "type": "click",
-      "elementRef": "find_send_button",
-      "waitFor": "message_sent",
-      "onSuccess": {
-        "action": "update_progress",
-        "increment": "reachedIndex"
-      }
+      "id": "log",
+      "type": "log",
+      "value": "Replied to: {{item.name}}"
     }
   ],
   "loops": [
     {
       "id": "process_conversations",
-      "iterator": "filteredConversations",
+      "iterator": "conversations",
       "indexVar": "reachedIndex",
       "steps": [
-        "process_conversation",
-        "find_message_input",
-        "type_reply",
-        "find_send_button",
-        "click_send"
-      ],
-      "onComplete": "update_action_state"
+        "reply",
+        "wait",
+        "log"
+      ]
     }
-  ],
-  "errorHandling": {
-    "globalRetries": 3,
-    "retryDelay": 2000,
-    "onFinalFailure": "log_and_continue"
-  }
+  ]
 }
