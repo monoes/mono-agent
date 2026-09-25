@@ -1090,9 +1090,9 @@ func (ae *ActionExecutor) stepExtractMultiple(ctx context.Context, step StepDef)
 	}
 	ae.execCtx.SetVariable(varName, extracted)
 
-	// Also add as extracted items for later saving.
+	// Also add as extracted items for later saving; each is a record.
 	for _, item := range extracted {
-		ae.execCtx.AddExtractedItem(item)
+		ae.execCtx.AddRecord(item)
 	}
 
 	result := &StepResult{
@@ -1536,7 +1536,7 @@ func (ae *ActionExecutor) stepSaveData(ctx context.Context, step StepDef) (*Step
 		ae.execCtx.mu.Unlock()
 		for _, item := range dataToSave {
 			if !containsExtractedItem(tracked, item) {
-				ae.execCtx.AddExtractedItem(item)
+				ae.execCtx.AddRecord(item)
 			}
 		}
 	}
@@ -1733,8 +1733,17 @@ func (ae *ActionExecutor) stepCallBotMethod(ctx context.Context, step StepDef) (
 	// If the bot method returned a map, or a list of maps (list_* methods),
 	// also add it as extracted item(s) so it appears in the node output.
 	// save_data over the same variable skips rows already tracked here.
+	// A list result is records; so is one map per loop iteration (e.g. a
+	// profile scraped per target). A single map outside a loop is one facet
+	// of the node's single item (the Gemini shape) and merges.
+	_, isMap := result.(map[string]interface{})
+	record := !isMap || ae.execCtx.inLoop()
 	for _, m := range botResultItems(result) {
-		ae.execCtx.AddExtractedItem(m)
+		if record {
+			ae.execCtx.AddRecord(m)
+		} else {
+			ae.execCtx.AddExtractedItem(m)
+		}
 	}
 
 	ae.logger.Debug().

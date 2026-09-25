@@ -126,6 +126,12 @@ type ExecutionContext struct {
 	FailedItems     []FailedItem
 	RecursionCounts map[string]int
 	CurrentURL      string
+	// ListOutput is set when the action produced records — rows from
+	// extract_multiple, a list-returning bot method, or one result per loop
+	// iteration — as opposed to per-step results about a single item (the
+	// Gemini shape). The node layer emits records as separate items.
+	ListOutput bool
+	loopDepth  int
 }
 
 // NewExecutionContext returns an initialised execution context.
@@ -222,6 +228,34 @@ func (ec *ExecutionContext) AddExtractedItem(item map[string]interface{}) {
 	ec.ExtractedItems = append(ec.ExtractedItems, item)
 }
 
+// AddRecord appends an item that is one record of a list result (see
+// ListOutput).
+func (ec *ExecutionContext) AddRecord(item map[string]interface{}) {
+	ec.mu.Lock()
+	defer ec.mu.Unlock()
+	ec.ExtractedItems = append(ec.ExtractedItems, item)
+	ec.ListOutput = true
+}
+
+// inLoop reports whether a loop body is currently executing.
+func (ec *ExecutionContext) inLoop() bool {
+	ec.mu.Lock()
+	defer ec.mu.Unlock()
+	return ec.loopDepth > 0
+}
+
+func (ec *ExecutionContext) enterLoop() {
+	ec.mu.Lock()
+	ec.loopDepth++
+	ec.mu.Unlock()
+}
+
+func (ec *ExecutionContext) leaveLoop() {
+	ec.mu.Lock()
+	ec.loopDepth--
+	ec.mu.Unlock()
+}
+
 // IncrementRecursion increments and returns the recursion counter for a key.
 func (ec *ExecutionContext) IncrementRecursion(key string) int {
 	ec.mu.Lock()
@@ -257,6 +291,9 @@ type StepResult struct {
 // ExecutionResult is the aggregate outcome of an entire action execution.
 type ExecutionResult struct {
 	ExtractedItems []map[string]interface{}
+	// ListOutput: ExtractedItems are separate records (see
+	// ExecutionContext.ListOutput), not facets of one item.
+	ListOutput     bool
 	FailedItems    []FailedItem
 	TotalProcessed int
 	Duration       time.Duration
@@ -877,6 +914,8 @@ func (ae *ActionExecutor) executeLoop(ctx context.Context, loop LoopDef, allStep
 	}
 
 	collection := toSlice(items)
+	ae.execCtx.enterLoop()
+	defer ae.execCtx.leaveLoop()
 	if len(collection) == 0 {
 		// toSlice yields nil both for a genuinely empty collection and for a
 		// value that simply isn't one (a string, a number). Only the first is
@@ -1238,6 +1277,7 @@ func (ae *ActionExecutor) buildResult() *ExecutionResult {
 
 	return &ExecutionResult{
 		ExtractedItems: extracted,
+		ListOutput:     ae.execCtx.ListOutput,
 		FailedItems:    failed,
 		TotalProcessed: len(extracted) + len(failed),
 		Duration:       time.Since(ae.startTime),

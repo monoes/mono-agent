@@ -396,3 +396,28 @@ func TestWaitStepHonoursAlternatives(t *testing.T) {
 		t.Fatalf("res = %+v", res)
 	}
 }
+
+// A list result, or one map per loop iteration, marks the run as producing
+// records; a single map outside a loop (the Gemini shape) does not.
+func TestCallBotMethodMarksListOutput(t *testing.T) {
+	run := func(result interface{}, inLoop bool) bool {
+		ae := NewActionExecutor(context.Background(), nil, nil, nil, nil, &listBotAdapter{result: result}, zerolog.Nop())
+		if inLoop {
+			ae.execCtx.enterLoop()
+			defer ae.execCtx.leaveLoop()
+		}
+		if res, _ := ae.stepCallBotMethod(context.Background(), StepDef{ID: "t", Type: "call_bot_method", MethodName: "m"}); !res.Success {
+			t.Fatalf("res = %+v", res)
+		}
+		return ae.buildResult().ListOutput
+	}
+	if !run([]interface{}{map[string]interface{}{"a": 1}}, false) {
+		t.Error("list result should be records")
+	}
+	if !run(map[string]interface{}{"name": "x"}, true) {
+		t.Error("a map per loop iteration should be records")
+	}
+	if run(map[string]interface{}{"response_text": "x"}, false) {
+		t.Error("a single map outside a loop must merge (Gemini shape)")
+	}
+}

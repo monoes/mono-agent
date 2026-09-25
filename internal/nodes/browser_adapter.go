@@ -275,6 +275,9 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 	// Seed selectedListItems as a variable so loops over target lists work.
 	if len(selectedListItems) > 0 {
 		executor.SetVariable("selectedListItems", selectedListItems)
+		// Same list under its node-facing name, for actions that declare
+		// their required list input as "targets" (runtime validation reads it).
+		executor.SetVariable("targets", selectedListItems)
 	}
 
 	result, err := executor.Execute(storageAction)
@@ -290,6 +293,15 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 	var inputJSON map[string]interface{}
 	if len(input.Items) > 0 {
 		inputJSON = input.Items[0].JSON
+	}
+
+	// List actions (comments, posts, followers, search results, one profile
+	// per target) produce records: emit one item per record. Before, they
+	// were merged into a single item and only the last record survived.
+	if result.ListOutput && len(result.ExtractedItems) > 0 {
+		return []workflow.NodeOutput{
+			{Handle: "main", Items: recordItems(result.ExtractedItems, b.platform)},
+		}, nil
 	}
 
 	if len(result.ExtractedItems) > 0 {
@@ -309,6 +321,39 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 	return []workflow.NodeOutput{
 		{Handle: "main", Items: []workflow.Item{}},
 	}, nil
+}
+
+// identityKeys name who or what a record is about; their presence means the
+// record's "text" is content, not a profile card.
+var identityKeys = []string{"full_name", "name", "username", "author", "author_username",
+	"author_name", "handle", "displayName", "display_name", "title", "author_url", "comment_id", "post_url"}
+
+func hasIdentityFields(raw map[string]interface{}) bool {
+	for _, k := range identityKeys {
+		if v, ok := raw[k]; ok && v != nil && v != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// recordItems turns each extracted record into its own output item,
+// normalised like a merged item and with step bookkeeping removed.
+func recordItems(extracted []map[string]interface{}, platform string) []workflow.Item {
+	items := make([]workflow.Item, 0, len(extracted))
+	for _, raw := range extracted {
+		if skipped, _ := raw["skipped"].(bool); skipped {
+			continue
+		}
+		rec := make(map[string]interface{}, len(raw)+4)
+		for k, v := range NormalizeBrowserItem(raw, platform) {
+			if !stepBookkeepingKeys[k] {
+				rec[k] = v
+			}
+		}
+		items = append(items, workflow.NewItem(rec))
+	}
+	return items
 }
 
 // mergeStepResults folds the input item and every step's extracted result
@@ -400,7 +445,11 @@ func NormalizeBrowserItem(raw map[string]interface{}, platform string) map[strin
 	// LinkedIn result cards include noise lines before the actual job title
 	// (e.g. "View X's profile", "• 2nd", "2nd degree connection").
 	// Scan past those to find the real professional headline.
-	if text, ok := raw["text"].(string); ok && text != "" {
+	// Only bare profile cards (a text blob and a link) get their text split
+	// into name fields. A record that already says who it is about — a
+	// comment's author, a post's username — keeps its text as text: a
+	// comment body is not a person's name.
+	if text, ok := raw["text"].(string); ok && text != "" && !hasIdentityFields(raw) {
 		trimmedText := strings.TrimSpace(text)
 
 		// Check if text is a single-line or bullet-separated LinkedIn card
