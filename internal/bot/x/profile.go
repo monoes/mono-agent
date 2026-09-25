@@ -59,10 +59,38 @@ const scrapeProfileJS = `() => {
 	}
 	out.bio = txt(q("[data-testid='UserDescription']"));
 	out.location = txt(q("[data-testid='UserLocation']"));
-	const site = q("[data-testid='UserUrl']");
+	let site = q("[data-testid='UserUrl']");
+	out.join_date = txt(q("[data-testid='UserJoinDate']"));
+	if (!nameBox) {
+		// Logged-out layout: no data-testids. The header is the smallest
+		// ancestor of the <h1> that also holds the /following link; its bio is
+		// a dir=auto div and its meta items are marked only by svg[data-icon].
+		const h1 = q('h1');
+		let header = null;
+		for (let n = h1 && h1.parentElement; n && n !== document.body; n = n.parentElement) {
+			if (n.querySelector("a[href$='/following']")) { header = n; break; }
+		}
+		if (header) {
+			const bioEl = [...header.querySelectorAll("div[dir='auto']")].find((d) =>
+				!d.contains(h1) && !d.closest('a, button, h1') && txt(d) && txt(d) !== out.handle);
+			if (!out.bio) out.bio = txt(bioEl);
+			const iconItem = (prefix) => {
+				const svg = header.querySelector("svg[data-icon^='" + prefix + "']");
+				return svg ? svg.parentElement : null;
+			};
+			if (!out.location) out.location = txt(iconItem('icon-location'));
+			if (!site) {
+				const item = iconItem('icon-link');
+				site = item ? (item.querySelector('a[href]') || item) : null;
+			}
+			if (!out.join_date) {
+				out.join_date = txt(iconItem('icon-calendar')) ||
+					txt([...header.querySelectorAll("a[href$='/about'], span, div")].find((el) => !el.children.length && /^Joined\s/.test(txt(el))));
+			}
+		}
+	}
 	out.website = txt(site);
 	out.website_href = site ? (site.getAttribute('href') || '') : '';
-	out.join_date = txt(q("[data-testid='UserJoinDate']"));
 	const countText = (a) => {
 		if (!a) return '';
 		for (const el of a.querySelectorAll('span, div')) {

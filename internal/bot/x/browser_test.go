@@ -176,10 +176,23 @@ func TestBrowserProfile(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got["username"] != "synth_dave" || got["full_name"] != "Synth Dave" || got["followers_count"] != int64(60700000) ||
-			got["following_count"] != int64(7) || got["is_verified"] != true ||
-			got["profile_picture_url"] != "https://pbs.example.test/avatars/dave_400x400.jpg" {
-			t.Errorf("got %v", got)
+		// The logged-out layout marks bio/location/website/join date only by
+		// structure (dir=auto bio, svg[data-icon] meta rows); the timeline
+		// below the header must not leak into them.
+		want := map[string]interface{}{
+			"username": "synth_dave", "profile_url": "https://x.com/synth_dave", "full_name": "Synth Dave",
+			"bio": "just testing", "location": "Somewhere, Synthland",
+			"website": "dave.example", "website_href": "https://t.co/synthdave", "join_date": "Joined February 2007",
+			"is_verified": true, "is_protected": false, "can_dm": false,
+			"followers_count": int64(60700000), "following_count": int64(7),
+			"followers_text": "60.7m", "following_text": "7",
+			"profile_picture_url": "https://pbs.example.test/avatars/dave_400x400.jpg",
+			"banner_url":          "https://pbs.example.test/banners/dave_1500x500",
+		}
+		for k, v := range want {
+			if !reflect.DeepEqual(got[k], v) {
+				t.Errorf("%s = %#v, want %#v", k, got[k], v)
+			}
 		}
 	})
 
@@ -302,6 +315,15 @@ func TestBrowserListFollowers(t *testing.T) {
 		}
 		if rows[2]["bio"] != "line one\nline two" || rows[2]["follows_you"] != false {
 			t.Errorf("f3 = %v", rows[2])
+		}
+		// The follow button's hidden aria description is never bio text.
+		for _, r := range rows {
+			if bio, _ := r["bio"].(string); strings.Contains(bio, "Click to") {
+				t.Errorf("%s bio leaks the follow button description: %q", r["username"], bio)
+			}
+		}
+		if rows[3]["bio"] != "four" || rows[4]["bio"] != "five" {
+			t.Errorf("f4/f5 bios = %q / %q", rows[3]["bio"], rows[4]["bio"])
 		}
 		if u := urlOf(t, p); u != "https://x.com/synth_alice/followers" {
 			t.Errorf("list opened at %s", u)
