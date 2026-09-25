@@ -235,6 +235,11 @@
             <div class="rec-sub">Steps</div>
             <ol id="rec-draft-steps" class="rec-draft-steps"></ol>
             <ul id="rec-draft-lint" class="rec-lint"></ul>
+            <!-- Scripts the draft would run in the page, in full: they run
+                 with your logged-in session, so read them before saving. -->
+            <div id="rec-draft-scripts" class="rec-scripts" hidden>
+              <p class="rec-script-warn">This draft includes page scripts. They run in the site with your session &mdash; read them before saving.</p>
+            </div>
             <div class="field">
               <label for="rec-save-as">Save as</label>
               <select id="rec-save-as">

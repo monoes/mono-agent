@@ -135,9 +135,13 @@
     error: "the page could not be recorded",
   };
 
+  /** hasErrors is true when a draft has error-level lint (saving needs "Save anyway"). */
+  const hasErrors = (d) => !!d && (d.lint || []).some((l) => /^error$/i.test(l.level));
+
   /** summary is the line under the step list once recording has stopped. */
   function summary(state) {
     const st = state || {};
+    if (st.discarded) return "Nothing was saved: the recording had no steps.";
     const n = rows(st.steps).length;
     const bits = [`${n} step${n === 1 ? "" : "s"}`];
     if (st.url) bits.push(`on ${hostPath(st.url)}`);
@@ -180,12 +184,17 @@
         id: s.id || "",
         type: s.type || "",
         detail: s.description || s.configKey || s.selector || s.url || s.key || "",
-        sideEffect: s.sideEffect || "",
+        // A boolean in the action format: the step writes, sends or deletes.
+        sideEffect: s.sideEffect === true || (typeof s.sideEffect === "string" && s.sideEffect !== "" && s.sideEffect !== "none"),
       })),
       lint: (draft.lint || []).map((i) => ({
         level: i.severity || i.level || "warning",
         message: i.message || i.code || String(i),
       })),
+      // page_script sources, shown in full: they run with the person's session.
+      scripts: Object.keys(draft.scripts || {})
+        .sort()
+        .map((name) => ({ name, source: String(draft.scripts[name]) })),
     };
   }
 
@@ -206,6 +215,7 @@
    */
   function describeInput(i, recorded) {
     const secret =
+      i.secret === true ||
       /^(secret|password)$/i.test(i.type || "") ||
       /^(secret|password)$/i.test(i.format || "") ||
       /^\{\{\s*secret:/.test(String(i.default || ""));
@@ -215,7 +225,7 @@
       required: i.required !== false,
       secret,
       recorded: has && !secret ? String(recorded[i.name]) : "",
-      needsValue: secret || (!has && i.default == null),
+      needsValue: typeof i.needsValue === "boolean" ? i.needsValue || secret : secret || (!has && i.default == null),
     };
   }
 
@@ -233,5 +243,5 @@
     };
   }
 
-  root.MonoRecordView = { describe, rows, summary, sensitiveKind, targetName, hostPath, describeDraft, describeVerify };
+  root.MonoRecordView = { describe, rows, summary, hasErrors, sensitiveKind, targetName, hostPath, describeDraft, describeVerify };
 })(globalThis);

@@ -104,8 +104,8 @@ test("a draft is read from record analyze --json", () => {
   assert.equal(d.automation, "crm");
   assert.deepEqual(d.inputs.map((i) => [i.name, i.required]), [["email", true], ["note", false]]);
   assert.deepEqual(d.steps.map((s) => [s.id, s.detail, s.sideEffect]), [
-    ["open", "https://crm.test/new", ""],
-    ["save", "save_button", "write"],
+    ["open", "https://crm.test/new", false],
+    ["save", "save_button", true],
   ]);
   assert.deepEqual(d.lint, [{ level: "warning", message: "page_script used" }]);
   assert.deepEqual(V.describeDraft(null).steps, [], "an empty answer draws an empty draft, not a crash");
@@ -155,4 +155,30 @@ test("the real analyze draft: inputs that verify needs a value for (M13)", () =>
       ["team", false, false, ""],
     ]
   );
+});
+
+test("draft review: boolean side effects, error lint, scripts in full, Go's needsValue (D8, security)", () => {
+  const d = V.describeDraft({
+    draftDir: "/d",
+    draft: {
+      action: "post",
+      names: { action: "post" },
+      lint: [{ severity: "error", message: "selector save_button matches nothing" }],
+      scripts: { "b.js": "return 2;", "a.js": "return document.title;" },
+      inputs: [
+        { name: "body", type: "string", required: true, secret: false, needsValue: false },
+        { name: "key", type: "string", required: true, secret: true, needsValue: true },
+      ],
+      actionDef: { steps: [{ id: "s", type: "click", sideEffect: true }, { id: "r", type: "extract_text" }] },
+    },
+  });
+  assert.deepEqual(d.steps.map((s) => s.sideEffect), [true, false]);
+  assert.equal(V.hasErrors(d), true);
+  assert.equal(V.hasErrors(V.describeDraft({ draft: { lint: [{ severity: "warning", message: "w" }] } })), false);
+  assert.deepEqual(d.scripts, [{ name: "a.js", source: "return document.title;" }, { name: "b.js", source: "return 2;" }]);
+  assert.deepEqual(d.inputs.map((i) => [i.name, i.secret, i.needsValue]), [["body", false, false], ["key", true, true]]);
+});
+
+test("a discarded recording says nothing was saved", () => {
+  assert.equal(V.summary({ discarded: true, steps: [] }), "Nothing was saved: the recording had no steps.");
 });

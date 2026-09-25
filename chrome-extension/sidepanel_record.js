@@ -34,6 +34,7 @@
   const draftInputs = el("rec-draft-inputs");
   const draftSteps = el("rec-draft-steps");
   const draftLint = el("rec-draft-lint");
+  const draftScripts = el("rec-draft-scripts");
   const saveAs = el("rec-save-as");
   const saveName = el("rec-save-name");
   const saveAutomation = el("rec-save-automation");
@@ -50,6 +51,7 @@
   // This panel pressed Record: after a worker restart it says so again, so
   // closing it still stops the recording.
   let owner = false;
+  let confirmSave = false;
   const PING_MS = 20000;
 
   function say(target, kind, text) {
@@ -147,6 +149,7 @@
     const done = !rec && !!state.id;
     summaryLine.hidden = !done;
     after.hidden = !done;
+    analyzeBtn.hidden = !!state.discarded;
     if (done) {
       summaryLine.textContent = View.summary(state);
       analyzeBtn.disabled = !state.delivered;
@@ -221,11 +224,21 @@
     draftSteps.textContent = "";
     for (const s of d.steps) {
       const li = node("li", "", `${s.type}${s.detail ? ` — ${s.detail}` : ""}`);
-      if (s.sideEffect) li.appendChild(node("span", "chip rec-suggest", s.sideEffect));
+      if (s.sideEffect) li.appendChild(node("span", "chip rec-suggest", "side effect"));
       draftSteps.appendChild(li);
     }
     draftLint.textContent = "";
     for (const l of d.lint) draftLint.appendChild(node("li", `rec-lint-${l.level}`, l.message));
+    for (const old of draftScripts.querySelectorAll(".rec-script")) old.remove();
+    draftScripts.hidden = !d.scripts.length;
+    for (const sc of d.scripts) {
+      const box = node("div", "rec-script");
+      box.appendChild(node("div", "rec-sub", sc.name));
+      box.appendChild(node("pre", "rec-script-src", sc.source));
+      draftScripts.appendChild(box);
+    }
+    confirmSave = false;
+    saveBtn.textContent = "Save";
     saveAs.value = d.saveAs || "action";
     saveName.value = d.action || "";
     saveAutomation.value = d.automation || "";
@@ -301,6 +314,14 @@
 
   saveBtn.addEventListener("click", async () => {
     if (!draft) return;
+    // Error-level lint: the first click explains, the second saves anyway.
+    const force = View.hasErrors(draft);
+    if (force && !confirmSave) {
+      confirmSave = true;
+      saveBtn.textContent = "Save anyway";
+      say(draftMsg, "warn", "This draft has errors (listed above) and may not run. Press Save anyway to keep it regardless.");
+      return;
+    }
     saveBtn.disabled = true;
     try {
       const res = await send({
@@ -311,6 +332,7 @@
         automation: saveAutomation.value.trim(),
         // A new automation stays new under whatever name the person gives it.
         isNew: draft.isNew,
+        force: force && confirmSave,
       });
       const r = res.result || {};
       const what = r.nodeType || [r.automation, r.action].filter(Boolean).join(".");
