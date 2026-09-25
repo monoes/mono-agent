@@ -30,27 +30,9 @@ type FitVerdict struct {
 	Rationale       string  `json:"rationale"`
 }
 
-const rubricInstructions = `You are scoring a job application for fit against a candidate's profile.
-
-Score in two phases:
-1. HARD GATES (pass/fail, evaluated first):
-   - Eligibility: does the candidate appear eligible to work in the job's location based on the profile information? (if unknown, assume pass)
-   - Language: does the profile show proficiency in any language explicitly required by the job posting? (if the posting states no specific requirement, pass)
-   - Location: is the job's location compatible with the candidate profile (remote, or a location the candidate could work from)? (if unclear, pass)
-   If either eligibility or language fails, set overall_score to 0 and verdict to "Ineligible" and skip the dimension scores below (still include all fields, using 0 for unscored dimensions).
-
-2. WEIGHTED DIMENSIONS (0-100 each, only if both eligibility and language gates pass):
-   - technical_score (weight 30%): alignment of the candidate's technical skills/experience with the job's requirements.
-   - experience_score (weight 25%): years and seniority level match.
-   - behavioral_score (weight 15%): soft-skill/culture signals visible in the profile relative to what the posting implies.
-   - career_score (weight 30%): whether this role is a sensible next step given the candidate's trajectory.
-   overall_score = 0.30*technical_score + 0.25*experience_score + 0.15*behavioral_score + 0.30*career_score.
-   verdict: "Strong Fit" (overall_score >= 80), "Good Fit" (>= 65), "Moderate Fit" (>= 50), "Weak Fit" (>= 30), "Poor Fit" (< 30).
-
-Base every claim ONLY on the CANDIDATE PROFILE EXCERPTS section below — never invent experience, skills, or credentials not shown there.
-
-Respond with ONLY a single JSON object, no markdown fencing, no other text, with exactly these fields:
-{"eligibility_pass": bool, "language_pass": bool, "location_pass": bool, "technical_score": number, "experience_score": number, "behavioral_score": number, "career_score": number, "overall_score": number, "verdict": string, "rationale": string}`
+// rubricInstructions is the agent-runtime prompt, rendered from the Go
+// weights and bands in rubric.go so the agent and jev backends cannot drift.
+var rubricInstructions = renderRubricInstructions()
 
 // buildPrompt assembles the full evaluation prompt for job app, grounded
 // in excerpts retrieved from the profile's knowledge base. If excerpts is
