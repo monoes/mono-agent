@@ -230,7 +230,7 @@ func validateManifest(m Manifest, source string) []IssueJSON {
 		add("error", "bad_schema", "schema must be %q, got %q", SchemaV1, m.Schema)
 	}
 	if !ValidID(m.ID) {
-		add("error", "bad_id", "id %q must match %s", m.ID, idPattern.String())
+		add("error", "bad_id", "id %q must be 1–41 lowercase letters, digits or dashes, starting with a letter or digit", m.ID)
 	}
 	if strings.TrimSpace(m.Name) == "" {
 		add("error", "missing_name", "name is required")

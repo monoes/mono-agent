@@ -72,7 +72,7 @@ func (c *pkgContext) ResolveAction(ref string) (*action.ActionDef, action.Packag
 	}
 	reg := c.pkg.reg
 	if reg == nil {
-		return nil, nil, fmt.Errorf("call_action %q: package %s is not installed, cross-package calls need the registry", ref, c.ID())
+		return nil, nil, fmt.Errorf("call_action %q: calling another automation only works from an installed automation, and %s is not installed", ref, c.ID())
 	}
 	info, err := reg.Info(id)
 	if err != nil {

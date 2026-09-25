@@ -166,7 +166,7 @@ func (r *Registry) download(url string) (fs.FS, string, error) {
 // ErrReplacesBuiltin is returned when an install would overwrite an
 // installed built-in or local package with less trusted content and
 // InstallOptions.ReplaceBuiltin is not set.
-var ErrReplacesBuiltin = errors.New("automation: install would replace a built-in or local package (needs ReplaceBuiltin)")
+var ErrReplacesBuiltin = errors.New("automation: install would replace a built-in or local package and needs confirmation (--replace-builtin on the command line)")
 
 // installPackage validates, reviews and (unless dryRun) writes p. merge
 // marks AddAction, where recorded content may extend a built-in or local
@@ -215,7 +215,7 @@ func (r *Registry) prepareLocked(idx *indexFile, p *Package, files map[string][]
 			res.Warnings = append(res.Warnings, fmt.Sprintf("REPLACES the installed %s package %q %s with %s content",
 				strings.ToUpper(e.trust()), m.ID, e.Version, incoming))
 			if replaceBlocked {
-				res.Warnings = append(res.Warnings, "replacing it requires --replace-builtin (InstallOptions.ReplaceBuiltin)")
+				res.Warnings = append(res.Warnings, "replacing it requires confirmation (--replace-builtin on the command line)")
 			}
 		}
 		res.PreviousVersion = e.Version

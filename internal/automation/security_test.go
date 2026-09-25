@@ -69,9 +69,19 @@ func TestImportedCannotSilentlyReplaceBuiltin(t *testing.T) {
 	if !strings.Contains(strings.Join(res.Warnings, "\n"), "REPLACES the installed BUILTIN package") {
 		t.Errorf("no loud warning: %v", res.Warnings)
 	}
+	for _, w := range res.Warnings {
+		if strings.Contains(w, "ReplaceBuiltin") || strings.Contains(w, "InstallOptions") {
+			t.Errorf("warning leaks a Go identifier: %q", w)
+		}
+	}
+	if !strings.Contains(strings.Join(res.Warnings, "\n"), "replacing it requires confirmation (--replace-builtin on the command line)") {
+		t.Errorf("confirmation hint missing: %v", res.Warnings)
+	}
 
 	if _, err := r.Install(dir, InstallOptions{}); !errors.Is(err, ErrReplacesBuiltin) {
 		t.Fatalf("want ErrReplacesBuiltin, got %v", err)
+	} else if strings.Contains(err.Error(), "ReplaceBuiltin") {
+		t.Errorf("error leaks a Go identifier: %v", err)
 	}
 	if info, _ := r.Info("demo"); info.Source != SourceBuiltin || info.Version != "1.0.0" {
 		t.Fatalf("built-in overwritten: %+v", info)
