@@ -56,6 +56,12 @@ type closureSet struct {
 
 // closure computes the transitive references of actions within p.
 func closure(p *Package, actions []string) (*closureSet, error) {
+	return closureOf(p, actions, nil)
+}
+
+// closureOf computes the transitive references of actions and fragments
+// within p.
+func closureOf(p *Package, actions, fragments []string) (*closureSet, error) {
 	c := &closureSet{actions: map[string]bool{}, fragments: map[string]bool{}, selectors: map[string]bool{}, scripts: map[string]bool{}}
 	var walk func(steps []action.StepDef) error
 	addAction := func(name string) error {
@@ -116,6 +122,11 @@ func closure(p *Package, actions []string) (*closureSet, error) {
 			return nil, err
 		}
 	}
+	for _, f := range fragments {
+		if err := walk([]action.StepDef{{Fragment: f}}); err != nil {
+			return nil, err
+		}
+	}
 	return c, nil
 }
 
@@ -126,6 +137,11 @@ func subsetFiles(p *Package, files map[string][]byte, actions []string) (map[str
 	if err != nil {
 		return nil, err
 	}
+	return subsetClosure(p, files, c)
+}
+
+// subsetClosure cuts files down to closure c (see subsetFiles).
+func subsetClosure(p *Package, files map[string][]byte, c *closureSet) (map[string][]byte, error) {
 	m := p.Manifest
 	out := map[string][]byte{}
 	for n, b := range files {

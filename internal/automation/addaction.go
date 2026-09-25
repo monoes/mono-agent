@@ -32,6 +32,22 @@ var ErrConflict = errors.New("automation: add-action conflicts with existing pac
 // bump. The merge, version bump and write all happen under the registry
 // lock, so concurrent AddActions do not lose each other's work.
 func (r *Registry) AddAction(id string, src *Package, actionName string, opts InstallOptions) (*InstallResult, error) {
+	return r.addItem(id, src, actionName, "", opts)
+}
+
+// AddFragment merges fragments/<fragmentName>.json of src and its closure
+// (nested fragments, selectors, scripts, same-package actions it calls)
+// into installed package id, with AddAction's rules: conflict checks
+// (a same-named fragment with different content is always a conflict),
+// trust lowered to the weaker tier, "<seedVersion>+local.N" for a built-in
+// and a patch bump otherwise, all under the lock. When id is not installed,
+// src's manifest (cut to the closure, usually no actions) creates it.
+func (r *Registry) AddFragment(id string, src *Package, fragmentName string, opts InstallOptions) (*InstallResult, error) {
+	return r.addItem(id, src, "", fragmentName, opts)
+}
+
+// addItem is AddAction (actionName set) or AddFragment (fragmentName set).
+func (r *Registry) addItem(id string, src *Package, actionName, fragmentName string, opts InstallOptions) (*InstallResult, error) {
 	if !ValidID(id) {
 		return nil, fmt.Errorf("automation: invalid id %q", id)
 	}
@@ -56,7 +72,19 @@ func (r *Registry) AddAction(id string, src *Package, actionName string, opts In
 	if err != nil {
 		return nil, err
 	}
-	sub, err := subsetFiles(src, srcFiles, []string{actionName})
+	var roots *closureSet
+	if actionName != "" {
+		roots, err = closureOf(src, []string{actionName}, nil)
+	} else {
+		if !safeName(fragmentName) {
+			return nil, fmt.Errorf("automation: invalid fragment name %q", fragmentName)
+		}
+		roots, err = closureOf(src, nil, []string{fragmentName})
+	}
+	if err != nil {
+		return nil, err
+	}
+	sub, err := subsetClosure(src, srcFiles, roots)
 	if err != nil {
 		return nil, err
 	}
@@ -76,11 +104,22 @@ func (r *Registry) AddAction(id string, src *Package, actionName string, opts In
 				return false, fmt.Errorf("automation %s: %w", id, err)
 			}
 			cur.Source, cur.Trust, cur.reg = e.Source, e.trust(), r
-			if merged, err = mergeInto(cur, subPkg, sub, actionName); err != nil {
+			if merged, err = mergeInto(cur, subPkg, sub, actionName, fragmentName); err != nil {
 				return false, err
 			}
 			m = mergeManifest(cur.Manifest, subPkg.Manifest)
 			source, trust = e.Source, lowerTrust(e.trust(), incoming)
+			if trust == e.trust() && unchanged(cur, m, merged) {
+				// Nothing new: no version bump, no write.
+				what := "action " + actionName
+				if actionName == "" {
+					what = "fragment " + fragmentName
+				}
+				res = &InstallResult{ID: id, Name: cur.Manifest.Name, Version: e.Version, DryRun: opts.DryRun,
+					Installed: !opts.DryRun, Dir: r.versionDir(id, e.Version),
+					Warnings: []string{fmt.Sprintf("no changes: %s already has this %s", id, what)}}
+				return false, nil
+			}
 			if e.Source == SourceBuiltin {
 				m.Version = localBuiltinVersion(e)
 			} else {
@@ -130,6 +169,29 @@ func (r *Registry) AddAction(id string, src *Package, actionName string, opts In
 	return res, err
 }
 
+// unchanged reports whether merging produced cur's content again: the same
+// manifest (ignoring version) and every file equal in content.
+func unchanged(cur *Package, m Manifest, merged map[string][]byte) bool {
+	mm := m
+	mm.Version = cur.Manifest.Version
+	if !reflect.DeepEqual(mm, cur.Manifest) {
+		return false
+	}
+	files, err := readTree(cur.FS)
+	if err != nil || len(files) != len(merged) {
+		return false
+	}
+	for n, b := range files {
+		if n == ManifestFile {
+			continue
+		}
+		if nb, ok := merged[n]; !ok || !sameContent(n, b, nb) {
+			return false
+		}
+	}
+	return true
+}
+
 // localBuiltinVersion is "<seedVersion>+local.N" for a user change to a
 // built-in, N one more than the current local build of the same base.
 func localBuiltinVersion(e *indexEntry) string {
@@ -149,11 +211,12 @@ func localBuiltinVersion(e *indexEntry) string {
 	return fmt.Sprintf("%s+local.%d", base, n)
 }
 
-// mergeInto returns cur's files with sub (the closure of actionName) merged
-// in. Items that differ and are still used by cur's other actions are
-// conflicts; so are other actions and their forms/tests. README, icon and
+// mergeInto returns cur's files with sub (the closure of actionName, or of
+// fragmentName) merged in. Items that differ and are still used by cur's
+// other actions are conflicts; so are other actions and their forms/tests,
+// and a same-named fragment when adding a fragment. README, icon and
 // recordings of the source are not merged.
-func mergeInto(cur, subPkg *Package, sub map[string][]byte, actionName string) (map[string][]byte, error) {
+func mergeInto(cur, subPkg *Package, sub map[string][]byte, actionName, fragmentName string) (map[string][]byte, error) {
 	merged, err := readTree(cur.FS)
 	if err != nil {
 		return nil, err
@@ -174,13 +237,13 @@ func mergeInto(cur, subPkg *Package, sub map[string][]byte, actionName string) (
 		case n == ManifestFile || n == "selectors.json":
 			continue
 		case dir == "actions/", dir == "forms/":
-			inUse = stem != actionName
+			inUse = actionName == "" || stem != actionName
 		case dir == "fragments/":
-			inUse = used.fragments[stem]
+			inUse = used.fragments[stem] || (fragmentName != "" && stem == fragmentName)
 		case dir == "scripts/":
 			inUse = used.scripts[base]
 		case strings.HasPrefix(n, "tests/"):
-			inUse = !strings.HasPrefix(base, actionName+".") && !strings.HasPrefix(base, actionName+"_")
+			inUse = actionName == "" || (!strings.HasPrefix(base, actionName+".") && !strings.HasPrefix(base, actionName+"_"))
 		default:
 			continue // README, icon, recordings: keep the target's own
 		}
