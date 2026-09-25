@@ -28,9 +28,17 @@ function isImageValue(value) {
     value.startsWith('blob:')
 }
 
+const PLATFORM_PROFILE_URL = {
+  INSTAGRAM: (u) => `https://www.instagram.com/${u}/`,
+  LINKEDIN:  (u) => `https://www.linkedin.com/in/${u}/`,
+  X:         (u) => `https://x.com/${u}`,
+  TIKTOK:    (u) => `https://www.tiktok.com/@${u}`,
+}
+
 function ReadonlyField({ label, value }) {
   const display = typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value ?? '')
   const isImg = isImageValue(display)
+  const isUrl = typeof display === 'string' && /^https?:\/\//i.test(display)
   return (
     <div style={{ marginBottom: 10 }}>
       <div style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 3 }}>
@@ -51,7 +59,20 @@ function ReadonlyField({ label, value }) {
           color: 'var(--text-secondary)',
           wordBreak: 'break-all',
         }}>
-          {display}
+          {isUrl ? (
+            <button
+              type="button"
+              onClick={() => api.openURL(display)}
+              style={{
+                background: 'none', border: 'none', padding: 0,
+                color: '#00b4d8', cursor: 'pointer', textAlign: 'left',
+                wordBreak: 'break-all', fontSize: 13, textDecoration: 'underline',
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+              }}
+            >
+              {display} <ExternalLink size={11} style={{ flexShrink: 0 }} />
+            </button>
+          ) : display}
         </div>
       )}
     </div>
@@ -369,6 +390,10 @@ function LeadApprovalCard({ item, onApprove, onReject, onOpenProfile }) {
   }
 
   const platformColor = item.platform?.toUpperCase() === 'LINKEDIN' ? '#0077b5' : '#00b4d8'
+  const rawUrl = item.profile_url || PLATFORM_PROFILE_URL[item.platform?.toUpperCase()]?.(item.platform_username)
+  const profileUrl = rawUrl
+    ? (/^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`)
+    : null
 
   return (
     <div style={{
@@ -403,9 +428,32 @@ function LeadApprovalCard({ item, onApprove, onReject, onOpenProfile }) {
               {item.platform?.toUpperCase() || 'LEAD'}
             </span>
             {item.platform_username && (
-              <span style={{ fontSize: 11, color: '#00b4d8', fontFamily: 'var(--font-mono)' }}>
-                @{item.platform_username}
-              </span>
+              profileUrl ? (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    api.openURL(profileUrl)
+                  }}
+                  title={`Open ${profileUrl}`}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    padding: 0,
+                    fontSize: 11,
+                    color: '#00b4d8',
+                    fontFamily: 'var(--font-mono)',
+                    cursor: 'pointer',
+                    textDecoration: 'underline',
+                  }}
+                >
+                  @{item.platform_username}
+                </button>
+              ) : (
+                <span style={{ fontSize: 11, color: '#00b4d8', fontFamily: 'var(--font-mono)' }}>
+                  @{item.platform_username}
+                </span>
+              )
             )}
           </div>
           {item.job_title && (
@@ -425,16 +473,29 @@ function LeadApprovalCard({ item, onApprove, onReject, onOpenProfile }) {
       {expanded && (
         <div style={{ padding: 16 }}>
           <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 12, fontSize: 11, color: 'var(--text-muted)' }}>
-            {item.profile_url && (
-              <a
-                href={item.profile_url}
-                target="_blank"
-                rel="noreferrer"
-                onClick={e => e.stopPropagation()}
-                style={{ color: '#00b4d8', display: 'inline-flex', alignItems: 'center', gap: 4, textDecoration: 'none' }}
+            {profileUrl && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  api.openURL(profileUrl)
+                }}
+                title={`Open on ${item.platform || 'web'}`}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  padding: 0,
+                  color: '#00b4d8',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  cursor: 'pointer',
+                  fontSize: 11,
+                  textDecoration: 'underline',
+                }}
               >
                 View Profile <ExternalLink size={11} />
-              </a>
+              </button>
             )}
             {item.created_at && (
               <span style={{ fontFamily: 'var(--font-mono)' }}>

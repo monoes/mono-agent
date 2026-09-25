@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`monoagentcli people tag list|add|remove|color`**. The People page now
+  makes every tag change through it, including the new tag colour picker.
+- **People page:** rework of the page and its tag editor. Human in Loop
+  usernames and URLs open the profile in the browser.
+
+### Fixed
+
+- People saved without a post count, following count or verified flag no
+  longer break `people list`, `people get`, export or the app's people
+  lookups. They failed with "converting NULL to int is unsupported".
+- A newly created tag shows its colour straight away.
+- The app prefers the `monoagentcli` shipped next to it over an older one on
+  PATH.
+
+### Added
+
 - **`monoagentcli people review list|approve|reject`** drives the review
   queue for people staged as `pending_approval`. `approve --send` runs the
   dispatch workflow for the person.
