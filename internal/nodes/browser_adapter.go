@@ -209,6 +209,9 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 		map[string]interface{}{"selectedListItems": selectedListItems, "targets": selectedListItems}); err != nil {
 		return nil, fmt.Errorf("nodes: %s/%s: %w", b.platform, b.actionType, err)
 	}
+	if err := checkLiveRun(b.platform, b.actionType); err != nil {
+		return nil, fmt.Errorf("nodes: %w", err)
+	}
 
 	// 4. Get a session (browser page) via the SessionProvider.
 	// Each call opens a fresh tab (no reuse across nodes), so close it once
