@@ -1,8 +1,8 @@
 {
   "actionType": "reply_to_comments",
   "platform": "INSTAGRAM",
-  "version": "1.0.0",
-  "description": "Reply to comments on Instagram posts",
+  "version": "2.0.0",
+  "description": "Reply to comments on Instagram posts: commentAuthor's comment, or the first comment when empty. The reply is posted only once Instagram has addressed it to that comment (@author), and it is verified; a missing author fails the item.",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
@@ -10,45 +10,87 @@
   },
   "inputs": {
     "required": [
-      { "name": "selectedListItems", "type": "list", "description": "Post URLs whose comments to reply to" },
-      { "name": "replyText", "type": "string", "description": "Reply text to post" }
+      {
+        "name": "selectedListItems",
+        "type": "list",
+        "description": "Post URLs whose comments to reply to"
+      },
+      {
+        "name": "replyText",
+        "type": "string",
+        "description": "Reply text to post"
+      }
     ],
     "optional": [
-      { "name": "commentAuthor", "type": "string", "default": "", "description": "Only reply to comments by this author; leave empty for first available comment" },
-      { "name": "delayBetweenReplies", "type": "number", "default": 10, "min": 5, "max": 120, "description": "Seconds to wait between replies" }
+      {
+        "name": "commentAuthor",
+        "type": "string",
+        "default": "",
+        "description": "Only reply to comments by this author; leave empty for first available comment"
+      },
+      {
+        "name": "delayBetweenReplies",
+        "type": "number",
+        "default": 10,
+        "min": 5,
+        "max": 120,
+        "description": "Seconds to wait between replies"
+      }
     ]
   },
   "outputs": {
-    "success": ["replyCount", "reachedIndex"],
-    "failure": ["failedItems"]
+    "success": [
+      "replyCount",
+      "reachedIndex"
+    ],
+    "failure": [
+      "failedItems"
+    ]
   },
   "steps": [
     {
-      "id": "t1_reply_comment",
+      "id": "reset_replyResult",
+      "type": "set_variable",
+      "variable_name": "replyResult",
+      "value": null
+    },
+    {
+      "id": "reply_comment",
       "type": "call_bot_method",
       "methodName": "reply_comment",
       "args": [
-        "{{item.url}}",
+        "{{item.url or item.href or item}}",
         "{{commentAuthor}}",
         "{{replyText}}"
       ],
       "variable_name": "replyResult",
-      "timeout": 60,
+      "timeout": 120,
       "onError": {
-        "action": "skip"
+        "action": "mark_failed"
       }
+    },
+    {
+      "id": "check_replied",
+      "type": "condition",
+      "condition": {
+        "variable": "replyResult",
+        "operator": "exists"
+      },
+      "then": [
+        "log_success"
+      ]
+    },
+    {
+      "id": "log_success",
+      "type": "log",
+      "description": "Reply posted",
+      "value": "Post: {{item.url}} (to {{replyResult.replied_to}})"
     },
     {
       "id": "wait_between_replies",
       "type": "wait",
       "duration": "{{delayBetweenReplies or 10}}",
       "waitFor": "time"
-    },
-    {
-      "id": "log_success",
-      "type": "log",
-      "description": "Reply posted",
-      "value": "Post: {{item.url}}"
     }
   ],
   "loops": [
@@ -57,15 +99,16 @@
       "iterator": "selectedListItems",
       "indexVar": "reachedIndex",
       "steps": [
-        "t1_reply_comment",
-        "wait_between_replies",
-        "log_success"
+        "reset_replyResult",
+        "reply_comment",
+        "check_replied",
+        "wait_between_replies"
       ],
       "onComplete": "update_action_state"
     }
   ],
   "errorHandling": {
-    "globalRetries": 3,
+    "globalRetries": 0,
     "retryDelay": 2000,
     "onFinalFailure": "log_and_continue"
   }

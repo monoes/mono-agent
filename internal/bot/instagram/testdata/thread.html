@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- SYNTHETIC fixture: an Instagram-like DM thread with a Lexical-style
+     contenteditable composer (Enter sends, Send button when non-empty). Invented content. -->
+<title>Bea Fixture • Direct</title>
+<style>
+body { font: 14px sans-serif; margin: 0; }
+main { margin-left: 90px; padding: 16px; }
+[role="grid"] { height: 300px; overflow-y: auto; border: 1px solid #eee; }
+.msg { padding: 4px; }
+[contenteditable] { width: 400px; min-height: 22px; border: 1px solid #ccc; display: inline-block; }
+[role="button"] { cursor: pointer; display: inline-block; padding: 4px 8px; }
+</style>
+</head>
+<body>
+<main role="main">
+  <div><a href="/{{PEER}}/" role="link"><span dir="auto">Bea Fixture</span></a> <span>{{PEER}}</span></div>
+  <div aria-label="Messages in conversation with Bea Fixture" role="grid" id="grid">
+    <div role="row"><div class="msg"><div dir="auto">Hi there, synthetic hello</div></div></div>
+    <div role="row"><div class="msg"><div dir="auto">see you soon</div></div></div>
+  </div>
+  <div id="composerWrap"><div aria-describedby="Message" aria-label="Message" contenteditable="true" role="textbox" spellcheck="true" tabindex="0" aria-placeholder="Message..." id="composer"><p><br></p></div>
+    <span id="sendSlot"></span></div>
+  <div id="toast"></div>
+</main>
+<script>
+window.FX = {{FX}};
+(function () {
+  const FX = window.FX;
+  const box = document.querySelector('#composer');
+  const slot = document.querySelector('#sendSlot');
+  const text = () => box.textContent;
+  const refresh = () => {
+    slot.innerHTML = text().trim() && !FX.noSendButton ? '<div role="button" tabindex="0" id="send">Send</div>' : '<div role="button" tabindex="0" aria-label="Like"><svg aria-label="Like" height="24" width="24"><title>Like</title></svg></div>';
+    const s = document.querySelector('#send');
+    if (s) s.addEventListener('click', send);
+  };
+  function send() {
+    const t = text().trim();
+    if (!t) return;
+    fetch('/api/v1/direct_v2/threads/broadcast/text/', { method: 'POST', body: 'thread=' + location.pathname + '&text=' + encodeURIComponent(t), headers: { 'content-type': 'application/x-www-form-urlencoded' } }).then(() => {
+      if (FX.noconfirm) return;
+      if (FX.fail) { document.querySelector('#toast').textContent = 'Not delivered'; return; }
+      const row = document.createElement('div');
+      row.setAttribute('role', 'row');
+      row.innerHTML = '<div class="msg"><div dir="auto"></div></div>';
+      row.querySelector('[dir=auto]').textContent = t;
+      document.querySelector('#grid').appendChild(row);
+      box.innerHTML = '<p><br></p>';
+      refresh();
+    });
+  }
+  box.addEventListener('input', refresh);
+  box.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (!FX.enterDoesNothing) send();
+    }
+  });
+  refresh();
+})();
+</script>
+</body>
+</html>

@@ -1,8 +1,8 @@
 {
   "actionType": "follow_users",
   "platform": "INSTAGRAM",
-  "version": "1.0.0",
-  "description": "Follow Instagram users from a list of profile URLs (3-tier fallback: bot method \u2192 XPath selectors \u2192 configKey)",
+  "version": "2.0.0",
+  "description": "Follow Instagram users from a list of profile URLs. Only the profile header's Follow button is used (never 'Suggested for you'); a profile already followed or requested is left alone; each follow is verified by the header switching to Following/Requested.",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
@@ -10,13 +10,43 @@
   },
   "inputs": {
     "required": [
-      { "name": "selectedListItems", "type": "list", "description": "Profile URLs to follow" }
+      {
+        "name": "selectedListItems",
+        "type": "list",
+        "description": "Profile URLs to follow"
+      }
     ],
     "optional": [
-      { "name": "maxFollowsPerSession", "type": "number", "default": 50, "min": 1, "max": 200, "description": "Rate limit: max follows per session" },
-      { "name": "maxFollowsPerDay", "type": "number", "default": 150, "min": 1, "max": 500, "description": "Rate limit: max follows per day" },
-      { "name": "delayBetweenFollows", "type": "number", "default": 5, "min": 2, "max": 60, "description": "Seconds to wait between follows" },
-      { "name": "skipPrivateAccounts", "type": "boolean", "default": false, "description": "Skip private accounts" }
+      {
+        "name": "maxFollowsPerSession",
+        "type": "number",
+        "default": 50,
+        "min": 1,
+        "max": 200,
+        "description": "Rate limit: max follows per session"
+      },
+      {
+        "name": "maxFollowsPerDay",
+        "type": "number",
+        "default": 150,
+        "min": 1,
+        "max": 500,
+        "description": "Rate limit: max follows per day"
+      },
+      {
+        "name": "delayBetweenFollows",
+        "type": "number",
+        "default": 5,
+        "min": 2,
+        "max": 60,
+        "description": "Seconds to wait between follows"
+      },
+      {
+        "name": "skipPrivateAccounts",
+        "type": "boolean",
+        "default": false,
+        "description": "Skip private accounts"
+      }
     ]
   },
   "outputs": {
@@ -30,114 +60,46 @@
   },
   "steps": [
     {
-      "id": "t1_follow_user",
+      "id": "reset_followResult",
+      "type": "set_variable",
+      "variable_name": "followResult",
+      "value": null
+    },
+    {
+      "id": "follow_user",
       "type": "call_bot_method",
       "methodName": "follow_user",
       "args": [
-        "{{item.url}}"
+        "{{item.url or item.href or item.username or item}}"
       ],
       "variable_name": "followResult",
-      "timeout": 30,
+      "timeout": 90,
       "onError": {
-        "action": "skip"
+        "action": "mark_failed"
       }
     },
     {
-      "id": "check_t1_result",
+      "id": "check_followed",
       "type": "condition",
       "condition": {
         "variable": "followResult",
-        "operator": "not_exists"
+        "operator": "exists"
       },
       "then": [
-        "t2_navigate_to_profile",
-        "t2_find_follow_button",
-        "t2_click_follow_button",
-        "t2_set_result",
-        "check_t2_result"
+        "log_success"
       ]
     },
     {
-      "id": "t2_navigate_to_profile",
-      "type": "navigate",
-      "url": "{{item.url}}",
-      "waitFor": "page_load",
-      "timeout": 30,
-      "onError": {
-        "action": "skip"
-      }
-    },
-    {
-      "id": "t2_find_follow_button",
-      "type": "find_element",
-      "xpath": "//header//button[normalize-space(.)='Follow']",
-      "alternatives": [
-        "//header//button[normalize-space(.)='Follow Back']",
-        "//header//div[@role='button'][normalize-space(.)='Follow']",
-        "//button[normalize-space(.)='Follow']",
-        "//div[@role='button'][normalize-space(.)='Follow']"
-      ],
-      "timeout": 10,
-      "variable_name": "t2FollowElement",
-      "onError": {
-        "action": "skip"
-      }
-    },
-    {
-      "id": "t2_click_follow_button",
-      "type": "click",
-      "elementRef": "t2_find_follow_button",
-      "onError": {
-        "action": "skip"
-      }
-    },
-    {
-      "id": "t2_set_result",
-      "type": "update_progress",
-      "set": {
-        "followResult": true
-      }
-    },
-    {
-      "id": "check_t2_result",
-      "type": "condition",
-      "condition": {
-        "variable": "t2FollowElement",
-        "operator": "not_exists"
-      },
-      "then": [
-        "t3_find_follow_button",
-        "t3_click_follow_button"
-      ]
-    },
-    {
-      "id": "t3_find_follow_button",
-      "type": "find_element",
-      "configKey": "follow_button",
-      "timeout": 10,
-      "onError": {
-        "action": "mark_failed"
-      }
-    },
-    {
-      "id": "t3_click_follow_button",
-      "type": "click",
-      "elementRef": "t3_find_follow_button",
-      "onError": {
-        "action": "mark_failed"
-      }
+      "id": "log_success",
+      "type": "log",
+      "description": "User followed",
+      "value": "Profile: {{item.url}} ({{followResult.status}})"
     },
     {
       "id": "wait_between_follows",
       "type": "wait",
       "duration": "{{delayBetweenFollows or 5}}",
       "waitFor": "time"
-    },
-    {
-      "id": "log_success",
-      "type": "log",
-      "description": "User followed",
-      "value": "Profile: {{item.url}}"
     }
   ],
   "loops": [
@@ -148,16 +110,16 @@
       "maxItems": "{{maxFollowsPerSession or 50}}",
       "maxItemsPerDay": "{{maxFollowsPerDay or 150}}",
       "steps": [
-        "t1_follow_user",
-        "check_t1_result",
-        "wait_between_follows",
-        "log_success"
+        "reset_followResult",
+        "follow_user",
+        "check_followed",
+        "wait_between_follows"
       ],
       "onComplete": "update_action_state"
     }
   ],
   "errorHandling": {
-    "globalRetries": 3,
+    "globalRetries": 0,
     "retryDelay": 2000,
     "onFinalFailure": "log_and_continue"
   }

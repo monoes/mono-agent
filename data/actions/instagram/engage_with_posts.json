@@ -2,7 +2,7 @@
   "actionType": "engage_with_posts",
   "platform": "INSTAGRAM",
   "version": "2.0.0",
-  "description": "Like or comment on Instagram posts using a 3-tier fallback pattern",
+  "description": "Search Instagram for a hashtag/keyword and engage with the posts found: like (verified, never un-likes), comment when commentText is set, follow the author when 'follow' is in engagementActions and the post link names its author.",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": true,
@@ -10,15 +10,57 @@
   },
   "inputs": {
     "required": [
-      { "name": "maxContentCount", "type": "number", "description": "Maximum number of posts to engage with" },
-      { "name": "searches", "type": "array", "description": "Array of hashtags or keywords to search" }
+      {
+        "name": "maxContentCount",
+        "type": "number",
+        "description": "Maximum number of posts to engage with"
+      },
+      {
+        "name": "searches",
+        "type": "array",
+        "description": "Array of hashtags or keywords to search"
+      }
     ],
     "optional": [
-      { "name": "engagementActions", "type": "array", "default": ["like"], "description": "Actions to perform: like, comment, follow" },
-      { "name": "commentText", "type": "string", "default": "", "description": "Comment text (if comment in engagementActions)" },
-      { "name": "target", "type": "string", "default": "posts", "enum": ["posts","reels"], "description": "Target content type" },
-      { "name": "minLikes", "type": "number", "default": 0, "min": 0, "description": "Skip posts with fewer likes" },
-      { "name": "sessionDelay", "type": "number", "default": 30, "min": 5, "max": 300, "description": "Seconds to wait between engagement sessions" }
+      {
+        "name": "engagementActions",
+        "type": "array",
+        "default": [
+          "like"
+        ],
+        "description": "Actions to perform: like, comment, follow"
+      },
+      {
+        "name": "commentText",
+        "type": "string",
+        "default": "",
+        "description": "Comment text (if comment in engagementActions)"
+      },
+      {
+        "name": "target",
+        "type": "string",
+        "default": "posts",
+        "enum": [
+          "posts",
+          "reels"
+        ],
+        "description": "Target content type"
+      },
+      {
+        "name": "minLikes",
+        "type": "number",
+        "default": 0,
+        "min": 0,
+        "description": "Skip posts with fewer likes"
+      },
+      {
+        "name": "sessionDelay",
+        "type": "number",
+        "default": 30,
+        "min": 5,
+        "max": 300,
+        "description": "Seconds to wait between engagement sessions"
+      }
     ]
   },
   "outputs": {
@@ -32,247 +74,150 @@
   },
   "steps": [
     {
-      "id": "parse_search_keyword",
-      "type": "update_progress",
-      "set": {
-        "searchKeyword": "{{searches[0].keyword}}"
-      }
-    },
-    {
-      "id": "build_search_url",
-      "type": "update_progress",
-      "set": {
-        "searchUrl": "https://www.instagram.com/explore/tags/{{searchKeyword}}/"
-      }
-    },
-    {
-      "id": "tier1_interact_with_posts",
+      "id": "search_posts",
       "type": "call_bot_method",
-      "methodName": "interact_with_posts",
+      "methodName": "search_posts",
       "args": [
-        "{{searches[0].keyword}}",
-        "{{maxContentCount}}",
+        "{{searches[0].keyword or searches[0] or keyword}}",
+        "{{maxContentCount or 10}}"
+      ],
+      "variable_name": "posts",
+      "timeout": 300,
+      "onError": {
+        "action": "mark_failed"
+      }
+    },
+    {
+      "id": "reset_likeResult",
+      "type": "set_variable",
+      "variable_name": "likeResult",
+      "value": null
+    },
+    {
+      "id": "reset_commentResult",
+      "type": "set_variable",
+      "variable_name": "commentResult",
+      "value": null
+    },
+    {
+      "id": "like_gate",
+      "type": "condition",
+      "condition": {
+        "variable": "engagementActions",
+        "operator": "not_exists"
+      },
+      "then": [
+        "like_post"
+      ],
+      "else": [
+        "like_requested"
+      ]
+    },
+    {
+      "id": "like_requested",
+      "type": "condition",
+      "condition": {
+        "variable": "engagementActions",
+        "operator": "contains",
+        "value": "like"
+      },
+      "then": [
+        "like_post"
+      ]
+    },
+    {
+      "id": "like_post",
+      "type": "call_bot_method",
+      "methodName": "like_post",
+      "args": [
+        "{{item.url}}"
+      ],
+      "variable_name": "likeResult",
+      "timeout": 90,
+      "onError": {
+        "action": "mark_failed"
+      }
+    },
+    {
+      "id": "comment_gate",
+      "type": "condition",
+      "condition": "commentText != ''",
+      "then": [
+        "comment_wanted"
+      ]
+    },
+    {
+      "id": "comment_wanted",
+      "type": "condition",
+      "condition": {
+        "variable": "engagementActions",
+        "operator": "not_exists"
+      },
+      "then": [
+        "comment_post"
+      ],
+      "else": [
+        "comment_requested"
+      ]
+    },
+    {
+      "id": "comment_requested",
+      "type": "condition",
+      "condition": {
+        "variable": "engagementActions",
+        "operator": "contains",
+        "value": "comment"
+      },
+      "then": [
+        "comment_post"
+      ]
+    },
+    {
+      "id": "comment_post",
+      "type": "call_bot_method",
+      "methodName": "comment_post",
+      "args": [
+        "{{item.url}}",
         "{{commentText}}"
       ],
-      "variable_name": "t1Result",
+      "variable_name": "commentResult",
       "timeout": 120,
       "onError": {
-        "action": "skip"
+        "action": "mark_failed"
       }
     },
     {
-      "id": "check_t1",
+      "id": "follow_gate",
       "type": "condition",
       "condition": {
-        "variable": "t1Result",
-        "operator": "not_exists"
+        "variable": "engagementActions",
+        "operator": "contains",
+        "value": "follow"
       },
       "then": [
-        "navigate_to_search",
-        "close_popups",
-        "find_posts",
-        "extract_post_list",
-        "process_content",
-        "check_t2"
+        "follow_has_author"
       ]
     },
     {
-      "id": "navigate_to_search",
-      "type": "navigate",
-      "url": "{{searchUrl}}",
-      "waitFor": "page_load",
-      "timeout": 30
-    },
-    {
-      "id": "close_popups",
-      "type": "wait",
-      "duration": "{{sessionDelay or 30}}",
-      "waitFor": "time"
-    },
-    {
-      "id": "find_posts",
-      "type": "find_element",
-      "xpath": "//article//a[contains(@href, '/p/')]",
-      "timeout": 15
-    },
-    {
-      "id": "extract_post_list",
-      "type": "extract_multiple",
-      "xpath": "//article//a[contains(@href, '/p/')]",
-      "onSuccess": {
-        "action": "save_data"
-      }
-    },
-    {
-      "id": "open_post",
-      "type": "navigate",
-      "url": "{{post.url}}",
-      "waitFor": "page_load",
-      "timeout": 15
-    },
-    {
-      "id": "tier2_like_post",
-      "type": "find_element",
-      "xpath": "//button[contains(@aria-label, 'Like')] | //span[contains(@aria-label, 'Like')]/parent::button",
-      "timeout": 5,
-      "onError": {
-        "action": "skip"
-      }
-    },
-    {
-      "id": "tier2_click_like",
-      "type": "click",
-      "elementRef": "tier2_like_post",
-      "waitFor": "like_clicked",
-      "onError": {
-        "action": "skip"
-      }
-    },
-    {
-      "id": "tier2_determine_comment",
+      "id": "follow_has_author",
       "type": "condition",
-      "condition": "commentText != ''",
+      "condition": "item.author != ''",
       "then": [
-        "tier2_find_comment_textarea",
-        "tier2_type_comment",
-        "tier2_find_post_button",
-        "tier2_click_post_button"
+        "follow_author"
       ]
     },
     {
-      "id": "tier2_find_comment_textarea",
-      "type": "find_element",
-      "xpath": "//textarea[@aria-label='Add a comment...'] | //div[@contenteditable='true']",
-      "timeout": 5,
-      "onError": {
-        "action": "skip"
-      }
-    },
-    {
-      "id": "tier2_type_comment",
-      "type": "type",
-      "elementRef": "tier2_find_comment_textarea",
-      "text": "{{commentText}}",
-      "humanLike": true,
-      "onError": {
-        "action": "skip"
-      }
-    },
-    {
-      "id": "tier2_find_post_button",
-      "type": "find_element",
-      "xpath": "//button[contains(text(), 'Post')] | //button[@type='submit']",
-      "timeout": 10,
-      "onError": {
-        "action": "skip"
-      }
-    },
-    {
-      "id": "tier2_click_post_button",
-      "type": "click",
-      "elementRef": "tier2_find_post_button",
-      "waitFor": "comment_posted",
-      "onError": {
-        "action": "skip"
-      }
-    },
-    {
-      "id": "tier2_set_result",
-      "type": "update_progress",
-      "set": {
-        "t2Result": "done"
-      }
-    },
-    {
-      "id": "check_t2",
-      "type": "condition",
-      "condition": {
-        "variable": "t2Result",
-        "operator": "not_exists"
-      },
-      "then": [
-        "tier3_like_post",
-        "tier3_click_like",
-        "tier3_determine_comment"
-      ]
-    },
-    {
-      "id": "tier3_like_post",
-      "type": "find_element",
-      "configKey": "like_button",
-      "timeout": 5,
+      "id": "follow_author",
+      "type": "call_bot_method",
+      "methodName": "follow_user",
+      "args": [
+        "{{item.author}}"
+      ],
+      "variable_name": "followResult",
+      "timeout": 90,
       "onError": {
         "action": "mark_failed"
       }
-    },
-    {
-      "id": "tier3_click_like",
-      "type": "click",
-      "elementRef": "tier3_like_post",
-      "waitFor": "like_clicked",
-      "onError": {
-        "action": "mark_failed"
-      }
-    },
-    {
-      "id": "tier3_determine_comment",
-      "type": "condition",
-      "condition": "commentText != ''",
-      "then": [
-        "tier3_find_comment_textarea",
-        "tier3_type_comment",
-        "tier3_find_post_button",
-        "tier3_click_post_button"
-      ]
-    },
-    {
-      "id": "tier3_find_comment_textarea",
-      "type": "find_element",
-      "configKey": "comment_textarea",
-      "timeout": 5,
-      "onError": {
-        "action": "mark_failed"
-      }
-    },
-    {
-      "id": "tier3_type_comment",
-      "type": "type",
-      "elementRef": "tier3_find_comment_textarea",
-      "text": "{{commentText}}",
-      "humanLike": true,
-      "onError": {
-        "action": "mark_failed"
-      }
-    },
-    {
-      "id": "tier3_find_post_button",
-      "type": "find_element",
-      "configKey": "post_button",
-      "timeout": 10,
-      "onError": {
-        "action": "mark_failed"
-      }
-    },
-    {
-      "id": "tier3_click_post_button",
-      "type": "click",
-      "elementRef": "tier3_find_post_button",
-      "waitFor": "comment_posted",
-      "onError": {
-        "action": "mark_failed"
-      }
-    },
-    {
-      "id": "navigate_back",
-      "type": "navigate",
-      "url": "{{searchUrl}}",
-      "waitFor": "page_load"
-    },
-    {
-      "id": "scroll_for_more",
-      "type": "scroll",
-      "elementRef": "find_posts",
-      "waitFor": "time"
     },
     {
       "id": "wait_between_engagements",
@@ -284,23 +229,22 @@
   "loops": [
     {
       "id": "process_content",
-      "iterator": "extract_post_list",
+      "iterator": "posts",
       "indexVar": "reachedIndex",
-      "maxItems": "{{maxContentCount or 0}}",
+      "maxItems": "{{maxContentCount or 10}}",
       "steps": [
-        "open_post",
-        "tier2_like_post",
-        "tier2_click_like",
-        "tier2_determine_comment",
-        "tier2_set_result",
-        "check_t2",
+        "reset_likeResult",
+        "reset_commentResult",
+        "like_gate",
+        "comment_gate",
+        "follow_gate",
         "wait_between_engagements"
       ],
       "onComplete": "update_action_state"
     }
   ],
   "errorHandling": {
-    "globalRetries": 3,
+    "globalRetries": 0,
     "retryDelay": 2000,
     "onFinalFailure": "log_and_continue"
   }
