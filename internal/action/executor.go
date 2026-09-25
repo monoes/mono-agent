@@ -586,6 +586,9 @@ func (ae *ActionExecutor) executeDef(action *StorageAction, actionDef *ActionDef
 			for _, id := range step.Else {
 				conditionBranchIDs[id] = true
 			}
+			// A condition inside a for_each body may branch to top-level
+			// steps too; those must not also run as initial steps.
+			collectBranches(step.Steps)
 		}
 	}
 	collectBranches(actionDef.Steps)

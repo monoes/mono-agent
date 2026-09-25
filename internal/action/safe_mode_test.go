@@ -103,3 +103,23 @@ func TestSafeModeExtraStops(t *testing.T) {
 		}
 	}
 }
+
+// A condition nested in a for_each body that branches to a top-level step:
+// that step runs only from the branch, not again as an initial step.
+func TestNestedConditionBranchNotInitial(t *testing.T) {
+	ae := newPkgExecutor(nil, nil)
+	ae.SetVariable("xs", []interface{}{"a"})
+	ae.SetVariable("hits", 0)
+	def := &ActionDef{ActionType: "t", SideEffects: "none", Steps: []StepDef{
+		{ID: "loop", Type: "for_each", Items: "{{xs}}", Steps: []StepDef{
+			{ID: "cond", Type: "condition", Condition: map[string]interface{}{"variable": "xs", "operator": "exists"}, Then: []string{"bump"}},
+		}},
+		{ID: "bump", Type: "set_variable", Variable: "bumped", Value: "yes", OnSuccess: &SuccessAction{Action: "increment", Variable: "hits"}},
+	}}
+	if _, err := ae.ExecuteDef(&StorageAction{ID: "a", TargetPlatform: "p", Type: "t"}, def); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := ae.execCtx.GetVariable("hits"); v != 1 {
+		t.Fatalf("branch-only step ran %v times, want 1", v)
+	}
+}

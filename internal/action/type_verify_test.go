@@ -147,3 +147,16 @@ func TestTypedTextLandedRule(t *testing.T) {
 		}
 	}
 }
+
+func TestTypeFocusesBeforeCDPTyping(t *testing.T) {
+	// The fake CDP typer types into whichever element is focused.
+	p := &typerPage{el: &fieldElem{}}
+	p.cdpType = func(e *fieldElem, s string) {
+		if e.focused {
+			e.value += s
+		}
+	}
+	if res := runType(t, p, "hello"); !res.Success || p.el.value != "hello" || p.inserts != 0 {
+		t.Fatalf("res=%+v value=%q inserts=%d", res, p.el.value, p.inserts)
+	}
+}

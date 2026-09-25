@@ -122,3 +122,22 @@ func TestPageDomainFailsClosed(t *testing.T) {
 		t.Fatalf("unreadable URL: %v", err)
 	}
 }
+
+type blankPage struct{ markPage }
+
+func (p *blankPage) GetURL() (string, error) { return "", nil }
+
+func TestPageDomainAllowsFreshTab(t *testing.T) {
+	for _, page := range []interface{ GetURL() (string, error) }{&blankPage{}, &markPage{url: "about:blank"}} {
+		var ae *ActionExecutor
+		switch p := page.(type) {
+		case *blankPage:
+			ae = newPkgExecutor(p, &fakePkg{id: "x", domains: []string{"x.com"}})
+		case *markPage:
+			ae = newPkgExecutor(p, &fakePkg{id: "x", domains: []string{"x.com"}})
+		}
+		if err := ae.checkPageDomain(); err != nil {
+			t.Errorf("%T: %v", page, err)
+		}
+	}
+}

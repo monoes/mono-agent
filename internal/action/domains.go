@@ -147,7 +147,8 @@ func (ae *ActionExecutor) CheckURLAllowed(rawURL string) error {
 // checkPageDomain is the post-step check: the page must still be on an
 // allowed host after the step ran (a click or a redirect may have left it).
 // It fails closed: with a package attached, a page URL that cannot be read
-// is an error.
+// is an error. An empty URL (a fresh tab with no document) and about:blank
+// are allowed: nothing has been loaded from any host.
 func (ae *ActionExecutor) checkPageDomain() error {
 	if ae.pkg == nil || ae.page == nil {
 		return nil
@@ -159,8 +160,11 @@ func (ae *ActionExecutor) checkPageDomain() error {
 		return nil
 	}
 	cur, err := ae.page.GetURL()
-	if err != nil || strings.TrimSpace(cur) == "" {
-		return fmt.Errorf("%w: cannot read the page URL to check it (%v)", ErrOffDomain, err)
+	if err != nil {
+		return fmt.Errorf("%w: cannot read the page URL to check it: %v", ErrOffDomain, err)
+	}
+	if strings.TrimSpace(cur) == "" {
+		return nil // no document yet (a fresh tab reports ""); nothing was reached
 	}
 	return URLAllowed(cur, ae.pkg.Domains())
 }

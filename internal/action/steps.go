@@ -615,6 +615,7 @@ func (ae *ActionExecutor) stepType(ctx context.Context, step StepDef) (*StepResu
 			if ep, ok := ae.page.(cdpTyper); ok {
 				if ee, ok := elem.(elementIDer); ok {
 					// CDP click + insert — real browser events, works with Lexical
+					_ = elem.Focus() // TypeCDPOnElement types into the focused element
 					if err := ep.TypeCDPOnElement(text, ee.ElementID()); err != nil {
 						if err2 := ae.page.InsertText(text); err2 != nil {
 							return &StepResult{Success: false, StepID: step.ID, Error: fmt.Errorf("type %s: %w", step.ID, err)}, nil
@@ -638,6 +639,7 @@ func (ae *ActionExecutor) stepType(ctx context.Context, step StepDef) (*StepResu
 	} else {
 		if ep, ok := ae.page.(cdpTyper); ok {
 			if ee, ok := elem.(elementIDer); ok {
+				_ = elem.Focus() // TypeCDPOnElement types into the focused element
 				if err := ep.TypeCDPOnElement(text, ee.ElementID()); err != nil {
 					_ = ae.page.InsertText(text)
 				}
