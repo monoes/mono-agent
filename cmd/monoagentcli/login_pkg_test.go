@@ -179,3 +179,27 @@ func TestLoginStatus_ListsAutomationsWithoutSession(t *testing.T) {
 		t.Errorf("with a session want one active gemini row, got %q", ls)
 	}
 }
+
+func TestLoginCheckURL(t *testing.T) {
+	m := func(u string, domains ...string) *automation.Manifest {
+		return &automation.Manifest{ID: "acme", Login: &automation.Login{URL: u},
+			Site: automation.Site{Domains: domains}}
+	}
+	for _, c := range []struct {
+		m  *automation.Manifest
+		ok bool
+	}{
+		{m("https://app.acme.com/login", "app.acme.com"), true},
+		{m("https://sso.acme.com/", "*.acme.com"), true},
+		{m("https://evil.example/login", "app.acme.com"), false},
+		{m("https://app.acme.com.evil.example/", "app.acme.com"), false},
+		{m("javascript:alert(1)", "app.acme.com"), false},
+		{m("file:///etc/passwd", "app.acme.com"), false},
+		{m("https://app.acme.com/login"), false}, // no domains to check against
+	} {
+		err := checkLoginURL(c.m)
+		if (err == nil) != c.ok {
+			t.Errorf("checkLoginURL(%q, %v) = %v, want ok=%v", c.m.Login.URL, c.m.Site.Domains, err, c.ok)
+		}
+	}
+}

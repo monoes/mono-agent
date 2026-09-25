@@ -5,12 +5,14 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/monoes/mono-agent/internal/action"
 	"github.com/monoes/mono-agent/internal/automation"
 	"github.com/monoes/mono-agent/internal/bot"
 	browserpkg "github.com/monoes/mono-agent/internal/browser"
@@ -90,6 +92,9 @@ func loginAutomations() []automation.InstalledInfo {
 // startPackageLogin opens the manifest's login URL in the user's browser and
 // records the tab for `login confirm`.
 func startPackageLogin(cfg *globalConfig, m *automation.Manifest) error {
+	if err := checkLoginURL(m); err != nil {
+		return err
+	}
 	bridge := setupExtensionBridge(newExtensionBridgeLogger(), 3*time.Second)
 	if err := ensureExtensionConnected(bridge, 30*time.Second); err != nil {
 		return err
@@ -103,6 +108,23 @@ func startPackageLogin(cfg *globalConfig, m *automation.Manifest) error {
 	}
 	fmt.Fprintf(os.Stderr, "Opened %s login in your Chrome — please log in manually in that tab.\n", m.Name)
 	fmt.Fprintf(os.Stderr, "Once logged in, run: monoagentcli login confirm %s\n", m.ID)
+	return nil
+}
+
+// checkLoginURL refuses a login URL the package may not open: it must be
+// http(s) and its host inside the manifest's site.domains (contract §8). A
+// package without domains can't be checked, so it can't log in either.
+func checkLoginURL(m *automation.Manifest) error {
+	u, err := url.Parse(strings.TrimSpace(m.Login.URL))
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		return fmt.Errorf("automation %q: login url %q is not an http(s) URL", m.ID, m.Login.URL)
+	}
+	if len(m.Site.Domains) == 0 {
+		return fmt.Errorf("automation %q declares no site.domains, so its login url can't be checked", m.ID)
+	}
+	if !action.HostAllowed(u.Host, m.Site.Domains) {
+		return fmt.Errorf("automation %q: login url host %s is outside its domains %v", m.ID, u.Hostname(), m.Site.Domains)
+	}
 	return nil
 }
 
