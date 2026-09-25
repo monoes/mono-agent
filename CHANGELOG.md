@@ -66,6 +66,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Social actions work in your browser again (social builds).** The app
+  only drives your real browser through the extension. Most Instagram bot
+  code and several LinkedIn, X and TikTok paths needed a different browser
+  driver, so they failed or quietly did nothing. All Instagram, LinkedIn, X,
+  TikTok, Hacker News and Product Hunt actions now run through the
+  extension. Scripts no longer break on sites whose security policy blocks
+  them (LinkedIn, Hacker News). Every write action (like, comment, reply,
+  DM, follow, publish) checks that its result appeared and fails if it
+  didn't.
+- Harmful fallbacks are gone:
+  - un-liking posts that were already liked;
+  - liking the wrong comment;
+  - following "Suggested for you" accounts;
+  - sending a LinkedIn connection request when a Message button was missing;
+  - DMs going to whichever conversation was open;
+  - clicking Send twice;
+  - comments reported as posted when they never reached the editor;
+  - double posts on Hacker News.
+- List actions (comments, posts, followers, search results) now return one
+  item per record. Before, only the last record survived the node.
+- Engine fixes that apply to every action:
+  - XPath lists work in the extension.
+  - Selector alternatives are honoured.
+  - `Eval` reports failures instead of returning nothing.
+  - `Has` and `WaitStable` work.
+  - Condition branches in the social actions are fixed.
+  - A wait of 0 seconds no longer waits 10.
+  - `linkedin.list_user_posts` accepts `targets`.
 - The desktop app's Human in Loop approve and reject now go through
   `monoagentcli hil` instead of running SQL inside the app.
 - Workflow retries no longer re-run a paused Human-in-Loop node or
