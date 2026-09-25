@@ -1,12 +1,14 @@
 // "Browser Automations" section of the Connections page (spec §7.1): one
 // card per installed package from `automation list --json`, plus the
 // Create card. Also the "Record new" explainer dialog.
-import { X } from 'lucide-react'
+import { X, Undo2 } from 'lucide-react'
 import AutomationCard, { CreateAutomationCard } from './AutomationCard.jsx'
-import { SectionHeader, ErrorBox, body, mono, muted } from './ui.jsx'
+import { SectionHeader, ErrorBox, Chip, body, label, mono, muted } from './ui.jsx'
 
-export default function BrowserAutomations({ automations, error, onOpen, onRecord, onImport }) {
-  const list = automations || []
+export default function BrowserAutomations({ automations, error, onOpen, onRecord, onImport, onRestore, restoring }) {
+  const all = automations || []
+  const list = all.filter(a => !a.removed)
+  const removed = all.filter(a => a.removed)
   const loggedIn = list.filter(a => a.session?.loggedIn).length
   return (
     <section aria-labelledby="browser-automations-title">
@@ -17,6 +19,19 @@ export default function BrowserAutomations({ automations, error, onOpen, onRecor
         {list.map(a => <AutomationCard key={a.id} automation={a} onOpen={() => onOpen(a)} />)}
         <CreateAutomationCard onRecord={onRecord} onImport={onImport} />
       </div>
+      {removed.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
+          <span style={label}>Uninstalled built-ins</span>
+          {removed.map(a => (
+            <span key={a.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <Chip>{a.name || a.id} {a.version}</Chip>
+              <button className="btn btn-ghost btn-sm" onClick={() => onRestore(a)} disabled={restoring === a.id} aria-label={`Restore ${a.name || a.id}`} style={{ gap: 4, padding: '2px 8px' }}>
+                <Undo2 size={10} /> {restoring === a.id ? 'Restoring…' : 'Restore'}
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
     </section>
   )
 }

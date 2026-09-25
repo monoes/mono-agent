@@ -41,7 +41,7 @@ function TestResults({ res }) {
       {results.map((r, i) => (
         <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
           <Chip color={r.ok ? 'var(--green-neon)' : 'var(--red)'}>{r.ok ? 'pass' : 'fail'}</Chip>
-          <span style={{ ...mono, fontSize: 10, color: 'var(--text-secondary)' }}>{r.fixture || 'live'}{r.message ? ` — ${r.message}` : ''}</span>
+          <span style={{ ...mono, fontSize: 10, color: 'var(--text-secondary)' }}>{r.fixture ? `fixture ${r.fixture}` : 'validation'}{r.message ? ` — ${r.message}` : ''}</span>
         </div>
       ))}
     </div>

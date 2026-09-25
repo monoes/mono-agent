@@ -33,7 +33,7 @@ export default function SessionTab({ automation, manifest, onChanged }) {
       } else {
         // A failed confirm (not logged in yet) keeps the confirm button.
         setPhase(p => (p === 'saving' ? 'awaiting' : 'idle'))
-        setMsg({ ok: false, text: d.error || 'Login failed' })
+        setMsg({ ok: false, text: !d.error || /^exit status/.test(d.error) ? 'Login failed — see the details below.' : d.error })
       }
     })
     return () => { offP(); offO(); offD() }

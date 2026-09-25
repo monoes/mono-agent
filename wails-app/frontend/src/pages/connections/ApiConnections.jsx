@@ -68,6 +68,8 @@ export default function ApiConnections({ platforms, connections, onSelect }) {
     if (!groups[cat]) groups[cat] = []
     groups[cat].push(p)
   }
+  // The registry's order is not stable between calls; sort for a steady grid.
+  for (const cat of Object.keys(groups)) groups[cat].sort((x, y) => (x.name || x.id).localeCompare(y.name || y.id))
   const total = list.filter(p => resolveConn(p, connections)).length
   const cats = [...CATEGORY_ORDER, ...Object.keys(groups).filter(c => !CATEGORY_ORDER.includes(c))]
     .filter(cat => groups[cat] && groups[cat].length > 0)

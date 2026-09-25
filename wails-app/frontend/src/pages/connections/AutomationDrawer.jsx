@@ -14,6 +14,19 @@ import RecordingsTab from './RecordingsTab.jsx'
 
 const TABS = ['Overview', 'Session', 'Actions', 'Health', 'Recordings']
 
+// isOlder reports whether version a sorts before b (numeric dot parts), so
+// the footer says "Roll back" for an older previous version and "Switch"
+// after a rollback, when the kept previous version is the newer one.
+function isOlder(a, b) {
+  const pa = String(a || '').split(/[.+-]/).map(Number), pb = String(b || '').split(/[.+-]/).map(Number)
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = pa[i] || 0, y = pb[i] || 0
+    if (Number.isNaN(x) || Number.isNaN(y)) return false
+    if (x !== y) return x < y
+  }
+  return false
+}
+
 export default function AutomationDrawer({ automation, initialTab = 'Overview', onClose, onChanged }) {
   const id = automation.id
   const [tab, setTab] = useState(initialTab)
@@ -121,8 +134,8 @@ export default function AutomationDrawer({ automation, initialTab = 'Overview', 
           </button>
           {info.previousVersion && (
             <button className="btn btn-ghost btn-sm" disabled={!!busy} style={{ gap: 5 }}
-              onClick={() => lifecycle('rollback', api.rollbackAutomation, `Roll ${info.name || id} back to ${info.previousVersion}?`)}>
-              <RotateCcw size={11} /> Roll back to {info.previousVersion}
+              onClick={() => lifecycle('rollback', api.rollbackAutomation, `Switch ${info.name || id} from ${info.version} to ${info.previousVersion}?`)}>
+              <RotateCcw size={11} /> {isOlder(info.previousVersion, info.version) ? 'Roll back' : 'Switch back'} to {info.previousVersion}
             </button>
           )}
           {info.removed ? (

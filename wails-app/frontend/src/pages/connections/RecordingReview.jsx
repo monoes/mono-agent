@@ -58,7 +58,9 @@ function StepList({ steps, verify }) {
 
 export default function RecordingReview({ recording, automationId, onBack, onSaved }) {
   const [phase, setPhase] = useState('analyzing') // analyzing | ready | verifying | saving | saved
-  const [error, setError] = useState('')
+  const [error, setError] = useState('') // analyze
+  const [verifyError, setVerifyError] = useState('')
+  const [saveError, setSaveError] = useState('')
   const [draftDir, setDraftDir] = useState('')
   const [draft, setDraft] = useState(null)
   const [verify, setVerify] = useState(null)
@@ -66,10 +68,12 @@ export default function RecordingReview({ recording, automationId, onBack, onSav
   const [names, setNames] = useState({ action: '', automation: '', fragment: '' })
   const [inputNames, setInputNames] = useState({})
   const [saveAs, setSaveAs] = useState('action')
+  const [attempt, setAttempt] = useState(0) // bump to re-run analyze
   const [verifyInputs, setVerifyInputs] = useState({}) // values the recording could not hold
 
   useEffect(() => {
     let live = true
+    setPhase('analyzing'); setError('')
     ;(async () => {
       const res = await api.analyzeRecording(recording.id, automationId)
       if (!live) return
@@ -83,7 +87,7 @@ export default function RecordingReview({ recording, automationId, onBack, onSav
       setPhase('ready')
     })()
     return () => { live = false }
-  }, [recording.id, automationId])
+  }, [recording.id, automationId, attempt])
 
   const def = draft?.actionDef || {}
   const steps = def.steps || []
@@ -96,15 +100,15 @@ export default function RecordingReview({ recording, automationId, onBack, onSav
 
   const runVerify = async (full) => {
     if (full && RISKY.has(def.sideEffects) && !(await confirm(`Run the whole action for real? It has "${def.sideEffects}" side effects — it will act on the site with your login.`))) return
-    setPhase('verifying'); setError('')
+    setPhase('verifying'); setVerifyError('')
     const res = await api.verifyDraft(draftDir, full, verifyInputs)
-    if (!res || (res.error && !res.steps)) setError(res?.error || 'Verify failed.')
-    else { setVerify(res); if (res.error) setError(res.error) }
+    if (!res || (res.error && !res.steps)) setVerifyError(res?.error || 'Verify failed.')
+    else { setVerify(res); if (res.error) setVerifyError(res.error) }
     setPhase('ready')
   }
 
   const save = async () => {
-    setPhase('saving'); setError('')
+    setPhase('saving'); setSaveError('')
     const renameInputs = Object.fromEntries(Object.entries(inputNames).filter(([from, to]) => to && to !== from))
     const spec = {
       as: saveAs,
@@ -113,7 +117,7 @@ export default function RecordingReview({ recording, automationId, onBack, onSav
       ...(draft?.isNew ? { new: names.automation } : { automation: names.automation || automationId }),
     }
     const res = await api.saveDraft(draftDir, spec)
-    if (!res || res.error) { setError(res?.error || 'Save failed.'); setPhase('ready'); return }
+    if (!res || res.error) { setSaveError(res?.error || 'Save failed.'); setPhase('ready'); return }
     setSaved(res); setPhase('saved')
     onSaved?.()
   }
@@ -127,6 +131,9 @@ export default function RecordingReview({ recording, automationId, onBack, onSav
       </div>
       {phase === 'analyzing' && <Busy text="Analyzing the recording with AI — this can take a minute…" />}
       <ErrorBox>{error}</ErrorBox>
+      {!draft && error && phase !== 'analyzing' && (
+        <button className="btn btn-secondary btn-sm" onClick={() => setAttempt(n => n + 1)} style={{ alignSelf: 'flex-start', gap: 5 }}><Sparkles size={11} /> Analyze again</button>
+      )}
 
       {draft && (
         <>
@@ -178,13 +185,14 @@ export default function RecordingReview({ recording, automationId, onBack, onSav
                 {missing.map(i => (
                   <div key={i.name} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                     <span style={{ ...mono, fontSize: 10.5, color: 'var(--text)', width: 140, overflow: 'hidden', textOverflow: 'ellipsis' }}>{i.name}</span>
-                    <input type={i.format === 'secret' || /pass|secret|token|pin/i.test(i.name) ? 'password' : 'text'} autoComplete="off" aria-label={`Value for ${i.name} during verify`} value={verifyInputs[i.name] || ''}
+                    <input type={i.type === 'secret' || i.format === 'secret' || /pass|secret|token|pin|card/i.test(i.name) ? 'password' : 'text'} autoComplete="off" aria-label={`Value for ${i.name} during verify`} value={verifyInputs[i.name] || ''}
                       onChange={e => setVerifyInputs(m => ({ ...m, [i.name]: e.target.value }))} style={{ ...inputStyle, flex: 1 }} />
                   </div>
                 ))}
               </div>
             )}
             {phase === 'verifying' && <Busy text="Replaying in your browser…" />}
+            <ErrorBox>{verifyError}</ErrorBox>
             {verify && (verify.ok
               ? <OkBox>{verify.stoppedAt ? 'Verified up to the first side-effecting step — it was not executed.' : 'All steps passed.'}{verify.healed?.length ? ` ${verify.healed.length} selector${verify.healed.length === 1 ? ' was' : 's were'} healed and promoted in the draft.` : ''}</OkBox>
               : <ErrorBox>Verification found failing steps — fix or re-record them before saving.</ErrorBox>)}
@@ -209,6 +217,7 @@ export default function RecordingReview({ recording, automationId, onBack, onSav
               {!verify && <span style={{ ...muted, fontSize: 10 }}>Tip: verify first.</span>}
             </div>
           )}
+          <ErrorBox>{saveError}</ErrorBox>
         </>
       )}
     </>

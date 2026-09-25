@@ -216,8 +216,10 @@ func (a *App) runAutomation(sub ...string) string {
 
 // ── Bindings: packages (contracts §5) ──────────────────────────────────────
 
+// ListAutomations includes uninstalled built-ins (removed: true) so the
+// page can offer to restore them.
 func (a *App) ListAutomations() string {
-	return a.runAutomation("automation", "list")
+	return a.runAutomation("automation", "list", "--all")
 }
 
 func (a *App) ShowAutomation(id string) string {
