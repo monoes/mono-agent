@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Upload | TikTok Studio fixture</title>
+<!-- SYNTHETIC fixture: mimics TikTok Studio's upload form. Picking a file
+     shows the caption editor (prefilled with the file name, as TikTok does)
+     and enables Post after a short "processing" delay. Posting redirects to
+     the content manager, or (?fail=1) does nothing. -->
+<style>
+  body { font: 14px sans-serif; margin: 16px; }
+  .caption-editor [contenteditable] { min-height: 24px; border: 1px solid #aaa; padding: 4px; width: 400px; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="css-1-DivUploadCard"><input type="file" accept="video/*" id="file"></div>
+<div id="form" class="hidden">
+  <div class="caption-editor" data-e2e="caption-editor"><div contenteditable="true" role="combobox" aria-label="Description" id="caption"></div></div>
+  <button type="button" data-e2e="discard_post_button">Discard</button>
+  <button type="button" data-e2e="post_video_button" id="post" disabled>Post</button>
+</div>
+<script>
+(function () {
+  window.__events = [];
+  const log = (s) => window.__events.push(s);
+  const fail = new URLSearchParams(location.search).get('fail') === '1';
+  const file = document.getElementById('file');
+  file.addEventListener('change', () => {
+    const name = file.files.length ? file.files[0].name : '';
+    log('file:' + name);
+    document.getElementById('caption').textContent = name.replace(/\.[^.]+$/, '');
+    document.getElementById('form').classList.remove('hidden');
+    setTimeout(() => document.getElementById('post').disabled = false, 400);
+  });
+  document.getElementById('post').addEventListener('click', (e) => {
+    if (!e.isTrusted) { log('untrusted-click'); return; }
+    const cap = document.getElementById('caption').innerText.trim();
+    log('post:' + cap);
+    window.name = 'posted:' + cap;
+    if (fail) return;
+    setTimeout(() => { location.href = '/tiktokstudio/content'; }, 150);
+  });
+})();
+</script>
+</body>
+</html>

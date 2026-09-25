@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Manage Follows | LinkedIn</title>
+<!-- SYNTHETIC fixture: the viewer's followers / following list
+     (/mynetwork/network-manager/people-follow/…): cards with
+     data-view-name="search-entity-result-universal-template", a
+     "Show more results" button that appends more. Follow buttons beacon a
+     write — the bot must never press them. Some avatars carry LinkedIn's
+     presence dot, whose screen-reader-only label ("Status is online") is
+     rendered text that precedes the name and headline. Invented people. -->
+<style> body { font: 14px sans-serif; } li { min-height: 60px; }
+.visually-hidden { position: absolute !important; width: 1px !important; height: 1px !important; overflow: hidden !important; clip: rect(1px, 1px, 1px, 1px) !important; white-space: nowrap !important; }
+.presence-entity { position: relative; display: inline-block; } .presence-entity__indicator { position: absolute; right: 0; bottom: 0; width: 6px; height: 6px; }
+</style>
+</head>
+<body>
+<header id="global-nav" class="global-nav"></header>
+<main>
+  <section class="artdeco-card">
+    <header class="mn-network-manager__header"><h1>Test’s Network</h1></header>
+    <div role="tablist"><button role="tab">Following</button><button role="tab">Followers</button></div>
+    <div class="scaffold-finite-scroll">
+      <div class="scaffold-finite-scroll__content">
+        <p class="mn-network-manager__subtitle" id="subtitle"></p>
+        <ul class="list-style-none" role="list" id="list"></ul>
+      </div>
+      <button class="scaffold-finite-scroll__load-button artdeco-button artdeco-button--secondary" id="more" type="button">Show more results</button>
+    </div>
+  </section>
+</main>
+<script>
+(function () {
+  const following = location.pathname.includes('/following/');
+  document.getElementById('subtitle').textContent = following ? 'You are following 3 people' : '5 people are following you';
+  const people = following
+    ? [['uma-north-test', 'Uma North', 'Climate researcher', true], ['vic-east-test', 'Vic East', 'Teacher', true], ['wes-south-test', 'Wes South', 'Nurse', true]]
+    : [['ann-fol-test', 'Ann Follower', 'Data analyst at Example Bank', true, 'online'], ['ben-fol-test', 'Ben Follower', 'Student', false, 'away'],
+       ['cat-fol-test', 'Cat Follower', 'Barista', false], ['dan-fol-test', 'Dan Follower', 'Pilot', true], ['eve-fol-test', 'Eve Follower', 'Chemist', false]];
+  const list = document.getElementById('list');
+  let shown = 0;
+  const render = (n) => {
+    for (const [slug, name, head, youFollow, presence] of people.slice(shown, shown + n)) {
+      const dot = presence ? '<div class="presence-entity__indicator presence-indicator presence-indicator--is-' + presence + '"><span class="visually-hidden">Status is ' + presence + '</span></div>' : '';
+      const url = 'https://www.linkedin.com/in/' + slug + '?miniProfileUrn=urn%3Ali%3Afs_miniProfile%3AFAKE';
+      list.insertAdjacentHTML('beforeend',
+        '<li><div data-view-name="search-entity-result-universal-template"><div class="linked-area">' +
+        '<a class="scale-down" aria-hidden="true" href="' + url + '" tabindex="-1"><div class="presence-entity"><img alt="' + name + '" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" width="20" height="20">' + dot + '</div></a>' +
+        '<div class="t-roman t-sans"><span class="t-16"><a href="' + url + '">' + name + '</a></span></div>' +
+        '<div class="t-14 t-black t-normal">' + head + '</div>' +
+        '<div class="entity-result__insights t-12">Followed by Someone Else</div></div>' +
+        '<div><button class="artdeco-button" aria-label="Click to ' + (youFollow ? 'stop following ' : 'follow ') + name + '" data-slug="' + slug + '"><span>' + (youFollow ? 'Following' : 'Follow') + '</span></button></div>' +
+        '</div></li>');
+    }
+    shown = Math.min(people.length, shown + n);
+    if (shown >= people.length) document.getElementById('more').remove();
+  };
+  render(3);
+  const more = document.getElementById('more');
+  if (more) more.addEventListener('click', () => render(3));
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-slug]');
+    if (b) fetch('https://www.linkedin.com/voyager/api/follow', { method: 'POST', body: b.getAttribute('data-slug') });
+  });
+})();
+</script>
+</body>
+</html>

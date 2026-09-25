@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Synthetic Gadget - Gadgets for tests | Product Hunt</title></head>
+<body data-mode="ok">
+<header class="site"><a href="/">Product Hunt</a> <nav><a href="/launches">Launches</a> <a href="/forums">Forums</a></nav> <button type="button" aria-label="User menu"><img alt="Test User" src="data:," width="32" height="32"></button></header>
+<main>
+<div data-test="header"><h1>Synthetic Gadget</h1><p>Gadgets for tests</p></div>
+<nav class="tabs"><button type="button">Overview</button><button type="button">Comments</button><button type="button">Reviews</button></nav>
+<div class="layout">
+<section class="body">
+<div class="prose">Synthetic Gadget does nothing, reliably.</div>
+<div id="comments"><div class="stack">
+<form data-test="comment-form" autocomplete="off"><div class="box"><p class="placeholder">What do you think? …</p>
+<div class="row"><button type="button" title="Mention user or product">@</button><button type="submit" data-test="form-submit-button" disabled>Comment</button></div></div></form>
+</div>
+<div data-test="comments-feed" class="feed">
+<div data-test="thread-900001" class="thread">
+  <div id="comment-900001" data-test="comment-900001" class="c">
+    <a data-test="user-image-link-11" aria-label="Pat Example" href="/@pat_example"><img alt="Pat Example" src="data:," width="32" height="32"></a>
+    <div class="col"><div class="meta"><button type="button"><a href="/@pat_example">Pat Example</a></button></div>
+      <div class="prose richText">Congrats on shipping!<br>Looks neat.</div>
+      <div class="bar"><button data-test="action-bar-vote-button" area-label="Upvote"><span>Upvote</span> (3)</button><button type="button">Reply</button><button data-test="comment-menu-button" type="button">…</button></div>
+    </div>
+  </div>
+  <div class="replies">
+    <div id="comment-900002" data-test="comment-900002" class="c">
+      <a data-test="user-image-link-12" aria-label="Sam Maker" href="/@sam_maker"><img alt="Sam Maker" src="data:," width="32" height="32"></a>
+      <div class="col"><div class="meta"><button type="button"><a href="/@sam_maker">Sam Maker</a></button><span>Maker</span></div>
+        <div class="prose richText">Thanks Pat!</div>
+        <div class="bar"><button data-test="action-bar-vote-button" area-label="Upvote"><span>Upvote</span> (1)</button><button type="button">Reply</button></div>
+        <div class="replies">
+          <div id="comment-900003" data-test="comment-900003" class="c">
+            <a href="/@pat_example" aria-label="Pat Example"><img alt="Pat Example" src="data:," width="32" height="32"></a>
+            <div class="col"><div class="meta"><button type="button"><a href="/@pat_example">Pat Example</a></button></div>
+              <div class="prose richText">Anytime.</div>
+              <div class="bar"><button data-test="action-bar-vote-button" area-label="Upvote"><span>Upvote</span></button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<div data-test="thread-900010" class="thread">
+  <div id="comment-900010" data-test="comment-900010" class="c">
+    <a href="/@lee_example" aria-label="Lee Example"><img alt="Lee Example" src="data:," width="32" height="32"></a>
+    <div class="col"><div class="meta"><button type="button"><a href="/@lee_example">Lee Example</a></button></div>
+      <div class="prose richText">How does it compare to the other gadget?</div>
+      <div class="bar"><button data-test="action-bar-vote-button" area-label="Upvote"><span>Upvote</span> (1.2K)</button></div>
+    </div>
+  </div>
+</div>
+</div></div>
+</section>
+<aside class="side">
+<div class="panel"><div>Launching today</div><button type="button" data-test="vote-button"><span><span>Upvote</span><span>1,234</span></span></button>
+<button area-label="Follow Synthetic Gadget" type="button">Follow</button></div>
+<div class="similar"><h3>Similar launches</h3>
+<section class="card"><a href="/posts/other-thing">Other Thing</a><p>Another synthetic launch</p><button type="button" data-test="vote-button"><div data-filled="false"><p>93</p></div></button></section>
+<section class="card"><a href="/posts/decoy-product">Decoy Product</a><p>Upvote magnet</p><button type="button" data-test="vote-button"><span><span>Upvote</span><span>555</span></span></button></section>
+</div>
+</aside>
+</div>
+</main>
+<script>
+(function () {
+  const mode = document.body.getAttribute('data-mode');
+  const form = document.querySelector('form');
+  if (!form) return;
+  const btn = form.querySelector('button[type="submit"]');
+  let editor = form.querySelector('textarea');
+  const val = () => editor ? (editor.value !== undefined && editor.tagName === 'TEXTAREA' ? editor.value : editor.textContent) : '';
+  const wire = () => editor.addEventListener('input', () => { btn.disabled = val().trim() === ''; });
+  if (editor) wire();
+  const ph = form.querySelector('p.placeholder');
+  if (ph && !/login/i.test(btn.textContent)) ph.addEventListener('click', () => {
+    editor = document.createElement('div');
+    editor.className = 'ProseMirror';
+    editor.setAttribute('contenteditable', 'true');
+    editor.setAttribute('role', 'textbox');
+    editor.setAttribute('aria-label', 'Comment');
+    ph.replaceWith(editor);
+    wire();
+    editor.focus();
+  });
+  let next = 900100;
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (/login/i.test(btn.textContent)) { location.href = '/login'; return; }
+    const text = val();
+    if (mode === 'broken' || !text.trim()) return;
+    const id = String(next++);
+    const t = document.createElement('div');
+    t.setAttribute('data-test', 'thread-' + id);
+    t.innerHTML = '<div data-test="comment-' + id + '" id="comment-' + id + '"><a href="/@test_user">Test User</a><div class="prose richText"></div></div>';
+    t.querySelector('.prose').textContent = text;
+    document.querySelector('[data-test="comments-feed"]').prepend(t);
+    if (editor.tagName === 'TEXTAREA') editor.value = ''; else editor.textContent = '';
+    btn.disabled = true;
+  });
+})();
+</script>
+</body></html>

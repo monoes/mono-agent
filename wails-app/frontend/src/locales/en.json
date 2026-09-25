@@ -189,7 +189,9 @@
         "boss": "Boss",
         "bossHint": "The org's root role decides.",
         "parent": "Parent",
-        "parentHint": "The holding org's initiator decides."
+        "parentHint": "The holding org's initiator decides.",
+        "jev": "Jev",
+        "jevHint": "TypeSafe Jev picks the verdict in one quick call; the model decides questions and anything Jev is unsure of. Needs a TypeSafe key."
       },
       "loading": "Loading autonomy…",
       "unavailable": "Autonomy unavailable",

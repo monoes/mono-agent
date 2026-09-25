@@ -11,7 +11,10 @@ import { api, notify, subscribeEvent } from '../services/api.js'
 import { confirm } from '../components/ConfirmDialog.jsx'
 import ResourcePickerField from '../components/ResourcePickerField.jsx'
 import ImagePickerModal from '../components/ImagePickerModal'
-import { NODE_CONFIG_FIELDS, BROWSER_NODE_GENERIC } from './nodeConfigFields.js'
+import {
+  NODE_CONFIG_FIELDS, BROWSER_NODE_GENERIC,
+  deriveInputs, deriveOutputs, portsDependOnConfig, isCaseListSettled, remapSourceEdges,
+} from './nodeConfigFields.js'
 import { SaveModal, WorkflowsModal, TriggerInputModal } from './NodeRunnerModals.jsx'
 import { rememberTriggerInput, rememberedTriggerInput } from './triggerInput.js'
 import { usePageVisibleRef } from '../lib/usePageVisible.js'
@@ -1004,6 +1007,13 @@ function resolvePortIdx(ports, handle) {
   return isNaN(n) ? 0 : n
 }
 
+// Default config a freshly dropped node starts with (mirrors addNode).
+function schemaDefaults(fields) {
+  const d = {}
+  ;(fields || []).forEach(f => { d[f.key] = f.default ?? '' })
+  return d
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function NodeRunner({ onNavigate, navData }) {
   const [categories, setCategories] = useState([])
@@ -1156,15 +1166,17 @@ export default function NodeRunner({ onNavigate, navData }) {
             config: n.config || {}, color: catColor(cat),
             schema: n.schema || null,
             configFields: n.schema?.fields ? n.schema.fields : getConfigFields(nt),
-            inputs: deriveInputs(nt), outputs: deriveOutputs(nt),
+            inputs: deriveInputs(nt), outputs: deriveOutputs(nt, n.config),
             runStatus: null, runInputItems: null, runOutputs: null, runOutputItems: 0, runDuration: null, runError: null,
           }
         })
+        const nodeById = {}
+        loadedNodes.forEach(n => { nodeById[n.id] = n })
         const loadedEdges = (wf.connections || []).map(c => ({
           id: c.id, source: c.source_node_id, sourcePortId: c.source_handle,
-          sourcePortIdx: parseInt(c.source_handle) || 0,
+          sourcePortIdx: resolvePortIdx(nodeById[c.source_node_id]?.outputs, c.source_handle),
           target: c.target_node_id, targetPortId: c.target_handle,
-          targetPortIdx: parseInt(c.target_handle) || 0,
+          targetPortIdx: resolvePortIdx(nodeById[c.target_node_id]?.inputs, c.target_handle),
         }))
         setWfId(wf.id)
         setWfName(wf.name || 'Untitled Workflow')
@@ -1202,7 +1214,7 @@ export default function NodeRunner({ onNavigate, navData }) {
                 config: n.config || {}, color: catColor(cat),
                 schema: n.schema || null,
                 configFields: n.schema?.fields ? n.schema.fields : getConfigFields(nt),
-                inputs: deriveInputs(nt), outputs: deriveOutputs(nt),
+                inputs: deriveInputs(nt), outputs: deriveOutputs(nt, n.config),
                 runStatus: null, runInputItems: null, runOutputs: null, runOutputItems: 0, runDuration: null, runError: null,
               }
             })
@@ -1277,7 +1289,7 @@ export default function NodeRunner({ onNavigate, navData }) {
           category: id,
           color: catColor(id),
           inputs:  deriveInputs(n.type),
-          outputs: deriveOutputs(n.type),
+          outputs: deriveOutputs(n.type, schemaDefaults(n.schema?.fields ? n.schema.fields : getConfigFields(n.type))),
           schema: n.schema || { credential_platform: null, fields: [] },
           configFields: n.schema?.fields ? n.schema.fields : getConfigFields(n.type),
         })) : [],
@@ -1384,7 +1396,7 @@ export default function NodeRunner({ onNavigate, navData }) {
       category: template.category,
       color: template.color || catColor(template.category || template.id),
       inputs:  template.inputs  || [],
-      outputs: template.outputs || [],
+      outputs: template.subtype ? deriveOutputs(template.subtype, defaults) : (template.outputs || []),
       schema: template.schema || { credential_platform: null, fields: [] },
       configFields: template.configFields || [],
       config: defaults,
@@ -1415,7 +1427,15 @@ export default function NodeRunner({ onNavigate, navData }) {
   }
 
   const updateConfig = (nodeId, key, val) => {
-    setNodes(prev => prev.map(n => n.id === nodeId ? { ...n, config: { ...n.config, [key]: val } } : n))
+    const node = nodesRef.current.find(n => n.id === nodeId)
+    // Switch / ai.choose ports follow their cases: re-derive them and re-point
+    // (or drop) this node's outgoing edges by handle id.
+    const portsChange = node && portsDependOnConfig(node.subtype, key) && isCaseListSettled(val)
+    const outputs = portsChange ? deriveOutputs(node.subtype, { ...node.config, [key]: val }) : null
+    setNodes(prev => prev.map(n => n.id === nodeId
+      ? { ...n, config: { ...n.config, [key]: val }, ...(outputs ? { outputs } : {}) }
+      : n))
+    if (outputs) setEdges(prev => remapSourceEdges(prev, nodeId, outputs))
     setIsDirty(true)
   }
 
@@ -1627,7 +1647,7 @@ export default function NodeRunner({ onNavigate, navData }) {
         schema: n.schema || null,
         configFields: n.schema?.fields ? n.schema.fields : getConfigFields(nt),
         inputs:  deriveInputs(nt),
-        outputs: deriveOutputs(nt),
+        outputs: deriveOutputs(nt, n.config),
         runStatus: null, runInputItems: null, runOutputs: null, runOutputItems: 0, runDuration: null, runError: null,
       }})
       // Map backend WorkflowConnectionData → canvas edge shape. Handles are
@@ -2238,23 +2258,8 @@ function getConfigFields(nodeType) {
 }
 
 // ── Derive input/output ports from node type string ───────────────────────────
-function deriveInputs(type) {
-  if (type.startsWith('trigger.')) return []
-  return [{ id: 'in', label: 'in' }]
-}
-function deriveOutputs(type) {
-  if (type === 'core.if')                return [{ id: 'true', label: 'true' }, { id: 'false', label: 'false' }]
-  if (type === 'core.switch')            return [{ id: 'case0', label: 'case0' }, { id: 'default', label: 'default' }]
-  if (type === 'core.split_in_batches')  return [{ id: 'batch', label: 'batch' }, { id: 'done', label: 'done' }]
-  if (type === 'core.filter')            return [{ id: 'pass', label: 'pass' }, { id: 'fail', label: 'fail' }]
-  if (type === 'core.merge')             return [{ id: 'out', label: 'out' }]
-  if (type === 'core.stop_error')        return []
-  if (type === 'trigger.webhook')        return [{ id: 'body', label: 'body' }, { id: 'headers', label: 'headers' }]
-  if (type === 'system.execute_command') return [{ id: 'stdout', label: 'stdout' }, { id: 'stderr', label: 'stderr' }]
-  if (type.startsWith('db.'))            return [{ id: 'rows', label: 'rows' }, { id: 'error', label: 'error' }]
-  if (type.startsWith('http.'))          return [{ id: 'out', label: 'out' }, { id: 'error', label: 'error' }]
-  return [{ id: 'main', label: 'main' }]
-}
+// deriveInputs / deriveOutputs(type, config) live in nodeConfigFields.js so
+// they can be unit-tested; core.switch and ai.choose ports follow their cases.
 
 const tbBtn = {
   background: 'transparent',

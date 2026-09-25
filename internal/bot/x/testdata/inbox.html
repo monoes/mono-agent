@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Messages / X</title>
+<style>.b{font-weight:700}.n{font-weight:400} [data-testid=conversation]{border:1px solid #ccc;margin:4px;padding:4px}</style></head>
+<body>
+<!-- SYNTHETIC fixture: the classic X DM inbox (/messages). Invented
+     accounts. Rows: unread (bold preview), last message from me ("You: …"),
+     read, unread (explicit unread marker). Header links to compose/requests/
+     settings are not conversations. -->
+<main role="main"><div data-testid="primaryColumn">
+  <div><a href="/messages/compose" aria-label="New message">✉</a> <a href="/messages/requests">Message requests</a> <a href="/settings/direct_messages">Settings</a></div>
+  <section aria-label="Section navigation"><div id="list"></div></section>
+</div></main>
+<script>
+const rows = [
+  ['100-200', 'Synth Alice', 'synth_alice', 'hey, are you around?', 'b', false],
+  ['100-300', 'Synth Bob', 'synth_bob', 'You: sounds good', 'n', false],
+  ['100-400', 'Synth Carol', 'synth_carol', 'already read this one', 'n', false],
+  ['100-500', 'Synth Dan', 'synth_dan', 'new one', 'n', true],
+];
+setTimeout(() => {
+  document.getElementById('list').innerHTML = rows.map(([id, name, u, preview, w, marker]) =>
+    `<div data-testid="conversation"><a href="/messages/${id}" role="link">
+      <div><span class="b">${name}</span> <span>@${u}</span> <span>·</span> <time>2h</time></div>
+      <div><span class="${w}">${preview}</span></div>
+      ${marker ? '<div data-testid="unread-indicator" aria-label="Unread"></div>' : ''}</a></div>`).join('');
+}, 150);
+</script>
+</body></html>

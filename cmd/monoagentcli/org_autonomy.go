@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/monoes/mono-agent/internal/daemonhb"
+	"github.com/monoes/mono-agent/internal/jev/jevconf"
 	"github.com/monoes/mono-agent/internal/monomind"
 	"github.com/monoes/mono-agent/internal/orgdecide"
 	"github.com/monoes/mono-agent/internal/orgdesign"
@@ -58,6 +60,7 @@ func autonomyView(a *orgdecide.Autonomy) map[string]interface{} {
 		"decider": map[string]interface{}{
 			"kind": a.Decider.Kind, "runtime": a.Decider.Runtime, "model": a.Decider.Model,
 			"fallback": a.Decider.Fallback, "timeout_seconds": a.Decider.TimeoutSeconds,
+			"threshold": deciderThresholdView(a),
 		},
 		"tiers": tiers, "default_tiers": orgdecide.DefaultTiers, "policy": a.Policy,
 		"on_decider_failure": a.OnDeciderFailure,
@@ -66,6 +69,17 @@ func autonomyView(a *orgdecide.Autonomy) map[string]interface{} {
 		},
 		"updated_at": updated, "updated_by": a.UpdatedBy, "daemon_running": daemonLive,
 	}
+}
+
+// deciderThresholdView is the jev decider's gate, or null for other kinds.
+func deciderThresholdView(a *orgdecide.Autonomy) interface{} {
+	if a.Decider.Kind != orgdesign.DeciderJev {
+		return nil
+	}
+	if a.Decider.Threshold == 0 {
+		return orgdecide.DefaultJevThreshold
+	}
+	return a.Decider.Threshold
 }
 
 func newOrgAutonomyShowCmd(env *orgEnv) *cobra.Command {
@@ -90,7 +104,7 @@ func newOrgAutonomyShowCmd(env *orgEnv) *cobra.Command {
 func newOrgAutonomySetCmd(env *orgEnv) *cobra.Command {
 	var level, decider, runtime, model, fallback, policy, policyFile, onFailure, by string
 	var timeout, maxDecisions int
-	var maxUSD float64
+	var maxUSD, threshold float64
 	var tiers, clearTiers []string
 	c := &cobra.Command{
 		Use:   "set <org>",
@@ -125,6 +139,12 @@ func newOrgAutonomySetCmd(env *orgEnv) *cobra.Command {
 			}
 			if f.Changed("decider-timeout") {
 				a.Decider.TimeoutSeconds = timeout
+			}
+			if f.Changed("decider-threshold") {
+				if !(threshold > 0 && threshold <= 1) {
+					return errInvalidInput("--decider-threshold %v must be in (0,1]", threshold)
+				}
+				a.Decider.Threshold = threshold
 			}
 			if f.Changed("policy") {
 				a.Policy = policy
@@ -161,7 +181,7 @@ func newOrgAutonomySetCmd(env *orgEnv) *cobra.Command {
 			if err := a.Validate(); err != nil {
 				return errInvalidInput("%v", err)
 			}
-			if err := checkDeciderAvailable(ctx, root, doc.Name, a); err != nil {
+			if err := checkDeciderAvailable(ctx, db.DB, profileID, root, doc.Name, a); err != nil {
 				return err
 			}
 			if err := store.Put(ctx, a, by); err != nil {
@@ -179,11 +199,12 @@ func newOrgAutonomySetCmd(env *orgEnv) *cobra.Command {
 	}
 	f := c.Flags()
 	f.StringVar(&level, "level", "", "manual | mid | full")
-	f.StringVar(&decider, "decider", "", "model | boss | parent")
+	f.StringVar(&decider, "decider", "", strings.Join(orgdesign.DeciderKinds, " | ")+" (jev: TypeSafe Jev picks the verdict, the model decides below --decider-threshold)")
 	f.StringVar(&runtime, "decider-runtime", "", "Runtime for the model decider (e.g. claude)")
 	f.StringVar(&model, "decider-model", "", "Model for the model decider")
 	f.StringVar(&fallback, "fallback", "", "Decider for items the chosen one cannot take (model)")
 	f.IntVar(&timeout, "decider-timeout", 0, "Seconds before an item goes to the fallback")
+	f.Float64Var(&threshold, "decider-threshold", 0, "jev only: lowest top-verdict probability jev decides at, in (0,1] (default 0.8)")
 	f.StringVar(&policy, "policy", "", "Instructions the decider follows (\"\" clears)")
 	f.StringVar(&policyFile, "policy-file", "", "Read the policy from a file")
 	f.StringArrayVar(&tiers, "tier", nil, "Override a class's tier: <class>=routine|consequential|irreversible (repeatable)")
@@ -197,8 +218,9 @@ func newOrgAutonomySetCmd(env *orgEnv) *cobra.Command {
 
 // checkDeciderAvailable enforces the plan §6.1 decider rules that need the
 // outside world: parent needs a holding org listing this org, boss needs
-// monomind tool providers.
-func checkDeciderAvailable(ctx context.Context, root, org string, a *orgdecide.Autonomy) error {
+// monomind tool providers, jev needs a TypeSafe key for the profile, and
+// model (also jev's fallback) needs a model its runtime offers.
+func checkDeciderAvailable(ctx context.Context, db *sql.DB, profileID, root, org string, a *orgdecide.Autonomy) error {
 	switch a.Decider.Kind {
 	case orgdesign.DeciderParent:
 		docs, _, err := orgdesign.LoadAll(root)
@@ -217,6 +239,11 @@ func checkDeciderAvailable(ctx context.Context, root, org string, a *orgdecide.A
 			return err
 		}
 	case orgdesign.DeciderModel:
+		return checkDeciderModel(ctx, a)
+	case orgdesign.DeciderJev:
+		if _, _, err := jevconf.ResolveKey(ctx, db, profileID, ""); err != nil {
+			return errInvalidInput("decider jev needs a TypeSafe API key: store one with `monoagentcli secret add --kind secret --name %s` (value on stdin) or set TYPESAFE_API_KEY (%v)", jevconf.SecretName, err)
+		}
 		return checkDeciderModel(ctx, a)
 	}
 	return nil

@@ -3,7 +3,7 @@ import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import '@testing-library/jest-dom/vitest'
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
-import HumanInLoop from './HumanInLoop.jsx'
+import HumanInLoop, { sortBySuggestion } from './HumanInLoop.jsx'
 import * as WailsApp from '../wailsjs/go/main/App'
 import { api } from '../services/api.js'
 
@@ -100,5 +100,49 @@ describe('HumanInLoop unified approvals', () => {
         true
       )
     })
+  })
+
+  it('shows Jev suggestion chips and sorts workflow items by confidence', async () => {
+    const hil = (id, name, suggestion) => ({
+      id, node_name: name, workflow_name: '', execution_id: 'exec-' + id, status: 'pending',
+      readonly_data: {}, editable_data: { caption: 'text ' + id },
+      node_config: suggestion ? { suggestion } : {},
+      created_at: '2026-09-25 10:00:00',
+    })
+    WailsApp.GetHILItems.mockResolvedValue([
+      hil('h1', 'Plain step', null),
+      hil('h2', 'Unsure step', { choice: 'needs_human', p: 0.61, risk: 'medium' }),
+      hil('h3', 'Sure step', { choice: 'approve', p: 0.97, risk: 'low' }),
+    ])
+    WailsApp.GetDraftPersonMessages.mockResolvedValue([])
+    api.getPendingPeopleApprovals.mockResolvedValue([
+      {
+        id: 'lead-1', platform: 'LINKEDIN', platform_username: 'sam', full_name: 'Sam Lee',
+        introduction: 'Hi Sam', created_at: '2026-09-24 18:00:00',
+        suggestion: { suggest: 'reject', p: 0.88, intro_fit: 'generic', intro_fit_p: 0.8 },
+      },
+    ])
+    api.listOrgDesigns.mockResolvedValue({ items: [] })
+
+    render(<HumanInLoop embedded isOpen={true} onClose={() => {}} />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Sure step')).toBeInTheDocument()
+    })
+    const chips = screen.getAllByTestId('jev-suggestion').map(el => el.textContent)
+    expect(chips).toContain('Suggested: approve 97% · risk low')
+    expect(chips).toContain('Suggested: needs human 61% · risk medium')
+    expect(chips).toContain('Suggested: reject 88% · intro generic')
+
+    // Workflow cards: most confident first, unsuggested last.
+    const names = ['Sure step', 'Unsure step', 'Plain step']
+    const pos = names.map(n => screen.getByText(n).compareDocumentPosition.bind(screen.getByText(n)))
+    expect(pos[0](screen.getByText('Unsure step')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(pos[1](screen.getByText('Plain step')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('sortBySuggestion keeps unsuggested items in their order', () => {
+    const a = { id: 'a' }, b = { id: 'b', node_config: { suggestion: { choice: 'approve', p: 0.5 } } }, c = { id: 'c' }
+    expect(sortBySuggestion([a, b, c]).map(x => x.id)).toEqual(['b', 'a', 'c'])
   })
 })

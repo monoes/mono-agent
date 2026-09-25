@@ -182,7 +182,13 @@ func (ep *ExtensionPage) Has(selector string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	found, _ := resp.dataMap()["found"].(bool)
+	// content.js answers {exists: bool}; "found" is accepted for older
+	// extension builds.
+	m := resp.dataMap()
+	if exists, ok := m["exists"].(bool); ok {
+		return exists, nil
+	}
+	found, _ := m["found"].(bool)
 	return found, nil
 }
 
@@ -242,6 +248,28 @@ func (ep *ExtensionPage) EvalCDP(js string) (interface{}, error) {
 	return data, nil
 }
 
+// CDP sends one raw Chrome DevTools Protocol command to this tab through the
+// extension's chrome.debugger relay (cdp_proxy.js) and returns its result.
+// The extension refuses it on about:blank — navigate first.
+func (ep *ExtensionPage) CDP(method string, params map[string]interface{}) (map[string]interface{}, error) {
+	if params == nil {
+		params = map[string]interface{}{}
+	}
+	resp, err := ep.server.SendCommand(&Command{
+		Type:   CmdCdp,
+		TabID:  ep.tabID,
+		Params: map[string]interface{}{"method": method, "params": params},
+	}, cdpCommandTimeout)
+	if err != nil {
+		return nil, fmt.Errorf("cdp %s: %w", method, err)
+	}
+	result, _ := resp.dataMap()["result"].(map[string]interface{})
+	if result == nil {
+		result = map[string]interface{}{}
+	}
+	return result, nil
+}
+
 // TypeCDP types text using Chrome Debugger Protocol (Input.insertText).
 // Optionally clicks the element via CDP first for real focus.
 func (ep *ExtensionPage) TypeCDP(text string) error {
@@ -256,15 +284,6 @@ func (ep *ExtensionPage) TypeCDPOnElement(text string, elementID string) error {
 	_, err := ep.send("type_cdp", map[string]interface{}{
 		"text":      text,
 		"elementId": elementID,
-	})
-	return err
-}
-
-// TypeCDPWithTabs presses Tab N times to focus, then inserts text via CDP.
-func (ep *ExtensionPage) TypeCDPWithTabs(text string, tabCount int) error {
-	_, err := ep.send("type_cdp", map[string]interface{}{
-		"text":     text,
-		"tabCount": tabCount,
 	})
 	return err
 }
@@ -300,18 +319,19 @@ func (ep *ExtensionPage) MouseScroll(x, y float64, steps int) error {
 // Eval
 // ---------------------------------------------------------------------------
 
+// Eval runs js in the tab's main world through chrome.scripting, which is
+// subject to the page's CSP. A failure — CSP refusing eval, a thrown
+// exception, a timeout, a lost connection — is returned as an error carrying
+// the extension's message. The result is still a non-nil (empty) EvalResult,
+// so callers that deliberately ignore the error can keep calling its
+// accessors. Use EvalCDP when the page CSP must be bypassed.
 func (ep *ExtensionPage) Eval(js string, args ...interface{}) (*browser.EvalResult, error) {
-	// For simple DOM queries, use content script commands that work reliably
-	// without eval (bypassing CSP issues). The content script can read DOM
-	// in its isolated world.
-	// Falls back to eval command for complex JS.
-
 	resp, err := ep.send(CmdEval, map[string]interface{}{
 		"expression": js,
 		"args":       args,
 	})
 	if err != nil {
-		return browser.NewEvalResult(nil), nil // Return nil result, don't error — let caller handle
+		return browser.NewEvalResult(nil), err
 	}
 	data := resp.Data
 	if m := resp.dataMap(); m != nil {
@@ -566,12 +586,37 @@ func (ee *ExtensionElement) ScrollIntoView() error {
 	return err
 }
 
+// WaitStable waits until the element's bounding box stops changing (two
+// consecutive identical reads 100ms apart), or d elapses. content.js has no
+// "stable" mode for wait_element (it requires a selector), so this polls
+// get_rect instead.
 func (ee *ExtensionElement) WaitStable(d time.Duration) error {
-	_, err := ee.send(CmdWaitElement, map[string]interface{}{
-		"mode":    "stable",
-		"timeout": d.Milliseconds(),
-	})
-	return err
+	deadline := time.Now().Add(d)
+	var last map[string]interface{}
+	for {
+		resp, err := ee.send("get_rect", nil)
+		if err != nil {
+			return err
+		}
+		cur := resp.dataMap()
+		if last != nil && rectEqual(last, cur) {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("element did not settle within %s", d)
+		}
+		last = cur
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func rectEqual(a, b map[string]interface{}) bool {
+	for _, k := range []string{"x", "y", "width", "height"} {
+		if fmt.Sprint(a[k]) != fmt.Sprint(b[k]) {
+			return false
+		}
+	}
+	return true
 }
 
 func (ee *ExtensionElement) HTML() (string, error) {

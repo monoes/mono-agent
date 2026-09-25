@@ -11,7 +11,7 @@ import (
 var DeprecatedNodeTypes = map[string]string{
 	"ai.chat":      `replace it with the "agent.ask" node (local AI agent via monomind; see "monoagentcli ref node agent.ask")`,
 	"ai.extract":   `replace it with the "agent.ask" node whose prompt requests JSON extraction`,
-	"ai.classify":  `replace it with the "agent.ask" node whose prompt requests classification`,
+	"ai.classify":  `replace it with the "ai.choose" node (TypeSafe Jev; see "monoagentcli ref node ai.choose") or an "agent.ask" node whose prompt requests classification`,
 	"ai.transform": `replace it with the "agent.ask" node`,
 	"ai.agent":     `replace it with the "agent.ask" node`,
 	"ai.embed":     `no local-agent equivalent exists — remove the node, or approximate via an "agent.ask" prompt (no true embeddings API)`,

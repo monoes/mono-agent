@@ -2,7 +2,7 @@
   "actionType": "duet_video",
   "platform": "TIKTOK",
   "version": "1.0.0",
-  "description": "Open the duet creation flow for TikTok videos",
+  "description": "Open TikTok's duet creator for videos (nothing is recorded or published; finishing the duet needs a person)",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
@@ -28,19 +28,26 @@
     ]
   },
   "outputs": {
-    "success": ["duetCount", "reachedIndex"],
-    "failure": ["failedItems"]
+    "success": [
+      "duetCount",
+      "reachedIndex"
+    ],
+    "failure": [
+      "failedItems"
+    ]
   },
   "steps": [
     {
       "id": "t1_duet_video",
       "type": "call_bot_method",
       "methodName": "duet_video",
-      "args": ["{{item.url or item}}"],
+      "args": [
+        "{{item.url or item}}"
+      ],
       "variable_name": "duetResult",
-      "timeout": 45,
+      "timeout": 60,
       "onError": {
-        "action": "skip"
+        "action": "mark_failed"
       }
     },
     {
@@ -60,7 +67,11 @@
       "id": "process_videos",
       "iterator": "selectedListItems",
       "indexVar": "reachedIndex",
-      "steps": ["t1_duet_video", "wait", "log_success"],
+      "steps": [
+        "t1_duet_video",
+        "wait",
+        "log_success"
+      ],
       "onComplete": "update_action_state"
     }
   ],

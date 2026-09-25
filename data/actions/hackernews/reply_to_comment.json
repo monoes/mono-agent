@@ -1,31 +1,59 @@
 {
   "actionType": "reply_to_comment",
   "platform": "HACKERNEWS",
-  "version": "1.0.0",
-  "description": "Reply to a Hacker News item or comment thread",
-  "metadata": { "requiresAuth": true, "supportsPagination": false, "supportsRetry": false },
+  "version": "1.1.0",
+  "description": "Reply to a Hacker News item or comment. Succeeds only when the reply by the logged-in user shows on the item page afterwards; rate limits (\"posting too fast\") and logged-out sessions fail. Never retried, so a reply is never posted twice",
+  "metadata": {
+    "requiresAuth": true,
+    "supportsPagination": false,
+    "supportsRetry": false
+  },
   "inputs": {
     "required": [
-      { "name": "itemID", "type": "string", "description": "Item or comment ID to reply to" },
-      { "name": "text", "type": "string", "description": "Reply text" }
+      {
+        "name": "itemID",
+        "type": "string",
+        "description": "Numeric item or comment ID to reply to"
+      },
+      {
+        "name": "text",
+        "type": "string",
+        "description": "Reply text"
+      }
     ],
     "optional": []
   },
   "outputs": {
-    "success": ["success", "itemID"],
-    "failure": ["error"]
+    "success": [
+      "success",
+      "itemID",
+      "commentID",
+      "url"
+    ],
+    "failure": [
+      "error"
+    ]
   },
   "steps": [
     {
       "id": "reply",
       "type": "call_bot_method",
       "methodName": "reply_to_comment",
-      "args": ["{{itemID}}", "{{text}}"],
+      "args": [
+        "{{itemID}}",
+        "{{text}}"
+      ],
       "variable_name": "replyResult",
-      "timeout": 30,
-      "onError": { "action": "mark_failed" }
+      "timeout": 60,
+      "onError": {
+        "action": "mark_failed"
+      }
     }
   ],
   "loops": [],
-  "errorHandling": { "globalRetries": 1, "retryDelay": 2000, "onFinalFailure": "log_and_continue" }
+  "errorHandling": {
+    "globalRetries": 0,
+    "retryDelay": 0,
+    "onFinalFailure": "log_and_continue"
+  }
 }

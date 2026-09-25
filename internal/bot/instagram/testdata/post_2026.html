@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- SYNTHETIC fixture: structure modelled on Instagram's 2026 post page
+     (no <header>, no <ul>/<li> comment list; the caption is the author's
+     row "author · Edited · <time>" followed by the text span; comment
+     rows carry a relative-time label "22 s" inside a permalink and a
+     Like/Reply text button; a "More posts from" grid under the post; the
+     post itself embedded as JSON in script[type="application/json"]).
+     Every name, text, id and number is invented. -->
+<title>Instagram</title>
+<meta property="og:url" content="https://www.instagram.com/{{AUTHOR}}/p/{{CODE}}/">
+<meta property="og:title" content="Ada Author on Instagram: &quot;Three synthetic clips, all filmed on @fake.brand&#10;&#10;Clips by @fake.one and @fake.two&quot;">
+<meta property="og:description" content="4,321 likes, 98 comments - {{AUTHOR}} on September 20, 2026: &quot;Three synthetic clips, all filmed on @fake.brand&#10;&#10;Clips by @fake.one and @fake.two&quot;. ">
+<meta property="twitter:title" content="Ada Author (@{{AUTHOR}}) • Instagram photos and videos">
+<style>
+body { font: 14px sans-serif; margin: 0; }
+.nav { position: fixed; left: 0; top: 0; bottom: 0; width: 70px; background: #fafafa; }
+main { margin-left: 90px; padding: 16px; }
+.post { display: flex; }
+.media { width: 420px; }
+.media video, .media img { width: 400px; height: 500px; background: #ccc; display: block; }
+.side { width: 480px; padding-left: 12px; }
+button, [role="button"] { cursor: pointer; display: inline-block; padding: 3px 6px; margin: 1px; border: 1px solid #ddd; background: #fff; }
+.avatar { width: 32px; height: 32px; background: #ddd; }
+.grid img { width: 200px; height: 250px; display: inline-block; }
+</style>
+</head>
+<body>
+<div class="nav" role="navigation">
+  <a href="/"><svg aria-label="Home" height="24" width="24"><title>Home</title></svg></a>
+  <a href="/fake.viewer/" role="link"><img alt="" src="https://scontent.fixture.invalid/viewer-avatar.jpg" width="24"><span>Profile</span></a>
+</div>
+<main role="main"><div>
+  <div class="post">
+    <div class="media" id="media"><div style="aspect-ratio: 0.8 / 1;"></div></div>
+    <div class="side">
+      <div><div>
+        <span role="link" tabindex="0"><img class="avatar" alt="{{AUTHOR}}'s profile picture" src="https://scontent.fixture.invalid/author-avatar.jpg"></span>
+        <div><span dir="auto"><a href="/{{AUTHOR}}/" role="link" tabindex="0"><div><div><span dir="auto">{{AUTHOR}}</span></div></div></a></span>
+          <div><span><span dir="auto">•</span></span><div role="button" tabindex="0">Follow</div></div></div>
+        <div role="button" tabindex="0"><svg aria-label="More Options" height="24" width="24"><title>More Options</title></svg></div>
+      </div></div>
+      <hr>
+      <div id="thread">
+        <div id="caption"><div>
+          <div><a href="/{{AUTHOR}}/" role="link" tabindex="0"><img class="avatar" alt="{{AUTHOR}}'s profile picture" src="https://scontent.fixture.invalid/author-avatar.jpg"></a></div>
+          <div><div><span dir="auto"><div><div><a href="/{{AUTHOR}}/" role="link" tabindex="0"><div><div><span dir="auto">{{AUTHOR}}</span></div></div></a>&nbsp;<span>Edited</span><span><span>•</span></span><span><time datetime="2026-09-20T10:05:00.000Z" title="20 September 2026">13 h</time></span></div>
+            <span>Three synthetic clips, all filmed on <a href="/fake.brand/" role="link">@fake.brand</a><br><br>Clips by <a href="/fake.one/" role="link">@fake.one</a> and <a href="/fake.two/" role="link">@fake.two</a></span></div></span></div></div>
+        </div></div>
+        <div id="comments"></div>
+      </div>
+      <section>
+        <div role="button" tabindex="0"><svg aria-label="Like" height="24" width="24"><title>Like</title></svg></div>
+        <span role="button">4,321</span>
+        <div role="button" tabindex="0"><svg aria-label="Comment" height="24" width="24"><title>Comment</title></svg></div>
+        <div role="button" tabindex="0"><svg aria-label="Share" height="24" width="24"><title>Share</title></svg></div>
+      </section>
+      <div dir="auto"><a href="/{{AUTHOR}}/p/{{CODE}}/" role="link"><span dir="auto"><time datetime="2026-09-20T10:00:00.000Z" title="20 September 2026">13 hours ago</time></span></a></div>
+    </div>
+  </div>
+  <hr>
+  <div class="grid"><div dir="auto">More posts from <a href="/{{AUTHOR}}/" role="link">{{AUTHOR}}</a></div>
+    <a href="/{{AUTHOR}}/p/FXMORE01/" role="link"><img alt="Photo by Ada Author" src="https://scontent.fixture.invalid/more1.jpg" width="1080"></a>
+    <a href="/{{AUTHOR}}/reel/FXMORE02/" role="link"><img alt="Video by Ada Author" src="https://scontent.fixture.invalid/more2.jpg" width="1080"></a>
+    <a href="/{{AUTHOR}}/p/FXMORE03/" role="link"><img alt="Photo by Ada Author" src="https://scontent.fixture.invalid/more3.jpg" width="1080"></a>
+  </div>
+</div></main>
+<script type="application/json" id="embedded"></script>
+<script>
+window.FX = {{FX}};
+(function () {
+  const FX = window.FX;
+  const $ = (s) => document.querySelector(s);
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const code = '{{CODE}}', author = '{{AUTHOR}}';
+
+  // The player: the current carousel item is a <video> streaming from a
+  // blob: URL; no Next button is rendered (the logged-in page shows none
+  // until hover), only the pagination dots.
+  $('#media').innerHTML = '<div><div style="aspect-ratio: 0.8 / 1;"><video playsinline src="blob:https://www.instagram.com/0f0f0f0f-fake-blob"></video></div>' +
+    '<div><div></div><div></div><div></div></div></div>';
+
+  // The post as the page embeds it (unless FX.noEmbed): a carousel of three
+  // videos. The "more posts" grid repeats a trimmed copy of another post.
+  if (!FX.noEmbed) {
+    const item = (n) => ({ media_type: 2, image_versions2: { candidates: [{ url: 'https://scontent.fixture.invalid/clip' + n + '.jpg', width: 1080 }] },
+      video_versions: [{ url: 'https://scontent.fixture.invalid/clip' + n + '.mp4', type: 101 }] });
+    const post = { __typename: 'XIGPolarisCarouselMedia', code: code, pk: '900001', media_type: 8, product_type: 'carousel_container',
+      user: { pk: '42', username: author }, like_count: 4321, comment_count: 98,
+      caption: { text: 'Three synthetic clips, all filmed on @fake.brand\n\nClips by @fake.one and @fake.two' },
+      carousel_media: [item(1), item(2), item(3)] };
+    const more = { code: 'FXMORE01', media_type: 1, product_type: 'feed', user: { username: author }, caption: { text: 'Another post' } };
+    $('#embedded').textContent = JSON.stringify({ require: [['Preloader', 'x', null, [{ __bbox: { result: { data: {
+      xig_polaris_media: { __typename: 'XIGPolarisCarouselMedia', code: code, pk: '900001', if_not_gated_logged_out: post } } } } }]],
+      ['Grid', 'y', null, [{ edges: [{ node: more }, { node: { code: code, media_type: 8, carousel_media_count: 3 } }] }]]] });
+  }
+
+  // Comments: 2026 rows — avatar link, author link, a permalink holding the
+  // relative time ("22 s"), the text span, then Like and Reply text buttons.
+  const comments = FX.comments || [];
+  $('#comments').innerHTML = comments.map((c) =>
+    '<div><div><div><a href="/' + c.author + '/" role="link" tabindex="0"><img class="avatar" alt="' + c.author + '\'s profile picture" src="https://scontent.fixture.invalid/' + c.author + '.jpg"></a></div>' +
+    '<div><div><div><span dir="auto"><a href="/' + c.author + '/" role="link" tabindex="0"><div><div><span dir="auto">' + c.author + '</span></div></div></a></span>' +
+    '<span dir="auto"><a href="/p/' + code + '/c/' + c.id + '/" role="link" tabindex="0"><time datetime="' + c.time + '" title="20 September 2026">' + c.ago + '</time></a></span>' +
+    '<span dir="auto">' + esc(c.text) + '</span></div></div>' +
+    '<div><button type="button"><span dir="auto">Like</span></button><div role="button" tabindex="0"><span dir="auto"><span>Reply</span></span></div></div></div></div></div>'
+  ).join('');
+})();
+</script>
+</body>
+</html>

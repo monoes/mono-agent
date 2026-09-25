@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   tierForClass, effectiveLevel, isPaused, routeFor, routeLabel, fullAutoImpact, classOfAction,
-  approvalToNeedsDecision, needsDecisionToApproval,
+  approvalToNeedsDecision, needsDecisionToApproval, DECIDERS, isDeciderKind,
 } from './autonomyModel.js'
 import { toMillis, formatDuration, waitedLabel, idleStopRemainingMs, idleStopLabel } from './waiting.js'
 
@@ -102,5 +102,14 @@ describe('waiting helpers', () => {
     expect(idleStopLabel(240_000)).toBe('idle stop in 4m')
     expect(idleStopLabel(0)).toBe('org may idle-stop now')
     expect(idleStopLabel(null)).toBe('')
+  })
+})
+
+describe('decider kinds', () => {
+  it('matches the CLI list, including jev', () => {
+    expect(DECIDERS.map(d => d.id)).toEqual(['model', 'boss', 'parent', 'jev'])
+    for (const k of ['model', 'boss', 'parent', 'jev']) expect(isDeciderKind(k)).toBe(true)
+    expect(isDeciderKind('bogus')).toBe(false)
+    expect(routeLabel('decider', 'jev')).toBe('decided by jev')
   })
 })

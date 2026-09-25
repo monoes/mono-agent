@@ -2,7 +2,7 @@
   "actionType": "share_video",
   "platform": "TIKTOK",
   "version": "1.0.0",
-  "description": "Copy share link for TikTok videos and return the URL",
+  "description": "Copy the share link of TikTok videos and return the URL (nothing is posted)",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
@@ -28,19 +28,27 @@
     ]
   },
   "outputs": {
-    "success": ["shareResult", "shareCount", "reachedIndex"],
-    "failure": ["failedItems"]
+    "success": [
+      "shareResult",
+      "shareCount",
+      "reachedIndex"
+    ],
+    "failure": [
+      "failedItems"
+    ]
   },
   "steps": [
     {
       "id": "t1_share_video",
       "type": "call_bot_method",
       "methodName": "share_video",
-      "args": ["{{item.url or item}}"],
+      "args": [
+        "{{item.url or item}}"
+      ],
       "variable_name": "shareResult",
-      "timeout": 30,
+      "timeout": 60,
       "onError": {
-        "action": "skip"
+        "action": "mark_failed"
       }
     },
     {
@@ -65,7 +73,12 @@
       "id": "process_videos",
       "iterator": "selectedListItems",
       "indexVar": "reachedIndex",
-      "steps": ["t1_share_video", "save_share", "wait", "log_success"],
+      "steps": [
+        "t1_share_video",
+        "save_share",
+        "wait",
+        "log_success"
+      ],
       "onComplete": "update_action_state"
     }
   ],

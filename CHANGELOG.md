@@ -7,12 +7,115 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.67.0] - 2026-09-25
+
+### Added
+
+- **TypeSafe Jev decisions.** Jev picks one of a fixed set of options,
+  answers yes/no, or scores against a rubric. It never writes text. Each
+  answer comes back in about 0.3 s with probabilities attached. Every
+  feature below is off until you turn it on for a profile (`monoagentcli jev
+  enable <surface>`, which first lists what gets sent to TypeSafe), or until
+  you use the node that relies on it. Below its confidence threshold, a
+  feature falls back to what it did before. The one difference is inbox
+  classification, which stores the message as "unsure" so it isn't sent
+  again. The key is looked up in the
+  node's config, then in the vault entry `typesafe` (or one named like
+  "Jev API key"), then in `TYPESAFE_API_KEY`.
+  - `monoagentcli jev status|enable|disable|usage|ask|models`, plus the
+    `jev.key` and `jev.api` doctor checks. `jev usage` shows calls, tokens
+    and estimated cost; no request content is stored.
+  - **`browser.jev` node:** give it a URL and a goal, and it clicks, types
+    and selects its way there in your own browser (ported from
+    browser-use/jev-ultrafast). A `values` map, which can hold `@secret:`
+    entries, fills fields without a local-agent turn. Jev only ever sees
+    those values as `<value:NAME>`.
+  - **`ai.choose` node:** routes each item to one of your cases, or to a
+    `low_confidence` output. It can also answer extra yes/no, choice or
+    score questions. `ai.classify` stays deprecated and now points to it.
+  - **Orgs:** `org autonomy set --decider jev` lets Jev approve, deny or
+    escalate. Questions, low-confidence cases and errors go to the model
+    decider. Each decision records Jev's probabilities. Tiers and routing
+    are unchanged.
+  - **Job fit:** `application evaluate --runtime jev` scores gates and
+    rubric dimensions in one request. The weighted score and verdict are
+    computed in Go.
+  - **Action steps** can declare an `intent`. With `action_fallback`
+    enabled, Jev finds the element when a selector no longer matches. Intents
+    ship for the Gemini, Instagram, LinkedIn, X and TikTok actions. In social
+    builds, LinkedIn likes use the same fallback.
+  - **Classification:** `capture classify` / `capture list --suggested`
+    label captured pages, and `people messages classify` / `list --intent`
+    label inbound messages.
+  - **Cross-platform people:** `people links suggest|list|confirm|dismiss`
+    proposes pairs of profiles that look like the same person. Rows are
+    never merged.
+  - **Human-in-Loop `auto_decide`** (`jev enable hil`): items Jev approves
+    with high confidence and doesn't rate as high-risk pass without
+    stopping. The rest wait, with Jev's suggestion shown. Runs started by
+    orgs only get suggestions. `hil list --suggest` and `people review list
+    --suggest` show the suggestions, and the Human in Loop page shows them
+    as chips sorted by confidence.
+  - **Org asks:** a reply that lost its `ask:` token is linked to the
+    waiting ask it answers, and the match is logged.
+  - **Retries:** with `retry` enabled, node failures are classified after
+    their error text is redacted. Rate limits back off longer, and auth or
+    permanent errors stop retrying.
+
+### Fixed
+
+- **Social actions work in your browser again (social builds).** The app
+  only drives your real browser through the extension. Most Instagram bot
+  code and several LinkedIn, X and TikTok paths needed a different browser
+  driver, so they failed or quietly did nothing. All Instagram, LinkedIn, X,
+  TikTok, Hacker News and Product Hunt actions now run through the
+  extension. Scripts no longer break on sites whose security policy blocks
+  them (LinkedIn, Hacker News). Every write action (like, comment, reply,
+  DM, follow, publish) checks that its result appeared and fails if it
+  didn't.
+- Harmful fallbacks are gone:
+  - un-liking posts that were already liked;
+  - liking the wrong comment;
+  - following "Suggested for you" accounts;
+  - sending a LinkedIn connection request when a Message button was missing;
+  - DMs going to whichever conversation was open;
+  - clicking Send twice;
+  - comments reported as posted when they never reached the editor;
+  - double posts on Hacker News.
+- List actions (comments, posts, followers, search results) now return one
+  item per record. Before, only the last record survived the node.
+- Engine fixes that apply to every action:
+  - XPath lists work in the extension.
+  - Selector alternatives are honoured.
+  - `Eval` reports failures instead of returning nothing.
+  - `Has` and `WaitStable` work.
+  - Condition branches in the social actions are fixed.
+  - A wait of 0 seconds no longer waits 10.
+  - `linkedin.list_user_posts` accepts `targets`.
+- The desktop app's Human in Loop approve and reject now go through
+  `monoagentcli hil` instead of running SQL inside the app.
+- Workflow retries no longer re-run a paused Human-in-Loop node or
+  invalid configuration, cancelled runs, or errors marked permanent. Before,
+  a paused node was executed again under `retry_policy`. A node's own
+  timeout is still retried.
+- LinkedIn likes with a named reaction (social builds) fail when that
+  reaction is missing. Before, they silently clicked plain Like. An unknown
+  reaction name is now an error.
+- The workflow editor's switch, filter and choose output ports now match
+  the handles the engine emits. The filter showed `pass/fail`, but the
+  engine emits `main/rejected`.
+
+## [0.66.0] - 2026-09-25
+
 ### Added
 
 - **`monoagentcli people tag list|add|remove|color`**. The People page now
   makes every tag change through it, including the new tag colour picker.
 - **People page:** rework of the page and its tag editor. Human in Loop
   usernames and URLs open the profile in the browser.
+- **`monoagentcli people review list|approve|reject`** drives the review
+  queue for people staged as `pending_approval`. `approve --send` runs the
+  dispatch workflow for the person.
 
 ### Fixed
 
@@ -20,17 +123,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   longer break `people list`, `people get`, export or the app's people
   lookups. They failed with "converting NULL to int is unsupported".
 - A newly created tag shows its colour straight away.
+
 - The app prefers the `monoagentcli` shipped next to it over an older one on
   PATH.
-
-### Added
-
-- **`monoagentcli people review list|approve|reject`** drives the review
-  queue for people staged as `pending_approval`. `approve --send` runs the
-  dispatch workflow for the person.
-
-### Fixed
-
 - **Human in Loop's people review goes through the CLI.** Approve/reject
   no longer run SQL inside the app, and "send now" no longer looks for one
   fixed workflow id. It finds the profile's workflow named like "Send

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Synth Alice / X</title>
+<style>[contenteditable],textarea{border:1px solid #999;min-height:30px;width:300px} button{min-width:40px;min-height:20px}</style></head>
+<body>
+<!-- SYNTHETIC fixture: an open X DM conversation. /messages/<id> uses the
+     classic composer (dmComposerTextInput / dmComposerSendButton), /i/chat/<id>
+     the newer one (a textarea). The thread already holds a message with the
+     same text the tests send, so only a NEW bubble confirms a send.
+     Conversation 100-400 is broken: Send does nothing. -->
+<main role="main"><div data-testid="primaryColumn">
+  <div data-testid="DmActivityContainer" id="thread">
+    <div data-testid="messageEntry"><div data-testid="tweetText">Thanks for the message!</div></div>
+    <div data-testid="messageEntry"><div data-testid="tweetText">hey, are you around?</div></div>
+  </div>
+  <div id="composer"></div>
+</div></main>
+<script>
+window.__sent = [];
+const chat = location.pathname.startsWith('/i/chat/');
+const broken = location.pathname.endsWith('/100-400');
+const c = document.getElementById('composer');
+setTimeout(() => {
+  c.innerHTML = chat
+    ? `<textarea data-testid="dm-composer-textarea" placeholder="Message"></textarea><button data-testid="dm-composer-send-button" aria-label="Send">➤</button>`
+    : `<div data-testid="dmComposerTextInput" contenteditable="true" role="textbox" aria-label="Text message"></div><button data-testid="dmComposerSendButton" aria-label="Send">➤</button>`;
+  const box = c.firstElementChild, btn = c.querySelector('button');
+  const read = () => chat ? box.value : box.textContent;
+  btn.addEventListener('click', () => {
+    if (broken || !read().trim()) return;
+    const text = read();
+    setTimeout(() => {
+      window.__sent.push(text);
+      const m = document.createElement('div');
+      m.setAttribute('data-testid', 'messageEntry');
+      m.innerHTML = '<div data-testid="tweetText"></div>';
+      m.firstChild.textContent = text;
+      document.getElementById('thread').appendChild(m);
+      if (chat) box.value = ''; else box.textContent = '';
+    }, 150);
+  });
+}, 200);
+</script>
+</body></html>

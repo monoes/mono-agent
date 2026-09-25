@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/monoes/mono-agent/internal/jev/jevconf"
+	"github.com/monoes/mono-agent/internal/jev/jevtest"
 	"github.com/monoes/mono-agent/internal/peoplereview"
 	"github.com/monoes/mono-agent/internal/storage"
 )
@@ -148,5 +151,45 @@ func TestPeopleReviewSendPlan(t *testing.T) {
 	out, err = runReview(t, cfg, "approve", "p2", "--send-plan", "--send-workflow", "w2")
 	if err != nil || json.Unmarshal([]byte(out), &res) != nil || res.Send.WorkflowID != "w2" {
 		t.Fatalf("explicit workflow = %q, %v", out, err)
+	}
+}
+
+func TestPeopleReviewListSuggest(t *testing.T) {
+	cfg, db := newReviewCLITestDB(t)
+	t.Setenv("TYPESAFE_API_KEY", "test-key")
+	srv := jevtest.NewServer(t, jevtest.Fixed(map[string]string{peoplereview.QSuggest: "approve", peoplereview.QIntroFit: peoplereview.IntroGeneric}))
+
+	out, err := runReview(t, cfg, "list", "--suggest")
+	var rows []peoplereview.Reviewed
+	if err != nil || json.Unmarshal([]byte(out), &rows) != nil || len(rows) != 2 || rows[0].Suggestion != nil || srv.Calls() != 0 {
+		t.Fatalf("disabled: %q %v calls=%d", out, err, srv.Calls())
+	}
+
+	if err := jevconf.SetEnabled(db.DB, "default", jevconf.PeopleReview, true); err != nil {
+		t.Fatal(err)
+	}
+	for pass := 0; pass < 2; pass++ {
+		out, err := runReview(t, cfg, "list", "--suggest")
+		var got []map[string]interface{}
+		if err != nil || json.Unmarshal([]byte(out), &got) != nil || len(got) != 2 {
+			t.Fatalf("pass %d: %q %v", pass, out, err)
+		}
+		for _, r := range got {
+			s, _ := r["suggestion"].(map[string]interface{})
+			if r["id"] == nil || s["suggest"] != "approve" || s["intro_fit"] != peoplereview.IntroGeneric || s["p"] == nil || s["intro_fit_p"] == nil {
+				t.Fatalf("pass %d row: %+v", pass, r)
+			}
+		}
+	}
+	if srv.Calls() != 2 {
+		t.Fatalf("calls = %d, want one per person", srv.Calls())
+	}
+	if got := category(t, db, "p1"); got != peoplereview.Pending {
+		t.Fatalf("suggest changed category: %q", got)
+	}
+	// Without --suggest the JSON is unchanged: no suggestion key.
+	out, _ = runReview(t, cfg, "list")
+	if strings.Contains(out, "suggestion") {
+		t.Fatalf("plain list mentions suggestions: %s", out)
 	}
 }

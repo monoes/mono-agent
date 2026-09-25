@@ -2,7 +2,7 @@
   "actionType": "like_comment",
   "platform": "TIKTOK",
   "version": "1.0.0",
-  "description": "Like a specific comment on TikTok videos",
+  "description": "Like specific comments on TikTok videos. Each item names the video (videoUrl) and the comment by its text and author username (as list_video_comments returns them); an item matching no comment, or several, fails instead of liking another comment",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
@@ -13,30 +13,40 @@
       {
         "name": "selectedListItems",
         "type": "list",
-        "description": "Items with videoUrl and commentId fields (or objects with url and commentId)"
+        "description": "Items with videoUrl plus the comment's text and username (list_video_comments rows work as-is); an id from list_video_comments (TikTok's own, or a derived tth- id) is matched first"
       }
     ]
   },
   "outputs": {
-    "success": ["likesCount", "reachedIndex"],
-    "failure": ["failedItems"]
+    "success": [
+      "likesCount",
+      "reachedIndex"
+    ],
+    "failure": [
+      "failedItems"
+    ]
   },
   "steps": [
     {
       "id": "t1_like_comment",
       "type": "call_bot_method",
       "methodName": "like_comment",
-      "args": ["{{item.videoUrl or item.url or item}}", "{{item.commentId or item.commentID}}"],
+      "args": [
+        "{{item.videoUrl or item.url}}",
+        "{{item.commentId or item.id}}",
+        "{{item.username}}",
+        "{{item.text}}"
+      ],
       "variable_name": "likeResult",
-      "timeout": 30,
+      "timeout": 90,
       "onError": {
-        "action": "skip"
+        "action": "mark_failed"
       }
     },
     {
       "id": "log_success",
       "type": "log",
-      "value": "Liked comment {{item.commentId or item.commentID}} on: {{item.videoUrl or item.url or item}}"
+      "value": "Liked comment by {{item.username}} on: {{item.videoUrl or item.url}}"
     }
   ],
   "loops": [
@@ -44,7 +54,10 @@
       "id": "process_comments",
       "iterator": "selectedListItems",
       "indexVar": "reachedIndex",
-      "steps": ["t1_like_comment", "log_success"],
+      "steps": [
+        "t1_like_comment",
+        "log_success"
+      ],
       "onComplete": "update_action_state"
     }
   ],

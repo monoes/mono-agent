@@ -9,6 +9,7 @@ import (
 
 	"github.com/rs/zerolog"
 
+	"github.com/monoes/mono-agent/internal/capture"
 	"github.com/monoes/mono-agent/internal/capturesummary"
 	"github.com/monoes/mono-agent/internal/extension"
 )
@@ -50,7 +51,14 @@ func installCaptureSummaries(srv *extension.Server, logf func(string, ...any)) *
 	sum := capturesummary.New(runtime, capturesummary.ExecRunner(0))
 	sum.Catalog = catalog
 	sum.Logf = logf
-	srv.SetAfterWrite(sum.Handle)
+	// Page-kind classification (Jev surface "capture") runs after the
+	// summary is queued; it is a no-op unless the capture's profile enabled
+	// it, and never makes the capture wait (capture_classify.go).
+	classifier := newCaptureClassifier(logf)
+	srv.SetAfterWrite(func(res *capture.Result) {
+		sum.Handle(res)
+		classifier.Handle(res)
+	})
 	srv.SetSummaryCatalog(catalog, runtime)
 	return sum
 }

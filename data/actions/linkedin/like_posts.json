@@ -43,9 +43,9 @@
       "methodName": "like_post",
       "args": ["{{item.url or item}}", "{{reaction or 'like'}}"],
       "variable_name": "likeResult",
-      "timeout": 30,
+      "timeout": 60,
       "onError": {
-        "action": "skip"
+        "action": "mark_failed"
       }
     },
     {
@@ -65,8 +65,7 @@
       "id": "process_posts",
       "iterator": "selectedListItems",
       "indexVar": "reachedIndex",
-      "steps": ["t1_like_post", "wait", "log"],
-      "onComplete": "update_action_state"
+      "steps": ["t1_like_post", "wait", "log"]
     }
   ],
   "errorHandling": {

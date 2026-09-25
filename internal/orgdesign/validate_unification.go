@@ -40,7 +40,23 @@ const (
 	DeciderModel  = "model"
 	DeciderBoss   = "boss"
 	DeciderParent = "parent"
+	// DeciderJev asks TypeSafe Jev to pick the verdict and hands anything it
+	// is not confident about to the model decider (jev plan WS4).
+	DeciderJev = "jev"
 )
+
+// DeciderKinds lists every decider kind, in display order.
+var DeciderKinds = []string{DeciderModel, DeciderBoss, DeciderParent, DeciderJev}
+
+// ValidDeciderKind reports whether kind is one of DeciderKinds.
+func ValidDeciderKind(kind string) bool {
+	for _, k := range DeciderKinds {
+		if k == kind {
+			return true
+		}
+	}
+	return false
+}
 
 // LevelRank orders levels by how much they let run without a human; -1 for
 // an unknown level.
@@ -275,10 +291,8 @@ func validateAutonomy(a *Autonomy) []string {
 		errs = append(errs, fmt.Sprintf("autonomy: level %q must be manual, mid, or full", a.Level))
 	}
 	if dc := a.Decider; dc != nil {
-		switch dc.Kind {
-		case "", DeciderModel, DeciderBoss, DeciderParent:
-		default:
-			errs = append(errs, fmt.Sprintf("autonomy: decider.kind %q must be model, boss, or parent", dc.Kind))
+		if dc.Kind != "" && !ValidDeciderKind(dc.Kind) {
+			errs = append(errs, fmt.Sprintf("autonomy: decider.kind %q must be model, boss, parent, or jev", dc.Kind))
 		}
 		switch dc.Fallback {
 		case "", DeciderModel:

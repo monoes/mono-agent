@@ -72,11 +72,21 @@ node fail, which the node's on_error setting then handles (default: the run fail
 		Config: `{
   "readonly_fields": ["name", "company", "email"],
   "editable_fields": ["subject", "body"],   // empty = whole item editable
-  "timeout_minutes": 60                     // 0 = wait forever; expiry counts as a rejection
+  "timeout_minutes": 60,                    // 0 = wait forever; expiry counts as a rejection
+  "auto_decide": {                          // optional, needs "jev enable hil"
+    "policy": "Approve routine outreach; flag anything legal or financial",
+    "approve_above": 0.9,                   // default: the profile's hil threshold
+    "reject_above": 0                       // 0/unset = Jev never rejects
+  }
 }`,
 		Inputs:  "any items",
 		Outputs: "the approved (possibly edited) items",
-		Notes: `While waiting the run's status is WAITING (exit code 0 from "workflow run").
+		Notes: `auto_decide (TypeSafe Jev): one request per item; items Jev approves with top
+p >= approve_above and does not rate high-risk are approved without a human; the
+rest wait with Jev's suggestion stored (see "hil list --suggest"). If every item
+is approved the node does not pause; one auto-reject fails the node exactly like
+a human reject. Runs started by an org never auto-decide (they are tier-routed).
+While waiting the run's status is WAITING (exit code 0 from "workflow run").
 Review with "monoagentcli hil list" / "hil approve <id>" / "hil reject <id>",
 the GUI review panel, the MCP hil_* tools, or the HTTP API.`,
 	},
@@ -103,6 +113,92 @@ ask for JSON, a category, or a rewrite in the prompt itself.`,
 		Notes: `Needs monomind and at least one agent runtime. Check with
 "monoagentcli agent scan --installed" and "monoagentcli agent test <runtime>";
 install one with "monoagentcli agent install <runtime>".`,
+	},
+	{
+		Type:     "browser.jev",
+		Category: "agent",
+		Short:    "Browser agent: reach a goal on any website in your own browser (TypeSafe Jev)",
+		Description: `Opens the URL in a new tab of your connected browser (the extension bridge,
+so your logins apply) and works toward the goal one action at a time. Each
+cycle reads the page as a numbered table of visible controls, and one TypeSafe
+Jev request picks the operation (CLICK, TYPE_TEXT, SELECT, SCROLL_UP/DOWN,
+WAIT, DONE, BLOCKED) and its target. For TYPE_TEXT a second Jev request picks
+one of the configured values by name (or NONE); only when none fits does a
+local agent (text_runtime) write the text. No selectors, no site scripts.
+Port of browser-use/jev-ultrafast.`,
+		Config: `{
+  "url":          "https://www.google.com/travel/flights",  // required
+  "goal":         "One-way Zurich to London on 2026-10-20…", // required
+  "api_key":      "@secret:typesafe",   // else vault secret typesafe, then TYPESAFE_API_KEY
+  "model":        "jev-latest",
+  "values": {                           // typed into matching fields, no text turn
+    "From":     "Zurich",
+    "To":       "London",
+    "email":    "@secret:airline-email" // vault-backed: stricter field match
+  },
+  "text_runtime": "claude",             // local agent for TYPE_TEXT values
+  "text_model":   "",                   // e.g. haiku
+  "max_actions":  40,                   // decisions are capped at 2×
+  "timeout":      300,                  // seconds
+  "fail_on_blocked": false
+}`,
+		Inputs: "any items (one run per item; none = one run)",
+		Outputs: `input item + status (done|blocked|budget|timeout), reason, url, title,
+page_text, steps[] (action, operation, text, value_name, probability,
+confidence, latency_ms, page_changed), decisions, value_requests, text_turns,
+low_confidence_steps (steps with confidence < 0.5), jev_input_tokens, elapsed_ms`,
+		Notes: `DONE is the model's claim, not proof: check page_text downstream when it
+matters. Page text is treated as data, never instructions, but the agent acts
+in your logged-in browser, so give it goals you would trust a person with.
+values: Jev only ever sees value NAMES; any configured value (4+ chars) is
+replaced with <value:NAME> in page text, field values and history before every
+Jev request. A plain value is used when Jev picks it with p >= 0.6; an
+@secret: value needs p >= 0.9 AND an email/tel input or a field label
+containing the value's name, else the text runtime is asked. Secret values are
+shown as <value:NAME> in steps[].text; an unresolvable @secret: ref is a config
+error. Password inputs are never observed (the snapshot skips them), so no
+value is ever typed into one. Gate on low_confidence_steps downstream when a
+shaky run matters.
+Skips file inputs too; frames, shadow DOM, canvas and uploads can block.
+Get a key at console.typesafe.ai and store it: "monoagentcli secret add --kind secret --name typesafe".`,
+	},
+	{
+		Type:     "ai.choose",
+		Category: "agent",
+		Short:    "Route each item to one of your cases with a TypeSafe Jev choice (replaces ai.classify)",
+		Description: `One TypeSafe Jev request per item picks which of the configured cases fits,
+with probabilities and a confidence (~0.1–0.3 s, no text generation). Items go
+out on the chosen case's handle; when the top probability is below
+min_confidence they go to "low_confidence" instead. Extra typed questions
+(noul = yes/no, choice, score = ordered rubric) ride along in the same request.
+The item content is sent as "untrusted_input" and treated as data, never
+instructions. If any item's request fails, the whole node fails (no partial
+output) and a re-run sends every item again.`,
+		Config: `{
+  "cases": [                               // required, same shapes as core.switch
+    "billing",
+    { "value": "tech", "handle": "support",
+      "description": "a technical problem or bug report" }
+  ],
+  "input":          "{{$json.subject}}\n{{$json.body}}",  // or "fields": ["subject","body"]; neither = whole item
+  "instructions":   "Customer emails to a SaaS company.",
+  "extra_questions": { "urgent": { "type": "noul", "criteria": "Does it need an answer today?" },
+                       "tone":   { "type": "choice", "criteria": ["calm", "angry"] } },
+  "min_confidence": 0.6,                   // top probability gate
+  "output_key":     "choice",
+  "api_key":        "@secret:typesafe",    // or TYPESAFE_API_KEY
+  "model":          "jev-latest",
+  "concurrency":    4                      // requests in flight, max 8
+}`,
+		Inputs: "any items (input capped at 6,000 characters)",
+		Outputs: `one handle per case handle (in config order, empty ones included) plus
+"low_confidence"; each item keeps its fields and gains <output_key>: {choice,
+handle, probability, probabilities, confidence, low_confidence, model,
+extra: {name: {noul} | {choice, probabilities, confidence} | {score, probabilities, confidence}}}`,
+		Notes: `Items keep input order within each handle. A failed request fails the node.
+No key => invalid-config error naming the missing vault secret. Get a key at
+console.typesafe.ai: "monoagentcli secret add --kind secret --name typesafe".
+Jev is weak at arithmetic, counting and date comparison — compute those first.`,
 	},
 	{
 		Type:     "org.run",
@@ -287,7 +383,7 @@ install one with "monoagentcli agent install <runtime>".`,
 	{
 		Type:     "hackernews.list_comments",
 		Category: "hackernews",
-		Short:    "List the top-level comments on a Hacker News item",
+		Short:    "List the comments on a Hacker News item (all depths with depth/parentId; topLevelOnly for top level only)",
 		Config:   `{ "itemID": "41234567" }`,
 		Notes:    socialBrowserNote,
 	},

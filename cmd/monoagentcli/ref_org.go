@@ -130,8 +130,9 @@ AUTONOMY
 
   org autonomy show <org>
   org autonomy set <org> [--level manual|mid|full]
-      [--decider model|boss|parent] [--decider-model M] [--decider-runtime R]
-      [--decider-timeout 120] [--policy TEXT | --policy-file F]
+      [--decider model|boss|parent|jev] [--decider-model M] [--decider-runtime R]
+      [--decider-timeout 120] [--decider-threshold 0.8]
+      [--policy TEXT | --policy-file F]
       [--tier <class>=routine|consequential|irreversible]... [--clear-tier C]...
       [--on-decider-failure deny|human] [--max-decisions N] [--max-decider-usd X]
   org autonomy pause <org>|--all [--for 30m]     resume <org>|--all
@@ -148,6 +149,18 @@ AUTONOMY
   org_start consequential, gate irreversible, grant:<alias> and
   hil:<alias> by the workflow (irreversible with outbound nodes).
   Wildcards tool:* and grant:* are accepted.
+
+  Deciders: model (a one-shot agent turn), boss (the org's root role),
+  parent (a holding org's Initiator), jev (TypeSafe Jev picks approve /
+  deny / escalate in one ~0.3 s call; questions, answers whose top
+  probability is below --decider-threshold (default 0.8), and Jev errors
+  go to the model decider, so --decider-model/--decider-runtime still
+  apply). jev needs a TypeSafe key for the profile (vault secret
+  "typesafe" or TYPESAFE_API_KEY); choosing it is the opt-in — no
+  "jev enable" needed. It sends the org name and goal, requester title,
+  item facts, and the agent-written text (marked untrusted) to TypeSafe. Tiers and
+  routes above never change. decisions shows its confidence and
+  probabilities.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 HOLDING ORGS

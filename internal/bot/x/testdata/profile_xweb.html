@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Synth Dave (@synth_dave) / X</title>
+<meta name="description" content="meta bio must not be used"></head>
+<body>
+<!-- SYNTHETIC fixture: the newer (logged-out) X profile layout without
+     data-testids, mirroring the real structure: an <h1> name, an @handle
+     span, a dir=auto bio, a meta row whose items are marked only by an
+     svg[data-icon] (icon-location-stroke / icon-link / icon-calendar), and
+     /following + /verified_followers links. A timeline below the header has
+     its own dir=auto text and icons that must not be read as header fields. -->
+<div><main>
+  <div><a aria-label="Opens header photo" href="/synth_dave/header_photo"><img src="https://pbs.example.test/banners/dave_1500x500" alt="banner"></a></div>
+  <div>
+    <div><div><a aria-label="Opens profile photo" href="/synth_dave/photo"><div><img alt="@synth_dave" src="https://pbs.example.test/avatars/dave_400x400.jpg"></div></a></div>
+      <div><span><h1>Synth Dave</h1><div><span aria-label="Verified account" role="button"><svg></svg></span></div></span><span><span>@synth_dave</span></span></div>
+    </div>
+    <div dir="auto"><span>just testing</span></div>
+    <div>
+      <div><svg data-icon="icon-location-stroke" role="img" aria-hidden="true"></svg><div>Somewhere, Synthland</div></div>
+      <div><svg data-icon="icon-link" role="img" aria-hidden="true"></svg><a href="https://t.co/synthdave">dave.example</a></div>
+      <div><svg data-icon="icon-calendar" role="img" aria-hidden="true"></svg><a href="/synth_dave/about">Joined February 2007</a></div>
+    </div>
+    <div><a href="/synth_dave/following"><div><div>7</div><div>Following</div></div></a>
+         <a href="/synth_dave/verified_followers"><div><div>60.7m</div><div>Followers</div></div></a></div>
+  </div>
+  <div><button type="button"><span>Follow</span></button></div>
+  <section>
+    <article><div><span>Synth Dave</span><span>@synth_dave</span></div>
+      <div dir="auto"><span>a synthetic timeline post</span></div>
+      <div><svg data-icon="icon-link" role="img"></svg><a href="https://t.co/postlink">post.example</a></div>
+      <div><svg data-icon="icon-location-stroke" role="img"></svg><div>Post Place</div></div>
+    </article>
+  </section>
+</main></div>
+</body></html>

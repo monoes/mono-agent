@@ -10,6 +10,8 @@ import (
 
 	"github.com/monoes/mono-agent/internal/agentinstall"
 	"github.com/monoes/mono-agent/internal/health"
+	"github.com/monoes/mono-agent/internal/jev"
+	"github.com/monoes/mono-agent/internal/jev/jevconf"
 	"github.com/monoes/mono-agent/internal/monomind"
 	"github.com/monoes/mono-agent/internal/nodemgr"
 	"github.com/monoes/mono-agent/internal/profiledir"
@@ -155,6 +157,25 @@ func newHealthEnv(cfg *globalConfig) (*health.Env, func()) {
 	}
 	if env.DB != nil {
 		addAccountHooks(env, env.DB)
+	}
+	// Jev: the DB may be unmigrated or absent; a vault miss just means the
+	// key comes from TYPESAFE_API_KEY or nowhere.
+	// KeySource only lists vault entry names: doctor never decrypts (no
+	// keyring/passphrase prompt just to report where the key lives).
+	env.JevKey = func(ctx context.Context) (string, error) {
+		return jevconf.KeySource(ctx, env.DB, env.ProfileID)
+	}
+	env.JevModels = func(ctx context.Context) error {
+		key, _, err := jevconf.ResolveKey(ctx, env.DB, env.ProfileID, "")
+		if err != nil {
+			return err
+		}
+		c, err := jev.NewClient(key, "")
+		if err != nil {
+			return err
+		}
+		_, err = c.Models(ctx)
+		return err
 	}
 	if healthEnvHook != nil {
 		healthEnvHook(env)

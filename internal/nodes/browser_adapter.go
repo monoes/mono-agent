@@ -11,6 +11,8 @@ import (
 	"github.com/monoes/mono-agent/internal/action"
 	"github.com/monoes/mono-agent/internal/browser"
 	"github.com/monoes/mono-agent/internal/connections"
+	"github.com/monoes/mono-agent/internal/jev"
+	"github.com/monoes/mono-agent/internal/jev/jevconf"
 	"github.com/monoes/mono-agent/internal/vault"
 	"github.com/monoes/mono-agent/internal/workflow"
 	"github.com/rs/zerolog"
@@ -42,6 +44,12 @@ type BotRegistry interface {
 // Called once during engine startup.
 func SetGlobalSessionProvider(sp SessionProvider) {
 	globalSessionProvider = sp
+}
+
+// GlobalSessionProvider returns the provider set at startup, or nil when the
+// process runs without a browser (tests, headless tools).
+func GlobalSessionProvider() SessionProvider {
+	return globalSessionProvider
 }
 
 // SetGlobalBotRegistry sets the bot registry used by all BrowserNodes.
@@ -133,9 +141,14 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 		storageAction.Keywords = kw
 	}
 
-	// Collect selectedListItems from "targets".
+	// Collect selectedListItems from "targets" (or, when that is absent, a
+	// config key named selectedListItems — which used to be silently ignored).
 	var selectedListItems []interface{}
-	if targetsRaw, ok := config["targets"]; ok {
+	targetsRaw, ok := config["targets"]
+	if !ok {
+		targetsRaw, ok = config["selectedListItems"]
+	}
+	if ok {
 		if targets, ok := targetsRaw.([]interface{}); ok {
 			for _, t := range targets {
 				switch v := t.(type) {
@@ -158,8 +171,10 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 	reserved := map[string]struct{}{
 		"username": {},
 		"targets":  {},
-		"message":  {},
-		"keywords": {},
+		// selectedListItems is seeded from targets below, never as a param.
+		"selectedListItems": {},
+		"message":           {},
+		"keywords":          {},
 	}
 	params := make(map[string]interface{})
 	for k, v := range config {
@@ -188,7 +203,10 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 	// say — used to open a browser tab, run zero loop iterations and still
 	// report success. Failing first costs nothing and names what is missing.
 	if err := action.ValidateActionInputs(b.platform, b.actionType, storageAction,
-		map[string]interface{}{"selectedListItems": selectedListItems}); err != nil {
+		// "targets" is the node-facing name of the same list: actions that
+		// declare their required list input as "targets" (e.g.
+		// linkedin.list_user_posts) must validate against it too.
+		map[string]interface{}{"selectedListItems": selectedListItems, "targets": selectedListItems}); err != nil {
 		return nil, fmt.Errorf("nodes: %s/%s: %w", b.platform, b.actionType, err)
 	}
 
@@ -238,9 +256,28 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 		logger,
 	)
 
+	// Opt-in Jev element-picker fallback for steps that declare an intent
+	// (`monoagentcli jev enable action_fallback`). Disabled, or no key ⇒
+	// the executor behaves exactly as before.
+	if db, pid := storage.db, storage.profileID; db != nil && jevconf.Enabled(db, pid, jevconf.ActionFallback) {
+		if client, err := jevconf.NewClient(ctx, db, pid, "", "", jevconf.ActionFallback); err == nil {
+			executor.SetJevPicker(client, jevconf.Threshold(db, pid, jevconf.ActionFallback, jevconf.DefaultThreshold[jevconf.ActionFallback]))
+			// Social bots that embed bot.JevPicker get the same client; 0 ⇒ their
+			// own default gate (0.6). GetAdapter builds a fresh bot per node run.
+			if jb, ok := botAdapter.(interface{ SetJevPicker(*jev.Client, float64) }); ok {
+				jb.SetJevPicker(client, 0)
+			}
+		} else {
+			logger.Debug().Err(err).Msg("jev action fallback enabled but no client")
+		}
+	}
+
 	// Seed selectedListItems as a variable so loops over target lists work.
 	if len(selectedListItems) > 0 {
 		executor.SetVariable("selectedListItems", selectedListItems)
+		// Same list under its node-facing name, for actions that declare
+		// their required list input as "targets" (runtime validation reads it).
+		executor.SetVariable("targets", selectedListItems)
 	}
 
 	result, err := executor.Execute(storageAction)
@@ -256,6 +293,15 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 	var inputJSON map[string]interface{}
 	if len(input.Items) > 0 {
 		inputJSON = input.Items[0].JSON
+	}
+
+	// List actions (comments, posts, followers, search results, one profile
+	// per target) produce records: emit one item per record. Before, they
+	// were merged into a single item and only the last record survived.
+	if result.ListOutput && len(result.ExtractedItems) > 0 {
+		return []workflow.NodeOutput{
+			{Handle: "main", Items: recordItems(result.ExtractedItems, b.platform)},
+		}, nil
 	}
 
 	if len(result.ExtractedItems) > 0 {
@@ -275,6 +321,39 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 	return []workflow.NodeOutput{
 		{Handle: "main", Items: []workflow.Item{}},
 	}, nil
+}
+
+// identityKeys name who or what a record is about; their presence means the
+// record's "text" is content, not a profile card.
+var identityKeys = []string{"full_name", "name", "username", "author", "author_username",
+	"author_name", "handle", "displayName", "display_name", "title", "author_url", "comment_id", "post_url"}
+
+func hasIdentityFields(raw map[string]interface{}) bool {
+	for _, k := range identityKeys {
+		if v, ok := raw[k]; ok && v != nil && v != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// recordItems turns each extracted record into its own output item,
+// normalised like a merged item and with step bookkeeping removed.
+func recordItems(extracted []map[string]interface{}, platform string) []workflow.Item {
+	items := make([]workflow.Item, 0, len(extracted))
+	for _, raw := range extracted {
+		if skipped, _ := raw["skipped"].(bool); skipped {
+			continue
+		}
+		rec := make(map[string]interface{}, len(raw)+4)
+		for k, v := range NormalizeBrowserItem(raw, platform) {
+			if !stepBookkeepingKeys[k] {
+				rec[k] = v
+			}
+		}
+		items = append(items, workflow.NewItem(rec))
+	}
+	return items
 }
 
 // mergeStepResults folds the input item and every step's extracted result
@@ -366,7 +445,11 @@ func NormalizeBrowserItem(raw map[string]interface{}, platform string) map[strin
 	// LinkedIn result cards include noise lines before the actual job title
 	// (e.g. "View X's profile", "• 2nd", "2nd degree connection").
 	// Scan past those to find the real professional headline.
-	if text, ok := raw["text"].(string); ok && text != "" {
+	// Only bare profile cards (a text blob and a link) get their text split
+	// into name fields. A record that already says who it is about — a
+	// comment's author, a post's username — keeps its text as text: a
+	// comment body is not a person's name.
+	if text, ok := raw["text"].(string); ok && text != "" && !hasIdentityFields(raw) {
 		trimmedText := strings.TrimSpace(text)
 
 		// Check if text is a single-line or bullet-separated LinkedIn card

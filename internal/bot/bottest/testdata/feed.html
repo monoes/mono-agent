@@ -1,0 +1,43 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Synthetic Feed</title>
+<style>
+  body { font: 15px sans-serif; margin: 20px; }
+  .post { border: 1px solid #ccc; padding: 12px; margin: 12px 0; height: 400px; }
+  #composer { min-height: 40px; width: 400px; border: 1px solid #999; }
+</style>
+</head>
+<body>
+<!-- Synthetic fixture for the bottest self-tests; all content is invented. -->
+<nav><a id="next" href="https://example.test/y">Next page</a></nav>
+<div class="post" data-id="101"><p class="caption">  First synthetic post  </p>
+  <button id="like" aria-label="Like">Like</button></div>
+<div class="post" data-id="102"><p class="caption">Second synthetic post</p></div>
+<form id="f" method="post" action="https://example.test/submit">
+  <input id="name" name="name" value="old">
+  <textarea id="note" name="note"></textarea>
+  <button id="send" type="submit">Send</button>
+</form>
+<div id="composer" contenteditable="true" role="textbox" aria-label="Message"></div>
+<input id="file" type="file">
+<script>
+  window.__log = [];
+  document.getElementById('like').addEventListener('click', (e) => {
+    window.__log.push('click:' + e.isTrusted);
+    e.target.setAttribute('aria-pressed', 'true');
+  });
+  document.getElementById('file').addEventListener('change', (e) => {
+    window.__log.push('files:' + e.target.files.length + ':' + e.target.files[0].name);
+  });
+  document.getElementById('composer').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') window.__log.push('enter:' + e.isTrusted);
+  });
+  setTimeout(() => {
+    const d = document.createElement('div');
+    d.id = 'late';
+    d.textContent = 'late arrival';
+    document.body.appendChild(d);
+  }, 600);
+</script>
+</body>
+</html>

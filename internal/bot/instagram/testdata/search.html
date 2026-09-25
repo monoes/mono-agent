@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- SYNTHETIC fixture: an Instagram-like hashtag / keyword results grid. Invented content. -->
+<title>#fixture hashtag on Instagram • Photos and videos</title>
+<style>
+body { font: 14px sans-serif; margin: 0; }
+main { margin-left: 90px; padding: 16px; }
+.grid a { display: inline-block; width: 300px; height: 300px; margin: 4px; background: #eee; }
+.grid img { width: 290px; height: 290px; }
+</style>
+</head>
+<body>
+<div role="navigation"><a href="/"><svg aria-label="Home" height="24" width="24"><title>Home</title></svg></a></div>
+<main role="main">
+  <header><h1>#fixture</h1><span>1,000 posts</span></header>
+  <div class="grid" id="grid"></div>
+</main>
+<script>
+window.FX = {{FX}};
+(function () {
+  const FX = window.FX;
+  const total = FX.total == null ? 15 : FX.total;
+  let shown = 0;
+  const GIF = 'data:image/gif;base64,R0lGODlhAQABAAAAACw=';
+  function more(n) {
+    const g = document.querySelector('#grid');
+    for (let i = 0; i < n && shown < total; i++) {
+      shown++;
+      const code = 'FXS' + String(shown).padStart(3, '0');
+      const a = document.createElement('a');
+      // Tag grids link /p/<code>/; newer grids /<author>/p/<code>/.
+      a.href = shown % 3 === 0 ? '/fake.tagger' + shown + '/p/' + code + '/' : (shown % 5 === 0 ? '/reel/' + code + '/' : '/p/' + code + '/');
+      a.setAttribute('role', 'link');
+      a.innerHTML = '<div><img alt="Photo ' + shown + ' tagged #fixture" src="' + GIF + '"></div>';
+      g.appendChild(a);
+    }
+  }
+  more(FX.initial == null ? 9 : FX.initial);
+  window.addEventListener('scroll', () => setTimeout(() => more(3), 50));
+})();
+</script>
+</body>
+</html>

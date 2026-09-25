@@ -1,8 +1,8 @@
 {
   "actionType": "scrape_profile_info",
   "platform": "LINKEDIN",
-  "version": "1.0.0",
-  "description": "Extract profile information from LinkedIn profiles",
+  "version": "2.0.0",
+  "description": "Extract profile information (name, headline, location, about, connection and follower counts) from LinkedIn profiles",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
@@ -10,9 +10,21 @@
   },
   "inputs": {
     "required": [
-      "selectedListItems"
+      {
+        "name": "selectedListItems",
+        "type": "list",
+        "description": "Profile URLs or usernames to read"
+      }
     ],
-    "optional": []
+    "optional": [
+      {
+        "name": "delayBetweenProfiles",
+        "type": "number",
+        "default": 3,
+        "min": 1,
+        "max": 120
+      }
+    ]
   },
   "outputs": {
     "success": [
@@ -20,105 +32,33 @@
       "reachedIndex"
     ],
     "failure": [
-      "failedProfileSearches"
+      "failedItems"
     ]
   },
   "steps": [
     {
-      "id": "navigate_to_profile",
-      "type": "navigate",
-      "url": "{{item.url or item}}",
-      "waitFor": "page_load",
-      "timeout": 30,
+      "id": "get_profile",
+      "type": "call_bot_method",
+      "methodName": "get_profile_data",
+      "args": [
+        "{{item.url or item.href or item.username or item}}"
+      ],
+      "variable_name": "profile",
+      "timeout": 90,
       "onError": {
-        "action": "retry",
-        "maxRetries": 3,
-        "onFailure": "mark_failed"
+        "action": "mark_failed"
       }
     },
     {
-      "id": "wait_for_profile_load",
+      "id": "wait",
       "type": "wait",
-      "duration": 2.0,
+      "duration": "{{delayBetweenProfiles or 3}}",
       "waitFor": "time"
     },
     {
-      "id": "extract_full_name",
-      "type": "find_element",
-      "configKey": "full_name",
-      "timeout": 6
-    },
-    {
-      "id": "get_full_name_text",
-      "type": "extract_text",
-      "elementRef": "extract_full_name"
-    },
-    {
-      "id": "extract_profile_url",
-      "type": "update_progress",
-      "set": {
-        "profileUrl": "{{current_url}}"
-      }
-    },
-    {
-      "id": "extract_username",
-      "type": "update_progress",
-      "set": {
-        "username": "{{profileUrl}}"
-      }
-    },
-    {
-      "id": "extract_profile_picture",
-      "type": "find_element",
-      "xpath": "//img[contains(@alt, '{{full_name}}')]",
-      "timeout": 2,
-      "onError": {
-        "action": "skip"
-      }
-    },
-    {
-      "id": "get_profile_picture_url",
-      "type": "extract_attribute",
-      "elementRef": "extract_profile_picture",
-      "attribute": "src"
-    },
-    {
-      "id": "extract_description",
-      "type": "find_element",
-      "configKey": "company_name",
-      "timeout": 3
-    },
-    {
-      "id": "get_description_text",
-      "type": "extract_text",
-      "elementRef": "extract_description"
-    },
-    {
-      "id": "extract_email",
-      "type": "extract_text",
-      "elementRef": "extract_description"
-    },
-    {
-      "id": "extract_follower_count",
-      "type": "find_element",
-      "configKey": "followers_count",
-      "timeout": 5,
-      "onError": {
-        "action": "skip"
-      }
-    },
-    {
-      "id": "get_follower_count_text",
-      "type": "extract_text",
-      "elementRef": "extract_follower_count"
-    },
-    {
-      "id": "save_profile_data",
-      "type": "save_data",
-      "onSuccess": {
-        "action": "update_progress",
-        "increment": "reachedIndex"
-      }
+      "id": "log",
+      "type": "log",
+      "value": "Profile: {{profile.full_name}} ({{item.url or item}})"
     }
   ],
   "loops": [
@@ -127,27 +67,10 @@
       "iterator": "selectedListItems",
       "indexVar": "reachedIndex",
       "steps": [
-        "navigate_to_profile",
-        "wait_for_profile_load",
-        "extract_full_name",
-        "get_full_name_text",
-        "extract_profile_url",
-        "extract_username",
-        "extract_profile_picture",
-        "get_profile_picture_url",
-        "extract_description",
-        "get_description_text",
-        "extract_email",
-        "extract_follower_count",
-        "get_follower_count_text",
-        "save_profile_data"
-      ],
-      "onComplete": "update_action_state"
+        "get_profile",
+        "wait",
+        "log"
+      ]
     }
-  ],
-  "errorHandling": {
-    "globalRetries": 3,
-    "retryDelay": 2000,
-    "onFinalFailure": "log_and_continue"
-  }
+  ]
 }

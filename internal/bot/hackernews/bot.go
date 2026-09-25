@@ -6,14 +6,19 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 
 	botpkg "github.com/monoes/mono-agent/internal/bot"
 	"github.com/monoes/mono-agent/internal/browser"
 )
 
-// HackerNewsBot implements botpkg.BotAdapter for Hacker News.
-type HackerNewsBot struct{}
+// HackerNewsBot implements botpkg.BotAdapter for Hacker News. The embedded
+// JevPicker (disabled unless the node layer calls SetJevPicker) lets the
+// write actions ask Jev for a form control their selectors miss.
+type HackerNewsBot struct {
+	botpkg.JevPicker
+}
 
 func init() {
 	botpkg.PlatformRegistry["HACKERNEWS"] = func() botpkg.BotAdapter {
@@ -89,64 +94,45 @@ func extractItemID(rawURL string) string {
 
 // GetMethodByName returns a dispatchable wrapper for the named Hacker News
 // action method, satisfying action.BotAdapter for call_bot_method steps.
+// Arguments go through botpkg.Args, so numeric item ids (JSON numbers)
+// arrive intact.
 func (b *HackerNewsBot) GetMethodByName(name string) (func(ctx context.Context, args ...interface{}) (interface{}, error), bool) {
 	switch name {
 	case "submit_post":
 		return func(ctx context.Context, args ...interface{}) (interface{}, error) {
-			if len(args) < 4 {
-				return nil, fmt.Errorf("submit_post requires (page, title, url, text)")
+			page, a, err := botpkg.Args(args, 3, "title", "url?", "text?")
+			if err != nil {
+				return nil, fmt.Errorf("submit_post: %w", err)
 			}
-			page, ok := args[0].(browser.PageInterface)
-			if !ok {
-				return nil, fmt.Errorf("submit_post: first arg must be browser.PageInterface")
-			}
-			title, _ := args[1].(string)
-			linkURL, _ := args[2].(string)
-			text, _ := args[3].(string)
-			return b.SubmitPost(ctx, page, title, linkURL, text)
+			return b.SubmitPost(ctx, page, a[0], a[1], a[2])
 		}, true
 
 	case "reply_to_comment":
 		return func(ctx context.Context, args ...interface{}) (interface{}, error) {
-			if len(args) < 3 {
-				return nil, fmt.Errorf("reply_to_comment requires (page, itemID, text)")
+			page, a, err := botpkg.Args(args, 2, "itemID", "text")
+			if err != nil {
+				return nil, fmt.Errorf("reply_to_comment: %w", err)
 			}
-			page, ok := args[0].(browser.PageInterface)
-			if !ok {
-				return nil, fmt.Errorf("reply_to_comment: first arg must be browser.PageInterface")
-			}
-			itemID, _ := args[1].(string)
-			text, _ := args[2].(string)
-			if err := b.ReplyToComment(ctx, page, itemID, text); err != nil {
-				return nil, err
-			}
-			return map[string]interface{}{"success": true, "itemID": itemID}, nil
+			return b.ReplyToComment(ctx, page, a[0], a[1])
 		}, true
 
 	case "list_comments":
 		return func(ctx context.Context, args ...interface{}) (interface{}, error) {
-			if len(args) < 2 {
-				return nil, fmt.Errorf("list_comments requires (page, itemID)")
+			page, a, err := botpkg.Args(args, 2, "itemID", "topLevelOnly?")
+			if err != nil {
+				return nil, fmt.Errorf("list_comments: %w", err)
 			}
-			page, ok := args[0].(browser.PageInterface)
-			if !ok {
-				return nil, fmt.Errorf("list_comments: first arg must be browser.PageInterface")
-			}
-			itemID, _ := args[1].(string)
-			return b.ListComments(ctx, page, itemID)
+			top, _ := strconv.ParseBool(strings.TrimSpace(a[1]))
+			return b.ListComments(ctx, page, a[0], top)
 		}, true
 
 	case "get_post_metrics":
 		return func(ctx context.Context, args ...interface{}) (interface{}, error) {
-			if len(args) < 2 {
-				return nil, fmt.Errorf("get_post_metrics requires (page, itemID)")
+			page, a, err := botpkg.Args(args, 1, "itemID")
+			if err != nil {
+				return nil, fmt.Errorf("get_post_metrics: %w", err)
 			}
-			page, ok := args[0].(browser.PageInterface)
-			if !ok {
-				return nil, fmt.Errorf("get_post_metrics: first arg must be browser.PageInterface")
-			}
-			itemID, _ := args[1].(string)
-			return b.GetPostMetrics(ctx, page, itemID)
+			return b.GetPostMetrics(ctx, page, a[0])
 		}, true
 	}
 	return nil, false

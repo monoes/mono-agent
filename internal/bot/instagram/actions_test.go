@@ -47,7 +47,9 @@ func TestTrackStagnation(t *testing.T) {
 // LikeComment and ReplyToComment previously fell back to the most recent
 // comment whenever the requested commentAuthor had no match, silently
 // liking/replying to the wrong person. Table covers the found, no-comments,
-// author-not-found, and unexpected-state cases.
+// author-not-found, and unexpected-state cases. A post without comments is
+// an error too: reporting success for a like/reply that never happened hides
+// the failure from the workflow.
 func TestResolveCommentTargetState(t *testing.T) {
 	cases := []struct {
 		name          string
@@ -62,8 +64,9 @@ func TestResolveCommentTargetState(t *testing.T) {
 			wantMarked: true,
 		},
 		{
-			name:  "no candidate comments on page — no-op",
-			state: "not_found",
+			name:    "no comments on the post — an error, not a silent success",
+			state:   "not_found",
+			wantErr: "no comments on",
 		},
 		{
 			name:          "author specified but unmatched",
