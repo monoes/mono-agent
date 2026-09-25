@@ -595,6 +595,39 @@ function parseCaseList(raw) {
   return s.split(',').map(x => x.trim()).filter(Boolean)
 }
 
+// arrayFieldItems is what the tag editor of an `array` field shows: arrays
+// as-is, a JSON-array string parsed (a comma split would shred it), anything
+// else comma-split.
+export function arrayFieldItems(raw) {
+  if (Array.isArray(raw)) return raw
+  if (raw == null || raw === '') return []
+  const s = String(raw).trim()
+  if (s.startsWith('[')) {
+    try { const v = JSON.parse(s); if (Array.isArray(v)) return v } catch { /* not JSON: split below */ }
+  }
+  return s.split(',').map(x => x.trim()).filter(Boolean)
+}
+
+// arrayTagLabel renders one array item as text. Case lists hold objects
+// ({value, handle, description}) — rendering those as a React child crashes
+// the whole page.
+export function arrayTagLabel(item) {
+  if (item == null) return ''
+  if (typeof item === 'object') { try { return JSON.stringify(item) } catch { return String(item) } }
+  return String(item)
+}
+
+// normalizeConfigForSave turns a JSON-array string `cases` (the textarea
+// fallback editor) into a real array: core.switch only reads a list, so a
+// string would silently route every item to the default handle.
+export function normalizeConfigForSave(type, config) {
+  const cfg = config || {}
+  if ((type === 'core.switch' || type === 'ai.choose') && typeof cfg.cases === 'string' && cfg.cases.trim().startsWith('[')) {
+    try { const v = JSON.parse(cfg.cases); if (Array.isArray(v)) return { ...cfg, cases: v } } catch { /* keep as typed */ }
+  }
+  return cfg
+}
+
 // caseHandles mirrors the backends: a string case is its own handle; an
 // object uses `handle` (core.switch skips objects without one, ai.choose
 // falls back to `value`). Duplicates collapse, order is kept.
@@ -663,15 +696,32 @@ export function isCaseListSettled(raw) {
   try { JSON.parse(s); return true } catch { return false }
 }
 
+// portRenames detects an in-place rename: same port count with exactly one
+// id changed at the same position (typing a new default_handle, or editing
+// one case's handle in the JSON editor). Every keystroke re-derives ports,
+// so without this the first key typed would drop that port's edges.
+export function portRenames(prevOutputs, outputs) {
+  if (!Array.isArray(prevOutputs) || !Array.isArray(outputs) || prevOutputs.length !== outputs.length) return {}
+  const diff = []
+  prevOutputs.forEach((p, i) => { if (p?.id !== outputs[i]?.id) diff.push(i) })
+  if (diff.length !== 1) return {}
+  const i = diff[0]
+  if (outputs.some(p => p.id === prevOutputs[i].id)) return {} // moved, not renamed
+  return { [prevOutputs[i].id]: outputs[i].id }
+}
+
 // remapSourceEdges re-points a node's outgoing edges at its new ports by
-// handle id; edges whose handle no longer exists are dropped (the backend
-// would never route to them).
-export function remapSourceEdges(edges, nodeId, outputs) {
+// handle id (following an in-place rename when prevOutputs is given); edges
+// whose handle no longer exists are dropped (the backend would never route
+// to them).
+export function remapSourceEdges(edges, nodeId, outputs, prevOutputs) {
+  const renames = portRenames(prevOutputs, outputs)
   return edges.flatMap(e => {
     if (e.source !== nodeId) return [e]
     let id = e.sourcePortId
     // Legacy files stored numeric handles: resolve those by position.
-    if (id == null || id === '' || /^\d+$/.test(String(id))) id = outputs[e.sourcePortIdx]?.id
+    if (id == null || id === '' || /^\d+$/.test(String(id))) id = (prevOutputs || outputs)[e.sourcePortIdx]?.id
+    if (Object.prototype.hasOwnProperty.call(renames, id)) id = renames[id]
     const idx = outputs.findIndex(p => p.id === id)
     if (idx === -1) return []
     return [idx === e.sourcePortIdx && id === e.sourcePortId ? e : { ...e, sourcePortIdx: idx, sourcePortId: id }]

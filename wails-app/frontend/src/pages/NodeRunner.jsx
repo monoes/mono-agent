@@ -14,6 +14,7 @@ import ImagePickerModal from '../components/ImagePickerModal'
 import {
   NODE_CONFIG_FIELDS, BROWSER_NODE_GENERIC,
   deriveInputs, deriveOutputs, portsDependOnConfig, isCaseListSettled, remapSourceEdges,
+  arrayFieldItems, arrayTagLabel, normalizeConfigForSave,
 } from './nodeConfigFields.js'
 import { SaveModal, WorkflowsModal, TriggerInputModal } from './NodeRunnerModals.jsx'
 import { rememberTriggerInput, rememberedTriggerInput } from './triggerInput.js'
@@ -520,7 +521,10 @@ function Inspector({ node, onConfigChange, onClose, onNavigate, liveSchemas }) {
                 if (!fieldIsVisible(f, node.config)) return null
                 // Skip credential_id text field when a credential picker is rendered above
                 if (f.key === 'credential_id' && platformId) return null
-                const val = node.config?.[f.key] ?? f.default ?? ''
+                const rawVal0 = node.config?.[f.key] ?? f.default ?? ''
+                // A list/object value in a text editor (e.g. core.switch cases
+                // edited in the textarea fallback) shows as JSON, not "[object Object]".
+                const val = rawVal0 !== null && typeof rawVal0 === 'object' ? JSON.stringify(rawVal0) : rawVal0
                 const onChange = e => onConfigChange(node.id, f.key, e.target.value)
                 let inputEl
                 if (f.type === 'boolean') {
@@ -553,7 +557,7 @@ function Inspector({ node, onConfigChange, onClose, onNavigate, liveSchemas }) {
                       <textarea
                         className="field-code"
                         rows={f.rows || 10}
-                        value={node.config?.[f.key] || ''}
+                        value={val}
                         onChange={e => onConfigChange(node.id, f.key, e.target.value)}
                         placeholder={f.placeholder || `// Enter ${f.language || ''} code here`}
                         spellCheck={false}
@@ -596,8 +600,7 @@ function Inspector({ node, onConfigChange, onClose, onNavigate, liveSchemas }) {
                   )
                 } else if (f.type === 'array') {
                   const rawVal = node.config?.[f.key]
-                  const arrValue = Array.isArray(rawVal) ? rawVal :
-                    (rawVal ? String(rawVal).split(',').map(s => s.trim()).filter(Boolean) : [])
+                  const arrValue = arrayFieldItems(rawVal)
                   return (
                     <div key={f.key} className="config-field" style={{ marginBottom: 10 }}>
                       <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-muted)', letterSpacing: 1.2, textTransform: 'uppercase', marginBottom: 4 }}>
@@ -620,8 +623,8 @@ function Inspector({ node, onConfigChange, onClose, onNavigate, liveSchemas }) {
                       {arrValue.length > 0 && (
                         <div className="field-tags">
                           {arrValue.map((tag, i) => (
-                            <span key={i} className="field-tag">
-                              <span>{tag}</span>
+                            <span key={i} className="field-tag" style={{ maxWidth: '100%' }}>
+                              <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{arrayTagLabel(tag)}</span>
                               <button
                                 type="button"
                                 className="field-tag-remove"
@@ -1435,7 +1438,7 @@ export default function NodeRunner({ onNavigate, navData }) {
     setNodes(prev => prev.map(n => n.id === nodeId
       ? { ...n, config: { ...n.config, [key]: val }, ...(outputs ? { outputs } : {}) }
       : n))
-    if (outputs) setEdges(prev => remapSourceEdges(prev, nodeId, outputs))
+    if (outputs) setEdges(prev => remapSourceEdges(prev, nodeId, outputs, node.outputs))
     setIsDirty(true)
   }
 
@@ -1584,7 +1587,7 @@ export default function NodeRunner({ onNavigate, navData }) {
           id: n.id,
           node_type: n.subtype,
           name: n.label,
-          config: n.config || {},
+          config: normalizeConfigForSave(n.subtype, n.config),
           position_x: n.x,
           position_y: n.y,
           disabled: false,
@@ -2086,7 +2089,7 @@ export default function NodeRunner({ onNavigate, navData }) {
                   id: n.id,
                   node_type: n.subtype,
                   name: n.label,
-                  config: n.config || {},
+                  config: normalizeConfigForSave(n.subtype, n.config),
                   position_x: Math.round(n.x),
                   position_y: Math.round(n.y),
                 })),
