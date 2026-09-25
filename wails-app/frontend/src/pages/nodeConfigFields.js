@@ -40,8 +40,9 @@ export const NODE_CONFIG_FIELDS = {
     ]},
   ],
   'core.switch': [
-    { key: 'expression', label: 'Expression', type: 'text', default: '{{$json.status}}' },
-    { key: 'cases', label: 'Cases (JSON array)', type: 'textarea', default: '[{"value":"active"},{"value":"inactive"}]' },
+    { key: 'field', label: 'Field to Switch On', type: 'text', default: '{{$json.status}}' },
+    { key: 'cases', label: 'Cases (JSON array)', type: 'textarea', default: '[{"value":"active","handle":"active"},{"value":"inactive","handle":"inactive"}]',
+      help: 'Each case is a string (value and output handle) or {"value": …, "handle": …}.' },
     { key: 'default_handle', label: 'Default Handle', type: 'text', default: 'default' },
   ],
   'core.set': [
@@ -374,6 +375,23 @@ export const NODE_CONFIG_FIELDS = {
   ],
 
   // ── AI ──────────────────────────────────────────────────────────────────
+  'ai.choose': [
+    { key: 'cases', label: 'Cases', type: 'array', required: true, default: ['billing', 'support', 'other'],
+      help: 'Each value becomes an output handle. Objects {value, handle, description} set a custom handle and the criterion Jev judges by.' },
+    { key: 'input', label: 'Input', type: 'textarea', rows: 3, default: '', placeholder: '{{$json.text}}',
+      help: 'What Jev reads per item ({{$json.field}} placeholders). Empty = the fields below, or the whole item. Capped at 6000 characters.' },
+    { key: 'fields', label: 'Fields', type: 'array', help: 'Item keys to send when Input is empty.' },
+    { key: 'instructions', label: 'Instructions', type: 'textarea', rows: 3, default: '' },
+    { key: 'extra_questions', label: 'Extra Questions (JSON)', type: 'code', language: 'json', default: '',
+      placeholder: '{"urgent": {"type": "noul", "criteria": "Is this urgent?"}}',
+      help: 'Answered in the same request: {name: {type: noul|choice|score, criteria}}.' },
+    { key: 'min_confidence', label: 'Min Probability', type: 'number', default: 0.6,
+      help: 'Items below this top probability go to the low_confidence output.' },
+    { key: 'output_key', label: 'Output Key', type: 'text', default: 'choice' },
+    { key: 'api_key', label: 'TypeSafe API Key', type: 'password', default: '@secret:typesafe' },
+    { key: 'model', label: 'Jev Model', type: 'text', default: 'jev-latest' },
+    { key: 'concurrency', label: 'Concurrency', type: 'number', default: 4, help: 'Requests in flight (max 8).' },
+  ],
   'ai.chat': [
     { key: 'provider_id', label: 'AI Provider', type: 'text', default: '' },
     { key: 'model', label: 'Model', type: 'text', default: '' },
@@ -559,3 +577,103 @@ export const BROWSER_NODE_GENERIC = [
   { key: 'limit', label: 'Max Items', type: 'number', default: '20' },
   { key: 'message', label: 'Message / Caption', type: 'textarea', default: '' },
 ]
+
+// ── Output ports ──────────────────────────────────────────────────────────────
+// Handles are not declared in node schemas, so the canvas derives them here.
+// Nodes whose handles come from their config (core.switch, ai.choose) must be
+// re-derived whenever that config changes.
+
+// parseCaseList accepts an array, a JSON-array string (the textarea fallback
+// editor) or a comma-separated string.
+function parseCaseList(raw) {
+  if (Array.isArray(raw)) return raw
+  if (typeof raw !== 'string' || !raw.trim()) return []
+  const s = raw.trim()
+  if (s.startsWith('[')) {
+    try { const v = JSON.parse(s); return Array.isArray(v) ? v : [] } catch { return [] }
+  }
+  return s.split(',').map(x => x.trim()).filter(Boolean)
+}
+
+// caseHandles mirrors the backends: a string case is its own handle; an
+// object uses `handle` (core.switch skips objects without one, ai.choose
+// falls back to `value`). Duplicates collapse, order is kept.
+export function caseHandles(raw, { handleFallsBackToValue = false } = {}) {
+  const out = []
+  for (const c of parseCaseList(raw)) {
+    let h = ''
+    if (typeof c === 'string') {
+      h = c.trim()
+      // Tag inputs store raw text; a pasted JSON object still counts.
+      if (h.startsWith('{')) {
+        try { const o = JSON.parse(h); h = String(o.handle || (handleFallsBackToValue ? o.value ?? '' : '')).trim() } catch { /* plain text */ }
+      }
+    } else if (c && typeof c === 'object') {
+      h = String(c.handle || (handleFallsBackToValue && c.value != null ? c.value : '')).trim()
+    }
+    if (h && !out.includes(h)) out.push(h)
+  }
+  return out
+}
+
+const port = id => ({ id, label: id })
+
+export function deriveInputs(type) {
+  if (type.startsWith('trigger.')) return []
+  return [{ id: 'in', label: 'in' }]
+}
+
+export function deriveOutputs(type, config = {}) {
+  const cfg = config || {}
+  if (type === 'core.if')                return [port('true'), port('false')]
+  if (type === 'core.switch') {
+    const def = (typeof cfg.default_handle === 'string' && cfg.default_handle.trim()) || 'default'
+    const hs = caseHandles(cfg.cases)
+    if (!hs.includes(def)) hs.push(def)
+    return hs.map(port)
+  }
+  if (type === 'ai.choose') {
+    const hs = caseHandles(cfg.cases, { handleFallsBackToValue: true }).filter(h => h !== 'low_confidence')
+    return [...hs, 'low_confidence'].map(port)
+  }
+  if (type === 'core.split_in_batches')  return [port('batch'), port('done')]
+  if (type === 'core.filter')            return [port('main'), port('rejected')]
+  if (type === 'core.merge')             return [port('out')]
+  if (type === 'core.stop_error')        return []
+  if (type === 'trigger.webhook')        return [port('body'), port('headers')]
+  if (type === 'system.execute_command') return [port('stdout'), port('stderr')]
+  if (type.startsWith('db.'))            return [port('rows'), port('error')]
+  if (type.startsWith('http.'))          return [port('out'), port('error')]
+  return [port('main')]
+}
+
+// portsDependOnConfig reports whether a config key change can move ports.
+export function portsDependOnConfig(type, key) {
+  if (type === 'core.switch') return key === 'cases' || key === 'default_handle'
+  if (type === 'ai.choose') return key === 'cases'
+  return false
+}
+
+// isCaseListSettled is false while a JSON-array string is mid-edit (does not
+// parse yet) — callers keep the current ports instead of dropping edges.
+export function isCaseListSettled(raw) {
+  if (typeof raw !== 'string') return true
+  const s = raw.trim()
+  if (!s.startsWith('[')) return true
+  try { JSON.parse(s); return true } catch { return false }
+}
+
+// remapSourceEdges re-points a node's outgoing edges at its new ports by
+// handle id; edges whose handle no longer exists are dropped (the backend
+// would never route to them).
+export function remapSourceEdges(edges, nodeId, outputs) {
+  return edges.flatMap(e => {
+    if (e.source !== nodeId) return [e]
+    let id = e.sourcePortId
+    // Legacy files stored numeric handles: resolve those by position.
+    if (id == null || id === '' || /^\d+$/.test(String(id))) id = outputs[e.sourcePortIdx]?.id
+    const idx = outputs.findIndex(p => p.id === id)
+    if (idx === -1) return []
+    return [idx === e.sourcePortIdx && id === e.sourcePortId ? e : { ...e, sourcePortIdx: idx, sourcePortId: id }]
+  })
+}

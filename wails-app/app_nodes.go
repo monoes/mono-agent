@@ -109,9 +109,10 @@ func (a *App) GetWorkflowNodeTypes() map[string]interface{} {
 		"ai": []nodeDesc{
 			mkNode("agent.ask", "Agent Ask", "ai", "Ask a locally-installed AI agent (claude, codex, …) one turn via the monomind engine"),
 			mkNode("browser.jev", "Browser Agent (Jev)", "ai", "Reach a goal on any website in your own browser — TypeSafe Jev picks each click/type/select"),
+			mkNode("ai.choose", "AI Choose (Jev)", "ai", "Route each item to one of your cases — TypeSafe Jev picks, with a low_confidence output"),
 			mkNode("ai.chat", "AI Chat (deprecated)", "ai", "Deprecated — replace with Agent Ask"),
 			mkNode("ai.extract", "AI Extract (deprecated)", "ai", "Deprecated — replace with Agent Ask"),
-			mkNode("ai.classify", "AI Classify (deprecated)", "ai", "Deprecated — replace with Agent Ask"),
+			mkNode("ai.classify", "AI Classify (deprecated)", "ai", "Deprecated — replace with AI Choose (Jev) or Agent Ask"),
 			mkNode("ai.transform", "AI Transform (deprecated)", "ai", "Deprecated — replace with Agent Ask"),
 			mkNode("ai.embed", "AI Embed (deprecated)", "ai", "Deprecated — no local-agent equivalent"),
 			mkNode("ai.agent", "AI Agent (deprecated)", "ai", "Deprecated — replace with Agent Ask"),
