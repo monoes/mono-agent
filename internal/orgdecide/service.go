@@ -128,6 +128,8 @@ func (s *Service) defaultDecider(a *Autonomy) DeciderImpl {
 		return model
 	}
 	s.jevWarned.Delete(a.ProfileID + "/" + a.OrgName)
+	// One retry at most: the fallback model shares the decision's budget.
+	client.Retries = 1
 	return &JevDecider{Client: client, Fallback: model, Threshold: a.Decider.Threshold}
 }
 

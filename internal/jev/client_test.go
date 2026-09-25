@@ -7,8 +7,10 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func testClient(t *testing.T, h http.HandlerFunc) *Client {
@@ -139,5 +141,51 @@ func TestValidateNoulAndScore(t *testing.T) {
 	q := Question{Type: TypeScore, Criteria: []string{"lo", "hi"}}
 	if err := Validate(q, Answer{Score: 3, Probabilities: map[string]float64{"0": 0.5, "1": 0.5}}); err == nil {
 		t.Error("score beyond the rubric accepted")
+	}
+}
+
+func TestAskRejectsMissingNoul(t *testing.T) {
+	for name, body := range map[string]string{
+		"absent": `{"answers":{"spam":{"type":"noul"}}}`,
+		"null":   `{"answers":{"spam":{"type":"noul","noul":null}}}`,
+	} {
+		c := testClient(t, func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(body)) })
+		if resp, err := c.Ask(context.Background(), "s", map[string]Question{"spam": {Type: TypeNoul}}); !errors.Is(err, ErrInvalidAnswer) || resp != nil {
+			t.Errorf("%s: resp=%+v err=%v, want ErrInvalidAnswer", name, resp, err)
+		}
+	}
+}
+
+func TestNoulZeroIsEncodedAndAccepted(t *testing.T) {
+	raw, err := json.Marshal(Answer{Type: TypeNoul, Noul: 0})
+	if err != nil || string(raw) != `{"type":"noul","noul":0}` {
+		t.Fatalf("marshal = %s, %v", raw, err)
+	}
+	var a Answer
+	if err := json.Unmarshal(raw, &a); err != nil {
+		t.Fatal(err)
+	}
+	if err := Validate(Question{Type: TypeNoul}, a); err != nil || a.Noul != 0 {
+		t.Fatalf("round-tripped 0.0 noul: %+v, %v", a, err)
+	}
+	// Non-noul answers keep omitting a zero noul.
+	if raw, _ := json.Marshal(Answer{Type: TypeChoice, Choice: "a"}); strings.Contains(string(raw), "noul") {
+		t.Fatalf("choice answer encodes noul: %s", raw)
+	}
+}
+
+func TestOnResultGetsUsageOnValidationFailure(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"model":"jev-x","usage":{"input_tokens":77},"answers":{"spam":{"type":"noul","noul":3}}}`))
+	})
+	var got *Response
+	var gotErr error
+	c.OnResult = func(_ *Request, resp *Response, _ time.Duration, err error) { got, gotErr = resp, err }
+	resp, err := c.Ask(context.Background(), "s", map[string]Question{"spam": {Type: TypeNoul}})
+	if resp != nil || !errors.Is(err, ErrInvalidAnswer) {
+		t.Fatalf("Ask = %+v, %v", resp, err)
+	}
+	if got == nil || got.Usage.InputTokens != 77 || !errors.Is(gotErr, ErrInvalidAnswer) {
+		t.Fatalf("OnResult resp=%+v err=%v", got, gotErr)
 	}
 }

@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -103,6 +105,31 @@ func TestNewClientRecordsUsage(t *testing.T) {
 	}
 	if u[0].Surface != "capture" || u[0].Calls != 2 || u[0].Failures != 1 || u[0].InputTokens != 100 || u[0].EstimatedUSD <= 0 {
 		t.Fatalf("usage = %+v", u[0])
+	}
+}
+
+func TestRecorderCountsTokensOfRejectedAnswers(t *testing.T) {
+	db := newDB(t)
+	// A billed 200 whose noul answer has no value: the client rejects it,
+	// but its input tokens were still charged and must be recorded.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"model":"jev-test","usage":{"input_tokens":123},"answers":{"q":{"type":"noul"}}}`))
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("TYPESAFE_BASE_URL", srv.URL)
+	c, err := NewClient(context.Background(), db, "p1", "k", "", Capture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Ask(context.Background(), "s", map[string]jev.Question{"q": {Type: jev.TypeNoul}}); !errors.Is(err, jev.ErrInvalidAnswer) {
+		t.Fatalf("err = %v, want ErrInvalidAnswer", err)
+	}
+	var tokens, ok int
+	if err := db.QueryRow(`SELECT input_tokens, ok FROM jev_usage WHERE profile_id = 'p1'`).Scan(&tokens, &ok); err != nil {
+		t.Fatal(err)
+	}
+	if tokens != 123 || ok != 0 {
+		t.Fatalf("recorded input_tokens=%d ok=%d, want 123 and 0", tokens, ok)
 	}
 }
 
