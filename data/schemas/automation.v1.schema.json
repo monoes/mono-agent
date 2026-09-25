@@ -138,6 +138,13 @@
     },
     "Permissions": {
       "properties": {
+        "callActions": {
+          "description": "CallActions lists the exact \"\u003cautomation\u003e.\u003caction\u003e\" refs this package may call_action (own-package calls need no declaration).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "downloads": {
           "description": "Whether download steps are allowed.",
           "type": "boolean"

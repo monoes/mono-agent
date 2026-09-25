@@ -38,9 +38,10 @@ var docDirs = []string{"internal/action", "internal/automation"}
 
 // actionEnums apply to every schema that contains action structs.
 var actionEnums = map[string][]string{
-	"StepDef.type":           StepTypes,
-	"ActionDef.sideEffects":  SideEffectLevels,
-	"ConditionDef.operator":  {"exists", "not_exists", "equals", "not_equals", "greater_than", "contains"},
+	"StepDef.type":          StepTypes,
+	"ActionDef.sideEffects": SideEffectLevels,
+	// less_than, not_contains and matches are transform "where" only.
+	"ConditionDef.operator":  {"exists", "not_exists", "equals", "not_equals", "greater_than", "less_than", "contains", "not_contains", "matches"},
 	"ErrorHandlerDef.action": {"retry", "try_alternative", "mark_failed", "skip", "continue", "abort"},
 	"SuccessAction.action":   {"set_variable", "increment", "save_data", "update_progress"},
 	"TransformOp.op":         {"map", "filter", "dedupe", "regex_extract", "parse_date", "parse_number", "join", "split", "pick", "limit"},

@@ -209,7 +209,9 @@ func TestBuiltinPackages(t *testing.T) {
 		if m.ID != p.name {
 			t.Errorf("%s: id = %q", p.name, m.ID)
 		}
-		if m.Requires.Native != p.name {
+		// Built-ins either wrap their native bot or are fully declarative
+		// (ported, no requires.native).
+		if m.Requires.Native != p.name && m.Requires.Native != "" {
 			t.Errorf("%s: requires.native = %q", p.name, m.Requires.Native)
 		}
 		wantTier := "social"

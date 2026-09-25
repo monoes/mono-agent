@@ -102,7 +102,10 @@
             "equals",
             "not_equals",
             "greater_than",
-            "contains"
+            "less_than",
+            "contains",
+            "not_contains",
+            "matches"
           ],
           "type": "string"
         },
