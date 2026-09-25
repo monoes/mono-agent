@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "export_followers",
   "platform": "INSTAGRAM",
   "version": "2.0.0",
   "description": "Export a profile's followers (or following) list — one item per account (username, url, full_name). The profile comes from target_url / profileUrl, or from sourceType when that is a profile URL or username.",
+  "sideEffects": "read",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": true,

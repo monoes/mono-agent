@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "scrape_profile_info",
   "platform": "X",
   "version": "2.0.0",
   "description": "Extract profile information (name, bio, location, website, join date, follower/following counts, avatar) from X (Twitter) profiles",
+  "sideEffects": "read",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,

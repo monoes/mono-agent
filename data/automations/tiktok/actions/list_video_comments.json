@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "list_video_comments",
   "platform": "TIKTOK",
   "version": "1.0.0",
   "description": "List comments on TikTok videos from a list of video URLs: id, username, displayName, text, likes, liked. id is TikTok's own when the page carries one, otherwise a stable tth- hash of the author and the text",
+  "sideEffects": "read",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,

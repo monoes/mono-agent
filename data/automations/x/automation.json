@@ -4,19 +4,38 @@
   "id": "x",
   "name": "X",
   "version": "1.0.0",
-  "description": "X browser automation (built-in)",
+  "description": "Read X (Twitter) profiles, posts and followers; like, reply, message and post from your own account",
   "publisher": {
-    "name": "Mono Agent"
+    "name": "Mono Agent",
+    "url": "https://github.com/monoes/mono-agent"
   },
   "license": "MIT",
   "engine": ">=0.0.0",
   "category": "social",
   "site": {
-    "startUrl": "",
-    "domains": []
+    "startUrl": "https://x.com/",
+    "domains": [
+      "x.com",
+      "*.x.com",
+      "twitter.com",
+      "*.twitter.com"
+    ]
+  },
+  "login": {
+    "url": "https://x.com/i/flow/login",
+    "loggedIn": {
+      "selector": "[data-testid='SideNav_AccountSwitcher_Button'], [data-testid='SideNav_NewTweet_Button'], [data-testid='AppTabBar_Profile_Link']",
+      "cookie": "auth_token"
+    },
+    "sessionTtlDays": 30
   },
   "permissions": {
-    "steps": [],
+    "steps": [
+      "call_bot_method",
+      "condition",
+      "save_data",
+      "wait"
+    ],
     "scripts": [],
     "downloads": false
   },

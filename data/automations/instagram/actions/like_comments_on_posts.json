@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "like_comments_on_posts",
   "platform": "INSTAGRAM",
   "version": "2.0.0",
   "description": "Like comments on Instagram posts. With commentAuthor, only that author's comment is liked (a post without one fails — never another person's comment); without it, up to maxCommentsToLike comments are liked in page order. Already-liked comments are never toggled; every like is verified.",
+  "sideEffects": "write",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
@@ -79,6 +81,7 @@
     },
     {
       "id": "like_comments",
+      "sideEffect": true,
       "type": "call_bot_method",
       "methodName": "like_comment",
       "args": [

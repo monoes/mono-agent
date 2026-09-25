@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "scrape_profile_info",
   "platform": "TIKTOK",
   "version": "1.1.0",
   "description": "Extract profile information (handle, display name, bio, follower/following/like counts, avatar, link, verified badge) from TikTok profiles",
+  "sideEffects": "read",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,

@@ -4,19 +4,41 @@
   "id": "tiktok",
   "name": "TikTok",
   "version": "1.0.0",
-  "description": "TikTok browser automation (built-in)",
+  "description": "Read TikTok profiles, videos and comments; like, comment, follow, message and publish videos from your own account",
   "publisher": {
-    "name": "Mono Agent"
+    "name": "Mono Agent",
+    "url": "https://github.com/monoes/mono-agent"
   },
   "license": "MIT",
   "engine": ">=0.0.0",
   "category": "social",
   "site": {
-    "startUrl": "",
-    "domains": []
+    "startUrl": "https://www.tiktok.com/",
+    "domains": [
+      "tiktok.com",
+      "*.tiktok.com"
+    ]
+  },
+  "login": {
+    "url": "https://www.tiktok.com/login",
+    "loggedIn": {
+      "selector": "[data-e2e='profile-icon'], [data-e2e='inbox-icon'], a[data-e2e='nav-profile'][href*='/@']:not([href='/@'])",
+      "cookie": "sessionid"
+    },
+    "sessionTtlDays": 30
   },
   "permissions": {
-    "steps": [],
+    "steps": [
+      "call_bot_method",
+      "condition",
+      "find_element",
+      "log",
+      "navigate",
+      "save_data",
+      "update_progress",
+      "upload",
+      "wait"
+    ],
     "scripts": [],
     "downloads": false
   },

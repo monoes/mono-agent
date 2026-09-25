@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "follow_user",
   "platform": "TIKTOK",
   "version": "1.0.0",
   "description": "Follow TikTok users from a list of profile URLs",
+  "sideEffects": "write",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
@@ -39,6 +41,7 @@
   "steps": [
     {
       "id": "t1_follow_user",
+      "sideEffect": true,
       "type": "call_bot_method",
       "methodName": "follow_user",
       "args": [

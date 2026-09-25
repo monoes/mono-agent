@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "comment_on_video",
   "platform": "TIKTOK",
   "version": "1.0.0",
   "description": "Post a comment on TikTok videos from a list of video URLs",
+  "sideEffects": "message",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
@@ -44,6 +46,7 @@
   "steps": [
     {
       "id": "t1_comment",
+      "sideEffect": true,
       "type": "call_bot_method",
       "methodName": "comment_on_video",
       "args": [

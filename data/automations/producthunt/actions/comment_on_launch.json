@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "comment_on_launch",
   "platform": "PRODUCTHUNT",
   "version": "1.1.0",
   "description": "Post a top-level comment on a Product Hunt launch page. Succeeds only when the new comment shows on the page; a logged-out session (\"Login to comment\") fails without typing. Never retried, so a comment is never posted twice",
+  "sideEffects": "message",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
@@ -36,6 +38,7 @@
   "steps": [
     {
       "id": "comment",
+      "sideEffect": true,
       "type": "call_bot_method",
       "methodName": "comment_on_launch",
       "args": [

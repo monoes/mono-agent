@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "unfollow_users",
   "platform": "INSTAGRAM",
   "version": "2.0.0",
   "description": "Unfollow Instagram users (or withdraw pending requests) from a list of profile URLs: header Following → the dialog's Unfollow, verified by the header showing Follow again. Profiles not followed are left alone.",
+  "sideEffects": "destructive",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
@@ -73,6 +75,7 @@
     },
     {
       "id": "unfollow_user",
+      "sideEffect": true,
       "type": "call_bot_method",
       "methodName": "unfollow_user",
       "args": [

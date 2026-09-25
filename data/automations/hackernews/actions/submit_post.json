@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "submit_post",
   "platform": "HACKERNEWS",
   "version": "1.1.0",
   "description": "Submit a story to Hacker News (a link, a text post, or a link with text) and confirm it on the user's /submitted page. A duplicate URL, a rejected form or a rate limit fails. Never retried: if the story cannot be confirmed after the form was sent, the error says so instead of submitting again",
+  "sideEffects": "write",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
@@ -44,6 +46,7 @@
   "steps": [
     {
       "id": "submit",
+      "sideEffect": true,
       "type": "call_bot_method",
       "methodName": "submit_post",
       "args": [

@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "find_by_keyword",
   "platform": "LINKEDIN",
   "version": "2.0.0",
   "description": "Find LinkedIn members by keyword (people search)",
+  "sideEffects": "read",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": true,

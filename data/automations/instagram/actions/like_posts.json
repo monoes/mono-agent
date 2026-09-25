@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "like_posts",
   "platform": "INSTAGRAM",
   "version": "2.0.0",
   "description": "Like Instagram posts from a list of post URLs. The bot finds the post's own heart (never a comment's), leaves an already-liked post alone (never clicks Unlike) and verifies each like; an unverified like fails the item.",
+  "sideEffects": "write",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
@@ -59,6 +61,7 @@
     },
     {
       "id": "like_post",
+      "sideEffect": true,
       "type": "call_bot_method",
       "methodName": "like_post",
       "args": [

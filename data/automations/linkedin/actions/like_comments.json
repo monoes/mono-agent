@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "like_comments",
   "platform": "LINKEDIN",
   "version": "1.0.0",
   "description": "Like comments on a LinkedIn post by comment URN ID",
+  "sideEffects": "write",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
@@ -38,6 +40,7 @@
   "steps": [
     {
       "id": "t1_like_comment",
+      "sideEffect": true,
       "type": "call_bot_method",
       "methodName": "like_comment",
       "args": ["{{postUrl}}", "{{item.id or item.url or item}}"],

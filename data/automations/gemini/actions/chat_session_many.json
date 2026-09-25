@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "chat_session_many",
   "platform": "GEMINI",
   "version": "1.0.0",
   "description": "Send a list of prompts to ONE Gemini session, one after another, so characters/style stay consistent across every answer. Resumes an existing session via session_id, or starts a new one. Any number of prompts — the loop length is the length of the prompts array.",
+  "sideEffects": "write",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
@@ -127,6 +129,7 @@
     },
     {
       "id": "t1_click_send",
+      "sideEffect": true,
       "type": "call_bot_method",
       "methodName": "click_send",
       "variable_name": "sendResult",
@@ -150,6 +153,7 @@
     },
     {
       "id": "t2_click_send",
+      "sideEffect": true,
       "type": "click",
       "elementRef": "t2_find_send_button",
       "onError": { "action": "skip" },
@@ -170,6 +174,7 @@
     },
     {
       "id": "t3_click_send",
+      "sideEffect": true,
       "type": "click",
       "elementRef": "t3_find_send_button",
       "onError": { "action": "mark_failed" }

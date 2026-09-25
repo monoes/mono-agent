@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "export_followers",
   "platform": "TIKTOK",
   "version": "1.1.0",
   "description": "Fetch the followers (sourceType FOLLOWERS_FETCH) or following (FOLLOWING_FETCH) list of a TikTok profile: username, profile URL, display name and follow state (the viewer's relationship button: Follow back, Following, Friends, …) per account",
+  "sideEffects": "read",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": true,

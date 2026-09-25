@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "scrape_profile_info",
   "platform": "LINKEDIN",
   "version": "2.0.0",
   "description": "Extract profile information (name, headline, location, about, connection and follower counts) from LinkedIn profiles",
+  "sideEffects": "read",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,

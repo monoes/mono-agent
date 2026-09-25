@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "like_video",
   "platform": "TIKTOK",
   "version": "1.0.0",
   "description": "Like TikTok videos from a list of video URLs",
+  "sideEffects": "write",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
@@ -39,6 +41,7 @@
   "steps": [
     {
       "id": "t1_like_video",
+      "sideEffect": true,
       "type": "call_bot_method",
       "methodName": "like_video",
       "args": [

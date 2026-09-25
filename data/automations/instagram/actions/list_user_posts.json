@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "list_user_posts",
   "platform": "INSTAGRAM",
   "version": "2.0.0",
   "description": "List posts from an Instagram profile's grid (url, shortcode, type, author, thumbnail, alt text). The profile is target_url / targetUsername when given, else username.",
+  "sideEffects": "read",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,

@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "share_video",
   "platform": "TIKTOK",
   "version": "1.0.0",
   "description": "Copy the share link of TikTok videos and return the URL (nothing is posted)",
+  "sideEffects": "read",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,

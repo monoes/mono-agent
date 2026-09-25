@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "generate_text",
   "platform": "GEMINI",
   "version": "1.0.0",
   "description": "Send a prompt to Gemini and extract the text response (3-tier fallback)",
+  "sideEffects": "write",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
@@ -107,6 +109,7 @@
     },
     {
       "id": "t1_click_send",
+      "sideEffect": true,
       "type": "call_bot_method",
       "methodName": "click_send",
       "variable_name": "sendResult",
@@ -130,6 +133,7 @@
     },
     {
       "id": "t2_click_send",
+      "sideEffect": true,
       "type": "click",
       "elementRef": "t2_find_send_button",
       "onError": { "action": "skip" },
@@ -150,6 +154,7 @@
     },
     {
       "id": "t3_click_send",
+      "sideEffect": true,
       "type": "click",
       "elementRef": "t3_find_send_button",
       "onError": { "action": "mark_failed" }

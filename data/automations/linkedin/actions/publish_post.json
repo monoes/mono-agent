@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "publish_post",
   "platform": "LINKEDIN",
   "version": "2.0.0",
   "description": "Publish a post (text, optional images) to the signed-in member's LinkedIn feed",
+  "sideEffects": "write",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
@@ -35,6 +37,7 @@
   "steps": [
     {
       "id": "publish",
+      "sideEffect": true,
       "type": "call_bot_method",
       "methodName": "publish_post",
       "args": [

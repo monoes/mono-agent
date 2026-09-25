@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "engage_with_posts",
   "platform": "X",
   "version": "2.0.0",
   "description": "Like and/or reply to X (Twitter) posts — given post URLs, or the results of a keyword search; each like and reply is verified and already-liked posts are left alone",
+  "sideEffects": "message",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": true,
@@ -64,6 +66,7 @@
     },
     {
       "id": "like_post",
+      "sideEffect": true,
       "type": "call_bot_method",
       "methodName": "like_post",
       "args": [
@@ -85,6 +88,7 @@
     },
     {
       "id": "reply_post",
+      "sideEffect": true,
       "type": "call_bot_method",
       "methodName": "reply_post",
       "args": [

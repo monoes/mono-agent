@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "extract_post_data",
   "platform": "INSTAGRAM",
   "version": "2.0.0",
   "description": "Read Instagram posts: author, caption, hashtags, likes, comment count, date, media URLs and type (image, video, reel, carousel); with includeComments also up to maxComments comments.",
+  "sideEffects": "read",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,

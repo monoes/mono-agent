@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "publish_post",
   "platform": "X",
   "version": "2.0.0",
   "description": "Publish a post (tweet) to X (Twitter), optionally with media; the post is verified to have left the composer",
+  "sideEffects": "write",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
@@ -23,6 +25,7 @@
   "steps": [
     {
       "id": "publish_post",
+      "sideEffect": true,
       "type": "call_bot_method",
       "methodName": "publish_post",
       "args": [

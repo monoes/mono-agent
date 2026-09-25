@@ -4,19 +4,35 @@
   "id": "hackernews",
   "name": "Hacker News",
   "version": "1.0.0",
-  "description": "Hacker News browser automation (built-in)",
+  "description": "Read Hacker News items and comments, reply to comments and submit stories",
   "publisher": {
-    "name": "Mono Agent"
+    "name": "Mono Agent",
+    "url": "https://github.com/monoes/mono-agent"
   },
   "license": "MIT",
   "engine": ">=0.0.0",
   "category": "social",
   "site": {
-    "startUrl": "",
-    "domains": []
+    "startUrl": "https://news.ycombinator.com/",
+    "domains": [
+      "news.ycombinator.com"
+    ]
+  },
+  "login": {
+    "url": "https://news.ycombinator.com/",
+    "loggedIn": {
+      "selector": "#me",
+      "cookie": "user"
+    },
+    "usernameFrom": {
+      "selector": "#me"
+    },
+    "sessionTtlDays": 30
   },
   "permissions": {
-    "steps": [],
+    "steps": [
+      "call_bot_method"
+    ],
     "scripts": [],
     "downloads": false
   },

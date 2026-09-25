@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "engage_with_posts",
   "platform": "INSTAGRAM",
   "version": "2.0.0",
   "description": "Search Instagram for a hashtag/keyword and engage with the posts found: like (verified, never un-likes), comment when commentText is set, follow the author when 'follow' is in engagementActions and the post link names its author.",
+  "sideEffects": "message",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": true,
@@ -127,6 +129,7 @@
     },
     {
       "id": "like_post",
+      "sideEffect": true,
       "type": "call_bot_method",
       "methodName": "like_post",
       "args": [
@@ -174,6 +177,7 @@
     },
     {
       "id": "comment_post",
+      "sideEffect": true,
       "type": "call_bot_method",
       "methodName": "comment_post",
       "args": [
@@ -208,6 +212,7 @@
     },
     {
       "id": "follow_author",
+      "sideEffect": true,
       "type": "call_bot_method",
       "methodName": "follow_user",
       "args": [

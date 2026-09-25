@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "watch_stories",
   "platform": "INSTAGRAM",
   "version": "2.0.0",
   "description": "Watch the active stories of a list of profiles (viewing adds you to each story's viewer list). Only the avatar's story ring is opened — never a highlight — and the viewer stops when it moves on to another account. Profiles without an active story report stories_viewed 0.",
+  "sideEffects": "write",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
@@ -78,6 +80,7 @@
     },
     {
       "id": "view_stories",
+      "sideEffect": true,
       "type": "call_bot_method",
       "methodName": "view_stories",
       "args": [

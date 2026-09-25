@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "auto_reply_dms",
   "platform": "X",
   "version": "2.0.0",
   "description": "Reply to X (Twitter) inbox conversations that await a reply (unread by default; conversations whose last message is yours are skipped); each reply is verified",
+  "sideEffects": "message",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
@@ -44,6 +46,7 @@
     },
     {
       "id": "reply_dm",
+      "sideEffect": true,
       "type": "call_bot_method",
       "methodName": "reply_dm",
       "args": [

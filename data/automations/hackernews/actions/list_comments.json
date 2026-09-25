@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "list_comments",
   "platform": "HACKERNEWS",
   "version": "1.1.0",
   "description": "List the comments on a Hacker News item across all \"More\" pages, in thread order: every comment carries its depth (0 = top level) and parentId (the item ID for top-level comments); set topLevelOnly to keep top-level comments only",
+  "sideEffects": "read",
   "metadata": {
     "requiresAuth": false,
     "supportsPagination": true,

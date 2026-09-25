@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "send_dms",
   "platform": "X",
   "version": "2.0.0",
   "description": "Send direct messages to a list of recipients on X (Twitter) from their profile's Message button; each send is verified",
+  "sideEffects": "message",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
@@ -30,6 +32,7 @@
   "steps": [
     {
       "id": "send_dm",
+      "sideEffect": true,
       "type": "call_bot_method",
       "methodName": "send_dm",
       "args": [

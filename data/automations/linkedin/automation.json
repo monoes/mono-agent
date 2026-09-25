@@ -4,19 +4,39 @@
   "id": "linkedin",
   "name": "LinkedIn",
   "version": "1.0.0",
-  "description": "LinkedIn browser automation (built-in)",
+  "description": "Read LinkedIn profiles, posts and comments; react, comment, message and publish from your own account",
   "publisher": {
-    "name": "Mono Agent"
+    "name": "Mono Agent",
+    "url": "https://github.com/monoes/mono-agent"
   },
   "license": "MIT",
   "engine": ">=0.0.0",
   "category": "social",
   "site": {
-    "startUrl": "",
-    "domains": []
+    "startUrl": "https://www.linkedin.com/",
+    "domains": [
+      "linkedin.com",
+      "*.linkedin.com"
+    ]
+  },
+  "login": {
+    "url": "https://www.linkedin.com/login",
+    "loggedIn": {
+      "selector": "#global-nav, div.global-nav, nav[aria-label='Primary'], nav[aria-label='Primary Navigation'], [data-testid='primary-nav'], img.global-nav__me-photo, a[href*='/messaging/']",
+      "cookie": "li_at"
+    },
+    "sessionTtlDays": 30
   },
   "permissions": {
-    "steps": [],
+    "steps": [
+      "call_bot_method",
+      "condition",
+      "log",
+      "save_data",
+      "set_variable",
+      "update_progress",
+      "wait"
+    ],
     "scripts": [],
     "downloads": false
   },

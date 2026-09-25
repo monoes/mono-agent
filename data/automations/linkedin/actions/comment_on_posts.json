@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "comment_on_posts",
   "platform": "LINKEDIN",
   "version": "1.0.0",
   "description": "Comment on LinkedIn posts or reply to a specific comment",
+  "sideEffects": "message",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
@@ -44,6 +46,7 @@
   "steps": [
     {
       "id": "t1_comment",
+      "sideEffect": true,
       "type": "call_bot_method",
       "methodName": "comment_on_post",
       "args": ["{{item.url or item}}", "{{commentText}}", "{{parentCommentId or ''}}"],

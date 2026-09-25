@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "follow_users",
   "platform": "INSTAGRAM",
   "version": "2.0.0",
   "description": "Follow Instagram users from a list of profile URLs. Only the profile header's Follow button is used (never 'Suggested for you'); a profile already followed or requested is left alone; each follow is verified by the header switching to Following/Requested.",
+  "sideEffects": "write",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
@@ -67,6 +69,7 @@
     },
     {
       "id": "follow_user",
+      "sideEffect": true,
       "type": "call_bot_method",
       "methodName": "follow_user",
       "args": [

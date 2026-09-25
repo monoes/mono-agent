@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "list_post_comments",
   "platform": "INSTAGRAM",
   "version": "2.0.0",
   "description": "List comments on Instagram posts (author, text, timestamp, liked, likes, replies), loading more comments as needed.",
+  "sideEffects": "read",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,

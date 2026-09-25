@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "list_post_comments",
   "platform": "LINKEDIN",
   "version": "1.0.0",
   "description": "List comments (and optionally replies) on LinkedIn posts",
+  "sideEffects": "read",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,

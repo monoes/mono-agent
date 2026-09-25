@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "find_by_keyword",
   "platform": "TIKTOK",
   "version": "1.1.0",
   "description": "Search TikTok videos by keyword and return up to maxResultsCount results (url, id, author, description, thumbnail). A search that renders no result cards fails rather than returning nothing.",
+  "sideEffects": "read",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": true,

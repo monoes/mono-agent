@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "list_user_posts",
   "platform": "LINKEDIN",
   "version": "1.0.0",
   "description": "List posts from a LinkedIn profile or company page",
+  "sideEffects": "read",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,

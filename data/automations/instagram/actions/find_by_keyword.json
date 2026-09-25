@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "find_by_keyword",
   "platform": "INSTAGRAM",
   "version": "2.0.0",
   "description": "Search Instagram for a keyword or hashtag and collect the profiles of the posts' authors (one profile item per post author, deduplicated).",
+  "sideEffects": "read",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": true,

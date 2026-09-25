@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "stitch_video",
   "platform": "TIKTOK",
   "version": "1.0.0",
   "description": "Open TikTok's stitch creator for videos (nothing is recorded or published; finishing the stitch needs a person)",
+  "sideEffects": "none",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,

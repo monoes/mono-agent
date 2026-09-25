@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "engage_user_posts",
   "platform": "INSTAGRAM",
   "version": "2.0.0",
   "description": "Engage with an Instagram user's latest posts: list the profile's grid (targetUsername / target_url, else username), then like each post (verified, never un-likes) and comment when commentText is set.",
+  "sideEffects": "message",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": true,
@@ -136,6 +138,7 @@
     },
     {
       "id": "like_post",
+      "sideEffect": true,
       "type": "call_bot_method",
       "methodName": "like_post",
       "args": [
@@ -183,6 +186,7 @@
     },
     {
       "id": "comment_post",
+      "sideEffect": true,
       "type": "call_bot_method",
       "methodName": "comment_post",
       "args": [

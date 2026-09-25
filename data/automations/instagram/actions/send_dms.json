@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "send_dms",
   "platform": "INSTAGRAM",
   "version": "2.0.0",
   "description": "Send a direct message to each recipient (profile URL or username): the profile's Message button, else the New message dialog selecting only the exact username. Each send is verified (composer cleared or the message rendered); a failure after typing is never retried another way (no double send).",
+  "sideEffects": "message",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
@@ -58,6 +60,7 @@
     },
     {
       "id": "send_dm",
+      "sideEffect": true,
       "type": "call_bot_method",
       "methodName": "send_message",
       "args": [

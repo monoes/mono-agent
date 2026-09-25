@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "reply_to_comment",
   "platform": "HACKERNEWS",
   "version": "1.1.0",
   "description": "Reply to a Hacker News item or comment. Succeeds only when the reply by the logged-in user shows on the item page afterwards; rate limits (\"posting too fast\") and logged-out sessions fail. Never retried, so a reply is never posted twice",
+  "sideEffects": "message",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
@@ -37,6 +39,7 @@
   "steps": [
     {
       "id": "reply",
+      "sideEffect": true,
       "type": "call_bot_method",
       "methodName": "reply_to_comment",
       "args": [

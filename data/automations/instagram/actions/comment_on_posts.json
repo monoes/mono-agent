@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "comment_on_posts",
   "platform": "INSTAGRAM",
   "version": "3.0.0",
   "description": "Comment on Instagram posts from a list of post URLs. Each comment is verified (it renders under the post, or the composer clears without an error); a failed or unverified comment fails the item and is never retried through a second path (no double posting).",
+  "sideEffects": "message",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
@@ -58,6 +60,7 @@
     },
     {
       "id": "comment_post",
+      "sideEffect": true,
       "type": "call_bot_method",
       "methodName": "comment_post",
       "args": [

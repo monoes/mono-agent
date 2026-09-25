@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "like_posts",
   "platform": "LINKEDIN",
   "version": "1.0.0",
   "description": "React to LinkedIn posts (Like, Celebrate, Support, Love, Insightful, Funny)",
+  "sideEffects": "write",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
@@ -39,6 +41,7 @@
   "steps": [
     {
       "id": "t1_like_post",
+      "sideEffect": true,
       "type": "call_bot_method",
       "methodName": "like_post",
       "args": ["{{item.url or item}}", "{{reaction or 'like'}}"],

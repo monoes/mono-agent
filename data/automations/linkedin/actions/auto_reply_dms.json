@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "auto_reply_dms",
   "platform": "LINKEDIN",
   "version": "2.0.0",
   "description": "Reply to LinkedIn inbox conversations that are waiting for an answer (unread, last message not yours)",
+  "sideEffects": "message",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": true,
@@ -65,6 +67,7 @@
     },
     {
       "id": "reply",
+      "sideEffect": true,
       "type": "call_bot_method",
       "methodName": "reply_to_conversation",
       "args": [

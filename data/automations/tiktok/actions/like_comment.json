@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "like_comment",
   "platform": "TIKTOK",
   "version": "1.0.0",
   "description": "Like specific comments on TikTok videos. Each item names the video (videoUrl) and the comment by its text and author username (as list_video_comments returns them); an item matching no comment, or several, fails instead of liking another comment",
+  "sideEffects": "write",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
@@ -29,6 +31,7 @@
   "steps": [
     {
       "id": "t1_like_comment",
+      "sideEffect": true,
       "type": "call_bot_method",
       "methodName": "like_comment",
       "args": [

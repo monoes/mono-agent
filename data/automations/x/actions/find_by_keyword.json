@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "find_by_keyword",
   "platform": "X",
   "version": "2.0.0",
   "description": "Search X (Twitter) posts by keyword and return them (URL, author, text, time, counts); promoted posts are excluded",
+  "sideEffects": "read",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": true,

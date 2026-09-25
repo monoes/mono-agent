@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "export_followers",
   "platform": "X",
   "version": "2.0.0",
   "description": "Export the followers, verified followers or following list of an X (Twitter) profile",
+  "sideEffects": "read",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": true,

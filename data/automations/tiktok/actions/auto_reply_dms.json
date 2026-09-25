@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "auto_reply_dms",
   "platform": "TIKTOK",
   "version": "1.1.0",
   "description": "Reply to unread conversations in the TikTok inbox with replyText. Conversations are matched by their exact name (a name shared by several conversations fails); each reply is verified in the chat whose header carries that name.",
+  "sideEffects": "message",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": true,
@@ -46,6 +48,7 @@
     },
     {
       "id": "reply",
+      "sideEffect": true,
       "type": "call_bot_method",
       "methodName": "reply_to_conversation",
       "args": [

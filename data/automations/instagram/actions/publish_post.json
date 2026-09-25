@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "publish_post",
   "platform": "INSTAGRAM",
   "version": "2.0.0",
   "description": "Publish a feed post: Create → Post → upload the media file → Next → Next → caption (and location, only a matching suggestion) → Share, confirmed by Instagram's 'Your post has been shared'. The bot method is the only path: a second UI tier could post twice.",
+  "sideEffects": "write",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
@@ -37,6 +39,7 @@
   "steps": [
     {
       "id": "publish",
+      "sideEffect": true,
       "type": "call_bot_method",
       "methodName": "publish_content",
       "args": [

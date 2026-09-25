@@ -4,19 +4,41 @@
   "id": "gemini",
   "name": "Gemini",
   "version": "1.0.0",
-  "description": "Gemini browser automation (built-in)",
+  "description": "Send prompts to Google Gemini in the browser and read back text or generated images, in one-shot or persistent chat sessions",
   "publisher": {
-    "name": "Mono Agent"
+    "name": "Mono Agent",
+    "url": "https://github.com/monoes/mono-agent"
   },
   "license": "MIT",
   "engine": ">=0.0.0",
   "category": "ai",
   "site": {
-    "startUrl": "",
-    "domains": []
+    "startUrl": "https://gemini.google.com/app",
+    "domains": [
+      "gemini.google.com",
+      "accounts.google.com",
+      "consent.google.com"
+    ]
+  },
+  "login": {
+    "url": "https://gemini.google.com",
+    "loggedIn": {
+      "selector": "div.ql-editor[contenteditable='true'], rich-textarea, input-area-v2"
+    },
+    "sessionTtlDays": 30
   },
   "permissions": {
-    "steps": [],
+    "steps": [
+      "call_bot_method",
+      "click",
+      "condition",
+      "extract_text",
+      "find_element",
+      "navigate",
+      "set_variable",
+      "type",
+      "wait"
+    ],
     "scripts": [],
     "downloads": false
   },

@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "engage_with_posts",
   "platform": "TIKTOK",
   "version": "1.1.0",
   "description": "Search TikTok videos by keyword, then like each result (and comment on it when commentText is set). Likes and comments are verified per video; an already-liked video is left as is.",
+  "sideEffects": "message",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": true,
@@ -51,6 +53,7 @@
     },
     {
       "id": "like_video",
+      "sideEffect": true,
       "type": "call_bot_method",
       "methodName": "like_video",
       "args": [
@@ -77,6 +80,7 @@
     },
     {
       "id": "comment_on_video",
+      "sideEffect": true,
       "type": "call_bot_method",
       "methodName": "comment_on_video",
       "args": [

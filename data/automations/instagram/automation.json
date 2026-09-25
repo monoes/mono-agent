@@ -4,19 +4,39 @@
   "id": "instagram",
   "name": "Instagram",
   "version": "1.0.0",
-  "description": "Instagram browser automation (built-in)",
+  "description": "Read Instagram profiles, posts and comments; like, comment, follow, message and publish from your own account",
   "publisher": {
-    "name": "Mono Agent"
+    "name": "Mono Agent",
+    "url": "https://github.com/monoes/mono-agent"
   },
   "license": "MIT",
   "engine": ">=0.0.0",
   "category": "social",
   "site": {
-    "startUrl": "",
-    "domains": []
+    "startUrl": "https://www.instagram.com/",
+    "domains": [
+      "instagram.com",
+      "*.instagram.com"
+    ]
+  },
+  "login": {
+    "url": "https://www.instagram.com/accounts/login/",
+    "loggedIn": {
+      "selector": "svg[aria-label='New post'], a[href*='/direct/inbox/'], svg[aria-label='Home'], svg[aria-label='Direct'], svg[aria-label='Messenger']",
+      "cookie": "sessionid"
+    },
+    "sessionTtlDays": 30
   },
   "permissions": {
-    "steps": [],
+    "steps": [
+      "call_bot_method",
+      "condition",
+      "log",
+      "mark_failed",
+      "set_variable",
+      "update_progress",
+      "wait"
+    ],
     "scripts": [],
     "downloads": false
   },

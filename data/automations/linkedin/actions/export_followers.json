@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "export_followers",
   "platform": "LINKEDIN",
   "version": "2.0.0",
   "description": "List the signed-in member's LinkedIn followers, or the people they follow",
+  "sideEffects": "read",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": true,

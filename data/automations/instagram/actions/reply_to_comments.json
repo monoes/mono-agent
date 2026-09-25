@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "reply_to_comments",
   "platform": "INSTAGRAM",
   "version": "2.0.0",
   "description": "Reply to comments on Instagram posts: commentAuthor's comment, or the first comment when empty. The reply is posted only once Instagram has addressed it to that comment (@author), and it is verified; a missing author fails the item.",
+  "sideEffects": "message",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
@@ -56,6 +58,7 @@
     },
     {
       "id": "reply_comment",
+      "sideEffect": true,
       "type": "call_bot_method",
       "methodName": "reply_comment",
       "args": [

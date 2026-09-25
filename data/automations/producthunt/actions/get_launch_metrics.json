@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "get_launch_metrics",
   "platform": "PRODUCTHUNT",
   "version": "1.1.0",
   "description": "Read a Product Hunt launch's upvotes (from the launch's own Upvote button — null while Product Hunt hides the count) and comment count (an explicit count label when the page shows one, else the comments loaded on the page; see commentsSource)",
+  "sideEffects": "read",
   "metadata": {
     "requiresAuth": false,
     "supportsPagination": false,

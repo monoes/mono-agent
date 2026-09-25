@@ -1,8 +1,10 @@
 {
+  "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "list_user_videos",
   "platform": "TIKTOK",
   "version": "1.0.0",
   "description": "Collect video URLs from TikTok profile video grids",
+  "sideEffects": "read",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,

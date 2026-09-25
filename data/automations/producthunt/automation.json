@@ -4,19 +4,32 @@
   "id": "producthunt",
   "name": "Product Hunt",
   "version": "1.0.0",
-  "description": "Product Hunt browser automation (built-in)",
+  "description": "Read Product Hunt launch metrics and comments, and comment on launches",
   "publisher": {
-    "name": "Mono Agent"
+    "name": "Mono Agent",
+    "url": "https://github.com/monoes/mono-agent"
   },
   "license": "MIT",
   "engine": ">=0.0.0",
   "category": "social",
   "site": {
-    "startUrl": "",
-    "domains": []
+    "startUrl": "https://www.producthunt.com/",
+    "domains": [
+      "producthunt.com",
+      "*.producthunt.com"
+    ]
+  },
+  "login": {
+    "url": "https://www.producthunt.com/login",
+    "loggedIn": {
+      "selector": "[aria-label='User menu']"
+    },
+    "sessionTtlDays": 30
   },
   "permissions": {
-    "steps": [],
+    "steps": [
+      "call_bot_method"
+    ],
     "scripts": [],
     "downloads": false
   },
