@@ -18,6 +18,7 @@ import (
 
 func newAutomationNewCmd(cfg *globalConfig) *cobra.Command {
 	var tmpl, dir, name, startURL string
+	var install bool
 	cmd := &cobra.Command{
 		Use:   "new <id>",
 		Short: "Scaffold a new automation package from a template",
@@ -55,19 +56,44 @@ letters, digits and dashes.`,
 				return err
 			}
 			abs, _ := filepath.Abs(dir)
-			if cfg.JSONOutput {
-				return writeJSONTo(cmd.OutOrStdout(), map[string]string{"dir": abs})
+			out := cmd.OutOrStdout()
+			if install {
+				// The scaffold is the user's own package: local source and
+				// trust, no review prompt. It stays on disk if this fails.
+				res, err := installScaffold(abs)
+				if err != nil {
+					return fmt.Errorf("created %s, but installing it failed: %w", abs, err)
+				}
+				if cfg.JSONOutput {
+					return writeJSONTo(out, map[string]any{"dir": abs, "install": res})
+				}
+				fmt.Fprintf(out, "Created %s from template %q and installed %s %s (local)\n", abs, tmpl, res.ID, res.Version)
+				return nil
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Created %s from template %q\n", abs, tmpl)
-			fmt.Fprintf(cmd.OutOrStdout(), "Next: edit it, then 'monoagentcli automation validate %s' and 'automation install %s'\n", dir, dir)
+			if cfg.JSONOutput {
+				return writeJSONTo(out, map[string]string{"dir": abs})
+			}
+			fmt.Fprintf(out, "Created %s from template %q\n", abs, tmpl)
+			fmt.Fprintf(out, "Next: edit it, then 'monoagentcli automation validate %s' and 'automation install %s --local'\n", dir, dir)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&tmpl, "template", "basic", "Template name")
 	cmd.Flags().StringVar(&dir, "dir", "", "Target directory (default ./<id>)")
 	cmd.Flags().StringVar(&name, "name", "", "Display name (default: the id)")
+	cmd.Flags().BoolVar(&install, "install", false, "Also install the new package (as local)")
 	cmd.Flags().StringVar(&startURL, "start-url", "", "Site start URL; its host becomes the allowed domain")
 	return cmd
+}
+
+// installScaffold installs a freshly scaffolded package directory as local.
+func installScaffold(dir string) (*automation.InstallResult, error) {
+	reg, err := openAutomationRegistry()
+	if err != nil {
+		return nil, err
+	}
+	res, err := reg.Install(dir, automation.InstallOptions{Source: automation.SourceLocal, Trust: automation.TrustLocal})
+	return res, withInstallResult(err, res)
 }
 
 // automationTemplate returns the named template tree.

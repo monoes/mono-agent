@@ -91,3 +91,45 @@ func TestAutomationReviewPrintsScriptSources(t *testing.T) {
 		t.Fatalf("output:\n%s", s)
 	}
 }
+
+func TestAutomationInstallLocalAndNewInstall(t *testing.T) {
+	home := t.TempDir()
+	// --local is refused for an archive.
+	file := filepath.Join(home, "gemini.mpkg")
+	var exp map[string]string
+	mustJSON(t, home, &exp, "automation", "export", "gemini", "-o", file)
+	out, _, err := runAutomationCLI(t, home, "automation", "install", file, "--local", "--yes", "--json")
+	if err == nil || !strings.Contains(out, "only for a package directory") {
+		t.Fatalf("--local on .mpkg: err=%v out=%s", err, out)
+	}
+
+	// new --install scaffolds and installs as local.
+	dir := filepath.Join(home, "acme")
+	var created struct {
+		Dir     string                    `json:"dir"`
+		Install *automation.InstallResult `json:"install"`
+	}
+	mustJSON(t, home, &created, "automation", "new", "acme", "--template", "basic", "--dir", dir,
+		"--start-url", "https://acme.test/", "--install")
+	if created.Dir == "" || created.Install == nil || !created.Install.Installed || created.Install.Review.Trust != "local" {
+		t.Fatalf("new --install = %+v", created)
+	}
+	var info struct {
+		Info *automation.InstalledInfo `json:"info"`
+	}
+	mustJSON(t, home, &info, "automation", "show", "acme")
+	if info.Info.Trust != "local" || info.Info.Source != "local" || !info.Info.ScriptsAllowed {
+		t.Fatalf("installed as %+v", info.Info)
+	}
+
+	// install <dir> --local updates it in place as local; without --local a
+	// directory installs as imported and may not replace the local package.
+	var res automation.InstallResult
+	mustJSON(t, home, &res, "automation", "install", dir, "--local", "--yes")
+	if !res.Installed || res.Review.Trust != "local" {
+		t.Fatalf("install --local = %+v", res)
+	}
+	if _, _, err := runAutomationCLI(t, home, "automation", "install", dir, "--yes", "--json"); err == nil {
+		t.Fatal("imported install over the local package succeeded without --replace-builtin")
+	}
+}

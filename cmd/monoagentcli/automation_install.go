@@ -63,7 +63,7 @@ func runInstall(opts automation.InstallOptions, c installConfirmer,
 }
 
 func newAutomationInstallCmd(cfg *globalConfig) *cobra.Command {
-	var dryRun, yes, replaceBuiltin bool
+	var dryRun, yes, replaceBuiltin, local bool
 	var expectSHA string
 	cmd := &cobra.Command{
 		Use:   "install <file.mpkg|dir|url>",
@@ -73,14 +73,21 @@ func newAutomationInstallCmd(cfg *globalConfig) *cobra.Command {
 			if err := checkInstallSource(args[0]); err != nil {
 				return err
 			}
+			opts := automation.InstallOptions{DryRun: dryRun, ReplaceBuiltin: replaceBuiltin,
+				ExpectSHA256: strings.ToLower(strings.TrimSpace(expectSHA))}
+			if local {
+				if st, err := os.Stat(args[0]); err != nil || !st.IsDir() {
+					return errors.New("--local is only for a package directory (your own files); a .mpkg or URL always installs as imported")
+				}
+				opts.Source, opts.Trust = automation.SourceLocal, automation.TrustLocal
+			}
 			reg, err := openAutomationRegistry()
 			if err != nil {
 				return err
 			}
 			c := installConfirmer{yes: yes, interactive: !cfg.JSONOutput && stdinIsTerminal(),
 				in: cmd.InOrStdin(), out: cmd.ErrOrStderr()}
-			res, err := runInstall(automation.InstallOptions{DryRun: dryRun, ReplaceBuiltin: replaceBuiltin,
-				ExpectSHA256: strings.ToLower(strings.TrimSpace(expectSHA))}, c, func(o automation.InstallOptions) (*automation.InstallResult, error) {
+			res, err := runInstall(opts, c, func(o automation.InstallOptions) (*automation.InstallResult, error) {
 				return reg.Install(args[0], o)
 			})
 			if errors.Is(err, automation.ErrReplacesBuiltin) {
@@ -96,6 +103,7 @@ func newAutomationInstallCmd(cfg *globalConfig) *cobra.Command {
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Validate and show the review without installing")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Install without asking")
 	cmd.Flags().BoolVar(&replaceBuiltin, "replace-builtin", false, "Allow this package to replace an installed built-in or local package with the same id")
+	cmd.Flags().BoolVar(&local, "local", false, "Install a package directory you wrote as local (trusted like your own code: scripts allowed, no live-run confirmation)")
 	cmd.Flags().StringVar(&expectSHA, "expect-sha256", "", "Refuse unless the package bytes have this sha256 (e.g. from a --dry-run review)")
 	return cmd
 }
