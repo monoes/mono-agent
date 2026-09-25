@@ -1111,7 +1111,10 @@ var inboxShouldReplyCriteria = map[string]any{
 
 // messageClassification is person_messages.metadata._classification.
 type messageClassification struct {
+	// Intent is empty when the top intent was below the threshold ("unsure");
+	// the answer is still stored so the message is not paid for again.
 	Intent       string  `json:"intent"`
+	Unsure       bool    `json:"unsure,omitempty"`
 	IntentP      float64 `json:"intent_p"`
 	ShouldReplyP float64 `json:"should_reply_p"`
 	Model        string  `json:"model"`
@@ -1239,15 +1242,16 @@ func classifyInboxMessage(ctx context.Context, c *jev.Client, m inboxCandidate, 
 		return nil, err
 	}
 	intent, p := jev.Top(resp.Answers["intent"])
-	if p < threshold {
-		return nil, nil
+	unsure := p < threshold
+	if unsure {
+		intent = ""
 	}
 	model := resp.Model
 	if model == "" {
 		model = c.Model
 	}
 	return &messageClassification{
-		Intent: intent, IntentP: p, ShouldReplyP: resp.Answers["should_reply"].Noul,
+		Intent: intent, Unsure: unsure, IntentP: p, ShouldReplyP: resp.Answers["should_reply"].Noul,
 		Model: model, At: time.Now().UTC().Format(time.RFC3339),
 	}, nil
 }
@@ -1303,7 +1307,8 @@ func newPeopleMessagesClassifyCmd(cfg *globalConfig) *cobra.Command {
 			"(" + strings.Join(inboxIntents, ", ") + ") and how likely it needs a reply, and\n" +
 			"stores the answer in the message's metadata under _classification. When the top\n" +
 			"intent's probability is below the inbox threshold (default 0.7, `jev enable inbox\n" +
-			"--threshold`), nothing is stored for that message and it is asked again next run.\n" +
+			"--threshold`), the message is stored as unsure (no intent) and not asked again\n" +
+			"unless --reclassify.\n" +
 			"\n" +
 			"Messages that already have a classification are skipped unless --reclassify.\n" +
 			"Sent to TypeSafe: sender name, subject and the first 6,000 characters of the body.\n" +
@@ -1357,13 +1362,12 @@ func newPeopleMessagesClassifyCmd(cfg *globalConfig) *cobra.Command {
 						switch {
 						case err != nil:
 							o.Error = err.Error()
-						case c == nil:
-							o.BelowThreshold = true
 						default:
 							if err := storeMessageClassification(db.DB, m.ID, m.Metadata, *c); err != nil {
 								o.Error = err.Error()
 							} else {
 								o.Classification = c
+								o.BelowThreshold = c.Unsure
 							}
 						}
 						outcomes[i] = o
@@ -1391,7 +1395,7 @@ func newPeopleMessagesClassifyCmd(cfg *globalConfig) *cobra.Command {
 						o.MessageID, o.Classification.Intent, o.Classification.IntentP, o.Classification.ShouldReplyP)
 				}
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Classified %d message(s); %d below threshold (nothing stored); %d failed.\n",
+			fmt.Fprintf(cmd.OutOrStdout(), "Classified %d message(s); %d unsure (below threshold, no intent); %d failed.\n",
 				classified, below, failed)
 			if failed > 0 {
 				return fmt.Errorf("%d message(s) could not be classified", failed)

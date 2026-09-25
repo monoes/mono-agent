@@ -139,7 +139,7 @@ func TestMessagesClassifyStoresSkipsAndReclassifies(t *testing.T) {
 	}
 }
 
-func TestMessagesClassifyBelowThresholdStoresNothing(t *testing.T) {
+func TestMessagesClassifyBelowThresholdStoresUnsure(t *testing.T) {
 	dbPath := seedInboxMessages(t)
 	enableJev(t, dbPath, "default", jevconf.Inbox)
 	withJevDB(t, dbPath, func(db *storage.Database) {
@@ -152,11 +152,20 @@ func TestMessagesClassifyBelowThresholdStoresNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if srv.Calls() != 1 || !strings.Contains(out, `"below_threshold": true`) {
-		t.Fatalf("calls=%d out=%s", srv.Calls(), out)
+	if !strings.Contains(out, `"below_threshold": true`) {
+		t.Fatalf("out=%s", out)
 	}
-	if md := parseMessageMetadata(fetchPersonMessage(t, dbPath, "m-new").Metadata); md.Classification != nil {
-		t.Fatalf("below-threshold answer was stored: %+v", md.Classification)
+	md := parseMessageMetadata(fetchPersonMessage(t, dbPath, "m-new").Metadata)
+	if md.Classification == nil || !md.Classification.Unsure || md.Classification.Intent != "" {
+		t.Fatalf("below-threshold answer should be stored as unsure with no intent: %+v", md.Classification)
+	}
+	calls := srv.Calls()
+	// A second run must not pay for the same message again.
+	if _, err := runMessagesClassify(t, dbPath, "--json"); err != nil {
+		t.Fatal(err)
+	}
+	if srv.Calls() != calls {
+		t.Fatalf("unsure message was classified again: %d → %d calls", calls, srv.Calls())
 	}
 }
 
