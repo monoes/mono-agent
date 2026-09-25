@@ -669,7 +669,11 @@ func (ae *ActionExecutor) stepUpload(ctx context.Context, step StepDef) (*StepRe
 	// C-46: uploaded files leave the machine through the page; in a run a
 	// role's grant started they must come from the role's workdir. Checked
 	// before the page is touched.
-	files, err := fsconfine.Paths(ctx, splitUploadPaths(step))
+	rawFiles := splitUploadPaths(step)
+	files, err := fsconfine.Paths(ctx, rawFiles)
+	if err == nil {
+		err = ae.confineUploads(ctx, rawFiles, files) // package actions: §8 C1
+	}
 	if err != nil {
 		return &StepResult{Success: false, StepID: step.ID, Error: fmt.Errorf("upload step %s: %w", step.ID, err)}, nil
 	}
