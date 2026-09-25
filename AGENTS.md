@@ -516,6 +516,13 @@ probabilities, in one ~100–300 ms request. It **never generates text**.
   that surface sends to TypeSafe and asks (or needs `--yes` when stdin is not
   a terminal). Workflow nodes that use Jev (e.g. `browser.jev`) opt in by
   being used; the org decider opts in through its own autonomy config.
+- **Deliberate exceptions to "off means unchanged"** (bug fixes that ship
+  with this work and apply with Jev off too): workflow retries no longer
+  re-run a paused Human-in-Loop node, invalid configuration, a cancelled run
+  or an error wrapped with `workflow.Permanent`; and in social builds a
+  LinkedIn like with a named reaction that is missing from the menu fails
+  instead of silently clicking plain Like (an unknown reaction name is an
+  error).
 - **Key**: vault entry `typesafe` for the profile, else `TYPESAFE_API_KEY`
   (`TYPESAFE_DEFAULT_MODEL` / `TYPESAFE_BASE_URL` override the model and
   host). `doctor` reports it as `jev.key`.

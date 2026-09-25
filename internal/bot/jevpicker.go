@@ -6,8 +6,10 @@ package bot
 // docs/plans/2026-09-25-jev-integration.md, WS11). A bot embeds JevPicker;
 // the node layer hands it a client with SetJevPicker when the profile opted
 // in. A bot consults Jev only where its own heuristic finder found no element
-// or more than one; with no picker, or on any Jev failure, the bot does
-// exactly what it did before.
+// or more than one; with no picker, or on any Jev failure, the bot keeps its
+// heuristic result. One deliberate exception (a bug fix, plan D2): LinkedIn
+// LikePost no longer substitutes plain Like for a requested reaction it
+// cannot find, picker or not.
 
 import (
 	"context"

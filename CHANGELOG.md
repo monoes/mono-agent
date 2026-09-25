@@ -15,7 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   feature below is off until you turn it on for a profile (`monoagentcli jev
   enable <surface>`, which first lists what gets sent to TypeSafe), or until
   you use the node that relies on it. Below its confidence threshold, a
-  feature behaves exactly as it did before. The key is looked up in the
+  feature falls back to what it did before. The one difference is inbox
+  classification, which stores the message as "unsure" so it isn't sent
+  again. The key is looked up in the
   node's config, then in the vault entry `typesafe`, then in
   `TYPESAFE_API_KEY`.
   - `monoagentcli jev status|enable|disable|usage|ask|models`, plus the
