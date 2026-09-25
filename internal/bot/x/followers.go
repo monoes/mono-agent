@@ -32,13 +32,30 @@ const userCellsJS = `() => {
 		if (!handle) continue;
 		const nameLink = [...cell.querySelectorAll('a[href]')].find((l) => (l.getAttribute('href') || '').toLowerCase() === '/' + handle.toLowerCase() && txt(l) && !txt(l).startsWith('@'));
 		const name = nameLink ? txt(nameLink).split('\n')[0].trim() : '';
+		// Accessible descriptions/labels of controls in the cell (X's follow
+		// button is aria-describedby a hidden "Click to Follow <user>" div).
+		const described = new Set();
+		for (const el of cell.querySelectorAll('[aria-describedby], [aria-labelledby]')) {
+			for (const id of ((el.getAttribute('aria-describedby') || '') + ' ' + (el.getAttribute('aria-labelledby') || '')).split(/\s+/)) {
+				if (id) described.add(id);
+			}
+		}
+		const hidden = (el) => {
+			for (let n = el; n && n !== cell; n = n.parentElement) {
+				if (n.id && described.has(n.id)) return true;
+				const cs = getComputedStyle(n);
+				if (cs.display === 'none' || cs.visibility === 'hidden') return true;
+				if (cs.position === 'absolute' && (n.offsetWidth <= 1 || n.offsetHeight <= 1)) return true;
+			}
+			return false;
+		};
 		const bio = [...cell.querySelectorAll("div[dir='auto']")]
 			.filter((d) => {
 				// The cell itself is a button in X's markup; controls inside it are not bio.
 				const ctl = d.closest("a, button, [role='button'], [role='link']");
-				return (!ctl || ctl === cell) && !d.closest("[data-testid='userFollowIndicator']") && !d.parentElement.closest("div[dir='auto']");
+				return (!ctl || ctl === cell) && !d.closest("[data-testid='userFollowIndicator']") && !d.parentElement.closest("div[dir='auto']") && !hidden(d);
 			})
-			.map(txt).filter(Boolean).join('\n');
+			.map(txt).filter((t) => t && !/^Click to (Un)?follow /i.test(t)).join('\n');
 		const btn = cell.querySelector("[data-testid$='-follow'], [data-testid$='-unfollow']");
 		const tid = btn ? (btn.getAttribute('data-testid') || '') : '';
 		const img = cell.querySelector('img');

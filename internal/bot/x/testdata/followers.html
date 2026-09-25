@@ -5,7 +5,10 @@
 <!-- SYNTHETIC fixture: an X followers / following list (UserCell rows).
      Invented accounts. The list is chosen by path; it is virtualised like
      X's (scrolling appends rows and drops the earliest). A "Who to follow"
-     UserCell in the sidebar must not be exported. -->
+     UserCell in the sidebar must not be exported. Like X's, each follow
+     button is aria-describedby a visually hidden "Click to Follow <user>"
+     dir=auto div inside the cell (display:none on some rows, clipped on
+     others) that is not part of the bio. -->
 <main role="main"><div data-testid="primaryColumn"><h2 id="title"></h2><section><div id="list"></div></section></div></main>
 <div data-testid="sidebarColumn"><aside aria-label="Who to follow">
   <div data-testid="UserCell"><a href="/synth_sidebar"><span>Side Bar</span></a><a href="/synth_sidebar"><span>@synth_sidebar</span></a><button data-testid="999-follow">Follow</button></div>
@@ -38,8 +41,9 @@ function render([u, name, bio, following, followsYou, verified]) {
       <div><a href="/${u}" role="link"><div dir="ltr"><span>${name}</span>${verified ? '<svg data-testid="icon-verified" aria-label="Verified account"></svg>' : ''}</div></a>
         <div><a href="/${u}" role="link" tabindex="-1"><div dir="ltr"><span>@${u}</span></div></a>
         ${followsYou ? '<div data-testid="userFollowIndicator"><div dir="auto"><span>Follows you</span></div></div>' : ''}</div></div>
-      <button data-testid="${u.length}${name.length}-${following ? 'unfollow' : 'follow'}" aria-label="${following ? 'Following' : 'Follow'} @${u}"><div dir="auto"><span>${following ? 'Following' : 'Follow'}</span></div></button>
+      <button data-testid="${u.length}${name.length}-${following ? 'unfollow' : 'follow'}" aria-label="${following ? 'Following' : 'Follow'} @${u}" aria-describedby="id__desc_${u}"><div dir="auto"><span>${following ? 'Following' : 'Follow'}</span></div></button>
     </div>
+    <div id="id__desc_${u}" dir="auto" style="${u.endsWith('2') || u.endsWith('4') ? 'display:none' : 'position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(1px,1px,1px,1px);white-space:nowrap'}">Click to ${following ? 'Unfollow' : 'Follow'} ${u}</div>
     ${bio ? `<div dir="auto"><span>${bio.replace('\n', '<br>')}</span></div>` : ''}</div></div>`;
   document.getElementById('list').appendChild(c);
 }
