@@ -7,8 +7,13 @@
      (/mynetwork/network-manager/people-follow/…): cards with
      data-view-name="search-entity-result-universal-template", a
      "Show more results" button that appends more. Follow buttons beacon a
-     write — the bot must never press them. Invented people. -->
-<style> body { font: 14px sans-serif; } li { min-height: 60px; } </style>
+     write — the bot must never press them. Some avatars carry LinkedIn's
+     presence dot, whose screen-reader-only label ("Status is online") is
+     rendered text that precedes the name and headline. Invented people. -->
+<style> body { font: 14px sans-serif; } li { min-height: 60px; }
+.visually-hidden { position: absolute !important; width: 1px !important; height: 1px !important; overflow: hidden !important; clip: rect(1px, 1px, 1px, 1px) !important; white-space: nowrap !important; }
+.presence-entity { position: relative; display: inline-block; } .presence-entity__indicator { position: absolute; right: 0; bottom: 0; width: 6px; height: 6px; }
+</style>
 </head>
 <body>
 <header id="global-nav" class="global-nav"></header>
@@ -31,16 +36,17 @@
   document.getElementById('subtitle').textContent = following ? 'You are following 3 people' : '5 people are following you';
   const people = following
     ? [['uma-north-test', 'Uma North', 'Climate researcher', true], ['vic-east-test', 'Vic East', 'Teacher', true], ['wes-south-test', 'Wes South', 'Nurse', true]]
-    : [['ann-fol-test', 'Ann Follower', 'Data analyst at Example Bank', true], ['ben-fol-test', 'Ben Follower', 'Student', false],
+    : [['ann-fol-test', 'Ann Follower', 'Data analyst at Example Bank', true, 'online'], ['ben-fol-test', 'Ben Follower', 'Student', false, 'away'],
        ['cat-fol-test', 'Cat Follower', 'Barista', false], ['dan-fol-test', 'Dan Follower', 'Pilot', true], ['eve-fol-test', 'Eve Follower', 'Chemist', false]];
   const list = document.getElementById('list');
   let shown = 0;
   const render = (n) => {
-    for (const [slug, name, head, youFollow] of people.slice(shown, shown + n)) {
+    for (const [slug, name, head, youFollow, presence] of people.slice(shown, shown + n)) {
+      const dot = presence ? '<div class="presence-entity__indicator presence-indicator presence-indicator--is-' + presence + '"><span class="visually-hidden">Status is ' + presence + '</span></div>' : '';
       const url = 'https://www.linkedin.com/in/' + slug + '?miniProfileUrn=urn%3Ali%3Afs_miniProfile%3AFAKE';
       list.insertAdjacentHTML('beforeend',
         '<li><div data-view-name="search-entity-result-universal-template"><div class="linked-area">' +
-        '<a class="scale-down" aria-hidden="true" href="' + url + '" tabindex="-1"><img alt="' + name + '" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" width="20" height="20"></a>' +
+        '<a class="scale-down" aria-hidden="true" href="' + url + '" tabindex="-1"><div class="presence-entity"><img alt="' + name + '" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" width="20" height="20">' + dot + '</div></a>' +
         '<div class="t-roman t-sans"><span class="t-16"><a href="' + url + '">' + name + '</a></span></div>' +
         '<div class="t-14 t-black t-normal">' + head + '</div>' +
         '<div class="entity-result__insights t-12">Followed by Someone Else</div></div>' +

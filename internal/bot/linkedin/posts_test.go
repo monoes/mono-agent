@@ -75,6 +75,34 @@ func TestListUserPosts(t *testing.T) {
 		}
 	})
 
+	t.Run("own activity: social-proof like counts, reposts keep their own author", func(t *testing.T) {
+		p, _ := newPage(t, b, bottest.Route{Pattern: "https://www.linkedin.com/in/*", File: "testdata/activity_own.html"})
+		res, err := call(t, &LinkedInBot{}, p, "list_user_posts", "https://www.linkedin.com/in/owen-owner-test/", 10, "all")
+		if err != nil {
+			t.Fatal(err)
+		}
+		posts := res.([]map[string]interface{})
+		if got := strings.Join(postIDs(t, res), ","); got != "7400000000000000001,7400000000000000002,7400000000000000003,7400000000000000004" {
+			t.Fatalf("ids = %s", got)
+		}
+		want := []struct {
+			author, authorURL string
+			likes, comments   int
+		}{
+			{"Rhea Partner", "https://www.linkedin.com/in/rhea-partner-test", 5, 0},             // collaboration: header links the owner
+			{"Acme Widgets", "https://www.linkedin.com/company/acme-widgets-test/posts", 15, 8}, // repost of a company post
+			{"Owen Owner", "https://www.linkedin.com/in/owen-owner-test", 7, 0},                 // "You and 6 others", no fallback number
+			{"Owen Owner", "https://www.linkedin.com/in/owen-owner-test", 29, 2},                // plain reaction count
+		}
+		for i, w := range want {
+			got := posts[i]
+			if got["author"] != w.author || got["author_url"] != w.authorURL || got["likes_count"] != w.likes || got["comments_count"] != w.comments {
+				t.Errorf("post %d = author %q url %q likes %v comments %v; want %q %q %d %d",
+					i, got["author"], got["author_url"], got["likes_count"], got["comments_count"], w.author, w.authorURL, w.likes, w.comments)
+			}
+		}
+	})
+
 	t.Run("not a profile URL", func(t *testing.T) {
 		p, _ := newPage(t, b)
 		if _, err := call(t, &LinkedInBot{}, p, "list_user_posts", "https://www.linkedin.com/feed/", 5, ""); err == nil {

@@ -91,6 +91,23 @@ const L = {
     if (m[2]) n *= (m[2].toLowerCase() === 'k' ? 1000 : 1000000);
     return Math.round(n);
   },
+  // bareName drops the connection-degree / relationship suffix LinkedIn
+  // renders next to a name ("Ann Lee • 2nd", "Ann Lee · 3rd+", "Ann Lee • You").
+  bareName(s) {
+    return String(s || '').replace(/\s*[•·]\s*(?:1st|2nd|3rd\+?|You|Following|Author)\b.*$/i, '').trim();
+  },
+  // a11yOnly: the texts of screen-reader-only elements inside el — presence
+  // ("Status is online"), degree descriptions and the like. They render (so
+  // innerText includes them) but are never visible content.
+  a11yOnly(el) {
+    const out = new Set();
+    if (!el) return out;
+    el.querySelectorAll('.visually-hidden, .a11y-text, [class*="presence-entity__indicator"], [class*="presence-indicator"]').forEach((x) => {
+      const t = L.text(x);
+      if (t) out.add(t);
+    });
+    return out;
+  },
   activeDeep() {
     let a = document.activeElement;
     while (a && a.shadowRoot && a.shadowRoot.activeElement) a = a.shadowRoot.activeElement;
