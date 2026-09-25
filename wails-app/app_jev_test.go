@@ -137,3 +137,59 @@ func TestJevCLIErrorSurfaces(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// TestJevRealCLI drives the real monoagentcli (opt-in: JEV_REAL_CLI=1 with
+// MONOAGENTCLI_BIN set, HOME a scratch home, MONOAGENT_ALLOW_FILE_KEYRING=1
+// and no TYPESAFE_API_KEY): key set → status → enable → disable → remove.
+func TestJevRealCLI(t *testing.T) {
+	if os.Getenv("JEV_REAL_CLI") != "1" || os.Getenv("MONOAGENTCLI_BIN") == "" {
+		t.Skip("set JEV_REAL_CLI=1 and MONOAGENTCLI_BIN to run against the real CLI")
+	}
+	a := newTestApp(t)
+	a.ctx = context.Background()
+
+	st, err := a.JevStatus()
+	if err != nil || st.KeySource != "none" || len(st.Surfaces) == 0 {
+		t.Fatalf("initial status = %+v, %v", st, err)
+	}
+	for _, s := range st.Surfaces {
+		if s.Title == "" || s.Description == "" || len(s.Egress) == 0 {
+			t.Fatalf("surface %s lacks title/description/egress: %+v", s.Surface, s)
+		}
+	}
+	if _, err := a.JevRemoveKey(); err == nil {
+		t.Fatal("remove with no vault key must fail")
+	}
+	set, err := a.JevSetKey(fakeJevKey)
+	if err != nil || set.KeySource != "vault" || set.KeyEntry != "typesafe" || set.Replaced {
+		t.Fatalf("JevSetKey = %+v, %v", set, err)
+	}
+	if set, err = a.JevSetKey(fakeJevKey + "2"); err != nil || !set.Replaced || set.KeyEntry != "typesafe" {
+		t.Fatalf("second JevSetKey = %+v, %v", set, err)
+	}
+	st, err = a.JevStatus()
+	if err != nil || st.KeySource != "vault" || st.KeyEntry != "typesafe" {
+		t.Fatalf("status after set = %+v, %v", st, err)
+	}
+	if r, err := a.JevSetSurface("hil", true, 0.85); err != nil || !r.Enabled || r.Threshold != 0.85 || len(r.Egress) == 0 {
+		t.Fatalf("enable = %+v, %v", r, err)
+	}
+	st, _ = a.JevStatus()
+	for _, s := range st.Surfaces {
+		if s.Surface == "hil" && (!s.Enabled || s.Threshold != 0.85) {
+			t.Fatalf("hil after enable = %+v", s)
+		}
+	}
+	if r, err := a.JevSetSurface("hil", false, 0); err != nil || r.Enabled || r.Surface != "hil" {
+		t.Fatalf("disable = %+v, %v", r, err)
+	}
+	if u, err := a.JevUsage("7d"); err != nil || u.Surfaces == nil {
+		t.Fatalf("usage = %+v, %v", u, err)
+	}
+	if rm, err := a.JevRemoveKey(); err != nil || rm.Removed != "typesafe" {
+		t.Fatalf("remove = %+v, %v", rm, err)
+	}
+	if st, err = a.JevStatus(); err != nil || st.KeySource != "none" {
+		t.Fatalf("status after remove = %+v, %v", st, err)
+	}
+}

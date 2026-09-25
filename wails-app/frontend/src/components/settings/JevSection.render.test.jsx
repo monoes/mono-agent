@@ -116,9 +116,9 @@ describe('JevSection', () => {
 
   it('shows a failed key test', async () => {
     await mount(status('vault', 'typesafe'))
-    App.JevTestKey.mockResolvedValue({ ok: false, key_source: 'vault', models: [], error: '401: invalid API key' })
+    App.JevTestKey.mockResolvedValue({ ok: false, key_source: 'vault', models: [], error: 'jev: HTTP 401: {"detail":{"error_type":"authentication_error","message":"Cannot authenticate with the server."}}' })
     fireEvent.click(screen.getByRole('button', { name: 'Test' }))
-    expect(await screen.findByTestId('jev-test-result')).toHaveTextContent('Key test failed: 401: invalid API key')
+    expect(await screen.findByTestId('jev-test-result')).toHaveTextContent('Key test failed: HTTP 401 — Cannot authenticate with the server.')
   })
 
   it('removing the key needs an inline confirm', async () => {

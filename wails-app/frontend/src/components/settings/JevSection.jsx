@@ -27,6 +27,19 @@ const input = {
 
 const errMsg = (e) => String(e?.message || e || 'unknown error')
 
+// testError shortens "jev: HTTP 401: {json body}" to "HTTP 401 — <message>".
+export function testError(raw) {
+  const m = /HTTP (\d+):\s*(\{.*\})\s*$/s.exec(raw || '')
+  if (!m) return raw || 'unknown error'
+  try {
+    const body = JSON.parse(m[2])
+    const d = body.detail ?? body.error ?? body
+    const msg = typeof d === 'string' ? d : (d?.message || body.message)
+    if (msg) return `HTTP ${m[1]} — ${msg}`
+  } catch { /* keep the raw text */ }
+  return raw
+}
+
 function keyChip(st) {
   switch (st?.key_source) {
     case 'vault': return { text: `Vault entry "${st.key_entry || 'typesafe'}"`, color: 'var(--green-neon)', bg: 'rgba(16,185,129,.1)', bd: 'rgba(74,222,128,.25)' }
@@ -100,7 +113,7 @@ function SurfaceRow({ s, busy, pending, onStartEnable, onCancelEnable, onConfirm
 
   return (
     <div data-jev-surface={s.surface} style={{
-      borderTop: '1px solid var(--border-dim)', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 8,
+      borderTop: '1px solid var(--border-dim)', paddingTop: 10, display: 'flex', flexDirection: 'column', gap: 6,
     }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -177,7 +190,7 @@ function UsageTable({ usage, titles }) {
   )
   return (
     <div style={{ overflowX: 'auto' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+      <table style={{ width: '100%', maxWidth: 640, borderCollapse: 'collapse' }}>
         <thead>
           <tr>
             <th style={{ ...th, textAlign: 'left', paddingLeft: 0 }}>Feature</th>
@@ -335,14 +348,14 @@ export default function JevSection() {
               Key works{test.models?.length ? ` — models: ${test.models.join(', ')}` : ''}.
             </div>
           ) : (
-            <div data-testid="jev-test-result" style={errText}>Key test failed: {test.error || 'unknown error'}</div>
+            <div data-testid="jev-test-result" style={errText}>Key test failed: {testError(test.error)}</div>
           ))}
         </div>
 
         {err && <div role="alert" style={errText}>{err}</div>}
 
         {/* Features */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <span style={label}>Features</span>
           {!hasKey && surfaces.some(s => s.enabled) && (
             <div style={{ ...hint, color: 'var(--yellow)' }}>Enabled features stay inactive until a key is set.</div>
