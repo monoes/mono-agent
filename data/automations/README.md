@@ -31,18 +31,22 @@ and autocomplete them.
 | id | tier | native bot | actions |
 |---|---|---|---|
 | `gemini` | standard | `gemini` | 4 |
-| `hackernews` | social | `hackernews` | 4 |
+| `hackernews` | social | — (declarative) | 4 |
 | `instagram` | social | `instagram` | 18 |
 | `linkedin` | social | `linkedin` | 12 |
 | `producthunt` | social | `producthunt` | 3 |
 | `tiktok` | social | `tiktok` | 16 |
 | `x` | social | `x` | 7 |
 
-All built-ins set `requires.native`: their actions call a compiled Go bot
-(`internal/bot/<id>`) through `call_bot_method`. Social-tier packages follow
-the usage policy (`docs/USAGE_POLICY.md`): their bots are left out of a
-`-tags nosocial` build, where the package installs as unavailable with that
-reason. Each action's `description` is its authoritative summary;
+All built-ins except `hackernews` set `requires.native`: their actions call
+a compiled Go bot (`internal/bot/<id>`) through `call_bot_method`.
+`hackernews` is fully declarative (no native bot, no scripts) and is the
+reference for new packages: copy its patterns (fragments, `selectors.json`,
+`transform`, fixtures) rather than the bot-backed ones. Social-tier packages
+follow the usage policy (`docs/USAGE_POLICY.md`): in a `-tags nosocial`
+build a bot-backed one installs as unavailable (its bot is left out), and
+any social-tier package is held back by the policy gate with the same
+explanation. Each action's `description` is its authoritative summary;
 `monoagentcli automation show <id>` lists them with their side effects.
 
 ## Manifest essentials
@@ -84,7 +88,8 @@ before it; the install review and the Connections page show the level.
 2. List `<name>` in `automation.json` → `actions` (keep the list sorted).
 3. Add any new step type it uses to `permissions.steps`.
 4. If it uses `call_bot_method`, implement the method in
-   `internal/bot/<id>/`. New packages should use declarative steps only.
+   `internal/bot/<id>/`. New packages should use declarative steps only
+(see `hackernews`).
 5. Bump the manifest `version` so installed copies pick up the change on the
    next seed (a user-modified copy is kept and the update is reported as
    pending).

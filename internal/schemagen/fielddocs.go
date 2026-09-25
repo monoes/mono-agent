@@ -111,7 +111,7 @@ var fieldDocs = map[string]string{
 	"TransformOp.pattern": "regex_extract / replace: Go regular expression.",
 	"TransformOp.layout":  "parse_date: Go time layout, or \"auto\".",
 	"TransformOp.sep":     "join / split: separator.",
-	"TransformOp.where":   "filter: condition evaluated against each item.",
+	"TransformOp.where":   "filter / flag: condition evaluated against each item.",
 	"TransformOp.map":     "map: new field → template over the item.",
 	"TransformOp.fields":  "pick: keys to keep.",
 	"TransformOp.count":   "limit: items to keep.",
