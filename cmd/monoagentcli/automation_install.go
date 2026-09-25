@@ -148,6 +148,9 @@ func printInstallReview(out io.Writer, res *automation.InstallResult) {
 	}
 	if ch := r.Changes; ch != nil {
 		fmt.Fprintln(out, "Changes since the installed version")
+		if len(ch.AddedDomains)+len(ch.AddedSteps)+len(ch.AddedScripts)+len(ch.ChangedScripts) == 0 {
+			fmt.Fprintln(out, "  no new domains, steps or scripts")
+		}
 		printChange(out, "added domains", ch.AddedDomains)
 		printChange(out, "added steps", ch.AddedSteps)
 		printChange(out, "added scripts", ch.AddedScripts)

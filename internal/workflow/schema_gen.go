@@ -206,7 +206,7 @@ func inputField(ai actionInput, required bool) NodeSchemaField {
 }
 
 // acronyms are written in capitals in generated labels ("postUrl" → "Post URL").
-var acronyms = map[string]bool{"url": true, "id": true, "api": true, "dm": true, "dms": true, "html": true, "json": true}
+var acronyms = map[string]bool{"url": true, "id": true, "api": true, "dm": true, "html": true, "json": true}
 
 // humanizeName turns "maxComments" or "max_comments" into "Max Comments".
 func humanizeName(name string) string {
