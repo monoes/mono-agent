@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { loadExtensionScripts } from "./test_helpers.mjs";
 import { h, countingEnv } from "./recorder_fake_dom.mjs";
 
-const { MonoRecorderList: L } = loadExtensionScripts(["recorder_selectors.js", "recorder_list.js"]);
+const { MonoRecorderList: L } = loadExtensionScripts(["recorder_privacy.js", "recorder_selectors.js", "recorder_list.js"]);
 
 /** stories builds a Hacker-News-shaped list of n rows. */
 function stories(n) {

@@ -261,9 +261,25 @@
   }
 
   /** rank scores specs with live counts and sorts best first (stable). */
+  // Counting an aria or text candidate walks every matching element and
+  // reads its text (layout, on a big page). Once a unique candidate this
+  // stable is in hand, those are skipped rather than counted.
+  const GOOD_ENOUGH = 0.8;
+  const EXPENSIVE = new Set(["aria", "text"]);
+
   function rank(specs, env) {
-    const scored = specs.map((spec, i) => {
+    const order = specs
+      .map((spec, i) => ({ spec, i }))
+      .sort((a, b) => (STABILITY[b.spec.source] || 0) - (STABILITY[a.spec.source] || 0) || a.i - b.i);
+    let settled = false;
+    const kept = [];
+    for (const { spec, i } of order) {
+      if (settled && EXPENSIVE.has(spec.kind)) continue;
       const count = countOf(spec, env);
+      if (count === 1 && (STABILITY[spec.source] || 0) >= GOOD_ENOUGH) settled = true;
+      kept.push({ spec, i, count });
+    }
+    const scored = kept.map(({ spec, i, count }) => {
       const c = { kind: spec.kind };
       if (spec.kind === "aria") {
         c.role = spec.role;

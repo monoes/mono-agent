@@ -53,6 +53,13 @@ const FIXTURE = `<!doctype html><html><head><meta charset="utf-8"><title>Recorde
   <button class="dup">Delete</button><button class="dup">Delete</button>
   <ul id="list"><li class="item"><span class="t">One</span></li><li class="item"><span class="t">Two</span></li><li class="item"><span class="t">Three</span></li></ul>
   <div id=":r5:"><a href="#details">Details</a></div>
+  <form id="pay"><textarea name="notes">card 4242 4242 4242 4242 thanks</textarea>
+    <input name="card_cvv" value="123"><button type="button" id="pay-btn">Pay</button></form>
+  <x-card id="host"></x-card>
+  <script>
+    const root = document.getElementById("host").attachShadow({ mode: "open" });
+    root.innerHTML = '<label>Agree <input type="checkbox" id="agree"></label><button id="inner">Inner</button>';
+  </script>
 </body></html>`;
 
 const STUB = `window.__sent = [];
@@ -66,7 +73,7 @@ describe("recorder.js in a browser", { skip, concurrency: 1 }, () => {
     const page = join(fixtures, "fixture.html");
     await writeFile(page, FIXTURE, "utf8");
     const src = await Promise.all(
-      ["recorder_selectors.js", "recorder_list.js", "recorder.js"].map((f) => readFile(join(HERE, f), "utf8"))
+      ["recorder_privacy.js", "recorder_selectors.js", "recorder_list.js", "recorder.js"].map((f) => readFile(join(HERE, f), "utf8"))
     );
     const id = await browser.onNewDocument(`${STUB}\n${src.join("\n")}`);
     await browser.navigate(fileUrl(page));
@@ -144,8 +151,8 @@ describe("recorder.js in a browser", { skip, concurrency: 1 }, () => {
     const fp = msg.event.target;
     assert.equal(msg.event.type, "click");
     assert.deepEqual([fp.candidates[0].kind, fp.candidates[0].value, fp.candidates[0].unique], ["css", '[data-testid="go"]', true]);
-    const aria = fp.candidates.find((c) => c.kind === "aria");
-    assert.deepEqual([aria.role, aria.name, aria.count], ["button", "Sign in", 1]);
+    assert.equal(fp.ariaName, "Sign in");
+    assert.ok(!fp.candidates.some((c) => c.kind === "aria"), "a unique test id makes counting aria unnecessary");
     for (const { c, ok } of JSON.parse(await resolves(fp.candidates, "[data-testid=go]"))) assert.ok(ok, JSON.stringify(c));
     assert.ok(fp.rect.W > 0 && fp.rect.H > 0);
   });
@@ -160,6 +167,36 @@ describe("recorder.js in a browser", { skip, concurrency: 1 }, () => {
     assert.equal(del.candidates[0].unique, true, "a unique selector ranks first");
     for (const { c, ok } of JSON.parse(await resolves(del.candidates, "button.dup:nth-of-type(2)"))) assert.ok(ok, JSON.stringify(c));
     assert.ok(!link.css.includes(":r5:"), "the React-style id is not an anchor for the path");
+  });
+
+  it("keeps card numbers and secret fields out of snippets and picks", async () => {
+    await open();
+    await click("#pay-btn");
+    await click("input[name=card_cvv]", 0, 1 /* Alt: pick as data */);
+    const msgs = await sent();
+    const all = JSON.stringify(msgs);
+    assert.match(msgs[0].snippet, /\[card\]/, "the textarea's card number is scrubbed");
+    assert.ok(!all.includes("4242 4242"), "no card number anywhere");
+    assert.ok(!all.includes('"123"') && !all.includes('value="123"'), "the CVV is neither picked nor in a snippet");
+    assert.equal(msgs[1].event.masked, true);
+  });
+
+  it("records clicks and checkbox changes inside an open shadow root", async () => {
+    await open();
+    const inShadow = (sel) =>
+      browser.evaluate(`(() => { const r = document.getElementById("host").shadowRoot.querySelector(${JSON.stringify(sel)}).getBoundingClientRect();
+        return JSON.stringify({ x: r.x + r.width / 2, y: r.y + r.height / 2 }); })()`).then(JSON.parse);
+    for (const sel of ["#inner", "#agree"]) {
+      const { x, y } = await inShadow(sel);
+      const base = { x, y, button: "left", clickCount: 1 };
+      await browser.session.send("Input.dispatchMouseEvent", { type: "mousePressed", buttons: 1, ...base });
+      await browser.session.send("Input.dispatchMouseEvent", { type: "mouseReleased", buttons: 0, ...base });
+      await sleep(60);
+    }
+    const events = (await sent()).map((m) => m.event);
+    assert.deepEqual(events.map((e) => e.type), ["click", "check"], JSON.stringify(events.map((e) => e.type)));
+    assert.equal(events[0].target.text, "Inner");
+    assert.equal(events[1].checked, true);
   });
 
   it("turns two Alt+clicks into a list whose selectors select the list", async () => {

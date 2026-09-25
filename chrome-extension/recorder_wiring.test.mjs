@@ -77,7 +77,7 @@ test("start injects the recorder files into every frame of the tab", async () =>
   const res = await call({ type: "record_start", goal: "demo" });
   assert.equal(res.ok, true, res.error);
   assert.equal(res.state.tabId, 7, "defaults to the active tab");
-  assert.deepEqual(chrome.scripts[0].files, ["recorder_selectors.js", "recorder_list.js", "recorder.js"]);
+  assert.deepEqual(chrome.scripts[0].files, ["recorder_privacy.js", "recorder_selectors.js", "recorder_list.js", "recorder.js"]);
   assert.deepEqual(chrome.scripts[0].target, { tabId: 7, allFrames: true });
   assert.equal(wire[0].op, "start");
 });

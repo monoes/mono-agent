@@ -30,12 +30,8 @@ test("a test id beats everything, and a stable id comes next", () => {
   assert.equal(fp.role, "button");
   assert.equal(fp.ariaName, "Save");
   assert.equal(fp.text, "Save");
-  assert.deepEqual(kinds(fp).slice(0, 4), [
-    'css:[data-testid="save"]',
-    "css:#save-btn",
-    "aria:button/Save",
-    "text:Save",
-  ]);
+  assert.deepEqual(kinds(fp).slice(0, 2), ['css:[data-testid="save"]', "css:#save-btn"]);
+  assert.ok(!fp.candidates.some((c) => c.kind === "aria" || c.kind === "text"), "not counted once a test id is unique");
   assert.ok(fp.candidates.every((c) => c.unique && c.count === 1));
   assert.equal(fp.candidates.at(-1).kind, "xpath", "the absolute XPath is the last resort");
 });
@@ -107,4 +103,23 @@ test("fingerprint JSON keys are exactly the Go Fingerprint/Candidate tags", asyn
   for (const k of Object.keys(fp)) assert.ok(tags.Fingerprint.has(k), `Fingerprint.${k}`);
   for (const c of fp.candidates) for (const k of Object.keys(c)) assert.ok(tags.Candidate.has(k), `Candidate.${k}`);
   assert.deepEqual(Object.keys(fp.rect).sort(), ["H", "W", "X", "Y"], "Rect has no json tags, so Go field names");
+});
+
+test("aria and text are only counted while nothing stable and unique has been found (M12)", () => {
+  const button = h("button", { class: "btn" }, "Save");
+  h("html", {}, h("body", {}, button));
+  const asked = [];
+  const env = countingEnv();
+  const wrap = (k) => (...a) => (asked.push(k), env[k](...a));
+  const spy = { labelOf: env.labelOf, countCss: wrap("countCss"), countXPath: wrap("countXPath"), countAria: wrap("countAria"), countText: wrap("countText") };
+  const fp = S.fingerprint(button, spy);
+  assert.ok(asked.includes("countAria"), "no test id or id: aria is counted");
+  assert.ok(!asked.includes("countText"), "and a unique aria name settles it before text");
+  assert.equal(fp.candidates[0].kind, "aria");
+
+  const tagged = h("button", { id: "save" }, "Save");
+  h("html", {}, h("body", {}, tagged));
+  asked.length = 0;
+  S.fingerprint(tagged, spy);
+  assert.ok(!asked.includes("countAria") && !asked.includes("countText"), "a unique stable id makes them unnecessary");
 });

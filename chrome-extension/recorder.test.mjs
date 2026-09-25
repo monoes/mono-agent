@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { loadExtensionScripts } from "./test_helpers.mjs";
 import { h, fakeDocument, countingEnv, fakeTimers } from "./recorder_fake_dom.mjs";
 
-const { MonoRecorder: R } = loadExtensionScripts(["recorder_selectors.js", "recorder_list.js", "recorder.js"]);
+const { MonoRecorder: R } = loadExtensionScripts(["recorder_privacy.js", "recorder_selectors.js", "recorder_list.js", "recorder.js"]);
 
 function setup(body, opts = {}) {
   const html = h("html", {}, h("body", {}, ...body));
@@ -201,5 +201,109 @@ test("maskReason and secretName", () => {
   assert.equal(R.maskReason(h("input", {}), "hello"), "");
   assert.equal(R.luhn("4242 4242 4242 4242"), true);
   assert.equal(R.luhn("4242 4242 4242 4241"), false);
-  assert.equal(R.secretName(h("input", { id: ":r1:" }), "password", countingEnv()), "password");
+  assert.equal(R.secretName(h("input", { id: ":r1:" }), "password", ""), "password");
+});
+
+// ── review fixes (H2, H4, M6, M11, LOW) ────────────────────────────────
+
+test("picking a password or card field as data sends no value (H2)", () => {
+  const pw = h("input", { type: "password", name: "pw" });
+  pw.value = "hunter2";
+  const cvv = h("input", { name: "card_cvv" });
+  cvv.value = "123";
+  const { doc, sent, events } = setup([pw, cvv]);
+  doc.dispatch("click", pw, { altKey: true });
+  doc.dispatch("click", cvv, { altKey: true });
+  for (const e of events()) {
+    assert.equal(e.type, "extract");
+    assert.equal(e.masked, true);
+    assert.deepEqual(e.extract.samples, []);
+  }
+  assert.ok(!JSON.stringify(sent).includes("hunter2"));
+  assert.ok(!JSON.stringify(sent).includes('"123"'));
+});
+
+test("stopActive resets pick mode, so the next recording starts with clicks working (H4)", () => {
+  const g = loadExtensionScripts(["recorder_privacy.js", "recorder_selectors.js", "recorder_list.js", "recorder.js"]);
+  g.MonoRecorder.setPick(true);
+  assert.equal(g.__monoRecorderPick, true);
+  g.MonoRecorder.stopActive();
+  assert.equal(g.__monoRecorderPick, false);
+});
+
+test("a stopped recorder is inert even if a listener survived (bfcache)", () => {
+  const b = h("button", {}, "Go");
+  const { doc, rec, events } = setup([b]);
+  const handlers = rec.handlers;
+  rec.stop();
+  handlers.onClick({ type: "click", target: b, isTrusted: true, preventDefault() {} });
+  handlers.onKeyDown({ key: "Enter", target: b });
+  assert.equal(events().length, 0);
+  assert.equal(rec.isStopped(), true);
+  assert.equal(doc.listeners.click.length, 0);
+});
+
+test("targets inside an open shadow root come from composedPath (M6)", () => {
+  const inner = h("button", {}, "Inside");
+  const host = h("my-widget", {});
+  const { doc, events } = setup([host]);
+  doc.dispatch("click", host, { composedPath: () => [inner, host] });
+  assert.equal(events()[0].target.text, "Inside");
+});
+
+test("change events inside a shadow root are heard through the root (M6)", () => {
+  const box = h("input", { type: "checkbox", name: "agree" });
+  const shadowListeners = {};
+  const shadow = {
+    host: h("x-form", {}),
+    addEventListener: (t, fn) => ((shadowListeners[t] = shadowListeners[t] || []).push(fn)),
+    removeEventListener: (t, fn) => (shadowListeners[t] = (shadowListeners[t] || []).filter((f) => f !== fn)),
+  };
+  box.getRootNode = () => shadow;
+  const { doc, rec, events } = setup([shadow.host]);
+  doc.dispatch("focusin", shadow.host, { composedPath: () => [box, shadow.host] });
+  assert.equal(shadowListeners.change.length, 1, "the root is watched once touched");
+  box.checked = true;
+  shadowListeners.change[0]({ type: "change", target: box });
+  assert.deepEqual(events().map((e) => [e.type, e.checked]), [["check", true]]);
+  rec.stop();
+  assert.equal(shadowListeners.change.length, 0, "and released on stop");
+});
+
+test("AltGr, alt-only typing in a field and key repeat are not steps (M11)", () => {
+  const altGr = { key: "@", ctrlKey: true, altKey: true, getModifierState: (m) => m === "AltGraph" };
+  assert.equal(R.keyCombo(altGr, true), "");
+  assert.equal(R.keyCombo({ key: "e", altKey: true }, true), "", "Option+e on a Mac types a character");
+  assert.equal(R.keyCombo({ key: "e", altKey: true }, false), "Alt+e", "outside a field it is a shortcut");
+  const f = h("input", { name: "q" });
+  const { doc, events } = setup([f]);
+  doc.dispatch("keydown", f, { key: "Enter" });
+  doc.dispatch("keydown", f, { key: "Enter", repeat: true });
+  assert.equal(events().length, 1);
+});
+
+test("the mask is latched at the first keystroke: show-password does not unmask (LOW)", () => {
+  const pw = h("input", { type: "password", name: "pw" });
+  const { doc, clock, sent } = setup([pw]);
+  typeInto(doc, pw, "hun");
+  pw.attrs.type = "text"; // the page's "show password" toggle
+  typeInto(doc, pw, "hunter2");
+  clock.advance(R.DEBOUNCE_MS);
+  assert.equal(sent[0].event.masked, true);
+  assert.ok(!JSON.stringify(sent).includes("hunter"));
+});
+
+test("pagehide flushes the value being typed (LOW)", () => {
+  const f = h("input", { name: "q" });
+  const html = h("html", {}, h("body", {}, f));
+  const doc = fakeDocument(html);
+  const winListeners = {};
+  const win = { addEventListener: (t, fn) => (winListeners[t] = fn), removeEventListener() {}, location: { href: "https://a.test/" } };
+  const sent = [];
+  const clock = fakeTimers();
+  const rec = R.createRecorder({ doc, win, send: (m) => sent.push(m), env: countingEnv(), now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer });
+  rec.start();
+  typeInto(doc, f, "leaving");
+  winListeners.pagehide({ type: "pagehide" });
+  assert.equal(sent[0].event.value, "leaving");
 });

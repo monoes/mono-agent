@@ -34,8 +34,20 @@
       .filter((c) => c && !S().looksGeneratedClass(c));
   }
 
-  /** extractValue says what a picked element holds: a link's href, an image's src, else text. */
+  /**
+   * extractValue says what a picked element holds: a link's href, an
+   * image's src, else text. A secret field or a card number holds nothing
+   * the recorder may send, so its value comes back empty.
+   */
   function extractValue(el) {
+    const found = rawValue(el);
+    if (root.MonoRecorderPrivacy && root.MonoRecorderPrivacy.maskReason(el, found.value)) {
+      return { attribute: found.attribute, value: "" };
+    }
+    return found;
+  }
+
+  function rawValue(el) {
     const tag = tagOf(el);
     if (tag === "img") return { attribute: "src", value: el.src || attr(el, "src") || "" };
     if (tag === "a" && !clean(el.textContent)) return { attribute: "href", value: el.href || attr(el, "href") || "" };

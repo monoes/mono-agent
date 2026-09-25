@@ -21,7 +21,7 @@
   "use strict";
 
   const PORT_NAME = "monoagent-record";
-  const RECORDER_FILES = ["recorder_selectors.js", "recorder_list.js", "recorder.js"];
+  const RECORDER_FILES = ["recorder_privacy.js", "recorder_selectors.js", "recorder_list.js", "recorder.js"];
   // Analysis runs a model; verify replays the whole action in a browser.
   // Both report progress when the Go side supports it, which keeps the
   // idle timer from firing while they work.
