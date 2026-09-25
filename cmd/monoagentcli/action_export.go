@@ -77,6 +77,7 @@ automation id). When that automation is not installed it is created.`,
 				return addActions(reg, target, src, o)
 			})
 			if err != nil {
+				printFailedIssues(cmd, cfg, err)
 				return err
 			}
 			return printInstallResult(cmd.OutOrStdout(), cfg, res)
@@ -109,7 +110,7 @@ func addActions(reg *automation.Registry, target string, src *automation.Package
 	for _, name := range src.Manifest.Actions {
 		res, err := reg.AddAction(target, src, name, o)
 		if err != nil {
-			return nil, fmt.Errorf("add %s.%s: %w", target, name, err)
+			return res, fmt.Errorf("add %s.%s: %w", target, name, err)
 		}
 		warnings = append(warnings, res.Warnings...)
 		issues = append(issues, res.Issues...)

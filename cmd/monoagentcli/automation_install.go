@@ -33,7 +33,8 @@ func runInstall(opts automation.InstallOptions, c installConfirmer,
 		opts.Source = automation.SourceImported
 	}
 	if opts.DryRun {
-		return do(opts)
+		res, err := do(opts)
+		return res, withInstallResult(err, res)
 	}
 	if !c.yes {
 		if !c.interactive {
@@ -43,7 +44,7 @@ func runInstall(opts automation.InstallOptions, c installConfirmer,
 		dry.DryRun = true
 		review, err := do(dry)
 		if err != nil {
-			return nil, err
+			return nil, withInstallResult(err, review)
 		}
 		printInstallReview(c.out, review)
 		if issuesHaveErrors(review.Issues) {
@@ -53,7 +54,8 @@ func runInstall(opts automation.InstallOptions, c installConfirmer,
 			return nil, errors.New("install cancelled")
 		}
 	}
-	return do(opts)
+	res, err := do(opts)
+	return res, withInstallResult(err, res)
 }
 
 func newAutomationInstallCmd(cfg *globalConfig) *cobra.Command {
@@ -73,6 +75,7 @@ func newAutomationInstallCmd(cfg *globalConfig) *cobra.Command {
 				return reg.Install(args[0], o)
 			})
 			if err != nil {
+				printFailedIssues(cmd, cfg, err)
 				return err
 			}
 			return printInstallResult(cmd.OutOrStdout(), cfg, res)
@@ -81,6 +84,15 @@ func newAutomationInstallCmd(cfg *globalConfig) *cobra.Command {
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Validate and show the review without installing")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Install without asking")
 	return cmd
+}
+
+// printFailedIssues shows a failed install's validation issues on stderr
+// (the --json error object carries them instead).
+func printFailedIssues(cmd *cobra.Command, cfg *globalConfig, err error) {
+	var re *installResultError
+	if !cfg.JSONOutput && errors.As(err, &re) {
+		printIssues(cmd.ErrOrStderr(), re.res.Issues)
+	}
 }
 
 func printInstallResult(out io.Writer, cfg *globalConfig, res *automation.InstallResult) error {

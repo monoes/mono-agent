@@ -167,7 +167,8 @@ func newActionTemplateInstallCmd(cfg *globalConfig) *cobra.Command {
 			}
 			defer cleanup()
 			res, err := addActions(reg, src.Manifest.ID, src, automation.InstallOptions{Source: automation.SourceLocal})
-			if err != nil {
+			if err = withInstallResult(err, res); err != nil {
+				printFailedIssues(cmd, cfg, err)
 				return err
 			}
 			name := src.Manifest.Actions[0]

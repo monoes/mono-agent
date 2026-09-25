@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -55,11 +56,35 @@ func withJSONErrors(cfg *globalConfig, cmd *cobra.Command) {
 	cmd.RunE = func(c *cobra.Command, args []string) error {
 		err := run(c, args)
 		if err != nil && cfg.JSONOutput {
-			b, _ := json.Marshal(map[string]string{"error": err.Error()})
+			body := map[string]any{"error": err.Error()}
+			var re *installResultError
+			if errors.As(err, &re) {
+				body["issues"], body["result"] = re.res.Issues, re.res
+			}
+			b, _ := json.Marshal(body)
 			fmt.Fprintln(c.OutOrStdout(), string(b))
 		}
 		return err
 	}
+}
+
+// installResultError is an Install/AddAction failure that still carries the
+// result (review + issues). With --json the error object adds "issues" and
+// "result"; without, the issues are printed on stderr.
+type installResultError struct {
+	err error
+	res *automation.InstallResult
+}
+
+func (e *installResultError) Error() string { return e.err.Error() }
+func (e *installResultError) Unwrap() error { return e.err }
+
+// withInstallResult wraps err so the failed result is not lost.
+func withInstallResult(err error, res *automation.InstallResult) error {
+	if err == nil || res == nil {
+		return err
+	}
+	return &installResultError{err: err, res: res}
 }
 
 // builtinAutomations is the embedded seed set rooted at the package dirs.
@@ -75,12 +100,22 @@ func builtinAutomations() fs.FS {
 // built-ins (cheap when nothing changed). Every automation subcommand starts
 // here so the installed set is never older than the binary.
 func openAutomationRegistry() (*automation.Registry, error) {
+	if version != "" { // release build: enforce manifests' "engine" ranges
+		automation.EngineVersion = version
+	}
 	reg, err := automation.Default()
 	if err != nil {
 		return nil, fmt.Errorf("open automation registry: %w", err)
 	}
-	if err := reg.Seed(builtinAutomations()); err != nil {
+	rep, err := reg.SeedWithReport(builtinAutomations())
+	if err != nil {
 		return nil, fmt.Errorf("seed built-in automations: %w", err)
+	}
+	for _, id := range rep.LegacyWrapped {
+		stderrf("note: wrapped legacy actions into automation package %s (~/.monoagent/actions is left as is)\n", id)
+	}
+	for _, s := range rep.Skipped {
+		stderrf("warning: built-in automation skipped: %s\n", s)
 	}
 	return reg, nil
 }

@@ -367,3 +367,34 @@ func TestAutomationParseInputsBothForms(t *testing.T) {
 		t.Errorf("object form: %+v", got[1])
 	}
 }
+
+func TestAutomationInstallInvalidReportsIssues(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, "bad")
+	if err := os.MkdirAll(filepath.Join(dir, "actions"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// An imported package without site.domains is invalid.
+	manifest := `{"schema":"monoagent.automation/v1","id":"bad-pkg","name":"Bad","version":"0.1.0",
+		"site":{"startUrl":"","domains":[]},"permissions":{"steps":["log"],"scripts":[]},
+		"actions":["a"],"policy":{"tier":"standard"}}`
+	action := `{"actionType":"a","automation":"bad-pkg","steps":[{"id":"s","type":"log"}]}`
+	os.WriteFile(filepath.Join(dir, "automation.json"), []byte(manifest), 0o644)
+	os.WriteFile(filepath.Join(dir, "actions", "a.json"), []byte(action), 0o644)
+
+	out, _, err := runAutomationCLI(t, home, "automation", "install", dir, "--yes", "--json")
+	if err == nil {
+		t.Fatal("expected install to fail")
+	}
+	var body struct {
+		Error  string                    `json:"error"`
+		Issues []automation.IssueJSON    `json:"issues"`
+		Result *automation.InstallResult `json:"result"`
+	}
+	if jerr := json.Unmarshal([]byte(out), &body); jerr != nil {
+		t.Fatalf("stdout %q: %v", out, jerr)
+	}
+	if body.Error == "" || len(body.Issues) == 0 || body.Result == nil {
+		t.Fatalf("error body = %+v", body)
+	}
+}
