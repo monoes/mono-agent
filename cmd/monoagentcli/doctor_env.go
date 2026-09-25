@@ -160,9 +160,10 @@ func newHealthEnv(cfg *globalConfig) (*health.Env, func()) {
 	}
 	// Jev: the DB may be unmigrated or absent; a vault miss just means the
 	// key comes from TYPESAFE_API_KEY or nowhere.
+	// KeySource only lists vault entry names: doctor never decrypts (no
+	// keyring/passphrase prompt just to report where the key lives).
 	env.JevKey = func(ctx context.Context) (string, error) {
-		_, source, err := jevconf.ResolveKey(ctx, env.DB, env.ProfileID, "")
-		return source, err
+		return jevconf.KeySource(ctx, env.DB, env.ProfileID)
 	}
 	env.JevModels = func(ctx context.Context) error {
 		key, _, err := jevconf.ResolveKey(ctx, env.DB, env.ProfileID, "")

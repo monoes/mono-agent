@@ -107,6 +107,25 @@ func ResolveKey(ctx context.Context, db *sql.DB, profileID, explicit string) (ke
 	return "", "", jev.ErrNoAPIKey
 }
 
+// KeySource reports where ResolveKey would find the profile's key — vault
+// (an entry named "typesafe" exists) or env — without decrypting anything,
+// so health checks never trigger a keyring or passphrase prompt.
+func KeySource(ctx context.Context, db *sql.DB, profileID string) (string, error) {
+	if db != nil {
+		if entries, err := secrets.List(ctx, db, profileID); err == nil {
+			for _, e := range entries {
+				if e.Name == SecretName {
+					return SourceVault, nil
+				}
+			}
+		}
+	}
+	if strings.TrimSpace(envKey()) != "" {
+		return SourceEnv, nil
+	}
+	return "", jev.ErrNoAPIKey
+}
+
 // NewClient resolves the key for profileID and returns a client whose every
 // call is recorded in jev_usage under surface s (db may be nil: no recording).
 func NewClient(ctx context.Context, db *sql.DB, profileID, explicitKey, model string, s Surface) (*jev.Client, error) {

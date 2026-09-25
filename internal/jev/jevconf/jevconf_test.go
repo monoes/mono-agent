@@ -121,3 +121,15 @@ func TestSuggestionCache(t *testing.T) {
 		t.Fatalf("cache = %v %v %v", got, ok, err)
 	}
 }
+
+func TestKeySourceNeverNeedsTheVaultKey(t *testing.T) {
+	db := newDB(t)
+	t.Setenv("TYPESAFE_API_KEY", "")
+	if _, err := KeySource(context.Background(), db, "p1"); !errors.Is(err, jev.ErrNoAPIKey) {
+		t.Fatalf("err = %v", err)
+	}
+	t.Setenv("TYPESAFE_API_KEY", "env-key")
+	if src, err := KeySource(context.Background(), nil, "p1"); err != nil || src != SourceEnv {
+		t.Fatalf("src = %q %v", src, err)
+	}
+}
