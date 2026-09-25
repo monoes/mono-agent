@@ -62,7 +62,7 @@ func runInstall(opts automation.InstallOptions, c installConfirmer,
 }
 
 func newAutomationInstallCmd(cfg *globalConfig) *cobra.Command {
-	var dryRun, yes bool
+	var dryRun, yes, replaceBuiltin bool
 	var expectSHA string
 	cmd := &cobra.Command{
 		Use:   "install <file.mpkg|dir|url>",
@@ -75,9 +75,13 @@ func newAutomationInstallCmd(cfg *globalConfig) *cobra.Command {
 			}
 			c := installConfirmer{yes: yes, interactive: !cfg.JSONOutput && stdinIsTerminal(),
 				in: cmd.InOrStdin(), out: cmd.ErrOrStderr()}
-			res, err := runInstall(automation.InstallOptions{DryRun: dryRun, ExpectSHA256: strings.ToLower(strings.TrimSpace(expectSHA))}, c, func(o automation.InstallOptions) (*automation.InstallResult, error) {
+			res, err := runInstall(automation.InstallOptions{DryRun: dryRun, ReplaceBuiltin: replaceBuiltin,
+				ExpectSHA256: strings.ToLower(strings.TrimSpace(expectSHA))}, c, func(o automation.InstallOptions) (*automation.InstallResult, error) {
 				return reg.Install(args[0], o)
 			})
+			if errors.Is(err, automation.ErrReplacesBuiltin) {
+				err = withInstallResult(fmt.Errorf("%w; pass --replace-builtin to replace it", err), res)
+			}
 			if err != nil {
 				printFailedIssues(cmd, cfg, err)
 				return err
@@ -87,6 +91,7 @@ func newAutomationInstallCmd(cfg *globalConfig) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Validate and show the review without installing")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Install without asking")
+	cmd.Flags().BoolVar(&replaceBuiltin, "replace-builtin", false, "Allow this package to replace an installed built-in or local package with the same id")
 	cmd.Flags().StringVar(&expectSHA, "expect-sha256", "", "Refuse unless the package bytes have this sha256 (e.g. from a --dry-run review)")
 	return cmd
 }
@@ -135,9 +140,12 @@ func printInstallReview(out io.Writer, res *automation.InstallResult) {
 	if res.SHA256 != "" {
 		fmt.Fprintf(out, "SHA256    %s\n", res.SHA256)
 	}
-	if res.PreviousVersion != "" {
+	if rp := r.Replaces; rp != nil {
+		fmt.Fprintf(out, "Replaces  %s %s (%s, trust %s)\n", rp.ID, rp.Version, rp.Source, rp.Trust)
+	} else if res.PreviousVersion != "" {
 		fmt.Fprintf(out, "Replaces  %s\n", res.PreviousVersion)
 	}
+	fmt.Fprintf(out, "Source    %s (trust %s)\n", orDash(r.Source), orDash(r.Trust))
 	fmt.Fprintf(out, "Publisher %s\n", orDash(r.Publisher))
 	fmt.Fprintf(out, "Domains   %s\n", orDash(strings.Join(r.Domains, ", ")))
 	steps := strings.Join(r.Steps, ", ")
@@ -151,7 +159,26 @@ func printInstallReview(out io.Writer, res *automation.InstallResult) {
 	}
 	fmt.Fprintf(out, "Scripts   %s\n", scripts)
 	fmt.Fprintf(out, "Downloads %v\n", r.Downloads)
-	fmt.Fprintf(out, "Tier      %s\n", orDash(r.Tier))
+	tier := orDash(r.Tier)
+	if r.ComputedTier != "" && r.ComputedTier != r.Tier {
+		tier += " (treated as " + r.ComputedTier + ")"
+	}
+	fmt.Fprintf(out, "Tier      %s\n", tier)
+	if r.Native != "" {
+		fmt.Fprintf(out, "Native    %s (compiled-in bot)\n", r.Native)
+	}
+	if r.LoginURL != "" {
+		fmt.Fprintf(out, "Login     %s\n", r.LoginURL)
+	}
+	if len(r.CallActions) > 0 {
+		fmt.Fprintf(out, "Calls     %s\n", strings.Join(r.CallActions, ", "))
+	}
+	if len(r.Capabilities) > 0 {
+		fmt.Fprintln(out, "This package")
+		for _, c := range r.Capabilities {
+			fmt.Fprintf(out, "  - %s\n", c)
+		}
+	}
 	if len(r.ActionEffects) > 0 {
 		names := make([]string, 0, len(r.ActionEffects))
 		for n := range r.ActionEffects {
@@ -183,10 +210,33 @@ func printInstallReview(out io.Writer, res *automation.InstallResult) {
 		}
 		fmt.Fprintf(out, "Files     %d (%d bytes)\n", len(r.Files), total)
 	}
+	printScriptSources(out, r.ScriptSources)
 	for _, w := range res.Warnings {
 		fmt.Fprintf(out, "warning: %s\n", w)
 	}
 	printIssues(out, res.Issues)
+}
+
+// printScriptSources prints every script in full: a script runs inside the
+// logged-in page, so the user reviews its code, not just its name.
+func printScriptSources(out io.Writer, sources map[string]string) {
+	if len(sources) == 0 {
+		return
+	}
+	names := make([]string, 0, len(sources))
+	for n := range sources {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	fmt.Fprintln(out, "\n!!! WARNING: this package runs scripts inside the site's pages.")
+	fmt.Fprintln(out, "!!! They can read what the page shows and send it anywhere. Review them:")
+	for _, n := range names {
+		fmt.Fprintf(out, "\n----- scripts/%s -----\n%s", n, sources[n])
+		if !strings.HasSuffix(sources[n], "\n") {
+			fmt.Fprintln(out)
+		}
+		fmt.Fprintf(out, "----- end of scripts/%s -----\n", n)
+	}
 }
 
 func printChange(out io.Writer, label string, items []string) {

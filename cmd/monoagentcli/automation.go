@@ -37,6 +37,7 @@ seeded into ~/.monoagent/automations; everything else is installed from a
 		newAutomationInstallCmd(cfg),
 		newAutomationExportCmd(cfg),
 		newAutomationDoctorCmd(cfg), // automation_doctor.go (health builder)
+		newAutomationTrustCmd(cfg),
 	)
 	cmd.AddCommand(newAutomationLifecycleCmds(cfg)...)
 	for _, sub := range cmd.Commands() {
