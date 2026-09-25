@@ -1,0 +1,38 @@
+{
+  "$schema": "../../schemas/automation.v1.schema.json",
+  "schema": "monoagent.automation/v1",
+  "id": "x",
+  "name": "X",
+  "version": "1.0.0",
+  "description": "X browser automation (built-in)",
+  "publisher": {
+    "name": "Mono Agent"
+  },
+  "license": "MIT",
+  "engine": ">=0.0.0",
+  "category": "social",
+  "site": {
+    "startUrl": "",
+    "domains": []
+  },
+  "permissions": {
+    "steps": [],
+    "scripts": [],
+    "downloads": false
+  },
+  "requires": {
+    "native": "x"
+  },
+  "actions": [
+    "auto_reply_dms",
+    "engage_with_posts",
+    "export_followers",
+    "find_by_keyword",
+    "publish_post",
+    "scrape_profile_info",
+    "send_dms"
+  ],
+  "policy": {
+    "tier": "social"
+  }
+}

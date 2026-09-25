@@ -1,0 +1,35 @@
+{
+  "$schema": "../../schemas/automation.v1.schema.json",
+  "schema": "monoagent.automation/v1",
+  "id": "hackernews",
+  "name": "Hacker News",
+  "version": "1.0.0",
+  "description": "Hacker News browser automation (built-in)",
+  "publisher": {
+    "name": "Mono Agent"
+  },
+  "license": "MIT",
+  "engine": ">=0.0.0",
+  "category": "social",
+  "site": {
+    "startUrl": "",
+    "domains": []
+  },
+  "permissions": {
+    "steps": [],
+    "scripts": [],
+    "downloads": false
+  },
+  "requires": {
+    "native": "hackernews"
+  },
+  "actions": [
+    "get_post_metrics",
+    "list_comments",
+    "reply_to_comment",
+    "submit_post"
+  ],
+  "policy": {
+    "tier": "social"
+  }
+}

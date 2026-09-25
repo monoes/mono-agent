@@ -34,6 +34,20 @@ type ActionDef struct {
 	Steps       []StepDef              `json:"steps"`
 	Loops       []LoopDef              `json:"loops,omitempty"`
 	ErrorConfig *GlobalErrorConfig     `json:"errorHandling,omitempty"`
+
+	// --- package-era fields (spec §4.3) ---
+
+	// Schema is the editor "$schema" pointer; ignored at run time.
+	Schema string `json:"$schema,omitempty"`
+	// Automation is the owning package id; Platform is the legacy alias.
+	Automation string `json:"automation,omitempty"`
+	// SideEffects is the action's strongest effect:
+	// none | read | write | message | destructive.
+	SideEffects string `json:"sideEffects,omitempty"`
+	// OutputSchema is a JSON Schema describing one output item.
+	OutputSchema json.RawMessage `json:"outputSchema,omitempty"`
+	// Provenance records how the action was made (e.g. a recording id).
+	Provenance map[string]interface{} `json:"provenance,omitempty"`
 }
 
 // InputDef lists the required and optional input variables for an action.
@@ -53,7 +67,7 @@ type GlobalErrorConfig struct {
 }
 
 // ActionLoader loads and caches action definitions from the embedded JSON files
-// in data.ActionsFS. It is safe for concurrent use.
+// in data.AutomationsFS. It is safe for concurrent use.
 type ActionLoader struct {
 	cache sync.Map
 }
@@ -81,8 +95,8 @@ func (l *ActionLoader) Load(platform, actionType string) (*ActionDef, error) {
 		return cached.(*ActionDef), nil
 	}
 
-	path := fmt.Sprintf("actions/%s/%s.json", normalPlatform, normalType)
-	fileData, err := data.ActionsFS.ReadFile(path)
+	path := fmt.Sprintf("automations/%s/actions/%s.json", normalPlatform, normalType)
+	fileData, err := data.AutomationsFS.ReadFile(path)
 	if err != nil {
 		// Fall back to user-installed templates in ~/.monoagent/actions/
 		userDir := userActionsDir()
@@ -110,7 +124,7 @@ func (l *ActionLoader) ListAvailable() ([]string, error) {
 	var result []string
 
 	// Dynamically discover all platform directories under actions/
-	platformDirs, err := data.ActionsFS.ReadDir("actions")
+	platformDirs, err := data.AutomationsFS.ReadDir("automations")
 	if err != nil {
 		return nil, fmt.Errorf("list platforms: %w", err)
 	}
@@ -120,7 +134,7 @@ func (l *ActionLoader) ListAvailable() ([]string, error) {
 			continue
 		}
 		p := pd.Name()
-		entries, err := data.ActionsFS.ReadDir(fmt.Sprintf("actions/%s", p))
+		entries, err := data.AutomationsFS.ReadDir(fmt.Sprintf("automations/%s/actions", p))
 		if err != nil {
 			continue
 		}
@@ -177,4 +191,26 @@ func (l *ActionLoader) InvalidateAll() {
 		l.cache.Delete(key)
 		return true
 	})
+}
+
+var (
+	defSourceMu sync.RWMutex
+	defSource   DefSource
+)
+
+// SetDefSource installs the definition source used by every loader (the
+// automation registry calls this at startup). nil restores the legacy
+// embedded-seed + ~/.monoagent/actions behaviour. Clears the cache.
+func SetDefSource(src DefSource) {
+	defSourceMu.Lock()
+	defSource = src
+	defSourceMu.Unlock()
+	GetLoader().InvalidateAll()
+}
+
+// CurrentDefSource returns the installed DefSource, or nil.
+func CurrentDefSource() DefSource {
+	defSourceMu.RLock()
+	defer defSourceMu.RUnlock()
+	return defSource
 }

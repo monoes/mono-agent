@@ -1,0 +1,49 @@
+{
+  "$schema": "../../schemas/automation.v1.schema.json",
+  "schema": "monoagent.automation/v1",
+  "id": "instagram",
+  "name": "Instagram",
+  "version": "1.0.0",
+  "description": "Instagram browser automation (built-in)",
+  "publisher": {
+    "name": "Mono Agent"
+  },
+  "license": "MIT",
+  "engine": ">=0.0.0",
+  "category": "social",
+  "site": {
+    "startUrl": "",
+    "domains": []
+  },
+  "permissions": {
+    "steps": [],
+    "scripts": [],
+    "downloads": false
+  },
+  "requires": {
+    "native": "instagram"
+  },
+  "actions": [
+    "auto_reply_dms",
+    "comment_on_posts",
+    "engage_user_posts",
+    "engage_with_posts",
+    "export_followers",
+    "extract_post_data",
+    "find_by_keyword",
+    "follow_users",
+    "like_comments_on_posts",
+    "like_posts",
+    "list_post_comments",
+    "list_user_posts",
+    "publish_post",
+    "reply_to_comments",
+    "scrape_profile_info",
+    "send_dms",
+    "unfollow_users",
+    "watch_stories"
+  ],
+  "policy": {
+    "tier": "social"
+  }
+}

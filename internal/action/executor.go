@@ -60,6 +60,39 @@ type StepDef struct {
 	// (jevfallback.go) when the step's selector/xpath finds nothing; a step
 	// without an intent never falls back.
 	Intent string `json:"intent,omitempty"`
+
+	// --- package-era fields (spec §4.3, §6.1) ---
+
+	// SideEffect marks a step that writes, sends or deletes on the site.
+	// Safe-mode verification (SetSafeMode) stops before the first one.
+	SideEffect bool `json:"sideEffect,omitempty"`
+	// Until is a post-step outcome to wait for (click/type/submit), and
+	// the condition of a wait_for step.
+	Until *WaitSpec `json:"until,omitempty"`
+	// Fragment names fragments/<name>.json for call_fragment.
+	Fragment string `json:"fragment,omitempty"`
+	// Action is the call_action reference ("<action>" or "<automation>.<action>").
+	Action string `json:"action,omitempty"`
+	// Inputs are the variables passed to call_fragment / call_action /
+	// page_script (values are templates).
+	Inputs map[string]interface{} `json:"inputs,omitempty"`
+	// Items is the for_each list template; As names the item variable
+	// (default "item"); Steps is the inline loop body.
+	Items string    `json:"items,omitempty"`
+	As    string    `json:"as,omitempty"`
+	Steps []StepDef `json:"steps,omitempty"`
+	// Key is the key for press_key ("Enter", "Escape", "Control+a", ...).
+	Key string `json:"key,omitempty"`
+	// Script names scripts/<name>.js for page_script.
+	Script string `json:"script,omitempty"`
+	// Input is the source template for transform; Ops its operations.
+	Input string        `json:"input,omitempty"`
+	Ops   []TransformOp `json:"ops,omitempty"`
+	// Fields maps output field → sub-selector for extract_table /
+	// extract_list-style steps (relative to each row/item).
+	Fields map[string]string `json:"fields,omitempty"`
+	// Path is a JSON path ("a.b[0].c") for extract_json.
+	Path string `json:"path,omitempty"`
 }
 
 // LoopDef defines an iteration over a collection of items, executing a subset
@@ -389,6 +422,13 @@ type ActionExecutor struct {
 	jevClient *jev.Client
 	jevMinP   float64
 	jevMarker string // marker set by the current step's pick, if any
+
+	// Package-era state (package_ctx.go). pkg is nil for legacy actions.
+	pkg      PackageContext
+	selObs   SelectorObserver
+	safeMode bool
+	// safeStop is set when safe mode stopped before a side-effect step.
+	safeStop *SafeStop
 }
 
 // NewActionExecutor creates a fully initialised executor. The page must already
@@ -459,6 +499,7 @@ func (ae *ActionExecutor) initHandlers() {
 	ae.handlers["log"] = ae.stepLog
 	ae.handlers["call_bot_method"] = ae.stepCallBotMethod
 	ae.handlers["set_variable"] = ae.stepSetVariable
+	ae.initExtendedHandlers()
 }
 
 // Execute runs the complete action. It follows four phases:

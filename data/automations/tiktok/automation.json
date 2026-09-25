@@ -1,0 +1,47 @@
+{
+  "$schema": "../../schemas/automation.v1.schema.json",
+  "schema": "monoagent.automation/v1",
+  "id": "tiktok",
+  "name": "TikTok",
+  "version": "1.0.0",
+  "description": "TikTok browser automation (built-in)",
+  "publisher": {
+    "name": "Mono Agent"
+  },
+  "license": "MIT",
+  "engine": ">=0.0.0",
+  "category": "social",
+  "site": {
+    "startUrl": "",
+    "domains": []
+  },
+  "permissions": {
+    "steps": [],
+    "scripts": [],
+    "downloads": false
+  },
+  "requires": {
+    "native": "tiktok"
+  },
+  "actions": [
+    "auto_reply_dms",
+    "comment_on_video",
+    "duet_video",
+    "engage_with_posts",
+    "export_followers",
+    "find_by_keyword",
+    "follow_user",
+    "like_comment",
+    "like_video",
+    "list_user_videos",
+    "list_video_comments",
+    "publish_post",
+    "scrape_profile_info",
+    "send_dms",
+    "share_video",
+    "stitch_video"
+  ],
+  "policy": {
+    "tier": "social"
+  }
+}

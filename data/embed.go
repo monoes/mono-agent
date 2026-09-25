@@ -7,11 +7,17 @@ import "embed"
 //go:embed migrations/*.sql
 var MigrationsFS embed.FS
 
-// ActionsFS contains all action definition JSON files embedded at compile time.
-// The files are organized by platform: actions/<platform>/<ACTION_TYPE>.json
+// AutomationsFS contains the built-in browser automation packages, embedded
+// at compile time as the seed set. Layout (one package per directory):
 //
-//go:embed actions
-var ActionsFS embed.FS
+//	automations/<id>/automation.json        manifest
+//	automations/<id>/actions/<action>.json  action definitions
+//	automations/<id>/{fragments,scripts,forms,tests}/…  optional
+//
+// See docs/mastermind/specs/2026-09-25-browser-automation-packages-design.md.
+//
+//go:embed automations
+var AutomationsFS embed.FS
 
 // SkillsFS contains Claude Code skill markdown files embedded at compile time.
 // These are installed to ~/.claude/skills/ by `monoagent init --claude`.
