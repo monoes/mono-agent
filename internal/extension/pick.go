@@ -97,7 +97,12 @@ func pickError(resp *Response, err error) error {
 	case reason == "timeout" || strings.HasSuffix(msg, "extension error: timeout") ||
 		strings.Contains(msg, "command "+CmdPickElement+" timed out"):
 		return ErrPickTimeout
+	case errors.Is(err, context.DeadlineExceeded):
+		return ErrPickTimeout
 	case strings.Contains(msg, "no extension connected") || strings.HasPrefix(msg, "relay request:"):
+		// "relay request:" is the bridge process itself being unreachable
+		// (connection refused, reset); a relay that is merely slow comes
+		// back as a timeout above, never here.
 		return ErrBridgeNotConnected
 	}
 	return fmt.Errorf("pick element: %w", err)

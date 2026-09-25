@@ -2,6 +2,7 @@ package extension
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -19,7 +20,25 @@ import (
 type RemoteSender struct {
 	baseURL string
 	token   string
-	client  *http.Client
+	// client has no Timeout of its own: every relayed command has its own
+	// deadline (the command's timeout plus relaySlack, see SendCommand). A
+	// fixed client cap silently cut every command longer than it — a
+	// three-minute pick_element died at 90s, reported as a dead bridge.
+	client *http.Client
+	// slack overrides relaySlack (tests).
+	slack time.Duration
+}
+
+// relaySlack is how much longer than the command's own timeout the relay
+// request may take: the relaying process waits the full timeout for the
+// extension and still has to write the reply back.
+const relaySlack = 10 * time.Second
+
+func (r *RemoteSender) requestSlack() time.Duration {
+	if r.slack > 0 {
+		return r.slack
+	}
+	return relaySlack
 }
 
 // NewRemoteSender creates a sender that relays through the server at baseURL
@@ -30,7 +49,7 @@ type RemoteSender struct {
 // than proceeding unauthenticated.
 func NewRemoteSender(baseURL string) *RemoteSender {
 	token, _ := loadToken()
-	return &RemoteSender{baseURL: baseURL, token: token, client: &http.Client{Timeout: 90 * time.Second}}
+	return &RemoteSender{baseURL: baseURL, token: token, client: &http.Client{}}
 }
 
 // Probe reports whether a Server is actually listening and reachable at
@@ -49,8 +68,13 @@ func (r *RemoteSender) SendCommand(cmd *Command, timeout time.Duration) (*Respon
 	if err != nil {
 		return nil, fmt.Errorf("marshal command: %w", err)
 	}
+	if timeout <= 0 {
+		timeout = defaultTimeout // what handleRelay applies to a missing timeout
+	}
 	url := fmt.Sprintf("%s/monoagent/relay?timeout_ms=%d", r.baseURL, timeout.Milliseconds())
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	ctx, cancel := context.WithTimeout(context.Background(), timeout+r.requestSlack())
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -58,6 +82,11 @@ func (r *RemoteSender) SendCommand(cmd *Command, timeout time.Duration) (*Respon
 	req.Header.Set(tokenHeader, r.token)
 	httpResp, err := r.client.Do(req)
 	if err != nil {
+		if ctx.Err() != nil {
+			// Same wording as Server.SendCommand's own timeout, so callers
+			// classify both the same way.
+			return nil, fmt.Errorf("command %s timed out after %s (relayed)", cmd.Type, timeout)
+		}
 		return nil, fmt.Errorf("relay request: %w", err)
 	}
 	defer httpResp.Body.Close()
