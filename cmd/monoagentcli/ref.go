@@ -1247,7 +1247,7 @@ Always prefer the browser crawl method. It requires only a Google login, no bill
 	{
 		Type:     "x.engage_with_posts",
 		Category: "x",
-		Short:    "Like + repost X posts",
+		Short:    "Like and optionally reply to X posts",
 		Config:   `{ "credential_id": "x-onetap", "selectedListItems": "{{ json $json.posts }}" }`,
 		Inputs:   "item with posts array",
 		Outputs:  "engaged_count",
