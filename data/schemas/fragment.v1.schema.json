@@ -1,0 +1,651 @@
+{
+  "$defs": {
+    "ConditionDef": {
+      "description": "ConditionDef describes a conditional expression for condition steps.",
+      "properties": {
+        "operator": {
+          "description": "\"exists\", \"not_exists\", \"equals\", \"not_equals\", \"greater_than\", \"contains\"",
+          "enum": [
+            "exists",
+            "not_exists",
+            "equals",
+            "not_equals",
+            "greater_than",
+            "contains"
+          ],
+          "type": "string"
+        },
+        "value": {
+          "description": "Value to compare with."
+        },
+        "variable": {
+          "description": "Variable to test.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "operator",
+        "variable"
+      ],
+      "type": "object"
+    },
+    "ErrorHandlerDef": {
+      "description": "ErrorHandlerDef describes the error handling policy for a single step.",
+      "properties": {
+        "action": {
+          "description": "What to do when the step fails.",
+          "enum": [
+            "retry",
+            "try_alternative",
+            "mark_failed",
+            "skip",
+            "continue",
+            "abort"
+          ],
+          "type": "string"
+        },
+        "maxRetries": {
+          "description": "retry: attempts before onFailure applies.",
+          "type": "integer"
+        },
+        "onFailure": {
+          "description": "Action after the retries are used up.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    "FragmentDef": {
+      "description": "FragmentDef is a reusable step sequence (fragments/\u003cname\u003e.json). It is included by a call_fragment step and is never a node on its own.",
+      "properties": {
+        "description": {
+          "description": "What the fragment does.",
+          "type": "string"
+        },
+        "inputs": {
+          "$ref": "#/$defs/InputDef",
+          "description": "Variables the caller passes with call_fragment inputs."
+        },
+        "name": {
+          "description": "Fragment name; must equal the file name without .json.",
+          "type": "string"
+        },
+        "steps": {
+          "description": "Steps, run in order in the caller's context.",
+          "items": {
+            "$ref": "#/$defs/StepDef"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "steps"
+      ],
+      "type": "object"
+    },
+    "InputDef": {
+      "description": "InputDef lists the required and optional input variables for an action. Both fields accept either an array of strings (legacy) or an array of objects with {name, type, description, ...} (current format).",
+      "properties": {
+        "optional": {
+          "description": "Inputs with defaults.",
+          "items": {
+            "oneOf": [
+              {
+                "description": "Input name (legacy form).",
+                "type": "string"
+              },
+              {
+                "properties": {
+                  "default": {
+                    "description": "Value used when the input is not given."
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "enum": {
+                    "description": "Allowed values (alias of options).",
+                    "type": "array"
+                  },
+                  "format": {
+                    "description": "Value format hint, e.g. email, uri.",
+                    "type": "string"
+                  },
+                  "max": {
+                    "type": "number"
+                  },
+                  "min": {
+                    "type": "number"
+                  },
+                  "name": {
+                    "description": "Variable name, used as {{name}} in step templates.",
+                    "type": "string"
+                  },
+                  "options": {
+                    "description": "Allowed values for a select input.",
+                    "type": "array"
+                  },
+                  "type": {
+                    "description": "Value type.",
+                    "enum": [
+                      "string",
+                      "number",
+                      "boolean",
+                      "list",
+                      "array",
+                      "object",
+                      "select",
+                      "secret",
+                      "file"
+                    ],
+                    "type": "string"
+                  },
+                  "ui": {
+                    "description": "Form hints; forms are generated from inputs.",
+                    "properties": {
+                      "help": {
+                        "type": "string"
+                      },
+                      "label": {
+                        "type": "string"
+                      },
+                      "placeholder": {
+                        "type": "string"
+                      },
+                      "rows": {
+                        "type": "integer"
+                      }
+                    },
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "type": "array"
+        },
+        "required": {
+          "description": "Inputs the caller must provide.",
+          "items": {
+            "oneOf": [
+              {
+                "description": "Input name (legacy form).",
+                "type": "string"
+              },
+              {
+                "properties": {
+                  "default": {
+                    "description": "Value used when the input is not given."
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "enum": {
+                    "description": "Allowed values (alias of options).",
+                    "type": "array"
+                  },
+                  "format": {
+                    "description": "Value format hint, e.g. email, uri.",
+                    "type": "string"
+                  },
+                  "max": {
+                    "type": "number"
+                  },
+                  "min": {
+                    "type": "number"
+                  },
+                  "name": {
+                    "description": "Variable name, used as {{name}} in step templates.",
+                    "type": "string"
+                  },
+                  "options": {
+                    "description": "Allowed values for a select input.",
+                    "type": "array"
+                  },
+                  "type": {
+                    "description": "Value type.",
+                    "enum": [
+                      "string",
+                      "number",
+                      "boolean",
+                      "list",
+                      "array",
+                      "object",
+                      "select",
+                      "secret",
+                      "file"
+                    ],
+                    "type": "string"
+                  },
+                  "ui": {
+                    "description": "Form hints; forms are generated from inputs.",
+                    "properties": {
+                      "help": {
+                        "type": "string"
+                      },
+                      "label": {
+                        "type": "string"
+                      },
+                      "placeholder": {
+                        "type": "string"
+                      },
+                      "rows": {
+                        "type": "integer"
+                      }
+                    },
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "StepDef": {
+      "description": "StepDef represents a single step in an action definition.",
+      "properties": {
+        "action": {
+          "description": "Action is the call_action reference (\"\u003caction\u003e\" or \"\u003cautomation\u003e.\u003caction\u003e\").",
+          "type": "string"
+        },
+        "alternatives": {
+          "description": "Fallback CSS selectors tried in order.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "args": {
+          "description": "call_bot_method: arguments (templates).",
+          "items": {},
+          "type": "array"
+        },
+        "as": {
+          "description": "for_each: name of the item variable (default \"item\").",
+          "type": "string"
+        },
+        "attribute": {
+          "description": "extract_attribute: attribute name.",
+          "type": "string"
+        },
+        "batchSize": {
+          "description": "save_data: items per batch.",
+          "type": "integer"
+        },
+        "condition": {
+          "description": "condition: a ConditionDef object or an expression string."
+        },
+        "configKey": {
+          "description": "Name of a selectors.json entry (tried after xpath and selector).",
+          "type": "string"
+        },
+        "dataSource": {
+          "description": "save_data / update_progress: variable holding the data.",
+          "type": "string"
+        },
+        "description": {
+          "description": "Human note; shown in logs.",
+          "type": "string"
+        },
+        "direction": {
+          "description": "scroll: up or down.",
+          "type": "string"
+        },
+        "duration": {
+          "description": "wait: seconds (number or template)."
+        },
+        "elementRef": {
+          "description": "Variable holding an element found by an earlier step (a find_element step id or variable_name).",
+          "type": "string"
+        },
+        "else": {
+          "description": "condition: step ids to run when false.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "fields": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Fields maps output field → sub-selector for extract_table / extract_list-style steps (relative to each row/item).",
+          "type": "object"
+        },
+        "fragment": {
+          "description": "Fragment names fragments/\u003cname\u003e.json for call_fragment.",
+          "type": "string"
+        },
+        "humanLike": {
+          "description": "Type and move like a person (jittered delays).",
+          "type": "boolean"
+        },
+        "id": {
+          "description": "Step id, unique within the action.",
+          "type": "string"
+        },
+        "increment": {
+          "description": "update_progress: counter variable to increment.",
+          "type": "string"
+        },
+        "input": {
+          "description": "Input is the source template for transform; Ops its operations.",
+          "type": "string"
+        },
+        "inputs": {
+          "additionalProperties": {},
+          "description": "Inputs are the variables passed to call_fragment / call_action / page_script (values are templates).",
+          "type": "object"
+        },
+        "intent": {
+          "description": "Intent describes the step's target element in plain words (e.g. \"the chat's Send button\"). It is only used by the opt-in Jev fallback (jevfallback.go) when the step's selector/xpath finds nothing; a step without an intent never falls back.",
+          "type": "string"
+        },
+        "items": {
+          "description": "Items is the for_each list template; As names the item variable (default \"item\"); Steps is the inline loop body.",
+          "type": "string"
+        },
+        "key": {
+          "description": "Key is the key for press_key (\"Enter\", \"Escape\", \"Control+a\", ...).",
+          "type": "string"
+        },
+        "method": {
+          "description": "call_bot_method: alias of methodName.",
+          "type": "string"
+        },
+        "methodName": {
+          "description": "call_bot_method: native bot method name.",
+          "type": "string"
+        },
+        "onError": {
+          "$ref": "#/$defs/ErrorHandlerDef",
+          "description": "What to do when the step fails."
+        },
+        "onSuccess": {
+          "$ref": "#/$defs/SuccessAction",
+          "description": "What to do when the step succeeds."
+        },
+        "ops": {
+          "description": "transform: operations, applied in order.",
+          "items": {
+            "$ref": "#/$defs/TransformOp"
+          },
+          "type": "array"
+        },
+        "path": {
+          "description": "Path is a JSON path (\"a.b[0].c\") for extract_json.",
+          "type": "string"
+        },
+        "raceSelectors": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "find_element: label → selector; the first present wins and its label is stored.",
+          "type": "object"
+        },
+        "script": {
+          "description": "Script names scripts/\u003cname\u003e.js for page_script.",
+          "type": "string"
+        },
+        "selector": {
+          "description": "CSS selector of the target element.",
+          "type": "string"
+        },
+        "set": {
+          "additionalProperties": {},
+          "description": "set_variable: variable → value (templates).",
+          "type": "object"
+        },
+        "sideEffect": {
+          "description": "SideEffect marks a step that writes, sends or deletes on the site. Safe-mode verification (SetSafeMode) stops before the first one.",
+          "type": "boolean"
+        },
+        "steps": {
+          "description": "for_each: the loop body.",
+          "items": {
+            "$ref": "#/$defs/StepDef"
+          },
+          "type": "array"
+        },
+        "text": {
+          "description": "Text to type (template), or text to match.",
+          "type": "string"
+        },
+        "then": {
+          "description": "condition: step ids to run when true.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "timeout": {
+          "description": "Seconds before the step fails.",
+          "type": "number"
+        },
+        "type": {
+          "description": "Step type.",
+          "enum": [
+            "navigate",
+            "wait",
+            "refresh",
+            "find_element",
+            "click",
+            "type",
+            "upload",
+            "scroll",
+            "hover",
+            "extract_text",
+            "extract_attribute",
+            "extract_multiple",
+            "condition",
+            "update_progress",
+            "save_data",
+            "mark_failed",
+            "log",
+            "call_bot_method",
+            "set_variable",
+            "call_fragment",
+            "call_action",
+            "for_each",
+            "wait_for",
+            "assert",
+            "select_option",
+            "press_key",
+            "extract_table",
+            "extract_json",
+            "transform",
+            "page_script",
+            "http_fetch_in_page",
+            "download"
+          ],
+          "type": "string"
+        },
+        "until": {
+          "$ref": "#/$defs/WaitSpec",
+          "description": "Until is a post-step outcome to wait for (click/type/submit), and the condition of a wait_for step."
+        },
+        "url": {
+          "description": "navigate: target URL (template). Must be inside site.domains.",
+          "type": "string"
+        },
+        "value": {
+          "description": "Value to type or set (template)."
+        },
+        "variable": {
+          "description": "Variable the step reads or writes.",
+          "type": "string"
+        },
+        "variable_name": {
+          "description": "Variable the step's result is stored in.",
+          "type": "string"
+        },
+        "waitAfter": {
+          "description": "Seconds to wait after the step.",
+          "type": "string"
+        },
+        "waitFor": {
+          "description": "CSS selector to wait for before the step runs.",
+          "type": "string"
+        },
+        "xpath": {
+          "description": "XPath of the target element (tried before selector).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "type": "object"
+    },
+    "SuccessAction": {
+      "description": "SuccessAction defines what happens when a step succeeds.",
+      "properties": {
+        "action": {
+          "description": "\"set_variable\", \"increment\", \"save_data\", \"update_progress\"",
+          "enum": [
+            "set_variable",
+            "increment",
+            "save_data",
+            "update_progress"
+          ],
+          "type": "string"
+        },
+        "increment": {
+          "description": "Counter variable to increment.",
+          "type": "string"
+        },
+        "value": {
+          "description": "Value to set."
+        },
+        "variable": {
+          "description": "Variable to set.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    "TransformOp": {
+      "description": "TransformOp is one operation of a transform step, applied in order to the list (or single object) the step's Input resolves to. map Map: {newField: \"{{template over the item}}\"} filter Where: condition evaluated against each item dedupe Field: key field (whole item when empty) regex_extract Field, Pattern (first capture group, else whole match), To parse_date Field, Layout (Go layout, or \"auto\"), To (RFC3339 output) parse_number Field, To (\"1.2k\" → 1200, \"3,400\" → 3400) join Field (list field), Sep, To split Field, Sep, To pick Fields: keep only these keys limit Count",
+      "properties": {
+        "count": {
+          "description": "limit: items to keep.",
+          "type": "integer"
+        },
+        "field": {
+          "description": "Field the operation reads.",
+          "type": "string"
+        },
+        "fields": {
+          "description": "pick: keys to keep.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "layout": {
+          "description": "parse_date: Go time layout, or \"auto\".",
+          "type": "string"
+        },
+        "map": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "map: new field → template over the item.",
+          "type": "object"
+        },
+        "op": {
+          "description": "Operation.",
+          "enum": [
+            "map",
+            "filter",
+            "dedupe",
+            "regex_extract",
+            "parse_date",
+            "parse_number",
+            "join",
+            "split",
+            "pick",
+            "limit"
+          ],
+          "type": "string"
+        },
+        "pattern": {
+          "description": "regex_extract: Go regular expression.",
+          "type": "string"
+        },
+        "sep": {
+          "description": "join / split: separator.",
+          "type": "string"
+        },
+        "to": {
+          "description": "Field the result is written to (default: field).",
+          "type": "string"
+        },
+        "where": {
+          "$ref": "#/$defs/ConditionDef",
+          "description": "filter: condition evaluated against each item."
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    },
+    "WaitSpec": {
+      "description": "WaitSpec is the condition of a wait_for step, or a step's \"until\" outcome. Exactly one of the leaf fields, or Any (first match wins).",
+      "properties": {
+        "any": {
+          "description": "Any of these conditions (first match wins).",
+          "items": {
+            "$ref": "#/$defs/WaitSpec"
+          },
+          "type": "array"
+        },
+        "gone": {
+          "description": "CSS; element absent",
+          "type": "string"
+        },
+        "networkIdle": {
+          "description": "No network requests for a short while.",
+          "type": "boolean"
+        },
+        "selector": {
+          "description": "CSS; element present",
+          "type": "string"
+        },
+        "text": {
+          "description": "substring of body innerText",
+          "type": "string"
+        },
+        "urlMatches": {
+          "description": "Go regexp against the page URL",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$id": "https://raw.githubusercontent.com/monoes/mono-agent/master/data/schemas/fragment.v1.schema.json",
+  "$ref": "#/$defs/FragmentDef",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A reusable step sequence, included by a call_fragment step.",
+  "title": "Mono Agent step fragment (fragments/\u003cname\u003e.json)"
+}

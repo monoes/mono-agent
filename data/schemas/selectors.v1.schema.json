@@ -1,0 +1,80 @@
+{
+  "$defs": {
+    "AriaSelector": {
+      "description": "AriaSelector matches by ARIA role and accessible name.",
+      "properties": {
+        "name": {
+          "description": "Accessible name, e.g. the button label.",
+          "type": "string"
+        },
+        "role": {
+          "description": "ARIA role, e.g. button, textbox, link.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "role"
+      ],
+      "type": "object"
+    },
+    "SelectorCandidate": {
+      "description": "SelectorCandidate is exactly one of CSS, XPath, Aria or Text.",
+      "properties": {
+        "aria": {
+          "$ref": "#/$defs/AriaSelector",
+          "description": "ARIA role and accessible name; the most layout-stable kind."
+        },
+        "css": {
+          "description": "CSS selector.",
+          "type": "string"
+        },
+        "score": {
+          "description": "Confidence 0..1 (informational).",
+          "type": "number"
+        },
+        "text": {
+          "description": "visible text, exact after trim",
+          "type": "string"
+        },
+        "xpath": {
+          "description": "XPath.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "SelectorEntry": {
+      "description": "SelectorEntry is one named selector in selectors.json: ranked candidates tried in order, plus the plain-words intent for the Jev fallback.",
+      "properties": {
+        "candidates": {
+          "description": "Selectors tried in order; the first that finds the element wins.",
+          "items": {
+            "$ref": "#/$defs/SelectorCandidate"
+          },
+          "type": "array"
+        },
+        "intent": {
+          "description": "The element in plain words; used by the AI fallback when no candidate matches.",
+          "type": "string"
+        },
+        "verifiedAt": {
+          "description": "When the candidates last matched on the live site (RFC 3339).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "candidates"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://raw.githubusercontent.com/monoes/mono-agent/master/data/schemas/selectors.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": {
+    "$ref": "#/$defs/SelectorEntry"
+  },
+  "description": "Named selectors referenced by a step's configKey: ranked candidates tried in order.",
+  "title": "Mono Agent named selectors (selectors.json)",
+  "type": "object"
+}

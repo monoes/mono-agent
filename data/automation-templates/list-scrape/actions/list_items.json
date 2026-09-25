@@ -1,0 +1,61 @@
+{
+  "$schema": "https://raw.githubusercontent.com/monoes/mono-agent/master/data/schemas/action.v1.schema.json",
+  "actionType": "list_items",
+  "automation": "{{id}}",
+  "version": "1.0.0",
+  "description": "Read the item list on the start page: title, link and summary of each item, de-duplicated by link.",
+  "sideEffects": "read",
+  "outputs": {
+    "success": [
+      "items"
+    ],
+    "failure": [
+      "error"
+    ]
+  },
+  "steps": [
+    {
+      "id": "open",
+      "type": "navigate",
+      "url": "{{startUrl}}",
+      "timeout": 20
+    },
+    {
+      "id": "loaded",
+      "type": "wait_for",
+      "until": {
+        "selector": "#items .item"
+      },
+      "timeout": 15
+    },
+    {
+      "id": "rows",
+      "type": "extract_table",
+      "configKey": "list.container",
+      "value": ".item",
+      "fields": {
+        "title": "a.title",
+        "url": "a.title@href",
+        "summary": ".summary"
+      },
+      "variable_name": "rawItems",
+      "intent": "the list that holds the items"
+    },
+    {
+      "id": "clean",
+      "type": "transform",
+      "input": "{{rawItems}}",
+      "variable_name": "items",
+      "ops": [
+        {
+          "op": "dedupe",
+          "field": "url"
+        },
+        {
+          "op": "limit",
+          "count": 50
+        }
+      ]
+    }
+  ]
+}

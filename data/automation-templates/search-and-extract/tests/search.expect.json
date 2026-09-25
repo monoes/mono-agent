@@ -1,0 +1,14 @@
+{
+  "results": [
+    {
+      "title": "Blue widgets",
+      "url": "https://example.com/p/blue",
+      "snippet": "Widgets in blue."
+    },
+    {
+      "title": "Red widgets",
+      "url": "https://example.com/p/red",
+      "snippet": "Widgets in red."
+    }
+  ]
+}

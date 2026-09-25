@@ -1,0 +1,51 @@
+{
+  "login.username": {
+    "candidates": [
+      {
+        "css": "input[name='username'], input[type='email']",
+        "score": 0.9
+      },
+      {
+        "aria": {
+          "role": "textbox",
+          "name": "Email"
+        },
+        "score": 0.8
+      },
+      {
+        "xpath": "//label[contains(., 'Email') or contains(., 'Username')]/following::input[1]",
+        "score": 0.6
+      }
+    ],
+    "intent": "the username or email field of the login form"
+  },
+  "login.password": {
+    "candidates": [
+      {
+        "css": "input[type='password']",
+        "score": 0.95
+      }
+    ],
+    "intent": "the password field of the login form"
+  },
+  "login.submit": {
+    "candidates": [
+      {
+        "css": "form button[type='submit']",
+        "score": 0.9
+      },
+      {
+        "aria": {
+          "role": "button",
+          "name": "Log in"
+        },
+        "score": 0.8
+      },
+      {
+        "text": "Sign in",
+        "score": 0.5
+      }
+    ],
+    "intent": "the Log in / Sign in button of the login form"
+  }
+}

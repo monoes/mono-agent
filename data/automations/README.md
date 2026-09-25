@@ -1,118 +1,109 @@
-# Action Definitions (data/actions/)
+# Built-in automation packages (data/automations/)
 
-JSON action definitions, embedded at compile time via `data/embed.go` and
-executed by the action engine. One file per action; the filename is the
-action name. Each file's `description` field is the authoritative summary.
+Each directory is one **browser automation package**: a manifest plus its
+actions, in the package format described in
+[`docs/mastermind/specs/2026-09-25-browser-automation-packages-design.md`](../../docs/mastermind/specs/2026-09-25-browser-automation-packages-design.md)
+(§4 format, §5 registry/install/export, §6 safety). They are embedded at
+compile time (`data.AutomationsFS`, see `data/embed.go`) and **seeded** into
+the installed registry (`~/.monoagent/automations/`) on first use; the
+registry, not this directory, is what runs.
 
 ## Layout
 
 ```
-data/actions/
-├── gemini/         # in the default build
-├── hackernews/     # built by default (omitted with -tags nosocial)
-├── instagram/      # built by default (omitted with -tags nosocial)
-├── linkedin/       # built by default (omitted with -tags nosocial)
-├── producthunt/    # built by default (omitted with -tags nosocial)
-├── tiktok/         # built by default (omitted with -tags nosocial)
-└── x/              # built by default (omitted with -tags nosocial)
+data/automations/<id>/
+├── automation.json          manifest: site, login, permissions, actions, policy
+├── actions/<action>.json    one action definition per file (file name = action name)
+├── fragments/<name>.json    optional reusable step sequences (call_fragment)
+├── selectors.json           optional named selectors (configKey)
+├── scripts/<name>.js        optional page scripts (page_script) — avoid
+└── tests/                   optional fixtures: fixtures/<action>.html + <action>.expect.json
 ```
 
-The social platform actions are compiled into a default build;
-`go build -tags nosocial ./cmd/monoagentcli` leaves them out (see `docs/USAGE_POLICY.md`).
-Gemini actions are part of the default build.
+Every file carries a `"$schema"` pointer to the JSON Schemas in
+[`data/schemas/`](../schemas) (generated from the Go structs by
+`internal/schemagen`; run `go generate ./internal/schemagen` after changing
+`automation.Manifest` or `action.ActionDef`/`StepDef`), so editors validate
+and autocomplete them.
 
-## Actions per platform
+## Packages
 
-### gemini (default build)
+| id | tier | native bot | actions |
+|---|---|---|---|
+| `gemini` | standard | `gemini` | 4 |
+| `hackernews` | social | `hackernews` | 4 |
+| `instagram` | social | `instagram` | 18 |
+| `linkedin` | social | `linkedin` | 12 |
+| `producthunt` | social | `producthunt` | 3 |
+| `tiktok` | social | `tiktok` | 16 |
+| `x` | social | `x` | 7 |
 
-- `chat_session` — send a prompt to a persistent Gemini session (text or image); resumes via `session_id`
-- `chat_session_many` — send a list of prompts to one Gemini session for consistent style across answers
-- `generate_image` — send a prompt to Gemini and download generated images (3-tier fallback)
-- `generate_text` — send a prompt to Gemini and extract the text response (3-tier fallback)
+All built-ins set `requires.native`: their actions call a compiled Go bot
+(`internal/bot/<id>`) through `call_bot_method`. Social-tier packages follow
+the usage policy (`docs/USAGE_POLICY.md`): their bots are left out of a
+`-tags nosocial` build, where the package installs as unavailable with that
+reason. Each action's `description` is its authoritative summary;
+`monoagentcli automation show <id>` lists them with their side effects.
 
-### hackernews (social build)
+## Manifest essentials
 
-- `get_post_metrics` — read the point score and comment count of a Hacker News item
-- `list_comments` — list the top-level comments on a Hacker News item
-- `reply_to_comment` — reply to a Hacker News item or comment thread
-- `submit_post` — submit a new post (link or text/Show HN) to Hacker News
+- `site.startUrl` / `site.domains` — the page a session opens and the hosts
+  steps may navigate to (`"*.example.com"` also matches `example.com`).
+  Enforced by the action engine.
+- `login` — login page, the logged-in probe (`loggedIn.selector`, a CSS list
+  meaning "any of", and/or a session `cookie`), optional `usernameFrom`, and
+  `sessionTtlDays`. Read by `monoagentcli login <id>` and the Connections page.
+- `permissions.steps` — every step type the package's actions use (entries
+  may be prefix globs such as `extract_*`). A step type not listed fails
+  validation with `step_not_permitted`.
+- `policy.tier` — `standard` or `social`.
 
-### instagram (social build)
+## Side effects
 
-- `auto_reply_dms` — reply to messages in the Instagram inbox (3-tier fallback)
-- `comment_on_posts` — comment on posts from a list of post URLs
-- `engage_user_posts` — like or comment on a user's recent posts (3-tier fallback)
-- `engage_with_posts` — like or comment on posts using a 3-tier fallback pattern
-- `export_followers` — fetch the followers or following list of a profile
-- `extract_post_data` — scrape data from posts (3-tier fallback)
-- `find_by_keyword` — search for posts and extract profile info from each
-- `follow_users` — follow users from a list of profile URLs
-- `like_comments_on_posts` — like comments on posts (3-tier fallback)
-- `like_posts` — like posts from a list of post URLs
-- `list_post_comments` — list comments on a post
-- `list_user_posts` — list posts from a profile grid
-- `publish_post` — publish content (post/story)
-- `reply_to_comments` — reply to comments on posts
-- `scrape_profile_info` — extract profile information (3-tier fallback)
-- `send_dms` — send direct messages to a list of recipients
-- `unfollow_users` — unfollow users from a list of profile URLs
-- `watch_stories` — view stories from a list of profile URLs
+Every action declares `sideEffects` — its strongest effect, one of
+`none | read | write | message | destructive`:
 
-### linkedin (social build)
+- `read` — scrapes, lists, searches, metrics
+- `write` — likes, follows, publishing, submitting, watching stories, sending
+  a prompt
+- `message` — anything that sends text another person reads: DMs, comments,
+  replies
+- `destructive` — unfollowing, deleting
 
-- `auto_reply_dms` — reply to messages in the LinkedIn inbox
-- `comment_on_posts` — comment on posts or reply to a specific comment
-- `engage_with_posts` — like or comment on posts
-- `export_followers` — fetch the followers or following list of a profile
-- `find_by_keyword` — search for people using keywords
-- `like_comments` — like comments on a post by comment URN ID
-- `like_posts` — react to posts (Like, Celebrate, Support, Love, Insightful, Funny)
-- `list_post_comments` — list comments (and optionally replies) on posts
-- `list_user_posts` — list posts from a profile or company page
-- `publish_post` — publish content (post)
-- `scrape_profile_info` — extract profile information
-- `send_dms` — send direct messages to a list of recipients
+The step that actually performs the effect (usually the `call_bot_method`
+step, or the click on the submit/send button) is marked
+`"sideEffect": true`. Safe-mode verification (`record verify`) stops right
+before it; the install review and the Connections page show the level.
 
-### producthunt (social build)
+## Adding an action
 
-- `comment_on_launch` — post a comment on a launch page
-- `get_launch_metrics` — read the upvote and comment count of a launch page
-- `list_comments` — list the visible comments on a launch page
+1. Add `actions/<name>.json` (copy a sibling, or scaffold from a template in
+   [`data/automation-templates/`](../automation-templates)). Set
+   `actionType` to `<name>`, `sideEffects`, and `"sideEffect": true` on the
+   step that writes/sends.
+2. List `<name>` in `automation.json` → `actions` (keep the list sorted).
+3. Add any new step type it uses to `permissions.steps`.
+4. If it uses `call_bot_method`, implement the method in
+   `internal/bot/<id>/`. New packages should use declarative steps only.
+5. Bump the manifest `version` so installed copies pick up the change on the
+   next seed (a user-modified copy is kept and the update is reported as
+   pending).
+6. `go test ./internal/schemagen/ ./internal/action/` — checks that the
+   `actions` list matches the files, every action declares `sideEffects`,
+   and `permissions.steps` covers every step used.
 
-### tiktok (social build)
+## Installing and exporting packages
 
-- `auto_reply_dms` — reply to messages in the TikTok inbox
-- `comment_on_video` — post a comment on videos from a list of video URLs
-- `duet_video` — open the duet creation flow for videos
-- `engage_with_posts` — like or comment on videos
-- `export_followers` — fetch the followers or following list of a profile
-- `find_by_keyword` — search for videos and users using keywords
-- `follow_user` — follow users from a list of profile URLs
-- `like_comment` — like a specific comment on videos
-- `like_video` — like videos from a list of video URLs
-- `list_user_videos` — collect video URLs from profile video grids
-- `list_video_comments` — list comments on videos
-- `publish_post` — publish content (video)
-- `scrape_profile_info` — extract profile information
-- `send_dms` — send direct messages to a list of recipients
-- `share_video` — copy the share link for videos and return the URL
-- `stitch_video` — open the stitch creation flow for videos
+```bash
+monoagentcli automation list                     # installed packages (seeds built-ins first)
+monoagentcli automation new acme --template list-scrape --dir ./acme
+monoagentcli automation validate ./acme          # schema + lint + fixtures
+monoagentcli automation install ./acme --yes     # directory, .mpkg file or https URL
+monoagentcli automation export acme -o acme.mpkg # deterministic zip with CHECKSUMS
+monoagentcli automation uninstall|restore|enable|disable|rollback <id>
+```
 
-### x (social build)
-
-- `auto_reply_dms` — reply to messages in the X inbox
-- `engage_with_posts` — like or comment on posts
-- `export_followers` — fetch the followers or following list of a profile
-- `find_by_keyword` — search for tweets and users using keywords
-- `publish_post` — publish content (tweet)
-- `scrape_profile_info` — extract profile information
-- `send_dms` — send direct messages to a list of recipients
-
-## Adding a new action
-
-1. Create `data/actions/<platform>/<action_name>.json` (copy an existing
-   file as a template — the schema lives in the JSON files themselves)
-2. If using `call_bot_method`, implement the Go method in
-   `internal/bot/<platform>/bot.go`
-3. Run `go build ./...` (and `go build -tags nosocial ./...`) to verify — the
-   embedded FS picks up new files automatically
+An `.mpkg` is the package directory zipped, with a generated `CHECKSUMS`
+file. Installing shows a review first (publisher, domains, permissions,
+scripts, each action's side effects); social-tier packages are held to the
+same build gate as the built-ins.

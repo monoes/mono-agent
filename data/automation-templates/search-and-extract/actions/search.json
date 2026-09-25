@@ -1,0 +1,101 @@
+{
+  "$schema": "https://raw.githubusercontent.com/monoes/mono-agent/master/data/schemas/action.v1.schema.json",
+  "actionType": "search",
+  "automation": "{{id}}",
+  "version": "1.0.0",
+  "description": "Search the site for a query and return the results (title, link, snippet).",
+  "sideEffects": "read",
+  "inputs": {
+    "required": [
+      {
+        "name": "query",
+        "type": "string",
+        "description": "What to search for",
+        "ui": {
+          "label": "Query",
+          "placeholder": "search terms"
+        }
+      }
+    ]
+  },
+  "outputs": {
+    "success": [
+      "results"
+    ],
+    "failure": [
+      "error"
+    ]
+  },
+  "steps": [
+    {
+      "id": "open",
+      "type": "navigate",
+      "url": "{{startUrl}}",
+      "timeout": 20
+    },
+    {
+      "id": "type_query",
+      "type": "type",
+      "configKey": "search.input",
+      "value": "{{query}}",
+      "humanLike": true,
+      "intent": "the site search box"
+    },
+    {
+      "id": "press_enter",
+      "type": "press_key",
+      "key": "Enter",
+      "configKey": "search.input"
+    },
+    {
+      "id": "loaded",
+      "type": "wait_for",
+      "until": {
+        "any": [
+          {
+            "selector": "#results .result"
+          },
+          {
+            "text": "No results"
+          }
+        ]
+      },
+      "timeout": 20
+    },
+    {
+      "id": "rows",
+      "type": "extract_table",
+      "configKey": "search.results",
+      "value": ".result",
+      "fields": {
+        "title": "h3",
+        "url": "a@href",
+        "snippet": ".snippet"
+      },
+      "variable_name": "rawResults",
+      "intent": "the list of search results",
+      "onError": {
+        "action": "skip"
+      }
+    },
+    {
+      "id": "clean",
+      "type": "transform",
+      "input": "{{rawResults}}",
+      "variable_name": "results",
+      "ops": [
+        {
+          "op": "dedupe",
+          "field": "url"
+        },
+        {
+          "op": "limit",
+          "count": 20
+        }
+      ],
+      "onError": {
+        "action": "skip"
+      }
+    }
+  ]
+}

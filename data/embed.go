@@ -24,3 +24,17 @@ var AutomationsFS embed.FS
 //
 //go:embed skills
 var SkillsFS embed.FS
+
+// SchemasFS contains the JSON Schemas (draft 2020-12) of the package files:
+// schemas/{automation,action,fragment,selectors}.v1.schema.json. They are
+// generated from the Go structs by internal/schemagen (go generate).
+//
+//go:embed schemas
+var SchemasFS embed.FS
+
+// TemplatesFS contains the package templates `automation new --template`
+// copies: automation-templates/<template>/… with {{id}}, {{name}},
+// {{startUrl}} and {{domain}} placeholders (see automation-templates/README.md).
+//
+//go:embed automation-templates
+var TemplatesFS embed.FS

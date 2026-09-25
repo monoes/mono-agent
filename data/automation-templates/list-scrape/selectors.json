@@ -1,0 +1,22 @@
+{
+  "list.container": {
+    "candidates": [
+      {
+        "css": "#items",
+        "score": 0.9
+      },
+      {
+        "aria": {
+          "role": "list",
+          "name": "Items"
+        },
+        "score": 0.7
+      },
+      {
+        "xpath": "//ul[li[contains(@class,'item')]]",
+        "score": 0.5
+      }
+    ],
+    "intent": "the list that holds the items"
+  }
+}
