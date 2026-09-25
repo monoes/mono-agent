@@ -296,3 +296,37 @@ scripts, live *bool)`. `AddAction` takes `InstallOptions.Trust`.
 
 CLI: `automation trust <id> [--scripts|--no-scripts] [--live|--no-live]`,
 `install --replace-builtin`, `record save` saves with trust `recorded`.
+
+## 9. Re-record a single selector (round 2)
+
+Flow: Health tab (or CLI) → `monoagentcli automation rerecord <id> <selectorKey>
+[--url U] [--timeout 180s] --json` → opens a tab at U (default
+`site.startUrl`) in the user's browser via the same connect path `node run`
+uses → sends extension command `pick_element` → the page shows a picker
+overlay ("Click: <intent or key>", Esc cancels, hover outline) → the user
+clicks once → the extension answers with a `recording.Fingerprint` (ranked,
+uniqueness-checked candidates, sensitive-field rules apply: never return a
+value) → CLI builds an `action.SelectorEntry` (candidates from the
+fingerprint, unique ones first, previous entry's intent kept, verifiedAt now)
+→ `Registry.ReplaceSelector(id, key, entry)` → JSON result.
+
+- Extension command (Go → extension): `Command{Type:"pick_element",
+  TabID, Params:{"prompt":string,"timeoutMs":int}}`. Response data:
+  `{"fingerprint": Fingerprint, "url": string}` or error `"cancelled"` /
+  `"timeout"`. Go constant `CmdPickElement = "pick_element"` in
+  internal/extension/protocol.go; `(*ExtensionPage).PickElement(ctx,
+  prompt string, timeout time.Duration) (*recording.Fingerprint, string,
+  error)` — owner ingest. If importing internal/recording from
+  internal/extension would cycle, return json.RawMessage and let the CLI
+  decode.
+- Registry: `ReplaceSelector(id, key string, e action.SelectorEntry)
+  (where string, err error)` — local packages (source+trust local): rewrite
+  selectors.json in place under the lock (refresh sha, bump generation);
+  everything else: overlay full entry (existing overlay v2 guard). `where` is
+  "package" or "overlay". Key must already exist in the effective selectors
+  (error otherwise).
+- CLI JSON: `{"automation","key","where","candidates":[…],"url"}`; errors
+  `{"error"}` incl. "cancelled", "timeout", "browser bridge not connected".
+- GUI: Health tab row action "Re-record" for decaying/broken (and on any
+  row via a menu); binding `RerecordSelector(id, key)` shells the CLI with a
+  long timeout, shows result and refreshes Health.
