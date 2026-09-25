@@ -101,3 +101,56 @@ func TestLegacyConfigKeyUnchangedWithoutPackage(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestSelectorString(t *testing.T) {
+	page := &markPage{
+		present:  map[string]bool{"//table[@id='t']": true},
+		ariaHits: map[string]bool{`{"name":"Results","role":"table"}`: true},
+	}
+	obs := &obsRecord{}
+	ae := newPkgExecutor(page, selPkg(map[string]*SelectorEntry{
+		"rows":  {Candidates: []SelectorCandidate{{CSS: "#gone"}, {XPath: "//table[@id='t']"}}},
+		"table": {Candidates: []SelectorCandidate{{Aria: &AriaSelector{Role: "table", Name: "Results"}}}},
+	}))
+	ae.SetSelectorObserver(obs)
+	ctx := context.Background()
+
+	if css, xp, err := ae.SelectorString(ctx, StepDef{ID: "a", Selector: "table.x"}); err != nil || css != "table.x" || xp != "" {
+		t.Errorf("selector: %q %q %v", css, xp, err)
+	}
+	if css, xp, err := ae.SelectorString(ctx, StepDef{ID: "a", XPath: "//tr"}); err != nil || css != "" || xp != "//tr" {
+		t.Errorf("xpath: %q %q %v", css, xp, err)
+	}
+	if css, xp, err := ae.SelectorString(ctx, StepDef{ID: "a", ConfigKey: "rows", Timeout: 0.05}); err != nil || css != "" || xp != "//table[@id='t']" {
+		t.Errorf("configKey xpath candidate: %q %q %v", css, xp, err)
+	}
+	css, xp, err := ae.SelectorString(ctx, StepDef{ID: "a", ConfigKey: "table", Timeout: 0.05})
+	if err != nil || xp != "" || !page.marked[css] {
+		t.Errorf("aria candidate: %q %q %v (marked %v)", css, xp, err, page.marked)
+	}
+	ae.releaseSelectorMarkers()
+	if len(page.marked) != 0 {
+		t.Error("marker not released at step end")
+	}
+	if _, _, err := ae.SelectorString(ctx, StepDef{ID: "a", ConfigKey: "absent"}); err == nil {
+		t.Error("unknown key without config manager must error")
+	}
+	want := []string{"acme/rows idx=1 ok=true healed=true", "acme/table idx=0 ok=true healed=false"}
+	if !reflect.DeepEqual(obs.calls, want) {
+		t.Fatalf("observed %v, want %v", obs.calls, want)
+	}
+}
+
+// ResolveStepDef leaves the package-era fields to their handlers.
+func TestResolveStepDefLeavesNewFieldsRaw(t *testing.T) {
+	ec := NewExecutionContext()
+	ec.SetVariable("v", "X")
+	step := StepDef{ID: "s", Type: "for_each", Items: "{{v}}", Key: "{{v}}", Input: "{{v}}",
+		Inputs: map[string]interface{}{"a": "{{v}}"}, Until: &WaitSpec{Text: "{{v}}"},
+		Steps: []StepDef{{ID: "n", Type: "log", Text: "{{v}}"}}}
+	r := NewVariableResolver(ec).ResolveStepDef(step)
+	if r.Items != "{{v}}" || r.Key != "{{v}}" || r.Input != "{{v}}" || r.Inputs["a"] != "{{v}}" ||
+		r.Until.Text != "{{v}}" || r.Steps[0].Text != "{{v}}" {
+		t.Fatalf("new fields were resolved: %+v", r)
+	}
+}

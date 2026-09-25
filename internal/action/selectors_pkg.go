@@ -16,6 +16,7 @@ package action
 // or a fallback after all candidates missed, found the element.
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -328,4 +329,45 @@ func firstNonEmptyStr(xs ...string) string {
 		}
 	}
 	return ""
+}
+
+// SelectorString resolves a step's target to a selector string for handlers
+// that query the page themselves (extract_table, extract_json) rather than
+// taking an element handle. Exactly one of css/xpath is set on success.
+// Order: xpath → selector → configKey via the package's selectors.json
+// (first candidate matching at least one element; aria/text candidates come
+// back as a [data-monoagent-sel] marker selector, removed when the step
+// ends) → the legacy ConfigInterface.
+func (ae *ActionExecutor) SelectorString(ctx context.Context, step StepDef) (css string, xpath string, err error) {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return "", "", err
+		}
+	}
+	split := func(sel string) (string, string) {
+		if isXPath(sel) {
+			return "", sel
+		}
+		return sel, ""
+	}
+	switch {
+	case step.XPath != "":
+		return "", step.XPath, nil
+	case step.Selector != "":
+		css, xpath = split(step.Selector)
+		return css, xpath, nil
+	case step.ConfigKey == "":
+		return "", "", fmt.Errorf("step %s: no selector, xpath or configKey", step.ID)
+	}
+	if entry, ok := ae.pkgSelectorEntry(step.ConfigKey); ok {
+		if sel := ae.resolvePkgSelectorString(step.ConfigKey, entry, stepTimeout(step, 10)); sel != "" {
+			css, xpath = split(sel)
+			return css, xpath, nil
+		}
+	}
+	if sel := ae.legacyConfigSelector(step.ConfigKey); sel != "" {
+		css, xpath = split(sel)
+		return css, xpath, nil
+	}
+	return "", "", fmt.Errorf("step %s: config key %q resolved to no selector", step.ID, step.ConfigKey)
 }
