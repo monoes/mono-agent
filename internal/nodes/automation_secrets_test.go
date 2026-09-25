@@ -141,3 +141,29 @@ func TestSecretLookup_BareOnlyForBuiltinAndLocal(t *testing.T) {
 		}
 	}
 }
+
+// The executor passes the running step's automation; each gets its own
+// namespace and trust, and an empty scope (legacy action) uses the node's.
+func TestScopedSecretLookup(t *testing.T) {
+	action.SetDefSource(trustSource{trust: map[string]string{"b": "builtin", "i": "imported"}})
+	t.Cleanup(func() { action.SetDefSource(nil) })
+	fakeVault(t, map[string]string{
+		"p1|automation:b/key": "b-key", "p1|automation:i/key": "i-key", "p1|shared": "bare",
+	})
+	look := ScopedSecretLookup(context.Background(), nil, "p1", "b")
+	for _, c := range []struct {
+		scope, name, want string
+		ok                bool
+	}{
+		{"b", "key", "b-key", true},
+		{"i", "key", "i-key", true},
+		{"b", "shared", "bare", true},
+		{"i", "shared", "", false},
+		{"", "key", "b-key", true}, // falls back to the node's automation
+	} {
+		v, ok := look(c.scope, c.name)
+		if v != c.want || ok != c.ok {
+			t.Errorf("look(%q,%q) = %q %v, want %q %v", c.scope, c.name, v, ok, c.want, c.ok)
+		}
+	}
+}

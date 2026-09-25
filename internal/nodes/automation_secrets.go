@@ -69,13 +69,26 @@ func secretLookup(ctx context.Context, db *sql.DB, profileID, automationID strin
 	}
 }
 
-// SecretLookup is the vault lookup for {{secret:<name>}} used outside
-// browser nodes (e.g. `record verify`), with the same rules as a node run.
+// SecretLookup is the vault lookup for {{secret:<name>}} bound to one
+// automation, for callers that run a single package (e.g. `record verify`).
 // Trust comes from the booted registry (the CLI root boots it); an
 // automation it doesn't know, such as a new draft, gets its namespaced
 // secrets only.
 func SecretLookup(ctx context.Context, db *sql.DB, profileID, automationID string) func(string) (string, bool) {
 	return secretLookup(ctx, db, profileID, automationID)
+}
+
+// ScopedSecretLookup is the executor's SetSecretLookup function: the
+// executor passes the automation the running step belongs to (re-scoped
+// inside call_action). fallbackID stands in when it passes none (a legacy
+// action without a package).
+func ScopedSecretLookup(ctx context.Context, db *sql.DB, profileID, fallbackID string) func(automationID, name string) (string, bool) {
+	return func(automationID, name string) (string, bool) {
+		if strings.TrimSpace(automationID) == "" {
+			automationID = fallbackID
+		}
+		return vaultSecret(ctx, db, profileID, automationID, name)
+	}
 }
 
 // bootedInfo returns the registry's installed info for an automation.
