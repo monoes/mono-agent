@@ -162,3 +162,43 @@ func TestLiveRunGate(t *testing.T) {
 		t.Fatalf("read action: %v", err)
 	}
 }
+
+type dlPkg struct {
+	fakePkg
+	dl bool
+}
+
+func (p *dlPkg) DownloadsPermitted() bool { return p.dl }
+
+func TestEnterPackageSwapsDownloads(t *testing.T) {
+	caller := &fakePkg{id: "a"}
+	ae := newPkgExecutor(nil, caller)
+	ae.SetDownloadsAllowed(true)
+	restore := ae.enterPackage(&fakePkg{id: "b"})
+	if ae.DownloadsAllowed() || ae.Package().ID() != "b" {
+		t.Fatal("callee without a downloads permission must not download")
+	}
+	restore()
+	if !ae.DownloadsAllowed() || ae.Package() != PackageContext(caller) {
+		t.Fatal("caller state not restored")
+	}
+	restore = ae.enterPackage(&dlPkg{fakePkg: fakePkg{id: "c"}, dl: true})
+	if !ae.DownloadsAllowed() {
+		t.Fatal("callee permission not applied")
+	}
+	restore()
+}
+
+type fixedURLPage struct{ markPage }
+
+func TestCallActionStepSkipsPostStepDomainCheck(t *testing.T) {
+	// The page is on the callee's domain after the call; the caller's
+	// allowlist does not include it.
+	ae := newPkgExecutor(&fixedURLPage{markPage{url: "https://callee.example/x"}}, &fakePkg{id: "a", domains: []string{"caller.example"}})
+	if err := ae.afterStep(StepDef{ID: "c", Type: "call_action"}, &StepResult{Success: true}, nil); err != nil {
+		t.Fatalf("call_action step: %v", err)
+	}
+	if err := ae.afterStep(StepDef{ID: "n", Type: "log"}, &StepResult{Success: true}, nil); !errors.Is(err, ErrOffDomain) {
+		t.Fatalf("next step must re-check: %v", err)
+	}
+}

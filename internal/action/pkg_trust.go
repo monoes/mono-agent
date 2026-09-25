@@ -167,3 +167,33 @@ func sideEffectRank(level string) int {
 func atLeastWrite(level string) bool {
 	return level != "" && sideEffectRank(level) >= 2
 }
+
+// DownloadsGate is optionally implemented to report manifest
+// permissions.downloads.
+type DownloadsGate interface{ DownloadsPermitted() bool }
+
+// checkLiveRun refuses a live (non-safe-mode) run of a write-level action
+// of a package whose live runs the user has not confirmed.
+func (ae *ActionExecutor) checkLiveRun(p PackageContext, def *ActionDef) error {
+	g, ok := p.(LiveRunGate)
+	if !ok || ae.safeMode || def == nil || !atLeastWrite(def.SideEffects) || g.LiveRunConfirmed() {
+		return nil
+	}
+	return fmt.Errorf("automation %s: live runs of %s-level actions need confirmation: run `monoagentcli automation trust %s --live`",
+		p.ID(), def.SideEffects, p.ID())
+}
+
+// enterPackage switches the executor to p for a call_action body: the
+// package (domains, selectors, secrets scope) and its download permission
+// (DownloadsGate; a package that does not say may not download). The
+// returned func restores the caller's.
+func (ae *ActionExecutor) enterPackage(p PackageContext) func() {
+	prevPkg, prevDL := ae.pkg, ae.downloadsAllowed
+	ae.pkg = p
+	dl := false
+	if g, ok := p.(DownloadsGate); ok {
+		dl = g.DownloadsPermitted()
+	}
+	ae.downloadsAllowed = dl
+	return func() { ae.pkg, ae.downloadsAllowed = prevPkg, prevDL }
+}

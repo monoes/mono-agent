@@ -83,6 +83,11 @@ func (ae *ActionExecutor) afterStep(step StepDef, result *StepResult, err error)
 	if cause != nil && errors.Is(cause, ErrOffDomain) {
 		return ae.failRun(step.ID, cause)
 	}
+	// A call_action body ran under the callee's package, which checked its
+	// own domains; the caller's next step re-checks the page.
+	if step.Type == "call_action" {
+		return nil
+	}
 	if derr := ae.checkPageDomain(); derr != nil {
 		return ae.failRun(step.ID, fmt.Errorf("page left the allowed domains: %w", derr))
 	}
