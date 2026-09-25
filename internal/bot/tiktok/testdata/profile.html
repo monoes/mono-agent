@@ -62,6 +62,9 @@
     fake_verified: { name: 'Fake Verified', verified: true, videos: 1 },
     fake_nobio: { name: 'fake_nobio', bio: 'No bio yet.', videos: 1 },
     fake_modern: { name: 'Fake Modern', modernList: true, videos: 1 },
+    // The follower popup exactly as tiktok.com renders it (2026-09): see
+    // liveList below.
+    fake_live: { name: 'Fake Live', liveList: true, videos: 1 },
     fake_following: { name: 'Fake Following', state: 'Following', videos: 3 },
     fake_friends: { name: 'Fake Friends', state: 'Friends', videos: 0 },
     fake_private: { name: 'Fake Private', private: true, noMessage: true },
@@ -128,12 +131,50 @@
 
   // Followers / following popup, with lazy loading.
   const popup = document.getElementById('popup');
-  const ul = document.getElementById('ul');
+  if (cfg.liveList) {
+    // Live layout (tiktok.com, 2026-09): a header with the profile's handle
+    // (no link) and a close control, a tab strip whose counts sit in
+    // <strong title="…">, a loading placeholder, then the list container
+    // holding <li> rows directly. A row is ONE link (avatar, then nickname
+    // span in a DivNicknameContainer — a verified badge svg may follow it —
+    // then the handle in p.PUniqueId) and a follow-state button labelled
+    // "<state> <nickname>" ("Follow back", "Following", "Friends").
+    popup.innerHTML =
+      '<div class="css-a1-DivHeaderContainer"><h1 class="css-a2-H1Header">' + handle + '</h1>' +
+      '<div aria-label="Close_button" role="button" tabindex="0" data-e2e="follow-popup-close" class="css-a3-DivCloseContainer">&#10005;</div></div>' +
+      '<div class="css-a4-DivTabs"><div class="css-a5-DivTabItem"><div>Following</div><strong title="Following">87</strong></div>' +
+      '<div class="css-a5-DivTabItem"><div>Followers</div><strong title="Followers">1234</strong></div>' +
+      '<div class="css-a5-DivTabItem"><div>Friends</div><strong title="Friends">2</strong></div><div class="css-a5-DivTabItem">Suggested</div></div>' +
+      '<div class="css-a6-DivEmptyListContainer" id="loading"><svg width="48" height="48" viewBox="0 0 200 200"><circle cx="100" cy="100" r="40" stroke="#3AF2FF"></circle></svg></div>' +
+      '<div class="css-5-DivUserListContainer" id="userlist"></div>';
+  }
+  const ul = document.getElementById('ul') || document.getElementById('userlist');
   let listed = 0, kind = '';
   const addUsers = (n) => {
     for (let i = 0; i < n && listed < 14; i++, listed++) {
       const u = 'fake_' + kind + '_' + (listed + 1);
       const name = 'Fake ' + kind + ' ' + (listed + 1);
+      if (cfg.liveList) {
+        const loading = document.getElementById('loading');
+        if (loading) loading.remove();
+        const n = listed + 1;
+        // Row 2's nickname is the handle itself; row 3 carries a verified badge.
+        const nick = n === 2 ? u : name;
+        const state = kind === 'following' ? (n % 3 === 0 ? 'Friends' : 'Following') : (n % 3 === 0 ? 'Friends' : 'Follow back');
+        const badge = n === 3 ? '<svg width="14" height="14" viewBox="0 0 48 48"><circle cx="24" cy="24" r="24" fill="#20D5EC"></circle></svg>' : '';
+        const li = document.createElement('li');
+        li.innerHTML = '<div class="css-b1-DivUserContainer"><div class="css-b2-DivUserItem">' +
+          '<a class="css-b3-StyledUserInfoLink link-a11y-focus" href="/@' + u + '"><span shape="circle" data-e2e="" class="css-b4-SpanAvatarContainer" style="width: 48px; height: 48px;">' +
+            '<img loading="lazy" alt="" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" class="css-b5-ImgAvatar"></span>' +
+            '<div class="css-b6-DivUserInfo"><div class="css-b7-DivNicknameContainer"><span class="css-b8-SpanNickname">' + nick + '</span>' + badge + '</div>' +
+            '<p class="css-b9-PUniqueId">' + u + '</p></div></a>' +
+          '<div class="css-c1-DivCTAContainer"><div class="css-c2-DivFollowButtonWrapperV2">' +
+            '<button type="button" data-e2e="follow-button" aria-label="' + state + ' ' + nick + '" class="css-c3-StyledFollowButtonV2">' + state + '</button></div></div>' +
+          '</div></div>';
+        li.querySelector('button').addEventListener('click', () => log('row-follow-click:' + u));
+        ul.appendChild(li);
+        continue;
+      }
       if (cfg.modernList) {
         // Current layout: no nickname data-e2e; the avatar and the texts are
         // separate links, the @handle comes first and the display name

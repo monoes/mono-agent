@@ -477,19 +477,29 @@ const nickOf = (row, user) => {
   }
   return '';
 };
+// stateOf is the row's follow-state button text as TikTok prints it
+// ("Follow", "Follow back", "Following", "Friends", "Requested"; live rows
+// label it "<state> <nickname>").
+const stateOf = (row) => {
+  const b = row.querySelector('[data-e2e="follow-button"]') || row.querySelector('button');
+  return b ? norm(b.innerText || b.textContent) : '';
+};
 const out = [], seen = new Set();
 for (const a of pop.querySelectorAll('a[href*="/@"]')) {
   const user = userFromHref(a.getAttribute('href'));
   if (!user || seen.has(user)) continue;
   seen.add(user);
-  out.push({ username: user, url: 'https://www.tiktok.com/@' + encodeURIComponent(user), displayName: nickOf(rowOf(a, user), user) });
+  const row = rowOf(a, user);
+  out.push({ username: user, url: 'https://www.tiktok.com/@' + encodeURIComponent(user), displayName: nickOf(row, user), followState: stateOf(row) });
 }
 return {open: true, items: out};
 `
 
 // ListFollowers opens a profile's followers (sourceType FOLLOWERS*) or
 // following (FOLLOWING*) list and returns up to maxCount accounts
-// ({username, url, displayName}).
+// ({username, url, displayName, followState}); followState is the viewer's
+// relationship button as TikTok labels it ("Follow back", "Following",
+// "Friends", …), "" when the row has none.
 func (b *TikTokBot) ListFollowers(ctx context.Context, page browser.PageInterface, profile, sourceType string, maxCount int) ([]map[string]interface{}, error) {
 	u, _, err := profileTarget(profile)
 	if err != nil {

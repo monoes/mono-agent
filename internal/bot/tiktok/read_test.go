@@ -431,3 +431,92 @@ func TestSearchVideosHandleAndRealThumbnail(t *testing.T) {
 		}
 	}
 }
+
+// The follower popup as tiktok.com renders it (verified against the live
+// site, 2026-09): li rows holding one link (nickname span, then the handle in
+// p.PUniqueId) and a follow-state button. Each account's follow state is
+// returned, and nothing in the popup is clicked.
+func TestListFollowersLiveLayout(t *testing.T) {
+	p := newPage(t)
+	res, err := call(t, &TikTokBot{}, p, "list_followers", profileURL("fake_live"), "FOLLOWERS_FETCH", 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	us := resultList(t, res)
+	if len(us) != 8 {
+		t.Fatalf("got %d, want 8 (6 + lazy loaded): %v", len(us), us)
+	}
+	for i, u := range us {
+		n := i + 1
+		wantUser := fmt.Sprintf("fake_followers_%d", n)
+		wantName := fmt.Sprintf("Fake followers %d", n)
+		if n == 2 {
+			wantName = wantUser // the nickname is the handle itself
+		}
+		wantState := "Follow back"
+		if n%3 == 0 {
+			wantState = "Friends"
+		}
+		if u["username"] != wantUser || u["displayName"] != wantName || u["followState"] != wantState ||
+			u["url"] != "https://www.tiktok.com/@"+wantUser || u["source"] != "followers" {
+			t.Fatalf("follower %d = %v, want %s / %s / %s", i, u, wantUser, wantName, wantState)
+		}
+	}
+	res, err = call(t, &TikTokBot{}, p, "list_followers", profileURL("fake_live"), "FOLLOWING_FETCH", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	us = resultList(t, res)
+	if len(us) != 3 || us[0]["followState"] != "Following" || us[2]["followState"] != "Friends" || us[0]["source"] != "following" {
+		t.Fatalf("following = %v", us)
+	}
+	wantEvents(t, p)
+}
+
+// The comment panel as tiktok.com renders it (verified against the live site,
+// 2026-09): the author's data-e2e sits on a div around the link, the like
+// control is data-key-interaction="comment_like" with aria-pressed and a
+// count that includes "0", there is no comment-list data-e2e and no comment
+// id in the DOM.
+func TestListVideoCommentsLiveLayout(t *testing.T) {
+	p := newPage(t)
+	res, err := call(t, &TikTokBot{}, p, "list_video_comments", vidLive, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cs := resultList(t, res)
+	want := []struct {
+		user, name, text, likes string
+		liked                   bool
+	}{
+		{"fake_ana", "Fake Ana", "Love the colors in this one", "3", false},
+		{"fake_ben", "Fake Ben", "First! great video", "9", true},
+		{"fake_cy", "Fake Cy", "Love the colors too", "0", false},
+		{"fake_eve", "Fake Eve", "Only visible after scrolling", "2", false},
+	}
+	if len(cs) != len(want) {
+		t.Fatalf("got %d comments, want %d (3 + lazily loaded): %v", len(cs), len(want), cs)
+	}
+	for i, w := range want {
+		c := cs[i]
+		if c["username"] != w.user || c["displayName"] != w.name || c["text"] != w.text || c["likes"] != w.likes || c["liked"] != w.liked {
+			t.Fatalf("comment %d = %v, want %+v", i, c, w)
+		}
+		if id, _ := c["id"].(string); !strings.HasPrefix(id, "tth-") {
+			t.Fatalf("comment %d id = %q, want a derived tth- id", i, id)
+		}
+		if strings.Contains(c["text"].(string), "agree with ben") || strings.Contains(c["text"].(string), "View") {
+			t.Fatalf("reply leaked into comment %d: %v", i, c)
+		}
+	}
+	// like_comment finds the live like control by author + text and
+	// verifies it through aria-pressed.
+	res, err = call(t, &TikTokBot{}, p, "like_comment", vidLive, "", "fake_cy", "Love the colors too")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := resultMap(t, res); m["status"] != "liked" {
+		t.Fatalf("like_comment = %v", m)
+	}
+	wantEvents(t, p, "comment-like-click:fake_cy")
+}
