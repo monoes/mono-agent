@@ -161,3 +161,31 @@ func TestExtractStepsResolvePackageSelectors(t *testing.T) {
 		t.Fatalf("observations = %v", obs.got)
 	}
 }
+
+func TestExtractTableRecordOptOut(t *testing.T) {
+	page := &extPage{elems: map[string]*extElem{"#list": {}}, eval: func(js string) (interface{}, error) {
+		if !strings.Contains(js, `rowSel = "li.item"`) {
+			t.Errorf("row selector not passed: %s", js)
+		}
+		return jsOut(map[string]interface{}{"rows": []interface{}{map[string]interface{}{"t": "A"}}}), nil
+	}}
+	ae := newExtExecutor(t, page)
+	res := runExt(t, ae, StepDef{ID: "t", Type: "extract_table", Selector: "#list", Fields: map[string]string{"t": ""},
+		Value: map[string]interface{}{"rows": "li.item", "record": false}, VariableName: "raw"})
+	wantOK(t, res)
+	if len(ae.execCtx.ExtractedItems) != 0 || ae.execCtx.ListOutput {
+		t.Fatalf("record:false must not add output records: %v", ae.execCtx.ExtractedItems)
+	}
+	if rows, _ := getVar(ae, "raw").([]map[string]interface{}); len(rows) != 1 {
+		t.Fatalf("raw = %v", getVar(ae, "raw"))
+	}
+
+	for _, bad := range []interface{}{
+		map[string]interface{}{"record": "no"},
+		map[string]interface{}{"rows": 3.0},
+		map[string]interface{}{"row": "li"},
+		42.0,
+	} {
+		wantFail(t, runExt(t, ae, StepDef{ID: "t", Type: "extract_table", Selector: "#list", Value: bad}), "value")
+	}
+}

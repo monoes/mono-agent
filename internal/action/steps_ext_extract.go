@@ -60,9 +60,9 @@ func (ae *ActionExecutor) stepExtractTable(ctx context.Context, step StepDef) (*
 		fields[k] = ae.resolver.Resolve(v)
 	}
 	fieldsJS, _ := jsJSON(fields)
-	rowSel := ""
-	if s, ok := step.Value.(string); ok {
-		rowSel = s
+	rowSel, record, err := tableOptions(step.Value)
+	if err != nil {
+		return extFail(step, "%w", err)
 	}
 	v, err := ae.evalJS(ctx, fmt.Sprintf(extractTableJS, jsString(sel), isXPath(sel), fieldsJS, jsString(rowSel)), stepTimeout(step, 15))
 	if err != nil {
@@ -89,9 +89,46 @@ func (ae *ActionExecutor) stepExtractTable(ctx context.Context, step StepDef) (*
 			}
 		}
 		rows = append(rows, row)
-		ae.execCtx.AddRecord(row)
+		if record {
+			ae.execCtx.AddRecord(row)
+		}
 	}
 	return ae.extStore(step, rows), nil
+}
+
+// tableOptions reads extract_table's value: a row selector string, or an
+// object {"rows": "<row selector>", "record": false}. record (default true)
+// adds each row to the node output; false keeps the rows only in the
+// step's variable (an intermediate read that a later step reshapes).
+func tableOptions(v interface{}) (rowSel string, record bool, err error) {
+	switch o := v.(type) {
+	case nil:
+		return "", true, nil
+	case string:
+		return o, true, nil
+	case map[string]interface{}:
+		record = true
+		for k, x := range o {
+			switch k {
+			case "rows":
+				s, ok := x.(string)
+				if !ok {
+					return "", false, fmt.Errorf("value.rows must be a string selector")
+				}
+				rowSel = s
+			case "record":
+				b, ok := x.(bool)
+				if !ok {
+					return "", false, fmt.Errorf("value.record must be true or false")
+				}
+				record = b
+			default:
+				return "", false, fmt.Errorf("unknown value option %q (want rows, record)", k)
+			}
+		}
+		return rowSel, record, nil
+	}
+	return "", false, fmt.Errorf("value must be a row selector or {rows, record}, got %T", v)
 }
 
 // extWaitSelector waits for the step's element and returns the selector
