@@ -429,6 +429,12 @@ type ActionExecutor struct {
 	safeMode bool
 	// safeStop is set when safe mode stopped before a side-effect step.
 	safeStop *SafeStop
+	// fatal is set by failRun (safe_mode.go): the run must unwind.
+	fatal            error
+	downloadsAllowed bool
+	// selMarkers are in-page marker tokens set by package-selector lookups
+	// (selectors_pkg.go) during the current step; removed when it ends.
+	selMarkers []string
 }
 
 // NewActionExecutor creates a fully initialised executor. The page must already
@@ -508,16 +514,25 @@ func (ae *ActionExecutor) initHandlers() {
 //  3. Execute each loop
 //  4. Aggregate and return results
 func (ae *ActionExecutor) Execute(action *StorageAction) (*ExecutionResult, error) {
-	ae.startTime = time.Now()
-	ae.action = action
-
-	// Load the action definition from the embedded JSON.
-	loader := GetLoader()
-	actionDef, err := loader.Load(action.TargetPlatform, action.Type)
+	actionDef, err := GetLoader().Load(action.TargetPlatform, action.Type)
 	if err != nil {
 		return nil, fmt.Errorf("loading action definition: %w", err)
 	}
+	return ae.ExecuteDef(action, actionDef)
+}
+
+// ExecuteDef runs an already-loaded definition (e.g. a recording draft that
+// is not installed). The definition is validated first and refused on
+// errors. In safe mode a run that stops before a side-effect step returns
+// success; SafeStopped reports where.
+func (ae *ActionExecutor) ExecuteDef(action *StorageAction, actionDef *ActionDef) (*ExecutionResult, error) {
+	ae.startTime = time.Now()
+	ae.action = action
 	ae.actionDef = actionDef
+
+	if err := ae.prepareRun(action.TargetPlatform, actionDef); err != nil {
+		return nil, err
+	}
 
 	// Seed the execution context with action fields.
 	ae.seedVariables(action)
@@ -574,8 +589,8 @@ func (ae *ActionExecutor) Execute(action *StorageAction) (*ExecutionResult, erro
 		}
 	}
 
-	if err := ae.executeSteps(ae.ctx, initialSteps); err != nil {
-		if err == ErrAbort {
+	if err := ae.executeSteps(ae.ctx, initialSteps); err != nil && !errors.Is(err, errSafeStop) {
+		if errors.Is(err, ErrAbort) {
 			ae.logger.Error().Msg("action aborted during initial steps")
 			if ae.db != nil {
 				if serr := ae.db.UpdateActionState(action.ID, "FAILED"); serr != nil {
@@ -598,8 +613,11 @@ func (ae *ActionExecutor) Execute(action *StorageAction) (*ExecutionResult, erro
 
 	// Phase 3: Execute loops.
 	for _, loop := range actionDef.Loops {
-		if err := ae.executeLoop(ae.ctx, loop, actionDef.Steps); err != nil {
-			if err == ErrAbort {
+		if ae.safeStop != nil {
+			break
+		}
+		if err := ae.executeLoop(ae.ctx, loop, actionDef.Steps); err != nil && !errors.Is(err, errSafeStop) {
+			if errors.Is(err, ErrAbort) {
 				ae.logger.Error().Str("loopID", loop.ID).Msg("action aborted during loop")
 				if ae.db != nil {
 					if serr := ae.db.UpdateActionState(action.ID, "FAILED"); serr != nil {
@@ -804,18 +822,20 @@ func (ae *ActionExecutor) executeSteps(ctx context.Context, steps []StepDef) err
 		default:
 		}
 
+		if err := ae.haltErr(); err != nil {
+			return err
+		}
 		step := steps[i]
+		if ae.safeMode && step.SideEffect {
+			return ae.stopBeforeSideEffect(step)
+		}
 
 		// Resolve templates in the step definition.
 		resolved := ae.resolver.ResolveStepDef(step)
 
 		handler, ok := ae.handlers[resolved.Type]
 		if !ok {
-			ae.logger.Warn().
-				Str("stepID", resolved.ID).
-				Str("type", resolved.Type).
-				Msg("unknown step type, skipping")
-			continue
+			return ae.failRun(resolved.ID, fmt.Errorf("unknown step type %q", resolved.Type))
 		}
 
 		ae.emitEvent(ExecutionEvent{
@@ -828,6 +848,9 @@ func (ae *ActionExecutor) executeSteps(ctx context.Context, steps []StepDef) err
 		})
 
 		result, err := handler(ctx, resolved)
+		if herr := ae.afterStep(resolved, result, err); herr != nil {
+			return herr
+		}
 		if err != nil || (result != nil && !result.Success) {
 			if result == nil {
 				result = &StepResult{
@@ -1060,7 +1083,7 @@ func (ae *ActionExecutor) executeLoop(ctx context.Context, loop LoopDef, allStep
 
 		stepErr := ae.executeSteps(ctx, loopSteps)
 		if stepErr != nil {
-			if stepErr == ErrAbort {
+			if isHalt(stepErr) {
 				return stepErr
 			}
 			ae.logger.Warn().

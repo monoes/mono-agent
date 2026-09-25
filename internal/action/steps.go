@@ -98,8 +98,12 @@ func (ae *ActionExecutor) resolveElement(step StepDef) (browser.ElementHandle, e
 		return el, nil
 	}
 
-	// 4. ConfigKey — ask the config manager for a selector.
+	// 4. ConfigKey — the package's selectors.json first, else ask the
+	// config manager for a selector.
 	if step.ConfigKey != "" {
+		if entry, ok := ae.pkgSelectorEntry(step.ConfigKey); ok {
+			return ae.resolvePkgElement(step, entry, timeout)
+		}
 		configSelector := ae.resolveConfigSelector(step.ConfigKey)
 		if configSelector != "" {
 			var el browser.ElementHandle
@@ -174,6 +178,10 @@ func (ae *ActionExecutor) stepNavigate(ctx context.Context, step StepDef) (*Step
 		}
 	}
 
+	if err := ae.CheckURLAllowed(targetURL); err != nil {
+		return &StepResult{Success: false, StepID: step.ID, Error: fmt.Errorf("navigate step %s: %w", step.ID, err)}, nil
+	}
+
 	timeout := stepTimeout(step, 30)
 
 	ae.logger.Debug().
@@ -221,9 +229,15 @@ func (ae *ActionExecutor) stepWait(ctx context.Context, step StepDef) (*StepResu
 	timeout := stepTimeout(step, 10)
 
 	// If ConfigKey is set, obtain the selector from the config manager.
+	// A package selector (selectors.json) is tried first.
 	selector := step.Selector
-	if step.ConfigKey != "" && ae.configMgr != nil {
-		configSelector := ae.resolveConfigSelector(step.ConfigKey)
+	pkgSel := ""
+	if entry, ok := ae.pkgSelectorEntry(step.ConfigKey); ok {
+		pkgSel = ae.resolvePkgSelectorString(step.ConfigKey, entry, timeout)
+		selector = firstNonEmptyStr(pkgSel, selector)
+	}
+	if pkgSel == "" && step.ConfigKey != "" && ae.configMgr != nil {
+		configSelector := ae.legacyConfigSelector(step.ConfigKey)
 		if configSelector != "" {
 			selector = configSelector
 		}
@@ -373,6 +387,19 @@ func (ae *ActionExecutor) stepFindElement(ctx context.Context, step StepDef) (*S
 
 		ae.logger.Debug().Str("stepID", step.ID).Msg("element found via selector")
 		return &StepResult{Success: true, Element: elem, StepID: step.ID}, nil
+	}
+
+	// A package selector (configKey in selectors.json) resolves with its
+	// own candidate order and fallbacks.
+	if step.XPath == "" {
+		if entry, ok := ae.pkgSelectorEntry(step.ConfigKey); ok {
+			elem, err := ae.resolvePkgElement(step, entry, timeout)
+			if err != nil {
+				return &StepResult{Success: false, StepID: step.ID, Error: fmt.Errorf("find_element %s: %w", step.ID, err)}, nil
+			}
+			ae.storeFoundElement(step, elem)
+			return &StepResult{Success: true, Element: elem, StepID: step.ID}, nil
+		}
 	}
 
 	// Build selector list from XPath/ConfigKey/Alternatives.
@@ -1808,9 +1835,21 @@ func (ae *ActionExecutor) buildSelectorList(step StepDef) []string {
 	return selectors
 }
 
-// resolveConfigSelector looks up a config key through the config manager to
-// get an XPath or CSS selector.
+// resolveConfigSelector resolves a config key to an XPath or CSS selector:
+// through the package's selectors.json when it defines the key, else
+// through the config manager.
 func (ae *ActionExecutor) resolveConfigSelector(configKey string) string {
+	if entry, ok := ae.pkgSelectorEntry(configKey); ok {
+		if sel := ae.resolvePkgSelectorString(configKey, entry, defaultPkgSelectorTimeout); sel != "" {
+			return sel
+		}
+	}
+	return ae.legacyConfigSelector(configKey)
+}
+
+// legacyConfigSelector looks up a config key through the config manager to
+// get an XPath or CSS selector.
+func (ae *ActionExecutor) legacyConfigSelector(configKey string) string {
 	if ae.configMgr == nil {
 		return ""
 	}

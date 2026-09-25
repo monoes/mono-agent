@@ -95,8 +95,20 @@ func (l *ActionLoader) Load(platform, actionType string) (*ActionDef, error) {
 		return cached.(*ActionDef), nil
 	}
 
+	var fileData []byte
+	var err error
+	if src := CurrentDefSource(); src != nil {
+		// The registry is authoritative: a removed or disabled package's
+		// actions must not load from the embedded seed.
+		fileData, err = src.Load(normalPlatform, normalType)
+		if err != nil {
+			return nil, fmt.Errorf("action definition not found: %s/%s: %w", normalPlatform, normalType, err)
+		}
+		return l.parseAndCache(key, normalPlatform, normalType, fileData)
+	}
+
 	path := fmt.Sprintf("automations/%s/actions/%s.json", normalPlatform, normalType)
-	fileData, err := data.AutomationsFS.ReadFile(path)
+	fileData, err = data.AutomationsFS.ReadFile(path)
 	if err != nil {
 		// Fall back to user-installed templates in ~/.monoagent/actions/
 		userDir := userActionsDir()
@@ -109,18 +121,37 @@ func (l *ActionLoader) Load(platform, actionType string) (*ActionDef, error) {
 		}
 	}
 
+	return l.parseAndCache(key, normalPlatform, normalType, fileData)
+}
+
+func (l *ActionLoader) parseAndCache(key, platform, actionType string, fileData []byte) (*ActionDef, error) {
+	def, err := ParseActionDef(fileData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse action definition %s/%s: %w", platform, actionType, err)
+	}
+	l.cache.Store(key, def)
+	return def, nil
+}
+
+// ParseActionDef decodes an action JSON file. "automation" is accepted in
+// place of the legacy "platform": when only it is set, it fills Platform.
+func ParseActionDef(fileData []byte) (*ActionDef, error) {
 	var def ActionDef
 	if err := json.Unmarshal(fileData, &def); err != nil {
-		return nil, fmt.Errorf("failed to parse action definition %s/%s: %w", normalPlatform, normalType, err)
+		return nil, err
 	}
-
-	l.cache.Store(key, &def)
+	if def.Platform == "" {
+		def.Platform = def.Automation
+	}
 	return &def, nil
 }
 
 // ListAvailable returns all available action definitions as
 // "<platform>/<ACTION_TYPE>" strings.
 func (l *ActionLoader) ListAvailable() ([]string, error) {
+	if src := CurrentDefSource(); src != nil {
+		return src.List()
+	}
 	var result []string
 
 	// Dynamically discover all platform directories under actions/
