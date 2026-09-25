@@ -216,3 +216,14 @@ func TestHackerNewsReplyLoggedOut(t *testing.T) {
 		t.Fatalf("logged-out reply must not POST, got %d", n)
 	}
 }
+
+// Two replies by the user carry the text (an older identical one first in
+// page order): the newest, highest id wins, as with the bot.
+func TestHackerNewsReplyPicksNewestMatch(t *testing.T) {
+	p, _ := hnBrowserPage(t, replyRoutes("reply_to_comment.html", "item_after_reply_twice.html")...)
+	got, err := runHN(t, p, "reply_to_comment", map[string]interface{}{"itemID": "70000010", "text": replyText})
+	if err != nil {
+		t.Fatal(err)
+	}
+	jsonEq(t, got, expectFile(t, "reply_to_comment"))
+}

@@ -188,6 +188,15 @@ func TestHackerNewsParityNodeOutput(t *testing.T) {
 				page("https://news.ycombinator.com/item?id=70000010", "item_after_reply.html"),
 			}
 		}},
+		{"reply-twice", "reply_to_comment", map[string]interface{}{"itemID": "70000010", "text": "Thanks for the *synthetic* write-up.\n\nSecond line here."}, func() []bottest.Route {
+			return []bottest.Route{
+				page("https://news.ycombinator.com/reply?*", "reply_to_comment.html"),
+				{Pattern: "https://news.ycombinator.com/comment*", Method: "POST", Status: 302,
+					Headers: map[string]string{"Location": "https://news.ycombinator.com/item?id=70000010"}},
+				page("https://news.ycombinator.com/item?id=70000010", "item_after_reply_twice.html"),
+			}
+		}},
+		{"submit-normalised-title", "submit_post", map[string]interface{}{"title": "  show HN:   *Synthetic*  gadget "}, submit},
 		{"submit", "submit_post", map[string]interface{}{"title": "Show HN: Synthetic Gadget", "url": "https://example.test/gadget"}, submit},
 	}
 	native, decl := nativePkg(t), declarativePkg(t)

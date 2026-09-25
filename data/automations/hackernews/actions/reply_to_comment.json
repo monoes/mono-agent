@@ -188,7 +188,7 @@
     {
       "id": "match_rows",
       "type": "transform",
-      "description": "The reply just posted: by the logged-in user, newer than the parent, and containing the typed text once both sides drop asterisks and whitespace and are lower-cased (HN renders *x* as italics and blank lines as paragraphs)",
+      "description": "The reply just posted (the newest match, as ids grow): by the logged-in user, newer than the parent, and containing the typed text once both sides drop asterisks and whitespace and are lower-cased (HN renders *x* as italics and blank lines as paragraphs)",
       "input": "{{repRows}}",
       "variable_name": "mine",
       "ops": [
@@ -206,6 +206,7 @@
           "op": "filter",
           "where": {"variable": "norm", "operator": "contains", "value": "{{repNeedle.t}}"}
         },
+        {"op": "sort", "field": "id", "order": "desc"},
         {"op": "limit", "count": 1}
       ]
     },
