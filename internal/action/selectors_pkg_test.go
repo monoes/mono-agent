@@ -2,8 +2,10 @@ package action
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func selPkg(entries map[string]*SelectorEntry) *fakePkg {
@@ -152,5 +154,71 @@ func TestResolveStepDefLeavesNewFieldsRaw(t *testing.T) {
 	if r.Items != "{{v}}" || r.Key != "{{v}}" || r.Input != "{{v}}" || r.Inputs["a"] != "{{v}}" ||
 		r.Until.Text != "{{v}}" || r.Steps[0].Text != "{{v}}" {
 		t.Fatalf("new fields were resolved: %+v", r)
+	}
+}
+
+type candObs struct{ got []string }
+
+func (o *candObs) ObserveSelector(id, key string, idx int, ok, healed bool) {
+	o.got = append(o.got, "plain")
+}
+func (o *candObs) ObserveSelectorCandidate(id, key string, c *SelectorCandidate, idx int, ok, healed bool) {
+	desc := "<nil>"
+	if c != nil {
+		desc = c.CSS + c.XPath
+	}
+	o.got = append(o.got, fmt.Sprintf("%s idx=%d ok=%v healed=%v", desc, idx, ok, healed))
+}
+
+func TestSelectorCandidateObserver(t *testing.T) {
+	page := &markPage{present: map[string]bool{".b": true}}
+	obs := &candObs{}
+	ae := newPkgExecutor(page, selPkg(map[string]*SelectorEntry{
+		"k": {Candidates: []SelectorCandidate{{CSS: ".a"}, {CSS: ".b"}}},
+	}))
+	ae.SetSelectorObserver(obs)
+	ae.resolveElement(StepDef{ID: "s", ConfigKey: "k", Timeout: 0.05})
+	ae.resolveElement(StepDef{ID: "s", ConfigKey: "k", XPath: "", Alternatives: nil, Timeout: 0.05, Selector: ""})
+	page.present = nil
+	ae.resolveElement(StepDef{ID: "s", ConfigKey: "k", Timeout: 0.05})
+	want := []string{".b idx=1 ok=true healed=true", ".b idx=1 ok=true healed=true", "<nil> idx=-1 ok=false healed=false"}
+	if !reflect.DeepEqual(obs.got, want) {
+		t.Fatalf("got %v, want %v", obs.got, want)
+	}
+}
+
+func TestSelectorStringAlternatives(t *testing.T) {
+	page := &markPage{present: map[string]bool{"#alt2": true}}
+	obs := &obsRecord{}
+	ae := newPkgExecutor(page, selPkg(map[string]*SelectorEntry{"k": {Candidates: []SelectorCandidate{{CSS: "#gone"}}}}))
+	ae.SetSelectorObserver(obs)
+	css, _, err := ae.SelectorString(context.Background(), StepDef{ID: "s", ConfigKey: "k", Alternatives: []string{"#alt1", "#alt2"}, Timeout: 0.05})
+	if err != nil || css != "#alt2" {
+		t.Fatalf("css=%q err=%v", css, err)
+	}
+	// Legacy key (no package entry) also falls back to alternatives.
+	legacy := newPkgExecutor(page, nil)
+	if css, _, err := legacy.SelectorString(context.Background(), StepDef{ID: "s", ConfigKey: "nokey", Alternatives: []string{"#alt2"}, Timeout: 0.05}); err != nil || css != "#alt2" {
+		t.Fatalf("legacy alternatives: css=%q err=%v", css, err)
+	}
+	if want := []string{"acme/k idx=-1 ok=true healed=true"}; !reflect.DeepEqual(obs.calls, want) {
+		t.Fatalf("observed %v", obs.calls)
+	}
+}
+
+func TestStepWaitPackageSelectorSingleBudget(t *testing.T) {
+	page := &markPage{}
+	ae := newPkgExecutor(page, selPkg(map[string]*SelectorEntry{"k": {Candidates: []SelectorCandidate{{CSS: "#gone"}}}}))
+	start := time.Now()
+	res, err := ae.stepWait(context.Background(), StepDef{ID: "w", Type: "wait", ConfigKey: "k", Selector: "#also-gone", Timeout: 0.4})
+	if err != nil || res.Success {
+		t.Fatalf("a package selector that never appears must fail the wait: %+v %v", res, err)
+	}
+	if d := time.Since(start); d > 900*time.Millisecond {
+		t.Fatalf("waited %v for a 0.4s timeout (twice?)", d)
+	}
+	page.present = map[string]bool{"#gone": true}
+	if res, _ := ae.stepWait(context.Background(), StepDef{ID: "w", Type: "wait", ConfigKey: "k", Timeout: 0.4}); !res.Success {
+		t.Fatalf("present candidate: %+v", res)
 	}
 }

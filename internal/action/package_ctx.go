@@ -110,6 +110,14 @@ type SelectorObserver interface {
 	ObserveSelector(automationID, key string, candidateIndex int, ok, healed bool)
 }
 
+// SelectorCandidateObserver is optionally implemented by a SelectorObserver
+// that wants the matched candidate itself (the index is relative to the
+// entry the run saw, which may since have been reordered). c is nil when no
+// candidate matched.
+type SelectorCandidateObserver interface {
+	ObserveSelectorCandidate(automationID, key string, c *SelectorCandidate, candidateIndex int, ok, healed bool)
+}
+
 // DefSource supplies action definitions to the loader. The automation
 // registry installs one at startup (SetDefSource); with none set the loader
 // reads the embedded seed (data.AutomationsFS) and the legacy

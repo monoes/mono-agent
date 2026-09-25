@@ -230,13 +230,17 @@ func (ae *ActionExecutor) stepWait(ctx context.Context, step StepDef) (*StepResu
 
 	// If ConfigKey is set, obtain the selector from the config manager.
 	// A package selector (selectors.json) is tried first.
+	// Its lookup (candidates, legacy lookup, the step's selector and
+	// alternatives) spends the step timeout once: a match is present, so
+	// the wait below returns at once; no match fails the step.
 	selector := step.Selector
-	pkgSel := ""
-	if entry, ok := ae.pkgSelectorEntry(step.ConfigKey); ok {
-		pkgSel = ae.resolvePkgSelectorString(step.ConfigKey, entry, timeout)
-		selector = firstNonEmptyStr(pkgSel, selector)
-	}
-	if pkgSel == "" && step.ConfigKey != "" && ae.configMgr != nil {
+	if _, ok := ae.pkgSelectorEntry(step.ConfigKey); ok {
+		sel, err := ae.selectorWithFallbacks(step, timeout, step.Selector)
+		if err != nil {
+			return &StepResult{Success: false, StepID: step.ID, Error: fmt.Errorf("wait step %s: %w", step.ID, err)}, nil
+		}
+		selector = sel
+	} else if step.ConfigKey != "" && ae.configMgr != nil {
 		configSelector := ae.legacyConfigSelector(step.ConfigKey)
 		if configSelector != "" {
 			selector = configSelector

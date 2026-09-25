@@ -124,3 +124,12 @@ func newPkgExecutor(page browser.PageInterface, pkg PackageContext) *ActionExecu
 	ae.SetPackage(pkg)
 	return ae
 }
+
+func (p *markPage) Race(sels []string, _ time.Duration) (int, browser.ElementHandle, error) {
+	for i, s := range sels {
+		if p.present[s] || p.marked[s] {
+			return i, &domElement{n: &domNode{text: s}}, nil
+		}
+	}
+	return -1, nil, errors.New("none of the selectors matched")
+}

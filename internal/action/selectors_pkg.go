@@ -46,8 +46,18 @@ func (ae *ActionExecutor) pkgSelectorEntry(key string) (*SelectorEntry, bool) {
 }
 
 // observeSelector reports a package-selector outcome to the observer.
-func (ae *ActionExecutor) observeSelector(key string, idx int, ok, healed bool) {
+// A SelectorCandidateObserver also receives the matched candidate of entry.
+func (ae *ActionExecutor) observeSelector(key string, entry *SelectorEntry, idx int, ok, healed bool) {
 	if ae.selObs == nil || ae.pkg == nil {
+		return
+	}
+	if co, isCO := ae.selObs.(SelectorCandidateObserver); isCO {
+		var c *SelectorCandidate
+		if entry != nil && idx >= 0 && idx < len(entry.Candidates) {
+			cand := entry.Candidates[idx]
+			c = &cand
+		}
+		co.ObserveSelectorCandidate(ae.pkg.ID(), key, c, idx, ok, healed)
 		return
 	}
 	ae.selObs.ObserveSelector(ae.pkg.ID(), key, idx, ok, healed)
@@ -175,20 +185,20 @@ func (ae *ActionExecutor) resolvePkgElement(step StepDef, entry *SelectorEntry, 
 	key := step.ConfigKey
 	idx, _, el, err := ae.findPkgCandidate(entry, timeout)
 	if el != nil {
-		ae.observeSelector(key, idx, true, idx > 0)
+		ae.observeSelector(key, entry, idx, true, idx > 0)
 		return el, nil
 	}
 	cause := fmt.Errorf("selector %q: %w", key, err)
 
 	if sel := ae.legacyConfigSelector(key); sel != "" {
 		if el, lerr := findElement(ae.page, sel, timeout); lerr == nil && el != nil {
-			ae.observeSelector(key, -1, true, true)
+			ae.observeSelector(key, entry, -1, true, true)
 			return el, nil
 		}
 	}
 	if len(step.Alternatives) > 0 {
 		if _, el, aerr := findFirst(ae.page, step.Alternatives, timeout); aerr == nil && el != nil {
-			ae.observeSelector(key, -1, true, true)
+			ae.observeSelector(key, entry, -1, true, true)
 			return el, nil
 		}
 	}
@@ -198,10 +208,10 @@ func (ae *ActionExecutor) resolvePkgElement(step StepDef, entry *SelectorEntry, 
 	}
 	el, err = ae.jevResolve(jevStep, cause)
 	if err == nil && el != nil {
-		ae.observeSelector(key, -1, true, true)
+		ae.observeSelector(key, entry, -1, true, true)
 		return el, nil
 	}
-	ae.observeSelector(key, -1, false, false)
+	ae.observeSelector(key, entry, -1, false, false)
 	return nil, err
 }
 
@@ -212,10 +222,10 @@ func (ae *ActionExecutor) resolvePkgElement(step StepDef, entry *SelectorEntry, 
 func (ae *ActionExecutor) resolvePkgSelectorString(key string, entry *SelectorEntry, timeout time.Duration) string {
 	idx, sel, _, _ := ae.findPkgCandidate(entry, timeout)
 	if sel == "" {
-		ae.observeSelector(key, -1, false, false)
+		ae.observeSelector(key, entry, -1, false, false)
 		return ""
 	}
-	ae.observeSelector(key, idx, true, idx > 0)
+	ae.observeSelector(key, entry, idx, true, idx > 0)
 	return sel
 }
 
@@ -322,15 +332,6 @@ func (ae *ActionExecutor) storeFoundElement(step StepDef, elem browser.ElementHa
 	}
 }
 
-func firstNonEmptyStr(xs ...string) string {
-	for _, x := range xs {
-		if x != "" {
-			return x
-		}
-	}
-	return ""
-}
-
 // SelectorString resolves a step's target to a selector string for handlers
 // that query the page themselves (extract_table, extract_json) rather than
 // taking an element handle. Exactly one of css/xpath is set on success.
@@ -359,15 +360,57 @@ func (ae *ActionExecutor) SelectorString(ctx context.Context, step StepDef) (css
 	case step.ConfigKey == "":
 		return "", "", fmt.Errorf("step %s: no selector, xpath or configKey", step.ID)
 	}
-	if entry, ok := ae.pkgSelectorEntry(step.ConfigKey); ok {
-		if sel := ae.resolvePkgSelectorString(step.ConfigKey, entry, stepTimeout(step, 10)); sel != "" {
-			css, xpath = split(sel)
-			return css, xpath, nil
+	sel, err := ae.selectorWithFallbacks(step, stepTimeout(step, 10))
+	if err != nil {
+		return "", "", fmt.Errorf("step %s: %w", step.ID, err)
+	}
+	css, xpath = split(sel)
+	return css, xpath, nil
+}
+
+// selectorWithFallbacks resolves step.ConfigKey to a selector string within
+// one timeout budget: the package's candidates, then the legacy config
+// lookup, then extra (e.g. the step's own selector) and the step's
+// alternatives — the fallbacks polled together with what is left of the
+// budget, so nothing waits twice. One selector observation per lookup.
+// Without a package entry and with a single fallback, that fallback is
+// returned unprobed (the legacy behaviour).
+func (ae *ActionExecutor) selectorWithFallbacks(step StepDef, timeout time.Duration, extra ...string) (string, error) {
+	key := step.ConfigKey
+	start := time.Now()
+	entry, hasPkg := ae.pkgSelectorEntry(key)
+	if hasPkg {
+		if idx, sel, _, _ := ae.findPkgCandidate(entry, timeout); sel != "" {
+			ae.observeSelector(key, entry, idx, true, idx > 0)
+			return sel, nil
 		}
 	}
-	if sel := ae.legacyConfigSelector(step.ConfigKey); sel != "" {
-		css, xpath = split(sel)
-		return css, xpath, nil
+	var fallbacks []string
+	if sel := ae.legacyConfigSelector(key); sel != "" {
+		fallbacks = append(fallbacks, sel)
 	}
-	return "", "", fmt.Errorf("step %s: config key %q resolved to no selector", step.ID, step.ConfigKey)
+	for _, f := range append(append([]string{}, extra...), step.Alternatives...) {
+		if strings.TrimSpace(f) != "" {
+			fallbacks = append(fallbacks, f)
+		}
+	}
+	if !hasPkg && len(fallbacks) == 1 {
+		return fallbacks[0], nil
+	}
+	if len(fallbacks) > 0 && ae.page != nil {
+		remaining := timeout - time.Since(start)
+		if remaining < raceProbeTimeout {
+			remaining = raceProbeTimeout
+		}
+		if i, _, err := findFirst(ae.page, fallbacks, remaining); err == nil {
+			if hasPkg {
+				ae.observeSelector(key, entry, -1, true, true)
+			}
+			return fallbacks[i], nil
+		}
+	}
+	if hasPkg {
+		ae.observeSelector(key, entry, -1, false, false)
+	}
+	return "", fmt.Errorf("config key %q resolved to no selector", key)
 }
