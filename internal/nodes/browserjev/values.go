@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/monoes/mono-agent/internal/jev"
 	"github.com/monoes/mono-agent/internal/jevpick"
@@ -20,9 +21,11 @@ import (
 const (
 	valueMinP       = 0.6
 	secretValueMinP = 0.9
-	// scrubMinLen: shorter values are not replaced inside text — "ab" would
-	// shred ordinary words. They still never reach Jev as a typed step
-	// (history text is recorded as <value:NAME> for secrets).
+	// scrubMinLen: shorter plain values are not replaced inside text — "ab"
+	// would shred ordinary words. They are still replaced where they stand
+	// alone: a field whose value equals one (scrubber.field), and a history
+	// step that typed one. Vault-backed values shorter than this are refused
+	// at config time (see parseValues).
 	scrubMinLen = 4
 	noneValue   = "NONE"
 )
@@ -90,6 +93,19 @@ func parseValues(ctx context.Context, config map[string]interface{}) ([]namedVal
 				return nil, fmt.Errorf("%w: browser.jev values: %q references %s, which did not resolve: %v",
 					workflow.ErrInvalidConfig, name, s, err)
 			}
+			// A short secret (a CVV, a PIN, an OTP) cannot be kept out of
+			// what Jev sees. Replacing its exact value in fields is not
+			// enough: the snapshot also carries it where it is not the whole
+			// string — a GET form's submitted URL (?cvv=123), a
+			// contenteditable's or combobox's label (its inner text), an
+			// autocomplete option echoing the query, a confirmation page —
+			// and substring-scrubbing 3 characters there would mangle
+			// ordinary text ("123" inside every longer number) without being
+			// reliable either. So refuse it rather than leak it.
+			if utf8.RuneCountInString(strings.TrimSpace(resolved)) < scrubMinLen {
+				return nil, fmt.Errorf("%w: secret value for %s is shorter than %d characters; browser.jev cannot keep it out of page text",
+					workflow.ErrInvalidConfig, name, scrubMinLen)
+			}
 			nv.Value, nv.Secret = resolved, true
 		}
 		out = append(out, nv)
@@ -112,14 +128,31 @@ type scrubber struct {
 	secretsOnly bool
 }
 
+// str replaces configured values inside x. Vault-backed values are
+// replaced at any length (parseValues refuses short ones); plain values
+// shorter than scrubMinLen are left alone here — see field.
 func (s scrubber) str(x string) string {
 	for _, v := range s.values {
-		if (s.secretsOnly && !v.Secret) || len(v.Value) < scrubMinLen {
+		if (s.secretsOnly && !v.Secret) || (!v.Secret && len(v.Value) < scrubMinLen) {
 			continue
 		}
 		x = strings.ReplaceAll(x, v.Value, "<value:"+v.Name+">")
 	}
 	return x
+}
+
+// field scrubs a field's value: when the whole value (trimmed) equals a
+// configured value it becomes <value:NAME> whatever its length — that is
+// where a short value lands after it was typed — else str applies.
+func (s scrubber) field(x string) string {
+	if t := strings.TrimSpace(x); t != "" {
+		for _, v := range s.values {
+			if (!s.secretsOnly || v.Secret) && t == strings.TrimSpace(v.Value) {
+				return "<value:" + v.Name + ">"
+			}
+		}
+	}
+	return s.str(x)
 }
 
 // page returns a scrubbed copy of p (the original keeps the real values the
@@ -132,7 +165,14 @@ func (s scrubber) page(p *jevpick.PageState) *jevpick.PageState {
 	c.URL, c.Title, c.Text = s.str(p.URL), s.str(p.Title), s.str(p.Text)
 	c.Actions = make([]jevpick.Action, len(p.Actions))
 	for i, a := range p.Actions {
-		a.Label, a.Value, a.CurrentValue = s.str(a.Label), s.str(a.Value), s.str(a.CurrentValue)
+		a.Label = s.str(a.Label)
+		if a.Kind == "select" {
+			// Option values and the selected options' labels are written by
+			// the page, not typed; a plain "2" must stay "2" to be chosen.
+			a.Value, a.CurrentValue = s.str(a.Value), s.str(a.CurrentValue)
+		} else {
+			a.Value, a.CurrentValue = s.field(a.Value), s.field(a.CurrentValue)
+		}
 		c.Actions[i] = a
 	}
 	return &c
@@ -145,6 +185,10 @@ func (s scrubber) history(h []step) []step {
 	out := make([]step, len(h))
 	for i, st := range h {
 		st.Text, st.Action, st.URL = s.str(st.Text), s.str(st.Action), s.str(st.URL)
+		if st.ValueName != "" && !s.secretsOnly {
+			// A typed configured value, however short, is sent by name.
+			st.Text = "<value:" + st.ValueName + ">"
+		}
 		out[i] = st
 	}
 	return out
@@ -208,7 +252,7 @@ func pickValue(ctx context.Context, c *jev.Client, values []namedValue, sc scrub
 	field := map[string]any{
 		"label":         sc.str(strings.Split(a.Label, " → ")[0]),
 		"role":          a.Role,
-		"current_value": sc.str(firstNonEmpty(a.CurrentValue, a.Value)),
+		"current_value": sc.field(firstNonEmpty(a.CurrentValue, a.Value)),
 	}
 	if inputType != "" {
 		field["input_type"] = inputType
