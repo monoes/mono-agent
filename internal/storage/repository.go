@@ -406,18 +406,18 @@ func (d *Database) GetPerson(id string) (*Person, error) {
 	p := &Person{}
 	var fullName, imageURL, contactDetails, website, followerCount sql.NullString
 	var introduction, category, jobTitle sql.NullString
-	var isVerified int
+	var isVerified, contentCount, followingCount sql.NullInt64
 
 	err := d.DB.QueryRow(`
-		SELECT id, platform_username, platform, full_name, image_url,
-		       contact_details, website, content_count, follower_count,
-		       following_count, introduction, is_verified, category, job_title,
+		SELECT id, COALESCE(platform_username, ''), COALESCE(platform, ''), full_name, image_url,
+		       contact_details, website, COALESCE(content_count, 0), follower_count,
+		       COALESCE(following_count, 0), introduction, COALESCE(is_verified, 0), category, job_title,
 		       created_at, updated_at
 		FROM people WHERE id = ?`, id,
 	).Scan(
 		&p.ID, &p.PlatformUsername, &p.Platform, &fullName, &imageURL,
-		&contactDetails, &website, &p.ContentCount, &followerCount,
-		&p.FollowingCount, &introduction, &isVerified, &category, &jobTitle,
+		&contactDetails, &website, &contentCount, &followerCount,
+		&followingCount, &introduction, &isVerified, &category, &jobTitle,
 		&p.CreatedAt, &p.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -432,8 +432,10 @@ func (d *Database) GetPerson(id string) (*Person, error) {
 	p.ContactDetails = contactDetails.String
 	p.Website = website.String
 	p.FollowerCount = followerCount.String
+	p.ContentCount = int(contentCount.Int64)
+	p.FollowingCount = int(followingCount.Int64)
 	p.Introduction = introduction.String
-	p.IsVerified = isVerified != 0
+	p.IsVerified = isVerified.Valid && isVerified.Int64 != 0
 	p.Category = category.String
 	p.JobTitle = jobTitle.String
 
@@ -450,18 +452,18 @@ func (d *Database) GetPersonByUsername(platformUsername, platform, profileID str
 	p := &Person{}
 	var fullName, imageURL, contactDetails, website, followerCount sql.NullString
 	var introduction, category, jobTitle sql.NullString
-	var isVerified int
+	var isVerified, contentCount, followingCount sql.NullInt64
 
 	err := d.DB.QueryRow(`
-		SELECT id, platform_username, platform, full_name, image_url,
-		       contact_details, website, content_count, follower_count,
-		       following_count, introduction, is_verified, category, job_title,
+		SELECT id, COALESCE(platform_username, ''), COALESCE(platform, ''), full_name, image_url,
+		       contact_details, website, COALESCE(content_count, 0), follower_count,
+		       COALESCE(following_count, 0), introduction, COALESCE(is_verified, 0), category, job_title,
 		       profile_id, created_at, updated_at
 		FROM people WHERE platform_username = ? AND platform = ? AND profile_id = ?`, platformUsername, platform, profileID,
 	).Scan(
 		&p.ID, &p.PlatformUsername, &p.Platform, &fullName, &imageURL,
-		&contactDetails, &website, &p.ContentCount, &followerCount,
-		&p.FollowingCount, &introduction, &isVerified, &category, &jobTitle,
+		&contactDetails, &website, &contentCount, &followerCount,
+		&followingCount, &introduction, &isVerified, &category, &jobTitle,
 		&p.ProfileID, &p.CreatedAt, &p.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -476,8 +478,10 @@ func (d *Database) GetPersonByUsername(platformUsername, platform, profileID str
 	p.ContactDetails = contactDetails.String
 	p.Website = website.String
 	p.FollowerCount = followerCount.String
+	p.ContentCount = int(contentCount.Int64)
+	p.FollowingCount = int(followingCount.Int64)
 	p.Introduction = introduction.String
-	p.IsVerified = isVerified != 0
+	p.IsVerified = isVerified.Valid && isVerified.Int64 != 0
 	p.Category = category.String
 	p.JobTitle = jobTitle.String
 
@@ -509,9 +513,9 @@ func (d *Database) ListPeople(platform, search string, limit, offset int) ([]*Pe
 	}
 
 	query := `
-		SELECT id, platform_username, platform, full_name, image_url,
-		       contact_details, website, content_count, follower_count,
-		       following_count, introduction, is_verified, category, job_title,
+		SELECT id, COALESCE(platform_username, ''), COALESCE(platform, ''), full_name, image_url,
+		       contact_details, website, COALESCE(content_count, 0), follower_count,
+		       COALESCE(following_count, 0), introduction, COALESCE(is_verified, 0), category, job_title,
 		       created_at, updated_at
 		FROM people`
 	if len(conditions) > 0 {
@@ -531,12 +535,12 @@ func (d *Database) ListPeople(platform, search string, limit, offset int) ([]*Pe
 		p := &Person{}
 		var fullName, imageURL, contactDetails, website, followerCount sql.NullString
 		var introduction, category, jobTitle sql.NullString
-		var isVerified int
+		var isVerified, contentCount, followingCount sql.NullInt64
 
 		if err := rows.Scan(
 			&p.ID, &p.PlatformUsername, &p.Platform, &fullName, &imageURL,
-			&contactDetails, &website, &p.ContentCount, &followerCount,
-			&p.FollowingCount, &introduction, &isVerified, &category, &jobTitle,
+			&contactDetails, &website, &contentCount, &followerCount,
+			&followingCount, &introduction, &isVerified, &category, &jobTitle,
 			&p.CreatedAt, &p.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scanning person row: %w", err)
@@ -547,8 +551,10 @@ func (d *Database) ListPeople(platform, search string, limit, offset int) ([]*Pe
 		p.ContactDetails = contactDetails.String
 		p.Website = website.String
 		p.FollowerCount = followerCount.String
+		p.ContentCount = int(contentCount.Int64)
+		p.FollowingCount = int(followingCount.Int64)
 		p.Introduction = introduction.String
-		p.IsVerified = isVerified != 0
+		p.IsVerified = isVerified.Valid && isVerified.Int64 != 0
 		p.Category = category.String
 		p.JobTitle = jobTitle.String
 

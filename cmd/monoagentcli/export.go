@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -70,8 +71,8 @@ func exportPeopleData(db *storage.Database, outputDir, profileID string) (int, e
 	rows, err := db.DB.Query(
 		`SELECT id, platform_username, platform, COALESCE(full_name,''),
 		        COALESCE(image_url,''), COALESCE(contact_details,''),
-		        COALESCE(website,''), content_count, COALESCE(follower_count,''),
-		        following_count, COALESCE(introduction,''), is_verified,
+		        COALESCE(website,''), COALESCE(content_count, 0), COALESCE(follower_count,''),
+		        COALESCE(following_count, 0), COALESCE(introduction,''), COALESCE(is_verified, 0),
 		        COALESCE(category,''), COALESCE(job_title,''),
 		        created_at, updated_at
 		 FROM people WHERE profile_id = ?
@@ -86,16 +87,18 @@ func exportPeopleData(db *storage.Database, outputDir, profileID string) (int, e
 	var people []storage.Person
 	for rows.Next() {
 		var p storage.Person
-		var verified int
+		var verified, contentCount, followingCount sql.NullInt64
 		if err := rows.Scan(
 			&p.ID, &p.PlatformUsername, &p.Platform, &p.FullName,
-			&p.ImageURL, &p.ContactDetails, &p.Website, &p.ContentCount,
-			&p.FollowerCount, &p.FollowingCount, &p.Introduction,
+			&p.ImageURL, &p.ContactDetails, &p.Website, &contentCount,
+			&p.FollowerCount, &followingCount, &p.Introduction,
 			&verified, &p.Category, &p.JobTitle, &p.CreatedAt, &p.UpdatedAt,
 		); err != nil {
 			return 0, fmt.Errorf("scanning person: %w", err)
 		}
-		p.IsVerified = verified != 0
+		p.ContentCount = int(contentCount.Int64)
+		p.FollowingCount = int(followingCount.Int64)
+		p.IsVerified = verified.Valid && verified.Int64 != 0
 		people = append(people, p)
 	}
 	if err := rows.Err(); err != nil {
