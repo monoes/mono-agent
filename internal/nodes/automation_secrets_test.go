@@ -79,7 +79,7 @@ func TestSecretLookup_ImportedPackageNoBareFallback(t *testing.T) {
 		"p1|acme-crm/api_key": "namespaced",
 		"p1|github_token":     "must-not-leak",
 	})
-	look := secretLookup(context.Background(), nil, "p1", "acme-crm")
+	look := SecretLookup(context.Background(), nil, "p1", " Acme-CRM ")
 	if v, ok := look("api_key"); !ok || v != "namespaced" {
 		t.Errorf("api_key = %q %v", v, ok)
 	}
