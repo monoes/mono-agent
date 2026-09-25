@@ -31,6 +31,12 @@ type LiveRunGate interface{ LiveRunConfirmed() bool }
 // ("social" marks a social-platform package).
 type Tiered interface{ Tier() string }
 
+// ErrRefused is wrapped by every security refusal (scripts not allowed,
+// upload path not allowed, call_action denied, live run not confirmed,
+// downloads not permitted, a path outside the run's workdir). Like
+// ErrOffDomain it is fatal: onError cannot skip or continue past it.
+var ErrRefused = errors.New("refused")
+
 // socialHosts are the social platforms of the usage policy (spec §6.4).
 var socialHosts = []string{"instagram.com", "linkedin.com", "x.com", "twitter.com", "tiktok.com", "facebook.com", "threads.net"}
 
@@ -87,6 +93,9 @@ type CallActionError struct {
 }
 
 func (e *CallActionError) Error() string { return e.Msg }
+
+// Unwrap makes every call_action policy refusal an ErrRefused.
+func (e *CallActionError) Unwrap() error { return ErrRefused }
 
 // errUnresolvedAction wraps a ResolveAction failure (a warning at validate
 // time: the target may be installed later; an error at run time).
@@ -179,8 +188,8 @@ func (ae *ActionExecutor) checkLiveRun(p PackageContext, def *ActionDef) error {
 	if !ok || ae.safeMode || def == nil || !atLeastWrite(def.SideEffects) || g.LiveRunConfirmed() {
 		return nil
 	}
-	return fmt.Errorf("automation %s: live runs of %s-level actions need confirmation: run `monoagentcli automation trust %s --live`",
-		p.ID(), def.SideEffects, p.ID())
+	return fmt.Errorf("%w: automation %s: live runs of %s-level actions need confirmation: run `monoagentcli automation trust %s --live`",
+		ErrRefused, p.ID(), def.SideEffects, p.ID())
 }
 
 // enterPackage switches the executor to p for a call_action body: the

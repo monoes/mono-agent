@@ -23,7 +23,6 @@ package action
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -33,7 +32,7 @@ import (
 )
 
 // ErrUploadNotAllowed is wrapped by every package upload refusal.
-var ErrUploadNotAllowed = errors.New("upload path not allowed")
+var ErrUploadNotAllowed = fmt.Errorf("%w: upload path not allowed", ErrRefused)
 
 // UploadsDir returns ~/.monoagent/uploads/<automationID>, the directory a
 // package may upload from without an input naming the file.

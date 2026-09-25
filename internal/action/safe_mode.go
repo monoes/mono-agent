@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/monoes/mono-agent/internal/fsconfine"
 )
 
 // errSafeStop unwinds executeSteps when safe mode stops before a
@@ -80,7 +82,7 @@ func (ae *ActionExecutor) afterStep(step StepDef, result *StepResult, err error)
 	if cause == nil && result != nil && !result.Success {
 		cause = result.Error
 	}
-	if cause != nil && errors.Is(cause, ErrOffDomain) {
+	if cause != nil && isFatalCause(cause) {
 		return ae.failRun(step.ID, cause)
 	}
 	// A call_action body ran under the callee's package, which checked its
@@ -117,4 +119,25 @@ func (ae *ActionExecutor) safeStopRequired(step StepDef) bool {
 		return err != nil || def.SideEffects == "" || atLeastWrite(def.SideEffects)
 	}
 	return false
+}
+
+// isFatalCause reports whether a step failure must end the run whatever
+// the step's onError says: leaving the allowed domains, or a security
+// refusal (ErrRefused, or a path outside the run's workdir).
+func isFatalCause(err error) bool {
+	return errors.Is(err, ErrOffDomain) || errors.Is(err, ErrRefused) || errors.Is(err, fsconfine.ErrOutsideWorkdir)
+}
+
+// defaultOnError is the policy for a failed step without "onError". A
+// declarative package action (a package that is not legacy/local-* and has
+// no native bot) aborts: a failure there must not report success. Legacy
+// and native built-in actions keep master's default, continue.
+func (ae *ActionExecutor) defaultOnError() *ErrorHandlerDef {
+	if ae.pkg == nil || isLegacyPackage(ae.pkg) {
+		return nil
+	}
+	if nb, ok := ae.pkg.(NativeBacked); ok && nb.Native() != "" {
+		return nil
+	}
+	return &ErrorHandlerDef{Action: ErrorActionAbort}
 }

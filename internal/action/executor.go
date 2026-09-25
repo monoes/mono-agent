@@ -876,7 +876,11 @@ func (ae *ActionExecutor) executeSteps(ctx context.Context, steps []StepDef) err
 			result.StepID = resolved.ID
 
 			// Apply error handler if defined.
-			handled := ae.errorHandler.Handle(ctx, resolved.OnError, result, ae.execCtx)
+			onErr := resolved.OnError
+			if onErr == nil {
+				onErr = ae.defaultOnError()
+			}
+			handled := ae.errorHandler.Handle(ctx, onErr, result, ae.execCtx)
 
 			if handled.Abort {
 				if errors.Is(handled.Error, ErrAbort) {
