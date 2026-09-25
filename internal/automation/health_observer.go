@@ -32,6 +32,8 @@ type HealthOptions struct {
 	Interval time.Duration // flush interval (default 2s)
 	MaxBatch int           // flush early at this many pending observations (default 256)
 	Promoter SelectorPromoter
+	// SelectorKeys enables pruning of stale rows (health_prune.go); nil = never prune.
+	SelectorKeys SelectorKeysFunc
 }
 
 // HealthRecorder is the concrete selector observer behind HealthObserver.
@@ -47,7 +49,8 @@ type HealthRecorder struct {
 	once     sync.Once
 	now      func() time.Time
 
-	testHookWrite func() // tests: called before each batch write
+	testHookWrite func()    // tests: called before each batch write
+	lastPrune     time.Time // loop goroutine only
 }
 
 type healthKey struct{ id, key string }
@@ -84,7 +87,7 @@ var _ action.SelectorCandidateObserver = (*HealthRecorder)(nil)
 // interface{ Close() error } and close it on shutdown so the last batch is
 // written.
 func HealthObserver(db *sql.DB) action.SelectorObserver {
-	return NewHealthRecorder(db, HealthOptions{Promoter: bootedPromoter{}})
+	return NewHealthRecorder(db, HealthOptions{Promoter: bootedPromoter{}, SelectorKeys: bootedKeys})
 }
 
 // NewHealthRecorder starts a recorder writing to db.
@@ -204,6 +207,7 @@ func (r *HealthRecorder) loop() {
 			log.Printf("automation: selector health: write batch: %v", err)
 		}
 		r.promote(batch)
+		r.maybePrune()
 		return err
 	}
 	for {

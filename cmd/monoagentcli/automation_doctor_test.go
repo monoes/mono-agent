@@ -176,3 +176,69 @@ func TestAutomationDoctorWithoutDatabase(t *testing.T) {
 		t.Fatal("doctor must not create a database")
 	}
 }
+
+// A health row for a key the installed version no longer declares is
+// reported stale: flagged, status "stale", no re-record suggestion.
+func TestAutomationDoctorStaleSelector(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	installTestAutomation(t)
+	cfg := &globalConfig{DBPath: filepath.Join(t.TempDir(), "doctor.db"), JSONOutput: true, ProfileID: "default"}
+	db, err := initDB(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := automation.NewHealthRecorder(db.DB, automation.HealthOptions{Interval: time.Hour})
+	for i := 0; i < 5; i++ {
+		rec.ObserveSelector("acme-test", "page.removed", -1, false, false) // broken, but gone
+		rec.ObserveSelector("acme-test", "page.link", -1, false, false)    // broken and declared
+	}
+	if err := rec.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	var out bytes.Buffer
+	cmd := newAutomationDoctorCmd(cfg)
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"acme-test"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Automations []struct {
+			Selectors []doctorSelectorJSON `json:"selectors"`
+		} `json:"automations"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	byKey := map[string]doctorSelectorJSON{}
+	for _, s := range got.Automations[0].Selectors {
+		byKey[s.Key] = s
+	}
+	if s := byKey["page.removed"]; !s.Stale || s.Status != "stale" || s.Suggestion != "" || s.Fail != 5 {
+		t.Fatalf("page.removed = %+v, want stale with no suggestion", s)
+	}
+	if s := byKey["page.link"]; s.Stale || s.Status != "broken" || s.Suggestion == "" {
+		t.Fatalf("page.link = %+v, want broken with a re-record suggestion", s)
+	}
+	if s := byKey["page.title"]; s.Stale || s.Status != "ok" {
+		t.Fatalf("page.title (declared, no data) = %+v", s)
+	}
+	if strings.Contains(out.String(), `"stale": false`) {
+		t.Fatal("stale should be omitted when false")
+	}
+
+	var human bytes.Buffer
+	cfg.JSONOutput = false
+	cmd = newAutomationDoctorCmd(cfg)
+	cmd.SetOut(&human)
+	cmd.SetArgs([]string{"acme-test"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(human.String(), "stale   selector page.removed: not in acme-test 1.0.0") ||
+		strings.Contains(human.String(), "rerecord acme-test page.removed") {
+		t.Fatalf("human output:\n%s", human.String())
+	}
+}

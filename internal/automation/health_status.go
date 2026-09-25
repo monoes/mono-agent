@@ -10,6 +10,9 @@ const (
 	HealthOK       = "ok"
 	HealthDecaying = "decaying"
 	HealthBroken   = "broken"
+	// HealthStale marks a health row whose key the installed package
+	// version no longer declares (doctor only; never from SelectorStatus).
+	HealthStale = "stale"
 )
 
 // Outcome letters of the recent-outcome ring (automation_selector_health.recent).

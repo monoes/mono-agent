@@ -25,6 +25,9 @@ type doctorSelectorJSON struct {
 	Status   string `json:"status"`   // ok | decaying | broken
 	// Suggestion is the fix for a decaying/broken selector ("" when ok).
 	Suggestion string `json:"suggestion,omitempty"`
+	// Stale: health data for a key the installed version no longer has
+	// (status "stale", no suggestion: there is nothing to re-record).
+	Stale bool `json:"stale,omitempty"`
 }
 
 // doctorAutomationJSON is one automation of `automation doctor --json`
@@ -118,14 +121,16 @@ func doctorAutomation(reg *automation.Registry, info automation.InstalledInfo,
 		Issues: []automation.IssueJSON{}, Selectors: []doctorSelectorJSON{}, Session: session,
 	}
 	byKey := map[string]doctorSelectorJSON{}
+	var declared map[string]bool // nil when the package could not be read
 	pkg, err := reg.Get(info.ID)
 	if err != nil {
 		row.Issues = append(row.Issues, automation.IssueJSON{Severity: "error", Code: "open_failed", Message: err.Error()})
 	} else {
 		row.Native = pkg.Manifest.Requires.Native
 		row.Issues = append(row.Issues, automation.Validate(pkg)...)
-		if sels, err := pkg.Selectors(); err == nil {
-			for key := range sels {
+		if keys, err := automation.DeclaredSelectorKeys(pkg); err == nil {
+			declared = keys
+			for key := range keys {
 				byKey[key] = doctorSelectorJSON{Key: key, Status: automation.HealthOK}
 			}
 		}
@@ -138,11 +143,15 @@ func doctorAutomation(reg *automation.Registry, info automation.InstalledInfo,
 			Message: fmt.Sprintf("built-in %s is held back because this copy was modified", info.PendingUpdate)})
 	}
 	for _, h := range health {
-		byKey[h.Key] = doctorSelectorJSON{Key: h.Key, OK: h.OK, Fail: h.Fail, Healed: h.Healed,
+		s := doctorSelectorJSON{Key: h.Key, OK: h.OK, Fail: h.Fail, Healed: h.Healed,
 			LastOK: rfc3339OrEmpty(h.LastOK), LastFail: rfc3339OrEmpty(h.LastFail), Status: h.Status}
+		if declared != nil && !declared[h.Key] {
+			s.Stale, s.Status = true, automation.HealthStale
+		}
+		byKey[h.Key] = s
 	}
 	for _, s := range byKey {
-		if s.Status != automation.HealthOK {
+		if s.Status != automation.HealthOK && !s.Stale {
 			s.Suggestion = rerecordSuggestion(info.ID, s.Key)
 		}
 		row.Selectors = append(row.Selectors, s)
@@ -201,6 +210,11 @@ func printAutomationDoctor(out io.Writer, rows []doctorAutomationJSON) {
 		}
 		for _, s := range r.Selectors {
 			if s.Status == automation.HealthOK {
+				continue
+			}
+			if s.Stale {
+				lines = append(lines, fmt.Sprintf("  %-7s selector %s: not in %s %s (old health data only)",
+					s.Status, s.Key, r.ID, r.Version))
 				continue
 			}
 			lines = append(lines, fmt.Sprintf("  %-7s selector %s: ok %d, healed %d, failed %d (last fail %s)\n          %s",
