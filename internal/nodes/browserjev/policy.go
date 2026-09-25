@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/monoes/mono-agent/internal/jev"
+	"github.com/monoes/mono-agent/internal/jevpick"
 )
 
 // Rules adapted from jev-ultrafast (questions.py). Page text is data.
@@ -53,12 +54,12 @@ type element struct {
 // space is the dynamic action space of one observation.
 type space struct {
 	elements []element
-	targets  map[string]map[string]*action // operation → target index → action
-	controls map[string]*action            // SCROLL_DOWN, SCROLL_UP, WAIT
+	targets  map[string]map[string]*jevpick.Action // operation → target index → action
+	controls map[string]*jevpick.Action            // SCROLL_DOWN, SCROLL_UP, WAIT
 }
 
-func actionSpace(actions []action) space {
-	s := space{targets: map[string]map[string]*action{}, controls: map[string]*action{}}
+func actionSpace(actions []jevpick.Action) space {
+	s := space{targets: map[string]map[string]*jevpick.Action{}, controls: map[string]*jevpick.Action{}}
 	indices := map[int]int{} // node → position in elements
 	for i := range actions {
 		a := &actions[i]
@@ -88,7 +89,7 @@ func actionSpace(actions []action) space {
 			el.Options = append(el.Options, map[string]string{"index": target, "label": a.Label, "value": a.Value})
 		}
 		if s.targets[op] == nil {
-			s.targets[op] = map[string]*action{}
+			s.targets[op] = map[string]*jevpick.Action{}
 		}
 		s.targets[op][target] = a
 	}
@@ -133,7 +134,7 @@ type decision struct {
 // choose asks for the operation and, speculatively, a target for every
 // operation in one request. Only the head matching the chosen operation can
 // execute; each target head offers only compatible elements.
-func choose(ctx context.Context, c *jev.Client, page *pageState, goal string, history []step) (*decision, error) {
+func choose(ctx context.Context, c *jev.Client, page *jevpick.PageState, goal string, history []step) (*decision, error) {
 	s := actionSpace(page.Actions)
 	ops := map[string]any{}
 	for op := range s.targets {

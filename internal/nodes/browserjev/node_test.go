@@ -11,23 +11,25 @@ import (
 	"testing"
 
 	"github.com/monoes/mono-agent/internal/jev"
+	"github.com/monoes/mono-agent/internal/jev/jevtest"
+	"github.com/monoes/mono-agent/internal/jevpick"
 	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // searchPage is a tiny site: a search box (node 10), a Go button (node 20).
-func searchPage(query string, results bool) *pageState {
-	p := &pageState{URL: "https://example.test/", Title: "Search", Text: "Search", Scroll: json.RawMessage(`{"y":0}`),
+func searchPage(query string, results bool) *jevpick.PageState {
+	p := &jevpick.PageState{URL: "https://example.test/", Title: "Search", Text: "Search", Scroll: json.RawMessage(`{"y":0}`),
 		Marker: json.RawMessage(`["m","` + query + `"]`)}
 	if results {
 		p.URL, p.Text = "https://example.test/results?q="+query, "Results for "+query
 	}
-	p.Actions = []action{
+	p.Actions = []jevpick.Action{
 		{ID: "e1", Kind: "fill", Label: "Search", Role: "textbox", Value: query, Node: 10},
 		{ID: "e2", Kind: "click", Label: "Open Search", Role: "textbox", Value: query, Node: 10},
 		{ID: "e3", Kind: "click", Label: "Go", Role: "button", Node: 20},
 		{ID: "wait", Kind: "wait", Label: "Wait for the page to update"},
 	}
-	p.Fingerprint = fingerprint(p)
+	p.Fingerprint = jevpick.Fingerprint(p)
 	return p
 }
 
@@ -36,22 +38,22 @@ type fakeDriver struct {
 	query    string
 	results  bool
 	executed []string
-	staleAct int  // fail this many act calls with errStale
+	staleAct int  // fail this many act calls with jevpick.ErrStale
 	inert    bool // clicks change nothing
 }
 
-func (f *fakeDriver) observe(context.Context) (*pageState, error) {
+func (f *fakeDriver) Observe(context.Context) (*jevpick.PageState, error) {
 	return searchPage(f.query, f.results), nil
 }
 
-func (f *fakeDriver) fresh(p *pageState, _ *action) (bool, error) {
+func (f *fakeDriver) Fresh(p *jevpick.PageState, _ *jevpick.Action) (bool, error) {
 	return p.Fingerprint == searchPage(f.query, f.results).Fingerprint, nil
 }
 
-func (f *fakeDriver) act(_ context.Context, p *pageState, a *action, text string) error {
+func (f *fakeDriver) Act(_ context.Context, p *jevpick.PageState, a *jevpick.Action, text string) error {
 	if f.staleAct > 0 {
 		f.staleAct--
-		return errStale
+		return jevpick.ErrStale
 	}
 	f.executed = append(f.executed, a.ID+":"+text)
 	if f.inert {
@@ -67,54 +69,33 @@ func (f *fakeDriver) act(_ context.Context, p *pageState, a *action, text string
 }
 
 // policyServer answers like a sensible Jev: type when empty, click Go when
-// filled, DONE on results. Every head gets a valid distribution.
-func policyServer(t *testing.T, calls *atomic.Int32, override func(q map[string]jev.Question) map[string]string) *httptest.Server {
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		var req struct {
-			State struct {
-				Page     struct{ URL string }
-				Elements []element
-			}
-			Questions map[string]jev.Question
+// filled, DONE on results. jevtest gives every head a valid distribution.
+func policyServer(t *testing.T, override func(q map[string]jev.Question) map[string]string) *jevtest.Server {
+	return jevtest.NewServer(t, func(req jev.Request) map[string]string {
+		if override != nil {
+			return override(req.Questions)
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		var state struct {
+			Page     struct{ URL string }
+			Elements []element
+		}
+		raw, _ := json.Marshal(req.State)
+		if err := json.Unmarshal(raw, &state); err != nil {
 			t.Error(err)
 		}
-		want := map[string]string{}
 		switch {
-		case strings.Contains(req.State.Page.URL, "results"):
-			want["operation"] = "DONE"
-		case req.State.Elements[0].Value == "":
-			want["operation"], want["type_text_target"] = "TYPE_TEXT", "1"
-		default:
-			want["operation"], want["click_target"] = "CLICK", "2"
+		case strings.Contains(state.Page.URL, "results"):
+			return map[string]string{"operation": "DONE"}
+		case state.Elements[0].Value == "":
+			return map[string]string{"operation": "TYPE_TEXT", "type_text_target": "1"}
 		}
-		if override != nil {
-			want = override(req.Questions)
-		}
-		answers := map[string]jev.Answer{}
-		for id, q := range req.Questions {
-			ids := jev.OptionIDs(q)
-			pick := want[id]
-			if pick == "" {
-				pick = ids[0]
-			}
-			probs := map[string]float64{}
-			for _, o := range ids {
-				probs[o] = 0
-			}
-			probs[pick] = 1
-			answers[id] = jev.Answer{Type: jev.TypeChoice, Choice: pick, Probabilities: probs, Confidence: 0.9}
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"model": "jev-test", "answers": answers, "usage": map[string]int{"input_tokens": 7}})
-	}))
+		return map[string]string{"operation": "CLICK", "click_target": "2"}
+	})
 }
 
-func testNode(t *testing.T, srv *httptest.Server, drv driver, writer textWriter) *Node {
-	t.Helper()
-	t.Cleanup(srv.Close)
-	t.Setenv("TYPESAFE_BASE_URL", srv.URL)
+// testNode wires a node to drv; the Jev server is whatever the test started
+// (it sets TYPESAFE_BASE_URL).
+func testNode(drv driver, writer textWriter) *Node {
 	return &Node{
 		writer: writer,
 		open: func(context.Context, string) (driver, func(), error) {
@@ -153,7 +134,7 @@ func TestActionSpaceOneIndexPerNode(t *testing.T) {
 }
 
 func TestActionSpaceSelectOptions(t *testing.T) {
-	s := actionSpace([]action{
+	s := actionSpace([]jevpick.Action{
 		{ID: "e1", Kind: "select", Label: "Class → Business", Value: "b", CurrentValue: "Economy", Node: 5},
 		{ID: "e2", Kind: "select", Label: "Class → First", Value: "f", CurrentValue: "Economy", Node: 5},
 	})
@@ -166,10 +147,10 @@ func TestActionSpaceSelectOptions(t *testing.T) {
 }
 
 func TestRunReachesDone(t *testing.T) {
-	var calls atomic.Int32
+	srv := policyServer(t, nil)
 	drv := &fakeDriver{}
 	var writes int
-	res := runNode(t, testNode(t, policyServer(t, &calls, nil), drv, func(ctx context.Context, f map[string]any) (string, error) {
+	res := runNode(t, testNode(drv, func(ctx context.Context, f map[string]any) (string, error) {
 		writes++
 		if f["goal"] != "Search for zurich" {
 			t.Errorf("text helper context = %v", f)
@@ -182,8 +163,8 @@ func TestRunReachesDone(t *testing.T) {
 	if got := strings.Join(drv.executed, ","); got != "e1:zurich,e3:" {
 		t.Errorf("executed = %s", got)
 	}
-	if writes != 1 || calls.Load() != 3 || res["decisions"] != 3 || res["jev_input_tokens"] != 21 {
-		t.Errorf("writes=%d calls=%d decisions=%v tokens=%v", writes, calls.Load(), res["decisions"], res["jev_input_tokens"])
+	if writes != 1 || srv.Calls() != 3 || res["decisions"] != 3 || res["jev_input_tokens"] != 300 {
+		t.Errorf("writes=%d calls=%d decisions=%v tokens=%v", writes, srv.Calls(), res["decisions"], res["jev_input_tokens"])
 	}
 	steps := res["steps"].([]step)
 	if len(steps) != 2 || steps[0].Operation != "TYPE_TEXT" || !*steps[0].PageChanged || steps[1].Target != "2" {
@@ -192,33 +173,33 @@ func TestRunReachesDone(t *testing.T) {
 }
 
 func TestStaleActionIsReDecidedNotReplayed(t *testing.T) {
-	var calls atomic.Int32
+	srv := policyServer(t, nil)
 	drv := &fakeDriver{staleAct: 1}
-	res := runNode(t, testNode(t, policyServer(t, &calls, nil), drv, zurich))
+	res := runNode(t, testNode(drv, zurich))
 	if res["status"] != "done" || strings.Join(drv.executed, ",") != "e1:zurich,e3:" {
 		t.Fatalf("status=%v executed=%v", res["status"], drv.executed)
 	}
-	if calls.Load() != 4 {
-		t.Errorf("jev calls = %d, want 4 (one decision discarded as stale)", calls.Load())
+	if srv.Calls() != 4 {
+		t.Errorf("jev calls = %d, want 4 (one decision discarded as stale)", srv.Calls())
 	}
 }
 
 func TestRepeatedNoOpBlocks(t *testing.T) {
-	var calls atomic.Int32
 	drv := &fakeDriver{inert: true}
 	clickGo := func(map[string]jev.Question) map[string]string {
 		return map[string]string{"operation": "CLICK", "click_target": "2"}
 	}
-	res := runNode(t, testNode(t, policyServer(t, &calls, clickGo), drv, zurich))
+	policyServer(t, clickGo)
+	res := runNode(t, testNode(drv, zurich))
 	if res["status"] != "blocked" || len(drv.executed) != 3 {
 		t.Fatalf("status=%v executed=%v", res["status"], drv.executed)
 	}
 }
 
 func TestMissingValueBlocksWithoutTyping(t *testing.T) {
-	var calls atomic.Int32
+	policyServer(t, nil)
 	drv := &fakeDriver{}
-	res := runNode(t, testNode(t, policyServer(t, &calls, nil), drv, func(context.Context, map[string]any) (string, error) {
+	res := runNode(t, testNode(drv, func(context.Context, map[string]any) (string, error) {
 		return "", errNoValue
 	}))
 	if res["status"] != "blocked" || len(drv.executed) != 0 {
@@ -227,13 +208,27 @@ func TestMissingValueBlocksWithoutTyping(t *testing.T) {
 }
 
 func TestInvalidJevAnswerExecutesNothing(t *testing.T) {
-	var calls atomic.Int32
+	// jevtest only sends valid answers; this server invents a target index.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req jev.Request
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		answers := map[string]jev.Answer{}
+		for id, q := range req.Questions {
+			a, err := jevtest.Answer(q, map[string]string{"operation": "CLICK"}[id])
+			if err != nil {
+				t.Error(err)
+			}
+			if id == "click_target" {
+				a.Choice = "99"
+			}
+			answers[id] = a
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"model": "jev-test", "answers": answers})
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("TYPESAFE_BASE_URL", srv.URL)
 	drv := &fakeDriver{}
-	invent := func(map[string]jev.Question) map[string]string {
-		return map[string]string{"operation": "CLICK", "click_target": "99"}
-	}
-	srv := policyServer(t, &calls, invent)
-	_, err := testNode(t, srv, drv, zurich).Execute(context.Background(), workflow.NodeInput{},
+	_, err := testNode(drv, zurich).Execute(context.Background(), workflow.NodeInput{},
 		map[string]interface{}{"url": "u", "goal": "g", "api_key": "k"})
 	if !errors.Is(err, jev.ErrInvalidAnswer) || len(drv.executed) != 0 {
 		t.Fatalf("err=%v executed=%v", err, drv.executed)
@@ -241,9 +236,9 @@ func TestInvalidJevAnswerExecutesNothing(t *testing.T) {
 }
 
 func TestFailOnBlocked(t *testing.T) {
-	var calls atomic.Int32
 	blocked := func(map[string]jev.Question) map[string]string { return map[string]string{"operation": "BLOCKED"} }
-	n := testNode(t, policyServer(t, &calls, blocked), &fakeDriver{}, zurich)
+	policyServer(t, blocked)
+	n := testNode(&fakeDriver{}, zurich)
 	_, err := n.Execute(context.Background(), workflow.NodeInput{},
 		map[string]interface{}{"url": "u", "goal": "g", "api_key": "k", "fail_on_blocked": true})
 	if err == nil || !strings.Contains(err.Error(), "blocked") {
@@ -298,11 +293,27 @@ func TestUnresolvedSecretFallsBackToEnv(t *testing.T) {
 		calls.Add(1)
 		w.WriteHeader(401)
 	}))
-	n := testNode(t, srv, &fakeDriver{}, zurich)
+	t.Cleanup(srv.Close)
+	t.Setenv("TYPESAFE_BASE_URL", srv.URL)
+	n := testNode(&fakeDriver{}, zurich)
 	t.Setenv("TYPESAFE_API_KEY", "env-key")
 	_, _ = n.Execute(context.Background(), workflow.NodeInput{},
 		map[string]interface{}{"url": "u", "goal": "g", "api_key": "@secret:typesafe"})
 	if calls.Load() != 1 {
 		t.Fatalf("calls = %d", calls.Load())
+	}
+}
+
+func TestClientSeamGetsConfig(t *testing.T) {
+	var gotKey string
+	n := testNode(&fakeDriver{}, zurich)
+	n.newClient = func(_ context.Context, config map[string]interface{}) (*jev.Client, error) {
+		gotKey = str(config, "api_key")
+		return nil, jev.ErrNoAPIKey
+	}
+	_, err := n.Execute(context.Background(), workflow.NodeInput{},
+		map[string]interface{}{"url": "u", "goal": "g", "api_key": "@secret:other"})
+	if !errors.Is(err, workflow.ErrInvalidConfig) || gotKey != "@secret:other" {
+		t.Fatalf("err = %v key = %q", err, gotKey)
 	}
 }

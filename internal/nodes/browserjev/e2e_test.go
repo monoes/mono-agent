@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/monoes/mono-agent/internal/jevpick"
 	"github.com/monoes/mono-agent/internal/workflow"
 )
 
@@ -78,8 +79,8 @@ func TestE2EJevBookingForm(t *testing.T) {
 			return nil, nil, err
 		}
 		time.Sleep(500 * time.Millisecond)
-		b := &cdpBrowser{page: page}
-		return b, func() {}, b.setup(1120, 780)
+		b := jevpick.NewBrowser(page)
+		return b, func() {}, b.Setup(1120, 780)
 	}}
 	out, err := n.Execute(context.Background(), nodeInputNone, map[string]interface{}{
 		"url":  site.URL,
@@ -99,7 +100,7 @@ func TestE2EJevBookingForm(t *testing.T) {
 	}
 }
 
-// devtoolsPage is a cdpPage over a direct DevTools WebSocket (flat session).
+// devtoolsPage is a jevpick.Page over a direct DevTools WebSocket (flat session).
 type devtoolsPage struct {
 	mu      sync.Mutex
 	conn    *websocket.Conn

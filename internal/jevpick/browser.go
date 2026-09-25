@@ -1,4 +1,8 @@
-package browserjev
+// Package jevpick reads a browser tab as a table of executable elements and
+// lets Jev pick the element that matches an intent. It is the page-level
+// machinery of browser.jev (extracted from internal/nodes/browserjev), shared
+// with the action-step fallback and the social bots.
+package jevpick
 
 import (
 	"context"
@@ -22,19 +26,19 @@ var snapshotJS string
 // markerJS evaluates only the freshness marker of a fresh snapshot.
 var markerJS = "(() => { const state=" + snapshotJS + "; return state?.marker ?? null; })()"
 
-// errStale means a decision no longer refers to the page it was made for.
+// ErrStale means a decision no longer refers to the page it was made for.
 // The loop observes again and re-decides; it never retries a mutation.
-var errStale = errors.New("page changed since it was observed")
+var ErrStale = errors.New("page changed since it was observed")
 
-// cdpPage is the one capability the node needs from a tab: raw CDP.
+// Page is the one capability jevpick needs from a tab: raw CDP.
 // *extension.ExtensionPage satisfies it through the extension's relay.
-type cdpPage interface {
+type Page interface {
 	CDP(method string, params map[string]interface{}) (map[string]interface{}, error)
 }
 
-// action is one executable choice from the snapshot. Node is the code-owned
+// Action is one executable choice from the snapshot. Node is the code-owned
 // DOM identity; the model only ever sees an index that maps back to it.
-type action struct {
+type Action struct {
 	ID           string `json:"id"`
 	Kind         string `json:"kind"` // click, fill, select, scroll, wait
 	Label        string `json:"label"`
@@ -48,13 +52,13 @@ type action struct {
 	Delta        int    `json:"delta,omitempty"`
 }
 
-// pageState is one observation.
-type pageState struct {
+// PageState is one observation.
+type PageState struct {
 	URL            string                     `json:"url"`
 	Title          string                     `json:"title"`
 	Text           string                     `json:"text"`
 	Scroll         json.RawMessage            `json:"scroll"`
-	Actions        []action                   `json:"actions"`
+	Actions        []Action                   `json:"actions"`
 	Marker         json.RawMessage            `json:"marker"`
 	PageKey        json.RawMessage            `json:"page_key"`
 	Guards         map[string]json.RawMessage `json:"guards"`
@@ -62,7 +66,8 @@ type pageState struct {
 	Fingerprint    string                     `json:"-"`
 }
 
-func (p *pageState) find(id string) *action {
+// Find returns the action with id, or nil.
+func (p *PageState) Find(id string) *Action {
 	for i := range p.Actions {
 		if p.Actions[i].ID == id {
 			return &p.Actions[i]
@@ -71,22 +76,26 @@ func (p *pageState) find(id string) *action {
 	return nil
 }
 
-// driver is what the agent loop needs from a browser; cdpBrowser is the real
-// one, tests substitute a fake.
-type driver interface {
-	observe(ctx context.Context) (*pageState, error)
-	fresh(page *pageState, a *action) (bool, error)
-	act(ctx context.Context, page *pageState, a *action, text string) error
+// Browser drives one tab over raw CDP: it observes the page, checks that a
+// decision is still fresh, and executes actions.
+type Browser struct {
+	page       Page
+	afterInput *Action
 }
 
-type cdpBrowser struct {
-	page       cdpPage
-	afterInput *action
-}
+// NewBrowser wraps a tab.
+func NewBrowser(p Page) *Browser { return &Browser{page: p} }
 
-// setup gives the owned tab a fixed viewport and keeps rAF running while the
+// Observe takes one snapshot of p.
+func Observe(ctx context.Context, p Page) (*PageState, error) { return NewBrowser(p).Observe(ctx) }
+
+// Fresh reports whether a (nil: the whole page) is unchanged since page was
+// observed on p.
+func Fresh(p Page, page *PageState, a *Action) (bool, error) { return NewBrowser(p).Fresh(page, a) }
+
+// Setup gives the owned tab a fixed viewport and keeps rAF running while the
 // tab is in the background, so menus and autocompletes still render.
-func (b *cdpBrowser) setup(width, height int) error {
+func (b *Browser) Setup(width, height int) error {
 	if _, err := b.page.CDP("Emulation.setDeviceMetricsOverride", map[string]interface{}{
 		"width": width, "height": height, "deviceScaleFactor": 1, "mobile": false,
 	}); err != nil {
@@ -96,9 +105,9 @@ func (b *cdpBrowser) setup(width, height int) error {
 	return err
 }
 
-// evaluate runs expression and decodes its value into out (when non-nil).
+// Evaluate runs expression and decodes its value into out (when non-nil).
 // A thrown exception means the document changed under us.
-func (b *cdpBrowser) evaluate(expression string, await bool, out interface{}) error {
+func (b *Browser) Evaluate(expression string, await bool, out interface{}) error {
 	res, err := b.page.CDP("Runtime.evaluate", map[string]interface{}{
 		"expression": expression, "returnByValue": true, "awaitPromise": await,
 	})
@@ -106,7 +115,7 @@ func (b *cdpBrowser) evaluate(expression string, await bool, out interface{}) er
 		return err
 	}
 	if res["exceptionDetails"] != nil {
-		return errStale
+		return ErrStale
 	}
 	if out == nil {
 		return nil
@@ -119,28 +128,29 @@ func (b *cdpBrowser) evaluate(expression string, await bool, out interface{}) er
 	return json.Unmarshal(raw, out)
 }
 
-func (b *cdpBrowser) observe(ctx context.Context) (*pageState, error) {
+// Observe snapshots the page, retrying while it is mid-navigation.
+func (b *Browser) Observe(ctx context.Context) (*PageState, error) {
 	if a := b.afterInput; a != nil {
 		b.afterInput = nil
 		// Read-only settle: two animation frames, or up to 200ms for an
 		// editable combobox's suggestions to appear. Errors don't matter.
-		_ = b.evaluate(settleJS(a), true, nil)
+		_ = b.Evaluate(settleJS(a), true, nil)
 	}
 	var lastErr error
 	for attempt := 0; attempt < 10; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		var page *pageState
-		err := b.evaluate(snapshotJS, false, &page)
+		var page *PageState
+		err := b.Evaluate(snapshotJS, false, &page)
 		if err == nil && page == nil {
-			err = errStale // document.body missing: navigating
+			err = ErrStale // document.body missing: navigating
 		}
 		if err == nil {
-			page.Fingerprint = fingerprint(page)
+			page.Fingerprint = Fingerprint(page)
 			return page, nil
 		}
-		if !errors.Is(err, errStale) {
+		if !errors.Is(err, ErrStale) {
 			return nil, err
 		}
 		lastErr = err
@@ -149,15 +159,17 @@ func (b *cdpBrowser) observe(ctx context.Context) (*pageState, error) {
 	return nil, fmt.Errorf("page did not settle: %w", lastErr)
 }
 
-func (b *cdpBrowser) fresh(page *pageState, a *action) (bool, error) {
+// Fresh reports whether a decision made on page about a (nil: the whole
+// page) still applies.
+func (b *Browser) Fresh(page *PageState, a *Action) (bool, error) {
 	if a != nil && (a.Kind == "click" || a.Kind == "select") {
 		// Scoped guard: the document, form state and the target's own
 		// neighbourhood must be unchanged; unrelated content may move.
 		var current []json.RawMessage
-		err := b.evaluate(fmt.Sprintf(
+		err := b.Evaluate(fmt.Sprintf(
 			"(() => { const c=window.__jevFast; return c ? [c.pageKey(),c.guard(c.nodes.get(%d))] : null; })()",
 			a.Node), false, &current)
-		if errors.Is(err, errStale) {
+		if errors.Is(err, ErrStale) {
 			return false, nil
 		}
 		if err != nil || len(current) != 2 {
@@ -166,20 +178,21 @@ func (b *cdpBrowser) fresh(page *pageState, a *action) (bool, error) {
 		return sameJSON(current[0], page.PageKey) && sameJSON(current[1], page.Guards[fmt.Sprint(a.Node)]), nil
 	}
 	var marker json.RawMessage
-	err := b.evaluate(markerJS, false, &marker)
-	if errors.Is(err, errStale) {
+	err := b.Evaluate(markerJS, false, &marker)
+	if errors.Is(err, ErrStale) {
 		return false, nil
 	}
 	return err == nil && sameJSON(marker, page.Marker), err
 }
 
-func (b *cdpBrowser) act(ctx context.Context, page *pageState, a *action, text string) error {
-	ok, err := b.fresh(page, a)
+// Act executes a after re-checking freshness; ErrStale means observe again.
+func (b *Browser) Act(ctx context.Context, page *PageState, a *Action, text string) error {
+	ok, err := b.Fresh(page, a)
 	if err != nil {
 		return err
 	}
 	if !ok {
-		return errStale
+		return ErrStale
 	}
 	switch a.Kind {
 	case "wait":
@@ -204,7 +217,7 @@ func (b *cdpBrowser) act(ctx context.Context, page *pageState, a *action, text s
 	}
 	spec, _ := json.Marshal(a)
 	var target *struct{ X, Y float64 }
-	err = b.evaluate("("+resolveTargetJS+")("+string(spec)+")", false, &target)
+	err = b.Evaluate("("+resolveTargetJS+")("+string(spec)+")", false, &target)
 	if err != nil && a.Kind == "select" {
 		// Its change event may already have fired; don't guess.
 		return fmt.Errorf("dropdown execution was interrupted; inspect before retrying: %w", err)
@@ -216,7 +229,7 @@ func (b *cdpBrowser) act(ctx context.Context, page *pageState, a *action, text s
 		if a.Kind == "select" {
 			return errors.New("dropdown execution was not confirmed; inspect before retrying")
 		}
-		return fmt.Errorf("target changed or is covered: %w", errStale)
+		return fmt.Errorf("target changed or is covered: %w", ErrStale)
 	}
 	b.afterInput = a
 	if a.Kind == "select" {
@@ -271,7 +284,7 @@ const resolveTargetJS = `action => {
   return {x,y};
 }`
 
-func settleJS(a *action) string {
+func settleJS(a *Action) string {
 	spec, _ := json.Marshal(a)
 	return `(action => new Promise(resolve => {
   const field=window.__jevFast?.nodes.get(action.node);
@@ -295,8 +308,8 @@ func settleJS(a *action) string {
 }))(` + string(spec) + `)`
 }
 
-// fingerprint hashes what the model saw: url, text, actions, scroll.
-func fingerprint(p *pageState) string {
+// Fingerprint hashes what the model saw: url, text, actions, scroll.
+func Fingerprint(p *PageState) string {
 	raw, _ := json.Marshal(map[string]interface{}{"url": p.URL, "text": p.Text, "actions": p.Actions, "scroll": p.Scroll})
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
