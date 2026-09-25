@@ -1,6 +1,7 @@
 package action
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -69,11 +70,6 @@ func TestSafeModeLetsReadsThrough(t *testing.T) {
 	if ae.SafeStopped() != nil || getVar(ae, "ran") != "yes" {
 		t.Fatalf("reads must run in safe mode: stop=%+v ran=%v", ae.SafeStopped(), getVar(ae, "ran"))
 	}
-	for level, want := range map[string]bool{"": false, "none": false, "read": false, "write": true, "message": true, "destructive": true, "weird": true} {
-		if sideEffectAtLeastWrite(level) != want {
-			t.Errorf("sideEffectAtLeastWrite(%q) != %v", level, want)
-		}
-	}
 }
 
 func TestFetchRedirectPolicy(t *testing.T) {
@@ -118,5 +114,84 @@ func TestForEachDefaultCap(t *testing.T) {
 	wantOK(t, res)
 	if res.Data != 3 {
 		t.Fatalf("batchSize cap: processed %v", res.Data)
+	}
+}
+
+// extTrustPkg adds the §8 trust interfaces to extPkg.
+type extTrustPkg struct {
+	*extPkg
+	trust     string
+	calls     []string
+	tier      string
+	confirmed bool
+	others    map[string]PackageContext
+}
+
+func (p *extTrustPkg) Trust() string          { return p.trust }
+func (p *extTrustPkg) CallActions() []string  { return p.calls }
+func (p *extTrustPkg) Tier() string           { return p.tier }
+func (p *extTrustPkg) LiveRunConfirmed() bool { return p.confirmed }
+func (p *extTrustPkg) ResolveAction(ref string) (*ActionDef, PackageContext, error) {
+	if auto, name, ok := strings.Cut(ref, "."); ok && auto != p.id {
+		o, found := p.others[auto]
+		if !found {
+			return nil, nil, fmt.Errorf("automation %q not installed", auto)
+		}
+		return o.ResolveAction(name)
+	}
+	_, name, ok := strings.Cut(ref, ".")
+	if !ok {
+		name = ref
+	}
+	if a, ok := p.actions[name]; ok {
+		return a, p, nil
+	}
+	return nil, nil, fmt.Errorf("action %q not found", ref)
+}
+
+func TestCallActionPolicy(t *testing.T) {
+	writeStep := setVarStep("ran", "ran", "yes")
+	writeStep.SideEffect = true
+	writeDef := &ActionDef{ActionType: "post", SideEffects: "write", Steps: []StepDef{writeStep}}
+	readDef := &ActionDef{ActionType: "list", SideEffects: "read", Steps: []StepDef{setVarStep("ran", "ran", "yes")}}
+	newTarget := func(trust, tier string, confirmed bool) *extTrustPkg {
+		return &extTrustPkg{extPkg: &extPkg{id: "target", actions: map[string]*ActionDef{"post": writeDef, "list": readDef}}, trust: trust, tier: tier, confirmed: confirmed}
+	}
+	cases := []struct {
+		name    string
+		caller  string
+		calls   []string
+		target  *extTrustPkg
+		ref     string
+		wantErr string
+	}{
+		{"declared call from local", "local", []string{"target.list"}, newTarget("local", "", false), "target.list", ""},
+		{"undeclared cross-package call", "local", nil, newTarget("local", "", false), "target.list", "permissions.callActions"},
+		{"template ref", "local", []string{"target.list"}, newTarget("local", "", false), "{{which}}", "must be literal"},
+		{"imported caller to builtin", "imported", []string{"target.list"}, newTarget("builtin", "", false), "target.list", "may not call"},
+		{"recorded caller to social tier", "recorded", []string{"target.list"}, newTarget("local", "social", false), "target.list", "may not call"},
+		{"imported target write unconfirmed", "local", []string{"target.post"}, newTarget("imported", "", false), "target.post", "confirmed for live runs"},
+		{"imported target write confirmed", "local", []string{"target.post"}, newTarget("imported", "", true), "target.post", ""},
+		{"imported target read needs no confirmation", "local", []string{"target.list"}, newTarget("imported", "", false), "target.list", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			caller := &extTrustPkg{extPkg: &extPkg{id: "caller"}, trust: c.caller, calls: c.calls}
+			caller.others = map[string]PackageContext{"target": c.target}
+			ae := newExtExecutor(t, &extPage{})
+			ae.SetPackage(caller)
+			res := runExt(t, ae, StepDef{ID: "c", Type: "call_action", Action: c.ref})
+			if c.wantErr == "" {
+				wantOK(t, res)
+				if getVar(ae, "ran") != "yes" {
+					t.Fatal("target did not run")
+				}
+				return
+			}
+			wantFail(t, res, c.wantErr)
+			if getVar(ae, "ran") != nil {
+				t.Fatal("refused target ran")
+			}
+		})
 	}
 }

@@ -80,22 +80,24 @@ func (ae *ActionExecutor) stepCallAction(ctx context.Context, step StepDef) (*St
 	if ae.pkg == nil {
 		return extFail(step, "call_action needs an automation package")
 	}
-	ref := ae.resolver.Resolve(step.Action)
+	// The reference must be literal; cross-package calls must be declared
+	// in permissions.callActions, and untrusted callers may not reach
+	// built-in or social packages (contract §8).
+	ref := strings.TrimSpace(step.Action)
 	if ref == "" {
 		return extFail(step, "no action named")
 	}
-	def, pctx, err := ae.pkg.ResolveAction(ref)
+	def, pctx, err := CheckCallAction(ae.pkg, ref)
 	if err != nil {
-		return extFail(step, "action %q: %w", ref, err)
+		return extFail(step, "%w", err)
 	}
-	if def == nil {
-		return extFail(step, "action %q not found", ref)
-	}
-	if pctx == nil {
-		pctx = ae.pkg
-	}
-	if ae.safeMode && sideEffectAtLeastWrite(def.SideEffects) {
+	if ae.safeMode && atLeastWrite(def.SideEffects) {
 		return ae.extSafeStop(step)
+	}
+	if !ae.safeMode && atLeastWrite(def.SideEffects) && PackageTrust(pctx) == "imported" {
+		if g, ok := pctx.(LiveRunGate); !ok || !g.LiveRunConfirmed() {
+			return extFail(step, "action %q of imported automation %q writes to the site and has not been confirmed for live runs (monoagentcli automation trust %s --live)", ref, pctx.ID(), pctx.ID())
+		}
 	}
 	if issues := Validate(def, pctx); HasErrors(issues) {
 		return extFail(step, "action %q does not validate: %s", ref, issueSummary(issues))
@@ -171,17 +173,6 @@ func (ae *ActionExecutor) runActionBody(ctx context.Context, def *ActionDef) err
 		}
 	}
 	return nil
-}
-
-// sideEffectAtLeastWrite reports whether an action's declared sideEffects
-// is write or stronger. An unknown value counts as writing (fail closed);
-// an undeclared one does not — its flagged steps still stop safe mode.
-func sideEffectAtLeastWrite(level string) bool {
-	switch strings.ToLower(strings.TrimSpace(level)) {
-	case "", "none", "read":
-		return false
-	}
-	return true
 }
 
 func issueSummary(issues []Issue) string {

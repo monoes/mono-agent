@@ -93,7 +93,8 @@ func TestCallActionRunsStepsAndLoopsInTargetPackage(t *testing.T) {
 			Loops: []LoopDef{{ID: "l", Iterator: "things", IndexVar: "i", Steps: []string{"each", "count"}}},
 		},
 	}
-	home := &extPkg{id: "home", other: map[string]*extPkg{"other": other}}
+	home := &extTrustPkg{extPkg: &extPkg{id: "home"}, trust: "local", calls: []string{"other.collect"},
+		others: map[string]PackageContext{"other": other}}
 	db := &capTestStorage{}
 	ae := newExtExecutor(t, &extPage{})
 	ae.db = db
@@ -110,7 +111,7 @@ func TestCallActionRunsStepsAndLoopsInTargetPackage(t *testing.T) {
 	if getVar(ae, "last") != "c" || getVar(ae, "n") != 3 {
 		t.Fatalf("loop ran wrong: last=%v n=%v", getVar(ae, "last"), getVar(ae, "n"))
 	}
-	if ae.pkg != home || ae.actionDef != prevDef || ae.action.ReachedIndex != 5 || ae.db != db {
+	if ae.pkg != PackageContext(home) || ae.actionDef != prevDef || ae.action.ReachedIndex != 5 || ae.db != db {
 		t.Fatal("executor state not restored after call_action")
 	}
 	if len(db.reachedIndexes) != 0 {

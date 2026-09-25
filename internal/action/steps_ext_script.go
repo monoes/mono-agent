@@ -99,19 +99,6 @@ func (ae *ActionExecutor) extSafeStop(step StepDef) (*StepResult, error) {
 	return &StepResult{Success: false, Abort: true, StepID: step.ID, Error: err}, nil
 }
 
-// extScriptsAllowed reports whether the current package may run page
-// scripts (page_script, http_fetch_in_page): no package → yes; otherwise
-// only when the package says so (fail closed when it cannot).
-func (ae *ActionExecutor) extScriptsAllowed() bool {
-	if ae.pkg == nil {
-		return true
-	}
-	if s, ok := ae.pkg.(interface{ ScriptsAllowed() bool }); ok {
-		return s.ScriptsAllowed()
-	}
-	return false
-}
-
 func scriptsRefused(p PackageContext) string {
 	id := ""
 	if p != nil {
@@ -138,7 +125,7 @@ func (ae *ActionExecutor) stepPageScript(ctx context.Context, step StepDef) (*St
 	if ae.pkg == nil {
 		return extFail(step, "page_script needs an automation package")
 	}
-	if !ae.extScriptsAllowed() {
+	if !ae.scriptsAllowed() {
 		return extFail(step, "%s", scriptsRefused(ae.pkg))
 	}
 	if ae.safeMode {
@@ -175,7 +162,7 @@ const maxFetchBody = 10 << 20
 
 func (ae *ActionExecutor) stepHTTPFetchInPage(ctx context.Context, step StepDef) (*StepResult, error) {
 	// A fetch with the page's session is a script capability (§8).
-	if !ae.extScriptsAllowed() {
+	if !ae.scriptsAllowed() {
 		return extFail(step, "%s", scriptsRefused(ae.pkg))
 	}
 	target, err := ae.extAbsURL(step.URL)
@@ -217,12 +204,14 @@ func (ae *ActionExecutor) stepHTTPFetchInPage(ctx context.Context, step StepDef)
 			headers["Content-Type"] = "application/json"
 		}
 	}
-	// Redirects: page JS cannot see a manual redirect's Location (the
-	// browser returns an opaque response), so hops cannot be checked one
-	// by one. A request that carries nothing of ours but the hop host's
-	// own cookies (bodyless GET/HEAD, no custom headers) may follow and is
-	// checked at its final URL; anything with a body or headers must not
-	// be re-sent anywhere, so its redirect fails the step.
+	// Redirects (contract §8, M4): page JS cannot see a manual redirect's
+	// Location (the browser returns an opaque response), so hops cannot be
+	// followed and checked one by one from Go. Instead:
+	//   - a bodyless GET/HEAD with no custom headers follows redirects; its
+	//     intermediate hops are not individually checked (they receive only
+	//     their own host's cookies), and the final URL must be allowed;
+	//   - a request with a body or headers uses redirect:'manual' and a
+	//     redirect fails the step, so they are never re-sent elsewhere.
 	redirect := "manual"
 	if readOnly && body == nil && len(headers) == 0 {
 		redirect = "follow"
@@ -316,7 +305,7 @@ func (ae *ActionExecutor) stepDownload(ctx context.Context, step StepDef) (*Step
 	}
 
 	expr := fmt.Sprintf(`(async () => {
-  const r = await fetch(%s, {credentials: 'include', redirect: 'follow'});
+  const r = await fetch(%s, {credentials: 'include', redirect: 'follow'}); // bodyless GET: see the redirect note in stepHTTPFetchInPage
   if (!r.ok) return {__error: 'HTTP ' + r.status};
   const buf = await r.arrayBuffer();
   if (buf.byteLength > %d) return {__error: 'file larger than %d bytes'};
