@@ -53,46 +53,45 @@ type NodeSchema struct {
 	Fields             []NodeSchemaField `json:"fields"`
 }
 
-// browserPlatforms are the platform prefixes whose nodes fall back to browser.generic
-// when no platform-specific schema file exists.
-var browserPlatforms = map[string]bool{
-	"instagram": true,
-	"linkedin":  true,
-	"x":         true,
-	"tiktok":    true,
-}
-
-// LoadDefaultSchema loads the embedded schema JSON for the given node type.
-// For browser platform nodes (e.g. "linkedin.find_by_keyword") that have no
-// dedicated schema file, falls back to browser.generic.json.
-// Returns an empty schema (no fields) if no schema file exists for the type.
+// LoadDefaultSchema returns the form schema for a node type:
+//
+//  1. its schema file (schemas/<type>.json);
+//  2. for a built-in browser automation, the shared action-suffix file
+//     (e.g. linkedin.find_by_keyword → schemas/action.find_by_keyword.json);
+//  3. for any other browser automation action, a form generated from the
+//     action's declared inputs and their ui hints.
+//
+// Returns an empty schema (no fields) when none of these applies.
 func LoadDefaultSchema(nodeType string) (*NodeSchema, error) {
-	fileName := "schemas/" + nodeType + ".json"
-	data, err := embeddedSchemas.ReadFile(fileName)
-	if err != nil {
-		// For browser platform nodes, try the action-suffix schema first
-		// (e.g. "action.find_by_keyword.json"), then fall back to browser.generic.
-		if dot := strings.Index(nodeType, "."); dot > 0 {
-			if browserPlatforms[nodeType[:dot]] {
-				suffix := nodeType[dot+1:]
-				data, err = embeddedSchemas.ReadFile("schemas/action." + suffix + ".json")
-				if err != nil {
-					data, err = embeddedSchemas.ReadFile("schemas/browser.generic.json")
-				}
-			}
+	data, ok := schemaFile(nodeType)
+	if !ok {
+		if gen, ok := generateActionSchema(nodeType); ok {
+			return gen, nil
 		}
-	}
-	if err != nil {
 		return &NodeSchema{Fields: []NodeSchemaField{}}, nil
 	}
 	var schema NodeSchema
 	if err := json.Unmarshal(data, &schema); err != nil {
-		return nil, fmt.Errorf("schema_loader: parse %s: %w", fileName, err)
+		return nil, fmt.Errorf("schema_loader: parse schemas/%s.json: %w", nodeType, err)
 	}
 	if schema.Fields == nil {
 		schema.Fields = []NodeSchemaField{}
 	}
 	return &schema, nil
+}
+
+// schemaFile returns the explicit schema file for nodeType (steps 1 and 2
+// of LoadDefaultSchema).
+func schemaFile(nodeType string) ([]byte, bool) {
+	if data, err := embeddedSchemas.ReadFile("schemas/" + nodeType + ".json"); err == nil {
+		return data, true
+	}
+	if dot := strings.Index(nodeType, "."); dot > 0 && isBuiltinAutomation(nodeType[:dot]) {
+		if data, err := embeddedSchemas.ReadFile("schemas/action." + nodeType[dot+1:] + ".json"); err == nil {
+			return data, true
+		}
+	}
+	return nil, false
 }
 
 // ListEmbeddedSchemas returns all node type names that have an embedded schema.

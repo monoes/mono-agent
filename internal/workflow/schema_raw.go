@@ -1,29 +1,22 @@
 package workflow
 
-import (
-	"encoding/json"
-	"strings"
-)
+import "encoding/json"
 
-// ReadEmbeddedSchema returns the raw embedded schema JSON for nodeType,
-// applying the same resolution rules as LoadDefaultSchema (the action-suffix
-// and browser.generic fallbacks for browser platform nodes). The second
-// return value reports whether a schema file exists for the type — unlike
-// LoadDefaultSchema, which returns an empty schema for unknown types.
+// ReadEmbeddedSchema returns the raw schema JSON for nodeType, applying the
+// same resolution rules as LoadDefaultSchema (schema file, the shared
+// action-suffix file for built-in browser automations, then a form generated
+// from the action's inputs). The second return value reports whether a
+// schema exists for the type — unlike LoadDefaultSchema, which returns an
+// empty schema for unknown types.
 func ReadEmbeddedSchema(nodeType string) ([]byte, bool) {
-	fileName := "schemas/" + nodeType + ".json"
-	data, err := embeddedSchemas.ReadFile(fileName)
-	if err != nil {
-		if dot := strings.Index(nodeType, "."); dot > 0 {
-			if browserPlatforms[nodeType[:dot]] {
-				suffix := nodeType[dot+1:]
-				data, err = embeddedSchemas.ReadFile("schemas/action." + suffix + ".json")
-				if err != nil {
-					data, err = embeddedSchemas.ReadFile("schemas/browser.generic.json")
-				}
-			}
-		}
+	if data, ok := schemaFile(nodeType); ok {
+		return data, true
 	}
+	gen, ok := generateActionSchema(nodeType)
+	if !ok {
+		return nil, false
+	}
+	data, err := json.Marshal(gen)
 	if err != nil {
 		return nil, false
 	}
