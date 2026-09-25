@@ -128,9 +128,9 @@ func TestSaveFragment(t *testing.T) {
 	if err != nil || len(f.Steps) != 5 {
 		t.Fatalf("fragment %+v err %v", f, err)
 	}
-	// Saving the same fragment again gets a suffixed name.
+	// Saving the identical fragment again is a no-op (no duplicate).
 	res, err = Save(context.Background(), reg, dir, SaveOptions{As: SaveAsFragment, Automation: "acme-crm"})
-	if err != nil || res.Action != "fill_contact_form_2" {
+	if err != nil || res.Action != "fill_contact_form" || !strings.Contains(strings.Join(res.Warnings, " "), "no changes") {
 		t.Errorf("second fragment = %+v %v", res, err)
 	}
 }
@@ -264,5 +264,39 @@ func TestSaveRefusesLintErrorsWithoutForce(t *testing.T) {
 		if strings.Contains(err.Error(), "lint error") {
 			t.Errorf("--force did not bypass lint: %v", err)
 		}
+	}
+}
+
+func TestSaveSameFragmentTwiceIsNoOp(t *testing.T) {
+	home := t.TempDir()
+	reg := openReg(t, home)
+	dir := draftFrom(t, home, "form-submit", answer(t, "form-submit"))
+	if _, err := Save(context.Background(), reg, dir, SaveOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := Save(context.Background(), reg, dir, SaveOptions{As: SaveAsFragment, Automation: "acme-crm"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := Save(context.Background(), reg, dir, SaveOptions{As: SaveAsFragment, Automation: "acme-crm"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Action != first.Action || again.Version != first.Version {
+		t.Errorf("identical re-save: %+v, first %+v", again, first)
+	}
+	p, _ := reg.Get("acme-crm")
+	if _, err := p.Fragment(first.Action + "_2"); err == nil {
+		t.Error("a duplicate fragment was created")
+	}
+	// Different content under the same name still gets a suffix.
+	ans := strings.Replace(answer(t, "form-submit"), `"intent": "the Email field"`, `"intent": "the e-mail field"`, 1)
+	dir2 := draftFrom(t, t.TempDir(), "form-submit", ans)
+	changed, err := Save(context.Background(), reg, dir2, SaveOptions{As: SaveAsFragment, Automation: "acme-crm"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed.Action != first.Action+"_2" {
+		t.Errorf("changed fragment name = %q", changed.Action)
 	}
 }
