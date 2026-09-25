@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"text/tabwriter"
@@ -34,12 +33,16 @@ import (
 // This ensures workflows created by both the CLI and the Wails GUI are visible.
 func newHybridStore(db *storage.Database) *workflow.HybridWorkflowStore {
 	sqlStore := workflow.NewSQLiteWorkflowStore(db.DB)
-	fileStore, err := workflow.NewWorkflowFileStore(expandPath("~/.monoagent/workflows"))
+	dir := expandPath("~/.monoagent/workflows")
+	fileStore, err := workflow.NewWorkflowFileStore(dir)
 	if err != nil {
 		// If file store can't be created, wrap SQLite-only in a hybrid shell
 		// so callers always get the same type.
 		return workflow.NewHybridWorkflowStore(nil, sqlStore)
 	}
+	// Workflows saved file-only (the desktop editor, older CLI versions)
+	// get their SQLite rows backfilled; cheap after the first run.
+	_, _ = syncFileWorkflowsToSQL(context.Background(), db.DB, dir)
 	return workflow.NewHybridWorkflowStore(fileStore, sqlStore)
 }
 
@@ -1164,7 +1167,9 @@ func newWorkflowCreateCmd(cfg *globalConfig) *cobra.Command {
 
 			store := newHybridStore(db)
 			ctx := context.Background()
-			if err := store.CreateWorkflow(ctx, wf); err != nil {
+			// Same persistence as import: file store plus the SQLite rows
+			// that `workflow run --json` and executions read.
+			if err := createOrOverwriteWorkflowAtomically(ctx, store, wf, false); err != nil {
 				return fmt.Errorf("create workflow: %w", err)
 			}
 
@@ -1282,7 +1287,7 @@ func normalizeLegacyWorkflowJSON(raw []byte) ([]byte, error) {
 // newWorkflowImportCmd imports a full workflow definition from a JSON file.
 func newWorkflowImportCmd(cfg *globalConfig) *cobra.Command {
 	var inputFile string
-	var overwrite, yes bool
+	var overwrite, yes, asNew bool
 
 	cmd := &cobra.Command{
 		Use:   "import",
@@ -1321,12 +1326,40 @@ func newWorkflowImportCmd(cfg *globalConfig) *cobra.Command {
 
 			now := time.Now().UTC()
 
-			// Assign a fresh ID unless --overwrite is requested and one is present.
-			if !overwrite || wf.ID == "" {
+			// Idempotent import: the file's own id, or an earlier import of
+			// the same source (same content or name), is updated in place —
+			// or left alone when nothing changed. --as-new forces a copy.
+			source, hash := workflowImportSource(inputFile), workflowContentHash(&wf)
+			status := importCreated
+			var target *workflow.Workflow
+			if !asNew {
+				target = findImportTarget(ctx, store, db.DB, cfg.ProfileID, &wf, source, hash)
+			}
+			switch {
+			case target != nil && workflowContentHash(target) == hash:
+				status = importUnchanged
+				wf.ID = target.ID
+			case target != nil:
+				status, overwrite = importUpdated, true
+				wf.ID = target.ID
+				if !target.CreatedAt.IsZero() {
+					now = target.CreatedAt
+				}
+			case asNew || wf.ID == "":
 				wf.ID = uuid.New().String()
+			case overwrite:
+				// keep the file's id
+			case ownedWorkflow(ctx, store, db.DB, "", wf.ID) == nil:
+				// The id is free here: keep it, so a re-import finds it.
+			default:
+				wf.ID = uuid.New().String() // taken by another profile's workflow
 			}
 			wf.CreatedAt = now
-			wf.UpdatedAt = now
+			wf.UpdatedAt = time.Now().UTC()
+			if status == importUnchanged {
+				recordImport(importIndexEntry{ID: wf.ID, Name: wf.Name, Source: source, Hash: hash})
+				return printWorkflowImport(cfg, cmd, &wf, status, nil, nil, raw, yes, inputFile)
+			}
 
 			// workflow_nodes.id and workflow_connections.id are globally
 			// unique (PRIMARY KEY) across ALL workflows, so importing a file
@@ -1444,51 +1477,14 @@ func newWorkflowImportCmd(cfg *globalConfig) *cobra.Command {
 				return err
 			}
 
-			// Bundled automations (workflow export --bundle-automations):
-			// report present/missing ones, install missing with --yes or
-			// after a prompt (only when stdin is free, i.e. --file).
-			bundled := handleBundledAutomations(raw, bundleImportOptions{
-				yes:         yes,
-				interactive: !cfg.JSONOutput && inputFile != "" && stdinIsTerminal(),
-				in:          cmd.InOrStdin(),
-				out:         os.Stderr,
-			})
-
-			if cfg.JSONOutput {
-				out := map[string]interface{}{"id": wf.ID, "name": wf.Name}
-				if bundled != nil {
-					out["automations"] = bundled
-				}
-				if len(remapped) > 0 {
-					out["remapped_node_ids"] = remapped
-				}
-				if len(remappedConns) > 0 {
-					out["remapped_connection_ids"] = remappedConns
-				}
-				return json.NewEncoder(os.Stdout).Encode(out)
-			}
-			fmt.Fprintf(os.Stdout, "Imported workflow %q as id: %s  (%d nodes, %d connections)\n",
-				wf.Name, wf.ID, len(wf.Nodes), len(wf.Connections))
-			printRemapped := func(label string, m map[string]string) {
-				if len(m) == 0 {
-					return
-				}
-				parts := make([]string, 0, len(m))
-				for old, newID := range m {
-					parts = append(parts, old+" → "+newID)
-				}
-				sort.Strings(parts)
-				fmt.Fprintf(os.Stdout, "Remapped %s (already used by another workflow): %s\n", label, strings.Join(parts, ", "))
-			}
-			printRemapped("node ids", remapped)
-			printRemapped("connection ids", remappedConns)
-			printBundleImport(os.Stdout, bundled)
-			return nil
+			recordImport(importIndexEntry{ID: wf.ID, Name: wf.Name, Source: source, Hash: hash})
+			return printWorkflowImport(cfg, cmd, &wf, status, remapped, remappedConns, raw, yes, inputFile)
 		},
 	}
 
 	cmd.Flags().StringVarP(&inputFile, "file", "f", "", "Path to JSON file (default: stdin)")
 	cmd.Flags().BoolVar(&overwrite, "overwrite", false, "Keep the id from the file instead of generating a new one")
+	cmd.Flags().BoolVar(&asNew, "as-new", false, "Always create a new workflow, even when this file was imported before")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Install automations bundled in the file that are not installed yet")
 	return cmd
 }
