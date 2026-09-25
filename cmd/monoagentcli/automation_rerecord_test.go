@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"github.com/monoes/mono-agent/internal/automation"
 	"github.com/monoes/mono-agent/internal/extension"
 	"github.com/monoes/mono-agent/internal/recording"
+	"github.com/monoes/mono-agent/internal/storage"
 )
 
 type fakePicker struct {
@@ -140,5 +142,47 @@ func TestAutomationRerecordDropsSensitiveText(t *testing.T) {
 func TestAutomationDoctorSuggestsRerecord(t *testing.T) {
 	if got := rerecordSuggestion("acme", "save.button"); got != "run: monoagentcli automation rerecord acme save.button" {
 		t.Fatalf("suggestion = %q", got)
+	}
+}
+
+func TestAutomationRerecordResetsHealth(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cfg := &globalConfig{DBPath: filepath.Join(home, ".monoagent", "monoagent.db")}
+	// No database: nothing to reset, and none is created.
+	if err := resetRerecordedHealth(cfg, "acme", "save.button"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(cfg.DBPath); !os.IsNotExist(err) {
+		t.Fatalf("database created: %v", err)
+	}
+	os.MkdirAll(filepath.Dir(cfg.DBPath), 0o700)
+	db, err := storage.NewDatabase(cfg.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.ApplyMigrations(); err != nil {
+		t.Fatal(err)
+	}
+	db.DB.Exec(`INSERT INTO automation_selector_health (automation_id, selector_key, ok_count, fail_count, healed_count, last_candidate_index, recent, updated_at)
+		VALUES ('acme','save.button',1,9,0,0,'','2026-01-01T00:00:00Z')`)
+	db.Close()
+
+	if err := resetRerecordedHealth(cfg, "acme", "save.button"); err != nil {
+		t.Fatal(err)
+	}
+	db, err = storage.NewDatabase(cfg.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var fails int
+	var rerecorded sql.NullString
+	if err := db.DB.QueryRow(`SELECT fail_count, rerecorded_at FROM automation_selector_health WHERE automation_id='acme' AND selector_key='save.button'`).
+		Scan(&fails, &rerecorded); err != nil {
+		t.Fatal(err)
+	}
+	if fails != 0 || !rerecorded.Valid {
+		t.Fatalf("fail_count %d rerecorded_at %v", fails, rerecorded)
 	}
 }

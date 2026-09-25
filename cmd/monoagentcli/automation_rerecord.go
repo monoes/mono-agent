@@ -124,6 +124,9 @@ func newAutomationRerecordCmd(cfg *globalConfig) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := resetRerecordedHealth(cfg, res.Automation, res.Key); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: selector saved, but its health history was not reset: %v\n", err)
+			}
 			out := cmd.OutOrStdout()
 			if cfg.JSONOutput {
 				return writeJSONTo(out, res)
@@ -136,6 +139,21 @@ func newAutomationRerecordCmd(cfg *globalConfig) *cobra.Command {
 	cmd.Flags().StringVar(&url, "url", "", "Page to open (default: the package's site.startUrl)")
 	cmd.Flags().DurationVar(&timeout, "timeout", 180*time.Second, "How long to wait for the click")
 	return cmd
+}
+
+// resetRerecordedHealth starts the selector's health over so doctor and
+// the Health tab stop reporting the old selector's failures. No database
+// yet means no history to reset; none is created.
+func resetRerecordedHealth(cfg *globalConfig, id, key string) error {
+	if _, err := os.Stat(expandPath(cfg.DBPath)); err != nil {
+		return nil
+	}
+	db, err := initDB(cfg)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	return automation.ResetSelectorHealth(db.DB, id, key)
 }
 
 // packageGetter is the part of the registry rerecord reads.
