@@ -94,6 +94,10 @@ type Client struct {
 	// Retries is how many times a 408/429/5xx is retried (default 2, as the
 	// official SDKs do). Transport errors are not retried: the caller decides.
 	Retries int
+	// OnResult, when set, is called once per Ask with the outcome — including
+	// transport and validation failures (resp nil or partial, err set). Usage
+	// recorders hang off it; it must not retain req beyond the call.
+	OnResult func(req *Request, resp *Response, latency time.Duration, err error)
 }
 
 // NewClient builds a client. An empty apiKey falls back to TYPESAFE_API_KEY,
@@ -127,26 +131,30 @@ func NewClient(apiKey, model string) (*Client, error) {
 // Ask sends the questions about state in one request and validates every
 // answer against its question. Questions are independent: none sees another's
 // answer, so ask everything you might need at once (speculative fan-out).
-func (c *Client) Ask(ctx context.Context, state any, questions map[string]Question) (*Response, error) {
+func (c *Client) Ask(ctx context.Context, state any, questions map[string]Question) (resp *Response, err error) {
 	if len(questions) == 0 {
 		return nil, errors.New("jev: no questions")
 	}
-	body, err := json.Marshal(Request{Model: c.Model, State: state, Questions: questions})
+	req := Request{Model: c.Model, State: state, Questions: questions}
+	started := time.Now()
+	if c.OnResult != nil {
+		defer func() { c.OnResult(&req, resp, time.Since(started), err) }()
+	}
+	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("jev: encode request: %w", err)
 	}
-	started := time.Now()
 	raw, err := c.post(ctx, body)
 	if err != nil {
 		return nil, err
 	}
-	var resp Response
-	if err := json.Unmarshal(raw, &resp); err != nil {
+	var decoded Response
+	if err := json.Unmarshal(raw, &decoded); err != nil {
 		return nil, fmt.Errorf("%w: undecodable response: %v", ErrInvalidAnswer, err)
 	}
-	resp.LatencyMS = time.Since(started).Milliseconds()
+	decoded.LatencyMS = time.Since(started).Milliseconds()
 	for id, q := range questions {
-		a, ok := resp.Answers[id]
+		a, ok := decoded.Answers[id]
 		if !ok {
 			return nil, fmt.Errorf("%w: no answer for %q", ErrInvalidAnswer, id)
 		}
@@ -154,7 +162,42 @@ func (c *Client) Ask(ctx context.Context, state any, questions map[string]Questi
 			return nil, fmt.Errorf("%s: %w", id, err)
 		}
 	}
-	return &resp, nil
+	return &decoded, nil
+}
+
+// Top returns the most probable option and its probability — the gate value
+// every surface compares with its threshold (plan D4). For a noul answer it
+// returns ("true", noul).
+func Top(a Answer) (string, float64) {
+	if a.Type == TypeNoul || (a.Probabilities == nil && a.Choice == "") {
+		return "true", a.Noul
+	}
+	best, bestP := "", -1.0
+	for id, p := range a.Probabilities {
+		if p > bestP || (p == bestP && id < best) {
+			best, bestP = id, p
+		}
+	}
+	if a.Choice != "" {
+		if p, ok := a.Probabilities[a.Choice]; ok && p >= bestP {
+			return a.Choice, p
+		}
+	}
+	return best, bestP
+}
+
+// Margin is the gap between the two most probable options (0 when fewer
+// than two). A small margin means the model was torn.
+func Margin(a Answer) float64 {
+	first, second := 0.0, 0.0
+	for _, p := range a.Probabilities {
+		if p > first {
+			first, second = p, first
+		} else if p > second {
+			second = p
+		}
+	}
+	return first - second
 }
 
 func (c *Client) post(ctx context.Context, body []byte) ([]byte, error) {
