@@ -1,0 +1,271 @@
+package extension
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/monoes/mono-agent/internal/profiledir"
+	"github.com/monoes/mono-agent/internal/recording"
+)
+
+// The record.* request methods: the side panel's Review flow asks this
+// process to list, analyze, verify and save recordings. None of the logic
+// lives here — each method runs this binary's own `record … --json`
+// (contracts §5) and hands back its JSON, so the GUI, the CLI and the side
+// panel can never disagree about what a command does.
+//
+// The params come from a browser, so every one is validated before it can
+// become an argv word: ids match a strict pattern and can never start with
+// a dash, a draft directory must resolve inside ~/.monoagent/recording-drafts,
+// flag values are passed as --flag=value so none can be read as a flag.
+
+// Record request methods.
+const (
+	MethodRecordList    = "record.list"
+	MethodRecordAnalyze = "record.analyze"
+	MethodRecordVerify  = "record.verify"
+	MethodRecordSave    = "record.save"
+)
+
+// Per-method deadlines: analyze runs an AI pass, verify replays a flow.
+const (
+	recordListTimeout    = 30 * time.Second
+	recordAnalyzeTimeout = 5 * time.Minute
+	recordVerifyTimeout  = 3 * time.Minute
+	recordSaveTimeout    = time.Minute
+)
+
+// stderrTail bounds how much of a failing command's stderr is quoted back.
+const stderrTail = 600
+
+var (
+	automationIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,40}$`)
+	recordNamePattern   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_ .-]{0,63}$`)
+)
+
+func registerRecordHandlers(s *Server) {
+	s.HandleRequestWithTimeout(MethodRecordList, s.handleRecordList, recordListTimeout)
+	s.HandleRequestWithTimeout(MethodRecordAnalyze, s.handleRecordAnalyze, recordAnalyzeTimeout)
+	s.HandleRequestWithTimeout(MethodRecordVerify, s.handleRecordVerify, recordVerifyTimeout)
+	s.HandleRequestWithTimeout(MethodRecordSave, s.handleRecordSave, recordSaveTimeout)
+}
+
+// SetRecordRunner replaces the runner the record.* methods exec through.
+// Tests call it; production uses this binary.
+func (s *Server) SetRecordRunner(r Runner) {
+	s.recMu.Lock()
+	s.recRunner = r
+	s.recMu.Unlock()
+}
+
+func (s *Server) recordRunner() Runner {
+	s.recMu.Lock()
+	defer s.recMu.Unlock()
+	if s.recRunner == nil {
+		s.recRunner = selfRunner{}
+	}
+	return s.recRunner
+}
+
+func (s *Server) handleRecordList(ctx context.Context, req *Request, _ ProgressFunc) (any, error) {
+	args, err := recordListArgs(req)
+	if err != nil {
+		return nil, err
+	}
+	return runRecordJSON(ctx, s.recordRunner(), args)
+}
+
+func (s *Server) handleRecordAnalyze(ctx context.Context, req *Request, progress ProgressFunc) (any, error) {
+	args, err := recordAnalyzeArgs(req)
+	if err != nil {
+		return nil, err
+	}
+	progress("analyzing", "")
+	return runRecordJSON(ctx, s.recordRunner(), args)
+}
+
+func (s *Server) handleRecordVerify(ctx context.Context, req *Request, progress ProgressFunc) (any, error) {
+	args, err := recordVerifyArgs(req)
+	if err != nil {
+		return nil, err
+	}
+	progress("verifying", "")
+	return runRecordJSON(ctx, s.recordRunner(), args)
+}
+
+func (s *Server) handleRecordSave(ctx context.Context, req *Request, _ ProgressFunc) (any, error) {
+	args, err := recordSaveArgs(req)
+	if err != nil {
+		return nil, err
+	}
+	return runRecordJSON(ctx, s.recordRunner(), args)
+}
+
+// badParam is the error for a param that failed validation.
+func badParam(format string, a ...any) error {
+	return &RequestError{Code: CodeBadParams, Err: fmt.Errorf(format, a...)}
+}
+
+// CodeBadParams is a request refused because a param failed validation.
+const CodeBadParams = "bad_params"
+
+// profileArgs returns the leading --profile flag when the request names a
+// usable profile.
+func profileArgs(req *Request) ([]string, error) {
+	p := req.String("profile")
+	if p == "" {
+		return nil, nil
+	}
+	if !profiledir.ValidProfileID(p) || !safeArgValue(p) || strings.ContainsAny(p, "=") {
+		return nil, badParam("invalid profile %q", firstLine(p))
+	}
+	return []string{"--profile=" + p}, nil
+}
+
+func recordListArgs(req *Request) ([]string, error) {
+	args, err := profileArgs(req)
+	if err != nil {
+		return nil, err
+	}
+	return append(args, "record", "list", "--json"), nil
+}
+
+func recordAnalyzeArgs(req *Request) ([]string, error) {
+	args, err := profileArgs(req)
+	if err != nil {
+		return nil, err
+	}
+	id := req.String("recordingId")
+	if !recording.ValidID(id) {
+		return nil, badParam("invalid recordingId %q", firstLine(id))
+	}
+	args = append(args, "record", "analyze", id)
+	if a := req.String("automation"); a != "" {
+		if !automationIDPattern.MatchString(a) {
+			return nil, badParam("invalid automation id %q", firstLine(a))
+		}
+		args = append(args, "--automation="+a)
+	}
+	return append(args, "--json"), nil
+}
+
+func recordVerifyArgs(req *Request) ([]string, error) {
+	args, err := profileArgs(req)
+	if err != nil {
+		return nil, err
+	}
+	dir, err := recording.ResolveDraftDir(req.String("draftDir"))
+	if err != nil {
+		return nil, badParam("%v", err)
+	}
+	args = append(args, "record", "verify", dir)
+	if full, _ := req.Params["full"].(bool); full {
+		args = append(args, "--full")
+	}
+	return append(args, "--json"), nil
+}
+
+func recordSaveArgs(req *Request) ([]string, error) {
+	args, err := profileArgs(req)
+	if err != nil {
+		return nil, err
+	}
+	dir, err := recording.ResolveDraftDir(req.String("draftDir"))
+	if err != nil {
+		return nil, badParam("%v", err)
+	}
+	args = append(args, "record", "save", dir)
+	switch as := req.String("saveAs"); as {
+	case "":
+	case "action", "fragment", "workflow":
+		args = append(args, "--as="+as)
+	default:
+		return nil, badParam("saveAs must be action, fragment or workflow, not %q", firstLine(as))
+	}
+	automation, newID := req.String("automation"), req.String("new")
+	if automation != "" && newID != "" {
+		return nil, badParam("give automation or new, not both")
+	}
+	for flag, v := range map[string]string{"automation": automation, "new": newID} {
+		if v != "" && !automationIDPattern.MatchString(v) {
+			return nil, badParam("invalid %s id %q", flag, firstLine(v))
+		}
+	}
+	if automation != "" {
+		args = append(args, "--automation="+automation)
+	}
+	if newID != "" {
+		args = append(args, "--new="+newID)
+	}
+	if name := req.String("name"); name != "" {
+		if !recordNamePattern.MatchString(name) {
+			return nil, badParam("invalid name %q", firstLine(name))
+		}
+		args = append(args, "--name="+name)
+	}
+	return append(args, "--json"), nil
+}
+
+// runRecordJSON runs one `record …` command and decodes its stdout. A
+// failing command's {"error": …} (contracts §5) wins over stderr as the
+// message, since that is the one written for a person.
+func runRecordJSON(ctx context.Context, r Runner, args []string) (any, error) {
+	out, err := r.Run(ctx, args...)
+	if err != nil {
+		var body struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(bytes.TrimSpace(out), &body) == nil && body.Error != "" {
+			return nil, fmt.Errorf("%s", body.Error)
+		}
+		return nil, err
+	}
+	var data any
+	if err := json.Unmarshal(bytes.TrimSpace(out), &data); err != nil {
+		return nil, fmt.Errorf("monoagentcli %s: output is not JSON", strings.Join(args, " "))
+	}
+	return data, nil
+}
+
+// selfRunner runs this very binary. Only a monoagentcli can answer
+// `record …`; any other host of the server (cmd/inspect, a test binary)
+// reports the methods as unavailable instead of exec'ing something
+// arbitrary.
+type selfRunner struct{}
+
+func (selfRunner) Run(ctx context.Context, args ...string) ([]byte, error) {
+	bin, err := os.Executable()
+	if err != nil {
+		return nil, Unavailable("cannot locate monoagentcli: %v", err)
+	}
+	base := strings.TrimSuffix(strings.ToLower(filepath.Base(bin)), ".exe")
+	if !strings.HasPrefix(base, "monoagentcli") {
+		return nil, Unavailable("record methods need the monoagentcli bridge (running as %s)", filepath.Base(bin))
+	}
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.WaitDelay = monomindWaitDelay
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return stdout.Bytes(), &RequestError{Code: CodeTimeout, Err: fmt.Errorf("monoagentcli %s: %w", strings.Join(args, " "), ctx.Err())}
+		}
+		detail := strings.TrimSpace(stderr.String())
+		if len(detail) > stderrTail {
+			detail = "…" + detail[len(detail)-stderrTail:]
+		}
+		if detail == "" {
+			detail = err.Error()
+		}
+		return stdout.Bytes(), fmt.Errorf("monoagentcli %s: %s", strings.Join(args, " "), detail)
+	}
+	return stdout.Bytes(), nil
+}

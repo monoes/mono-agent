@@ -3,6 +3,8 @@
 // envelope with source "recording" (spec §8.2–§8.3).
 package recording
 
+import "github.com/monoes/mono-agent/internal/capture"
+
 // Frame is one extension → Go WebSocket message with kind "recording".
 //
 //	op "start":    RecordingID, TabID, URL, Title, Goal, StartedAt
@@ -71,21 +73,24 @@ type Event struct {
 
 // Fingerprint describes the target element (spec §8.2).
 type Fingerprint struct {
-	Tag         string      `json:"tag"`
-	ID          string      `json:"id,omitempty"`
-	Name        string      `json:"name,omitempty"`
-	TestID      string      `json:"testId,omitempty"` // data-testid / data-test / data-qa
-	Role        string      `json:"role,omitempty"`
-	AriaName    string      `json:"ariaName,omitempty"`
-	Label       string      `json:"label,omitempty"`
-	Placeholder string      `json:"placeholder,omitempty"`
-	Text        string      `json:"text,omitempty"` // trimmed, ≤ 120 chars
-	Href        string      `json:"href,omitempty"`
-	InputType   string      `json:"inputType,omitempty"`
-	CSS         string      `json:"css,omitempty"`   // structural CSS path
-	XPath       string      `json:"xpath,omitempty"` // absolute-ish XPath
-	Rect        *Rect       `json:"rect,omitempty"`
-	Candidates  []Candidate `json:"candidates"` // ranked, best first
+	Tag         string `json:"tag"`
+	ID          string `json:"id,omitempty"`
+	Name        string `json:"name,omitempty"`
+	TestID      string `json:"testId,omitempty"` // data-testid / data-test / data-qa
+	Role        string `json:"role,omitempty"`
+	AriaName    string `json:"ariaName,omitempty"`
+	Label       string `json:"label,omitempty"`
+	Placeholder string `json:"placeholder,omitempty"`
+	Text        string `json:"text,omitempty"` // trimmed, ≤ 120 chars
+	Href        string `json:"href,omitempty"`
+	InputType   string `json:"inputType,omitempty"`
+	// Autocomplete is the element's autocomplete attribute; ingest treats
+	// "cc-*" and the password tokens as sensitive (privacy re-check).
+	Autocomplete string      `json:"autocomplete,omitempty"`
+	CSS          string      `json:"css,omitempty"`   // structural CSS path
+	XPath        string      `json:"xpath,omitempty"` // absolute-ish XPath
+	Rect         *Rect       `json:"rect,omitempty"`
+	Candidates   []Candidate `json:"candidates"` // ranked, best first
 }
 
 type Rect struct {
@@ -137,7 +142,7 @@ const (
 	EventsArtifact  = "events.jsonl"
 	NetworkArtifact = "network.jsonl"
 	// DOM snippets: "dom-<eventId>.html"; screenshots: "shot-<eventId>.png".
-	SourceRecording = "recording"
+	SourceRecording = capture.SourceRecording
 )
 
 // Summary is one row of `record list --json`.
@@ -152,4 +157,5 @@ type Summary struct {
 	Complete   bool   `json:"complete"` // a stop frame arrived
 	StopReason string `json:"stopReason,omitempty"`
 	Automation string `json:"automation,omitempty"` // linked package once saved
+	Profile    string `json:"profile,omitempty"`    // profile inbox it lives in ("" = default inbox)
 }

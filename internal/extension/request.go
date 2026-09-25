@@ -200,6 +200,19 @@ func (s *Server) HandleRequest(method string, h RequestHandler) {
 	s.handlers[method] = h
 }
 
+// HandleRequestWithTimeout registers a handler whose requests get their own
+// deadline instead of requestTimeout — for methods that legitimately run
+// for minutes (record.analyze shells out to an AI runner).
+func (s *Server) HandleRequestWithTimeout(method string, h RequestHandler, timeout time.Duration) {
+	s.HandleRequest(method, h)
+	s.handlerMu.Lock()
+	defer s.handlerMu.Unlock()
+	if s.methodTimeouts == nil {
+		s.methodTimeouts = make(map[string]time.Duration)
+	}
+	s.methodTimeouts[method] = timeout
+}
+
 func (s *Server) handlerFor(method string) (RequestHandler, bool) {
 	s.handlerMu.Lock()
 	defer s.handlerMu.Unlock()
@@ -231,6 +244,7 @@ func (s *Server) registerBuiltinHandlers() {
 		}, nil
 	})
 	registerKnowledgeHandlers(s)
+	registerRecordHandlers(s)
 }
 
 // ---------------------------------------------------------------------------
@@ -242,10 +256,7 @@ func (s *Server) registerBuiltinHandlers() {
 // design: it decodes one field, and only frames that claim KindRequest are
 // decoded again as a Request.
 func isRequestFrame(msg []byte) bool {
-	var peek struct {
-		Kind string `json:"kind"`
-	}
-	return json.Unmarshal(msg, &peek) == nil && peek.Kind == KindRequest
+	return frameKind(msg) == KindRequest
 }
 
 // serveRequest runs one request to completion and settles it. Called from
@@ -325,7 +336,7 @@ func (s *Server) runHandler(handler RequestHandler, req *Request) {
 	if base == nil {
 		base = context.Background()
 	}
-	timeout := s.requestDeadline()
+	timeout := s.requestDeadline(req.Method)
 	// Cancelling on the way out is what gives a handler that DOES watch its
 	// context — every exec in knowledge.go — the signal to stop working on
 	// an answer nobody is waiting for any more.
@@ -395,11 +406,14 @@ func (s *Server) SetRequestTimeout(d time.Duration) {
 	s.requestTimeout = d
 }
 
-func (s *Server) requestDeadline() time.Duration {
+func (s *Server) requestDeadline(method string) time.Duration {
 	s.handlerMu.Lock()
 	defer s.handlerMu.Unlock()
 	if s.requestTimeout > 0 {
 		return s.requestTimeout
+	}
+	if d := s.methodTimeouts[method]; d > 0 {
+		return d
 	}
 	return requestTimeout
 }
@@ -464,6 +478,9 @@ type handlerState struct {
 	// requestTimeout overrides the requestTimeout constant; zero means the
 	// constant. Guarded by handlerMu. See SetRequestTimeout.
 	requestTimeout time.Duration
+	// methodTimeouts are per-method deadlines (HandleRequestWithTimeout);
+	// requestTimeout, when set, still wins. Guarded by handlerMu.
+	methodTimeouts map[string]time.Duration
 	sem            chan struct{}
 	semOnce        sync.Once
 }

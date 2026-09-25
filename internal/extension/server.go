@@ -77,6 +77,10 @@ type Server struct {
 	// knowledge.go).
 	knowledgeState
 
+	// recordingState ingests kind:"recording" frames and runs the
+	// record.* request methods (see recording.go).
+	recordingState
+
 	// pairingNonces backs the one-time, loopback-only auto-pairing flow
 	// (see handlePairPage/handlePairExchange): a short-lived, single-use
 	// nonce that exchanges for the real token, so the long-lived secret
@@ -318,6 +322,10 @@ func (s *Server) Start(ctx context.Context) error {
 	s.addrMu.Unlock()
 
 	s.logger.Info().Str("addr", addr).Msg("extension server listening")
+	// Recordings outlive connections (the service worker is suspended
+	// constantly), so their idle reaper runs for the server's lifetime,
+	// not the socket's.
+	go s.recordingReaper(s.ctx)
 	err = s.server.Serve(listener)
 	if err == http.ErrServerClosed {
 		return nil
@@ -808,8 +816,14 @@ func (s *Server) readLoop(conn *websocket.Conn) {
 		// (see request.go). Checked before the Response decode because a
 		// request has no `success` field and would otherwise land in
 		// dispatch as an unmatched failure.
-		if isRequestFrame(msg) {
+		switch frameKind(msg) {
+		case KindRequest:
 			s.serveRequest(msg)
+			continue
+		case KindRecording:
+			// An activity-recording frame (recording.go): a push that
+			// is acked, never a response to anything this process sent.
+			s.serveRecording(msg)
 			continue
 		}
 

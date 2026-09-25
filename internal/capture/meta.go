@@ -86,8 +86,8 @@ func (s Selection) MarshalJSON() ([]byte, error) { return marshalWithExtra(s, s.
 
 // The meta.source values, one per producer of these envelopes. They live
 // together here rather than in each producer because a consumer reading an
-// inbox has to recognise all three, and a private copy in one package is
-// how the three quietly drift apart.
+// inbox has to recognise all of them, and a private copy in one package is
+// how they quietly drift apart.
 const (
 	// SourceExtension is a page saved from the user's real, logged-in
 	// Chrome via the extension bridge.
@@ -97,6 +97,10 @@ const (
 	SourceCrawl = "crawl"
 	// SourceMonobrowse is a page captured through headless monobrowse.
 	SourceMonobrowse = "monobrowse"
+	// SourceRecording is a browser activity recording streamed by the
+	// extension (internal/recording): events.jsonl, dom-<eventId>.html
+	// snippets and network.jsonl rather than a page snapshot.
+	SourceRecording = "recording"
 )
 
 // UnmarshalJSON decodes field by field instead of in one shot, so a single
