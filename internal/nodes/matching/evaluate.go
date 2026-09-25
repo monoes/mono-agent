@@ -25,6 +25,8 @@ func RegisterAll(r *workflow.NodeTypeRegistry, db *sql.DB) {
 }
 
 // EvaluateNode scores one job application's fit via matching.Evaluate.
+// Config "runtime" is a local agent runtime (default "claude"), or "jev" /
+// "jev:<model>" to score with TypeSafe Jev (see matching.Evaluate).
 // Type: "applications.evaluate"
 type EvaluateNode struct{}
 
