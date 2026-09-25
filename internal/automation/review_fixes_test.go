@@ -2,6 +2,7 @@ package automation
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -271,5 +272,50 @@ func TestGenerationTracksChanges(t *testing.T) {
 	r.WriteOverlaySelector("demo", "k", action.SelectorEntry{Candidates: []action.SelectorCandidate{{CSS: "x"}}})
 	if generation(t, r) == g2 {
 		t.Error("overlay write did not change the generation")
+	}
+}
+
+// N2: metadata-only differences are not conflicts.
+func TestAddActionIgnoresMetadataOnlyDifferences(t *testing.T) {
+	r := newReg(t)
+	base := acmeFiles()
+	base["selectors.json"] = strings.Replace(base["selectors.json"],
+		`"contact.email": {"candidates": [{"css": "input[name=email]"}, {"aria": {"role": "textbox", "name": "Email"}}]}`,
+		`"contact.email": {"candidates": [{"css": "input[name=email]"}, {"aria": {"role": "textbox", "name": "Email"}}], "verifiedAt": "2026-09-01T10:00:00Z"}`, 1)
+	if _, err := r.Install(writeTree(t, t.TempDir(), base), InstallOptions{Source: SourceLocal}); err != nil {
+		t.Fatal(err)
+	}
+	// The source re-verified contact.email later, and its dismiss fragment
+	// is the same JSON with different key order and whitespace.
+	src := acmeFiles()
+	src["selectors.json"] = strings.Replace(src["selectors.json"],
+		`"contact.email": {"candidates": [{"css": "input[name=email]"}, {"aria": {"role": "textbox", "name": "Email"}}]}`,
+		`"contact.email": {"candidates": [{"css": "input[name=email]"}, {"aria": {"role": "textbox", "name": "Email"}}], "verifiedAt": "2026-09-20T10:00:00Z"}`, 1)
+	src["fragments/dismiss.json"] = "{\n  \"steps\": [ {\"type\":\"click\", \"id\":\"x\", \"configKey\":\"banner.close\"} ],\n  \"name\": \"dismiss\"\n}\n"
+	src["actions/other.json"] = `{"actionType":"other","sideEffects":"write","steps":[
+  {"id":"f","type":"call_fragment","fragment":"dismiss"},
+  {"id":"e","type":"type","configKey":"contact.email","value":"x"},
+  {"id":"s","type":"click","configKey":"contact.save","sideEffect":true}]}`
+	src["automation.json"] = strings.Replace(src["automation.json"], `"actions": ["list_deals", "create_contact"]`, `"actions": ["list_deals", "create_contact", "other"]`, 1)
+	sp, err := OpenDir(writeTree(t, t.TempDir(), src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.AddAction("acme-crm", sp, "other", InstallOptions{}); err != nil {
+		t.Fatalf("metadata-only differences reported as conflicts: %v", err)
+	}
+	p, _ := r.Get("acme-crm")
+	if e, _ := p.Context().Selector("contact.email"); e.VerifiedAt != "2026-09-20T10:00:00Z" {
+		t.Errorf("newer verifiedAt not kept: %q", e.VerifiedAt)
+	}
+	if b, _ := fs.ReadFile(p.FS, "fragments/dismiss.json"); string(b) != base["fragments/dismiss.json"] {
+		t.Errorf("equal fragment was rewritten: %s", b)
+	}
+
+	// A real difference in a used selector is still a conflict.
+	src["selectors.json"] = strings.Replace(src["selectors.json"], `input[name=email]`, `input#mail`, 1)
+	sp, _ = OpenDir(writeTree(t, t.TempDir(), src))
+	if _, err := r.AddAction("acme-crm", sp, "other", InstallOptions{}); !errors.Is(err, ErrConflict) {
+		t.Errorf("real selector change not a conflict: %v", err)
 	}
 }

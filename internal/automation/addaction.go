@@ -1,6 +1,7 @@
 package automation
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/monoes/mono-agent/internal/action"
 )
 
 // ErrConflict is returned by AddAction when merging would overwrite a
@@ -177,9 +181,14 @@ func mergeInto(cur, subPkg *Package, sub map[string][]byte, actionName string) (
 		default:
 			continue // README, icon, recordings: keep the target's own
 		}
-		if old, exists := merged[n]; exists && string(old) != string(b) && inUse {
-			conflicts = append(conflicts, n)
-			continue
+		if old, exists := merged[n]; exists {
+			if sameContent(n, old, b) {
+				continue // equal after canonicalising: keep the target's bytes
+			}
+			if inUse {
+				conflicts = append(conflicts, n)
+				continue
+			}
 		}
 		merged[n] = b
 	}
@@ -193,11 +202,17 @@ func mergeInto(cur, subPkg *Package, sub map[string][]byte, actionName string) (
 		return nil, err
 	}
 	for k, e := range add {
-		if old, exists := sel[k]; exists && !reflect.DeepEqual(old, e) && used.selectors[k] {
+		old, exists := sel[k]
+		switch {
+		case !exists:
+			sel[k] = e
+		case sameSelector(old, e):
+			sel[k] = newerVerified(old, e) // only verifiedAt may differ
+		case used.selectors[k]:
 			conflicts = append(conflicts, "selectors.json#"+k)
-			continue
+		default:
+			sel[k] = e
 		}
-		sel[k] = e
 	}
 	if len(conflicts) > 0 {
 		sort.Strings(conflicts)
@@ -212,6 +227,51 @@ func mergeInto(cur, subPkg *Package, sub map[string][]byte, actionName string) (
 		merged["selectors.json"] = append(b, '\n')
 	}
 	return merged, nil
+}
+
+// sameSelector compares two selector entries ignoring verifiedAt, which
+// records when a copy was last checked, not what it selects.
+func sameSelector(a, b action.SelectorEntry) bool {
+	a.VerifiedAt, b.VerifiedAt = "", ""
+	return reflect.DeepEqual(a, b)
+}
+
+// newerVerified returns whichever entry was verified more recently.
+func newerVerified(a, b action.SelectorEntry) action.SelectorEntry {
+	ta, errA := time.Parse(time.RFC3339, a.VerifiedAt)
+	tb, errB := time.Parse(time.RFC3339, b.VerifiedAt)
+	switch {
+	case errB != nil:
+		return a
+	case errA != nil || tb.After(ta):
+		return b
+	}
+	return a
+}
+
+// sameContent compares two versions of a package file: JSON files by their
+// canonical form (key order and whitespace do not matter), others byte for
+// byte.
+func sameContent(name string, a, b []byte) bool {
+	if string(a) == string(b) {
+		return true
+	}
+	if path.Ext(name) != ".json" {
+		return false
+	}
+	ca, errA := canonicalJSON(a)
+	cb, errB := canonicalJSON(b)
+	return errA == nil && errB == nil && string(ca) == string(cb)
+}
+
+func canonicalJSON(b []byte) ([]byte, error) {
+	var v any
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
+	if err := dec.Decode(&v); err != nil {
+		return nil, err
+	}
+	return json.Marshal(v) // maps marshal with sorted keys
 }
 
 func pluralItems(n int) string {
