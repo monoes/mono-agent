@@ -65,23 +65,37 @@
       "id": "gate_page",
       "type": "condition",
       "condition": "cUrl != ''",
-      "then": ["open_page", "read_page", "gate_found", "keep", "record", "advance", "next_url", "set_next"],
+      "then": [
+        "open_page",
+        "read_found",
+        "gate_found",
+        "read_rows",
+        "shape",
+        "record",
+        "reset_more",
+        "read_more",
+        "wrap_more",
+        "next_url",
+        "set_next"
+      ],
       "description": "Follow the item's \"More\" links (at most 20 pages) while there is a next page"
     },
     {"id": "open_page", "type": "navigate", "url": "{{cUrl}}", "onError": {"action": "mark_failed"}},
     {
-      "id": "read_page",
-      "type": "page_script",
-      "script": "comments_page.js",
-      "inputs": {"itemID": "{{hn.id}}", "stack": "{{cStack}}"},
-      "variable_name": "cPage",
-      "onError": {"action": "mark_failed"}
+      "id": "read_found",
+      "type": "extract_attribute",
+      "description": "The item's own row: missing means the item does not exist",
+      "selector": ".fatitem tr.athing",
+      "attribute": "id",
+      "variable_name": "cFound",
+      "timeout": 2,
+      "onError": {"action": "skip"}
     },
     {
       "id": "gate_found",
       "type": "condition",
-      "condition": "cPage.found != true and pageIdx == 0",
-      "then": ["read_missing", "fail_missing"]
+      "condition": "cFound != hn.id and pageIdx == 0",
+      "then": ["read_missing", "fail_missing", "stop_pages"]
     },
     {
       "id": "read_missing",
@@ -96,35 +110,100 @@
       "type": "mark_failed",
       "text": "hackernews: item {{hn.id}} not found on {{cUrl}}: {{pageText}}"
     },
+    {"id": "stop_pages", "type": "set_variable", "variable_name": "cUrl", "value": ""},
     {
-      "id": "keep",
+      "id": "read_rows",
+      "type": "extract_table",
+      "description": "HN renders the thread as a flat list of rows; td.ind[indent] is the depth (not output: record false)",
+      "selector": "body",
+      "value": {"rows": "tr.athing.comtr", "record": false},
+      "fields": {
+        "id": "@id",
+        "author": "a.hnuser",
+        "body": ".commtext",
+        "depth": "td.ind@indent",
+        "age": ".age@title"
+      },
+      "variable_name": "cRows",
+      "timeout": 5,
+      "onError": {"action": "mark_failed"}
+    },
+    {
+      "id": "shape",
       "type": "transform",
-      "input": "{{cPage.comments}}",
+      "description": "parentId: the closest previous row one level up (the item for top-level rows), continuing across More pages through cStack",
+      "input": "{{cRows}}",
       "variable_name": "cKeep",
       "ops": [
+        {
+          "op": "tree_parent",
+          "field": "depth",
+          "id": "id",
+          "to": "parentId",
+          "root": "{{hn.id}}",
+          "carry": "cStack"
+        },
+        {"op": "parse_number", "field": "depth"},
+        {"op": "flag", "where": {"variable": "body", "operator": "not_exists"}, "to": "deleted"},
+        {"op": "regex_extract", "field": "age", "pattern": "^(\\S+)"},
+        {
+          "op": "map",
+          "map": {"author": "{{author or ''}}", "text": "{{body or ''}}", "age": "{{age or ''}}"}
+        },
         {
           "op": "filter",
           "where": {"variable": "depth", "operator": "less_than", "value": "{{maxDepth}}"}
         },
-        {"op": "dedupe", "field": "id"}
+        {"op": "dedupe", "field": "id"},
+        {
+          "op": "pick",
+          "fields": ["id", "author", "text", "depth", "parentId", "age", "deleted"]
+        }
       ]
     },
     {"id": "record", "type": "save_data", "dataSource": "cKeep"},
-    {"id": "advance", "type": "set_variable", "variable_name": "cStack", "value": "{{cPage.stack}}"},
+    {"id": "reset_more", "type": "set_variable", "variable_name": "cMore", "value": ""},
+    {
+      "id": "read_more",
+      "type": "extract_attribute",
+      "selector": "a.morelink",
+      "attribute": "href",
+      "variable_name": "cMore",
+      "timeout": 1,
+      "onError": {"action": "skip"}
+    },
+    {
+      "id": "wrap_more",
+      "type": "set_variable",
+      "variable_name": "cMoreIn",
+      "value": {"href": "{{cMore}}"}
+    },
     {
       "id": "next_url",
       "type": "transform",
-      "description": "The next page of this item, or nothing: cUrl empties and the loop stops",
-      "input": "{{cPage}}",
+      "description": "Follow only a More link to another page of this same item; otherwise cUrl empties and the loop stops",
+      "input": "{{cMoreIn}}",
       "variable_name": "cNext",
       "ops": [
         {
+          "op": "regex_extract",
+          "field": "href",
+          "to": "moreId",
+          "pattern": "^https://news\\.ycombinator\\.com/item\\?id=([0-9]+)&p=[0-9]{1,4}$"
+        },
+        {
+          "op": "regex_extract",
+          "field": "href",
+          "to": "moreP",
+          "pattern": "^https://news\\.ycombinator\\.com/item\\?id=[0-9]+&p=([0-9]{1,4})$"
+        },
+        {
           "op": "filter",
-          "where": {"variable": "nextP", "operator": "matches", "value": "^[0-9]+$"}
+          "where": {"variable": "moreId", "operator": "equals", "value": "{{hn.id}}"}
         },
         {
           "op": "map",
-          "map": {"url": "https://news.ycombinator.com/item?id={{hn.id}}&p={{nextP}}"}
+          "map": {"url": "https://news.ycombinator.com/item?id={{hn.id}}&p={{moreP}}"}
         }
       ]
     },

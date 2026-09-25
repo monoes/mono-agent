@@ -44,7 +44,8 @@ func hnPackage(t *testing.T) *automation.Package {
 }
 
 // TestHackerNewsPackageIsDeclarative: the package validates cleanly, needs
-// no native bot, and no action, fragment or script calls a Go bot method.
+// no native bot, carries no page script, and no action or fragment calls a
+// Go bot method.
 func TestHackerNewsPackageIsDeclarative(t *testing.T) {
 	pkg := hnPackage(t)
 	if n := pkg.Manifest.Requires.Native; n != "" {
@@ -53,8 +54,11 @@ func TestHackerNewsPackageIsDeclarative(t *testing.T) {
 	if pkg.Manifest.Policy.Tier != "social" {
 		t.Fatalf("policy.tier = %q, want social", pkg.Manifest.Policy.Tier)
 	}
+	if s := pkg.ScriptFiles(); len(s) > 0 || len(pkg.Manifest.Permissions.Scripts) > 0 {
+		t.Fatalf("scripts = %v / %v, want none", s, pkg.Manifest.Permissions.Scripts)
+	}
 	for _, is := range automation.Validate(pkg) {
-		if is.Severity == "error" {
+		if is.Severity == "error" || is.Code == "script_used" || is.Code == "contains_scripts" {
 			t.Errorf("%s %s %s: %s", is.File, is.StepID, is.Code, is.Message)
 		}
 	}

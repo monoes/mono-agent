@@ -119,12 +119,30 @@
       "type": "condition",
       "condition": "hnState.refusal != ''",
       "then": ["fail_refused"],
-      "else": ["confirm_tries"]
+      "else": ["wrap_needle", "make_needle", "confirm_tries"]
     },
     {
       "id": "fail_refused",
       "type": "mark_failed",
       "text": "hackernews: Hacker News refused the reply: {{hnState.refusal}}"
+    },
+    {
+      "id": "wrap_needle",
+      "type": "set_variable",
+      "variable_name": "repNeedleIn",
+      "value": {"t": "{{text}}"}
+    },
+    {
+      "id": "make_needle",
+      "type": "transform",
+      "description": "The start of the typed text, normalised the way match_rows normalises the page",
+      "input": "{{repNeedleIn}}",
+      "variable_name": "repNeedle",
+      "ops": [
+        {"op": "replace", "field": "t", "pattern": "[*\\s]+", "with": ""},
+        {"op": "lower", "field": "t"},
+        {"op": "regex_extract", "field": "t", "pattern": "^(?s)(.{0,80})"}
+      ]
     },
     {
       "id": "confirm_tries",
@@ -137,21 +155,48 @@
       "id": "gate_confirm",
       "type": "condition",
       "condition": "repFound != true",
-      "then": ["confirm_wait", "find_mine", "gate_mine"]
+      "then": ["confirm_wait", "read_rows", "match_rows", "gate_mine"]
     },
     {"id": "confirm_wait", "type": "wait", "duration": "{{item}}"},
     {
-      "id": "find_mine",
-      "type": "page_script",
-      "script": "find_reply.js",
-      "inputs": {"user": "{{repUser}}", "text": "{{text}}", "parent": "{{hn.id}}"},
-      "variable_name": "mine",
+      "id": "read_rows",
+      "type": "extract_table",
+      "description": "Every comment on the page HN returned after posting (not output: record false)",
+      "selector": "body",
+      "value": {"rows": "tr.athing.comtr", "record": false},
+      "fields": {"id": "@id", "author": "a.hnuser", "body": ".commtext"},
+      "variable_name": "repRows",
+      "timeout": 5,
       "onError": {"action": "skip"}
+    },
+    {
+      "id": "match_rows",
+      "type": "transform",
+      "description": "The reply just posted: by the logged-in user, newer than the parent, and containing the typed text once both sides drop asterisks and whitespace and are lower-cased (HN renders *x* as italics and blank lines as paragraphs)",
+      "input": "{{repRows}}",
+      "variable_name": "mine",
+      "ops": [
+        {
+          "op": "filter",
+          "where": {"variable": "author", "operator": "equals", "value": "{{repUser}}"}
+        },
+        {
+          "op": "filter",
+          "where": {"variable": "id", "operator": "greater_than", "value": "{{hn.id}}"}
+        },
+        {"op": "replace", "field": "body", "pattern": "[*\\s]+", "with": "", "to": "norm"},
+        {"op": "lower", "field": "norm"},
+        {
+          "op": "filter",
+          "where": {"variable": "norm", "operator": "contains", "value": "{{repNeedle.t}}"}
+        },
+        {"op": "limit", "count": 1}
+      ]
     },
     {
       "id": "gate_mine",
       "type": "condition",
-      "condition": "mine.id != ''",
+      "condition": "mine[0].id != ''",
       "then": ["rep_found", "rep_result", "rep_save"],
       "else": ["gate_give_up"]
     },
@@ -163,8 +208,8 @@
       "value": {
         "success": true,
         "itemID": "{{hn.id}}",
-        "commentID": "{{mine.id}}",
-        "url": "https://news.ycombinator.com/item?id={{mine.id}}"
+        "commentID": "{{mine[0].id}}",
+        "url": "https://news.ycombinator.com/item?id={{mine[0].id}}"
       }
     },
     {"id": "rep_save", "type": "save_data", "dataSource": "repResult"},

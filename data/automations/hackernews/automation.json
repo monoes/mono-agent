@@ -35,11 +35,11 @@
       "click",
       "condition",
       "extract_attribute",
+      "extract_table",
       "extract_text",
       "find_element",
       "mark_failed",
       "navigate",
-      "page_script",
       "press_key",
       "save_data",
       "set_variable",
@@ -48,10 +48,7 @@
       "wait",
       "wait_for"
     ],
-    "scripts": [
-      "comments_page.js",
-      "find_reply.js"
-    ],
+    "scripts": [],
     "downloads": false
   },
   "actions": [
