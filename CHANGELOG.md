@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Settings › TypeSafe Jev** in the app: store, test or remove the API key,
+  switch each Jev feature on or off with its confidence threshold (the app
+  shows what each one sends to TypeSafe and asks before turning it on), and
+  see the last 7 days' usage. It drives the new
+  `monoagentcli jev key set|test|remove` (key read from stdin) and
+  `jev status`, which now names the vault entry and describes each feature.
+
 ## [0.67.0] - 2026-09-25
 
 ### Added

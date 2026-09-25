@@ -33,12 +33,13 @@ func newJevCmd(cfg *globalConfig) *cobra.Command {
 			"from a closed set of options, and every implicit surface is off until\n" +
 			"`jev enable <surface>` for the profile.\n" +
 			"\n" +
-			"Key: vault entry \"typesafe\" (monoagentcli secret add --kind secret --name\n" +
-			"typesafe), else TYPESAFE_API_KEY. TYPESAFE_DEFAULT_MODEL and\n" +
+			"Key: the profile's vault (`jev key set`, key on stdin; an entry named\n" +
+			"\"typesafe\" or e.g. \"Jev Api key\" is found), else TYPESAFE_API_KEY. TYPESAFE_DEFAULT_MODEL and\n" +
 			"TYPESAFE_BASE_URL override the model and API host.",
 	}
 	cmd.AddCommand(
 		newJevStatusCmd(cfg),
+		newJevKeyCmd(cfg),
 		newJevEnableCmd(cfg),
 		newJevDisableCmd(cfg),
 		newJevUsageCmd(cfg),
@@ -88,21 +89,25 @@ func parseJevSurface(arg string) (jevconf.Surface, error) {
 // an auth failure (exit 4).
 func jevKeyErr(err error) error {
 	if errors.Is(err, jev.ErrNoAPIKey) {
-		return errAuthConnection("%v — store one with `monoagentcli secret add --kind secret --name typesafe` or set TYPESAFE_API_KEY", err)
+		return errAuthConnection("%v — store one with `monoagentcli jev key set` (key on stdin) or set TYPESAFE_API_KEY", err)
 	}
 	return err
 }
 
 type jevSurfaceStatus struct {
-	Surface          string  `json:"surface"`
-	Enabled          bool    `json:"enabled"`
-	Threshold        float64 `json:"threshold"`
-	DefaultThreshold float64 `json:"default_threshold"`
+	Surface          string   `json:"surface"`
+	Title            string   `json:"title"`
+	Description      string   `json:"description"`
+	Egress           []string `json:"egress"`
+	Enabled          bool     `json:"enabled"`
+	Threshold        float64  `json:"threshold"`
+	DefaultThreshold float64  `json:"default_threshold"`
 }
 
 type jevStatus struct {
 	ProfileID string             `json:"profile_id"`
 	KeySource string             `json:"key_source"` // config | vault | env | none
+	KeyEntry  string             `json:"key_entry"`  // vault entry name when key_source is vault
 	Model     string             `json:"model"`
 	BaseURL   string             `json:"base_url"`
 	Surfaces  []jevSurfaceStatus `json:"surfaces"`
@@ -120,13 +125,20 @@ func newJevStatusCmd(cfg *globalConfig) *cobra.Command {
 			}
 			defer db.Close()
 			st := jevStatus{ProfileID: cfg.ProfileID, KeySource: "none", Model: jevModel(), BaseURL: jevBaseURL()}
-			if _, source, err := jevconf.ResolveKey(cmd.Context(), db.DB, cfg.ProfileID, ""); err == nil {
+			// KeySource never decrypts, so status never prompts for a keyring.
+			if source, err := jevconf.KeySource(cmd.Context(), db.DB, cfg.ProfileID); err == nil {
 				st.KeySource = source
+			}
+			if name, ok := jevconf.VaultKeyName(cmd.Context(), db.DB, cfg.ProfileID); ok {
+				st.KeyEntry = name
 			}
 			for _, s := range jevconf.Surfaces {
 				def := jevconf.DefaultThreshold[s]
 				st.Surfaces = append(st.Surfaces, jevSurfaceStatus{
 					Surface:          string(s),
+					Title:            jevconf.Describe[s].Title,
+					Description:      jevconf.Describe[s].Description,
+					Egress:           jevconf.Egress[s],
 					Enabled:          jevconf.Enabled(db.DB, cfg.ProfileID, s),
 					Threshold:        jevconf.Threshold(db.DB, cfg.ProfileID, s, def),
 					DefaultThreshold: def,
@@ -138,7 +150,7 @@ func newJevStatusCmd(cfg *globalConfig) *cobra.Command {
 			}
 			key := st.KeySource
 			if key == "none" {
-				key = "none — store one with `monoagentcli secret add --kind secret --name typesafe` or set TYPESAFE_API_KEY"
+				key = "none — store one with `monoagentcli jev key set` (key on stdin) or set TYPESAFE_API_KEY"
 			}
 			fmt.Fprintf(out, "Profile: %s\nKey:     %s\nModel:   %s\nAPI:     %s\n\n", st.ProfileID, key, st.Model, st.BaseURL)
 			table := newPlainTable(out, []string{"Surface", "Enabled", "Threshold"}, nil)
@@ -209,7 +221,7 @@ func newJevEnableCmd(cfg *globalConfig) *cobra.Command {
 			}
 			eff := jevconf.Threshold(db.DB, cfg.ProfileID, s, jevconf.DefaultThreshold[s])
 			if _, _, err := jevconf.ResolveKey(cmd.Context(), db.DB, cfg.ProfileID, ""); err != nil {
-				fmt.Fprintln(cmd.ErrOrStderr(), "note: no TypeSafe key yet, so the surface stays inactive — store one with `monoagentcli secret add --kind secret --name typesafe` or set TYPESAFE_API_KEY")
+				fmt.Fprintln(cmd.ErrOrStderr(), "note: no TypeSafe key yet, so the surface stays inactive — store one with `monoagentcli jev key set` or set TYPESAFE_API_KEY")
 			}
 			if cfg.JSONOutput {
 				return writeJevJSON(out, map[string]any{"profile_id": cfg.ProfileID, "surface": string(s),

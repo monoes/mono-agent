@@ -160,7 +160,7 @@ error. Password inputs are never observed (the snapshot skips them), so no
 value is ever typed into one. Gate on low_confidence_steps downstream when a
 shaky run matters.
 Skips file inputs too; frames, shadow DOM, canvas and uploads can block.
-Get a key at console.typesafe.ai and store it: "monoagentcli secret add --kind secret --name typesafe".`,
+Get a key at console.typesafe.ai and store it: "monoagentcli jev key set".`,
 	},
 	{
 		Type:     "ai.choose",
@@ -197,7 +197,7 @@ handle, probability, probabilities, confidence, low_confidence, model,
 extra: {name: {noul} | {choice, probabilities, confidence} | {score, probabilities, confidence}}}`,
 		Notes: `Items keep input order within each handle. A failed request fails the node.
 No key => invalid-config error naming the missing vault secret. Get a key at
-console.typesafe.ai: "monoagentcli secret add --kind secret --name typesafe".
+console.typesafe.ai: "monoagentcli jev key set".
 Jev is weak at arithmetic, counting and date comparison — compute those first.`,
 	},
 	{

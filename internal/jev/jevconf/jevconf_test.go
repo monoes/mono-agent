@@ -80,6 +80,9 @@ func TestEnabledAndThreshold(t *testing.T) {
 		if len(Egress[s]) == 0 {
 			t.Errorf("surface %s has no egress description", s)
 		}
+		if Describe[s].Title == "" || Describe[s].Description == "" {
+			t.Errorf("surface %s has no title/description", s)
+		}
 		if _, ok := DefaultThreshold[s]; !ok {
 			t.Errorf("surface %s has no default threshold", s)
 		}

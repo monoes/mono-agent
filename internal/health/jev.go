@@ -25,7 +25,7 @@ func jevChecks() []Check {
 func jevFixes() []Fix {
 	return []Fix{
 		{FixInfo: FixInfo{ID: FixJevKey, Label: "Store a TypeSafe API key in the vault (or set TYPESAFE_API_KEY)", Safety: SafetyManual,
-			Command: "monoagentcli secret add --kind secret --name typesafe"},
+			Command: "monoagentcli jev key set"},
 			Apply: func(context.Context, *Env, func(string)) error { return fmt.Errorf("this needs to be done by hand") }},
 	}
 }
