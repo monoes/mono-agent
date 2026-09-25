@@ -333,6 +333,17 @@ func recordSaveArgs(req *Request) ([]string, error) {
 		}
 		args = append(args, "--name="+name)
 	}
+	// force: the person confirmed "Save anyway" on a draft whose lint has
+	// errors. Only a real boolean counts.
+	if raw, ok := req.Params["force"]; ok && raw != nil {
+		force, isBool := raw.(bool)
+		if !isBool {
+			return nil, badParam("force must be a boolean")
+		}
+		if force {
+			args = append(args, "--force")
+		}
+	}
 	return append(args, "--json"), nil
 }
 

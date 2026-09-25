@@ -186,6 +186,8 @@ func TestRecordMethodArgsValidation(t *testing.T) {
 		{verifyArgsOnly, map[string]any{"draftDir": "rec-1"}, "record verify " + realDraft + " --json"},
 		{recordSaveArgs, map[string]any{"draftDir": draft, "saveAs": "fragment", "new": "my-site", "name": "Create contact"},
 			"record save " + realDraft + " --as=fragment --new=my-site --name=Create contact --json"},
+		{recordSaveArgs, map[string]any{"draftDir": draft, "force": true}, "record save " + realDraft + " --force --json"},
+		{recordSaveArgs, map[string]any{"draftDir": draft, "force": false}, "record save " + realDraft + " --json"},
 	}
 	for _, g := range good {
 		args, err := g.build(req(g.p))
@@ -213,6 +215,8 @@ func TestRecordMethodArgsValidation(t *testing.T) {
 		{recordSaveArgs, map[string]any{"draftDir": draft, "new": "UPPER"}},
 		{recordSaveArgs, map[string]any{"draftDir": draft, "name": "-x"}},
 		{recordSaveArgs, map[string]any{"draftDir": draft, "name": "a\nb"}},
+		{recordSaveArgs, map[string]any{"draftDir": draft, "force": "true"}},
+		{recordSaveArgs, map[string]any{"draftDir": draft, "force": 1.0}},
 	}
 	for _, b := range bad {
 		if args, err := b.build(req(b.p)); err == nil {
