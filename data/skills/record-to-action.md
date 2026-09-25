@@ -58,9 +58,12 @@ You receive a JSON document (at the end) with:
    the strongest effect: `none | read | write | message | destructive`.
 7. **Repetitions** become `extract_*` of the item list followed by `for_each`
    with an inline `steps` body. **Extract groups** become `extract_table` (lists:
-   rows selector via `configKey`, `fields` = field → sub-selector relative to a
-   row) or `extract_text`/`extract_attribute` (single values), stored with
-   `variable_name`. Declare outputs in `outputs` (`{"items": ["field", …]}`) and
+   `configKey` = the list *container* (one element), `value` = the item selector
+   relative to it, `fields` = field → sub-selector inside one item) or
+   `extract_text`/`extract_attribute` (single values), stored with
+   `variable_name`. Field sub-selectors: `""` the item's text, `"@href"` an
+   attribute of the item, `"a.title"` a descendant's text, `"a.title@href"` a
+   descendant's attribute. Declare outputs in `outputs` (`{"items": ["field", …]}`) and
    an `outputSchema` (JSON Schema of one item).
 8. **Navigation** stays inside `domains`. Start with a `navigate` to
    `actionStartUrl` (or its `urlTemplate`).
@@ -93,7 +96,7 @@ You receive a JSON document (at the end) with:
 | `assert` | `condition` |
 | `extract_text`, `extract_attribute` | `configKey`, `intent`, `attribute`?, `variable_name` |
 | `extract_multiple` | `configKey`, `intent`, `variable_name` |
-| `extract_table` | `configKey` (rows), `intent`, `fields` {field: sub-selector}, `variable_name` |
+| `extract_table` | `configKey` (container), `value` (item selector), `intent`, `fields` {field: "sel" \| "sel@attr" \| "@attr"}, `variable_name` |
 | `extract_json` | `path`, `variable_name` |
 | `transform` | `input`, `ops` [{op: map\|filter\|dedupe\|regex_extract\|parse_date\|parse_number\|join\|split\|pick\|limit, …}], `variable_name` |
 | `for_each` | `items` ("{{list}}"), `as`, `steps` [inline body] |

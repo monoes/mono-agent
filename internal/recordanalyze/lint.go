@@ -41,7 +41,7 @@ func Lint(out *Output, env *Env, m *automation.Manifest, snippets map[string]str
 		if _, ok := keys[s.ConfigKey]; !ok {
 			keys[s.ConfigKey] = s.ID
 		}
-		if s.Type == "extract_table" || s.Type == "extract_multiple" {
+		if s.Type == "extract_multiple" { // matches every item; extract_table's key is the container
 			listKeys[s.ConfigKey] = true
 		}
 	})
