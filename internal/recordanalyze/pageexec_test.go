@@ -16,11 +16,13 @@ import (
 // fakePage answers the core step handlers from a fixed element set.
 type fakePage struct {
 	browser.PageInterface
-	mu      sync.Mutex
-	url     string
-	elems   map[string]*fakeElem
-	typed   []string
-	focused *fakeElem
+	mu          sync.Mutex
+	url         string
+	elems       map[string]*fakeElem
+	typed       []string
+	focused     *fakeElem
+	highlighted string
+	closed      bool
 }
 
 func (p *fakePage) Navigate(u string) error                     { p.url = u; return nil }
@@ -37,9 +39,15 @@ func (p *fakePage) InsertText(t string) error {
 	}
 	return nil
 }
-func (p *fakePage) Eval(string, ...interface{}) (*browser.EvalResult, error) {
+func (p *fakePage) Eval(js string, _ ...interface{}) (*browser.EvalResult, error) {
+	if strings.Contains(js, "outline") {
+		p.highlighted = js
+		return browser.NewEvalResult(true), nil
+	}
 	return browser.NewEvalResult(nil), nil
 }
+
+func (p *fakePage) Close() error                 { p.closed = true; return nil }
 func (p *fakePage) Has(sel string) (bool, error) { _, ok := p.elems[sel]; return ok, nil }
 func (p *fakePage) Element(sel string, _ time.Duration) (browser.ElementHandle, error) {
 	if e, ok := p.elems[sel]; ok {
@@ -65,7 +73,13 @@ type fakeElem struct {
 	value   string
 }
 
-func (e *fakeElem) Click() error                         { e.clicked = true; e.page.focused = e; return nil }
+func (e *fakeElem) Click() error {
+	e.clicked, e.page.focused = true, e
+	if e.name == "save" { // the form submits and the app shows the new contact
+		e.page.url = "https://app.acme-crm.test/contacts/4821"
+	}
+	return nil
+}
 func (e *fakeElem) Focus() error                         { e.page.focused = e; return nil }
 func (e *fakeElem) ScrollIntoView() error                { return nil }
 func (e *fakeElem) WaitStable(time.Duration) error       { return nil }
@@ -111,6 +125,9 @@ func TestPageExecSafeModeRealExecutor(t *testing.T) {
 	all := strings.Join(page.typed, "|")
 	if !strings.Contains(all, "s3cret") || !strings.Contains(all, "jane@example.com") {
 		t.Errorf("expected values were not typed (%d entries)", len(page.typed))
+	}
+	if !rep.Highlighted || !rep.TabLeftOpen || page.closed || !strings.Contains(page.highlighted, "contact-save") {
+		t.Errorf("safe stop should outline Save and keep the tab: %+v closed=%v js=%q", rep, page.closed, page.highlighted)
 	}
 	if page.url != "https://app.acme-crm.test/contacts/new" {
 		t.Errorf("url = %s", page.url)
@@ -168,5 +185,23 @@ func TestVerifySecretFromVaultLookup(t *testing.T) {
 	all := strings.Join(page.typed, "|")
 	if !strings.Contains(all, "flag-pw") || strings.Contains(all, "vault-pw") || len(asked) != 0 {
 		t.Errorf("--input should win without asking the vault: asked=%v", asked)
+	}
+}
+
+func TestPageExecClosesTab(t *testing.T) {
+	dir := formDraft(t)
+	in := map[string]any{"account_password": "pw"}
+	page := newFormPage()
+	rep, err := Verify(context.Background(), dir, VerifyOptions{Full: true, Inputs: in, Exec: PageExecWith(page, zerolog.Nop(), PageExecOptions{})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !page.closed || rep.TabLeftOpen || rep.Highlighted {
+		t.Errorf("--full run should close its tab: closed=%v rep=%+v", page.closed, rep)
+	}
+	page = newFormPage()
+	rep, _ = Verify(context.Background(), dir, VerifyOptions{Full: true, Inputs: in, Exec: PageExecWith(page, zerolog.Nop(), PageExecOptions{KeepOpen: true})})
+	if page.closed || !rep.TabLeftOpen {
+		t.Errorf("--keep-open closed the tab")
 	}
 }

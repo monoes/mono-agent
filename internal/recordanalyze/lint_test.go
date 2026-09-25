@@ -50,8 +50,11 @@ func TestLintSelectorResolution(t *testing.T) {
 	if !strings.HasPrefix(errs["selector_ambiguous"], "name:") {
 		t.Errorf("ambiguous: %v", errs)
 	}
-	if !strings.HasPrefix(errs["selector_unresolved"], "email:") {
-		t.Errorf("unresolved: %v", errs)
+	if !strings.HasPrefix(warns["selector_unverifiable"], "email:") {
+		t.Errorf("unverifiable: %v", warns)
+	}
+	if _, ok := errs["selector_unresolved"]; ok {
+		t.Errorf("no-match must not be an error: %v", errs)
 	}
 	if !strings.HasPrefix(warns["selector_unverified"], "save:") {
 		t.Errorf("unverified: %v", warns)

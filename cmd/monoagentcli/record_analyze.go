@@ -33,7 +33,7 @@ var recordAnalyzeRunner = func(runtime, model string, timeout time.Duration) rec
 
 // recordVerifyExec returns the replay function for verify, or an error
 // when no browser is reachable; tests replace it.
-var recordVerifyExec = func(ctx context.Context, automationID string, verbose bool, secrets func(string) (string, bool)) (recordanalyze.ExecFunc, error) {
+var recordVerifyExec = func(ctx context.Context, automationID string, verbose, keepOpen bool, secrets func(string) (string, bool)) (recordanalyze.ExecFunc, error) {
 	logger := zerolog.New(os.Stderr).With().Timestamp().Str("component", "extension").Logger()
 	if !verbose {
 		logger = logger.Level(zerolog.WarnLevel)
@@ -51,7 +51,7 @@ var recordVerifyExec = func(ctx context.Context, automationID string, verbose bo
 	if err != nil {
 		return nil, fmt.Errorf("browser bridge not connected: %w", err)
 	}
-	return recordanalyze.PageExecWithSecrets(page, logger, secrets), nil
+	return recordanalyze.PageExecWith(page, logger, recordanalyze.PageExecOptions{Secrets: secrets, KeepOpen: keepOpen}), nil
 }
 
 // recordSecretLookup returns the profile vault lookup for an automation's
@@ -65,6 +65,20 @@ var recordSecretLookup = func(ctx context.Context, cfg *globalConfig, automation
 		return nil, func() {}
 	}
 	return nodes.SecretLookup(ctx, db.DB, cfg.ProfileID, automationID), func() { db.Close() }
+}
+
+// resolveDraftArg accepts a draft name, an absolute path, or a path
+// relative to the working directory; all must resolve inside
+// recording-drafts (recording.ResolveDraftDir enforces that).
+func resolveDraftArg(ref string) (string, error) {
+	if ref != "" && !filepath.IsAbs(ref) && !recording.ValidID(ref) && !strings.HasPrefix(ref, "-") {
+		abs, err := filepath.Abs(ref)
+		if err != nil {
+			return "", err
+		}
+		ref = abs
+	}
+	return recording.ResolveDraftDir(ref)
 }
 
 // monoagentHome is ~/.monoagent (the parent of recording-drafts).
@@ -143,7 +157,7 @@ func printAnalyzeResult(w io.Writer, res *recordanalyze.Result) {
 }
 
 func newRecordVerifyCmd(cfg *globalConfig) *cobra.Command {
-	var full bool
+	var full, keepOpen bool
 	var inputs []string
 	var inputsFile string
 	cmd := &cobra.Command{
@@ -151,7 +165,7 @@ func newRecordVerifyCmd(cfg *globalConfig) *cobra.Command {
 		Short: "Replay a draft in the browser (stops before the first side-effect step unless --full)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			dir, err := recording.ResolveDraftDir(args[0])
+			dir, err := resolveDraftArg(args[0])
 			if err != nil {
 				return err
 			}
@@ -161,7 +175,7 @@ func newRecordVerifyCmd(cfg *globalConfig) *cobra.Command {
 			}
 			secrets, release := recordSecretLookup(cmd.Context(), cfg, d.TargetAutomation)
 			defer release()
-			exec, err := recordVerifyExec(cmd.Context(), d.TargetAutomation, cfg.Verbose, secrets)
+			exec, err := recordVerifyExec(cmd.Context(), d.TargetAutomation, cfg.Verbose, keepOpen, secrets)
 			if err != nil {
 				return err
 			}
@@ -195,6 +209,7 @@ func newRecordVerifyCmd(cfg *globalConfig) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&full, "full", false, "Also run side-effect steps (writes on the site)")
+	cmd.Flags().BoolVar(&keepOpen, "keep-open", false, "Leave the replay tab open (it stays open anyway when safe mode outlines the element it stopped before)")
 	cmd.Flags().Bool("safe", true, "Stop before the first side-effect step (default)")
 	cmd.Flags().StringVar(&inputsFile, "inputs-file", "", "JSON object {name: value} of inputs (mode 0600, owned by you; values are never echoed)")
 	cmd.Flags().StringArrayVar(&inputs, "input", nil, "Input value name=value (repeatable; secrets are never recorded)")
@@ -203,13 +218,14 @@ func newRecordVerifyCmd(cfg *globalConfig) *cobra.Command {
 
 func newRecordSaveCmd(cfg *globalConfig) *cobra.Command {
 	var as, target, newID, name string
+	var force bool
 	var renames []string
 	cmd := &cobra.Command{
 		Use:   "save <draft>",
 		Short: "Install a draft as an action, a fragment, or a workflow of actions",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			dir, err := recording.ResolveDraftDir(args[0])
+			dir, err := resolveDraftArg(args[0])
 			if err != nil {
 				return err
 			}
@@ -229,7 +245,7 @@ func newRecordSaveCmd(cfg *globalConfig) *cobra.Command {
 				return err
 			}
 			res, err := recordanalyze.Save(cmd.Context(), reg, dir, recordanalyze.SaveOptions{
-				As: as, Automation: target, New: newID, Name: name, RenameInputs: ren,
+				As: as, Automation: target, New: newID, Name: name, RenameInputs: ren, Force: force,
 				CreateWorkflow: recordWorkflowCreator(cfg),
 				LinkRecording:  linkRecording,
 			})
@@ -257,6 +273,7 @@ func newRecordSaveCmd(cfg *globalConfig) *cobra.Command {
 	cmd.Flags().StringVar(&target, "automation", "", "Save into this automation (default: the draft's)")
 	cmd.Flags().StringVar(&newID, "new", "", "Save into a new automation with this id")
 	cmd.Flags().StringVar(&name, "name", "", "Action or fragment name (default: the AI's)")
+	cmd.Flags().BoolVar(&force, "force", false, "Save even when the draft's lint has errors")
 	cmd.Flags().StringArrayVar(&renames, "rename-input", nil, "Rename an input old=new, including its {{old}} uses (repeatable)")
 	return cmd
 }

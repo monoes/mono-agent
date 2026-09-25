@@ -41,6 +41,40 @@ type ExecRunner struct {
 }
 
 func (r ExecRunner) Run(ctx context.Context, prompt string) (string, error) {
+	text, err := r.run(ctx, prompt)
+	if err != nil {
+		return "", withRunnerHint(err, r.runtime())
+	}
+	return text, nil
+}
+
+func (r ExecRunner) runtime() string {
+	if r.Runtime == "" {
+		return DefaultRuntime
+	}
+	return r.Runtime
+}
+
+// withRunnerHint adds what to try next to a runner failure (e2e D12).
+func withRunnerHint(err error, runtime string) error {
+	msg := strings.ToLower(err.Error())
+	hint := fmt.Sprintf("check the %s runtime with `monomind doctor`", runtime)
+	switch {
+	case strings.Contains(msg, "not found") && strings.Contains(msg, "monomind"),
+		strings.Contains(msg, "executable file not found"):
+		hint = "monomind is not installed or not on PATH; install it (npx -y monomind@latest doctor)"
+	case strings.Contains(msg, "auth"), strings.Contains(msg, "credential"), strings.Contains(msg, "api key"),
+		strings.Contains(msg, "api_key"), strings.Contains(msg, "401"), strings.Contains(msg, "login"), strings.Contains(msg, "unauthorized"):
+		hint = fmt.Sprintf("no %s credentials? run `monomind doctor`", runtime)
+	case strings.Contains(msg, "timeout"), strings.Contains(msg, "deadline"):
+		hint = "the AI turn timed out; retry, or raise --timeout"
+	case strings.Contains(msg, "budget"):
+		hint = "the turn hit its spend cap"
+	}
+	return fmt.Errorf("%w (hint: %s)", err, hint)
+}
+
+func (r ExecRunner) run(ctx context.Context, prompt string) (string, error) {
 	timeout := r.Timeout
 	if timeout <= 0 {
 		timeout = DefaultTimeout

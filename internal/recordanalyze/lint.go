@@ -56,7 +56,7 @@ func Lint(out *Output, env *Env, m *automation.Manifest, snippets map[string]str
 			code, msg := resolveEntry(e, docs, listKeys[key])
 			switch code {
 			case "":
-			case "selector_unverified":
+			case "selector_unverified", "selector_unverifiable":
 				add("warning", keys[key], code, "configKey %q: %s", key, msg)
 			default:
 				add("error", keys[key], code, "configKey %q: %s", key, msg)
@@ -179,7 +179,9 @@ func resolveEntry(e *action.SelectorEntry, docs []*goquery.Document, list bool) 
 	case ambiguous:
 		return "selector_ambiguous", "matches more than one element in the recorded DOM"
 	}
-	return "selector_unresolved", "no candidate matches an element in the recorded DOM"
+	// Snippets are fragments around recorded elements: an element outside
+	// every snippet is not evidence the selector is wrong (e2e D7).
+	return "selector_unverifiable", "no recorded DOM snippet contains a match; not verifiable offline"
 }
 
 // candidateCounts returns the match count per snippet; ok is false for a

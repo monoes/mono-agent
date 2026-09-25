@@ -2,6 +2,7 @@ package recordanalyze
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -122,6 +123,20 @@ func TestExtractJSON(t *testing.T) {
 	} {
 		if got := extractJSON(in); got != want {
 			t.Errorf("extractJSON(%q) = %q", in, got)
+		}
+	}
+}
+
+func TestRunnerHints(t *testing.T) {
+	for msg, want := range map[string]string{
+		"auth_error 401 Unauthorized":                          "no claude credentials? run `monomind doctor`",
+		`exec: "monomind": executable file not found in $PATH`: "not installed",
+		"the turn stopped early (timeout)":                     "timed out",
+		"the runtime exited with code 3":                       "check the claude runtime with `monomind doctor`",
+	} {
+		err := withRunnerHint(errors.New(msg), "claude")
+		if !strings.Contains(err.Error(), msg) || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q → %v", msg, err)
 		}
 	}
 }

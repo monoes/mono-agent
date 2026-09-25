@@ -10,11 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/rs/zerolog"
-
 	"github.com/monoes/mono-agent/internal/action"
 	"github.com/monoes/mono-agent/internal/automation"
-	"github.com/monoes/mono-agent/internal/browser"
 )
 
 // Step statuses of a verify report (contracts §5).
@@ -42,6 +39,11 @@ type VerifyReport struct {
 	OK        bool             `json:"ok"`
 	Healed    []string         `json:"healed,omitempty"` // selector keys promoted in the draft
 	Error     string           `json:"error,omitempty"`
+	// Highlighted: the element safe mode stopped before is outlined in the
+	// tab, which is left open for the user to see.
+	Highlighted bool `json:"highlighted"`
+	// TabLeftOpen: the replay tab is still open (highlight or --keep-open).
+	TabLeftOpen bool `json:"tabLeftOpen"`
 }
 
 // Observation is one package-selector lookup seen during the replay.
@@ -69,6 +71,9 @@ type RunOutcome struct {
 	Result   *action.ExecutionResult
 	Err      error
 	SafeStop *action.SafeStop
+	// Highlighted / TabLeftOpen are set by PageExec (see VerifyReport).
+	Highlighted bool
+	TabLeftOpen bool
 }
 
 // ExecFunc replays def; the production one is PageExec.
@@ -179,7 +184,7 @@ func BuildReport(def *action.ActionDef, out RunOutcome, obs []Observation, pkg a
 			k.fail = true
 		}
 	}
-	rep := &VerifyReport{StoppedAt: out.SafeStop, Steps: []StepReport{}}
+	rep := &VerifyReport{StoppedAt: out.SafeStop, Steps: []StepReport{}, Highlighted: out.Highlighted, TabLeftOpen: out.TabLeftOpen}
 	stopped := false
 	for _, s := range def.Steps {
 		r := StepReport{ID: s.ID, Type: s.Type}
@@ -279,42 +284,6 @@ func PromoteHealed(dir string, obs []Observation) ([]string, error) {
 		return nil, err
 	}
 	return promoted, os.WriteFile(path, append(out, '\n'), 0o644)
-}
-
-// PageExec replays through the normal ActionExecutor on page, running the
-// uninstalled draft definition with ExecuteDef (which validates first).
-func PageExec(page browser.PageInterface, logger zerolog.Logger) ExecFunc {
-	return PageExecWithSecrets(page, logger, nil)
-}
-
-// PageExecWithSecrets is PageExec with a vault lookup for {{secret:x}}
-// templates whose value is not an input (inputs are resolved first).
-func PageExecWithSecrets(page browser.PageInterface, logger zerolog.Logger, lookup func(string) (string, bool)) ExecFunc {
-	return func(ctx context.Context, def *action.ActionDef, pkg action.PackageContext, inputs map[string]any, safe bool, obs action.SelectorObserver) RunOutcome {
-		events := make(chan action.ExecutionEvent, 8192)
-		ae := action.NewActionExecutor(ctx, page, nil, nil, events, nil, logger)
-		ae.SetPackage(pkg)
-		ae.SetSafeMode(safe)
-		ae.SetSelectorObserver(obs)
-		if lookup != nil {
-			ae.SetSecretLookup(func(_, name string) (string, bool) { return lookup(name) })
-		}
-		params := map[string]interface{}{}
-		for k, v := range inputs {
-			params[k] = v
-			ae.SetVariable(k, v)
-		}
-		res, err := ae.ExecuteDef(&action.StorageAction{
-			ID: "verify-" + time.Now().UTC().Format("20060102T150405"), Type: def.ActionType,
-			TargetPlatform: pkg.ID(), Params: params,
-		}, def)
-		close(events)
-		out := RunOutcome{Result: res, Err: err, SafeStop: ae.SafeStopped()}
-		for ev := range events {
-			out.Events = append(out.Events, ev)
-		}
-		return out
-	}
 }
 
 // redact masks every supplied input value (they may be secrets) in the

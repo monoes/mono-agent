@@ -249,3 +249,20 @@ func TestRenameInputsTemplates(t *testing.T) {
 		t.Errorf("renamed = %+v", def.Steps)
 	}
 }
+
+func TestSaveRefusesLintErrorsWithoutForce(t *testing.T) {
+	home := t.TempDir()
+	reg := openReg(t, home)
+	ans := strings.Replace(answer(t, "form-submit"), `"url": "https://app.acme-crm.test/contacts/new"`, `"url": "https://app.acme-crm.test/contacts/new?token=abc"`, 1)
+	dir := draftFrom(t, home, "form-submit", ans)
+	_, err := Save(context.Background(), reg, dir, SaveOptions{})
+	if err == nil || !strings.Contains(err.Error(), "token_in_url") || !strings.Contains(err.Error(), "--force") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := Save(context.Background(), reg, dir, SaveOptions{Force: true}); err != nil {
+		// Only lint is bypassed; the registry may still refuse the package.
+		if strings.Contains(err.Error(), "lint error") {
+			t.Errorf("--force did not bypass lint: %v", err)
+		}
+	}
+}

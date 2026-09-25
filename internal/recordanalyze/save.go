@@ -38,7 +38,9 @@ type SaveOptions struct {
 	New        string // new automation id
 	Name       string // action / fragment name override
 	// RenameInputs renames action inputs (old → new) before saving.
-	RenameInputs   map[string]string
+	RenameInputs map[string]string
+	// Force saves a draft whose lint has errors.
+	Force          bool
 	CreateWorkflow WorkflowCreator
 	// LinkRecording records the saved automation on the recording; nil
 	// adds a warning instead.
@@ -62,6 +64,9 @@ func Save(ctx context.Context, reg Installer, dir string, opts SaveOptions) (*Sa
 	d, err := ReadDraft(dir)
 	if err != nil {
 		return nil, err
+	}
+	if errs := lintErrors(d); len(errs) > 0 && !opts.Force {
+		return nil, fmt.Errorf("the draft has %d lint error(s); fix them or save with --force:\n- %s", len(errs), strings.Join(errs, "\n- "))
 	}
 	as := opts.As
 	if as == "" {
@@ -126,6 +131,16 @@ func Save(ctx context.Context, reg Installer, dir string, opts SaveOptions) (*Sa
 		res.Warnings = append(res.Warnings, "the recording was not linked to the automation (no recording link available)")
 	}
 	return res, nil
+}
+
+func lintErrors(d *Draft) []string {
+	var out []string
+	for _, is := range d.Lint {
+		if is.Severity == "error" {
+			out = append(out, strings.TrimSpace(is.StepID+" "+is.Code+": "+is.Message))
+		}
+	}
+	return out
 }
 
 // retarget rewrites the staged manifest id and renames action from → to.

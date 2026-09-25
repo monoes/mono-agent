@@ -100,7 +100,7 @@ func TestRecordAnalyzeErrorsAsJSON(t *testing.T) {
 func TestRecordAnalyzeVerifyNoBridge(t *testing.T) {
 	dir := analyzeRec1(t)
 	prev := recordVerifyExec
-	recordVerifyExec = func(context.Context, string, bool, func(string) (string, bool)) (recordanalyze.ExecFunc, error) {
+	recordVerifyExec = func(context.Context, string, bool, bool, func(string) (string, bool)) (recordanalyze.ExecFunc, error) {
 		return nil, errors.New("browser bridge not connected")
 	}
 	t.Cleanup(func() { recordVerifyExec = prev })
@@ -113,7 +113,7 @@ func TestRecordAnalyzeVerifyNoBridge(t *testing.T) {
 func TestRecordAnalyzeVerifySafeStop(t *testing.T) {
 	dir := analyzeRec1(t)
 	prev := recordVerifyExec
-	recordVerifyExec = func(_ context.Context, id string, _ bool, _ func(string) (string, bool)) (recordanalyze.ExecFunc, error) {
+	recordVerifyExec = func(_ context.Context, id string, _, _ bool, _ func(string) (string, bool)) (recordanalyze.ExecFunc, error) {
 		if id != "example-go" {
 			t.Errorf("automation = %s", id)
 		}
@@ -217,7 +217,7 @@ func TestRecordAnalyzeVerifyInputsFile(t *testing.T) {
 	dir := analyzeRec1(t)
 	var got map[string]any
 	prev := recordVerifyExec
-	recordVerifyExec = func(context.Context, string, bool, func(string) (string, bool)) (recordanalyze.ExecFunc, error) {
+	recordVerifyExec = func(context.Context, string, bool, bool, func(string) (string, bool)) (recordanalyze.ExecFunc, error) {
 		return func(_ context.Context, _ *action.ActionDef, _ action.PackageContext, in map[string]any, _ bool, _ action.SelectorObserver) recordanalyze.RunOutcome {
 			got = in
 			return recordanalyze.RunOutcome{Result: &action.ExecutionResult{}, Err: errors.New("login with s3cr3t-pw failed")}
@@ -268,7 +268,7 @@ func TestRecordAnalyzeVerifyVaultLookup(t *testing.T) {
 	var got map[string]any
 	var gotLookup bool
 	prevE := recordVerifyExec
-	recordVerifyExec = func(_ context.Context, _ string, _ bool, secrets func(string) (string, bool)) (recordanalyze.ExecFunc, error) {
+	recordVerifyExec = func(_ context.Context, _ string, _, _ bool, secrets func(string) (string, bool)) (recordanalyze.ExecFunc, error) {
 		gotLookup = secrets != nil
 		return func(_ context.Context, _ *action.ActionDef, _ action.PackageContext, in map[string]any, _ bool, _ action.SelectorObserver) recordanalyze.RunOutcome {
 			got = in
@@ -317,5 +317,47 @@ func TestRecordAnalyzeAllowAdvancedFlag(t *testing.T) {
 	out, err = runRecordCLI(t, true, "analyze", "rec1", "--allow-advanced")
 	if err != nil || !strings.Contains(out, `"allowAdvanced": true`) || !strings.Contains(out, `"x.js": "return 1"`) {
 		t.Errorf("with flag: %v %s", err, out)
+	}
+}
+
+func TestRecordAnalyzeRelativeDraftPathAndKeepOpen(t *testing.T) {
+	dir := analyzeRec1(t)
+	var keep bool
+	prev := recordVerifyExec
+	recordVerifyExec = func(_ context.Context, _ string, _, keepOpen bool, _ func(string) (string, bool)) (recordanalyze.ExecFunc, error) {
+		keep = keepOpen
+		return func(context.Context, *action.ActionDef, action.PackageContext, map[string]any, bool, action.SelectorObserver) recordanalyze.RunOutcome {
+			return recordanalyze.RunOutcome{Result: &action.ExecutionResult{}}
+		}, nil
+	}
+	t.Cleanup(func() { recordVerifyExec = prev })
+	t.Chdir(filepath.Dir(dir))
+	rel := filepath.Join(".", filepath.Base(dir))
+	if out, err := runRecordCLI(t, true, "verify", "./"+filepath.Base(dir), "--keep-open"); err != nil || !keep {
+		t.Errorf("relative %s: %v %s keep=%v", rel, err, out, keep)
+	}
+	t.Chdir(t.TempDir())
+	if _, err := runRecordCLI(t, true, "verify", "../../x"); err == nil {
+		t.Error("relative path outside recording-drafts accepted")
+	}
+}
+
+func TestRecordAnalyzeSaveForce(t *testing.T) {
+	recordTestHome(t, "rec1")
+	stubRecordAI(t, strings.Replace(recordAnalyzeAnswer, `"url": "https://example.com/rec1"`, `"url": "https://example.com/rec1?token=abc"`, 1))
+	out, err := runRecordCLI(t, true, "analyze", "rec1")
+	if err != nil {
+		t.Fatalf("analyze: %v %s", err, out)
+	}
+	var res struct {
+		DraftDir string `json:"draftDir"`
+	}
+	_ = json.Unmarshal([]byte(out), &res)
+	out, err = runRecordCLI(t, true, "save", res.DraftDir)
+	if err == nil || !strings.Contains(out, "--force") {
+		t.Errorf("lint errors not refused: %v %s", err, out)
+	}
+	if out, err = runRecordCLI(t, true, "save", res.DraftDir, "--force"); err != nil && strings.Contains(out, "lint error") {
+		t.Errorf("--force ignored: %s", out)
 	}
 }
