@@ -1,7 +1,6 @@
 package secrets
 
 import (
-	"bufio"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
@@ -9,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"golang.org/x/crypto/argon2"
 )
@@ -68,27 +66,13 @@ type fileKEKEnvelope struct {
 // filePassphraseFunc supplies the passphrase used to wrap/unwrap the
 // file-based KEK. A package-level variable (rather than a direct call)
 // purely so tests can substitute a stub, mirroring the fetchKEK /
-// keyringGet / keyringSet pattern in keyring.go. The default implementation
-// prompts on stderr and reads a line from stdin — the same anti-argv
-// pattern readSecretValue (cmd/monoagentcli/secret.go) and the vault
-// export/import passphrase prompts (cmd/monoagentcli/secret_export.go) use:
-// a passphrase must never be accepted as a CLI flag or environment
-// variable, since both leak through shell history and process listings.
+// keyringGet / keyringSet pattern in keyring.go. The default
+// (promptFilePassphrase, filekeyring_passphrase.go) prompts on stdin — or on
+// the controlling terminal when stdin carries the command's own data — or
+// reads MONOAGENT_FILE_KEYRING_PASSPHRASE_FILE. The passphrase itself is
+// never accepted as a CLI flag or environment variable, since both leak
+// through shell history and process listings; the env var holds a path.
 var filePassphraseFunc = promptFilePassphrase
-
-func promptFilePassphrase() (string, error) {
-	fmt.Fprint(os.Stderr, "File-keyring passphrase: ")
-	reader := bufio.NewReader(os.Stdin)
-	line, err := reader.ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return "", fmt.Errorf("secrets: reading file-keyring passphrase: %w", err)
-	}
-	pass := strings.TrimRight(line, "\r\n")
-	if pass == "" {
-		return "", errors.New("secrets: empty file-keyring passphrase")
-	}
-	return pass, nil
-}
 
 // wrapFileKEK seals the raw KEK under a key derived from passphrase via
 // argon2id, using a fresh random salt and nonce, and returns the resulting
@@ -177,7 +161,7 @@ func readFileKeyringKEK(profileID string) (kek []byte, found bool, err error) {
 		return nil, false, fmt.Errorf("secrets: file-based KEK %s has unsupported envelope format %q/v%d/%q", fileKeyringPath(profileID), env.Format, env.Version, env.KDF)
 	}
 
-	passphrase, err := filePassphraseFunc()
+	passphrase, err := filePassphraseFor(profileID)
 	if err != nil {
 		return nil, false, err
 	}
@@ -185,6 +169,7 @@ func readFileKeyringKEK(profileID string) (kek []byte, found bool, err error) {
 	if err != nil {
 		return nil, false, err
 	}
+	rememberFilePassphrase(profileID, passphrase)
 	return kek, true, nil
 }
 
@@ -199,7 +184,7 @@ func readFileKeyringKEK(profileID string) (kek []byte, found bool, err error) {
 // upgrade is best-effort, not the current operation.
 func migrateLegacyFileKEK(profileID string, rawKEK []byte) (kek []byte, found bool, err error) {
 	fmt.Fprintf(fileKeyringWarnWriter, "WARN: file-based KEK for profile %q is in the unprotected legacy format — migrating to a passphrase-protected format now\n", profileID)
-	passphrase, err := filePassphraseFunc()
+	passphrase, err := filePassphraseFor(profileID)
 	if err != nil {
 		return nil, false, fmt.Errorf("secrets: migrating file-based KEK: %w", err)
 	}
@@ -209,6 +194,8 @@ func migrateLegacyFileKEK(profileID string, rawKEK []byte) (kek []byte, found bo
 	}
 	if err := os.WriteFile(fileKeyringPath(profileID), wrapped, 0600); err != nil {
 		fmt.Fprintf(fileKeyringWarnWriter, "WARN: failed to persist migrated file-based KEK for profile %q, will retry next use: %v\n", profileID, err)
+	} else {
+		rememberFilePassphrase(profileID, passphrase)
 	}
 	return rawKEK, true, nil
 }
@@ -253,7 +240,7 @@ func fetchOrCreateFileKEK(profileID string) ([]byte, error) {
 	if _, err := rand.Read(kek); err != nil {
 		return nil, fmt.Errorf("secrets: generating file-based KEK: %w", err)
 	}
-	passphrase, err := filePassphraseFunc()
+	passphrase, err := filePassphraseFor(profileID)
 	if err != nil {
 		return nil, fmt.Errorf("secrets: creating file-based KEK: %w", err)
 	}
@@ -287,5 +274,6 @@ func fetchOrCreateFileKEK(profileID string) ([]byte, error) {
 		os.Remove(fileKeyringPath(profileID))
 		return nil, fmt.Errorf("secrets: writing file-based KEK: %w", err)
 	}
+	rememberFilePassphrase(profileID, passphrase)
 	return kek, nil
 }

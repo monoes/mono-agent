@@ -84,6 +84,7 @@ func newSecretImportCmd(cfg *globalConfig) *cobra.Command {
 			}
 
 			fmt.Fprint(os.Stderr, "Passphrase: ")
+			secrets.MarkStdinConsumed()
 			reader := bufio.NewReader(os.Stdin)
 			line, err := reader.ReadString('\n')
 			if err != nil {

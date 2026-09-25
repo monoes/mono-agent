@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/monoes/mono-agent/internal/secrets"
 )
 
 const protocolVersion = "2024-11-05"
@@ -107,6 +109,9 @@ func NewServer(opts Options) *Server {
 // Run serves MCP over stdin/stdout until stdin closes. It is the entry
 // point used by the `monoagentcli mcp` command.
 func Run(opts Options) error {
+	// stdin is the JSON-RPC stream: a file-keyring passphrase prompt must
+	// never read from it.
+	secrets.MarkStdinConsumed()
 	return NewServer(opts).Serve(context.Background(), os.Stdin, os.Stdout)
 }
 
