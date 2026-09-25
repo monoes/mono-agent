@@ -61,6 +61,22 @@ var Egress = map[Surface][]string{
 	Retry:          {"node type", "the error message with URLs' query strings, bearer/API tokens and vault values removed", "attempt number and HTTP status"},
 }
 
+// Info is a surface's display title and a one-line description of what
+// turning it on does (settings UI, `jev status`).
+type Info struct{ Title, Description string }
+
+// Describe holds Info for every surface in Surfaces.
+var Describe = map[Surface]Info{
+	ActionFallback: {"Element fallback for browser actions", "When a browser action's selector no longer matches, Jev picks the intended element on the page instead of failing."},
+	HIL:            {"Human-in-Loop suggestions", "Suggests approve/reject for items waiting in Human-in-Loop and can settle confident items automatically (per node's auto_decide)."},
+	PeopleReview:   {"People review suggestions", "Suggests approve/reject and how well the drafted intro fits for people waiting in the review queue."},
+	Capture:        {"Capture classification", "Labels captured pages (job posting, profile, article, …) and suggests where to file them."},
+	Inbox:          {"Inbox classification", "Labels inbound messages with an intent (lead, question, spam, …) and whether they need a reply."},
+	PeopleLinks:    {"Cross-platform people links", "Suggests which people on different platforms are the same person. Never merges anyone."},
+	Asks:           {"Org ask reply linking", "Links a reply that lost its ask: token to the waiting org ask it answers."},
+	Retry:          {"Retry triage", "Classifies node failures so rate limits back off longer and auth or permanent errors stop retrying."},
+}
+
 // Default thresholds per surface (plan §5), compared against jev.Top.
 var DefaultThreshold = map[Surface]float64{
 	ActionFallback: 0.5, HIL: 0.9, PeopleReview: 0, Capture: 0.75,
@@ -318,6 +334,12 @@ func normaliseKeyName(n string) string {
 // vaultKeyName returns the vault entry holding the TypeSafe key: exactly
 // "typesafe" if present, else the single entry whose normalised name is a
 // known alias. Two or more alias matches are ambiguous and ignored.
+// VaultKeyName is the vault entry the key resolves from for the profile
+// (exactly "typesafe", else a single naturally named entry), if any.
+func VaultKeyName(ctx context.Context, db *sql.DB, profileID string) (string, bool) {
+	return vaultKeyName(ctx, db, profileID)
+}
+
 func vaultKeyName(ctx context.Context, db *sql.DB, profileID string) (string, bool) {
 	entries, err := secrets.List(ctx, db, profileID)
 	if err != nil {

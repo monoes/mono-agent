@@ -112,7 +112,7 @@ func TestJevStatusText(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"none", "secret add --kind secret --name typesafe", "jev-latest", "people_links"} {
+	for _, want := range []string{"none", "jev key set", "jev-latest", "people_links"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status text lacks %q:\n%s", want, out)
 		}
