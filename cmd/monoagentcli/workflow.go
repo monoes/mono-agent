@@ -1279,7 +1279,7 @@ func normalizeLegacyWorkflowJSON(raw []byte) ([]byte, error) {
 // newWorkflowImportCmd imports a full workflow definition from a JSON file.
 func newWorkflowImportCmd(cfg *globalConfig) *cobra.Command {
 	var inputFile string
-	var overwrite bool
+	var overwrite, yes bool
 
 	cmd := &cobra.Command{
 		Use:   "import",
@@ -1441,8 +1441,21 @@ func newWorkflowImportCmd(cfg *globalConfig) *cobra.Command {
 				return err
 			}
 
+			// Bundled automations (workflow export --bundle-automations):
+			// report present/missing ones, install missing with --yes or
+			// after a prompt (only when stdin is free, i.e. --file).
+			bundled := handleBundledAutomations(raw, bundleImportOptions{
+				yes:         yes,
+				interactive: !cfg.JSONOutput && inputFile != "" && stdinIsTerminal(),
+				in:          cmd.InOrStdin(),
+				out:         os.Stderr,
+			})
+
 			if cfg.JSONOutput {
 				out := map[string]interface{}{"id": wf.ID, "name": wf.Name}
+				if bundled != nil {
+					out["automations"] = bundled
+				}
 				if len(remapped) > 0 {
 					out["remapped_node_ids"] = remapped
 				}
@@ -1466,12 +1479,14 @@ func newWorkflowImportCmd(cfg *globalConfig) *cobra.Command {
 			}
 			printRemapped("node ids", remapped)
 			printRemapped("connection ids", remappedConns)
+			printBundleImport(os.Stdout, bundled)
 			return nil
 		},
 	}
 
 	cmd.Flags().StringVarP(&inputFile, "file", "f", "", "Path to JSON file (default: stdin)")
 	cmd.Flags().BoolVar(&overwrite, "overwrite", false, "Keep the id from the file instead of generating a new one")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Install automations bundled in the file that are not installed yet")
 	return cmd
 }
 
@@ -1523,6 +1538,7 @@ func workflowFileFromWorkflow(wf *workflow.Workflow) workflow.WorkflowFile {
 // newWorkflowExportCmd exports a workflow as JSON.
 func newWorkflowExportCmd(cfg *globalConfig) *cobra.Command {
 	var outputFile string
+	var bundle bool
 
 	cmd := &cobra.Command{
 		Use:   "export <id>",
@@ -1546,7 +1562,12 @@ func newWorkflowExportCmd(cfg *globalConfig) *cobra.Command {
 				return errNotFound("workflow %q not found", args[0])
 			}
 
-			wfFile := workflowFileFromWorkflow(wf)
+			var wfFile interface{} = workflowFileFromWorkflow(wf)
+			if bundle {
+				if wfFile, err = bundleWorkflowAutomations(workflowFileFromWorkflow(wf)); err != nil {
+					return err
+				}
+			}
 
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
@@ -1569,6 +1590,7 @@ func newWorkflowExportCmd(cfg *globalConfig) *cobra.Command {
 	}
 
 	cmd.Flags().StringVarP(&outputFile, "output", "o", "", "Write to file instead of stdout")
+	cmd.Flags().BoolVar(&bundle, "bundle-automations", false, "Embed the automation packages the workflow's nodes use")
 	return cmd
 }
 
