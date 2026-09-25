@@ -16,7 +16,13 @@ import (
 // ("acme-test") and returns it.
 func writeTestAutomation(t *testing.T) string {
 	t.Helper()
-	dir := filepath.Join(t.TempDir(), "acme-test")
+	return writeTestAutomationID(t, "acme-test")
+}
+
+// writeTestAutomationID writes the same package under another id.
+func writeTestAutomationID(t *testing.T, id string) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), id)
 	files := map[string]string{
 		"automation.json": `{
   "schema": "monoagent.automation/v1",
@@ -41,6 +47,7 @@ func writeTestAutomation(t *testing.T) string {
 `,
 	}
 	for name, body := range files {
+		body = strings.ReplaceAll(body, "acme-test", id)
 		p := filepath.Join(dir, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			t.Fatal(err)

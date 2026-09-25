@@ -1,11 +1,17 @@
 package main
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/monoes/mono-agent/internal/automation"
 	"github.com/monoes/mono-agent/internal/workflow"
 )
 
@@ -111,17 +117,132 @@ func TestWorkflowBundleRoundTrip(t *testing.T) {
 	}
 }
 
-func TestWorkflowBundleRejectsTamperedPackage(t *testing.T) {
+// packBundle packs the fixture package with manifest id pkgID into a
+// bundle entry.
+func packBundle(t *testing.T, pkgID string) bundledAutomation {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := automation.Pack(writeTestAutomationID(t, pkgID), &buf); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(buf.Bytes())
+	return bundledAutomation{Version: "1.0.0", SHA256: hex.EncodeToString(sum[:]),
+		Mpkg: base64.StdEncoding.EncodeToString(buf.Bytes())}
+}
+
+func bundleDoc(t *testing.T, entries map[string]bundledAutomation) []byte {
+	t.Helper()
+	raw, err := json.Marshal(map[string]any{"name": "x", "nodes": []any{}, "connections": []any{}, "automations": entries})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+func mustNotBeInstalled(t *testing.T, id string) {
+	t.Helper()
+	reg, err := openAutomationRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reg.Info(id); err == nil {
+		t.Fatalf("%s must not be installed", id)
+	}
+}
+
+func TestWorkflowBundleRefusesBadSHA(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	raw, _ := json.Marshal(map[string]any{
-		"name": "x", "nodes": []any{}, "connections": []any{},
-		"automations": map[string]any{"acme-test": map[string]string{
-			"version": "1.0.0", "sha256": "00", "mpkg": "UEsFBgAAAAAAAAAAAAAAAAAAAAAAAA==",
-		}},
-	})
-	items := handleBundledAutomations(raw, bundleImportOptions{yes: true})
-	if len(items) != 1 || items[0].Status != "failed" {
-		t.Fatalf("tampered bundle: %+v", items)
+	good := packBundle(t, "acme-test")
+	tampered := good
+	tampered.SHA256 = strings.Repeat("0", 64)
+	unpinned := good
+	unpinned.SHA256 = ""
+	for name, b := range map[string]bundledAutomation{"mismatch": tampered, "missing": unpinned} {
+		var log bytes.Buffer
+		items := handleBundledAutomations(bundleDoc(t, map[string]bundledAutomation{"acme-test": b}),
+			bundleImportOptions{yes: true, out: &log})
+		if len(items) != 1 || items[0].Status != "failed" {
+			t.Fatalf("%s sha256: %+v", name, items)
+		}
+		mustNotBeInstalled(t, "acme-test")
+	}
+}
+
+func TestWorkflowBundleRefusesKeyIDMismatch(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	// The bundle key says "harmless" but the package inside is acme-test.
+	var log bytes.Buffer
+	items := handleBundledAutomations(bundleDoc(t, map[string]bundledAutomation{"harmless": packBundle(t, "acme-test")}),
+		bundleImportOptions{yes: true, out: &log})
+	if len(items) != 1 || items[0].Status != "failed" || !strings.Contains(items[0].Error, "declares id") {
+		t.Fatalf("key/id mismatch: %+v", items)
+	}
+	mustNotBeInstalled(t, "harmless")
+	mustNotBeInstalled(t, "acme-test")
+}
+
+func TestWorkflowBundleNeverReplacesBuiltin(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	reg, err := openAutomationRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	infos, err := reg.List(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var builtin automation.InstalledInfo
+	for _, in := range infos {
+		if in.Source == automation.SourceBuiltin {
+			builtin = in
+			break
+		}
+	}
+	if builtin.ID == "" {
+		t.Skip("no built-in automations seeded")
+	}
+	entries := map[string]bundledAutomation{builtin.ID: packBundle(t, builtin.ID)}
+	var log bytes.Buffer
+	items := handleBundledAutomations(bundleDoc(t, entries), bundleImportOptions{yes: true, out: &log})
+	if len(items) != 1 || items[0].Status != "present" {
+		t.Fatalf("installed built-in: %+v", items)
+	}
+	after, err := reg.Info(builtin.ID)
+	if err != nil || after.Source != automation.SourceBuiltin || after.Version != builtin.Version {
+		t.Fatalf("built-in %s was replaced: %+v %v", builtin.ID, after, err)
+	}
+	// An uninstalled built-in is a conflict, not an install slot.
+	if err := reg.Uninstall(builtin.ID); err != nil {
+		t.Fatal(err)
+	}
+	items = handleBundledAutomations(bundleDoc(t, entries), bundleImportOptions{yes: true, out: &log})
+	if len(items) != 1 || items[0].Status != "conflict" {
+		t.Fatalf("removed built-in: %+v", items)
+	}
+	all, err := reg.List(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, in := range all {
+		if in.ID == builtin.ID && (!in.Removed || in.Source != automation.SourceBuiltin) {
+			t.Fatalf("removed built-in %s was touched: %+v", builtin.ID, in)
+		}
+	}
+}
+
+func TestWorkflowBundlePrintsReviewLineWithYes(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	var log bytes.Buffer
+	items := handleBundledAutomations(bundleDoc(t, map[string]bundledAutomation{"acme-test": packBundle(t, "acme-test")}),
+		bundleImportOptions{yes: true, out: &log})
+	if len(items) != 1 || items[0].Status != "installed" {
+		t.Fatalf("install: %+v", items)
+	}
+	line := log.String()
+	for _, want := range []string{"acme-test", "1.0.0", "publisher", "example.com", "navigate"} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("review line lacks %q: %q", want, line)
+		}
 	}
 }
 

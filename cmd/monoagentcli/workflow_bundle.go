@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -97,7 +98,7 @@ func workflowAutomationIDs(nodes []workflow.WorkflowFileNode) []string {
 type bundleImportItem struct {
 	ID               string `json:"id"`
 	Version          string `json:"version"`
-	Status           string `json:"status"` // present | missing | installed | failed
+	Status           string `json:"status"` // present | conflict | missing | installed | failed
 	InstalledVersion string `json:"installedVersion,omitempty"`
 	Error            string `json:"error,omitempty"`
 }
@@ -135,11 +136,28 @@ func handleBundledAutomations(raw []byte, o bundleImportOptions) []bundleImportI
 		}
 		return items
 	}
+	// Every id in the index, removed built-ins included (Info hides those).
+	all, err := reg.List(true)
+	if err != nil {
+		for _, id := range ids {
+			items = append(items, bundleImportItem{ID: id, Version: doc.Automations[id].Version, Status: "failed", Error: err.Error()})
+		}
+		return items
+	}
+	known := make(map[string]automation.InstalledInfo, len(all))
+	for _, in := range all {
+		known[in.ID] = in
+	}
 	for _, id := range ids {
 		b := doc.Automations[id]
 		item := bundleImportItem{ID: id, Version: b.Version, Status: "missing"}
-		if info, err := reg.Info(id); err == nil {
+		// Never install over an installed id, including an uninstalled
+		// built-in (its index entry stays, marked removed).
+		if info, ok := known[id]; ok {
 			item.Status, item.InstalledVersion = "present", info.Version
+			if info.Removed {
+				item.Status, item.Error = "conflict", "a removed built-in has this id; restore it with `automation restore`"
+			}
 			items = append(items, item)
 			continue
 		}
@@ -155,32 +173,61 @@ func handleBundledAutomations(raw []byte, o bundleImportOptions) []bundleImportI
 	return items
 }
 
-// installBundledAutomation verifies one bundled package and installs it
-// through the normal review → confirm → install flow.
+// installBundledAutomation installs one bundled package that is not
+// installed yet. The bundle is untrusted input: the sha256 is required and
+// pinned through to the install, the package's manifest id must equal its
+// bundle key, and a one-line review summary is always printed (also with
+// --yes) before anything is written.
 func installBundledAutomation(reg *automation.Registry, id string, b bundledAutomation, o bundleImportOptions) error {
 	data, err := base64.StdEncoding.DecodeString(b.Mpkg)
 	if err != nil {
 		return fmt.Errorf("decode bundled package: %w", err)
 	}
-	if b.SHA256 != "" {
-		sum := sha256.Sum256(data)
-		if hex.EncodeToString(sum[:]) != strings.ToLower(b.SHA256) {
-			return fmt.Errorf("bundled package %s: sha256 mismatch", id)
-		}
+	want := strings.ToLower(b.SHA256)
+	if want == "" {
+		return fmt.Errorf("bundled package %s has no sha256", id)
+	}
+	if sum := sha256.Sum256(data); hex.EncodeToString(sum[:]) != want {
+		return fmt.Errorf("bundled package %s: sha256 mismatch", id)
 	}
 	dir, err := os.MkdirTemp("", "workflow-bundle-*")
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(dir)
-	path := filepath.Join(dir, id+".mpkg")
+	path := filepath.Join(dir, "bundle.mpkg")
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return err
 	}
-	c := installConfirmer{yes: o.yes, interactive: o.interactive, in: o.in, out: o.out}
-	res, err := runInstall(automation.InstallOptions{}, c, func(opts automation.InstallOptions) (*automation.InstallResult, error) {
-		return reg.Install(path, opts)
-	})
+	pkg, err := automation.OpenFile(path)
+	if err != nil {
+		return fmt.Errorf("open bundled package %s: %w", id, err)
+	}
+	if pkg.Manifest.ID != id {
+		return fmt.Errorf("bundled package under %q declares id %q; not installed", id, pkg.Manifest.ID)
+	}
+	opts := automation.InstallOptions{Source: automation.SourceImported, ExpectSHA256: want}
+	dry := opts
+	dry.DryRun = true
+	review, err := reg.Install(path, dry)
+	if err != nil {
+		return err
+	}
+	out := o.out
+	if out == nil {
+		out = io.Discard
+	}
+	fmt.Fprintln(out, bundleReviewLine(review))
+	if review.ID != id {
+		return fmt.Errorf("bundled package under %q reviews as %q; not installed", id, review.ID)
+	}
+	if issuesHaveErrors(review.Issues) {
+		return fmt.Errorf("bundled package %s has validation errors; not installed", id)
+	}
+	if !o.yes && !confirmYes(o.in, out, fmt.Sprintf("Install %s %s?", review.ID, review.Version)) {
+		return errors.New("install declined")
+	}
+	res, err := reg.Install(path, opts)
 	if err != nil {
 		return err
 	}
@@ -188,6 +235,30 @@ func installBundledAutomation(reg *automation.Registry, id string, b bundledAuto
 		return fmt.Errorf("bundled package under %q installed as %q", id, res.ID)
 	}
 	return nil
+}
+
+// bundleReviewLine summarises an install review on one line: id, version,
+// publisher, domains and capabilities.
+func bundleReviewLine(r *automation.InstallResult) string {
+	rv := r.Review
+	caps := []string{"steps: " + orDash(strings.Join(rv.Steps, ","))}
+	if len(rv.Steps) == 0 {
+		caps[0] = "steps: unrestricted"
+	}
+	if len(rv.Scripts) > 0 {
+		caps = append(caps, "scripts: "+strings.Join(rv.Scripts, ","))
+	}
+	if rv.Downloads {
+		caps = append(caps, "downloads")
+	}
+	if rv.Tier != "" {
+		caps = append(caps, "tier: "+rv.Tier)
+	}
+	if rv.PolicyBlocked {
+		caps = append(caps, "policy-blocked")
+	}
+	return fmt.Sprintf("Bundled automation %s %s — publisher %s — domains %s — %s",
+		r.ID, r.Version, orDash(rv.Publisher), orDash(strings.Join(rv.Domains, ",")), strings.Join(caps, "; "))
 }
 
 // printBundleImport prints the human summary of handleBundledAutomations.
@@ -199,7 +270,7 @@ func printBundleImport(out io.Writer, items []bundleImportItem) {
 			fmt.Fprintf(out, "Automation %s: already installed (%s; bundle has %s)\n", it.ID, it.InstalledVersion, it.Version)
 		case "installed":
 			fmt.Fprintf(out, "Automation %s %s: installed from the bundle\n", it.ID, it.Version)
-		case "failed":
+		case "failed", "conflict":
 			fmt.Fprintf(out, "Automation %s %s: not installed: %s\n", it.ID, it.Version, it.Error)
 		default:
 			missing++
