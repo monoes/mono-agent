@@ -135,6 +135,12 @@ func boolField(m map[string]interface{}, key string) bool {
 // RematerializeFunc that reconnects an imported vault export on a new
 // machine.
 func upsertSessionRow(ctx context.Context, db *sql.DB, profileID, platform, username string, cookiesJSON []byte) error {
+	return upsertSessionRowTTL(ctx, db, profileID, platform, username, cookiesJSON, 30*24*time.Hour)
+}
+
+// upsertSessionRowTTL is upsertSessionRow with an explicit session lifetime
+// (an automation manifest's login.sessionTtlDays).
+func upsertSessionRowTTL(ctx context.Context, db *sql.DB, profileID, platform, username string, cookiesJSON []byte, ttl time.Duration) error {
 	var linkedVaultID string
 	_ = db.QueryRowContext(ctx,
 		`SELECT vault_ref FROM crawler_sessions WHERE username = ? AND platform = ? AND profile_id = ?`,
@@ -148,7 +154,7 @@ func upsertSessionRow(ctx context.Context, db *sql.DB, profileID, platform, user
 		return fmt.Errorf("saving session cookies to vault: %w", putErr)
 	}
 
-	expiry := time.Now().Add(30 * 24 * time.Hour) // 30 days
+	expiry := time.Now().Add(ttl)
 	res, err := db.ExecContext(ctx,
 		`UPDATE crawler_sessions SET vault_ref = ?, expiry = ?
 		 WHERE username = ? AND platform = ? AND profile_id = ?`,
@@ -169,12 +175,13 @@ func upsertSessionRow(ctx context.Context, db *sql.DB, profileID, platform, user
 
 func newLoginCmd(cfg *globalConfig) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "login <platform>",
-		Short: "Open a tab in your real Chrome to log in to a social platform",
+		Use:   "login <platform|automation>",
+		Short: "Open a tab in your real Chrome to log in to a platform or browser automation",
 		Long: "Opens the platform's login page as a new tab in your actual, already-running Chrome — via the " +
 			"mono-agent Chrome extension — instead of a separate throwaway browser instance. Log in by hand (any " +
 			"method, including Google/SSO buttons and bot-verification challenges), then run `login confirm " +
-			"<platform>` to capture the session directly from that tab.",
+			"<platform>` to capture the session directly from that tab. Any installed browser automation whose " +
+			"manifest declares a login works the same way.",
 		Example: `  monoagentcli login instagram
   monoagentcli login producthunt
   monoagentcli login confirm producthunt`,
@@ -188,11 +195,17 @@ func newLoginCmd(cfg *globalConfig) *cobra.Command {
 
 			factory, ok := bot.PlatformRegistry[platform]
 			if !ok {
-				supported := make([]string, 0, len(bot.PlatformRegistry))
-				for k := range bot.PlatformRegistry {
-					supported = append(supported, strings.ToLower(k))
+				m, err := loginAutomation(args[0])
+				if err != nil {
+					return unsupportedLoginError(args[0], err)
 				}
-				return fmt.Errorf("unsupported platform %q; supported: %s", args[0], strings.Join(supported, ", "))
+				// initDB resolves cfg.ProfileID; see below.
+				db, err := initDB(cfg)
+				if err != nil {
+					return fmt.Errorf("initializing database: %w", err)
+				}
+				db.Close()
+				return startPackageLogin(cfg, m)
 			}
 
 			adapter := factory()
@@ -254,7 +267,16 @@ func newLoginConfirmCmd(cfg *globalConfig) *cobra.Command {
 			}
 
 			if _, ok := bot.PlatformRegistry[platform]; !ok {
-				return fmt.Errorf("unsupported platform %q", platformArg)
+				m, err := loginAutomation(platformArg)
+				if err != nil {
+					return unsupportedLoginError(platformArg, err)
+				}
+				db, err := initDB(cfg)
+				if err != nil {
+					return fmt.Errorf("initializing database: %w", err)
+				}
+				defer db.Close()
+				return confirmPackageLogin(cmd.Context(), cfg, db.DB, m)
 			}
 
 			// initDB must run first: it's what resolves cfg.ProfileID from
@@ -311,7 +333,7 @@ func newLoginConfirmCmd(cfg *globalConfig) *cobra.Command {
 func newLoginStatusCmd(cfg *globalConfig) *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
-		Short: "Show login status for all platforms",
+		Short: "Show login status for all platforms and browser automations",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			db, err := initDB(cfg)
 			if err != nil {
@@ -334,6 +356,7 @@ func newLoginStatusCmd(cfg *globalConfig) *cobra.Command {
 				Platform  string
 				Expiry    time.Time
 				WhenAdded time.Time
+				Status    string // active | expired | logged_out
 			}
 
 			var sessions []sessionRow
@@ -346,6 +369,22 @@ func newLoginStatusCmd(cfg *globalConfig) *cobra.Command {
 			}
 			if err := rows.Err(); err != nil {
 				return fmt.Errorf("iterating sessions: %w", err)
+			}
+
+			now := time.Now()
+			hasSession := map[string]bool{}
+			for i := range sessions {
+				sessions[i].Status = "active"
+				if sessions[i].Expiry.Before(now) {
+					sessions[i].Status = "expired"
+				}
+				hasSession[strings.ToLower(sessions[i].Platform)] = true
+			}
+			// Installed automations with a login but no session yet.
+			for _, a := range loginAutomations() {
+				if !hasSession[a.ID] {
+					sessions = append(sessions, sessionRow{Platform: a.ID, Status: "logged_out"})
+				}
 			}
 
 			if cfg.JSONOutput {
@@ -362,17 +401,16 @@ func newLoginStatusCmd(cfg *globalConfig) *cobra.Command {
 			table := newPlainTable(cmd.OutOrStdout(), []string{"ID", "Platform", "Username", "Status", "Expires", "Added"},
 				[]tw.Align{tw.AlignRight, tw.AlignLeft, tw.AlignLeft, tw.AlignLeft, tw.AlignLeft, tw.AlignLeft})
 
-			now := time.Now()
 			for _, s := range sessions {
-				status := "active"
-				if s.Expiry.Before(now) {
-					status = "expired"
+				if s.Status == "logged_out" {
+					table.Append([]string{"-", s.Platform, "-", "logged out", "-", "-"})
+					continue
 				}
 				table.Append([]string{
 					fmt.Sprintf("%d", s.ID),
 					s.Platform,
 					s.Username,
-					status,
+					s.Status,
 					s.Expiry.Format("2006-01-02 15:04"),
 					s.WhenAdded.Format("2006-01-02 15:04"),
 				})
