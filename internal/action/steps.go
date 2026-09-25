@@ -3,6 +3,7 @@ package action
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"reflect"
@@ -80,18 +81,9 @@ func (ae *ActionExecutor) resolveElement(step StepDef) (browser.ElementHandle, e
 		return nil, fmt.Errorf("element ref %q not found in context", step.ElementRef)
 	}
 
-	// 2. CSS Selector (with alternatives via bot.FindElementWithAlternatives).
+	// 2. Selector, falling back to the step's alternatives (on any driver).
 	if step.Selector != "" {
-		rodPage := unwrapRodPage(ae.page)
-		if rodPage != nil {
-			el, err := bot.FindElementWithAlternatives(rodPage, step.Selector, step.Alternatives, timeout)
-			if err == nil {
-				return browser.NewRodElement(el), nil
-			}
-			return ae.jevResolve(step, err)
-		}
-		// Non-Rod fallback.
-		el, err := ae.page.Element(step.Selector, timeout)
+		el, err := findWithAlternatives(ae.page, step.Selector, step.Alternatives, timeout)
 		if err == nil {
 			return el, nil
 		}
@@ -249,7 +241,9 @@ func (ae *ActionExecutor) stepWait(ctx context.Context, step StepDef) (*StepResu
 		var elem browser.ElementHandle
 		var findErr error
 
-		if isXPath(selector) {
+		if len(step.Alternatives) > 0 {
+			elem, findErr = findWithAlternatives(ae.page, selector, step.Alternatives, timeout)
+		} else if isXPath(selector) {
 			elem, findErr = ae.page.ElementX(selector, timeout)
 		} else {
 			elem, findErr = ae.page.Element(selector, timeout)
@@ -278,7 +272,13 @@ func (ae *ActionExecutor) stepWait(ctx context.Context, step StepDef) (*StepResu
 			Dur("timeout", timeout).
 			Msg("waiting for element (xpath)")
 
-		elem, findErr := ae.page.ElementX(step.XPath, timeout)
+		var elem browser.ElementHandle
+		var findErr error
+		if len(step.Alternatives) > 0 {
+			elem, findErr = findWithAlternatives(ae.page, step.XPath, step.Alternatives, timeout)
+		} else {
+			elem, findErr = ae.page.ElementX(step.XPath, timeout)
+		}
 		if findErr != nil {
 			return &StepResult{
 				Success: false,
@@ -343,36 +343,17 @@ func (ae *ActionExecutor) stepFindElement(ctx context.Context, step StepDef) (*S
 	defer ae.releaseJevMarker()
 	timeout := stepTimeout(step, 10)
 
-	// Use bot.FindElementWithAlternatives when we have a selector with alternatives.
+	// A primary selector falls back to its alternatives on any page driver.
 	if step.Selector != "" {
-		var elem browser.ElementHandle
-		rodPage := unwrapRodPage(ae.page)
-		if rodPage != nil {
-			rawElem, err := bot.FindElementWithAlternatives(rodPage, step.Selector, step.Alternatives, timeout)
+		elem, err := findWithAlternatives(ae.page, step.Selector, step.Alternatives, timeout)
+		if err != nil {
+			elem, err = ae.jevResolve(step, fmt.Errorf("find_element %s: %w", step.ID, err))
 			if err != nil {
-				elem, err = ae.jevResolve(step, fmt.Errorf("find_element %s: %w", step.ID, err))
-				if err != nil {
-					return &StepResult{
-						Success: false,
-						StepID:  step.ID,
-						Error:   err,
-					}, nil
-				}
-			} else {
-				elem = browser.NewRodElement(rawElem)
-			}
-		} else {
-			var err error
-			elem, err = ae.page.Element(step.Selector, timeout)
-			if err != nil {
-				elem, err = ae.jevResolve(step, fmt.Errorf("find_element %s: %w", step.ID, err))
-				if err != nil {
-					return &StepResult{
-						Success: false,
-						StepID:  step.ID,
-						Error:   err,
-					}, nil
-				}
+				return &StepResult{
+					Success: false,
+					StepID:  step.ID,
+					Error:   err,
+				}, nil
 			}
 		}
 
@@ -529,10 +510,8 @@ func (ae *ActionExecutor) waitAfterClick(step StepDef) {
 		// Wait for any of the race selectors to appear.
 		if len(step.RaceSelectors) > 0 {
 			timeout := stepTimeout(step, 5)
-			rodPage := unwrapRodPage(ae.page)
-			if rodPage != nil {
-				_, _, _ = bot.WaitForOutcome(rodPage, step.RaceSelectors, timeout)
-			}
+			label, err := waitForOutcomes(ae.page, step.RaceSelectors, timeout)
+			ae.logger.Debug().Str("stepID", step.ID).Str("outcome", label).Err(err).Msg("race wait after click")
 		}
 
 	case "":
@@ -1007,21 +986,17 @@ func (ae *ActionExecutor) stepExtractMultiple(ctx context.Context, step StepDef)
 	}
 
 	var elements []browser.ElementHandle
-	var lastErr error
+	var lastErr, unsupportedErr error
 
 	for _, sel := range selectors {
 		var elems []browser.ElementHandle
 		var err error
 		if isXPath(sel) {
-			// PageInterface.Elements only supports CSS. For XPath, use the Rod unwrap.
-			rodPage := unwrapRodPage(ae.page)
-			if rodPage != nil {
-				err = rod.Try(func() {
-					rawElems := rodPage.Timeout(timeout).MustElementsX(sel)
-					for _, re := range rawElems {
-						elems = append(elems, browser.NewRodElement(re))
-					}
-				})
+			// PageInterface.Elements only supports CSS; elementsByXPath works
+			// on Rod and on any page exposing EvalCDP, and errors otherwise.
+			elems, err = elementsByXPath(ae.page, sel, timeout)
+			if errors.Is(err, errXPathMultiUnsupported) && unsupportedErr == nil {
+				unsupportedErr = err
 			}
 		} else {
 			elems, err = ae.page.Elements(sel)
@@ -1034,11 +1009,16 @@ func (ae *ActionExecutor) stepExtractMultiple(ctx context.Context, step StepDef)
 		elements = nil
 	}
 
+	// A driver that cannot evaluate an XPath selector must not turn into a
+	// silent zero-item success.
+	if len(elements) == 0 && lastErr == nil && unsupportedErr != nil {
+		lastErr = unsupportedErr
+	}
 	if len(elements) == 0 && lastErr != nil {
 		return &StepResult{
 			Success: false,
 			StepID:  step.ID,
-			Error:   fmt.Errorf("extract_multiple %s: no elements found: %v", step.ID, lastErr),
+			Error:   fmt.Errorf("extract_multiple %s: no elements found: %w", step.ID, lastErr),
 		}, nil
 	}
 
@@ -1075,17 +1055,8 @@ func (ae *ActionExecutor) stepExtractMultiple(ctx context.Context, step StepDef)
 				item["href"] = ae.resolveRelativeURL(*href)
 			} else {
 				// Fallback: look for first child <a> with an href (profile link in card containers).
-				// This requires Rod element access for child element queries.
-				rodElem := unwrapRodElement(elem)
-				if rodElem != nil {
-					var childHref *string
-					rod.Try(func() {
-						a := rodElem.MustElement("a[href]")
-						childHref, _ = a.Attribute("href")
-					})
-					if childHref != nil && *childHref != "" {
-						item["href"] = ae.resolveRelativeURL(*childHref)
-					}
+				if childHref, ok := firstChildHref(elem); ok && childHref != "" {
+					item["href"] = ae.resolveRelativeURL(childHref)
 				}
 			}
 		}
@@ -1754,9 +1725,10 @@ func (ae *ActionExecutor) stepCallBotMethod(ctx context.Context, step StepDef) (
 		ae.execCtx.SetVariable(varName, result)
 	}
 
-	// If the bot method returned a map, also add it as an extracted item
-	// so it appears in the node output.
-	if m, ok := result.(map[string]interface{}); ok && len(m) > 0 {
+	// If the bot method returned a map, or a list of maps (list_* methods),
+	// also add it as extracted item(s) so it appears in the node output.
+	// save_data over the same variable skips rows already tracked here.
+	for _, m := range botResultItems(result) {
 		ae.execCtx.AddExtractedItem(m)
 	}
 
@@ -1964,4 +1936,29 @@ func containsExtractedItem(items []map[string]interface{}, candidate map[string]
 		}
 	}
 	return false
+}
+
+// botResultItems returns the extracted rows a bot method result carries: a
+// non-empty map, or every map of a list result ([]map or []interface{}
+// holding maps). List rows are taken exactly as save_data would take them
+// from the same variable, so save_data's already-tracked check matches them
+// and nothing is recorded twice. Anything else yields no rows.
+func botResultItems(result interface{}) []map[string]interface{} {
+	switch r := result.(type) {
+	case map[string]interface{}:
+		if len(r) > 0 {
+			return []map[string]interface{}{r}
+		}
+	case []map[string]interface{}:
+		return r
+	case []interface{}:
+		out := make([]map[string]interface{}, 0, len(r))
+		for _, v := range r {
+			if m, ok := v.(map[string]interface{}); ok {
+				out = append(out, m)
+			}
+		}
+		return out
+	}
+	return nil
 }

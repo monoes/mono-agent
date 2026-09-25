@@ -322,18 +322,19 @@ func (ep *ExtensionPage) MouseScroll(x, y float64, steps int) error {
 // Eval
 // ---------------------------------------------------------------------------
 
+// Eval runs js in the tab's main world through chrome.scripting, which is
+// subject to the page's CSP. A failure — CSP refusing eval, a thrown
+// exception, a timeout, a lost connection — is returned as an error carrying
+// the extension's message. The result is still a non-nil (empty) EvalResult,
+// so callers that deliberately ignore the error can keep calling its
+// accessors. Use EvalCDP when the page CSP must be bypassed.
 func (ep *ExtensionPage) Eval(js string, args ...interface{}) (*browser.EvalResult, error) {
-	// For simple DOM queries, use content script commands that work reliably
-	// without eval (bypassing CSP issues). The content script can read DOM
-	// in its isolated world.
-	// Falls back to eval command for complex JS.
-
 	resp, err := ep.send(CmdEval, map[string]interface{}{
 		"expression": js,
 		"args":       args,
 	})
 	if err != nil {
-		return browser.NewEvalResult(nil), nil // Return nil result, don't error — let caller handle
+		return browser.NewEvalResult(nil), err
 	}
 	data := resp.Data
 	if m := resp.dataMap(); m != nil {
