@@ -1060,7 +1060,7 @@ async function pickElement({ tabId, prompt, timeoutMs }) {
   });
   let timer;
   const deadline = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error("timeout")), ms + 5000);
+    timer = setTimeout(() => reject(new Error("timeout")), ms + 2000); // inside Go's ms+5s
   });
   let res;
   try {
