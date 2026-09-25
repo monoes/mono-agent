@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +15,8 @@ import (
 	"github.com/monoes/mono-agent/internal/action"
 	"github.com/monoes/mono-agent/internal/recordanalyze"
 	"github.com/monoes/mono-agent/internal/recording"
+	"github.com/monoes/mono-agent/internal/storage"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 const recordAnalyzeAnswer = `{
@@ -163,7 +167,16 @@ func TestRecordAnalyzeSaveActionAndWorkflow(t *testing.T) {
 		t.Errorf("recording link: %+v %v", list, err)
 	}
 
-	out, err = runRecordCLI(t, true, "save", dir, "--as", "workflow", "--name", "press go flow")
+	dbPath := filepath.Join(t.TempDir(), "wf.db")
+	cfg := &globalConfig{JSONOutput: true, DBPath: dbPath}
+	cmd := newRecordCmd(cfg)
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(io.Discard)
+	cmd.SilenceUsage, cmd.SilenceErrors = true, true
+	cmd.SetArgs([]string{"save", dir, "--as", "workflow", "--name", "press go flow"})
+	err = cmd.Execute()
+	out = buf.String()
 	if err != nil {
 		t.Fatalf("save workflow: %v\n%s", err, out)
 	}
@@ -173,6 +186,23 @@ func TestRecordAnalyzeSaveActionAndWorkflow(t *testing.T) {
 	}
 	if res.WorkflowID == "" || res.NodeType != "example-go.press_go_flow" {
 		t.Errorf("workflow save = %+v", res)
+	}
+	// `workflow run --json` reads node types from the SQLite store (N4).
+	db, err := storage.NewDatabase(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	wf, err := workflow.NewSQLiteWorkflowStore(db.DB).GetWorkflow(context.Background(), res.WorkflowID)
+	if err != nil || wf == nil || len(wf.Nodes) != 2 {
+		t.Fatalf("SQLite workflow = %+v, %v", wf, err)
+	}
+	types := map[string]bool{}
+	for _, n := range wf.Nodes {
+		types[n.Type] = true
+	}
+	if !types["trigger.manual"] || !types["example-go.press_go_flow"] || len(wf.Connections) != 1 {
+		t.Errorf("SQLite node types = %v, connections = %d", types, len(wf.Connections))
 	}
 }
 

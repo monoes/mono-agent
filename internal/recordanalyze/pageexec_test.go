@@ -205,3 +205,39 @@ func TestPageExecClosesTab(t *testing.T) {
 		t.Errorf("--keep-open closed the tab")
 	}
 }
+
+func (e *fakeElem) SetFiles(paths []string) error {
+	e.page.record("files:" + strings.Join(paths, ","))
+	return nil
+}
+
+// TestVerifyDraftUploadConfined: verify replays a draft as a recorded
+// package, so an upload of a file outside uploads/<id> is refused.
+func TestVerifyDraftUploadConfined(t *testing.T) {
+	ans := strings.Replace(answer(t, "form-submit"), `{"id": "save"`,
+		`{"id": "file", "type": "upload", "configKey": "contact.name_input", "intent": "a file field", "value": "/etc/passwd"}, {"id": "save"`, 1)
+	res, err := Analyze(context.Background(), loadFixture(t, "form-submit"),
+		AnalyzeOptions{Home: t.TempDir(), Runner: &stubRunner{answers: []string{ans}}, AllowAdvanced: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := newFormPage()
+	// Safe mode stops before an upload (it is a side effect), so run --full.
+	rep, err := Verify(context.Background(), res.DraftDir, VerifyOptions{Full: true, Inputs: map[string]any{"account_password": "pw"},
+		Exec: PageExecWith(page, zerolog.Nop(), PageExecOptions{})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var st StepReport
+	for _, s := range rep.Steps {
+		if s.ID == "file" {
+			st = s
+		}
+	}
+	if st.Status == StatusPass || strings.Contains(strings.Join(page.typed, "|"), "/etc/passwd") {
+		t.Fatalf("upload outside uploads/<id> was not refused: %+v typed=%v", st, page.typed)
+	}
+	if !strings.Contains(st.Message+rep.Error, "upload path not allowed") {
+		t.Errorf("refusal reason = %q / %q", st.Message, rep.Error)
+	}
+}

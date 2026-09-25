@@ -297,7 +297,13 @@ func recordWorkflowCreator(cfg *globalConfig) recordanalyze.WorkflowCreator {
 		}
 		defer db.Close()
 		wf := buildRecordedWorkflow(name, description, cfg.ProfileID, nodes)
-		if err := newHybridStore(db).CreateWorkflow(ctx, wf); err != nil {
+		if err := workflow.ValidateConnectionsAgainstNodes(wf.Nodes, wf.Connections); err != nil {
+			return "", err
+		}
+		// Persist exactly as `workflow import` does (workflow row, then nodes
+		// and connections), so SQLite readers such as `workflow run --json`
+		// see the node types too.
+		if err := createOrOverwriteWorkflowAtomically(ctx, newHybridStore(db), wf, false); err != nil {
 			return "", err
 		}
 		return wf.ID, nil

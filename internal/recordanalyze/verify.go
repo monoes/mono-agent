@@ -103,6 +103,9 @@ func Verify(ctx context.Context, dir string, opts VerifyOptions) (*VerifyReport,
 	if err != nil {
 		return nil, fmt.Errorf("open draft: %w", err)
 	}
+	// A draft is AI-written: replay it under the rules a saved recorded
+	// package gets (upload confinement, scripts off), not as a local one.
+	p.Trust = automation.TrustRecorded
 	def, err := p.Action(d.Action)
 	if err != nil {
 		return nil, fmt.Errorf("draft action %s: %w", d.Action, err)
