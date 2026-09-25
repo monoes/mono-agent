@@ -37,9 +37,13 @@ var recordVerifyExec = func(ctx context.Context, automationID string, verbose bo
 	if !verbose {
 		logger = logger.Level(zerolog.WarnLevel)
 	}
+	// Same connect path as `node run`: reuse or start the bridge, and when
+	// the extension is not attached launch the user's real Chrome and wait.
 	bridge := setupExtensionBridge(logger, 3*time.Second)
-	if bridge == nil || !bridge.IsConnected() {
-		return nil, fmt.Errorf("browser bridge not connected")
+	if !bridge.IsConnected() {
+		if err := ensureExtensionConnected(bridge, 30*time.Second); err != nil {
+			return nil, fmt.Errorf("browser bridge not connected: %w", err)
+		}
 	}
 	provider := &browserpkg.HybridSessionProvider{ExtBridge: bridge, Logger: logger}
 	page, err := provider.GetPage(ctx, automationID, "")

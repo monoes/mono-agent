@@ -3,6 +3,7 @@ package recordanalyze
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -27,8 +28,8 @@ func (p *fakePage) WaitDOMStable(time.Duration) error           { return nil }
 func (p *fakePage) WaitIdle(time.Duration) error                { return nil }
 func (p *fakePage) GetURL() (string, error)                     { return p.url, nil }
 func (p *fakePage) Timeout(time.Duration) browser.PageInterface { return p }
-func (p *fakePage) KeyboardType(keys ...rune) error             { return nil }
-func (p *fakePage) InsertText(t string) error                   { return nil }
+func (p *fakePage) KeyboardType(keys ...rune) error             { p.record(string(keys)); return nil }
+func (p *fakePage) InsertText(t string) error                   { p.record(t); return nil }
 func (p *fakePage) Eval(string, ...interface{}) (*browser.EvalResult, error) {
 	return browser.NewEvalResult(nil), nil
 }
@@ -97,7 +98,18 @@ func TestPageExecSafeModeRealExecutor(t *testing.T) {
 			t.Errorf("step %s = %s (%s)", s.ID, s.Status, s.Message)
 		}
 	}
+	// The masked password reaches the page through {{secret:account_password}}.
+	all := strings.Join(page.typed, "|")
+	if !strings.Contains(all, "s3cret") || !strings.Contains(all, "jane@example.com") {
+		t.Errorf("typed = %q", all)
+	}
 	if page.url != "https://app.acme-crm.test/contacts/new" {
 		t.Errorf("url = %s", page.url)
 	}
+}
+
+func (p *fakePage) record(t string) {
+	p.mu.Lock()
+	p.typed = append(p.typed, t)
+	p.mu.Unlock()
 }
