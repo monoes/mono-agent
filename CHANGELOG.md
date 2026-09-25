@@ -20,8 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   feature falls back to what it did before. The one difference is inbox
   classification, which stores the message as "unsure" so it isn't sent
   again. The key is looked up in the
-  node's config, then in the vault entry `typesafe`, then in
-  `TYPESAFE_API_KEY`.
+  node's config, then in the vault entry `typesafe` (or one named like
+  "Jev API key"), then in `TYPESAFE_API_KEY`.
   - `monoagentcli jev status|enable|disable|usage|ask|models`, plus the
     `jev.key` and `jev.api` doctor checks. `jev usage` shows calls, tokens
     and estimated cost; no request content is stored.

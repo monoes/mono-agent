@@ -92,6 +92,13 @@ func ResolveKey(ctx context.Context, db *sql.DB, profileID, explicit string) (ke
 	}
 	var vaultErr error
 	if db != nil {
+		// No explicit ref: use the "typesafe" entry, else a naturally named
+		// one ("Jev Api key", "TypeSafe API key", …).
+		if explicit == "" {
+			if name, ok := vaultKeyName(ctx, db, profileID); ok {
+				ref = "@secret:" + name
+			}
+		}
 		v, err := secrets.Resolve(ctx, db, profileID, ref)
 		if err == nil && v != "" && !strings.HasPrefix(v, "@secret:") {
 			return v, SourceVault, nil
@@ -108,16 +115,13 @@ func ResolveKey(ctx context.Context, db *sql.DB, profileID, explicit string) (ke
 }
 
 // KeySource reports where ResolveKey would find the profile's key — vault
-// (an entry named "typesafe" exists) or env — without decrypting anything,
-// so health checks never trigger a keyring or passphrase prompt.
+// (a "typesafe" or naturally named Jev entry exists) or env — without
+// decrypting anything, so health checks never trigger a keyring or
+// passphrase prompt.
 func KeySource(ctx context.Context, db *sql.DB, profileID string) (string, error) {
 	if db != nil {
-		if entries, err := secrets.List(ctx, db, profileID); err == nil {
-			for _, e := range entries {
-				if e.Name == SecretName {
-					return SourceVault, nil
-				}
-			}
+		if _, ok := vaultKeyName(ctx, db, profileID); ok {
+			return SourceVault, nil
 		}
 	}
 	if strings.TrimSpace(envKey()) != "" {
@@ -297,4 +301,39 @@ func UsageSince(db *sql.DB, profileID string, since time.Time) ([]Usage, error) 
 		out = append(out, u)
 	}
 	return out, rows.Err()
+}
+
+// keyNameAliases are vault entry names, normalised (lower case, no spaces,
+// dashes or underscores), accepted for the key when no entry is named
+// exactly "typesafe" — people name the secret after the product or the model.
+var keyNameAliases = map[string]bool{
+	"typesafe": true, "typesafeapikey": true, "typesafekey": true, "typesafeapi": true,
+	"jev": true, "jevapikey": true, "jevkey": true, "jevapi": true,
+}
+
+func normaliseKeyName(n string) string {
+	return strings.NewReplacer(" ", "", "-", "", "_", "", ".", "").Replace(strings.ToLower(strings.TrimSpace(n)))
+}
+
+// vaultKeyName returns the vault entry holding the TypeSafe key: exactly
+// "typesafe" if present, else the single entry whose normalised name is a
+// known alias. Two or more alias matches are ambiguous and ignored.
+func vaultKeyName(ctx context.Context, db *sql.DB, profileID string) (string, bool) {
+	entries, err := secrets.List(ctx, db, profileID)
+	if err != nil {
+		return "", false
+	}
+	var alias []string
+	for _, e := range entries {
+		if e.Name == SecretName {
+			return e.Name, true
+		}
+		if keyNameAliases[normaliseKeyName(e.Name)] {
+			alias = append(alias, e.Name)
+		}
+	}
+	if len(alias) == 1 {
+		return alias[0], true
+	}
+	return "", false
 }

@@ -160,3 +160,14 @@ func TestKeySourceNeverNeedsTheVaultKey(t *testing.T) {
 		t.Fatalf("src = %q %v", src, err)
 	}
 }
+
+func TestKeyNameAliases(t *testing.T) {
+	for in, want := range map[string]bool{
+		"Jev Api key": true, "jev_api_key": true, "TypeSafe API Key": true, "typesafe": true,
+		"JEV": true, "openai": false, "jevons notes": false, "": false,
+	} {
+		if got := keyNameAliases[normaliseKeyName(in)]; got != want {
+			t.Errorf("%q: got %v, want %v", in, got, want)
+		}
+	}
+}
