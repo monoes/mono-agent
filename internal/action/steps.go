@@ -1812,11 +1812,22 @@ func (ae *ActionExecutor) resolveConfigSelector(configKey string) string {
 		}
 	}
 
-	// Get page HTML for config resolution.
+	// Get page HTML for config resolution. Prefer CDP evaluation: sites
+	// such as LinkedIn and Hacker News forbid 'unsafe-eval', which blocks the
+	// extension's plain Eval and left html empty (selectors never resolved).
 	var html string
-	evalResult, evalErr := ae.page.Eval(`() => document.documentElement.outerHTML`)
-	if evalErr == nil && evalResult != nil {
-		html = evalResult.Str()
+	if cdp, ok := ae.page.(interface {
+		EvalCDP(js string) (interface{}, error)
+	}); ok {
+		if v, err := cdp.EvalCDP(`document.documentElement.outerHTML`); err == nil {
+			html, _ = v.(string)
+		}
+	}
+	if html == "" {
+		evalResult, evalErr := ae.page.Eval(`() => document.documentElement.outerHTML`)
+		if evalErr == nil && evalResult != nil {
+			html = evalResult.Str()
+		}
 	}
 
 	configResult, err := ae.configMgr.GetConfig(

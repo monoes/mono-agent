@@ -141,9 +141,14 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 		storageAction.Keywords = kw
 	}
 
-	// Collect selectedListItems from "targets".
+	// Collect selectedListItems from "targets" (or, when that is absent, a
+	// config key named selectedListItems — which used to be silently ignored).
 	var selectedListItems []interface{}
-	if targetsRaw, ok := config["targets"]; ok {
+	targetsRaw, ok := config["targets"]
+	if !ok {
+		targetsRaw, ok = config["selectedListItems"]
+	}
+	if ok {
 		if targets, ok := targetsRaw.([]interface{}); ok {
 			for _, t := range targets {
 				switch v := t.(type) {
@@ -166,8 +171,10 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 	reserved := map[string]struct{}{
 		"username": {},
 		"targets":  {},
-		"message":  {},
-		"keywords": {},
+		// selectedListItems is seeded from targets below, never as a param.
+		"selectedListItems": {},
+		"message":           {},
+		"keywords":          {},
 	}
 	params := make(map[string]interface{})
 	for k, v := range config {
@@ -196,7 +203,10 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 	// say — used to open a browser tab, run zero loop iterations and still
 	// report success. Failing first costs nothing and names what is missing.
 	if err := action.ValidateActionInputs(b.platform, b.actionType, storageAction,
-		map[string]interface{}{"selectedListItems": selectedListItems}); err != nil {
+		// "targets" is the node-facing name of the same list: actions that
+		// declare their required list input as "targets" (e.g.
+		// linkedin.list_user_posts) must validate against it too.
+		map[string]interface{}{"selectedListItems": selectedListItems, "targets": selectedListItems}); err != nil {
 		return nil, fmt.Errorf("nodes: %s/%s: %w", b.platform, b.actionType, err)
 	}
 
