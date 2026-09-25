@@ -23,6 +23,7 @@ import (
 	"github.com/monoes/mono-agent/internal/connections"
 	"github.com/monoes/mono-agent/internal/docscan"
 	"github.com/monoes/mono-agent/internal/monomind"
+	"github.com/monoes/mono-agent/internal/nodes"
 	"github.com/monoes/mono-agent/internal/orgdesign"
 	"github.com/monoes/mono-agent/internal/profiledir"
 	"github.com/monoes/mono-agent/internal/secrets"
@@ -95,6 +96,10 @@ func (a *App) setActiveProfileID(id string) {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	// Installed automation packages, before anything reads actions or forms.
+	if _, err := nodes.BootAutomations(""); err != nil {
+		runtime.LogWarningf(ctx, "automations: %v (using the built-in action set)", err)
+	}
 	// A first launch on a new machine has no ~/.monoagent yet; SQLite can't
 	// create the database file inside a folder that doesn't exist (the CLI's
 	// initDB makes it the same way).
