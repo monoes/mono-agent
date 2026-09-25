@@ -224,6 +224,34 @@ export const api = {
   getWorkflow:            (id) => GoApp.GetWorkflow(id).catch(guard('get workflow', null)),
   listProfileDocuments:   () => GoApp.ListProfileDocuments().catch(guard('list profile documents', [])),
   getProfileDocument:     (id) => GoApp.GetProfileDocument(id).catch(guard('get profile document', null)),
+  // Browser automation packages and recordings (Connections page). Every
+  // call shells `monoagentcli automation|action|record … --json` (see
+  // wails-app/app_automations.go) and resolves to the CLI's JSON or to
+  // {error}, so callers check res.error and render it inline.
+  listAutomations:        () => GoApp.ListAutomations().then(JSON.parse).catch(asError),
+  showAutomation:         (id) => GoApp.ShowAutomation(id).then(JSON.parse).catch(asError),
+  installAutomationDryRun:(path) => GoApp.InstallAutomationDryRun(path).then(JSON.parse).catch(asError),
+  installAutomation:      (path) => GoApp.InstallAutomation(path).then(JSON.parse).catch(asError),
+  exportAutomation:       (id, path) => GoApp.ExportAutomation(id, path).then(JSON.parse).catch(asError),
+  exportAction:           (ref, path) => GoApp.ExportAction(ref, path).then(JSON.parse).catch(asError),
+  uninstallAutomation:    (id) => GoApp.UninstallAutomation(id).then(JSON.parse).catch(asError),
+  restoreAutomation:      (id) => GoApp.RestoreAutomation(id).then(JSON.parse).catch(asError),
+  enableAutomation:       (id) => GoApp.EnableAutomation(id).then(JSON.parse).catch(asError),
+  disableAutomation:      (id) => GoApp.DisableAutomation(id).then(JSON.parse).catch(asError),
+  rollbackAutomation:     (id) => GoApp.RollbackAutomation(id).then(JSON.parse).catch(asError),
+  validateAutomation:     (path) => GoApp.ValidateAutomation(path).then(JSON.parse).catch(asError),
+  testAutomation:         (id, action = '', live = false) => GoApp.TestAutomation(id, action, live).then(JSON.parse).catch(asError),
+  doctorAutomations:      (id = '') => GoApp.DoctorAutomations(id).then(JSON.parse).catch(asError),
+  listRecordings:         () => GoApp.ListRecordings().then(JSON.parse).catch(asError),
+  showRecording:          (id) => GoApp.ShowRecording(id).then(JSON.parse).catch(asError),
+  deleteRecording:        (id) => GoApp.DeleteRecording(id).then(JSON.parse).catch(asError),
+  analyzeRecording:       (id, automation = '') => GoApp.AnalyzeRecording(id, automation).then(JSON.parse).catch(asError),
+  verifyDraft:            (draftDir, full = false) => GoApp.VerifyDraft(draftDir, full).then(JSON.parse).catch(asError),
+  // spec: {as, automation, new, name, renameInputs: {aiName: userName}}
+  saveDraft:              (draftDir, spec) => GoApp.SaveDraft(draftDir, JSON.stringify(spec || {})).then(JSON.parse).catch(asError),
+  // Native pickers; resolve to '' when cancelled.
+  chooseAutomationPackage:    () => GoApp.ChooseAutomationPackage().catch(guard('choose package', '')),
+  chooseAutomationExportPath: (defaultName = '') => GoApp.ChooseAutomationExportPath(defaultName).catch(guard('choose export path', '')),
 }
 
 // The Wails runtime (window.runtime / window.go) only exists inside the desktop
