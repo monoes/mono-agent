@@ -42,7 +42,7 @@ var (
 	validGrantModes     = map[string]bool{"run": true, "trigger": true, "status": true}
 	validApprovals      = map[string]bool{"none": true, "required": true}
 	validLevels         = map[string]bool{"manual": true, "mid": true, "full": true}
-	validDeciderKinds   = map[string]bool{"model": true, "boss": true, "parent": true}
+	validDeciderKinds   = map[string]bool{"model": true, "boss": true, "parent": true, "jev": true}
 	validTiers          = map[string]bool{"routine": true, "consequential": true, "irreversible": true}
 	validFailureActions = map[string]bool{"deny": true, "human": true}
 	validReplyModes     = regexp.MustCompile(`^(last_node|node:.+)$`)
@@ -292,7 +292,7 @@ func autonomySetArgs(org, specJSON string) ([]string, error) {
 	if d := s.Decider; d != nil {
 		if d.Kind != "" {
 			if !validDeciderKinds[d.Kind] {
-				return nil, fmt.Errorf("autonomy spec: decider kind must be model, boss, or parent")
+				return nil, fmt.Errorf("autonomy spec: decider kind must be model, boss, parent, or jev")
 			}
 			args = append(args, "--decider", d.Kind)
 		}

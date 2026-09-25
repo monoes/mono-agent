@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/monoes/mono-agent/internal/jev/jevconf"
 	"github.com/monoes/mono-agent/internal/monomind"
 	"github.com/monoes/mono-agent/internal/orgbridge"
 	"github.com/monoes/mono-agent/internal/orgdesign"
@@ -94,18 +96,39 @@ type Service struct {
 	Interval      time.Duration
 	Logf          func(format string, args ...interface{})
 	now           func() time.Time
+
+	jevWarned sync.Map // profile/org → struct{}: "jev without a key" logged once
 }
 
 // NewService wires a Service with production defaults.
 func NewService(db *sql.DB, roots func(ctx context.Context) ([]ProfileRoot, error)) *Service {
-	return &Service{
+	s := &Service{
 		DB: db, Store: NewStore(db), Client: MonomindClient{}, Roots: roots, Interval: 15 * time.Second,
-		NewDecider: func(a *Autonomy) DeciderImpl {
-			return &ModelDecider{Runtime: a.Decider.Runtime, Model: a.Decider.Model, Timeout: time.Duration(a.Decider.TimeoutSeconds) * time.Second}
-		},
 		Logf: func(string, ...interface{}) {},
 		now:  time.Now,
 	}
+	s.NewDecider = s.defaultDecider
+	return s
+}
+
+// defaultDecider builds the model decider, wrapped in a JevDecider when the
+// org chose kind jev (that choice is the opt-in, plan D2) and a TypeSafe key
+// resolves for its profile. Without a key the model decides alone, and the
+// daemon log says so once per org.
+func (s *Service) defaultDecider(a *Autonomy) DeciderImpl {
+	model := &ModelDecider{Runtime: a.Decider.Runtime, Model: a.Decider.Model, Timeout: time.Duration(a.Decider.TimeoutSeconds) * time.Second}
+	if a.Decider.Kind != orgdesign.DeciderJev {
+		return model
+	}
+	client, err := jevconf.NewClient(context.Background(), s.DB, a.ProfileID, "", "", jevconf.Decider)
+	if err != nil {
+		if _, seen := s.jevWarned.LoadOrStore(a.ProfileID+"/"+a.OrgName, struct{}{}); !seen && s.Logf != nil {
+			s.Logf("orgdecide: %s/%s: decider jev has no key, the model decides instead: %v", a.ProfileID, a.OrgName, err)
+		}
+		return model
+	}
+	s.jevWarned.Delete(a.ProfileID + "/" + a.OrgName)
+	return &JevDecider{Client: client, Fallback: model, Threshold: a.Decider.Threshold}
 }
 
 func (s *Service) clock() time.Time {
@@ -321,8 +344,9 @@ func (s *Service) decide(ctx context.Context, profileID, root, org, runID, level
 		return record("rule", VerdictApproved, "", reason, nil, nil)
 	}
 
-	// Decider route.
-	if a.Decider.Kind != orgdesign.DeciderModel {
+	// Decider route. boss and parent hand the item to a role; model and
+	// jev decide here.
+	if a.Decider.Kind != orgdesign.DeciderModel && a.Decider.Kind != orgdesign.DeciderJev {
 		d, reason, err := s.delegate(ctx, profileID, root, org, level, a, doc, it, record)
 		if d != nil || err != nil {
 			return d, err
@@ -364,6 +388,7 @@ func (s *Service) decide(ctx context.Context, profileID, root, org, runID, level
 	dctx, cancel := context.WithTimeout(ctx, time.Duration(a.Decider.TimeoutSeconds)*time.Second+10*time.Second)
 	outcome, derr := decider.Decide(dctx, BuildPrompt(in))
 	cancel()
+	base.Confidence, base.Probabilities = outcome.Confidence, outcome.Probabilities
 	cost := outcome.CostUSD
 	lat := outcome.Latency.Milliseconds()
 	resolver := outcome.Resolver

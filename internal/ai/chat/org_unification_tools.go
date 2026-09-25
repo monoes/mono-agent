@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/monoes/mono-agent/internal/ai"
+	"github.com/monoes/mono-agent/internal/orgdesign"
 )
 
 // Org × workflow unification tools (plan §7.1, §7.7). Each shells back into
@@ -40,7 +41,7 @@ func orgUnificationToolDefs(def func(name, desc string, props map[string]interfa
 		def("set_org_autonomy", "Change who decides an org's pending approvals, questions, and gates: level manual (a human decides everything), mid (rules approve routine items, the decider handles consequential ones, a human handles irreversible ones), or full (the decider handles everything, no human). Without confirm:true this only previews the change.", map[string]interface{}{
 			"org_name":           strParam("The org's name"),
 			"level":              strParam("manual | mid | full"),
-			"decider":            strParam("model | boss | parent"),
+			"decider":            strParam(strings.Join(orgdesign.DeciderKinds, " | ") + " (jev: TypeSafe Jev picks the verdict; the model decider handles questions and anything Jev is unsure of)"),
 			"decider_model":      strParam("Model id for the model decider"),
 			"decider_runtime":    strParam("Runtime for the model decider (e.g. claude)"),
 			"policy":             strParam("Instructions the decider follows (operator text)"),
@@ -184,6 +185,9 @@ func (mt *MonoagentTools) setOrgAutonomy(ctx context.Context, args string) (stri
 	}
 	if err := mt.checkInjectionGate("set_org_autonomy"); err != nil {
 		return "", err
+	}
+	if a.Decider != "" && !orgdesign.ValidDeciderKind(a.Decider) {
+		return "", fmt.Errorf("decider %q must be one of %s", a.Decider, strings.Join(orgdesign.DeciderKinds, ", "))
 	}
 	cli := []string{"autonomy", "set", a.OrgName, "--by", "chat"}
 	if a.Level != "" {

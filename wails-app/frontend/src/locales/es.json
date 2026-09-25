@@ -189,7 +189,9 @@
         "boss": "Jefe",
         "bossHint": "Decide el rol raíz de la organización.",
         "parent": "Matriz",
-        "parentHint": "Decide el iniciador de la organización matriz."
+        "parentHint": "Decide el iniciador de la organización matriz.",
+        "jev": "Jev",
+        "jevHint": "TypeSafe Jev elige el veredicto en una llamada rápida; el modelo decide las preguntas y todo lo que Jev no tenga claro. Necesita una clave de TypeSafe."
       },
       "loading": "Cargando autonomía…",
       "unavailable": "Autonomía no disponible",
