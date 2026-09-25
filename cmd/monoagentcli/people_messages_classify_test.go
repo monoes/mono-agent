@@ -14,12 +14,45 @@ import (
 const richMetadata = `{"_source":{"source":"outlook","via":"service.outlook_mail","account":"me@x.com"},` +
 	`"attachments":[{"filename":"cv.pdf","path":"/files/cv.pdf","size_bytes":12}],"connection_id":"outlook"}`
 
-func TestWithMessageClassificationKeepsMetadata(t *testing.T) {
-	c := messageClassification{Intent: "lead", IntentP: 0.9, ShouldReplyP: 0.8, Model: "m", At: "2026-09-25T00:00:00Z"}
-	out, err := withMessageClassification(richMetadata, c)
+// withMessageClassification returns raw with _classification set to c
+// (test seeding only; production writes go through storeMessageClassification).
+func withMessageClassification(raw string, c messageClassification) (string, error) {
+	md := map[string]json.RawMessage{}
+	if strings.TrimSpace(raw) != "" {
+		if err := json.Unmarshal([]byte(raw), &md); err != nil {
+			return "", err
+		}
+	}
+	blob, err := json.Marshal(c)
 	if err != nil {
+		return "", err
+	}
+	md["_classification"] = blob
+	out, err := json.Marshal(md)
+	return string(out), err
+}
+
+func storeClassification(t *testing.T, dbPath, id string, c messageClassification) error {
+	t.Helper()
+	var err error
+	withJevDB(t, dbPath, func(db *storage.Database) { err = storeMessageClassification(db.DB, id, c) })
+	return err
+}
+
+func TestStoreMessageClassificationKeepsMetadata(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dbPath := newMessagesCLITestDB(t)
+	seedPersonMessage(t, dbPath, "m1", "E1", "inbound", "Bob", "sent", richMetadata)
+	seedPersonMessage(t, dbPath, "m-empty", "E2", "inbound", "Bob", "sent", "")
+	seedPersonMessage(t, dbPath, "m-null", "E3", "inbound", "Bob", "sent", "null")
+	seedPersonMessage(t, dbPath, "m-array", "E4", "inbound", "Bob", "sent", `["not","an","object"]`)
+	seedPersonMessage(t, dbPath, "m-bad", "E5", "inbound", "Bob", "sent", `{broken`)
+
+	c := messageClassification{Intent: "lead", IntentP: 0.9, ShouldReplyP: 0.8, Model: "m", At: "2026-09-25T00:00:00Z"}
+	if err := storeClassification(t, dbPath, "m1", c); err != nil {
 		t.Fatal(err)
 	}
+	out := fetchPersonMessage(t, dbPath, "m1").Metadata
 	md := parseMessageMetadata(out)
 	if md.Source.Source != "outlook" || md.Source.Account != "me@x.com" || len(md.Attachments) != 1 || md.Attachments[0].Path != "/files/cv.pdf" {
 		t.Fatalf("existing metadata lost: %s", out)
@@ -36,16 +69,77 @@ func TestWithMessageClassificationKeepsMetadata(t *testing.T) {
 	// Replacing a classification keeps everything else too.
 	c2 := c
 	c2.Intent = "spam"
-	out2, err := withMessageClassification(out, c2)
-	if err != nil || parseMessageMetadata(out2).Classification.Intent != "spam" || len(parseMessageMetadata(out2).Attachments) != 1 {
-		t.Fatalf("reclassify: %v %s", err, out2)
+	if err := storeClassification(t, dbPath, "m1", c2); err != nil {
+		t.Fatal(err)
+	}
+	if md := parseMessageMetadata(fetchPersonMessage(t, dbPath, "m1").Metadata); md.Classification.Intent != "spam" || len(md.Attachments) != 1 {
+		t.Fatalf("reclassify: %+v", md)
 	}
 
-	if out, err := withMessageClassification("", c); err != nil || parseMessageMetadata(out).Classification == nil {
-		t.Fatalf("empty metadata: %v %s", err, out)
+	for _, id := range []string{"m-empty", "m-null"} {
+		if err := storeClassification(t, dbPath, id, c); err != nil {
+			t.Fatalf("%s: %v", id, err)
+		}
+		if parseMessageMetadata(fetchPersonMessage(t, dbPath, id).Metadata).Classification == nil {
+			t.Fatalf("%s: classification not stored", id)
+		}
 	}
-	if _, err := withMessageClassification(`["not","an","object"]`, c); err == nil {
-		t.Fatal("non-object metadata must be refused, not overwritten")
+	for id, orig := range map[string]string{"m-array": `["not","an","object"]`, "m-bad": `{broken`} {
+		if err := storeClassification(t, dbPath, id, c); err == nil || !strings.Contains(err.Error(), "not a JSON object") {
+			t.Fatalf("%s: non-object metadata must be refused, got %v", id, err)
+		}
+		if got := fetchPersonMessage(t, dbPath, id).Metadata; got != orig {
+			t.Fatalf("%s: refused metadata was changed: %s", id, got)
+		}
+	}
+	if err := storeClassification(t, dbPath, "missing", c); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("missing message: %v", err)
+	}
+}
+
+// A sync that adds keys between candidate selection and the store must not
+// be overwritten by the stale copy read earlier.
+func TestStoreMessageClassificationNoLostUpdate(t *testing.T) {
+	dbPath := seedInboxMessages(t)
+	var cands []inboxCandidate
+	withJevDB(t, dbPath, func(db *storage.Database) {
+		var err error
+		if cands, err = selectInboxCandidates(db.DB, "default", "", 0, 0, false); err != nil {
+			t.Fatal(err)
+		}
+		// Concurrent Outlook sync: rewrites metadata after we read it.
+		if _, err := db.DB.Exec(`UPDATE person_messages SET metadata = json_set(metadata, '$.attachment_error', 'quota') WHERE id = 'm-new'`); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if len(cands) != 1 || cands[0].ID != "m-new" || strings.Contains(cands[0].Metadata, "attachment_error") {
+		t.Fatalf("candidates = %+v", cands)
+	}
+	if err := storeClassification(t, dbPath, "m-new", messageClassification{Intent: "lead", IntentP: 0.9}); err != nil {
+		t.Fatal(err)
+	}
+	out := fetchPersonMessage(t, dbPath, "m-new").Metadata
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(out), &raw); err != nil {
+		t.Fatal(err)
+	}
+	if string(raw["attachment_error"]) != `"quota"` || raw["_classification"] == nil || raw["attachments"] == nil {
+		t.Fatalf("concurrent update lost: %s", out)
+	}
+}
+
+func TestInboxSenderName(t *testing.T) {
+	for _, tc := range []struct{ sender, full, want string }{
+		{"Bob Buyer", "Robert", "Bob Buyer"},
+		{"bob@x.com", "Robert Buyer", "Robert Buyer"},
+		{"bob@x.com", "bob@x.com", ""},
+		{"", "", ""},
+		{`"Bob B" <bob@x.com>`, "", "Bob B"},
+		{"<bob@x.com>", "", ""},
+	} {
+		if got := inboxSenderName(tc.sender, tc.full); got != tc.want {
+			t.Errorf("inboxSenderName(%q, %q) = %q, want %q", tc.sender, tc.full, got, tc.want)
+		}
 	}
 }
 
@@ -105,7 +199,7 @@ func TestMessagesClassifyStoresSkipsAndReclassifies(t *testing.T) {
 	}
 	req := srv.Requests()[0]
 	state := req.State.(map[string]any)
-	if state["sender_name"] != "Bob Buyer" || state["subject"] != "Hello" || state["untrusted_body"] != "orig body" {
+	if len(state) != 3 || state["sender_name"] != "Bob Buyer" || state["untrusted_subject"] != "Hello" || state["untrusted_body"] != "orig body" {
 		t.Fatalf("state = %v", state)
 	}
 	if len(req.Questions) != 2 || req.Questions["intent"].Type != "choice" || req.Questions["should_reply"].Type != "noul" {
