@@ -198,37 +198,43 @@ const profileScript = `() => {
 	out.verified = !!h.querySelector('svg[aria-label="Verified"], [title="Verified"]');
 	const img = h.querySelector('img[alt*="profile picture"]') || h.querySelector('img');
 	out.image = img ? img.getAttribute('src') || '' : '';
-	// Counts: the stats list items ("12 posts", "1,234 followers", "56 following").
-	const exact = (el) => { const t = el && el.querySelector('[title]'); return t ? t.getAttribute('title') : ''; };
-	for (const li of h.querySelectorAll('ul li')) {
-		const t = T(li);
-		const num = exact(li) || ((t.match(/^([\d.,]+\s*[kmb]?)/i) || [])[1] || '');
-		if (/follower/i.test(t)) out.followers = num;
-		else if (/following/i.test(t)) out.following = num;
-		else if (/post/i.test(t)) out.posts = num;
-	}
+	// Counts: read off the rendered header, whatever its layout. The page's
+	// og:description is only a fallback — Instagram serves it stale (the
+	// header of your own profile can say 674 following while og: says 706).
+	const st = headerStats(h);
+	if (st.posts) out.posts = st.posts.num;
+	if (st.followers) out.followers = st.followers.num;
+	if (st.following) out.following = st.following.num;
+	const statEls = Object.values(st).map((x) => x.el);
+	const isStat = (el) => statEls.some((x) => x.contains(el) || el.contains(x));
+	const skip = (el) => !!el.closest('[role="menu"]') || isStat(el);
+	// Website: an outbound link (never the Threads badge next to the name),
+	// else the text of the link button ("example.com and 2 more").
 	for (const a of h.querySelectorAll('a[href]')) {
 		const href = a.getAttribute('href') || '';
-		if (/\/followers\/?$/.test(href) && !out.followers) out.followers = exact(a) || ((T(a).match(/^([\d.,]+\s*[kmb]?)/i) || [])[1] || '');
-		if (/\/following\/?$/.test(href) && !out.following) out.following = exact(a) || ((T(a).match(/^([\d.,]+\s*[kmb]?)/i) || [])[1] || '');
-		if (!out.website && (a.target === '_blank' || /l\.instagram\.com/.test(href)) && !userOf(href)) out.website = href;
+		if (skip(a) || userOf(href) || isThreadsBadge(a)) continue;
+		const d = linkDest(href);
+		if (!d || !/^https?:$/.test(d.protocol)) continue;
+		if (a.target === '_blank' || /(^|\.)l\.instagram\.com$/i.test(new URL(href, location.href).hostname) || !/(^|\.)instagram\.com$/i.test(d.hostname)) { out.website = href; break; }
 	}
-	// Name and bio live in the section after the stats.
-	const secs = Array.from(h.querySelectorAll('section'));
-	const statsSec = secs.find((s) => s.querySelector('ul li'));
-	const infoSec = statsSec ? secs[secs.indexOf(statsSec) + 1] : null;
-	if (infoSec) {
-		const spans = Array.from(infoSec.querySelectorAll('span[dir="auto"]')).filter((s) => !s.closest('button, a, [role="button"]'));
-		const texts = spans.map(T).filter(Boolean);
-		if (texts.length) out.full_name = texts[0];
-		const bio = spans.find((s) => T(s) && T(s) !== out.full_name && !s.querySelector('span[dir="auto"]'));
-		const bioBtn = infoSec.querySelector('[role="button"] span[dir="auto"]');
-		out.bio = bio ? T(bio) : (bioBtn ? T(bioBtn) : '');
-		const cat = infoSec.querySelector('[data-category], div[class*="category"]');
-		if (cat) out.category = T(cat);
-		const wb = infoSec.querySelector('button span[dir="auto"], a[target="_blank"]');
-		if (!out.website && wb) out.website = T(wb);
+	if (!out.website) {
+		const icon = h.querySelector('svg[aria-label="Link icon"]');
+		const b = icon && icon.closest('button, a, [role="button"], [role="link"]');
+		const t = b ? T(b).replace(/\s+and \d+ more$/i, '') : '';
+		if (t) out.website = t;
 	}
+	// Name: the first plain text line of the header that is not the username,
+	// a count, a button or a link. Bio: the (expandable) text behind a
+	// role=button, else the next plain line.
+	const lines = Array.from(h.querySelectorAll('span[dir="auto"]')).filter((x) => !skip(x) &&
+		!x.closest('a, button, [role="button"], [role="link"], h1, h2') && !x.querySelector('span[dir="auto"]'));
+	const texts = lines.map(T).filter((t) => t && t !== out.username && !/^[•·]$/.test(t));
+	if (texts.length) out.full_name = texts[0];
+	const bioBtn = Array.from(h.querySelectorAll('[role="button"] span[dir="auto"]')).find((x) => !skip(x) &&
+		!x.closest('button') && !/^(more|less|\.\.\.)$/i.test(T(x)) && T(x) !== out.full_name && !x.parentElement.closest('[role="button"] span[dir="auto"]'));
+	out.bio = bioBtn ? T(bioBtn) : (texts[1] || '');
+	const cat = h.querySelector('[data-category], div[class*="category"]');
+	if (cat) out.category = T(cat);
 	return out;
 }`
 
@@ -724,28 +730,42 @@ func (b *InstagramBot) FetchFollowersList(ctx context.Context, p browser.PageInt
 		err := evalJS(p, `() => { const d = dialogs().find((x) => x.querySelector('a[href]')); return d ? d.querySelectorAll('a[href]').length : 0; }`, &n)
 		return n > 0, err
 	}
-	m := newMark()
-	var clicked bool
-	if err := evalJS(p, `(kind, m) => {
-		const h = hdr();
-		const re = new RegExp('/' + kind + '/?$');
-		let a = Array.from(h.querySelectorAll('a[href]')).find((x) => re.test(x.getAttribute('href') || ''));
-		if (!a) {
-			const li = Array.from(h.querySelectorAll('ul li')).find((x) => new RegExp('\\b' + kind + '\\b', 'i').test(T(x)));
-			a = li && (li.querySelector('a, [role="button"], button') || null);
+	// clickCount clicks the header's "<n> followers" (or following) count.
+	// Profiles of other accounts may carry a real /<user>/followers/ link;
+	// the 2026 header — always on your own profile — has
+	// <a role="link" href="#"> in plain <div>s, found by its text.
+	clickCount := func() bool {
+		m := newMark()
+		defer unmark(p, m)
+		var found bool
+		if err := evalJS(p, `(kind, m) => {
+			const h = hdr();
+			if (!h) return false;
+			const re = new RegExp('/' + kind + '/?$');
+			let a = Array.from(h.querySelectorAll('a[href]')).find((x) => re.test(x.getAttribute('href') || ''));
+			if (!a) { const s = headerStats(h)[kind]; a = s ? s.target : null; }
+			if (a) mark(a, m);
+			return !!a;
+		}`, &found, kind, m); err != nil || !found {
+			return false
 		}
-		if (a) mark(a, m);
-		return !!a;
-	}`, &clicked, kind, m); err == nil && clicked {
-		_ = clickMarked(p, m)
+		return clickMarked(p, m) == nil
 	}
-	if !clicked || poll(ctx, findTimeout, dialogOpen) != nil {
-		// The /<user>/followers/ route opens the same dialog.
+	opened := clickCount() && poll(ctx, findTimeout, dialogOpen) == nil
+	if !opened {
+		// The /<user>/followers/ route opens the dialog on some profiles —
+		// not on your own; there, click the count again on the reloaded page.
 		if err := b.open(ctx, p, profileURL(username)+kind+"/"); err != nil {
 			return nil, err
 		}
-		if err := poll(ctx, findTimeout, dialogOpen); err != nil {
-			return nil, fmt.Errorf("instagram: %s dialog did not open on %s's profile: %w", kind, username, err)
+		opened = poll(ctx, findTimeout, dialogOpen) == nil
+		if !opened {
+			if _, err := waitProfileHeader(ctx, p); err == nil && clickCount() {
+				opened = poll(ctx, findTimeout, dialogOpen) == nil
+			}
+		}
+		if !opened {
+			return nil, fmt.Errorf("instagram: %s dialog did not open on %s's profile (no clickable %s count in the header, and the /%s/ route did not open it)", kind, username, kind, kind)
 		}
 	}
 	var results []map[string]interface{}

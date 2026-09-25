@@ -603,27 +603,47 @@ func (b *InstagramBot) ScrapePostData(ctx context.Context, p browser.PageInterfa
 		data = nil
 		if err := evalJS(p, `() => {
 			const d = {};
-			const meta = (p) => { const m = document.querySelector('meta[property="' + p + '"]'); return m ? m.getAttribute('content') || '' : ''; };
-			const ref = postRef(location.href) || postRef(meta('og:url'));
+			const meta = (p) => { const m = document.querySelector('meta[property="' + p + '"]') || document.querySelector('meta[name="' + p + '"]'); return m ? m.getAttribute('content') || '' : ''; };
+			const ogRef = postRef(meta('og:url'));
+			const ref = postRef(location.href) || ogRef;
 			d.shortcode = ref ? ref.shortcode : '';
 			d.post_url = ref ? 'https://www.instagram.com/' + (ref.kind === 'reel' ? 'reel' : 'p') + '/' + ref.shortcode + '/' : location.href;
-			// Author: the URL (/<user>/p/<code>/), else the post header link.
-			let author = ref && ref.author;
+			const sc = d.shortcode;
+			// The post as Instagram embeds it in the page: the most reliable
+			// source for author, caption, type and media, logged in or out.
+			const em = embeddedMedia(sc);
+			const cs = new Set(comments().map((c) => c.body));
+			const inComment = (el) => Array.from(cs).some((b) => b.contains(el));
+			// otherPost: el belongs to a link to a different post (the
+			// "More posts from …" grid under the post).
+			const otherPost = (el) => { const a = el.closest('a[href]'); const r = a && postRef(a.getAttribute('href')); return !!(r && r.shortcode !== sc); };
+			// Author: the URL (/<user>/p/<code>/) or og:url, the embedded post,
+			// the post header link, else "<user> on <date>:" in og:description.
+			// Never an @mention of the caption.
+			let author = (ref && ref.author) || (ogRef && ogRef.author) ||
+				(em && ((em.user && em.user.username) || (em.owner && em.owner.username))) || '';
 			let header = null;
 			for (const h of document.querySelectorAll('main header, article header, header')) {
 				const a = Array.from(h.querySelectorAll('a[href]')).find((x) => userOf(x.getAttribute('href')));
 				if (a) { header = h; if (!author) author = userOf(a.getAttribute('href')); break; }
 			}
-			if (!author) { const m = meta('og:title').match(/@([A-Za-z0-9._]{1,30})/); if (m) author = m[1]; }
+			if (!author) { const m = meta('og:description').match(/\s-\s([A-Za-z0-9._]{1,30}) on [^:"]*:/); if (m) author = m[1]; }
+			if (!author) { const m = meta('twitter:title').match(/\(@([A-Za-z0-9._]{1,30})\)/); if (m) author = m[1]; }
 			d.author_username = author || '';
 			const bars = postBars();
-			d.rendered = !!(bars.length || header);
-			// Caption: the first entry of the comment list that has no Reply button
-			// and is written by the author; else og:description's quoted text.
+			d.rendered = !!(bars.length || header || em);
+			// Caption: the embedded post's, else the rendered caption (an <h1>,
+			// or the author's row — author · time, then the text — that is not
+			// a comment), else og:description's / og:title's quoted text.
+			// Caption text keeps its line breaks (<br>): innerText, not T.
+			const ctext = (el) => (el.innerText || '').replace(/[ \t\u00a0]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim() || T(el);
 			let caption = '';
-			const cs = new Set(comments().map((c) => c.body));
-			const h1 = Array.from(document.querySelectorAll('main h1, article h1')).find((h) => T(h) && !Array.from(cs).some((b) => b.contains(h)));
-			if (h1) caption = T(h1);
+			if (em) {
+				const e2 = em.edge_media_to_caption && em.edge_media_to_caption.edges && em.edge_media_to_caption.edges[0];
+				caption = (em.caption && em.caption.text) || (e2 && e2.node && e2.node.text) || '';
+			}
+			const h1 = Array.from(document.querySelectorAll('main h1, article h1')).find((h) => T(h) && !inComment(h) && !h.closest('header'));
+			if (!caption && h1) caption = ctext(h1);
 			if (!caption) {
 				for (const li of document.querySelectorAll('ul li, ul > div')) {
 					if (Array.from(cs).some((b) => li.contains(b) || b.contains(li))) continue;
@@ -634,10 +654,27 @@ func (b *InstagramBot) ScrapePostData(ctx context.Context, p browser.PageInterfa
 					if (caption) break;
 				}
 			}
-			if (!caption) { const m = meta('og:description').match(/:\s*"([\s\S]*)"\s*$/); if (m) caption = m[1]; }
+			if (!caption && author) {
+				const mine = Array.from(document.querySelectorAll('main a[href], article a[href]')).filter((a) =>
+					userOf(a.getAttribute('href')).toLowerCase() === author.toLowerCase() && !inComment(a) && !otherPost(a));
+				for (const a of mine) {
+					let blk = a.parentElement;
+					for (let i = 0; i < 8 && blk && !blk.querySelector('time'); i++) blk = blk.parentElement;
+					if (!blk || inComment(blk) || Array.from(cs).some((b) => blk.contains(b))) continue;
+					const texts = Array.from(blk.querySelectorAll('span, h1, div[dir="auto"]')).filter((s) =>
+						!s.closest('a[href], time, button, [role="button"]') && !s.querySelector('time') && !s.contains(a))
+						.map(ctext).filter((t) => t && t.toLowerCase() !== author.toLowerCase() && !REL_TIME.test(t) && !/^(edited|verified|follow|•|·)$/i.test(t));
+					const best = texts.sort((x, y) => y.length - x.length)[0];
+					if (best) { caption = best; break; }
+				}
+			}
+			if (!caption) {
+				const m = meta('og:description').match(/:\s*"([\s\S]*)"\s*\.?\s*$/) || meta('og:title').match(/:\s*"([\s\S]*)"\s*\.?\s*$/);
+				if (m) caption = m[1];
+			}
 			d.caption = caption;
 			d.hashtags = Array.from(new Set((caption.match(/#[\p{L}\p{N}_]+/gu) || [])));
-			d.mentions = Array.from(new Set((caption.match(/@[A-Za-z0-9._]+/g) || []).map((x) => x.slice(1))));
+			d.mentions = Array.from(new Set((caption.match(/@[A-Za-z0-9._]+/g) || []).map((x) => x.slice(1).replace(/\.+$/, '')).filter(Boolean)));
 			// Likes: "1,234 likes" / "Liked by x and 1,233 others" in the post's sections.
 			let likes = '';
 			for (const s of document.querySelectorAll('section')) {
@@ -648,11 +685,13 @@ func (b *InstagramBot) ScrapePostData(ctx context.Context, p browser.PageInterfa
 				m = t.match(/liked by \S+ and ([\d,]+) others?/i);
 				if (m) { likes = String(parseInt(m[1].replace(/,/g, ''), 10) + 1); break; }
 			}
+			if (em && typeof em.like_count === 'number' && em.like_count > 0) likes = String(em.like_count);
 			if (!likes) { const m = meta('og:description').match(/^([\d,.]+[KM]?) likes?/i); if (m) likes = m[1]; }
 			d.likes_count = likes;
 			let cc = '';
 			const vm = VT().match(/view all ([\d,]+) comments/i);
 			if (vm) cc = vm[1];
+			if (em && typeof em.comment_count === 'number' && em.comment_count > 0) cc = String(em.comment_count);
 			if (!cc) { const m = meta('og:description').match(/([\d,.]+[KM]?) comments?/i); if (m) cc = m[1]; }
 			d.comments_count = cc;
 			d.comments_loaded = comments().length;
@@ -663,26 +702,42 @@ func (b *InstagramBot) ScrapePostData(ctx context.Context, p browser.PageInterfa
 				const a = t.closest('a[href]');
 				let path = '';
 				try { path = a ? new URL(a.getAttribute('href'), location.href).pathname : ''; } catch (e) {}
-				if (/^\/(?:[^/]+\/)?(p|reel|tv)\/[^/]+\/?$/.test(path) && !Array.from(cs).some((b) => b.contains(t))) { time = t; break; }
+				if (/^\/(?:[^/]+\/)?(p|reel|tv)\/[^/]+\/?$/.test(path) && !inComment(t)) { time = t; break; }
 			}
-			if (!time) time = Array.from(document.querySelectorAll('time[datetime]')).find((t) => !Array.from(cs).some((b) => b.contains(t))) || null;
+			if (!time) time = Array.from(document.querySelectorAll('time[datetime]')).find((t) => !inComment(t)) || null;
 			d.post_date = time ? time.getAttribute('datetime') : '';
-			// Media: images/videos in the post body (not avatars or comment images).
+			if (!d.post_date && em && em.taken_at) d.post_date = new Date(em.taken_at * 1000).toISOString();
+			// Media: the embedded post's own items; else the images/videos of the
+			// post body — not avatars, comment images, the "more posts" grid, or
+			// blob: stream URLs of the video player.
 			const main = document.querySelector('main') || document.body;
-			const media = [];
+			const own = (el) => !el.closest('header') && !inComment(el) && !otherPost(el) &&
+				!(el.closest('a[href]') && userOf(el.closest('a[href]').getAttribute('href')));
+			const dom = [];
 			for (const img of main.querySelectorAll('img[src]')) {
-				if (img.closest('header') || img.closest('li') && Array.from(cs).some((b) => b.contains(img))) continue;
+				if (!own(img)) continue;
 				const alt = img.getAttribute('alt') || '';
 				if (/profile picture/i.test(alt)) continue;
+				const src = img.getAttribute('src') || '';
+				if (/^(blob|data):/.test(src)) continue;
 				const w = img.naturalWidth || +img.getAttribute('width') || img.getBoundingClientRect().width;
 				if (w && w < 150) continue;
-				media.push(img.getAttribute('src'));
+				dom.push(src);
 			}
-			const vids = Array.from(main.querySelectorAll('video'));
-			for (const v of vids) { const s = v.getAttribute('src') || (v.querySelector('source') || { getAttribute: () => '' }).getAttribute('src'); if (s) media.push(s); }
-			d.media_urls = Array.from(new Set(media));
-			const carousel = main.querySelector('button[aria-label="Next"], [role="button"][aria-label="Next"]') && !main.querySelector('header [aria-label="Next"]');
-			d.post_type = carousel ? 'carousel' : ((ref && ref.kind === 'reel') ? 'reel' : (vids.length ? 'video' : 'image'));
+			const vids = Array.from(main.querySelectorAll('video')).filter(own);
+			for (const v of vids) {
+				const s = v.getAttribute('src') || (v.querySelector('source') || { getAttribute: () => '' }).getAttribute('src') || '';
+				const u = s && !/^blob:/.test(s) ? s : (v.getAttribute('poster') || '');
+				if (u) dom.push(u);
+			}
+			const emMedia = em ? mediaURLs(em) : [];
+			d.media_urls = Array.from(new Set(emMedia.length ? emMedia : dom));
+			// Type: the embedded post's, else the page — a carousel has a Next
+			// control in the media (not the story-highlight tray) or several
+			// media items; /reel/ is a reel.
+			const next = Array.from(main.querySelectorAll('button[aria-label="Next"], [role="button"][aria-label="Next"]')).some((b) => own(b) && !b.closest('[role="menu"]'));
+			const domKind = (next || dom.length > 1) ? 'carousel' : ((ref && ref.kind === 'reel') ? 'reel' : (vids.length ? 'video' : 'image'));
+			d.post_type = (em && mediaKind(em)) || domKind;
 			d.is_liked = !!(bars.length && bars[0].likes.some((s) => lbl(s) === 'Unlike'));
 			return d;
 		}`, &data); err != nil {
