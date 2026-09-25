@@ -42,12 +42,15 @@ import (
 // e.g. "activity-7123456789" or "activity:7123456789"
 var reLinkedInActivity = regexp.MustCompile(`activity[-:](\d+)`)
 
-// isBrowserNodeType returns true for platform.action social/browser node types.
-func isBrowserNodeType(t string) bool {
-	return strings.HasPrefix(t, "instagram.") || strings.HasPrefix(t, "linkedin.") ||
-		strings.HasPrefix(t, "x.") || strings.HasPrefix(t, "tiktok.") ||
-		strings.HasPrefix(t, "gemini.") || strings.HasPrefix(t, "hackernews.") ||
-		strings.HasPrefix(t, "producthunt.") || strings.HasPrefix(t, "browser.")
+// needsBrowserSession reports whether a node type drives the browser and so
+// needs the extension session provider: every automation action (built-in
+// or installed package, all BrowserNode) and the browser.* nodes.
+func needsBrowserSession(nodeType string, factory workflow.NodeFactory) bool {
+	if strings.HasPrefix(nodeType, "browser.") {
+		return true
+	}
+	_, ok := factory().(*nodes.BrowserNode)
+	return ok
 }
 
 // nodeTypeToPlatform maps a node type to its connections-registry platform ID.
@@ -583,7 +586,7 @@ platform name to override. Token refresh is handled automatically for OAuth conn
 			_ = logger
 
 			// Set up browser session provider, bot registry, and config manager for social/browser nodes.
-			if isBrowserNodeType(nodeType) {
+			if needsBrowserSession(nodeType, factory) {
 				// Chrome extension only — no Rod/Chromium fallback, sharing
 				// another local process's connection when one already exists.
 				extLogger := zerolog.New(os.Stderr).With().Timestamp().Str("component", "extension").Logger()

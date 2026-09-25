@@ -10,6 +10,7 @@ import (
 
 	"github.com/monoes/mono-agent/internal/action"
 	"github.com/monoes/mono-agent/internal/automation"
+	"github.com/monoes/mono-agent/internal/nodes"
 )
 
 func writeTestFile(t *testing.T, path, body string) {
@@ -121,6 +122,49 @@ func TestNeedsAutomations(t *testing.T) {
 		}
 		if got := needsAutomations(cmd); got != c.want {
 			t.Errorf("needsAutomations(%v) = %v, want %v", c.args, got, c.want)
+		}
+	}
+}
+
+// TestNeedsBrowserSession: `node run` sets up the browser for every
+// automation action, including an installed package that isn't a built-in.
+func TestNeedsBrowserSession(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	reg, err := nodes.BootAutomations(filepath.Join(home, ".monoagent"))
+	t.Cleanup(func() { action.SetDefSource(nil) })
+	if err != nil {
+		t.Fatalf("BootAutomations: %v", err)
+	}
+	src := filepath.Join(t.TempDir(), "acme-crm")
+	writeTestFile(t, filepath.Join(src, "automation.json"), `{
+	  "schema": "monoagent.automation/v1",
+	  "id": "acme-crm", "name": "Acme CRM", "version": "1.0.0",
+	  "site": {"startUrl": "https://app.acme-crm.com/", "domains": ["app.acme-crm.com"]},
+	  "permissions": {"steps": ["navigate"], "scripts": [], "downloads": false},
+	  "actions": ["list_deals"],
+	  "policy": {"tier": "standard"}
+	}`)
+	writeTestFile(t, filepath.Join(src, "actions", "list_deals.json"), `{
+	  "actionType": "list_deals", "automation": "acme-crm", "sideEffects": "read",
+	  "steps": [{"id": "open", "type": "navigate", "url": "https://app.acme-crm.com/deals"}]
+	}`)
+	if res, err := reg.Install(src, automation.InstallOptions{Source: automation.SourceLocal}); err != nil || !res.Installed {
+		t.Fatalf("Install: %v %+v", err, res)
+	}
+
+	registry := buildNodeRegistry(false, nil)
+	for nt, want := range map[string]bool{
+		"acme-crm.list_deals":  true,
+		"gemini.generate_text": true,
+		"core.if":              false,
+	} {
+		f, ok := registry.Get(nt)
+		if !ok {
+			t.Fatalf("%s not registered", nt)
+		}
+		if got := needsBrowserSession(nt, f); got != want {
+			t.Errorf("needsBrowserSession(%s) = %v, want %v", nt, got, want)
 		}
 	}
 }
