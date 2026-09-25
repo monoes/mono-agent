@@ -47,6 +47,19 @@ describe('HealthTab re-record', () => {
     expect(await screen.findByText(/Saved 1 selector candidate for contact.email_input in the package/)).toBeInTheDocument()
   })
 
+  it('greys stale rows with a note and no Re-record', async () => {
+    api.doctorAutomations.mockResolvedValue({ automations: [{ id: 'acme', issues: [], selectors: [
+      { key: 'deal.open_button', ok: 2, fail: 5, status: 'broken', stale: true },
+      { key: 'old.key', ok: 3, fail: 0, status: 'stale' },
+    ] }] })
+    render(<HealthTab automationId="acme" />)
+    await screen.findByText('deal.open_button')
+    expect(screen.getAllByText('no longer in this package')).toHaveLength(2)
+    expect(screen.queryByRole('button', { name: /Re-record/ })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/More for/)).not.toBeInTheDocument()
+    expect(screen.getByText(/2 selectors tracked, 0 need attention/)).toBeInTheDocument()
+  })
+
   it('shows cancelled, timeout and bridge errors inline without refreshing', async () => {
     api.doctorAutomations.mockResolvedValue(doctor)
     for (const err of ['cancelled', 'timeout', 'browser bridge not connected']) {

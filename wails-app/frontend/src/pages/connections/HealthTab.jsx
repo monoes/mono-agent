@@ -7,7 +7,10 @@ import { api } from '../../services/api.js'
 import { Chip, ErrorBox, OkBox, Busy, body, label, mono, muted, panel, fmtShort } from './ui.jsx'
 import { IssueList } from './OverviewTab.jsx'
 
-const STATUS_COLORS = { ok: 'var(--green-neon)', decaying: 'var(--yellow)', broken: 'var(--red)' }
+const STATUS_COLORS = { ok: 'var(--green-neon)', decaying: 'var(--yellow)', broken: 'var(--red)', stale: 'var(--text-dim)' }
+
+// isStale: health history for a key the installed package no longer has.
+const isStale = (s) => s.stale === true || s.status === 'stale'
 const WHERE_TEXT = { package: 'in the package', overlay: 'in your local overlay (the package itself is unchanged)' }
 const cell = { ...muted, padding: '6px 10px' }
 
@@ -15,6 +18,7 @@ const cell = { ...muted, padding: '6px 10px' }
 // others keep it behind a small menu so a healthy row stays quiet.
 function RowAction({ s, busy, onRerecord }) {
   const [open, setOpen] = useState(false)
+  if (isStale(s)) return <span style={{ ...muted, fontSize: 10, whiteSpace: 'nowrap' }}>no longer in this package</span>
   if (s.status !== 'ok') {
     return (
       <button className="btn btn-secondary btn-sm" disabled={busy} onClick={() => onRerecord(s.key)} style={{ gap: 4, padding: '2px 8px' }}>
@@ -67,7 +71,7 @@ export default function HealthTab({ automationId }) {
 
   const entry = (res?.automations || []).find(a => a.id === automationId) || (res?.automations || [])[0]
   const selectors = entry?.selectors || []
-  const bad = selectors.filter(s => s.status !== 'ok').length
+  const bad = selectors.filter(s => s.status !== 'ok' && !isStale(s)).length
 
   return (
     <>
@@ -98,9 +102,9 @@ export default function HealthTab({ automationId }) {
             </thead>
             <tbody>
               {selectors.map(s => (
-                <tr key={s.key} style={{ borderTop: '1px solid var(--border-dim)' }}>
+                <tr key={s.key} style={{ borderTop: '1px solid var(--border-dim)', opacity: isStale(s) ? 0.5 : 1 }}>
                   <td style={{ ...mono, fontSize: 10.5, color: 'var(--text)', padding: '6px 10px' }}>{s.key}</td>
-                  <td style={{ padding: '6px 10px' }}><Chip color={STATUS_COLORS[s.status] || 'var(--text-muted)'}>{s.status}</Chip></td>
+                  <td style={{ padding: '6px 10px' }}><Chip color={STATUS_COLORS[isStale(s) ? 'stale' : s.status] || 'var(--text-muted)'}>{isStale(s) ? 'stale' : s.status}</Chip></td>
                   <td style={cell}>{s.ok ?? 0}</td>
                   <td style={{ ...cell, color: s.fail ? 'var(--red)' : 'var(--text-muted)' }}>{s.fail ?? 0}</td>
                   <td style={cell}>{s.healed ?? 0}</td>
