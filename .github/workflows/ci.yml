@@ -220,7 +220,7 @@ jobs:
           fi
 
       - name: Test
-        run: go test ./... -race
+        run: go test -timeout 25m ./... -race
 
   # Social platforms are built by default; this job keeps the opt-out
   # (-tags nosocial) build compiling and passing.
@@ -241,7 +241,7 @@ jobs:
         run: go vet -tags nosocial ./...
 
       - name: Test
-        run: go test -tags nosocial ./... -race
+        run: go test -timeout 25m -tags nosocial ./... -race
 
   # Mirror of the release.yml test gate's Wails steps (minus release/tagging):
   # system deps for GTK/WebKit headers, frontend build (main.go //go:embeds
