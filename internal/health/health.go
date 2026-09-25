@@ -206,6 +206,12 @@ type Env struct {
 	AIProviders       func(ctx context.Context) ([]ProviderInfo, error)
 	TestAIProvider    func(ctx context.Context, id string) error
 	LoginSessions     func(ctx context.Context) ([]SessionInfo, error)
+
+	// TypeSafe Jev: where the active profile's key comes from (config,
+	// vault or env; an error when there is none), and a models listing
+	// that proves the API accepts it (network).
+	JevKey    func(ctx context.Context) (source string, err error)
+	JevModels func(ctx context.Context) error
 }
 
 // ConnectionInfo is a saved connection, without any secret.

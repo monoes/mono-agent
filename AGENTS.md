@@ -71,7 +71,8 @@ Groups: `core` (data folder, database, profile, vault, PATH, disk), `monomind`
 (Node.js, monomind install/version/features, profile `monomind init`) and
 `runtimes` (one row per AI agent runtime), `browser` (browser, extension,
 bridge, pairing), `services` (daemon, start at login) and `integrations`
-(Claude Code skills, MCP registration), `accounts` (platform login expiry;
+(Claude Code skills, MCP registration, TypeSafe Jev key; `jev.api` runs
+on demand with `--deep`), `accounts` (platform login expiry;
 with `--deep` also live tests of saved connections and AI connections
 (legacy) — a failing OAuth connection with a refresh token gets a silent
 refresh fix when the service refused its credentials (401/403) or the token
@@ -487,6 +488,42 @@ recipe for piping the passphrase via stdin. It is still weaker than a real
 keychain — any process running as the same user, or anything with read
 *and* the passphrase, can unlock it — so treat it as a CI/container escape
 hatch, not a default. Without the env var, `secret add` fails closed.
+
+## TypeSafe Jev (decisions only)
+
+[TypeSafe Jev](https://docs.typesafe.ai/api) answers typed questions about a
+JSON state — pick one of N options, yes/no, or a level on a rubric — with
+probabilities, in one ~100–300 ms request. It **never generates text**.
+
+- **Doctrine exception.** monoagent otherwise has no HTTP AI providers
+  (generation goes to local agents via monomind). Jev is admitted only as a
+  non-generative decision provider: it may pick among options the code
+  enumerates, never write field values, rationales or answers. Gates compare
+  the top option's probability with a per-surface threshold; below it the
+  surface does exactly what it did without Jev.
+- **Opt-in per surface, per profile.** Every implicit surface
+  (`action_fallback`, `hil`, `people_review`, `capture`, `inbox`,
+  `people_links`, `asks`, `retry`) is off until enabled. `enable` prints what
+  that surface sends to TypeSafe and asks (or needs `--yes` when stdin is not
+  a terminal). Workflow nodes that use Jev (e.g. `browser.jev`) opt in by
+  being used; the org decider opts in through its own autonomy config.
+- **Key**: vault entry `typesafe` for the profile, else `TYPESAFE_API_KEY`
+  (`TYPESAFE_DEFAULT_MODEL` / `TYPESAFE_BASE_URL` override the model and
+  host). `doctor` reports it as `jev.key`.
+
+```bash
+printf '%s' "$KEY" | monoagentcli secret add --kind secret --name typesafe
+monoagentcli --json jev status               # key source (never the key), model, surfaces + thresholds
+monoagentcli jev enable hil [--threshold 0.9] [--yes]
+monoagentcli jev disable hil                 # today's behaviour returns immediately
+monoagentcli --json jev usage --since 7d     # calls, failures, input tokens, est. USD by surface
+monoagentcli jev ask --request req.json      # raw {state, questions, model?}; recorded as surface "cli"
+monoagentcli jev models
+```
+
+Every call is recorded in `jev_usage` (counts only, no content). **Tests
+never reach the network**: use `internal/jev/jevtest` (scripted fake
+server); real-API tests are opt-in via env like `browserjev/e2e_test.go`.
 
 ## Profiles
 
