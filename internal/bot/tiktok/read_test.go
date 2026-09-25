@@ -411,3 +411,23 @@ func TestSearchVideosDescriptionIsTheCaption(t *testing.T) {
 		}
 	}
 }
+
+// Live bugs: the search card's "unique id" element shows the display name,
+// and the thumbnail is a 1×1 data: GIF until it lazy-loads. The author must
+// be the handle from the video URL, and the thumbnail the real image URL.
+func TestSearchVideosHandleAndRealThumbnail(t *testing.T) {
+	p := newPage(t)
+	res, err := call(t, &TikTokBot{}, p, "search_videos", "coffee", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, v := range resultList(t, res) {
+		if v["author"] != fmt.Sprintf("fake_maker_%d", i) || v["author_name"] != fmt.Sprintf("Fake Maker %d", i) {
+			t.Fatalf("result %d author = %v / %v", i, v["author"], v["author_name"])
+		}
+		th, _ := v["thumbnail"].(string)
+		if strings.HasPrefix(th, "data:") || !strings.Contains(th, "/thumb/") {
+			t.Fatalf("result %d thumbnail = %q, want the real image URL", i, th)
+		}
+	}
+}

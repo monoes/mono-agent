@@ -9,14 +9,13 @@
     "supportsRetry": true
   },
   "inputs": {
-    "required": [
+    "optional": [
       {
         "name": "sourceType",
         "type": "string",
-        "description": "Source type: 'followers', 'following', or profile URL"
-      }
-    ],
-    "optional": [
+        "description": "Source type: 'followers', 'following', or profile URL",
+        "default": "FOLLOWERS_FETCH"
+      },
       {
         "name": "maxResultsCount",
         "type": "number",

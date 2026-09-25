@@ -9,10 +9,8 @@
     "supportsRetry": true
   },
   "inputs": {
-    "required": [
-      "sourceType"
-    ],
     "optional": [
+      "sourceType",
       "maxResultsCount",
       "listId",
       "profileUrl"

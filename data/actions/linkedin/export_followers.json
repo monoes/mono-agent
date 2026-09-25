@@ -9,7 +9,7 @@
     "supportsRetry": true
   },
   "inputs": {
-    "required": [
+    "optional": [
       {
         "name": "sourceType",
         "type": "select",
@@ -17,10 +17,9 @@
           "FOLLOWERS_FETCH",
           "FOLLOWING_FETCH"
         ],
-        "description": "Followers or following (LinkedIn only shows these for your own account)"
-      }
-    ],
-    "optional": [
+        "description": "Followers or following (LinkedIn only shows these for your own account)",
+        "default": "FOLLOWERS_FETCH"
+      },
       {
         "name": "maxResultsCount",
         "type": "number",

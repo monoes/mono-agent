@@ -65,7 +65,7 @@ func scrollWindow(page browser.PageInterface) error {
 // Profile videos
 // ---------------------------------------------------------------------------
 
-const jsUserVideos = `
+const jsUserVideos = jsRealImageSrc + `
 const grid = document.querySelector('[data-e2e="user-post-item-list"]');
 const items = [...document.querySelectorAll('[data-e2e="user-post-item"]')].map(el => {
   const a = el.querySelector('a[href*="/video/"],a[href*="/photo/"]') || el.querySelector('a[href]');
@@ -76,7 +76,7 @@ const items = [...document.querySelectorAll('[data-e2e="user-post-item"]')].map(
   return {
     url: href,
     id: m ? m[1] : '',
-    thumbnail: img ? (img.currentSrc || img.src || '') : '',
+    thumbnail: realImageSrc(img),
     description: img ? altCaption(img.getAttribute('alt')) : '',
     views: norm(views && (views.innerText || views.textContent)),
   };
@@ -368,7 +368,7 @@ func (b *TikTokBot) getProfileData(ctx context.Context, page browser.PageInterfa
 // Search
 // ---------------------------------------------------------------------------
 
-const jsSearchVideos = `
+const jsSearchVideos = jsRealImageSrc + `
 const cardSel = '[data-e2e="search_video-item"],[data-e2e="search_top-item"],[data-e2e="search-card-item"]';
 const out = [], seen = new Set();
 for (const a of document.querySelectorAll('a[href*="/video/"]')) {
@@ -389,13 +389,18 @@ for (const a of document.querySelectorAll('a[href*="/video/"]')) {
     desc.querySelectorAll('[data-e2e="search-card-info-container"],[data-e2e*="user"],[data-e2e*="like"],a[href*="/@"]').forEach(e => e.remove());
   }
   const author = pick('[data-e2e="search-card-user-unique-id"]');
+  const authorText = norm(author && (author.innerText || author.textContent));
+  // The video URL (/@handle/video/id) is the authoritative handle; the card's
+  // "unique id" element shows the display name on the current layout.
+  const handle = userFromHref(href);
   const img = card.querySelector('img');
   out.push({
     url: href,
     id: m ? m[1] : '',
-    author: norm(author && (author.innerText || author.textContent)) || userFromHref(href),
+    author: handle || authorText,
+    author_name: authorText && authorText !== handle ? authorText : '',
     description: norm(desc && (desc.innerText || desc.textContent)) || (img ? altCaption(img.getAttribute('alt')) : ''),
-    thumbnail: img ? (img.currentSrc || img.src || '') : '',
+    thumbnail: realImageSrc(img),
   });
 }
 return out;
@@ -546,3 +551,17 @@ if (box) { box.scrollTop = box.scrollHeight; box.dispatchEvent(new Event('scroll
 return true;`, &ok)
 	})
 }
+
+// jsRealImageSrc defines realImageSrc(img): the image's real URL, skipping
+// lazy-load placeholders (data: URIs such as the 1×1 transparent GIF TikTok
+// renders before the image loads) in favour of data-src/srcset; "" when only
+// a placeholder is available.
+const jsRealImageSrc = `
+function realImageSrc(img) {
+  if (!img) return '';
+  const cands = [img.currentSrc, img.src, img.getAttribute('data-src'),
+    (img.getAttribute('srcset') || '').split(',')[0].trim().split(' ')[0]];
+  for (const c of cands) if (c && !c.startsWith('data:') && !c.startsWith('blob:')) return c;
+  return '';
+}
+`

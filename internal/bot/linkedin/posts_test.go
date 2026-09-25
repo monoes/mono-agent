@@ -89,10 +89,10 @@ func TestListUserPosts(t *testing.T) {
 			author, authorURL string
 			likes, comments   int
 		}{
-			{"Rhea Partner", "https://www.linkedin.com/in/rhea-partner-test", 5, 0},             // collaboration: header links the owner
-			{"Acme Widgets", "https://www.linkedin.com/company/acme-widgets-test/posts", 15, 8}, // repost of a company post
-			{"Owen Owner", "https://www.linkedin.com/in/owen-owner-test", 7, 0},                 // "You and 6 others", no fallback number
-			{"Owen Owner", "https://www.linkedin.com/in/owen-owner-test", 29, 2},                // plain reaction count
+			{"Rhea Partner", "https://www.linkedin.com/in/rhea-partner-test", 5, 0},       // collaboration: header links the owner
+			{"Acme Widgets", "https://www.linkedin.com/company/acme-widgets-test", 15, 8}, // repost of a company post
+			{"Owen Owner", "https://www.linkedin.com/in/owen-owner-test", 7, 0},           // "You and 6 others", no fallback number
+			{"Owen Owner", "https://www.linkedin.com/in/owen-owner-test", 29, 2},          // plain reaction count
 		}
 		for i, w := range want {
 			got := posts[i]

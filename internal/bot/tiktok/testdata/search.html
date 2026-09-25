@@ -32,10 +32,10 @@
       // ?q=altonly renders no caption element, leaving only the alt.
       const w = document.createElement('div');
       w.className = 'css-2-DivItemContainerForSearch';
-      w.innerHTML = '<div data-e2e="search_video-item"><a href="https://www.tiktok.com/@' + user + '/video/' + id + '?is_from_webapp=1"><img alt="' + cap + ' created by Fake Maker with Fake Maker\'s original sound" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></a></div>' +
+      w.innerHTML = '<div data-e2e="search_video-item"><a href="https://www.tiktok.com/@' + user + '/video/' + id + '?is_from_webapp=1"><img alt="' + cap + ' created by Fake Maker with Fake Maker\'s original sound" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" data-src="https://p16-sign.example.test/thumb/' + id + '.jpeg"></a></div>' +
         '<div data-e2e="search-card-desc">' +
           (q === 'altonly' ? '' : '<div data-e2e="search-card-video-caption"><span data-e2e="new-desc-span">' + cap + '</span></div>') +
-          '<div data-e2e="search-card-info-container"><p data-e2e="search-card-user-unique-id">' + user + '</p></div></div>';
+          '<div data-e2e="search-card-info-container"><p data-e2e="search-card-user-unique-id">' + (q === 'altonly' ? user : 'Fake Maker ' + shown) + '</p></div></div>';
       grid.appendChild(w);
     }
   };

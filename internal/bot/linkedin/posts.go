@@ -139,7 +139,7 @@ func (r rawPost) item() map[string]interface{} {
 		"shortcode":      r.ID,
 		"text_preview":   r.Text,
 		"author":         r.Author,
-		"author_url":     r.AuthorURL,
+		"author_url":     canonicalEntityURL(r.AuthorURL),
 		"timestamp":      r.Timestamp,
 		"likes_count":    r.Likes,
 		"comments_count": r.Comments,
@@ -413,7 +413,7 @@ func (b *LinkedInBot) ListPostComments(ctx context.Context, page browser.PageInt
 			"id":          c.ID,
 			"post_url":    postURL,
 			"author":      c.Author,
-			"author_url":  c.AuthorURL,
+			"author_url":  canonicalEntityURL(c.AuthorURL),
 			"headline":    c.Headline,
 			"text":        c.Text,
 			"timestamp":   c.Timestamp,
@@ -434,4 +434,26 @@ func waitForPost(ctx context.Context, page browser.PageInterface) error {
 		return fmt.Errorf("linkedin: no post rendered on the page: %w", err)
 	}
 	return nil
+}
+
+// canonicalEntityURL trims a LinkedIn member or company link to the entity's
+// root: author links on company posts point at /company/<slug>/posts (or
+// /about, /life …), which is a tab, not the company.
+func canonicalEntityURL(u string) string {
+	for _, kind := range []string{"/company/", "/school/", "/showcase/", "/in/"} {
+		i := strings.Index(u, kind)
+		if i < 0 {
+			continue
+		}
+		rest := u[i+len(kind):]
+		slug := rest
+		if j := strings.IndexByte(rest, '/'); j >= 0 {
+			slug = rest[:j]
+		}
+		if slug == "" || rest == slug || rest == slug+"/" {
+			return u // already the entity root
+		}
+		return u[:i+len(kind)] + slug
+	}
+	return u
 }
