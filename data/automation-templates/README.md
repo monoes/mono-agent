@@ -46,6 +46,7 @@ Rules for the scaffolder:
 ├── selectors.json           named selectors, referenced by configKey
 ├── tests/fixtures/<action>.html   optional DOM snapshot
 ├── tests/<action>.expect.json     expected extraction output for it
+├── tests/<action>.inputs.json     optional inputs for the fixture run
 └── README.md
 ```
 

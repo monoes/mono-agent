@@ -19,6 +19,7 @@
     "steps": [
       "extract_table",
       "navigate",
+      "save_data",
       "transform",
       "wait_for"
     ],

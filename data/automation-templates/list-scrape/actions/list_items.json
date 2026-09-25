@@ -32,7 +32,10 @@
       "id": "rows",
       "type": "extract_table",
       "configKey": "list.container",
-      "value": ".item",
+      "value": {
+        "rows": ".item",
+        "record": false
+      },
       "fields": {
         "title": "a.title",
         "url": "a.title@href",
@@ -56,6 +59,11 @@
           "count": 50
         }
       ]
+    },
+    {
+      "id": "save",
+      "type": "save_data",
+      "dataSource": "items"
     }
   ]
 }

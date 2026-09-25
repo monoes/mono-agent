@@ -66,7 +66,10 @@
       "id": "rows",
       "type": "extract_table",
       "configKey": "search.results",
-      "value": ".result",
+      "value": {
+        "rows": ".result",
+        "record": false
+      },
       "fields": {
         "title": "h3",
         "url": "a@href",
@@ -93,6 +96,14 @@
           "count": 20
         }
       ],
+      "onError": {
+        "action": "skip"
+      }
+    },
+    {
+      "id": "save",
+      "type": "save_data",
+      "dataSource": "results",
       "onError": {
         "action": "skip"
       }

@@ -20,6 +20,7 @@
       "extract_table",
       "navigate",
       "press_key",
+      "save_data",
       "transform",
       "type",
       "wait_for"
