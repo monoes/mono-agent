@@ -2,6 +2,8 @@ package automation
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/monoes/mono-agent/internal/action"
@@ -73,4 +75,20 @@ func (d *defSource) Package(automation string) action.PackageContext {
 		return nil
 	}
 	return p.Context()
+}
+
+// Generation changes whenever the index is written (install, seed, enable,
+// trust flags, overlay writes, promotions, …): the index's write counter
+// plus its modification time, which also covers a hand-edited index. The
+// action loader uses it to drop cached definitions.
+func (d *defSource) Generation() string {
+	idx, err := d.r.readIndex()
+	if err != nil {
+		return "error"
+	}
+	var mod int64
+	if st, err := os.Stat(filepath.Join(d.r.root, indexName)); err == nil {
+		mod = st.ModTime().UnixNano()
+	}
+	return fmt.Sprintf("%d:%d", idx.Generation, mod)
 }

@@ -8,10 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
-
-	"github.com/monoes/mono-agent/internal/action"
 )
 
 const indexName = "index.json"
@@ -19,8 +16,12 @@ const indexName = "index.json"
 // indexFile is <root>/index.json.
 type indexFile struct {
 	Version       int                    `json:"version"`
+	Generation    uint64                 `json:"generation"` // bumped on every write (DefSource.Generation)
 	Packages      map[string]*indexEntry `json:"packages"`
-	LegacyWrapped bool                   `json:"legacyWrapped,omitempty"` // ~/.monoagent/actions wrapped once
+	LegacyWrapped bool                   `json:"legacyWrapped,omitempty"` // pre-hash marker (superseded by LegacyHashes)
+	// LegacyHashes records, per ~/.monoagent/actions/<p> directory, the hash
+	// of the files last folded into local-<p>.
+	LegacyHashes map[string]string `json:"legacyHashes,omitempty"`
 }
 
 type indexEntry struct {
@@ -32,12 +33,15 @@ type indexEntry struct {
 	Enabled            bool      `json:"enabled"`
 	Removed            bool      `json:"removed,omitempty"`
 	SeedSha256         string    `json:"seedSha256,omitempty"`
+	SeedVersion        string    `json:"seedVersion,omitempty"` // last seeded built-in version (seeds compare against it)
 	InstalledSha256    string    `json:"installedSha256,omitempty"`
 	InstalledAt        time.Time `json:"installedAt"`
 	PendingSeedVersion string    `json:"pendingSeedVersion,omitempty"`
 	DisabledReason     string    `json:"disabledReason,omitempty"`
 	ScriptsAllowed     *bool     `json:"scriptsAllowed,omitempty"`   // explicit user choice; nil = tier default
 	LiveRunConfirmed   bool      `json:"liveRunConfirmed,omitempty"` // imported: real runs confirmed once
+	PreviousSource     string    `json:"previousSource,omitempty"`   // source/trust of the Previous version
+	PreviousTrust      string    `json:"previousTrust,omitempty"`
 }
 
 func (e *indexEntry) trust() string {
@@ -91,6 +95,7 @@ func (r *Registry) update(fn func(idx *indexFile) (changed bool, err error)) err
 	if err != nil || !changed {
 		return err
 	}
+	idx.Generation++
 	b, err := json.MarshalIndent(idx, "", "  ")
 	if err != nil {
 		return err
@@ -315,6 +320,21 @@ func (r *Registry) Rollback(id string) error {
 			return false, err
 		}
 		e.Version, e.Previous = e.Previous, e.Version
+		// The version rolled back to brings back its own source and trust.
+		curSource, curTrust := e.Source, e.trust()
+		if e.PreviousSource != "" {
+			e.Source = e.PreviousSource
+		}
+		if e.PreviousTrust != "" {
+			e.Trust = normTrust(e.PreviousTrust)
+		}
+		e.PreviousSource, e.PreviousTrust = curSource, curTrust
+		if e.trust() != curTrust {
+			e.ScriptsAllowed, e.LiveRunConfirmed = nil, false
+		}
+		if err := r.pruneOverlayLocked(id, r.versionDir(id, e.Version)); err != nil {
+			return false, err
+		}
 		e.InstalledSha256 = h
 		e.InstalledAt = time.Now().UTC()
 		// A rollback is a user choice: forget the seeded hash so the next
@@ -323,42 +343,6 @@ func (r *Registry) Rollback(id string) error {
 		e.SeedSha256 = ""
 		return true, nil
 	})
-}
-
-// WriteOverlaySelector records a healed selector in the local overlay
-// (<root>/<id>/overlay/selectors.json) without touching package files.
-func (r *Registry) WriteOverlaySelector(id, key string, e action.SelectorEntry) error {
-	if strings.TrimSpace(key) == "" {
-		return errors.New("automation: empty selector key")
-	}
-	return r.update(func(idx *indexFile) (bool, error) {
-		if ent, ok := idx.Packages[id]; !ok || ent.Removed {
-			return false, fmt.Errorf("%w: %s", ErrNotInstalled, id)
-		}
-		dir := filepath.Join(r.root, id, "overlay")
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return false, err
-		}
-		ov := r.readOverlay(id)
-		ov[key] = e
-		b, err := json.MarshalIndent(ov, "", "  ")
-		if err != nil {
-			return false, err
-		}
-		return false, atomicWrite(filepath.Join(dir, "selectors.json"), append(b, '\n'))
-	})
-}
-
-func (r *Registry) readOverlay(id string) map[string]action.SelectorEntry {
-	ov := map[string]action.SelectorEntry{}
-	b, err := os.ReadFile(filepath.Join(r.root, id, "overlay", "selectors.json"))
-	if err == nil {
-		_ = json.Unmarshal(b, &ov)
-	}
-	if ov == nil {
-		ov = map[string]action.SelectorEntry{}
-	}
-	return ov
 }
 
 // writeVersion writes files as <root>/<id>/<version>, replacing that

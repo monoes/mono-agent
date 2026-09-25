@@ -1,15 +1,9 @@
 package automation
 
 import (
-	"encoding/json"
 	"fmt"
 	"io/fs"
-	"os"
 	"path/filepath"
-	"regexp"
-	"strings"
-
-	"github.com/monoes/mono-agent/internal/bot"
 )
 
 // SeedReport says what a Seed call changed (ids per outcome).
@@ -18,7 +12,7 @@ type SeedReport struct {
 	Updated       []string `json:"updated,omitempty"`       // newer seed version installed
 	Refreshed     []string `json:"refreshed,omitempty"`     // same version, changed files (dev builds)
 	Pending       []string `json:"pending,omitempty"`       // held back: the user modified the installed copy
-	LegacyWrapped []string `json:"legacyWrapped,omitempty"` // ~/.monoagent/actions/<p> → local-<p>
+	LegacyWrapped []string `json:"legacyWrapped,omitempty"` // ~/.monoagent/actions/<p> folded into local-<p>
 	Skipped       []string `json:"skipped,omitempty"`       // broken built-ins, skipped with the reason
 }
 
@@ -55,9 +49,10 @@ const (
 // removed → skip; installed version newer → skip; same version and same
 // seed hash → skip; installed files unmodified since their seeding → the
 // seed replaces them (new version keeps the old as previous; same version
-// is refreshed in place); user-modified → kept, PendingUpdate set. When
-// nothing needs to change nothing is written and no lock is taken. The
-// legacy ~/.monoagent/actions directory is wrapped once.
+// is refreshed in place); user-modified → kept, PendingUpdate set. A
+// built-in is compared by the version it was last seeded at. When nothing
+// needs to change nothing is written and no lock is taken. New or changed
+// files in the legacy ~/.monoagent/actions/<p> are folded into local-<p>.
 func (r *Registry) SeedWithReport(builtins fs.FS) (*SeedReport, error) {
 	seeds, skipped, loadErr := loadSeeds(builtins)
 	rep := &SeedReport{Skipped: skipped}
@@ -68,7 +63,8 @@ func (r *Registry) SeedWithReport(builtins fs.FS) (*SeedReport, error) {
 	if err != nil {
 		return rep, err
 	}
-	needed := !idx.LegacyWrapped
+	legacy := scanLegacy(filepath.Join(r.home, "actions"))
+	needed := legacyChanged(idx, legacy)
 	for _, s := range seeds {
 		if out, _ := r.decideSeed(idx.Packages[s.pkg.Manifest.ID], s); out != seedSkip {
 			needed = true
@@ -92,6 +88,7 @@ func (r *Registry) SeedWithReport(builtins fs.FS) (*SeedReport, error) {
 			case seedAdopt:
 				e := idx.Packages[id]
 				e.SeedSha256, e.InstalledSha256, e.PendingSeedVersion = s.hash, s.hash, ""
+				e.SeedVersion = s.pkg.Manifest.Version
 			default:
 				if _, err := r.commitLocked(idx, s.pkg, s.files, true); err != nil {
 					return changed, fmt.Errorf("seed %s: %w", id, err)
@@ -107,13 +104,12 @@ func (r *Registry) SeedWithReport(builtins fs.FS) (*SeedReport, error) {
 			}
 			changed = true
 		}
-		if !idx.LegacyWrapped {
-			wrapped, err := r.wrapLegacyLocked(idx, seeds)
+		if legacyChanged(idx, legacy) {
+			wrapped, err := r.foldLegacyLocked(idx, seeds, legacy)
 			if err != nil {
 				return changed, err
 			}
 			rep.LegacyWrapped = wrapped
-			idx.LegacyWrapped = true
 			changed = true
 		}
 		return changed, nil
@@ -131,7 +127,13 @@ func (r *Registry) decideSeed(e *indexEntry, s seedPkg) (seedOutcome, string) {
 	case e.Removed:
 		return seedSkip, ""
 	}
-	c := CompareVersions(e.Version, sv)
+	// A built-in is compared by the version it was last seeded at, so a
+	// user change ("1.0.0+local.2") never hides a newer release.
+	base := e.Version
+	if e.Source == SourceBuiltin && e.SeedVersion != "" {
+		base = e.SeedVersion
+	}
+	c := CompareVersions(base, sv)
 	if c > 0 || (c == 0 && e.SeedSha256 == s.hash) {
 		return seedSkip, ""
 	}
@@ -245,82 +247,4 @@ func (r *Registry) Restore(id string, builtins fs.FS) error {
 		})
 	}
 	return fmt.Errorf("automation %s: no built-in with that id", id)
-}
-
-var nonSlug = regexp.MustCompile(`[^a-z0-9-]+`)
-
-// wrapLegacyLocked wraps ~/.monoagent/actions/<p>/*.json into generated
-// local-<p> packages. Nothing is deleted; runs once (index marker).
-func (r *Registry) wrapLegacyLocked(idx *indexFile, seeds []seedPkg) ([]string, error) {
-	legacy := filepath.Join(r.home, "actions")
-	dirs, err := os.ReadDir(legacy)
-	if err != nil {
-		return nil, nil
-	}
-	var wrapped []string
-	for _, d := range dirs {
-		if !d.IsDir() {
-			continue
-		}
-		platform := strings.ToLower(d.Name())
-		id := strings.Trim(nonSlug.ReplaceAllString("local-"+platform, "-"), "-")
-		if len(id) > 41 {
-			id = id[:41]
-		}
-		if !ValidID(id) {
-			continue
-		}
-		if _, exists := idx.Packages[id]; exists {
-			continue
-		}
-		files := map[string][]byte{}
-		var actions []string
-		entries, _ := os.ReadDir(filepath.Join(legacy, d.Name()))
-		for _, f := range entries {
-			name := strings.TrimSuffix(f.Name(), ".json")
-			if !f.Type().IsRegular() || !strings.HasSuffix(f.Name(), ".json") || !safeName(name) {
-				continue
-			}
-			b, err := os.ReadFile(filepath.Join(legacy, d.Name(), f.Name()))
-			if err != nil || !json.Valid(b) {
-				continue
-			}
-			files["actions/"+name+".json"] = b
-			actions = append(actions, name)
-		}
-		if len(actions) == 0 {
-			continue
-		}
-		m := Manifest{
-			Schema: SchemaV1, ID: id, Name: "Local " + d.Name(), Version: "1.0.0",
-			Description: fmt.Sprintf("Legacy actions from ~/.monoagent/actions/%s (wrapped automatically)", d.Name()),
-			Permissions: Permissions{Steps: []string{}, Scripts: []string{}},
-			Site:        Site{Domains: []string{}},
-			Actions:     actions,
-			Policy:      Policy{Tier: "standard"},
-		}
-		for _, s := range seeds {
-			if s.pkg.Manifest.Requires.Native == platform || s.pkg.Manifest.ID == platform {
-				m.Requires.Native = s.pkg.Manifest.Requires.Native
-				m.Site, m.Policy = s.pkg.Manifest.Site, s.pkg.Manifest.Policy
-			}
-		}
-		if _, ok := bot.PlatformRegistry[strings.ToUpper(platform)]; ok && m.Requires.Native == "" {
-			m.Requires.Native = platform
-		}
-		b, err := json.MarshalIndent(m, "", "  ")
-		if err != nil {
-			return wrapped, err
-		}
-		files[ManifestFile] = append(b, '\n')
-		p, err := OpenFS(mapFS(files), SourceLocal)
-		if err != nil {
-			return wrapped, err
-		}
-		if _, err := r.commitLocked(idx, p, files, false); err != nil {
-			return wrapped, fmt.Errorf("wrap legacy %s: %w", d.Name(), err)
-		}
-		wrapped = append(wrapped, id)
-	}
-	return wrapped, nil
 }

@@ -13,7 +13,7 @@ import (
 // own entry.
 type pkgContext struct {
 	pkg     *Package
-	overlay map[string]action.SelectorEntry
+	overlay map[string]overlayEntry
 
 	once      sync.Once
 	selectors map[string]action.SelectorEntry
@@ -38,17 +38,18 @@ func (c *pkgContext) Fragment(name string) (*action.FragmentDef, error) {
 }
 
 func (c *pkgContext) Selector(key string) (*action.SelectorEntry, bool) {
-	if e, ok := c.overlay[key]; ok {
-		return &e, true
-	}
 	c.once.Do(func() {
 		c.selectors, _ = c.pkg.Selectors()
 	})
-	e, ok := c.selectors[key]
-	if !ok {
-		return nil, false
+	var base *action.SelectorEntry
+	if e, ok := c.selectors[key]; ok {
+		base = &e
 	}
-	return &e, true
+	if o, ok := c.overlay[key]; ok {
+		eff, _, _ := applyOverlay(base, o)
+		return eff, eff != nil
+	}
+	return base, base != nil
 }
 
 // ResolveAction resolves "<action>" in this package, or "<automation>.<action>"

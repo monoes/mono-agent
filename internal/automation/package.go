@@ -117,7 +117,7 @@ func (p *Package) ActionJSON(name string) ([]byte, error) {
 func (p *Package) Context() action.PackageContext {
 	c := &pkgContext{pkg: p}
 	if p.reg != nil && p.Dir != "" {
-		c.overlay = p.reg.readOverlay(p.Manifest.ID)
+		c.overlay = p.reg.loadOverlay(p.Manifest.ID)
 	}
 	return c
 }

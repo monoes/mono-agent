@@ -2,7 +2,6 @@ package automation
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -173,9 +172,28 @@ var ErrReplacesBuiltin = errors.New("automation: install would replace a built-i
 // marks AddAction, where recorded content may extend a built-in or local
 // package (it lowers the package's trust) but imported content may not.
 func (r *Registry) installPackage(p *Package, files map[string][]byte, opts InstallOptions, merge bool) (*InstallResult, error) {
-	dryRun := opts.DryRun
+	var res *InstallResult
+	err := r.update(func(idx *indexFile) (bool, error) {
+		var err error
+		res, err = r.prepareLocked(idx, p, files, opts, merge)
+		if err != nil || opts.DryRun {
+			return false, err
+		}
+		res.Dir, err = r.commitLocked(idx, p, files, false)
+		if err != nil {
+			return false, err
+		}
+		res.Installed = true
+		return true, nil
+	})
+	return res, err
+}
+
+// prepareLocked builds the install result for p against the index:
+// validation, review, policy, what it replaces and the replace gate.
+func (r *Registry) prepareLocked(idx *indexFile, p *Package, files map[string][]byte, opts InstallOptions, merge bool) (*InstallResult, error) {
 	m := p.Manifest
-	res := &InstallResult{ID: m.ID, Name: m.Name, Version: m.Version, DryRun: dryRun}
+	res := &InstallResult{ID: m.ID, Name: m.Name, Version: m.Version, DryRun: opts.DryRun}
 	res.Issues = Validate(p)
 	res.Review = buildReview(p, files)
 	allowed, reason := PolicyAllows(m)
@@ -187,10 +205,6 @@ func (r *Registry) installPackage(p *Package, files map[string][]byte, opts Inst
 		res.Warnings = append(res.Warnings, fmt.Sprintf("contains %d page script(s): %s", len(res.Review.Scripts), strings.Join(res.Review.Scripts, ", ")))
 	}
 
-	idx, err := r.readIndex()
-	if err != nil {
-		return nil, err
-	}
 	var replaceBlocked bool
 	if e, ok := idx.Packages[m.ID]; ok && !e.Removed {
 		incoming := p.trust()
@@ -208,7 +222,7 @@ func (r *Registry) installPackage(p *Package, files map[string][]byte, opts Inst
 		if CompareVersions(m.Version, e.Version) < 0 {
 			res.Warnings = append(res.Warnings, fmt.Sprintf("downgrades %s from %s to %s", m.ID, e.Version, m.Version))
 		}
-		if old, err := r.Get(m.ID); err == nil {
+		if old, err := OpenDir(r.versionDir(m.ID, e.Version)); err == nil {
 			res.Review.Changes = reviewChanges(old, p)
 		}
 	}
@@ -216,23 +230,10 @@ func (r *Registry) installPackage(p *Package, files map[string][]byte, opts Inst
 	if HasErrors(res.Issues) {
 		return res, fmt.Errorf("%w: %s", ErrInvalid, firstError(res.Issues))
 	}
-	if replaceBlocked && !dryRun {
+	if replaceBlocked && !opts.DryRun {
 		rp := res.Review.Replaces
 		return res, fmt.Errorf("%w: %s is an installed %s package (%s)", ErrReplacesBuiltin, rp.ID, rp.Trust, rp.Version)
 	}
-	if dryRun {
-		return res, nil
-	}
-
-	err = r.update(func(idx *indexFile) (bool, error) {
-		dir, err := r.commitLocked(idx, p, files, false)
-		res.Dir = dir
-		return err == nil, err
-	})
-	if err != nil {
-		return res, err
-	}
-	res.Installed = true
 	return res, nil
 }
 
@@ -255,11 +256,18 @@ func (r *Registry) commitLocked(idx *indexFile, p *Package, files map[string][]b
 	} else if e.Removed {
 		e.Enabled = true
 	}
+	if ok && !e.Removed && e.Version != m.Version {
+		// The current version becomes previous: remember what it was.
+		e.PreviousSource, e.PreviousTrust = e.Source, e.trust()
+	}
+	if e.Source == SourceBuiltin && e.SeedVersion == "" && e.SeedSha256 != "" {
+		e.SeedVersion = e.Version // entries seeded before seedVersion existed
+	}
 	if e.Source != SourceBuiltin || p.Source != SourceBuiltin {
-		e.SeedSha256 = "" // not (or no longer) the shipped copy
+		e.SeedSha256, e.SeedVersion = "", "" // not (or no longer) the shipped copy
 	}
 	if fromSeed {
-		e.SeedSha256 = hash
+		e.SeedSha256, e.SeedVersion = hash, m.Version
 	}
 	trust := p.trust()
 	if ok && (e.trust() != trust || (e.InstalledSha256 != hash && trustRank(trust) < trustRank(TrustLocal))) {
@@ -280,139 +288,11 @@ func (r *Registry) commitLocked(idx *indexFile, p *Package, files map[string][]b
 		e.PendingSeedVersion = ""
 	}
 	r.setVersion(m.ID, e, m.Version)
+	if e.Previous == "" {
+		e.PreviousSource, e.PreviousTrust = "", ""
+	}
+	if err := r.pruneOverlayLocked(m.ID, dir); err != nil {
+		return dir, err
+	}
 	return dir, nil
-}
-
-// AddAction merges one action (and its fragment/selector/script closure)
-// from src into installed package id, bumping its patch version. When id
-// is not installed, src's manifest (cut to that action) creates it with
-// opts.Source (default local).
-func (r *Registry) AddAction(id string, src *Package, actionName string, opts InstallOptions) (*InstallResult, error) {
-	if !ValidID(id) {
-		return nil, fmt.Errorf("automation: invalid id %q", id)
-	}
-	if err := checkPin(src.sha256, opts.ExpectSHA256); err != nil {
-		return nil, err
-	}
-	if opts.Trust != "" && !validTrust(opts.Trust) {
-		return nil, fmt.Errorf("automation: invalid trust %q", opts.Trust)
-	}
-	incoming := opts.Trust
-	switch {
-	case incoming != "":
-	case opts.Source != "":
-		incoming = trustFor(opts.Source)
-	default:
-		incoming = src.trust()
-	}
-	srcFiles, err := readTree(src.FS)
-	if err != nil {
-		return nil, err
-	}
-	sub, err := subsetFiles(src, srcFiles, []string{actionName})
-	if err != nil {
-		return nil, err
-	}
-	subPkg, err := OpenFS(mapFS(sub), src.Source)
-	if err != nil {
-		return nil, err
-	}
-
-	var merged map[string][]byte
-	var m Manifest
-	var trust string
-	source := opts.Source
-	cur, err := r.Get(id)
-	if err == nil {
-		if merged, err = readTree(cur.FS); err != nil {
-			return nil, err
-		}
-		if source == "" {
-			source = cur.Source
-		}
-		for n, b := range sub {
-			if n != ManifestFile && n != "selectors.json" {
-				merged[n] = b
-			}
-		}
-		sel, err := cur.Selectors()
-		if err != nil {
-			return nil, err
-		}
-		add, err := subPkg.Selectors()
-		if err != nil {
-			return nil, err
-		}
-		for k, e := range add {
-			sel[k] = e
-		}
-		if len(sel) > 0 {
-			b, err := json.MarshalIndent(sel, "", "  ")
-			if err != nil {
-				return nil, err
-			}
-			merged["selectors.json"] = append(b, '\n')
-		}
-		m = mergeManifest(cur.Manifest, subPkg.Manifest)
-		m.Version = bumpPatch(cur.Manifest.Version)
-		trust = lowerTrust(cur.trust(), incoming)
-	} else {
-		if source == "" {
-			source = SourceLocal
-			if src.Source == SourceImported {
-				source = SourceImported
-			}
-		}
-		trust = incoming
-		merged = sub
-		m = subPkg.Manifest
-		m.ID = id
-	}
-	b, err := json.MarshalIndent(m, "", "  ")
-	if err != nil {
-		return nil, err
-	}
-	merged[ManifestFile] = append(b, '\n')
-
-	p, err := OpenFS(mapFS(merged), source)
-	if err != nil {
-		return nil, err
-	}
-	p.Trust = trust
-	res, err := r.installPackage(p, merged, opts, true)
-	if res != nil {
-		res.SHA256 = src.sha256
-	}
-	return res, err
-}
-
-// mergeManifest widens base with add's actions, permissions, scripts,
-// required fragments and domains (the review's Changes shows the widening).
-func mergeManifest(base, add Manifest) Manifest {
-	union := func(a, b []string) []string {
-		out := append([]string{}, a...)
-		for _, s := range b {
-			if !contains(out, s) {
-				out = append(out, s)
-			}
-		}
-		return out
-	}
-	base.Actions = union(base.Actions, add.Actions)
-	// An empty list means unrestricted: widening it would restrict it.
-	if len(base.Site.Domains) > 0 {
-		base.Site.Domains = union(base.Site.Domains, add.Site.Domains)
-	}
-	if len(base.Permissions.Steps) > 0 {
-		base.Permissions.Steps = union(base.Permissions.Steps, add.Permissions.Steps)
-	}
-	base.Permissions.Scripts = union(base.Permissions.Scripts, add.Permissions.Scripts)
-	if len(add.Permissions.CallActions) > 0 {
-		base.Permissions.CallActions = union(base.Permissions.CallActions, add.Permissions.CallActions)
-	}
-	base.Permissions.Downloads = base.Permissions.Downloads || add.Permissions.Downloads
-	if len(add.Requires.Fragments) > 0 {
-		base.Requires.Fragments = union(base.Requires.Fragments, add.Requires.Fragments)
-	}
-	return base
 }
