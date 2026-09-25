@@ -158,35 +158,6 @@ func (r *Registry) pruneOverlayLocked(id, dir string) error {
 	return r.saveOverlayLocked(id, ov)
 }
 
-// readOverlay returns the effective overlaid entries of package id's
-// current version (keys whose overlay still applies).
-func (r *Registry) readOverlay(id string) map[string]action.SelectorEntry {
-	out := map[string]action.SelectorEntry{}
-	ov := r.loadOverlay(id)
-	if len(ov) == 0 {
-		return out
-	}
-	e, err := r.entry(id)
-	if err != nil {
-		return out
-	}
-	p, err := OpenDir(r.versionDir(id, e.Version))
-	if err != nil {
-		return out
-	}
-	sel, _ := p.Selectors()
-	for k, o := range ov {
-		var base *action.SelectorEntry
-		if b, ok := sel[k]; ok {
-			base = &b
-		}
-		if eff, entryOK, promoteOK := applyOverlay(base, o); (entryOK || promoteOK) && eff != nil {
-			out[k] = *eff
-		}
-	}
-	return out
-}
-
 func (r *Registry) currentSelector(idx *indexFile, id, key string) (*action.SelectorEntry, error) {
 	e, ok := idx.Packages[id]
 	if !ok || e.Removed {
