@@ -16,7 +16,7 @@ vi.mock('../../services/api.js', () => ({ api, notify: vi.fn() }))
 
 import ConfirmHost from '../../components/ConfirmDialog.jsx'
 import ImportDialog from './ImportDialog.jsx'
-import RecordingReview from './RecordingReview.jsx'
+import RecordingReview, { scriptRefused } from './RecordingReview.jsx'
 
 afterEach(() => { cleanup(); vi.clearAllMocks() })
 
@@ -105,6 +105,13 @@ describe('RecordingReview', () => {
     fireEvent.click(screen.getByText('Verify full'))
     fireEvent.click(await screen.findByText('Confirm'))
     await waitFor(() => expect(api.verifyDraft).toHaveBeenCalledWith('/d/rec1', true, { password: 'hunter2' }))
+  })
+
+  it('recognises the refusal by the CLI code, with the message as a fallback', () => {
+    expect(scriptRefused({ status: 'fail', code: 'scripts_refused', message: 'anything' })).toBe(true)
+    expect(scriptRefused({ status: 'fail', message: 'refused: scripts are not allowed for automation "a"' })).toBe(true)
+    expect(scriptRefused({ status: 'fail', code: 'off_domain', message: 'navigation to evil.com' })).toBe(false)
+    expect(scriptRefused({ status: 'pass', code: 'scripts_refused' })).toBe(false)
   })
 
   it('explains a verify step refused because scripts are off for recorded drafts', async () => {
