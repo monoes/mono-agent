@@ -60,3 +60,55 @@ func TestLoaderUsesDefSource(t *testing.T) {
 		t.Errorf("site.startUrl = %v", v)
 	}
 }
+
+// genSource counts Loads and reports a settable generation.
+type genSource struct {
+	fakeDefSource
+	gen   string
+	loads int
+}
+
+func (s *genSource) Generation() string { return s.gen }
+func (s *genSource) Load(a, t string) ([]byte, error) {
+	s.loads++
+	return s.fakeDefSource.Load(a, t)
+}
+
+func TestLoaderCacheFollowsSourceGeneration(t *testing.T) {
+	src := &genSource{gen: "1", fakeDefSource: fakeDefSource{files: map[string]string{
+		"acme/greet": `{"actionType":"greet","automation":"acme","version":"1","steps":[]}`}}}
+	SetDefSource(src)
+	t.Cleanup(func() { SetDefSource(nil) })
+	l := GetLoader()
+
+	d1, _ := l.Load("acme", "greet")
+	d2, _ := l.Load("acme", "greet")
+	if src.loads != 1 || d1 != d2 {
+		t.Fatalf("same generation should hit the cache (loads=%d)", src.loads)
+	}
+	// An update bumps the generation: the new definition is served.
+	src.files["acme/greet"] = `{"actionType":"greet","automation":"acme","version":"2","steps":[]}`
+	src.gen = "2"
+	if d, _ := l.Load("acme", "greet"); d.Version != "2" {
+		t.Fatalf("stale definition after update: %q", d.Version)
+	}
+	// Uninstall: fail rather than serve the cache.
+	delete(src.files, "acme/greet")
+	src.gen = "3"
+	if _, err := l.Load("acme", "greet"); err == nil {
+		t.Fatal("removed package still loads")
+	}
+}
+
+func TestLoaderWithoutGenerationAlwaysAsksSource(t *testing.T) {
+	src := &fakeDefSource{files: map[string]string{"acme/greet": `{"actionType":"greet","steps":[]}`}}
+	SetDefSource(src)
+	t.Cleanup(func() { SetDefSource(nil) })
+	if _, err := GetLoader().Load("acme", "greet"); err != nil {
+		t.Fatal(err)
+	}
+	delete(src.files, "acme/greet")
+	if _, err := GetLoader().Load("acme", "greet"); err == nil {
+		t.Fatal("a source without Generation must be consulted on every Load")
+	}
+}

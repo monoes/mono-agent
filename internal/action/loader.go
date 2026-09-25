@@ -70,7 +70,21 @@ type GlobalErrorConfig struct {
 // in data.AutomationsFS. It is safe for concurrent use.
 type ActionLoader struct {
 	cache sync.Map
+	// srcCache caches DefSource definitions per key as genEntry, valid only
+	// while the source's Generation() is unchanged.
+	srcCache sync.Map
 }
+
+// genEntry is a DefSource definition cached at one source generation.
+type genEntry struct {
+	gen string
+	def *ActionDef
+}
+
+// Generational is optionally implemented by a DefSource: Generation changes
+// whenever any installed package changes (install, update, enable/disable,
+// removal). Without it the loader consults the source on every Load.
+type Generational interface{ Generation() string }
 
 var defaultLoader *ActionLoader
 var loaderOnce sync.Once
@@ -91,21 +105,16 @@ func (l *ActionLoader) Load(platform, actionType string) (*ActionDef, error) {
 	normalType := strings.ToLower(strings.TrimSpace(actionType))
 	key := fmt.Sprintf("%s/%s", normalPlatform, normalType)
 
+	if src := CurrentDefSource(); src != nil {
+		return l.loadFromSource(src, key, normalPlatform, normalType)
+	}
+
 	if cached, ok := l.cache.Load(key); ok {
 		return cached.(*ActionDef), nil
 	}
 
 	var fileData []byte
 	var err error
-	if src := CurrentDefSource(); src != nil {
-		// The registry is authoritative: a removed or disabled package's
-		// actions must not load from the embedded seed.
-		fileData, err = src.Load(normalPlatform, normalType)
-		if err != nil {
-			return nil, fmt.Errorf("action definition not found: %s/%s: %w", normalPlatform, normalType, err)
-		}
-		return l.parseAndCache(key, normalPlatform, normalType, fileData)
-	}
 
 	path := fmt.Sprintf("automations/%s/actions/%s.json", normalPlatform, normalType)
 	fileData, err = data.AutomationsFS.ReadFile(path)
@@ -122,6 +131,32 @@ func (l *ActionLoader) Load(platform, actionType string) (*ActionDef, error) {
 	}
 
 	return l.parseAndCache(key, normalPlatform, normalType, fileData)
+}
+
+// loadFromSource loads through the registry, which is authoritative: a
+// removed or disabled package's actions must not load from the embedded
+// seed, nor from a cache filled before it changed (long-lived processes).
+func (l *ActionLoader) loadFromSource(src DefSource, key, platform, actionType string) (*ActionDef, error) {
+	gen, hasGen := "", false
+	if g, ok := src.(Generational); ok {
+		gen, hasGen = g.Generation(), true
+		if e, ok := l.srcCache.Load(key); ok && e.(genEntry).gen == gen {
+			return e.(genEntry).def, nil
+		}
+	}
+	fileData, err := src.Load(platform, actionType)
+	if err != nil {
+		l.srcCache.Delete(key)
+		return nil, fmt.Errorf("action definition not found: %s/%s: %w", platform, actionType, err)
+	}
+	def, err := ParseActionDef(fileData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse action definition %s/%s: %w", platform, actionType, err)
+	}
+	if hasGen {
+		l.srcCache.Store(key, genEntry{gen: gen, def: def})
+	}
+	return def, nil
 }
 
 func (l *ActionLoader) parseAndCache(key, platform, actionType string, fileData []byte) (*ActionDef, error) {
@@ -214,12 +249,17 @@ func (l *ActionLoader) ListAvailable() ([]string, error) {
 func (l *ActionLoader) Invalidate(platform, actionType string) {
 	key := fmt.Sprintf("%s/%s", strings.ToLower(platform), strings.ToLower(actionType))
 	l.cache.Delete(key)
+	l.srcCache.Delete(key)
 }
 
 // InvalidateAll clears the entire cache.
 func (l *ActionLoader) InvalidateAll() {
 	l.cache.Range(func(key, _ interface{}) bool {
 		l.cache.Delete(key)
+		return true
+	})
+	l.srcCache.Range(func(key, _ interface{}) bool {
+		l.srcCache.Delete(key)
 		return true
 	})
 }
