@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { PauseCircle, PlayCircle, ShieldCheck, RefreshCw } from 'lucide-react'
 import { api, notify } from '../../services/api.js'
-import { LEVELS, DECIDERS, isPaused, effectiveLevel } from './autonomyModel.js'
+import { LEVELS, DECIDERS, isPaused, effectiveLevel, JEV_THRESHOLD, parseJevThreshold } from './autonomyModel.js'
 import { toMillis } from './waiting.js'
 import FullAutoConfirm from './FullAutoConfirm.jsx'
 import { Chip, mono, smallBtn } from './ui.jsx'
@@ -23,7 +23,42 @@ function pausedLabel(autonomy, t) {
   return t('orgs.autonomy.pausedUntil', { time: new Date(until).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) })
 }
 
-export default function AutonomyBar({ orgName, onChange }) {
+// JevThreshold is the jev decider's gate: Jev's top verdict must reach it or
+// the model decider decides. Saved on blur / Enter through
+// `org autonomy set --decider jev --decider-threshold X`.
+function JevThreshold({ value, disabled, onSave }) {
+  const { t } = useTranslation()
+  const current = value ?? JEV_THRESHOLD
+  const [draft, setDraft] = useState(String(current))
+  useEffect(() => { setDraft(String(current)) }, [current])
+  const commit = () => {
+    const v = parseJevThreshold(draft)
+    if (v == null) { setDraft(String(current)); return }
+    setDraft(String(v))
+    if (v !== current) onSave(v)
+  }
+  return (
+    <label title={t('orgs.autonomy.jevThresholdHint')} style={{ display: 'flex', alignItems: 'center', gap: 4, ...mono, fontSize: 10, color: 'var(--text-muted)' }}>
+      {t('orgs.autonomy.jevThreshold')}
+      <input
+        aria-label={t('orgs.autonomy.jevThreshold')}
+        type="number" min={0.05} max={1} step={0.05}
+        value={draft}
+        disabled={disabled}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }}
+        style={{
+          ...mono, fontSize: 10, width: 52, padding: '2px 4px',
+          background: 'var(--elevated)', color: 'var(--text)',
+          border: '1px solid var(--border)', borderRadius: 'var(--radius)',
+        }}
+      />
+    </label>
+  )
+}
+
+export default function AutonomyBar({ orgName, onChange, onOpenJevSettings }) {
   const { t } = useTranslation()
   const [autonomy, setAutonomy] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -82,6 +117,10 @@ export default function AutonomyBar({ orgName, onChange }) {
     apply(() => api.setOrgAutonomy(orgName, { decider: { kind } }), 'set decider')
   }
 
+  const setThreshold = (threshold) => {
+    apply(() => api.setOrgAutonomy(orgName, { decider: { kind: 'jev', threshold } }), 'set jev threshold')
+  }
+
   if (!orgName) return null
 
   if (loading) {
@@ -102,9 +141,10 @@ export default function AutonomyBar({ orgName, onChange }) {
   const paused = isPaused(autonomy)
   const eff = effectiveLevel(autonomy)
   const deciderKind = autonomy.decider?.kind || 'model'
+  const fallbackModel = [autonomy.decider?.runtime, autonomy.decider?.model].filter(Boolean).join(' · ')
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
       <ShieldCheck size={12} style={{ color: 'var(--text-muted)' }} />
       <div role="radiogroup" aria-label={t('orgs.autonomy.levelGroup')} style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
         {LEVELS.map(l => {
@@ -142,6 +182,10 @@ export default function AutonomyBar({ orgName, onChange }) {
           {DECIDERS.map(d => <option key={d.id} value={d.id} title={t(`orgs.autonomy.deciders.${d.id}Hint`)}>{t(`orgs.autonomy.deciders.${d.id}`)}</option>)}
         </select>
       </label>
+
+      {deciderKind === 'jev' && (
+        <JevThreshold value={autonomy.decider?.threshold} disabled={busy} onSave={setThreshold} />
+      )}
 
       {paused ? (
         <>
@@ -188,6 +232,26 @@ export default function AutonomyBar({ orgName, onChange }) {
       )}
       {!paused && eff !== autonomy.level && autonomy.daemon_running !== false && (
         <Chip color="#eab308">{t('orgs.autonomy.actingAs', { level: t(`orgs.autonomy.levels.${eff}`, { defaultValue: eff }) })}</Chip>
+      )}
+
+      {deciderKind === 'jev' && (
+        <div data-testid="jev-decider-note" style={{ flexBasis: '100%', display: 'flex', justifyContent: 'flex-end', gap: 4, flexWrap: 'wrap', ...mono, fontSize: 9.5, color: 'var(--text-muted)' }}>
+          <span>{t('orgs.autonomy.jevNeedsKey')}</span>
+          {onOpenJevSettings ? (
+            <button
+              onClick={onOpenJevSettings}
+              style={{ ...mono, fontSize: 9.5, padding: 0, background: 'none', border: 'none', color: 'var(--cyan, #00b4d8)', cursor: 'pointer', textDecoration: 'underline' }}
+            >
+              {t('orgs.autonomy.jevSettingsLink')}
+            </button>
+          ) : (
+            <span style={{ color: 'var(--text-secondary)' }}>{t('orgs.autonomy.jevSettingsLink')}</span>
+          )}
+          <span>·</span>
+          <span>{t(fallbackModel ? 'orgs.autonomy.jevFallbackModel' : 'orgs.autonomy.jevFallback', {
+            model: fallbackModel, threshold: autonomy.decider?.threshold ?? JEV_THRESHOLD,
+          })}</span>
+        </div>
       )}
 
       <FullAutoConfirm

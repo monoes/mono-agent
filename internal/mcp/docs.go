@@ -166,7 +166,9 @@ Nodes: org.run (wait, exclusive), org.send, org.ask, trigger.org (event or
 endpoint mode). Crossings carry [trace chn_… hop=N]; max_hops 8.
 
 Autonomy: 'org autonomy set <org> --level manual|mid|full --decider
-model|boss|parent'. mid: rules approve routine, the decider handles
+model|boss|parent|jev [--decider-threshold 0.8]'. jev: TypeSafe Jev picks the
+verdict when its top probability reaches the threshold (needs a TypeSafe
+key); questions and anything below it go to the model decider. mid: rules approve routine, the decider handles
 consequential, a person irreversible. full: the decider handles everything
 above routine. 'org autonomy pause <org> --for 30m' drops to manual.
 Holding orgs: kind "holding", children[]; 'org group init <holding>'.`,

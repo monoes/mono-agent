@@ -159,4 +159,51 @@ describe('AutonomyBar', () => {
     await waitFor(() => expect(within(dialog).getByText(new RegExp(es.orgs.fullAuto.everyGate))).toBeInTheDocument())
     expect(within(dialog).getByRole('button', { name: es.orgs.fullAuto.confirm })).toBeInTheDocument()
   })
+
+  it('shows the Jev threshold field only for the jev decider', async () => {
+    await renderBar()
+    expect(screen.queryByLabelText('Jev ≥')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('jev-decider-note')).not.toBeInTheDocument()
+    cleanup()
+    api.getOrgAutonomy.mockResolvedValue({ ...AUTONOMY, decider: { ...AUTONOMY.decider, kind: 'jev', threshold: 0.8 } })
+    await renderBar()
+    const field = screen.getByLabelText('Jev ≥')
+    expect(field).toHaveValue(0.8)
+    expect(field).toHaveAttribute('min', '0.05')
+    expect(field).toHaveAttribute('max', '1')
+    expect(field).toHaveAttribute('step', '0.05')
+    const note = screen.getByTestId('jev-decider-note')
+    expect(note).toHaveTextContent('Needs a TypeSafe key')
+    expect(note).toHaveTextContent('Settings › TypeSafe Jev')
+    expect(note).toHaveTextContent('questions and p < 0.8 go to the model decider (claude · m)')
+  })
+
+  it('saves the Jev threshold through org autonomy set', async () => {
+    api.getOrgAutonomy.mockResolvedValue({ ...AUTONOMY, decider: { ...AUTONOMY.decider, kind: 'jev', threshold: 0.8 } })
+    await renderBar()
+    const field = screen.getByLabelText('Jev ≥')
+    fireEvent.change(field, { target: { value: '0.9' } })
+    fireEvent.blur(field)
+    await waitFor(() => expect(api.setOrgAutonomy).toHaveBeenCalledWith('growth', { decider: { kind: 'jev', threshold: 0.9 } }))
+  })
+
+  it('rejects an out-of-range Jev threshold without saving', async () => {
+    api.getOrgAutonomy.mockResolvedValue({ ...AUTONOMY, decider: { ...AUTONOMY.decider, kind: 'jev', threshold: 0.8 } })
+    await renderBar()
+    const field = screen.getByLabelText('Jev ≥')
+    fireEvent.change(field, { target: { value: '1.5' } })
+    fireEvent.blur(field)
+    expect(field).toHaveValue(0.8)
+    expect(api.setOrgAutonomy).not.toHaveBeenCalled()
+  })
+
+  it('links the Jev note to Settings when a navigator is given', async () => {
+    api.getOrgAutonomy.mockResolvedValue({ ...AUTONOMY, decider: { ...AUTONOMY.decider, kind: 'jev' } })
+    const open = vi.fn()
+    render(<AutonomyBar orgName="growth" onOpenJevSettings={open} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Settings › TypeSafe Jev' }))
+    expect(open).toHaveBeenCalled()
+    // No threshold stored yet: the field shows the CLI default.
+    expect(screen.getByLabelText('Jev ≥')).toHaveValue(0.8)
+  })
 })

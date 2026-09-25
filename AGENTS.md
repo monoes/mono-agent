@@ -380,12 +380,16 @@ and HIL items inside runs the org started:
 monoagentcli org autonomy set growth --level mid --decider model --policy "Never approve spend over \$50."
 monoagentcli org autonomy pause growth --for 30m     # drop to manual now
 monoagentcli org autonomy needs-you growth           # items waiting for a person
-monoagentcli org autonomy decisions growth           # resolver, tier, verdict, rationale, cost
+monoagentcli org autonomy decisions growth           # resolver, tier, verdict, rationale, cost (+ jev summary)
 ```
 
 The decider is `model` (a one-shot `monomind agent exec`), `boss` (the org's
-root role through `decision_list`/`decision_resolve` tools), or `parent`
-(a holding org's Initiator). A decider never resolves its own request, and
+root role through `decision_list`/`decision_resolve` tools), `parent`
+(a holding org's Initiator), or `jev` (TypeSafe Jev picks the verdict when
+its top probability reaches `--decider-threshold`, default 0.8; questions,
+lower answers and Jev failures go to the model decider, so runtime/model
+still matter). Decision rows asked of Jev carry `confidence`,
+`probabilities` and a derived `jev: {decided, verdict, p, threshold}`. A decider never resolves its own request, and
 items it cannot take go to the `model` fallback. Orgs that predate
 autonomy stay `manual`; new orgs start at `mid`. Only CLI, GUI, and chat
 commands raise a level — an edit to the org file can only lower it.

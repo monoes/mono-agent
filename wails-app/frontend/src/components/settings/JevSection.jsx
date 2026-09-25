@@ -265,7 +265,7 @@ export default function JevSection() {
 
   if (!status) {
     return (
-      <div data-testid="jev-section">
+      <div id="settings-jev" data-testid="jev-section">
         {header}
         <div style={card}>
           {loadErr ? (
@@ -288,7 +288,7 @@ export default function JevSection() {
   const disabled = !!busy
 
   return (
-    <div data-testid="jev-section">
+    <div id="settings-jev" data-testid="jev-section">
       {header}
       <div style={card}>
         <div style={hint}>

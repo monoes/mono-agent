@@ -18,6 +18,20 @@ export const DECIDERS = [
   { id: 'jev', label: 'Jev', hint: 'TypeSafe Jev picks the verdict in one quick call; the model decides questions and anything Jev is unsure of.' },
 ]
 
+/** The jev decider's default gate (CLI orgdecide.DefaultJevThreshold). */
+export const JEV_THRESHOLD = 0.8
+
+/**
+ * Parse a jev threshold field: a number in [0.05, 1], snapped to the 0.05
+ * step the field offers. Returns null for anything else.
+ */
+export function parseJevThreshold(raw) {
+  if (raw === '' || raw == null) return null
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n < 0.05 || n > 1) return null
+  return Math.round(n * 20) / 20
+}
+
 /** Decider kinds the CLI accepts (`org autonomy set --decider`). */
 export function isDeciderKind(kind) {
   return DECIDERS.some(d => d.id === kind)

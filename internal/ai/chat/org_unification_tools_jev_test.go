@@ -27,3 +27,21 @@ func TestSetOrgAutonomy_DeciderKinds(t *testing.T) {
 		}
 	}
 }
+
+func TestSetOrgAutonomy_DeciderThreshold(t *testing.T) {
+	db := newMonoagentTestDB(t)
+	mt := NewMonoagentTools(db.DB, "/bin/monoagentcli")
+	stubRunSelfExec(t, func(ctx context.Context, bin string, args ...string) ([]byte, error) {
+		t.Fatal("exec must not run for a preview")
+		return nil, nil
+	})
+	out, err := mt.Execute("set_org_autonomy", `{"org_name":"growth","decider":"jev","decider_threshold":0.85}`)
+	if err != nil || !strings.Contains(out, "--decider jev --decider-threshold 0.85") {
+		t.Fatalf("preview %s err=%v", out, err)
+	}
+	for _, bad := range []string{"0", "1.2"} {
+		if out, err := mt.Execute("set_org_autonomy", `{"org_name":"growth","decider":"jev","decider_threshold":`+bad+`}`); err == nil {
+			t.Errorf("threshold %s accepted: %s", bad, out)
+		}
+	}
+}
