@@ -283,6 +283,9 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 	}
 
 	result, err := executor.Execute(storageAction)
+	if storage.db != nil {
+		flushHealth(storage.db)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("nodes: BrowserNode execute %s/%s: %w", b.platform, b.actionType, err)
 	}

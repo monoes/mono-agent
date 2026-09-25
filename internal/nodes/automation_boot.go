@@ -124,10 +124,52 @@ func packageStartURL(platform string) string {
 	return pkg.StartURL()
 }
 
-// downloadsSetter is implemented by the executor once the action core adds
-// SetDownloadsAllowed (contracts §3); until then downloads stay at the
-// executor's default.
-type downloadsSetter interface{ SetDownloadsAllowed(bool) }
+var (
+	healthMu  sync.Mutex
+	healthObs = map[*sql.DB]action.SelectorObserver{}
+)
+
+// healthObserver returns the process-wide selector-health observer for db,
+// creating it on first use. The observer batches writes on its own
+// goroutine, so it must be shared, not built per run.
+func healthObserver(db *sql.DB) action.SelectorObserver {
+	healthMu.Lock()
+	defer healthMu.Unlock()
+	if obs, ok := healthObs[db]; ok {
+		return obs
+	}
+	obs := automation.HealthObserver(db)
+	if obs == nil {
+		return nil
+	}
+	healthObs[db] = obs
+	return obs
+}
+
+// flushHealth writes the observer's pending observations for db now, so a
+// short CLI run doesn't exit before the batch timer fires.
+func flushHealth(db *sql.DB) {
+	healthMu.Lock()
+	obs := healthObs[db]
+	healthMu.Unlock()
+	if f, ok := obs.(interface{ Flush() error }); ok {
+		_ = f.Flush()
+	}
+}
+
+// CloseHealthObservers flushes and stops every selector-health observer.
+// Call it on process shutdown, before the database is closed.
+func CloseHealthObservers() {
+	healthMu.Lock()
+	all := healthObs
+	healthObs = map[*sql.DB]action.SelectorObserver{}
+	healthMu.Unlock()
+	for _, obs := range all {
+		if c, ok := obs.(interface{ Close() error }); ok {
+			_ = c.Close()
+		}
+	}
+}
 
 // attachPackage hands the executor the package its action belongs to, the
 // selector-health observer and the manifest's download permission. Without a
@@ -143,12 +185,10 @@ func attachPackage(ex *action.ActionExecutor, platform string, db *sql.DB) {
 	}
 	ex.SetPackage(pkg)
 	if db != nil {
-		if obs := automation.HealthObserver(db); obs != nil {
+		if obs := healthObserver(db); obs != nil {
 			ex.SetSelectorObserver(obs)
 		}
 	}
-	if ds, ok := any(ex).(downloadsSetter); ok {
-		m, found := bootedManifest(pkg.ID())
-		ds.SetDownloadsAllowed(found && m.Permissions.Downloads)
-	}
+	m, found := bootedManifest(pkg.ID())
+	ex.SetDownloadsAllowed(found && m.Permissions.Downloads)
 }
