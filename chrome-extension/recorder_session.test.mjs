@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { loadExtensionScripts } from "./test_helpers.mjs";
 import { goJsonTags } from "./recorder_go_types.mjs";
 
-const { MonoRecorderSession: RS } = loadExtensionScripts(["recorder_outbox.js", "recorder_session.js"]);
+const { MonoRecorderSession: RS } = loadExtensionScripts(["recorder_privacy.js", "recorder_outbox.js", "recorder_session.js"]);
 const TAGS = goJsonTags();
 
 function fakeStorage(seed = {}) {
@@ -484,4 +484,30 @@ test("marks need the recording still open (Go refuses frames after stop)", async
   hx.s.event(ev("type", { at: 1, value: "x" }), fromTab(7));
   await hx.s.stop("user");
   assert.throws(() => hx.s.mark({ kind: "param", refEvent: "e1" }), /has stopped/);
+});
+
+test("recorded URLs lose fragments and secret query values before they are queued (M5)", async () => {
+  const hx = harness({ connected: false });
+  hx.deps.tabInfo = async () => ({ url: "https://app.test/cb?code=abc123&state=xyz&page=2#access_token=t0k", title: "x".repeat(400) });
+  await hx.s.start({ tabId: 7 });
+  hx.s.navigation({ tabId: 7, frameId: 0, url: "https://app.test/reset?token=s3cret&u=ann#/inbox", transitionType: "link", transitionQualifiers: [] });
+  const all = JSON.stringify(hx.s.outbox());
+  for (const secret of ["abc123", "xyz", "t0k", "s3cret"]) assert.ok(!all.includes(secret), secret);
+  const [start, nav] = hx.s.outbox();
+  assert.equal(start.url, "https://app.test/cb?code=REDACTED&state=REDACTED&page=2");
+  assert.equal(start.title.length, 300);
+  assert.equal(nav.event.url, "https://app.test/reset?token=REDACTED&u=ann#/inbox", "a plain hash route is kept");
+});
+
+test("a stop acked as discarded (no events) is not analysable", async () => {
+  const hx = harness();
+  await hx.s.start({ tabId: 7 });
+  await hx.s.stop("user");
+  for (const f of hx.wire.splice(0)) {
+    hx.s.handleFrame({ id: f.id, success: true, type: "recording", data: f.op === "stop" ? { recordingId: f.recordingId, discarded: "no events" } : undefined });
+  }
+  const st = hx.s.status();
+  assert.equal(st.discarded, true);
+  assert.equal(st.delivered, false);
+  assert.equal(st.queued, 0);
 });

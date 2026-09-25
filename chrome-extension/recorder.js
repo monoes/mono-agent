@@ -29,6 +29,11 @@
  * does not unmask it. DOM snippets lose secret value attributes and any
  * card number in their text.
  *
+ * Only trusted events are recorded (e.isTrusted): a page or an ad frame
+ * dispatching synthetic events cannot write steps. Every URL is passed
+ * through sanitizeUrl before it leaves the page, and a secret field's
+ * fingerprint carries `sensitive: true`.
+ *
  * Open shadow roots: targets come from composedPath(), and the events that
  * do not cross a shadow boundary (change, submit) are also listened for on
  * each shadow root the person touches.
@@ -43,14 +48,16 @@
 
   const DEBOUNCE_MS = 700;
   const SNIPPET_MAX = 2048;
-  const SNIPPET_WALK = 6; // ancestor levels considered for the snippet
-  const SNIPPET_NODES = 80; // an ancestor with more descendants is never serialised
   const FOLD_MS = 800; // a submit this soon after its own click/Enter is folded into it
   const OVERLAY_ID = "monoagent-recorder-pick";
 
   const Sel = () => root.MonoRecorderSelectors;
   const List = () => root.MonoRecorderList;
   const Priv = () => root.MonoRecorderPrivacy;
+  const Dom = () => root.MonoRecorderDom;
+  const snippetOf = (el, label) => Dom().snippetOf(el, label);
+  const containerHtml = (el) => Dom().containerHtml(el);
+  const framePath = (win) => Dom().framePath(win);
   const tagOf = (el) => String((el && el.tagName) || "").toLowerCase();
   const attr = (el, name) => (el && el.getAttribute ? el.getAttribute(name) : null);
   const typeOf = (el) => String(attr(el, "type") || "text").toLowerCase();
@@ -106,66 +113,6 @@
     return `${mods.join("+")}+${name}`;
   }
 
-  /** fits is true when an element is small enough to serialise for a snippet. */
-  function fits(el) {
-    if (el.getElementsByTagName && el.getElementsByTagName("*").length > SNIPPET_NODES) return false;
-    return el.outerHTML.length <= SNIPPET_MAX;
-  }
-
-  /**
-   * snippetOf is ~2KB of outerHTML around the element: the largest nearby
-   * ancestor that still fits, with scripts dropped and secrets removed. The
-   * walk is capped, and a large ancestor is judged by its node count before
-   * anything is serialised, so a click deep in a big page stays cheap.
-   */
-  function snippetOf(el, label) {
-    if (!el || !el.cloneNode || el.outerHTML == null) return "";
-    let node = el;
-    for (let i = 0; i < SNIPPET_WALK; i++) {
-      const up = node.parentElement;
-      if (!up || tagOf(up) === "body" || tagOf(up) === "html" || !fits(up)) break;
-      node = up;
-    }
-    const copy = node.cloneNode(true);
-    if (copy.querySelectorAll) {
-      for (const s of copy.querySelectorAll("script,style,noscript,template")) s.remove();
-      const all = [copy].concat(Array.from(copy.querySelectorAll("input,textarea")));
-      for (const f of all) {
-        if (!/^(input|textarea)$/.test(tagOf(f))) continue;
-        const withheld = Priv().maskReason(f, attr(f, "value") || f.textContent, f === el ? label : "");
-        if (withheld) {
-          f.removeAttribute("value");
-          if (tagOf(f) === "textarea") f.textContent = "";
-        }
-      }
-    }
-    const html = Priv().scrubCards(copy.outerHTML || "");
-    return html.length > SNIPPET_MAX ? html.slice(0, SNIPPET_MAX) : html;
-  }
-
-  /** framePath is this frame's index path from the top window; [] at the top. */
-  function framePath(win) {
-    const path = [];
-    try {
-      let w = win;
-      while (w && w.parent && w !== w.parent) {
-        const p = w.parent;
-        let at = -1;
-        for (let i = 0; i < p.frames.length; i++) {
-          if (p.frames[i] === w) {
-            at = i;
-            break;
-          }
-        }
-        path.unshift(at);
-        w = p;
-      }
-    } catch {
-      // an unreachable parent: keep what was found
-    }
-    return path;
-  }
-
   /**
    * createRecorder wires one document. opts: doc, win, send(msg), now(),
    * env (selector counting), setTimer/clearTimer, debounceMs.
@@ -189,16 +136,28 @@
     let stopped = false;
     let lastPick = null;
     let last = null; // {type, form, at}
+    // When the person last did something. A submit with no trusted action
+    // just before it was started by the page's own script (element.click()).
+    let lastTrusted = -Infinity;
+    const ACTED_MS = 1000;
     let overlay = null;
     const bound = []; // [target, type, fn]
     const roots = new Set(); // shadow roots already listened on
 
-    function emit(partial, target, extra) {
-      const event = Object.assign({ type: partial.type, url: location(), at: now() }, partial);
+    function emit(partial, target, extra, snapshot) {
+      const event = Object.assign({ type: partial.type, url: Priv().sanitizeUrl(location()), at: now() }, partial);
       if (frame.length) event.frame = frame.slice();
-      if (target) event.target = Sel().fingerprint(target, env);
+      if (target) {
+        const fp = Sel().fingerprint(target, env);
+        if (fp.href) fp.href = Priv().sanitizeUrl(fp.href);
+        if (Priv().sensitiveField(target, labelOf(target))) fp.sensitive = true;
+        event.target = fp;
+      }
       const msg = Object.assign({ type: "recorder_event", event }, extra || {});
-      if (target && event.type !== "extract") msg.snippet = snippetOf(target, labelOf(target));
+      // Every event with a target carries its DOM; a list pick carries the
+      // whole container, so the analyzer can resolve the item pattern.
+      if (snapshot != null) msg.snippet = snapshot;
+      else if (target) msg.snippet = snippetOf(target, labelOf(target));
       last = { type: event.type, form: target && target.closest ? target.closest("form") : null, key: event.key, at: event.at };
       try {
         send(msg);
@@ -250,7 +209,7 @@
     }
 
     function onInput(e) {
-      if (stopped) return;
+      if (stopped || e.isTrusted === false) return;
       const el = targetOf(e);
       if (!isTextField(el)) return;
       watchRoot(el);
@@ -263,7 +222,7 @@
     }
 
     function onChange(e) {
-      if (stopped) return;
+      if (stopped || e.isTrusted === false) return;
       const el = targetOf(e);
       const tag = tagOf(el);
       if (tag === "select") {
@@ -283,11 +242,14 @@
     }
 
     function onFocusIn(e) {
-      if (!stopped) watchRoot(targetOf(e));
+      if (stopped) return;
+      const el = targetOf(e);
+      watchRoot(el);
+      if (tagOf(el) === "input" && typeOf(el) === "password") Priv().markPassword(el);
     }
 
     function onFocusOut(e) {
-      if (stopped) return;
+      if (stopped || e.isTrusted === false) return;
       const el = targetOf(e);
       if (pending.has(el)) flush(el);
     }
@@ -303,8 +265,9 @@
       const extra = withheld ? { masked: true } : {};
       const list = lastPick && lastPick !== el ? List().proposeList(lastPick, el, env) : null;
       if (list) {
+        const container = List().commonAncestor(lastPick, el);
         lastPick = null;
-        emit(Object.assign({ type: "extract", extract: list }, extra), el, { replacesLastExtract: true });
+        emit(Object.assign({ type: "extract", extract: list }, extra), el, { replacesLastExtract: true }, containerHtml(container));
       } else {
         lastPick = el;
         emit(Object.assign({ type: "extract", extract: List().single(el) }, extra), el);
@@ -312,13 +275,13 @@
     }
 
     function onClick(e) {
-      if (stopped) return;
+      if (stopped || e.isTrusted === false) return;
+      lastTrusted = now();
       if (pick || e.altKey) {
         if (e.type === "click") onPick(e);
         else e.preventDefault();
         return;
       }
-      if (e.isTrusted === false) return;
       const raw = targetOf(e);
       watchRoot(raw);
       const el = actionable(raw);
@@ -332,7 +295,7 @@
     }
 
     function onSubmit(e) {
-      if (stopped) return;
+      if (stopped || e.isTrusted === false || now() - lastTrusted > ACTED_MS) return;
       const form = targetOf(e);
       flush();
       const folded =
@@ -345,7 +308,8 @@
     }
 
     function onKeyDown(e) {
-      if (stopped || e.isComposing || e.repeat) return;
+      if (stopped || e.isTrusted === false || e.isComposing || e.repeat) return;
+      lastTrusted = now();
       const el = targetOf(e);
       const key = keyCombo(e, isTextField(el));
       if (!key) return;
@@ -377,6 +341,9 @@
     }
 
     function start() {
+      // Fields that are passwords now stay sensitive if a page later turns
+      // them into text fields.
+      if (doc.querySelectorAll) for (const f of doc.querySelectorAll('input[type="password"]')) Priv().markPassword(f);
       listen(doc, "click", onClick);
       listen(doc, "dblclick", onClick);
       listen(doc, "contextmenu", onClick);
@@ -427,7 +394,7 @@
   }
 
   root.MonoRecorder = {
-    createRecorder, keyCombo, snippetOf, framePath, actionable, targetOf,
+    createRecorder, keyCombo, snippetOf, containerHtml, framePath, actionable, targetOf,
     maskReason: (el, value, label) => Priv().maskReason(el, value, label),
     secretName: (el, reason, label) => Priv().secretName(el, reason, label, Sel().looksGenerated),
     luhn: (v) => Priv().luhn(v),

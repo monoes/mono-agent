@@ -51,7 +51,7 @@ const FIXTURE = `<!doctype html><html><head><meta charset="utf-8"><title>Recorde
     <button type="submit" data-testid="go">Sign in</button>
   </form>
   <button class="dup">Delete</button><button class="dup">Delete</button>
-  <ul id="list"><li class="item"><span class="t">One</span></li><li class="item"><span class="t">Two</span></li><li class="item"><span class="t">Three</span></li></ul>
+  <ul id="list"><li class="item" data-track="u-991"><span class="t">One</span><a href="/p/1?token=abc">go</a></li><li class="item"><span class="t">Two</span></li><li class="item"><span class="t">Three</span></li></ul>
   <div id=":r5:"><a href="#details">Details</a></div>
   <form id="pay"><textarea name="notes">card 4242 4242 4242 4242 thanks</textarea>
     <input name="card_cvv" value="123"><button type="button" id="pay-btn">Pay</button></form>
@@ -73,7 +73,7 @@ describe("recorder.js in a browser", { skip, concurrency: 1 }, () => {
     const page = join(fixtures, "fixture.html");
     await writeFile(page, FIXTURE, "utf8");
     const src = await Promise.all(
-      ["recorder_privacy.js", "recorder_selectors.js", "recorder_list.js", "recorder.js"].map((f) => readFile(join(HERE, f), "utf8"))
+      ["recorder_privacy.js", "recorder_selectors.js", "recorder_list.js", "recorder_dom.js", "recorder.js"].map((f) => readFile(join(HERE, f), "utf8"))
     );
     const id = await browser.onNewDocument(`${STUB}\n${src.join("\n")}`);
     await browser.navigate(fileUrl(page));
@@ -155,6 +155,7 @@ describe("recorder.js in a browser", { skip, concurrency: 1 }, () => {
     assert.ok(!fp.candidates.some((c) => c.kind === "aria"), "a unique test id makes counting aria unnecessary");
     for (const { c, ok } of JSON.parse(await resolves(fp.candidates, "[data-testid=go]"))) assert.ok(ok, JSON.stringify(c));
     assert.ok(fp.rect.W > 0 && fp.rect.H > 0);
+    assert.ok(!msg.snippet.includes("data-testid"), "snippets carry no data-* attributes");
   });
 
   it("marks a repeated name as not unique, and skips a generated id", async () => {
@@ -199,6 +200,22 @@ describe("recorder.js in a browser", { skip, concurrency: 1 }, () => {
     assert.equal(events[1].checked, true);
   });
 
+  it("ignores events the page itself dispatches", async () => {
+    await open();
+    await browser.evaluate(`(() => {
+      const b = document.querySelector("[data-testid=go]");
+      b.click();
+      b.dispatchEvent(new MouseEvent("click", { bubbles: true, altKey: true }));
+      const e = document.getElementById("email");
+      e.value = "robot@x.test";
+      e.dispatchEvent(new Event("input", { bubbles: true }));
+      e.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      return true;
+    })()`);
+    await sleep(900);
+    assert.deepEqual(await sent(), []);
+  });
+
   it("turns two Alt+clicks into a list whose selectors select the list", async () => {
     await open();
     await click("#list .t", 0, 1 /* Alt */);
@@ -208,6 +225,12 @@ describe("recorder.js in a browser", { skip, concurrency: 1 }, () => {
     const x = events[1].extract;
     assert.equal(x.list, true);
     assert.deepEqual(x.samples, ["One", "Two", "Three"]);
+    const msgs = await sent();
+    const container = msgs[1].snippet;
+    assert.match(container, /^<ul id="list">/, "a list pick sends its whole container");
+    assert.ok(container.includes("Three"));
+    assert.ok(!container.includes("data-track"), "data-* attributes are stripped");
+    assert.ok(!container.includes("token=abc") && container.includes("token=REDACTED"), "hrefs are sanitised");
     const n = await browser.evaluate(
       `document.querySelectorAll(${JSON.stringify(`${x.containerSelector} > ${x.itemSelector} > ${x.fieldSelector}`)}).length`
     );

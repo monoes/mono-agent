@@ -34,7 +34,7 @@ importScripts("cdp_proxy.js");
 // The activity recorder (§8.2): the session state machine and its Chrome
 // wiring. The page half (recorder_selectors.js, recorder_list.js,
 // recorder.js) is injected into the recorded tab only while recording.
-importScripts("recorder_outbox.js", "recorder_session.js", "recorder_wiring.js");
+importScripts("recorder_privacy.js", "recorder_outbox.js", "recorder_session.js", "recorder_wiring.js");
 // Asked before every dial; see doConnect. The same module the side panel uses,
 // so "is that really the bridge?" has exactly one implementation.
 importScripts("bridge_health.js");

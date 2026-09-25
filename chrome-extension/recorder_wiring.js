@@ -21,7 +21,7 @@
   "use strict";
 
   const PORT_NAME = "monoagent-record";
-  const RECORDER_FILES = ["recorder_privacy.js", "recorder_selectors.js", "recorder_list.js", "recorder.js"];
+  const RECORDER_FILES = ["recorder_privacy.js", "recorder_selectors.js", "recorder_list.js", "recorder_dom.js", "recorder.js"];
   // Analysis runs a model; verify replays the whole action in a browser.
   // Both report progress when the Go side supports it, which keeps the
   // idle timer from firing while they work.
@@ -182,6 +182,7 @@
       const st = session.status();
       const recordingId = msg.recordingId || st.id;
       if (!recordingId) throw new Error("nothing has been recorded yet");
+      if (st.id === recordingId && st.discarded) throw new Error("nothing was saved: the recording had no steps");
       if (st.id === recordingId && !st.delivered) {
         throw new Error("this recording is still waiting to reach the bridge — start it and try again");
       }
@@ -205,6 +206,8 @@
       // An existing automation (`automation`) or a new one the analyzer named (`new`).
       if (msg.automation) params[msg.isNew ? "new" : "automation"] = msg.automation;
       if (msg.name) params.name = msg.name;
+      // The person confirmed saving despite error-level lint.
+      if (msg.force === true) params.force = true;
       return { ok: true, result: await request("record.save", params) };
     },
   };
@@ -212,6 +215,13 @@
   function registerMessages() {
     chrome.runtime.onMessage.addListener((msg, sender, respond) => {
       if (!msg || typeof msg.type !== "string") return false;
+      if (!(msg.type in handlers) && msg.type !== "recorder_event") return false;
+      // Only this extension talks to the recorder: the page recorders (from
+      // a tab) send recorder_event / recorder_alive, and only the extension's
+      // own pages (the side panel) may drive a recording.
+      if (!sender || sender.id !== chrome.runtime.id) return false;
+      const fromPage = msg.type === "recorder_event" || msg.type === "recorder_alive";
+      if (fromPage ? !sender.tab : !isExtensionPage(sender)) return false;
       if (msg.type === "recorder_event") {
         later(() => session.event(msg, sender))();
         return false;
@@ -226,9 +236,15 @@
     });
   }
 
+  function isExtensionPage(sender) {
+    const base = chrome.runtime.getURL ? chrome.runtime.getURL("") : "";
+    return !!base && String(sender.url || "").startsWith(base);
+  }
+
   function registerPorts() {
     chrome.runtime.onConnect.addListener((port) => {
       if (port.name !== PORT_NAME) return;
+      if (!port.sender || port.sender.id !== chrome.runtime.id || !isExtensionPage(port.sender)) return;
       ports.add(port);
       port.onMessage.addListener((msg) => {
         // The panel that presses Record owns the recording: closing it stops it.

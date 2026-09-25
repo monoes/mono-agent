@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { loadExtensionScripts } from "./test_helpers.mjs";
 import { h, fakeDocument, countingEnv, fakeTimers } from "./recorder_fake_dom.mjs";
 
-const { MonoRecorder: R } = loadExtensionScripts(["recorder_privacy.js", "recorder_selectors.js", "recorder_list.js", "recorder.js"]);
+const { MonoRecorder: R } = loadExtensionScripts(["recorder_privacy.js", "recorder_selectors.js", "recorder_list.js", "recorder_dom.js", "recorder.js"]);
 
 function setup(body, opts = {}) {
   const html = h("html", {}, h("body", {}, ...body));
@@ -142,7 +142,11 @@ test("a submit right after its own click is folded into it", () => {
   assert.deepEqual(events().map((e) => e.type), ["click"]);
   clock.advance(5000);
   doc.dispatch("submit", form);
-  assert.deepEqual(events().map((e) => e.type), ["click", "submit"], "a later, script-driven submit is its own step");
+  assert.deepEqual(events().map((e) => e.type), ["click"], "a submit with no action of the person's before it is the page's own");
+  doc.dispatch("keydown", h("input", {}), { key: "Tab" });
+  clock.advance(900);
+  doc.dispatch("submit", form);
+  assert.deepEqual(events().map((e) => e.type), ["click", "press_key", "submit"], "one right after the person acted is recorded");
 });
 
 test("Alt+click marks data and never reaches the page; a similar second pick proposes a list", () => {
@@ -224,7 +228,7 @@ test("picking a password or card field as data sends no value (H2)", () => {
 });
 
 test("stopActive resets pick mode, so the next recording starts with clicks working (H4)", () => {
-  const g = loadExtensionScripts(["recorder_privacy.js", "recorder_selectors.js", "recorder_list.js", "recorder.js"]);
+  const g = loadExtensionScripts(["recorder_privacy.js", "recorder_selectors.js", "recorder_list.js", "recorder_dom.js", "recorder.js"]);
   g.MonoRecorder.setPick(true);
   assert.equal(g.__monoRecorderPick, true);
   g.MonoRecorder.stopActive();
@@ -306,4 +310,59 @@ test("pagehide flushes the value being typed (LOW)", () => {
   typeInto(doc, f, "leaving");
   winListeners.pagehide({ type: "pagehide" });
   assert.equal(sent[0].event.value, "leaving");
+});
+
+// ── security review (H3, H6, M5) ───────────────────────────────────────
+
+test("synthetic (untrusted) events of any kind are never recorded (H3)", () => {
+  const f = h("input", { name: "q" });
+  const b = h("button", {}, "Go");
+  const form = h("form", {}, f, b);
+  const { doc, clock, events } = setup([form]);
+  const fake = { isTrusted: false };
+  f.value = "injected";
+  doc.dispatch("input", f, fake);
+  doc.dispatch("change", f, fake);
+  doc.dispatch("click", b, fake);
+  doc.dispatch("click", b, Object.assign({ altKey: true }, fake));
+  doc.dispatch("keydown", f, Object.assign({ key: "Enter" }, fake));
+  doc.dispatch("submit", form, fake);
+  clock.advance(R.DEBOUNCE_MS);
+  assert.deepEqual(events(), []);
+});
+
+test("a secret field's fingerprint says sensitive; an ordinary one does not (H6)", () => {
+  const token = h("input", { name: "api_token" });
+  const plain = h("input", { name: "city" });
+  const { doc, clock, events } = setup([token, plain]);
+  typeInto(doc, token, "tk_live_1");
+  typeInto(doc, plain, "Utrecht");
+  clock.advance(R.DEBOUNCE_MS);
+  const [a, b] = events();
+  assert.deepEqual([a.masked, a.target.sensitive, a.value], [true, true, undefined]);
+  assert.deepEqual([b.value, b.target.sensitive], ["Utrecht", undefined]);
+});
+
+test("a field that was ever a password stays masked after the page makes it text (H6)", () => {
+  const pw = h("input", { type: "password", name: "p1" });
+  const { doc, clock, events } = setup([pw]);
+  doc.dispatch("focusin", pw);
+  pw.attrs.type = "text"; // "show password", before a single key
+  typeInto(doc, pw, "hunter2");
+  clock.advance(R.DEBOUNCE_MS);
+  assert.equal(events()[0].masked, true);
+  assert.equal(events()[0].target.sensitive, true);
+});
+
+test("event URLs and link hrefs are sanitised in the page (M5)", () => {
+  const link = h("a", { href: "https://app.test/magic?magic=abc&x=1#frag" }, "Open");
+  const html = h("html", {}, h("body", {}, link));
+  const doc = fakeDocument(html);
+  const sent = [];
+  const rec = R.createRecorder({ doc, send: (m) => sent.push(m), env: countingEnv(), url: () => "https://app.test/p?session=zzz#top" });
+  rec.start();
+  doc.dispatch("click", link);
+  const e = sent[0].event;
+  assert.equal(e.url, "https://app.test/p?session=REDACTED");
+  assert.equal(e.target.href, "https://app.test/magic?magic=REDACTED&x=1");
 });

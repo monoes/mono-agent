@@ -53,3 +53,33 @@ test("secret names prefer name, then a stable id, then the label", () => {
   assert.equal(P.secretName(h("input", { id: ":r3:" }), "secret", "Security code", gen), "security_code");
   assert.equal(P.secretName(h("input", {}), "card", "", gen), "card_number");
 });
+
+test("sensitive names: pass, token, secret, pin, cvv, otp, ssn (H6)", () => {
+  for (const name of ["pass", "passwd", "user_password", "apiToken", "client_secret", "pin", "card-cvv", "otp", "ssn"]) {
+    assert.ok(P.sensitiveField(h("input", { name })), name);
+  }
+  assert.equal(P.sensitiveField(h("input", { name: "passport_no" })), "");
+  assert.equal(P.sensitiveField(h("input", { autocomplete: "cc-exp" })), "card");
+});
+
+test("-webkit-text-security marks a CSS-masked field", () => {
+  const g = loadExtensionScripts(["recorder_privacy.js"], {
+    getComputedStyle: () => ({ webkitTextSecurity: "disc", getPropertyValue: () => "disc" }),
+  });
+  // The script reads root.getComputedStyle; the sandbox root is the fake global.
+  g.getComputedStyle = () => ({ webkitTextSecurity: "disc", getPropertyValue: () => "disc" });
+  const el = h("input", { name: "code_display" });
+  el.nodeType = 1;
+  assert.equal(g.MonoRecorderPrivacy.sensitiveField(el), "password");
+});
+
+test("sanitizeUrl drops fragments, keeps hash routes, redacts secret params (M5)", () => {
+  assert.equal(P.sanitizeUrl("https://a.test/x#section"), "https://a.test/x");
+  assert.equal(P.sanitizeUrl("https://a.test/#/inbox/3"), "https://a.test/#/inbox/3");
+  assert.equal(P.sanitizeUrl("https://a.test/#/x?token=1"), "https://a.test/");
+  assert.equal(
+    P.sanitizeUrl("https://a.test/cb?code=1&id_token=2&sig=3&q=shoes&X-Amz-Signature=4&reset=5"),
+    "https://a.test/cb?code=REDACTED&id_token=REDACTED&sig=REDACTED&q=shoes&X-Amz-Signature=REDACTED&reset=REDACTED"
+  );
+  assert.equal(P.sanitizeUrl("not a url"), "not a url");
+});

@@ -78,6 +78,9 @@
     return s;
   }
 
+  /** clean applies the privacy module's URL rules when it is loaded (always, in the worker). */
+  const clean = (u) => (root.MonoRecorderPrivacy ? root.MonoRecorderPrivacy.sanitizeUrl(u) : u);
+
   const OVERFLOW =
     "the bridge was unreachable for too long and the recording buffer is full, so recording stopped. " +
     "Start the bridge; what was recorded so far is kept and will be sent.";
@@ -107,7 +110,7 @@
       return {
         recording: false, id: "", tabId: 0, goal: "", url: "", title: "", profile: "", startedAt: 0,
         seq: 0, frameSeq: 0, lastExtract: "", pick: false, stopReason: "", steps: [],
-        finalized: false, envelopeId: "", error: "", warning: "",
+        finalized: false, discarded: false, envelopeId: "", error: "", warning: "",
       };
     }
 
@@ -140,7 +143,8 @@
         stopReason: state.stopReason,
         steps: state.steps.slice(),
         queued: outbox.size(),
-        delivered: !!state.id && state.finalized,
+        delivered: !!state.id && state.finalized && !state.discarded,
+        discarded: state.discarded,
         envelopeId: state.envelopeId,
         error: state.error,
         warning: state.warning,
@@ -210,8 +214,8 @@
         id: newRecordingId(startedAt),
         tabId,
         goal: String((opts && opts.goal) || "").trim(),
-        url: info.url || "",
-        title: info.title || "",
+        url: clean(info.url || ""),
+        title: String(info.title || "").slice(0, 300),
         startedAt,
       });
       state.profile = deps.profile ? await deps.profile() : "";
@@ -280,8 +284,9 @@
       if (!state.recording || stopping || !details || details.tabId !== state.tabId || details.frameId !== 0) return null;
       if (!/^(https?|file):/i.test(details.url || "")) return null;
       const kind = navKind(details.transitionType, details.transitionQualifiers, history);
-      state.url = details.url;
-      return addEvent({ type: kind.type, url: details.url, navCause: kind.navCause, t: details.timeStamp || now() });
+      const url = clean(details.url);
+      state.url = url;
+      return addEvent({ type: kind.type, url, navCause: kind.navCause, t: details.timeStamp || now() });
     }
 
     /** documentReady re-injects the recorder into a frame that just loaded. */
@@ -367,6 +372,8 @@
         if (frame.recordingId === state.id) {
           state.finalized = true;
           if (msg.data && msg.data.id) state.envelopeId = String(msg.data.id);
+          // Go writes nothing for a recording with no events.
+          if (msg.data && msg.data.discarded) state.discarded = true;
         }
         outbox.purge(frame.recordingId);
         changed();

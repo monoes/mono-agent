@@ -29,6 +29,10 @@ function area(data = {}) {
   };
 }
 
+// Who is asking: the side panel (an extension page) or a page recorder (a tab).
+const PANEL = { id: "ext", url: "chrome-extension://ext/sidepanel.html" };
+const PAGE = (tabId) => ({ id: "ext", tab: { id: tabId }, url: "https://app.test/" });
+
 function fakeChrome() {
   const data = {};
   const scripts = [];
@@ -37,7 +41,13 @@ function fakeChrome() {
     data,
     scripts,
     ports,
-    runtime: { onMessage: event(), onConnect: event(), onStartup: event() },
+    runtime: {
+      id: "ext",
+      getURL: (p) => `chrome-extension://ext/${p}`,
+      onMessage: event(),
+      onConnect: event(),
+      onStartup: event(),
+    },
     tabs: {
       onCreated: event(),
       onRemoved: event(),
@@ -65,17 +75,17 @@ function fakeChrome() {
 function load() {
   const chrome = fakeChrome();
   const wire = [];
-  const g = loadExtensionScripts(["ask.js", "recorder_outbox.js", "recorder_session.js", "recorder_wiring.js"], { chrome });
+  const g = loadExtensionScripts(["ask.js", "recorder_privacy.js", "recorder_outbox.js", "recorder_session.js", "recorder_wiring.js"], { chrome });
   const send = (f) => (wire.push(f), true);
   g.MonoAsk.install({ send, isConnected: () => true });
   g.MonoRecorderWiring.install({ send, isConnected: () => true, storage: chrome.storage.local });
-  const call = (msg, sender = {}) =>
+  const call = (msg, sender = PANEL) =>
     new Promise((resolve) => {
       const handled = chrome.runtime.onMessage.fire(msg, sender, resolve);
       if (!handled.some(Boolean)) resolve(undefined);
     });
   const port = () => {
-    const p = { name: g.MonoRecorderWiring.PORT_NAME, onMessage: event(), onDisconnect: event(), sent: [] };
+    const p = { name: g.MonoRecorderWiring.PORT_NAME, sender: PANEL, onMessage: event(), onDisconnect: event(), sent: [] };
     p.postMessage = (m) => p.sent.push(m);
     chrome.runtime.onConnect.fire(p);
     return p;
@@ -90,7 +100,7 @@ test("start injects the recorder files into every frame of the tab", async () =>
   const res = await call({ type: "record_start", goal: "demo" });
   assert.equal(res.ok, true, res.error);
   assert.equal(res.state.tabId, 7, "defaults to the active tab");
-  assert.deepEqual(chrome.scripts[0].files, ["recorder_privacy.js", "recorder_selectors.js", "recorder_list.js", "recorder.js"]);
+  assert.deepEqual(chrome.scripts[0].files, ["recorder_privacy.js", "recorder_selectors.js", "recorder_list.js", "recorder_dom.js", "recorder.js"]);
   assert.deepEqual(chrome.scripts[0].target, { tabId: 7, allFrames: true });
   assert.equal(wire[0].op, "start");
 });
@@ -98,7 +108,7 @@ test("start injects the recorder files into every frame of the tab", async () =>
 test("page events, navigation and new documents are routed to the session", async () => {
   const { chrome, wire, call, settle } = load();
   await call({ type: "record_start", tabId: 7 });
-  await call({ type: "recorder_event", event: { type: "click", url: "https://app.test/7", at: Date.now() } }, { tab: { id: 7 } });
+  await call({ type: "recorder_event", event: { type: "click", url: "https://app.test/7", at: Date.now() } }, PAGE(7));
   chrome.webNavigation.onCommitted.fire({ tabId: 7, frameId: 0, url: "https://app.test/b", transitionType: "link", transitionQualifiers: [] });
   chrome.webNavigation.onDOMContentLoaded.fire({ tabId: 7, frameId: 2 });
   await settle();
@@ -180,10 +190,10 @@ test("analyze, verify and save are record.* requests to Go", async () => {
 
 test("analyze refuses while the recording has not reached the bridge", async () => {
   const chrome = fakeChrome();
-  const g = loadExtensionScripts(["ask.js", "recorder_outbox.js", "recorder_session.js", "recorder_wiring.js"], { chrome });
+  const g = loadExtensionScripts(["ask.js", "recorder_privacy.js", "recorder_outbox.js", "recorder_session.js", "recorder_wiring.js"], { chrome });
   g.MonoAsk.install({ send: () => false, isConnected: () => false });
   g.MonoRecorderWiring.install({ send: () => false, isConnected: () => false, storage: chrome.storage.local });
-  const call = (msg) => new Promise((resolve) => chrome.runtime.onMessage.fire(msg, {}, resolve));
+  const call = (msg) => new Promise((resolve) => chrome.runtime.onMessage.fire(msg, PANEL, resolve));
   await call({ type: "record_start", tabId: 7 });
   await call({ type: "record_stop" });
   const res = await call({ type: "record_analyze" });
@@ -215,10 +225,10 @@ test("a hash-route change is recorded as navigation", async () => {
 test("a page from the back/forward cache is told whether to keep recording", async () => {
   const { call } = load();
   await call({ type: "record_start", tabId: 7 });
-  assert.deepEqual(await call({ type: "recorder_alive" }, { tab: { id: 7 } }), { recording: true });
-  assert.deepEqual(await call({ type: "recorder_alive" }, { tab: { id: 8 } }), { recording: false });
+  assert.deepEqual(await call({ type: "recorder_alive" }, PAGE(7)), { recording: true });
+  assert.deepEqual(await call({ type: "recorder_alive" }, PAGE(8)), { recording: false });
   await call({ type: "record_stop" });
-  assert.deepEqual(await call({ type: "recorder_alive" }, { tab: { id: 7 } }), { recording: false });
+  assert.deepEqual(await call({ type: "recorder_alive" }, PAGE(7)), { recording: false });
 });
 
 test("the recording state lives in storage.session", async () => {
@@ -236,4 +246,17 @@ test("a browser restart (runtime.onStartup) closes the old recording", async () 
   await settle();
   const res = await call({ type: "record_status" });
   assert.equal(res.state.recording, false);
+});
+
+test("only this extension's pages may drive a recording, and only tabs send events", async () => {
+  const { wire, call } = load();
+  // An ignored message is not answered at all (call resolves undefined).
+  const nobody = (msg, sender) => call(msg, sender).then((r) => (r === undefined ? "ignored" : r));
+  assert.equal(await nobody({ type: "record_start", tabId: 7 }, { id: "other-extension", url: "chrome-extension://other/x.html" }), "ignored");
+  assert.equal(await nobody({ type: "record_start", tabId: 7 }, PAGE(7)), "ignored", "a content script cannot start one");
+  assert.equal(wire.length, 0);
+  await call({ type: "record_start", tabId: 7 });
+  await call({ type: "recorder_event", event: { type: "click", url: "https://app.test/7", at: 1 } }, { id: "ext", url: "chrome-extension://ext/sidepanel.html" });
+  await call({ type: "recorder_event", event: { type: "click", url: "https://app.test/7", at: 1 } }, { id: "evil", tab: { id: 7 } });
+  assert.equal(wire.filter((f) => f.op === "event").length, 0, "events come only from this extension's page recorders");
 });
