@@ -377,6 +377,11 @@ func TestActionIntentsAreValid(t *testing.T) {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".json") {
 			return err
 		}
+		// Only action files (automations/<p>/actions/<a>.json): packages
+		// also ship manifests, fragments and test expectations.
+		if parts := strings.Split(path, "/"); len(parts) != 4 || parts[2] != "actions" {
+			return nil
+		}
 		raw, err := data.AutomationsFS.ReadFile(path)
 		if err != nil {
 			return err
