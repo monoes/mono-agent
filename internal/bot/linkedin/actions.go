@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/monoes/mono-agent/internal/browser"
+	"github.com/monoes/mono-agent/internal/jevpick"
 )
 
 // reLinkedInActivity matches the numeric activity ID in LinkedIn post URLs.
@@ -252,18 +253,76 @@ func (b *LinkedInBot) ListPostComments(ctx context.Context, page browser.PageInt
 	return result, nil
 }
 
+// likePostSleep is time.Sleep; tests replace it.
+var likePostSleep = time.Sleep
+
+// findReactionButtonJS finds the post's own Like/React button (not a
+// comment's), marks the first candidate with data-monoagent-reaction-btn and
+// reports how many candidates it saw, as JSON {state, count}. state is
+// "not_found", "already_reacted" or "marked".
+const findReactionButtonJS = `() => {
+		const prev = document.querySelector('[data-monoagent-reaction-btn]');
+		if (prev) prev.removeAttribute('data-monoagent-reaction-btn');
+
+		const candidates = [];
+		const actionBars = document.querySelectorAll('div.feed-shared-social-action-bar, div.social-actions-button, div[class*="social-actions"]');
+		for (const bar of actionBars) {
+			const btn = bar.querySelector('button[aria-label*="Like"], button[aria-label*="React"]');
+			if (btn && !candidates.includes(btn)) candidates.push(btn);
+		}
+		if (candidates.length === 0) {
+			const allBtns = document.querySelectorAll('button[aria-label*="React Like"], button[aria-label*="Like"]');
+			for (const btn of allBtns) {
+				if (!btn.closest('article.comments-comment-item') && !btn.closest('div[class*="comment-item"]')) {
+					candidates.push(btn);
+				}
+			}
+		}
+		if (candidates.length === 0) return JSON.stringify({state: 'not_found', count: 0});
+		const reactionBtn = candidates[0];
+
+		const label = (reactionBtn.getAttribute('aria-label') || '').toLowerCase();
+		if (label.includes('remove') || label.includes('unlike')) return JSON.stringify({state: 'already_reacted', count: candidates.length});
+
+		reactionBtn.setAttribute('data-monoagent-reaction-btn', 'true');
+		return JSON.stringify({state: 'marked', count: candidates.length});
+	}`
+
+// reactionLabel is the reaction's name as LinkedIn labels its button.
+func reactionLabel(reaction string) string {
+	if reaction == "" {
+		return ""
+	}
+	return strings.ToUpper(reaction[:1]) + reaction[1:]
+}
+
+// alreadyReacted reports whether a reaction button's label says the post
+// already carries the viewer's reaction.
+func alreadyReacted(label string) bool {
+	label = strings.ToLower(label)
+	return strings.Contains(label, "remove") || strings.Contains(label, "unlike")
+}
+
 // LikePost reacts to a LinkedIn post with the specified reaction.
-// reaction: "like"|"celebrate"|"support"|"love"|"insightful"|"funny" (default: "like")
+// reaction: "like"|"celebrate"|"support"|"love"|"insightful"|"funny" (default:
+// "like"; any other value is an error). The requested reaction is never
+// substituted: when its button is not in the reactions menu, Jev picks it
+// (if this bot has a picker) or the call fails.
+//
+// The post's own reaction button is found by selectors; when they match no
+// button or several, and a Jev picker is set, Jev picks the post's reaction
+// button. A Jev failure keeps today's result (the first match, or the
+// not-found error).
 func (b *LinkedInBot) LikePost(ctx context.Context, page browser.PageInterface, postURL string, reaction string) error {
 	if postURL == "" {
 		return fmt.Errorf("linkedin: postURL is required")
 	}
+	reaction = strings.ToLower(strings.TrimSpace(reaction))
 	if reaction == "" {
 		reaction = "like"
 	}
-	validReactions := map[string]bool{"like": true, "celebrate": true, "support": true, "love": true, "insightful": true, "funny": true}
-	if !validReactions[reaction] {
-		reaction = "like"
+	if _, ok := reactionButtonSelectors[reaction]; !ok && reaction != "like" {
+		return fmt.Errorf("linkedin: unknown reaction %q (want like, celebrate, support, love, insightful or funny)", reaction)
 	}
 
 	if err := page.Navigate(postURL); err != nil {
@@ -272,55 +331,62 @@ func (b *LinkedInBot) LikePost(ctx context.Context, page browser.PageInterface, 
 	if err := page.WaitLoad(); err != nil {
 		return fmt.Errorf("linkedin: post page did not load: %w", err)
 	}
-	time.Sleep(3 * time.Second)
+	likePostSleep(3 * time.Second)
 
-	res, err := page.Eval(`() => {
-		const prev = document.querySelector('[data-monoagent-reaction-btn]');
-		if (prev) prev.removeAttribute('data-monoagent-reaction-btn');
-
-		const actionBars = document.querySelectorAll('div.feed-shared-social-action-bar, div.social-actions-button, div[class*="social-actions"]');
-		let reactionBtn = null;
-		for (const bar of actionBars) {
-			const btn = bar.querySelector('button[aria-label*="Like"], button[aria-label*="React"]');
-			if (btn) { reactionBtn = btn; break; }
-		}
-		if (!reactionBtn) {
-			const allBtns = document.querySelectorAll('button[aria-label*="React Like"], button[aria-label*="Like"]');
-			for (const btn of allBtns) {
-				if (!btn.closest('article.comments-comment-item') && !btn.closest('div[class*="comment-item"]')) {
-					reactionBtn = btn;
-					break;
-				}
-			}
-		}
-		if (!reactionBtn) return 'not_found';
-
-		const label = (reactionBtn.getAttribute('aria-label') || '').toLowerCase();
-		if (label.includes('remove') || label.includes('unlike')) return 'already_reacted';
-
-		reactionBtn.setAttribute('data-monoagent-reaction-btn', 'true');
-		return 'marked';
-	}`)
+	res, err := page.Eval(findReactionButtonJS)
 	if err != nil {
 		return fmt.Errorf("linkedin: failed to evaluate reaction script: %w", err)
 	}
+	var found struct {
+		State string `json:"state"`
+		Count int    `json:"count"`
+	}
+	if err := jsonUnmarshal(res.Str(), &found); err != nil {
+		return fmt.Errorf("linkedin: failed to parse reaction script result: %w", err)
+	}
 
-	state := res.Str()
-	if state == "already_reacted" {
+	btnSel := "[data-monoagent-reaction-btn='true']"
+	var reactionBtn browser.ElementHandle
+	if found.Count != 1 && b.JevAvailable(page) {
+		pick, jerr := b.JevElement(ctx, page, jevpick.Target{
+			Kind:   "click",
+			Intent: fmt.Sprintf("the Like (React) button of the LinkedIn post shown on this page (%s) — the post's own reaction button, not a Like button that belongs to a comment", postURL),
+			Hint:   "LinkedIn labels it e.g. \"React Like\"; a label with \"Remove\" or \"Unlike\" means the post was already reacted to.",
+		})
+		switch {
+		case jerr == nil:
+			defer pick.Release()
+			label := pick.Label
+			if a, aerr := pick.Element.Attribute("aria-label"); aerr == nil && a != nil && *a != "" {
+				label = *a
+			}
+			if alreadyReacted(label) {
+				return nil
+			}
+			btnSel, reactionBtn, found.State = pick.Selector, pick.Element, "marked"
+		case found.Count == 0:
+			return fmt.Errorf("linkedin: could not find reaction button on %s (%s) (jev fallback: %v)", postURL, found.State, jerr)
+		}
+		// Several matches and no usable pick: the first match, as before.
+	}
+
+	if found.State == "already_reacted" {
 		return nil
 	}
-	if state != "marked" {
-		return fmt.Errorf("linkedin: could not find reaction button on %s (%s)", postURL, state)
+	if found.State != "marked" {
+		return fmt.Errorf("linkedin: could not find reaction button on %s (%s)", postURL, found.State)
 	}
 
-	reactionBtn, err := page.Element("[data-monoagent-reaction-btn='true']", 5*time.Second)
-	if err != nil {
-		return fmt.Errorf("linkedin: marked reaction button not found: %w", err)
+	if reactionBtn == nil {
+		reactionBtn, err = page.Element(btnSel, 5*time.Second)
+		if err != nil {
+			return fmt.Errorf("linkedin: marked reaction button not found: %w", err)
+		}
 	}
 	if err := reactionBtn.ScrollIntoView(); err != nil {
 		return fmt.Errorf("linkedin: failed to scroll element into view: %w", err)
 	}
-	time.Sleep(300 * time.Millisecond)
+	likePostSleep(300 * time.Millisecond)
 
 	if reaction == "like" {
 		if err := reactionBtn.Click(); err != nil {
@@ -331,29 +397,33 @@ func (b *LinkedInBot) LikePost(ctx context.Context, page browser.PageInterface, 
 			return fmt.Errorf("linkedin: failed to scroll reaction button into view: %w", err)
 		}
 		// Simulate hover by dispatching mouseover event via JS.
-		_, _ = page.Eval(`() => {
-			const el = document.querySelector('[data-monoagent-reaction-btn]');
+		_, _ = page.Eval(fmt.Sprintf(`() => {
+			const el = document.querySelector(%q);
 			if (el) el.dispatchEvent(new MouseEvent('mouseover', {bubbles: true}));
-		}`)
-		time.Sleep(1 * time.Second)
+		}`, btnSel))
+		likePostSleep(1 * time.Second)
 
-		reactionSel, hasSel := reactionButtonSelectors[reaction]
-		if !hasSel {
-			reactionSel = reactionButtonSelectors["celebrate"] // fallback, won't normally be reached
-		}
-		popupBtn, popupErr := page.Element(reactionSel, 5*time.Second)
+		popupBtn, popupErr := page.Element(reactionButtonSelectors[reaction], 5*time.Second)
 		if popupErr != nil {
-			if err := reactionBtn.Click(); err != nil {
-				return fmt.Errorf("linkedin: fallback Like click failed: %w", err)
+			// Never substitute another reaction: Jev finds the requested
+			// one in the open menu, or the call fails.
+			label := reactionLabel(reaction)
+			pick, jerr := b.JevElement(ctx, page, jevpick.Target{
+				Kind:   "click",
+				Intent: fmt.Sprintf("the %q reaction button in the LinkedIn reactions menu opened over the post's Like button — exactly the %s reaction, not Like and not any other reaction", label, label),
+			})
+			if jerr != nil {
+				return fmt.Errorf("linkedin: %s reaction not found on %s: %w (jev fallback: %v)", reaction, postURL, popupErr, jerr)
 			}
-		} else {
-			if err := popupBtn.Click(); err != nil {
-				return fmt.Errorf("linkedin: failed to click %s reaction: %w", reaction, err)
-			}
+			defer pick.Release()
+			popupBtn = pick.Element
+		}
+		if err := popupBtn.Click(); err != nil {
+			return fmt.Errorf("linkedin: failed to click %s reaction: %w", reaction, err)
 		}
 	}
 
-	time.Sleep(2 * time.Second)
+	likePostSleep(2 * time.Second)
 	page.Eval(`() => {
 		const el = document.querySelector('[data-monoagent-reaction-btn]');
 		if (el) el.removeAttribute('data-monoagent-reaction-btn');
