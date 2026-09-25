@@ -421,6 +421,8 @@ export function UpdateOrgRole(arg1:string,arg2:string,arg3:string):Promise<strin
 
 export function UpdateSecret(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:Record<string, string>):Promise<void>;
 
+export function UpdateTagColor(arg1:string,arg2:string):Promise<boolean>;
+
 export function UpdateVaultImageLabel(arg1:string,arg2:string):Promise<void>;
 
 export function UploadProfileDocument(arg1:string,arg2:string):Promise<main.UploadResult>;

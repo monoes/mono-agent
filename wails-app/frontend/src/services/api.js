@@ -98,6 +98,7 @@ export const api = {
   getAllTags:            ()  => GoApp.GetAllTags().catch(guard('tags', [])),
   getPersonTags:        (personId) => GoApp.GetPersonTags(personId).catch(guard('person tags', [])),
   addPersonTag:         (personId, name, color) => GoApp.AddPersonTag(personId, name, color).catch(guard('add tag', null)),
+  updateTagColor:       (tagId, color) => (GoApp.UpdateTagColor ? GoApp.UpdateTagColor(tagId, color) : Promise.resolve(false)).catch(() => false),
   removePersonTag:      (personId, tagId) => GoApp.RemovePersonTag(personId, tagId).catch(e => reportError('remove tag', e)),
   getPeopleTagsMap:     (ids) => GoApp.GetPeopleTagsMap(ids).catch(guard('tags map', {})),
   listConnections:      (platform = '') => GoApp.ListConnections(platform).catch(guard('list connections', [])),

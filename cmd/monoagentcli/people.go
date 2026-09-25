@@ -29,6 +29,7 @@ func newPeopleCmd(cfg *globalConfig) *cobra.Command {
 		newPeopleMessagesCmd(cfg),
 		newPeopleStatusCmd(cfg),
 		newPeopleReviewCmd(cfg),
+		newPeopleTagCmd(cfg),
 	)
 
 	return cmd
@@ -54,7 +55,7 @@ func newPeopleListCmd(cfg *globalConfig) *cobra.Command {
 			defer db.Close()
 
 			query := `SELECT id, platform_username, platform, COALESCE(full_name,''),
-			                 COALESCE(follower_count,''), COALESCE(following_count,0), is_verified,
+			                 COALESCE(follower_count,''), COALESCE(following_count,0), COALESCE(is_verified,0),
 			                 COALESCE(category,''), COALESCE(job_title,'')
 			          FROM people WHERE profile_id = ?`
 			var params []interface{}
@@ -92,7 +93,7 @@ func newPeopleListCmd(cfg *globalConfig) *cobra.Command {
 			var people []personSummary
 			for rows.Next() {
 				var p personSummary
-				var verified int
+				var verified sql.NullInt64
 				if err := rows.Scan(
 					&p.ID, &p.PlatformUsername, &p.Platform, &p.FullName,
 					&p.FollowerCount, &p.FollowingCount,
@@ -100,7 +101,7 @@ func newPeopleListCmd(cfg *globalConfig) *cobra.Command {
 				); err != nil {
 					return fmt.Errorf("scanning person: %w", err)
 				}
-				p.IsVerified = verified != 0
+				p.IsVerified = verified.Valid && verified.Int64 != 0
 				people = append(people, p)
 			}
 			if err := rows.Err(); err != nil {
@@ -165,22 +166,22 @@ func newPeopleGetCmd(cfg *globalConfig) *cobra.Command {
 			defer db.Close()
 
 			var p storage.Person
-			var verified int
+			var verified, contentCount, followingCount sql.NullInt64
 			var fullName, imageURL, contactDetails, website sql.NullString
 			var followerCount, introduction, category, jobTitle sql.NullString
 
 			err = db.DB.QueryRow(
-				`SELECT id, platform_username, platform, full_name,
+				`SELECT id, COALESCE(platform_username, ''), COALESCE(platform, ''), full_name,
 				        image_url, contact_details,
-				        website, content_count, follower_count,
-				        following_count, introduction, is_verified,
+				        website, COALESCE(content_count, 0), follower_count,
+				        COALESCE(following_count, 0), introduction, COALESCE(is_verified, 0),
 				        category, job_title,
 				        created_at, updated_at
 				 FROM people WHERE id = ? AND profile_id = ?`, personID, cfg.ProfileID,
 			).Scan(
 				&p.ID, &p.PlatformUsername, &p.Platform, &fullName,
-				&imageURL, &contactDetails, &website, &p.ContentCount,
-				&followerCount, &p.FollowingCount, &introduction,
+				&imageURL, &contactDetails, &website, &contentCount,
+				&followerCount, &followingCount, &introduction,
 				&verified, &category, &jobTitle, &p.CreatedAt, &p.UpdatedAt,
 			)
 			if err == sql.ErrNoRows {
@@ -195,8 +196,10 @@ func newPeopleGetCmd(cfg *globalConfig) *cobra.Command {
 			p.ContactDetails = contactDetails.String
 			p.Website = website.String
 			p.FollowerCount = followerCount.String
+			p.ContentCount = int(contentCount.Int64)
+			p.FollowingCount = int(followingCount.Int64)
 			p.Introduction = introduction.String
-			p.IsVerified = verified != 0
+			p.IsVerified = verified.Valid && verified.Int64 != 0
 			p.Category = category.String
 			p.JobTitle = jobTitle.String
 

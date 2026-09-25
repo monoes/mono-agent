@@ -450,6 +450,15 @@ monoagentcli people review reject <id>
 introduction}` as trigger input. A missing (exit 2), ambiguous or inactive
 (exit 3) workflow is refused before the person is approved.
 
+Tags on people (at most 10 each; a tag is the profile's, matched by name):
+
+```bash
+monoagentcli --json people tag list [--person <id>]
+monoagentcli people tag add <person-id> "hot lead" --color "#ff5500"
+monoagentcli people tag remove <person-id> <tag-id|name>
+monoagentcli people tag color <tag-id|name> "#00b4d8"   # recolours it for everyone
+```
+
 ## Secrets
 
 Secrets live in an **encrypted vault** (OS keyring-wrapped key,

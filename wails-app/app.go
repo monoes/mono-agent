@@ -539,71 +539,37 @@ func (a *App) GetPersonTags(personId string) []TagInfo {
 	return tags
 }
 
-// AddPersonTag creates a tag (if new) and links it to the person.
-// Returns the tag that was added, or nil on error / if the person already has 10 tags.
+// AddPersonTag tags a person, creating the tag when new; a colour recolours
+// an existing tag everywhere — `people tag add`. Returns the tag, or nil
+// when it could not be added (unknown person, bad colour, 10 tags already).
 func (a *App) AddPersonTag(personId, tagName, color string) *TagInfo {
-	if a.db == nil {
+	args := []string{"people", "tag", "add", personId, tagName}
+	if color != "" {
+		args = append(args, "--color", color)
+	}
+	var t TagInfo
+	if err := a.runMonoCLI("", &t, args...); err != nil {
+		a.emitLog("PEOPLE", "WARN", fmt.Sprintf("tagging %s with %q: %v", personId, tagName, err))
 		return nil
 	}
-	tagName = strings.TrimSpace(tagName)
-	if tagName == "" {
-		return nil
-	}
-
-	var personExists int
-	if err := a.db.QueryRow(`SELECT 1 FROM people WHERE id = ? AND profile_id = ?`, personId, a.getActiveProfileID()).Scan(&personExists); err != nil {
-		return nil
-	}
-
-	// Enforce max-10 limit.
-	var count int
-	_ = a.db.QueryRow(`SELECT COUNT(*) FROM people_tags WHERE person_id = ?`, personId).Scan(&count)
-	if count >= 10 {
-		return nil
-	}
-
-	tx, err := a.db.Begin()
-	if err != nil {
-		return nil
-	}
-	defer tx.Rollback()
-
-	// Find or create the tag within the active profile.
-	var tagId, tagColor string
-	err = tx.QueryRow(`SELECT id, color FROM tags WHERE LOWER(name) = LOWER(?) AND profile_id = ?`, tagName, a.getActiveProfileID()).Scan(&tagId, &tagColor)
-	if err != nil {
-		// Create new tag scoped to the active profile.
-		tagId = newUUID()
-		if color == "" {
-			color = "#00b4d8"
-		}
-		if _, err = tx.Exec(`INSERT INTO tags(id, name, color, profile_id) VALUES(?,?,?,?)`, tagId, tagName, color, a.getActiveProfileID()); err != nil {
-			return nil
-		}
-		tagColor = color
-	}
-
-	// Link person ↔ tag (ignore if already linked).
-	if _, err = tx.Exec(`INSERT OR IGNORE INTO people_tags(person_id, tag_id) VALUES(?,?)`, personId, tagId); err != nil {
-		return nil
-	}
-
-	if err = tx.Commit(); err != nil {
-		return nil
-	}
-	return &TagInfo{ID: tagId, Name: tagName, Color: tagColor}
+	return &t
 }
 
-// RemovePersonTag unlinks a tag from a person (does not delete the tag globally).
+// UpdateTagColor recolours a tag for everyone who has it — `people tag color`.
+func (a *App) UpdateTagColor(tagId, color string) bool {
+	if err := a.runMonoCLI("", nil, "people", "tag", "color", tagId, color); err != nil {
+		a.emitLog("PEOPLE", "WARN", fmt.Sprintf("recolouring tag %s: %v", tagId, err))
+		return false
+	}
+	return true
+}
+
+// RemovePersonTag unlinks a tag from a person (the tag itself stays) —
+// `people tag remove`.
 func (a *App) RemovePersonTag(personId, tagId string) {
-	if a.db == nil {
-		return
+	if err := a.runMonoCLI("", nil, "people", "tag", "remove", personId, tagId); err != nil {
+		a.emitLog("PEOPLE", "WARN", fmt.Sprintf("untagging %s: %v", personId, err))
 	}
-	var exists int
-	if err := a.db.QueryRow(`SELECT 1 FROM people WHERE id = ? AND profile_id = ?`, personId, a.getActiveProfileID()).Scan(&exists); err != nil {
-		return
-	}
-	_, _ = a.db.Exec(`DELETE FROM people_tags WHERE person_id = ? AND tag_id = ?`, personId, tagId)
 }
 
 // GetPeopleTagsMap returns a map of personId → []TagInfo for a slice of person IDs.
@@ -806,6 +772,20 @@ func findMonoAgentCLI() (string, error) {
 			return p, nil
 		}
 	}
+	// Also check relative to executable (bundled app or dev bin/ directory).
+	// Checked before PATH so a sibling binary built with the app is preferred over
+	// an older version installed globally in ~/.local/bin or /usr/local/bin.
+	if exe, err := os.Executable(); err == nil {
+		if real, err := filepath.EvalSymlinks(exe); err == nil {
+			exe = real
+		}
+		execDir := filepath.Dir(exe)
+		sibling := filepath.Join(execDir, "monoagentcli")
+		if fileExists(sibling) {
+			return sibling, nil
+		}
+	}
+
 	if p, err := exec.LookPath("monoagentcli"); err == nil {
 		return p, nil
 	}
@@ -816,19 +796,12 @@ func findMonoAgentCLI() (string, error) {
 		"/usr/local/bin/monoagentcli",
 		"/opt/homebrew/bin/monoagentcli",
 	}
-	// Also check relative to executable (bundled app). os.Executable(), not
-	// os.Args[0]: on Linux it resolves through /proc/self/exe, which the
-	// kernel already follows to the real binary, so this still finds a
-	// sibling monoagentcli when MonoAgent itself was launched through a
-	// symlink (e.g. scripts/install-linux-desktop.sh's stable-named launch
-	// symlink) — os.Args[0] would instead give the symlink's own directory.
 	if exe, err := os.Executable(); err == nil {
 		if real, err := filepath.EvalSymlinks(exe); err == nil {
 			exe = real
 		}
 		execDir := filepath.Dir(exe)
 		candidates = append(candidates,
-			filepath.Join(execDir, "monoagentcli"),
 			filepath.Join(execDir, "..", "..", "..", "cmd", "monoagentcli", "monoagentcli"),
 		)
 	}

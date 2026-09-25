@@ -834,6 +834,10 @@ export function UpdateSecret(arg1, arg2, arg3, arg4, arg5, arg6) {
   return window['go']['main']['App']['UpdateSecret'](arg1, arg2, arg3, arg4, arg5, arg6);
 }
 
+export function UpdateTagColor(arg1, arg2) {
+  return window['go']['main']['App']['UpdateTagColor'](arg1, arg2);
+}
+
 export function UpdateVaultImageLabel(arg1, arg2) {
   return window['go']['main']['App']['UpdateVaultImageLabel'](arg1, arg2);
 }
