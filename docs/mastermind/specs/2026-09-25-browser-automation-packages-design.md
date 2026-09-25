@@ -1,7 +1,7 @@
 # Browser Automation Packages, Connections Split & Record-to-Action — Design Spec
 
 Date: 2026-09-25
-Status: Decisions resolved (§13) — ready for the Phase 0–1 implementation plan
+Status: Implemented on `feat/browser-automation-packages` (all phases 0–6); see §14
 Related: `docs/BROWSER_TRACK_PLAN.md` (GLU-02 "demonstrate → workflow",
 RIG-12 "replay", GLU-04), `docs/plans/2026-03-11-connections-design.md`,
 `data/actions/README.md`, `docs/USAGE_POLICY.md`
@@ -806,3 +806,43 @@ deliver the connections split and import/export.
 6. **Recording scope:** one tab only in v1. A navigation that opens a new
    tab ends the recorded segment with a notice. There is no `switch_tab`
    recording; the step exists for hand-written actions only.
+
+## 14. Implementation notes (2026-09-25)
+
+Built in one pass by parallel builders against
+`docs/mastermind/plans/2026-09-25-browser-automation-packages-contracts.md`,
+then reviewed (security, Go correctness, extension/GUI) and end-to-end
+tested in a real browser over a private bridge. Deviations from the text
+above, all deliberate:
+
+- **Social gate** follows the existing `nosocial` build tag (§6.4).
+- **Trust tiers** `builtin | local | recorded | imported` (contracts §8):
+  recorded and imported packages get namespaced secrets only
+  (`automation:<id>/<name>`), scripts off until `automation trust --scripts`,
+  uploads confined to `~/.monoagent/uploads/<id>/`, and imported write
+  actions need a one-time `automation trust --live`.
+- **Security refusals are always fatal**; declarative packaged actions abort
+  on a failed step by default (legacy and native built-ins keep `continue`).
+- **Recordings** are stored in `~/.monoagent/recordings/` (per profile under
+  `profiles/<id>/recordings/`), never in the monomind capture inbox.
+- **Redirects** in `http_fetch_in_page`/`download`: credentialed or bodied
+  requests refuse redirects; bodyless GETs follow and the final URL is
+  checked (intermediate hops are not individually checked).
+- **Built-in forms** are unchanged from before packages (golden-tested);
+  generated forms apply to non-built-in packages only.
+- **Hacker News** is the reference declarative package (no Go bot, no
+  scripts); its node output is parity-tested against the native bot.
+- `automation test` runs fixtures through the real executor in headless
+  Chrome with per-URL routes (`tests/<name>.routes.json`) and request
+  assertions; `--live` is not implemented (use `record verify`).
+
+Known limitations / follow-ups:
+- `workflow create` writes only the file store, so `workflow run --json`
+  shows empty node types for workflows made that way (pre-existing).
+- `workflow import` without `--yes` imports the workflow even when a bundled
+  package is left missing; re-running with `--yes` duplicates the workflow
+  (pre-existing import behaviour).
+- `username` cannot select a session: the extension drives one real browser
+  profile with one cookie jar per site.
+- Re-record a single step (§8.7) and applying a held-back built-in update
+  from the GUI are not built yet.
