@@ -1,8 +1,13 @@
-[
-  {
-    "success": true,
-    "itemID": "70000010",
-    "commentID": "70000099",
-    "url": "https://news.ycombinator.com/item?id=70000099"
-  }
-]
+{
+  "records": [
+    {
+      "success": true,
+      "itemID": "70000010",
+      "commentID": "70000099",
+      "url": "https://news.ycombinator.com/item?id=70000099"
+    }
+  ],
+  "requests": [
+    { "method": "POST", "urlMatches": "/comment$", "bodyContains": "parent=70000010" }
+  ]
+}

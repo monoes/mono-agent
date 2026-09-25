@@ -279,7 +279,7 @@
       "id": "arm_read_back",
       "type": "condition",
       "condition": "hnState.refusal == '' and check_dup.success != true and check_form.success != true",
-      "then": ["read_back_tries"]
+      "then": ["read_back_tries", "read_back", "publish"]
     },
     {
       "id": "read_back_tries",
@@ -289,12 +289,28 @@
       "value": [0, 2, 2]
     },
     {
-      "id": "gate_try",
-      "type": "condition",
-      "condition": "subFound != true",
-      "then": ["try_wait", "open_after", "read_top_id", "read_top_title", "read_top_link", "gate_new"]
+      "id": "read_back",
+      "type": "for_each",
+      "description": "Look at /submitted up to three times (0s, 2s, 2s apart) for the new story; never submits again",
+      "items": "{{readBackTries}}",
+      "as": "readBackWait",
+      "steps": [
+        {
+          "id": "gate_try",
+          "type": "condition",
+          "condition": "subFound != true",
+          "then": ["try_wait", "open_after", "read_top_id", "read_top_title", "read_top_link", "gate_new"]
+        }
+      ]
     },
-    {"id": "try_wait", "type": "wait", "duration": "{{item}}"},
+    {
+      "id": "publish",
+      "type": "condition",
+      "description": "Report the result once, after the loop, so it merges into the node's output item",
+      "condition": "subFound == true",
+      "then": ["save", "out_title", "out_url"]
+    },
+    {"id": "try_wait", "type": "wait", "duration": "{{readBackWait}}"},
     {
       "id": "open_after",
       "type": "navigate",
@@ -339,7 +355,7 @@
       "id": "gate_match",
       "type": "condition",
       "condition": "topTitle == sub.title or topLink == sub.okUrl",
-      "then": ["found", "result", "save"],
+      "then": ["found", "result"],
       "else": ["gate_give_up"]
     },
     {"id": "found", "type": "set_variable", "variable_name": "subFound", "value": true},
@@ -357,9 +373,22 @@
     },
     {"id": "save", "type": "save_data", "dataSource": "subResult"},
     {
+      "id": "out_title",
+      "type": "set_variable",
+      "description": "The node reports outputs.success names from variables: give the ones that are also input names their output values",
+      "variable_name": "title",
+      "value": "{{topTitle}}"
+    },
+    {
+      "id": "out_url",
+      "type": "set_variable",
+      "variable_name": "url",
+      "value": "https://news.ycombinator.com/item?id={{topID}}"
+    },
+    {
       "id": "gate_give_up",
       "type": "condition",
-      "condition": "tryIdx >= 2",
+      "condition": "readBackWait_index >= 2",
       "then": ["fail_unconfirmed"]
     },
     {
@@ -368,6 +397,6 @@
       "text": "hackernews: submission not confirmed — no new item titled \"{{sub.title}}\" on /submitted; the form was submitted; not resubmitting to avoid a double post — check https://news.ycombinator.com/submitted?id={{subUser}}"
     }
   ],
-  "loops": [{"id": "read_back", "iterator": "readBackTries", "indexVar": "tryIdx", "steps": ["gate_try"]}],
+  "loops": [],
   "errorHandling": {"globalRetries": 0, "retryDelay": 0, "onFinalFailure": "log_and_continue"}
 }

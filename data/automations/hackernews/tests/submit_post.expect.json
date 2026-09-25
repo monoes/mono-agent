@@ -1,9 +1,14 @@
-[
-  {
-    "id": "70000200",
-    "title": "Show HN: Synthetic Gadget",
-    "url": "https://news.ycombinator.com/item?id=70000200",
-    "link": "https://example.test/gadget",
-    "author": "test_user"
-  }
-]
+{
+  "records": [
+    {
+      "id": "70000200",
+      "title": "Show HN: Synthetic Gadget",
+      "url": "https://news.ycombinator.com/item?id=70000200",
+      "link": "https://example.test/gadget",
+      "author": "test_user"
+    }
+  ],
+  "requests": [
+    { "method": "POST", "urlMatches": "/r$", "bodyContains": "title=Show+HN%3A+Synthetic+Gadget" }
+  ]
+}

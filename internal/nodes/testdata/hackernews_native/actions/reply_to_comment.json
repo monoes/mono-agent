@@ -1,0 +1,62 @@
+{
+  "$schema": "../../../schemas/action.v1.schema.json",
+  "actionType": "reply_to_comment",
+  "platform": "HACKERNEWS",
+  "version": "1.1.0",
+  "description": "Reply to a Hacker News item or comment. Succeeds only when the reply by the logged-in user shows on the item page afterwards; rate limits (\"posting too fast\") and logged-out sessions fail. Never retried, so a reply is never posted twice",
+  "sideEffects": "message",
+  "metadata": {
+    "requiresAuth": true,
+    "supportsPagination": false,
+    "supportsRetry": false
+  },
+  "inputs": {
+    "required": [
+      {
+        "name": "itemID",
+        "type": "string",
+        "description": "Numeric item or comment ID to reply to"
+      },
+      {
+        "name": "text",
+        "type": "string",
+        "description": "Reply text"
+      }
+    ],
+    "optional": []
+  },
+  "outputs": {
+    "success": [
+      "success",
+      "itemID",
+      "commentID",
+      "url"
+    ],
+    "failure": [
+      "error"
+    ]
+  },
+  "steps": [
+    {
+      "id": "reply",
+      "sideEffect": true,
+      "type": "call_bot_method",
+      "methodName": "reply_to_comment",
+      "args": [
+        "{{itemID}}",
+        "{{text}}"
+      ],
+      "variable_name": "replyResult",
+      "timeout": 60,
+      "onError": {
+        "action": "mark_failed"
+      }
+    }
+  ],
+  "loops": [],
+  "errorHandling": {
+    "globalRetries": 0,
+    "retryDelay": 0,
+    "onFinalFailure": "log_and_continue"
+  }
+}

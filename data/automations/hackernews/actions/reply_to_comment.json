@@ -119,7 +119,7 @@
       "type": "condition",
       "condition": "hnState.refusal != ''",
       "then": ["fail_refused"],
-      "else": ["wrap_needle", "make_needle", "confirm_tries"]
+      "else": ["wrap_needle", "make_needle", "confirm_tries", "confirm", "publish"]
     },
     {
       "id": "fail_refused",
@@ -152,12 +152,28 @@
       "value": [0, 1, 1, 1, 1, 1]
     },
     {
-      "id": "gate_confirm",
-      "type": "condition",
-      "condition": "repFound != true",
-      "then": ["confirm_wait", "read_rows", "match_rows", "gate_mine"]
+      "id": "confirm",
+      "type": "for_each",
+      "description": "Look for the posted reply up to six times, about 5s in all; never posts again",
+      "items": "{{confirmTries}}",
+      "as": "confirmWait",
+      "steps": [
+        {
+          "id": "gate_confirm",
+          "type": "condition",
+          "condition": "repFound != true",
+          "then": ["confirm_wait", "read_rows", "match_rows", "gate_mine"]
+        }
+      ]
     },
-    {"id": "confirm_wait", "type": "wait", "duration": "{{item}}"},
+    {
+      "id": "publish",
+      "type": "condition",
+      "description": "Report the result once, after the loop, so it merges into the node's output item",
+      "condition": "repFound == true",
+      "then": ["rep_save", "out_item_id"]
+    },
+    {"id": "confirm_wait", "type": "wait", "duration": "{{confirmWait}}"},
     {
       "id": "read_rows",
       "type": "extract_table",
@@ -197,7 +213,7 @@
       "id": "gate_mine",
       "type": "condition",
       "condition": "mine[0].id != ''",
-      "then": ["rep_found", "rep_result", "rep_save"],
+      "then": ["rep_found", "rep_result"],
       "else": ["gate_give_up"]
     },
     {"id": "rep_found", "type": "set_variable", "variable_name": "repFound", "value": true},
@@ -214,9 +230,16 @@
     },
     {"id": "rep_save", "type": "save_data", "dataSource": "repResult"},
     {
+      "id": "out_item_id",
+      "type": "set_variable",
+      "description": "The node reports outputs.success names from variables: give the ones that are also input names their output values",
+      "variable_name": "itemID",
+      "value": "{{hn.id}}"
+    },
+    {
       "id": "gate_give_up",
       "type": "condition",
-      "condition": "confirmIdx >= 5",
+      "condition": "confirmWait_index >= 5",
       "then": ["fail_unconfirmed"]
     },
     {
@@ -225,13 +248,6 @@
       "text": "hackernews: reply not confirmed — no comment by {{repUser}} with the reply text on the page Hacker News returned after posting; not posting again"
     }
   ],
-  "loops": [
-    {
-      "id": "confirm",
-      "iterator": "confirmTries",
-      "indexVar": "confirmIdx",
-      "steps": ["gate_confirm"]
-    }
-  ],
+  "loops": [],
   "errorHandling": {"globalRetries": 0, "retryDelay": 0, "onFinalFailure": "log_and_continue"}
 }

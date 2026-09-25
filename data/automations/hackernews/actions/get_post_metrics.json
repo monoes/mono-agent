@@ -63,7 +63,8 @@
         "shape",
         "gate_job",
         "finish",
-        "save"
+        "save",
+        "out_item_id"
       ],
       "else": ["read_missing", "fail_missing"]
     },
@@ -190,7 +191,14 @@
         }
       ]
     },
-    {"id": "save", "type": "save_data", "dataSource": "metrics"}
+    {"id": "save", "type": "save_data", "dataSource": "metrics"},
+    {
+      "id": "out_item_id",
+      "type": "set_variable",
+      "description": "The node reports outputs.success names from variables: give the ones that are also input names their output values",
+      "variable_name": "itemID",
+      "value": "{{hn.id}}"
+    }
   ],
   "loops": [],
   "errorHandling": {"globalRetries": 2, "retryDelay": 2000, "onFinalFailure": "log_and_continue"}

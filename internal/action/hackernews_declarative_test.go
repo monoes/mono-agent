@@ -201,6 +201,10 @@ func expectFile(t *testing.T, name string) interface{} {
 	if err := json.Unmarshal(b, &v); err != nil {
 		t.Fatal(err)
 	}
+	// {"records": [...], "requests": [...]} (automation test's form) → records.
+	if m, ok := v.(map[string]interface{}); ok {
+		return m["records"]
+	}
 	return v
 }
 
