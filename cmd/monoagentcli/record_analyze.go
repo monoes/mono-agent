@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -123,6 +124,7 @@ func printAnalyzeResult(w io.Writer, res *recordanalyze.Result) {
 
 func newRecordVerifyCmd(cfg *globalConfig) *cobra.Command {
 	var full bool
+	var inputs []string
 	cmd := &cobra.Command{
 		Use:   "verify <draft>",
 		Short: "Replay a draft in the browser (stops before the first side-effect step unless --full)",
@@ -140,7 +142,15 @@ func newRecordVerifyCmd(cfg *globalConfig) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rep, err := recordanalyze.Verify(cmd.Context(), dir, recordanalyze.VerifyOptions{Full: full, Exec: exec})
+			overrides := map[string]any{}
+			for _, kv := range inputs {
+				k, v, ok := strings.Cut(kv, "=")
+				if !ok || k == "" {
+					return fmt.Errorf("--input wants name=value, got %q", kv)
+				}
+				overrides[k] = v
+			}
+			rep, err := recordanalyze.Verify(cmd.Context(), dir, recordanalyze.VerifyOptions{Full: full, Exec: exec, Inputs: overrides})
 			if err != nil {
 				return err
 			}
@@ -156,6 +166,7 @@ func newRecordVerifyCmd(cfg *globalConfig) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&full, "full", false, "Also run side-effect steps (writes on the site)")
 	cmd.Flags().Bool("safe", true, "Stop before the first side-effect step (default)")
+	cmd.Flags().StringArrayVar(&inputs, "input", nil, "Input value name=value (repeatable; secrets are never recorded)")
 	return cmd
 }
 

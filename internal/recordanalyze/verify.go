@@ -77,6 +77,9 @@ type ExecFunc func(ctx context.Context, def *action.ActionDef, pkg action.Packag
 type VerifyOptions struct {
 	Full bool // run side-effect steps too
 	Exec ExecFunc
+	// Inputs override or add to the recorded values (secrets are never
+	// recorded, so a step typing one needs it here).
+	Inputs map[string]any
 }
 
 // Verify replays the draft in dir (safe mode unless Full), builds the
@@ -100,7 +103,14 @@ func Verify(ctx context.Context, dir string, opts VerifyOptions) (*VerifyReport,
 	}
 	pkg := p.Context()
 	o := &observer{}
-	out := opts.Exec(ctx, def, pkg, d.RecordedInputs, !opts.Full, o)
+	inputs := map[string]any{}
+	for k, v := range d.RecordedInputs {
+		inputs[k] = v
+	}
+	for k, v := range opts.Inputs {
+		inputs[k] = v
+	}
+	out := opts.Exec(ctx, def, pkg, inputs, !opts.Full, o)
 	rep := BuildReport(def, out, o.obs, pkg)
 	promoted, err := PromoteHealed(dir, o.obs)
 	if err != nil {
