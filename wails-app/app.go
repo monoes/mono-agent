@@ -22,6 +22,7 @@ import (
 	"github.com/monoes/mono-agent/internal/capturedocs"
 	"github.com/monoes/mono-agent/internal/connections"
 	"github.com/monoes/mono-agent/internal/docscan"
+	"github.com/monoes/mono-agent/internal/imagescan"
 	"github.com/monoes/mono-agent/internal/monomind"
 	"github.com/monoes/mono-agent/internal/orgdesign"
 	"github.com/monoes/mono-agent/internal/profiledir"
@@ -61,6 +62,9 @@ type App struct {
 	docWatchMu sync.Mutex
 	docWatcher *docscan.Watcher     // polls the active profile's whole folder (minus .monomind/) for document changes; see restartDocumentWatcher
 	capWatcher *capturedocs.Watcher // polls the active profile's browser-capture inbox; see restartDocumentWatcher
+
+	imgWatchMu sync.Mutex
+	imgWatcher *imagescan.Watcher // polls the active profile's whole folder for images; see restartImageWatcher
 }
 
 // cancelHandle wraps a stream's cancel func in a pointer so it has a comparable
@@ -196,6 +200,7 @@ func (a *App) startup(ctx context.Context) {
 
 	a.restartOrgWatcher()
 	a.restartDocumentWatcher()
+	a.restartImageWatcher()
 
 	a.emitLog("SYSTEM", "INFO", "Mono Agent UI connected to "+a.dbPath)
 
@@ -324,6 +329,13 @@ func (a *App) shutdown(_ context.Context) {
 		a.capWatcher = nil
 	}
 	a.docWatchMu.Unlock()
+
+	a.imgWatchMu.Lock()
+	if a.imgWatcher != nil {
+		a.imgWatcher.Stop()
+		a.imgWatcher = nil
+	}
+	a.imgWatchMu.Unlock()
 
 	a.runningMu.Lock()
 	for _, cmd := range a.runningCmds {
@@ -1203,6 +1215,7 @@ func (a *App) MoveProfileFolder(profileID, newRootDir string) error {
 	if profileID == a.getActiveProfileID() {
 		a.restartOrgWatcher()
 		a.restartDocumentWatcher()
+		a.restartImageWatcher()
 	}
 	a.emitLog("SYSTEM", "INFO", fmt.Sprintf("profile %s: moved to %s", profileID, newRootDir))
 	return nil
@@ -1260,6 +1273,7 @@ func (a *App) SwitchProfile(id string) error {
 	a.setActiveProfileID(id)
 	a.restartOrgWatcher()
 	a.restartDocumentWatcher()
+	a.restartImageWatcher()
 	a.emitLog("SYSTEM", "INFO", "Switched to profile: "+id)
 	return nil
 }

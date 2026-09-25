@@ -662,6 +662,9 @@ func (a *App) runWorkflowProcess(id, inputJSON string) error {
 			a.emitLog("WORKFLOW", "INFO", fmt.Sprintf("Workflow %s completed", id))
 			runtime.EventsEmit(a.ctx, "workflow:complete", map[string]interface{}{"workflow_id": id, "success": true})
 		}
+		if a.ctx != nil {
+			runtime.EventsEmit(a.ctx, "images:changed", map[string]interface{}{"profileID": a.getActiveProfileID(), "workflow_id": id})
+		}
 	}()
 	return nil
 }

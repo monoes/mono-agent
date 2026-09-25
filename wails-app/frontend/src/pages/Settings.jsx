@@ -350,7 +350,7 @@ export default function Settings({ onNavigate }) {
           <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
         </div>
 
-        <HealthSection onNavigate={onNavigate} />
+        <HealthSection onNavigate={onNavigate} collapsible defaultExpanded={false} />
 
         {/* Quick access cards */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>

@@ -222,4 +222,82 @@ describe('HealthSection', () => {
     render(<HealthSection />)
     expect(await screen.findByTestId('runtimes-not-checked')).toHaveTextContent('settings.health.runtimesNotChecked')
   })
+
+  it('renders folded by default when collapsible and defaultExpanded is false, showing severity badge and toggling', async () => {
+    render(<HealthSection collapsible defaultExpanded={false} />)
+
+    // Toggle header is present
+    const toggle = await screen.findByTestId('health-fold-toggle')
+    expect(toggle).toBeInTheDocument()
+    expect(screen.getByText('Open')).toBeInTheDocument()
+
+    // Full doctor body is folded/hidden
+    expect(screen.queryByTestId('system-health')).not.toBeInTheDocument()
+
+    // Severity badge shows the issues count and critical count
+    const badge = screen.getByTestId('doctor-severity-badge')
+    expect(badge).toBeInTheDocument()
+    expect(screen.getByTestId('doctor-severity-count')).toHaveTextContent('2')
+    expect(screen.getByTestId('doctor-severity-label')).toHaveTextContent('2 issues (1 critical)')
+
+    // Click to unfold
+    fireEvent.click(toggle)
+    expect(screen.getByText('Hide')).toBeInTheDocument()
+    expect(screen.getByTestId('system-health')).toBeInTheDocument()
+    expect(screen.getByText('Database')).toBeInTheDocument()
+
+    // Click to fold again
+    fireEvent.click(toggle)
+    expect(screen.getByText('Open')).toBeInTheDocument()
+    expect(screen.queryByTestId('system-health')).not.toBeInTheDocument()
+  })
+
+  it('shows amber severity badge when report has only warnings', async () => {
+    const warnOnlyReport = {
+      ...report,
+      results: [
+        { id: 'browser.bridge', group: 'browser', title: 'Bridge', status: 'warn', summary: 'down' },
+        { id: 'integrations.mcp', group: 'integrations', title: 'MCP', status: 'warn', summary: 'not registered' },
+      ],
+    }
+    mockRunHealthCheck.mockResolvedValue(JSON.stringify(warnOnlyReport))
+    render(<HealthSection collapsible defaultExpanded={false} />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('doctor-severity-count')).toHaveTextContent('2')
+    })
+    expect(screen.getByTestId('doctor-severity-label')).toHaveTextContent('2 warnings')
+    expect(screen.getByTestId('doctor-severity-badge')).toHaveStyle({ color: 'rgb(251, 191, 36)' })
+  })
+
+  it('shows green severity badge with 0 count when report has no issues', async () => {
+    const okReport = {
+      ...report,
+      results: [
+        { id: 'core.db', group: 'core', title: 'Database', status: 'ok', summary: 'ready' },
+      ],
+    }
+    mockRunHealthCheck.mockResolvedValue(JSON.stringify(okReport))
+    render(<HealthSection collapsible defaultExpanded={false} />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('doctor-severity-count')).toHaveTextContent('0')
+    })
+    expect(screen.getByTestId('doctor-severity-label')).toHaveTextContent('0 issues · All checks passed')
+  })
+
+  it('shows red severity badge when cli is missing in collapsible mode and expands to explain', async () => {
+    mockRunHealthCheck.mockResolvedValue(JSON.stringify({ error: 'monoagentcli not found', cli_missing: true }))
+    render(<HealthSection collapsible defaultExpanded={false} />)
+
+    const toggle = await screen.findByTestId('health-fold-toggle')
+    expect(screen.getByTestId('doctor-severity-count')).toHaveTextContent('1')
+    expect(screen.getByTestId('doctor-severity-label')).toHaveTextContent(/settings.health.cliMissingTitle/)
+    expect(screen.queryByText('monoagentcli not found')).not.toBeInTheDocument()
+
+    // Expand
+    fireEvent.click(toggle)
+    expect(screen.getByText('monoagentcli not found')).toBeInTheDocument()
+  })
 })
+

@@ -24,7 +24,7 @@
 // internal/ai/chat/monoagent_tools.go (createWorkflow/createOrg/
 // saveDocument) — see that file if either ever changes shape.
 
-const ALLOWED_TOOL_NAMES = new Set(['create_workflow', 'create_org', 'save_document'])
+const ALLOWED_TOOL_NAMES = new Set(['create_workflow', 'create_org', 'save_document', 'save_image'])
 
 function nonEmptyString(v) {
   return typeof v === 'string' && v.trim().length > 0
@@ -66,6 +66,11 @@ export function detectArtifactCandidate(call) {
       ? { type: 'document', callId: call.callId, id: parsed.vault_document_id }
       : null
   }
+  if (call.name === 'save_image') {
+    return nonEmptyString(parsed.vault_image_id)
+      ? { type: 'image', callId: call.callId, id: parsed.vault_image_id }
+      : null
+  }
   return null
 }
 
@@ -105,6 +110,12 @@ export async function resolveArtifact(candidate, api) {
     const doc = await api.getProfileDocument(candidate.id)
     if (!doc) return null
     return { type: 'document', id: doc.id, filename: doc.filename, path: doc.path, sizeBytes: doc.size_bytes }
+  }
+
+  if (candidate.type === 'image') {
+    const img = await api.getVaultImage(candidate.id)
+    if (!img || !nonEmptyString(img.id)) return null
+    return { type: 'image', id: img.id, filename: img.filename, label: img.label || img.filename || img.id, path: img.path, url: img.url }
   }
 
   return null

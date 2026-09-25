@@ -4,7 +4,6 @@ import (
 	"context"
 	"embed"
 	"net/http"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -53,13 +52,11 @@ var assets embed.FS
 //go:embed build/appicon.png
 var appIcon []byte
 
-// vaultImageHandler serves files from ~/.monoagent/vault/ at /vault-image/<filename>,
+// vaultImageHandler serves vault images at /vault-image/<id-or-filename>,
 // scoped to the currently active profile so one profile cannot enumerate or view
-// another profile's vault images.
+// another profile's vault images. It reads the exact disk path from the database,
+// supporting both uploaded/vault-stored images and discovered project images.
 func vaultImageHandler(app *App) http.Handler {
-	// os.UserHomeDir (not $HOME) so the vault dir resolves on Windows too.
-	home, _ := os.UserHomeDir()
-	vaultDir := filepath.Join(home, ".monoagent", "vault")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.URL.Path, "/vault-image/") {
 			w.WriteHeader(http.StatusNotFound)
@@ -76,17 +73,17 @@ func vaultImageHandler(app *App) http.Handler {
 		if profileID == "" {
 			profileID = "default"
 		}
-		var exists int
+		var filePath string
 		err := app.db.QueryRow(
-			`SELECT 1 FROM vault_images WHERE filename = ? AND profile_id = ?`,
-			name, profileID,
-		).Scan(&exists)
+			`SELECT path FROM vault_images WHERE (id = ? OR filename = ?) AND profile_id = ? LIMIT 1`,
+			name, name, profileID,
+		).Scan(&filePath)
 		if err != nil {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
 
-		http.ServeFile(w, r, filepath.Join(vaultDir, name))
+		http.ServeFile(w, r, filePath)
 	})
 }
 

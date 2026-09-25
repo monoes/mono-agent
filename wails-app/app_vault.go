@@ -337,6 +337,9 @@ func (a *App) AddVaultImage(srcPath, label string) (map[string]interface{}, erro
 	if label != "" {
 		_, _ = a.db.Exec(`UPDATE vault_images SET label = ? WHERE id = ? AND profile_id = ?`, label, id, a.getActiveProfileID())
 	}
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "images:changed", map[string]interface{}{"profileID": a.getActiveProfileID(), "added": 1})
+	}
 	return a.GetVaultImage(id)
 }
 
@@ -406,6 +409,9 @@ func (a *App) UpdateVaultImageLabel(id, label string) error {
 	if n, _ := res.RowsAffected(); n == 0 {
 		return fmt.Errorf("vault image %s not found", id)
 	}
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "images:changed", map[string]interface{}{"profileID": a.getActiveProfileID(), "updated": id})
+	}
 	return nil
 }
 
@@ -413,14 +419,12 @@ func (a *App) DeleteVaultImage(id string) error {
 	if a.db == nil {
 		return fmt.Errorf("database not available")
 	}
-	var path string
-	if err := a.db.QueryRow(`SELECT path FROM vault_images WHERE id = ? AND profile_id = ?`, id, a.getActiveProfileID()).Scan(&path); err != nil {
-		return fmt.Errorf("vault image %q not found: %w", id, err)
+	if err := vault.DeleteImage(context.Background(), a.db, a.getActiveProfileID(), id); err != nil {
+		return err
 	}
-	if _, err := a.db.Exec(`DELETE FROM vault_images WHERE id = ? AND profile_id = ?`, id, a.getActiveProfileID()); err != nil {
-		return fmt.Errorf("delete record: %w", err)
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "images:changed", map[string]interface{}{"profileID": a.getActiveProfileID(), "deleted": id})
 	}
-	_ = os.Remove(path) // best-effort
 	return nil
 }
 

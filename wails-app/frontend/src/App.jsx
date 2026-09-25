@@ -181,6 +181,8 @@ export default function App() {
         : `No built-in viewer for ${artifact.filename.split('.').pop()?.toUpperCase() || 'this'} files`
       notify('open', `${reason} — opening "${artifact.filename}" with your system's default application.`)
       WailsApp.OpenPathWithOS(artifact.path).catch(e => notify('open', `Could not open "${artifact.filename}": ${e}`))
+    } else if (artifact.type === 'image') {
+      navigate('vault')
     }
   }, [navigate])
 

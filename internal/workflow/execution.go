@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"runtime/debug"
 	"strings"
 	"time"
 
 	"github.com/monoes/mono-agent/internal/connections"
 	"github.com/monoes/mono-agent/internal/fsconfine"
+	"github.com/monoes/mono-agent/internal/imagescan"
 	"github.com/monoes/mono-agent/internal/secrets"
 	"github.com/monoes/mono-agent/internal/vault"
 	"github.com/rs/zerolog"
@@ -499,6 +501,9 @@ func RunExecution(
 			}
 		}
 
+		// Auto-register any image files produced by the node into the image vault.
+		autoRegisterItemImages(ctx, outputs, wf.ID, exec.ID)
+
 		// Collect items per handle: "main" feeds nodeOutputs and the success
 		// record; "error" is the failure-output convention shared by nodes
 		// that report per-item failures instead of returning an error
@@ -870,6 +875,42 @@ func restorePerItemFields(resolvedConfig map[string]interface{}, state *perItemF
 				continue
 			}
 			elem[nested.subKey] = v
+		}
+	}
+}
+
+// autoRegisterItemImages checks if an output item contains an unregistered image file
+// path in its JSON (e.g. file_path or image_path) and registers it in the image vault.
+func autoRegisterItemImages(ctx context.Context, outputs []NodeOutput, wfID, execID string) {
+	vaultDB := vault.DBFromContext(ctx)
+	if vaultDB == nil {
+		return
+	}
+	for _, out := range outputs {
+		for _, item := range out.Items {
+			if item.JSON == nil {
+				continue
+			}
+			if vid, ok := item.JSON["vault_id"].(string); ok && vid != "" {
+				continue
+			}
+			for _, key := range []string{"file_path", "image_path"} {
+				p, ok := item.JSON[key].(string)
+				if !ok || p == "" {
+					continue
+				}
+				if !imagescan.IsImageFile(p) {
+					continue
+				}
+				fi, err := os.Stat(p)
+				if err != nil || fi.IsDir() {
+					continue
+				}
+				if vaultID, err := vault.Register(ctx, vaultDB, p, "workflow", wfID, execID); err == nil {
+					item.JSON["vault_id"] = vaultID
+					break
+				}
+			}
 		}
 	}
 }
