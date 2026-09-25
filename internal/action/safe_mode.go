@@ -9,6 +9,7 @@ package action
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -86,4 +87,29 @@ func (ae *ActionExecutor) afterStep(step StepDef, result *StepResult, err error)
 		return ae.failRun(step.ID, fmt.Errorf("page left the allowed domains: %w", derr))
 	}
 	return nil
+}
+
+// safeStopRequired reports whether safe mode stops before step: a step
+// flagged sideEffect, and the steps that act beyond the page or run
+// arbitrary code — page_script, upload, download, a non-GET
+// http_fetch_in_page, and a call_action whose target writes (or cannot be
+// resolved, or does not declare its level).
+func (ae *ActionExecutor) safeStopRequired(step StepDef) bool {
+	if step.SideEffect {
+		return true
+	}
+	switch step.Type {
+	case "page_script", "upload", "download":
+		return true
+	case "http_fetch_in_page":
+		m := strings.ToUpper(strings.TrimSpace(ae.resolver.Resolve(step.Method)))
+		return m != "" && m != "GET"
+	case "call_action":
+		if ae.pkg == nil {
+			return true
+		}
+		def, _, err := CheckCallAction(ae.pkg, step.Action)
+		return err != nil || def.SideEffects == "" || atLeastWrite(def.SideEffects)
+	}
+	return false
 }

@@ -73,3 +73,33 @@ func TestSafeModeOffRunsSideEffects(t *testing.T) {
 		t.Fatalf("saved = %v", v)
 	}
 }
+
+func TestSafeModeExtraStops(t *testing.T) {
+	imp, _ := coreTrustWorld()
+	imp.actions["writer"] = &ActionDef{ActionType: "writer", SideEffects: "write"}
+	imp.actions["reader"] = &ActionDef{ActionType: "reader", SideEffects: "read"}
+	ae := newPkgExecutor(nil, imp)
+	ae.SetSafeMode(true)
+	ae.SetVariable("verb", "post")
+	cases := []struct {
+		step StepDef
+		stop bool
+	}{
+		{StepDef{Type: "page_script", Script: "x.js"}, true},
+		{StepDef{Type: "upload"}, true},
+		{StepDef{Type: "download"}, true},
+		{StepDef{Type: "http_fetch_in_page"}, false},
+		{StepDef{Type: "http_fetch_in_page", Method: "get"}, false},
+		{StepDef{Type: "http_fetch_in_page", Method: "{{verb}}"}, true},
+		{StepDef{Type: "call_action", Action: "writer"}, true},
+		{StepDef{Type: "call_action", Action: "reader"}, false},
+		{StepDef{Type: "call_action", Action: "missing"}, true},
+		{StepDef{Type: "click"}, false},
+		{StepDef{Type: "click", SideEffect: true}, true},
+	}
+	for _, c := range cases {
+		if got := ae.safeStopRequired(c.step); got != c.stop {
+			t.Errorf("%s %s%s: stop=%v, want %v", c.step.Type, c.step.Method, c.step.Action, got, c.stop)
+		}
+	}
+}

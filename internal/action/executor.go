@@ -826,7 +826,7 @@ func (ae *ActionExecutor) executeSteps(ctx context.Context, steps []StepDef) err
 			return err
 		}
 		step := steps[i]
-		if ae.safeMode && step.SideEffect {
+		if ae.safeMode && ae.safeStopRequired(step) {
 			return ae.stopBeforeSideEffect(step)
 		}
 

@@ -6,25 +6,25 @@ import (
 	"testing"
 )
 
-// trustPkg adds the optional trust interfaces to fakePkg and resolves
+// coreTrustPkg adds the optional trust interfaces to fakePkg and resolves
 // call_action refs through a small registry.
-type trustPkg struct {
+type coreTrustPkg struct {
 	fakePkg
 	trust   string
 	calls   []string
 	scripts *bool
 	live    *bool
-	reg     map[string]*trustPkg
+	reg     map[string]*coreTrustPkg
 	actions map[string]*ActionDef
 }
 
-func (p *trustPkg) Trust() string         { return p.trust }
-func (p *trustPkg) CallActions() []string { return p.calls }
-func (p *trustPkg) ScriptsAllowed() bool  { return p.scripts == nil || *p.scripts }
-func (p *trustPkg) LiveRunConfirmed() bool {
+func (p *coreTrustPkg) Trust() string         { return p.trust }
+func (p *coreTrustPkg) CallActions() []string { return p.calls }
+func (p *coreTrustPkg) ScriptsAllowed() bool  { return p.scripts == nil || *p.scripts }
+func (p *coreTrustPkg) LiveRunConfirmed() bool {
 	return p.live == nil || *p.live
 }
-func (p *trustPkg) ResolveAction(ref string) (*ActionDef, PackageContext, error) {
+func (p *coreTrustPkg) ResolveAction(ref string) (*ActionDef, PackageContext, error) {
 	pkgID, name := p.id, ref
 	if i := strings.Index(ref, "."); i >= 0 {
 		pkgID, name = ref[:i], ref[i+1:]
@@ -36,10 +36,10 @@ func (p *trustPkg) ResolveAction(ref string) (*ActionDef, PackageContext, error)
 	return t.actions[name], t, nil
 }
 
-func trustWorld() (imported, local *trustPkg) {
-	reg := map[string]*trustPkg{}
-	mk := func(id, trust string, domains []string, native string) *trustPkg {
-		p := &trustPkg{fakePkg: fakePkg{id: id, domains: domains, native: native}, trust: trust, reg: reg,
+func coreTrustWorld() (imported, local *coreTrustPkg) {
+	reg := map[string]*coreTrustPkg{}
+	mk := func(id, trust string, domains []string, native string) *coreTrustPkg {
+		p := &coreTrustPkg{fakePkg: fakePkg{id: id, domains: domains, native: native}, trust: trust, reg: reg,
 			actions: map[string]*ActionDef{"act": {ActionType: "act", SideEffects: "read"}}}
 		reg[id] = p
 		return p
@@ -53,7 +53,7 @@ func trustWorld() (imported, local *trustPkg) {
 }
 
 func TestCheckCallAction(t *testing.T) {
-	imp, loc := trustWorld()
+	imp, loc := coreTrustWorld()
 	imp.calls = []string{"helper.act", "instagram.act", "social.act"}
 	loc.calls = []string{"instagram.act"}
 
@@ -68,7 +68,7 @@ func TestCheckCallAction(t *testing.T) {
 		return ""
 	}
 	cases := []struct {
-		caller *trustPkg
+		caller *coreTrustPkg
 		ref    string
 		want   string
 	}{
@@ -131,7 +131,7 @@ func TestValidateUnflaggedSideEffect(t *testing.T) {
 
 func TestScriptsAllowed(t *testing.T) {
 	no := false
-	imp, _ := trustWorld()
+	imp, _ := coreTrustWorld()
 	imp.scripts = &no
 	if newPkgExecutor(nil, imp).scriptsAllowed() {
 		t.Error("ScriptsAllowed()=false must refuse")
@@ -143,7 +143,7 @@ func TestScriptsAllowed(t *testing.T) {
 
 func TestLiveRunGate(t *testing.T) {
 	no := false
-	imp, _ := trustWorld()
+	imp, _ := coreTrustWorld()
 	imp.live = &no
 	def := &ActionDef{ActionType: "t", SideEffects: "write", Steps: []StepDef{
 		{ID: "s", Type: "set_variable", Variable: "x", Value: 1, SideEffect: true}}}
