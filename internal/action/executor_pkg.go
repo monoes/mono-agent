@@ -5,6 +5,7 @@ package action
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"strings"
 
@@ -120,4 +121,21 @@ func isNilPackage(p PackageContext) bool {
 		return v.IsNil()
 	}
 	return false
+}
+
+// untilSteps are the step types whose "until" is a post-step outcome; for
+// wait_for it is the step's own condition (handled by its handler).
+var untilSteps = map[string]bool{"click": true, "type": true, "submit": true, "press_key": true, "select_option": true}
+
+// applyUntil waits for step.Until after a successful click/type-like step;
+// a timeout turns the step into a failure (then subject to onError).
+func (ae *ActionExecutor) applyUntil(ctx context.Context, step StepDef, result *StepResult, err error) (*StepResult, error) {
+	if step.Until == nil || !untilSteps[step.Type] || err != nil || result == nil || !result.Success {
+		return result, err
+	}
+	if werr := ae.waitUntil(ctx, step.Until, stepTimeout(step, 10)); werr != nil {
+		return &StepResult{Success: false, StepID: step.ID, Element: result.Element,
+			Error: fmt.Errorf("step %s: until: %w", step.ID, werr)}, nil
+	}
+	return result, nil
 }

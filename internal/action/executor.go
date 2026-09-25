@@ -848,6 +848,7 @@ func (ae *ActionExecutor) executeSteps(ctx context.Context, steps []StepDef) err
 		})
 
 		result, err := handler(ctx, resolved)
+		result, err = ae.applyUntil(ctx, resolved, result, err)
 		if herr := ae.afterStep(resolved, result, err); herr != nil {
 			return herr
 		}
