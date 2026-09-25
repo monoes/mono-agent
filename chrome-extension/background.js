@@ -124,6 +124,8 @@ const SENSITIVE_COMMANDS = new Set([
   "focus", "html", "property", "scroll_into_view", "insert_text",
   "get_rect", "set_files", "query_count", "query_text", "fetch_image_base64",
   "page_capture",
+  // The element picker (re-record one selector) reads the page's structure.
+  "pick_element",
   // Raw CDP is the most sensitive of the lot: it bypasses page CSP and can
   // read anything the tab can. Same origin check as the rest.
   "cdp", "cdp_attach", "cdp_detach",
@@ -132,7 +134,7 @@ const SENSITIVE_COMMANDS = new Set([
 // Commands that mean "the tab the user is looking at" when given no tabId.
 // Resolved before the origin check below, which has no tab to check without
 // one.
-const ACTIVE_TAB_COMMANDS = new Set(["page_capture", "cdp", "cdp_attach", "cdp_detach"]);
+const ACTIVE_TAB_COMMANDS = new Set(["page_capture", "cdp", "cdp_attach", "cdp_detach", "pick_element"]);
 
 async function isOriginAuthorized(tabId) {
   if (!tabId) return false;
@@ -613,6 +615,9 @@ async function handleCommand(cmd) {
         // rather than falling through to the single-frame sendResponse.
         await MonoCaptureBridge.handleCommand(id, params);
         return;
+      case "pick_element":
+        result = await pickElement(params);
+        break;
       case "get_rect":
       case "set_files":
       case "query_count":
@@ -1015,6 +1020,63 @@ async function typeIntoElement(target, tabId, elementId, text) {
   // Never the value itself: it is often a password, and this answer crosses
   // the bridge, where it could be logged. The Go side reads back on its own.
   return { typed: true, length: text.length };
+}
+
+// ---------------------------------------------------------------------------
+// pick_element: the person points at one element (re-record a selector)
+// ---------------------------------------------------------------------------
+
+const PICKER_FILES = ["recorder_privacy.js", "recorder_selectors.js", "recorder_picker.js"];
+const PICKER_GLOBALS = ["MonoRecorderPicker", "MonoRecorderSelectors", "MonoRecorderPrivacy"];
+const PICK_DEFAULT_MS = 120000;
+
+/**
+ * pickElement shows recorder_picker.js's overlay in the tab's top frame and
+ * answers {fingerprint, url} for the one element the person clicks, or
+ * fails with "cancelled" / "timeout". The picker removes its overlay,
+ * listeners and the globals it added on every way out; the worker's own
+ * deadline (a little past the page's) asks it to, in case the page never
+ * answered.
+ */
+async function pickElement({ tabId, prompt, timeoutMs }) {
+  if (!tabId) throw new Error("tabId is required");
+  const ms = Math.min(600000, Math.max(1000, Number(timeoutMs) || PICK_DEFAULT_MS));
+  const target = { tabId };
+  const [before] = await chrome.scripting.executeScript({
+    target,
+    args: [PICKER_GLOBALS],
+    func: (names) => names.filter((n) => globalThis[n] !== undefined),
+  });
+  const keep = (before && before.result) || [];
+  await chrome.scripting.executeScript({ target, files: PICKER_FILES });
+  const run = chrome.scripting.executeScript({
+    target,
+    args: [String(prompt || ""), ms, keep],
+    func: (p, t, k) =>
+      globalThis.MonoRecorderPicker.pick({ prompt: p, timeoutMs: t, keep: k }).then(
+        (value) => ({ ok: true, value }),
+        (err) => ({ ok: false, error: err.message })
+      ),
+  });
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error("timeout")), ms + 5000);
+  });
+  let res;
+  try {
+    [res] = await Promise.race([run, deadline]);
+  } catch (err) {
+    await chrome.scripting
+      .executeScript({ target, func: () => globalThis.MonoRecorderPicker && globalThis.MonoRecorderPicker.cancel("timeout") })
+      .catch(() => {});
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+  const out = res && res.result;
+  if (!out) throw new Error("the page went away before an element was picked");
+  if (!out.ok) throw new Error(out.error);
+  return out.value;
 }
 
 // Evaluate JS via CDP Runtime.evaluate — bypasses page CSP completely.

@@ -54,7 +54,8 @@ test("every extension file is valid UTF-8 with no noncharacters", () => {
 
 test("the recorder's page scripts are plain ASCII", () => {
   const { MonoRecorderWiring } = loadWiring();
-  for (const file of MonoRecorderWiring.RECORDER_FILES) {
+  // Plus the element picker, injected by background.js's pick_element.
+  for (const file of MonoRecorderWiring.RECORDER_FILES.concat(["recorder_picker.js"])) {
     const bytes = readFileSync(join(HERE, file));
     const at = bytes.findIndex((b) => b > 0x7f);
     if (at !== -1) {

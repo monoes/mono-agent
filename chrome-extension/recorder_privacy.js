@@ -28,6 +28,11 @@
 (function (root) {
   "use strict";
 
+  // Loaded once per page world. A second injection (the element picker
+  // while a recording runs) must not replace it: the WeakSet of fields that
+  // were ever passwords lives here.
+  if (root.MonoRecorderPrivacy) return;
+
   const tagOf = (el) => String((el && el.tagName) || "").toLowerCase();
   const attr = (el, name) => (el && el.getAttribute ? el.getAttribute(name) : null);
   const typeOf = (el) => String(attr(el, "type") || "text").toLowerCase();
