@@ -1561,9 +1561,18 @@ func (ae *ActionExecutor) stepSaveData(ctx context.Context, step StepDef) (*Step
 		tracked := make([]map[string]interface{}, len(ae.execCtx.ExtractedItems))
 		copy(tracked, ae.execCtx.ExtractedItems)
 		ae.execCtx.mu.Unlock()
+		// A single map outside a loop is one facet of the node's single
+		// item and merges, as call_bot_method does; lists are records.
+		_, single := val.(map[string]interface{})
+		record := !single || ae.execCtx.inLoop()
 		for _, item := range dataToSave {
-			if !containsExtractedItem(tracked, item) {
+			if containsExtractedItem(tracked, item) {
+				continue
+			}
+			if record {
 				ae.execCtx.AddRecord(item)
+			} else {
+				ae.execCtx.AddExtractedItem(item)
 			}
 		}
 	}

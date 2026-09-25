@@ -866,6 +866,9 @@ func (ae *ActionExecutor) executeSteps(ctx context.Context, steps []StepDef) err
 			handled := ae.errorHandler.Handle(ctx, resolved.OnError, result, ae.execCtx)
 
 			if handled.Abort {
+				if errors.Is(handled.Error, ErrAbort) {
+					return handled.Error
+				}
 				return ErrAbort
 			}
 			if handled.Retry {
