@@ -3,7 +3,10 @@
 // browser-use/jev-ultrafast: each cycle observes the page as a numbered
 // element table, and one TypeSafe Jev request picks the operation (CLICK,
 // TYPE_TEXT, SELECT, SCROLL, WAIT, DONE, BLOCKED) and its target. Text is
-// generated only for TYPE_TEXT, by a local agent through monomind.
+// generated only for TYPE_TEXT: from the configured `values` when a second
+// Jev request matches one to the field, else by a local agent through
+// monomind. Configured values are scrubbed to <value:NAME> before every
+// Jev request.
 package browserjev
 
 import (
@@ -63,6 +66,7 @@ type runConfig struct {
 	maxActions  int
 	timeout     time.Duration
 	failBlocked bool
+	values      []namedValue
 }
 
 func (n *Node) Execute(ctx context.Context, input workflow.NodeInput, config map[string]interface{}) ([]workflow.NodeOutput, error) {
@@ -73,11 +77,15 @@ func (n *Node) Execute(ctx context.Context, input workflow.NodeInput, config map
 		timeout:     time.Duration(num(config, "timeout", 300)) * time.Second,
 		failBlocked: config["fail_on_blocked"] == true,
 	}
+	var err error
 	if cfg.url == "" || cfg.goal == "" {
 		return nil, fmt.Errorf("%w: browser.jev requires \"url\" and \"goal\"", workflow.ErrInvalidConfig)
 	}
 	if cfg.maxActions <= 0 || cfg.maxActions > 200 {
 		return nil, fmt.Errorf("%w: browser.jev max_actions must be 1..200", workflow.ErrInvalidConfig)
+	}
+	if cfg.values, err = parseValues(ctx, config); err != nil {
+		return nil, err
 	}
 	newClient := n.newClient
 	if newClient == nil {
@@ -143,12 +151,17 @@ func (n *Node) run(ctx context.Context, cfg runConfig, client *jev.Client, write
 	}
 	defer closeTab()
 
+	// jevSc scrubs every configured value before a Jev request; outSc only
+	// the vault-backed ones, for the node's output and the local writer.
+	jevSc, outSc := scrubber{values: cfg.values}, scrubber{values: cfg.values, secretsOnly: true}
 	var (
-		page      *jevpick.PageState
-		history   []step
-		decisions int
-		tokens    int
-		textCache struct {
+		page          *jevpick.PageState
+		history       []step
+		decisions     int
+		valueRequests int
+		textTurns     int
+		tokens        int
+		textCache     struct {
 			key   map[string]any
 			value string
 		}
@@ -157,10 +170,17 @@ func (n *Node) run(ctx context.Context, cfg runConfig, client *jev.Client, write
 		if page == nil {
 			page = &jevpick.PageState{URL: cfg.url}
 		}
+		low := 0
+		for _, h := range history {
+			if h.Confidence < 0.5 {
+				low++
+			}
+		}
 		return map[string]interface{}{
 			"status": status, "reason": reason, "goal": cfg.goal,
-			"url": page.URL, "title": page.Title, "page_text": page.Text,
-			"steps": history, "decisions": decisions, "jev_input_tokens": tokens,
+			"url": outSc.str(page.URL), "title": outSc.str(page.Title), "page_text": outSc.str(page.Text),
+			"steps": outSc.history(history), "decisions": decisions, "jev_input_tokens": tokens,
+			"low_confidence_steps": low, "value_requests": valueRequests, "text_turns": textTurns,
 			"elapsed_ms": time.Since(started).Milliseconds(),
 		}
 	}
@@ -190,7 +210,7 @@ func (n *Node) run(ctx context.Context, cfg runConfig, client *jev.Client, write
 				return nil, err
 			}
 		}
-		d, err := choose(ctx, client, page, cfg.goal, history)
+		d, err := choose(ctx, client, jevSc.page(page), jevSc.str(cfg.goal), jevSc.history(history))
 		if err != nil {
 			if ctx.Err() != nil {
 				continue
@@ -219,17 +239,44 @@ func (n *Node) run(ctx context.Context, cfg runConfig, client *jev.Client, write
 			return nil, fmt.Errorf("decision %q is not an observed action", d.Choice)
 		}
 
-		text := ""
-		if a.Kind == "fill" {
-			field := fieldContext(cfg.goal, a, page, history)
+		text, recorded := "", ""
+		var used *namedValue
+		if a.Kind == "fill" && len(cfg.values) > 0 {
+			inputType := ""
+			if t, ok := drv.(inputTyper); ok {
+				inputType = t.InputType(a)
+			}
+			vp, err := pickValue(ctx, client, cfg.values, jevSc, cfg.goal, a, page, inputType)
+			if err != nil {
+				if ctx.Err() != nil {
+					continue
+				}
+				return nil, err
+			}
+			valueRequests++
+			tokens += vp.tokens
+			used = vp.value
+		}
+		switch {
+		case used != nil:
+			text, recorded = used.Value, used.Value
+			if used.Secret {
+				recorded = "<value:" + used.Name + ">"
+			}
+		case a.Kind == "fill":
+			sp := outSc.page(page)
+			field := fieldContext(outSc.str(cfg.goal), sp.Find(a.ID), sp, history)
 			if textCache.key != nil && reflect.DeepEqual(textCache.key, field) {
 				text = textCache.value
 			} else if text, err = writer(ctx, field); errors.Is(err, errNoValue) {
-				return finish("blocked", fmt.Sprintf("no value for %q: %v", a.Label, err)), nil
+				return finish("blocked", fmt.Sprintf("no value for %q: %v", outSc.str(a.Label), err)), nil
 			} else if err != nil {
 				return nil, err
+			} else {
+				textTurns++
 			}
 			textCache.key, textCache.value = field, text
+			recorded = text
 		}
 
 		if err := drv.Act(ctx, page, a, text); errors.Is(err, jevpick.ErrStale) {
@@ -243,8 +290,12 @@ func (n *Node) run(ctx context.Context, cfg runConfig, client *jev.Client, write
 		textCache.key = nil
 		// Record the execution before observing: a navigation during the
 		// next observation must not erase the action.
+		valueName := ""
+		if used != nil {
+			valueName = used.Name
+		}
 		history = append(history, step{Step: len(history) + 1, Action: a.Label, Kind: a.Kind,
-			Operation: d.Operation, Target: d.Target, Text: text, Probability: d.Probability,
+			Operation: d.Operation, Target: d.Target, Text: recorded, ValueName: valueName, Probability: d.Probability,
 			Confidence: d.Confidence, LatencyMS: d.LatencyMS, URL: page.URL})
 		before := page.Fingerprint
 		if page, err = drv.Observe(ctx); err != nil {
@@ -363,7 +414,7 @@ func openExtensionTab(ctx context.Context, url string) (driver, func(), error) {
 		closeTab()
 		return nil, nil, err
 	}
-	return b, closeTab, nil
+	return extDriver{b}, closeTab, nil
 }
 
 func str(config map[string]interface{}, key string) string {
