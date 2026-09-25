@@ -374,6 +374,7 @@ func (vr *VariableResolver) ResolveStepDef(step StepDef) StepDef {
 	resolved.Variable = vr.Resolve(step.Variable)
 	resolved.WaitFor = vr.Resolve(step.WaitFor)
 	resolved.WaitAfter = vr.Resolve(step.WaitAfter)
+	resolved.Key = vr.Resolve(step.Key)
 	if step.Type == "upload" {
 		resolved.Text = vr.resolveUploadPaths(step.Text)
 	} else {
