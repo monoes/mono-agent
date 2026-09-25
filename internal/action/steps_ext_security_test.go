@@ -195,3 +195,28 @@ func TestCallActionPolicy(t *testing.T) {
 		})
 	}
 }
+
+func TestCallActionRescopesSecrets(t *testing.T) {
+	target := &extTrustPkg{extPkg: &extPkg{id: "target", actions: map[string]*ActionDef{
+		"use": {ActionType: "use", SideEffects: "read", Steps: []StepDef{setVarStep("inner", "inner", "{{secret:token}}")}},
+	}}, trust: "local"}
+	caller := &extTrustPkg{extPkg: &extPkg{id: "caller"}, trust: "local", calls: []string{"target.use"},
+		others: map[string]PackageContext{"target": target}}
+	ae := newExtExecutor(t, &extPage{})
+	ae.SetPackage(caller)
+	var scopes []string
+	ae.SetSecretLookup(func(automationID, name string) (string, bool) {
+		scopes = append(scopes, automationID+"/"+name)
+		return "val-" + automationID, true
+	})
+	wantOK(t, runExt(t, ae, StepDef{ID: "c", Type: "call_action", Action: "target.use"}))
+	if len(scopes) == 0 || scopes[len(scopes)-1] != "target/token" {
+		t.Fatalf("secret looked up under %v, want target/token", scopes)
+	}
+	if getVar(ae, "inner") != "val-target" {
+		t.Fatalf("inner = %v", getVar(ae, "inner"))
+	}
+	if ae.secretScope() != "caller" {
+		t.Fatalf("scope not restored: %s", ae.secretScope())
+	}
+}
