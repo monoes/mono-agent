@@ -96,6 +96,14 @@ func (ae *ActionExecutor) prepareRun(platform string, def *ActionDef) error {
 		return verr
 	}
 
+	// An imported package's write-level actions run for real only after the
+	// user confirmed once (automation trust <id> --live); safe-mode
+	// verification is unaffected.
+	if g, ok := ae.pkg.(LiveRunGate); ok && !ae.safeMode && atLeastWrite(def.SideEffects) && !g.LiveRunConfirmed() {
+		return fmt.Errorf("automation %s: live runs of %s-level actions need confirmation: run `monoagentcli automation trust %s --live`",
+			ae.pkg.ID(), def.SideEffects, ae.pkg.ID())
+	}
+
 	if ae.pkg != nil {
 		if _, ok := ae.execCtx.GetVariable("site"); !ok {
 			ae.execCtx.SetVariable("site", map[string]interface{}{

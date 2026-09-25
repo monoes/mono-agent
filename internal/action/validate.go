@@ -2,6 +2,7 @@ package action
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -102,7 +103,51 @@ func Validate(def *ActionDef, pkg PackageContext) []Issue {
 	}
 
 	v.steps("", def.Steps, def.Loops)
+	if atLeastWrite(def.SideEffects) && !v.anyFlagged(def.Steps, map[string]bool{}) {
+		v.err("", "unflagged_side_effect", fmt.Sprintf(`sideEffects is %q but no step is marked "sideEffect": true, so safe-mode verification would run the write`, def.SideEffects))
+	}
 	return v.issues
+}
+
+// anyFlagged reports whether a step (nested bodies and fragments included)
+// is marked sideEffect, or is a call_action (safe mode stops before calls
+// whose target writes).
+func (v *validator) anyFlagged(steps []StepDef, seen map[string]bool) bool {
+	for _, s := range steps {
+		if s.SideEffect || s.Type == "call_action" || v.anyFlagged(s.Steps, seen) {
+			return true
+		}
+		if s.Type == "call_fragment" && v.pkg != nil && !seen[s.Fragment] {
+			seen[s.Fragment] = true
+			if f, err := v.pkg.Fragment(s.Fragment); err == nil && f != nil && v.anyFlagged(f.Steps, seen) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (v *validator) callAction(id string, s StepDef) {
+	if s.Action == "" {
+		v.err(id, "missing_field", `call_action needs "action"`)
+		return
+	}
+	if isTemplate(s.Action) {
+		v.err(id, "call_action_template", fmt.Sprintf("call_action %q: the action reference must be literal, not a template", s.Action))
+		return
+	}
+	if v.pkg == nil {
+		return
+	}
+	_, _, err := CheckCallAction(v.pkg, s.Action)
+	var cae *CallActionError
+	switch {
+	case err == nil:
+	case errors.As(err, &cae):
+		v.err(id, cae.Code, cae.Msg)
+	default:
+		v.warn(id, "unresolved_action", err.Error())
+	}
 }
 
 type validator struct {
@@ -201,13 +246,7 @@ func (v *validator) step(id string, s StepDef) {
 	case "page_script":
 		v.pageScript(id, s)
 	case "call_action":
-		if s.Action == "" {
-			v.err(id, "missing_field", `call_action needs "action"`)
-		} else if v.pkg != nil && !isTemplate(s.Action) {
-			if _, _, err := v.pkg.ResolveAction(s.Action); err != nil {
-				v.warn(id, "unresolved_action", fmt.Sprintf("call_action %q: %v", s.Action, err))
-			}
-		}
+		v.callAction(id, s)
 	case "for_each":
 		if s.Items == "" {
 			v.err(id, "missing_field", `for_each needs "items"`)
