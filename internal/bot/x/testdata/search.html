@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>synthkeyword - Search / X</title>
+<style>html{overflow-anchor:none} article{border:1px solid #ccc;margin:4px;padding:4px;min-height:160px} #spacer{height:3000px}</style></head>
+<body>
+<!-- SYNTHETIC fixture: X search results. Invented accounts and posts. The
+     timeline is virtualised like X's: scrolling appends posts and drops the
+     earliest ones from the DOM. Includes a promoted post (an "Ad" label and
+     no timestamp link), an already-liked post (data-testid=unlike) and a
+     post whose author/text contain "Admin"/"Add" (must NOT be treated as an ad). -->
+<main role="main"><div data-testid="primaryColumn"><section aria-label="Timeline: Search timeline"><div id="timeline"></div></section></div></main>
+<div data-testid="sidebarColumn">
+  <article data-testid="tweet"><div data-testid="User-Name"><a href="/synth_side"><span>Side Bar</span></a><a href="/synth_side"><span>@synth_side</span></a><a href="/synth_side/status/7777"><time datetime="2026-01-01T00:00:00.000Z">1d</time></a></div><div data-testid="tweetText">sidebar post, not a result</div></article>
+</div>
+<div id="spacer"></div>
+<script>
+const posts = [
+  { id: '2001', user: 'synth_erin', name: 'Synth Erin', text: 'Quiet morning with #synthkeyword', counts: ['5 Replies. Reply', '2 reposts. Repost', '12 Likes. Like'], liked: false, quote: true },
+  { id: '2002', user: 'synth_frank', name: 'Synth Frank', text: 'Already liked this synthkeyword post', counts: ['0 Replies. Reply', '1 repost. Repost', '30 Likes. Liked'], liked: true },
+  { ad: true, user: 'synth_brand', name: 'Synth Brand', text: 'Buy synthetic widgets (synthkeyword)', counts: ['Reply', 'Repost', 'Like'] },
+  { id: '2003', user: 'synth_admin', name: 'Admin Person', text: 'Add more synthkeyword tests', counts: ['1.2K Replies. Reply', '3 reposts. Repost', '4,321 Likes. Like'], liked: false },
+  { id: '2004', user: 'synth_gina', name: 'Synth Gina', text: 'synthkeyword four', counts: ['Reply', 'Repost', '1 Like. Like'] },
+  { id: '2005', user: 'synth_hank', name: 'Synth Hank', text: 'synthkeyword five', counts: ['Reply', 'Repost', 'Like'] },
+  { id: '2006', user: 'synth_ivy', name: 'Synth Ivy', text: 'synthkeyword six', counts: ['Reply', 'Repost', 'Like'] },
+  { id: '2007', user: 'synth_jon', name: 'Synth Jon', text: 'synthkeyword seven', counts: ['Reply', 'Repost', 'Like'] },
+  { id: '2008', user: 'synth_kim', name: 'Synth Kim', text: 'synthkeyword eight', counts: ['Reply', 'Repost', 'Like'] },
+];
+function render(p) {
+  const cell = document.createElement('div');
+  cell.setAttribute('data-testid', 'cellInnerDiv');
+  const when = p.ad ? '<span>Ad</span>' :
+    `<span>·</span><a href="/${p.user}/status/${p.id}" role="link"><time datetime="2026-09-20T10:00:00.000Z">5h</time></a>`;
+  const quote = p.quote ? `<div role="link" tabindex="0"><div><span>Synth Zed</span> <span>@synth_zed</span> <time datetime="2026-09-19T10:00:00.000Z">Sep 19</time></div><div data-testid="tweetText">the quoted post text</div></div>` : '';
+  cell.innerHTML = `<article data-testid="tweet" role="article" tabindex="0">
+    <div data-testid="User-Name"><div><a href="/${p.user}" role="link"><div><span>${p.name}</span></div></a></div>
+      <div><a href="/${p.user}" role="link" tabindex="-1"><div><span>@${p.user}</span></div></a>${when}</div></div>
+    <div data-testid="tweetText" lang="en"><span>${p.text}</span></div>${quote}
+    <div role="group">
+      <button data-testid="reply" aria-label="${p.counts[0]}"></button>
+      <button data-testid="retweet" aria-label="${p.counts[1]}"></button>
+      <button data-testid="${p.liked ? 'unlike' : 'like'}" aria-label="${p.counts[2]}"></button>
+    </div></article>`;
+  document.getElementById('timeline').appendChild(cell);
+}
+let next = 0;
+function more(n) { for (let i = 0; i < n && next < posts.length; i++) render(posts[next++]); }
+setTimeout(() => more(4), 200);
+let busy = false;
+window.addEventListener('scroll', () => {
+  if (busy || next >= posts.length) return;
+  busy = true;
+  setTimeout(() => {
+    more(2);
+    const cells = document.querySelectorAll("[data-testid='cellInnerDiv']");
+    for (let i = 0; i < cells.length - 4; i++) cells[i].remove();
+    busy = false;
+  }, 100);
+});
+</script>
+</body></html>

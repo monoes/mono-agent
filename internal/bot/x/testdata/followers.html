@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>People / X</title>
+<style>html{overflow-anchor:none} [data-testid=UserCell]{border:1px solid #ccc;margin:4px;padding:6px;min-height:150px} #spacer{height:3000px}</style></head>
+<body>
+<!-- SYNTHETIC fixture: an X followers / following list (UserCell rows).
+     Invented accounts. The list is chosen by path; it is virtualised like
+     X's (scrolling appends rows and drops the earliest). A "Who to follow"
+     UserCell in the sidebar must not be exported. -->
+<main role="main"><div data-testid="primaryColumn"><h2 id="title"></h2><section><div id="list"></div></section></div></main>
+<div data-testid="sidebarColumn"><aside aria-label="Who to follow">
+  <div data-testid="UserCell"><a href="/synth_sidebar"><span>Side Bar</span></a><a href="/synth_sidebar"><span>@synth_sidebar</span></a><button data-testid="999-follow">Follow</button></div>
+</aside></div>
+<div id="spacer"></div>
+<script>
+const [, who, kind] = location.pathname.split('/');
+document.getElementById('title').textContent = who + ' ' + kind;
+const lists = {
+  followers: [
+    ['synth_f1', 'Follower One', 'likes tea', false, true, true],
+    ['synth_f2', 'Follower Two', '', true, true, false],
+    ['synth_f3', 'Follower Three', 'line one\nline two', false, false, false],
+    ['synth_f4', 'Follower Four', 'four', false, true, false],
+    ['synth_f5', 'Follower Five', 'five', true, true, false],
+    ['synth_f6', 'Follower Six', 'six', false, true, false],
+    ['synth_f7', 'Follower Seven', 'seven', false, true, false],
+  ],
+  verified_followers: [['synth_v1', 'Verified One', 'blue check', false, true, true]],
+  following: [['synth_g1', 'Followed One', 'g1', true, false, false], ['synth_g2', 'Followed Two', 'g2', true, true, false]],
+};
+const rows = who === 'synth_nobody' ? [] : (lists[kind] || []);
+if (!rows.length) document.getElementById('list').innerHTML = `<div data-testid="emptyState"><span>Looking for followers?</span></div>`;
+function render([u, name, bio, following, followsYou, verified]) {
+  const c = document.createElement('div');
+  c.setAttribute('data-testid', 'cellInnerDiv');
+  c.innerHTML = `<div data-testid="UserCell" role="button" tabindex="0">
+    <div><a href="/${u}" role="link"><img src="https://pbs.example.test/avatars/${u}.jpg" alt=""></a></div>
+    <div><div>
+      <div><a href="/${u}" role="link"><div dir="ltr"><span>${name}</span>${verified ? '<svg data-testid="icon-verified" aria-label="Verified account"></svg>' : ''}</div></a>
+        <div><a href="/${u}" role="link" tabindex="-1"><div dir="ltr"><span>@${u}</span></div></a>
+        ${followsYou ? '<div data-testid="userFollowIndicator"><div dir="auto"><span>Follows you</span></div></div>' : ''}</div></div>
+      <button data-testid="${u.length}${name.length}-${following ? 'unfollow' : 'follow'}" aria-label="${following ? 'Following' : 'Follow'} @${u}"><div dir="auto"><span>${following ? 'Following' : 'Follow'}</span></div></button>
+    </div>
+    ${bio ? `<div dir="auto"><span>${bio.replace('\n', '<br>')}</span></div>` : ''}</div></div>`;
+  document.getElementById('list').appendChild(c);
+}
+let next = 0;
+function more(n) { for (let i = 0; i < n && next < rows.length; i++) render(rows[next++]); }
+setTimeout(() => more(3), 150);
+let busy = false;
+window.addEventListener('scroll', () => {
+  if (busy || next >= rows.length) return;
+  busy = true;
+  setTimeout(() => {
+    more(2);
+    const cells = document.querySelectorAll("[data-testid='primaryColumn'] [data-testid='cellInnerDiv']");
+    for (let i = 0; i < cells.length - 3; i++) cells[i].remove();
+    busy = false;
+  }, 100);
+});
+</script>
+</body></html>
