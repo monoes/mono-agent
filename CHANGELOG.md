@@ -56,6 +56,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Selector health.** Every run records which selector worked. A selector
   that needed a fallback is promoted, and `automation doctor` flags decaying
   or broken ones.
+- **Re-record a single selector.** `automation rerecord <id> <key>`, or
+  Re-record on a broken row in Connections › Health, opens the page and asks
+  you to click the element once. The selector is rebuilt from that click
+  (written into your own packages, or kept as a local overlay for built-in
+  and imported ones), and its health history is reset.
+- `automation install <dir> --local` and `automation new … --install` install
+  a package you wrote as your own (trusted, scripts allowed).
+- **Workflow import is idempotent.** Importing the same workflow again
+  reports `unchanged` or `updated` instead of creating a copy; `--as-new`
+  forces a copy. A workflow whose bundled automations are missing is still
+  imported, and the output lists what to install and the command to run.
 
 ### Security
 
@@ -84,6 +95,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now focused, and the typed text is read back.
 - **Unknown step types** in an action now fail validation instead of being
   skipped silently.
+- **Workflows created with `workflow create`, or saved from the desktop
+  editor,** now also store their nodes in the database, so `workflow run
+  --json` shows node types. Existing workflows are backfilled automatically.
+- **Commands relayed through a running bridge** are no longer cut off after
+  90 seconds.
 - **Browser logins:** the `connect <platform>` error now points to
   `login <platform>`.
 

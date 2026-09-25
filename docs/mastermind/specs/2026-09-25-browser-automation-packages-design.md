@@ -837,12 +837,14 @@ above, all deliberate:
   assertions; `--live` is not implemented (use `record verify`).
 
 Known limitations / follow-ups:
-- `workflow create` writes only the file store, so `workflow run --json`
-  shows empty node types for workflows made that way (pre-existing).
-- `workflow import` without `--yes` imports the workflow even when a bundled
-  package is left missing; re-running with `--yes` duplicates the workflow
-  (pre-existing import behaviour).
 - `username` cannot select a session: the extension drives one real browser
   profile with one cookie jar per site.
-- Re-record a single step (§8.7) and applying a held-back built-in update
-  from the GUI are not built yet.
+- Applying a held-back built-in update from the GUI is not built yet (CLI:
+  `automation restore` / reinstall).
+- There is no workflow-import screen in the desktop app (the backend import
+  is idempotent and reports its status).
+
+Resolved in round 2: `workflow create` / desktop saves persist to SQLite
+(with a backfill), workflow import is idempotent (`--as-new` for a copy),
+single-selector re-record (`automation rerecord`, contracts §9), relayed
+commands no longer capped at 90s.
