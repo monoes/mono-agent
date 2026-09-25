@@ -218,7 +218,7 @@ func TestExportRoundTrip(t *testing.T) {
 		if info.Source == SourceBuiltin {
 			src = SourceBuiltin
 		}
-		if res, err := b.Install(f, InstallOptions{Source: src}); err != nil {
+		if res, err := b.install(f, InstallOptions{Source: src}, true); err != nil {
 			t.Fatalf("install %s: %v %+v", info.ID, err, errorsOnly(res.Issues))
 		}
 		var second bytes.Buffer

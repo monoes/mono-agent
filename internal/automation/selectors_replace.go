@@ -17,8 +17,8 @@ const (
 
 // ReplaceSelector replaces selector key of package id with e (a re-recorded
 // selector, contracts §9). The key must already exist in the package's
-// effective selectors. A local package (source and trust local) has its
-// selectors.json rewritten in place under the lock: the version is kept,
+// effective selectors. A package that is the user's own (source local,
+// trust local or recorded) has its selectors.json rewritten in place under the lock: the version is kept,
 // the installed hash refreshed and any overlay item for the key dropped.
 // Every other package gets a full overlay entry, guarded by the hash of the
 // package entry it replaces. where is WherePackage or WhereOverlay.
@@ -44,7 +44,7 @@ func (r *Registry) ReplaceSelector(id, key string, e action.SelectorEntry) (stri
 			return false, fmt.Errorf("automation %s has no selector %q", id, key)
 		}
 
-		if ent.Source == SourceLocal && ent.trust() == TrustLocal {
+		if ent.userOwned() {
 			dir := r.versionDir(id, ent.Version)
 			if err := writePackageSelector(dir, key, e); err != nil {
 				return false, err

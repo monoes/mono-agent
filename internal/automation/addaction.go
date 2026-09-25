@@ -41,6 +41,9 @@ func (r *Registry) AddAction(id string, src *Package, actionName string, opts In
 	if opts.Trust != "" && !validTrust(opts.Trust) {
 		return nil, fmt.Errorf("automation: invalid trust %q", opts.Trust)
 	}
+	if opts.Trust == TrustBuiltin || opts.Source == SourceBuiltin {
+		return nil, errors.New("automation: built-in packages come only from the app itself (automation restore)")
+	}
 	incoming := opts.Trust
 	switch {
 	case incoming != "":

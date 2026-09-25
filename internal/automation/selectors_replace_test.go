@@ -1,6 +1,7 @@
 package automation
 
 import (
+	"bytes"
 	"os"
 	"strings"
 	"testing"
@@ -119,4 +120,87 @@ func TestReplaceSelector(t *testing.T) {
 			t.Error("two-kind candidate accepted")
 		}
 	})
+}
+
+func TestUserOwnedPackagesFixedInPlace(t *testing.T) {
+	fresh := action.SelectorEntry{Candidates: []action.SelectorCandidate{{CSS: "#email"}}}
+	// A recorded package (record save) is the user's own: fixed in place.
+	r := newReg(t)
+	src, _ := OpenDir(acmeDir(t))
+	if _, err := r.AddAction("acme-crm", src, "create_contact", InstallOptions{Trust: TrustRecorded}); err != nil {
+		t.Fatal(err)
+	}
+	if where, err := r.ReplaceSelector("acme-crm", "contact.email", fresh); err != nil || where != WherePackage {
+		t.Fatalf("recorded: where=%q err=%v", where, err)
+	}
+	// And its export carries the fix.
+	var buf bytes.Buffer
+	if err := r.Export("acme-crm", &buf, ExportOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	fsys, _ := readZip(&buf)
+	exp, _ := OpenFS(fsys, SourceImported)
+	if sel, _ := exp.Selectors(); sel["contact.email"].Candidates[0].CSS != "#email" {
+		t.Errorf("export lacks the fix: %+v", sel["contact.email"])
+	}
+}
+
+func TestInstallTrustRules(t *testing.T) {
+	dir := acmeDir(t)
+	mpkg := packDir(t, dir)
+
+	// A directory can be installed as the user's own.
+	r := newReg(t)
+	if _, err := r.Install(dir, InstallOptions{Trust: TrustLocal}); err != nil {
+		t.Fatalf("dir as local: %v", err)
+	}
+	info, _ := r.Info("acme-crm")
+	if info.Source != SourceLocal || info.Trust != TrustLocal || !info.ScriptsAllowed {
+		t.Fatalf("dir as local: %+v", info)
+	}
+	if _, err := newReg(t).Install(dir, InstallOptions{Source: SourceLocal}); err != nil {
+		t.Errorf("dir with source local: %v", err)
+	}
+	if res, err := newReg(t).Install(dir, InstallOptions{Trust: TrustRecorded}); err != nil || res == nil {
+		t.Errorf("dir as recorded: %v", err)
+	}
+
+	// Archives and URLs never get more than imported; nothing gets built-in.
+	for name, opts := range map[string]InstallOptions{
+		"mpkg local trust":  {Trust: TrustLocal},
+		"mpkg local source": {Source: SourceLocal},
+		"mpkg recorded":     {Trust: TrustRecorded},
+		"mpkg builtin":      {Source: SourceBuiltin},
+	} {
+		if _, err := newReg(t).Install(mpkg, opts); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+	if _, err := newReg(t).Install("https://example.invalid/x.mpkg", InstallOptions{Trust: TrustLocal}); err == nil || !strings.Contains(err.Error(), "only a package directory") {
+		t.Errorf("URL as local: %v", err)
+	}
+	for name, opts := range map[string]InstallOptions{
+		"dir builtin trust":  {Trust: TrustBuiltin},
+		"dir builtin source": {Source: SourceBuiltin},
+	} {
+		if _, err := newReg(t).Install(dir, opts); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+	if _, err := newReg(t).AddAction("acme-crm", mustOpenDir(t, dir), "list_deals", InstallOptions{Trust: TrustBuiltin}); err == nil {
+		t.Error("AddAction with builtin trust accepted")
+	}
+	// Plain imported installs of an archive still work.
+	if _, err := newReg(t).Install(mpkg, InstallOptions{}); err != nil {
+		t.Errorf("mpkg imported: %v", err)
+	}
+}
+
+func mustOpenDir(t *testing.T, dir string) *Package {
+	t.Helper()
+	p, err := OpenDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
 }

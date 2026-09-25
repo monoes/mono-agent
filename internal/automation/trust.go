@@ -119,6 +119,15 @@ func (p *Package) trust() string {
 	return trustFor(p.Source)
 }
 
+// userOwned reports whether a package is the user's own work — hand
+// authored (local) or saved from a recording (recorded) — so fixes to it
+// (re-recorded or promoted selectors) belong in its own files, where an
+// export carries them, rather than in the overlay.
+func (e *indexEntry) userOwned() bool {
+	t := e.trust()
+	return e.Source == SourceLocal && (t == TrustLocal || t == TrustRecorded)
+}
+
 // validCallActionRef reports whether ref is "<automation>.<action>".
 func validCallActionRef(ref string) bool {
 	id, name, ok := strings.Cut(ref, ".")

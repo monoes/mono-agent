@@ -20,10 +20,21 @@ import (
 // policy gate (blocked → installed but disabled, with a warning). DryRun
 // returns the full review, including Changes against the installed
 // version, and writes nothing.
+//
+// Only a directory (the user's own files) may be installed with anything
+// but imported source and trust (opts.Source local, or opts.Trust local or
+// recorded, which default the source to local); an archive or URL always
+// installs as imported. Nothing gets built-in trust except seeding.
 func (r *Registry) Install(src string, opts InstallOptions) (*InstallResult, error) {
-	source := opts.Source
-	if source == "" {
-		source = SourceImported
+	return r.install(src, opts, false)
+}
+
+// install is Install; trustArchive lets tests install an archive with the
+// source/trust it was exported with (round-trip checks).
+func (r *Registry) install(src string, opts InstallOptions, trustArchive bool) (*InstallResult, error) {
+	source, trust, err := installTrust(src, opts, trustArchive)
+	if err != nil {
+		return nil, err
 	}
 	fsys, sum, err := r.loadSource(src)
 	if err != nil {
@@ -36,10 +47,7 @@ func (r *Registry) Install(src string, opts InstallOptions) (*InstallResult, err
 	if err != nil {
 		return nil, err
 	}
-	if opts.Trust != "" && !validTrust(opts.Trust) {
-		return nil, fmt.Errorf("automation: invalid trust %q", opts.Trust)
-	}
-	p.Trust = opts.Trust
+	p.Trust = trust
 	files, err := readTree(fsys)
 	if err != nil {
 		return nil, err
@@ -49,6 +57,45 @@ func (r *Registry) Install(src string, opts InstallOptions) (*InstallResult, err
 		res.SHA256 = sum
 	}
 	return res, err
+}
+
+// installTrust decides the source and trust an Install records.
+func installTrust(src string, opts InstallOptions, trustArchive bool) (source, trust string, err error) {
+	source, trust = opts.Source, opts.Trust
+	if trust != "" && !validTrust(trust) {
+		return "", "", fmt.Errorf("automation: invalid trust %q", trust)
+	}
+	if source == "" {
+		source = SourceImported
+		if trust == TrustLocal || trust == TrustRecorded {
+			source = SourceLocal
+		}
+	}
+	if trustArchive {
+		return source, trust, nil
+	}
+	if trust == TrustBuiltin || (source == SourceBuiltin && trust == "") {
+		return "", "", errors.New("automation: built-in packages come only from the app itself (automation restore)")
+	}
+	if source != SourceImported || (trust != "" && trust != TrustImported) {
+		st, statErr := os.Stat(src)
+		if isURL(src) || statErr != nil || !st.IsDir() {
+			return "", "", fmt.Errorf("automation: only a package directory can be installed as %s; archives and URLs install as imported", nonEmpty(trust, trustFor(source)))
+		}
+	}
+	return source, trust, nil
+}
+
+func isURL(s string) bool {
+	l := strings.ToLower(s)
+	return strings.HasPrefix(l, "http://") || strings.HasPrefix(l, "https://")
+}
+
+func nonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
 }
 
 // ErrSHA256Mismatch is returned when InstallOptions.ExpectSHA256 does not
