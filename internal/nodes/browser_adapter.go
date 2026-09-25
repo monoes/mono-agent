@@ -11,6 +11,7 @@ import (
 	"github.com/monoes/mono-agent/internal/action"
 	"github.com/monoes/mono-agent/internal/browser"
 	"github.com/monoes/mono-agent/internal/connections"
+	"github.com/monoes/mono-agent/internal/jev"
 	"github.com/monoes/mono-agent/internal/jev/jevconf"
 	"github.com/monoes/mono-agent/internal/vault"
 	"github.com/monoes/mono-agent/internal/workflow"
@@ -251,6 +252,11 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 	if db, pid := storage.db, storage.profileID; db != nil && jevconf.Enabled(db, pid, jevconf.ActionFallback) {
 		if client, err := jevconf.NewClient(ctx, db, pid, "", "", jevconf.ActionFallback); err == nil {
 			executor.SetJevPicker(client, jevconf.Threshold(db, pid, jevconf.ActionFallback, jevconf.DefaultThreshold[jevconf.ActionFallback]))
+			// Social bots that embed bot.JevPicker get the same client; 0 ⇒ their
+			// own default gate (0.6). GetAdapter builds a fresh bot per node run.
+			if jb, ok := botAdapter.(interface{ SetJevPicker(*jev.Client, float64) }); ok {
+				jb.SetJevPicker(client, 0)
+			}
 		} else {
 			logger.Debug().Err(err).Msg("jev action fallback enabled but no client")
 		}
