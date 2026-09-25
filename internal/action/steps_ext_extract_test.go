@@ -124,3 +124,40 @@ func TestJSONPath(t *testing.T) {
 		t.Errorf("[0].n = %v", got)
 	}
 }
+
+func TestExtractStepsResolvePackageSelectors(t *testing.T) {
+	page := &extPage{elems: map[string]*extElem{"#stories": {}, "script#data": {}}, eval: func(js string) (interface{}, error) {
+		if !strings.Contains(js, "rowSel") {
+			if !strings.Contains(js, `"script#data"`) {
+				t.Fatalf("extract_json used the wrong selector: %s", js)
+			}
+			return jsOut(map[string]interface{}{"text": `{"n":3}`}), nil
+		}
+		if !strings.Contains(js, `"#stories"`) {
+			t.Fatalf("extract_table used the wrong selector: %s", js)
+		}
+		return jsOut(map[string]interface{}{"rows": []interface{}{map[string]interface{}{"t": "A"}}}), nil
+	}}
+	ae := newExtExecutor(t, page)
+	obs := &obsRecorder{}
+	ae.SetSelectorObserver(obs)
+	ae.SetPackage(&extPkg{id: "news", selectors: map[string]*SelectorEntry{
+		"story_list": {Candidates: []SelectorCandidate{{CSS: "#old-stories"}, {CSS: "#stories"}}},
+		"state":      {Candidates: []SelectorCandidate{{CSS: "script#data"}}},
+		"gone":       {Candidates: []SelectorCandidate{{CSS: "#nope"}}},
+	}})
+
+	res := runExt(t, ae, StepDef{ID: "t", Type: "extract_table", ConfigKey: "story_list", Fields: map[string]string{"t": ""}, Timeout: 1})
+	wantOK(t, res)
+	res = runExt(t, ae, StepDef{ID: "j", Type: "extract_json", ConfigKey: "state", Path: "n", Timeout: 1})
+	wantOK(t, res)
+	if res.Data != 3.0 {
+		t.Fatalf("data = %v", res.Data)
+	}
+	wantFail(t, runExt(t, ae, StepDef{ID: "t", Type: "extract_table", ConfigKey: "gone", Timeout: 0.2}), "resolved to no selector")
+
+	want := []string{"news/story_list idx=1 ok=true healed=true", "news/state idx=0 ok=true healed=false", "news/gone idx=-1 ok=false healed=false"}
+	if !reflect.DeepEqual(obs.got, want) {
+		t.Fatalf("observations = %v", obs.got)
+	}
+}

@@ -128,14 +128,18 @@ type extPkg struct {
 	fragments map[string]*FragmentDef
 	scripts   map[string]string
 	actions   map[string]*ActionDef
+	selectors map[string]*SelectorEntry
 	other     map[string]*extPkg // "<automation>" → package, for "x.y" refs
 }
 
-func (p *extPkg) ID() string                             { return p.id }
-func (p *extPkg) StartURL() string                       { return "" }
-func (p *extPkg) Domains() []string                      { return p.domains }
-func (p *extPkg) PermittedSteps() []string               { return nil }
-func (p *extPkg) Selector(string) (*SelectorEntry, bool) { return nil, false }
+func (p *extPkg) ID() string               { return p.id }
+func (p *extPkg) StartURL() string         { return "" }
+func (p *extPkg) Domains() []string        { return p.domains }
+func (p *extPkg) PermittedSteps() []string { return nil }
+func (p *extPkg) Selector(key string) (*SelectorEntry, bool) {
+	e, ok := p.selectors[key]
+	return e, ok
+}
 func (p *extPkg) Fragment(name string) (*FragmentDef, error) {
 	if f, ok := p.fragments[name]; ok {
 		return f, nil
@@ -204,4 +208,11 @@ func wantOK(t *testing.T, res *StepResult) {
 func getVar(ae *ActionExecutor, name string) interface{} {
 	v, _ := ae.execCtx.GetVariable(name)
 	return v
+}
+
+// obsRecorder records selector-health observations.
+type obsRecorder struct{ got []string }
+
+func (o *obsRecorder) ObserveSelector(automationID, key string, idx int, ok, healed bool) {
+	o.got = append(o.got, fmt.Sprintf("%s/%s idx=%d ok=%t healed=%t", automationID, key, idx, ok, healed))
 }

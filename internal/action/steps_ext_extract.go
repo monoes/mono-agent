@@ -51,7 +51,7 @@ const extractTableJS = `(() => {
 })()`
 
 func (ae *ActionExecutor) stepExtractTable(ctx context.Context, step StepDef) (*StepResult, error) {
-	sel, err := ae.extWaitSelector(step)
+	sel, err := ae.extWaitSelector(ctx, step)
 	if err != nil {
 		return extFail(step, "%w", err)
 	}
@@ -95,11 +95,24 @@ func (ae *ActionExecutor) stepExtractTable(ctx context.Context, step StepDef) (*
 }
 
 // extWaitSelector waits for the step's element and returns the selector
-// string (CSS or XPath) that found it, for use in page JavaScript.
-func (ae *ActionExecutor) extWaitSelector(step StepDef) (string, error) {
-	sels := ae.buildSelectorList(step)
-	if len(sels) == 0 {
-		return "", fmt.Errorf("no selector (selector, xpath or configKey)")
+// string (CSS or XPath) that found it, for use in page JavaScript. The
+// selector comes from core's SelectorString (xpath → selector → configKey
+// via the package's selectors.json, then the legacy config manager); the
+// step's alternatives are fallbacks for an explicit selector/xpath.
+func (ae *ActionExecutor) extWaitSelector(ctx context.Context, step StepDef) (string, error) {
+	css, xp, err := ae.SelectorString(ctx, step)
+	if err != nil {
+		return "", err
+	}
+	sel := css
+	if sel == "" {
+		sel = xp
+	}
+	sels := []string{sel}
+	for _, alt := range step.Alternatives {
+		if alt != "" && alt != sel {
+			sels = append(sels, alt)
+		}
 	}
 	idx, _, err := findFirst(ae.page, sels, stepTimeout(step, 10))
 	if err != nil {
@@ -127,7 +140,7 @@ func (ae *ActionExecutor) stepExtractJSON(ctx context.Context, step StepDef) (*S
 			return extFail(step, "input %q resolved to nothing", step.Input)
 		}
 	case step.Selector != "" || step.XPath != "" || step.ConfigKey != "":
-		sel, err := ae.extWaitSelector(step)
+		sel, err := ae.extWaitSelector(ctx, step)
 		if err != nil {
 			return extFail(step, "%w", err)
 		}
