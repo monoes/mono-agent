@@ -25,7 +25,7 @@ go vet ./...
 gofmt -l .
 
 # Opt-in build with social platform nodes (Instagram/LinkedIn/X/TikTok)
-go build -tags social ./cmd/monoagentcli
+go build -tags nosocial ./cmd/monoagentcli   # opt-out: no social platform nodes
 ```
 
 Runtime state (workflows, vault, logins) is global under `~/.monoagent/` —
@@ -58,7 +58,7 @@ agent-facing guidance on driving the CLI.
 
 ## CI / CD
 - All code must pass CI before merging — do not bypass checks
-- CI runs build/vet/test in BOTH modes: default and `-tags social`
+- CI runs build/vet/test in BOTH modes: default (with social) and `-tags nosocial`
 - Never commit secrets or API keys — use environment variables from the CI secret store
 - Write commit messages that pass the conventional commits format: `type(scope): description`
 

@@ -16,7 +16,7 @@
 //
 // # Using it from a platform test
 //
-// Platform packages carry the `social` build tag; their tests do too:
+// Platform packages carry the `!nosocial` build tag (built by default); their tests do too:
 //
 //	//go:build social
 //
@@ -43,7 +43,7 @@
 //
 // Run with a Chromium-family binary:
 //
-//	BOTTEST_BROWSER=/usr/bin/chromium go test -tags social ./internal/bot/instagram/
+//	BOTTEST_BROWSER=/usr/bin/chromium go test ./internal/bot/instagram/
 //
 // ($JEV_E2E_BROWSER is accepted too.) Without either, Launch calls t.Skip,
 // so plain `go test ./...` stays browser-free.

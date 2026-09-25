@@ -164,18 +164,18 @@ build them, ship them, or accept contributions adding them:
   never asked for contact, or any tooling whose main purpose is dodging the
   word "no."
 
-## Social nodes are opt-in at build time
+## Social nodes ship in the default build
 
 Social platform automation (Instagram, LinkedIn, X, TikTok, Hacker News,
-Product Hunt) is **not in the default binary**. It only exists if you
-deliberately compile it in:
+Product Hunt) is part of the default binary and every release. It acts only
+through your own logged-in browser session, and everything above applies to
+it. If you want a binary without it, build with:
 
 ```bash
-go build -tags social ./cmd/monoagentcli
+go build -tags nosocial ./cmd/monoagentcli
 ```
 
-A default build simply doesn't contain those node types. That keeps the
-default install a clean, general automation tool.
+That build simply doesn't contain those node types.
 
 ## No affiliation
 

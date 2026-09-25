@@ -1,4 +1,4 @@
-//go:build social
+//go:build !nosocial
 
 package instagram
 
@@ -8,7 +8,7 @@ package instagram
 // Recorder captures, and the page carries an Instagram-like CSP without
 // 'unsafe-eval' so only CSP-proof evaluation works.
 //
-//	BOTTEST_BROWSER=/usr/bin/chromium go test -tags social ./internal/bot/instagram/
+//	BOTTEST_BROWSER=/usr/bin/chromium go test ./internal/bot/instagram/
 
 import (
 	"encoding/json"

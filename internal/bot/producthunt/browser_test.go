@@ -1,4 +1,4 @@
-//go:build social
+//go:build !nosocial
 
 package producthunt
 
@@ -6,7 +6,7 @@ package producthunt
 // served at real www.producthunt.com URLs under a CSP without
 // 'unsafe-eval'.
 //
-//	BOTTEST_BROWSER=/usr/bin/chromium go test -count=1 -tags social ./internal/bot/producthunt/
+//	BOTTEST_BROWSER=/usr/bin/chromium go test -count=1 ./internal/bot/producthunt/
 
 import (
 	"context"

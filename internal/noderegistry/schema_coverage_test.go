@@ -8,7 +8,7 @@ import (
 	"github.com/monoes/mono-agent/internal/workflow"
 )
 
-// socialBrowserPlatforms are the opt-in (-tags social) platforms whose node
+// socialBrowserPlatforms are the social platforms (built by default, dropped by -tags nosocial) whose node
 // types are generated from data/actions JSONs; they resolve through the
 // browser-generic runtime schema rather than dedicated embedded schemas.
 var socialBrowserPlatforms = []string{

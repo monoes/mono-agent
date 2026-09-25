@@ -51,11 +51,11 @@ body:
     attributes:
       label: Build flavor
       description: >
-        Social-platform nodes are not in the default binary — they require
-        `go build -tags social`. Pick the build you are running.
+        Social-platform nodes are in the default binary; a
+        `go build -tags nosocial` build leaves them out. Pick the build you are running.
       options:
         - Default (downloaded release / `go build ./cmd/monoagentcli`)
-        - "`-tags social` build (Instagram/LinkedIn/X/TikTok/HN/PH nodes present)"
+        - "`-tags nosocial` build (no Instagram/LinkedIn/X/TikTok/HN/PH nodes)"
         - Not sure
     validations:
       required: true

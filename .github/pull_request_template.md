@@ -17,7 +17,7 @@ Closes #
 - [ ] `go build ./...` passes
 - [ ] `go test ./...` passes
 - [ ] If touching code gated behind the `social` build tag:
-      `go build -tags social ./...` and `go test -tags social ./...` pass
+      `go build -tags nosocial ./...` and `go test -tags nosocial ./...` pass
       (CI runs both modes)
 - [ ] `gofmt -l .` is clean
 - [ ] CHANGELOG.md has an entry under **Unreleased**

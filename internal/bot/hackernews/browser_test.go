@@ -1,4 +1,4 @@
-//go:build social
+//go:build !nosocial
 
 package hackernews
 
@@ -7,7 +7,7 @@ package hackernews
 // forbids 'unsafe-eval' — as Hacker News does — so the extension's plain
 // Eval path would fail and only the EvalCDP path can pass.
 //
-//	BOTTEST_BROWSER=/usr/bin/chromium go test -count=1 -tags social ./internal/bot/hackernews/
+//	BOTTEST_BROWSER=/usr/bin/chromium go test -count=1 ./internal/bot/hackernews/
 
 import (
 	"net/url"

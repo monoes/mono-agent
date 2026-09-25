@@ -56,7 +56,7 @@ Services (OAuth via 'connect <platform>'): service.google_sheets,
 People/CRM: people.save, people.lookup, people.sync_outlook_message, ...
 AI/agent: agent.ask (local agent), image.* processing, crawl.* extraction
 Browser/social (instagram./linkedin./x./tiktok.): NOT in the default build —
-  require 'go build -tags social' and a saved login session.
+  need a saved login session (they are left out only of -tags nosocial builds).
 
 Every node takes a config object shaped by its schema; fetch it with
 node_schema before building configs by hand. Credentials resolve
@@ -146,7 +146,7 @@ OAuth tokens refresh automatically before expiry.
 
 Secrets for config values: prefer the vault (secret add, value via stdin) —
 never paste tokens into workflow JSON. Browser-based nodes (gemini.*, and
-social platforms in -tags social builds) need a saved login session
+social platforms) need a saved login session
 ('monoagentcli login <platform>') instead of API keys.`,
 	"org": `ORGS, AUTOMATIONS & AUTONOMY (full text: monoagentcli ref org)
 

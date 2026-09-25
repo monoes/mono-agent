@@ -1,4 +1,4 @@
-//go:build social
+//go:build !nosocial
 
 package instagram
 

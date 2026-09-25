@@ -45,7 +45,7 @@ body:
         Describe the concrete workflow this enables (trigger → nodes →
         outcome). Requests grounded in a real automation get priority.
         If the workflow involves social platforms, note that those nodes
-        are opt-in (`-tags social`) and must follow
+        must follow
         [docs/USAGE_POLICY.md](https://github.com/monoes/mono-agent/blob/main/docs/USAGE_POLICY.md).
       placeholder: When a webhook fires → look up … → post/approve via HIL → …
     validations:

@@ -29,8 +29,8 @@ desktop GUI (`wails-app/`).
   connections). Some nodes use **browser automation on the user's own
   logged-in session** (e.g. Gemini image generation — no API key needed).
 - **Social platform nodes** (Instagram, LinkedIn, X, TikTok, Hacker News,
-  Product Hunt) are NOT in the default build — they require an opt-in
-  compile: `go build -tags social`. In a default build those node types
+  Product Hunt) are in the default build and in every release. A
+  `go build -tags nosocial` build leaves them out; there those node types
   are absent, not merely disabled.
 
 ## Start here
@@ -106,10 +106,10 @@ own PATH stays in `$MONOAGENT_USER_PATH` (`nodemgr.UserEnv`/`LookPathUser`).
 Older top-level commands include `message`, `comment`, `search`, `list`,
 `template`, `crawl`, `people`, `login`, `logout`, `connect`, `config`,
 `export`, `status`, `init`, `run`, `action`, and `schedule`. They are
-oriented toward the optional social build (`-tags social`) and the CRM
-features. The social-oriented ones (`message`, `comment`, `search`, `list`,
-`template`) are hidden from the default `--help` output but still work when
-invoked directly; they appear in `--help` only in `-tags social` builds.
+oriented toward the social platforms and the CRM features. The
+social-oriented ones (`message`, `comment`, `search`, `list`, `template`)
+appear in `--help` in the default build; a `-tags nosocial` build hides them
+(they still work when invoked directly).
 General automation lives under `workflow` and `node`; prefer those.
 
 ## Machine-readable output
@@ -574,8 +574,8 @@ Branch on these instead of parsing stderr.
 ## Building from source
 
 ```bash
-go build ./cmd/monoagentcli        # default build (no social nodes)
-go build -tags social ./cmd/monoagentcli   # opt-in: Instagram/LinkedIn/X/TikTok/Hacker News/Product Hunt nodes
+go build ./cmd/monoagentcli        # default build (includes the social platform nodes)
+go build -tags nosocial ./cmd/monoagentcli # opt-out: no Instagram/LinkedIn/X/TikTok/Hacker News/Product Hunt nodes
 go test ./...                      # tests, no Chrome required
 go vet ./...
 gofmt -l .

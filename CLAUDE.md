@@ -11,7 +11,7 @@ Full agent guidance lives in **AGENTS.md** (root) — read that first.
 ```bash
 go build ./...                        # build everything
 go build ./cmd/monoagentcli           # the CLI binary
-go build -tags social ./cmd/monoagentcli   # opt-in build incl. social platform nodes
+go build -tags nosocial ./cmd/monoagentcli # opt-out build without social platform nodes
 go test ./...                         # run tests (no Chrome required)
 go vet ./...                          # lint
 gofmt -l .                            # formatting check
@@ -21,8 +21,8 @@ The desktop GUI (`wails-app/`) is optional and needs the Wails toolchain.
 
 ## Notes
 
-- Default builds exclude social platform nodes — use `-tags social` when
-  working on `internal/bot/` or social node code.
+- Default builds include the social platform nodes (Instagram, LinkedIn, X,
+  TikTok, Hacker News, Product Hunt); `-tags nosocial` leaves them out.
 - CLI state lives in `~/.monoagent/` (global, not per-repo).
 - Commit messages: conventional style (`type(scope): description`).
 - Never commit secrets or `.env` files.

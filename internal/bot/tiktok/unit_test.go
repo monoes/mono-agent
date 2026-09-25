@@ -1,4 +1,4 @@
-//go:build social
+//go:build !nosocial
 
 package tiktok
 
@@ -11,7 +11,7 @@ import (
 	"github.com/monoes/mono-agent/internal/jev"
 )
 
-// Browser-free checks (run in every `go test -tags social`).
+// Browser-free checks (run in every `go test`).
 
 func TestProfileTarget(t *testing.T) {
 	cases := []struct{ in, url, handle string }{
