@@ -804,9 +804,9 @@ Running it fails with: replace it with the "agent.ask" node (local AI agent via 
 	{
 		Type:     "ai.classify",
 		Category: "ai",
-		Short:    "DEPRECATED — fails at run time; use agent.ask with a classification prompt",
+		Short:    "DEPRECATED — fails at run time; use ai.choose (TypeSafe Jev) or agent.ask",
 		Description: `Kept only so old workflows get a migration hint instead of "unknown node type".
-Running it fails with: replace it with the "agent.ask" node whose prompt requests classification.`,
+Running it fails with: replace it with the "ai.choose" node (TypeSafe Jev; see "monoagentcli ref node ai.choose") or an "agent.ask" node whose prompt requests classification.`,
 	},
 	{
 		Type:     "ai.extract",

@@ -47,3 +47,18 @@ func TestDeprecatedNodeExecutorEmbedHasNoEquivalentHint(t *testing.T) {
 		t.Errorf("Execute() error = %q, want it to say no local-agent equivalent exists", err.Error())
 	}
 }
+
+// O2 (docs/plans/2026-09-25-jev-integration.md): ai.classify stays failing but
+// points at its Jev-backed successor as well as agent.ask.
+func TestDeprecatedClassifyPointsToAIChoose(t *testing.T) {
+	node := &DeprecatedNodeExecutor{TypeName: "ai.classify"}
+	_, err := node.Execute(context.Background(), workflow.NodeInput{}, nil)
+	if err == nil {
+		t.Fatal("Execute() = nil error, want a migration-hint error")
+	}
+	for _, want := range []string{"ai.choose", "agent.ask"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Execute() error = %q, want it to mention %s", err.Error(), want)
+		}
+	}
+}

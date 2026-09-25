@@ -137,6 +137,43 @@ Skips password/file inputs; frames, shadow DOM, canvas and uploads can block.
 Get a key at console.typesafe.ai and store it: "monoagentcli secret add --kind secret --name typesafe".`,
 	},
 	{
+		Type:     "ai.choose",
+		Category: "agent",
+		Short:    "Route each item to one of your cases with a TypeSafe Jev choice (replaces ai.classify)",
+		Description: `One TypeSafe Jev request per item picks which of the configured cases fits,
+with probabilities and a confidence (~0.1–0.3 s, no text generation). Items go
+out on the chosen case's handle; when the top probability is below
+min_confidence they go to "low_confidence" instead. Extra typed questions
+(noul = yes/no, choice, score = ordered rubric) ride along in the same request.
+The item content is sent as "untrusted_input" and treated as data, never
+instructions.`,
+		Config: `{
+  "cases": [                               // required, same shapes as core.switch
+    "billing",
+    { "value": "tech", "handle": "support",
+      "description": "a technical problem or bug report" }
+  ],
+  "input":          "{{$json.subject}}\n{{$json.body}}",  // or "fields": ["subject","body"]; neither = whole item
+  "instructions":   "Customer emails to a SaaS company.",
+  "extra_questions": { "urgent": { "type": "noul", "criteria": "Does it need an answer today?" },
+                       "tone":   { "type": "choice", "criteria": ["calm", "angry"] } },
+  "min_confidence": 0.6,                   // top probability gate
+  "output_key":     "choice",
+  "api_key":        "@secret:typesafe",    // or TYPESAFE_API_KEY
+  "model":          "jev-latest",
+  "concurrency":    4                      // requests in flight, max 8
+}`,
+		Inputs: "any items (input capped at 6,000 characters)",
+		Outputs: `one handle per case handle (in config order, empty ones included) plus
+"low_confidence"; each item keeps its fields and gains <output_key>: {choice,
+handle, probability, probabilities, confidence, low_confidence, model,
+extra: {name: {noul} | {choice, probabilities, confidence} | {score, probabilities, confidence}}}`,
+		Notes: `Items keep input order within each handle. A failed request fails the node.
+No key => invalid-config error naming the missing vault secret. Get a key at
+console.typesafe.ai: "monoagentcli secret add --kind secret --name typesafe".
+Jev is weak at arithmetic, counting and date comparison — compute those first.`,
+	},
+	{
 		Type:     "org.run",
 		Category: "org",
 		Short:    "Start (or join) a run of an agent org",

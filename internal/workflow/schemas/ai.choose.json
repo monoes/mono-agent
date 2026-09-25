@@ -1,0 +1,91 @@
+{
+  "_generated": true,
+  "credential_platform": null,
+  "fields": [
+    {
+      "help": "Each value becomes an output handle. Objects {value, handle, description} set a custom handle and the criterion Jev judges by.",
+      "item_type": "text",
+      "key": "cases",
+      "label": "Cases",
+      "required": true,
+      "type": "array"
+    },
+    {
+      "help": "What Jev reads per item. Supports {{$json.field}} placeholders. Empty = the fields below, or the whole item. Capped at 6000 characters.",
+      "key": "input",
+      "label": "Input",
+      "placeholder": "{{$json.text}}",
+      "required": false,
+      "rows": 3,
+      "type": "textarea"
+    },
+    {
+      "help": "Item keys to send when Input is empty (a projection of the item).",
+      "item_type": "text",
+      "key": "fields",
+      "label": "Fields",
+      "required": false,
+      "type": "array"
+    },
+    {
+      "help": "Extra guidance for the choice. Item content is always treated as data, never instructions.",
+      "key": "instructions",
+      "label": "Instructions",
+      "required": false,
+      "rows": 3,
+      "type": "textarea"
+    },
+    {
+      "help": "Answered in the same request: {name: {type: noul|choice|score, criteria}}. Written to <output_key>.extra.",
+      "key": "extra_questions",
+      "label": "Extra Questions (JSON)",
+      "language": "json",
+      "placeholder": "{\"urgent\": {\"type\": \"noul\", \"criteria\": \"Is this urgent?\"}}",
+      "required": false,
+      "rows": 5,
+      "type": "code"
+    },
+    {
+      "default": 0.6,
+      "help": "Items whose top option probability is below this go to the low_confidence handle.",
+      "key": "min_confidence",
+      "label": "Min Probability",
+      "max": 1,
+      "min": 0,
+      "required": false,
+      "type": "number"
+    },
+    {
+      "default": "choice",
+      "key": "output_key",
+      "label": "Output Key",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "default": "@secret:typesafe",
+      "help": "Falls back to TYPESAFE_API_KEY.",
+      "key": "api_key",
+      "label": "TypeSafe API Key",
+      "required": false,
+      "type": "password"
+    },
+    {
+      "default": "jev-latest",
+      "key": "model",
+      "label": "Jev Model",
+      "required": false,
+      "type": "text"
+    },
+    {
+      "default": 4,
+      "help": "Requests in flight at once (one request per item).",
+      "key": "concurrency",
+      "label": "Concurrency",
+      "max": 8,
+      "min": 1,
+      "required": false,
+      "type": "number"
+    }
+  ]
+}
