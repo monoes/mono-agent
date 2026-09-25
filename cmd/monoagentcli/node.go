@@ -605,6 +605,7 @@ platform name to override. Token refresh is handled automatically for OAuth conn
 					Logger:    extLogger,
 				}
 				defer hybridProvider.Close()
+				defer nodes.CloseHealthObservers()
 				nodes.SetGlobalSessionProvider(hybridProvider)
 				nodes.SetGlobalBotRegistry(&cliBotRegistry{})
 				nodes.SetGlobalCredentialStore(connections.NewStore(rawDB))

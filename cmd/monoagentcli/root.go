@@ -49,6 +49,8 @@ func newRootCmd() *cobra.Command {
 			// Put monoagent's managed Node on PATH for every child process
 			// (monomind, npm, agent CLIs). One stat when none is installed.
 			nodemgr.Activate(cmd.Context())
+			// Installed automation packages, before anything reads actions.
+			bootAutomationsFor(cmd)
 		},
 	}
 

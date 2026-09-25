@@ -189,7 +189,10 @@ func buildEngine(cfg *globalConfig, allowAllProfiles bool) (*workflow.WorkflowEn
 
 	hybridStore := newHybridStore(db)
 	engine := workflow.NewWorkflowEngineWithStore(hybridStore, db.DB, sched, registry, engCfg, logger)
-	return engine, sessionProvider.Close, nil
+	return engine, func() {
+		sessionProvider.Close()
+		nodes.CloseHealthObservers()
+	}, nil
 }
 
 // lazyBrowserSessionProvider implements nodes.SessionProvider by connecting
