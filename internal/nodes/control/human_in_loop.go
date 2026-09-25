@@ -388,7 +388,9 @@ func autoDecideRows(ctx context.Context, db *sql.DB, input workflow.NodeInput, c
 	}
 	for i, s := range sugs {
 		switch {
-		case s.Choice == hilsuggest.Approve && s.P >= cfg.approveAbove:
+		// Never auto-approve an item Jev itself rates high-risk: it waits for
+		// a human with the suggestion shown.
+		case s.Choice == hilsuggest.Approve && s.P >= cfg.approveAbove && s.Risk != "high":
 			plan[i].status = "approved"
 		case s.Choice == hilsuggest.Reject && cfg.rejectAbove > 0 && s.P >= cfg.rejectAbove:
 			plan[i].status = "rejected"

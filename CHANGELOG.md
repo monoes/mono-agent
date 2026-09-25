@@ -46,6 +46,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Cross-platform people:** `people links suggest|list|confirm|dismiss`
     proposes pairs of profiles that look like the same person. Rows are
     never merged.
+  - **Human-in-Loop `auto_decide`** (`jev enable hil`): items Jev approves
+    with high confidence and doesn't rate as high-risk pass without
+    stopping. The rest wait, with Jev's suggestion shown. Runs started by
+    orgs only get suggestions. `hil list --suggest` and `people review list
+    --suggest` show the suggestions, and the Human in Loop page shows them
+    as chips sorted by confidence.
   - **Org asks:** a reply that lost its `ask:` token is linked to the
     waiting ask it answers, and the match is logged.
   - **Retries:** with `retry` enabled, node failures are classified after
@@ -58,6 +64,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The desktop app's Human in Loop approve and reject now go through
+  `monoagentcli hil` instead of running SQL inside the app.
 - Workflow retries no longer re-run a paused Human-in-Loop node or
   invalid configuration, cancelled runs, or errors marked permanent. Before,
   a paused node was executed again under `retry_policy`. A node's own

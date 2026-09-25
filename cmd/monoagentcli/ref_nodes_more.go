@@ -72,11 +72,21 @@ node fail, which the node's on_error setting then handles (default: the run fail
 		Config: `{
   "readonly_fields": ["name", "company", "email"],
   "editable_fields": ["subject", "body"],   // empty = whole item editable
-  "timeout_minutes": 60                     // 0 = wait forever; expiry counts as a rejection
+  "timeout_minutes": 60,                    // 0 = wait forever; expiry counts as a rejection
+  "auto_decide": {                          // optional, needs "jev enable hil"
+    "policy": "Approve routine outreach; flag anything legal or financial",
+    "approve_above": 0.9,                   // default: the profile's hil threshold
+    "reject_above": 0                       // 0/unset = Jev never rejects
+  }
 }`,
 		Inputs:  "any items",
 		Outputs: "the approved (possibly edited) items",
-		Notes: `While waiting the run's status is WAITING (exit code 0 from "workflow run").
+		Notes: `auto_decide (TypeSafe Jev): one request per item; items Jev approves with top
+p >= approve_above and does not rate high-risk are approved without a human; the
+rest wait with Jev's suggestion stored (see "hil list --suggest"). If every item
+is approved the node does not pause; one auto-reject fails the node exactly like
+a human reject. Runs started by an org never auto-decide (they are tier-routed).
+While waiting the run's status is WAITING (exit code 0 from "workflow run").
 Review with "monoagentcli hil list" / "hil approve <id>" / "hil reject <id>",
 the GUI review panel, the MCP hil_* tools, or the HTTP API.`,
 	},

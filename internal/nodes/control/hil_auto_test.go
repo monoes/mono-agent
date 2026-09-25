@@ -384,3 +384,30 @@ func TestHILAuto_ConfigAsJSONText(t *testing.T) {
 		t.Fatalf("empty text = %v, want today's pause", err)
 	}
 }
+
+// An item Jev approves with high confidence but rates high-risk still waits
+// for a human.
+func TestHILAuto_HighRiskNeverAutoApproved(t *testing.T) {
+	db := newAutoTestDB(t)
+	t.Setenv("TYPESAFE_API_KEY", "test-key")
+	jevtest.NewServer(t, func(req jev.Request) map[string]string {
+		raw, _ := json.Marshal(req.State)
+		if strings.Contains(string(raw), "bravo") {
+			return map[string]string{hilsuggest.QDecision: hilsuggest.Approve, hilsuggest.QRisk: "2"}
+		}
+		return map[string]string{hilsuggest.QDecision: hilsuggest.Approve, hilsuggest.QRisk: "0"}
+	})
+	enable(t, db)
+	_, err := (&HumanInLoopNode{}).Execute(autoCtx(db), threeItems(), autoConfig(map[string]interface{}{}))
+	if !errors.Is(err, workflow.ErrNodePaused) {
+		t.Fatalf("err = %v, want paused for the high-risk item", err)
+	}
+	rows := rowsOf(t, db)
+	if rows[0].Status != "approved" || rows[1].Status != "pending" || rows[2].Status != "approved" {
+		t.Fatalf("statuses = %s %s %s", rows[0].Status, rows[1].Status, rows[2].Status)
+	}
+	sug, _ := cfgOf(t, rows[1])["suggestion"].(map[string]interface{})
+	if sug["risk"] != "high" || cfgOf(t, rows[1])["decided_by"] != nil {
+		t.Fatalf("high-risk row config = %s", rows[1].Config)
+	}
+}
