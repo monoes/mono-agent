@@ -287,3 +287,15 @@ func firstChildHref(elem browser.ElementHandle) (string, bool) {
 	}
 	return doc.Find("a[href]").First().Attr("href")
 }
+
+// cdpTyper is a page that can type through CDP (Input.insertText), which
+// React/Lexical/contenteditable editors accept. *extension.ExtensionPage and
+// the bottest harness page implement it; checking the capability rather than
+// the concrete type keeps the typing path testable.
+type cdpTyper interface {
+	TypeCDP(text string) error
+	TypeCDPOnElement(text, elementID string) error
+}
+
+// elementIDer is an element handle that exposes its driver-side id.
+type elementIDer interface{ ElementID() string }

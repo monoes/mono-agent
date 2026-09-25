@@ -182,7 +182,13 @@ func (ep *ExtensionPage) Has(selector string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	found, _ := resp.dataMap()["found"].(bool)
+	// content.js answers {exists: bool}; "found" is accepted for older
+	// extension builds.
+	m := resp.dataMap()
+	if exists, ok := m["exists"].(bool); ok {
+		return exists, nil
+	}
+	found, _ := m["found"].(bool)
 	return found, nil
 }
 
@@ -589,12 +595,37 @@ func (ee *ExtensionElement) ScrollIntoView() error {
 	return err
 }
 
+// WaitStable waits until the element's bounding box stops changing (two
+// consecutive identical reads 100ms apart), or d elapses. content.js has no
+// "stable" mode for wait_element (it requires a selector), so this polls
+// get_rect instead.
 func (ee *ExtensionElement) WaitStable(d time.Duration) error {
-	_, err := ee.send(CmdWaitElement, map[string]interface{}{
-		"mode":    "stable",
-		"timeout": d.Milliseconds(),
-	})
-	return err
+	deadline := time.Now().Add(d)
+	var last map[string]interface{}
+	for {
+		resp, err := ee.send("get_rect", nil)
+		if err != nil {
+			return err
+		}
+		cur := resp.dataMap()
+		if last != nil && rectEqual(last, cur) {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("element did not settle within %s", d)
+		}
+		last = cur
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func rectEqual(a, b map[string]interface{}) bool {
+	for _, k := range []string{"x", "y", "width", "height"} {
+		if fmt.Sprint(a[k]) != fmt.Sprint(b[k]) {
+			return false
+		}
+	}
+	return true
 }
 
 func (ee *ExtensionElement) HTML() (string, error) {

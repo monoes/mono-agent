@@ -69,3 +69,42 @@ func TestExtensionPageEvalCDPSurfacesError(t *testing.T) {
 		t.Fatalf("v = %v err = %v", v, err)
 	}
 }
+
+func TestHasReadsExists(t *testing.T) {
+	for _, tc := range []struct {
+		data map[string]interface{}
+		want bool
+	}{
+		{map[string]interface{}{"exists": true, "elementId": "el_1"}, true},
+		{map[string]interface{}{"exists": false}, false},
+		{map[string]interface{}{"found": true}, true}, // older extension builds
+	} {
+		ep := NewExtensionPage(&fakeSender{resp: &Response{Success: true, Data: tc.data}}, 1)
+		if got, err := ep.Has("#x"); err != nil || got != tc.want {
+			t.Errorf("Has(%v) = %v, %v; want %v", tc.data, got, err, tc.want)
+		}
+	}
+}
+
+// rectSender returns a moving box for the first reads, then a still one.
+type rectSender struct{ n int }
+
+func (r *rectSender) SendCommand(cmd *Command, _ time.Duration) (*Response, error) {
+	r.n++
+	y := 10.0
+	if r.n < 3 {
+		y = float64(r.n)
+	}
+	return &Response{Success: true, Data: map[string]interface{}{"x": 1.0, "y": y, "width": 5.0, "height": 5.0}}, nil
+}
+
+func TestWaitStablePollsRect(t *testing.T) {
+	s := &rectSender{}
+	el := &ExtensionElement{server: s, elementID: "el_1"}
+	if err := el.WaitStable(2 * time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if s.n < 4 {
+		t.Fatalf("reads = %d, want the box to be read until it stops moving", s.n)
+	}
+}

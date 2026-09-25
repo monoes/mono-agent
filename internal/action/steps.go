@@ -15,7 +15,6 @@ import (
 	"github.com/go-rod/rod"
 	"github.com/monoes/mono-agent/internal/bot"
 	"github.com/monoes/mono-agent/internal/browser"
-	extpkg "github.com/monoes/mono-agent/internal/extension"
 	"github.com/monoes/mono-agent/internal/fsconfine"
 	"github.com/monoes/mono-agent/internal/util"
 )
@@ -575,8 +574,8 @@ func (ae *ActionExecutor) stepType(ctx context.Context, step StepDef) (*StepResu
 			}
 		} else {
 			// Extension path: type via CDP with real click + Input.insertText.
-			if ep, ok := ae.page.(*extpkg.ExtensionPage); ok {
-				if ee, ok := elem.(*extpkg.ExtensionElement); ok {
+			if ep, ok := ae.page.(cdpTyper); ok {
+				if ee, ok := elem.(elementIDer); ok {
 					// CDP click + insert — real browser events, works with Lexical
 					if err := ep.TypeCDPOnElement(text, ee.ElementID()); err != nil {
 						if err2 := ae.page.InsertText(text); err2 != nil {
@@ -599,8 +598,8 @@ func (ae *ActionExecutor) stepType(ctx context.Context, step StepDef) (*StepResu
 			}
 		}
 	} else {
-		if ep, ok := ae.page.(*extpkg.ExtensionPage); ok {
-			if ee, ok := elem.(*extpkg.ExtensionElement); ok {
+		if ep, ok := ae.page.(cdpTyper); ok {
+			if ee, ok := elem.(elementIDer); ok {
 				if err := ep.TypeCDPOnElement(text, ee.ElementID()); err != nil {
 					_ = ae.page.InsertText(text)
 				}
