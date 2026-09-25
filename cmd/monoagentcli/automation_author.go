@@ -19,12 +19,13 @@ import (
 // automation_fixtures.go).
 
 func newAutomationValidateCmd(cfg *globalConfig) *cobra.Command {
-	return &cobra.Command{
+	var builtin bool
+	cmd := &cobra.Command{
 		Use:   "validate <dir|file.mpkg|action.json>",
 		Short: "Validate a package directory, a .mpkg file or a single action file",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			issues, err := validateTarget(args[0])
+			issues, err := validateTarget(args[0], builtin)
 			if err != nil {
 				return err
 			}
@@ -41,11 +42,15 @@ func newAutomationValidateCmd(cfg *globalConfig) *cobra.Command {
 			return fmt.Errorf("%s has validation errors", args[0])
 		},
 	}
+	cmd.Flags().BoolVar(&builtin, "builtin", false, "Validate as a built-in package (automatic under data/automations/)")
+	return cmd
 }
 
 // validateTarget validates whatever path points at. Always returns a
-// non-nil slice so --json prints "issues": [].
-func validateTarget(target string) ([]automation.IssueJSON, error) {
+// non-nil slice so --json prints "issues": []. A package is checked as a
+// built-in (no imported-package rules) with builtin or when it lives under
+// data/automations/.
+func validateTarget(target string, builtin bool) ([]automation.IssueJSON, error) {
 	st, err := os.Stat(target)
 	if err != nil {
 		return nil, err
@@ -62,11 +67,25 @@ func validateTarget(target string) ([]automation.IssueJSON, error) {
 	if err != nil {
 		return nil, err
 	}
+	if builtin || isBuiltinSourceDir(target) {
+		pkg.Source = automation.SourceBuiltin
+	}
 	issues := automation.Validate(pkg)
 	if issues == nil {
 		issues = []automation.IssueJSON{}
 	}
 	return issues, nil
+}
+
+// isBuiltinSourceDir reports whether dir is a package of the shipped seed
+// set: data/automations/<id> in a source checkout.
+func isBuiltinSourceDir(dir string) bool {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return false
+	}
+	return filepath.Base(filepath.Dir(abs)) == "automations" &&
+		filepath.Base(filepath.Dir(filepath.Dir(abs))) == "data"
 }
 
 // validateActionFile lints one loose action JSON with no package context.

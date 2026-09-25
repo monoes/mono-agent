@@ -23,6 +23,7 @@ type automationSession struct {
 	LoggedIn  bool   `json:"loggedIn"`
 	Username  string `json:"username"`
 	ExpiresAt string `json:"expiresAt"` // RFC3339, "" when never logged in
+	Status    string `json:"status"`    // active | expired | logged_out (as `login status`)
 }
 
 // automationListRow is InstalledInfo plus the session block (contracts §5).
@@ -117,7 +118,7 @@ func (s sessionIndex) lookup(id string) automationSession {
 	if v, ok := s[strings.ToLower(id)]; ok {
 		return v
 	}
-	return automationSession{}
+	return automationSession{Status: "logged_out"}
 }
 
 // loadAutomationSessions reads login state from crawler_sessions (the same
@@ -158,10 +159,15 @@ func querySessionIndex(db *sql.DB, profileID string, now time.Time) sessionIndex
 			continue
 		}
 		best[key] = expiry
+		status := "active"
+		if expiry.Before(now) {
+			status = "expired"
+		}
 		idx[key] = automationSession{
-			LoggedIn:  expiry.After(now),
+			LoggedIn:  status == "active",
 			Username:  username,
 			ExpiresAt: expiry.UTC().Format(time.RFC3339),
+			Status:    status,
 		}
 	}
 	return idx
@@ -218,6 +224,7 @@ func newAutomationShowCmd(cfg *globalConfig) *cobra.Command {
 				return writeJSONTo(out, map[string]any{
 					"info": info, "manifest": pkg.Manifest, "actions": actions,
 					"fragments": fragments, "issues": issues,
+					"session": loadAutomationSessions(cfg).lookup(id),
 				})
 			}
 			printAutomationShow(out, info, pkg.Manifest, actions, fragments, issues)

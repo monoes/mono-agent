@@ -10,7 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 
+	"github.com/monoes/mono-agent/internal/action"
 	"github.com/monoes/mono-agent/internal/automation"
 	"github.com/monoes/mono-agent/internal/storage"
 	"github.com/zalando/go-keyring"
@@ -65,7 +67,7 @@ func TestAutomationListJSONShape(t *testing.T) {
 		if err := json.Unmarshal(a["session"], &s); err != nil {
 			t.Fatalf("session: %v", err)
 		}
-		for _, k := range []string{"loggedIn", "username", "expiresAt"} {
+		for _, k := range []string{"loggedIn", "username", "expiresAt", "status"} {
 			if _, ok := s[k]; !ok {
 				t.Errorf("session missing %q", k)
 			}
@@ -104,7 +106,7 @@ func TestAutomationListSessionFromCrawlerSessions(t *testing.T) {
 	mustJSON(t, home, &got, "automation", "list")
 	for _, a := range got.Automations {
 		if a.ID == "hackernews" {
-			if !a.Session.LoggedIn || a.Session.Username != "pg" || a.Session.ExpiresAt == "" {
+			if !a.Session.LoggedIn || a.Session.Username != "pg" || a.Session.ExpiresAt == "" || a.Session.Status != "active" {
 				t.Fatalf("session = %+v, want logged in as pg", a.Session)
 			}
 			return
@@ -156,10 +158,10 @@ func TestAutomationShowUnknownPrintsJSONError(t *testing.T) {
 
 func TestAutomationExportUninstallInstallRestore(t *testing.T) {
 	home := t.TempDir()
-	file := filepath.Join(home, "hn.mpkg")
+	file := filepath.Join(home, "gemini.mpkg")
 
 	var exp struct{ File, Sha256 string }
-	mustJSON(t, home, &exp, "automation", "export", "hackernews", "-o", file)
+	mustJSON(t, home, &exp, "automation", "export", "gemini", "-o", file)
 	b, err := os.ReadFile(file)
 	if err != nil {
 		t.Fatal(err)
@@ -173,7 +175,7 @@ func TestAutomationExportUninstallInstallRestore(t *testing.T) {
 		OK   bool                      `json:"ok"`
 		Info *automation.InstalledInfo `json:"info"`
 	}
-	mustJSON(t, home, &un, "automation", "uninstall", "hackernews")
+	mustJSON(t, home, &un, "automation", "uninstall", "gemini")
 	if !un.OK {
 		t.Fatal("uninstall not ok")
 	}
@@ -186,22 +188,22 @@ func TestAutomationExportUninstallInstallRestore(t *testing.T) {
 
 	var dry automation.InstallResult
 	mustJSON(t, home, &dry, "automation", "install", file, "--dry-run")
-	if !dry.DryRun || dry.Installed || dry.ID != "hackernews" {
+	if !dry.DryRun || dry.Installed || dry.ID != "gemini" {
 		t.Fatalf("dry run = %+v", dry)
 	}
 
 	var inst automation.InstallResult
 	mustJSON(t, home, &inst, "automation", "install", file, "--yes")
-	if !inst.Installed || inst.ID != "hackernews" {
+	if !inst.Installed || inst.ID != "gemini" {
 		t.Fatalf("install = %+v", inst)
 	}
 
-	mustJSON(t, home, &un, "automation", "uninstall", "hackernews")
+	mustJSON(t, home, &un, "automation", "uninstall", "gemini")
 	var res struct {
 		OK   bool                      `json:"ok"`
 		Info *automation.InstalledInfo `json:"info"`
 	}
-	mustJSON(t, home, &res, "automation", "restore", "hackernews")
+	mustJSON(t, home, &res, "automation", "restore", "gemini")
 	if !res.OK || res.Info == nil || res.Info.Source != automation.SourceBuiltin || res.Info.Removed {
 		t.Fatalf("restore = %+v", res.Info)
 	}
@@ -302,6 +304,12 @@ func TestAutomationValidateActionFileAndTest(t *testing.T) {
 	if len(tr.Results) == 0 || !strings.HasPrefix(tr.Results[0].Message, "validate:") {
 		t.Fatalf("results = %+v", tr.Results)
 	}
+	for _, r := range tr.Results[1:] {
+		// No browser in tests: a fixture is skipped (and ok), never passed.
+		if r.Status != "skipped" || !r.OK {
+			t.Errorf("fixture %s: status %q ok %v (%s)", r.Fixture, r.Status, r.OK, r.Message)
+		}
+	}
 
 	if _, _, err := runAutomationCLI(t, home, "automation", "test", "hackernews", "--live", "--json"); err == nil {
 		t.Error("--live should report not supported")
@@ -396,5 +404,84 @@ func TestAutomationInstallInvalidReportsIssues(t *testing.T) {
 	}
 	if body.Error == "" || len(body.Issues) == 0 || body.Result == nil {
 		t.Fatalf("error body = %+v", body)
+	}
+}
+
+func TestAutomationSessionStatus(t *testing.T) {
+	var idx sessionIndex = sessionIndex{}
+	if got := idx.lookup("nobody"); got.Status != "logged_out" || got.LoggedIn {
+		t.Fatalf("no session = %+v", got)
+	}
+}
+
+func TestAutomationValidateBuiltinDir(t *testing.T) {
+	home := t.TempDir()
+	// A package without domains is valid only as a built-in.
+	dir := filepath.Join(home, "data", "automations", "plain")
+	if err := os.MkdirAll(filepath.Join(dir, "actions"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `{"schema":"monoagent.automation/v1","id":"plain","name":"Plain","version":"1.0.0",
+		"site":{"startUrl":"","domains":[]},"permissions":{"steps":[],"scripts":[]},
+		"actions":["a"],"policy":{"tier":"standard"}}`
+	action := `{"actionType":"a","automation":"plain","sideEffects":"none","steps":[{"id":"s","type":"log"}]}`
+	os.WriteFile(filepath.Join(dir, "automation.json"), []byte(manifest), 0o644)
+	os.WriteFile(filepath.Join(dir, "actions", "a.json"), []byte(action), 0o644)
+	if !isBuiltinSourceDir(dir) {
+		t.Fatal("dir under data/automations not detected")
+	}
+	var v struct {
+		OK     bool                   `json:"ok"`
+		Issues []automation.IssueJSON `json:"issues"`
+	}
+	mustJSON(t, home, &v, "automation", "validate", dir)
+	if !v.OK {
+		t.Fatalf("as built-in: %+v", v.Issues)
+	}
+	other := filepath.Join(home, "plain")
+	if err := os.Rename(dir, other); err != nil {
+		t.Fatal(err)
+	}
+	out, _, _ := runAutomationCLI(t, home, "automation", "validate", other, "--json")
+	if !strings.Contains(out, `"ok": false`) {
+		t.Fatalf("as local package it should fail: %s", out)
+	}
+	mustJSON(t, home, &v, "automation", "validate", other, "--builtin")
+	if !v.OK {
+		t.Fatalf("--builtin: %+v", v.Issues)
+	}
+}
+
+func TestAutomationFixtureCompareAndInputs(t *testing.T) {
+	items := []map[string]interface{}{{"id": "1", "n": 2}}
+	for _, tc := range []struct {
+		want string
+		ok   bool
+	}{
+		{`[{"id":"1","n":2}]`, true},
+		{`{"id":"1","n":2}`, true},
+		{`{"items":[{"id":"1","n":2}]}`, true},
+		{`[{"id":"1","n":3}]`, false},
+		{`[]`, false},
+	} {
+		var w interface{}
+		json.Unmarshal([]byte(tc.want), &w)
+		if got := outputMatches(items, w); got != tc.ok {
+			t.Errorf("outputMatches(%s) = %v", tc.want, got)
+		}
+	}
+
+	def := &action.ActionDef{Inputs: &action.InputDef{Required: []json.RawMessage{
+		json.RawMessage(`"itemID"`), json.RawMessage(`"query"`)}}}
+	var want interface{}
+	json.Unmarshal([]byte(`[{"itemID":"7","title":"x"}]`), &want)
+	fsys := fstest.MapFS{"tests/a.inputs.json": {Data: []byte(`{"query":"q"}`)}}
+	in, missing := fixtureInputs(fsys, "a", def, want)
+	if len(missing) != 0 || in["itemID"] != "7" || in["query"] != "q" {
+		t.Fatalf("inputs %v missing %v", in, missing)
+	}
+	_, missing = fixtureInputs(fstest.MapFS{}, "a", def, nil)
+	if len(missing) != 2 {
+		t.Fatalf("missing = %v", missing)
 	}
 }
