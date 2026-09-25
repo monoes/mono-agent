@@ -145,7 +145,7 @@ func TestLoadDefaultSchema_GeneratedForBuiltins(t *testing.T) {
 func TestHumanizeName(t *testing.T) {
 	for in, want := range map[string]string{
 		"maxComments": "Max Comments", "max_comments": "Max Comments",
-		"postURL": "Post URL", "email": "Email",
+		"postURL": "Post URL", "email": "Email", "url": "URL", "postId": "Post ID",
 	} {
 		if got := humanizeName(in); got != want {
 			t.Errorf("humanizeName(%q) = %q, want %q", in, got, want)
