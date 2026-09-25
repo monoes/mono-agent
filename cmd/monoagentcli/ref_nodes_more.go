@@ -383,7 +383,7 @@ Jev is weak at arithmetic, counting and date comparison — compute those first.
 	{
 		Type:     "hackernews.list_comments",
 		Category: "hackernews",
-		Short:    "List the top-level comments on a Hacker News item",
+		Short:    "List the comments on a Hacker News item (all depths with depth/parentId; topLevelOnly for top level only)",
 		Config:   `{ "itemID": "41234567" }`,
 		Notes:    socialBrowserNote,
 	},
