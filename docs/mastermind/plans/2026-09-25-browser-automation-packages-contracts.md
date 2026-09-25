@@ -223,3 +223,64 @@ v1 is one tab: a new tab ends the recording with reason `new_tab`.
 3. **Port**: hackernews to declarative (no `requires.native`), E2E harness.
 4. **Review**: security, correctness/contracts, extension, GUI (browser).
 5. **Fix**, re-verify, docs/CHANGELOG, PR.
+
+## 8. Security hardening contract (after the security review)
+
+Trust tiers (registry index `trust`): `builtin` | `local` (hand-authored or
+`automation new`) | `recorded` (saved from `record save`) | `imported`.
+Only `builtin` and `local` get the bare-name vault fallback; `recorded`
+and `imported` read only `automation:<id>/<name>` secrets. Unknown/failed
+lookup ⇒ treat as `imported` (fail closed).
+
+New optional interfaces a `PackageContext` may implement (registry
+implements all):
+- `Trust() string`
+- `CallActions() []string` — manifest `permissions.callActions`: exact
+  `"<automation>.<action>"` refs this package may call (own-package calls
+  need no declaration).
+- `ScriptsAllowed() bool` — false for `imported`/`recorded` packages unless
+  the user opted in (`automation trust <id> --scripts`), true for
+  builtin/local.
+- `LiveRunConfirmed() bool` — imported packages with an action of
+  sideEffects ≥ write refuse to run for real until the user confirms once
+  (`automation trust <id> --live`); verify --safe is unaffected.
+
+Engine (core/steps):
+- `SetSecretLookup(func(automationID, name string) (string, bool))` — the
+  executor passes the CURRENT package id (re-scoped inside call_action).
+- `SetGlobalHostDeny(func(host string) (bool, string))` — package-wide deny
+  applied in every URL check (runtime installs: social hosts when
+  `!bot.PlatformCompiledIn`). URL checks fail CLOSED when the page URL
+  can't be read. Ports are part of the match when the pattern has one.
+- `upload`: with a package, a path is allowed only if it (a) equals the
+  value of an input whose declared type is `file`/`path`, or (b) resolves
+  inside `~/.monoagent/uploads/<id>/` or the run's fsconfine root. Upload is
+  always treated as a side effect by safe mode.
+- `call_action`: refs must be literal (no templates — validate error);
+  cross-package refs must be listed in `CallActions()`; an `imported`
+  or `recorded` caller may never call a `builtin` or social-tier target.
+- `page_script`/`http_fetch_in_page`: refused at run time when
+  `!ScriptsAllowed()` (http_fetch_in_page counts as a script capability).
+- Safe mode also stops before: page_script, upload, download,
+  non-GET http_fetch_in_page, call_action whose target sideEffects ≥ write.
+- Validate: error when action sideEffects ≥ write and no step is flagged.
+- Secret masking: every resolved secret value is redacted from logs,
+  StepResult data/errors, events, FailedItems and saved data; resolved
+  text is never re-resolved; a plain variable never shadows `{{secret:}}`.
+- http_fetch_in_page / download: `redirect:'manual'`, hops followed in Go
+  with a host check each hop.
+
+Registry: manifest `permissions.callActions`; domain patterns need ≥ 2
+labels and must not be a public suffix (`golang.org/x/net/publicsuffix`),
+same for `*.` globs; `login.url` and `site.startUrl` must be inside
+`site.domains`; installing an imported package over an existing
+`builtin`/`local` id requires `InstallOptions.ReplaceBuiltin`; Review adds
+`source`, `replaces` (id+source), `computedTier`, `native`, `callActions`,
+`loginURL`, `scripts` WITH source text (`scriptSources map[name]string`),
+`capabilities` (plain-language list: "can run scripts in the page that can
+read site data and send it anywhere", "can upload local files", ...).
+Index adds `scriptsAllowed`, `liveRunConfirmed`; API `SetTrustFlags(id,
+scripts, live *bool)`. `AddAction` takes `InstallOptions.Trust`.
+
+CLI: `automation trust <id> [--scripts|--no-scripts] [--live|--no-live]`,
+`install --replace-builtin`, `record save` saves with trust `recorded`.
