@@ -53,6 +53,9 @@ func runInstall(opts automation.InstallOptions, c installConfirmer,
 		if !confirmYes(c.in, c.out, fmt.Sprintf("Install %s %s?", review.ID, review.Version)) {
 			return nil, errors.New("install cancelled")
 		}
+		if opts.ExpectSHA256 == "" {
+			opts.ExpectSHA256 = review.SHA256 // install exactly the bytes reviewed
+		}
 	}
 	res, err := do(opts)
 	return res, withInstallResult(err, res)
@@ -60,6 +63,7 @@ func runInstall(opts automation.InstallOptions, c installConfirmer,
 
 func newAutomationInstallCmd(cfg *globalConfig) *cobra.Command {
 	var dryRun, yes bool
+	var expectSHA string
 	cmd := &cobra.Command{
 		Use:   "install <file.mpkg|dir|url>",
 		Short: "Install or update an automation package (shows a review first)",
@@ -71,7 +75,7 @@ func newAutomationInstallCmd(cfg *globalConfig) *cobra.Command {
 			}
 			c := installConfirmer{yes: yes, interactive: !cfg.JSONOutput && stdinIsTerminal(),
 				in: cmd.InOrStdin(), out: cmd.ErrOrStderr()}
-			res, err := runInstall(automation.InstallOptions{DryRun: dryRun}, c, func(o automation.InstallOptions) (*automation.InstallResult, error) {
+			res, err := runInstall(automation.InstallOptions{DryRun: dryRun, ExpectSHA256: strings.ToLower(strings.TrimSpace(expectSHA))}, c, func(o automation.InstallOptions) (*automation.InstallResult, error) {
 				return reg.Install(args[0], o)
 			})
 			if err != nil {
@@ -83,6 +87,7 @@ func newAutomationInstallCmd(cfg *globalConfig) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Validate and show the review without installing")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Install without asking")
+	cmd.Flags().StringVar(&expectSHA, "expect-sha256", "", "Refuse unless the package bytes have this sha256 (e.g. from a --dry-run review)")
 	return cmd
 }
 
@@ -127,6 +132,9 @@ func printInstallResult(out io.Writer, cfg *globalConfig, res *automation.Instal
 func printInstallReview(out io.Writer, res *automation.InstallResult) {
 	r := res.Review
 	fmt.Fprintf(out, "Package   %s (%s) %s\n", res.Name, res.ID, res.Version)
+	if res.SHA256 != "" {
+		fmt.Fprintf(out, "SHA256    %s\n", res.SHA256)
+	}
 	if res.PreviousVersion != "" {
 		fmt.Fprintf(out, "Replaces  %s\n", res.PreviousVersion)
 	}

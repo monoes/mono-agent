@@ -191,9 +191,18 @@ func TestAutomationExportUninstallInstallRestore(t *testing.T) {
 	if !dry.DryRun || dry.Installed || dry.ID != "gemini" {
 		t.Fatalf("dry run = %+v", dry)
 	}
+	sum = sha256.Sum256(b)
+	if dry.SHA256 != hex.EncodeToString(sum[:]) {
+		t.Fatalf("dry run sha256 %q, file %x", dry.SHA256, sum)
+	}
+	// A wrong pin is refused; the reviewed hash installs.
+	if _, _, err := runAutomationCLI(t, home, "automation", "install", file, "--yes", "--json",
+		"--expect-sha256", strings.Repeat("0", 64)); err == nil {
+		t.Fatal("install with a wrong --expect-sha256 succeeded")
+	}
 
 	var inst automation.InstallResult
-	mustJSON(t, home, &inst, "automation", "install", file, "--yes")
+	mustJSON(t, home, &inst, "automation", "install", file, "--yes", "--expect-sha256", dry.SHA256)
 	if !inst.Installed || inst.ID != "gemini" {
 		t.Fatalf("install = %+v", inst)
 	}
