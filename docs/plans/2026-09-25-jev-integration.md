@@ -42,7 +42,10 @@ best; vulnerable to prompt injection (docs: `model-jaggedness/jev-1.13.md`).
 | D12 | ⓡ **Rollback.** `jev disable <surface>` (or removing the key) restores today's behaviour immediately; the decider reverts with `org autonomy set --decider model`. All migrations only add nullable columns/tables. A TypeSafe outage degrades every surface to today's path. |
 | D13 | ⓡ **No batching by default.** Jev is weak at indirection ("item 7 in a shared state"), so every surface sends **one request per item** with bounded concurrency (≤8 in flight; 1,200 req/min allows it). Batching is opt-in only where stated, with items keyed by id and each question naming its id, and a token estimate of `len(json)/3` kept ≤ 28,000. |
 
-**Open decisions (need the user before the named workstream starts):**
+**Decisions from the user (2026-09-25): O1 = no, O2 = no, O3 = yes** — i.e. the defaults below.
+WS11 is **un-deferred** at the user's request ("do it all"); it ships only in `-tags social` builds.
+
+**Open decisions (resolved as above):**
 
 | # | Question | Default if unanswered |
 |---|---|---|
@@ -505,7 +508,7 @@ behaviour in both receiver and waker.
 **Tests**: paused/invalid-config not retried (regression tests); classifier permanent stops;
 classifier failure retries.
 
-### WS11 — Social bots on `jevpick` (build tag `social`) · Effort L · depends WS0, WS2 · ⓡ **DEFERRED to the next release**
+### WS11 — Social bots on `jevpick` (build tag `social`) · Effort L · depends WS0, WS2 · (un-deferred by the user; P2)
 
 ⓡ Releases build without `-tags social` (`release.yml:334`), so this work ships to no release
 user yet. Keep the spec; start it only when social builds ship or the user asks.
@@ -533,9 +536,8 @@ user yet. Keep the spec; start it only when social builds ship or the user asks.
 |---|---|---|
 | P0 | WS0 (1 agent) | §WS0 gate + reviewer pass; merged to `integration/jev` |
 | P1 | WS1, WS2, WS3, WS4, WS6, WS7, WS9, WS10 (≤8 agents) | each WS gate; integrator merges one at a time, full suite after each merge |
-| P2 | WS5, WS8 (after §3.3 precondition) | same |
+| P2 | WS5, WS8 (after §3.3 precondition), WS11 (after WS2) | same |
 | P3 | Integrator: CHANGELOG/README/AGENTS.md, `ref` docs pass, `doctor` smoke, one PR | CI green incl. "Doctor smoke test"; user approval to merge |
-| later | WS11 (deferred, see its section) | — |
 
 File-ownership conflicts to watch (only these files are shared; each has one named owner):
 `noderegistry/registry.go`, `schemagen/manifest.go` (WS3 only adds lines), `ref_nodes_more.go`
