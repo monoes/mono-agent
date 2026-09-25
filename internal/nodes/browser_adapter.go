@@ -261,7 +261,7 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 	)
 	attachPackage(executor, b.platform, storage.db)
 	if storage.db != nil {
-		executor.SetSecretLookup(secretLookup(ctx, storage.db, storage.profileID, strings.ToLower(b.platform)))
+		executor.SetSecretLookup(ScopedSecretLookup(ctx, storage.db, storage.profileID, strings.ToLower(b.platform)))
 	}
 
 	// Opt-in Jev element-picker fallback for steps that declare an intent
@@ -315,10 +315,20 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 		}, nil
 	}
 
+	// A declarative package's action also reports what it declared in
+	// outputs.success (variables it set); native built-ins get nil here.
+	declared := declaredOutputs(executor, b.platform, b.actionType)
+
 	if len(result.ExtractedItems) > 0 {
-		merged := mergeStepResults(inputJSON, result.ExtractedItems, b.platform)
+		merged := withDeclaredOutputs(mergeStepResults(inputJSON, result.ExtractedItems, b.platform), declared)
 		return []workflow.NodeOutput{
 			{Handle: "main", Items: []workflow.Item{workflow.NewItem(merged)}},
+		}, nil
+	}
+
+	if declared != nil {
+		return []workflow.NodeOutput{
+			{Handle: "main", Items: []workflow.Item{workflow.NewItem(withDeclaredOutputs(inputJSON, declared))}},
 		}, nil
 	}
 
