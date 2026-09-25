@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.67.0] - 2026-09-25
+
 ### Added
 
 - **TypeSafe Jev decisions.** Jev picks one of a fixed set of options,
@@ -59,10 +61,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Retries:** with `retry` enabled, node failures are classified after
     their error text is redacted. Rate limits back off longer, and auth or
     permanent errors stop retrying.
-- **`monoagentcli people tag list|add|remove|color`**. The People page now
-  makes every tag change through it, including the new tag colour picker.
-- **People page:** rework of the page and its tag editor. Human in Loop
-  usernames and URLs open the profile in the browser.
 
 ### Fixed
 
@@ -106,21 +104,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The workflow editor's switch, filter and choose output ports now match
   the handles the engine emits. The filter showed `pass/fail`, but the
   engine emits `main/rejected`.
-- People saved without a post count, following count or verified flag no
-  longer break `people list`, `people get`, export or the app's people
-  lookups. They failed with "converting NULL to int is unsupported".
-- A newly created tag shows its colour straight away.
-- The app prefers the `monoagentcli` shipped next to it over an older one on
-  PATH.
+
+## [0.66.0] - 2026-09-25
 
 ### Added
 
+- **`monoagentcli people tag list|add|remove|color`**. The People page now
+  makes every tag change through it, including the new tag colour picker.
+- **People page:** rework of the page and its tag editor. Human in Loop
+  usernames and URLs open the profile in the browser.
 - **`monoagentcli people review list|approve|reject`** drives the review
   queue for people staged as `pending_approval`. `approve --send` runs the
   dispatch workflow for the person.
 
 ### Fixed
 
+- People saved without a post count, following count or verified flag no
+  longer break `people list`, `people get`, export or the app's people
+  lookups. They failed with "converting NULL to int is unsupported".
+- A newly created tag shows its colour straight away.
+
+- The app prefers the `monoagentcli` shipped next to it over an older one on
+  PATH.
 - **Human in Loop's people review goes through the CLI.** Approve/reject
   no longer run SQL inside the app, and "send now" no longer looks for one
   fixed workflow id. It finds the profile's workflow named like "Send
