@@ -94,10 +94,8 @@ func (ae *ActionExecutor) stepCallAction(ctx context.Context, step StepDef) (*St
 	if ae.safeMode && atLeastWrite(def.SideEffects) {
 		return ae.extSafeStop(step)
 	}
-	if !ae.safeMode && atLeastWrite(def.SideEffects) && PackageTrust(pctx) == "imported" {
-		if g, ok := pctx.(LiveRunGate); !ok || !g.LiveRunConfirmed() {
-			return extFail(step, "action %q of imported automation %q writes to the site and has not been confirmed for live runs (monoagentcli automation trust %s --live)", ref, pctx.ID(), pctx.ID())
-		}
+	if err := ae.checkLiveRun(pctx, def); err != nil {
+		return extFail(step, "%w", err)
 	}
 	if issues := Validate(def, pctx); HasErrors(issues) {
 		return extFail(step, "action %q does not validate: %s", ref, issueSummary(issues))
@@ -117,11 +115,14 @@ func (ae *ActionExecutor) stepCallAction(ctx context.Context, step StepDef) (*St
 	// Switch the executor to the called action for the duration: its
 	// package (domains, selectors, fragments), its steps (condition
 	// branches look them up in actionDef) and fresh loop progress.
-	prevPkg, prevDef, prevAction, prevDB, prevReached := ae.pkg, ae.actionDef, ae.action, ae.db, ae.reachedIndexByLoop
+	// enterPackage also switches the download permission to the callee's.
+	restorePkg := ae.enterPackage(pctx)
+	defer restorePkg()
+	prevDef, prevAction, prevDB, prevReached := ae.actionDef, ae.action, ae.db, ae.reachedIndexByLoop
 	defer func() {
-		ae.pkg, ae.actionDef, ae.action, ae.db, ae.reachedIndexByLoop = prevPkg, prevDef, prevAction, prevDB, prevReached
+		ae.actionDef, ae.action, ae.db, ae.reachedIndexByLoop = prevDef, prevAction, prevDB, prevReached
 	}()
-	ae.pkg, ae.actionDef, ae.reachedIndexByLoop = pctx, def, make(map[string]int)
+	ae.actionDef, ae.reachedIndexByLoop = def, make(map[string]int)
 	if prevDB != nil {
 		ae.db = nestedStorage{prevDB}
 	}

@@ -236,3 +236,27 @@ func TestMoveCandidateFirst(t *testing.T) {
 		t.Fatal("moving the first candidate again must be a no-op")
 	}
 }
+
+// A built-in that carries local trust (possible after AddAction) is still
+// not the user's own package: it is promoted through the overlay.
+func TestHealthPromoteBuiltinWithLocalTrustUsesOverlay(t *testing.T) {
+	r := installAcme(t, SourceLocal)
+	if err := r.update(func(idx *indexFile) (bool, error) {
+		e := idx.Packages["acme-crm"]
+		e.Source, e.Trust = SourceBuiltin, TrustLocal
+		return true, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	pkg, _ := r.Get("acme-crm")
+	before, _ := os.ReadFile(filepath.Join(pkg.Dir, "selectors.json"))
+	if err := r.PromoteCandidate("acme-crm", "contact.email", emailAria); err != nil {
+		t.Fatal(err)
+	}
+	if after, _ := os.ReadFile(filepath.Join(pkg.Dir, "selectors.json")); string(after) != string(before) {
+		t.Fatal("a built-in with local trust must not be rewritten in place")
+	}
+	if got := selectorOrder(t, r, "acme-crm", "contact.email"); got[0] != "aria:Email" {
+		t.Fatalf("overlay promotion missing: %v", got)
+	}
+}

@@ -1,6 +1,7 @@
 package action
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -170,7 +171,7 @@ func TestCallActionPolicy(t *testing.T) {
 		{"template ref", "local", []string{"target.list"}, newTarget("local", "", false), "{{which}}", "must be literal"},
 		{"imported caller to builtin", "imported", []string{"target.list"}, newTarget("builtin", "", false), "target.list", "may not call"},
 		{"recorded caller to social tier", "recorded", []string{"target.list"}, newTarget("local", "social", false), "target.list", "may not call"},
-		{"imported target write unconfirmed", "local", []string{"target.post"}, newTarget("imported", "", false), "target.post", "confirmed for live runs"},
+		{"imported target write unconfirmed", "local", []string{"target.post"}, newTarget("imported", "", false), "target.post", "need confirmation"},
 		{"imported target write confirmed", "local", []string{"target.post"}, newTarget("imported", "", true), "target.post", ""},
 		{"imported target read needs no confirmation", "local", []string{"target.list"}, newTarget("imported", "", false), "target.list", ""},
 	}
@@ -218,5 +219,35 @@ func TestCallActionRescopesSecrets(t *testing.T) {
 	}
 	if ae.secretScope() != "caller" {
 		t.Fatalf("scope not restored: %s", ae.secretScope())
+	}
+}
+
+// extDLPkg is a package that declares its download permission.
+type extDLPkg struct {
+	*extPkg
+	downloads bool
+}
+
+func (p *extDLPkg) DownloadsPermitted() bool { return p.downloads }
+
+func TestCallActionSwitchesDownloadPermission(t *testing.T) {
+	probe := StepDef{ID: "probe", Type: "set_variable", VariableName: "x", Value: "1"}
+	caller := &extDLPkg{extPkg: &extPkg{id: "caller", actions: map[string]*ActionDef{
+		"inner": {ActionType: "inner", SideEffects: "read", Steps: []StepDef{probe}},
+	}}}
+	ae := newExtExecutor(t, &extPage{})
+	ae.SetPackage(caller)
+	ae.SetDownloadsAllowed(true)
+	var during bool
+	ae.handlers["set_variable"] = func(_ context.Context, s StepDef) (*StepResult, error) {
+		during = ae.DownloadsAllowed()
+		return &StepResult{Success: true, StepID: s.ID}, nil
+	}
+	wantOK(t, runExt(t, ae, StepDef{ID: "c", Type: "call_action", Action: "inner"}))
+	if during {
+		t.Fatal("a callee that does not permit downloads must run without them")
+	}
+	if !ae.DownloadsAllowed() || ae.pkg != PackageContext(caller) {
+		t.Fatal("caller's package and download permission not restored")
 	}
 }

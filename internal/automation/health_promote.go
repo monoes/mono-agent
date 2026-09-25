@@ -20,38 +20,30 @@ import (
 //     version is rewritten in place and the index's installedSha256 is
 //     refreshed, so the registry never mistakes the change for a foreign
 //     edit;
-//   - built-in and imported packages: the reordered entry goes to the local
-//     overlay, so package files — and updates — are never touched, and the
-//     overlay can be exported as a patch.
+//   - everything else: the registry's overlay records "promote c" for the
+//     key (PromoteOverlayCandidate), so package files — and updates — are
+//     never touched; the promotion lapses when a new version drops c.
 //
-// The candidate is identified by content, never by index, and the whole
+// The candidate is identified by content, never by index, and each
 // read-modify-write runs under the registry's update lock: promoting a
 // candidate that is already first (or no longer present) changes nothing.
 
-// PromoteCandidate moves candidate c of selector key to the front of the
-// effective entry (overlay wins) of package id.
+// PromoteCandidate moves candidate c of selector key to the front of
+// package id's effective entry. Only a package that is the user's own
+// (source local and trust local) is rewritten in place; everything else —
+// built-in, imported, recorded, or a built-in carrying local trust — is
+// promoted through the overlay (PromoteOverlayCandidate).
 func (r *Registry) PromoteCandidate(id, key string, c action.SelectorCandidate) error {
-	return r.update(func(idx *indexFile) (bool, error) {
+	errNotLocal := errors.New("not a local package")
+	err := r.update(func(idx *indexFile) (bool, error) {
 		e, ok := idx.Packages[id]
 		if !ok || e.Removed {
 			return false, fmt.Errorf("%w: %s", ErrNotInstalled, id)
 		}
-		dir := r.versionDir(id, e.Version)
-		ov := r.readOverlay(id)
-		if cur, inOverlay := ov[key]; inOverlay || e.Source != SourceLocal {
-			if !inOverlay {
-				base, found, err := readPackageSelector(dir, key)
-				if err != nil || !found {
-					return false, err
-				}
-				cur = base
-			}
-			promoted, changed := moveCandidateFirst(cur, c)
-			if !changed {
-				return false, nil
-			}
-			return false, r.writeOverlayLocked(id, ov, key, promoted)
+		if e.Source != SourceLocal || e.trust() != TrustLocal {
+			return false, errNotLocal
 		}
+		dir := r.versionDir(id, e.Version)
 		cur, found, err := readPackageSelector(dir, key)
 		if err != nil || !found {
 			return false, err
@@ -68,23 +60,12 @@ func (r *Registry) PromoteCandidate(id, key string, c action.SelectorCandidate) 
 			return false, err
 		}
 		e.InstalledSha256 = h
-		return true, nil
+		return true, nil // also bumps the registry generation (cache invalidation)
 	})
-}
-
-// writeOverlayLocked writes the overlay with key set to e. The caller holds
-// the update lock.
-func (r *Registry) writeOverlayLocked(id string, ov map[string]action.SelectorEntry, key string, e action.SelectorEntry) error {
-	dir := filepath.Join(r.root, id, "overlay")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
+	if errors.Is(err, errNotLocal) {
+		return r.PromoteOverlayCandidate(id, key, c)
 	}
-	ov[key] = e
-	b, err := json.MarshalIndent(ov, "", "  ")
-	if err != nil {
-		return err
-	}
-	return atomicWrite(filepath.Join(dir, "selectors.json"), append(b, '\n'))
+	return err
 }
 
 // moveCandidateFirst returns entry with c moved to index 0. changed is
