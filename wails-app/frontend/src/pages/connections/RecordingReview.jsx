@@ -12,6 +12,14 @@ import { IssueList } from './OverviewTab.jsx'
 
 const VERIFY_COLORS = { pass: 'var(--green-neon)', healed: 'var(--cyan)', fail: 'var(--red)', stopped_before_side_effect: 'var(--yellow)', skipped: 'var(--text-muted)' }
 const VERIFY_LABELS = { stopped_before_side_effect: 'stopped (side effect)' }
+
+// scriptRefused: a verify step failed because page scripts are off for this
+// trust tier (drafts verify as "recorded"). Prefers the CLI's code; the
+// message match covers CLIs that do not send one yet.
+export function scriptRefused(step) {
+  if (!step || step.status !== 'fail') return false
+  return step.code === 'scripts_refused' || /scripts are not allowed/i.test(step.message || '')
+}
 // outputList flattens ActionDef.outputs ({success: [...], ...}) or a plain list.
 function outputList(o) {
   if (Array.isArray(o)) return o
@@ -216,6 +224,11 @@ export default function RecordingReview({ recording, automationId, onBack, onSav
             )}
             {phase === 'verifying' && <Busy text="Replaying in your browser…" />}
             <ErrorBox>{verifyError}</ErrorBox>
+            {(verify?.steps || []).some(scriptRefused) && (
+              <div role="note" style={{ ...panel, borderColor: 'var(--yellow)', ...body, fontSize: 11 }}>
+                This draft runs page scripts, which are off for recorded automations. After saving, allow scripts in the automation's Overview (Allow scripts) and run it again.
+              </div>
+            )}
             {verify && (verify.ok
               ? <OkBox>{verify.stoppedAt ? 'Verified up to the first side-effecting step — it was not executed.' : 'All steps passed.'}{verify.healed?.length ? ` ${verify.healed.length} selector${verify.healed.length === 1 ? ' was' : 's were'} healed and promoted in the draft.` : ''}</OkBox>
               : <ErrorBox>Verification found failing steps — fix or re-record them before saving.</ErrorBox>)}

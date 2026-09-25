@@ -107,6 +107,29 @@ describe('RecordingReview', () => {
     await waitFor(() => expect(api.verifyDraft).toHaveBeenCalledWith('/d/rec1', true, { password: 'hunter2' }))
   })
 
+  it('explains a verify step refused because scripts are off for recorded drafts', async () => {
+    api.analyzeRecording.mockResolvedValue(analyzed)
+    api.verifyDraft.mockResolvedValue({ ok: false, stoppedAt: null, steps: [
+      { id: 'open', type: 'navigate', status: 'pass' },
+      { id: 'save', type: 'page_script', status: 'fail', message: 'page_script step save: refused: scripts are not allowed for automation "acme" (allow with: monoagentcli automation trust acme --scripts)' },
+    ] })
+    render(<RecordingReview recording={{ id: 'rec1' }} automationId="acme" onBack={() => {}} />)
+    await screen.findByText('Create a contact')
+    expect(screen.queryByText(/which are off for recorded automations/)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByText('Verify (safe)'))
+    expect(await screen.findByText(/This draft runs page scripts, which are off for recorded automations/)).toBeInTheDocument()
+  })
+
+  it('does not show the script note for other failures', async () => {
+    api.analyzeRecording.mockResolvedValue(analyzed)
+    api.verifyDraft.mockResolvedValue({ ok: false, stoppedAt: null, steps: [{ id: 'save', type: 'click', status: 'fail', message: 'element not found' }] })
+    render(<RecordingReview recording={{ id: 'rec1' }} automationId="acme" onBack={() => {}} />)
+    await screen.findByText('Create a contact')
+    fireEvent.click(screen.getByText('Verify (safe)'))
+    expect(await screen.findByText('element not found')).toBeInTheDocument()
+    expect(screen.queryByText(/which are off for recorded automations/)).not.toBeInTheDocument()
+  })
+
   it('saves with renamed inputs', async () => {
     api.analyzeRecording.mockResolvedValue(analyzed)
     api.saveDraft.mockResolvedValue({ nodeType: 'acme.add_contact', version: '1.2.1' })
