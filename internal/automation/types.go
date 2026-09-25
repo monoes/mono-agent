@@ -114,6 +114,10 @@ type InstalledInfo struct {
 type InstallOptions struct {
 	DryRun bool   // validate + review only, write nothing
 	Source string // SourceImported (default) or SourceLocal
+	// ExpectSHA256 pins the package bytes: when set, install refuses unless
+	// the fetched archive (or the packed directory) hashes to it. Pass the
+	// SHA256 of a dry-run result to install exactly what was reviewed.
+	ExpectSHA256 string
 }
 
 // InstallResult is returned by Install/AddAction (and `--json`).
@@ -123,6 +127,7 @@ type InstallResult struct {
 	Version         string      `json:"version"`
 	PreviousVersion string      `json:"previousVersion,omitempty"`
 	DryRun          bool        `json:"dryRun"`
+	SHA256          string      `json:"sha256,omitempty"` // hash of the exact package bytes reviewed
 	Review          Review      `json:"review"`
 	Warnings        []string    `json:"warnings,omitempty"`
 	Issues          []IssueJSON `json:"issues,omitempty"`

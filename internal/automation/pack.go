@@ -42,13 +42,28 @@ var ErrUnsafeArchive = errors.New("unsafe package archive")
 // no absolute or parent-relative paths, no symlinks or special files, no
 // duplicates, file-count and size caps, and CHECKSUMS when present.
 func readZip(r io.Reader) (fs.FS, error) {
+	fsys, _, err := readZipSum(r)
+	return fsys, err
+}
+
+// readZipSum is readZip that also returns the sha256 of the archive bytes
+// it read (the bytes the review describes).
+func readZipSum(r io.Reader) (fs.FS, string, error) {
 	raw, err := io.ReadAll(io.LimitReader(r, MaxArchiveBytes+1))
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if int64(len(raw)) > MaxArchiveBytes {
-		return nil, fmt.Errorf("%w: archive larger than %d bytes", ErrUnsafeArchive, MaxArchiveBytes)
+		return nil, "", fmt.Errorf("%w: archive larger than %d bytes", ErrUnsafeArchive, MaxArchiveBytes)
 	}
+	fsys, err := readZipBytes(raw)
+	if err != nil {
+		return nil, "", err
+	}
+	return fsys, sha256Hex(raw), nil
+}
+
+func readZipBytes(raw []byte) (fs.FS, error) {
 	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
 	if err != nil && !errors.Is(err, zip.ErrInsecurePath) {
 		return nil, fmt.Errorf("open archive: %w", err)

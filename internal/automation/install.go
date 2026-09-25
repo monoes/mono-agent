@@ -1,7 +1,9 @@
 package automation
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -11,7 +13,9 @@ import (
 	"time"
 )
 
-// Install installs a .mpkg file, a package directory, or an http(s) URL.
+// Install installs a .mpkg file, a package directory, or an https URL.
+// The result's SHA256 is the hash of the exact bytes reviewed; pass it back
+// as opts.ExpectSHA256 to install only those bytes.
 // The package is validated (errors abort with ErrInvalid; the result still
 // carries the review and issues), checked against the engine range and the
 // policy gate (blocked → installed but disabled, with a warning). DryRun
@@ -22,8 +26,11 @@ func (r *Registry) Install(src string, opts InstallOptions) (*InstallResult, err
 	if source == "" {
 		source = SourceImported
 	}
-	fsys, err := r.loadSource(src)
+	fsys, sum, err := r.loadSource(src)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkPin(sum, opts.ExpectSHA256); err != nil {
 		return nil, err
 	}
 	p, err := OpenFS(fsys, source)
@@ -34,68 +41,123 @@ func (r *Registry) Install(src string, opts InstallOptions) (*InstallResult, err
 	if err != nil {
 		return nil, err
 	}
-	return r.installPackage(p, files, opts.DryRun)
+	res, err := r.installPackage(p, files, opts.DryRun)
+	if res != nil {
+		res.SHA256 = sum
+	}
+	return res, err
 }
 
-// loadSource reads src (URL, .mpkg or directory) into a checked in-memory
-// file system.
-func (r *Registry) loadSource(src string) (fs.FS, error) {
-	if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
+// ErrSHA256Mismatch is returned when InstallOptions.ExpectSHA256 does not
+// match the package bytes.
+var ErrSHA256Mismatch = errors.New("automation: package bytes do not match the expected sha256")
+
+func checkPin(got, want string) error {
+	want = strings.ToLower(strings.TrimSpace(want))
+	if want == "" {
+		return nil
+	}
+	if got == "" {
+		return fmt.Errorf("%w: this source has no package hash to compare", ErrSHA256Mismatch)
+	}
+	if got != want {
+		return fmt.Errorf("%w: expected %s, got %s (the package changed since it was reviewed)", ErrSHA256Mismatch, want, got)
+	}
+	return nil
+}
+
+// allowPlainHTTP lets tests install from an http:// URL. There is no
+// user-facing way to set it: URL installs are https only.
+var allowPlainHTTP = false
+
+// loadSource reads src (https URL, .mpkg or directory) into a checked
+// in-memory file system and returns the sha256 of the package bytes: the
+// downloaded or read archive, or for a directory its deterministic pack.
+func (r *Registry) loadSource(src string) (fs.FS, string, error) {
+	lower := strings.ToLower(src)
+	if strings.HasPrefix(lower, "http://") && !allowPlainHTTP {
+		return nil, "", fmt.Errorf("refusing to install over plain http (%s): use an https URL", src)
+	}
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
 		return r.download(src)
 	}
 	st, err := os.Stat(src)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if st.IsDir() {
-		return snapshotDir(src)
+		fsys, err := snapshotDir(src)
+		if err != nil {
+			return nil, "", err
+		}
+		files, err := readTree(fsys)
+		if err != nil {
+			return nil, "", err
+		}
+		var buf bytes.Buffer
+		if err := writeZip(files, &buf); err != nil {
+			return nil, "", err
+		}
+		return fsys, sha256Hex(buf.Bytes()), nil
 	}
 	f, err := os.Open(src)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	defer f.Close()
-	return readZip(f)
+	return readZipSum(f)
 }
 
-// httpClient is the client used for URL installs (tests replace it).
-var httpClient = &http.Client{Timeout: 2 * time.Minute}
+// httpClient is the client used for URL installs (tests replace its
+// transport). Redirects must stay on https.
+var httpClient = &http.Client{
+	Timeout: 2 * time.Minute,
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return errors.New("too many redirects")
+		}
+		if req.URL.Scheme != "https" && !allowPlainHTTP {
+			return fmt.Errorf("refusing redirect to non-https URL %s", req.URL)
+		}
+		return nil
+	},
+}
 
-func (r *Registry) download(url string) (fs.FS, error) {
+func (r *Registry) download(url string) (fs.FS, string, error) {
 	resp, err := httpClient.Get(url)
 	if err != nil {
-		return nil, fmt.Errorf("download %s: %w", url, err)
+		return nil, "", fmt.Errorf("download %s: %w", url, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("download %s: HTTP %d", url, resp.StatusCode)
+		return nil, "", fmt.Errorf("download %s: HTTP %d", url, resp.StatusCode)
 	}
 	if resp.ContentLength > MaxArchiveBytes {
-		return nil, fmt.Errorf("%w: download larger than %d bytes", ErrUnsafeArchive, MaxArchiveBytes)
+		return nil, "", fmt.Errorf("%w: download larger than %d bytes", ErrUnsafeArchive, MaxArchiveBytes)
 	}
 	// Spool to a scratch file under the registry so a large body is never
 	// held twice, then read it through the archive checks.
 	dir := r.root + string(os.PathSeparator) + ".downloads"
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	tmp, err := os.CreateTemp(dir, "pkg-*.mpkg")
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	defer os.Remove(tmp.Name())
 	defer tmp.Close()
 	n, err := io.Copy(tmp, io.LimitReader(resp.Body, MaxArchiveBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("download %s: %w", url, err)
+		return nil, "", fmt.Errorf("download %s: %w", url, err)
 	}
 	if n > MaxArchiveBytes {
-		return nil, fmt.Errorf("%w: download larger than %d bytes", ErrUnsafeArchive, MaxArchiveBytes)
+		return nil, "", fmt.Errorf("%w: download larger than %d bytes", ErrUnsafeArchive, MaxArchiveBytes)
 	}
 	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return readZip(tmp)
+	return readZipSum(tmp)
 }
 
 // installPackage validates, reviews and (unless dryRun) writes p.
@@ -260,6 +322,9 @@ func (r *Registry) AddAction(id string, src *Package, actionName string, opts In
 	if !ValidID(id) {
 		return nil, fmt.Errorf("automation: invalid id %q", id)
 	}
+	if err := checkPin(src.sha256, opts.ExpectSHA256); err != nil {
+		return nil, err
+	}
 	srcFiles, err := readTree(src.FS)
 	if err != nil {
 		return nil, err
@@ -327,7 +392,11 @@ func (r *Registry) AddAction(id string, src *Package, actionName string, opts In
 	if err != nil {
 		return nil, err
 	}
-	return r.installPackage(p, merged, opts.DryRun)
+	res, err := r.installPackage(p, merged, opts.DryRun)
+	if res != nil {
+		res.SHA256 = src.sha256
+	}
+	return res, err
 }
 
 // mergeManifest widens base with add's actions, permissions, scripts,

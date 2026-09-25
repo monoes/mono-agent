@@ -20,7 +20,8 @@ type Package struct {
 	Source   string // builtin | imported | local
 	Dir      string // on-disk dir when installed ("" for zip/embed)
 
-	reg *Registry // set when opened through a Registry (call_action lookups)
+	reg    *Registry // set when opened through a Registry (call_action lookups)
+	sha256 string    // archive bytes hash when opened with OpenFile
 }
 
 // OpenDir opens a package directory (source local).
@@ -53,12 +54,21 @@ func OpenFile(path string) (*Package, error) {
 		return nil, err
 	}
 	defer f.Close()
-	fsys, err := readZip(f)
+	fsys, sum, err := readZipSum(f)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", filepath.Base(path), err)
 	}
-	return OpenFS(fsys, SourceImported)
+	p, err := OpenFS(fsys, SourceImported)
+	if err != nil {
+		return nil, err
+	}
+	p.sha256 = sum
+	return p, nil
 }
+
+// SHA256 is the hash of the .mpkg bytes this package was read from
+// (OpenFile only; "" otherwise).
+func (p *Package) SHA256() string { return p.sha256 }
 
 // OpenFS opens a package rooted at fsys.
 func OpenFS(fsys fs.FS, source string) (*Package, error) {

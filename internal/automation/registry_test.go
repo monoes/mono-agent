@@ -311,20 +311,40 @@ func TestAddAction(t *testing.T) {
 
 func TestInstallFromURL(t *testing.T) {
 	pkg, _ := os.ReadFile(packDir(t, acmeDir(t)))
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if req.URL.Path == "/missing" {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		switch req.URL.Path {
+		case "/missing":
 			http.NotFound(w, req)
-			return
+		case "/downgrade":
+			http.Redirect(w, req, "http://"+req.Host+"/acme.mpkg", http.StatusFound)
+		default:
+			w.Write(pkg)
 		}
-		w.Write(pkg)
 	}))
 	defer srv.Close()
+	oldTransport := httpClient.Transport
+	httpClient.Transport = srv.Client().Transport
+	defer func() { httpClient.Transport = oldTransport }()
+
 	r := newReg(t)
-	if res, err := r.Install(srv.URL+"/acme.mpkg", InstallOptions{}); err != nil || !res.Installed {
-		t.Fatalf("URL install: %v %+v", err, res)
+	res, err := r.Install(srv.URL+"/acme.mpkg", InstallOptions{DryRun: true})
+	if err != nil || res.SHA256 != sha256Hex(pkg) {
+		t.Fatalf("dry run: %v sha=%q", err, res.SHA256)
+	}
+	if res, err := r.Install(srv.URL+"/acme.mpkg", InstallOptions{ExpectSHA256: res.SHA256}); err != nil || !res.Installed {
+		t.Fatalf("pinned URL install: %v %+v", err, res)
+	}
+	if _, err := r.Install(srv.URL+"/acme.mpkg", InstallOptions{ExpectSHA256: strings.Repeat("0", 64)}); !errors.Is(err, ErrSHA256Mismatch) {
+		t.Errorf("wrong pin: %v", err)
 	}
 	if _, err := r.Install(srv.URL+"/missing", InstallOptions{}); err == nil {
 		t.Error("404 accepted")
+	}
+	if _, err := r.Install(srv.URL+"/downgrade", InstallOptions{}); err == nil || !strings.Contains(err.Error(), "non-https") {
+		t.Errorf("redirect to http accepted: %v", err)
+	}
+	if _, err := r.Install(strings.Replace(srv.URL, "https://", "http://", 1)+"/acme.mpkg", InstallOptions{}); err == nil || !strings.Contains(err.Error(), "plain http") {
+		t.Errorf("http URL accepted: %v", err)
 	}
 	old := MaxArchiveBytes
 	MaxArchiveBytes = 100
@@ -334,6 +354,48 @@ func TestInstallFromURL(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(filepath.Join(r.Root(), ".downloads")); len(entries) != 0 {
 		t.Errorf("download scratch left behind: %d files", len(entries))
+	}
+}
+
+func TestInstallSHA256Pin(t *testing.T) {
+	dir := acmeDir(t)
+	file := packDir(t, dir)
+	raw, _ := os.ReadFile(file)
+	r := newReg(t)
+
+	// .mpkg: the hash of the file bytes.
+	res, err := r.Install(file, InstallOptions{DryRun: true})
+	if err != nil || res.SHA256 != sha256Hex(raw) {
+		t.Fatalf("file dry run: %v %q", err, res.SHA256)
+	}
+	// Directory: the hash of its deterministic pack (same bytes as Pack).
+	res, err = r.Install(dir, InstallOptions{DryRun: true})
+	if err != nil || res.SHA256 != sha256Hex(raw) {
+		t.Fatalf("dir dry run: %v %q", err, res.SHA256)
+	}
+	pin := res.SHA256
+	// The directory changes between review and install: refused.
+	os.WriteFile(filepath.Join(dir, "scripts", "parse.js"), []byte("return 'evil';\n"), 0o644)
+	if _, err := r.Install(dir, InstallOptions{ExpectSHA256: pin}); !errors.Is(err, ErrSHA256Mismatch) {
+		t.Fatalf("changed dir installed: %v", err)
+	}
+	if _, err := r.Info("acme-crm"); !errors.Is(err, ErrNotInstalled) {
+		t.Error("mismatch still wrote")
+	}
+	if res, err := r.Install(file, InstallOptions{ExpectSHA256: strings.ToUpper(pin)}); err != nil || !res.Installed {
+		t.Fatalf("pinned file install: %v", err)
+	}
+
+	// AddAction pins against the OpenFile bytes.
+	src, _ := OpenFile(file)
+	if src.SHA256() != pin {
+		t.Errorf("Package.SHA256 = %q", src.SHA256())
+	}
+	if _, err := newReg(t).AddAction("acme-crm", src, "list_deals", InstallOptions{ExpectSHA256: strings.Repeat("1", 64)}); !errors.Is(err, ErrSHA256Mismatch) {
+		t.Errorf("AddAction wrong pin: %v", err)
+	}
+	if res, err := newReg(t).AddAction("acme-crm", src, "list_deals", InstallOptions{ExpectSHA256: pin}); err != nil || res.SHA256 != pin {
+		t.Errorf("AddAction pinned: %v", err)
 	}
 }
 
