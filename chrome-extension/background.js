@@ -31,6 +31,10 @@ importScripts("ask.js", "saved.js", "highlights.js", "recall_bridge.js");
 // it unasked-for, which is why it needs its own module rather than another
 // case in the dispatch below.
 importScripts("cdp_proxy.js");
+// The activity recorder (§8.2): the session state machine and its Chrome
+// wiring. The page half (recorder_selectors.js, recorder_list.js,
+// recorder.js) is injected into the recorded tab only while recording.
+importScripts("recorder_session.js", "recorder_wiring.js");
 // Asked before every dial; see doConnect. The same module the side panel uses,
 // so "is that really the bridge?" has exactly one implementation.
 importScripts("bridge_health.js");
@@ -401,6 +405,8 @@ async function doConnect() {
     console.log("[monoagent] Connected to backend at", url);
     startKeepAlive();
     MonoRecall.connected();
+    // Recording frames buffered while the bridge was down go out first, in order.
+    MonoRecorderWiring.flush();
     MonoCaptureBridge.flush()
       .catch((err) => console.error("[monoagent] capture queue flush failed:", err.message))
       // The badge counts what is still waiting, so it has to be repainted
@@ -421,6 +427,8 @@ async function doConnect() {
     // A reply to something THIS side asked (ask.js). Claimed before the
     // command dispatch because a reply is not a command and has no handler.
     if (MonoAsk.handleFrame(cmd)) return;
+    // Go's acks for kind:"recording" frames: {id, success, type:"recording"}.
+    if (MonoRecorderWiring.handleFrame(cmd)) return;
     handleCommand(cmd);
   };
 
@@ -1149,6 +1157,14 @@ MonoCaptureActions.install({
 // registers its own tab and message listeners; background.js only has to
 // hand it the socket.
 MonoRecall.install({
+  send: sendFrame,
+  isConnected: () => ws?.readyState === WebSocket.OPEN,
+  storage: chrome.storage.local,
+});
+
+// The activity recorder rides the same socket: kind:"recording" frames out,
+// buffered through its own outbox while the bridge is down.
+MonoRecorderWiring.install({
   send: sendFrame,
   isConnected: () => ws?.readyState === WebSocket.OPEN,
   storage: chrome.storage.local,

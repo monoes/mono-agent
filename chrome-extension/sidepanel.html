@@ -193,6 +193,74 @@
     </section>
 
     <div class="panels">
+      <!-- §8.2/§8.6: record what you do on this tab, then turn it into an
+           action. Opened for you while a recording is running, and the red
+           dot in the summary says so even when it is folded. -->
+      <details class="panel" id="record-panel">
+        <summary>
+          <span>Record an automation</span>
+          <span id="rec-dot" class="rec-dot" hidden><span class="rec-dot-mark" aria-hidden="true"></span>Recording</span>
+        </summary>
+        <div class="panel-body">
+          <div class="field">
+            <label for="rec-goal">What are you about to do?</label>
+            <input type="text" id="rec-goal" placeholder="e.g. create a contact from an email" />
+          </div>
+          <div class="row row-start rec-controls">
+            <button type="button" id="rec-toggle" class="btn-secondary">Record</button>
+            <label class="rec-pick" for="rec-pick">
+              <input type="checkbox" id="rec-pick" disabled />
+              Pick data
+            </label>
+          </div>
+          <p class="note-line">
+            Only this tab is recorded. Passwords and card numbers are never
+            captured. Alt+click marks something as data; pick a second, similar
+            one to extract a list.
+          </p>
+          <ol id="rec-steps" class="rec-steps" aria-label="Recorded steps"></ol>
+          <p id="rec-summary" class="note-line" hidden></p>
+          <div id="rec-after" class="row row-start" hidden>
+            <button type="button" id="rec-analyze" class="btn-secondary">Analyze</button>
+            <button type="button" id="rec-clear" class="btn-secondary btn-tiny">Clear</button>
+          </div>
+          <div id="rec-msg" class="msg" role="status" aria-live="polite"></div>
+
+          <!-- The analyzer's draft: what it would save, and the two ways on. -->
+          <div id="rec-draft" class="rec-draft" hidden>
+            <h3 id="rec-draft-name" class="rec-draft-name"></h3>
+            <p id="rec-draft-where" class="note-line"></p>
+            <div class="rec-sub">Inputs</div>
+            <div id="rec-draft-inputs" class="chips"></div>
+            <div class="rec-sub">Steps</div>
+            <ol id="rec-draft-steps" class="rec-draft-steps"></ol>
+            <ul id="rec-draft-lint" class="rec-lint"></ul>
+            <div class="field">
+              <label for="rec-save-as">Save as</label>
+              <select id="rec-save-as">
+                <option value="action">New action</option>
+                <option value="fragment">Fragment (part of an action)</option>
+                <option value="workflow">Workflow draft</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="rec-save-name">Name</label>
+              <input type="text" id="rec-save-name" />
+            </div>
+            <div class="field">
+              <label for="rec-save-automation">Automation</label>
+              <input type="text" id="rec-save-automation" placeholder="the automation to add it to" />
+            </div>
+            <div class="row row-start">
+              <button type="button" id="rec-verify" class="btn-secondary">Verify (safe)</button>
+              <button type="button" id="rec-save" class="btn-secondary">Save</button>
+            </div>
+            <ol id="rec-verify-steps" class="rec-draft-steps" hidden></ol>
+            <div id="rec-draft-msg" class="msg" role="status" aria-live="polite"></div>
+          </div>
+        </div>
+      </details>
+
       <!-- CLIP-08: hidden outright when nothing is waiting, and opened for
            you when something failed, because a queue you have to go looking
            for is a queue nobody empties. -->
@@ -296,5 +364,9 @@
   <!-- RCL-02/RCL-05. After sidepanel.js: it shares that file's `ask`
        helper and listens for the page it announces. -->
   <script src="sidepanel_recall.js"></script>
+  <!-- §8.2/§8.6: the Record section. Also after sidepanel.js, for `ask`
+       and MonoPanelPage. -->
+  <script src="sidepanel_record_view.js"></script>
+  <script src="sidepanel_record.js"></script>
 </body>
 </html>

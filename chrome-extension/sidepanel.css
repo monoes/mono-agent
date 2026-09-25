@@ -1385,3 +1385,165 @@ progress::-webkit-progress-value {
   color: var(--warn);
   font-size: var(--t-sm);
 }
+
+/* ── record (§8.2, §8.6) ───────────────────────────────────────────── */
+
+/* The recording signal is the one use of --err outside an error: a red
+   dot is what every recorder uses, and it has to be unmissable. */
+.rec-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  margin-left: auto;
+  font-size: var(--t-xs);
+  font-weight: 600;
+  color: var(--err);
+}
+
+.rec-dot-mark {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--err);
+  animation: rec-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes rec-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.rec-controls {
+  align-items: center;
+}
+
+#rec-toggle[data-recording="true"] {
+  color: var(--err);
+  border-color: var(--err);
+}
+
+.rec-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--t-sm);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.rec-pick input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.rec-steps,
+.rec-draft-steps {
+  margin: 0;
+  padding-left: var(--sp-5);
+  display: grid;
+  gap: var(--sp-2);
+  font-size: var(--t-sm);
+  color: var(--ink);
+}
+
+.rec-steps:empty {
+  display: none;
+}
+
+.rec-step {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.rec-step-text {
+  flex: 1 1 12em;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.rec-input {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  font-size: var(--t-xs);
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.rec-input input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.rec-suggest {
+  color: var(--warn);
+  background: var(--warn-wash);
+}
+
+.rec-field {
+  flex: 1 1 8em;
+  min-width: 0;
+  font-size: var(--t-sm);
+}
+
+.rec-samples {
+  flex-basis: 100%;
+  font-size: var(--t-xs);
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+.rec-draft {
+  display: grid;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--surface);
+}
+
+.rec-draft-name {
+  margin: 0;
+  font-size: var(--t-md);
+  font-weight: 600;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.rec-sub {
+  font-size: var(--t-xs);
+  font-weight: 600;
+  color: var(--ink-2);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.rec-lint {
+  margin: 0;
+  padding-left: var(--sp-5);
+  font-size: var(--t-xs);
+}
+
+.rec-lint:empty {
+  display: none;
+}
+
+.rec-lint-error {
+  color: var(--err);
+}
+
+.rec-lint-warning {
+  color: var(--warn);
+}
+
+.rec-draft-steps li[data-status="fail"] {
+  color: var(--err);
+}
+
+.rec-draft-steps li[data-status="pass"],
+.rec-draft-steps li[data-status="healed"] {
+  color: var(--ok);
+}
