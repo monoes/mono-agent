@@ -288,15 +288,6 @@ func (ep *ExtensionPage) TypeCDPOnElement(text string, elementID string) error {
 	return err
 }
 
-// TypeCDPWithTabs presses Tab N times to focus, then inserts text via CDP.
-func (ep *ExtensionPage) TypeCDPWithTabs(text string, tabCount int) error {
-	_, err := ep.send("type_cdp", map[string]interface{}{
-		"text":     text,
-		"tabCount": tabCount,
-	})
-	return err
-}
-
 // InsertTextOnElement sends text to a specific element by ID.
 func (ep *ExtensionPage) InsertTextOnElement(text string, elementID string) error {
 	_, err := ep.send(CmdInsertText, map[string]interface{}{
