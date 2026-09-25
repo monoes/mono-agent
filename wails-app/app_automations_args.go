@@ -128,6 +128,17 @@ func actionExportArgs(ref, path string) ([]string, error) {
 	return withPositional([]string{"action", "export", "-o", path}, ref), nil
 }
 
+// automationRerecordArgs builds `automation rerecord -- <id> <key>`.
+func automationRerecordArgs(id, key string) ([]string, error) {
+	if err := requireArg("automation id", id); err != nil {
+		return nil, err
+	}
+	if err := requireArg("selector key", key); err != nil {
+		return nil, err
+	}
+	return withPositional([]string{"automation", "rerecord"}, id, key), nil
+}
+
 func recordAnalyzeArgs(id, automation string, advanced bool) ([]string, error) {
 	if err := requireArg("recording id", id); err != nil {
 		return nil, err

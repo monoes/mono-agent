@@ -369,6 +369,8 @@ export function RemoveOrgRole(arg1:string,arg2:string,arg3:string):Promise<strin
 
 export function RemovePersonTag(arg1:string,arg2:string):Promise<void>;
 
+export function RerecordSelector(arg1:string,arg2:string):Promise<string>;
+
 export function RestoreAutomation(arg1:string):Promise<string>;
 
 export function ResumeOrgAutonomy(arg1:string):Promise<string>;

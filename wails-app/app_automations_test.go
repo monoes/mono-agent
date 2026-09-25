@@ -76,6 +76,16 @@ func TestAutomationTestExportAnalyzeArgs(t *testing.T) {
 	}
 }
 
+func TestAutomationRerecordArgs(t *testing.T) {
+	got, err := automationRerecordArgs("acme", "contact.save_button")
+	if err != nil || !reflect.DeepEqual(got, []string{"automation", "rerecord", "--", "acme", "contact.save_button"}) {
+		t.Fatalf("got %v %v", got, err)
+	}
+	if _, err := automationRerecordArgs("acme", " "); err == nil {
+		t.Fatal("empty key accepted")
+	}
+}
+
 func TestRecordVerifyArgsAndInputsFile(t *testing.T) {
 	got, err := recordVerifyArgs("/d", true, "/tmp/in.json")
 	want := []string{"record", "verify", "--full", "--inputs-file", "/tmp/in.json", "--", "/d"}

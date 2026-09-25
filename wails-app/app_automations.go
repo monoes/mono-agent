@@ -128,6 +128,18 @@ func (a *App) SetAutomationTrust(id, flag string) string {
 	return a.runAutomationCLI(automationCLITimeout, args, err)
 }
 
+// automationRerecordTimeout covers the CLI's own 180s wait for the user to
+// click the element, plus opening the tab.
+const automationRerecordTimeout = 4 * time.Minute
+
+// RerecordSelector opens the site in the user's browser and replaces one
+// selector with the element the user clicks (contracts §9). Errors include
+// "cancelled", "timeout" and "browser bridge not connected".
+func (a *App) RerecordSelector(id, key string) string {
+	args, err := automationRerecordArgs(id, key)
+	return a.runAutomationCLI(automationRerecordTimeout, args, err)
+}
+
 // ValidateAutomation validates a package directory or action file.
 func (a *App) ValidateAutomation(path string) string {
 	return a.runAutomationCLI(automationCLITimeout, withPositional([]string{"automation", "validate"}, path), requireArg("path", path))

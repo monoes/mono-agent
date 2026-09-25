@@ -730,6 +730,10 @@ export function RemovePersonTag(arg1, arg2) {
   return window['go']['main']['App']['RemovePersonTag'](arg1, arg2);
 }
 
+export function RerecordSelector(arg1, arg2) {
+  return window['go']['main']['App']['RerecordSelector'](arg1, arg2);
+}
+
 export function RestoreAutomation(arg1) {
   return window['go']['main']['App']['RestoreAutomation'](arg1);
 }

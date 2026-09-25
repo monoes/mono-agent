@@ -244,6 +244,8 @@ export const api = {
   setAutomationTrust:     (id, flag) => GoApp.SetAutomationTrust(id, flag).then(JSON.parse).catch(asError),
   validateAutomation:     (path) => GoApp.ValidateAutomation(path).then(JSON.parse).catch(asError),
   testAutomation:         (id, action = '', live = false) => GoApp.TestAutomation(id, action, live).then(JSON.parse).catch(asError),
+  // Opens the site and replaces one selector with the element the user clicks.
+  rerecordSelector:       (id, key) => GoApp.RerecordSelector(id, key).then(JSON.parse).catch(asError),
   doctorAutomations:      (id = '') => GoApp.DoctorAutomations(id).then(JSON.parse).catch(asError),
   listRecordings:         () => GoApp.ListRecordings().then(JSON.parse).catch(asError),
   showRecording:          (id) => GoApp.ShowRecording(id).then(JSON.parse).catch(asError),
