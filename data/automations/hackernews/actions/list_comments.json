@@ -2,7 +2,7 @@
   "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "list_comments",
   "platform": "HACKERNEWS",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "List the comments on a Hacker News item across all \"More\" pages, in thread order: every comment carries its depth (0 = top level) and parentId (the item ID for top-level comments); set topLevelOnly to keep top-level comments only",
   "sideEffects": "read",
   "metadata": {
@@ -43,21 +43,218 @@
   },
   "steps": [
     {
-      "id": "list",
-      "type": "call_bot_method",
-      "methodName": "list_comments",
-      "args": [
-        "{{itemID}}",
-        "{{topLevelOnly}}"
+      "id": "check_id",
+      "type": "call_fragment",
+      "fragment": "check_item_id",
+      "description": "Accept only a numeric item id (hn.id); anything else fails"
+    },
+    {
+      "id": "gate_id",
+      "type": "condition",
+      "condition": "hn.id != ''",
+      "then": [
+        "gate_top",
+        "start",
+        "page_list",
+        "pages"
       ],
-      "variable_name": "commentsResult",
-      "timeout": 120,
+      "else": [
+        "fail_bad_id"
+      ]
+    },
+    {
+      "id": "fail_bad_id",
+      "type": "mark_failed",
+      "text": "hackernews: item id must be numeric, got \"{{itemID}}\""
+    },
+    {
+      "id": "gate_top",
+      "type": "condition",
+      "condition": "topLevelOnly == true",
+      "then": [
+        "depth_top"
+      ],
+      "else": [
+        "depth_all"
+      ]
+    },
+    {
+      "id": "depth_top",
+      "type": "set_variable",
+      "variable_name": "maxDepth",
+      "value": 1
+    },
+    {
+      "id": "depth_all",
+      "type": "set_variable",
+      "variable_name": "maxDepth",
+      "value": 1000000
+    },
+    {
+      "id": "start",
+      "type": "set_variable",
+      "variable_name": "cUrl",
+      "value": "https://news.ycombinator.com/item?id={{hn.id}}"
+    },
+    {
+      "id": "page_list",
+      "type": "set_variable",
+      "variable_name": "pageList",
+      "value": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20
+      ]
+    },
+    {
+      "id": "gate_page",
+      "type": "condition",
+      "condition": "cUrl != ''",
+      "then": [
+        "open_page",
+        "read_page",
+        "gate_found",
+        "keep",
+        "record",
+        "advance",
+        "next_url",
+        "set_next"
+      ],
+      "description": "Follow the item's \"More\" links (at most 20 pages) while there is a next page"
+    },
+    {
+      "id": "open_page",
+      "type": "navigate",
+      "url": "{{cUrl}}",
       "onError": {
         "action": "mark_failed"
       }
+    },
+    {
+      "id": "read_page",
+      "type": "page_script",
+      "script": "comments_page.js",
+      "inputs": {
+        "itemID": "{{hn.id}}",
+        "stack": "{{cStack}}"
+      },
+      "variable_name": "cPage",
+      "onError": {
+        "action": "mark_failed"
+      }
+    },
+    {
+      "id": "gate_found",
+      "type": "condition",
+      "condition": "cPage.found != true and pageIdx == 0",
+      "then": [
+        "read_missing",
+        "fail_missing"
+      ]
+    },
+    {
+      "id": "read_missing",
+      "type": "extract_text",
+      "selector": "body",
+      "variable_name": "pageText",
+      "timeout": 2,
+      "onError": {
+        "action": "skip"
+      }
+    },
+    {
+      "id": "fail_missing",
+      "type": "mark_failed",
+      "text": "hackernews: item {{hn.id}} not found on {{cUrl}}: {{pageText}}"
+    },
+    {
+      "id": "keep",
+      "type": "transform",
+      "input": "{{cPage.comments}}",
+      "variable_name": "cKeep",
+      "ops": [
+        {
+          "op": "filter",
+          "where": {
+            "variable": "depth",
+            "operator": "less_than",
+            "value": "{{maxDepth}}"
+          }
+        },
+        {
+          "op": "dedupe",
+          "field": "id"
+        }
+      ]
+    },
+    {
+      "id": "record",
+      "type": "save_data",
+      "dataSource": "cKeep"
+    },
+    {
+      "id": "advance",
+      "type": "set_variable",
+      "variable_name": "cStack",
+      "value": "{{cPage.stack}}"
+    },
+    {
+      "id": "next_url",
+      "type": "transform",
+      "description": "The next page of this item, or nothing: cUrl empties and the loop stops",
+      "input": "{{cPage}}",
+      "variable_name": "cNext",
+      "ops": [
+        {
+          "op": "filter",
+          "where": {
+            "variable": "nextP",
+            "operator": "matches",
+            "value": "^[0-9]+$"
+          }
+        },
+        {
+          "op": "map",
+          "map": {
+            "url": "https://news.ycombinator.com/item?id={{hn.id}}&p={{nextP}}"
+          }
+        }
+      ]
+    },
+    {
+      "id": "set_next",
+      "type": "set_variable",
+      "variable_name": "cUrl",
+      "value": "{{cNext.url}}"
     }
   ],
-  "loops": [],
+  "loops": [
+    {
+      "id": "pages",
+      "iterator": "pageList",
+      "indexVar": "pageIdx",
+      "steps": [
+        "gate_page"
+      ]
+    }
+  ],
   "errorHandling": {
     "globalRetries": 2,
     "retryDelay": 2000,

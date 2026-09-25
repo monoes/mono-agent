@@ -1,0 +1,69 @@
+{
+  "$schema": "../../../schemas/fragment.v1.schema.json",
+  "name": "read_page_state",
+  "description": "Read who is logged in (hnUser, from #me; empty when logged out) and, on a bare Hacker News refusal page (no #hnmain: rate limits, login walls), the refusal sentence (hnState.refusal). Regular pages are never scanned, so a comment quoting a refusal phrase is not mistaken for one. pageText holds the start of the page text.",
+  "steps": [
+    { "id": "reset_user", "type": "set_variable", "variable_name": "hnUser", "value": "" },
+    { "id": "reset_main", "type": "set_variable", "variable_name": "hnMain", "value": "" },
+    { "id": "reset_text", "type": "set_variable", "variable_name": "pageTextRaw", "value": "" },
+    {
+      "id": "read_user",
+      "type": "extract_text",
+      "selector": "#me",
+      "variable_name": "hnUser",
+      "timeout": 2,
+      "onError": { "action": "skip" }
+    },
+    {
+      "id": "read_main",
+      "type": "extract_attribute",
+      "selector": "#hnmain",
+      "attribute": "id",
+      "variable_name": "hnMain",
+      "timeout": 1,
+      "onError": { "action": "skip" }
+    },
+    {
+      "id": "read_text",
+      "type": "extract_text",
+      "selector": "body",
+      "variable_name": "pageTextRaw",
+      "timeout": 2,
+      "onError": { "action": "skip" }
+    },
+    {
+      "id": "wrap_state",
+      "type": "set_variable",
+      "variable_name": "hnStateIn",
+      "value": { "text": "{{pageTextRaw}}", "main": "{{hnMain}}" }
+    },
+    {
+      "id": "clip_text",
+      "type": "transform",
+      "input": "{{hnStateIn}}",
+      "variable_name": "hnText",
+      "ops": [
+        { "op": "regex_extract", "field": "text", "pattern": "^(?s)\\s*(.{0,600})" }
+      ]
+    },
+    {
+      "id": "set_page_text",
+      "type": "set_variable",
+      "variable_name": "pageText",
+      "value": "{{hnText.text}}"
+    },
+    {
+      "id": "find_refusal",
+      "type": "transform",
+      "description": "Only a bare page (no #hnmain) is a refusal; quote just the sentence carrying the refusal phrase",
+      "input": "{{hnStateIn}}",
+      "variable_name": "hnState",
+      "ops": [
+        { "op": "filter", "where": { "variable": "main", "operator": "equals", "value": "" } },
+        { "op": "regex_extract", "field": "text", "to": "refusal", "pattern": "(?i)([^.!?\\n]*(?:you[’']re posting too fast|posting too fast|not able to serve your requests this quickly|you have to be logged in|please log in|please try again|that comment is too long|you can[’']t post|validation required|we[’']ve limited requests)[^.!?\\n]*[.!?]?)" },
+        { "op": "map", "map": { "refusal": "{{refusal or ''}}" } },
+        { "op": "regex_extract", "field": "refusal", "pattern": "^\\s*(?s)(.{0,160})" }
+      ]
+    }
+  ]
+}

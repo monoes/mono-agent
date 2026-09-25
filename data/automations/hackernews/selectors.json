@@ -1,0 +1,46 @@
+{
+  "submit.title": {
+    "candidates": [
+      { "css": "form input[name='title']", "score": 0.95 },
+      { "xpath": "//form//tr[td[normalize-space()='title']]//input", "score": 0.6 }
+    ],
+    "intent": "the title field of the Hacker News submit form"
+  },
+  "submit.url": {
+    "candidates": [
+      { "css": "form input[name='url']", "score": 0.95 },
+      { "xpath": "//form//tr[td[normalize-space()='url']]//input", "score": 0.6 }
+    ],
+    "intent": "the url field of the Hacker News submit form"
+  },
+  "submit.text": {
+    "candidates": [
+      { "css": "form textarea[name='text']", "score": 0.95 },
+      { "xpath": "//form//tr[td[normalize-space()='text']]//textarea", "score": 0.6 }
+    ],
+    "intent": "the text box of the Hacker News submit form"
+  },
+  "submit.button": {
+    "candidates": [
+      { "css": "form:has(input[name='title']) input[type='submit']", "score": 0.95 },
+      { "css": "form:has(input[name='title']) button[type='submit']", "score": 0.7 },
+      { "aria": { "role": "button", "name": "submit" }, "score": 0.5 }
+    ],
+    "intent": "the submit button of the Hacker News submit form"
+  },
+  "reply.text": {
+    "candidates": [
+      { "css": "form[action='comment'] textarea[name='text']", "score": 0.95 },
+      { "css": "form:has(input[name='parent']) textarea", "score": 0.7 }
+    ],
+    "intent": "the reply text box on the Hacker News reply page"
+  },
+  "reply.button": {
+    "candidates": [
+      { "css": "form[action='comment'] input[type='submit']", "score": 0.95 },
+      { "css": "form:has(input[name='parent']) input[type='submit']", "score": 0.7 },
+      { "aria": { "role": "button", "name": "reply" }, "score": 0.5 }
+    ],
+    "intent": "the submit ('reply') button of the Hacker News reply form"
+  }
+}

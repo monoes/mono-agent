@@ -1,0 +1,65 @@
+[
+  {
+    "age": "2030-01-02T03:04:05",
+    "author": "bob_example",
+    "deleted": false,
+    "depth": 0,
+    "id": "70000010",
+    "parentId": "70000001",
+    "text": "First synthetic paragraph about the widget.\n\nSecond paragraph with a link."
+  },
+  {
+    "age": "2030-01-02T03:04:05",
+    "author": "carol_example",
+    "deleted": false,
+    "depth": 1,
+    "id": "70000011",
+    "parentId": "70000010",
+    "text": "A reply to bob, one level down."
+  },
+  {
+    "age": "2030-01-02T03:04:05",
+    "author": "dave_example",
+    "deleted": false,
+    "depth": 2,
+    "id": "70000012",
+    "parentId": "70000011",
+    "text": "Deeper still: two levels down."
+  },
+  {
+    "age": "2030-01-02T03:04:05",
+    "author": "",
+    "deleted": true,
+    "depth": 1,
+    "id": "70000013",
+    "parentId": "70000010",
+    "text": ""
+  },
+  {
+    "age": "2030-01-02T03:04:05",
+    "author": "erin_example",
+    "deleted": false,
+    "depth": 0,
+    "id": "70000014",
+    "parentId": "70000001",
+    "text": "Another top-level remark."
+  },
+  {
+    "age": "2030-01-02T03:04:05",
+    "author": "frank_example",
+    "deleted": false,
+    "depth": 1,
+    "id": "70000020",
+    "parentId": "70000014",
+    "text": "Continuation reply on page two."
+  },
+  {
+    "age": "2030-01-02T03:04:05",
+    "author": "grace_example",
+    "deleted": false,
+    "depth": 0,
+    "id": "70000021",
+    "parentId": "70000001",
+    "text": "Last top-level comment."
+  }
+]
