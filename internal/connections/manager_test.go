@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/zalando/go-keyring"
@@ -132,5 +133,19 @@ func TestManagerConnectSavesProfileID(t *testing.T) {
 	}
 	if saved.ProfileID != "work" {
 		t.Fatalf("saved ProfileID = %q, want %q", saved.ProfileID, "work")
+	}
+}
+
+// TestManagerConnectBrowserPointsToLogin: a browser-login platform can't be
+// connected here, and the error must name the command that does it (it used
+// to say `connect <p>`, the command that had just failed).
+func TestManagerConnectBrowserPointsToLogin(t *testing.T) {
+	mgr, _ := newManagerDB(t)
+	_, err := mgr.Connect(context.Background(), "instagram", ConnectOptions{Method: MethodBrowser})
+	if err == nil {
+		t.Fatal("expected an error for the browser method")
+	}
+	if !strings.Contains(err.Error(), "monoagentcli login instagram") {
+		t.Fatalf("error should point to `login instagram`, got: %v", err)
 	}
 }
