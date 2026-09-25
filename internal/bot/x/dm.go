@@ -16,18 +16,38 @@ import (
 )
 
 // DM composer and send-button selectors: the classic /messages UI first,
-// then the /i/chat UI X is moving DMs to.
+// then the X Chat UI (/i/chat; dm-composer-textarea / dm-composer-send-button
+// as shipped in the X Chat web client, 2026-09).
 const (
 	dmComposerSel = "[data-testid='dmComposerTextInput'], [data-testid='dm-composer-textarea'], textarea[data-testid*='composer' i]"
 	dmSendSel     = "[data-testid='dmComposerSendButton'], [data-testid='dm-composer-send-button']"
 )
 
 // dmBubbleSelectors are rendered message bubbles in an open conversation.
+// X Chat renders message-<id> > message-text-<id>; message-text-toggle /
+// message-text-show-more are controls, not bubbles.
 var dmBubbleSelectors = []string{
 	"[data-testid='messageEntry']",
 	"[data-testid='DmActivityContainer'] [data-testid='tweetText']",
-	"[data-testid^='message-text']",
+	"[data-testid^='message-text-']:not([data-testid='message-text-toggle']):not([data-testid='message-text-show-more'])",
 	"[data-testid='dm-message']",
+}
+
+// chatLockedJS reports whether the page is X Chat's passcode gate: an
+// account that has not set up (or entered) its X Chat passcode is sent from
+// /messages, /i/chat and every conversation to /i/chat/pin/<mode> instead.
+const chatLockedJS = `() => /^\/i\/chat\/pin(\/|$)/.test(location.pathname) ||
+	!!document.querySelector("[data-testid='pin-onboarding-title'], [data-testid='pin-onboarding-setup-now'], [data-testid='pin-code-input-container'], [data-testid='pin-enter-new-passcode']")`
+
+// errChatLocked is returned when X Chat's passcode gate stands in front of
+// the inbox or a conversation. Setting up or entering the passcode is the
+// user's call, so the bot never does it.
+var errChatLocked = errors.New("x: X Chat is locked behind its passcode (x.com/i/chat/pin): set up or enter your X Chat passcode in the browser first")
+
+// chatLocked reports whether p shows X Chat's passcode gate.
+func chatLocked(p browser.PageInterface) bool {
+	var locked bool
+	return botpkg.EvalJSON(p, chatLockedJS, &locked) == nil && locked
 }
 
 // bubbleCountJS counts message bubbles whose text contains snippet
@@ -68,6 +88,9 @@ func sendVerified(composerPresent bool, composerText string, bubblesBefore, bubb
 // sends it, and verifies the send.
 func (b *XBot) sendInConversation(ctx context.Context, p browser.PageInterface, message string) (sendOutcome, error) {
 	box, boxSel, err := findMarked(ctx, p, "", dmComposerSel, loadTimeout)
+	if err != nil && chatLocked(p) {
+		return "", errChatLocked
+	}
 	if err != nil {
 		pick, _, jerr := b.jevPick(ctx, p, "fill", "the message text box of the open direct message conversation", "", "")
 		if jerr != nil {
@@ -203,8 +226,11 @@ func (b *XBot) SendDM(ctx context.Context, p browser.PageInterface, target, mess
 	return res, nil
 }
 
-// conversationPathRe matches a DM conversation path in either UI.
-var conversationPathRe = regexp.MustCompile(`^/(messages/\d+(-\d+)?|i/chat/[A-Za-z0-9_:-]+)/?$`)
+// conversationPathRe matches a DM conversation path in either UI. X Chat
+// conversation ids are numeric ("<a>-<b>" for one-to-one, "g<n>" for
+// groups); /i/chat/requests, /new, /settings, /grok-bots and /pin/… are not
+// conversations.
+var conversationPathRe = regexp.MustCompile(`^/(messages/\d+(-\d+)?|i/chat/g?\d+(-\d+)*)/?$`)
 
 // conversationURL validates and normalises a conversation URL.
 func conversationURL(raw string) (string, error) {
@@ -249,12 +275,15 @@ func (b *XBot) ReplyDM(ctx context.Context, p browser.PageInterface, convURL, me
 }
 
 // conversationsJS lists the inbox's conversations: every link to a
-// conversation path, with the row around it. unread comes from an explicit
-// unread marker or a bold preview line; last_from_me from a "You: …"
-// preview (English UI).
+// conversation path, with the row around it (classic: [data-testid=
+// 'conversation']; X Chat: [data-testid='dm-conversation-item-<id>'] wrapping
+// the link). unread comes from an explicit unread marker, X Chat's unlabelled
+// text-chat-accent dot, or a preview heavier than normal (classic bolds it
+// to 700, X Chat renders it font-medium, 500); last_from_me from a "You: …"
+// / "You sent …" preview (English UI). locked is X Chat's passcode gate.
 const conversationsJS = `() => {
 	const txt = (el) => el ? (el.innerText || el.textContent || '').trim() : '';
-	const re = /^\/(messages\/\d+(-\d+)?|i\/chat\/[A-Za-z0-9_:-]+)\/?$/;
+	const re = /^\/(messages\/\d+(-\d+)?|i\/chat\/g?\d+(-\d+)*)\/?$/;
 	const rows = [], seen = new Set();
 	for (const a of document.querySelectorAll('a[href]')) {
 		let path;
@@ -263,28 +292,30 @@ const conversationsJS = `() => {
 		path = path.replace(/\/$/, '');
 		if (seen.has(path)) continue;
 		seen.add(path);
-		const row = a.closest("[data-testid='conversation']") || a.closest("[data-testid^='dm-conversation-item']") || a;
+		const row = a.closest("[data-testid='conversation']") || a.closest("[data-testid^='dm-conversation-item-']") || a;
 		const lines = txt(row).split('\n').map((s) => s.trim()).filter(Boolean);
 		const preview = lines.length > 1 ? lines[lines.length - 1] : '';
-		let bold = false;
-		for (const el of row.querySelectorAll('span, div')) {
-			if (el.children.length || (el.textContent || '').trim() !== preview || !preview) continue;
-			const w = parseInt(getComputedStyle(el).fontWeight, 10);
-			if (w >= 700) bold = true;
-			break;
+		// The preview's last text leaf carries its weight.
+		let heavy = false;
+		if (preview) {
+			const leaves = [...row.querySelectorAll('span, div, p')].filter((el) => !el.children.length && (el.textContent || '').trim());
+			const last = leaves.reverse().find((el) => preview.endsWith((el.textContent || '').trim()));
+			if (last) heavy = parseInt(getComputedStyle(last).fontWeight, 10) >= 500;
 		}
-		const marker = !!row.querySelector("[aria-label*='unread' i], [data-testid*='unread' i]") || /unread/i.test(row.getAttribute('aria-label') || '');
+		const marker = !!row.querySelector("[aria-label*='unread' i], [data-testid*='unread' i], .text-chat-accent") ||
+			/unread/i.test((row.getAttribute('aria-label') || '') + ' ' + (row.getAttribute('aria-description') || ''));
 		rows.push({
 			url: location.origin + path,
 			name: (lines[0] || '').split(/\s+@[A-Za-z0-9_]{1,15}\b/)[0].trim(),
 			preview,
-			unread: marker || bold,
-			last_from_me: /^(you|you sent|you reacted)\b/i.test(preview),
+			unread: marker || heavy,
+			last_from_me: /^(you|you sent|you reacted|you forwarded)\b/i.test(preview),
 		});
 	}
-	const cells = document.querySelectorAll("[data-testid='conversation']").length;
-	const empty = !!document.querySelector("[data-testid='emptyState']");
-	return { rows, cells, empty };
+	const cells = document.querySelectorAll("[data-testid='conversation'], [data-testid^='dm-conversation-item-']").length;
+	const empty = !!document.querySelector("[data-testid='emptyState'], [data-testid='dm-empty-inbox']");
+	const locked = (` + chatLockedJS + `)();
+	return { rows, cells, empty, locked };
 }`
 
 type rawConversation struct {
@@ -296,9 +327,10 @@ type rawConversation struct {
 }
 
 type conversationsSnapshot struct {
-	Rows  []rawConversation `json:"rows"`
-	Cells int               `json:"cells"`
-	Empty bool              `json:"empty"`
+	Rows   []rawConversation `json:"rows"`
+	Cells  int               `json:"cells"`
+	Empty  bool              `json:"empty"`
+	Locked bool              `json:"locked"`
 }
 
 // ListConversations lists up to max inbox conversations that await a reply:
@@ -316,7 +348,7 @@ func (b *XBot) ListConversations(ctx context.Context, p browser.PageInterface, m
 		if err := botpkg.EvalJSON(p, conversationsJS, &snap); err != nil {
 			return false, nil
 		}
-		return len(snap.Rows) > 0 || snap.Empty, nil
+		return len(snap.Rows) > 0 || snap.Empty || snap.Locked, nil
 	}); err != nil {
 		if lerr := checkLoginRedirect(p); lerr != nil {
 			return nil, lerr
@@ -325,6 +357,9 @@ func (b *XBot) ListConversations(ctx context.Context, p browser.PageInterface, m
 			return nil, fmt.Errorf("x: inbox shows %d conversations but no conversation links", snap.Cells)
 		}
 		return nil, fmt.Errorf("x: inbox did not render: %w", err)
+	}
+	if snap.Locked {
+		return nil, errChatLocked
 	}
 	// Rows render progressively; read once more after a beat.
 	if err := sleep(ctx, actionPause); err == nil {

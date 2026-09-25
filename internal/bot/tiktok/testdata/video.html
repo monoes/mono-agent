@@ -65,6 +65,18 @@
     // role=button inside a *LikeContainer* with the count beside it (no
     // number at all when nobody liked the comment).
     '7100000000000000010': { modern: true },
+    // The comment panel exactly as tiktok.com renders it (verified against
+    // the live site, 2026-09): no comment-list / comment-item / like
+    // data-e2e and no comment id anywhere. Per top-level comment a
+    // DivCommentObjectWrapper holds a DivCommentItemWrapper (avatar link,
+    // then the content: a DIV data-e2e="comment-username-1" wrapping the
+    // author link and name, the text in span[data-e2e="comment-level-1"],
+    // a sub line with the date, a Reply control and a "liked by creator"
+    // avatar, and the like control: role=button with
+    // data-key-interaction="comment_like", aria-label "Like video\n<n> likes",
+    // aria-pressed, and the count — "0" included — beside an svg) and a
+    // DivReplyContainer ("View <n> replies"; expanded replies are level 2).
+    '7100000000000000011': { live: true },
   };
   const cfg = CONFIG[vid] || {};
   window.__events = [];
@@ -86,12 +98,62 @@
     { user: 'fake_ana', name: 'Fake Ana', text: 'Love the colors in this one', likes: 3, liked: false },
     { user: 'fake_ben', name: 'Fake Ben', text: 'First! great video', likes: 9, liked: true,
       replies: [{ user: 'fake_dee', name: 'Fake Dee', text: 'agree with ben', likes: 1, liked: false }] },
-    { user: 'fake_cy', name: 'Fake Cy', text: 'Love the colors too', likes: 0, liked: false },
+    { user: 'fake_cy', name: 'Fake Cy', text: 'Love the colors too', likes: 0, liked: false, creatorLiked: true, moreReplies: 5 },
   ];
   const later = [{ user: 'fake_eve', name: 'Fake Eve', text: 'Only visible after scrolling', likes: 2, liked: false }];
 
   const list = document.getElementById('list');
+  if (cfg.live) list.removeAttribute('data-e2e');
+  const liveItem = (c, level) => {
+    const w = document.createElement('div');
+    w.className = level === 1 ? 'css-5e-DivCommentObjectWrapper' : 'css-l1-DivCommentItemWrapper';
+    const body =
+      '<div class="css-l2-DivAvatarWrapper"><div class="css-l3-DivTriggerWrapper"><a class="link-a11y-focus" href="/@' + c.user + '">' +
+        '<span shape="circle" data-e2e="" class="css-l4-SpanAvatarContainer"><img loading="lazy" alt="" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></span></a></div></div>' +
+      '<div class="css-l5-DivCommentContentWrapper">' +
+        '<div class="css-l6-DivCommentHeaderWrapper"><div data-e2e="comment-username-' + level + '" class="css-l7-DivUsernameContentWrapper">' +
+          '<div class="css-l3-DivTriggerWrapper"><a class="link-a11y-focus" href="/@' + c.user + '"><p class="TUXText TUXText--weight-medium">' + c.name + '</p></a></div>' +
+          '<p class="TUXText TUXText--weight-medium"></p></div>' +
+          '<div aria-expanded="false" aria-haspopup="dialog" class="css-l8-DivMore"><svg width="14" height="14"><path d="M5 24a4 4 0 1 1 8 0"></path></svg></div></div>' +
+        '<span data-e2e="comment-level-' + level + '"><span class="TUXText TUXText--weight-normal">' + c.text + '</span></span>' +
+        '<div class="css-l9-DivCommentSubContentSplitWrapper"><div class="css-m1-DivCommentSubContentWrapper">' +
+          '<span class="TUXText TUXText--weight-normal">2026-9-1</span>' +
+          '<div class="css-m2-DivReplyTriggerWrapper"><p class="TUXText" aria-label="Reply" role="button" data-e2e="comment-reply-' + level + '" data-key-interaction="comment_reply" tabindex="0">Reply</p></div>' +
+          (c.creatorLiked ? '<div class="css-m3-DivFloaterBoundsWrapper"><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" alt="avatar" width="16" height="16"><div class="css-m4-DivBottomFloaterContainer"><svg width="10" height="10"><defs><clipPath id="Icon_Color-Like_Circle_svg__a"><path d="M0 0h48v48H0z"></path></clipPath></defs></svg></div></div>' : '') +
+        '</div>' +
+        '<div data-key-interaction="comment_like" aria-label="Like video \n' + c.likes + ' likes" aria-pressed="' + c.liked + '" tabindex="0" role="button" class="css-m5-DivLikeContainer">' +
+          '<svg width="20" height="20" viewBox="0 0 48 48"><path d="M24 12.62c3.91-4.08 9.84-4.1 13.6-.42"></path></svg>' +
+          '<span class="TUXText TUXText--weight-normal">' + c.likes + '</span></div>' +
+        '</div></div>';
+    if (level === 1) {
+      w.innerHTML = '<div class="css-l1-DivCommentItemWrapper">' + body + '</div>';
+      const replies = c.replies || [];
+      if (replies.length || c.moreReplies) {
+        const rc = document.createElement('div');
+        rc.className = 'css-6f-DivReplyContainer';
+        replies.forEach(r => rc.appendChild(liveItem(r, 2)));
+        rc.insertAdjacentHTML('beforeend', '<div class="css-m6-DivViewMoreRepliesWrapper"><button class="TUXButton" type="button"><div class="TUXButton-label">View ' + (c.moreReplies || 1) + ' replies</div></button></div>');
+        w.appendChild(rc);
+      }
+    } else {
+      w.innerHTML = body;
+    }
+    const lk = w.querySelector('[data-key-interaction="comment_like"]');
+    lk.addEventListener('click', (e) => {
+      if (!trusted(e)) return;
+      log('comment-like-click:' + c.user);
+      const on = lk.getAttribute('aria-pressed') !== 'true';
+      setTimeout(() => {
+        lk.setAttribute('aria-pressed', on ? 'true' : 'false');
+        const n = parseInt(lk.querySelector('span').textContent, 10) + (on ? 1 : -1);
+        lk.querySelector('span').textContent = String(n);
+        lk.setAttribute('aria-label', 'Like video \n' + n + ' likes');
+      }, 150);
+    });
+    return w;
+  };
   const item = (c, level) => {
+    if (cfg.live) return liveItem(c, level);
     const w = document.createElement('div');
     w.className = level === 1 ? 'css-5e-DivCommentObjectWrapper' : 'css-6f-DivReplyContainer';
     const likeAttrs = cfg.commentLikeless ? '' : '<div class="css-x-DivLikeWrapper" role="button" tabindex="0" aria-label="Like comment by ' + c.name + '" aria-pressed="' + c.liked + '" data-e2e="comment-like-icon">&#9825;</div>';

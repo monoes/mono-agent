@@ -145,7 +145,8 @@ const userFromHref = (h) => { const m = (h || '').match(/\/@([^/?#]+)/); return 
 // the author link is the comment; an ancestor holding a second comment text
 // belongs to a thread, not to one comment.
 const C_USER = '[data-e2e="comment-username"],[data-e2e="comment-username-1"]';
-const C_LIKE = '[data-e2e="comment-like-icon"],[data-e2e="comment-like-btn"],[data-e2e="comment-like"]';
+// data-key-interaction="comment_like" is the live like control (2026-09).
+const C_LIKE = '[data-e2e="comment-like-icon"],[data-e2e="comment-like-btn"],[data-e2e="comment-like"],[data-key-interaction="comment_like"]';
 const commentItems = () => {
   const explicit = [...document.querySelectorAll('[data-e2e="comment-item"]')];
   if (explicit.length) return explicit;
