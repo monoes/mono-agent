@@ -74,30 +74,68 @@ func TestE2EJevBookingForm(t *testing.T) {
 	if rt := os.Getenv("JEV_E2E_TEXT_RUNTIME"); rt != "" {
 		writer = monomindWriter(rt, os.Getenv("JEV_E2E_TEXT_MODEL"))
 	}
+	res := runE2E(t, page, writer, map[string]interface{}{
+		"url":  site.URL,
+		"goal": "Search for first class train tickets from Zurich to Basel, bringing a bicycle. Stop when results are shown.",
+	})
+	// Independent verification of the outcome, not the model's DONE.
+	text := fmt.Sprint(res["page_text"])
+	if !strings.Contains(text, "from=Zurich to=Basel cls=1 bike=yes") {
+		t.Fatalf("final page does not show the requested search: %q", text)
+	}
+}
+
+// TestE2EJevBookingFormValues supplies From/To as `values`: the run must
+// finish without a single text-writer turn.
+func TestE2EJevBookingFormValues(t *testing.T) {
+	bin := os.Getenv("JEV_E2E_BROWSER")
+	if bin == "" || os.Getenv("TYPESAFE_API_KEY") == "" {
+		t.Skip("set JEV_E2E_BROWSER and TYPESAFE_API_KEY to run against a real browser and Jev")
+	}
+	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(e2eFixture))
+	}))
+	defer site.Close()
+
+	page := launchBrowser(t, bin)
+	writer := func(_ context.Context, f map[string]any) (string, error) {
+		t.Errorf("text writer called for %v", f["field"])
+		return "", errNoValue
+	}
+	res := runE2E(t, page, writer, map[string]interface{}{
+		"url":    site.URL,
+		"goal":   "Search for first class train tickets from Zurich to Basel, bringing a bicycle. Stop when results are shown.",
+		"values": map[string]interface{}{"From": "Zurich", "To": "Basel"},
+	})
+	text := fmt.Sprint(res["page_text"])
+	if !strings.Contains(text, "from=Zurich to=Basel cls=1 bike=yes") {
+		t.Fatalf("final page does not show the requested search: %q", text)
+	}
+	if res["text_turns"] != 0 {
+		t.Errorf("text_turns = %v, want 0", res["text_turns"])
+	}
+}
+
+func runE2E(t *testing.T, page *devtoolsPage, writer textWriter, config map[string]interface{}) map[string]interface{} {
+	t.Helper()
 	n := &Node{writer: writer, open: func(ctx context.Context, url string) (driver, func(), error) {
 		if _, err := page.CDP("Page.navigate", map[string]interface{}{"url": url}); err != nil {
 			return nil, nil, err
 		}
 		time.Sleep(500 * time.Millisecond)
 		b := jevpick.NewBrowser(page)
-		return b, func() {}, b.Setup(1120, 780)
+		return extDriver{b}, func() {}, b.Setup(1120, 780)
 	}}
-	out, err := n.Execute(context.Background(), nodeInputNone, map[string]interface{}{
-		"url":  site.URL,
-		"goal": "Search for first class train tickets from Zurich to Basel, bringing a bicycle. Stop when results are shown.",
-	})
+	out, err := n.Execute(context.Background(), nodeInputNone, config)
 	if err != nil {
 		t.Fatal(err)
 	}
 	res := out[0].Items[0].JSON
 	steps, _ := json.MarshalIndent(res["steps"], "", "  ")
-	t.Logf("status=%v reason=%v decisions=%v tokens=%v elapsed=%vms\nsteps=%s",
-		res["status"], res["reason"], res["decisions"], res["jev_input_tokens"], res["elapsed_ms"], steps)
-	// Independent verification of the outcome, not the model's DONE.
-	text := fmt.Sprint(res["page_text"])
-	if !strings.Contains(text, "from=Zurich to=Basel cls=1 bike=yes") {
-		t.Fatalf("final page does not show the requested search: %q", text)
-	}
+	t.Logf("status=%v reason=%v decisions=%v value_requests=%v text_turns=%v low_confidence_steps=%v tokens=%v elapsed=%vms\nsteps=%s",
+		res["status"], res["reason"], res["decisions"], res["value_requests"], res["text_turns"],
+		res["low_confidence_steps"], res["jev_input_tokens"], res["elapsed_ms"], steps)
+	return res
 }
 
 // devtoolsPage is a jevpick.Page over a direct DevTools WebSocket (flat session).

@@ -112,14 +112,20 @@ install one with "monoagentcli agent install <runtime>".`,
 so your logins apply) and works toward the goal one action at a time. Each
 cycle reads the page as a numbered table of visible controls, and one TypeSafe
 Jev request picks the operation (CLICK, TYPE_TEXT, SELECT, SCROLL_UP/DOWN,
-WAIT, DONE, BLOCKED) and its target. Only TYPE_TEXT generates text, through a
-local agent (text_runtime). No selectors, no site scripts. Port of
-browser-use/jev-ultrafast.`,
+WAIT, DONE, BLOCKED) and its target. For TYPE_TEXT a second Jev request picks
+one of the configured values by name (or NONE); only when none fits does a
+local agent (text_runtime) write the text. No selectors, no site scripts.
+Port of browser-use/jev-ultrafast.`,
 		Config: `{
   "url":          "https://www.google.com/travel/flights",  // required
   "goal":         "One-way Zurich to London on 2026-10-20…", // required
-  "api_key":      "@secret:typesafe",   // or TYPESAFE_API_KEY
+  "api_key":      "@secret:typesafe",   // else vault secret typesafe, then TYPESAFE_API_KEY
   "model":        "jev-latest",
+  "values": {                           // typed into matching fields, no text turn
+    "From":     "Zurich",
+    "To":       "London",
+    "email":    "@secret:airline-email" // vault-backed: stricter field match
+  },
   "text_runtime": "claude",             // local agent for TYPE_TEXT values
   "text_model":   "",                   // e.g. haiku
   "max_actions":  40,                   // decisions are capped at 2×
@@ -128,12 +134,22 @@ browser-use/jev-ultrafast.`,
 }`,
 		Inputs: "any items (one run per item; none = one run)",
 		Outputs: `input item + status (done|blocked|budget|timeout), reason, url, title,
-page_text, steps[] (action, operation, text, probability, confidence,
-latency_ms, page_changed), decisions, jev_input_tokens, elapsed_ms`,
+page_text, steps[] (action, operation, text, value_name, probability,
+confidence, latency_ms, page_changed), decisions, value_requests, text_turns,
+low_confidence_steps (steps with confidence < 0.5), jev_input_tokens, elapsed_ms`,
 		Notes: `DONE is the model's claim, not proof: check page_text downstream when it
 matters. Page text is treated as data, never instructions, but the agent acts
 in your logged-in browser, so give it goals you would trust a person with.
-Skips password/file inputs; frames, shadow DOM, canvas and uploads can block.
+values: Jev only ever sees value NAMES; any configured value (4+ chars) is
+replaced with <value:NAME> in page text, field values and history before every
+Jev request. A plain value is used when Jev picks it with p >= 0.6; an
+@secret: value needs p >= 0.9 AND an email/tel input or a field label
+containing the value's name, else the text runtime is asked. Secret values are
+shown as <value:NAME> in steps[].text; an unresolvable @secret: ref is a config
+error. Password inputs are never observed (the snapshot skips them), so no
+value is ever typed into one. Gate on low_confidence_steps downstream when a
+shaky run matters.
+Skips file inputs too; frames, shadow DOM, canvas and uploads can block.
 Get a key at console.typesafe.ai and store it: "monoagentcli secret add --kind secret --name typesafe".`,
 	},
 	{

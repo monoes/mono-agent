@@ -19,7 +19,7 @@
     },
     {
       "default": "@secret:typesafe",
-      "help": "Falls back to TYPESAFE_API_KEY.",
+      "help": "Falls back to the profile's vault secret `typesafe`, then TYPESAFE_API_KEY.",
       "key": "api_key",
       "label": "TypeSafe API Key",
       "required": false,
@@ -31,6 +31,16 @@
       "label": "Jev Model",
       "required": false,
       "type": "text"
+    },
+    {
+      "help": "Name → value pairs typed into matching fields instead of asking the text runtime. Jev sees only the names (typed values are shown to it as <value:NAME>). @secret: values need an email/tel field or one whose label names the value (password inputs are never observed).",
+      "key": "values",
+      "label": "Values",
+      "language": "json",
+      "placeholder": "{\"From\": \"Zurich\", \"email\": \"@secret:my-email\"}",
+      "required": false,
+      "rows": 5,
+      "type": "code"
     },
     {
       "default": "claude",

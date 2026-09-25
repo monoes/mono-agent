@@ -112,7 +112,8 @@ type step struct {
 	Kind        string  `json:"kind"`
 	Operation   string  `json:"operation"`
 	Target      string  `json:"target,omitempty"`
-	Text        string  `json:"text,omitempty"`
+	Text        string  `json:"text,omitempty"`       // a vault-backed value is recorded as <value:NAME>
+	ValueName   string  `json:"value_name,omitempty"` // name of the configured value typed, if any
 	Probability float64 `json:"probability"`
 	Confidence  float64 `json:"confidence"`
 	LatencyMS   int64   `json:"latency_ms"`
