@@ -665,14 +665,18 @@
       "type": "object"
     },
     "TransformOp": {
-      "description": "TransformOp is one operation of a transform step, applied in order to the list (or single object) the step's Input resolves to. map Map: {newField: \"{{template over the item}}\"} filter Where: condition evaluated against each item dedupe Field: key field (whole item when empty) regex_extract Field, Pattern (first capture group, else whole match), To parse_date Field, Layout (Go layout, or \"auto\"), To (RFC3339 output) parse_number Field, To (\"1.2k\" → 1200, \"3,400\" → 3400) join Field (list field), Sep, To split Field, Sep, To pick Fields: keep only these keys limit Count",
+      "description": "TransformOp is one operation of a transform step, applied in order to the list (or single object) the step's Input resolves to. map Map: {newField: \"{{template over the item}}\"} filter Where: condition evaluated against each item dedupe Field: key field (whole item when empty) regex_extract Field, Pattern (first capture group, else whole match), To parse_date Field, Layout (Go layout, or \"auto\"), To (RFC3339 output) parse_number Field, To (\"1.2k\" → 1200, \"3,400\" → 3400) join Field (list field), Sep, To split Field, Sep, To pick Fields: keep only these keys limit Count lower Field, To replace Field, Pattern (Go regexp), With, To tree_parent Field (depth), ID, To, Root, Carry",
       "properties": {
+        "carry": {
+          "description": "tree_parent: variable holding the open-ancestor stack across pages",
+          "type": "string"
+        },
         "count": {
           "description": "limit: items to keep.",
           "type": "integer"
         },
         "field": {
-          "description": "Field the operation reads.",
+          "description": "Field the operation reads (tree_parent: the depth field).",
           "type": "string"
         },
         "fields": {
@@ -681,6 +685,10 @@
             "type": "string"
           },
           "type": "array"
+        },
+        "id": {
+          "description": "tree_parent: the row's id field",
+          "type": "string"
         },
         "layout": {
           "description": "parse_date: Go time layout, or \"auto\".",
@@ -705,12 +713,19 @@
             "join",
             "split",
             "pick",
-            "limit"
+            "limit",
+            "lower",
+            "replace",
+            "tree_parent"
           ],
           "type": "string"
         },
         "pattern": {
-          "description": "regex_extract: Go regular expression.",
+          "description": "regex_extract / replace: Go regular expression.",
+          "type": "string"
+        },
+        "root": {
+          "description": "tree_parent: template, parent of depth-0 rows",
           "type": "string"
         },
         "sep": {
@@ -724,6 +739,10 @@
         "where": {
           "$ref": "#/$defs/ConditionDef",
           "description": "filter: condition evaluated against each item."
+        },
+        "with": {
+          "description": "replace: replacement text ($1 expands)",
+          "type": "string"
         }
       },
       "required": [

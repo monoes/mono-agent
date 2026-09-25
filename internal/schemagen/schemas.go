@@ -44,7 +44,7 @@ var actionEnums = map[string][]string{
 	"ConditionDef.operator":  {"exists", "not_exists", "equals", "not_equals", "greater_than", "less_than", "contains", "not_contains", "matches"},
 	"ErrorHandlerDef.action": {"retry", "try_alternative", "mark_failed", "skip", "continue", "abort"},
 	"SuccessAction.action":   {"set_variable", "increment", "save_data", "update_progress"},
-	"TransformOp.op":         {"map", "filter", "dedupe", "regex_extract", "parse_date", "parse_number", "join", "split", "pick", "limit"},
+	"TransformOp.op":         {"map", "filter", "dedupe", "regex_extract", "parse_date", "parse_number", "join", "split", "pick", "limit", "lower", "replace", "tree_parent"},
 }
 
 // inputItem is one entry of inputs.required / inputs.optional: a bare name

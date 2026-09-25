@@ -106,9 +106,9 @@ var fieldDocs = map[string]string{
 	"SuccessAction.increment": "Counter variable to increment.",
 
 	"TransformOp.op":      "Operation.",
-	"TransformOp.field":   "Field the operation reads.",
+	"TransformOp.field":   "Field the operation reads (tree_parent: the depth field).",
 	"TransformOp.to":      "Field the result is written to (default: field).",
-	"TransformOp.pattern": "regex_extract: Go regular expression.",
+	"TransformOp.pattern": "regex_extract / replace: Go regular expression.",
 	"TransformOp.layout":  "parse_date: Go time layout, or \"auto\".",
 	"TransformOp.sep":     "join / split: separator.",
 	"TransformOp.where":   "filter: condition evaluated against each item.",
