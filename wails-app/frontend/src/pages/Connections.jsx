@@ -4,7 +4,7 @@
 // connected without the browser. A site with both appears in both.
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { RefreshCw, Upload, Circle } from 'lucide-react'
-import { api, notify } from '../services/api.js'
+import { api } from '../services/api.js'
 import BrowserAutomations, { RecordHelpDialog } from './connections/BrowserAutomations.jsx'
 import ApiConnections, { resolveConn } from './connections/ApiConnections.jsx'
 import ApiConnectionModal from './connections/ApiConnectionModal.jsx'
@@ -22,7 +22,6 @@ export default function Connections({ onRefresh }) {
   const [openAuto,     setOpenAuto]     = useState(null)
   const [importing,    setImporting]    = useState(false)
   const [recordHelp,   setRecordHelp]   = useState(false)
-  const [restoring,    setRestoring]    = useState('')
   const pollRef = useRef(null)
 
   const loadAutomations = useCallback(async () => {
@@ -74,15 +73,6 @@ export default function Connections({ onRefresh }) {
 
   const closeDrawer = useCallback(() => setOpenAuto(null), [])
 
-  const restore = useCallback(async (a) => {
-    setRestoring(a.id)
-    try {
-      const res = await api.restoreAutomation(a.id)
-      if (!res || res.error) notify('restore automation', res?.error || 'restore failed')
-      await loadAutomations()
-    } finally { setRestoring('') }
-  }, [loadAutomations])
-
   return (
     <>
       <div className="page-header">
@@ -109,8 +99,6 @@ export default function Connections({ onRefresh }) {
               onOpen={setOpenAuto}
               onRecord={() => setRecordHelp(true)}
               onImport={() => setImporting(true)}
-              onRestore={restore}
-              restoring={restoring}
             />
             <ApiConnections platforms={platforms} connections={connections} onSelect={setSelected} />
           </div>

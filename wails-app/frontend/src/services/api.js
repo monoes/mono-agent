@@ -231,7 +231,8 @@ export const api = {
   listAutomations:        () => GoApp.ListAutomations().then(JSON.parse).catch(asError),
   showAutomation:         (id) => GoApp.ShowAutomation(id).then(JSON.parse).catch(asError),
   installAutomationDryRun:(path) => GoApp.InstallAutomationDryRun(path).then(JSON.parse).catch(asError),
-  installAutomation:      (path) => GoApp.InstallAutomation(path).then(JSON.parse).catch(asError),
+  // spec: {expectSha256 (from the dry run), replaceBuiltin}
+  installAutomation:      (path, spec = {}) => GoApp.InstallAutomation(path, JSON.stringify(spec || {})).then(JSON.parse).catch(asError),
   exportAutomation:       (id, path) => GoApp.ExportAutomation(id, path).then(JSON.parse).catch(asError),
   exportAction:           (ref, path) => GoApp.ExportAction(ref, path).then(JSON.parse).catch(asError),
   uninstallAutomation:    (id) => GoApp.UninstallAutomation(id).then(JSON.parse).catch(asError),
@@ -239,13 +240,15 @@ export const api = {
   enableAutomation:       (id) => GoApp.EnableAutomation(id).then(JSON.parse).catch(asError),
   disableAutomation:      (id) => GoApp.DisableAutomation(id).then(JSON.parse).catch(asError),
   rollbackAutomation:     (id) => GoApp.RollbackAutomation(id).then(JSON.parse).catch(asError),
+  // flag: scripts | no-scripts | live | no-live
+  setAutomationTrust:     (id, flag) => GoApp.SetAutomationTrust(id, flag).then(JSON.parse).catch(asError),
   validateAutomation:     (path) => GoApp.ValidateAutomation(path).then(JSON.parse).catch(asError),
   testAutomation:         (id, action = '', live = false) => GoApp.TestAutomation(id, action, live).then(JSON.parse).catch(asError),
   doctorAutomations:      (id = '') => GoApp.DoctorAutomations(id).then(JSON.parse).catch(asError),
   listRecordings:         () => GoApp.ListRecordings().then(JSON.parse).catch(asError),
   showRecording:          (id) => GoApp.ShowRecording(id).then(JSON.parse).catch(asError),
   deleteRecording:        (id) => GoApp.DeleteRecording(id).then(JSON.parse).catch(asError),
-  analyzeRecording:       (id, automation = '') => GoApp.AnalyzeRecording(id, automation).then(JSON.parse).catch(asError),
+  analyzeRecording:       (id, automation = '', advanced = false) => GoApp.AnalyzeRecording(id, automation, advanced).then(JSON.parse).catch(asError),
   // inputs: {name: value} for values the recording could not hold (secrets).
   verifyDraft:            (draftDir, full = false, inputs = {}) => GoApp.VerifyDraft(draftDir, full, JSON.stringify(inputs || {})).then(JSON.parse).catch(asError),
   // spec: {as, automation, new, name, renameInputs: {aiName: userName}}

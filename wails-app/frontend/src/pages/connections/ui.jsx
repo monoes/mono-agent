@@ -1,6 +1,7 @@
 // Shared presentational bits for the Connections page (browser automations
 // and API connections). Inline-style language matches the rest of the app:
 // mono labels, CSS vars, small bordered chips.
+import { useEffect, useRef } from 'react'
 import { Loader } from 'lucide-react'
 
 export const mono = { fontFamily: 'var(--font-mono)' }
@@ -19,6 +20,46 @@ export const EFFECT_COLORS = {
   write: 'var(--yellow)',
   message: 'var(--orange)',
   destructive: 'var(--red)',
+}
+
+// isRisky: an action needs a confirmation before it runs for real unless it
+// explicitly declares no or read-only side effects (missing = dangerous).
+export function isRisky(effect) {
+  return effect !== 'none' && effect !== 'read'
+}
+
+const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])'
+
+// useDialog gives a drawer or dialog modal keyboard behaviour: focus moves
+// into it on open and back to the opener on close, Tab stays inside, and
+// Escape closes it. The key handler sits on the element itself (spread the
+// returned props onto it), so an Escape meant for a confirm dialog opened
+// on top never reaches it.
+export function useDialog(onClose) {
+  const ref = useRef(null)
+  const closeRef = useRef(onClose)
+  closeRef.current = onClose
+  useEffect(() => {
+    const opener = document.activeElement
+    const el = ref.current
+    const first = el?.querySelector(FOCUSABLE)
+    ;(first || el)?.focus?.()
+    return () => { if (opener && document.contains(opener)) opener.focus?.() }
+  }, [])
+  const onKeyDown = (e) => {
+    if (e.key === 'Escape') {
+      e.stopPropagation()
+      closeRef.current?.()
+      return
+    }
+    if (e.key !== 'Tab' || !ref.current) return
+    const items = [...ref.current.querySelectorAll(FOCUSABLE)].filter(x => x.offsetParent !== null || x === document.activeElement)
+    if (!items.length) return
+    const first = items[0], last = items[items.length - 1]
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus() }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
+  }
+  return { ref, onKeyDown, tabIndex: -1 }
 }
 
 export function Chip({ children, color = 'var(--text-muted)', title, style }) {

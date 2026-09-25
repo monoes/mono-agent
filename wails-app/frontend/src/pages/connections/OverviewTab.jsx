@@ -1,8 +1,10 @@
 // Overview tab: manifest summary, site domains, permissions, trust and
 // validation issues for one automation package.
+import { useState } from 'react'
 import { ExternalLink } from 'lucide-react'
 import { api } from '../../services/api.js'
-import { Chip, KV, ErrorBox, SOURCE_LABELS, body, label, mono, muted, panel, fmtDate } from './ui.jsx'
+import { confirm } from '../../components/ConfirmDialog.jsx'
+import { Chip, KV, ErrorBox, Busy, SOURCE_LABELS, body, label, mono, muted, panel, fmtDate } from './ui.jsx'
 
 function List({ title, items, empty = 'none', color }) {
   return (
@@ -34,7 +36,56 @@ export function IssueList({ issues }) {
   )
 }
 
-export default function OverviewTab({ info, manifest, issues, fragments }) {
+const TRUST_TEXT = {
+  builtin: 'Ships with the app.',
+  local: 'Written on this machine.',
+  recorded: 'Saved from one of your recordings.',
+  imported: 'Installed from a package file or URL.',
+}
+
+// TrustToggles: per-package opt-ins for imported and recorded packages
+// (`automation trust`). Built-in and local packages are always trusted.
+function TrustToggles({ info, onChanged }) {
+  const [busy, setBusy] = useState('')
+  const [err, setErr] = useState('')
+  const restricted = info.trust === 'imported' || info.trust === 'recorded'
+  const flip = async (kind, on) => {
+    const q = kind === 'scripts'
+      ? (on ? `Allow ${info.name || info.id} to run its page scripts? They run inside the site with your login and can read and send anything the page shows.` : `Stop ${info.name || info.id} from running page scripts? Actions that use them will fail.`)
+      : (on ? `Allow real (live) runs of ${info.name || info.id}'s actions that change things on the site?` : `Withdraw live runs for ${info.name || info.id}? Its write actions will refuse to run for real.`)
+    if (!(await confirm(q))) return
+    setBusy(kind); setErr('')
+    try {
+      const res = await api.setAutomationTrust(info.id, on ? kind : `no-${kind}`)
+      if (!res || res.error) setErr(res?.error || 'Could not change trust.')
+      else await onChanged?.()
+    } finally { setBusy('') }
+  }
+  const Toggle = ({ kind, label: text, on, hint }) => (
+    <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', cursor: restricted ? 'pointer' : 'default' }}>
+      <input type="checkbox" role="switch" checked={!!on} disabled={!restricted || !!busy} onChange={e => flip(kind, e.target.checked)} style={{ marginTop: 2 }} aria-label={text} />
+      <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <span style={{ ...mono, fontSize: 11, color: 'var(--text)' }}>{text}</span>
+        <span style={{ ...muted, fontSize: 10 }}>{hint}</span>
+      </span>
+    </label>
+  )
+  return (
+    <div style={{ ...panel, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <span style={label}>Trust</span>
+        <Chip color={restricted ? 'var(--yellow)' : 'var(--green-neon)'}>{info.trust || 'imported'}</Chip>
+        <span style={{ ...muted, fontSize: 10 }}>{TRUST_TEXT[info.trust] || ''}</span>
+      </div>
+      <Toggle kind="scripts" label="Allow scripts" on={info.scriptsAllowed} hint={restricted ? 'Page scripts and in-page requests. Off until you allow them.' : 'Always allowed for built-in and local packages.'} />
+      <Toggle kind="live" label="Allow live runs" on={info.liveRunConfirmed} hint={restricted ? 'Actions that write, message or delete may run for real.' : 'Always allowed for built-in and local packages.'} />
+      {busy && <Busy text="Saving…" />}
+      <ErrorBox>{err}</ErrorBox>
+    </div>
+  )
+}
+
+export default function OverviewTab({ info, manifest, issues, fragments, onTrustChanged }) {
   const perms = manifest.permissions || {}
   const site = manifest.site || {}
   const publisher = manifest.publisher
@@ -47,6 +98,7 @@ export default function OverviewTab({ info, manifest, issues, fragments }) {
         </div>
       )}
       {manifest.description && <div style={body}>{manifest.description}</div>}
+      <TrustToggles info={info} onChanged={onTrustChanged} />
       <KV rows={[
         ['Source', SOURCE_LABELS[info.source] || info.source],
         ['Trust', info.trust],

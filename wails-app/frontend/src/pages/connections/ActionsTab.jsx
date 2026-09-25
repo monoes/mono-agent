@@ -4,9 +4,8 @@ import { useState } from 'react'
 import { Play, Workflow, Download, FlaskConical, FileCode } from 'lucide-react'
 import { api } from '../../services/api.js'
 import { confirm } from '../../components/ConfirmDialog.jsx'
-import { Chip, EffectChip, ErrorBox, OkBox, Busy, body, label, mono, muted, panel, copyText } from './ui.jsx'
+import { Chip, EffectChip, ErrorBox, OkBox, Busy, isRisky, body, label, mono, muted, panel, copyText } from './ui.jsx'
 
-const RISKY = new Set(['write', 'message', 'destructive'])
 
 function Inputs({ inputs }) {
   if (!inputs || !inputs.length) return <span style={muted}>no inputs</span>
@@ -55,7 +54,7 @@ function ActionRow({ automationId, a }) {
   const nodeType = a.nodeType || `${automationId}.${a.name}`
 
   const runTest = async (live) => {
-    if (live && RISKY.has(a.sideEffects) && !(await confirm(`Run ${a.name} live? It has "${a.sideEffects}" side effects and acts on the real site with your login.`))) return
+    if (live && isRisky(a.sideEffects) && !(await confirm(`Run ${a.name} live? ${a.sideEffects ? `It has "${a.sideEffects}" side effects and` : 'It declares no side-effect level, so assume it'} acts on the real site with your login.`))) return
     setBusy(live ? 'live' : 'test'); setTestRes(null)
     try { setTestRes(await api.testAutomation(automationId, a.name, live)) } finally { setBusy('') }
   }

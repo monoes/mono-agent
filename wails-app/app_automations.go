@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
-	"sort"
 	"strings"
 	"time"
 
@@ -29,152 +29,6 @@ const automationCLITimeout = 2 * time.Minute
 // runner (analyze, verify, test, doctor).
 const automationLongCLITimeout = 10 * time.Minute
 
-// automationCLIArgs builds the full argv: global flags first, then the
-// subcommand words.
-func automationCLIArgs(profileID string, sub ...string) []string {
-	full := []string{}
-	if profileID != "" {
-		full = append(full, "--profile", profileID)
-	}
-	return append(append(full, "--json"), sub...)
-}
-
-func requireArg(name, v string) error {
-	if strings.TrimSpace(v) == "" {
-		return fmt.Errorf("%s required", name)
-	}
-	return nil
-}
-
-// automationInstallArgs builds `automation install <src> --dry-run|--yes`.
-// The GUI shows the review from the dry run, then confirms with --yes.
-func automationInstallArgs(path string, dryRun bool) ([]string, error) {
-	if err := requireArg("package path", path); err != nil {
-		return nil, err
-	}
-	args := []string{"automation", "install", path}
-	if dryRun {
-		return append(args, "--dry-run"), nil
-	}
-	return append(args, "--yes"), nil
-}
-
-// automationLifecycleArgs builds `automation <verb> <id>` for the footer
-// buttons (uninstall, restore, enable, disable, rollback).
-func automationLifecycleArgs(verb, id string) ([]string, error) {
-	switch verb {
-	case "uninstall", "restore", "enable", "disable", "rollback":
-	default:
-		return nil, fmt.Errorf("unknown automation command %q", verb)
-	}
-	if err := requireArg("automation id", id); err != nil {
-		return nil, err
-	}
-	return []string{"automation", verb, id}, nil
-}
-
-func automationTestArgs(id, action string, live bool) ([]string, error) {
-	if err := requireArg("automation id", id); err != nil {
-		return nil, err
-	}
-	args := []string{"automation", "test", id}
-	if action != "" {
-		args = append(args, action)
-	}
-	if live {
-		args = append(args, "--live")
-	}
-	return args, nil
-}
-
-func automationExportArgs(id, path string, withRecordings bool) ([]string, error) {
-	if err := requireArg("automation id", id); err != nil {
-		return nil, err
-	}
-	if err := requireArg("output path", path); err != nil {
-		return nil, err
-	}
-	args := []string{"automation", "export", id, "-o", path}
-	if withRecordings {
-		args = append(args, "--with-recordings")
-	}
-	return args, nil
-}
-
-func actionExportArgs(ref, path string) ([]string, error) {
-	if !strings.Contains(ref, ".") {
-		return nil, fmt.Errorf("action reference must be <automation>.<action>, got %q", ref)
-	}
-	if err := requireArg("output path", path); err != nil {
-		return nil, err
-	}
-	return []string{"action", "export", ref, "-o", path}, nil
-}
-
-func recordVerifyArgs(draftDir string, full bool, inputs map[string]string) ([]string, error) {
-	if err := requireArg("draft directory", draftDir); err != nil {
-		return nil, err
-	}
-	args := []string{"record", "verify", draftDir}
-	if full {
-		args = append(args, "--full")
-	}
-	for _, name := range sortedKeys(inputs) {
-		if inputs[name] != "" {
-			args = append(args, "--input", name+"="+inputs[name])
-		}
-	}
-	return args, nil
-}
-
-// SaveDraftSpec is SaveDraft's JSON argument (one JSON string crosses the
-// Wails boundary instead of a long positional list).
-type SaveDraftSpec struct {
-	As           string            `json:"as"`           // action | fragment | workflow
-	Automation   string            `json:"automation"`   // existing target package
-	New          string            `json:"new"`          // new package id (wins over Automation)
-	Name         string            `json:"name"`         // action / fragment name
-	RenameInputs map[string]string `json:"renameInputs"` // AI name → user name, changed ones only
-}
-
-func recordSaveArgs(draftDir string, s SaveDraftSpec) ([]string, error) {
-	if err := requireArg("draft directory", draftDir); err != nil {
-		return nil, err
-	}
-	args := []string{"record", "save", draftDir}
-	switch s.As {
-	case "":
-	case "action", "fragment", "workflow":
-		args = append(args, "--as", s.As)
-	default:
-		return nil, fmt.Errorf("save as must be action, fragment or workflow, got %q", s.As)
-	}
-	if s.New != "" {
-		args = append(args, "--new", s.New)
-	} else if s.Automation != "" {
-		args = append(args, "--automation", s.Automation)
-	}
-	if s.Name != "" {
-		args = append(args, "--name", s.Name)
-	}
-	for _, from := range sortedKeys(s.RenameInputs) {
-		to := s.RenameInputs[from]
-		if to != "" && to != from {
-			args = append(args, "--rename-input", from+"="+to)
-		}
-	}
-	return args, nil
-}
-
-func sortedKeys(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
 // ── Execution ──────────────────────────────────────────────────────────────
 
 // runAutomationCLI runs one monoagentcli call with the active profile and
@@ -194,8 +48,8 @@ func (a *App) runAutomationCLI(timeout time.Duration, sub []string, buildErr err
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	fullArgs := automationCLIArgs(a.getActiveProfileID(), sub...)
-	label := strings.Join(sub, " ")
-	a.emitLog("AUTOMATION", "INFO", fmt.Sprintf("$ %s %s", cliBin, strings.Join(fullArgs, " ")))
+	label := strings.Join(redactArgs(sub), " ")
+	a.emitLog("AUTOMATION", "INFO", fmt.Sprintf("$ %s %s", cliBin, strings.Join(redactArgs(fullArgs), " ")))
 	startedAt := time.Now()
 	cmd := exec.CommandContext(ctx, cliBin, fullArgs...)
 	hideWindow(cmd)
@@ -223,16 +77,26 @@ func (a *App) ListAutomations() string {
 }
 
 func (a *App) ShowAutomation(id string) string {
-	return a.runAutomationCLI(automationCLITimeout, []string{"automation", "show", id}, requireArg("automation id", id))
+	return a.runAutomationCLI(automationCLITimeout, withPositional([]string{"automation", "show"}, id), requireArg("automation id", id))
 }
 
+// InstallAutomationDryRun returns the install review, including the sha256
+// of the exact bytes reviewed.
 func (a *App) InstallAutomationDryRun(path string) string {
-	args, err := automationInstallArgs(path, true)
+	args, err := automationInstallArgs(path, true, InstallSpec{})
 	return a.runAutomationCLI(automationCLITimeout, args, err)
 }
 
-func (a *App) InstallAutomation(path string) string {
-	args, err := automationInstallArgs(path, false)
+// InstallAutomation installs after the review; specJSON is an InstallSpec
+// carrying the reviewed sha256 and the replace-built-in consent.
+func (a *App) InstallAutomation(path, specJSON string) string {
+	var spec InstallSpec
+	if strings.TrimSpace(specJSON) != "" {
+		if err := json.Unmarshal([]byte(specJSON), &spec); err != nil {
+			return aiError(fmt.Errorf("install spec: %w", err))
+		}
+	}
+	args, err := automationInstallArgs(path, false, spec)
 	return a.runAutomationCLI(automationCLITimeout, args, err)
 }
 
@@ -257,9 +121,16 @@ func (a *App) automationLifecycle(verb, id string) string {
 	return a.runAutomationCLI(automationCLITimeout, args, err)
 }
 
+// SetAutomationTrust flips one per-package trust choice: flag is scripts,
+// no-scripts, live or no-live (`automation trust`).
+func (a *App) SetAutomationTrust(id, flag string) string {
+	args, err := automationTrustArgs(id, flag)
+	return a.runAutomationCLI(automationCLITimeout, args, err)
+}
+
 // ValidateAutomation validates a package directory or action file.
 func (a *App) ValidateAutomation(path string) string {
-	return a.runAutomationCLI(automationCLITimeout, []string{"automation", "validate", path}, requireArg("path", path))
+	return a.runAutomationCLI(automationCLITimeout, withPositional([]string{"automation", "validate"}, path), requireArg("path", path))
 }
 
 // TestAutomation runs fixture tests (or live ones) for a package or one action.
@@ -272,7 +143,7 @@ func (a *App) TestAutomation(id, action string, live bool) string {
 func (a *App) DoctorAutomations(id string) string {
 	sub := []string{"automation", "doctor"}
 	if id != "" {
-		sub = append(sub, id)
+		sub = withPositional(sub, id)
 	}
 	return a.runAutomationCLI(automationLongCLITimeout, sub, nil)
 }
@@ -284,35 +155,52 @@ func (a *App) ListRecordings() string {
 }
 
 func (a *App) ShowRecording(id string) string {
-	return a.runAutomationCLI(automationCLITimeout, []string{"record", "show", id}, requireArg("recording id", id))
+	return a.runAutomationCLI(automationCLITimeout, withPositional([]string{"record", "show"}, id), requireArg("recording id", id))
 }
 
 func (a *App) DeleteRecording(id string) string {
-	return a.runAutomationCLI(automationCLITimeout, []string{"record", "delete", id}, requireArg("recording id", id))
+	return a.runAutomationCLI(automationCLITimeout, withPositional([]string{"record", "delete"}, id), requireArg("recording id", id))
 }
 
 // AnalyzeRecording turns a recording into a draft; automation "" lets the
-// analyzer propose a target (or a new package).
-func (a *App) AnalyzeRecording(id, automation string) string {
-	sub := []string{"record", "analyze", id}
-	if automation != "" {
-		sub = append(sub, "--automation", automation)
-	}
-	return a.runAutomationCLI(automationLongCLITimeout, sub, requireArg("recording id", id))
+// analyzer propose a target (or a new package). advanced lets the AI use
+// scripts and other advanced steps (`--allow-advanced`), which the page
+// only offers behind a warning.
+func (a *App) AnalyzeRecording(id, automation string, advanced bool) string {
+	args, err := recordAnalyzeArgs(id, automation, advanced)
+	return a.runAutomationCLI(automationLongCLITimeout, args, err)
 }
 
 // VerifyDraft replays a draft; full=false is safe mode (stops before the
 // first side-effecting step). inputsJSON is an optional {name: value}
-// object for inputs the recording could not hold (secrets are never
-// recorded), passed as --input name=value.
+// object for inputs the draft has no value for (secrets are never
+// recorded). The values go to the CLI in a 0600 file removed afterwards,
+// never on argv.
 func (a *App) VerifyDraft(draftDir string, full bool, inputsJSON string) string {
-	var inputs map[string]string
+	inputs := map[string]string{}
 	if strings.TrimSpace(inputsJSON) != "" {
 		if err := json.Unmarshal([]byte(inputsJSON), &inputs); err != nil {
-			return aiError(fmt.Errorf("verify inputs: %w", err))
+			return aiError(fmt.Errorf("verify inputs: invalid JSON"))
 		}
 	}
-	args, err := recordVerifyArgs(draftDir, full, inputs)
+	for k, v := range inputs {
+		if v == "" {
+			delete(inputs, k)
+		}
+	}
+	if err := validateInputNames(inputs); err != nil {
+		return aiError(err)
+	}
+	file := ""
+	if len(inputs) > 0 {
+		f, err := writeInputsFile(inputs)
+		if err != nil {
+			return aiError(fmt.Errorf("verify inputs: %w", err))
+		}
+		defer os.Remove(f)
+		file = f
+	}
+	args, err := recordVerifyArgs(draftDir, full, file)
 	return a.runAutomationCLI(automationLongCLITimeout, args, err)
 }
 

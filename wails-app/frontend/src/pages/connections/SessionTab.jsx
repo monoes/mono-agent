@@ -63,9 +63,9 @@ export default function SessionTab({ automation, manifest, onChanged }) {
   return (
     <>
       <div style={{ ...panel, display: 'flex', alignItems: 'center', gap: 8 }}>
-        <Dot on={s.loggedIn} warn={!s.loggedIn && !!s.username} />
+        <Dot on={s.loggedIn} warn={!s.loggedIn && s.status === 'expired'} />
         <span style={{ ...mono, fontSize: 12, color: s.loggedIn ? 'var(--green-neon)' : 'var(--text-secondary)' }}>
-          {s.loggedIn ? `Logged in${s.username ? ` as ${s.username}` : ''}` : s.username ? `Session for ${s.username} expired` : 'Not logged in'}
+          {s.loggedIn ? `Logged in${s.username ? ` as ${s.username}` : ''}` : s.status === 'expired' ? `Session${s.username ? ` for ${s.username}` : ''} expired` : 'Not logged in'}
         </span>
         {s.expiresAt && <span style={{ ...mono, fontSize: 10, color: 'var(--text-muted)', marginLeft: 'auto' }}>expires {fmtDate(s.expiresAt)}</span>}
       </div>

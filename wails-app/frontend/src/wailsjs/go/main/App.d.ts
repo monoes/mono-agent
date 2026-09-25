@@ -23,7 +23,7 @@ export function AddSecret(arg1:string,arg2:string,arg3:string,arg4:string,arg5:s
 
 export function AddVaultImage(arg1:string,arg2:string):Promise<Record<string, any>>;
 
-export function AnalyzeRecording(arg1:string,arg2:string):Promise<string>;
+export function AnalyzeRecording(arg1:string,arg2:string,arg3:boolean):Promise<string>;
 
 export function AnswerOrgQuestion(arg1:string,arg2:string,arg3:string):Promise<string>;
 
@@ -259,7 +259,7 @@ export function InitializeMonomindProfile():Promise<string>;
 
 export function InstallAgentRuntime(arg1:string,arg2:boolean,arg3:string):Promise<string>;
 
-export function InstallAutomation(arg1:string):Promise<string>;
+export function InstallAutomation(arg1:string,arg2:string):Promise<string>;
 
 export function InstallAutomationDryRun(arg1:string):Promise<string>;
 
@@ -418,6 +418,8 @@ export function SendDraftPersonMessage(arg1:string):Promise<storage.PersonMessag
 export function SendOrgMessage(arg1:string,arg2:string):Promise<string>;
 
 export function SetApplicationStatus(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function SetAutomationTrust(arg1:string,arg2:string):Promise<string>;
 
 export function SetOAuthCredentials(arg1:string,arg2:string,arg3:string):Promise<string>;
 

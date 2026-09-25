@@ -38,8 +38,8 @@ export function AddVaultImage(arg1, arg2) {
   return window['go']['main']['App']['AddVaultImage'](arg1, arg2);
 }
 
-export function AnalyzeRecording(arg1, arg2) {
-  return window['go']['main']['App']['AnalyzeRecording'](arg1, arg2);
+export function AnalyzeRecording(arg1, arg2, arg3) {
+  return window['go']['main']['App']['AnalyzeRecording'](arg1, arg2, arg3);
 }
 
 export function AnswerOrgQuestion(arg1, arg2, arg3) {
@@ -510,8 +510,8 @@ export function InstallAgentRuntime(arg1, arg2, arg3) {
   return window['go']['main']['App']['InstallAgentRuntime'](arg1, arg2, arg3);
 }
 
-export function InstallAutomation(arg1) {
-  return window['go']['main']['App']['InstallAutomation'](arg1);
+export function InstallAutomation(arg1, arg2) {
+  return window['go']['main']['App']['InstallAutomation'](arg1, arg2);
 }
 
 export function InstallAutomationDryRun(arg1) {
@@ -828,6 +828,10 @@ export function SendOrgMessage(arg1, arg2) {
 
 export function SetApplicationStatus(arg1, arg2, arg3) {
   return window['go']['main']['App']['SetApplicationStatus'](arg1, arg2, arg3);
+}
+
+export function SetAutomationTrust(arg1, arg2) {
+  return window['go']['main']['App']['SetAutomationTrust'](arg1, arg2);
 }
 
 export function SetOAuthCredentials(arg1, arg2, arg3) {

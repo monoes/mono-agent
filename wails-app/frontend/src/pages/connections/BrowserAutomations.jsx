@@ -1,11 +1,11 @@
 // "Browser Automations" section of the Connections page (spec §7.1): one
 // card per installed package from `automation list --json`, plus the
 // Create card. Also the "Record new" explainer dialog.
-import { X, Undo2 } from 'lucide-react'
+import { X } from 'lucide-react'
 import AutomationCard, { CreateAutomationCard } from './AutomationCard.jsx'
-import { SectionHeader, ErrorBox, Chip, body, label, mono, muted } from './ui.jsx'
+import { SectionHeader, ErrorBox, body, mono, muted, useDialog } from './ui.jsx'
 
-export default function BrowserAutomations({ automations, error, onOpen, onRecord, onImport, onRestore, restoring }) {
+export default function BrowserAutomations({ automations, error, onOpen, onRecord, onImport }) {
   const all = automations || []
   const list = all.filter(a => !a.removed)
   const removed = all.filter(a => a.removed)
@@ -18,20 +18,8 @@ export default function BrowserAutomations({ automations, error, onOpen, onRecor
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: 10, marginTop: error ? 10 : 0 }}>
         {list.map(a => <AutomationCard key={a.id} automation={a} onOpen={() => onOpen(a)} />)}
         <CreateAutomationCard onRecord={onRecord} onImport={onImport} />
+        {removed.map(a => <AutomationCard key={a.id} automation={a} onOpen={() => onOpen(a)} />)}
       </div>
-      {removed.length > 0 && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
-          <span style={label}>Uninstalled built-ins</span>
-          {removed.map(a => (
-            <span key={a.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-              <Chip>{a.name || a.id} {a.version}</Chip>
-              <button className="btn btn-ghost btn-sm" onClick={() => onRestore(a)} disabled={restoring === a.id} aria-label={`Restore ${a.name || a.id}`} style={{ gap: 4, padding: '2px 8px' }}>
-                <Undo2 size={10} /> {restoring === a.id ? 'Restoring…' : 'Restore'}
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
     </section>
   )
 }
@@ -45,9 +33,10 @@ const STEPS = [
 ]
 
 export function RecordHelpDialog({ onClose }) {
+  const dialog = useDialog(onClose)
   return (
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="record-help-title" style={{ width: 500 }}>
+      <div {...dialog} className="modal" role="dialog" aria-modal="true" aria-labelledby="record-help-title" style={{ width: 500 }}>
         <div className="modal-title">
           <span id="record-help-title">Record a new automation</span>
           <button className="btn btn-ghost btn-icon" onClick={onClose} aria-label="Close"><X size={15} /></button>

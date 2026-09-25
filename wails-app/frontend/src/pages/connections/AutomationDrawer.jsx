@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { X, Download, RotateCcw, Power, Trash2, Undo2 } from 'lucide-react'
 import { api, notify } from '../../services/api.js'
 import { confirm } from '../../components/ConfirmDialog.jsx'
-import { Chip, ErrorBox, OkBox, Busy, SOURCE_LABELS, mono, muted } from './ui.jsx'
+import { Chip, ErrorBox, OkBox, Busy, SOURCE_LABELS, mono, muted, body, useDialog } from './ui.jsx'
 import OverviewTab from './OverviewTab.jsx'
 import SessionTab from './SessionTab.jsx'
 import ActionsTab from './ActionsTab.jsx'
@@ -27,8 +27,45 @@ function isOlder(a, b) {
   return false
 }
 
+// Tabs follows the ARIA tabs pattern: arrow keys, Home and End move between
+// tabs; only the selected tab is in the Tab order.
+function Tabs({ tabs, current, onSelect }) {
+  const onKeyDown = (e) => {
+    const i = tabs.indexOf(current)
+    const next = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: tabs.length - 1 }[e.key]
+    if (next === undefined) return
+    e.preventDefault()
+    const t = tabs[(next + tabs.length) % tabs.length]
+    onSelect(t)
+    document.getElementById(`automation-tab-${t}`)?.focus()
+  }
+  return (
+    <div role="tablist" aria-label="Automation sections" onKeyDown={onKeyDown} style={{ display: 'flex', gap: 2, marginTop: 14 }}>
+      {tabs.map(t => (
+        <button
+          key={t}
+          id={`automation-tab-${t}`}
+          role="tab"
+          aria-selected={current === t}
+          aria-controls="automation-tabpanel"
+          tabIndex={current === t ? 0 : -1}
+          onClick={() => onSelect(t)}
+          style={{ ...mono, fontSize: 11, padding: '7px 12px', background: 'none', border: 'none', cursor: 'pointer', color: current === t ? 'var(--cyan-bright)' : 'var(--text-muted)', borderBottom: `2px solid ${current === t ? 'var(--cyan)' : 'transparent'}`, marginBottom: -1 }}
+        >
+          {t}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 export default function AutomationDrawer({ automation, initialTab = 'Overview', onClose, onChanged }) {
   const id = automation.id
+  // An uninstalled built-in has no package to show (`automation show`
+  // refuses it): the drawer only offers Restore.
+  const removed = !!automation.removed
+  const tabs = removed ? ['Overview'] : TABS
+  const dialog = useDialog(onClose)
   const [tab, setTab] = useState(initialTab)
   const [detail, setDetail] = useState(null)
   const [error, setError] = useState('')
@@ -37,18 +74,13 @@ export default function AutomationDrawer({ automation, initialTab = 'Overview', 
 
   const load = useCallback(async () => {
     setError('')
+    if (removed) { setDetail(null); return }
     const res = await api.showAutomation(id)
     if (!res || res.error) { setError(res?.error || 'Could not load this automation.'); return }
     setDetail(res)
-  }, [id])
+  }, [id, removed])
 
   useEffect(() => { load() }, [load])
-
-  useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') onClose() }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
 
   const info = { ...automation, ...(detail?.info || {}) }
 
@@ -76,6 +108,7 @@ export default function AutomationDrawer({ automation, initialTab = 'Overview', 
   return (
     <div onClick={e => e.target === e.currentTarget && onClose()} style={{ position: 'fixed', inset: 0, background: 'rgba(4,6,10,.6)', zIndex: 1000, display: 'flex', justifyContent: 'flex-end' }}>
       <aside
+        {...dialog}
         role="dialog"
         aria-modal="true"
         aria-labelledby="automation-drawer-title"
@@ -98,29 +131,18 @@ export default function AutomationDrawer({ automation, initialTab = 'Overview', 
             </div>
             <button className="btn btn-ghost btn-icon" onClick={onClose} aria-label="Close"><X size={16} /></button>
           </div>
-          <div role="tablist" aria-label="Automation sections" style={{ display: 'flex', gap: 2, marginTop: 14 }}>
-            {TABS.map(t => (
-              <button
-                key={t}
-                role="tab"
-                aria-selected={tab === t}
-                onClick={() => setTab(t)}
-                style={{ ...mono, fontSize: 11, padding: '7px 12px', background: 'none', border: 'none', cursor: 'pointer', color: tab === t ? 'var(--cyan-bright)' : 'var(--text-muted)', borderBottom: `2px solid ${tab === t ? 'var(--cyan)' : 'transparent'}`, marginBottom: -1 }}
-              >
-                {t}
-              </button>
-            ))}
-          </div>
+          <Tabs tabs={tabs} current={tabs.includes(tab) ? tab : 'Overview'} onSelect={setTab} />
         </header>
 
-        <div role="tabpanel" aria-label={tab} style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div role="tabpanel" id="automation-tabpanel" aria-labelledby={`automation-tab-${tab}`} style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
           <ErrorBox>{error}</ErrorBox>
-          {!detail && !error && <Busy text="Loading…" />}
-          {detail && tab === 'Overview' && <OverviewTab info={info} manifest={detail.manifest || {}} issues={detail.issues || []} fragments={detail.fragments || []} />}
-          {tab === 'Session' && <SessionTab automation={info} manifest={detail?.manifest} onChanged={onChanged} />}
+          {removed && <div style={body}>This built-in is uninstalled: its workflow nodes do not run. Restore it to use it again.</div>}
+          {!removed && !detail && !error && <Busy text="Loading…" />}
+          {detail && tab === 'Overview' && <OverviewTab info={info} manifest={detail.manifest || {}} issues={detail.issues || []} fragments={detail.fragments || []} onTrustChanged={() => Promise.all([load(), onChanged?.()])} />}
+          {!removed && tab === 'Session' && <SessionTab automation={info} manifest={detail?.manifest} onChanged={onChanged} />}
           {detail && tab === 'Actions' && <ActionsTab automationId={id} actions={detail.actions || []} />}
-          {tab === 'Health' && <HealthTab automationId={id} />}
-          {tab === 'Recordings' && <RecordingsTab automationId={id} onSaved={() => Promise.all([load(), onChanged?.()])} />}
+          {!removed && tab === 'Health' && <HealthTab automationId={id} />}
+          {!removed && tab === 'Recordings' && <RecordingsTab automationId={id} onSaved={() => Promise.all([load(), onChanged?.()])} />}
         </div>
 
         {note && (
@@ -129,10 +151,10 @@ export default function AutomationDrawer({ automation, initialTab = 'Overview', 
           </div>
         )}
         <footer style={{ padding: '12px 20px', borderTop: '1px solid var(--border)', display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-          <button className="btn btn-secondary btn-sm" onClick={exportPackage} disabled={!!busy} style={{ gap: 5 }}>
+          <button className="btn btn-secondary btn-sm" onClick={exportPackage} disabled={!!busy || removed} style={{ gap: 5 }}>
             <Download size={11} /> {busy === 'export' ? 'Exporting…' : 'Export package'}
           </button>
-          {info.previousVersion && (
+          {!removed && info.previousVersion && (
             <button className="btn btn-ghost btn-sm" disabled={!!busy} style={{ gap: 5 }}
               onClick={() => lifecycle('rollback', api.rollbackAutomation, `Switch ${info.name || id} from ${info.version} to ${info.previousVersion}?`)}>
               <RotateCcw size={11} /> {isOlder(info.previousVersion, info.version) ? 'Roll back' : 'Switch back'} to {info.previousVersion}

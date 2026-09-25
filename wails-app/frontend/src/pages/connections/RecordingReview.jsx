@@ -3,15 +3,15 @@
 // first side-effecting step), `record save` stores it as an action,
 // fragment or workflow. Names are editable before saving.
 import { useEffect, useState } from 'react'
-import { ArrowLeft, ShieldCheck, Play, Save, Sparkles } from 'lucide-react'
+import { ArrowLeft, ShieldCheck, Play, Save, Sparkles, AlertTriangle } from 'lucide-react'
 import { api } from '../../services/api.js'
 import { confirm } from '../../components/ConfirmDialog.jsx'
-import { Chip, EffectChip, ErrorBox, OkBox, Busy, body, label, mono, muted, panel } from './ui.jsx'
+import { Chip, EffectChip, ErrorBox, OkBox, Busy, isRisky, body, label, mono, muted, panel } from './ui.jsx'
+import { ScriptSources } from './ImportReview.jsx'
 import { IssueList } from './OverviewTab.jsx'
 
 const VERIFY_COLORS = { pass: 'var(--green-neon)', healed: 'var(--cyan)', fail: 'var(--red)', stopped_before_side_effect: 'var(--yellow)', skipped: 'var(--text-muted)' }
 const VERIFY_LABELS = { stopped_before_side_effect: 'stopped (side effect)' }
-const RISKY = new Set(['write', 'message', 'destructive'])
 // outputList flattens ActionDef.outputs ({success: [...], ...}) or a plain list.
 function outputList(o) {
   if (Array.isArray(o)) return o
@@ -69,13 +69,14 @@ export default function RecordingReview({ recording, automationId, onBack, onSav
   const [inputNames, setInputNames] = useState({})
   const [saveAs, setSaveAs] = useState('action')
   const [attempt, setAttempt] = useState(0) // bump to re-run analyze
+  const [advanced, setAdvanced] = useState(false) // --allow-advanced
   const [verifyInputs, setVerifyInputs] = useState({}) // values the recording could not hold
 
   useEffect(() => {
     let live = true
-    setPhase('analyzing'); setError('')
+    setPhase('analyzing'); setError(''); setVerify(null)
     ;(async () => {
-      const res = await api.analyzeRecording(recording.id, automationId)
+      const res = await api.analyzeRecording(recording.id, automationId, advanced)
       if (!live) return
       if (!res || res.error) { setError(res?.error || 'Analysis failed.'); setPhase('ready'); return }
       const d = res.draft || {}
@@ -87,19 +88,25 @@ export default function RecordingReview({ recording, automationId, onBack, onSav
       setPhase('ready')
     })()
     return () => { live = false }
-  }, [recording.id, automationId, attempt])
+  }, [recording.id, automationId, attempt, advanced])
 
   const def = draft?.actionDef || {}
   const steps = def.steps || []
   const inputs = draft?.inputs || []
   const outputs = outputList(def.outputs)
   const recorded = draft?.recordedInputs || {}
-  // Inputs with no recorded value (secrets are never recorded) need a value
-  // for verify to get past the step that types them.
-  const missing = inputs.filter(i => recorded[i.name] === undefined && (i.default === undefined || i.default === null))
+  // The CLI marks inputs verify needs a value for (secrets are never
+  // recorded; required inputs with no recorded value or default).
+  const missing = inputs.filter(i => i.needsValue)
+
+  const reanalyzeAdvanced = async () => {
+    if (!(await confirm('Re-analyze with advanced steps? The AI may then write page scripts and in-page requests. They run inside the site with your login and can read and send anything the page shows. Review every script before saving.', { confirmLabel: 'Re-analyze' }))) return
+    setDraft(null)
+    setAdvanced(true)
+  }
 
   const runVerify = async (full) => {
-    if (full && RISKY.has(def.sideEffects) && !(await confirm(`Run the whole action for real? It has "${def.sideEffects}" side effects — it will act on the site with your login.`))) return
+    if (full && isRisky(def.sideEffects) && !(await confirm(`Run the whole action for real? ${def.sideEffects ? `It has "${def.sideEffects}" side effects —` : 'It declares no side-effect level, so assume'} it will act on the site with your login.`))) return
     setPhase('verifying'); setVerifyError('')
     const res = await api.verifyDraft(draftDir, full, verifyInputs)
     if (!res || (res.error && !res.steps)) setVerifyError(res?.error || 'Verify failed.')
@@ -172,6 +179,14 @@ export default function RecordingReview({ recording, automationId, onBack, onSav
           </div>
 
           <IssueList issues={draft.lint} />
+          <ScriptSources sources={draft.scriptSources} title="Scripts the AI wrote" />
+          {!advanced && (
+            <div style={{ ...panel, display: 'flex', gap: 10, alignItems: 'center' }}>
+              <AlertTriangle size={14} color="var(--yellow)" style={{ flexShrink: 0 }} />
+              <span style={{ ...body, fontSize: 11, flex: 1 }}>The draft uses only declarative steps. If the site needs it, the AI can also use page scripts — powerful, and risky.</span>
+              <button className="btn btn-ghost btn-sm" onClick={reanalyzeAdvanced} disabled={busy}>Allow advanced steps…</button>
+            </div>
+          )}
 
           <div style={{ ...panel, display: 'flex', flexDirection: 'column', gap: 8 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
@@ -185,7 +200,7 @@ export default function RecordingReview({ recording, automationId, onBack, onSav
                 {missing.map(i => (
                   <div key={i.name} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                     <span style={{ ...mono, fontSize: 10.5, color: 'var(--text)', width: 140, overflow: 'hidden', textOverflow: 'ellipsis' }}>{i.name}</span>
-                    <input type={i.type === 'secret' || i.format === 'secret' || /pass|secret|token|pin|card/i.test(i.name) ? 'password' : 'text'} autoComplete="off" aria-label={`Value for ${i.name} during verify`} value={verifyInputs[i.name] || ''}
+                    <input type={i.secret ? 'password' : 'text'} autoComplete="off" aria-label={`Value for ${i.name} during verify`} value={verifyInputs[i.name] || ''}
                       onChange={e => setVerifyInputs(m => ({ ...m, [i.name]: e.target.value }))} style={{ ...inputStyle, flex: 1 }} />
                   </div>
                 ))}
