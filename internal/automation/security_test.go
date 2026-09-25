@@ -252,3 +252,21 @@ func TestReviewSecurityFields(t *testing.T) {
 		t.Errorf("computed tier: %s %s", rv.ComputedTier, rv.SocialPlatform)
 	}
 }
+
+func TestSocialPlatformForHost(t *testing.T) {
+	cases := map[string]string{
+		"www.instagram.com": "instagram", "INSTAGRAM.COM.": "instagram", "m.x.com:443": "x",
+		"*.twitter.com": "x", "www.linkedin.com": "linkedin", "[::1]": "", "notx.com": "", "x.com.evil.org": "",
+	}
+	for host, want := range cases {
+		got, ok := SocialPlatformForHost(host)
+		if got != want || ok != (want != "") {
+			t.Errorf("%q → %q,%v want %q", host, got, ok, want)
+		}
+	}
+	d := SocialDomains()
+	d["instagram.com"] = "tampered"
+	if SocialDomains()["instagram.com"] != "instagram" {
+		t.Error("SocialDomains is not a copy")
+	}
+}

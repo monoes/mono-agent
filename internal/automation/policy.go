@@ -2,6 +2,7 @@ package automation
 
 import (
 	"fmt"
+	"net"
 	"strings"
 
 	"github.com/monoes/mono-agent/internal/bot"
@@ -19,6 +20,33 @@ var socialDomains = map[string]string{
 	"threads.net":   "instagram",
 }
 
+// SocialDomains returns a copy of the social site list: registrable domain
+// → the platform whose bot gate decides it.
+func SocialDomains() map[string]string {
+	out := make(map[string]string, len(socialDomains))
+	for d, p := range socialDomains {
+		out[d] = p
+	}
+	return out
+}
+
+// SocialPlatformForHost maps a host (any case, optional port, trailing dot,
+// "*." glob prefix) to its social platform: the host is a social domain or
+// a subdomain of one (www.instagram.com → instagram).
+func SocialPlatformForHost(host string) (string, bool) {
+	host = strings.TrimSuffix(strings.TrimPrefix(strings.ToLower(strings.TrimSpace(host)), "*."), ".")
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	for sd, platform := range socialDomains {
+		if host == sd || strings.HasSuffix(host, "."+sd) {
+			return platform, true
+		}
+	}
+	return "", false
+}
+
 // socialBuild reports whether social automation is compiled into this
 // binary. The bot gate is per platform; any gated platform stands for the
 // whole social build (they are switched together by the nosocial tag).
@@ -28,14 +56,8 @@ func socialBuild() bool { return bot.PlatformCompiledIn("instagram") }
 // manifest is not social).
 func socialPlatform(m Manifest) string {
 	for _, d := range m.Site.Domains {
-		host := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(d)), "*.")
-		if i := strings.IndexByte(host, ':'); i >= 0 {
-			host = host[:i]
-		}
-		for sd, platform := range socialDomains {
-			if host == sd || strings.HasSuffix(host, "."+sd) {
-				return platform
-			}
+		if platform, ok := SocialPlatformForHost(d); ok {
+			return platform
 		}
 	}
 	if m.Policy.Tier == "social" {
