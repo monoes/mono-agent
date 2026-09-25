@@ -68,10 +68,15 @@ func PrimaryArtifact(artifacts []string) string {
 }
 
 // FromEntries maps inbox entries to vault rows, skipping any envelope with
-// no artifact to open.
+// no artifact to open and every activity recording: a recording is typed
+// values and DOM around them, not a document, and must not surface in
+// Documents or anything fed from it (security review M8).
 func FromEntries(entries []capture.Entry) []vault.CaptureDocument {
 	out := make([]vault.CaptureDocument, 0, len(entries))
 	for _, e := range entries {
+		if e.Meta.Source == capture.SourceRecording {
+			continue
+		}
 		primary := PrimaryArtifact(e.Artifacts)
 		if primary == "" {
 			continue

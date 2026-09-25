@@ -250,3 +250,24 @@ func TestDeleteDocument_RefusesANonEnvelopeCaptureDir(t *testing.T) {
 		t.Fatalf("file outside an inbox was removed: %v", err)
 	}
 }
+
+func TestSync_SkipsActivityRecordings(t *testing.T) {
+	db := newTestDB(t)
+	inbox, err := capture.ProfileInbox(profileID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := writeCapture(t, inbox, "2026-09-22T10-20-19Z-example-com",
+		meta("Example article", "https://example.com/a", "2026-09-22T10:20:19Z"), "readable.md")
+	rec := meta("Recording", "https://example.com/login", "2026-09-22T11:00:00Z")
+	rec["source"] = capture.SourceRecording
+	writeCapture(t, inbox, "2026-09-22T11-00-00Z-example-com-login", rec, "events.jsonl", "dom-e1.html")
+
+	added, _, errs := capturedocs.Sync(context.Background(), db.DB, profileID)
+	if len(errs) != 0 || added != 1 {
+		t.Fatalf("Sync = added %d errs %v; want only the page", added, errs)
+	}
+	if rows := listByDir(t, db); len(rows) != 1 || rows[page].Filename != "Example article" {
+		t.Fatalf("rows = %+v", rows)
+	}
+}

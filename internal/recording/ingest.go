@@ -32,6 +32,9 @@ type Ingest struct {
 	// IdleTimeout ends a recording no frame has touched for this long.
 	// Zero means DefaultIdleTimeout.
 	IdleTimeout time.Duration
+	// MaxRecordings caps recordings per inbox; zero means
+	// MaxRecordingsPerInbox.
+	MaxRecordings int
 
 	mu       sync.Mutex
 	active   map[string]*session
@@ -96,6 +99,7 @@ type session struct {
 	dir        string
 	start      Frame
 	seen       map[string]bool
+	sensitive  map[string]bool // events on a sensitive field: their snippets lose every value
 	events     int
 	bytes      int64
 	dropEvents int
@@ -200,7 +204,7 @@ func (in *Ingest) session(f *Frame, now time.Time) (*session, error) {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return nil, fmt.Errorf("create recording spool: %w", err)
 		}
-		s = &session{id: f.RecordingID, dir: dir, seen: map[string]bool{}}
+		s = &session{id: f.RecordingID, dir: dir, seen: map[string]bool{}, sensitive: map[string]bool{}}
 		if f.Op != OpStart {
 			s.notes = append(s.notes, "no start frame was received")
 			s.start = Frame{RecordingID: f.RecordingID, Profile: f.Profile, StartedAt: now.UnixMilli()}
@@ -304,7 +308,7 @@ func adoptSpool(dir string) (*session, error) {
 	if !ValidID(id) {
 		return nil, nil
 	}
-	s := &session{id: id, dir: dir, seen: map[string]bool{}, touched: info.ModTime()}
+	s := &session{id: id, dir: dir, seen: map[string]bool{}, sensitive: map[string]bool{}, touched: info.ModTime()}
 	if blob, err := os.ReadFile(filepath.Join(dir, startFile)); err == nil {
 		_ = json.Unmarshal(blob, &s.start)
 	}
@@ -314,6 +318,9 @@ func adoptSpool(dir string) (*session, error) {
 		if !s.seen[ev.ID] {
 			s.seen[ev.ID] = true
 			s.events++
+		}
+		if SensitiveTarget(ev.Target) {
+			s.sensitive[ev.ID] = true
 		}
 	}
 	entries, _ := os.ReadDir(dir)

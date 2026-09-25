@@ -130,8 +130,9 @@ func TestIngestReenforcesPrivacy(t *testing.T) {
 	for _, e := range []*Event{pw, cc, plain} {
 		mustHandle(t, in, Frame{Op: OpEvent, RecordingID: "r", Event: e})
 	}
-	mustHandle(t, in, Frame{Op: OpSnapshot, RecordingID: "r", EventID: "e1",
-		Data: `<form><input type="password" value="hunter2" name=p><input name="u" value="alice"></form>`})
+	form := `<form><input type="password" value="hunter2" name=p><input name="u" value="alice"></form>`
+	mustHandle(t, in, Frame{Op: OpSnapshot, RecordingID: "r", EventID: "e1", Data: form})
+	mustHandle(t, in, Frame{Op: OpSnapshot, RecordingID: "r", EventID: "e3", Data: form})
 	out := mustHandle(t, in, Frame{Op: OpStop, RecordingID: "r"})
 	res, err := in.Finalize(out.Stopped)
 	if err != nil {
@@ -145,9 +146,13 @@ func TestIngestReenforcesPrivacy(t *testing.T) {
 	if !events[0].Masked || !events[1].Masked || events[2].Masked || events[2].Value != "alice" {
 		t.Fatalf("masking wrong: %+v", events)
 	}
-	dom, _ := DOMSnippet(res.Path, "e1")
-	if strings.Contains(dom, "hunter2") || !strings.Contains(dom, `value="alice"`) {
-		t.Fatalf("snapshot scrub wrong: %s", dom)
+	// The snippet of an event on a sensitive field loses every value; any
+	// other snippet loses only the sensitive inputs' values.
+	if dom, _ := DOMSnippet(res.Path, "e1"); strings.Contains(dom, "hunter2") || strings.Contains(dom, "alice") {
+		t.Fatalf("sensitive event's snippet kept a value: %s", dom)
+	}
+	if dom, _ := DOMSnippet(res.Path, "e3"); strings.Contains(dom, "hunter2") || !strings.Contains(dom, `value="alice"`) {
+		t.Fatalf("plain event's snippet scrubbed wrong: %s", dom)
 	}
 }
 

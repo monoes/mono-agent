@@ -19,9 +19,9 @@ func (s *session) applyStart(f *Frame) error {
 	s.start = Frame{
 		RecordingID: s.id,
 		TabID:       f.TabID,
-		URL:         strings.TrimSpace(f.URL),
-		Title:       f.Title,
-		Goal:        f.Goal,
+		URL:         SanitizeURL(f.URL),
+		Title:       clipRunes(f.Title, MaxTitleRunes),
+		Goal:        clipRunes(f.Goal, MaxGoalRunes),
 		StartedAt:   f.StartedAt,
 		Profile:     strings.TrimSpace(f.Profile),
 	}
@@ -70,6 +70,9 @@ func (s *session) addEvent(ev *Event) (Outcome, error) {
 		return Outcome{}, err
 	}
 	s.seen[ev.ID] = true
+	if ev.Target != nil && ev.Target.Sensitive {
+		s.sensitive[ev.ID] = true
+	}
 	s.events++
 	s.bytes += int64(len(line)) + 1
 	return Outcome{}, nil
@@ -90,7 +93,7 @@ func (s *session) addSnapshot(f *Frame) (Outcome, error) {
 		s.dropSnaps++
 		return Outcome{Dropped: fmt.Sprintf("snapshot over %d bytes", MaxSnapshotBytes)}, nil
 	}
-	data := ScrubHTML(f.Data)
+	data := ScrubHTML(f.Data, s.sensitive[f.EventID])
 	path := filepath.Join(s.dir, name)
 	var prev int64
 	if fi, err := os.Stat(path); err == nil {
@@ -111,6 +114,7 @@ func (s *session) addNetwork(n *NetEntry) (Outcome, error) {
 	if n == nil {
 		return Outcome{}, errors.New("network frame has no net entry")
 	}
+	n.URL = SanitizeURL(n.URL)
 	line, err := json.Marshal(n)
 	if err != nil {
 		return Outcome{}, err

@@ -30,6 +30,11 @@ func (in *Ingest) Finalize(st *Stopped) (*capture.Result, error) {
 		return nil, err
 	}
 	_ = os.RemoveAll(s.dir)
+	max := in.MaxRecordings
+	if max <= 0 {
+		max = MaxRecordingsPerInbox
+	}
+	res.Warnings = append(res.Warnings, pruneInbox(filepath.Dir(res.Path), res.Path, max)...)
 	return res, nil
 }
 
@@ -57,8 +62,12 @@ func (s *session) envelope(now time.Time) (*capture.Envelope, error) {
 		events = events[:MaxEvents]
 	}
 	var buf bytes.Buffer
+	sensitive := map[string]bool{}
 	for i := range events {
 		Sanitize(&events[i])
+		if events[i].Target != nil && events[i].Target.Sensitive {
+			sensitive[events[i].ID] = true
+		}
 		line, err := json.Marshal(events[i])
 		if err != nil {
 			return nil, err
@@ -83,14 +92,15 @@ func (s *session) envelope(now time.Time) (*capture.Envelope, error) {
 			return nil, fmt.Errorf("read spooled %s: %w", name, err)
 		}
 		if isDOM {
-			b = []byte(ScrubHTML(string(b)))
+			eventID := strings.TrimSuffix(strings.TrimPrefix(name, "dom-"), ".html")
+			b = []byte(ScrubHTML(string(b), sensitive[eventID] || s.sensitive[eventID]))
 		}
 		artifacts[name] = capture.Inline(b)
 	}
 
 	meta := capture.Meta{
-		URL:     s.start.URL,
-		Title:   s.start.Title,
+		URL:     SanitizeURL(s.start.URL),
+		Title:   clipRunes(s.start.Title, MaxTitleRunes),
 		Source:  SourceRecording,
 		Profile: s.start.Profile,
 	}
@@ -101,7 +111,7 @@ func (s *session) envelope(now time.Time) (*capture.Envelope, error) {
 		meta.URL = "about:blank"
 	}
 	if meta.Title == "" {
-		meta.Title = firstNonEmpty(s.start.Goal, "Recording "+s.id)
+		meta.Title = clipRunes(firstNonEmpty(s.start.Goal, "Recording "+s.id), MaxTitleRunes)
 	}
 	started := s.start.StartedAt
 	if started <= 0 {
@@ -117,7 +127,7 @@ func (s *session) envelope(now time.Time) (*capture.Envelope, error) {
 		ExtraComplete:    s.complete,
 	}
 	if s.start.Goal != "" {
-		extra[ExtraGoal] = s.start.Goal
+		extra[ExtraGoal] = clipRunes(s.start.Goal, MaxGoalRunes)
 	}
 	if s.start.TabID != 0 {
 		extra[ExtraTabID] = s.start.TabID

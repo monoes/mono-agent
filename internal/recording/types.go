@@ -86,11 +86,16 @@ type Fingerprint struct {
 	InputType   string `json:"inputType,omitempty"`
 	// Autocomplete is the element's autocomplete attribute; ingest treats
 	// "cc-*" and the password tokens as sensitive (privacy re-check).
-	Autocomplete string      `json:"autocomplete,omitempty"`
-	CSS          string      `json:"css,omitempty"`   // structural CSS path
-	XPath        string      `json:"xpath,omitempty"` // absolute-ish XPath
-	Rect         *Rect       `json:"rect,omitempty"`
-	Candidates   []Candidate `json:"candidates"` // ranked, best first
+	Autocomplete string `json:"autocomplete,omitempty"`
+	// Sensitive is set by the recorder for a field that was ever
+	// type=password, uses -webkit-text-security, or whose name/label says
+	// pass/pin/cvv/otp/ssn/token; ingest masks its value and strips it
+	// from snippets (and sets it itself when its own check matches).
+	Sensitive  bool        `json:"sensitive,omitempty"`
+	CSS        string      `json:"css,omitempty"`   // structural CSS path
+	XPath      string      `json:"xpath,omitempty"` // absolute-ish XPath
+	Rect       *Rect       `json:"rect,omitempty"`
+	Candidates []Candidate `json:"candidates"` // ranked, best first
 }
 
 type Rect struct {
