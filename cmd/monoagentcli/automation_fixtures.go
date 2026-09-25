@@ -57,20 +57,27 @@ func newAutomationTestCmd(cfg *globalConfig) *cobra.Command {
 			defer closeRunner()
 			results := runAutomationTests(pkg, only, runner)
 			out := cmd.OutOrStdout()
-			if cfg.JSONOutput {
-				return writeJSONTo(out, map[string]any{"results": results})
-			}
 			failed := 0
-			table := newPlainTable(out, []string{"Action", "Fixture", "Result", "Message"}, nil)
 			for _, r := range results {
 				if !r.OK {
 					failed++
 				}
-				table.Append([]string{r.Action, orDash(r.Fixture), r.Status, truncateStr(r.Message, 80)})
 			}
-			table.Render()
+			if cfg.JSONOutput {
+				if err := writeJSONTo(out, map[string]any{"results": results}); err != nil {
+					return err
+				}
+			} else {
+				table := newPlainTable(out, []string{"Action", "Fixture", "Result", "Message"}, nil)
+				for _, r := range results {
+					table.Append([]string{r.Action, orDash(r.Fixture), r.Status, truncateStr(r.Message, 80)})
+				}
+				table.Render()
+			}
 			if failed > 0 {
-				return fmt.Errorf("%d test(s) failed", failed)
+				// The results already say why; with --json no second
+				// {"error"} object may follow them on stdout.
+				return reportedError{fmt.Errorf("%d test(s) failed", failed)}
 			}
 			return nil
 		},

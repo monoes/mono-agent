@@ -56,7 +56,8 @@ func withJSONErrors(cfg *globalConfig, cmd *cobra.Command) {
 	}
 	cmd.RunE = func(c *cobra.Command, args []string) error {
 		err := run(c, args)
-		if err != nil && cfg.JSONOutput {
+		var rep reportedError
+		if err != nil && cfg.JSONOutput && !errors.As(err, &rep) {
 			body := map[string]any{"error": err.Error()}
 			var re *installResultError
 			if errors.As(err, &re) {
@@ -68,6 +69,13 @@ func withJSONErrors(cfg *globalConfig, cmd *cobra.Command) {
 		return err
 	}
 }
+
+// reportedError is a failure whose details the command already printed
+// (e.g. `automation test` results): it sets the exit code, and --json
+// prints no extra {"error"} object after the output.
+type reportedError struct{ error }
+
+func (e reportedError) Unwrap() error { return e.error }
 
 // installResultError is an Install/AddAction failure that still carries the
 // result (review + issues). With --json the error object adds "issues" and

@@ -146,3 +146,31 @@ func TestAutomationFixtureFullRunPostsForm(t *testing.T) {
 	}
 	_ = automation.SourceLocal
 }
+
+// TestAutomationTestJSONExitCode: a failing test row makes the command fail
+// with --json too, and stdout stays a single JSON document.
+func TestAutomationTestJSONExitCode(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, "broken")
+	os.MkdirAll(filepath.Join(dir, "actions"), 0o755)
+	// Invalid as a local package (no domains): the validate row fails.
+	os.WriteFile(filepath.Join(dir, "automation.json"), []byte(`{"schema":"monoagent.automation/v1","id":"broken",
+		"name":"B","version":"0.1.0","site":{"startUrl":"","domains":[]},"permissions":{"steps":["log"],"scripts":[]},
+		"actions":["a"],"policy":{"tier":"standard"}}`), 0o644)
+	os.WriteFile(filepath.Join(dir, "actions", "a.json"), []byte(`{"actionType":"a","automation":"broken","steps":[{"id":"s","type":"log"}]}`), 0o644)
+
+	out, _, err := runAutomationCLI(t, home, "automation", "test", dir, "--json")
+	if err == nil {
+		t.Fatal("automation test --json succeeded with a failing row")
+	}
+	var res struct {
+		Results []fixtureResult `json:"results"`
+	}
+	dec := json.NewDecoder(strings.NewReader(out))
+	if err := dec.Decode(&res); err != nil || len(res.Results) == 0 || res.Results[0].Status != "fail" {
+		t.Fatalf("stdout %q: %v", out, err)
+	}
+	if dec.More() {
+		t.Fatalf("more than one JSON document on stdout: %q", out)
+	}
+}
