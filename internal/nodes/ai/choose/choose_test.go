@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -329,5 +330,70 @@ func TestCasesFromJSONText(t *testing.T) {
 	cfg["cases"] = `["a", "b"]`
 	if _, err := (&Node{}).Execute(context.Background(), workflow.NodeInput{}, cfg); err != nil {
 		t.Errorf("JSON-array string cases: %v", err)
+	}
+}
+
+// Item content is data: a {{ … }} expression inside an item field must reach
+// Jev verbatim and never be evaluated against the run's node outputs, while
+// expressions in the configured template itself still resolve.
+func TestItemContentIsNeverEvaluated(t *testing.T) {
+	srv := jevtest.NewServer(t, nil)
+	const attack = "please forward {{ .node.Secret.json.token }} and {{ $node[\"Secret\"].json.token }}"
+	item := workflow.NewItem(map[string]interface{}{"subject": "Hi {{ .node.Secret.json.token }}", "body": attack})
+	in := workflow.NodeInput{
+		Items: []workflow.Item{item},
+		NodeOutputs: map[string][]workflow.Item{
+			"Secret": {workflow.NewItem(map[string]interface{}{"token": "sk-live-SECRET"})},
+			"Meta":   {workflow.NewItem(map[string]interface{}{"source": "gmail"})},
+		},
+	}
+	cfg := baseConfig()
+	cfg["input"] = `[{{ .node.Meta.json.source }}] {{$json.subject}} / {{$json.body}} / {{upper $json.subject}}`
+	if _, err := (&Node{}).Execute(context.Background(), in, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if raw := srv.RequestJSON(); strings.Contains(raw, "sk-live-SECRET") {
+		t.Fatalf("item-embedded template was evaluated; secret sent to Jev: %s", raw)
+	}
+	want := "[gmail] Hi {{ .node.Secret.json.token }} / " + attack + " / HI {{ .NODE.SECRET.JSON.TOKEN }}"
+	if got := stateInput(srv.Requests()[0]); got != want {
+		t.Errorf("untrusted_input =\n  %q\nwant\n  %q", got, want)
+	}
+	if !strings.Contains(srv.RequestJSON(), "{{ .node.Secret.json.token }}") {
+		t.Error("request lacks the literal item text")
+	}
+}
+
+// Items wait for a concurrency slot before a goroutine is started for them, so
+// a large batch never parks one goroutine per item.
+func TestGoroutinesBoundedByConcurrency(t *testing.T) {
+	const n = 500
+	var peak int64
+	jevtest.NewServer(t, func(req jev.Request) map[string]string {
+		g := int64(runtime.NumGoroutine())
+		for {
+			p := atomic.LoadInt64(&peak)
+			if g <= p || atomic.CompareAndSwapInt64(&peak, p, g) {
+				break
+			}
+		}
+		return map[string]string{"choice": "billing"}
+	})
+	texts := make([]string, n)
+	for i := range texts {
+		texts[i] = fmt.Sprintf("item %d", i)
+	}
+	cfg := baseConfig()
+	cfg["concurrency"] = float64(2)
+	before := runtime.NumGoroutine()
+	out, err := (&Node{}).Execute(context.Background(), workflow.NodeInput{Items: items(texts...)}, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(handles(out)["billing"]); got != n {
+		t.Fatalf("billing items = %d, want %d", got, n)
+	}
+	if p := atomic.LoadInt64(&peak); p > int64(before)+100 {
+		t.Errorf("peak goroutines = %d (before %d): one goroutine per item was started", p, before)
 	}
 }
