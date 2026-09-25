@@ -19,6 +19,56 @@ func (s pkgSource) Load(a, t string) ([]byte, error) {
 func (s pkgSource) List() ([]string, error)                         { return nil, nil }
 func (s pkgSource) Package(automation string) action.PackageContext { return nil }
 
+// formPkg is a package context that serves forms/<action>.json.
+type formPkg struct {
+	action.PackageContext
+	forms map[string]string
+}
+
+func (p formPkg) Form(name string) ([]byte, error) {
+	if f, ok := p.forms[name]; ok {
+		return []byte(f), nil
+	}
+	return nil, fmt.Errorf("no form %s", name)
+}
+
+type formSource struct {
+	pkgSource
+	pkg formPkg
+}
+
+func (s formSource) Package(a string) action.PackageContext {
+	if a == "acme-crm" {
+		return s.pkg
+	}
+	return nil
+}
+
+func TestLoadDefaultSchema_PackageFormOverride(t *testing.T) {
+	action.SetDefSource(formSource{
+		pkgSource: pkgSource{
+			"acme-crm/create_contact": `{"actionType":"create_contact","inputs":{"required":[{"name":"email","type":"string"}]},"steps":[]}`,
+			"acme-crm/list_deals":     `{"actionType":"list_deals","inputs":{"optional":[{"name":"stage","type":"string"}]},"steps":[]}`,
+		},
+		pkg: formPkg{forms: map[string]string{
+			"create_contact": `{"credential_platform":null,"fields":[{"key":"email","label":"Work email","type":"text","required":true,"placeholder":"jane@acme.com"}]}`,
+		}},
+	})
+	t.Cleanup(func() { action.SetDefSource(nil) })
+
+	s, err := LoadDefaultSchema("acme-crm.create_contact")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Fields) != 1 || s.Fields[0].Label != "Work email" || s.Fields[0].Placeholder != "jane@acme.com" {
+		t.Errorf("forms/ override not used: %+v", s.Fields)
+	}
+	// No form for this action: generated from inputs.
+	s, _ = LoadDefaultSchema("acme-crm.list_deals")
+	fieldByKey(t, s, "username")
+	fieldByKey(t, s, "stage")
+}
+
 func fieldByKey(t *testing.T, s *NodeSchema, key string) NodeSchemaField {
 	t.Helper()
 	for _, f := range s.Fields {

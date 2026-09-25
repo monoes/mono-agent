@@ -94,12 +94,47 @@ func loadActionDefFrom(automation, actionType string) (*action.ActionDef, error)
 	return &def, nil
 }
 
-// generateActionSchema builds the form for a browser node type from its
+// formProvider is implemented by package contexts that can serve a package's
+// forms/<action>.json override.
+type formProvider interface {
+	Form(actionName string) ([]byte, error)
+}
+
+// packageForm returns the package's forms/<action>.json, which replaces the
+// generated form for that action.
+func packageForm(automation, actionType string) (*NodeSchema, bool) {
+	src := action.CurrentDefSource()
+	if src == nil {
+		return nil, false
+	}
+	fp, ok := src.Package(automation).(formProvider)
+	if !ok {
+		return nil, false
+	}
+	raw, err := fp.Form(actionType)
+	if err != nil || len(raw) == 0 {
+		return nil, false
+	}
+	var schema NodeSchema
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		return nil, false
+	}
+	if schema.Fields == nil {
+		schema.Fields = []NodeSchemaField{}
+	}
+	return &schema, true
+}
+
+// generateActionSchema builds the form for a browser node type: the
+// package's forms/ override when there is one, else one built from its
 // action's inputs. ok is false when nodeType is not a known action.
 func generateActionSchema(nodeType string) (*NodeSchema, bool) {
 	dot := strings.Index(nodeType, ".")
 	if dot <= 0 || dot == len(nodeType)-1 {
 		return nil, false
+	}
+	if form, ok := packageForm(nodeType[:dot], nodeType[dot+1:]); ok {
+		return form, true
 	}
 	def, err := loadActionDef(nodeType[:dot], nodeType[dot+1:])
 	if err != nil || def == nil {

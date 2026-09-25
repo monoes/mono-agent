@@ -58,8 +58,9 @@ type NodeSchema struct {
 //  1. its schema file (schemas/<type>.json);
 //  2. for a built-in browser automation, the shared action-suffix file
 //     (e.g. linkedin.find_by_keyword → schemas/action.find_by_keyword.json);
-//  3. for any other browser automation action, a form generated from the
-//     action's declared inputs and their ui hints.
+//  3. for any other browser automation action, the package's
+//     forms/<action>.json, else a form generated from the action's declared
+//     inputs and their ui hints.
 //
 // Returns an empty schema (no fields) when none of these applies.
 func LoadDefaultSchema(nodeType string) (*NodeSchema, error) {
