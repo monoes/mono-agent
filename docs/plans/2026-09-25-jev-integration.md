@@ -111,7 +111,7 @@ the workflow HIL functions (`GetHILItems/ApproveHIL/RejectHIL`).
 | `people_review` | 5 | suggest approve/reject; intro fit | any (suggest only) | — | person name/title/category/platform, drafted intro |
 | (config) `matching.backend=jev` | 6 | 3 gates (noul) + 4 rubric scores | — | n/a (always answers) | job posting text, knowledge excerpts |
 | `capture` | 7 | page kind | 0.75 (suggest route) | kind recorded, no suggestion | url, title, first 6,000 chars of readable.md |
-| `inbox` | 7 | intent + should_reply | 0.7 | no classification stored | message subject/body, sender name |
+| `inbox` | 7 | intent + should_reply | 0.7 | stored as unsure (no intent), not re-sent | message subject/body, sender name |
 | `people_links` | 8 | same person? (noul) | p ≥ 0.9 link-suggest | not suggested | both people's name, username, platform, website, title, bio |
 | `asks` | 9 | which waiting ask does this reply answer (+ `none`) | 0.9 ⓡ | today's path (fresh run / drop) | reply subject/body, candidate ask questions |
 | `retry` | 10 | transient / rate_limited / auth / permanent | 0.7 | retry as today | node type, **redacted** error string (ⓡ: query strings, `Bearer …`, key-like tokens and resolved vault values stripped), attempt, HTTP status |
