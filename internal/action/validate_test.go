@@ -2,6 +2,7 @@ package action
 
 import (
 	"context"
+	"encoding/json"
 	"io/fs"
 	"path"
 	"strings"
@@ -10,12 +11,63 @@ import (
 	"github.com/monoes/mono-agent/data"
 )
 
-// Every shipped built-in action validates with zero errors (no package).
+// seedPkg is a PackageContext over one embedded built-in package
+// (manifest, fragments/, scripts/, selectors.json), for validation tests.
+func seedPkg(t *testing.T, id string) *fakePkg {
+	t.Helper()
+	root := "automations/" + id
+	var m struct {
+		Site struct {
+			StartURL string   `json:"startUrl"`
+			Domains  []string `json:"domains"`
+		} `json:"site"`
+		Permissions struct {
+			Steps []string `json:"steps"`
+		} `json:"permissions"`
+		Requires struct {
+			Native string `json:"native"`
+		} `json:"requires"`
+	}
+	raw, err := data.AutomationsFS.ReadFile(root + "/automation.json")
+	if err != nil {
+		t.Fatalf("%s: %v", id, err)
+	}
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("%s manifest: %v", id, err)
+	}
+	p := &fakePkg{id: id, startURL: m.Site.StartURL, domains: m.Site.Domains, permitted: m.Permissions.Steps,
+		native: m.Requires.Native, fragments: map[string]*FragmentDef{}, scripts: map[string]string{},
+		selectors: map[string]*SelectorEntry{}}
+	frags, _ := fs.Glob(data.AutomationsFS, root+"/fragments/*.json")
+	for _, f := range frags {
+		b, _ := data.AutomationsFS.ReadFile(f)
+		var fd FragmentDef
+		if err := json.Unmarshal(b, &fd); err != nil {
+			t.Fatalf("%s: %v", f, err)
+		}
+		p.fragments[strings.TrimSuffix(path.Base(f), ".json")] = &fd
+	}
+	scripts, _ := fs.Glob(data.AutomationsFS, root+"/scripts/*")
+	for _, f := range scripts {
+		b, _ := data.AutomationsFS.ReadFile(f)
+		p.scripts[path.Base(f)] = string(b)
+	}
+	if b, err := data.AutomationsFS.ReadFile(root + "/selectors.json"); err == nil {
+		if err := json.Unmarshal(b, &p.selectors); err != nil {
+			t.Fatalf("%s selectors.json: %v", id, err)
+		}
+	}
+	return p
+}
+
+// Every shipped built-in action validates with zero errors against its own
+// package; native-backed (legacy) packages also validate with no package.
 func TestBuiltinActionsValidate(t *testing.T) {
 	files, err := fs.Glob(data.AutomationsFS, "automations/*/actions/*.json")
 	if err != nil || len(files) == 0 {
 		t.Fatalf("glob: %v (%d files)", err, len(files))
 	}
+	pkgs := map[string]*fakePkg{}
 	for _, f := range files {
 		raw, err := data.AutomationsFS.ReadFile(f)
 		if err != nil {
@@ -26,15 +78,17 @@ func TestBuiltinActionsValidate(t *testing.T) {
 			t.Errorf("%s: %v", f, err)
 			continue
 		}
-		for _, is := range Validate(def, nil) {
+		id := path.Base(path.Dir(path.Dir(f)))
+		if pkgs[id] == nil {
+			pkgs[id] = seedPkg(t, id)
+		}
+		for _, is := range Validate(def, pkgs[id]) {
 			if is.Severity == "error" {
 				t.Errorf("%s: %s %s: %s", f, is.StepID, is.Code, is.Message)
 			}
 		}
-		// With its (native) package attached they still validate.
-		native := &fakePkg{id: path.Base(path.Dir(path.Dir(f))), native: "x"}
-		if HasErrors(Validate(def, native)) {
-			t.Errorf("%s: errors with a native package: %+v", f, Validate(def, native))
+		if pkgs[id].native != "" && HasErrors(Validate(def, nil)) {
+			t.Errorf("%s: legacy action has errors without a package: %v", f, codes(Validate(def, nil), "error"))
 		}
 	}
 }

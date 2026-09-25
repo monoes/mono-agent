@@ -589,6 +589,7 @@ func (ae *ActionExecutor) stepType(ctx context.Context, step StepDef) (*StepResu
 		Bool("humanLike", step.HumanLike).
 		Int("textLen", len(text)).
 		Msg("typing text")
+	before, _ := readFieldValue(elem)
 
 	if step.HumanLike {
 		// Type with randomized pacing for session stability (no typo simulation).
@@ -652,6 +653,10 @@ func (ae *ActionExecutor) stepType(ctx context.Context, step StepDef) (*StepResu
 		}
 	}
 
+	// Drivers can report success while typing nothing: read the field back.
+	if failed := ae.ensureTyped(step, elem, before, text); failed != nil {
+		return failed, nil
+	}
 	return &StepResult{Success: true, Element: elem, StepID: step.ID}, nil
 }
 
