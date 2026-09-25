@@ -13,44 +13,21 @@ var templatePattern = regexp.MustCompile(`\{\{([^}]+)\}\}`)
 // action step definitions.
 type VariableResolver struct {
 	context *ExecutionContext
-	// secrets looks up a vault secret for {{secret:<name>}} when no input
-	// variable <name> is set (SetSecretLookup). nil = inputs only.
-	secrets func(name string) (string, bool)
+	// Secret handling (secrets.go): the vault lookup, the scope (current
+	// automation id) and declared-secret-input check the executor installs,
+	// and the set of values resolved so far, for redaction. Copies of the
+	// resolver share the set.
+	secrets        func(automationID, name string) (string, bool)
+	scope          func() string
+	declaredSecret func(name string) bool
+	secretVals     *secretSet
 	// maskSecrets renders {{secret:...}} as "***" (log steps).
 	maskSecrets bool
 }
 
-// secretPrefix marks a template path as a secret: {{secret:<name>}}.
-const secretPrefix = "secret:"
-
-// SetSecretLookup installs the vault lookup used by {{secret:<name>}} when
-// the action has no input variable <name>.
-func (vr *VariableResolver) SetSecretLookup(fn func(name string) (string, bool)) {
-	vr.secrets = fn
-}
-
-// resolveSecret resolves {{secret:<name>}}: the input variable <name> when
-// set (the value a secret-typed input received), else the vault lookup.
-// The value is never logged.
-func (vr *VariableResolver) resolveSecret(name string) interface{} {
-	if vr.maskSecrets {
-		return "***"
-	}
-	name = strings.TrimSpace(name)
-	if v, ok := vr.context.GetVariable(name); ok && v != nil {
-		return v
-	}
-	if vr.secrets != nil {
-		if v, ok := vr.secrets(name); ok {
-			return v
-		}
-	}
-	return nil
-}
-
 // NewVariableResolver creates a resolver bound to the given execution context.
 func NewVariableResolver(ctx *ExecutionContext) *VariableResolver {
-	return &VariableResolver{context: ctx}
+	return &VariableResolver{context: ctx, secretVals: &secretSet{}}
 }
 
 // Resolve replaces all {{variable.path}} occurrences in template with their

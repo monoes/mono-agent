@@ -464,6 +464,8 @@ func NewActionExecutor(
 		handlers:           make(map[string]StepHandler),
 		reachedIndexByLoop: make(map[string]int),
 	}
+	ae.resolver.scope = ae.secretScope
+	ae.resolver.declaredSecret = func(name string) bool { return ae.secretInputNames()[name] }
 	ae.initHandlers()
 	return ae
 }
@@ -526,6 +528,11 @@ func (ae *ActionExecutor) Execute(action *StorageAction) (*ExecutionResult, erro
 // errors. In safe mode a run that stops before a side-effect step returns
 // success; SafeStopped reports where.
 func (ae *ActionExecutor) ExecuteDef(action *StorageAction, actionDef *ActionDef) (*ExecutionResult, error) {
+	res, err := ae.executeDef(action, actionDef)
+	return res, ae.redactErr(err)
+}
+
+func (ae *ActionExecutor) executeDef(action *StorageAction, actionDef *ActionDef) (*ExecutionResult, error) {
 	ae.startTime = time.Now()
 	ae.action = action
 	ae.actionDef = actionDef
@@ -536,6 +543,7 @@ func (ae *ActionExecutor) ExecuteDef(action *StorageAction, actionDef *ActionDef
 
 	// Seed the execution context with action fields.
 	ae.seedVariables(action)
+	ae.registerSecretInputs()
 
 	// Validate declared required inputs before executing anything.
 	if err := ae.validateRequiredInputs(actionDef); err != nil {
@@ -849,6 +857,7 @@ func (ae *ActionExecutor) executeSteps(ctx context.Context, steps []StepDef) err
 
 		result, err := handler(ctx, resolved)
 		result, err = ae.applyUntil(ctx, resolved, result, err)
+		result, err = ae.redactStep(result, err)
 		if herr := ae.afterStep(resolved, result, err); herr != nil {
 			return herr
 		}
@@ -958,7 +967,7 @@ func (ae *ActionExecutor) handleOnSuccess(sa *SuccessAction) {
 			items := make([]map[string]interface{}, len(ae.execCtx.ExtractedItems))
 			copy(items, ae.execCtx.ExtractedItems)
 			ae.execCtx.mu.Unlock()
-			if err := ae.db.SaveExtractedData(ae.action.ID, items); err != nil {
+			if err := ae.db.SaveExtractedData(ae.action.ID, ae.redactItems(items)); err != nil {
 				ae.logger.Warn().Err(err).Msg("failed to save extracted data on success callback")
 			}
 		}
@@ -1322,6 +1331,7 @@ func (ae *ActionExecutor) emitEvent(event ExecutionEvent) {
 	if ae.events == nil {
 		return
 	}
+	event.Message = ae.redact(event.Message)
 	select {
 	case ae.events <- event:
 	default:
@@ -1337,11 +1347,16 @@ func (ae *ActionExecutor) buildResult() *ExecutionResult {
 	ae.execCtx.mu.Lock()
 	defer ae.execCtx.mu.Unlock()
 
-	extracted := make([]map[string]interface{}, len(ae.execCtx.ExtractedItems))
-	copy(extracted, ae.execCtx.ExtractedItems)
+	extracted := ae.redactItems(ae.execCtx.ExtractedItems)
+	if extracted == nil {
+		extracted = []map[string]interface{}{}
+	}
 
 	failed := make([]FailedItem, len(ae.execCtx.FailedItems))
 	copy(failed, ae.execCtx.FailedItems)
+	for i := range failed {
+		failed[i].Error = ae.redactErr(failed[i].Error)
+	}
 
 	return &ExecutionResult{
 		ExtractedItems: extracted,

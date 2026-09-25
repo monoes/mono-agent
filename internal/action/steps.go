@@ -186,7 +186,7 @@ func (ae *ActionExecutor) stepNavigate(ctx context.Context, step StepDef) (*Step
 
 	ae.logger.Debug().
 		Str("stepID", step.ID).
-		Str("url", targetURL).
+		Str("url", ae.redact(targetURL)).
 		Dur("timeout", timeout).
 		Msg("navigating")
 
@@ -1483,7 +1483,7 @@ func (ae *ActionExecutor) stepUpdateProgress(ctx context.Context, step StepDef) 
 	// Apply variable assignments from the Set map.
 	if step.Set != nil {
 		for key, value := range step.Set {
-			resolved := ae.resolver.ResolveValue(value)
+			resolved := value // already resolved by ResolveStepDef; never twice
 			ae.execCtx.SetVariable(key, resolved)
 			ae.logger.Debug().
 				Str("stepID", step.ID).
@@ -1597,7 +1597,7 @@ func (ae *ActionExecutor) stepSaveData(ctx context.Context, step StepDef) (*Step
 
 	// Persist to storage.
 	if ae.db != nil && ae.action != nil && len(dataToSave) > 0 {
-		if err := ae.db.SaveExtractedData(ae.action.ID, dataToSave); err != nil {
+		if err := ae.db.SaveExtractedData(ae.action.ID, ae.redactItems(dataToSave)); err != nil {
 			ae.logger.Warn().Err(err).Msg("failed to save extracted data")
 			return &StepResult{
 				Success: false,
@@ -1636,9 +1636,9 @@ func (ae *ActionExecutor) stepMarkFailed(ctx context.Context, step StepDef) (*St
 
 	errMsg := "step marked as failed"
 	if step.Text != "" {
-		errMsg = ae.resolver.Resolve(step.Text)
+		errMsg = step.Text // resolved once by ResolveStepDef
 	} else if step.Description != "" {
-		errMsg = ae.resolver.Resolve(step.Description)
+		errMsg = step.Description
 	}
 
 	ae.execCtx.AddFailedItem(FailedItem{
@@ -1692,7 +1692,7 @@ func (ae *ActionExecutor) stepLog(ctx context.Context, step StepDef) (*StepResul
 		}
 	}
 
-	resolved := ae.resolver.Resolve(msg)
+	resolved := msg // resolved (secrets masked) by ResolveStepDef; never twice
 
 	ae.logger.Info().
 		Str("stepID", step.ID).
@@ -1746,7 +1746,7 @@ func (ae *ActionExecutor) stepCallBotMethod(ctx context.Context, step StepDef) (
 	// the first argument so bot methods have access to the browser page.
 	resolvedArgs := []interface{}{ae.page}
 	for _, arg := range step.Args {
-		resolvedArgs = append(resolvedArgs, ae.resolver.ResolveValue(arg))
+		resolvedArgs = append(resolvedArgs, arg) // resolved by ResolveStepDef
 	}
 
 	// Honor the step's timeout, if configured.

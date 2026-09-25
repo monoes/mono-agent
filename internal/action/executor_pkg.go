@@ -147,10 +147,3 @@ func (ae *ActionExecutor) applyUntil(ctx context.Context, step StepDef, result *
 	}
 	return result, nil
 }
-
-// SetSecretLookup lets {{secret:<name>}} fall back to the vault when the
-// action has no input variable <name> (spec §6.2). The runtime wires it to
-// the profile's vault; values are never logged.
-func (ae *ActionExecutor) SetSecretLookup(fn func(name string) (string, bool)) {
-	ae.resolver.SetSecretLookup(fn)
-}
