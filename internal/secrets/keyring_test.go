@@ -18,6 +18,8 @@ func resetKEKState(t *testing.T) {
 	kekAttemptsMu.Lock()
 	kekAttempts = map[string]*kekAttempt{}
 	kekAttemptsMu.Unlock()
+	forgetFilePassphrases()
+	t.Cleanup(forgetFilePassphrases)
 }
 
 func TestGetOrCreateKEK_PersistsAcrossCalls(t *testing.T) {

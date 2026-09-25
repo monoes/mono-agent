@@ -37,7 +37,13 @@ func newSecretCmd(cfg *globalConfig) *cobra.Command {
 			"per-profile file ~/.monoagent/vault/.file-keyring-<profileID> under the\n" +
 			"vault dir (file mode 0600, vault dir 0700). Every use\n" +
 			"prints a warning to stderr; only enable this where the file is protected by\n" +
-			"full-disk encryption and restrictive file permissions.",
+			"full-disk encryption and restrictive file permissions.\n" +
+			"\n" +
+			"The file keyring is protected by a passphrase. It is read from stdin, or\n" +
+			"from the terminal (/dev/tty) when stdin carries the command's own input\n" +
+			"(e.g. `secret add` reading the value, `jev key set`). Where nobody can type\n" +
+			"it (the desktop app, services), put it in a chmod-600 file and set\n" +
+			"MONOAGENT_FILE_KEYRING_PASSPHRASE_FILE=/path/to/that/file.",
 	}
 	cmd.AddCommand(
 		newSecretAddCmd(cfg),
@@ -75,6 +81,9 @@ func lookupSecretID(ctx context.Context, db *sql.DB, profileID, name string) (st
 // as-is; only a completely empty stream is an error. A trailing newline —
 // including the one scripts/import_edge_passwords.py appends — is trimmed.
 func readSecretValue(r io.Reader) (string, error) {
+	// stdin now carries data: a file-keyring passphrase prompt must use the
+	// terminal (or MONOAGENT_FILE_KEYRING_PASSPHRASE_FILE), not stdin.
+	secrets.MarkStdinConsumed()
 	reader := bufio.NewReader(r)
 	line, err := reader.ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
@@ -114,6 +123,7 @@ func parseFieldFlags(fieldFlags []string) (map[string]string, error) {
 // by the GUI (and scripts): secret material never appears in process
 // listings.
 func readSecretStdinFields(r io.Reader) (map[string]string, error) {
+	secrets.MarkStdinConsumed()
 	var payload struct {
 		Value  string            `json:"value"`
 		Fields map[string]string `json:"fields"`

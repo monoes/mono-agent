@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   deriveOutputs, deriveInputs, caseHandles, portsDependOnConfig,
   isCaseListSettled, remapSourceEdges, NODE_CONFIG_FIELDS,
+  arrayFieldItems, arrayTagLabel, normalizeConfigForSave, portRenames,
 } from './nodeConfigFields.js'
 
 const ids = ports => ports.map(p => p.id)
@@ -93,5 +94,75 @@ describe('config field fallbacks', () => {
       expect(keys).toContain(k)
     }
     expect(NODE_CONFIG_FIELDS['ai.choose'].find(x => x.key === 'api_key').default).toBe('@secret:typesafe')
+  })
+})
+
+// Regressions found driving the editor in a browser (2026-09-25).
+describe('array field editor values', () => {
+  it('object cases render as text, not as a React child (inspector crashed)', () => {
+    const items = arrayFieldItems([{ value: 'tech', handle: 'support', description: 'tech issue' }, 'billing'])
+    expect(items.map(arrayTagLabel)).toEqual(['{"value":"tech","handle":"support","description":"tech issue"}', 'billing'])
+    expect(items.map(arrayTagLabel).every(l => typeof l === 'string')).toBe(true)
+    expect(arrayTagLabel(3)).toBe('3')
+    expect(arrayTagLabel(null)).toBe('')
+  })
+
+  it('a JSON-array string is parsed, not comma-split into fragments', () => {
+    expect(arrayFieldItems('[{"value":"active","handle":"active"},"idle"]'))
+      .toEqual([{ value: 'active', handle: 'active' }, 'idle'])
+    expect(arrayFieldItems('a, b')).toEqual(['a', 'b'])
+    expect(arrayFieldItems('[not json, x')).toEqual(['[not json', 'x'])
+    expect(arrayFieldItems('')).toEqual([])
+    expect(arrayFieldItems(undefined)).toEqual([])
+  })
+})
+
+describe('normalizeConfigForSave', () => {
+  it('core.switch JSON-string cases are saved as a list (switch.go ignores strings)', () => {
+    const cfg = { field: '{{ $json.s }}', cases: '[{"value":"a","handle":"a"},"b"]' }
+    expect(normalizeConfigForSave('core.switch', cfg)).toEqual({ field: '{{ $json.s }}', cases: [{ value: 'a', handle: 'a' }, 'b'] })
+    expect(cfg.cases).toBe('[{"value":"a","handle":"a"},"b"]') // input not mutated
+  })
+
+  it('leaves mid-edit text, arrays and other node types alone', () => {
+    const mid = { cases: '[{"value":' }
+    expect(normalizeConfigForSave('core.switch', mid)).toBe(mid)
+    const arr = { cases: ['a'] }
+    expect(normalizeConfigForSave('ai.choose', arr)).toBe(arr)
+    const other = { cases: '["a"]' }
+    expect(normalizeConfigForSave('core.set', other)).toBe(other)
+    expect(normalizeConfigForSave('core.switch', null)).toEqual({})
+  })
+})
+
+describe('renaming a handle in place keeps its edges', () => {
+  const edges = [
+    { id: 'e1', source: 'sw', sourcePortId: 'active', sourcePortIdx: 0, target: 'a' },
+    { id: 'e2', source: 'sw', sourcePortId: 'default', sourcePortIdx: 2, target: 'b' },
+  ]
+  it('typing a new core.switch default_handle re-points the default edge (was dropped on the first key)', () => {
+    let prev = deriveOutputs('core.switch', { cases: ['active', 'idle'] })
+    let cur = edges
+    for (const typed of ['o', 'ot', 'oth', 'othe', 'other']) {
+      const next = deriveOutputs('core.switch', { cases: ['active', 'idle'], default_handle: typed })
+      cur = remapSourceEdges(cur, 'sw', next, prev)
+      prev = next
+    }
+    expect(cur.map(e => [e.id, e.sourcePortId, e.sourcePortIdx])).toEqual([['e1', 'active', 0], ['e2', 'other', 2]])
+  })
+
+  it('editing one case handle in the JSON editor follows the rename', () => {
+    const prev = deriveOutputs('core.switch', { cases: '[{"value":"a","handle":"active"},"idle"]' })
+    const next = deriveOutputs('core.switch', { cases: '[{"value":"a","handle":"activ"},"idle"]' })
+    expect(portRenames(prev, next)).toEqual({ active: 'activ' })
+    expect(remapSourceEdges(edges, 'sw', next, prev).map(e => e.sourcePortId)).toEqual(['activ', 'default'])
+  })
+
+  it('removing or reordering is not a rename', () => {
+    const p = deriveOutputs('ai.choose', { cases: ['billing', 'support', 'sales'] })
+    expect(portRenames(p, deriveOutputs('ai.choose', { cases: ['billing', 'sales'] }))).toEqual({})
+    expect(portRenames(p, deriveOutputs('ai.choose', { cases: ['support', 'billing', 'sales'] }))).toEqual({})
+    expect(portRenames(p, deriveOutputs('ai.choose', { cases: ['billing', 'sales', 'sales2'] }))).toEqual({})
+    expect(portRenames(null, p)).toEqual({})
   })
 })

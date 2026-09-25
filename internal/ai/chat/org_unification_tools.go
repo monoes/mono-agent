@@ -42,6 +42,7 @@ func orgUnificationToolDefs(def func(name, desc string, props map[string]interfa
 			"org_name":           strParam("The org's name"),
 			"level":              strParam("manual | mid | full"),
 			"decider":            strParam(strings.Join(orgdesign.DeciderKinds, " | ") + " (jev: TypeSafe Jev picks the verdict; the model decider handles questions and anything Jev is unsure of)"),
+			"decider_threshold":  map[string]interface{}{"type": "number", "description": "jev decider only: lowest top-verdict probability Jev decides at, in (0,1] (default 0.8)"},
 			"decider_model":      strParam("Model id for the model decider"),
 			"decider_runtime":    strParam("Runtime for the model decider (e.g. claude)"),
 			"policy":             strParam("Instructions the decider follows (operator text)"),
@@ -168,14 +169,15 @@ func (mt *MonoagentTools) setOrgGrant(ctx context.Context, args string) (string,
 }
 
 type setOrgAutonomyArgs struct {
-	OrgName          string  `json:"org_name"`
-	Level            string  `json:"level"`
-	Decider          string  `json:"decider"`
-	DeciderModel     string  `json:"decider_model"`
-	DeciderRuntime   string  `json:"decider_runtime"`
-	Policy           *string `json:"policy"`
-	OnDeciderFailure string  `json:"on_decider_failure"`
-	Confirm          bool    `json:"confirm"`
+	OrgName          string   `json:"org_name"`
+	Level            string   `json:"level"`
+	Decider          string   `json:"decider"`
+	DeciderModel     string   `json:"decider_model"`
+	DeciderRuntime   string   `json:"decider_runtime"`
+	DeciderThreshold *float64 `json:"decider_threshold"`
+	Policy           *string  `json:"policy"`
+	OnDeciderFailure string   `json:"on_decider_failure"`
+	Confirm          bool     `json:"confirm"`
 }
 
 func (mt *MonoagentTools) setOrgAutonomy(ctx context.Context, args string) (string, error) {
@@ -195,6 +197,12 @@ func (mt *MonoagentTools) setOrgAutonomy(ctx context.Context, args string) (stri
 	}
 	if a.Decider != "" {
 		cli = append(cli, "--decider", a.Decider)
+	}
+	if t := a.DeciderThreshold; t != nil {
+		if !(*t > 0 && *t <= 1) {
+			return "", fmt.Errorf("decider_threshold %v must be in (0,1]", *t)
+		}
+		cli = append(cli, "--decider-threshold", strconv.FormatFloat(*t, 'f', -1, 64))
 	}
 	if a.DeciderModel != "" {
 		cli = append(cli, "--decider-model", a.DeciderModel)

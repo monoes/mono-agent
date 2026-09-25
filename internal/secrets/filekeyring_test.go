@@ -48,7 +48,8 @@ func captureFileKeyringWarns(t *testing.T) *bytes.Buffer {
 func stubFilePassphrase(t *testing.T, passphrase string) {
 	t.Helper()
 	orig := filePassphraseFunc
-	t.Cleanup(func() { filePassphraseFunc = orig })
+	forgetFilePassphrases()
+	t.Cleanup(func() { filePassphraseFunc = orig; forgetFilePassphrases() })
 	filePassphraseFunc = func() (string, error) { return passphrase, nil }
 }
 

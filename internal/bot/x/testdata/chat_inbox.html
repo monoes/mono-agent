@@ -1,11 +1,62 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Chat / X</title>
-<style>.b{font-weight:700}</style></head>
+<style>
+  /* The few Tailwind utilities the X Chat inbox row relies on. */
+  .flex{display:flex}.flex-row{flex-direction:row}.flex-col{flex-direction:column}
+  .block{display:block}.font-medium{font-weight:500}.font-normal{font-weight:400}.font-bold{font-weight:700}
+  .text-chat-accent{color:#1d9bf0}.size-3{width:12px;height:12px}
+</style></head>
 <body>
-<!-- SYNTHETIC fixture: the newer X chat inbox (/i/chat). Invented accounts. -->
-<main><div id="list">
-  <a href="/i/chat/new">New chat</a>
-  <a href="/i/chat/abc-111" data-testid="dm-conversation-item-abc-111"><div><span>Synth Eve</span></div><div><span class="b">ping from eve</span></div></a>
-  <a href="/i/chat/abc-222" data-testid="dm-conversation-item-abc-222"><div><span>Synth Finn</span></div><div><span>old chatter</span></div></a>
-</div></main>
+<!-- SYNTHETIC fixture: the X Chat inbox (/i/chat), structure taken from the
+     live X Chat web client (2026-09): each conversation is
+     <div data-testid="dm-conversation-item-<id>"> wrapping ONE link to
+     /i/chat/<id>; conversation ids are numeric pairs ("<a>-<b>") or "g<n>"
+     for groups. A row shows the title and timestamp on one line and the
+     preview under it; an unread row renders its timestamp and preview
+     font-medium (500, not bold) plus a text-chat-accent dot with no label.
+     An own last message is prefixed "You: ". The header's New message
+     button, the Message requests row (/i/chat/requests) and Grok bots row
+     are not conversations. Every name and text is invented. -->
+<div data-testid="dm-container">
+ <div data-testid="dm-inbox-panel">
+  <header data-testid="dm-inbox-header"><div data-testid="dm-inbox-header-main">
+    <span data-testid="dm-inbox-title">Chat</span>
+    <button type="button" aria-label="New message" data-testid="dm-new-chat-button">+</button>
+  </div></header>
+  <div aria-label="Conversations" role="listbox">
+   <div data-testid="dm-conversation-scroller" id="x-chat-conversation-list"></div>
+  </div>
+ </div>
+</div>
+<script>
+const rows = [
+  // id, title, time, preview, unread, prefixYou
+  ['1111111111-2222222222', 'Synth Eve', '2m', 'ping from eve', true, false],
+  ['1111111111-3333333333', 'Synth Finn', '1h', 'sounds good', false, true],
+  ['1111111111-4444444444', 'Synth Gus', '3h', 'old chatter', false, false],
+  ['g1555555555', 'Synth Group', '1d', 'Synth Hal: see you there', true, false],
+];
+const row = ([id, title, time, preview, unread, you]) => {
+  const w = unread ? 'text-primary font-medium' : 'text-secondary font-normal';
+  const text = you
+    ? `<span class="font-medium">You: </span><span>${preview}</span>`
+    : `<span>${preview}</span>`;
+  return `<div aria-description="${title}" data-testid="dm-conversation-item-${id}" data-selected="false">` +
+    `<a href="/i/chat/${id}" class="block text-inherit no-underline outline-hidden" role="option" aria-selected="false">` +
+    `<div class="mx-4 flex flex-row items-stretch gap-4"><div class="py-3"><img alt="" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></div>` +
+    `<div class="flex min-w-0 flex-1 flex-col justify-center gap-1">` +
+      `<div class="text-body flex min-w-0 flex-row items-center justify-between gap-1.5 font-medium"><div class="min-w-0 flex-1"><div class="flex flex-row"><span>${title}</span></div></div>` +
+        `<div class="flex flex-row gap-1.5 items-center shrink-0 ${w}"><span>${time}</span></div></div>` +
+      `<div class="flex min-w-0 flex-row items-center justify-between gap-4"><div class="min-w-0 flex-1 overflow-hidden">` +
+        `<div class="flex flex-row items-center gap-1 overflow-hidden flex-1 min-w-0 ${w}"><span class="break-all hyphens-auto">${text}</span></div></div>` +
+        `<div class="flex flex-row gap-1.5 items-center shrink-0 ${w}">${unread ? '<svg class="text-chat-accent shrink-0 size-3" viewBox="0 0 8 8"><circle cx="4" cy="4" r="4" fill="currentColor"></circle></svg>' : ''}</div></div>` +
+    `</div></div></a></div>`;
+};
+setTimeout(() => {
+  document.getElementById('x-chat-conversation-list').innerHTML =
+    `<div data-testid="dm-message-requests-list-item"><a href="/i/chat/requests"><span>Message requests</span><span>2 pending</span></a></div>` +
+    `<div><a href="/i/chat/grok-bots"><span>Grok</span><span>Your bots</span></a></div>` +
+    rows.map(row).join('');
+}, 150);
+</script>
 </body></html>

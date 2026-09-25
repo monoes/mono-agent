@@ -4,14 +4,13 @@
 <body>
 <!-- SYNTHETIC fixture: an open X DM conversation. /messages/<id> uses the
      classic composer (dmComposerTextInput / dmComposerSendButton), /i/chat/<id>
-     the newer one (a textarea). The thread already holds a message with the
+     the X Chat one (dm-composer-textarea / dm-composer-send-button, bubbles
+     message-<id> > message-text-<id>, as in the live X Chat client).
+     The thread already holds a message with the
      same text the tests send, so only a NEW bubble confirms a send.
      Conversation 100-400 is broken: Send does nothing. -->
 <main role="main"><div data-testid="primaryColumn">
-  <div data-testid="DmActivityContainer" id="thread">
-    <div data-testid="messageEntry"><div data-testid="tweetText">Thanks for the message!</div></div>
-    <div data-testid="messageEntry"><div data-testid="tweetText">hey, are you around?</div></div>
-  </div>
+  <div data-testid="DmActivityContainer" id="thread"></div>
   <div id="composer"></div>
 </div></main>
 <script>
@@ -19,6 +18,24 @@ window.__sent = [];
 const chat = location.pathname.startsWith('/i/chat/');
 const broken = location.pathname.endsWith('/100-400');
 const c = document.getElementById('composer');
+const thread = document.getElementById('thread');
+let seq = 0;
+const bubble = (text) => {
+  const m = document.createElement('div');
+  if (chat) {
+    const id = 'm' + (++seq);
+    m.setAttribute('data-testid', 'message-' + id);
+    m.innerHTML = '<div data-testid="message-text-' + id + '"></div>';
+  } else {
+    m.setAttribute('data-testid', 'messageEntry');
+    m.innerHTML = '<div data-testid="tweetText"></div>';
+  }
+  m.firstChild.textContent = text;
+  thread.appendChild(m);
+};
+if (chat) thread.setAttribute('data-testid', 'dm-message-list');
+bubble('Thanks for the message!');
+bubble('hey, are you around?');
 setTimeout(() => {
   c.innerHTML = chat
     ? `<textarea data-testid="dm-composer-textarea" placeholder="Message"></textarea><button data-testid="dm-composer-send-button" aria-label="Send">➤</button>`
@@ -30,11 +47,7 @@ setTimeout(() => {
     const text = read();
     setTimeout(() => {
       window.__sent.push(text);
-      const m = document.createElement('div');
-      m.setAttribute('data-testid', 'messageEntry');
-      m.innerHTML = '<div data-testid="tweetText"></div>';
-      m.firstChild.textContent = text;
-      document.getElementById('thread').appendChild(m);
+      bubble(text);
       if (chat) box.value = ''; else box.textContent = '';
     }, 150);
   });

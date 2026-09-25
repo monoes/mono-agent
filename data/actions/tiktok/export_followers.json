@@ -2,7 +2,7 @@
   "actionType": "export_followers",
   "platform": "TIKTOK",
   "version": "1.1.0",
-  "description": "Fetch the followers (sourceType FOLLOWERS_FETCH) or following (FOLLOWING_FETCH) list of a TikTok profile: username, profile URL and display name per account",
+  "description": "Fetch the followers (sourceType FOLLOWERS_FETCH) or following (FOLLOWING_FETCH) list of a TikTok profile: username, profile URL, display name and follow state (the viewer's relationship button: Follow back, Following, Friends, …) per account",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": true,

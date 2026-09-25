@@ -13,6 +13,7 @@ import (
 
 	"github.com/monoes/mono-agent/internal/jev"
 	"github.com/monoes/mono-agent/internal/jev/jevconf"
+	"github.com/monoes/mono-agent/internal/secrets"
 
 	"github.com/spf13/cobra"
 )
@@ -367,6 +368,7 @@ func newJevAskCmd(cfg *globalConfig) *cobra.Command {
 			var raw []byte
 			var err error
 			if reqPath == "-" {
+				secrets.MarkStdinConsumed()
 				raw, err = io.ReadAll(io.LimitReader(cmd.InOrStdin(), 16<<20))
 			} else {
 				raw, err = os.ReadFile(reqPath)

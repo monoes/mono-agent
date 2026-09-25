@@ -209,7 +209,13 @@
       "pauseUntilResumed": "Hasta reanudar",
       "daemonOff": "Daemon apagado: actúa como manual",
       "daemonOffTitle": "Inicia `monoagentcli daemon` para que las decisiones se enruten",
-      "actingAs": "Actúa como {{level}}"
+      "actingAs": "Actúa como {{level}}",
+      "jevThreshold": "Jev ≥",
+      "jevThresholdHint": "Jev decide solo cuando su veredicto principal alcanza esta probabilidad (0.05–1, por defecto 0.8); por debajo decide el decisor de modelo.",
+      "jevNeedsKey": "Necesita una clave de TypeSafe:",
+      "jevSettingsLink": "Ajustes › TypeSafe Jev",
+      "jevFallback": "las preguntas y p < {{threshold}} van al decisor de modelo",
+      "jevFallbackModel": "las preguntas y p < {{threshold}} van al decisor de modelo ({{model}})"
     },
     "fullAuto": {
       "dialog": "Activar automático total",

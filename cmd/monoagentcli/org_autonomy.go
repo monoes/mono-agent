@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -396,13 +399,67 @@ func newOrgAutonomyDecisionsCmd(env *orgEnv) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printJSONValue(map[string]interface{}{"v": 1, "org": doc.Name, "decisions": ds})
+			return printJSONValue(map[string]interface{}{"v": 1, "org": doc.Name, "decisions": decisionRows(ds)})
 		},
 	}
 	c.Flags().StringVar(&run, "run", "", "Only this org run")
 	c.Flags().StringVar(&verdict, "verdict", "", "approved | denied | answered | escalated | failed")
 	c.Flags().IntVar(&limit, "limit", 200, "Most recent N")
 	return c
+}
+
+// decisionRow is one `org autonomy decisions` row: the stored decision plus,
+// when TypeSafe Jev was asked, a summary of its answer.
+type decisionRow struct {
+	orgdecide.Decision
+	Jev *jevDecisionView `json:"jev,omitempty"`
+}
+
+// jevDecisionView summarises a jev decider's answer on a decision row.
+// Decided is false when Jev's top verdict fell below the threshold (or Jev
+// failed) and the fallback model decided; Threshold is the gate in force for
+// that decision when the row records it, else null.
+type jevDecisionView struct {
+	Decided   bool     `json:"decided"`
+	Verdict   string   `json:"verdict,omitempty"`
+	P         float64  `json:"p"`
+	Threshold *float64 `json:"threshold"`
+}
+
+// jevBelowPattern reads the gate from a fallback rationale
+// ("jev <model>: <verdict> p=0.62 below 0.80 (...)").
+var jevBelowPattern = regexp.MustCompile(`^jev \S+: \S+ p=[0-9.]+ below ([0-9.]+)`)
+
+func decisionRows(ds []orgdecide.Decision) []decisionRow {
+	rows := make([]decisionRow, 0, len(ds))
+	for _, d := range ds {
+		rows = append(rows, decisionRow{Decision: d, Jev: jevView(d)})
+	}
+	return rows
+}
+
+func jevView(d orgdecide.Decision) *jevDecisionView {
+	decided := strings.HasPrefix(d.Resolver, "jev:")
+	if !decided && len(d.Probabilities) == 0 {
+		return nil
+	}
+	v := &jevDecisionView{Decided: decided}
+	keys := make([]string, 0, len(d.Probabilities))
+	for k := range d.Probabilities {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys) // ties go to the first verdict by name
+	for _, k := range keys {
+		if p := d.Probabilities[k]; v.Verdict == "" || p > v.P {
+			v.Verdict, v.P = k, p
+		}
+	}
+	if m := jevBelowPattern.FindStringSubmatch(d.Rationale); m != nil {
+		if t, err := strconv.ParseFloat(m[1], 64); err == nil {
+			v.Threshold = &t
+		}
+	}
+	return v
 }
 
 func newOrgAutonomyNeedsYouCmd(env *orgEnv) *cobra.Command {

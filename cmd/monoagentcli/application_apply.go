@@ -14,6 +14,7 @@ import (
 	"github.com/monoes/mono-agent/internal/applications"
 	"github.com/monoes/mono-agent/internal/apply"
 	"github.com/monoes/mono-agent/internal/documents"
+	"github.com/monoes/mono-agent/internal/secrets"
 
 	"github.com/spf13/cobra"
 )
@@ -38,6 +39,7 @@ var applicationApplyBridgeFunc = func() (browserpkg.ExtensionBridge, error) {
 // browser and starts an application flow).
 var confirmPromptFunc = func(prompt string) bool {
 	fmt.Fprintf(os.Stderr, "%s [y/N]: ", prompt)
+	secrets.MarkStdinConsumed()
 	reader := bufio.NewReader(os.Stdin)
 	line, err := reader.ReadString('\n')
 	if err != nil {

@@ -209,7 +209,13 @@
       "pauseUntilResumed": "Until resumed",
       "daemonOff": "Daemon off: acts as manual",
       "daemonOffTitle": "Start `monoagentcli daemon` so decisions are routed",
-      "actingAs": "Acting as {{level}}"
+      "actingAs": "Acting as {{level}}",
+      "jevThreshold": "Jev ≥",
+      "jevThresholdHint": "Jev decides only when its top verdict reaches this probability (0.05–1, default 0.8); below it the model decider decides.",
+      "jevNeedsKey": "Needs a TypeSafe key:",
+      "jevSettingsLink": "Settings › TypeSafe Jev",
+      "jevFallback": "questions and p < {{threshold}} go to the model decider",
+      "jevFallbackModel": "questions and p < {{threshold}} go to the model decider ({{model}})"
     },
     "fullAuto": {
       "dialog": "Turn on full auto",

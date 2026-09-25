@@ -20,3 +20,15 @@ func TestAutonomySetArgsDeciderKinds(t *testing.T) {
 		}
 	}
 }
+
+func TestAutonomySetArgsDeciderThreshold(t *testing.T) {
+	a, err := autonomySetArgs("growth", `{"decider":{"kind":"jev","threshold":0.85}}`)
+	eqArgs(t, a, err, []string{"autonomy", "set", "growth", "--by", "gui", "--decider", "jev", "--decider-threshold", "0.85"})
+	a, err = autonomySetArgs("growth", `{"decider":{"threshold":1}}`)
+	eqArgs(t, a, err, []string{"autonomy", "set", "growth", "--by", "gui", "--decider-threshold", "1"})
+	for _, bad := range []string{"0", "-0.1", "1.05"} {
+		if _, err := autonomySetArgs("growth", `{"decider":{"kind":"jev","threshold":`+bad+`}}`); err == nil || !strings.Contains(err.Error(), "threshold must be") {
+			t.Errorf("threshold %s: err=%v", bad, err)
+		}
+	}
+}

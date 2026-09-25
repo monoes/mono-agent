@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.70.0] - 2026-09-25
+
+### Added
+
+- **Jev in the org view.** When the org decider is `jev`, the autonomy bar
+  shows a Jev threshold field, with a pointer to Settings › TypeSafe Jev and
+  a note that the model decider takes over below the threshold. The
+  decisions feed shows Jev's confidence: "Jev p=0.93", or "model decided
+  (Jev p=0.62 below 0.8)". Expanding a decision shows the per-verdict
+  distribution. `org autonomy decisions` rows carry a `jev` summary, and the
+  MCP and chat autonomy tools know the `jev` kind and its threshold.
+
+### Fixed
+
+- **Workflow editor:**
+  - Opening an `ai.choose` or switch node whose cases are objects no longer
+    crashes the page.
+  - Renaming a handle keeps its connections.
+  - Switch cases edited as JSON are saved as a list. Before, the engine
+    ignored them and every item went to the default handle.
+- **Hosts without an OS keyring** (`MONOAGENT_ALLOW_FILE_KEYRING=1`):
+  commands that read their input from stdin (`jev key set`, `secret add`,
+  `secret add|update --stdin-json`, `secret import`, and saving the TypeSafe
+  key from the app) no longer fail with "empty file-keyring passphrase". The
+  passphrase is asked for on the terminal, or read from the chmod-600 file
+  named by the new `MONOAGENT_FILE_KEYRING_PASSPHRASE_FILE`.
+- **X DMs** match the current X Chat inbox (`/i/chat`). Requests and
+  settings links are no longer counted as conversations, and unread rows are
+  detected. An account that hasn't set an X Chat passcode now gets a clear
+  "set up or enter your X Chat passcode" error.
+- **TikTok:** follower lists include each account's follow state, and
+  comments are read from the current comment panel layout.
+
 ## [0.69.0] - 2026-09-25
 
 ### Changed

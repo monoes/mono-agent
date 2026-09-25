@@ -128,7 +128,7 @@ type Autonomy struct {
 // Decider selects who resolves decisions the level routes away from a rule
 // or a human.
 type Decider struct {
-	Kind           string `json:"kind,omitempty"` // model | boss | parent
+	Kind           string `json:"kind,omitempty"` // model | boss | parent | jev
 	Runtime        string `json:"runtime,omitempty"`
 	Model          string `json:"model,omitempty"`
 	Fallback       string `json:"fallback,omitempty"`
