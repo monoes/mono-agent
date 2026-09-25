@@ -92,6 +92,7 @@ type WaitSpec struct {
 //	lower        Field, To
 //	replace      Field, Pattern (Go regexp), With, To
 //	tree_parent  Field (depth), ID, To, Root, Carry
+//	flag         Where, To (per-item true/false from the condition)
 type TransformOp struct {
 	Op      string            `json:"op"`
 	Field   string            `json:"field,omitempty"`
