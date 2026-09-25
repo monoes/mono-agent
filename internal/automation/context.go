@@ -27,6 +27,9 @@ func (c *pkgContext) Domains() []string                  { return c.pkg.Manifest
 func (c *pkgContext) PermittedSteps() []string           { return c.pkg.Manifest.Permissions.Steps }
 func (c *pkgContext) Script(name string) (string, error) { return c.pkg.Script(name) }
 
+// Form returns forms/<action>.json (the workflow editor's form override).
+func (c *pkgContext) Form(actionName string) ([]byte, error) { return c.pkg.Form(actionName) }
+
 // Native implements action.NativeBacked: requires.native of the package.
 func (c *pkgContext) Native() string { return c.pkg.Manifest.Requires.Native }
 

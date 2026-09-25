@@ -3,6 +3,7 @@ package automation
 import (
 	"bytes"
 	"errors"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -367,5 +368,27 @@ func TestDefaultHonoursHOME(t *testing.T) {
 	}
 	if r.Root() != filepath.Join(home, ".monoagent", "automations") {
 		t.Errorf("root %s", r.Root())
+	}
+}
+
+func TestContextForm(t *testing.T) {
+	p, err := OpenDir(acmeDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, ok := p.Context().(interface{ Form(string) ([]byte, error) })
+	if !ok {
+		t.Fatal("context has no Form method")
+	}
+	if b, err := f.Form("create_contact"); err != nil || string(b) != "{}\n" {
+		t.Errorf("Form: %q %v", b, err)
+	}
+	if _, err := f.Form("list_deals"); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("missing form: %v", err)
+	}
+	for _, bad := range []string{"../automation", "a/b", ".."} {
+		if _, err := f.Form(bad); err == nil {
+			t.Errorf("Form(%q) allowed", bad)
+		}
 	}
 }

@@ -138,6 +138,19 @@ func (p *Package) Fragment(name string) (*action.FragmentDef, error) {
 	return &f, nil
 }
 
+// Form returns the raw forms/<action>.json override. A missing file is
+// an error wrapping fs.ErrNotExist.
+func (p *Package) Form(actionName string) ([]byte, error) {
+	if !safeName(actionName) {
+		return nil, fmt.Errorf("invalid action name %q", actionName)
+	}
+	b, err := fs.ReadFile(p.FS, "forms/"+actionName+".json")
+	if err != nil {
+		return nil, fmt.Errorf("automation %s: form %q: %w", p.Manifest.ID, actionName, err)
+	}
+	return b, nil
+}
+
 // Script returns scripts/<name> (".js" is appended when missing).
 func (p *Package) Script(name string) (string, error) {
 	if !strings.HasSuffix(name, ".js") {
