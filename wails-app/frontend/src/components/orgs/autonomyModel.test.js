@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   tierForClass, effectiveLevel, isPaused, routeFor, routeLabel, fullAutoImpact, classOfAction,
-  approvalToNeedsDecision, needsDecisionToApproval, DECIDERS, isDeciderKind,
+  approvalToNeedsDecision, needsDecisionToApproval, DECIDERS, isDeciderKind, parseJevThreshold, JEV_THRESHOLD,
 } from './autonomyModel.js'
 import { toMillis, formatDuration, waitedLabel, idleStopRemainingMs, idleStopLabel } from './waiting.js'
 
@@ -111,5 +111,16 @@ describe('decider kinds', () => {
     for (const k of ['model', 'boss', 'parent', 'jev']) expect(isDeciderKind(k)).toBe(true)
     expect(isDeciderKind('bogus')).toBe(false)
     expect(routeLabel('decider', 'jev')).toBe('decided by jev')
+  })
+})
+
+describe('parseJevThreshold', () => {
+  it('accepts 0.05–1 snapped to 0.05 and rejects the rest', () => {
+    expect(parseJevThreshold('0.9')).toBe(0.9)
+    expect(parseJevThreshold('0.83')).toBe(0.85)
+    expect(parseJevThreshold('1')).toBe(1)
+    expect(parseJevThreshold('0.05')).toBe(0.05)
+    for (const bad of ['', '0', '0.01', '1.2', 'abc', null]) expect(parseJevThreshold(bad)).toBeNull()
+    expect(JEV_THRESHOLD).toBe(0.8)
   })
 })

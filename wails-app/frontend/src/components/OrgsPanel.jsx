@@ -537,6 +537,19 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
     return off
   }, [loadOrgs, selectOrg, onNavigate])
 
+  // Settings › TypeSafe Jev: switch to Settings, then bring its Jev section
+  // (id "settings-jev") into view once the page has rendered.
+  const openJevSettings = useCallback(() => {
+    onNavigate?.('settings')
+    let tries = 0
+    const scroll = () => {
+      const el = document.getElementById('settings-jev')
+      if (el) el.scrollIntoView({ block: 'start' })
+      else if (++tries < 20) setTimeout(scroll, 50)
+    }
+    setTimeout(scroll, 0)
+  }, [onNavigate])
+
   // Covers the case the listener above can't: this panel didn't exist yet
   // when the org was created (App.jsx's own top-level listener caught it
   // instead, since pages here only mount after being visited once — see
@@ -716,8 +729,11 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
                 <Building2 size={12} style={{ color: 'var(--text-muted)' }} />
                 <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, fontWeight: 600, color: 'var(--text)' }}>{selected}</span>
                 {isHolding && <Chip>holding</Chip>}
-                <span style={{ flex: 1 }} />
-                <AutonomyBar orgName={selected} />
+                {/* flex-basis 0 keeps the bar beside the name and lets it wrap
+                    its own second line (the jev note) instead of the header's. */}
+                <div style={{ flex: '1 1 0', display: 'flex', justifyContent: 'flex-end' }}>
+                  <AutonomyBar orgName={selected} onOpenJevSettings={onNavigate ? openJevSettings : undefined} />
+                </div>
               </div>
               )}
               {!(designerFullscreen && tab === 'design') && (

@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"testing"
 
+	"github.com/monoes/mono-agent/internal/orgdecide"
 	"github.com/monoes/mono-agent/internal/orgdesign"
 	"github.com/monoes/mono-agent/internal/orggrant"
+	"github.com/monoes/mono-agent/internal/storage"
 )
 
 func TestOrgAutomationRoleLifecycle(t *testing.T) {
@@ -163,5 +166,55 @@ func TestOrgGroupInitAndParentDecider(t *testing.T) {
 
 	if _, err := f.run(t, "group", "status", "growth"); err == nil {
 		t.Fatal("group status on a standard org")
+	}
+}
+
+// The decisions listing carries Jev's distribution and a summary of it, so
+// the GUI can show "Jev p=0.93" or "model decided (Jev p=0.62 below 0.8)".
+func TestAutonomyDecisionsJevView(t *testing.T) {
+	f := newOrgCLIFixture(t)
+	db, err := storage.NewDatabase(f.cfg.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := orgdecide.NewStore(db.DB)
+	ctx := context.Background()
+	for _, d := range []orgdecide.Decision{
+		{ID: "d-jev", ProfileID: "default", OrgName: "growth", ItemKind: "approval", ItemRef: "a1", ItemHash: "h1", Class: "tool:x", Tier: "consequential",
+			Level: "mid", Resolver: "jev:jev-1.13", Verdict: "approved", Rationale: "jev jev-1.13: approve p=0.93 (approve 0.93, deny 0.07)",
+			Confidence: 0.9, Probabilities: map[string]float64{"approve": 0.93, "deny": 0.07}, CreatedAt: "2026-09-25T10:00:00Z"},
+		{ID: "d-fb", ProfileID: "default", OrgName: "growth", ItemKind: "approval", ItemRef: "a2", ItemHash: "h2", Class: "tool:y", Tier: "consequential",
+			Level: "mid", Resolver: "model:m", Verdict: "denied", Rationale: "jev jev-1.13: approve p=0.62 below 0.80 (approve 0.62, deny 0.38); risky",
+			Confidence: 0.5, Probabilities: map[string]float64{"approve": 0.62, "deny": 0.38}, CreatedAt: "2026-09-25T10:01:00Z"},
+		{ID: "d-model", ProfileID: "default", OrgName: "growth", ItemKind: "approval", ItemRef: "a3", ItemHash: "h3", Class: "tool:z", Tier: "consequential",
+			Level: "mid", Resolver: "model:m", Verdict: "approved", Rationale: "fine", CreatedAt: "2026-09-25T10:02:00Z"},
+	} {
+		d := d
+		if err := st.Record(ctx, &d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+
+	rows := map[string]map[string]interface{}{}
+	for _, r := range f.mustRun(t, "autonomy", "decisions", "growth")["decisions"].([]interface{}) {
+		m := r.(map[string]interface{})
+		rows[m["id"].(string)] = m
+	}
+	j := rows["d-jev"]
+	if j["confidence"] != 0.9 || j["probabilities"].(map[string]interface{})["approve"] != 0.93 {
+		t.Fatalf("jev row = %v", j)
+	}
+	if v := j["jev"].(map[string]interface{}); v["decided"] != true || v["verdict"] != "approve" || v["p"] != 0.93 || v["threshold"] != nil {
+		t.Fatalf("jev view = %v", v)
+	}
+	if v := rows["d-fb"]["jev"].(map[string]interface{}); v["decided"] != false || v["p"] != 0.62 || v["threshold"] != 0.8 {
+		t.Fatalf("fallback view = %v", v)
+	}
+	if _, ok := rows["d-model"]["jev"]; ok {
+		t.Fatalf("model row has a jev view: %v", rows["d-model"])
+	}
+	if _, ok := rows["d-model"]["probabilities"]; ok {
+		t.Fatalf("model row has probabilities: %v", rows["d-model"])
 	}
 }

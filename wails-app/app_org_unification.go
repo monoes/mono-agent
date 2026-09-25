@@ -263,6 +263,8 @@ type autonomySpec struct {
 		Runtime        string `json:"runtime"`
 		Fallback       string `json:"fallback"`
 		TimeoutSeconds *int   `json:"timeout_seconds"`
+		// Threshold is the jev decider's gate, in (0,1] (--decider-threshold).
+		Threshold *float64 `json:"threshold"`
 	} `json:"decider"`
 	Policy           *string           `json:"policy"`
 	Tiers            map[string]string `json:"tiers"`
@@ -313,6 +315,12 @@ func autonomySetArgs(org, specJSON string) ([]string, error) {
 				return nil, fmt.Errorf("autonomy spec: decider timeout_seconds must be positive")
 			}
 			args = append(args, "--decider-timeout", strconv.Itoa(*d.TimeoutSeconds))
+		}
+		if d.Threshold != nil {
+			if !(*d.Threshold > 0 && *d.Threshold <= 1) {
+				return nil, fmt.Errorf("autonomy spec: decider threshold must be in (0,1]")
+			}
+			args = append(args, "--decider-threshold", strconv.FormatFloat(*d.Threshold, 'f', -1, 64))
 		}
 	}
 	if s.Policy != nil {
