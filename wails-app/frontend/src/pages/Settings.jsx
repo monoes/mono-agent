@@ -6,6 +6,7 @@ import { GetVersion, CheckForUpdate, AppSelfUpdate } from '../wailsjs/go/main/Ap
 import { getAssistantTools, getAssistantAllowRuns, setAssistantTools, setAssistantAllowRuns } from '../lib/assistantTools.js'
 import RefreshButton from '../components/RefreshButton.jsx'
 import HealthSection from '../components/settings/HealthSection.jsx'
+import JevSection from '../components/settings/JevSection.jsx'
 
 // ── VersionRow ──────────────────────────────────────────────────────────────
 
@@ -401,6 +402,8 @@ export default function Settings({ onNavigate }) {
         </div>
 
         <AssistantToolsSection />
+
+        <JevSection />
 
         {/* Application Info */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>

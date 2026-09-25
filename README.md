@@ -368,7 +368,7 @@ monoagentcli hil reject <id>        # drop the item
 | `people.sync_outlook_message` | Sync an Outlook message into People history |
 | `vault.secret_get` / `vault.secret_save` | Read or write an entry in the encrypted secrets vault |
 
-> **TypeSafe Jev** (`browser.jev`, `ai.choose`, and opt-in features such as `org autonomy set --decider jev`, action-step element fallback, capture/inbox classification, people links) answers typed questions in ~0.3 s and never generates text. Store a key with `monoagentcli secret add --kind secret --name typesafe`, check it with `monoagentcli jev status`, and switch features on per profile with `monoagentcli jev enable <surface>`.
+> **TypeSafe Jev** (`browser.jev`, `ai.choose`, and opt-in features such as `org autonomy set --decider jev`, action-step element fallback, capture/inbox classification, people links) answers typed questions in ~0.3 s and never generates text. Store a key in Settings › TypeSafe Jev or with `monoagentcli jev key set` (key on stdin), check it with `monoagentcli jev status`, and switch features on per profile with `monoagentcli jev enable <surface>`.
 
 > **Deprecated:** `ai.chat` · `ai.extract` · `ai.classify` · `ai.transform` · `ai.agent` · `ai.embed` still exist only so old workflows fail with a migration hint — running one errors out. Use `agent.ask` (put the extraction/classification/rewrite instruction in its prompt). `ai.embed` has no replacement.
 

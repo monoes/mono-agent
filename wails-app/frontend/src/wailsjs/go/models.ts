@@ -421,6 +421,194 @@ export namespace main {
 	        this.created_at = source["created_at"];
 	    }
 	}
+	export class JevKeyRemoveResult {
+	    removed: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new JevKeyRemoveResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.removed = source["removed"];
+	    }
+	}
+	export class JevKeySetResult {
+	    key_source: string;
+	    key_entry: string;
+	    replaced: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new JevKeySetResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.key_source = source["key_source"];
+	        this.key_entry = source["key_entry"];
+	        this.replaced = source["replaced"];
+	    }
+	}
+	export class JevKeyTestResult {
+	    ok: boolean;
+	    key_source: string;
+	    models: string[];
+	    error: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new JevKeyTestResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ok = source["ok"];
+	        this.key_source = source["key_source"];
+	        this.models = source["models"];
+	        this.error = source["error"];
+	    }
+	}
+	export class JevSurface {
+	    surface: string;
+	    title: string;
+	    description: string;
+	    egress: string[];
+	    enabled: boolean;
+	    threshold: number;
+	    default_threshold: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new JevSurface(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.surface = source["surface"];
+	        this.title = source["title"];
+	        this.description = source["description"];
+	        this.egress = source["egress"];
+	        this.enabled = source["enabled"];
+	        this.threshold = source["threshold"];
+	        this.default_threshold = source["default_threshold"];
+	    }
+	}
+	export class JevStatusInfo {
+	    profile_id: string;
+	    key_source: string;
+	    key_entry: string;
+	    model: string;
+	    base_url: string;
+	    surfaces: JevSurface[];
+	
+	    static createFrom(source: any = {}) {
+	        return new JevStatusInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.profile_id = source["profile_id"];
+	        this.key_source = source["key_source"];
+	        this.key_entry = source["key_entry"];
+	        this.model = source["model"];
+	        this.base_url = source["base_url"];
+	        this.surfaces = this.convertValues(source["surfaces"], JevSurface);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class JevSurfaceResult {
+	    profile_id: string;
+	    surface: string;
+	    enabled: boolean;
+	    threshold: number;
+	    egress: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new JevSurfaceResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.profile_id = source["profile_id"];
+	        this.surface = source["surface"];
+	        this.enabled = source["enabled"];
+	        this.threshold = source["threshold"];
+	        this.egress = source["egress"];
+	    }
+	}
+	export class JevUsageRow {
+	    surface: string;
+	    calls: number;
+	    failures: number;
+	    input_tokens: number;
+	    estimated_usd: number;
+	    avg_latency_ms: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new JevUsageRow(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.surface = source["surface"];
+	        this.calls = source["calls"];
+	        this.failures = source["failures"];
+	        this.input_tokens = source["input_tokens"];
+	        this.estimated_usd = source["estimated_usd"];
+	        this.avg_latency_ms = source["avg_latency_ms"];
+	    }
+	}
+	export class JevUsageReport {
+	    profile_id: string;
+	    since: string;
+	    surfaces: JevUsageRow[];
+	    total: JevUsageRow;
+	
+	    static createFrom(source: any = {}) {
+	        return new JevUsageReport(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.profile_id = source["profile_id"];
+	        this.since = source["since"];
+	        this.surfaces = this.convertValues(source["surfaces"], JevUsageRow);
+	        this.total = this.convertValues(source["total"], JevUsageRow);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class KnowledgeSearchResult {
 	    path: string;
 	    excerpt: string;

@@ -74,7 +74,7 @@ func TestJevRegistered(t *testing.T) {
 		t.Fatalf("jev.api = %+v", *api)
 	}
 	f, ok := reg.Fix(FixJevKey)
-	if !ok || f.Safety != SafetyManual || f.Command != "monoagentcli secret add --kind secret --name typesafe" {
+	if !ok || f.Safety != SafetyManual || f.Command != "monoagentcli jev key set" {
 		t.Fatalf("fix = %+v %v", f, ok)
 	}
 }

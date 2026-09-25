@@ -486,6 +486,30 @@ export function IsReady() {
   return window['go']['main']['App']['IsReady']();
 }
 
+export function JevRemoveKey() {
+  return window['go']['main']['App']['JevRemoveKey']();
+}
+
+export function JevSetKey(arg1) {
+  return window['go']['main']['App']['JevSetKey'](arg1);
+}
+
+export function JevSetSurface(arg1, arg2, arg3) {
+  return window['go']['main']['App']['JevSetSurface'](arg1, arg2, arg3);
+}
+
+export function JevStatus() {
+  return window['go']['main']['App']['JevStatus']();
+}
+
+export function JevTestKey() {
+  return window['go']['main']['App']['JevTestKey']();
+}
+
+export function JevUsage(arg1) {
+  return window['go']['main']['App']['JevUsage'](arg1);
+}
+
 export function ListAIProviders() {
   return window['go']['main']['App']['ListAIProviders']();
 }
