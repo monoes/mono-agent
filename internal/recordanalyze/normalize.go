@@ -40,6 +40,7 @@ type Step struct {
 	Candidates  []action.SelectorCandidate `json:"candidates,omitempty"`
 	Extract     *recording.ExtractMark     `json:"extract,omitempty"`
 	Submits     bool                       `json:"submits,omitempty"`     // a folded form submit
+	Double      bool                       `json:"double,omitempty"`      // a double click
 	NavigatedTo string                     `json:"navigatedTo,omitempty"` // URL this step caused
 	Param       string                     `json:"param,omitempty"`       // user-marked input name
 	Marked      bool                       `json:"marked,omitempty"`      // user marked the value as an input
@@ -114,15 +115,24 @@ func Normalize(sum *recording.Summary, events []recording.Event) *Normalized {
 		l.Merged = append(l.Merged, ev.ID)
 	}
 
+	var prevT int64
 	for _, ev := range evs {
+		if ev.Type != recording.EvClick {
+			prevT = 0
+		}
 		if cur == "" && ev.URL != "" {
 			cur = ev.URL
 		}
 		l := last()
 		switch ev.Type {
 		case recording.EvParam:
+			// The latest mark per event wins; note "unset" removes it.
 			if ev.Param != nil && ev.Param.RefEvent != "" {
-				params[ev.Param.RefEvent] = ev.Param.Name
+				if ev.Note == "unset" {
+					delete(params, ev.Param.RefEvent)
+				} else {
+					params[ev.Param.RefEvent] = ev.Param.Name
+				}
 			}
 		case recording.EvNavigated:
 			if l != nil && l.NavigatedTo == "" && l.Kind != KindNavigate {
@@ -175,14 +185,28 @@ func Normalize(sum *recording.Summary, events []recording.Event) *Normalized {
 			}
 			add(ev, KindScroll)
 		case recording.EvClick:
-			if l != nil && l.Kind == KindClick && sameTarget(l.Target, ev.Target) && ev.T-lastT(evs, l.EventID) < 400 {
-				merge(ev) // double click
+			// A dblclick arrives as two clicks plus one with note "double".
+			if l != nil && l.Kind == KindClick && sameTarget(l.Target, ev.Target) && (ev.Note == "double" || ev.T-prevT < 400) {
+				merge(ev)
+				if ev.Note == "double" {
+					l.Double = true
+				}
+				prevT = ev.T
 				continue
 			}
 			add(ev, KindClick)
-		case recording.EvSelect, recording.EvCheck, recording.EvUpload, recording.EvExtract:
+			prevT = ev.T
+			steps[len(steps)-1].Note = strings.TrimPrefix(ev.Note, "double")
+		case recording.EvExtract:
+			// "supersedes eN" replaces an earlier pick (list upgrade, rename).
+			if ids, ok := strings.CutPrefix(ev.Note, "supersedes "); ok {
+				steps = dropSteps(steps, strings.FieldsFunc(ids, func(r rune) bool { return r == ' ' || r == ',' }))
+				ev.Note = ""
+			}
+			add(ev, KindExtract)
+		case recording.EvSelect, recording.EvCheck, recording.EvUpload:
 			kind := map[string]string{recording.EvSelect: KindSelect, recording.EvCheck: KindCheck,
-				recording.EvUpload: KindUpload, recording.EvExtract: KindExtract}[ev.Type]
+				recording.EvUpload: KindUpload}[ev.Type]
 			add(ev, kind)
 		}
 	}
@@ -221,13 +245,19 @@ func Normalize(sum *recording.Summary, events []recording.Event) *Normalized {
 	return n
 }
 
-func lastT(evs []recording.Event, id string) int64 {
-	for _, e := range evs {
-		if e.ID == id {
-			return e.T
+// dropSteps removes the steps that own any of the event ids.
+func dropSteps(steps []Step, ids []string) []Step {
+	drop := map[string]bool{}
+	for _, id := range ids {
+		drop[id] = true
+	}
+	kept := steps[:0]
+	for _, s := range steps {
+		if !drop[s.EventID] {
+			kept = append(kept, s)
 		}
 	}
-	return 0
+	return kept
 }
 
 func targetKey(fp *recording.Fingerprint) string {

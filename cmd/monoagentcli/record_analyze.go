@@ -172,6 +172,7 @@ func newRecordVerifyCmd(cfg *globalConfig) *cobra.Command {
 
 func newRecordSaveCmd(cfg *globalConfig) *cobra.Command {
 	var as, target, newID, name string
+	var renames []string
 	cmd := &cobra.Command{
 		Use:   "save <draft>",
 		Short: "Install a draft as an action, a fragment, or a workflow of actions",
@@ -184,12 +185,20 @@ func newRecordSaveCmd(cfg *globalConfig) *cobra.Command {
 			if err := applyRecordScope(cfg); err != nil {
 				return err
 			}
+			ren := map[string]string{}
+			for _, kv := range renames {
+				old, nw, ok := strings.Cut(kv, "=")
+				if !ok || old == "" || nw == "" {
+					return fmt.Errorf("--rename-input wants old=new, got %q", kv)
+				}
+				ren[old] = nw
+			}
 			reg, err := openAutomationRegistry()
 			if err != nil {
 				return err
 			}
 			res, err := recordanalyze.Save(cmd.Context(), reg, dir, recordanalyze.SaveOptions{
-				As: as, Automation: target, New: newID, Name: name,
+				As: as, Automation: target, New: newID, Name: name, RenameInputs: ren,
 				CreateWorkflow: recordWorkflowCreator(cfg),
 				LinkRecording:  linkRecording,
 			})
@@ -217,6 +226,7 @@ func newRecordSaveCmd(cfg *globalConfig) *cobra.Command {
 	cmd.Flags().StringVar(&target, "automation", "", "Save into this automation (default: the draft's)")
 	cmd.Flags().StringVar(&newID, "new", "", "Save into a new automation with this id")
 	cmd.Flags().StringVar(&name, "name", "", "Action or fragment name (default: the AI's)")
+	cmd.Flags().StringArrayVar(&renames, "rename-input", nil, "Rename an input old=new, including its {{old}} uses (repeatable)")
 	return cmd
 }
 

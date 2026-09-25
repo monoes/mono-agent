@@ -19,8 +19,10 @@ const recordAnalyzeAnswer = `{
     "actionType": "press_go",
     "description": "Press the Go button",
     "sideEffects": "write",
+    "inputs": {"required": [{"name": "label", "type": "string"}]},
     "steps": [
       {"id": "open", "type": "navigate", "url": "https://example.com/rec1"},
+      {"id": "note", "type": "log", "text": "pressing {{label}}"},
       {"id": "go", "type": "click", "configKey": "page.go_button", "intent": "the Go button", "sideEffect": true}
     ]
   },
@@ -52,14 +54,17 @@ func analyzeRec1(t *testing.T) string {
 		t.Fatalf("analyze: %v\n%s", err, out)
 	}
 	var res struct {
-		DraftDir string              `json:"draftDir"`
-		Draft    recordanalyze.Draft `json:"draft"`
+		DraftDir string                  `json:"draftDir"`
+		Draft    recordanalyze.DraftView `json:"draft"`
 	}
 	if err := json.Unmarshal([]byte(out), &res); err != nil {
 		t.Fatalf("analyze JSON: %v\n%s", err, out)
 	}
 	if res.Draft.Action != "press_go" || !res.Draft.IsNew || res.Draft.TargetAutomation != "example-go" {
 		t.Fatalf("draft = %+v", res.Draft)
+	}
+	if res.Draft.ActionDef == nil || len(res.Draft.ActionDef.Steps) != 3 || len(res.Draft.Inputs) != 1 || len(res.Draft.Selectors) != 1 {
+		t.Errorf("draft view = %+v", res.Draft)
 	}
 	for _, is := range res.Draft.Lint {
 		if is.Severity == "error" {
@@ -130,7 +135,7 @@ func TestRecordAnalyzeVerifySafeStop(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &rep); err != nil {
 		t.Fatal(err)
 	}
-	if !rep.OK || rep.StoppedAt == nil || len(rep.Steps) != 2 || rep.Steps[1].Status != recordanalyze.StatusStopped {
+	if !rep.OK || rep.StoppedAt == nil || len(rep.Steps) != 3 || rep.Steps[2].Status != recordanalyze.StatusStopped {
 		t.Errorf("report = %+v", rep)
 	}
 	if _, err := runRecordCLI(t, true, "verify", "/etc"); err == nil {
@@ -176,5 +181,32 @@ func TestRecordAnalyzeBuildWorkflow(t *testing.T) {
 	}
 	if wf.Connections[1].SourceNodeID != wf.Nodes[1].ID || wf.Connections[1].TargetNodeID != wf.Nodes[2].ID || wf.ProfileID != "p1" {
 		t.Errorf("wiring = %+v", wf.Connections)
+	}
+}
+
+func TestRecordAnalyzeSaveRenameInput(t *testing.T) {
+	dir := analyzeRec1(t)
+	out, err := runRecordCLI(t, true, "save", dir, "--new", "renamed-go", "--name", "Press Go", "--rename-input", "label=button_label")
+	if err != nil {
+		t.Fatalf("save: %v\n%s", err, out)
+	}
+	reg, err := openAutomationRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := reg.Get("renamed-go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	def, err := p.Action("press_go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(def)
+	if !strings.Contains(string(b), `"name":"button_label"`) || !strings.Contains(string(b), "{{button_label}}") {
+		t.Errorf("rename not applied: %s", b)
+	}
+	if _, err := runRecordCLI(t, true, "save", dir, "--rename-input", "label"); err == nil {
+		t.Error("malformed --rename-input accepted")
 	}
 }

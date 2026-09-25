@@ -110,3 +110,33 @@ func TestPromptCarriesAnalysis(t *testing.T) {
 		}
 	}
 }
+
+func TestAnalyzeResultCarriesDraftView(t *testing.T) {
+	res, err := Analyze(context.Background(), loadFixture(t, "form-submit"),
+		AnalyzeOptions{Home: t.TempDir(), Runner: &stubRunner{answers: []string{answer(t, "form-submit")}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(res)
+	var got struct {
+		Draft struct {
+			Action    string                     `json:"action"`
+			ActionDef map[string]any             `json:"actionDef"`
+			Inputs    []DraftInput               `json:"inputs"`
+			Selectors map[string]json.RawMessage `json:"selectors"`
+			Names     map[string]string          `json:"names"`
+			Lint      []any                      `json:"lint"`
+		} `json:"draft"`
+	}
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	d := got.Draft
+	if d.Action != "create_contact" || d.ActionDef["actionType"] != "create_contact" || len(d.Selectors) != 4 ||
+		d.Names["action"] != "create_contact" || d.Lint == nil {
+		t.Fatalf("view = %s", b)
+	}
+	if len(d.Inputs) != 3 || d.Inputs[0].Name != "email" || !d.Inputs[0].Required || d.Inputs[2].Type != "secret" {
+		t.Errorf("inputs = %+v", d.Inputs)
+	}
+}

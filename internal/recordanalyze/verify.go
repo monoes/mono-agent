@@ -262,20 +262,10 @@ func PromoteHealed(dir string, obs []Observation) ([]string, error) {
 	return promoted, os.WriteFile(path, append(out, '\n'), 0o644)
 }
 
-// PageExec replays through the normal ActionExecutor on page. The draft is
-// served to the loader by wrapping the current DefSource for the duration
-// of the run.
+// PageExec replays through the normal ActionExecutor on page, running the
+// uninstalled draft definition with ExecuteDef (which validates first).
 func PageExec(page browser.PageInterface, logger zerolog.Logger) ExecFunc {
 	return func(ctx context.Context, def *action.ActionDef, pkg action.PackageContext, inputs map[string]any, safe bool, obs action.SelectorObserver) RunOutcome {
-		raw, err := json.Marshal(def)
-		if err != nil {
-			return RunOutcome{Err: err}
-		}
-		autoID := pkg.ID()
-		prev := action.CurrentDefSource()
-		action.SetDefSource(&draftSource{inner: prev, id: autoID, name: def.ActionType, raw: raw, pkg: pkg})
-		defer action.SetDefSource(prev)
-
 		events := make(chan action.ExecutionEvent, 8192)
 		ae := action.NewActionExecutor(ctx, page, nil, nil, events, nil, logger)
 		ae.SetPackage(pkg)
@@ -286,10 +276,10 @@ func PageExec(page browser.PageInterface, logger zerolog.Logger) ExecFunc {
 			params[k] = v
 			ae.SetVariable(k, v)
 		}
-		res, err := ae.Execute(&action.StorageAction{
+		res, err := ae.ExecuteDef(&action.StorageAction{
 			ID: "verify-" + time.Now().UTC().Format("20060102T150405"), Type: def.ActionType,
-			TargetPlatform: autoID, Params: params,
-		})
+			TargetPlatform: pkg.ID(), Params: params,
+		}, def)
 		close(events)
 		out := RunOutcome{Result: res, Err: err, SafeStop: ae.SafeStopped()}
 		for ev := range events {
@@ -297,44 +287,4 @@ func PageExec(page browser.PageInterface, logger zerolog.Logger) ExecFunc {
 		}
 		return out
 	}
-}
-
-// draftSource serves one draft action on top of the installed DefSource.
-type draftSource struct {
-	inner    action.DefSource
-	id, name string
-	raw      []byte
-	pkg      action.PackageContext
-}
-
-func (s *draftSource) Load(automation, actionType string) ([]byte, error) {
-	if automation == s.id && actionType == s.name {
-		return s.raw, nil
-	}
-	if s.inner != nil {
-		return s.inner.Load(automation, actionType)
-	}
-	return nil, fmt.Errorf("action definition not found: %s/%s", automation, actionType)
-}
-
-func (s *draftSource) List() ([]string, error) {
-	var out []string
-	if s.inner != nil {
-		l, err := s.inner.List()
-		if err != nil {
-			return nil, err
-		}
-		out = l
-	}
-	return append(out, s.id+"/"+s.name), nil
-}
-
-func (s *draftSource) Package(automation string) action.PackageContext {
-	if automation == s.id {
-		return s.pkg
-	}
-	if s.inner != nil {
-		return s.inner.Package(automation)
-	}
-	return nil
 }

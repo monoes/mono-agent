@@ -119,3 +119,39 @@ func TestURLPattern(t *testing.T) {
 		}
 	}
 }
+
+// TestNormalizeRecorderQuirks covers the recorder's protocol notes:
+// "supersedes eN" extracts, "unset" params (latest mark wins), dblclick as
+// clicks + note "double", value-only select_option, and a masked card.
+func TestNormalizeRecorderQuirks(t *testing.T) {
+	a := analyzeFixture(t, "recorder-quirks")
+	want := []string{KindNavigate, KindClick, KindSelect, KindType, KindType, KindType, KindExtract}
+	if got := kinds_(a.Steps); !reflect.DeepEqual(got, want) {
+		t.Fatalf("kinds = %v, want %v", got, want)
+	}
+	if c := a.Steps[1]; !c.Double || !reflect.DeepEqual(c.Merged, []string{"e2", "e3", "e4"}) {
+		t.Errorf("dblclick = %+v", c)
+	}
+	if s := a.Steps[2]; s.Value != "won" || s.Input != "stage" {
+		t.Errorf("select = %+v", s)
+	}
+	if s := a.Steps[4]; s.Marked || s.Param != "" {
+		t.Errorf("unset param still marked: %+v", s)
+	}
+	if s := a.Steps[5]; !s.Marked || s.Param != "deal_amount" || s.Input != "deal_amount" {
+		t.Errorf("latest param should win: %+v", s)
+	}
+	if e := a.Steps[6]; e.EventID != "e14" || e.Note != "" || !e.Extract.List {
+		t.Errorf("superseding extract = %+v", e)
+	}
+	if len(a.Extracts) != 1 || a.Extracts[0].Fields[0].Name != "deal_title" {
+		t.Errorf("extracts = %+v", a.Extracts)
+	}
+	types := map[string]string{}
+	for _, in := range a.Inputs {
+		types[in.Name] = in.Type
+	}
+	if types["card_number"] != "secret" || types["stage"] != "string" || types["notes"] != "string" {
+		t.Errorf("inputs = %+v", a.Inputs)
+	}
+}

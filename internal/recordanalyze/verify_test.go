@@ -131,18 +131,3 @@ func TestPromoteHealedNoSelectors(t *testing.T) {
 		t.Errorf("jev heal (index -1) must not reorder: %v %v", got, err)
 	}
 }
-
-func TestDraftSourceServesDraft(t *testing.T) {
-	inner := &draftSource{id: "other", name: "x", raw: []byte(`{"o":1}`)}
-	s := &draftSource{inner: inner, id: "acme", name: "a", raw: []byte(`{}`)}
-	if b, err := s.Load("acme", "a"); err != nil || string(b) != "{}" {
-		t.Errorf("draft load %s %v", b, err)
-	}
-	if b, err := s.Load("other", "x"); err != nil || string(b) != `{"o":1}` {
-		t.Errorf("delegate %s %v", b, err)
-	}
-	l, _ := s.List()
-	if len(l) != 2 || l[1] != "acme/a" {
-		t.Errorf("list = %v", l)
-	}
-}

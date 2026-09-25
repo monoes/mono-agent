@@ -72,8 +72,8 @@ type AnalyzeOptions struct {
 
 // Result is `record analyze --json`.
 type Result struct {
-	DraftDir string `json:"draftDir"`
-	Draft    *Draft `json:"draft"`
+	DraftDir string     `json:"draftDir"`
+	Draft    *DraftView `json:"draft"`
 }
 
 // Analyze runs normalize → detect → AI draft → lint and writes the draft.
@@ -140,7 +140,11 @@ func Analyze(ctx context.Context, rec *Recording, opts AnalyzeOptions) (*Result,
 	if err := WriteDraft(dir, out, env, m, d); err != nil {
 		return nil, err
 	}
-	return &Result{DraftDir: dir, Draft: d}, nil
+	view, err := LoadDraftView(dir)
+	if err != nil {
+		return nil, err
+	}
+	return &Result{DraftDir: dir, Draft: view}, nil
 }
 
 func stampProvenance(out *Output, recID, goal string) {

@@ -33,10 +33,12 @@ type WorkflowCreator func(ctx context.Context, name, description string, nodes [
 
 // SaveOptions controls Save.
 type SaveOptions struct {
-	As             string // action (default) | fragment | workflow
-	Automation     string // existing automation id
-	New            string // new automation id
-	Name           string // action / fragment name override
+	As         string // action (default) | fragment | workflow
+	Automation string // existing automation id
+	New        string // new automation id
+	Name       string // action / fragment name override
+	// RenameInputs renames action inputs (old → new) before saving.
+	RenameInputs   map[string]string
 	CreateWorkflow WorkflowCreator
 	// LinkRecording records the saved automation on the recording; nil
 	// adds a warning instead.
@@ -98,6 +100,9 @@ func Save(ctx context.Context, reg Installer, dir string, opts SaveOptions) (*Sa
 		return nil, fmt.Errorf("stage draft: %w", err)
 	}
 	_ = os.Remove(filepath.Join(stage, DraftFile))
+	if err := renameStaged(stage, d.Action, opts.RenameInputs, d); err != nil {
+		return nil, err
+	}
 
 	var res *SaveResult
 	switch as {

@@ -2,6 +2,7 @@ package recordanalyze
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -180,5 +181,53 @@ func TestSplitAndUsedInputs(t *testing.T) {
 	}
 	if bumpPatch("1.2.9") != "1.2.10" || bumpPatch("x") != "0.1.0" {
 		t.Error("bumpPatch")
+	}
+}
+
+func TestSaveRenameInputs(t *testing.T) {
+	home := t.TempDir()
+	reg := openReg(t, home)
+	dir := draftFrom(t, home, "form-submit", answer(t, "form-submit"))
+	_, err := Save(context.Background(), reg, dir, SaveOptions{RenameInputs: map[string]string{
+		"email": "contact_email", "account_password": "pw"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, _ := reg.Get("acme-crm")
+	def, _ := p.Action("create_contact")
+	b, _ := json.Marshal(def)
+	s := string(b)
+	for _, want := range []string{`"name":"contact_email"`, `{{contact_email}}`, `{{secret:pw}}`, `{{full_name}}`} {
+		if !strings.Contains(s, want) {
+			t.Errorf("missing %s in %s", want, s)
+		}
+	}
+	if strings.Contains(s, "{{email}}") || strings.Contains(s, "account_password") {
+		t.Errorf("old names left: %s", s)
+	}
+	// The draft itself is untouched.
+	v, _ := LoadDraftView(dir)
+	if v.Inputs[0].Name != "email" {
+		t.Errorf("draft changed: %+v", v.Inputs)
+	}
+	for _, bad := range []map[string]string{{"nope": "x"}, {"email": "bad name"}, {"email": "full_name"}} {
+		if _, err := Save(context.Background(), reg, dir, SaveOptions{RenameInputs: bad}); err == nil {
+			t.Errorf("rename %v accepted", bad)
+		}
+	}
+}
+
+func TestRenameInputsTemplates(t *testing.T) {
+	def := &action.ActionDef{
+		Inputs: &action.InputDef{Required: []json.RawMessage{json.RawMessage(`"q"`)}},
+		Steps: []action.StepDef{{ID: "a", Type: "type", Value: "{{ q }} and {{q.x}} and {{qq}}", URL: "https://x/{{q}}"},
+			{ID: "b", Type: "for_each", Items: "{{q[0]}}", Steps: []action.StepDef{{ID: "c", Type: "log", Text: "{{q}}"}}}},
+	}
+	if err := RenameInputs(def, map[string]string{"q": "query"}); err != nil {
+		t.Fatal(err)
+	}
+	if def.Steps[0].Value != "{{ query }} and {{query.x}} and {{qq}}" || def.Steps[0].URL != "https://x/{{query}}" ||
+		def.Steps[1].Items != "{{query[0]}}" || def.Steps[1].Steps[0].Text != "{{query}}" || string(def.Inputs.Required[0]) != `"query"` {
+		t.Errorf("renamed = %+v", def.Steps)
 	}
 }
