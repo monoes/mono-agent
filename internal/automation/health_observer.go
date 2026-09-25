@@ -18,19 +18,20 @@ import (
 // writes one transaction per batch. Healing promotions run from the same
 // goroutine, after the write — never on the run's path.
 
-// SelectorPromoter promotes a healed selector candidate (spec §8.7). The
-// registry implements it (health_promote.go).
+// SelectorPromoter promotes a healed selector candidate (spec §8.7),
+// identified by content: the index a run reports is relative to the entry
+// that run saw, which a promotion may since have reordered. The registry
+// implements it (health_promote.go).
 type SelectorPromoter interface {
-	PromoteSelector(automationID, key string, candidateIndex int) error
+	PromoteCandidate(automationID, key string, c action.SelectorCandidate) error
 }
 
 // HealthOptions tunes a HealthRecorder. Zero values take the defaults.
 type HealthOptions struct {
-	Buffer          int           // queued observations before dropping (default 1024)
-	Interval        time.Duration // flush interval (default 2s)
-	MaxBatch        int           // flush early at this many pending observations (default 256)
-	PromoteCooldown time.Duration // ignore further promotions of a key for this long (default 10m)
-	Promoter        SelectorPromoter
+	Buffer   int           // queued observations before dropping (default 1024)
+	Interval time.Duration // flush interval (default 2s)
+	MaxBatch int           // flush early at this many pending observations (default 256)
+	Promoter SelectorPromoter
 }
 
 // HealthRecorder is the concrete selector observer behind HealthObserver.
@@ -46,8 +47,6 @@ type HealthRecorder struct {
 	once     sync.Once
 	now      func() time.Time
 
-	// Loop-goroutine state.
-	promotedAt    map[healthKey]time.Time
 	testHookWrite func() // tests: called before each batch write
 }
 
@@ -56,6 +55,7 @@ type healthKey struct{ id, key string }
 type healthObservation struct {
 	healthKey
 	idx        int
+	cand       *action.SelectorCandidate // the matched candidate, when the executor reports it
 	ok, healed bool
 	at         time.Time
 }
@@ -66,19 +66,29 @@ type healthDelta struct {
 	lastOK, lastFail time.Time
 	lastIdx          int
 	recent           []byte
-	promoteIdx       int // candidate to promote (>0), or -1
+	promote          *action.SelectorCandidate // healed candidate to move first, or nil
 }
 
 var _ action.SelectorObserver = (*HealthRecorder)(nil)
 
+// candidateObserver is the optional executor-side extension that also
+// reports the matched candidate; HealthRecorder implements it.
+type candidateObserver interface {
+	ObserveSelectorCandidate(automationID, key string, c *action.SelectorCandidate, candidateIndex int, ok, healed bool)
+}
+
+var _ candidateObserver = (*HealthRecorder)(nil)
+
 // HealthObserver returns the selector-health observer backed by the
 // automation_selector_health table (spec §8.7). Healed candidates are
-// promoted through the default registry. The returned value is a
+// promoted through the registry the process booted (the one installed as
+// the action loader's DefSource); with none booted, nothing is promoted —
+// never a registry under some other home. The returned value is a
 // *HealthRecorder: callers that own its lifetime should type-assert to
 // interface{ Close() error } and close it on shutdown so the last batch is
 // written.
 func HealthObserver(db *sql.DB) action.SelectorObserver {
-	return NewHealthRecorder(db, HealthOptions{Promoter: &defaultPromoter{}})
+	return NewHealthRecorder(db, HealthOptions{Promoter: bootedPromoter{}})
 }
 
 // NewHealthRecorder starts a recorder writing to db.
@@ -92,25 +102,30 @@ func NewHealthRecorder(db *sql.DB, opts HealthOptions) *HealthRecorder {
 	if opts.MaxBatch <= 0 {
 		opts.MaxBatch = 256
 	}
-	if opts.PromoteCooldown <= 0 {
-		opts.PromoteCooldown = 10 * time.Minute
-	}
 	r := &HealthRecorder{
-		db:         db,
-		opts:       opts,
-		ch:         make(chan healthObservation, opts.Buffer),
-		flushReq:   make(chan chan error),
-		done:       make(chan struct{}),
-		stopped:    make(chan struct{}),
-		now:        time.Now,
-		promotedAt: map[healthKey]time.Time{},
+		db:       db,
+		opts:     opts,
+		ch:       make(chan healthObservation, opts.Buffer),
+		flushReq: make(chan chan error),
+		done:     make(chan struct{}),
+		stopped:  make(chan struct{}),
+		now:      time.Now,
 	}
 	go r.loop()
 	return r
 }
 
 // ObserveSelector implements action.SelectorObserver. It never blocks.
+// Without the matched candidate, the outcome is counted but nothing is
+// promoted.
 func (r *HealthRecorder) ObserveSelector(automationID, key string, candidateIndex int, ok, healed bool) {
+	r.ObserveSelectorCandidate(automationID, key, nil, candidateIndex, ok, healed)
+}
+
+// ObserveSelectorCandidate is ObserveSelector plus the matched candidate
+// (nil when none matched or the Jev fallback found the element). It never
+// blocks.
+func (r *HealthRecorder) ObserveSelectorCandidate(automationID, key string, c *action.SelectorCandidate, candidateIndex int, ok, healed bool) {
 	if r == nil || automationID == "" || key == "" {
 		return
 	}
@@ -119,6 +134,10 @@ func (r *HealthRecorder) ObserveSelector(automationID, key string, candidateInde
 		return
 	}
 	o := healthObservation{healthKey: healthKey{automationID, key}, idx: candidateIndex, ok: ok, healed: healed, at: r.now()}
+	if c != nil && ok {
+		cc := *c
+		o.cand = &cc
+	}
 	select {
 	case r.ch <- o:
 	default:
@@ -215,7 +234,7 @@ func (r *HealthRecorder) loop() {
 func addObservation(pending map[healthKey]*healthDelta, o healthObservation) {
 	d := pending[o.healthKey]
 	if d == nil {
-		d = &healthDelta{promoteIdx: -1}
+		d = &healthDelta{}
 		pending[o.healthKey] = d
 	}
 	d.lastIdx = o.idx
@@ -232,30 +251,24 @@ func addObservation(pending map[healthKey]*healthDelta, o healthObservation) {
 	}
 	// The latest success decides: a later first-candidate match means the
 	// first candidate works again and nothing needs promoting.
-	d.promoteIdx = -1
-	if o.healed && o.idx > 0 {
-		d.promoteIdx = o.idx
+	d.promote = nil
+	if o.healed && o.cand != nil {
+		d.promote = o.cand
 	}
 }
 
-// promote applies healing promotions for a written batch, at most once per
-// selector per cooldown: candidate indexes are relative to the ordering the
-// run saw, so a run that started before a promotion may still report the
-// old index and must not flip the order back.
+// promote applies healing promotions for a written batch. A promotion
+// moves a candidate by content, so a stale report (a run that started
+// before an earlier promotion) is a no-op, never a flip back.
 func (r *HealthRecorder) promote(batch map[healthKey]*healthDelta) {
 	if r.opts.Promoter == nil {
 		return
 	}
-	now := r.now()
 	for k, d := range batch {
-		if d.promoteIdx <= 0 {
+		if d.promote == nil {
 			continue
 		}
-		if at, ok := r.promotedAt[k]; ok && now.Sub(at) < r.opts.PromoteCooldown {
-			continue
-		}
-		r.promotedAt[k] = now
-		if err := r.opts.Promoter.PromoteSelector(k.id, k.key, d.promoteIdx); err != nil {
+		if err := r.opts.Promoter.PromoteCandidate(k.id, k.key, *d.promote); err != nil {
 			log.Printf("automation: selector health: promote %s/%s: %v", k.id, k.key, err)
 		}
 	}
@@ -308,17 +321,23 @@ func nullTime(t time.Time) any {
 	return formatHealthTime(t)
 }
 
-// defaultPromoter promotes through the default registry, opened on first use.
-type defaultPromoter struct {
-	once sync.Once
-	reg  *Registry
-	err  error
+// bootedPromoter promotes through the registry behind the current
+// DefSource, resolved at promotion time (boot may happen after the
+// observer is created).
+type bootedPromoter struct{}
+
+func (bootedPromoter) PromoteCandidate(id, key string, c action.SelectorCandidate) error {
+	reg := bootedRegistry()
+	if reg == nil {
+		return nil
+	}
+	return reg.PromoteCandidate(id, key, c)
 }
 
-func (p *defaultPromoter) PromoteSelector(id, key string, idx int) error {
-	p.once.Do(func() { p.reg, p.err = Default() })
-	if p.err != nil {
-		return p.err
+// bootedRegistry returns the registry installed via action.SetDefSource, or nil.
+func bootedRegistry() *Registry {
+	if ds, ok := action.CurrentDefSource().(*defSource); ok && ds != nil {
+		return ds.r
 	}
-	return p.reg.PromoteSelector(id, key, idx)
+	return nil
 }

@@ -3,6 +3,7 @@ package automation
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -43,6 +44,20 @@ func installAcme(t *testing.T, source string) *Registry {
 	return r
 }
 
+var (
+	emailCSS  = action.SelectorCandidate{CSS: "input[name=email]"}
+	emailAria = action.SelectorCandidate{Aria: &action.AriaSelector{Role: "textbox", Name: "Email"}}
+)
+
+func indexEntryOf(t *testing.T, r *Registry, id string) indexEntry {
+	t.Helper()
+	idx, err := r.readIndex()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return *idx.Packages[id]
+}
+
 func TestHealthPromoteImportedWritesOverlayIdempotently(t *testing.T) {
 	r := installAcme(t, SourceImported)
 	pkg, _ := r.Get("acme-crm")
@@ -50,42 +65,54 @@ func TestHealthPromoteImportedWritesOverlayIdempotently(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := r.PromoteSelector("acme-crm", "contact.email", 1); err != nil {
+	if err := r.PromoteCandidate("acme-crm", "contact.email", emailAria); err != nil {
 		t.Fatal(err)
 	}
-	if got := selectorOrder(t, r, "acme-crm", "contact.email"); got[0] != "aria:Email" || len(got) != 2 {
+	if got := selectorOrder(t, r, "acme-crm", "contact.email"); len(got) != 2 || got[0] != "aria:Email" {
 		t.Fatalf("after promotion: %v", got)
 	}
 	after, _ := os.ReadFile(filepath.Join(pkg.Dir, "selectors.json"))
 	if string(before) != string(after) {
 		t.Fatal("an imported package's own selectors.json must not change; the overlay carries the promotion")
 	}
-	// Promoting the same candidate again (now first) changes nothing.
-	cur, _ := r.Get("acme-crm")
-	e, _ := cur.Context().Selector("contact.email")
-	if err := r.promoteCandidate(cur, "contact.email", *e, e.Candidates[0]); err != nil {
-		t.Fatal(err)
-	}
-	if got := selectorOrder(t, r, "acme-crm", "contact.email"); got[0] != "aria:Email" {
-		t.Fatalf("re-promotion flipped the order: %v", got)
-	}
-	// Out-of-range, first and unknown keys are no-ops.
-	for _, idx := range []int{0, -1, 7} {
-		if err := r.PromoteSelector("acme-crm", "contact.email", idx); err != nil {
-			t.Fatalf("idx %d: %v", idx, err)
+	// The same candidate again — e.g. a stale report from a run that
+	// started before the promotion — changes nothing.
+	ov := filepath.Join(r.Root(), "acme-crm", "overlay", "selectors.json")
+	ovBefore, _ := os.ReadFile(ov)
+	for i := 0; i < 3; i++ {
+		if err := r.PromoteCandidate("acme-crm", "contact.email", emailAria); err != nil {
+			t.Fatal(err)
 		}
 	}
-	if err := r.PromoteSelector("acme-crm", "no.such.key", 1); err != nil {
+	if ovAfter, _ := os.ReadFile(ov); string(ovAfter) != string(ovBefore) {
+		t.Fatal("repeating a promotion rewrote the overlay")
+	}
+	// A candidate not in the entry, and an unknown key, are no-ops.
+	if err := r.PromoteCandidate("acme-crm", "contact.email", action.SelectorCandidate{CSS: "#nope"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.PromoteCandidate("acme-crm", "no.such.key", emailCSS); err != nil {
 		t.Fatal(err)
 	}
 	if got := selectorOrder(t, r, "acme-crm", "contact.email"); got[0] != "aria:Email" {
 		t.Fatalf("no-op promotions changed the order: %v", got)
 	}
+	// Promoting the other candidate works on the overlay's order.
+	if err := r.PromoteCandidate("acme-crm", "contact.email", emailCSS); err != nil {
+		t.Fatal(err)
+	}
+	if got := selectorOrder(t, r, "acme-crm", "contact.email"); got[0] != "css:input[name=email]" {
+		t.Fatalf("second promotion: %v", got)
+	}
+	if err := r.PromoteCandidate("not-installed", "k", emailCSS); err == nil {
+		t.Fatal("promoting in a package that is not installed should fail")
+	}
 }
 
-func TestHealthPromoteLocalRewritesPackage(t *testing.T) {
+func TestHealthPromoteLocalRewritesPackageAndRefreshesSHA(t *testing.T) {
 	r := installAcme(t, SourceLocal)
-	if err := r.PromoteSelector("acme-crm", "contact.email", 1); err != nil {
+	shaBefore := indexEntryOf(t, r, "acme-crm").InstalledSha256
+	if err := r.PromoteCandidate("acme-crm", "contact.email", emailAria); err != nil {
 		t.Fatal(err)
 	}
 	pkg, _ := r.Get("acme-crm")
@@ -102,18 +129,96 @@ func TestHealthPromoteLocalRewritesPackage(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(r.Root(), "acme-crm", "overlay", "selectors.json")); err == nil {
 		t.Fatal("a local package must be promoted in place, not through the overlay")
 	}
+	shaAfter := indexEntryOf(t, r, "acme-crm").InstalledSha256
+	want, err := fsHash(os.DirFS(pkg.Dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if shaAfter == shaBefore || shaAfter != want {
+		t.Fatalf("installedSha256 not refreshed: before %s after %s files %s", shaBefore, shaAfter, want)
+	}
+	// Idempotent: again changes neither files nor index.
+	if err := r.PromoteCandidate("acme-crm", "contact.email", emailAria); err != nil {
+		t.Fatal(err)
+	}
+	if got := indexEntryOf(t, r, "acme-crm").InstalledSha256; got != shaAfter {
+		t.Fatal("a no-op promotion changed installedSha256")
+	}
+}
+
+func TestHealthPromoteConcurrentIsSerialised(t *testing.T) {
+	r := installAcme(t, SourceLocal)
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			c := emailAria
+			if i%2 == 0 {
+				c = emailCSS
+			}
+			if err := r.PromoteCandidate("acme-crm", "contact.email", c); err != nil {
+				t.Error(err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	pkg, _ := r.Get("acme-crm")
+	sels, err := pkg.Selectors()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := sels["contact.email"].Candidates; len(c) != 2 {
+		t.Fatalf("concurrent promotions lost or duplicated candidates: %+v", c)
+	}
+	want, _ := fsHash(os.DirFS(pkg.Dir))
+	if got := indexEntryOf(t, r, "acme-crm").InstalledSha256; got != want {
+		t.Fatal("installedSha256 out of step with the files after concurrent promotions")
+	}
 }
 
 func TestHealthRecorderPromotesThroughRegistry(t *testing.T) {
 	r := installAcme(t, SourceImported)
 	rec := NewHealthRecorder(healthTestDB(t), HealthOptions{Interval: time.Hour, Promoter: r})
 	defer rec.Close()
-	rec.ObserveSelector("acme-crm", "contact.email", 1, true, true)
+	c := emailAria
+	rec.ObserveSelectorCandidate("acme-crm", "contact.email", &c, 1, true, true)
 	if err := rec.Flush(); err != nil {
 		t.Fatal(err)
 	}
 	if got := selectorOrder(t, r, "acme-crm", "contact.email"); got[0] != "aria:Email" {
 		t.Fatalf("recorder did not promote: %v", got)
+	}
+	// A stale report of the old index with the same content: no flip back.
+	rec.ObserveSelectorCandidate("acme-crm", "contact.email", &c, 1, true, true)
+	if err := rec.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if got := selectorOrder(t, r, "acme-crm", "contact.email"); got[0] != "aria:Email" {
+		t.Fatalf("stale report flipped the order: %v", got)
+	}
+}
+
+func TestHealthBootedPromoterUsesBootedRegistry(t *testing.T) {
+	prev := action.CurrentDefSource()
+	t.Cleanup(func() { action.SetDefSource(prev) })
+	action.SetDefSource(nil)
+	if bootedRegistry() != nil {
+		t.Fatal("no DefSource booted: expected no registry")
+	}
+	if err := (bootedPromoter{}).PromoteCandidate("acme-crm", "contact.email", emailAria); err != nil {
+		t.Fatalf("with nothing booted, promotion must be a silent no-op: %v", err)
+	}
+	r := installAcme(t, SourceImported)
+	action.SetDefSource(r.DefSource())
+	if bootedRegistry() != r {
+		t.Fatal("bootedRegistry is not the registry behind the DefSource")
+	}
+	if err := (bootedPromoter{}).PromoteCandidate("acme-crm", "contact.email", emailAria); err != nil {
+		t.Fatal(err)
+	}
+	if got := selectorOrder(t, r, "acme-crm", "contact.email"); got[0] != "aria:Email" {
+		t.Fatalf("booted promoter did not promote in the booted registry: %v", got)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/monoes/mono-agent/internal/action"
 	"github.com/monoes/mono-agent/internal/storage"
 )
 
@@ -81,10 +82,10 @@ type fakePromoter struct {
 	calls []string
 }
 
-func (p *fakePromoter) PromoteSelector(id, key string, idx int) error {
+func (p *fakePromoter) PromoteCandidate(id, key string, c action.SelectorCandidate) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.calls = append(p.calls, fmt.Sprintf("%s/%s#%d", id, key, idx))
+	p.calls = append(p.calls, fmt.Sprintf("%s/%s=%s", id, key, c.CSS))
 	return nil
 }
 
@@ -198,30 +199,26 @@ func TestHealthRecorderOverflowDropsWithoutBlocking(t *testing.T) {
 	}
 }
 
-func TestHealthRecorderPromotesOffHotPathOnce(t *testing.T) {
+func TestHealthRecorderPromotesByContent(t *testing.T) {
 	db := healthTestDB(t)
 	p := &fakePromoter{}
 	r := NewHealthRecorder(db, HealthOptions{Interval: time.Hour, Promoter: p})
 	defer r.Close()
-	r.ObserveSelector("hn", "a", 1, true, true)
-	r.ObserveSelector("hn", "a", 2, true, true) // latest heal wins
-	r.ObserveSelector("hn", "b", 1, true, true)
-	r.ObserveSelector("hn", "b", 0, true, false) // first candidate works again: no promotion
-	r.ObserveSelector("hn", "c", -1, true, true) // Jev fallback: nothing to promote
-	r.ObserveSelector("hn", "d", 1, false, false)
+	cand := func(css string) *action.SelectorCandidate { return &action.SelectorCandidate{CSS: css} }
+	r.ObserveSelectorCandidate("hn", "a", cand("a1"), 1, true, true)
+	r.ObserveSelectorCandidate("hn", "a", cand("a2"), 2, true, true) // latest heal wins
+	r.ObserveSelectorCandidate("hn", "b", cand("b1"), 1, true, true)
+	r.ObserveSelectorCandidate("hn", "b", cand("b0"), 0, true, false) // first candidate works again
+	r.ObserveSelectorCandidate("hn", "c", nil, -1, true, true)        // Jev fallback: nothing to promote
+	r.ObserveSelectorCandidate("hn", "d", nil, -1, false, false)
+	r.ObserveSelector("hn", "e", 1, true, true) // index only: counted, never promoted
 	if err := r.Flush(); err != nil {
 		t.Fatal(err)
 	}
-	if got := p.list(); len(got) != 1 || got[0] != "hn/a#2" {
-		t.Fatalf("promotions = %v, want [hn/a#2]", got)
+	if got := p.list(); len(got) != 1 || got[0] != "hn/a=a2" {
+		t.Fatalf("promotions = %v, want [hn/a=a2]", got)
 	}
-	// A run that started before the promotion reports the old index again:
-	// within the cooldown it must not flip the order back.
-	r.ObserveSelector("hn", "a", 2, true, true)
-	if err := r.Flush(); err != nil {
-		t.Fatal(err)
-	}
-	if got := p.list(); len(got) != 1 {
-		t.Fatalf("promotion repeated within cooldown: %v", got)
+	if h := healthRow(t, db, "hn", "e"); h.OK != 1 || h.Healed != 1 {
+		t.Fatalf("index-only observation not counted: %+v", h)
 	}
 }

@@ -16,46 +16,75 @@ import (
 // non-first candidate, that candidate moves to the front so the next run
 // tries it first.
 //
-//   - local packages (the user's own): selectors.json in the package is
-//     rewritten in place;
+//   - local packages (the user's own): selectors.json in the installed
+//     version is rewritten in place and the index's installedSha256 is
+//     refreshed, so the registry never mistakes the change for a foreign
+//     edit;
 //   - built-in and imported packages: the reordered entry goes to the local
-//     overlay (WriteOverlaySelector), so package files — and updates — are
-//     never touched, and the overlay can be exported as a patch.
+//     overlay, so package files — and updates — are never touched, and the
+//     overlay can be exported as a patch.
 //
-// The move is by candidate content, so promoting a candidate that is
-// already first changes nothing (idempotent).
+// The candidate is identified by content, never by index, and the whole
+// read-modify-write runs under the registry's update lock: promoting a
+// candidate that is already first (or no longer present) changes nothing.
 
-// PromoteSelector promotes candidate candidateIndex of selector key in the
-// effective entry (overlay wins) of package id. Indexes ≤ 0 or out of range
-// and unknown keys are no-ops.
-func (r *Registry) PromoteSelector(id, key string, candidateIndex int) error {
-	if candidateIndex <= 0 {
-		return nil
+// PromoteCandidate moves candidate c of selector key to the front of the
+// effective entry (overlay wins) of package id.
+func (r *Registry) PromoteCandidate(id, key string, c action.SelectorCandidate) error {
+	return r.update(func(idx *indexFile) (bool, error) {
+		e, ok := idx.Packages[id]
+		if !ok || e.Removed {
+			return false, fmt.Errorf("%w: %s", ErrNotInstalled, id)
+		}
+		dir := r.versionDir(id, e.Version)
+		ov := r.readOverlay(id)
+		if cur, inOverlay := ov[key]; inOverlay || e.Source != SourceLocal {
+			if !inOverlay {
+				base, found, err := readPackageSelector(dir, key)
+				if err != nil || !found {
+					return false, err
+				}
+				cur = base
+			}
+			promoted, changed := moveCandidateFirst(cur, c)
+			if !changed {
+				return false, nil
+			}
+			return false, r.writeOverlayLocked(id, ov, key, promoted)
+		}
+		cur, found, err := readPackageSelector(dir, key)
+		if err != nil || !found {
+			return false, err
+		}
+		promoted, changed := moveCandidateFirst(cur, c)
+		if !changed {
+			return false, nil
+		}
+		if err := writePackageSelector(dir, key, promoted); err != nil {
+			return false, err
+		}
+		h, err := fsHash(os.DirFS(dir))
+		if err != nil {
+			return false, err
+		}
+		e.InstalledSha256 = h
+		return true, nil
+	})
+}
+
+// writeOverlayLocked writes the overlay with key set to e. The caller holds
+// the update lock.
+func (r *Registry) writeOverlayLocked(id string, ov map[string]action.SelectorEntry, key string, e action.SelectorEntry) error {
+	dir := filepath.Join(r.root, id, "overlay")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
 	}
-	pkg, err := r.Get(id)
+	ov[key] = e
+	b, err := json.MarshalIndent(ov, "", "  ")
 	if err != nil {
 		return err
 	}
-	ctx := pkg.Context()
-	if ctx == nil {
-		return nil
-	}
-	entry, ok := ctx.Selector(key)
-	if !ok || entry == nil || candidateIndex >= len(entry.Candidates) {
-		return nil
-	}
-	return r.promoteCandidate(pkg, key, *entry, entry.Candidates[candidateIndex])
-}
-
-func (r *Registry) promoteCandidate(pkg *Package, key string, entry action.SelectorEntry, c action.SelectorCandidate) error {
-	promoted, changed := moveCandidateFirst(entry, c)
-	if !changed {
-		return nil
-	}
-	if pkg.Source == SourceLocal && pkg.Dir != "" {
-		return writePackageSelector(pkg.Dir, key, promoted)
-	}
-	return r.WriteOverlaySelector(pkg.Manifest.ID, key, promoted)
+	return atomicWrite(filepath.Join(dir, "selectors.json"), append(b, '\n'))
 }
 
 // moveCandidateFirst returns entry with c moved to index 0. changed is
@@ -79,8 +108,25 @@ func moveCandidateFirst(entry action.SelectorEntry, c action.SelectorCandidate) 
 	return out, true
 }
 
+// readPackageSelector reads selectors.json[key] from a package directory.
+func readPackageSelector(dir, key string) (action.SelectorEntry, bool, error) {
+	raw, err := os.ReadFile(filepath.Join(dir, "selectors.json"))
+	if errors.Is(err, fs.ErrNotExist) {
+		return action.SelectorEntry{}, false, nil
+	}
+	if err != nil {
+		return action.SelectorEntry{}, false, err
+	}
+	all := map[string]action.SelectorEntry{}
+	if err := json.Unmarshal(raw, &all); err != nil {
+		return action.SelectorEntry{}, false, fmt.Errorf("parse %s/selectors.json: %w", dir, err)
+	}
+	e, ok := all[key]
+	return e, ok, nil
+}
+
 // writePackageSelector replaces selectors.json[key] in a package directory,
-// keeping every other entry byte-for-byte, via temp file + rename.
+// keeping every other entry byte-for-byte.
 func writePackageSelector(dir, key string, e action.SelectorEntry) error {
 	path := filepath.Join(dir, "selectors.json")
 	all := map[string]json.RawMessage{}
@@ -102,18 +148,5 @@ func writePackageSelector(dir, key string, e action.SelectorEntry) error {
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, ".selectors-*.json")
-	if err != nil {
-		return err
-	}
-	if _, err := tmp.Write(append(out, '\n')); err != nil {
-		tmp.Close()
-		os.Remove(tmp.Name())
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmp.Name())
-		return err
-	}
-	return os.Rename(tmp.Name(), path)
+	return atomicWrite(path, append(out, '\n'))
 }
