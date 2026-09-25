@@ -100,7 +100,7 @@ func TestRecordAnalyzeErrorsAsJSON(t *testing.T) {
 func TestRecordAnalyzeVerifyNoBridge(t *testing.T) {
 	dir := analyzeRec1(t)
 	prev := recordVerifyExec
-	recordVerifyExec = func(context.Context, string, bool) (recordanalyze.ExecFunc, error) {
+	recordVerifyExec = func(context.Context, string, bool, func(string) (string, bool)) (recordanalyze.ExecFunc, error) {
 		return nil, errors.New("browser bridge not connected")
 	}
 	t.Cleanup(func() { recordVerifyExec = prev })
@@ -113,7 +113,7 @@ func TestRecordAnalyzeVerifyNoBridge(t *testing.T) {
 func TestRecordAnalyzeVerifySafeStop(t *testing.T) {
 	dir := analyzeRec1(t)
 	prev := recordVerifyExec
-	recordVerifyExec = func(_ context.Context, id string, _ bool) (recordanalyze.ExecFunc, error) {
+	recordVerifyExec = func(_ context.Context, id string, _ bool, _ func(string) (string, bool)) (recordanalyze.ExecFunc, error) {
 		if id != "example-go" {
 			t.Errorf("automation = %s", id)
 		}
@@ -217,7 +217,7 @@ func TestRecordAnalyzeVerifyInputsFile(t *testing.T) {
 	dir := analyzeRec1(t)
 	var got map[string]any
 	prev := recordVerifyExec
-	recordVerifyExec = func(context.Context, string, bool) (recordanalyze.ExecFunc, error) {
+	recordVerifyExec = func(context.Context, string, bool, func(string) (string, bool)) (recordanalyze.ExecFunc, error) {
 		return func(_ context.Context, _ *action.ActionDef, _ action.PackageContext, in map[string]any, _ bool, _ action.SelectorObserver) recordanalyze.RunOutcome {
 			got = in
 			return recordanalyze.RunOutcome{Result: &action.ExecutionResult{}, Err: errors.New("login with s3cr3t-pw failed")}
@@ -244,5 +244,48 @@ func TestRecordAnalyzeVerifyInputsFile(t *testing.T) {
 	out, err = runRecordCLI(t, true, "verify", dir, "--inputs-file", file)
 	if err == nil || !strings.Contains(out, "0600") || strings.Contains(out, "s3cr3t-pw") {
 		t.Errorf("world-readable inputs file: err %v out %s", err, out)
+	}
+}
+
+func TestRecordAnalyzeVerifyVaultLookup(t *testing.T) {
+	recordTestHome(t, "rec1")
+	stubRecordAI(t, strings.Replace(recordAnalyzeAnswer, `{"name": "label", "type": "string"}`, `{"name": "pw", "type": "secret"}`, 1))
+	out, err := runRecordCLI(t, true, "analyze", "rec1")
+	if err != nil {
+		t.Fatalf("analyze: %v\n%s", err, out)
+	}
+	var res struct {
+		DraftDir string `json:"draftDir"`
+	}
+	_ = json.Unmarshal([]byte(out), &res)
+
+	var askedFor string
+	prevL := recordSecretLookup
+	recordSecretLookup = func(_ context.Context, _ *globalConfig, id string) (func(string) (string, bool), func()) {
+		askedFor = id
+		return func(name string) (string, bool) { return "vault-" + name, name == "pw" }, func() {}
+	}
+	var got map[string]any
+	var gotLookup bool
+	prevE := recordVerifyExec
+	recordVerifyExec = func(_ context.Context, _ string, _ bool, secrets func(string) (string, bool)) (recordanalyze.ExecFunc, error) {
+		gotLookup = secrets != nil
+		return func(_ context.Context, _ *action.ActionDef, _ action.PackageContext, in map[string]any, _ bool, _ action.SelectorObserver) recordanalyze.RunOutcome {
+			got = in
+			return recordanalyze.RunOutcome{Result: &action.ExecutionResult{}, Err: errors.New("pw vault-pw rejected")}
+		}, nil
+	}
+	t.Cleanup(func() { recordSecretLookup, recordVerifyExec = prevL, prevE })
+
+	out, err = runRecordCLI(t, true, "verify", res.DraftDir)
+	if err != nil {
+		t.Fatalf("verify: %v\n%s", err, out)
+	}
+	if askedFor != "example-go" || !gotLookup || got["pw"] != "vault-pw" || strings.Contains(out, "vault-pw") {
+		t.Errorf("askedFor=%q lookup=%v inputs=%v out=%s", askedFor, gotLookup, got, out)
+	}
+	out, err = runRecordCLI(t, true, "verify", res.DraftDir, "--input", "pw=flag-pw")
+	if err != nil || got["pw"] != "flag-pw" {
+		t.Errorf("--input must win: %v %v", got, err)
 	}
 }

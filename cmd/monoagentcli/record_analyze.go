@@ -32,7 +32,7 @@ var recordAnalyzeRunner = func(runtime, model string, timeout time.Duration) rec
 
 // recordVerifyExec returns the replay function for verify, or an error
 // when no browser is reachable; tests replace it.
-var recordVerifyExec = func(ctx context.Context, automationID string, verbose bool) (recordanalyze.ExecFunc, error) {
+var recordVerifyExec = func(ctx context.Context, automationID string, verbose bool, secrets func(string) (string, bool)) (recordanalyze.ExecFunc, error) {
 	logger := zerolog.New(os.Stderr).With().Timestamp().Str("component", "extension").Logger()
 	if !verbose {
 		logger = logger.Level(zerolog.WarnLevel)
@@ -50,7 +50,14 @@ var recordVerifyExec = func(ctx context.Context, automationID string, verbose bo
 	if err != nil {
 		return nil, fmt.Errorf("browser bridge not connected: %w", err)
 	}
-	return recordanalyze.PageExec(page, logger), nil
+	return recordanalyze.PageExecWithSecrets(page, logger, secrets), nil
+}
+
+// recordSecretLookup returns the vault lookup for an automation's secrets
+// (namespaced by the automation id), or nil when no vault is available.
+// The returned func releases what it opened. Tests replace it.
+var recordSecretLookup = func(ctx context.Context, cfg *globalConfig, automationID string) (func(string) (string, bool), func()) {
+	return nil, func() {}
 }
 
 // monoagentHome is ~/.monoagent (the parent of recording-drafts).
@@ -143,7 +150,9 @@ func newRecordVerifyCmd(cfg *globalConfig) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			exec, err := recordVerifyExec(cmd.Context(), d.TargetAutomation, cfg.Verbose)
+			secrets, release := recordSecretLookup(cmd.Context(), cfg, d.TargetAutomation)
+			defer release()
+			exec, err := recordVerifyExec(cmd.Context(), d.TargetAutomation, cfg.Verbose, secrets)
 			if err != nil {
 				return err
 			}
@@ -162,7 +171,7 @@ func newRecordVerifyCmd(cfg *globalConfig) *cobra.Command {
 				}
 				overrides[k] = v // --input wins over --inputs-file
 			}
-			rep, err := recordanalyze.Verify(cmd.Context(), dir, recordanalyze.VerifyOptions{Full: full, Exec: exec, Inputs: overrides})
+			rep, err := recordanalyze.Verify(cmd.Context(), dir, recordanalyze.VerifyOptions{Full: full, Exec: exec, Inputs: overrides, SecretLookup: secrets})
 			if err != nil {
 				return err
 			}
