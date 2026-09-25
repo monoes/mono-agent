@@ -219,10 +219,11 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 	}
 	defer page.Close() //nolint:errcheck
 
-	// 5. Get the appropriate bot adapter via the BotRegistry (optional — not all platforms need it).
+	// 5. Get the appropriate bot adapter via the BotRegistry (optional — not
+	// all platforms need it): the package's requires.native bot, if any.
 	var botAdapter action.BotAdapter
 	if globalBotRegistry != nil {
-		botAdapter, _ = globalBotRegistry.GetAdapter(b.platform)
+		botAdapter, _ = globalBotRegistry.GetAdapter(nativePlatform(b.platform))
 	}
 
 	// 6. Create ActionExecutor and call Execute.
@@ -255,6 +256,7 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 		botAdapter,
 		logger,
 	)
+	attachPackage(executor, b.platform, storage.db)
 
 	// Opt-in Jev element-picker fallback for steps that declare an intent
 	// (`monoagentcli jev enable action_fallback`). Disabled, or no key ⇒
