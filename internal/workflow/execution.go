@@ -658,6 +658,13 @@ func executeWithRetry(
 			return nil, ErrExecutionCancelled
 		default:
 		}
+
+		// A pause, invalid config, cancellation or Permanent error cannot be
+		// fixed by running the node again: return it as-is (the caller relies
+		// on errors.Is(err, ErrNodePaused) to suspend the run).
+		if isNonRetryable(err) {
+			return nil, err
+		}
 	}
 	return nil, lastErr
 }

@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -45,3 +46,35 @@ var (
 	ErrNodePaused      = errors.New("workflow: node paused, awaiting resume")
 	ErrExecutionPaused = errors.New("workflow: execution paused, awaiting resume")
 )
+
+// PermanentError marks a node failure that retrying cannot fix (a 404, a
+// rejected payload, a missing resource). executeWithRetry never retries an
+// error that wraps one, whatever the node's retry_policy says.
+type PermanentError struct {
+	Err error
+}
+
+func (e *PermanentError) Error() string { return e.Err.Error() }
+
+// Unwrap exposes the underlying error to errors.Is / errors.As.
+func (e *PermanentError) Unwrap() error { return e.Err }
+
+// Permanent wraps err so the engine does not retry it. Permanent(nil) is nil.
+func Permanent(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &PermanentError{Err: err}
+}
+
+// isNonRetryable reports errors whose outcome a retry cannot change: a
+// Human-in-Loop pause (retrying would re-create the approval), invalid
+// configuration, cancellation/deadline, and errors marked Permanent.
+func isNonRetryable(err error) bool {
+	var pe *PermanentError
+	return errors.Is(err, ErrNodePaused) ||
+		errors.Is(err, ErrInvalidConfig) ||
+		errors.Is(err, context.Canceled) ||
+		errors.Is(err, context.DeadlineExceeded) ||
+		errors.As(err, &pe)
+}
