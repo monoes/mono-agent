@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -150,5 +151,28 @@ func TestVerifyRedactsInputValues(t *testing.T) {
 	b, _ := json.Marshal(rep)
 	if strings.Contains(string(b), "hunter2") || !strings.Contains(string(b), "***") {
 		t.Errorf("report leaks or lacks mask: %s", b)
+	}
+}
+
+func TestFailureCode(t *testing.T) {
+	cases := []struct {
+		typ  string
+		err  error
+		want string
+	}{
+		{"page_script", fmt.Errorf("page_script step js: %w: scripts are not allowed for automation \"x\"", action.ErrRefused), CodeScriptsRefused},
+		{"http_fetch_in_page", fmt.Errorf("wrapped: %w", action.ErrRefused), CodeScriptsRefused},
+		{"log", errors.New("flattened: scripts are not allowed for automation \"x\""), CodeScriptsRefused},
+		{"upload", fmt.Errorf("upload: %w", action.ErrUploadNotAllowed), CodeUploadNotAllowed},
+		{"navigate", fmt.Errorf("nav: %w", action.ErrOffDomain), CodeOffDomain},
+		{"click", fmt.Errorf("x: %w", action.ErrRefused), CodeRefused},
+		{"", &action.ValidationError{Action: "a"}, CodeValidation},
+		{"click", errors.New("element not found"), ""},
+		{"click", nil, ""},
+	}
+	for _, c := range cases {
+		if got := FailureCode(c.typ, c.err); got != c.want {
+			t.Errorf("%s %v: got %q want %q", c.typ, c.err, got, c.want)
+		}
 	}
 }

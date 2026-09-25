@@ -3,6 +3,7 @@ package recordanalyze
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -30,6 +31,8 @@ type StepReport struct {
 	Status   string `json:"status"`
 	Message  string `json:"message,omitempty"`
 	Selector string `json:"selector,omitempty"`
+	// Code classifies a failure for the UI (see FailureCode); "" otherwise.
+	Code string `json:"code,omitempty"`
 }
 
 // VerifyReport is `record verify --json`.
@@ -39,6 +42,7 @@ type VerifyReport struct {
 	OK        bool             `json:"ok"`
 	Healed    []string         `json:"healed,omitempty"` // selector keys promoted in the draft
 	Error     string           `json:"error,omitempty"`
+	ErrorCode string           `json:"errorCode,omitempty"`
 	// Highlighted: the element safe mode stopped before is outlined in the
 	// tab, which is left open for the user to see.
 	Highlighted bool `json:"highlighted"`
@@ -159,14 +163,14 @@ func BuildReport(def *action.ActionDef, out RunOutcome, obs []Observation, pkg a
 			done[ev.StepID] = true
 		}
 	}
-	failed := map[string]string{}
+	failed, failedErr := map[string]string{}, map[string]error{}
 	if out.Result != nil {
 		for _, f := range out.Result.FailedItems {
 			msg := "failed"
 			if f.Error != nil {
 				msg = f.Error.Error()
 			}
-			failed[f.StepID] = msg
+			failed[f.StepID], failedErr[f.StepID] = msg, f.Error
 		}
 	}
 	type keyState struct {
@@ -202,9 +206,10 @@ func BuildReport(def *action.ActionDef, out RunOutcome, obs []Observation, pkg a
 			r.Status = StatusSkipped
 		case out.SafeStop != nil && s.ID == out.SafeStop.StepID:
 			r.Status, stopped = StatusStopped, true
-			r.Message = fmt.Sprintf("would %s %s", s.Type, firstNonEmpty(s.Intent, s.Description, s.ConfigKey))
+			r.Message = fmt.Sprintf("would %s %s", s.Type, firstNonEmpty(s.Intent, s.Description, s.ConfigKey, s.Script, s.URL))
 		case failed[s.ID] != "":
 			r.Status, r.Message = StatusFail, failed[s.ID]
+			r.Code = FailureCode(s.Type, failedErr[s.ID])
 		case done[s.ID] && k != nil && k.healed:
 			r.Status, r.Message = StatusHealed, "primary selector failed; a fallback found the element"
 		case done[s.ID]:
@@ -213,6 +218,7 @@ func BuildReport(def *action.ActionDef, out RunOutcome, obs []Observation, pkg a
 			r.Status, r.Message = StatusFail, "did not complete"
 			if out.Err != nil {
 				r.Message = out.Err.Error()
+				r.Code = FailureCode(s.Type, out.Err)
 			}
 		default:
 			r.Status = StatusSkipped
@@ -227,6 +233,7 @@ func BuildReport(def *action.ActionDef, out RunOutcome, obs []Observation, pkg a
 	}
 	if out.Err != nil {
 		rep.Error = out.Err.Error()
+		rep.ErrorCode = FailureCode("", out.Err)
 	}
 	return rep
 }
@@ -311,4 +318,39 @@ func redact(rep *VerifyReport, inputs map[string]any) {
 		rep.Steps[i].Message = mask(rep.Steps[i].Message)
 	}
 	rep.Error = mask(rep.Error)
+}
+
+// Failure codes on verify step rows (and the report's errorCode).
+const (
+	CodeScriptsRefused   = "scripts_refused"    // page_script / http_fetch_in_page not allowed for the package
+	CodeUploadNotAllowed = "upload_not_allowed" // upload outside uploads/<id> and not a file input
+	CodeOffDomain        = "off_domain"         // navigation outside the package's domains
+	CodeRefused          = "refused"            // any other security refusal
+	CodeValidation       = "validation"         // the draft failed action validation before running
+)
+
+// FailureCode classifies a step failure by the engine's error sentinels,
+// falling back to the known message text when a wrapper dropped the chain.
+func FailureCode(stepType string, err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	var verr *action.ValidationError
+	switch {
+	case errors.Is(err, action.ErrUploadNotAllowed) || strings.Contains(msg, "upload path not allowed"):
+		return CodeUploadNotAllowed
+	case (errors.Is(err, action.ErrRefused) || strings.Contains(msg, "refused")) &&
+		(stepType == "page_script" || stepType == "http_fetch_in_page" || strings.Contains(msg, "scripts are not allowed")):
+		return CodeScriptsRefused
+	case strings.Contains(msg, "scripts are not allowed"):
+		return CodeScriptsRefused
+	case errors.Is(err, action.ErrOffDomain):
+		return CodeOffDomain
+	case errors.Is(err, action.ErrRefused):
+		return CodeRefused
+	case errors.As(err, &verr):
+		return CodeValidation
+	}
+	return ""
 }

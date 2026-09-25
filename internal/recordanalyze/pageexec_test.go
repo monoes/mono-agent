@@ -237,7 +237,34 @@ func TestVerifyDraftUploadConfined(t *testing.T) {
 	if st.Status == StatusPass || strings.Contains(strings.Join(page.typed, "|"), "/etc/passwd") {
 		t.Fatalf("upload outside uploads/<id> was not refused: %+v typed=%v", st, page.typed)
 	}
+	if st.Code != CodeUploadNotAllowed {
+		t.Errorf("code = %q", st.Code)
+	}
 	if !strings.Contains(st.Message+rep.Error, "upload path not allowed") {
 		t.Errorf("refusal reason = %q / %q", st.Message, rep.Error)
+	}
+}
+
+// TestVerifyScriptsRefusedCode: a draft's page_script is refused (recorded
+// trust, scripts off) and the row carries code "scripts_refused".
+func TestVerifyScriptsRefusedCode(t *testing.T) {
+	ans := strings.Replace(answer(t, "form-submit"), `{"id": "save"`,
+		`{"id": "js", "type": "page_script", "script": "probe.js"}, {"id": "save"`, 1)
+	ans = strings.Replace(ans, `"scripts": {}`, `"scripts": {"probe.js": "return 1"}`, 1)
+	res, err := Analyze(context.Background(), loadFixture(t, "form-submit"),
+		AnalyzeOptions{Home: t.TempDir(), Runner: &stubRunner{answers: []string{ans}}, AllowAdvanced: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Safe mode stops before a script (it counts as a side effect): --full.
+	rep, err := Verify(context.Background(), res.DraftDir, VerifyOptions{Full: true, Inputs: map[string]any{"account_password": "pw"},
+		Exec: PageExecWith(newFormPage(), zerolog.Nop(), PageExecOptions{})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range rep.Steps {
+		if s.ID == "js" && (s.Status != StatusFail || s.Code != CodeScriptsRefused) {
+			t.Errorf("js row = %+v", s)
+		}
 	}
 }
