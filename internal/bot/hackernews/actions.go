@@ -81,6 +81,10 @@ type pageState struct {
 	URL  string `json:"url"`
 	User string `json:"user"`
 	Text string `json:"text"`
+	// Lines is the start of the visible text with line breaks kept (one
+	// non-empty, whitespace-collapsed line each), so a refusal can be quoted
+	// without the login form that follows it.
+	Lines string `json:"lines"`
 	// Main is true on regular HN pages (#hnmain); refusals such as the
 	// rate-limit message are bare text pages without it.
 	Main bool `json:"main"`
@@ -93,7 +97,7 @@ func (s pageState) refusal() string {
 	if s.Main {
 		return ""
 	}
-	if p := problem(s.Text); p != "" {
+	if p := problem(s.Lines); p != "" {
 		return p
 	}
 	return ""
@@ -103,7 +107,8 @@ const pageStateJS = `() => {
 	const me = document.getElementById('me');
 	const b = document.body;
 	const text = b ? (b.innerText || b.textContent || '') : '';
-	return { url: location.href, user: me ? me.textContent.trim() : '', text: text.replace(/\s+/g, ' ').trim().slice(0, 600), main: !!document.getElementById('hnmain') };
+	const lines = text.split(/\n/).map(l => l.replace(/\s+/g, ' ').trim()).filter(Boolean).join('\n').slice(0, 600);
+	return { url: location.href, user: me ? me.textContent.trim() : '', text: text.replace(/\s+/g, ' ').trim().slice(0, 600), lines, main: !!document.getElementById('hnmain') };
 }`
 
 func readState(page browser.PageInterface) (pageState, error) {
@@ -128,18 +133,52 @@ var problemPhrases = []string{
 	"we've limited requests",
 }
 
-// problem returns the refusal message on the page, or "".
+// maxRefusal caps how much of a refusal is quoted in an error.
+const maxRefusal = 160
+
+// problem returns the refusal message on the page, or "". Only the sentence
+// carrying the refusal is returned (capped at maxRefusal characters): a
+// logged-out page continues with the login and create-account forms
+// ("Login username: password: …"), which must not end up in the error.
 func problem(text string) string {
-	low := strings.ToLower(text)
-	for _, p := range problemPhrases {
-		if strings.Contains(low, p) {
-			if len(text) > 200 {
-				return text[:200]
+	for _, line := range strings.Split(text, "\n") {
+		low := strings.ToLower(line)
+		for _, p := range problemPhrases {
+			if i := strings.Index(low, p); i >= 0 {
+				return clip(sentenceAt(line, i), maxRefusal)
 			}
-			return text
 		}
 	}
 	return ""
+}
+
+// sentenceAt returns the sentence of line that contains byte offset i: from
+// just after the previous ". ", "! " or "? " to the next sentence end
+// (inclusive of its punctuation).
+func sentenceAt(line string, i int) string {
+	start := 0
+	for j := 0; j+1 < i && j+1 < len(line); j++ {
+		if strings.ContainsRune(".!?", rune(line[j])) && line[j+1] == ' ' {
+			start = j + 2
+		}
+	}
+	end := len(line)
+	for j := i; j < len(line); j++ {
+		if strings.ContainsRune(".!?", rune(line[j])) && (j+1 == len(line) || line[j+1] == ' ') {
+			end = j + 1
+			break
+		}
+	}
+	return strings.TrimSpace(line[start:end])
+}
+
+// clip shortens s to at most n runes, marking a cut with "…".
+func clip(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return strings.TrimSpace(string(r[:n-1])) + "…"
 }
 
 // normText is how posted text is compared with what Hacker News renders:

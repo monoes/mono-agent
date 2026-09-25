@@ -216,6 +216,30 @@ func TestBrowserReplyLoggedOut(t *testing.T) {
 	}
 }
 
+// TestBrowserReplyLoggedOutBarePage uses HN's real logged-out reply page: a
+// bare page (no #hnmain) with the refusal line followed by the login and
+// create-account forms. The error quotes only the refusal sentence.
+func TestBrowserReplyLoggedOutBarePage(t *testing.T) {
+	p, rec := hnPage(t, file("https://news.ycombinator.com/reply?*", "reply_loggedout_bare.html"))
+	_, err := bottest.CallMethod(t, &HackerNewsBot{}, p, "reply_to_comment", "70000010", replyText)
+	assertTrimmedRefusal(t, err, "You have to be logged in to reply.")
+	if n := len(rec.Matching("POST", "*")); n != 0 {
+		t.Fatalf("logged-out reply must not POST, got %d", n)
+	}
+}
+
+func assertTrimmedRefusal(t *testing.T, err error, sentence string) {
+	t.Helper()
+	if err == nil || !strings.HasSuffix(err.Error(), "refused: "+sentence) {
+		t.Fatalf("err = %v, want it to end with the refusal sentence %q only", err, sentence)
+	}
+	for _, junk := range []string{"username", "password", "Create Account", "Login"} {
+		if strings.Contains(err.Error(), junk) {
+			t.Fatalf("err quotes the login form (%q): %v", junk, err)
+		}
+	}
+}
+
 // submitRoutes serves /submit and a /submitted list that gains the new
 // story once the form was POSTed; postResp answers the POST.
 func submitRoutes(postResp bottest.Route) ([]bottest.Route, *int32) {
@@ -322,6 +346,15 @@ func TestBrowserSubmitLoggedOut(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "not logged in") {
 		t.Fatalf("err = %v", err)
 	}
+	if n := len(rec.Matching("POST", "*")); n != 0 {
+		t.Fatalf("POSTs = %d", n)
+	}
+}
+
+func TestBrowserSubmitLoggedOutBarePage(t *testing.T) {
+	p, rec := hnPage(t, file("https://news.ycombinator.com/submit", "submit_loggedout_bare.html"))
+	_, err := bottest.CallMethod(t, &HackerNewsBot{}, p, "submit_post", "Title", "", "")
+	assertTrimmedRefusal(t, err, "You have to be logged in to submit.")
 	if n := len(rec.Matching("POST", "*")); n != 0 {
 		t.Fatalf("POSTs = %d", n)
 	}

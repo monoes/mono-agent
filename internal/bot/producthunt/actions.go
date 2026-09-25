@@ -107,8 +107,10 @@ func commentSection(page browser.PageInterface) error {
 // commentsJS reads every rendered comment: an element whose data-test is
 // exactly comment-<digits> (not comment-form / comment-menu-button). Author,
 // body and upvotes are taken only from the comment's own subtree, never
-// from a reply nested inside it; depth/parentId come from the enclosing
-// comments and thread-<id> container.
+// from a reply nested inside it. depth/parentId come from an enclosing
+// comment element or, in the current layout (each comment in its own
+// thread-<id>, a reply's thread nested inside its parent's thread), from
+// the nearest thread-<id> ancestor that is not the comment's own.
 const commentsJS = `() => {
 	const isC = el => /^comment-[0-9]+$/.test(el.getAttribute('data-test') || '');
 	const idOf = el => el.getAttribute('data-test').slice(8);
@@ -121,18 +123,25 @@ const commentsJS = `() => {
 		if (m[2]) n *= /k/i.test(m[2]) ? 1000 : 1000000;
 		return Math.round(n);
 	};
-	const depthOf = new Map(); // document order visits ancestors first
+	const depthOf = new Map(); // id -> depth; document order visits parents first
 	return nodes.map(el => {
 		const own = sel => Array.from(el.querySelectorAll(sel)).filter(x => owner(x) === el);
 		const author = own('a[href^="/@"]').find(a => a.textContent.trim());
 		const body = own('.prose, [class*="richText"]')[0];
 		const parent = owner(el.parentElement);
-		const thread = el.closest('[data-test^="thread-"]');
-		const threadId = thread ? thread.getAttribute('data-test').slice(7) : '';
+		const myId = idOf(el);
+		// Every comment sits in its own thread-<id>; a reply's thread is
+		// nested inside its parent's thread, so the parent is the nearest
+		// thread ancestor that is not the comment's own.
+		let threadId = '';
+		for (let e = el.parentElement; e; e = e.parentElement) {
+			const t = /^thread-([0-9]+)$/.exec(e.getAttribute('data-test') || '');
+			if (t && t[1] !== myId) { threadId = t[1]; break; }
+		}
 		let depth = 0, parentId = '';
-		if (parent) { depth = depthOf.get(parent) + 1; parentId = idOf(parent); }
-		else if (threadId && threadId !== idOf(el)) { depth = 1; parentId = threadId; }
-		depthOf.set(el, depth);
+		if (parent) { depth = depthOf.get(idOf(parent)) + 1; parentId = idOf(parent); }
+		else if (threadId) { parentId = threadId; depth = depthOf.has(threadId) ? depthOf.get(threadId) + 1 : 1; }
+		depthOf.set(myId, depth);
 		const vote = own('[data-test="action-bar-vote-button"]')[0];
 		const href = author ? author.getAttribute('href') : '';
 		return {
