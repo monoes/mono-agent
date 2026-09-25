@@ -67,12 +67,15 @@ best; vulnerable to prompt injection (docs: `model-jaggedness/jev-1.13.md`).
 - **Handles**: not declared in schemas; `ValidateForSave` only requires a non-empty `source_handle` (`internal/workflow/validator.go:81`); routing via `DAG.SuccessorsOnHandle` (`dag.go:119`). GUI `NodeRunner.jsx:2245-2258` `deriveOutputs(type)` hard-codes ports (switch → `case0/default` regardless of cases; filter shows `pass/fail` but backend emits `main/rejected` — existing bug).
 - **Doctor**: `health.Check{ID, Group, Title, Required, Features, DependsOn, Network, OnDemand, Timeout, Run}` (`internal/health/health.go:96`), `Fix` :119, register in `Default()` (`registry.go:4`); `Env` :130 has `DB` (not migrated), `ProfileID`, hooks wired in `cmd/monoagentcli/doctor_env.go:24`.
 
-### 3.3 Precondition — uncommitted work in the main checkout
-`~/projects/monoes/mono-agent` (master) has uncommitted changes in `cmd/monoagentcli/people.go`,
-`internal/storage/repository.go`, `wails-app/app.go`, `HumanInLoop.jsx`, `People.jsx`,
-`services/api.js`, generated wailsjs bindings. **WS5 and WS8 touch these files and must not start
-until that work is committed and merged to master** (then `integration/jev` merges master).
-No agent may touch the main checkout.
+### 3.3 Precondition — PR #154
+The previously uncommitted main-checkout edits (NULL-safe people scans in `people.go`/`export.go`/
+`repository.go`, People.jsx rewrite, HumanInLoop.jsx profile links) landed as **PR #154** from
+another session, reworked so tag writes go through `monoagentcli people tag list|add|remove|color`
+(GUI shells out). **WS5 and WS8 start only after #154 is merged**, and `integration/jev` merges
+master first. The raw edits still sitting in the main checkout are redundant after #154; no agent
+touches the main checkout. People review has been CLI-backed since #152 (`people review
+list|approve|reject`, `--send-plan`, GUI via `runMonoCLI`), so WS5's GUI move-to-CLI covers only
+the workflow HIL functions (`GetHILItems/ApproveHIL/RejectHIL`).
 
 ## 4. Target architecture
 
