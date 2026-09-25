@@ -41,6 +41,7 @@ type fx map[string]interface{}
 type site struct {
 	profiles   map[string]fx // username → profile.html FX (default: not followed, Message button)
 	post       fx            // post.html FX
+	postPage   string        // post fixture (default post.html)
 	postAuthor string
 	stories    fx
 	inbox      fx
@@ -147,7 +148,11 @@ func (s *site) open(t *testing.T) (*bottest.Page, *bottest.Recorder) {
 					}
 					f["kind"] = "reel"
 				}
-				return html(render(t, "post.html", f, map[string]string{"CODE": m[3], "AUTHOR": s.postAuthor}))
+				page := s.postPage
+				if page == "" {
+					page = "post.html"
+				}
+				return html(render(t, page, f, map[string]string{"CODE": m[3], "AUTHOR": s.postAuthor}))
 			case profilePath.MatchString(p):
 				user := profilePath.FindStringSubmatch(p)[1]
 				f, ok := s.profiles[user]

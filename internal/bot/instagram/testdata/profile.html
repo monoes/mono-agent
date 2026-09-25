@@ -73,6 +73,27 @@ window.FX = {{FX}};
   const post = (path, body) => fetch(path, { method: 'POST', body: body || '', headers: { 'content-type': 'application/x-www-form-urlencoded' } });
   const GIF = 'data:image/gif;base64,R0lGODlhAQABAAAAACw=';
 
+  // FX.layout2026: the header Instagram rendered in 2026 (seen on your own
+  // profile): no <ul><li> stats — the counts are <a role="link" href="#">
+  // in plain <div>s; a Threads badge link next to the username; the website
+  // behind a link-icon button in an <h1>. The header's counts differ from
+  // the (stale) og:description on purpose.
+  if (FX.layout2026) {
+    document.querySelector('header').innerHTML =
+      '<section id="avatar"></section>' +
+      '<section><div><div><div><a href="#" role="link" tabindex="0"><h2 dir="auto"><span>' + U + '</span></h2></a>' +
+      '<a href="https://www.threads.com/@' + U + '?xmt=FAKEXMT" role="link" target="_blank" tabindex="0"><div><svg aria-label="Threads" height="16" width="16"><title>Threads</title></svg></div><span>' + U + '</span></a></div>' +
+      '<div id="actions"></div></div>' +
+      '<div><span dir="auto">Ada Fixture</span></div>' +
+      '<div><div><div><span dir="auto"><span><span>' + (FX.hdrPosts || '13') + '</span></span> posts</span></div></div>' +
+      '<div><div><a href="#" role="link" tabindex="0" id="followersLink"><span dir="auto"><span title="' + (FX.hdrFollowersExact || '1,240') + '"><span>' + (FX.hdrFollowers || '1,240') + '</span></span> followers</span></a></div></div>' +
+      '<div><div><a href="#" role="link" tabindex="0" id="followingLink"><span dir="auto"><span><span>' + (FX.hdrFollowing || '50') + '</span></span> following</span></a></div></div></div>' +
+      '<span dir="auto"><div role="button" tabindex="0"><span dir="auto">Synthetic bio used only by tests</span></div></span>' +
+      '<h1 dir="auto"><button type="button"><div><svg aria-label="Link icon" height="12" width="12"><title>Link icon</title></svg></div><div dir="auto">example.test and 1 more</div></button></h1>' +
+      '</div></section>' +
+      '<section><div role="menu"><ul><li><a aria-label="View fixtures highlight" href="/stories/highlights/1111/" role="link"><span>fixtures</span></a></li></ul></div></section>';
+  }
+
   // Avatar: with an active story the avatar is a story ring.
   $('#avatar').innerHTML = FX.story
     ? '<div><div aria-label="View profile story" role="button" tabindex="0" id="ring"><canvas height="165" width="165"></canvas><span role="link" tabindex="-1"><img alt="' + U + '\'s profile picture" src="' + GIF + '"></span></div></div>'
@@ -184,7 +205,9 @@ window.FX = {{FX}};
   $('#followersLink').addEventListener('click', (e) => { e.preventDefault(); history.pushState({}, '', '/' + U + '/followers/'); openList('followers'); });
   $('#followingLink').addEventListener('click', (e) => { e.preventDefault(); history.pushState({}, '', '/' + U + '/following/'); openList('following'); });
   const m = location.pathname.match(/\/(followers|following)\/$/);
-  if (m) openList(m[1]);
+  // FX.noRoute: /<user>/followers/ renders the profile without the dialog
+  // (what your own profile does).
+  if (m && !FX.noRoute) openList(m[1]);
 })();
 </script>
 </body>

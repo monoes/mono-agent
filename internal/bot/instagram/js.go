@@ -53,6 +53,8 @@ const postRef = (href) => {
 		return { url: 'https://www.instagram.com' + m[0].replace(/\/?$/, '/'), shortcode: m[3], kind: m[2], author: m[1] || '' };
 	} catch (e) { return null; }
 };
+// REL_TIME is a relative-time label: "22 s", "3h", "5 min", "2 w", "1 y".
+const REL_TIME = /^\d+\s*(s|m|h|d|w|y|sec|secs|min|mins|hr|hrs|wk|wks)$/i;
 const isReply = (b) => /^reply$/i.test(T(b)) && !b.querySelector('svg');
 const LIKE_SVG = 'svg[aria-label="Like"], svg[aria-label="Unlike"]';
 const svgSize = (s) => { const r = s.getBoundingClientRect(); return Math.max(r.width, r.height, +s.getAttribute('height') || 0); };
@@ -99,15 +101,73 @@ const comments = () => {
 		let text = '';
 		for (const s of body.querySelectorAll('span, h1, h2, h3, div')) {
 			if (s.querySelector('div, span, time') && !s.matches('span[dir="auto"]')) continue;
-			const cb = s.closest('button, [role="button"], time');
+			// Never the relative-time label ("22 s", "3 h": a <time>, usually
+			// inside the comment's permalink) nor any other link's text — the
+			// body span holds mention links, it is never inside one.
+			if (s.closest('time') || s.querySelector('time')) continue;
+			const cb = s.closest('button, [role="button"], a[href]');
 			if ((cb && body.contains(cb)) || (authorLink && (authorLink.contains(s) || s.contains(authorLink)))) continue;
 			const t = T(s);
-			if (!t || t === author || /^(\d+[smhdw]|\d+ (likes?|repl(y|ies))|see translation|reply|edited|verified)$/i.test(t)) continue;
+			if (!t || t === author || REL_TIME.test(t) || /^(\d[\d,]* (likes?|repl(y|ies))|see translation|reply|like|edited|verified|•)$/i.test(t)) continue;
 			if (t.length > text.length) text = t;
 		}
 		const time = body.querySelector('time[datetime]');
 		out.push({ el, body, reply: rb, like: likeSvg, author, text, liked: !!likeSvg && lbl(likeSvg) === 'Unlike',
 			timestamp: time ? time.getAttribute('datetime') : '' });
+	}
+	return out;
+};
+
+// embeddedMedia returns the post object for shortcode sc from the JSON
+// Instagram embeds in the page (script[type="application/json"]: the
+// logged-in xdt_api__v1__media__shortcode__web_info items and the logged-out
+// xig_polaris_media alike carry code, media_type, product_type, caption,
+// user, carousel_media, image_versions2, video_versions), or null. Of the
+// objects with that code the one with the most post fields wins (the
+// "more posts" grid repeats a trimmed copy).
+const embeddedMedia = (sc) => {
+	if (!sc) return null;
+	const keys = ['media_type', 'product_type', 'caption', 'user', 'owner', 'carousel_media', 'image_versions2',
+		'video_versions', 'display_uri', 'display_url', 'edge_sidecar_to_children', 'edge_media_to_caption'];
+	let best = null, score = 0;
+	const walk = (o, depth) => {
+		if (!o || typeof o !== 'object' || depth > 80) return;
+		if (Array.isArray(o)) { for (const v of o) walk(v, depth + 1); return; }
+		if (o.code === sc || o.shortcode === sc) {
+			const n = keys.filter((k) => o[k] != null).length;
+			if (n > score) { best = o; score = n; }
+		}
+		for (const k in o) walk(o[k], depth + 1);
+	};
+	for (const s of document.querySelectorAll('script[type="application/json"]')) {
+		const t = s.textContent || '';
+		if (!t.includes('"' + sc + '"')) continue;
+		try { walk(JSON.parse(t), 0); } catch (e) {}
+	}
+	return best;
+};
+// mediaKind classifies an embedded post object: carousel, reel, video, image.
+const mediaKind = (o) => {
+	const tn = String(o.__typename || '');
+	if (o.media_type === 8 || o.product_type === 'carousel_container' || /carousel|sidecar/i.test(tn) ||
+		(o.carousel_media || []).length > 1 || o.edge_sidecar_to_children) return 'carousel';
+	if (o.product_type === 'clips' || /clips|reel/i.test(tn)) return 'reel';
+	if (o.media_type === 2 || o.is_video === true || /video/i.test(tn)) return 'video';
+	if (o.media_type === 1 || /image|photo/i.test(tn)) return 'image';
+	return '';
+};
+// mediaURLs lists an embedded post's own media: per item its video, else its
+// largest image.
+const mediaURLs = (o) => {
+	const items = (o.carousel_media && o.carousel_media.length && o.carousel_media) ||
+		(o.edge_sidecar_to_children && (o.edge_sidecar_to_children.edges || []).map((e) => e.node)) || [o];
+	const out = [];
+	for (const it of items) {
+		if (!it) continue;
+		const v = (it.video_versions || [])[0];
+		const c = ((it.image_versions2 && it.image_versions2.candidates) || [])[0];
+		const u = (v && v.url) || it.video_url || (c && c.url) || it.display_uri || it.display_url || '';
+		if (u && !/^blob:/.test(u)) out.push(u);
 	}
 	return out;
 };
@@ -149,6 +209,46 @@ const followState = () => {
 	if (texts.some((t) => /^(following|requested)$/i.test(t))) return texts.some((t) => /^requested$/i.test(t)) ? 'requested' : 'following';
 	if (texts.some((t) => /^follow( back)?$/i.test(t))) return 'not_following';
 	return 'unknown';
+};
+// STAT is a profile header count: "1,234 followers", "32.2k followers",
+// "56 following", "12 posts".
+const STAT = /^([\d.,]+\s*[kmb]?)\s*(posts?|followers?|following)$/i;
+// headerStats finds the profile header's counts, whatever the layout (a
+// <ul><li> list, or — the 2026 layout — bare <div>s holding
+// <a role="link" href="#">): {posts|followers|following: {el, target, num}}.
+// el is the innermost element reading "<n> <kind>", target the link/button
+// to click (the header's own element when there is none), num the exact
+// count from a title attribute when the page carries one.
+const headerStats = (h) => {
+	const out = {};
+	if (!h) return out;
+	for (const el of h.querySelectorAll('*')) {
+		if (el.closest('[role="menu"], svg')) continue;
+		const m = T(el).match(STAT);
+		if (!m) continue;
+		const kind = /^post/i.test(m[2]) ? 'posts' : (/^follower/i.test(m[2]) ? 'followers' : 'following');
+		const titled = el.matches('[title]') ? el : el.querySelector('[title]');
+		const exact = titled && /^[\d.,\s]+$/.test(titled.getAttribute('title') || '') ? titled.getAttribute('title') : '';
+		const c = el.closest('a, [role="link"], [role="button"], button');
+		// Document order visits ancestors first: a descendant that still
+		// reads "<n> <kind>" replaces its ancestor.
+		out[kind] = { el, target: c && h.contains(c) ? c : el, num: exact || m[1].trim() };
+	}
+	return out;
+};
+// linkDest resolves a link through Instagram's l.instagram.com shim.
+const linkDest = (href) => {
+	try {
+		const u = new URL(href, location.href);
+		const d = /(^|\.)l\.instagram\.com$/i.test(u.hostname) && u.searchParams.get('u');
+		return d ? new URL(d) : u;
+	} catch (e) { return null; }
+};
+// isThreadsBadge: the header's Threads badge links to threads.net/.com.
+const isThreadsBadge = (a) => {
+	const d = linkDest(a.getAttribute('href') || '');
+	return !!(d && /(^|\.)threads\.(net|com)$/i.test(d.hostname)) || /threads/i.test(lbl(a)) ||
+		!!a.querySelector('svg[aria-label*="Threads" i], [aria-label*="Threads" i]');
 };
 const dialogs = () => Array.from(document.querySelectorAll('[role="dialog"]')).filter(vis);
 `
