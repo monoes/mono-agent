@@ -39,7 +39,6 @@ func TestExecuteWithRetry_DeterministicErrorsNotRetried(t *testing.T) {
 		"permanent":         Permanent(errors.New("404 not found")),
 		"wrapped permanent": fmt.Errorf("outer: %w", Permanent(errors.New("bad"))),
 		"canceled":          fmt.Errorf("inner: %w", context.Canceled),
-		"deadline":          fmt.Errorf("inner: %w", context.DeadlineExceeded),
 	}
 	for name, e := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -78,5 +77,25 @@ func TestPermanentError(t *testing.T) {
 	var pe *PermanentError
 	if !errors.As(p, &pe) || !errors.Is(p, base) || p.Error() != "gone" {
 		t.Fatalf("PermanentError wrapping broken: %v", p)
+	}
+}
+
+// A node's own timeout is transient: retried while the run is still alive.
+func TestExecuteWithRetry_NodeTimeoutIsRetried(t *testing.T) {
+	ex := &countingExecutor{errs: []error{fmt.Errorf("GET x: %w", context.DeadlineExceeded), nil}}
+	if _, err := executeWithRetry(context.Background(), ex, NodeInput{}, nil, noWait); err != nil || ex.calls != 2 {
+		t.Fatalf("calls=%d err=%v, want a retry after the node timeout", ex.calls, err)
+	}
+}
+
+// When the run's own context is done, nothing is retried.
+func TestExecuteWithRetry_ExpiredRunStops(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 0)
+	defer cancel()
+	<-ctx.Done()
+	ex := &countingExecutor{errs: []error{fmt.Errorf("inner: %w", context.DeadlineExceeded)}}
+	_, _ = executeWithRetry(ctx, ex, NodeInput{}, nil, noWait)
+	if ex.calls > 1 {
+		t.Fatalf("executed %d times on an expired run, want at most 1", ex.calls)
 	}
 }

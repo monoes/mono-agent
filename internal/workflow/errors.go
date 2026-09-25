@@ -69,12 +69,15 @@ func Permanent(err error) error {
 
 // isNonRetryable reports errors whose outcome a retry cannot change: a
 // Human-in-Loop pause (retrying would re-create the approval), invalid
-// configuration, cancellation/deadline, and errors marked Permanent.
+// configuration, cancellation, and errors marked Permanent.
+//
+// context.DeadlineExceeded is deliberately NOT here: a node's own timeout
+// (an HTTP call, a slow API) is the classic transient error. When the run's
+// own context has expired, executeWithRetry stops on ctx.Err() instead.
 func isNonRetryable(err error) bool {
 	var pe *PermanentError
 	return errors.Is(err, ErrNodePaused) ||
 		errors.Is(err, ErrInvalidConfig) ||
 		errors.Is(err, context.Canceled) ||
-		errors.Is(err, context.DeadlineExceeded) ||
 		errors.As(err, &pe)
 }
