@@ -89,6 +89,9 @@ type WaitSpec struct {
 //	split        Field, Sep, To
 //	pick         Fields: keep only these keys
 //	limit        Count
+//	lower        Field, To
+//	replace      Field, Pattern (Go regexp), With, To
+//	tree_parent  Field (depth), ID, To, Root, Carry
 type TransformOp struct {
 	Op      string            `json:"op"`
 	Field   string            `json:"field,omitempty"`
@@ -100,6 +103,10 @@ type TransformOp struct {
 	Map     map[string]string `json:"map,omitempty"`
 	Fields  []string          `json:"fields,omitempty"`
 	Count   int               `json:"count,omitempty"`
+	With    string            `json:"with,omitempty"`  // replace: replacement text ($1 expands)
+	ID      string            `json:"id,omitempty"`    // tree_parent: the row's id field
+	Root    string            `json:"root,omitempty"`  // tree_parent: template, parent of depth-0 rows
+	Carry   string            `json:"carry,omitempty"` // tree_parent: variable holding the open-ancestor stack across pages
 }
 
 // SelectorObserver receives the outcome of every package-selector lookup
