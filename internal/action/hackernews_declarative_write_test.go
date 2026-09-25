@@ -65,6 +65,18 @@ func TestHackerNewsSubmitConfirmed(t *testing.T) {
 	}
 }
 
+// The title is compared the way the bot compared it: case, runs of
+// whitespace and *asterisks* do not matter.
+func TestHackerNewsSubmitMatchesNormalisedTitle(t *testing.T) {
+	routes, _ := submitRoutes(redirectTo("https://news.ycombinator.com/newest"))
+	p, _ := hnBrowserPage(t, routes...)
+	got, err := runHN(t, p, "submit_post", map[string]interface{}{"title": "  show HN:   *Synthetic*  gadget "})
+	if err != nil {
+		t.Fatal(err)
+	}
+	jsonEq(t, got, expectFile(t, "submit_post"))
+}
+
 func TestHackerNewsSubmitDuplicateRedirectsToExistingItem(t *testing.T) {
 	routes, _ := submitRoutes(redirectTo("https://news.ycombinator.com/item?id=70000100"))
 	p, _ := hnBrowserPage(t, routes...)
