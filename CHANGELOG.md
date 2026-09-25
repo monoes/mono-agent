@@ -9,15 +9,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`browser.jev` — a goal-driven browser agent.** Give it a URL and a goal
-  in plain language. It opens a tab in your connected browser and works
-  toward the goal one action at a time, with no selectors or site scripts.
-  Each step, one TypeSafe Jev request (about 300 ms) picks what to do
-  (click, type, select, scroll, wait, done, blocked) and on which element.
-  A local agent writes the text for fields. The item gets the final page
-  and a step-by-step trace. Needs a TypeSafe key
-  (`secret add --kind secret --name typesafe`). Ported from
-  browser-use/jev-ultrafast.
+- **TypeSafe Jev decisions.** Jev picks one of a fixed set of options,
+  answers yes/no, or scores against a rubric. It never writes text. Each
+  answer comes back in about 0.3 s with probabilities attached. Every
+  feature below is off until you turn it on for a profile (`monoagentcli jev
+  enable <surface>`, which first lists what gets sent to TypeSafe), or until
+  you use the node that relies on it. Below its confidence threshold, a
+  feature behaves exactly as it did before. The key is looked up in the
+  node's config, then in the vault entry `typesafe`, then in
+  `TYPESAFE_API_KEY`.
+  - `monoagentcli jev status|enable|disable|usage|ask|models`, plus the
+    `jev.key` and `jev.api` doctor checks. `jev usage` shows calls, tokens
+    and estimated cost; no request content is stored.
+  - **`browser.jev` node:** give it a URL and a goal, and it clicks, types
+    and selects its way there in your own browser (ported from
+    browser-use/jev-ultrafast). A `values` map, which can hold `@secret:`
+    entries, fills fields without a local-agent turn. Jev only ever sees
+    those values as `<value:NAME>`.
+  - **`ai.choose` node:** routes each item to one of your cases, or to a
+    `low_confidence` output. It can also answer extra yes/no, choice or
+    score questions. `ai.classify` stays deprecated and now points to it.
+  - **Orgs:** `org autonomy set --decider jev` lets Jev approve, deny or
+    escalate. Questions, low-confidence cases and errors go to the model
+    decider. Each decision records Jev's probabilities. Tiers and routing
+    are unchanged.
+  - **Job fit:** `application evaluate --runtime jev` scores gates and
+    rubric dimensions in one request. The weighted score and verdict are
+    computed in Go.
+  - **Action steps** can declare an `intent`. With `action_fallback`
+    enabled, Jev finds the element when a selector no longer matches. Intents
+    ship for the Gemini, Instagram, LinkedIn, X and TikTok actions. In social
+    builds, LinkedIn likes use the same fallback.
+  - **Classification:** `capture classify` / `capture list --suggested`
+    label captured pages, and `people messages classify` / `list --intent`
+    label inbound messages.
+  - **Cross-platform people:** `people links suggest|list|confirm|dismiss`
+    proposes pairs of profiles that look like the same person. Rows are
+    never merged.
+  - **Org asks:** a reply that lost its `ask:` token is linked to the
+    waiting ask it answers, and the match is logged.
+  - **Retries:** with `retry` enabled, node failures are classified after
+    their error text is redacted. Rate limits back off longer, and auth or
+    permanent errors stop retrying.
 - **`monoagentcli people tag list|add|remove|color`**. The People page now
   makes every tag change through it, including the new tag colour picker.
 - **People page:** rework of the page and its tag editor. Human in Loop
@@ -25,6 +58,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Workflow retries no longer re-run a paused Human-in-Loop node or
+  invalid configuration, cancelled runs, or errors marked permanent. Before,
+  a paused node was executed again under `retry_policy`. A node's own
+  timeout is still retried.
+- LinkedIn likes with a named reaction (social builds) fail when that
+  reaction is missing. Before, they silently clicked plain Like. An unknown
+  reaction name is now an error.
+- The workflow editor's switch, filter and choose output ports now match
+  the handles the engine emits. The filter showed `pass/fail`, but the
+  engine emits `main/rejected`.
 - People saved without a post count, following count or verified flag no
   longer break `people list`, `people get`, export or the app's people
   lookups. They failed with "converting NULL to int is unsupported".

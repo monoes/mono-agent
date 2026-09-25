@@ -352,11 +352,12 @@ monoagentcli hil reject <id>        # drop the item
 </details>
 
 <details>
-<summary><strong>🧠 AI Agents, Orgs, Gemini, System, People & Vault (17 nodes)</strong></summary>
+<summary><strong>🧠 AI Agents, Orgs, Gemini, System, People & Vault (18 nodes)</strong></summary>
 
 | Node | Description |
 |------|-------------|
 | `agent.ask` | Ask a locally-installed AI agent (claude, codex, kimi, qwen, …) — the node for AI steps |
+| `ai.choose` | Route each item to one of your cases with a TypeSafe Jev choice (probabilities, `low_confidence` output) |
 | `browser.jev` | Browser agent: give it a URL and a goal, it clicks/types/selects its way there in your own browser (TypeSafe Jev picks each action; port of browser-use/jev-ultrafast) |
 | `org.run` / `org.ask` / `org.send` | Start, question, or message an agent org (via the monomind engine) |
 | `ai.read_page` / `ai.extract_page` | AI-assisted page reading and structured extraction |
@@ -366,6 +367,8 @@ monoagentcli hil reject <id>        # drop the item
 | `people.save` | Upsert a contact into the CRM (profile-scoped) |
 | `people.sync_outlook_message` | Sync an Outlook message into People history |
 | `vault.secret_get` / `vault.secret_save` | Read or write an entry in the encrypted secrets vault |
+
+> **TypeSafe Jev** (`browser.jev`, `ai.choose`, and opt-in features such as `org autonomy set --decider jev`, action-step element fallback, capture/inbox classification, people links) answers typed questions in ~0.3 s and never generates text. Store a key with `monoagentcli secret add --kind secret --name typesafe`, check it with `monoagentcli jev status`, and switch features on per profile with `monoagentcli jev enable <surface>`.
 
 > **Deprecated:** `ai.chat` · `ai.extract` · `ai.classify` · `ai.transform` · `ai.agent` · `ai.embed` still exist only so old workflows fail with a migration hint — running one errors out. Use `agent.ask` (put the extraction/classification/rewrite instruction in its prompt). `ai.embed` has no replacement.
 
