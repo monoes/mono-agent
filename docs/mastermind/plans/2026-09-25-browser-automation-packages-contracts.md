@@ -17,7 +17,7 @@ in your final report under "Requests for other owners".
 - Every Bash call that builds or tests starts with
   `export GOTMPDIR=/home/monoes/scratch/agent-tmp TMPDIR=/home/monoes/scratch/agent-tmp`.
   Scratch data goes under `~/scratch/automation-<yourname>/`, never /tmp.
-- Commit only your own files (`git add <paths>`; never `git add -A` / `.`),
+- Commit only your own files with `git commit -F - -- <paths>` (pathspec form: commits exactly those paths even if others have staged files in the shared index; never a bare `git commit` after `git add`, never `git add -A` / `.`),
   small conventional commits (`feat(automation): …`). Use
   `git commit -F - <<'MSG' … MSG` (quoted heredoc). No Co-Authored-By or
   Claude attribution lines. Other builders commit concurrently in the same
@@ -206,12 +206,24 @@ Types: `internal/recording/types.go` (authoritative; JS mirrors it).
 Transport: the extension's existing WS to the bridge. Frames are JSON with
 `"kind":"recording"`. ingest routes them in the WS read loop before the
 Response/request handling, writes to a spool, and finalises the envelope on
-`stop` (or after 30 min idle → `Complete=false`). Envelope via
-`internal/capture` writer: `meta.json` (`source:"recording"`, `Extra`:
-goal, tabId, stopReason, eventCount), `events.jsonl`, `dom-<eventId>.html`,
-`network.jsonl`. Inbox = the same profile inbox captures use.
+`stop` (or after 30 min idle → `Complete=false`; a recording with no events
+is discarded, not written). Envelope via `internal/capture` writer:
+`meta.json` (`source:"recording"`, `Extra`: goal, tabId, stopReason,
+eventCount, complete, warnings), `events.jsonl`, `dom-<eventId>.html`,
+`network.jsonl`.
+**Storage (revised after the security review):** recordings are *not* kept
+in the capture inbox — `~/.monomind/inbox` feeds monomind's knowledge
+ingest. They live in their own store: `~/.monoagent/recordings/` when the
+frames name no profile, `~/.monoagent/profiles/<id>/recordings/` for
+profile `<id>`, 0700 dirs and 0600 files; spools and restart recovery live
+there too. On first use, recordings older builds left in the capture
+inboxes are moved into their store (each move logged; runs once, marker
+`.migrated-from-inbox`). `recording.List/Find/Load/Delete/DraftsDir` keep
+their signatures; `recording.StoreDir(profile)` names a store.
 Recorder privacy rules (spec §8.2) are enforced in the extension **and**
-re-checked in ingest (drop any `value` on `inputType=password`, set Masked).
+re-checked in ingest (sensitive fields masked — `inputType` password/hidden,
+`autocomplete` cc-*/password, the recorder's `sensitive` flag, secret-like
+names — snippets scrubbed, URLs sanitised).
 v1 is one tab: a new tab ends the recording with reason `new_tab`.
 
 ## 7. Waves
