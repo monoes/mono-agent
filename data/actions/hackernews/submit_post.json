@@ -1,33 +1,67 @@
 {
   "actionType": "submit_post",
   "platform": "HACKERNEWS",
-  "version": "1.0.0",
-  "description": "Submit a new post (link or text/Show HN) to Hacker News",
-  "metadata": { "requiresAuth": true, "supportsPagination": false, "supportsRetry": false },
+  "version": "1.1.0",
+  "description": "Submit a story to Hacker News (a link, a text post, or a link with text) and confirm it on the user's /submitted page. A duplicate URL, a rejected form or a rate limit fails. Never retried: if the story cannot be confirmed after the form was sent, the error says so instead of submitting again",
+  "metadata": {
+    "requiresAuth": true,
+    "supportsPagination": false,
+    "supportsRetry": false
+  },
   "inputs": {
     "required": [
-      { "name": "title", "type": "string", "description": "Post title" }
+      {
+        "name": "title",
+        "type": "string",
+        "description": "Post title"
+      }
     ],
     "optional": [
-      { "name": "url", "type": "string", "description": "Link URL (mutually exclusive with text)" },
-      { "name": "text", "type": "string", "description": "Self-post body (Show HN style)" }
+      {
+        "name": "url",
+        "type": "string",
+        "description": "Link URL (absolute http/https)"
+      },
+      {
+        "name": "text",
+        "type": "string",
+        "description": "Post text (Ask/Show HN body; with a url it becomes the first comment, as on HN)"
+      }
     ]
   },
   "outputs": {
-    "success": ["id", "title", "url"],
-    "failure": ["error"]
+    "success": [
+      "id",
+      "title",
+      "url",
+      "link",
+      "author"
+    ],
+    "failure": [
+      "error"
+    ]
   },
   "steps": [
     {
       "id": "submit",
       "type": "call_bot_method",
       "methodName": "submit_post",
-      "args": ["{{title}}", "{{url}}", "{{text}}"],
+      "args": [
+        "{{title}}",
+        "{{url}}",
+        "{{text}}"
+      ],
       "variable_name": "submitResult",
-      "timeout": 30,
-      "onError": { "action": "mark_failed" }
+      "timeout": 90,
+      "onError": {
+        "action": "mark_failed"
+      }
     }
   ],
   "loops": [],
-  "errorHandling": { "globalRetries": 1, "retryDelay": 2000, "onFinalFailure": "log_and_continue" }
+  "errorHandling": {
+    "globalRetries": 0,
+    "retryDelay": 0,
+    "onFinalFailure": "log_and_continue"
+  }
 }

@@ -1,30 +1,64 @@
 {
   "actionType": "list_comments",
   "platform": "HACKERNEWS",
-  "version": "1.0.0",
-  "description": "List the top-level comments on a Hacker News item",
-  "metadata": { "requiresAuth": false, "supportsPagination": false, "supportsRetry": true },
+  "version": "1.1.0",
+  "description": "List the comments on a Hacker News item across all \"More\" pages, in thread order: every comment carries its depth (0 = top level) and parentId (the item ID for top-level comments); set topLevelOnly to keep top-level comments only",
+  "metadata": {
+    "requiresAuth": false,
+    "supportsPagination": true,
+    "supportsRetry": true
+  },
   "inputs": {
     "required": [
-      { "name": "itemID", "type": "string", "description": "Item ID to read comments from" }
+      {
+        "name": "itemID",
+        "type": "string",
+        "description": "Numeric item ID to read comments from"
+      }
     ],
-    "optional": []
+    "optional": [
+      {
+        "name": "topLevelOnly",
+        "type": "boolean",
+        "description": "Return only top-level (depth 0) comments",
+        "default": false
+      }
+    ]
   },
   "outputs": {
-    "success": ["comments"],
-    "failure": ["error"]
+    "success": [
+      "id",
+      "author",
+      "text",
+      "depth",
+      "parentId",
+      "age",
+      "deleted"
+    ],
+    "failure": [
+      "error"
+    ]
   },
   "steps": [
     {
       "id": "list",
       "type": "call_bot_method",
       "methodName": "list_comments",
-      "args": ["{{itemID}}"],
+      "args": [
+        "{{itemID}}",
+        "{{topLevelOnly}}"
+      ],
       "variable_name": "commentsResult",
-      "timeout": 30,
-      "onError": { "action": "mark_failed" }
+      "timeout": 120,
+      "onError": {
+        "action": "mark_failed"
+      }
     }
   ],
   "loops": [],
-  "errorHandling": { "globalRetries": 2, "retryDelay": 2000, "onFinalFailure": "log_and_continue" }
+  "errorHandling": {
+    "globalRetries": 2,
+    "retryDelay": 2000,
+    "onFinalFailure": "log_and_continue"
+  }
 }

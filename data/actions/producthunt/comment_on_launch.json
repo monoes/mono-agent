@@ -1,31 +1,58 @@
 {
   "actionType": "comment_on_launch",
   "platform": "PRODUCTHUNT",
-  "version": "1.0.0",
-  "description": "Post a comment on a Product Hunt launch page",
-  "metadata": { "requiresAuth": true, "supportsPagination": false, "supportsRetry": false },
+  "version": "1.1.0",
+  "description": "Post a top-level comment on a Product Hunt launch page. Succeeds only when the new comment shows on the page; a logged-out session (\"Login to comment\") fails without typing. Never retried, so a comment is never posted twice",
+  "metadata": {
+    "requiresAuth": true,
+    "supportsPagination": false,
+    "supportsRetry": false
+  },
   "inputs": {
     "required": [
-      { "name": "launchURL", "type": "string", "description": "Product Hunt launch page URL" },
-      { "name": "text", "type": "string", "description": "Comment text" }
+      {
+        "name": "launchURL",
+        "type": "string",
+        "description": "Product Hunt launch page URL (https://www.producthunt.com/...)"
+      },
+      {
+        "name": "text",
+        "type": "string",
+        "description": "Comment text"
+      }
     ],
     "optional": []
   },
   "outputs": {
-    "success": ["success", "launchURL"],
-    "failure": ["error"]
+    "success": [
+      "success",
+      "launchURL",
+      "commentID"
+    ],
+    "failure": [
+      "error"
+    ]
   },
   "steps": [
     {
       "id": "comment",
       "type": "call_bot_method",
       "methodName": "comment_on_launch",
-      "args": ["{{launchURL}}", "{{text}}"],
+      "args": [
+        "{{launchURL}}",
+        "{{text}}"
+      ],
       "variable_name": "commentResult",
-      "timeout": 30,
-      "onError": { "action": "mark_failed" }
+      "timeout": 60,
+      "onError": {
+        "action": "mark_failed"
+      }
     }
   ],
   "loops": [],
-  "errorHandling": { "globalRetries": 1, "retryDelay": 2000, "onFinalFailure": "log_and_continue" }
+  "errorHandling": {
+    "globalRetries": 0,
+    "retryDelay": 0,
+    "onFinalFailure": "log_and_continue"
+  }
 }

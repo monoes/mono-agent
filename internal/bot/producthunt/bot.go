@@ -11,8 +11,12 @@ import (
 	"github.com/monoes/mono-agent/internal/browser"
 )
 
-// ProductHuntBot implements botpkg.BotAdapter for Product Hunt.
-type ProductHuntBot struct{}
+// ProductHuntBot implements botpkg.BotAdapter for Product Hunt. The
+// embedded JevPicker (disabled unless the node layer calls SetJevPicker)
+// lets CommentOnLaunch ask Jev for a composer control its selectors miss.
+type ProductHuntBot struct {
+	botpkg.JevPicker
+}
 
 func init() {
 	botpkg.PlatformRegistry["PRODUCTHUNT"] = func() botpkg.BotAdapter {
@@ -72,45 +76,29 @@ func (b *ProductHuntBot) GetMethodByName(name string) (func(ctx context.Context,
 	switch name {
 	case "comment_on_launch":
 		return func(ctx context.Context, args ...interface{}) (interface{}, error) {
-			if len(args) < 3 {
-				return nil, fmt.Errorf("comment_on_launch requires (page, launchURL, text)")
+			page, a, err := botpkg.Args(args, 2, "launchURL", "text")
+			if err != nil {
+				return nil, fmt.Errorf("comment_on_launch: %w", err)
 			}
-			page, ok := args[0].(browser.PageInterface)
-			if !ok {
-				return nil, fmt.Errorf("comment_on_launch: first arg must be browser.PageInterface")
-			}
-			launchURL, _ := args[1].(string)
-			text, _ := args[2].(string)
-			if err := b.CommentOnLaunch(ctx, page, launchURL, text); err != nil {
-				return nil, err
-			}
-			return map[string]interface{}{"success": true, "launchURL": launchURL}, nil
+			return b.CommentOnLaunch(ctx, page, a[0], a[1])
 		}, true
 
 	case "list_comments":
 		return func(ctx context.Context, args ...interface{}) (interface{}, error) {
-			if len(args) < 2 {
-				return nil, fmt.Errorf("list_comments requires (page, launchURL)")
+			page, a, err := botpkg.Args(args, 1, "launchURL")
+			if err != nil {
+				return nil, fmt.Errorf("list_comments: %w", err)
 			}
-			page, ok := args[0].(browser.PageInterface)
-			if !ok {
-				return nil, fmt.Errorf("list_comments: first arg must be browser.PageInterface")
-			}
-			launchURL, _ := args[1].(string)
-			return b.ListComments(ctx, page, launchURL)
+			return b.ListComments(ctx, page, a[0])
 		}, true
 
 	case "get_launch_metrics":
 		return func(ctx context.Context, args ...interface{}) (interface{}, error) {
-			if len(args) < 2 {
-				return nil, fmt.Errorf("get_launch_metrics requires (page, launchURL)")
+			page, a, err := botpkg.Args(args, 1, "launchURL")
+			if err != nil {
+				return nil, fmt.Errorf("get_launch_metrics: %w", err)
 			}
-			page, ok := args[0].(browser.PageInterface)
-			if !ok {
-				return nil, fmt.Errorf("get_launch_metrics: first arg must be browser.PageInterface")
-			}
-			launchURL, _ := args[1].(string)
-			return b.GetLaunchMetrics(ctx, page, launchURL)
+			return b.GetLaunchMetrics(ctx, page, a[0])
 		}, true
 	}
 	return nil, false
