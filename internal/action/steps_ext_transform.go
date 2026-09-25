@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -30,13 +29,20 @@ func (ae *ActionExecutor) stepTransform(_ context.Context, step StepDef) (*StepR
 	if err != nil {
 		return extFail(step, "%w", err)
 	}
+	// tree_parent carries its ancestor stack to the next page's transform.
+	for _, op := range step.Ops {
+		if op.Carry != "" {
+			ae.execCtx.SetVariable(op.Carry, vars[op.Carry])
+		}
+	}
 	return ae.extStore(step, out), nil
 }
 
 // runTransform applies ops to src. A list stays a list; a single object is
 // transformed as a one-item list and returned as an object (nil when a
 // filter dropped it). vars are the variables map templates may use besides
-// the item's own fields.
+// the item's own fields; tree_parent writes its carried stack back into
+// vars.
 func runTransform(src interface{}, ops []TransformOp, vars map[string]interface{}, now time.Time) (interface{}, error) {
 	items, isList := toList(src)
 	if !isList {
@@ -51,6 +57,9 @@ func runTransform(src interface{}, ops []TransformOp, vars map[string]interface{
 		} else {
 			return nil, fmt.Errorf("input is %T, expected a list or an object", src)
 		}
+	}
+	if vars == nil {
+		vars = map[string]interface{}{}
 	}
 	// Work on copies so the source variable is never mutated.
 	cp := make([]interface{}, len(items))
@@ -246,6 +255,33 @@ func applyOp(items []interface{}, op TransformOp, vars map[string]interface{}, n
 		}
 		return items, nil
 
+	case "lower":
+		for i, it := range items {
+			v := getField(it, op.Field)
+			if v != nil {
+				v = strings.ToLower(fieldString(v))
+			}
+			items[i] = setField(it, op.Field, op.To, v)
+		}
+		return items, nil
+
+	case "replace":
+		re, err := regexp.Compile(op.Pattern)
+		if err != nil {
+			return nil, fmt.Errorf("pattern: %w", err)
+		}
+		for i, it := range items {
+			v := getField(it, op.Field)
+			if v != nil {
+				v = re.ReplaceAllString(fieldString(v), op.With)
+			}
+			items[i] = setField(it, op.Field, op.To, v)
+		}
+		return items, nil
+
+	case "tree_parent":
+		return treeParent(items, op, vars)
+
 	case "pick":
 		if len(op.Fields) == 0 {
 			return nil, fmt.Errorf("pick needs fields")
@@ -334,105 +370,66 @@ func matchWhere(item interface{}, c *ConditionDef, vars map[string]interface{}) 
 	return false, fmt.Errorf("unknown operator %q", c.Operator)
 }
 
-var numberRe = regexp.MustCompile(`[-+]?\d[\d,]*(?:\.\d+)?|[-+]?\.\d+`)
-
-// parseHumanNumber parses numbers as sites print them: "1.2k" → 1200,
-// "3,400" → 3400, "2.5M" → 2500000, "12 points" → 12.
-func parseHumanNumber(v interface{}) (float64, bool) {
-	switch n := v.(type) {
-	case float64:
-		return n, true
-	case int:
-		return float64(n), true
-	case int64:
-		return float64(n), true
-	case nil:
-		return 0, false
+// treeParent gives each row of a flat, depth-annotated tree (a comment
+// page) the id of its closest previous row one level up: rows at depth 0
+// get Root. The open-ancestor stack is read from and written back to
+// vars[Carry], so a tree split over pages continues where it left off.
+func treeParent(items []interface{}, op TransformOp, vars map[string]interface{}) ([]interface{}, error) {
+	if op.Field == "" || op.ID == "" {
+		return nil, fmt.Errorf("tree_parent needs field (depth) and id")
 	}
-	s := strings.TrimSpace(fieldString(v))
-	loc := numberRe.FindStringIndex(s)
-	if loc == nil {
-		return 0, false
+	to := op.To
+	if to == "" {
+		to = "parentId"
 	}
-	f, err := strconv.ParseFloat(strings.ReplaceAll(s[loc[0]:loc[1]], ",", ""), 64)
-	if err != nil {
-		return 0, false
-	}
-	rest := strings.TrimSpace(s[loc[1]:])
-	// A lone k/M/B suffix scales ("1.2k"); a word does not ("5 minutes").
-	if rest != "" && (len(rest) == 1 || !isASCIILetter(rest[1])) {
-		switch rest[0] {
-		case 'k', 'K':
-			f *= 1e3
-		case 'm', 'M':
-			f *= 1e6
-		case 'b', 'B':
-			f *= 1e9
+	var root interface{}
+	if op.Root != "" {
+		root = itemResolver(nil, vars).ResolveValue(op.Root)
+		if s, ok := root.(string); ok && s == "" {
+			root = nil
 		}
 	}
-	return math.Round(f*1e6) / 1e6, true
+	var stack []interface{} // stack[d] = id of the open row at depth d
+	if op.Carry != "" {
+		if prev, ok := toList(vars[op.Carry]); ok {
+			stack = append(stack, prev...)
+		}
+	}
+	for i, it := range items {
+		m, ok := it.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("row %d is not an object", i)
+		}
+		df, ok := parseHumanNumber(getField(m, op.Field))
+		if !ok || df < 0 {
+			return nil, fmt.Errorf("row %d: depth %v is not a non-negative number", i, getField(m, op.Field))
+		}
+		d := int(df)
+		parent := root
+		for j := minInt(d, len(stack)) - 1; j >= 0; j-- {
+			if stack[j] != nil {
+				parent = stack[j]
+				break
+			}
+		}
+		m[to] = parent
+		if d < len(stack) {
+			stack = stack[:d]
+		}
+		for len(stack) < d {
+			stack = append(stack, nil)
+		}
+		stack = append(stack, getField(m, op.ID))
+	}
+	if op.Carry != "" {
+		vars[op.Carry] = stack
+	}
+	return items, nil
 }
 
-func isASCIILetter(b byte) bool { return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') }
-
-var autoLayouts = []string{
-	time.RFC3339Nano, time.RFC3339, time.RFC1123Z, time.RFC1123, time.RFC850,
-	"2006-01-02T15:04:05", "2006-01-02 15:04:05", "2006-01-02 15:04", "2006-01-02",
-	"Jan 2, 2006", "January 2, 2006", "Jan 2 2006", "2 Jan 2006", "02 Jan 2006",
-	"2 January 2006", "01/02/2006", "Mon, 2 Jan 2006",
-}
-
-var agoRe = regexp.MustCompile(`(?i)^(\d+|an?|one)\s+(second|sec|minute|min|hour|hr|day|week|month|year)s?\s+ago$`)
-
-// parseDate parses s with layout, or with "auto"/"": the common layouts,
-// unix seconds, "today"/"yesterday" and "<n> <unit>s ago" relative to now.
-func parseDate(s, layout string, now time.Time) (time.Time, bool) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return time.Time{}, false
+func minInt(a, b int) int {
+	if a < b {
+		return a
 	}
-	if layout != "" && layout != "auto" {
-		t, err := time.Parse(layout, s)
-		return t, err == nil
-	}
-	for _, l := range autoLayouts {
-		if t, err := time.Parse(l, s); err == nil {
-			return t, true
-		}
-	}
-	if n, err := strconv.ParseInt(s, 10, 64); err == nil && n > 1e8 {
-		if n > 1e11 { // milliseconds
-			return time.UnixMilli(n), true
-		}
-		return time.Unix(n, 0), true
-	}
-	switch strings.ToLower(s) {
-	case "now", "just now", "today":
-		return now, true
-	case "yesterday":
-		return now.AddDate(0, 0, -1), true
-	}
-	if m := agoRe.FindStringSubmatch(s); m != nil {
-		n, err := strconv.Atoi(m[1])
-		if err != nil {
-			n = 1 // "a", "an", "one"
-		}
-		switch strings.ToLower(m[2]) {
-		case "second", "sec":
-			return now.Add(-time.Duration(n) * time.Second), true
-		case "minute", "min":
-			return now.Add(-time.Duration(n) * time.Minute), true
-		case "hour", "hr":
-			return now.Add(-time.Duration(n) * time.Hour), true
-		case "day":
-			return now.AddDate(0, 0, -n), true
-		case "week":
-			return now.AddDate(0, 0, -7*n), true
-		case "month":
-			return now.AddDate(0, -n, 0), true
-		case "year":
-			return now.AddDate(-n, 0, 0), true
-		}
-	}
-	return time.Time{}, false
+	return b
 }

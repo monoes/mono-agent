@@ -195,3 +195,88 @@ func TestParseDateVariants(t *testing.T) {
 		t.Error("invalid date with explicit layout must fail")
 	}
 }
+
+func TestTransformLowerAndReplace(t *testing.T) {
+	src := txItems(txM{"typed": "Hello *World*", "shown": "hello   world"}, txM{"n": 5.0})
+	got, err := runTransform(src, []TransformOp{
+		{Op: "replace", Field: "typed", Pattern: `[*\s]`, To: "a"},
+		{Op: "lower", Field: "a"},
+		{Op: "replace", Field: "shown", Pattern: `\s+`, To: "b"},
+		{Op: "replace", Field: "shown", Pattern: `(\w+)\s+(\w+)`, With: "$2 $1", To: "swapped"},
+		{Op: "lower", Field: "missing", To: "m"},
+	}, nil, transformNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := got.([]interface{})[0].(txM)
+	if row["a"] != "helloworld" || row["b"] != "helloworld" || row["swapped"] != "world hello" || row["m"] != nil {
+		t.Fatalf("row = %v", row)
+	}
+	if _, err := runTransform(src, []TransformOp{{Op: "replace", Pattern: "("}}, nil, transformNow); err == nil {
+		t.Fatal("bad pattern must fail")
+	}
+}
+
+func TestTransformTreeParent(t *testing.T) {
+	rows := func(pairs ...interface{}) []interface{} {
+		var out []interface{}
+		for i := 0; i < len(pairs); i += 2 {
+			out = append(out, txM{"id": pairs[i], "depth": pairs[i+1]})
+		}
+		return out
+	}
+	op := TransformOp{Op: "tree_parent", Field: "depth", ID: "id", Root: "{{itemID}}", Carry: "stack"}
+	vars := map[string]interface{}{"itemID": "S"}
+
+	// Page 1: a(0) b(1) c(2) d(1) e(0) f(1)
+	got, err := runTransform(rows("a", "0", "b", "1", "c", "2", "d", "1", "e", "0", "f", "1"), []TransformOp{op}, vars, transformNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parents []interface{}
+	for _, r := range got.([]interface{}) {
+		parents = append(parents, r.(txM)["parentId"])
+	}
+	if want := []interface{}{"S", "a", "b", "a", "S", "e"}; !reflect.DeepEqual(parents, want) {
+		t.Fatalf("parents = %v, want %v", parents, want)
+	}
+	// Page 2 continues the stack: g(2) is f's child, h(3) skips no level, i(5) jumps two levels.
+	got, err = runTransform(rows("g", 2.0, "h", 3.0, "i", 5.0, "j", 1.0), []TransformOp{op}, vars, transformNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parents = nil
+	for _, r := range got.([]interface{}) {
+		parents = append(parents, r.(txM)["parentId"])
+	}
+	if want := []interface{}{"f", "g", "h", "e"}; !reflect.DeepEqual(parents, want) {
+		t.Fatalf("page 2 parents = %v, want %v", parents, want)
+	}
+
+	for name, bad := range map[string][]TransformOp{
+		"no id":     {{Op: "tree_parent", Field: "depth"}},
+		"bad depth": {{Op: "tree_parent", Field: "x", ID: "id"}},
+	} {
+		if _, err := runTransform(rows("a", "0"), bad, nil, transformNow); err == nil {
+			t.Errorf("%s: want error", name)
+		}
+	}
+}
+
+func TestTransformStepCarriesTreeStack(t *testing.T) {
+	ae := newExtExecutor(t, &extPage{})
+	ae.SetVariable("itemID", 42.0)
+	step := StepDef{ID: "tp", Type: "transform", Input: "page", VariableName: "out",
+		Ops: []TransformOp{{Op: "tree_parent", Field: "indent", ID: "id", To: "parent", Root: "{{itemID}}", Carry: "hnStack"}}}
+	ae.SetVariable("page", txItems(txM{"id": "1", "indent": "0"}))
+	wantOK(t, runExt(t, ae, step))
+	ae.SetVariable("page", txItems(txM{"id": "2", "indent": "1"}))
+	wantOK(t, runExt(t, ae, step))
+	out := getVar(ae, "out").([]interface{})
+	if out[0].(txM)["parent"] != "1" {
+		t.Fatalf("second page parent = %v, want 1 (carried)", out[0].(txM)["parent"])
+	}
+	if st, _ := getVar(ae, "hnStack").([]interface{}); len(st) != 2 {
+		t.Fatalf("carried stack = %v", getVar(ae, "hnStack"))
+	}
+}
