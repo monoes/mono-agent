@@ -3,6 +3,7 @@ package recording
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,9 +14,15 @@ import (
 	"github.com/monoes/mono-agent/internal/capture"
 )
 
+// ErrNoEvents is Finalize's answer for a recording that captured no events
+// (a failed or abandoned start): its spool is dropped and nothing lands in
+// the inbox.
+var ErrNoEvents = errors.New("recording has no events: discarded")
+
 // Finalize writes a stopped recording as a capture envelope and removes its
 // spool. The spool is kept when the write fails, so a retry (or Recover in
-// the next process) can still publish it.
+// the next process) can still publish it. A recording with no events is
+// not written at all (ErrNoEvents).
 func (in *Ingest) Finalize(st *Stopped) (*capture.Result, error) {
 	if st == nil || st.s == nil {
 		return nil, fmt.Errorf("nil recording")
@@ -24,6 +31,10 @@ func (in *Ingest) Finalize(st *Stopped) (*capture.Result, error) {
 	env, err := s.envelope(in.now())
 	if err != nil {
 		return nil, err
+	}
+	if s.kept == 0 {
+		_ = os.RemoveAll(s.dir)
+		return nil, ErrNoEvents
 	}
 	res, err := in.writer().Write(env)
 	if err != nil {
@@ -76,6 +87,7 @@ func (s *session) envelope(now time.Time) (*capture.Envelope, error) {
 		buf.WriteByte('\n')
 	}
 
+	s.kept = len(events)
 	artifacts := map[string]capture.Artifact{EventsArtifact: capture.Inline(buf.Bytes())}
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {

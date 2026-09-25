@@ -101,6 +101,7 @@ type session struct {
 	seen       map[string]bool
 	sensitive  map[string]bool // events on a sensitive field: their snippets lose every value
 	events     int
+	kept       int // events written by envelope (after dedupe and caps)
 	bytes      int64
 	dropEvents int
 	dropSnaps  int

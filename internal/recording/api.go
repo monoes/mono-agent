@@ -35,8 +35,26 @@ const (
 )
 
 // List returns recordings in the active profile's inbox, newest first.
-// See Inboxes for which inboxes that is.
+// See Inboxes for which inboxes that is. An incomplete recording with no
+// events (a failed start, from before such recordings were discarded) is
+// left out; Find still resolves it, so it can be deleted.
 func List() ([]Summary, error) {
+	all, err := listAll()
+	if err != nil {
+		return nil, err
+	}
+	out := all[:0]
+	for _, s := range all {
+		if !s.Complete && s.Events == 0 {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out, nil
+}
+
+// listAll is List without the empty-recording filter.
+func listAll() ([]Summary, error) {
 	var out []Summary
 	for _, inbox := range Inboxes() {
 		entries, err := capture.List(inbox)
@@ -67,7 +85,7 @@ func Find(id string) (string, error) {
 	if !ValidID(id) {
 		return "", fmt.Errorf("invalid recording id %q", id)
 	}
-	all, err := List()
+	all, err := listAll()
 	if err != nil {
 		return "", err
 	}

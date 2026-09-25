@@ -325,7 +325,7 @@ func (s *Server) Start(ctx context.Context) error {
 	// Recordings outlive connections (the service worker is suspended
 	// constantly), so their idle reaper runs for the server's lifetime,
 	// not the socket's.
-	go s.recordingReaper(s.ctx)
+	s.startRecordingReaper(s.ctx)
 	err = s.server.Serve(listener)
 	if err == http.ErrServerClosed {
 		return nil
@@ -442,6 +442,9 @@ func (s *Server) Close() error {
 	if s.cancel != nil {
 		s.cancel()
 	}
+	// The recording reaper exits on the cancel; wait so nothing of this
+	// server is still running (or writing an envelope) once Close returns.
+	s.waitRecordingReaper()
 	s.connMu.Lock()
 	conn := s.conn
 	s.conn = nil

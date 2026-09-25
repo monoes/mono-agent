@@ -88,10 +88,7 @@ func TestRecordingFramesOverWebSocketLandAsEnvelope(t *testing.T) {
 }
 
 func TestRecordingIdleReaperRunsWithoutAConnection(t *testing.T) {
-	prev := recordingReapInterval
-	recordingReapInterval = 20 * time.Millisecond
-	t.Cleanup(func() { recordingReapInterval = prev })
-	srv, ext, inbox := startCaptureServer(t)
+	srv, ext, inbox := startCaptureServerWith(t, func(s *Server) { s.SetRecordingReapInterval(20 * time.Millisecond) })
 
 	var mu sync.Mutex
 	now := time.Now()
@@ -105,6 +102,8 @@ func TestRecordingIdleReaperRunsWithoutAConnection(t *testing.T) {
 	})
 	ext.send(recFrame("b1", "start", map[string]any{"url": "https://example.com/"}))
 	ext.nextAck("b1")
+	ext.send(recFrame("b2", "event", map[string]any{"event": map[string]any{"id": "e1", "seq": 1, "type": "click", "url": "https://example.com/"}}))
+	ext.nextAck("b2")
 	_ = ext.conn.Close() // the service worker goes away mid-recording
 
 	mu.Lock()
@@ -345,5 +344,31 @@ func TestRecordVerifyPassesInputsByPrivateFile(t *testing.T) {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("fail=%v: inputs file still there: %v", fail, err)
 		}
+	}
+}
+
+func TestRecordingWithoutEventsIsDiscarded(t *testing.T) {
+	_, ext, inbox := startCaptureServer(t)
+	ext.send(recFrame("c1", "start", map[string]any{"url": "https://example.com/"}))
+	ext.nextAck("c1")
+	ext.send(recFrame("c2", "stop", map[string]any{"reason": "error"}))
+	ack := ext.nextAck("c2")
+	data, _ := ack.Data.(map[string]any)
+	if !ack.Success || data["discarded"] != "no events" {
+		t.Fatalf("stop ack = %+v", ack)
+	}
+	if entries, _ := capture.List(inbox); len(entries) != 0 {
+		t.Fatalf("empty recording landed: %+v", entries)
+	}
+}
+
+func TestCloseWaitsForRecordingReaper(t *testing.T) {
+	srv, _, _ := startCaptureServerWith(t, func(s *Server) { s.SetRecordingReapInterval(time.Millisecond) })
+	done := make(chan struct{})
+	go func() { _ = srv.Close(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close never returned")
 	}
 }

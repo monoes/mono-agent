@@ -1,6 +1,8 @@
 package recording
 
 import (
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -95,6 +97,7 @@ func TestStartFrameCapsAndSanitises(t *testing.T) {
 	long := strings.Repeat("g", MaxGoalRunes+50)
 	mustHandle(t, in, Frame{Op: OpStart, RecordingID: "r", URL: "https://x.test/cb?code=abc#tok", Title: strings.Repeat("t", MaxTitleRunes+9), Goal: long})
 	mustHandle(t, in, Frame{Op: OpNetwork, RecordingID: "r", Net: &NetEntry{Method: "GET", URL: "https://api.x.test/v1?access_token=zzz"}})
+	mustHandle(t, in, Frame{Op: OpEvent, RecordingID: "r", Event: ev("e1", 1, EvClick)})
 	out := mustHandle(t, in, Frame{Op: OpStop, RecordingID: "r"})
 	res, err := in.Finalize(out.Stopped)
 	if err != nil {
@@ -133,6 +136,7 @@ func TestFinalizePrunesOldestRecordings(t *testing.T) {
 	}
 	in := &Ingest{Writer: &capture.Writer{Inbox: inbox}, MaxRecordings: 3}
 	mustHandle(t, in, Frame{Op: OpStart, RecordingID: "rec-new", URL: "https://example.com/n", StartedAt: base.Add(9 * time.Hour).UnixMilli()})
+	mustHandle(t, in, Frame{Op: OpEvent, RecordingID: "rec-new", Event: ev("e1", 1, EvClick)})
 	out := mustHandle(t, in, Frame{Op: OpStop, RecordingID: "rec-new"})
 	res, err := in.Finalize(out.Stopped)
 	if err != nil {
@@ -149,5 +153,50 @@ func TestFinalizePrunesOldestRecordings(t *testing.T) {
 	}
 	if _, err := os.Stat(res.Path); err != nil {
 		t.Fatalf("the new recording was pruned: %v", err)
+	}
+}
+
+func TestZeroEventRecordingIsDiscarded(t *testing.T) {
+	in, inbox, c := newIngest(t)
+	mustHandle(t, in, Frame{Op: OpStart, RecordingID: "r", URL: "https://example.com/"})
+	out := mustHandle(t, in, Frame{Op: OpStop, RecordingID: "r"})
+	if res, err := in.Finalize(out.Stopped); !errors.Is(err, ErrNoEvents) || res != nil {
+		t.Fatalf("Finalize(empty) = %v, %v", res, err)
+	}
+	// Idle-reaped with nothing recorded: also discarded.
+	mustHandle(t, in, Frame{Op: OpStart, RecordingID: "r2", URL: "https://example.com/"})
+	c.t = c.t.Add(time.Hour)
+	for _, st := range in.Reap() {
+		if _, err := in.Finalize(st); !errors.Is(err, ErrNoEvents) {
+			t.Fatalf("reaped empty recording: %v", err)
+		}
+	}
+	if entries, _ := capture.List(inbox); len(entries) != 0 {
+		t.Fatalf("empty recordings landed: %+v", entries)
+	}
+	if spools, _ := filepath.Glob(filepath.Join(inbox, spoolPrefix+"*")); len(spools) != 0 {
+		t.Fatalf("spools left: %v", spools)
+	}
+}
+
+func TestListHidesIncompleteEmptyRecordings(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	inbox := filepath.Join(t.TempDir(), "inbox")
+	SetInboxes(inbox)
+	t.Cleanup(func() { SetInboxes() })
+	writeRecording(t, inbox, "rec-ok", time.Now(), 1)
+	// An old-style empty, incomplete envelope written before discarding.
+	if _, err := (&capture.Writer{Inbox: inbox}).Write(&capture.Envelope{
+		Meta: capture.Meta{URL: "https://example.com/empty", Source: SourceRecording, Extra: map[string]json.RawMessage{
+			ExtraRecordingID: json.RawMessage(`"rec-empty"`), ExtraEventCount: json.RawMessage(`0`), ExtraComplete: json.RawMessage(`false`)}},
+		Artifacts: map[string]capture.Artifact{EventsArtifact: capture.Inline(nil)}}); err != nil {
+		t.Fatal(err)
+	}
+	list, err := List()
+	if err != nil || len(list) != 1 || list[0].Title != "rec-ok" {
+		t.Fatalf("List = %+v, %v", list, err)
+	}
+	if _, err := Find("rec-empty"); err != nil {
+		t.Fatalf("hidden recording not findable for delete: %v", err)
 	}
 }

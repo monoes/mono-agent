@@ -3,6 +3,7 @@ package extension
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"sync"
 	"time"
@@ -38,8 +39,8 @@ import (
 // applied on the read loop (each is a small append), except a stop, whose
 // envelope write (up to 20MB) runs on its own goroutine.
 
-// recordingReapInterval is how often idle recordings are looked for.
-var recordingReapInterval = time.Minute
+// defaultRecordingReapInterval is how often idle recordings are looked for.
+const defaultRecordingReapInterval = time.Minute
 
 // recordingState is the recording slice of Server.
 type recordingState struct {
@@ -51,6 +52,55 @@ type recordingState struct {
 	// onRecording, if set, is told about every recording written (or that
 	// failed to be). Tests use it to wait for the stop's async write.
 	onRecording func(*capture.Result, error)
+	// reapInterval overrides defaultRecordingReapInterval (tests). Read
+	// once when the reaper starts.
+	reapInterval time.Duration
+	// reaperWG lets Close wait for the reaper goroutine to exit;
+	// reaperClosed (under recMu) stops a late Start from adding to it
+	// while Close is waiting.
+	reaperWG     sync.WaitGroup
+	reaperClosed bool
+}
+
+// SetRecordingReapInterval changes how often idle recordings are looked
+// for. Call before Start; tests use it to avoid waiting a minute.
+func (s *Server) SetRecordingReapInterval(d time.Duration) {
+	s.recMu.Lock()
+	s.reapInterval = d
+	s.recMu.Unlock()
+}
+
+func (s *Server) recordingReapInterval() time.Duration {
+	s.recMu.Lock()
+	defer s.recMu.Unlock()
+	if s.reapInterval > 0 {
+		return s.reapInterval
+	}
+	return defaultRecordingReapInterval
+}
+
+// startRecordingReaper runs recordingReaper until ctx ends; Close waits for
+// it (waitRecordingReaper).
+func (s *Server) startRecordingReaper(ctx context.Context) {
+	s.recMu.Lock()
+	defer s.recMu.Unlock()
+	if s.reaperClosed {
+		return
+	}
+	s.reaperWG.Add(1)
+	go func() {
+		defer s.reaperWG.Done()
+		s.recordingReaper(ctx)
+	}()
+}
+
+// waitRecordingReaper blocks until the reaper goroutine has exited. Only
+// meaningful after the server's context was cancelled.
+func (s *Server) waitRecordingReaper() {
+	s.recMu.Lock()
+	s.reaperClosed = true
+	s.recMu.Unlock()
+	s.reaperWG.Wait()
 }
 
 // recordingIngest returns the ingest, building it on first use so it
@@ -129,6 +179,12 @@ func (s *Server) finishRecording(ing *recording.Ingest, st *recording.Stopped, a
 	if fn != nil {
 		fn(res, err)
 	}
+	if errors.Is(err, recording.ErrNoEvents) {
+		// A failed or abandoned start: nothing to keep, nothing wrong.
+		s.logger.Info().Str("recording", st.RecordingID()).Msg("discarded a recording with no events")
+		s.ackRecording(ackID, true, map[string]any{"recordingId": st.RecordingID(), "discarded": "no events"}, "")
+		return
+	}
 	if err != nil {
 		s.logger.Error().Err(err).Str("recording", st.RecordingID()).Msg("recording could not be written")
 		s.ackRecording(ackID, false, nil, err.Error())
@@ -167,8 +223,8 @@ func (s *Server) ackRecording(id string, ok bool, data any, errMsg string) {
 }
 
 // recordingReaper finalises recordings left by a previous process, then
-// every recordingReapInterval ends the ones that went idle (tab closed
-// without a stop, service worker gone for good).
+// every reap interval ends the ones that went idle (tab closed without a
+// stop, service worker gone for good).
 func (s *Server) recordingReaper(ctx context.Context) {
 	ing := s.recordingIngest()
 	inboxes := recording.Inboxes()
@@ -178,7 +234,7 @@ func (s *Server) recordingReaper(ctx context.Context) {
 	for _, st := range ing.Recover(inboxes...) {
 		s.finishRecording(ing, st, "")
 	}
-	ticker := time.NewTicker(recordingReapInterval)
+	ticker := time.NewTicker(s.recordingReapInterval())
 	defer ticker.Stop()
 	for {
 		select {

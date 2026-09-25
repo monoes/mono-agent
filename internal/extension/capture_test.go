@@ -33,6 +33,13 @@ type fakeExtension struct {
 // test's temp dir, and connects a fake extension to it.
 func startCaptureServer(t *testing.T) (*Server, *fakeExtension, string) {
 	t.Helper()
+	return startCaptureServerWith(t, nil)
+}
+
+// startCaptureServerWith is startCaptureServer with a hook that configures
+// the server before it starts.
+func startCaptureServerWith(t *testing.T, configure func(*Server)) (*Server, *fakeExtension, string) {
+	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("USERPROFILE", t.TempDir())
 
@@ -42,6 +49,9 @@ func startCaptureServer(t *testing.T) (*Server, *fakeExtension, string) {
 	srv := NewServer("127.0.0.1:9222", zerolog.Nop())
 	inbox := filepath.Join(t.TempDir(), "inbox")
 	srv.SetCaptureInbox(inbox)
+	if configure != nil {
+		configure(srv)
+	}
 	srv.StartAsync(context.Background())
 	t.Cleanup(func() { _ = srv.Close() })
 
