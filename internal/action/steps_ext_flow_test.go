@@ -370,3 +370,19 @@ func TestOffDomainInsideForEachHaltsRun(t *testing.T) {
 		t.Fatal("steps after the halt must not run")
 	}
 }
+
+func TestCallActionNestedBranchTargetsRunOnce(t *testing.T) {
+	target := &ActionDef{ActionType: "t", Steps: []StepDef{
+		{ID: "each", Type: "for_each", Items: "list", Steps: []StepDef{
+			{ID: "cond", Type: "condition", Condition: "item == 'b'", Then: []string{"hit"}},
+		}},
+		{ID: "hit", Type: "update_progress", Increment: "hits"},
+	}}
+	ae := newExtExecutor(t, &extPage{})
+	ae.SetPackage(&extPkg{id: "site", actions: map[string]*ActionDef{"t": target}})
+	ae.SetVariable("list", []interface{}{"a", "b"})
+	wantOK(t, runExt(t, ae, StepDef{ID: "c", Type: "call_action", Action: "t"}))
+	if got := getVar(ae, "hits"); got != 1 {
+		t.Fatalf("branch target ran %v times, want 1", got)
+	}
+}

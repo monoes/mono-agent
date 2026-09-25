@@ -145,14 +145,21 @@ func (ae *ActionExecutor) runActionBody(ctx context.Context, def *ActionDef) err
 			skip[id] = true
 		}
 	}
-	for _, s := range def.Steps {
-		for _, id := range s.Then {
-			skip[id] = true
-		}
-		for _, id := range s.Else {
-			skip[id] = true
+	// Condition branch targets are not initial steps — including those
+	// named by conditions nested in for_each bodies.
+	var collect func(steps []StepDef)
+	collect = func(steps []StepDef) {
+		for _, s := range steps {
+			for _, id := range s.Then {
+				skip[id] = true
+			}
+			for _, id := range s.Else {
+				skip[id] = true
+			}
+			collect(s.Steps)
 		}
 	}
+	collect(def.Steps)
 	var initial []StepDef
 	for _, s := range def.Steps {
 		if !skip[s.ID] {
