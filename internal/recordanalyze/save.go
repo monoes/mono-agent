@@ -17,7 +17,7 @@ import (
 // Installer is the part of *automation.Registry save needs.
 type Installer interface {
 	AddAction(id string, src *automation.Package, actionName string, opts automation.InstallOptions) (*automation.InstallResult, error)
-	Install(src string, opts automation.InstallOptions) (*automation.InstallResult, error)
+	AddFragment(id string, src *automation.Package, fragmentName string, opts automation.InstallOptions) (*automation.InstallResult, error)
 	Get(id string) (*automation.Package, error)
 }
 
@@ -114,7 +114,7 @@ func Save(ctx context.Context, reg Installer, dir string, opts SaveOptions) (*Sa
 	case SaveAsAction:
 		res, err = saveAction(reg, stage, id, d.Action, name)
 	case SaveAsFragment:
-		res, err = saveFragment(reg, staging, stage, id, d.Action, name)
+		res, err = saveFragment(reg, stage, id, d.Action, name)
 	case SaveAsWorkflow:
 		res, err = saveWorkflow(ctx, reg, stage, id, d, name, opts.CreateWorkflow)
 	default:

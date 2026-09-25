@@ -13,87 +13,46 @@ import (
 	"github.com/monoes/mono-agent/internal/automation"
 )
 
-// saveFragment merges the draft action, as a fragment, into a copy of the
-// target package (or a new package) and installs that copy.
-func saveFragment(reg Installer, staging, stage, id, from, name string) (*SaveResult, error) {
+// saveFragment adds the draft action, as a fragment, to automation id
+// (created when missing) through Registry.AddFragment, which keeps built-in
+// lineage (<seed>+local.N), conflict checks and trust merging.
+func saveFragment(reg Installer, stage, id, from, name string) (*SaveResult, error) {
 	var def action.ActionDef
 	if err := readJSON(filepath.Join(stage, "actions", from+".json"), &def); err != nil {
 		return nil, err
 	}
-	var draftM automation.Manifest
-	if err := readJSON(filepath.Join(stage, "automation.json"), &draftM); err != nil {
-		return nil, err
-	}
-	target := filepath.Join(staging, "target")
 	var m automation.Manifest
-	source := automation.SourceLocal
-	if p, err := reg.Get(id); err == nil && p != nil {
-		if p.Source != "" {
-			source = p.Source
-		}
-		if err := os.CopyFS(target, p.FS); err != nil {
-			return nil, fmt.Errorf("copy %s: %w", id, err)
-		}
-		if err := readJSON(filepath.Join(target, "automation.json"), &m); err != nil {
-			return nil, err
-		}
-		m.Version = bumpPatch(m.Version)
-		if len(m.Permissions.Steps) > 0 {
-			m.Permissions.Steps = union(m.Permissions.Steps, draftM.Permissions.Steps)
-		}
-		if len(m.Site.Domains) > 0 {
-			m.Site.Domains = union(m.Site.Domains, draftM.Site.Domains)
-		}
-		m.Permissions.Scripts = union(m.Permissions.Scripts, draftM.Permissions.Scripts)
-	} else {
-		m = draftM
-		m.ID, m.Actions = id, []string{}
-		if m.Version == "" {
-			m.Version = "0.1.0"
-		}
+	if err := readJSON(filepath.Join(stage, "automation.json"), &m); err != nil {
+		return nil, err
 	}
-
-	exists := func(rel string) bool {
-		_, err := os.Stat(filepath.Join(target, rel))
-		return err == nil
+	var target *automation.Package
+	if p, err := reg.Get(id); err == nil {
+		target = p
 	}
-	name = Unique(name, "_", func(n string) bool { return exists("fragments/" + n + ".json") })
+	name = Unique(name, "_", func(n string) bool {
+		if _, err := os.Stat(filepath.Join(stage, "fragments", n+".json")); err == nil {
+			return true
+		}
+		if target != nil {
+			if _, err := target.Fragment(n); err == nil {
+				return true
+			}
+		}
+		return false
+	})
 	frag := action.FragmentDef{Name: name, Description: def.Description, Inputs: def.Inputs, Steps: def.Steps}
-	if err := writeJSON(filepath.Join(target, "fragments", name+".json"), &frag); err != nil {
+	if err := writeJSON(filepath.Join(stage, "fragments", name+".json"), &frag); err != nil {
 		return nil, err
 	}
-	for _, dir := range []string{"fragments", "scripts"} {
-		entries, _ := os.ReadDir(filepath.Join(stage, dir))
-		for _, e := range entries {
-			rel := dir + "/" + e.Name()
-			if e.IsDir() || exists(rel) {
-				continue
-			}
-			b, err := os.ReadFile(filepath.Join(stage, rel))
-			if err != nil {
-				return nil, err
-			}
-			if err := writeFile(filepath.Join(target, rel), b); err != nil {
-				return nil, err
-			}
-		}
-	}
-	sels := map[string]action.SelectorEntry{}
-	_ = readJSON(filepath.Join(target, "selectors.json"), &sels)
-	draftSels := map[string]action.SelectorEntry{}
-	_ = readJSON(filepath.Join(stage, "selectors.json"), &draftSels)
-	for k, v := range draftSels {
-		if _, ok := sels[k]; !ok {
-			sels[k] = v
-		}
-	}
-	if err := writeJSON(filepath.Join(target, "selectors.json"), sels); err != nil {
+	m.ID = id
+	if err := writeJSON(filepath.Join(stage, "automation.json"), &m); err != nil {
 		return nil, err
 	}
-	if err := writeJSON(filepath.Join(target, "automation.json"), &m); err != nil {
+	src, err := automation.OpenDir(stage)
+	if err != nil {
 		return nil, err
 	}
-	ir, err := reg.Install(target, automation.InstallOptions{Source: source, Trust: automation.TrustRecorded})
+	ir, err := reg.AddFragment(id, src, name, automation.InstallOptions{Trust: automation.TrustRecorded})
 	if err != nil {
 		return nil, installErr(err, ir)
 	}
