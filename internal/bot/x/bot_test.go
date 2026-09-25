@@ -157,14 +157,18 @@ func TestConversationURL(t *testing.T) {
 		"https://x.com/messages/111-222":   "https://x.com/messages/111-222",
 		"/messages/111-222/":               "https://x.com/messages/111-222",
 		"https://twitter.com/messages/333": "https://x.com/messages/333",
-		"https://x.com/i/chat/abc-123":     "https://x.com/i/chat/abc-123",
+		"https://x.com/i/chat/123-456":     "https://x.com/i/chat/123-456",
+		"/i/chat/g1555555555":              "https://x.com/i/chat/g1555555555",
 	}
 	for in, want := range ok {
 		if got, err := conversationURL(in); err != nil || got != want {
 			t.Errorf("conversationURL(%q) = %q, %v", in, got, err)
 		}
 	}
-	for _, in := range []string{"", "https://x.com/messages", "https://x.com/messages/compose", "https://x.com/jack", "https://evil.test/messages/1-2"} {
+	for _, in := range []string{"", "https://x.com/messages", "https://x.com/messages/compose", "https://x.com/jack", "https://evil.test/messages/1-2",
+		// X Chat routes that are not conversations.
+		"https://x.com/i/chat/requests", "https://x.com/i/chat/new", "https://x.com/i/chat/settings",
+		"https://x.com/i/chat/grok-bots", "https://x.com/i/chat/pin/new", "https://x.com/i/chat/pin"} {
 		if _, err := conversationURL(in); err == nil {
 			t.Errorf("conversationURL(%q) accepted", in)
 		}

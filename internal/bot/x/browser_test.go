@@ -41,6 +41,7 @@ func xRoutes() []bottest.Route {
 		{Pattern: "https://x.com/home", File: "testdata/compose.html"},
 		{Pattern: "https://x.com/messages", File: "testdata/inbox.html"},
 		{Pattern: "https://x.com/i/chat", File: "testdata/chat_inbox.html"},
+		{Pattern: "https://x.com/i/chat/pin/*", File: "testdata/chat_pin.html"},
 		{Pattern: "https://x.com/messages/*", File: "testdata/thread.html"},
 		{Pattern: "https://x.com/i/chat/*", File: "testdata/thread.html"},
 		{Pattern: "https://x.com/*", File: "testdata/profile.html"},
@@ -595,16 +596,25 @@ func TestBrowserDMs(t *testing.T) {
 
 	t.Run("reply_dm in the chat UI", func(t *testing.T) {
 		p := xPage(t, b)
-		got, err := bot.ReplyDM(ctxT(t), p, "/i/chat/abc-111", "hi from the synthetic bot")
+		// The thread already holds this text: only a new message-text-<id>
+		// bubble confirms the send.
+		got, err := bot.ReplyDM(ctxT(t), p, "/i/chat/1111111111-2222222222", "Thanks for the message!")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got["sent"] != true || got["conversation_url"] != "https://x.com/i/chat/abc-111" {
+		if got["sent"] != true || got["conversation_url"] != "https://x.com/i/chat/1111111111-2222222222" || got["verified_by"] != "bubble" {
 			t.Errorf("result = %v", got)
 		}
-		if s := sentDMs(t, p); s != `["hi from the synthetic bot"]` {
+		if s := sentDMs(t, p); s != `["Thanks for the message!"]` {
 			t.Errorf("sent = %s", s)
 		}
+	})
+
+	t.Run("reply_dm: X Chat locked behind its passcode", func(t *testing.T) {
+		p := xPage(t, b, bottest.Route{Pattern: "https://x.com/i/chat/1111111111-2222222222",
+			Body: `<!doctype html><script>location.replace('/i/chat/pin/verify')</script>`})
+		_, err := bot.ReplyDM(ctxT(t), p, "https://x.com/i/chat/1111111111-2222222222", "hello")
+		wantErr(t, err, "passcode")
 	})
 
 	t.Run("list_conversations: unread only, never last-from-me", func(t *testing.T) {
@@ -638,12 +648,37 @@ func TestBrowserDMs(t *testing.T) {
 
 	t.Run("list_conversations: chat UI", func(t *testing.T) {
 		p := xPage(t, b, bottest.Route{Pattern: "https://x.com/messages", Body: `<!doctype html><script>location.replace('/i/chat')</script>`})
-		rows, err := bot.ListConversations(ctxT(t), p, 10, true)
+		rows, err := bot.ListConversations(ctxT(t), p, 10, false)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := ids(rows, "url"); !reflect.DeepEqual(got, []string{"https://x.com/i/chat/abc-111"}) {
+		// Requests / Grok rows are not conversations; Finn's last message is
+		// ours ("You: …").
+		want := []string{"https://x.com/i/chat/1111111111-2222222222", "https://x.com/i/chat/1111111111-4444444444", "https://x.com/i/chat/g1555555555"}
+		if got := ids(rows, "url"); !reflect.DeepEqual(got, want) {
+			t.Fatalf("urls = %v, want %v", got, want)
+		}
+		if rows[0]["name"] != "Synth Eve" || rows[0]["preview"] != "ping from eve" || rows[0]["unread"] != true {
+			t.Errorf("row 0 = %v", rows[0])
+		}
+		if rows[1]["unread"] != false || rows[2]["unread"] != true || rows[2]["preview"] != "Synth Hal: see you there" {
+			t.Errorf("rows = %v", rows)
+		}
+	})
+
+	t.Run("list_conversations: chat UI, unread only", func(t *testing.T) {
+		rows, err := bot.ListConversations(ctxT(t), xPage(t, b, bottest.Route{Pattern: "https://x.com/messages", Body: `<!doctype html><script>location.replace('/i/chat')</script>`}), 10, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := ids(rows, "url"); !reflect.DeepEqual(got, []string{"https://x.com/i/chat/1111111111-2222222222", "https://x.com/i/chat/g1555555555"}) {
 			t.Fatalf("urls = %v", got)
 		}
+	})
+
+	t.Run("list_conversations: X Chat passcode gate", func(t *testing.T) {
+		p := xPage(t, b, bottest.Route{Pattern: "https://x.com/messages", Body: `<!doctype html><script>location.replace('/i/chat/pin/new?from=%2Fi%2Fchat')</script>`})
+		_, err := bot.ListConversations(ctxT(t), p, 10, false)
+		wantErr(t, err, "passcode")
 	})
 }
