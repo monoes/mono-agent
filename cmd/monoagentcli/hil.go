@@ -1,10 +1,16 @@
 package main
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
+	"time"
 
+	"github.com/monoes/mono-agent/internal/hilsuggest"
+	"github.com/monoes/mono-agent/internal/jev/jevconf"
 	"github.com/spf13/cobra"
 )
 
@@ -34,15 +40,26 @@ type hilItem struct {
 	Status       string                 `json:"status"`
 	ReadonlyData map[string]interface{} `json:"readonly_data"`
 	EditableData map[string]interface{} `json:"editable_data"`
+	NodeConfig   map[string]interface{} `json:"node_config"`
 	CreatedAt    string                 `json:"created_at"`
+	// Suggestion is TypeSafe Jev's stored suggestion (--suggest only).
+	Suggestion *hilsuggest.Suggestion `json:"suggestion,omitempty"`
 }
 
 func newHILListCmd(cfg *globalConfig) *cobra.Command {
-	return &cobra.Command{
+	var suggest, resuggest bool
+	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List pending Human-in-Loop items",
+		Long: "List pending Human-in-Loop items.\n\n" +
+			"--suggest adds TypeSafe Jev's suggestion to each item (approve, reject or needs_human with " +
+			"its probability p, and a low/medium/high risk). A suggestion stored on the item (by the " +
+			"node's auto_decide, or by an earlier --suggest) is reused; a missing one is computed — one " +
+			"request per item — and stored, when the profile enabled the surface (jev enable hil) and " +
+			"a key resolves. --resuggest recomputes. Suggestions never approve or reject anything.",
 		Example: `  monoagentcli hil list
-  monoagentcli --json hil list`,
+  monoagentcli --json hil list
+  monoagentcli --json hil list --suggest`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			db, err := initDB(cfg)
 			if err != nil {
@@ -52,7 +69,7 @@ func newHILListCmd(cfg *globalConfig) *cobra.Command {
 
 			rows, err := db.DB.Query(
 				`SELECT h.id, h.execution_id, h.workflow_id, h.node_id, h.node_name, h.status,
-				        h.readonly_data, h.editable_data, h.created_at, COALESCE(w.name,'')
+				        h.readonly_data, h.editable_data, h.node_config, h.created_at, COALESCE(w.name,'')
 				 FROM hil_pending h
 				 LEFT JOIN workflows w ON w.id = h.workflow_id
 				 WHERE h.status = 'pending' AND h.profile_id = ?
@@ -67,17 +84,23 @@ func newHILListCmd(cfg *globalConfig) *cobra.Command {
 			var items []hilItem
 			for rows.Next() {
 				var it hilItem
-				var roRaw, edRaw string
+				var roRaw, edRaw, cfgRaw string
 				if err := rows.Scan(&it.ID, &it.ExecutionID, &it.WorkflowID, &it.NodeID, &it.NodeName,
-					&it.Status, &roRaw, &edRaw, &it.CreatedAt, &it.WorkflowName); err != nil {
+					&it.Status, &roRaw, &edRaw, &cfgRaw, &it.CreatedAt, &it.WorkflowName); err != nil {
 					return fmt.Errorf("scanning HIL item: %w", err)
 				}
 				_ = json.Unmarshal([]byte(roRaw), &it.ReadonlyData)
 				_ = json.Unmarshal([]byte(edRaw), &it.EditableData)
+				_ = json.Unmarshal([]byte(cfgRaw), &it.NodeConfig)
 				items = append(items, it)
 			}
 			if err := rows.Err(); err != nil {
 				return fmt.Errorf("iterating HIL items: %w", err)
+			}
+			rows.Close()
+
+			if suggest || resuggest {
+				suggestHILItems(cmd.Context(), db.DB, cfg.ProfileID, items, resuggest)
 			}
 
 			if cfg.JSONOutput {
@@ -94,7 +117,11 @@ func newHILListCmd(cfg *globalConfig) *cobra.Command {
 				return nil
 			}
 
-			table := newPlainTable(os.Stdout, []string{"ID", "Workflow", "Node", "Created"}, nil)
+			header := []string{"ID", "Workflow", "Node", "Created"}
+			if suggest || resuggest {
+				header = append(header, "Suggestion")
+			}
+			table := newPlainTable(os.Stdout, header, nil)
 			for _, it := range items {
 				shortID := it.ID
 				if len(shortID) > 8 {
@@ -104,13 +131,104 @@ func newHILListCmd(cfg *globalConfig) *cobra.Command {
 				if name == "" {
 					name = it.WorkflowID
 				}
-				table.Append([]string{shortID, truncateStr(name, 24), truncateStr(it.NodeName, 20), it.CreatedAt})
+				row := []string{shortID, truncateStr(name, 24), truncateStr(it.NodeName, 20), it.CreatedAt}
+				if suggest || resuggest {
+					sug := ""
+					if s := it.Suggestion; s != nil {
+						sug = fmt.Sprintf("%s p=%.2f risk=%s", s.Choice, s.P, s.Risk)
+					}
+					row = append(row, sug)
+				}
+				table.Append(row)
 			}
 			table.Render()
 			fmt.Fprintf(os.Stderr, "\nTotal: %d pending item(s). Approve with `hil approve <id>` or reject with `hil reject <id>`.\n", len(items))
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&suggest, "suggest", false, "Add TypeSafe Jev's suggestion to each item (computed and stored when missing; needs `jev enable hil`)")
+	cmd.Flags().BoolVar(&resuggest, "resuggest", false, "Recompute and store every suggestion (implies --suggest)")
+	return cmd
+}
+
+// hilSuggestTimeout bounds one `hil list --suggest` run's Jev calls.
+const hilSuggestTimeout = 60 * time.Second
+
+// suggestHILItems fills items[i].Suggestion: the one stored in the row's
+// node_config unless resuggest, else — when the profile enabled surface
+// "hil" and a key resolves — a fresh one (one request per item), stored
+// back into node_config. It only ever writes node_config of rows still
+// pending, never their status. Problems are warnings on stderr: the list
+// itself must not fail because Jev is unavailable.
+func suggestHILItems(ctx context.Context, db *sql.DB, profileID string, items []hilItem, resuggest bool) {
+	var todo []int
+	for i := range items {
+		if s, ok := storedHILSuggestion(items[i].NodeConfig); ok && !resuggest {
+			items[i].Suggestion = s
+			continue
+		}
+		todo = append(todo, i)
+	}
+	if len(todo) == 0 {
+		return
+	}
+	if !jevconf.Enabled(db, profileID, jevconf.HIL) {
+		fmt.Fprintln(os.Stderr, "warning: TypeSafe Jev suggestions are off for this profile — enable them with `monoagentcli jev enable hil`")
+		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	client, err := jevconf.NewClient(ctx, db, profileID, "", "", jevconf.HIL)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: no suggestions: %v\n", err)
+		return
+	}
+	ins := make([]hilsuggest.Input, len(todo))
+	for k, i := range todo {
+		policy, _ := items[i].NodeConfig["policy"].(string)
+		ins[k] = hilsuggest.Input{Readonly: items[i].ReadonlyData, Editable: items[i].EditableData, Policy: policy}
+	}
+	jctx, cancel := context.WithTimeout(ctx, hilSuggestTimeout)
+	defer cancel()
+	sugs, errs := hilsuggest.SuggestAll(jctx, client, ins)
+	for k, i := range todo {
+		if errs[k] != nil {
+			fmt.Fprintf(os.Stderr, "warning: no suggestion for %s: %v\n", items[i].ID, errs[k])
+			continue
+		}
+		s := sugs[k]
+		items[i].Suggestion = &s
+		if items[i].NodeConfig == nil {
+			items[i].NodeConfig = map[string]interface{}{}
+		}
+		items[i].NodeConfig["suggestion"] = s
+		raw, err := json.Marshal(items[i].NodeConfig)
+		if err == nil {
+			_, err = db.ExecContext(ctx, `UPDATE hil_pending SET node_config = ? WHERE id = ? AND status = 'pending' AND profile_id = ?`,
+				string(raw), items[i].ID, profileID)
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: storing the suggestion for %s: %v\n", items[i].ID, err)
+		}
+	}
+}
+
+// storedHILSuggestion decodes node_config.suggestion.
+func storedHILSuggestion(nc map[string]interface{}) (*hilsuggest.Suggestion, bool) {
+	raw, ok := nc["suggestion"]
+	if !ok || raw == nil {
+		return nil, false
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return nil, false
+	}
+	var s hilsuggest.Suggestion
+	if err := json.Unmarshal(b, &s); err != nil || strings.TrimSpace(s.Choice) == "" {
+		return nil, false
+	}
+	return &s, true
 }
 
 func newHILApproveCmd(cfg *globalConfig) *cobra.Command {

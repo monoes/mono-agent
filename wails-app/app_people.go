@@ -446,13 +446,17 @@ type PendingPersonApproval struct {
 	Category         string `json:"category"`
 	Introduction     string `json:"introduction"`
 	CreatedAt        string `json:"created_at"`
+	// Suggestion is TypeSafe Jev's cached suggestion ({suggest, p,
+	// intro_fit, intro_fit_p, model, at}) when the profile enabled surface
+	// people_review; absent otherwise.
+	Suggestion map[string]interface{} `json:"suggestion,omitempty"`
 }
 
 // GetPendingPeopleApprovals returns the active profile's people staged for
-// review (category "pending_approval") — `people review list`.
+// review (category "pending_approval") — `people review list --suggest`.
 func (a *App) GetPendingPeopleApprovals() ([]*PendingPersonApproval, error) {
 	results := []*PendingPersonApproval{}
-	if err := a.runMonoCLI("", &results, "people", "review", "list"); err != nil {
+	if err := a.runMonoCLI("", &results, "people", "review", "list", "--suggest"); err != nil {
 		return nil, err
 	}
 	return results, nil
