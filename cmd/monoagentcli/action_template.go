@@ -17,19 +17,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// userActionsInstallDir returns ~/.monoagent/actions, creating it if needed.
-func userActionsInstallDir() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("resolve home dir: %w", err)
-	}
-	dir := filepath.Join(home, ".monoagent", "actions")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", fmt.Errorf("create actions dir: %w", err)
-	}
-	return dir, nil
-}
-
 // userCaptureDir returns ~/.monoagent/captures, creating it if needed.
 func userCaptureDir() (string, error) {
 	home, err := os.UserHomeDir()
@@ -187,62 +174,68 @@ func newActionTemplateInstallCmd(cfg *globalConfig) *cobra.Command {
 	return cmd
 }
 
+// newActionTemplateListCmd lists the actions of the user's own packages
+// (trust local or recorded), or of every installed package with --all.
+// The node_type/file keys are kept from the pre-package output.
 func newActionTemplateListCmd(cfg *globalConfig) *cobra.Command {
-	return &cobra.Command{
+	var all bool
+	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List user-installed action templates",
+		Short: "List the actions of local and recorded automation packages",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			home, err := os.UserHomeDir()
+			reg, err := openAutomationRegistry()
 			if err != nil {
-				return fmt.Errorf("resolve home dir: %w", err)
+				return err
 			}
-			actionsDir := filepath.Join(home, ".monoagent", "actions")
-
+			infos, err := reg.List(false)
+			if err != nil {
+				return err
+			}
 			type entry struct {
-				NodeType string `json:"node_type"`
-				File     string `json:"file"`
+				NodeType   string `json:"node_type"`
+				File       string `json:"file"`
+				Automation string `json:"automation"`
+				Trust      string `json:"trust"`
+				Enabled    bool   `json:"enabled"`
 			}
-			var entries []entry
-
-			platforms, err := os.ReadDir(actionsDir)
-			if err != nil && !os.IsNotExist(err) {
-				return fmt.Errorf("read actions dir: %w", err)
-			}
-			for _, pd := range platforms {
-				if !pd.IsDir() {
+			entries := []entry{}
+			for _, info := range infos {
+				if !all && info.Trust != automation.TrustLocal && info.Trust != automation.TrustRecorded {
 					continue
 				}
-				files, _ := os.ReadDir(filepath.Join(actionsDir, pd.Name()))
-				for _, f := range files {
-					if !f.IsDir() && strings.HasSuffix(f.Name(), ".json") {
-						name := strings.TrimSuffix(f.Name(), ".json")
-						entries = append(entries, entry{
-							NodeType: fmt.Sprintf("%s.%s", pd.Name(), name),
-							File:     filepath.Join(actionsDir, pd.Name(), f.Name()),
-						})
-					}
+				pkg, err := reg.Get(info.ID)
+				if err != nil {
+					continue
+				}
+				for _, name := range pkg.Manifest.Actions {
+					entries = append(entries, entry{
+						NodeType:   info.ID + "." + name,
+						File:       filepath.Join(info.Dir, "actions", name+".json"),
+						Automation: info.ID,
+						Trust:      info.Trust,
+						Enabled:    info.Enabled,
+					})
 				}
 			}
-
+			out := cmd.OutOrStdout()
 			if cfg.JSONOutput {
-				if entries == nil {
-					entries = []entry{}
-				}
-				return printJSON(entries)
+				return writeJSONTo(out, entries)
 			}
-
 			if len(entries) == 0 {
-				fmt.Println("No user-installed templates. Install with: monoagent action template install <file>")
+				fmt.Fprintln(out, "No local or recorded actions. Create a package with: monoagentcli automation new <id>  (or --all for every installed package)")
 				return nil
 			}
-
-			tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "NODE TYPE\tFILE")
+			tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+			fmt.Fprintln(tw, "NODE TYPE\tTRUST\tFILE")
 			for _, e := range entries {
-				fmt.Fprintf(tw, "%s\t%s\n", e.NodeType, e.File)
+				fmt.Fprintf(tw, "%s\t%s\t%s\n", e.NodeType, e.Trust, e.File)
 			}
 			tw.Flush()
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&all, "all", false, "Include built-in and imported packages")
+	withJSONErrors(cfg, cmd)
+	return cmd
 }

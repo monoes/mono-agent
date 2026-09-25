@@ -2393,20 +2393,22 @@ Step 1 — capture the rendered page HTML (real browser, JS executed):
   monoagent action template capture https://somesite.com/someuser
   # Saves to: ~/.monoagent/captures/somesite_com_<timestamp>.html
 
-Step 2 — generate an ActionDef template with Claude Code:
-  In Claude Code, type:  /action-template-generator
-  The skill reads the HTML, identifies elements using XPath analysis,
-  and writes a JSON template to ~/.monoagent/actions/<platform>/<type>.json
+Step 2 — scaffold an automation package and write the action:
+  monoagent automation new <id> --template list-scrape --start-url https://somesite.com/
+  In Claude Code, /action-template-generator reads the captured HTML and
+  writes the action JSON into the package's actions/ folder.
   No API key required — Claude's built-in reasoning does the analysis.
+  (A single loose action file: monoagent action import <file>.json)
 
-Step 3 — install the template:
-  monoagent action template install ~/.monoagent/actions/<platform>/<type>.json
+Step 3 — validate and install the package:
+  monoagent automation validate <id>
+  monoagent automation install <id> --yes
 
 Step 4 — run it like any built-in node:
-  monoagent node run <platform>.<action_type>
+  monoagent node run <id>.<action_type>
 
-List installed templates:
-  monoagent action template list
+List installed automations:
+  monoagent automation list
 
 Full guide:  monoagentcli ref crawling
 
@@ -2567,32 +2569,37 @@ STEP 2  Generate a template with Claude Code
     • Analyze DOM structure to identify data elements
     • Build XPath selectors (no @class — stable across deployments)
     • Output a valid ActionDef JSON template
-    • Save it to ~/.monoagent/actions/<platform>/<action_type>.json
+    • Save it in an automation package's actions/ folder — scaffold one
+      first with: monoagent automation new <id> --template basic --start-url <url>
 
-STEP 3  Install the template
-─────────────────────────────
-  monoagent action template install <path>
+STEP 3  Install it
+───────────────────
+  monoagent automation validate <dir>       # schema + lint + fixture tests
+  monoagent automation install <dir> --yes  # installs into ~/.monoagent/automations
 
-  Validates the JSON, copies it to ~/.monoagent/actions/<platform>/,
-  and invalidates the loader cache so it's immediately usable.
+  A single loose action file merges into an automation with:
+    monoagent action import <file>.json [--into <id>] --yes
 
   Example:
-    monoagent action template install ~/.monoagent/actions/producthunt/scrape_post.json
+    monoagent automation new producthunt-extra --template basic --start-url https://www.producthunt.com/
+    # write actions/scrape_post.json, then:
+    monoagent automation install producthunt-extra --yes
 
 STEP 4  Run it
 ───────────────
-  monoagent node run <platform>.<action_type>
+  monoagent node run <id>.<action_type>
 
   Example:
-    monoagent node run producthunt.scrape_post \
+    monoagent node run producthunt-extra.scrape_post \
       --config '{"url":"https://www.producthunt.com/posts/some-product"}'
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 MANAGE INSTALLED TEMPLATES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  monoagent action template list        # show all installed templates
-  monoagent node list                   # includes installed templates
+  monoagent automation list             # installed automation packages
+  monoagent action template list        # local and recorded packages' actions
+  monoagent node list                   # includes installed actions
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ACTIONDEF ALLOWED STEP TYPES

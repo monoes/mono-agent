@@ -181,7 +181,8 @@ type automationActionJSON struct {
 	ContainsScript bool                  `json:"containsScript"`
 	NodeType       string                `json:"nodeType"`
 	Inputs         []automationInputJSON `json:"inputs"`
-	Outputs        []string              `json:"outputs"`
+	Outputs        []string              `json:"outputs"`      // union of every outputs key, success first
+	OutputsByKey   map[string][]string   `json:"outputsByKey"` // the action's outputs map as written
 }
 
 type automationInputJSON struct {
@@ -237,7 +238,7 @@ func describeActions(pkg *automation.Package) []automationActionJSON {
 	out := []automationActionJSON{}
 	for _, name := range pkg.Manifest.Actions {
 		a := automationActionJSON{Name: name, NodeType: pkg.Manifest.ID + "." + name,
-			Inputs: []automationInputJSON{}, Outputs: []string{}}
+			Inputs: []automationInputJSON{}, Outputs: []string{}, OutputsByKey: map[string][]string{}}
 		def, err := pkg.Action(name)
 		if err != nil {
 			a.Description = "error: " + err.Error()
@@ -251,10 +252,38 @@ func describeActions(pkg *automation.Package) []automationActionJSON {
 			a.Inputs = append(a.Inputs, parseInputs(def.Inputs.Required, true)...)
 			a.Inputs = append(a.Inputs, parseInputs(def.Inputs.Optional, false)...)
 		}
-		if s := def.Outputs["success"]; s != nil {
-			a.Outputs = s
+		a.Outputs = unionOutputs(def.Outputs)
+		for k, v := range def.Outputs {
+			a.OutputsByKey[k] = append([]string{}, v...)
 		}
 		out = append(out, a)
+	}
+	return out
+}
+
+// unionOutputs flattens an outputs map: "success" first, then the other
+// keys in name order, each field once. Saved/recorded actions key their
+// outputs freely, so reading only "success" would lose them.
+func unionOutputs(outputs map[string][]string) []string {
+	keys := make([]string, 0, len(outputs))
+	for k := range outputs {
+		if k != "success" {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	if _, ok := outputs["success"]; ok {
+		keys = append([]string{"success"}, keys...)
+	}
+	out := []string{}
+	seen := map[string]bool{}
+	for _, k := range keys {
+		for _, f := range outputs[k] {
+			if !seen[f] {
+				seen[f] = true
+				out = append(out, f)
+			}
+		}
 	}
 	return out
 }

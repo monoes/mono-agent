@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"strings"
 
@@ -69,6 +70,9 @@ func newAutomationInstallCmd(cfg *globalConfig) *cobra.Command {
 		Short: "Install or update an automation package (shows a review first)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := checkInstallSource(args[0]); err != nil {
+				return err
+			}
 			reg, err := openAutomationRegistry()
 			if err != nil {
 				return err
@@ -94,6 +98,19 @@ func newAutomationInstallCmd(cfg *globalConfig) *cobra.Command {
 	cmd.Flags().BoolVar(&replaceBuiltin, "replace-builtin", false, "Allow this package to replace an installed built-in or local package with the same id")
 	cmd.Flags().StringVar(&expectSHA, "expect-sha256", "", "Refuse unless the package bytes have this sha256 (e.g. from a --dry-run review)")
 	return cmd
+}
+
+// checkInstallSource fails fast on a local path that does not exist, so
+// the user hears "no such file" rather than "confirmation required".
+// URLs are checked by the registry when it downloads them.
+func checkInstallSource(src string) error {
+	if strings.HasPrefix(src, "https://") || strings.HasPrefix(src, "http://") {
+		return nil
+	}
+	if _, err := os.Stat(src); err != nil {
+		return fmt.Errorf("install source: %w", err)
+	}
+	return nil
 }
 
 // printFailedIssues shows a failed install's validation issues on stderr
@@ -195,12 +212,13 @@ func printInstallReview(out io.Writer, res *automation.InstallResult) {
 	}
 	if ch := r.Changes; ch != nil {
 		fmt.Fprintln(out, "Changes since the installed version")
-		if len(ch.AddedDomains)+len(ch.AddedSteps)+len(ch.AddedScripts)+len(ch.ChangedScripts) == 0 {
-			fmt.Fprintln(out, "  no new domains, steps or scripts")
+		if len(ch.AddedDomains)+len(ch.AddedSteps)+len(ch.AddedScripts)+len(ch.ChangedScripts)+len(ch.AddedCallActions) == 0 {
+			fmt.Fprintln(out, "  no new domains, steps, scripts or cross-package calls")
 		}
 		printChange(out, "added domains", ch.AddedDomains)
 		printChange(out, "added steps", ch.AddedSteps)
 		printChange(out, "added scripts", ch.AddedScripts)
+		printChange(out, "added calls", ch.AddedCallActions)
 		printChange(out, "changed scripts", ch.ChangedScripts)
 	}
 	if len(r.Files) > 0 {
