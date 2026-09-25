@@ -117,6 +117,7 @@
     {
       "id": "find_message_input",
       "type": "find_element",
+      "intent": "the message text box of the open direct message conversation",
       "xpath": "//div[@contenteditable='true'][@role='textbox']",
       "alternatives": [
         "//textarea[@placeholder]",
@@ -140,6 +141,7 @@
     {
       "id": "find_send_button",
       "type": "find_element",
+      "intent": "the Send button of the open direct message conversation",
       "xpath": "//button[contains(text(), 'Send')]",
       "alternatives": [
         "//button[@type='submit']",

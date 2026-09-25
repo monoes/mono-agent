@@ -80,6 +80,7 @@
     {
       "id": "find_message_in_dropdown",
       "type": "find_element",
+      "intent": "the Message option in the profile's More actions dropdown menu",
       "xpath": "//div[contains(@class, 'dropdown')]//span[text()='Message']",
       "timeout": 3
     },
@@ -115,6 +116,7 @@
     {
       "id": "fill_message_full_page",
       "type": "find_element",
+      "intent": "the message text box of the open direct message conversation",
       "xpath": "//div[contains(@class, 'msg-form__contenteditable')]",
       "timeout": 15
     },
@@ -128,6 +130,7 @@
     {
       "id": "send_message_full_page",
       "type": "find_element",
+      "intent": "the Send button of the open direct message conversation",
       "xpath": "//button[contains(@class, 'msg-form__send-button')]",
       "timeout": 15
     },

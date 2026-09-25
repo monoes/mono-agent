@@ -88,21 +88,21 @@ func (ae *ActionExecutor) resolveElement(step StepDef) (browser.ElementHandle, e
 			if err == nil {
 				return browser.NewRodElement(el), nil
 			}
-			return nil, err
+			return ae.jevResolve(step, err)
 		}
 		// Non-Rod fallback.
 		el, err := ae.page.Element(step.Selector, timeout)
 		if err == nil {
 			return el, nil
 		}
-		return nil, err
+		return ae.jevResolve(step, err)
 	}
 
 	// 3. XPath.
 	if step.XPath != "" {
 		el, err := ae.page.ElementX(step.XPath, timeout)
 		if err != nil {
-			return nil, err
+			return ae.jevResolve(step, err)
 		}
 		return el, nil
 	}
@@ -340,6 +340,7 @@ func (ae *ActionExecutor) stepRefresh(ctx context.Context, step StepDef) (*StepR
 // ---------------------------------------------------------------------------
 
 func (ae *ActionExecutor) stepFindElement(ctx context.Context, step StepDef) (*StepResult, error) {
+	defer ae.releaseJevMarker()
 	timeout := stepTimeout(step, 10)
 
 	// Use bot.FindElementWithAlternatives when we have a selector with alternatives.
@@ -349,22 +350,29 @@ func (ae *ActionExecutor) stepFindElement(ctx context.Context, step StepDef) (*S
 		if rodPage != nil {
 			rawElem, err := bot.FindElementWithAlternatives(rodPage, step.Selector, step.Alternatives, timeout)
 			if err != nil {
-				return &StepResult{
-					Success: false,
-					StepID:  step.ID,
-					Error:   fmt.Errorf("find_element %s: %w", step.ID, err),
-				}, nil
+				elem, err = ae.jevResolve(step, fmt.Errorf("find_element %s: %w", step.ID, err))
+				if err != nil {
+					return &StepResult{
+						Success: false,
+						StepID:  step.ID,
+						Error:   err,
+					}, nil
+				}
+			} else {
+				elem = browser.NewRodElement(rawElem)
 			}
-			elem = browser.NewRodElement(rawElem)
 		} else {
 			var err error
 			elem, err = ae.page.Element(step.Selector, timeout)
 			if err != nil {
-				return &StepResult{
-					Success: false,
-					StepID:  step.ID,
-					Error:   fmt.Errorf("find_element %s: %w", step.ID, err),
-				}, nil
+				elem, err = ae.jevResolve(step, fmt.Errorf("find_element %s: %w", step.ID, err))
+				if err != nil {
+					return &StepResult{
+						Success: false,
+						StepID:  step.ID,
+						Error:   err,
+					}, nil
+				}
 			}
 		}
 
@@ -413,11 +421,16 @@ func (ae *ActionExecutor) stepFindElement(ctx context.Context, step StepDef) (*S
 	}
 
 	if elem == nil {
-		return &StepResult{
-			Success: false,
-			StepID:  step.ID,
-			Error:   fmt.Errorf("find_element %s: no matching element found (tried %d selectors): %v", step.ID, len(selectors), lastErr),
-		}, nil
+		// One Jev pick after the whole list failed (not one per alternative).
+		var err error
+		elem, err = ae.jevResolve(step, fmt.Errorf("find_element %s: no matching element found (tried %d selectors): %v", step.ID, len(selectors), lastErr))
+		if err != nil {
+			return &StepResult{
+				Success: false,
+				StepID:  step.ID,
+				Error:   err,
+			}, nil
+		}
 	}
 
 	// Store the element for later reference.
@@ -440,6 +453,7 @@ func (ae *ActionExecutor) stepFindElement(ctx context.Context, step StepDef) (*S
 // ---------------------------------------------------------------------------
 
 func (ae *ActionExecutor) stepClick(ctx context.Context, step StepDef) (*StepResult, error) {
+	defer ae.releaseJevMarker()
 	elem, resolveErr := ae.resolveElement(step)
 	if elem == nil {
 		return &StepResult{
@@ -539,6 +553,7 @@ func (ae *ActionExecutor) waitAfterClick(step StepDef) {
 // ---------------------------------------------------------------------------
 
 func (ae *ActionExecutor) stepType(ctx context.Context, step StepDef) (*StepResult, error) {
+	defer ae.releaseJevMarker()
 	elem, resolveErr := ae.resolveElement(step)
 	if elem == nil {
 		return &StepResult{
@@ -634,6 +649,7 @@ func (ae *ActionExecutor) stepType(ctx context.Context, step StepDef) (*StepResu
 // ---------------------------------------------------------------------------
 
 func (ae *ActionExecutor) stepUpload(ctx context.Context, step StepDef) (*StepResult, error) {
+	defer ae.releaseJevMarker()
 	// C-46: uploaded files leave the machine through the page; in a run a
 	// role's grant started they must come from the role's workdir. Checked
 	// before the page is touched.
@@ -760,6 +776,7 @@ func (ae *ActionExecutor) stepScroll(ctx context.Context, step StepDef) (*StepRe
 // ---------------------------------------------------------------------------
 
 func (ae *ActionExecutor) stepHover(ctx context.Context, step StepDef) (*StepResult, error) {
+	defer ae.releaseJevMarker()
 	elem, resolveErr := ae.resolveElement(step)
 	if elem == nil {
 		return &StepResult{

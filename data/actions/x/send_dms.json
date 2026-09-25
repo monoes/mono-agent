@@ -42,6 +42,7 @@
     {
       "id": "find_message_button",
       "type": "find_element",
+      "intent": "the Message button on the profile that opens a direct message",
       "xpath": "//a[contains(@href, '/messages/compose')] | //button[contains(@data-testid, 'sendDMFromProfile')]",
       "timeout": 10,
       "onError": {
@@ -64,6 +65,7 @@
     {
       "id": "find_message_input",
       "type": "find_element",
+      "intent": "the message text box of the open direct message conversation",
       "xpath": "//div[@contenteditable='true' and @data-testid='dmComposerTextInput'] | //div[@role='textbox']",
       "timeout": 15
     },
@@ -77,6 +79,7 @@
     {
       "id": "find_send_button",
       "type": "find_element",
+      "intent": "the Send button of the open direct message conversation",
       "xpath": "//button[@data-testid='dmComposerSendButton'] | //button[contains(text(), 'Send')]",
       "timeout": 10
     },

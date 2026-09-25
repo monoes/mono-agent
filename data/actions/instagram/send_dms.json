@@ -69,6 +69,7 @@
     {
       "id": "t2_find_message_btn",
       "type": "find_element",
+      "intent": "the Message button in the profile header that opens a direct message",
       "xpath": "//div[@role='button'][normalize-space(.)='Message']",
       "alternatives": [
         "//button[normalize-space(.)='Message']"
@@ -89,6 +90,7 @@
     {
       "id": "t2_find_message_input",
       "type": "find_element",
+      "intent": "the message text box of the open direct message conversation",
       "xpath": "//div[@aria-label='Message'][@role='textbox']",
       "alternatives": [
         "//div[@contenteditable='true'][@role='textbox']",
@@ -112,6 +114,7 @@
     {
       "id": "t2_find_send_button",
       "type": "find_element",
+      "intent": "the Send button of the open direct message conversation",
       "xpath": "//div[@role='button'][normalize-space(.)='Send']",
       "alternatives": [
         "//button[normalize-space(.)='Send']"
@@ -160,6 +163,7 @@
     {
       "id": "t3_find_message_btn",
       "type": "find_element",
+      "intent": "the Message button in the profile header that opens a direct message",
       "xpath": "//div[@role='button'][normalize-space(.)='Message']",
       "alternatives": [
         "//button[normalize-space(.)='Message']"

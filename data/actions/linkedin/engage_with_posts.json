@@ -84,6 +84,7 @@
     {
       "id": "like_post",
       "type": "find_element",
+      "intent": "the post's own Like reaction button in its action bar (not a comment's Like)",
       "xpath": ".//button[contains(@aria-label, 'Like')] | .//button[contains(@aria-pressed, 'false')]",
       "timeout": 5,
       "onError": {

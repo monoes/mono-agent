@@ -11,6 +11,7 @@ import (
 	"github.com/monoes/mono-agent/internal/action"
 	"github.com/monoes/mono-agent/internal/browser"
 	"github.com/monoes/mono-agent/internal/connections"
+	"github.com/monoes/mono-agent/internal/jev/jevconf"
 	"github.com/monoes/mono-agent/internal/vault"
 	"github.com/monoes/mono-agent/internal/workflow"
 	"github.com/rs/zerolog"
@@ -243,6 +244,17 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 		botAdapter,
 		logger,
 	)
+
+	// Opt-in Jev element-picker fallback for steps that declare an intent
+	// (`monoagentcli jev enable action_fallback`). Disabled, or no key ⇒
+	// the executor behaves exactly as before.
+	if db, pid := storage.db, storage.profileID; db != nil && jevconf.Enabled(db, pid, jevconf.ActionFallback) {
+		if client, err := jevconf.NewClient(ctx, db, pid, "", "", jevconf.ActionFallback); err == nil {
+			executor.SetJevPicker(client, jevconf.Threshold(db, pid, jevconf.ActionFallback, jevconf.DefaultThreshold[jevconf.ActionFallback]))
+		} else {
+			logger.Debug().Err(err).Msg("jev action fallback enabled but no client")
+		}
+	}
 
 	// Seed selectedListItems as a variable so loops over target lists work.
 	if len(selectedListItems) > 0 {

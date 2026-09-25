@@ -42,6 +42,7 @@
     {
       "id": "find_message_button",
       "type": "find_element",
+      "intent": "the Message button on the profile that opens a direct message",
       "xpath": "//button[contains(text(), 'Message')] | //a[contains(@href, '/message')]",
       "timeout": 10,
       "onError": {
@@ -64,6 +65,7 @@
     {
       "id": "find_message_input",
       "type": "find_element",
+      "intent": "the message text box of the open direct message conversation",
       "xpath": "//div[@contenteditable='true'] | //textarea",
       "timeout": 15
     },
@@ -77,6 +79,7 @@
     {
       "id": "find_send_button",
       "type": "find_element",
+      "intent": "the Send button of the open direct message conversation",
       "xpath": "//button[contains(text(), 'Send')] | //button[@type='submit']",
       "timeout": 10
     },
