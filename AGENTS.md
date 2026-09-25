@@ -434,6 +434,21 @@ monoagentcli hil reject <id>
 to `{}` if omitted). Rejection fails the workflow branch — surface the
 consequence to the user before rejecting.
 
+People staged for outreach (saved with category `pending_approval` and a
+drafted introduction) have their own queue, the one the app shows on Human
+in Loop:
+
+```bash
+monoagentcli --json people review list
+monoagentcli people review approve <id> --intro "edited text" --send   # approve, then run the dispatch workflow
+monoagentcli people review reject <id>
+```
+
+`--send` runs the profile's workflow named like "Send Approved DMs" (or
+`--send-workflow <id|name>`) with `{person_id, platform, platform_username,
+introduction}` as trigger input. A missing (exit 2), ambiguous or inactive
+(exit 3) workflow is refused before the person is approved.
+
 ## Secrets
 
 Secrets live in an **encrypted vault** (OS keyring-wrapped key,

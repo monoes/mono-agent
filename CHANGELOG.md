@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`monoagentcli people review list|approve|reject`** drives the review
+  queue for people staged as `pending_approval`. `approve --send` runs the
+  dispatch workflow for the person.
+
+### Fixed
+
+- **Human in Loop's people review goes through the CLI.** Approve/reject
+  no longer run SQL inside the app, and "send now" no longer looks for one
+  fixed workflow id. It finds the profile's workflow named like "Send
+  Approved DMs", including ones stored as files. When there is none, when
+  several match, or when it's inactive, you now get an error and the person
+  stays in the queue. Before, the person was approved and nothing was sent.
+
 ## [0.65.0] - 2026-09-25
 
 This entry also covers work that shipped in 0.50–0.64, which were cut

@@ -448,88 +448,54 @@ type PendingPersonApproval struct {
 	CreatedAt        string `json:"created_at"`
 }
 
-// GetPendingPeopleApprovals returns all people staged with category = 'pending_approval'
-// for the active profile, for review and approval in Human in Loop.
+// GetPendingPeopleApprovals returns the active profile's people staged for
+// review (category "pending_approval") — `people review list`.
 func (a *App) GetPendingPeopleApprovals() ([]*PendingPersonApproval, error) {
-	if a.db == nil {
-		return nil, fmt.Errorf("database not initialized")
-	}
-	rows, err := a.db.Query(`
-		SELECT id, platform, platform_username, COALESCE(full_name,''), COALESCE(image_url,''),
-		       COALESCE(profile_url,''), COALESCE(job_title,''), COALESCE(category,''),
-		       COALESCE(introduction,''), COALESCE(created_at,'')
-		FROM people
-		WHERE profile_id = ? AND category = 'pending_approval'
-		ORDER BY created_at DESC`, a.getActiveProfileID())
-	if err != nil {
+	results := []*PendingPersonApproval{}
+	if err := a.runMonoCLI("", &results, "people", "review", "list"); err != nil {
 		return nil, err
-	}
-	defer rows.Close()
-
-	var results []*PendingPersonApproval
-	for rows.Next() {
-		var p PendingPersonApproval
-		if err := rows.Scan(&p.ID, &p.Platform, &p.PlatformUsername, &p.FullName, &p.ImageUrl,
-			&p.ProfileUrl, &p.JobTitle, &p.Category, &p.Introduction, &p.CreatedAt); err != nil {
-			continue
-		}
-		results = append(results, &p)
 	}
 	return results, nil
 }
 
-// ApprovePendingPerson saves any edits to the introduction, updates category to 'approved',
-// and optionally triggers the outreach dispatch workflow if sendNow is requested.
+// ApprovePendingPerson approves a person, replacing the introduction when
+// editedIntroduction is set — `people review approve`. With sendNow the CLI
+// also picks the profile's dispatch workflow (refusing, before approving,
+// when there is none, several or only an inactive one) and returns the run,
+// which starts here like any GUI run so it shows up in the run tracking.
 func (a *App) ApprovePendingPerson(personID, editedIntroduction string, sendNow bool) error {
-	if a.db == nil {
-		return fmt.Errorf("database not initialized")
+	args := []string{"people", "review", "approve", personID}
+	if strings.TrimSpace(editedIntroduction) != "" {
+		args = append(args, "--intro", editedIntroduction)
 	}
-	profileID := a.getActiveProfileID()
-	var platform, username, intro string
-	err := a.db.QueryRow(`SELECT COALESCE(platform,''), COALESCE(platform_username,''), COALESCE(introduction,'') FROM people WHERE id = ? AND profile_id = ?`, personID, profileID).Scan(&platform, &username, &intro)
-	if err != nil {
-		return fmt.Errorf("person not found: %w", err)
-	}
-
-	finalIntro := intro
-	if editedIntroduction != "" {
-		finalIntro = editedIntroduction
-	}
-
-	_, err = a.db.Exec(`UPDATE people SET introduction = ?, category = 'approved', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND profile_id = ?`, finalIntro, personID, profileID)
-	if err != nil {
-		return fmt.Errorf("failed to update person: %w", err)
-	}
-
 	if sendNow {
-		inputMap := map[string]interface{}{
-			"platform_username": username,
-			"introduction":      finalIntro,
-			"person_id":         personID,
-			"platform":          platform,
-		}
-		inputBytes, _ := json.Marshal(inputMap)
-		inputJSON := string(inputBytes)
-
-		// Check if a dispatch workflow exists (e.g. b590cf19-5330-45bf-a34e-e54cc75b6004 or name contains 'Send Approved DMs')
-		var dispatchID string
-		_ = a.db.QueryRow(`SELECT id FROM workflows WHERE (id = 'b590cf19-5330-45bf-a34e-e54cc75b6004' OR name LIKE '%Send Approved DMs%') AND profile_id = ? LIMIT 1`, profileID).Scan(&dispatchID)
-		if dispatchID != "" {
-			go func() {
-				_ = a.RunWorkflowWithInput(dispatchID, inputJSON)
-			}()
-		}
+		args = append(args, "--send-plan")
+	}
+	var res struct {
+		Send *struct {
+			WorkflowID string                 `json:"workflow_id"`
+			Input      map[string]interface{} `json:"input"`
+		} `json:"send"`
+	}
+	if err := a.runMonoCLI("", &res, args...); err != nil {
+		return err
+	}
+	if res.Send == nil {
+		return nil
+	}
+	input, err := json.Marshal(res.Send.Input)
+	if err != nil {
+		return err
+	}
+	if err := a.RunWorkflowWithInput(res.Send.WorkflowID, string(input)); err != nil {
+		return fmt.Errorf("approved, but sending failed: %w", err)
 	}
 	return nil
 }
 
-// RejectPendingPerson updates the person's category to 'rejected' so it leaves the pending queue.
+// RejectPendingPerson takes a person out of the queue — `people review reject`.
 func (a *App) RejectPendingPerson(personID string) error {
-	if a.db == nil {
-		return fmt.Errorf("database not initialized")
-	}
-	_, err := a.db.Exec(`UPDATE people SET category = 'rejected', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND profile_id = ?`, personID, a.getActiveProfileID())
-	return err
+	return a.runMonoCLI("", nil, "people", "review", "reject", personID)
 }
 
 // GetLatestPersonStatus returns the most recent status update for a person,
