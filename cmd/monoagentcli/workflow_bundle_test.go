@@ -26,10 +26,15 @@ const bundleTestWorkflow = `{
 }`
 
 func TestWorkflowAutomationIDs(t *testing.T) {
+	// "foo" is an alias of the package local-foo; "core" is no automation.
+	resolve := func(prefix string) string {
+		return map[string]string{"a": "a", "b": "b", "foo": "local-foo", "local-foo": "local-foo"}[prefix]
+	}
 	got := workflowAutomationIDs([]workflow.WorkflowFileNode{
 		{Type: "b.x"}, {Type: "a.y"}, {Type: "b.z"}, {Type: "nodot"}, {Type: ".x"},
-	})
-	if len(got) != 2 || got[0] != "a" || got[1] != "b" {
+		{Type: "core.set"}, {Type: "foo.bar"}, {Type: "local-foo.baz"},
+	}, resolve)
+	if strings.Join(got, ",") != "a,b,local-foo" {
 		t.Fatalf("workflowAutomationIDs = %v", got)
 	}
 }

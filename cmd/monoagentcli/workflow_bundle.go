@@ -54,10 +54,10 @@ func bundleWorkflowAutomations(file workflow.WorkflowFile) (workflowBundleFile, 
 	if err != nil {
 		return out, err
 	}
-	for _, id := range workflowAutomationIDs(file.Nodes) {
+	for _, id := range workflowAutomationIDs(file.Nodes, packageResolver(reg)) {
 		info, err := reg.Info(id)
 		if err != nil {
-			continue // "<x>.<y>" that is not an installed automation (core.set, trigger.manual, …)
+			continue
 		}
 		var buf bytes.Buffer
 		if err := reg.Export(id, &buf, automation.ExportOptions{}); err != nil {
@@ -76,14 +76,21 @@ func bundleWorkflowAutomations(file workflow.WorkflowFile) (workflowBundleFile, 
 	return out, nil
 }
 
-// workflowAutomationIDs returns the sorted, distinct "<id>" prefixes of
-// node types of the form "<id>.<action>".
-func workflowAutomationIDs(nodes []workflow.WorkflowFileNode) []string {
+// workflowAutomationIDs returns the sorted, distinct package ids used by
+// node types of the form "<prefix>.<action>". resolve maps a prefix to the
+// installed package id ("" when the prefix is not an automation, e.g.
+// core.set or trigger.manual); it goes through the definition source, so an
+// aliased prefix (foo → local-foo) bundles the package that actually runs.
+func workflowAutomationIDs(nodes []workflow.WorkflowFileNode, resolve func(prefix string) string) []string {
 	seen := map[string]bool{}
 	var ids []string
 	for _, n := range nodes {
-		id, _, ok := strings.Cut(n.Type, ".")
-		if !ok || id == "" || seen[id] {
+		prefix, _, ok := strings.Cut(n.Type, ".")
+		if !ok || prefix == "" {
+			continue
+		}
+		id := resolve(prefix)
+		if id == "" || seen[id] {
 			continue
 		}
 		seen[id] = true
@@ -91,6 +98,24 @@ func workflowAutomationIDs(nodes []workflow.WorkflowFileNode) []string {
 	}
 	sort.Strings(ids)
 	return ids
+}
+
+// packageResolver resolves a node-type prefix the way the action loader
+// does (the registry's DefSource), falling back to an installed package of
+// that exact id (e.g. a disabled one, which the DefSource hides).
+func packageResolver(reg *automation.Registry) func(string) string {
+	src := reg.DefSource()
+	return func(prefix string) string {
+		if src != nil {
+			if pc := src.Package(prefix); pc != nil {
+				return pc.ID()
+			}
+		}
+		if info, err := reg.Info(prefix); err == nil && !info.Removed {
+			return info.ID
+		}
+		return ""
+	}
 }
 
 // bundleImportItem reports what `workflow import` did (or would do) with
