@@ -294,9 +294,15 @@ func (ae *ActionExecutor) stepWait(ctx context.Context, step StepDef) (*StepResu
 	}
 
 	// No selector — just wait for the specified duration.
+	// An explicit duration of 0 (or less) means no wait; only a missing
+	// duration falls back to the step timeout. Before, "duration": 0 — e.g. a
+	// delay input set to 0 — waited the full 10s default.
 	duration := timeout
-	if d, ok := toFloat64Ok(step.Duration); ok && d > 0 {
-		duration = time.Duration(d * float64(time.Second))
+	if d, ok := toFloat64Ok(step.Duration); ok {
+		duration = 0
+		if d > 0 {
+			duration = time.Duration(d * float64(time.Second))
+		}
 	}
 
 	ae.logger.Debug().
