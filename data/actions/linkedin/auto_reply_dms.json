@@ -72,6 +72,7 @@
     {
       "id": "find_message_input",
       "type": "find_element",
+      "intent": "the message text box of the open direct message conversation",
       "xpath": "//div[@contenteditable='true'] | //textarea",
       "timeout": 10
     },
@@ -85,6 +86,7 @@
     {
       "id": "find_send_button",
       "type": "find_element",
+      "intent": "the Send button of the open direct message conversation",
       "xpath": "//button[contains(@aria-label, 'Send')] | //button[@type='submit']",
       "timeout": 10
     },

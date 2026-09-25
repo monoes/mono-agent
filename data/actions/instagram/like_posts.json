@@ -69,6 +69,7 @@
     {
       "id": "t2_find_like_button",
       "type": "find_element",
+      "intent": "the open post's own Like heart button (not a comment's Like)",
       "xpath": "(//section[.//svg[@aria-label='Like'] and .//svg[@aria-label='Comment']])[last()]//svg[@aria-label='Like']/..",
       "alternatives": [
         "(//section[.//svg[@aria-label='Like'] and .//svg[@aria-label='Comment']])[last()]//svg[@aria-label='Like']/ancestor::div[@role='button'][1]",

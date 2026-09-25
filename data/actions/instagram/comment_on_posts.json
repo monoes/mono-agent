@@ -85,6 +85,7 @@
     {
       "id": "t2_find_comment_input",
       "type": "find_element",
+      "intent": "the open post's Add a comment text box",
       "xpath": "//textarea[@aria-label='Add a comment\u2026']",
       "alternatives": [
         "//textarea[@aria-label='Add a comment...']",
@@ -127,6 +128,7 @@
     {
       "id": "t2_find_post_button",
       "type": "find_element",
+      "intent": "the Post button that publishes the comment typed under the open post",
       "xpath": "//div[@role='button'][text()='Post']",
       "alternatives": [
         "//button[text()='Post']",

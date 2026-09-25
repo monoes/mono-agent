@@ -91,6 +91,7 @@
     {
       "id": "like_video",
       "type": "find_element",
+      "intent": "the video's own Like heart button (not a comment's like)",
       "xpath": "//button[contains(@aria-label, 'Like')] | //div[contains(@data-e2e, 'like')]",
       "timeout": 5,
       "onError": {

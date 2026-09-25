@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/monoes/mono-agent/internal/browser"
+	"github.com/monoes/mono-agent/internal/jev"
 	"github.com/rs/zerolog"
 )
 
@@ -54,6 +55,11 @@ type StepDef struct {
 	DataSource    string                 `json:"dataSource,omitempty"`
 	BatchSize     int                    `json:"batchSize,omitempty"`
 	Increment     string                 `json:"increment,omitempty"`
+	// Intent describes the step's target element in plain words (e.g. "the
+	// chat's Send button"). It is only used by the opt-in Jev fallback
+	// (jevfallback.go) when the step's selector/xpath finds nothing; a step
+	// without an intent never falls back.
+	Intent string `json:"intent,omitempty"`
 }
 
 // LoopDef defines an iteration over a collection of items, executing a subset
@@ -342,6 +348,10 @@ type ActionExecutor struct {
 	// run so that multiple loops (or a re-triggered loop) do not share one
 	// reached index.
 	reachedIndexByLoop map[string]int
+	// Jev element-picker fallback (jevfallback.go); nil client = off.
+	jevClient *jev.Client
+	jevMinP   float64
+	jevMarker string // marker set by the current step's pick, if any
 }
 
 // NewActionExecutor creates a fully initialised executor. The page must already
@@ -373,6 +383,15 @@ func NewActionExecutor(
 	}
 	ae.initHandlers()
 	return ae
+}
+
+// SetJevPicker enables the Jev element-picker fallback: a step with an
+// intent whose selector/xpath finds nothing asks Jev for the matching
+// element, accepted only when its top probability is ≥ minP. A nil client
+// disables it (the default).
+func (ae *ActionExecutor) SetJevPicker(c *jev.Client, minP float64) {
+	ae.jevClient = c
+	ae.jevMinP = minP
 }
 
 // SetVariable pre-seeds a variable in the execution context before Execute() is

@@ -90,6 +90,7 @@
     {
       "id": "like_tweet",
       "type": "find_element",
+      "intent": "the post's own Like heart button in its action bar",
       "xpath": ".//button[@data-testid='like'] | .//div[@data-testid='like']",
       "timeout": 5,
       "onError": {
