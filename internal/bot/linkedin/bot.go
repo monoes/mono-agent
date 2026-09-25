@@ -16,8 +16,12 @@ import (
 	"github.com/monoes/mono-agent/internal/browser"
 )
 
-// LinkedInBot implements botpkg.BotAdapter for LinkedIn.
-type LinkedInBot struct{}
+// LinkedInBot implements botpkg.BotAdapter for LinkedIn. The embedded
+// JevPicker (disabled unless the node layer calls SetJevPicker) lets LikePost
+// ask Jev for the reaction controls when its selectors are not conclusive.
+type LinkedInBot struct {
+	botpkg.JevPicker
+}
 
 // sendVerificationTimeout bounds the post-send poll that confirms a message
 // was actually delivered (composer cleared or message bubble rendered).
