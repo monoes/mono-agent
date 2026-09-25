@@ -201,6 +201,7 @@ type SaveDraftSpec struct {
 	New          string            `json:"new"`          // new package id (wins over Automation)
 	Name         string            `json:"name"`         // action / fragment name
 	RenameInputs map[string]string `json:"renameInputs"` // AI name → user name, changed ones only
+	Force        bool              `json:"force"`        // save despite error-level lint (the user chose "Save anyway")
 }
 
 func recordSaveArgs(draftDir string, s SaveDraftSpec) ([]string, error) {
@@ -222,6 +223,9 @@ func recordSaveArgs(draftDir string, s SaveDraftSpec) ([]string, error) {
 	}
 	if s.Name != "" {
 		args = append(args, "--name", s.Name)
+	}
+	if s.Force {
+		args = append(args, "--force")
 	}
 	if err := validateInputNames(s.RenameInputs); err != nil {
 		return nil, err

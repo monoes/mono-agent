@@ -123,6 +123,10 @@ func TestRecordSaveArgs(t *testing.T) {
 	if !reflect.DeepEqual(got, []string{"record", "save", "--automation", "acme", "--", "/d"}) {
 		t.Fatalf("existing: %v", got)
 	}
+	got, _ = recordSaveArgs("/d", SaveDraftSpec{Automation: "acme", Force: true})
+	if !reflect.DeepEqual(got, []string{"record", "save", "--automation", "acme", "--force", "--", "/d"}) {
+		t.Fatalf("force: %v", got)
+	}
 	if _, err := recordSaveArgs("/d", SaveDraftSpec{As: "node"}); err == nil {
 		t.Fatal("bad save-as accepted")
 	}

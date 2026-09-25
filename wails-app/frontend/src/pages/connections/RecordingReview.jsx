@@ -61,6 +61,7 @@ export default function RecordingReview({ recording, automationId, onBack, onSav
   const [error, setError] = useState('') // analyze
   const [verifyError, setVerifyError] = useState('')
   const [saveError, setSaveError] = useState('')
+  const [forceAsk, setForceAsk] = useState(false) // lint errors shown, waiting for "Save anyway"
   const [draftDir, setDraftDir] = useState('')
   const [draft, setDraft] = useState(null)
   const [verify, setVerify] = useState(null)
@@ -114,7 +115,13 @@ export default function RecordingReview({ recording, automationId, onBack, onSav
     setPhase('ready')
   }
 
-  const save = async () => {
+  const lintErrors = (draft?.lint || []).filter(i => i.severity === 'error')
+
+  // save refuses a draft with error-level lint until the user has seen the
+  // errors and chosen "Save anyway", which passes --force.
+  const save = async (force = false) => {
+    if (lintErrors.length && !force) { setForceAsk(true); return }
+    setForceAsk(false)
     setPhase('saving'); setSaveError('')
     const renameInputs = Object.fromEntries(Object.entries(inputNames).filter(([from, to]) => to && to !== from))
     const spec = {
@@ -122,6 +129,7 @@ export default function RecordingReview({ recording, automationId, onBack, onSav
       name: saveAs === 'fragment' ? names.fragment || names.action : names.action,
       renameInputs,
       ...(draft?.isNew ? { new: names.automation } : { automation: names.automation || automationId }),
+      ...(force ? { force: true } : {}),
     }
     const res = await api.saveDraft(draftDir, spec)
     if (!res || res.error) { setSaveError(res?.error || 'Save failed.'); setPhase('ready'); return }
@@ -226,10 +234,23 @@ export default function RecordingReview({ recording, automationId, onBack, onSav
                 <option value="fragment">Fragment (part of a node)</option>
                 <option value="workflow">Workflow draft</option>
               </select>
-              <button className="btn btn-primary btn-sm" onClick={save} disabled={busy || !names.action || (draft.isNew && !names.automation)} style={{ gap: 5 }}>
+              <button className="btn btn-primary btn-sm" onClick={() => save(false)} disabled={busy || !names.action || (draft.isNew && !names.automation)} style={{ gap: 5 }}>
                 <Save size={11} /> {phase === 'saving' ? 'Saving…' : 'Save'}
               </button>
               {!verify && <span style={{ ...muted, fontSize: 10 }}>Tip: verify first.</span>}
+            </div>
+          )}
+          {forceAsk && phase !== 'saved' && (
+            <div role="alert" style={{ ...panel, borderColor: 'var(--red)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <span style={{ ...label, color: 'var(--red)' }}>The draft has {lintErrors.length} error{lintErrors.length === 1 ? '' : 's'}</span>
+              {lintErrors.map((i, n) => (
+                <span key={n} style={{ ...mono, fontSize: 10.5, color: 'var(--text-secondary)' }}>{i.stepId ? `${i.stepId}: ` : ''}{i.message} <span style={{ color: 'var(--text-dim)' }}>({i.code})</span></span>
+              ))}
+              <span style={{ ...body, fontSize: 11 }}>The saved action may not run. Fix the draft (re-record or analyze again), or save it anyway to edit it later.</span>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-danger btn-sm" onClick={() => save(true)} disabled={busy}>Save anyway</button>
+                <button className="btn btn-ghost btn-sm" onClick={() => setForceAsk(false)}>Cancel</button>
+              </div>
             </div>
           )}
           <ErrorBox>{saveError}</ErrorBox>

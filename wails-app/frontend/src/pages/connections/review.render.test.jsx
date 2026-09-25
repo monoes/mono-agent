@@ -106,6 +106,18 @@ describe('RecordingReview', () => {
     expect(await screen.findByText(/Saved as node acme.add_contact/)).toBeInTheDocument()
   })
 
+  it('holds a draft with lint errors until "Save anyway", then passes force', async () => {
+    api.analyzeRecording.mockResolvedValue({ ...analyzed, draft: { ...analyzed.draft, lint: [{ severity: 'error', code: 'selector_ambiguous', stepId: 'save', message: 'matches 3 elements' }] } })
+    api.saveDraft.mockResolvedValue({ nodeType: 'acme.create_contact', version: '1.2.1' })
+    render(<RecordingReview recording={{ id: 'rec1' }} automationId="acme" onBack={() => {}} />)
+    await screen.findByText('Create a contact')
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect(await screen.findByText('save: matches 3 elements', { exact: false })).toBeInTheDocument()
+    expect(api.saveDraft).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByText('Save anyway'))
+    await waitFor(() => expect(api.saveDraft).toHaveBeenCalledWith('/d/rec1', expect.objectContaining({ force: true })))
+  })
+
   it('re-analyzes with advanced steps only after the warning is accepted', async () => {
     api.analyzeRecording.mockResolvedValue(analyzed)
     render(<><ConfirmHost /><RecordingReview recording={{ id: 'rec1' }} automationId="acme" onBack={() => {}} /></>)
