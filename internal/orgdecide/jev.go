@@ -24,6 +24,11 @@ type JevDecider struct {
 	Model     string // shown in the resolver; defaults to Client.Model
 }
 
+// jevCallTimeout bounds the Jev request on its own, so a TypeSafe outage
+// costs at most this much of the decider's budget before the fallback model
+// decides (a var so tests can shorten it).
+var jevCallTimeout = 10 * time.Second
+
 // jevTextCap bounds each untrusted field sent to Jev (plan D6).
 const jevTextCap = 6000
 
@@ -58,7 +63,9 @@ func (d *JevDecider) Decide(ctx context.Context, p Prompt) (Outcome, error) {
 	}
 	model := d.model()
 	started := time.Now()
-	resp, err := d.Client.Ask(ctx, jevState(p.Input), map[string]jev.Question{"verdict": jevVerdictQuestion(p.Allowed, p.Input.Level)})
+	jctx, cancel := context.WithTimeout(ctx, jevCallTimeout)
+	resp, err := d.Client.Ask(jctx, jevState(p.Input), map[string]jev.Question{"verdict": jevVerdictQuestion(p.Allowed, p.Input.Level)})
+	cancel()
 	if err != nil {
 		return d.fallback(ctx, p, fmt.Sprintf("jev %s failed (%v)", model, err), Outcome{Latency: time.Since(started)})
 	}

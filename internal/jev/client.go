@@ -69,6 +69,44 @@ type Answer struct {
 	Noul          float64            `json:"noul,omitempty"`
 	Score         float64            `json:"score,omitempty"`
 	Legend        map[string]string  `json:"legend,omitempty"`
+
+	// noulMissing is set by UnmarshalJSON when the decoded object had no
+	// (or a null) "noul" field, so Validate can tell a missing noul from a
+	// real 0.0. Answers built in Go code are never "missing".
+	noulMissing bool
+}
+
+// answerAlias has Answer's fields without its JSON methods.
+type answerAlias Answer
+
+// MarshalJSON always encodes "noul" for a noul answer — a legitimate 0.0
+// would otherwise be dropped by omitempty and read back as missing.
+func (a Answer) MarshalJSON() ([]byte, error) {
+	var noul *float64
+	if a.Type == TypeNoul || a.Noul != 0 {
+		n := a.Noul
+		noul = &n
+	}
+	return json.Marshal(struct {
+		answerAlias
+		Noul *float64 `json:"noul,omitempty"`
+	}{answerAlias(a), noul})
+}
+
+// UnmarshalJSON decodes an answer and records whether "noul" was present.
+func (a *Answer) UnmarshalJSON(b []byte) error {
+	aux := struct {
+		*answerAlias
+		Noul *float64 `json:"noul"`
+	}{answerAlias: (*answerAlias)(a)}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	a.Noul, a.noulMissing = 0, aux.Noul == nil
+	if aux.Noul != nil {
+		a.Noul = *aux.Noul
+	}
+	return nil
 }
 
 // Usage is the token accounting TypeSafe returns (output tokens are free).
@@ -95,7 +133,9 @@ type Client struct {
 	// official SDKs do). Transport errors are not retried: the caller decides.
 	Retries int
 	// OnResult, when set, is called once per Ask with the outcome — including
-	// transport and validation failures (resp nil or partial, err set). Usage
+	// transport and validation failures (err set). resp is nil only when no
+	// decodable 200 came back; after a validation failure it is the decoded
+	// (rejected) response, so its Usage is still recorded. Usage
 	// recorders hang off it; it must not retain req beyond the call.
 	OnResult func(req *Request, resp *Response, latency time.Duration, err error)
 }
@@ -137,8 +177,12 @@ func (c *Client) Ask(ctx context.Context, state any, questions map[string]Questi
 	}
 	req := Request{Model: c.Model, State: state, Questions: questions}
 	started := time.Now()
+	// recorded is what OnResult sees: the decoded response whenever TypeSafe
+	// answered (so a billed request that fails validation still records its
+	// usage), even though the caller then gets nil.
+	var recorded *Response
 	if c.OnResult != nil {
-		defer func() { c.OnResult(&req, resp, time.Since(started), err) }()
+		defer func() { c.OnResult(&req, recorded, time.Since(started), err) }()
 	}
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -153,6 +197,7 @@ func (c *Client) Ask(ctx context.Context, state any, questions map[string]Questi
 		return nil, fmt.Errorf("%w: undecodable response: %v", ErrInvalidAnswer, err)
 	}
 	decoded.LatencyMS = time.Since(started).Milliseconds()
+	recorded = &decoded
 	for id, q := range questions {
 		a, ok := decoded.Answers[id]
 		if !ok {
@@ -319,6 +364,9 @@ func Validate(q Question, a Answer) error {
 	}
 	switch q.Type {
 	case TypeNoul:
+		if a.noulMissing {
+			return bad("noul value missing")
+		}
 		if !unit(a.Noul) {
 			return bad("noul %v outside [0,1]", a.Noul)
 		}

@@ -14,7 +14,7 @@ func TestJevKeyCheck(t *testing.T) {
 		t.Fatalf("nil hook: %+v", res)
 	}
 	env.JevKey = func(context.Context) (string, error) { return "vault", nil }
-	if res := checkJevKey(ctx, env); res.Status != StatusOK || !strings.Contains(res.Summary, "vault") {
+	if res := checkJevKey(ctx, env); res.Status != StatusOK || res.Summary != "vault entry `typesafe` present (not decrypted)" {
 		t.Fatalf("vault key: %+v", res)
 	}
 	env.JevKey = func(context.Context) (string, error) { return "", errors.New("no key") }

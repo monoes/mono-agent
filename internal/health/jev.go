@@ -38,6 +38,10 @@ func checkJevKey(ctx context.Context, env *Env) Result {
 	if err != nil || source == "" {
 		return Result{Status: StatusWarn, Summary: "no key (Jev is optional; its surfaces stay off without one)", FixID: FixJevKey}
 	}
+	if source == "vault" {
+		// KeySource only lists vault entries; it never decrypts one.
+		return Result{Status: StatusOK, Summary: "vault entry `typesafe` present (not decrypted)"}
+	}
 	return Result{Status: StatusOK, Summary: "key from " + source}
 }
 

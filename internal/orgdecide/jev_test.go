@@ -7,6 +7,7 @@ import (
 	"math"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/monoes/mono-agent/internal/jev"
 	"github.com/monoes/mono-agent/internal/jev/jevconf"
@@ -158,6 +159,31 @@ func TestJevDeciderTransportErrorUsesFallback(t *testing.T) {
 	}
 }
 
+// A hanging Jev must not eat the fallback's budget: the call has its own
+// timeout, after which the fallback decides.
+func TestJevDeciderTimeoutUsesFallback(t *testing.T) {
+	old := jevCallTimeout
+	jevCallTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { jevCallTimeout = old })
+	c, _ := newJevClient(t, func(jev.Request) map[string]string {
+		time.Sleep(time.Second)
+		return nil
+	})
+	fb := &scriptedDecider{replies: map[string]string{KindGate: `{"verdict":"deny","rationale":"model says no"}`}}
+	d := &JevDecider{Client: c, Fallback: fb, Threshold: 0.8}
+	started := time.Now()
+	out, err := d.Decide(context.Background(), gatePrompt("full"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(started); elapsed > 800*time.Millisecond {
+		t.Fatalf("Decide took %v with a %v jev timeout", elapsed, jevCallTimeout)
+	}
+	if len(fb.prompts) != 1 || out.Verdict.Verdict != "deny" || !strings.Contains(out.Verdict.Rationale, "deadline exceeded") {
+		t.Fatalf("outcome = %+v", out)
+	}
+}
+
 // Through the service: a confident jev verdict is applied, recorded with its
 // distribution, and counted against the run's decider budget.
 func TestServiceRecordsJevDecision(t *testing.T) {
@@ -282,6 +308,9 @@ func TestNewServiceJevFactory(t *testing.T) {
 	jd, ok := s.NewDecider(a).(*JevDecider)
 	if !ok || jd.Threshold != 0.7 || jd.Client == nil {
 		t.Fatalf("with key: %#v", s.NewDecider(a))
+	}
+	if jd.Client.Retries != 1 {
+		t.Fatalf("decider client retries = %d, want 1", jd.Client.Retries)
 	}
 	if md, ok := jd.Fallback.(*ModelDecider); !ok || md.Model != DefaultDeciderModel || md.Runtime != DefaultDeciderRuntime {
 		t.Fatalf("fallback = %#v", jd.Fallback)

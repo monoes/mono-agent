@@ -74,3 +74,18 @@ func TestBadNoulFromHandlerIsAnError(t *testing.T) {
 		t.Fatalf("err = %v, want an HTTP 422 from the fake", err)
 	}
 }
+
+func TestFakeNoulZeroRoundTrips(t *testing.T) {
+	NewServer(t, Fixed(map[string]string{"spam": "0"}))
+	c, err := jev.NewClient("k", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := c.Ask(context.Background(), "s", map[string]jev.Question{"spam": {Type: jev.TypeNoul}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id, p := jev.Top(resp.Answers["spam"]); id != "true" || p != 0 {
+		t.Fatalf("spam = %s %v", id, p)
+	}
+}
