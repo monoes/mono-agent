@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.68.0] - 2026-09-25
+
 ### Added
 
 - **Settings › TypeSafe Jev** in the app: store, test or remove the API key,
