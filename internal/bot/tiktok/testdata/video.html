@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Synthetic video | TikTok fixture</title>
+<!-- SYNTHETIC fixture: structure and data-e2e attributes mimic a TikTok video
+     page; every name, text, id and count is invented. Behaviour is keyed by
+     the video id in the URL (see CONFIG). Controls react to trusted clicks
+     only, like TikTok's React handlers. -->
+<style>
+  body { font: 14px sans-serif; margin: 0; }
+  .css-1a-DivVideoWrapper { display: flex; gap: 24px; padding: 16px; }
+  .css-2b-DivPlayer { width: 320px; height: 420px; background: #222; color: #fff; }
+  .css-3c-SectionActionBar { display: flex; flex-direction: column; gap: 10px; }
+  .css-3c-SectionActionBar button { width: 64px; height: 56px; }
+  .css-4d-DivCommentPanel { padding: 16px; width: 420px; }
+  .css-4d-DivCommentListContainer { max-height: 260px; overflow-y: auto; border: 1px solid #ddd; }
+  .css-5e-DivCommentObjectWrapper { padding: 8px; min-height: 60px; }
+  .css-6f-DivReplyContainer { margin-left: 40px; }
+  .css-7g-DivCommentFooter { display: flex; gap: 8px; margin-top: 8px; }
+  .public-DraftEditor-content { min-height: 24px; border: 1px solid #aaa; padding: 4px; width: 300px; }
+  .css-8h-DivPostButton { display: inline-block; padding: 4px 12px; border: 1px solid #555; }
+  .css-9i-DivShareModal { position: fixed; top: 60px; left: 360px; background: #fff; border: 1px solid #333; padding: 12px; }
+  .css-9i-DivShareModal > * { display: block; margin: 6px 0; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<header><a data-e2e="nav-profile" href="/@me_tester">Profile</a> <div data-e2e="profile-icon">me</div></header>
+<div class="css-1a-DivVideoWrapper">
+  <div class="css-2b-DivPlayer" data-e2e="browse-video">synthetic video</div>
+  <section class="css-3c-SectionActionBar">
+    <button type="button" id="like-btn" aria-label="Like video" aria-pressed="false"><span data-e2e="like-icon">&#9825;</span><strong data-e2e="like-count">1204</strong></button>
+    <button type="button" id="comment-btn" aria-label="Read or add comments"><span data-e2e="comment-icon">&#128172;</span><strong data-e2e="comment-count">4</strong></button>
+    <button type="button" id="share-btn" aria-label="Share video"><span data-e2e="share-icon">&#10148;</span><strong data-e2e="share-count">12</strong></button>
+  </section>
+  <div class="css-4d-DivCommentPanel hidden" id="panel">
+    <div class="css-4d-DivCommentListContainer" data-e2e="comment-list" id="list"></div>
+    <div class="css-7g-DivCommentFooter" id="footer">
+      <div data-e2e="comment-input"><div class="public-DraftEditor-content" contenteditable="true" role="textbox" aria-label="Add comment..." id="composer"></div></div>
+      <div class="css-8h-DivPostButton" data-e2e="comment-post" role="button" aria-disabled="true" aria-label="Post" id="post">Post</div>
+    </div>
+    <div id="toast" class="hidden" role="alert">Couldn't post comment</div>
+  </div>
+</div>
+<div class="css-9i-DivShareModal hidden" id="share-modal" data-e2e="share-modal">
+  <a data-e2e="copy-link-icon" id="copy" role="button" href="#copy">Copy link</a>
+  <button type="button" data-e2e="share-stitch" id="stitch">Stitch</button>
+  <button type="button" data-e2e="share-duet" id="duet">Duet</button>
+</div>
+<script>
+(function () {
+  const vid = (location.pathname.match(/\/video\/(\d+)/) || [])[1] || '';
+  const CONFIG = {
+    '7100000000000000001': {},
+    '7100000000000000002': { liked: true },
+    '7100000000000000003': { likeBroken: true },
+    '7100000000000000004': { commentFails: true },
+    '7100000000000000005': { noComments: true },
+    '7100000000000000006': { remixOff: true },
+    '7100000000000000007': { noPressed: true },
+    '7100000000000000008': { commentLikeless: true },
+  };
+  const cfg = CONFIG[vid] || {};
+  window.__events = [];
+  const log = (s) => window.__events.push(s);
+  const trusted = (e) => { if (!e.isTrusted) { log('untrusted-click'); return false; } return true; };
+
+  const like = document.getElementById('like-btn');
+  if (cfg.liked) like.setAttribute('aria-pressed', 'true');
+  if (cfg.noPressed) like.removeAttribute('aria-pressed');
+  like.addEventListener('click', (e) => {
+    if (!trusted(e)) return;
+    log('video-like-click');
+    if (cfg.likeBroken) return;
+    const on = like.getAttribute('aria-pressed') !== 'true';
+    setTimeout(() => like.setAttribute('aria-pressed', on ? 'true' : 'false'), 150);
+  });
+
+  const comments = [
+    { user: 'fake_ana', name: 'Fake Ana', text: 'Love the colors in this one', likes: 3, liked: false },
+    { user: 'fake_ben', name: 'Fake Ben', text: 'First! great video', likes: 9, liked: true,
+      replies: [{ user: 'fake_dee', name: 'Fake Dee', text: 'agree with ben', likes: 1, liked: false }] },
+    { user: 'fake_cy', name: 'Fake Cy', text: 'Love the colors too', likes: 0, liked: false },
+  ];
+  const later = [{ user: 'fake_eve', name: 'Fake Eve', text: 'Only visible after scrolling', likes: 2, liked: false }];
+
+  const list = document.getElementById('list');
+  const item = (c, level) => {
+    const w = document.createElement('div');
+    w.className = level === 1 ? 'css-5e-DivCommentObjectWrapper' : 'css-6f-DivReplyContainer';
+    const likeAttrs = cfg.commentLikeless ? '' : '<div class="css-x-DivLikeWrapper" role="button" tabindex="0" aria-label="Like comment by ' + c.name + '" aria-pressed="' + c.liked + '" data-e2e="comment-like-icon">&#9825;</div>';
+    w.innerHTML =
+      '<div class="css-a-DivCommentContentContainer">' +
+        '<a href="/@' + c.user + '" data-e2e="comment-avatar-' + level + '"><span class="css-b-SpanAvatar"></span></a>' +
+        '<div class="css-c-DivContentContainer">' +
+          '<a href="/@' + c.user + '" class="css-d-StyledUserLinkName"><span data-e2e="comment-username-' + level + '">' + c.name + '</span></a>' +
+          '<span data-e2e="comment-level-' + level + '"><p>' + c.text + '</p></span>' +
+          '<span data-e2e="comment-time-' + level + '">1d ago</span>' +
+        '</div>' +
+        '<div class="css-e-DivActionContainer">' + likeAttrs +
+          '<span data-e2e="comment-like-count">' + c.likes + '</span></div>' +
+      '</div>';
+    const lk = w.querySelector('[data-e2e="comment-like-icon"]');
+    if (lk) lk.addEventListener('click', (e) => {
+      if (!trusted(e)) return;
+      log('comment-like-click:' + c.user);
+      const on = lk.getAttribute('aria-pressed') !== 'true';
+      setTimeout(() => lk.setAttribute('aria-pressed', on ? 'true' : 'false'), 150);
+    });
+    (c.replies || []).forEach(r => w.appendChild(item(r, 2)));
+    return w;
+  };
+  const render = (cs) => cs.forEach(c => list.appendChild(item(c, 1)));
+
+  const panel = document.getElementById('panel');
+  let opened = false;
+  document.getElementById('comment-btn').addEventListener('click', (e) => {
+    if (!trusted(e)) return;
+    if (cfg.noComments) return;
+    if (opened) return;
+    opened = true;
+    setTimeout(() => { panel.classList.remove('hidden'); render(comments); }, 200);
+  });
+  if (cfg.noComments) document.getElementById('comment-btn').remove();
+  let loadedMore = false;
+  list.addEventListener('scroll', () => {
+    if (loadedMore) return;
+    loadedMore = true;
+    setTimeout(() => render(later), 20);
+  });
+  // Pad the list so it scrolls.
+  const pad = document.createElement('div'); pad.style.height = '400px'; list.appendChild(pad);
+
+  const composer = document.getElementById('composer');
+  const post = document.getElementById('post');
+  composer.addEventListener('input', () => {
+    post.setAttribute('aria-disabled', composer.innerText.trim() ? 'false' : 'true');
+  });
+  post.addEventListener('click', (e) => {
+    if (!trusted(e)) return;
+    if (post.getAttribute('aria-disabled') === 'true') return;
+    const text = composer.innerText.trim();
+    log('comment-post:' + text);
+    if (cfg.commentFails) { document.getElementById('toast').classList.remove('hidden'); return; }
+    setTimeout(() => {
+      list.insertBefore(item({ user: 'me_tester', name: 'Me Tester', text, likes: 0, liked: false }, 1), list.firstChild);
+      composer.innerHTML = '';
+      post.setAttribute('aria-disabled', 'true');
+    }, 200);
+  });
+
+  const modal = document.getElementById('share-modal');
+  document.getElementById('share-btn').addEventListener('click', (e) => {
+    if (!trusted(e)) return;
+    setTimeout(() => modal.classList.remove('hidden'), 150);
+  });
+  if (cfg.remixOff) {
+    document.getElementById('stitch').setAttribute('aria-disabled', 'true');
+    document.getElementById('duet').setAttribute('aria-disabled', 'true');
+  }
+  for (const id of ['copy', 'stitch', 'duet']) {
+    document.getElementById(id).addEventListener('click', (e) => {
+      e.preventDefault();
+      if (!trusted(e)) return;
+      if (e.currentTarget.getAttribute('aria-disabled') === 'true') return;
+      log('share-option:' + id);
+      document.body.setAttribute('data-opened', id);
+    });
+  }
+})();
+</script>
+</body>
+</html>

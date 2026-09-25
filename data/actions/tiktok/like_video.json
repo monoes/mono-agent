@@ -28,19 +28,26 @@
     ]
   },
   "outputs": {
-    "success": ["likesCount", "reachedIndex"],
-    "failure": ["failedItems"]
+    "success": [
+      "likesCount",
+      "reachedIndex"
+    ],
+    "failure": [
+      "failedItems"
+    ]
   },
   "steps": [
     {
       "id": "t1_like_video",
       "type": "call_bot_method",
       "methodName": "like_video",
-      "args": ["{{item.url or item}}"],
+      "args": [
+        "{{item.url or item}}"
+      ],
       "variable_name": "likeResult",
-      "timeout": 30,
+      "timeout": 60,
       "onError": {
-        "action": "skip"
+        "action": "mark_failed"
       }
     },
     {
@@ -60,7 +67,11 @@
       "id": "process_videos",
       "iterator": "selectedListItems",
       "indexVar": "reachedIndex",
-      "steps": ["t1_like_video", "wait", "log_success"],
+      "steps": [
+        "t1_like_video",
+        "wait",
+        "log_success"
+      ],
       "onComplete": "update_action_state"
     }
   ],
