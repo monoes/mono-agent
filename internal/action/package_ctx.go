@@ -93,6 +93,7 @@ type WaitSpec struct {
 //	replace      Field, Pattern (Go regexp), With, To
 //	tree_parent  Field (depth), ID, To, Root, Carry
 //	flag         Where, To (per-item true/false from the condition)
+//	sort         Field, Order (stable; numeric when both values are numbers, else string; missing last)
 type TransformOp struct {
 	Op      string            `json:"op"`
 	Field   string            `json:"field,omitempty"`
@@ -108,6 +109,7 @@ type TransformOp struct {
 	ID      string            `json:"id,omitempty"`    // tree_parent: the row's id field
 	Root    string            `json:"root,omitempty"`  // tree_parent: template, parent of depth-0 rows
 	Carry   string            `json:"carry,omitempty"` // tree_parent: variable holding the open-ancestor stack across pages
+	Order   string            `json:"order,omitempty"` // sort: "asc" (default) | "desc"
 }
 
 // SelectorObserver receives the outcome of every package-selector lookup
