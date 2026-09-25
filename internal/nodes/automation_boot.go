@@ -12,6 +12,7 @@ import (
 	"github.com/monoes/mono-agent/data"
 	"github.com/monoes/mono-agent/internal/action"
 	"github.com/monoes/mono-agent/internal/automation"
+	"github.com/monoes/mono-agent/internal/bot"
 	"github.com/monoes/mono-agent/internal/browser"
 	"github.com/rs/zerolog"
 )
@@ -21,7 +22,9 @@ var (
 	bootedHome string
 	bootedReg  *automation.Registry
 
-	autoBootOnce sync.Once
+	// defaultBootTried is set once BootAutomations("") has run, whatever
+	// the outcome, so a failure is reported by its first caller only.
+	defaultBootTried bool
 )
 
 // BootAutomations opens the automation registry under home (normally
@@ -30,8 +33,12 @@ var (
 // per home. On error the loader is left as it was (the legacy embedded seed
 // + ~/.monoagent/actions), so callers log the error and carry on.
 func BootAutomations(home string) (*automation.Registry, error) {
+	action.SetGlobalHostDeny(socialHostDeny)
 	bootMu.Lock()
 	defer bootMu.Unlock()
+	if home == "" {
+		defaultBootTried = true
+	}
 	if bootedReg != nil && bootedHome == home {
 		return bootedReg, nil
 	}
@@ -76,12 +83,27 @@ func ensureAutomationsBooted() {
 	if testing.Testing() {
 		return
 	}
-	autoBootOnce.Do(func() {
-		if _, err := BootAutomations(""); err != nil {
-			l := zerolog.New(os.Stderr).With().Timestamp().Logger()
-			l.Warn().Err(err).Msg("automations: registry unavailable, using the built-in action set")
-		}
-	})
+	bootMu.Lock()
+	tried := defaultBootTried
+	bootMu.Unlock()
+	if tried {
+		return // the CLI root (or an earlier call) already booted, or warned
+	}
+	if _, err := BootAutomations(""); err != nil {
+		l := zerolog.New(os.Stderr).With().Timestamp().Logger()
+		l.Warn().Err(err).Msg("automations: registry unavailable, using the built-in action set")
+	}
+}
+
+// socialHostDeny is the global host rule (contract §8): a social site whose
+// platform isn't compiled into this binary is off limits to every action,
+// with or without a package.
+func socialHostDeny(host string) (bool, string) {
+	platform, ok := automation.SocialPlatformForHost(host)
+	if !ok || bot.PlatformCompiledIn(platform) {
+		return false, ""
+	}
+	return true, fmt.Sprintf("%s is a %s site and this build has no social support (built with -tags nosocial)", host, platform)
 }
 
 // bootedManifest returns the installed manifest for an automation, when the
