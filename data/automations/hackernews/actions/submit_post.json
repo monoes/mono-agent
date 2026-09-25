@@ -5,25 +5,11 @@
   "version": "1.2.0",
   "description": "Submit a story to Hacker News (a link, a text post, or a link with text) and confirm it on the user's /submitted page. A duplicate URL, a rejected form or a rate limit fails. Never retried: if the story cannot be confirmed after the form was sent, the error says so instead of submitting again",
   "sideEffects": "write",
-  "metadata": {
-    "requiresAuth": true,
-    "supportsPagination": false,
-    "supportsRetry": false
-  },
+  "metadata": {"requiresAuth": true, "supportsPagination": false, "supportsRetry": false},
   "inputs": {
-    "required": [
-      {
-        "name": "title",
-        "type": "string",
-        "description": "Post title"
-      }
-    ],
+    "required": [{"name": "title", "type": "string", "description": "Post title"}],
     "optional": [
-      {
-        "name": "url",
-        "type": "string",
-        "description": "Link URL (absolute http/https)"
-      },
+      {"name": "url", "type": "string", "description": "Link URL (absolute http/https)"},
       {
         "name": "text",
         "type": "string",
@@ -31,28 +17,13 @@
       }
     ]
   },
-  "outputs": {
-    "success": [
-      "id",
-      "title",
-      "url",
-      "link",
-      "author"
-    ],
-    "failure": [
-      "error"
-    ]
-  },
+  "outputs": {"success": ["id", "title", "url", "link", "author"], "failure": ["error"]},
   "steps": [
     {
       "id": "wrap_input",
       "type": "set_variable",
       "variable_name": "subIn",
-      "value": {
-        "title": "{{title}}",
-        "url": "{{url}}",
-        "text": "{{text}}"
-      }
+      "value": {"title": "{{title}}", "url": "{{url}}", "text": "{{text}}"}
     },
     {
       "id": "clean_input",
@@ -61,42 +32,23 @@
       "input": "{{subIn}}",
       "variable_name": "sub",
       "ops": [
-        {
-          "op": "regex_extract",
-          "field": "title",
-          "pattern": "^\\s*((?s).*?)\\s*$"
-        },
-        {
-          "op": "regex_extract",
-          "field": "url",
-          "pattern": "^\\s*((?s).*?)\\s*$"
-        },
+        {"op": "regex_extract", "field": "title", "pattern": "^\\s*((?s).*?)\\s*$"},
+        {"op": "regex_extract", "field": "url", "pattern": "^\\s*((?s).*?)\\s*$"},
         {
           "op": "regex_extract",
           "field": "url",
           "to": "okUrl",
           "pattern": "^(https?://[^\\s/?#]+[^\\s]*)$"
         },
-        {
-          "op": "regex_extract",
-          "field": "text",
-          "to": "hasText",
-          "pattern": "(\\S)"
-        }
+        {"op": "regex_extract", "field": "text", "to": "hasText", "pattern": "(\\S)"}
       ]
     },
     {
       "id": "gate_url",
       "type": "condition",
       "condition": "sub.url != '' and sub.okUrl == ''",
-      "then": [
-        "fail_bad_url"
-      ],
-      "else": [
-        "open_form",
-        "state_form",
-        "gate_user"
-      ]
+      "then": ["fail_bad_url"],
+      "else": ["open_form", "state_form", "gate_user"]
     },
     {
       "id": "fail_bad_url",
@@ -107,15 +59,9 @@
       "id": "open_form",
       "type": "navigate",
       "url": "https://news.ycombinator.com/submit",
-      "onError": {
-        "action": "mark_failed"
-      }
+      "onError": {"action": "mark_failed"}
     },
-    {
-      "id": "state_form",
-      "type": "call_fragment",
-      "fragment": "read_page_state"
-    },
+    {"id": "state_form", "type": "call_fragment", "fragment": "read_page_state"},
     {
       "id": "gate_user",
       "type": "condition",
@@ -132,20 +78,14 @@
         "find_submit",
         "gate_submit"
       ],
-      "else": [
-        "gate_login_refusal"
-      ]
+      "else": ["gate_login_refusal"]
     },
     {
       "id": "gate_login_refusal",
       "type": "condition",
       "condition": "hnState.refusal != ''",
-      "then": [
-        "fail_form_refused"
-      ],
-      "else": [
-        "fail_logged_out"
-      ]
+      "then": ["fail_form_refused"],
+      "else": ["fail_logged_out"]
     },
     {
       "id": "fail_form_refused",
@@ -157,20 +97,13 @@
       "type": "mark_failed",
       "text": "hackernews: not logged in (no #me on the submit page)"
     },
-    {
-      "id": "keep_user",
-      "type": "set_variable",
-      "variable_name": "subUser",
-      "value": "{{hnUser}}"
-    },
+    {"id": "keep_user", "type": "set_variable", "variable_name": "subUser", "value": "{{hnUser}}"},
     {
       "id": "open_before",
       "type": "navigate",
       "description": "The user's newest story before submitting: the new story is the one listed above it afterwards",
       "url": "https://news.ycombinator.com/submitted?id={{subUser}}",
-      "onError": {
-        "action": "mark_failed"
-      }
+      "onError": {"action": "mark_failed"}
     },
     {
       "id": "read_before",
@@ -179,17 +112,13 @@
       "attribute": "id",
       "variable_name": "beforeTop",
       "timeout": 2,
-      "onError": {
-        "action": "skip"
-      }
+      "onError": {"action": "skip"}
     },
     {
       "id": "reopen_form",
       "type": "navigate",
       "url": "https://news.ycombinator.com/submit",
-      "onError": {
-        "action": "mark_failed"
-      }
+      "onError": {"action": "mark_failed"}
     },
     {
       "id": "focus_title",
@@ -198,9 +127,7 @@
       "configKey": "submit.title",
       "key": "End",
       "timeout": 8,
-      "onError": {
-        "action": "mark_failed"
-      }
+      "onError": {"action": "mark_failed"}
     },
     {
       "id": "type_title",
@@ -208,18 +135,13 @@
       "configKey": "submit.title",
       "text": "{{sub.title}}",
       "timeout": 8,
-      "onError": {
-        "action": "mark_failed"
-      }
+      "onError": {"action": "mark_failed"}
     },
     {
       "id": "gate_type_url",
       "type": "condition",
       "condition": "sub.url != ''",
-      "then": [
-        "focus_url",
-        "type_url"
-      ]
+      "then": ["focus_url", "type_url"]
     },
     {
       "id": "focus_url",
@@ -228,9 +150,7 @@
       "configKey": "submit.url",
       "key": "End",
       "timeout": 8,
-      "onError": {
-        "action": "mark_failed"
-      }
+      "onError": {"action": "mark_failed"}
     },
     {
       "id": "type_url",
@@ -238,18 +158,13 @@
       "configKey": "submit.url",
       "text": "{{sub.url}}",
       "timeout": 8,
-      "onError": {
-        "action": "mark_failed"
-      }
+      "onError": {"action": "mark_failed"}
     },
     {
       "id": "gate_type_text",
       "type": "condition",
       "condition": "sub.hasText != ''",
-      "then": [
-        "focus_text",
-        "type_text"
-      ]
+      "then": ["focus_text", "type_text"]
     },
     {
       "id": "focus_text",
@@ -258,9 +173,7 @@
       "configKey": "submit.text",
       "key": "End",
       "timeout": 8,
-      "onError": {
-        "action": "mark_failed"
-      }
+      "onError": {"action": "mark_failed"}
     },
     {
       "id": "type_text",
@@ -268,18 +181,14 @@
       "configKey": "submit.text",
       "text": "{{text}}",
       "timeout": 8,
-      "onError": {
-        "action": "mark_failed"
-      }
+      "onError": {"action": "mark_failed"}
     },
     {
       "id": "find_submit",
       "type": "find_element",
       "configKey": "submit.button",
       "timeout": 8,
-      "onError": {
-        "action": "mark_failed"
-      }
+      "onError": {"action": "mark_failed"}
     },
     {
       "id": "gate_submit",
@@ -301,29 +210,17 @@
       "sideEffect": true,
       "description": "Send the story. From here on the post may exist: nothing below submits again",
       "elementRef": "find_submit",
-      "until": {
-        "urlMatches": "^https://news\\.ycombinator\\.com/(r|newest|news|item|x)([?#]|$)"
-      },
+      "until": {"urlMatches": "^https://news\\.ycombinator\\.com/(r|newest|news|item|x)([?#]|$)"},
       "timeout": 30,
-      "onError": {
-        "action": "skip"
-      }
+      "onError": {"action": "skip"}
     },
-    {
-      "id": "state_after",
-      "type": "call_fragment",
-      "fragment": "read_page_state"
-    },
+    {"id": "state_after", "type": "call_fragment", "fragment": "read_page_state"},
     {
       "id": "gate_refused",
       "type": "condition",
       "condition": "hnState.refusal != ''",
-      "then": [
-        "fail_refused"
-      ],
-      "else": [
-        "check_dup"
-      ]
+      "then": ["fail_refused"],
+      "else": ["check_dup"]
     },
     {
       "id": "fail_refused",
@@ -334,25 +231,16 @@
       "id": "check_dup",
       "type": "wait_for",
       "description": "HN answers a duplicate URL by redirecting to the existing item",
-      "until": {
-        "urlMatches": "^https://news\\.ycombinator\\.com/item\\?"
-      },
+      "until": {"urlMatches": "^https://news\\.ycombinator\\.com/item\\?"},
       "timeout": 1,
-      "onError": {
-        "action": "skip"
-      }
+      "onError": {"action": "skip"}
     },
     {
       "id": "gate_dup_url",
       "type": "condition",
       "condition": "hnState.refusal == '' and check_dup.success == true",
-      "then": [
-        "read_dup",
-        "fail_dup"
-      ],
-      "else": [
-        "check_form"
-      ]
+      "then": ["read_dup", "fail_dup"],
+      "else": ["check_form"]
     },
     {
       "id": "read_dup",
@@ -361,9 +249,7 @@
       "attribute": "id",
       "variable_name": "dupID",
       "timeout": 2,
-      "onError": {
-        "action": "skip"
-      }
+      "onError": {"action": "skip"}
     },
     {
       "id": "fail_dup",
@@ -374,21 +260,15 @@
       "id": "check_form",
       "type": "wait_for",
       "description": "A form still on the page after the POST means HN rejected it",
-      "until": {
-        "selector": "form input[name='title']"
-      },
+      "until": {"selector": "form input[name='title']"},
       "timeout": 1,
-      "onError": {
-        "action": "skip"
-      }
+      "onError": {"action": "skip"}
     },
     {
       "id": "gate_rejected_form",
       "type": "condition",
       "condition": "hnState.refusal == '' and check_dup.success != true and check_form.success == true",
-      "then": [
-        "fail_rejected"
-      ]
+      "then": ["fail_rejected"]
     },
     {
       "id": "fail_rejected",
@@ -399,46 +279,27 @@
       "id": "arm_read_back",
       "type": "condition",
       "condition": "hnState.refusal == '' and check_dup.success != true and check_form.success != true",
-      "then": [
-        "read_back_tries"
-      ]
+      "then": ["read_back_tries"]
     },
     {
       "id": "read_back_tries",
       "type": "set_variable",
       "description": "Seconds to wait before each look at /submitted (three looks)",
       "variable_name": "readBackTries",
-      "value": [
-        0,
-        2,
-        2
-      ]
+      "value": [0, 2, 2]
     },
     {
       "id": "gate_try",
       "type": "condition",
       "condition": "subFound != true",
-      "then": [
-        "try_wait",
-        "open_after",
-        "read_top_id",
-        "read_top_title",
-        "read_top_link",
-        "gate_new"
-      ]
+      "then": ["try_wait", "open_after", "read_top_id", "read_top_title", "read_top_link", "gate_new"]
     },
-    {
-      "id": "try_wait",
-      "type": "wait",
-      "duration": "{{item}}"
-    },
+    {"id": "try_wait", "type": "wait", "duration": "{{item}}"},
     {
       "id": "open_after",
       "type": "navigate",
       "url": "https://news.ycombinator.com/submitted?id={{subUser}}",
-      "onError": {
-        "action": "skip"
-      }
+      "onError": {"action": "skip"}
     },
     {
       "id": "read_top_id",
@@ -447,9 +308,7 @@
       "attribute": "id",
       "variable_name": "topID",
       "timeout": 2,
-      "onError": {
-        "action": "skip"
-      }
+      "onError": {"action": "skip"}
     },
     {
       "id": "read_top_title",
@@ -457,9 +316,7 @@
       "selector": "tr.athing .titleline > a",
       "variable_name": "topTitle",
       "timeout": 2,
-      "onError": {
-        "action": "skip"
-      }
+      "onError": {"action": "skip"}
     },
     {
       "id": "read_top_link",
@@ -468,41 +325,24 @@
       "attribute": "href",
       "variable_name": "topLink",
       "timeout": 2,
-      "onError": {
-        "action": "skip"
-      }
+      "onError": {"action": "skip"}
     },
     {
       "id": "gate_new",
       "type": "condition",
       "description": "A story listed above the one that was newest before, carrying the submitted title or link",
       "condition": "topID > beforeTop",
-      "then": [
-        "gate_match"
-      ],
-      "else": [
-        "gate_give_up"
-      ]
+      "then": ["gate_match"],
+      "else": ["gate_give_up"]
     },
     {
       "id": "gate_match",
       "type": "condition",
       "condition": "topTitle == sub.title or topLink == sub.okUrl",
-      "then": [
-        "found",
-        "result",
-        "save"
-      ],
-      "else": [
-        "gate_give_up"
-      ]
+      "then": ["found", "result", "save"],
+      "else": ["gate_give_up"]
     },
-    {
-      "id": "found",
-      "type": "set_variable",
-      "variable_name": "subFound",
-      "value": true
-    },
+    {"id": "found", "type": "set_variable", "variable_name": "subFound", "value": true},
     {
       "id": "result",
       "type": "set_variable",
@@ -515,18 +355,12 @@
         "author": "{{subUser}}"
       }
     },
-    {
-      "id": "save",
-      "type": "save_data",
-      "dataSource": "subResult"
-    },
+    {"id": "save", "type": "save_data", "dataSource": "subResult"},
     {
       "id": "gate_give_up",
       "type": "condition",
       "condition": "tryIdx >= 2",
-      "then": [
-        "fail_unconfirmed"
-      ]
+      "then": ["fail_unconfirmed"]
     },
     {
       "id": "fail_unconfirmed",
@@ -534,19 +368,6 @@
       "text": "hackernews: submission not confirmed — no new item titled \"{{sub.title}}\" on /submitted; the form was submitted; not resubmitting to avoid a double post — check https://news.ycombinator.com/submitted?id={{subUser}}"
     }
   ],
-  "loops": [
-    {
-      "id": "read_back",
-      "iterator": "readBackTries",
-      "indexVar": "tryIdx",
-      "steps": [
-        "gate_try"
-      ]
-    }
-  ],
-  "errorHandling": {
-    "globalRetries": 0,
-    "retryDelay": 0,
-    "onFinalFailure": "log_and_continue"
-  }
+  "loops": [{"id": "read_back", "iterator": "readBackTries", "indexVar": "tryIdx", "steps": ["gate_try"]}],
+  "errorHandling": {"globalRetries": 0, "retryDelay": 0, "onFinalFailure": "log_and_continue"}
 }

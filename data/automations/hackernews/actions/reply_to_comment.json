@@ -5,37 +5,15 @@
   "version": "1.2.0",
   "description": "Reply to a Hacker News item or comment. Succeeds only when the reply by the logged-in user shows on the item page afterwards; rate limits (\"posting too fast\") and logged-out sessions fail. Never retried, so a reply is never posted twice",
   "sideEffects": "message",
-  "metadata": {
-    "requiresAuth": true,
-    "supportsPagination": false,
-    "supportsRetry": false
-  },
+  "metadata": {"requiresAuth": true, "supportsPagination": false, "supportsRetry": false},
   "inputs": {
     "required": [
-      {
-        "name": "itemID",
-        "type": "string",
-        "description": "Numeric item or comment ID to reply to"
-      },
-      {
-        "name": "text",
-        "type": "string",
-        "description": "Reply text"
-      }
+      {"name": "itemID", "type": "string", "description": "Numeric item or comment ID to reply to"},
+      {"name": "text", "type": "string", "description": "Reply text"}
     ],
     "optional": []
   },
-  "outputs": {
-    "success": [
-      "success",
-      "itemID",
-      "commentID",
-      "url"
-    ],
-    "failure": [
-      "error"
-    ]
-  },
+  "outputs": {"success": ["success", "itemID", "commentID", "url"], "failure": ["error"]},
   "steps": [
     {
       "id": "check_id",
@@ -59,13 +37,9 @@
       "id": "open_form",
       "type": "navigate",
       "url": "https://news.ycombinator.com/reply?id={{hn.id}}&goto=item%3Fid%3D{{hn.id}}",
-      "onError": { "action": "mark_failed" }
+      "onError": {"action": "mark_failed"}
     },
-    {
-      "id": "state_form",
-      "type": "call_fragment",
-      "fragment": "read_page_state"
-    },
+    {"id": "state_form", "type": "call_fragment", "fragment": "read_page_state"},
     {
       "id": "gate_user",
       "type": "condition",
@@ -97,12 +71,7 @@
       "type": "mark_failed",
       "text": "hackernews: reply page refused: {{hnState.refusal}}"
     },
-    {
-      "id": "keep_user",
-      "type": "set_variable",
-      "variable_name": "repUser",
-      "value": "{{hnUser}}"
-    },
+    {"id": "keep_user", "type": "set_variable", "variable_name": "repUser", "value": "{{hnUser}}"},
     {
       "id": "focus_box",
       "type": "press_key",
@@ -110,7 +79,7 @@
       "configKey": "reply.text",
       "key": "End",
       "timeout": 8,
-      "onError": { "action": "mark_failed" }
+      "onError": {"action": "mark_failed"}
     },
     {
       "id": "type_box",
@@ -118,14 +87,14 @@
       "configKey": "reply.text",
       "text": "{{text}}",
       "timeout": 8,
-      "onError": { "action": "mark_failed" }
+      "onError": {"action": "mark_failed"}
     },
     {
       "id": "find_button",
       "type": "find_element",
       "configKey": "reply.button",
       "timeout": 8,
-      "onError": { "action": "mark_failed" }
+      "onError": {"action": "mark_failed"}
     },
     {
       "id": "gate_send",
@@ -140,15 +109,11 @@
       "sideEffect": true,
       "description": "Post the reply. Nothing below posts again",
       "elementRef": "find_button",
-      "until": { "urlMatches": "^https://news\\.ycombinator\\.com/(item|comment|x)([?#]|$)" },
+      "until": {"urlMatches": "^https://news\\.ycombinator\\.com/(item|comment|x)([?#]|$)"},
       "timeout": 30,
-      "onError": { "action": "skip" }
+      "onError": {"action": "skip"}
     },
-    {
-      "id": "state_after",
-      "type": "call_fragment",
-      "fragment": "read_page_state"
-    },
+    {"id": "state_after", "type": "call_fragment", "fragment": "read_page_state"},
     {
       "id": "gate_refused",
       "type": "condition",
@@ -174,18 +139,14 @@
       "condition": "repFound != true",
       "then": ["confirm_wait", "find_mine", "gate_mine"]
     },
-    {
-      "id": "confirm_wait",
-      "type": "wait",
-      "duration": "{{item}}"
-    },
+    {"id": "confirm_wait", "type": "wait", "duration": "{{item}}"},
     {
       "id": "find_mine",
       "type": "page_script",
       "script": "find_reply.js",
-      "inputs": { "user": "{{repUser}}", "text": "{{text}}", "parent": "{{hn.id}}" },
+      "inputs": {"user": "{{repUser}}", "text": "{{text}}", "parent": "{{hn.id}}"},
       "variable_name": "mine",
-      "onError": { "action": "skip" }
+      "onError": {"action": "skip"}
     },
     {
       "id": "gate_mine",
@@ -194,12 +155,7 @@
       "then": ["rep_found", "rep_result", "rep_save"],
       "else": ["gate_give_up"]
     },
-    {
-      "id": "rep_found",
-      "type": "set_variable",
-      "variable_name": "repFound",
-      "value": true
-    },
+    {"id": "rep_found", "type": "set_variable", "variable_name": "repFound", "value": true},
     {
       "id": "rep_result",
       "type": "set_variable",
@@ -211,11 +167,7 @@
         "url": "https://news.ycombinator.com/item?id={{mine.id}}"
       }
     },
-    {
-      "id": "rep_save",
-      "type": "save_data",
-      "dataSource": "repResult"
-    },
+    {"id": "rep_save", "type": "save_data", "dataSource": "repResult"},
     {
       "id": "gate_give_up",
       "type": "condition",
@@ -236,9 +188,5 @@
       "steps": ["gate_confirm"]
     }
   ],
-  "errorHandling": {
-    "globalRetries": 0,
-    "retryDelay": 0,
-    "onFinalFailure": "log_and_continue"
-  }
+  "errorHandling": {"globalRetries": 0, "retryDelay": 0, "onFinalFailure": "log_and_continue"}
 }

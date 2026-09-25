@@ -5,19 +5,9 @@
   "version": "1.2.0",
   "description": "List the comments on a Hacker News item across all \"More\" pages, in thread order: every comment carries its depth (0 = top level) and parentId (the item ID for top-level comments); set topLevelOnly to keep top-level comments only",
   "sideEffects": "read",
-  "metadata": {
-    "requiresAuth": false,
-    "supportsPagination": true,
-    "supportsRetry": true
-  },
+  "metadata": {"requiresAuth": false, "supportsPagination": true, "supportsRetry": true},
   "inputs": {
-    "required": [
-      {
-        "name": "itemID",
-        "type": "string",
-        "description": "Numeric item ID to read comments from"
-      }
-    ],
+    "required": [{"name": "itemID", "type": "string", "description": "Numeric item ID to read comments from"}],
     "optional": [
       {
         "name": "topLevelOnly",
@@ -28,18 +18,8 @@
     ]
   },
   "outputs": {
-    "success": [
-      "id",
-      "author",
-      "text",
-      "depth",
-      "parentId",
-      "age",
-      "deleted"
-    ],
-    "failure": [
-      "error"
-    ]
+    "success": ["id", "author", "text", "depth", "parentId", "age", "deleted"],
+    "failure": ["error"]
   },
   "steps": [
     {
@@ -52,15 +32,8 @@
       "id": "gate_id",
       "type": "condition",
       "condition": "hn.id != ''",
-      "then": [
-        "gate_top",
-        "start",
-        "page_list",
-        "pages"
-      ],
-      "else": [
-        "fail_bad_id"
-      ]
+      "then": ["gate_top", "start", "page_list"],
+      "else": ["fail_bad_id"]
     },
     {
       "id": "fail_bad_id",
@@ -71,25 +44,11 @@
       "id": "gate_top",
       "type": "condition",
       "condition": "topLevelOnly == true",
-      "then": [
-        "depth_top"
-      ],
-      "else": [
-        "depth_all"
-      ]
+      "then": ["depth_top"],
+      "else": ["depth_all"]
     },
-    {
-      "id": "depth_top",
-      "type": "set_variable",
-      "variable_name": "maxDepth",
-      "value": 1
-    },
-    {
-      "id": "depth_all",
-      "type": "set_variable",
-      "variable_name": "maxDepth",
-      "value": 1000000
-    },
+    {"id": "depth_top", "type": "set_variable", "variable_name": "maxDepth", "value": 1},
+    {"id": "depth_all", "type": "set_variable", "variable_name": "maxDepth", "value": 1000000},
     {
       "id": "start",
       "type": "set_variable",
@@ -100,74 +59,29 @@
       "id": "page_list",
       "type": "set_variable",
       "variable_name": "pageList",
-      "value": [
-        1,
-        2,
-        3,
-        4,
-        5,
-        6,
-        7,
-        8,
-        9,
-        10,
-        11,
-        12,
-        13,
-        14,
-        15,
-        16,
-        17,
-        18,
-        19,
-        20
-      ]
+      "value": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
     },
     {
       "id": "gate_page",
       "type": "condition",
       "condition": "cUrl != ''",
-      "then": [
-        "open_page",
-        "read_page",
-        "gate_found",
-        "keep",
-        "record",
-        "advance",
-        "next_url",
-        "set_next"
-      ],
+      "then": ["open_page", "read_page", "gate_found", "keep", "record", "advance", "next_url", "set_next"],
       "description": "Follow the item's \"More\" links (at most 20 pages) while there is a next page"
     },
-    {
-      "id": "open_page",
-      "type": "navigate",
-      "url": "{{cUrl}}",
-      "onError": {
-        "action": "mark_failed"
-      }
-    },
+    {"id": "open_page", "type": "navigate", "url": "{{cUrl}}", "onError": {"action": "mark_failed"}},
     {
       "id": "read_page",
       "type": "page_script",
       "script": "comments_page.js",
-      "inputs": {
-        "itemID": "{{hn.id}}",
-        "stack": "{{cStack}}"
-      },
+      "inputs": {"itemID": "{{hn.id}}", "stack": "{{cStack}}"},
       "variable_name": "cPage",
-      "onError": {
-        "action": "mark_failed"
-      }
+      "onError": {"action": "mark_failed"}
     },
     {
       "id": "gate_found",
       "type": "condition",
       "condition": "cPage.found != true and pageIdx == 0",
-      "then": [
-        "read_missing",
-        "fail_missing"
-      ]
+      "then": ["read_missing", "fail_missing"]
     },
     {
       "id": "read_missing",
@@ -175,9 +89,7 @@
       "selector": "body",
       "variable_name": "pageText",
       "timeout": 2,
-      "onError": {
-        "action": "skip"
-      }
+      "onError": {"action": "skip"}
     },
     {
       "id": "fail_missing",
@@ -192,29 +104,13 @@
       "ops": [
         {
           "op": "filter",
-          "where": {
-            "variable": "depth",
-            "operator": "less_than",
-            "value": "{{maxDepth}}"
-          }
+          "where": {"variable": "depth", "operator": "less_than", "value": "{{maxDepth}}"}
         },
-        {
-          "op": "dedupe",
-          "field": "id"
-        }
+        {"op": "dedupe", "field": "id"}
       ]
     },
-    {
-      "id": "record",
-      "type": "save_data",
-      "dataSource": "cKeep"
-    },
-    {
-      "id": "advance",
-      "type": "set_variable",
-      "variable_name": "cStack",
-      "value": "{{cPage.stack}}"
-    },
+    {"id": "record", "type": "save_data", "dataSource": "cKeep"},
+    {"id": "advance", "type": "set_variable", "variable_name": "cStack", "value": "{{cPage.stack}}"},
     {
       "id": "next_url",
       "type": "transform",
@@ -224,40 +120,16 @@
       "ops": [
         {
           "op": "filter",
-          "where": {
-            "variable": "nextP",
-            "operator": "matches",
-            "value": "^[0-9]+$"
-          }
+          "where": {"variable": "nextP", "operator": "matches", "value": "^[0-9]+$"}
         },
         {
           "op": "map",
-          "map": {
-            "url": "https://news.ycombinator.com/item?id={{hn.id}}&p={{nextP}}"
-          }
+          "map": {"url": "https://news.ycombinator.com/item?id={{hn.id}}&p={{nextP}}"}
         }
       ]
     },
-    {
-      "id": "set_next",
-      "type": "set_variable",
-      "variable_name": "cUrl",
-      "value": "{{cNext.url}}"
-    }
+    {"id": "set_next", "type": "set_variable", "variable_name": "cUrl", "value": "{{cNext.url}}"}
   ],
-  "loops": [
-    {
-      "id": "pages",
-      "iterator": "pageList",
-      "indexVar": "pageIdx",
-      "steps": [
-        "gate_page"
-      ]
-    }
-  ],
-  "errorHandling": {
-    "globalRetries": 2,
-    "retryDelay": 2000,
-    "onFinalFailure": "log_and_continue"
-  }
+  "loops": [{"id": "pages", "iterator": "pageList", "indexVar": "pageIdx", "steps": ["gate_page"]}],
+  "errorHandling": {"globalRetries": 2, "retryDelay": 2000, "onFinalFailure": "log_and_continue"}
 }

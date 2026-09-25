@@ -5,34 +5,14 @@
   "version": "1.2.0",
   "description": "Read a Hacker News item's points and comment count (both null for job posts, which have neither)",
   "sideEffects": "read",
-  "metadata": {
-    "requiresAuth": false,
-    "supportsPagination": false,
-    "supportsRetry": true
-  },
+  "metadata": {"requiresAuth": false, "supportsPagination": false, "supportsRetry": true},
   "inputs": {
-    "required": [
-      {
-        "name": "itemID",
-        "type": "string",
-        "description": "Numeric item ID to read metrics for"
-      }
-    ],
+    "required": [{"name": "itemID", "type": "string", "description": "Numeric item ID to read metrics for"}],
     "optional": []
   },
   "outputs": {
-    "success": [
-      "itemID",
-      "points",
-      "comments",
-      "title",
-      "author",
-      "age",
-      "isJob"
-    ],
-    "failure": [
-      "error"
-    ]
+    "success": ["itemID", "points", "comments", "title", "author", "age", "isJob"],
+    "failure": ["error"]
   },
   "steps": [
     {
@@ -57,7 +37,7 @@
       "id": "open_item",
       "type": "navigate",
       "url": "https://news.ycombinator.com/item?id={{hn.id}}",
-      "onError": { "action": "mark_failed" }
+      "onError": {"action": "mark_failed"}
     },
     {
       "id": "read_found",
@@ -66,13 +46,25 @@
       "attribute": "id",
       "variable_name": "mFound",
       "timeout": 3,
-      "onError": { "action": "skip" }
+      "onError": {"action": "skip"}
     },
     {
       "id": "gate_found",
       "type": "condition",
       "condition": "mFound == hn.id",
-      "then": ["read_title", "read_score", "read_author", "read_age", "read_sub", "read_comments", "collect", "shape", "gate_job", "finish", "save"],
+      "then": [
+        "read_title",
+        "read_score",
+        "read_author",
+        "read_age",
+        "read_sub",
+        "read_comments",
+        "collect",
+        "shape",
+        "gate_job",
+        "finish",
+        "save"
+      ],
       "else": ["read_missing", "fail_missing"]
     },
     {
@@ -81,7 +73,7 @@
       "selector": "body",
       "variable_name": "pageText",
       "timeout": 2,
-      "onError": { "action": "skip" }
+      "onError": {"action": "skip"}
     },
     {
       "id": "fail_missing",
@@ -94,7 +86,7 @@
       "selector": ".fatitem .titleline > a",
       "variable_name": "mTitle",
       "timeout": 2,
-      "onError": { "action": "skip" }
+      "onError": {"action": "skip"}
     },
     {
       "id": "read_score",
@@ -102,7 +94,7 @@
       "selector": ".fatitem .subline .score",
       "variable_name": "mScore",
       "timeout": 2,
-      "onError": { "action": "skip" }
+      "onError": {"action": "skip"}
     },
     {
       "id": "read_author",
@@ -110,7 +102,7 @@
       "selector": ".fatitem .subline a.hnuser",
       "variable_name": "mAuthor",
       "timeout": 2,
-      "onError": { "action": "skip" }
+      "onError": {"action": "skip"}
     },
     {
       "id": "read_age",
@@ -119,7 +111,7 @@
       "attribute": "title",
       "variable_name": "mAge",
       "timeout": 2,
-      "onError": { "action": "skip" }
+      "onError": {"action": "skip"}
     },
     {
       "id": "read_sub",
@@ -128,7 +120,7 @@
       "attribute": "class",
       "variable_name": "mSub",
       "timeout": 2,
-      "onError": { "action": "skip" }
+      "onError": {"action": "skip"}
     },
     {
       "id": "read_comments",
@@ -136,7 +128,7 @@
       "selector": ".fatitem .subline > a:last-child",
       "variable_name": "mComments",
       "timeout": 2,
-      "onError": { "action": "skip" }
+      "onError": {"action": "skip"}
     },
     {
       "id": "collect",
@@ -160,13 +152,20 @@
       "input": "{{mRaw}}",
       "variable_name": "metrics",
       "ops": [
-        { "op": "regex_extract", "field": "age", "pattern": "^(\\S+)" },
-        { "op": "parse_number", "field": "points" },
-        { "op": "regex_extract", "field": "discussProbe", "pattern": "(?i)^discuss#(0)$" },
-        { "op": "regex_extract", "field": "comments", "pattern": "(?i)^([0-9]+)[\\s\\x{00a0}]+comments?$" },
-        { "op": "map", "map": { "comments": "{{comments or discussProbe}}", "age": "{{age or ''}}" } },
-        { "op": "parse_number", "field": "comments" },
-        { "op": "regex_extract", "field": "jobProbe", "pattern": "^(subtext)\\|\\|$" }
+        {"op": "regex_extract", "field": "age", "pattern": "^(\\S+)"},
+        {"op": "parse_number", "field": "points"},
+        {"op": "regex_extract", "field": "discussProbe", "pattern": "(?i)^discuss#(0)$"},
+        {
+          "op": "regex_extract",
+          "field": "comments",
+          "pattern": "(?i)^([0-9]+)[\\s\\x{00a0}]+comments?$"
+        },
+        {
+          "op": "map",
+          "map": {"comments": "{{comments or discussProbe}}", "age": "{{age or ''}}"}
+        },
+        {"op": "parse_number", "field": "comments"},
+        {"op": "regex_extract", "field": "jobProbe", "pattern": "^(subtext)\\|\\|$"}
       ]
     },
     {
@@ -176,38 +175,23 @@
       "then": ["job_yes"],
       "else": ["job_no"]
     },
-    {
-      "id": "job_yes",
-      "type": "set_variable",
-      "variable_name": "isJob",
-      "value": true
-    },
-    {
-      "id": "job_no",
-      "type": "set_variable",
-      "variable_name": "isJob",
-      "value": false
-    },
+    {"id": "job_yes", "type": "set_variable", "variable_name": "isJob", "value": true},
+    {"id": "job_no", "type": "set_variable", "variable_name": "isJob", "value": false},
     {
       "id": "finish",
       "type": "transform",
       "input": "{{metrics}}",
       "variable_name": "metrics",
       "ops": [
-        { "op": "map", "map": { "isJob": "{{isJob}}" } },
-        { "op": "pick", "fields": ["itemID", "points", "comments", "title", "author", "age", "isJob"] }
+        {"op": "map", "map": {"isJob": "{{isJob}}"}},
+        {
+          "op": "pick",
+          "fields": ["itemID", "points", "comments", "title", "author", "age", "isJob"]
+        }
       ]
     },
-    {
-      "id": "save",
-      "type": "save_data",
-      "dataSource": "metrics"
-    }
+    {"id": "save", "type": "save_data", "dataSource": "metrics"}
   ],
   "loops": [],
-  "errorHandling": {
-    "globalRetries": 2,
-    "retryDelay": 2000,
-    "onFinalFailure": "log_and_continue"
-  }
+  "errorHandling": {"globalRetries": 2, "retryDelay": 2000, "onFinalFailure": "log_and_continue"}
 }
