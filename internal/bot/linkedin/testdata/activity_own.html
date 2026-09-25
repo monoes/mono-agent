@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Activity | LinkedIn</title>
+<!-- SYNTHETIC fixture: the viewer's OWN recent-activity page (classic Ember
+     markup). Mirrors the real structure: an update-components-header
+     ("<owner> reposted this" / "collaborated on this") whose links point at
+     the profile owner comes BEFORE the post's own actor block; the viewer
+     liked their own posts, so the like summary is the social-proof variant
+     ("You and N others", total in
+     .social-details-social-counts__social-proof-fallback-number) and the
+     reactions button's aria-label has no " reactions" suffix. Invented
+     people, companies and content. -->
+<style> body { font: 14px sans-serif; } .post { min-height: 120px; border-bottom: 1px solid #ddd; } </style>
+</head>
+<body>
+<header id="global-nav"></header>
+<main>
+  <div class="scaffold-finite-scroll__content">
+
+    <div class="post"><div class="feed-shared-update-v2" role="article" data-urn="urn:li:activity:7400000000000000001">
+      <h2 class="visually-hidden">Feed post number 1</h2>
+      <div class="update-components-header">
+        <div class="update-components-header__text-wrapper">
+          <a href="https://www.linkedin.com/in/owen-owner-test?miniProfileUrn=urn%3Ali%3Afsd_profile%3AFAKE1"><div class="update-components-header__image"><img alt="" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"></div></a>
+          <span class="update-components-header__text-view"><span><a href="/in/owen-owner-test/">Owen Owner</a></span><span class="white-space-pre"> </span>collaborated on this</span>
+        </div>
+      </div>
+      <button aria-label="Open control menu for post by Rhea Partner" class="feed-shared-control-menu__trigger"></button>
+      <div class="update-components-actor__container">
+        <a class="update-components-actor__image" aria-label="View Rhea Partner’s graphic link" href="https://www.linkedin.com/in/rhea-partner-test?miniProfileUrn=urn%3Ali%3Afsd_profile%3AFAKE2"><img alt="" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"></a>
+        <div class="update-components-actor__meta">
+          <a class="update-components-actor__meta-link" aria-label="View: Rhea Partner 1st CEO at Example Works" href="https://www.linkedin.com/in/rhea-partner-test?miniProfileUrn=urn%3Ali%3Afsd_profile%3AFAKE2">
+            <span class="update-components-actor__title"><span class="update-components-actor__single-line-truncate"><span dir="ltr"><span>Rhea Partner</span></span></span>
+              <span class="update-components-actor__supplementary-actor-info"><span><span class="white-space-pre"> </span>• 1st</span></span></span>
+            <span class="update-components-actor__description"><span>CEO at Example Works</span></span>
+          </a>
+          <span class="update-components-actor__sub-description"><span>3d • </span></span>
+        </div>
+      </div>
+      <div class="feed-shared-update-v2__description"><div class="update-components-text"><span class="break-words">A post we wrote together.</span></div></div>
+      <div class="social-details-social-counts"><ul>
+        <li class="social-details-social-counts__item social-details-social-counts__reactions">
+          <button data-reaction-details="" aria-label="You and 4 others" class="social-details-social-counts__count-value" type="button">
+            <img alt="" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7">
+            <span class="social-details-social-counts__social-proof-container">
+              <span aria-hidden="true" data-social-proof-fallback="" class="social-details-social-counts__social-proof-fallback-number">5</span>
+              <span class="social-details-social-counts__social-proof-text"> You and 4 others </span>
+            </span>
+          </button>
+        </li>
+      </ul></div>
+      <div class="feed-shared-social-action-bar"><span class="reactions-react-button"><button aria-pressed="true" aria-label="Unreact Like"><span>Like</span></button></span></div>
+    </div></div>
+
+    <div class="post"><div class="feed-shared-update-v2" role="article" data-urn="urn:li:activity:7400000000000000002">
+      <h2 class="visually-hidden">Feed post number 2</h2>
+      <div class="update-components-header">
+        <div class="update-components-header__text-wrapper">
+          <a href="https://www.linkedin.com/in/owen-owner-test?miniProfileUrn=urn%3Ali%3Afsd_profile%3AFAKE1"><div class="update-components-header__image"><img alt="" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"></div></a>
+          <span class="update-components-header__text-view"><span><a href="/in/owen-owner-test/">Owen Owner</a></span><span class="white-space-pre"> </span>reposted this</span>
+        </div>
+      </div>
+      <button aria-label="Open control menu for post by Acme Widgets" class="feed-shared-control-menu__trigger"></button>
+      <div class="update-components-actor__container">
+        <a class="update-components-actor__image" aria-label="Acme Widgets, graphic." href="https://www.linkedin.com/company/acme-widgets-test/posts"><img alt="" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"></a>
+        <div class="update-components-actor__meta">
+          <a class="update-components-actor__meta-link" aria-label="View: Acme Widgets 512 followers" href="https://www.linkedin.com/company/acme-widgets-test/posts">
+            <span class="update-components-actor__title"><span class="update-components-actor__single-line-truncate"><span dir="ltr"><span><span>Acme Widgets</span></span></span></span></span>
+            <span class="update-components-actor__description"><span>512 followers</span></span>
+          </a>
+          <span class="update-components-actor__sub-description"><span>1w • </span></span>
+        </div>
+      </div>
+      <div class="feed-shared-update-v2__description"><div class="update-components-text"><span class="break-words">Acme ships a new widget.</span></div></div>
+      <div class="social-details-social-counts"><ul>
+        <li class="social-details-social-counts__item social-details-social-counts__reactions">
+          <button data-reaction-details="" aria-label="You and 14 others" class="social-details-social-counts__count-value" type="button">
+            <span class="social-details-social-counts__social-proof-container">
+              <span aria-hidden="true" data-social-proof-fallback="" class="social-details-social-counts__social-proof-fallback-number">15</span>
+              <span class="social-details-social-counts__social-proof-text"> You and 14 others </span>
+            </span>
+          </button>
+        </li>
+        <li class="social-details-social-counts__item social-details-social-counts__comments">
+          <button aria-label="8 comments on Acme Widgets’ post" class="social-details-social-counts__btn" type="button"><span aria-hidden="true"> 8 comments </span></button>
+        </li>
+      </ul></div>
+    </div></div>
+
+    <div class="post"><div class="feed-shared-update-v2" role="article" data-urn="urn:li:activity:7400000000000000003">
+      <h2 class="visually-hidden">Feed post number 3</h2>
+      <div class="update-components-actor__container">
+        <a class="update-components-actor__image" aria-label="View Owen Owner’s graphic link" href="https://www.linkedin.com/in/owen-owner-test?miniProfileUrn=urn%3Ali%3Afsd_profile%3AFAKE1"><img alt="" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"></a>
+        <div class="update-components-actor__meta">
+          <a class="update-components-actor__meta-link" aria-label="View: Owen Owner • You Founder at Owner Co" href="https://www.linkedin.com/in/owen-owner-test?miniProfileUrn=urn%3Ali%3Afsd_profile%3AFAKE1">
+            <span class="update-components-actor__title"><span class="update-components-actor__single-line-truncate"><span dir="ltr"><span>Owen Owner</span></span></span>
+              <span class="update-components-actor__supplementary-actor-info"><span><span class="white-space-pre"> </span>• You</span></span></span>
+            <span class="update-components-actor__description"><span>Founder at Owner Co</span></span>
+          </a>
+          <span class="update-components-actor__sub-description"><span>2w • Edited • </span></span>
+        </div>
+      </div>
+      <div class="feed-shared-update-v2__description"><div class="update-components-text"><span class="break-words">My own post, liked by me.</span></div></div>
+      <div class="social-details-social-counts"><ul>
+        <li class="social-details-social-counts__item social-details-social-counts__reactions">
+          <button data-reaction-details="" aria-label="You and 6 others" class="social-details-social-counts__count-value" type="button">
+            <span class="social-details-social-counts__social-proof-container">
+              <span class="social-details-social-counts__social-proof-text"> You and 6 others </span>
+            </span>
+          </button>
+        </li>
+      </ul></div>
+    </div></div>
+
+    <div class="post"><div class="feed-shared-update-v2" role="article" data-urn="urn:li:activity:7400000000000000004">
+      <h2 class="visually-hidden">Feed post number 4</h2>
+      <div class="update-components-actor__container">
+        <a class="update-components-actor__image" aria-label="View Owen Owner’s graphic link" href="https://www.linkedin.com/in/owen-owner-test?miniProfileUrn=urn%3Ali%3Afsd_profile%3AFAKE1"><img alt="" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"></a>
+        <div class="update-components-actor__meta">
+          <a class="update-components-actor__meta-link" aria-label="View: Owen Owner • You Founder at Owner Co" href="https://www.linkedin.com/in/owen-owner-test?miniProfileUrn=urn%3Ali%3Afsd_profile%3AFAKE1">
+            <span class="update-components-actor__title"><span class="update-components-actor__single-line-truncate"><span dir="ltr"><span>Owen Owner</span></span></span></span>
+          </a>
+          <span class="update-components-actor__sub-description"><span>1yr • </span></span>
+        </div>
+      </div>
+      <div class="feed-shared-update-v2__description"><div class="update-components-text"><span class="break-words">An older post that others liked.</span></div></div>
+      <div class="social-details-social-counts"><ul>
+        <li class="social-details-social-counts__item social-details-social-counts__reactions">
+          <button data-reaction-details="" aria-label="29 reactions" class="social-details-social-counts__count-value" type="button">
+            <span aria-hidden="true" class="social-details-social-counts__reactions-count"> 29 </span>
+          </button>
+        </li>
+        <li class="social-details-social-counts__item social-details-social-counts__comments">
+          <button aria-label="2 comments on Owen Owner’s post" class="social-details-social-counts__btn" type="button"><span aria-hidden="true"> 2 comments </span></button>
+        </li>
+      </ul></div>
+    </div></div>
+
+  </div>
+</main>
+</body>
+</html>

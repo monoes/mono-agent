@@ -37,27 +37,55 @@ const collectPostsJS = `() => {
 		if (seen.has(id)) return;
 		seen.add(id);
 		const q = (sel) => root ? root.querySelector(sel) : null;
+		// first returns the first element matching the earliest selector in
+		// sels (priority order, not document order), skipping the context
+		// header ("<owner> reposted this" / "collaborated on this"), whose
+		// links point at the profile owner rather than the post's author.
+		const first = (sels) => {
+			if (!root) return null;
+			for (const sel of sels) {
+				const el = Array.from(root.querySelectorAll(sel)).find((x) => !x.closest('.update-components-header'));
+				if (el) return el;
+			}
+			return null;
+		};
 		let author = '', authorUrl = '';
-		const nameEl = q('.update-components-actor__title span[aria-hidden="true"], .update-components-actor__title, .update-components-actor__name');
-		if (nameEl) author = L.lines(nameEl)[0] || '';
-		const authorLink = q('a.update-components-actor__meta-link, a.update-components-actor__image, a[href*="/in/"], a[href*="/company/"]');
+		const nameEl = first(['.update-components-actor__title span[aria-hidden="true"]', '.update-components-actor__title span[dir="ltr"]', '.update-components-actor__title', '.update-components-actor__name']);
+		if (nameEl) author = L.bareName(L.lines(nameEl)[0] || '');
+		const authorLink = first(['a.update-components-actor__meta-link', 'a.update-components-actor__image', '.update-components-actor__container a[href*="/in/"]', '.update-components-actor__container a[href*="/company/"]', 'a[href*="/in/"]', 'a[href*="/company/"]']);
 		if (authorLink) authorUrl = authorLink.href.split('?')[0];
 		if (!author && authorLink) {
 			const lbl = (authorLink.getAttribute('aria-label') || '').replace(/^View:?\s*/, '').replace(/[’']s\s+profile.*$/, '').replace(/,\s*graphic\.?$/, '');
-			author = lbl || L.lines(authorLink)[0] || '';
+			author = L.bareName(lbl || L.lines(authorLink)[0] || '');
 		}
 		const textEl = q('.update-components-text, .feed-shared-update-v2__description, [data-testid="expandable-text-box"], span.break-words');
 		const timeEl = q('time, .update-components-actor__sub-description');
 		let timestamp = '';
 		if (timeEl) timestamp = timeEl.getAttribute('datetime') || (L.text(timeEl).split('•')[0] || '').trim();
-		const likesEl = q('.social-details-social-counts__reactions-count, button[aria-label$=" reactions"], button[aria-label$=" reaction"]');
+		// Likes: the plain count ("29"), or — when the viewer reacted — the
+		// social-proof summary "You and 4 others", whose total sits in a
+		// fallback-number span; without that span, "X and N others" is N+1
+		// and a bare name is a single reaction.
+		const likes = (() => {
+			for (const sel of ['.social-details-social-counts__social-proof-fallback-number', '.social-details-social-counts__reactions-count']) {
+				const el = q(sel);
+				if (el && /\d/.test(L.text(el))) return L.num(L.text(el));
+			}
+			const btn = q('button[data-reaction-details], .social-details-social-counts__reactions button, button[aria-label$=" reactions"], button[aria-label$=" reaction"]');
+			if (!btn) return 0;
+			const s = (btn.getAttribute('aria-label') || '').trim() || L.text(btn);
+			const others = s.match(/\band\s+(\d[\d.,]*\s*[KkMm]?)\s+others?\b/i);
+			if (others) return L.num(others[1]) + 1;
+			if (/\d/.test(s)) return L.num(s);
+			return s ? 1 : 0;
+		})();
 		const commentsEl = q('button[aria-label*=" comment"], .social-details-social-counts__comments');
 		const repostsEl = q('button[aria-label*=" repost"]');
 		out.push({
 			urn, id, author, authorUrl,
 			text: textEl ? L.text(textEl).slice(0, 500) : '',
 			timestamp,
-			likes: likesEl ? L.num(likesEl.getAttribute('aria-label') || L.text(likesEl)) : 0,
+			likes,
 			comments: commentsEl ? L.num(commentsEl.getAttribute('aria-label') || L.text(commentsEl)) : 0,
 			reposts: repostsEl ? L.num(repostsEl.getAttribute('aria-label') || L.text(repostsEl)) : 0,
 		});

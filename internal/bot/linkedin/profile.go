@@ -146,13 +146,21 @@ const peopleCardsJS = `() => {
 		const href = links[0].href.split('?')[0];
 		if (seen.has(href)) continue;
 		seen.add(href);
-		const nameLink = links.find((a) => a.getAttribute('aria-hidden') !== 'true' && L.text(a)) || links[0];
+		// The name link: a link to the same profile that wraps no other
+		// profile link (in the server-driven markup the whole card is one
+		// link wrapping the name link), else the first visible one.
+		const same = (a) => a.href.split('?')[0] === href;
+		const named = (a) => a.getAttribute('aria-hidden') !== 'true' && L.text(a);
+		const nameLink = links.find((a) => same(a) && named(a) && !a.querySelector('a[href*="/in/"]')) || links.find(named) || links[0];
 		let name = '';
 		const hidden = nameLink.querySelector('span[aria-hidden="true"]');
 		name = L.lines(hidden || nameLink)[0] || '';
 		if (!name) { const img = c.querySelector('img[alt]'); name = img ? img.getAttribute('alt') : ''; }
-		name = name.replace(/^View\s+/, '').replace(/[’']s\s+profile$/, '').trim();
-		const lines = L.lines(c).filter((t) => t !== name && !/^(Premium|Verified|LinkedIn Member)$/i.test(t));
+		name = L.bareName(name.replace(/^View\s+/, '').replace(/[’']s\s+profile$/, ''));
+		// Screen-reader-only texts (presence "Status is online", "2nd degree
+		// connection") render as lines of their own; they are not content.
+		const a11y = L.a11yOnly(c);
+		const lines = L.lines(c).filter((t) => t !== name && !a11y.has(t) && !/^Status is \w+$/i.test(t) && !/^(Premium|Verified|LinkedIn Member)$/i.test(t));
 		const degLine = lines.find((t) => /^(?:•|·)?\s*(1st|2nd|3rd\+?)(\s+degree connection)?$/i.test(t));
 		const rest = lines.filter((t) => t !== degLine && !/^(?:•|·)\s*(1st|2nd|3rd\+?)$/.test(t) && !/mutual connection|^Followed by|^(Connect|Follow|Following|Message|Pending)$/i.test(t) && !t.startsWith(name + ' '));
 		const deg = (L.lines(c).join(' ').match(/(?:•|·)\s*(1st|2nd|3rd\+?)/) || [])[1] || '';

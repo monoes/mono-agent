@@ -112,6 +112,10 @@ func TestSearchPeople(t *testing.T) {
 			first["headline"] != "Workflow automation consultant" || first["location"] != "Berlin, Germany" || first["connection_degree"] != "2nd" {
 			t.Fatalf("first = %v", first)
 		}
+		// Rui Stone's card has no photo: the name must not carry " • 2nd".
+		if rui := people[3]; rui["full_name"] != "Rui Stone" || rui["connection_degree"] != "2nd" || rui["headline"] != "No-code builder" || rui["location"] != "Porto, Portugal" {
+			t.Fatalf("fourth = %v", rui)
+		}
 		if len(rec.Matching("GET", "https://www.linkedin.com/search/results/people/?keywords=workflow+automation&origin=GLOBAL_SEARCH_HEADER")) != 1 ||
 			len(rec.Matching("GET", "https://www.linkedin.com/search/results/people/?*page=2*")) != 1 {
 			t.Fatalf("requests = %v", rec.Requests())
@@ -148,6 +152,13 @@ func TestListFollowers(t *testing.T) {
 		if people[0]["full_name"] != "Ann Follower" || people[0]["url"] != "https://www.linkedin.com/in/ann-fol-test" ||
 			people[0]["headline"] != "Data analyst at Example Bank" || people[0]["you_follow"] != true || people[1]["you_follow"] != false {
 			t.Fatalf("people = %v", people[:2])
+		}
+		// Ann and Ben show a presence dot ("Status is online"/"away"): its
+		// screen-reader label is neither a headline nor a location.
+		for i, head := range []string{"Data analyst at Example Bank", "Student", "Barista"} {
+			if people[i]["headline"] != head || people[i]["location"] != "" {
+				t.Errorf("person %d headline %q location %q, want %q and none", i, people[i]["headline"], people[i]["location"], head)
+			}
 		}
 		if len(rec.Matching("POST", "*/follow")) != 0 {
 			t.Fatal("a follow button was pressed")
