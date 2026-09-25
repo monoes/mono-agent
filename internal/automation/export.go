@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"path"
-	"sort"
 	"strings"
 
 	"github.com/monoes/mono-agent/internal/action"
@@ -210,13 +209,4 @@ func contains(list []string, s string) bool {
 		}
 	}
 	return false
-}
-
-func sortedKeys(m map[string]bool) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }

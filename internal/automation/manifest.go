@@ -17,7 +17,8 @@ var EngineVersion = "0.0.0-dev"
 // ManifestFile is the manifest's file name at the package root.
 const ManifestFile = "automation.json"
 
-var idPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,40}$`)
+// idPattern is the id slug. One character is allowed: the built-in "x".
+var idPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,40}$`)
 
 // ValidID reports whether id is a valid automation id slug.
 func ValidID(id string) bool { return idPattern.MatchString(id) }

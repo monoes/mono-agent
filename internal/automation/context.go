@@ -27,6 +27,9 @@ func (c *pkgContext) Domains() []string                  { return c.pkg.Manifest
 func (c *pkgContext) PermittedSteps() []string           { return c.pkg.Manifest.Permissions.Steps }
 func (c *pkgContext) Script(name string) (string, error) { return c.pkg.Script(name) }
 
+// Native implements action.NativeBacked: requires.native of the package.
+func (c *pkgContext) Native() string { return c.pkg.Manifest.Requires.Native }
+
 func (c *pkgContext) Fragment(name string) (*action.FragmentDef, error) {
 	return c.pkg.Fragment(name)
 }

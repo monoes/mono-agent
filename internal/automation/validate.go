@@ -57,12 +57,17 @@ func Validate(p *Package) []IssueJSON {
 		}
 	}
 
-	// Fragments parse and their steps validate like an action's.
+	// Fragments parse; the ones no action calls are validated on their own
+	// (called ones were validated through call_fragment above).
+	called := calledFragments(p)
 	for _, name := range p.FragmentNames() {
 		file := "fragments/" + name + ".json"
 		frag, err := p.Fragment(name)
 		if err != nil {
 			add(file, "error", "bad_fragment_json", "%v", err)
+			continue
+		}
+		if called[name] {
 			continue
 		}
 		def := &action.ActionDef{ActionType: name, Automation: m.ID, Inputs: frag.Inputs, Steps: frag.Steps, SideEffects: "none"}
@@ -109,6 +114,29 @@ func Validate(p *Package) []IssueJSON {
 
 	sortIssues(out)
 	return out
+}
+
+// calledFragments returns the fragments reachable from the listed actions.
+func calledFragments(p *Package) map[string]bool {
+	seen := map[string]bool{}
+	var walk func([]action.StepDef)
+	walk = func(steps []action.StepDef) {
+		for _, s := range steps {
+			if s.Fragment != "" && !seen[s.Fragment] {
+				seen[s.Fragment] = true
+				if f, err := p.Fragment(s.Fragment); err == nil {
+					walk(f.Steps)
+				}
+			}
+			walk(s.Steps)
+		}
+	}
+	for _, a := range p.Manifest.Actions {
+		if def, err := p.Action(a); err == nil {
+			walk(def.Steps)
+		}
+	}
+	return seen
 }
 
 func validateSelectors(p *Package) []IssueJSON {
