@@ -1,8 +1,8 @@
 {
   "actionType": "find_by_keyword",
   "platform": "TIKTOK",
-  "version": "1.0.0",
-  "description": "Search for videos and users on TikTok using keywords",
+  "version": "1.1.0",
+  "description": "Search TikTok videos by keyword and return up to maxResultsCount results (url, id, author, description, thumbnail). A search that renders no result cards fails rather than returning nothing.",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": true,
@@ -24,86 +24,27 @@
   },
   "steps": [
     {
-      "id": "parse_keywords",
-      "type": "update_progress",
-      "set": {
-        "keywords": "{{keyword}}"
-      }
-    },
-    {
-      "id": "build_search_url",
-      "type": "update_progress",
-      "set": {
-        "searchUrl": "https://www.tiktok.com/search?q={{keyword}}"
-      }
-    },
-    {
-      "id": "navigate_to_search",
-      "type": "navigate",
-      "url": "{{searchUrl}}",
-      "waitFor": "page_load",
-      "timeout": 30,
+      "id": "search_videos",
+      "type": "call_bot_method",
+      "methodName": "search_videos",
+      "args": [
+        "{{keyword}}",
+        "{{maxResultsCount or 20}}"
+      ],
+      "variable_name": "videos",
+      "timeout": 180,
       "onError": {
-        "action": "retry",
-        "maxRetries": 3
+        "action": "mark_failed"
       }
     },
     {
-      "id": "wait_for_results",
-      "type": "wait",
-      "duration": 3.0,
-      "waitFor": "time"
-    },
-    {
-      "id": "find_videos",
-      "type": "find_element",
-      "xpath": "//div[contains(@class, 'video-item')] | //a[contains(@href, '/video/')]",
-      "timeout": 15
-    },
-    {
-      "id": "extract_video_data",
-      "type": "extract_multiple",
-      "configKey": "videos",
-      "onSuccess": {
-        "action": "save_data"
-      }
-    },
-    {
-      "id": "check_more_needed",
-      "type": "condition",
-      "condition": "resultsCount < maxResultsCount",
-      "then": [
-        "scroll_for_more",
-        "extract_video_data",
-        "check_more_needed"
-      ],
-      "else": []
-    },
-    {
-      "id": "scroll_for_more",
-      "type": "scroll",
-      "elementRef": "find_videos",
-      "waitFor": "time"
-    }
-  ],
-  "loops": [
-    {
-      "id": "process_keywords",
-      "iterator": "keywords",
-      "indexVar": "keywordIndex",
-      "steps": [
-        "build_search_url",
-        "navigate_to_search",
-        "wait_for_results",
-        "find_videos",
-        "extract_video_data",
-        "check_more_needed"
-      ],
-      "onComplete": "update_action_state"
+      "id": "save_videos",
+      "type": "save_data",
+      "dataSource": "videos"
     }
   ],
   "errorHandling": {
-    "globalRetries": 3,
+    "globalRetries": 0,
     "retryDelay": 2000,
     "onFinalFailure": "log_and_continue"
   }

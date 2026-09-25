@@ -1,8 +1,8 @@
 {
   "actionType": "export_followers",
   "platform": "TIKTOK",
-  "version": "1.0.0",
-  "description": "Fetch followers or following list from TikTok profile",
+  "version": "1.1.0",
+  "description": "Fetch the followers (sourceType FOLLOWERS_FETCH) or following (FOLLOWING_FETCH) list of a TikTok profile: username, profile URL and display name per account",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": true,
@@ -14,7 +14,8 @@
     ],
     "optional": [
       "maxResultsCount",
-      "listId"
+      "listId",
+      "profileUrl"
     ]
   },
   "outputs": {
@@ -26,87 +27,28 @@
   },
   "steps": [
     {
-      "id": "navigate_to_profile",
-      "type": "navigate",
-      "url": "{{profileUrl}}",
-      "waitFor": "page_load",
-      "timeout": 30
-    },
-    {
-      "id": "determine_fetch_type",
-      "type": "condition",
-      "condition": "sourceType == 'FOLLOWERS_FETCH'",
-      "then": [
-        "click_followers"
+      "id": "list_accounts",
+      "type": "call_bot_method",
+      "methodName": "list_followers",
+      "args": [
+        "{{profileUrl or selectedListItems[0].url or selectedListItems[0]}}",
+        "{{sourceType}}",
+        "{{maxResultsCount or 50}}"
       ],
-      "else": [
-        "click_following"
-      ]
-    },
-    {
-      "id": "click_followers",
-      "type": "find_element",
-      "xpath": "//strong[contains(text(), 'Followers')]/parent::button | //a[contains(@href, '/followers')]",
-      "timeout": 10
-    },
-    {
-      "id": "click_followers_button",
-      "type": "click",
-      "elementRef": "click_followers",
-      "waitFor": "followers_list_visible"
-    },
-    {
-      "id": "click_following",
-      "type": "find_element",
-      "xpath": "//strong[contains(text(), 'Following')]/parent::button | //a[contains(@href, '/following')]",
-      "timeout": 10
-    },
-    {
-      "id": "click_following_button",
-      "type": "click",
-      "elementRef": "click_following",
-      "waitFor": "following_list_visible"
-    },
-    {
-      "id": "wait_for_list_load",
-      "type": "wait",
-      "duration": 3.0,
-      "waitFor": "time"
-    },
-    {
-      "id": "find_users_list",
-      "type": "find_element",
-      "xpath": "//div[contains(@class, 'user-list')] | //div[contains(@data-e2e, 'user-item')]",
-      "timeout": 15
-    },
-    {
-      "id": "extract_users",
-      "type": "extract_multiple",
-      "xpath": "//div[contains(@data-e2e, 'user-item')]//a",
-      "onSuccess": {
-        "action": "save_data"
+      "variable_name": "accounts",
+      "timeout": 300,
+      "onError": {
+        "action": "mark_failed"
       }
     },
     {
-      "id": "check_more_results",
-      "type": "condition",
-      "condition": "resultsCount < maxResultsCount",
-      "then": [
-        "scroll_list",
-        "extract_users",
-        "check_more_results"
-      ],
-      "else": []
-    },
-    {
-      "id": "scroll_list",
-      "type": "scroll",
-      "elementRef": "find_users_list",
-      "waitFor": "time"
+      "id": "save_accounts",
+      "type": "save_data",
+      "dataSource": "accounts"
     }
   ],
   "errorHandling": {
-    "globalRetries": 3,
+    "globalRetries": 0,
     "retryDelay": 2000,
     "onFinalFailure": "log_and_continue"
   }

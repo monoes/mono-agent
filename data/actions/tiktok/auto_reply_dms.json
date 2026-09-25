@@ -1,8 +1,8 @@
 {
   "actionType": "auto_reply_dms",
   "platform": "TIKTOK",
-  "version": "1.0.0",
-  "description": "Reply to messages in TikTok inbox",
+  "version": "1.1.0",
+  "description": "Reply to unread conversations in the TikTok inbox with replyText. Conversations are matched by their exact name (a name shared by several conversations fails); each reply is verified in the chat whose header carries that name.",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": true,
@@ -15,7 +15,9 @@
       "pollInterval"
     ],
     "optional": [
-      "selectedListItems"
+      "selectedListItems",
+      "replyText",
+      "maxReplies"
     ]
   },
   "outputs": {
@@ -29,88 +31,58 @@
   },
   "steps": [
     {
-      "id": "navigate_to_inbox",
-      "type": "navigate",
-      "url": "https://www.tiktok.com/messages",
-      "waitFor": "page_load",
-      "timeout": 30
-    },
-    {
-      "id": "wait_for_inbox_load",
-      "type": "wait",
-      "duration": 3.0,
-      "waitFor": "time"
-    },
-    {
-      "id": "find_conversation_list",
-      "type": "find_element",
-      "xpath": "//div[contains(@class, 'conversation-list')] | //ul[contains(@role, 'list')]",
-      "timeout": 15
-    },
-    {
-      "id": "extract_conversations",
-      "type": "extract_multiple",
-      "xpath": "//div[contains(@class, 'conversation-item')] | //a[contains(@href, '/messages/')]",
-      "onSuccess": {
-        "action": "save_data"
+      "id": "list_unread_conversations",
+      "type": "call_bot_method",
+      "methodName": "list_conversations",
+      "args": [
+        "{{maxReplies or 20}}",
+        "true"
+      ],
+      "variable_name": "conversations",
+      "timeout": 60,
+      "onError": {
+        "action": "mark_failed"
       }
     },
     {
-      "id": "open_conversation",
-      "type": "navigate",
-      "url": "{{conversation.url}}",
-      "waitFor": "page_load",
-      "timeout": 15
-    },
-    {
-      "id": "find_message_input",
-      "type": "find_element",
-      "intent": "the message text box of the open direct message conversation",
-      "xpath": "//div[@contenteditable='true'] | //textarea",
-      "timeout": 10
-    },
-    {
-      "id": "type_reply",
-      "type": "type",
-      "elementRef": "find_message_input",
-      "text": "{{replyText}}",
-      "humanLike": true
-    },
-    {
-      "id": "find_send_button",
-      "type": "find_element",
-      "intent": "the Send button of the open direct message conversation",
-      "xpath": "//button[contains(text(), 'Send')] | //button[@type='submit']",
-      "timeout": 10
-    },
-    {
-      "id": "click_send",
-      "type": "click",
-      "elementRef": "find_send_button",
-      "waitFor": "message_sent",
+      "id": "reply",
+      "type": "call_bot_method",
+      "methodName": "reply_to_conversation",
+      "args": [
+        "{{item.name}}",
+        "{{replyText}}"
+      ],
+      "variable_name": "replyResult",
+      "timeout": 90,
+      "onError": {
+        "action": "mark_failed"
+      },
       "onSuccess": {
         "action": "update_progress",
-        "increment": "reachedIndex"
+        "increment": "itemsCount"
       }
+    },
+    {
+      "id": "wait_between_replies",
+      "type": "wait",
+      "duration": "{{delayBetweenReplies or 5}}",
+      "waitFor": "time"
     }
   ],
   "loops": [
     {
       "id": "process_conversations",
-      "iterator": "filteredConversations",
+      "iterator": "conversations",
       "indexVar": "reachedIndex",
       "steps": [
-        "open_conversation",
-        "find_message_input",
-        "type_reply",
-        "find_send_button",
-        "click_send"
+        "reply",
+        "wait_between_replies"
       ],
       "onComplete": "update_action_state"
     }
   ],
   "errorHandling": {
-    "globalRetries": 3,
+    "globalRetries": 0,
     "retryDelay": 2000,
     "onFinalFailure": "log_and_continue"
   }
