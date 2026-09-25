@@ -12,10 +12,15 @@
  *   - scope: one tab. Events from any other tab are ignored; a tab opened
  *     FROM the recorded tab stops the recording ("new_tab"), closing it stops
  *     it ("tab_closed"), and so does closing the side panel ("panel_closed");
- *   - delivery: frames go out in order through an outbox that survives the
- *     bridge being down (and the worker being restarted), and is flushed in
- *     the same order when it comes back — the capture_queue.js promise,
- *     nothing recorded is silently dropped.
+ *   - delivery: frames go out through recorder_outbox.js, which keeps each
+ *     one until Go acks it and resends the unacked ones in order on every
+ *     reconnect. A recording is `delivered` only once its stop frame is
+ *     acked -- Go has written the envelope -- and then every frame of it,
+ *     typed values included, is purged from storage.
+ *
+ * The live recording is chrome.storage.session state: it survives a worker
+ * restart but not a browser restart, so a recording can never "resume" in
+ * whatever new tab reuses an old tab id. On restore the tab is checked too.
  *
  * Navigation comes from chrome.webNavigation, not the page: a typed URL,
  * reload or back/forward is `navigate` (the person did it); a link, form or
@@ -29,8 +34,6 @@
   "use strict";
 
   const STATE_KEY = "recordingState";
-  const OUTBOX_KEY = "recordingOutbox";
-  const MAX_OUTBOX = 5000;
   const MAX_STEPS = 500;
   const STOP_SETTLE_MS = 150;
 
@@ -75,29 +78,48 @@
     return s;
   }
 
+  const OVERFLOW =
+    "the bridge was unreachable for too long and the recording buffer is full, so recording stopped. " +
+    "Start the bridge; what was recorded so far is kept and will be sent.";
+
   function createSession(deps) {
     const now = deps.now || (() => Date.now());
     const settleMs = deps.settleMs == null ? STOP_SETTLE_MS : deps.settleMs;
+    const stateStore = deps.sessionStorage || deps.storage;
     let state = blank();
-    let outbox = [];
-    let frameSeq = 0;
-    let saving = Promise.resolve();
     let stopping = null;
+    let saving = Promise.resolve();
+    let dirty = false;
+
+    const outbox = root.MonoRecorderOutbox.createOutbox({
+      storage: deps.storage,
+      send: (f) => deps.send(f),
+      isConnected: () => deps.isConnected(),
+      maxFrames: deps.maxFrames,
+      maxBytes: deps.maxBytes,
+      onError: (msg) => {
+        state.error = msg;
+        changed();
+      },
+    });
 
     function blank() {
-      return { recording: false, id: "", tabId: 0, goal: "", url: "", title: "", profile: "", startedAt: 0, seq: 0, lastExtract: "", pick: false, stopReason: "", steps: [] };
+      return {
+        recording: false, id: "", tabId: 0, goal: "", url: "", title: "", profile: "", startedAt: 0,
+        seq: 0, frameSeq: 0, lastExtract: "", pick: false, stopReason: "", steps: [],
+        finalized: false, envelopeId: "", error: "", warning: "",
+      };
     }
 
-    // Writes are coalesced: a burst of events is one storage write of the
-    // state as it is when the write runs, not one write per event.
-    let dirty = false;
+    // Writes are coalesced: a burst of events is one write of the state as
+    // it is when the write runs.
     function persist() {
       if (dirty) return saving;
       dirty = true;
       saving = saving
         .then(() => {
           dirty = false;
-          return deps.storage.set({ [STATE_KEY]: state, [OUTBOX_KEY]: outbox.slice() });
+          return stateStore.set({ [STATE_KEY]: state });
         })
         .catch(() => {});
       return saving;
@@ -106,6 +128,7 @@
     function status() {
       return {
         recording: state.recording,
+        stopping: !!stopping,
         id: state.id,
         tabId: state.tabId,
         goal: state.goal,
@@ -116,8 +139,11 @@
         pick: state.pick,
         stopReason: state.stopReason,
         steps: state.steps.slice(),
-        queued: outbox.length,
-        delivered: !!state.id && !outbox.some((f) => f.recordingId === state.id),
+        queued: outbox.size(),
+        delivered: !!state.id && state.finalized,
+        envelopeId: state.envelopeId,
+        error: state.error,
+        warning: state.warning,
       };
     }
 
@@ -132,43 +158,23 @@
       }
     }
 
-    /** pump sends queued frames in order until the socket refuses one. */
-    function pump() {
-      let sent = 0;
-      while (outbox.length && deps.isConnected()) {
-        let ok = false;
-        try {
-          ok = deps.send(outbox[0]) !== false;
-        } catch {
-          ok = false;
-        }
-        if (!ok) break;
-        outbox.shift();
-        sent++;
-      }
-      return sent;
-    }
-
-    function enqueue(frame) {
-      frameSeq += 1;
-      const f = Object.assign({ kind: "recording", id: `${frame.recordingId}-f${frameSeq}` }, frame);
+    function enqueue(frame, force) {
+      state.frameSeq += 1;
+      const f = Object.assign({ kind: "recording", id: `${frame.recordingId}-f${state.frameSeq}` }, frame);
       // On every frame, not just start: a restarted bridge re-adopts the
       // spool by recordingId inside this profile's inbox.
       if (state.profile && !f.profile) f.profile = state.profile;
-      outbox.push(f);
-      if (outbox.length > MAX_OUTBOX) {
-        // Never drop an event, start or stop: the oldest DOM snippet goes first.
-        const at = outbox.findIndex((x) => x.op === "snapshot");
-        outbox.splice(at === -1 ? 0 : at, 1);
+      const res = outbox.push(f, force);
+      if (res.overflow && state.recording && !stopping) {
+        state.error = OVERFLOW;
+        Promise.resolve().then(() => stop("error"));
       }
-      pump();
+      return !res.overflow;
     }
 
-    /** flush is called when the socket (re)opens. */
+    /** flush resends every unacked frame, in order: called when the socket (re)opens. */
     function flush() {
-      const sent = pump();
-      if (sent) changed();
-      return sent;
+      return outbox.resend();
     }
 
     function addEvent(ev, snippet) {
@@ -178,7 +184,11 @@
       // Key order is cosmetic, but keep the types.go order for readable jsonl.
       const ordered = { id: event.id, seq: event.seq, t: event.t, type: event.type, url: event.url || "" };
       for (const k of Object.keys(event)) if (!(k in ordered)) ordered[k] = event[k];
-      enqueue({ op: "event", recordingId: state.id, event: ordered });
+      if (!enqueue({ op: "event", recordingId: state.id, event: ordered })) {
+        state.seq -= 1; // never sent, so the number is free again
+        changed();
+        return null;
+      }
       if (snippet) {
         enqueue({ op: "snapshot", recordingId: state.id, eventId: ordered.id, name: `dom-${ordered.id}.html`, data: snippet });
       }
@@ -190,7 +200,7 @@
     }
 
     async function start(opts) {
-      if (state.recording) throw new Error("a recording is already running");
+      if (state.recording || stopping) throw new Error("a recording is already running");
       const tabId = opts && opts.tabId;
       if (!tabId) throw new Error("no tab to record");
       const info = (deps.tabInfo && (await deps.tabInfo(tabId))) || {};
@@ -204,10 +214,11 @@
         title: info.title || "",
         startedAt,
       });
+      state.profile = deps.profile ? await deps.profile() : "";
       const frame = { op: "start", recordingId: state.id, tabId, url: state.url, title: state.title, startedAt };
       if (state.goal) frame.goal = state.goal;
-      state.profile = deps.profile ? await deps.profile() : "";
-      enqueue(frame);
+      enqueue(frame, true);
+      if (deps.listen) deps.listen(true);
       changed();
       try {
         await deps.inject(tabId);
@@ -225,28 +236,30 @@
       const why = REASONS.indexOf(reason) !== -1 ? reason : "user";
       stopping = (async () => {
         const tabId = state.tabId;
-        if (why !== "tab_closed" && deps.uninject) {
-          // Stopping the page recorders flushes any debounced value; give
-          // those last messages a moment to land before the stop frame.
+        if (why !== "tab_closed") {
           try {
-            await deps.uninject(tabId);
+            if (state.pick && deps.pick) await deps.pick(tabId, false);
+            // Stopping the page recorders flushes any debounced value; give
+            // those last messages a moment to land before the stop frame.
+            if (deps.uninject) await deps.uninject(tabId);
           } catch {
             // the tab is gone or closed to scripts
           }
           if (settleMs) await new Promise((r) => setTimeout(r, settleMs));
         }
-        enqueue({ op: "stop", recordingId: state.id, reason: why });
+        enqueue({ op: "stop", recordingId: state.id, reason: why }, true);
         state.recording = false;
         state.pick = false;
         state.stopReason = why;
+        if (deps.listen) deps.listen(false);
         if (deps.badge) deps.badge(tabId, false);
-        changed();
         return status();
       })();
       try {
         return await stopping;
       } finally {
         stopping = null;
+        changed();
       }
     }
 
@@ -262,9 +275,9 @@
       return addEvent(ev, msg.snippet || "");
     }
 
-    /** navigation takes webNavigation.onCommitted / onHistoryStateUpdated details. */
+    /** navigation takes webNavigation onCommitted / onHistoryStateUpdated / onReferenceFragmentUpdated. */
     function navigation(details, history) {
-      if (!state.recording || !details || details.tabId !== state.tabId || details.frameId !== 0) return null;
+      if (!state.recording || stopping || !details || details.tabId !== state.tabId || details.frameId !== 0) return null;
       if (!/^(https?|file):/i.test(details.url || "")) return null;
       const kind = navKind(details.transitionType, details.transitionQualifiers, history);
       state.url = details.url;
@@ -273,7 +286,7 @@
 
     /** documentReady re-injects the recorder into a frame that just loaded. */
     function documentReady(details) {
-      if (!state.recording || !details || details.tabId !== state.tabId) return null;
+      if (!state.recording || stopping || !details || details.tabId !== state.tabId) return null;
       return Promise.resolve(deps.inject(state.tabId, details.frameId, state.pick)).catch(() => {});
     }
 
@@ -298,7 +311,7 @@
     }
 
     async function setPick(on) {
-      state.pick = !!on && state.recording;
+      state.pick = !!on && state.recording && !stopping;
       if (state.recording && deps.pick) await deps.pick(state.tabId, state.pick);
       changed();
       return status();
@@ -314,10 +327,11 @@
      *   {kind:"extract", refEvent, field}    rename an extract's field
      * Both become new events (the recording is append-only); the analyzer
      * applies the latest mark per refEvent. An un-marked param carries
-     * note "unset".
+     * note "unset". Marks need the recording still open on the Go side.
      */
     function mark(m) {
       if (!state.id || !m) throw new Error("nothing is being recorded");
+      if (!state.recording) throw new Error("the recording has stopped; mark inputs while recording");
       const ref = findStep(m.refEvent);
       if (!ref) throw new Error(`no step ${m.refEvent}`);
       const url = ref.url || state.url;
@@ -338,28 +352,83 @@
       throw new Error(`unknown mark ${m.kind}`);
     }
 
-    /** handleFrame consumes Go's {id, success, type:"recording"} acks. */
+    /**
+     * handleFrame consumes Go's acks: {id, success, type:"recording"}. The
+     * acked frame leaves the outbox. The stop frame's ack means the envelope
+     * is written (or, "already finished", was written before): the recording
+     * is delivered and its frames are purged from storage.
+     */
     function handleFrame(msg) {
-      return !!(msg && msg.type === "recording" && typeof msg.success === "boolean" && !msg.kind);
+      if (!(msg && msg.type === "recording" && typeof msg.success === "boolean" && !msg.kind)) return false;
+      const frame = outbox.ack(msg.id);
+      if (!frame) return true;
+      const err = String(msg.error || "");
+      if (frame.op === "stop" && (msg.success || /already finished/i.test(err))) {
+        if (frame.recordingId === state.id) {
+          state.finalized = true;
+          if (msg.data && msg.data.id) state.envelopeId = String(msg.data.id);
+        }
+        outbox.purge(frame.recordingId);
+        changed();
+      } else if (!msg.success) {
+        state.warning = `the bridge refused a ${frame.op} frame: ${err || "no reason given"}`;
+        changed();
+      } else if (msg.data && msg.data.dropped) {
+        state.warning = `the bridge dropped a ${frame.op} frame: ${msg.data.dropped}`;
+        changed();
+      } else {
+        // A plain ack: the queued count changed.
+        if (deps.notify) changed();
+      }
+      return true;
     }
 
-    /** restore reloads state after a worker restart. */
-    async function restore() {
-      try {
-        const got = (await deps.storage.get([STATE_KEY, OUTBOX_KEY])) || {};
-        if (got[STATE_KEY] && typeof got[STATE_KEY] === "object") state = Object.assign(blank(), got[STATE_KEY]);
-        if (Array.isArray(got[OUTBOX_KEY])) outbox = got[OUTBOX_KEY].concat(outbox);
-        frameSeq = outbox.length + state.seq * 2 + 1000;
-      } catch {
-        // nothing stored
+    /** closeOrphans ends recordings left in the outbox with no stop frame. */
+    function closeOrphans() {
+      const open = new Map();
+      for (const f of outbox.frames()) {
+        if (f.op === "stop") open.set(f.recordingId, false);
+        else if (!open.has(f.recordingId)) open.set(f.recordingId, f.profile || "");
       }
-      if (state.recording && deps.badge) deps.badge(state.tabId, true);
+      for (const [id, profile] of open) {
+        if (profile === false || (state.recording && id === state.id)) continue;
+        const f = { kind: "recording", id: `${id}-orphan-stop`, op: "stop", recordingId: id, reason: "error" };
+        if (profile) f.profile = profile;
+        outbox.push(f, true);
+      }
+    }
+
+    /**
+     * restore reloads after a worker restart. `startup` (runtime.onStartup,
+     * a new browser session) starts from nothing: any recording left in the
+     * outbox from before is closed with reason "error".
+     */
+    async function restore(opts) {
+      await outbox.load();
+      try {
+        const got = opts && opts.startup ? {} : (await stateStore.get(STATE_KEY)) || {};
+        state = got[STATE_KEY] && typeof got[STATE_KEY] === "object" ? Object.assign(blank(), got[STATE_KEY]) : blank();
+      } catch {
+        state = blank();
+      }
+      if (state.recording) {
+        const alive = deps.tabExists ? await deps.tabExists(state.tabId) : true;
+        if (!alive) {
+          state.error = "the recorded tab is gone";
+          await stop("error");
+        } else {
+          if (deps.listen) deps.listen(true);
+          if (deps.badge) deps.badge(state.tabId, true);
+        }
+      }
+      closeOrphans();
+      changed();
       return status();
     }
 
     /** clear forgets a finished recording's summary once the panel is done with it. */
     function clear() {
-      if (state.recording) throw new Error("stop the recording first");
+      if (state.recording || stopping) throw new Error("stop the recording first");
       state = blank();
       changed();
       return status();
@@ -368,10 +437,10 @@
     return {
       start, stop, event, navigation, documentReady, tabCreated, navigationTarget, tabRemoved,
       panelClosed, setPick, mark, flush, handleFrame, restore, clear, status,
-      outbox: () => outbox.slice(),
-      saved: () => saving,
+      outbox: () => outbox.frames(),
+      saved: () => Promise.all([saving, outbox.saved()]),
     };
   }
 
-  root.MonoRecorderSession = { createSession, navKind, stepOf, STATE_KEY, OUTBOX_KEY, MAX_OUTBOX, REASONS };
+  root.MonoRecorderSession = { createSession, navKind, stepOf, STATE_KEY, REASONS, OVERFLOW };
 })(globalThis);

@@ -23,7 +23,9 @@ function scripts(dir) {
     if (name === "node_modules" || name.startsWith(".")) continue;
     const path = join(dir, name);
     if (statSync(path).isDirectory()) out.push(...scripts(path));
-    else if (/\.(js|mjs|html|css|json)$/.test(name)) out.push(path);
+    // What Chrome loads. Node test files (.mjs) are never shipped, and may
+    // hold noncharacters on purpose as test data (script_encoding.test.mjs).
+    else if (/\.(js|html|css|json)$/.test(name)) out.push(path);
   }
   return out;
 }

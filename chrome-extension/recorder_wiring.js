@@ -85,11 +85,23 @@
     }
   }
 
+  async function tabExists(tabId) {
+    try {
+      return !!(await chrome.tabs.get(tabId));
+    } catch {
+      return false;
+    }
+  }
+
   function install(d) {
     session = root.MonoRecorderSession.createSession({
       send: d.send,
       isConnected: d.isConnected,
       storage: d.storage || chrome.storage.local,
+      // The live recording is session state: gone with the browser session.
+      sessionStorage: d.sessionStorage || (chrome.storage.session || chrome.storage.local),
+      tabExists,
+      listen,
       inject,
       uninject,
       pick: (tabId, on) => setPickInTab(tabId, on),
@@ -101,7 +113,12 @@
     // A worker woken BY a recorder event must not handle it before the
     // running recording has been read back from storage.
     ready = session.restore().then(() => session.flush(), () => {});
-    registerChrome();
+    // A new browser session: whatever the last one was recording is over.
+    if (chrome.runtime.onStartup) {
+      chrome.runtime.onStartup.addListener(() => {
+        ready = ready.then(() => session.restore({ startup: true })).then(() => session.flush(), () => {});
+      });
+    }
     registerMessages();
     registerPorts();
     return session;
@@ -112,22 +129,40 @@
     ready.then(() => fn(...args)).catch((err) => console.error("[monoagent] recorder:", err && err.message));
   };
 
-  function registerChrome() {
-    const nav = chrome.webNavigation;
-    if (nav) {
-      nav.onCommitted.addListener(later((details) => session.navigation(details, false)));
-      nav.onHistoryStateUpdated.addListener(later((details) => session.navigation(details, true)));
-      nav.onDOMContentLoaded.addListener(later((details) => session.documentReady(details)));
-      nav.onCreatedNavigationTarget.addListener(later((details) => session.navigationTarget(details)));
+  // Navigation and tab listeners exist only while something is recording,
+  // so no other browsing ever runs through this code. The side panel pings
+  // the worker while recording, which keeps it (and these listeners) alive.
+  const nav = () => chrome.webNavigation || {};
+  const LISTENERS = [
+    [() => nav().onCommitted, (d) => session.navigation(d, false)],
+    [() => nav().onHistoryStateUpdated, (d) => session.navigation(d, true)],
+    // Hash-route SPAs change only the fragment.
+    [() => nav().onReferenceFragmentUpdated, (d) => session.navigation(d, false)],
+    [() => nav().onDOMContentLoaded, (d) => session.documentReady(d)],
+    [() => nav().onCreatedNavigationTarget, (d) => session.navigationTarget(d)],
+    [() => chrome.tabs.onCreated, (tab) => session.tabCreated(tab)],
+    [() => chrome.tabs.onRemoved, (tabId) => session.tabRemoved(tabId)],
+  ].map(([event, fn]) => ({ event, fn: later(fn) }));
+
+  function listen(on) {
+    for (const l of LISTENERS) {
+      const ev = l.event();
+      if (!ev || !ev.addListener) continue;
+      const has = ev.hasListener ? ev.hasListener(l.fn) : false;
+      if (on && !has) ev.addListener(l.fn);
+      if (!on && ev.removeListener) ev.removeListener(l.fn);
     }
-    chrome.tabs.onCreated.addListener(later((tab) => session.tabCreated(tab)));
-    chrome.tabs.onRemoved.addListener(later((tabId) => session.tabRemoved(tabId)));
   }
 
   const request = (method, params, opts) => root.MonoAsk.request(method, params, opts);
 
   const handlers = {
     record_status: async () => ({ ok: true, state: session.status() }),
+    // A page restored from the back/forward cache asks whether to keep recording.
+    recorder_alive: async (msg, sender) => {
+      const st = session.status();
+      return { recording: st.recording && !!sender.tab && sender.tab.id === st.tabId };
+    },
     record_start: async (msg) => {
       let tabId = msg.tabId;
       if (!tabId) {
@@ -156,10 +191,15 @@
       if (st.id === recordingId && st.profile) params.profile = st.profile;
       return { ok: true, result: await request("record.analyze", params, LONG) };
     },
-    record_verify: async (msg) => ({
-      ok: true,
-      result: await request("record.verify", { draftDir: msg.draftDir }, LONG),
-    }),
+    record_verify: async (msg) => {
+      const params = { draftDir: msg.draftDir };
+      // Values for inputs the recording did not capture (secrets included),
+      // used for this replay only and never stored here.
+      if (msg.inputs && typeof msg.inputs === "object" && Object.keys(msg.inputs).length) params.inputs = msg.inputs;
+      const st = session.status();
+      if (st.profile) params.profile = st.profile;
+      return { ok: true, result: await request("record.verify", params, LONG) };
+    },
     record_save: async (msg) => {
       const params = { draftDir: msg.draftDir, saveAs: msg.saveAs || "action" };
       // An existing automation (`automation`) or a new one the analyzer named (`new`).
@@ -201,7 +241,15 @@
           later(() => session.panelClosed())();
         }
       });
-      port.postMessage({ type: "record_state", state: session.status() });
+      // After restore, so a worker woken by this panel does not report an
+      // empty state for a recording it is still reading back.
+      ready.then(() => {
+        try {
+          port.postMessage({ type: "record_state", state: session.status() });
+        } catch {
+          // the panel closed already
+        }
+      });
     });
   }
 

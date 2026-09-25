@@ -8,8 +8,25 @@ import assert from "node:assert/strict";
 import { loadExtensionScripts } from "./test_helpers.mjs";
 
 function event() {
-  const fns = [];
-  return { addListener: (fn) => fns.push(fn), fire: (...a) => fns.map((fn) => fn(...a)), fns };
+  let fns = [];
+  return {
+    addListener: (fn) => fns.push(fn),
+    removeListener: (fn) => (fns = fns.filter((f) => f !== fn)),
+    hasListener: (fn) => fns.includes(fn),
+    fire: (...a) => fns.map((fn) => fn(...a)),
+    get fns() {
+      return fns;
+    },
+  };
+}
+
+function area(data = {}) {
+  return {
+    data,
+    get: async (keys) => Object.fromEntries([].concat(keys).filter((k) => k in data).map((k) => [k, data[k]])),
+    set: async (v) => Object.assign(data, JSON.parse(JSON.stringify(v))),
+    remove: async (keys) => [].concat(keys).forEach((k) => delete data[k]),
+  };
 }
 
 function fakeChrome() {
@@ -20,7 +37,7 @@ function fakeChrome() {
     data,
     scripts,
     ports,
-    runtime: { onMessage: event(), onConnect: event() },
+    runtime: { onMessage: event(), onConnect: event(), onStartup: event() },
     tabs: {
       onCreated: event(),
       onRemoved: event(),
@@ -32,6 +49,7 @@ function fakeChrome() {
       onHistoryStateUpdated: event(),
       onDOMContentLoaded: event(),
       onCreatedNavigationTarget: event(),
+      onReferenceFragmentUpdated: event(),
     },
     scripting: { executeScript: async (spec) => (scripts.push(spec), [{}]) },
     action: {
@@ -39,12 +57,7 @@ function fakeChrome() {
       setBadgeBackgroundColor: async () => {},
       setTitle: async () => {},
     },
-    storage: {
-      local: {
-        get: async (keys) => Object.fromEntries([].concat(keys).filter((k) => k in data).map((k) => [k, data[k]])),
-        set: async (v) => Object.assign(data, JSON.parse(JSON.stringify(v))),
-      },
-    },
+    storage: { local: area(data), session: area() },
   };
   return c;
 }
@@ -52,7 +65,7 @@ function fakeChrome() {
 function load() {
   const chrome = fakeChrome();
   const wire = [];
-  const g = loadExtensionScripts(["ask.js", "recorder_session.js", "recorder_wiring.js"], { chrome });
+  const g = loadExtensionScripts(["ask.js", "recorder_outbox.js", "recorder_session.js", "recorder_wiring.js"], { chrome });
   const send = (f) => (wire.push(f), true);
   g.MonoAsk.install({ send, isConnected: () => true });
   g.MonoRecorderWiring.install({ send, isConnected: () => true, storage: chrome.storage.local });
@@ -97,7 +110,8 @@ test("page events, navigation and new documents are routed to the session", asyn
 test("closing the panel that started the recording stops it", async () => {
   const { wire, call, port, settle } = load();
   const p = port();
-  assert.equal(p.sent[0].type, "record_state", "a new panel gets the state straight away");
+  await settle();
+  assert.equal(p.sent[0].type, "record_state", "a new panel gets the state once the worker has restored it");
   p.onMessage.fire({ type: "record_owner" });
   await call({ type: "record_start", tabId: 7 });
   p.onDisconnect.fire();
@@ -119,6 +133,10 @@ test("analyze, verify and save are record.* requests to Go", async () => {
   await call({ type: "record_start", tabId: 7 });
   await call({ type: "record_stop" });
   const recordingId = wire[0].recordingId;
+  // Go acks every frame; the stop ack says the envelope is written.
+  for (const f of wire.filter((x) => x.kind === "recording")) {
+    g.MonoRecorderWiring.handleFrame({ id: f.id, success: true, type: "recording" });
+  }
 
   const answer = (method, data) => {
     const req = wire.find((f) => f.kind === "request" && f.method === method);
@@ -133,9 +151,13 @@ test("analyze, verify and save are record.* requests to Go", async () => {
   assert.deepEqual(req.params, { recordingId, profile: "work" }, "analyze looks in the profile's inbox");
   assert.deepEqual((await analyzing).result, { draftDir: "/d", draft: { action: "x" } });
 
-  const verifying = call({ type: "record_verify", draftDir: "/d" });
+  const verifying = call({ type: "record_verify", draftDir: "/d", inputs: { password: "pw-for-this-run" } });
   await settle();
-  assert.deepEqual(answer("record.verify", { ok: true, steps: [] }).params, { draftDir: "/d" });
+  assert.deepEqual(answer("record.verify", { ok: true, steps: [] }).params, {
+    draftDir: "/d",
+    inputs: { password: "pw-for-this-run" },
+    profile: "work",
+  });
   assert.equal((await verifying).ok, true);
 
   const saving = call({ type: "record_save", draftDir: "/d", saveAs: "fragment", automation: "crm", name: "login" });
@@ -158,7 +180,7 @@ test("analyze, verify and save are record.* requests to Go", async () => {
 
 test("analyze refuses while the recording has not reached the bridge", async () => {
   const chrome = fakeChrome();
-  const g = loadExtensionScripts(["ask.js", "recorder_session.js", "recorder_wiring.js"], { chrome });
+  const g = loadExtensionScripts(["ask.js", "recorder_outbox.js", "recorder_session.js", "recorder_wiring.js"], { chrome });
   g.MonoAsk.install({ send: () => false, isConnected: () => false });
   g.MonoRecorderWiring.install({ send: () => false, isConnected: () => false, storage: chrome.storage.local });
   const call = (msg) => new Promise((resolve) => chrome.runtime.onMessage.fire(msg, {}, resolve));
@@ -167,4 +189,51 @@ test("analyze refuses while the recording has not reached the bridge", async () 
   const res = await call({ type: "record_analyze" });
   assert.equal(res.ok, false);
   assert.match(res.error, /waiting to reach the bridge/);
+});
+
+test("navigation and tab listeners exist only while recording", async () => {
+  const { chrome, call, settle } = load();
+  const count = () => chrome.webNavigation.onCommitted.fns.length + chrome.tabs.onCreated.fns.length;
+  await settle();
+  assert.equal(count(), 0, "idle: no listener on anyone's browsing");
+  await call({ type: "record_start", tabId: 7 });
+  assert.equal(count(), 2);
+  assert.equal(chrome.webNavigation.onReferenceFragmentUpdated.fns.length, 1, "hash routes are heard");
+  await call({ type: "record_stop" });
+  assert.equal(count(), 0);
+});
+
+test("a hash-route change is recorded as navigation", async () => {
+  const { chrome, wire, call, settle } = load();
+  await call({ type: "record_start", tabId: 7 });
+  chrome.webNavigation.onReferenceFragmentUpdated.fire({ tabId: 7, frameId: 0, url: "https://app.test/7#/inbox", transitionType: "link", transitionQualifiers: [] });
+  await settle();
+  const nav = wire.find((f) => f.event && f.event.url.endsWith("#/inbox"));
+  assert.equal(nav.event.type, "navigated");
+});
+
+test("a page from the back/forward cache is told whether to keep recording", async () => {
+  const { call } = load();
+  await call({ type: "record_start", tabId: 7 });
+  assert.deepEqual(await call({ type: "recorder_alive" }, { tab: { id: 7 } }), { recording: true });
+  assert.deepEqual(await call({ type: "recorder_alive" }, { tab: { id: 8 } }), { recording: false });
+  await call({ type: "record_stop" });
+  assert.deepEqual(await call({ type: "recorder_alive" }, { tab: { id: 7 } }), { recording: false });
+});
+
+test("the recording state lives in storage.session", async () => {
+  const { chrome, call, settle } = load();
+  await call({ type: "record_start", tabId: 7 });
+  await settle();
+  assert.ok(chrome.storage.session.data.recordingState);
+  assert.equal(chrome.data.recordingState, undefined);
+});
+
+test("a browser restart (runtime.onStartup) closes the old recording", async () => {
+  const { chrome, call, settle } = load();
+  await call({ type: "record_start", tabId: 7 });
+  chrome.runtime.onStartup.fire();
+  await settle();
+  const res = await call({ type: "record_status" });
+  assert.equal(res.state.recording, false);
 });

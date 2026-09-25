@@ -195,7 +195,23 @@ describe("the unpacked extension records a real page", { skip: browser ? false :
     const steps = st.steps.map((s) => `${s.type}:${s.value || s.target?.text || ""}${s.masked ? ":masked" : ""}`);
     assert.deepEqual(steps, ["type:ann@x.test", "type::masked", "click:Save"]);
     assert.ok(st.queued >= 5, "frames wait in the outbox (no bridge in this profile)");
-    const outbox = await cdp.evaluate(panel, `chrome.storage.local.get("recordingOutbox").then((o) => JSON.stringify(o.recordingOutbox))`);
-    assert.ok(!outbox.includes("hunter2"), "the password never reached the worker");
+    const local = await cdp.evaluate(panel, `chrome.storage.local.get(null).then((o) => JSON.stringify(o))`);
+    assert.ok(local.includes("ann@x.test"), "unacked frames are buffered in storage.local");
+    assert.ok(!local.includes("hunter2"), "the password never reached the worker");
+    assert.ok(!local.includes('"recordingState"'), "the live recording is not in storage.local");
+    const sess = await cdp.evaluate(panel, `chrome.storage.session.get("recordingState").then((o) => JSON.stringify(o))`);
+    assert.match(sess, /"recordingState"/, "it is session state");
+
+    // H4: pick mode on, stop, record again -- a click is a click, not an extract.
+    await ask({ type: "record_clear" });
+    assert.equal((await ask({ type: "record_start", tabId })).ok, true);
+    assert.equal((await ask({ type: "record_pick", on: true })).state.pick, true);
+    await ask({ type: "record_stop" });
+    await ask({ type: "record_clear" });
+    assert.equal((await ask({ type: "record_start", tabId })).ok, true);
+    await click("[data-testid=save]");
+    await sleep(200);
+    const again = await ask({ type: "record_stop" });
+    assert.deepEqual(again.state.steps.map((x) => x.type), ["click"], "pick mode did not carry over");
   });
 });
