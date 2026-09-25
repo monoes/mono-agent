@@ -41,11 +41,16 @@
   const saveBtn = el("rec-save");
   const verifySteps = el("rec-verify-steps");
   const draftMsg = el("rec-draft-msg");
+  const verifyInputs = el("rec-verify-inputs");
 
   let port = null;
   let state = { recording: false, steps: [] };
   let draft = null;
   let pendingDraw = false;
+  // This panel pressed Record: after a worker restart it says so again, so
+  // closing it still stops the recording.
+  let owner = false;
+  const PING_MS = 20000;
 
   function say(target, kind, text) {
     target.textContent = text || "";
@@ -73,7 +78,10 @@
     li.dataset.type = row.type;
     li.appendChild(node("span", "rec-step-text", row.text));
 
-    if (row.canParam) {
+    if (row.canParam && !state.recording && row.isParam) {
+      li.appendChild(node("span", "chip", "input"));
+    } else if (row.canParam && state.recording) {
+      // Marks are new frames; the bridge refuses frames once a recording stops.
       const label = node("label", "rec-input");
       const box = document.createElement("input");
       box.type = "checkbox";
@@ -86,7 +94,10 @@
     }
     if (row.suggestInput) li.appendChild(node("span", "chip rec-suggest", `looks like ${row.sensitive} — suggested input`));
 
-    if (row.isExtract) {
+    if (row.isExtract && !state.recording) {
+      li.appendChild(node("span", "chip", row.field));
+      if (row.samples.length) li.appendChild(node("span", "rec-samples", row.samples.slice(0, 3).join(" · ")));
+    } else if (row.isExtract) {
       const field = document.createElement("input");
       field.type = "text";
       field.className = "rec-field";
@@ -120,6 +131,9 @@
   function draw(next) {
     state = next || { recording: false, steps: [] };
     const rec = !!state.recording;
+    if (!rec) owner = false;
+    if (state.error) say(msg, "err", state.error);
+    else if (state.warning) say(msg, "warn", state.warning);
     dot.hidden = !rec;
     panel.classList.toggle("recording", rec);
     if (rec) panel.open = true;
@@ -164,6 +178,7 @@
         draftBox.hidden = true;
         draft = null;
         const page = globalThis.MonoPanelPage && globalThis.MonoPanelPage.current();
+        owner = true;
         if (port) port.postMessage({ type: "record_owner" });
         await send({ type: "record_start", goal: goal.value.trim(), tabId: page && page.tabId });
       }
@@ -215,7 +230,36 @@
     saveName.value = d.action || "";
     saveAutomation.value = d.automation || "";
     verifySteps.hidden = true;
+    drawVerifyInputs(d.inputs);
     say(draftMsg, "", "");
+  }
+
+  function drawVerifyInputs(inputs) {
+    verifyInputs.textContent = "";
+    const needed = inputs.filter((i) => i.needsValue);
+    verifyInputs.hidden = !needed.length;
+    for (const i of needed) {
+      const field = node("div", "field");
+      const id = `rec-in-${i.name}`;
+      const label = node("label", "", i.secret ? `${i.name} (secret, used for this check only)` : i.name);
+      label.htmlFor = id;
+      const box = document.createElement("input");
+      box.id = id;
+      box.type = i.secret ? "password" : "text";
+      box.autocomplete = "off";
+      box.dataset.input = i.name;
+      field.appendChild(label);
+      field.appendChild(box);
+      verifyInputs.appendChild(field);
+    }
+  }
+
+  function verifyValues() {
+    const out = {};
+    for (const box of verifyInputs.querySelectorAll("input[data-input]")) {
+      if (box.value !== "") out[box.dataset.input] = box.value;
+    }
+    return out;
   }
 
   analyzeBtn.addEventListener("click", async () => {
@@ -237,7 +281,7 @@
     verifyBtn.disabled = true;
     say(draftMsg, "ok", "Replaying up to the first step that changes anything…");
     try {
-      const res = await send({ type: "record_verify", draftDir: draft.draftDir });
+      const res = await send({ type: "record_verify", draftDir: draft.draftDir, inputs: verifyValues() });
       const v = View.describeVerify(res.result);
       verifySteps.textContent = "";
       for (const s of v.steps) {
@@ -265,8 +309,8 @@
         saveAs: saveAs.value,
         name: saveName.value.trim(),
         automation: saveAutomation.value.trim(),
-        // Still the name the analyzer proposed for a new automation → create it.
-        isNew: draft.isNew && saveAutomation.value.trim() === draft.automation,
+        // A new automation stays new under whatever name the person gives it.
+        isNew: draft.isNew,
       });
       const r = res.result || {};
       const what = r.nodeType || [r.automation, r.action].filter(Boolean).join(".");
@@ -290,12 +334,25 @@
     port.onMessage.addListener((m) => {
       if (m && m.type === "record_state") draw(m.state);
     });
+    if (owner) port.postMessage({ type: "record_owner" });
     port.onDisconnect.addListener(() => {
       // The worker was restarted. Reconnect; it re-sends its state on connect.
       port = null;
       setTimeout(connectPort, 500);
     });
   }
+
+  // While recording, keep the worker awake: its navigation listeners live
+  // only as long as it does.
+  setInterval(() => {
+    if (state.recording && port) {
+      try {
+        port.postMessage({ type: "record_ping" });
+      } catch {
+        // reconnecting
+      }
+    }
+  }, PING_MS);
 
   connectPort();
 })();

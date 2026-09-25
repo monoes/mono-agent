@@ -102,7 +102,7 @@ test("a draft is read from record analyze --json", () => {
   });
   assert.equal(d.action, "create_contact");
   assert.equal(d.automation, "crm");
-  assert.deepEqual(d.inputs, [{ name: "email", required: true }, { name: "note", required: false }]);
+  assert.deepEqual(d.inputs.map((i) => [i.name, i.required]), [["email", true], ["note", false]]);
   assert.deepEqual(d.steps.map((s) => [s.id, s.detail, s.sideEffect]), [
     ["open", "https://crm.test/new", ""],
     ["save", "save_button", "write"],
@@ -123,4 +123,36 @@ test("verify results become one line per step", () => {
   assert.equal(v.ok, false);
   assert.deepEqual(v.steps.map((s) => s.text), ["open navigate — pass", "save click — stopped_before_side_effect: safe mode"]);
   assert.ok(v.stoppedAt);
+});
+
+test("the real analyze draft: inputs that verify needs a value for (M13)", () => {
+  const d = V.describeDraft({
+    draftDir: "/d",
+    draft: {
+      action: "login",
+      names: { automation: "crm", action: "login" },
+      isNew: true,
+      recordedInputs: { email: "ann@x.test" },
+      inputs: [
+        { name: "email", type: "string", required: true },
+        { name: "password", type: "string", required: true, default: "{{secret:password}}" },
+        { name: "otp", type: "secret", required: true },
+        { name: "note", type: "string", required: false },
+        { name: "team", type: "string", required: false, default: "sales" },
+      ],
+      actionDef: { steps: [{ id: "go", type: "navigate", url: "https://crm.test" }] },
+      lint: [],
+    },
+  });
+  assert.equal(d.isNew, true);
+  assert.deepEqual(
+    d.inputs.map((i) => [i.name, i.secret, i.needsValue, i.recorded]),
+    [
+      ["email", false, false, "ann@x.test"],
+      ["password", true, true, ""],
+      ["otp", true, true, ""],
+      ["note", false, true, ""],
+      ["team", false, false, ""],
+    ]
+  );
 });

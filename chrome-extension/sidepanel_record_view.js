@@ -168,17 +168,14 @@
       (r.action && typeof r.action === "object" && r.action) ||
       {};
     const names = draft.names || {};
-    const inputs = def.inputs || {};
+    const recorded = draft.recordedInputs || {};
     return {
       draftDir: r.draftDir || "",
       action: names.action || (typeof draft.action === "string" ? draft.action : "") || def.actionType || "",
       automation: names.automation || draft.targetAutomation || "",
       isNew: !!draft.isNew,
       saveAs: draft.saveAs || "action",
-      inputs: []
-        .concat((inputs.required || []).map((x) => ({ name: inputName(x), required: true })))
-        .concat((inputs.optional || []).map((x) => ({ name: inputName(x), required: false })))
-        .filter((x) => x.name),
+      inputs: draftInputs(draft, def).map((i) => describeInput(i, recorded)),
       steps: (def.steps || []).map((s) => ({
         id: s.id || "",
         type: s.type || "",
@@ -189,6 +186,36 @@
         level: i.severity || i.level || "warning",
         message: i.message || i.code || String(i),
       })),
+    };
+  }
+
+  /** draftInputs prefers the draft's flat input list; else the action's required/optional. */
+  function draftInputs(draft, def) {
+    if (Array.isArray(draft.inputs)) return draft.inputs.filter((i) => i && i.name);
+    const inputs = def.inputs || {};
+    return []
+      .concat((inputs.required || []).map((x) => (typeof x === "object" ? Object.assign({}, x, { required: true }) : { name: inputName(x), required: true })))
+      .concat((inputs.optional || []).map((x) => (typeof x === "object" ? Object.assign({}, x, { required: false }) : { name: inputName(x), required: false })))
+      .filter((x) => x.name);
+  }
+
+  /**
+   * describeInput says whether verify needs a value typed in: a secret
+   * always does (its value was never recorded), and so does any input the
+   * recording has no value for and that has no default.
+   */
+  function describeInput(i, recorded) {
+    const secret =
+      /^(secret|password)$/i.test(i.type || "") ||
+      /^(secret|password)$/i.test(i.format || "") ||
+      /^\{\{\s*secret:/.test(String(i.default || ""));
+    const has = Object.prototype.hasOwnProperty.call(recorded, i.name);
+    return {
+      name: i.name,
+      required: i.required !== false,
+      secret,
+      recorded: has && !secret ? String(recorded[i.name]) : "",
+      needsValue: secret || (!has && i.default == null),
     };
   }
 

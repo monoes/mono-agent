@@ -251,6 +251,9 @@
               <label for="rec-save-automation">Automation</label>
               <input type="text" id="rec-save-automation" placeholder="the automation to add it to" />
             </div>
+            <!-- Values verify needs that the recording does not have: inputs
+                 it never saw, and every secret. Used for this replay only. -->
+            <div id="rec-verify-inputs" class="rec-verify-inputs" hidden></div>
             <div class="row row-start">
               <button type="button" id="rec-verify" class="btn-secondary">Verify (safe)</button>
               <button type="button" id="rec-save" class="btn-secondary">Save</button>
