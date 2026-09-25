@@ -217,6 +217,24 @@ func TestSaveRenameInputs(t *testing.T) {
 	}
 }
 
+func TestSaveRenameInDraftFragment(t *testing.T) {
+	home := t.TempDir()
+	reg := openReg(t, home)
+	ans := strings.Replace(answer(t, "form-submit"), `"fragments": [],`,
+		`"fragments": [{"name": "fill_email", "steps": [{"id": "fe", "type": "type", "configKey": "contact.email_input", "intent": "Email", "value": "{{email}}"}]}],`, 1)
+	ans = strings.Replace(ans, `{"id": "email", "type": "type", "configKey": "contact.email_input", "intent": "the Email field", "value": "{{email}}"}`,
+		`{"id": "email", "type": "call_fragment", "fragment": "fill_email"}`, 1)
+	dir := draftFrom(t, home, "form-submit", ans)
+	if _, err := Save(context.Background(), reg, dir, SaveOptions{RenameInputs: map[string]string{"email": "contact_email"}}); err != nil {
+		t.Fatal(err)
+	}
+	p, _ := reg.Get("acme-crm")
+	f, err := p.Fragment("fill_email")
+	if err != nil || f.Steps[0].Value != "{{contact_email}}" {
+		t.Errorf("fragment = %+v %v", f, err)
+	}
+}
+
 func TestRenameInputsTemplates(t *testing.T) {
 	def := &action.ActionDef{
 		Inputs: &action.InputDef{Required: []json.RawMessage{json.RawMessage(`"q"`)}},

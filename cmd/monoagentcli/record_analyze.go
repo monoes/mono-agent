@@ -79,6 +79,7 @@ func monoagentHome() (string, error) {
 func newRecordAnalyzeCmd(cfg *globalConfig) *cobra.Command {
 	var target, runtime, model string
 	var timeout time.Duration
+	var allowAdvanced bool
 	cmd := &cobra.Command{
 		Use:   "analyze <recording>",
 		Short: "Turn a recording into a draft automation action (AI via the monomind runner)",
@@ -107,7 +108,7 @@ recorded DOM and writes it to ~/.monoagent/recording-drafts/<recording>/.`,
 				return err
 			}
 			res, err := recordanalyze.Analyze(cmd.Context(), rec, recordanalyze.AnalyzeOptions{
-				Home: home, Target: target, Registry: reg,
+				Home: home, Target: target, Registry: reg, AllowAdvanced: allowAdvanced,
 				Runner: recordAnalyzeRunner(runtime, model, timeout),
 			})
 			if err != nil {
@@ -123,6 +124,7 @@ recorded DOM and writes it to ~/.monoagent/recording-drafts/<recording>/.`,
 	cmd.Flags().StringVar(&target, "automation", "", "Add the action to this installed automation (default: a new automation)")
 	cmd.Flags().StringVar(&runtime, "runtime", recordanalyze.DefaultRuntime, "Agent runtime for monomind agent exec")
 	cmd.Flags().StringVar(&model, "model", "", "Model for the runtime (default: the runtime's own)")
+	cmd.Flags().BoolVar(&allowAdvanced, "allow-advanced", false, "Let the draft use page_script, http_fetch_in_page, call_action, upload and download")
 	cmd.Flags().DurationVar(&timeout, "timeout", recordanalyze.DefaultTimeout, "Timeout of the AI turn")
 	return cmd
 }

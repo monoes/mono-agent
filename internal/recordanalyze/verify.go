@@ -297,7 +297,7 @@ func PageExecWithSecrets(page browser.PageInterface, logger zerolog.Logger, look
 		ae.SetSafeMode(safe)
 		ae.SetSelectorObserver(obs)
 		if lookup != nil {
-			ae.SetSecretLookup(lookup)
+			ae.SetSecretLookup(func(_, name string) (string, bool) { return lookup(name) })
 		}
 		params := map[string]interface{}{}
 		for k, v := range inputs {

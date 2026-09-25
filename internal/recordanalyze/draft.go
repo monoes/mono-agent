@@ -37,6 +37,10 @@ type Draft struct {
 	CreatedAt        string                 `json:"createdAt"`
 	Goal             string                 `json:"goal,omitempty"`
 	RecordedInputs   map[string]any         `json:"recordedInputs,omitempty"`
+	// NewFragments are the fragments this draft adds (not the target's).
+	NewFragments []string `json:"newFragments,omitempty"`
+	// AllowAdvanced records `record analyze --allow-advanced`.
+	AllowAdvanced bool `json:"allowAdvanced,omitempty"`
 }
 
 type DraftNames struct {
@@ -58,6 +62,16 @@ func DraftsRoot(home string) string { return filepath.Join(home, "recording-draf
 // widened with what the draft uses, or a new one from the recording.
 func BuildManifest(out *Output, env *Env) *automation.Manifest {
 	used := stepTypes(out)
+	if !env.AllowAdvanced {
+		// Never auto-grant advanced step types (lint reports their use).
+		kept := used[:0]
+		for _, t := range used {
+			if !AdvancedSteps[t] {
+				kept = append(kept, t)
+			}
+		}
+		used = kept
+	}
 	scripts := sortedKeys(out.Scripts)
 	var domains []string
 	start := ""

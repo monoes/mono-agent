@@ -32,6 +32,8 @@ type DraftView struct {
 	Inputs    []DraftInput                    `json:"inputs"`
 	Selectors map[string]action.SelectorEntry `json:"selectors"`
 	Fragments []string                        `json:"fragments"`
+	// Scripts is the full source of every scripts/ file, for review.
+	Scripts map[string]string `json:"scripts"`
 }
 
 // LoadDraftView reads a draft directory into a DraftView.
@@ -40,7 +42,8 @@ func LoadDraftView(dir string) (*DraftView, error) {
 	if err != nil {
 		return nil, err
 	}
-	v := &DraftView{Draft: d, Inputs: []DraftInput{}, Selectors: map[string]action.SelectorEntry{}, Fragments: []string{}}
+	v := &DraftView{Draft: d, Inputs: []DraftInput{}, Selectors: map[string]action.SelectorEntry{}, Fragments: []string{},
+		Scripts: map[string]string{}}
 	var def action.ActionDef
 	if err := readJSON(filepath.Join(dir, "actions", d.Action+".json"), &def); err != nil {
 		return nil, err
@@ -55,6 +58,15 @@ func LoadDraftView(dir string) (*DraftView, error) {
 		}
 	}
 	sort.Strings(v.Fragments)
+	scripts, _ := os.ReadDir(filepath.Join(dir, "scripts"))
+	for _, e := range scripts {
+		if e.IsDir() {
+			continue
+		}
+		if b, err := os.ReadFile(filepath.Join(dir, "scripts", e.Name())); err == nil {
+			v.Scripts[e.Name()] = string(b)
+		}
+	}
 	return v, nil
 }
 

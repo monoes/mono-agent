@@ -93,7 +93,7 @@ func saveFragment(reg Installer, staging, stage, id, from, name string) (*SaveRe
 	if err := writeJSON(filepath.Join(target, "automation.json"), &m); err != nil {
 		return nil, err
 	}
-	ir, err := reg.Install(target, automation.InstallOptions{Source: source})
+	ir, err := reg.Install(target, automation.InstallOptions{Source: source, Trust: automation.TrustRecorded})
 	if err != nil {
 		return nil, installErr(err, ir)
 	}
@@ -194,7 +194,7 @@ func saveWorkflow(ctx context.Context, reg Installer, stage, id string, d *Draft
 	res := &SaveResult{Automation: id, Action: parts[0], Actions: parts}
 	var nodes []WorkflowNode
 	for _, part := range parts {
-		ir, err := reg.AddAction(id, p, part, automation.InstallOptions{})
+		ir, err := reg.AddAction(id, p, part, automation.InstallOptions{Trust: automation.TrustRecorded})
 		if err != nil {
 			return nil, installErr(err, ir)
 		}

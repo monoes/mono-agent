@@ -27,6 +27,9 @@ type Env struct {
 	Target *Existing
 	// AutomationTaken reports installed (or removed built-in) package ids.
 	AutomationTaken func(id string) bool
+	// AllowAdvanced permits the advanced step types (AdvancedSteps) in the
+	// AI draft (`record analyze --allow-advanced`).
+	AllowAdvanced bool
 }
 
 // LoadExisting reads the reusable parts of an opened package.

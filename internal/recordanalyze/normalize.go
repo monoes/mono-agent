@@ -86,11 +86,15 @@ type Normalized struct {
 // pattern changes.
 func Normalize(sum *recording.Summary, events []recording.Event) *Normalized {
 	evs := append([]recording.Event(nil), events...)
+	for i := range evs {
+		evs[i].URL = SanitizeURL(evs[i].URL)
+		evs[i].Target = sanitizeFingerprint(evs[i].Target)
+	}
 	sort.SliceStable(evs, func(i, j int) bool { return evs[i].Seq < evs[j].Seq })
 
 	n := &Normalized{}
 	if sum != nil {
-		n.RecordingID, n.Goal, n.StartURL = sum.ID, sum.Goal, sum.URL
+		n.RecordingID, n.Goal, n.StartURL = sum.ID, sum.Goal, SanitizeURL(sum.URL)
 	}
 	params := map[string]string{} // ref event id → input name
 	var steps []Step
@@ -104,7 +108,7 @@ func Normalize(sum *recording.Summary, events []recording.Event) *Normalized {
 	add := func(ev recording.Event, kind string) {
 		s := Step{EventID: ev.ID, Kind: kind, URL: ev.URL, Value: ev.Value, Masked: ev.Masked,
 			SecretAs: ev.SecretAs, Key: ev.Key, Checked: ev.Checked, Target: ev.Target,
-			Extract: ev.Extract, Note: ev.Note, Merged: []string{ev.ID}}
+			Extract: sanitizeExtract(ev.Extract), Note: ev.Note, Merged: []string{ev.ID}}
 		if ev.Target != nil {
 			s.Candidates = rankCandidates(ev.Target)
 		}
@@ -430,4 +434,16 @@ func splitSegments(steps []Step) []Segment {
 		seg.To, seg.Last = s.EventID, i
 	}
 	return segs
+}
+
+func sanitizeExtract(m *recording.ExtractMark) *recording.ExtractMark {
+	if m == nil {
+		return nil
+	}
+	c := *m
+	c.Samples = make([]string, len(m.Samples))
+	for i, v := range m.Samples {
+		c.Samples[i] = sanitizeText(v)
+	}
+	return &c
 }

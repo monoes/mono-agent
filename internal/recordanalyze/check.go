@@ -14,6 +14,12 @@ var elementSteps = map[string]bool{
 	"extract_text": true, "extract_attribute": true, "extract_multiple": true, "extract_table": true,
 }
 
+// AdvancedSteps may run code, reach other packages or move files. An AI
+// draft may use them only with --allow-advanced (security review H3).
+var AdvancedSteps = map[string]bool{
+	"page_script": true, "http_fetch_in_page": true, "call_action": true, "upload": true, "download": true,
+}
+
 var sideEffectLevels = map[string]bool{"none": true, "read": true, "write": true, "message": true, "destructive": true}
 
 // FixNames makes every AI-proposed name a valid slug and suffixes
@@ -178,6 +184,9 @@ func CheckOutput(out *Output, env *Env) []string {
 			if s.Intent == "" {
 				add("step %q (%s) has no intent", s.ID, s.Type)
 			}
+		}
+		if AdvancedSteps[s.Type] && !env.AllowAdvanced {
+			add("step %q uses %s, which a recorded draft may not use without --allow-advanced: remove it (express it with declarative steps)", s.ID, s.Type)
 		}
 		switch s.Type {
 		case "call_fragment":

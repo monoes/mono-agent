@@ -164,7 +164,7 @@ func saveAction(reg Installer, stage, id, from, name string) (*SaveResult, error
 	if err != nil {
 		return nil, err
 	}
-	ir, err := reg.AddAction(id, p, name, automation.InstallOptions{})
+	ir, err := reg.AddAction(id, p, name, automation.InstallOptions{Trust: automation.TrustRecorded})
 	if err != nil {
 		return nil, installErr(err, ir)
 	}

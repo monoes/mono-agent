@@ -68,6 +68,8 @@ type AnalyzeOptions struct {
 	Target   string // existing automation to add to ("" = new automation)
 	Runner   Runner
 	Registry PackageLookup // may be nil (no target, no collision check)
+	// AllowAdvanced lets the draft use AdvancedSteps.
+	AllowAdvanced bool
 }
 
 // Result is `record analyze --json`.
@@ -90,7 +92,7 @@ func Analyze(ctx context.Context, rec *Recording, opts AnalyzeOptions) (*Result,
 		norm.RecordingID = filepath.Base(rec.Dir)
 	}
 	a := Detect(norm)
-	env := &Env{Analysis: a}
+	env := &Env{Analysis: a, AllowAdvanced: opts.AllowAdvanced}
 	if opts.Target != "" {
 		if opts.Registry == nil {
 			return nil, errors.New("no automation registry to look up " + opts.Target)
@@ -122,6 +124,7 @@ func Analyze(ctx context.Context, rec *Recording, opts AnalyzeOptions) (*Result,
 		return nil, err
 	}
 	stampProvenance(out, norm.RecordingID, a.Goal)
+	enforced := EnforceSideEffects(out, env)
 	m := BuildManifest(out, env)
 	d := &Draft{
 		RecordingID:      norm.RecordingID,
@@ -131,10 +134,14 @@ func Analyze(ctx context.Context, rec *Recording, opts AnalyzeOptions) (*Result,
 		Action:           out.Action.ActionType,
 		SaveAs:           suggestSaveAs(a),
 		Names:            DraftNames{Automation: out.Names["automation"], Action: out.Names["action"], Fragment: out.Names["fragment"]},
-		Lint:             Lint(out, env, m, rec.Snippets),
+		Lint:             append(enforced, Lint(out, env, m, rec.Snippets)...),
 		Segments:         draftSegments(a, out.Action.ActionType),
 		Goal:             a.Goal,
 		RecordedInputs:   recordedInputs(a),
+		AllowAdvanced:    opts.AllowAdvanced,
+	}
+	for _, f := range out.Fragments {
+		d.NewFragments = append(d.NewFragments, f.Name)
 	}
 	dir := filepath.Join(DraftsRoot(opts.Home), safeDirName(norm.RecordingID))
 	if err := WriteDraft(dir, out, env, m, d); err != nil {

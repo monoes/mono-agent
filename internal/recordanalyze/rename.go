@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 
 	"github.com/monoes/mono-agent/internal/action"
 )
@@ -58,27 +59,126 @@ func RenameInputs(def *action.ActionDef, ren map[string]string) error {
 			}
 		}
 	}
-	body, err := json.Marshal(struct {
-		Steps []action.StepDef `json:"steps"`
-		Loops []action.LoopDef `json:"loops,omitempty"`
-	}{def.Steps, def.Loops})
+	for i := range def.Steps {
+		if err := renameInStep(&def.Steps[i], ren); err != nil {
+			return err
+		}
+	}
+	for i := range def.Loops {
+		l := &def.Loops[i]
+		l.Iterator = renamePath(l.Iterator, ren)
+		l.MaxItems, l.MaxItemsPerDay = renameTemplates(l.MaxItems, ren), renameTemplates(l.MaxItemsPerDay, ren)
+	}
+	return nil
+}
+
+// RenameInFragment applies input renames to a draft fragment whose body
+// uses the caller's variables.
+func RenameInFragment(f *action.FragmentDef, ren map[string]string) error {
+	for i := range f.Steps {
+		if err := renameInStep(&f.Steps[i], ren); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// pathKeys hold a bare variable path (no {{ }}) rather than text.
+var pathKeys = map[string]bool{"variable": true, "variable_name": true, "increment": true, "items": true, "input": true, "iterator": true}
+
+// renameInStep rewrites one step (and its nested body) at reference level:
+// every template string, and the bare paths of pathKeys, anywhere in it
+// (condition, onSuccess, until, inputs, fields, set, transform ops, …).
+func renameInStep(st *action.StepDef, ren map[string]string) error {
+	b, err := json.Marshal(st)
 	if err != nil {
 		return err
 	}
-	s := string(body)
-	for _, old := range olds {
-		re := regexp.MustCompile(`\{\{(\s*(?:secret:)?)` + regexp.QuoteMeta(old) + `(\s*\}\}|[.\[])`)
-		s = re.ReplaceAllString(s, "{{${1}"+ren[old]+"${2}")
-	}
-	var back struct {
-		Steps []action.StepDef `json:"steps"`
-		Loops []action.LoopDef `json:"loops,omitempty"`
-	}
-	if err := json.Unmarshal([]byte(s), &back); err != nil {
+	var tree any
+	if err := json.Unmarshal(b, &tree); err != nil {
 		return err
 	}
-	def.Steps, def.Loops = back.Steps, back.Loops
+	tree = renameTree(tree, "", ren)
+	b, err = json.Marshal(tree)
+	if err != nil {
+		return err
+	}
+	var out action.StepDef
+	if err := json.Unmarshal(b, &out); err != nil {
+		return err
+	}
+	*st = out
 	return nil
+}
+
+func renameTree(v any, key string, ren map[string]string) any {
+	switch t := v.(type) {
+	case map[string]any:
+		for k, c := range t {
+			t[k] = renameTree(c, k, ren)
+		}
+		return t
+	case []any:
+		for i, c := range t {
+			t[i] = renameTree(c, key, ren)
+		}
+		return t
+	case string:
+		if strings.Contains(t, "{{") {
+			return renameTemplates(t, ren)
+		}
+		if pathKeys[key] {
+			return renamePath(t, ren)
+		}
+		return t
+	}
+	return v
+}
+
+var (
+	templateRe = regexp.MustCompile(`\{\{(.*?)\}\}`)
+	orRe       = regexp.MustCompile(`\s+or\s+`)
+)
+
+// renameTemplates renames the head of every variable path inside {{ }}:
+// alternatives split on " or " ({{q or 'x'}}), a "secret:" prefix kept,
+// quoted and numeric literals left alone.
+func renameTemplates(s string, ren map[string]string) string {
+	return templateRe.ReplaceAllStringFunc(s, func(m string) string {
+		inner := m[2 : len(m)-2]
+		seps := orRe.FindAllString(inner, -1)
+		parts := orRe.Split(inner, -1)
+		var b strings.Builder
+		for i, p := range parts {
+			lead := p[:len(p)-len(strings.TrimLeft(p, " \t"))]
+			trail := p[len(strings.TrimRight(p, " \t")):]
+			core := strings.TrimSpace(p)
+			prefix := ""
+			if rest, ok := strings.CutPrefix(core, "secret:"); ok {
+				prefix, core = "secret:", rest
+			}
+			b.WriteString(lead + prefix + renamePath(core, ren) + trail)
+			if i < len(seps) {
+				b.WriteString(seps[i])
+			}
+		}
+		return "{{" + b.String() + "}}"
+	})
+}
+
+// renamePath renames the head of a variable path ("q", "q.x", "q[0].y").
+func renamePath(p string, ren map[string]string) string {
+	if p == "" || strings.HasPrefix(p, "'") || strings.HasPrefix(p, `"`) {
+		return p
+	}
+	end := strings.IndexAny(p, ".[ ")
+	if end < 0 {
+		end = len(p)
+	}
+	if nw, ok := ren[p[:end]]; ok {
+		return nw + p[end:]
+	}
+	return p
 }
 
 // inputName reads the name of an input entry (object or legacy string).
@@ -107,6 +207,19 @@ func renameStaged(stage, actionName string, ren map[string]string, d *Draft) err
 	}
 	if err := RenameInputs(&def, ren); err != nil {
 		return err
+	}
+	for _, name := range d.NewFragments {
+		fpath := filepath.Join(stage, "fragments", name+".json")
+		var f action.FragmentDef
+		if err := readJSON(fpath, &f); err != nil {
+			return err
+		}
+		if err := RenameInFragment(&f, ren); err != nil {
+			return err
+		}
+		if err := writeJSON(fpath, &f); err != nil {
+			return err
+		}
 	}
 	for old, nw := range ren {
 		if v, ok := d.RecordedInputs[old]; ok {

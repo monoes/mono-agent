@@ -96,6 +96,14 @@ func Lint(out *Output, env *Env, m *automation.Manifest, snippets map[string]str
 		}
 	})
 	allSteps(out, func(s *action.StepDef) {
+		if AdvancedSteps[s.Type] && !env.AllowAdvanced {
+			add("error", s.ID, "advanced_step", "%s needs --allow-advanced", s.Type)
+		}
+		if s.Type == "navigate" && !strings.HasPrefix(strings.TrimSpace(s.URL), "{{") && urlCarriesToken(s.URL) {
+			add("error", s.ID, "token_in_url", "navigate URL carries a token or credential parameter; make it an input or drop it")
+		}
+	})
+	allSteps(out, func(s *action.StepDef) {
 		if s.Type == "page_script" && !seen["script_used|"+s.ID] {
 			add("warning", s.ID, "script_used", "uses page_script %q; prefer declarative steps", s.Script)
 		}

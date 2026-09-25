@@ -304,3 +304,18 @@ func TestRecordAnalyzeDefaultSecretLookup(t *testing.T) {
 		t.Errorf("missing secret resolved: ok=%v", ok)
 	}
 }
+
+func TestRecordAnalyzeAllowAdvancedFlag(t *testing.T) {
+	recordTestHome(t, "rec1")
+	withScript := strings.Replace(recordAnalyzeAnswer, `"steps": [`, `"steps": [{"id": "js", "type": "page_script", "script": "x.js"},`, 1)
+	withScript = strings.Replace(withScript, `"names":`, `"scripts": {"x.js": "return 1"}, "names":`, 1)
+	stubRecordAI(t, withScript)
+	out, err := runRecordCLI(t, true, "analyze", "rec1")
+	if err == nil || !strings.Contains(out, "allow-advanced") {
+		t.Errorf("page_script accepted without the flag: %v %s", err, out)
+	}
+	out, err = runRecordCLI(t, true, "analyze", "rec1", "--allow-advanced")
+	if err != nil || !strings.Contains(out, `"allowAdvanced": true`) || !strings.Contains(out, `"x.js": "return 1"`) {
+		t.Errorf("with flag: %v %s", err, out)
+	}
+}
