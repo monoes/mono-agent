@@ -4,7 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
+	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/monoes/mono-agent/internal/action"
@@ -41,11 +45,62 @@ type ExecRunner struct {
 }
 
 func (r ExecRunner) Run(ctx context.Context, prompt string) (string, error) {
-	text, err := r.run(ctx, prompt)
+	tail := &tailWriter{max: stderrTailBytes}
+	text, err := r.run(ctx, prompt, io.MultiWriter(os.Stderr, tail))
 	if err != nil {
-		return "", withRunnerHint(err, r.runtime())
+		return "", withStderrTail(withRunnerHint(err, r.runtime()), tail.String())
 	}
 	return text, nil
+}
+
+// stderrTailBytes is how much of the runner's stderr a failure carries.
+const stderrTailBytes = 2048
+
+// tailWriter keeps the last max bytes written to it.
+type tailWriter struct {
+	mu  sync.Mutex
+	max int
+	buf []byte
+}
+
+func (w *tailWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.buf = append(w.buf, p...)
+	if over := len(w.buf) - w.max; over > 0 {
+		w.buf = append([]byte(nil), w.buf[over:]...)
+	}
+	return len(p), nil
+}
+
+func (w *tailWriter) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return string(w.buf)
+}
+
+var (
+	bearerRe     = regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+`)
+	credAssignRe = regexp.MustCompile(`(?i)((?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|passwd|authorization|x-api-key|cookie)["']?\s*[:=]\s*["']?)[^\s"',;]+`)
+)
+
+// redactDiagnostics strips credentials from runner output before it is
+// shown: known token shapes, bearer headers, key=value credentials and
+// sensitive URL parameters.
+func redactDiagnostics(s string) string {
+	s = secretTokenRe.ReplaceAllString(s, Redacted)
+	s = bearerRe.ReplaceAllString(s, "${1}"+Redacted)
+	s = credAssignRe.ReplaceAllString(s, "${1}"+Redacted)
+	return sanitizeText(s)
+}
+
+// withStderrTail appends the redacted stderr tail to a runner error.
+func withStderrTail(err error, tail string) error {
+	tail = strings.TrimSpace(redactDiagnostics(tail))
+	if tail == "" {
+		return err
+	}
+	return fmt.Errorf("%w\nrunner stderr (last %d bytes):\n%s", err, stderrTailBytes, tail)
 }
 
 func (r ExecRunner) runtime() string {
@@ -74,7 +129,7 @@ func withRunnerHint(err error, runtime string) error {
 	return fmt.Errorf("%w (hint: %s)", err, hint)
 }
 
-func (r ExecRunner) run(ctx context.Context, prompt string) (string, error) {
+func (r ExecRunner) run(ctx context.Context, prompt string, stderr io.Writer) (string, error) {
 	timeout := r.Timeout
 	if timeout <= 0 {
 		timeout = DefaultTimeout
@@ -93,7 +148,7 @@ func (r ExecRunner) run(ctx context.Context, prompt string) (string, error) {
 	if budget <= 0 {
 		budget = DefaultBudgetUSD
 	}
-	opts := monomind.ExecOptions{Bin: bin, Runtime: runtime, Model: r.Model, Prompt: prompt, BudgetUSD: budget}
+	opts := monomind.ExecOptions{Bin: bin, Runtime: runtime, Model: r.Model, Prompt: prompt, BudgetUSD: budget, Stderr: stderr}
 	if deadline, ok := ctx.Deadline(); ok {
 		// Let the runtime stop itself a little before we would kill it.
 		if d := time.Until(deadline) - 5*time.Second; d > 0 {

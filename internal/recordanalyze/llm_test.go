@@ -140,3 +140,27 @@ func TestRunnerHints(t *testing.T) {
 		}
 	}
 }
+
+func TestStderrTailRedacted(t *testing.T) {
+	w := &tailWriter{max: 32}
+	_, _ = w.Write([]byte(strings.Repeat("x", 40)))
+	_, _ = w.Write([]byte("END"))
+	if s := w.String(); len(s) != 32 || !strings.HasSuffix(s, "END") {
+		t.Errorf("tail = %q", s)
+	}
+	stderr := "Error: 401 invalid x-api-key\nAuthorization: Bearer eyJhbGciOi.abc.def\n" +
+		"ANTHROPIC_API_KEY=sk-ant-abcdefghijklmnopqrstuv\ncallback https://x.test/cb?code=zz123&ok=1\npassword: hunter2\n"
+	err := withStderrTail(errors.New("the runtime exited with code 1"), stderr)
+	msg := err.Error()
+	for _, leak := range []string{"eyJhbGciOi", "sk-ant-abcdefghijklmnopqrstuv", "zz123", "hunter2"} {
+		if strings.Contains(msg, leak) {
+			t.Errorf("stderr tail leaks %q:\n%s", leak, msg)
+		}
+	}
+	if !strings.Contains(msg, "runner stderr") || !strings.Contains(msg, "401 invalid") || !strings.Contains(msg, "exited with code 1") {
+		t.Errorf("tail missing: %s", msg)
+	}
+	if withStderrTail(errors.New("e"), "  \n").Error() != "e" {
+		t.Error("empty tail should add nothing")
+	}
+}
