@@ -16,8 +16,11 @@ import (
 	"time"
 
 	"github.com/monoes/mono-agent/internal/jev"
+	"github.com/monoes/mono-agent/internal/jev/jevconf"
+	"github.com/monoes/mono-agent/internal/jevpick"
 	"github.com/monoes/mono-agent/internal/monomind"
 	"github.com/monoes/mono-agent/internal/nodes"
+	"github.com/monoes/mono-agent/internal/vault"
 	"github.com/monoes/mono-agent/internal/workflow"
 )
 
@@ -32,10 +35,18 @@ var errNoValue = errors.New("the goal does not supply a value for this field")
 // textWriter produces the value for a TYPE_TEXT action from its context.
 type textWriter func(ctx context.Context, field map[string]any) (string, error)
 
+// driver is what the agent loop needs from a browser; *jevpick.Browser is
+// the real one, tests substitute a fake.
+type driver interface {
+	Observe(ctx context.Context) (*jevpick.PageState, error)
+	Fresh(page *jevpick.PageState, a *jevpick.Action) (bool, error)
+	Act(ctx context.Context, page *jevpick.PageState, a *jevpick.Action, text string) error
+}
+
 // Node implements browser.jev.
 type Node struct {
-	// newClient and writer are seams for tests; nil means the real ones.
-	newClient func(apiKey, model string) (*jev.Client, error)
+	// newClient, writer and open are seams for tests; nil means the real ones.
+	newClient func(ctx context.Context, config map[string]interface{}) (*jev.Client, error)
 	writer    textWriter
 	open      func(ctx context.Context, url string) (driver, func(), error)
 }
@@ -70,20 +81,10 @@ func (n *Node) Execute(ctx context.Context, input workflow.NodeInput, config map
 	}
 	newClient := n.newClient
 	if newClient == nil {
-		newClient = jev.NewClient
+		newClient = jevClient
 	}
-	// An @secret: reference the vault could not resolve arrives verbatim;
-	// never send it as a bearer token — fall back to TYPESAFE_API_KEY.
-	apiKey := str(config, "api_key")
-	unresolved := ""
-	if strings.HasPrefix(apiKey, "@secret:") {
-		unresolved, apiKey = apiKey, ""
-	}
-	client, err := newClient(apiKey, str(config, "model"))
+	client, err := newClient(ctx, config)
 	if err != nil {
-		if unresolved != "" {
-			err = fmt.Errorf("%v (vault has no %s)", err, strings.TrimPrefix(unresolved, "@"))
-		}
 		return nil, fmt.Errorf("%w: %v", workflow.ErrInvalidConfig, err)
 	}
 	writer := n.writer
@@ -120,6 +121,14 @@ func (n *Node) Execute(ctx context.Context, input workflow.NodeInput, config map
 	return []workflow.NodeOutput{{Handle: "main", Items: out}}, nil
 }
 
+// jevClient resolves the key per plan D3 (explicit api_key → the profile's
+// vault entry → TYPESAFE_API_KEY; an unresolved @secret: ref is never sent)
+// and records usage under node:browser.jev.
+func jevClient(ctx context.Context, config map[string]interface{}) (*jev.Client, error) {
+	return jevconf.NewClient(ctx, vault.DBFromContext(ctx), vault.ProfileIDFromContext(ctx),
+		str(config, "api_key"), str(config, "model"), jevconf.NodeSurface("browser.jev"))
+}
+
 // run drives one goal to DONE, BLOCKED, or a budget. Decisions are
 // consumed once: a stale page means observe and decide again, never replay.
 func (n *Node) run(ctx context.Context, cfg runConfig, client *jev.Client, writer textWriter,
@@ -135,7 +144,7 @@ func (n *Node) run(ctx context.Context, cfg runConfig, client *jev.Client, write
 	defer closeTab()
 
 	var (
-		page      *pageState
+		page      *jevpick.PageState
 		history   []step
 		decisions int
 		tokens    int
@@ -146,7 +155,7 @@ func (n *Node) run(ctx context.Context, cfg runConfig, client *jev.Client, write
 	)
 	finish := func(status, reason string) map[string]interface{} {
 		if page == nil {
-			page = &pageState{URL: cfg.url}
+			page = &jevpick.PageState{URL: cfg.url}
 		}
 		return map[string]interface{}{
 			"status": status, "reason": reason, "goal": cfg.goal,
@@ -163,7 +172,7 @@ func (n *Node) run(ctx context.Context, cfg runConfig, client *jev.Client, write
 			result, err = finish("timeout", fmt.Sprintf("stopped after %s", cfg.timeout)), nil
 		}
 	}()
-	if page, err = drv.observe(ctx); err != nil {
+	if page, err = drv.Observe(ctx); err != nil {
 		return nil, err
 	}
 
@@ -174,10 +183,10 @@ func (n *Node) run(ctx context.Context, cfg runConfig, client *jev.Client, write
 		if decisions >= 2*cfg.maxActions {
 			return finish("budget", fmt.Sprintf("reached %d decisions", decisions)), nil
 		}
-		if ok, err := drv.fresh(page, nil); err != nil {
+		if ok, err := drv.Fresh(page, nil); err != nil {
 			return nil, err
 		} else if !ok {
-			if page, err = drv.observe(ctx); err != nil {
+			if page, err = drv.Observe(ctx); err != nil {
 				return nil, err
 			}
 		}
@@ -192,7 +201,7 @@ func (n *Node) run(ctx context.Context, cfg runConfig, client *jev.Client, write
 		tokens += d.Tokens
 
 		if d.Choice == "DONE" || d.Choice == "BLOCKED" {
-			if ok, err := drv.fresh(page, nil); err != nil {
+			if ok, err := drv.Fresh(page, nil); err != nil {
 				return nil, err
 			} else if !ok {
 				continue // the page moved under the verdict: decide again
@@ -205,7 +214,7 @@ func (n *Node) run(ctx context.Context, cfg runConfig, client *jev.Client, write
 		if len(history) >= cfg.maxActions {
 			return finish("budget", fmt.Sprintf("reached %d actions", cfg.maxActions)), nil
 		}
-		a := page.find(d.Choice)
+		a := page.Find(d.Choice)
 		if a == nil {
 			return nil, fmt.Errorf("decision %q is not an observed action", d.Choice)
 		}
@@ -223,8 +232,8 @@ func (n *Node) run(ctx context.Context, cfg runConfig, client *jev.Client, write
 			textCache.key, textCache.value = field, text
 		}
 
-		if err := drv.act(ctx, page, a, text); errors.Is(err, errStale) {
-			if page, err = drv.observe(ctx); err != nil {
+		if err := drv.Act(ctx, page, a, text); errors.Is(err, jevpick.ErrStale) {
+			if page, err = drv.Observe(ctx); err != nil {
 				return nil, err
 			}
 			continue
@@ -238,7 +247,7 @@ func (n *Node) run(ctx context.Context, cfg runConfig, client *jev.Client, write
 			Operation: d.Operation, Target: d.Target, Text: text, Probability: d.Probability,
 			Confidence: d.Confidence, LatencyMS: d.LatencyMS, URL: page.URL})
 		before := page.Fingerprint
-		if page, err = drv.observe(ctx); err != nil {
+		if page, err = drv.Observe(ctx); err != nil {
 			return nil, err
 		}
 		changed := page.Fingerprint != before
@@ -259,7 +268,7 @@ func (n *Node) run(ctx context.Context, cfg runConfig, client *jev.Client, write
 	}
 }
 
-func fieldContext(goal string, a *action, page *pageState, history []step) map[string]any {
+func fieldContext(goal string, a *jevpick.Action, page *jevpick.PageState, history []step) map[string]any {
 	text := page.Text
 	if len(text) > 6000 {
 		text = text[:6000]
@@ -339,7 +348,7 @@ func openExtensionTab(ctx context.Context, url string) (driver, func(), error) {
 		return nil, nil, err
 	}
 	closeTab := func() { _ = page.Close() }
-	cdp, ok := page.(cdpPage)
+	cdp, ok := page.(jevpick.Page)
 	if !ok {
 		closeTab()
 		return nil, nil, fmt.Errorf("browser page %T has no CDP relay (needs the extension bridge)", page)
@@ -349,8 +358,8 @@ func openExtensionTab(ctx context.Context, url string) (driver, func(), error) {
 		return nil, nil, fmt.Errorf("navigate %s: %w", url, err)
 	}
 	_ = page.WaitLoad()
-	b := &cdpBrowser{page: cdp}
-	if err := b.setup(1120, 780); err != nil {
+	b := jevpick.NewBrowser(cdp)
+	if err := b.Setup(1120, 780); err != nil {
 		closeTab()
 		return nil, nil, err
 	}
