@@ -49,8 +49,7 @@ var sessionField = NodeSchemaField{
 }
 
 // isBuiltinAutomation reports whether id is one of the embedded built-in
-// packages. Only those share the action.<name>.json forms: an imported
-// package's "send_dms" is not Instagram's.
+// packages, whose nodes keep their pre-package forms.
 func isBuiltinAutomation(id string) bool {
 	if id == "" || strings.ContainsAny(id, "/\\.") {
 		return false
@@ -60,22 +59,9 @@ func isBuiltinAutomation(id string) bool {
 }
 
 // loadActionDef finds the action behind a browser node type, through the
-// installed definition source when there is one, else the legacy loader. A
-// legacy "<p>.<action>" name also resolves to the wrapped "local-<p>" package.
+// installed definition source when there is one, else the legacy loader.
 func loadActionDef(automation, actionType string) (*action.ActionDef, error) {
-	candidates := []string{automation}
-	if !strings.HasPrefix(automation, "local-") {
-		candidates = append(candidates, "local-"+automation)
-	}
-	var lastErr error
-	for _, a := range candidates {
-		def, err := loadActionDefFrom(a, actionType)
-		if err == nil {
-			return def, nil
-		}
-		lastErr = err
-	}
-	return nil, lastErr
+	return loadActionDefFrom(automation, actionType)
 }
 
 func loadActionDefFrom(automation, actionType string) (*action.ActionDef, error) {
@@ -131,6 +117,10 @@ func packageForm(automation, actionType string) (*NodeSchema, bool) {
 func generateActionSchema(nodeType string) (*NodeSchema, bool) {
 	dot := strings.Index(nodeType, ".")
 	if dot <= 0 || dot == len(nodeType)-1 {
+		return nil, false
+	}
+	// Built-in and legacy local-* nodes keep their pre-package forms.
+	if isBuiltinAutomation(nodeType[:dot]) || strings.HasPrefix(nodeType, "local-") {
 		return nil, false
 	}
 	if form, ok := packageForm(nodeType[:dot], nodeType[dot+1:]); ok {

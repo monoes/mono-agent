@@ -167,29 +167,32 @@ func TestLoadDefaultSchema_GeneratedFromPackageInputs(t *testing.T) {
 	}
 }
 
-func TestLoadDefaultSchema_GeneratedForBuiltins(t *testing.T) {
+// Built-in nodes keep their pre-package forms (the full golden check is
+// TestBuiltinForms_MatchMaster in internal/nodes).
+func TestLoadDefaultSchema_BuiltinsKeepLegacyForms(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	action.SetDefSource(nil)
 
-	// hackernews had no form at all before; now its inputs drive one.
-	s, _ := LoadDefaultSchema("hackernews.submit_post")
-	if f := fieldByKey(t, s, "title"); !f.Required {
-		t.Errorf("title: %+v", f)
+	// No schema file, not a generic-form platform: empty, as before.
+	if s, _ := LoadDefaultSchema("hackernews.submit_post"); len(s.Fields) != 0 {
+		t.Errorf("hackernews.submit_post got a generated form: %+v", s.Fields)
 	}
-	fieldByKey(t, s, "url")
-
-	// A built-in without a shared form gets its declared inputs rather than
-	// the generic keywords/message box.
-	s, _ = LoadDefaultSchema("instagram.list_post_comments")
-	fieldByKey(t, s, "targets")
-	fieldByKey(t, s, "maxComments")
-
-	// Explicit files keep precedence.
+	if _, ok := ReadEmbeddedSchema("hackernews.submit_post"); ok {
+		t.Error("ReadEmbeddedSchema invented a schema for hackernews.submit_post")
+	}
+	// No shared form: browser.generic.json, as before.
+	s, _ := LoadDefaultSchema("tiktok.like_video")
+	if f := fieldByKey(t, s, "targets"); f.Required {
+		t.Errorf("tiktok.like_video targets became required: %+v", f)
+	}
+	fieldByKey(t, s, "keywords")
+	fieldByKey(t, s, "limit")
+	// Shared form.
 	s, _ = LoadDefaultSchema("linkedin.find_by_keyword")
 	fieldByKey(t, s, "keywords")
-	if s.Fields[0].Key == "username" {
-		t.Error("shared action.find_by_keyword form replaced by a generated one")
-	}
+	// A legacy local-<platform> action resolves like the platform's did.
+	s, _ = LoadDefaultSchema("local-instagram.my_custom_action")
+	fieldByKey(t, s, "targets")
 }
 
 func TestHumanizeName(t *testing.T) {

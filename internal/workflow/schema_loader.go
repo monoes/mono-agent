@@ -53,16 +53,29 @@ type NodeSchema struct {
 	Fields             []NodeSchemaField `json:"fields"`
 }
 
+// legacyFormPlatforms are the platforms whose nodes without a schema file
+// fall back to the shared action.<name>.json form, then browser.generic.json.
+// This is the pre-package resolution, kept so built-in (and legacy
+// local-<platform>) nodes keep exactly the forms they had.
+var legacyFormPlatforms = map[string]bool{
+	"instagram": true,
+	"linkedin":  true,
+	"x":         true,
+	"tiktok":    true,
+}
+
 // LoadDefaultSchema returns the form schema for a node type:
 //
 //  1. its schema file (schemas/<type>.json);
-//  2. for a built-in browser automation, the shared action-suffix file
-//     (e.g. linkedin.find_by_keyword → schemas/action.find_by_keyword.json);
-//  3. for any other browser automation action, the package's
+//  2. for instagram/linkedin/x/tiktok nodes (built-in or legacy local-*),
+//     the shared action-suffix file (e.g. linkedin.find_by_keyword →
+//     schemas/action.find_by_keyword.json), else browser.generic.json;
+//  3. for an action of an installed, non-built-in package, the package's
 //     forms/<action>.json, else a form generated from the action's declared
 //     inputs and their ui hints.
 //
-// Returns an empty schema (no fields) when none of these applies.
+// Returns an empty schema (no fields) when none of these applies — which is
+// also what other built-in nodes without a schema file get, as before.
 func LoadDefaultSchema(nodeType string) (*NodeSchema, error) {
 	data, ok := schemaFile(nodeType)
 	if !ok {
@@ -87,10 +100,15 @@ func schemaFile(nodeType string) ([]byte, bool) {
 	if data, err := embeddedSchemas.ReadFile("schemas/" + nodeType + ".json"); err == nil {
 		return data, true
 	}
-	if dot := strings.Index(nodeType, "."); dot > 0 && isBuiltinAutomation(nodeType[:dot]) {
-		if data, err := embeddedSchemas.ReadFile("schemas/action." + nodeType[dot+1:] + ".json"); err == nil {
-			return data, true
-		}
+	dot := strings.Index(nodeType, ".")
+	if dot <= 0 || !legacyFormPlatforms[strings.TrimPrefix(nodeType[:dot], "local-")] {
+		return nil, false
+	}
+	if data, err := embeddedSchemas.ReadFile("schemas/action." + nodeType[dot+1:] + ".json"); err == nil {
+		return data, true
+	}
+	if data, err := embeddedSchemas.ReadFile("schemas/browser.generic.json"); err == nil {
+		return data, true
 	}
 	return nil, false
 }

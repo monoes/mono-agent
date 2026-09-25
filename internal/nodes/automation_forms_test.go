@@ -46,7 +46,7 @@ func TestInstalledPackage_FormsAndNodes(t *testing.T) {
 	  "actionType": "create_contact", "automation": "acme-crm", "sideEffects": "write",
 	  "inputs": {"required": [{"name": "email", "type": "string"}]},
 	  "steps": [{"id": "open", "type": "navigate", "url": "https://app.acme-crm.com/contacts/new"},
-	            {"id": "email", "type": "type", "selector": "#email", "value": "{{email}}"}]
+	            {"id": "email", "type": "type", "selector": "#email", "value": "{{email}}", "sideEffect": true}]
 	}`)
 	writeFile(t, filepath.Join(src, "actions", "list_deals.json"), `{
 	  "actionType": "list_deals", "automation": "acme-crm", "sideEffects": "read",
