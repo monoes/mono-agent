@@ -152,6 +152,8 @@
       }
       const params = { recordingId };
       if (msg.automation) params.automation = msg.automation;
+      // The recording landed in the inbox of the profile it started under.
+      if (st.id === recordingId && st.profile) params.profile = st.profile;
       return { ok: true, result: await request("record.analyze", params, LONG) };
     },
     record_verify: async (msg) => ({
@@ -160,7 +162,8 @@
     }),
     record_save: async (msg) => {
       const params = { draftDir: msg.draftDir, saveAs: msg.saveAs || "action" };
-      if (msg.automation) params.automation = msg.automation;
+      // An existing automation (`automation`) or a new one the analyzer named (`new`).
+      if (msg.automation) params[msg.isNew ? "new" : "automation"] = msg.automation;
       if (msg.name) params.name = msg.name;
       return { ok: true, result: await request("record.save", params) };
     },

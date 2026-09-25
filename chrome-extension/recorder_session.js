@@ -85,7 +85,7 @@
     let stopping = null;
 
     function blank() {
-      return { recording: false, id: "", tabId: 0, goal: "", url: "", title: "", startedAt: 0, seq: 0, lastExtract: "", pick: false, stopReason: "", steps: [] };
+      return { recording: false, id: "", tabId: 0, goal: "", url: "", title: "", profile: "", startedAt: 0, seq: 0, lastExtract: "", pick: false, stopReason: "", steps: [] };
     }
 
     // Writes are coalesced: a burst of events is one storage write of the
@@ -111,6 +111,7 @@
         goal: state.goal,
         url: state.url,
         title: state.title,
+        profile: state.profile,
         startedAt: state.startedAt,
         pick: state.pick,
         stopReason: state.stopReason,
@@ -204,6 +205,7 @@
       if (state.goal) frame.goal = state.goal;
       const profile = deps.profile ? await deps.profile() : "";
       if (profile) frame.profile = profile;
+      state.profile = profile;
       enqueue(frame);
       changed();
       try {

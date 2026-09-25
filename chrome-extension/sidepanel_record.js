@@ -265,6 +265,8 @@
         saveAs: saveAs.value,
         name: saveName.value.trim(),
         automation: saveAutomation.value.trim(),
+        // Still the name the analyzer proposed for a new automation → create it.
+        isNew: draft.isNew && saveAutomation.value.trim() === draft.automation,
       });
       const r = res.result || {};
       const what = r.nodeType || [r.automation, r.action].filter(Boolean).join(".");

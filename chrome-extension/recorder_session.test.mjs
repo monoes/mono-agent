@@ -80,6 +80,7 @@ test("start sends a start frame, injects into the tab and shows the badge", asyn
   assert.equal(start.url, "https://app.test/t7");
   assert.equal(start.goal, "add a contact");
   assert.equal(start.profile, "work");
+  assert.equal(st.profile, "work", "kept, so analyze can look in the right inbox");
   assert.equal(start.startedAt, hx.now());
   assert.deepEqual(hx.injected, [[7, undefined]]);
   assert.deepEqual(hx.badges, [[7, true]]);

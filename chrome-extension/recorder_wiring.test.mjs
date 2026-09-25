@@ -73,6 +73,7 @@ function load() {
 
 test("start injects the recorder files into every frame of the tab", async () => {
   const { chrome, wire, call } = load();
+  chrome.data.captureProfile = "work";
   const res = await call({ type: "record_start", goal: "demo" });
   assert.equal(res.ok, true, res.error);
   assert.equal(res.state.tabId, 7, "defaults to the active tab");
@@ -113,7 +114,8 @@ test("a new tab from the recorded tab stops the recording", async () => {
 });
 
 test("analyze, verify and save are record.* requests to Go", async () => {
-  const { g, wire, call, settle } = load();
+  const { g, chrome, wire, call, settle } = load();
+  chrome.data.captureProfile = "work";
   await call({ type: "record_start", tabId: 7 });
   await call({ type: "record_stop" });
   const recordingId = wire[0].recordingId;
@@ -128,7 +130,7 @@ test("analyze, verify and save are record.* requests to Go", async () => {
   const analyzing = call({ type: "record_analyze" });
   await settle();
   const req = answer("record.analyze", { draftDir: "/d", draft: { action: "x" } });
-  assert.deepEqual(req.params, { recordingId });
+  assert.deepEqual(req.params, { recordingId, profile: "work" }, "analyze looks in the profile's inbox");
   assert.deepEqual((await analyzing).result, { draftDir: "/d", draft: { action: "x" } });
 
   const verifying = call({ type: "record_verify", draftDir: "/d" });
@@ -145,6 +147,13 @@ test("analyze, verify and save are record.* requests to Go", async () => {
     name: "login",
   });
   assert.equal((await saving).ok, true);
+
+  const creating = call({ type: "record_save", draftDir: "/e", automation: "newcrm", isNew: true });
+  await settle();
+  const req2 = wire.filter((f) => f.method === "record.save").at(-1);
+  assert.deepEqual(req2.params, { draftDir: "/e", saveAs: "action", new: "newcrm" }, "a new automation is --new");
+  g.MonoAsk.handleFrame({ kind: "reply", id: req2.id, ok: true, data: {} });
+  await creating;
 });
 
 test("analyze refuses while the recording has not reached the bridge", async () => {
