@@ -116,3 +116,22 @@ func TestTikTokBotIsAdapterWithJevSetter(t *testing.T) {
 		t.Fatal("TIKTOK not registered")
 	}
 }
+
+func TestProfileNames(t *testing.T) {
+	for _, c := range []struct{ url, title, sub, handle, name string }{
+		{"tiktok", "TikTok", "tiktok", "tiktok", "TikTok"},             // current layout
+		{"fake_a", "Fake A", "@fake_a", "fake_a", "Fake A"},            // @-prefixed subtitle
+		{"fake_a", "fake_a", "Fake A", "fake_a", "Fake A"},             // swapped layout
+		{"fake_a", "fake_a", "fake_a", "fake_a", "fake_a"},             // name equals handle
+		{"fake_new", "Fake Name", "fake_old", "fake_new", "Fake Name"}, // renamed
+		{"", "Fake Name", "fake_x", "fake_x", "Fake Name"},             // no URL handle
+	} {
+		h, n := profileNames(c.url, c.title, c.sub)
+		if h != c.handle || n != c.name {
+			t.Errorf("profileNames(%q, %q, %q) = %q, %q; want %q, %q", c.url, c.title, c.sub, h, n, c.handle, c.name)
+		}
+	}
+	if !bioPlaceholder.MatchString("No bio yet.") || !bioPlaceholder.MatchString("no bio yet") || bioPlaceholder.MatchString("No bio yet. Just vibes") {
+		t.Fatal("bioPlaceholder")
+	}
+}

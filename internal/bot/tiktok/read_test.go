@@ -270,3 +270,144 @@ func TestIsLoggedIn(t *testing.T) {
 		}
 	}
 }
+
+// Live bug: on the current comment layout likes and id came back "" for every
+// comment. The like count sits beside an unlabelled-by-data-e2e like button
+// (no number at all for a comment nobody liked), and TikTok puts no comment id
+// in the DOM, so the id is derived from the author and the text.
+func TestListVideoCommentsCurrentLayoutLikesAndID(t *testing.T) {
+	p := newPage(t)
+	read := func() []map[string]interface{} {
+		t.Helper()
+		res, err := call(t, &TikTokBot{}, p, "list_video_comments", vidModern, 3)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cs := resultList(t, res)
+		if len(cs) != 3 {
+			t.Fatalf("got %d comments, want 3: %v", len(cs), cs)
+		}
+		return cs
+	}
+	cs := read()
+	want := []struct {
+		user, text, likes string
+		liked             bool
+	}{
+		{"fake_ana", "Love the colors in this one", "3", false},
+		{"fake_ben", "First! great video", "9", true},
+		{"fake_cy", "Love the colors too", "0", false},
+	}
+	ids := map[string]bool{}
+	for i, w := range want {
+		c := cs[i]
+		if c["username"] != w.user || c["text"] != w.text || c["likes"] != w.likes || c["liked"] != w.liked {
+			t.Fatalf("comment %d = %v, want %+v", i, c, w)
+		}
+		id, _ := c["id"].(string)
+		if !strings.HasPrefix(id, "tth-") || ids[id] {
+			t.Fatalf("comment %d id = %q, want a distinct derived tth- id", i, id)
+		}
+		ids[id] = true
+	}
+	// The derived id is stable: a fresh read yields the same ids.
+	again := read()
+	for i := range cs {
+		if again[i]["id"] != cs[i]["id"] {
+			t.Fatalf("id of comment %d changed between reads: %v vs %v", i, cs[i]["id"], again[i]["id"])
+		}
+	}
+	// ...and like_comment finds the comment by it.
+	res, err := call(t, &TikTokBot{}, p, "like_comment", vidModern, cs[0]["id"], "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := resultMap(t, res); m["status"] != "liked" {
+		t.Fatalf("like_comment by derived id = %v", m)
+	}
+	wantEvents(t, p, "comment-like-click:fake_ana")
+}
+
+func TestListVideoCommentsLegacyLayoutHasIDs(t *testing.T) {
+	p := newPage(t)
+	res, err := call(t, &TikTokBot{}, p, "list_video_comments", vidPlain, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range resultList(t, res) {
+		if id, _ := c["id"].(string); id == "" {
+			t.Fatalf("comment without id: %v", c)
+		}
+	}
+	if cs := resultList(t, res); cs[0]["likes"] != "3" || cs[2]["likes"] != "0" {
+		t.Fatalf("likes = %v / %v", cs[0]["likes"], cs[2]["likes"])
+	}
+}
+
+// Live bug: handle and display name were swapped. On tiktok.com user-title
+// is the display name and user-subtitle the @handle.
+func TestGetProfileDataHandleAndNameNotSwapped(t *testing.T) {
+	p := newPage(t)
+	res, err := call(t, &TikTokBot{}, p, "get_profile_data", profileURL("fake_verified"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := resultMap(t, res)
+	if m["handle"] != "fake_verified" || m["full_name"] != "Fake Verified" || m["username"] != "fake_verified" {
+		t.Fatalf("handle/full_name/username = %v / %v / %v", m["handle"], m["full_name"], m["username"])
+	}
+	// Live bug: the verified badge (an unlabelled svg) was not seen.
+	if m["is_verified"] != true {
+		t.Fatalf("is_verified = %v, want true", m["is_verified"])
+	}
+}
+
+// Live bug: TikTok's "No bio yet." placeholder came back as the bio.
+func TestGetProfileDataBioPlaceholderIsEmpty(t *testing.T) {
+	p := newPage(t)
+	res, err := call(t, &TikTokBot{}, p, "get_profile_data", "@fake_nobio")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := resultMap(t, res)
+	if m["bio"] != "" || m["handle"] != "fake_nobio" || m["full_name"] != "fake_nobio" || m["is_verified"] != false {
+		t.Fatalf("profile = %v", m)
+	}
+}
+
+// Live bug: displayName was "" for every follower on the current follower
+// list layout (no nickname data-e2e, avatar and texts in separate links).
+func TestListFollowersCurrentLayoutDisplayNames(t *testing.T) {
+	p := newPage(t)
+	res, err := call(t, &TikTokBot{}, p, "list_followers", profileURL("fake_modern"), "FOLLOWERS_FETCH", 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	us := resultList(t, res)
+	if len(us) != 4 {
+		t.Fatalf("got %d, want 4: %v", len(us), us)
+	}
+	for i, u := range us {
+		wantUser, wantName := fmt.Sprintf("fake_followers_%d", i+1), fmt.Sprintf("Fake followers %d", i+1)
+		if u["username"] != wantUser || u["displayName"] != wantName {
+			t.Fatalf("follower %d = %v, want %s / %s", i, u, wantUser, wantName)
+		}
+	}
+}
+
+// Live bug: find_by_keyword's description carried the thumbnail alt's
+// "created by … with …'s sound" suffix.
+func TestSearchVideosDescriptionIsTheCaption(t *testing.T) {
+	p := newPage(t)
+	for _, q := range []string{"coffee", "altonly"} {
+		res, err := call(t, &TikTokBot{}, p, "search_videos", q, 3)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, v := range resultList(t, res) {
+			if want := fmt.Sprintf("Synthetic %s clip %d", q, i+1); v["description"] != want || v["author"] != fmt.Sprintf("fake_maker_%d", i) {
+				t.Fatalf("%s result %d = %v, want description %q", q, i, v, want)
+			}
+		}
+	}
+}

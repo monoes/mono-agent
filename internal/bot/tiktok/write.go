@@ -163,17 +163,20 @@ const maxCommentScrolls = 40
 // jsFindComment finds the one comment matching (id) or (username, text).
 const jsFindComment = `
 const want = norm(text).toLowerCase(), wantUser = (user || '').replace(/^@/, '').toLowerCase();
-const matches = [];
+const matches = [], byID = [];
 for (const it of commentItems()) {
   const c = commentInfo(it);
-  if (id && c.id && c.id === id) { matches.length = 0; matches.push(it); break; }
+  if (id && c.id && c.id === id) { byID.push(it); continue; }
   if (!want) continue;
   if (!c.text.toLowerCase().includes(want)) continue;
   if (wantUser && c.username.toLowerCase() !== wantUser) continue;
   matches.push(it);
 }
-if (matches.length !== 1) return {count: matches.length};
-const it = matches[0];
+// An id match wins; a derived id (tth-…) is shared by one author's identical
+// comments, and several matches are refused like several text matches.
+const hits = byID.length ? byID : matches;
+if (hits.length !== 1) return {count: hits.length};
+const it = hits[0];
 mark(it, itemToken);
 const like = commentLike(it);
 if (!like) return {count: 1, state: 'no_button'};

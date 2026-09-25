@@ -60,6 +60,11 @@
     '7100000000000000006': { remixOff: true },
     '7100000000000000007': { noPressed: true },
     '7100000000000000008': { commentLikeless: true },
+    // Current comment layout: no comment-like-icon / comment-like-count
+    // data-e2e and no comment id in the DOM; the like control is a labelled
+    // role=button inside a *LikeContainer* with the count beside it (no
+    // number at all when nobody liked the comment).
+    '7100000000000000010': { modern: true },
   };
   const cfg = CONFIG[vid] || {};
   window.__events = [];
@@ -90,6 +95,10 @@
     const w = document.createElement('div');
     w.className = level === 1 ? 'css-5e-DivCommentObjectWrapper' : 'css-6f-DivReplyContainer';
     const likeAttrs = cfg.commentLikeless ? '' : '<div class="css-x-DivLikeWrapper" role="button" tabindex="0" aria-label="Like comment by ' + c.name + '" aria-pressed="' + c.liked + '" data-e2e="comment-like-icon">&#9825;</div>';
+    const likeBlock = cfg.modern
+      ? '<div class="css-q-DivLikeContainer"><div class="css-r-DivLikeWrapper" role="button" tabindex="0" aria-label="Like" aria-pressed="' + c.liked + '"><svg width="16" height="16"><path d="M1 1h14v14H1z"></path></svg></div>' +
+        (c.likes ? '<span class="TUXText css-s-SpanCount">' + c.likes + '</span>' : '') + '</div>'
+      : likeAttrs + '<span data-e2e="comment-like-count">' + c.likes + '</span>';
     w.innerHTML =
       '<div class="css-a-DivCommentContentContainer">' +
         '<a href="/@' + c.user + '" data-e2e="comment-avatar-' + level + '"><span class="css-b-SpanAvatar"></span></a>' +
@@ -98,10 +107,9 @@
           '<span data-e2e="comment-level-' + level + '"><p>' + c.text + '</p></span>' +
           '<span data-e2e="comment-time-' + level + '">1d ago</span>' +
         '</div>' +
-        '<div class="css-e-DivActionContainer">' + likeAttrs +
-          '<span data-e2e="comment-like-count">' + c.likes + '</span></div>' +
+        '<div class="css-e-DivActionContainer">' + likeBlock + '</div>' +
       '</div>';
-    const lk = w.querySelector('[data-e2e="comment-like-icon"]');
+    const lk = w.querySelector(cfg.modern ? '[role="button"][aria-label="Like"]' : '[data-e2e="comment-like-icon"]');
     if (lk) lk.addEventListener('click', (e) => {
       if (!trusted(e)) return;
       log('comment-like-click:' + c.user);
