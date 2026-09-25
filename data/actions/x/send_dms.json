@@ -1,8 +1,8 @@
 {
   "actionType": "send_dms",
   "platform": "X",
-  "version": "1.0.0",
-  "description": "Send direct messages to a list of recipients on X (Twitter)",
+  "version": "2.0.0",
+  "description": "Send direct messages to a list of recipients on X (Twitter) from their profile's Message button; each send is verified",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
@@ -10,11 +10,12 @@
   },
   "inputs": {
     "required": [
-      "selectedListItems",
-      "messageText"
+      { "name": "selectedListItems", "type": "list", "description": "Profile URLs or usernames to message" },
+      { "name": "messageText", "type": "string", "description": "Message text to send" }
     ],
     "optional": [
-      "messageSubject"
+      { "name": "maxMessagesPerSession", "type": "number", "default": 30, "min": 1, "max": 100, "description": "Rate limit: max DMs per session" },
+      { "name": "delayBetweenMessages", "type": "number", "default": 15, "min": 5, "max": 120, "description": "Seconds to wait between messages" }
     ]
   },
   "outputs": {
@@ -28,70 +29,24 @@
   },
   "steps": [
     {
-      "id": "navigate_to_profile",
-      "type": "navigate",
-      "url": "{{item.url}}",
-      "waitFor": "page_load",
-      "timeout": 30,
+      "id": "send_dm",
+      "type": "call_bot_method",
+      "methodName": "send_dm",
+      "args": [
+        "{{item.url or item.href or item.username or item}}",
+        "{{messageText}}"
+      ],
+      "variable_name": "dmResult",
+      "timeout": 120,
       "onError": {
-        "action": "retry",
-        "maxRetries": 3,
-        "onFailure": "mark_failed"
+        "action": "mark_failed"
       }
     },
     {
-      "id": "find_message_button",
-      "type": "find_element",
-      "intent": "the Message button on the profile that opens a direct message",
-      "xpath": "//a[contains(@href, '/messages/compose')] | //button[contains(@data-testid, 'sendDMFromProfile')]",
-      "timeout": 10,
-      "onError": {
-        "action": "retry",
-        "maxRetries": 2
-      }
-    },
-    {
-      "id": "click_message_button",
-      "type": "click",
-      "elementRef": "find_message_button",
-      "waitFor": "message_compose_visible"
-    },
-    {
-      "id": "wait_for_compose",
+      "id": "wait_between_messages",
       "type": "wait",
-      "duration": 2.0,
+      "duration": "{{delayBetweenMessages or 15}}",
       "waitFor": "time"
-    },
-    {
-      "id": "find_message_input",
-      "type": "find_element",
-      "intent": "the message text box of the open direct message conversation",
-      "xpath": "//div[@contenteditable='true' and @data-testid='dmComposerTextInput'] | //div[@role='textbox']",
-      "timeout": 15
-    },
-    {
-      "id": "type_message",
-      "type": "type",
-      "elementRef": "find_message_input",
-      "text": "{{messageText}}",
-      "humanLike": true
-    },
-    {
-      "id": "find_send_button",
-      "type": "find_element",
-      "intent": "the Send button of the open direct message conversation",
-      "xpath": "//button[@data-testid='dmComposerSendButton'] | //button[contains(text(), 'Send')]",
-      "timeout": 10
-    },
-    {
-      "id": "click_send",
-      "type": "click",
-      "elementRef": "find_send_button",
-      "waitFor": "message_sent",
-      "onSuccess": {
-        "action": "update_progress",
-        "increment": "reachedIndex"
-      }
     }
   ],
   "loops": [
@@ -99,21 +54,15 @@
       "id": "process_recipients",
       "iterator": "selectedListItems",
       "indexVar": "reachedIndex",
+      "maxItems": "{{maxMessagesPerSession or 30}}",
       "steps": [
-        "navigate_to_profile",
-        "find_message_button",
-        "click_message_button",
-        "wait_for_compose",
-        "find_message_input",
-        "type_message",
-        "find_send_button",
-        "click_send"
-      ],
-      "onComplete": "update_action_state"
+        "send_dm",
+        "wait_between_messages"
+      ]
     }
   ],
   "errorHandling": {
-    "globalRetries": 3,
+    "globalRetries": 1,
     "retryDelay": 2000,
     "onFinalFailure": "log_and_continue"
   }

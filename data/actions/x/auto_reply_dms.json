@@ -1,21 +1,21 @@
 {
   "actionType": "auto_reply_dms",
   "platform": "X",
-  "version": "1.0.0",
-  "description": "Reply to messages in X (Twitter) inbox",
+  "version": "2.0.0",
+  "description": "Reply to X (Twitter) inbox conversations that await a reply (unread by default; conversations whose last message is yours are skipped); each reply is verified",
   "metadata": {
     "requiresAuth": true,
-    "supportsPagination": true,
+    "supportsPagination": false,
     "supportsRetry": true
   },
   "inputs": {
     "required": [
-      "startDate",
-      "endDate",
-      "pollInterval"
+      { "name": "replyText", "type": "string", "description": "Reply to send" }
     ],
     "optional": [
-      "selectedListItems"
+      { "name": "maxConversations", "type": "number", "default": 20, "min": 1, "max": 100, "description": "Maximum conversations to reply to" },
+      { "name": "unreadOnly", "type": "boolean", "default": true, "description": "Only reply to unread conversations" },
+      { "name": "delayBetweenReplies", "type": "number", "default": 10, "min": 2, "max": 120, "description": "Seconds to wait between replies" }
     ]
   },
   "outputs": {
@@ -29,88 +29,54 @@
   },
   "steps": [
     {
-      "id": "navigate_to_messages",
-      "type": "navigate",
-      "url": "https://x.com/messages",
-      "waitFor": "page_load",
-      "timeout": 30
+      "id": "list_conversations",
+      "type": "call_bot_method",
+      "methodName": "list_conversations",
+      "args": [
+        "{{maxConversations or 20}}",
+        "{{unreadOnly or true}}"
+      ],
+      "variable_name": "conversations",
+      "timeout": 90,
+      "onError": {
+        "action": "mark_failed"
+      }
     },
     {
-      "id": "wait_for_inbox_load",
+      "id": "reply_dm",
+      "type": "call_bot_method",
+      "methodName": "reply_dm",
+      "args": [
+        "{{item.url}}",
+        "{{replyText}}"
+      ],
+      "variable_name": "replyResult",
+      "timeout": 90,
+      "onError": {
+        "action": "mark_failed"
+      }
+    },
+    {
+      "id": "wait_between_replies",
       "type": "wait",
-      "duration": 3.0,
+      "duration": "{{delayBetweenReplies or 10}}",
       "waitFor": "time"
-    },
-    {
-      "id": "find_conversation_list",
-      "type": "find_element",
-      "xpath": "//div[contains(@data-testid, 'conversation')] | //div[contains(@role, 'listitem')]",
-      "timeout": 15
-    },
-    {
-      "id": "extract_conversations",
-      "type": "extract_multiple",
-      "xpath": "//div[contains(@data-testid, 'conversation')]//a",
-      "onSuccess": {
-        "action": "save_data"
-      }
-    },
-    {
-      "id": "open_conversation",
-      "type": "navigate",
-      "url": "{{conversation.url}}",
-      "waitFor": "page_load",
-      "timeout": 15
-    },
-    {
-      "id": "find_message_input",
-      "type": "find_element",
-      "intent": "the message text box of the open direct message conversation",
-      "xpath": "//div[@contenteditable='true' and @data-testid='dmComposerTextInput']",
-      "timeout": 10
-    },
-    {
-      "id": "type_reply",
-      "type": "type",
-      "elementRef": "find_message_input",
-      "text": "{{replyText}}",
-      "humanLike": true
-    },
-    {
-      "id": "find_send_button",
-      "type": "find_element",
-      "intent": "the Send button of the open direct message conversation",
-      "xpath": "//button[@data-testid='dmComposerSendButton']",
-      "timeout": 10
-    },
-    {
-      "id": "click_send",
-      "type": "click",
-      "elementRef": "find_send_button",
-      "waitFor": "message_sent",
-      "onSuccess": {
-        "action": "update_progress",
-        "increment": "reachedIndex"
-      }
     }
   ],
   "loops": [
     {
       "id": "process_conversations",
-      "iterator": "filteredConversations",
+      "iterator": "conversations",
       "indexVar": "reachedIndex",
+      "maxItems": "{{maxConversations or 20}}",
       "steps": [
-        "open_conversation",
-        "find_message_input",
-        "type_reply",
-        "find_send_button",
-        "click_send"
-      ],
-      "onComplete": "update_action_state"
+        "reply_dm",
+        "wait_between_replies"
+      ]
     }
   ],
   "errorHandling": {
-    "globalRetries": 3,
+    "globalRetries": 1,
     "retryDelay": 2000,
     "onFinalFailure": "log_and_continue"
   }

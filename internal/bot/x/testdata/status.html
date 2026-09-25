@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Synth Alice on X / X</title>
+<style>article{border:1px solid #ccc;margin:4px;padding:6px} button{min-width:30px;min-height:20px;margin:2px}
+[role=dialog]{position:fixed;top:40px;left:40px;background:#fff;border:2px solid #000;padding:10px;width:400px}
+[contenteditable]{border:1px solid #999;min-height:40px}</style></head>
+<body>
+<!-- SYNTHETIC fixture: an X post page (/synth_alice/status/<id>). Invented
+     accounts and posts. Above the post sits the post it replies to (with its
+     own, different Like button); below it a reply that quotes the post. The
+     post id selects a variant:
+       1001 normal: Like toggles to Unlike; Reply opens the dialog; posting works
+       1003 already liked (data-testid=unlike)
+       1004 the post's Like button has no data-testid (Jev fallback)
+       1005 clicking Like changes nothing (no confirmation)
+       1006 posting the reply fails with an error toast; the text stays
+       1007 the post has no action bar at all
+       1008 the post itself is gone; only a reply quoting it remains -->
+<main role="main"><div data-testid="primaryColumn"><section id="conv"></section></div></main>
+<script>
+const id = (location.pathname.match(/status\/(\d+)/) || [])[1];
+const conv = document.getElementById('conv');
+function article(o) {
+  const cell = document.createElement('div');
+  cell.setAttribute('data-testid', 'cellInnerDiv');
+  const likeAttr = o.likeTestid === null ? '' : `data-testid="${o.likeTestid || 'like'}"`;
+  const bar = o.noBar ? '' : `<div role="group">
+      <button class="reply" data-testid="reply" aria-label="2 Replies. Reply">↩</button>
+      <button data-testid="retweet" aria-label="Repost">⟳</button>
+      <button class="like" ${likeAttr} aria-label="${o.likeLabel}">♡</button></div>`;
+  cell.innerHTML = `<article data-testid="tweet" role="article" tabindex="-1">
+    <div data-testid="User-Name"><a href="/${o.user}"><span>${o.name}</span></a> <a href="/${o.user}"><span>@${o.user}</span></a></div>
+    <div data-testid="tweetText"><span>${o.text}</span></div>${o.quote || ''}
+    <div><a href="/${o.user}/status/${o.id}"><time datetime="2026-09-20T10:00:00.000Z">10:00 AM · Sep 20, 2026</time></a></div>
+    ${bar}</article>`;
+  conv.appendChild(cell);
+  return cell.querySelector('article');
+}
+article({ id: '999', user: 'synth_parent', name: 'Synth Parent', text: 'the parent post', likeLabel: '3 Likes. Like' });
+let target = null;
+if (id !== '1008') {
+  target = article({ id, user: 'synth_alice', name: 'Synth Alice', text: 'the target post ' + id,
+    likeTestid: id === '1003' ? 'unlike' : (id === '1004' ? null : 'like'),
+    likeLabel: id === '1003' ? '8 Likes. Liked' : '7 Likes. Like', noBar: id === '1007' });
+}
+article({ id: '1050', user: 'synth_replier', name: 'Synth Replier', text: 'replying and quoting',
+  likeLabel: '1 Like. Like',
+  quote: `<div role="link" tabindex="0"><a href="/synth_alice/status/${id}"><time datetime="2026-09-20T10:00:00.000Z">Sep 20</time></a><div>quoted: the target post</div></div>` });
+
+document.addEventListener('click', (e) => {
+  const like = e.target.closest('button.like');
+  if (like && like.closest('article') === target && id !== '1005') {
+    setTimeout(() => {
+      if (id === '1004') { like.setAttribute('aria-pressed', 'true'); like.setAttribute('aria-label', '8 Likes. Liked'); }
+      else { like.setAttribute('data-testid', 'unlike'); like.setAttribute('aria-label', '8 Likes. Liked'); }
+    }, 150);
+  }
+  if (like && like.closest('article') !== target) window.__wrongLike = (window.__wrongLike || 0) + 1;
+  const reply = e.target.closest('button.reply');
+  if (reply && reply.closest('article') === target) openDialog();
+});
+function openDialog() {
+  const d = document.createElement('div');
+  d.setAttribute('role', 'dialog');
+  d.innerHTML = `<div>Replying to <a href="/synth_alice">@synth_alice</a></div>
+    <div data-testid="tweetTextarea_0" contenteditable="true" role="textbox" aria-label="Post text"></div>
+    <button data-testid="tweetButton" aria-disabled="true">Reply</button>`;
+  document.body.appendChild(d);
+  const box = d.querySelector('[contenteditable]');
+  const btn = d.querySelector('[data-testid=tweetButton]');
+  box.addEventListener('input', () => btn.setAttribute('aria-disabled', box.textContent.trim() ? 'false' : 'true'));
+  btn.addEventListener('click', () => {
+    if (btn.getAttribute('aria-disabled') === 'true') return;
+    window.__replies = (window.__replies || []).concat([box.textContent]);
+    setTimeout(() => {
+      if (id === '1006') { toast('Whoops! You already said that.'); return; }
+      d.remove();
+      toast('Your post was sent. <a href="/synth_alice/status/1101">View</a>');
+    }, 200);
+  });
+}
+function toast(html) {
+  const t = document.createElement('div');
+  t.setAttribute('data-testid', 'toast');
+  t.setAttribute('role', 'alert');
+  t.innerHTML = html;
+  document.body.appendChild(t);
+}
+</script>
+</body></html>

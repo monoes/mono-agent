@@ -1,20 +1,19 @@
 {
   "actionType": "publish_post",
   "platform": "X",
-  "version": "1.0.0",
-  "description": "Publish content (tweet) to X (Twitter)",
+  "version": "2.0.0",
+  "description": "Publish a post (tweet) to X (Twitter), optionally with media; the post is verified to have left the composer",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
-    "supportsRetry": true
+    "supportsRetry": false
   },
   "inputs": {
     "required": [
-      "text"
+      { "name": "text", "type": "string", "description": "Post text" }
     ],
     "optional": [
-      "media",
-      "locationTag"
+      { "name": "media", "type": "list", "description": "Image/video file paths to attach (comma-separated or a list)" }
     ]
   },
   "outputs": {
@@ -23,92 +22,22 @@
   },
   "steps": [
     {
-      "id": "navigate_to_home",
-      "type": "navigate",
-      "url": "https://x.com/home",
-      "waitFor": "page_load",
-      "timeout": 30
-    },
-    {
-      "id": "find_tweet_input",
-      "type": "find_element",
-      "xpath": "//div[@contenteditable='true' and @data-testid='tweetTextarea_0'] | //div[@role='textbox']",
-      "timeout": 15
-    },
-    {
-      "id": "type_tweet",
-      "type": "type",
-      "elementRef": "find_tweet_input",
-      "text": "{{text}}",
-      "humanLike": true
-    },
-    {
-      "id": "check_has_media",
-      "type": "condition",
-      "condition": "media.length > 0",
-      "then": [
-        "find_file_input",
-        "upload_media"
+      "id": "publish_post",
+      "type": "call_bot_method",
+      "methodName": "publish_post",
+      "args": [
+        "{{text}}",
+        "{{media}}"
       ],
-      "else": []
-    },
-    {
-      "id": "find_file_input",
-      "type": "find_element",
-      "xpath": "//input[@type='file']",
-      "timeout": 10
-    },
-    {
-      "id": "upload_media",
-      "type": "upload",
-      "elementRef": "find_file_input",
-      "text": "{{media}}"
-    },
-    {
-      "id": "find_tweet_button",
-      "type": "find_element",
-      "xpath": "//button[@data-testid='tweetButton'] | //button[contains(text(), 'Post')]",
-      "timeout": 10
-    },
-    {
-      "id": "click_tweet",
-      "type": "click",
-      "elementRef": "find_tweet_button",
-      "onSuccess": {
-        "action": "update_progress"
-      }
-    },
-    {
-      "id": "wait_for_x_post_outcome_toast",
-      "type": "wait",
-      "selector": "[data-testid='toast']",
-      "timeout": 10,
+      "variable_name": "postResult",
+      "timeout": 120,
       "onError": {
-        "action": "skip"
+        "action": "mark_failed"
       }
-    },
-    {
-      "id": "extract_x_post_outcome_toast_text",
-      "type": "extract_text",
-      "selector": "[data-testid='toast']",
-      "alternatives": [
-        "[data-testid='toast'] span",
-        "[role='status']"
-      ],
-      "variable_name": "postOutcomeText",
-      "timeout": 5,
-      "onError": {
-        "action": "skip"
-      }
-    },
-    {
-      "id": "log_x_post_outcome_not_verified_beyond_toast",
-      "type": "log",
-      "value": "Post submitted; outcome toast: {{postOutcomeText or 'none shown'}}"
     }
   ],
   "errorHandling": {
-    "globalRetries": 3,
+    "globalRetries": 1,
     "retryDelay": 2000,
     "onFinalFailure": "log_and_continue"
   }
