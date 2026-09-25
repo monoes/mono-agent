@@ -91,6 +91,35 @@ func (ae *ActionExecutor) evalJS(ctx context.Context, expr string, timeout time.
 	return v, nil
 }
 
+// extSafeStop records a safe-mode stop before step (a step type that is a
+// side effect by nature: page_script, download, a non-GET fetch, a call to a
+// writing action) and returns the result that unwinds the run.
+func (ae *ActionExecutor) extSafeStop(step StepDef) (*StepResult, error) {
+	err := ae.stopBeforeSideEffect(step)
+	return &StepResult{Success: false, Abort: true, StepID: step.ID, Error: err}, nil
+}
+
+// extScriptsAllowed reports whether the current package may run page
+// scripts (page_script, http_fetch_in_page): no package → yes; otherwise
+// only when the package says so (fail closed when it cannot).
+func (ae *ActionExecutor) extScriptsAllowed() bool {
+	if ae.pkg == nil {
+		return true
+	}
+	if s, ok := ae.pkg.(interface{ ScriptsAllowed() bool }); ok {
+		return s.ScriptsAllowed()
+	}
+	return false
+}
+
+func scriptsRefused(p PackageContext) string {
+	id := ""
+	if p != nil {
+		id = p.ID()
+	}
+	return fmt.Sprintf("scripts are not allowed for automation %q (allow with: monoagentcli automation trust %s --scripts)", id, id)
+}
+
 // pageError reports a {"__error": "..."} object a page snippet returned.
 func pageError(v interface{}) error {
 	if m, ok := v.(map[string]interface{}); ok {
@@ -108,6 +137,12 @@ func pageError(v interface{}) error {
 func (ae *ActionExecutor) stepPageScript(ctx context.Context, step StepDef) (*StepResult, error) {
 	if ae.pkg == nil {
 		return extFail(step, "page_script needs an automation package")
+	}
+	if !ae.extScriptsAllowed() {
+		return extFail(step, "%s", scriptsRefused(ae.pkg))
+	}
+	if ae.safeMode {
+		return ae.extSafeStop(step)
 	}
 	name := ae.resolver.Resolve(step.Script)
 	if name == "" {
@@ -139,6 +174,10 @@ func (ae *ActionExecutor) stepPageScript(ctx context.Context, step StepDef) (*St
 const maxFetchBody = 10 << 20
 
 func (ae *ActionExecutor) stepHTTPFetchInPage(ctx context.Context, step StepDef) (*StepResult, error) {
+	// A fetch with the page's session is a script capability (§8).
+	if !ae.extScriptsAllowed() {
+		return extFail(step, "%s", scriptsRefused(ae.pkg))
+	}
 	target, err := ae.extAbsURL(step.URL)
 	if err != nil {
 		return extFail(step, "%w", err)
@@ -149,6 +188,10 @@ func (ae *ActionExecutor) stepHTTPFetchInPage(ctx context.Context, step StepDef)
 	method := strings.ToUpper(strings.TrimSpace(step.Method))
 	if method == "" {
 		method = "GET"
+	}
+	readOnly := method == "GET" || method == "HEAD"
+	if ae.safeMode && !readOnly {
+		return ae.extSafeStop(step)
 	}
 	inputs := ae.extResolveInputs(step.Inputs)
 	headers := map[string]string{}
@@ -174,10 +217,21 @@ func (ae *ActionExecutor) stepHTTPFetchInPage(ctx context.Context, step StepDef)
 			headers["Content-Type"] = "application/json"
 		}
 	}
-	opts, _ := jsJSON(map[string]interface{}{"method": method, "headers": headers, "body": body, "credentials": "include"})
+	// Redirects: page JS cannot see a manual redirect's Location (the
+	// browser returns an opaque response), so hops cannot be checked one
+	// by one. A request that carries nothing of ours but the hop host's
+	// own cookies (bodyless GET/HEAD, no custom headers) may follow and is
+	// checked at its final URL; anything with a body or headers must not
+	// be re-sent anywhere, so its redirect fails the step.
+	redirect := "manual"
+	if readOnly && body == nil && len(headers) == 0 {
+		redirect = "follow"
+	}
+	opts, _ := jsJSON(map[string]interface{}{"method": method, "headers": headers, "body": body, "credentials": "include", "redirect": redirect})
 	expr := fmt.Sprintf(`(async () => {
   const o = %s; if (o.body === null) delete o.body;
   const r = await fetch(%s, o);
+  if (r.type === 'opaqueredirect') return {__error: 'the server redirected; redirects are not followed for requests with a body or headers — use the final URL'};
   const headers = {}; r.headers.forEach((v, k) => { headers[k] = v; });
   let text = await r.text();
   if (text.length > %d) return {__error: 'response larger than %d bytes'};
@@ -240,6 +294,9 @@ func (ae *ActionExecutor) stepDownload(ctx context.Context, step StepDef) (*Step
 	if !ae.DownloadsAllowed() {
 		return extFail(step, "downloads are not permitted for this automation")
 	}
+	if ae.safeMode {
+		return ae.extSafeStop(step)
+	}
 	raw := step.URL
 	if raw == "" {
 		if s, ok := step.Value.(string); ok {
@@ -259,7 +316,7 @@ func (ae *ActionExecutor) stepDownload(ctx context.Context, step StepDef) (*Step
 	}
 
 	expr := fmt.Sprintf(`(async () => {
-  const r = await fetch(%s, {credentials: 'include'});
+  const r = await fetch(%s, {credentials: 'include', redirect: 'follow'});
   if (!r.ok) return {__error: 'HTTP ' + r.status};
   const buf = await r.arrayBuffer();
   if (buf.byteLength > %d) return {__error: 'file larger than %d bytes'};

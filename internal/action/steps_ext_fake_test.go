@@ -129,6 +129,7 @@ type extPkg struct {
 	scripts   map[string]string
 	actions   map[string]*ActionDef
 	selectors map[string]*SelectorEntry
+	noScripts bool               // ScriptsAllowed() == false (an untrusted package)
 	other     map[string]*extPkg // "<automation>" → package, for "x.y" refs
 }
 
@@ -136,6 +137,8 @@ func (p *extPkg) ID() string               { return p.id }
 func (p *extPkg) StartURL() string         { return "" }
 func (p *extPkg) Domains() []string        { return p.domains }
 func (p *extPkg) PermittedSteps() []string { return nil }
+func (p *extPkg) ScriptsAllowed() bool     { return !p.noScripts }
+
 func (p *extPkg) Selector(key string) (*SelectorEntry, bool) {
 	e, ok := p.selectors[key]
 	return e, ok

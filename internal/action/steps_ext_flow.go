@@ -94,6 +94,9 @@ func (ae *ActionExecutor) stepCallAction(ctx context.Context, step StepDef) (*St
 	if pctx == nil {
 		pctx = ae.pkg
 	}
+	if ae.safeMode && sideEffectAtLeastWrite(def.SideEffects) {
+		return ae.extSafeStop(step)
+	}
 	if issues := Validate(def, pctx); HasErrors(issues) {
 		return extFail(step, "action %q does not validate: %s", ref, issueSummary(issues))
 	}
@@ -170,6 +173,17 @@ func (ae *ActionExecutor) runActionBody(ctx context.Context, def *ActionDef) err
 	return nil
 }
 
+// sideEffectAtLeastWrite reports whether an action's declared sideEffects
+// is write or stronger. An unknown value counts as writing (fail closed);
+// an undeclared one does not — its flagged steps still stop safe mode.
+func sideEffectAtLeastWrite(level string) bool {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "", "none", "read":
+		return false
+	}
+	return true
+}
+
 func issueSummary(issues []Issue) string {
 	var parts []string
 	for _, i := range issues {
@@ -184,6 +198,9 @@ func issueSummary(issues []Issue) string {
 // for_each
 // ---------------------------------------------------------------------------
 
+// maxForEachItems caps one for_each run when the step sets no batchSize.
+const maxForEachItems = 10000
+
 func (ae *ActionExecutor) stepForEach(ctx context.Context, step StepDef) (*StepResult, error) {
 	raw := ae.extResolve(step.Items)
 	if raw == nil {
@@ -194,8 +211,13 @@ func (ae *ActionExecutor) stepForEach(ctx context.Context, step StepDef) (*StepR
 	if !ok {
 		return extFail(step, "items %q resolved to %T (%v), which cannot be iterated — expected an array", step.Items, raw, truncateForError(raw))
 	}
-	if step.BatchSize > 0 && len(items) > step.BatchSize {
-		items = items[:step.BatchSize]
+	limit := maxForEachItems
+	if step.BatchSize > 0 {
+		limit = step.BatchSize
+	}
+	if len(items) > limit {
+		ae.logger.Warn().Str("stepID", step.ID).Int("items", len(items)).Int("cap", limit).Msg("for_each items capped")
+		items = items[:limit]
 	}
 	as := step.As
 	if as == "" {
