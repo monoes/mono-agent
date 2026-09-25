@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Activity | LinkedIn</title>
+<!-- SYNTHETIC fixture: classic (Ember) posts list, as on a member's
+     recent-activity page, a company's posts page and content search. Posts
+     carry their URN in data-urn; one is a reshare with a nested inner post;
+     "Show more results" appends two more. Invented content. -->
+<style> body { font: 14px sans-serif; } .post { min-height: 120px; border-bottom: 1px solid #ddd; } </style>
+</head>
+<body>
+<header id="global-nav"></header>
+<main>
+  <nav class="org-page-navigation"><a href="/company/example-labs-test/posts/?feedView=all">Posts</a></nav>
+  <div class="scaffold-finite-scroll__content" id="list">
+    <div class="post"><div class="feed-shared-update-v2" role="article" data-urn="urn:li:activity:7300000000000000001">
+      <div class="update-components-actor__container">
+        <a class="update-components-actor__meta-link" href="https://www.linkedin.com/company/example-labs-test/posts"><span class="update-components-actor__title"><span aria-hidden="true">Example Labs</span></span></a>
+        <span class="update-components-actor__sub-description"><span>2d • Edited</span></span>
+      </div>
+      <div class="update-components-text"><span class="break-words">Our Q3 roadmap is live.</span></div>
+      <ul><li><button aria-label="120 reactions"><span class="social-details-social-counts__reactions-count">120</span></button></li>
+      <li><button aria-label="14 comments on Example Labs’s post">14 comments</button></li>
+      <li><button aria-label="6 reposts of Example Labs’s post">6 reposts</button></li></ul>
+    </div></div>
+    <div class="post"><div class="feed-shared-update-v2" role="article" data-urn="urn:li:activity:7300000000000000002">
+      <div class="update-components-actor__container">
+        <a class="update-components-actor__meta-link" href="https://www.linkedin.com/company/example-labs-test/posts"><span class="update-components-actor__title"><span aria-hidden="true">Example Labs</span></span></a>
+        <span class="update-components-actor__sub-description"><span>4d •</span></span>
+      </div>
+      <div class="update-components-text"><span class="break-words">Reposting a great read.</span></div>
+      <div class="feed-shared-update-v2__content">
+        <div class="update-components-mini-update-v2" data-urn="urn:li:activity:7299999999999999999">
+          <div class="update-components-text">The inner post must not be listed separately.</div>
+        </div>
+      </div>
+      <ul><li><button aria-label="1,204 reactions"><span class="social-details-social-counts__reactions-count">1,204</span></button></li></ul>
+      <div class="comments-comments-list"><article class="comments-comment-entity" data-id="urn:li:comment:(activity:7300000000000000002,1)"><a href="https://www.linkedin.com/feed/update/urn:li:activity:7300000000000000555/">a link inside a comment</a></article></div>
+    </div></div>
+    <div class="post"><div class="feed-shared-update-v2" role="article" data-urn="urn:li:ugcPost:7300000000000000003">
+      <div class="update-components-actor__container">
+        <a class="update-components-actor__meta-link" href="https://www.linkedin.com/in/finn-example-test/"><span class="update-components-actor__title"><span aria-hidden="true">Finn Example</span></span></a>
+        <span class="update-components-actor__sub-description"><span>1w •</span></span>
+      </div>
+      <div class="update-components-text"><span class="break-words">A post identified by a ugcPost URN.</span></div>
+    </div></div>
+  </div>
+  <div class="display-flex p5"><button class="scaffold-finite-scroll__load-button artdeco-button artdeco-button--secondary artdeco-button--full" type="button" id="more">Show more results</button></div>
+</main>
+<script>
+document.getElementById('more').addEventListener('click', (e) => {
+  const list = document.getElementById('list');
+  for (const n of [4, 5]) {
+    list.insertAdjacentHTML('beforeend', '<div class="post"><div class="feed-shared-update-v2" role="article" data-urn="urn:li:activity:730000000000000000' + n + '"><div class="update-components-actor__container"><a class="update-components-actor__meta-link" href="https://www.linkedin.com/company/example-labs-test/posts"><span class="update-components-actor__title"><span aria-hidden="true">Example Labs</span></span></a><span class="update-components-actor__sub-description"><span>' + n + 'w •</span></span></div><div class="update-components-text"><span class="break-words">Older post ' + n + '.</span></div></div></div>');
+  }
+  e.target.parentElement.remove();
+});
+</script>
+</body>
+</html>

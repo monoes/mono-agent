@@ -51,7 +51,7 @@
       "variable_name": "comments",
       "timeout": 120,
       "onError": {
-        "action": "skip"
+        "action": "mark_failed"
       }
     },
     {
@@ -83,8 +83,7 @@
       "id": "process_posts",
       "iterator": "selectedListItems",
       "indexVar": "reachedIndex",
-      "steps": ["t1_list_comments", "save_comments", "store_count", "wait", "log_success"],
-      "onComplete": "update_action_state"
+      "steps": ["t1_list_comments", "save_comments", "store_count", "wait", "log_success"]
     }
   ],
   "errorHandling": {

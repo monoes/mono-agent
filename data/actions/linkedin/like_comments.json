@@ -40,11 +40,11 @@
       "id": "t1_like_comment",
       "type": "call_bot_method",
       "methodName": "like_comment",
-      "args": ["{{postUrl}}", "{{item.id or item}}"],
+      "args": ["{{postUrl}}", "{{item.id or item.url or item}}"],
       "variable_name": "likeResult",
-      "timeout": 20,
+      "timeout": 60,
       "onError": {
-        "action": "skip"
+        "action": "mark_failed"
       }
     },
     {
@@ -56,7 +56,7 @@
     {
       "id": "log",
       "type": "log",
-      "value": "Liked comment: {{item.id or item}}"
+      "value": "Liked comment: {{item.id or item.url or item}}"
     }
   ],
   "loops": [
@@ -64,8 +64,7 @@
       "id": "process_comments",
       "iterator": "selectedListItems",
       "indexVar": "reachedIndex",
-      "steps": ["t1_like_comment", "wait", "log"],
-      "onComplete": "update_action_state"
+      "steps": ["t1_like_comment", "wait", "log"]
     }
   ],
   "errorHandling": {

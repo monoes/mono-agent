@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Feed | LinkedIn</title>
+<!-- SYNTHETIC fixture: the feed's share box. "Start a post" (server-driven
+     markup: a div[aria-label] inside a role=button) opens a share dialog with
+     a Quill editor, media upload and a Post button that stays disabled until
+     there is text. Decoy "Post" controls sit outside the dialog. Posting
+     closes the dialog, shows a toast and prepends the post.
+     ?broken=post makes Post do nothing. Invented content. -->
+<style>
+  body { font: 14px sans-serif; }
+  button, [role="button"] { min-width: 40px; min-height: 24px; margin: 2px; display: inline-block; }
+  .ql-editor { min-height: 60px; border: 1px solid #999; }
+</style>
+</head>
+<body>
+<div data-testid="primary-nav"></div>
+<main>
+  <div role="tablist"><button role="tab" id="decoy-tab">Post</button><button role="tab">Article</button></div>
+  <div role="list" data-testid="mainFeed" id="feed">
+    <div role="listitem">
+      <div role="button" tabindex="0" id="start"><div aria-label="Start a post"><p>Start a post</p></div></div>
+      <div role="button" tabindex="0"><p>Photo</p></div>
+    </div>
+    <div role="listitem"><p><span data-testid="expandable-text-box">Somebody else's older post.</span></p><button aria-label="Post options" id="decoy-opt">Post</button></div>
+  </div>
+</main>
+<div id="artdeco-toasts"></div>
+<div id="modal-outlet"></div>
+<script>
+(function () {
+  const q = new URLSearchParams(location.search);
+  const beacon = (path, body) => { try { fetch('https://www.linkedin.com/voyager/api/' + path, { method: 'POST', body: JSON.stringify(body) }); } catch (e) {} };
+  document.getElementById('decoy-tab').addEventListener('click', () => beacon('decoy', {}));
+  document.getElementById('decoy-opt').addEventListener('click', () => beacon('decoy', {}));
+  let files = [];
+  document.getElementById('start').addEventListener('click', () => {
+    if (document.querySelector('[role="dialog"]')) return;
+    const d = document.createElement('div');
+    d.setAttribute('role', 'dialog');
+    d.className = 'share-box';
+    d.innerHTML = '<h2>Create a post</h2><div class="share-creation-state__text-editor"><div class="ql-editor ql-blank" contenteditable="true" role="textbox" aria-label="Text editor for creating content"><p><br></p></div></div>' +
+      '<div class="media-count"></div>' +
+      '<button aria-label="Add media" class="share-promoted-detour-button">Media</button>' +
+      '<button aria-label="Schedule post" class="share-actions__scheduled-post-btn">Clock</button>' +
+      '<button class="share-actions__primary-action artdeco-button" disabled>Post</button>';
+    document.getElementById('modal-outlet').appendChild(d);
+    const ed = d.querySelector('.ql-editor');
+    const post = d.querySelector('.share-actions__primary-action');
+    ed.addEventListener('input', () => { post.disabled = ed.innerText.trim() === ''; });
+    d.querySelector('[aria-label="Add media"]').addEventListener('click', () => {
+      const m = document.createElement('div');
+      m.setAttribute('role', 'dialog');
+      m.className = 'media-editor';
+      m.innerHTML = '<h2>Editor</h2><input type="file" multiple><button class="artdeco-button" disabled>Next</button>';
+      document.body.appendChild(m);
+      d.style.display = 'none';
+      const inp = m.querySelector('input'), next = m.querySelector('button');
+      inp.addEventListener('change', () => { files = Array.from(inp.files).map((f) => f.name); next.disabled = files.length === 0; });
+      next.addEventListener('click', () => { m.remove(); d.style.display = ''; d.querySelector('.media-count').textContent = files.length + ' media'; });
+    });
+    post.addEventListener('click', () => {
+      if (q.get('broken') === 'post') return;
+      const text = ed.innerText.trim();
+      d.remove();
+      const item = document.createElement('div');
+      item.setAttribute('role', 'listitem');
+      item.innerHTML = '<a href="https://www.linkedin.com/feed/update/urn:li:activity:7400000000000000001/">now</a><p><span data-testid="expandable-text-box"></span></p>';
+      item.querySelector('span').textContent = text;
+      document.getElementById('feed').children[0].after(item);
+      document.getElementById('artdeco-toasts').innerHTML = '<div class="artdeco-toast-item" role="alert">Post successful. <a href="https://www.linkedin.com/feed/update/urn:li:activity:7400000000000000001/">View post</a></div>';
+      beacon('shares/create', { text, media: files });
+    });
+  });
+})();
+</script>
+</body>
+</html>

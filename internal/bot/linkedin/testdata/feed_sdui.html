@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Feed | LinkedIn</title>
+<!-- SYNTHETIC fixture: the server-driven (SDUI) feed markup — hashed class
+     names, componentkey attributes, posts only identified by permalinks,
+     reaction buttons labelled "Reaction button state: …". Invented content.
+     ?single=1 keeps only the first post (a single-post page). -->
+<style>
+  body { font: 14px sans-serif; }
+  button { min-width: 40px; min-height: 24px; margin: 2px; }
+  [role="toolbar"] { display: none; }
+  [role="toolbar"].open { display: flex; }
+</style>
+</head>
+<body>
+<div data-testid="primary-nav"><a aria-label="Messaging, 0 new notifications" href="https://www.linkedin.com/messaging/">Messaging</a></div>
+<main>
+<div role="list" data-testid="mainFeed" componentkey="container-update-list_mainFeed-lazy-container">
+  <div role="listitem" componentkey="update-card-focusAAA1FeedType_MAIN_FEED_RELEVANCE" class="x9f1a2">
+    <h2>Feed post</h2>
+    <a componentkey="c-actor-1" href="https://www.linkedin.com/in/dana-fictive-test/"><div aria-label="Dana Fictive Verified Profile 2nd"><p>Dana Fictive</p></div></a>
+    <p>Product manager at Example Labs</p>
+    <a href="https://www.linkedin.com/feed/update/urn:li:activity:7200000000000000001/"><p>5h •</p></a>
+    <p componentkey="c-text-1"><span data-testid="expandable-text-box">Five lessons from shipping our first offline-first app.</span></p>
+    <div role="button"><p>12 reactions</p></div>
+    <div role="button"><p>3 comments</p></div>
+    <div class="x71bd">
+      <span><span><button id="like-1" aria-label="Reaction button state: no reaction" componentkey="c-like-1" type="button"><span>Like</span></button></span></span>
+      <button id="menu-1" aria-label="Open reactions menu" aria-expanded="false" type="button"></button>
+      <div role="toolbar" id="toolbar-1">
+        <button aria-label="Like">L</button><button aria-label="Celebrate">C</button><button aria-label="Support">S</button>
+        <button aria-label="Love">V</button><button aria-label="Insightful">I</button><button aria-label="Funny">F</button>
+      </div>
+      <button componentkey="c-comment-1" type="button"><span>Comment</span></button>
+      <button aria-expanded="false" type="button"><span>Repost</span></button>
+    </div>
+    <div data-testid="AAA1-commentList">
+      <a href="https://www.linkedin.com/in/eli-sample-test/">Eli Sample</a>
+      <span data-testid="expandable-text-box">Great write-up!</span>
+      <button aria-label="Reaction button state: no reaction" type="button">Like</button>
+      <button aria-label="Open reactions menu" aria-expanded="false" type="button"></button>
+      <a href="https://www.linkedin.com/feed/update/urn:li:activity:7200000000000000001?commentUrn=urn%3Ali%3Acomment%3A%28activity%3A7200000000000000001%2C7200000000000000077%29">2h</a>
+    </div>
+  </div>
+  <div role="listitem" componentkey="update-card-focusBBB2FeedType_MAIN_FEED_RELEVANCE" class="x9f1a2" id="second">
+    <h2>Feed post</h2>
+    <a href="https://www.linkedin.com/company/example-labs-test/"><div aria-label="Example Labs"><p>Example Labs</p></div></a>
+    <a href="https://www.linkedin.com/feed/update/urn:li:activity:7200000000000000002/"><p>1d •</p></a>
+    <p><span data-testid="expandable-text-box">We are hiring two backend engineers.</span></p>
+    <span><button aria-label="Reaction button state: Like" type="button"><span>Like</span></button></span>
+    <button aria-label="Open reactions menu" aria-expanded="false" type="button"></button>
+  </div>
+</div>
+</main>
+<script>
+(function () {
+  const q = new URLSearchParams(location.search);
+  if (q.get('single') === '1') document.getElementById('second').remove();
+  const post = (body) => { try { fetch('https://www.linkedin.com/voyager/api/reactions?action=create', { method: 'POST', body: JSON.stringify(body) }); } catch (e) {} };
+  const like = document.getElementById('like-1');
+  const tb = document.getElementById('toolbar-1');
+  document.getElementById('menu-1').addEventListener('click', () => tb.classList.add('open'));
+  like.addEventListener('click', () => {
+    if (like.getAttribute('aria-label') !== 'Reaction button state: no reaction') return;
+    like.setAttribute('aria-label', 'Reaction button state: Like');
+    post({ target: 'post-1', type: 'LIKE' });
+  });
+  tb.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+    const r = b.getAttribute('aria-label');
+    like.setAttribute('aria-label', 'Reaction button state: ' + r);
+    tb.classList.remove('open');
+    post({ target: 'post-1', type: r.toUpperCase() });
+  }));
+})();
+</script>
+</body>
+</html>

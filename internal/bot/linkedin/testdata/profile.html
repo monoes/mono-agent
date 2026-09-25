@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Profile | LinkedIn</title>
+<!-- SYNTHETIC fixture: member profiles (classic top card), keyed by the
+     /in/<slug>/ path. Every person is invented.
+       ada-first-test   1st degree: a Message button; ?otherOpen=1 also has
+                        another conversation open in the overlay
+       bo-third-test    3rd degree: Connect, Message only under More; the
+                        conversation opens inside a shadow root (#interop-outlet)
+       cy-closed-test   Connect and More (no Message anywhere)
+       dee-link-test    Message is a link to the full-page composer
+     ?broken=send makes Send do nothing. Writes beacon to /voyager/api/. -->
+<style>
+  body { font: 14px sans-serif; }
+  button, [role="menuitem"] { min-width: 40px; min-height: 24px; margin: 2px; display: inline-block; }
+  .artdeco-dropdown__content { display: none; border: 1px solid #ccc; }
+  .artdeco-dropdown__content.open { display: block; }
+  .msg-form__contenteditable { min-height: 40px; border: 1px solid #999; }
+  .msg-overlay-conversation-bubble { border: 1px solid #333; margin: 4px; width: 300px; }
+</style>
+</head>
+<body>
+<header id="global-nav" class="global-nav"><nav aria-label="Primary Navigation"><a aria-label="Messaging, 0 new notifications" href="https://www.linkedin.com/messaging/">Messaging</a></nav></header>
+<main class="scaffold-layout__main">
+  <section class="pv-top-card artdeco-card" id="card">
+    <img class="pv-top-card-profile-picture__image" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" width="40" height="40" alt="">
+    <h1 class="text-heading-xlarge" id="name"></h1>
+    <div class="text-body-medium break-words" id="headline"></div>
+    <span class="text-body-small inline t-black--light break-words" id="loc"></span>
+    <span class="dist-value">· <span id="deg"></span></span>
+    <ul><li class="text-body-small"><span class="t-bold">500+</span> connections</li></ul>
+    <div class="pvs-profile-actions" id="actions"></div>
+  </section>
+  <section class="artdeco-card">
+    <div id="about"></div>
+    <div class="display-flex"><div class="inline-show-more-text"><span aria-hidden="true" id="about-text"></span></div></div>
+  </section>
+  <section class="artdeco-card"><p>1,234 followers</p></section>
+  <aside class="scaffold-layout__aside">
+    <h2>People also viewed</h2>
+    <button aria-label="Message Zed Sidebar" id="decoy">Message</button>
+    <button aria-label="Invite Zed Sidebar to connect">Connect</button>
+  </aside>
+</main>
+<div id="msg-overlay" class="msg-overlay-container"></div>
+<div id="interop-outlet" data-testid="interop-shadowdom"></div>
+<script>
+(function () {
+  const q = new URLSearchParams(location.search);
+  const slug = (location.pathname.match(/\/in\/([^/]+)/) || [])[1] || '';
+  const people = {
+    'ada-first-test': { name: 'Ada First', headline: 'Robotics engineer at Example Works', loc: 'Lisbon, Portugal', deg: '1st', mode: 'button' },
+    'bo-third-test': { name: 'Bo Third', headline: 'Chef', loc: 'Oslo, Norway', deg: '3rd+', mode: 'more-shadow' },
+    'cy-closed-test': { name: 'Cy Closed', headline: 'Private person', loc: 'Quito, Ecuador', deg: '3rd+', mode: 'none' },
+    'dee-link-test': { name: 'Dee Link', headline: 'Designer', loc: 'Accra, Ghana', deg: '2nd', mode: 'link' },
+  };
+  const p = people[slug];
+  if (!p) { document.getElementById('card').innerHTML = '<h1>Profile not found</h1>'; return; }
+  document.title = p.name + ' | LinkedIn';
+  document.getElementById('name').textContent = p.name;
+  document.getElementById('headline').textContent = p.headline;
+  document.getElementById('loc').textContent = p.loc;
+  document.getElementById('deg').textContent = p.deg;
+  document.getElementById('about-text').textContent = 'About ' + p.name + ': builds things.';
+  const beacon = (path, body) => { try { fetch('https://www.linkedin.com/voyager/api/' + path, { method: 'POST', body: JSON.stringify(body) }); } catch (e) {} };
+  const actions = document.getElementById('actions');
+  const connect = '<button class="artdeco-button" aria-label="Invite ' + p.name + ' to connect" data-act="connect"><span>Connect</span></button>';
+  const more = (items) => '<div class="artdeco-dropdown"><button class="artdeco-dropdown__trigger artdeco-button" aria-label="More actions" data-act="more"><span>More</span></button>' +
+    '<div class="artdeco-dropdown__content" role="menu">' + items + '</div></div>';
+  if (p.mode === 'button') {
+    actions.innerHTML = '<button class="artdeco-button pvs-profile-actions__action" aria-label="Message ' + p.name + '" data-act="message"><span>Message</span></button>' +
+      more('<div role="menuitem" class="artdeco-dropdown__item" aria-label="Remove your connection to ' + p.name + '" data-act="remove">Remove connection</div>');
+  } else if (p.mode === 'more-shadow') {
+    actions.innerHTML = connect + more('<div role="menuitem" class="artdeco-dropdown__item" aria-label="Message ' + p.name + '" data-act="message">Message</div>' +
+      '<div role="menuitem" class="artdeco-dropdown__item" aria-label="Report or block" data-act="report">Report / Block</div>');
+  } else if (p.mode === 'none') {
+    actions.innerHTML = connect + more('<div role="menuitem" class="artdeco-dropdown__item" aria-label="Save to PDF" data-act="pdf">Save to PDF</div>' +
+      '<div role="menuitem" class="artdeco-dropdown__item" aria-label="Report or block" data-act="report">Report / Block</div>');
+  } else if (p.mode === 'link') {
+    actions.innerHTML = '<a class="artdeco-button" href="https://www.linkedin.com/messaging/compose/?recipient=' + slug + '">Message</a>' +
+      '<button class="artdeco-button" aria-label="Follow ' + p.name + '" data-act="follow"><span>Follow</span></button>';
+  }
+
+  const openConversation = (name, root) => {
+    const bubble = document.createElement('div');
+    bubble.className = 'msg-overlay-conversation-bubble';
+    bubble.innerHTML = '<header><h2 class="msg-overlay-bubble-header__title"></h2></header><ul class="msg-s-message-list"></ul>' +
+      '<form class="msg-form"><div class="msg-form__msg-content-container"><div class="msg-form__contenteditable" contenteditable="true" role="textbox" aria-label="Write a message…"><p><br></p></div></div>' +
+      '<button class="msg-form__send-button artdeco-button" type="submit" disabled>Send</button></form>';
+    bubble.querySelector('h2').textContent = name;
+    root.appendChild(bubble);
+    const ed = bubble.querySelector('.msg-form__contenteditable');
+    const send = bubble.querySelector('.msg-form__send-button');
+    ed.addEventListener('input', () => { send.disabled = ed.innerText.trim() === ''; });
+    bubble.querySelector('form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (q.get('broken') === 'send') return;
+      const text = ed.innerText.trim();
+      if (!text) return;
+      const li = document.createElement('li');
+      li.innerHTML = '<p class="msg-s-event-listitem__body"></p>';
+      li.querySelector('p').textContent = text;
+      bubble.querySelector('.msg-s-message-list').appendChild(li);
+      ed.innerHTML = '<p><br></p>';
+      send.disabled = true;
+      beacon('messaging/send', { to: name, text });
+    });
+    return ed;
+  };
+  if (q.get('otherOpen') === '1') openConversation('Otto Other', document.getElementById('msg-overlay'));
+
+  document.addEventListener('click', (e) => {
+    const el = e.target.closest('[data-act]');
+    if (!el) return;
+    const act = el.getAttribute('data-act');
+    if (act === 'more') { el.parentElement.querySelector('.artdeco-dropdown__content').classList.toggle('open'); return; }
+    if (act === 'connect') { beacon('growth/invite', { to: slug }); el.querySelector('span').textContent = 'Pending'; return; }
+    if (act === 'follow' || act === 'remove' || act === 'report' || act === 'pdf') { beacon('other/' + act, { to: slug }); return; }
+    if (act === 'message') {
+      document.querySelectorAll('.artdeco-dropdown__content').forEach((d) => d.classList.remove('open'));
+      let root = document.getElementById('msg-overlay');
+      if (p.mode === 'more-shadow') {
+        const host = document.getElementById('interop-outlet');
+        root = host.shadowRoot || host.attachShadow({ mode: 'open' });
+      }
+      setTimeout(() => { const ed = openConversation(p.name, root); ed.focus(); }, 150);
+    }
+  });
+  document.getElementById('decoy').addEventListener('click', () => beacon('growth/decoy', {}));
+})();
+</script>
+</body>
+</html>
