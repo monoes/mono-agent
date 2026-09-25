@@ -880,6 +880,11 @@ async function typeCDP({ tabId, text, elementId, tabCount }) {
   const target = { tabId };
   await ensureDebuggerAttached(target, tabId);
 
+  // A named element is typed into exactly: focused, checked, read back.
+  if (elementId) return typeIntoElement(target, tabId, elementId, text);
+
+  // No element named: the contenteditable heuristic below (built for
+  // caption boxes) finds a large editable to type into.
   // Strategy: use CDP to find the contenteditable element, focus it via
   // DOM.focus, then insert text via Input.insertText.
 
@@ -947,6 +952,66 @@ async function typeCDP({ tabId, text, elementId, tabCount }) {
   });
 
   return { typed: true, length: text.length };
+}
+
+// Runs `func(elementId)` in the top frame's content-script world, where
+// content.js keeps its element registry (getElement is a global there).
+async function inContentWorld(tabId, elementId, func) {
+  const [res] = await chrome.scripting.executeScript({ target: { tabId }, func, args: [elementId] });
+  const out = res && res.result;
+  if (!out) throw new Error(`Element ${elementId} could not be reached in the page`);
+  if (out.error) throw new Error(out.error);
+  return out;
+}
+
+/**
+ * typeIntoElement types `text` into the element content.js registered as
+ * `elementId`, and proves it:
+ *   1. scroll it into view and focus it;
+ *   2. if focus did not take (a framework swallowing focus()), click the
+ *      centre of its box through CDP, as a person would;
+ *   3. refuse to type unless document.activeElement is it (or inside it);
+ *   4. Input.insertText, then read the value back and fail unless it
+ *      contains the text -- "typed" must mean the text is in the field.
+ */
+async function typeIntoElement(target, tabId, elementId, text) {
+  const focus = (id) => {
+    const el = typeof getElement === "function" ? getElement(id) : null;
+    if (!el) return { error: `Element ${id} no longer exists in DOM` };
+    el.scrollIntoView({ block: "center", inline: "center" });
+    try {
+      el.focus({ preventScroll: true });
+    } catch {
+      // not focusable this way; the click below tries
+    }
+    const a = document.activeElement;
+    const r = el.getBoundingClientRect();
+    return { focused: !!a && (a === el || el.contains(a)), x: r.x + r.width / 2, y: r.y + r.height / 2 };
+  };
+  const readBack = (id) => {
+    const el = typeof getElement === "function" ? getElement(id) : null;
+    if (!el) return { error: `Element ${id} no longer exists in DOM` };
+    const a = document.activeElement;
+    const field = el.matches && el.matches("input,textarea") ? el : a && el.contains(a) && a.matches("input,textarea") ? a : null;
+    const value = field ? field.value : el.isContentEditable || (a && el.contains(a)) ? el.innerText || el.textContent || "" : el.textContent || "";
+    return { value: String(value) };
+  };
+
+  let state = await inContentWorld(tabId, elementId, focus);
+  if (!state.focused) {
+    for (const type of ["mousePressed", "mouseReleased"]) {
+      await debuggerSend(target, tabId, "Input.dispatchMouseEvent", { type, x: state.x, y: state.y, button: "left", clickCount: 1 });
+    }
+    state = await inContentWorld(tabId, elementId, focus);
+    if (!state.focused) throw new Error(`type_cdp: element ${elementId} could not be focused`);
+  }
+  await debuggerSend(target, tabId, "Input.insertText", { text });
+  const { value } = await inContentWorld(tabId, elementId, readBack);
+  const norm = (v) => String(v).replace(/[\s\u00a0]+/g, " ").trim();
+  if (!norm(value).includes(norm(text))) {
+    throw new Error(`type_cdp: the text did not land in element ${elementId}`);
+  }
+  return { typed: true, length: text.length, value };
 }
 
 // Evaluate JS via CDP Runtime.evaluate — bypasses page CSP completely.
