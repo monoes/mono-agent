@@ -25,14 +25,18 @@
     for (let i = 0; i < n && shown < total; i++, shown++) {
       const id = String(7300000000000000000n + BigInt(shown + 1));
       const user = 'fake_maker_' + (shown % 5);
-      const d = document.createElement('div');
-      d.innerHTML = '<div data-e2e="search_video-item"><a href="https://www.tiktok.com/@' + user + '/video/' + id + '?is_from_webapp=1"><img alt="clip" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></a></div>' +
-        '<div data-e2e="search-card-desc"><span data-e2e="search-card-video-caption">Synthetic ' + q + ' clip ' + (shown + 1) + '</span></div>' +
-        '<p data-e2e="search-card-user-unique-id">' + user + '</p>';
-      grid.appendChild(d.firstChild);
-      // caption and author live next to the item in real markup; keep them in the card here
-      grid.lastChild.appendChild(d.firstChild);
-      grid.lastChild.appendChild(d.firstChild);
+      const cap = 'Synthetic ' + q + ' clip ' + (shown + 1);
+      // As on tiktok.com: the result card holds only the thumbnail link
+      // (whose alt appends "created by <name> with <sound>" to the caption);
+      // caption and author are siblings in the wrapper around the card.
+      // ?q=altonly renders no caption element, leaving only the alt.
+      const w = document.createElement('div');
+      w.className = 'css-2-DivItemContainerForSearch';
+      w.innerHTML = '<div data-e2e="search_video-item"><a href="https://www.tiktok.com/@' + user + '/video/' + id + '?is_from_webapp=1"><img alt="' + cap + ' created by Fake Maker with Fake Maker\'s original sound" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></a></div>' +
+        '<div data-e2e="search-card-desc">' +
+          (q === 'altonly' ? '' : '<div data-e2e="search-card-video-caption"><span data-e2e="new-desc-span">' + cap + '</span></div>') +
+          '<div data-e2e="search-card-info-container"><p data-e2e="search-card-user-unique-id">' + user + '</p></div></div>';
+      grid.appendChild(w);
     }
   };
   add(8);

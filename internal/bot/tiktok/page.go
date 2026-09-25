@@ -129,6 +129,16 @@ const pressedOf = (e) => {
 };
 const disabledOf = (e) => !!e && (e.disabled === true || e.getAttribute('aria-disabled') === 'true' || e.hasAttribute('disabled'));
 const textOf = (e) => !e ? '' : norm(/^(INPUT|TEXTAREA)$/.test(e.tagName) ? e.value : (e.innerText || e.textContent));
+// altCaption turns a video thumbnail's alt text into its caption: TikTok
+// writes the alt as "<caption> created by <name> with <sound>", so the part
+// from the last " created by " (followed by a " with ") on is dropped. An alt
+// without that suffix is returned as is. Only the English wording is known.
+const altCaption = (alt) => {
+  const s = norm(alt), i = s.toLowerCase().lastIndexOf(' created by ');
+  if (i < 0 && /^created by .+ with /i.test(s)) return '';
+  if (i < 0 || s.toLowerCase().indexOf(' with ', i + 12) < 0) return s;
+  return s.slice(0, i).trim();
+};
 const userFromHref = (h) => { const m = (h || '').match(/\/@([^/?#]+)/); return m ? decodeURIComponent(m[1]) : ''; };
 // Comments: TikTok renders either explicit comment-item containers or
 // (current layout) a comment-level-1 text node whose nearest ancestor holding
@@ -146,31 +156,92 @@ const commentItems = () => {
       if (a.querySelectorAll('[data-e2e^="comment-level-"]').length > 1) break;
       if (a.querySelector(C_USER) || a.querySelector('a[href*="/@"]')) {
         item = a;
-        if (a.querySelector(C_LIKE)) break;
+        if (a.querySelector(C_LIKE) || a.querySelector(C_LIKE_LOOSE)) break;
       }
     }
     if (item && !out.includes(item)) out.push(item);
   }
   return out;
 };
+// The like control: a known data-e2e first, then (current layout, no
+// data-e2e) a button labelled "like" or a *Like* wrapper. Nothing inside the
+// comment's text, author or time counts.
+const C_LIKE_LOOSE = '[role="button"][aria-label*="like" i],button[aria-label*="like" i],[aria-label*="like" i],[class*="LikeWrapper"],[class*="LikeContainer"],[class*="LikeIcon"]';
+const C_TEXT = '[data-e2e="comment-content"],[data-e2e^="comment-level-"],[data-e2e^="comment-username"],[data-e2e^="comment-time"],[data-e2e^="comment-reply"]';
+const inReplies = (item, e) => { const lv = e.closest('[data-e2e^="comment-level-"]'); return !!lv && item.contains(lv) && lv !== item.querySelector('[data-e2e^="comment-level-"]'); };
+const ownOf = (item, e) => item.contains(e) && !e.closest(C_TEXT) && !inReplies(item, e);
 const commentLike = (item) => {
-  const icon = item.querySelector(C_LIKE);
+  let icon = [...item.querySelectorAll(C_LIKE)].find(e => ownOf(item, e));
+  if (!icon) icon = [...item.querySelectorAll(C_LIKE_LOOSE)].find(e => ownOf(item, e) && !/reply|dislike/i.test(e.getAttribute('aria-label') || ''));
   if (!icon) return null;
   const b = clickable(icon);
   return item.contains(b) ? b : icon;
 };
+// A count as TikTok prints it: 0, 12, 1,204, 3.4K, 1.2M.
+const COUNT = /^\d[\d.,]*\s*[KMB]?$/i;
+const countIn = (root, item) => {
+  if (!root) return '';
+  for (const e of [root, ...root.querySelectorAll('*')]) {
+    if (e.children.length || !ownOf(item, e)) continue;
+    const t = norm(e.innerText || e.textContent);
+    if (COUNT.test(t)) return t;
+  }
+  return '';
+};
+// commentLikes reads a comment's like count: data-e2e="comment-like-count",
+// else the number beside the like control (its button or the *Like*
+// container around it). TikTok prints no number for a comment nobody liked,
+// so a like control without one is "0".
+const commentLikes = (item, like) => {
+  const cnt = item.querySelector('[data-e2e="comment-like-count"]');
+  if (cnt && ownOf(item, cnt)) return norm(cnt.innerText || cnt.textContent);
+  if (!like) return '';
+  for (let a = like; a && a !== item; a = a.parentElement) {
+    const n = countIn(a, item);
+    if (n) return n;
+    if (a !== like && a.parentElement !== item && a.parentElement && a.parentElement.querySelector(C_TEXT)) break;
+  }
+  return '0';
+};
+// hash53 is cyrb53: a stable 53-bit hash rendered as hex.
+const hash53 = (str) => {
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (let i = 0; i < str.length; i++) { const ch = str.charCodeAt(i); h1 = Math.imul(h1 ^ ch, 2654435761); h2 = Math.imul(h2 ^ ch, 1597334677); }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16).padStart(14, '0');
+};
+// commentDomID is the id TikTok puts in the DOM, if any: a data-comment-id /
+// data-cid, or a numeric (comment-id shaped) id attribute on the item or its
+// wrapper.
+const commentDomID = (item) => {
+  for (const e of [item, item.parentElement, ...item.querySelectorAll('[data-comment-id],[data-cid],[id]')]) {
+    if (!e || !e.getAttribute) continue;
+    const v = e.getAttribute('data-comment-id') || e.getAttribute('data-cid') || '';
+    if (v) return v;
+    const id = e.getAttribute('id') || '';
+    if (/^\d{12,}$/.test(id) && (e === item || e === item.parentElement || !inReplies(item, e))) return id;
+  }
+  return '';
+};
+// commentInfo describes a comment. id is TikTok's own when the DOM carries
+// one; otherwise it is derived: "tth-" + a hash of the author's username and
+// the comment text (the time is left out on purpose: TikTok prints it
+// relative, "2d ago", so it changes from day to day). A derived id is stable
+// across runs and the same for one author's identical comments.
 const commentInfo = (item) => {
   const t = item.querySelector('[data-e2e="comment-content"]') || item.querySelector('[data-e2e="comment-level-1"]') || item.querySelector('[data-e2e^="comment-level-"]');
   const u = item.querySelector(C_USER);
   const link = (u && u.closest('a[href*="/@"]')) || item.querySelector('a[href*="/@"]');
   const like = commentLike(item);
-  const cnt = item.querySelector('[data-e2e="comment-like-count"]');
+  const username = userFromHref(link && link.getAttribute('href'));
+  const text = norm(t && (t.innerText || t.textContent));
   return {
-    id: item.getAttribute('data-comment-id') || item.getAttribute('data-cid') || '',
-    username: userFromHref(link && link.getAttribute('href')),
+    id: commentDomID(item) || (text ? 'tth-' + hash53(username.toLowerCase() + '\n' + text) : ''),
+    username,
     displayName: norm(u && (u.innerText || u.textContent)),
-    text: norm(t && (t.innerText || t.textContent)),
-    likes: norm(cnt && (cnt.innerText || cnt.textContent)),
+    text,
+    likes: commentLikes(item, like),
     liked: like ? pressedOf(like) : null,
   };
 };

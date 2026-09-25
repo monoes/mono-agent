@@ -30,6 +30,7 @@ const (
 	vidNoPressed  = "https://www.tiktok.com/@fake_creator/video/7100000000000000007"
 	vidLikeless   = "https://www.tiktok.com/@fake_creator/video/7100000000000000008"
 	vidAmbiguous  = "https://www.tiktok.com/@fake_creator/video/7100000000000000009"
+	vidModern     = "https://www.tiktok.com/@fake_creator/video/7100000000000000010"
 )
 
 func profileURL(h string) string { return "https://www.tiktok.com/@" + h }

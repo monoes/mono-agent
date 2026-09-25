@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -76,7 +77,7 @@ const items = [...document.querySelectorAll('[data-e2e="user-post-item"]')].map(
     url: href,
     id: m ? m[1] : '',
     thumbnail: img ? (img.currentSrc || img.src || '') : '',
-    description: img ? (img.getAttribute('alt') || '') : '',
+    description: img ? altCaption(img.getAttribute('alt')) : '',
     views: norm(views && (views.innerText || views.textContent)),
   };
 }).filter(v => v.url !== '');
@@ -255,27 +256,64 @@ func (b *TikTokBot) ListVideoComments(ctx context.Context, page browser.PageInte
 
 const jsProfile = `
 const txt = (sels) => { for (const s of sels) { const e = document.querySelector(s); if (e && norm(e.innerText || e.textContent)) return norm(e.innerText || e.textContent); } return ''; };
+const titleEl = document.querySelector('[data-e2e="user-title"]');
+const subEl = document.querySelector('[data-e2e="user-subtitle"]');
 const title = txt(['[data-e2e="user-title"]']);
 const subtitle = txt(['[data-e2e="user-subtitle"]']);
 if (!title && !subtitle) return {found: false};
 const img = document.querySelector('img[data-e2e="user-avatar"], [data-e2e="user-avatar"] img');
 const link = document.querySelector('a[data-e2e="user-link"], [data-e2e="user-link"] a, [data-e2e="user-link"]');
+// The verified badge carries no data-e2e or label on the current layout: it
+// is an svg drawn as a #20D5EC circle next to the name/handle.
+const idBox = (() => {
+  const a = titleEl || subEl;
+  for (let p = a && a.parentElement; p && p !== document.body; p = p.parentElement)
+    if ((!titleEl || p.contains(titleEl)) && (!subEl || p.contains(subEl))) return p;
+  return null;
+})();
+const badge = (root) => !!root && [...root.querySelectorAll('svg')].some(v =>
+  [...v.querySelectorAll('circle,path,rect')].some(x => /^#?20d5ec$/i.test(x.getAttribute('fill') || '')) ||
+  /verified/i.test((v.getAttribute('aria-label') || '') + ' ' + ((v.querySelector('title') || {}).textContent || '')));
 return {
   found: true,
-  handle: title,
-  full_name: subtitle,
+  title: title,
+  subtitle: subtitle,
   bio: txt(['[data-e2e="user-bio"]']),
   following_count: txt(['[data-e2e="following-count"]']),
   follower_count: txt(['[data-e2e="followers-count"]']),
   likes_count: txt(['[data-e2e="likes-count"]']),
   profile_picture_url: img ? (img.currentSrc || img.src || '') : '',
   website: link ? (link.getAttribute('href') || norm(link.innerText)) : '',
-  is_verified: !!document.querySelector('[data-e2e="verify-badge"], [data-e2e="user-verified"]'),
+  is_verified: !!document.querySelector('[data-e2e="verify-badge"], [data-e2e="user-verified"]') || badge(idBox),
 };
 `
 
-// GetProfileData scrapes the currently loaded TikTok profile page. On TikTok
-// user-title holds the @handle and user-subtitle the display name.
+// bioPlaceholder is what TikTok shows in user-bio when the account has no
+// bio; it is not the account's bio.
+var bioPlaceholder = regexp.MustCompile(`(?i)^no bio yet\.?$`)
+
+// profileNames splits the profile header into (handle, display name). On
+// tiktok.com user-title is the display name and user-subtitle the @handle.
+// The handle in the URL is authoritative: whichever element spells it is the
+// handle (the subtitle when both do, i.e. the display name equals the
+// handle), the other one the display name.
+func profileNames(urlHandle, title, subtitle string) (handle, fullName string) {
+	same := func(a, b string) bool { return a != "" && normUser(a) == normUser(b) }
+	switch {
+	case urlHandle == "":
+		return strings.TrimPrefix(subtitle, "@"), title
+	case same(subtitle, urlHandle):
+		return strings.TrimPrefix(subtitle, "@"), title
+	case same(title, urlHandle):
+		return strings.TrimPrefix(title, "@"), subtitle
+	default:
+		// Neither element spells the URL's handle (e.g. the account renamed
+		// and TikTok redirected): the layout rule decides.
+		return urlHandle, title
+	}
+}
+
+// GetProfileData scrapes the currently loaded TikTok profile page.
 func (b *TikTokBot) GetProfileData(ctx context.Context, page browser.PageInterface) (map[string]interface{}, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -292,13 +330,22 @@ func (b *TikTokBot) GetProfileData(ctx context.Context, page browser.PageInterfa
 	delete(data, "found")
 	cur, _ := page.GetURL()
 	data["profile_url"] = cur
+	title, _ := data["title"].(string)
+	subtitle, _ := data["subtitle"].(string)
+	delete(data, "title")
+	delete(data, "subtitle")
 	username := b.ExtractUsername(cur)
-	if username == "" {
-		if h, _ := data["handle"].(string); h != "" {
-			username = strings.TrimPrefix(h, "@")
-		}
+	handle, fullName := profileNames(username, title, subtitle)
+	if handle == "" {
+		handle = username
 	}
-	data["username"] = username
+	if username == "" {
+		username = handle
+	}
+	data["handle"], data["full_name"], data["username"] = handle, fullName, username
+	if bio, _ := data["bio"].(string); bioPlaceholder.MatchString(strings.TrimSpace(bio)) {
+		data["bio"] = ""
+	}
 	return data, nil
 }
 
@@ -331,14 +378,23 @@ for (const a of document.querySelectorAll('a[href*="/video/"]')) {
   if (seen.has(href)) continue;
   seen.add(href);
   const m = href.match(/\/video\/(\d+)/);
-  const desc = card.querySelector('[data-e2e="search-card-desc"],[data-e2e="search-card-video-caption"]');
-  const author = card.querySelector('[data-e2e="search-card-user-unique-id"]');
+  // The caption and author sit next to the card, in the wrapper around it
+  // (used only while that wrapper holds this one video).
+  const wrap = card.parentElement && new Set([...card.parentElement.querySelectorAll('a[href*="/video/"]')].map(x => x.href.split('?')[0])).size === 1 ? card.parentElement : card;
+  const pick = (sel) => card.querySelector(sel) || wrap.querySelector(sel);
+  // search-card-desc also holds the author line; only its caption counts.
+  let desc = pick('[data-e2e="search-card-video-caption"]');
+  if (!desc && (desc = pick('[data-e2e="search-card-desc"]'))) {
+    desc = desc.cloneNode(true);
+    desc.querySelectorAll('[data-e2e="search-card-info-container"],[data-e2e*="user"],[data-e2e*="like"],a[href*="/@"]').forEach(e => e.remove());
+  }
+  const author = pick('[data-e2e="search-card-user-unique-id"]');
   const img = card.querySelector('img');
   out.push({
     url: href,
     id: m ? m[1] : '',
     author: norm(author && (author.innerText || author.textContent)) || userFromHref(href),
-    description: norm(desc && (desc.innerText || desc.textContent)) || (img ? img.getAttribute('alt') || '' : ''),
+    description: norm(desc && (desc.innerText || desc.textContent)) || (img ? altCaption(img.getAttribute('alt')) : ''),
     thumbnail: img ? (img.currentSrc || img.src || '') : '',
   });
 }
@@ -387,14 +443,41 @@ func (b *TikTokBot) SearchVideos(ctx context.Context, page browser.PageInterface
 const jsFollowList = `
 const pop = document.querySelector('[data-e2e="follow-info-popup"]') || [...document.querySelectorAll('[role="dialog"]')].find(visible);
 if (!pop) return {open: false, items: []};
+// rowOf is the widest ancestor of a (inside the popup) that still names only
+// this one account: the avatar link, the texts and the follow button.
+const usersIn = (e) => new Set([...e.querySelectorAll('a[href*="/@"]')].map(x => userFromHref(x.getAttribute('href'))).filter(Boolean));
+const rowOf = (a, user) => {
+  let row = a.closest('li,[data-e2e="follow-info-item"]');
+  if (row && pop.contains(row) && usersIn(row).size === 1) return row;
+  row = a;
+  for (let p = a.parentElement; p && p !== pop && pop.contains(p); p = p.parentElement) {
+    const us = usersIn(p);
+    if (us.size !== 1 || !us.has(user)) break;
+    row = p;
+  }
+  return row;
+};
+// A button's label or a relationship word is never a display name.
+const NOT_NAME = /^(follow|following|follow back|friends|remove|message|unfollow|requested)$/i;
+const nickOf = (row, user) => {
+  const hint = row.querySelector('[data-e2e="follow-info-nickname"],[class*="PNickname"],[class*="Nickname"]');
+  if (hint && norm(hint.innerText || hint.textContent)) return norm(hint.innerText || hint.textContent);
+  // Otherwise the first text leaf that is neither the @handle nor a button.
+  const handle = user.toLowerCase();
+  for (const e of row.querySelectorAll('*')) {
+    if (e.children.length || e.closest('button,[role="button"]')) continue;
+    const t = norm(e.innerText || e.textContent);
+    if (!t || NOT_NAME.test(t) || t.replace(/^@/, '').toLowerCase() === handle) continue;
+    return t;
+  }
+  return '';
+};
 const out = [], seen = new Set();
 for (const a of pop.querySelectorAll('a[href*="/@"]')) {
   const user = userFromHref(a.getAttribute('href'));
   if (!user || seen.has(user)) continue;
   seen.add(user);
-  const row = a.closest('li,[data-e2e="follow-info-item"]') || a;
-  const nick = row.querySelector('[data-e2e="follow-info-nickname"]');
-  out.push({ username: user, url: 'https://www.tiktok.com/@' + encodeURIComponent(user), displayName: norm(nick && (nick.innerText || nick.textContent)) });
+  out.push({ username: user, url: 'https://www.tiktok.com/@' + encodeURIComponent(user), displayName: nickOf(rowOf(a, user), user) });
 }
 return {open: true, items: out};
 `

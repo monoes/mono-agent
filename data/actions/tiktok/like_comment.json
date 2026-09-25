@@ -13,7 +13,7 @@
       {
         "name": "selectedListItems",
         "type": "list",
-        "description": "Items with videoUrl plus the comment's text and username (list_video_comments rows work as-is); commentId is used only when TikTok exposes one"
+        "description": "Items with videoUrl plus the comment's text and username (list_video_comments rows work as-is); an id from list_video_comments (TikTok's own, or a derived tth- id) is matched first"
       }
     ]
   },
