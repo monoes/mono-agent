@@ -81,6 +81,9 @@ type VerifyOptions struct {
 	// Inputs override or add to the recorded values (secrets are never
 	// recorded, so a step typing one needs it here).
 	Inputs map[string]any
+	// SecretLookup resolves a secret input from the vault when Inputs does
+	// not supply it (Inputs always win). Nil = no vault.
+	SecretLookup func(name string) (string, bool)
 }
 
 // Verify replays the draft in dir (safe mode unless Full), builds the
@@ -111,9 +114,23 @@ func Verify(ctx context.Context, dir string, opts VerifyOptions) (*VerifyReport,
 	for k, v := range opts.Inputs {
 		inputs[k] = v
 	}
+	secrets := map[string]any{}
+	for k, v := range opts.Inputs {
+		secrets[k] = v
+	}
+	if opts.SecretLookup != nil {
+		for _, in := range flatInputs(def, nil) {
+			if _, given := inputs[in.Name]; given || !in.Secret {
+				continue
+			}
+			if v, ok := opts.SecretLookup(in.Name); ok {
+				inputs[in.Name], secrets[in.Name] = v, v
+			}
+		}
+	}
 	out := opts.Exec(ctx, def, pkg, inputs, !opts.Full, o)
 	rep := BuildReport(def, out, o.obs, pkg)
-	redact(rep, opts.Inputs)
+	redact(rep, secrets)
 	promoted, err := PromoteHealed(dir, o.obs)
 	if err != nil {
 		return rep, err
@@ -267,12 +284,21 @@ func PromoteHealed(dir string, obs []Observation) ([]string, error) {
 // PageExec replays through the normal ActionExecutor on page, running the
 // uninstalled draft definition with ExecuteDef (which validates first).
 func PageExec(page browser.PageInterface, logger zerolog.Logger) ExecFunc {
+	return PageExecWithSecrets(page, logger, nil)
+}
+
+// PageExecWithSecrets is PageExec with a vault lookup for {{secret:x}}
+// templates whose value is not an input (inputs are resolved first).
+func PageExecWithSecrets(page browser.PageInterface, logger zerolog.Logger, lookup func(string) (string, bool)) ExecFunc {
 	return func(ctx context.Context, def *action.ActionDef, pkg action.PackageContext, inputs map[string]any, safe bool, obs action.SelectorObserver) RunOutcome {
 		events := make(chan action.ExecutionEvent, 8192)
 		ae := action.NewActionExecutor(ctx, page, nil, nil, events, nil, logger)
 		ae.SetPackage(pkg)
 		ae.SetSafeMode(safe)
 		ae.SetSelectorObserver(obs)
+		if lookup != nil {
+			ae.SetSecretLookup(lookup)
+		}
 		params := map[string]interface{}{}
 		for k, v := range inputs {
 			params[k] = v
