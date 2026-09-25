@@ -1,9 +1,9 @@
 /**
- * MonoAgent Bridge — "mark as data" for the activity recorder (§8.2)
+ * MonoAgent Bridge -- "mark as data" for the activity recorder (section 8.2)
  *
  * A person shows the recorder what to extract by picking an element. One
- * pick is one value. A second pick on a *similar* element — the price of
- * the next product, the title of the next story — means "all of these",
+ * pick is one value. A second pick on a *similar* element -- the price of
+ * the next product, the title of the next story -- means "all of these",
  * and this file turns the two picks into a list pattern:
  *
  *   container  the nearest common ancestor of the two picks

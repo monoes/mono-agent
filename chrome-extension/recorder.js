@@ -1,5 +1,5 @@
 /**
- * MonoAgent Bridge — the activity recorder, in the page (§8.2)
+ * MonoAgent Bridge -- the activity recorder, in the page (section 8.2)
  *
  * Injected into every frame of ONE tab by recorder_session.js, and only
  * while a recording is running; it is never a declared content script, so
@@ -9,17 +9,17 @@
  *
  * What it records, and what it deliberately does not:
  *
- *   click / dblclick / contextmenu  → click on the nearest actionable ancestor
- *   input / change on a text field  → type, debounced: the FINAL value only,
+ *   click / dblclick / contextmenu  -> click on the nearest actionable ancestor
+ *   input / change on a text field  -> type, debounced: the FINAL value only,
  *                                     never the keystrokes that built it
- *   <select> change                 → select_option
- *   checkbox / radio change         → check (the click itself is dropped)
- *   form submit                     → submit, unless the click or Enter that
+ *   <select> change                 -> select_option
+ *   checkbox / radio change         -> check (the click itself is dropped)
+ *   form submit                     -> submit, unless the click or Enter that
  *                                     caused it was just recorded
- *   Enter / Escape / Tab / shortcuts → press_key; printable keys are dropped
- *   file input change               → upload, file NAMES only
- *   Alt+click, or "Pick data" on    → extract (the click never reaches the page)
- *   scroll                          → not recorded in v1
+ *   Enter / Escape / Tab / shortcuts -> press_key; printable keys are dropped
+ *   file input change               -> upload, file NAMES only
+ *   Alt+click, or "Pick data" on    -> extract (the click never reaches the page)
+ *   scroll                          -> not recorded in v1
  *
  * PRIVACY, before anything leaves the page: password fields, autocomplete
  * cc-* / one-time-code fields, hidden inputs and anything that passes a Luhn
@@ -137,7 +137,7 @@
   }
 
   /**
-   * snippetOf is ≈2KB of outerHTML around the element: the largest ancestor
+   * snippetOf is ~2KB of outerHTML around the element: the largest ancestor
    * that still fits, with scripts dropped and secret values removed.
    */
   function snippetOf(el) {

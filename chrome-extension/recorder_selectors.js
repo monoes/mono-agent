@@ -1,5 +1,5 @@
 /**
- * MonoAgent Bridge — element fingerprints for the activity recorder (§8.2)
+ * MonoAgent Bridge -- element fingerprints for the activity recorder (section 8.2)
  *
  * Every recorded event names the element it happened to, and a recording is
  * only worth replaying if that name still finds the element next month. So
@@ -15,7 +15,7 @@
  *   name attribute, placeholder         form fields
  *   label-based XPath                   "the input labelled Email"
  *   visible text                        buttons and links
- *   structural CSS path                 last resort — breaks on any layout change
+ *   structural CSS path                 last resort -- breaks on any layout change
  *   absolute XPath                      even more so
  *
  * Counting is done through an `env` so node can test the ranking without a
@@ -85,7 +85,7 @@
 
   function cssEscape(s) {
     if (root.CSS && root.CSS.escape) return root.CSS.escape(s);
-    return String(s).replace(/[^a-zA-Z0-9_ -￿-]/g, (ch) => `\\${ch}`).replace(/^(\d)/, "\\3$1 ");
+    return String(s).replace(/[^a-zA-Z0-9_\u00A0-\uFFFF-]/g, (ch) => `\\${ch}`).replace(/^(\d)/, "\\3$1 ");
   }
 
   const cssString = (s) => `"${String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
@@ -98,7 +98,7 @@
     return `concat('${v.split("'").join(`', "'", '`)}')`;
   }
 
-  // ── what the element is ──────────────────────────────────────────
+  // -- what the element is ------------------------------------------
 
   const INPUT_ROLES = {
     button: "button", submit: "button", reset: "button", image: "button",
@@ -197,7 +197,7 @@
     return `/${parts.join("/")}`;
   }
 
-  // ── candidates ───────────────────────────────────────────────────
+  // -- candidates ---------------------------------------------------
 
   /**
    * specsFor lists the candidate selectors for an element, unscored. Each
@@ -251,7 +251,7 @@
   /**
    * scoreOf: stability, scaled down hard when the selector is not unique.
    * A selector that matches nothing (the element is in a shadow root, say)
-   * scores zero — it cannot find anything later either.
+   * scores zero -- it cannot find anything later either.
    */
   function scoreOf(source, count) {
     const base = STABILITY[source] || 0.1;
@@ -338,7 +338,7 @@
     return unique ? unique.value : info.css;
   }
 
-  // ── the live page ────────────────────────────────────────────────
+  // -- the live page ------------------------------------------------
 
   const ROLE_SELECTORS = {
     button: 'button,input[type=button],input[type=submit],input[type=reset],input[type=image],[role~="button"]',
