@@ -109,3 +109,24 @@ func TestBuildReplyURLOrdinaryID(t *testing.T) {
 		t.Fatalf("goto = %q, want item?id=38472619", q.Get("goto"))
 	}
 }
+
+func TestProblemQuotesOnlyTheRefusalSentence(t *testing.T) {
+	cases := []struct{ in, want string }{
+		// HN's real logged-out reply page: refusal line, then the login forms.
+		{"You have to be logged in to reply.\nLogin\nusername:\npassword:\nForgot your password?\nCreate Account", "You have to be logged in to reply."},
+		// Same page read without line breaks (textContent).
+		{"You have to be logged in to submit. Login username: password: Forgot your password? Create Account", "You have to be logged in to submit."},
+		{"Hacker News\nSorry. You're posting too fast. Please slow down. Thanks.", "You're posting too fast."},
+		{"Sorry, we're not able to serve your requests this quickly.", "Sorry, we're not able to serve your requests this quickly."},
+		{"Regular page text", ""},
+	}
+	for _, c := range cases {
+		if got := problem(c.in); got != c.want {
+			t.Errorf("problem(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+	long := "Please log in " + strings.Repeat("x", 400)
+	if got := problem(long); len([]rune(got)) > maxRefusal || !strings.HasPrefix(got, "Please log in") || !strings.HasSuffix(got, "…") {
+		t.Errorf("long refusal not clipped: %q", got)
+	}
+}
