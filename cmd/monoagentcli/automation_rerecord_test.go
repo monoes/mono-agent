@@ -10,6 +10,7 @@ import (
 
 	"github.com/monoes/mono-agent/internal/action"
 	"github.com/monoes/mono-agent/internal/automation"
+	"github.com/monoes/mono-agent/internal/extension"
 	"github.com/monoes/mono-agent/internal/recording"
 )
 
@@ -108,6 +109,9 @@ func TestAutomationRerecordErrors(t *testing.T) {
 		{"no.such.key", `automation acme has no selector "no.such.key"`, nil},
 		{"save.button", "cancelled", errors.New("extension: cancelled")},
 		{"save.button", "timeout", errors.New("pick_element: timeout")},
+		{"save.button", "cancelled", extension.ErrPickCancelled},
+		{"save.button", "timeout", context.DeadlineExceeded},
+		{"save.button", "browser bridge not connected", extension.ErrBridgeNotConnected},
 	} {
 		picker := &fakePicker{err: tc.pickErr}
 		rerecordOpenPicker = func(context.Context, string, bool) (elementPicker, error) { return picker, nil }

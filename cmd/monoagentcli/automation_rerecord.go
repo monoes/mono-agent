@@ -175,11 +175,13 @@ func rerecordSelector(ctx context.Context, reg packageGetter, rep selectorReplac
 	defer picker.Close()
 	fp, pickedURL, err := picker.Pick(ctx, "Click: "+label, timeout)
 	if err != nil {
+		// The contract's error strings; the text match covers the relay
+		// path and test fakes.
 		switch msg := err.Error(); {
-		case strings.Contains(msg, "cancelled"):
-			return nil, errors.New("cancelled")
-		case strings.Contains(msg, "timeout") || errors.Is(err, context.DeadlineExceeded):
-			return nil, errors.New("timeout")
+		case errors.Is(err, extension.ErrPickCancelled) || strings.Contains(msg, "cancelled"):
+			return nil, extension.ErrPickCancelled
+		case errors.Is(err, extension.ErrPickTimeout) || errors.Is(err, context.DeadlineExceeded) || strings.Contains(msg, "timeout"):
+			return nil, extension.ErrPickTimeout
 		}
 		return nil, err
 	}

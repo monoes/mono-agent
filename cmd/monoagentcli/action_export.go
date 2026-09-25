@@ -73,7 +73,7 @@ automation id). When that automation is not installed it is created.`,
 			}
 			c := installConfirmer{yes: yes, interactive: !cfg.JSONOutput && stdinIsTerminal(),
 				in: cmd.InOrStdin(), out: cmd.ErrOrStderr()}
-			res, err := runInstall(automation.InstallOptions{DryRun: dryRun, Source: importSource(args[0]), ReplaceBuiltin: replaceBuiltin}, c, func(o automation.InstallOptions) (*automation.InstallResult, error) {
+			res, err := runInstall(automation.InstallOptions{DryRun: dryRun, Source: actionImportSource(args[0]), ReplaceBuiltin: replaceBuiltin}, c, func(o automation.InstallOptions) (*automation.InstallResult, error) {
 				return addActions(reg, target, src, o)
 			})
 			if err != nil {
@@ -90,9 +90,9 @@ automation id). When that automation is not installed it is created.`,
 	return cmd
 }
 
-// importSource is local for a loose action file (the user's own work) and
+// actionImportSource is local for a loose action file (the user's own work) and
 // imported for a package that came from elsewhere.
-func importSource(src string) string {
+func actionImportSource(src string) string {
 	if strings.EqualFold(filepath.Ext(src), ".json") {
 		return automation.SourceLocal
 	}
