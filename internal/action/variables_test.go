@@ -96,3 +96,27 @@ func TestResolvePathStringItemUrl(t *testing.T) {
 		}
 	}
 }
+
+func TestSecretTemplates(t *testing.T) {
+	ec := NewExecutionContext()
+	ec.SetVariable("password", "hunter2")
+	vr := NewVariableResolver(ec)
+	if got := vr.Resolve("{{secret:password}}"); got != "hunter2" {
+		t.Errorf("input-backed secret = %q", got)
+	}
+	if got := vr.Resolve("{{secret:api_key}}"); got != "" {
+		t.Errorf("no lookup: %q", got)
+	}
+	vr.SetSecretLookup(func(n string) (string, bool) { return "vault-" + n, n == "api_key" })
+	if got := vr.Resolve("{{secret:api_key}}"); got != "vault-api_key" {
+		t.Errorf("vault secret = %q", got)
+	}
+	typed := vr.ResolveStepDef(StepDef{ID: "t", Type: "type", Value: "{{secret:password}}"})
+	if typed.Value != "hunter2" {
+		t.Errorf("type step value = %v", typed.Value)
+	}
+	logged := vr.ResolveStepDef(StepDef{ID: "l", Type: "log", Text: "pw={{secret:password}} user={{password}}"})
+	if logged.Text != "pw=*** user=hunter2" {
+		t.Errorf("log step text = %q", logged.Text)
+	}
+}

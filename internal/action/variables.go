@@ -13,6 +13,39 @@ var templatePattern = regexp.MustCompile(`\{\{([^}]+)\}\}`)
 // action step definitions.
 type VariableResolver struct {
 	context *ExecutionContext
+	// secrets looks up a vault secret for {{secret:<name>}} when no input
+	// variable <name> is set (SetSecretLookup). nil = inputs only.
+	secrets func(name string) (string, bool)
+	// maskSecrets renders {{secret:...}} as "***" (log steps).
+	maskSecrets bool
+}
+
+// secretPrefix marks a template path as a secret: {{secret:<name>}}.
+const secretPrefix = "secret:"
+
+// SetSecretLookup installs the vault lookup used by {{secret:<name>}} when
+// the action has no input variable <name>.
+func (vr *VariableResolver) SetSecretLookup(fn func(name string) (string, bool)) {
+	vr.secrets = fn
+}
+
+// resolveSecret resolves {{secret:<name>}}: the input variable <name> when
+// set (the value a secret-typed input received), else the vault lookup.
+// The value is never logged.
+func (vr *VariableResolver) resolveSecret(name string) interface{} {
+	if vr.maskSecrets {
+		return "***"
+	}
+	name = strings.TrimSpace(name)
+	if v, ok := vr.context.GetVariable(name); ok && v != nil {
+		return v
+	}
+	if vr.secrets != nil {
+		if v, ok := vr.secrets(name); ok {
+			return v
+		}
+	}
+	return nil
 }
 
 // NewVariableResolver creates a resolver bound to the given execution context.
@@ -129,6 +162,9 @@ func (vr *VariableResolver) ResolveValue(value interface{}) interface{} {
 func (vr *VariableResolver) ResolvePath(path string) interface{} {
 	if path == "" {
 		return nil
+	}
+	if name, ok := strings.CutPrefix(path, secretPrefix); ok {
+		return vr.resolveSecret(name)
 	}
 
 	// Support "a or b or c" — return first non-nil, non-empty value.
@@ -362,6 +398,12 @@ func parseArrayAccess(part string) (string, int, bool) {
 // ResolveStepDef creates a deep copy of the given StepDef with all template
 // references resolved to their current values.
 func (vr *VariableResolver) ResolveStepDef(step StepDef) StepDef {
+	if step.Type == "log" && !vr.maskSecrets {
+		// A log line must never carry a secret.
+		masked := *vr
+		masked.maskSecrets = true
+		return masked.ResolveStepDef(step)
+	}
 	resolved := step
 
 	resolved.URL = vr.Resolve(step.URL)
