@@ -13,14 +13,23 @@ import (
 	"github.com/monoes/mono-agent/internal/profiledir"
 )
 
-// Which inboxes List and Find read.
+// Where recordings live (contracts §6, revised).
 //
-// A recording lands where a capture would: the inbox of the profile the
-// extension named, or the default (unprofiled) inbox. The CLI reading them
-// back has no say in where they went, so by default it reads every place one
-// can be — the default inbox plus each profile's inbox under
-// ~/.monoagent/profiles — without needing the database. `--profile` narrows
-// that to one profile (SetProfile); tests point it anywhere (SetInboxes).
+// Recordings are NOT kept in the capture inbox (~/.monomind/inbox): that
+// directory is ingested by monomind into the knowledge brain, and a
+// recording is typed values and the DOM around them. They are capture
+// envelopes all the same, written by the capture Writer, but into a store
+// of their own:
+//
+//	~/.monoagent/recordings/                    no profile named
+//	~/.monoagent/profiles/<id>/recordings/      profile <id>
+//
+// with 0700 directories and 0600 files. By default List and Find read every
+// store (no database needed); `--profile` narrows that to one profile
+// (SetProfile); tests point it anywhere (SetInboxes).
+
+// StoreDirName is a recording store's directory name.
+const StoreDirName = "recordings"
 
 var scope struct {
 	mu      sync.Mutex
@@ -28,8 +37,8 @@ var scope struct {
 	inboxes []string
 }
 
-// SetProfile narrows List/Find to one profile's inbox. "" restores the
-// default (every inbox).
+// SetProfile narrows List/Find to one profile's store. "" restores the
+// default (every store).
 func SetProfile(id string) error {
 	id = strings.TrimSpace(id)
 	if id != "" && !profiledir.ValidProfileID(id) {
@@ -41,16 +50,20 @@ func SetProfile(id string) error {
 	return nil
 }
 
-// SetInboxes overrides the inboxes read, outright. No arguments restores
-// the default.
+// SetInboxes overrides the store directories read, outright. No arguments
+// restores the default.
 func SetInboxes(dirs ...string) {
 	scope.mu.Lock()
 	defer scope.mu.Unlock()
 	scope.inboxes = append([]string(nil), dirs...)
 }
 
-// Inboxes returns the inbox directories List and Find read, in order.
-func Inboxes() []string {
+// Inboxes returns the store directories List and Find read, in order. (The
+// name predates the move out of the capture inbox; see StoreDirs.)
+func Inboxes() []string { return StoreDirs() }
+
+// StoreDirs returns the store directories List and Find read, in order.
+func StoreDirs() []string {
 	scope.mu.Lock()
 	override, profile := scope.inboxes, scope.profile
 	scope.mu.Unlock()
@@ -58,18 +71,66 @@ func Inboxes() []string {
 		return append([]string(nil), override...)
 	}
 	if profile != "" {
-		dir, err := capture.ProfileInbox(profile)
+		dir, err := StoreDir(profile)
 		if err != nil {
 			return nil
 		}
 		return []string{dir}
 	}
-	return allInboxes()
+	return allStores()
 }
 
-// allInboxes is the default inbox plus every profile inbox that exists on
-// disk.
-func allInboxes() []string {
+// StoreDir is where one profile's recordings live ("" = no profile).
+func StoreDir(profile string) (string, error) {
+	profile = strings.TrimSpace(profile)
+	if profile == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(home, ".monoagent", StoreDirName), nil
+	}
+	if !profiledir.ValidProfileID(profile) {
+		return "", fmt.Errorf("recording: unusable profile id %q", clamp(profile))
+	}
+	root := profiledir.Root(nil, profile)
+	if root == "" {
+		return "", fmt.Errorf("recording: no profile root for %q", clamp(profile))
+	}
+	return filepath.Join(root, StoreDirName), nil
+}
+
+// allStores is the unprofiled store plus every profile store on disk.
+func allStores() []string {
+	var out []string
+	if dir, err := StoreDir(""); err == nil {
+		out = append(out, dir)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return out
+	}
+	matches, _ := filepath.Glob(filepath.Join(home, ".monoagent", "profiles", "*", StoreDirName))
+	sort.Strings(matches)
+	for _, m := range matches {
+		if profiledir.ValidProfileID(filepath.Base(filepath.Dir(m))) {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// profileOfStore returns the profile id whose store dir is, or "".
+func profileOfStore(dir string) string {
+	if filepath.Base(dir) != StoreDirName || filepath.Base(filepath.Dir(filepath.Dir(dir))) != "profiles" {
+		return ""
+	}
+	return filepath.Base(filepath.Dir(dir))
+}
+
+// legacyInboxes are the capture inboxes recordings used to be written to:
+// the default inbox and every profile's monomind inbox.
+func legacyInboxes() []string {
 	out := []string{capture.DefaultInbox()}
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -77,28 +138,16 @@ func allInboxes() []string {
 	}
 	matches, _ := filepath.Glob(filepath.Join(home, ".monoagent", "profiles", "*", ".monomind", capture.ProfileInboxDir))
 	sort.Strings(matches)
-	seen := map[string]bool{filepath.Clean(out[0]): true}
-	for _, m := range matches {
-		id := filepath.Base(filepath.Dir(filepath.Dir(m)))
-		if !profiledir.ValidProfileID(id) || seen[filepath.Clean(m)] {
-			continue
-		}
-		seen[filepath.Clean(m)] = true
-		out = append(out, m)
-	}
-	return out
+	return append(out, matches...)
 }
 
-// profileOfInbox returns the profile id whose inbox dir is, or "".
-func profileOfInbox(dir string) string {
-	if filepath.Base(dir) != capture.ProfileInboxDir || filepath.Base(filepath.Dir(dir)) != ".monomind" {
+// profileOfLegacyInbox returns the profile id whose monomind inbox dir is.
+func profileOfLegacyInbox(dir string) string {
+	if filepath.Base(dir) != capture.ProfileInboxDir || filepath.Base(filepath.Dir(dir)) != ".monomind" ||
+		filepath.Base(filepath.Dir(filepath.Dir(filepath.Dir(dir)))) != "profiles" {
 		return ""
 	}
-	id := filepath.Base(filepath.Dir(filepath.Dir(dir)))
-	if filepath.Base(filepath.Dir(filepath.Dir(filepath.Dir(dir)))) != "profiles" {
-		return ""
-	}
-	return id
+	return filepath.Base(filepath.Dir(filepath.Dir(dir)))
 }
 
 // safeID matches identifiers that come from the extension or a command line

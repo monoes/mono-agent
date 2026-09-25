@@ -13,17 +13,22 @@ import (
 	"github.com/monoes/mono-agent/internal/recording"
 )
 
-// recordTestHome isolates HOME and the default inbox, and lands n
-// recordings in that inbox through the real ingest.
+// recordTestHome isolates HOME and the capture inbox, lands the named
+// recordings in the unprofiled recording store through the real ingest, and
+// returns that store.
 func recordTestHome(t *testing.T, ids ...string) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	inbox := filepath.Join(home, "inbox")
-	t.Setenv(capture.InboxEnv, inbox)
+	// The capture inbox is isolated too, though recordings never go there.
+	t.Setenv(capture.InboxEnv, filepath.Join(home, "inbox"))
 	t.Cleanup(func() { _ = recording.SetProfile("") })
+	store, err := recording.StoreDir("")
+	if err != nil {
+		t.Fatal(err)
+	}
 	for i, id := range ids {
-		in := &recording.Ingest{Writer: &capture.Writer{Inbox: inbox}}
+		in := &recording.Ingest{}
 		started := time.Date(2026, 9, 25, 8+i, 0, 0, 0, time.UTC).UnixMilli()
 		frames := []recording.Frame{
 			{Op: recording.OpStart, RecordingID: id, URL: "https://example.com/" + id, Title: id, Goal: "goal " + id, StartedAt: started},
@@ -45,7 +50,7 @@ func recordTestHome(t *testing.T, ids ...string) string {
 			t.Fatal(err)
 		}
 	}
-	return inbox
+	return store
 }
 
 func runRecordCLI(t *testing.T, jsonOut bool, args ...string) (string, error) {

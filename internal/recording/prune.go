@@ -9,12 +9,12 @@ import (
 	"github.com/monoes/mono-agent/internal/capture"
 )
 
-// MaxRecordingsPerInbox bounds how many recordings one inbox keeps
+// MaxRecordingsPerInbox bounds how many recordings one store keeps
 // (security review L3). Past it the oldest are removed when a new one
 // lands — recordings not yet saved into an automation first.
 const MaxRecordingsPerInbox = 200
 
-// pruneInbox removes the oldest recordings in inbox beyond max, never the
+// pruneInbox removes the oldest recordings in a store beyond max, never the
 // one at keep, and returns a warning per recording removed.
 func pruneInbox(inbox, keep string, max int) []string {
 	entries, err := capture.List(inbox)
@@ -52,7 +52,7 @@ func pruneInbox(inbox, keep string, max int) []string {
 			continue
 		}
 		excess--
-		warnings = append(warnings, fmt.Sprintf("removed old recording %s: the inbox keeps at most %d", r.ID, max))
+		warnings = append(warnings, fmt.Sprintf("removed old recording %s: the store keeps at most %d", r.ID, max))
 	}
 	return warnings
 }

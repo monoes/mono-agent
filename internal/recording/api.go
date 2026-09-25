@@ -34,8 +34,8 @@ const (
 	ExtraAutomation  = "automation"
 )
 
-// List returns recordings in the active profile's inbox, newest first.
-// See Inboxes for which inboxes that is. An incomplete recording with no
+// List returns recordings in the active scope's stores, newest first.
+// See StoreDirs for which stores those are. An incomplete recording with no
 // events (a failed start, from before such recordings were discarded) is
 // left out; Find still resolves it, so it can be deleted.
 func List() ([]Summary, error) {
@@ -56,7 +56,8 @@ func List() ([]Summary, error) {
 // listAll is List without the empty-recording filter.
 func listAll() ([]Summary, error) {
 	var out []Summary
-	for _, inbox := range Inboxes() {
+	migrateLegacy()
+	for _, inbox := range StoreDirs() {
 		entries, err := capture.List(inbox)
 		if err != nil {
 			return nil, err
@@ -171,7 +172,7 @@ func DOMSnippet(dir, eventID string) (string, error) {
 }
 
 // Delete removes a recording envelope. Only a directory whose meta.json
-// says it is a recording is removed; the inbox has no trash to move it to.
+// says it is a recording is removed; the store has no trash to move it to.
 func Delete(id string) error {
 	dir, err := Find(id)
 	if err != nil {
@@ -250,7 +251,7 @@ func summaryOf(dir string, meta *capture.Meta) Summary {
 		Complete:   extraBool(meta, ExtraComplete),
 		StopReason: extraString(meta, ExtraStopReason),
 		Automation: extraString(meta, ExtraAutomation),
-		Profile:    firstNonEmpty(meta.Profile, profileOfInbox(filepath.Dir(dir))),
+		Profile:    firstNonEmpty(meta.Profile, profileOfStore(filepath.Dir(dir))),
 	}
 }
 

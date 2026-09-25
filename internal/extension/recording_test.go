@@ -71,8 +71,16 @@ func TestRecordingFramesOverWebSocketLandAsEnvelope(t *testing.T) {
 	}
 	data, _ := ack.Data.(map[string]any)
 	path, _ := data["path"].(string)
-	if filepath.Dir(path) != inbox || data["recordingId"] != "rec-ws" {
-		t.Fatalf("stop ack data = %v", data)
+	store, _ := recording.StoreDir("")
+	if filepath.Dir(path) != store || data["recordingId"] != "rec-ws" {
+		t.Fatalf("stop ack data = %v, want a path in %s", data, store)
+	}
+	// Never in the capture inbox, which feeds the knowledge brain.
+	if entries, _ := capture.List(inbox); len(entries) != 0 {
+		t.Fatalf("recording landed in the capture inbox: %+v", entries)
+	}
+	if fi, err := os.Stat(store); err != nil || fi.Mode().Perm() != 0o700 {
+		t.Fatalf("store dir mode: %v %v", fi, err)
 	}
 	meta, err := capture.ReadMeta(path)
 	if err != nil || meta.Source != recording.SourceRecording || meta.URL != "https://example.com/x" {

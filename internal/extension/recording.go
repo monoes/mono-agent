@@ -103,16 +103,14 @@ func (s *Server) waitRecordingReaper() {
 	s.reaperWG.Wait()
 }
 
-// recordingIngest returns the ingest, building it on first use so it
-// writes into the inbox captures use (SetCaptureInbox).
+// recordingIngest returns the ingest, building it on first use. Recordings
+// go to their own store (recording.StoreDir), never the capture inbox that
+// SetCaptureInbox points at: that inbox feeds the knowledge brain.
 func (s *Server) recordingIngest() *recording.Ingest {
 	s.recMu.Lock()
 	defer s.recMu.Unlock()
 	if s.recIngest == nil {
-		s.pendMu.Lock()
-		inbox := s.captureInbox
-		s.pendMu.Unlock()
-		s.recIngest = &recording.Ingest{Writer: &capture.Writer{Inbox: inbox}}
+		s.recIngest = &recording.Ingest{}
 	}
 	return s.recIngest
 }
@@ -226,8 +224,15 @@ func (s *Server) ackRecording(id string, ok bool, data any, errMsg string) {
 // every reap interval ends the ones that went idle (tab closed without a
 // stop, service worker gone for good).
 func (s *Server) recordingReaper(ctx context.Context) {
+	// Recordings written into the capture inbox by older builds move to
+	// their store first (once; see recording.MigrateLegacy).
+	if n, err := recording.MigrateLegacy(); err != nil {
+		s.logger.Warn().Err(err).Msg("moving recordings out of the capture inbox")
+	} else if n > 0 {
+		s.logger.Info().Int("moved", n).Msg("moved recordings out of the capture inbox")
+	}
 	ing := s.recordingIngest()
-	inboxes := recording.Inboxes()
+	inboxes := recording.StoreDirs()
 	if ing.Writer != nil && ing.Writer.Inbox != "" {
 		inboxes = []string{ing.Writer.Inbox}
 	}

@@ -108,12 +108,19 @@ func TestProfileScope(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv(capture.InboxEnv, filepath.Join(home, "default-inbox"))
-	work, err := capture.ProfileInbox("work")
+	work, err := StoreDir("work")
 	if err != nil {
 		t.Fatal(err)
 	}
+	if want := filepath.Join(home, ".monoagent", "profiles", "work", "recordings"); work != want {
+		t.Fatalf("StoreDir(work) = %s, want %s", work, want)
+	}
+	root, _ := StoreDir("")
+	if want := filepath.Join(home, ".monoagent", "recordings"); root != want {
+		t.Fatalf("StoreDir(\"\") = %s, want %s", root, want)
+	}
 	writeRecording(t, work, "rec-w", time.Now(), 1)
-	writeRecording(t, capture.DefaultInbox(), "rec-d", time.Now().Add(-time.Hour), 1)
+	writeRecording(t, root, "rec-d", time.Now().Add(-time.Hour), 1)
 
 	list, err := List()
 	if err != nil || len(list) != 2 || list[0].Profile != "work" || list[1].Profile != "" {

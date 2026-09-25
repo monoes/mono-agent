@@ -16,7 +16,7 @@ import (
 
 // ErrNoEvents is Finalize's answer for a recording that captured no events
 // (a failed or abandoned start): its spool is dropped and nothing lands in
-// the inbox.
+// the store.
 var ErrNoEvents = errors.New("recording has no events: discarded")
 
 // Finalize writes a stopped recording as a capture envelope and removes its
@@ -36,7 +36,10 @@ func (in *Ingest) Finalize(st *Stopped) (*capture.Result, error) {
 		_ = os.RemoveAll(s.dir)
 		return nil, ErrNoEvents
 	}
-	res, err := in.writer().Write(env)
+	// The envelope lands in the store its spool sits in — explicitly, so
+	// the capture Writer never routes it to a profile's capture inbox.
+	w := capture.Writer{Inbox: filepath.Dir(s.dir), Now: in.writer().Now}
+	res, err := w.Write(env)
 	if err != nil {
 		return nil, err
 	}

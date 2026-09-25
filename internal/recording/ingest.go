@@ -15,8 +15,8 @@ import (
 
 // Ingest turns the extension's kind:"recording" frames into capture
 // envelopes (contracts §6). Each recording streams into its own spool
-// directory inside the inbox it will land in — dot-prefixed like the
-// capture assembler's, so an inbox watcher skips it and the writer's stale
+// directory inside the store it will land in (see StoreDir) — dot-prefixed like the
+// capture assembler's, so a directory watcher skips it and the writer's stale
 // sweep eventually removes one nobody finalised — and is written through the
 // capture Writer on `stop`, or by Reap once it has sat idle.
 //
@@ -24,7 +24,7 @@ import (
 // as they arrive, so a long recording costs a few kilobytes of RAM.
 type Ingest struct {
 	// Writer publishes finished recordings. Nil means a Writer for the
-	// default (or the frame's profile) inbox.
+	// recording store of the frame's profile (StoreDir).
 	Writer *capture.Writer
 	// Now supplies the clock; nil means time.Now. Tests inject it to drive
 	// the idle reaper.
@@ -32,7 +32,7 @@ type Ingest struct {
 	// IdleTimeout ends a recording no frame has touched for this long.
 	// Zero means DefaultIdleTimeout.
 	IdleTimeout time.Duration
-	// MaxRecordings caps recordings per inbox; zero means
+	// MaxRecordings caps recordings per store; zero means
 	// MaxRecordingsPerInbox.
 	MaxRecordings int
 
@@ -133,16 +133,17 @@ func (in *Ingest) writer() *capture.Writer {
 	return &capture.Writer{}
 }
 
-// spoolRoot is the inbox a recording will land in, so the spool sits on
-// the same filesystem as the envelope it becomes.
-func (in *Ingest) spoolRoot(profile string) string {
+// spoolRoot is the store a recording will land in (StoreDir, or the
+// Writer's explicit Inbox), so the spool sits beside the envelope it
+// becomes. Never the capture inbox.
+func (in *Ingest) spoolRoot(profile string) (string, error) {
 	if w := in.writer(); strings.TrimSpace(w.Inbox) != "" {
-		return w.Inbox
+		return w.Inbox, nil
 	}
-	if dir, err := capture.InboxFor(profile); err == nil {
-		return dir
+	if dir, err := StoreDir(profile); err == nil {
+		return dir, nil
 	}
-	return capture.DefaultInbox()
+	return StoreDir("")
 }
 
 // Handle applies one frame. An error means the frame was refused; the
@@ -196,7 +197,14 @@ func (in *Ingest) session(f *Frame, now time.Time) (*session, error) {
 	if in.active == nil {
 		in.active = map[string]*session{}
 	}
-	dir := filepath.Join(in.spoolRoot(f.Profile), spoolPrefix+f.RecordingID)
+	root, err := in.spoolRoot(f.Profile)
+	if err != nil {
+		return nil, err
+	}
+	if err := ensurePrivateDir(root); err != nil {
+		return nil, err
+	}
+	dir := filepath.Join(root, spoolPrefix+f.RecordingID)
 	s, err := adoptSpool(dir)
 	if err != nil {
 		return nil, err
@@ -255,7 +263,7 @@ func (in *Ingest) Reap() []*Stopped {
 }
 
 // Recover adopts recording spools a previous process left in the given
-// inboxes: one idle past IdleTimeout is returned for finalising (stopReason
+// store directories: one idle past IdleTimeout is returned for finalising (stopReason
 // "recovered"); a fresher one becomes active again, for the reaper or a
 // continuing extension to finish.
 func (in *Ingest) Recover(inboxes ...string) []*Stopped {
