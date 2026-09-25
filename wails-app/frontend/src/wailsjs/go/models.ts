@@ -546,6 +546,7 @@ export namespace main {
 	    category: string;
 	    introduction: string;
 	    created_at: string;
+	    suggestion?: Record<string, any>;
 	
 	    static createFrom(source: any = {}) {
 	        return new PendingPersonApproval(source);
@@ -563,6 +564,7 @@ export namespace main {
 	        this.category = source["category"];
 	        this.introduction = source["introduction"];
 	        this.created_at = source["created_at"];
+	        this.suggestion = source["suggestion"];
 	    }
 	}
 	export class PersonDetailInfo {

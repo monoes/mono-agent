@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/monoes/mono-agent/internal/peoplereview"
 	"github.com/monoes/mono-agent/internal/storage"
@@ -29,10 +30,19 @@ func newPeopleReviewCmd(cfg *globalConfig) *cobra.Command {
 }
 
 func newPeopleReviewListCmd(cfg *globalConfig) *cobra.Command {
-	return &cobra.Command{
+	var suggest, resuggest bool
+	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List people awaiting review",
-		Args:  cobra.NoArgs,
+		Long: "List people awaiting review.\n\n" +
+			"--suggest adds TypeSafe Jev's suggestion to each person: {suggest approve|reject, p, " +
+			"intro_fit on_topic|generic|off, intro_fit_p}. It needs `jev enable people_review`; a " +
+			"suggestion is computed once per person (one request each) and cached until the person " +
+			"or their introduction changes. --resuggest recomputes. Suggestions never approve or " +
+			"reject anyone.",
+		Example: `  monoagentcli --json people review list
+  monoagentcli --json people review list --suggest`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			db, err := initDB(cfg)
 			if err != nil {
@@ -43,23 +53,60 @@ func newPeopleReviewListCmd(cfg *globalConfig) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if cfg.JSONOutput {
-				return printReviewJSON(people)
+			if !suggest && !resuggest {
+				if cfg.JSONOutput {
+					return printReviewJSON(people)
+				}
+				if len(people) == 0 {
+					fmt.Println("No one is waiting for review.")
+					return nil
+				}
+				table := newPlainTable(os.Stdout, []string{"ID", "Platform", "Username", "Name", "Introduction"}, nil)
+				for _, p := range people {
+					table.Append([]string{p.ID, p.Platform, truncateStr(p.PlatformUsername, 20),
+						truncateStr(p.FullName, 20), truncateStr(p.Introduction, 40)})
+				}
+				table.Render()
+				return nil
 			}
-			if len(people) == 0 {
+
+			ctx := cmd.Context()
+			if ctx == nil {
+				ctx = context.Background()
+			}
+			ctx, cancel := context.WithTimeout(ctx, reviewSuggestTimeout)
+			defer cancel()
+			reviewed, warns := peoplereview.WithSuggestions(ctx, db.DB, cfg.ProfileID, people, resuggest)
+			for _, w := range warns {
+				fmt.Fprintln(os.Stderr, "warning: "+w)
+			}
+			if cfg.JSONOutput {
+				return printReviewJSON(reviewed)
+			}
+			if len(reviewed) == 0 {
 				fmt.Println("No one is waiting for review.")
 				return nil
 			}
-			table := newPlainTable(os.Stdout, []string{"ID", "Platform", "Username", "Name", "Introduction"}, nil)
-			for _, p := range people {
-				table.Append([]string{p.ID, p.Platform, truncateStr(p.PlatformUsername, 20),
-					truncateStr(p.FullName, 20), truncateStr(p.Introduction, 40)})
+			table := newPlainTable(os.Stdout, []string{"ID", "Platform", "Username", "Name", "Introduction", "Suggestion"}, nil)
+			for _, r := range reviewed {
+				sug := ""
+				if s := r.Suggestion; s != nil {
+					sug = fmt.Sprintf("%s p=%.2f intro=%s", s.Suggest, s.P, s.IntroFit)
+				}
+				table.Append([]string{r.ID, r.Platform, truncateStr(r.PlatformUsername, 20),
+					truncateStr(r.FullName, 20), truncateStr(r.Introduction, 40), sug})
 			}
 			table.Render()
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&suggest, "suggest", false, "Add TypeSafe Jev's suggestion per person (cached; needs `jev enable people_review`)")
+	cmd.Flags().BoolVar(&resuggest, "resuggest", false, "Recompute every suggestion (implies --suggest)")
+	return cmd
 }
+
+// reviewSuggestTimeout bounds one `people review list --suggest` run's Jev calls.
+const reviewSuggestTimeout = 60 * time.Second
 
 // reviewSend is the dispatch run for an approved person: which workflow,
 // and the trigger input it gets.
