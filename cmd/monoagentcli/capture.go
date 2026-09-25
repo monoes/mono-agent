@@ -32,6 +32,7 @@ func newCaptureCmd(cfg *globalConfig) *cobra.Command {
 	cmd.AddCommand(
 		newCapturePageCmd(cfg),
 		newCaptureListCmd(cfg),
+		newCaptureClassifyCmd(cfg), // capture_classify.go
 	)
 	cmd.AddCommand(captureGlueCmds(cfg)...) // export, import, task — see capture_archive.go
 	return cmd
@@ -160,6 +161,7 @@ func newCaptureListCmd(cfg *globalConfig) *cobra.Command {
 	var (
 		out         string
 		allProfiles bool
+		suggested   bool
 	)
 	cmd := &cobra.Command{
 		Use:   "list",
@@ -201,6 +203,9 @@ func newCaptureListCmd(cfg *globalConfig) *cobra.Command {
 				}
 			}
 			sortCaptureEntries(entries)
+			if suggested {
+				return printSuggestedCaptures(cmd.OutOrStdout(), cfg.JSONOutput, entries) // capture_classify.go
+			}
 
 			if cfg.JSONOutput {
 				enc := json.NewEncoder(cmd.OutOrStdout())
@@ -235,6 +240,7 @@ func newCaptureListCmd(cfg *globalConfig) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&out, "out", "", "Inbox directory to read (default: ~/.monomind/inbox)")
 	cmd.Flags().BoolVar(&allProfiles, "all-profiles", false, "Read the default inbox and every profile's inbox")
+	cmd.Flags().BoolVar(&suggested, "suggested", false, "Only captures whose classification.json suggests a route (see capture classify)")
 	return cmd
 }
 
