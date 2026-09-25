@@ -249,6 +249,94 @@ func TestSecretValueNeverReachesJev(t *testing.T) {
 	if steps[1].Text != "<value:password>" || steps[0].Text != "alice.example" {
 		t.Errorf("steps text = %q, %q", steps[0].Text, steps[1].Text)
 	}
+
+	// A 3-character secret (a CVV into a tel field) cannot be kept out of
+	// page text, URLs and labels, so it is refused before anything is sent.
+	t.Run("short secret refused", func(t *testing.T) {
+		ctx := vaultCtx(t, map[string]string{"card-cvv": "123"})
+		srv := formPolicy(t, func(string) string { return "cvv" })
+		drv := &formDriver{fields: []formField{{10, "CVV", "textbox", "tel"}}}
+		_, err := formNode(drv, nil).Execute(ctx, workflow.NodeInput{}, map[string]interface{}{
+			"url": "https://example.test/form", "goal": "Pay", "api_key": "k",
+			"values": map[string]interface{}{"cvv": "@secret:card-cvv"}})
+		if !errors.Is(err, workflow.ErrInvalidConfig) || !strings.Contains(err.Error(), "secret value for cvv is shorter than 4 characters") {
+			t.Fatalf("err = %v", err)
+		}
+		if len(srv.Requests()) != 0 || len(drv.executed) != 0 || strings.Contains(srv.RequestJSON(), "123") {
+			t.Fatalf("a refused config still ran: requests=%d executed=%v", len(srv.Requests()), drv.executed)
+		}
+	})
+
+	// At the 4-character minimum a secret (a PIN into a tel field) is typed
+	// and replaced everywhere it shows up later — element value, the target
+	// criteria, and the page text that echoes it after submit.
+	t.Run("4-character secret", func(t *testing.T) {
+		const pin = "Zq7x"
+		ctx := vaultCtx(t, map[string]string{"card-pin": pin})
+		srv := formPolicy(t, func(string) string { return "pin" })
+		drv := &formDriver{fields: []formField{{10, "PIN", "textbox", "tel"}}}
+		res := runForm(t, ctx, formNode(drv, nil), "Unlock the card", map[string]interface{}{"pin": "@secret:card-pin"})
+		if res["status"] != "done" || strings.Join(drv.executed, ",") != "f0:"+pin+",go:" {
+			t.Fatalf("status=%v executed=%v", res["status"], drv.executed)
+		}
+		if all := srv.RequestJSON(); strings.Contains(all, pin) || !strings.Contains(all, jsonPlaceholder("pin")) {
+			t.Fatalf("the PIN reached Jev (or no placeholder): %s", all)
+		}
+	})
+}
+
+func TestShortPlainValueScrubbedInFieldValue(t *testing.T) {
+	srv := formPolicy(t, func(label string) string { return "qty" })
+	drv := &formDriver{fields: []formField{{10, "Quantity", "spinbutton", "number"}}}
+	res := runForm(t, context.Background(), formNode(drv, nil), "Order 12 boxes", map[string]interface{}{"qty": "12"})
+	if res["status"] != "done" || strings.Join(drv.executed, ",") != "f0:12,go:" {
+		t.Fatalf("status=%v executed=%v", res["status"], drv.executed)
+	}
+	var sawField bool
+	for _, r := range srv.Requests() {
+		if _, ok := r.Questions["operation"]; !ok {
+			continue
+		}
+		raw, _ := json.Marshal(r.State)
+		var st struct {
+			Elements      []element
+			RecentActions []struct{ Text string } `json:"recent_actions"`
+		}
+		if err := json.Unmarshal(raw, &st); err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range st.Elements {
+			if e.Label != "Quantity" {
+				continue
+			}
+			if e.Value == "12" {
+				t.Errorf("element value carries the typed value: %s", raw)
+			}
+			if e.Value == "<value:qty>" {
+				sawField = true
+			}
+		}
+		for _, a := range st.RecentActions {
+			if a.Text == "12" {
+				t.Errorf("history carries the typed value: %s", raw)
+			}
+		}
+		// The target criteria carry current_value too.
+		q, _ := json.Marshal(r.Questions)
+		if strings.Contains(string(q), `"current_value":"12"`) {
+			t.Errorf("current_value carries the typed value: %s", q)
+		}
+	}
+	if !sawField {
+		t.Error("expected the field's value as <value:qty> in a later request")
+	}
+	// Short plain values are not replaced inside text: the goal keeps "12".
+	if !strings.Contains(srv.RequestJSON(), "Order 12 boxes") {
+		t.Error("the goal's ordinary text was scrubbed")
+	}
+	if steps := res["steps"].([]step); steps[0].Text != "12" {
+		t.Errorf("plain values stay in the node output: %+v", steps[0])
+	}
 }
 
 func reqsJSON(r jev.Request) string { raw, _ := json.Marshal(r); return string(raw) }
@@ -332,6 +420,24 @@ func TestScrubberSkipsShortValues(t *testing.T) {
 	}
 	if got := (scrubber{values: s.values, secretsOnly: true}).str("Zurich"); got != "Zurich" {
 		t.Errorf("secretsOnly scrubbed a plain value: %q", got)
+	}
+	// A whole field value equal to a configured value is replaced at any length.
+	if got := s.field(" ab "); got != "<value:x>" {
+		t.Errorf("field(ab) = %q", got)
+	}
+	if got := s.field("abc"); got != "abc" {
+		t.Errorf("field(abc) = %q", got)
+	}
+	if got := (scrubber{values: s.values, secretsOnly: true}).field("ab"); got != "ab" {
+		t.Errorf("secretsOnly field scrubbed a plain value: %q", got)
+	}
+	// Select options are the page's own text: a short plain value stays.
+	p := s.page(&jevpick.PageState{Actions: []jevpick.Action{
+		{Kind: "select", Value: "ab", CurrentValue: "ab", Label: "Size → ab"},
+		{Kind: "fill", Value: "ab"}, {Kind: "click", Value: "ab", Label: "Open Size"},
+	}})
+	if a := p.Actions; a[0].Value != "ab" || a[0].CurrentValue != "ab" || a[1].Value != "<value:x>" || a[2].Value != "<value:x>" {
+		t.Errorf("page actions = %+v", a)
 	}
 }
 
