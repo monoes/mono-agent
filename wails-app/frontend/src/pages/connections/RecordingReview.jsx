@@ -45,7 +45,7 @@ function StepList({ steps, verify }) {
                 {s.sideEffect && <Chip color="var(--orange)">side effect</Chip>}
                 {v && <Chip color={VERIFY_COLORS[v.status] || 'var(--text-muted)'}>{VERIFY_LABELS[v.status] || v.status}</Chip>}
               </div>
-              <div style={{ ...body, fontSize: 11 }}>{s.intent || s.description || s.configKey || s.url || s.id}</div>
+              <div style={{ ...body, fontSize: 11 }}>{s.intent || s.description || s.text || s.configKey || s.url || s.id}</div>
               {v?.message && <div style={{ ...muted, fontSize: 10, color: v.status === 'fail' ? 'var(--red)' : 'var(--text-muted)' }}>{v.message}</div>}
               {(v?.selector || s.configKey) && <div style={{ ...muted, fontSize: 9.5, wordBreak: 'break-all' }}>{v?.selector || s.configKey}</div>}
             </div>
@@ -174,11 +174,11 @@ export default function RecordingReview({ recording, automationId, onBack, onSav
             </div>
             {missing.length > 0 && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <span style={{ ...muted, fontSize: 10 }}>Not recorded (e.g. passwords) — enter a value to verify with. It is passed to this run only, never saved.</span>
+                <span style={{ ...muted, fontSize: 10 }}>No recorded value (secrets are never recorded) — enter one to verify with. It is used for this run only and never saved.</span>
                 {missing.map(i => (
                   <div key={i.name} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                     <span style={{ ...mono, fontSize: 10.5, color: 'var(--text)', width: 140, overflow: 'hidden', textOverflow: 'ellipsis' }}>{i.name}</span>
-                    <input type="password" autoComplete="new-password" aria-label={`Value for ${i.name} during verify`} value={verifyInputs[i.name] || ''}
+                    <input type={i.format === 'secret' || /pass|secret|token|pin/i.test(i.name) ? 'password' : 'text'} autoComplete="off" aria-label={`Value for ${i.name} during verify`} value={verifyInputs[i.name] || ''}
                       onChange={e => setVerifyInputs(m => ({ ...m, [i.name]: e.target.value }))} style={{ ...inputStyle, flex: 1 }} />
                   </div>
                 ))}
