@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -131,5 +132,41 @@ func TestRecordHumanOutput(t *testing.T) {
 	}
 	if _, err := runRecordCLI(t, false, "delete", "rec-a", "--yes"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRecordShowMissingPrintsOneJSONError(t *testing.T) {
+	recordTestHome(t)
+	out, err := runRecordCLI(t, true, "show", "nope")
+	if err == nil {
+		t.Fatal("show nope succeeded")
+	}
+	if want := "{\"error\":\"recording not found: nope\"}\n"; out != want {
+		t.Fatalf("stdout = %q, want %q", out, want)
+	}
+}
+
+func TestRecordJSONErrorsWrapIsIdempotent(t *testing.T) {
+	cfg := &globalConfig{JSONOutput: true}
+	cmd := newRecordCmd(cfg)
+	for _, sub := range cmd.Commands() {
+		if sub.RunE == nil {
+			continue
+		}
+		if sub.Annotations[recordJSONErrorsAnnotation] == "" {
+			t.Errorf("record %s is not wrapped", sub.Name())
+		}
+		withRecordJSONErrors(cfg, sub) // a second pass must not wrap again
+	}
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(io.Discard)
+	cmd.SilenceUsage, cmd.SilenceErrors = true, true
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv(capture.InboxEnv, t.TempDir())
+	cmd.SetArgs([]string{"show", "nope"})
+	_ = cmd.Execute()
+	if n := strings.Count(out.String(), `"error"`); n != 1 {
+		t.Fatalf("error printed %d times: %q", n, out.String())
 	}
 }

@@ -23,17 +23,37 @@ func newRecordCmd(cfg *globalConfig) *cobra.Command {
 capture inbox as envelopes with source "recording". List, inspect and delete
 them here; analyze turns one into a draft automation action.`,
 	}
-	mine := []*cobra.Command{
+	cmd.AddCommand(
 		newRecordListCmd(cfg),
 		newRecordShowCmd(cfg),
 		newRecordDeleteCmd(cfg),
-	}
-	for _, sub := range mine {
-		withJSONErrors(cfg, sub)
-	}
-	cmd.AddCommand(mine...)
+	)
 	addRecordAnalyzeCommands(cmd, cfg)
+	// Every record subcommand, analyze's included, prints {"error": …} on
+	// stdout under --json (contracts §5): the GUI and the extension's
+	// record.* bridge methods read it.
+	for _, sub := range cmd.Commands() {
+		withRecordJSONErrors(cfg, sub)
+	}
 	return cmd
+}
+
+// recordJSONErrorsAnnotation marks a command already wrapped by
+// withRecordJSONErrors, so a second wrap cannot print the error twice.
+const recordJSONErrorsAnnotation = "monoagent/json-errors"
+
+// withRecordJSONErrors is withJSONErrors made idempotent. A record
+// subcommand that wants to wrap itself should call this, not
+// withJSONErrors, so newRecordCmd's own pass skips it.
+func withRecordJSONErrors(cfg *globalConfig, cmd *cobra.Command) {
+	if cmd.Annotations[recordJSONErrorsAnnotation] != "" {
+		return
+	}
+	withJSONErrors(cfg, cmd)
+	if cmd.Annotations == nil {
+		cmd.Annotations = map[string]string{}
+	}
+	cmd.Annotations[recordJSONErrorsAnnotation] = "1"
 }
 
 // applyRecordScope points internal/recording at the inboxes this command
