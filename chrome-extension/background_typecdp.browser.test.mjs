@@ -92,8 +92,8 @@ describe("type_cdp types into the element it is given", { skip: browser ? false 
   it("types into an <input> and reads it back", async () => {
     const res = await typeInto("#name", "Ann Example");
     assert.equal(res.ok, true, res.error);
-    assert.equal(res.r.typed, true);
-    assert.equal(res.r.value, "Ann Example");
+    assert.deepEqual(res.r, { typed: true, length: "Ann Example".length }, "the typed text is never echoed back");
+    assert.ok(!("value" in res.r));
     assert.equal(await valueOf(`document.getElementById("name").value`), "Ann Example");
     assert.equal(await valueOf(`document.getElementById("decoy").textContent`), "", "the big contenteditable was not the target");
   });
@@ -101,6 +101,7 @@ describe("type_cdp types into the element it is given", { skip: browser ? false 
   it("types into a <textarea>", async () => {
     const res = await typeInto("#bio", "line one");
     assert.equal(res.ok, true, res.error);
+    assert.ok(!("value" in res.r));
     assert.equal(await valueOf(`document.getElementById("bio").value`), "line one");
   });
 

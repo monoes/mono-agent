@@ -973,6 +973,7 @@ async function inContentWorld(tabId, elementId, func) {
  *   3. refuse to type unless document.activeElement is it (or inside it);
  *   4. Input.insertText, then read the value back and fail unless it
  *      contains the text -- "typed" must mean the text is in the field.
+ *      The answer is {typed, length}; the value is never echoed.
  */
 async function typeIntoElement(target, tabId, elementId, text) {
   const focus = (id) => {
@@ -1011,7 +1012,9 @@ async function typeIntoElement(target, tabId, elementId, text) {
   if (!norm(value).includes(norm(text))) {
     throw new Error(`type_cdp: the text did not land in element ${elementId}`);
   }
-  return { typed: true, length: text.length, value };
+  // Never the value itself: it is often a password, and this answer crosses
+  // the bridge, where it could be logged. The Go side reads back on its own.
+  return { typed: true, length: text.length };
 }
 
 // Evaluate JS via CDP Runtime.evaluate — bypasses page CSP completely.
