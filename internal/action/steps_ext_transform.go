@@ -175,6 +175,19 @@ func applyOp(items []interface{}, op TransformOp, vars map[string]interface{}, n
 		}
 		return out, nil
 
+	case "flag":
+		if op.Where == nil || op.To == "" {
+			return nil, fmt.Errorf("flag needs where and to")
+		}
+		for i, it := range items {
+			ok, err := matchWhere(it, op.Where, vars)
+			if err != nil {
+				return nil, err
+			}
+			items[i] = setField(it, "", op.To, ok)
+		}
+		return items, nil
+
 	case "dedupe":
 		seen := map[string]bool{}
 		out := items[:0:0]

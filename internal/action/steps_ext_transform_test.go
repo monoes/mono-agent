@@ -280,3 +280,27 @@ func TestTransformStepCarriesTreeStack(t *testing.T) {
 		t.Fatalf("carried stack = %v", getVar(ae, "hnStack"))
 	}
 }
+
+func TestTransformFlag(t *testing.T) {
+	src := txItems(txM{"id": "1", "text": "hi"}, txM{"id": "2"}, txM{"id": "3", "text": ""})
+	got, err := runTransform(src, []TransformOp{
+		{Op: "flag", Where: &ConditionDef{Variable: "text", Operator: "not_exists"}, To: "deleted"},
+		{Op: "flag", Where: &ConditionDef{Variable: "id", Operator: "equals", Value: "{{want}}"}, To: "match"},
+	}, map[string]interface{}{"want": "3"}, transformNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var deleted, match []interface{}
+	for _, r := range got.([]interface{}) {
+		deleted = append(deleted, r.(txM)["deleted"])
+		match = append(match, r.(txM)["match"])
+	}
+	if !reflect.DeepEqual(deleted, []interface{}{false, true, false}) || !reflect.DeepEqual(match, []interface{}{false, false, true}) {
+		t.Fatalf("deleted=%v match=%v", deleted, match)
+	}
+	for _, bad := range []TransformOp{{Op: "flag", To: "x"}, {Op: "flag", Where: &ConditionDef{Variable: "id", Operator: "exists"}}} {
+		if _, err := runTransform(src, []TransformOp{bad}, nil, transformNow); err == nil {
+			t.Errorf("%+v: want error", bad)
+		}
+	}
+}
