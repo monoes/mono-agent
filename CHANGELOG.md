@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.69.0] - 2026-09-25
+
+### Changed
+
+- **Social platforms are in the main build.** Instagram, LinkedIn, X,
+  TikTok, Hacker News and Product Hunt nodes and actions now ship in every
+  release and in a plain `go build`. `node list` shows 167 node types. To
+  build without them, use `go build -tags nosocial`. The old `-tags social`
+  flag is gone. The usage policy, README and help text are updated to match.
+
 ## [0.68.0] - 2026-09-25
 
 ### Added

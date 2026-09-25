@@ -1,11 +1,11 @@
-//go:build !social
+//go:build nosocial
 
 package bot
 
 import "strings"
 
 // socialTagPlatforms are the social-engagement platforms whose bot packages
-// are excluded from default builds (they require -tags social).
+// are excluded from -tags nosocial builds.
 var socialTagPlatforms = map[string]bool{
 	"INSTAGRAM":   true,
 	"LINKEDIN":    true,

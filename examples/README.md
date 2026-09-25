@@ -2,7 +2,7 @@
 
 Ten ready-to-import, structurally valid workflow JSONs. None of them use
 social-platform nodes — they work with the default build
-(`go build ./cmd/monoagentcli`, no `-tags social`).
+(`go build ./cmd/monoagentcli`; none of them need the social platform nodes).
 
 Every node `type` matches a schema in `internal/workflow/schemas/` and every
 config key matches that schema's fields. Values marked

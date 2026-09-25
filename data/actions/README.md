@@ -9,16 +9,16 @@ action name. Each file's `description` field is the authoritative summary.
 ```
 data/actions/
 ├── gemini/         # in the default build
-├── hackernews/     # requires -tags social
-├── instagram/      # requires -tags social
-├── linkedin/       # requires -tags social
-├── producthunt/    # requires -tags social
-├── tiktok/         # requires -tags social
-└── x/              # requires -tags social
+├── hackernews/     # built by default (omitted with -tags nosocial)
+├── instagram/      # built by default (omitted with -tags nosocial)
+├── linkedin/       # built by default (omitted with -tags nosocial)
+├── producthunt/    # built by default (omitted with -tags nosocial)
+├── tiktok/         # built by default (omitted with -tags nosocial)
+└── x/              # built by default (omitted with -tags nosocial)
 ```
 
-The social platform actions are only compiled in with
-`go build -tags social ./cmd/monoagentcli` (see `docs/USAGE_POLICY.md`).
+The social platform actions are compiled into a default build;
+`go build -tags nosocial ./cmd/monoagentcli` leaves them out (see `docs/USAGE_POLICY.md`).
 Gemini actions are part of the default build.
 
 ## Actions per platform
@@ -114,5 +114,5 @@ Gemini actions are part of the default build.
    file as a template — the schema lives in the JSON files themselves)
 2. If using `call_bot_method`, implement the Go method in
    `internal/bot/<platform>/bot.go`
-3. Run `go build ./...` (or `go build -tags social ./...`) to verify — the
+3. Run `go build ./...` (and `go build -tags nosocial ./...`) to verify — the
    embedded FS picks up new files automatically

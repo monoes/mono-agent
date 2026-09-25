@@ -417,6 +417,6 @@ Jev is weak at arithmetic, counting and date comparison — compute those first.
 	},
 }
 
-const socialBrowserNote = `Social build only (go build -tags social). Runs in your own logged-in
+const socialBrowserNote = `Built in by default (left out of -tags nosocial builds). Runs in your own logged-in
 browser through the extension bridge, so a saved session for the site is needed.
 For API access use the service.producthunt node instead of producthunt.*.`

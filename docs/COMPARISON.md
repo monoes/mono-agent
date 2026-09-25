@@ -21,7 +21,7 @@ drive, and human approval built into the engine.**
 | **AI-agent native** | MCP server over stdio (read-only by default; `--allow-mutations` to run workflows and approve HIL items), `AGENTS.md`, offline reference manual; AI steps run on locally-installed agent CLIs (`agent.ask`) | MCP trigger/client nodes, AI workflow nodes | Pieces exposed as MCP servers (not verified here) | AI code generation; MCP support not verified here | — |
 | **Human-in-the-loop primitive** | Core `core.human_in_loop` node; durable queue in SQLite **survives restarts**; per-item edit/approve/reject; timeout auto-reject | Approval steps / Wait node patterns | Delay/approval pieces | Not a core primitive | — (roll your own) |
 | **Encrypted secrets vault** | Built in: OS-keyring-wrapped key, AES-256-GCM payloads, `@secret:` references never expose plaintext in configs/logs | Credentials in n8n's store (encrypted at rest) | Similar per-piece credentials | Workspace K/V with per-workspace encryption key | Credential nodes stored locally |
-| **Node count (honest)** | 105 node types in the default build; 165 with the opt-in `-tags social` build | 1500+ integrations | 200+ pieces (community-contributable) | Scripts in 10+ languages + hub | Thousands of community palette nodes |
+| **Node count (honest)** | 167 node types in the default build (107 without the social platform nodes, `-tags nosocial`) | 1500+ integrations | 200+ pieces (community-contributable) | Scripts in 10+ languages + hub | Thousands of community palette nodes |
 | **Extensibility** | Write nodes in Go | Write nodes in TypeScript/JS | Pieces in TypeScript (npm) | Scripts in Python/TS/Go/Bash/Rust/... | Nodes in JS |
 | **Community & maturity** | **Young project, small community — we lose this row today** | ~203k stars, ~60k forks, 9,000+ templates, huge forum | ~24k stars, active Discord | ~18k stars, commercial backing | Est. 2013, OpenJS governance, massive install base |
 
@@ -32,7 +32,7 @@ August 2026 and will drift; check them before quoting.
 
 Often, honestly. Use n8n if you:
 
-- **Need the integration catalog.** 1500+ integrations vs. our 105 node types.
+- **Need the integration catalog.** 1500+ integrations vs. our 167 node types.
   If your stack touches many SaaS products, n8n simply has the connectors.
 - **Want a hosted/cloud option** with someone else handling upgrades,
   availability, and scaling. Mono Agent is self-run by design.

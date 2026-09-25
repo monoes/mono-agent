@@ -222,8 +222,10 @@ jobs:
       - name: Test
         run: go test ./... -race
 
-  test-social:
-    name: Build & test (social)
+  # Social platforms are built by default; this job keeps the opt-out
+  # (-tags nosocial) build compiling and passing.
+  test-nosocial:
+    name: Build & test (nosocial)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -233,13 +235,13 @@ jobs:
           go-version-file: go.mod
 
       - name: Build
-        run: go build -tags social ./...
+        run: go build -tags nosocial ./...
 
       - name: Vet
-        run: go vet -tags social ./...
+        run: go vet -tags nosocial ./...
 
       - name: Test
-        run: go test -tags social ./... -race
+        run: go test -tags nosocial ./... -race
 
   # Mirror of the release.yml test gate's Wails steps (minus release/tagging):
   # system deps for GTK/WebKit headers, frontend build (main.go //go:embeds

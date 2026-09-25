@@ -1,3 +1,3 @@
-//go:build social
+//go:build !nosocial
 
 package tiktok

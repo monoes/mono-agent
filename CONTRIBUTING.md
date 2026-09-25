@@ -19,19 +19,20 @@ go test ./...
 go vet ./...
 ```
 
-### Social-platform nodes (opt-in build tag)
+### Social-platform nodes (built by default; `nosocial` opts out)
 
-Social-platform browser bots and their action templates are **not compiled
-into the default binary**. They live behind the `social` build tag:
+Social-platform browser bots and their action templates are compiled into
+the default binary (files tagged `//go:build !nosocial`). The `nosocial` tag
+builds without them — keep that build working too:
 
 ```bash
-go build -tags social ./...
-go vet -tags social ./...
-go test -tags social ./...
+go build -tags nosocial ./...
+go vet -tags nosocial ./...
+go test -tags nosocial ./...
 ```
 
 CI runs both modes — make sure your change builds and tests green in **both**
-default and `-tags social` modes.
+default (social included) and `-tags nosocial` modes.
 
 ## Code Style
 
@@ -49,7 +50,7 @@ default and `-tags social` modes.
   network access.
 - Describe what changed and why; link any related issues.
 - Verify before opening: `gofmt` clean, `go build ./...`,
-  `go test ./...`, and the same with `-tags social`.
+  `go test ./...`, and the same with `-tags nosocial`.
 
 ## Security
 

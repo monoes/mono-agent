@@ -1,4 +1,4 @@
-//go:build integration && social
+//go:build integration && !nosocial
 
 package action
 

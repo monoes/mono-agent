@@ -21,12 +21,12 @@
 
 > **Project status:** pre-1.0, single maintainer. Core workflow engine and node set are exercised by CI (`go test ./...`), but expect breaking changes between minor versions until 1.0.
 
-- 🔁 **DAG workflow engine** — 105 built-in node types (165 with the optional social build): services (GitHub, Google Sheets / Gmail / Drive, Stripe, Salesforce, HubSpot, Jira, Linear, Notion, Airtable), databases, HTTP, data transforms, and comms (Gmail, Outlook, Slack, Telegram, Discord, and more)
+- 🔁 **DAG workflow engine** — 167 built-in node types, social platform actions included: services (GitHub, Google Sheets / Gmail / Drive, Stripe, Salesforce, HubSpot, Jira, Linear, Notion, Airtable), databases, HTTP, data transforms, and comms (Gmail, Outlook, Slack, Telegram, Discord, and more)
 - 📦 **Single static Go binary** — zero CGO, SQLite embedded, no Docker, no Node.js runtime, no telemetry. All data stays on your machine (crash reports default to local files — see [SECURITY.md](SECURITY.md))
 - 🖥️ **Three ways to drive it** — a visual canvas editor (Wails desktop GUI), a 180+-command CLI with JSON output everywhere, and a built-in MCP server so AI agents can operate it safely
 - 🤝 **Human-in-the-loop as a platform primitive** — pause any workflow for review, edit the payload, then approve or reject; the queue is durable and survives restarts
 - 🌐 **Browser automation where no practical API exists** — drive *your own logged-in Chrome* via the bundled extension bridge, publishing to and reading your own accounts (same model as consumer RPA tools)
-- 📣 **Social platform nodes** (Instagram, LinkedIn, X, TikTok, Hacker News, Product Hunt) are an **opt-in** compile-time build (`-tags social`) for managing your own accounts — see [Usage Policy](docs/USAGE_POLICY.md)
+- 📣 **Social platform nodes** (Instagram, LinkedIn, X, TikTok, Hacker News, Product Hunt) are built in, for managing your own accounts (a `-tags nosocial` build leaves them out) — see [Usage Policy](docs/USAGE_POLICY.md)
 
 Think of it as an honest, self-hosted n8n you can carry in a single file — with human approval gates and first-class agent access built in.
 
@@ -54,7 +54,7 @@ go build -o monoagentcli ./cmd/monoagentcli
 # Orientation
 ./monoagentcli version
 ./monoagentcli ref                       # built-in offline docs: commands, nodes, expressions
-./monoagentcli node list                 # all 105 node types
+./monoagentcli node list                 # all 167 node types
 
 # Try the flagship example workflow (prints the new workflow id)
 ./monoagentcli workflow templates list
@@ -262,7 +262,7 @@ monoagentcli hil reject <id>        # drop the item
 
 ## Node Library
 
-> 105 built-in node types (+ 4 triggers) in the default build — 165 with the optional social build (below). `monoagentcli node list` prints the exact set your binary has.
+> 167 built-in node types in the default build, social platform actions (below) included — 107 in a `-tags nosocial` build. `monoagentcli node list` prints the exact set your binary has.
 
 <details>
 <summary><strong>⚙️ Core Control (15 nodes)</strong></summary>
@@ -394,9 +394,9 @@ monoagentcli hil reject <id>        # drop the item
 </details>
 
 <details>
-<summary><strong>📱 Social platform actions — <em>opt-in build</em> (<code>-tags social</code>)</strong></summary>
+<summary><strong>📱 Social platform actions</strong></summary>
 
-Publish to and read **your own accounts** on these platforms via the Chrome extension bridge. These node types are **not compiled into the default binary** — build with `go build -tags social ./cmd/monoagentcli` to include them. They exist for managing your own presence; platform terms apply — see the [Usage Policy](docs/USAGE_POLICY.md).
+Publish to and read **your own accounts** on these platforms via the Chrome extension bridge. They are part of the default binary and every release (a `go build -tags nosocial` build leaves them out). They exist for managing your own presence; platform terms apply — see the [Usage Policy](docs/USAGE_POLICY.md).
 
 | Platform | Available actions |
 |----------|-------------------|
@@ -585,8 +585,8 @@ git clone https://github.com/monoes/mono-agent.git
 cd mono-agent
 go build -o monoagentcli ./cmd/monoagentcli
 
-# Or with the social platform nodes (opt-in):
-go build -tags social -o monoagentcli ./cmd/monoagentcli
+# Or without the social platform nodes:
+go build -tags nosocial -o monoagentcli ./cmd/monoagentcli
 ```
 
 Prebuilt: `install.sh` (macOS arm64/amd64, Linux amd64/arm64), or download from [releases](https://github.com/monoes/mono-agent/releases/latest) — CLI binaries for macOS, Linux (amd64/arm64), and Windows, plus desktop-app builds for macOS (arm64), Linux (amd64), and Windows.
@@ -701,7 +701,7 @@ mono-agent/
 | [examples/](examples/) | Ready-to-run workflow JSONs with webhook trigger examples |
 | [install.sh](install.sh) | One-line installer (macOS / Linux) |
 | [SECURITY.md](SECURITY.md) | Reporting, supported versions, telemetry & crash-reporting statement |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | Build/test commands (incl. `-tags social`), PR guidelines |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Build/test commands (incl. `-tags nosocial`), PR guidelines |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
 | [docs/screenshots/](docs/screenshots/) | GUI screenshots, including a [walkthrough of the Org page](docs/screenshots/org-walkthrough/README.md) |
 
