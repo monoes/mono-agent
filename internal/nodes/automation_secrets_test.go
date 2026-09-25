@@ -27,25 +27,33 @@ func fakeVault(t *testing.T, entries map[string]string) *[]string {
 	return &asked
 }
 
-func TestSecretLookup_NamespacedThenBare(t *testing.T) {
-	fakeVault(t, map[string]string{
-		"p1|acme-crm/api_key": "namespaced",
-		"p1|shared_token":     "bare",
-		"p2|acme-crm/api_key": "other-profile",
+// Without a registry that vouches for the automation, only its own
+// namespaced secrets resolve (fail closed).
+func TestSecretLookup_UnknownAutomationFailsClosed(t *testing.T) {
+	action.SetDefSource(nil)
+	asked := fakeVault(t, map[string]string{
+		"p1|automation:acme-crm/api_key": "namespaced",
+		"p1|shared_token":                "bare",
+		"p2|automation:acme-crm/api_key": "other-profile",
 	})
 	look := secretLookup(context.Background(), nil, "p1", "acme-crm")
 
 	if v, ok := look("api_key"); !ok || v != "namespaced" {
 		t.Errorf("api_key = %q %v, want the namespaced value", v, ok)
 	}
-	if v, ok := look("shared_token"); !ok || v != "bare" {
-		t.Errorf("shared_token = %q %v, want the bare fallback", v, ok)
+	if _, ok := look("shared_token"); ok {
+		t.Error("unknown automation read a bare vault secret")
 	}
 	if _, ok := look("missing"); ok {
 		t.Error("missing secret resolved")
 	}
 	if _, ok := look("  "); ok {
 		t.Error("empty name resolved")
+	}
+	for _, n := range *asked {
+		if n == "shared_token" {
+			t.Error("bare name was looked up for an unknown automation")
+		}
 	}
 }
 
@@ -76,8 +84,8 @@ func TestSecretLookup_ImportedPackageNoBareFallback(t *testing.T) {
 	}
 
 	asked := fakeVault(t, map[string]string{
-		"p1|acme-crm/api_key": "namespaced",
-		"p1|github_token":     "must-not-leak",
+		"p1|automation:acme-crm/api_key": "namespaced",
+		"p1|github_token":                "must-not-leak",
 	})
 	look := SecretLookup(context.Background(), nil, "p1", " Acme-CRM ")
 	if v, ok := look("api_key"); !ok || v != "namespaced" {
@@ -92,9 +100,44 @@ func TestSecretLookup_ImportedPackageNoBareFallback(t *testing.T) {
 		}
 	}
 
-	// A built-in keeps the bare fallback.
+	// A built-in keeps the bare fallback, after its namespaced name.
 	builtin := secretLookup(context.Background(), nil, "p1", "gemini")
 	if _, ok := builtin("github_token"); !ok {
 		t.Error("built-in automation lost the bare-name fallback")
+	}
+}
+
+// trustPkg is a package context that reports a trust tier.
+type trustPkg struct {
+	action.PackageContext
+	trust string
+}
+
+func (p trustPkg) Trust() string { return p.trust }
+
+type trustSource struct {
+	fakeSource
+	trust map[string]string
+}
+
+func (s trustSource) Package(id string) action.PackageContext {
+	if t, ok := s.trust[id]; ok {
+		return trustPkg{trust: t}
+	}
+	return nil
+}
+
+func TestSecretLookup_BareOnlyForBuiltinAndLocal(t *testing.T) {
+	action.SetDefSource(trustSource{trust: map[string]string{
+		"b": "builtin", "l": "local", "r": "recorded", "i": "imported", "x": "",
+	}})
+	t.Cleanup(func() { action.SetDefSource(nil) })
+	fakeVault(t, map[string]string{"p1|token": "bare"})
+
+	for id, want := range map[string]bool{"b": true, "l": true, "r": false, "i": false, "x": false, "missing": false} {
+		_, got := secretLookup(context.Background(), nil, "p1", id)("token")
+		if got != want {
+			t.Errorf("trust of %q: bare fallback = %v, want %v", id, got, want)
+		}
 	}
 }

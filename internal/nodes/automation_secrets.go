@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"strings"
 
+	"github.com/monoes/mono-agent/internal/action"
 	"github.com/monoes/mono-agent/internal/automation"
 	"github.com/monoes/mono-agent/internal/secrets"
 )
@@ -14,43 +15,67 @@ var resolveSecret = func(ctx context.Context, db *sql.DB, profileID, name string
 	return secrets.Resolve(ctx, db, profileID, "@secret:"+name)
 }
 
-// secretLookup backs {{secret:<name>}} with the profile vault. The name is
-// tried as "<automation>/<name>" first. Only built-in and local automations
-// (and legacy actions without a package) fall back to the bare "<name>":
-// an imported package may read nothing but the secrets filed under its own
-// id, so it can't pull, say, a GitHub token into a page it controls.
-// Values are never logged.
-func secretLookup(ctx context.Context, db *sql.DB, profileID, automationID string) func(string) (string, bool) {
-	bare := true
-	if info, ok := bootedInfo(automationID); ok && info.Trust == automation.SourceImported {
-		bare = false
-	}
-	return func(name string) (string, bool) {
-		name = strings.TrimSpace(name)
-		if name == "" {
-			return "", false
-		}
-		candidates := []string{automationID + "/" + name}
-		if bare {
-			candidates = append(candidates, name)
-		}
-		for _, c := range candidates {
-			if v, err := resolveSecret(ctx, db, profileID, c); err == nil {
-				return v, true
-			}
-		}
+// secretNamespace is the vault name prefix of a package's own secrets:
+// {{secret:api_key}} in automation acme-crm reads "automation:acme-crm/api_key".
+const secretNamespace = "automation:"
+
+// vaultSecret backs {{secret:<name>}} with the profile vault (contract §8).
+// It tries "automation:<id>/<name>" first. Only automations whose trust is
+// positively builtin or local fall back to the bare "<name>"; recorded,
+// imported and unknown ones (fail closed) read nothing but the secrets filed
+// under their own id, so a third-party package can't pull, say, a GitHub
+// token into a page it controls. Values are never logged.
+func vaultSecret(ctx context.Context, db *sql.DB, profileID, automationID, name string) (string, bool) {
+	automationID = strings.ToLower(strings.TrimSpace(automationID))
+	name = strings.TrimSpace(name)
+	if name == "" {
 		return "", false
+	}
+	candidates := []string{secretNamespace + automationID + "/" + name}
+	if automationID != "" && trustAllowsBareSecrets(automationTrust(automationID)) {
+		candidates = append(candidates, name)
+	}
+	for _, c := range candidates {
+		if v, err := resolveSecret(ctx, db, profileID, c); err == nil {
+			return v, true
+		}
+	}
+	return "", false
+}
+
+func trustAllowsBareSecrets(trust string) bool {
+	return trust == automation.SourceBuiltin || trust == automation.SourceLocal
+}
+
+// automationTrust is the installed trust tier of an automation: the package
+// context's Trust() when it has one, else the registry index; "" when
+// unknown.
+func automationTrust(id string) string {
+	if src := action.CurrentDefSource(); src != nil {
+		if t, ok := src.Package(id).(interface{ Trust() string }); ok {
+			return t.Trust()
+		}
+	}
+	if info, ok := bootedInfo(id); ok {
+		return info.Trust
+	}
+	return ""
+}
+
+// secretLookup binds vaultSecret to one automation for the executor.
+func secretLookup(ctx context.Context, db *sql.DB, profileID, automationID string) func(string) (string, bool) {
+	return func(name string) (string, bool) {
+		return vaultSecret(ctx, db, profileID, automationID, name)
 	}
 }
 
 // SecretLookup is the vault lookup for {{secret:<name>}} used outside
-// browser nodes (e.g. `record verify`), with the same rules as a node run:
-// "<automation>/<name>" first, and the bare "<name>" only for automations
-// that aren't imported. It needs the registry booted (BootAutomations; the
-// CLI root does it) to know an automation's trust; an id the registry doesn't
-// know, such as a new draft, counts as the user's own.
+// browser nodes (e.g. `record verify`), with the same rules as a node run.
+// Trust comes from the booted registry (the CLI root boots it); an
+// automation it doesn't know, such as a new draft, gets its namespaced
+// secrets only.
 func SecretLookup(ctx context.Context, db *sql.DB, profileID, automationID string) func(string) (string, bool) {
-	return secretLookup(ctx, db, profileID, strings.ToLower(strings.TrimSpace(automationID)))
+	return secretLookup(ctx, db, profileID, automationID)
 }
 
 // bootedInfo returns the registry's installed info for an automation.
