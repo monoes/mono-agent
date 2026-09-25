@@ -2,9 +2,11 @@ package recordanalyze
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/monoes/mono-agent/internal/action"
@@ -129,5 +131,24 @@ func TestPromoteHealedNoSelectors(t *testing.T) {
 	got, err := PromoteHealed(dir, []Observation{{Key: "a", Index: -1, OK: true, Healed: true}})
 	if err != nil || len(got) != 0 {
 		t.Errorf("jev heal (index -1) must not reorder: %v %v", got, err)
+	}
+}
+
+func TestVerifyRedactsInputValues(t *testing.T) {
+	dir := formDraft(t)
+	exec := func(context.Context, *action.ActionDef, action.PackageContext, map[string]any, bool, action.SelectorObserver) RunOutcome {
+		return RunOutcome{
+			Events: []action.ExecutionEvent{{Type: "step_start", StepID: "password"}},
+			Result: &action.ExecutionResult{FailedItems: []action.FailedItem{{StepID: "password", Error: errors.New(`typed "hunter2" rejected`)}}},
+			Err:    errors.New("hunter2 was wrong"),
+		}
+	}
+	rep, err := Verify(context.Background(), dir, VerifyOptions{Exec: exec, Inputs: map[string]any{"account_password": "hunter2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(rep)
+	if strings.Contains(string(b), "hunter2") || !strings.Contains(string(b), "***") {
+		t.Errorf("report leaks or lacks mask: %s", b)
 	}
 }

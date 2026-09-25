@@ -86,7 +86,7 @@ func TestPageExecSafeModeRealExecutor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("report: %+v typed: %v", rep, page.typed)
+	t.Logf("report: %+v", rep)
 	if page.elems[`[data-testid="contact-save"]`].clicked {
 		t.Error("safe mode clicked Save")
 	}
@@ -101,7 +101,7 @@ func TestPageExecSafeModeRealExecutor(t *testing.T) {
 	// The masked password reaches the page through {{secret:account_password}}.
 	all := strings.Join(page.typed, "|")
 	if !strings.Contains(all, "s3cret") || !strings.Contains(all, "jane@example.com") {
-		t.Errorf("typed = %q", all)
+		t.Errorf("expected values were not typed (%d entries)", len(page.typed))
 	}
 	if page.url != "https://app.acme-crm.test/contacts/new" {
 		t.Errorf("url = %s", page.url)

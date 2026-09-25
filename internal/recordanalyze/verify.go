@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -112,6 +113,7 @@ func Verify(ctx context.Context, dir string, opts VerifyOptions) (*VerifyReport,
 	}
 	out := opts.Exec(ctx, def, pkg, inputs, !opts.Full, o)
 	rep := BuildReport(def, out, o.obs, pkg)
+	redact(rep, opts.Inputs)
 	promoted, err := PromoteHealed(dir, o.obs)
 	if err != nil {
 		return rep, err
@@ -287,4 +289,28 @@ func PageExec(page browser.PageInterface, logger zerolog.Logger) ExecFunc {
 		}
 		return out
 	}
+}
+
+// redact masks every supplied input value (they may be secrets) in the
+// report's messages, so no value is ever echoed back.
+func redact(rep *VerifyReport, inputs map[string]any) {
+	var vals []string
+	for _, v := range inputs {
+		if s := fmt.Sprint(v); len(s) >= 3 {
+			vals = append(vals, s)
+		}
+	}
+	if len(vals) == 0 {
+		return
+	}
+	mask := func(s string) string {
+		for _, v := range vals {
+			s = strings.ReplaceAll(s, v, "***")
+		}
+		return s
+	}
+	for i := range rep.Steps {
+		rep.Steps[i].Message = mask(rep.Steps[i].Message)
+	}
+	rep.Error = mask(rep.Error)
 }

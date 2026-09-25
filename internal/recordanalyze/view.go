@@ -18,6 +18,10 @@ type DraftInput struct {
 	Default     any    `json:"default,omitempty"`
 	Description string `json:"description,omitempty"`
 	Format      string `json:"format,omitempty"`
+	Secret      bool   `json:"secret"`
+	// NeedsValue: verify/run needs a value the draft does not have — a
+	// secret, or a required input with no recorded value and no default.
+	NeedsValue bool `json:"needsValue"`
 }
 
 // DraftView is the `draft` of `record analyze --json`: draft.json's fields
@@ -42,7 +46,7 @@ func LoadDraftView(dir string) (*DraftView, error) {
 		return nil, err
 	}
 	v.ActionDef = &def
-	v.Inputs = flatInputs(&def)
+	v.Inputs = flatInputs(&def, d.RecordedInputs)
 	_ = readJSON(filepath.Join(dir, "selectors.json"), &v.Selectors)
 	entries, _ := os.ReadDir(filepath.Join(dir, "fragments"))
 	for _, e := range entries {
@@ -54,7 +58,7 @@ func LoadDraftView(dir string) (*DraftView, error) {
 	return v, nil
 }
 
-func flatInputs(def *action.ActionDef) []DraftInput {
+func flatInputs(def *action.ActionDef, recorded map[string]any) []DraftInput {
 	out := []DraftInput{}
 	if def.Inputs == nil {
 		return out
@@ -69,6 +73,9 @@ func flatInputs(def *action.ActionDef) []DraftInput {
 				in.Type = "string"
 			}
 			in.Required = gi == 0
+			in.Secret = in.Type == "secret"
+			_, hasRecorded := recorded[in.Name]
+			in.NeedsValue = in.Secret || (in.Required && !hasRecorded && (in.Default == nil || in.Default == ""))
 			out = append(out, in)
 		}
 	}

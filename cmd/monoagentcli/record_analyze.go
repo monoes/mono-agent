@@ -129,6 +129,7 @@ func printAnalyzeResult(w io.Writer, res *recordanalyze.Result) {
 func newRecordVerifyCmd(cfg *globalConfig) *cobra.Command {
 	var full bool
 	var inputs []string
+	var inputsFile string
 	cmd := &cobra.Command{
 		Use:   "verify <draft>",
 		Short: "Replay a draft in the browser (stops before the first side-effect step unless --full)",
@@ -147,12 +148,19 @@ func newRecordVerifyCmd(cfg *globalConfig) *cobra.Command {
 				return err
 			}
 			overrides := map[string]any{}
+			if inputsFile != "" {
+				fromFile, err := recordanalyze.ReadInputsFile(inputsFile)
+				if err != nil {
+					return err
+				}
+				overrides = fromFile
+			}
 			for _, kv := range inputs {
 				k, v, ok := strings.Cut(kv, "=")
 				if !ok || k == "" {
-					return fmt.Errorf("--input wants name=value, got %q", kv)
+					return fmt.Errorf("--input wants name=value")
 				}
-				overrides[k] = v
+				overrides[k] = v // --input wins over --inputs-file
 			}
 			rep, err := recordanalyze.Verify(cmd.Context(), dir, recordanalyze.VerifyOptions{Full: full, Exec: exec, Inputs: overrides})
 			if err != nil {
@@ -170,6 +178,7 @@ func newRecordVerifyCmd(cfg *globalConfig) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&full, "full", false, "Also run side-effect steps (writes on the site)")
 	cmd.Flags().Bool("safe", true, "Stop before the first side-effect step (default)")
+	cmd.Flags().StringVar(&inputsFile, "inputs-file", "", "JSON object {name: value} of inputs (mode 0600, owned by you; values are never echoed)")
 	cmd.Flags().StringArrayVar(&inputs, "input", nil, "Input value name=value (repeatable; secrets are never recorded)")
 	return cmd
 }

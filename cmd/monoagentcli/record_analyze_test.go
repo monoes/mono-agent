@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -208,5 +210,39 @@ func TestRecordAnalyzeSaveRenameInput(t *testing.T) {
 	}
 	if _, err := runRecordCLI(t, true, "save", dir, "--rename-input", "label"); err == nil {
 		t.Error("malformed --rename-input accepted")
+	}
+}
+
+func TestRecordAnalyzeVerifyInputsFile(t *testing.T) {
+	dir := analyzeRec1(t)
+	var got map[string]any
+	prev := recordVerifyExec
+	recordVerifyExec = func(context.Context, string, bool) (recordanalyze.ExecFunc, error) {
+		return func(_ context.Context, _ *action.ActionDef, _ action.PackageContext, in map[string]any, _ bool, _ action.SelectorObserver) recordanalyze.RunOutcome {
+			got = in
+			return recordanalyze.RunOutcome{Result: &action.ExecutionResult{}, Err: errors.New("login with s3cr3t-pw failed")}
+		}, nil
+	}
+	t.Cleanup(func() { recordVerifyExec = prev })
+	file := filepath.Join(t.TempDir(), "inputs.json")
+	if err := os.WriteFile(file, []byte(`{"label":"from-file","pw":"s3cr3t-pw"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runRecordCLI(t, true, "verify", dir, "--inputs-file", file, "--input", "label=from-flag")
+	if err != nil {
+		t.Fatalf("verify: %v\n%s", err, out)
+	}
+	if got["label"] != "from-flag" || got["pw"] != "s3cr3t-pw" {
+		t.Errorf("merged inputs = %v", got)
+	}
+	if strings.Contains(out, "s3cr3t-pw") || strings.Contains(out, "from-flag") {
+		t.Errorf("output echoes a value: %s", out)
+	}
+	if err := os.Chmod(file, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err = runRecordCLI(t, true, "verify", dir, "--inputs-file", file)
+	if err == nil || !strings.Contains(out, "0600") || strings.Contains(out, "s3cr3t-pw") {
+		t.Errorf("world-readable inputs file: err %v out %s", err, out)
 	}
 }
