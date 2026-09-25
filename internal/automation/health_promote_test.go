@@ -283,4 +283,34 @@ func TestHealthPromoteRecordedRewritesInPlace(t *testing.T) {
 	if got := indexEntryOf(t, r, "acme-crm").InstalledSha256; got != want {
 		t.Fatal("installedSha256 not refreshed for the recorded package")
 	}
+	if _, err := os.Stat(filepath.Join(r.Root(), "acme-crm", "overlay", "selectors.json")); err == nil {
+		t.Fatal("a recorded local package must not get an overlay")
+	}
+}
+
+// A recording merged into a built-in or imported package lowers its trust
+// to recorded but keeps its source: the publisher's files are never
+// rewritten, the promotion goes to the overlay.
+func TestHealthPromoteRecordedNonLocalUsesOverlay(t *testing.T) {
+	for _, src := range []string{SourceBuiltin, SourceImported} {
+		r := installAcme(t, SourceLocal)
+		if err := r.update(func(idx *indexFile) (bool, error) {
+			e := idx.Packages["acme-crm"]
+			e.Source, e.Trust = src, TrustRecorded
+			return true, nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		pkg, _ := r.Get("acme-crm")
+		before, _ := os.ReadFile(filepath.Join(pkg.Dir, "selectors.json"))
+		if err := r.PromoteCandidate("acme-crm", "contact.email", emailAria); err != nil {
+			t.Fatal(err)
+		}
+		if after, _ := os.ReadFile(filepath.Join(pkg.Dir, "selectors.json")); string(after) != string(before) {
+			t.Fatalf("source %s with recorded trust was rewritten in place", src)
+		}
+		if got := selectorOrder(t, r, "acme-crm", "contact.email"); got[0] != "aria:Email" {
+			t.Fatalf("source %s: overlay promotion missing: %v", src, got)
+		}
+	}
 }

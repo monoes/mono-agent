@@ -40,7 +40,7 @@ func (r *Registry) PromoteCandidate(id, key string, c action.SelectorCandidate) 
 		if !ok || e.Removed {
 			return false, fmt.Errorf("%w: %s", ErrNotInstalled, id)
 		}
-		if !promotesInPlace(e) {
+		if !e.userOwned() { // source local, trust local or recorded (same rule as ReplaceSelector)
 			return false, errNotLocal
 		}
 		dir := r.versionDir(id, e.Version)
@@ -66,17 +66,6 @@ func (r *Registry) PromoteCandidate(id, key string, c action.SelectorCandidate) 
 		return r.PromoteOverlayCandidate(id, key, c)
 	}
 	return err
-}
-
-// promotesInPlace reports whether a package is the user's own — written
-// locally or saved from a recording — and so is promoted by rewriting its
-// selectors.json rather than through the overlay.
-func promotesInPlace(e *indexEntry) bool {
-	if e.Source != SourceLocal {
-		return false
-	}
-	t := e.trust()
-	return t == TrustLocal || t == TrustRecorded
 }
 
 // moveCandidateFirst returns entry with c moved to index 0. changed is
