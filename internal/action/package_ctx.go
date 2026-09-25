@@ -94,6 +94,7 @@ type WaitSpec struct {
 //	tree_parent  Field (depth), ID, To, Root, Carry
 //	flag         Where, To (per-item true/false from the condition)
 //	sort         Field, Order (stable; numeric when both values are numbers, else string; missing last)
+//	add, subtract, multiply, divide  Field, By, Round, To (numbers parsed like parse_number)
 type TransformOp struct {
 	Op      string            `json:"op"`
 	Field   string            `json:"field,omitempty"`
@@ -110,6 +111,8 @@ type TransformOp struct {
 	Root    string            `json:"root,omitempty"`  // tree_parent: template, parent of depth-0 rows
 	Carry   string            `json:"carry,omitempty"` // tree_parent: variable holding the open-ancestor stack across pages
 	Order   string            `json:"order,omitempty"` // sort: "asc" (default) | "desc"
+	By      float64           `json:"by,omitempty"`    // add/subtract/multiply/divide: the operand
+	Round   bool              `json:"round,omitempty"` // add/subtract/multiply/divide: round the result to an integer
 }
 
 // SelectorObserver receives the outcome of every package-selector lookup
