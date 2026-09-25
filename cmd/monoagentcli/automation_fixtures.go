@@ -1,25 +1,17 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
-	"path"
 	"reflect"
 	"sort"
 	"strings"
-	"time"
 
-	"github.com/go-rod/rod"
-	"github.com/go-rod/rod/lib/launcher"
-	"github.com/go-rod/rod/lib/proto"
 	"github.com/monoes/mono-agent/internal/action"
 	"github.com/monoes/mono-agent/internal/automation"
-	"github.com/monoes/mono-agent/internal/browser"
-	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
 )
 
@@ -43,19 +35,8 @@ type fixtureResult struct {
 	Message string `json:"message"`
 }
 
-// fixtureRun is what running one action against one fixture produced.
-type fixtureRun struct {
-	items    []map[string]interface{}
-	safeStop *action.SafeStop
-	err      error
-}
-
-// fixtureRunner runs def (inputs as params) on a page that answers every
-// document request with html. nil means no browser is available.
-type fixtureRunner func(pkg *automation.Package, def *action.ActionDef, html string, inputs map[string]interface{}) fixtureRun
-
 func newAutomationTestCmd(cfg *globalConfig) *cobra.Command {
-	var live bool
+	var live, full bool
 	cmd := &cobra.Command{
 		Use:   "test <id|dir> [action]",
 		Short: "Validate an automation and check its fixture snapshots",
@@ -72,7 +53,7 @@ func newAutomationTestCmd(cfg *globalConfig) *cobra.Command {
 			if len(args) == 2 {
 				only = args[1]
 			}
-			runner, closeRunner := newBrowserFixtureRunner()
+			runner, closeRunner := newBrowserFixtureRunner(full)
 			defer closeRunner()
 			results := runAutomationTests(pkg, only, runner)
 			out := cmd.OutOrStdout()
@@ -94,6 +75,7 @@ func newAutomationTestCmd(cfg *globalConfig) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&full, "full", false, "Run past side-effect steps (safe: fixtures are served in-process, nothing leaves the machine)")
 	cmd.Flags().BoolVar(&live, "live", false, "Run against the real site in the browser (not supported yet)")
 	return cmd
 }
@@ -142,7 +124,7 @@ func runAutomationTests(pkg *automation.Package, only string, run fixtureRunner)
 	}
 	results = append(results, fixtureResult{Action: valAction, OK: errs == 0, Status: status, Message: msg})
 
-	for _, fx := range listFixtures(pkg.FS) {
+	for _, fx := range listFixtures(pkg.FS, pkg.Manifest.Actions) {
 		if only != "" && fx.action != only {
 			continue
 		}
@@ -155,21 +137,40 @@ type fixtureFile struct {
 	action, name, htmlPath, expectPath string
 }
 
-// listFixtures pairs tests/fixtures/<name>.html with tests/<name>.expect.json.
-// The action is the part of <name> before the first dot.
-func listFixtures(fsys fs.FS) []fixtureFile {
+// listFixtures finds the tests of a package. A test <name> (= <action> or
+// <action>.<variant>) exists when tests/<name>.expect.json exists, or when
+// tests/fixtures/<name>.html exists and <action> is one of actions. Other
+// fixture files are pages that tests/<name>.routes.json serves.
+func listFixtures(fsys fs.FS, actions []string) []fixtureFile {
 	var out []fixtureFile
 	if fsys == nil {
 		return out
 	}
-	entries, _ := fs.ReadDir(fsys, "tests/fixtures")
+	isAction := map[string]bool{}
+	for _, a := range actions {
+		isAction[a] = true
+	}
+	names := map[string]bool{}
+	entries, _ := fs.ReadDir(fsys, "tests")
 	for _, e := range entries {
-		if e.IsDir() || path.Ext(e.Name()) != ".html" {
-			continue
+		if n, ok := strings.CutSuffix(e.Name(), ".expect.json"); ok && !e.IsDir() {
+			names[n] = true
 		}
-		name := strings.TrimSuffix(e.Name(), ".html")
+	}
+	entries, _ = fs.ReadDir(fsys, "tests/fixtures")
+	for _, e := range entries {
+		n, ok := strings.CutSuffix(e.Name(), ".html")
+		act, _, _ := strings.Cut(n, ".")
+		if ok && !e.IsDir() && isAction[act] {
+			names[n] = true
+		}
+	}
+	for name := range names {
 		act, _, _ := strings.Cut(name, ".")
-		fx := fixtureFile{action: act, name: name, htmlPath: "tests/fixtures/" + e.Name()}
+		fx := fixtureFile{action: act, name: name}
+		if _, err := fs.Stat(fsys, "tests/fixtures/"+name+".html"); err == nil {
+			fx.htmlPath = "tests/fixtures/" + name + ".html"
+		}
 		if _, err := fs.Stat(fsys, "tests/"+name+".expect.json"); err == nil {
 			fx.expectPath = "tests/" + name + ".expect.json"
 		}
@@ -177,52 +178,6 @@ func listFixtures(fsys fs.FS) []fixtureFile {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].name < out[j].name })
 	return out
-}
-
-func runFixture(pkg *automation.Package, fx fixtureFile, run fixtureRunner) fixtureResult {
-	r := fixtureResult{Action: fx.action, Fixture: fx.name, OK: true, Status: "skipped"}
-	def, err := pkg.Action(fx.action)
-	if err != nil {
-		r.OK, r.Status, r.Message = false, "fail", "no such action: "+err.Error()
-		return r
-	}
-	if fx.expectPath == "" {
-		r.Message = "skipped: no tests/" + fx.name + ".expect.json"
-		return r
-	}
-	var want interface{}
-	if b, err := fs.ReadFile(pkg.FS, fx.expectPath); err != nil || json.Unmarshal(b, &want) != nil {
-		r.OK, r.Status, r.Message = false, "fail", "unreadable "+fx.expectPath
-		return r
-	}
-	inputs, missing := fixtureInputs(pkg.FS, fx.name, def, want)
-	if len(missing) > 0 {
-		r.Message = "skipped: no value for required input(s) " + strings.Join(missing, ", ") +
-			" (add tests/" + fx.name + ".inputs.json)"
-		return r
-	}
-	if run == nil {
-		r.Message = "skipped: no browser"
-		return r
-	}
-	html, err := fs.ReadFile(pkg.FS, fx.htmlPath)
-	if err != nil {
-		r.OK, r.Status, r.Message = false, "fail", err.Error()
-		return r
-	}
-	got := run(pkg, def, string(html), inputs)
-	switch {
-	case got.safeStop != nil:
-		r.Message = "skipped: stopped before side-effect step " + got.safeStop.StepID
-	case got.err != nil:
-		r.OK, r.Status, r.Message = false, "fail", got.err.Error()
-	case outputMatches(got.items, want):
-		r.Status, r.Message = "pass", fmt.Sprintf("%d record(s) match %s", len(got.items), fx.expectPath)
-	default:
-		g, _ := json.Marshal(got.items)
-		r.OK, r.Status, r.Message = false, "fail", "output differs from "+fx.expectPath+": got "+truncateStr(string(g), 300)
-	}
-	return r
 }
 
 // fixtureInputs builds the run's params: tests/<name>.inputs.json when
@@ -286,61 +241,4 @@ func outputMatches(items []map[string]interface{}, want interface{}) bool {
 		}
 	}
 	return false
-}
-
-// newBrowserFixtureRunner starts a headless browser only if one is already
-// installed (launcher.LookPath; rod's own download is never triggered).
-// Returns a nil runner when none is found.
-func newBrowserFixtureRunner() (fixtureRunner, func()) {
-	noop := func() {}
-	if os.Getenv("MONOAGENT_TEST_NO_BROWSER") != "" {
-		return nil, noop
-	}
-	bin, found := launcher.LookPath()
-	if !found {
-		return nil, noop
-	}
-	l := launcher.New().Bin(bin).Headless(true)
-	u, err := l.Launch()
-	if err != nil {
-		return nil, noop
-	}
-	b := rod.New().ControlURL(u)
-	if err := b.Connect(); err != nil {
-		l.Kill()
-		return nil, noop
-	}
-	closeFn := func() { b.Close(); l.Kill() }
-	return func(pkg *automation.Package, def *action.ActionDef, html string, inputs map[string]interface{}) fixtureRun {
-		page, err := b.Page(proto.TargetCreateTarget{URL: "about:blank"})
-		if err != nil {
-			return fixtureRun{err: err}
-		}
-		defer page.Close()
-		// Every document is the fixture; nothing else leaves the machine.
-		router := page.HijackRequests()
-		router.MustAdd("*", func(h *rod.Hijack) {
-			if h.Request.Type() == proto.NetworkResourceTypeDocument {
-				h.Response.SetHeader("Content-Type", "text/html; charset=utf-8")
-				h.Response.SetBody(html)
-				return
-			}
-			h.Response.SetBody("")
-		})
-		go router.Run()
-		defer router.Stop()
-
-		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-		defer cancel()
-		ae := action.NewActionExecutor(ctx, browser.NewRodPage(page.Context(ctx)), nil, nil, nil, nil, zerolog.Nop())
-		ae.SetPackage(pkg.Context())
-		ae.SetSafeMode(true)
-		res, err := ae.ExecuteDef(&action.StorageAction{ID: "fixture-test", Type: def.ActionType,
-			TargetPlatform: pkg.Manifest.ID, Params: inputs}, def)
-		out := fixtureRun{err: err, safeStop: ae.SafeStopped()}
-		if res != nil {
-			out.items = res.ExtractedItems
-		}
-		return out
-	}, closeFn
 }
