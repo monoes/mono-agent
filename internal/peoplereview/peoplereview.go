@@ -1,0 +1,180 @@
+// Package peoplereview is the review queue for people staged for outreach:
+// a workflow saves a lead with category "pending_approval" and a drafted
+// introduction; a person approves (optionally sending it through a
+// dispatch workflow) or rejects it. `monoagentcli people review` is the
+// surface; the GUI's Human in Loop page calls that command.
+package peoplereview
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"sort"
+	"strings"
+)
+
+// Category values the queue moves people between.
+const (
+	Pending  = "pending_approval"
+	Approved = "approved"
+	Rejected = "rejected"
+)
+
+// SendWorkflowName is the naming convention for the dispatch workflow when
+// none is named explicitly: the profile's one workflow whose name contains
+// it.
+const SendWorkflowName = "Send Approved DMs"
+
+// ErrNotFound reports a person or workflow that isn't in the profile.
+var ErrNotFound = errors.New("not found")
+
+// ErrAmbiguous reports more than one workflow matching the send choice.
+var ErrAmbiguous = errors.New("ambiguous")
+
+// Person is one lead in the queue.
+type Person struct {
+	ID               string `json:"id"`
+	Platform         string `json:"platform"`
+	PlatformUsername string `json:"platform_username"`
+	FullName         string `json:"full_name"`
+	ImageURL         string `json:"image_url"`
+	ProfileURL       string `json:"profile_url"`
+	JobTitle         string `json:"job_title"`
+	Category         string `json:"category"`
+	Introduction     string `json:"introduction"`
+	CreatedAt        string `json:"created_at"`
+}
+
+// Workflow names the dispatch workflow chosen for sending.
+type Workflow struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Active bool   `json:"active"`
+}
+
+// ListPending returns the profile's people awaiting review, newest first.
+func ListPending(ctx context.Context, db *sql.DB, profileID string) ([]Person, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT id, COALESCE(platform,''), COALESCE(platform_username,''), COALESCE(full_name,''),
+		       COALESCE(image_url,''), COALESCE(profile_url,''), COALESCE(job_title,''),
+		       COALESCE(category,''), COALESCE(introduction,''), COALESCE(created_at,'')
+		FROM people
+		WHERE profile_id = ? AND category = ?
+		ORDER BY created_at DESC`, profileID, Pending)
+	if err != nil {
+		return nil, fmt.Errorf("listing people to review: %w", err)
+	}
+	defer rows.Close()
+	out := []Person{}
+	for rows.Next() {
+		var p Person
+		if err := rows.Scan(&p.ID, &p.Platform, &p.PlatformUsername, &p.FullName, &p.ImageURL,
+			&p.ProfileURL, &p.JobTitle, &p.Category, &p.Introduction, &p.CreatedAt); err != nil {
+			return nil, fmt.Errorf("reading people to review: %w", err)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// Get returns one person of the profile.
+func Get(ctx context.Context, db *sql.DB, profileID, personID string) (Person, error) {
+	var p Person
+	err := db.QueryRowContext(ctx, `
+		SELECT id, COALESCE(platform,''), COALESCE(platform_username,''), COALESCE(full_name,''),
+		       COALESCE(image_url,''), COALESCE(profile_url,''), COALESCE(job_title,''),
+		       COALESCE(category,''), COALESCE(introduction,''), COALESCE(created_at,'')
+		FROM people WHERE id = ? AND profile_id = ?`, personID, profileID).
+		Scan(&p.ID, &p.Platform, &p.PlatformUsername, &p.FullName, &p.ImageURL,
+			&p.ProfileURL, &p.JobTitle, &p.Category, &p.Introduction, &p.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return p, fmt.Errorf("person %q: %w", personID, ErrNotFound)
+	}
+	return p, err
+}
+
+// Approve marks a person approved, replacing the introduction when intro is
+// not empty, and returns the updated person.
+func Approve(ctx context.Context, db *sql.DB, profileID, personID, intro string) (Person, error) {
+	p, err := Get(ctx, db, profileID, personID)
+	if err != nil {
+		return p, err
+	}
+	if strings.TrimSpace(intro) != "" {
+		p.Introduction = intro
+	}
+	if _, err := db.ExecContext(ctx,
+		`UPDATE people SET introduction = ?, category = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND profile_id = ?`,
+		p.Introduction, Approved, personID, profileID); err != nil {
+		return p, fmt.Errorf("approving %s: %w", personID, err)
+	}
+	p.Category = Approved
+	return p, nil
+}
+
+// Reject marks a person rejected so they leave the queue.
+func Reject(ctx context.Context, db *sql.DB, profileID, personID string) error {
+	res, err := db.ExecContext(ctx,
+		`UPDATE people SET category = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND profile_id = ?`,
+		Rejected, personID, profileID)
+	if err != nil {
+		return fmt.Errorf("rejecting %s: %w", personID, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("person %q: %w", personID, ErrNotFound)
+	}
+	return nil
+}
+
+// PickSendWorkflow chooses the dispatch workflow from the profile's
+// workflows: want (an id, or part of a name) when given, else the one
+// workflow whose name contains SendWorkflowName. None, or more than one, is
+// an error that says how to choose. Workflows live in files and SQLite, so
+// the caller lists them (the hybrid store) rather than this package
+// querying one table.
+func PickSendWorkflow(workflows []Workflow, want string) (Workflow, error) {
+	want = strings.TrimSpace(want)
+	if want != "" {
+		for _, w := range workflows {
+			if w.ID == want {
+				return w, nil
+			}
+		}
+		return matchOne(workflows, want, fmt.Sprintf("matches --send-workflow %q", want))
+	}
+	return matchOne(workflows, SendWorkflowName, fmt.Sprintf("is named like %q", SendWorkflowName))
+}
+
+func matchOne(workflows []Workflow, name, what string) (Workflow, error) {
+	var found []Workflow
+	for _, w := range workflows {
+		if strings.Contains(strings.ToLower(w.Name), strings.ToLower(name)) {
+			found = append(found, w)
+		}
+	}
+	switch len(found) {
+	case 1:
+		return found[0], nil
+	case 0:
+		return Workflow{}, fmt.Errorf("no workflow in this profile %s — create one, or name it with --send-workflow <id|name>: %w", what, ErrNotFound)
+	default:
+		sort.Slice(found, func(i, j int) bool { return found[i].Name < found[j].Name })
+		names := make([]string, len(found))
+		for i, w := range found {
+			names[i] = fmt.Sprintf("%s (%s)", w.Name, w.ID)
+		}
+		return Workflow{}, fmt.Errorf("%d workflows in this profile %s: %s — name one with --send-workflow <id>: %w",
+			len(found), what, strings.Join(names, ", "), ErrAmbiguous)
+	}
+}
+
+// SendInput is the trigger input a dispatch workflow receives for a person.
+func SendInput(p Person) map[string]interface{} {
+	return map[string]interface{}{
+		"person_id":         p.ID,
+		"platform":          p.Platform,
+		"platform_username": p.PlatformUsername,
+		"introduction":      p.Introduction,
+	}
+}
