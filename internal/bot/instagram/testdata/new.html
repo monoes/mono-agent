@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- SYNTHETIC fixture: Instagram-like "New message" dialog with recipient
+     search (near-duplicate usernames on purpose). Invented content. -->
+<title>New message • Direct</title>
+<style>
+body { font: 14px sans-serif; margin: 0; }
+[role="dialog"] { position: fixed; top: 60px; left: 25%; width: 440px; background: #fff; border: 1px solid #888; padding: 8px; }
+[role="button"] { cursor: pointer; display: block; padding: 6px; }
+[aria-disabled="true"] { opacity: .3; }
+</style>
+</head>
+<body>
+<div role="dialog">
+  <div><h1>New message</h1></div>
+  <div><span>To:</span> <input autocomplete="off" name="queryBox" placeholder="Search..." spellcheck="false" type="text"></div>
+  <div id="results"></div>
+  <div role="button" tabindex="0" id="chat" aria-disabled="true">Chat</div>
+</div>
+<script>
+window.FX = {{FX}};
+(function () {
+  const FX = window.FX;
+  const people = FX.people || [
+    { u: 'fake.bea.two', n: 'Bea Two', t: '5003' },
+    { u: 'fake.bea', n: 'Bea Fixture', t: '5001' },
+    { u: 'fake.beatrix', n: 'Beatrix', t: '5009' },
+  ];
+  const q = document.querySelector('input[name=queryBox]');
+  const res = document.querySelector('#results');
+  const chat = document.querySelector('#chat');
+  let chosen = null, timer = 0;
+  q.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      const v = q.value.toLowerCase();
+      res.innerHTML = people.filter((p) => v && p.u.includes(v.slice(0, 4))).map((p) =>
+        '<div role="button" tabindex="0" data-t="' + p.t + '" data-u="' + p.u + '"><div><img alt="" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="40" height="40"></div>' +
+        '<div><span dir="auto">' + p.n + '</span><div><span>' + p.u + '</span></div></div><div><input type="checkbox" aria-label="Toggle selection"></div></div>').join('');
+      res.querySelectorAll('[role="button"]').forEach((r) => r.addEventListener('click', () => {
+        chosen = r.dataset;
+        fetch('/api/v1/direct_v2/select/?u=' + encodeURIComponent(r.dataset.u), { method: 'POST', body: '' });
+        chat.setAttribute('aria-disabled', 'false');
+      }));
+    }, 150);
+  });
+  chat.addEventListener('click', () => { if (chosen) location.href = '/direct/t/' + chosen.t + '/'; });
+})();
+</script>
+</body>
+</html>

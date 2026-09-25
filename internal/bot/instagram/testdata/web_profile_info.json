@@ -1,0 +1,1 @@
+{"data":{"user":{"id":"9001","username":"{{USER}}","full_name":"Ada Fixture (API)","biography":"Synthetic API bio","is_verified":true,"is_private":false,"profile_pic_url":"https://scontent.fixture.invalid/ada.jpg","external_url":"https://example.test/","edge_followed_by":{"count":1234},"edge_follow":{"count":56},"edge_owner_to_timeline_media":{"count":12}}},"status":"ok"}

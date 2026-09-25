@@ -1,8 +1,8 @@
 {
   "actionType": "auto_reply_dms",
   "platform": "INSTAGRAM",
-  "version": "2.0.0",
-  "description": "Reply to messages in Instagram inbox using a 3-tier fallback strategy",
+  "version": "3.0.0",
+  "description": "Reply to Instagram conversations: each item of selectedListItems is a conversation URL (/direct/t/<id>/) or a username (matched exactly in the inbox, else messaged directly). Each reply is verified. Without selectedListItems the action fails instead of doing nothing.",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": true,
@@ -10,16 +10,57 @@
   },
   "inputs": {
     "required": [
-      { "name": "replyText", "type": "string", "description": "Auto-reply text" },
-      { "name": "startDate", "type": "string", "description": "Start date for auto-replies (YYYY-MM-DD)" },
-      { "name": "endDate", "type": "string", "description": "End date for auto-replies (YYYY-MM-DD)" },
-      { "name": "pollInterval", "type": "number", "description": "Seconds between polling for new messages" }
+      {
+        "name": "replyText",
+        "type": "string",
+        "description": "Auto-reply text"
+      },
+      {
+        "name": "startDate",
+        "type": "string",
+        "description": "Start date for auto-replies (YYYY-MM-DD)"
+      },
+      {
+        "name": "endDate",
+        "type": "string",
+        "description": "End date for auto-replies (YYYY-MM-DD)"
+      },
+      {
+        "name": "pollInterval",
+        "type": "number",
+        "description": "Seconds between polling for new messages"
+      }
     ],
     "optional": [
-      { "name": "filterByKeyword", "type": "string", "default": "", "description": "Only reply to messages containing this keyword" },
-      { "name": "maxRepliesPerDay", "type": "number", "default": 100, "min": 1, "max": 500, "description": "Max auto-replies per day" },
-      { "name": "delayBeforeReply", "type": "number", "default": 5, "min": 1, "max": 60, "description": "Seconds to wait before sending reply" },
-      { "name": "stopAfterReplies", "type": "number", "default": 0, "min": 0, "description": "Stop after N total replies (0=unlimited)" }
+      {
+        "name": "filterByKeyword",
+        "type": "string",
+        "default": "",
+        "description": "Only reply to messages containing this keyword"
+      },
+      {
+        "name": "maxRepliesPerDay",
+        "type": "number",
+        "default": 100,
+        "min": 1,
+        "max": 500,
+        "description": "Max auto-replies per day"
+      },
+      {
+        "name": "delayBeforeReply",
+        "type": "number",
+        "default": 5,
+        "min": 1,
+        "max": 60,
+        "description": "Seconds to wait before sending reply"
+      },
+      {
+        "name": "stopAfterReplies",
+        "type": "number",
+        "default": 0,
+        "min": 0,
+        "description": "Stop after N total replies (0=unlimited)"
+      }
     ]
   },
   "outputs": {
@@ -33,218 +74,63 @@
   },
   "steps": [
     {
-      "id": "tier1_reply",
+      "id": "require_items",
+      "type": "condition",
+      "condition": {
+        "variable": "selectedListItems",
+        "operator": "not_exists"
+      },
+      "then": [
+        "fail_no_items"
+      ]
+    },
+    {
+      "id": "fail_no_items",
+      "type": "mark_failed",
+      "description": "auto_reply_dms needs selectedListItems: conversation URLs or usernames to reply to"
+    },
+    {
+      "id": "reset_replyResult",
+      "type": "set_variable",
+      "variable_name": "replyResult",
+      "value": null
+    },
+    {
+      "id": "wait_before_reply",
+      "type": "wait",
+      "duration": "{{delayBeforeReply or 5}}",
+      "waitFor": "time"
+    },
+    {
+      "id": "reply",
       "type": "call_bot_method",
       "methodName": "reply_to_conversation",
       "args": [
-        "{{item.url}}",
+        "{{item.url or item.href or item.username or item}}",
         "{{replyText}}"
       ],
-      "variable_name": "t1Result",
-      "timeout": 30,
+      "variable_name": "replyResult",
+      "timeout": 120,
       "onError": {
-        "action": "skip"
+        "action": "mark_failed"
       }
     },
     {
-      "id": "check_t1",
+      "id": "check_replied",
       "type": "condition",
       "condition": {
-        "variable": "t1Result",
-        "operator": "not_exists"
+        "variable": "replyResult",
+        "operator": "exists"
       },
       "then": [
-        "navigate_to_inbox",
-        "wait_for_inbox_load",
-        "find_conversation_list",
-        "find_conversation_item",
-        "open_conversation_t2",
-        "find_message_input",
-        "type_reply_t2",
-        "find_send_button",
-        "click_send_t2",
-        "check_t2"
+        "log_success"
       ]
     },
     {
-      "id": "navigate_to_inbox",
-      "type": "navigate",
-      "url": "https://www.instagram.com/direct/inbox/",
-      "waitFor": "page_load",
-      "timeout": 30
-    },
-    {
-      "id": "wait_for_inbox_load",
-      "type": "wait",
-      "duration": "{{delayBeforeReply or 5}}",
-      "waitFor": "time"
-    },
-    {
-      "id": "find_conversation_list",
-      "type": "find_element",
-      "xpath": "//div[contains(@role, 'list')]",
-      "alternatives": [
-        "//ul[contains(@class, 'conversation-list')]"
-      ],
-      "timeout": 15,
-      "onError": {
-        "action": "skip"
-      }
-    },
-    {
-      "id": "find_conversation_item",
-      "type": "find_element",
-      "xpath": "//div[contains(@role, 'listitem')]",
-      "alternatives": [
-        "//a[contains(@href, '/direct/t/')]"
-      ],
-      "timeout": 10,
-      "variable_name": "t2Result",
-      "onError": {
-        "action": "skip"
-      }
-    },
-    {
-      "id": "open_conversation_t2",
-      "type": "navigate",
-      "url": "{{item.url}}",
-      "waitFor": "page_load",
-      "timeout": 15,
-      "onError": {
-        "action": "skip"
-      }
-    },
-    {
-      "id": "find_message_input",
-      "type": "find_element",
-      "intent": "the message text box of the open direct message conversation",
-      "xpath": "//div[@contenteditable='true'][@role='textbox']",
-      "alternatives": [
-        "//textarea[@placeholder]",
-        "//div[@aria-label='Message'][@role='textbox']"
-      ],
-      "timeout": 10,
-      "onError": {
-        "action": "skip"
-      }
-    },
-    {
-      "id": "type_reply_t2",
-      "type": "type",
-      "elementRef": "find_message_input",
-      "text": "{{replyText}}",
-      "humanLike": true,
-      "onError": {
-        "action": "skip"
-      }
-    },
-    {
-      "id": "find_send_button",
-      "type": "find_element",
-      "intent": "the Send button of the open direct message conversation",
-      "xpath": "//button[contains(text(), 'Send')]",
-      "alternatives": [
-        "//button[@type='submit']",
-        "//div[@role='button'][normalize-space(.)='Send']"
-      ],
-      "timeout": 10,
-      "onError": {
-        "action": "skip"
-      }
-    },
-    {
-      "id": "click_send_t2",
-      "type": "click",
-      "elementRef": "find_send_button",
-      "waitFor": "message_sent",
-      "variable_name": "t2Result",
-      "onError": {
-        "action": "skip"
-      }
-    },
-    {
-      "id": "check_t2",
-      "type": "condition",
-      "condition": {
-        "variable": "t2Result",
-        "operator": "not_exists"
-      },
-      "then": [
-        "navigate_to_inbox_t3",
-        "wait_for_inbox_load_t3",
-        "open_conversation_t3",
-        "find_message_input_t3",
-        "type_reply_t3",
-        "find_send_button_t3",
-        "click_send_t3"
-      ]
-    },
-    {
-      "id": "navigate_to_inbox_t3",
-      "type": "navigate",
-      "url": "https://www.instagram.com/direct/inbox/",
-      "waitFor": "page_load",
-      "timeout": 30,
-      "onError": {
-        "action": "mark_failed"
-      }
-    },
-    {
-      "id": "wait_for_inbox_load_t3",
-      "type": "wait",
-      "duration": "{{delayBeforeReply or 5}}",
-      "waitFor": "time"
-    },
-    {
-      "id": "open_conversation_t3",
-      "type": "navigate",
-      "url": "{{item.url}}",
-      "waitFor": "page_load",
-      "timeout": 15,
-      "onError": {
-        "action": "mark_failed"
-      }
-    },
-    {
-      "id": "find_message_input_t3",
-      "type": "find_element",
-      "configKey": "message_input",
-      "timeout": 10,
-      "onError": {
-        "action": "mark_failed"
-      }
-    },
-    {
-      "id": "type_reply_t3",
-      "type": "type",
-      "elementRef": "find_message_input_t3",
-      "text": "{{replyText}}",
-      "humanLike": true,
-      "onError": {
-        "action": "mark_failed"
-      }
-    },
-    {
-      "id": "find_send_button_t3",
-      "type": "find_element",
-      "configKey": "send_button",
-      "timeout": 10,
-      "onError": {
-        "action": "mark_failed"
-      }
-    },
-    {
-      "id": "click_send_t3",
-      "type": "click",
-      "elementRef": "find_send_button_t3",
-      "waitFor": "message_sent",
-      "onSuccess": {
-        "action": "update_progress",
-        "increment": "reachedIndex"
-      },
-      "onError": {
-        "action": "mark_failed"
-      }
+      "id": "log_success",
+      "type": "log",
+      "description": "Reply sent",
+      "value": "Conversation: {{replyResult.url}}"
     }
   ],
   "loops": [
@@ -254,14 +140,16 @@
       "indexVar": "reachedIndex",
       "maxItemsPerDay": "{{maxRepliesPerDay or 100}}",
       "steps": [
-        "tier1_reply",
-        "check_t1"
+        "reset_replyResult",
+        "wait_before_reply",
+        "reply",
+        "check_replied"
       ],
       "onComplete": "update_action_state"
     }
   ],
   "errorHandling": {
-    "globalRetries": 3,
+    "globalRetries": 0,
     "retryDelay": 2000,
     "onFinalFailure": "log_and_continue"
   }
