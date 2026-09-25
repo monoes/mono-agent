@@ -23,6 +23,8 @@ type doctorSelectorJSON struct {
 	LastOK   string `json:"lastOk"`   // RFC3339, "" when never
 	LastFail string `json:"lastFail"` // RFC3339, "" when never
 	Status   string `json:"status"`   // ok | decaying | broken
+	// Suggestion is the fix for a decaying/broken selector ("" when ok).
+	Suggestion string `json:"suggestion,omitempty"`
 }
 
 // doctorAutomationJSON is one automation of `automation doctor --json`
@@ -140,10 +142,18 @@ func doctorAutomation(reg *automation.Registry, info automation.InstalledInfo,
 			LastOK: rfc3339OrEmpty(h.LastOK), LastFail: rfc3339OrEmpty(h.LastFail), Status: h.Status}
 	}
 	for _, s := range byKey {
+		if s.Status != automation.HealthOK {
+			s.Suggestion = rerecordSuggestion(info.ID, s.Key)
+		}
 		row.Selectors = append(row.Selectors, s)
 	}
 	sort.Slice(row.Selectors, func(i, j int) bool { return row.Selectors[i].Key < row.Selectors[j].Key })
 	return row
+}
+
+// rerecordSuggestion is the fix doctor offers for a decaying/broken selector.
+func rerecordSuggestion(id, key string) string {
+	return "run: monoagentcli automation rerecord " + id + " " + key
 }
 
 func rfc3339OrEmpty(t *time.Time) string {
@@ -193,8 +203,8 @@ func printAutomationDoctor(out io.Writer, rows []doctorAutomationJSON) {
 			if s.Status == automation.HealthOK {
 				continue
 			}
-			lines = append(lines, fmt.Sprintf("  %-7s selector %s: ok %d, healed %d, failed %d (last fail %s)",
-				s.Status, s.Key, s.OK, s.Healed, s.Fail, orDash(s.LastFail)))
+			lines = append(lines, fmt.Sprintf("  %-7s selector %s: ok %d, healed %d, failed %d (last fail %s)\n          %s",
+				s.Status, s.Key, s.OK, s.Healed, s.Fail, orDash(s.LastFail), s.Suggestion))
 		}
 		if len(lines) > 0 {
 			fmt.Fprintf(out, "\n%s\n%s\n", r.ID, strings.Join(lines, "\n"))
