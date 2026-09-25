@@ -75,7 +75,7 @@ export default function RecordingReview({ recording, automationId, onBack, onSav
 
   useEffect(() => {
     let live = true
-    setPhase('analyzing'); setError(''); setVerify(null)
+    setPhase('analyzing'); setError(''); setVerify(null); setVerifyError(''); setSaveError(''); setSaved(null); setForceAsk(false)
     ;(async () => {
       const res = await api.analyzeRecording(recording.id, automationId, advanced)
       if (!live) return
@@ -187,7 +187,7 @@ export default function RecordingReview({ recording, automationId, onBack, onSav
           </div>
 
           <IssueList issues={draft.lint} />
-          <ScriptSources sources={draft.scriptSources} title="Scripts the AI wrote" />
+          <ScriptSources sources={draft.scripts} title="Scripts the AI wrote" />
           {!advanced && (
             <div style={{ ...panel, display: 'flex', gap: 10, alignItems: 'center' }}>
               <AlertTriangle size={14} color="var(--yellow)" style={{ flexShrink: 0 }} />

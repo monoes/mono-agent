@@ -7,7 +7,7 @@ import { useState } from 'react'
 import { X, FolderOpen, AlertTriangle } from 'lucide-react'
 import { api } from '../../services/api.js'
 import { ErrorBox, OkBox, Busy, SOURCE_LABELS, body, mono, useDialog } from './ui.jsx'
-import ImportReview from './ImportReview.jsx'
+import ImportReview, { replacesProtected } from './ImportReview.jsx'
 
 export default function ImportDialog({ onClose, onInstalled }) {
   const dialog = useDialog(onClose)
@@ -34,14 +34,14 @@ export default function ImportDialog({ onClose, onInstalled }) {
   }
   const install = async () => {
     setPhase('installing'); setError('')
-    const out = await api.installAutomation(path.trim(), { expectSha256: res?.sha256 || '', replaceBuiltin: !!res?.review?.replaces && replaceOk })
+    const out = await api.installAutomation(path.trim(), { expectSha256: res?.sha256 || '', replaceBuiltin: replacesProtected(res?.review) && replaceOk })
     if (!out || out.error) { setError(out?.error || 'Install failed.'); setPhase('review'); return }
     setInstalled(out); setPhase('done')
     onInstalled?.()
   }
 
   const insecureURL = /^http:\/\//i.test(path.trim())
-  const replaces = res?.review?.replaces
+  const replaces = replacesProtected(res?.review) ? res.review.replaces : null
   const hasErrors = (res?.issues || []).some(i => i.severity === 'error')
   const blocked = phase !== 'review' || hasErrors || (replaces && !replaceOk)
   return (

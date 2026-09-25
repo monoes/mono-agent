@@ -16,6 +16,14 @@ function Row({ title, children }) {
 }
 
 const none = <span style={muted}>none</span>
+// replacesProtected: the install overwrites a built-in or local package
+// (the CLI then requires --replace-builtin). Replacing an earlier import of
+// the same package is an ordinary update.
+export function replacesProtected(review) {
+  const r = review?.replaces
+  return !!r && [r.source, r.trust].some(x => x === 'builtin' || x === 'local')
+}
+
 const warnPanel = (color) => ({ ...panel, borderColor: color, display: 'flex', flexDirection: 'column', gap: 6 })
 
 export function ScriptSources({ sources, title = 'Page scripts' }) {
@@ -49,7 +57,7 @@ export default function ImportReview({ res }) {
       <div style={{ ...mono, fontSize: 13, color: 'var(--text)', fontWeight: 700 }}>
         {res.name || res.id} <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>{res.id} · {res.previousVersion ? `${res.previousVersion} → ${res.version}` : res.version}</span>
       </div>
-      {r.replaces && (
+      {replacesProtected(r) && (
         <div role="alert" style={warnPanel('var(--red)')}>
           <span style={{ ...label, color: 'var(--red)', display: 'flex', alignItems: 'center', gap: 5 }}>
             <ShieldAlert size={12} /> Replaces {SOURCE_LABELS[r.replaces.source] || r.replaces.source} {r.replaces.id} {r.replaces.version}

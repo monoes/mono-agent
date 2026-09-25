@@ -52,6 +52,19 @@ describe('ImportDialog', () => {
     expect(await screen.findByText(/Installed HN \(fork\) 2.0.0/)).toBeInTheDocument()
   })
 
+  it('treats replacing an earlier import as a plain update (no tick, no --replace-builtin)', async () => {
+    api.chooseAutomationPackage.mockResolvedValue('/tmp/b.mpkg')
+    api.installAutomationDryRun.mockResolvedValue({ ...dryRun, previousVersion: '1.0.0', review: { ...dryRun.review, replaces: { id: 'hackernews', source: 'imported', trust: 'imported', version: '1.0.0' } } })
+    api.installAutomation.mockResolvedValue({ id: 'hackernews', version: '2.0.0', installed: true, review: {} })
+    render(<ImportDialog onClose={() => {}} />)
+    fireEvent.click(screen.getByText('Browse'))
+    const update = await screen.findByText('Update to 2.0.0')
+    expect(screen.queryByText(/Replaces/)).not.toBeInTheDocument()
+    expect(update).not.toBeDisabled()
+    fireEvent.click(update)
+    await waitFor(() => expect(api.installAutomation).toHaveBeenCalledWith('/tmp/b.mpkg', { expectSha256: 'abc123', replaceBuiltin: false }))
+  })
+
   it('warns about plain http URLs and closes on Escape', () => {
     const onClose = vi.fn()
     render(<ImportDialog onClose={onClose} />)
@@ -72,7 +85,7 @@ const analyzed = {
       { name: 'email', type: 'string', required: true, secret: false, needsValue: false },
       { name: 'password', type: 'secret', required: true, secret: true, needsValue: true },
     ],
-    scriptSources: { 'read.js': 'return 1' },
+    scripts: { 'read.js': 'return 1' },
   },
 }
 
