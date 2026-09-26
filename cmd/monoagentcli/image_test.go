@@ -247,3 +247,40 @@ func TestImageAddLabelExportDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A discovered image is the user's project file tracked in place: it lists
+// beside uploads, and deleting it drops only the row (ported from the
+// desktop app's TestVaultImages_DiscoveredAndUploaded).
+func TestImageDeleteKeepsDiscoveredFile(t *testing.T) {
+	cfg, dir := newImageCLITestDB(t)
+	project := filepath.Join(dir, "project", "banner.png")
+	if err := os.MkdirAll(filepath.Dir(project), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(project, []byte("banner"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	db, err := storage.NewDatabase(cfg.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _, err := vault.RegisterDiscoveredImage(t.Context(), db.DB, "default", project, "banner.png", 6)
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runImage(t, cfg, "list")
+	if err != nil || !strings.Contains(out, `"source": "discovered"`) {
+		t.Fatalf("list = %s, %v", out, err)
+	}
+	if _, err := runImage(t, cfg, "delete", id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(project); err != nil {
+		t.Fatalf("delete must keep a discovered image's file: %v", err)
+	}
+	if _, err := runImage(t, cfg, "get", id); exitCode(err) != 2 {
+		t.Fatalf("get after delete: exit %d", exitCode(err))
+	}
+}

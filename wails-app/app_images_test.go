@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -31,6 +32,10 @@ esac
 	orig := saveImageDialog
 	saveImageDialog = func(*App, string) (string, error) { return "/out/logo.png", nil }
 	t.Cleanup(func() { saveImageDialog = orig })
+	var events []string
+	recordImageEvents(t, func(name string, data map[string]interface{}) {
+		events = append(events, fmt.Sprintf("%s %v", name, data))
+	})
 
 	if rows, err := a.GetVaultImages(0); err != nil || len(rows) != 1 || rows[0]["url"] != "/vault-image/img-002.png" || rows[0]["size_bytes"] != float64(9) {
 		t.Fatalf("GetVaultImages = %v, %v", rows, err)
@@ -82,6 +87,25 @@ esac
 	if got := loggedArgs(t, log); strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("argv:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
+	// Every edit made through the app refreshes open Image Vault pages.
+	wantEvents := []string{
+		"images:changed map[added:1 profileID:work]",
+		"images:changed map[added:1 profileID:work]",
+		"images:changed map[profileID:work updated:img-002]",
+		"images:changed map[profileID:work updated:img-002]",
+		"images:changed map[deleted:img-002 profileID:work]",
+	}
+	if strings.Join(events, "\n") != strings.Join(wantEvents, "\n") {
+		t.Fatalf("events:\n%s\nwant:\n%s", strings.Join(events, "\n"), strings.Join(wantEvents, "\n"))
+	}
+}
+
+// recordImageEvents routes the image bindings' events to rec for the test.
+func recordImageEvents(t *testing.T, rec func(name string, data map[string]interface{})) {
+	t.Helper()
+	orig := emitImageEvent
+	emitImageEvent = func(_ *App, name string, data map[string]interface{}) { rec(name, data) }
+	t.Cleanup(func() { emitImageEvent = orig })
 }
 
 // A CLI failure (e.g. exit 2 for an unknown id) reaches the page as the
@@ -93,6 +117,7 @@ func TestImageVaultBindingsReportCLIErrors(t *testing.T) {
 	a := newTestApp(t)
 	a.ctx = context.Background()
 	opened := false
+	recordImageEvents(t, func(name string, _ map[string]interface{}) { t.Errorf("unexpected %s after a failed call", name) })
 	orig := saveImageDialog
 	saveImageDialog = func(*App, string) (string, error) { opened = true; return "/x", nil }
 	t.Cleanup(func() { saveImageDialog = orig })

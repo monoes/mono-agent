@@ -100,13 +100,15 @@ func GetImage(ctx context.Context, db *sql.DB, profileID, id string) (*ImageEntr
 	return &im, nil
 }
 
-// ImagePathInProfile returns where a vault file (by its stored file name,
-// e.g. "img-001.png") lives, if it belongs to the profile — what the desktop
-// app's /vault-image/ file server serves. The stored path is authoritative:
-// images live in the profile's own vault folder, not one fixed directory.
-func ImagePathInProfile(ctx context.Context, db *sql.DB, profileID, filename string) (string, bool, error) {
+// ImagePathInProfile returns where a vault image (by id, or by its stored
+// file name, e.g. "img-001.png") lives, if it belongs to the profile — what
+// the desktop app's /vault-image/ file server serves. The stored path is
+// authoritative: uploads live in the profile's own vault folder, and
+// discovered images are served from wherever they sit in the project.
+func ImagePathInProfile(ctx context.Context, db *sql.DB, profileID, name string) (string, bool, error) {
 	var path string
-	err := db.QueryRowContext(ctx, `SELECT path FROM vault_images WHERE filename = ? AND profile_id = ?`, filename, profileID).Scan(&path)
+	err := db.QueryRowContext(ctx, `SELECT path FROM vault_images WHERE (id = ? OR filename = ?) AND profile_id = ? ORDER BY id = ? DESC LIMIT 1`,
+		name, name, profileID, name).Scan(&path)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
 	}
@@ -133,7 +135,8 @@ func SetImageLabel(ctx context.Context, db *sql.DB, profileID, id, label string)
 }
 
 // DeleteImage removes an image's row, then its file (best-effort: a file
-// that is already gone does not fail the delete).
+// that is already gone does not fail the delete). A discovered image is
+// the user's own project file, tracked in place, so only its row goes.
 func DeleteImage(ctx context.Context, db *sql.DB, profileID, id string) error {
 	im, err := GetImage(ctx, db, profileID, id)
 	if err != nil {
@@ -142,7 +145,9 @@ func DeleteImage(ctx context.Context, db *sql.DB, profileID, id string) error {
 	if _, err := db.ExecContext(ctx, `DELETE FROM vault_images WHERE id = ? AND profile_id = ?`, id, profileID); err != nil {
 		return fmt.Errorf("delete record: %w", err)
 	}
-	_ = os.Remove(im.Path)
+	if im.Source != "discovered" {
+		_ = os.Remove(im.Path)
+	}
 	return nil
 }
 

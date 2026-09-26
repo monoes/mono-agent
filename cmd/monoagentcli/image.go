@@ -269,7 +269,7 @@ func newImageDeleteCmd(cfg *globalConfig) *cobra.Command {
 	return &cobra.Command{
 		Use:     "delete <id>",
 		Aliases: []string{"rm"},
-		Short:   "Delete an image and its file",
+		Short:   "Delete an image and its file (a discovered image keeps its file)",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withImageDB(cfg, func(db *sql.DB) error {

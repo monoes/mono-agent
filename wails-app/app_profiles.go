@@ -128,6 +128,7 @@ func (a *App) SwitchProfile(id string) error {
 	}
 	a.restartOrgWatcher()
 	a.restartDocumentWatcher()
+	a.restartImageWatcher()
 	a.emitLog("SYSTEM", "INFO", "Switched to profile: "+switched)
 	return nil
 }
@@ -240,6 +241,7 @@ func (a *App) MoveProfileFolder(profileID, newRootDir string) error {
 	if profileID == a.getActiveProfileID() {
 		a.restartOrgWatcher()
 		a.restartDocumentWatcher()
+		a.restartImageWatcher()
 	}
 	a.emitLog("SYSTEM", "INFO", fmt.Sprintf("profile %s: moved to %s", profileID, strings.TrimSpace(newRootDir)))
 	return nil

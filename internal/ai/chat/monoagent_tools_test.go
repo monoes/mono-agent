@@ -842,6 +842,46 @@ func TestSaveDocument_RejectsDisallowedExtension(t *testing.T) {
 	}
 }
 
+func TestMonoagentTools_SaveImage(t *testing.T) {
+	mt := newOrgTestTools(t)
+
+	// SVG text content
+	svgContent := `<svg width="100" height="100"><circle cx="50" cy="50" r="40" /></svg>`
+	args, _ := json.Marshal(map[string]interface{}{
+		"filename": "badge.svg",
+		"content":  svgContent,
+		"label":    "Test Badge",
+	})
+	out, err := mt.Execute("save_image", string(args))
+	if err != nil {
+		t.Fatalf("save_image failed: %v", err)
+	}
+	var res struct {
+		Filename     string `json:"filename"`
+		Path         string `json:"path"`
+		SizeBytes    int    `json:"size_bytes"`
+		VaultImageID string `json:"vault_image_id"`
+		Source       string `json:"source"`
+		Label        string `json:"label"`
+	}
+	mustJSON(t, out, &res)
+	if res.Filename != "badge.svg" {
+		t.Errorf("filename = %q, want badge.svg", res.Filename)
+	}
+	if res.VaultImageID == "" {
+		t.Fatal("response missing vault_image_id")
+	}
+	if res.Source != "chat" {
+		t.Errorf("source = %q, want chat", res.Source)
+	}
+
+	// Verify row in vault_images
+	var count int
+	if err := mt.db.QueryRow(`SELECT COUNT(*) FROM vault_images WHERE id = ?`, res.VaultImageID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("vault_images row not found for %s", res.VaultImageID)
+	}
+}
+
 // TestSaveDocument_AcceptsHTMLAndSurvivesWatcherReconcile proves a
 // self-contained HTML deliverable is a real, supported save_document
 // output end-to-end — not just that IsDocumentFile("x.html") flipped to

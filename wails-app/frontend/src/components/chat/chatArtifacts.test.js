@@ -21,6 +21,11 @@ describe('detectArtifactCandidate', () => {
     expect(detectArtifactCandidate(c)).toEqual({ type: 'document', callId: 'c1', id: 'doc-001' })
   })
 
+  it('extracts an image candidate from a completed save_image call', () => {
+    const c = call({ name: 'save_image', result: JSON.stringify({ filename: 'photo.png', path: '/x/photo.png', size_bytes: 1234, vault_image_id: 'img-001' }) })
+    expect(detectArtifactCandidate(c)).toEqual({ type: 'image', callId: 'c1', id: 'img-001' })
+  })
+
   it('returns null when save_document succeeded but vault registration was never attempted (vault_document_id omitted)', () => {
     const c = call({ name: 'save_document', result: JSON.stringify({ filename: 'a.md', path: '/x/a.md', size_bytes: 12 }) })
     expect(detectArtifactCandidate(c)).toBeNull()
@@ -169,6 +174,19 @@ describe('resolveArtifact', () => {
   it('returns null when getProfileDocument itself fails (guard degrades to null)', async () => {
     const api = { getProfileDocument: async () => null }
     expect(await resolveArtifact({ type: 'document', id: 'doc-001' }, api)).toBeNull()
+  })
+
+  // ── image ────────────────────────────────────────────────────────────
+
+  it('resolves an image candidate to trusted metadata via api.getVaultImage', async () => {
+    const api = { getVaultImage: async (id) => (id === 'img-001' ? { id: 'img-001', filename: 'photo.png', label: 'My Photo', path: '/vault/img-001.png', url: '/vault-image/photo.png' } : null) }
+    const result = await resolveArtifact({ type: 'image', id: 'img-001' }, api)
+    expect(result).toEqual({ type: 'image', id: 'img-001', filename: 'photo.png', label: 'My Photo', path: '/vault/img-001.png', url: '/vault-image/photo.png' })
+  })
+
+  it('returns null for a deleted image id (api.getVaultImage resolves null)', async () => {
+    const api = { getVaultImage: async () => null }
+    expect(await resolveArtifact({ type: 'image', id: 'img-gone' }, api)).toBeNull()
   })
 
   it('returns null for an unsupported candidate type', async () => {

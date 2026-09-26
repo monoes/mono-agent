@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/monoes/mono-agent/internal/vault"
 	"github.com/monoes/mono-agent/internal/workflow"
 )
 
@@ -136,6 +137,13 @@ func (n *OpenRouterNode) generateImage(ctx context.Context, apiKey string, confi
 	enriched := copyItem(item)
 	enriched.JSON["url"] = imageURL
 	enriched.JSON["file_path"] = filePath
+
+	if vaultDB := vault.DBFromContext(ctx); vaultDB != nil {
+		wfID, execID := vault.ExecIDsFromContext(ctx)
+		if vaultID, err := vault.Register(ctx, vaultDB, filePath, "openrouter", wfID, execID); err == nil {
+			enriched.JSON["vault_id"] = vaultID
+		}
+	}
 	return enriched, nil
 }
 
