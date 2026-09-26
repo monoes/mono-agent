@@ -2,9 +2,11 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os/exec"
@@ -17,31 +19,27 @@ import (
 
 	"github.com/monoes/mono-agent/internal/ai"
 	"github.com/monoes/mono-agent/internal/ai/chatevents"
-	"github.com/monoes/mono-agent/internal/monomind"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Chat supervisor (docs/mastermind/plans/2026-09-11-interactive-agent-chat.md)
 //
-// This is the SOLE GUI supervisor for the new conversation/turn/event
-// architecture: it owns admission, the per-turn registry, event sequencing,
-// write-before-emit ordering, process lifecycle, and finalization for agent
-// turns (a `monoagentcli chat` subprocess). The UI consumes only the
-// "chat:event" stream this file emits, via the bindings at the bottom of
-// this file. Conversations recorded by the removed in-app provider backend
-// (backend "provider") stay readable but cannot take new turns.
+// The chat's history lives behind `monoagentcli chat` (issue #172): every
+// read, write and delete of conversations, turns and events is a CLI call,
+// and a turn is one `monoagentcli chat --conversation C --turn T -- <msg>`
+// process that creates its turn row and journals its own events. What stays
+// here is supervising those processes, which only the UI process can do:
+// admission (one active turn per conversation), the process group a Stop
+// kills, the instance id that tells this window's turns from another
+// window's, relaying each committed event to the frontend as "chat:event",
+// and finishing a turn (through `chat history finish`) whose process died
+// before it could.
 //
-// Known, deliberate scope limits (stated here rather than silently assumed):
-//   - Startup reconciliation (reconcileOrphanedTurns) marks every turn left
-//     "active" in the store as interrupted, unconditionally. It cannot tell
-//     a genuinely-dead previous instance apart from a second live instance
-//     racing this one at the same instant (no heartbeat/liveness signal is
-//     implemented) — for a single-user desktop app sharing one local
-//     SQLite file, two truly-concurrent instances is an edge case, not the
-//     primary scenario the plan's "two app owners" concern is guarding.
-//     Never destructive (only rewrites in-memory-admission-relevant status
-//     on rows already left in a non-terminal state), but worth knowing.
+// Startup reconciliation (`chat history reconcile`) marks every turn left
+// active as interrupted, except this instance's own. It cannot tell a dead
+// previous instance from a second live one (no liveness signal exists); for
+// a single-user desktop app sharing one SQLite file that is an edge case.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // chatProcess abstracts a running `monoagentcli chat` subprocess so tests
@@ -74,9 +72,7 @@ func (p *realChatProcess) Wait() error       { return p.cmd.Wait() }
 func (p *realChatProcess) Kill()             { killChatProcessGroup(p.cmd) }
 
 // chatProcessLauncher starts one `monoagentcli chat ...` turn. Injectable so
-// tests can drive the supervisor's own logic (registry, admission,
-// coalescing, finalization) against a fake process without a real
-// monoagentcli binary or real tool side effects.
+// tests can drive the supervisor against a fake process.
 type chatProcessLauncher func(ctx context.Context, cliBin string, args []string) (chatProcess, error)
 
 func defaultChatProcessLauncher(ctx context.Context, cliBin string, args []string) (chatProcess, error) {
@@ -104,15 +100,11 @@ type chatEventEmitter func(ev chatevents.Event)
 type chatTurnKey struct{ conversationID, turnID string }
 
 // chatTurnHandle is the in-memory state for one admitted, currently-active
-// turn. Everything here is only valid while the turn is active; once
-// finalized the handle is removed from the registry (history reads go
-// through the durable store, not this).
+// turn, removed from the registry once the turn finishes.
 type chatTurnHandle struct {
 	profileID      string // captured at admission, immutable for the turn's life
 	conversationID string
 	turnID         string
-	backend        string // "agent"
-	runtimeID      string
 
 	cancel context.CancelFunc
 
@@ -126,11 +118,14 @@ func (h *chatTurnHandle) requestStop() {
 	already := h.stopRequested
 	h.stopRequested = true
 	proc := h.proc
+	cancel := h.cancel
 	h.mu.Unlock()
 	if already {
 		return
 	}
-	h.cancel()
+	if cancel != nil {
+		cancel()
+	}
 	if proc != nil {
 		proc.Kill()
 	}
@@ -142,28 +137,59 @@ func (h *chatTurnHandle) isStopRequested() bool {
 	return h.stopRequested
 }
 
-// chatSupervisor owns admission, the per-turn registry, and journal writes.
-// Independently constructible (no Wails runtime/App required) so it is
-// fully unit-testable — see app_chat_test.go.
+// chatCLIError is a failed `monoagentcli` call: its exit code and the error
+// line it printed.
+type chatCLIError struct {
+	code int
+	msg  string
+}
+
+func (e *chatCLIError) Error() string { return e.msg }
+
+// chatCLIExitCode returns err's CLI exit code, or 0 when err isn't one.
+func chatCLIExitCode(err error) int {
+	var ce *chatCLIError
+	if errors.As(err, &ce) {
+		return ce.code
+	}
+	return 0
+}
+
+// lastLine returns s's last non-empty line: the CLI prints its error last,
+// after any warnings.
+func lastLine(s string) string {
+	lines := strings.Split(strings.TrimSpace(s), "\n")
+	return strings.TrimSpace(lines[len(lines)-1])
+}
+
+// chatCLITimeout bounds one history call (the CLI migrates the DB on open).
+const chatCLITimeout = 60 * time.Second
+
+// chatAdmissionTimeout bounds how long StartChatTurn waits for the turn
+// process to register its turn.
+const chatAdmissionTimeout = 60 * time.Second
+
+// chatSupervisor owns admission and the per-turn registry. Independently
+// constructible (no Wails runtime/App required) so it is fully
+// unit-testable — see app_chat_test.go.
 type chatSupervisor struct {
-	store    *ai.AIStore
 	launcher chatProcessLauncher
 	emit     chatEventEmitter
 	findCLI  func() (string, error)
-	// instanceID identifies this running app process, stamped as a turn's
-	// OwnerInstanceID — distinguishes "my own turn, resumable/stoppable
-	// here" from "another live instance's turn, read-only here" (plan
-	// §236). Fresh per process start.
+	// instanceID identifies this running app process, recorded as a turn's
+	// owner — distinguishes "my own turn, stoppable here" from "another
+	// live instance's turn, read-only here" (plan §236). Fresh per process
+	// start.
 	instanceID string
 
 	mu                   sync.Mutex
 	turns                map[chatTurnKey]*chatTurnHandle
 	activeByConversation map[string]chatTurnKey // one active turn per conversation
+	running              sync.WaitGroup         // turn relays still finishing
 }
 
-func newChatSupervisor(store *ai.AIStore, launcher chatProcessLauncher, emit chatEventEmitter, findCLI func() (string, error)) *chatSupervisor {
+func newChatSupervisor(launcher chatProcessLauncher, emit chatEventEmitter, findCLI func() (string, error)) *chatSupervisor {
 	return &chatSupervisor{
-		store:                store,
 		launcher:             launcher,
 		emit:                 emit,
 		findCLI:              findCLI,
@@ -173,26 +199,53 @@ func newChatSupervisor(store *ai.AIStore, launcher chatProcessLauncher, emit cha
 	}
 }
 
-// reconcileOrphanedTurns marks every turn left "active" in the store as
-// interrupted — see this file's header comment for the known liveness-
-// detection limitation. Best-effort: logged, not fatal, on a per-row basis
-// via the return value's error slice.
-func (sup *chatSupervisor) reconcileOrphanedTurns() []error {
-	var errs []error
-	rows, err := sup.store.QueryActiveTurns()
+// cli runs `monoagentcli [--profile P] --json <args>` and decodes its stdout
+// into result (when non-nil). profileID "" leaves --profile off.
+func (sup *chatSupervisor) cli(profileID string, result any, args ...string) error {
+	bin, err := sup.findCLI()
 	if err != nil {
-		return []error{fmt.Errorf("list active turns: %w", err)}
+		return err
 	}
-	for _, row := range rows {
-		// No live app instance is subscribed to this turn yet at startup —
-		// nothing to emit to, so the committed event is intentionally
-		// discarded here (unlike finalize, which emits it to the currently
-		// running turn's subscriber).
-		if _, _, err := sup.store.FinalizeTurn(row.ProfileID, row.ConversationID, row.ID, chatevents.StatusInterrupted, "interrupted at backend startup (previous app instance)", nil, true); err != nil {
-			errs = append(errs, fmt.Errorf("reconcile turn %s: %w", row.ID, err))
+	full := []string{"--json"}
+	if profileID != "" {
+		full = []string{"--profile", profileID, "--json"}
+	}
+	full = append(full, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), chatCLITimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, full...)
+	hideWindow(cmd)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			msg := lastLine(stderr.String())
+			if msg == "" {
+				msg = err.Error()
+			}
+			return &chatCLIError{code: ee.ExitCode(), msg: msg}
 		}
+		return err
 	}
-	return errs
+	if result == nil {
+		return nil
+	}
+	if err := json.Unmarshal(out, result); err != nil {
+		return fmt.Errorf("monoagentcli %s: unexpected output: %w", strings.Join(args, " "), err)
+	}
+	return nil
+}
+
+// reconcileOrphanedTurns marks every turn left active by a previous
+// instance as interrupted, via `chat history reconcile`. This instance's
+// own turns are skipped, so it may run concurrently with the first Start.
+func (sup *chatSupervisor) reconcileOrphanedTurns() []error {
+	if err := sup.cli("", nil, "chat", "history", "reconcile", "--except-owner", sup.instanceID); err != nil {
+		return []error{err}
+	}
+	return nil
 }
 
 // ─── Admission ──────────────────────────────────────────────────────────────
@@ -218,9 +271,7 @@ func (sup *chatSupervisor) admit(conversationID, turnID string) (h *chatTurnHand
 	return h, false, nil
 }
 
-// release clears a finalized turn's admission slot. The handle itself is
-// dropped from the registry — GetChatTurns/GetChatEvents read the durable
-// store for anything past this point, not in-memory state.
+// release clears a finished turn's admission slot.
 func (sup *chatSupervisor) release(conversationID, turnID string) {
 	sup.mu.Lock()
 	defer sup.mu.Unlock()
@@ -237,9 +288,11 @@ func (sup *chatSupervisor) lookup(conversationID, turnID string) *chatTurnHandle
 	return sup.turns[chatTurnKey{conversationID: conversationID, turnID: turnID}]
 }
 
-// stopAll requests stop on every currently-registered turn — called at app
-// shutdown so no orphaned subprocess survives the GUI (plan §236: "App
-// shutdown cancels its registered turns").
+// stopAll requests stop on every registered turn — called at app shutdown
+// so no orphaned subprocess survives the GUI (plan §236: "App shutdown
+// cancels its registered turns") — and gives their relays a few seconds to
+// record the cancellation. A turn still unfinished after that is caught by
+// the next startup's reconcile.
 func (sup *chatSupervisor) stopAll() {
 	sup.mu.Lock()
 	handles := make([]*chatTurnHandle, 0, len(sup.turns))
@@ -250,58 +303,26 @@ func (sup *chatSupervisor) stopAll() {
 	for _, h := range handles {
 		h.requestStop()
 	}
+	done := make(chan struct{})
+	go func() { sup.running.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+	}
 }
 
-// ─── Journal write helper ───────────────────────────────────────────────────
+// ─── Turn process ───────────────────────────────────────────────────────────
 
-// appendAndEmit commits ev to the durable journal, then — only on success —
-// emits the identical committed event live. A commit failure is reported
-// via onPersistFailure rather than emitting a live-only event silently:
-// callers decide how to surface historySaved:false per plan §248.
-func (sup *chatSupervisor) appendAndEmit(h *chatTurnHandle, typ chatevents.EventType, payload any) (chatevents.Event, error) {
-	ev, err := sup.store.AppendEvent(h.profileID, h.conversationID, h.turnID, typ, payload)
-	if err != nil {
-		return chatevents.Event{}, err
-	}
-	if sup.emit != nil {
-		sup.emit(ev)
-	}
-	return ev, nil
+// chatAdmission is the turn process's first stdout line.
+type chatAdmission struct {
+	Admitted bool          `json:"admitted"`
+	Existed  bool          `json:"existed"`
+	Turn     ai.TurnRecord `json:"turn"`
 }
 
-// ─── Turn message plumbing (single writer goroutine per turn) ──────────────
-//
-// Both the NDJSON reader and the stale-coalescing-flush ticker send onto one
-// channel, consumed by exactly one goroutine per turn (runAgentTurn's inner
-// loop). This is what makes "serialize writes per turn" true in practice:
-// nothing outside that one loop ever calls appendAndEmit for this turn.
-
-type turnMsg struct {
-	ev         *monomind.Event
-	tick       bool
-	procDone   bool
-	waitErr    error
-	stderrText string
-}
-
-// ─── Agent backend ───────────────────────────────────────────────────────────
-
-// startAgentTurn launches `monoagentcli chat --no-history ...` for an agent
-// conversation and drives its NDJSON stdout through the single-writer
-// pipeline. Returns immediately after the process is confirmed started;
-// finalization happens asynchronously.
-func (sup *chatSupervisor) startAgentTurn(h *chatTurnHandle, conv ai.Conversation, turnID, prompt string, tools, allowRuns bool) error {
-	cliBin, err := sup.findCLI()
-	if err != nil {
-		return err
-	}
-	args := []string{"--profile", h.profileID, "chat", "--no-history", "--runtime", conv.RuntimeID, "--history-id", conv.HistoryKey}
-	if conv.SessionID != "" {
-		args = append(args, "--resume", conv.SessionID)
-	}
-	if conv.Model != "" {
-		args = append(args, "--model", conv.Model)
-	}
+// chatTurnArgs builds the turn process's argv.
+func chatTurnArgs(profileID, conversationID, turnID, instanceID, message string, tools, allowRuns bool) []string {
+	args := []string{"--profile", profileID, "chat", "--conversation", conversationID, "--turn", turnID, "--instance", instanceID}
 	if tools {
 		toolsFlag := "monoagent"
 		if allowRuns {
@@ -309,308 +330,248 @@ func (sup *chatSupervisor) startAgentTurn(h *chatTurnHandle, conv ai.Conversatio
 		}
 		args = append(args, "--tools", toolsFlag)
 	}
-	args = append(args, prompt)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	h.cancel = cancel
-	h.runtimeID = conv.RuntimeID
-
-	proc, err := sup.launcher(ctx, cliBin, args)
-	if err != nil {
-		cancel()
-		return err
-	}
-	h.mu.Lock()
-	h.proc = proc
-	h.mu.Unlock()
-
-	if _, err := sup.appendAndEmit(h, chatevents.EventTurnStarted, chatevents.TurnStartedPayload{
-		Backend: "agent", Runtime: conv.RuntimeID, Model: conv.Model, Text: prompt,
-	}); err != nil {
-		proc.Kill()
-		cancel()
-		// CreateTurn already committed this turn as "active" — without
-		// finalizing it here, it never leaves that state until a restart's
-		// reconcileOrphanedTurns catches it, and DeleteConversation refuses
-		// the conversation in the meantime.
-		sup.finalize(h, &monomind.TurnResult{Err: &monomind.ProtocolError{Code: monomind.ErrRunnerError, Message: err.Error()}})
-		return err
-	}
-
-	go sup.runAgentTurn(h, proc)
-	return nil
+	return append(args, "--", message)
 }
 
-func (sup *chatSupervisor) runAgentTurn(h *chatTurnHandle, proc chatProcess) {
-	msgs := make(chan turnMsg, 256)
-	var stderrBuf strings.Builder
-	var stderrMu sync.Mutex
-	// stderrDone is closed once the stderr-draining goroutine below returns,
-	// by any path. The wait goroutine joins on it before reading stderrBuf:
-	// proc.Wait() returning is not a signal that goroutine has finished
-	// draining the pipe, only that stderrBuf is safe to *access* under
-	// stderrMu — not that its contents are complete. Deliberately joined
-	// AFTER proc.Wait() rather than before: exec.Cmd's StderrPipe is only
-	// force-closed (unblocking a stuck Read) once Wait's closeAfterWait
-	// runs, so joining first would risk hanging forever against a real
-	// process whose stderr fd stays open past our own exit (e.g. a
-	// process-group child that inherited fd 2).
-	stderrDone := make(chan struct{})
+// turnOutput is what a turn process's pipes produced: its JSON stdout lines
+// in order, then (after close) its stderr, exit error and exit code.
+type turnOutput struct {
+	lines      chan []byte
+	stderrDone chan struct{}
+	stderr     *strings.Builder
+}
 
+func readTurnOutput(proc chatProcess) *turnOutput {
+	o := &turnOutput{lines: make(chan []byte, 256), stderrDone: make(chan struct{}), stderr: &strings.Builder{}}
 	go func() {
-		defer close(stderrDone) // first, so a panic in Read still unblocks the wait goroutine
-		stderr := proc.Stderr() // read once, outside the loop: some
-		// implementations (e.g. test fakes) return a fresh reader on every
-		// call rather than the same underlying stream, which would never
-		// reach EOF if re-fetched on each iteration.
-		buf := make([]byte, 4096)
-		for {
-			n, err := stderr.Read(buf)
-			if n > 0 {
-				stderrMu.Lock()
-				stderrBuf.Write(buf[:n])
-				stderrMu.Unlock()
-			}
-			if err != nil {
-				return
-			}
-		}
+		defer close(o.stderrDone)
+		_, _ = io.Copy(o.stderr, proc.Stderr())
 	}()
-
 	go func() {
+		defer close(o.lines)
 		sc := bufio.NewScanner(proc.Stdout())
-		sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+		sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 		for sc.Scan() {
 			line := sc.Bytes()
 			if len(line) == 0 || line[0] != '{' {
 				continue
 			}
-			var ev monomind.Event
-			if json.Unmarshal(line, &ev) != nil {
-				continue
-			}
-			evCopy := ev
-			msgs <- turnMsg{ev: &evCopy}
+			o.lines <- append([]byte(nil), line...)
 		}
-		waitErr := proc.Wait()
-		<-stderrDone
-		stderrMu.Lock()
-		stderrText := stderrBuf.String()
-		stderrMu.Unlock()
-		msgs <- turnMsg{procDone: true, waitErr: waitErr, stderrText: stderrText}
-		close(msgs)
 	}()
-
-	sup.writeTurnLoop(h, msgs)
+	return o
 }
 
-// writeTurnLoop is the single writer goroutine for one turn: the only code
-// path that calls appendAndEmit for this (conversationID, turnID), fed by
-// both the NDJSON reader and stale-flush ticks over one channel.
-func (sup *chatSupervisor) writeTurnLoop(h *chatTurnHandle, msgs chan turnMsg) {
-	coalescer := chatevents.NewTextCoalescer()
-	res := &monomind.TurnResult{}
-	partSeq := 0
-	currentPartID := ""
-	nextPart := func() string { partSeq++; return "part-" + strconv.Itoa(partSeq) }
-	sawAnyEvent := false
+// exited waits for the process after stdout closed, then for stderr to be
+// fully drained (Wait is what force-closes a pipe a straggling grandchild
+// still holds, so stderr is joined after it, not before).
+func (o *turnOutput) exited(proc chatProcess) (waitErr error, stderr string) {
+	waitErr = proc.Wait()
+	<-o.stderrDone
+	return waitErr, o.stderr.String()
+}
 
-	commit := func(partID, text string) {
-		if text == "" {
-			return
-		}
-		sup.appendAndEmit(h, chatevents.EventAssistantDelta, chatevents.AssistantDeltaPayload{PartID: partID, Text: text})
+// startTurn launches the turn process and waits for its admission line.
+// It returns the StartChatTurn response; on success the turn keeps
+// streaming in the background.
+func (sup *chatSupervisor) startTurn(h *chatTurnHandle, message string, tools, allowRuns bool) (string, error) {
+	cliBin, err := sup.findCLI()
+	if err != nil {
+		return "", err
 	}
-	armTick := func() {
-		time.AfterFunc(chatevents.CoalesceWindow+10*time.Millisecond, func() {
-			defer func() { recover() }() // msgs may already be closed if the turn finished
-			msgs <- turnMsg{tick: true}
-		})
+	ctx, cancel := context.WithCancel(context.Background())
+	h.mu.Lock()
+	h.cancel = cancel
+	h.mu.Unlock()
+	proc, err := sup.launcher(ctx, cliBin, chatTurnArgs(h.profileID, h.conversationID, h.turnID, sup.instanceID, message, tools, allowRuns))
+	if err != nil {
+		cancel()
+		return "", err
 	}
-	emitUsageIfAny := func(source string) {
-		if !res.HasInputTokens && !res.HasOutputTokens && !res.HasCostUSD {
-			return
-		}
-		p := chatevents.UsageUpdatedPayload{Source: source}
-		if res.HasInputTokens {
-			v := res.InputTokens
-			p.InputTokens = &v
-		}
-		if res.HasOutputTokens {
-			v := res.OutputTokens
-			p.OutputTokens = &v
-		}
-		if res.HasCostUSD {
-			v := res.CostUSD
-			p.CostUSD = &v
-		}
-		sup.appendAndEmit(h, chatevents.EventUsageUpdated, p)
+	h.mu.Lock()
+	h.proc = proc
+	stopped := h.stopRequested
+	h.mu.Unlock()
+	if stopped {
+		proc.Kill()
 	}
 
-	for msg := range msgs {
-		if msg.tick {
-			if partID, text, ok := coalescer.Flush(time.Now()); ok {
-				commit(partID, text)
-				currentPartID = ""
+	out := readTurnOutput(proc)
+	var adm chatAdmission
+	select {
+	case line, ok := <-out.lines:
+		if ok {
+			err = json.Unmarshal(line, &adm)
+		}
+		if !ok || err != nil || adm.Turn.ID == "" {
+			proc.Kill()
+			for range out.lines {
 			}
+			waitErr, stderr := out.exited(proc)
+			cancel()
+			if h.isStopRequested() {
+				// Stopped while starting: the process may have registered
+				// the turn before it died.
+				sup.finishStoppedStart(h)
+			}
+			return "", admissionError(waitErr, stderr)
+		}
+	case <-time.After(chatAdmissionTimeout):
+		proc.Kill()
+		go func() {
+			for range out.lines {
+			}
+			_, _ = out.exited(proc)
+		}()
+		cancel()
+		return "", fmt.Errorf("monoagentcli did not start the turn within %s", chatAdmissionTimeout)
+	}
+
+	if adm.Existed {
+		// This exact turn id already ran (e.g. a Start retried after a
+		// restart): the process reports it and exits without running it.
+		go func() {
+			for range out.lines {
+			}
+			_, _ = out.exited(proc)
+			cancel()
+		}()
+		sup.release(h.conversationID, h.turnID)
+		b, _ := json.Marshal(map[string]any{"ok": true, "turnId": h.turnID, "status": adm.Turn.Status})
+		return string(b), nil
+	}
+
+	sup.running.Add(1)
+	go func() {
+		defer sup.running.Done()
+		defer cancel()
+		sup.relayTurn(h, proc, out)
+	}()
+	return fmt.Sprintf(`{"ok":true,"turnId":%q,"status":"active"}`, h.turnID), nil
+}
+
+// admissionError explains a turn process that exited without admitting
+// its turn. An older monoagentcli that predates --conversation is called
+// out, since it would otherwise read like any other failure.
+func admissionError(waitErr error, stderr string) error {
+	if strings.Contains(stderr, "unknown flag") {
+		return fmt.Errorf("the installed monoagentcli does not recognize a flag this app requires (%s); update monoagentcli to match this app's version", lastLine(stderr))
+	}
+	if msg := lastLine(stderr); msg != "" {
+		return errors.New(msg)
+	}
+	if waitErr != nil {
+		return fmt.Errorf("monoagentcli exited before starting the turn: %w", waitErr)
+	}
+	return errors.New("monoagentcli exited before starting the turn")
+}
+
+// relayTurn emits each committed event the turn process prints, in order,
+// and finishes the turn itself if the process ends without having done so.
+func (sup *chatSupervisor) relayTurn(h *chatTurnHandle, proc chatProcess, out *turnOutput) {
+	finished := false
+	for line := range out.lines {
+		var rec chatevents.Record
+		if json.Unmarshal(line, &rec) != nil || rec.Type == "" {
 			continue
 		}
-		if msg.procDone {
-			if partID, text, ok := coalescer.ForceFlush(); ok {
-				commit(partID, text)
-			}
-			sup.finalizeAgentTurn(h, res, sawAnyEvent, msg.waitErr, msg.stderrText)
-			return
+		if rec.Type == chatevents.EventTurnFinished {
+			finished = true
 		}
-
-		ev := *msg.ev
-		sawAnyEvent = true
-		monomind.ApplyEventToResult(res, ev)
-
-		switch ev.Type {
-		case monomind.EventSession:
-			if ev.SessionID != "" {
-				_ = sup.store.BindConversationSession(h.conversationID, h.profileID, h.runtimeID, ev.SessionID)
-				sup.appendAndEmit(h, chatevents.EventSessionBound, chatevents.SessionBoundPayload{Runtime: h.runtimeID, SessionID: ev.SessionID})
-			}
-		case monomind.EventAssistant:
-			if ev.Text != "" {
-				if currentPartID == "" {
-					currentPartID = nextPart()
-				}
-				partID, text, flushed := coalescer.Push(currentPartID, ev.Text, time.Now())
-				if flushed {
-					commit(partID, text)
-					currentPartID = ""
-				} else {
-					armTick()
-				}
-			}
-		case monomind.EventToolCall:
-			if partID, text, ok := coalescer.ForceFlush(); ok {
-				commit(partID, text)
-				currentPartID = ""
-			}
-			args := chatevents.RedactAndBoundJSON(ev.Args)
-			sup.appendAndEmit(h, chatevents.EventToolStarted, chatevents.ToolStartedPayload{CallID: ev.ID, Name: ev.Name, Arguments: args})
-		case monomind.EventToolResult:
-			resultText := ""
-			if ev.Result != nil {
-				resultText = ev.Result.Text
-			}
-			bounded, _, _ := chatevents.BoundText(resultText, chatevents.MaxToolPreviewBytes)
-			sup.appendAndEmit(h, chatevents.EventToolCompleted, chatevents.ToolCompletedPayload{CallID: ev.ID, OK: ev.OK, Result: bounded})
-		case monomind.EventUsage:
-			emitUsageIfAny("usage")
-		case monomind.EventResult:
-			emitUsageIfAny("result")
-		case monomind.EventError:
-			if !ev.Fatal {
-				if partID, text, ok := coalescer.ForceFlush(); ok {
-					commit(partID, text)
-					currentPartID = ""
-				}
-				boundedMsg, _, _ := chatevents.BoundText(ev.ErrMessage, chatevents.MaxToolPreviewBytes)
-				sup.appendAndEmit(h, chatevents.EventNotice, chatevents.NoticePayload{Code: ev.Code, Message: boundedMsg, Severity: chatevents.SeverityWarning})
-			}
-		}
-	}
-}
-
-// finalizeAgentTurn computes the terminal status and commits turn.finished
-// exactly once. A --no-history launch failure (an older monoagentcli that
-// doesn't recognize a required flag) shows up as zero events ever parsed
-// plus "unknown flag" on stderr — indistinguishable from a hung/crashed
-// process otherwise, so it is detected explicitly and reported as a clear,
-// distinct failure rather than the generic "interrupted" a bare !SawDone
-// would otherwise produce (plan §161: never silently retry as fallback).
-func (sup *chatSupervisor) finalizeAgentTurn(h *chatTurnHandle, res *monomind.TurnResult, sawAnyEvent bool, waitErr error, stderrText string) {
-	if !sawAnyEvent && strings.Contains(stderrText, "unknown flag") {
-		sup.appendAndEmit(h, chatevents.EventNotice, chatevents.NoticePayload{
-			Code:     "cli-flag-unsupported",
-			Message:  "The installed monoagentcli does not recognize a flag this app requires (--no-history). Update monoagentcli to match this app's version.",
-			Severity: chatevents.SeverityError,
-		})
-		res.Err = &monomind.ProtocolError{Code: monomind.ErrRunnerError, Message: "monoagentcli rejected a required flag: " + firstLine(stderrText)}
-	} else if !sawAnyEvent && waitErr != nil && res.Err == nil {
-		res.Err = &monomind.ProtocolError{Code: monomind.ErrRunnerError, Message: "monoagentcli exited before producing any output: " + waitErr.Error()}
-	}
-	sup.finalize(h, res)
-}
-
-func firstLine(s string) string {
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		return s[:i]
-	}
-	return s
-}
-
-// finalize computes the terminal status/reason, commits turn.finished
-// exactly once (FinalizeTurn's compare-and-set makes a second call here a
-// harmless no-op), and releases the conversation's admission slot.
-func (sup *chatSupervisor) finalize(h *chatTurnHandle, res *monomind.TurnResult) {
-	status, reason := chatevents.ComputeTurnStatus(h.isStopRequested(), res)
-	var exitCode *int
-	if res != nil {
-		v := res.ExitCode
-		exitCode = &v
-	}
-	ev, alreadyFinalized, err := sup.store.FinalizeTurn(h.profileID, h.conversationID, h.turnID, status, reason, exitCode, true)
-	switch {
-	case err != nil:
-		// Persistence failed mid/post-turn: retain the live transcript
-		// already emitted, but tell the UI history could not be saved for
-		// this turn's terminal state (plan §248) instead of hanging. This
-		// event is never committed (the store write is exactly what just
-		// failed) — live-only, by construction.
-		liveEv, buildErr := chatevents.New(h.profileID, h.conversationID, h.turnID, chatevents.MaxSafeSeq, time.Now(), chatevents.EventTurnFinished, chatevents.TurnFinishedPayload{
-			Status: status, Reason: reason, ExitCode: exitCode, HistorySaved: false,
-		})
-		if buildErr == nil && sup.emit != nil {
-			sup.emit(liveEv)
-		}
-	case alreadyFinalized:
-		// Another path (e.g. a racing Stop) already finalized this turn —
-		// exactly-once by design; ev is the zero value (nothing was
-		// written this call), so there is nothing further to emit.
-	default:
 		if sup.emit != nil {
-			sup.emit(ev)
+			sup.emit(rec.Event())
 		}
+	}
+	waitErr, stderr := out.exited(proc)
+	if !finished {
+		sup.finishOrphanedTurn(h, waitErr, stderr)
 	}
 	sup.release(h.conversationID, h.turnID)
 }
 
+type chatFinishResult struct {
+	Finalized bool               `json:"finalized"`
+	Event     *chatevents.Record `json:"event"`
+}
+
+// finishOrphanedTurn records the end of a turn whose process exited without
+// its turn.finished — killed by Stop, crashed, or cut off — through
+// `chat history finish`, and emits the committed event. If that fails too,
+// the UI still gets a live-only turn.finished (seq MaxSafeSeq so the
+// frontend never drops it as stale, historySaved false) instead of hanging.
+func (sup *chatSupervisor) finishOrphanedTurn(h *chatTurnHandle, waitErr error, stderr string) {
+	status, reason := chatevents.ComputeTurnStatus(h.isStopRequested(), nil)
+	var exitCode *int
+	var ee *exec.ExitError
+	if errors.As(waitErr, &ee) && ee.ExitCode() >= 0 {
+		v := ee.ExitCode()
+		exitCode = &v
+	}
+	if !h.isStopRequested() {
+		if waitErr != nil {
+			status, reason = chatevents.StatusFailed, "monoagentcli exited: "+waitErr.Error()
+			if msg := lastLine(stderr); msg != "" {
+				reason += ": " + msg
+			}
+		} else {
+			reason = "monoagentcli ended without finishing the turn"
+		}
+	}
+	args := []string{"chat", "history", "finish", h.conversationID, h.turnID, "--status", string(status), "--reason", reason}
+	if exitCode != nil {
+		args = append(args, "--exit-code", strconv.Itoa(*exitCode))
+	}
+	var res chatFinishResult
+	if err := sup.cli(h.profileID, &res, args...); err != nil {
+		live, buildErr := chatevents.New(h.profileID, h.conversationID, h.turnID, chatevents.MaxSafeSeq, time.Now(), chatevents.EventTurnFinished, chatevents.TurnFinishedPayload{
+			Status: status, Reason: reason, ExitCode: exitCode, HistorySaved: false,
+		})
+		if buildErr == nil && sup.emit != nil {
+			sup.emit(live)
+		}
+		return
+	}
+	if res.Finalized && res.Event != nil && sup.emit != nil {
+		sup.emit(res.Event.Event())
+	}
+}
+
+// finishStoppedStart records a turn stopped before its process admitted it
+// as cancelled, if the process got as far as creating it. Unlike
+// finishOrphanedTurn it emits nothing when there is no such turn.
+func (sup *chatSupervisor) finishStoppedStart(h *chatTurnHandle) {
+	status, reason := chatevents.ComputeTurnStatus(true, nil)
+	var res chatFinishResult
+	if sup.cli(h.profileID, &res, "chat", "history", "finish", h.conversationID, h.turnID, "--status", string(status), "--reason", reason) == nil &&
+		res.Finalized && res.Event != nil && sup.emit != nil {
+		sup.emit(res.Event.Event())
+	}
+}
+
 // ─── Wails bindings ─────────────────────────────────────────────────────────
 //
-// New contracts per the plan (§175). Responses follow the existing
+// Contracts per the plan (§175), unchanged by the move to the CLI: the
+// CLI's snake_case records are converted back to the ai/chatevents types
+// whose JSON these bindings always returned. Responses follow the existing
 // JSON-string convention: {"error":...} on failure, otherwise a typed
 // payload.
 
 func (a *App) chatBindingError(err error) string { return aiError(err) }
 
 // isForeignActiveTurn reports whether t is an active turn owned by a
-// DIFFERENT, identified live instance than instanceID. This is the single
-// condition — per the interactive-agent-chat followups' cross-instance-
-// ownership contract — under which another live app instance's turn (one
-// sharing this same on-disk database) must be treated as read-only here:
-// it governs both GetChatTurns' ownedByThisInstance flag and StopChatTurn's
-// explicit foreign-turn failure below. A terminal turn is never foreign
-// (finished turns are ordinary, fully-owned history, regardless who ran
-// them), and neither is an active turn with an empty stored
-// OwnerInstanceID — a row predating this check, or any other case where
-// there is simply nothing to compare against — which deliberately falls
-// back to the prior, already-idempotent "treat as mine/no-op" behavior
-// rather than guessing.
+// DIFFERENT, identified live instance than instanceID — the one case in
+// which another app instance's turn (sharing this database) is read-only
+// here: it drives GetChatTurns' ownedByThisInstance and StopChatTurn's
+// explicit foreign-turn failure. A terminal turn is never foreign, and
+// neither is an active turn with no recorded owner (a row predating
+// ownership), which falls back to "treat as mine".
 func isForeignActiveTurn(t ai.Turn, instanceID string) bool {
 	return t.Status == "active" && t.OwnerInstanceID != "" && t.OwnerInstanceID != instanceID
 }
 
 // chatTurnListItem is one GetChatTurns response entry: the stored turn plus
-// a derived, instance-scoped ownership flag. ai.Turn.OwnerInstanceID itself
-// stays json:"-" (never exposed raw) — only whether THIS process still owns
-// an active turn here is meaningful to a UI, e.g. to label a foreign-active
-// turn read-only.
+// a derived, instance-scoped ownership flag. ai.Turn.OwnerInstanceID stays
+// json:"-" (never exposed raw).
 type chatTurnListItem struct {
 	ai.Turn
 	OwnedByThisInstance bool `json:"ownedByThisInstance"`
@@ -618,80 +579,52 @@ type chatTurnListItem struct {
 
 // CreateChatConversation creates a new scoped agent conversation.
 // workflowID is the tool/ownership context ("general"/"draft"/an owned
-// workflow id); an opaque history key is generated internally and never
-// exposed to the caller.
+// workflow id).
 func (a *App) CreateChatConversation(workflowID, runtimeID, model string) string {
 	if a.chatSup == nil {
 		return a.chatBindingError(fmt.Errorf("chat supervisor not initialized"))
 	}
-	conv, err := a.aiStore.CreateConversation(a.getActiveProfileID(), "agent", workflowID, runtimeID, "", model)
-	if err != nil {
+	args := []string{"chat", "history", "create", "--runtime", runtimeID, "--workflow", workflowID}
+	if model != "" {
+		args = append(args, "--model", model)
+	}
+	var rec ai.ConversationRecord
+	if err := a.chatSup.cli(a.getActiveProfileID(), &rec, args...); err != nil {
 		return a.chatBindingError(err)
 	}
-	b, _ := json.Marshal(conv)
+	b, _ := json.Marshal(rec.Conversation())
 	return string(b)
 }
 
 // StartChatTurn admits and starts one turn. Duplicate calls with the same
 // turnID against an already-admitted turn return the existing admission
 // (idempotent Start); a different turnID while one is active returns busy.
+// Every response carries turnId (plan §189).
 func (a *App) StartChatTurn(conversationID, turnID, message string, tools, allowRuns bool) string {
 	if a.chatSup == nil {
 		return a.chatBindingError(fmt.Errorf("chat supervisor not initialized"))
 	}
-	profileID := a.getActiveProfileID()
-	conv, err := a.aiStore.GetConversation(conversationID, profileID)
-	if err != nil {
-		return a.chatBindingError(err)
-	}
-	if conv.Backend != "agent" {
-		// "provider": the in-app AI provider stack is gone; its
-		// conversations are history only.
-		return a.chatBindingError(fmt.Errorf("conversation %s used a removed AI provider and is read-only; start a new chat", conversationID))
-	}
-
 	h, alreadyActive, err := a.chatSup.admit(conversationID, turnID)
 	if err != nil {
-		// Every StartChatTurn response carries turnId (plan §189) so a
-		// frontend keying pending requests by turn can correlate this
-		// refusal back to the call that produced it.
 		return fmt.Sprintf(`{"ok":false,"turnId":%q,"status":"busy"}`, turnID)
 	}
 	if alreadyActive {
 		return fmt.Sprintf(`{"ok":true,"turnId":%q,"status":"active"}`, turnID)
 	}
-	h.profileID = profileID
-	h.backend = conv.Backend
-
-	turn, existed, err := a.aiStore.CreateTurn(conversationID, profileID, turnID, a.chatSup.instanceID, message)
+	h.profileID = a.getActiveProfileID()
+	resp, err := a.chatSup.startTurn(h, message, tools, allowRuns)
 	if err != nil {
-		a.chatSup.release(conversationID, turnID)
-		return a.chatBindingError(fmt.Errorf("admit turn: %w", err))
-	}
-	if existed && turn.Status != "active" {
-		// A previous process's turn with this exact ID already reached a
-		// terminal state (e.g. this exact Start was retried after the app
-		// restarted) — report it rather than re-running the same prompt.
-		a.chatSup.release(conversationID, turnID)
-		b, _ := json.Marshal(map[string]any{"ok": true, "turnId": turnID, "status": turn.Status})
-		return string(b)
-	}
-
-	if err := a.chatSup.startAgentTurn(h, conv, turnID, message, tools, allowRuns); err != nil {
 		a.chatSup.release(conversationID, turnID)
 		return a.chatBindingError(err)
 	}
-	return fmt.Sprintf(`{"ok":true,"turnId":%q,"status":"active"}`, turnID)
+	return resp
 }
 
 // StopChatTurn requests cancellation of a turn. Idempotent: stopping an
-// already-stopped/already-finished turn, or an unknown turn id, remains a
-// harmless no-op success. A turn that is currently ACTIVE but owned by a
-// DIFFERENT live instance sharing this database is neither of those: this
-// instance holds no handle for it (nothing here would actually be
-// stopped), so silently returning {"ok":true} would misreport a no-op as a
-// completed stop — that specific case reports an explicit failure instead.
-// See isForeignActiveTurn.
+// already-finished turn, or an unknown turn id, is a harmless no-op
+// success. A turn that is ACTIVE but owned by a different live instance is
+// neither: nothing here would stop it, so that case reports an explicit
+// failure instead. See isForeignActiveTurn.
 func (a *App) StopChatTurn(conversationID, turnID string) string {
 	if a.chatSup == nil {
 		return a.chatBindingError(fmt.Errorf("chat supervisor not initialized"))
@@ -700,87 +633,113 @@ func (a *App) StopChatTurn(conversationID, turnID string) string {
 		h.requestStop()
 		return `{"ok":true}`
 	}
-	// Not admitted in THIS instance's own registry. Consult the durable
-	// store to distinguish "already finished" / "unknown id" (both remain
-	// the existing harmless no-op) from "active right now, but owned by
-	// another live instance".
-	if a.aiStore != nil {
-		if turn, err := a.aiStore.GetTurn(turnID, a.getActiveProfileID()); err == nil {
-			if isForeignActiveTurn(turn, a.chatSup.instanceID) {
-				return `{"ok":false,"error":"this turn is running in another window and can only be stopped there"}`
-			}
+	var rec ai.TurnRecord
+	if err := a.chatSup.cli(a.getActiveProfileID(), &rec, "chat", "history", "turn", conversationID, turnID); err == nil {
+		if isForeignActiveTurn(rec.Turn(), a.chatSup.instanceID) {
+			return `{"ok":false,"error":"this turn is running in another window and can only be stopped there"}`
 		}
 	}
 	return `{"ok":true}`
 }
 
+type chatConversationPage struct {
+	Items      []ai.ConversationRecord `json:"items"`
+	NextCursor string                  `json:"next_cursor"`
+}
+
 // ListChatConversations returns this profile's conversations, most recent
 // first.
 func (a *App) ListChatConversations(cursor string, limit int) string {
-	if a.aiStore == nil {
+	if a.chatSup == nil {
 		return `{"items":[]}`
 	}
-	items, next, err := a.aiStore.ListConversations(a.getActiveProfileID(), cursor, clampChatLimit(limit))
-	if err != nil {
+	args := []string{"chat", "history", "list", "--limit", strconv.Itoa(clampChatLimit(limit))}
+	if cursor != "" {
+		args = append(args, "--cursor", cursor)
+	}
+	var page chatConversationPage
+	if err := a.chatSup.cli(a.getActiveProfileID(), &page, args...); err != nil {
 		return a.chatBindingError(err)
 	}
-	b, _ := json.Marshal(map[string]any{"items": items, "nextCursor": next})
+	items := make([]ai.Conversation, 0, len(page.Items))
+	for _, r := range page.Items {
+		items = append(items, r.Conversation())
+	}
+	b, _ := json.Marshal(map[string]any{"items": items, "nextCursor": page.NextCursor})
 	return string(b)
+}
+
+type chatTurnPage struct {
+	Items      []ai.TurnRecord `json:"items"`
+	NextCursor string          `json:"next_cursor"`
 }
 
 // GetChatTurns returns one conversation's turns, most recent first. Each
 // item carries ownedByThisInstance: true for every turn except one that is
-// currently active AND owned by a different live instance sharing this
-// database — see isForeignActiveTurn.
+// active AND owned by a different live instance — see isForeignActiveTurn.
 func (a *App) GetChatTurns(conversationID, cursor string, limit int) string {
-	if a.aiStore == nil {
+	if a.chatSup == nil {
 		return `{"items":[]}`
 	}
-	items, next, err := a.aiStore.ListTurns(conversationID, a.getActiveProfileID(), cursor, clampChatLimit(limit))
-	if err != nil {
+	args := []string{"chat", "history", "turns", conversationID, "--limit", strconv.Itoa(clampChatLimit(limit))}
+	if cursor != "" {
+		args = append(args, "--cursor", cursor)
+	}
+	var page chatTurnPage
+	if err := a.chatSup.cli(a.getActiveProfileID(), &page, args...); err != nil {
+		if chatCLIExitCode(err) == 2 { // unknown conversation: no turns, as before
+			return `{"items":[],"nextCursor":""}`
+		}
 		return a.chatBindingError(err)
 	}
-	instanceID := ""
-	if a.chatSup != nil {
-		instanceID = a.chatSup.instanceID
+	out := make([]chatTurnListItem, 0, len(page.Items))
+	for _, r := range page.Items {
+		t := r.Turn()
+		out = append(out, chatTurnListItem{Turn: t, OwnedByThisInstance: !isForeignActiveTurn(t, a.chatSup.instanceID)})
 	}
-	out := make([]chatTurnListItem, len(items))
-	for i, t := range items {
-		out[i] = chatTurnListItem{Turn: t, OwnedByThisInstance: !isForeignActiveTurn(t, instanceID)}
-	}
-	b, _ := json.Marshal(map[string]any{"items": out, "nextCursor": next})
+	b, _ := json.Marshal(map[string]any{"items": out, "nextCursor": page.NextCursor})
 	return string(b)
+}
+
+type chatEventPage struct {
+	Items            []chatevents.Record `json:"items"`
+	LastCommittedSeq int64               `json:"last_committed_seq"`
+	HasMore          bool                `json:"has_more"`
 }
 
 // GetChatEvents returns one turn's events after afterSeq, ascending.
 func (a *App) GetChatEvents(conversationID, turnID string, afterSeq int64, limit int) string {
-	if a.aiStore == nil {
+	if a.chatSup == nil {
 		return `{"items":[]}`
 	}
-	events, err := a.aiStore.GetEvents(conversationID, turnID, a.getActiveProfileID(), afterSeq, clampChatLimit(limit))
+	var page chatEventPage
+	err := a.chatSup.cli(a.getActiveProfileID(), &page, "chat", "history", "events", conversationID, turnID,
+		"--after-seq", strconv.FormatInt(afterSeq, 10), "--limit", strconv.Itoa(clampChatLimit(limit)))
 	if err != nil {
+		if chatCLIExitCode(err) == 2 { // unknown turn: no events, as before
+			return `{"items":[],"lastCommittedSeq":0,"hasMore":false}`
+		}
 		return a.chatBindingError(err)
 	}
-	turn, turnErr := a.aiStore.GetTurn(turnID, a.getActiveProfileID())
-	lastCommittedSeq := int64(0)
-	if turnErr == nil {
-		lastCommittedSeq = turn.LastCommittedSeq
+	events := make([]chatevents.Event, 0, len(page.Items))
+	for _, r := range page.Items {
+		events = append(events, r.Event())
 	}
 	b, _ := json.Marshal(map[string]any{
 		"items":            events,
-		"lastCommittedSeq": lastCommittedSeq,
-		"hasMore":          len(events) == clampChatLimit(limit),
+		"lastCommittedSeq": page.LastCommittedSeq,
+		"hasMore":          page.HasMore,
 	})
 	return string(b)
 }
 
 // DeleteChatConversation removes a conversation and its turns/events —
-// blocked while a turn is active (ai.ErrTurnActive).
+// refused while a turn is active.
 func (a *App) DeleteChatConversation(conversationID string) string {
-	if a.aiStore == nil {
-		return a.chatBindingError(fmt.Errorf("ai store not initialized"))
+	if a.chatSup == nil {
+		return a.chatBindingError(fmt.Errorf("chat supervisor not initialized"))
 	}
-	if err := a.aiStore.DeleteConversation(conversationID, a.getActiveProfileID()); err != nil {
+	if err := a.chatSup.cli(a.getActiveProfileID(), nil, "chat", "history", "delete", conversationID); err != nil {
 		return a.chatBindingError(err)
 	}
 	return `{"ok":true}`
@@ -797,23 +756,24 @@ func clampChatLimit(limit int) int {
 }
 
 // wailsChatEmitter is the real emitter used outside tests: emits the
-// committed event as-is on the "chat:event" channel the new frontend
-// subscribes to exclusively.
+// committed event as-is on the "chat:event" channel the frontend
+// subscribes to.
 func wailsChatEmitter(ctx context.Context) chatEventEmitter {
 	return func(ev chatevents.Event) {
 		runtime.EventsEmit(ctx, "chat:event", ev)
 	}
 }
 
-// initChatSupervisor wires a.chatSup once aiStore is ready (called from
-// startup(), after it is constructed). db is accepted for symmetry with
-// other init* helpers even though the supervisor itself only needs the
-// store handle.
-func (a *App) initChatSupervisor(db *sql.DB) {
-	a.chatSup = newChatSupervisor(a.aiStore, defaultChatProcessLauncher, wailsChatEmitter(a.ctx), findMonoAgentCLI)
-	if errs := a.chatSup.reconcileOrphanedTurns(); len(errs) > 0 {
-		for _, e := range errs {
+// initChatSupervisor wires a.chatSup (called from startup()) and runs the
+// orphaned-turn sweep in the background, so a slow CLI never delays
+// startup. db is unused: the supervisor reaches the history only through
+// the CLI.
+func (a *App) initChatSupervisor(_ *sql.DB) {
+	a.chatSup = newChatSupervisor(defaultChatProcessLauncher, wailsChatEmitter(a.ctx), findMonoAgentCLI)
+	sup := a.chatSup
+	go func() {
+		for _, e := range sup.reconcileOrphanedTurns() {
 			a.emitLog("SYSTEM", "WARN", fmt.Sprintf("chat turn reconciliation: %v", e))
 		}
-	}
+	}()
 }
