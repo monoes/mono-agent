@@ -72,6 +72,47 @@ function ReviewNotes({ d }) {
   )
 }
 
+// copyOfExisting returns the id of the same-named workflow an import was
+// kept apart from (the CLI's "imported as a copy" warning). A structured
+// field wins when the CLI sends one.
+const COPY_WARNING = /already exists:\s*([^\s;]+);\s*imported as a copy/i
+export function copyOfExisting(res) {
+  if (res?.copyOf) return res.copyOf
+  for (const w of res?.warnings || []) {
+    const m = COPY_WARNING.exec(w)
+    if (m) return m[1]
+  }
+  return null
+}
+
+// splitBundle separates packages the file carries (installable when
+// missing) from ones the exporter could not include (notBundled).
+export function splitBundle(items) {
+  const all = items || []
+  const notIncluded = all.filter(i => i.notBundled && i.status === 'missing')
+  const listed = all.filter(i => !notIncluded.includes(i))
+  const installable = listed.filter(i => i.status === 'missing')
+  return { listed, installable, notIncluded }
+}
+
+function NotIncluded({ items }) {
+  if (!items.length) return null
+  return (
+    <div style={{ ...panel, display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <span style={label}>Not included in this file</span>
+      <span style={{ ...body, fontSize: 11 }}>
+        The workflow uses {items.length === 1 ? 'an automation' : 'automations'} the file does not carry. {items.length === 1 ? 'Its nodes' : 'Their nodes'} will not run until {items.length === 1 ? 'it is' : 'they are'} installed some other way.
+      </span>
+      {items.map(it => (
+        <div key={it.id} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <span style={{ ...mono, fontSize: 11, color: 'var(--text)' }}><Package size={11} color="var(--text-muted)" style={{ verticalAlign: -1, marginRight: 6 }} />{it.id} <span style={muted}>{it.version}</span></span>
+          {it.error && <span style={{ ...muted, fontSize: 10, paddingLeft: 19, wordBreak: 'break-word' }}>{it.error.replace(/^not in the bundle:\s*/i, '')}</span>}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function Automations({ items }) {
   if (!items?.length) return null
   return (
@@ -103,6 +144,7 @@ export default function WorkflowImportDialog({ onClose, onOpen, onImported, onAu
   const [res, setRes] = useState(null)
   const [installRes, setInstallRes] = useState(null)
   const [replaceOk, setReplaceOk] = useState(false)
+  const [replaced, setReplaced] = useState(null) // result of "Replace the existing workflow instead"
 
   const input = pasted.trim() || path.trim()
 
@@ -113,7 +155,7 @@ export default function WorkflowImportDialog({ onClose, onOpen, onImported, onAu
     return out
   }
   const doImport = async () => {
-    setBusy('import'); setRes(null); setInstallRes(null)
+    setBusy('import'); setRes(null); setInstallRes(null); setReplaced(null)
     try { const out = await run({ asNew }); if (out) { setRes(out); onImported?.(out) } } finally { setBusy('') }
   }
   const browse = async () => {
@@ -121,7 +163,17 @@ export default function WorkflowImportDialog({ onClose, onOpen, onImported, onAu
     if (p) { setPath(p); setPasted(''); setRes(null); setInstallRes(null); setError('') }
   }
   const shown = installRes || res
-  const missing = (shown?.automations || []).filter(i => i.status === 'missing')
+  const { listed, installable: missing, notIncluded } = splitBundle(shown?.automations)
+  const existingId = !replaced ? copyOfExisting(res) : null
+  const otherWarnings = (shown?.warnings || []).filter(w => !COPY_WARNING.test(w))
+  const replaceExisting = async () => {
+    if (!(await confirm(`Replace the existing “${res.name}” with this file? Its current nodes and settings are overwritten, and the copy just imported is removed.`, { title: 'Replace existing workflow', confirmLabel: 'Replace' }))) return
+    setBusy('replace')
+    try {
+      const out = await run({ replace: existingId, removeCopy: res.id })
+      if (out) { setReplaced(out); onImported?.(out) }
+    } finally { setBusy('') }
+  }
   const installMissing = async () => {
     const message = (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -177,11 +229,26 @@ export default function WorkflowImportDialog({ onClose, onOpen, onImported, onAu
           {shown && (
             <>
               <OkBox>
-                {installRes
-                  ? installSummary(installRes)
-                  : (STATUS_TEXT[shown.status] || STATUS_TEXT.created)(shown.name || shown.id)}
+                {replaced
+                  ? `Replaced the existing “${replaced.name}” with this file${replaced.removedCopy ? ' and removed the copy.' : '.'}`
+                  : installRes
+                    ? installSummary(installRes)
+                    : (STATUS_TEXT[shown.status] || STATUS_TEXT.created)(shown.name || shown.id)}
               </OkBox>
-              <Automations items={shown.automations} />
+              {replaced?.removeCopyError && <ErrorBox>The copy could not be removed: {replaced.removeCopyError}</ErrorBox>}
+              {existingId && (
+                <div role="note" style={{ ...panel, borderColor: 'var(--yellow)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <span style={{ ...body, fontSize: 11.5 }}>
+                    A workflow named “{res.name}” already exists and was left as it is, so this file was imported as a separate copy.
+                  </span>
+                  <button className="btn btn-secondary btn-sm" onClick={replaceExisting} disabled={!!busy} style={{ alignSelf: 'flex-start' }}>
+                    {busy === 'replace' ? 'Replacing…' : 'Replace the existing workflow instead'}
+                  </button>
+                </div>
+              )}
+              {otherWarnings.map((w, i) => <div key={i} role="note" style={{ ...muted, color: 'var(--yellow)' }}>⚠ {w}</div>)}
+              <Automations items={listed} />
+              <NotIncluded items={notIncluded} />
               {(shown.reviewLines || []).length > 0 && (
                 <div style={{ ...panel, display: 'flex', flexDirection: 'column', gap: 4 }}>
                   <span style={label}>Install review</span>
@@ -211,7 +278,7 @@ export default function WorkflowImportDialog({ onClose, onOpen, onImported, onAu
         <div className="modal-actions">
           <button className="btn btn-ghost btn-sm" onClick={onClose}>{shown ? 'Close' : 'Cancel'}</button>
           {shown ? (
-            <button className="btn btn-primary btn-sm" onClick={() => onOpen(shown.id)} style={{ gap: 5 }}><ExternalLink size={11} /> Open</button>
+            <button className="btn btn-primary btn-sm" onClick={() => onOpen((replaced || shown).id)} style={{ gap: 5 }}><ExternalLink size={11} /> Open</button>
           ) : (
             <button className="btn btn-primary btn-sm" onClick={doImport} disabled={!input || !!busy}>Import</button>
           )}

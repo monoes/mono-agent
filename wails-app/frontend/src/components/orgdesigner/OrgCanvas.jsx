@@ -390,8 +390,11 @@ export default function OrgCanvas({
       {!valid && errors.length > 0 && (
         <div style={{
           position: 'absolute', top: 0, left: 0, right: 0, zIndex: 5,
-          background: 'rgba(239,68,68,0.08)',
-          borderBottom: '1px solid rgba(239,68,68,0.3)',
+          // Opaque: the banner sits over the canvas, so a translucent
+          // background let node titles show through the error text.
+          background: 'var(--danger-surface)',
+          borderBottom: '1px solid var(--danger-border)',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.35)',
           padding: '6px 12px',
           display: 'flex', flexDirection: 'column', gap: 2,
         }}>
