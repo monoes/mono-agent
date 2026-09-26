@@ -61,5 +61,68 @@ for z in zip-dotdot zip-abs zip-nested zip-symlink; do
 done
 test ! -e /tmp/zipslip-abs-pwned.txt; check archive.nothing-written $? 0
 
+# --- workflow import never overwrites local work (D9)
+m automation install $F/e2e-offdom --yes --json >/dev/null 2>&1
+imp() { m workflow import --file "$1" ${2:+$2} --json > $R/imp.json 2>/dev/null; }
+count_wf() { m workflow list --json 2>/dev/null | python3 -c 'import json,sys;print(len([w for w in json.load(sys.stdin) if w["name"]=="E2E import"]))'; }
+WID=e2e-import-fixed-id
+imp $F/wf-import.json; check import.first "$(j $R/imp.json 'd["status"]')" created
+imp $F/wf-import.json; check import.identical "$(j $R/imp.json 'd["status"]')" unchanged
+NODE=$(m workflow node list $WID --json 2>/dev/null | python3 -c 'import json,sys;print([n["id"] for n in json.load(sys.stdin) if n["node_type"]!="trigger.manual"][0])')
+m workflow node set $WID $NODE --config "{\"url\":\"$E2E_SITE/contacts?edited=1\"}" >/dev/null 2>&1
+m workflow import --file $F/wf-import.json --overwrite --json >/dev/null 2>&1; rc=$?
+check import.overwrite-edited-refused "$([ $rc -ne 0 ] && echo refused || echo rc=$rc)" refused
+imp $F/wf-import.json
+check import.after-edit.copy "$(j $R/imp.json 'd["status"], d.get("copyOf"), d.get("copyReason")')" "created $WID id"
+check import.after-edit.warning-says-id "$(j $R/imp.json '"id already exists and was edited locally" in d["warnings"][0]')" True
+COPY=$(j $R/imp.json 'd["id"]')
+imp $F/wf-import.json; check import.after-edit.again-unchanged "$(j $R/imp.json 'd["status"], d["id"]')" "unchanged $COPY"
+imp $F/wf-import.json; check import.after-edit.one-copy-only "$(count_wf)" 2
+check import.local-edit-kept "$(m workflow get $WID --json 2>/dev/null | python3 -c 'import json,sys;print([n["config"]["url"] for n in json.load(sys.stdin)["nodes"] if n["node_type"]!="trigger.manual"][0].endswith("edited=1"))')" True
+imp $F/wf-import.json "--replace $WID"; check import.replace "$(j $R/imp.json 'd["status"], d["id"]')" "updated $WID"
+python3 -c "import json,sys;d=json.load(open(sys.argv[1]));d['id']='e2e-import-same-name';d['nodes'][1]['config']['url']+='?other';json.dump(d,open(sys.argv[2],'w'))" $F/wf-import.json $R/wf-same-name.json
+imp $R/wf-same-name.json; check import.same-name-other-content "$(j $R/imp.json 'd["status"], d.get("copyReason")')" "created name"
+
+# --- legacy packages: narrow domain suggestions, startUrl keeps http, local-only
+HL="$E2E_WORK/home-legacy"; mkdir -p "$HL/.monoagent/actions"; cp -r $F/legacy-actions/. "$HL/.monoagent/actions/"
+ml() { HOME="$HL" PATH="$E2E_WORK/bin:$PATH" "$E2E_BIN" "$@"; }
+ml automation show local-crmlegacy --json > $R/legacy-show.json 2>/dev/null; check legacy.show.rc $? 0
+check legacy.suggested-domains-narrow "$(j $R/legacy-show.json 'd["manifest"]["legacy"]["suggestedDomains"]')" "['crm.e2e.test:$E2E_FIXTURE_PORT']"
+check legacy.start-url-keeps-http "$(j $R/legacy-show.json 'd["manifest"]["site"]["startUrl"]')" "$E2E_SITE/"
+ml automation export local-crmlegacy -o $R/legacy.mpkg --json >/dev/null 2>&1; check legacy.export-without-domains-refused.rc $? 1
+ml automation export local-crmlegacy -o $R/legacy.mpkg --use-suggested-domains --json >/dev/null 2>&1; check legacy.export-suggested.rc $? 0
+check legacy.exported-domains "$(python3 -c 'import zipfile,json,sys;print(json.loads(zipfile.ZipFile(sys.argv[1]).read("automation.json"))["site"]["domains"])' $R/legacy.mpkg)" "['crm.e2e.test:$E2E_FIXTURE_PORT']"
+ml automation export local-locallegacy -o $R/local.mpkg --use-suggested-domains --json >/dev/null 2>&1; check legacy.local-only-not-exportable.rc $? 1
+
+# --- partial bundles
+LW=$(ml workflow create "Legacy wf" --json 2>/dev/null | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')
+LT=$(ml workflow node add $LW --type trigger.manual --name Start --json 2>/dev/null | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')
+LA=$(ml workflow node add $LW --type local-crmlegacy.add_contact --name A --config '{"email":"legacy@example.com","name":"Legacy"}' --json 2>/dev/null | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')
+LB=$(ml workflow node add $LW --type local-locallegacy.add_contact --name B --config '{"email":"local@example.com"}' --json 2>/dev/null | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')
+ml workflow connect $LW --from $LT:main --to $LA:main >/dev/null 2>&1; ml workflow connect $LW --from $LA:main --to $LB:main >/dev/null 2>&1
+ml workflow export $LW --bundle-automations --automation-domains nosuch=crm.e2e.test -o $R/b-nosuch.json >/dev/null 2>&1; rc=$?
+check bundle.unknown-automation-domains-id-refused "$([ $rc -ne 0 ] && [ ! -e $R/b-nosuch.json ] && echo refused || echo rc=$rc)" refused
+ml workflow export $LW --bundle-automations --use-suggested-domains -o $R/b-legacy.json >/dev/null 2>&1; check bundle.export-suggested.rc $? 0
+check bundle.local-only-left-out "$(j $R/b-legacy.json 'list(d["automations"]), d["unbundledAutomations"]["local-locallegacy"]["localOnly"]')" "['local-crmlegacy'] True"
+HR="$E2E_WORK/home-recipient"; mkdir -p "$HR/.monoagent"
+mr() { HOME="$HR" PATH="$E2E_WORK/bin:$PATH" "$E2E_BIN" "$@"; }
+mr workflow import --file $R/b-legacy.json --json > $R/imp-legacy.json 2>/dev/null
+check bundle.import.missing-excludes-local "$(j $R/imp-legacy.json 'd["missingAutomations"]')" "['local-crmlegacy']"
+check bundle.import.local-only-item "$(j $R/imp-legacy.json '[(a["localOnly"], "Recreate" in a["hint"]) for a in d["automations"] if a["id"]=="local-locallegacy"][0]')" "(True, True)"
+mr workflow import --file $R/b-legacy.json --yes --json > $R/imp-legacy2.json 2>/dev/null
+check bundle.import.installed "$(j $R/imp-legacy2.json '[a["status"] for a in d["automations"] if a["id"]=="local-crmlegacy"][0]')" installed
+check bundle.imported-start-url-http "$(mr automation show local-crmlegacy --json 2>/dev/null | python3 -c 'import json,sys;print(json.load(sys.stdin)["info"]["startUrl"])')" "$E2E_SITE/"
+
+# --- a bundled package that differs from the installed one (same id and version)
+m workflow export $WID --bundle-automations -o $R/b-offdom.json >/dev/null 2>&1; check bundle.export-offdom.rc $? 0
+mr automation install $F/e2e-offdom-differs --yes --json >/dev/null 2>&1
+mr workflow import --file $R/b-offdom.json --yes --json > $R/imp-differs.json 2>/dev/null
+check bundle.differs.kept "$(j $R/imp-differs.json '[(a["status"], a.get("replaceable")) for a in d["automations"] if a["id"]=="e2e-offdom"][0]')" "('differs', True)"
+check bundle.differs.not-installed "$(mr automation show e2e-offdom --json 2>/dev/null | python3 -c 'import json,sys;print(json.load(sys.stdin)["manifest"]["description"])')" "e2e fixture package, edited locally"
+mr workflow import --file $R/b-offdom.json --replace-automations --yes --json > $R/imp-replace.json 2>/dev/null
+check bundle.replace-automations "$(j $R/imp-replace.json '[a["status"] for a in d["automations"] if a["id"]=="e2e-offdom"][0]')" replaced
+check bundle.replaced-content "$(mr automation show e2e-offdom --json 2>/dev/null | python3 -c 'import json,sys;print(json.load(sys.stdin)["manifest"]["description"])')" "e2e fixture package"
+mr automation rollback e2e-offdom --json >/dev/null 2>&1; check bundle.replaced-can-roll-back $? 0
+
 echo "regress-cli: $FAILS failure(s)"
 [ "$FAILS" = 0 ]

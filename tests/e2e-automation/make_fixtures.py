@@ -10,6 +10,9 @@ Everything is generated, so the scripts carry no machine-specific files:
   zip-*.mpkg          archives with ../, absolute and symlink entries
   login-draft/        a draft (package layout) with a {{secret:password}} input
   pw-right.json, pw-wrong.json   0600 inputs files for record verify
+  wf-import.json      a workflow with a fixed id (import checks)
+  e2e-offdom-differs/ same id and version as e2e-offdom, other content
+  legacy-actions/     legacy ~/.monoagent/actions/<p>/ files (crm over http, localhost)
 """
 
 import json
@@ -126,3 +129,35 @@ for name, pw in (("pw-right.json", password), ("pw-wrong.json", "wrong-password"
     with os.fdopen(fd, "w") as f:
         json.dump({"username": "alice", "password": pw}, f)
     os.chmod(path, 0o600)
+
+# a workflow with a fixed id, for the import checks (node type from e2e-offdom)
+write("wf-import.json", {
+    "id": "e2e-import-fixed-id", "name": "E2E import", "description": "v1", "version": 1, "is_active": False,
+    "nodes": [
+        {"id": "trigger", "type": "trigger.manual", "name": "Run", "position": {"x": 0, "y": 0}, "disabled": False, "config": {}},
+        {"id": "go", "type": "e2e-offdom.go", "name": "Go", "position": {"x": 300, "y": 0}, "disabled": False,
+         "config": {"url": site + "/contacts"}}],
+    "connections": [{"id": "t-g", "source": "trigger", "source_handle": "main", "target": "go", "target_handle": "main"}]})
+
+# same id and version as e2e-offdom, different content (a bundle "differs")
+for rel in ("automation.json", "actions/go.json", "actions/fetch.json"):
+    with open(os.path.join(out, "e2e-offdom", rel)) as f:
+        data = json.load(f)
+    if rel == "automation.json":
+        data["description"] = "e2e fixture package, edited locally"
+    write(os.path.join("e2e-offdom-differs", rel), data)
+
+# legacy actions (~/.monoagent/actions/<platform>/): one on the fixture site
+# over http, one on a local address (never bundled)
+port = site.rsplit(":", 1)[1] if site.count(":") > 1 else "80"
+legacy_steps = lambda base: [
+    {"id": "open", "type": "navigate", "url": base + "/contacts/new"},
+    {"id": "name", "type": "type", "selector": "#contact-name", "value": "{{name}}"},
+    {"id": "email", "type": "type", "selector": "#contact-email", "value": "{{email}}"},
+    {"id": "save", "type": "click", "selector": "[data-testid=save-contact]"},
+    {"id": "t", "type": "extract_text", "selector": "h1", "variable_name": "title"}]
+for plat, base in (("crmlegacy", site), ("locallegacy", f"http://localhost:{port}")):
+    write(f"legacy-actions/{plat}/add_contact.json", {
+        "actionType": "add_contact", "platform": plat, "description": "legacy: add a contact",
+        "inputs": {"required": [{"name": "email", "type": "string"}], "optional": [{"name": "name", "type": "string"}]},
+        "outputs": {"success": ["title"]}, "steps": legacy_steps(base)})
