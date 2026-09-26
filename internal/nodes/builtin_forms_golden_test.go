@@ -2,6 +2,7 @@ package nodes
 
 import (
 	"encoding/json"
+	"flag"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,12 +11,32 @@ import (
 	"github.com/monoes/mono-agent/internal/workflow"
 )
 
-// TestBuiltinForms_MatchMaster: every built-in browser node type resolves to
-// exactly the form it had before automation packages (captured from
-// origin/master's LoadDefaultSchema into testdata), both with the legacy
-// loader and with the automation registry booted.
-func TestBuiltinForms_MatchMaster(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("testdata", "builtin_forms_master.golden.json"))
+var updateForms = flag.Bool("update-forms", false, "rewrite testdata/builtin_forms.golden.json")
+
+// TestBuiltinForms_Golden: every built-in browser node type resolves to
+// exactly the form in testdata, both with the legacy loader and with the
+// automation registry booted. The golden started as origin/master's forms;
+// change it only on purpose (-update-forms) and review the diff.
+func TestBuiltinForms_Golden(t *testing.T) {
+	path := filepath.Join("testdata", "builtin_forms.golden.json")
+	if *updateForms {
+		t.Setenv("HOME", t.TempDir())
+		action.SetDefSource(nil)
+		out := map[string]json.RawMessage{}
+		for _, nt := range browserNodeTypes() {
+			s, err := workflow.LoadDefaultSchema(nt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			out[nt], _ = json.Marshal(s)
+		}
+		b, _ := json.MarshalIndent(out, "", "  ")
+		if err := os.WriteFile(path, append(b, '\n'), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}

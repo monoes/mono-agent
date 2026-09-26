@@ -177,19 +177,117 @@
   },
   "hackernews.get_post_metrics": {
     "credential_platform": null,
-    "fields": []
+    "fields": [
+      {
+        "key": "username",
+        "label": "Session Username",
+        "type": "text",
+        "required": false,
+        "help": "Username of the browser session to use. Leave blank to use the default session."
+      },
+      {
+        "key": "itemID",
+        "label": "Item ID",
+        "type": "text",
+        "required": true,
+        "help": "Numeric item ID to read metrics for"
+      }
+    ]
   },
   "hackernews.list_comments": {
     "credential_platform": null,
-    "fields": []
+    "fields": [
+      {
+        "key": "username",
+        "label": "Session Username",
+        "type": "text",
+        "required": false,
+        "help": "Username of the browser session to use. Leave blank to use the default session."
+      },
+      {
+        "key": "itemID",
+        "label": "Item ID",
+        "type": "text",
+        "required": true,
+        "help": "Numeric item ID to read comments from"
+      },
+      {
+        "key": "topLevelOnly",
+        "label": "Top Level Only",
+        "type": "boolean",
+        "required": false,
+        "default": false,
+        "help": "Return only top-level (depth 0) comments"
+      },
+      {
+        "key": "maxComments",
+        "label": "Max Comments",
+        "type": "number",
+        "required": false,
+        "default": 0,
+        "help": "Stop after this many comments (0 = all of them)",
+        "min": 0
+      }
+    ]
   },
   "hackernews.reply_to_comment": {
     "credential_platform": null,
-    "fields": []
+    "fields": [
+      {
+        "key": "username",
+        "label": "Session Username",
+        "type": "text",
+        "required": false,
+        "help": "Username of the browser session to use. Leave blank to use the default session."
+      },
+      {
+        "key": "itemID",
+        "label": "Item ID",
+        "type": "text",
+        "required": true,
+        "help": "Numeric item or comment ID to reply to"
+      },
+      {
+        "key": "text",
+        "label": "Text",
+        "type": "text",
+        "required": true,
+        "help": "Reply text"
+      }
+    ]
   },
   "hackernews.submit_post": {
     "credential_platform": null,
-    "fields": []
+    "fields": [
+      {
+        "key": "username",
+        "label": "Session Username",
+        "type": "text",
+        "required": false,
+        "help": "Username of the browser session to use. Leave blank to use the default session."
+      },
+      {
+        "key": "title",
+        "label": "Title",
+        "type": "text",
+        "required": true,
+        "help": "Post title"
+      },
+      {
+        "key": "url",
+        "label": "URL",
+        "type": "text",
+        "required": false,
+        "help": "Link URL (absolute http/https)"
+      },
+      {
+        "key": "text",
+        "label": "Text",
+        "type": "text",
+        "required": false,
+        "help": "Post text (Ask/Show HN body; with a url it becomes the first comment, as on HN)"
+      }
+    ]
   },
   "instagram.auto_reply_dms": {
     "credential_platform": null,
@@ -320,13 +418,6 @@
         "required": true,
         "help": "Post URLs to extract structured data from.",
         "item_type": "text"
-      },
-      {
-        "key": "limit",
-        "label": "Max Posts",
-        "type": "number",
-        "required": false,
-        "default": 20
       }
     ]
   },
@@ -421,32 +512,32 @@
         "help": "Username of the browser session to use. Leave blank to use the default session."
       },
       {
-        "key": "keywords",
-        "label": "Keywords",
-        "type": "text",
-        "required": false
-      },
-      {
-        "key": "message",
-        "label": "Message",
-        "type": "textarea",
-        "required": false,
-        "rows": 3
-      },
-      {
         "key": "targets",
-        "label": "Target List",
+        "label": "Targets",
         "type": "array",
-        "required": false,
-        "help": "List of target usernames, URLs, or identifiers.",
+        "required": true,
+        "help": "Post URLs to list comments from",
         "item_type": "text"
       },
       {
-        "key": "limit",
-        "label": "Max Actions",
+        "key": "maxComments",
+        "label": "Max Comments",
         "type": "number",
         "required": false,
-        "default": 10
+        "default": 50,
+        "help": "Maximum number of comments to return per post",
+        "min": 1,
+        "max": 500
+      },
+      {
+        "key": "delayBetweenPosts",
+        "label": "Delay Between Posts",
+        "type": "number",
+        "required": false,
+        "default": 3,
+        "help": "Seconds to wait between posts",
+        "min": 1,
+        "max": 60
       }
     ]
   },
@@ -461,32 +552,32 @@
         "help": "Username of the browser session to use. Leave blank to use the default session."
       },
       {
-        "key": "keywords",
-        "label": "Keywords",
+        "key": "target_url",
+        "label": "Profile",
         "type": "text",
-        "required": false
+        "required": true,
+        "placeholder": "https://www.instagram.com/natgeo/",
+        "help": "Profile URL or username to list posts from (without @)"
       },
       {
-        "key": "message",
-        "label": "Message",
-        "type": "textarea",
-        "required": false,
-        "rows": 3
-      },
-      {
-        "key": "targets",
-        "label": "Target List",
-        "type": "array",
-        "required": false,
-        "help": "List of target usernames, URLs, or identifiers.",
-        "item_type": "text"
-      },
-      {
-        "key": "limit",
-        "label": "Max Actions",
+        "key": "maxCount",
+        "label": "Max Count",
         "type": "number",
         "required": false,
-        "default": 10
+        "default": 20,
+        "help": "Maximum number of posts to return",
+        "min": 1,
+        "max": 200
+      },
+      {
+        "key": "delayAfterLoad",
+        "label": "Delay After Load",
+        "type": "number",
+        "required": false,
+        "default": 3,
+        "help": "Seconds to wait after page load",
+        "min": 1,
+        "max": 30
       }
     ]
   },
@@ -552,32 +643,37 @@
         "help": "Username of the browser session to use. Leave blank to use the default session."
       },
       {
-        "key": "keywords",
-        "label": "Keywords",
-        "type": "text",
-        "required": false
-      },
-      {
-        "key": "message",
-        "label": "Message",
-        "type": "textarea",
-        "required": false,
-        "rows": 3
-      },
-      {
         "key": "targets",
-        "label": "Target List",
+        "label": "Targets",
         "type": "array",
-        "required": false,
-        "help": "List of target usernames, URLs, or identifiers.",
+        "required": true,
+        "help": "Post URLs whose comments to reply to",
         "item_type": "text"
       },
       {
-        "key": "limit",
-        "label": "Max Actions",
+        "key": "replyText",
+        "label": "Reply Text",
+        "type": "text",
+        "required": true,
+        "help": "Reply text to post"
+      },
+      {
+        "key": "commentAuthor",
+        "label": "Comment Author",
+        "type": "text",
+        "required": false,
+        "default": "",
+        "help": "Only reply to comments by this author; leave empty for first available comment"
+      },
+      {
+        "key": "delayBetweenReplies",
+        "label": "Delay Between Replies",
         "type": "number",
         "required": false,
-        "default": 10
+        "default": 10,
+        "help": "Seconds to wait between replies",
+        "min": 5,
+        "max": 120
       }
     ]
   },
@@ -591,13 +687,6 @@
         "required": true,
         "help": "Usernames or profile URLs to scrape.",
         "item_type": "text"
-      },
-      {
-        "key": "limit",
-        "label": "Max Profiles",
-        "type": "number",
-        "required": false,
-        "default": 50
       }
     ]
   },
@@ -799,32 +888,28 @@
         "help": "Username of the browser session to use. Leave blank to use the default session."
       },
       {
-        "key": "keywords",
-        "label": "Keywords",
+        "key": "postUrl",
+        "label": "Post URL",
         "type": "text",
-        "required": false
-      },
-      {
-        "key": "message",
-        "label": "Message",
-        "type": "textarea",
-        "required": false,
-        "rows": 3
+        "required": true,
+        "help": "URL of the post containing the comments"
       },
       {
         "key": "targets",
-        "label": "Target List",
+        "label": "Targets",
         "type": "array",
-        "required": false,
-        "help": "List of target usernames, URLs, or identifiers.",
+        "required": true,
+        "help": "Comment URN IDs to like (from list_post_comments output)",
         "item_type": "text"
       },
       {
-        "key": "limit",
-        "label": "Max Actions",
+        "key": "delayBetweenLikes",
+        "label": "Delay Between Likes",
         "type": "number",
         "required": false,
-        "default": 10
+        "default": 2,
+        "min": 1,
+        "max": 30
       }
     ]
   },
@@ -859,32 +944,37 @@
         "help": "Username of the browser session to use. Leave blank to use the default session."
       },
       {
-        "key": "keywords",
-        "label": "Keywords",
-        "type": "text",
-        "required": false
-      },
-      {
-        "key": "message",
-        "label": "Message",
-        "type": "textarea",
-        "required": false,
-        "rows": 3
-      },
-      {
         "key": "targets",
-        "label": "Target List",
+        "label": "Targets",
         "type": "array",
-        "required": false,
-        "help": "List of target usernames, URLs, or identifiers.",
+        "required": true,
+        "help": "Post URLs to list comments from",
         "item_type": "text"
       },
       {
-        "key": "limit",
-        "label": "Max Actions",
+        "key": "maxComments",
+        "label": "Max Comments",
         "type": "number",
         "required": false,
-        "default": 10
+        "default": 50,
+        "min": 1,
+        "max": 500
+      },
+      {
+        "key": "includeReplies",
+        "label": "Include Replies",
+        "type": "boolean",
+        "required": false,
+        "default": true
+      },
+      {
+        "key": "delayBetweenPosts",
+        "label": "Delay Between Posts",
+        "type": "number",
+        "required": false,
+        "default": 3,
+        "min": 1,
+        "max": 60
       }
     ]
   },
@@ -899,32 +989,41 @@
         "help": "Username of the browser session to use. Leave blank to use the default session."
       },
       {
-        "key": "keywords",
-        "label": "Keywords",
-        "type": "text",
-        "required": false
-      },
-      {
-        "key": "message",
-        "label": "Message",
-        "type": "textarea",
-        "required": false,
-        "rows": 3
-      },
-      {
         "key": "targets",
-        "label": "Target List",
+        "label": "Targets",
         "type": "array",
-        "required": false,
-        "help": "List of target usernames, URLs, or identifiers.",
+        "required": true,
+        "help": "Profile/company URLs to scrape posts from",
         "item_type": "text"
       },
       {
-        "key": "limit",
-        "label": "Max Actions",
+        "key": "maxCount",
+        "label": "Max Count",
         "type": "number",
         "required": false,
-        "default": 10
+        "default": 20,
+        "min": 1,
+        "max": 200
+      },
+      {
+        "key": "activityType",
+        "label": "Activity Type",
+        "type": "select",
+        "required": false,
+        "default": "all",
+        "options": [
+          "all",
+          "shares"
+        ]
+      },
+      {
+        "key": "delayAfterLoad",
+        "label": "Delay After Load",
+        "type": "number",
+        "required": false,
+        "default": 3,
+        "min": 1,
+        "max": 30
       }
     ]
   },
@@ -951,13 +1050,6 @@
         "required": true,
         "help": "Usernames or profile URLs to scrape.",
         "item_type": "text"
-      },
-      {
-        "key": "limit",
-        "label": "Max Profiles",
-        "type": "number",
-        "required": false,
-        "default": 50
       }
     ]
   },
@@ -991,15 +1083,76 @@
   },
   "producthunt.comment_on_launch": {
     "credential_platform": null,
-    "fields": []
+    "fields": [
+      {
+        "key": "username",
+        "label": "Session Username",
+        "type": "text",
+        "required": false,
+        "help": "Username of the browser session to use. Leave blank to use the default session."
+      },
+      {
+        "key": "launchURL",
+        "label": "Launch URL",
+        "type": "text",
+        "required": true,
+        "help": "Product Hunt launch page URL (https://www.producthunt.com/...)"
+      },
+      {
+        "key": "text",
+        "label": "Text",
+        "type": "text",
+        "required": true,
+        "help": "Comment text"
+      }
+    ]
   },
   "producthunt.get_launch_metrics": {
     "credential_platform": null,
-    "fields": []
+    "fields": [
+      {
+        "key": "username",
+        "label": "Session Username",
+        "type": "text",
+        "required": false,
+        "help": "Username of the browser session to use. Leave blank to use the default session."
+      },
+      {
+        "key": "launchURL",
+        "label": "Launch URL",
+        "type": "text",
+        "required": true,
+        "help": "Product Hunt launch page URL (https://www.producthunt.com/...)"
+      }
+    ]
   },
   "producthunt.list_comments": {
     "credential_platform": null,
-    "fields": []
+    "fields": [
+      {
+        "key": "username",
+        "label": "Session Username",
+        "type": "text",
+        "required": false,
+        "help": "Username of the browser session to use. Leave blank to use the default session."
+      },
+      {
+        "key": "launchURL",
+        "label": "Launch URL",
+        "type": "text",
+        "required": true,
+        "help": "Product Hunt launch page URL (https://www.producthunt.com/...)"
+      },
+      {
+        "key": "maxComments",
+        "label": "Max Comments",
+        "type": "number",
+        "required": false,
+        "default": 0,
+        "help": "Stop after this many comments (0 = all loaded comments)",
+        "min": 0
+      }
+    ]
   },
   "tiktok.auto_reply_dms": {
     "credential_platform": null,
@@ -1032,32 +1185,29 @@
         "help": "Username of the browser session to use. Leave blank to use the default session."
       },
       {
-        "key": "keywords",
-        "label": "Keywords",
-        "type": "text",
-        "required": false
-      },
-      {
-        "key": "message",
-        "label": "Message",
-        "type": "textarea",
-        "required": false,
-        "rows": 3
-      },
-      {
         "key": "targets",
-        "label": "Target List",
+        "label": "Targets",
         "type": "array",
-        "required": false,
-        "help": "List of target usernames, URLs, or identifiers.",
+        "required": true,
+        "help": "Video URLs to comment on",
         "item_type": "text"
       },
       {
-        "key": "limit",
-        "label": "Max Actions",
+        "key": "commentText",
+        "label": "Comment Text",
+        "type": "text",
+        "required": true,
+        "help": "Comment text (supports {{templates}})"
+      },
+      {
+        "key": "delayBetweenComments",
+        "label": "Delay Between Comments",
         "type": "number",
         "required": false,
-        "default": 10
+        "default": 5,
+        "help": "Seconds to wait between comments",
+        "min": 2,
+        "max": 120
       }
     ]
   },
@@ -1072,32 +1222,22 @@
         "help": "Username of the browser session to use. Leave blank to use the default session."
       },
       {
-        "key": "keywords",
-        "label": "Keywords",
-        "type": "text",
-        "required": false
-      },
-      {
-        "key": "message",
-        "label": "Message",
-        "type": "textarea",
-        "required": false,
-        "rows": 3
-      },
-      {
         "key": "targets",
-        "label": "Target List",
+        "label": "Targets",
         "type": "array",
-        "required": false,
-        "help": "List of target usernames, URLs, or identifiers.",
+        "required": true,
+        "help": "Video URLs to open duet creator for",
         "item_type": "text"
       },
       {
-        "key": "limit",
-        "label": "Max Actions",
+        "key": "delayBetweenVideos",
+        "label": "Delay Between Videos",
         "type": "number",
         "required": false,
-        "default": 10
+        "default": 5,
+        "help": "Seconds to wait between videos",
+        "min": 2,
+        "max": 60
       }
     ]
   },
@@ -1184,32 +1324,22 @@
         "help": "Username of the browser session to use. Leave blank to use the default session."
       },
       {
-        "key": "keywords",
-        "label": "Keywords",
-        "type": "text",
-        "required": false
-      },
-      {
-        "key": "message",
-        "label": "Message",
-        "type": "textarea",
-        "required": false,
-        "rows": 3
-      },
-      {
         "key": "targets",
-        "label": "Target List",
+        "label": "Targets",
         "type": "array",
-        "required": false,
-        "help": "List of target usernames, URLs, or identifiers.",
+        "required": true,
+        "help": "Profile URLs to follow",
         "item_type": "text"
       },
       {
-        "key": "limit",
-        "label": "Max Actions",
+        "key": "delayBetweenFollows",
+        "label": "Delay Between Follows",
         "type": "number",
         "required": false,
-        "default": 10
+        "default": 5,
+        "help": "Seconds to wait between follows",
+        "min": 2,
+        "max": 60
       }
     ]
   },
@@ -1224,32 +1354,12 @@
         "help": "Username of the browser session to use. Leave blank to use the default session."
       },
       {
-        "key": "keywords",
-        "label": "Keywords",
-        "type": "text",
-        "required": false
-      },
-      {
-        "key": "message",
-        "label": "Message",
-        "type": "textarea",
-        "required": false,
-        "rows": 3
-      },
-      {
         "key": "targets",
-        "label": "Target List",
+        "label": "Targets",
         "type": "array",
-        "required": false,
-        "help": "List of target usernames, URLs, or identifiers.",
+        "required": true,
+        "help": "Items with videoUrl plus the comment's text and username (list_video_comments rows work as-is); an id from list_video_comments (TikTok's own, or a derived tth- id) is matched first",
         "item_type": "text"
-      },
-      {
-        "key": "limit",
-        "label": "Max Actions",
-        "type": "number",
-        "required": false,
-        "default": 10
       }
     ]
   },
@@ -1264,32 +1374,22 @@
         "help": "Username of the browser session to use. Leave blank to use the default session."
       },
       {
-        "key": "keywords",
-        "label": "Keywords",
-        "type": "text",
-        "required": false
-      },
-      {
-        "key": "message",
-        "label": "Message",
-        "type": "textarea",
-        "required": false,
-        "rows": 3
-      },
-      {
         "key": "targets",
-        "label": "Target List",
+        "label": "Targets",
         "type": "array",
-        "required": false,
-        "help": "List of target usernames, URLs, or identifiers.",
+        "required": true,
+        "help": "Video URLs to like",
         "item_type": "text"
       },
       {
-        "key": "limit",
-        "label": "Max Actions",
+        "key": "delayBetweenLikes",
+        "label": "Delay Between Likes",
         "type": "number",
         "required": false,
-        "default": 10
+        "default": 3,
+        "help": "Seconds to wait between likes",
+        "min": 1,
+        "max": 60
       }
     ]
   },
@@ -1304,32 +1404,32 @@
         "help": "Username of the browser session to use. Leave blank to use the default session."
       },
       {
-        "key": "keywords",
-        "label": "Keywords",
-        "type": "text",
-        "required": false
-      },
-      {
-        "key": "message",
-        "label": "Message",
-        "type": "textarea",
-        "required": false,
-        "rows": 3
-      },
-      {
         "key": "targets",
-        "label": "Target List",
+        "label": "Targets",
         "type": "array",
-        "required": false,
-        "help": "List of target usernames, URLs, or identifiers.",
+        "required": true,
+        "help": "Profile URLs to collect videos from",
         "item_type": "text"
       },
       {
-        "key": "limit",
-        "label": "Max Actions",
+        "key": "maxVideos",
+        "label": "Max Videos",
         "type": "number",
         "required": false,
-        "default": 10
+        "default": 20,
+        "help": "Maximum number of videos to collect per profile",
+        "min": 1,
+        "max": 500
+      },
+      {
+        "key": "delayBetweenProfiles",
+        "label": "Delay Between Profiles",
+        "type": "number",
+        "required": false,
+        "default": 3,
+        "help": "Seconds to wait between profiles",
+        "min": 1,
+        "max": 60
       }
     ]
   },
@@ -1344,32 +1444,32 @@
         "help": "Username of the browser session to use. Leave blank to use the default session."
       },
       {
-        "key": "keywords",
-        "label": "Keywords",
-        "type": "text",
-        "required": false
-      },
-      {
-        "key": "message",
-        "label": "Message",
-        "type": "textarea",
-        "required": false,
-        "rows": 3
-      },
-      {
         "key": "targets",
-        "label": "Target List",
+        "label": "Targets",
         "type": "array",
-        "required": false,
-        "help": "List of target usernames, URLs, or identifiers.",
+        "required": true,
+        "help": "Video URLs to list comments from",
         "item_type": "text"
       },
       {
-        "key": "limit",
-        "label": "Max Actions",
+        "key": "maxComments",
+        "label": "Max Comments",
         "type": "number",
         "required": false,
-        "default": 10
+        "default": 50,
+        "help": "Maximum number of comments to collect per video",
+        "min": 1,
+        "max": 500
+      },
+      {
+        "key": "delayBetweenVideos",
+        "label": "Delay Between Videos",
+        "type": "number",
+        "required": false,
+        "default": 3,
+        "help": "Seconds to wait between videos",
+        "min": 1,
+        "max": 60
       }
     ]
   },
@@ -1378,11 +1478,27 @@
     "fields": [
       {
         "key": "message",
-        "label": "Post Content",
+        "label": "Caption",
         "type": "textarea",
         "required": true,
-        "placeholder": "Write your post here...",
+        "placeholder": "Write your caption here...",
+        "help": "Replaces TikTok's prefilled caption.",
         "rows": 5
+      },
+      {
+        "key": "media",
+        "label": "Video Path",
+        "type": "text",
+        "required": true,
+        "placeholder": "e.g. /home/me/videos/clip.mp4",
+        "help": "Local path of the video file to upload."
+      },
+      {
+        "key": "locationTag",
+        "label": "Location Tag",
+        "type": "text",
+        "required": false,
+        "placeholder": "e.g. Berlin"
       }
     ]
   },
@@ -1396,13 +1512,6 @@
         "required": true,
         "help": "Usernames or profile URLs to scrape.",
         "item_type": "text"
-      },
-      {
-        "key": "limit",
-        "label": "Max Profiles",
-        "type": "number",
-        "required": false,
-        "default": 50
       }
     ]
   },
@@ -1445,32 +1554,22 @@
         "help": "Username of the browser session to use. Leave blank to use the default session."
       },
       {
-        "key": "keywords",
-        "label": "Keywords",
-        "type": "text",
-        "required": false
-      },
-      {
-        "key": "message",
-        "label": "Message",
-        "type": "textarea",
-        "required": false,
-        "rows": 3
-      },
-      {
         "key": "targets",
-        "label": "Target List",
+        "label": "Targets",
         "type": "array",
-        "required": false,
-        "help": "List of target usernames, URLs, or identifiers.",
+        "required": true,
+        "help": "Video URLs to copy share links for",
         "item_type": "text"
       },
       {
-        "key": "limit",
-        "label": "Max Actions",
+        "key": "delayBetweenVideos",
+        "label": "Delay Between Videos",
         "type": "number",
         "required": false,
-        "default": 10
+        "default": 3,
+        "help": "Seconds to wait between videos",
+        "min": 1,
+        "max": 60
       }
     ]
   },
@@ -1485,32 +1584,22 @@
         "help": "Username of the browser session to use. Leave blank to use the default session."
       },
       {
-        "key": "keywords",
-        "label": "Keywords",
-        "type": "text",
-        "required": false
-      },
-      {
-        "key": "message",
-        "label": "Message",
-        "type": "textarea",
-        "required": false,
-        "rows": 3
-      },
-      {
         "key": "targets",
-        "label": "Target List",
+        "label": "Targets",
         "type": "array",
-        "required": false,
-        "help": "List of target usernames, URLs, or identifiers.",
+        "required": true,
+        "help": "Video URLs to open stitch creator for",
         "item_type": "text"
       },
       {
-        "key": "limit",
-        "label": "Max Actions",
+        "key": "delayBetweenVideos",
+        "label": "Delay Between Videos",
         "type": "number",
         "required": false,
-        "default": 10
+        "default": 5,
+        "help": "Seconds to wait between videos",
+        "min": 2,
+        "max": 60
       }
     ]
   },
@@ -1630,13 +1719,6 @@
         "required": true,
         "help": "Usernames or profile URLs to scrape.",
         "item_type": "text"
-      },
-      {
-        "key": "limit",
-        "label": "Max Profiles",
-        "type": "number",
-        "required": false,
-        "default": 50
       }
     ]
   },

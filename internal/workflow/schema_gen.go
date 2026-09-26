@@ -119,8 +119,8 @@ func generateActionSchema(nodeType string) (*NodeSchema, bool) {
 	if dot <= 0 || dot == len(nodeType)-1 {
 		return nil, false
 	}
-	// Built-in and legacy local-* nodes keep their pre-package forms.
-	if isBuiltinAutomation(nodeType[:dot]) || strings.HasPrefix(nodeType, "local-") {
+	// Legacy local-* nodes keep their pre-package forms.
+	if strings.HasPrefix(nodeType, "local-") {
 		return nil, false
 	}
 	if form, ok := packageForm(nodeType[:dot], nodeType[dot+1:]); ok {

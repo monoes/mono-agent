@@ -1,7 +1,6 @@
 {
   "credential_platform": null,
   "fields": [
-    { "key": "targets", "label": "Profiles", "type": "array", "required": true, "item_type": "text", "help": "Usernames or profile URLs to scrape." },
-    { "key": "limit",   "label": "Max Profiles", "type": "number", "required": false, "default": 50 }
+    { "key": "targets", "label": "Profiles", "type": "array", "required": true, "item_type": "text", "help": "Usernames or profile URLs to scrape." }
   ]
 }
