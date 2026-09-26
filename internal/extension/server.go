@@ -748,6 +748,14 @@ const pairPageHTML = `<!doctype html>
 // it safe for a short-lived CLI invocation to share the daemon's already-
 // connected extension instead of starting a second, competing server.
 func (s *Server) handleRelay(w http.ResponseWriter, r *http.Request) {
+	// Same-machine callers only. Local clients (the CLI, the node runtime,
+	// the app's bundled CLI, the MCP server) send no Origin, which
+	// checkOrigin accepts; a web page's Origin, or a DNS-rebound Host, is
+	// refused before the token is looked at.
+	if !checkOrigin(r) || !loopbackHost(r.Host) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return

@@ -98,6 +98,7 @@ func TestHandleRelayRejectsMissingOrWrongValue(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/monoagent/relay", bytes.NewReader(relayRequestBody(t)))
+			req.Host = "127.0.0.1:9222" // a local client; httptest defaults to example.com
 			if tc.setHdr {
 				req.Header.Set(tokenHeader, tc.headerV)
 			}
@@ -123,6 +124,7 @@ func TestHandleRelayAcceptsMatchingValue(t *testing.T) {
 	s.pending = make(map[string]chan *Response)
 
 	req := httptest.NewRequest(http.MethodPost, "/monoagent/relay", bytes.NewReader(relayRequestBody(t)))
+	req.Host = "127.0.0.1:9222" // a local client; httptest defaults to example.com
 	req.Header.Set(tokenHeader, expected)
 	w := httptest.NewRecorder()
 
@@ -130,7 +132,47 @@ func TestHandleRelayAcceptsMatchingValue(t *testing.T) {
 
 	// No extension is connected in this test, so the request should get past
 	// the auth check and fail for that unrelated reason (never unauthorized).
-	if w.Code == http.StatusUnauthorized {
-		t.Fatalf("matching value was rejected as unauthorized")
+	if w.Code == http.StatusUnauthorized || w.Code == http.StatusForbidden {
+		t.Fatalf("matching value was rejected: %d", w.Code)
+	}
+}
+
+// The relay only serves same-machine callers: a CLI-style request (no
+// Origin, loopback Host) is served; a web Origin or a DNS-rebound Host is
+// refused before the token is checked.
+func TestHandleRelayOriginAndHostGuard(t *testing.T) {
+	withTempHome(t)
+	token, err := generateToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{token: token, pending: make(map[string]chan *Response)}
+	serve := func(mutate func(*http.Request)) int {
+		req := httptest.NewRequest(http.MethodPost, "/monoagent/relay", bytes.NewReader(relayRequestBody(t)))
+		req.Host = "127.0.0.1:9222"
+		req.Header.Set(tokenHeader, token)
+		mutate(req)
+		w := httptest.NewRecorder()
+		s.handleRelay(w, req)
+		return w.Code
+	}
+	if got := serve(func(*http.Request) {}); got == http.StatusForbidden || got == http.StatusUnauthorized {
+		t.Fatalf("CLI-style request (no Origin) refused: %d", got)
+	}
+	if got := serve(func(r *http.Request) { r.Host = "localhost:9222" }); got == http.StatusForbidden {
+		t.Fatalf("localhost Host refused")
+	}
+	if got := serve(func(r *http.Request) { r.Header.Set("Origin", "https://evil.test") }); got != http.StatusForbidden {
+		t.Fatalf("web Origin: %d, want 403", got)
+	}
+	if got := serve(func(r *http.Request) { r.Host = "evil.test:9222" }); got != http.StatusForbidden {
+		t.Fatalf("rebound Host: %d, want 403", got)
+	}
+	// Refused even without a token: the guard runs first.
+	if got := serve(func(r *http.Request) {
+		r.Header.Set("Origin", "https://evil.test")
+		r.Header.Del(tokenHeader)
+	}); got != http.StatusForbidden {
+		t.Fatalf("web Origin without token: %d, want 403", got)
 	}
 }
