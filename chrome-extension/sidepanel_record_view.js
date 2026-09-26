@@ -176,6 +176,9 @@
     return !!(draft && draft.isNew && String(automation || "").trim() === draft.automation);
   }
 
+  /** existsQuestion is what the panel asks when the proposed id is taken. */
+  const existsQuestion = (id) => `An automation named ${id} already exists \u2014 add this action to it? Or rename it above and save again.`;
+
   /** alreadyExists is the save refusal for --new on an installed id. */
   const alreadyExists = (err) => /already exists; use --automation/.test(String((err && err.message) || err || ""));
 
@@ -305,5 +308,5 @@
     return { ok, stoppedAt: r.stoppedAt || null, error, steps };
   }
 
-  root.MonoRecordView = { describe, rows, summary, hasErrors, selectorConflict, saveResult, saveAsNew, alreadyExists, sensitiveKind, targetName, hostPath, describeDraft, describeVerify };
+  root.MonoRecordView = { describe, rows, summary, hasErrors, selectorConflict, saveResult, saveAsNew, alreadyExists, existsQuestion, sensitiveKind, targetName, hostPath, describeDraft, describeVerify };
 })(globalThis);

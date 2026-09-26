@@ -264,4 +264,5 @@ test("save as new only while the Automation field holds the analyzer's proposal"
   assert.equal(V.saveAsNew({ isNew: false, automation: "crm" }, "crm"), false);
   assert.equal(V.alreadyExists(new Error("automation e2e-crm already exists; use --automation e2e-crm")), true);
   assert.equal(V.alreadyExists(new Error("draft not found")), false);
+  assert.equal(V.existsQuestion("e2e-crm-2"), "An automation named e2e-crm-2 already exists \u2014 add this action to it? Or rename it above and save again.");
 });

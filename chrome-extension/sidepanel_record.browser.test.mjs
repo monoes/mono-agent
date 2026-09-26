@@ -213,14 +213,30 @@ describe("the Record panel's Verify and Save results", { skip: browser ? false :
     assert.match(await browser.evaluate(`document.getElementById("rec-draft-msg").textContent`), /Saved as e2e-crm\.create_contact/);
   });
 
-  it("the unchanged proposal goes as new, and if it exists by now the save retries as automation", async () => {
+  it("the unchanged proposal goes as new; if that id exists the panel asks before adding to it", async () => {
     await analyzeNewDraft();
-    await browser.evaluate(
-      `window.__save.push(${JSON.stringify({ ok: false, error: "automation e2e-crm-2 already exists; use --automation e2e-crm-2", code: "internal" })}, ${JSON.stringify({ ok: true, result: { nodeType: "e2e-crm-2.create_contact" } })}); document.getElementById("rec-save").click(); true`
+    const exists = { ok: false, error: "automation e2e-crm-2 already exists; use --automation e2e-crm-2", code: "internal" };
+    await browser.evaluate(`window.__save.push(${JSON.stringify(exists)}); document.getElementById("rec-save").click(); true`);
+    await sleep(150);
+    const asked = JSON.parse(
+      await browser.evaluate(`JSON.stringify({ msg: document.getElementById("rec-draft-msg").textContent, button: !document.getElementById("rec-save-existing").hidden, n: window.__saveRequests.length })`)
     );
-    await sleep(200);
+    assert.equal(asked.n, 1, "no silent retry");
+    assert.equal(asked.button, true);
+    assert.match(asked.msg, /An automation named e2e-crm-2 already exists \u2014 add this action to it\?/);
+
+    // Renaming is the other way out: the offer goes away.
+    await browser.evaluate(`(() => { const f = document.getElementById("rec-save-automation"); f.value = "e2e-crm-3"; f.dispatchEvent(new Event("input")); return true; })()`);
+    assert.equal(await browser.evaluate(`document.getElementById("rec-save-existing").hidden`), true);
+    await browser.evaluate(`(() => { const f = document.getElementById("rec-save-automation"); f.value = "e2e-crm-2"; f.dispatchEvent(new Event("input")); return true; })()`);
+
+    // Saying yes saves into it as `automation`.
+    await browser.evaluate(`window.__save.push(${JSON.stringify(exists)}); document.getElementById("rec-save").click(); true`);
+    await sleep(150);
+    await browser.evaluate(`window.__save.push(${JSON.stringify({ ok: true, result: { nodeType: "e2e-crm-2.create_contact" } })}); document.getElementById("rec-save-existing").click(); true`);
+    await sleep(150);
     const reqs = JSON.parse(await browser.evaluate(`JSON.stringify(window.__saveRequests)`));
-    assert.deepEqual(reqs.map((r) => [r.automation, r.isNew]), [["e2e-crm-2", true], ["e2e-crm-2", false]]);
+    assert.deepEqual(reqs.map((r) => [r.automation, r.isNew]), [["e2e-crm-2", true], ["e2e-crm-2", true], ["e2e-crm-2", false]]);
     assert.match(await browser.evaluate(`document.getElementById("rec-draft-msg").textContent`), /Saved as e2e-crm-2\.create_contact/);
   });
 });
