@@ -72,7 +72,7 @@ func newAutomationDoctorCmd(cfg *globalConfig) *cobra.Command {
 			sessions, health := loadDoctorState(cfg)
 			rows := make([]doctorAutomationJSON, 0, len(infos))
 			for _, info := range infos {
-				rows = append(rows, doctorAutomation(reg, info, sessions.lookup(info.ID), health[info.ID]))
+				rows = append(rows, doctorAutomation(reg, info, sessions.lookupInfo(info), health[info.ID]))
 			}
 			out := cmd.OutOrStdout()
 			if cfg.JSONOutput {

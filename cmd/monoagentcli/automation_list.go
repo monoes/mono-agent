@@ -54,7 +54,7 @@ func newAutomationListCmd(cfg *globalConfig) *cobra.Command {
 			for _, info := range infos {
 				rows = append(rows, automationListRow{
 					InstalledInfo: info,
-					Session:       sessions.lookup(info.ID),
+					Session:       sessions.lookupInfo(info),
 					PendingUpdate: info.PendingUpdate,
 				})
 			}
@@ -116,11 +116,28 @@ type sessionIndex map[string]automationSession
 
 // lookup finds id's session. A legacy-wrapped package local-<p> (the
 // registry's wrap of ~/.monoagent/actions/<p>) runs on <p>'s login, so it
-// falls back to <p>'s session.
+// falls back to <p>'s session. Prefer lookupInfo, which knows <p> exactly.
 func (s sessionIndex) lookup(id string) automationSession {
+	return s.lookupWith(id, "")
+}
+
+// lookupInfo is lookup for an installed package: its own id first, then
+// the registry's LegacyPlatform (the original platform name, e.g.
+// "google_maps", which the runtime also uses as credential_platform), then
+// the id without "local-".
+func (s sessionIndex) lookupInfo(info automation.InstalledInfo) automationSession {
+	return s.lookupWith(info.ID, info.LegacyPlatform)
+}
+
+func (s sessionIndex) lookupWith(id, legacy string) automationSession {
 	key := strings.ToLower(id)
 	if v, ok := s[key]; ok {
 		return v
+	}
+	if legacy = strings.ToLower(legacy); legacy != "" {
+		if v, ok := s[legacy]; ok {
+			return v
+		}
 	}
 	if p, ok := strings.CutPrefix(key, "local-"); ok && p != "" {
 		if v, ok := s[p]; ok {
@@ -235,7 +252,7 @@ func newAutomationShowCmd(cfg *globalConfig) *cobra.Command {
 				return writeJSONTo(out, map[string]any{
 					"info": info, "manifest": pkg.Manifest, "actions": actions,
 					"fragments": fragments, "issues": issues,
-					"session": loadAutomationSessions(cfg).lookup(id),
+					"session": loadAutomationSessions(cfg).lookupInfo(*info),
 				})
 			}
 			printAutomationShow(out, info, pkg.Manifest, actions, fragments, issues)

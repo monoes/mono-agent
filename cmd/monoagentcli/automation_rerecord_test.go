@@ -205,3 +205,23 @@ func TestAutomationSessionLookupLocalWrap(t *testing.T) {
 		t.Fatalf("own session wins: %+v", got)
 	}
 }
+
+// TestAutomationSessionLookupLegacyPlatform: a legacy package whose
+// platform name has an underscore (id local-google-maps) finds the session
+// saved under "google_maps" through InstalledInfo.LegacyPlatform.
+func TestAutomationSessionLookupLegacyPlatform(t *testing.T) {
+	idx := sessionIndex{"google_maps": {LoggedIn: true, Username: "maps-user", Status: "active"}}
+	info := automation.InstalledInfo{ID: "local-google-maps", LegacyPlatform: "google_maps"}
+	if got := idx.lookupInfo(info); !got.LoggedIn || got.Username != "maps-user" {
+		t.Fatalf("lookupInfo = %+v", got)
+	}
+	// The id alone ("google-maps" once stripped) does not find it.
+	if got := idx.lookup("local-google-maps"); got.Status != "logged_out" {
+		t.Fatalf("stripped id matched unexpectedly: %+v", got)
+	}
+	// Its own session still wins.
+	idx["local-google-maps"] = automationSession{Username: "own", Status: "active"}
+	if got := idx.lookupInfo(info); got.Username != "own" {
+		t.Fatalf("own session = %+v", got)
+	}
+}
