@@ -56,6 +56,33 @@ describe('useDashboardData while another page is showing', () => {
   })
 })
 
+describe('useDashboardData replies', () => {
+  it('ignores a stale summary reply and refreshes orgs on org:runStatus', async () => {
+    const { result } = renderHook(() => useDashboardData())
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    let resolveOld
+    api.getSummary.mockImplementationOnce(() => new Promise(r => { resolveOld = r }))
+    api.getSummary.mockImplementationOnce(() => Promise.resolve({ v: 1, hil: { total: 9 } }))
+    const orgCalls = api.getOrgSummary.mock.calls.length
+    await act(async () => { handlers['org:runStatus']() })   // request 1 (slow)
+    await act(async () => { handlers['workflow:complete']() }) // request 2 (fast)
+    await waitFor(() => expect(result.current.summary.hil.total).toBe(9))
+    await act(async () => { resolveOld({ v: 1, hil: { total: 1 } }) })
+    expect(result.current.summary.hil.total).toBe(9)
+    expect(api.getOrgSummary.mock.calls.length).toBe(orgCalls + 1)
+    expect(api.getOrgSummary).toHaveBeenLastCalledWith(true)
+  })
+  it('flags a failed summary load', async () => {
+    api.getSummary.mockImplementation(() => Promise.resolve(null))
+    try {
+      const { result } = renderHook(() => useDashboardData())
+      await waitFor(() => expect(result.current.summaryFailed).toBe(true))
+    } finally {
+      api.getSummary.mockImplementation(() => Promise.resolve({ v: 1, hil: { total: 2 } }))
+    }
+  })
+})
+
 describe('mergeFast', () => {
   it('keeps needs_you from the last full reply', () => {
     const prev = { orgs: [{ name: 'a', needs_you: 2 }, { name: 'b', needs_you: null, needs_you_error: 'x' }] }

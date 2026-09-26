@@ -13,7 +13,7 @@ export const ORG_FULL_POLL_MS = 60000
 export const FAST_POLL_MS = 2000 // while a run is live (`workflow executions --all` ≈ 20 ms)
 export const BASE_POLL_MS = 5000 // catches runs started outside this window (CLI, daemon cron)
 
-const REFRESH_EVENTS = ['workflow:complete', 'workflow:exec-started', 'documents:changed', 'images:changed', 'org:runStatus']
+const REFRESH_EVENTS = ['workflow:complete', 'workflow:exec-started', 'documents:changed', 'org:runStatus']
 
 // A fast org summary has needs_you null; keep the counts the last full one found.
 export function mergeFast(prev, fast) {
@@ -38,6 +38,7 @@ function useInterval(fn, ms) {
 
 export function useDashboardData({ active = true } = {}) {
   const [summary, setSummary] = useState(null)
+  const [summaryFailed, setSummaryFailed] = useState(false)
   const [orgs, setOrgs] = useState(null)
   const [workflows, setWorkflows] = useState([])
   const [executions, setExecutions] = useState([])
@@ -48,18 +49,29 @@ export function useDashboardData({ active = true } = {}) {
   const visible = { get current() { return windowVisible.current && activeRef.current } }
   const haveFull = useRef(false)
 
+  // Replies can overlap (events plus polls, 20 s CLI timeout): each loader
+  // keeps only the reply to its latest request.
+  const seq = useRef({ summary: 0, lists: 0, orgs: 0 })
   const loadSummary = useCallback(async () => {
+    const n = ++seq.current.summary
     const s = await api.getSummary()
+    if (n !== seq.current.summary) return
     if (s) setSummary(s)
+    setSummaryFailed(!s)
   }, [])
   const loadOrgs = useCallback(async (fast = true) => {
+    const n = ++seq.current.orgs
     const o = await api.getOrgSummary(fast)
-    if (!o) return
+    // A full reply is never discarded (it is the only source of needs_you);
+    // a fast one is, when a newer request is in flight.
+    if (!o || (fast && n !== seq.current.orgs)) return
     if (!fast) haveFull.current = true
     setOrgs(prev => (fast && haveFull.current ? mergeFast(prev, o) : o))
   }, [])
   const loadLists = useCallback(async () => {
+    const n = ++seq.current.lists
     const [w, e] = await Promise.all([api.listWorkflows(), api.getRecentExecutions(30)])
+    if (n !== seq.current.lists) return
     setWorkflows(w || [])
     setExecutions(e || [])
   }, [])
@@ -78,9 +90,14 @@ export function useDashboardData({ active = true } = {}) {
   }, [active, refresh])
 
   useEffect(() => {
-    const offs = REFRESH_EVENTS.map(n => subscribeEvent(n, () => { if (activeRef.current) { loadSummary(); loadLists() } }))
+    const offs = REFRESH_EVENTS.map(n => subscribeEvent(n, () => {
+      if (!activeRef.current) return
+      loadSummary()
+      loadLists()
+      if (n === 'org:runStatus') loadOrgs(true)
+    }))
     return () => offs.forEach(off => off && off())
-  }, [loadSummary, loadLists])
+  }, [loadSummary, loadLists, loadOrgs])
 
   useInterval(() => { if (visible.current) loadSummary() }, SUMMARY_POLL_MS)
   useInterval(() => { if (visible.current) loadOrgs(true) }, ORG_FAST_POLL_MS)
@@ -88,5 +105,5 @@ export function useDashboardData({ active = true } = {}) {
   const live = executions.some(e => LIVE_STATUSES.has((e.status || '').toUpperCase()))
   useInterval(() => { if (visible.current) loadLists() }, live ? FAST_POLL_MS : BASE_POLL_MS)
 
-  return { summary, orgs, workflows, executions, loading, refresh, setExecutions, reloadLists: loadLists }
+  return { summary, summaryFailed, orgs, workflows, executions, loading, refresh, setExecutions, reloadLists: loadLists }
 }

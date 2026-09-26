@@ -80,7 +80,10 @@
       "automationUpdates_one": "automation update",
       "automationUpdates_other": "automation updates",
       "unevaluatedApplications_one": "application to evaluate",
-      "unevaluatedApplications_other": "applications to evaluate"
+      "unevaluatedApplications_other": "applications to evaluate",
+      "unavailable": "Couldn't load the summary — waiting items may be missing",
+      "partial_one": "{{count}} section couldn't be read",
+      "partial_other": "{{count}} sections couldn't be read"
     },
     "stat": {
       "workflows": "Workflows",
@@ -88,13 +91,14 @@
       "failed24h": "Failed (24h)",
       "orgs": "Orgs running",
       "people": "People",
-      "activeCount": "{{count}} active",
       "queuedCount": "{{count}} queued",
       "ofRuns_one": "of {{count}} run",
       "ofRuns_other": "of {{count}} runs",
       "ofOrgs_one": "of {{count}} org",
       "ofOrgs_other": "of {{count}} orgs",
-      "addedWeek": "+{{count}} this week"
+      "addedWeek": "+{{count}} this week",
+      "activeCount_one": "{{count}} active",
+      "activeCount_other": "{{count}} active"
     },
     "workflowsSection": {
       "title": "Workflows",
@@ -155,26 +159,31 @@
       "create": "Create an org",
       "paused": "paused",
       "queued": "queued",
-      "needsYou": "need you",
       "counting": "Counting…",
-      "more": "+{{count}} more"
+      "more": "+{{count}} more",
+      "needsYou_one": "needs you",
+      "needsYou_other": "need you"
     },
     "automations": {
       "title": "Automations",
       "manage": "Manage",
-      "installed": "{{count}} installed",
-      "enabled": "{{count}} enabled",
-      "unavailable": "{{count}} unavailable",
       "pendingUpdate_one": "{{count}} update held",
       "pendingUpdate_other": "{{count}} updates held",
-      "scriptsBlocked": "{{count}} scripts blocked",
       "selectors": "Selector health",
       "noSelectorData": "No selector runs recorded yet",
       "ok": "ok",
       "decaying": "decaying",
       "broken": "broken",
       "stale": "stale",
-      "recordings": "Recordings: {{total}} · {{unsaved}} unsaved · {{incomplete}} incomplete"
+      "recordings": "Recordings: {{total}} · {{unsaved}} unsaved · {{incomplete}} incomplete",
+      "scriptsBlocked_one": "{{count}} script blocked",
+      "scriptsBlocked_other": "{{count}} scripts blocked",
+      "installed_one": "{{count}} installed",
+      "installed_other": "{{count}} installed",
+      "enabled_one": "{{count}} enabled",
+      "enabled_other": "{{count}} enabled",
+      "unavailable_one": "{{count}} unavailable",
+      "unavailable_other": "{{count}} unavailable"
     },
     "accounts": {
       "title": "Connected Accounts",
@@ -193,17 +202,20 @@
       "docErrors_one": "{{count}} error",
       "docErrors_other": "{{count}} errors",
       "messages": "Messages in",
-      "sent": "{{count}} sent",
       "applications": "Applications pending",
-      "applied": "{{count}} applied",
       "toEvaluate": "To evaluate",
-      "evaluated": "{{count}} evaluated",
       "people": "People added",
       "lists_one": "{{count}} list",
       "lists_other": "{{count}} lists",
       "vault": "Vault secrets",
       "images_one": "{{count}} image",
-      "images_other": "{{count}} images"
+      "images_other": "{{count}} images",
+      "sent_one": "{{count}} sent",
+      "sent_other": "{{count}} sent",
+      "applied_one": "{{count}} applied",
+      "applied_other": "{{count}} applied",
+      "evaluated_one": "{{count}} evaluated",
+      "evaluated_other": "{{count}} evaluated"
     }
   },
   "toasts": {

@@ -79,10 +79,14 @@ export default function Connections({ onRefresh, navData }) {
   const closeDrawer = useCallback(() => { setOpenAuto(null); setDrawerTab('Overview') }, [])
   const openDrawer = useCallback(a => { setDrawerTab('Overview'); setOpenAuto(a) }, [])
 
-  // Open the automation a deep link names once the list has it.
+  // Open the automation a deep link names once the list has it — once per
+  // link: navData stays set while this page is showing, and the list reloads
+  // often (drawer changes, Refresh), which must not reopen the drawer.
+  const appliedLink = useRef(null)
   useEffect(() => {
     const id = navData?.automationId
-    if (!id || !automations.some(a => a.id === id)) return
+    if (!id || appliedLink.current === navData || !automations.some(a => a.id === id)) return
+    appliedLink.current = navData
     setDrawerTab(DRAWER_TABS[navData.tab] || 'Overview')
     setOpenAuto({ id })
   }, [navData, automations])

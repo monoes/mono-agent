@@ -23,20 +23,20 @@ const ExecRow = memo(function ExecRow({ exec, onNavigate }) {
   return (
     <button className="dash-exec-row" onClick={open} title={t('dashboard.recentRuns.openTitle')}>
       <ExecStatusDot status={exec.status} />
-      <div style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
-        <div className="dash-ellipsis" style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text)' }}>
+      <span style={{ flex: 1, minWidth: 0, textAlign: 'left', display: 'block' }}>
+        <span className="dash-ellipsis" style={{ display: 'block', fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text)' }}>
           {exec.workflow_name || (exec.workflow_id || '').slice(0, 8)}
-        </div>
+        </span>
         {exec.error && (
-          <div className="dash-ellipsis" style={{ fontSize: 10, color: '#ef4444', marginTop: 1 }} title={exec.error}>
+          <span className="dash-ellipsis" style={{ display: 'block', fontSize: 10, color: '#ef4444', marginTop: 1 }} title={exec.error}>
             {exec.error}
-          </div>
+          </span>
         )}
-      </div>
-      <div style={{ textAlign: 'right', flexShrink: 0 }}>
-        {dur && <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--cyan-dim)' }}>{dur}</div>}
-        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)' }}>{relTime(exec.created_at, t)}</div>
-      </div>
+      </span>
+      <span style={{ textAlign: 'right', flexShrink: 0, display: 'block' }}>
+        {dur && <span style={{ display: 'block', fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--cyan-dim)' }}>{dur}</span>}
+        <span style={{ display: 'block', fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)' }}>{relTime(exec.created_at, t)}</span>
+      </span>
     </button>
   )
 })

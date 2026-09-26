@@ -80,7 +80,10 @@
       "automationUpdates_one": "actualización de automatización",
       "automationUpdates_other": "actualizaciones de automatización",
       "unevaluatedApplications_one": "postulación por evaluar",
-      "unevaluatedApplications_other": "postulaciones por evaluar"
+      "unevaluatedApplications_other": "postulaciones por evaluar",
+      "unavailable": "No se pudo cargar el resumen — pueden faltar elementos pendientes",
+      "partial_one": "{{count}} sección no se pudo leer",
+      "partial_other": "{{count}} secciones no se pudieron leer"
     },
     "stat": {
       "workflows": "Flujos de trabajo",
@@ -88,13 +91,14 @@
       "failed24h": "Fallidas (24 h)",
       "orgs": "Orgs activas",
       "people": "Personas",
-      "activeCount": "{{count}} activos",
       "queuedCount": "{{count}} en cola",
       "ofRuns_one": "de {{count}} ejecución",
       "ofRuns_other": "de {{count}} ejecuciones",
       "ofOrgs_one": "de {{count}} org",
       "ofOrgs_other": "de {{count}} orgs",
-      "addedWeek": "+{{count}} esta semana"
+      "addedWeek": "+{{count}} esta semana",
+      "activeCount_one": "{{count}} activo",
+      "activeCount_other": "{{count}} activos"
     },
     "workflowsSection": {
       "title": "Flujos de trabajo",
@@ -155,26 +159,31 @@
       "create": "Crear una org",
       "paused": "en pausa",
       "queued": "en cola",
-      "needsYou": "te necesitan",
       "counting": "Contando…",
-      "more": "+{{count}} más"
+      "more": "+{{count}} más",
+      "needsYou_one": "te necesita",
+      "needsYou_other": "te necesitan"
     },
     "automations": {
       "title": "Automatizaciones",
       "manage": "Gestionar",
-      "installed": "{{count}} instaladas",
-      "enabled": "{{count}} activadas",
-      "unavailable": "{{count}} no disponibles",
       "pendingUpdate_one": "{{count}} actualización retenida",
       "pendingUpdate_other": "{{count}} actualizaciones retenidas",
-      "scriptsBlocked": "{{count}} con scripts bloqueados",
       "selectors": "Salud de los selectores",
       "noSelectorData": "Aún no hay ejecuciones de selectores",
       "ok": "bien",
       "decaying": "degradándose",
       "broken": "rotos",
       "stale": "obsoletos",
-      "recordings": "Grabaciones: {{total}} · {{unsaved}} sin guardar · {{incomplete}} incompletas"
+      "recordings": "Grabaciones: {{total}} · {{unsaved}} sin guardar · {{incomplete}} incompletas",
+      "installed_one": "{{count}} instalada",
+      "installed_other": "{{count}} instaladas",
+      "enabled_one": "{{count}} activada",
+      "enabled_other": "{{count}} activadas",
+      "unavailable_one": "{{count}} no disponible",
+      "unavailable_other": "{{count}} no disponibles",
+      "scriptsBlocked_one": "{{count}} con scripts bloqueados",
+      "scriptsBlocked_other": "{{count}} con scripts bloqueados"
     },
     "accounts": {
       "title": "Cuentas conectadas",
@@ -193,17 +202,20 @@
       "docErrors_one": "{{count}} error",
       "docErrors_other": "{{count}} errores",
       "messages": "Mensajes recibidos",
-      "sent": "{{count}} enviados",
       "applications": "Postulaciones pendientes",
-      "applied": "{{count}} enviadas",
       "toEvaluate": "Por evaluar",
-      "evaluated": "{{count}} evaluadas",
       "people": "Personas añadidas",
       "lists_one": "{{count}} lista",
       "lists_other": "{{count}} listas",
       "vault": "Secretos de la bóveda",
       "images_one": "{{count}} imagen",
-      "images_other": "{{count}} imágenes"
+      "images_other": "{{count}} imágenes",
+      "sent_one": "{{count}} enviado",
+      "sent_other": "{{count}} enviados",
+      "applied_one": "{{count}} enviada",
+      "applied_other": "{{count}} enviadas",
+      "evaluated_one": "{{count}} evaluada",
+      "evaluated_other": "{{count}} evaluadas"
     }
   },
   "toasts": {

@@ -51,9 +51,10 @@ export default function SystemCard({ summary, onNavigate }) {
             onClick={() => onNavigate('orgs')} />
           <DashRow tone={healthTone} label={t('dashboard.system.health')} value={healthValue} onClick={toHealth} />
           <DashRow tone={jev?.key_configured ? TONE.ok : TONE.off} label={t('dashboard.system.jev')}
-            value={jev?.key_configured
+            value={jev?.error ? t('dashboard.unavailable') : jev?.key_configured
               ? t('dashboard.system.jevUsage', { calls: jev.calls_24h, usd: `$${(jev.estimated_usd_24h || 0).toFixed(2)}` })
               : t('dashboard.system.jevNoKey')}
+            title={jev?.error || undefined}
             onClick={() => onNavigate('settings', { section: 'jev' })} />
         </>
       )}

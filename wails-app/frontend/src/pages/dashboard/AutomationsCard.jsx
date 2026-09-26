@@ -54,7 +54,7 @@ export default function AutomationsCard({ summary, onNavigate }) {
         </>
       )}
       {r && !r.error && (
-        <button className="dash-link" style={{ marginTop: 8 }} onClick={() => onNavigate('connections', { tab: 'recordings' })}>
+        <button className="dash-link" style={{ marginTop: 8 }} onClick={() => onNavigate('connections')}>
           {t('dashboard.automations.recordings', { total: r.total, unsaved: r.unsaved, incomplete: r.incomplete })}
         </button>
       )}

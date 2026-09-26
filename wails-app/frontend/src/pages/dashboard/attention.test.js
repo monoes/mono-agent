@@ -1,12 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { attentionItems } from './attention.js'
+import { attentionItems, unreadSections } from './attention.js'
 
 describe('attentionItems', () => {
   it('returns only non-zero items, most severe first', () => {
     const summary = {
       hil: { workflow_pending: 2, people_review: 3, drafts: 0, link_suggestions: 1 },
       executions: { last_24h: { failed: 1 } },
-      automations: { selectors: { broken: 1 }, unavailable: 0, pending_update: 2 },
+      automations: { selectors: { broken: 1 }, broken: [{ automation_id: 'linkedin', selector_key: 'post.send' }], unavailable: 0, pending_update: 2 },
       accounts: { expired: 1, expiring_soon: 0 },
       schedules: { daemon_running: false, upcoming: [{}] },
       recordings: { unsaved: 0 },
@@ -16,7 +16,7 @@ describe('attentionItems', () => {
     expect(items.map(i => i.id)).toEqual(['daemonOffline', 'failedRuns', 'brokenSelectors', 'expiredLogins',
       'hilApprovals', 'orgNeedsYou', 'leadsToReview', 'health', 'linkSuggestions', 'automationUpdates'])
     expect(items.find(i => i.id === 'hilApprovals').target).toEqual({ hil: true })
-    expect(items.find(i => i.id === 'brokenSelectors').target).toEqual({ page: 'connections', data: { tab: 'health' } })
+    expect(items.find(i => i.id === 'brokenSelectors').target).toEqual({ page: 'connections', data: { automationId: 'linkedin', tab: 'health' } })
     expect(items.find(i => i.id === 'health').target).toEqual({ page: 'settings', data: { section: 'health' } })
     expect(items.find(i => i.id === 'orgNeedsYou').count).toBe(4)
   })
@@ -27,5 +27,12 @@ describe('attentionItems', () => {
   it('is empty when everything is fine or data is missing', () => {
     expect(attentionItems(null, null, null)).toEqual([])
     expect(attentionItems({ schedules: { daemon_running: false, upcoming: [] } }, null, { level: 'ok', issues: 0 })).toEqual([])
+  })
+})
+
+describe('unreadSections', () => {
+  it('lists counted sections that reported an error', () => {
+    expect(unreadSections(null)).toEqual([])
+    expect(unreadSections({ hil: { error: 'db locked' }, people: { error: 'x' }, executions: { running: 0 } })).toEqual(['hil'])
   })
 })

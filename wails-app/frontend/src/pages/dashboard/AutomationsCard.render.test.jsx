@@ -24,7 +24,7 @@ describe('AutomationsCard', () => {
     fireEvent.click(screen.getByText('linkedin › post.send'))
     expect(onNavigate).toHaveBeenCalledWith('connections', { automationId: 'linkedin', tab: 'health' })
     fireEvent.click(screen.getByText('dashboard.automations.recordings'))
-    expect(onNavigate).toHaveBeenCalledWith('connections', { tab: 'recordings' })
+    expect(onNavigate).toHaveBeenLastCalledWith('connections')
   })
 })
 

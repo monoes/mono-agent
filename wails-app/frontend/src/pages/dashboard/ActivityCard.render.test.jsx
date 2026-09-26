@@ -15,6 +15,10 @@ const summary = {
 }
 
 describe('ActivityCard', () => {
+  it('a section that failed shows a dash, not zero', () => {
+    render(<ActivityCard summary={{ ...summary, vault: { error: 'database unavailable', secrets: 0 } }} onNavigate={vi.fn()} />)
+    expect(screen.getByTitle('database unavailable')).toHaveTextContent('—')
+  })
   it('renders seven tiles that navigate', () => {
     const onNavigate = vi.fn()
     render(<ActivityCard summary={summary} onNavigate={onNavigate} />)

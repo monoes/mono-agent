@@ -8,7 +8,7 @@ import { api } from '../services/api.js'
 import { GetVersion } from '../wailsjs/go/main/App'
 import { getHealth, subscribeHealth, summarize } from '../lib/health.js'
 import { useDashboardData } from './dashboard/useDashboardData.js'
-import { attentionItems } from './dashboard/attention.js'
+import { attentionItems, unreadSections } from './dashboard/attention.js'
 import AttentionStrip from './dashboard/AttentionStrip.jsx'
 import StatRow from './dashboard/StatRow.jsx'
 import WorkflowsCard from './dashboard/WorkflowsCard.jsx'
@@ -21,7 +21,7 @@ import AccountsCard from './dashboard/AccountsCard.jsx'
 
 export default function Dashboard({ isActive = true, onRefresh, onNavigate, onOpenHil }) {
   const { t } = useTranslation()
-  const { summary, orgs, workflows, executions, loading, refresh, setExecutions, reloadLists } = useDashboardData({ active: isActive })
+  const { summary, summaryFailed, orgs, workflows, executions, loading, refresh, setExecutions, reloadLists } = useDashboardData({ active: isActive })
   const [ver, setVer] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
   const [health, setHealth] = useState(getHealth())
@@ -72,7 +72,8 @@ export default function Dashboard({ isActive = true, onRefresh, onNavigate, onOp
       </div>
 
       <div className="page-body dash-page">
-        <AttentionStrip items={items} loading={loading} onNavigate={onNavigate} onOpenHil={onOpenHil} />
+        <AttentionStrip items={items} loading={loading} failed={summaryFailed} unread={unreadSections(summary)}
+          onNavigate={onNavigate} onOpenHil={onOpenHil} />
         <StatRow summary={summary} orgs={orgs} loading={loading} onNavigate={onNavigate} />
         <div className="dashboard-grid">
           <div className="dash-col">

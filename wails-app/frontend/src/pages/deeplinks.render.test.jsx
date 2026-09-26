@@ -3,13 +3,13 @@
 // automation's drawer on the tab the link names.
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import '@testing-library/jest-dom/vitest'
-import { render, screen, cleanup, waitFor } from '@testing-library/react'
+import { render, screen, cleanup, waitFor, fireEvent, act } from '@testing-library/react'
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: k => k, i18n: { resolvedLanguage: 'en', language: 'en', changeLanguage: vi.fn() } }) }))
 vi.mock('../services/api.js', () => ({
   api: {
     getDBPath: () => Promise.resolve('/db'), isDBConnected: () => Promise.resolve(true),
     listConnections: () => Promise.resolve([]), listPlatforms: () => Promise.resolve([]),
-    listAutomations: () => Promise.resolve({ automations: [{ id: 'linkedin', name: 'LinkedIn' }] }),
+    listAutomations: () => Promise.resolve({ automations: [{ id: 'linkedin', name: 'LinkedIn' }, { id: 'x', name: 'X' }] }),
   },
 }))
 vi.mock('../wailsjs/go/main/App', () => ({
@@ -17,12 +17,20 @@ vi.mock('../wailsjs/go/main/App', () => ({
 }))
 vi.mock('../components/settings/HealthSection.jsx', () => ({ default: () => <div>health-section</div> }))
 vi.mock('../components/settings/JevSection.jsx', () => ({ default: () => <div>jev-section</div> }))
-vi.mock('./connections/BrowserAutomations.jsx', () => ({ default: () => <div>automations</div>, RecordHelpDialog: () => null }))
+vi.mock('./connections/BrowserAutomations.jsx', () => ({
+  default: ({ onOpen }) => <div>automations<button onClick={() => onOpen({ id: 'x' })}>open-x</button></div>,
+  RecordHelpDialog: () => null,
+}))
 vi.mock('./connections/ApiConnections.jsx', () => ({ default: () => null, resolveConn: () => null }))
 vi.mock('./connections/ApiConnectionModal.jsx', () => ({ default: () => null }))
 vi.mock('./connections/ImportDialog.jsx', () => ({ default: () => null }))
 vi.mock('./connections/AutomationDrawer.jsx', () => ({
-  default: ({ automation, initialTab }) => <div>drawer:{automation.id}:{initialTab}</div>,
+  default: ({ automation, initialTab, onClose, onChanged }) => (
+    <div>
+      <span>drawer:{automation.id}:{initialTab}</span>
+      <button onClick={onClose}>close</button><button onClick={onChanged}>changed</button>
+    </div>
+  ),
 }))
 import Settings from './Settings.jsx'
 import Connections from './Connections.jsx'
@@ -46,6 +54,16 @@ describe('dashboard deep links', () => {
   it('Connections opens the named automation on the named tab', async () => {
     render(<Connections navData={{ automationId: 'linkedin', tab: 'health' }} />)
     expect(await screen.findByText('drawer:linkedin:Health')).toBeInTheDocument()
+  })
+  it('a deep link is applied once: reloading the list later does not reopen it', async () => {
+    render(<Connections navData={{ automationId: 'linkedin', tab: 'health' }} />)
+    await screen.findByText('drawer:linkedin:Health')
+    fireEvent.click(screen.getByText('close'))
+    fireEvent.click(screen.getByText('open-x'))
+    await screen.findByText('drawer:x:Overview')
+    await act(async () => { fireEvent.click(screen.getByText('changed')) })
+    await new Promise(r => setTimeout(r, 20))
+    expect(screen.getByText('drawer:x:Overview')).toBeInTheDocument()
   })
   it('Connections ignores an unknown automation', async () => {
     render(<Connections navData={{ automationId: 'nope', tab: 'health' }} />)

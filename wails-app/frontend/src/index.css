@@ -1511,6 +1511,8 @@ body {
 
 /* Dashboard cards (pages/dashboard/*) */
 .dash-col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.stat-card-btn .stat-value, .stat-card-btn .stat-label, .stat-card .stat-sub { display: block; }
+.attn-unread { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--text-muted); }
 .stat-sub { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); margin-top: 4px; }
 .stat-card-btn { text-align: left; cursor: pointer; font: inherit; color: inherit; width: 100%; }
 .stat-card-btn:focus-visible, .dash-row:focus-visible, .dash-tile:focus-visible, .dash-link:focus-visible,

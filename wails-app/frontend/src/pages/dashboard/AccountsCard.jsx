@@ -18,7 +18,9 @@ export default function AccountsCard({ summary, onNavigate }) {
           {t('dashboard.accounts.manage')} <ChevronRight size={11} />
         </button>
       </div>
-      {!ac ? <div className="dash-empty">…</div> : sessions.length === 0 ? (
+      {!ac ? <div className="dash-empty">…</div> : ac.error ? (
+        <div className="dash-empty" title={ac.error}>{t('dashboard.unavailable')}</div>
+      ) : sessions.length === 0 ? (
         <div className="dash-empty">{t('dashboard.accounts.empty')}</div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>

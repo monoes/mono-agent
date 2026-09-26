@@ -1,9 +1,11 @@
 import { useTranslation } from 'react-i18next'
 import { Activity } from 'lucide-react'
 
-function Tile({ label, value, sub, bad, onClick }) {
+function Tile({ label, value, sub, bad, error, onClick }) {
+  const { t } = useTranslation()
+  if (error) { value = '—'; sub = t('dashboard.unavailable'); bad = false }
   return (
-    <button className="dash-tile" onClick={onClick}>
+    <button className="dash-tile" onClick={onClick} title={error || undefined}>
       <span className="dash-tile-label">{label}</span>
       <span className="dash-tile-value">{value ?? '—'}</span>
       {sub && <span className={`dash-tile-sub${bad ? ' dash-bad-text' : ''}`}>{sub}</span>}
@@ -28,21 +30,21 @@ export default function ActivityCard({ summary, onNavigate }) {
       </div>
       {!summary ? <div className="dash-empty">…</div> : (
         <div className="dash-tiles">
-          <Tile label={t('dashboard.activity.captures')} value={a?.captures_7d}
+          <Tile error={a?.error} label={t('dashboard.activity.captures')} value={a?.captures_7d}
             sub={t('dashboard.activity.capturesTotal', { count: a?.captures_total || 0 })} onClick={() => onNavigate('documents')} />
-          <Tile label={t('dashboard.activity.documents')} value={d?.total}
+          <Tile error={a?.error} label={t('dashboard.activity.documents')} value={d?.total}
             sub={docErrors > 0 ? t('dashboard.activity.docErrors', { count: docErrors })
               : d?.summarising > 0 ? t('dashboard.activity.summarising', { count: d.summarising }) : null}
             bad={docErrors > 0} onClick={() => onNavigate('documents')} />
-          <Tile label={t('dashboard.activity.messages')} value={a?.messages_in_7d}
+          <Tile error={a?.error} label={t('dashboard.activity.messages')} value={a?.messages_in_7d}
             sub={t('dashboard.activity.sent', { count: a?.messages_out_7d || 0 })} onClick={() => onNavigate('communications')} />
-          <Tile label={t('dashboard.activity.applications')} value={ap?.by_status?.pending}
+          <Tile error={ap?.error} label={t('dashboard.activity.applications')} value={ap?.by_status?.pending}
             sub={t('dashboard.activity.applied', { count: ap?.by_status?.applied || 0 })} onClick={() => onNavigate('applications')} />
-          <Tile label={t('dashboard.activity.toEvaluate')} value={ap?.unevaluated_pending}
+          <Tile error={ap?.error} label={t('dashboard.activity.toEvaluate')} value={ap?.unevaluated_pending}
             sub={t('dashboard.activity.evaluated', { count: ap?.evaluated || 0 })} onClick={() => onNavigate('applications')} />
-          <Tile label={t('dashboard.activity.people')} value={p?.added_7d}
+          <Tile error={p?.error} label={t('dashboard.activity.people')} value={p?.added_7d}
             sub={t('dashboard.activity.lists', { count: p?.lists || 0 })} onClick={() => onNavigate('people')} />
-          <Tile label={t('dashboard.activity.vault')} value={v?.secrets}
+          <Tile error={v?.error} label={t('dashboard.activity.vault')} value={v?.secrets}
             sub={t('dashboard.activity.images', { count: v?.images || 0 })} onClick={() => onNavigate('secretsVault')} />
         </div>
       )}

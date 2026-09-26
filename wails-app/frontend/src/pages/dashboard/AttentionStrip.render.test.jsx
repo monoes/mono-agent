@@ -24,6 +24,13 @@ describe('AttentionStrip', () => {
     fireEvent.click(screen.getByText('dashboard.attention.health'))
     expect(onNavigate).toHaveBeenCalledWith('settings', { section: 'health' })
   })
+  it('never claims all clear when the summary failed or a section is unread', () => {
+    const { rerender } = render(<AttentionStrip items={[]} failed onNavigate={vi.fn()} />)
+    expect(screen.getByText('dashboard.attention.unavailable')).toBeInTheDocument()
+    rerender(<AttentionStrip items={[]} unread={['hil']} onNavigate={vi.fn()} />)
+    expect(screen.getByText('dashboard.attention.partial')).toBeInTheDocument()
+    expect(screen.queryByText('dashboard.attention.allClear')).toBeNull()
+  })
   it('all clear, and nothing while loading', () => {
     const { rerender, container } = render(<AttentionStrip items={[]} onNavigate={vi.fn()} />)
     expect(screen.getByText('dashboard.attention.allClear')).toBeInTheDocument()

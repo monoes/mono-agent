@@ -15,7 +15,7 @@ function OrgRow({ org, onNavigate }) {
       tone={org.running ? TONE.ok : TONE.off}
       label={<>{org.name} <span className="dash-chip">{org.paused ? t('dashboard.orgs.paused') : level}</span></>}
       value={<>
-        <span className={org.needs_you ? 'dash-warn-text' : ''}>{needs} {t('dashboard.orgs.needsYou')}</span>
+        <span className={org.needs_you ? 'dash-warn-text' : ''}>{needs} {t('dashboard.orgs.needsYou', { count: org.needs_you ?? 2 })}</span>
         {org.queued > 0 && <> · {org.queued} {t('dashboard.orgs.queued')}</>}
       </>}
       title={org.running ? t('dashboard.system.running') : t('dashboard.system.stopped')}
