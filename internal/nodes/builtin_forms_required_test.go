@@ -59,10 +59,11 @@ func requiredInputs(def *action.ActionDef) []requiredInput {
 
 // TestBuiltinForms_RequiredInputsAreRequiredFields: every required input of
 // every built-in action is set by a required field of the node's resolved
-// form, or by a field with a default the editor fills in (directly, through
-// the node-facing names above, or through one of the input's declared
-// aliases). An input the form can't set, or sets only from an optional empty
-// field, is a form the user can't fill in correctly.
+// form (directly, through the node-facing names above, or through one of the
+// input's declared aliases). A field's default doesn't count: only the
+// editor pre-fills it, and a caller that sends just the required fields
+// (CLI, MCP, API) would fail. Such an input belongs among the action's
+// optional inputs, with its default.
 func TestBuiltinForms_RequiredInputsAreRequiredFields(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	action.SetDefSource(nil)
@@ -81,8 +82,9 @@ func TestBuiltinForms_RequiredInputsAreRequiredFields(t *testing.T) {
 		}
 		fed := map[string]bool{} // input name → set by a required field
 		for _, f := range schema.Fields {
-			// A field the user must fill, or one that always sends a value.
-			if !f.Required && f.Default == nil {
+			// Only a field the user must fill counts: a default is the
+			// editor's pre-fill, and CLI/MCP/API callers never send it.
+			if !f.Required {
 				continue
 			}
 			feeds, mapped := formKeyFeeds[f.Key]
