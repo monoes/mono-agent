@@ -154,13 +154,13 @@ describe('new chat bindings', () => {
 
   it('createChatConversation parses a successful conversation payload', async () => {
     GoApp.CreateChatConversation.mockResolvedValueOnce(JSON.stringify({ id: 'conv-1', backend: 'agent' }))
-    const conv = await api.createChatConversation('agent', 'general', 'claude', '', '')
+    const conv = await api.createChatConversation('general', 'claude', '')
     expect(conv).toEqual({ id: 'conv-1', backend: 'agent' })
   })
 
   it('createChatConversation rejects on the {error} shape instead of resolving it', async () => {
     GoApp.CreateChatConversation.mockResolvedValueOnce(JSON.stringify({ error: 'boom' }))
-    await expect(api.createChatConversation('agent', 'general', 'claude', '', '')).rejects.toThrow('boom')
+    await expect(api.createChatConversation('general', 'claude', '')).rejects.toThrow('boom')
   })
 
   it('startChatTurn passes through a business-status response (not an error) unchanged', async () => {

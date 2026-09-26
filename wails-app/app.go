@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/monoes/mono-agent/internal/ai"
-	aichat "github.com/monoes/mono-agent/internal/ai/chat"
 	"github.com/monoes/mono-agent/internal/capturedocs"
 	"github.com/monoes/mono-agent/internal/connections"
 	"github.com/monoes/mono-agent/internal/docscan"
@@ -34,21 +33,18 @@ import (
 
 // App holds application state bound to the Wails runtime.
 type App struct {
-	ctx         context.Context
-	db          *sql.DB
-	dbPath      string
-	logs        []LogEntry
-	logsMu      sync.Mutex
-	connMgr     *connections.Manager
-	aiStore     *ai.AIStore
-	chatService *aichat.ChatService
-	chatSup     *chatSupervisor // new conversation/turn/event supervisor; see app_chat.go
+	ctx     context.Context
+	db      *sql.DB
+	dbPath  string
+	logs    []LogEntry
+	logsMu  sync.Mutex
+	connMgr *connections.Manager
+	aiStore *ai.AIStore
+	chatSup *chatSupervisor // conversation/turn/event supervisor; see app_chat.go
 
 	runningMu      sync.Mutex
 	runningCmds    map[string]*exec.Cmd // workflowID / "action:<id>" / "noderun:<id>" → running subprocess
 	nodeRunCounter atomic.Int64         // source of RunNode run ids (NodeRunResult.run_id)
-
-	chatCancels sync.Map // workflowID → *cancelHandle for in-flight AI chat streams
 
 	activeProfileIDPtr atomic.Pointer[string] // currently selected profile; access via get/setActiveProfileID (read/written across Wails goroutines)
 	ready              atomic.Bool            // set once startup()'s synchronous setup has finished; see IsReady
@@ -60,10 +56,6 @@ type App struct {
 	docWatcher *docscan.Watcher     // polls the active profile's whole folder (minus .monomind/) for document changes; see restartDocumentWatcher
 	capWatcher *capturedocs.Watcher // polls the active profile's browser-capture inbox; see restartDocumentWatcher
 }
-
-// cancelHandle wraps a stream's cancel func in a pointer so it has a comparable
-// identity for sync.Map.CompareAndDelete.
-type cancelHandle struct{ cancel context.CancelFunc }
 
 // NewApp creates the App instance.
 func NewApp() *App {
@@ -127,8 +119,8 @@ func (a *App) startup(ctx context.Context) {
 	if _, _, err := secrets.MigrateSessionsToVault(ctx, db); err != nil {
 		runtime.LogErrorf(ctx, "sessions migration error: %v", err)
 	}
-	if _, _, err := ai.MigrateProvidersToVault(ctx, db); err != nil {
-		runtime.LogErrorf(ctx, "ai providers migration error: %v", err)
+	if _, err := secrets.RetireAIProviderEntries(ctx, db, filepath.Join(filepath.Dir(a.dbPath), "backups")); err != nil {
+		runtime.LogErrorf(ctx, "retiring AI provider keys: %v", err)
 	}
 
 	// os.UserHomeDir (not $HOME) so vault/workflow dirs resolve on Windows too.
@@ -154,24 +146,6 @@ func (a *App) startup(ctx context.Context) {
 		fmt.Printf("ai store init error: %v\n", aiErr)
 	} else {
 		a.aiStore = aiStore
-		cs := aichat.NewChatService(aiStore, db)
-		// Feed the node type registry into canvas tools so AI knows what nodes are available.
-		ntMap := a.GetWorkflowNodeTypes()
-		var allTypes []aichat.NodeTypeInfo
-		for _, v := range ntMap {
-			// v is interface{} wrapping a typed slice; marshal+unmarshal to extract
-			b, err := json.Marshal(v)
-			if err != nil {
-				continue
-			}
-			var items []aichat.NodeTypeInfo
-			if err := json.Unmarshal(b, &items); err != nil {
-				continue
-			}
-			allTypes = append(allTypes, items...)
-		}
-		cs.SetCanvasNodeTypes(allTypes)
-		a.chatService = cs
 		a.initChatSupervisor(db)
 	}
 

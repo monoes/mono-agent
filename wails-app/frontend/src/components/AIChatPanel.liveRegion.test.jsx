@@ -47,8 +47,9 @@ const startChatTurn = vi.fn()
 const listChatConversations = vi.fn().mockResolvedValue({ items: [] })
 const getChatTurns = vi.fn().mockResolvedValue({ items: [] })
 const getChatEvents = vi.fn().mockResolvedValue({ items: [], hasMore: false })
-const listAIProviders = vi.fn().mockResolvedValue([{ id: 1, name: 'openai', status: 'active', default_model: 'gpt' }])
-const cachedAgentScan = vi.fn().mockResolvedValue({ agents: [] })
+const getAgentRuntimeModels = vi.fn().mockResolvedValue([{ id: 'sonnet' }])
+const installedClaude = { agents: [{ id: 'claude', installed: true, binary: '' }] }
+const cachedAgentScan = vi.fn().mockResolvedValue(installedClaude)
 
 // Bypasses agentRuntimes.js's own module-level TTL cache entirely — see the
 // file-level comment above for why that cache makes per-test control of a
@@ -68,7 +69,7 @@ vi.mock('../services/api.js', async (importOriginal) => {
     },
     api: {
       ...actual.api,
-      listAIProviders: (...args) => listAIProviders(...args),
+      getAgentRuntimeModels: (...args) => getAgentRuntimeModels(...args),
       listChatConversations: (...args) => listChatConversations(...args),
       createChatConversation: (...args) => createChatConversation(...args),
       startChatTurn: (...args) => startChatTurn(...args),
@@ -89,13 +90,12 @@ afterEach(() => {
   cleanup()
 })
 
-// Starts a turn in "providers" mode (the default/only backend these tests'
-// mocks expose) and returns the live turn's actual client-generated turnId
+// Starts a turn on the mocked "claude" agent runtime and returns the live turn's actual client-generated turnId
 // — captured from startChatTurn's own call args, since AIChatPanel binds
 // activeTurnId to newTurnId()'s return value, not to anything the mocked
 // startChatTurn resolves.
 async function sendAndCaptureTurnId(conversationId) {
-  createChatConversation.mockResolvedValue({ id: conversationId, backend: 'provider' })
+  createChatConversation.mockResolvedValue({ id: conversationId, backend: 'agent' })
   startChatTurn.mockResolvedValue({ ok: true, turnId: 'ignored-by-app', status: 'active' })
 
   render(<AIChatPanel workflowID="general" isOpen={true} onClose={() => {}} />)
@@ -199,12 +199,10 @@ describe('AIChatPanel live region: mid-turn notices', () => {
 
 describe('AIChatPanel live region: composer disabledReason banner', () => {
   it('announces the disabledReason banner once its text changes (e.g. once a runtime scan resolves monomind missing)', async () => {
-    // No providers this test, so hasBackend stays false throughout.
     // cachedAgentScan is held pending for the whole first half — runtimesLoading
     // (seeded from isOpen=true) makes "Loading available AI systems…" the
     // panel's actual first-committed state, so that's the resting-state
     // baseline; the scan settling to monomindMissing is the first real change.
-    listAIProviders.mockResolvedValue([])
     let resolveScan
     cachedAgentScan.mockReturnValueOnce(new Promise(r => { resolveScan = r }))
 
@@ -228,7 +226,6 @@ describe('AIChatPanel live region: composer disabledReason banner', () => {
   })
 
   it('shows the real scan error, not "not installed", when monomind exists but is unusable', async () => {
-    listAIProviders.mockResolvedValue([])
     cachedAgentScan.mockResolvedValueOnce({ error: 'monomind 2.1.0 is too old (need >= 2.9.0)' })
 
     render(<AIChatPanel workflowID="general" isOpen={true} onClose={() => {}} />)
@@ -239,32 +236,21 @@ describe('AIChatPanel live region: composer disabledReason banner', () => {
     expect(screen.queryByText(/monomind not found/)).not.toBeInTheDocument()
   })
 
-  it('announces that Send became available once a provider finishes loading', async () => {
-    // cachedAgentScan uses the file-level default (resolves quickly, finds
-    // no agents) — that settling to "Select an AI provider..." is itself a
-    // real, legitimate announcement now (Loading… -> nothing installed),
-    // distinct from and prior to the providers-resolving announcement this
-    // test is actually about.
-    let resolveProviders
-    listAIProviders.mockReturnValueOnce(new Promise(r => { resolveProviders = r }))
+  it('announces that Send became available once the runtime scan finds an agent', async () => {
+    let resolveScan
+    cachedAgentScan.mockReturnValueOnce(new Promise(r => { resolveScan = r }))
 
     render(<AIChatPanel workflowID="general" isOpen={true} onClose={() => {}} />)
     await screen.findByPlaceholderText('Type a message...')
-    await waitFor(() => expect(screen.queryByText('Loading available AI systems…')).not.toBeInTheDocument())
-
-    // "Select an AI provider..." now legitimately renders in two places at
-    // once — the composer banner and this scan-settled announcement — so a
-    // bare getByText would be ambiguous; the region check below is the one
-    // that matters for this test.
     const region = liveRegion()
-    await waitFor(() => expect(region).toHaveTextContent('Select an AI provider above to start chatting'))
+    expect(region).toBeEmptyDOMElement()
 
     await act(async () => {
-      resolveProviders([{ id: 1, name: 'openai', status: 'active', default_model: 'gpt' }])
+      resolveScan(installedClaude)
       await new Promise(r => setTimeout(r, 0))
     })
 
-    await waitFor(() => expect(screen.queryByText('Select an AI provider above to start chatting')).not.toBeInTheDocument())
-    expect(region).toHaveTextContent(/you can send/i)
+    await waitFor(() => expect(screen.queryByText('Loading available AI systems…')).not.toBeInTheDocument())
+    await waitFor(() => expect(region).toHaveTextContent(/you can send/i))
   })
 })

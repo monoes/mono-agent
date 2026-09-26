@@ -16,17 +16,15 @@ import (
 	"github.com/zalando/go-keyring"
 
 	"github.com/monoes/mono-agent/internal/ai"
-	aichat "github.com/monoes/mono-agent/internal/ai/chat"
 	"github.com/monoes/mono-agent/internal/ai/chatevents"
 	"github.com/monoes/mono-agent/internal/storage"
 )
 
 // --- test helpers ---
 
-// newChatTestStore returns both the AIStore and the raw *sql.DB behind it —
-// ChatService's constructor needs the raw handle directly (CanvasTools
-// queries tables AIStore doesn't own), so callers must keep both rather
-// than trying to recover one from the other after the fact.
+// newChatTestStore returns both the AIStore and the raw *sql.DB behind it,
+// so a test can close the database under the store to simulate a
+// persistence failure.
 func newChatTestStore(t *testing.T) (*ai.AIStore, *sql.DB) {
 	t.Helper()
 	keyring.MockInit()
@@ -191,8 +189,7 @@ func (p *fakeChatProcess) wasKilled() bool {
 // and a function to enqueue the next launched fake process.
 func newTestSupervisor(t *testing.T) (*chatSupervisor, *collectingEmitter, *[]*fakeChatProcess) {
 	t.Helper()
-	store, db := newChatTestStore(t)
-	chatSvc := aichat.NewChatService(store, db)
+	store, _ := newChatTestStore(t)
 	emitter := &collectingEmitter{}
 	var launched []*fakeChatProcess
 	launcher := func(ctx context.Context, cliBin string, args []string) (chatProcess, error) {
@@ -204,7 +201,7 @@ func newTestSupervisor(t *testing.T) (*chatSupervisor, *collectingEmitter, *[]*f
 		return p, nil
 	}
 	findCLI := func() (string, error) { return "fake-monoagentcli", nil }
-	sup := newChatSupervisor(store, chatSvc, launcher, emitter.emit, findCLI)
+	sup := newChatSupervisor(store, launcher, emitter.emit, findCLI)
 	return sup, emitter, &launched
 }
 
@@ -626,16 +623,14 @@ func TestChatSupervisor_CommitBeforeEmit(t *testing.T) {
 // CreateTurn already wrote is left "active" in the store with nothing to
 // ever finalize it — a restart's reconcileOrphanedTurns is the only thing
 // that would ever clear it, and DeleteConversation refuses a conversation
-// with an active turn in the meantime. Both startAgentTurn and
-// startProviderTurn must finalize the turn as failed on this path instead
-// of just returning the error. Simulated here by closing the store's DB
+// with an active turn in the meantime. startAgentTurn must finalize the
+// turn as failed on this path instead of just returning the error. Simulated here by closing the store's DB
 // after CreateTurn succeeds but before the turn.started append — a stand-in
 // for any real mid-turn persistence failure (disk full, DB locked, etc.),
 // deterministic without racing the sequence-allocation transaction itself.
 
 func TestChatSupervisor_AgentTurnStartedPersistFailure_FinalizesFailedAndReleases(t *testing.T) {
 	store, db := newChatTestStore(t)
-	chatSvc := aichat.NewChatService(store, db)
 	emitter := &collectingEmitter{}
 	var launched []*fakeChatProcess
 	launcher := func(ctx context.Context, cliBin string, args []string) (chatProcess, error) {
@@ -647,7 +642,7 @@ func TestChatSupervisor_AgentTurnStartedPersistFailure_FinalizesFailedAndRelease
 		return p, nil
 	}
 	findCLI := func() (string, error) { return "fake-monoagentcli", nil }
-	sup := newChatSupervisor(store, chatSvc, launcher, emitter.emit, findCLI)
+	sup := newChatSupervisor(store, launcher, emitter.emit, findCLI)
 
 	conv, err := store.CreateConversation("default", "agent", "general", "fake-runtime", "", "")
 	if err != nil {
@@ -695,52 +690,6 @@ func TestChatSupervisor_AgentTurnStartedPersistFailure_FinalizesFailedAndRelease
 	}
 }
 
-func TestChatSupervisor_ProviderTurnStartedPersistFailure_FinalizesFailedAndReleases(t *testing.T) {
-	store, db := newChatTestStore(t)
-	chatSvc := aichat.NewChatService(store, db)
-	emitter := &collectingEmitter{}
-	launcher := func(ctx context.Context, cliBin string, args []string) (chatProcess, error) {
-		t.Fatal("launcher should not be called for a provider-backend turn")
-		return nil, nil
-	}
-	findCLI := func() (string, error) { return "fake-monoagentcli", nil }
-	sup := newChatSupervisor(store, chatSvc, launcher, emitter.emit, findCLI)
-
-	conv, err := store.CreateConversation("default", "provider", "general", "", "test-provider", "test-model")
-	if err != nil {
-		t.Fatalf("CreateConversation: %v", err)
-	}
-	h, _, err := sup.admit(conv.ID, "turn-1")
-	if err != nil {
-		t.Fatalf("admit: %v", err)
-	}
-	h.profileID = "default"
-	if _, _, err := store.CreateTurn(conv.ID, "default", "turn-1", sup.instanceID, "hi"); err != nil {
-		t.Fatalf("CreateTurn: %v", err)
-	}
-
-	db.Close()
-
-	if err := sup.startProviderTurn(h, conv, "hi"); err == nil {
-		t.Fatal("startProviderTurn with a dead store: want error, got nil")
-	}
-
-	finished := waitForType(t, emitter, chatevents.EventTurnFinished, 2*time.Second)
-	var payload chatevents.TurnFinishedPayload
-	if err := jsonUnmarshalPayload(finished[0], &payload); err != nil {
-		t.Fatalf("unmarshal turn.finished payload: %v", err)
-	}
-	if payload.Status != chatevents.StatusFailed {
-		t.Errorf("status = %q, want %q", payload.Status, chatevents.StatusFailed)
-	}
-	if finished[0].Seq != chatevents.MaxSafeSeq {
-		t.Errorf("live-only turn.finished Seq = %d, want chatevents.MaxSafeSeq so the frontend never discards it as stale", finished[0].Seq)
-	}
-	if h2 := sup.lookup(conv.ID, "turn-1"); h2 != nil {
-		t.Error("turn admission was not released after the turn.started append failed")
-	}
-}
-
 // --- App binding turnId-correlation tests ---
 //
 // StartChatTurn's plan contract (§189) is {ok,turnId,status} on every
@@ -751,8 +700,7 @@ func TestChatSupervisor_ProviderTurnStartedPersistFailure_FinalizesFailedAndRele
 
 func newChatBindingTestApp(t *testing.T) (*App, *[]*fakeChatProcess) {
 	t.Helper()
-	store, db := newChatTestStore(t)
-	chatSvc := aichat.NewChatService(store, db)
+	store, _ := newChatTestStore(t)
 	var launched []*fakeChatProcess
 	launcher := func(ctx context.Context, cliBin string, args []string) (chatProcess, error) {
 		if len(launched) == 0 {
@@ -763,8 +711,45 @@ func newChatBindingTestApp(t *testing.T) (*App, *[]*fakeChatProcess) {
 		return p, nil
 	}
 	findCLI := func() (string, error) { return "fake-monoagentcli", nil }
-	sup := newChatSupervisor(store, chatSvc, launcher, func(chatevents.Event) {}, findCLI)
-	return &App{aiStore: store, chatService: chatSvc, chatSup: sup}, &launched
+	sup := newChatSupervisor(store, launcher, func(chatevents.Event) {}, findCLI)
+	return &App{aiStore: store, chatSup: sup}, &launched
+}
+
+// New conversations are always agent conversations.
+func TestApp_CreateChatConversation_IsAgentBackend(t *testing.T) {
+	a, _ := newChatBindingTestApp(t)
+	var conv struct {
+		Backend   string `json:"backend"`
+		RuntimeID string `json:"runtimeId"`
+	}
+	out := a.CreateChatConversation("general", "fake-runtime", "m1")
+	if err := json.Unmarshal([]byte(out), &conv); err != nil {
+		t.Fatalf("unmarshal: %v (%s)", err, out)
+	}
+	if conv.Backend != "agent" || conv.RuntimeID != "fake-runtime" {
+		t.Errorf("conversation = %+v, want an agent conversation on fake-runtime", conv)
+	}
+}
+
+// A conversation recorded by the removed provider backend stays readable
+// but refuses new turns, without creating a turn or launching anything.
+func TestApp_StartChatTurn_ProviderConversationIsReadOnly(t *testing.T) {
+	a, _ := newChatBindingTestApp(t) // launcher fails the test if called
+	conv, err := a.aiStore.CreateConversation("default", "provider", "general", "", "old-provider", "gpt-x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := a.StartChatTurn(conv.ID, "turn-1", "hi", false, false)
+	if !strings.Contains(out, "read-only") {
+		t.Fatalf("StartChatTurn on a provider conversation = %s, want a read-only error", out)
+	}
+	turns, _, err := a.aiStore.ListTurns(conv.ID, "default", "", 10)
+	if err != nil || len(turns) != 0 {
+		t.Errorf("turns = %v, %v; want none created", turns, err)
+	}
+	if got, err := a.aiStore.GetConversation(conv.ID, "default"); err != nil || got.Backend != "provider" {
+		t.Errorf("conversation after refusal = %+v, %v; want it kept", got, err)
+	}
 }
 
 type startChatTurnResponse struct {
@@ -775,7 +760,7 @@ type startChatTurnResponse struct {
 
 func TestApp_StartChatTurn_BusyResponseIncludesTurnID(t *testing.T) {
 	a, launched := newChatBindingTestApp(t)
-	convJSON := a.CreateChatConversation("agent", "general", "fake-runtime", "", "")
+	convJSON := a.CreateChatConversation("general", "fake-runtime", "")
 	var conv struct {
 		ID string `json:"id"`
 	}
@@ -809,7 +794,7 @@ func TestApp_StartChatTurn_BusyResponseIncludesTurnID(t *testing.T) {
 
 func TestApp_StartChatTurn_DuplicateStartResponseIncludesTurnID(t *testing.T) {
 	a, launched := newChatBindingTestApp(t)
-	convJSON := a.CreateChatConversation("agent", "general", "fake-runtime", "", "")
+	convJSON := a.CreateChatConversation("general", "fake-runtime", "")
 	var conv struct {
 		ID string `json:"id"`
 	}
@@ -849,15 +834,15 @@ func TestApp_StartChatTurn_DuplicateStartResponseIncludesTurnID(t *testing.T) {
 // still clobber a first window's turn at (its own) startup, which this
 // fix does not close.
 
-// newSecondInstanceApp builds an *App sharing store/chatSvc with an
+// newSecondInstanceApp builds an *App sharing store with an
 // existing one but with its OWN chatSupervisor (and therefore its own
 // instanceID) and launcher — the "second live process" half of a
 // cross-instance test.
-func newSecondInstanceApp(t *testing.T, store *ai.AIStore, chatSvc *aichat.ChatService, launcher chatProcessLauncher) *App {
+func newSecondInstanceApp(t *testing.T, store *ai.AIStore, launcher chatProcessLauncher) *App {
 	t.Helper()
 	findCLI := func() (string, error) { return "fake-monoagentcli", nil }
-	sup := newChatSupervisor(store, chatSvc, launcher, func(chatevents.Event) {}, findCLI)
-	return &App{aiStore: store, chatService: chatSvc, chatSup: sup}
+	sup := newChatSupervisor(store, launcher, func(chatevents.Event) {}, findCLI)
+	return &App{aiStore: store, chatSup: sup}
 }
 
 func neverLaunch(t *testing.T) chatProcessLauncher {
@@ -929,8 +914,7 @@ func TestChatTurnListItem_JSONShape(t *testing.T) {
 }
 
 func TestApp_StartChatTurn_RefusedWhenAnotherLiveInstanceOwnsActiveTurn(t *testing.T) {
-	store, db := newChatTestStore(t)
-	chatSvc := aichat.NewChatService(store, db)
+	store, _ := newChatTestStore(t)
 	var launchedA, launchedB []*fakeChatProcess
 	launcherA := func(ctx context.Context, cliBin string, args []string) (chatProcess, error) {
 		if len(launchedA) == 0 {
@@ -954,13 +938,13 @@ func TestApp_StartChatTurn_RefusedWhenAnotherLiveInstanceOwnsActiveTurn(t *testi
 		launchedB = launchedB[1:]
 		return p, nil
 	}
-	appA := newSecondInstanceApp(t, store, chatSvc, launcherA)
-	appB := newSecondInstanceApp(t, store, chatSvc, launcherB)
+	appA := newSecondInstanceApp(t, store, launcherA)
+	appB := newSecondInstanceApp(t, store, launcherB)
 	if appA.chatSup.instanceID == appB.chatSup.instanceID {
 		t.Fatal("two independently constructed supervisors must have distinct instanceIDs")
 	}
 
-	convJSON := appA.CreateChatConversation("agent", "general", "fake-runtime", "", "")
+	convJSON := appA.CreateChatConversation("general", "fake-runtime", "")
 	var conv struct {
 		ID string `json:"id"`
 	}
@@ -1017,8 +1001,7 @@ func TestApp_StartChatTurn_RefusedWhenAnotherLiveInstanceOwnsActiveTurn(t *testi
 }
 
 func TestApp_StopChatTurn_ForeignActiveTurnReturnsExplicitFailure(t *testing.T) {
-	store, db := newChatTestStore(t)
-	chatSvc := aichat.NewChatService(store, db)
+	store, _ := newChatTestStore(t)
 	var launchedA []*fakeChatProcess
 	launcherA := func(ctx context.Context, cliBin string, args []string) (chatProcess, error) {
 		if len(launchedA) == 0 {
@@ -1028,10 +1011,10 @@ func TestApp_StopChatTurn_ForeignActiveTurnReturnsExplicitFailure(t *testing.T) 
 		launchedA = launchedA[1:]
 		return p, nil
 	}
-	appA := newSecondInstanceApp(t, store, chatSvc, launcherA)
-	appB := newSecondInstanceApp(t, store, chatSvc, neverLaunch(t))
+	appA := newSecondInstanceApp(t, store, launcherA)
+	appB := newSecondInstanceApp(t, store, neverLaunch(t))
 
-	convJSON := appA.CreateChatConversation("agent", "general", "fake-runtime", "", "")
+	convJSON := appA.CreateChatConversation("general", "fake-runtime", "")
 	var conv struct {
 		ID string `json:"id"`
 	}
@@ -1090,9 +1073,8 @@ func TestApp_StopChatTurn_ForeignActiveTurnReturnsExplicitFailure(t *testing.T) 
 // only the foreign-active case (tested above) gets the new explicit
 // failure.
 func TestApp_StopChatTurn_UnknownIDAndFinishedTurnRemainNoOpSuccess(t *testing.T) {
-	store, db := newChatTestStore(t)
-	chatSvc := aichat.NewChatService(store, db)
-	a := newSecondInstanceApp(t, store, chatSvc, neverLaunch(t))
+	store, _ := newChatTestStore(t)
+	a := newSecondInstanceApp(t, store, neverLaunch(t))
 
 	resp := a.StopChatTurn("conv-nonexistent", "turn-nonexistent")
 	var r struct {
@@ -1102,7 +1084,7 @@ func TestApp_StopChatTurn_UnknownIDAndFinishedTurnRemainNoOpSuccess(t *testing.T
 		t.Fatalf("StopChatTurn on an unknown id = %s (err=%v), want ok:true (unchanged idempotent no-op)", resp, err)
 	}
 
-	convJSON := a.CreateChatConversation("agent", "general", "fake-runtime", "", "")
+	convJSON := a.CreateChatConversation("general", "fake-runtime", "")
 	var conv struct {
 		ID string `json:"id"`
 	}
@@ -1126,8 +1108,7 @@ func TestApp_StopChatTurn_UnknownIDAndFinishedTurnRemainNoOpSuccess(t *testing.T
 }
 
 func TestApp_GetChatTurns_OwnedByThisInstance(t *testing.T) {
-	store, db := newChatTestStore(t)
-	chatSvc := aichat.NewChatService(store, db)
+	store, _ := newChatTestStore(t)
 	var launchedA []*fakeChatProcess
 	launcherA := func(ctx context.Context, cliBin string, args []string) (chatProcess, error) {
 		if len(launchedA) == 0 {
@@ -1137,10 +1118,10 @@ func TestApp_GetChatTurns_OwnedByThisInstance(t *testing.T) {
 		launchedA = launchedA[1:]
 		return p, nil
 	}
-	appA := newSecondInstanceApp(t, store, chatSvc, launcherA)
-	appB := newSecondInstanceApp(t, store, chatSvc, neverLaunch(t))
+	appA := newSecondInstanceApp(t, store, launcherA)
+	appB := newSecondInstanceApp(t, store, neverLaunch(t))
 
-	convJSON := appA.CreateChatConversation("agent", "general", "fake-runtime", "", "")
+	convJSON := appA.CreateChatConversation("general", "fake-runtime", "")
 	var conv struct {
 		ID string `json:"id"`
 	}
