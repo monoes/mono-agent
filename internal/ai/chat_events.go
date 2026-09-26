@@ -117,8 +117,8 @@ func (s *AIStore) initChatEventTables() error {
 	// conversation_id and turn_id each carry a real foreign key (see turnsSQL
 	// above for why they are declared here as well as in migration 040) —
 	// turn_id's target, ai_chat_turns, is safe to require because every
-	// AppendEvent call in this codebase (wails-app/app_chat.go's
-	// appendAndEmit, the only production writer) is already structurally
+	// AppendEvent call in this codebase (cmd/monoagentcli's turnJournal, the
+	// only production writer) is already structurally
 	// downstream of a successful CreateTurn for that same turn ID.
 	const eventsSQL = `CREATE TABLE IF NOT EXISTS ai_chat_events (
 		profile_id TEXT NOT NULL,
@@ -495,7 +495,7 @@ func (s *AIStore) activeTurnForConversation(conversationID, profileID string) (T
 
 // QueryActiveTurns returns every turn across every profile and conversation
 // currently left in "active" status — the startup reconciliation query
-// (app_chat.go's reconcileOrphanedTurns), deliberately unscoped by profile
+// (ReconcileActiveTurns, behind `chat history reconcile`), deliberately unscoped by profile
 // since it exists to sweep the WHOLE database for a previous process's
 // unfinished turns, not to serve one profile's view.
 func (s *AIStore) QueryActiveTurns() ([]Turn, error) {
@@ -579,7 +579,7 @@ func (s *AIStore) ListTurns(conversationID, profileID, cursor string, limit int)
 // returns "database is locked") rather than silently corrupting data, but
 // it is a hard failure, not a clean serialization. Callers must not invoke
 // AppendEvent concurrently for the same (profileID, conversationID, turnID);
-// the GUI supervisor is responsible for serializing writes per turn (single
+// the turn's journal (cmd/monoagentcli) serializes writes per turn (single
 // active writer per turn), matching this store's transactional guarantees.
 func (s *AIStore) AppendEvent(profileID, conversationID, turnID string, typ chatevents.EventType, payload any) (chatevents.Event, error) {
 	if profileID == "" {
@@ -675,7 +675,7 @@ func (s *AIStore) GetEvents(conversationID, turnID, profileID string, afterSeq i
 // "exactly once after supervisor completion". Returns alreadyFinalized=true
 // when the compare-and-set found the turn already in a terminal state.
 // FinalizeTurn returns the committed turn.finished event so the caller (the
-// GUI supervisor) can emit the identical event live after this call commits
+// turn's journal) can print the identical event live after this call commits
 // — "commit before emit" — without a second read. ev is the zero value when
 // alreadyFinalized is true (nothing was written this call) or err != nil.
 func (s *AIStore) FinalizeTurn(profileID, conversationID, turnID string, status chatevents.TurnStatus, reason string, exitCode *int, historySaved bool) (ev chatevents.Event, alreadyFinalized bool, err error) {
@@ -716,4 +716,106 @@ func (s *AIStore) FinalizeTurn(profileID, conversationID, turnID string, status 
 		return chatevents.Event{}, false, fmt.Errorf("advance last_committed_seq on finalize: %w", err)
 	}
 	return ev, false, tx.Commit()
+}
+
+// ReconciledReason is the reason ReconcileActiveTurns records on a turn it
+// marks interrupted.
+const ReconciledReason = "interrupted at backend startup (previous app instance)"
+
+// ReconcileActiveTurns marks every turn still "active", across every
+// profile, as interrupted — the sweep a starting app runs over turns a
+// previous instance left unfinished. A turn owned by exceptOwner (the
+// starting instance itself, which may already have admitted a turn by the
+// time the sweep runs) is skipped; an empty exceptOwner skips nothing.
+// It cannot tell a dead previous instance from a second live one, since no
+// liveness signal exists. Per-row failures are collected, not fatal.
+func (s *AIStore) ReconcileActiveTurns(exceptOwner string) (reconciled []Turn, errs []error) {
+	rows, err := s.QueryActiveTurns()
+	if err != nil {
+		return nil, []error{fmt.Errorf("list active turns: %w", err)}
+	}
+	reconciled = []Turn{}
+	for _, row := range rows {
+		if exceptOwner != "" && row.OwnerInstanceID == exceptOwner {
+			continue
+		}
+		_, already, err := s.FinalizeTurn(row.ProfileID, row.ConversationID, row.ID, chatevents.StatusInterrupted, ReconciledReason, nil, true)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("reconcile turn %s: %w", row.ID, err))
+			continue
+		}
+		if !already {
+			row.Status = string(chatevents.StatusInterrupted)
+			row.Reason = ReconciledReason
+			reconciled = append(reconciled, row)
+		}
+	}
+	return reconciled, errs
+}
+
+// ConversationRecord is a Conversation as `monoagentcli chat history`
+// prints it: snake_case keys, and no history key.
+type ConversationRecord struct {
+	ID              string `json:"id"`
+	ProfileID       string `json:"profile_id"`
+	Backend         string `json:"backend"`
+	WorkflowContext string `json:"workflow_context"`
+	RuntimeID       string `json:"runtime_id"`
+	ProviderID      string `json:"provider_id"`
+	Model           string `json:"model"`
+	SessionID       string `json:"session_id"`
+	CreatedAt       string `json:"created_at"`
+	UpdatedAt       string `json:"updated_at"`
+}
+
+// Record converts c to its CLI shape.
+func (c Conversation) Record() ConversationRecord {
+	return ConversationRecord{
+		ID: c.ID, ProfileID: c.ProfileID, Backend: c.Backend, WorkflowContext: c.WorkflowContext,
+		RuntimeID: c.RuntimeID, ProviderID: c.ProviderID, Model: c.Model, SessionID: c.SessionID,
+		CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
+	}
+}
+
+// Conversation converts a CLI record back (HistoryKey stays empty).
+func (r ConversationRecord) Conversation() Conversation {
+	return Conversation{
+		ID: r.ID, ProfileID: r.ProfileID, Backend: r.Backend, WorkflowContext: r.WorkflowContext,
+		RuntimeID: r.RuntimeID, ProviderID: r.ProviderID, Model: r.Model, SessionID: r.SessionID,
+		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+	}
+}
+
+// TurnRecord is a Turn as the CLI prints it. Unlike Turn's own JSON it
+// carries the owner instance id, so the app can tell its own active turns
+// from another window's.
+type TurnRecord struct {
+	ID               string `json:"id"`
+	ConversationID   string `json:"conversation_id"`
+	ProfileID        string `json:"profile_id"`
+	OwnerInstanceID  string `json:"owner_instance_id"`
+	Prompt           string `json:"prompt"`
+	Status           string `json:"status"`
+	Reason           string `json:"reason"`
+	LastCommittedSeq int64  `json:"last_committed_seq"`
+	CreatedAt        string `json:"created_at"`
+	UpdatedAt        string `json:"updated_at"`
+}
+
+// Record converts t to its CLI shape.
+func (t Turn) Record() TurnRecord {
+	return TurnRecord{
+		ID: t.ID, ConversationID: t.ConversationID, ProfileID: t.ProfileID, OwnerInstanceID: t.OwnerInstanceID,
+		Prompt: t.Prompt, Status: t.Status, Reason: t.Reason, LastCommittedSeq: t.LastCommittedSeq,
+		CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
+	}
+}
+
+// Turn converts a CLI record back.
+func (r TurnRecord) Turn() Turn {
+	return Turn{
+		ID: r.ID, ConversationID: r.ConversationID, ProfileID: r.ProfileID, OwnerInstanceID: r.OwnerInstanceID,
+		Prompt: r.Prompt, Status: r.Status, Reason: r.Reason, LastCommittedSeq: r.LastCommittedSeq,
+		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+	}
 }
