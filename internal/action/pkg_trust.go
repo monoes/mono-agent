@@ -181,8 +181,17 @@ func atLeastWrite(level string) bool {
 // permissions.downloads.
 type DownloadsGate interface{ DownloadsPermitted() bool }
 
+// DeclaresSideEffects reports whether level is one of the declared
+// sideEffects values (none, read, write, message, destructive). An empty or
+// unrecognised value is undeclared, and counts as write.
+func DeclaresSideEffects(level string) bool {
+	return sideEffectLevels[strings.ToLower(strings.TrimSpace(level))]
+}
+
 // checkLiveRun refuses a live (non-safe-mode) run of a write-level action
-// of a package whose live runs the user has not confirmed.
+// of a package whose live runs the user has not confirmed. Only declared
+// levels are gated here; the runtime's node gate (internal/nodes
+// automation_live.go) also counts an undeclared level as write.
 func (ae *ActionExecutor) checkLiveRun(p PackageContext, def *ActionDef) error {
 	g, ok := p.(LiveRunGate)
 	if !ok || ae.safeMode || def == nil || !atLeastWrite(def.SideEffects) || g.LiveRunConfirmed() {
