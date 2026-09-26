@@ -293,3 +293,12 @@ test("record_save passes keepPackageSelectors only as a real true (L2)", async (
     await saving;
   }
 });
+
+test("a selector_conflict refusal reaches the panel with its code and keys", async () => {
+  const { g, wire, call, settle } = load();
+  const saving = call({ type: "record_save", draftDir: "/d", automation: "contact" });
+  await settle();
+  const req = wire.filter((f) => f.method === "record.save").at(-1);
+  g.MonoAsk.handleFrame({ kind: "reply", id: req.id, ok: false, error: "selectors differ", code: "selector_conflict", data: { keys: ["contact.name_input"] } });
+  assert.deepEqual(await saving, { ok: false, error: "selectors differ", code: "selector_conflict", data: { keys: ["contact.name_input"] } });
+});

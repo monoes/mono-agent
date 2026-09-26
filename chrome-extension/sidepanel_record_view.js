@@ -138,17 +138,24 @@
   /**
    * selectorConflict reads a `record save` failure caused by selectors that
    * changed in the package since the recording (e.g. `automation rerecord`).
-   * The bridge passes the CLI's message through with no code, so this reads
-   * the text: "selector(s) a, b differ from the package's current ones ...
+   * The bridge says so with code "selector_conflict" and data.keys; an older
+   * bridge passed only the CLI's text, so that is read as a fallback:
+   * "selector(s) a, b differ from the package's current ones ...
    * --keep-package-selectors", or the raw "selectors.json#key" mentions.
+   * `err` is the failure ({message, code, data}) or just its message.
    * Returns {keys, text} for the panel, or null for any other failure.
    */
-  function selectorConflict(message, automation) {
-    const m = String(message || "");
-    if (!/--keep-package-selectors|differ from the package's current/.test(m)) return null;
+  function selectorConflict(err, automation) {
+    const e = err && typeof err === "object" ? err : { message: err };
+    const m = String(e.message || "");
     let keys = [];
+    if (e.code === "selector_conflict") {
+      keys = (e.data && Array.isArray(e.data.keys) ? e.data.keys : []).map(String);
+    } else if (!/--keep-package-selectors|differ from the package's current/.test(m)) {
+      return null;
+    }
     const listed = /selector\(s\) (.+?) differ from the package's current/.exec(m);
-    if (listed) keys = listed[1].split(/,\s*/);
+    if (!keys.length && listed) keys = listed[1].split(/,\s*/);
     if (!keys.length) keys = Array.from(m.matchAll(/selectors\.json#([^,\s]+)/g), (x) => x[1]);
     keys = Array.from(new Set(keys.map((k) => k.trim()).filter(Boolean)));
     const named = keys.map((k) => (automation && k.indexOf(".") === -1 ? `${automation}.${k}` : k));

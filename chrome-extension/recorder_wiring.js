@@ -236,7 +236,11 @@
       ready
         .then(() => handler(msg, sender))
         .then((result) => respond(result))
-        .catch((err) => respond({ ok: false, error: err.message || String(err), code: err.code }));
+        .catch((err) => {
+          const out = { ok: false, error: err.message || String(err), code: err.code };
+          if (err.data !== undefined) out.data = err.data;
+          respond(out);
+        });
       return true;
     });
   }
