@@ -19,9 +19,9 @@ import OrgsCard from './dashboard/OrgsCard.jsx'
 import AutomationsCard from './dashboard/AutomationsCard.jsx'
 import AccountsCard from './dashboard/AccountsCard.jsx'
 
-export default function Dashboard({ onRefresh, onNavigate, onOpenHil }) {
+export default function Dashboard({ isActive = true, onRefresh, onNavigate, onOpenHil }) {
   const { t } = useTranslation()
-  const { summary, orgs, workflows, executions, loading, refresh, setExecutions, reloadLists } = useDashboardData()
+  const { summary, orgs, workflows, executions, loading, refresh, setExecutions, reloadLists } = useDashboardData({ active: isActive })
   const [ver, setVer] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
   const [health, setHealth] = useState(getHealth())

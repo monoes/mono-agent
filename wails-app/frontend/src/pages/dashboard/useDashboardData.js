@@ -1,5 +1,7 @@
 // Everything the dashboard shows, from the CLI via bindings. Polls only while
-// the page is visible; events trigger an immediate refresh.
+// the window is visible AND the dashboard is the page being shown (App.jsx
+// keeps pages mounted behind display:none); coming back refreshes at once.
+// Events trigger an immediate refresh.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, subscribeEvent } from '../../services/api.js'
 import { usePageVisibleRef, useVisibleCatchUp } from '../../lib/usePageVisible.js'
@@ -34,13 +36,16 @@ function useInterval(fn, ms) {
   }, [ms])
 }
 
-export function useDashboardData() {
+export function useDashboardData({ active = true } = {}) {
   const [summary, setSummary] = useState(null)
   const [orgs, setOrgs] = useState(null)
   const [workflows, setWorkflows] = useState([])
   const [executions, setExecutions] = useState([])
   const [loading, setLoading] = useState(true)
-  const visible = usePageVisibleRef()
+  const windowVisible = usePageVisibleRef()
+  const activeRef = useRef(active)
+  activeRef.current = active
+  const visible = { get current() { return windowVisible.current && activeRef.current } }
   const haveFull = useRef(false)
 
   const loadSummary = useCallback(async () => {
@@ -64,10 +69,16 @@ export function useDashboardData() {
   }, [loadSummary, loadLists, loadOrgs])
 
   useEffect(() => { refresh(); loadOrgs(false) }, [refresh, loadOrgs])
-  useVisibleCatchUp(refresh)
+  useVisibleCatchUp(() => { if (activeRef.current) refresh() })
+  // Returning to the dashboard page: catch up instead of showing stale data.
+  const wasActive = useRef(active)
+  useEffect(() => {
+    if (active && !wasActive.current) refresh()
+    wasActive.current = active
+  }, [active, refresh])
 
   useEffect(() => {
-    const offs = REFRESH_EVENTS.map(n => subscribeEvent(n, () => { loadSummary(); loadLists() }))
+    const offs = REFRESH_EVENTS.map(n => subscribeEvent(n, () => { if (activeRef.current) { loadSummary(); loadLists() } }))
     return () => offs.forEach(off => off && off())
   }, [loadSummary, loadLists])
 

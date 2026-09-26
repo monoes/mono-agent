@@ -38,6 +38,24 @@ describe('useDashboardData', () => {
   })
 })
 
+describe('useDashboardData while another page is showing', () => {
+  it('skips polls and events, and catches up when shown again', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      const { result, rerender } = renderHook(({ active }) => useDashboardData({ active }), { initialProps: { active: true } })
+      await waitFor(() => expect(result.current.loading).toBe(false))
+      rerender({ active: false })
+      const before = api.getSummary.mock.calls.length
+      await act(async () => { vi.advanceTimersByTime(61000); handlers['workflow:complete']() })
+      expect(api.getSummary.mock.calls.length).toBe(before)
+      rerender({ active: true })
+      await waitFor(() => expect(api.getSummary.mock.calls.length).toBe(before + 1))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
 describe('mergeFast', () => {
   it('keeps needs_you from the last full reply', () => {
     const prev = { orgs: [{ name: 'a', needs_you: 2 }, { name: 'b', needs_you: null, needs_you_error: 'x' }] }

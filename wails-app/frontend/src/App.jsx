@@ -247,7 +247,7 @@ export default function App() {
   // and — for pages like Agents/Orgs that fetch on mount — re-running
   // their (multi-second) initial data load every single time.
   const persistentPages = {
-    dashboard: <Dashboard onRefresh={refreshStats} onNavigate={navigate} onOpenHil={() => setGlobalHilOpen(true)} />,
+    dashboard: <Dashboard isActive={activePage === 'dashboard'} onRefresh={refreshStats} onNavigate={navigate} onOpenHil={() => setGlobalHilOpen(true)} />,
     noderunner: <NodeRunner onNavigate={navigate} navData={navData} />,
     people:    <People key={peopleRefreshKey} onProfile={openProfile} />,
     communications: <Communications onProfile={openProfile} />,
