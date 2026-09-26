@@ -365,10 +365,16 @@ func recordSaveArgs(req *Request) ([]string, error) {
 // its whole output (reportedError), and the side panel needs those steps
 // far more than it needs "verify failed". So on a non-zero exit:
 //
-//   - a JSON object with an "error" field is the failure (contracts §5), and
-//     its message wins over stderr since it is the one written for a person;
-//   - any other JSON object is a report, returned as the result;
-//   - missing or non-JSON stdout is the run's own error.
+//   - a report — an object with "steps", or with "ok" as a boolean — is
+//     returned as the result even though it also carries "error": a failed
+//     verify prints {steps, ok:false, stoppedAt, error, highlighted,
+//     tabLeftOpen}, and its error is the report's summary, not a
+//     replacement for it;
+//   - any other object with an "error" string is the plain failure
+//     ({"error", "code"?}, contracts §5), and its message wins over stderr
+//     since it is the one written for a person;
+//   - missing or non-JSON stdout, or an object that is neither, is the
+//     run's own error.
 func runRecordJSON(ctx context.Context, r Runner, args []string) (any, error) {
 	out, runErr := r.Run(ctx, args...)
 	trimmed := bytes.TrimSpace(out)
@@ -378,13 +384,13 @@ func runRecordJSON(ctx context.Context, r Runner, args []string) (any, error) {
 		if !isObject {
 			return nil, runErr
 		}
+		if isReport(obj) {
+			return obj, nil
+		}
 		if msg, ok := obj["error"].(string); ok && msg != "" {
 			return nil, fmt.Errorf("%s", msg)
 		}
-		if _, hasErr := obj["error"]; hasErr {
-			return nil, runErr
-		}
-		return obj, nil
+		return nil, runErr
 	}
 	if isObject {
 		return obj, nil
@@ -394,6 +400,16 @@ func runRecordJSON(ctx context.Context, r Runner, args []string) (any, error) {
 		return nil, fmt.Errorf("monoagentcli %s: output is not JSON", redactArgs(args))
 	}
 	return data, nil
+}
+
+// isReport reports whether a command's JSON output is a result report
+// (verify's step report) rather than a bare {"error"} failure.
+func isReport(obj map[string]any) bool {
+	if _, ok := obj["steps"]; ok {
+		return true
+	}
+	_, ok := obj["ok"].(bool)
+	return ok
 }
 
 // selfRunner runs this very binary. Only a monoagentcli can answer
