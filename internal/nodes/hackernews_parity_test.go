@@ -221,3 +221,43 @@ func TestHackerNewsParityNodeOutput(t *testing.T) {
 		})
 	}
 }
+
+// TestHackerNewsListCommentsMaxComments: maxComments caps the rows across
+// "More" pages (the cap spans pages, not one page), and once it is reached
+// the next page is not requested at all.
+func TestHackerNewsListCommentsMaxComments(t *testing.T) {
+	if os.Getenv("BOTTEST_BROWSER") == "" && os.Getenv("JEV_E2E_BROWSER") == "" {
+		t.Skip("needs BOTTEST_BROWSER")
+	}
+	var p2Hits int32
+	routes := func() []bottest.Route {
+		return []bottest.Route{
+			{Pattern: "https://news.ycombinator.com/item?id=70000001&p=2", Handler: func(bottest.Request) bottest.Response {
+				atomic.AddInt32(&p2Hits, 1)
+				return bottest.Response{Body: body("item_p2.html"), ContentType: "text/html; charset=utf-8"}
+			}},
+			page("https://news.ycombinator.com/item?id=70000001", "list_comments.html"),
+		}
+	}
+	decl := declarativePkg(t)
+	all := runNode(t, decl, "list_comments", map[string]interface{}{"itemID": "70000001"}, routes)
+	if len(all) < 3 || atomic.LoadInt32(&p2Hits) == 0 {
+		t.Fatalf("fixture needs ≥3 comments over two pages, got %d rows, %d page-2 loads", len(all), p2Hits)
+	}
+
+	for _, n := range []int{0, 1, 2, len(all) - 1, len(all) + 5} {
+		atomic.StoreInt32(&p2Hits, 0)
+		got := runNode(t, decl, "list_comments", map[string]interface{}{"itemID": "70000001", "maxComments": float64(n)}, routes)
+		want := all
+		if n > 0 && n < len(all) {
+			want = all[:n]
+		}
+		if !reflect.DeepEqual(got, want) {
+			g, _ := json.MarshalIndent(got, "", " ")
+			t.Fatalf("maxComments %d: got %d rows, want %d\n%s", n, len(got), len(want), g)
+		}
+		if n == 1 && atomic.LoadInt32(&p2Hits) != 0 {
+			t.Errorf("maxComments 1: page 2 was loaded after the cap was reached")
+		}
+	}
+}

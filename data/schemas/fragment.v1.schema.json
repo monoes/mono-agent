@@ -546,14 +546,14 @@
       "type": "object"
     },
     "TransformOp": {
-      "description": "TransformOp is one operation of a transform step, applied in order to the list (or single object) the step's Input resolves to. map Map: {newField: \"{{template over the item}}\"} filter Where: condition evaluated against each item dedupe Field: key field (whole item when empty) regex_extract Field, Pattern (first capture group, else whole match), To parse_date Field, Layout (Go layout, or \"auto\"), To (RFC3339 output) parse_number Field, To (\"1.2k\" → 1200, \"3,400\" → 3400) join Field (list field), Sep, To split Field, Sep, To pick Fields: keep only these keys limit Count lower Field, To replace Field, Pattern (Go regexp), With, To tree_parent Field (depth), ID, To, Root, Carry flag Where, To (per-item true/false from the condition) sort Field, Order (stable; numeric when both values are numbers, else string; missing last) add, subtract, multiply, divide Field, By, Round, To (numbers parsed like parse_number)",
+      "description": "TransformOp is one operation of a transform step, applied in order to the list (or single object) the step's Input resolves to. map Map: {newField: \"{{template over the item}}\"} filter Where: condition evaluated against each item dedupe Field: key field (whole item when empty) regex_extract Field, Pattern (first capture group, else whole match), To parse_date Field, Layout (Go layout, or \"auto\"), To (RFC3339 output) parse_number Field, To (\"1.2k\" → 1200, \"3,400\" → 3400) join Field (list field), Sep, To split Field, Sep, To pick Fields: keep only these keys limit Count lower Field, To replace Field, Pattern (Go regexp), With, To tree_parent Field (depth), ID, To, Root, Carry index To, Carry (numbers the rows 0, 1, …; with Carry the count continues across pages) flag Where, To (per-item true/false from the condition) sort Field, Order (stable; numeric when both values are numbers, else string; missing last) add, subtract, multiply, divide Field, By, Round, To (numbers parsed like parse_number)",
       "properties": {
         "by": {
           "description": "add/subtract/multiply/divide: the operand",
           "type": "number"
         },
         "carry": {
-          "description": "tree_parent: variable holding the open-ancestor stack across pages",
+          "description": "tree_parent: variable holding the open-ancestor stack across pages; index: the row count so far",
           "type": "string"
         },
         "count": {
@@ -602,6 +602,7 @@
             "lower",
             "replace",
             "tree_parent",
+            "index",
             "flag",
             "sort",
             "add",

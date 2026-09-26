@@ -311,6 +311,9 @@ func applyOp(items []interface{}, op TransformOp, vars map[string]interface{}, n
 	case "tree_parent":
 		return treeParent(items, op, vars)
 
+	case "index":
+		return indexRows(items, op, vars)
+
 	case "pick":
 		if len(op.Fields) == 0 {
 			return nil, fmt.Errorf("pick needs fields")
@@ -452,6 +455,35 @@ func treeParent(items []interface{}, op TransformOp, vars map[string]interface{}
 	}
 	if op.Carry != "" {
 		vars[op.Carry] = stack
+	}
+	return items, nil
+}
+
+// indexRows stores each row's position in To ("index" by default). With
+// Carry the numbering starts at vars[Carry] and the new row count is written
+// back, so a list read page by page is numbered as one list — which lets a
+// filter on the index cap the total across pages.
+func indexRows(items []interface{}, op TransformOp, vars map[string]interface{}) ([]interface{}, error) {
+	to := op.To
+	if to == "" {
+		to = "index"
+	}
+	n := 0
+	if op.Carry != "" {
+		if prev, ok := parseHumanNumber(vars[op.Carry]); ok && prev > 0 {
+			n = int(prev)
+		}
+	}
+	for i, it := range items {
+		m, ok := it.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("row %d is not an object", i)
+		}
+		m[to] = n
+		n++
+	}
+	if op.Carry != "" {
+		vars[op.Carry] = n
 	}
 	return items, nil
 }
