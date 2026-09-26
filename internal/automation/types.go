@@ -7,7 +7,12 @@
 // Contracts: docs/mastermind/plans/2026-09-25-browser-automation-packages-contracts.md
 package automation
 
-import "time"
+import (
+	"strings"
+	"time"
+
+	"golang.org/x/net/publicsuffix"
+)
 
 // SchemaV1 is the manifest "schema" value.
 const SchemaV1 = "monoagent.automation/v1"
@@ -65,6 +70,28 @@ type LegacyInfo struct {
 	// (localhost, IP-less single labels…); they make the package
 	// unexportable.
 	LocalHosts []string `json:"localHosts,omitempty"`
+	// TemplatedURLs is true when some navigate URL is built at run time
+	// ({{…}}): the suggestion cannot be complete.
+	TemplatedURLs bool `json:"templatedUrls,omitempty"`
+}
+
+// templatedHint is the advice shown when a legacy package's navigate URLs
+// are built at run time.
+func (l *LegacyInfo) templatedHint() string {
+	if l == nil || !l.TemplatedURLs {
+		return ""
+	}
+	for _, d := range l.SuggestedDomains {
+		if strings.HasPrefix(d, "*.") {
+			return "its actions open URLs built at run time, so list every site they may reach — prefer a wildcard like " + d + " over exact hosts"
+		}
+	}
+	if len(l.SuggestedDomains) > 0 {
+		// Only literal hosts are known (template in the path).
+		return "its actions open URLs built at run time, so list every site they may reach — add a wildcard like *." +
+			registrable(l.SuggestedDomains[0]) + " if they redirect to other subdomains"
+	}
+	return "its actions open URLs built at run time, so list every site they may reach — prefer a wildcard like *.example.com over exact hosts"
 }
 
 type Publisher struct {
@@ -254,4 +281,13 @@ type ExportOptions struct {
 	// package is untouched), e.g. for a generated legacy package that runs
 	// unrestricted locally. Each is checked like a manifest domain.
 	Domains []string
+}
+
+// registrable is host's registrable domain (host itself when unknown).
+func registrable(host string) string {
+	h := strings.Split(host, ":")[0]
+	if reg, err := publicsuffix.EffectiveTLDPlusOne(h); err == nil {
+		return reg
+	}
+	return h
 }
