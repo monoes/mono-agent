@@ -4,8 +4,12 @@ package tiktok
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/monoes/mono-agent/internal/bot/bottest"
 )
 
 func TestListUserVideosScrollsTheGrid(t *testing.T) {
@@ -519,4 +523,75 @@ func TestListVideoCommentsLiveLayout(t *testing.T) {
 		t.Fatalf("like_comment = %v", m)
 	}
 	wantEvents(t, p, "comment-like-click:fake_cy")
+}
+
+// mediaState reports a video's muted/autoplay state and the fixture's pause
+// count as "muted,autoplay,pauses".
+func mediaState(t *testing.T, p *bottest.Page, id string) string {
+	t.Helper()
+	v, err := p.EvalCDP(`(() => { const v = document.getElementById(` + strconv.Quote(id) + `); return v ? v.muted + ',' + v.autoplay + ',' + window.__media.pauses : 'missing'; })()`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, _ := v.(string)
+	return s
+}
+
+// holdVideos pauses and mutes the page's videos, keeps doing so for videos
+// added or started later, and stops once released.
+func TestHoldVideosPausesMutesAndReleases(t *testing.T) {
+	p := newPage(t)
+	if err := p.Navigate(vidPlain); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.WaitLoad(); err != nil {
+		t.Fatal(err)
+	}
+	release := holdVideos(p)
+	if got := mediaState(t, p, "player"); !strings.HasPrefix(got, "true,false,") || strings.HasSuffix(got, ",0") {
+		t.Fatalf("player after hold = %s, want muted, no autoplay, paused", got)
+	}
+	if _, err := p.EvalCDP(`window.__addVideo('late')`); err != nil {
+		t.Fatal(err)
+	}
+	ok, _ := waitFor(bg, 2*time.Second, func() (bool, error) {
+		return strings.HasPrefix(mediaState(t, p, "late"), "true,false,"), nil
+	})
+	if !ok {
+		t.Fatalf("video added later = %s, want muted and not autoplaying", mediaState(t, p, "late"))
+	}
+	before := mediaState(t, p, "late")
+	if _, err := p.EvalCDP(`document.getElementById('late').dispatchEvent(new Event('play')); ''`); err != nil {
+		t.Fatal(err)
+	}
+	if after := mediaState(t, p, "late"); after == before {
+		t.Fatalf("a play event did not pause the video (%s)", after)
+	}
+
+	release()
+	if v, _ := p.EvalCDP(`typeof window.__monoagentHold`); v != "undefined" {
+		t.Fatalf("hold still installed after release: %v", v)
+	}
+	if _, err := p.EvalCDP(`window.__addVideo('after')`); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if got := mediaState(t, p, "after"); !strings.HasPrefix(got, "false,true,") {
+		t.Fatalf("video added after release = %s, want untouched", got)
+	}
+}
+
+// list_video_comments reads with the video paused and muted, and leaves no
+// observer behind.
+func TestListVideoCommentsHoldsVideoPaused(t *testing.T) {
+	p := newPage(t)
+	if _, err := call(t, &TikTokBot{}, p, "list_video_comments", vidPlain, 3); err != nil {
+		t.Fatal(err)
+	}
+	if got := mediaState(t, p, "player"); !strings.HasPrefix(got, "true,false,") || strings.HasSuffix(got, ",0") {
+		t.Fatalf("player = %s, want muted, no autoplay, paused", got)
+	}
+	if v, _ := p.EvalCDP(`typeof window.__monoagentHold`); v != "undefined" {
+		t.Fatalf("hold left installed: %v", v)
+	}
 }
