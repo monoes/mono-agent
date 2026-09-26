@@ -64,6 +64,9 @@ func newTemplateListCmd(cfg *globalConfig) *cobra.Command {
 			}
 
 			if cfg.JSONOutput {
+				if templates == nil {
+					templates = []storage.Template{}
+				}
 				enc := json.NewEncoder(os.Stdout)
 				enc.SetIndent("", "  ")
 				return enc.Encode(templates)
