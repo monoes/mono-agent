@@ -151,7 +151,9 @@
       "jevUsage": "{{calls}} calls · {{usd}} (24h)",
       "jevNoKey": "no key",
       "runCheck": "Run check",
-      "checking": "Checking…"
+      "checking": "Checking…",
+      "update": "Update",
+      "updateAvailable": "{{version}} available"
     },
     "orgs": {
       "title": "Orgs",

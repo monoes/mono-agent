@@ -151,7 +151,9 @@
       "jevUsage": "{{calls}} llamadas · {{usd}} (24 h)",
       "jevNoKey": "sin clave",
       "runCheck": "Comprobar",
-      "checking": "Comprobando…"
+      "checking": "Comprobando…",
+      "update": "Actualización",
+      "updateAvailable": "{{version}} disponible"
     },
     "orgs": {
       "title": "Orgs",

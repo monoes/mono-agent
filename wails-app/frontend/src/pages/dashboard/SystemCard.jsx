@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Server, ChevronRight, Activity } from 'lucide-react'
 import { getHealth, subscribeHealth, summarize, runHealth } from '../../lib/health.js'
+import { subscribeEvent } from '../../services/api.js'
 
 // One service row: coloured dot, label, state; clickable when it links somewhere.
 export function DashRow({ tone, label, value, title, onClick }) {
@@ -21,6 +22,10 @@ export default function SystemCard({ summary, onNavigate }) {
   const { t } = useTranslation()
   const [health, setHealth] = useState(getHealth())
   useEffect(() => subscribeHealth(setHealth), [])
+  // The app checks for a release in the background (via `update --check`)
+  // and announces one; no extra request from here.
+  const [update, setUpdate] = useState(null)
+  useEffect(() => subscribeEvent('update:available', info => { if (info?.update_available) setUpdate(info) }), [])
   const sv = summary?.services
   const jev = summary?.jev
   const h = summarize(health?.report)
@@ -56,6 +61,11 @@ export default function SystemCard({ summary, onNavigate }) {
               : t('dashboard.system.jevNoKey')}
             title={jev?.error || undefined}
             onClick={() => onNavigate('settings', { section: 'jev' })} />
+          {update && (
+            <DashRow tone={TONE.warn} label={t('dashboard.system.update')}
+              value={t('dashboard.system.updateAvailable', { version: update.latest_version })}
+              title={update.release_url} onClick={() => onNavigate('settings', { section: 'version' })} />
+          )}
         </>
       )}
       <button className="btn btn-ghost btn-sm" style={{ marginTop: 8, gap: 5 }} disabled={health?.loading}

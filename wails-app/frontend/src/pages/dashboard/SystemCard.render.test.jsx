@@ -10,6 +10,9 @@ vi.mock('../../lib/health.js', () => ({
   summarize: () => ({ level: 'issues', issues: 2 }),
   runHealth: (...a) => runHealth(...a),
 }))
+const events = {}
+vi.mock('../../services/api.js', () => ({ subscribeEvent: (n, fn) => { events[n] = fn; return () => {} } }))
+import { act } from '@testing-library/react'
 import SystemCard from './SystemCard.jsx'
 import StatRow from './StatRow.jsx'
 
@@ -35,6 +38,14 @@ describe('SystemCard', () => {
     expect(runHealth).toHaveBeenCalledWith({ background: true })
     fireEvent.click(screen.getByText('dashboard.system.jev'))
     expect(onNavigate).toHaveBeenCalledWith('settings', { section: 'jev' })
+  })
+  it('shows an announced update and links to Settings', () => {
+    const onNavigate = vi.fn()
+    render(<SystemCard summary={summary} onNavigate={onNavigate} />)
+    expect(screen.queryByText('dashboard.system.update')).toBeNull()
+    act(() => events['update:available']({ update_available: true, latest_version: 'v9.9.9', release_url: 'https://x' }))
+    fireEvent.click(screen.getByText('dashboard.system.update'))
+    expect(onNavigate).toHaveBeenCalledWith('settings', { section: 'version' })
   })
   it('bridge null shows not running', () => {
     render(<SystemCard summary={{ ...summary, services: { ...summary.services, bridge: null } }} onNavigate={vi.fn()} />)
