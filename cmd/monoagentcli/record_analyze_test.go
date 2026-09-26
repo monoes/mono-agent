@@ -259,9 +259,7 @@ func TestRecordAnalyzeVerifyInputsFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, err := runRecordCLI(t, true, "verify", dir, "--inputs-file", file, "--input", "label=from-flag")
-	if err != nil {
-		t.Fatalf("verify: %v\n%s", err, out)
-	}
+	failedVerifyReport(t, out, err)
 	if got["label"] != "from-flag" || got["pw"] != "s3cr3t-pw" {
 		t.Errorf("merged inputs = %v", got)
 	}
@@ -308,15 +306,31 @@ func TestRecordAnalyzeVerifyVaultLookup(t *testing.T) {
 	t.Cleanup(func() { recordSecretLookup, recordVerifyExec = prevL, prevE })
 
 	out, err = runRecordCLI(t, true, "verify", res.DraftDir)
-	if err != nil {
-		t.Fatalf("verify: %v\n%s", err, out)
-	}
+	failedVerifyReport(t, out, err)
 	if askedFor != "example-go" || !gotLookup || got["pw"] != "vault-pw" || strings.Contains(out, "vault-pw") {
 		t.Errorf("askedFor=%q lookup=%v inputs=%v out=%s", askedFor, gotLookup, got, out)
 	}
 	out, err = runRecordCLI(t, true, "verify", res.DraftDir, "--input", "pw=flag-pw")
-	if err != nil || got["pw"] != "flag-pw" {
-		t.Errorf("--input must win: %v %v", got, err)
+	failedVerifyReport(t, out, err)
+	if got["pw"] != "flag-pw" {
+		t.Errorf("--input must win: %v", got)
+	}
+}
+
+// failedVerifyReport: a failed replay exits non-zero but stdout is still
+// exactly one JSON report, with ok false (no trailing {"error"}).
+func failedVerifyReport(t *testing.T, out string, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("a failed verify exited 0: %s", out)
+	}
+	dec := json.NewDecoder(strings.NewReader(out))
+	var rep recordanalyze.VerifyReport
+	if derr := dec.Decode(&rep); derr != nil || rep.OK {
+		t.Fatalf("stdout is not a failed report: %v\n%s", derr, out)
+	}
+	if dec.More() {
+		t.Fatalf("more than one JSON document: %s", out)
 	}
 }
 
