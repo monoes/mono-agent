@@ -1573,7 +1573,7 @@ func newWorkflowExportCmd(cfg *globalConfig) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				for _, w := range unbundledWarnings(b) {
+				for _, w := range append(suggestedNotices(b), unbundledWarnings(b)...) {
 					fmt.Fprintln(os.Stderr, w)
 				}
 				wfFile = b

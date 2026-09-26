@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -133,6 +134,14 @@ func TestWorkflowBundleLegacyAlias(t *testing.T) {
 			if err := json.Unmarshal([]byte(runWorkflowSubcmd(t, cfg, "import", "--file", src)), &imported); err != nil {
 				t.Fatal(err)
 			}
+			// Default: a legacy package runs unrestricted and has no domains,
+			// so it is left out, with a hint listing the suggested domains.
+			_, bare := exportBundle(t, cfg, imported.ID)
+			if u, ok := bare.Unbundled[pkgID]; !ok || len(bare.Automations) != 0 ||
+				!strings.Contains(u.Hint, "example.com") || !strings.Contains(u.Hint, "--use-suggested-domains") {
+				t.Fatalf("default export: bundled %v, unbundled %+v", keysOf(bare.Automations), bare.Unbundled)
+			}
+
 			bundled := filepath.Join(t.TempDir(), "bundled.json")
 			runWorkflowSubcmd(t, cfg, "export", imported.ID, "--bundle-automations", "--use-suggested-domains", "-o", bundled)
 			raw, err := os.ReadFile(bundled)

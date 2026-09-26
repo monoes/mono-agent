@@ -1,11 +1,15 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/monoes/mono-agent/internal/automation"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // writeLegacyFile writes ~/.monoagent/actions/<platform>/<name>.json.
@@ -202,5 +206,66 @@ func TestParseAutomationDomains(t *testing.T) {
 		if _, err := parseAutomationDomains([]string{bad}); err == nil {
 			t.Fatalf("%q should be rejected", bad)
 		}
+	}
+}
+
+// --use-suggested-domains exports a legacy package with the domains derived
+// from its navigate URLs (the exported copy only), and names them in a
+// notice; a package that opens a local host is never given them.
+func TestWorkflowBundleUseSuggestedDomains(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeLegacyFile(t, home, "examplesite", "get_heading",
+		`{"actionType":"get_heading","platform":"examplesite","steps":[{"id":"o","type":"navigate","url":"https://www.example.com/"}]}`)
+	writeLegacyFile(t, home, "devsite", "get_heading",
+		`{"actionType":"get_heading","platform":"devsite","steps":[{"id":"o","type":"navigate","url":"http://localhost:3000/"}]}`)
+	reg, err := openAutomationRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ex, dev := packageResolver(reg)("examplesite", "get_heading"), packageResolver(reg)("devsite", "get_heading")
+	pkg, err := reg.Get(ex)
+	if err != nil || pkg.Manifest.Legacy == nil || len(pkg.Manifest.Legacy.SuggestedDomains) == 0 || len(pkg.Manifest.Site.Domains) != 0 {
+		t.Fatalf("fixture: %s should run unrestricted with suggestions: %+v", ex, pkg)
+	}
+	suggested := pkg.Manifest.Legacy.SuggestedDomains
+
+	wf := workflow.WorkflowFile{Name: "s", Nodes: []workflow.WorkflowFileNode{
+		{ID: "a", Type: "examplesite.get_heading"}, {ID: "b", Type: "devsite.get_heading"}}}
+	b, err := bundleWorkflowAutomations(wf, bundleOptions{useSuggested: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := b.Automations[ex]; !ok {
+		t.Fatalf("%s not bundled with suggested domains; unbundled %v", ex, b.Unbundled)
+	}
+	if _, ok := b.Unbundled[dev]; !ok {
+		t.Fatalf("%s (localhost) must stay unbundled: bundled %v", dev, keysOf(b.Automations))
+	}
+	// The exported copy carries exactly the suggestions; the installed
+	// package is unchanged.
+	raw, _ := base64.StdEncoding.DecodeString(b.Automations[ex].Mpkg)
+	f := filepath.Join(t.TempDir(), "x.mpkg")
+	if err := os.WriteFile(f, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	exported, err := automation.OpenFile(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(exported.Manifest.Site.Domains, ",") != strings.Join(suggested, ",") {
+		t.Fatalf("exported domains %v, want %v", exported.Manifest.Site.Domains, suggested)
+	}
+	if again, _ := reg.Get(ex); len(again.Manifest.Site.Domains) != 0 {
+		t.Fatal("the installed legacy package gained domains")
+	}
+	notes := suggestedNotices(b)
+	if len(notes) != 1 || !strings.Contains(notes[0], ex) || !strings.Contains(notes[0], suggested[0]) {
+		t.Fatalf("notices = %q", notes)
+	}
+	// Without the flag nothing gets suggested domains.
+	b, err = bundleWorkflowAutomations(wf, bundleOptions{})
+	if err != nil || len(b.Automations) != 0 || len(suggestedNotices(b)) != 0 {
+		t.Fatalf("default: bundled %v, err %v", keysOf(b.Automations), err)
 	}
 }

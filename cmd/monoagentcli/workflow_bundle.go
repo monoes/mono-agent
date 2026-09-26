@@ -50,6 +50,9 @@ type workflowBundleFile struct {
 	// workflow and every exportable package are still written; the
 	// importing side reports these as missing, with the reason and hint.
 	Unbundled map[string]unbundledAutomation `json:"unbundledAutomations,omitempty"`
+	// suggestedUsed: packages exported with their suggested domains
+	// (--use-suggested-domains), for the exporter's notice. Not written.
+	suggestedUsed map[string][]string
 }
 
 // unbundledAutomation says why a used package is not in the bundle.
@@ -103,12 +106,19 @@ func bundleWorkflowAutomations(file workflow.WorkflowFile, opts bundleOptions) (
 			continue
 		}
 		var buf bytes.Buffer
-		if err := reg.Export(id, &buf, automation.ExportOptions{Domains: exportDomains(reg, id, opts)}); err != nil {
+		domains, suggested := exportDomains(reg, id, opts)
+		if err := reg.Export(id, &buf, automation.ExportOptions{Domains: domains}); err != nil {
 			if out.Unbundled == nil {
 				out.Unbundled = map[string]unbundledAutomation{}
 			}
 			out.Unbundled[id] = unbundledAutomation{Version: info.Version, Reason: err.Error(), Hint: unbundledHint(reg, id)}
 			continue
+		}
+		if suggested {
+			if out.suggestedUsed == nil {
+				out.suggestedUsed = map[string][]string{}
+			}
+			out.suggestedUsed[id] = domains
 		}
 		sum := sha256.Sum256(buf.Bytes())
 		if out.Automations == nil {
@@ -125,18 +135,20 @@ func bundleWorkflowAutomations(file workflow.WorkflowFile, opts bundleOptions) (
 }
 
 // exportDomains picks site.domains for the exported copy of id: explicit
-// ones first, else (opt-in) a legacy package's suggestions, else none (the
-// package's own).
-func exportDomains(reg *automation.Registry, id string, opts bundleOptions) []string {
+// ones first, else (opt-in) a legacy package's suggestions — only when it
+// opens no local host, which no exported package may allow — else none
+// (the package's own). suggested reports that the suggestions were used.
+func exportDomains(reg *automation.Registry, id string, opts bundleOptions) (domains []string, suggested bool) {
 	if d := opts.domains[id]; len(d) > 0 {
-		return d
+		return d, false
 	}
 	if opts.useSuggested {
-		if p, err := reg.Get(id); err == nil && p.Manifest.Legacy != nil {
-			return p.Manifest.Legacy.SuggestedDomains
+		if p, err := reg.Get(id); err == nil && p.Manifest.Legacy != nil &&
+			len(p.Manifest.Legacy.SuggestedDomains) > 0 && len(p.Manifest.Legacy.LocalHosts) == 0 {
+			return p.Manifest.Legacy.SuggestedDomains, true
 		}
 	}
-	return nil
+	return nil, false
 }
 
 // unbundledHint tells the user how to include id next time.
@@ -146,6 +158,22 @@ func unbundledHint(reg *automation.Registry, id string) string {
 			id, strings.Join(p.Manifest.Legacy.SuggestedDomains, ","), id, strings.Join(p.Manifest.Legacy.SuggestedDomains, ","))
 	}
 	return fmt.Sprintf("re-run workflow export with --automation-domains %s=<site,...> naming the sites its actions open, or share it separately: monoagentcli automation export %s --domains <site,...>", id, id)
+}
+
+// suggestedNotices are human lines for packages exported with their
+// suggested domains: the recipient's install review will show them.
+func suggestedNotices(b workflowBundleFile) []string {
+	ids := make([]string, 0, len(b.suggestedUsed))
+	for id := range b.suggestedUsed {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	var lines []string
+	for _, id := range ids {
+		lines = append(lines, fmt.Sprintf("note: bundled %s with suggested domains %s (the recipient's install review shows them)",
+			id, strings.Join(b.suggestedUsed[id], ", ")))
+	}
+	return lines
 }
 
 // unbundledWarnings are human lines for the packages left out of a bundle.
