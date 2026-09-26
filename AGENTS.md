@@ -148,7 +148,7 @@ read-only call that returns counts for:
 
 - workflows
 - runs (running/queued, last 24 h, recent 15)
-- next scheduled run per `trigger.schedule` node, plus `daemon_running`
+- next scheduled run per `trigger.schedule` node, plus `daemon_running`. `source` says where the time comes from: `daemon` means the running daemon's own scheduler, as published in its heartbeat; `computed` means it was worked out from the cron spec
 - things waiting for a person: workflow HIL, leads to review, drafts, suggested person links
 - people
 - captures, documents and messages (7 days)

@@ -27,6 +27,12 @@ describe('WorkflowsCard', () => {
       schedules={{ daemon_running: true, upcoming: [{ workflow_id: 'w1', next_run: new Date().toISOString(), every: '5m', cron: '@every 5m' }], invalid: [] }} />)
     expect(screen.getByTitle('@every 5m')).toBeInTheDocument()
   })
+  it('an @every schedule the daemon reported shows its real next run', () => {
+    const next = new Date(Date.now() + 17 * 60000).toISOString()
+    render(<WorkflowsCard workflows={wfs} executions={[]} {...noop}
+      schedules={{ daemon_running: true, upcoming: [{ workflow_id: 'w1', next_run: next, every: '1h', cron: '@every 1h', source: 'daemon' }], invalid: [] }} />)
+    expect(screen.getByText('dashboard.time.inMinutes:17')).toBeInTheDocument()
+  })
   it('flags invalid schedules', () => {
     render(<WorkflowsCard workflows={wfs} executions={[]} {...noop}
       schedules={{ daemon_running: true, upcoming: [], invalid: [{ workflow_id: 'w2', node_id: 'n', error: 'bad' }] }} />)

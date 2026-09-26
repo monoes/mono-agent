@@ -156,3 +156,34 @@ func TestWorkflowsAreProfileScoped(t *testing.T) {
 		}
 	}
 }
+
+// With the daemon running, its scheduler's own next fire time wins; a stale
+// (past) one, or no daemon, falls back to the computed time.
+func TestDaemonSchedulesPreferred(t *testing.T) {
+	db := testDB(t)
+	src := fakeWorkflows{wfs: []workflow.Workflow{{ID: "w1", Name: "A", IsActive: true, Nodes: []workflow.WorkflowNode{
+		{ID: "every", Type: "trigger.schedule", Config: map[string]interface{}{"cron": "@every 1h"}},
+		{ID: "daily", Type: "trigger.schedule", Config: map[string]interface{}{"cron": "0 0 14 * * *"}},
+	}}}}
+	daemon := map[string]time.Time{"w1/every": now.Add(17 * time.Minute), "w1/daily": now.Add(-time.Minute)}
+	run := func(running bool) map[string]ScheduleRow {
+		s := Build(context.Background(), Options{DB: db.DB, ProfileID: "default", Now: now, Workflows: src,
+			DaemonRunning: func() bool { return running }, DaemonSchedules: func() map[string]time.Time { return daemon },
+			Sections: map[string]bool{"schedules": true}})
+		out := map[string]ScheduleRow{}
+		for _, u := range s.Schedules.Upcoming {
+			out[u.NodeID] = u
+		}
+		return out
+	}
+	up := run(true)
+	if up["every"].Source != "daemon" || up["every"].NextRun != "2026-09-26T12:17:00Z" {
+		t.Fatalf("every = %+v", up["every"])
+	}
+	if up["daily"].Source != "computed" || up["daily"].NextRun != "2026-09-26T14:00:00Z" {
+		t.Fatalf("a past daemon time must not be used: %+v", up["daily"])
+	}
+	if up := run(false); up["every"].Source != "computed" {
+		t.Fatalf("no daemon: %+v", up["every"])
+	}
+}
