@@ -174,15 +174,8 @@
     }
 
     settle(frame.id);
-    if (frame.ok) {
-      entry.resolve(frame.data);
-    } else {
-      const err = askError(frame.error || "the backend refused the request", frame.code || "");
-      // A refusal can still carry what the backend knows (a failed verify's
-      // report); keep it for callers that can show it.
-      if (frame.data !== undefined) err.data = frame.data;
-      entry.reject(err);
-    }
+    if (frame.ok) entry.resolve(frame.data);
+    else entry.reject(askError(frame.error || "the backend refused the request", frame.code || ""));
     return true;
   }
 

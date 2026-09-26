@@ -199,16 +199,9 @@
       if (msg.inputs && typeof msg.inputs === "object" && Object.keys(msg.inputs).length) params.inputs = msg.inputs;
       const st = session.status();
       if (st.profile) params.profile = st.profile;
-      try {
-        return { ok: true, result: await request("record.verify", params, LONG) };
-      } catch (err) {
-        // A failed replay may still come with its report: show that, not
-        // only the error, so the panel can say which step failed.
-        if (err && err.data && typeof err.data === "object" && Array.isArray(err.data.steps)) {
-          return { ok: true, result: Object.assign({ ok: false, error: err.message }, err.data) };
-        }
-        throw err;
-      }
+      // A failed replay settles normally with its report (ok:false); only
+      // a command that never produced a report is an error.
+      return { ok: true, result: await request("record.verify", params, LONG) };
     },
     record_save: async (msg) => {
       const params = { draftDir: msg.draftDir, saveAs: msg.saveAs || "action" };
