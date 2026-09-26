@@ -195,6 +195,10 @@ func fetchOrCreateKEK(profileID string) ([]byte, error) {
 // Used only by the vault-key migration to unwrap existing secrets so they
 // can be re-encrypted under a fresh per-profile key; every other code path
 // uses the per-profile functions above.
+//
+// Hosts with a working OS keyring read only the keychain's "kek" account.
+// Hosts without one (MONOAGENT_ALLOW_FILE_KEYRING=1) consult the legacy
+// singleton file-keyring file instead — never the OS keyring error.
 func fetchLegacyKEK() (kek []byte, found bool, err error) {
 	keyringIOMu.Lock()
 	defer keyringIOMu.Unlock()
@@ -203,6 +207,16 @@ func fetchLegacyKEK() (kek []byte, found bool, err error) {
 	if err != nil {
 		if errors.Is(err, keyring.ErrNotFound) {
 			return nil, false, nil
+		}
+		// The OS keyring is unavailable (not merely empty). Follow the same
+		// backend selection as peekKEK/fetchOrCreateKEK: under the opted-in
+		// file keyring, the only place a pre-per-profile KEK could ever have
+		// lived is the singleton legacy file (see readLegacyFileKEK); its
+		// absence means "no legacy KEK", silently — not an error the vault
+		// key migration would print as a warning on every run. Without the
+		// opt-in, fail closed exactly as before.
+		if fileKeyringEnabled() {
+			return readLegacyFileKEK()
 		}
 		return nil, false, fmt.Errorf("secrets: reading legacy KEK from keychain: %w", err)
 	}
