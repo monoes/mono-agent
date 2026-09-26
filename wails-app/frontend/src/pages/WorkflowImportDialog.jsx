@@ -10,9 +10,9 @@ import { api } from '../services/api.js'
 import { emitAutomationsChanged } from '../lib/appEvents.js'
 import { confirm } from '../components/ConfirmDialog.jsx'
 import { ErrorBox, OkBox, Busy, body, label, mono, muted, panel, useDialog } from './connections/ui.jsx'
-import { STATUS_TEXT, installSummary, ReviewDetail, COPY_WARNING, copyOfExisting, splitBundle, NotIncluded, Automations, Differs, ChangeList } from './workflowImport/bundleParts.jsx'
+import { STATUS_TEXT, installSummary, ReviewDetail, COPY_WARNING, copyOfExisting, copyReasonOf, splitBundle, NotIncluded, Automations, Differs, ChangeList } from './workflowImport/bundleParts.jsx'
 
-export { copyOfExisting, splitBundle }
+export { copyOfExisting, copyReasonOf, splitBundle }
 
 export default function WorkflowImportDialog({ onClose, onOpen, onImported, onAutomationsInstalled }) {
   const dialog = useDialog(onClose)
@@ -149,7 +149,9 @@ export default function WorkflowImportDialog({ onClose, onOpen, onImported, onAu
               {existingId && (
                 <div role="note" style={{ ...panel, borderColor: 'var(--yellow)', display: 'flex', flexDirection: 'column', gap: 8 }}>
                   <span style={{ ...body, fontSize: 11.5 }}>
-                    A workflow named “{res.name}” already exists and was left as it is, so this file was imported as a separate copy.
+                    {copyReasonOf(res) === 'edited'
+                      ? <>“{res.name}” was changed here since it was imported; your edited version was kept, so this file was imported as a separate copy.</>
+                      : <>A workflow named “{res.name}” already exists and was left as it is, so this file was imported as a separate copy.</>}
                   </span>
                   <button className="btn btn-secondary btn-sm" onClick={replaceExisting} disabled={!!busy} style={{ alignSelf: 'flex-start' }}>
                     {busy === 'replace' ? 'Replacing…' : 'Replace the existing workflow instead'}

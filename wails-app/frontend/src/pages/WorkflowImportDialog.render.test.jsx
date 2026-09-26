@@ -12,7 +12,7 @@ vi.mock('../services/api.js', () => ({ api }))
 
 import ConfirmHost from '../components/ConfirmDialog.jsx'
 import { onAutomationsChanged } from '../lib/appEvents.js'
-import WorkflowImportDialog, { copyOfExisting, splitBundle } from './WorkflowImportDialog.jsx'
+import WorkflowImportDialog, { copyOfExisting, copyReasonOf, splitBundle } from './WorkflowImportDialog.jsx'
 
 afterEach(() => { cleanup(); vi.clearAllMocks() })
 
@@ -141,6 +141,24 @@ describe('WorkflowImportDialog', () => {
     expect(screen.queryByText('Replace the existing workflow instead')).not.toBeInTheDocument()
   })
 
+  it('uses copyOf and words an edited-copy notice from copyReason', async () => {
+    for (const reason of ['id', 'import']) {
+      await importFile({ id: 'copy-2', name: 'Daily digest', status: 'created', copyOf: 'orig-7', copyReason: reason,
+        warnings: ['a workflow with this name already exists: orig-7; imported as a copy — use --replace orig-7 to replace it'] })
+      expect(await screen.findByText(/your edited version was kept, so this file was imported as a separate copy/)).toBeInTheDocument()
+      api.importWorkflowFull.mockResolvedValueOnce({ id: 'orig-7', name: 'Daily digest', status: 'updated', removedCopy: 'copy-2' })
+      fireEvent.click(screen.getByText('Replace the existing workflow instead'))
+      fireEvent.click(await screen.findByText('Replace', { selector: 'button' }))
+      await waitFor(() => expect(api.importWorkflowFull).toHaveBeenLastCalledWith('/w/flow.json', { replace: 'orig-7', removeCopy: 'copy-2' }))
+      cleanup(); vi.clearAllMocks()
+    }
+  })
+
+  it('keeps the same-name wording for copyReason "name"', async () => {
+    await importFile({ id: 'copy-3', name: 'Daily digest', status: 'created', copyOf: 'orig-8', copyReason: 'name', warnings: ['a workflow with this name already exists: orig-8; imported as a copy'] })
+    expect(await screen.findByText(/A workflow named “Daily digest” already exists and was left as it is/)).toBeInTheDocument()
+  })
+
   it('shows other warnings as they are', async () => {
     await importFile({ id: 'w1', name: 'X', status: 'created', warnings: ['node "a" uses a deprecated type'] })
     expect(await screen.findByText('⚠ node "a" uses a deprecated type')).toBeInTheDocument()
@@ -225,6 +243,13 @@ describe('WorkflowImportDialog', () => {
 })
 
 describe('import result helpers', () => {
+  it('copyReasonOf maps id/import to edited and defaults to name', () => {
+    expect(copyReasonOf({ copyReason: 'id' })).toBe('edited')
+    expect(copyReasonOf({ copyReason: 'import' })).toBe('edited')
+    expect(copyReasonOf({ copyReason: 'name' })).toBe('name')
+    expect(copyReasonOf({})).toBe('name')
+  })
+
   it('copyOfExisting prefers a structured field and reads the copy warning', () => {
     expect(copyOfExisting({ copyOf: 'a1', warnings: ['a workflow with this name already exists: b2; imported as a copy'] })).toBe('a1')
     expect(copyOfExisting({ warnings: ['a workflow with this name already exists: b2; imported as a copy — use --replace b2'] })).toBe('b2')

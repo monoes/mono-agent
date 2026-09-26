@@ -69,9 +69,9 @@ function ReviewNotes({ d }) {
   )
 }
 
-// copyOfExisting returns the id of the same-named workflow an import was
-// kept apart from (the CLI's "imported as a copy" warning). A structured
-// field wins when the CLI sends one.
+// copyOfExisting returns the id of the workflow an import was kept apart
+// from: the CLI's copyOf, else (older CLIs) the id in its "imported as a
+// copy" warning.
 export const COPY_WARNING = /already exists:\s*([^\s;]+);\s*imported as a copy/i
 export function copyOfExisting(res) {
   if (res?.copyOf) return res.copyOf
@@ -84,6 +84,16 @@ export function copyOfExisting(res) {
 
 // splitBundle separates packages the file carries (installable when
 // missing) from ones the exporter could not include (notBundled).
+// copyReasonOf is why the import became a copy: "name" (a same-named
+// workflow) or "edited" (the file's own id, or an earlier import of this
+// file, was edited here — CLI reasons "id" and "import"). Older CLIs send
+// no reason; their warning is about a same-named workflow.
+export function copyReasonOf(res) {
+  const r = res?.copyReason
+  if (r === 'id' || r === 'import') return 'edited'
+  return 'name'
+}
+
 export function splitBundle(items) {
   const all = items || []
   const notIncluded = all.filter(i => i.notBundled && i.status === 'missing')
