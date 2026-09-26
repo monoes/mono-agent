@@ -254,3 +254,14 @@ test("the bridge's selector_conflict code and keys come first; other codes still
   assert.deepEqual(V.selectorConflict({ message: CONFLICT, code: "internal" }, "contact").keys, ["contact.name_input"]);
   assert.equal(V.selectorConflict({ message: "draft not found", code: "bad_params" }), null);
 });
+
+test("save as new only while the Automation field holds the analyzer's proposal", () => {
+  const draft = { isNew: true, automation: "e2e-crm-2" };
+  assert.equal(V.saveAsNew(draft, "e2e-crm-2"), true);
+  assert.equal(V.saveAsNew(draft, " e2e-crm-2 "), true);
+  assert.equal(V.saveAsNew(draft, "e2e-crm"), false, "an existing automation typed in");
+  assert.equal(V.saveAsNew(draft, "brand-new"), false, "any other name goes as --automation, which installs it");
+  assert.equal(V.saveAsNew({ isNew: false, automation: "crm" }, "crm"), false);
+  assert.equal(V.alreadyExists(new Error("automation e2e-crm already exists; use --automation e2e-crm")), true);
+  assert.equal(V.alreadyExists(new Error("draft not found")), false);
+});

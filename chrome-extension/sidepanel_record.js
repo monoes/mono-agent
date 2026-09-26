@@ -342,18 +342,30 @@
     const force = View.hasErrors(draft) && confirmSave;
     saveBtn.disabled = true;
     keepBtn.disabled = true;
-    try {
-      const res = await send({
+    const automation = saveAutomation.value.trim();
+    const request = (isNew) =>
+      send({
         type: "record_save",
         draftDir: draft.draftDir,
         saveAs: saveAs.value,
         name: saveName.value.trim(),
-        automation: saveAutomation.value.trim(),
-        // A new automation stays new under whatever name the person gives it.
-        isNew: draft.isNew,
+        automation,
+        isNew,
         force,
         keepPackageSelectors: keepPackageSelectors === true,
       });
+    try {
+      // `new` only for the analyzer's own proposal; a name the person typed
+      // is an automation to add to (the CLI installs it if it is not there).
+      const asNew = View.saveAsNew(draft, automation);
+      let res;
+      try {
+        res = await request(asNew);
+      } catch (err) {
+        // The proposed id was installed meanwhile: add to it instead.
+        if (!asNew || !View.alreadyExists(err)) throw err;
+        res = await request(false);
+      }
       keepBtn.hidden = true;
       const done = View.saveResult(res.result);
       say(draftMsg, done.warn ? "warn" : "ok", done.text);
