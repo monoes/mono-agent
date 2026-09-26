@@ -217,6 +217,11 @@ type bundleReviewDetail struct {
 	Domains      []string             `json:"domains"`
 	Capabilities []string             `json:"capabilities"`
 	Replaces     *automation.Replaced `json:"replaces,omitempty"`
+	// The install review's confirmation fields, as `automation install
+	// --dry-run` reports them, so the import dialog can show the same.
+	ReplaceRequired bool                    `json:"replaceRequired"`
+	TrustChange     *automation.TrustChange `json:"trustChange,omitempty"`
+	Visibility      map[string][]string     `json:"visibility"`
 }
 
 // bundleImportOptions controls handleBundledAutomations.
@@ -422,8 +427,18 @@ func newBundleReviewDetail(r *automation.InstallResult) *bundleReviewDetail {
 	return &bundleReviewDetail{
 		ID: r.ID, Version: r.Version, Publisher: rv.Publisher,
 		Domains: append([]string{}, rv.Domains...), Capabilities: caps,
-		Replaces: rv.Replaces,
+		Replaces:        rv.Replaces,
+		ReplaceRequired: rv.ReplaceRequired,
+		TrustChange:     rv.TrustChange,
+		Visibility:      nonNilVisibility(rv.Visibility),
 	}
+}
+
+func nonNilVisibility(v map[string][]string) map[string][]string {
+	if v == nil {
+		return map[string][]string{}
+	}
+	return v
 }
 
 // bundleReviewLine summarises an install review on one line: id, version,
