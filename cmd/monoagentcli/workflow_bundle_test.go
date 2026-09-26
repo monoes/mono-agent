@@ -27,7 +27,7 @@ const bundleTestWorkflow = `{
 
 func TestWorkflowAutomationIDs(t *testing.T) {
 	// "foo" is an alias of the package local-foo; "core" is no automation.
-	resolve := func(prefix string) string {
+	resolve := func(prefix, _ string) string {
 		return map[string]string{"a": "a", "b": "b", "foo": "local-foo", "local-foo": "local-foo"}[prefix]
 	}
 	got := workflowAutomationIDs([]workflow.WorkflowFileNode{

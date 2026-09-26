@@ -1537,7 +1537,8 @@ func workflowFileFromWorkflow(wf *workflow.Workflow) workflow.WorkflowFile {
 // newWorkflowExportCmd exports a workflow as JSON.
 func newWorkflowExportCmd(cfg *globalConfig) *cobra.Command {
 	var outputFile string
-	var bundle bool
+	var bundle, useSuggested bool
+	var autoDomains []string
 
 	cmd := &cobra.Command{
 		Use:   "export <id>",
@@ -1563,23 +1564,32 @@ func newWorkflowExportCmd(cfg *globalConfig) *cobra.Command {
 
 			var wfFile interface{} = workflowFileFromWorkflow(wf)
 			if bundle {
-				if wfFile, err = bundleWorkflowAutomations(workflowFileFromWorkflow(wf)); err != nil {
+				domains, err := parseAutomationDomains(autoDomains)
+				if err != nil {
 					return err
 				}
+				b, err := bundleWorkflowAutomations(workflowFileFromWorkflow(wf),
+					bundleOptions{domains: domains, useSuggested: useSuggested})
+				if err != nil {
+					return err
+				}
+				for _, w := range append(suggestedNotices(b), unbundledWarnings(b)...) {
+					fmt.Fprintln(os.Stderr, w)
+				}
+				wfFile = b
 			}
 
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
 			if outputFile != "" {
-				f, err := os.Create(outputFile)
+				// Encode fully, then write via temp file + rename: a failed
+				// export never leaves an empty or truncated file behind.
+				b, err := json.MarshalIndent(wfFile, "", "  ")
 				if err != nil {
-					return fmt.Errorf("create output file: %w", err)
-				}
-				defer f.Close()
-				enc = json.NewEncoder(f)
-				enc.SetIndent("", "  ")
-				if err := enc.Encode(wfFile); err != nil {
 					return err
+				}
+				if err := writeFileAtomic(outputFile, append(b, '\n')); err != nil {
+					return fmt.Errorf("write output file: %w", err)
 				}
 				fmt.Fprintf(os.Stdout, "Exported workflow %q to %s\n", wf.Name, outputFile)
 				return nil
@@ -1590,6 +1600,10 @@ func newWorkflowExportCmd(cfg *globalConfig) *cobra.Command {
 
 	cmd.Flags().StringVarP(&outputFile, "output", "o", "", "Write to file instead of stdout")
 	cmd.Flags().BoolVar(&bundle, "bundle-automations", false, "Embed the automation packages the workflow's nodes use")
+	cmd.Flags().StringArrayVar(&autoDomains, "automation-domains", nil,
+		"With --bundle-automations: site domains for a bundled package's exported copy, as <id>=<site,...> (repeatable)")
+	cmd.Flags().BoolVar(&useSuggested, "use-suggested-domains", false,
+		"With --bundle-automations: give legacy packages the domains suggested from their navigate URLs")
 	return cmd
 }
 
