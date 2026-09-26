@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -766,9 +765,8 @@ func wailsChatEmitter(ctx context.Context) chatEventEmitter {
 
 // initChatSupervisor wires a.chatSup (called from startup()) and runs the
 // orphaned-turn sweep in the background, so a slow CLI never delays
-// startup. db is unused: the supervisor reaches the history only through
-// the CLI.
-func (a *App) initChatSupervisor(_ *sql.DB) {
+// startup. The supervisor reaches the history only through the CLI.
+func (a *App) initChatSupervisor() {
 	a.chatSup = newChatSupervisor(defaultChatProcessLauncher, wailsChatEmitter(a.ctx), findMonoAgentCLI)
 	sup := a.chatSup
 	go func() {

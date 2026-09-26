@@ -16,7 +16,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/monoes/mono-agent/internal/ai"
 	"github.com/monoes/mono-agent/internal/capturedocs"
 	"github.com/monoes/mono-agent/internal/connections"
 	"github.com/monoes/mono-agent/internal/docscan"
@@ -39,7 +38,6 @@ type App struct {
 	logs    []LogEntry
 	logsMu  sync.Mutex
 	connMgr *connections.Manager
-	aiStore *ai.AIStore
 	chatSup *chatSupervisor // conversation/turn/event supervisor; see app_chat.go
 
 	runningMu      sync.Mutex
@@ -140,14 +138,9 @@ func (a *App) startup(ctx context.Context) {
 		a.connMgr = mgr
 	}
 
-	// Initialize AI store.
-	aiStore, aiErr := ai.NewAIStore(db)
-	if aiErr != nil {
-		fmt.Printf("ai store init error: %v\n", aiErr)
-	} else {
-		a.aiStore = aiStore
-		a.initChatSupervisor(db)
-	}
+	// The chat supervisor reaches chat history only through the CLI
+	// (`chat history …`), which creates the chat tables itself.
+	a.initChatSupervisor()
 
 	// Load the active profile from settings; default to 'default' if not set.
 	var activeProfileID string
