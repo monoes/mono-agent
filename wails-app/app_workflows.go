@@ -704,42 +704,6 @@ func (a *App) GetWorkflowExecutions(workflowID string, limit int) ([]WorkflowExe
 	return execs, rows.Err()
 }
 
-func (a *App) GetRecentExecutions(limit int) ([]WorkflowExecutionSummary, error) {
-	if a.db == nil {
-		return nil, fmt.Errorf("database not available")
-	}
-	if limit <= 0 {
-		limit = 20
-	}
-	rows, err := a.db.Query(`SELECT e.id, e.workflow_id, COALESCE(w.name,'') as workflow_name,
-	                                 e.status, COALESCE(e.trigger_type,''),
-	                                 COALESCE(e.started_at,'') as started_at,
-	                                 COALESCE(e.finished_at,'') as finished_at,
-	                                 COALESCE(e.error_message,'') as error,
-	                                 e.created_at
-	                          FROM workflow_executions e
-	                          LEFT JOIN workflows w ON e.workflow_id = w.id
-	                          WHERE w.profile_id = ?
-	                          ORDER BY e.created_at DESC
-	                          LIMIT ?`, a.getActiveProfileID(), limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var execs []WorkflowExecutionSummary
-	for rows.Next() {
-		var e WorkflowExecutionSummary
-		if rows.Scan(&e.ID, &e.WorkflowID, &e.WorkflowName, &e.Status, &e.TriggerType,
-			&e.StartedAt, &e.FinishedAt, &e.Error, &e.CreatedAt) == nil {
-			execs = append(execs, e)
-		}
-	}
-	if execs == nil {
-		execs = []WorkflowExecutionSummary{}
-	}
-	return execs, rows.Err()
-}
-
 // GetExecutionDetail returns a full execution record with per-node status.
 func (a *App) GetExecutionDetail(executionID string) (map[string]interface{}, error) {
 	if a.db == nil {

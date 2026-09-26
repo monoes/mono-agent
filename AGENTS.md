@@ -139,6 +139,31 @@ Typical agent loop: `workflow search --json` → inspect template with
 `workflow templates show <id>` → `workflow run --dry-run` → real run with
 `--json` → read per-node outputs.
 
+### At a glance: `summary`
+
+`monoagentcli --json summary [--section workflows,executions,…]` is one
+read-only call that returns counts for:
+
+- workflows
+- runs (running/queued, last 24 h, recent 15)
+- next scheduled run per `trigger.schedule` node, plus `daemon_running`
+- things waiting for a person: workflow HIL, leads to review, drafts, suggested person links
+- people
+- captures, documents and messages (7 days)
+- applications by status
+- automation packages and selector health
+- recordings
+- Jev usage (24 h, from the local usage table)
+- logins: active, expiring within 72 h, expired
+- vault counts (counts only, never secret names or values)
+- daemon, extension bridge and org-serve state
+
+It is local-only: it never calls Jev, monomind or the network (apart from a
+loopback probe of the extension bridge), so it is safe to poll. The desktop
+dashboard polls it. A failing section reports `"error"` inside itself, and the
+command still exits 0. For orgs, use `monoagentcli org summary [--fast]`. For
+the full run list, use `monoagentcli --json workflow executions --all --limit N`.
+
 > **Importing a workflow is equivalent to executing code.** Workflows can
 > run shell commands (`system.execute_command`), inline JavaScript
 > (`core.code`), and template expressions against local files. Only import
@@ -310,6 +335,8 @@ each one) entirely out of the Go binary.
   at all.
 
 ## Orgs, automations, and autonomy
+
+`monoagentcli org summary [--fast]` prints one row per org (running, autonomy level, paused, queued messages, `needs_you`) plus totals. `--fast` reads only local files and the database and leaves `needs_you` null. Without it, `needs_you` is computed for every org in parallel (monomind round-trips, each org capped at 10 s).
 
 An **org** is a team of agent roles run by monomind (`monomind org serve`).
 Its config lives in the active profile's folder:

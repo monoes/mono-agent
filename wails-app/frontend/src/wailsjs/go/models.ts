@@ -239,34 +239,6 @@ export namespace main {
 	        this.method = source["method"];
 	    }
 	}
-	export class WorkflowExecutionSummary {
-	    id: string;
-	    workflow_id: string;
-	    workflow_name: string;
-	    status: string;
-	    trigger_type: string;
-	    started_at: string;
-	    finished_at: string;
-	    error: string;
-	    created_at: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new WorkflowExecutionSummary(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.workflow_id = source["workflow_id"];
-	        this.workflow_name = source["workflow_name"];
-	        this.status = source["status"];
-	        this.trigger_type = source["trigger_type"];
-	        this.started_at = source["started_at"];
-	        this.finished_at = source["finished_at"];
-	        this.error = source["error"];
-	        this.created_at = source["created_at"];
-	    }
-	}
 	export class SessionSummary {
 	    platform: string;
 	    username: string;
@@ -292,7 +264,6 @@ export namespace main {
 	    total_people: number;
 	    total_lists: number;
 	    sessions: SessionSummary[];
-	    recent_executions: WorkflowExecutionSummary[];
 	    db_path: string;
 	
 	    static createFrom(source: any = {}) {
@@ -307,7 +278,6 @@ export namespace main {
 	        this.total_people = source["total_people"];
 	        this.total_lists = source["total_lists"];
 	        this.sessions = this.convertValues(source["sessions"], SessionSummary);
-	        this.recent_executions = this.convertValues(source["recent_executions"], WorkflowExecutionSummary);
 	        this.db_path = source["db_path"];
 	    }
 	
@@ -531,6 +501,7 @@ export namespace main {
 		    return a;
 		}
 	}
+	
 	export class JevSurfaceResult {
 	    profile_id: string;
 	    surface: string;
@@ -609,6 +580,7 @@ export namespace main {
 		    return a;
 		}
 	}
+	
 	export class KnowledgeSearchResult {
 	    path: string;
 	    excerpt: string;
@@ -1462,10 +1434,38 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class WorkflowExecutionSummary {
+	    id: string;
+	    workflow_id: string;
+	    workflow_name: string;
+	    status: string;
+	    trigger_type: string;
+	    started_at: string;
+	    finished_at: string;
+	    error: string;
+	    created_at: string;
 	
+	    static createFrom(source: any = {}) {
+	        return new WorkflowExecutionSummary(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.workflow_id = source["workflow_id"];
+	        this.workflow_name = source["workflow_name"];
+	        this.status = source["status"];
+	        this.trigger_type = source["trigger_type"];
+	        this.started_at = source["started_at"];
+	        this.finished_at = source["finished_at"];
+	        this.error = source["error"];
+	        this.created_at = source["created_at"];
+	    }
+	}
 	export class WorkflowImportResult {
 	    id: string;
 	    name: string;
+	    status?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new WorkflowImportResult(source);
@@ -1475,6 +1475,7 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
 	        this.name = source["name"];
+	        this.status = source["status"];
 	    }
 	}
 	

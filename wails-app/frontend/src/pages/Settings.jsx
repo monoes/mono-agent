@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link2, Brain, ExternalLink, Download, Bot } from 'lucide-react'
 import { api } from '../services/api.js'
@@ -304,8 +304,16 @@ function LanguageSection() {
   )
 }
 
-export default function Settings({ onNavigate }) {
+export default function Settings({ onNavigate, navData }) {
   const { t } = useTranslation()
+  // Deep links (the dashboard's "health" and "Jev" rows) scroll to a section.
+  const sectionRefs = { health: useRef(null), jev: useRef(null) }
+  const section = navData?.section
+  useEffect(() => {
+    const el = section && sectionRefs[section]?.current
+    if (el) el.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navData])
   const [dbPath, setDbPath] = useState('')
   const [dbConnected, setDbConnected] = useState(false)
   const [connCount, setConnCount] = useState(null)
@@ -344,7 +352,7 @@ export default function Settings({ onNavigate }) {
 
       <div className="page-body">
         {/* System health (monoagentcli doctor) */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+        <div ref={sectionRefs.health} data-section="health" style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: 2 }}>
             {t('settings.health.sectionTitle')}
           </span>
@@ -403,7 +411,7 @@ export default function Settings({ onNavigate }) {
 
         <AssistantToolsSection />
 
-        <JevSection />
+        <div ref={sectionRefs.jev} data-section="jev"><JevSection /></div>
 
         {/* Application Info */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>

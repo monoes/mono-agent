@@ -42,8 +42,20 @@ function parseStreamResult(s) {
   return r
 }
 
+// Bindings that return the CLI's stdout verbatim yield either the payload or
+// {"error": "..."}; turn the latter into a rejection so guard() reports it.
+const parseCLIJSON = (label) => (raw) => {
+  const v = typeof raw === 'string' ? JSON.parse(raw) : raw
+  if (v && typeof v === 'object' && !Array.isArray(v) && typeof v.error === 'string' && v.v === undefined) {
+    throw new Error(`${label}: ${v.error}`)
+  }
+  return v
+}
+
 export const api = {
   getDashboardStats:    () => GoApp.GetDashboardStats().catch(guard('dashboard stats', null)),
+  getSummary:           () => GoApp.GetSummary().then(parseCLIJSON('summary')).catch(guard('summary', null)),
+  getOrgSummary:        (fast = true) => GoApp.GetOrgSummary(fast).then(parseCLIJSON('org summary')).catch(guard('org summary', null)),
   listWorkflows:        () => GoApp.ListWorkflows().catch(guard('list workflows', [])),
   runWorkflow:          (id) => GoApp.RunWorkflow(id).catch(e => { reportError('run workflow', e); return `error: ${e}` }),
   runWorkflowWithInput: (id, input) => GoApp.RunWorkflowWithInput(id, input || '').catch(e => { reportError('run workflow', e); return `error: ${e}` }),

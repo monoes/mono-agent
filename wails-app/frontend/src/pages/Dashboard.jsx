@@ -1,344 +1,57 @@
-import { useEffect, useState, useCallback, useMemo, memo } from 'react'
+// The at-a-glance home. Every number comes from the CLI — `summary`,
+// `org summary`, `workflow list` and `workflow executions --all` (see
+// dashboard/useDashboardData.js); this page only lays the cards out.
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import {
-  RefreshCw, Play, Users, Shield, GitBranch,
-  CheckCircle, XCircle, Clock, Loader, ChevronRight,
-  ToggleLeft, ToggleRight, Layers, Zap, StopCircle,
-} from 'lucide-react'
-import { api, STATE_COLORS, PLATFORM_COLORS } from '../services/api.js'
+import { RefreshCw, GitBranch } from 'lucide-react'
+import { api } from '../services/api.js'
 import { GetVersion } from '../wailsjs/go/main/App'
-import { usePageVisibleRef, useVisibleCatchUp } from '../lib/usePageVisible.js'
+import { getHealth, subscribeHealth, summarize } from '../lib/health.js'
+import { useDashboardData } from './dashboard/useDashboardData.js'
+import { attentionItems, unreadSections } from './dashboard/attention.js'
+import AttentionStrip from './dashboard/AttentionStrip.jsx'
+import StatRow from './dashboard/StatRow.jsx'
+import WorkflowsCard from './dashboard/WorkflowsCard.jsx'
+import RecentRunsCard from './dashboard/RecentRunsCard.jsx'
+import ActivityCard from './dashboard/ActivityCard.jsx'
+import SystemCard from './dashboard/SystemCard.jsx'
+import OrgsCard from './dashboard/OrgsCard.jsx'
+import AutomationsCard from './dashboard/AutomationsCard.jsx'
+import AccountsCard from './dashboard/AccountsCard.jsx'
 
-// ── Status dot for execution ──────────────────────────────────────────────────
-function ExecStatusDot({ status }) {
-  const s = (status || '').toUpperCase()
-  const color =
-    s === 'COMPLETED' ? 'var(--green-neon)' :
-    s === 'RUNNING'   ? 'var(--cyan)' :
-    s === 'FAILED'    ? '#ef4444' :
-    s === 'PENDING'   ? '#eab308' : 'var(--text-muted)'
-  const pulse = s === 'RUNNING'
-  return (
-    <span style={{
-      display: 'inline-block',
-      width: 7, height: 7, borderRadius: '50%',
-      background: color, flexShrink: 0,
-      boxShadow: pulse ? `0 0 6px ${color}` : 'none',
-      animation: pulse ? 'pulse 1.4s ease-in-out infinite' : 'none',
-    }} />
-  )
-}
-
-// ── Duration label ────────────────────────────────────────────────────────────
-function duration(startedAt, finishedAt) {
-  if (!startedAt) return null
-  const t0 = new Date(startedAt)
-  const t1 = finishedAt ? new Date(finishedAt) : new Date()
-  const ms = t1 - t0
-  if (isNaN(ms) || ms < 0) return null
-  const sec = Math.round(ms / 1000)
-  if (sec < 60) return `${sec}s`
-  return `${Math.floor(sec / 60)}m ${sec % 60}s`
-}
-
-// ── Relative time ─────────────────────────────────────────────────────────────
-function relTime(ts) {
-  if (!ts) return '—'
-  const diff = Date.now() - new Date(ts)
-  if (diff < 60000) return 'just now'
-  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`
-  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`
-  return new Date(ts).toLocaleDateString()
-}
-
-// ── Stat card ─────────────────────────────────────────────────────────────────
-function StatCard({ icon: Icon, label, value, color, loading }) {
-  return (
-    <div className="stat-card" style={{ '--accent-color': color, '--icon-bg': color + '18', '--icon-color': color }}>
-      <div className="stat-icon"><Icon size={16} /></div>
-      <div className="stat-value">
-        {loading
-          ? <div style={{ width: 40, height: 20, background: 'var(--elevated)', borderRadius: 4, animation: 'pulse-dot 1.5s infinite' }} />
-          : (value ?? '—')}
-      </div>
-      <div className="stat-label">{label}</div>
-    </div>
-  )
-}
-
-// ── Workflow row ──────────────────────────────────────────────────────────────
-function WorkflowRow({ wf, execMap, onRun, onStop, onToggle, onNavigate }) {
-  const execs = execMap[wf.id] || []
-  const last = execs[0]
-  const [running, setRunning] = useState(false)
-  const [stopping, setStopping] = useState(false)
-  const [toggling, setToggling] = useState(false)
-
-  const handleRun = async () => {
-    setRunning(true)
-    try {
-      await onRun(wf.id)
-    } finally {
-      setTimeout(() => setRunning(false), 2000)
-    }
-  }
-
-  const handleStop = async () => {
-    if (!last?.id) return
-    setStopping(true)
-    try {
-      await onStop(last.id)
-    } finally {
-      setStopping(false)
-    }
-  }
-
-  const handleToggle = async () => {
-    setToggling(true)
-    try {
-      await onToggle(wf.id, !wf.is_active)
-    } finally {
-      setToggling(false)
-    }
-  }
-
-  const lastStatus = last?.status?.toUpperCase() || null
-  const isRunning = lastStatus === 'RUNNING' || lastStatus === 'QUEUED' || lastStatus === 'PENDING'
-  const statusColor =
-    lastStatus === 'COMPLETED' || lastStatus === 'SUCCESS' ? 'var(--green-neon)' :
-    lastStatus === 'SUCCESS_WITH_ERRORS' ? '#fbbf24' :
-    isRunning                  ? 'var(--cyan)' :
-    lastStatus === 'FAILED'    ? '#ef4444' :
-    lastStatus === 'CANCELLED' ? '#6b7280' : 'var(--text-dim)'
-
-  return (
-    <div className="wf-row" style={{ opacity: wf.is_active ? 1 : 0.55 }}>
-      {/* Active toggle */}
-      <button
-        className="btn btn-ghost btn-icon"
-        onClick={handleToggle}
-        disabled={toggling}
-        title={wf.is_active ? 'Deactivate' : 'Activate'}
-        style={{ color: wf.is_active ? 'var(--cyan)' : 'var(--text-dim)', padding: 2 }}
-      >
-        {wf.is_active
-          ? <ToggleRight size={18} />
-          : <ToggleLeft size={18} />}
-      </button>
-
-      {/* Name + description */}
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {wf.name}
-        </div>
-        {wf.description && (
-          <div style={{ fontSize: 11, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 1 }}>
-            {wf.description}
-          </div>
-        )}
-      </div>
-
-      {/* Last run */}
-      <div style={{ textAlign: 'right', minWidth: 80 }}>
-        {last ? (
-          <>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 5, justifyContent: 'flex-end' }}>
-              <ExecStatusDot status={last.status} />
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: statusColor, textTransform: 'uppercase' }}>
-                {last.status}
-              </span>
-            </div>
-            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)', marginTop: 2 }}>
-              {relTime(last.created_at)}
-            </div>
-          </>
-        ) : (
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)' }}>never run</span>
-        )}
-      </div>
-
-      {/* Stop button (visible when running) */}
-      {isRunning && (
-        <button
-          className="btn btn-sm"
-          onClick={handleStop}
-          disabled={stopping}
-          style={{
-            gap: 4, minWidth: 56, flexShrink: 0,
-            background: 'rgba(239,68,68,0.12)',
-            border: '1px solid rgba(239,68,68,0.35)',
-            color: '#ef4444',
-          }}
-          title="Stop this execution"
-        >
-          {stopping
-            ? <Loader size={11} style={{ animation: 'spin 1s linear infinite' }} />
-            : <StopCircle size={11} />}
-          Stop
-        </button>
-      )}
-
-      {/* Run button (hidden when running) */}
-      {!isRunning && (
-        <button
-          className="btn btn-secondary btn-sm"
-          onClick={handleRun}
-          disabled={running}
-          style={{ gap: 4, minWidth: 60, flexShrink: 0 }}
-        >
-          {running
-            ? <Loader size={11} style={{ animation: 'spin 1s linear infinite' }} />
-            : <Play size={11} />}
-          {running ? 'Starting' : 'Run'}
-        </button>
-      )}
-
-      {/* Arrow to workflow editor — pass latest executionId so node status overlay loads */}
-      <button
-        className="btn btn-ghost btn-icon"
-        onClick={() => onNavigate('noderunner', last ? { workflowId: wf.id, executionId: last.id } : { workflowId: wf.id })}
-        style={{ padding: 3, color: 'var(--text-dim)' }}
-        title="Open in editor"
-        aria-label={`Open ${wf.name || 'workflow'} in editor`}
-      >
-        <ChevronRight size={14} />
-      </button>
-    </div>
-  )
-}
-
-// ── Execution timeline row ────────────────────────────────────────────────────
-const ExecRow = memo(function ExecRow({ exec, onNavigate }) {
-  const dur = useMemo(() => duration(exec.started_at, exec.finished_at), [exec.started_at, exec.finished_at])
-  const rel = useMemo(() => relTime(exec.created_at), [exec.created_at])
-
-  const handleClick = () => {
-    if (onNavigate) {
-      onNavigate('noderunner', { executionId: exec.id, workflowId: exec.workflow_id })
-    }
-  }
-
-  return (
-    <div
-      onClick={handleClick}
-      style={{
-        display: 'flex', alignItems: 'center', gap: 8, padding: '7px 0',
-        borderBottom: '1px solid var(--border-dim)',
-        cursor: onNavigate ? 'pointer' : 'default',
-        borderRadius: 4,
-        transition: 'background 0.15s',
-      }}
-      onMouseEnter={e => { if (onNavigate) e.currentTarget.style.background = 'rgba(0,180,216,0.06)' }}
-      onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
-      title="View execution in workflow editor"
-    >
-      <ExecStatusDot status={exec.status} />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {exec.workflow_name || exec.workflow_id.slice(0, 8)}
-        </div>
-        {exec.error && (
-          <div style={{ fontSize: 10, color: '#ef4444', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 1 }}>
-            {exec.error}
-          </div>
-        )}
-      </div>
-      <div style={{ textAlign: 'right', flexShrink: 0 }}>
-        {dur && <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--cyan-dim)' }}>{dur}</div>}
-        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)' }}>{rel}</div>
-      </div>
-    </div>
-  )
-})
-
-// ── Main dashboard ────────────────────────────────────────────────────────────
-export default function Dashboard({ stats, onRefresh, onNavigate }) {
+export default function Dashboard({ isActive = true, onRefresh, onNavigate, onOpenHil }) {
   const { t } = useTranslation()
-  const [refreshing, setRefreshing]     = useState(false)
-  const [dashLoading, setDashLoading]   = useState(true)
-  const [workflows, setWorkflows]       = useState([])
-  const [executions, setExecutions]     = useState([])
-  const [ver, setVer]                   = useState(null)
-  const pageVisibleRef = usePageVisibleRef()
-
+  const { summary, summaryFailed, orgs, workflows, executions, loading, refresh, setExecutions, reloadLists } = useDashboardData({ active: isActive })
+  const [ver, setVer] = useState(null)
+  const [refreshing, setRefreshing] = useState(false)
+  const [health, setHealth] = useState(getHealth())
   useEffect(() => { GetVersion().then(setVer).catch(() => {}) }, [])
-  const [execMap, setExecMap]           = useState({})   // workflowID → last execution[]
-
-  const load = useCallback(async () => {
-    const [wfs, execs] = await Promise.all([
-      api.listWorkflows(),
-      api.getRecentExecutions(30),
-    ])
-    const wfList = wfs || []
-    const execList = execs || []
-    setWorkflows(wfList)
-    setExecutions(execList)
-
-    // build a per-workflow map of recent executions (last 1 needed for status badge)
-    const map = {}
-    execList.forEach(e => {
-      if (!map[e.workflow_id]) map[e.workflow_id] = []
-      map[e.workflow_id].push(e)
-    })
-    setExecMap(map)
-    setDashLoading(false)
-  }, [])
-
-  useEffect(() => { load() }, [load])
-
-  // One catch-up refresh when the page becomes visible again after being
-  // hidden — the interval ticks below were gated the whole time.
-  useVisibleCatchUp(load)
-
-  // Auto-poll: 2s while any execution is RUNNING/QUEUED, 5s baseline to catch
-  // new CLI runs that start externally without a manual trigger from this UI.
-  // Individual ticks are gated on page visibility so a hidden window stops
-  // hitting the backend.
-  useEffect(() => {
-    const hasRunning = executions.some(e => {
-      const s = (e.status || '').toUpperCase()
-      return s === 'RUNNING' || s === 'QUEUED' || s === 'PENDING'
-    })
-    const interval = hasRunning ? 2000 : 5000
-    const t = setInterval(() => {
-      if (!pageVisibleRef.current) return
-      load()
-    }, interval)
-    return () => clearInterval(t)
-  }, [executions, load, pageVisibleRef])
+  useEffect(() => subscribeHealth(setHealth), [])
+  const items = useMemo(
+    () => attentionItems(summary, orgs, health?.report ? summarize(health.report) : null),
+    [summary, orgs, health],
+  )
 
   const handleRefresh = async () => {
     setRefreshing(true)
-    await Promise.all([onRefresh(), load()])
+    await Promise.all([onRefresh?.(), refresh()])
     setTimeout(() => setRefreshing(false), 400)
   }
-
+  // Optimistic status flips so the row reacts at once; the next poll corrects it.
   const handleRun = async (id) => {
-    // Optimistic update: mark workflow as running immediately instead of refetching all data
-    setExecutions(prev => {
-      const updated = prev.map(e => e.workflow_id === id && e.status !== 'RUNNING' ? { ...e, status: 'RUNNING' } : e)
-      return updated
-    })
+    setExecutions(prev => prev.map(e => (e.workflow_id === id && e.status !== 'RUNNING' ? { ...e, status: 'RUNNING' } : e)))
     await api.runWorkflow(id)
-    setTimeout(load, 1500)
+    setTimeout(reloadLists, 1500)
   }
-
   const handleStop = async (executionId) => {
-    // Optimistic update: mark cancelled immediately so UI feels instant
-    setExecutions(prev => prev.map(e => e.id === executionId ? { ...e, status: 'CANCELLED' } : e))
+    setExecutions(prev => prev.map(e => (e.id === executionId ? { ...e, status: 'CANCELLED' } : e)))
     await api.cancelWorkflow(executionId)
-    setTimeout(load, 500)
+    setTimeout(reloadLists, 500)
   }
-
   const handleToggle = async (id, active) => {
     await api.setWorkflowActive(id, active)
-    await load()
+    await reloadLists()
   }
-
-  const sessions    = stats?.sessions || []
-  const totalPeople = stats?.total_people || 0
-  const activeWFs   = workflows.filter(w => w.is_active).length
-  const totalExecs  = executions.length
 
   return (
     <>
@@ -358,133 +71,22 @@ export default function Dashboard({ stats, onRefresh, onNavigate }) {
         </div>
       </div>
 
-      <div className="page-body">
-        {/* ── Stat cards ── */}
-        <div className="stat-grid">
-          <StatCard icon={Layers}     label={t('dashboard.stat.workflows')}    value={workflows.length} color="var(--cyan)" loading={dashLoading} />
-          <StatCard icon={GitBranch}  label={t('dashboard.stat.active')}       value={activeWFs}        color="var(--purple-light)" loading={dashLoading} />
-          <StatCard icon={Zap}        label={t('dashboard.stat.recentRuns')}   value={totalExecs}       color="#eab308" loading={dashLoading} />
-          <StatCard icon={Users}      label={t('dashboard.stat.peopleFound')}  value={totalPeople}      color="var(--green-neon)" loading={dashLoading} />
-        </div>
-
+      <div className="page-body dash-page">
+        <AttentionStrip items={items} loading={loading} failed={summaryFailed} unread={unreadSections(summary)}
+          onNavigate={onNavigate} onOpenHil={onOpenHil} />
+        <StatRow summary={summary} orgs={orgs} loading={loading} onNavigate={onNavigate} />
         <div className="dashboard-grid">
-          {/* ── Left: Workflows ── */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-            <div className="card" style={{ flex: 1 }}>
-              <div className="section-header">
-                <div className="section-title"><GitBranch size={12} /> {t('dashboard.workflowsSection.title')}</div>
-                <button
-                  className="btn btn-ghost btn-sm"
-                  onClick={() => onNavigate('noderunner')}
-                  style={{ fontSize: 11, gap: 3 }}
-                >
-                  {t('dashboard.workflowsSection.openEditor')} <ChevronRight size={11} />
-                </button>
-              </div>
-
-              {workflows.length === 0 ? (
-                <div className="empty-state" style={{ padding: '32px 0' }}>
-                  <GitBranch size={28} style={{ color: 'var(--text-dim)', marginBottom: 8 }} />
-                  <div className="empty-state-title" style={{ fontSize: 13 }}>{t('dashboard.workflowsSection.emptyTitle')}</div>
-                  <div className="empty-state-desc" style={{ marginBottom: 12 }}>{t('dashboard.workflowsSection.emptyDesc')}</div>
-                  <button className="btn btn-secondary btn-sm" onClick={() => onNavigate('noderunner')} style={{ gap: 5 }}>
-                    <Play size={12} /> {t('dashboard.workflowsSection.openEditor')}
-                  </button>
-                </div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  {workflows.map(wf => (
-                    <WorkflowRow
-                      key={wf.id}
-                      wf={wf}
-                      execMap={execMap}
-                      onRun={handleRun}
-                      onStop={handleStop}
-                      onToggle={handleToggle}
-                      onNavigate={onNavigate}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
+          <div className="dash-col">
+            <WorkflowsCard workflows={workflows} executions={executions} schedules={summary?.schedules}
+              onRun={handleRun} onStop={handleStop} onToggle={handleToggle} onNavigate={onNavigate} />
+            <RecentRunsCard executions={executions} onNavigate={onNavigate} />
+            <ActivityCard summary={summary} onNavigate={onNavigate} />
           </div>
-
-          {/* ── Right: Recent executions + sessions ── */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {/* Execution timeline */}
-            <div className="card">
-              <div className="section-header">
-                <div className="section-title"><Clock size={12} /> Recent Runs</div>
-              </div>
-              {executions.length === 0 ? (
-                <div style={{ padding: '20px 0', textAlign: 'center', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
-                  No runs yet
-                </div>
-              ) : (
-                <div>
-                  {executions.slice(0, 15).map(e => <ExecRow key={e.id} exec={e} onNavigate={onNavigate} />)}
-                </div>
-              )}
-            </div>
-
-            {/* Connected accounts */}
-            <div className="card">
-              <div className="section-header">
-                <div className="section-title"><Shield size={12} /> Connected Accounts</div>
-                <button
-                  className="btn btn-ghost btn-sm"
-                  onClick={() => onNavigate('connections')}
-                  style={{ fontSize: 11, gap: 3 }}
-                >
-                  Manage <ChevronRight size={11} />
-                </button>
-              </div>
-
-              {sessions.length === 0 ? (
-                <div style={{ padding: '16px 0', textAlign: 'center', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
-                  No active sessions
-                </div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                  {sessions.map((s, i) => (
-                    <div key={i} style={{
-                      display: 'flex', alignItems: 'center', gap: 8,
-                      padding: '7px 10px',
-                      background: 'var(--elevated)',
-                      borderRadius: 'var(--radius)',
-                      border: `1px solid ${s.active ? 'var(--border)' : 'var(--border-dim)'}`,
-                      opacity: s.active ? 1 : 0.5,
-                    }}>
-                      <span className={`status-dot ${s.active ? 'connected' : 'disconnected'}`} />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text)' }}>{s.username}</div>
-                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)' }}>{s.platform}</div>
-                      </div>
-                      <span
-                        className="badge"
-                        style={{
-                          background: (PLATFORM_COLORS[s.platform?.toUpperCase()] || 'var(--cyan)') + '20',
-                          color:      (PLATFORM_COLORS[s.platform?.toUpperCase()] || 'var(--cyan)'),
-                          borderColor:(PLATFORM_COLORS[s.platform?.toUpperCase()] || 'var(--cyan)') + '40',
-                        }}
-                      >
-                        {s.platform}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* DB path */}
-            {stats?.db_path && (
-              <div className="card" style={{ padding: 12 }}>
-                <div className="section-title" style={{ marginBottom: 6, fontSize: 11 }}>Database</div>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)', wordBreak: 'break-all', lineHeight: 1.6 }}>
-                  {stats.db_path}
-                </div>
-              </div>
-            )}
+          <div className="dash-col">
+            <SystemCard summary={summary} onNavigate={onNavigate} />
+            <OrgsCard orgs={orgs} onNavigate={onNavigate} />
+            <AutomationsCard summary={summary} onNavigate={onNavigate} />
+            <AccountsCard summary={summary} onNavigate={onNavigate} />
           </div>
         </div>
       </div>
