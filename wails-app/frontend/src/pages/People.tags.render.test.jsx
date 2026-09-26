@@ -2,7 +2,7 @@
 import React from 'react'
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import '@testing-library/jest-dom/vitest'
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react'
 
 const { mockApi } = vi.hoisted(() => ({
   mockApi: {
@@ -28,7 +28,12 @@ vi.mock('../wailsjs/go/main/App', () => ({}))
 
 import People, { TAG_SUGGESTION_GROUPS, TAG_COLORS } from './People.jsx'
 
-describe('People Tag Suggestions & Color Customization', () => {
+// Each test renders the whole People page and opens the tag editor; on a
+// busy CI box that alone can take several seconds, so these tests get more
+// than vitest's 5s default and the async waits more than waitFor's 1s.
+const SLOW = { timeout: 5000 }
+
+describe('People Tag Suggestions & Color Customization', { timeout: 20000 }, () => {
   afterEach(cleanup)
 
   beforeEach(() => {
@@ -84,62 +89,59 @@ describe('People Tag Suggestions & Color Customization', () => {
     render(<People />)
 
     // Wait for the table to load
-    await waitFor(() => {
-      expect(screen.getByText('@alice')).toBeInTheDocument()
-    })
+    await screen.findByText('@alice', {}, SLOW)
 
     // Click on the tag chip or tag button to open TagEditor modal
     const manageTagButtons = screen.getAllByTitle('Click to manage tags')
     expect(manageTagButtons.length).toBeGreaterThan(0)
     fireEvent.click(manageTagButtons[0])
 
-    // Verify modal is open
-    expect(screen.getByRole('dialog', { name: /manage tags for/i })).toBeInTheDocument()
+    // Verify modal is open, and let its tag load settle before asserting
+    const dialog = screen.getByRole('dialog', { name: /manage tags for/i })
+    await within(dialog).findByTitle("Click to customize this tag's color", {}, SLOW)
 
     // Verify the 3 category headers appear
-    expect(screen.getByText('Sales Pipeline')).toBeInTheDocument()
-    expect(screen.getByText('Role & Authority')).toBeInTheDocument()
-    expect(screen.getByText('Advocacy & Relationships')).toBeInTheDocument()
+    expect(within(dialog).getByText('Sales Pipeline')).toBeInTheDocument()
+    expect(within(dialog).getByText('Role & Authority')).toBeInTheDocument()
+    expect(within(dialog).getByText('Advocacy & Relationships')).toBeInTheDocument()
 
-    // Verify suggested tag buttons are rendered
-    expect(screen.getByRole('button', { name: /^founder$/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /^champion$/i })).toBeInTheDocument()
+    // Verify suggested tag buttons are rendered. Scoped to the dialog and
+    // read by text: role queries over the whole page compute every button's
+    // accessible name and style, which took seconds on a loaded CI box and
+    // ran this test past its timeout.
+    expect(within(dialog).getByText('Founder', { selector: 'button, button *' }).closest('button')).toBeInTheDocument()
+    expect(within(dialog).getByText('Champion', { selector: 'button, button *' }).closest('button')).toBeInTheDocument()
   })
 
   it('toggles a suggested tag to add it to the contact', async () => {
     mockApi.addPersonTag.mockResolvedValue({ id: 't2', name: 'Founder', color: '#7c3aed' })
     render(<People />)
 
-    await waitFor(() => {
-      expect(screen.getByText('@alice')).toBeInTheDocument()
-    })
+    await screen.findByText('@alice', {}, SLOW)
 
     fireEvent.click(screen.getAllByTitle('Click to manage tags')[0])
-    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    const dialog = screen.getByRole('dialog')
+    await within(dialog).findByTitle("Click to customize this tag's color", {}, SLOW)
 
     // Click Founder tag button
-    const founderBtn = screen.getByRole('button', { name: /^founder$/i })
+    const founderBtn = within(dialog).getByText('Founder', { selector: 'button, button *' }).closest('button')
     fireEvent.click(founderBtn)
 
     await waitFor(() => {
       expect(mockApi.addPersonTag).toHaveBeenCalledWith('p1', 'Founder', '#7c3aed')
-    })
+    }, SLOW)
   })
 
   it('allows customizing tag color via updateTagColor', async () => {
     mockApi.updateTagColor.mockResolvedValue(true)
     render(<People />)
 
-    await waitFor(() => {
-      expect(screen.getByText('@alice')).toBeInTheDocument()
-    })
+    await screen.findByText('@alice', {}, SLOW)
 
     fireEvent.click(screen.getAllByTitle('Click to manage tags')[0])
 
     // Wait for tags to load in TagEditor
-    await waitFor(() => {
-      expect(screen.getByTitle("Click to customize this tag's color")).toBeInTheDocument()
-    })
+    await screen.findByTitle("Click to customize this tag's color", {}, SLOW)
 
     // Find the color customization button on the assigned Lead tag
     const colorDotBtn = screen.getByTitle("Click to customize this tag's color")
@@ -154,6 +156,6 @@ describe('People Tag Suggestions & Color Customization', () => {
 
     await waitFor(() => {
       expect(mockApi.updateTagColor).toHaveBeenCalledWith('t1', '#10b981')
-    })
+    }, SLOW)
   })
 })
