@@ -748,10 +748,15 @@ func (ae *ActionExecutor) seedVariables(action *StorageAction) {
 // validateRequiredInputs checks that every input declared as required by the
 // action definition is present (non-empty) in the execution context. Required
 // entries may be plain strings (legacy format) or objects with a "name" field.
+//
+// Inputs that declare "aliases" are filled from the first non-empty alias
+// first (see resolveInputAliases), so a renamed input keeps accepting the
+// config field older workflows set.
 func (ae *ActionExecutor) validateRequiredInputs(def *ActionDef) error {
 	if def.Inputs == nil {
 		return nil
 	}
+	ae.resolveInputAliases(def.Inputs)
 	var missing []string
 	for _, raw := range def.Inputs.Required {
 		name := requiredInputName(raw)
@@ -805,6 +810,65 @@ func isEmptyRequiredValue(v interface{}) bool {
 		return len(val) == 0
 	}
 	return false
+}
+
+// resolveInputAliases sets every declared input that is missing or empty
+// from the first of its "aliases" that holds a value. A list value (the
+// node's targets) fills a scalar input with its first entry, taking a
+// map entry's url, href or username.
+func (ae *ActionExecutor) resolveInputAliases(in *InputDef) {
+	for _, raw := range append(append([]json.RawMessage{}, in.Required...), in.Optional...) {
+		var obj struct {
+			Name    string   `json:"name"`
+			Type    string   `json:"type"`
+			Aliases []string `json:"aliases"`
+		}
+		if json.Unmarshal(raw, &obj) != nil || obj.Name == "" || len(obj.Aliases) == 0 {
+			continue
+		}
+		if v, ok := ae.execCtx.GetVariable(obj.Name); ok && v != nil && !isEmptyRequiredValue(v) {
+			continue
+		}
+		for _, alias := range obj.Aliases {
+			v, ok := ae.execCtx.GetVariable(alias)
+			if !ok || v == nil || isEmptyRequiredValue(v) {
+				continue
+			}
+			if obj.Type != "list" && obj.Type != "array" {
+				v = firstListEntry(v)
+			}
+			if v == nil || isEmptyRequiredValue(v) {
+				continue
+			}
+			ae.execCtx.SetVariable(obj.Name, v)
+			break
+		}
+	}
+}
+
+// firstListEntry reduces a list to its first entry (a map entry to its url,
+// href or username); any other value is returned unchanged.
+func firstListEntry(v interface{}) interface{} {
+	var first interface{}
+	switch l := v.(type) {
+	case []interface{}:
+		first = l[0]
+	case []string:
+		first = l[0]
+	case []map[string]interface{}:
+		first = l[0]
+	default:
+		return v
+	}
+	if m, ok := first.(map[string]interface{}); ok {
+		for _, k := range []string{"url", "href", "username"} {
+			if s, ok := m[k].(string); ok && strings.TrimSpace(s) != "" {
+				return s
+			}
+		}
+		return nil
+	}
+	return first
 }
 
 // requiredInputName extracts the input name from a required-input entry,

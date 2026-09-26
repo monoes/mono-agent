@@ -1,0 +1,8 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "target_url", "label": "Profile", "type": "text", "required": true, "placeholder": "https://x.com/NASA", "help": "Username or profile URL whose list to export. Older workflows that set profileUrl, targetUsername or targets keep working." },
+    { "key": "sourceType", "label": "List", "type": "select", "required": false, "default": "FOLLOWERS_FETCH", "options": ["FOLLOWERS_FETCH", "VERIFIED_FOLLOWERS_FETCH", "FOLLOWING_FETCH"], "help": "Followers, verified followers, or the accounts followed." },
+    { "key": "limit",      "label": "Max Results", "type": "number", "required": false, "default": 100 }
+  ]
+}

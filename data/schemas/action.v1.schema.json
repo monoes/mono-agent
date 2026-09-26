@@ -183,6 +183,13 @@
               },
               {
                 "properties": {
+                  "aliases": {
+                    "description": "Other variable names that also supply this input (config fields older workflows set); the first non-empty one fills it when the input is not given.",
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
                   "default": {
                     "description": "Value used when the input is not given."
                   },
@@ -264,6 +271,13 @@
               },
               {
                 "properties": {
+                  "aliases": {
+                    "description": "Other variable names that also supply this input (config fields older workflows set); the first non-empty one fills it when the input is not given.",
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
                   "default": {
                     "description": "Value used when the input is not given."
                   },

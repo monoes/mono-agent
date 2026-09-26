@@ -11,9 +11,16 @@
     "supportsRetry": true
   },
   "inputs": {
-    "required": [],
+    "required": [
+      {
+        "name": "target_url",
+        "type": "string",
+        "description": "Profile URL or username whose followers (or following) list to export",
+        "aliases": ["profileUrl", "targetUsername", "targets", "selectedListItems"],
+        "ui": { "label": "Profile", "placeholder": "https://x.com/NASA" }
+      }
+    ],
     "optional": [
-      { "name": "target_url", "type": "string", "description": "Profile URL or username whose list to export (profileUrl and targetUsername are accepted too)" },
       { "name": "sourceType", "type": "select", "default": "FOLLOWERS_FETCH", "options": ["FOLLOWERS_FETCH", "VERIFIED_FOLLOWERS_FETCH", "FOLLOWING_FETCH"], "description": "Which list to export" },
       { "name": "maxResultsCount", "type": "number", "default": 100, "min": 1, "max": 5000, "description": "Maximum users to export" }
     ]
@@ -31,7 +38,7 @@
       "type": "call_bot_method",
       "methodName": "list_followers",
       "args": [
-        "{{target_url or profileUrl or targetUsername}}",
+        "{{target_url}}",
         "{{sourceType or 'FOLLOWERS_FETCH'}}",
         "{{maxResultsCount or 100}}"
       ],
