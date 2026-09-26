@@ -43,7 +43,7 @@ describe('ImportDialog', () => {
     expect(await screen.findByText(/can run scripts in the page/)).toBeInTheDocument()
     expect(screen.getByText(/Replaces built-in hackernews 1.1.0/)).toBeInTheDocument()
     expect(screen.getByText('return document.cookie')).toBeInTheDocument()
-    const install = screen.getByText('Install')
+    const install = screen.getByText('Replace built-in hackernews')
     expect(install).toBeDisabled()
     fireEvent.click(screen.getByLabelText(/I understand this replaces the built-in hackernews/))
     expect(install).not.toBeDisabled()

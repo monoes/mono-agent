@@ -247,7 +247,7 @@ export default function App() {
   // their (multi-second) initial data load every single time.
   const persistentPages = {
     dashboard: <Dashboard stats={stats} onRefresh={refreshStats} onNavigate={navigate} />,
-    noderunner: <NodeRunner onNavigate={navigate} navData={navData} />,
+    noderunner: <NodeRunner onNavigate={navigate} navData={navData} onWorkflowsChanged={refreshStats} />,
     people:    <People key={peopleRefreshKey} onProfile={openProfile} />,
     communications: <Communications onProfile={openProfile} />,
     connections: <Connections onRefresh={refreshStats} />,

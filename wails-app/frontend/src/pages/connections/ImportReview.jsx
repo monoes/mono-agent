@@ -47,7 +47,11 @@ export function ScriptSources({ sources, title = 'Page scripts' }) {
   )
 }
 
-export default function ImportReview({ res }) {
+// cliOnly: warnings that tell a terminal user to pass a flag the GUI sets
+// itself (the replace tick box covers --replace-builtin).
+const isReplaceFlagHint = (w) => /--replace-builtin/.test(w)
+
+export default function ImportReview({ res, hideCliConfirmHint = false, resetsTrust = false }) {
   const r = res.review || {}
   const ch = r.changes
   const effects = Object.entries(r.actionEffects || {})
@@ -113,7 +117,10 @@ export default function ImportReview({ res }) {
         </div>
       )}
       <IssueList issues={res.issues} />
-      {(res.warnings || []).map((w, i) => <div key={i} style={{ ...muted, color: 'var(--yellow)' }}>⚠ {w}</div>)}
+      {resetsTrust && (
+        <div role="note" style={{ ...muted, color: 'var(--yellow)' }}>⚠ Updating resets 'Allow scripts' and 'Allow live runs' — you'll need to allow them again.</div>
+      )}
+      {(res.warnings || []).filter(w => !(hideCliConfirmHint && isReplaceFlagHint(w))).map((w, i) => <div key={i} style={{ ...muted, color: 'var(--yellow)' }}>⚠ {w}</div>)}
       {(r.files || []).length > 0 && (
         <details style={{ ...panel }}>
           <summary style={{ ...label, cursor: 'pointer' }}>Files ({r.files.length})</summary>

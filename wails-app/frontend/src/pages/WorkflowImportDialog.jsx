@@ -71,7 +71,7 @@ function Automations({ items }) {
   )
 }
 
-export default function WorkflowImportDialog({ onClose, onOpen }) {
+export default function WorkflowImportDialog({ onClose, onOpen, onImported }) {
   const dialog = useDialog(onClose)
   const [path, setPath] = useState('')
   const [pasted, setPasted] = useState('')
@@ -91,7 +91,7 @@ export default function WorkflowImportDialog({ onClose, onOpen }) {
   }
   const doImport = async () => {
     setBusy('import'); setRes(null); setInstallRes(null)
-    try { const out = await run({ asNew }); if (out) setRes(out) } finally { setBusy('') }
+    try { const out = await run({ asNew }); if (out) { setRes(out); onImported?.(out) } } finally { setBusy('') }
   }
   const browse = async () => {
     const p = await api.chooseWorkflowFile()
