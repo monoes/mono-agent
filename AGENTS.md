@@ -70,7 +70,9 @@ monoagentcli setup [--yes] [--runtime claude] [--autostart] [--mcp]  # guided: f
 Groups: `core` (data folder, database, profile, vault, PATH, disk), `monomind`
 (Node.js, monomind install/version/features, profile `monomind init`) and
 `runtimes` (one row per AI agent runtime), `browser` (browser, extension,
-bridge, pairing), `services` (daemon, start at login) and `integrations`
+bridge, pairing), `automations` (installed packages that are unavailable,
+and broken or decaying selectors — each with its `automation rerecord` fix;
+read-only, never seeds packages), `services` (daemon, start at login) and `integrations`
 (Claude Code skills, MCP registration, TypeSafe Jev key; `jev.api` runs
 on demand with `--deep`), `accounts` (platform login expiry;
 with `--deep` also live tests of saved connections and AI connections

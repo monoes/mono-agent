@@ -279,6 +279,7 @@
         "monomind": "Motor monomind",
         "runtimes": "Runtimes de agentes IA",
         "browser": "Navegador y extensión",
+        "automations": "Automatizaciones del navegador",
         "services": "Servicios en segundo plano",
         "integrations": "Integraciones con agentes de código",
         "accounts": "Cuentas"

@@ -279,6 +279,7 @@
         "monomind": "monomind engine",
         "runtimes": "AI agent runtimes",
         "browser": "Browser & extension",
+        "automations": "Browser automations",
         "services": "Background services",
         "integrations": "Coding-agent integrations",
         "accounts": "Accounts"

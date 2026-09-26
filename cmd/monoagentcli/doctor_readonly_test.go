@@ -33,7 +33,7 @@ var readOnlyHooks = map[string]bool{
 	"PendingMigrations": true, "QuickCheck": true, "VaultState": true, "ProfileRoot": true, "FreeBytes": true,
 	"ManagedNode": true, "FindBrowser": true, "ExtensionInstalled": true, "ExtensionDir": true, "Daemon": true,
 	"ClaudeSkills": true, "MCPRegistration": true, "Connections": true, "AIProviders": true, "LoginSessions": true,
-	"MonomindProjects": true,
+	"MonomindProjects": true, "Automations": true,
 }
 
 // offlineEnv replaces every hook that starts a process or uses the network

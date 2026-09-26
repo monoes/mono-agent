@@ -158,6 +158,7 @@ func newHealthEnv(cfg *globalConfig) (*health.Env, func()) {
 	if env.DB != nil {
 		addAccountHooks(env, env.DB)
 	}
+	addAutomationHooks(env)
 	// Jev: the DB may be unmigrated or absent; a vault miss just means the
 	// key comes from TYPESAFE_API_KEY or nowhere.
 	// KeySource only lists vault entry names: doctor never decrypts (no
