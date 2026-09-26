@@ -116,3 +116,66 @@ func countErrors(issues []automation.IssueJSON) int {
 	}
 	return n
 }
+
+// TestAutomationExportSuggestedDomains: --use-suggested-domains on
+// automation export and action export.
+func TestAutomationExportSuggestedDomains(t *testing.T) {
+	home := legacyGoogleMapsHome(t)
+	var show struct {
+		Manifest automation.Manifest `json:"manifest"`
+	}
+	mustJSON(t, home, &show, "automation", "show", "local-google-maps")
+	if show.Manifest.Legacy == nil || len(show.Manifest.Legacy.SuggestedDomains) == 0 {
+		t.Fatalf("no suggestion: %+v", show.Manifest.Legacy)
+	}
+	want := strings.Join(show.Manifest.Legacy.SuggestedDomains, ",")
+
+	for _, args := range [][]string{
+		{"automation", "export", "local-google-maps"},
+		{"action", "export", "local-google-maps.search"},
+	} {
+		file := filepath.Join(t.TempDir(), "x.mpkg")
+		var res map[string]string
+		mustJSON(t, home, &res, append(args, "-o", file, "--use-suggested-domains")...)
+		p, err := automation.OpenFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Join(p.Manifest.Site.Domains, ","); got != want {
+			t.Fatalf("%v: domains %q, want %q", args, got, want)
+		}
+		// action export takes --domains too.
+		if args[0] == "action" {
+			mustJSON(t, home, &res, append(args, "-o", file, "--domains", "www.google.com")...)
+			if p, _ := automation.OpenFile(file); strings.Join(p.Manifest.Site.Domains, ",") != "www.google.com" {
+				t.Fatalf("action export --domains: %v", p.Manifest.Site.Domains)
+			}
+		}
+	}
+
+	out, _, err := runAutomationCLI(t, home, "automation", "export", "local-google-maps", "-o", filepath.Join(home, "y.mpkg"),
+		"--use-suggested-domains", "--domains", "a.test", "--json")
+	if err == nil || !strings.Contains(out, "mutually exclusive") {
+		t.Fatalf("both flags: %v %s", err, out)
+	}
+	out, _, err = runAutomationCLI(t, home, "automation", "export", "hackernews", "-o", filepath.Join(home, "hn.mpkg"),
+		"--use-suggested-domains", "--json")
+	if err == nil || !strings.Contains(out, "not a generated legacy package") {
+		t.Fatalf("non-legacy: %v %s", err, out)
+	}
+}
+
+// TestAutomationExportSuggestedDomainsLocalOnly: a legacy package that only
+// opens a local address has nothing to suggest.
+func TestAutomationExportSuggestedDomainsLocalOnly(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, ".monoagent", "actions", "devsite")
+	os.MkdirAll(dir, 0o755)
+	os.WriteFile(filepath.Join(dir, "ping.json"), []byte(`{"actionType":"ping","platform":"DEVSITE",
+		"steps":[{"id":"open","type":"navigate","url":"http://localhost:3000/"}]}`), 0o644)
+	out, _, err := runAutomationCLI(t, home, "automation", "export", "local-devsite", "-o", filepath.Join(home, "d.mpkg"),
+		"--use-suggested-domains", "--json")
+	if err == nil || !strings.Contains(out, "only opens local addresses") {
+		t.Fatalf("local-only: %v %s", err, out)
+	}
+}

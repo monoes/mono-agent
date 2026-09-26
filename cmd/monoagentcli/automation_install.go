@@ -287,8 +287,9 @@ func printChange(out io.Writer, label string, items []string) {
 }
 
 func newAutomationExportCmd(cfg *globalConfig) *cobra.Command {
-	var outFile, actions, domains string
+	var outFile, actions string
 	var withRecordings bool
+	var df exportDomainFlags
 	cmd := &cobra.Command{
 		Use:   "export <id>",
 		Short: "Export an installed automation as a .mpkg file",
@@ -306,8 +307,11 @@ func newAutomationExportCmd(cfg *globalConfig) *cobra.Command {
 				}
 				outFile = fmt.Sprintf("%s-%s.mpkg", id, info.Version)
 			}
-			opts := automation.ExportOptions{Actions: splitCSV(actions), WithRecordings: withRecordings,
-				Domains: splitCSV(domains)}
+			doms, err := df.resolve(reg, id)
+			if err != nil {
+				return err
+			}
+			opts := automation.ExportOptions{Actions: splitCSV(actions), WithRecordings: withRecordings, Domains: doms}
 			sum, err := writeHashed(outFile, func(w io.Writer) error { return reg.Export(id, w, opts) })
 			if err != nil {
 				return err
@@ -318,7 +322,7 @@ func newAutomationExportCmd(cfg *globalConfig) *cobra.Command {
 	cmd.Flags().StringVarP(&outFile, "output", "o", "", "Output file (default <id>-<version>.mpkg)")
 	cmd.Flags().StringVar(&actions, "actions", "", "Only these actions (comma-separated) and what they reference")
 	cmd.Flags().BoolVar(&withRecordings, "with-recordings", false, "Include recordings/ (real page content)")
-	cmd.Flags().StringVar(&domains, "domains", "", "Set site.domains in the exported copy (comma-separated), e.g. for a legacy package that declares none")
+	df.register(cmd)
 	return cmd
 }
 
