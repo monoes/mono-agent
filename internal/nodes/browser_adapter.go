@@ -345,9 +345,14 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 }
 
 // identityKeys name who or what a record is about; their presence means the
-// record's "text" is content, not a profile card.
+// record's "text" is content, not a profile card. The content keys cover the
+// results of write actions (a TikTok comment or engagement result carries
+// videoURL and the text it posted; X/Hacker News replies carry postURL or
+// itemID), whose text is never a name. Plain "url" is left out: a profile
+// card may carry one.
 var identityKeys = []string{"full_name", "name", "username", "author", "author_username",
-	"author_name", "handle", "displayName", "display_name", "title", "author_url", "comment_id", "post_url"}
+	"author_name", "handle", "displayName", "display_name", "title", "author_url", "comment_id", "post_url",
+	"videoURL", "video_url", "postURL", "postUrl", "itemID", "item_id", "commentID"}
 
 func hasIdentityFields(raw map[string]interface{}) bool {
 	for _, k := range identityKeys {
