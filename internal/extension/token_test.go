@@ -159,8 +159,15 @@ func TestHandleRelayOriginAndHostGuard(t *testing.T) {
 	if got := serve(func(*http.Request) {}); got == http.StatusForbidden || got == http.StatusUnauthorized {
 		t.Fatalf("CLI-style request (no Origin) refused: %d", got)
 	}
-	if got := serve(func(r *http.Request) { r.Host = "localhost:9222" }); got == http.StatusForbidden {
-		t.Fatalf("localhost Host refused")
+	for _, host := range []string{"localhost:9222", "[::1]:9222", "[::1]", "127.0.0.1", "localhost"} {
+		if got := serve(func(r *http.Request) { r.Host = host }); got == http.StatusForbidden {
+			t.Fatalf("loopback Host %q refused", host)
+		}
+	}
+	for _, host := range []string{"evil.test", "[::2]:9222", "127.0.0.2:9222", "192.168.1.5:9222", "localhost.evil.test:9222"} {
+		if got := serve(func(r *http.Request) { r.Host = host }); got != http.StatusForbidden {
+			t.Fatalf("non-loopback Host %q: %d, want 403", host, got)
+		}
 	}
 	if got := serve(func(r *http.Request) { r.Header.Set("Origin", "https://evil.test") }); got != http.StatusForbidden {
 		t.Fatalf("web Origin: %d, want 403", got)

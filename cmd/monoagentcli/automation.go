@@ -64,11 +64,28 @@ func withJSONErrors(cfg *globalConfig, cmd *cobra.Command) {
 			if errors.As(err, &re) {
 				body["issues"], body["result"] = re.res.Issues, re.res
 			}
+			// An error that knows its machine-readable form (a code, the
+			// keys involved) adds it, so callers need not match the text.
+			var fields jsonErrorFields
+			if errors.As(err, &fields) {
+				for k, v := range fields.JSONErrorFields() {
+					if k != "error" {
+						body[k] = v
+					}
+				}
+			}
 			b, _ := json.Marshal(body)
 			fmt.Fprintln(c.OutOrStdout(), string(b))
 		}
 		return err
 	}
+}
+
+// jsonErrorFields is implemented by errors that carry machine-readable
+// detail for `--json` (e.g. recordanalyze.SelectorConflictError: code
+// "selector_conflict" and the conflicting keys).
+type jsonErrorFields interface {
+	JSONErrorFields() map[string]any
 }
 
 // reportedError is a failure whose details the command already printed

@@ -388,7 +388,7 @@ func runRecordJSON(ctx context.Context, r Runner, args []string) (any, error) {
 			return obj, nil
 		}
 		if msg, ok := obj["error"].(string); ok && msg != "" {
-			return nil, fmt.Errorf("%s", msg)
+			return nil, plainFailure(msg, obj)
 		}
 		return nil, runErr
 	}
@@ -400,6 +400,32 @@ func runRecordJSON(ctx context.Context, r Runner, args []string) (any, error) {
 		return nil, fmt.Errorf("monoagentcli %s: output is not JSON", redactArgs(args))
 	}
 	return data, nil
+}
+
+// cliErrorCode matches a CLI error code worth passing to the extension as
+// the reply's code (e.g. "selector_conflict").
+var cliErrorCode = regexp.MustCompile(`^[a-z][a-z0-9_]{0,39}$`)
+
+// plainFailure turns a CLI {"error", "code"?, …} into the request error.
+// A code is passed through as the reply's code, and every other field
+// (e.g. "keys") as the reply's data, so the side panel can branch on them
+// rather than on the message.
+func plainFailure(msg string, obj map[string]any) error {
+	code, _ := obj["code"].(string)
+	if !cliErrorCode.MatchString(code) {
+		return fmt.Errorf("%s", msg)
+	}
+	data := map[string]any{}
+	for k, v := range obj {
+		if k != "error" && k != "code" {
+			data[k] = v
+		}
+	}
+	re := &RequestError{Code: code, Err: fmt.Errorf("%s", msg)}
+	if len(data) > 0 {
+		re.Data = data
+	}
+	return re
 }
 
 // isReport reports whether a command's JSON output is a result report

@@ -545,3 +545,39 @@ func TestRecordVerifyFailureWithErrorKeyReturnsTheReport(t *testing.T) {
 		t.Fatalf("stoppedAt dropped: %v", data)
 	}
 }
+
+// A selector conflict on save reaches the side panel as a code and the
+// conflicting keys, not only as text to match.
+func TestRecordSaveConflictPassesCodeAndKeys(t *testing.T) {
+	srv, ext, _ := startCaptureServer(t)
+	drafts, _ := recording.DraftsDir()
+	if err := os.MkdirAll(filepath.Join(drafts, "rec-1"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	srv.SetRecordRunner(exitRunner{out: `{"error":"merge conflict: selectors.json#contact.name_input\nselector(s) contact.name_input differ …","code":"selector_conflict","keys":["contact.name_input","contact.email_input"]}`})
+	ext.ask("s1", MethodRecordSave, map[string]any{"draftDir": "rec-1", "automation": "acme-crm"})
+	reply := ext.settled()
+	if reply.OK || reply.Code != "selector_conflict" || !strings.Contains(reply.Error, "merge conflict") {
+		t.Fatalf("reply = %+v", reply)
+	}
+	data, _ := reply.Data.(map[string]any)
+	keys, _ := data["keys"].([]any)
+	if len(keys) != 2 || keys[0] != "contact.name_input" || keys[1] != "contact.email_input" {
+		t.Fatalf("keys = %v", data)
+	}
+	if _, leaked := data["error"]; leaked {
+		t.Fatalf("data repeats the error: %v", data)
+	}
+}
+
+func TestPlainFailureCodes(t *testing.T) {
+	// A code the bridge would not pass on (not a plain identifier) leaves
+	// a bare error; no code at all likewise.
+	for _, out := range []string{`{"error":"x","code":"Bad Code!"}`, `{"error":"x"}`} {
+		_, err := runRecordJSON(context.Background(), exitRunner{out: out}, []string{"record", "save", "d", "--json"})
+		var re *RequestError
+		if err == nil || asRequestError(err, &re) {
+			t.Errorf("%s: err = %#v", out, err)
+		}
+	}
+}
