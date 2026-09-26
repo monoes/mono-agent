@@ -50,7 +50,7 @@ func newActionExportCmd(cfg *globalConfig) *cobra.Command {
 
 func newActionImportCmd(cfg *globalConfig) *cobra.Command {
 	var into string
-	var yes, dryRun, replaceBuiltin bool
+	var yes, dryRun, replace, replaceBuiltin bool
 	cmd := &cobra.Command{
 		Use:   "import <file.mpkg|dir|action.json>",
 		Short: "Merge the actions of a package (or one action file) into an installed automation",
@@ -73,7 +73,7 @@ automation id). When that automation is not installed it is created.`,
 			}
 			c := installConfirmer{yes: yes, interactive: !cfg.JSONOutput && stdinIsTerminal(),
 				in: cmd.InOrStdin(), out: cmd.ErrOrStderr()}
-			res, err := runInstall(automation.InstallOptions{DryRun: dryRun, Source: actionImportSource(args[0]), ReplaceBuiltin: replaceBuiltin}, c, func(o automation.InstallOptions) (*automation.InstallResult, error) {
+			res, err := runInstall(automation.InstallOptions{DryRun: dryRun, Source: actionImportSource(args[0]), Replace: replace || replaceBuiltin}, c, func(o automation.InstallOptions) (*automation.InstallResult, error) {
 				return addActions(reg, target, src, o)
 			})
 			if err != nil {
@@ -86,7 +86,9 @@ automation id). When that automation is not installed it is created.`,
 	cmd.Flags().StringVar(&into, "into", "", "Target automation id (default: the source's id)")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Import without asking")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show the review without importing")
-	cmd.Flags().BoolVar(&replaceBuiltin, "replace-builtin", false, "Allow merging imported actions into a built-in or local automation")
+	cmd.Flags().BoolVar(&replace, "replace", false, "Confirm merging into an automation that needs it (built-in, local or recorded)")
+	cmd.Flags().BoolVar(&replaceBuiltin, "replace-builtin", false, "Deprecated alias of --replace")
+	_ = cmd.Flags().MarkHidden("replace-builtin")
 	return cmd
 }
 
