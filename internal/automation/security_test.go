@@ -100,7 +100,9 @@ func TestImportedCannotSilentlyReplaceBuiltin(t *testing.T) {
 	if _, err := loc.Install(acmeDir(t), InstallOptions{Source: SourceLocal}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := loc.Install(packDir(t, acmeDir(t)), InstallOptions{}); !errors.Is(err, ErrReplacesBuiltin) {
+	changed := acmeFiles()
+	changed["scripts/parse.js"] = "return 'imported';\n"
+	if _, err := loc.Install(packDir(t, writeTree(t, t.TempDir(), changed)), InstallOptions{}); !errors.Is(err, ErrReplacesBuiltin) {
 		t.Errorf("imported over local: %v", err)
 	}
 	// Imported over imported is an ordinary update.
