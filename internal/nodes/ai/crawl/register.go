@@ -10,6 +10,10 @@ func RegisterAll(r *workflow.NodeTypeRegistry, generator *cfgpkg.AgentGenerator)
 		return &ReadPageNode{}
 	})
 	r.Register("ai.extract_page", func() workflow.NodeExecutor {
-		return &ExtractPageNode{Generator: generator}
+		node := &ExtractPageNode{}
+		if generator != nil { // keep a nil *AgentGenerator from becoming a non-nil interface
+			node.Generator = generator
+		}
+		return node
 	})
 }
