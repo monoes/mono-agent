@@ -48,6 +48,15 @@ type Manifest struct {
 	Actions     []string       `json:"actions"`
 	Defaults    map[string]any `json:"defaults,omitempty"`
 	Policy      Policy         `json:"policy"`
+	// Legacy marks a package generated from ~/.monoagent/actions/<platform>
+	// (never set by hand). Platform is the original directory name, the
+	// "<platform>.<action>" node types old workflows still use.
+	Legacy *LegacyInfo `json:"legacy,omitempty"`
+}
+
+// LegacyInfo is Manifest.Legacy.
+type LegacyInfo struct {
+	Platform string `json:"platform"`
 }
 
 type Publisher struct {
@@ -121,6 +130,7 @@ type InstalledInfo struct {
 	PreviousVersion   string    `json:"previousVersion,omitempty"` // rollback target
 	PendingUpdate     string    `json:"pendingUpdate,omitempty"`   // newer seed held back because the user modified this built-in
 	ScriptsAllowed    bool      `json:"scriptsAllowed"`            // page_script / http_fetch_in_page may run
+	LegacyPlatform    string    `json:"legacyPlatform,omitempty"`  // generated legacy package: old "<platform>.<action>" node prefix
 	LiveRunConfirmed  bool      `json:"liveRunConfirmed"`          // write-level actions may run for real
 }
 
@@ -131,14 +141,19 @@ type InstallOptions struct {
 	// Trust overrides the trust tier recorded for the package (e.g.
 	// TrustRecorded from `record save`). Default: derived from Source.
 	Trust string
-	// ReplaceBuiltin allows an imported package to replace an installed
-	// built-in or local package with the same id.
+	// Replace confirms replacing an installed package that needs it: a
+	// built-in, local or recorded package receiving less trusted content,
+	// or the user's own package receiving different content.
+	Replace bool
+	// ReplaceBuiltin is the former name of Replace; either one confirms.
 	ReplaceBuiltin bool
 	// ExpectSHA256 pins the package bytes: when set, install refuses unless
 	// the fetched archive (or the packed directory) hashes to it. Pass the
 	// SHA256 of a dry-run result to install exactly what was reviewed.
 	ExpectSHA256 string
 }
+
+func (o InstallOptions) replaceConfirmed() bool { return o.Replace || o.ReplaceBuiltin }
 
 // InstallResult is returned by Install/AddAction (and `--json`).
 type InstallResult struct {
@@ -157,27 +172,39 @@ type InstallResult struct {
 
 // Review is what the install confirmation shows (spec §6.3).
 type Review struct {
-	Source         string            `json:"source"`
-	Trust          string            `json:"trust"`
-	Replaces       *Replaced         `json:"replaces,omitempty"` // installed package this install overwrites
-	ComputedTier   string            `json:"computedTier"`       // "social" when the gate applies, whatever the manifest says
-	SocialPlatform string            `json:"socialPlatform,omitempty"`
-	Native         string            `json:"native,omitempty"`
-	CallActions    []string          `json:"callActions"`
-	LoginURL       string            `json:"loginURL,omitempty"`
-	ScriptSources  map[string]string `json:"scriptSources"` // scripts/<name> → full source text
-	Capabilities   []string          `json:"capabilities"`  // plain-language list of what the package can do
-	Publisher      string            `json:"publisher,omitempty"`
-	Domains        []string          `json:"domains"`
-	Steps          []string          `json:"steps"`
-	Scripts        []string          `json:"scripts"`
-	Downloads      bool              `json:"downloads"`
-	Tier           string            `json:"tier"`
-	ActionEffects  map[string]string `json:"actionEffects"` // action → sideEffects
-	Files          []FileInfo        `json:"files"`
-	PolicyBlocked  bool              `json:"policyBlocked"`
-	PolicyReason   string            `json:"policyReason,omitempty"`
-	Changes        *ReviewChanges    `json:"changes,omitempty"` // on update: permission/script diff
+	Source      string       `json:"source"`
+	Trust       string       `json:"trust"`
+	Replaces    *Replaced    `json:"replaces,omitempty"`    // installed package this install overwrites
+	TrustChange *TrustChange `json:"trustChange,omitempty"` // the package's trust drops
+	// ReplaceRequired says this install replaces something that needs the
+	// user's explicit confirmation (InstallOptions.Replace / --replace).
+	ReplaceRequired bool                `json:"replaceRequired"`
+	Visibility      map[string][]string `json:"visibility"`   // visibility kind → actions that leave that trace
+	ComputedTier    string              `json:"computedTier"` // "social" when the gate applies, whatever the manifest says
+	SocialPlatform  string              `json:"socialPlatform,omitempty"`
+	Native          string              `json:"native,omitempty"`
+	CallActions     []string            `json:"callActions"`
+	LoginURL        string              `json:"loginURL,omitempty"`
+	ScriptSources   map[string]string   `json:"scriptSources"` // scripts/<name> → full source text
+	Capabilities    []string            `json:"capabilities"`  // plain-language list of what the package can do
+	Publisher       string              `json:"publisher,omitempty"`
+	Domains         []string            `json:"domains"`
+	Steps           []string            `json:"steps"`
+	Scripts         []string            `json:"scripts"`
+	Downloads       bool                `json:"downloads"`
+	Tier            string              `json:"tier"`
+	ActionEffects   map[string]string   `json:"actionEffects"` // action → sideEffects
+	Files           []FileInfo          `json:"files"`
+	PolicyBlocked   bool                `json:"policyBlocked"`
+	PolicyReason    string              `json:"policyReason,omitempty"`
+	Changes         *ReviewChanges      `json:"changes,omitempty"` // on update: permission/script diff
+}
+
+// TrustChange is a drop in a package's trust tier caused by an install or
+// merge (e.g. recorded → imported).
+type TrustChange struct {
+	From string `json:"from"`
+	To   string `json:"to"`
 }
 
 // Replaced names the installed package an install overwrites.

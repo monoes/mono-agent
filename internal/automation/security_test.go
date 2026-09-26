@@ -74,7 +74,7 @@ func TestImportedCannotSilentlyReplaceBuiltin(t *testing.T) {
 			t.Errorf("warning leaks a Go identifier: %q", w)
 		}
 	}
-	if !strings.Contains(strings.Join(res.Warnings, "\n"), "replacing it requires confirmation (--replace-builtin on the command line)") {
+	if !strings.Contains(strings.Join(res.Warnings, "\n"), "replacing it requires confirmation (--replace on the command line)") {
 		t.Errorf("confirmation hint missing: %v", res.Warnings)
 	}
 

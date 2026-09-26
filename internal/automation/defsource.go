@@ -18,7 +18,16 @@ type defSource struct{ r *Registry }
 func (d *defSource) usable(id string) (*Package, error) {
 	e, err := d.r.entry(id)
 	if err != nil {
-		return nil, err
+		// Not an id: maybe the original name of a legacy platform
+		// ("google_maps" → local-google-maps).
+		alias, aerr := d.r.resolveLegacyAlias(id)
+		if aerr != nil || alias == "" {
+			return nil, err
+		}
+		id = alias
+		if e, err = d.r.entry(id); err != nil {
+			return nil, err
+		}
 	}
 	info := d.r.info(id, e, false)
 	if !info.Enabled {
@@ -91,4 +100,28 @@ func (d *defSource) Generation() string {
 		mod = st.ModTime().UnixNano()
 	}
 	return fmt.Sprintf("%d:%d", idx.Generation, mod)
+}
+
+// resolveLegacyAlias returns the id of the generated legacy package whose
+// original platform name is name (case-insensitive), or "".
+func (r *Registry) resolveLegacyAlias(name string) (string, error) {
+	idx, err := r.readIndex()
+	if err != nil {
+		return "", err
+	}
+	for _, id := range sortedIDs(idx) {
+		e := idx.Packages[id]
+		if e.Removed || e.Source != SourceLocal {
+			continue
+		}
+		p, err := OpenDir(r.versionDir(id, e.Version))
+		if err != nil {
+			continue
+		}
+		p.Source, p.Trust = e.Source, e.trust()
+		if a := p.LegacyAlias(); a != "" && strings.EqualFold(a, name) {
+			return id, nil
+		}
+	}
+	return "", nil
 }
