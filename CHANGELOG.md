@@ -37,6 +37,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`doctor` has an `automations` group** that lists unavailable packages and
   broken or decaying selectors, each with its `automation rerecord` fix. It
   also appears under Settings › System health.
+- **Unread messages.** New inbound messages start unread; messages that
+  already exist count as read. The CLI gains `people messages read|unread`
+  and `messages all --unread`. Communications shows an unread dot and an
+  Unread filter, and opening a message or a person's conversation marks it
+  read. The dashboard shows how many are unread.
+- **`monoagentcli update --app <exe>`** updates the desktop app, and on
+  Linux the `monoagentcli` bundled next to it. The desktop app's Update
+  button now goes through it.
 - **The daemon publishes its scheduler's real next run times** in its
   heartbeat. `summary` prefers them (`"source": "daemon"`), so `@every`
   schedules show their actual next run.
@@ -56,6 +64,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Go-style keys need updating.
 
 ### Fixed
+
+- **Desktop app updates are now verified against the release's
+  `SHA256SUMS.txt`.** Before, the app installed its own update without
+  checking the checksum. On Linux the bundled CLI is now updated along with
+  the app.
 
 - The dashboard showed successful runs in grey, and the running indicator never
   pulsed.
