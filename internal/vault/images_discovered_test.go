@@ -161,3 +161,42 @@ func TestImagePathInProfileByIDOrFilename(t *testing.T) {
 		t.Error("another profile's image must not resolve")
 	}
 }
+
+// SyncDiscoveredImages counts each kind of write, and a pass over an
+// unchanged snapshot writes nothing.
+func TestSyncDiscoveredImagesCountsEachChange(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	a, b := filepath.Join(dir, "a.png"), filepath.Join(dir, "b.jpg")
+	snap := func(sizeA int64, withB bool) []vault.DiscoveredFile {
+		out := []vault.DiscoveredFile{{Path: a, Filename: "a.png", SizeBytes: sizeA}}
+		if withB {
+			out = append(out, vault.DiscoveredFile{Path: b, Filename: "b.jpg", SizeBytes: 1})
+		}
+		return out
+	}
+	steps := []struct {
+		found                   []vault.DiscoveredFile
+		added, updated, removed int
+	}{
+		{snap(1, true), 2, 0, 0},
+		{snap(1, true), 0, 0, 0},
+		{snap(5, true), 0, 1, 0},
+		{snap(5, false), 0, 0, 1},
+		{snap(5, false), 0, 0, 0},
+	}
+	for i, s := range steps {
+		r := vault.SyncDiscoveredImages(ctx, db.DB, "default", s.found)
+		if len(r.Errs) != 0 || r.Added != s.added || r.Updated != s.updated || r.Removed != s.removed {
+			t.Fatalf("step %d: got %+v, want added=%d updated=%d removed=%d", i, r, s.added, s.updated, s.removed)
+		}
+		if r.Changed() != (s.added+s.updated+s.removed > 0) {
+			t.Fatalf("step %d: Changed() = %v", i, r.Changed())
+		}
+	}
+	// The wrapper keeps its signature and counts.
+	if added, removed, errs := vault.ReconcileDiscoveredImages(ctx, db.DB, "default", snap(5, true)); added != 1 || removed != 0 || len(errs) != 0 {
+		t.Fatalf("ReconcileDiscoveredImages = %d, %d, %v", added, removed, errs)
+	}
+}

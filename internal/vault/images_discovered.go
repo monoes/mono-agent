@@ -101,26 +101,36 @@ func imageIDByPath(ctx context.Context, db *sql.DB, profileID, path string) (id 
 // manually uploaded, workflow-generated, or chat-generated images are never
 // purged here.
 func ReconcileDiscoveredImages(ctx context.Context, db *sql.DB, profileID string, found []DiscoveredFile) (added int, removed int, errs []error) {
+	r := SyncDiscoveredImages(ctx, db, profileID, found)
+	return r.Added, r.Removed, r.Errs
+}
+
+// SyncDiscoveredImages is ReconcileDiscoveredImages with the size
+// refreshes counted too -- what `image sync` reports.
+func SyncDiscoveredImages(ctx context.Context, db *sql.DB, profileID string, found []DiscoveredFile) (res ReconcileResult) {
 	if profileID == "" {
 		profileID = "default"
 	}
 	existing := make(map[string]int64, len(found))
 	rows, err := db.QueryContext(ctx, `SELECT path, size_bytes FROM vault_images WHERE profile_id = ? AND source = 'discovered'`, profileID)
 	if err != nil {
-		return 0, 0, []error{fmt.Errorf("vault.ReconcileDiscoveredImages: loading existing: %w", err)}
+		res.Errs = []error{fmt.Errorf("vault.ReconcileDiscoveredImages: loading existing: %w", err)}
+		return res
 	}
 	for rows.Next() {
 		var path string
 		var size int64
 		if scanErr := rows.Scan(&path, &size); scanErr != nil {
 			rows.Close()
-			return 0, 0, []error{fmt.Errorf("vault.ReconcileDiscoveredImages: scanning existing: %w", scanErr)}
+			res.Errs = []error{fmt.Errorf("vault.ReconcileDiscoveredImages: scanning existing: %w", scanErr)}
+			return res
 		}
 		existing[path] = size
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return 0, 0, []error{fmt.Errorf("vault.ReconcileDiscoveredImages: %w", err)}
+		res.Errs = []error{fmt.Errorf("vault.ReconcileDiscoveredImages: %w", err)}
+		return res
 	}
 
 	foundPaths := make(map[string]bool, len(found))
@@ -128,20 +138,25 @@ func ReconcileDiscoveredImages(ctx context.Context, db *sql.DB, profileID string
 		foundPaths[f.Path] = true
 		size, tracked := existing[f.Path]
 		if !tracked {
+			// RegisterDiscoveredImage matches by path regardless of source,
+			// so an image the chat or a workflow saved into the folder keeps
+			// its own row and reports created=false.
 			_, created, regErr := RegisterDiscoveredImage(ctx, db, profileID, f.Path, f.Filename, f.SizeBytes)
 			if regErr != nil {
-				errs = append(errs, fmt.Errorf("registering %s: %w", f.Path, regErr))
+				res.Errs = append(res.Errs, fmt.Errorf("registering %s: %w", f.Path, regErr))
 				continue
 			}
 			if created {
-				added++
+				res.Added++
 			}
 			continue
 		}
 		if size != f.SizeBytes {
-			if _, updErr := db.ExecContext(ctx, `UPDATE vault_images SET size_bytes = ? WHERE profile_id = ? AND path = ?`, f.SizeBytes, profileID, f.Path); updErr != nil {
-				errs = append(errs, fmt.Errorf("refreshing size for %s: %w", f.Path, updErr))
+			if _, updErr := db.ExecContext(ctx, `UPDATE vault_images SET size_bytes = ? WHERE profile_id = ? AND path = ? AND source = 'discovered'`, f.SizeBytes, profileID, f.Path); updErr != nil {
+				res.Errs = append(res.Errs, fmt.Errorf("refreshing size for %s: %w", f.Path, updErr))
+				continue
 			}
+			res.Updated++
 		}
 	}
 
@@ -150,11 +165,10 @@ func ReconcileDiscoveredImages(ctx context.Context, db *sql.DB, profileID string
 			continue
 		}
 		if _, delErr := db.ExecContext(ctx, `DELETE FROM vault_images WHERE profile_id = ? AND path = ? AND source = 'discovered'`, profileID, path); delErr != nil {
-			errs = append(errs, fmt.Errorf("removing vanished %s: %w", path, delErr))
+			res.Errs = append(res.Errs, fmt.Errorf("removing vanished %s: %w", path, delErr))
 			continue
 		}
-		removed++
+		res.Removed++
 	}
-
-	return added, removed, errs
+	return res
 }
