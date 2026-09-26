@@ -119,6 +119,13 @@ func TestWorkflowBundleRoundTrip(t *testing.T) {
 	if d == nil || d.ID != "acme-test" || d.Version != "1.0.0" || len(d.Domains) == 0 || len(d.Capabilities) == 0 || d.Replaces != nil {
 		t.Errorf("reviewDetail = %+v", d)
 	}
+	// The install review's confirmation fields ride along (not needed here).
+	if d != nil && (d.ReplaceRequired || d.TrustChange != nil || d.Visibility == nil) {
+		t.Errorf("reviewDetail confirmation fields = %+v", d)
+	}
+	if !strings.Contains(missingOut, `"visibility"`) || !strings.Contains(missingOut, `"replaceRequired"`) {
+		t.Errorf("reviewDetail JSON lacks visibility/replaceRequired: %s", missingOut)
+	}
 	reg, err := openAutomationRegistry()
 	if err != nil {
 		t.Fatal(err)
@@ -273,4 +280,24 @@ func keysOf(m map[string]bundledAutomation) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// TestBundleReviewDetailCarriesConfirmation: replaceRequired, trustChange
+// and visibility come through from the dry-run review unchanged.
+func TestBundleReviewDetailCarriesConfirmation(t *testing.T) {
+	r := &automation.InstallResult{ID: "acme", Version: "2.0.0", Review: automation.Review{
+		Domains:         []string{"acme.test"},
+		ReplaceRequired: true,
+		TrustChange:     &automation.TrustChange{From: "local", To: "imported"},
+		Visibility:      map[string][]string{"visits_profiles": {"open_profile"}},
+		Replaces:        &automation.Replaced{ID: "acme", Source: "local", Trust: "local", Version: "1.0.0"},
+	}}
+	d := newBundleReviewDetail(r)
+	if !d.ReplaceRequired || d.TrustChange == nil || d.TrustChange.To != "imported" ||
+		len(d.Visibility["visits_profiles"]) != 1 || d.Replaces == nil {
+		t.Fatalf("detail = %+v", d)
+	}
+	if d := newBundleReviewDetail(&automation.InstallResult{ID: "x"}); d.Visibility == nil {
+		t.Fatal("visibility must be an object, not null")
+	}
 }
