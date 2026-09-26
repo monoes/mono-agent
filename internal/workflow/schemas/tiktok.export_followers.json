@@ -1,0 +1,8 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "profileUrl", "label": "Profile", "type": "text", "required": true, "placeholder": "https://www.tiktok.com/@nasa", "help": "Username or profile URL whose list to export. Older workflows that set targets keep working." },
+    { "key": "sourceType", "label": "List", "type": "select", "required": false, "default": "FOLLOWERS_FETCH", "options": ["FOLLOWERS_FETCH", "FOLLOWING_FETCH"], "help": "Followers or the accounts followed." },
+    { "key": "limit",      "label": "Max Results", "type": "number", "required": false, "default": 50 }
+  ]
+}

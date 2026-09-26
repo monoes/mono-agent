@@ -837,26 +837,18 @@
         "type": "select",
         "required": false,
         "default": "FOLLOWERS_FETCH",
-        "help": "Followers or the accounts followed.",
+        "help": "Your followers or the accounts you follow. LinkedIn shows these lists only for your own account.",
         "options": [
           "FOLLOWERS_FETCH",
           "FOLLOWING_FETCH"
         ]
       },
       {
-        "key": "targets",
-        "label": "Profiles",
-        "type": "array",
-        "required": false,
-        "help": "Username or profile URL whose list to export. LinkedIn always exports your own account; TikTok needs a profile.",
-        "item_type": "text"
-      },
-      {
         "key": "limit",
         "label": "Max Results",
         "type": "number",
         "required": false,
-        "default": 100
+        "default": 50
       }
     ]
   },
@@ -1270,6 +1262,14 @@
     "credential_platform": "tiktok",
     "fields": [
       {
+        "key": "profileUrl",
+        "label": "Profile",
+        "type": "text",
+        "required": true,
+        "placeholder": "https://www.tiktok.com/@nasa",
+        "help": "Username or profile URL whose list to export. Older workflows that set targets keep working."
+      },
+      {
         "key": "sourceType",
         "label": "List",
         "type": "select",
@@ -1282,19 +1282,11 @@
         ]
       },
       {
-        "key": "targets",
-        "label": "Profiles",
-        "type": "array",
-        "required": false,
-        "help": "Username or profile URL whose list to export. LinkedIn always exports your own account; TikTok needs a profile.",
-        "item_type": "text"
-      },
-      {
         "key": "limit",
         "label": "Max Results",
         "type": "number",
         "required": false,
-        "default": 100
+        "default": 50
       }
     ]
   },

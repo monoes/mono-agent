@@ -232,6 +232,29 @@ func TestListFollowersPrivateIsError(t *testing.T) {
 	}
 }
 
+// Live T1: on a slow load the first click on the count opened nothing, or
+// the popup opened but its rows took longer than one wait.
+func TestListFollowersSlowLoads(t *testing.T) {
+	p := newPage(t)
+	res, err := call(t, &TikTokBot{}, p, "list_followers", profileURL("fake_deafclick"), "FOLLOWERS_FETCH", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if us := resultList(t, res); len(us) != 3 {
+		t.Fatalf("deaf click: got %v", us)
+	}
+	if ev := strings.Join(pageEvents(t, p), ","); strings.Count(ev, "ignored-count-click") != 1 {
+		t.Fatalf("events = %s, want exactly one ignored click then a retry", ev)
+	}
+	res, err = call(t, &TikTokBot{}, p, "list_followers", profileURL("fake_slowrows"), "FOLLOWERS_FETCH", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if us := resultList(t, res); len(us) != 3 {
+		t.Fatalf("slow rows: got %v", us)
+	}
+}
+
 func TestListConversations(t *testing.T) {
 	p := newPage(t)
 	res, err := call(t, &TikTokBot{}, p, "list_conversations", 10, true)

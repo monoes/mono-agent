@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Pat Example | LinkedIn</title>
+<!-- SYNTHETIC fixture: someone else's profile in the server-driven markup.
+     The name block carries the degree ("· 3rd") and pronouns; the banner
+     <figure> holds an image that comes before the profile photo; the About
+     card renders only once the page is scrolled, headed by an h2 inside a
+     componentkey card (no <section>). Invented person. -->
+</head>
+<body>
+<main>
+<section aria-label="Primary content">
+  <div data-testid="lazy-column" id="column">
+    <div componentkey="com.linkedin.sdui.profile.card.refACoAAFakeFakeFake0002Topcard">
+      <section componentkey="tc-2">
+        <div role="button" tabindex="0"><figure><img alt="" src="https://media.licdn.com/dms/image/v2/fake/profile-displaybackgroundimage-shrink_350_1400/banner.jpg" width="400" height="100"></figure></div>
+        <div aria-label="Profile photo"><figure><img alt="" src="https://media.licdn.com/dms/image/v2/fake/profile-displayphoto-shrink_200_200/pat.jpg" width="40" height="40"></figure></div>
+        <div><div><a href="https://www.linkedin.com/in/pat-example-test/"><h2>Pat Example</h2></a><p>· 3rd</p></div><p>He/Him</p></div>
+        <p>Co-chair, Example Foundation</p>
+        <p>Example Foundation · Example College</p>
+        <div><p>Seattle, Washington, United States</p><p>·</p><p><a href="https://www.linkedin.com/in/pat-example-test/overlay/contact-info/">Contact info</a></p></div>
+        <p>40,681,680 followers</p>
+        <button aria-label="Follow Pat Example" type="button">Follow</button>
+      </section>
+    </div>
+    <div style="height:4000px"></div>
+  </div>
+</section>
+</main>
+<script>
+window.addEventListener('scroll', function once() {
+  if (window.scrollY < 100) return;
+  window.removeEventListener('scroll', once);
+  var card = document.createElement('div');
+  card.setAttribute('componentkey', 'com.linkedin.sdui.profile.card.refACoAAFakeFakeFake0002About');
+  card.innerHTML = '<div><h2>About</h2></div><div><span data-testid="expandable-text-box">Sharing what I am learning about climate and health.</span></div>';
+  document.getElementById('column').appendChild(card);
+});
+</script>
+</body>
+</html>

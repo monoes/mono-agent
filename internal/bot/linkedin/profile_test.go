@@ -60,6 +60,32 @@ func TestGetProfileData(t *testing.T) {
 		}
 	})
 
+	// Someone else's server-driven profile: the "· 3rd" and pronoun lines
+	// in the name block are not the headline, the banner image before the
+	// photo is not the picture, and the About card renders only on scroll.
+	t.Run("server-driven top card (other member, lazy About)", func(t *testing.T) {
+		p, rec := newPage(t, b, bottest.Route{Pattern: "https://www.linkedin.com/in/*", File: "testdata/profile_sdui_other.html"})
+		res, err := call(t, &LinkedInBot{}, p, "get_profile_data", "https://www.linkedin.com/in/pat-example-test/")
+		if err != nil {
+			t.Fatal(err)
+		}
+		m := res.(map[string]interface{})
+		want := map[string]interface{}{
+			"username": "pat-example-test", "full_name": "Pat Example", "headline": "Co-chair, Example Foundation",
+			"location": "Seattle, Washington, United States", "connection_degree": "3rd", "follower_count": "40,681,680",
+			"about": "Sharing what I am learning about climate and health.", "is_self": false,
+			"profile_picture_url": "https://media.licdn.com/dms/image/v2/fake/profile-displayphoto-shrink_200_200/pat.jpg",
+		}
+		for k, v := range want {
+			if m[k] != v {
+				t.Errorf("%s = %v, want %v", k, m[k], v)
+			}
+		}
+		if w := writes(rec); len(w) != 0 {
+			t.Fatalf("a read made writes: %v", w)
+		}
+	})
+
 	t.Run("nothing rendered is an error", func(t *testing.T) {
 		p, _ := newPage(t, b, bottest.Route{Pattern: "https://www.linkedin.com/in/*", Body: `<!doctype html><main><p>loading…</p></main>`})
 		if _, err := call(t, &LinkedInBot{}, p, "get_profile_data", "https://www.linkedin.com/in/slow-test/"); err == nil {
@@ -176,6 +202,42 @@ func TestListFollowers(t *testing.T) {
 		}
 		if len(rec.Matching("GET", "https://www.linkedin.com/mynetwork/network-manager/people-follow/following/")) != 1 {
 			t.Fatalf("requests = %v", rec.Requests())
+		}
+	})
+
+	// The list must render (cards, or the empty state) before it is read:
+	// a list that never loads is an error, not an empty success.
+	t.Run("renders late", func(t *testing.T) {
+		p, _ := newPage(t, b, bottest.Route{Pattern: "https://www.linkedin.com/mynetwork/network-manager/people-follow/*",
+			Body: `<!doctype html><main><p>Loading</p></main><script>setTimeout(function () { document.querySelector('main').innerHTML = '<ul role="list"><li><a href="https://www.linkedin.com/in/late-lu-test/">Late Lu</a><p>Designer</p></li></ul>'; }, 1200);</script>`})
+		res, err := call(t, &LinkedInBot{}, p, "list_followers", "FOLLOWING_FETCH", 5)
+		if err != nil {
+			t.Fatal(err)
+		}
+		people := res.([]map[string]interface{})
+		if len(people) != 1 || people[0]["full_name"] != "Late Lu" {
+			t.Fatalf("people = %v", people)
+		}
+	})
+
+	t.Run("empty state", func(t *testing.T) {
+		p, _ := newPage(t, b, bottest.Route{Pattern: "https://www.linkedin.com/mynetwork/network-manager/people-follow/*",
+			Body: `<!doctype html><main><section class="artdeco-empty-state"><h2>You’re not following anyone yet</h2></section></main>`})
+		res, err := call(t, &LinkedInBot{}, p, "list_followers", "FOLLOWING_FETCH", 5)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n := len(res.([]map[string]interface{})); n != 0 {
+			t.Fatalf("got %d", n)
+		}
+	})
+
+	t.Run("never loads", func(t *testing.T) {
+		p, _ := newPage(t, b, bottest.Route{Pattern: "https://www.linkedin.com/mynetwork/network-manager/people-follow/*",
+			Body: `<!doctype html><main><p>Loading</p></main>`})
+		_, err := call(t, &LinkedInBot{}, p, "list_followers", "FOLLOWING_FETCH", 5)
+		if err == nil || !strings.Contains(err.Error(), "following list didn't load") {
+			t.Fatalf("err = %v", err)
 		}
 	})
 
