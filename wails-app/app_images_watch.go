@@ -2,17 +2,22 @@
 package main
 
 import (
-	"context"
-	"fmt"
+	"time"
 
 	"github.com/monoes/mono-agent/internal/imagescan"
-	"github.com/monoes/mono-agent/internal/vault"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // restartImageWatcher stops any existing image watcher and starts a new one
-// scoped to the active profile's project folder. Mirrors restartDocumentWatcher
-// in shape and call sites (startup, MoveProfileFolder, SwitchProfile, shutdown).
+// scoped to the active profile's folder. Mirrors restartDocumentWatcher in
+// shape and call sites (startup, MoveProfileFolder, SwitchProfile,
+// shutdown).
+//
+// The watcher only detects change: imagescan.Watcher walks the folder every
+// few seconds and compares (path, size, mtime) with its last walk, which
+// costs no subprocess. On a difference (and once at start, since nothing
+// else knows what is already on disk) it runs `image sync`, which owns the
+// vault_images writes; images:changed is emitted only when that sync
+// reports it changed something.
 func (a *App) restartImageWatcher() {
 	a.imgWatchMu.Lock()
 	defer a.imgWatchMu.Unlock()
@@ -22,29 +27,23 @@ func (a *App) restartImageWatcher() {
 		a.imgWatcher = nil
 	}
 
-	profileID := a.getActiveProfileID()
 	root := a.documentRootForActiveProfile()
 	if root == "" {
 		return
 	}
+	a.imgWatcher = a.startImageWatcher(a.getActiveProfileID(), root, 0, a.emitFolderEvent)
+}
 
-	w := imagescan.NewWatcher(root, 0, func(files []imagescan.FileInfo) {
-		found := make([]vault.DiscoveredFile, len(files))
-		for i, f := range files {
-			found[i] = vault.DiscoveredFile{Path: f.Path, Filename: f.Filename, SizeBytes: f.SizeBytes}
-		}
-		added, removed, errs := vault.ReconcileDiscoveredImages(context.Background(), a.db, profileID, found)
-		for _, e := range errs {
-			a.emitLog("SYSTEM", "WARN", fmt.Sprintf("profile %s: image discovery: %v", profileID, e))
-		}
-		if a.ctx != nil && (added > 0 || removed > 0 || len(errs) > 0) {
-			runtime.EventsEmit(a.ctx, "images:changed", map[string]interface{}{
-				"profileID": profileID,
-				"added":     added,
-				"removed":   removed,
-			})
+// startImageWatcher starts an imagescan.Watcher on root that syncs
+// profileID's discovered images through the CLI whenever the folder differs
+// from its last walk. interval <= 0 uses imagescan.DefaultPollInterval.
+func (a *App) startImageWatcher(profileID, root string, interval time.Duration, emit folderEventFunc) *imagescan.Watcher {
+	s := newFolderSyncer(func() {
+		if changed := a.syncFolder(profileID, "image discovery", "image", "sync"); changed != nil {
+			emit("images:changed", folderEventData(profileID, changed))
 		}
 	})
+	w := imagescan.NewWatcher(root, interval, func([]imagescan.FileInfo) { s.trigger() })
 	w.Start()
-	a.imgWatcher = w
+	return w
 }
