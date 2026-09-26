@@ -45,10 +45,24 @@ type bundledAutomation struct {
 type workflowBundleFile struct {
 	workflow.WorkflowFile
 	Automations map[string]bundledAutomation `json:"automations,omitempty"`
+	// Unbundled lists packages the workflow uses that could not be exported
+	// (e.g. a legacy package whose sites could not be worked out). The
+	// workflow and every exportable package are still written; the
+	// importing side reports these as missing, with the reason and hint.
+	Unbundled map[string]unbundledAutomation `json:"unbundledAutomations,omitempty"`
+}
+
+// unbundledAutomation says why a used package is not in the bundle.
+type unbundledAutomation struct {
+	Version string `json:"version,omitempty"`
+	Reason  string `json:"reason"`
+	Hint    string `json:"hint"`
 }
 
 // bundleWorkflowAutomations exports every installed automation the
-// workflow's nodes use into the file's "automations" field.
+// workflow's nodes use into the file's "automations" field. A package that
+// cannot be exported is listed under "unbundledAutomations" instead; the
+// export as a whole never fails because of one package.
 func bundleWorkflowAutomations(file workflow.WorkflowFile) (workflowBundleFile, error) {
 	out := workflowBundleFile{WorkflowFile: file}
 	reg, err := openAutomationRegistry()
@@ -63,7 +77,12 @@ func bundleWorkflowAutomations(file workflow.WorkflowFile) (workflowBundleFile, 
 		}
 		var buf bytes.Buffer
 		if err := reg.Export(id, &buf, automation.ExportOptions{}); err != nil {
-			return out, fmt.Errorf("bundle automation %s: %w", id, err)
+			if out.Unbundled == nil {
+				out.Unbundled = map[string]unbundledAutomation{}
+			}
+			out.Unbundled[id] = unbundledAutomation{Version: info.Version, Reason: err.Error(),
+				Hint: fmt.Sprintf("on the exporting machine, run: monoagentcli automation export %s --domains <host,...> -o %s.mpkg, then share and install that file", id, id)}
+			continue
 		}
 		sum := sha256.Sum256(buf.Bytes())
 		if out.Automations == nil {
@@ -79,74 +98,19 @@ func bundleWorkflowAutomations(file workflow.WorkflowFile) (workflowBundleFile, 
 	return out, nil
 }
 
-// workflowAutomationIDs returns the sorted, distinct package ids used by
-// node types of the form "<prefix>.<action>". resolve maps a prefix to the
-// installed package id ("" when the prefix is not an automation, e.g.
-// core.set or trigger.manual); it goes through the definition source, so an
-// aliased prefix (foo → local-foo) bundles the package that actually runs.
-func workflowAutomationIDs(nodes []workflow.WorkflowFileNode, resolve func(prefix string) string) []string {
-	seen := map[string]bool{}
-	var ids []string
-	for _, n := range nodes {
-		prefix, _, ok := strings.Cut(n.Type, ".")
-		if !ok || prefix == "" {
-			continue
-		}
-		id := resolve(prefix)
-		if id == "" || seen[id] {
-			continue
-		}
-		seen[id] = true
+// unbundledWarnings are human lines for the packages left out of a bundle.
+func unbundledWarnings(b workflowBundleFile) []string {
+	ids := make([]string, 0, len(b.Unbundled))
+	for id := range b.Unbundled {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
-	return ids
-}
-
-// packageResolver resolves a node-type prefix the way the action loader
-// does (the registry's DefSource, which also maps a legacy platform alias
-// such as "google_maps" to its generated local-* package), then falls back
-// to installed packages the DefSource hides (disabled): an exact id, or the
-// generated legacy package for that platform (Registry.ResolveLegacyPlatform,
-// which knows hashed ids for colliding names).
-func packageResolver(reg *automation.Registry) func(string) string {
-	src := reg.DefSource()
-	return func(prefix string) string {
-		if src != nil {
-			if pc := src.Package(prefix); pc != nil {
-				return pc.ID()
-			}
-		}
-		if info, err := reg.Info(prefix); err == nil && !info.Removed {
-			return info.ID
-		}
-		if id, ok := reg.ResolveLegacyPlatform(prefix); ok {
-			return id
-		}
-		return ""
+	var lines []string
+	for _, id := range ids {
+		u := b.Unbundled[id]
+		lines = append(lines, fmt.Sprintf("warning: automation %s not bundled: %s\n  %s", id, u.Reason, u.Hint))
 	}
-}
-
-// canonicalNodeTypes rewrites "<alias>.<action>" node types to
-// "<package id>.<action>" wherever the prefix resolved to a different
-// (bundled) package id. A legacy alias is a local convenience of the
-// exporting machine — an imported package never claims one — so a bundled
-// workflow must name the package it ships.
-func canonicalNodeTypes(nodes []workflow.WorkflowFileNode, resolve func(string) string, bundled map[string]bundledAutomation) []workflow.WorkflowFileNode {
-	out := make([]workflow.WorkflowFileNode, len(nodes))
-	copy(out, nodes)
-	for i, n := range out {
-		prefix, act, ok := strings.Cut(n.Type, ".")
-		if !ok || prefix == "" {
-			continue
-		}
-		if id := resolve(prefix); id != "" && id != prefix {
-			if _, isBundled := bundled[id]; isBundled {
-				out[i].Type = id + "." + act
-			}
-		}
-	}
-	return out
+	return lines
 }
 
 // bundleImportItem reports what `workflow import` did (or would do) with
@@ -157,6 +121,9 @@ type bundleImportItem struct {
 	Status           string `json:"status"` // present | conflict | missing | installed | failed
 	InstalledVersion string `json:"installedVersion,omitempty"`
 	Error            string `json:"error,omitempty"`
+	// NotBundled: the exporter could not include this package (see Error);
+	// --yes cannot install it.
+	NotBundled bool `json:"notBundled,omitempty"`
 	// Review and ReviewDetail describe a "missing" package (a dry-run review
 	// of the pinned bytes, nothing installed), so a GUI can show what it
 	// would install before asking.
@@ -189,9 +156,10 @@ type bundleImportOptions struct {
 // Failures are reported per package and never fail the workflow import.
 func handleBundledAutomations(raw []byte, o bundleImportOptions) []bundleImportItem {
 	var doc struct {
-		Automations map[string]bundledAutomation `json:"automations"`
+		Automations map[string]bundledAutomation   `json:"automations"`
+		Unbundled   map[string]unbundledAutomation `json:"unbundledAutomations"`
 	}
-	if json.Unmarshal(raw, &doc) != nil || len(doc.Automations) == 0 {
+	if json.Unmarshal(raw, &doc) != nil || len(doc.Automations)+len(doc.Unbundled) == 0 {
 		return nil
 	}
 	ids := make([]string, 0, len(doc.Automations))
@@ -242,6 +210,30 @@ func handleBundledAutomations(raw []byte, o bundleImportOptions) []bundleImportI
 			item.Error = err.Error() // still "missing": --yes would fail the same way
 		} else {
 			item.Review, item.ReviewDetail = bundleReviewLine(review), newBundleReviewDetail(review)
+		}
+		items = append(items, item)
+	}
+	return append(items, unbundledItems(doc.Unbundled, doc.Automations, known)...)
+}
+
+// unbundledItems reports packages the exporter could not bundle: present
+// when installed here, otherwise missing with the exporter's reason and hint.
+func unbundledItems(unbundled map[string]unbundledAutomation, bundled map[string]bundledAutomation,
+	known map[string]automation.InstalledInfo) []bundleImportItem {
+	ids := make([]string, 0, len(unbundled))
+	for id := range unbundled {
+		if _, dup := bundled[id]; !dup {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	var items []bundleImportItem
+	for _, id := range ids {
+		u := unbundled[id]
+		item := bundleImportItem{ID: id, Version: u.Version, Status: "missing", NotBundled: true,
+			Error: "not in the bundle: " + u.Reason + "; " + u.Hint}
+		if info, ok := known[id]; ok && !info.Removed {
+			item.Status, item.InstalledVersion, item.Error = "present", info.Version, ""
 		}
 		items = append(items, item)
 	}
@@ -389,6 +381,10 @@ func bundleCapabilities(rv automation.Review) []string {
 func printBundleImport(out io.Writer, items []bundleImportItem) {
 	missing := 0
 	for _, it := range items {
+		if it.NotBundled && it.Status == "missing" {
+			fmt.Fprintf(out, "Automation %s %s: missing (%s)\n", it.ID, it.Version, it.Error)
+			continue
+		}
 		switch it.Status {
 		case "present":
 			fmt.Fprintf(out, "Automation %s: already installed (%s; bundle has %s)\n", it.ID, it.InstalledVersion, it.Version)

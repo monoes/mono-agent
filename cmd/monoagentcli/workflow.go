@@ -1563,23 +1563,27 @@ func newWorkflowExportCmd(cfg *globalConfig) *cobra.Command {
 
 			var wfFile interface{} = workflowFileFromWorkflow(wf)
 			if bundle {
-				if wfFile, err = bundleWorkflowAutomations(workflowFileFromWorkflow(wf)); err != nil {
+				b, err := bundleWorkflowAutomations(workflowFileFromWorkflow(wf))
+				if err != nil {
 					return err
 				}
+				for _, w := range unbundledWarnings(b) {
+					fmt.Fprintln(os.Stderr, w)
+				}
+				wfFile = b
 			}
 
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
 			if outputFile != "" {
-				f, err := os.Create(outputFile)
+				// Encode fully, then write via temp file + rename: a failed
+				// export never leaves an empty or truncated file behind.
+				b, err := json.MarshalIndent(wfFile, "", "  ")
 				if err != nil {
-					return fmt.Errorf("create output file: %w", err)
-				}
-				defer f.Close()
-				enc = json.NewEncoder(f)
-				enc.SetIndent("", "  ")
-				if err := enc.Encode(wfFile); err != nil {
 					return err
+				}
+				if err := writeFileAtomic(outputFile, append(b, '\n')); err != nil {
+					return fmt.Errorf("write output file: %w", err)
 				}
 				fmt.Fprintf(os.Stdout, "Exported workflow %q to %s\n", wf.Name, outputFile)
 				return nil
