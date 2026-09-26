@@ -108,6 +108,26 @@ describe('WorkflowImportDialog', () => {
     off()
   })
 
+  it('shows the trust drop and requires a tick when a bundled package replaces one', async () => {
+    await importFile({
+      id: 'w1', name: 'Scrape', status: 'created',
+      automations: [{ id: 'acme', version: '2.0.0', status: 'missing', reviewDetail: {
+        id: 'acme', version: '2.0.0', publisher: 'Jane', domains: ['app.acme.com'],
+        capabilities: ["visits profiles — the profile's owner can see your visit (view_profile)"],
+        replaces: { id: 'acme', source: 'local', trust: 'recorded', version: '1.0.0' }, replaceRequired: true,
+        trustChange: { from: 'recorded', to: 'imported' }, visibility: { profile_view_visible_to_owner: ['view_profile'] } } }],
+      missingAutomations: ['acme'],
+    })
+    expect(await screen.findByText(/Trust drops from recorded to imported/)).toBeInTheDocument()
+    expect(screen.getByText(/visits profiles — the profile's owner can see your visit/)).toBeInTheDocument()
+    expect(screen.getByText('Replaces local acme 1.0.0')).toBeInTheDocument()
+    expect(screen.queryByText('• can open and act on: books.toscrape.com')).not.toBeInTheDocument()
+    const install = screen.getByText('Install bundled automations').closest('button')
+    expect(install).toBeDisabled()
+    fireEvent.click(screen.getByLabelText(/I understand this replaces the local acme/))
+    expect(install).not.toBeDisabled()
+  })
+
   it('shows CLI errors inline and closes on Escape', async () => {
     const onClose = vi.fn()
     api.importWorkflowFull.mockResolvedValue({ error: 'node "x" has no type' })
