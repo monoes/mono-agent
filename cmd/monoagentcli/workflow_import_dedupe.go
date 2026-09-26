@@ -151,7 +151,47 @@ func findImportTarget(ctx context.Context, store *workflow.HybridWorkflowStore, 
 			}
 		}
 	}
-	return nil
+	return matchUnindexed(ctx, store, db, profileID, wf, hash)
+}
+
+// matchUnindexed finds a local workflow the import index does not know —
+// e.g. one imported by v0.70, which kept no index: first one with the same
+// content (ids and timestamps ignored), else one with the same name and the
+// same node types. Newest first.
+func matchUnindexed(ctx context.Context, store *workflow.HybridWorkflowStore, db *sql.DB, profileID string,
+	wf *workflow.Workflow, hash string) *workflow.Workflow {
+	list, err := store.ListWorkflows(ctx, profileID)
+	if err != nil {
+		return nil
+	}
+	var sameTypes *workflow.Workflow
+	want := nodeTypeSet(wf)
+	for _, cand := range list {
+		if cand.Name != wf.Name {
+			continue
+		}
+		full := ownedWorkflow(ctx, store, db, profileID, cand.ID)
+		if full == nil {
+			continue
+		}
+		if workflowContentHash(full) == hash {
+			return full
+		}
+		if sameTypes == nil && nodeTypeSet(full) == want {
+			sameTypes = full
+		}
+	}
+	return sameTypes
+}
+
+// nodeTypeSet is the sorted multiset of a workflow's node types.
+func nodeTypeSet(wf *workflow.Workflow) string {
+	types := make([]string, 0, len(wf.Nodes))
+	for _, n := range wf.Nodes {
+		types = append(types, n.Type)
+	}
+	sort.Strings(types)
+	return strings.Join(types, "\x00")
 }
 
 // missingBundleHint lists bundled packages that were not installed and the
