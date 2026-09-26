@@ -425,8 +425,6 @@ export function SearchProfileKnowledge(arg1:string):Promise<Array<main.Knowledge
 
 export function SearchVaultImages(arg1:string):Promise<Array<Record<string, any>>>;
 
-export function SelfUpdate():Promise<main.UpdateResult>;
-
 export function SendApplication(arg1:string,arg2:string):Promise<void>;
 
 export function SendDraftPersonMessage(arg1:string):Promise<storage.PersonMessage>;
