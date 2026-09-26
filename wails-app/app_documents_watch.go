@@ -100,8 +100,7 @@ func (a *App) startDocumentWatcher(profileID, root string, interval time.Duratio
 // profile folder registers every file in it.
 const folderSyncCLITimeout = 2 * time.Minute
 
-// folderSyncReport is the --json output of `profile documents sync` and
-// `image sync`.
+// folderSyncReport is the --json output of `profile documents sync`.
 type folderSyncReport struct {
 	ProfileID string   `json:"profile_id"`
 	Added     int      `json:"added"`
@@ -141,7 +140,7 @@ func (a *App) syncFolder(profileID, what string, args ...string) *folderSyncRepo
 	return &rep
 }
 
-// folderEventData is the documents:changed / images:changed payload.
+// folderEventData is the documents:changed payload.
 // rep is nil when the event is not from a sync that wrote rows.
 func folderEventData(profileID string, rep *folderSyncReport) map[string]interface{} {
 	data := map[string]interface{}{"profileID": profileID}
