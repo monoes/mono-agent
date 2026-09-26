@@ -98,12 +98,16 @@ func checkExportInstallable(id string, files map[string][]byte) error {
 		return nil
 	}
 	if len(m.Site.Domains) == 0 {
-		if l := m.Legacy; l != nil && len(l.SuggestedDomains) > 0 {
-			return fmt.Errorf("%w %s: it was generated from legacy actions and runs unrestricted here, but an exported package must list the sites it may open: export it with --domains %s (suggested from its actions)",
-				ErrNotExportable, id, strings.Join(l.SuggestedDomains, ","))
+		hint := ""
+		if h := m.Legacy.templatedHint(); h != "" {
+			hint = "; " + h
 		}
-		return fmt.Errorf("%w %s: it lists no sites (site.domains), which an exported package must: export it with --domains <site,…> naming the sites its actions open",
-			ErrNotExportable, id)
+		if l := m.Legacy; l != nil && len(l.SuggestedDomains) > 0 {
+			return fmt.Errorf("%w %s: it was generated from legacy actions and runs unrestricted here, but an exported package must list the sites it may open: export it with --domains %s (suggested from its actions)%s",
+				ErrNotExportable, id, strings.Join(l.SuggestedDomains, ","), hint)
+		}
+		return fmt.Errorf("%w %s: it lists no sites (site.domains), which an exported package must: export it with --domains <site,…> naming the sites its actions open%s",
+			ErrNotExportable, id, hint)
 	}
 	return fmt.Errorf("%w %s: it would not install elsewhere: %s", ErrNotExportable, id, firstError(issues))
 }

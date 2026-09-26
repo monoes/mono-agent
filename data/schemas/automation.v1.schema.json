@@ -35,6 +35,10 @@
             "type": "string"
           },
           "type": "array"
+        },
+        "templatedUrls": {
+          "description": "TemplatedURLs is true when some navigate URL is built at run time ({{…}}): the suggestion cannot be complete.",
+          "type": "boolean"
         }
       },
       "required": [

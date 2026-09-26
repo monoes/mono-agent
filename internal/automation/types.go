@@ -7,7 +7,10 @@
 // Contracts: docs/mastermind/plans/2026-09-25-browser-automation-packages-contracts.md
 package automation
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // SchemaV1 is the manifest "schema" value.
 const SchemaV1 = "monoagent.automation/v1"
@@ -65,6 +68,25 @@ type LegacyInfo struct {
 	// (localhost, IP-less single labels…); they make the package
 	// unexportable.
 	LocalHosts []string `json:"localHosts,omitempty"`
+	// TemplatedURLs is true when some navigate URL is built at run time
+	// ({{…}}): the suggestion cannot be complete.
+	TemplatedURLs bool `json:"templatedUrls,omitempty"`
+}
+
+// templatedHint is the advice shown when a legacy package's navigate URLs
+// are built at run time.
+func (l *LegacyInfo) templatedHint() string {
+	if l == nil || !l.TemplatedURLs {
+		return ""
+	}
+	example := "*.example.com"
+	for _, d := range l.SuggestedDomains {
+		if strings.HasPrefix(d, "*.") {
+			example = d
+			break
+		}
+	}
+	return "its actions open URLs built at run time, so list every site they may reach — prefer a wildcard like " + example + " over exact hosts"
 }
 
 type Publisher struct {

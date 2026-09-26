@@ -31,7 +31,7 @@ import (
 
 // legacyFormat versions the generated manifests; a registry folded with an
 // older format is refolded once on the next Seed.
-const legacyFormat = 3 // 3: site.domains no longer derived (v0.74 regression)
+const legacyFormat = 4 // 3: site.domains no longer derived (v0.74 regression); 4: templated URLs noted
 
 type legacyDir struct {
 	name    string            // directory name as found
@@ -289,12 +289,23 @@ func (r *Registry) foldOneLocked(idx *indexFile, id string, ld *legacyDir, seeds
 // the user added by hand are kept; ones an earlier build derived (exact
 // hosts, a seed's list) are cleared.
 func deriveLegacyPermissions(m *Manifest, files map[string][]byte, generated []string) {
-	var hosts, local, steps []string
+	var hosts, local, steps, globs []string
+	templated := false
 	var walk func([]action.StepDef)
 	walk = func(ss []action.StepDef) {
 		for _, s := range ss {
 			if s.Type != "" && !contains(steps, s.Type) {
 				steps = append(steps, s.Type)
+			}
+			if s.Type == "navigate" && strings.Contains(s.URL, "{{") {
+				templated = true
+				if g, h := templateHost(s.URL); g != "" {
+					if !contains(globs, g) {
+						globs = append(globs, g)
+					}
+				} else if h != "" && checkDomainPattern(h) == nil && !contains(hosts, h) {
+					hosts = append(hosts, h) // template only in the path
+				}
 			}
 			if s.Type == "navigate" && !strings.Contains(s.URL, "{{") {
 				if u, err := url.Parse(strings.TrimSpace(s.URL)); err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" {
@@ -341,8 +352,10 @@ func deriveLegacyPermissions(m *Manifest, files map[string][]byte, generated []s
 			suggested = append(suggested, "*."+reg)
 		}
 	}
+	suggested = append(suggested, globs...)
 	sort.Strings(local)
 	m.Legacy.SuggestedDomains = unionSorted(nil, suggested)
+	m.Legacy.TemplatedURLs = templated
 	m.Legacy.LocalHosts = local
 
 	// Clear generated domains; keep hand-added ones.
@@ -362,6 +375,29 @@ func deriveLegacyPermissions(m *Manifest, files map[string][]byte, generated []s
 			m.Site.StartURL = ""
 		}
 	}
+}
+
+var templateExpr = regexp.MustCompile(`\{\{[^}]*\}\}`)
+
+// templateHost looks at a templated navigate URL. When the template sits
+// in the host but a registrable domain is literal
+// ("https://{{x}}.google.com/…") it returns that domain's *. glob; when the
+// host is entirely literal (template only in the path) it returns the host.
+func templateHost(raw string) (glob, host string) {
+	const marker = "tmplhostmarker0"
+	u, err := url.Parse(templateExpr.ReplaceAllString(strings.TrimSpace(raw), marker))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "", ""
+	}
+	h := strings.ToLower(u.Hostname())
+	if !strings.Contains(h, marker) {
+		return "", strings.ToLower(u.Host)
+	}
+	reg, err := publicsuffix.EffectiveTLDPlusOne(h)
+	if err != nil || strings.Contains(reg, marker) {
+		return "", ""
+	}
+	return "*." + reg, ""
 }
 
 func unionSorted(a, b []string) []string {
