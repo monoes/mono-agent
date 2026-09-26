@@ -10,6 +10,8 @@ package automation
 import (
 	"strings"
 	"time"
+
+	"golang.org/x/net/publicsuffix"
 )
 
 // SchemaV1 is the manifest "schema" value.
@@ -79,14 +81,17 @@ func (l *LegacyInfo) templatedHint() string {
 	if l == nil || !l.TemplatedURLs {
 		return ""
 	}
-	example := "*.example.com"
 	for _, d := range l.SuggestedDomains {
 		if strings.HasPrefix(d, "*.") {
-			example = d
-			break
+			return "its actions open URLs built at run time, so list every site they may reach — prefer a wildcard like " + d + " over exact hosts"
 		}
 	}
-	return "its actions open URLs built at run time, so list every site they may reach — prefer a wildcard like " + example + " over exact hosts"
+	if len(l.SuggestedDomains) > 0 {
+		// Only literal hosts are known (template in the path).
+		return "its actions open URLs built at run time, so list every site they may reach — add a wildcard like *." +
+			registrable(l.SuggestedDomains[0]) + " if they redirect to other subdomains"
+	}
+	return "its actions open URLs built at run time, so list every site they may reach — prefer a wildcard like *.example.com over exact hosts"
 }
 
 type Publisher struct {
@@ -276,4 +281,13 @@ type ExportOptions struct {
 	// package is untouched), e.g. for a generated legacy package that runs
 	// unrestricted locally. Each is checked like a manifest domain.
 	Domains []string
+}
+
+// registrable is host's registrable domain (host itself when unknown).
+func registrable(host string) string {
+	h := strings.Split(host, ":")[0]
+	if reg, err := publicsuffix.EffectiveTLDPlusOne(h); err == nil {
+		return reg
+	}
+	return h
 }

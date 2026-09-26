@@ -9,19 +9,73 @@ import (
 )
 
 func TestTemplateHost(t *testing.T) {
-	cases := []struct{ raw, glob, host string }{
-		{"https://{{lang}}.google.com/maps", "*.google.com", ""},
-		{"https://maps.google.com/?q={{q}}", "", "maps.google.com"},
-		{"https://{{a}}.{{b}}.example.co.uk/x", "*.example.co.uk", ""},
-		{"https://{{domain}}.com/", "", ""},
-		{"{{url}}", "", ""},
-		{"{{base}}/path", "", ""},
+	cases := []struct{ raw, glob, host, scheme string }{
+		{"https://{{lang}}.google.com/maps", "*.google.com", "", ""},
+		{"https://maps.google.com/?q={{q}}", "", "maps.google.com", "https"},
+		{"http://intranet.example.org/{{page}}", "", "intranet.example.org", "http"},
+		{"https://{{a}}.{{b}}.example.co.uk/x", "*.example.co.uk", "", ""},
+		{"https://{{domain}}.com/", "", "", ""},
+		{"{{url}}", "", "", ""},
+		{"{{base}}/path", "", "", ""},
 	}
 	for _, c := range cases {
-		g, h := templateHost(c.raw)
-		if g != c.glob || h != c.host {
-			t.Errorf("templateHost(%q) = %q,%q want %q,%q", c.raw, g, h, c.glob, c.host)
+		g, h, sch := templateHost(c.raw)
+		if g != c.glob || h != c.host || sch != c.scheme {
+			t.Errorf("templateHost(%q) = %q,%q,%q want %q,%q,%q", c.raw, g, h, sch, c.glob, c.host, c.scheme)
 		}
+	}
+}
+
+func TestWWWCounterpart(t *testing.T) {
+	for h, want := range map[string]string{
+		"example.com": "www.example.com", "www.example.com": "example.com", "example.com:8443": "www.example.com:8443",
+		"crm.e2e.test": "", "maps.google.com": "", "www.example.co.uk": "example.co.uk",
+	} {
+		if got := wwwCounterpart(h); got != want {
+			t.Errorf("wwwCounterpart(%q) = %q, want %q", h, got, want)
+		}
+	}
+}
+
+// Literal hosts never widen to a wildcard; the start URL keeps its scheme.
+func TestLegacySuggestionsStayNarrow(t *testing.T) {
+	r := newReg(t)
+	writeTree(t, filepath.Join(r.Home(), "actions", "crm"), map[string]string{
+		"open.json": `{"actionType":"open","sideEffects":"read","steps":[
+  {"id":"a","type":"navigate","url":"http://crm.e2e.test/login"},
+  {"id":"b","type":"navigate","url":"https://example.com/"}]}`,
+	})
+	writeTree(t, filepath.Join(r.Home(), "actions", "maps"), map[string]string{
+		"q.json": `{"actionType":"q","sideEffects":"read","steps":[{"id":"a","type":"navigate","url":"https://maps.google.com/?q={{q}}"}]}`,
+	})
+	if err := r.Seed(seedFS("1.0.0", "a")); err != nil {
+		t.Fatal(err)
+	}
+	crm, _ := r.ResolveLegacyPlatform("crm")
+	p, _ := r.Get(crm)
+	if s := strings.Join(p.Manifest.Legacy.SuggestedDomains, ","); s != "crm.e2e.test,example.com,www.example.com" {
+		t.Errorf("literal suggestions: %s", s)
+	}
+	if p.Manifest.Site.StartURL != "http://crm.e2e.test/" {
+		t.Errorf("startUrl %q (scheme must follow the actions)", p.Manifest.Site.StartURL)
+	}
+	// The suggestion exports and allows exactly what the actions open.
+	var buf bytes.Buffer
+	if err := r.Export(crm, &buf, ExportOptions{Domains: p.Manifest.Legacy.SuggestedDomains}); err != nil {
+		t.Errorf("export with the suggestion: %v", err)
+	}
+
+	// Template only in the path: the literal host, no wildcard; the hint
+	// says to add one if the site redirects.
+	mid, _ := r.ResolveLegacyPlatform("maps")
+	mp, _ := r.Get(mid)
+	if s := strings.Join(mp.Manifest.Legacy.SuggestedDomains, ","); s != "maps.google.com" {
+		t.Errorf("path-template suggestions: %s", s)
+	}
+	err := r.Export(mid, &buf, ExportOptions{})
+	if err == nil || !strings.Contains(err.Error(), "--domains maps.google.com") ||
+		!strings.Contains(err.Error(), "add a wildcard like *.google.com if they redirect to other subdomains") {
+		t.Errorf("path-template refusal: %v", err)
 	}
 }
 

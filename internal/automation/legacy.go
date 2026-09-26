@@ -290,6 +290,7 @@ func (r *Registry) foldOneLocked(idx *indexFile, id string, ld *legacyDir, seeds
 // hosts, a seed's list) are cleared.
 func deriveLegacyPermissions(m *Manifest, files map[string][]byte, generated []string) {
 	var hosts, local, steps, globs []string
+	scheme := map[string]string{} // host → scheme of the first URL seen
 	templated := false
 	var walk func([]action.StepDef)
 	walk = func(ss []action.StepDef) {
@@ -299,12 +300,13 @@ func deriveLegacyPermissions(m *Manifest, files map[string][]byte, generated []s
 			}
 			if s.Type == "navigate" && strings.Contains(s.URL, "{{") {
 				templated = true
-				if g, h := templateHost(s.URL); g != "" {
+				if g, h, sch := templateHost(s.URL); g != "" {
 					if !contains(globs, g) {
 						globs = append(globs, g)
 					}
 				} else if h != "" && checkDomainPattern(h) == nil && !contains(hosts, h) {
 					hosts = append(hosts, h) // template only in the path
+					scheme[h] = sch
 				}
 			}
 			if s.Type == "navigate" && !strings.Contains(s.URL, "{{") {
@@ -317,6 +319,7 @@ func deriveLegacyPermissions(m *Manifest, files map[string][]byte, generated []s
 						}
 					case !contains(hosts, h):
 						hosts = append(hosts, h)
+						scheme[h] = u.Scheme
 					}
 				}
 			}
@@ -345,11 +348,17 @@ func deriveLegacyPermissions(m *Manifest, files map[string][]byte, generated []s
 		m.Permissions.Scripts = []string{}
 	}
 
-	var suggested []string
+	// A literal host suggests itself and its www/apex counterpart — never a
+	// wildcard, which would allow sites the actions never opened. Only a
+	// template in the host (https://{{x}}.google.com/) needs a wildcard.
+	var suggested, widened []string
 	for _, h := range hosts {
 		suggested = append(suggested, h)
+		if c := wwwCounterpart(h); c != "" {
+			suggested = append(suggested, c)
+		}
 		if reg, err := publicsuffix.EffectiveTLDPlusOne(strings.Split(h, ":")[0]); err == nil {
-			suggested = append(suggested, "*."+reg)
+			widened = append(widened, "*."+reg) // what an earlier build suggested
 		}
 	}
 	suggested = append(suggested, globs...)
@@ -359,7 +368,7 @@ func deriveLegacyPermissions(m *Manifest, files map[string][]byte, generated []s
 	m.Legacy.LocalHosts = local
 
 	// Clear generated domains; keep hand-added ones.
-	generated = append(append([]string{}, generated...), suggested...)
+	generated = append(append(append([]string{}, generated...), suggested...), widened...)
 	kept := []string{}
 	for _, d := range m.Site.Domains {
 		if !contains(generated, d) {
@@ -368,7 +377,11 @@ func deriveLegacyPermissions(m *Manifest, files map[string][]byte, generated []s
 	}
 	m.Site.Domains = kept
 	if m.Site.StartURL == "" && len(hosts) > 0 {
-		m.Site.StartURL = "https://" + hosts[0] + "/"
+		sch := scheme[hosts[0]]
+		if sch == "" {
+			sch = "https"
+		}
+		m.Site.StartURL = sch + "://" + hosts[0] + "/" // keep the scheme the actions use
 	}
 	if len(kept) > 0 {
 		if err := urlInDomains(m.Site.StartURL, kept); err != nil {
@@ -382,22 +395,44 @@ var templateExpr = regexp.MustCompile(`\{\{[^}]*\}\}`)
 // templateHost looks at a templated navigate URL. When the template sits
 // in the host but a registrable domain is literal
 // ("https://{{x}}.google.com/…") it returns that domain's *. glob; when the
-// host is entirely literal (template only in the path) it returns the host.
-func templateHost(raw string) (glob, host string) {
+// host is entirely literal (template only in the path) it returns the host
+// and the URL's scheme.
+func templateHost(raw string) (glob, host, scheme string) {
 	const marker = "tmplhostmarker0"
 	u, err := url.Parse(templateExpr.ReplaceAllString(strings.TrimSpace(raw), marker))
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return "", ""
+		return "", "", ""
 	}
 	h := strings.ToLower(u.Hostname())
 	if !strings.Contains(h, marker) {
-		return "", strings.ToLower(u.Host)
+		return "", strings.ToLower(u.Host), u.Scheme
 	}
 	reg, err := publicsuffix.EffectiveTLDPlusOne(h)
 	if err != nil || strings.Contains(reg, marker) {
-		return "", ""
+		return "", "", ""
 	}
-	return "*." + reg, ""
+	return "*." + reg, "", ""
+}
+
+// wwwCounterpart maps a registrable domain to its www host and back
+// (example.com ↔ www.example.com, keeping any port); "" for other hosts
+// (crm.example.com has no counterpart).
+func wwwCounterpart(h string) string {
+	host, port := h, ""
+	if i := strings.LastIndexByte(h, ':'); i >= 0 {
+		host, port = h[:i], h[i:]
+	}
+	reg, err := publicsuffix.EffectiveTLDPlusOne(host)
+	if err != nil {
+		return ""
+	}
+	switch host {
+	case reg:
+		return "www." + reg + port
+	case "www." + reg:
+		return reg + port
+	}
+	return ""
 }
 
 func unionSorted(a, b []string) []string {
