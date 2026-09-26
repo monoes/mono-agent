@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/monoes/mono-agent/internal/action"
 )
 
 // buildReview is what the install confirmation shows (spec §6.3,
@@ -23,6 +25,7 @@ func buildReview(p *Package, files map[string][]byte) Review {
 		Downloads:     m.Permissions.Downloads,
 		Tier:          m.Policy.Tier,
 		ActionEffects: map[string]string{},
+		Visibility:    map[string][]string{},
 		Files:         fileInfos(files),
 	}
 	if rv.Tier == "" {
@@ -45,10 +48,18 @@ func buildReview(p *Package, files map[string][]byte) Review {
 	}
 	for _, a := range m.Actions {
 		effect := "undeclared"
-		if def, err := p.Action(a); err == nil && def.SideEffects != "" {
+		def, err := p.Action(a)
+		if err == nil && def.SideEffects != "" {
 			effect = def.SideEffects
 		}
 		rv.ActionEffects[a] = effect
+		if err == nil {
+			for _, k := range def.Visibility {
+				if !contains(rv.Visibility[k], a) {
+					rv.Visibility[k] = append(rv.Visibility[k], a)
+				}
+			}
+		}
 	}
 	rv.Capabilities = capabilities(m, rv)
 	return rv
@@ -111,6 +122,7 @@ func capabilities(m Manifest, rv Review) []string {
 			out = append(out, fmt.Sprintf("%s (%s)", e.text, strings.Join(as, ", ")))
 		}
 	}
+	out = append(out, visibilityCapabilities(rv.Visibility)...)
 	if len(m.Permissions.CallActions) > 0 {
 		out = append(out, "can run actions of other automations: "+strings.Join(m.Permissions.CallActions, ", "))
 	}
@@ -163,4 +175,46 @@ func nonNil(s []string) []string {
 		return []string{}
 	}
 	return s
+}
+
+// visibilityPhrases describe action.VisibilityKinds in plain words.
+var visibilityPhrases = map[string]string{
+	"profile_view_visible_to_owner": "visits profiles — the profile's owner can see your visit",
+	"story_view_visible_to_owner":   "views stories — the story's owner sees you among its viewers",
+	"search_may_be_saved":           "runs searches — the site may keep them in your account's search history",
+	"video_view_counted":            "opens videos — each visit may count as a view",
+	"account_preference_prompt":     "answers site prompts — the site may remember your answer",
+}
+
+// visibilityCapabilities is one line per visibility kind (deduplicated
+// across actions), in action.VisibilityKinds order, naming the actions.
+func visibilityCapabilities(vis map[string][]string) []string {
+	var out []string
+	seen := map[string]bool{}
+	line := func(kind string) {
+		as := append([]string(nil), vis[kind]...)
+		sort.Strings(as)
+		text, ok := visibilityPhrases[kind]
+		if !ok {
+			text = "leaves a visible trace on the site (" + kind + ")"
+		}
+		out = append(out, fmt.Sprintf("%s (%s)", text, strings.Join(as, ", ")))
+		seen[kind] = true
+	}
+	for _, kind := range action.VisibilityKinds {
+		if len(vis[kind]) > 0 {
+			line(kind)
+		}
+	}
+	var rest []string
+	for kind, as := range vis {
+		if !seen[kind] && len(as) > 0 {
+			rest = append(rest, kind)
+		}
+	}
+	sort.Strings(rest)
+	for _, kind := range rest {
+		line(kind)
+	}
+	return out
 }

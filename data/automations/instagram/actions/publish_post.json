@@ -34,7 +34,7 @@
     ]
   },
   "outputs": {
-    "success": [],
+    "success": ["success"],
     "failure": []
   },
   "steps": [

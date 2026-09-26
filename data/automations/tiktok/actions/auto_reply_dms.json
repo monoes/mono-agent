@@ -11,12 +11,11 @@
     "supportsRetry": true
   },
   "inputs": {
-    "required": [
+    "required": [],
+    "optional": [
       "startDate",
       "endDate",
-      "pollInterval"
-    ],
-    "optional": [
+      "pollInterval",
       "selectedListItems",
       "replyText",
       "maxReplies"
@@ -24,8 +23,16 @@
   },
   "outputs": {
     "success": [
-      "itemsCount",
-      "reachedIndex"
+      "name",
+      "lastMessage",
+      "time",
+      "unread",
+      "success",
+      "status",
+      "verified",
+      "recipient",
+      "nickname",
+      "conversation"
     ],
     "failure": [
       "failedItems"

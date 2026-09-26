@@ -20,6 +20,7 @@ import (
 
 func newActionExportCmd(cfg *globalConfig) *cobra.Command {
 	var outFile string
+	var df exportDomainFlags
 	cmd := &cobra.Command{
 		Use:   "export <automation>.<action>",
 		Short: "Export one action, with the fragments/selectors/scripts it uses, as a .mpkg",
@@ -36,7 +37,11 @@ func newActionExportCmd(cfg *globalConfig) *cobra.Command {
 			if outFile == "" {
 				outFile = fmt.Sprintf("%s.%s.mpkg", id, name)
 			}
-			opts := automation.ExportOptions{Actions: []string{name}}
+			doms, err := df.resolve(reg, id)
+			if err != nil {
+				return err
+			}
+			opts := automation.ExportOptions{Actions: []string{name}, Domains: doms}
 			sum, err := writeHashed(outFile, func(w io.Writer) error { return reg.Export(id, w, opts) })
 			if err != nil {
 				return err
@@ -45,12 +50,13 @@ func newActionExportCmd(cfg *globalConfig) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVarP(&outFile, "output", "o", "", "Output file (default <automation>.<action>.mpkg)")
+	df.register(cmd)
 	return cmd
 }
 
 func newActionImportCmd(cfg *globalConfig) *cobra.Command {
 	var into string
-	var yes, dryRun, replaceBuiltin bool
+	var yes, dryRun, replace, replaceBuiltin bool
 	cmd := &cobra.Command{
 		Use:   "import <file.mpkg|dir|action.json>",
 		Short: "Merge the actions of a package (or one action file) into an installed automation",
@@ -73,7 +79,7 @@ automation id). When that automation is not installed it is created.`,
 			}
 			c := installConfirmer{yes: yes, interactive: !cfg.JSONOutput && stdinIsTerminal(),
 				in: cmd.InOrStdin(), out: cmd.ErrOrStderr()}
-			res, err := runInstall(automation.InstallOptions{DryRun: dryRun, Source: actionImportSource(args[0]), ReplaceBuiltin: replaceBuiltin}, c, func(o automation.InstallOptions) (*automation.InstallResult, error) {
+			res, err := runInstall(automation.InstallOptions{DryRun: dryRun, Source: actionImportSource(args[0]), Replace: replace || replaceBuiltin}, c, func(o automation.InstallOptions) (*automation.InstallResult, error) {
 				return addActions(reg, target, src, o)
 			})
 			if err != nil {
@@ -86,7 +92,9 @@ automation id). When that automation is not installed it is created.`,
 	cmd.Flags().StringVar(&into, "into", "", "Target automation id (default: the source's id)")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Import without asking")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show the review without importing")
-	cmd.Flags().BoolVar(&replaceBuiltin, "replace-builtin", false, "Allow merging imported actions into a built-in or local automation")
+	cmd.Flags().BoolVar(&replace, "replace", false, "Confirm merging into an automation that needs it (built-in, local or recorded)")
+	cmd.Flags().BoolVar(&replaceBuiltin, "replace-builtin", false, "Deprecated alias of --replace")
+	_ = cmd.Flags().MarkHidden("replace-builtin")
 	return cmd
 }
 

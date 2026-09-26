@@ -68,9 +68,21 @@
   },
   "outputs": {
     "success": [
-      "scrapeCount",
-      "reachedIndex",
-      "extractedData"
+      "shortcode",
+      "post_url",
+      "author_username",
+      "author_url",
+      "caption",
+      "hashtags",
+      "mentions",
+      "likes_count",
+      "comments_count",
+      "comments_loaded",
+      "post_date",
+      "media_urls",
+      "post_type",
+      "is_liked",
+      "comments"
     ],
     "failure": [
       "failedItems"

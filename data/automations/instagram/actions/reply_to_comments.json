@@ -43,8 +43,11 @@
   },
   "outputs": {
     "success": [
-      "replyCount",
-      "reachedIndex"
+      "success",
+      "url",
+      "status",
+      "replied_to",
+      "verified_by"
     ],
     "failure": [
       "failedItems"

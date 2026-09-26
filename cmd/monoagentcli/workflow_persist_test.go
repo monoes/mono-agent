@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -184,6 +185,7 @@ type importOut struct {
 	ID                 string   `json:"id"`
 	Status             string   `json:"status"`
 	MissingAutomations []string `json:"missingAutomations"`
+	Warnings           []string `json:"warnings"`
 	InstallCommand     string   `json:"installCommand"`
 }
 
@@ -285,5 +287,141 @@ func TestWorkflowImportReportsMissingBundles(t *testing.T) {
 	if !strings.Contains(out, "not installed: acme-missing") || !strings.Contains(out, "Install them with: monoagentcli workflow import --file") ||
 		!strings.Contains(out, "already imported and unchanged") {
 		t.Errorf("human output:\n%s", out)
+	}
+}
+
+// TestWorkflowImportMatchesUnindexed (D4): a workflow imported by v0.70 has
+// no entry in workflow-imports.json. Re-importing the same file must find
+// it by content (unchanged), a changed file with the same name and node
+// types must update it, and the match is then recorded in the index.
+func TestWorkflowImportMatchesUnindexed(t *testing.T) {
+	home, cfg := persistTestEnv(t)
+	path := writeTempWorkflow(t, validWorkflowFile) // no id: v0.70 gave it a fresh one
+	first := importJSON(t, cfg, "--file", path)
+	index := filepath.Join(home, ".monoagent", "workflow-imports.json")
+	if err := os.Remove(index); err != nil {
+		t.Fatal(err)
+	}
+
+	again := importJSON(t, cfg, "--file", path)
+	if again.Status != importUnchanged || again.ID != first.ID {
+		t.Fatalf("re-import without index = %+v, want unchanged %s", again, first.ID)
+	}
+	if n := countWorkflows(t, cfg); n != 1 {
+		t.Errorf("workflows = %d, want 1", n)
+	}
+	if b, err := os.ReadFile(index); err != nil || !strings.Contains(string(b), first.ID) {
+		t.Errorf("match not recorded in the index: %s %v", b, err)
+	}
+
+	// Same name and node types but different content, with no index: the
+	// local workflow is never overwritten (D9); the file becomes a copy.
+	if err := os.Remove(index); err != nil {
+		t.Fatal(err)
+	}
+	other := writeTempWorkflow(t, strings.Replace(validWorkflowFile, `"x": 1`, `"x": 7`, 1))
+	cp := importJSON(t, cfg, "--file", other)
+	if cp.Status != importCreated || cp.ID == first.ID || !strings.Contains(strings.Join(cp.Warnings, " "), first.ID) {
+		t.Errorf("same name+types = %+v", cp)
+	}
+
+	// Same name but different node types is a different workflow.
+	diff := writeTempWorkflow(t, strings.Replace(validWorkflowFile, `"type": "core.set"`, `"type": "core.if"`, 1))
+	if created := importJSON(t, cfg, "--file", diff, "--as-new=false"); created.Status != importCreated || created.ID == first.ID {
+		t.Errorf("different node types = %+v", created)
+	}
+}
+
+func workflowNodeConfig(t *testing.T, cfg *globalConfig, wfID, nodeName string) map[string]any {
+	t.Helper()
+	db, err := initDB(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	wf, err := newHybridStore(db).GetWorkflow(context.Background(), wfID)
+	if err != nil || wf == nil {
+		t.Fatalf("workflow %s: %v", wfID, err)
+	}
+	for _, n := range wf.Nodes {
+		if n.Name == nodeName {
+			return n.Config
+		}
+	}
+	t.Fatalf("no node %q in %s", nodeName, wfID)
+	return nil
+}
+
+// TestWorkflowImportNeverOverwritesHandMade (D9): a workflow the user made
+// by hand with the file's name and node types is left alone; the file is
+// imported as a copy with a warning, and --replace is the explicit way.
+func TestWorkflowImportNeverOverwritesHandMade(t *testing.T) {
+	_, cfg := persistTestEnv(t)
+	var created workflow.Workflow
+	if err := json.Unmarshal([]byte(runWorkflowSubcmd(t, cfg, "create", "test-wf")), &created); err != nil {
+		t.Fatal(err)
+	}
+	runWorkflowSubcmd(t, cfg, "node", "add", created.ID, "--type", "trigger.manual", "--name", "Manual")
+	runWorkflowSubcmd(t, cfg, "node", "add", created.ID, "--type", "core.set", "--name", "Set",
+		"--config", `{"assignments":[{"field":"mine","value":"hand-made"}]}`)
+
+	r := importJSON(t, cfg, "--file", writeTempWorkflow(t, validWorkflowFile))
+	if r.Status != importCreated || r.ID == created.ID || len(r.Warnings) != 1 ||
+		!strings.Contains(r.Warnings[0], created.ID) || !strings.Contains(r.Warnings[0], "--replace") {
+		t.Fatalf("import over a hand-made workflow = %+v", r)
+	}
+	if cfgMap := workflowNodeConfig(t, cfg, created.ID, "Set"); !strings.Contains(fmt.Sprint(cfgMap), "hand-made") {
+		t.Errorf("hand-made config lost: %v", cfgMap)
+	}
+
+	// --replace <id> is the explicit overwrite.
+	rep := importJSON(t, cfg, "--file", writeTempWorkflow(t, validWorkflowFile), "--replace", created.ID)
+	if rep.Status != importUpdated || rep.ID != created.ID {
+		t.Errorf("--replace = %+v", rep)
+	}
+}
+
+// TestWorkflowImportKeepsLocalEdits (D9): re-importing a changed file does
+// not overwrite a workflow the user edited after the previous import; a
+// re-export of an unedited import still updates in place.
+func TestWorkflowImportKeepsLocalEdits(t *testing.T) {
+	_, cfg := persistTestEnv(t)
+	path := writeTempWorkflow(t, validWorkflowFile)
+	first := importJSON(t, cfg, "--file", path)
+
+	// Unedited: a changed file updates in place.
+	if err := os.WriteFile(path, []byte(strings.Replace(validWorkflowFile, `"x": 1`, `"x": 2`, 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if upd := importJSON(t, cfg, "--file", path); upd.Status != importUpdated || upd.ID != first.ID {
+		t.Fatalf("unedited re-import = %+v", upd)
+	}
+
+	// The user edits the workflow (the desktop editor saves the whole thing).
+	db, err := initDB(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := newHybridStore(db)
+	wf, _ := store.GetWorkflow(context.Background(), first.ID)
+	for i := range wf.Nodes {
+		if wf.Nodes[i].Name == "Set" {
+			wf.Nodes[i].Config = map[string]any{"assignments": []any{map[string]any{"field": "edited", "value": "by-user"}}}
+		}
+	}
+	if err := store.SaveWorkflow(context.Background(), wf); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	if err := os.WriteFile(path, []byte(strings.Replace(validWorkflowFile, `"x": 1`, `"x": 3`, 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cp := importJSON(t, cfg, "--file", path)
+	if cp.Status != importCreated || cp.ID == first.ID || len(cp.Warnings) == 0 || !strings.Contains(cp.Warnings[0], first.ID) {
+		t.Fatalf("re-import over an edited workflow = %+v", cp)
+	}
+	if cfgMap := workflowNodeConfig(t, cfg, first.ID, "Set"); !strings.Contains(fmt.Sprint(cfgMap), "by-user") {
+		t.Errorf("user edit lost: %v", cfgMap)
 	}
 }

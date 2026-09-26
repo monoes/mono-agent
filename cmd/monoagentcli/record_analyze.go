@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -199,12 +200,19 @@ func newRecordVerifyCmd(cfg *globalConfig) *cobra.Command {
 				return err
 			}
 			if cfg.JSONOutput {
-				return writeJSONTo(cmd.OutOrStdout(), rep)
+				if err := writeJSONTo(cmd.OutOrStdout(), rep); err != nil {
+					return err
+				}
+			} else {
+				for _, s := range rep.Steps {
+					fmt.Fprintf(cmd.OutOrStdout(), "  %-28s %-14s %s %s\n", s.Status, s.ID, s.Type, s.Message)
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "ok: %v\n", rep.OK)
 			}
-			for _, s := range rep.Steps {
-				fmt.Fprintf(cmd.OutOrStdout(), "  %-28s %-14s %s %s\n", s.Status, s.ID, s.Type, s.Message)
+			if !rep.OK {
+				// Exit 1 on a failed replay; the report is the output.
+				return reportedError{errors.New("verify failed: see the step results")}
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "ok: %v\n", rep.OK)
 			return nil
 		},
 	}
@@ -218,7 +226,7 @@ func newRecordVerifyCmd(cfg *globalConfig) *cobra.Command {
 
 func newRecordSaveCmd(cfg *globalConfig) *cobra.Command {
 	var as, target, newID, name string
-	var force bool
+	var force, keepSelectors bool
 	var renames []string
 	cmd := &cobra.Command{
 		Use:   "save <draft>",
@@ -246,8 +254,9 @@ func newRecordSaveCmd(cfg *globalConfig) *cobra.Command {
 			}
 			res, err := recordanalyze.Save(cmd.Context(), reg, dir, recordanalyze.SaveOptions{
 				As: as, Automation: target, New: newID, Name: name, RenameInputs: ren, Force: force,
-				CreateWorkflow: recordWorkflowCreator(cfg),
-				LinkRecording:  linkRecording,
+				KeepPackageSelectors: keepSelectors,
+				CreateWorkflow:       recordWorkflowCreator(cfg),
+				LinkRecording:        linkRecording,
 			})
 			if err != nil {
 				return err
@@ -273,6 +282,7 @@ func newRecordSaveCmd(cfg *globalConfig) *cobra.Command {
 	cmd.Flags().StringVar(&target, "automation", "", "Save into this automation (default: the draft's)")
 	cmd.Flags().StringVar(&newID, "new", "", "Save into a new automation with this id")
 	cmd.Flags().StringVar(&name, "name", "", "Action or fragment name (default: the AI's)")
+	cmd.Flags().BoolVar(&keepSelectors, "keep-package-selectors", false, "On selector conflicts with the target automation, keep the automation's current selectors")
 	cmd.Flags().BoolVar(&force, "force", false, "Save even when the draft's lint has errors")
 	cmd.Flags().StringArrayVar(&renames, "rename-input", nil, "Rename an input old=new, including its {{old}} uses (repeatable)")
 	return cmd

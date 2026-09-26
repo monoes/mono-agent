@@ -11,12 +11,12 @@ function Row({ r, onAnalyze, onDelete }) {
   return (
     <div style={{ ...panel, display: 'flex', flexDirection: 'column', gap: 6 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-        <span style={{ ...mono, fontSize: 11.5, fontWeight: 700, color: 'var(--text)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.title || r.url || r.id}</span>
+        <span title={r.title || r.url || r.id} style={{ ...mono, fontSize: 11.5, fontWeight: 700, color: 'var(--text)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.title || r.url || r.id}</span>
         {!r.complete && <Chip color="var(--yellow)" title={r.stopReason || ''}>incomplete</Chip>}
         {r.automation && <Chip color="var(--teal)">saved</Chip>}
       </div>
       {r.goal && <div style={{ ...body, fontSize: 11 }}>“{r.goal}”</div>}
-      <div style={{ ...muted, fontSize: 10, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+      <div title={r.url} style={{ ...muted, fontSize: 10, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {fmtDate(r.startedAt)} · {r.events} events · {r.url}
       </div>
       <div style={{ display: 'flex', gap: 6 }}>

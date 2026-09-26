@@ -21,8 +21,12 @@
   },
   "outputs": {
     "success": [
-      "resultsCount",
-      "maxResultsCount"
+      "username",
+      "url",
+      "displayName",
+      "followState",
+      "source",
+      "profileUrl"
     ],
     "failure": []
   },

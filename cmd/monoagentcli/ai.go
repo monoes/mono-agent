@@ -207,7 +207,15 @@ func newAIProviderTestCmd(cfg *globalConfig) *cobra.Command {
 				if testErr != nil {
 					out["error"] = testErr.Error()
 				}
-				return json.NewEncoder(os.Stdout).Encode(out)
+				if err := json.NewEncoder(os.Stdout).Encode(out); err != nil {
+					return err
+				}
+				if testErr != nil {
+					// Exit 1 like the human output; stdout already has the one
+					// JSON document (main adds none for `ai`).
+					return fmt.Errorf("provider test failed: %w", testErr)
+				}
+				return nil
 			}
 			if testErr != nil {
 				return fmt.Errorf("provider test failed: %w", testErr)

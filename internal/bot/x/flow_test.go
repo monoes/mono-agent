@@ -34,6 +34,9 @@ func runAction(t *testing.T, p *bottest.Page, actionType string, sa action.Stora
 	}
 	sa.ID, sa.Type, sa.TargetPlatform = "flow-"+actionType, actionType, "X"
 	res, err := ae.Execute(&sa)
+	if err == nil {
+		assertOutputsDeclared(t, actionType, res)
+	}
 	var items []map[string]interface{}
 	if res != nil {
 		items = res.ExtractedItems

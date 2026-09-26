@@ -32,8 +32,10 @@
   },
   "outputs": {
     "success": [
-      "stitchCount",
-      "reachedIndex"
+      "success",
+      "status",
+      "published",
+      "videoURL"
     ],
     "failure": [
       "failedItems"

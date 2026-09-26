@@ -1,14 +1,20 @@
 package automation
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 
+	"golang.org/x/net/publicsuffix"
+
+	"github.com/monoes/mono-agent/internal/action"
 	"github.com/monoes/mono-agent/internal/bot"
 )
 
@@ -17,6 +23,15 @@ import (
 // Every Seed rescans the directory and compares a per-platform hash with
 // the one recorded in the index, so new or edited files are picked up
 // while an unchanged directory costs only a read. Nothing is deleted.
+//
+// The generated manifest records the original directory name
+// (manifest.legacy.platform) so old "<p>.<action>" node types keep working
+// even when <p> is not a valid id (google_maps → local-google-maps), and
+// derives site.domains and permissions.steps from what the actions do.
+
+// legacyFormat versions the generated manifests; a registry folded with an
+// older format is refolded once on the next Seed.
+const legacyFormat = 3 // 3: site.domains no longer derived (v0.74 regression)
 
 type legacyDir struct {
 	name    string            // directory name as found
@@ -26,10 +41,57 @@ type legacyDir struct {
 
 var nonSlug = regexp.MustCompile(`[^a-z0-9-]+`)
 
+// LegacyPackageID is the id a legacy ~/.monoagent/actions/<platform>
+// directory is wrapped into when no other platform claimed it first
+// ("google_maps" → "local-google-maps"). Colliding or over-long names get
+// a hashed id instead, so to find an installed package prefer
+// Registry.ResolveLegacyPlatform.
+func LegacyPackageID(platform string) string { return legacyID(platform) }
+
+// legacyID is the plain id for platform (truncated to the id length).
 func legacyID(platform string) string {
 	id := strings.Trim(nonSlug.ReplaceAllString("local-"+strings.ToLower(platform), "-"), "-")
 	if len(id) > 41 {
-		id = id[:41]
+		id = strings.TrimRight(id[:41], "-")
+	}
+	return id
+}
+
+// legacyHashedID disambiguates platforms whose plain ids collide (long
+// names truncated alike, or google_maps vs google-maps).
+func legacyHashedID(platform string) string {
+	sum := sha256.Sum256([]byte(platform))
+	base := legacyID(platform)
+	if len(base) > 34 {
+		base = strings.TrimRight(base[:34], "-")
+	}
+	return base + "-" + hex.EncodeToString(sum[:3])
+}
+
+// legacyIDFor picks the id for ld: the plain id unless the package
+// installed there belongs to another legacy platform. A package folded
+// before the platform was recorded counts as ours when it already has all
+// of ld's actions.
+func (r *Registry) legacyIDFor(idx *indexFile, ld *legacyDir) string {
+	id := legacyID(ld.name)
+	e, ok := idx.Packages[id]
+	if !ok || e.Removed {
+		return id
+	}
+	p, err := OpenDir(r.versionDir(id, e.Version))
+	if err != nil {
+		return id
+	}
+	if l := p.Manifest.Legacy; l != nil {
+		if strings.EqualFold(l.Platform, ld.name) {
+			return id
+		}
+		return legacyHashedID(ld.name)
+	}
+	for a := range ld.actions {
+		if !contains(p.Manifest.Actions, a) {
+			return legacyHashedID(ld.name)
+		}
 	}
 	return id
 }
@@ -73,9 +135,10 @@ func scanLegacy(dir string) map[string]*legacyDir {
 }
 
 // legacyChanged reports whether any legacy directory differs from what was
-// last folded (or one recorded before has gone).
+// last folded (or one recorded before has gone), or the generated format
+// is older than this build's.
 func legacyChanged(idx *indexFile, legacy map[string]*legacyDir) bool {
-	if len(legacy) != len(idx.LegacyHashes) {
+	if idx.LegacyFormat < legacyFormat || len(legacy) != len(idx.LegacyHashes) {
 		return true
 	}
 	for p, ld := range legacy {
@@ -89,11 +152,13 @@ func legacyChanged(idx *indexFile, legacy map[string]*legacyDir) bool {
 // foldLegacyLocked folds changed legacy directories into local-<p>: new and
 // changed action files are added to the installed package (patch bump), or
 // the package is created. A local-<p> the user uninstalled comes back only
-// when its legacy files change. The caller holds the lock.
+// when its legacy files change. After a format change every installed
+// generated package is refolded once. The caller holds the lock.
 func (r *Registry) foldLegacyLocked(idx *indexFile, seeds []seedPkg, legacy map[string]*legacyDir) ([]string, error) {
 	if idx.LegacyHashes == nil {
 		idx.LegacyHashes = map[string]string{}
 	}
+	refold := idx.LegacyFormat < legacyFormat
 	for p := range idx.LegacyHashes {
 		if _, ok := legacy[p]; !ok {
 			delete(idx.LegacyHashes, p)
@@ -107,11 +172,13 @@ func (r *Registry) foldLegacyLocked(idx *indexFile, seeds []seedPkg, legacy map[
 	var folded []string
 	for _, platform := range platforms {
 		ld := legacy[platform]
-		if idx.LegacyHashes[platform] == ld.hash {
+		id := r.legacyIDFor(idx, ld)
+		e, installed := idx.Packages[id]
+		installed = installed && !e.Removed
+		if idx.LegacyHashes[platform] == ld.hash && !(refold && installed) {
 			continue
 		}
-		id := legacyID(platform)
-		changed, err := r.foldOneLocked(idx, id, platform, ld, seeds)
+		changed, err := r.foldOneLocked(idx, id, ld, seeds)
 		if err != nil {
 			return folded, fmt.Errorf("fold legacy %s: %w", ld.name, err)
 		}
@@ -120,10 +187,12 @@ func (r *Registry) foldLegacyLocked(idx *indexFile, seeds []seedPkg, legacy map[
 			folded = append(folded, id)
 		}
 	}
+	idx.LegacyFormat = legacyFormat
 	return folded, nil
 }
 
-func (r *Registry) foldOneLocked(idx *indexFile, id, platform string, ld *legacyDir, seeds []seedPkg) (bool, error) {
+func (r *Registry) foldOneLocked(idx *indexFile, id string, ld *legacyDir, seeds []seedPkg) (bool, error) {
+	platform := strings.ToLower(ld.name)
 	names := make([]string, 0, len(ld.actions))
 	for n := range ld.actions {
 		names = append(names, n)
@@ -165,12 +234,21 @@ func (r *Registry) foldOneLocked(idx *indexFile, id, platform string, ld *legacy
 			m.Requires.Native = platform
 		}
 	}
+	m.Legacy = &LegacyInfo{Platform: ld.name}
 	for _, n := range names {
 		files["actions/"+n+".json"] = ld.actions[n]
 		if !contains(m.Actions, n) {
 			m.Actions = append(m.Actions, n)
 		}
 	}
+	var generated []string // domains an earlier build put there, not the user
+	for _, s := range seeds {
+		if s.pkg.Manifest.Requires.Native == platform || s.pkg.Manifest.ID == platform {
+			generated = append(generated, s.pkg.Manifest.Site.Domains...)
+		}
+	}
+	deriveLegacyPermissions(&m, files, generated)
+
 	encode := func() error {
 		b, err := json.MarshalIndent(m, "", "  ")
 		if err != nil {
@@ -200,4 +278,99 @@ func (r *Registry) foldOneLocked(idx *indexFile, id, platform string, ld *legacy
 		return false, err
 	}
 	return true, nil
+}
+
+// deriveLegacyPermissions fills permissions.steps from the step types the
+// actions use and records the sites their literal navigate URLs open as a
+// suggestion only (legacy.suggestedDomains: each host plus the *. glob of
+// its registrable domain). site.domains stays EMPTY: legacy actions ran
+// unrestricted before packages existed — templated URLs, redirects to
+// www. — and must keep doing so (the documented legacy exception). Domains
+// the user added by hand are kept; ones an earlier build derived (exact
+// hosts, a seed's list) are cleared.
+func deriveLegacyPermissions(m *Manifest, files map[string][]byte, generated []string) {
+	var hosts, local, steps []string
+	var walk func([]action.StepDef)
+	walk = func(ss []action.StepDef) {
+		for _, s := range ss {
+			if s.Type != "" && !contains(steps, s.Type) {
+				steps = append(steps, s.Type)
+			}
+			if s.Type == "navigate" && !strings.Contains(s.URL, "{{") {
+				if u, err := url.Parse(strings.TrimSpace(s.URL)); err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" {
+					h := strings.ToLower(u.Host)
+					switch {
+					case checkDomainPattern(h) != nil:
+						if !contains(local, h) {
+							local = append(local, h)
+						}
+					case !contains(hosts, h):
+						hosts = append(hosts, h)
+					}
+				}
+			}
+			walk(s.Steps)
+		}
+	}
+	for _, a := range m.Actions {
+		var def action.ActionDef
+		if json.Unmarshal(files["actions/"+a+".json"], &def) == nil {
+			walk(def.Steps)
+		}
+	}
+	for n, b := range files {
+		if strings.HasPrefix(n, "fragments/") {
+			var f action.FragmentDef
+			if json.Unmarshal(b, &f) == nil {
+				walk(f.Steps)
+			}
+		}
+	}
+	sort.Strings(steps)
+	if len(m.Permissions.Steps) > 0 || len(steps) > 0 {
+		m.Permissions.Steps = unionSorted(m.Permissions.Steps, steps)
+	}
+	if m.Permissions.Scripts == nil {
+		m.Permissions.Scripts = []string{}
+	}
+
+	var suggested []string
+	for _, h := range hosts {
+		suggested = append(suggested, h)
+		if reg, err := publicsuffix.EffectiveTLDPlusOne(strings.Split(h, ":")[0]); err == nil {
+			suggested = append(suggested, "*."+reg)
+		}
+	}
+	sort.Strings(local)
+	m.Legacy.SuggestedDomains = unionSorted(nil, suggested)
+	m.Legacy.LocalHosts = local
+
+	// Clear generated domains; keep hand-added ones.
+	generated = append(append([]string{}, generated...), suggested...)
+	kept := []string{}
+	for _, d := range m.Site.Domains {
+		if !contains(generated, d) {
+			kept = append(kept, d)
+		}
+	}
+	m.Site.Domains = kept
+	if m.Site.StartURL == "" && len(hosts) > 0 {
+		m.Site.StartURL = "https://" + hosts[0] + "/"
+	}
+	if len(kept) > 0 {
+		if err := urlInDomains(m.Site.StartURL, kept); err != nil {
+			m.Site.StartURL = ""
+		}
+	}
+}
+
+func unionSorted(a, b []string) []string {
+	out := append([]string{}, a...)
+	for _, s := range b {
+		if !contains(out, s) {
+			out = append(out, s)
+		}
+	}
+	sort.Strings(out)
+	return out
 }

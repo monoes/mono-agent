@@ -5,6 +5,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { RefreshCw, Upload, Circle } from 'lucide-react'
 import { api } from '../services/api.js'
+import { emitAutomationsChanged } from '../lib/appEvents.js'
 import BrowserAutomations, { RecordHelpDialog } from './connections/BrowserAutomations.jsx'
 import ApiConnections, { resolveConn } from './connections/ApiConnections.jsx'
 import ApiConnectionModal from './connections/ApiConnectionModal.jsx'
@@ -91,6 +92,14 @@ export default function Connections({ onRefresh, navData }) {
     setOpenAuto({ id })
   }, [navData, automations])
 
+  // A package was installed, removed, restored, rolled back or gained a
+  // saved action: reload the cards and tell the workflow editor, whose node
+  // palette lists these packages' actions.
+  const automationsChanged = useCallback(async () => {
+    await loadAutomations()
+    emitAutomationsChanged()
+  }, [loadAutomations])
+
   return (
     <>
       <div className="page-header">
@@ -138,10 +147,10 @@ export default function Connections({ onRefresh, navData }) {
           automation={automations.find(a => a.id === openAuto.id) || openAuto}
           initialTab={drawerTab}
           onClose={closeDrawer}
-          onChanged={loadAutomations}
+          onChanged={automationsChanged}
         />
       )}
-      {importing && <ImportDialog onClose={() => setImporting(false)} onInstalled={loadAutomations} />}
+      {importing && <ImportDialog installedPackages={automations} onClose={() => setImporting(false)} onInstalled={automationsChanged} />}
       {recordHelp && <RecordHelpDialog onClose={() => setRecordHelp(false)} />}
     </>
   )

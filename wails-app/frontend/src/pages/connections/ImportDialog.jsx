@@ -6,10 +6,10 @@
 import { useState } from 'react'
 import { X, FolderOpen, AlertTriangle } from 'lucide-react'
 import { api } from '../../services/api.js'
-import { ErrorBox, OkBox, Busy, SOURCE_LABELS, body, mono, useDialog } from './ui.jsx'
-import ImportReview, { replacesProtected } from './ImportReview.jsx'
+import { ErrorBox, OkBox, Busy, body, mono, useDialog } from './ui.jsx'
+import ImportReview, { needsReplaceConfirm, replaceTarget, sourceLabel } from './ImportReview.jsx'
 
-export default function ImportDialog({ onClose, onInstalled }) {
+export default function ImportDialog({ installedPackages = [], onClose, onInstalled }) {
   const dialog = useDialog(onClose)
   const [path, setPath] = useState('')
   const [phase, setPhase] = useState('pick') // pick | reviewing | review | installing | done
@@ -34,14 +34,18 @@ export default function ImportDialog({ onClose, onInstalled }) {
   }
   const install = async () => {
     setPhase('installing'); setError('')
-    const out = await api.installAutomation(path.trim(), { expectSha256: res?.sha256 || '', replaceBuiltin: replacesProtected(res?.review) && replaceOk })
+    const out = await api.installAutomation(path.trim(), { expectSha256: res?.sha256 || '', replace: needsReplaceConfirm(res?.review) && replaceOk })
     if (!out || out.error) { setError(out?.error || 'Install failed.'); setPhase('review'); return }
     setInstalled(out); setPhase('done')
     onInstalled?.()
   }
 
   const insecureURL = /^http:\/\//i.test(path.trim())
-  const replaces = replacesProtected(res?.review) ? res.review.replaces : null
+  const replaces = needsReplaceConfirm(res?.review) ? replaceTarget(res) : null
+  // Opt-ins reset when package content changes (by design): warn on an
+  // update when the installed package currently has either allowed.
+  const current = installedPackages.find(a => a.id === res?.id && !a.removed)
+  const resetsTrust = !!res?.previousVersion && !replaces && !!current && (current.scriptsAllowed || current.liveRunConfirmed) && ['imported', 'recorded'].includes(current.trust)
   const hasErrors = (res?.issues || []).some(i => i.severity === 'error')
   const blocked = phase !== 'review' || hasErrors || (replaces && !replaceOk)
   return (
@@ -66,11 +70,11 @@ export default function ImportDialog({ onClose, onInstalled }) {
           )}
           {phase === 'reviewing' && <Busy text="Reading package…" />}
           <ErrorBox>{error}</ErrorBox>
-          {res && phase !== 'done' && <ImportReview res={res} />}
+          {res && phase !== 'done' && <ImportReview res={res} hideCliConfirmHint={!!replaces} resetsTrust={resetsTrust} />}
           {replaces && phase !== 'done' && (
             <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', ...body, fontSize: 11.5, color: 'var(--text)' }}>
               <input type="checkbox" checked={replaceOk} onChange={e => setReplaceOk(e.target.checked)} style={{ marginTop: 2 }} />
-              I understand this replaces the {SOURCE_LABELS[replaces.source] || replaces.source} {replaces.id}
+              I understand this replaces the {sourceLabel(replaces.source)} {replaces.id}
             </label>
           )}
           {phase === 'done' && (
@@ -85,7 +89,7 @@ export default function ImportDialog({ onClose, onInstalled }) {
               <button className="btn btn-ghost btn-sm" onClick={onClose}>Cancel</button>
               <button className="btn btn-primary btn-sm" onClick={install} disabled={blocked}
                 title={hasErrors ? 'The package has validation errors' : replaces && !replaceOk ? 'Tick the box to confirm the replacement' : ''}>
-                {phase === 'installing' ? 'Installing…' : res?.review?.policyBlocked ? 'Install (disabled)' : res?.previousVersion ? `Update to ${res.version}` : 'Install'}
+                {phase === 'installing' ? 'Installing…' : res?.review?.policyBlocked ? 'Install (disabled)' : replaces ? `Replace ${sourceLabel(replaces.source)} ${replaces.id}` : res?.previousVersion ? `Update to ${res.version}` : 'Install'}
               </button>
             </>
           )}

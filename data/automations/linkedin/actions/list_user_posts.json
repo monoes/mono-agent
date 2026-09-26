@@ -43,7 +43,7 @@
     ]
   },
   "outputs": {
-    "success": ["posts", "postsCount"],
+    "success": ["url", "urn", "activity_id", "shortcode", "text_preview", "author", "author_url", "timestamp", "likes_count", "comments_count", "reposts_count"],
     "failure": []
   },
   "steps": [

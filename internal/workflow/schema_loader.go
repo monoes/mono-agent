@@ -69,20 +69,21 @@ var legacyFormPlatforms = map[string]bool{
 //  1. its schema file (schemas/<type>.json);
 //  2. for instagram/linkedin/x/tiktok nodes (built-in or legacy local-*),
 //     the shared action-suffix file (e.g. linkedin.find_by_keyword →
-//     schemas/action.find_by_keyword.json), else browser.generic.json;
-//  3. for an action of an installed, non-built-in package, the package's
-//     forms/<action>.json, else a form generated from the action's declared
-//     inputs and their ui hints.
+//     schemas/action.find_by_keyword.json); for a legacy local-* action,
+//     then browser.generic.json;
+//  3. for any other automation action, the package's forms/<action>.json
+//     (non-built-in packages), else a form generated from the action's
+//     declared inputs and their ui hints.
 //
-// Returns an empty schema (no fields) when none of these applies — which is
-// also what other built-in nodes without a schema file get, as before.
+// Returns an empty schema (no fields) when none of these applies.
 func LoadDefaultSchema(nodeType string) (*NodeSchema, error) {
-	data, ok := schemaFile(nodeType)
+	data, ok := resolveSchemaJSON(nodeType)
 	if !ok {
-		if gen, ok := generateActionSchema(nodeType); ok {
-			return gen, nil
+		empty := &NodeSchema{Fields: []NodeSchemaField{}}
+		if p := sessionPlatform(nodeType); p != "" {
+			empty.CredentialPlatform = &p
 		}
-		return &NodeSchema{Fields: []NodeSchemaField{}}, nil
+		return empty, nil
 	}
 	var schema NodeSchema
 	if err := json.Unmarshal(data, &schema); err != nil {
@@ -92,6 +93,47 @@ func LoadDefaultSchema(nodeType string) (*NodeSchema, error) {
 		schema.Fields = []NodeSchemaField{}
 	}
 	return &schema, nil
+}
+
+// resolveSchemaJSON is the schema JSON for nodeType (a schema file, else a
+// generated form). A browser automation node's schema always names its
+// session platform: shared and generated forms don't, so it is filled in
+// here from the node type.
+func resolveSchemaJSON(nodeType string) ([]byte, bool) {
+	data, ok := schemaFile(nodeType)
+	if !ok {
+		gen, ok := generateActionSchema(nodeType)
+		if !ok {
+			return nil, false
+		}
+		var err error
+		if data, err = json.Marshal(gen); err != nil {
+			return nil, false
+		}
+	}
+	return withSessionPlatform(nodeType, data), true
+}
+
+// withSessionPlatform sets credential_platform on a browser automation
+// node's schema when the schema leaves it unset. Other keys are kept as is.
+func withSessionPlatform(nodeType string, data []byte) []byte {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(data, &m) != nil {
+		return data
+	}
+	if cp, ok := m["credential_platform"]; ok && string(cp) != "null" && string(cp) != `""` {
+		return data
+	}
+	p := sessionPlatform(nodeType)
+	if p == "" {
+		return data
+	}
+	m["credential_platform"], _ = json.Marshal(p)
+	out, err := json.Marshal(m)
+	if err != nil {
+		return data
+	}
+	return out
 }
 
 // schemaFile returns the explicit schema file for nodeType (steps 1 and 2
@@ -106,6 +148,11 @@ func schemaFile(nodeType string) ([]byte, bool) {
 	}
 	if data, err := embeddedSchemas.ReadFile("schemas/action." + nodeType[dot+1:] + ".json"); err == nil {
 		return data, true
+	}
+	// A built-in action is described by its own inputs (the generated form);
+	// the catch-all generic form is only for legacy local-* actions.
+	if !strings.HasPrefix(nodeType, "local-") {
+		return nil, false
 	}
 	if data, err := embeddedSchemas.ReadFile("schemas/browser.generic.json"); err == nil {
 		return data, true

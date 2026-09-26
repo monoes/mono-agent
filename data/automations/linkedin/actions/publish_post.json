@@ -28,7 +28,9 @@
   },
   "outputs": {
     "success": [
-      "post_url"
+      "success",
+      "post_url",
+      "media_count"
     ],
     "failure": [
       "failedItems"

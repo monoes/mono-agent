@@ -35,7 +35,7 @@
     ]
   },
   "outputs": {
-    "success": ["likesCount", "reachedIndex"],
+    "success": ["success", "postURL", "reaction", "already_reacted", "current_reaction"],
     "failure": ["failedItems"]
   },
   "steps": [

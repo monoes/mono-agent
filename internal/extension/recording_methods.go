@@ -344,25 +344,53 @@ func recordSaveArgs(req *Request) ([]string, error) {
 			args = append(args, "--force")
 		}
 	}
+	// keepPackageSelectors: on selector conflicts keep the automation's
+	// current selectors (record save --keep-package-selectors).
+	if raw, ok := req.Params["keepPackageSelectors"]; ok && raw != nil {
+		keep, isBool := raw.(bool)
+		if !isBool {
+			return nil, badParam("keepPackageSelectors must be a boolean")
+		}
+		if keep {
+			args = append(args, "--keep-package-selectors")
+		}
+	}
 	return append(args, "--json"), nil
 }
 
-// runRecordJSON runs one `record …` command and decodes its stdout. A
-// failing command's {"error": …} (contracts §5) wins over stderr as the
-// message, since that is the one written for a person.
+// runRecordJSON runs one `record …` command and decodes its stdout.
+//
+// A command that fails still answers with its stdout when that is a report:
+// `record verify` exits 1 on a failed replay and prints the step results as
+// its whole output (reportedError), and the side panel needs those steps
+// far more than it needs "verify failed". So on a non-zero exit:
+//
+//   - a JSON object with an "error" field is the failure (contracts §5), and
+//     its message wins over stderr since it is the one written for a person;
+//   - any other JSON object is a report, returned as the result;
+//   - missing or non-JSON stdout is the run's own error.
 func runRecordJSON(ctx context.Context, r Runner, args []string) (any, error) {
-	out, err := r.Run(ctx, args...)
-	if err != nil {
-		var body struct {
-			Error string `json:"error"`
+	out, runErr := r.Run(ctx, args...)
+	trimmed := bytes.TrimSpace(out)
+	var obj map[string]any
+	isObject := len(trimmed) > 0 && trimmed[0] == '{' && json.Unmarshal(trimmed, &obj) == nil
+	if runErr != nil {
+		if !isObject {
+			return nil, runErr
 		}
-		if json.Unmarshal(bytes.TrimSpace(out), &body) == nil && body.Error != "" {
-			return nil, fmt.Errorf("%s", body.Error)
+		if msg, ok := obj["error"].(string); ok && msg != "" {
+			return nil, fmt.Errorf("%s", msg)
 		}
-		return nil, err
+		if _, hasErr := obj["error"]; hasErr {
+			return nil, runErr
+		}
+		return obj, nil
+	}
+	if isObject {
+		return obj, nil
 	}
 	var data any
-	if err := json.Unmarshal(bytes.TrimSpace(out), &data); err != nil {
+	if err := json.Unmarshal(trimmed, &data); err != nil {
 		return nil, fmt.Errorf("monoagentcli %s: output is not JSON", redactArgs(args))
 	}
 	return data, nil

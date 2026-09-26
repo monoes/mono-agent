@@ -22,8 +22,12 @@
   },
   "outputs": {
     "success": [
-      "recipientsCount",
-      "reachedIndex"
+      "recipient",
+      "profile_url",
+      "message",
+      "sent",
+      "verified_by",
+      "conversation_url"
     ],
     "failure": [
       "failedMessages"

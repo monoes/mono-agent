@@ -22,6 +22,8 @@ type indexFile struct {
 	// LegacyHashes records, per ~/.monoagent/actions/<p> directory, the hash
 	// of the files last folded into local-<p>.
 	LegacyHashes map[string]string `json:"legacyHashes,omitempty"`
+	// LegacyFormat is the generated-manifest format last folded with.
+	LegacyFormat int `json:"legacyFormat,omitempty"`
 }
 
 type indexEntry struct {
@@ -217,6 +219,8 @@ func (r *Registry) info(id string, e *indexEntry, hash bool) InstalledInfo {
 	if info.Tier == "" {
 		info.Tier = "standard"
 	}
+	p.Source, p.Trust = e.Source, e.trust()
+	info.LegacyPlatform = p.LegacyAlias()
 	info.ContainsScripts = len(m.Permissions.Scripts) > 0 || len(p.ScriptFiles()) > 0
 	if m.Icon != "" && safePath(m.Icon) {
 		_, statErr := fs.Stat(p.FS, m.Icon)

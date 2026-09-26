@@ -24,8 +24,22 @@
   },
   "outputs": {
     "success": [
-      "itemsCount",
-      "reachedIndex"
+      "url",
+      "id",
+      "author_username",
+      "author_name",
+      "author_url",
+      "post_text",
+      "created_at",
+      "liked",
+      "already_liked",
+      "keyword",
+      "reply_count",
+      "repost_count",
+      "like_count",
+      "replied",
+      "reply_text",
+      "reply_url"
     ],
     "failure": [
       "failedItems"

@@ -167,30 +167,34 @@ func TestLoadDefaultSchema_GeneratedFromPackageInputs(t *testing.T) {
 	}
 }
 
-// Built-in nodes keep their pre-package forms (the full golden check is
-// TestBuiltinForms_MatchMaster in internal/nodes).
-func TestLoadDefaultSchema_BuiltinsKeepLegacyForms(t *testing.T) {
+// Built-in nodes resolve: schema file → shared action.<name>.json →
+// generated from the action's inputs (the full golden is
+// TestBuiltinForms_Golden in internal/nodes).
+func TestLoadDefaultSchema_BuiltinResolution(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	action.SetDefSource(nil)
 
-	// No schema file, not a generic-form platform: empty, as before.
-	if s, _ := LoadDefaultSchema("hackernews.submit_post"); len(s.Fields) != 0 {
-		t.Errorf("hackernews.submit_post got a generated form: %+v", s.Fields)
+	// No schema file: generated from the action's inputs.
+	s, _ := LoadDefaultSchema("hackernews.submit_post")
+	if f := fieldByKey(t, s, "title"); !f.Required {
+		t.Errorf("hackernews.submit_post title: %+v", f)
 	}
-	if _, ok := ReadEmbeddedSchema("hackernews.submit_post"); ok {
-		t.Error("ReadEmbeddedSchema invented a schema for hackernews.submit_post")
+	if _, ok := ReadEmbeddedSchema("hackernews.submit_post"); !ok {
+		t.Error("ReadEmbeddedSchema: no generated schema for hackernews.submit_post")
 	}
-	// No shared form: browser.generic.json, as before.
-	s, _ := LoadDefaultSchema("tiktok.like_video")
-	if f := fieldByKey(t, s, "targets"); f.Required {
-		t.Errorf("tiktok.like_video targets became required: %+v", f)
+	s, _ = LoadDefaultSchema("tiktok.like_video")
+	if f := fieldByKey(t, s, "targets"); !f.Required {
+		t.Errorf("tiktok.like_video targets should be required: %+v", f)
 	}
-	fieldByKey(t, s, "keywords")
-	fieldByKey(t, s, "limit")
+	for _, f := range s.Fields {
+		if f.Key == "keywords" || f.Key == "limit" {
+			t.Errorf("tiktok.like_video offers %q, which the action ignores", f.Key)
+		}
+	}
 	// Shared form.
 	s, _ = LoadDefaultSchema("linkedin.find_by_keyword")
 	fieldByKey(t, s, "keywords")
-	// A legacy local-<platform> action resolves like the platform's did.
+	// A legacy local-<platform> action keeps the generic form.
 	s, _ = LoadDefaultSchema("local-instagram.my_custom_action")
 	fieldByKey(t, s, "targets")
 }
@@ -203,5 +207,33 @@ func TestHumanizeName(t *testing.T) {
 		if got := humanizeName(in); got != want {
 			t.Errorf("humanizeName(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// Inputs the browser node fills from its own config names are asked for
+// under those names, typed as the node reads them.
+func TestInputField_NodeFacingKeys(t *testing.T) {
+	for _, c := range []struct {
+		in       actionInput
+		key, typ string
+	}{
+		{actionInput{Name: "commentText", Type: "string"}, "message", "textarea"},
+		{actionInput{Name: "replyText", Type: "string"}, "message", "textarea"},
+		{actionInput{Name: "selectedListItems", Type: "list"}, "targets", "array"},
+		{actionInput{Name: "maxResultsCount", Type: "number"}, "limit", "number"},
+		{actionInput{Name: "maxComments", Type: "number", Aliases: []string{"limit"}}, "limit", "number"},
+		{actionInput{Name: "searches", Type: "array", Aliases: []string{"keywords", "keyword"}}, "keywords", "text"},
+		// A scalar aliased to targets keeps its name: the node reads targets as a list.
+		{actionInput{Name: "target_url", Type: "string", Aliases: []string{"targets", "username"}}, "target_url", "text"},
+		{actionInput{Name: "itemID", Type: "string"}, "itemID", "text"},
+	} {
+		f := inputField(c.in, true)
+		if f.Key != c.key || f.Type != c.typ {
+			t.Errorf("%s: key %q type %q, want %q %q", c.in.Name, f.Key, f.Type, c.key, c.typ)
+		}
+	}
+	// The label still says what the action wants.
+	if f := inputField(actionInput{Name: "commentText", Type: "string"}, true); f.Label != "Comment Text" {
+		t.Errorf("label %q", f.Label)
 	}
 }

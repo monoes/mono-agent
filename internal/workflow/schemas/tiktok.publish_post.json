@@ -1,0 +1,8 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "message", "label": "Caption", "type": "textarea", "required": true, "rows": 5, "placeholder": "Write your caption here...", "help": "Replaces TikTok's prefilled caption." },
+    { "key": "media", "label": "Video Path", "type": "text", "required": true, "placeholder": "e.g. /home/me/videos/clip.mp4", "help": "Local path of the video file to upload." },
+    { "key": "locationTag", "label": "Location Tag", "type": "text", "required": false, "placeholder": "e.g. Berlin" }
+  ]
+}

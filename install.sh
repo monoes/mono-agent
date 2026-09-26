@@ -122,15 +122,27 @@ fi
 
 chmod +x "${TMP_DIR}/${ASSET}"
 
-if [ "$(id -u)" = "0" ]; then
-  SUDO=""
-else
-  command -v sudo >/dev/null 2>&1 || err "no write access guess: need sudo to install into ${INSTALL_DIR} but sudo is not available"
+# sudo only when the install dir (or, if it does not exist yet, its closest
+# existing parent) is not writable by this user — e.g. INSTALL_DIR=~/.local/bin
+# never needs it.
+writable_target() {
+  d="$1"
+  while [ ! -d "$d" ]; do
+    parent="$(dirname "$d")"
+    [ "$parent" = "$d" ] && return 1
+    d="$parent"
+  done
+  [ -w "$d" ]
+}
+SUDO=""
+if [ "$(id -u)" != "0" ] && ! writable_target "$INSTALL_DIR"; then
+  command -v sudo >/dev/null 2>&1 \
+    || err "${INSTALL_DIR} is not writable by $(id -un) and sudo is not available — re-run as root, or choose a writable directory with INSTALL_DIR=\$HOME/.local/bin"
   SUDO="sudo"
 fi
 
-mkdir -p "$INSTALL_DIR" 2>/dev/null || true
-$SUDO mv "${TMP_DIR}/${ASSET}" "${INSTALL_DIR}/${BIN}"
+$SUDO mkdir -p "$INSTALL_DIR" || err "cannot create ${INSTALL_DIR}"
+$SUDO mv "${TMP_DIR}/${ASSET}" "${INSTALL_DIR}/${BIN}" || err "cannot install into ${INSTALL_DIR}"
 
 echo "Installed: ${INSTALL_DIR}/${BIN} (${TAG}, ${os}/${arch})"
 echo "Verify with:  ${INSTALL_DIR}/${BIN} version"

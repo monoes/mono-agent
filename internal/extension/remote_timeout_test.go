@@ -129,3 +129,53 @@ func TestRelayUnreachableIsNotConnected(t *testing.T) {
 		t.Fatalf("err = %v, want ErrBridgeNotConnected", err)
 	}
 }
+
+// A relay that refuses this client's token answers 401 in plain text; the
+// error must say so, not "invalid character 'u'" (upgrade report).
+func TestRelayRejectionIsReportedAsPairingMismatch(t *testing.T) {
+	for _, code := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "unauthorized", code)
+		}))
+		r := &RemoteSender{baseURL: srv.URL, client: &http.Client{}}
+		_, err := r.SendCommand(&Command{Type: CmdCreateTab}, time.Second)
+		if !errors.Is(err, ErrRelayUnauthorized) || !strings.Contains(err.Error(), "pairing token mismatch") ||
+			strings.Contains(err.Error(), "invalid character") {
+			t.Errorf("%d: err = %v", code, err)
+		}
+		if _, err := r.CreateTab("https://x.test/"); !errors.Is(err, ErrRelayUnauthorized) {
+			t.Errorf("%d: CreateTab err = %v", code, err)
+		}
+		if _, err := (&RemoteSender{baseURL: srv.URL, client: &http.Client{}}).CapturePage(CaptureRequest{Timeout: time.Second}); !errors.Is(err, ErrRelayUnauthorized) {
+			t.Errorf("%d: CapturePage err = %v", code, err)
+		}
+		srv.Close()
+	}
+}
+
+func TestRelayOtherFailuresQuoteStatusAndBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "invalid command: unexpected EOF\n"+strings.Repeat("x", 500), http.StatusBadRequest)
+	}))
+	defer srv.Close()
+	r := &RemoteSender{baseURL: srv.URL, client: &http.Client{}}
+	_, err := r.SendCommand(&Command{Type: CmdWaitLoad}, time.Second)
+	if err == nil || !strings.Contains(err.Error(), "400 Bad Request") || !strings.Contains(err.Error(), "invalid command: unexpected EOF") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(err.Error()) > 400 {
+		t.Fatalf("body not bounded: %d bytes", len(err.Error()))
+	}
+
+	// A non-2xx that still carries a JSON Response keeps the extension's
+	// own error.
+	json500 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(Response{ID: "x", Error: "no extension connected"})
+	}))
+	defer json500.Close()
+	_, err = (&RemoteSender{baseURL: json500.URL, client: &http.Client{}}).SendCommand(&Command{Type: CmdWaitLoad}, time.Second)
+	if err == nil || !strings.Contains(err.Error(), "extension error: no extension connected") {
+		t.Fatalf("err = %v", err)
+	}
+}

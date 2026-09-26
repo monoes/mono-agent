@@ -41,6 +41,7 @@
   const verifyBtn = el("rec-verify");
   const saveBtn = el("rec-save");
   const verifySteps = el("rec-verify-steps");
+  const verifyError = el("rec-verify-error");
   const draftMsg = el("rec-draft-msg");
   const verifyInputs = el("rec-verify-inputs");
 
@@ -242,7 +243,7 @@
     saveAs.value = d.saveAs || "action";
     saveName.value = d.action || "";
     saveAutomation.value = d.automation || "";
-    verifySteps.hidden = true;
+    clearVerify();
     drawVerifyInputs(d.inputs);
     say(draftMsg, "", "");
   }
@@ -265,6 +266,26 @@
       field.appendChild(box);
       verifyInputs.appendChild(field);
     }
+  }
+
+  function clearVerify() {
+    verifySteps.textContent = "";
+    verifySteps.hidden = true;
+    verifyError.textContent = "";
+    verifyError.hidden = true;
+  }
+
+  function drawVerify(v) {
+    clearVerify();
+    for (const s of v.steps) {
+      const li = node("li", "", s.text);
+      li.dataset.status = s.status;
+      if (s.failed) li.dataset.failed = "true";
+      verifySteps.appendChild(li);
+    }
+    verifySteps.hidden = !v.steps.length;
+    verifyError.textContent = v.error;
+    verifyError.hidden = !v.error;
   }
 
   function verifyValues() {
@@ -292,19 +313,15 @@
   verifyBtn.addEventListener("click", async () => {
     if (!draft) return;
     verifyBtn.disabled = true;
+    // A new run: nothing from the previous one may stay on screen next to it.
+    clearVerify();
     say(draftMsg, "ok", "Replaying up to the first step that changes anything…");
     try {
       const res = await send({ type: "record_verify", draftDir: draft.draftDir, inputs: verifyValues() });
       const v = View.describeVerify(res.result);
-      verifySteps.textContent = "";
-      for (const s of v.steps) {
-        const li = node("li", "", s.text);
-        li.dataset.status = s.status;
-        verifySteps.appendChild(li);
-      }
-      verifySteps.hidden = !v.steps.length;
+      drawVerify(v);
       const stopped = v.stoppedAt ? " Stopped before a step with side effects." : "";
-      say(draftMsg, v.ok ? "ok" : "warn", (v.ok ? "Verified." : "Some steps failed.") + stopped);
+      say(draftMsg, v.ok ? "ok" : "warn", (v.ok ? "Verified." : "Verify failed.") + stopped);
     } catch (err) {
       say(draftMsg, "err", `Verify failed: ${err.message}`);
     } finally {

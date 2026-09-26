@@ -21,8 +21,18 @@
   },
   "outputs": {
     "success": [
-      "resultsCount",
-      "maxResultsCount"
+      "url",
+      "id",
+      "author_username",
+      "author_name",
+      "author_url",
+      "post_text",
+      "created_at",
+      "liked",
+      "keyword",
+      "reply_count",
+      "repost_count",
+      "like_count"
     ],
     "failure": []
   },

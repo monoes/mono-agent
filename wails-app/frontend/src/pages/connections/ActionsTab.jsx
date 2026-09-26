@@ -15,7 +15,7 @@ function Inputs({ inputs }) {
       <tbody>
         {inputs.map(i => (
           <tr key={i.name} style={{ borderTop: '1px solid var(--border-dim)' }}>
-            <td style={{ ...mono, fontSize: 10.5, color: 'var(--text)', padding: '4px 8px 4px 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'top' }}>
+            <td title={i.name} style={{ ...mono, fontSize: 10.5, color: 'var(--text)', padding: '4px 8px 4px 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'top' }}>
               {i.name}{i.required && <span style={{ color: 'var(--red)' }}> *</span>}
             </td>
             <td style={{ ...mono, fontSize: 10, color: 'var(--cyan)', padding: '4px 8px 4px 0', verticalAlign: 'top' }}>{i.type || 'string'}</td>
@@ -27,6 +27,26 @@ function Inputs({ inputs }) {
         ))}
       </tbody>
     </table>
+  )
+}
+
+// Outputs: the success outputs as chips, and any other outputs keys (the
+// fields set when the action fails) listed apart and muted. outputsByKey is
+// the action's outputs map as written; outputs is its flat union.
+function Outputs({ a }) {
+  const byKey = a.outputsByKey
+  const success = byKey ? (byKey.success || []) : (a.outputs || [])
+  const other = byKey ? Object.entries(byKey).filter(([k, v]) => k !== 'success' && (v || []).length) : []
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
+        <span style={{ ...label, marginRight: 4 }}>Outputs</span>
+        {success.length ? success.map(o => <Chip key={o} color="var(--teal)">{o}</Chip>) : <span style={muted}>none</span>}
+      </div>
+      {other.map(([k, v]) => (
+        <span key={k} style={{ ...muted, fontSize: 10 }}>on {k}: {v.join(', ')}</span>
+      ))}
+    </div>
   )
 }
 
@@ -85,10 +105,7 @@ function ActionRow({ automationId, a }) {
         <span style={label}>Inputs</span>
         <Inputs inputs={a.inputs} />
       </div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
-        <span style={{ ...label, marginRight: 4 }}>Outputs</span>
-        {(a.outputs || []).length ? a.outputs.map(o => <Chip key={o} color="var(--teal)">{o}</Chip>) : <span style={muted}>none</span>}
-      </div>
+      <Outputs a={a} />
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         <button className="btn btn-secondary btn-sm" onClick={() => runTest(false)} disabled={!!busy} style={{ gap: 5 }}><FlaskConical size={11} /> Run test</button>
         <button className="btn btn-ghost btn-sm" onClick={() => runTest(true)} disabled={!!busy} style={{ gap: 5 }}><Play size={11} /> Run live</button>

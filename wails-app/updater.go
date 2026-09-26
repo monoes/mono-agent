@@ -3,9 +3,16 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+)
+
+const (
+	githubOwner = "monoes"
+	githubRepo  = "mono-agent"
 )
 
 // VersionInfo is returned by GetVersion.
@@ -23,7 +30,7 @@ type UpdateInfo struct {
 	Error           string `json:"error,omitempty"`
 }
 
-// UpdateResult is returned by AppSelfUpdate.
+// UpdateResult is returned by SelfUpdate.
 type UpdateResult struct {
 	Success    bool   `json:"success"`
 	NewVersion string `json:"new_version,omitempty"`
@@ -55,6 +62,25 @@ func (a *App) CheckForUpdate() UpdateInfo {
 
 // updateCheckTimeout bounds `update --check` (one GitHub request).
 const updateCheckTimeout = 30 * time.Second
+
+// releaseAPIURL is GitHub's latest-release endpoint (a variable so tests
+// can point it at a fake release server). AppSelfUpdate (app_update.go)
+// updates the app and its bundled CLI from it.
+var releaseAPIURL = fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", githubOwner, githubRepo)
+
+// getAll fetches url; any status but 200 is an error (an HTML error page
+// must never be installed as the binary).
+func getAll(client *http.Client, url string) ([]byte, error) {
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("HTTP %d for %s", resp.StatusCode, url)
+	}
+	return io.ReadAll(resp.Body)
+}
 
 // backgroundUpdateCheck runs once on startup (after a short delay) and then
 // every 24 hours, emitting "update:available" when a newer release exists.

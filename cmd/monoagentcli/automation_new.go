@@ -47,6 +47,11 @@ letters, digits and dashes.`,
 			if _, err := os.Stat(dir); err == nil {
 				return fmt.Errorf("%s already exists", dir)
 			}
+			if install {
+				if err := refuseInstalledID(id); err != nil {
+					return err
+				}
+			}
 			tfs, err := automationTemplate(tmpl)
 			if err != nil {
 				return err
@@ -84,6 +89,20 @@ letters, digits and dashes.`,
 	cmd.Flags().BoolVar(&install, "install", false, "Also install the new package (as local)")
 	cmd.Flags().StringVar(&startURL, "start-url", "", "Site start URL; its host becomes the allowed domain")
 	return cmd
+}
+
+// refuseInstalledID stops `new --install` from overwriting an automation
+// that is already installed under id (a removed built-in does not count).
+// Checked before anything is written.
+func refuseInstalledID(id string) error {
+	reg, err := openAutomationRegistry()
+	if err != nil {
+		return err
+	}
+	if info, err := reg.Info(id); err == nil && info != nil && !info.Removed {
+		return fmt.Errorf("automation %s already exists; pick another id or use `automation install <dir> --local --replace`", id)
+	}
+	return nil
 }
 
 // installScaffold installs a freshly scaffolded package directory as local.

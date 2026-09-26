@@ -31,8 +31,17 @@
   },
   "outputs": {
     "success": [
-      "profilesCount",
-      "reachedIndex"
+      "username",
+      "profile_url",
+      "full_name",
+      "headline",
+      "location",
+      "about",
+      "connection_count",
+      "follower_count",
+      "connection_degree",
+      "profile_picture_url",
+      "is_self"
     ],
     "failure": [
       "failedItems"

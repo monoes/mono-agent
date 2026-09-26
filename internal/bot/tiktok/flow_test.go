@@ -48,7 +48,11 @@ func runFlow(t *testing.T, p *bottest.Page, b *TikTokBot, f flow) (*action.Execu
 	if f.items != nil {
 		ae.SetVariable("selectedListItems", f.items)
 	}
-	return ae.Execute(sa)
+	res, err := ae.Execute(sa)
+	if err == nil {
+		assertOutputsDeclared(t, f.typ, res)
+	}
+	return res, err
 }
 
 func target(u string) map[string]interface{} {

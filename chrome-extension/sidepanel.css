@@ -1543,6 +1543,24 @@ progress::-webkit-progress-value {
   color: var(--err);
 }
 
+/* The step a failed verify stopped on. */
+.rec-draft-steps li[data-failed="true"] {
+  font-weight: 600;
+  background: var(--err-wash);
+  border-radius: var(--r-sm);
+  padding: 0 var(--sp-1);
+}
+
+.rec-verify-error {
+  margin: 0;
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--t-sm);
+  color: var(--err);
+  background: var(--err-wash);
+  border-radius: var(--r-sm);
+  overflow-wrap: anywhere;
+}
+
 .rec-draft-steps li[data-status="pass"],
 .rec-draft-steps li[data-status="healed"] {
   color: var(--ok);

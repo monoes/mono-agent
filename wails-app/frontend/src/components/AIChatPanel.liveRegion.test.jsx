@@ -107,6 +107,15 @@ async function sendAndCaptureTurnId(conversationId) {
 
   await waitFor(() => expect(startChatTurn).toHaveBeenCalled())
   const [, turnId] = startChatTurn.mock.calls[0]
+  // startChatTurn being called does not mean the live stream is listening
+  // yet: useChatStream subscribes to chat:event in an effect that runs once
+  // AIChatPanel has committed the new activeTurnId. A notice emitted before
+  // that subscription exists is simply never delivered (this mock has no
+  // backlog for hydrate() to recover it from), which is what made these
+  // tests fail under CPU load. Wait for the actual subscription — the only
+  // onChatEvent consumer in the panel is the active turn's useChatStream —
+  // instead of racing it.
+  await waitFor(() => expect(chatEventListeners.size).toBe(1))
   return turnId
 }
 

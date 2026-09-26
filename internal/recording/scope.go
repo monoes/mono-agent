@@ -1,6 +1,7 @@
 package recording
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -170,39 +171,54 @@ func DraftsDir() (string, error) {
 	return filepath.Join(home, ".monoagent", "recording-drafts"), nil
 }
 
+// ErrDraftNotFound is ResolveDraftDir's one answer for every reference it
+// refuses. The reference comes from a browser, so the refusal must not say
+// which way it failed: "no such file" for one path and "outside" for
+// another would let a page probe which paths exist on this machine.
+var ErrDraftNotFound = errors.New("draft not found or outside the drafts folder")
+
 // ResolveDraftDir turns a caller-supplied draft reference — a draft name or
 // a path — into a directory that is guaranteed to sit inside DraftsDir,
-// symlinks resolved. Anything else is refused.
+// symlinks resolved. Anything else is refused with ErrDraftNotFound, never
+// with an OS error.
 func ResolveDraftDir(ref string) (string, error) {
 	ref = strings.TrimSpace(ref)
 	root, err := DraftsDir()
 	if err != nil {
-		return "", err
+		return "", ErrDraftNotFound
 	}
 	if ref == "" || strings.ContainsRune(ref, 0) || strings.HasPrefix(ref, "-") {
-		return "", fmt.Errorf("invalid draft %q", ref)
+		return "", ErrDraftNotFound
 	}
 	dir := ref
 	if !filepath.IsAbs(ref) {
 		if !ValidID(ref) {
-			return "", fmt.Errorf("invalid draft %q: give a draft name or an absolute path", ref)
+			return "", ErrDraftNotFound
 		}
 		dir = filepath.Join(root, ref)
 	}
+	// Containment is checked on the lexical path first, so a reference
+	// outside the drafts folder is refused before anything is looked up.
+	if !within(filepath.Clean(root), filepath.Clean(dir)) {
+		return "", ErrDraftNotFound
+	}
 	realRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
-		return "", fmt.Errorf("no drafts yet: %w", err)
+		return "", ErrDraftNotFound
 	}
 	realDir, err := filepath.EvalSymlinks(filepath.Clean(dir))
-	if err != nil {
-		return "", fmt.Errorf("draft %q: %w", ref, err)
-	}
-	rel, err := filepath.Rel(realRoot, realDir)
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		return "", fmt.Errorf("draft %q is outside %s", ref, root)
+	if err != nil || !within(realRoot, realDir) {
+		return "", ErrDraftNotFound
 	}
 	if fi, err := os.Stat(realDir); err != nil || !fi.IsDir() {
-		return "", fmt.Errorf("draft %q is not a directory", ref)
+		return "", ErrDraftNotFound
 	}
 	return realDir, nil
+}
+
+// within reports whether path is strictly inside root.
+func within(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	return err == nil && rel != "." && rel != ".." &&
+		!strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }

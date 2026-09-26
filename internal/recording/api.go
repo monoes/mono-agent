@@ -84,7 +84,9 @@ func listAll() ([]Summary, error) {
 func Find(id string) (string, error) {
 	id = strings.TrimSpace(id)
 	if !ValidID(id) {
-		return "", fmt.Errorf("invalid recording id %q", id)
+		// Same answer as an id that names nothing: the id may come from
+		// a browser, and a malformed one says nothing about the disk.
+		return "", ErrNotFound
 	}
 	all, err := listAll()
 	if err != nil {

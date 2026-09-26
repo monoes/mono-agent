@@ -903,6 +903,9 @@ func (ae *ActionExecutor) executeSteps(ctx context.Context, steps []StepDef) err
 		}
 		step := steps[i]
 		if ae.safeMode && ae.safeStopRequired(step) {
+			if err := ae.precheckSafeStop(ctx, step); err != nil {
+				return ae.failRun(step.ID, err)
+			}
 			return ae.stopBeforeSideEffect(step)
 		}
 

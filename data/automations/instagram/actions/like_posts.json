@@ -46,8 +46,9 @@
   },
   "outputs": {
     "success": [
-      "likesCount",
-      "reachedIndex"
+      "success",
+      "url",
+      "status"
     ],
     "failure": [
       "failedLikes"

@@ -9,18 +9,7 @@ import "encoding/json"
 // schema exists for the type — unlike LoadDefaultSchema, which returns an
 // empty schema for unknown types.
 func ReadEmbeddedSchema(nodeType string) ([]byte, bool) {
-	if data, ok := schemaFile(nodeType); ok {
-		return data, true
-	}
-	gen, ok := generateActionSchema(nodeType)
-	if !ok {
-		return nil, false
-	}
-	data, err := json.Marshal(gen)
-	if err != nil {
-		return nil, false
-	}
-	return data, true
+	return resolveSchemaJSON(nodeType)
 }
 
 // SchemaTitle returns the "title" (or fallback "name") field from a node

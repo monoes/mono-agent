@@ -22,7 +22,11 @@ func runAction(t *testing.T, p *bottest.Page, actionType, message string, params
 	if len(items) > 0 {
 		ae.SetVariable("selectedListItems", items)
 	}
-	return ae.Execute(&action.StorageAction{ID: "test-" + actionType, Type: actionType, TargetPlatform: "linkedin", ContentMessage: message, Params: params})
+	res, err := ae.Execute(&action.StorageAction{ID: "test-" + actionType, Type: actionType, TargetPlatform: "linkedin", ContentMessage: message, Params: params})
+	if err == nil {
+		assertOutputsDeclared(t, actionType, res)
+	}
+	return res, err
 }
 
 // target mimics BrowserNode's wrapping of a string target.

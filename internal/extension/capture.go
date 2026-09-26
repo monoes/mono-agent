@@ -533,9 +533,9 @@ func (r *RemoteSender) CapturePage(req CaptureRequest) (*capture.Result, error) 
 	}
 	defer httpResp.Body.Close()
 
-	var resp Response
-	if err := json.NewDecoder(httpResp.Body).Decode(&resp); err != nil {
-		return nil, fmt.Errorf("decode relay response: %w", err)
+	resp, err := decodeRelayResponse(httpResp)
+	if err != nil {
+		return nil, err
 	}
 	if !resp.Success {
 		if resp.Error == "" {

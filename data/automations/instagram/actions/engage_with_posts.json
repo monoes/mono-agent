@@ -14,17 +14,20 @@
   "inputs": {
     "required": [
       {
-        "name": "maxContentCount",
-        "type": "number",
-        "description": "Maximum number of posts to engage with"
-      },
-      {
         "name": "searches",
         "type": "array",
-        "description": "Array of hashtags or keywords to search"
+        "aliases": ["keywords", "keyword"],
+        "description": "Array of hashtags or keywords to search (the node's keywords)"
       }
     ],
     "optional": [
+      {
+        "name": "maxContentCount",
+        "type": "number",
+        "default": 10,
+        "aliases": ["limit"],
+        "description": "Maximum number of posts to engage with"
+      },
       {
         "name": "engagementActions",
         "type": "array",
@@ -68,8 +71,18 @@
   },
   "outputs": {
     "success": [
-      "itemsCount",
-      "reachedIndex"
+      "url",
+      "shortcode",
+      "type",
+      "thumbnail_src",
+      "alt_text",
+      "author",
+      "author_url",
+      "keyword",
+      "success",
+      "status",
+      "verified_by",
+      "username"
     ],
     "failure": [
       "failedItems"

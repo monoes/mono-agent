@@ -263,6 +263,9 @@
               <button type="button" id="rec-verify" class="btn-secondary">Verify (safe)</button>
               <button type="button" id="rec-save" class="btn-secondary">Save</button>
             </div>
+            <!-- The latest verify only: cleared when a new one starts. A failed
+                 run's error sits above its steps, the failing step marked. -->
+            <p id="rec-verify-error" class="rec-verify-error" role="alert" hidden></p>
             <ol id="rec-verify-steps" class="rec-draft-steps" hidden></ol>
             <div id="rec-draft-msg" class="msg" role="status" aria-live="polite"></div>
           </div>

@@ -42,9 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `messages all --unread`. Communications shows an unread dot and an
   Unread filter, and opening a message or a person's conversation marks it
   read. The dashboard shows how many are unread.
-- **`monoagentcli update --app <exe>`** updates the desktop app, and on
-  Linux the `monoagentcli` bundled next to it. The desktop app's Update
-  button now goes through it.
+- **`monoagentcli update --app <exe>`** updates the desktop app from the
+  CLI.
 - **The daemon publishes its scheduler's real next run times** in its
   heartbeat. `summary` prefers them (`"source": "daemon"`), so `@every`
   schedules show their actual next run.
@@ -99,13 +98,94 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`workflow executions`** failed on runs with no error message, and
   `people list --platform` missed upper-case platform names.
 
-- **Desktop app updates are now verified against the release's
-  `SHA256SUMS.txt`.** Before, the app installed its own update without
-  checking the checksum. On Linux the bundled CLI is now updated along with
-  the app.
 
 - The dashboard showed successful runs in grey, and the running indicator never
   pulsed.
+
+## [0.75.0] - 2026-09-26
+
+### Fixed
+
+- **Upgraded legacy actions work as before again.** v0.74 restricted
+  actions from `~/.monoagent/actions` to the sites written in them, which
+  broke templated URLs and redirects (e.g. google.com → www.google.com).
+  They run unrestricted again. The sites found in them are kept as a
+  suggestion for export.
+- **Importing a workflow never overwrites your own work.** A same-named
+  workflow you made or edited is left alone, and the file is imported as a
+  copy with a warning (`--replace <id>` replaces it explicitly). Re-importing
+  an identical file still reports "unchanged".
+- **Workflow bundles export partially.** Automations that can't be exported
+  are listed with the reason instead of failing the whole export.
+  `--automation-domains <id>=<sites>` and `--use-suggested-domains` include
+  legacy ones. `automation export` and `action export` take `--domains` and
+  `--use-suggested-domains` too.
+- **Browser nodes have a session picker** in the editor for every
+  automation, including Hacker News, Product Hunt and imported or recorded
+  ones.
+- **Keyword search nodes** run with only their required fields on every
+  platform.
+- **The extension's side panel** shows a failed verify's step report instead
+  of the previous run's steps.
+- `record save --keep-package-selectors` keeps selectors you re-recorded.
+- **Re-importing an identical action** is a no-op. Upgrading your own local
+  package to a newer version no longer needs `--replace`.
+- **`node run instagram.list_post_comments`** saves comments with form-style
+  targets.
+- **Clearer error** when the bridge rejects a client (pairing mismatch).
+- **Workflow editor:** the node palette refreshes after installs, and the
+  image picker only appears on media fields.
+
+### Note
+
+The desktop app's in-app update on Linux could fail in v0.73.0 when `/tmp`
+is a separate filesystem. If you're on the v0.73.0 desktop app, download
+this release manually once. Updates from v0.74.0 onward work from inside the
+app.
+
+## [0.74.0] - 2026-09-26
+
+### Fixed
+
+- **The desktop app's update button** now verifies every download against
+  the release's SHA256SUMS and HTTP status before installing, stages files
+  next to the app (no more "invalid cross-device link" on Linux), and
+  updates the bundled CLI together with the app. The 0.73.0 entry claimed
+  this for a code path the button never used; that unused updater is
+  removed.
+- **Upgrading from older versions:**
+  - Old actions whose platform name contains `_` (e.g. `google_maps`) keep
+    their node names.
+  - Packages generated from `~/.monoagent/actions` get their allowed sites
+    derived from their actions and no longer show validation errors.
+  - Re-importing a workflow imported by an older version no longer
+    duplicates it.
+- **Workflows bundled with legacy automations** can be exported and
+  imported on another machine.
+- **Node forms:**
+  - Hacker News and Product Hunt nodes have forms.
+  - Instagram `list_user_posts` asks for the profile to read, separately
+    from the session.
+  - Every built-in form now asks for its action's required inputs.
+  - Workflows saved with older forms still fill the new fields.
+- **Actions declare the fields they actually return.** A test now checks
+  every flow's output against the declaration.
+- **TikTok and other comment results** no longer get their text copied into
+  `full_name`.
+- **Replacing a package you created** keeps the old copy for rollback and
+  needs confirmation (`--replace`; `--replace-builtin` still works). The
+  install review lists what the site can see and says when trust drops.
+  `automation new --install` refuses an existing id.
+- **Failed `--json` commands** (`automation validate`, `record verify`,
+  `ai provider test`) exit 1.
+- **Safe-mode verify** refuses an upload that a real run would refuse.
+- **`record verify` paths:** errors no longer reveal whether a path exists.
+- **`install.sh`** uses sudo only when the install directory isn't writable.
+- **Connections page:**
+  - The Health tab fits the drawer.
+  - Replacements are labelled as such.
+  - The workflow count refreshes after an import.
+  - Updates warn that script and live-run permissions are reset.
 
 ## [0.73.0] - 2026-09-26
 

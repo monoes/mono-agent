@@ -229,18 +229,27 @@
     };
   }
 
-  /** describeVerify turns `record verify --json` into one line per step. */
+  /**
+   * describeVerify turns `record verify --json` into one line per step. A
+   * failed run says why (`error`: the report's own error, else the failing
+   * step's message) and marks the step it failed on (`failed`), so the panel
+   * can put the error above the list and highlight that step.
+   */
   function describeVerify(result) {
     const r = result || {};
-    return {
-      ok: !!r.ok,
-      stoppedAt: r.stoppedAt || null,
-      steps: (r.steps || []).map((s) => ({
-        id: s.id || "",
-        status: s.status || "",
-        text: `${s.id || "?"} ${s.type || ""} — ${s.status || "?"}${s.message ? `: ${s.message}` : ""}`,
-      })),
-    };
+    const steps = (r.steps || []).map((s) => ({
+      id: s.id || "",
+      status: s.status || "",
+      failed: false,
+      text: `${s.id || "?"} ${s.type || ""} — ${s.status || "?"}${s.message ? `: ${s.message}` : ""}`,
+      message: s.message || "",
+    }));
+    const ok = !!r.ok;
+    const failing = ok ? null : steps.find((s) => s.status === "fail") || null;
+    if (failing) failing.failed = true;
+    let error = "";
+    if (!ok) error = String(r.error || (failing && `${failing.id}: ${failing.message || "failed"}`) || "");
+    return { ok, stoppedAt: r.stoppedAt || null, error, steps };
   }
 
   root.MonoRecordView = { describe, rows, summary, hasErrors, sensitiveKind, targetName, hostPath, describeDraft, describeVerify };

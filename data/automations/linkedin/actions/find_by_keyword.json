@@ -17,19 +17,27 @@
         "name": "keyword",
         "type": "string",
         "description": "Search keywords, or a linkedin.com/search/results/people URL"
-      },
+      }
+    ],
+    "optional": [
       {
         "name": "maxResultsCount",
         "type": "number",
+        "default": 20,
         "description": "Maximum number of people"
       }
-    ],
-    "optional": []
+    ]
   },
   "outputs": {
     "success": [
-      "resultsCount",
-      "maxResultsCount"
+      "url",
+      "profile_url",
+      "username",
+      "full_name",
+      "headline",
+      "job_title",
+      "location",
+      "connection_degree"
     ],
     "failure": [
       "failedItems"
@@ -42,7 +50,7 @@
       "methodName": "search_people",
       "args": [
         "{{keyword}}",
-        "{{maxResultsCount}}"
+        "{{maxResultsCount or 20}}"
       ],
       "variable_name": "people",
       "timeout": 600,
