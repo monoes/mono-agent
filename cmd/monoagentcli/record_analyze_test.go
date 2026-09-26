@@ -405,3 +405,28 @@ func TestRecordAnalyzeSaveForce(t *testing.T) {
 		t.Errorf("--force ignored: %s", out)
 	}
 }
+
+func TestRecordAnalyzeSaveKeepPackageSelectors(t *testing.T) {
+	dir := analyzeRec1(t)
+	if out, err := runRecordCLI(t, true, "save", dir); err != nil {
+		t.Fatalf("first save: %v %s", err, out)
+	}
+	// An older draft of the same page, with a different selector for the key.
+	stubRecordAI(t, strings.Replace(recordAnalyzeAnswer, `{"css": "button", "score": 0.8}`, `{"css": "body button", "score": 0.8}`, 1))
+	out, err := runRecordCLI(t, true, "analyze", "rec1")
+	if err != nil {
+		t.Fatalf("analyze: %v %s", err, out)
+	}
+	var res struct {
+		DraftDir string `json:"draftDir"`
+	}
+	_ = json.Unmarshal([]byte(out), &res)
+	out, err = runRecordCLI(t, true, "save", res.DraftDir, "--automation", "example-go", "--name", "press go again")
+	if err == nil || !strings.Contains(out, "page.go_button") || !strings.Contains(out, "--keep-package-selectors") {
+		t.Fatalf("conflict not explained: %v %s", err, out)
+	}
+	out, err = runRecordCLI(t, true, "save", res.DraftDir, "--automation", "example-go", "--name", "press go again", "--keep-package-selectors")
+	if err != nil || !strings.Contains(out, "kept the package's current selector(s): page.go_button") {
+		t.Errorf("with flag: %v %s", err, out)
+	}
+}
