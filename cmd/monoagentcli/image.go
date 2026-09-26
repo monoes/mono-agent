@@ -21,7 +21,7 @@ import (
 func newImageCmd(cfg *globalConfig) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "image",
-		Short: "Manage the image vault: list, add, label, export, delete",
+		Short: "Manage the image vault: list, add, label, export, delete, sync",
 		Long: "Images belong to the active profile and are addressed by id (img-001, …). " +
 			"Workflows refer to them as @img-001.",
 	}
@@ -35,6 +35,7 @@ func newImageCmd(cfg *globalConfig) *cobra.Command {
 		newImageSearchCmd(cfg),
 		newImageStatsCmd(cfg),
 		newImageExportCmd(cfg),
+		newImageSyncCmd(cfg),
 	)
 	return cmd
 }

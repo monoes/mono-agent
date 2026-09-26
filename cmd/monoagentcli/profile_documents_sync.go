@@ -12,9 +12,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// folderSyncResult is the --json shape of `profile documents sync`: what
-// one reconcile of the profile folder changed. Not document-specific, so
-// any other folder reconcile can report through it.
+// folderSyncResult is the --json shape of `profile documents sync` and
+// `image sync`: what one reconcile of the profile folder changed.
 type folderSyncResult struct {
 	ProfileID string   `json:"profile_id"`
 	Root      string   `json:"root"`
