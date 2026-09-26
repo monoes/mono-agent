@@ -187,6 +187,8 @@ type importOut struct {
 	MissingAutomations []string `json:"missingAutomations"`
 	Warnings           []string `json:"warnings"`
 	InstallCommand     string   `json:"installCommand"`
+	CopyOf             string   `json:"copyOf"`
+	CopyReason         string   `json:"copyReason"`
 }
 
 func importJSON(t *testing.T, cfg *globalConfig, args ...string) importOut {

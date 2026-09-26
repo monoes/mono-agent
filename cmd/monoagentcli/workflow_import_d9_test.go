@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -48,12 +49,12 @@ func TestWorkflowImportAfterEditMakesOneCopy(t *testing.T) {
 	cp := importJSON(t, cfg, "--file", path)
 	if cp.Status != importCreated || cp.ID == first.ID || len(cp.Warnings) != 1 ||
 		!strings.Contains(cp.Warnings[0], "a workflow with this id already exists and was edited locally: wf-d9") ||
-		!strings.Contains(cp.Warnings[0], "--replace wf-d9") {
+		!strings.Contains(cp.Warnings[0], "--replace wf-d9") || cp.CopyOf != "wf-d9" || cp.CopyReason != "id" {
 		t.Fatalf("re-import after the edit = %+v", cp)
 	}
 	for i := 0; i < 2; i++ {
 		again := importJSON(t, cfg, "--file", path)
-		if again.Status != importUnchanged || again.ID != cp.ID {
+		if again.Status != importUnchanged || again.ID != cp.ID || again.CopyOf != "" {
 			t.Fatalf("re-import %d = %+v, want unchanged %s", i+2, again, cp.ID)
 		}
 	}
@@ -75,8 +76,9 @@ func TestWorkflowImportCopyWarningByImport(t *testing.T) {
 		t.Fatal(err)
 	}
 	cp := importJSON(t, cfg, "--file", path2)
-	if len(cp.Warnings) != 1 || !strings.Contains(cp.Warnings[0], "the workflow imported earlier from this file was edited locally: "+first.ID) {
-		t.Fatalf("warnings = %v", cp.Warnings)
+	if len(cp.Warnings) != 1 || !strings.Contains(cp.Warnings[0], "the workflow imported earlier from this file was edited locally: "+first.ID) ||
+		cp.CopyOf != first.ID || cp.CopyReason != "import" {
+		t.Fatalf("copy = %+v", cp)
 	}
 }
 
@@ -107,3 +109,24 @@ func TestWorkflowImportOverwriteRefusesEditedID(t *testing.T) {
 }
 
 func writeFileAt(path, content string) error { return os.WriteFile(path, []byte(content), 0o600) }
+
+// TestWorkflowImportCopyOfByName: a copy made beside a same-named
+// workflow carries copyOf/copyReason "name" next to its warning.
+func TestWorkflowImportCopyOfByName(t *testing.T) {
+	_, cfg := persistTestEnv(t)
+	var created struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(runWorkflowSubcmd(t, cfg, "create", "test-wf")), &created); err != nil {
+		t.Fatal(err)
+	}
+	r := importJSON(t, cfg, "--file", writeTempWorkflow(t, validWorkflowFile))
+	if r.Status != importCreated || r.CopyOf != created.ID || r.CopyReason != "name" || len(r.Warnings) != 1 {
+		t.Fatalf("import beside a same-named workflow = %+v", r)
+	}
+	// A plain first import makes no copy.
+	_, cfg2 := persistTestEnv(t)
+	if r := importJSON(t, cfg2, "--file", writeTempWorkflow(t, validWorkflowFile)); r.CopyOf != "" || r.CopyReason != "" {
+		t.Fatalf("fresh import = %+v", r)
+	}
+}
