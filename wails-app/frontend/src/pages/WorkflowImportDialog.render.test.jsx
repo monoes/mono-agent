@@ -11,6 +11,7 @@ const api = vi.hoisted(() => ({
 vi.mock('../services/api.js', () => ({ api }))
 
 import ConfirmHost from '../components/ConfirmDialog.jsx'
+import { onAutomationsChanged } from '../lib/appEvents.js'
 import WorkflowImportDialog from './WorkflowImportDialog.jsx'
 
 afterEach(() => { cleanup(); vi.clearAllMocks() })
@@ -93,6 +94,18 @@ describe('WorkflowImportDialog', () => {
     expect(screen.getByText('Installed 1 bundled automation for “Scrape”.')).toBeInTheDocument()
     expect(screen.getByText('Install review')).toBeInTheDocument()
     expect(screen.queryByText('Install bundled automations')).not.toBeInTheDocument()
+  })
+
+  it('announces installed automations so the node palette reloads', async () => {
+    const onAutomationsInstalled = vi.fn(); const heard = vi.fn()
+    const off = onAutomationsChanged(heard)
+    await importFile({ id: 'w1', name: 'Scrape', status: 'created', automations: [{ id: 'books-demo', version: '0.1.0', status: 'missing' }], missingAutomations: ['books-demo'] }, { onAutomationsInstalled })
+    api.importWorkflowFull.mockResolvedValueOnce({ id: 'w1', name: 'Scrape', status: 'unchanged', automations: [{ id: 'books-demo', version: '0.1.0', status: 'installed' }] })
+    fireEvent.click(await screen.findByText('Install bundled automations'))
+    fireEvent.click(await screen.findByText('Install'))
+    await waitFor(() => expect(onAutomationsInstalled).toHaveBeenCalled())
+    expect(heard).toHaveBeenCalledWith({ source: 'workflow-import' })
+    off()
   })
 
   it('shows CLI errors inline and closes on Escape', async () => {

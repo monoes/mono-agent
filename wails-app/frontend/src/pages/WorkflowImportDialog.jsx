@@ -7,6 +7,7 @@
 import { useState } from 'react'
 import { X, FolderOpen, ExternalLink, Package, Download } from 'lucide-react'
 import { api } from '../services/api.js'
+import { emitAutomationsChanged } from '../lib/appEvents.js'
 import { confirm } from '../components/ConfirmDialog.jsx'
 import { Chip, ErrorBox, OkBox, Busy, body, label, mono, muted, panel, useDialog } from './connections/ui.jsx'
 
@@ -71,7 +72,7 @@ function Automations({ items }) {
   )
 }
 
-export default function WorkflowImportDialog({ onClose, onOpen, onImported }) {
+export default function WorkflowImportDialog({ onClose, onOpen, onImported, onAutomationsInstalled }) {
   const dialog = useDialog(onClose)
   const [path, setPath] = useState('')
   const [pasted, setPasted] = useState('')
@@ -112,7 +113,13 @@ export default function WorkflowImportDialog({ onClose, onOpen, onImported }) {
     try {
       // Re-import with --yes: the workflow itself comes back unchanged.
       const out = await run({ yes: true })
-      if (out) setInstallRes(out)
+      if (out) {
+        setInstallRes(out)
+        if ((out.automations || []).some(i => i.status === 'installed')) {
+          onAutomationsInstalled?.(out)
+          emitAutomationsChanged({ source: 'workflow-import' })
+        }
+      }
     } finally { setBusy('') }
   }
 

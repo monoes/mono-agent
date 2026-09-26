@@ -18,6 +18,8 @@ import {
 } from './nodeConfigFields.js'
 import { SaveModal, WorkflowsModal, TriggerInputModal } from './NodeRunnerModals.jsx'
 import WorkflowImportDialog from './WorkflowImportDialog.jsx'
+import { derivePlatformId, isSessionPicker, isMediaField, automationIdsFrom } from './nodeInspectorRules.js'
+import { onAutomationsChanged } from '../lib/appEvents.js'
 import { rememberTriggerInput, rememberedTriggerInput } from './triggerInput.js'
 import { usePageVisibleRef } from '../lib/usePageVisible.js'
 
@@ -337,58 +339,11 @@ function Palette({ categories, onAdd, onNodeMouseDown }) {
 }
 
 // ── Platforms that require a credential selection ─────────────────────────────
-// LEGACY FALLBACK: This map is only needed for nodes whose schemas don't have
-// credential_platform set yet. Once all schemas are updated, this map can be removed.
-const CREDENTIAL_PLATFORMS = {
-  'service.github': 'github',
-  'service.notion': 'notion',
-  'service.airtable': 'airtable',
-  'service.jira': 'jira',
-  'service.linear': 'linear',
-  'service.asana': 'asana',
-  'service.stripe': 'stripe',
-  'service.shopify': 'shopify',
-  'service.salesforce': 'salesforce',
-  'service.hubspot': 'hubspot',
-  'service.google_sheets': 'google_sheets',
-  'service.gmail': 'gmail',
-  'service.google_drive': 'google_drive',
-  'comm.slack': 'slack',
-  'comm.discord': 'discord',
-  'comm.twilio': 'twilio',
-  'comm.whatsapp': 'whatsapp',
-  'db.postgres': 'postgresql',
-  'db.mysql': 'mysql',
-  'db.mongodb': 'mongodb',
-  'db.redis': 'redis',
-  'service.openrouter': 'openrouter',
-  'service.huggingface': 'huggingface',
-  'instagram.publish_post': 'instagram',
-}
-
 // ── Field visibility check (depends_on support) ───────────────────────────────
 function fieldIsVisible(field, config) {
   if (!field.depends_on) return true
   const depValue = String(config?.[field.depends_on.key] ?? config?.[field.depends_on.field] ?? '')
   return (field.depends_on.values || []).includes(depValue)
-}
-
-// ── Derive platformId for credential/session picker ──────────────────────────
-const BROWSER_PLATFORMS = ['instagram', 'linkedin', 'x', 'tiktok', 'gemini']
-
-function derivePlatformId(node, liveSchemas) {
-  if (!node) return null
-  // Schema-defined takes priority — the catalog's copy over the one saved
-  // inside the workflow (see resolveSchema).
-  const resolved = resolveSchema(node, liveSchemas)
-  if (resolved?.credential_platform) return resolved.credential_platform
-  // Hardcoded map fallback
-  if (CREDENTIAL_PLATFORMS[node.subtype]) return CREDENTIAL_PLATFORMS[node.subtype]
-  // Browser node pattern: "instagram.like_posts" → "instagram"
-  const subtype = node.subtype || ''
-  const prefix = subtype.split('.')[0]
-  if (BROWSER_PLATFORMS.includes(prefix)) return prefix
-  return null
 }
 
 // ── Inspector panel (right side) ──────────────────────────────────────────────
@@ -402,7 +357,7 @@ function resolveSchema(node, liveSchemas) {
   return liveSchemas?.[node?.subtype] || node?.schema || null
 }
 
-function Inspector({ node, onConfigChange, onClose, onNavigate, liveSchemas }) {
+function Inspector({ node, onConfigChange, onClose, onNavigate, liveSchemas, automationIds }) {
   const schema = resolveSchema(node, liveSchemas)
   const [copied, setCopied] = useState(false)
   const [connections, setConnections] = useState([])
@@ -411,8 +366,8 @@ function Inspector({ node, onConfigChange, onClose, onNavigate, liveSchemas }) {
   const [atAC, setAtAC] = useState({ open: false, query: '', fieldKey: null })
   const [pickerField, setPickerField] = useState(null)
 
-  const platformId = derivePlatformId(node, liveSchemas)
-  const isBrowserPlatform = BROWSER_PLATFORMS.includes(platformId)
+  const platformId = derivePlatformId(node, schema, automationIds)
+  const isBrowserPlatform = isSessionPicker(node, automationIds)
 
   useEffect(() => {
     if (!platformId) { setConnections([]); return }
@@ -715,7 +670,8 @@ function Inspector({ node, onConfigChange, onClose, onNavigate, liveSchemas }) {
                   )
                 } else {
                   // 'text' and any unknown types — with @-autocomplete and picker button
-                  const acMatches = atAC.open && atAC.fieldKey === f.key
+                  const media = isMediaField(f)
+                  const acMatches = media && atAC.open && atAC.fieldKey === f.key
                     ? vaultImages.filter(img =>
                         img.id.includes(atAC.query) ||
                         (img.label || '').toLowerCase().includes(atAC.query.toLowerCase())
@@ -725,7 +681,7 @@ function Inspector({ node, onConfigChange, onClose, onNavigate, liveSchemas }) {
                   const handleAtChange = (e) => {
                     const v = e.target.value
                     onConfigChange(node.id, f.key, v)
-                    const lastAt = v.lastIndexOf('@')
+                    const lastAt = media ? v.lastIndexOf('@') : -1
                     if (lastAt !== -1) {
                       const afterAt = v.slice(lastAt + 1)
                       if (!afterAt.includes(' ')) {
@@ -747,7 +703,7 @@ function Inspector({ node, onConfigChange, onClose, onNavigate, liveSchemas }) {
                           placeholder={f.placeholder || ''}
                           style={{ ...inputStyle, flex: 1 }}
                         />
-                        <button
+                        {media && <button
                           title="Pick from Image Vault"
                           onClick={() => setPickerField(f.key)}
                           style={{
@@ -759,7 +715,7 @@ function Inspector({ node, onConfigChange, onClose, onNavigate, liveSchemas }) {
                           onMouseLeave={e => e.currentTarget.style.color = '#475569'}
                         >
                           🖼
-                        </button>
+                        </button>}
                       </div>
                       {atAC.open && atAC.fieldKey === f.key && acMatches.length > 0 && (
                         <div style={{
@@ -1282,8 +1238,13 @@ export default function NodeRunner({ onNavigate, navData, onWorkflowsChanged }) 
   useEffect(() => { nodesRef.current = nodes }, [nodes])
   useEffect(() => { cameraRef.current = camera }, [camera])
 
-  // Load node types from backend
-  useEffect(() => {
+  // Load node types (and the installed automations, for the session picker)
+  // from the backend. Reloaded when automations change elsewhere — an
+  // install from the Connections page or a workflow import that installed
+  // bundled packages — and on window focus as a cheap fallback.
+  const [automationIds, setAutomationIds] = useState(() => new Set())
+  const loadCatalog = useCallback(() => {
+    api.listAutomations().then(res => { if (res && !res.error) setAutomationIds(automationIdsFrom(res)) }).catch(() => {})
     GetWorkflowNodeTypes().then(data => {
       const cats = Object.entries(data).map(([id, nodes]) => ({
         id,
@@ -1302,6 +1263,12 @@ export default function NodeRunner({ onNavigate, navData, onWorkflowsChanged }) 
       setCategories(cats)
     }).catch(() => {})
   }, [])
+  useEffect(() => {
+    loadCatalog()
+    const off = onAutomationsChanged(loadCatalog)
+    window.addEventListener('focus', loadCatalog)
+    return () => { off(); window.removeEventListener('focus', loadCatalog) }
+  }, [loadCatalog])
 
   // ── Coordinate helpers ────────────────────────────────────────────────────
   const toWorld = useCallback((cx, cy) => {
@@ -2042,6 +2009,7 @@ export default function NodeRunner({ onNavigate, navData, onWorkflowsChanged }) 
         <WorkflowImportDialog
           onClose={() => setShowImport(false)}
           onImported={() => onWorkflowsChanged?.()}
+          onAutomationsInstalled={loadCatalog}
           onOpen={(id) => { setShowImport(false); handleLoad(id) }}
         />
       )}
@@ -2201,6 +2169,7 @@ export default function NodeRunner({ onNavigate, navData, onWorkflowsChanged }) 
             onClose={() => setInspectorOpen(false)}
             onNavigate={onNavigate}
             liveSchemas={liveSchemas}
+            automationIds={automationIds}
           />
         )}
 
