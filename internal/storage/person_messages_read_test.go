@@ -82,4 +82,3 @@ func TestMessageReadState(t *testing.T) {
 		t.Fatal("marking nothing must be refused")
 	}
 }
-

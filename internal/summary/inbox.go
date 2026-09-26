@@ -40,8 +40,8 @@ type ActivitySection struct {
 	MessagesIn7d  int            `json:"messages_in_7d"`
 	MessagesOut7d int            `json:"messages_out_7d"`
 	// MessagesUnread counts inbound messages not marked read (all time).
-	MessagesUnread int `json:"messages_unread"`
-	Error         string         `json:"error,omitempty"`
+	MessagesUnread int    `json:"messages_unread"`
+	Error          string `json:"error,omitempty"`
 }
 
 type ApplicationsSection struct {
