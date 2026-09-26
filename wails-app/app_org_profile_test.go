@@ -50,32 +50,21 @@ func TestMoveProfileFolderRefusesWhenOrgsCannotStop(t *testing.T) {
 	argvLog := filepath.Join(home, "argv.log")
 	fake := filepath.Join(home, "monoagentcli")
 	script := "#!/bin/sh\necho \"$*\" >> " + argvLog + "\n" +
+		"case \"$*\" in *--check*) echo '{}'; exit 0 ;; esac\n" +
 		"echo 'org daemon (pid 7) did not exit' >&2\nexit 1\n"
 	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("MONOAGENTCLI_BIN", fake)
-	if _, err := a.db.Exec(`INSERT OR IGNORE INTO profiles (id, name) VALUES ('work', 'Work')`); err != nil {
-		t.Fatal(err)
-	}
 
 	dest := filepath.Join(home, "elsewhere")
 	err := a.MoveProfileFolder("work", dest)
 	if err == nil || !strings.Contains(err.Error(), "did not exit") {
 		t.Fatalf("MoveProfileFolder = %v, want the stop failure", err)
 	}
-	var root string
-	if err := a.db.QueryRow(`SELECT root_dir FROM profiles WHERE id = 'work'`).Scan(&root); err != nil {
-		t.Fatal(err)
-	}
-	if root != "" {
-		t.Fatalf("root_dir changed to %q although the move was refused", root)
-	}
-	if _, err := os.Stat(filepath.Join(dest, ".monomind")); !os.IsNotExist(err) {
-		t.Fatalf("destination was populated: %v", err)
-	}
 	b, _ := os.ReadFile(argvLog)
-	if got := strings.TrimSpace(string(b)); got != "--profile work --json org serve --stop" {
-		t.Fatalf("CLI calls = %q, want only the stop", got)
+	want := "--profile default --json profile move --check work " + dest + "\n--profile work --json org serve --stop"
+	if got := strings.TrimSpace(string(b)); got != want {
+		t.Fatalf("CLI calls = %q, want only the check and the stop (no move)", got)
 	}
 }

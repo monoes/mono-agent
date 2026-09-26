@@ -3,19 +3,34 @@ import { Trash2, Plus, Search, Image as ImageIcon } from 'lucide-react'
 import * as WailsApp from '../wailsjs/go/main/App'
 import ImageDetailModal from '../components/ImageDetailModal'
 import RefreshButton from '../components/RefreshButton.jsx'
+import { limiter } from '../lib/limiter.js'
 
-// Lazy-loads a vault image's data URL on first render.
+// Each thumbnail is one `monoagentcli image data` call, so they load when
+// scrolled into view and at most 4 at a time — a vault of hundreds of images
+// must not start hundreds of processes at once.
+const loadThumb = limiter(4)
+
 function VaultThumb({ id }) {
   const [src, setSrc] = useState(null)
+  const [visible, setVisible] = useState(typeof IntersectionObserver === 'undefined')
+  const ref = useRef(null)
   useEffect(() => {
-    try {
-      const p = WailsApp.GetVaultImageData(id)
-      if (p && typeof p.then === 'function') {
-        p.then(setSrc).catch(() => {})
-      }
-    } catch (_) {}
-  }, [id])
-  if (!src) return null
+    if (visible || !ref.current) return undefined
+    const io = new IntersectionObserver(entries => {
+      if (entries.some(e => e.isIntersecting)) { setVisible(true); io.disconnect() }
+    }, { rootMargin: '200px' })
+    io.observe(ref.current)
+    return () => io.disconnect()
+  }, [visible])
+  useEffect(() => {
+    if (!visible) return undefined
+    let cancelled = false
+    loadThumb(() => (cancelled ? null : WailsApp.GetVaultImageData(id)))
+      .then(url => { if (!cancelled && url) setSrc(url) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [id, visible])
+  if (!src) return <div ref={ref} style={{ width: '100%', height: '100%' }} />
   return <img src={src} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
 }
 

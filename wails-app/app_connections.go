@@ -3,12 +3,12 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
-	"time"
 
-	"github.com/google/uuid"
 	"github.com/monoes/mono-agent/internal/connections"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -26,99 +26,28 @@ type CredentialOption struct {
 	Method   string `json:"method"`
 }
 
-// ListCredentialsForNode returns credential options relevant to a given node type.
-// Social platform nodes (action.instagram.*, action.linkedin.*, etc.) get browser
-// method credentials; API service nodes get their matching platform's connections.
+// ListCredentialsForNode returns the active profile's connections a
+// workflow node type can use (`connect for-node`).
 func (a *App) ListCredentialsForNode(nodeType string) []CredentialOption {
-	if a.db == nil {
+	opts := []CredentialOption{}
+	if err := a.runConnCLI("", &opts, "connect", "for-node", nodeType); err != nil || opts == nil {
 		return []CredentialOption{}
-	}
-	store := connections.NewStore(a.db)
-	var platform string
-
-	// Detect social platform from node type prefix (e.g. "action.instagram.publish_post")
-	socialPlatforms := []string{"instagram", "linkedin", "tiktok", "x", "twitter", "hackernews", "producthunt"}
-	lnodeType := strings.ToLower(nodeType)
-	for _, sp := range socialPlatforms {
-		if strings.Contains(lnodeType, sp) {
-			platform = sp
-			break
-		}
-	}
-
-	// Service nodes: map by known service identifiers
-	if platform == "" {
-		serviceMap := map[string]string{
-			"openrouter":    "openrouter",
-			"huggingface":   "huggingface",
-			"google_sheets": "google_sheets",
-			"google_drive":  "google_drive",
-			"gmail":         "gmail",
-			"youtube":       "youtube",
-			"slack":         "slack",
-			"discord":       "discord",
-			"stripe":        "stripe",
-			"shopify":       "shopify",
-			"salesforce":    "salesforce",
-			"hubspot":       "hubspot",
-			"github":        "github",
-			"notion":        "notion",
-			"airtable":      "airtable",
-			"jira":          "jira",
-			"linear":        "linear",
-			"asana":         "asana",
-			"outlook":       "outlook",
-			"telegram":      "telegram",
-			"twilio":        "twilio",
-			"whatsapp":      "whatsapp",
-			"devto":         "devto",
-			"hashnode":      "hashnode",
-			"producthunt":   "producthunt",
-			"bluesky":       "bluesky",
-			"mastodon":      "mastodon",
-			"reddit":        "reddit",
-		}
-		for key, pid := range serviceMap {
-			if strings.Contains(lnodeType, key) {
-				platform = pid
-				break
-			}
-		}
-	}
-
-	var conns []connections.Connection
-	var err error
-	if platform != "" {
-		conns, err = store.ListByPlatform(a.ctx, platform, a.getActiveProfileID())
-	} else {
-		conns, err = store.ListAll(a.ctx, a.getActiveProfileID())
-	}
-	if err != nil || conns == nil {
-		return []CredentialOption{}
-	}
-	opts := make([]CredentialOption, 0, len(conns))
-	for _, c := range conns {
-		opts = append(opts, CredentialOption{
-			ID:       c.ID,
-			Label:    c.Label,
-			Platform: c.Platform,
-			Method:   string(c.Method),
-		})
 	}
 	return opts
 }
 
 // ListConnections returns all saved connections for the active profile, filtered by platform if non-empty.
-// Credential material (Connection.Data) is stripped before crossing the Wails IPC boundary.
+// `connect list --json` never carries credential material (Connection.Data).
 func (a *App) ListConnections(platform string) []connections.SafeConnection {
-	if a.connMgr == nil {
+	args := []string{"connect", "list"}
+	if platform != "" {
+		args = append(args, "--platform", platform)
+	}
+	result := []connections.SafeConnection{}
+	if err := a.runConnCLI("", &result, args...); err != nil || result == nil {
 		return []connections.SafeConnection{}
 	}
-	result, err := a.connMgr.List(a.ctx, platform, a.getActiveProfileID())
-	if err != nil {
-		return []connections.SafeConnection{}
-	}
-	return connections.RedactAll(result)
+	return result
 }
 
 // PlatformInfo is a frontend-safe representation of a platform (no OAuth secrets).
@@ -171,90 +100,42 @@ func (a *App) ListPlatformsJSON(connectVia string) string {
 	return string(b)
 }
 
-// TestConnection re-validates a connection by ID.
-// For OAuth connections it attempts a silent token refresh first.
-// For browser sessions (social platforms), it checks session expiry and cookie presence.
+// TestConnection re-validates a connection by ID ("ok" or "error: …").
+// The id is tried as a saved connection (`connect test`, which refreshes an
+// expired OAuth token first), then as a browser session id (`login test`),
+// then as a platform or node type with an active connection.
 func (a *App) TestConnection(id string) string {
-	if a.connMgr == nil && a.db == nil {
-		return "error: manager not initialized"
+	err := a.runConnCLI("", nil, "connect", "test", id)
+	if err == nil {
+		return "ok"
 	}
-
-	// First try the connections table (OAuth/API key connections).
-	if a.connMgr != nil {
-		if conn, err := a.connMgr.Get(a.ctx, id); err == nil && conn != nil {
-			// Enforce profile scope.
-			if conn.ProfileID != "" && conn.ProfileID != a.getActiveProfileID() {
-				return "error: connection not found"
-			}
-			// OAuth: attempt silent token refresh before testing.
-			if conn.Method == "oauth" {
-				if _, refreshErr := a.getResourceCredentialData(a.ctx, id); refreshErr != nil {
-					fmt.Printf("token refresh attempted: %v\n", refreshErr)
-				}
-			}
-			if err := a.connMgr.Test(a.ctx, id); err != nil {
-				return fmt.Sprintf("error: %v", err)
-			}
-			return "ok"
-		}
+	if !isCLINotFound(err) {
+		return "error: " + err.Error()
 	}
-
-	// Fallback: check crawler_sessions (browser sessions for social platforms).
-	// The UI passes integer session IDs for social platforms.
-	if a.db != nil {
-		var platform, vaultRef, expiry string
-		err := a.db.QueryRow(
-			`SELECT platform, COALESCE(vault_ref,''), expiry FROM crawler_sessions WHERE id = ? AND profile_id = ?`, id, a.getActiveProfileID(),
-		).Scan(&platform, &vaultRef, &expiry)
+	if n, convErr := strconv.Atoi(id); convErr == nil {
+		err := a.runConnCLI("", nil, "login", "test", strconv.Itoa(n))
 		if err == nil {
-			// Check expiry
-			if exp, pErr := time.Parse("2006-01-02 15:04:05", expiry); pErr == nil {
-				if time.Now().After(exp) {
-					return "error: session expired — please log in again via the browser"
-				}
-			} else if exp2, pErr2 := time.Parse(time.RFC3339, expiry); pErr2 == nil {
-				if time.Now().After(exp2) {
-					return "error: session expired — please log in again via the browser"
-				}
-			}
-			// Check cookies present
-			if vaultRef == "" {
-				return "error: no session cookies stored — please log in again"
-			}
+			return "ok"
+		}
+		if !isCLINotFound(err) {
+			return "error: " + err.Error()
+		}
+	}
+	for _, c := range a.ListConnections(nodeTypeToPlatform(id)) {
+		if c.Status == "active" {
 			return "ok"
 		}
 	}
-
-	// Also try looking up by platform name (fallback for credential_id = platform string).
-	if a.connMgr != nil {
-		platform := nodeTypeToPlatform(id)
-		if conns, err := a.connMgr.List(a.ctx, platform, a.getActiveProfileID()); err == nil && len(conns) > 0 {
-			for _, c := range conns {
-				if c.Status == "active" {
-					return "ok"
-				}
-			}
-		}
-	}
-
 	return "error: connection not found"
 }
 
 // RemoveConnection deletes a connection by ID, scoped to the active profile.
 func (a *App) RemoveConnection(id string) string {
-	if a.connMgr == nil {
-		return "error: manager not initialized"
-	}
-	// Verify ownership before deletion.
-	conn, err := a.connMgr.Get(a.ctx, id)
-	if err != nil || conn == nil {
-		return "error: connection not found"
-	}
-	if conn.ProfileID != "" && conn.ProfileID != a.getActiveProfileID() {
-		return "error: connection not found"
-	}
-	if err := a.connMgr.Remove(a.ctx, id, a.getActiveProfileID()); err != nil {
-		return fmt.Sprintf("error: %v", err)
+	if err := a.runConnCLI("", nil, "connect", "remove", id); err != nil {
+		if isCLINotFound(err) {
+			return "error: connection not found"
+		}
+		return "error: " + err.Error()
 	}
 	return "ok"
 }
@@ -269,55 +150,58 @@ func (a *App) GetConnectionsForPlatform(platformID string) []connections.SafeCon
 // a platform, scoped to the active profile, as JSON. Returns JSON
 // {"clientID":"...","clientSecret":"..."} or "" if not set. Credentials are
 // per-profile because two connections for the same platform under different
-// profiles may need different Azure/OAuth app registrations.
+// profiles may need different Azure/OAuth app registrations. The secret is
+// revealed because the connection form shows it for editing.
 func (a *App) GetOAuthCredentials(platformID string) string {
-	if a.db == nil {
+	var view struct {
+		ClientID     string `json:"client_id"`
+		ClientSecret string `json:"client_secret"`
+	}
+	if err := a.runConnCLI("", &view, "connect", "get-oauth-client", platformID, "--reveal"); err != nil {
 		return ""
 	}
-	// Route through the connections store so the encrypted client_secret is
-	// decrypted (the store owns the vault envelope; reading the column raw here
-	// would return a "vaultenc:v1:..." blob).
-	clientID, clientSecret := connections.NewStore(a.db).GetOAuthClient(a.ctx, platformID, a.getActiveProfileID())
-	if clientID == "" && clientSecret == "" {
+	if view.ClientID == "" && view.ClientSecret == "" {
 		return ""
 	}
-	b, _ := json.Marshal(map[string]string{"clientID": clientID, "clientSecret": clientSecret})
+	b, _ := json.Marshal(map[string]string{"clientID": view.ClientID, "clientSecret": view.ClientSecret})
 	return string(b)
 }
 
 // SetOAuthCredentials saves OAuth client_id and client_secret for a platform,
 // scoped to the active profile. clientSecret may be empty for public-client
 // OAuth apps (e.g. those using PKCE, like a desktop app registration with no
-// client secret).
+// client secret). The secret travels on the CLI's stdin, never its argv.
 func (a *App) SetOAuthCredentials(platformID, clientID, clientSecret string) string {
-	if a.db == nil {
-		return "error: db not available"
-	}
 	if clientID == "" {
 		return "error: clientID is required"
 	}
-	// Route through the store so client_secret is encrypted under the vault
-	// envelope (matching the reader and the auto-persist path).
-	if err := connections.NewStore(a.db).SaveOAuthClient(a.ctx, platformID, a.getActiveProfileID(), clientID, clientSecret); err != nil {
-		return fmt.Sprintf("error: %v", err)
+	args := []string{"connect", "set-oauth-client", platformID, "--client-id", clientID}
+	if clientSecret != "" {
+		args = append(args, "--client-secret-stdin")
+	}
+	if err := a.runConnCLI(clientSecret, nil, args...); err != nil {
+		return "error: " + err.Error()
 	}
 	return "ok"
 }
 
-// ConnectPlatformOAuth starts an OAuth flow in a background goroutine.
-// Emits "conn:progress" events with {platform, message, kind} and a final
-// "conn:done" event with {platform, success, accountID?, error?}.
-// Returns "started" immediately, or "error: ..." if preconditions fail.
+// ConnectPlatformOAuth starts an OAuth flow (`connect oauth <platform>`) in
+// a background goroutine; the CLI uses the OAuth client stored for the
+// active profile. Emits "conn:progress" events with {platform, message,
+// kind} and a final "conn:done" event with {platform, success, accountID?,
+// error?}. Returns "started" immediately, or "error: ..." if preconditions
+// fail.
 func (a *App) ConnectPlatformOAuth(platformID string) string {
-	if a.connMgr == nil {
-		return "error: manager not initialized"
-	}
 	p, ok := connections.Get(platformID)
 	if !ok {
 		return fmt.Sprintf("error: unknown platform %q", platformID)
 	}
 	if p.OAuth == nil {
 		return "error: platform does not support OAuth"
+	}
+	cliBin, err := findMonoAgentCLI()
+	if err != nil {
+		return fmt.Sprintf("error: %v", err)
 	}
 
 	go func() {
@@ -328,35 +212,60 @@ func (a *App) ConnectPlatformOAuth(platformID string) string {
 				"kind":     kind,
 			})
 		}
-
-		// Resolve DB-stored OAuth credentials and pass them directly.
-		var oauthClientID, oauthClientSecret string
-		if credsJSON := a.GetOAuthCredentials(platformID); credsJSON != "" {
-			var creds map[string]string
-			if json.Unmarshal([]byte(credsJSON), &creds) == nil {
-				oauthClientID = creds["clientID"]
-				oauthClientSecret = creds["clientSecret"]
-			}
+		done := func(fields map[string]interface{}) {
+			fields["platform"] = platformID
+			runtime.EventsEmit(a.ctx, "conn:done", fields)
 		}
-
-		conn, err := a.connMgr.ConnectOAuthWithProgress(a.ctx, platformID, emit, oauthClientID, oauthClientSecret, a.getActiveProfileID())
+		conn, err := a.runOAuthConnect(cliBin, platformID, emit)
 		if err != nil {
-			runtime.EventsEmit(a.ctx, "conn:done", map[string]interface{}{
-				"platform": platformID,
-				"success":  false,
-				"error":    err.Error(),
-			})
+			done(map[string]interface{}{"success": false, "error": err.Error()})
 			return
 		}
-
-		runtime.EventsEmit(a.ctx, "conn:done", map[string]interface{}{
-			"platform":  platformID,
-			"success":   true,
-			"accountID": conn.AccountID,
-		})
+		done(map[string]interface{}{"success": true, "accountID": conn.AccountID})
 	}()
 
 	return "started"
+}
+
+// runOAuthConnect runs `connect oauth <platform> --json`, forwarding each
+// progress line it writes to stderr, and returns the saved connection.
+func (a *App) runOAuthConnect(cliBin, platformID string, emit func(msg, kind string)) (*connections.SafeConnection, error) {
+	cmd := exec.CommandContext(a.ctx, cliBin, "--profile", a.getActiveProfileID(), "--json", "connect", "oauth", platformID)
+	hideWindow(cmd)
+	var stdout strings.Builder
+	cmd.Stdout = &stdout
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	var lastErr string
+	scanner := bufio.NewScanner(stderr)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		var ev struct {
+			Message string `json:"message"`
+			Kind    string `json:"kind"`
+		}
+		if json.Unmarshal([]byte(line), &ev) == nil && ev.Message != "" {
+			emit(ev.Message, ev.Kind)
+		} else if line != "" {
+			lastErr = line
+		}
+	}
+	if err := cmd.Wait(); err != nil {
+		if lastErr != "" {
+			return nil, errors.New(lastErr)
+		}
+		return nil, err
+	}
+	var conn connections.SafeConnection
+	if err := json.Unmarshal([]byte(stdout.String()), &conn); err != nil {
+		return nil, fmt.Errorf("reading the saved connection: %w", err)
+	}
+	return &conn, nil
 }
 
 // LoginSocial spawns `monoagentcli login <platform>` as a subprocess, which
@@ -475,48 +384,66 @@ func (a *App) ConfirmSocialLogin(platform string) string {
 }
 
 // SaveConnectionDirect saves a connection directly from the UI with provided field values.
-// fieldValuesJSON is a JSON object string (avoids Wails map serialization issues).
+// fieldValuesJSON is a JSON object string (avoids Wails map serialization issues);
+// it reaches the CLI on stdin, never its argv.
 // Returns "ok:<id>" on success or "error: ..." on failure.
 func (a *App) SaveConnectionDirect(platformID string, method string, fieldValuesJSON string) string {
-	if a.connMgr == nil {
-		return "error: manager not initialized"
-	}
-	p, ok := connections.Get(platformID)
-	if !ok {
-		return fmt.Sprintf("error: unknown platform %q", platformID)
-	}
 	var fieldValues map[string]interface{}
 	if err := json.Unmarshal([]byte(fieldValuesJSON), &fieldValues); err != nil {
-		return fmt.Sprintf("error: invalid field values JSON: %v", err)
+		return "error: invalid field values JSON"
 	}
-	now := time.Now().Format(time.RFC3339)
-	conn := &connections.Connection{
-		ID:        uuid.New().String(),
-		Platform:  platformID,
-		Method:    connections.AuthMethod(method),
-		Label:     p.Name,
-		Data:      fieldValues,
-		Status:    "active",
-		ProfileID: a.getActiveProfileID(),
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-	// Validate the connection
-	accountID, err := connections.ValidateConnection(a.ctx, conn)
-	if err != nil {
-		return fmt.Sprintf("error: %v", err)
-	}
-	if accountID != "" {
-		conn.AccountID = accountID
-		conn.Label = fmt.Sprintf("%s – %s", p.Name, accountID)
-	}
-	// Save to DB
-	store := connections.NewStore(a.db)
-	if err := store.EnsureTable(a.ctx); err != nil {
-		return fmt.Sprintf("error: table init: %v", err)
-	}
-	if err := store.Save(a.ctx, conn); err != nil {
-		return fmt.Sprintf("error: save: %v", err)
+	var conn connections.SafeConnection
+	if err := a.runConnCLI(fieldValuesJSON, &conn, "connect", "save", platformID, "--method", method, "--stdin-json"); err != nil {
+		return "error: " + err.Error()
 	}
 	return "ok:" + conn.ID
+}
+
+// connCLIError is a monoagentcli call that exited non-zero: its exit code
+// (cmd/monoagentcli/exitcodes.go: 2 not found, 3 invalid input, 4 auth) and
+// its error message.
+type connCLIError struct {
+	code int
+	msg  string
+}
+
+func (e *connCLIError) Error() string { return e.msg }
+
+// isCLINotFound reports whether err is the CLI's not-found exit (2).
+func isCLINotFound(err error) bool {
+	var f *connCLIError
+	return errors.As(err, &f) && f.code == 2
+}
+
+// runConnCLI is runMonoCLI (--profile <active> --json, stdin, decoded
+// stdout) keeping the exit code, which the connection bindings branch on.
+// The message is the last stderr line: the CLI prints its error last,
+// after any warnings.
+func (a *App) runConnCLI(stdin string, result interface{}, args ...string) error {
+	cliBin, err := findMonoAgentCLI()
+	if err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(a.ctx, cliBin, append([]string{"--profile", a.getActiveProfileID(), "--json"}, args...)...)
+	hideWindow(cmd)
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			lines := strings.Split(strings.TrimSpace(string(ee.Stderr)), "\n")
+			msg := strings.TrimSpace(lines[len(lines)-1])
+			if msg == "" {
+				msg = err.Error()
+			}
+			return &connCLIError{code: ee.ExitCode(), msg: msg}
+		}
+		return err
+	}
+	if result == nil {
+		return nil
+	}
+	return json.Unmarshal(out, result)
 }

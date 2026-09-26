@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os/exec"
@@ -9,10 +8,7 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
-	"github.com/monoes/mono-agent/internal/orgdecide"
 	"github.com/monoes/mono-agent/internal/orgdesign"
-	"github.com/monoes/mono-agent/internal/orggrant"
-	"github.com/monoes/mono-agent/internal/profiledir"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -342,24 +338,10 @@ func (a *App) ValidateOrgDesign(orgName string) string {
 
 // ReloadOrg tells a running org's daemon to pick up config changes it
 // wouldn't otherwise notice (the daemon polls for a `reload` sentinel file,
-// not the config's mtime).
+// not the config's mtime). `org reload` resolves the active profile's org
+// folder itself.
 func (a *App) ReloadOrg(orgName string) string {
-	root := a.orgDesignRoot()
-	cliBin, err := findMonoAgentCLI()
-	if err != nil {
-		return aiError(err)
-	}
-	args := []string{"org", "reload", orgName}
-	if root != "" {
-		args = append(args, "--project", root)
-	}
-	cmd := exec.Command(cliBin, args...)
-	hideWindow(cmd)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return aiError(fmt.Errorf("%s", strings.TrimSpace(string(out))))
-	}
-	return string(out)
+	return a.rawCLI(orgCLITimeout, "org", "reload", orgName)
 }
 
 // ── internals ─────────────────────────────────────────────────────────────
@@ -455,47 +437,31 @@ func (a *App) rollbackOrgDoc(root, name string, preImage *orgdesign.Doc) {
 // the grant, endpoint, and autonomy rows before it reaches disk, exactly as
 // every CLI save does: a stale or hand-edited document can never carry
 // grants, tool providers, or an autonomy level no row backs (C-3, C-54).
-// A new org gets its starting autonomy row (mid, Q8).
+// A new org gets its starting autonomy row (mid, Q8). The rows are the
+// CLI's (`org reconcile-doc`); it hands back the reconciled document, which
+// replaces d for the caller to write.
 func (a *App) reconcileOrgDoc(root string, d *orgdesign.Doc, isNew bool) error {
-	if a.db == nil {
-		return nil
+	if root == "" {
+		return nil // no profile folder: the org lives in the CLI's default root, outside any profile's rows
 	}
-	profileID := a.getActiveProfileID()
-	if profileID == "" || profiledir.Root(a.db, profileID) != root {
-		return nil
+	body, err := json.Marshal(d)
+	if err != nil {
+		return fmt.Errorf("encode org document: %w", err)
 	}
-	ctx := context.Background()
-	store := orgdecide.NewStore(a.db)
+	args := []string{"org", "reconcile-doc", d.Name}
 	if isNew {
-		// Same rule as cmd/monoagentcli's ensureNewOrgAutonomy: mid by
-		// default (Q8), manual when the document asks for it, and the
-		// document's decider policy text carried over — a document can never
-		// start an org at full.
-		if row, err := store.Get(ctx, profileID, d.Name); err == nil && !row.Stored {
-			row.Level = orgdesign.LevelMid
-			if d.Autonomy != nil && d.Autonomy.Level == orgdesign.LevelManual {
-				row.Level = orgdesign.LevelManual
-			}
-			if d.Autonomy != nil && d.Autonomy.Policy != "" {
-				row.Policy = d.Autonomy.Policy
-			}
-			if err := store.Put(ctx, row, "gui"); err != nil {
-				return err
-			}
-		}
+		args = append(args, "--new", "--by", "gui")
 	}
-	cli, _ := findMonoAgentCLI()
-	apiAddr := orggrant.DefaultAPIAddr
-	var v string
-	if err := a.db.QueryRow(`SELECT value FROM settings WHERE key = 'daemon_api_addr'`).Scan(&v); err == nil && v != "" {
-		apiAddr = v
+	var res struct {
+		Org *orgdesign.Doc `json:"org"`
 	}
-	if _, err := orggrant.Reconcile(ctx, orggrant.NewStore(a.db), d, orggrant.GenOptions{ProfileID: profileID, CLIPath: cli, APIAddr: apiAddr}); err != nil {
-		return fmt.Errorf("reconcile grants: %w", err)
+	if err := a.runMonoCLI(string(body), &res, args...); err != nil {
+		return fmt.Errorf("reconcile org rows: %w", err)
 	}
-	if _, err := orgdecide.ReconcileAutonomy(ctx, store, profileID, d); err != nil {
-		return fmt.Errorf("reconcile autonomy: %w", err)
+	if res.Org == nil {
+		return fmt.Errorf("reconcile org rows: the CLI returned no document")
 	}
+	*d = *res.Org
 	return nil
 }
 

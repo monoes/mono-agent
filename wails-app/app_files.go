@@ -12,17 +12,13 @@ import (
 )
 
 // documentPath resolves id to its on-disk path, scoped to the active
-// profile — the same lookup GetVaultImageData uses for vault_images.
+// profile (`profile documents get`).
 func (a *App) documentPath(id string) (string, error) {
-	if a.db == nil {
-		return "", fmt.Errorf("database not available")
-	}
-	var path string
-	err := a.db.QueryRow(`SELECT path FROM vault_documents WHERE id = ? AND profile_id = ?`, id, a.getActiveProfileID()).Scan(&path)
+	doc, err := a.GetProfileDocument(id)
 	if err != nil {
-		return "", fmt.Errorf("document %q not found: %w", id, err)
+		return "", err
 	}
-	return path, nil
+	return doc.Path, nil
 }
 
 // maxInlinePreviewBytes caps GetProfileDocumentData's in-memory base64

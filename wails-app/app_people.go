@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/monoes/mono-agent/internal/storage"
 )
@@ -99,127 +98,78 @@ type PostComment struct {
 	ReplyCount int    `json:"reply_count"`
 }
 
-func (a *App) GetPeople(platform, search string, limit, offset int) []PersonInfo {
-	if a.db == nil {
-		return nil
-	}
-	query := `SELECT id, platform_username, platform, COALESCE(full_name,''), COALESCE(image_url,''),
-	                 COALESCE(profile_url,''), COALESCE(follower_count,''), COALESCE(following_count,0), COALESCE(is_verified,0),
-	                 COALESCE(job_title,''), COALESCE(category,''), COALESCE(created_at,'')
-	          FROM people WHERE profile_id = ?`
-	var args []interface{}
-	args = append(args, a.getActiveProfileID())
+// peopleFilterArgs turns the People page's filter into `people list|count`
+// flags; "ALL" means no platform filter.
+func peopleFilterArgs(platform, search string) []string {
+	var args []string
 	if platform != "" && platform != "ALL" {
-		query += " AND UPPER(platform) = ?"
-		args = append(args, strings.ToUpper(platform))
+		args = append(args, "--platform="+platform)
 	}
 	if search != "" {
-		query += " AND (platform_username LIKE ? OR full_name LIKE ?)"
-		s := "%" + search + "%"
-		args = append(args, s, s)
+		args = append(args, "--search="+search)
 	}
-	query += " ORDER BY created_at DESC"
-	if limit > 0 {
-		query += fmt.Sprintf(" LIMIT %d OFFSET %d", limit, offset)
-	}
+	return args
+}
 
-	rows, err := a.db.Query(query, args...)
-	if err != nil {
+// GetPeople returns one page of the active profile's people, newest first —
+// `people list`. limit <= 0 means every person (and ignores offset).
+func (a *App) GetPeople(platform, search string, limit, offset int) []PersonInfo {
+	args := append([]string{"people", "list"}, peopleFilterArgs(platform, search)...)
+	if limit > 0 {
+		args = append(args, "--limit", strconv.Itoa(limit), "--offset", strconv.Itoa(offset))
+	} else {
+		args = append(args, "--limit", "0")
+	}
+	// The CLI calls the username platform_username.
+	var rows []struct {
+		PersonInfo
+		PlatformUsername string `json:"platform_username"`
+	}
+	if err := a.runMonoCLI("", &rows, args...); err != nil {
 		return nil
 	}
-	defer rows.Close()
-	var people []PersonInfo
-	for rows.Next() {
-		var p PersonInfo
-		var isVerified int
-		if rows.Scan(&p.ID, &p.Username, &p.Platform, &p.FullName, &p.ImageURL,
-			&p.ProfileURL, &p.FollowerCount, &p.FollowingCount, &isVerified, &p.JobTitle, &p.Category, &p.CreatedAt) == nil {
-			p.IsVerified = isVerified == 1
-			people = append(people, p)
-		}
+	people := make([]PersonInfo, len(rows))
+	for i, r := range rows {
+		people[i] = r.PersonInfo
+		people[i].Username = r.PlatformUsername
 	}
 	return people
 }
 
+// GetPeopleCount is the People page's total for the same filter —
+// `people count`.
 func (a *App) GetPeopleCount(platform, search string) int {
-	if a.db == nil {
+	var res struct {
+		Count int `json:"count"`
+	}
+	if err := a.runMonoCLI("", &res, append([]string{"people", "count"}, peopleFilterArgs(platform, search)...)...); err != nil {
 		return 0
 	}
-	query := "SELECT COUNT(*) FROM people WHERE profile_id = ?"
-	var args []interface{}
-	args = append(args, a.getActiveProfileID())
-	if platform != "" && platform != "ALL" {
-		query += " AND UPPER(platform) = ?"
-		args = append(args, strings.ToUpper(platform))
-	}
-	if search != "" {
-		query += " AND (platform_username LIKE ? OR full_name LIKE ?)"
-		s := "%" + search + "%"
-		args = append(args, s, s)
-	}
-	var count int
-	_ = a.db.QueryRow(query, args...).Scan(&count)
-	return count
+	return res.Count
 }
 
+// GetPersonDetail returns one person, or nil when not in the active
+// profile — `people get`.
 func (a *App) GetPersonDetail(id string) *PersonDetailInfo {
-	if a.db == nil {
+	var p struct {
+		PersonDetailInfo
+		PlatformUsername string `json:"platform_username"`
+	}
+	if err := a.runMonoCLI("", &p, "people", "get", id); err != nil {
 		return nil
 	}
-	row := a.db.QueryRow(`
-		SELECT id, platform_username, platform,
-		       COALESCE(full_name,''), COALESCE(image_url,''), COALESCE(profile_url,''),
-		       COALESCE(follower_count,''), COALESCE(following_count,0), COALESCE(content_count,0), COALESCE(is_verified,0),
-		       COALESCE(job_title,''), COALESCE(category,''),
-		       COALESCE(introduction,''), COALESCE(website,''), COALESCE(contact_details,''),
-		       COALESCE(created_at,''), COALESCE(updated_at,'')
-		FROM people WHERE id = ? AND profile_id = ?`, id, a.getActiveProfileID())
-	var p PersonDetailInfo
-	var isVerified int
-	if err := row.Scan(&p.ID, &p.Username, &p.Platform,
-		&p.FullName, &p.ImageURL, &p.ProfileURL,
-		&p.FollowerCount, &p.FollowingCount, &p.ContentCount, &isVerified,
-		&p.JobTitle, &p.Category,
-		&p.Introduction, &p.Website, &p.ContactDetails,
-		&p.CreatedAt, &p.UpdatedAt); err != nil {
-		return nil
-	}
-	p.IsVerified = isVerified == 1
-	return &p
+	p.Username = p.PlatformUsername
+	return &p.PersonDetailInfo
 }
 
+// GetPersonInteractions lists what the profile's workflows did to a person,
+// newest first — `people interactions`.
 func (a *App) GetPersonInteractions(id string) []PersonInteraction {
-	if a.db == nil {
+	var out []PersonInteraction
+	if err := a.runMonoCLI("", &out, "people", "interactions", id); err != nil {
 		return nil
 	}
-	rows, err := a.db.Query(`
-		SELECT wnt.execution_id, COALESCE(wn.name,''), COALESCE(wn.node_type,''),
-		       wnt.platform, COALESCE(wnt.link,''), wnt.status,
-		       COALESCE(wnt.comment_text,''),
-		       COALESCE(wnt.last_interacted_at,''), COALESCE(wnt.created_at,'')
-		FROM workflow_node_targets wnt
-		JOIN workflow_executions we ON wnt.execution_id = we.id
-		JOIN workflows w ON we.workflow_id = w.id
-		LEFT JOIN workflow_nodes wn ON wnt.node_id = wn.id
-		JOIN people p ON wnt.person_id = p.id
-		WHERE wnt.person_id = ? AND w.profile_id = ?
-		ORDER BY COALESCE(wnt.last_interacted_at, wnt.created_at) DESC
-		LIMIT 200`, id, a.getActiveProfileID())
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-	var interactions []PersonInteraction
-	for rows.Next() {
-		var i PersonInteraction
-		if rows.Scan(&i.ExecutionID, &i.NodeName, &i.NodeType,
-			&i.Platform, &i.Link, &i.Status,
-			&i.CommentText,
-			&i.LastInteractedAt, &i.CreatedAt) == nil {
-			interactions = append(interactions, i)
-		}
-	}
-	return interactions
+	return out
 }
 
 // GetPersonMessages lists a person's messages, newest first
@@ -259,189 +209,62 @@ func (a *App) MarkPersonMessageUnread(id string) error {
 	return a.runMonoCLI("", nil, "people", "messages", "unread", id)
 }
 
-// AddPersonMessage records a message/interaction for a person, delegating to
-// the same storage.PersonMessage repo used by `monoagentcli people messages add`.
+// AddPersonMessage records a message/interaction for a person —
+// `people messages add`.
 func (a *App) AddPersonMessage(personID, source, externalID, direction, sender, subject, body string) error {
-	if a.db == nil {
-		return fmt.Errorf("database not initialized")
+	args := []string{"people", "messages", "add", "--source=" + source}
+	for _, f := range []struct{ flag, value string }{
+		{"external-id", externalID}, {"direction", direction}, {"sender", sender},
+		{"subject", subject}, {"body", body},
+	} {
+		if f.value != "" {
+			args = append(args, "--"+f.flag+"="+f.value)
+		}
 	}
-	msg := &storage.PersonMessage{
-		PersonID:   personID,
-		Source:     source,
-		ExternalID: externalID,
-		Direction:  direction,
-		Sender:     sender,
-		Subject:    subject,
-		Body:       body,
-	}
-	return (&storage.Database{DB: a.db}).UpsertPersonMessage(msg, a.getActiveProfileID())
+	return a.runMonoCLI("", nil, append(args, "--", personID)...)
 }
 
 // ComposePersonMessage sends (or drafts, when asDraft is true) an email to a
-// person via the given Outlook connection, using service.outlook_mail under
-// the hood, and records the result on that person's message history.
+// person via the given Outlook connection and records it on their message
+// history — `people messages compose`.
 func (a *App) ComposePersonMessage(personID, connectionID, subject, body string, asDraft bool) (*storage.PersonMessage, error) {
-	if a.db == nil {
-		return nil, fmt.Errorf("database not initialized")
-	}
-	var toAddr string
-	if err := a.db.QueryRow(
-		`SELECT platform_username FROM people WHERE id = ? AND profile_id = ?`,
-		personID, a.getActiveProfileID(),
-	).Scan(&toAddr); err != nil {
-		return nil, fmt.Errorf("person not found: %w", err)
-	}
-
-	operation, status := "send_message", "sent"
+	args := []string{"people", "messages", "compose",
+		"--connection=" + connectionID, "--subject=" + subject, "--body=" + body}
 	if asDraft {
-		operation, status = "create_draft", "draft"
+		args = append(args, "--draft")
 	}
-
-	result := a.RunNode(NodeRunRequest{
-		NodeType: "service.outlook_mail",
-		Config: map[string]interface{}{
-			"credential_id": connectionID,
-			"operation":     operation,
-			"to":            toAddr,
-			"subject":       subject,
-			"body":          body,
-			"body_type":     "html",
-		},
-	})
-	if result.Error != "" {
-		return nil, fmt.Errorf("%s", result.Error)
-	}
-
-	var externalID string
-	if len(result.Outputs) > 0 && len(result.Outputs[0].Items) > 0 {
-		if id, ok := result.Outputs[0].Items[0]["id"].(string); ok {
-			externalID = id
-		}
-	}
-	// Remember which connection created this draft so a later send/reject
-	// doesn't need the caller to resupply it.
-	metaBytes, _ := json.Marshal(map[string]string{"connection_id": connectionID})
-
-	msg := &storage.PersonMessage{
-		PersonID:   personID,
-		Source:     "outlook",
-		ExternalID: externalID,
-		Direction:  "outbound",
-		Sender:     toAddr,
-		Subject:    subject,
-		Body:       body,
-		Metadata:   string(metaBytes),
-		Status:     status,
-		SentAt:     time.Now().UTC(),
-	}
-	db := &storage.Database{DB: a.db}
-	if err := db.UpsertPersonMessage(msg, a.getActiveProfileID()); err != nil {
+	var msg storage.PersonMessage
+	if err := a.runMonoCLI("", &msg, append(args, "--", personID)...); err != nil {
 		return nil, err
 	}
-	return msg, nil
+	return &msg, nil
 }
 
 // GetDraftPersonMessages returns all draft (unsent) outbound messages for the
-// active profile, for review in the Human in Loop section.
+// active profile, for review in the Human in Loop section —
+// `people messages drafts`.
 func (a *App) GetDraftPersonMessages() ([]*storage.PersonMessageWithPerson, error) {
-	if a.db == nil {
-		return nil, fmt.Errorf("database not initialized")
+	var drafts []*storage.PersonMessageWithPerson
+	if err := a.runMonoCLI("", &drafts, "people", "messages", "drafts"); err != nil {
+		return nil, err
 	}
-	return (&storage.Database{DB: a.db}).ListPersonMessagesByStatus(a.getActiveProfileID(), "draft")
+	return drafts, nil
 }
 
-// draftMessageConnectionID extracts the connection_id stashed in a draft
-// message's Metadata by ComposePersonMessage.
-func draftMessageConnectionID(msg *storage.PersonMessage) (string, error) {
-	var meta struct {
-		ConnectionID string `json:"connection_id"`
-	}
-	if msg.Metadata == "" {
-		return "", fmt.Errorf("message %s has no associated connection", msg.ID)
-	}
-	if err := json.Unmarshal([]byte(msg.Metadata), &meta); err != nil || meta.ConnectionID == "" {
-		return "", fmt.Errorf("message %s has no associated connection", msg.ID)
-	}
-	return meta.ConnectionID, nil
-}
-
-// SendDraftPersonMessage sends a previously-created draft (via Graph's
-// "send an existing draft" endpoint) and marks it as sent.
+// SendDraftPersonMessage sends a previously-created draft and marks it as
+// sent — `people messages send-draft`.
 func (a *App) SendDraftPersonMessage(personMessageID string) (*storage.PersonMessage, error) {
-	if a.db == nil {
-		return nil, fmt.Errorf("database not initialized")
-	}
-	db := &storage.Database{DB: a.db}
-	msg, err := db.GetPersonMessage(personMessageID)
-	if err != nil {
+	var msg storage.PersonMessage
+	if err := a.runMonoCLI("", &msg, "people", "messages", "send-draft", personMessageID); err != nil {
 		return nil, err
 	}
-	if msg == nil {
-		return nil, fmt.Errorf("message %s not found", personMessageID)
-	}
-	if msg.Status != "draft" {
-		return nil, fmt.Errorf("message %s is not a draft", personMessageID)
-	}
-	connectionID, err := draftMessageConnectionID(msg)
-	if err != nil {
-		return nil, err
-	}
-
-	result := a.RunNode(NodeRunRequest{
-		NodeType: "service.outlook_mail",
-		Config: map[string]interface{}{
-			"credential_id": connectionID,
-			"operation":     "send_draft",
-			"message_id":    msg.ExternalID,
-		},
-	})
-	if result.Error != "" {
-		return nil, fmt.Errorf("%s", result.Error)
-	}
-
-	if err := db.UpdatePersonMessageStatus(personMessageID, "sent"); err != nil {
-		return nil, err
-	}
-	msg.Status = "sent"
-	// Graph reassigns a new message id when a draft is sent (moved into Sent
-	// Items), so the stored external_id must be updated to stay valid for a
-	// later reply/get_message/delete_message.
-	if len(result.Outputs) > 0 && len(result.Outputs[0].Items) > 0 {
-		if newID, ok := result.Outputs[0].Items[0]["message_id"].(string); ok && newID != "" && newID != msg.ExternalID {
-			if err := db.UpdatePersonMessageExternalID(personMessageID, newID); err != nil {
-				return nil, err
-			}
-			msg.ExternalID = newID
-		}
-	}
-	return msg, nil
+	return &msg, nil
 }
 
-// RejectDraftPersonMessage deletes a draft message: best-effort removes it
-// from the Outlook Drafts folder, then deletes the local history row.
+// RejectDraftPersonMessage discards a draft, best-effort from the Outlook
+// Drafts folder too — `people messages reject-draft`.
 func (a *App) RejectDraftPersonMessage(personMessageID string) error {
-	if a.db == nil {
-		return fmt.Errorf("database not initialized")
-	}
-	db := &storage.Database{DB: a.db}
-	msg, err := db.GetPersonMessage(personMessageID)
-	if err != nil {
-		return err
-	}
-	if msg == nil {
-		return fmt.Errorf("message %s not found", personMessageID)
-	}
-	if connectionID, err := draftMessageConnectionID(msg); err == nil && msg.ExternalID != "" {
-		a.RunNode(NodeRunRequest{
-			NodeType: "service.outlook_mail",
-			Config: map[string]interface{}{
-				"credential_id": connectionID,
-				"operation":     "delete_message",
-				"message_id":    msg.ExternalID,
-			},
-		})
-	}
-	return db.DeletePersonMessage(personMessageID)
+	return a.runMonoCLI("", nil, "people", "messages", "reject-draft", personMessageID)
 }
 
 // PendingPersonApproval represents a lead or contact waiting for human review in Human-in-Loop.
@@ -513,173 +336,64 @@ func (a *App) RejectPendingPerson(personID string) error {
 }
 
 // GetLatestPersonStatus returns the most recent status update for a person,
-// or nil if none exists yet — the GUI equivalent of `people status get`.
+// or nil if none exists yet — `people status get`.
 func (a *App) GetLatestPersonStatus(personId string) *storage.PersonStatusUpdate {
-	if a.db == nil {
-		return nil
-	}
-	u, err := (&storage.Database{DB: a.db}).GetLatestPersonStatusUpdate(personId, a.getActiveProfileID())
-	if err != nil {
+	var u *storage.PersonStatusUpdate
+	if err := a.runMonoCLI("", &u, "people", "status", "get", personId); err != nil {
 		return nil
 	}
 	return u
 }
 
-// AddPersonStatus appends a new status update for a person, delegating to
-// the same storage.PersonStatusUpdate repo used by `monoagentcli people status set`.
+// AddPersonStatus appends a new status update for a person —
+// `people status set`.
 func (a *App) AddPersonStatus(personId, text string) (*storage.PersonStatusUpdate, error) {
-	if a.db == nil {
-		return nil, fmt.Errorf("database not initialized")
+	var u storage.PersonStatusUpdate
+	if err := a.runMonoCLI("", &u, "people", "status", "set", "--", personId, text); err != nil {
+		return nil, err
 	}
-	return (&storage.Database{DB: a.db}).AddPersonStatusUpdate(personId, a.getActiveProfileID(), text)
+	return &u, nil
 }
 
 // GetPersonStatusHistory returns every status update for a person, newest
-// first — the GUI equivalent of `people status history`. limit <= 0 means
-// no cap.
+// first — `people status history`. limit <= 0 means no cap.
 func (a *App) GetPersonStatusHistory(personId string, limit int) []*storage.PersonStatusUpdate {
-	if a.db == nil {
-		return nil
+	args := []string{"people", "status", "history", personId}
+	if limit > 0 {
+		args = append(args, "--limit", strconv.Itoa(limit))
 	}
-	updates, err := (&storage.Database{DB: a.db}).ListPersonStatusUpdates(personId, a.getActiveProfileID(), limit)
-	if err != nil {
+	var updates []*storage.PersonStatusUpdate
+	if err := a.runMonoCLI("", &updates, args...); err != nil {
 		return nil
 	}
 	return updates
 }
 
-// GetPersonPosts returns all scraped posts for a person, with we_liked/we_commented flags.
+// GetPersonPosts returns all scraped posts for a person, with
+// we_liked/we_commented flags — `people posts list`.
 func (a *App) GetPersonPosts(personID string) []PostSummary {
-	if a.db == nil {
-		return []PostSummary{}
-	}
-	rows, err := a.db.Query(`
-		SELECT
-			p.id,
-			p.shortcode,
-			p.url,
-			COALESCE(p.thumbnail_url, ''),
-			COALESCE(p.like_count, 0),
-			COALESCE(p.comment_count, 0),
-			COALESCE(p.caption, ''),
-			COALESCE(p.posted_at, ''),
-			p.scraped_at,
-			EXISTS(
-				SELECT 1 FROM action_targets at2
-				JOIN actions a2 ON at2.action_id = a2.id
-				WHERE rtrim(at2.link, '/') = rtrim(p.url, '/')
-				  AND a2.type = 'like_posts'
-				  AND at2.status = 'COMPLETED'
-			) AS we_liked,
-			EXISTS(
-				SELECT 1 FROM action_targets at3
-				JOIN actions a3 ON at3.action_id = a3.id
-				WHERE rtrim(at3.link, '/') = rtrim(p.url, '/')
-				  AND a3.type = 'comment_on_posts'
-				  AND at3.status = 'COMPLETED'
-			) AS we_commented
-		FROM posts p
-		JOIN people pe ON p.person_id = pe.id
-		WHERE p.person_id = ? AND pe.profile_id = ?
-		ORDER BY p.scraped_at DESC`,
-		personID, a.getActiveProfileID(),
-	)
-	if err != nil {
-		return []PostSummary{}
-	}
-	defer rows.Close()
-
-	var posts []PostSummary
-	for rows.Next() {
-		var p PostSummary
-		var weLiked, weCommented int
-		if err := rows.Scan(
-			&p.ID, &p.Shortcode, &p.URL, &p.ThumbnailURL,
-			&p.LikeCount, &p.CommentCount, &p.Caption,
-			&p.PostedAt, &p.ScrapedAt,
-			&weLiked, &weCommented,
-		); err != nil {
-			continue
-		}
-		p.WeLiked = weLiked != 0
-		p.WeCommented = weCommented != 0
-		posts = append(posts, p)
-	}
-	if err := rows.Err(); err != nil {
-		return []PostSummary{}
-	}
-	if posts == nil {
+	posts := []PostSummary{}
+	if err := a.runMonoCLI("", &posts, "people", "posts", "list", personID); err != nil || posts == nil {
 		return []PostSummary{}
 	}
 	return posts
 }
 
-// GetPostDetail returns full metadata for a single post by ID.
+// GetPostDetail returns full metadata for a single post by ID —
+// `people posts get`.
 func (a *App) GetPostDetail(postID string) *PostDetail {
-	if a.db == nil {
-		return nil
-	}
 	var p PostDetail
-	err := a.db.QueryRow(`
-		SELECT posts.id, shortcode, url,
-		       COALESCE(thumbnail_url, ''),
-		       COALESCE(like_count, 0),
-		       COALESCE(comment_count, 0),
-		       COALESCE(caption, ''),
-		       COALESCE(posted_at, ''),
-		       scraped_at
-		FROM posts
-		JOIN people ON posts.person_id = people.id
-		WHERE posts.id = ? AND people.profile_id = ?`,
-		postID, a.getActiveProfileID(),
-	).Scan(
-		&p.ID, &p.Shortcode, &p.URL, &p.ThumbnailURL,
-		&p.LikeCount, &p.CommentCount, &p.Caption,
-		&p.PostedAt, &p.ScrapedAt,
-	)
-	if err != nil {
+	if err := a.runMonoCLI("", &p, "people", "posts", "get", postID); err != nil {
 		return nil
 	}
 	return &p
 }
 
-// GetPostComments returns all scraped comments for a post, ordered by timestamp.
+// GetPostComments returns all scraped comments for a post, oldest first —
+// `people posts comments`.
 func (a *App) GetPostComments(postID string) []PostComment {
-	if a.db == nil {
-		return []PostComment{}
-	}
-	rows, err := a.db.Query(`
-		SELECT post_comments.id, COALESCE(author, ''), COALESCE(text, ''),
-		       COALESCE(timestamp, ''),
-		       COALESCE(likes_count, 0),
-		       COALESCE(reply_count, 0)
-		FROM post_comments
-		JOIN posts ON post_comments.post_id = posts.id
-		JOIN people ON posts.person_id = people.id
-		WHERE post_id = ? AND people.profile_id = ?
-		ORDER BY timestamp ASC`,
-		postID, a.getActiveProfileID(),
-	)
-	if err != nil {
-		return []PostComment{}
-	}
-	defer rows.Close()
-
-	var comments []PostComment
-	for rows.Next() {
-		var c PostComment
-		if err := rows.Scan(
-			&c.ID, &c.Author, &c.Text,
-			&c.Timestamp, &c.LikesCount, &c.ReplyCount,
-		); err != nil {
-			continue
-		}
-		comments = append(comments, c)
-	}
-	if err := rows.Err(); err != nil {
-		return []PostComment{}
-	}
-	if comments == nil {
+	comments := []PostComment{}
+	if err := a.runMonoCLI("", &comments, "people", "posts", "comments", postID); err != nil || comments == nil {
 		return []PostComment{}
 	}
 	return comments

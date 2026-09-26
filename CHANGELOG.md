@@ -51,6 +51,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The desktop app no longer reads or writes the database itself** for
+  people, tags, lists, posts, the image vault, workflows and runs, sessions
+  and connections, profiles, templates, the node palette, documents and
+  captures. Every one of those goes through a `monoagentcli` command, which
+  is equally usable from scripts (see AGENTS.md, "What the desktop app
+  calls"). New commands:
+  - `people count`, `people interactions`, `people posts …` and
+    `people tag map`; `people list` gains `--search` and `--offset`.
+  - `image …`.
+  - `workflow save`, `workflow execution` and `workflow cancel`.
+  - `login test|delete`.
+  - `connect save|get-oauth-client|set-oauth-client|for-node|oauth`.
+  - `profile get|folder|move|projects` and
+    `profile documents get|capture`.
+  - `node palette` and `org reconcile-doc`.
+- Image Vault thumbnails load as they scroll into view.
+
 - The dashboard, sidebar and status-bar counts now come from the CLI instead of
   the desktop app reading the database itself.
 - The dashboard stops polling while another page is open.
@@ -64,6 +81,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Go-style keys need updating.
 
 ### Fixed
+
+- **OAuth client secrets were stored in plain text** by
+  `connect set-oauth-client`. They are now encrypted, like every other
+  secret.
+- **Cancelling a run that had already finished** overwrote its
+  SUCCESS/FAILED status with CANCELLED. It is now left alone.
+- **Workflow image previews (`/vault-image/…`) never loaded.** The file
+  server looked in `~/.monoagent/vault`, but images live in the profile's
+  own vault folder. It now serves each image from its stored path, and only
+  the active profile's images.
+- **The liked/commented flags on a person's posts were always empty.** They
+  read tables that a migration had dropped.
+- **Moving a profile folder left documents behind**, pointing at the old
+  folder. It now moves them along with the images, and checks the new
+  folder first.
+- **`workflow executions`** failed on runs with no error message, and
+  `people list --platform` missed upper-case platform names.
 
 - **Desktop app updates are now verified against the release's
   `SHA256SUMS.txt`.** Before, the app installed its own update without

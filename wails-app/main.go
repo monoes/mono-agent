@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 	"embed"
+	"github.com/monoes/mono-agent/internal/vault"
 	"net/http"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -53,13 +53,10 @@ var assets embed.FS
 //go:embed build/appicon.png
 var appIcon []byte
 
-// vaultImageHandler serves files from ~/.monoagent/vault/ at /vault-image/<filename>,
-// scoped to the currently active profile so one profile cannot enumerate or view
-// another profile's vault images.
+// vaultImageHandler serves the active profile's vault images at
+// /vault-image/<filename>, from each image's stored path, so one profile
+// cannot enumerate or view another profile's vault images.
 func vaultImageHandler(app *App) http.Handler {
-	// os.UserHomeDir (not $HOME) so the vault dir resolves on Windows too.
-	home, _ := os.UserHomeDir()
-	vaultDir := filepath.Join(home, ".monoagent", "vault")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.URL.Path, "/vault-image/") {
 			w.WriteHeader(http.StatusNotFound)
@@ -76,17 +73,16 @@ func vaultImageHandler(app *App) http.Handler {
 		if profileID == "" {
 			profileID = "default"
 		}
-		var exists int
-		err := app.db.QueryRow(
-			`SELECT 1 FROM vault_images WHERE filename = ? AND profile_id = ?`,
-			name, profileID,
-		).Scan(&exists)
-		if err != nil {
+		// Only this profile's files, served from the path stored on the row
+		// (images live in the profile's own vault folder). The lookup is the
+		// vault package's, which the CLI's `image` commands use too; it stays
+		// in-process because it runs once per <img> request.
+		path, ok, err := vault.ImagePathInProfile(r.Context(), app.db, profileID, name)
+		if err != nil || !ok {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-
-		http.ServeFile(w, r, filepath.Join(vaultDir, name))
+		http.ServeFile(w, r, path)
 	})
 }
 
