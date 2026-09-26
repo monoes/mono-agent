@@ -558,7 +558,10 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
   // doesn't re-fire if this component happens to remount later.
   useEffect(() => {
     if (!pendingSelectOrgName) return
-    loadOrgs(true).then(() => selectOrg(pendingSelectOrgName, { tab: 'design' }))
+    // A bare name (a newly created org) opens its design; the dashboard
+    // passes { name, tab } to land on the tab it linked to.
+    const pending = typeof pendingSelectOrgName === 'string' ? { name: pendingSelectOrgName, tab: 'design' } : pendingSelectOrgName
+    loadOrgs(true).then(() => selectOrg(pending.name, { tab: pending.tab || 'overview' }))
     onConsumePendingSelect?.()
   }, [pendingSelectOrgName, loadOrgs, selectOrg, onConsumePendingSelect])
 

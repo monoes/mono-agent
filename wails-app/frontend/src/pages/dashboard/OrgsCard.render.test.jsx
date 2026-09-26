@@ -18,7 +18,7 @@ describe('OrgsCard', () => {
     expect(screen.getByText('dashboard.orgs.paused')).toBeInTheDocument()
     expect(screen.getByTitle('monomind down')).toBeInTheDocument()
     fireEvent.click(screen.getByText('acme'))
-    expect(onNavigate).toHaveBeenCalledWith('orgs', { org: 'acme' })
+    expect(onNavigate).toHaveBeenCalledWith('orgs', { org: 'acme', tab: 'needs' })
   })
   it('empty and more', () => {
     const { rerender } = render(<OrgsCard onNavigate={vi.fn()} orgs={{ orgs: [], totals: { orgs: 0 } }} />)

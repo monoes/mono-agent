@@ -11,7 +11,11 @@ import ApiConnectionModal from './connections/ApiConnectionModal.jsx'
 import AutomationDrawer from './connections/AutomationDrawer.jsx'
 import ImportDialog from './connections/ImportDialog.jsx'
 
-export default function Connections({ onRefresh }) {
+// navData (from the dashboard) may name an automation and a drawer tab:
+// { automationId, tab: 'health' | 'recordings' | … }.
+const DRAWER_TABS = { overview: 'Overview', session: 'Session', actions: 'Actions', health: 'Health', recordings: 'Recordings' }
+
+export default function Connections({ onRefresh, navData }) {
   const [platforms,    setPlatforms]    = useState([])
   const [connections,  setConnections]  = useState([])
   const [automations,  setAutomations]  = useState([])
@@ -20,6 +24,7 @@ export default function Connections({ onRefresh }) {
   const [error,        setError]        = useState(null)
   const [selected,     setSelected]     = useState(null)
   const [openAuto,     setOpenAuto]     = useState(null)
+  const [drawerTab,    setDrawerTab]    = useState('Overview')
   const [importing,    setImporting]    = useState(false)
   const [recordHelp,   setRecordHelp]   = useState(false)
   const pollRef = useRef(null)
@@ -71,7 +76,16 @@ export default function Connections({ onRefresh }) {
     setSelected(null)
   }, [loadAll, onRefresh])
 
-  const closeDrawer = useCallback(() => setOpenAuto(null), [])
+  const closeDrawer = useCallback(() => { setOpenAuto(null); setDrawerTab('Overview') }, [])
+  const openDrawer = useCallback(a => { setDrawerTab('Overview'); setOpenAuto(a) }, [])
+
+  // Open the automation a deep link names once the list has it.
+  useEffect(() => {
+    const id = navData?.automationId
+    if (!id || !automations.some(a => a.id === id)) return
+    setDrawerTab(DRAWER_TABS[navData.tab] || 'Overview')
+    setOpenAuto({ id })
+  }, [navData, automations])
 
   return (
     <>
@@ -96,7 +110,7 @@ export default function Connections({ onRefresh }) {
             <BrowserAutomations
               automations={automations}
               error={autoError}
-              onOpen={setOpenAuto}
+              onOpen={openDrawer}
               onRecord={() => setRecordHelp(true)}
               onImport={() => setImporting(true)}
             />
@@ -116,8 +130,9 @@ export default function Connections({ onRefresh }) {
       )}
       {openAuto && (
         <AutomationDrawer
-          key={openAuto.id}
+          key={`${openAuto.id}/${drawerTab}`}
           automation={automations.find(a => a.id === openAuto.id) || openAuto}
+          initialTab={drawerTab}
           onClose={closeDrawer}
           onChanged={loadAutomations}
         />

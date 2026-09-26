@@ -19,7 +19,7 @@ function OrgRow({ org, onNavigate }) {
         {org.queued > 0 && <> · {org.queued} {t('dashboard.orgs.queued')}</>}
       </>}
       title={org.running ? t('dashboard.system.running') : t('dashboard.system.stopped')}
-      onClick={() => onNavigate('orgs', { org: org.name })}
+      onClick={() => onNavigate('orgs', { org: org.name, tab: org.needs_you ? 'needs' : 'overview' })}
     />
   )
 }
