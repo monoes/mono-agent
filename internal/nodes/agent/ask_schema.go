@@ -5,7 +5,7 @@ package agent
 // doc comment for why this is a companion struct rather than the runtime
 // config, and internal/tools/schemagen for the tag grammar.
 type AskNodeSchema struct {
-	Runtime string `json:"runtime" schema:"label=Agent Runtime,type=text,required,help=Locally-installed agent runtime id — claude， codex， kimi， qwen， … (list: monoagentcli agent scan --installed)."`
+	Runtime string `json:"runtime" schema:"label=Agent Runtime,type=text,required,help=Locally-installed agent runtime id — claude， codex， kimicode， qwen， … (list: monoagentcli agent scan --installed)."`
 
 	Prompt string `json:"prompt" schema:"label=Prompt,type=textarea,required,rows=4,default={{$json.text}},help=Supports {{$json.field}} placeholders."`
 

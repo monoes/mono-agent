@@ -427,7 +427,7 @@ Changes made this way appear in the app automatically — orgs are picked up liv
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&runtime, "runtime", "", "Agent runtime id (claude, codex, kimi, … — see `agent scan`)")
+	cmd.Flags().StringVar(&runtime, "runtime", "", "Agent runtime id (claude, codex, kimicode, … — see `agent scan`)")
 	cmd.Flags().StringVar(&model, "model", "", "Model override for the runtime")
 	cmd.Flags().StringVar(&resume, "resume", "", "Session/thread id to resume (from the session event)")
 	cmd.Flags().StringVar(&canvasID, "canvas", "", "Workflow-builder mode for this workflow id")
