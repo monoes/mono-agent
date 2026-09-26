@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	goruntime "runtime"
 	"strings"
@@ -99,7 +98,9 @@ var releaseAPIURL = fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/lat
 // release's SHA256SUMS.txt and replaces the CLI.
 // The UI app shows a dialog to restart after update.
 func (a *App) SelfUpdate() UpdateResult {
-	cliPath, err := findCLIBinary()
+	// The same resolution the app uses for every CLI call, so the update
+	// replaces the binary the app actually runs.
+	cliPath, err := findMonoAgentCLI()
 	if err != nil {
 		return UpdateResult{Error: fmt.Sprintf("cannot locate CLI binary: %v", err)}
 	}
@@ -283,43 +284,4 @@ func (a *App) backgroundUpdateCheck() {
 			return
 		}
 	}
-}
-
-// cliBinaryNameFor is the CLI's file name on goos ("monoagentcli.exe" on
-// Windows, where os.Stat needs the extension that LookPath adds itself).
-func cliBinaryNameFor(goos string) string {
-	if goos == "windows" {
-		return "monoagentcli.exe"
-	}
-	return "monoagentcli"
-}
-
-// findCLIBinary locates the monoagentcli binary.
-func findCLIBinary() (string, error) {
-	candidates := []string{}
-	name := cliBinaryNameFor(goruntime.GOOS)
-
-	if p, err := exec.LookPath("monoagentcli"); err == nil {
-		candidates = append(candidates, p)
-	}
-
-	if exe, err := os.Executable(); err == nil {
-		dir := filepath.Dir(exe)
-		candidates = append(candidates, filepath.Join(dir, name))
-		candidates = append(candidates, filepath.Join(dir, "..", "bin", name))
-	}
-
-	if home, err := os.UserHomeDir(); err == nil {
-		candidates = append(candidates, filepath.Join(home, "go", "bin", name))
-		candidates = append(candidates, filepath.Join(home, ".local", "bin", name))
-	}
-	candidates = append(candidates, "/usr/local/bin/monoagentcli")
-
-	for _, c := range candidates {
-		if info, err := os.Stat(c); err == nil && !info.IsDir() {
-			return c, nil
-		}
-	}
-
-	return "", fmt.Errorf("monoagentcli binary not found in PATH or common locations")
 }

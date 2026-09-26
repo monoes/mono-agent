@@ -784,10 +784,8 @@ func findMonoAgentCLI() (string, error) {
 		if real, err := filepath.EvalSymlinks(exe); err == nil {
 			exe = real
 		}
-		execDir := filepath.Dir(exe)
-		sibling := filepath.Join(execDir, "monoagentcli")
-		if fileExists(sibling) {
-			return sibling, nil
+		if p, ok := siblingCLI(filepath.Dir(exe), goruntime.GOOS, goruntime.GOARCH); ok {
+			return p, nil
 		}
 	}
 
@@ -795,9 +793,10 @@ func findMonoAgentCLI() (string, error) {
 		return p, nil
 	}
 	home, _ := os.UserHomeDir()
+	name := cliSiblingNames(goruntime.GOOS, goruntime.GOARCH)[0]
 	candidates := []string{
-		filepath.Join(home, "go", "bin", "monoagentcli"),
-		filepath.Join(home, ".local", "bin", "monoagentcli"),
+		filepath.Join(home, "go", "bin", name),
+		filepath.Join(home, ".local", "bin", name),
 		"/usr/local/bin/monoagentcli",
 		"/opt/homebrew/bin/monoagentcli",
 	}
@@ -816,6 +815,32 @@ func findMonoAgentCLI() (string, error) {
 		}
 	}
 	return "", fmt.Errorf("monoagentcli binary not found — run `go install` or place the binary in PATH")
+}
+
+// cliSiblingNames are the file names the CLI has next to the desktop app:
+// "monoagentcli" (".exe" on Windows; macOS .app bundles and the current
+// Linux tarball), then the release's bundled name
+// "monoagentcli-<goos>-<goarch>-bundled[.exe]" (older Linux tarballs, and
+// the separate Windows download saved beside MonoAgent-windows-amd64.exe).
+func cliSiblingNames(goos, goarch string) []string {
+	ext := ""
+	if goos == "windows" {
+		ext = ".exe"
+	}
+	return []string{
+		"monoagentcli" + ext,
+		"monoagentcli-" + goos + "-" + goarch + "-bundled" + ext,
+	}
+}
+
+// siblingCLI returns the first CLI found in execDir under cliSiblingNames.
+func siblingCLI(execDir, goos, goarch string) (string, bool) {
+	for _, n := range cliSiblingNames(goos, goarch) {
+		if p := filepath.Join(execDir, n); fileExists(p) {
+			return p, true
+		}
+	}
+	return "", false
 }
 
 func fileExists(p string) bool {
