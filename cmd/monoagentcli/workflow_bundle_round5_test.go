@@ -158,3 +158,30 @@ func TestWorkflowBundleDiffersSameVersion(t *testing.T) {
 		t.Fatalf("re-import after replace = %+v", it)
 	}
 }
+
+// An --automation-domains id the export does not use is refused, naming
+// the ids it does use, instead of being silently ignored.
+func TestWorkflowBundleUnknownDomainsID(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	installTestAutomation(t)
+	cfg := &globalConfig{DBPath: filepath.Join(t.TempDir(), "src.db"), JSONOutput: true, ProfileID: "default"}
+	id := importWorkflowJSON(t, cfg, bundleTestWorkflow)
+	out := filepath.Join(t.TempDir(), "bundled.json")
+	var runErr error
+	captureStdout(t, func() {
+		cmd := newWorkflowCmd(cfg)
+		cmd.SetArgs([]string{"export", id, "--bundle-automations", "--automation-domains", "nosuch=example.com", "-o", out})
+		cmd.SilenceUsage, cmd.SilenceErrors = true, true
+		runErr = cmd.Execute()
+	})
+	if runErr == nil || runErr.Error() != "--automation-domains nosuch: no such automation in this export (bundled: acme-test)" {
+		t.Fatalf("err = %v", runErr)
+	}
+	if _, err := os.Stat(out); err == nil {
+		t.Fatal("a refused export wrote a file")
+	}
+	// A known id is accepted.
+	if _, doc := exportBundle(t, cfg, id, "--automation-domains", "acme-test=example.com"); doc.Automations["acme-test"].Mpkg == "" {
+		t.Fatal("known id: acme-test not bundled")
+	}
+}

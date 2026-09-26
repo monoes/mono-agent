@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
+	"slices"
 	"sort"
 	"strings"
 
@@ -100,7 +101,11 @@ func bundleWorkflowAutomations(file workflow.WorkflowFile, opts bundleOptions) (
 		return out, err
 	}
 	resolve := packageResolver(reg)
-	for _, id := range workflowAutomationIDs(file.Nodes, resolve) {
+	ids := workflowAutomationIDs(file.Nodes, resolve)
+	if err := checkDomainIDs(opts.domains, ids); err != nil {
+		return out, err
+	}
+	for _, id := range ids {
 		info, err := reg.Info(id)
 		if err != nil {
 			continue
@@ -235,4 +240,25 @@ func isLocalAddress(hostport string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && (ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() || ip.IsLinkLocalUnicast())
+}
+
+// checkDomainIDs refuses --automation-domains for an id this export does
+// not use: a typo would otherwise silently leave the package unbundled.
+func checkDomainIDs(domains map[string][]string, used []string) error {
+	var unknown []string
+	for id := range domains {
+		if !slices.Contains(used, id) {
+			unknown = append(unknown, id)
+		}
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+	sort.Strings(unknown)
+	list := strings.Join(used, ", ")
+	if list == "" {
+		list = "none"
+	}
+	return errInvalidInput("--automation-domains %s: no such automation in this export (bundled: %s)",
+		strings.Join(unknown, ", "), list)
 }
