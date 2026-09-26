@@ -322,6 +322,12 @@ body {
   50% { opacity: 0.5; box-shadow: 0 0 12px var(--green); }
 }
 
+/* Generic opacity pulse for live status dots (any colour). */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
 /* ── Main Content ── */
 .main-content {
   flex: 1 1 auto;
