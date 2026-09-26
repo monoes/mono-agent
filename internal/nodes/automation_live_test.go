@@ -112,3 +112,18 @@ func TestCheckLiveRun_LegacyUngated(t *testing.T) {
 		t.Fatalf("legacy action gated: %v", err)
 	}
 }
+
+func TestCheckLiveRunMessageForUndeclaredEffects(t *testing.T) {
+	t.Cleanup(func() { action.SetDefSource(nil) })
+	action.SetDefSource(liveSource{pkg: livePkg{trust: "imported"}, effects: liveEffects})
+
+	err := checkLiveRun("acme", "old")
+	if err == nil || !strings.Contains(err.Error(), "doesn't declare what it changes on the site, so it's treated as a write action") ||
+		strings.Contains(err.Error(), `sideEffects ""`) {
+		t.Fatalf("undeclared: %v", err)
+	}
+	err = checkLiveRun("acme", "post")
+	if err == nil || !strings.Contains(err.Error(), `changes data on the site (sideEffects "write")`) {
+		t.Fatalf("declared write: %v", err)
+	}
+}

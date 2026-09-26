@@ -202,3 +202,11 @@ func TestCallActionStepSkipsPostStepDomainCheck(t *testing.T) {
 		t.Fatalf("next step must re-check: %v", err)
 	}
 }
+
+func TestDeclaresSideEffects(t *testing.T) {
+	for level, want := range map[string]bool{"none": true, "read": true, "Write": true, "message": true, "destructive": true, "": false, "bogus": false} {
+		if got := DeclaresSideEffects(level); got != want {
+			t.Errorf("DeclaresSideEffects(%q) = %v", level, got)
+		}
+	}
+}
