@@ -23,7 +23,10 @@ func newPeopleCmd(cfg *globalConfig) *cobra.Command {
 
 	cmd.AddCommand(
 		newPeopleListCmd(cfg),
+		newPeopleCountCmd(cfg),
 		newPeopleGetCmd(cfg),
+		newPeopleInteractionsCmd(cfg),
+		newPeoplePostsCmd(cfg),
 		newPeopleDeleteCmd(cfg),
 		newPeopleImportCmd(cfg),
 		newPeopleMessagesCmd(cfg),
@@ -36,41 +39,69 @@ func newPeopleCmd(cfg *globalConfig) *cobra.Command {
 	return cmd
 }
 
+// peopleFilter is the platform/search filter `people list` and `people count`
+// share, so a page of results and its total always agree.
+type peopleFilter struct {
+	platform string
+	search   string
+}
+
+// where returns the WHERE clause (profile-scoped) and its parameters. The
+// platform matches case-insensitively; the search matches username or name.
+func (f peopleFilter) where(profileID string) (string, []interface{}) {
+	clause := " WHERE profile_id = ?"
+	params := []interface{}{profileID}
+	if f.platform != "" {
+		clause += " AND UPPER(platform) = ?"
+		params = append(params, strings.ToUpper(f.platform))
+	}
+	if f.search != "" {
+		clause += " AND (platform_username LIKE ? OR full_name LIKE ?)"
+		s := "%" + f.search + "%"
+		params = append(params, s, s)
+	}
+	return clause, params
+}
+
+func (f *peopleFilter) addFlags(cmd *cobra.Command) {
+	cmd.Flags().StringVarP(&f.platform, "platform", "p", "", "Filter by platform (case-insensitive)")
+	cmd.Flags().StringVarP(&f.search, "search", "s", "", "Only people whose username or name contains this")
+}
+
 func newPeopleListCmd(cfg *globalConfig) *cobra.Command {
 	var (
-		platform string
-		limit    int
+		filter peopleFilter
+		limit  int
+		offset int
 	)
 
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List people in the database",
+		Short: "List people in the database, newest first",
 		Example: `  monoagentcli people list
   monoagentcli people list --platform instagram --limit 20
-  monoagentcli people list --json`,
+  monoagentcli people list --search sam --limit 50 --offset 50 --json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if limit < 0 || offset < 0 {
+				return errInvalidInput("--limit and --offset must not be negative")
+			}
 			db, err := initDB(cfg)
 			if err != nil {
 				return fmt.Errorf("initializing database: %w", err)
 			}
 			defer db.Close()
 
+			where, params := filter.where(cfg.ProfileID)
 			query := `SELECT id, platform_username, platform, COALESCE(full_name,''),
+			                 COALESCE(image_url,''), COALESCE(profile_url,''),
 			                 COALESCE(follower_count,''), COALESCE(following_count,0), COALESCE(is_verified,0),
-			                 COALESCE(category,''), COALESCE(job_title,'')
-			          FROM people WHERE profile_id = ?`
-			var params []interface{}
-			params = append(params, cfg.ProfileID)
-
-			if platform != "" {
-				query += " AND platform = ?"
-				params = append(params, strings.ToLower(platform))
-			}
-
-			query += " ORDER BY created_at DESC"
-
-			if limit > 0 {
-				query += fmt.Sprintf(" LIMIT %d", limit)
+			                 COALESCE(category,''), COALESCE(job_title,''), COALESCE(created_at,'')
+			          FROM people` + where + " ORDER BY created_at DESC"
+			switch {
+			case limit > 0:
+				query += fmt.Sprintf(" LIMIT %d OFFSET %d", limit, offset)
+			case offset > 0:
+				query += fmt.Sprintf(" LIMIT -1 OFFSET %d", offset)
 			}
 
 			rows, err := db.DB.Query(query, params...)
@@ -84,21 +115,25 @@ func newPeopleListCmd(cfg *globalConfig) *cobra.Command {
 				PlatformUsername string `json:"platform_username"`
 				Platform         string `json:"platform"`
 				FullName         string `json:"full_name"`
+				ImageURL         string `json:"image_url"`
+				ProfileURL       string `json:"profile_url"`
 				FollowerCount    string `json:"follower_count"`
 				FollowingCount   int    `json:"following_count"`
 				IsVerified       bool   `json:"is_verified"`
 				Category         string `json:"category,omitempty"`
 				JobTitle         string `json:"job_title,omitempty"`
+				CreatedAt        string `json:"created_at"`
 			}
 
-			var people []personSummary
+			people := []personSummary{}
 			for rows.Next() {
 				var p personSummary
 				var verified sql.NullInt64
 				if err := rows.Scan(
 					&p.ID, &p.PlatformUsername, &p.Platform, &p.FullName,
+					&p.ImageURL, &p.ProfileURL,
 					&p.FollowerCount, &p.FollowingCount,
-					&verified, &p.Category, &p.JobTitle,
+					&verified, &p.Category, &p.JobTitle, &p.CreatedAt,
 				); err != nil {
 					return fmt.Errorf("scanning person: %w", err)
 				}
@@ -146,9 +181,42 @@ func newPeopleListCmd(cfg *globalConfig) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&platform, "platform", "p", "", "Filter by platform")
-	cmd.Flags().IntVarP(&limit, "limit", "n", 50, "Maximum number of results")
+	filter.addFlags(cmd)
+	cmd.Flags().IntVarP(&limit, "limit", "n", 50, "Maximum number of results (0 = no limit)")
+	cmd.Flags().IntVar(&offset, "offset", 0, "Skip this many results first, for paging")
 
+	return cmd
+}
+
+// newPeopleCountCmd counts the people `people list` would page through with
+// the same filters — the People page's total.
+func newPeopleCountCmd(cfg *globalConfig) *cobra.Command {
+	var filter peopleFilter
+	cmd := &cobra.Command{
+		Use:     "count",
+		Short:   "Count people, with the same filters as people list",
+		Example: `  monoagentcli --json people count --platform linkedin --search sam`,
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			db, err := initDB(cfg)
+			if err != nil {
+				return fmt.Errorf("initializing database: %w", err)
+			}
+			defer db.Close()
+
+			where, params := filter.where(cfg.ProfileID)
+			var count int
+			if err := db.DB.QueryRow("SELECT COUNT(*) FROM people"+where, params...).Scan(&count); err != nil {
+				return fmt.Errorf("counting people: %w", err)
+			}
+			if cfg.JSONOutput {
+				return printReviewJSON(map[string]int{"count": count})
+			}
+			fmt.Println(count)
+			return nil
+		},
+	}
+	filter.addFlags(cmd)
 	return cmd
 }
 
@@ -168,7 +236,7 @@ func newPeopleGetCmd(cfg *globalConfig) *cobra.Command {
 
 			var p storage.Person
 			var verified, contentCount, followingCount sql.NullInt64
-			var fullName, imageURL, contactDetails, website sql.NullString
+			var fullName, imageURL, contactDetails, website, profileURL sql.NullString
 			var followerCount, introduction, category, jobTitle sql.NullString
 
 			err = db.DB.QueryRow(
@@ -177,16 +245,16 @@ func newPeopleGetCmd(cfg *globalConfig) *cobra.Command {
 				        website, COALESCE(content_count, 0), follower_count,
 				        COALESCE(following_count, 0), introduction, COALESCE(is_verified, 0),
 				        category, job_title,
-				        created_at, updated_at
+				        created_at, updated_at, profile_url
 				 FROM people WHERE id = ? AND profile_id = ?`, personID, cfg.ProfileID,
 			).Scan(
 				&p.ID, &p.PlatformUsername, &p.Platform, &fullName,
 				&imageURL, &contactDetails, &website, &contentCount,
 				&followerCount, &followingCount, &introduction,
-				&verified, &category, &jobTitle, &p.CreatedAt, &p.UpdatedAt,
+				&verified, &category, &jobTitle, &p.CreatedAt, &p.UpdatedAt, &profileURL,
 			)
 			if err == sql.ErrNoRows {
-				return fmt.Errorf("person %q not found", personID)
+				return errNotFound("person %q not found", personID)
 			}
 			if err != nil {
 				return fmt.Errorf("querying person: %w", err)
@@ -210,8 +278,9 @@ func newPeopleGetCmd(cfg *globalConfig) *cobra.Command {
 				enc.SetIndent("", "  ")
 				return enc.Encode(struct {
 					storage.Person
-					Links []confirmedLink `json:"links,omitempty"`
-				}{p, links})
+					ProfileURL string          `json:"profile_url,omitempty"`
+					Links      []confirmedLink `json:"links,omitempty"`
+				}{p, profileURL.String, links})
 			}
 
 			table := newPlainTable(os.Stdout, []string{"Field", "Value"}, []tw.Align{tw.AlignRight, tw.AlignLeft})
