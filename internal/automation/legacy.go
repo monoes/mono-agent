@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strings"
 
+	"golang.org/x/net/publicsuffix"
+
 	"github.com/monoes/mono-agent/internal/action"
 	"github.com/monoes/mono-agent/internal/bot"
 )
@@ -29,7 +31,7 @@ import (
 
 // legacyFormat versions the generated manifests; a registry folded with an
 // older format is refolded once on the next Seed.
-const legacyFormat = 2
+const legacyFormat = 3 // 3: site.domains no longer derived (v0.74 regression)
 
 type legacyDir struct {
 	name    string            // directory name as found
@@ -239,7 +241,13 @@ func (r *Registry) foldOneLocked(idx *indexFile, id string, ld *legacyDir, seeds
 			m.Actions = append(m.Actions, n)
 		}
 	}
-	deriveLegacyPermissions(&m, files)
+	var generated []string // domains an earlier build put there, not the user
+	for _, s := range seeds {
+		if s.pkg.Manifest.Requires.Native == platform || s.pkg.Manifest.ID == platform {
+			generated = append(generated, s.pkg.Manifest.Site.Domains...)
+		}
+	}
+	deriveLegacyPermissions(&m, files, generated)
 
 	encode := func() error {
 		b, err := json.MarshalIndent(m, "", "  ")
@@ -272,15 +280,16 @@ func (r *Registry) foldOneLocked(idx *indexFile, id string, ld *legacyDir, seeds
 	return true, nil
 }
 
-// deriveLegacyPermissions fills site.domains from the actions' literal
-// navigate URLs and permissions.steps from the step types they use (the
-// same rule as wrapping a loose action file). Domains stay empty — the
-// documented legacy exception, unrestricted as before — when an action
-// navigates to a host that cannot be a domain pattern (localhost, a
-// public suffix): restricting to the others would break that action.
-func deriveLegacyPermissions(m *Manifest, files map[string][]byte) {
-	var hosts, steps []string
-	valid := true
+// deriveLegacyPermissions fills permissions.steps from the step types the
+// actions use and records the sites their literal navigate URLs open as a
+// suggestion only (legacy.suggestedDomains: each host plus the *. glob of
+// its registrable domain). site.domains stays EMPTY: legacy actions ran
+// unrestricted before packages existed — templated URLs, redirects to
+// www. — and must keep doing so (the documented legacy exception). Domains
+// the user added by hand are kept; ones an earlier build derived (exact
+// hosts, a seed's list) are cleared.
+func deriveLegacyPermissions(m *Manifest, files map[string][]byte, generated []string) {
+	var hosts, local, steps []string
 	var walk func([]action.StepDef)
 	walk = func(ss []action.StepDef) {
 		for _, s := range ss {
@@ -290,9 +299,12 @@ func deriveLegacyPermissions(m *Manifest, files map[string][]byte) {
 			if s.Type == "navigate" && !strings.Contains(s.URL, "{{") {
 				if u, err := url.Parse(strings.TrimSpace(s.URL)); err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" {
 					h := strings.ToLower(u.Host)
-					if checkDomainPattern(h) != nil {
-						valid = false
-					} else if !contains(hosts, h) {
+					switch {
+					case checkDomainPattern(h) != nil:
+						if !contains(local, h) {
+							local = append(local, h)
+						}
+					case !contains(hosts, h):
 						hosts = append(hosts, h)
 					}
 				}
@@ -318,14 +330,37 @@ func deriveLegacyPermissions(m *Manifest, files map[string][]byte) {
 	if len(m.Permissions.Steps) > 0 || len(steps) > 0 {
 		m.Permissions.Steps = unionSorted(m.Permissions.Steps, steps)
 	}
-	if valid && len(hosts) > 0 && m.Requires.Native == "" {
-		m.Site.Domains = unionSorted(m.Site.Domains, hosts)
-		if m.Site.StartURL == "" {
-			m.Site.StartURL = "https://" + m.Site.Domains[0] + "/"
-		}
-	}
 	if m.Permissions.Scripts == nil {
 		m.Permissions.Scripts = []string{}
+	}
+
+	var suggested []string
+	for _, h := range hosts {
+		suggested = append(suggested, h)
+		if reg, err := publicsuffix.EffectiveTLDPlusOne(strings.Split(h, ":")[0]); err == nil {
+			suggested = append(suggested, "*."+reg)
+		}
+	}
+	sort.Strings(local)
+	m.Legacy.SuggestedDomains = unionSorted(nil, suggested)
+	m.Legacy.LocalHosts = local
+
+	// Clear generated domains; keep hand-added ones.
+	generated = append(append([]string{}, generated...), suggested...)
+	kept := []string{}
+	for _, d := range m.Site.Domains {
+		if !contains(generated, d) {
+			kept = append(kept, d)
+		}
+	}
+	m.Site.Domains = kept
+	if m.Site.StartURL == "" && len(hosts) > 0 {
+		m.Site.StartURL = "https://" + hosts[0] + "/"
+	}
+	if len(kept) > 0 {
+		if err := urlInDomains(m.Site.StartURL, kept); err != nil {
+			m.Site.StartURL = ""
+		}
 	}
 }
 

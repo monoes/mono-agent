@@ -3,6 +3,7 @@ package automation
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -59,7 +60,8 @@ func TestLegacyUpgradeAliasesAndValidity(t *testing.T) {
 	// google_maps and google-maps slug to the same id: one gets it, the
 	// other a hashed id, and both keep their own alias.
 	gm := by["google_maps"]
-	if !strings.HasPrefix(gm.ID, "local-google-maps") || strings.Join(gm.Domains, ",") != "maps.google.com" || gm.StartURL != "https://maps.google.com/" {
+	// Legacy packages run unrestricted: no domains, only a suggestion.
+	if !strings.HasPrefix(gm.ID, "local-google-maps") || len(gm.Domains) != 0 || gm.StartURL != "https://maps.google.com/" {
 		t.Errorf("google_maps: %+v", gm)
 	}
 	if other := by["google-maps"]; other.ID == gm.ID || !ValidID(other.ID) {
@@ -115,7 +117,7 @@ func TestLegacyUpgradeAliasesAndValidity(t *testing.T) {
 
 	// Export → install elsewhere works; the imported copy claims no alias.
 	var buf bytes.Buffer
-	if err := r.Export(gm.ID, &buf, ExportOptions{}); err != nil {
+	if err := r.Export(gm.ID, &buf, ExportOptions{Domains: []string{"*.google.com"}}); err != nil {
 		t.Fatal(err)
 	}
 	f := filepath.Join(t.TempDir(), "gm.mpkg")
@@ -193,7 +195,7 @@ func TestLegacyRefoldAfterUpgrade(t *testing.T) {
 		t.Fatalf("no refold: %+v", rep)
 	}
 	info, err := r.Info("local-google-maps")
-	if err != nil || info.LegacyPlatform != "google_maps" || info.Version != "1.0.1" || len(info.Domains) != 1 {
+	if err != nil || info.LegacyPlatform != "google_maps" || info.Version != "1.0.1" || len(info.Domains) != 0 {
 		t.Fatalf("refolded google_maps: %+v %v", info, err)
 	}
 	p, _ := r.Get("local-google-maps")
@@ -256,10 +258,10 @@ func TestLegacyAPIForRuntimeAndBundles(t *testing.T) {
 		}
 	}
 
-	// A generated package with no derivable site cannot be exported.
+	// A package that opens localhost cannot be exported.
 	var buf bytes.Buffer
 	err := both.Export(by["devtool"].ID, &buf, ExportOptions{})
-	if err == nil || !strings.Contains(err.Error(), "add site.domains") {
+	if !errors.Is(err, ErrNotExportable) || !strings.Contains(err.Error(), "localhost:3000") || !strings.Contains(err.Error(), "can't be exported") {
 		t.Errorf("export of a domainless legacy package: %v", err)
 	}
 }

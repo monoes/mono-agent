@@ -29,6 +29,17 @@ func Validate(p *Package) []IssueJSON {
 				out[i].Message = "generated from legacy actions: " + is.Message + " (it runs unrestricted, as before the upgrade)"
 			}
 		}
+		if l := m.Legacy; len(m.Site.Domains) == 0 {
+			if len(l.SuggestedDomains) > 0 {
+				out = append(out, IssueJSON{File: ManifestFile, Severity: "info", Code: "legacy_suggested_domains",
+					Message: "its actions open " + strings.Join(l.SuggestedDomains, ", ") +
+						": add these as site.domains to restrict it, or pass them to export with --domains"})
+			}
+			if len(l.LocalHosts) > 0 {
+				out = append(out, IssueJSON{File: ManifestFile, Severity: "info", Code: "legacy_local_hosts",
+					Message: "its actions open " + strings.Join(l.LocalHosts, ", ") + ", which only works on this computer: it can't be exported"})
+			}
+		}
 	}
 	if is := engineIssue(m); is != nil {
 		out = append(out, *is)
@@ -193,13 +204,9 @@ func safePath(p string) bool {
 }
 
 func sortIssues(is []IssueJSON) {
-	rank := func(s string) int {
-		if s == "error" {
-			return 0
-		}
-		return 1
-	}
-	sort.SliceStable(is, func(i, j int) bool { return rank(is[i].Severity) < rank(is[j].Severity) })
+	// errors, then warnings, then info
+	rank := map[string]int{"error": 0, "warning": 1, "info": 2}
+	sort.SliceStable(is, func(i, j int) bool { return rank[is[i].Severity] < rank[is[j].Severity] })
 }
 
 // HasErrors reports whether any issue is an error.
