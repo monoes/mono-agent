@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,23 +18,24 @@ func TestAutomationTrustAndReplaceBuiltin(t *testing.T) {
 
 	// An imported package may not silently replace the built-in.
 	out, _, err := runAutomationCLI(t, home, "automation", "install", file, "--yes", "--json")
-	if err == nil || !strings.Contains(out, "--replace-builtin") {
-		t.Fatalf("install over a built-in without --replace-builtin: err=%v out=%s", err, out)
+	if err == nil || !strings.Contains(out, "--replace") || !strings.Contains(out, `"replaceRequired":true`) {
+		t.Fatalf("install over a built-in without --replace: err=%v out=%s", err, out)
 	}
 
 	var dry map[string]json.RawMessage
-	mustJSON(t, home, &dry, "automation", "install", file, "--dry-run", "--replace-builtin")
+	mustJSON(t, home, &dry, "automation", "install", file, "--dry-run", "--replace")
 	var review map[string]json.RawMessage
 	if err := json.Unmarshal(dry["review"], &review); err != nil {
 		t.Fatal(err)
 	}
-	for _, k := range []string{"source", "trust", "replaces", "computedTier", "callActions", "scriptSources", "capabilities"} {
+	for _, k := range []string{"source", "trust", "replaces", "computedTier", "callActions", "scriptSources", "capabilities", "replaceRequired", "visibility"} {
 		if _, ok := review[k]; !ok {
 			t.Errorf("review missing %q", k)
 		}
 	}
 
 	var inst automation.InstallResult
+	// The deprecated, hidden --replace-builtin still confirms.
 	mustJSON(t, home, &inst, "automation", "install", file, "--yes", "--replace-builtin")
 	if !inst.Installed {
 		t.Fatalf("install = %+v", inst)
@@ -130,6 +132,35 @@ func TestAutomationInstallLocalAndNewInstall(t *testing.T) {
 		t.Fatalf("install --local = %+v", res)
 	}
 	if _, _, err := runAutomationCLI(t, home, "automation", "install", dir, "--yes", "--json"); err == nil {
-		t.Fatal("imported install over the local package succeeded without --replace-builtin")
+		t.Fatal("imported install over the local package succeeded without --replace")
+	}
+}
+
+// TestAutomationInstallReplaceOwnPackage: different content over the user's
+// own local package needs --replace; the identical content is a no-op.
+func TestAutomationInstallReplaceOwnPackage(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, "acme")
+	var created map[string]json.RawMessage
+	mustJSON(t, home, &created, "automation", "new", "acme", "--template", "basic", "--dir", dir,
+		"--start-url", "https://acme.test/", "--install")
+
+	var same automation.InstallResult
+	mustJSON(t, home, &same, "automation", "install", dir, "--local", "--yes")
+	if !same.Installed {
+		t.Fatalf("identical reinstall = %+v", same)
+	}
+
+	readme := filepath.Join(dir, "README.md")
+	b, _ := os.ReadFile(readme)
+	os.WriteFile(readme, append(b, []byte("\nchanged\n")...), 0o644)
+	out, _, err := runAutomationCLI(t, home, "automation", "install", dir, "--local", "--yes", "--json")
+	if err == nil || !strings.Contains(out, "--replace") {
+		t.Fatalf("changed local package without --replace: err=%v out=%s", err, out)
+	}
+	var res automation.InstallResult
+	mustJSON(t, home, &res, "automation", "install", dir, "--local", "--yes", "--replace")
+	if !res.Installed || res.PreviousVersion == "" {
+		t.Fatalf("--replace = %+v", res)
 	}
 }
