@@ -109,35 +109,9 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 	}
 	fmt.Printf("Checksum verified: %s SHA256 %s\n", assetName, sha256Hex(data))
 
-	tmp, err := os.CreateTemp("", "monoagentcli-update-*")
-	if err != nil {
-		return fmt.Errorf("temp file: %w", err)
+	if err := installBinary(data, selfPath); err != nil {
+		return err
 	}
-	tmpPath := tmp.Name()
-
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
-		return fmt.Errorf("write download: %w", err)
-	}
-	tmp.Close()
-
-	if err := os.Chmod(tmpPath, 0755); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("chmod: %w", err)
-	}
-
-	bak := selfPath + ".bak"
-	os.Remove(bak)
-	if err := os.Rename(selfPath, bak); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("backup: %w", err)
-	}
-	if err := os.Rename(tmpPath, selfPath); err != nil {
-		os.Rename(bak, selfPath) // rollback
-		return fmt.Errorf("install: %w", err)
-	}
-	os.Remove(bak)
 
 	fmt.Printf("Updated to %s\n", release.TagName)
 	return nil
@@ -284,4 +258,43 @@ func selfBinaryPath() (string, error) {
 		}
 	}
 	return "", fmt.Errorf("cannot locate own binary (argv[0]=%s)", arg0)
+}
+
+// installBinary atomically replaces target with data. The temp file is
+// created next to target, not in os.TempDir: /tmp is often a separate
+// filesystem (tmpfs), and a rename across filesystems fails with
+// "invalid cross-device link".
+func installBinary(data []byte, target string) error {
+	tmp, err := os.CreateTemp(filepath.Dir(target), ".monoagentcli-update-*")
+	if err != nil {
+		return fmt.Errorf("temp file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("write download: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("write download: %w", err)
+	}
+	if err := os.Chmod(tmpPath, 0755); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("chmod: %w", err)
+	}
+
+	bak := target + ".bak"
+	os.Remove(bak)
+	if err := os.Rename(target, bak); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("backup: %w", err)
+	}
+	if err := os.Rename(tmpPath, target); err != nil {
+		os.Rename(bak, target) // rollback
+		os.Remove(tmpPath)
+		return fmt.Errorf("install: %w", err)
+	}
+	os.Remove(bak)
+	return nil
 }
