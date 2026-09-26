@@ -91,3 +91,22 @@ func TestOldGenericConfigFitsGeneratedForms(t *testing.T) {
 		}
 	}
 }
+
+// A caller that sends only the form's required fields (CLI, MCP, API — no
+// editor pre-fill of limit) runs find_by_keyword: its result cap is
+// optional with a default.
+func TestFindByKeyword_RequiredFieldsOnly(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	action.SetDefSource(nil)
+	prev := globalSessionProvider
+	SetGlobalSessionProvider(&sessionRecorder{})
+	t.Cleanup(func() { SetGlobalSessionProvider(prev) })
+
+	for _, p := range []string{"instagram", "linkedin", "tiktok", "x"} {
+		_, err := NewBrowserNode(p, "find_by_keyword").Execute(context.Background(), workflow.NodeInput{},
+			map[string]interface{}{"keywords": "street photography"})
+		if !errors.Is(err, errStopAtPage) {
+			t.Errorf("%s.find_by_keyword with keywords only: %v", p, err)
+		}
+	}
+}

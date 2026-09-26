@@ -143,4 +143,16 @@ func TestLegacyUpgrade_GoogleMapsAliasResolves(t *testing.T) {
 	if r.Has("google-maps.get_place") {
 		t.Error("an alias was derived from the sanitised id (google-maps)")
 	}
+	// Its form offers google_maps' sessions (the legacy login), under
+	// both names.
+	for _, nt := range []string{"google_maps.get_place", bn.platform + ".get_place"} {
+		s, err := workflow.LoadDefaultSchema(nt)
+		if err != nil || s.CredentialPlatform == nil || *s.CredentialPlatform != "google_maps" {
+			got := "<nil>"
+			if s != nil && s.CredentialPlatform != nil {
+				got = *s.CredentialPlatform
+			}
+			t.Errorf("%s: credential_platform %s, want google_maps (%v)", nt, got, err)
+		}
+	}
 }

@@ -17,14 +17,15 @@
         "name": "keyword",
         "type": "string",
         "description": "Search keyword or hashtag"
-      },
-      {
-        "name": "maxResultsCount",
-        "type": "number",
-        "description": "Maximum number of results to collect"
       }
     ],
     "optional": [
+      {
+        "name": "maxResultsCount",
+        "type": "number",
+        "default": 20,
+        "description": "Maximum number of results to collect"
+      },
       {
         "name": "mediaType",
         "type": "string",
