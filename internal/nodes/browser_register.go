@@ -76,8 +76,8 @@ func legacyPlatform(id string) string {
 		}
 	}
 	if src := action.CurrentDefSource(); src != nil {
-		if lp, ok := src.Package(id).(interface{ LegacyAlias() string }); ok {
-			if a := lp.LegacyAlias(); a != "" {
+		if lp, ok := src.Package(id).(interface{ LegacyPlatform() string }); ok {
+			if a := lp.LegacyPlatform(); a != "" {
 				return a
 			}
 		}
