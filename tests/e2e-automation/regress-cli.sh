@@ -70,8 +70,11 @@ imp $F/wf-import.json; check import.first "$(j $R/imp.json 'd["status"]')" creat
 imp $F/wf-import.json; check import.identical "$(j $R/imp.json 'd["status"]')" unchanged
 NODE=$(m workflow node list $WID --json 2>/dev/null | python3 -c 'import json,sys;print([n["id"] for n in json.load(sys.stdin) if n["node_type"]!="trigger.manual"][0])')
 m workflow node set $WID $NODE --config "{\"url\":\"$E2E_SITE/contacts?edited=1\"}" >/dev/null 2>&1
-m workflow import --file $F/wf-import.json --overwrite --json >/dev/null 2>&1; rc=$?
+m workflow import --file $F/wf-import.json --overwrite --json > $R/imp-overwrite.json 2>/dev/null; rc=$?
 check import.overwrite-edited-refused "$([ $rc -ne 0 ] && echo refused || echo rc=$rc)" refused
+check import.json-error-on-stdout "$(j $R/imp-overwrite.json '"--replace" in d["error"]')" True "code=$(j $R/imp-overwrite.json 'd.get("code")')"
+m workflow import --file "$E2E_WORK/no-such-file.json" --json > $R/imp-missing.json 2>/dev/null; rc=$?
+check import.missing-file.json-error "$([ $rc -ne 0 ] && j $R/imp-missing.json 'bool(d["error"])')" True
 imp $F/wf-import.json
 check import.after-edit.copy "$(j $R/imp.json 'd["status"], d.get("copyOf"), d.get("copyReason")')" "created $WID id"
 check import.after-edit.warning-says-id "$(j $R/imp.json '"id already exists and was edited locally" in d["warnings"][0]')" True
