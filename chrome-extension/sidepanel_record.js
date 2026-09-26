@@ -71,7 +71,12 @@
 
   async function send(message) {
     const res = await ask(message); // sidepanel.js
-    if (!res || res.ok === false) throw new Error((res && res.error) || "the extension did not answer");
+    if (!res || res.ok === false) {
+      const err = new Error((res && res.error) || "the extension did not answer");
+      if (res && res.code) err.code = res.code;
+      if (res && res.data !== undefined) err.data = res.data;
+      throw err;
+    }
     return res;
   }
 
@@ -353,7 +358,7 @@
       const done = View.saveResult(res.result);
       say(draftMsg, done.warn ? "warn" : "ok", done.text);
     } catch (err) {
-      const conflict = View.selectorConflict(err.message, saveAutomation.value.trim());
+      const conflict = View.selectorConflict(err, saveAutomation.value.trim());
       if (conflict && !keepPackageSelectors) {
         say(draftMsg, "warn", `${conflict.text}. Save again keeping the package's current selectors, or re-record.`);
         keepBtn.hidden = false;

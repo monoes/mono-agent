@@ -242,3 +242,15 @@ test("a save's warnings are shown with its result", () => {
   assert.equal(kept.text, "Saved as contact.create. kept the package's current selector(s): name_input.");
   assert.equal(kept.warn, true);
 });
+
+test("the bridge's selector_conflict code and keys come first; other codes still fall back to the text", () => {
+  const byCode = V.selectorConflict(
+    { message: "anything at all", code: "selector_conflict", data: { keys: ["contact.name_input", "contact.save_button"] } },
+    "contact"
+  );
+  assert.deepEqual(byCode.keys, ["contact.name_input", "contact.save_button"], "keys are used as given");
+  assert.equal(byCode.text, "The package's selectors changed since this recording (re-recorded): contact.name_input, contact.save_button");
+  // An older bridge: the conflict only in the text, under a generic code.
+  assert.deepEqual(V.selectorConflict({ message: CONFLICT, code: "internal" }, "contact").keys, ["contact.name_input"]);
+  assert.equal(V.selectorConflict({ message: "draft not found", code: "bad_params" }), null);
+});

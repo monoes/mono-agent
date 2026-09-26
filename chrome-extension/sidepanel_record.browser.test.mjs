@@ -166,4 +166,17 @@ describe("the Record panel's Verify and Save results", { skip: browser ? false :
     assert.match(second.msg, /Saved as crm\.create_contact \(v1\.0\.4\)\. kept the package's current selector\(s\): name_input/);
     assert.equal(second.keep, false);
   });
+
+  it("the bridge's selector_conflict code with keys drives the same retry", async () => {
+    await browser.evaluate(`window.__saveRequests.length = 0; true`);
+    const refusal = { ok: false, error: "the package's selectors differ", code: "selector_conflict", data: { keys: ["crm.name_input", "crm.email_input"] } };
+    await browser.evaluate(`window.__save.push(${JSON.stringify(refusal)}); document.getElementById("rec-save").click(); true`);
+    await sleep(150);
+    const shown = await browser.evaluate(`document.getElementById("rec-draft-msg").textContent`);
+    assert.match(shown, /re-recorded\): crm\.name_input, crm\.email_input/);
+    await browser.evaluate(`window.__save.push(${JSON.stringify({ ok: true, result: { nodeType: "crm.create_contact" } })}); document.getElementById("rec-save-keep").click(); true`);
+    await sleep(150);
+    const reqs = JSON.parse(await browser.evaluate(`JSON.stringify(window.__saveRequests)`));
+    assert.deepEqual(reqs.map((r) => r.keepPackageSelectors), [false, true]);
+  });
 });
