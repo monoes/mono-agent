@@ -10,7 +10,9 @@ import (
 // over HTTP with its own API key, which mono-agent no longer does: AI runs
 // through local agents via monomind. It stays registered so a saved
 // workflow that still uses it fails with the migration hint from
-// workflow.DeprecatedNodeTypes instead of "unknown node type".
+// workflow.DeprecatedNodeTypes instead of "unknown node type". Its schema
+// (internal/workflow/schemas/service.openrouter.json) is hand-written and
+// empty: nothing it could be configured with is used.
 type OpenRouterNode struct{}
 
 func (n *OpenRouterNode) Type() string { return "service.openrouter" }
