@@ -59,7 +59,10 @@ func withJSONErrors(cfg *globalConfig, cmd *cobra.Command) {
 		err := run(c, args)
 		var rep reportedError
 		if err != nil && cfg.JSONOutput && !errors.As(err, &rep) {
-			body := map[string]any{"error": err.Error(), "code": jsonErrorCode(err)}
+			body := map[string]any{"error": err.Error()}
+			if code := jsonErrorCode(err); code != "" {
+				body["code"] = code
+			}
 			var re *installResultError
 			if errors.As(err, &re) {
 				body["issues"], body["result"] = re.res.Issues, re.res
@@ -71,8 +74,9 @@ func withJSONErrors(cfg *globalConfig, cmd *cobra.Command) {
 	}
 }
 
-// jsonErrorCode names an error's exit-code class for {"error","code"}:
-// not_found (2), invalid_input (3), auth_or_connection (4), else error.
+// jsonErrorCode names a classified error's exit-code class for
+// {"error","code"}: not_found (2), invalid_input (3), auth_or_connection
+// (4); "" for a plain error (exit 1), which prints {"error"} alone.
 func jsonErrorCode(err error) string {
 	switch exitCodeFor(err) {
 	case 2:
@@ -82,7 +86,7 @@ func jsonErrorCode(err error) string {
 	case 4:
 		return "auth_or_connection"
 	}
-	return "error"
+	return ""
 }
 
 // reportedError is a failure whose details the command already printed
