@@ -2,6 +2,9 @@ package nodes
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/monoes/mono-agent/internal/action"
@@ -60,7 +63,7 @@ type legacyPkg struct {
 	name string
 }
 
-func (p legacyPkg) LegacyPlatform() string { return p.name }
+func (p legacyPkg) LegacyAlias() string { return p.name }
 
 type legacySource struct {
 	fakeSource
@@ -96,5 +99,48 @@ func TestRegisterBrowserNodes_LegacyAliasUsesOriginalName(t *testing.T) {
 	// No recorded name: the id without "local-", as before.
 	if !r.Has("widgets.scrape") {
 		t.Error("widgets.scrape does not resolve")
+	}
+}
+
+// Upgrade path against the real registry: a pre-package
+// ~/.monoagent/actions/google_maps/get_place.json is wrapped into a local
+// package on boot, and workflows that say google_maps.get_place still find
+// (and would run) it.
+func TestLegacyUpgrade_GoogleMapsAliasResolves(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, ".monoagent", "actions", "google_maps")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "get_place.json"), []byte(`{
+	  "actionType": "get_place", "platform": "google_maps",
+	  "inputs": {"required": [{"name": "query", "type": "string"}]},
+	  "steps": [{"id": "open", "type": "navigate", "url": "https://www.google.com/maps/search/{{query}}"}]
+	}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := BootAutomations(filepath.Join(home, ".monoagent")); err != nil {
+		t.Fatalf("BootAutomations: %v", err)
+	}
+	t.Cleanup(func() { action.SetDefSource(nil) })
+
+	r := workflow.NewNodeTypeRegistry()
+	RegisterBrowserNodes(r)
+	f, ok := r.Get("google_maps.get_place")
+	if !ok {
+		t.Fatalf("google_maps.get_place does not resolve; registered: %v", r.Types())
+	}
+	bn := f().(*BrowserNode)
+	if !strings.HasPrefix(bn.platform, "local-google-maps") {
+		t.Fatalf("alias runs automation %q, want the wrapped local-google-maps package", bn.platform)
+	}
+	// The run path finds the definition through the registry.
+	def, err := action.GetLoader().Load(bn.platform, bn.actionType)
+	if err != nil || def.ActionType != "get_place" {
+		t.Fatalf("load %s/%s: %v", bn.platform, bn.actionType, err)
+	}
+	if r.Has("google-maps.get_place") {
+		t.Error("an alias was derived from the sanitised id (google-maps)")
 	}
 }
