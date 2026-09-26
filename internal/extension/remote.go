@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/monoes/mono-agent/internal/browser"
@@ -91,14 +94,62 @@ func (r *RemoteSender) SendCommand(cmd *Command, timeout time.Duration) (*Respon
 	}
 	defer httpResp.Body.Close()
 
-	var resp Response
-	if err := json.NewDecoder(httpResp.Body).Decode(&resp); err != nil {
-		return nil, fmt.Errorf("decode relay response: %w", err)
+	resp, err := decodeRelayResponse(httpResp)
+	if err != nil {
+		return nil, err
 	}
 	if !resp.Success {
-		return &resp, fmt.Errorf("extension error: %s", resp.Error)
+		return resp, fmt.Errorf("extension error: %s", resp.Error)
+	}
+	return resp, nil
+}
+
+// ErrRelayUnauthorized is a relay request the bridge refused (401/403):
+// this process's pairing token is not the bridge's — a different HOME, or
+// the token was reset since.
+var ErrRelayUnauthorized = errors.New("the bridge rejected this client: pairing token mismatch — run `monoagentcli extension status` / re-pair")
+
+// relayBodyPreview bounds how much of an unexpected relay body is quoted.
+const relayBodyPreview = 200
+
+// decodeRelayResponse reads a relay reply, checking the HTTP status before
+// the body: a refused or failed request answers with plain text
+// ("unauthorized"), and decoding that as JSON produced
+// "decode relay response: invalid character 'u'…", which named nothing
+// anyone could act on. A non-2xx reply that still carries a JSON Response
+// (the relay reporting the extension's own failure) is returned as is.
+func decodeRelayResponse(httpResp *http.Response) (*Response, error) {
+	if httpResp.StatusCode == http.StatusUnauthorized || httpResp.StatusCode == http.StatusForbidden {
+		return nil, ErrRelayUnauthorized
+	}
+	body, err := io.ReadAll(io.LimitReader(httpResp.Body, maxMessageSize))
+	if err != nil {
+		return nil, fmt.Errorf("read relay response: %w", err)
+	}
+	var resp Response
+	decodeErr := json.Unmarshal(body, &resp)
+	if httpResp.StatusCode < 200 || httpResp.StatusCode > 299 {
+		if decodeErr == nil && (resp.ID != "" || resp.Error != "") {
+			return &resp, nil
+		}
+		return nil, fmt.Errorf("relay request failed: %s: %s", httpResp.Status, previewBody(body))
+	}
+	if decodeErr != nil {
+		return nil, fmt.Errorf("decode relay response: %w", decodeErr)
 	}
 	return &resp, nil
+}
+
+// previewBody is a short, single-line quote of a reply body.
+func previewBody(b []byte) string {
+	s := strings.Join(strings.Fields(string(b)), " ")
+	if len(s) > relayBodyPreview {
+		s = s[:relayBodyPreview] + "…"
+	}
+	if s == "" {
+		return "(empty body)"
+	}
+	return s
 }
 
 // IsConnected reports whether the remote server currently has a live
