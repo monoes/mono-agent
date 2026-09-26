@@ -135,6 +135,38 @@
     error: "the page could not be recorded",
   };
 
+  /**
+   * selectorConflict reads a `record save` failure caused by selectors that
+   * changed in the package since the recording (e.g. `automation rerecord`).
+   * The bridge passes the CLI's message through with no code, so this reads
+   * the text: "selector(s) a, b differ from the package's current ones ...
+   * --keep-package-selectors", or the raw "selectors.json#key" mentions.
+   * Returns {keys, text} for the panel, or null for any other failure.
+   */
+  function selectorConflict(message, automation) {
+    const m = String(message || "");
+    if (!/--keep-package-selectors|differ from the package's current/.test(m)) return null;
+    let keys = [];
+    const listed = /selector\(s\) (.+?) differ from the package's current/.exec(m);
+    if (listed) keys = listed[1].split(/,\s*/);
+    if (!keys.length) keys = Array.from(m.matchAll(/selectors\.json#([^,\s]+)/g), (x) => x[1]);
+    keys = Array.from(new Set(keys.map((k) => k.trim()).filter(Boolean)));
+    const named = keys.map((k) => (automation && k.indexOf(".") === -1 ? `${automation}.${k}` : k));
+    const text = named.length
+      ? `The package's selectors changed since this recording (re-recorded): ${named.join(", ")}`
+      : "The package's selectors changed since this recording (re-recorded).";
+    return { keys: named, text };
+  }
+
+  /** saveResult is the line after a save: what was saved, and any warnings. */
+  function saveResult(r) {
+    const res = r || {};
+    const what = res.nodeType || [res.automation, res.action].filter(Boolean).join(".");
+    const line = `Saved${what ? ` as ${what}` : ""}${res.version ? ` (v${res.version})` : ""}.`;
+    const warnings = (res.warnings || []).filter(Boolean);
+    return { text: warnings.length ? `${line} ${warnings.join(". ")}.` : line, warn: warnings.length > 0 };
+  }
+
   /** hasErrors is true when a draft has error-level lint (saving needs "Save anyway"). */
   const hasErrors = (d) => !!d && (d.lint || []).some((l) => /^error$/i.test(l.level));
 
@@ -252,5 +284,5 @@
     return { ok, stoppedAt: r.stoppedAt || null, error, steps };
   }
 
-  root.MonoRecordView = { describe, rows, summary, hasErrors, sensitiveKind, targetName, hostPath, describeDraft, describeVerify };
+  root.MonoRecordView = { describe, rows, summary, hasErrors, selectorConflict, saveResult, sensitiveKind, targetName, hostPath, describeDraft, describeVerify };
 })(globalThis);

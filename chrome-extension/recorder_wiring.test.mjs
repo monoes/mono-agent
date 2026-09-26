@@ -281,3 +281,15 @@ test("a verify that fails with no report is a plain error", async () => {
   const res = await verifying;
   assert.deepEqual([res.ok, res.error], [false, "browser bridge not connected"]);
 });
+
+test("record_save passes keepPackageSelectors only as a real true (L2)", async () => {
+  const { g, wire, call, settle } = load();
+  for (const [keep, want] of [[true, true], [false, undefined], ["true", undefined]]) {
+    const saving = call({ type: "record_save", draftDir: "/d", automation: "contact", keepPackageSelectors: keep });
+    await settle();
+    const req = wire.filter((f) => f.method === "record.save").at(-1);
+    assert.equal(req.params.keepPackageSelectors, want, JSON.stringify(keep));
+    g.MonoAsk.handleFrame({ kind: "reply", id: req.id, ok: true, data: {} });
+    await saving;
+  }
+});
