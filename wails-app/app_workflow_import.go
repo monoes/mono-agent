@@ -33,6 +33,13 @@ const workflowImportTimeout = 3 * time.Minute
 type WorkflowImportOptions struct {
 	AsNew bool `json:"asNew"` // --as-new: always create a new workflow
 	Yes   bool `json:"yes"`   // --yes: install bundled automations that are missing
+	// Replace is the id of an existing workflow the file replaces in place
+	// (--replace <id>): the user chose "Replace the existing workflow
+	// instead" after an import that was kept as a copy.
+	Replace string `json:"replace"`
+	// RemoveCopy is the copy that earlier import made; it is deleted
+	// (`workflow delete --force`) once the replace succeeded.
+	RemoveCopy string `json:"removeCopy"`
 }
 
 // workflowImportArgs builds `[--profile P] --json workflow import [flags]`.
@@ -53,7 +60,43 @@ func workflowImportArgs(profileID, file string, o WorkflowImportOptions) []strin
 	if o.Yes {
 		args = append(args, "--yes")
 	}
+	if o.Replace != "" {
+		args = append(args, "--replace", o.Replace)
+	}
 	return args
+}
+
+// workflowDeleteArgs builds `[--profile P] workflow delete --force -- <id>`.
+func workflowDeleteArgs(profileID, id string) []string {
+	args := []string{}
+	if profileID != "" {
+		args = append(args, "--profile", profileID)
+	}
+	return append(args, "workflow", "delete", "--force", "--", id)
+}
+
+// validWorkflowID rejects ids that could be read as flags or are empty.
+func validWorkflowID(id string) error {
+	if strings.TrimSpace(id) == "" || strings.HasPrefix(id, "-") || strings.ContainsAny(id, " \n") {
+		return fmt.Errorf("invalid workflow id %q", id)
+	}
+	return nil
+}
+
+// withField adds one field to the CLI's JSON object (unchanged if the
+// output is not a JSON object).
+func withField(stdout, key string, value any) string {
+	var obj map[string]json.RawMessage
+	if json.Unmarshal([]byte(stdout), &obj) != nil {
+		return stdout
+	}
+	b, _ := json.Marshal(value)
+	obj[key] = b
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return stdout
+	}
+	return string(out)
 }
 
 // bundleReviewLines picks the CLI's per-package review lines out of stderr.
@@ -101,6 +144,16 @@ func (a *App) ImportWorkflowFull(input, optsJSON string) string {
 			return aiError(fmt.Errorf("import options: %w", err))
 		}
 	}
+	for _, id := range []string{opts.Replace, opts.RemoveCopy} {
+		if id != "" {
+			if err := validWorkflowID(id); err != nil {
+				return aiError(err)
+			}
+		}
+	}
+	if opts.RemoveCopy != "" && opts.Replace == "" {
+		return aiError(fmt.Errorf("removeCopy needs replace"))
+	}
 	file, stdin := "", []byte(nil)
 	if fileExists(input) {
 		file = input
@@ -139,10 +192,32 @@ func (a *App) ImportWorkflowFull(input, optsJSON string) string {
 	if runErr == nil {
 		res = withReviewLines(res, bundleReviewLines(stderr.Bytes()))
 		a.emitLog("WORKFLOW", "INFO", "workflow import finished")
+		if opts.RemoveCopy != "" {
+			res = a.removeImportCopy(ctx, cliBin, res, opts.RemoveCopy)
+		}
 	} else {
 		a.emitLog("WORKFLOW", "ERROR", "workflow import failed: "+res)
 	}
 	return res
+}
+
+// removeImportCopy deletes the copy an earlier import made, after the
+// replace went through, and records the outcome on the result.
+func (a *App) removeImportCopy(ctx context.Context, cliBin, res, copyID string) string {
+	args := workflowDeleteArgs(a.getActiveProfileID(), copyID)
+	a.emitLog("WORKFLOW", "INFO", fmt.Sprintf("$ %s %s", cliBin, strings.Join(args, " ")))
+	cmd := exec.CommandContext(ctx, cliBin, args...)
+	hideWindow(cmd)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			msg = err.Error()
+		}
+		a.emitLog("WORKFLOW", "ERROR", "removing the import copy failed: "+msg)
+		return withField(res, "removeCopyError", msg)
+	}
+	return withField(res, "removedCopy", copyID)
 }
 
 // ChooseWorkflowFile opens a native picker for a workflow .json file and
