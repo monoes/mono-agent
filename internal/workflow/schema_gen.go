@@ -26,6 +26,7 @@ type actionInput struct {
 	Enum        []interface{} `json:"enum"`
 	Options     []interface{} `json:"options"`
 	Format      string        `json:"format"`
+	Aliases     []string      `json:"aliases"`
 	UI          *inputUI      `json:"ui"`
 }
 
@@ -182,10 +183,15 @@ func inputField(ai actionInput, required bool) NodeSchemaField {
 		Min:      ai.Min,
 		Max:      ai.Max,
 	}
-	// The browser node takes its target list as "targets" and feeds it to
-	// the action as selectedListItems.
-	if ai.Name == "selectedListItems" {
-		f.Key, f.Label = "targets", "Targets"
+	// Inputs the browser node fills from its own config names are asked for
+	// under that name, so the form writes the config the node expects and
+	// workflows saved with the old generic form still fill it in.
+	switch key := nodeFacingKey(ai); key {
+	case ai.Name:
+	case "targets":
+		f.Key, f.Label = key, "Targets"
+	default:
+		f.Key = key
 	}
 
 	opts := ai.Options
@@ -210,6 +216,18 @@ func inputField(ai actionInput, required bool) NodeSchemaField {
 		f.Type = "text"
 	}
 
+	// The node reads these names as scalars whatever the input's own type.
+	switch f.Key {
+	case "message":
+		if f.Type == "text" || f.Type == "array" {
+			f.Type, f.ItemType, f.Rows = "textarea", "", 3
+		}
+	case "keywords":
+		f.Type, f.ItemType = "text", ""
+	case "limit":
+		f.Type, f.ItemType = "number", ""
+	}
+
 	if ui := ai.UI; ui != nil {
 		if ui.Label != "" {
 			f.Label = ui.Label
@@ -232,6 +250,41 @@ func inputField(ai actionInput, required bool) NodeSchemaField {
 
 // acronyms are written in capitals in generated labels ("postUrl" → "Post URL").
 var acronyms = map[string]bool{"url": true, "id": true, "api": true, "dm": true, "html": true, "json": true}
+
+// nodeFacingKeys are the browser node's config names and the action inputs
+// it fills from them (see BrowserNode.Execute and the action's variable
+// seeding): targets → selectedListItems; message → the message/comment/
+// reply text variables; keywords → keyword(s); limit → maxResultsCount.
+var nodeFacingKeys = map[string]string{
+	"selectedListItems": "targets",
+	"targets":           "targets",
+	"message":           "message",
+	"messageText":       "message",
+	"contentMessage":    "message",
+	"commentText":       "message",
+	"replyText":         "message",
+	"text":              "message",
+	"keyword":           "keywords",
+	"keywords":          "keywords",
+	"maxResultsCount":   "limit",
+	"limit":             "limit",
+}
+
+// nodeFacingKey is the config name the form uses for an input: its node
+// mapping, else a scalar node name among its aliases (e.g. maxComments
+// aliased to limit), else the input's own name. A scalar input aliased to
+// "targets" keeps its name: the node only reads targets as a list.
+func nodeFacingKey(ai actionInput) string {
+	if k, ok := nodeFacingKeys[ai.Name]; ok {
+		return k
+	}
+	for _, a := range ai.Aliases {
+		if k, ok := nodeFacingKeys[a]; ok && k != "targets" {
+			return k
+		}
+	}
+	return ai.Name
+}
 
 // humanizeName turns "maxComments" or "max_comments" into "Max Comments".
 func humanizeName(name string) string {

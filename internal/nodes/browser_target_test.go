@@ -58,3 +58,36 @@ func TestListUserPosts_TargetIsNotTheSession(t *testing.T) {
 		t.Errorf("sessions = %v, want %v", rec.sessions, want)
 	}
 }
+
+// A workflow saved with the old generic form (message + targets) fills
+// every required field of the new generated form and passes the action's
+// input validation.
+func TestOldGenericConfigFitsGeneratedForms(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	action.SetDefSource(nil)
+	rec := &sessionRecorder{}
+	prev := globalSessionProvider
+	SetGlobalSessionProvider(rec)
+	t.Cleanup(func() { SetGlobalSessionProvider(prev) })
+
+	old := map[string]interface{}{
+		"message": "Thanks!",
+		"targets": []interface{}{"https://example.com/p/1"},
+	}
+	for _, nt := range []string{"instagram.reply_to_comments", "tiktok.comment_on_video", "linkedin.list_post_comments"} {
+		s, err := workflow.LoadDefaultSchema(nt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range s.Fields {
+			if _, set := old[f.Key]; f.Required && !set && f.Default == nil {
+				t.Errorf("%s: required field %q is not filled by an old message+targets config", nt, f.Key)
+			}
+		}
+		dot := strings.Index(nt, ".")
+		_, err = NewBrowserNode(nt[:dot], nt[dot+1:]).Execute(context.Background(), workflow.NodeInput{}, old)
+		if !errors.Is(err, errStopAtPage) {
+			t.Errorf("%s: old config failed before opening a tab: %v", nt, err)
+		}
+	}
+}

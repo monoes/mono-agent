@@ -248,11 +248,12 @@
         "help": "Numeric item or comment ID to reply to"
       },
       {
-        "key": "text",
+        "key": "message",
         "label": "Text",
-        "type": "text",
+        "type": "textarea",
         "required": true,
-        "help": "Reply text"
+        "help": "Reply text",
+        "rows": 3
       }
     ]
   },
@@ -281,11 +282,12 @@
         "help": "Link URL (absolute http/https)"
       },
       {
-        "key": "text",
+        "key": "message",
         "label": "Text",
-        "type": "text",
+        "type": "textarea",
         "required": false,
-        "help": "Post text (Ask/Show HN body; with a url it becomes the first comment, as on HN)"
+        "help": "Post text (Ask/Show HN body; with a url it becomes the first comment, as on HN)",
+        "rows": 3
       }
     ]
   },
@@ -520,7 +522,7 @@
         "item_type": "text"
       },
       {
-        "key": "maxComments",
+        "key": "limit",
         "label": "Max Comments",
         "type": "number",
         "required": false,
@@ -651,11 +653,12 @@
         "item_type": "text"
       },
       {
-        "key": "replyText",
+        "key": "message",
         "label": "Reply Text",
-        "type": "text",
+        "type": "textarea",
         "required": true,
-        "help": "Reply text to post"
+        "help": "Reply text to post",
+        "rows": 3
       },
       {
         "key": "commentAuthor",
@@ -1099,11 +1102,12 @@
         "help": "Product Hunt launch page URL (https://www.producthunt.com/...)"
       },
       {
-        "key": "text",
+        "key": "message",
         "label": "Text",
-        "type": "text",
+        "type": "textarea",
         "required": true,
-        "help": "Comment text"
+        "help": "Comment text",
+        "rows": 3
       }
     ]
   },
@@ -1193,11 +1197,12 @@
         "item_type": "text"
       },
       {
-        "key": "commentText",
+        "key": "message",
         "label": "Comment Text",
-        "type": "text",
+        "type": "textarea",
         "required": true,
-        "help": "Comment text (supports {{templates}})"
+        "help": "Comment text (supports {{templates}})",
+        "rows": 3
       },
       {
         "key": "delayBetweenComments",

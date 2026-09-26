@@ -209,3 +209,31 @@ func TestHumanizeName(t *testing.T) {
 		}
 	}
 }
+
+// Inputs the browser node fills from its own config names are asked for
+// under those names, typed as the node reads them.
+func TestInputField_NodeFacingKeys(t *testing.T) {
+	for _, c := range []struct {
+		in       actionInput
+		key, typ string
+	}{
+		{actionInput{Name: "commentText", Type: "string"}, "message", "textarea"},
+		{actionInput{Name: "replyText", Type: "string"}, "message", "textarea"},
+		{actionInput{Name: "selectedListItems", Type: "list"}, "targets", "array"},
+		{actionInput{Name: "maxResultsCount", Type: "number"}, "limit", "number"},
+		{actionInput{Name: "maxComments", Type: "number", Aliases: []string{"limit"}}, "limit", "number"},
+		{actionInput{Name: "searches", Type: "array", Aliases: []string{"keywords", "keyword"}}, "keywords", "text"},
+		// A scalar aliased to targets keeps its name: the node reads targets as a list.
+		{actionInput{Name: "target_url", Type: "string", Aliases: []string{"targets", "username"}}, "target_url", "text"},
+		{actionInput{Name: "itemID", Type: "string"}, "itemID", "text"},
+	} {
+		f := inputField(c.in, true)
+		if f.Key != c.key || f.Type != c.typ {
+			t.Errorf("%s: key %q type %q, want %q %q", c.in.Name, f.Key, f.Type, c.key, c.typ)
+		}
+	}
+	// The label still says what the action wants.
+	if f := inputField(actionInput{Name: "commentText", Type: "string"}, true); f.Label != "Comment Text" {
+		t.Errorf("label %q", f.Label)
+	}
+}
