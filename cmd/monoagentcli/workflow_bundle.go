@@ -11,7 +11,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 
@@ -50,30 +49,21 @@ type workflowBundleFile struct {
 
 // bundleWorkflowAutomations exports every installed automation the
 // workflow's nodes use into the file's "automations" field.
-// domains sets site.domains in the named packages' exported copies
-// (--bundle-domains); a domain for a package the workflow does not use is
-// an error.
-func bundleWorkflowAutomations(file workflow.WorkflowFile, domains map[string][]string) (workflowBundleFile, error) {
+func bundleWorkflowAutomations(file workflow.WorkflowFile) (workflowBundleFile, error) {
 	out := workflowBundleFile{WorkflowFile: file}
 	reg, err := openAutomationRegistry()
 	if err != nil {
 		return out, err
 	}
 	resolve := packageResolver(reg)
-	ids := workflowAutomationIDs(file.Nodes, resolve)
-	for id := range domains {
-		if !slices.Contains(ids, id) {
-			return out, fmt.Errorf("--bundle-domains %s: the workflow does not use automation %s (it uses: %s)", id, id, strings.Join(ids, ", "))
-		}
-	}
-	for _, id := range ids {
+	for _, id := range workflowAutomationIDs(file.Nodes, resolve) {
 		info, err := reg.Info(id)
 		if err != nil {
 			continue
 		}
 		var buf bytes.Buffer
-		if err := reg.Export(id, &buf, automation.ExportOptions{Domains: domains[id]}); err != nil {
-			return out, fmt.Errorf("bundle automation %s: %w%s", id, err, bundleDomainsHint(reg, id, err))
+		if err := reg.Export(id, &buf, automation.ExportOptions{}); err != nil {
+			return out, fmt.Errorf("bundle automation %s: %w", id, err)
 		}
 		sum := sha256.Sum256(buf.Bytes())
 		if out.Automations == nil {
@@ -87,33 +77,6 @@ func bundleWorkflowAutomations(file workflow.WorkflowFile, domains map[string][]
 	}
 	out.Nodes = canonicalNodeTypes(file.Nodes, resolve, out.Automations)
 	return out, nil
-}
-
-// parseBundleDomains reads --bundle-domains values "<id>=<site,…>".
-func parseBundleDomains(vals []string) (map[string][]string, error) {
-	out := map[string][]string{}
-	for _, v := range vals {
-		id, list, ok := strings.Cut(v, "=")
-		id = strings.TrimSpace(id)
-		if !ok || id == "" || len(splitCSV(list)) == 0 {
-			return nil, fmt.Errorf("--bundle-domains wants <id>=<site,…>, got %q", v)
-		}
-		out[id] = splitCSV(list)
-	}
-	return out, nil
-}
-
-// bundleDomainsHint turns the registry's "export it with --domains …"
-// advice into the flag workflow export takes.
-func bundleDomainsHint(reg *automation.Registry, id string, err error) string {
-	if !errors.Is(err, automation.ErrNotExportable) {
-		return ""
-	}
-	suggested := "<site,…>"
-	if p, gerr := reg.Get(id); gerr == nil && p.Manifest.Legacy != nil && len(p.Manifest.Legacy.SuggestedDomains) > 0 {
-		suggested = strings.Join(p.Manifest.Legacy.SuggestedDomains, ",")
-	}
-	return fmt.Sprintf(" — with workflow export, pass --bundle-domains %s=%s", id, suggested)
 }
 
 // workflowAutomationIDs returns the sorted, distinct package ids used by

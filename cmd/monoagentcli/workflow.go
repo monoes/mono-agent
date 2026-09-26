@@ -1538,7 +1538,6 @@ func workflowFileFromWorkflow(wf *workflow.Workflow) workflow.WorkflowFile {
 func newWorkflowExportCmd(cfg *globalConfig) *cobra.Command {
 	var outputFile string
 	var bundle bool
-	var bundleDomains []string
 
 	cmd := &cobra.Command{
 		Use:   "export <id>",
@@ -1564,11 +1563,7 @@ func newWorkflowExportCmd(cfg *globalConfig) *cobra.Command {
 
 			var wfFile interface{} = workflowFileFromWorkflow(wf)
 			if bundle {
-				domains, err := parseBundleDomains(bundleDomains)
-				if err != nil {
-					return err
-				}
-				if wfFile, err = bundleWorkflowAutomations(workflowFileFromWorkflow(wf), domains); err != nil {
+				if wfFile, err = bundleWorkflowAutomations(workflowFileFromWorkflow(wf)); err != nil {
 					return err
 				}
 			}
@@ -1595,7 +1590,6 @@ func newWorkflowExportCmd(cfg *globalConfig) *cobra.Command {
 
 	cmd.Flags().StringVarP(&outputFile, "output", "o", "", "Write to file instead of stdout")
 	cmd.Flags().BoolVar(&bundle, "bundle-automations", false, "Embed the automation packages the workflow's nodes use")
-	cmd.Flags().StringArrayVar(&bundleDomains, "bundle-domains", nil, "With --bundle-automations: <id>=<site,…> sets site.domains in that bundled package (repeatable; e.g. for a legacy package that lists none)")
 	return cmd
 }
 

@@ -135,14 +135,7 @@ func TestWorkflowBundleLegacyAlias(t *testing.T) {
 				t.Fatal(err)
 			}
 			bundled := filepath.Join(t.TempDir(), "bundled.json")
-			// A legacy package runs unrestricted and lists no sites; the
-			// bundle names them (D8), here the registry's suggestion.
-			p, err := reg.Get(pkgID)
-			if err != nil || p.Manifest.Legacy == nil || len(p.Manifest.Legacy.SuggestedDomains) == 0 {
-				t.Fatalf("legacy package %s has no suggested domains: %v", pkgID, err)
-			}
-			runWorkflowSubcmd(t, cfg, "export", imported.ID, "--bundle-automations", "-o", bundled,
-				"--bundle-domains", pkgID+"="+strings.Join(p.Manifest.Legacy.SuggestedDomains, ","))
+			runWorkflowSubcmd(t, cfg, "export", imported.ID, "--bundle-automations", "-o", bundled)
 			raw, err := os.ReadFile(bundled)
 			if err != nil {
 				t.Fatal(err)
@@ -255,25 +248,13 @@ func TestWorkflowBundleLegacyWithoutDomainsFails(t *testing.T) {
 		cmd.SilenceUsage, cmd.SilenceErrors = true, true
 		runErr = cmd.Execute()
 	})
-	if runErr == nil || !strings.Contains(runErr.Error(), "cannot export") || !strings.Contains(runErr.Error(), "--bundle-domains local-nosite=") {
+	if runErr == nil || !strings.Contains(runErr.Error(), "cannot export") {
 		t.Fatalf("export of a domainless legacy package: err = %v", runErr)
 	}
 	if b, err := os.ReadFile(out); err == nil && len(b) > 0 {
 		var doc workflowBundleFile
 		if json.Unmarshal(b, &doc) == nil && len(doc.Automations) > 0 {
 			t.Fatal("a bundle with an uninstallable package was written")
-		}
-	}
-}
-
-func TestParseBundleDomains(t *testing.T) {
-	got, err := parseBundleDomains([]string{"local-a=a.test, www.a.test", "b=b.test"})
-	if err != nil || strings.Join(got["local-a"], ",") != "a.test,www.a.test" || len(got["b"]) != 1 {
-		t.Fatalf("got %v, %v", got, err)
-	}
-	for _, bad := range []string{"noequals", "=a.test", "x="} {
-		if _, err := parseBundleDomains([]string{bad}); err == nil {
-			t.Errorf("%q accepted", bad)
 		}
 	}
 }
