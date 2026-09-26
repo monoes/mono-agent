@@ -1,0 +1,74 @@
+{
+  "banner.accept": {
+    "candidates": [
+      {
+        "aria": {
+          "role": "button",
+          "name": "Accept"
+        },
+        "score": 0.8
+      },
+      {
+        "text": "Accept all",
+        "score": 0.5
+      }
+    ],
+    "intent": "the Accept button of the cookie or consent banner"
+  },
+  "post.title": {
+    "candidates": [
+      {
+        "css": "input[name='title']",
+        "score": 0.9
+      },
+      {
+        "aria": {
+          "role": "textbox",
+          "name": "Title"
+        },
+        "score": 0.8
+      }
+    ],
+    "intent": "the Title field of the new-post form"
+  },
+  "post.body": {
+    "candidates": [
+      {
+        "css": "textarea[name='body']",
+        "score": 0.9
+      },
+      {
+        "css": "[contenteditable='true']",
+        "score": 0.6
+      },
+      {
+        "aria": {
+          "role": "textbox",
+          "name": "Body"
+        },
+        "score": 0.7
+      }
+    ],
+    "intent": "the Body / content field of the new-post form"
+  },
+  "post.publish": {
+    "candidates": [
+      {
+        "css": "form button[type='submit']",
+        "score": 0.8
+      },
+      {
+        "aria": {
+          "role": "button",
+          "name": "Publish"
+        },
+        "score": 0.9
+      },
+      {
+        "text": "Publish",
+        "score": 0.6
+      }
+    ],
+    "intent": "the Publish button of the new-post form"
+  }
+}

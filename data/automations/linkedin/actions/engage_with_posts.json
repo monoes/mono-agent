@@ -1,0 +1,184 @@
+{
+  "$schema": "../../../schemas/action.v1.schema.json",
+  "actionType": "engage_with_posts",
+  "platform": "LINKEDIN",
+  "version": "2.0.0",
+  "description": "React to (and optionally comment on) LinkedIn posts: the given post URLs, or the posts a keyword search finds",
+  "sideEffects": "message",
+  "metadata": {
+    "requiresAuth": true,
+    "supportsPagination": false,
+    "supportsRetry": true
+  },
+  "inputs": {
+    "required": [],
+    "optional": [
+      {
+        "name": "selectedListItems",
+        "type": "list",
+        "description": "Post URLs to engage with (when empty, posts are found by keyword)"
+      },
+      {
+        "name": "maxContentCount",
+        "type": "number",
+        "default": 10,
+        "min": 1,
+        "max": 100,
+        "description": "How many posts to engage with"
+      },
+      {
+        "name": "searches",
+        "type": "list",
+        "description": "[{\"keyword\": \"...\"}] — the first keyword is searched"
+      },
+      {
+        "name": "keyword",
+        "type": "string",
+        "description": "Keyword to search when searches is not given"
+      },
+      {
+        "name": "reaction",
+        "type": "select",
+        "default": "like",
+        "options": [
+          "like",
+          "celebrate",
+          "support",
+          "love",
+          "insightful",
+          "funny",
+          "none"
+        ]
+      },
+      {
+        "name": "commentText",
+        "type": "string",
+        "default": "",
+        "description": "Comment to post on each post (empty: no comment)"
+      },
+      {
+        "name": "delayBetweenPosts",
+        "type": "number",
+        "default": 10,
+        "min": 1,
+        "max": 600
+      }
+    ]
+  },
+  "outputs": {
+    "success": [
+      "itemsCount",
+      "reachedIndex"
+    ],
+    "failure": [
+      "failedItems"
+    ]
+  },
+  "steps": [
+    {
+      "id": "choose_posts",
+      "type": "condition",
+      "condition": "selectedListItems",
+      "then": [
+        "use_given_posts"
+      ],
+      "else": [
+        "find_posts"
+      ]
+    },
+    {
+      "id": "use_given_posts",
+      "type": "set_variable",
+      "variable_name": "posts",
+      "value": "{{selectedListItems}}"
+    },
+    {
+      "id": "find_posts",
+      "type": "call_bot_method",
+      "methodName": "search_posts",
+      "args": [
+        "{{searches[0].keyword or keyword}}",
+        "{{maxContentCount or 10}}"
+      ],
+      "variable_name": "posts",
+      "timeout": 120,
+      "onError": {
+        "action": "mark_failed"
+      }
+    },
+    {
+      "id": "check_react",
+      "type": "condition",
+      "condition": "reaction != 'none'",
+      "then": [
+        "react"
+      ],
+      "else": []
+    },
+    {
+      "id": "react",
+      "sideEffect": true,
+      "type": "call_bot_method",
+      "methodName": "like_post",
+      "args": [
+        "{{item.url}}",
+        "{{reaction or 'like'}}"
+      ],
+      "variable_name": "reactResult",
+      "timeout": 60,
+      "onError": {
+        "action": "mark_failed"
+      }
+    },
+    {
+      "id": "check_comment",
+      "type": "condition",
+      "condition": "commentText != ''",
+      "then": [
+        "comment"
+      ],
+      "else": []
+    },
+    {
+      "id": "comment",
+      "sideEffect": true,
+      "type": "call_bot_method",
+      "methodName": "comment_on_post",
+      "args": [
+        "{{item.url}}",
+        "{{commentText}}",
+        ""
+      ],
+      "variable_name": "commentResult",
+      "timeout": 90,
+      "onError": {
+        "action": "mark_failed"
+      }
+    },
+    {
+      "id": "wait",
+      "type": "wait",
+      "duration": "{{delayBetweenPosts or 10}}",
+      "waitFor": "time"
+    },
+    {
+      "id": "log",
+      "type": "log",
+      "value": "Engaged with: {{item.url}}"
+    }
+  ],
+  "loops": [
+    {
+      "id": "process_content",
+      "iterator": "posts",
+      "indexVar": "reachedIndex",
+      "maxItems": "{{maxContentCount or 0}}",
+      "steps": [
+        "check_react",
+        "check_comment",
+        "wait",
+        "log"
+      ]
+    }
+  ]
+}

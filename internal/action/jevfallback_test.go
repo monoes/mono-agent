@@ -373,11 +373,16 @@ func TestActionIntentsAreValid(t *testing.T) {
 		return (typ == "find_element" || typ == "click" || typ == "type") && (sel != "" || xp != "")
 	}
 	count := 0
-	err := fs.WalkDir(data.ActionsFS, "actions", func(path string, d fs.DirEntry, err error) error {
+	err := fs.WalkDir(data.AutomationsFS, "automations", func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".json") {
 			return err
 		}
-		raw, err := data.ActionsFS.ReadFile(path)
+		// Only action files (automations/<p>/actions/<a>.json): packages
+		// also ship manifests, fragments and test expectations.
+		if parts := strings.Split(path, "/"); len(parts) != 4 || parts[2] != "actions" {
+			return nil
+		}
+		raw, err := data.AutomationsFS.ReadFile(path)
 		if err != nil {
 			return err
 		}
@@ -391,7 +396,7 @@ func TestActionIntentsAreValid(t *testing.T) {
 		for _, s := range def.Steps {
 			v, ok := s["intent"]
 			if !ok {
-				if strings.HasPrefix(path, "actions/gemini/") && elementStep(s) {
+				if strings.HasPrefix(path, "automations/gemini/actions/") && elementStep(s) {
 					t.Errorf("%s step %v: gemini element step without an intent", path, s["id"])
 				}
 				continue
@@ -411,8 +416,8 @@ func TestActionIntentsAreValid(t *testing.T) {
 			}
 		}
 		if hasIntent {
-			parts := strings.Split(strings.TrimSuffix(path, ".json"), "/") // actions/<platform>/<type>
-			def2, err := GetLoader().Load(parts[1], parts[2])
+			parts := strings.Split(strings.TrimSuffix(path, ".json"), "/") // automations/<platform>/actions/<type>
+			def2, err := GetLoader().Load(parts[1], parts[3])
 			if err != nil {
 				return fmt.Errorf("%s: %w", path, err)
 			}

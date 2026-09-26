@@ -1,0 +1,120 @@
+{
+  "$schema": "../../../schemas/action.v1.schema.json",
+  "actionType": "like_posts",
+  "platform": "INSTAGRAM",
+  "version": "2.0.0",
+  "description": "Like Instagram posts from a list of post URLs. The bot finds the post's own heart (never a comment's), leaves an already-liked post alone (never clicks Unlike) and verifies each like; an unverified like fails the item.",
+  "sideEffects": "write",
+  "metadata": {
+    "requiresAuth": true,
+    "supportsPagination": false,
+    "supportsRetry": true
+  },
+  "inputs": {
+    "required": [
+      {
+        "name": "selectedListItems",
+        "type": "list",
+        "description": "Post URLs to like"
+      }
+    ],
+    "optional": [
+      {
+        "name": "maxLikesPerSession",
+        "type": "number",
+        "default": 50,
+        "min": 1,
+        "max": 500,
+        "description": "Rate limit: max likes per session"
+      },
+      {
+        "name": "delayBetweenLikes",
+        "type": "number",
+        "default": 3,
+        "min": 1,
+        "max": 60,
+        "description": "Seconds to wait between likes"
+      },
+      {
+        "name": "randomizeOrder",
+        "type": "boolean",
+        "default": false,
+        "description": "Process items in random order"
+      }
+    ]
+  },
+  "outputs": {
+    "success": [
+      "likesCount",
+      "reachedIndex"
+    ],
+    "failure": [
+      "failedLikes"
+    ]
+  },
+  "steps": [
+    {
+      "id": "reset_likeResult",
+      "type": "set_variable",
+      "variable_name": "likeResult",
+      "value": null
+    },
+    {
+      "id": "like_post",
+      "sideEffect": true,
+      "type": "call_bot_method",
+      "methodName": "like_post",
+      "args": [
+        "{{item.url or item.href or item}}"
+      ],
+      "variable_name": "likeResult",
+      "timeout": 90,
+      "onError": {
+        "action": "mark_failed"
+      }
+    },
+    {
+      "id": "check_liked",
+      "type": "condition",
+      "condition": {
+        "variable": "likeResult",
+        "operator": "exists"
+      },
+      "then": [
+        "log_success"
+      ]
+    },
+    {
+      "id": "log_success",
+      "type": "log",
+      "description": "Post liked",
+      "value": "Post: {{item.url}} ({{likeResult.status}})"
+    },
+    {
+      "id": "wait_between_likes",
+      "type": "wait",
+      "duration": "{{delayBetweenLikes or 3}}",
+      "waitFor": "time"
+    }
+  ],
+  "loops": [
+    {
+      "id": "process_posts",
+      "iterator": "selectedListItems",
+      "indexVar": "reachedIndex",
+      "maxItems": "{{maxLikesPerSession or 50}}",
+      "steps": [
+        "reset_likeResult",
+        "like_post",
+        "check_liked",
+        "wait_between_likes"
+      ],
+      "onComplete": "update_action_state"
+    }
+  ],
+  "errorHandling": {
+    "globalRetries": 0,
+    "retryDelay": 2000,
+    "onFinalFailure": "log_and_continue"
+  }
+}

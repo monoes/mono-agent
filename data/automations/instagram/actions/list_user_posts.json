@@ -1,0 +1,82 @@
+{
+  "$schema": "../../../schemas/action.v1.schema.json",
+  "actionType": "list_user_posts",
+  "platform": "INSTAGRAM",
+  "version": "2.0.0",
+  "description": "List posts from an Instagram profile's grid (url, shortcode, type, author, thumbnail, alt text). The profile is target_url / targetUsername when given, else username.",
+  "sideEffects": "read",
+  "metadata": {
+    "requiresAuth": true,
+    "supportsPagination": false,
+    "supportsRetry": true
+  },
+  "inputs": {
+    "required": [
+      {
+        "name": "username",
+        "type": "string",
+        "description": "Instagram username to list posts from (without @)"
+      }
+    ],
+    "optional": [
+      {
+        "name": "maxCount",
+        "type": "number",
+        "default": 20,
+        "min": 1,
+        "max": 200,
+        "description": "Maximum number of posts to return"
+      },
+      {
+        "name": "delayAfterLoad",
+        "type": "number",
+        "default": 3,
+        "min": 1,
+        "max": 30,
+        "description": "Seconds to wait after page load"
+      }
+    ]
+  },
+  "outputs": {
+    "success": [
+      "posts",
+      "postsCount"
+    ],
+    "failure": []
+  },
+  "steps": [
+    {
+      "id": "list_posts",
+      "type": "call_bot_method",
+      "methodName": "list_user_posts",
+      "args": [
+        "{{target_url or targetUsername or username}}",
+        "{{maxCount or limit or 20}}"
+      ],
+      "variable_name": "posts",
+      "timeout": 180,
+      "onError": {
+        "action": "mark_failed"
+      }
+    },
+    {
+      "id": "store_count",
+      "type": "update_progress",
+      "set": {
+        "postsCount": "{{posts.count}}"
+      }
+    },
+    {
+      "id": "log_success",
+      "type": "log",
+      "description": "Posts listed",
+      "value": "Count: {{postsCount}}"
+    }
+  ],
+  "loops": [],
+  "errorHandling": {
+    "globalRetries": 0,
+    "retryDelay": 2000,
+    "onFinalFailure": "log_and_continue"
+  }
+}

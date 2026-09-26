@@ -1,0 +1,78 @@
+{
+  "$schema": "../../../schemas/action.v1.schema.json",
+  "actionType": "scrape_profile_info",
+  "platform": "LINKEDIN",
+  "version": "2.0.0",
+  "description": "Extract profile information (name, headline, location, about, connection and follower counts) from LinkedIn profiles",
+  "sideEffects": "read",
+  "metadata": {
+    "requiresAuth": true,
+    "supportsPagination": false,
+    "supportsRetry": true
+  },
+  "inputs": {
+    "required": [
+      {
+        "name": "selectedListItems",
+        "type": "list",
+        "description": "Profile URLs or usernames to read"
+      }
+    ],
+    "optional": [
+      {
+        "name": "delayBetweenProfiles",
+        "type": "number",
+        "default": 3,
+        "min": 1,
+        "max": 120
+      }
+    ]
+  },
+  "outputs": {
+    "success": [
+      "profilesCount",
+      "reachedIndex"
+    ],
+    "failure": [
+      "failedItems"
+    ]
+  },
+  "steps": [
+    {
+      "id": "get_profile",
+      "type": "call_bot_method",
+      "methodName": "get_profile_data",
+      "args": [
+        "{{item.url or item.href or item.username or item}}"
+      ],
+      "variable_name": "profile",
+      "timeout": 90,
+      "onError": {
+        "action": "mark_failed"
+      }
+    },
+    {
+      "id": "wait",
+      "type": "wait",
+      "duration": "{{delayBetweenProfiles or 3}}",
+      "waitFor": "time"
+    },
+    {
+      "id": "log",
+      "type": "log",
+      "value": "Profile: {{profile.full_name}} ({{item.url or item}})"
+    }
+  ],
+  "loops": [
+    {
+      "id": "process_profiles",
+      "iterator": "selectedListItems",
+      "indexVar": "reachedIndex",
+      "steps": [
+        "get_profile",
+        "wait",
+        "log"
+      ]
+    }
+  ]
+}

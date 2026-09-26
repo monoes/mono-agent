@@ -1,0 +1,47 @@
+{
+  "$schema": "../../../schemas/action.v1.schema.json",
+  "actionType": "publish_post",
+  "platform": "X",
+  "version": "2.0.0",
+  "description": "Publish a post (tweet) to X (Twitter), optionally with media; the post is verified to have left the composer",
+  "sideEffects": "write",
+  "metadata": {
+    "requiresAuth": true,
+    "supportsPagination": false,
+    "supportsRetry": false
+  },
+  "inputs": {
+    "required": [
+      { "name": "text", "type": "string", "description": "Post text" }
+    ],
+    "optional": [
+      { "name": "media", "type": "list", "description": "Image/video file paths to attach (comma-separated or a list)" }
+    ]
+  },
+  "outputs": {
+    "success": [],
+    "failure": []
+  },
+  "steps": [
+    {
+      "id": "publish_post",
+      "sideEffect": true,
+      "type": "call_bot_method",
+      "methodName": "publish_post",
+      "args": [
+        "{{text}}",
+        "{{media}}"
+      ],
+      "variable_name": "postResult",
+      "timeout": 120,
+      "onError": {
+        "action": "mark_failed"
+      }
+    }
+  ],
+  "errorHandling": {
+    "globalRetries": 1,
+    "retryDelay": 2000,
+    "onFinalFailure": "log_and_continue"
+  }
+}

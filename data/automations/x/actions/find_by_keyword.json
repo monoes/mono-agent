@@ -1,0 +1,54 @@
+{
+  "$schema": "../../../schemas/action.v1.schema.json",
+  "actionType": "find_by_keyword",
+  "platform": "X",
+  "version": "2.0.0",
+  "description": "Search X (Twitter) posts by keyword and return them (URL, author, text, time, counts); promoted posts are excluded",
+  "sideEffects": "read",
+  "metadata": {
+    "requiresAuth": true,
+    "supportsPagination": true,
+    "supportsRetry": true
+  },
+  "inputs": {
+    "required": [
+      { "name": "keyword", "type": "string", "description": "Search query; several searches may be given one per line" }
+    ],
+    "optional": [
+      { "name": "maxResultsCount", "type": "number", "default": 20, "min": 1, "max": 500, "description": "Maximum posts per search" }
+    ]
+  },
+  "outputs": {
+    "success": [
+      "resultsCount",
+      "maxResultsCount"
+    ],
+    "failure": []
+  },
+  "steps": [
+    {
+      "id": "search_posts",
+      "type": "call_bot_method",
+      "methodName": "search_posts",
+      "args": [
+        "{{keyword}}",
+        "{{maxResultsCount or 20}}"
+      ],
+      "variable_name": "tweets",
+      "timeout": 300,
+      "onError": {
+        "action": "mark_failed"
+      }
+    },
+    {
+      "id": "save_results",
+      "type": "save_data",
+      "dataSource": "tweets"
+    }
+  ],
+  "errorHandling": {
+    "globalRetries": 1,
+    "retryDelay": 2000,
+    "onFinalFailure": "log_and_continue"
+  }
+}

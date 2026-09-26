@@ -1,0 +1,34 @@
+{
+  "automation": {"id": "Acme CRM!", "name": "Acme CRM", "description": "Acme CRM contacts"},
+  "action": {
+    "actionType": "create_contact",
+    "description": "Create a contact from an email and a name",
+    "sideEffects": "write",
+    "inputs": {
+      "required": [
+        {"name": "email", "type": "string", "format": "email", "description": "Contact email", "ui": {"label": "Email"}},
+        {"name": "full_name", "type": "string", "description": "Contact name", "ui": {"label": "Name"}},
+        {"name": "account_password", "type": "secret", "description": "Password for the contact account"}
+      ],
+      "optional": []
+    },
+    "outputs": {"success": ["contactUrl"]},
+    "steps": [
+      {"id": "open", "type": "navigate", "url": "https://app.acme-crm.test/contacts/new"},
+      {"id": "email", "type": "type", "configKey": "contact.email_input", "intent": "the Email field", "value": "{{email}}"},
+      {"id": "name", "type": "type", "configKey": "contact.name_input", "intent": "the Name field", "value": "{{full_name}}"},
+      {"id": "password", "type": "type", "configKey": "contact.password_input", "intent": "the Password field", "value": "{{secret:account_password}}"},
+      {"id": "save", "type": "click", "configKey": "contact.save_button", "intent": "the Save button", "sideEffect": true,
+       "until": {"urlMatches": "/contacts/\\d+(?:[?#]|$)"}}
+    ]
+  },
+  "selectors": {
+    "contact.email_input": {"intent": "Email field", "candidates": [{"css": "[data-testid=\"contact-email\"]", "score": 0.95}, {"aria": {"role": "textbox", "name": "Email"}, "score": 0.9}]},
+    "contact.name_input": {"intent": "Name field", "candidates": [{"css": "input[name=\"full_name\"]", "score": 0.85}]},
+    "contact.password_input": {"intent": "Password field", "candidates": [{"css": "input[name=\"password\"]", "score": 0.85}]},
+    "contact.save_button": {"intent": "Save button", "candidates": [{"css": "[data-testid=\"contact-save\"]", "score": 0.95}, {"text": "Save", "score": 0.6}]}
+  },
+  "fragments": [],
+  "scripts": {},
+  "names": {"automation": "acme-crm", "action": "create_contact", "fragment": "fill_contact_form"}
+}

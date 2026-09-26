@@ -1,0 +1,256 @@
+{
+  "$schema": "../../../schemas/action.v1.schema.json",
+  "actionType": "engage_with_posts",
+  "platform": "INSTAGRAM",
+  "version": "2.0.0",
+  "description": "Search Instagram for a hashtag/keyword and engage with the posts found: like (verified, never un-likes), comment when commentText is set, follow the author when 'follow' is in engagementActions and the post link names its author.",
+  "sideEffects": "message",
+  "metadata": {
+    "requiresAuth": true,
+    "supportsPagination": true,
+    "supportsRetry": true
+  },
+  "inputs": {
+    "required": [
+      {
+        "name": "maxContentCount",
+        "type": "number",
+        "description": "Maximum number of posts to engage with"
+      },
+      {
+        "name": "searches",
+        "type": "array",
+        "description": "Array of hashtags or keywords to search"
+      }
+    ],
+    "optional": [
+      {
+        "name": "engagementActions",
+        "type": "array",
+        "default": [
+          "like"
+        ],
+        "description": "Actions to perform: like, comment, follow"
+      },
+      {
+        "name": "commentText",
+        "type": "string",
+        "default": "",
+        "description": "Comment text (if comment in engagementActions)"
+      },
+      {
+        "name": "target",
+        "type": "string",
+        "default": "posts",
+        "enum": [
+          "posts",
+          "reels"
+        ],
+        "description": "Target content type"
+      },
+      {
+        "name": "minLikes",
+        "type": "number",
+        "default": 0,
+        "min": 0,
+        "description": "Skip posts with fewer likes"
+      },
+      {
+        "name": "sessionDelay",
+        "type": "number",
+        "default": 30,
+        "min": 5,
+        "max": 300,
+        "description": "Seconds to wait between engagement sessions"
+      }
+    ]
+  },
+  "outputs": {
+    "success": [
+      "itemsCount",
+      "reachedIndex"
+    ],
+    "failure": [
+      "failedItems"
+    ]
+  },
+  "steps": [
+    {
+      "id": "search_posts",
+      "type": "call_bot_method",
+      "methodName": "search_posts",
+      "args": [
+        "{{searches[0].keyword or searches[0] or keyword}}",
+        "{{maxContentCount or 10}}"
+      ],
+      "variable_name": "posts",
+      "timeout": 300,
+      "onError": {
+        "action": "mark_failed"
+      }
+    },
+    {
+      "id": "reset_likeResult",
+      "type": "set_variable",
+      "variable_name": "likeResult",
+      "value": null
+    },
+    {
+      "id": "reset_commentResult",
+      "type": "set_variable",
+      "variable_name": "commentResult",
+      "value": null
+    },
+    {
+      "id": "like_gate",
+      "type": "condition",
+      "condition": {
+        "variable": "engagementActions",
+        "operator": "not_exists"
+      },
+      "then": [
+        "like_post"
+      ],
+      "else": [
+        "like_requested"
+      ]
+    },
+    {
+      "id": "like_requested",
+      "type": "condition",
+      "condition": {
+        "variable": "engagementActions",
+        "operator": "contains",
+        "value": "like"
+      },
+      "then": [
+        "like_post"
+      ]
+    },
+    {
+      "id": "like_post",
+      "sideEffect": true,
+      "type": "call_bot_method",
+      "methodName": "like_post",
+      "args": [
+        "{{item.url}}"
+      ],
+      "variable_name": "likeResult",
+      "timeout": 90,
+      "onError": {
+        "action": "mark_failed"
+      }
+    },
+    {
+      "id": "comment_gate",
+      "type": "condition",
+      "condition": "commentText != ''",
+      "then": [
+        "comment_wanted"
+      ]
+    },
+    {
+      "id": "comment_wanted",
+      "type": "condition",
+      "condition": {
+        "variable": "engagementActions",
+        "operator": "not_exists"
+      },
+      "then": [
+        "comment_post"
+      ],
+      "else": [
+        "comment_requested"
+      ]
+    },
+    {
+      "id": "comment_requested",
+      "type": "condition",
+      "condition": {
+        "variable": "engagementActions",
+        "operator": "contains",
+        "value": "comment"
+      },
+      "then": [
+        "comment_post"
+      ]
+    },
+    {
+      "id": "comment_post",
+      "sideEffect": true,
+      "type": "call_bot_method",
+      "methodName": "comment_post",
+      "args": [
+        "{{item.url}}",
+        "{{commentText}}"
+      ],
+      "variable_name": "commentResult",
+      "timeout": 120,
+      "onError": {
+        "action": "mark_failed"
+      }
+    },
+    {
+      "id": "follow_gate",
+      "type": "condition",
+      "condition": {
+        "variable": "engagementActions",
+        "operator": "contains",
+        "value": "follow"
+      },
+      "then": [
+        "follow_has_author"
+      ]
+    },
+    {
+      "id": "follow_has_author",
+      "type": "condition",
+      "condition": "item.author != ''",
+      "then": [
+        "follow_author"
+      ]
+    },
+    {
+      "id": "follow_author",
+      "sideEffect": true,
+      "type": "call_bot_method",
+      "methodName": "follow_user",
+      "args": [
+        "{{item.author}}"
+      ],
+      "variable_name": "followResult",
+      "timeout": 90,
+      "onError": {
+        "action": "mark_failed"
+      }
+    },
+    {
+      "id": "wait_between_engagements",
+      "type": "wait",
+      "duration": "{{sessionDelay or 30}}",
+      "waitFor": "time"
+    }
+  ],
+  "loops": [
+    {
+      "id": "process_content",
+      "iterator": "posts",
+      "indexVar": "reachedIndex",
+      "maxItems": "{{maxContentCount or 10}}",
+      "steps": [
+        "reset_likeResult",
+        "reset_commentResult",
+        "like_gate",
+        "comment_gate",
+        "follow_gate",
+        "wait_between_engagements"
+      ],
+      "onComplete": "update_action_state"
+    }
+  ],
+  "errorHandling": {
+    "globalRetries": 0,
+    "retryDelay": 2000,
+    "onFinalFailure": "log_and_continue"
+  }
+}

@@ -1,0 +1,86 @@
+{
+  "$schema": "../../../schemas/action.v1.schema.json",
+  "actionType": "follow_user",
+  "platform": "TIKTOK",
+  "version": "1.0.0",
+  "description": "Follow TikTok users from a list of profile URLs",
+  "sideEffects": "write",
+  "metadata": {
+    "requiresAuth": true,
+    "supportsPagination": false,
+    "supportsRetry": true
+  },
+  "inputs": {
+    "required": [
+      {
+        "name": "selectedListItems",
+        "type": "list",
+        "description": "Profile URLs to follow"
+      }
+    ],
+    "optional": [
+      {
+        "name": "delayBetweenFollows",
+        "type": "number",
+        "default": 5,
+        "min": 2,
+        "max": 60,
+        "description": "Seconds to wait between follows"
+      }
+    ]
+  },
+  "outputs": {
+    "success": [
+      "followCount",
+      "reachedIndex"
+    ],
+    "failure": [
+      "failedItems"
+    ]
+  },
+  "steps": [
+    {
+      "id": "t1_follow_user",
+      "sideEffect": true,
+      "type": "call_bot_method",
+      "methodName": "follow_user",
+      "args": [
+        "{{item.url or item}}"
+      ],
+      "variable_name": "followResult",
+      "timeout": 60,
+      "onError": {
+        "action": "mark_failed"
+      }
+    },
+    {
+      "id": "wait",
+      "type": "wait",
+      "duration": "{{delayBetweenFollows or 5}}",
+      "waitFor": "time"
+    },
+    {
+      "id": "log_success",
+      "type": "log",
+      "value": "Followed: {{item.url or item}}"
+    }
+  ],
+  "loops": [
+    {
+      "id": "process_profiles",
+      "iterator": "selectedListItems",
+      "indexVar": "reachedIndex",
+      "steps": [
+        "t1_follow_user",
+        "wait",
+        "log_success"
+      ],
+      "onComplete": "update_action_state"
+    }
+  ],
+  "errorHandling": {
+    "globalRetries": 2,
+    "retryDelay": 3000,
+    "onFinalFailure": "log_and_continue"
+  }
+}

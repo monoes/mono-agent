@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -31,7 +32,10 @@ func NewHybridWorkflowStore(files *WorkflowFileStore, sql *SQLiteWorkflowStore) 
 
 func (h *HybridWorkflowStore) CreateWorkflow(ctx context.Context, w *Workflow) error {
 	if h.files != nil {
-		return h.files.SaveWorkflow(ctx, w)
+		if err := h.files.SaveWorkflow(ctx, w); err != nil {
+			return err
+		}
+		return h.mirrorToSQL(ctx, w)
 	}
 	return h.sql.CreateWorkflow(ctx, w)
 }
@@ -110,17 +114,105 @@ func (h *HybridWorkflowStore) NodeCounts(ctx context.Context, profileID string) 
 
 func (h *HybridWorkflowStore) UpdateWorkflow(ctx context.Context, w *Workflow) error {
 	if h.files != nil {
-		return h.files.SaveWorkflow(ctx, w)
+		if err := h.files.SaveWorkflow(ctx, w); err != nil {
+			return err
+		}
+		return h.mirrorToSQL(ctx, w)
 	}
 	return h.sql.UpdateWorkflow(ctx, w)
 }
 
-// SaveWorkflow writes a workflow to the file store (create or update).
+// SaveWorkflow writes a workflow to the file store (create or update) and
+// mirrors it — metadata, nodes, connections — to SQLite, which executions,
+// profile scoping and `workflow run --json` read.
 func (h *HybridWorkflowStore) SaveWorkflow(ctx context.Context, w *Workflow) error {
 	if h.files != nil {
-		return h.files.SaveWorkflow(ctx, w)
+		if err := h.files.SaveWorkflow(ctx, w); err != nil {
+			return err
+		}
+		return h.mirrorToSQL(ctx, w)
 	}
 	return h.sql.UpdateWorkflow(ctx, w)
+}
+
+// ErrSharedIDs reports a workflow whose node or connection ids belong to
+// another workflow in SQLite; such a workflow is not mirrored.
+var ErrSharedIDs = errors.New("workflow shares node or connection ids with another workflow")
+
+// mirrorToSQL makes SQLite's copy of w match the file just written: the
+// workflow row (created, or its name/description/active flag updated; the
+// profile and version are left alone), then nodes and connections. The
+// file stays canonical. A workflow whose node/connection ids are owned by
+// another workflow is skipped (SaveWorkflowNodes' upsert would move them);
+// the save itself still succeeds. The caller's w is not modified.
+func (h *HybridWorkflowStore) mirrorToSQL(ctx context.Context, w *Workflow) error {
+	if h.sql == nil || w == nil || w.ID == "" {
+		return nil
+	}
+	if err := h.sql.checkOwnIDs(ctx, w); err != nil {
+		if errors.Is(err, ErrSharedIDs) {
+			return nil
+		}
+		return err
+	}
+	var n int
+	if err := h.sql.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM workflows WHERE id = ?`, w.ID).Scan(&n); err != nil {
+		return fmt.Errorf("mirror workflow %s: %w", w.ID, err)
+	}
+	if n == 0 {
+		stub := *w
+		stub.Nodes, stub.Connections = nil, nil
+		if err := h.sql.CreateWorkflow(ctx, &stub); err != nil {
+			return fmt.Errorf("mirror workflow %s: %w", w.ID, err)
+		}
+	} else if _, err := h.sql.db.ExecContext(ctx,
+		`UPDATE workflows SET name = ?, description = ?, is_active = ?, updated_at = ? WHERE id = ?`,
+		w.Name, w.Description, boolToInt(w.IsActive), time.Now().UTC(), w.ID); err != nil {
+		return fmt.Errorf("mirror workflow %s: %w", w.ID, err)
+	}
+	nodes := append([]WorkflowNode(nil), w.Nodes...)
+	if err := h.sql.SaveWorkflowNodes(ctx, w.ID, nodes); err != nil {
+		return fmt.Errorf("mirror workflow %s nodes: %w", w.ID, err)
+	}
+	conns := append([]WorkflowConnection(nil), w.Connections...)
+	if err := h.sql.SaveWorkflowConnections(ctx, w.ID, conns); err != nil {
+		return fmt.Errorf("mirror workflow %s connections: %w", w.ID, err)
+	}
+	return nil
+}
+
+// checkOwnIDs returns ErrSharedIDs when any of w's node or connection ids
+// belongs to a different workflow in SQLite.
+func (s *SQLiteWorkflowStore) checkOwnIDs(ctx context.Context, w *Workflow) error {
+	var nodeIDs, connIDs []any
+	for _, n := range w.Nodes {
+		if n.ID != "" {
+			nodeIDs = append(nodeIDs, n.ID)
+		}
+	}
+	for _, c := range w.Connections {
+		if c.ID != "" {
+			connIDs = append(connIDs, c.ID)
+		}
+	}
+	for _, q := range []struct {
+		table string
+		ids   []any
+	}{{"workflow_nodes", nodeIDs}, {"workflow_connections", connIDs}} {
+		if len(q.ids) == 0 {
+			continue
+		}
+		stmt := fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE workflow_id != ? AND id IN (%s)`, q.table,
+			strings.TrimSuffix(strings.Repeat("?,", len(q.ids)), ","))
+		var n int
+		if err := s.db.QueryRowContext(ctx, stmt, append([]any{w.ID}, q.ids...)...).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			return fmt.Errorf("%w: %s (%d in %s)", ErrSharedIDs, w.ID, n, q.table)
+		}
+	}
+	return nil
 }
 
 // DeleteWorkflow removes a workflow from both stores. "Already gone" from
@@ -152,7 +244,10 @@ func (h *HybridWorkflowStore) SetWorkflowActive(ctx context.Context, id string, 
 		wf, err := h.files.GetWorkflow(ctx, id)
 		if err == nil && wf != nil {
 			wf.IsActive = active
-			return h.files.SaveWorkflow(ctx, wf)
+			if err := h.files.SaveWorkflow(ctx, wf); err != nil {
+				return err
+			}
+			return h.mirrorToSQL(ctx, wf)
 		}
 	}
 	return h.sql.SetWorkflowActive(ctx, id, active)

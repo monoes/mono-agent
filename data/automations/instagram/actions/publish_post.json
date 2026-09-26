@@ -1,0 +1,79 @@
+{
+  "$schema": "../../../schemas/action.v1.schema.json",
+  "actionType": "publish_post",
+  "platform": "INSTAGRAM",
+  "version": "2.0.0",
+  "description": "Publish a feed post: Create → Post → upload the media file → Next → Next → caption (and location, only a matching suggestion) → Share, confirmed by Instagram's 'Your post has been shared'. The bot method is the only path: a second UI tier could post twice.",
+  "sideEffects": "write",
+  "metadata": {
+    "requiresAuth": true,
+    "supportsPagination": false,
+    "supportsRetry": true
+  },
+  "inputs": {
+    "required": [
+      {
+        "name": "text",
+        "type": "string",
+        "description": "Post caption/text"
+      },
+      {
+        "name": "media",
+        "type": "string",
+        "description": "Media file path or URL"
+      }
+    ],
+    "optional": [
+      {
+        "name": "locationTag",
+        "type": "string",
+        "default": "",
+        "description": "Location tag for the post"
+      }
+    ]
+  },
+  "outputs": {
+    "success": [],
+    "failure": []
+  },
+  "steps": [
+    {
+      "id": "publish",
+      "sideEffect": true,
+      "type": "call_bot_method",
+      "methodName": "publish_content",
+      "args": [
+        "{{media}}",
+        "{{text}}",
+        "{{locationTag}}"
+      ],
+      "variable_name": "publishResult",
+      "timeout": 300,
+      "onError": {
+        "action": "mark_failed"
+      }
+    },
+    {
+      "id": "check_published",
+      "type": "condition",
+      "condition": {
+        "variable": "publishResult",
+        "operator": "exists"
+      },
+      "then": [
+        "log_success"
+      ]
+    },
+    {
+      "id": "log_success",
+      "type": "log",
+      "description": "Post published",
+      "value": "Media: {{media}}"
+    }
+  ],
+  "errorHandling": {
+    "globalRetries": 0,
+    "retryDelay": 2000,
+    "onFinalFailure": "log_and_continue"
+  }
+}

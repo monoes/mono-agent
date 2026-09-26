@@ -65,6 +65,10 @@ const (
 	// internal/capture and docs/BROWSER_TRACK_PLAN.md)
 	CmdPageCapture = "page_capture"
 
+	// Selector re-recording: the user clicks one element under a picker
+	// overlay (contracts §9; see pick.go)
+	CmdPickElement = "pick_element"
+
 	// Waiting
 	CmdWaitLoad    = "wait_load"
 	CmdWaitElement = "wait_element"
@@ -78,3 +82,11 @@ const (
 // ingest side reads it by this name; see
 // packages/@monomind/cli/src/knowledge/highlights.ts.
 const HighlightsArtifact = "highlights.json"
+
+// KindRecording marks an extension → Go activity-recording frame
+// (internal/recording.Frame; see recording.go). Acks for frames that carry
+// an id come back as a Response with Type RecordingAckType.
+const (
+	KindRecording    = "recording"
+	RecordingAckType = "recording"
+)

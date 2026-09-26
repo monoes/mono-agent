@@ -1,0 +1,10 @@
+{
+  "url": "https://app.acme-crm.test/contacts/new",
+  "title": "New contact - Acme CRM",
+  "goal": "create a contact from an email and a name",
+  "source": "recording",
+  "capturedAt": "2026-09-25T10:00:00Z",
+  "eventCount": 11,
+  "complete": true,
+  "stopReason": "user"
+}

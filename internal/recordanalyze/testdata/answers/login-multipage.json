@@ -1,0 +1,22 @@
+{
+  "automation": {"id": "example-shop", "name": "Example Shop",
+                 "login": {"url": "https://shop.example.test/login", "loggedIn": {"selector": "nav.account"}}},
+  "action": {
+    "actionType": "latest_order_total",
+    "description": "Read the total of the latest order",
+    "sideEffects": "read",
+    "outputs": {"success": ["total"]},
+    "steps": [
+      {"id": "open", "type": "navigate", "url": "https://shop.example.test/account"},
+      {"id": "orders", "type": "click", "configKey": "account.orders_link", "intent": "the Orders link", "until": {"urlMatches": "/account/orders(?:[?#]|$)"}},
+      {"id": "latest", "type": "click", "configKey": "orders.latest_link", "intent": "the first order in the list", "until": {"urlMatches": "/account/orders/\\d+(?:[?#]|$)"}},
+      {"id": "total", "type": "extract_text", "configKey": "order.total", "intent": "the order total", "variable_name": "total"}
+    ]
+  },
+  "selectors": {
+    "account.orders_link": {"candidates": [{"aria": {"role": "link", "name": "Orders"}, "score": 0.9}, {"css": "nav.account a[href=\"/account/orders\"]", "score": 0.85}]},
+    "orders.latest_link": {"candidates": [{"css": "table.orders tbody tr:first-child a", "score": 0.8}]},
+    "order.total": {"candidates": [{"css": "span.order-total", "score": 0.9}]}
+  },
+  "names": {"automation": "example-shop", "action": "latest_order_total"}
+}

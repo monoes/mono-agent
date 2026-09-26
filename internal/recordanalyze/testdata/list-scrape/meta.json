@@ -1,0 +1,10 @@
+{
+  "url": "https://news.example.test/",
+  "title": "Example News",
+  "goal": "collect the top stories with their points",
+  "source": "recording",
+  "capturedAt": "2026-09-25T10:00:00Z",
+  "eventCount": 5,
+  "complete": true,
+  "stopReason": "user"
+}

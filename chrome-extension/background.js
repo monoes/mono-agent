@@ -31,6 +31,10 @@ importScripts("ask.js", "saved.js", "highlights.js", "recall_bridge.js");
 // it unasked-for, which is why it needs its own module rather than another
 // case in the dispatch below.
 importScripts("cdp_proxy.js");
+// The activity recorder (§8.2): the session state machine and its Chrome
+// wiring. The page half (recorder_selectors.js, recorder_list.js,
+// recorder.js) is injected into the recorded tab only while recording.
+importScripts("recorder_privacy.js", "recorder_outbox.js", "recorder_session.js", "recorder_wiring.js");
 // Asked before every dial; see doConnect. The same module the side panel uses,
 // so "is that really the bridge?" has exactly one implementation.
 importScripts("bridge_health.js");
@@ -120,6 +124,8 @@ const SENSITIVE_COMMANDS = new Set([
   "focus", "html", "property", "scroll_into_view", "insert_text",
   "get_rect", "set_files", "query_count", "query_text", "fetch_image_base64",
   "page_capture",
+  // The element picker (re-record one selector) reads the page's structure.
+  "pick_element",
   // Raw CDP is the most sensitive of the lot: it bypasses page CSP and can
   // read anything the tab can. Same origin check as the rest.
   "cdp", "cdp_attach", "cdp_detach",
@@ -128,7 +134,7 @@ const SENSITIVE_COMMANDS = new Set([
 // Commands that mean "the tab the user is looking at" when given no tabId.
 // Resolved before the origin check below, which has no tab to check without
 // one.
-const ACTIVE_TAB_COMMANDS = new Set(["page_capture", "cdp", "cdp_attach", "cdp_detach"]);
+const ACTIVE_TAB_COMMANDS = new Set(["page_capture", "cdp", "cdp_attach", "cdp_detach", "pick_element"]);
 
 async function isOriginAuthorized(tabId) {
   if (!tabId) return false;
@@ -401,6 +407,8 @@ async function doConnect() {
     console.log("[monoagent] Connected to backend at", url);
     startKeepAlive();
     MonoRecall.connected();
+    // Recording frames buffered while the bridge was down go out first, in order.
+    MonoRecorderWiring.flush();
     MonoCaptureBridge.flush()
       .catch((err) => console.error("[monoagent] capture queue flush failed:", err.message))
       // The badge counts what is still waiting, so it has to be repainted
@@ -421,6 +429,8 @@ async function doConnect() {
     // A reply to something THIS side asked (ask.js). Claimed before the
     // command dispatch because a reply is not a command and has no handler.
     if (MonoAsk.handleFrame(cmd)) return;
+    // Go's acks for kind:"recording" frames: {id, success, type:"recording"}.
+    if (MonoRecorderWiring.handleFrame(cmd)) return;
     handleCommand(cmd);
   };
 
@@ -605,6 +615,9 @@ async function handleCommand(cmd) {
         // rather than falling through to the single-frame sendResponse.
         await MonoCaptureBridge.handleCommand(id, params);
         return;
+      case "pick_element":
+        result = await pickElement(params);
+        break;
       case "get_rect":
       case "set_files":
       case "query_count":
@@ -872,6 +885,11 @@ async function typeCDP({ tabId, text, elementId, tabCount }) {
   const target = { tabId };
   await ensureDebuggerAttached(target, tabId);
 
+  // A named element is typed into exactly: focused, checked, read back.
+  if (elementId) return typeIntoElement(target, tabId, elementId, text);
+
+  // No element named: the contenteditable heuristic below (built for
+  // caption boxes) finds a large editable to type into.
   // Strategy: use CDP to find the contenteditable element, focus it via
   // DOM.focus, then insert text via Input.insertText.
 
@@ -939,6 +957,126 @@ async function typeCDP({ tabId, text, elementId, tabCount }) {
   });
 
   return { typed: true, length: text.length };
+}
+
+// Runs `func(elementId)` in the top frame's content-script world, where
+// content.js keeps its element registry (getElement is a global there).
+async function inContentWorld(tabId, elementId, func) {
+  const [res] = await chrome.scripting.executeScript({ target: { tabId }, func, args: [elementId] });
+  const out = res && res.result;
+  if (!out) throw new Error(`Element ${elementId} could not be reached in the page`);
+  if (out.error) throw new Error(out.error);
+  return out;
+}
+
+/**
+ * typeIntoElement types `text` into the element content.js registered as
+ * `elementId`, and proves it:
+ *   1. scroll it into view and focus it;
+ *   2. if focus did not take (a framework swallowing focus()), click the
+ *      centre of its box through CDP, as a person would;
+ *   3. refuse to type unless document.activeElement is it (or inside it);
+ *   4. Input.insertText, then read the value back and fail unless it
+ *      contains the text -- "typed" must mean the text is in the field.
+ *      The answer is {typed, length}; the value is never echoed.
+ */
+async function typeIntoElement(target, tabId, elementId, text) {
+  const focus = (id) => {
+    const el = typeof getElement === "function" ? getElement(id) : null;
+    if (!el) return { error: `Element ${id} no longer exists in DOM` };
+    el.scrollIntoView({ block: "center", inline: "center" });
+    try {
+      el.focus({ preventScroll: true });
+    } catch {
+      // not focusable this way; the click below tries
+    }
+    const a = document.activeElement;
+    const r = el.getBoundingClientRect();
+    return { focused: !!a && (a === el || el.contains(a)), x: r.x + r.width / 2, y: r.y + r.height / 2 };
+  };
+  const readBack = (id) => {
+    const el = typeof getElement === "function" ? getElement(id) : null;
+    if (!el) return { error: `Element ${id} no longer exists in DOM` };
+    const a = document.activeElement;
+    const field = el.matches && el.matches("input,textarea") ? el : a && el.contains(a) && a.matches("input,textarea") ? a : null;
+    const value = field ? field.value : el.isContentEditable || (a && el.contains(a)) ? el.innerText || el.textContent || "" : el.textContent || "";
+    return { value: String(value) };
+  };
+
+  let state = await inContentWorld(tabId, elementId, focus);
+  if (!state.focused) {
+    for (const type of ["mousePressed", "mouseReleased"]) {
+      await debuggerSend(target, tabId, "Input.dispatchMouseEvent", { type, x: state.x, y: state.y, button: "left", clickCount: 1 });
+    }
+    state = await inContentWorld(tabId, elementId, focus);
+    if (!state.focused) throw new Error(`type_cdp: element ${elementId} could not be focused`);
+  }
+  await debuggerSend(target, tabId, "Input.insertText", { text });
+  const { value } = await inContentWorld(tabId, elementId, readBack);
+  const norm = (v) => String(v).replace(/[\s\u00a0]+/g, " ").trim();
+  if (!norm(value).includes(norm(text))) {
+    throw new Error(`type_cdp: the text did not land in element ${elementId}`);
+  }
+  // Never the value itself: it is often a password, and this answer crosses
+  // the bridge, where it could be logged. The Go side reads back on its own.
+  return { typed: true, length: text.length };
+}
+
+// ---------------------------------------------------------------------------
+// pick_element: the person points at one element (re-record a selector)
+// ---------------------------------------------------------------------------
+
+const PICKER_FILES = ["recorder_privacy.js", "recorder_selectors.js", "recorder_picker.js"];
+const PICKER_GLOBALS = ["MonoRecorderPicker", "MonoRecorderSelectors", "MonoRecorderPrivacy"];
+const PICK_DEFAULT_MS = 120000;
+
+/**
+ * pickElement shows recorder_picker.js's overlay in the tab's top frame and
+ * answers {fingerprint, url} for the one element the person clicks, or
+ * fails with "cancelled" / "timeout". The picker removes its overlay,
+ * listeners and the globals it added on every way out; the worker's own
+ * deadline (a little past the page's) asks it to, in case the page never
+ * answered.
+ */
+async function pickElement({ tabId, prompt, timeoutMs }) {
+  if (!tabId) throw new Error("tabId is required");
+  const ms = Math.min(600000, Math.max(1000, Number(timeoutMs) || PICK_DEFAULT_MS));
+  const target = { tabId };
+  const [before] = await chrome.scripting.executeScript({
+    target,
+    args: [PICKER_GLOBALS],
+    func: (names) => names.filter((n) => globalThis[n] !== undefined),
+  });
+  const keep = (before && before.result) || [];
+  await chrome.scripting.executeScript({ target, files: PICKER_FILES });
+  const run = chrome.scripting.executeScript({
+    target,
+    args: [String(prompt || ""), ms, keep],
+    func: (p, t, k) =>
+      globalThis.MonoRecorderPicker.pick({ prompt: p, timeoutMs: t, keep: k }).then(
+        (value) => ({ ok: true, value }),
+        (err) => ({ ok: false, error: err.message })
+      ),
+  });
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error("timeout")), ms + 2000); // inside Go's ms+5s
+  });
+  let res;
+  try {
+    [res] = await Promise.race([run, deadline]);
+  } catch (err) {
+    await chrome.scripting
+      .executeScript({ target, func: () => globalThis.MonoRecorderPicker && globalThis.MonoRecorderPicker.cancel("timeout") })
+      .catch(() => {});
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+  const out = res && res.result;
+  if (!out) throw new Error("the page went away before an element was picked");
+  if (!out.ok) throw new Error(out.error);
+  return out.value;
 }
 
 // Evaluate JS via CDP Runtime.evaluate — bypasses page CSP completely.
@@ -1149,6 +1287,14 @@ MonoCaptureActions.install({
 // registers its own tab and message listeners; background.js only has to
 // hand it the socket.
 MonoRecall.install({
+  send: sendFrame,
+  isConnected: () => ws?.readyState === WebSocket.OPEN,
+  storage: chrome.storage.local,
+});
+
+// The activity recorder rides the same socket: kind:"recording" frames out,
+// buffered through its own outbox while the bridge is down.
+MonoRecorderWiring.install({
   send: sendFrame,
   isConnected: () => ws?.readyState === WebSocket.OPEN,
   storage: chrome.storage.local,

@@ -1,0 +1,34 @@
+{
+  "search.input": {
+    "candidates": [
+      {
+        "css": "input[type='search'], input[name='q']",
+        "score": 0.9
+      },
+      {
+        "aria": {
+          "role": "searchbox",
+          "name": "Search"
+        },
+        "score": 0.9
+      }
+    ],
+    "intent": "the site search box"
+  },
+  "search.results": {
+    "candidates": [
+      {
+        "css": "#results",
+        "score": 0.9
+      },
+      {
+        "aria": {
+          "role": "list",
+          "name": "Results"
+        },
+        "score": 0.7
+      }
+    ],
+    "intent": "the list of search results"
+  }
+}

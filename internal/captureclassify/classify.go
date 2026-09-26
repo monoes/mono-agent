@@ -116,12 +116,20 @@ func Classify(ctx context.Context, c *jev.Client, in Input) (Result, error) {
 	return r, nil
 }
 
+// ErrRecording is LoadInput's refusal for an activity recording.
+var ErrRecording = errors.New("activity recordings are not classified")
+
 // LoadInput reads a capture envelope: URL and title from meta.json, content
 // from readable.md (transcript.md when there is no readable text).
 func LoadInput(dir string) (Input, error) {
 	meta, err := capture.ReadMeta(dir)
 	if err != nil {
 		return Input{}, err
+	}
+	if meta.Source == capture.SourceRecording {
+		// Recordings hold typed values; they are never sent to a
+		// classifier (security review M8).
+		return Input{}, ErrRecording
 	}
 	in := Input{URL: meta.DedupeURL(), Title: strings.TrimSpace(meta.Title)}
 	for _, name := range []string{capture.ArtifactReadable, "transcript.md"} {

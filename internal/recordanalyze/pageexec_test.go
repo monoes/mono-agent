@@ -1,0 +1,270 @@
+package recordanalyze
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/rs/zerolog"
+
+	"github.com/monoes/mono-agent/internal/browser"
+)
+
+// fakePage answers the core step handlers from a fixed element set.
+type fakePage struct {
+	browser.PageInterface
+	mu          sync.Mutex
+	url         string
+	elems       map[string]*fakeElem
+	typed       []string
+	focused     *fakeElem
+	highlighted string
+	closed      bool
+}
+
+func (p *fakePage) Navigate(u string) error                     { p.url = u; return nil }
+func (p *fakePage) WaitLoad() error                             { return nil }
+func (p *fakePage) WaitDOMStable(time.Duration) error           { return nil }
+func (p *fakePage) WaitIdle(time.Duration) error                { return nil }
+func (p *fakePage) GetURL() (string, error)                     { return p.url, nil }
+func (p *fakePage) Timeout(time.Duration) browser.PageInterface { return p }
+func (p *fakePage) KeyboardType(keys ...rune) error             { p.record(string(keys)); return nil }
+func (p *fakePage) InsertText(t string) error {
+	p.record(t)
+	if p.focused != nil {
+		p.focused.value += t
+	}
+	return nil
+}
+func (p *fakePage) Eval(js string, _ ...interface{}) (*browser.EvalResult, error) {
+	if strings.Contains(js, "outline") {
+		p.highlighted = js
+		return browser.NewEvalResult(true), nil
+	}
+	return browser.NewEvalResult(nil), nil
+}
+
+func (p *fakePage) Close() error                 { p.closed = true; return nil }
+func (p *fakePage) Has(sel string) (bool, error) { _, ok := p.elems[sel]; return ok, nil }
+func (p *fakePage) Element(sel string, _ time.Duration) (browser.ElementHandle, error) {
+	if e, ok := p.elems[sel]; ok {
+		return e, nil
+	}
+	return nil, fmt.Errorf("element not found: %s", sel)
+}
+func (p *fakePage) ElementX(x string, _ time.Duration) (browser.ElementHandle, error) {
+	return nil, fmt.Errorf("element not found: %s", x)
+}
+func (p *fakePage) Elements(sel string) ([]browser.ElementHandle, error) {
+	if e, ok := p.elems[sel]; ok {
+		return []browser.ElementHandle{e}, nil
+	}
+	return nil, nil
+}
+
+type fakeElem struct {
+	browser.ElementHandle
+	page    *fakePage
+	name    string
+	clicked bool
+	value   string
+}
+
+func (e *fakeElem) Click() error {
+	e.clicked, e.page.focused = true, e
+	if e.name == "save" { // the form submits and the app shows the new contact
+		e.page.url = "https://app.acme-crm.test/contacts/4821"
+	}
+	return nil
+}
+func (e *fakeElem) Focus() error                         { e.page.focused = e; return nil }
+func (e *fakeElem) ScrollIntoView() error                { return nil }
+func (e *fakeElem) WaitStable(time.Duration) error       { return nil }
+func (e *fakeElem) Text() (string, error)                { return e.name, nil }
+func (e *fakeElem) Attribute(string) (*string, error)    { return nil, nil }
+func (e *fakeElem) Property(string) (interface{}, error) { return e.value, nil }
+func (e *fakeElem) Input(t string) error {
+	e.page.mu.Lock()
+	e.page.typed = append(e.page.typed, t)
+	e.value = t
+	e.page.mu.Unlock()
+	return nil
+}
+
+// TestPageExecSafeModeRealExecutor replays the form draft through the real
+// ActionExecutor on a fake page: everything before Save runs, Save does not.
+func TestPageExecSafeModeRealExecutor(t *testing.T) {
+	dir := formDraft(t)
+	page := &fakePage{elems: map[string]*fakeElem{}}
+	for sel, name := range map[string]string{
+		`[data-testid="contact-email"]`: "email", `input[name="full_name"]`: "name",
+		`input[name="password"]`: "password", `[data-testid="contact-save"]`: "save",
+	} {
+		page.elems[sel] = &fakeElem{page: page, name: name}
+	}
+	rep, err := Verify(context.Background(), dir, VerifyOptions{Exec: PageExec(page, zerolog.Nop()), Inputs: map[string]any{"account_password": "s3cret"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("report: %+v", rep)
+	if page.elems[`[data-testid="contact-save"]`].clicked {
+		t.Error("safe mode clicked Save")
+	}
+	if rep.StoppedAt == nil || rep.StoppedAt.StepID != "save" {
+		t.Errorf("stoppedAt = %+v", rep.StoppedAt)
+	}
+	for _, s := range rep.Steps[:3] {
+		if s.Status != StatusPass {
+			t.Errorf("step %s = %s (%s)", s.ID, s.Status, s.Message)
+		}
+	}
+	// The masked password reaches the page through {{secret:account_password}}.
+	all := strings.Join(page.typed, "|")
+	if !strings.Contains(all, "s3cret") || !strings.Contains(all, "jane@example.com") {
+		t.Errorf("expected values were not typed (%d entries)", len(page.typed))
+	}
+	if !rep.Highlighted || !rep.TabLeftOpen || page.closed || !strings.Contains(page.highlighted, "contact-save") {
+		t.Errorf("safe stop should outline Save and keep the tab: %+v closed=%v js=%q", rep, page.closed, page.highlighted)
+	}
+	if page.url != "https://app.acme-crm.test/contacts/new" {
+		t.Errorf("url = %s", page.url)
+	}
+}
+
+func (p *fakePage) record(t string) {
+	p.mu.Lock()
+	p.typed = append(p.typed, t)
+	p.mu.Unlock()
+}
+
+func newFormPage() *fakePage {
+	page := &fakePage{elems: map[string]*fakeElem{}}
+	for sel, name := range map[string]string{
+		`[data-testid="contact-email"]`: "email", `input[name="full_name"]`: "name",
+		`input[name="password"]`: "password", `[data-testid="contact-save"]`: "save",
+	} {
+		page.elems[sel] = &fakeElem{page: page, name: name}
+	}
+	return page
+}
+
+// TestVerifySecretFromVaultLookup: with no --input the secret input comes
+// from the vault lookup; an explicit input wins over the vault.
+func TestVerifySecretFromVaultLookup(t *testing.T) {
+	dir := formDraft(t)
+	var asked []string
+	lookup := func(name string) (string, bool) {
+		asked = append(asked, name)
+		if name == "account_password" {
+			return "vault-pw", true
+		}
+		return "", false
+	}
+	page := newFormPage()
+	rep, err := Verify(context.Background(), dir, VerifyOptions{Exec: PageExecWithSecrets(page, zerolog.Nop(), lookup), SecretLookup: lookup})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rep.OK || rep.Steps[3].Status != StatusPass || !strings.Contains(strings.Join(page.typed, "|"), "vault-pw") {
+		t.Errorf("vault secret not used: ok=%v steps=%+v typed=%d", rep.OK, rep.Steps, len(page.typed))
+	}
+	if len(asked) == 0 || asked[0] != "account_password" {
+		t.Errorf("asked = %v", asked)
+	}
+
+	page = newFormPage()
+	asked = nil
+	_, err = Verify(context.Background(), dir, VerifyOptions{Exec: PageExecWithSecrets(page, zerolog.Nop(), lookup),
+		SecretLookup: lookup, Inputs: map[string]any{"account_password": "flag-pw"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	all := strings.Join(page.typed, "|")
+	if !strings.Contains(all, "flag-pw") || strings.Contains(all, "vault-pw") || len(asked) != 0 {
+		t.Errorf("--input should win without asking the vault: asked=%v", asked)
+	}
+}
+
+func TestPageExecClosesTab(t *testing.T) {
+	dir := formDraft(t)
+	in := map[string]any{"account_password": "pw"}
+	page := newFormPage()
+	rep, err := Verify(context.Background(), dir, VerifyOptions{Full: true, Inputs: in, Exec: PageExecWith(page, zerolog.Nop(), PageExecOptions{})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !page.closed || rep.TabLeftOpen || rep.Highlighted {
+		t.Errorf("--full run should close its tab: closed=%v rep=%+v", page.closed, rep)
+	}
+	page = newFormPage()
+	rep, _ = Verify(context.Background(), dir, VerifyOptions{Full: true, Inputs: in, Exec: PageExecWith(page, zerolog.Nop(), PageExecOptions{KeepOpen: true})})
+	if page.closed || !rep.TabLeftOpen {
+		t.Errorf("--keep-open closed the tab")
+	}
+}
+
+func (e *fakeElem) SetFiles(paths []string) error {
+	e.page.record("files:" + strings.Join(paths, ","))
+	return nil
+}
+
+// TestVerifyDraftUploadConfined: verify replays a draft as a recorded
+// package, so an upload of a file outside uploads/<id> is refused.
+func TestVerifyDraftUploadConfined(t *testing.T) {
+	ans := strings.Replace(answer(t, "form-submit"), `{"id": "save"`,
+		`{"id": "file", "type": "upload", "configKey": "contact.name_input", "intent": "a file field", "value": "/etc/passwd"}, {"id": "save"`, 1)
+	res, err := Analyze(context.Background(), loadFixture(t, "form-submit"),
+		AnalyzeOptions{Home: t.TempDir(), Runner: &stubRunner{answers: []string{ans}}, AllowAdvanced: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := newFormPage()
+	// Safe mode stops before an upload (it is a side effect), so run --full.
+	rep, err := Verify(context.Background(), res.DraftDir, VerifyOptions{Full: true, Inputs: map[string]any{"account_password": "pw"},
+		Exec: PageExecWith(page, zerolog.Nop(), PageExecOptions{})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var st StepReport
+	for _, s := range rep.Steps {
+		if s.ID == "file" {
+			st = s
+		}
+	}
+	if st.Status == StatusPass || strings.Contains(strings.Join(page.typed, "|"), "/etc/passwd") {
+		t.Fatalf("upload outside uploads/<id> was not refused: %+v typed=%v", st, page.typed)
+	}
+	if st.Code != CodeUploadNotAllowed {
+		t.Errorf("code = %q", st.Code)
+	}
+	if !strings.Contains(st.Message+rep.Error, "upload path not allowed") {
+		t.Errorf("refusal reason = %q / %q", st.Message, rep.Error)
+	}
+}
+
+// TestVerifyScriptsRefusedCode: a draft's page_script is refused (recorded
+// trust, scripts off) and the row carries code "scripts_refused".
+func TestVerifyScriptsRefusedCode(t *testing.T) {
+	ans := strings.Replace(answer(t, "form-submit"), `{"id": "save"`,
+		`{"id": "js", "type": "page_script", "script": "probe.js"}, {"id": "save"`, 1)
+	ans = strings.Replace(ans, `"scripts": {}`, `"scripts": {"probe.js": "return 1"}`, 1)
+	res, err := Analyze(context.Background(), loadFixture(t, "form-submit"),
+		AnalyzeOptions{Home: t.TempDir(), Runner: &stubRunner{answers: []string{ans}}, AllowAdvanced: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Safe mode stops before a script (it counts as a side effect): --full.
+	rep, err := Verify(context.Background(), res.DraftDir, VerifyOptions{Full: true, Inputs: map[string]any{"account_password": "pw"},
+		Exec: PageExecWith(newFormPage(), zerolog.Nop(), PageExecOptions{})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range rep.Steps {
+		if s.ID == "js" && (s.Status != StatusFail || s.Code != CodeScriptsRefused) {
+			t.Errorf("js row = %+v", s)
+		}
+	}
+}

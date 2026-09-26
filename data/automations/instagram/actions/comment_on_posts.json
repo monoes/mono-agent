@@ -1,0 +1,120 @@
+{
+  "$schema": "../../../schemas/action.v1.schema.json",
+  "actionType": "comment_on_posts",
+  "platform": "INSTAGRAM",
+  "version": "3.0.0",
+  "description": "Comment on Instagram posts from a list of post URLs. Each comment is verified (it renders under the post, or the composer clears without an error); a failed or unverified comment fails the item and is never retried through a second path (no double posting).",
+  "sideEffects": "message",
+  "metadata": {
+    "requiresAuth": true,
+    "supportsPagination": false,
+    "supportsRetry": true
+  },
+  "inputs": {
+    "required": [
+      {
+        "name": "selectedListItems",
+        "type": "list",
+        "description": "Post URLs to comment on"
+      },
+      {
+        "name": "commentText",
+        "type": "string",
+        "description": "Comment text to post"
+      }
+    ],
+    "optional": [
+      {
+        "name": "maxCommentsPerSession",
+        "type": "number",
+        "default": 20,
+        "min": 1,
+        "max": 100,
+        "description": "Rate limit: max comments per session"
+      },
+      {
+        "name": "delayBetweenComments",
+        "type": "number",
+        "default": 10,
+        "min": 5,
+        "max": 120,
+        "description": "Seconds to wait between comments"
+      }
+    ]
+  },
+  "outputs": {
+    "success": [
+      "commentsCount",
+      "reachedIndex"
+    ],
+    "failure": [
+      "failedComments"
+    ]
+  },
+  "steps": [
+    {
+      "id": "reset_commentResult",
+      "type": "set_variable",
+      "variable_name": "commentResult",
+      "value": null
+    },
+    {
+      "id": "comment_post",
+      "sideEffect": true,
+      "type": "call_bot_method",
+      "methodName": "comment_post",
+      "args": [
+        "{{item.url or item.href or item}}",
+        "{{commentText}}"
+      ],
+      "variable_name": "commentResult",
+      "timeout": 120,
+      "onError": {
+        "action": "mark_failed"
+      }
+    },
+    {
+      "id": "check_commented",
+      "type": "condition",
+      "condition": {
+        "variable": "commentResult",
+        "operator": "exists"
+      },
+      "then": [
+        "log_success"
+      ]
+    },
+    {
+      "id": "log_success",
+      "type": "log",
+      "description": "Comment posted",
+      "value": "Post: {{item.url}}"
+    },
+    {
+      "id": "wait_between_comments",
+      "type": "wait",
+      "duration": "{{delayBetweenComments or 10}}",
+      "waitFor": "time"
+    }
+  ],
+  "loops": [
+    {
+      "id": "process_posts",
+      "iterator": "selectedListItems",
+      "indexVar": "reachedIndex",
+      "maxItems": "{{maxCommentsPerSession or 20}}",
+      "steps": [
+        "reset_commentResult",
+        "comment_post",
+        "check_commented",
+        "wait_between_comments"
+      ],
+      "onComplete": "update_action_state"
+    }
+  ],
+  "errorHandling": {
+    "globalRetries": 0,
+    "retryDelay": 2000,
+    "onFinalFailure": "log_and_continue"
+  }
+}

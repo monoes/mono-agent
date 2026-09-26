@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"slices"
@@ -49,6 +50,8 @@ type ExecOptions struct {
 	// access to a well-known CLI is far more reliable for the model to
 	// actually use than a large custom tool surface alone.
 	AllowBashPrefixes []string
+	// Stderr receives monomind's diagnostics; nil means os.Stderr.
+	Stderr io.Writer
 }
 
 // TurnResult is the terminal state of one exec turn.
@@ -363,6 +366,9 @@ func Exec(ctx context.Context, opts ExecOptions, onEvent func(Event)) (*TurnResu
 		return nil, err
 	}
 	cmd.Stderr = os.Stderr // monomind keeps diagnostics off stdout (§3)
+	if opts.Stderr != nil {
+		cmd.Stderr = opts.Stderr
+	}
 
 	release, err := startProcessGroup(cmd)
 	if err != nil {

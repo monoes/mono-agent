@@ -34,6 +34,20 @@ type ActionDef struct {
 	Steps       []StepDef              `json:"steps"`
 	Loops       []LoopDef              `json:"loops,omitempty"`
 	ErrorConfig *GlobalErrorConfig     `json:"errorHandling,omitempty"`
+
+	// --- package-era fields (spec §4.3) ---
+
+	// Schema is the editor "$schema" pointer; ignored at run time.
+	Schema string `json:"$schema,omitempty"`
+	// Automation is the owning package id; Platform is the legacy alias.
+	Automation string `json:"automation,omitempty"`
+	// SideEffects is the action's strongest effect:
+	// none | read | write | message | destructive.
+	SideEffects string `json:"sideEffects,omitempty"`
+	// OutputSchema is a JSON Schema describing one output item.
+	OutputSchema json.RawMessage `json:"outputSchema,omitempty"`
+	// Provenance records how the action was made (e.g. a recording id).
+	Provenance map[string]interface{} `json:"provenance,omitempty"`
 }
 
 // InputDef lists the required and optional input variables for an action.
@@ -53,10 +67,24 @@ type GlobalErrorConfig struct {
 }
 
 // ActionLoader loads and caches action definitions from the embedded JSON files
-// in data.ActionsFS. It is safe for concurrent use.
+// in data.AutomationsFS. It is safe for concurrent use.
 type ActionLoader struct {
 	cache sync.Map
+	// srcCache caches DefSource definitions per key as genEntry, valid only
+	// while the source's Generation() is unchanged.
+	srcCache sync.Map
 }
+
+// genEntry is a DefSource definition cached at one source generation.
+type genEntry struct {
+	gen string
+	def *ActionDef
+}
+
+// Generational is optionally implemented by a DefSource: Generation changes
+// whenever any installed package changes (install, update, enable/disable,
+// removal). Without it the loader consults the source on every Load.
+type Generational interface{ Generation() string }
 
 var defaultLoader *ActionLoader
 var loaderOnce sync.Once
@@ -77,12 +105,19 @@ func (l *ActionLoader) Load(platform, actionType string) (*ActionDef, error) {
 	normalType := strings.ToLower(strings.TrimSpace(actionType))
 	key := fmt.Sprintf("%s/%s", normalPlatform, normalType)
 
+	if src := CurrentDefSource(); src != nil {
+		return l.loadFromSource(src, key, normalPlatform, normalType)
+	}
+
 	if cached, ok := l.cache.Load(key); ok {
 		return cached.(*ActionDef), nil
 	}
 
-	path := fmt.Sprintf("actions/%s/%s.json", normalPlatform, normalType)
-	fileData, err := data.ActionsFS.ReadFile(path)
+	var fileData []byte
+	var err error
+
+	path := fmt.Sprintf("automations/%s/actions/%s.json", normalPlatform, normalType)
+	fileData, err = data.AutomationsFS.ReadFile(path)
 	if err != nil {
 		// Fall back to user-installed templates in ~/.monoagent/actions/
 		userDir := userActionsDir()
@@ -95,22 +130,67 @@ func (l *ActionLoader) Load(platform, actionType string) (*ActionDef, error) {
 		}
 	}
 
+	return l.parseAndCache(key, normalPlatform, normalType, fileData)
+}
+
+// loadFromSource loads through the registry, which is authoritative: a
+// removed or disabled package's actions must not load from the embedded
+// seed, nor from a cache filled before it changed (long-lived processes).
+func (l *ActionLoader) loadFromSource(src DefSource, key, platform, actionType string) (*ActionDef, error) {
+	gen, hasGen := "", false
+	if g, ok := src.(Generational); ok {
+		gen, hasGen = g.Generation(), true
+		if e, ok := l.srcCache.Load(key); ok && e.(genEntry).gen == gen {
+			return e.(genEntry).def, nil
+		}
+	}
+	fileData, err := src.Load(platform, actionType)
+	if err != nil {
+		l.srcCache.Delete(key)
+		return nil, fmt.Errorf("action definition not found: %s/%s: %w", platform, actionType, err)
+	}
+	def, err := ParseActionDef(fileData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse action definition %s/%s: %w", platform, actionType, err)
+	}
+	if hasGen {
+		l.srcCache.Store(key, genEntry{gen: gen, def: def})
+	}
+	return def, nil
+}
+
+func (l *ActionLoader) parseAndCache(key, platform, actionType string, fileData []byte) (*ActionDef, error) {
+	def, err := ParseActionDef(fileData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse action definition %s/%s: %w", platform, actionType, err)
+	}
+	l.cache.Store(key, def)
+	return def, nil
+}
+
+// ParseActionDef decodes an action JSON file. "automation" is accepted in
+// place of the legacy "platform": when only it is set, it fills Platform.
+func ParseActionDef(fileData []byte) (*ActionDef, error) {
 	var def ActionDef
 	if err := json.Unmarshal(fileData, &def); err != nil {
-		return nil, fmt.Errorf("failed to parse action definition %s/%s: %w", normalPlatform, normalType, err)
+		return nil, err
 	}
-
-	l.cache.Store(key, &def)
+	if def.Platform == "" {
+		def.Platform = def.Automation
+	}
 	return &def, nil
 }
 
 // ListAvailable returns all available action definitions as
 // "<platform>/<ACTION_TYPE>" strings.
 func (l *ActionLoader) ListAvailable() ([]string, error) {
+	if src := CurrentDefSource(); src != nil {
+		return src.List()
+	}
 	var result []string
 
 	// Dynamically discover all platform directories under actions/
-	platformDirs, err := data.ActionsFS.ReadDir("actions")
+	platformDirs, err := data.AutomationsFS.ReadDir("automations")
 	if err != nil {
 		return nil, fmt.Errorf("list platforms: %w", err)
 	}
@@ -120,7 +200,7 @@ func (l *ActionLoader) ListAvailable() ([]string, error) {
 			continue
 		}
 		p := pd.Name()
-		entries, err := data.ActionsFS.ReadDir(fmt.Sprintf("actions/%s", p))
+		entries, err := data.AutomationsFS.ReadDir(fmt.Sprintf("automations/%s/actions", p))
 		if err != nil {
 			continue
 		}
@@ -169,6 +249,7 @@ func (l *ActionLoader) ListAvailable() ([]string, error) {
 func (l *ActionLoader) Invalidate(platform, actionType string) {
 	key := fmt.Sprintf("%s/%s", strings.ToLower(platform), strings.ToLower(actionType))
 	l.cache.Delete(key)
+	l.srcCache.Delete(key)
 }
 
 // InvalidateAll clears the entire cache.
@@ -177,4 +258,30 @@ func (l *ActionLoader) InvalidateAll() {
 		l.cache.Delete(key)
 		return true
 	})
+	l.srcCache.Range(func(key, _ interface{}) bool {
+		l.srcCache.Delete(key)
+		return true
+	})
+}
+
+var (
+	defSourceMu sync.RWMutex
+	defSource   DefSource
+)
+
+// SetDefSource installs the definition source used by every loader (the
+// automation registry calls this at startup). nil restores the legacy
+// embedded-seed + ~/.monoagent/actions behaviour. Clears the cache.
+func SetDefSource(src DefSource) {
+	defSourceMu.Lock()
+	defSource = src
+	defSourceMu.Unlock()
+	GetLoader().InvalidateAll()
+}
+
+// CurrentDefSource returns the installed DefSource, or nil.
+func CurrentDefSource() DefSource {
+	defSourceMu.RLock()
+	defer defSourceMu.RUnlock()
+	return defSource
 }

@@ -3,6 +3,7 @@ package captureclassify
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -138,5 +139,15 @@ func TestWriteReadAndLoadInput(t *testing.T) {
 	}
 	if _, err := LoadInput(t.TempDir()); err == nil {
 		t.Fatal("a directory without meta.json is not a capture")
+	}
+}
+
+func TestLoadInputRefusesRecordings(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "meta.json"), []byte(`{"url":"https://x.test/login","source":"recording"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadInput(dir); !errors.Is(err, ErrRecording) {
+		t.Fatalf("LoadInput(recording) = %v, want ErrRecording", err)
 	}
 }

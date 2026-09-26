@@ -1,0 +1,142 @@
+{
+  "$schema": "../../../schemas/action.v1.schema.json",
+  "actionType": "like_comments_on_posts",
+  "platform": "INSTAGRAM",
+  "version": "2.0.0",
+  "description": "Like comments on Instagram posts. With commentAuthor, only that author's comment is liked (a post without one fails — never another person's comment); without it, up to maxCommentsToLike comments are liked in page order. Already-liked comments are never toggled; every like is verified.",
+  "sideEffects": "write",
+  "metadata": {
+    "requiresAuth": true,
+    "supportsPagination": false,
+    "supportsRetry": true
+  },
+  "inputs": {
+    "required": [
+      {
+        "name": "selectedListItems",
+        "type": "list",
+        "description": "Post URLs whose comments to like"
+      }
+    ],
+    "optional": [
+      {
+        "name": "commentAuthor",
+        "type": "string",
+        "default": "",
+        "description": "Only like comments by this author"
+      },
+      {
+        "name": "maxCommentsToLike",
+        "type": "number",
+        "default": 5,
+        "min": 1,
+        "max": 50,
+        "description": "Max comments to like per post"
+      },
+      {
+        "name": "maxLikesPerSession",
+        "type": "number",
+        "default": 100,
+        "min": 1,
+        "max": 500,
+        "description": "Rate limit: max comment likes per session"
+      },
+      {
+        "name": "delayBetweenLikes",
+        "type": "number",
+        "default": 2,
+        "min": 1,
+        "max": 30,
+        "description": "Seconds to wait between comment likes"
+      },
+      {
+        "name": "likeReplies",
+        "type": "boolean",
+        "default": false,
+        "description": "Also like comment replies"
+      },
+      {
+        "name": "sortByNew",
+        "type": "boolean",
+        "default": false,
+        "description": "Sort comments by newest first"
+      }
+    ]
+  },
+  "outputs": {
+    "success": [
+      "likeCount",
+      "reachedIndex"
+    ],
+    "failure": [
+      "failedItems"
+    ]
+  },
+  "steps": [
+    {
+      "id": "reset_commentLikeResult",
+      "type": "set_variable",
+      "variable_name": "commentLikeResult",
+      "value": null
+    },
+    {
+      "id": "like_comments",
+      "sideEffect": true,
+      "type": "call_bot_method",
+      "methodName": "like_comment",
+      "args": [
+        "{{item.url or item.href or item}}",
+        "{{commentAuthor}}",
+        "{{maxCommentsToLike or 5}}"
+      ],
+      "variable_name": "commentLikeResult",
+      "timeout": 120,
+      "onError": {
+        "action": "mark_failed"
+      }
+    },
+    {
+      "id": "check_liked",
+      "type": "condition",
+      "condition": {
+        "variable": "commentLikeResult",
+        "operator": "exists"
+      },
+      "then": [
+        "log_success"
+      ]
+    },
+    {
+      "id": "log_success",
+      "type": "log",
+      "description": "Comments liked",
+      "value": "Post: {{item.url}} ({{commentLikeResult.liked_count}} liked)"
+    },
+    {
+      "id": "wait_between_likes",
+      "type": "wait",
+      "duration": "{{delayBetweenLikes or 2}}",
+      "waitFor": "time"
+    }
+  ],
+  "loops": [
+    {
+      "id": "process_posts",
+      "iterator": "selectedListItems",
+      "indexVar": "reachedIndex",
+      "maxItems": "{{maxLikesPerSession or 100}}",
+      "steps": [
+        "reset_commentLikeResult",
+        "like_comments",
+        "check_liked",
+        "wait_between_likes"
+      ],
+      "onComplete": "update_action_state"
+    }
+  ],
+  "errorHandling": {
+    "globalRetries": 0,
+    "retryDelay": 2000,
+    "onFinalFailure": "log_and_continue"
+  }
+}

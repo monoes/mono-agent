@@ -1,0 +1,10 @@
+{
+  "url": "https://crm.example.test/deals",
+  "title": "Deals",
+  "goal": "update a deal",
+  "source": "recording",
+  "capturedAt": "2026-09-25T10:00:00Z",
+  "eventCount": 14,
+  "complete": true,
+  "stopReason": "user"
+}

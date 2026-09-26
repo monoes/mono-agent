@@ -1,0 +1,54 @@
+{
+  "$schema": "../../../schemas/action.v1.schema.json",
+  "actionType": "publish_post",
+  "platform": "LINKEDIN",
+  "version": "2.0.0",
+  "description": "Publish a post (text, optional images) to the signed-in member's LinkedIn feed",
+  "sideEffects": "write",
+  "metadata": {
+    "requiresAuth": true,
+    "supportsPagination": false,
+    "supportsRetry": true
+  },
+  "inputs": {
+    "required": [
+      {
+        "name": "text",
+        "type": "string",
+        "description": "Post text"
+      }
+    ],
+    "optional": [
+      {
+        "name": "media",
+        "type": "string",
+        "description": "Comma-separated image paths to attach"
+      }
+    ]
+  },
+  "outputs": {
+    "success": [
+      "post_url"
+    ],
+    "failure": [
+      "failedItems"
+    ]
+  },
+  "steps": [
+    {
+      "id": "publish",
+      "sideEffect": true,
+      "type": "call_bot_method",
+      "methodName": "publish_post",
+      "args": [
+        "{{text}}",
+        "{{media}}"
+      ],
+      "variable_name": "publishResult",
+      "timeout": 180,
+      "onError": {
+        "action": "mark_failed"
+      }
+    }
+  ]
+}

@@ -1,0 +1,91 @@
+{
+  "$schema": "https://raw.githubusercontent.com/monoes/mono-agent/master/data/schemas/action.v1.schema.json",
+  "actionType": "create_post",
+  "automation": "{{id}}",
+  "version": "1.0.0",
+  "description": "Open the composer, fill in a title and body, publish, and wait until the new post is shown.",
+  "sideEffects": "write",
+  "inputs": {
+    "required": [
+      {
+        "name": "title",
+        "type": "string",
+        "description": "Post title",
+        "ui": {
+          "label": "Title"
+        }
+      },
+      {
+        "name": "body",
+        "type": "string",
+        "description": "Post text",
+        "ui": {
+          "label": "Body",
+          "rows": 6
+        }
+      }
+    ]
+  },
+  "outputs": {
+    "success": [
+      "posted"
+    ],
+    "failure": [
+      "error"
+    ]
+  },
+  "steps": [
+    {
+      "id": "open",
+      "type": "navigate",
+      "url": "{{startUrl}}new",
+      "timeout": 20
+    },
+    {
+      "id": "banner",
+      "type": "call_fragment",
+      "fragment": "dismiss_banner"
+    },
+    {
+      "id": "type_title",
+      "type": "type",
+      "configKey": "post.title",
+      "value": "{{title}}",
+      "humanLike": true,
+      "intent": "the Title field of the new-post form"
+    },
+    {
+      "id": "type_body",
+      "type": "type",
+      "configKey": "post.body",
+      "value": "{{body}}",
+      "humanLike": true,
+      "intent": "the Body / content field of the new-post form"
+    },
+    {
+      "id": "publish",
+      "type": "click",
+      "configKey": "post.publish",
+      "sideEffect": true,
+      "intent": "the Publish button of the new-post form",
+      "until": {
+        "any": [
+          {
+            "urlMatches": "/posts/[^/]+/?$"
+          },
+          {
+            "selector": ".toast-success"
+          }
+        ]
+      },
+      "timeout": 30
+    },
+    {
+      "id": "mark_posted",
+      "type": "set_variable",
+      "set": {
+        "posted": true
+      }
+    }
+  ]
+}

@@ -1,0 +1,3 @@
+[
+  { "match": "^https://news\\.ycombinator\\.com/item\\?id=70000001&p=2$", "fixture": "pages/item_p2.html" }
+]

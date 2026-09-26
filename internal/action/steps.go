@@ -98,8 +98,12 @@ func (ae *ActionExecutor) resolveElement(step StepDef) (browser.ElementHandle, e
 		return el, nil
 	}
 
-	// 4. ConfigKey — ask the config manager for a selector.
+	// 4. ConfigKey — the package's selectors.json first, else ask the
+	// config manager for a selector.
 	if step.ConfigKey != "" {
+		if entry, ok := ae.pkgSelectorEntry(step.ConfigKey); ok {
+			return ae.resolvePkgElement(step, entry, timeout)
+		}
 		configSelector := ae.resolveConfigSelector(step.ConfigKey)
 		if configSelector != "" {
 			var el browser.ElementHandle
@@ -174,11 +178,15 @@ func (ae *ActionExecutor) stepNavigate(ctx context.Context, step StepDef) (*Step
 		}
 	}
 
+	if err := ae.CheckURLAllowed(targetURL); err != nil {
+		return &StepResult{Success: false, StepID: step.ID, Error: fmt.Errorf("navigate step %s: %w", step.ID, err)}, nil
+	}
+
 	timeout := stepTimeout(step, 30)
 
 	ae.logger.Debug().
 		Str("stepID", step.ID).
-		Str("url", targetURL).
+		Str("url", ae.redact(targetURL)).
 		Dur("timeout", timeout).
 		Msg("navigating")
 
@@ -221,9 +229,19 @@ func (ae *ActionExecutor) stepWait(ctx context.Context, step StepDef) (*StepResu
 	timeout := stepTimeout(step, 10)
 
 	// If ConfigKey is set, obtain the selector from the config manager.
+	// A package selector (selectors.json) is tried first.
+	// Its lookup (candidates, legacy lookup, the step's selector and
+	// alternatives) spends the step timeout once: a match is present, so
+	// the wait below returns at once; no match fails the step.
 	selector := step.Selector
-	if step.ConfigKey != "" && ae.configMgr != nil {
-		configSelector := ae.resolveConfigSelector(step.ConfigKey)
+	if _, ok := ae.pkgSelectorEntry(step.ConfigKey); ok {
+		sel, err := ae.selectorWithFallbacks(step, timeout, step.Selector)
+		if err != nil {
+			return &StepResult{Success: false, StepID: step.ID, Error: fmt.Errorf("wait step %s: %w", step.ID, err)}, nil
+		}
+		selector = sel
+	} else if step.ConfigKey != "" && ae.configMgr != nil {
+		configSelector := ae.legacyConfigSelector(step.ConfigKey)
 		if configSelector != "" {
 			selector = configSelector
 		}
@@ -373,6 +391,19 @@ func (ae *ActionExecutor) stepFindElement(ctx context.Context, step StepDef) (*S
 
 		ae.logger.Debug().Str("stepID", step.ID).Msg("element found via selector")
 		return &StepResult{Success: true, Element: elem, StepID: step.ID}, nil
+	}
+
+	// A package selector (configKey in selectors.json) resolves with its
+	// own candidate order and fallbacks.
+	if step.XPath == "" {
+		if entry, ok := ae.pkgSelectorEntry(step.ConfigKey); ok {
+			elem, err := ae.resolvePkgElement(step, entry, timeout)
+			if err != nil {
+				return &StepResult{Success: false, StepID: step.ID, Error: fmt.Errorf("find_element %s: %w", step.ID, err)}, nil
+			}
+			ae.storeFoundElement(step, elem)
+			return &StepResult{Success: true, Element: elem, StepID: step.ID}, nil
+		}
 	}
 
 	// Build selector list from XPath/ConfigKey/Alternatives.
@@ -562,6 +593,7 @@ func (ae *ActionExecutor) stepType(ctx context.Context, step StepDef) (*StepResu
 		Bool("humanLike", step.HumanLike).
 		Int("textLen", len(text)).
 		Msg("typing text")
+	before, _ := readFieldValue(elem)
 
 	if step.HumanLike {
 		// Type with randomized pacing for session stability (no typo simulation).
@@ -583,6 +615,7 @@ func (ae *ActionExecutor) stepType(ctx context.Context, step StepDef) (*StepResu
 			if ep, ok := ae.page.(cdpTyper); ok {
 				if ee, ok := elem.(elementIDer); ok {
 					// CDP click + insert — real browser events, works with Lexical
+					_ = elem.Focus() // TypeCDPOnElement types into the focused element
 					if err := ep.TypeCDPOnElement(text, ee.ElementID()); err != nil {
 						if err2 := ae.page.InsertText(text); err2 != nil {
 							return &StepResult{Success: false, StepID: step.ID, Error: fmt.Errorf("type %s: %w", step.ID, err)}, nil
@@ -606,6 +639,7 @@ func (ae *ActionExecutor) stepType(ctx context.Context, step StepDef) (*StepResu
 	} else {
 		if ep, ok := ae.page.(cdpTyper); ok {
 			if ee, ok := elem.(elementIDer); ok {
+				_ = elem.Focus() // TypeCDPOnElement types into the focused element
 				if err := ep.TypeCDPOnElement(text, ee.ElementID()); err != nil {
 					_ = ae.page.InsertText(text)
 				}
@@ -625,6 +659,10 @@ func (ae *ActionExecutor) stepType(ctx context.Context, step StepDef) (*StepResu
 		}
 	}
 
+	// Drivers can report success while typing nothing: read the field back.
+	if failed := ae.ensureTyped(step, elem, before, text); failed != nil {
+		return failed, nil
+	}
 	return &StepResult{Success: true, Element: elem, StepID: step.ID}, nil
 }
 
@@ -637,7 +675,11 @@ func (ae *ActionExecutor) stepUpload(ctx context.Context, step StepDef) (*StepRe
 	// C-46: uploaded files leave the machine through the page; in a run a
 	// role's grant started they must come from the role's workdir. Checked
 	// before the page is touched.
-	files, err := fsconfine.Paths(ctx, splitUploadPaths(step))
+	rawFiles := splitUploadPaths(step)
+	files, err := fsconfine.Paths(ctx, rawFiles)
+	if err == nil {
+		err = ae.confineUploads(ctx, rawFiles, files) // package actions: §8 C1
+	}
 	if err != nil {
 		return &StepResult{Success: false, StepID: step.ID, Error: fmt.Errorf("upload step %s: %w", step.ID, err)}, nil
 	}
@@ -1447,7 +1489,7 @@ func (ae *ActionExecutor) stepUpdateProgress(ctx context.Context, step StepDef) 
 	// Apply variable assignments from the Set map.
 	if step.Set != nil {
 		for key, value := range step.Set {
-			resolved := ae.resolver.ResolveValue(value)
+			resolved := value // already resolved by ResolveStepDef; never twice
 			ae.execCtx.SetVariable(key, resolved)
 			ae.logger.Debug().
 				Str("stepID", step.ID).
@@ -1534,9 +1576,20 @@ func (ae *ActionExecutor) stepSaveData(ctx context.Context, step StepDef) (*Step
 		tracked := make([]map[string]interface{}, len(ae.execCtx.ExtractedItems))
 		copy(tracked, ae.execCtx.ExtractedItems)
 		ae.execCtx.mu.Unlock()
+		// A single map outside a loop is one facet of the node's single
+		// item and merges, as call_bot_method does; lists are records.
+		// Legacy actions (no package / local-*) keep master's behaviour:
+		// every saved row is a record.
+		_, single := val.(map[string]interface{})
+		record := !single || ae.execCtx.inLoop() || isLegacyPackage(ae.pkg)
 		for _, item := range dataToSave {
-			if !containsExtractedItem(tracked, item) {
+			if containsExtractedItem(tracked, item) {
+				continue
+			}
+			if record {
 				ae.execCtx.AddRecord(item)
+			} else {
+				ae.execCtx.AddExtractedItem(item)
 			}
 		}
 	}
@@ -1552,7 +1605,7 @@ func (ae *ActionExecutor) stepSaveData(ctx context.Context, step StepDef) (*Step
 
 	// Persist to storage.
 	if ae.db != nil && ae.action != nil && len(dataToSave) > 0 {
-		if err := ae.db.SaveExtractedData(ae.action.ID, dataToSave); err != nil {
+		if err := ae.db.SaveExtractedData(ae.action.ID, ae.redactItems(dataToSave)); err != nil {
 			ae.logger.Warn().Err(err).Msg("failed to save extracted data")
 			return &StepResult{
 				Success: false,
@@ -1591,9 +1644,9 @@ func (ae *ActionExecutor) stepMarkFailed(ctx context.Context, step StepDef) (*St
 
 	errMsg := "step marked as failed"
 	if step.Text != "" {
-		errMsg = ae.resolver.Resolve(step.Text)
+		errMsg = step.Text // resolved once by ResolveStepDef
 	} else if step.Description != "" {
-		errMsg = ae.resolver.Resolve(step.Description)
+		errMsg = step.Description
 	}
 
 	ae.execCtx.AddFailedItem(FailedItem{
@@ -1647,7 +1700,7 @@ func (ae *ActionExecutor) stepLog(ctx context.Context, step StepDef) (*StepResul
 		}
 	}
 
-	resolved := ae.resolver.Resolve(msg)
+	resolved := msg // resolved (secrets masked) by ResolveStepDef; never twice
 
 	ae.logger.Info().
 		Str("stepID", step.ID).
@@ -1701,7 +1754,7 @@ func (ae *ActionExecutor) stepCallBotMethod(ctx context.Context, step StepDef) (
 	// the first argument so bot methods have access to the browser page.
 	resolvedArgs := []interface{}{ae.page}
 	for _, arg := range step.Args {
-		resolvedArgs = append(resolvedArgs, ae.resolver.ResolveValue(arg))
+		resolvedArgs = append(resolvedArgs, arg) // resolved by ResolveStepDef
 	}
 
 	// Honor the step's timeout, if configured.
@@ -1808,9 +1861,21 @@ func (ae *ActionExecutor) buildSelectorList(step StepDef) []string {
 	return selectors
 }
 
-// resolveConfigSelector looks up a config key through the config manager to
-// get an XPath or CSS selector.
+// resolveConfigSelector resolves a config key to an XPath or CSS selector:
+// through the package's selectors.json when it defines the key, else
+// through the config manager.
 func (ae *ActionExecutor) resolveConfigSelector(configKey string) string {
+	if entry, ok := ae.pkgSelectorEntry(configKey); ok {
+		if sel := ae.resolvePkgSelectorString(configKey, entry, defaultPkgSelectorTimeout); sel != "" {
+			return sel
+		}
+	}
+	return ae.legacyConfigSelector(configKey)
+}
+
+// legacyConfigSelector looks up a config key through the config manager to
+// get an XPath or CSS selector.
+func (ae *ActionExecutor) legacyConfigSelector(configKey string) string {
 	if ae.configMgr == nil {
 		return ""
 	}

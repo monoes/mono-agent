@@ -1,0 +1,6 @@
+[
+  { "match": "^https://news\\.ycombinator\\.com/submit$", "fixture": "pages/submit.html" },
+  { "match": "^https://news\\.ycombinator\\.com/submitted\\?id=test_user$", "after": "^https://news\\.ycombinator\\.com/r$", "fixture": "pages/submitted_after.html" },
+  { "match": "^https://news\\.ycombinator\\.com/submitted\\?id=test_user$", "fixture": "pages/submitted_before.html" },
+  { "match": "^https://news\\.ycombinator\\.com/r$", "fixture": "pages/newest.html" }
+]

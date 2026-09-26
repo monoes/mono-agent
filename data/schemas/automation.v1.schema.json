@@ -1,0 +1,261 @@
+{
+  "$defs": {
+    "AttrProbe": {
+      "properties": {
+        "attribute": {
+          "description": "\"\" = innerText",
+          "type": "string"
+        },
+        "selector": {
+          "description": "CSS selector of the element holding the username.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "selector"
+      ],
+      "type": "object"
+    },
+    "Login": {
+      "description": "Login describes how to log in and how to tell a session is logged in.",
+      "properties": {
+        "loggedIn": {
+          "$ref": "#/$defs/Probe",
+          "description": "Signal that the session is logged in."
+        },
+        "sessionTtlDays": {
+          "description": "Days a captured session is assumed valid.",
+          "type": "integer"
+        },
+        "url": {
+          "description": "Page the login command opens.",
+          "type": "string"
+        },
+        "usernameFrom": {
+          "$ref": "#/$defs/AttrProbe",
+          "description": "Where the logged-in username is read from."
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "type": "object"
+    },
+    "Manifest": {
+      "description": "Manifest is automation.json.",
+      "properties": {
+        "$schema": {
+          "description": "Editor schema pointer; ignored at run time.",
+          "type": "string"
+        },
+        "actions": {
+          "description": "Action names; each is actions/\u003cname\u003e.json.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "category": {
+          "description": "Grouping on the Connections page, e.g. social, ai, crm.",
+          "type": "string"
+        },
+        "defaults": {
+          "additionalProperties": {},
+          "description": "Default step options for the package's actions (e.g. humanLike, timeoutSec).",
+          "type": "object"
+        },
+        "description": {
+          "description": "One-line summary shown on the package card.",
+          "type": "string"
+        },
+        "engine": {
+          "description": "semver range, e.g. \"\u003e=0.68.0\"",
+          "type": "string"
+        },
+        "icon": {
+          "description": "file in the package",
+          "type": "string"
+        },
+        "id": {
+          "description": "Package id: lowercase letters, digits and dashes. Workflow nodes are named \u003cid\u003e.\u003caction\u003e.",
+          "type": "string"
+        },
+        "license": {
+          "description": "SPDX license id.",
+          "type": "string"
+        },
+        "login": {
+          "$ref": "#/$defs/Login",
+          "description": "How to log in, and how to tell a session is logged in."
+        },
+        "name": {
+          "description": "Display name.",
+          "type": "string"
+        },
+        "permissions": {
+          "$ref": "#/$defs/Permissions",
+          "description": "What the package's actions may do; checked when an action is validated."
+        },
+        "policy": {
+          "$ref": "#/$defs/Policy",
+          "description": "Usage-policy tier."
+        },
+        "publisher": {
+          "$ref": "#/$defs/Publisher",
+          "description": "Who publishes the package."
+        },
+        "requires": {
+          "$ref": "#/$defs/Requires",
+          "description": "Native bots and fragments the package needs."
+        },
+        "schema": {
+          "description": "Manifest format version.",
+          "enum": [
+            "monoagent.automation/v1"
+          ],
+          "type": "string"
+        },
+        "site": {
+          "$ref": "#/$defs/Site",
+          "description": "The site the package automates. site.domains is enforced."
+        },
+        "version": {
+          "description": "Package version (semver). Installing a lower version than the installed one is refused.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "actions",
+        "id",
+        "name",
+        "permissions",
+        "policy",
+        "schema",
+        "site",
+        "version"
+      ],
+      "type": "object"
+    },
+    "Permissions": {
+      "properties": {
+        "callActions": {
+          "description": "CallActions lists the exact \"\u003cautomation\u003e.\u003caction\u003e\" refs this package may call_action (own-package calls need no declaration).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "downloads": {
+          "description": "Whether download steps are allowed.",
+          "type": "boolean"
+        },
+        "scripts": {
+          "description": "declared scripts/\u003cname\u003e.js files",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "steps": {
+          "description": "step types / prefix globs; empty = unrestricted (built-ins only)",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "downloads",
+        "scripts",
+        "steps"
+      ],
+      "type": "object"
+    },
+    "Policy": {
+      "properties": {
+        "tier": {
+          "description": "\"standard\" | \"social\"",
+          "enum": [
+            "standard",
+            "social"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "tier"
+      ],
+      "type": "object"
+    },
+    "Probe": {
+      "properties": {
+        "cookie": {
+          "description": "Name of a cookie present only when logged in.",
+          "type": "string"
+        },
+        "selector": {
+          "description": "CSS selector (a comma list means any of them) present only when logged in.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Publisher": {
+      "properties": {
+        "name": {
+          "description": "Publisher name.",
+          "type": "string"
+        },
+        "url": {
+          "description": "Publisher web page.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "Requires": {
+      "properties": {
+        "fragments": {
+          "description": "Fragments from other packages this package calls.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "native": {
+          "description": "compiled Go bot id, e.g. \"instagram\"",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Site": {
+      "properties": {
+        "domains": {
+          "description": "Hosts steps may navigate to: exact hosts or \"*.example.com\" (which also matches example.com). Anything else fails with off_domain.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "startUrl": {
+          "description": "Page a new session opens; available to steps as {{site.startUrl}}.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "domains",
+        "startUrl"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://raw.githubusercontent.com/monoes/mono-agent/master/data/schemas/automation.v1.schema.json",
+  "$ref": "#/$defs/Manifest",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A browser automation package: site, login, permissions and the actions it ships.",
+  "title": "Mono Agent automation package manifest (automation.json)"
+}

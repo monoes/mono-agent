@@ -60,6 +60,39 @@ type StepDef struct {
 	// (jevfallback.go) when the step's selector/xpath finds nothing; a step
 	// without an intent never falls back.
 	Intent string `json:"intent,omitempty"`
+
+	// --- package-era fields (spec §4.3, §6.1) ---
+
+	// SideEffect marks a step that writes, sends or deletes on the site.
+	// Safe-mode verification (SetSafeMode) stops before the first one.
+	SideEffect bool `json:"sideEffect,omitempty"`
+	// Until is a post-step outcome to wait for (click/type/submit), and
+	// the condition of a wait_for step.
+	Until *WaitSpec `json:"until,omitempty"`
+	// Fragment names fragments/<name>.json for call_fragment.
+	Fragment string `json:"fragment,omitempty"`
+	// Action is the call_action reference ("<action>" or "<automation>.<action>").
+	Action string `json:"action,omitempty"`
+	// Inputs are the variables passed to call_fragment / call_action /
+	// page_script (values are templates).
+	Inputs map[string]interface{} `json:"inputs,omitempty"`
+	// Items is the for_each list template; As names the item variable
+	// (default "item"); Steps is the inline loop body.
+	Items string    `json:"items,omitempty"`
+	As    string    `json:"as,omitempty"`
+	Steps []StepDef `json:"steps,omitempty"`
+	// Key is the key for press_key ("Enter", "Escape", "Control+a", ...).
+	Key string `json:"key,omitempty"`
+	// Script names scripts/<name>.js for page_script.
+	Script string `json:"script,omitempty"`
+	// Input is the source template for transform; Ops its operations.
+	Input string        `json:"input,omitempty"`
+	Ops   []TransformOp `json:"ops,omitempty"`
+	// Fields maps output field → sub-selector for extract_table /
+	// extract_list-style steps (relative to each row/item).
+	Fields map[string]string `json:"fields,omitempty"`
+	// Path is a JSON path ("a.b[0].c") for extract_json.
+	Path string `json:"path,omitempty"`
 }
 
 // LoopDef defines an iteration over a collection of items, executing a subset
@@ -389,6 +422,19 @@ type ActionExecutor struct {
 	jevClient *jev.Client
 	jevMinP   float64
 	jevMarker string // marker set by the current step's pick, if any
+
+	// Package-era state (package_ctx.go). pkg is nil for legacy actions.
+	pkg      PackageContext
+	selObs   SelectorObserver
+	safeMode bool
+	// safeStop is set when safe mode stopped before a side-effect step.
+	safeStop *SafeStop
+	// fatal is set by failRun (safe_mode.go): the run must unwind.
+	fatal            error
+	downloadsAllowed bool
+	// selMarkers are in-page marker tokens set by package-selector lookups
+	// (selectors_pkg.go) during the current step; removed when it ends.
+	selMarkers []string
 }
 
 // NewActionExecutor creates a fully initialised executor. The page must already
@@ -418,6 +464,8 @@ func NewActionExecutor(
 		handlers:           make(map[string]StepHandler),
 		reachedIndexByLoop: make(map[string]int),
 	}
+	ae.resolver.scope = ae.secretScope
+	ae.resolver.declaredSecret = func(name string) bool { return ae.secretInputNames()[name] }
 	ae.initHandlers()
 	return ae
 }
@@ -459,6 +507,7 @@ func (ae *ActionExecutor) initHandlers() {
 	ae.handlers["log"] = ae.stepLog
 	ae.handlers["call_bot_method"] = ae.stepCallBotMethod
 	ae.handlers["set_variable"] = ae.stepSetVariable
+	ae.initExtendedHandlers()
 }
 
 // Execute runs the complete action. It follows four phases:
@@ -467,19 +516,35 @@ func (ae *ActionExecutor) initHandlers() {
 //  3. Execute each loop
 //  4. Aggregate and return results
 func (ae *ActionExecutor) Execute(action *StorageAction) (*ExecutionResult, error) {
-	ae.startTime = time.Now()
-	ae.action = action
-
-	// Load the action definition from the embedded JSON.
-	loader := GetLoader()
-	actionDef, err := loader.Load(action.TargetPlatform, action.Type)
+	actionDef, err := GetLoader().Load(action.TargetPlatform, action.Type)
 	if err != nil {
 		return nil, fmt.Errorf("loading action definition: %w", err)
 	}
+	return ae.ExecuteDef(action, actionDef)
+}
+
+// ExecuteDef runs an already-loaded definition (e.g. a recording draft that
+// is not installed). The definition is validated first and refused on
+// errors. In safe mode a run that stops before a side-effect step returns
+// success; SafeStopped reports where.
+func (ae *ActionExecutor) ExecuteDef(action *StorageAction, actionDef *ActionDef) (*ExecutionResult, error) {
+	res, err := ae.executeDef(action, actionDef)
+	return res, ae.redactErr(err)
+}
+
+func (ae *ActionExecutor) executeDef(action *StorageAction, actionDef *ActionDef) (*ExecutionResult, error) {
+	ae.startTime = time.Now()
+	ae.action = action
 	ae.actionDef = actionDef
+
+	if err := ae.prepareRun(action.TargetPlatform, actionDef); err != nil {
+		return nil, err
+	}
+	actionDef = ae.actionDef // prepareRun may assign synthetic step ids
 
 	// Seed the execution context with action fields.
 	ae.seedVariables(action)
+	ae.registerSecretInputs()
 
 	// Validate declared required inputs before executing anything.
 	if err := ae.validateRequiredInputs(actionDef); err != nil {
@@ -521,6 +586,9 @@ func (ae *ActionExecutor) Execute(action *StorageAction) (*ExecutionResult, erro
 			for _, id := range step.Else {
 				conditionBranchIDs[id] = true
 			}
+			// A condition inside a for_each body may branch to top-level
+			// steps too; those must not also run as initial steps.
+			collectBranches(step.Steps)
 		}
 	}
 	collectBranches(actionDef.Steps)
@@ -533,8 +601,8 @@ func (ae *ActionExecutor) Execute(action *StorageAction) (*ExecutionResult, erro
 		}
 	}
 
-	if err := ae.executeSteps(ae.ctx, initialSteps); err != nil {
-		if err == ErrAbort {
+	if err := ae.executeSteps(ae.ctx, initialSteps); err != nil && !errors.Is(err, errSafeStop) {
+		if errors.Is(err, ErrAbort) {
 			ae.logger.Error().Msg("action aborted during initial steps")
 			if ae.db != nil {
 				if serr := ae.db.UpdateActionState(action.ID, "FAILED"); serr != nil {
@@ -557,8 +625,11 @@ func (ae *ActionExecutor) Execute(action *StorageAction) (*ExecutionResult, erro
 
 	// Phase 3: Execute loops.
 	for _, loop := range actionDef.Loops {
-		if err := ae.executeLoop(ae.ctx, loop, actionDef.Steps); err != nil {
-			if err == ErrAbort {
+		if ae.safeStop != nil {
+			break
+		}
+		if err := ae.executeLoop(ae.ctx, loop, actionDef.Steps); err != nil && !errors.Is(err, errSafeStop) {
+			if errors.Is(err, ErrAbort) {
 				ae.logger.Error().Str("loopID", loop.ID).Msg("action aborted during loop")
 				if ae.db != nil {
 					if serr := ae.db.UpdateActionState(action.ID, "FAILED"); serr != nil {
@@ -763,18 +834,20 @@ func (ae *ActionExecutor) executeSteps(ctx context.Context, steps []StepDef) err
 		default:
 		}
 
+		if err := ae.haltErr(); err != nil {
+			return err
+		}
 		step := steps[i]
+		if ae.safeMode && ae.safeStopRequired(step) {
+			return ae.stopBeforeSideEffect(step)
+		}
 
 		// Resolve templates in the step definition.
 		resolved := ae.resolver.ResolveStepDef(step)
 
 		handler, ok := ae.handlers[resolved.Type]
 		if !ok {
-			ae.logger.Warn().
-				Str("stepID", resolved.ID).
-				Str("type", resolved.Type).
-				Msg("unknown step type, skipping")
-			continue
+			return ae.failRun(resolved.ID, fmt.Errorf("unknown step type %q", resolved.Type))
 		}
 
 		ae.emitEvent(ExecutionEvent{
@@ -787,6 +860,11 @@ func (ae *ActionExecutor) executeSteps(ctx context.Context, steps []StepDef) err
 		})
 
 		result, err := handler(ctx, resolved)
+		result, err = ae.applyUntil(ctx, resolved, result, err)
+		result, err = ae.redactStep(result, err)
+		if herr := ae.afterStep(resolved, result, err); herr != nil {
+			return herr
+		}
 		if err != nil || (result != nil && !result.Success) {
 			if result == nil {
 				result = &StepResult{
@@ -798,9 +876,16 @@ func (ae *ActionExecutor) executeSteps(ctx context.Context, steps []StepDef) err
 			result.StepID = resolved.ID
 
 			// Apply error handler if defined.
-			handled := ae.errorHandler.Handle(ctx, resolved.OnError, result, ae.execCtx)
+			onErr := resolved.OnError
+			if onErr == nil {
+				onErr = ae.defaultOnError()
+			}
+			handled := ae.errorHandler.Handle(ctx, onErr, result, ae.execCtx)
 
 			if handled.Abort {
+				if errors.Is(handled.Error, ErrAbort) {
+					return handled.Error
+				}
 				return ErrAbort
 			}
 			if handled.Retry {
@@ -890,7 +975,7 @@ func (ae *ActionExecutor) handleOnSuccess(sa *SuccessAction) {
 			items := make([]map[string]interface{}, len(ae.execCtx.ExtractedItems))
 			copy(items, ae.execCtx.ExtractedItems)
 			ae.execCtx.mu.Unlock()
-			if err := ae.db.SaveExtractedData(ae.action.ID, items); err != nil {
+			if err := ae.db.SaveExtractedData(ae.action.ID, ae.redactItems(items)); err != nil {
 				ae.logger.Warn().Err(err).Msg("failed to save extracted data on success callback")
 			}
 		}
@@ -1019,7 +1104,7 @@ func (ae *ActionExecutor) executeLoop(ctx context.Context, loop LoopDef, allStep
 
 		stepErr := ae.executeSteps(ctx, loopSteps)
 		if stepErr != nil {
-			if stepErr == ErrAbort {
+			if isHalt(stepErr) {
 				return stepErr
 			}
 			ae.logger.Warn().
@@ -1254,6 +1339,7 @@ func (ae *ActionExecutor) emitEvent(event ExecutionEvent) {
 	if ae.events == nil {
 		return
 	}
+	event.Message = ae.redact(event.Message)
 	select {
 	case ae.events <- event:
 	default:
@@ -1269,11 +1355,16 @@ func (ae *ActionExecutor) buildResult() *ExecutionResult {
 	ae.execCtx.mu.Lock()
 	defer ae.execCtx.mu.Unlock()
 
-	extracted := make([]map[string]interface{}, len(ae.execCtx.ExtractedItems))
-	copy(extracted, ae.execCtx.ExtractedItems)
+	extracted := ae.redactItems(ae.execCtx.ExtractedItems)
+	if extracted == nil {
+		extracted = []map[string]interface{}{}
+	}
 
 	failed := make([]FailedItem, len(ae.execCtx.FailedItems))
 	copy(failed, ae.execCtx.FailedItems)
+	for i := range failed {
+		failed[i].Error = ae.redactErr(failed[i].Error)
+	}
 
 	return &ExecutionResult{
 		ExtractedItems: extracted,

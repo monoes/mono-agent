@@ -1,0 +1,107 @@
+{
+  "$schema": "../../../schemas/action.v1.schema.json",
+  "actionType": "auto_reply_dms",
+  "platform": "LINKEDIN",
+  "version": "2.0.0",
+  "description": "Reply to LinkedIn inbox conversations that are waiting for an answer (unread, last message not yours)",
+  "sideEffects": "message",
+  "metadata": {
+    "requiresAuth": true,
+    "supportsPagination": true,
+    "supportsRetry": true
+  },
+  "inputs": {
+    "required": [
+      {
+        "name": "replyText",
+        "type": "string",
+        "description": "Reply to send (the node's message)"
+      }
+    ],
+    "optional": [
+      {
+        "name": "maxConversations",
+        "type": "number",
+        "default": 10,
+        "min": 1,
+        "max": 100
+      },
+      {
+        "name": "onlyUnread",
+        "type": "boolean",
+        "default": true,
+        "description": "Only unread conversations whose last message is not yours"
+      },
+      {
+        "name": "delayBetweenReplies",
+        "type": "number",
+        "default": 10,
+        "min": 1,
+        "max": 600
+      }
+    ]
+  },
+  "outputs": {
+    "success": [
+      "itemsCount",
+      "reachedIndex"
+    ],
+    "failure": [
+      "failedItems"
+    ]
+  },
+  "steps": [
+    {
+      "id": "list_conversations",
+      "type": "call_bot_method",
+      "methodName": "list_conversations",
+      "args": [
+        "{{maxConversations or 10}}",
+        "{{onlyUnread}}"
+      ],
+      "variable_name": "conversations",
+      "timeout": 90,
+      "onError": {
+        "action": "mark_failed"
+      }
+    },
+    {
+      "id": "reply",
+      "sideEffect": true,
+      "type": "call_bot_method",
+      "methodName": "reply_to_conversation",
+      "args": [
+        "{{item.url}}",
+        "{{replyText}}"
+      ],
+      "variable_name": "replyResult",
+      "timeout": 120,
+      "onError": {
+        "action": "mark_failed"
+      }
+    },
+    {
+      "id": "wait",
+      "type": "wait",
+      "duration": "{{delayBetweenReplies or 10}}",
+      "waitFor": "time"
+    },
+    {
+      "id": "log",
+      "type": "log",
+      "value": "Replied to: {{item.name}}"
+    }
+  ],
+  "loops": [
+    {
+      "id": "process_conversations",
+      "iterator": "conversations",
+      "indexVar": "reachedIndex",
+      "steps": [
+        "reply",
+        "wait",
+        "log"
+      ]
+    }
+  ]
+}

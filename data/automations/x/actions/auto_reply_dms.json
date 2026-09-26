@@ -1,0 +1,86 @@
+{
+  "$schema": "../../../schemas/action.v1.schema.json",
+  "actionType": "auto_reply_dms",
+  "platform": "X",
+  "version": "2.0.0",
+  "description": "Reply to X (Twitter) inbox conversations that await a reply (unread by default; conversations whose last message is yours are skipped); each reply is verified",
+  "sideEffects": "message",
+  "metadata": {
+    "requiresAuth": true,
+    "supportsPagination": false,
+    "supportsRetry": true
+  },
+  "inputs": {
+    "required": [
+      { "name": "replyText", "type": "string", "description": "Reply to send" }
+    ],
+    "optional": [
+      { "name": "maxConversations", "type": "number", "default": 20, "min": 1, "max": 100, "description": "Maximum conversations to reply to" },
+      { "name": "unreadOnly", "type": "boolean", "default": true, "description": "Only reply to unread conversations" },
+      { "name": "delayBetweenReplies", "type": "number", "default": 10, "min": 2, "max": 120, "description": "Seconds to wait between replies" }
+    ]
+  },
+  "outputs": {
+    "success": [
+      "itemsCount",
+      "reachedIndex"
+    ],
+    "failure": [
+      "failedItems"
+    ]
+  },
+  "steps": [
+    {
+      "id": "list_conversations",
+      "type": "call_bot_method",
+      "methodName": "list_conversations",
+      "args": [
+        "{{maxConversations or 20}}",
+        "{{unreadOnly or true}}"
+      ],
+      "variable_name": "conversations",
+      "timeout": 90,
+      "onError": {
+        "action": "mark_failed"
+      }
+    },
+    {
+      "id": "reply_dm",
+      "sideEffect": true,
+      "type": "call_bot_method",
+      "methodName": "reply_dm",
+      "args": [
+        "{{item.url}}",
+        "{{replyText}}"
+      ],
+      "variable_name": "replyResult",
+      "timeout": 90,
+      "onError": {
+        "action": "mark_failed"
+      }
+    },
+    {
+      "id": "wait_between_replies",
+      "type": "wait",
+      "duration": "{{delayBetweenReplies or 10}}",
+      "waitFor": "time"
+    }
+  ],
+  "loops": [
+    {
+      "id": "process_conversations",
+      "iterator": "conversations",
+      "indexVar": "reachedIndex",
+      "maxItems": "{{maxConversations or 20}}",
+      "steps": [
+        "reply_dm",
+        "wait_between_replies"
+      ]
+    }
+  ],
+  "errorHandling": {
+    "globalRetries": 1,
+    "retryDelay": 2000,
+    "onFinalFailure": "log_and_continue"
+  }
+}

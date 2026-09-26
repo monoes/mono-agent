@@ -1,0 +1,1670 @@
+{
+  "gemini.chat_session": {
+    "credential_platform": "gemini",
+    "fields": [
+      {
+        "key": "prompt",
+        "label": "Prompt",
+        "type": "textarea",
+        "required": true,
+        "placeholder": "Ask Gemini anything...",
+        "examples": [
+          "generate an image that: a wizard in a blue robe casting a fire spell",
+          "now show the same wizard riding a red dragon"
+        ],
+        "help": "Sent to the session named by Session ID, so it can refer back to earlier answers (\"the same wizard, now …\"). Omit Session ID to start a new chat.",
+        "rows": 4
+      },
+      {
+        "key": "session_id",
+        "label": "Session ID",
+        "type": "text",
+        "required": false,
+        "help": "Existing chat session to continue (from a previous run's session_id output). Omit to start a new chat."
+      },
+      {
+        "key": "mode",
+        "label": "Response Mode",
+        "type": "select",
+        "required": false,
+        "default": "text",
+        "help": "image mode waits for generated images and downloads them to downloadDir.",
+        "options": [
+          "text",
+          "image"
+        ]
+      },
+      {
+        "key": "referenceImagePath",
+        "label": "Reference Image Path",
+        "type": "text",
+        "required": false,
+        "help": "Local image to upload before the prompt is sent (e.g. for style transfer)."
+      },
+      {
+        "key": "maxWaitSeconds",
+        "label": "Max Wait (seconds)",
+        "type": "number",
+        "required": false,
+        "default": 90,
+        "help": "Maximum time to wait for each Gemini response.",
+        "min": 10,
+        "max": 300
+      },
+      {
+        "key": "downloadDir",
+        "label": "Download Directory",
+        "type": "text",
+        "required": false,
+        "default": "~/.monoagent/downloads",
+        "help": "Where to save generated images (image mode only)."
+      }
+    ]
+  },
+  "gemini.chat_session_many": {
+    "credential_platform": "gemini",
+    "fields": [
+      {
+        "key": "prompts",
+        "label": "Prompts",
+        "type": "array",
+        "required": true,
+        "placeholder": "generate an image that: a wizard in a blue robe casting a fire spell",
+        "examples": [
+          "generate an image that: a wizard in a blue robe casting a fire spell",
+          "generate an image that: the same wizard riding a red dragon over a burning castle"
+        ],
+        "help": "One prompt per image, added in order and sent to a single chat session, so the character and style carry across every answer — write the second as a change to the first (\"the same wizard, now …\"). Short English prompts work best.",
+        "item_type": "text"
+      },
+      {
+        "key": "session_id",
+        "label": "Session ID",
+        "type": "text",
+        "required": false,
+        "help": "Existing chat session to continue (from a previous run's session_id output). Omit to start a new chat."
+      },
+      {
+        "key": "mode",
+        "label": "Response Mode",
+        "type": "select",
+        "required": false,
+        "default": "text",
+        "help": "image mode waits for generated images and downloads them to downloadDir.",
+        "options": [
+          "text",
+          "image"
+        ]
+      },
+      {
+        "key": "maxWaitSeconds",
+        "label": "Max Wait (seconds)",
+        "type": "number",
+        "required": false,
+        "default": 90,
+        "help": "Maximum time to wait for each response in the loop.",
+        "min": 10,
+        "max": 300
+      },
+      {
+        "key": "downloadDir",
+        "label": "Download Directory",
+        "type": "text",
+        "required": false,
+        "default": "~/.monoagent/downloads",
+        "help": "Where to save generated images (image mode only)."
+      }
+    ]
+  },
+  "gemini.generate_image": {
+    "credential_platform": "gemini",
+    "fields": [
+      {
+        "key": "prompt",
+        "label": "Prompt",
+        "type": "textarea",
+        "required": true,
+        "placeholder": "generate an image that: a wizard in a blue robe casting a fire spell",
+        "examples": [
+          "generate an image that: a wizard in a blue robe casting a fire spell",
+          "generate an image that: a red bicycle leaning on a Paris café window at dawn"
+        ],
+        "help": "Describe the image in one short English sentence. Long or non-English prompts trigger a reasoning model that cannot generate images.",
+        "rows": 4
+      },
+      {
+        "key": "maxWaitSeconds",
+        "label": "Max Wait (seconds)",
+        "type": "number",
+        "required": false,
+        "default": 120,
+        "help": "Maximum time to wait for image generation."
+      },
+      {
+        "key": "downloadDir",
+        "label": "Download Directory",
+        "type": "text",
+        "required": false,
+        "default": "~/.monoagent/downloads",
+        "help": "Where to save generated images."
+      }
+    ]
+  },
+  "gemini.generate_text": {
+    "credential_platform": "gemini",
+    "fields": [
+      {
+        "key": "prompt",
+        "label": "Prompt",
+        "type": "textarea",
+        "required": true,
+        "placeholder": "Ask Gemini anything...",
+        "examples": [
+          "Summarise this week’s AI news in five bullet points",
+          "Rewrite this paragraph for a non-technical reader: …"
+        ],
+        "rows": 4
+      },
+      {
+        "key": "maxWaitSeconds",
+        "label": "Max Wait (seconds)",
+        "type": "number",
+        "required": false,
+        "default": 60,
+        "help": "Maximum time to wait for Gemini to respond."
+      }
+    ]
+  },
+  "hackernews.get_post_metrics": {
+    "credential_platform": null,
+    "fields": []
+  },
+  "hackernews.list_comments": {
+    "credential_platform": null,
+    "fields": []
+  },
+  "hackernews.reply_to_comment": {
+    "credential_platform": null,
+    "fields": []
+  },
+  "hackernews.submit_post": {
+    "credential_platform": null,
+    "fields": []
+  },
+  "instagram.auto_reply_dms": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "message",
+        "label": "Reply Template",
+        "type": "textarea",
+        "required": true,
+        "placeholder": "Thanks for your message! ...",
+        "rows": 4
+      },
+      {
+        "key": "limit",
+        "label": "Max Replies",
+        "type": "number",
+        "required": false,
+        "default": 20
+      }
+    ]
+  },
+  "instagram.comment_on_posts": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "targets",
+        "label": "Post URLs",
+        "type": "array",
+        "required": true,
+        "help": "Post URLs or identifiers to comment on.",
+        "item_type": "text"
+      },
+      {
+        "key": "message",
+        "label": "Comment",
+        "type": "textarea",
+        "required": true,
+        "rows": 3
+      },
+      {
+        "key": "limit",
+        "label": "Max Comments",
+        "type": "number",
+        "required": false,
+        "default": 10
+      }
+    ]
+  },
+  "instagram.engage_user_posts": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "targets",
+        "label": "Profiles",
+        "type": "array",
+        "required": true,
+        "help": "Usernames whose posts to engage with.",
+        "item_type": "text"
+      },
+      {
+        "key": "limit",
+        "label": "Max Posts",
+        "type": "number",
+        "required": false,
+        "default": 10
+      }
+    ]
+  },
+  "instagram.engage_with_posts": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "keywords",
+        "label": "Keywords",
+        "type": "text",
+        "required": true,
+        "placeholder": "e.g. AI startup",
+        "help": "Search terms to find posts to engage with."
+      },
+      {
+        "key": "limit",
+        "label": "Max Posts",
+        "type": "number",
+        "required": false,
+        "default": 10
+      }
+    ]
+  },
+  "instagram.export_followers": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "sourceType",
+        "label": "List",
+        "type": "select",
+        "required": false,
+        "default": "FOLLOWERS_FETCH",
+        "help": "Followers or the accounts followed. X also accepts VERIFIED_FOLLOWERS_FETCH.",
+        "options": [
+          "FOLLOWERS_FETCH",
+          "FOLLOWING_FETCH"
+        ]
+      },
+      {
+        "key": "targets",
+        "label": "Profiles",
+        "type": "array",
+        "required": false,
+        "help": "Username or profile URL whose list to export. LinkedIn always exports your own account; Instagram, X and TikTok need a profile.",
+        "item_type": "text"
+      },
+      {
+        "key": "limit",
+        "label": "Max Results",
+        "type": "number",
+        "required": false,
+        "default": 100
+      }
+    ]
+  },
+  "instagram.extract_post_data": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "targets",
+        "label": "Post URLs",
+        "type": "array",
+        "required": true,
+        "help": "Post URLs to extract structured data from.",
+        "item_type": "text"
+      },
+      {
+        "key": "limit",
+        "label": "Max Posts",
+        "type": "number",
+        "required": false,
+        "default": 20
+      }
+    ]
+  },
+  "instagram.find_by_keyword": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "keywords",
+        "label": "Keywords",
+        "type": "text",
+        "required": true,
+        "placeholder": "e.g. startup investor Berlin",
+        "help": "Search terms to look up."
+      },
+      {
+        "key": "limit",
+        "label": "Max Results",
+        "type": "number",
+        "required": false,
+        "default": 20
+      }
+    ]
+  },
+  "instagram.follow_users": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "targets",
+        "label": "Users to Follow",
+        "type": "array",
+        "required": true,
+        "help": "Usernames or profile URLs to follow.",
+        "item_type": "text"
+      },
+      {
+        "key": "limit",
+        "label": "Max Follows",
+        "type": "number",
+        "required": false,
+        "default": 20
+      }
+    ]
+  },
+  "instagram.like_comments_on_posts": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "targets",
+        "label": "Post URLs",
+        "type": "array",
+        "required": true,
+        "help": "Post URLs whose comments to like.",
+        "item_type": "text"
+      },
+      {
+        "key": "limit",
+        "label": "Max Likes",
+        "type": "number",
+        "required": false,
+        "default": 20
+      }
+    ]
+  },
+  "instagram.like_posts": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "targets",
+        "label": "Post URLs",
+        "type": "array",
+        "required": true,
+        "help": "Post URLs or identifiers to like.",
+        "item_type": "text"
+      },
+      {
+        "key": "limit",
+        "label": "Max Likes",
+        "type": "number",
+        "required": false,
+        "default": 20
+      }
+    ]
+  },
+  "instagram.list_post_comments": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "username",
+        "label": "Session Username",
+        "type": "text",
+        "required": false,
+        "help": "Username of the browser session to use. Leave blank to use the default session."
+      },
+      {
+        "key": "keywords",
+        "label": "Keywords",
+        "type": "text",
+        "required": false
+      },
+      {
+        "key": "message",
+        "label": "Message",
+        "type": "textarea",
+        "required": false,
+        "rows": 3
+      },
+      {
+        "key": "targets",
+        "label": "Target List",
+        "type": "array",
+        "required": false,
+        "help": "List of target usernames, URLs, or identifiers.",
+        "item_type": "text"
+      },
+      {
+        "key": "limit",
+        "label": "Max Actions",
+        "type": "number",
+        "required": false,
+        "default": 10
+      }
+    ]
+  },
+  "instagram.list_user_posts": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "username",
+        "label": "Session Username",
+        "type": "text",
+        "required": false,
+        "help": "Username of the browser session to use. Leave blank to use the default session."
+      },
+      {
+        "key": "keywords",
+        "label": "Keywords",
+        "type": "text",
+        "required": false
+      },
+      {
+        "key": "message",
+        "label": "Message",
+        "type": "textarea",
+        "required": false,
+        "rows": 3
+      },
+      {
+        "key": "targets",
+        "label": "Target List",
+        "type": "array",
+        "required": false,
+        "help": "List of target usernames, URLs, or identifiers.",
+        "item_type": "text"
+      },
+      {
+        "key": "limit",
+        "label": "Max Actions",
+        "type": "number",
+        "required": false,
+        "default": 10
+      }
+    ]
+  },
+  "instagram.publish_post": {
+    "credential_platform": "instagram",
+    "fields": [
+      {
+        "key": "credential_id",
+        "label": "Instagram Account",
+        "type": "credential_picker",
+        "required": true
+      },
+      {
+        "key": "text",
+        "label": "Caption",
+        "type": "textarea",
+        "required": true,
+        "placeholder": "Write your caption here... Supports {{ $json.fieldName }} expressions.",
+        "help": "The caption for the Instagram post.",
+        "rows": 4
+      },
+      {
+        "key": "media",
+        "label": "Media Path / URL",
+        "type": "text",
+        "required": true,
+        "placeholder": "e.g. /tmp/image.jpg or https://...",
+        "help": "Local file path or URL of the image to post."
+      },
+      {
+        "key": "locationTag",
+        "label": "Location Tag",
+        "type": "text",
+        "required": false,
+        "placeholder": "e.g. New York"
+      },
+      {
+        "key": "tags",
+        "label": "Hashtags",
+        "type": "text",
+        "required": false,
+        "placeholder": "e.g. #ai #automation",
+        "help": "Comma-separated hashtags to append to the caption."
+      },
+      {
+        "key": "scheduledTime",
+        "label": "Scheduled Time",
+        "type": "text",
+        "required": false,
+        "placeholder": "e.g. 2025-12-31T09:00:00Z",
+        "help": "Optional ISO 8601 time to schedule the post."
+      }
+    ]
+  },
+  "instagram.reply_to_comments": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "username",
+        "label": "Session Username",
+        "type": "text",
+        "required": false,
+        "help": "Username of the browser session to use. Leave blank to use the default session."
+      },
+      {
+        "key": "keywords",
+        "label": "Keywords",
+        "type": "text",
+        "required": false
+      },
+      {
+        "key": "message",
+        "label": "Message",
+        "type": "textarea",
+        "required": false,
+        "rows": 3
+      },
+      {
+        "key": "targets",
+        "label": "Target List",
+        "type": "array",
+        "required": false,
+        "help": "List of target usernames, URLs, or identifiers.",
+        "item_type": "text"
+      },
+      {
+        "key": "limit",
+        "label": "Max Actions",
+        "type": "number",
+        "required": false,
+        "default": 10
+      }
+    ]
+  },
+  "instagram.scrape_profile_info": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "targets",
+        "label": "Profiles",
+        "type": "array",
+        "required": true,
+        "help": "Usernames or profile URLs to scrape.",
+        "item_type": "text"
+      },
+      {
+        "key": "limit",
+        "label": "Max Profiles",
+        "type": "number",
+        "required": false,
+        "default": 50
+      }
+    ]
+  },
+  "instagram.send_dms": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "targets",
+        "label": "Recipients",
+        "type": "array",
+        "required": true,
+        "help": "Usernames or profile URLs to send messages to.",
+        "item_type": "text"
+      },
+      {
+        "key": "message",
+        "label": "Message",
+        "type": "textarea",
+        "required": true,
+        "placeholder": "Hi {{name}}, ...",
+        "rows": 4
+      },
+      {
+        "key": "limit",
+        "label": "Max Sends",
+        "type": "number",
+        "required": false,
+        "default": 10
+      }
+    ]
+  },
+  "instagram.unfollow_users": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "targets",
+        "label": "Users to Unfollow",
+        "type": "array",
+        "required": true,
+        "help": "Usernames or profile URLs to unfollow.",
+        "item_type": "text"
+      },
+      {
+        "key": "limit",
+        "label": "Max Unfollows",
+        "type": "number",
+        "required": false,
+        "default": 20
+      }
+    ]
+  },
+  "instagram.watch_stories": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "targets",
+        "label": "Profiles",
+        "type": "array",
+        "required": true,
+        "help": "Usernames whose stories to watch.",
+        "item_type": "text"
+      },
+      {
+        "key": "limit",
+        "label": "Max Profiles",
+        "type": "number",
+        "required": false,
+        "default": 20
+      }
+    ]
+  },
+  "linkedin.auto_reply_dms": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "message",
+        "label": "Reply Template",
+        "type": "textarea",
+        "required": true,
+        "placeholder": "Thanks for your message! ...",
+        "rows": 4
+      },
+      {
+        "key": "limit",
+        "label": "Max Replies",
+        "type": "number",
+        "required": false,
+        "default": 20
+      }
+    ]
+  },
+  "linkedin.comment_on_posts": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "targets",
+        "label": "Post URLs",
+        "type": "array",
+        "required": true,
+        "help": "Post URLs or identifiers to comment on.",
+        "item_type": "text"
+      },
+      {
+        "key": "message",
+        "label": "Comment",
+        "type": "textarea",
+        "required": true,
+        "rows": 3
+      },
+      {
+        "key": "limit",
+        "label": "Max Comments",
+        "type": "number",
+        "required": false,
+        "default": 10
+      }
+    ]
+  },
+  "linkedin.engage_with_posts": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "keywords",
+        "label": "Keywords",
+        "type": "text",
+        "required": true,
+        "placeholder": "e.g. AI startup",
+        "help": "Search terms to find posts to engage with."
+      },
+      {
+        "key": "limit",
+        "label": "Max Posts",
+        "type": "number",
+        "required": false,
+        "default": 10
+      }
+    ]
+  },
+  "linkedin.export_followers": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "sourceType",
+        "label": "List",
+        "type": "select",
+        "required": false,
+        "default": "FOLLOWERS_FETCH",
+        "help": "Followers or the accounts followed. X also accepts VERIFIED_FOLLOWERS_FETCH.",
+        "options": [
+          "FOLLOWERS_FETCH",
+          "FOLLOWING_FETCH"
+        ]
+      },
+      {
+        "key": "targets",
+        "label": "Profiles",
+        "type": "array",
+        "required": false,
+        "help": "Username or profile URL whose list to export. LinkedIn always exports your own account; Instagram, X and TikTok need a profile.",
+        "item_type": "text"
+      },
+      {
+        "key": "limit",
+        "label": "Max Results",
+        "type": "number",
+        "required": false,
+        "default": 100
+      }
+    ]
+  },
+  "linkedin.find_by_keyword": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "keywords",
+        "label": "Keywords",
+        "type": "text",
+        "required": true,
+        "placeholder": "e.g. startup investor Berlin",
+        "help": "Search terms to look up."
+      },
+      {
+        "key": "limit",
+        "label": "Max Results",
+        "type": "number",
+        "required": false,
+        "default": 20
+      }
+    ]
+  },
+  "linkedin.like_comments": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "username",
+        "label": "Session Username",
+        "type": "text",
+        "required": false,
+        "help": "Username of the browser session to use. Leave blank to use the default session."
+      },
+      {
+        "key": "keywords",
+        "label": "Keywords",
+        "type": "text",
+        "required": false
+      },
+      {
+        "key": "message",
+        "label": "Message",
+        "type": "textarea",
+        "required": false,
+        "rows": 3
+      },
+      {
+        "key": "targets",
+        "label": "Target List",
+        "type": "array",
+        "required": false,
+        "help": "List of target usernames, URLs, or identifiers.",
+        "item_type": "text"
+      },
+      {
+        "key": "limit",
+        "label": "Max Actions",
+        "type": "number",
+        "required": false,
+        "default": 10
+      }
+    ]
+  },
+  "linkedin.like_posts": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "targets",
+        "label": "Post URLs",
+        "type": "array",
+        "required": true,
+        "help": "Post URLs or identifiers to like.",
+        "item_type": "text"
+      },
+      {
+        "key": "limit",
+        "label": "Max Likes",
+        "type": "number",
+        "required": false,
+        "default": 20
+      }
+    ]
+  },
+  "linkedin.list_post_comments": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "username",
+        "label": "Session Username",
+        "type": "text",
+        "required": false,
+        "help": "Username of the browser session to use. Leave blank to use the default session."
+      },
+      {
+        "key": "keywords",
+        "label": "Keywords",
+        "type": "text",
+        "required": false
+      },
+      {
+        "key": "message",
+        "label": "Message",
+        "type": "textarea",
+        "required": false,
+        "rows": 3
+      },
+      {
+        "key": "targets",
+        "label": "Target List",
+        "type": "array",
+        "required": false,
+        "help": "List of target usernames, URLs, or identifiers.",
+        "item_type": "text"
+      },
+      {
+        "key": "limit",
+        "label": "Max Actions",
+        "type": "number",
+        "required": false,
+        "default": 10
+      }
+    ]
+  },
+  "linkedin.list_user_posts": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "username",
+        "label": "Session Username",
+        "type": "text",
+        "required": false,
+        "help": "Username of the browser session to use. Leave blank to use the default session."
+      },
+      {
+        "key": "keywords",
+        "label": "Keywords",
+        "type": "text",
+        "required": false
+      },
+      {
+        "key": "message",
+        "label": "Message",
+        "type": "textarea",
+        "required": false,
+        "rows": 3
+      },
+      {
+        "key": "targets",
+        "label": "Target List",
+        "type": "array",
+        "required": false,
+        "help": "List of target usernames, URLs, or identifiers.",
+        "item_type": "text"
+      },
+      {
+        "key": "limit",
+        "label": "Max Actions",
+        "type": "number",
+        "required": false,
+        "default": 10
+      }
+    ]
+  },
+  "linkedin.publish_post": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "message",
+        "label": "Post Content",
+        "type": "textarea",
+        "required": true,
+        "placeholder": "Write your post here...",
+        "rows": 5
+      }
+    ]
+  },
+  "linkedin.scrape_profile_info": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "targets",
+        "label": "Profiles",
+        "type": "array",
+        "required": true,
+        "help": "Usernames or profile URLs to scrape.",
+        "item_type": "text"
+      },
+      {
+        "key": "limit",
+        "label": "Max Profiles",
+        "type": "number",
+        "required": false,
+        "default": 50
+      }
+    ]
+  },
+  "linkedin.send_dms": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "targets",
+        "label": "Recipients",
+        "type": "array",
+        "required": true,
+        "help": "Usernames or profile URLs to send messages to.",
+        "item_type": "text"
+      },
+      {
+        "key": "message",
+        "label": "Message",
+        "type": "textarea",
+        "required": true,
+        "placeholder": "Hi {{name}}, ...",
+        "rows": 4
+      },
+      {
+        "key": "limit",
+        "label": "Max Sends",
+        "type": "number",
+        "required": false,
+        "default": 10
+      }
+    ]
+  },
+  "producthunt.comment_on_launch": {
+    "credential_platform": null,
+    "fields": []
+  },
+  "producthunt.get_launch_metrics": {
+    "credential_platform": null,
+    "fields": []
+  },
+  "producthunt.list_comments": {
+    "credential_platform": null,
+    "fields": []
+  },
+  "tiktok.auto_reply_dms": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "message",
+        "label": "Reply Template",
+        "type": "textarea",
+        "required": true,
+        "placeholder": "Thanks for your message! ...",
+        "rows": 4
+      },
+      {
+        "key": "limit",
+        "label": "Max Replies",
+        "type": "number",
+        "required": false,
+        "default": 20
+      }
+    ]
+  },
+  "tiktok.comment_on_video": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "username",
+        "label": "Session Username",
+        "type": "text",
+        "required": false,
+        "help": "Username of the browser session to use. Leave blank to use the default session."
+      },
+      {
+        "key": "keywords",
+        "label": "Keywords",
+        "type": "text",
+        "required": false
+      },
+      {
+        "key": "message",
+        "label": "Message",
+        "type": "textarea",
+        "required": false,
+        "rows": 3
+      },
+      {
+        "key": "targets",
+        "label": "Target List",
+        "type": "array",
+        "required": false,
+        "help": "List of target usernames, URLs, or identifiers.",
+        "item_type": "text"
+      },
+      {
+        "key": "limit",
+        "label": "Max Actions",
+        "type": "number",
+        "required": false,
+        "default": 10
+      }
+    ]
+  },
+  "tiktok.duet_video": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "username",
+        "label": "Session Username",
+        "type": "text",
+        "required": false,
+        "help": "Username of the browser session to use. Leave blank to use the default session."
+      },
+      {
+        "key": "keywords",
+        "label": "Keywords",
+        "type": "text",
+        "required": false
+      },
+      {
+        "key": "message",
+        "label": "Message",
+        "type": "textarea",
+        "required": false,
+        "rows": 3
+      },
+      {
+        "key": "targets",
+        "label": "Target List",
+        "type": "array",
+        "required": false,
+        "help": "List of target usernames, URLs, or identifiers.",
+        "item_type": "text"
+      },
+      {
+        "key": "limit",
+        "label": "Max Actions",
+        "type": "number",
+        "required": false,
+        "default": 10
+      }
+    ]
+  },
+  "tiktok.engage_with_posts": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "keywords",
+        "label": "Keywords",
+        "type": "text",
+        "required": true,
+        "placeholder": "e.g. AI startup",
+        "help": "Search terms to find posts to engage with."
+      },
+      {
+        "key": "limit",
+        "label": "Max Posts",
+        "type": "number",
+        "required": false,
+        "default": 10
+      }
+    ]
+  },
+  "tiktok.export_followers": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "sourceType",
+        "label": "List",
+        "type": "select",
+        "required": false,
+        "default": "FOLLOWERS_FETCH",
+        "help": "Followers or the accounts followed. X also accepts VERIFIED_FOLLOWERS_FETCH.",
+        "options": [
+          "FOLLOWERS_FETCH",
+          "FOLLOWING_FETCH"
+        ]
+      },
+      {
+        "key": "targets",
+        "label": "Profiles",
+        "type": "array",
+        "required": false,
+        "help": "Username or profile URL whose list to export. LinkedIn always exports your own account; Instagram, X and TikTok need a profile.",
+        "item_type": "text"
+      },
+      {
+        "key": "limit",
+        "label": "Max Results",
+        "type": "number",
+        "required": false,
+        "default": 100
+      }
+    ]
+  },
+  "tiktok.find_by_keyword": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "keywords",
+        "label": "Keywords",
+        "type": "text",
+        "required": true,
+        "placeholder": "e.g. startup investor Berlin",
+        "help": "Search terms to look up."
+      },
+      {
+        "key": "limit",
+        "label": "Max Results",
+        "type": "number",
+        "required": false,
+        "default": 20
+      }
+    ]
+  },
+  "tiktok.follow_user": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "username",
+        "label": "Session Username",
+        "type": "text",
+        "required": false,
+        "help": "Username of the browser session to use. Leave blank to use the default session."
+      },
+      {
+        "key": "keywords",
+        "label": "Keywords",
+        "type": "text",
+        "required": false
+      },
+      {
+        "key": "message",
+        "label": "Message",
+        "type": "textarea",
+        "required": false,
+        "rows": 3
+      },
+      {
+        "key": "targets",
+        "label": "Target List",
+        "type": "array",
+        "required": false,
+        "help": "List of target usernames, URLs, or identifiers.",
+        "item_type": "text"
+      },
+      {
+        "key": "limit",
+        "label": "Max Actions",
+        "type": "number",
+        "required": false,
+        "default": 10
+      }
+    ]
+  },
+  "tiktok.like_comment": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "username",
+        "label": "Session Username",
+        "type": "text",
+        "required": false,
+        "help": "Username of the browser session to use. Leave blank to use the default session."
+      },
+      {
+        "key": "keywords",
+        "label": "Keywords",
+        "type": "text",
+        "required": false
+      },
+      {
+        "key": "message",
+        "label": "Message",
+        "type": "textarea",
+        "required": false,
+        "rows": 3
+      },
+      {
+        "key": "targets",
+        "label": "Target List",
+        "type": "array",
+        "required": false,
+        "help": "List of target usernames, URLs, or identifiers.",
+        "item_type": "text"
+      },
+      {
+        "key": "limit",
+        "label": "Max Actions",
+        "type": "number",
+        "required": false,
+        "default": 10
+      }
+    ]
+  },
+  "tiktok.like_video": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "username",
+        "label": "Session Username",
+        "type": "text",
+        "required": false,
+        "help": "Username of the browser session to use. Leave blank to use the default session."
+      },
+      {
+        "key": "keywords",
+        "label": "Keywords",
+        "type": "text",
+        "required": false
+      },
+      {
+        "key": "message",
+        "label": "Message",
+        "type": "textarea",
+        "required": false,
+        "rows": 3
+      },
+      {
+        "key": "targets",
+        "label": "Target List",
+        "type": "array",
+        "required": false,
+        "help": "List of target usernames, URLs, or identifiers.",
+        "item_type": "text"
+      },
+      {
+        "key": "limit",
+        "label": "Max Actions",
+        "type": "number",
+        "required": false,
+        "default": 10
+      }
+    ]
+  },
+  "tiktok.list_user_videos": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "username",
+        "label": "Session Username",
+        "type": "text",
+        "required": false,
+        "help": "Username of the browser session to use. Leave blank to use the default session."
+      },
+      {
+        "key": "keywords",
+        "label": "Keywords",
+        "type": "text",
+        "required": false
+      },
+      {
+        "key": "message",
+        "label": "Message",
+        "type": "textarea",
+        "required": false,
+        "rows": 3
+      },
+      {
+        "key": "targets",
+        "label": "Target List",
+        "type": "array",
+        "required": false,
+        "help": "List of target usernames, URLs, or identifiers.",
+        "item_type": "text"
+      },
+      {
+        "key": "limit",
+        "label": "Max Actions",
+        "type": "number",
+        "required": false,
+        "default": 10
+      }
+    ]
+  },
+  "tiktok.list_video_comments": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "username",
+        "label": "Session Username",
+        "type": "text",
+        "required": false,
+        "help": "Username of the browser session to use. Leave blank to use the default session."
+      },
+      {
+        "key": "keywords",
+        "label": "Keywords",
+        "type": "text",
+        "required": false
+      },
+      {
+        "key": "message",
+        "label": "Message",
+        "type": "textarea",
+        "required": false,
+        "rows": 3
+      },
+      {
+        "key": "targets",
+        "label": "Target List",
+        "type": "array",
+        "required": false,
+        "help": "List of target usernames, URLs, or identifiers.",
+        "item_type": "text"
+      },
+      {
+        "key": "limit",
+        "label": "Max Actions",
+        "type": "number",
+        "required": false,
+        "default": 10
+      }
+    ]
+  },
+  "tiktok.publish_post": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "message",
+        "label": "Post Content",
+        "type": "textarea",
+        "required": true,
+        "placeholder": "Write your post here...",
+        "rows": 5
+      }
+    ]
+  },
+  "tiktok.scrape_profile_info": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "targets",
+        "label": "Profiles",
+        "type": "array",
+        "required": true,
+        "help": "Usernames or profile URLs to scrape.",
+        "item_type": "text"
+      },
+      {
+        "key": "limit",
+        "label": "Max Profiles",
+        "type": "number",
+        "required": false,
+        "default": 50
+      }
+    ]
+  },
+  "tiktok.send_dms": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "targets",
+        "label": "Recipients",
+        "type": "array",
+        "required": true,
+        "help": "Usernames or profile URLs to send messages to.",
+        "item_type": "text"
+      },
+      {
+        "key": "message",
+        "label": "Message",
+        "type": "textarea",
+        "required": true,
+        "placeholder": "Hi {{name}}, ...",
+        "rows": 4
+      },
+      {
+        "key": "limit",
+        "label": "Max Sends",
+        "type": "number",
+        "required": false,
+        "default": 10
+      }
+    ]
+  },
+  "tiktok.share_video": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "username",
+        "label": "Session Username",
+        "type": "text",
+        "required": false,
+        "help": "Username of the browser session to use. Leave blank to use the default session."
+      },
+      {
+        "key": "keywords",
+        "label": "Keywords",
+        "type": "text",
+        "required": false
+      },
+      {
+        "key": "message",
+        "label": "Message",
+        "type": "textarea",
+        "required": false,
+        "rows": 3
+      },
+      {
+        "key": "targets",
+        "label": "Target List",
+        "type": "array",
+        "required": false,
+        "help": "List of target usernames, URLs, or identifiers.",
+        "item_type": "text"
+      },
+      {
+        "key": "limit",
+        "label": "Max Actions",
+        "type": "number",
+        "required": false,
+        "default": 10
+      }
+    ]
+  },
+  "tiktok.stitch_video": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "username",
+        "label": "Session Username",
+        "type": "text",
+        "required": false,
+        "help": "Username of the browser session to use. Leave blank to use the default session."
+      },
+      {
+        "key": "keywords",
+        "label": "Keywords",
+        "type": "text",
+        "required": false
+      },
+      {
+        "key": "message",
+        "label": "Message",
+        "type": "textarea",
+        "required": false,
+        "rows": 3
+      },
+      {
+        "key": "targets",
+        "label": "Target List",
+        "type": "array",
+        "required": false,
+        "help": "List of target usernames, URLs, or identifiers.",
+        "item_type": "text"
+      },
+      {
+        "key": "limit",
+        "label": "Max Actions",
+        "type": "number",
+        "required": false,
+        "default": 10
+      }
+    ]
+  },
+  "x.auto_reply_dms": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "message",
+        "label": "Reply Template",
+        "type": "textarea",
+        "required": true,
+        "placeholder": "Thanks for your message! ...",
+        "rows": 4
+      },
+      {
+        "key": "limit",
+        "label": "Max Replies",
+        "type": "number",
+        "required": false,
+        "default": 20
+      }
+    ]
+  },
+  "x.engage_with_posts": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "keywords",
+        "label": "Keywords",
+        "type": "text",
+        "required": true,
+        "placeholder": "e.g. AI startup",
+        "help": "Search terms to find posts to engage with."
+      },
+      {
+        "key": "limit",
+        "label": "Max Posts",
+        "type": "number",
+        "required": false,
+        "default": 10
+      }
+    ]
+  },
+  "x.export_followers": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "sourceType",
+        "label": "List",
+        "type": "select",
+        "required": false,
+        "default": "FOLLOWERS_FETCH",
+        "help": "Followers or the accounts followed. X also accepts VERIFIED_FOLLOWERS_FETCH.",
+        "options": [
+          "FOLLOWERS_FETCH",
+          "FOLLOWING_FETCH"
+        ]
+      },
+      {
+        "key": "targets",
+        "label": "Profiles",
+        "type": "array",
+        "required": false,
+        "help": "Username or profile URL whose list to export. LinkedIn always exports your own account; Instagram, X and TikTok need a profile.",
+        "item_type": "text"
+      },
+      {
+        "key": "limit",
+        "label": "Max Results",
+        "type": "number",
+        "required": false,
+        "default": 100
+      }
+    ]
+  },
+  "x.find_by_keyword": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "keywords",
+        "label": "Keywords",
+        "type": "text",
+        "required": true,
+        "placeholder": "e.g. startup investor Berlin",
+        "help": "Search terms to look up."
+      },
+      {
+        "key": "limit",
+        "label": "Max Results",
+        "type": "number",
+        "required": false,
+        "default": 20
+      }
+    ]
+  },
+  "x.publish_post": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "message",
+        "label": "Post Content",
+        "type": "textarea",
+        "required": true,
+        "placeholder": "Write your post here...",
+        "rows": 5
+      }
+    ]
+  },
+  "x.scrape_profile_info": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "targets",
+        "label": "Profiles",
+        "type": "array",
+        "required": true,
+        "help": "Usernames or profile URLs to scrape.",
+        "item_type": "text"
+      },
+      {
+        "key": "limit",
+        "label": "Max Profiles",
+        "type": "number",
+        "required": false,
+        "default": 50
+      }
+    ]
+  },
+  "x.send_dms": {
+    "credential_platform": null,
+    "fields": [
+      {
+        "key": "targets",
+        "label": "Recipients",
+        "type": "array",
+        "required": true,
+        "help": "Usernames or profile URLs to send messages to.",
+        "item_type": "text"
+      },
+      {
+        "key": "message",
+        "label": "Message",
+        "type": "textarea",
+        "required": true,
+        "placeholder": "Hi {{name}}, ...",
+        "rows": 4
+      },
+      {
+        "key": "limit",
+        "label": "Max Sends",
+        "type": "number",
+        "required": false,
+        "default": 10
+      }
+    ]
+  }
+}

@@ -1,0 +1,4 @@
+gemini.chat_session
+gemini.chat_session_many
+gemini.generate_image
+gemini.generate_text

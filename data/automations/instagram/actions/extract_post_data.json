@@ -1,0 +1,143 @@
+{
+  "$schema": "../../../schemas/action.v1.schema.json",
+  "actionType": "extract_post_data",
+  "platform": "INSTAGRAM",
+  "version": "2.0.0",
+  "description": "Read Instagram posts: author, caption, hashtags, likes, comment count, date, media URLs and type (image, video, reel, carousel); with includeComments also up to maxComments comments.",
+  "sideEffects": "read",
+  "metadata": {
+    "requiresAuth": true,
+    "supportsPagination": false,
+    "supportsRetry": true
+  },
+  "inputs": {
+    "required": [
+      {
+        "name": "selectedListItems",
+        "type": "list",
+        "description": "Post URLs to extract data from"
+      }
+    ],
+    "optional": [
+      {
+        "name": "fieldsToExtract",
+        "type": "string",
+        "default": "all",
+        "enum": [
+          "all",
+          "basic",
+          "comments"
+        ],
+        "description": "Which post fields to extract"
+      },
+      {
+        "name": "includeComments",
+        "type": "boolean",
+        "default": false,
+        "description": "Extract post comments"
+      },
+      {
+        "name": "maxComments",
+        "type": "number",
+        "default": 0,
+        "min": 0,
+        "description": "Maximum comments to extract (0=all)"
+      },
+      {
+        "name": "includeReplies",
+        "type": "boolean",
+        "default": false,
+        "description": "Include comment replies"
+      },
+      {
+        "name": "downloadMedia",
+        "type": "boolean",
+        "default": false,
+        "description": "Download post media files"
+      },
+      {
+        "name": "delayBetweenPosts",
+        "type": "number",
+        "default": 2,
+        "min": 1,
+        "max": 30,
+        "description": "Seconds between post extractions"
+      }
+    ]
+  },
+  "outputs": {
+    "success": [
+      "scrapeCount",
+      "reachedIndex",
+      "extractedData"
+    ],
+    "failure": [
+      "failedItems"
+    ]
+  },
+  "steps": [
+    {
+      "id": "reset_postData",
+      "type": "set_variable",
+      "variable_name": "postData",
+      "value": null
+    },
+    {
+      "id": "scrape_post",
+      "type": "call_bot_method",
+      "methodName": "scrape_post_data",
+      "args": [
+        "{{item.url or item.href or item}}",
+        "{{includeComments}}",
+        "{{maxComments or 0}}"
+      ],
+      "variable_name": "postData",
+      "timeout": 120,
+      "onError": {
+        "action": "mark_failed"
+      }
+    },
+    {
+      "id": "check_scraped",
+      "type": "condition",
+      "condition": {
+        "variable": "postData",
+        "operator": "exists"
+      },
+      "then": [
+        "log_success"
+      ]
+    },
+    {
+      "id": "log_success",
+      "type": "log",
+      "description": "Post read",
+      "value": "Post: {{postData.post_url}}"
+    },
+    {
+      "id": "wait_between_posts",
+      "type": "wait",
+      "duration": "{{delayBetweenPosts or 2}}",
+      "waitFor": "time"
+    }
+  ],
+  "loops": [
+    {
+      "id": "process_posts",
+      "iterator": "selectedListItems",
+      "indexVar": "reachedIndex",
+      "steps": [
+        "reset_postData",
+        "scrape_post",
+        "check_scraped",
+        "wait_between_posts"
+      ],
+      "onComplete": "update_action_state"
+    }
+  ],
+  "errorHandling": {
+    "globalRetries": 0,
+    "retryDelay": 2000,
+    "onFinalFailure": "log_and_continue"
+  }
+}

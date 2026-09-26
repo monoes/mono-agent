@@ -1,0 +1,139 @@
+{
+  "$schema": "../../../schemas/action.v1.schema.json",
+  "actionType": "watch_stories",
+  "platform": "INSTAGRAM",
+  "version": "2.0.0",
+  "description": "Watch the active stories of a list of profiles (viewing adds you to each story's viewer list). Only the avatar's story ring is opened — never a highlight — and the viewer stops when it moves on to another account. Profiles without an active story report stories_viewed 0.",
+  "sideEffects": "write",
+  "metadata": {
+    "requiresAuth": true,
+    "supportsPagination": false,
+    "supportsRetry": true
+  },
+  "inputs": {
+    "required": [
+      {
+        "name": "selectedListItems",
+        "type": "list",
+        "description": "Profile URLs whose stories to watch"
+      }
+    ],
+    "optional": [
+      {
+        "name": "maxStoriesPerUser",
+        "type": "number",
+        "default": 0,
+        "min": 0,
+        "description": "Max stories per user (0=all)"
+      },
+      {
+        "name": "delayBetweenStories",
+        "type": "number",
+        "default": 3,
+        "min": 1,
+        "max": 30,
+        "description": "Seconds to wait between stories"
+      },
+      {
+        "name": "delayBetweenProfiles",
+        "type": "number",
+        "default": 5,
+        "min": 2,
+        "max": 60,
+        "description": "Seconds to wait between profiles"
+      },
+      {
+        "name": "likeStory",
+        "type": "boolean",
+        "default": false,
+        "description": "Like each story while watching"
+      },
+      {
+        "name": "replyToStory",
+        "type": "boolean",
+        "default": false,
+        "description": "Reply to each story"
+      },
+      {
+        "name": "replyText",
+        "type": "string",
+        "default": "",
+        "description": "Text to use when replying to stories"
+      }
+    ]
+  },
+  "outputs": {
+    "success": [
+      "viewCount",
+      "reachedIndex"
+    ],
+    "failure": [
+      "failedItems"
+    ]
+  },
+  "steps": [
+    {
+      "id": "reset_storyResult",
+      "type": "set_variable",
+      "variable_name": "storyResult",
+      "value": null
+    },
+    {
+      "id": "view_stories",
+      "sideEffect": true,
+      "type": "call_bot_method",
+      "methodName": "view_stories",
+      "args": [
+        "{{item.url or item.href or item.username or item}}",
+        "{{maxStoriesPerUser or 0}}"
+      ],
+      "variable_name": "storyResult",
+      "timeout": 300,
+      "onError": {
+        "action": "mark_failed"
+      }
+    },
+    {
+      "id": "check_viewed",
+      "type": "condition",
+      "condition": {
+        "variable": "storyResult",
+        "operator": "exists"
+      },
+      "then": [
+        "log_success"
+      ]
+    },
+    {
+      "id": "log_success",
+      "type": "log",
+      "description": "Stories viewed",
+      "value": "Profile: {{item.url}} ({{storyResult.stories_viewed}} viewed)"
+    },
+    {
+      "id": "wait_between_profiles",
+      "type": "wait",
+      "duration": "{{delayBetweenProfiles or 5}}",
+      "waitFor": "time"
+    }
+  ],
+  "loops": [
+    {
+      "id": "process_profiles",
+      "iterator": "selectedListItems",
+      "indexVar": "reachedIndex",
+      "steps": [
+        "reset_storyResult",
+        "view_stories",
+        "check_viewed",
+        "wait_between_profiles"
+      ],
+      "onComplete": "update_action_state"
+    }
+  ],
+  "errorHandling": {
+    "globalRetries": 0,
+    "retryDelay": 2000,
+    "onFinalFailure": "log_and_continue"
+  }
+}

@@ -13,7 +13,8 @@
     "cookies",
     "contextMenus",
     "tabGroups",
-    "sidePanel"
+    "sidePanel",
+    "webNavigation"
   ],
   "host_permissions": [
     "<all_urls>"

@@ -209,6 +209,9 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 		map[string]interface{}{"selectedListItems": selectedListItems, "targets": selectedListItems}); err != nil {
 		return nil, fmt.Errorf("nodes: %s/%s: %w", b.platform, b.actionType, err)
 	}
+	if err := checkLiveRun(b.platform, b.actionType); err != nil {
+		return nil, fmt.Errorf("nodes: %w", err)
+	}
 
 	// 4. Get a session (browser page) via the SessionProvider.
 	// Each call opens a fresh tab (no reuse across nodes), so close it once
@@ -219,10 +222,11 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 	}
 	defer page.Close() //nolint:errcheck
 
-	// 5. Get the appropriate bot adapter via the BotRegistry (optional — not all platforms need it).
+	// 5. Get the appropriate bot adapter via the BotRegistry (optional — not
+	// all platforms need it): the package's requires.native bot, if any.
 	var botAdapter action.BotAdapter
 	if globalBotRegistry != nil {
-		botAdapter, _ = globalBotRegistry.GetAdapter(b.platform)
+		botAdapter, _ = globalBotRegistry.GetAdapter(nativePlatform(b.platform))
 	}
 
 	// 6. Create ActionExecutor and call Execute.
@@ -255,6 +259,10 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 		botAdapter,
 		logger,
 	)
+	attachPackage(executor, b.platform, storage.db)
+	if storage.db != nil {
+		executor.SetSecretLookup(ScopedSecretLookup(ctx, storage.db, storage.profileID, strings.ToLower(b.platform)))
+	}
 
 	// Opt-in Jev element-picker fallback for steps that declare an intent
 	// (`monoagentcli jev enable action_fallback`). Disabled, or no key ⇒
@@ -281,6 +289,9 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 	}
 
 	result, err := executor.Execute(storageAction)
+	if storage.db != nil {
+		flushHealth(storage.db)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("nodes: BrowserNode execute %s/%s: %w", b.platform, b.actionType, err)
 	}
@@ -304,10 +315,20 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 		}, nil
 	}
 
+	// A declarative package's action also reports what it declared in
+	// outputs.success (variables it set); native built-ins get nil here.
+	declared := declaredOutputs(executor, b.platform, b.actionType)
+
 	if len(result.ExtractedItems) > 0 {
-		merged := mergeStepResults(inputJSON, result.ExtractedItems, b.platform)
+		merged := withDeclaredOutputs(mergeStepResults(inputJSON, result.ExtractedItems, b.platform), declared)
 		return []workflow.NodeOutput{
 			{Handle: "main", Items: []workflow.Item{workflow.NewItem(merged)}},
+		}, nil
+	}
+
+	if declared != nil {
+		return []workflow.NodeOutput{
+			{Handle: "main", Items: []workflow.Item{workflow.NewItem(withDeclaredOutputs(inputJSON, declared))}},
 		}, nil
 	}
 

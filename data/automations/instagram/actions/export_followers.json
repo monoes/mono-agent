@@ -1,0 +1,109 @@
+{
+  "$schema": "../../../schemas/action.v1.schema.json",
+  "actionType": "export_followers",
+  "platform": "INSTAGRAM",
+  "version": "2.0.0",
+  "description": "Export a profile's followers (or following) list — one item per account (username, url, full_name). The profile comes from target_url / profileUrl, or from sourceType when that is a profile URL or username.",
+  "sideEffects": "read",
+  "metadata": {
+    "requiresAuth": true,
+    "supportsPagination": true,
+    "supportsRetry": true
+  },
+  "inputs": {
+    "optional": [
+      {
+        "name": "sourceType",
+        "type": "string",
+        "description": "Source type: 'followers', 'following', or profile URL",
+        "default": "FOLLOWERS_FETCH"
+      },
+      {
+        "name": "maxResultsCount",
+        "type": "number",
+        "default": 1000,
+        "min": 1,
+        "max": 10000,
+        "description": "Maximum followers to export"
+      },
+      {
+        "name": "listId",
+        "type": "string",
+        "default": "",
+        "description": "Save to existing list ID"
+      },
+      {
+        "name": "filterMinFollowers",
+        "type": "number",
+        "default": 0,
+        "min": 0,
+        "description": "Minimum follower count filter"
+      },
+      {
+        "name": "filterMaxFollowers",
+        "type": "number",
+        "default": 0,
+        "min": 0,
+        "description": "Maximum follower count filter (0=unlimited)"
+      },
+      {
+        "name": "filterVerified",
+        "type": "boolean",
+        "default": false,
+        "description": "Only include verified accounts"
+      },
+      {
+        "name": "sortBy",
+        "type": "string",
+        "default": "recent",
+        "enum": [
+          "recent",
+          "followers"
+        ],
+        "description": "Sort order for results"
+      }
+    ]
+  },
+  "outputs": {
+    "success": [
+      "resultsCount",
+      "maxResultsCount"
+    ],
+    "failure": []
+  },
+  "steps": [
+    {
+      "id": "fetch_followers",
+      "type": "call_bot_method",
+      "methodName": "fetch_followers_list",
+      "args": [
+        "{{target_url or profileUrl or targetUsername or sourceType}}",
+        "{{sourceType}}",
+        "{{maxResultsCount or 100}}"
+      ],
+      "variable_name": "followers",
+      "timeout": 900,
+      "onError": {
+        "action": "mark_failed"
+      }
+    },
+    {
+      "id": "store_count",
+      "type": "update_progress",
+      "set": {
+        "resultsCount": "{{followers.count}}"
+      }
+    },
+    {
+      "id": "log_success",
+      "type": "log",
+      "description": "Followers exported",
+      "value": "Accounts: {{resultsCount}}"
+    }
+  ],
+  "errorHandling": {
+    "globalRetries": 0,
+    "retryDelay": 2000,
+    "onFinalFailure": "log_and_continue"
+  }
+}

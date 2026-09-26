@@ -1,0 +1,28 @@
+{
+  "$schema": "../../../schemas/fragment.v1.schema.json",
+  "name": "check_item_id",
+  "description": "Normalise {{itemID}} into hn.id: the trimmed id when it is 1-20 digits, else empty — so an id can never smuggle anything into a URL",
+  "inputs": {
+    "required": [
+      { "name": "itemID", "type": "string", "description": "Hacker News item id" }
+    ],
+    "optional": []
+  },
+  "steps": [
+    {
+      "id": "wrap_id",
+      "type": "set_variable",
+      "variable_name": "hnIn",
+      "value": { "id": "{{itemID}}" }
+    },
+    {
+      "id": "match_id",
+      "type": "transform",
+      "input": "{{hnIn}}",
+      "variable_name": "hn",
+      "ops": [
+        { "op": "regex_extract", "field": "id", "pattern": "^\\s*([0-9]{1,20})\\s*$" }
+      ]
+    }
+  ]
+}

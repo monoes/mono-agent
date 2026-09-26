@@ -1,0 +1,230 @@
+{
+  "$schema": "../../../schemas/action.v1.schema.json",
+  "actionType": "engage_user_posts",
+  "platform": "INSTAGRAM",
+  "version": "2.0.0",
+  "description": "Engage with an Instagram user's latest posts: list the profile's grid (targetUsername / target_url, else username), then like each post (verified, never un-likes) and comment when commentText is set.",
+  "sideEffects": "message",
+  "metadata": {
+    "requiresAuth": true,
+    "supportsPagination": true,
+    "supportsRetry": true
+  },
+  "inputs": {
+    "required": [
+      {
+        "name": "username",
+        "type": "string",
+        "description": "Instagram username to engage with"
+      },
+      {
+        "name": "maxContentCount",
+        "type": "number",
+        "description": "Maximum number of posts to engage with"
+      }
+    ],
+    "optional": [
+      {
+        "name": "engagementActions",
+        "type": "array",
+        "default": [
+          "like"
+        ],
+        "description": "Actions to perform: like, comment"
+      },
+      {
+        "name": "commentText",
+        "type": "string",
+        "default": "",
+        "description": "Comment text (if comment in engagementActions)"
+      },
+      {
+        "name": "startFromPost",
+        "type": "number",
+        "default": 0,
+        "min": 0,
+        "description": "Start from post index (0=latest)"
+      },
+      {
+        "name": "filterRecentOnly",
+        "type": "boolean",
+        "default": false,
+        "description": "Only engage with recent posts"
+      },
+      {
+        "name": "reverseOrder",
+        "type": "boolean",
+        "default": false,
+        "description": "Process posts from oldest to newest"
+      },
+      {
+        "name": "filterMinLikes",
+        "type": "number",
+        "default": 0,
+        "min": 0,
+        "description": "Skip posts with fewer likes"
+      },
+      {
+        "name": "delayBetweenPosts",
+        "type": "number",
+        "default": 5,
+        "min": 2,
+        "max": 60,
+        "description": "Seconds between post engagements"
+      }
+    ]
+  },
+  "outputs": {
+    "success": [
+      "itemsCount",
+      "reachedIndex"
+    ],
+    "failure": [
+      "failedItems"
+    ]
+  },
+  "steps": [
+    {
+      "id": "list_posts",
+      "type": "call_bot_method",
+      "methodName": "list_user_posts",
+      "args": [
+        "{{targetUsername or target_url or username}}",
+        "{{maxContentCount or 10}}"
+      ],
+      "variable_name": "posts",
+      "timeout": 300,
+      "onError": {
+        "action": "mark_failed"
+      }
+    },
+    {
+      "id": "reset_likeResult",
+      "type": "set_variable",
+      "variable_name": "likeResult",
+      "value": null
+    },
+    {
+      "id": "reset_commentResult",
+      "type": "set_variable",
+      "variable_name": "commentResult",
+      "value": null
+    },
+    {
+      "id": "like_gate",
+      "type": "condition",
+      "condition": {
+        "variable": "engagementActions",
+        "operator": "not_exists"
+      },
+      "then": [
+        "like_post"
+      ],
+      "else": [
+        "like_requested"
+      ]
+    },
+    {
+      "id": "like_requested",
+      "type": "condition",
+      "condition": {
+        "variable": "engagementActions",
+        "operator": "contains",
+        "value": "like"
+      },
+      "then": [
+        "like_post"
+      ]
+    },
+    {
+      "id": "like_post",
+      "sideEffect": true,
+      "type": "call_bot_method",
+      "methodName": "like_post",
+      "args": [
+        "{{item.url}}"
+      ],
+      "variable_name": "likeResult",
+      "timeout": 90,
+      "onError": {
+        "action": "mark_failed"
+      }
+    },
+    {
+      "id": "comment_gate",
+      "type": "condition",
+      "condition": "commentText != ''",
+      "then": [
+        "comment_wanted"
+      ]
+    },
+    {
+      "id": "comment_wanted",
+      "type": "condition",
+      "condition": {
+        "variable": "engagementActions",
+        "operator": "not_exists"
+      },
+      "then": [
+        "comment_post"
+      ],
+      "else": [
+        "comment_requested"
+      ]
+    },
+    {
+      "id": "comment_requested",
+      "type": "condition",
+      "condition": {
+        "variable": "engagementActions",
+        "operator": "contains",
+        "value": "comment"
+      },
+      "then": [
+        "comment_post"
+      ]
+    },
+    {
+      "id": "comment_post",
+      "sideEffect": true,
+      "type": "call_bot_method",
+      "methodName": "comment_post",
+      "args": [
+        "{{item.url}}",
+        "{{commentText}}"
+      ],
+      "variable_name": "commentResult",
+      "timeout": 120,
+      "onError": {
+        "action": "mark_failed"
+      }
+    },
+    {
+      "id": "wait_between_engagements",
+      "type": "wait",
+      "duration": "{{delayBetweenPosts or 5}}",
+      "waitFor": "time"
+    }
+  ],
+  "loops": [
+    {
+      "id": "loop_process_content",
+      "iterator": "posts",
+      "indexVar": "reachedIndex",
+      "maxItems": "{{maxContentCount or 10}}",
+      "steps": [
+        "reset_likeResult",
+        "reset_commentResult",
+        "like_gate",
+        "comment_gate",
+        "wait_between_engagements"
+      ],
+      "onComplete": "update_action_state"
+    }
+  ],
+  "errorHandling": {
+    "globalRetries": 0,
+    "retryDelay": 2000,
+    "onFinalFailure": "log_and_continue"
+  }
+}

@@ -1,0 +1,94 @@
+{
+  "$schema": "https://raw.githubusercontent.com/monoes/mono-agent/master/data/schemas/action.v1.schema.json",
+  "actionType": "log_in",
+  "automation": "{{id}}",
+  "version": "1.0.0",
+  "description": "Log in with a username and password through the site's login form, and confirm the account menu appears.",
+  "sideEffects": "write",
+  "inputs": {
+    "required": [
+      {
+        "name": "username",
+        "type": "string",
+        "description": "Username or email",
+        "ui": {
+          "label": "Username"
+        }
+      },
+      {
+        "name": "password",
+        "type": "secret",
+        "description": "Password (resolved from the vault, never logged)",
+        "ui": {
+          "label": "Password"
+        }
+      }
+    ]
+  },
+  "outputs": {
+    "success": [
+      "loggedIn"
+    ],
+    "failure": [
+      "error"
+    ]
+  },
+  "steps": [
+    {
+      "id": "open",
+      "type": "navigate",
+      "url": "{{startUrl}}login",
+      "timeout": 20
+    },
+    {
+      "id": "type_username",
+      "type": "type",
+      "configKey": "login.username",
+      "value": "{{username}}",
+      "humanLike": true,
+      "intent": "the username or email field of the login form"
+    },
+    {
+      "id": "type_password",
+      "type": "type",
+      "configKey": "login.password",
+      "value": "{{password}}",
+      "humanLike": true,
+      "intent": "the password field of the login form"
+    },
+    {
+      "id": "submit",
+      "type": "click",
+      "configKey": "login.submit",
+      "sideEffect": true,
+      "intent": "the Log in / Sign in button of the login form",
+      "until": {
+        "any": [
+          {
+            "selector": "[data-testid='account-menu']"
+          },
+          {
+            "selector": ".login-error"
+          }
+        ]
+      },
+      "timeout": 20
+    },
+    {
+      "id": "check",
+      "type": "wait_for",
+      "until": {
+        "selector": "[data-testid='account-menu']"
+      },
+      "timeout": 10,
+      "description": "The account menu only renders for a logged-in session; a .login-error instead means the credentials were rejected."
+    },
+    {
+      "id": "mark_logged_in",
+      "type": "set_variable",
+      "set": {
+        "loggedIn": true
+      }
+    }
+  ]
+}

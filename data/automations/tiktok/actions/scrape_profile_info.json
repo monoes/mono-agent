@@ -1,0 +1,76 @@
+{
+  "$schema": "../../../schemas/action.v1.schema.json",
+  "actionType": "scrape_profile_info",
+  "platform": "TIKTOK",
+  "version": "1.1.0",
+  "description": "Extract profile information (handle, display name, bio, follower/following/like counts, avatar, link, verified badge) from TikTok profiles",
+  "sideEffects": "read",
+  "metadata": {
+    "requiresAuth": true,
+    "supportsPagination": false,
+    "supportsRetry": true
+  },
+  "inputs": {
+    "required": [
+      "selectedListItems"
+    ],
+    "optional": []
+  },
+  "outputs": {
+    "success": [
+      "profilesCount",
+      "reachedIndex"
+    ],
+    "failure": [
+      "failedProfileSearches"
+    ]
+  },
+  "steps": [
+    {
+      "id": "get_profile_data",
+      "type": "call_bot_method",
+      "methodName": "get_profile_data",
+      "args": [
+        "{{item.url or item.href or item}}"
+      ],
+      "variable_name": "profile",
+      "timeout": 60,
+      "onError": {
+        "action": "mark_failed"
+      },
+      "onSuccess": {
+        "action": "update_progress",
+        "increment": "profilesCount"
+      }
+    },
+    {
+      "id": "save_profile_data",
+      "type": "save_data",
+      "dataSource": "profile"
+    },
+    {
+      "id": "wait_between_profiles",
+      "type": "wait",
+      "duration": "{{delayBetweenProfiles or 3}}",
+      "waitFor": "time"
+    }
+  ],
+  "loops": [
+    {
+      "id": "process_profiles",
+      "iterator": "selectedListItems",
+      "indexVar": "reachedIndex",
+      "steps": [
+        "get_profile_data",
+        "save_profile_data",
+        "wait_between_profiles"
+      ],
+      "onComplete": "update_action_state"
+    }
+  ],
+  "errorHandling": {
+    "globalRetries": 0,
+    "retryDelay": 2000,
+    "onFinalFailure": "log_and_continue"
+  }
+}

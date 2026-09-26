@@ -1,0 +1,5 @@
+[
+  { "match": "^https://news\\.ycombinator\\.com/reply\\?", "fixture": "reply_to_comment.html" },
+  { "match": "^https://news\\.ycombinator\\.com/comment", "fixture": "pages/item_after_reply.html" },
+  { "match": "^https://news\\.ycombinator\\.com/item\\?id=70000010$", "fixture": "pages/item_after_reply.html" }
+]

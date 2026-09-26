@@ -1,0 +1,63 @@
+{
+  "$schema": "../../schemas/automation.v1.schema.json",
+  "schema": "monoagent.automation/v1",
+  "id": "linkedin",
+  "name": "LinkedIn",
+  "version": "1.0.0",
+  "description": "Read LinkedIn profiles, posts and comments; react, comment, message and publish from your own account",
+  "publisher": {
+    "name": "Mono Agent",
+    "url": "https://github.com/monoes/mono-agent"
+  },
+  "license": "MIT",
+  "engine": ">=0.0.0",
+  "category": "social",
+  "site": {
+    "startUrl": "https://www.linkedin.com/",
+    "domains": [
+      "linkedin.com",
+      "*.linkedin.com"
+    ]
+  },
+  "login": {
+    "url": "https://www.linkedin.com/login",
+    "loggedIn": {
+      "selector": "#global-nav, div.global-nav, nav[aria-label='Primary'], nav[aria-label='Primary Navigation'], [data-testid='primary-nav'], img.global-nav__me-photo, a[href*='/messaging/']",
+      "cookie": "li_at"
+    },
+    "sessionTtlDays": 30
+  },
+  "permissions": {
+    "steps": [
+      "call_bot_method",
+      "condition",
+      "log",
+      "save_data",
+      "set_variable",
+      "update_progress",
+      "wait"
+    ],
+    "scripts": [],
+    "downloads": false
+  },
+  "requires": {
+    "native": "linkedin"
+  },
+  "actions": [
+    "auto_reply_dms",
+    "comment_on_posts",
+    "engage_with_posts",
+    "export_followers",
+    "find_by_keyword",
+    "like_comments",
+    "like_posts",
+    "list_post_comments",
+    "list_user_posts",
+    "publish_post",
+    "scrape_profile_info",
+    "send_dms"
+  ],
+  "policy": {
+    "tier": "social"
+  }
+}

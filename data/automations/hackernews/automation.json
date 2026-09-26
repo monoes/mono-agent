@@ -1,0 +1,64 @@
+{
+  "$schema": "../../schemas/automation.v1.schema.json",
+  "schema": "monoagent.automation/v1",
+  "id": "hackernews",
+  "name": "Hacker News",
+  "version": "1.1.0",
+  "description": "Read Hacker News items and comments, reply to comments and submit stories",
+  "publisher": {
+    "name": "Mono Agent",
+    "url": "https://github.com/monoes/mono-agent"
+  },
+  "license": "MIT",
+  "engine": ">=0.0.0",
+  "category": "social",
+  "site": {
+    "startUrl": "https://news.ycombinator.com/",
+    "domains": [
+      "news.ycombinator.com"
+    ]
+  },
+  "login": {
+    "url": "https://news.ycombinator.com/",
+    "loggedIn": {
+      "selector": "#me",
+      "cookie": "user"
+    },
+    "usernameFrom": {
+      "selector": "#me"
+    },
+    "sessionTtlDays": 30
+  },
+  "permissions": {
+    "steps": [
+      "call_fragment",
+      "click",
+      "condition",
+      "extract_attribute",
+      "extract_table",
+      "extract_text",
+      "find_element",
+      "for_each",
+      "mark_failed",
+      "navigate",
+      "press_key",
+      "save_data",
+      "set_variable",
+      "transform",
+      "type",
+      "wait",
+      "wait_for"
+    ],
+    "scripts": [],
+    "downloads": false
+  },
+  "actions": [
+    "get_post_metrics",
+    "list_comments",
+    "reply_to_comment",
+    "submit_post"
+  ],
+  "policy": {
+    "tier": "social"
+  }
+}

@@ -7,6 +7,102 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.71.0] - 2026-09-25
+
+### Added
+
+- **Browser automation packages.** Every browser automation (Hacker News,
+  LinkedIn, … or your own) is now a package: an `automation.json` manifest
+  (site, allowed domains, login detection, permissions), action files,
+  reusable fragments, named selectors with ranked fallbacks, optional forms
+  and fixture tests. Packages install, update, roll back, export and import
+  as `.mpkg` files. Built-ins ship with the app as packages too, so they can
+  be updated or removed (`automation restore` brings one back).
+  - CLI: `automation list|show|new|validate|test|pack|install|export|
+    uninstall|restore|enable|disable|rollback|trust|doctor`,
+    `action export|import`, and `workflow export --bundle-automations`.
+  - `automation new --template` scaffolds a package from five templates.
+    JSON Schemas in `data/schemas/` let editors validate package files.
+  - Node types keep their `<automation>.<action>` names, so existing
+    workflows keep working. Actions installed with the old
+    `action template install` are wrapped into a `local-<platform>` package.
+  - Package actions without a hand-written form get one generated from their
+    inputs.
+- **Declarative steps.** Actions no longer need compiled Go code:
+  - `call_fragment`, `call_action`, `for_each`, `wait_for`, `assert`,
+    `select_option`, `press_key`, `extract_table` and `extract_json`;
+  - `transform`, with the ops map, filter, flag, dedupe, regex_extract,
+    parse_date, parse_number, join, split, pick, limit, lower, replace and
+    tree_parent;
+  - `http_fetch_in_page` and `download`;
+  - `page_script`, only as an opt-in escape hatch.
+
+  The built-in Hacker News automation is now fully declarative, the
+  reference package to copy.
+- **Record an action in the browser.** In the extension's side panel,
+  press Record, do the task (pick data to extract with Alt+click), then Stop.
+  - `record analyze` has AI (through the monomind runner) turn the recording
+    into an action with named inputs, outputs, selectors with fallbacks, and
+    side-effect flags.
+  - `record verify` replays it in your browser, stopping before anything
+    that writes or sends. It heals broken selectors from their fallbacks.
+  - `record save` saves it as a node, as a fragment, or as a workflow draft.
+  - The same flow is in Connections › Recordings.
+  - Passwords and card numbers are never recorded, and tokens are stripped
+    from recorded URLs.
+- **Connections page** is split into **Browser Automations** (cards with
+  login state, actions, health, recordings, import/export) and **API
+  Connections**.
+- **Selector health.** Every run records which selector worked. A selector
+  that needed a fallback is promoted, and `automation doctor` flags decaying
+  or broken ones.
+- **Re-record a single selector.** `automation rerecord <id> <key>`, or
+  Re-record on a broken row in Connections › Health, opens the page and asks
+  you to click the element once. The selector is rebuilt from that click
+  (written into your own packages, or kept as a local overlay for built-in
+  and imported ones), and its health history is reset.
+- `automation install <dir> --local` and `automation new … --install` install
+  a package you wrote as your own (trusted, scripts allowed).
+- **Workflow import is idempotent.** Importing the same workflow again
+  reports `unchanged` or `updated` instead of creating a copy; `--as-new`
+  forces a copy. A workflow whose bundled automations are missing is still
+  imported, and the output lists what to install and the command to run.
+
+### Security
+
+- Imported packages are contained:
+  - They run only on their declared domains, with only their declared step
+    types.
+  - They read only secrets filed under their own id
+    (`automation:<id>/<name>`).
+  - They upload only files you give them.
+  - They run page scripts only after `automation trust <id> --scripts`, and
+    their writing actions only after a one-time
+    `automation trust <id> --live`.
+- The install review shows every capability and the full source of any
+  script. Installs are pinned to the reviewed bytes (`--expect-sha256`), URL
+  installs are https-only, and replacing a built-in needs `--replace-builtin`.
+- Recordings are stored in `~/.monoagent/recordings/`, not the capture
+  inbox, so they never reach Documents or the knowledge brain. Recording
+  content is fenced as untrusted data in the AI prompt, and AI-drafted
+  actions can't use scripts, fetches, uploads or cross-package calls
+  without `--allow-advanced`.
+
+### Fixed
+
+- **Typing through the extension:** `type` steps sent through the extension
+  typed nothing into ordinary inputs while reporting success. The element is
+  now focused, and the typed text is read back.
+- **Unknown step types** in an action now fail validation instead of being
+  skipped silently.
+- **Workflows created with `workflow create`, or saved from the desktop
+  editor,** now also store their nodes in the database, so `workflow run
+  --json` shows node types. Existing workflows are backfilled automatically.
+- **Commands relayed through a running bridge** are no longer cut off after
+  90 seconds.
+- **Browser logins:** the `connect <platform>` error now points to
+  `login <platform>`.
+
 ## [0.70.0] - 2026-09-25
 
 ### Added

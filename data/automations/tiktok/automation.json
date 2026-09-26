@@ -1,0 +1,69 @@
+{
+  "$schema": "../../schemas/automation.v1.schema.json",
+  "schema": "monoagent.automation/v1",
+  "id": "tiktok",
+  "name": "TikTok",
+  "version": "1.0.0",
+  "description": "Read TikTok profiles, videos and comments; like, comment, follow, message and publish videos from your own account",
+  "publisher": {
+    "name": "Mono Agent",
+    "url": "https://github.com/monoes/mono-agent"
+  },
+  "license": "MIT",
+  "engine": ">=0.0.0",
+  "category": "social",
+  "site": {
+    "startUrl": "https://www.tiktok.com/",
+    "domains": [
+      "tiktok.com",
+      "*.tiktok.com"
+    ]
+  },
+  "login": {
+    "url": "https://www.tiktok.com/login",
+    "loggedIn": {
+      "selector": "[data-e2e='profile-icon'], [data-e2e='inbox-icon'], a[data-e2e='nav-profile'][href*='/@']:not([href='/@'])",
+      "cookie": "sessionid"
+    },
+    "sessionTtlDays": 30
+  },
+  "permissions": {
+    "steps": [
+      "call_bot_method",
+      "condition",
+      "find_element",
+      "log",
+      "navigate",
+      "save_data",
+      "update_progress",
+      "upload",
+      "wait"
+    ],
+    "scripts": [],
+    "downloads": false
+  },
+  "requires": {
+    "native": "tiktok"
+  },
+  "actions": [
+    "auto_reply_dms",
+    "comment_on_video",
+    "duet_video",
+    "engage_with_posts",
+    "export_followers",
+    "find_by_keyword",
+    "follow_user",
+    "like_comment",
+    "like_video",
+    "list_user_videos",
+    "list_video_comments",
+    "publish_post",
+    "scrape_profile_info",
+    "send_dms",
+    "share_video",
+    "stitch_video"
+  ],
+  "policy": {
+    "tier": "social"
+  }
+}

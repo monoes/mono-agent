@@ -1,0 +1,58 @@
+{
+  "$schema": "../../../schemas/action.v1.schema.json",
+  "actionType": "get_post_metrics",
+  "platform": "HACKERNEWS",
+  "version": "1.1.0",
+  "description": "Read a Hacker News item's points and comment count (both null for job posts, which have neither)",
+  "sideEffects": "read",
+  "metadata": {
+    "requiresAuth": false,
+    "supportsPagination": false,
+    "supportsRetry": true
+  },
+  "inputs": {
+    "required": [
+      {
+        "name": "itemID",
+        "type": "string",
+        "description": "Numeric item ID to read metrics for"
+      }
+    ],
+    "optional": []
+  },
+  "outputs": {
+    "success": [
+      "itemID",
+      "points",
+      "comments",
+      "title",
+      "author",
+      "age",
+      "isJob"
+    ],
+    "failure": [
+      "error"
+    ]
+  },
+  "steps": [
+    {
+      "id": "metrics",
+      "type": "call_bot_method",
+      "methodName": "get_post_metrics",
+      "args": [
+        "{{itemID}}"
+      ],
+      "variable_name": "metricsResult",
+      "timeout": 30,
+      "onError": {
+        "action": "mark_failed"
+      }
+    }
+  ],
+  "loops": [],
+  "errorHandling": {
+    "globalRetries": 2,
+    "retryDelay": 2000,
+    "onFinalFailure": "log_and_continue"
+  }
+}

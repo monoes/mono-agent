@@ -1,0 +1,129 @@
+{
+  "$schema": "../../../schemas/action.v1.schema.json",
+  "actionType": "follow_users",
+  "platform": "INSTAGRAM",
+  "version": "2.0.0",
+  "description": "Follow Instagram users from a list of profile URLs. Only the profile header's Follow button is used (never 'Suggested for you'); a profile already followed or requested is left alone; each follow is verified by the header switching to Following/Requested.",
+  "sideEffects": "write",
+  "metadata": {
+    "requiresAuth": true,
+    "supportsPagination": false,
+    "supportsRetry": true
+  },
+  "inputs": {
+    "required": [
+      {
+        "name": "selectedListItems",
+        "type": "list",
+        "description": "Profile URLs to follow"
+      }
+    ],
+    "optional": [
+      {
+        "name": "maxFollowsPerSession",
+        "type": "number",
+        "default": 50,
+        "min": 1,
+        "max": 200,
+        "description": "Rate limit: max follows per session"
+      },
+      {
+        "name": "maxFollowsPerDay",
+        "type": "number",
+        "default": 150,
+        "min": 1,
+        "max": 500,
+        "description": "Rate limit: max follows per day"
+      },
+      {
+        "name": "delayBetweenFollows",
+        "type": "number",
+        "default": 5,
+        "min": 2,
+        "max": 60,
+        "description": "Seconds to wait between follows"
+      },
+      {
+        "name": "skipPrivateAccounts",
+        "type": "boolean",
+        "default": false,
+        "description": "Skip private accounts"
+      }
+    ]
+  },
+  "outputs": {
+    "success": [
+      "followCount",
+      "reachedIndex"
+    ],
+    "failure": [
+      "failedItems"
+    ]
+  },
+  "steps": [
+    {
+      "id": "reset_followResult",
+      "type": "set_variable",
+      "variable_name": "followResult",
+      "value": null
+    },
+    {
+      "id": "follow_user",
+      "sideEffect": true,
+      "type": "call_bot_method",
+      "methodName": "follow_user",
+      "args": [
+        "{{item.url or item.href or item.username or item}}"
+      ],
+      "variable_name": "followResult",
+      "timeout": 90,
+      "onError": {
+        "action": "mark_failed"
+      }
+    },
+    {
+      "id": "check_followed",
+      "type": "condition",
+      "condition": {
+        "variable": "followResult",
+        "operator": "exists"
+      },
+      "then": [
+        "log_success"
+      ]
+    },
+    {
+      "id": "log_success",
+      "type": "log",
+      "description": "User followed",
+      "value": "Profile: {{item.url}} ({{followResult.status}})"
+    },
+    {
+      "id": "wait_between_follows",
+      "type": "wait",
+      "duration": "{{delayBetweenFollows or 5}}",
+      "waitFor": "time"
+    }
+  ],
+  "loops": [
+    {
+      "id": "process_profiles",
+      "iterator": "selectedListItems",
+      "indexVar": "reachedIndex",
+      "maxItems": "{{maxFollowsPerSession or 50}}",
+      "maxItemsPerDay": "{{maxFollowsPerDay or 150}}",
+      "steps": [
+        "reset_followResult",
+        "follow_user",
+        "check_followed",
+        "wait_between_follows"
+      ],
+      "onComplete": "update_action_state"
+    }
+  ],
+  "errorHandling": {
+    "globalRetries": 0,
+    "retryDelay": 2000,
+    "onFinalFailure": "log_and_continue"
+  }
+}

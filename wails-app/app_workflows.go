@@ -388,6 +388,9 @@ func (a *App) SetWorkflowActive(id string, active bool) error {
 type WorkflowImportResult struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
+	// Status is the CLI's import outcome: "created", "updated" (the same
+	// workflow was imported before and changed) or "unchanged".
+	Status string `json:"status,omitempty"`
 }
 
 // workflowFileFromStore converts a stored *workflow.Workflow into the
@@ -509,7 +512,7 @@ func (a *App) ImportWorkflow(jsonOrPath string) (*WorkflowImportResult, error) {
 	if err := json.Unmarshal(out, &res); err != nil {
 		return nil, fmt.Errorf("unexpected workflow import output: %w", err)
 	}
-	a.emitLog("WORKFLOW", "INFO", fmt.Sprintf("Imported workflow: %s [%s]", res.Name, res.ID))
+	a.emitLog("WORKFLOW", "INFO", fmt.Sprintf("Imported workflow (%s): %s [%s]", res.Status, res.Name, res.ID))
 	return &res, nil
 }
 

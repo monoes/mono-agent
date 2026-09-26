@@ -1,0 +1,122 @@
+{
+  "$schema": "../../../schemas/action.v1.schema.json",
+  "actionType": "engage_with_posts",
+  "platform": "TIKTOK",
+  "version": "1.1.0",
+  "description": "Search TikTok videos by keyword, then like each result (and comment on it when commentText is set). Likes and comments are verified per video; an already-liked video is left as is.",
+  "sideEffects": "message",
+  "metadata": {
+    "requiresAuth": true,
+    "supportsPagination": true,
+    "supportsRetry": true
+  },
+  "inputs": {
+    "required": [
+      "maxContentCount",
+      "searches"
+    ],
+    "optional": [
+      "commentText",
+      "target"
+    ]
+  },
+  "outputs": {
+    "success": [
+      "itemsCount",
+      "reachedIndex"
+    ],
+    "failure": [
+      "failedItems"
+    ]
+  },
+  "steps": [
+    {
+      "id": "parse_search_keyword",
+      "type": "update_progress",
+      "set": {
+        "searchKeyword": "{{searches[0].keyword or searches[0] or keyword}}"
+      }
+    },
+    {
+      "id": "find_videos",
+      "type": "call_bot_method",
+      "methodName": "search_videos",
+      "args": [
+        "{{searchKeyword}}",
+        "{{maxContentCount or 10}}"
+      ],
+      "variable_name": "videos",
+      "timeout": 120,
+      "onError": {
+        "action": "mark_failed"
+      }
+    },
+    {
+      "id": "like_video",
+      "sideEffect": true,
+      "type": "call_bot_method",
+      "methodName": "like_video",
+      "args": [
+        "{{item.url}}"
+      ],
+      "variable_name": "likeResult",
+      "timeout": 60,
+      "onError": {
+        "action": "mark_failed"
+      },
+      "onSuccess": {
+        "action": "update_progress",
+        "increment": "itemsCount"
+      }
+    },
+    {
+      "id": "determine_interaction_type",
+      "type": "condition",
+      "condition": "commentText != ''",
+      "then": [
+        "comment_on_video"
+      ],
+      "else": []
+    },
+    {
+      "id": "comment_on_video",
+      "sideEffect": true,
+      "type": "call_bot_method",
+      "methodName": "comment_on_video",
+      "args": [
+        "{{item.url}}",
+        "{{commentText}}"
+      ],
+      "variable_name": "commentResult",
+      "timeout": 90,
+      "onError": {
+        "action": "mark_failed"
+      }
+    },
+    {
+      "id": "wait_between_videos",
+      "type": "wait",
+      "duration": "{{delayBetweenActions or 5}}",
+      "waitFor": "time"
+    }
+  ],
+  "loops": [
+    {
+      "id": "process_content",
+      "iterator": "videos",
+      "indexVar": "reachedIndex",
+      "maxItems": "{{maxContentCount or 0}}",
+      "steps": [
+        "like_video",
+        "determine_interaction_type",
+        "wait_between_videos"
+      ],
+      "onComplete": "update_action_state"
+    }
+  ],
+  "errorHandling": {
+    "globalRetries": 0,
+    "retryDelay": 2000,
+    "onFinalFailure": "log_and_continue"
+  }
+}

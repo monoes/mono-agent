@@ -1,0 +1,19 @@
+{
+  "items": [
+    {
+      "title": "First item",
+      "url": "https://example.com/items/1",
+      "summary": "The first one."
+    },
+    {
+      "title": "Second item",
+      "url": "https://example.com/items/2",
+      "summary": "The second one."
+    },
+    {
+      "title": "Third item",
+      "url": "https://example.com/items/3",
+      "summary": "The third one."
+    }
+  ]
+}

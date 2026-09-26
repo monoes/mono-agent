@@ -1,0 +1,205 @@
+{
+  "$schema": "../../../schemas/action.v1.schema.json",
+  "actionType": "get_post_metrics",
+  "platform": "HACKERNEWS",
+  "version": "1.2.0",
+  "description": "Read a Hacker News item's points and comment count (both null for job posts, which have neither)",
+  "sideEffects": "read",
+  "metadata": {"requiresAuth": false, "supportsPagination": false, "supportsRetry": true},
+  "inputs": {
+    "required": [{"name": "itemID", "type": "string", "description": "Numeric item ID to read metrics for"}],
+    "optional": []
+  },
+  "outputs": {
+    "success": ["itemID", "points", "comments", "title", "author", "age", "isJob"],
+    "failure": ["error"]
+  },
+  "steps": [
+    {
+      "id": "check_id",
+      "type": "call_fragment",
+      "fragment": "check_item_id",
+      "description": "Accept only a numeric item id (hn.id); anything else fails"
+    },
+    {
+      "id": "gate_id",
+      "type": "condition",
+      "condition": "hn.id != ''",
+      "then": ["open_item", "read_found", "gate_found"],
+      "else": ["fail_bad_id"]
+    },
+    {
+      "id": "fail_bad_id",
+      "type": "mark_failed",
+      "text": "hackernews: item id must be numeric, got \"{{itemID}}\""
+    },
+    {
+      "id": "open_item",
+      "type": "navigate",
+      "url": "https://news.ycombinator.com/item?id={{hn.id}}",
+      "onError": {"action": "mark_failed"}
+    },
+    {
+      "id": "read_found",
+      "type": "extract_attribute",
+      "selector": ".fatitem tr.athing",
+      "attribute": "id",
+      "variable_name": "mFound",
+      "timeout": 3,
+      "onError": {"action": "skip"}
+    },
+    {
+      "id": "gate_found",
+      "type": "condition",
+      "condition": "mFound == hn.id",
+      "then": [
+        "read_title",
+        "read_score",
+        "read_author",
+        "read_age",
+        "read_sub",
+        "read_comments",
+        "collect",
+        "shape",
+        "gate_job",
+        "finish",
+        "save",
+        "out_item_id"
+      ],
+      "else": ["read_missing", "fail_missing"]
+    },
+    {
+      "id": "read_missing",
+      "type": "extract_text",
+      "selector": "body",
+      "variable_name": "pageText",
+      "timeout": 2,
+      "onError": {"action": "skip"}
+    },
+    {
+      "id": "fail_missing",
+      "type": "mark_failed",
+      "text": "hackernews: item {{hn.id}} not found: {{pageText}}"
+    },
+    {
+      "id": "read_title",
+      "type": "extract_text",
+      "selector": ".fatitem .titleline > a",
+      "variable_name": "mTitle",
+      "timeout": 2,
+      "onError": {"action": "skip"}
+    },
+    {
+      "id": "read_score",
+      "type": "extract_text",
+      "selector": ".fatitem .subline .score",
+      "variable_name": "mScore",
+      "timeout": 2,
+      "onError": {"action": "skip"}
+    },
+    {
+      "id": "read_author",
+      "type": "extract_text",
+      "selector": ".fatitem .subline a.hnuser",
+      "variable_name": "mAuthor",
+      "timeout": 2,
+      "onError": {"action": "skip"}
+    },
+    {
+      "id": "read_age",
+      "type": "extract_attribute",
+      "selector": ".fatitem .subline .age",
+      "attribute": "title",
+      "variable_name": "mAge",
+      "timeout": 2,
+      "onError": {"action": "skip"}
+    },
+    {
+      "id": "read_sub",
+      "type": "extract_attribute",
+      "selector": ".fatitem td.subtext",
+      "attribute": "class",
+      "variable_name": "mSub",
+      "timeout": 2,
+      "onError": {"action": "skip"}
+    },
+    {
+      "id": "read_comments",
+      "type": "extract_text",
+      "selector": ".fatitem .subline > a:last-child",
+      "variable_name": "mComments",
+      "timeout": 2,
+      "onError": {"action": "skip"}
+    },
+    {
+      "id": "collect",
+      "type": "set_variable",
+      "variable_name": "mRaw",
+      "value": {
+        "itemID": "{{hn.id}}",
+        "title": "{{mTitle}}",
+        "author": "{{mAuthor}}",
+        "age": "{{mAge}}",
+        "points": "{{mScore}}",
+        "comments": "{{mComments}}",
+        "discussProbe": "{{mComments}}#0",
+        "jobProbe": "{{mSub}}|{{mScore}}|{{mAuthor}}"
+      }
+    },
+    {
+      "id": "shape",
+      "type": "transform",
+      "description": "points: '42 points' → 42; comments: 'N comments' → N, 'discuss' → 0, no link → null; age: ISO part of the title attribute; job: a subtext row without score and author",
+      "input": "{{mRaw}}",
+      "variable_name": "metrics",
+      "ops": [
+        {"op": "regex_extract", "field": "age", "pattern": "^(\\S+)"},
+        {"op": "parse_number", "field": "points"},
+        {"op": "regex_extract", "field": "discussProbe", "pattern": "(?i)^discuss#(0)$"},
+        {
+          "op": "regex_extract",
+          "field": "comments",
+          "pattern": "(?i)^([0-9]+)[\\s\\x{00a0}]+comments?$"
+        },
+        {
+          "op": "map",
+          "map": {"comments": "{{comments or discussProbe}}", "age": "{{age or ''}}"}
+        },
+        {"op": "parse_number", "field": "comments"},
+        {"op": "regex_extract", "field": "jobProbe", "pattern": "^(subtext)\\|\\|$"}
+      ]
+    },
+    {
+      "id": "gate_job",
+      "type": "condition",
+      "condition": "metrics.jobProbe != ''",
+      "then": ["job_yes"],
+      "else": ["job_no"]
+    },
+    {"id": "job_yes", "type": "set_variable", "variable_name": "isJob", "value": true},
+    {"id": "job_no", "type": "set_variable", "variable_name": "isJob", "value": false},
+    {
+      "id": "finish",
+      "type": "transform",
+      "input": "{{metrics}}",
+      "variable_name": "metrics",
+      "ops": [
+        {"op": "map", "map": {"isJob": "{{isJob}}"}},
+        {
+          "op": "pick",
+          "fields": ["itemID", "points", "comments", "title", "author", "age", "isJob"]
+        }
+      ]
+    },
+    {"id": "save", "type": "save_data", "dataSource": "metrics"},
+    {
+      "id": "out_item_id",
+      "type": "set_variable",
+      "description": "The node reports outputs.success names from variables: give the ones that are also input names their output values",
+      "variable_name": "itemID",
+      "value": "{{hn.id}}"
+    }
+  ],
+  "loops": [],
+  "errorHandling": {"globalRetries": 2, "retryDelay": 2000, "onFinalFailure": "log_and_continue"}
+}

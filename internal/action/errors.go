@@ -145,7 +145,7 @@ func (eh *ErrorHandler) Handle(
 			Success: false,
 			Abort:   true,
 			StepID:  result.StepID,
-			Error:   ErrAbort,
+			Error:   abortError(result),
 		}
 
 	default:
@@ -181,7 +181,7 @@ func (eh *ErrorHandler) handleOnFailure(
 			Success: false,
 			Abort:   true,
 			StepID:  result.StepID,
-			Error:   ErrAbort,
+			Error:   abortError(result),
 		}
 
 	case ErrorActionSkip:
@@ -239,4 +239,17 @@ func WithRetry(ctx context.Context, maxRetries int, baseDelay time.Duration, fn 
 		}
 	}
 	return fmt.Errorf("all %d retries exhausted: %w", maxRetries, lastErr)
+}
+
+// abortError is the error an aborted step returns: ErrAbort, wrapping the
+// step's own error so the reason survives ("not logged in", …) while
+// errors.Is(err, ErrAbort) still holds.
+func abortError(result *StepResult) error {
+	if result == nil || result.Error == nil {
+		return ErrAbort
+	}
+	if errors.Is(result.Error, ErrAbort) {
+		return result.Error
+	}
+	return fmt.Errorf("%w: step %s: %w", ErrAbort, result.StepID, result.Error)
 }

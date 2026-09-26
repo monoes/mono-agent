@@ -148,6 +148,9 @@ func newTestAppWithHomeDir(t *testing.T, homeDir string) *App {
 // (subprocess, isolated HOME) → GUI read must roundtrip a workflow with its
 // nodes, positions, and connections intact. This is the parity gap FD7
 // closes: the GUI can now produce and consume the CLI's interchange format.
+// Imports are idempotent: on the machine that exported it the workflow comes
+// back "unchanged" under its own id; on a fresh machine it is "created" with
+// ids preserved, and a changed file re-imported there is "updated" in place.
 func TestExportImportRoundtripViaCLI(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("HOME isolation is unix-only")
@@ -155,8 +158,8 @@ func TestExportImportRoundtripViaCLI(t *testing.T) {
 	cliBin := buildTestCLI(t)
 
 	// Build the CLI before overriding HOME so the go build cache stays on
-	// the real home; the import subprocess below must only see the isolated
-	// home (~/.monoagent of the test sandbox).
+	// the real home; the import subprocesses below must only see the
+	// isolated homes (~/.monoagent of each test sandbox).
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("PATH", filepath.Dir(cliBin)+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -182,19 +185,40 @@ func TestExportImportRoundtripViaCLI(t *testing.T) {
 		t.Fatalf("ExportWorkflow: %v", err)
 	}
 
-	// Raw-JSON input mode.
+	// Same machine, raw-JSON input mode: already there, nothing changes.
 	imp, err := a.ImportWorkflow(exported)
 	if err != nil {
 		t.Fatalf("ImportWorkflow(json): %v", err)
 	}
-	if imp.Name != "roundtrip" {
-		t.Fatalf("imported name = %q, want %q", imp.Name, "roundtrip")
-	}
-	if imp.ID == saved.ID {
-		t.Fatalf("import should assign a fresh id, got the original %q", imp.ID)
+	if imp.ID != saved.ID || imp.Status != "unchanged" || imp.Name != "roundtrip" {
+		t.Fatalf("same-machine re-import = %+v, want id %s status unchanged", imp, saved.ID)
 	}
 
-	got, err := a.GetWorkflow(imp.ID)
+	// Same machine, file-path input mode: same answer.
+	wfPath := filepath.Join(t.TempDir(), "workflow.json")
+	if err := os.WriteFile(wfPath, []byte(exported), 0o644); err != nil {
+		t.Fatalf("writing workflow file: %v", err)
+	}
+	imp2, err := a.ImportWorkflow(wfPath)
+	if err != nil {
+		t.Fatalf("ImportWorkflow(path): %v", err)
+	}
+	if imp2.ID != saved.ID || imp2.Status != "unchanged" {
+		t.Fatalf("same-machine path re-import = %+v", imp2)
+	}
+
+	// A fresh machine (new HOME and database): created, data intact.
+	homeB := t.TempDir()
+	t.Setenv("HOME", homeB)
+	b := newTestAppWithHomeDir(t, homeB)
+	impB, err := b.ImportWorkflow(exported)
+	if err != nil {
+		t.Fatalf("ImportWorkflow on fresh home: %v", err)
+	}
+	if impB.Status != "created" || impB.Name != "roundtrip" {
+		t.Fatalf("fresh-home import = %+v", impB)
+	}
+	got, err := b.GetWorkflow(impB.ID)
 	if err != nil {
 		t.Fatalf("GetWorkflow(imported): %v", err)
 	}
@@ -209,17 +233,14 @@ func TestExportImportRoundtripViaCLI(t *testing.T) {
 		t.Fatalf("roundtripped connection degraded: %+v", got.Connections[0])
 	}
 
-	// File-path input mode: same import via a path to the JSON on disk.
-	wfPath := filepath.Join(t.TempDir(), "workflow.json")
-	if err := os.WriteFile(wfPath, []byte(exported), 0o644); err != nil {
-		t.Fatalf("writing workflow file: %v", err)
-	}
-	imp2, err := a.ImportWorkflow(wfPath)
+	// The same file, changed, imported there again: updated in place.
+	changed := strings.Replace(exported, `"Set"`, `"Set v2"`, 1)
+	impB2, err := b.ImportWorkflow(changed)
 	if err != nil {
-		t.Fatalf("ImportWorkflow(path): %v", err)
+		t.Fatalf("ImportWorkflow(changed): %v", err)
 	}
-	if imp2.Name != "roundtrip" || imp2.ID == imp.ID || imp2.ID == saved.ID {
-		t.Fatalf("unexpected second import result: %+v", imp2)
+	if impB2.ID != impB.ID || impB2.Status != "updated" {
+		t.Fatalf("changed re-import = %+v, want id %s status updated", impB2, impB.ID)
 	}
 }
 

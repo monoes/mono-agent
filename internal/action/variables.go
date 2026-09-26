@@ -13,11 +13,21 @@ var templatePattern = regexp.MustCompile(`\{\{([^}]+)\}\}`)
 // action step definitions.
 type VariableResolver struct {
 	context *ExecutionContext
+	// Secret handling (secrets.go): the vault lookup, the scope (current
+	// automation id) and declared-secret-input check the executor installs,
+	// and the set of values resolved so far, for redaction. Copies of the
+	// resolver share the set.
+	secrets        func(automationID, name string) (string, bool)
+	scope          func() string
+	declaredSecret func(name string) bool
+	secretVals     *secretSet
+	// maskSecrets renders {{secret:...}} as "***" (log steps).
+	maskSecrets bool
 }
 
 // NewVariableResolver creates a resolver bound to the given execution context.
 func NewVariableResolver(ctx *ExecutionContext) *VariableResolver {
-	return &VariableResolver{context: ctx}
+	return &VariableResolver{context: ctx, secretVals: &secretSet{}}
 }
 
 // Resolve replaces all {{variable.path}} occurrences in template with their
@@ -129,6 +139,9 @@ func (vr *VariableResolver) ResolveValue(value interface{}) interface{} {
 func (vr *VariableResolver) ResolvePath(path string) interface{} {
 	if path == "" {
 		return nil
+	}
+	if name, ok := strings.CutPrefix(path, secretPrefix); ok {
+		return vr.resolveSecret(name)
 	}
 
 	// Support "a or b or c" — return first non-nil, non-empty value.
@@ -362,6 +375,12 @@ func parseArrayAccess(part string) (string, int, bool) {
 // ResolveStepDef creates a deep copy of the given StepDef with all template
 // references resolved to their current values.
 func (vr *VariableResolver) ResolveStepDef(step StepDef) StepDef {
+	if step.Type == "log" && !vr.maskSecrets {
+		// A log line must never carry a secret.
+		masked := *vr
+		masked.maskSecrets = true
+		return masked.ResolveStepDef(step)
+	}
 	resolved := step
 
 	resolved.URL = vr.Resolve(step.URL)
