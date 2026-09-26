@@ -179,6 +179,37 @@ the full run list, use `monoagentcli --json workflow executions --all --limit N`
 - Every download must match the release's `SHA256SUMS.txt`, or nothing is installed.
 - With `--json`, progress is NDJSON on stderr and the result goes to stdout.
 
+### What the desktop app calls
+
+The desktop app does everything through these commands; they are equally usable from scripts. All support `--json`: snake_case keys, `[]` for empty lists, exit 2 for not found and exit 3 for invalid input.
+
+- **People:**
+  - `people list [--platform P] [--search Q] [--limit N] [--offset M]` and `people count [--platform] [--search]`
+  - `people get <id>` and `people interactions <id>`
+  - `people posts list <person>`, `people posts get <post>` and `people posts comments <post>`
+  - `people tag list [--person]`, `people tag map -- <ids…>` and `people tag add|color|remove`
+  - `people status set|get|history`
+  - `people messages list|all [--unread]|add|compose|drafts|send-draft|reject-draft|read|unread`
+- **Social lists:** `list ls`.
+- **Image vault:** `image list|search|get|data|add|label|delete|stats|export`, scoped to the active profile. `image data` returns a data URL.
+- **Workflows:**
+  - `workflow save` creates or replaces a workflow from the editor's document on stdin.
+  - `workflow execution <id>` shows run detail with redacted items.
+  - `workflow cancel <execution-id>` stops the recorded process (never the daemon), marks the run cancelled and rejects its pending HIL items. It leaves a finished run alone.
+  - `workflow delete <id> --yes` refuses a workflow that an org uses; `--force` also revokes its grants.
+  - `workflow get`, `workflow export` and `workflow delete` are profile-scoped.
+- **Sessions and connections:**
+  - `login test <id>` and `login delete <id>` (delete also removes the vault entry).
+  - `connect list|test|remove|refresh` are profile-scoped.
+  - `connect save <platform> --method M --stdin-json`: field values arrive on stdin.
+  - `connect get-oauth-client <platform> [--reveal]` and `connect set-oauth-client <platform> --client-id X [--client-secret-stdin]`. Secrets travel on stdin and are only printed with `--reveal`.
+  - `connect for-node <node-type>` and `connect oauth <platform>` (progress is NDJSON on stderr).
+- **Profiles:**
+  - `profile list|get|current|switch|create [--root-dir] [--icon]`
+  - `profile folder <id>`, `profile move [--check] <id> <dir>` (moves images and documents) and `profile projects`
+  - `profile documents list|get|capture|index|rm`
+- **Editor and orgs:** `node palette` gives the editor's node catalog. `org reconcile-doc <name>` returns the reconciled org document from stdin without saving it.
+
 ## MCP server
 
 ```bash
