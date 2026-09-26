@@ -336,6 +336,8 @@ each one) entirely out of the Go binary.
 
 ## Orgs, automations, and autonomy
 
+`monoagentcli org summary [--fast]` prints one row per org (running, autonomy level, paused, queued messages, `needs_you`) plus totals. `--fast` reads only local files and the database and leaves `needs_you` null. Without it, `needs_you` is computed for every org in parallel (monomind round-trips, each org capped at 10 s).
+
 An **org** is a team of agent roles run by monomind (`monomind org serve`).
 Its config lives in the active profile's folder:
 `<profile folder>/.monomind/orgs/<name>.json` (`org` commands use that
