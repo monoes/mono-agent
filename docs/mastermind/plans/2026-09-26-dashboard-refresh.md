@@ -3333,3 +3333,22 @@ Where the implementation differed from the plan above, and why:
   | `org summary` (1 org) | about 1.6 s |
   | Polling per dashboard window, per minute | 4 `summary`, 4 `org summary --fast`, 1 `org summary`, 12 `workflow executions --all` |
   | Polling while another page is shown | none |
+- **Review (two independent reviewers, Go and frontend).** Every confirmed finding was fixed, with a regression test for each:
+  - **Profile scoping:**
+    - captures came from the unprofiled inbox;
+    - other profiles' file-store workflows were counted;
+    - HIL was joined through workflows instead of `hil_pending.profile_id`, and org-triggered HIL rows were counted twice.
+  - **org summary:** the per-org deadline didn't hold behind a monomind wrapper.
+  - **summary wrote to the database:** it backfilled workflow rows on every poll. It now uses a read-only store.
+  - **Speed:** migration 049 adds a time expression index and a partial index for in-flight runs.
+  - **Selector ok count:** declared selectors with no runs now count as ok, matching `automation doctor`.
+  - **`@every` schedules** show their interval instead of a moving next run.
+  - **Binding deadlines:** the polled bindings now have one.
+  - **Tests** no longer probe the real bridge.
+  - **Frontend:**
+    - deep links are applied once;
+    - "All clear" is no longer claimed when the summary failed or a section is unread;
+    - failed sections show "—" instead of zero;
+    - stale replies are dropped;
+    - `org:runStatus` refreshes the orgs card;
+    - missing plural forms were added.
