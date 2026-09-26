@@ -210,7 +210,7 @@ func (b *LinkedInBot) SearchPeople(ctx context.Context, page browser.PageInterfa
 			return nil, fmt.Errorf("linkedin: %q is not a people search URL", keyword)
 		}
 	} else {
-		base = b.SearchURL(keyword) + "&origin=GLOBAL_SEARCH_HEADER"
+		base = b.SearchURL(keyword) + "&origin=" + searchOrigin
 	}
 	out := []map[string]interface{}{}
 	seen := map[string]bool{}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -50,6 +51,15 @@ type NativeBacked interface {
 }
 
 var sideEffectLevels = map[string]bool{"none": true, "read": true, "write": true, "message": true, "destructive": true}
+
+// VisibilityKinds are the allowed ActionDef.visibility values.
+var VisibilityKinds = []string{
+	"profile_view_visible_to_owner", // the profile's owner can see you visited
+	"story_view_visible_to_owner",   // the story's owner sees you in its viewers
+	"search_may_be_saved",           // the query may land in the account's search history
+	"video_view_counted",            // opening a video page may count as a view
+	"account_preference_prompt",     // a site prompt is answered, which the site may remember
+}
 
 var (
 	knownStepsOnce sync.Once
@@ -100,6 +110,12 @@ func Validate(def *ActionDef, pkg PackageContext) []Issue {
 		v.warn("", "no_side_effects", `action does not declare "sideEffects" (none|read|write|message|destructive)`)
 	case !sideEffectLevels[def.SideEffects]:
 		v.err("", "invalid_side_effects", fmt.Sprintf("sideEffects %q is not one of none|read|write|message|destructive", def.SideEffects))
+	}
+
+	for _, k := range def.Visibility {
+		if !slices.Contains(VisibilityKinds, k) {
+			v.err("", "invalid_visibility", fmt.Sprintf("visibility %q is not one of %s", k, strings.Join(VisibilityKinds, "|")))
+		}
 	}
 
 	v.steps("", def.Steps, def.Loops)

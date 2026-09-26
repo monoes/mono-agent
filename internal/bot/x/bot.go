@@ -127,9 +127,12 @@ func (b *XBot) ExtractUsername(pageURL string) string {
 }
 
 // SearchURL returns the X post search URL ("Top" tab) for the keyword; it is
-// what search_posts opens.
+// what search_posts opens. It carries no src: src=typed_query tells X the
+// query was typed into the search box (what Recent searches keeps), and the
+// other src values claim a click (a trend, a recent search) that did not
+// happen. Without src X shows the same Top results, as for a pasted link.
 func (b *XBot) SearchURL(keyword string) string {
-	return "https://x.com/search?q=" + url.QueryEscape(strings.TrimSpace(keyword)) + "&src=typed_query"
+	return "https://x.com/search?q=" + url.QueryEscape(strings.TrimSpace(keyword))
 }
 
 // SendMessage sends a direct message to username (a handle or profile URL)

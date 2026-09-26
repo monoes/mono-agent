@@ -178,6 +178,7 @@ type automationActionJSON struct {
 	Name           string                `json:"name"`
 	Description    string                `json:"description"`
 	SideEffects    string                `json:"sideEffects"`
+	Visibility     []string              `json:"visibility"` // what running it can reveal or leave behind; [] when nothing
 	ContainsScript bool                  `json:"containsScript"`
 	NodeType       string                `json:"nodeType"`
 	Inputs         []automationInputJSON `json:"inputs"`
@@ -237,7 +238,7 @@ func newAutomationShowCmd(cfg *globalConfig) *cobra.Command {
 func describeActions(pkg *automation.Package) []automationActionJSON {
 	out := []automationActionJSON{}
 	for _, name := range pkg.Manifest.Actions {
-		a := automationActionJSON{Name: name, NodeType: pkg.Manifest.ID + "." + name,
+		a := automationActionJSON{Name: name, NodeType: pkg.Manifest.ID + "." + name, Visibility: []string{},
 			Inputs: []automationInputJSON{}, Outputs: []string{}, OutputsByKey: map[string][]string{}}
 		def, err := pkg.Action(name)
 		if err != nil {
@@ -247,6 +248,7 @@ func describeActions(pkg *automation.Package) []automationActionJSON {
 		}
 		a.Description = def.Description
 		a.SideEffects = def.SideEffects
+		a.Visibility = append(a.Visibility, def.Visibility...)
 		a.ContainsScript = stepsUseScript(def.Steps)
 		if def.Inputs != nil {
 			a.Inputs = append(a.Inputs, parseInputs(def.Inputs.Required, true)...)
@@ -380,6 +382,9 @@ func printAutomationShow(out io.Writer, info *automation.InstalledInfo, m automa
 		eff := a.SideEffects
 		if a.ContainsScript {
 			eff += " +script"
+		}
+		if len(a.Visibility) > 0 {
+			eff += " +visible"
 		}
 		table.Append([]string{a.NodeType, eff, strings.Join(ins, ", "), truncateStr(a.Description, 60)})
 	}

@@ -3,8 +3,9 @@
   "actionType": "find_by_keyword",
   "platform": "INSTAGRAM",
   "version": "2.0.0",
-  "description": "Search Instagram for a keyword or hashtag and collect the profiles of the posts' authors (one profile item per post author, deduplicated).",
+  "description": "Search Instagram for a keyword or hashtag and collect the profiles of the posts' authors (one profile item per post author, deduplicated). The search may be kept in your Instagram search history. If Instagram asks to turn on notifications or save your login, it answers \"Not Now\", which Instagram may remember for your account.",
   "sideEffects": "read",
+  "visibility": ["search_may_be_saved", "account_preference_prompt"],
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": true,

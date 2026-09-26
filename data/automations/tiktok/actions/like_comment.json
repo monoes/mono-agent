@@ -3,8 +3,9 @@
   "actionType": "like_comment",
   "platform": "TIKTOK",
   "version": "1.0.0",
-  "description": "Like specific comments on TikTok videos. Each item names the video (videoUrl) and the comment by its text and author username (as list_video_comments returns them); an item matching no comment, or several, fails instead of liking another comment",
+  "description": "Like specific comments on TikTok videos. Each item names the video (videoUrl) and the comment by its text and author username (as list_video_comments returns them); an item matching no comment, or several, fails instead of liking another comment. Opening a video page may count as a view.",
   "sideEffects": "write",
+  "visibility": ["video_view_counted"],
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,

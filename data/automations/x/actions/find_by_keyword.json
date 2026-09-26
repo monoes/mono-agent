@@ -3,8 +3,9 @@
   "actionType": "find_by_keyword",
   "platform": "X",
   "version": "2.0.0",
-  "description": "Search X (Twitter) posts by keyword and return them (URL, author, text, time, counts); promoted posts are excluded",
+  "description": "Search X (Twitter) posts by keyword and return them (URL, author, text, time, counts); promoted posts are excluded. The search may be kept in your X search history.",
   "sideEffects": "read",
+  "visibility": ["search_may_be_saved"],
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": true,

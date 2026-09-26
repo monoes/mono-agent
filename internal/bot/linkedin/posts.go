@@ -277,7 +277,7 @@ func (b *LinkedInBot) SearchPosts(ctx context.Context, page browser.PageInterfac
 	}
 	target := keyword
 	if !strings.Contains(keyword, "linkedin.com/search/results/content") {
-		target = "https://www.linkedin.com/search/results/content/?keywords=" + url.QueryEscape(keyword) + "&origin=GLOBAL_SEARCH_HEADER"
+		target = "https://www.linkedin.com/search/results/content/?keywords=" + url.QueryEscape(keyword) + "&origin=" + searchOrigin
 	}
 	if err := navigate(ctx, page, target); err != nil {
 		return nil, err

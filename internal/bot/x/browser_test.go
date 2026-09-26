@@ -249,8 +249,9 @@ func TestBrowserSearchPosts(t *testing.T) {
 		if rows[2]["author_name"] != "Admin Person" || rows[2]["like_count"] != int64(4321) || rows[2]["reply_count"] != int64(1200) {
 			t.Errorf("row 2 = %v", rows[2])
 		}
-		if !strings.HasPrefix(urlOf(t, p), "https://x.com/search?q=synthkeyword&src=typed_query") {
-			t.Errorf("searched at %s", urlOf(t, p))
+		// No src: typed_query would mark the search as typed into the box.
+		if u := urlOf(t, p); u != "https://x.com/search?q=synthkeyword" {
+			t.Errorf("searched at %s", u)
 		}
 	})
 

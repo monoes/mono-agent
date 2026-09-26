@@ -3,8 +3,9 @@
   "actionType": "engage_with_posts",
   "platform": "TIKTOK",
   "version": "1.1.0",
-  "description": "Search TikTok videos by keyword, then like each result (and comment on it when commentText is set). Likes and comments are verified per video; an already-liked video is left as is.",
+  "description": "Search TikTok videos by keyword, then like each result (and comment on it when commentText is set). Likes and comments are verified per video; an already-liked video is left as is. The search may be kept in your TikTok search history. Opening a video page may count as a view.",
   "sideEffects": "message",
+  "visibility": ["search_may_be_saved", "video_view_counted"],
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": true,

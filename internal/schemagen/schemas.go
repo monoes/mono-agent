@@ -41,6 +41,7 @@ var docDirs = []string{"internal/action", "internal/automation"}
 var actionEnums = map[string][]string{
 	"StepDef.type":          StepTypes,
 	"ActionDef.sideEffects": SideEffectLevels,
+	"ActionDef.visibility":  action.VisibilityKinds,
 	// less_than, not_contains and matches are transform "where" only.
 	"ConditionDef.operator":  {"exists", "not_exists", "equals", "not_equals", "greater_than", "less_than", "contains", "not_contains", "matches"},
 	"ErrorHandlerDef.action": {"retry", "try_alternative", "mark_failed", "skip", "continue", "abort"},

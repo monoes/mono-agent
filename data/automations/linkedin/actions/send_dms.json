@@ -3,8 +3,9 @@
   "actionType": "send_dms",
   "platform": "LINKEDIN",
   "version": "2.0.0",
-  "description": "Send direct messages to a list of LinkedIn members (only through their Message option — never a connection request)",
+  "description": "Send direct messages to a list of LinkedIn members (only through their Message option — never a connection request). Visiting a profile shows you in that member's \"Who viewed your profile\"; LinkedIn only hides this when you switch to private mode in LinkedIn's settings (Visibility > Profile viewing options).",
   "sideEffects": "message",
+  "visibility": ["profile_view_visible_to_owner"],
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
