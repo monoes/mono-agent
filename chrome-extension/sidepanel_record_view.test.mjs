@@ -200,3 +200,20 @@ test("a failed verify says why and marks the step it failed on (R6-1)", () => {
   const passed = V.describeVerify({ ok: true, steps: [{ id: "a", status: "pass" }] });
   assert.deepEqual([passed.error, passed.steps[0].failed], ["", false]);
 });
+
+test("a failed report with its own error summary shows its steps and that summary", () => {
+  const v = V.describeVerify({
+    ok: false,
+    error: "step name: element not found",
+    highlighted: true,
+    tabLeftOpen: true,
+    stoppedAt: null,
+    steps: [
+      { id: "open", type: "navigate", status: "pass" },
+      { id: "name", type: "type", status: "fail", message: "element not found", selector: "#name" },
+    ],
+  });
+  assert.equal(v.ok, false);
+  assert.equal(v.error, "step name: element not found", "data.error is the summary line");
+  assert.deepEqual(v.steps.map((s) => [s.id, s.failed]), [["open", false], ["name", true]], "and the steps are still drawn");
+});
