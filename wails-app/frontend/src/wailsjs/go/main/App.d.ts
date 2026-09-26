@@ -233,6 +233,8 @@ export function GetSocialLists():Promise<Array<main.SocialListInfo>>;
 
 export function GetSummary():Promise<string>;
 
+export function GetSummarySections(arg1:string):Promise<string>;
+
 export function GetTemplates():Promise<Array<main.TemplateInfo>>;
 
 export function GetVaultImage(arg1:string):Promise<Record<string, any>>;

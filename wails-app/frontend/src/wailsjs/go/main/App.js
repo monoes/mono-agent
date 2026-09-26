@@ -458,6 +458,10 @@ export function GetSummary() {
   return window['go']['main']['App']['GetSummary']();
 }
 
+export function GetSummarySections(arg1) {
+  return window['go']['main']['App']['GetSummarySections'](arg1);
+}
+
 export function GetTemplates() {
   return window['go']['main']['App']['GetTemplates']();
 }
