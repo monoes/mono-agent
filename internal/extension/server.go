@@ -272,6 +272,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/monoagent", s.handleWS)
 	mux.HandleFunc("/monoagent/health", s.handleHealth)
 	mux.HandleFunc("/monoagent/relay", s.handleRelay)
+	mux.HandleFunc("/monoagent/auth", s.handleAuthProbe)
 	mux.HandleFunc("/monoagent/cdp", s.handleCdpSocket)
 	mux.HandleFunc("/monoagent/pair", s.handlePairPage)
 	mux.HandleFunc("/monoagent/pair/exchange", s.handlePairExchange)
