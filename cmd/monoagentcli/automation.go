@@ -60,6 +60,9 @@ func withJSONErrors(cfg *globalConfig, cmd *cobra.Command) {
 		var rep reportedError
 		if err != nil && cfg.JSONOutput && !errors.As(err, &rep) {
 			body := map[string]any{"error": err.Error()}
+			if code := jsonErrorCode(err); code != "" {
+				body["code"] = code
+			}
 			var re *installResultError
 			if errors.As(err, &re) {
 				body["issues"], body["result"] = re.res.Issues, re.res
@@ -86,6 +89,21 @@ func withJSONErrors(cfg *globalConfig, cmd *cobra.Command) {
 // "selector_conflict" and the conflicting keys).
 type jsonErrorFields interface {
 	JSONErrorFields() map[string]any
+}
+
+// jsonErrorCode names a classified error's exit-code class for
+// {"error","code"}: not_found (2), invalid_input (3), auth_or_connection
+// (4); "" for a plain error (exit 1), which prints {"error"} alone.
+func jsonErrorCode(err error) string {
+	switch exitCodeFor(err) {
+	case 2:
+		return "not_found"
+	case 3:
+		return "invalid_input"
+	case 4:
+		return "auth_or_connection"
+	}
+	return ""
 }
 
 // reportedError is a failure whose details the command already printed

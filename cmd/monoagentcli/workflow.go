@@ -1517,6 +1517,9 @@ func newWorkflowImportCmd(cfg *globalConfig) *cobra.Command {
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Install automations bundled in the file that are not installed yet")
 	cmd.Flags().BoolVar(&replaceAutomations, "replace-automations", false,
 		"Replace installed automations whose bundled copy (same version) has different content, after showing the review (asks unless --yes)")
+	// With --json a failure is also {"error","code"} on stdout (contracts
+	// §5), as the automation commands do; the exit code is unchanged.
+	withJSONErrors(cfg, cmd)
 	return cmd
 }
 
