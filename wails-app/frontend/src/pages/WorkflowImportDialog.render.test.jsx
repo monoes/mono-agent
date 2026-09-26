@@ -142,10 +142,15 @@ describe('WorkflowImportDialog', () => {
   })
 
   it('uses copyOf and words an edited-copy notice from copyReason', async () => {
+    // The CLI's own warning for each reason; the notice stands in for it.
+    const warning = {
+      id: 'a workflow with this id already exists and was edited locally: orig-7; imported as a copy — use --replace orig-7 to replace it',
+      import: 'the workflow imported earlier from this file was edited locally: orig-7; imported as a copy — use --replace orig-7 to replace it',
+    }
     for (const reason of ['id', 'import']) {
-      await importFile({ id: 'copy-2', name: 'Daily digest', status: 'created', copyOf: 'orig-7', copyReason: reason,
-        warnings: ['a workflow with this name already exists: orig-7; imported as a copy — use --replace orig-7 to replace it'] })
+      await importFile({ id: 'copy-2', name: 'Daily digest', status: 'created', copyOf: 'orig-7', copyReason: reason, warnings: [warning[reason]] })
       expect(await screen.findByText(/your edited version was kept, so this file was imported as a separate copy/)).toBeInTheDocument()
+      expect(screen.queryByText(/--replace|edited locally/)).not.toBeInTheDocument()
       api.importWorkflowFull.mockResolvedValueOnce({ id: 'orig-7', name: 'Daily digest', status: 'updated', removedCopy: 'copy-2' })
       fireEvent.click(screen.getByText('Replace the existing workflow instead'))
       fireEvent.click(await screen.findByText('Replace', { selector: 'button' }))
@@ -281,6 +286,8 @@ describe('import result helpers', () => {
   it('copyOfExisting prefers a structured field and reads the copy warning', () => {
     expect(copyOfExisting({ copyOf: 'a1', warnings: ['a workflow with this name already exists: b2; imported as a copy'] })).toBe('a1')
     expect(copyOfExisting({ warnings: ['a workflow with this name already exists: b2; imported as a copy — use --replace b2'] })).toBe('b2')
+    expect(copyOfExisting({ warnings: ['a workflow with this id already exists and was edited locally: wf-d9; imported as a copy — use --replace wf-d9 to replace it'] })).toBe('wf-d9')
+    expect(copyOfExisting({ warnings: ['the workflow imported earlier from this file was edited locally: 7672; imported as a copy — use --replace 7672 to replace it'] })).toBe('7672')
     expect(copyOfExisting({ warnings: ['something else'] })).toBe(null)
   })
   it('splitBundle keeps not-bundled packages out of the installable set', () => {

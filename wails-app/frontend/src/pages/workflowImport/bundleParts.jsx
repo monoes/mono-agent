@@ -71,8 +71,9 @@ function ReviewNotes({ d }) {
 
 // copyOfExisting returns the id of the workflow an import was kept apart
 // from: the CLI's copyOf, else (older CLIs) the id in its "imported as a
-// copy" warning.
-export const COPY_WARNING = /already exists:\s*([^\s;]+);\s*imported as a copy/i
+// copy" warning. Every copy reason's warning ends "…: <id>; imported as a
+// copy — use --replace …"; the dialog's notice replaces it.
+export const COPY_WARNING = /:\s*([^\s;]+);\s*imported as a copy/i
 export function copyOfExisting(res) {
   if (res?.copyOf) return res.copyOf
   for (const w of res?.warnings || []) {
