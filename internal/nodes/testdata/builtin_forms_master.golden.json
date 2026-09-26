@@ -282,24 +282,24 @@
     "credential_platform": null,
     "fields": [
       {
+        "key": "target_url",
+        "label": "Profile",
+        "type": "text",
+        "required": true,
+        "placeholder": "https://www.instagram.com/natgeo/",
+        "help": "Username or profile URL whose list to export. Older workflows that set profileUrl, targetUsername or targets keep working."
+      },
+      {
         "key": "sourceType",
         "label": "List",
         "type": "select",
         "required": false,
         "default": "FOLLOWERS_FETCH",
-        "help": "Followers or the accounts followed. X also accepts VERIFIED_FOLLOWERS_FETCH.",
+        "help": "Followers or the accounts followed.",
         "options": [
           "FOLLOWERS_FETCH",
           "FOLLOWING_FETCH"
         ]
-      },
-      {
-        "key": "targets",
-        "label": "Profiles",
-        "type": "array",
-        "required": false,
-        "help": "Username or profile URL whose list to export. LinkedIn always exports your own account; Instagram, X and TikTok need a profile.",
-        "item_type": "text"
       },
       {
         "key": "limit",
@@ -745,7 +745,7 @@
         "type": "select",
         "required": false,
         "default": "FOLLOWERS_FETCH",
-        "help": "Followers or the accounts followed. X also accepts VERIFIED_FOLLOWERS_FETCH.",
+        "help": "Followers or the accounts followed.",
         "options": [
           "FOLLOWERS_FETCH",
           "FOLLOWING_FETCH"
@@ -756,7 +756,7 @@
         "label": "Profiles",
         "type": "array",
         "required": false,
-        "help": "Username or profile URL whose list to export. LinkedIn always exports your own account; Instagram, X and TikTok need a profile.",
+        "help": "Username or profile URL whose list to export. LinkedIn always exports your own account; TikTok needs a profile.",
         "item_type": "text"
       },
       {
@@ -1130,7 +1130,7 @@
         "type": "select",
         "required": false,
         "default": "FOLLOWERS_FETCH",
-        "help": "Followers or the accounts followed. X also accepts VERIFIED_FOLLOWERS_FETCH.",
+        "help": "Followers or the accounts followed.",
         "options": [
           "FOLLOWERS_FETCH",
           "FOLLOWING_FETCH"
@@ -1141,7 +1141,7 @@
         "label": "Profiles",
         "type": "array",
         "required": false,
-        "help": "Username or profile URL whose list to export. LinkedIn always exports your own account; Instagram, X and TikTok need a profile.",
+        "help": "Username or profile URL whose list to export. LinkedIn always exports your own account; TikTok needs a profile.",
         "item_type": "text"
       },
       {
@@ -1558,24 +1558,25 @@
     "credential_platform": null,
     "fields": [
       {
+        "key": "target_url",
+        "label": "Profile",
+        "type": "text",
+        "required": true,
+        "placeholder": "https://x.com/NASA",
+        "help": "Username or profile URL whose list to export. Older workflows that set profileUrl, targetUsername or targets keep working."
+      },
+      {
         "key": "sourceType",
         "label": "List",
         "type": "select",
         "required": false,
         "default": "FOLLOWERS_FETCH",
-        "help": "Followers or the accounts followed. X also accepts VERIFIED_FOLLOWERS_FETCH.",
+        "help": "Followers, verified followers, or the accounts followed.",
         "options": [
           "FOLLOWERS_FETCH",
+          "VERIFIED_FOLLOWERS_FETCH",
           "FOLLOWING_FETCH"
         ]
-      },
-      {
-        "key": "targets",
-        "label": "Profiles",
-        "type": "array",
-        "required": false,
-        "help": "Username or profile URL whose list to export. LinkedIn always exports your own account; Instagram, X and TikTok need a profile.",
-        "item_type": "text"
       },
       {
         "key": "limit",

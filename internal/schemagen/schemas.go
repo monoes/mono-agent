@@ -65,6 +65,7 @@ var inputItem = map[string]any{
 				"options":     map[string]any{"type": "array", "description": "Allowed values for a select input."},
 				"enum":        map[string]any{"type": "array", "description": "Allowed values (alias of options)."},
 				"format":      map[string]any{"type": "string", "description": "Value format hint, e.g. email, uri."},
+				"aliases":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Other variable names that also supply this input (config fields older workflows set); the first non-empty one fills it when the input is not given."},
 				"ui": map[string]any{
 					"type":        "object",
 					"description": "Form hints; forms are generated from inputs.",

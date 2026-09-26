@@ -1,8 +1,8 @@
 {
   "credential_platform": null,
   "fields": [
-    { "key": "sourceType", "label": "List", "type": "select", "required": false, "default": "FOLLOWERS_FETCH", "options": ["FOLLOWERS_FETCH", "FOLLOWING_FETCH"], "help": "Followers or the accounts followed. X also accepts VERIFIED_FOLLOWERS_FETCH." },
-    { "key": "targets", "label": "Profiles", "type": "array", "required": false, "item_type": "text", "help": "Username or profile URL whose list to export. LinkedIn always exports your own account; Instagram, X and TikTok need a profile." },
+    { "key": "sourceType", "label": "List", "type": "select", "required": false, "default": "FOLLOWERS_FETCH", "options": ["FOLLOWERS_FETCH", "FOLLOWING_FETCH"], "help": "Followers or the accounts followed." },
+    { "key": "targets", "label": "Profiles", "type": "array", "required": false, "item_type": "text", "help": "Username or profile URL whose list to export. LinkedIn always exports your own account; TikTok needs a profile." },
     { "key": "limit",   "label": "Max Results", "type": "number", "required": false, "default": 100 }
   ]
 }

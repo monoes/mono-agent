@@ -177,7 +177,8 @@ func readComments(page browser.PageInterface) ([]Comment, error) {
 // ListComments returns the comments rendered on a launch page, in page
 // order: top-level comments (depth 0) and replies (depth 1+, parentId set).
 // Comments Product Hunt has not loaded yet ("show more") are not included.
-func (b *ProductHuntBot) ListComments(ctx context.Context, page browser.PageInterface, launchURL string) ([]map[string]interface{}, error) {
+// maxComments > 0 keeps only the first maxComments.
+func (b *ProductHuntBot) ListComments(ctx context.Context, page browser.PageInterface, launchURL string, maxComments int) ([]map[string]interface{}, error) {
 	u, err := checkLaunchURL(launchURL)
 	if err != nil {
 		return nil, err
@@ -191,6 +192,9 @@ func (b *ProductHuntBot) ListComments(ctx context.Context, page browser.PageInte
 	cs, err := readComments(page)
 	if err != nil {
 		return nil, err
+	}
+	if maxComments > 0 && len(cs) > maxComments {
+		cs = cs[:maxComments]
 	}
 	out := make([]map[string]interface{}, 0, len(cs))
 	for _, c := range cs {

@@ -120,8 +120,9 @@ func TestFlowReadActions(t *testing.T) {
 	})
 
 	t.Run("export_followers without a target fails", func(t *testing.T) {
+		// target_url is a required input: the run stops before opening anything.
 		r := runAction(t, xPage(t, b), "export_followers", action.StorageAction{}, nil)
-		wantErr(t, r.err, "profile")
+		wantErr(t, r.err, "missing required input 'target_url'")
 	})
 }
 

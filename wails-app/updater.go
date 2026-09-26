@@ -147,7 +147,9 @@ func (a *App) SelfUpdate() UpdateResult {
 	}
 	defer dlResp.Body.Close()
 
-	tmpFile, err := os.CreateTemp("", "monoagentcli-update-*")
+	// Temp file next to the CLI, not in os.TempDir: /tmp is often a
+	// separate filesystem and a cross-device rename fails.
+	tmpFile, err := os.CreateTemp(filepath.Dir(cliPath), ".monoagentcli-update-*")
 	if err != nil {
 		return UpdateResult{Error: fmt.Sprintf("temp file error: %v", err)}
 	}
@@ -177,6 +179,7 @@ func (a *App) SelfUpdate() UpdateResult {
 	if err := os.Rename(tmpPath, cliPath); err != nil {
 		// Rollback
 		os.Rename(bakPath, cliPath)
+		os.Remove(tmpPath)
 		return UpdateResult{Error: fmt.Sprintf("install error: %v", err)}
 	}
 	os.Remove(bakPath)

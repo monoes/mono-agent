@@ -2,8 +2,8 @@
   "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "list_comments",
   "platform": "HACKERNEWS",
-  "version": "1.2.0",
-  "description": "List the comments on a Hacker News item across all \"More\" pages, in thread order: every comment carries its depth (0 = top level) and parentId (the item ID for top-level comments); set topLevelOnly to keep top-level comments only",
+  "version": "1.3.0",
+  "description": "List the comments on a Hacker News item across all \"More\" pages, in thread order: every comment carries its depth (0 = top level) and parentId (the item ID for top-level comments); set topLevelOnly to keep top-level comments only and maxComments to stop after that many",
   "sideEffects": "read",
   "metadata": {"requiresAuth": false, "supportsPagination": true, "supportsRetry": true},
   "inputs": {
@@ -14,6 +14,13 @@
         "type": "boolean",
         "description": "Return only top-level (depth 0) comments",
         "default": false
+      },
+      {
+        "name": "maxComments",
+        "type": "number",
+        "description": "Stop after this many comments (0 = all of them)",
+        "default": 0,
+        "min": 0
       }
     ]
   },
@@ -32,7 +39,7 @@
       "id": "gate_id",
       "type": "condition",
       "condition": "hn.id != ''",
-      "then": ["gate_top", "start", "page_list"],
+      "then": ["gate_top", "gate_cap", "start", "page_list"],
       "else": ["fail_bad_id"]
     },
     {
@@ -49,6 +56,15 @@
     },
     {"id": "depth_top", "type": "set_variable", "variable_name": "maxDepth", "value": 1},
     {"id": "depth_all", "type": "set_variable", "variable_name": "maxDepth", "value": 1000000},
+    {
+      "id": "gate_cap",
+      "type": "condition",
+      "condition": "maxComments > 0",
+      "then": ["cap_set"],
+      "else": ["cap_all"]
+    },
+    {"id": "cap_set", "type": "set_variable", "variable_name": "maxRows", "value": "{{maxComments}}"},
+    {"id": "cap_all", "type": "set_variable", "variable_name": "maxRows", "value": 1000000},
     {
       "id": "start",
       "type": "set_variable",
@@ -76,7 +92,8 @@
         "read_more",
         "wrap_more",
         "next_url",
-        "set_next"
+        "set_next",
+        "gate_cap_reached"
       ],
       "description": "Follow the item's \"More\" links (at most 20 pages) while there is a next page"
     },
@@ -158,6 +175,11 @@
           "where": {"variable": "depth", "operator": "less_than", "value": "{{maxDepth}}"}
         },
         {"op": "dedupe", "field": "id"},
+        {"op": "index", "to": "rowNo", "carry": "cSeen"},
+        {
+          "op": "filter",
+          "where": {"variable": "rowNo", "operator": "less_than", "value": "{{maxRows}}"}
+        },
         {
           "op": "pick",
           "fields": ["id", "author", "text", "depth", "parentId", "age", "deleted"]
@@ -210,7 +232,14 @@
         }
       ]
     },
-    {"id": "set_next", "type": "set_variable", "variable_name": "cUrl", "value": "{{cNext.url}}"}
+    {"id": "set_next", "type": "set_variable", "variable_name": "cUrl", "value": "{{cNext.url}}"},
+    {
+      "id": "gate_cap_reached",
+      "type": "condition",
+      "description": "maxComments reached: read no further pages",
+      "condition": "cSeen >= maxRows",
+      "then": ["stop_pages"]
+    }
   ],
   "loops": [{"id": "pages", "iterator": "pageList", "indexVar": "pageIdx", "steps": ["gate_page"]}],
   "errorHandling": {"globalRetries": 2, "retryDelay": 2000, "onFinalFailure": "log_and_continue"}

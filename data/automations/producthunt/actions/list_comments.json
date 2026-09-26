@@ -2,7 +2,7 @@
   "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "list_comments",
   "platform": "PRODUCTHUNT",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "List the comments loaded on a Product Hunt launch page, in page order: top-level comments (depth 0) and replies (depth 1+, with parentId)",
   "sideEffects": "read",
   "metadata": {
@@ -18,7 +18,15 @@
         "description": "Product Hunt launch page URL (https://www.producthunt.com/...)"
       }
     ],
-    "optional": []
+    "optional": [
+      {
+        "name": "maxComments",
+        "type": "number",
+        "description": "Stop after this many comments (0 = all loaded comments)",
+        "default": 0,
+        "min": 0
+      }
+    ]
   },
   "outputs": {
     "success": [
@@ -40,7 +48,8 @@
       "type": "call_bot_method",
       "methodName": "list_comments",
       "args": [
-        "{{launchURL}}"
+        "{{launchURL}}",
+        "{{maxComments or 0}}"
       ],
       "variable_name": "commentsResult",
       "timeout": 45,

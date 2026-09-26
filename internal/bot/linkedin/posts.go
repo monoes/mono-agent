@@ -195,12 +195,18 @@ func scrollCollectPosts(ctx context.Context, page browser.PageInterface, max int
 }
 
 // clickShowMore clicks a visible end-of-list "show more" button, if any.
+// The selectors are class-only and these pages are full of Follow/Connect
+// buttons styled the same way, so a candidate must also read "show more",
+// "see more" or "load more" (text or aria-label) and must not name an
+// action such as follow, connect, message or like.
 func clickShowMore(page browser.PageInterface) {
 	tok := newToken("more")
 	var found bool
 	if err := run(page, `(tok) => {
+		const label = (b) => ((b.textContent || '') + ' ' + (b.getAttribute('aria-label') || '')).replace(/\s+/g, ' ').trim().toLowerCase();
+		const isMore = (b) => { const l = label(b); return /\b(show|see|load) more\b/.test(l) && !/\b(follow|following|unfollow|connect|message|like)\b/.test(l); };
 		const btn = Array.from(document.querySelectorAll('button.scaffold-finite-scroll__load-button, .scaffold-finite-scroll button.artdeco-button--full, main button.artdeco-button--secondary.artdeco-button--full'))
-			.find((b) => L.vis(b) && !b.disabled);
+			.find((b) => L.vis(b) && !b.disabled && isMore(b));
 		if (!btn) return false;
 		L.mark(btn, tok);
 		return true;

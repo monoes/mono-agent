@@ -5,6 +5,7 @@ package producthunt
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	botpkg "github.com/monoes/mono-agent/internal/bot"
@@ -85,11 +86,17 @@ func (b *ProductHuntBot) GetMethodByName(name string) (func(ctx context.Context,
 
 	case "list_comments":
 		return func(ctx context.Context, args ...interface{}) (interface{}, error) {
-			page, a, err := botpkg.Args(args, 1, "launchURL")
+			page, a, err := botpkg.Args(args, 2, "launchURL", "maxComments?")
 			if err != nil {
 				return nil, fmt.Errorf("list_comments: %w", err)
 			}
-			return b.ListComments(ctx, page, a[0])
+			max := 0
+			if s := strings.TrimSpace(a[1]); s != "" {
+				if max, err = strconv.Atoi(s); err != nil || max < 0 {
+					return nil, fmt.Errorf("list_comments: maxComments must be a whole number ≥ 0, got %q", a[1])
+				}
+			}
+			return b.ListComments(ctx, page, a[0], max)
 		}, true
 
 	case "get_launch_metrics":

@@ -85,6 +85,35 @@ func TestBrowserListComments(t *testing.T) {
 	}
 }
 
+// maxComments keeps the first N comments in page order; 0 keeps them all.
+func TestBrowserListCommentsMaxComments(t *testing.T) {
+	p := phPage(t, "launch.html")
+	for _, c := range []struct {
+		max  interface{}
+		want []string
+	}{
+		{"2", []string{"900001", "900002"}},
+		{2.0, []string{"900001", "900002"}},
+		{"0", []string{"900001", "900002", "900003", "900010"}},
+		{"10", []string{"900001", "900002", "900003", "900010"}},
+	} {
+		res, err := bottest.CallMethod(t, &ProductHuntBot{}, p, "list_comments", launchURL, c.max)
+		if err != nil {
+			t.Fatalf("max %v: %v", c.max, err)
+		}
+		var got []string
+		for _, m := range res.([]map[string]interface{}) {
+			got = append(got, m["id"].(string))
+		}
+		if !reflect.DeepEqual(got, c.want) {
+			t.Errorf("max %v: ids %v, want %v", c.max, got, c.want)
+		}
+	}
+	if _, err := bottest.CallMethod(t, &ProductHuntBot{}, p, "list_comments", launchURL, "-1"); err == nil {
+		t.Error("maxComments -1: want an error")
+	}
+}
+
 // TestBrowserListCommentsThreadedReplies uses the real 2026 layout: every
 // comment (reply or not) sits in its own thread-<id> container, and a
 // reply's thread is nested inside its parent's thread rather than inside

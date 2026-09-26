@@ -1,0 +1,19 @@
+<!doctype html>
+<!-- Minimized, invented markup: a Follow button carrying the same classes as
+     the end-of-list "Show more" button sits before it, plus a disguised
+     aria-label case. Only the real Show more may be clicked. -->
+<html><body><main>
+  <ul class="scaffold-finite-scroll">
+    <li>Example Person A <button class="artdeco-button artdeco-button--secondary artdeco-button--full" id="follow" type="button">Follow</button></li>
+    <li>Example Person B <button class="artdeco-button artdeco-button--secondary artdeco-button--full" id="connect" type="button" aria-label="Invite Example Person B to connect">Connect</button></li>
+    <li>Example Person C <button class="artdeco-button artdeco-button--secondary artdeco-button--full" id="follow-more" type="button" aria-label="Follow Example Person C and see more posts">Follow</button></li>
+  </ul>
+  <button class="scaffold-finite-scroll__load-button artdeco-button artdeco-button--secondary artdeco-button--full" id="more" type="button">
+    Show more results
+  </button>
+</main>
+<script>
+  window.clicked = [];
+  document.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => window.clicked.push(b.id)));
+</script>
+</body></html>

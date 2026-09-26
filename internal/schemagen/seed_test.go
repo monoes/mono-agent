@@ -87,6 +87,22 @@ func stepTypes(steps []action.StepDef, into map[string]bool) {
 	}
 }
 
+// pageActingMethods are native bot methods that click controls with an
+// effect beyond reading (TikTok's Copy link replaces the clipboard and may
+// count a share; duet/stitch open the creator), so an action calling them
+// cannot be declared read or none.
+var pageActingMethods = map[string]bool{"share_video": true, "duet_video": true, "stitch_video": true}
+
+func botMethods(steps []action.StepDef) (out []string) {
+	for _, s := range steps {
+		if s.Type == "call_bot_method" {
+			out = append(out, s.MethodName)
+		}
+		out = append(out, botMethods(s.Steps)...)
+	}
+	return out
+}
+
 func sideEffectSteps(steps []action.StepDef) (n int) {
 	for _, s := range steps {
 		if s.SideEffect {
@@ -244,6 +260,26 @@ func TestBuiltinPackages(t *testing.T) {
 			for _, s := range def.Steps {
 				if s.Type == "navigate" && strings.HasPrefix(s.URL, "http") && !hostAllowed(m.Site.Domains, s.URL) {
 					t.Errorf("%s/%s: navigate %q outside domains", p.name, name, s.URL)
+				}
+			}
+			// A read/none action interacts with the page only to read it:
+			// no clicks, typing or uploads (a bot method that clicks is
+			// flagged sideEffect and makes the action at least "write").
+			if def.SideEffects == "read" || def.SideEffects == "none" {
+				types := map[string]bool{}
+				stepTypes(def.Steps, types)
+				for _, st := range []string{"click", "type", "press_key", "upload"} {
+					if types[st] {
+						t.Errorf("%s/%s: sideEffects %q but has a %s step", p.name, name, def.SideEffects, st)
+					}
+				}
+				if n := sideEffectSteps(def.Steps); n > 0 {
+					t.Errorf("%s/%s: sideEffects %q but %d step(s) are flagged sideEffect", p.name, name, def.SideEffects, n)
+				}
+				for _, m := range botMethods(def.Steps) {
+					if pageActingMethods[m] {
+						t.Errorf("%s/%s: sideEffects %q but calls %s, which clicks on the page", p.name, name, def.SideEffects, m)
+					}
 				}
 			}
 		}

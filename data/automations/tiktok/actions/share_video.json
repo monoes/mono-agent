@@ -3,8 +3,8 @@
   "actionType": "share_video",
   "platform": "TIKTOK",
   "version": "1.0.0",
-  "description": "Copy the share link of TikTok videos and return the URL (nothing is posted)",
-  "sideEffects": "read",
+  "description": "Copy the share link of TikTok videos and return the URL. Nothing is posted, but it clicks Copy link, which replaces your clipboard and may count as a share on TikTok",
+  "sideEffects": "write",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
@@ -43,6 +43,7 @@
     {
       "id": "t1_share_video",
       "type": "call_bot_method",
+      "sideEffect": true,
       "methodName": "share_video",
       "args": [
         "{{item.url or item}}"
