@@ -55,13 +55,26 @@ func (a *App) runAutomationCLI(timeout time.Duration, sub []string, buildErr err
 	hideWindow(cmd)
 	out, runErr := cmd.Output()
 	elapsed := time.Since(startedAt).Round(time.Millisecond)
-	res := cliResultJSON(cliBin, out, runErr)
+	res := automationResultJSON(cliBin, out, runErr)
 	if runErr != nil {
 		a.emitLog("AUTOMATION", "ERROR", fmt.Sprintf("%s failed after %s: %s", label, elapsed, res))
 	} else {
 		a.emitLog("AUTOMATION", "INFO", fmt.Sprintf("%s finished in %s", label, elapsed))
 	}
 	return res
+}
+
+// automationResultJSON is cliResultJSON, except that a JSON object on
+// stdout wins over a non-zero exit: `automation test|validate` and
+// `record verify` exit 1 when something failed but still print their full
+// report (one JSON document), which the page shows. Error objects
+// ({"error": …}) pass through either way.
+func automationResultJSON(cliBin string, stdout []byte, runErr error) string {
+	trimmed := strings.TrimSpace(string(stdout))
+	if runErr != nil && strings.HasPrefix(trimmed, "{") && json.Valid([]byte(trimmed)) {
+		return trimmed
+	}
+	return cliResultJSON(cliBin, stdout, runErr)
 }
 
 func (a *App) runAutomation(sub ...string) string {
