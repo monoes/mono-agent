@@ -23,6 +23,7 @@
       {
         "name": "maxComments",
         "type": "number",
+        "aliases": ["limit"],
         "default": 50,
         "min": 1,
         "max": 500,

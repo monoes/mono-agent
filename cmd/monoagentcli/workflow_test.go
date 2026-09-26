@@ -1157,3 +1157,32 @@ func TestWorkflowTemplatesUse_PersistsSuccessfully(t *testing.T) {
 		t.Fatalf("persisted node count %d != reported %d", len(wf.Nodes), len(created.Nodes))
 	}
 }
+
+// A valid workflow has no warnings; an unknown node type is a warning, and
+// the workflow still validates (node types were never checked before).
+func TestWorkflowValidateFile_UnknownNodeTypeWarns(t *testing.T) {
+	out, err := runValidateCmd(t, true, "--file", writeTempWorkflow(t, validWorkflowFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got validationJSON
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Warnings) != 0 {
+		t.Fatalf("valid workflow got warnings: %v", got.Warnings)
+	}
+
+	unknown := strings.Replace(validWorkflowFile, `"type": "core.set"`, `"type": "acme-crm.list_deals"`, 1)
+	out, err = runValidateCmd(t, true, "--file", writeTempWorkflow(t, unknown))
+	if err != nil {
+		t.Fatalf("unknown node type must not fail validation: %v", err)
+	}
+	got = validationJSON{}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.Valid || len(got.Warnings) != 1 || !strings.Contains(got.Warnings[0], "acme-crm.list_deals") {
+		t.Fatalf("want valid with one warning naming the type, got %+v", got)
+	}
+}

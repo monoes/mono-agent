@@ -14,9 +14,11 @@
   "inputs": {
     "required": [
       {
-        "name": "username",
+        "name": "target_url",
         "type": "string",
-        "description": "Instagram username to list posts from (without @)"
+        "description": "Profile URL or username to list posts from (without @)",
+        "aliases": ["targetUsername", "profileUrl", "targets", "selectedListItems", "username"],
+        "ui": { "label": "Profile", "placeholder": "https://www.instagram.com/natgeo/" }
       }
     ],
     "optional": [
