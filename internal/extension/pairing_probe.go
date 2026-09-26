@@ -3,7 +3,9 @@ package extension
 import (
 	"crypto/subtle"
 	"fmt"
+	"net"
 	"net/http"
+	"strings"
 )
 
 // Checking this client's pairing token against a running bridge.
@@ -13,8 +15,9 @@ import (
 // connected bridge that every relayed command from this client would then
 // be refused by (401: another HOME, or the token was reset). The
 // /monoagent/auth endpoint answers only that one question: 204 when the
-// X-Monoagent-Extension-Token header matches the bridge's token, 401
-// otherwise. It does nothing else.
+// X-Monoagent-Extension-Token header matches the bridge's token (compared
+// in constant time, as the relay does), 401 otherwise, 403 for a request
+// from a web origin or a non-loopback Host. It does nothing else.
 
 // PairingState is what CheckPairing found.
 type PairingState string
@@ -35,10 +38,18 @@ const PairingMismatchHint = "bridge is running, but this client's pairing token 
 
 // handleAuthProbe answers /monoagent/auth.
 func (s *Server) handleAuthProbe(w http.ResponseWriter, r *http.Request) {
+	// Same-machine callers only, like the WebSocket and pairing endpoints:
+	// a web page (including one reached by DNS rebinding, whose Origin and
+	// Host are its own domain) is refused before the token is looked at.
+	if !checkOrigin(r) || !loopbackHost(r.Host) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	// Header only: a token in a query string ends up in logs and history.
 	got := r.Header.Get(tokenHeader)
 	if got == "" || s.token == "" || subtle.ConstantTimeCompare([]byte(got), []byte(s.token)) != 1 {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -69,4 +80,17 @@ func CheckPairing(baseURL string) (PairingState, error) {
 	default:
 		return PairingUnknown, fmt.Errorf("pairing check: HTTP %d", resp.StatusCode)
 	}
+}
+
+// loopbackHost reports whether a request's Host names this machine.
+func loopbackHost(host string) bool {
+	h := host
+	if hh, _, err := net.SplitHostPort(host); err == nil {
+		h = hh
+	}
+	switch strings.Trim(h, "[]") {
+	case "127.0.0.1", "localhost", "::1":
+		return true
+	}
+	return false
 }
