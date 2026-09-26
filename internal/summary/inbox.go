@@ -39,7 +39,9 @@ type ActivitySection struct {
 	Documents     DocumentCounts `json:"documents"`
 	MessagesIn7d  int            `json:"messages_in_7d"`
 	MessagesOut7d int            `json:"messages_out_7d"`
-	Error         string         `json:"error,omitempty"`
+	// MessagesUnread counts inbound messages not marked read (all time).
+	MessagesUnread int    `json:"messages_unread"`
+	Error          string `json:"error,omitempty"`
 }
 
 type ApplicationsSection struct {
@@ -144,6 +146,11 @@ func activitySection(ctx context.Context, o Options) *ActivitySection {
 		FROM person_messages WHERE profile_id = ? AND `+sinceExpr("created_at")+` >= julianday(?)`,
 		o.ProfileID, weekAgo(o)).Scan(&s.MessagesIn7d, &s.MessagesOut7d)
 	if err != nil {
+		errs = append(errs, err)
+	}
+	// Matches idx_person_messages_unread (050).
+	if err := o.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_messages
+		WHERE profile_id = ? AND direction = 'inbound' AND read_at IS NULL`, o.ProfileID).Scan(&s.MessagesUnread); err != nil {
 		errs = append(errs, err)
 	}
 	if len(errs) > 0 {

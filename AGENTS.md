@@ -171,6 +171,14 @@ the full run list, use `monoagentcli --json workflow executions --all --limit N`
 > (`core.code`), and template expressions against local files. Only import
 > workflows from sources you trust.
 
+### Updating
+
+- `monoagentcli update` replaces this binary with the latest release.
+- `update --check [--current <v>]` only reports whether a newer release exists.
+- `update --app <exe> [--current <v>]` updates the desktop app at that path. On Linux it also updates the `monoagentcli` bundled next to the app.
+- Every download must match the release's `SHA256SUMS.txt`, or nothing is installed.
+- With `--json`, progress is NDJSON on stderr and the result goes to stdout.
+
 ## MCP server
 
 ```bash

@@ -666,6 +666,14 @@ export function LoginSocial(arg1) {
   return window['go']['main']['App']['LoginSocial'](arg1);
 }
 
+export function MarkPersonMessageUnread(arg1) {
+  return window['go']['main']['App']['MarkPersonMessageUnread'](arg1);
+}
+
+export function MarkPersonMessagesRead(arg1, arg2) {
+  return window['go']['main']['App']['MarkPersonMessagesRead'](arg1, arg2);
+}
+
 export function MoveProfileFolder(arg1, arg2) {
   return window['go']['main']['App']['MoveProfileFolder'](arg1, arg2);
 }
@@ -832,10 +840,6 @@ export function SearchProfileKnowledge(arg1) {
 
 export function SearchVaultImages(arg1) {
   return window['go']['main']['App']['SearchVaultImages'](arg1);
-}
-
-export function SelfUpdate() {
-  return window['go']['main']['App']['SelfUpdate']();
 }
 
 export function SendApplication(arg1, arg2) {

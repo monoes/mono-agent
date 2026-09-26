@@ -22,6 +22,7 @@ export function attentionItems(summary, orgs, health) {
   add('expiringLogins', s.accounts?.expiring_soon || 0, 'warn', { page: 'connections' })
   const healthIssues = health && health.level !== 'ok' ? health.issues || 0 : 0
   add('health', healthIssues, health?.level === 'broken' ? 'danger' : 'warn', { page: 'settings', data: { section: 'health' } })
+  add('unreadMessages', s.activity?.messages_unread || 0, 'info', { page: 'communications' })
   add('linkSuggestions', s.hil?.link_suggestions || 0, 'info', { page: 'people' })
   add('unsavedRecordings', s.recordings?.unsaved || 0, 'info', { page: 'connections' })
   add('automationUpdates', s.automations?.pending_update || 0, 'info', { page: 'connections' })

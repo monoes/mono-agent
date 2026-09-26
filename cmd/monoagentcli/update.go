@@ -22,7 +22,7 @@ const sha256SumsAssetName = updatecheck.SumsAssetName
 
 func newUpdateCmd(cfg *globalConfig) *cobra.Command {
 	var check bool
-	var current string
+	var current, app string
 	cmd := &cobra.Command{
 		Use:   "update",
 		Short: "Update monoagentcli to the latest release",
@@ -31,19 +31,27 @@ func newUpdateCmd(cfg *globalConfig) *cobra.Command {
 			"version instead of this binary's — the desktop app asks about its own version this way.",
 		Example: `  monoagentcli update
   monoagentcli --json update --check
-  monoagentcli --json update --check --current v0.72.0`,
+  monoagentcli --json update --check --current v0.72.0
+  monoagentcli --json update --app /opt/MonoAgent/MonoAgent-linux-amd64 --current v0.72.0`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if check && app != "" {
+				return errInvalidInput("--check and --app are separate: check with --check, install with --app")
+			}
 			if check {
 				return runUpdateCheck(cmd, cfg, current)
 			}
+			if app != "" {
+				return runUpdateApp(cmd, cfg, app, current)
+			}
 			if current != "" {
-				return errInvalidInput("--current only goes with --check")
+				return errInvalidInput("--current goes with --check or --app")
 			}
 			return runUpdate(cmd, args)
 		},
 	}
 	cmd.Flags().BoolVar(&check, "check", false, "Only report whether a newer release exists; download nothing")
 	cmd.Flags().StringVar(&current, "current", "", "Version to compare against (default: this binary's)")
+	cmd.Flags().StringVar(&app, "app", "", "Update the desktop app at this executable path (and its bundled CLI on Linux) instead of this binary")
 	return cmd
 }
 

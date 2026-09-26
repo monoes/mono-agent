@@ -96,6 +96,8 @@ export const api = {
   getPersonPosts:   (personId) => GoApp.GetPersonPosts(personId).catch(guard('person posts', [])),
   getPersonMessages:(personId) => GoApp.GetPersonMessages(personId).catch(guard('person messages', [])),
   getAllPersonMessages:(limit) => GoApp.GetAllPersonMessages(limit ?? 200).catch(guard('all messages', [])),
+  markPersonMessagesRead: (personId, ids = []) => GoApp.MarkPersonMessagesRead(personId || '', ids).catch(guard('mark messages read', null)),
+  markPersonMessageUnread: (id) => GoApp.MarkPersonMessageUnread(id).catch(guard('mark message unread', null)),
   composePersonMessage:(personId, connectionId, subject, body, asDraft) => GoApp.ComposePersonMessage(personId, connectionId, subject, body, asDraft),
   getDraftPersonMessages: () => GoApp.GetDraftPersonMessages().catch(guard('draft messages', [])),
   sendDraftPersonMessage: (id) => GoApp.SendDraftPersonMessage(id),

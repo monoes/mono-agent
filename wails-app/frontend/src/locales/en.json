@@ -83,7 +83,9 @@
       "unevaluatedApplications_other": "applications to evaluate",
       "unavailable": "Couldn't load the summary — waiting items may be missing",
       "partial_one": "{{count}} section couldn't be read",
-      "partial_other": "{{count}} sections couldn't be read"
+      "partial_other": "{{count}} sections couldn't be read",
+      "unreadMessages_one": "unread message",
+      "unreadMessages_other": "unread messages"
     },
     "stat": {
       "workflows": "Workflows",
@@ -218,7 +220,8 @@
       "applied_one": "{{count}} applied",
       "applied_other": "{{count}} applied",
       "evaluated_one": "{{count}} evaluated",
-      "evaluated_other": "{{count}} evaluated"
+      "evaluated_other": "{{count}} evaluated",
+      "unread": "{{count}} unread"
     }
   },
   "toasts": {

@@ -1525,6 +1525,8 @@ export namespace storage {
 	    sent_at?: any;
 	    // Go type: time
 	    created_at: any;
+	    // Go type: time
+	    read_at?: any;
 	
 	    static createFrom(source: any = {}) {
 	        return new PersonMessage(source);
@@ -1544,6 +1546,7 @@ export namespace storage {
 	        this.status = source["status"];
 	        this.sent_at = this.convertValues(source["sent_at"], null);
 	        this.created_at = this.convertValues(source["created_at"], null);
+	        this.read_at = this.convertValues(source["read_at"], null);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -1579,6 +1582,8 @@ export namespace storage {
 	    sent_at?: any;
 	    // Go type: time
 	    created_at: any;
+	    // Go type: time
+	    read_at?: any;
 	    person_full_name?: string;
 	    person_platform_username: string;
 	    person_platform: string;
@@ -1601,6 +1606,7 @@ export namespace storage {
 	        this.status = source["status"];
 	        this.sent_at = this.convertValues(source["sent_at"], null);
 	        this.created_at = this.convertValues(source["created_at"], null);
+	        this.read_at = this.convertValues(source["read_at"], null);
 	        this.person_full_name = source["person_full_name"];
 	        this.person_platform_username = source["person_platform_username"];
 	        this.person_platform = source["person_platform"];

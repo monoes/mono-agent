@@ -337,6 +337,10 @@ export function ListWorkflows():Promise<Array<main.WorkflowSummary>>;
 
 export function LoginSocial(arg1:string):Promise<string>;
 
+export function MarkPersonMessageUnread(arg1:string):Promise<void>;
+
+export function MarkPersonMessagesRead(arg1:string,arg2:Array<string>):Promise<void>;
+
 export function MoveProfileFolder(arg1:string,arg2:string):Promise<void>;
 
 export function OpenAnyFilePicker(arg1:string):Promise<string>;
@@ -420,8 +424,6 @@ export function ScanAgentRuntimes():Promise<string>;
 export function SearchProfileKnowledge(arg1:string):Promise<Array<main.KnowledgeSearchResult>>;
 
 export function SearchVaultImages(arg1:string):Promise<Array<Record<string, any>>>;
-
-export function SelfUpdate():Promise<main.UpdateResult>;
 
 export function SendApplication(arg1:string,arg2:string):Promise<void>;
 

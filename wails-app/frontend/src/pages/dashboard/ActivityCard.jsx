@@ -37,7 +37,8 @@ export default function ActivityCard({ summary, onNavigate }) {
               : d?.summarising > 0 ? t('dashboard.activity.summarising', { count: d.summarising }) : null}
             bad={docErrors > 0} onClick={() => onNavigate('documents')} />
           <Tile error={a?.error} label={t('dashboard.activity.messages')} value={a?.messages_in_7d}
-            sub={t('dashboard.activity.sent', { count: a?.messages_out_7d || 0 })} onClick={() => onNavigate('communications')} />
+            sub={a?.messages_unread > 0 ? t('dashboard.activity.unread', { count: a.messages_unread }) : t('dashboard.activity.sent', { count: a?.messages_out_7d || 0 })}
+            onClick={() => onNavigate('communications')} />
           <Tile error={ap?.error} label={t('dashboard.activity.applications')} value={ap?.by_status?.pending}
             sub={t('dashboard.activity.applied', { count: ap?.by_status?.applied || 0 })} onClick={() => onNavigate('applications')} />
           <Tile error={ap?.error} label={t('dashboard.activity.toEvaluate')} value={ap?.unevaluated_pending}
