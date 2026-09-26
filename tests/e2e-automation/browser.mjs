@@ -4,6 +4,7 @@
 //   record                   record the scenario through the REAL side panel; prints the recording id
 //   panel-review             side panel Analyze → Verify → Save; prints JSON
 //   panel-verify             side panel Verify of the current draft; prints JSON
+//   panel-save-conflict <automation> [name]   save into a package whose selectors were re-recorded; prints JSON
 //   request <method> <json>  one extension→Go request (record.*); prints JSON
 //   pick <urlPart> click|value|esc|none [selector]   act on the rerecord picker tab that opens next
 //   tabids                   print every target id (for pick's E2E_BEFORE)
@@ -132,6 +133,37 @@ async function panelReview() {
   console.log(JSON.stringify({ draft, verify, save }));
 }
 
+/**
+ * panelSaveConflict saves the panel's draft into an existing automation whose
+ * selectors were re-recorded since: the save must be refused with the
+ * "Keep the package's current selectors and save" button, and that button
+ * must save.
+ */
+async function panelSaveConflict(automation, name) {
+  const sp = await panel();
+  await sp.evaluate(`(() => {
+    document.getElementById('rec-draft-msg').textContent = '';
+    document.getElementById('rec-save-as').value = 'action';
+    document.getElementById('rec-save-name').value = ${JSON.stringify(name)};
+    document.getElementById('rec-save-automation').value = ${JSON.stringify(automation)};
+    document.getElementById('rec-save').click();
+  })()`);
+  let first = await waitText(sp, "rec-draft-msg", /selector|Saved|fail|anyway/i, 60000);
+  if (/anyway/i.test(first || "")) {
+    await sp.evaluate(`document.getElementById('rec-save').click()`);
+    first = await waitText(sp, "rec-draft-msg", /selector|Saved|fail/i, 60000);
+  }
+  const keepShown = !(await sp.evaluate(`document.getElementById('rec-save-keep').hidden`));
+  let second = null;
+  if (keepShown) {
+    await sp.evaluate(`document.getElementById('rec-draft-msg').textContent = ''`);
+    await sp.evaluate(`document.getElementById('rec-save-keep').click()`);
+    second = await waitText(sp, "rec-draft-msg", /Saved|fail/i, 60000);
+  }
+  await sp.shot("panel-save-conflict");
+  console.log(JSON.stringify({ first, keepShown, second, keepHiddenAfter: await sp.evaluate(`document.getElementById('rec-save-keep').hidden`) }));
+}
+
 /** pick waits for the rerecord picker tab (a tab not open before) and acts on it. */
 async function pick(urlPart, mode, sel) {
   // Tabs open before the rerecord command started (E2E_BEFORE), else now.
@@ -158,6 +190,7 @@ switch (cmd) {
   case "panel-review": await panelReview(); break;
   case "panel-verify": { const sp = await panel(); const v = await panelVerify(sp); await sp.shot("panel-verify"); console.log(JSON.stringify(v)); break; }
   case "request": console.log(JSON.stringify(await request(args[0], JSON.parse(args[1] || "{}")))); break;
+  case "panel-save-conflict": await panelSaveConflict(args[0], args[1] || "create_contact_kept"); break;
   case "pick": await pick(args[0], args[1], args[2]); break;
   case "tabids": console.log((await list()).map((t) => t.id).join(" ")); break;
   case "tabs": console.log((await list()).filter((t) => t.type === "page").map((t) => t.url).join("\n")); break;

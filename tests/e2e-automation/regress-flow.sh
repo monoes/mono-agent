@@ -20,7 +20,9 @@ DR="$E2E_HOME/.monoagent/recording-drafts"
 # --- 1. record through the real side panel
 REC="${E2E_REC:-$(B record 2>$R/record.err | tail -1)}"
 check record.id "$([ -n "$REC" ] && echo ok)" ok "$REC"
-RD="$E2E_HOME/.monoagent/recordings/$REC"
+# where it landed: ~/.monoagent/recordings, or the active profile's recordings/
+m record list --json > $R/record-list.json 2>/dev/null
+RD=$(python3 -c 'import json,sys;print([r["dir"] for r in json.load(open(sys.argv[1]))["recordings"] if r["id"]==sys.argv[2]][0])' $R/record-list.json "$REC" 2>/dev/null)
 check record.events "$(j $RD/meta.json 'd["eventCount"] >= 10')" True
 check record.source "$(j $RD/meta.json 'd["source"]')" recording
 check record.password-masked "$(sed -n 2p $RD/events.jsonl | python3 -c 'import json,sys;e=json.load(sys.stdin);print(e.get("masked"), "value" in e)')" "True False"
@@ -130,6 +132,12 @@ check rerecord.password.rc "$(cat $R/rr.rc)" 0
 check rerecord.password.no-value "$(grep -c "$E2E_PASSWORD" $R/rr.json)" 0
 m automation doctor e2e-crm --json > $R/doctor.json 2>/dev/null
 check doctor.after-rerecord "$(j $R/doctor.json '[s["status"] for s in d["automations"][0]["selectors"] if s["key"]=="contact.name_input"][0]')" ok
+# the side panel recovers from the re-recorded selector: its draft still has the
+# old selector, so saving it into e2e-crm is refused with a button that
+# retries keeping the package's current selectors (L2)
+B panel-save-conflict e2e-crm create_contact_kept > $R/panel-conflict.json 2>/dev/null
+check panel.save-conflict.button "$(j $R/panel-conflict.json 'd["keepShown"]')" True "$(j $R/panel-conflict.json 'd["first"][:90]')"
+check panel.save-conflict.saved "$(j $R/panel-conflict.json '(d["second"] or "").startswith("Saved")')" True
 
 # --- 11. bundle a recorded workflow, import it elsewhere, first live run needs trust
 m record save $DR/$REC --as workflow --automation e2e-crm --name create_contact_wf --keep-package-selectors --json > $R/wf-save.json 2>/dev/null
@@ -149,7 +157,15 @@ m2 automation trust e2e-crm --live --json >/dev/null 2>&1
 m2 workflow run $W --timeout 2m --json >/dev/null 2>&1; check trust.after-live.rc $? 0
 check trust.after-live.post "$(posts_since $n)" 1
 
-# --- 12. the fixture password never lands anywhere
+# --- 12. a client whose pairing token is not the bridge's is told so
+HW="$E2E_WORK/home-wrong-token"; mkdir -p "$HW/.monoagent"; cp -r "$E2E_HOME/.monoagent/automations" "$HW/.monoagent/"; python3 -c 'import secrets;print(secrets.token_hex(32),end="")' > "$HW/.monoagent/extension.token"
+HOME="$HW" MONOAGENT_EXTENSION_PORT="$E2E_BRIDGE_PORT" "$E2E_BIN" extension status --json > $R/status-wrong.json 2>/dev/null
+check status.client-pairing-mismatch "$(j $R/status-wrong.json 'd["clientPairing"]')" mismatch
+m extension status --json > $R/status-ok.json 2>/dev/null; check status.client-pairing-ok "$(j $R/status-ok.json 'd["clientPairing"]')" ok
+HOME="$HW" MONOAGENT_EXTENSION_PORT="$E2E_BRIDGE_PORT" timeout 60 "$E2E_BIN" automation rerecord e2e-crm contact.name_input --timeout 5s --json > $R/rr-wrong.json 2>/dev/null
+check relay.wrong-token-message "$(j $R/rr-wrong.json '"pairing token mismatch" in d["error"]')" True
+
+# --- 13. the fixture password never lands anywhere
 leaks=$(grep -rl --exclude=pw-right.json "$E2E_PASSWORD" "$E2E_HOME" "$H2" "$R" "$E2E_WORK/logs" 2>/dev/null | head -3)
 check password.never-stored "$leaks" ""
 

@@ -71,8 +71,9 @@ function ReviewNotes({ d }) {
 
 // copyOfExisting returns the id of the workflow an import was kept apart
 // from: the CLI's copyOf, else (older CLIs) the id in its "imported as a
-// copy" warning.
-export const COPY_WARNING = /already exists:\s*([^\s;]+);\s*imported as a copy/i
+// copy" warning. Every copy reason's warning ends "…: <id>; imported as a
+// copy — use --replace …"; the dialog's notice replaces it.
+export const COPY_WARNING = /:\s*([^\s;]+);\s*imported as a copy/i
 export function copyOfExisting(res) {
   if (res?.copyOf) return res.copyOf
   for (const w of res?.warnings || []) {
@@ -100,16 +101,31 @@ export function splitBundle(items) {
   const differs = all.filter(i => i.status === 'differs')
   const listed = all.filter(i => !notIncluded.includes(i) && !differs.includes(i))
   const installable = listed.filter(i => i.status === 'missing')
-  // A bundle never replaces a built-in; only other packages can be.
-  const replaceable = differs.filter(i => !isBuiltinCopy(i))
+  const replaceable = differs.filter(isReplaceable)
   return { listed, installable, notIncluded, differs, replaceable }
 }
 
 // isBuiltinCopy: the installed copy a "differs" package would replace is a
-// built-in, which a workflow file never replaces.
+// built-in, which a workflow file never replaces. The CLI's builtin flag,
+// else (older CLIs) the review's replaces source.
 export function isBuiltinCopy(item) {
+  if (item?.builtin) return true
   const r = item?.reviewDetail?.replaces
   return r?.source === 'builtin' || r?.trust === 'builtin'
+}
+
+// isReplaceable: a "differs" package the file's version may replace — the
+// CLI's replaceable, else anything that is not a built-in.
+export function isReplaceable(item) {
+  if (typeof item?.replaceable === 'boolean') return item.replaceable
+  return !isBuiltinCopy(item)
+}
+
+// notBundledReason is the exporter's reason alone: the CLI's "not in the
+// bundle:" prefix and its "; the sender can …" advice (which names CLI
+// flags) are dropped; the dialog words the advice itself.
+export function notBundledReason(item) {
+  return (item?.error || '').replace(/^not in the bundle:\s*/i, '').replace(/;\s*the sender can [\s\S]*$/i, '')
 }
 
 export function NotIncluded({ items }) {
@@ -125,7 +141,10 @@ export function NotIncluded({ items }) {
           <span style={{ ...mono, fontSize: 11, color: 'var(--text)' }}><Package size={11} color="var(--text-muted)" style={{ verticalAlign: -1, marginRight: 6 }} />{it.id} <span style={muted}>{it.version}</span></span>
           {it.localOnly
             ? <span style={{ ...muted, fontSize: 10, paddingLeft: 19 }}>Only works on the sender's machine — recreate it here or ask the sender.</span>
-            : it.error && <span style={{ ...muted, fontSize: 10, paddingLeft: 19, wordBreak: 'break-word' }}>{it.error.replace(/^not in the bundle:\s*/i, '')}</span>}
+            : <>
+                {notBundledReason(it) && <span style={{ ...muted, fontSize: 10, paddingLeft: 19, wordBreak: 'break-word' }}>{notBundledReason(it)}</span>}
+                <span style={{ ...muted, fontSize: 10, paddingLeft: 19 }}>Install it here some other way, or ask the sender to include it in the file.</span>
+              </>}
         </div>
       ))}
     </div>
@@ -190,7 +209,9 @@ export function Differs({ items }) {
           <span style={{ ...mono, fontSize: 11, color: 'var(--text)' }}><Package size={11} color="var(--text-muted)" style={{ verticalAlign: -1, marginRight: 6 }} />{it.id} <span style={muted}>{it.version}</span></span>
           <div style={{ paddingLeft: 19 }}><ChangeList changes={it.changes} /></div>
           {/^(not replaced|could not compare)/i.test(it.error || '') && <span style={{ ...muted, fontSize: 10, paddingLeft: 19, color: 'var(--red)' }}>{it.error}</span>}
-          {isBuiltinCopy(it) && <span style={{ ...muted, fontSize: 10, paddingLeft: 19 }}>The installed copy is a built-in; a workflow file never replaces it.</span>}
+          {isBuiltinCopy(it)
+            ? <span style={{ ...muted, fontSize: 10, paddingLeft: 19 }}>The installed copy is a built-in; a workflow file never replaces it.</span>
+            : !isReplaceable(it) && <span style={{ ...muted, fontSize: 10, paddingLeft: 19 }}>This file cannot replace the installed copy.</span>}
         </div>
       ))}
     </div>

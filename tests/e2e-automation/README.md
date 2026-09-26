@@ -78,8 +78,8 @@ Use a fresh `E2E_WORK` for each full run: `regress-flow.sh` creates the
 | `cdp.mjs`, `browser.mjs` | DevTools helpers; recording through the real side panel, panel review, the rerecord picker, extension→Go requests |
 | `make_fixtures.py` | generates the test packages, unsafe archives, a login draft and 0600 inputs files |
 | `stub-monomind.mjs` | stand-in for `monomind` (`MONOMIND_BIN`) that answers `record analyze` with a fixed draft |
-| `regress-cli.sh` | package lifecycle, fixture tests, local packages, install review, unsafe archives |
-| `regress-flow.sh` | the browser scenarios |
+| `regress-cli.sh` | package lifecycle, fixture tests, local packages, install review, unsafe archives, workflow import without overwriting local edits (copyOf/copyReason, `--overwrite`, `--replace`), legacy packages (narrow domain suggestions, http startUrl, local-only), partial bundles (`--automation-domains`, `--use-suggested-domains`), `differs` and `--replace-automations` |
+| `regress-flow.sh` | the browser scenarios, including the side panel's re-recorded-selector recovery and `extension status` for a client with the wrong pairing token |
 
 Results (JSON outputs, screenshots under `shots/`, prompts the stub
 received) stay in `$E2E_WORK` for inspection.
