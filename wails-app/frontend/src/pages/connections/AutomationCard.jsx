@@ -4,9 +4,11 @@ import { useState } from 'react'
 import { Plus, Circle, FileCode, AlertTriangle, ArrowUpCircle, PenLine, Trash2 } from 'lucide-react'
 import { Chip, Dot, SOURCE_LABELS, mono, muted, body } from './ui.jsx'
 
-const cardStyle = (active, hov) => ({
+// dashed: removed built-ins and the Create card. Part of the border
+// shorthand — mixing in borderStyle makes React warn on every re-render.
+const cardStyle = (active, hov, dashed = false) => ({
   background: active ? 'linear-gradient(145deg,var(--elevated),var(--surface))' : 'var(--surface)',
-  border: active ? '1px solid var(--border-active)' : hov ? '1px solid var(--border-bright)' : '1px solid var(--border)',
+  border: `1px ${dashed ? 'dashed' : 'solid'} ${active ? 'var(--border-active)' : hov ? 'var(--border-bright)' : 'var(--border)'}`,
   borderRadius: 'var(--radius-lg)',
   padding: '12px 14px',
   cursor: 'pointer',
@@ -37,7 +39,7 @@ export default function AutomationCard({ automation: a, onOpen }) {
       onMouseEnter={() => setHov(true)}
       onMouseLeave={() => setHov(false)}
       aria-label={removed ? `${a.name || a.id}, uninstalled` : `${a.name || a.id}, ${loginText(s)}, ${a.actions} actions`}
-      style={{ ...cardStyle(s.loggedIn && !unavailable && !removed, hov), opacity: removed ? 0.5 : unavailable || disabled ? 0.75 : 1, borderStyle: removed ? 'dashed' : 'solid' }}
+      style={{ ...cardStyle(s.loggedIn && !unavailable && !removed, hov, removed), opacity: removed ? 0.5 : unavailable || disabled ? 0.75 : 1 }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
         <span title={a.name || a.id} style={{ ...mono, fontSize: 12, fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
@@ -68,7 +70,7 @@ export default function AutomationCard({ automation: a, onOpen }) {
 
 export function CreateAutomationCard({ onRecord, onImport }) {
   return (
-    <div style={{ ...cardStyle(false, false), cursor: 'default', borderStyle: 'dashed', gap: 8 }}>
+    <div style={{ ...cardStyle(false, false, true), cursor: 'default', gap: 8 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, ...mono, fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>
         <Plus size={13} /> Create automation
       </div>
