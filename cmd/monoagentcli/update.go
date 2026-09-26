@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,12 +12,13 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/monoes/mono-agent/internal/updatecheck"
 	"github.com/spf13/cobra"
 )
 
 // sha256SumsAssetName is the checksum manifest published with every
 // release (see .github/workflows/release.yml "Flatten and checksum").
-const sha256SumsAssetName = "SHA256SUMS.txt"
+const sha256SumsAssetName = updatecheck.SumsAssetName
 
 func newUpdateCmd() *cobra.Command {
 	return &cobra.Command{
@@ -168,66 +167,13 @@ func httpGetAll(url string) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
-// sha256Hex returns the lowercase hex-encoded SHA-256 digest of data.
-func sha256Hex(data []byte) string {
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
-}
-
-// parseSHA256Sums parses the contents of a SHA256SUMS.txt file as written
-// by sha256sum(1) (release.yml: "sha256sum * > SHA256SUMS.txt"): one
-// "<64 hex chars>  <filename>" entry per line, where the separator is two
-// spaces (text mode) or space + '*' (binary mode). Malformed lines are
-// skipped; digests are normalized to lowercase.
-func parseSHA256Sums(data []byte) map[string]string {
-	sums := make(map[string]string)
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimRight(line, "\r")
-		if len(line) < 66 || line[64] != ' ' {
-			continue
-		}
-		digest := line[:64]
-		name := line[65:]
-		if name[0] == ' ' || name[0] == '*' {
-			name = name[1:]
-		}
-		if name == "" || !isHex64(digest) {
-			continue
-		}
-		sums[name] = strings.ToLower(digest)
-	}
-	return sums
-}
-
-func isHex64(s string) bool {
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		switch {
-		case c >= '0' && c <= '9', c >= 'a' && c <= 'f', c >= 'A' && c <= 'F':
-		default:
-			return false
-		}
-	}
-	return len(s) == 64
-}
-
-// verifyReleaseDigest checks the downloaded bytes against the entry for
-// the exact asset name in the release's SHA256SUMS.txt. A missing entry
-// or a digest mismatch hard-fails (install.sh policy: never install an
-// unverified binary); on mismatch both digests are reported.
-func verifyReleaseDigest(data, sums []byte, assetName string) error {
-	expected, ok := parseSHA256Sums(sums)[assetName]
-	if !ok {
-		return fmt.Errorf("integrity check failed: %s has no entry for %s — refusing to install unverified binary",
-			sha256SumsAssetName, assetName)
-	}
-	actual := sha256Hex(data)
-	if !strings.EqualFold(actual, expected) {
-		return fmt.Errorf("integrity check failed for %s: SHA-256 mismatch (expected %s, got %s) — download may be corrupted or tampered; nothing was installed",
-			assetName, expected, actual)
-	}
-	return nil
-}
+// The checksum helpers live in internal/updatecheck, shared with the
+// desktop app's updater (wails-app/updater.go).
+var (
+	sha256Hex           = updatecheck.SHA256Hex
+	parseSHA256Sums     = updatecheck.ParseSHA256Sums
+	verifyReleaseDigest = updatecheck.VerifyReleaseDigest
+)
 
 // updateAssetName returns the release asset name for the running
 // platform: monoagentcli-<GOOS>-<GOARCH> (plus ".exe" on windows) —
