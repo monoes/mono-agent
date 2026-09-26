@@ -138,6 +138,13 @@ check doctor.after-rerecord "$(j $R/doctor.json '[s["status"] for s in d["automa
 B panel-save-conflict e2e-crm create_contact_kept > $R/panel-conflict.json 2>/dev/null
 check panel.save-conflict.button "$(j $R/panel-conflict.json 'd["keepShown"]')" True "$(j $R/panel-conflict.json 'd["first"][:90]')"
 check panel.save-conflict.saved "$(j $R/panel-conflict.json '(d["second"] or "").startswith("Saved")')" True
+# the unchanged proposal (created by the first panel save in §9) now exists:
+# the panel asks before adding to it, and adds on confirmation
+B panel-save-existing create_contact_again > $R/panel-existing.json 2>/dev/null
+check panel.save-existing.asks "$(j $R/panel-existing.json 'd["asked"] and "already exists" in (d["first"] or "")')" True "$(j $R/panel-existing.json '(d["first"] or "")[:90]')"
+check panel.save-existing.saved "$(j $R/panel-existing.json 'd["saved"]')" True "$(j $R/panel-existing.json '(d["second"] or "")[:60]')"
+P=$(j $R/panel-existing.json 'd["proposal"]')
+check panel.save-existing.added "$(m automation show "$P" --json 2>/dev/null | python3 -c 'import json,sys;print("create_contact_again" in [a["name"] for a in json.load(sys.stdin)["actions"]])')" True
 
 # --- 11. bundle a recorded workflow, import it elsewhere, first live run needs trust
 m record save $DR/$REC --as workflow --automation e2e-crm --name create_contact_wf --keep-package-selectors --json > $R/wf-save.json 2>/dev/null

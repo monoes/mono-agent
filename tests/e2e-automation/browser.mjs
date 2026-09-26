@@ -5,6 +5,7 @@
 //   panel-review             side panel Analyze → Verify → Save; prints JSON
 //   panel-verify             side panel Verify of the current draft; prints JSON
 //   panel-save-conflict <automation> [name]   save into a package whose selectors were re-recorded; prints JSON
+//   panel-save-existing [name]   save again under the analyzer's proposal, which now exists; prints JSON
 //   request <method> <json>  one extension→Go request (record.*); prints JSON
 //   pick <urlPart> click|value|esc|none [selector]   act on the rerecord picker tab that opens next
 //   tabids                   print every target id (for pick's E2E_BEFORE)
@@ -164,6 +165,47 @@ async function panelSaveConflict(automation, name) {
   console.log(JSON.stringify({ first, keepShown, second, keepHiddenAfter: await sp.evaluate(`document.getElementById('rec-save-keep').hidden`) }));
 }
 
+/**
+ * panelSaveExisting saves the panel's draft again with the Automation field
+ * left at the analyzer's proposal after that automation was created: the
+ * panel must ask "add this action to it?" (no silent retry), and the
+ * "Add this action to it" button must save.
+ */
+async function panelSaveExisting(name) {
+  const sp = await panel();
+  // The analyzer's proposal, as the draft shows it ("New automation <id>").
+  const proposal = await sp.evaluate(`document.getElementById('rec-draft-where').textContent.trim().split(/\\s+/).pop()`);
+  await sp.evaluate(`(() => { const f = document.getElementById('rec-save-automation'); f.value = ${JSON.stringify(proposal)}; f.dispatchEvent(new Event('input')); })()`);
+  await sp.evaluate(`(() => {
+    document.getElementById('rec-draft-msg').textContent = '';
+    document.getElementById('rec-save-as').value = 'action';
+    document.getElementById('rec-save-name').value = ${JSON.stringify(name)};
+    document.getElementById('rec-save').click();
+  })()`);
+  let first = await waitText(sp, "rec-draft-msg", /exists|Saved|fail|anyway/i, 60000);
+  if (/anyway/i.test(first || "")) {
+    await sp.evaluate(`document.getElementById('rec-save').click()`);
+    first = await waitText(sp, "rec-draft-msg", /exists|Saved|fail/i, 60000);
+  }
+  const asked = !(await sp.evaluate(`document.getElementById('rec-save-existing').hidden`));
+  let second = null;
+  if (asked) {
+    await sp.evaluate(`document.getElementById('rec-draft-msg').textContent = ''`);
+    await sp.evaluate(`document.getElementById('rec-save-existing').click()`);
+    second = await waitText(sp, "rec-draft-msg", /Saved|fail|selectors changed/i, 60000);
+  }
+  // The draft may carry selectors that differ from the automation's (the
+  // flow edits them): then the keep-selectors offer follows the confirmation.
+  let kept = null;
+  if (!(await sp.evaluate(`document.getElementById('rec-save-keep').hidden`))) {
+    await sp.evaluate(`document.getElementById('rec-draft-msg').textContent = ''`);
+    await sp.evaluate(`document.getElementById('rec-save-keep').click()`);
+    kept = await waitText(sp, "rec-draft-msg", /Saved|fail/i, 60000);
+  }
+  await sp.shot("panel-save-existing");
+  console.log(JSON.stringify({ proposal, first, asked, second, kept, saved: /^Saved/.test(kept || second || "") }));
+}
+
 /** pick waits for the rerecord picker tab (a tab not open before) and acts on it. */
 async function pick(urlPart, mode, sel) {
   // Tabs open before the rerecord command started (E2E_BEFORE), else now.
@@ -191,6 +233,7 @@ switch (cmd) {
   case "panel-verify": { const sp = await panel(); const v = await panelVerify(sp); await sp.shot("panel-verify"); console.log(JSON.stringify(v)); break; }
   case "request": console.log(JSON.stringify(await request(args[0], JSON.parse(args[1] || "{}")))); break;
   case "panel-save-conflict": await panelSaveConflict(args[0], args[1] || "create_contact_kept"); break;
+  case "panel-save-existing": await panelSaveExisting(args[0] || "create_contact_again"); break;
   case "pick": await pick(args[0], args[1], args[2]); break;
   case "tabids": console.log((await list()).map((t) => t.id).join(" ")); break;
   case "tabs": console.log((await list()).filter((t) => t.type === "page").map((t) => t.url).join("\n")); break;
