@@ -1336,6 +1336,7 @@ func newWorkflowImportCmd(cfg *globalConfig) *cobra.Command {
 			status := importCreated
 			var match importMatch
 			var warnings []string
+			var copied importCopy
 			switch {
 			case replaceID != "":
 				t := ownedWorkflow(ctx, store, db.DB, cfg.ProfileID, replaceID)
@@ -1349,6 +1350,7 @@ func newWorkflowImportCmd(cfg *globalConfig) *cobra.Command {
 			target := match.Target
 			if match.Clash != "" {
 				warnings = append(warnings, copyWarning(match.Clash, ""))
+				copied = importCopy{Of: match.Clash, Reason: copyReasonName}
 			}
 			switch {
 			case target != nil && workflowContentHash(target) == hash:
@@ -1368,6 +1370,7 @@ func newWorkflowImportCmd(cfg *globalConfig) *cobra.Command {
 			case target != nil:
 				// Edited (or created) locally since: keep the user's work.
 				warnings = append(warnings, copyWarning(target.ID, match.By))
+				copied = importCopy{Of: target.ID, Reason: copyReasonFor(match.By)}
 				wf.ID, overwrite = uuid.New().String(), false
 			case asNew || wf.ID == "":
 				wf.ID = uuid.New().String()
@@ -1382,7 +1385,7 @@ func newWorkflowImportCmd(cfg *globalConfig) *cobra.Command {
 			wf.UpdatedAt = time.Now().UTC()
 			if status == importUnchanged {
 				recordImport(importIndexEntry{ID: wf.ID, Name: wf.Name, Source: source, Hash: hash})
-				return printWorkflowImport(cfg, cmd, &wf, status, warnings, nil, nil, raw, yes, inputFile)
+				return printWorkflowImport(cfg, cmd, &wf, status, warnings, nil, nil, raw, yes, inputFile, importCopy{})
 			}
 
 			// workflow_nodes.id and workflow_connections.id are globally
@@ -1502,7 +1505,7 @@ func newWorkflowImportCmd(cfg *globalConfig) *cobra.Command {
 			}
 
 			recordImport(importIndexEntry{ID: wf.ID, Name: wf.Name, Source: source, Hash: hash})
-			return printWorkflowImport(cfg, cmd, &wf, status, warnings, remapped, remappedConns, raw, yes, inputFile)
+			return printWorkflowImport(cfg, cmd, &wf, status, warnings, remapped, remappedConns, raw, yes, inputFile, copied)
 		},
 	}
 

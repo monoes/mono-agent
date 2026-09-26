@@ -255,6 +255,31 @@ func matchUnindexed(ctx context.Context, store *workflow.HybridWorkflowStore, db
 	return importMatch{Clash: clash}
 }
 
+// importCopy says which existing workflow an import was copied beside and
+// why (`workflow import --json` "copyOf"/"copyReason"); zero when the
+// import did not make a copy.
+type importCopy struct {
+	Of     string // existing workflow id
+	Reason string // copyReasonID | copyReasonName | copyReasonImport
+}
+
+const (
+	copyReasonID     = "id"     // the file's own id is a locally edited workflow
+	copyReasonName   = "name"   // a different workflow has the same name
+	copyReasonImport = "import" // the earlier import of this file was edited
+)
+
+// copyReasonFor maps how a match was found to its copyReason.
+func copyReasonFor(by string) string {
+	switch by {
+	case matchByID:
+		return copyReasonID
+	case matchByImport:
+		return copyReasonImport
+	}
+	return copyReasonName
+}
+
 // copyWarning is the warning of an import that did not replace id; by
 // says why id matched (matchByID, matchByImport, or "" for a name clash).
 func copyWarning(id, by string) string {
@@ -312,7 +337,7 @@ func shellQuoteArg(s string) string {
 // import result (JSON or human), including the status and, when bundled
 // packages are missing, which ones and the exact command installing them.
 func printWorkflowImport(cfg *globalConfig, cmd *cobra.Command, wf *workflow.Workflow, status string, warnings []string,
-	remapped, remappedConns map[string]string, raw []byte, yes bool, inputFile string) error {
+	remapped, remappedConns map[string]string, raw []byte, yes bool, inputFile string, copied importCopy) error {
 	// Bundled automations (workflow export --bundle-automations):
 	// report present/missing ones, install missing with --yes or
 	// after a prompt (only when stdin is free, i.e. --file).
@@ -328,6 +353,9 @@ func printWorkflowImport(cfg *globalConfig, cmd *cobra.Command, wf *workflow.Wor
 		out := map[string]interface{}{"id": wf.ID, "name": wf.Name, "status": status}
 		if len(warnings) > 0 {
 			out["warnings"] = warnings
+		}
+		if copied.Of != "" {
+			out["copyOf"], out["copyReason"] = copied.Of, copied.Reason
 		}
 		if bundled != nil {
 			out["automations"] = bundled
