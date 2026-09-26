@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/monoes/mono-agent/internal/ai"
 	"github.com/monoes/mono-agent/internal/orgdesign"
 )
 
@@ -18,8 +17,8 @@ import (
 // so both refuse once untrusted synced communications entered the session
 // and both preview unless confirm:true.
 
-func orgUnificationToolDefs(def func(name, desc string, props map[string]interface{}, required []string) ai.ToolDef) []ai.ToolDef {
-	return []ai.ToolDef{
+func orgUnificationToolDefs(def func(name, desc string, props map[string]interface{}, required []string) ToolDef) []ToolDef {
+	return []ToolDef{
 		def("add_org_automation", "Add an existing workflow to an org as one of its automations, under a short alias (lowercase letters, digits, underscores). Roles can then be granted it as a tool with set_org_grant, or it can become an automation role.", map[string]interface{}{
 			"org_name":    strParam("The org's name"),
 			"workflow_id": strParam("The workflow to add (same profile)"),
