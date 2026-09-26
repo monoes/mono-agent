@@ -16,8 +16,8 @@
       {
         "name": "target_url",
         "type": "string",
-        "description": "Profile URL or username to list posts from (without @)",
-        "aliases": ["targetUsername", "profileUrl", "targets", "selectedListItems", "username"],
+        "description": "Profile URL or username (without @) to list posts from",
+        "aliases": ["targetUsername", "targets", "selectedListItems", "username"],
         "ui": { "label": "Profile", "placeholder": "https://www.instagram.com/natgeo/" }
       }
     ],
