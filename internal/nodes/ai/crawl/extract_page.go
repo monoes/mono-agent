@@ -82,12 +82,6 @@ func (n *ExtractPageNode) Execute(ctx context.Context, input workflow.NodeInput,
 			return nil, fmt.Errorf("ai.extract_page: prompt is required for natural extract_mode")
 		}
 
-		// Clean HTML for the LLM.
-		cleaned, cleanErr := CleanContent(fetchResult.HTML, pageURL, CleanOptions{})
-		if cleanErr != nil {
-			return nil, fmt.Errorf("ai.extract_page: clean: %w", cleanErr)
-		}
-
 		domain := domainFromURL(pageURL)
 		hash := shortHash(prompt)
 		configName := fmt.Sprintf("extract_%s_%s", domain, hash)
@@ -96,29 +90,24 @@ func (n *ExtractPageNode) Execute(ctx context.Context, input workflow.NodeInput,
 			"description": prompt,
 		}
 
-		generated, genErr := n.Generator.GenerateConfig(ctx, configName, cleaned.Markdown, prompt, schema)
+		// The selectors are generated against the DOM, so the agent gets
+		// the page markup (minus scripts and styles), not its markdown.
+		generated, genErr := n.Generator.GenerateConfig(ctx, configName, selectorHTML(fetchResult.HTML), naturalPurpose(prompt), schema)
 		if genErr != nil {
-			// Fallback: return cleaned markdown as extracted content.
-			out := workflow.NewItem(map[string]interface{}{
-				"url":            pageURL,
-				"extracted":      cleaned.Markdown,
-				"selectors_used": map[string]string{},
-				"extract_mode":   extractMode,
-				"fetch_time_ms":  fetchMs,
-				"error":          fmt.Sprintf("AI generation failed, returning markdown fallback: %v", genErr),
-			})
-			return []workflow.NodeOutput{{Handle: "main", Items: []workflow.Item{out}}}, nil
+			return markdownFallback(fetchResult.HTML, pageURL, extractMode, fetchMs,
+				fmt.Sprintf("AI generation failed, returning markdown fallback: %v", genErr))
 		}
 
 		selectors, err = configToSelectors(generated)
 		if err != nil {
-			return nil, fmt.Errorf("ai.extract_page: parse generated selectors: %w", err)
+			return markdownFallback(fetchResult.HTML, pageURL, extractMode, fetchMs,
+				fmt.Sprintf("%v, returning markdown fallback", err))
 		}
 
-		// If the API returned a list_selector and none was set, use it.
+		// If the agent returned a list_selector and none was set, use it.
 		if listSelector == "" {
 			if ls, ok := generated["list_selector"].(string); ok {
-				listSelector = ls
+				listSelector = strings.TrimSpace(ls)
 			}
 		}
 
@@ -230,24 +219,92 @@ func splitAttr(s string) (selector, attr string) {
 	return s[:idx], s[idx+1:]
 }
 
-// configToSelectors converts a map[string]interface{} (from the API) into
-// map[string]string, keeping only string-valued entries.
-func configToSelectors(m map[string]interface{}) (map[string]string, error) {
-	result := make(map[string]string, len(m))
-	for k, v := range m {
-		if k == "list_selector" {
-			continue // handled separately
+// naturalPurpose wraps the user's prompt with the constraints of this
+// node's extractor, which the generic config-generation prompt doesn't know.
+func naturalPurpose(prompt string) string {
+	return prompt + "\n\n" +
+		`Selectors are applied as CSS selectors (goquery), never XPath: put a CSS selector in each field's "xpath" key, ` +
+		`appending @attr to read an attribute (e.g. img.hero@src). If the request is for a repeated list of items, ` +
+		`also return a top-level "list_selector" (CSS) matching each item, and make the field selectors relative to that item.`
+}
+
+// selectorHTML strips the parts of a page that carry no selectable content,
+// so the generator's HTML budget is spent on the DOM.
+func selectorHTML(rawHTML string) string {
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(rawHTML))
+	if err != nil {
+		return rawHTML
+	}
+	doc.Find("script, style, noscript, template, svg, link, meta").Remove()
+	out, err := doc.Html()
+	if err != nil {
+		return rawHTML
+	}
+	return out
+}
+
+// markdownFallback is natural mode's documented fallback: when no usable
+// selectors can be generated, the node returns the page as markdown along
+// with the reason.
+func markdownFallback(rawHTML, pageURL, extractMode string, fetchMs int64, reason string) ([]workflow.NodeOutput, error) {
+	cleaned, err := CleanContent(rawHTML, pageURL, CleanOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("ai.extract_page: clean: %w", err)
+	}
+	out := workflow.NewItem(map[string]interface{}{
+		"url":            pageURL,
+		"extracted":      cleaned.Markdown,
+		"selectors_used": map[string]string{},
+		"extract_mode":   extractMode,
+		"fetch_time_ms":  fetchMs,
+		"error":          reason,
+	})
+	return []workflow.NodeOutput{{Handle: "main", Items: []workflow.Item{out}}}, nil
+}
+
+// configToSelectors turns a generated config, shaped
+// {"config_name": "...", "list_selector": "...", "fields": {"<field>": {"xpath": "<css>", "type": "...", "data": ...}}},
+// into the same field-name → CSS selector map css mode reads from "fields".
+// Only "fields" is read: config_name and list_selector are never selectors.
+// A field may also be a bare selector string. Fields without a selector, or
+// whose selector is XPath (which goquery can't apply), are skipped.
+func configToSelectors(generated map[string]interface{}) (map[string]string, error) {
+	fields, _ := generated["fields"].(map[string]interface{})
+	result := make(map[string]string, len(fields))
+	for name, v := range fields {
+		sel := fieldSelector(v)
+		if sel == "" || looksLikeXPath(sel) {
+			continue
 		}
-		s, ok := v.(string)
-		if !ok {
-			continue // skip non-string entries (e.g. nested objects)
-		}
-		result[k] = s
+		result[name] = sel
 	}
 	if len(result) == 0 {
-		return nil, fmt.Errorf("generated config contained no usable selectors")
+		return nil, fmt.Errorf("generated config contained no usable CSS selectors")
 	}
 	return result, nil
+}
+
+// fieldSelector returns the selector of one generated field.
+func fieldSelector(v interface{}) string {
+	switch f := v.(type) {
+	case string:
+		return strings.TrimSpace(f)
+	case map[string]interface{}:
+		for _, key := range []string{"css", "selector", "xpath"} {
+			if s, ok := f[key].(string); ok && strings.TrimSpace(s) != "" {
+				return strings.TrimSpace(s)
+			}
+		}
+	}
+	return ""
+}
+
+// looksLikeXPath reports whether sel is XPath (or an XPath template with
+// {FIELD} placeholders) rather than a CSS selector.
+func looksLikeXPath(sel string) bool {
+	return strings.HasPrefix(sel, "/") || strings.HasPrefix(sel, "./") || strings.HasPrefix(sel, "(") ||
+		strings.Contains(sel, "[@") || strings.Contains(sel, "::") || strings.Contains(sel, "()") ||
+		strings.Contains(sel, "{")
 }
 
 // domainFromURL extracts the hostname from a URL, replacing dots with
