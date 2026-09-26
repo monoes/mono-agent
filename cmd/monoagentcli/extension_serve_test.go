@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -264,3 +266,39 @@ type fakeAddrBridge struct {
 
 func (f *fakeAddrBridge) IsConnected() bool    { return false }
 func (f *fakeAddrBridge) Addr() (string, bool) { return f.addr, f.addr != "" }
+
+// A client whose pairing token is not the running bridge's must not be told
+// the bridge is simply connected: every relayed command it sends gets 401.
+func TestExtensionStatus_ReportsPairingTokenMismatch(t *testing.T) {
+	base := isolateBridgeEnv(t)
+	serveInBackground(t, base)
+
+	out := &bytes.Buffer{}
+	if err := runExtensionStatus(out, true); err != nil {
+		t.Fatal(err)
+	}
+	var report bridgeStatusReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil || report.ClientPairing != extension.PairingOK {
+		t.Fatalf("matching token: %+v %v\n%s", report, err, out)
+	}
+
+	home, _ := os.UserHomeDir()
+	if err := os.WriteFile(filepath.Join(home, ".monoagent", "extension.token"), []byte("someone-elses-token"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := runExtensionStatus(out, false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "this client's pairing token doesn't match it — re-pair or use the same HOME") {
+		t.Fatalf("status hid the token mismatch:\n%s", out)
+	}
+	out.Reset()
+	if err := runExtensionStatus(out, true); err != nil {
+		t.Fatal(err)
+	}
+	report = bridgeStatusReport{}
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil || report.ClientPairing != extension.PairingMismatch || report.Hint != extension.PairingMismatchHint {
+		t.Fatalf("mismatch JSON: %+v %v", report, err)
+	}
+}
