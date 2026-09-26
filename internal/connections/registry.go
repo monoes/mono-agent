@@ -505,25 +505,6 @@ var Registry = map[string]PlatformDef{
 		},
 		IconEmoji: "📺",
 	},
-	"openrouter": {
-		ID:         "openrouter",
-		Name:       "OpenRouter API",
-		Category:   "service",
-		ConnectVia: "API",
-		Methods:    []AuthMethod{MethodAPIKey},
-		Fields: map[AuthMethod][]CredentialField{
-			MethodAPIKey: {
-				{
-					Key:      "api_key",
-					Label:    "API Key",
-					Secret:   true,
-					Required: true,
-					HelpText: "Your OpenRouter API key. Find it at openrouter.ai/keys.",
-				},
-			},
-		},
-		IconEmoji: "🤖",
-	},
 	"huggingface": {
 		ID:         "huggingface",
 		Name:       "Hugging Face API",
