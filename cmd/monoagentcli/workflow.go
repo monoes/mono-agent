@@ -1537,7 +1537,8 @@ func workflowFileFromWorkflow(wf *workflow.Workflow) workflow.WorkflowFile {
 // newWorkflowExportCmd exports a workflow as JSON.
 func newWorkflowExportCmd(cfg *globalConfig) *cobra.Command {
 	var outputFile string
-	var bundle bool
+	var bundle, useSuggested bool
+	var autoDomains []string
 
 	cmd := &cobra.Command{
 		Use:   "export <id>",
@@ -1563,7 +1564,12 @@ func newWorkflowExportCmd(cfg *globalConfig) *cobra.Command {
 
 			var wfFile interface{} = workflowFileFromWorkflow(wf)
 			if bundle {
-				b, err := bundleWorkflowAutomations(workflowFileFromWorkflow(wf))
+				domains, err := parseAutomationDomains(autoDomains)
+				if err != nil {
+					return err
+				}
+				b, err := bundleWorkflowAutomations(workflowFileFromWorkflow(wf),
+					bundleOptions{domains: domains, useSuggested: useSuggested})
 				if err != nil {
 					return err
 				}
@@ -1594,6 +1600,10 @@ func newWorkflowExportCmd(cfg *globalConfig) *cobra.Command {
 
 	cmd.Flags().StringVarP(&outputFile, "output", "o", "", "Write to file instead of stdout")
 	cmd.Flags().BoolVar(&bundle, "bundle-automations", false, "Embed the automation packages the workflow's nodes use")
+	cmd.Flags().StringArrayVar(&autoDomains, "automation-domains", nil,
+		"With --bundle-automations: site domains for a bundled package's exported copy, as <id>=<site,...> (repeatable)")
+	cmd.Flags().BoolVar(&useSuggested, "use-suggested-domains", false,
+		"With --bundle-automations: give legacy packages the domains suggested from their navigate URLs")
 	return cmd
 }
 

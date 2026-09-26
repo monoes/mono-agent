@@ -134,7 +134,7 @@ func TestWorkflowBundleLegacyAlias(t *testing.T) {
 				t.Fatal(err)
 			}
 			bundled := filepath.Join(t.TempDir(), "bundled.json")
-			runWorkflowSubcmd(t, cfg, "export", imported.ID, "--bundle-automations", "-o", bundled)
+			runWorkflowSubcmd(t, cfg, "export", imported.ID, "--bundle-automations", "--use-suggested-domains", "-o", bundled)
 			raw, err := os.ReadFile(bundled)
 			if err != nil {
 				t.Fatal(err)

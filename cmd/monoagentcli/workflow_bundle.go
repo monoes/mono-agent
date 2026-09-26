@@ -59,11 +59,38 @@ type unbundledAutomation struct {
 	Hint    string `json:"hint"`
 }
 
+// bundleOptions controls which site domains an exported package gets.
+// Generated legacy packages run unrestricted locally and have no
+// site.domains; an exported copy must name them (Registry.Export refuses
+// otherwise).
+type bundleOptions struct {
+	// domains sets site.domains of the exported copy per automation id
+	// (--automation-domains <id>=<site,...>).
+	domains map[string][]string
+	// useSuggested uses a legacy package's suggested domains (derived from
+	// its literal navigate URLs) when no explicit domains are given.
+	useSuggested bool
+}
+
+// parseAutomationDomains parses --automation-domains values "<id>=<a,b>".
+func parseAutomationDomains(vals []string) (map[string][]string, error) {
+	out := map[string][]string{}
+	for _, v := range vals {
+		id, list, ok := strings.Cut(v, "=")
+		id = strings.TrimSpace(id)
+		if !ok || id == "" || len(splitCSV(list)) == 0 {
+			return nil, errInvalidInput("--automation-domains %q: want <automation id>=<site,...>", v)
+		}
+		out[id] = append(out[id], splitCSV(list)...)
+	}
+	return out, nil
+}
+
 // bundleWorkflowAutomations exports every installed automation the
 // workflow's nodes use into the file's "automations" field. A package that
 // cannot be exported is listed under "unbundledAutomations" instead; the
 // export as a whole never fails because of one package.
-func bundleWorkflowAutomations(file workflow.WorkflowFile) (workflowBundleFile, error) {
+func bundleWorkflowAutomations(file workflow.WorkflowFile, opts bundleOptions) (workflowBundleFile, error) {
 	out := workflowBundleFile{WorkflowFile: file}
 	reg, err := openAutomationRegistry()
 	if err != nil {
@@ -76,12 +103,11 @@ func bundleWorkflowAutomations(file workflow.WorkflowFile) (workflowBundleFile, 
 			continue
 		}
 		var buf bytes.Buffer
-		if err := reg.Export(id, &buf, automation.ExportOptions{}); err != nil {
+		if err := reg.Export(id, &buf, automation.ExportOptions{Domains: exportDomains(reg, id, opts)}); err != nil {
 			if out.Unbundled == nil {
 				out.Unbundled = map[string]unbundledAutomation{}
 			}
-			out.Unbundled[id] = unbundledAutomation{Version: info.Version, Reason: err.Error(),
-				Hint: fmt.Sprintf("on the exporting machine, run: monoagentcli automation export %s --domains <host,...> -o %s.mpkg, then share and install that file", id, id)}
+			out.Unbundled[id] = unbundledAutomation{Version: info.Version, Reason: err.Error(), Hint: unbundledHint(reg, id)}
 			continue
 		}
 		sum := sha256.Sum256(buf.Bytes())
@@ -96,6 +122,30 @@ func bundleWorkflowAutomations(file workflow.WorkflowFile) (workflowBundleFile, 
 	}
 	out.Nodes = canonicalNodeTypes(file.Nodes, resolve, out.Automations)
 	return out, nil
+}
+
+// exportDomains picks site.domains for the exported copy of id: explicit
+// ones first, else (opt-in) a legacy package's suggestions, else none (the
+// package's own).
+func exportDomains(reg *automation.Registry, id string, opts bundleOptions) []string {
+	if d := opts.domains[id]; len(d) > 0 {
+		return d
+	}
+	if opts.useSuggested {
+		if p, err := reg.Get(id); err == nil && p.Manifest.Legacy != nil {
+			return p.Manifest.Legacy.SuggestedDomains
+		}
+	}
+	return nil
+}
+
+// unbundledHint tells the user how to include id next time.
+func unbundledHint(reg *automation.Registry, id string) string {
+	if p, err := reg.Get(id); err == nil && p.Manifest.Legacy != nil && len(p.Manifest.Legacy.SuggestedDomains) > 0 {
+		return fmt.Sprintf("re-run workflow export with --automation-domains %s=%s (or --use-suggested-domains), or share it separately: monoagentcli automation export %s --domains %s",
+			id, strings.Join(p.Manifest.Legacy.SuggestedDomains, ","), id, strings.Join(p.Manifest.Legacy.SuggestedDomains, ","))
+	}
+	return fmt.Sprintf("re-run workflow export with --automation-domains %s=<site,...> naming the sites its actions open, or share it separately: monoagentcli automation export %s --domains <site,...>", id, id)
 }
 
 // unbundledWarnings are human lines for the packages left out of a bundle.

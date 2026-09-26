@@ -36,12 +36,13 @@ func importWorkflowJSON(t *testing.T, cfg *globalConfig, wf string) string {
 	return imported.ID
 }
 
-// exportBundle runs `workflow export <id> --bundle-automations -o F` and
-// parses F.
-func exportBundle(t *testing.T, cfg *globalConfig, id string) (string, workflowBundleFile) {
+// exportBundle runs `workflow export <id> --bundle-automations [extra] -o F`
+// and parses F.
+func exportBundle(t *testing.T, cfg *globalConfig, id string, extra ...string) (string, workflowBundleFile) {
 	t.Helper()
 	out := filepath.Join(t.TempDir(), "bundled.json")
-	runWorkflowSubcmd(t, cfg, "export", id, "--bundle-automations", "-o", out)
+	args := append([]string{"export", id, "--bundle-automations"}, extra...)
+	runWorkflowSubcmd(t, cfg, append(args, "-o", out)...)
 	raw, err := os.ReadFile(out)
 	if err != nil {
 		t.Fatal(err)
@@ -81,7 +82,18 @@ func TestWorkflowBundlePartialExport(t *testing.T) {
   {"id":"a","type":"nosite.get_heading","name":"A","position":{"x":0,"y":0},"config":{}},
   {"id":"b","type":"examplesite.get_heading","name":"B","position":{"x":200,"y":0},"config":{}}
 ],"connections":[{"id":"a-b","source":"a","target":"b"}]}`)
-	file, doc := exportBundle(t, cfg, id)
+	// Without domains, neither legacy package can be exported (they run
+	// unrestricted locally); the workflow is still written, and the hint
+	// names the suggested domains where there are some.
+	_, bare := exportBundle(t, cfg, id)
+	if len(bare.Automations) != 0 || len(bare.Unbundled) != 2 || len(bare.Nodes) != 2 {
+		t.Fatalf("bare export: bundled %v, unbundled %v", keysOf(bare.Automations), bare.Unbundled)
+	}
+	if h := bare.Unbundled[exSite].Hint; !strings.Contains(h, "--automation-domains "+exSite+"=") || !strings.Contains(h, "example.com") {
+		t.Fatalf("hint for %s: %q", exSite, h)
+	}
+
+	file, doc := exportBundle(t, cfg, id, "--automation-domains", exSite+"=example.com,*.example.com")
 	if len(doc.Nodes) != 2 || len(doc.Connections) != 1 {
 		t.Fatalf("workflow missing from the bundle: %d nodes, %d connections", len(doc.Nodes), len(doc.Connections))
 	}
@@ -89,7 +101,7 @@ func TestWorkflowBundlePartialExport(t *testing.T) {
 		t.Fatalf("bundled %v, want exactly %s", keysOf(doc.Automations), exSite)
 	}
 	u, ok := doc.Unbundled[noSite]
-	if !ok || u.Reason == "" || !strings.Contains(u.Hint, "automation export "+noSite+" --domains") {
+	if !ok || !strings.Contains(u.Reason, "cannot export") || !strings.Contains(u.Hint, "--automation-domains "+noSite+"=<site") {
 		t.Fatalf("unbundled entry for %s = %+v (all: %v)", noSite, u, doc.Unbundled)
 	}
 	// The unbundled node keeps its original type; the bundled one names its package.
@@ -118,7 +130,7 @@ func TestWorkflowBundlePartialExport(t *testing.T) {
 	if got[exSite].Status != "installed" {
 		t.Fatalf("%s: %+v", exSite, got[exSite])
 	}
-	if it := got[noSite]; it.Status != "missing" || !it.NotBundled || !strings.Contains(it.Error, "--domains") {
+	if it := got[noSite]; it.Status != "missing" || !it.NotBundled || !strings.Contains(it.Error, "cannot export") {
 		t.Fatalf("%s: %+v", noSite, it)
 	}
 }
@@ -154,7 +166,7 @@ func TestWorkflowBundleLegacyActionOnBuiltinPlatform(t *testing.T) {
   {"id":"a","type":"hackernews.custom_scrape","name":"A","position":{"x":0,"y":0},"config":{}},
   {"id":"b","type":"hackernews.list_comments","name":"B","position":{"x":200,"y":0},"config":{}}
 ],"connections":[]}`)
-	_, doc := exportBundle(t, cfg, id)
+	_, doc := exportBundle(t, cfg, id, "--use-suggested-domains")
 	if _, ok := doc.Automations[legacy]; !ok {
 		t.Fatalf("legacy package %s not bundled: %v (unbundled %v)", legacy, keysOf(doc.Automations), doc.Unbundled)
 	}
@@ -178,5 +190,17 @@ func TestWorkflowExportMissingWorkflowWritesNothing(t *testing.T) {
 	})
 	if _, err := os.Stat(out); err == nil {
 		t.Fatal("a failed export left a file behind")
+	}
+}
+
+func TestParseAutomationDomains(t *testing.T) {
+	got, err := parseAutomationDomains([]string{"a=x.com, *.x.com", "b=y.org", "a=z.net"})
+	if err != nil || strings.Join(got["a"], ",") != "x.com,*.x.com,z.net" || strings.Join(got["b"], ",") != "y.org" {
+		t.Fatalf("parse = %v, %v", got, err)
+	}
+	for _, bad := range []string{"a", "=x.com", "a="} {
+		if _, err := parseAutomationDomains([]string{bad}); err == nil {
+			t.Fatalf("%q should be rejected", bad)
+		}
 	}
 }
