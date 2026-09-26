@@ -122,7 +122,7 @@ export default function AutomationDrawer({ automation, initialTab = 'Overview', 
                 <span style={{ ...muted, fontSize: 10 }}>{id}</span>
                 <Chip color="var(--cyan)">{SOURCE_LABELS[info.source] || info.source} {info.version}</Chip>
                 {info.trust && info.trust !== info.source && <Chip>trust: {info.trust}</Chip>}
-                {info.available === false && <Chip color="var(--red)">unavailable</Chip>}
+                {!info.removed && info.available === false && <Chip color="var(--red)">unavailable</Chip>}
                 {info.available !== false && info.enabled === false && <Chip>disabled</Chip>}
                 {info.modified && <Chip color="var(--yellow)">modified</Chip>}
                 {info.containsScripts && <Chip color="var(--orange)">contains scripts</Chip>}

@@ -32,7 +32,14 @@ func newAutomationValidateCmd(cfg *globalConfig) *cobra.Command {
 			ok := !issuesHaveErrors(issues)
 			out := cmd.OutOrStdout()
 			if cfg.JSONOutput {
-				return writeJSONTo(out, map[string]any{"ok": ok, "issues": issues})
+				if err := writeJSONTo(out, map[string]any{"ok": ok, "issues": issues}); err != nil {
+					return err
+				}
+				if !ok {
+					// Exit 1; the JSON above already says why (one document).
+					return reportedError{fmt.Errorf("%s has validation errors", args[0])}
+				}
+				return nil
 			}
 			printIssues(out, issues)
 			if ok {

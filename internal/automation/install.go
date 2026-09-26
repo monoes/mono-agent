@@ -210,10 +210,32 @@ func (r *Registry) download(url string) (fs.FS, string, error) {
 	return readZipSum(tmp)
 }
 
-// ErrReplacesBuiltin is returned when an install would overwrite an
-// installed built-in or local package with less trusted content and
-// InstallOptions.ReplaceBuiltin is not set.
-var ErrReplacesBuiltin = errors.New("automation: install would replace a built-in or local package and needs confirmation (--replace-builtin on the command line)")
+// ErrReplaces is returned when an install would overwrite an installed
+// package that needs confirmation (InstallOptions.Replace): a built-in,
+// local or recorded package receiving less trusted content, or the user's
+// own package receiving different content.
+var ErrReplaces = errors.New("automation: install would replace an installed package and needs confirmation (--replace on the command line)")
+
+// ErrReplacesBuiltin is the former name of ErrReplaces.
+var ErrReplacesBuiltin = ErrReplaces
+
+// sameInstall reports whether p (with files) is exactly what e has
+// installed: same version, content, source and trust.
+func sameInstall(e *indexEntry, p *Package, files map[string][]byte) bool {
+	return !e.Removed && e.Version == p.Manifest.Version && e.InstalledSha256 == treeHash(files) &&
+		e.Source == p.Source && e.trust() == p.trust()
+}
+
+// trustDropEffects says in plain words what a lower trust tier changes.
+func trustDropEffects(to string) string {
+	switch to {
+	case TrustImported:
+		return "page scripts stay off and real runs of actions that change things need confirmation again; secrets must be stored for this automation"
+	case TrustRecorded:
+		return "page scripts stay off until you allow them; secrets must be stored for this automation"
+	}
+	return "some defaults change"
+}
 
 // installPackage validates, reviews and (unless dryRun) writes p. merge
 // marks AddAction, where recorded content may extend a built-in or local
@@ -225,6 +247,12 @@ func (r *Registry) installPackage(p *Package, files map[string][]byte, opts Inst
 		res, err = r.prepareLocked(idx, p, files, opts, merge)
 		if err != nil || opts.DryRun {
 			return false, err
+		}
+		if e, ok := idx.Packages[p.Manifest.ID]; ok && sameInstall(e, p, files) {
+			// Identical content, source and trust: nothing to write.
+			res.Installed, res.Dir = true, r.versionDir(p.Manifest.ID, e.Version)
+			res.Warnings = append(res.Warnings, fmt.Sprintf("no changes: %s %s is already installed with this content", p.Manifest.ID, e.Version))
+			return false, nil
 		}
 		res.Dir, err = r.commitLocked(idx, p, files, false)
 		if err != nil {
@@ -256,14 +284,29 @@ func (r *Registry) prepareLocked(idx *indexFile, p *Package, files map[string][]
 	if e, ok := idx.Packages[m.ID]; ok && !e.Removed {
 		incoming := p.trust()
 		res.Review.Replaces = &Replaced{ID: m.ID, Source: e.Source, Trust: e.trust(), Version: e.Version}
-		if trustRank(e.trust()) >= trustRank(TrustLocal) &&
-			(incoming == TrustImported || (incoming == TrustRecorded && !merge)) {
-			replaceBlocked = !opts.ReplaceBuiltin
-			res.Warnings = append(res.Warnings, fmt.Sprintf("REPLACES the installed %s package %q %s with %s content",
-				strings.ToUpper(e.trust()), m.ID, e.Version, incoming))
+		same := sameInstall(e, p, files)
+		var why string
+		switch {
+		case same:
+			// identical reinstall: a no-op, nothing to confirm
+		case trustRank(e.trust()) >= trustRank(TrustRecorded) && incoming == TrustImported:
+			why = fmt.Sprintf("REPLACES the installed %s package %q %s with imported content", strings.ToUpper(e.trust()), m.ID, e.Version)
+		case trustRank(e.trust()) >= trustRank(TrustLocal) && incoming == TrustRecorded && !merge:
+			why = fmt.Sprintf("REPLACES the installed %s package %q %s with recorded content", strings.ToUpper(e.trust()), m.ID, e.Version)
+		case e.userOwned() && !merge:
+			why = fmt.Sprintf("REPLACES your own package %q %s with different content (the current copy is kept for rollback)", m.ID, e.Version)
+		}
+		if why != "" {
+			res.Review.ReplaceRequired = true
+			replaceBlocked = !opts.replaceConfirmed()
+			res.Warnings = append(res.Warnings, why)
 			if replaceBlocked {
-				res.Warnings = append(res.Warnings, "replacing it requires confirmation (--replace-builtin on the command line)")
+				res.Warnings = append(res.Warnings, "replacing it requires confirmation (--replace on the command line)")
 			}
+		}
+		if !same && trustRank(incoming) < trustRank(e.trust()) {
+			res.Review.TrustChange = &TrustChange{From: e.trust(), To: incoming}
+			res.Warnings = append(res.Warnings, fmt.Sprintf("trust drops from %s to %s: %s", e.trust(), incoming, trustDropEffects(incoming)))
 		}
 		res.PreviousVersion = e.Version
 		if CompareVersions(m.Version, e.Version) < 0 {
@@ -279,9 +322,31 @@ func (r *Registry) prepareLocked(idx *indexFile, p *Package, files map[string][]
 	}
 	if replaceBlocked && !opts.DryRun {
 		rp := res.Review.Replaces
-		return res, fmt.Errorf("%w: %s is an installed %s package (%s)", ErrReplacesBuiltin, rp.ID, rp.Trust, rp.Version)
+		return res, fmt.Errorf("%w: %s is an installed %s package (%s)", ErrReplaces, rp.ID, rp.Trust, rp.Version)
 	}
 	return res, nil
+}
+
+// keepReplacedLocked renames version dir v of id to a free
+// "<v>+replaced.<n>" slot and returns that name.
+func (r *Registry) keepReplacedLocked(id, v string) (string, error) {
+	sep := "+"
+	if strings.Contains(v, "+") {
+		sep = "."
+	}
+	for n := 1; ; n++ {
+		name := fmt.Sprintf("%s%sreplaced.%d", v, sep, n)
+		if _, err := os.Stat(r.versionDir(id, name)); err == nil {
+			continue
+		}
+		if err := os.Rename(r.versionDir(id, v), r.versionDir(id, name)); err != nil {
+			if os.IsNotExist(err) {
+				return "", nil // nothing on disk to keep
+			}
+			return "", err
+		}
+		return name, nil
+	}
 }
 
 // commitLocked writes p's files as a new version and updates its index
@@ -291,11 +356,22 @@ func (r *Registry) prepareLocked(idx *indexFile, p *Package, files map[string][]
 // sees them.
 func (r *Registry) commitLocked(idx *indexFile, p *Package, files map[string][]byte, fromSeed bool) (string, error) {
 	m := p.Manifest
+	hash := treeHash(files)
+	// Same version, different content: keep the current copy as the
+	// rollback target instead of overwriting the only one. (A dev-build
+	// seed refresh of an unmodified built-in replaces in place.)
+	var keptAs string
+	if e, ok := idx.Packages[m.ID]; ok && !e.Removed && !fromSeed && e.Version == m.Version && e.InstalledSha256 != hash {
+		name, err := r.keepReplacedLocked(m.ID, e.Version)
+		if err != nil {
+			return "", err
+		}
+		keptAs = name
+	}
 	dir, err := r.writeVersion(m.ID, m.Version, files)
 	if err != nil {
 		return "", err
 	}
-	hash := treeHash(files)
 	e, ok := idx.Packages[m.ID]
 	if !ok {
 		e = &indexEntry{Enabled: true}
@@ -303,7 +379,7 @@ func (r *Registry) commitLocked(idx *indexFile, p *Package, files map[string][]b
 	} else if e.Removed {
 		e.Enabled = true
 	}
-	if ok && !e.Removed && e.Version != m.Version {
+	if ok && !e.Removed && (e.Version != m.Version || keptAs != "") {
 		// The current version becomes previous: remember what it was.
 		e.PreviousSource, e.PreviousTrust = e.Source, e.trust()
 	}
@@ -333,6 +409,9 @@ func (r *Registry) commitLocked(idx *indexFile, p *Package, files map[string][]b
 	}
 	if e.PendingSeedVersion != "" && CompareVersions(m.Version, e.PendingSeedVersion) >= 0 {
 		e.PendingSeedVersion = ""
+	}
+	if keptAs != "" {
+		e.Previous = keptAs // setVersion keeps it (same version) and prunes the rest
 	}
 	r.setVersion(m.ID, e, m.Version)
 	if e.Previous == "" {

@@ -822,10 +822,6 @@ export function SearchVaultImages(arg1) {
   return window['go']['main']['App']['SearchVaultImages'](arg1);
 }
 
-export function SelfUpdate() {
-  return window['go']['main']['App']['SelfUpdate']();
-}
-
 export function SendApplication(arg1, arg2) {
   return window['go']['main']['App']['SendApplication'](arg1, arg2);
 }

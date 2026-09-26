@@ -54,8 +54,10 @@
   },
   "outputs": {
     "success": [
-      "followCount",
-      "reachedIndex"
+      "success",
+      "url",
+      "username",
+      "status"
     ],
     "failure": [
       "failedItems"

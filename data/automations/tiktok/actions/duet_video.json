@@ -32,8 +32,10 @@
   },
   "outputs": {
     "success": [
-      "duetCount",
-      "reachedIndex"
+      "success",
+      "status",
+      "published",
+      "videoURL"
     ],
     "failure": [
       "failedItems"

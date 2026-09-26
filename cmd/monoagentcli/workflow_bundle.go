@@ -30,8 +30,9 @@ import (
 //
 // The field is ignored by importers that predate it (the workflow parser
 // skips unknown keys), so bundled files stay importable everywhere. A node
-// uses automation <id> when its type is "<id>.<action>" and <id> is an
-// installed automation on the exporting machine.
+// uses automation <id> when its type's prefix resolves to installed package
+// <id> on the exporting machine (directly or through a legacy alias); in a
+// bundle such node types are written as "<id>.<action>".
 
 // bundledAutomation is one entry of the "automations" field.
 type bundledAutomation struct {
@@ -54,7 +55,8 @@ func bundleWorkflowAutomations(file workflow.WorkflowFile) (workflowBundleFile, 
 	if err != nil {
 		return out, err
 	}
-	for _, id := range workflowAutomationIDs(file.Nodes, packageResolver(reg)) {
+	resolve := packageResolver(reg)
+	for _, id := range workflowAutomationIDs(file.Nodes, resolve) {
 		info, err := reg.Info(id)
 		if err != nil {
 			continue
@@ -73,6 +75,7 @@ func bundleWorkflowAutomations(file workflow.WorkflowFile) (workflowBundleFile, 
 			Mpkg:    base64.StdEncoding.EncodeToString(buf.Bytes()),
 		}
 	}
+	out.Nodes = canonicalNodeTypes(file.Nodes, resolve, out.Automations)
 	return out, nil
 }
 
@@ -101,8 +104,11 @@ func workflowAutomationIDs(nodes []workflow.WorkflowFileNode, resolve func(prefi
 }
 
 // packageResolver resolves a node-type prefix the way the action loader
-// does (the registry's DefSource), falling back to an installed package of
-// that exact id (e.g. a disabled one, which the DefSource hides).
+// does (the registry's DefSource, which also maps a legacy platform alias
+// such as "google_maps" to its generated local-* package), then falls back
+// to installed packages the DefSource hides (disabled): an exact id, or the
+// generated legacy package for that platform (Registry.ResolveLegacyPlatform,
+// which knows hashed ids for colliding names).
 func packageResolver(reg *automation.Registry) func(string) string {
 	src := reg.DefSource()
 	return func(prefix string) string {
@@ -114,8 +120,33 @@ func packageResolver(reg *automation.Registry) func(string) string {
 		if info, err := reg.Info(prefix); err == nil && !info.Removed {
 			return info.ID
 		}
+		if id, ok := reg.ResolveLegacyPlatform(prefix); ok {
+			return id
+		}
 		return ""
 	}
+}
+
+// canonicalNodeTypes rewrites "<alias>.<action>" node types to
+// "<package id>.<action>" wherever the prefix resolved to a different
+// (bundled) package id. A legacy alias is a local convenience of the
+// exporting machine — an imported package never claims one — so a bundled
+// workflow must name the package it ships.
+func canonicalNodeTypes(nodes []workflow.WorkflowFileNode, resolve func(string) string, bundled map[string]bundledAutomation) []workflow.WorkflowFileNode {
+	out := make([]workflow.WorkflowFileNode, len(nodes))
+	copy(out, nodes)
+	for i, n := range out {
+		prefix, act, ok := strings.Cut(n.Type, ".")
+		if !ok || prefix == "" {
+			continue
+		}
+		if id := resolve(prefix); id != "" && id != prefix {
+			if _, isBundled := bundled[id]; isBundled {
+				out[i].Type = id + "." + act
+			}
+		}
+	}
+	return out
 }
 
 // bundleImportItem reports what `workflow import` did (or would do) with

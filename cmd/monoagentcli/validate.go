@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/monoes/mono-agent/internal/workflow"
 	"github.com/spf13/cobra"
@@ -26,8 +27,26 @@ type dryRunJSON struct {
 
 // validationJSON is the `workflow validate --json` payload.
 type validationJSON struct {
-	Valid  bool     `json:"valid"`
-	Errors []string `json:"errors"`
+	Valid    bool     `json:"valid"`
+	Errors   []string `json:"errors"`
+	Warnings []string `json:"warnings,omitempty"`
+}
+
+// unknownNodeTypeWarnings names the nodes whose type no registered node
+// handles (a typo, or an automation that isn't installed). They are
+// warnings, not errors: validation never checked node types before, and a
+// workflow may be validated on a machine that lacks one of its packages.
+func unknownNodeTypeWarnings(wf *workflow.Workflow) []string {
+	reg := buildNodeRegistry(false, nil)
+	var out []string
+	for _, n := range wf.Nodes {
+		// Triggers aren't registry nodes; ValidateForActivation checks them.
+		if n.Type == "" || strings.HasPrefix(n.Type, "trigger.") || reg.Has(n.Type) {
+			continue
+		}
+		out = append(out, fmt.Sprintf("node %q: unknown node type %q (run `monoagentcli node list`; an automation it needs may not be installed)", n.ID, n.Type))
+	}
+	return out
 }
 
 // loadWorkflowDefinition fetches a workflow by id from the canonical hybrid
@@ -141,8 +160,12 @@ func newWorkflowValidateCmd(cfg *globalConfig) *cobra.Command {
 				return errInvalidInput("%v", err)
 			}
 
+			warnings := unknownNodeTypeWarnings(wf)
 			if cfg.JSONOutput {
-				return json.NewEncoder(cmd.OutOrStdout()).Encode(validationJSON{Valid: true, Errors: []string{}})
+				return json.NewEncoder(cmd.OutOrStdout()).Encode(validationJSON{Valid: true, Errors: []string{}, Warnings: warnings})
+			}
+			for _, w := range warnings {
+				fmt.Fprintln(cmd.ErrOrStderr(), "warning: "+w)
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "Workflow is valid.")
 			return nil

@@ -24,8 +24,8 @@ func TestAutomationInstallArgs(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(dry, []string{"automation", "install", "--dry-run", "--", "/x/a.mpkg"}) {
 		t.Fatalf("dry run: %v %v", dry, err)
 	}
-	yes, err := automationInstallArgs("-evil.mpkg", false, InstallSpec{ExpectSHA256: "ab12", ReplaceBuiltin: true})
-	want := []string{"automation", "install", "--yes", "--expect-sha256", "ab12", "--replace-builtin", "--", "-evil.mpkg"}
+	yes, err := automationInstallArgs("-evil.mpkg", false, InstallSpec{ExpectSHA256: "ab12", Replace: true})
+	want := []string{"automation", "install", "--yes", "--expect-sha256", "ab12", "--replace", "--", "-evil.mpkg"}
 	if err != nil || !reflect.DeepEqual(yes, want) {
 		t.Fatalf("confirm: %v %v", yes, err)
 	}

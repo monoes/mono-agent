@@ -65,8 +65,11 @@
   },
   "outputs": {
     "success": [
-      "viewCount",
-      "reachedIndex"
+      "success",
+      "url",
+      "username",
+      "stories_viewed",
+      "status"
     ],
     "failure": [
       "failedItems"

@@ -16,6 +16,18 @@
       ],
       "type": "object"
     },
+    "LegacyInfo": {
+      "description": "LegacyInfo is Manifest.Legacy.",
+      "properties": {
+        "platform": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "platform"
+      ],
+      "type": "object"
+    },
     "Login": {
       "description": "Login describes how to log in and how to tell a session is logged in.",
       "properties": {
@@ -79,6 +91,10 @@
         "id": {
           "description": "Package id: lowercase letters, digits and dashes. Workflow nodes are named \u003cid\u003e.\u003caction\u003e.",
           "type": "string"
+        },
+        "legacy": {
+          "$ref": "#/$defs/LegacyInfo",
+          "description": "Legacy marks a package generated from ~/.monoagent/actions/\u003cplatform\u003e (never set by hand). Platform is the original directory name, the \"\u003cplatform\u003e.\u003caction\u003e\" node types old workflows still use."
         },
         "license": {
           "description": "SPDX license id.",

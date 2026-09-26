@@ -51,8 +51,17 @@ func runInstall(opts automation.InstallOptions, c installConfirmer,
 		if issuesHaveErrors(review.Issues) {
 			return review, fmt.Errorf("package %s has validation errors; not installed", review.ID)
 		}
-		if !confirmYes(c.in, c.out, fmt.Sprintf("Install %s %s?", review.ID, review.Version)) {
+		question := fmt.Sprintf("Install %s %s?", review.ID, review.Version)
+		if review.Review.ReplaceRequired {
+			question = fmt.Sprintf("Replace the installed %s with %s %s?", review.ID, review.ID, review.Version)
+		}
+		if !confirmYes(c.in, c.out, question) {
 			return nil, errors.New("install cancelled")
+		}
+		// Answering yes to a review that says it replaces something is the
+		// confirmation --replace gives on the command line.
+		if review.Review.ReplaceRequired {
+			opts.Replace = true
 		}
 		if opts.ExpectSHA256 == "" {
 			opts.ExpectSHA256 = review.SHA256 // install exactly the bytes reviewed
@@ -63,7 +72,7 @@ func runInstall(opts automation.InstallOptions, c installConfirmer,
 }
 
 func newAutomationInstallCmd(cfg *globalConfig) *cobra.Command {
-	var dryRun, yes, replaceBuiltin, local bool
+	var dryRun, yes, replace, replaceBuiltin, local bool
 	var expectSHA string
 	cmd := &cobra.Command{
 		Use:   "install <file.mpkg|dir|url>",
@@ -73,7 +82,7 @@ func newAutomationInstallCmd(cfg *globalConfig) *cobra.Command {
 			if err := checkInstallSource(args[0]); err != nil {
 				return err
 			}
-			opts := automation.InstallOptions{DryRun: dryRun, ReplaceBuiltin: replaceBuiltin,
+			opts := automation.InstallOptions{DryRun: dryRun, Replace: replace || replaceBuiltin,
 				ExpectSHA256: strings.ToLower(strings.TrimSpace(expectSHA))}
 			if local {
 				if st, err := os.Stat(args[0]); err != nil || !st.IsDir() {
@@ -90,9 +99,6 @@ func newAutomationInstallCmd(cfg *globalConfig) *cobra.Command {
 			res, err := runInstall(opts, c, func(o automation.InstallOptions) (*automation.InstallResult, error) {
 				return reg.Install(args[0], o)
 			})
-			if errors.Is(err, automation.ErrReplacesBuiltin) {
-				err = withInstallResult(fmt.Errorf("%w; pass --replace-builtin to replace it", err), res)
-			}
 			if err != nil {
 				printFailedIssues(cmd, cfg, err)
 				return err
@@ -102,7 +108,9 @@ func newAutomationInstallCmd(cfg *globalConfig) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Validate and show the review without installing")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Install without asking")
-	cmd.Flags().BoolVar(&replaceBuiltin, "replace-builtin", false, "Allow this package to replace an installed built-in or local package with the same id")
+	cmd.Flags().BoolVar(&replace, "replace", false, "Confirm replacing an installed package that needs it (a built-in, your own local/recorded package, or different content)")
+	cmd.Flags().BoolVar(&replaceBuiltin, "replace-builtin", false, "Deprecated alias of --replace")
+	_ = cmd.Flags().MarkHidden("replace-builtin")
 	cmd.Flags().BoolVar(&local, "local", false, "Install a package directory you wrote as local (trusted like your own code: scripts allowed, no live-run confirmation)")
 	cmd.Flags().StringVar(&expectSHA, "expect-sha256", "", "Refuse unless the package bytes have this sha256 (e.g. from a --dry-run review)")
 	return cmd
@@ -166,11 +174,18 @@ func printInstallReview(out io.Writer, res *automation.InstallResult) {
 		fmt.Fprintf(out, "SHA256    %s\n", res.SHA256)
 	}
 	if rp := r.Replaces; rp != nil {
-		fmt.Fprintf(out, "Replaces  %s %s (%s, trust %s)\n", rp.ID, rp.Version, rp.Source, rp.Trust)
+		note := ""
+		if r.ReplaceRequired {
+			note = " — needs confirmation (--replace)"
+		}
+		fmt.Fprintf(out, "Replaces  %s %s (%s, trust %s)%s\n", rp.ID, rp.Version, rp.Source, rp.Trust, note)
 	} else if res.PreviousVersion != "" {
 		fmt.Fprintf(out, "Replaces  %s\n", res.PreviousVersion)
 	}
 	fmt.Fprintf(out, "Source    %s (trust %s)\n", orDash(r.Source), orDash(r.Trust))
+	if tc := r.TrustChange; tc != nil {
+		fmt.Fprintf(out, "Trust     drops from %s to %s\n", tc.From, tc.To)
+	}
 	fmt.Fprintf(out, "Publisher %s\n", orDash(r.Publisher))
 	fmt.Fprintf(out, "Domains   %s\n", orDash(strings.Join(r.Domains, ", ")))
 	steps := strings.Join(r.Steps, ", ")

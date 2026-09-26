@@ -1019,7 +1019,7 @@ function schemaDefaults(fields) {
 }
 
 // ── Main page ─────────────────────────────────────────────────────────────────
-export default function NodeRunner({ onNavigate, navData }) {
+export default function NodeRunner({ onNavigate, navData, onWorkflowsChanged }) {
   const [categories, setCategories] = useState([])
   // type -> schema, from the node catalog. The workflow file carries the
   // schema each node had when it was saved; the catalog is what the running
@@ -1607,6 +1607,7 @@ export default function NodeRunner({ onNavigate, navData }) {
       if (saved?.id) {
         setWfId(saved.id)
         setIsDirty(false)
+        onWorkflowsChanged?.() // status bar / dashboard workflow count
         setSaveMsg({ ok: true, text: 'Saved' })
         return saved
       } else {
@@ -2040,6 +2041,7 @@ export default function NodeRunner({ onNavigate, navData }) {
       {showImport && (
         <WorkflowImportDialog
           onClose={() => setShowImport(false)}
+          onImported={() => onWorkflowsChanged?.()}
           onOpen={(id) => { setShowImport(false); handleLoad(id) }}
         />
       )}
@@ -2051,6 +2053,7 @@ export default function NodeRunner({ onNavigate, navData }) {
           onDelete={async (id) => {
             if (!(await confirm('Delete this workflow? This cannot be undone.', { title: 'Delete Workflow', confirmLabel: 'Delete' }))) return false
             await DeleteWorkflow(id)
+            onWorkflowsChanged?.()
             if (id === wfId) {
               stopPolling()
               resetCanvas()

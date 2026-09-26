@@ -32,8 +32,9 @@
   },
   "outputs": {
     "success": [
-      "likesCount",
-      "reachedIndex"
+      "success",
+      "status",
+      "videoURL"
     ],
     "failure": [
       "failedItems"

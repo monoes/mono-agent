@@ -287,3 +287,45 @@ func TestWorkflowImportReportsMissingBundles(t *testing.T) {
 		t.Errorf("human output:\n%s", out)
 	}
 }
+
+// TestWorkflowImportMatchesUnindexed (D4): a workflow imported by v0.70 has
+// no entry in workflow-imports.json. Re-importing the same file must find
+// it by content (unchanged), a changed file with the same name and node
+// types must update it, and the match is then recorded in the index.
+func TestWorkflowImportMatchesUnindexed(t *testing.T) {
+	home, cfg := persistTestEnv(t)
+	path := writeTempWorkflow(t, validWorkflowFile) // no id: v0.70 gave it a fresh one
+	first := importJSON(t, cfg, "--file", path)
+	index := filepath.Join(home, ".monoagent", "workflow-imports.json")
+	if err := os.Remove(index); err != nil {
+		t.Fatal(err)
+	}
+
+	again := importJSON(t, cfg, "--file", path)
+	if again.Status != importUnchanged || again.ID != first.ID {
+		t.Fatalf("re-import without index = %+v, want unchanged %s", again, first.ID)
+	}
+	if n := countWorkflows(t, cfg); n != 1 {
+		t.Errorf("workflows = %d, want 1", n)
+	}
+	if b, err := os.ReadFile(index); err != nil || !strings.Contains(string(b), first.ID) {
+		t.Errorf("match not recorded in the index: %s %v", b, err)
+	}
+
+	// Same name and node types, different config, from another path and
+	// with no index: updated in place.
+	if err := os.Remove(index); err != nil {
+		t.Fatal(err)
+	}
+	other := writeTempWorkflow(t, strings.Replace(validWorkflowFile, `"x": 1`, `"x": 7`, 1))
+	upd := importJSON(t, cfg, "--file", other)
+	if upd.Status != importUpdated || upd.ID != first.ID {
+		t.Errorf("same name+types = %+v", upd)
+	}
+
+	// Same name but different node types is a different workflow.
+	diff := writeTempWorkflow(t, strings.Replace(validWorkflowFile, `"type": "core.set"`, `"type": "core.if"`, 1))
+	if created := importJSON(t, cfg, "--file", diff, "--as-new=false"); created.Status != importCreated || created.ID == first.ID {
+		t.Errorf("different node types = %+v", created)
+	}
+}

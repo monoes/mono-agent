@@ -40,13 +40,13 @@ export default function AutomationCard({ automation: a, onOpen }) {
       style={{ ...cardStyle(s.loggedIn && !unavailable && !removed, hov), opacity: removed ? 0.5 : unavailable || disabled ? 0.75 : 1, borderStyle: removed ? 'dashed' : 'solid' }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-        <span style={{ ...mono, fontSize: 12, fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+        <span title={a.name || a.id} style={{ ...mono, fontSize: 12, fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
           {a.name || a.id}
         </span>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <Dot on={s.loggedIn} warn={!s.loggedIn && s.status === 'expired'} />
-        <span style={{ ...muted, fontSize: 10, color: s.loggedIn ? 'var(--green-neon)' : 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span title={loginText(s)} style={{ ...muted, fontSize: 10, color: s.loggedIn ? 'var(--green-neon)' : 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {loginText(s)}
         </span>
       </div>

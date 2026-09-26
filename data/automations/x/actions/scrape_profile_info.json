@@ -20,8 +20,23 @@
   },
   "outputs": {
     "success": [
-      "profilesCount",
-      "reachedIndex"
+      "profile_url",
+      "username",
+      "full_name",
+      "bio",
+      "location",
+      "website",
+      "website_href",
+      "join_date",
+      "is_verified",
+      "is_protected",
+      "profile_picture_url",
+      "banner_url",
+      "can_dm",
+      "followers_text",
+      "following_text",
+      "followers_count",
+      "following_count"
     ],
     "failure": [
       "failedProfileSearches"

@@ -70,8 +70,21 @@
   },
   "outputs": {
     "success": [
-      "resultsCount",
-      "maxResultsCount"
+      "username",
+      "url",
+      "full_name",
+      "introduction",
+      "is_verified",
+      "is_private",
+      "image_url",
+      "website",
+      "follower_count",
+      "following_count",
+      "content_count",
+      "category",
+      "profile_error",
+      "source_post",
+      "keyword"
     ],
     "failure": []
   },

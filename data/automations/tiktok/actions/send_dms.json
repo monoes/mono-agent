@@ -22,8 +22,13 @@
   },
   "outputs": {
     "success": [
-      "recipientsCount",
-      "reachedIndex"
+      "success",
+      "status",
+      "verified",
+      "recipient",
+      "nickname",
+      "profileURL",
+      "username"
     ],
     "failure": [
       "failedMessages"

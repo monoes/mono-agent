@@ -43,8 +43,15 @@
   },
   "outputs": {
     "success": [
-      "itemsCount",
-      "reachedIndex"
+      "url",
+      "name",
+      "snippet",
+      "timestamp",
+      "unread",
+      "last_from_me",
+      "success",
+      "thread_url",
+      "sent"
     ],
     "failure": [
       "failedItems"

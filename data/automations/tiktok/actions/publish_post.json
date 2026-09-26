@@ -21,7 +21,7 @@
     ]
   },
   "outputs": {
-    "success": [],
+    "success": ["success", "status", "verified"],
     "failure": []
   },
   "steps": [

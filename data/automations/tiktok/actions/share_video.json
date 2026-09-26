@@ -32,9 +32,11 @@
   },
   "outputs": {
     "success": [
-      "shareResult",
-      "shareCount",
-      "reachedIndex"
+      "success",
+      "status",
+      "published",
+      "url",
+      "videoURL"
     ],
     "failure": [
       "failedItems"

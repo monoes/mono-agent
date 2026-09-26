@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -199,12 +200,19 @@ func newRecordVerifyCmd(cfg *globalConfig) *cobra.Command {
 				return err
 			}
 			if cfg.JSONOutput {
-				return writeJSONTo(cmd.OutOrStdout(), rep)
+				if err := writeJSONTo(cmd.OutOrStdout(), rep); err != nil {
+					return err
+				}
+			} else {
+				for _, s := range rep.Steps {
+					fmt.Fprintf(cmd.OutOrStdout(), "  %-28s %-14s %s %s\n", s.Status, s.ID, s.Type, s.Message)
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "ok: %v\n", rep.OK)
 			}
-			for _, s := range rep.Steps {
-				fmt.Fprintf(cmd.OutOrStdout(), "  %-28s %-14s %s %s\n", s.Status, s.ID, s.Type, s.Message)
+			if !rep.OK {
+				// Exit 1 on a failed replay; the report is the output.
+				return reportedError{errors.New("verify failed: see the step results")}
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "ok: %v\n", rep.OK)
 			return nil
 		},
 	}

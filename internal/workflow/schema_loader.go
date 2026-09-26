@@ -69,13 +69,13 @@ var legacyFormPlatforms = map[string]bool{
 //  1. its schema file (schemas/<type>.json);
 //  2. for instagram/linkedin/x/tiktok nodes (built-in or legacy local-*),
 //     the shared action-suffix file (e.g. linkedin.find_by_keyword →
-//     schemas/action.find_by_keyword.json), else browser.generic.json;
-//  3. for an action of an installed, non-built-in package, the package's
-//     forms/<action>.json, else a form generated from the action's declared
-//     inputs and their ui hints.
+//     schemas/action.find_by_keyword.json); for a legacy local-* action,
+//     then browser.generic.json;
+//  3. for any other automation action, the package's forms/<action>.json
+//     (non-built-in packages), else a form generated from the action's
+//     declared inputs and their ui hints.
 //
-// Returns an empty schema (no fields) when none of these applies — which is
-// also what other built-in nodes without a schema file get, as before.
+// Returns an empty schema (no fields) when none of these applies.
 func LoadDefaultSchema(nodeType string) (*NodeSchema, error) {
 	data, ok := schemaFile(nodeType)
 	if !ok {
@@ -106,6 +106,11 @@ func schemaFile(nodeType string) ([]byte, bool) {
 	}
 	if data, err := embeddedSchemas.ReadFile("schemas/action." + nodeType[dot+1:] + ".json"); err == nil {
 		return data, true
+	}
+	// A built-in action is described by its own inputs (the generated form);
+	// the catch-all generic form is only for legacy local-* actions.
+	if !strings.HasPrefix(nodeType, "local-") {
+		return nil, false
 	}
 	if data, err := embeddedSchemas.ReadFile("schemas/browser.generic.json"); err == nil {
 		return data, true

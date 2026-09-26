@@ -14,17 +14,21 @@
   "inputs": {
     "required": [
       {
-        "name": "username",
+        "name": "target_url",
         "type": "string",
-        "description": "Instagram username to engage with"
-      },
-      {
-        "name": "maxContentCount",
-        "type": "number",
-        "description": "Maximum number of posts to engage with"
+        "description": "Profile URL or username to engage with (without @)",
+        "aliases": ["targetUsername", "profileUrl", "targets", "selectedListItems", "username"],
+        "ui": { "label": "Profile", "placeholder": "https://www.instagram.com/natgeo/" }
       }
     ],
     "optional": [
+      {
+        "name": "maxContentCount",
+        "type": "number",
+        "default": 10,
+        "aliases": ["limit"],
+        "description": "Maximum number of posts to engage with"
+      },
       {
         "name": "engagementActions",
         "type": "array",
@@ -77,8 +81,16 @@
   },
   "outputs": {
     "success": [
-      "itemsCount",
-      "reachedIndex"
+      "url",
+      "shortcode",
+      "type",
+      "thumbnail_src",
+      "alt_text",
+      "author",
+      "author_url",
+      "success",
+      "status",
+      "verified_by"
     ],
     "failure": [
       "failedItems"

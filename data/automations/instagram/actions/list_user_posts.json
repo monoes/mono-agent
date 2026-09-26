@@ -3,7 +3,7 @@
   "actionType": "list_user_posts",
   "platform": "INSTAGRAM",
   "version": "2.0.0",
-  "description": "List posts from an Instagram profile's grid (url, shortcode, type, author, thumbnail, alt text). The profile is target_url / targetUsername when given, else username. If Instagram asks to turn on notifications or save your login, it answers \"Not Now\", which Instagram may remember for your account.",
+  "description": "List posts from an Instagram profile's grid (url, shortcode, type, author, thumbnail, alt text). The profile is target_url; older configs that set targetUsername, profileUrl, targets or username still work. If Instagram asks to turn on notifications or save your login, it answers \"Not Now\", which Instagram may remember for your account.",
   "sideEffects": "read",
   "visibility": ["account_preference_prompt"],
   "metadata": {
@@ -14,9 +14,11 @@
   "inputs": {
     "required": [
       {
-        "name": "username",
+        "name": "target_url",
         "type": "string",
-        "description": "Instagram username to list posts from (without @)"
+        "description": "Profile URL or username to list posts from (without @)",
+        "aliases": ["targetUsername", "profileUrl", "targets", "selectedListItems", "username"],
+        "ui": { "label": "Profile", "placeholder": "https://www.instagram.com/natgeo/" }
       }
     ],
     "optional": [
@@ -40,8 +42,13 @@
   },
   "outputs": {
     "success": [
-      "posts",
-      "postsCount"
+      "url",
+      "shortcode",
+      "type",
+      "thumbnail_src",
+      "alt_text",
+      "author",
+      "author_url"
     ],
     "failure": []
   },
@@ -51,7 +58,7 @@
       "type": "call_bot_method",
       "methodName": "list_user_posts",
       "args": [
-        "{{target_url or targetUsername or username}}",
+        "{{target_url}}",
         "{{maxCount or limit or 20}}"
       ],
       "variable_name": "posts",

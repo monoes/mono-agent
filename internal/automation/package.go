@@ -72,6 +72,22 @@ func OpenFile(path string) (*Package, error) {
 	return p, nil
 }
 
+// LegacyAlias is the original ~/.monoagent/actions/<platform> name of a
+// package generated from legacy actions ("" otherwise): old workflows use
+// "<platform>.<action>" node types. Only the user's own local package
+// carries it; an imported package claiming one gets "".
+func (p *Package) LegacyAlias() string {
+	if !p.legacyGenerated() {
+		return ""
+	}
+	return p.Manifest.Legacy.Platform
+}
+
+func (p *Package) legacyGenerated() bool {
+	return p.Manifest.Legacy != nil && p.Manifest.Legacy.Platform != "" &&
+		p.Source == SourceLocal && p.trust() == TrustLocal
+}
+
 // SHA256 is the hash of the .mpkg bytes this package was read from
 // (OpenFile only; "" otherwise).
 func (p *Package) SHA256() string { return p.sha256 }

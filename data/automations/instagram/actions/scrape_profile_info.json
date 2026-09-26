@@ -36,8 +36,18 @@
   },
   "outputs": {
     "success": [
-      "profilesCount",
-      "reachedIndex"
+      "username",
+      "url",
+      "full_name",
+      "introduction",
+      "is_verified",
+      "is_private",
+      "image_url",
+      "website",
+      "follower_count",
+      "following_count",
+      "content_count",
+      "category"
     ],
     "failure": [
       "failedProfileSearches"
