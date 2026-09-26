@@ -1,0 +1,70 @@
+package summary
+
+import (
+	"context"
+	"testing"
+
+	"github.com/monoes/mono-agent/internal/capture"
+)
+
+func TestInboxSections(t *testing.T) {
+	db := testDB(t)
+	exec(t, db,
+		`INSERT INTO workflows (id, name, is_active, profile_id) VALUES ('w1','A',1,'default'), ('wx','X',1,'other')`,
+		`INSERT INTO hil_pending (id, execution_id, workflow_id, node_id, node_name, status, created_at) VALUES
+		 ('h1','e1','w1','n','N','pending','2026-09-26 08:00:00'),
+		 ('h2','e1','w1','n','N','approved','2026-09-26 07:00:00'),
+		 ('h3','e9','wx','n','N','pending','2026-09-26 06:00:00')`,
+		`INSERT INTO people (id, profile_id, platform, platform_username, full_name, category, created_at) VALUES
+		 ('p1','default','LINKEDIN','a','A','pending_approval','2026-09-25 10:00:00'),
+		 ('p2','default','LINKEDIN','b','B','',                '2026-09-01 10:00:00'),
+		 ('p3','default','LINKEDIN','c','C','',                '2026-09-24 10:00:00.5 +0000 UTC')`,
+		`INSERT INTO social_lists (id, list_type, name, profile_id) VALUES ('sl1','people','L','default')`,
+		`INSERT INTO person_messages (id, person_id, source, external_id, direction, status, profile_id, created_at) VALUES
+		 ('m1','p2','linkedin','x1','outbound','draft','default','2026-09-26 09:00:00'),
+		 ('m2','p2','linkedin','x2','inbound','sent','default','2026-09-25 09:00:00'),
+		 ('m4','p2','linkedin','x4','outbound','sent','default','2026-09-25 09:30:00'),
+		 ('m3','p2','linkedin','x3','inbound','sent','default','2026-08-01 09:00:00')`,
+		`INSERT INTO person_links (id, profile_id, person_a, person_b, relation, status) VALUES
+		 ('l1','default','p2','p3','same','suggested'), ('l2','default','p1','p3','same','confirmed')`,
+		`INSERT INTO applications (id, profile_id, kind, status, created_at, updated_at) VALUES
+		 ('a1','default','job','pending','2026-09-25T10:00:00Z','2026-09-25T10:00:00Z'),
+		 ('a3','default','job','pending','2026-09-02T10:00:00Z','2026-09-02T10:00:00Z'),
+		 ('a2','default','job','applied','2026-09-01T10:00:00Z','2026-09-02T10:00:00Z')`,
+		`INSERT INTO application_evaluations (id, application_id, runtime, eligibility_pass, language_pass, location_pass, verdict, created_at)
+		 VALUES ('ev1','a3','claude',1,1,1,'fit','2026-09-03T10:00:00Z')`,
+		`INSERT INTO vault_documents (id, seq, path, filename, profile_id, created_at, indexed, index_error, capture_dir) VALUES
+		 ('d1',1,'/a','a.md','default','2026-09-25 10:00:00',1,NULL,'/cap/running'),
+		 ('d2',2,'/b','b.md','default','2026-09-25 10:00:00',0,'too big','/cap/error'),
+		 ('d3',3,'/c','c.md','default','2026-09-25 10:00:00',1,NULL,NULL)`,
+	)
+	caps := []capture.Entry{{CapturedAt: "2026-09-25T10:00:00Z"}, {CapturedAt: "2026-08-01T10:00:00Z"}}
+	states := map[string]string{"/cap/running": "running", "/cap/error": "error"}
+	s := Build(context.Background(), Options{DB: db.DB, ProfileID: "default", Now: now,
+		Captures:     func() ([]capture.Entry, error) { return caps, nil },
+		SummaryState: func(dir string) string { return states[dir] },
+		Sections:     map[string]bool{"hil": true, "people": true, "activity": true, "applications": true}})
+
+	h := s.HIL
+	if h.Error != "" || h.WorkflowPending != 1 || h.PeopleReview != 1 || h.Drafts != 1 || h.LinkSuggestions != 1 || h.Total != 4 {
+		t.Fatalf("hil = %+v", h)
+	}
+	if h.OldestWaitingSince != "2026-09-26T08:00:00Z" {
+		t.Fatalf("oldest_waiting_since = %q", h.OldestWaitingSince)
+	}
+	if p := s.People; p.Error != "" || p.Total != 3 || p.Added7d != 2 || p.Lists != 1 {
+		t.Fatalf("people = %+v", p)
+	}
+	a := s.Activity
+	if a.Error != "" || a.Captures7d != 1 || a.CapturesTotal != 2 || a.MessagesIn7d != 1 || a.MessagesOut7d != 1 {
+		t.Fatalf("activity = %+v", a)
+	}
+	if d := a.Documents; d.Total != 3 || d.Indexed != 2 || d.IndexErrors != 1 || d.Summarising != 1 || d.SummaryErrors != 1 {
+		t.Fatalf("documents = %+v", d)
+	}
+	ap := s.Applications
+	if ap.Error != "" || ap.ByStatus["pending"] != 2 || ap.ByStatus["applied"] != 1 || ap.ByStatus["rejected"] != 0 ||
+		ap.Evaluated != 1 || ap.UnevaluatedPending != 1 || ap.Added7d != 1 {
+		t.Fatalf("applications = %+v", ap)
+	}
+}
