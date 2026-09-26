@@ -30,12 +30,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   files only.
 - **`monoagentcli workflow executions --all`** lists recent runs across every
   workflow.
+- **`monoagentcli update --check [--current <version>]`** reports whether a
+  newer release exists without downloading anything. The desktop app now asks
+  the CLI instead of calling GitHub itself, and the dashboard shows an
+  available update.
+- **`doctor` has an `automations` group** that lists unavailable packages and
+  broken or decaying selectors, each with its `automation rerecord` fix. It
+  also appears under Settings › System health.
+- **The daemon publishes its scheduler's real next run times** in its
+  heartbeat. `summary` prefers them (`"source": "daemon"`), so `@every`
+  schedules show their actual next run.
 
 ### Changed
 
 - The dashboard, sidebar and status-bar counts now come from the CLI instead of
   the desktop app reading the database itself.
 - The dashboard stops polling while another page is open.
+- The HIL badge counts pending items from `summary`, which is local and makes
+  no Jev calls. Before, the sidebar polled `hil list --suggest` every
+  5 seconds, which could ask Jev about every unrated item. The badge is also
+  current now while the HIL drawer is closed.
+- **`login status --json`** uses snake_case keys (`id`, `username`,
+  `platform`, `expiry`, `when_added`, `status`) and prints `[]` instead of
+  `null` when there is nothing to report. Scripts that read the old
+  Go-style keys need updating.
 
 ### Fixed
 
