@@ -3,8 +3,9 @@
   "actionType": "comment_on_video",
   "platform": "TIKTOK",
   "version": "1.0.0",
-  "description": "Post a comment on TikTok videos from a list of video URLs",
+  "description": "Post a comment on TikTok videos from a list of video URLs. Opening a video page may count as a view.",
   "sideEffects": "message",
+  "visibility": ["video_view_counted"],
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,

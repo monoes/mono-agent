@@ -3,8 +3,9 @@
   "actionType": "comment_on_posts",
   "platform": "INSTAGRAM",
   "version": "3.0.0",
-  "description": "Comment on Instagram posts from a list of post URLs. Each comment is verified (it renders under the post, or the composer clears without an error); a failed or unverified comment fails the item and is never retried through a second path (no double posting).",
+  "description": "Comment on Instagram posts from a list of post URLs. Each comment is verified (it renders under the post, or the composer clears without an error); a failed or unverified comment fails the item and is never retried through a second path (no double posting). If Instagram asks to turn on notifications or save your login, it answers \"Not Now\", which Instagram may remember for your account.",
   "sideEffects": "message",
+  "visibility": ["account_preference_prompt"],
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,

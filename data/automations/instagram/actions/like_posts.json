@@ -3,8 +3,9 @@
   "actionType": "like_posts",
   "platform": "INSTAGRAM",
   "version": "2.0.0",
-  "description": "Like Instagram posts from a list of post URLs. The bot finds the post's own heart (never a comment's), leaves an already-liked post alone (never clicks Unlike) and verifies each like; an unverified like fails the item.",
+  "description": "Like Instagram posts from a list of post URLs. The bot finds the post's own heart (never a comment's), leaves an already-liked post alone (never clicks Unlike) and verifies each like; an unverified like fails the item. If Instagram asks to turn on notifications or save your login, it answers \"Not Now\", which Instagram may remember for your account.",
   "sideEffects": "write",
+  "visibility": ["account_preference_prompt"],
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,

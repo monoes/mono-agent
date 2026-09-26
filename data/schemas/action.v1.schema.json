@@ -83,6 +83,20 @@
         "version": {
           "description": "Action version (semver).",
           "type": "string"
+        },
+        "visibility": {
+          "description": "Visibility lists what running the action can reveal to others or leave behind on the site even when it changes nothing, e.g. a profile view the owner sees or a search kept in the account's history. Values: profile_view_visible_to_owner | story_view_visible_to_owner | search_may_be_saved | video_view_counted | account_preference_prompt.",
+          "items": {
+            "enum": [
+              "profile_view_visible_to_owner",
+              "story_view_visible_to_owner",
+              "search_may_be_saved",
+              "video_view_counted",
+              "account_preference_prompt"
+            ],
+            "type": "string"
+          },
+          "type": "array"
         }
       },
       "required": [

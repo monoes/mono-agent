@@ -3,8 +3,9 @@
   "actionType": "reply_to_comments",
   "platform": "INSTAGRAM",
   "version": "2.0.0",
-  "description": "Reply to comments on Instagram posts: commentAuthor's comment, or the first comment when empty. The reply is posted only once Instagram has addressed it to that comment (@author), and it is verified; a missing author fails the item.",
+  "description": "Reply to comments on Instagram posts: commentAuthor's comment, or the first comment when empty. The reply is posted only once Instagram has addressed it to that comment (@author), and it is verified; a missing author fails the item. If Instagram asks to turn on notifications or save your login, it answers \"Not Now\", which Instagram may remember for your account.",
   "sideEffects": "message",
+  "visibility": ["account_preference_prompt"],
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,

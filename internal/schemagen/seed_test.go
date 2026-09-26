@@ -103,6 +103,43 @@ func botMethods(steps []action.StepDef) (out []string) {
 	return out
 }
 
+// visibilityOf maps "<automation>.<bot method>" to what calling it reveals
+// or leaves behind on the site.
+var visibilityOf = map[string]string{
+	"linkedin.get_profile_data":   "profile_view_visible_to_owner",
+	"linkedin.list_user_posts":    "profile_view_visible_to_owner",
+	"linkedin.send_message":       "profile_view_visible_to_owner",
+	"linkedin.search_people":      "search_may_be_saved",
+	"linkedin.search_posts":       "search_may_be_saved",
+	"instagram.find_post_authors": "search_may_be_saved",
+	"instagram.search_posts":      "search_may_be_saved",
+	"instagram.view_stories":      "story_view_visible_to_owner",
+	"x.search_posts":              "search_may_be_saved",
+	"tiktok.search_videos":        "search_may_be_saved",
+	"tiktok.get_profile_data":     "profile_view_visible_to_owner",
+	"tiktok.list_user_videos":     "profile_view_visible_to_owner",
+	"tiktok.list_followers":       "profile_view_visible_to_owner",
+	"tiktok.follow_user":          "profile_view_visible_to_owner",
+	"tiktok.send_dm":              "profile_view_visible_to_owner",
+	"tiktok.list_video_comments":  "video_view_counted",
+	"tiktok.like_video":           "video_view_counted",
+	"tiktok.comment_on_video":     "video_view_counted",
+	"tiktok.like_comment":         "video_view_counted",
+	"tiktok.share_video":          "video_view_counted",
+	"tiktok.duet_video":           "video_view_counted",
+	"tiktok.stitch_video":         "video_view_counted",
+}
+
+// visibilityWords is what an action's description must mention for each
+// visibility value it declares.
+var visibilityWords = map[string]string{
+	"profile_view_visible_to_owner": "viewed",
+	"story_view_visible_to_owner":   "viewed its stories",
+	"search_may_be_saved":           "search",
+	"video_view_counted":            "count as a view",
+	"account_preference_prompt":     "Not Now",
+}
+
 func sideEffectSteps(steps []action.StepDef) (n int) {
 	for _, s := range steps {
 		if s.SideEffect {
@@ -280,6 +317,24 @@ func TestBuiltinPackages(t *testing.T) {
 					if pageActingMethods[m] {
 						t.Errorf("%s/%s: sideEffects %q but calls %s, which clicks on the page", p.name, name, def.SideEffects, m)
 					}
+				}
+			}
+		}
+		// Actions whose bot methods reveal the visit, or leave a trace, must
+		// say so in visibility and in their description.
+		for name, def := range defs {
+			for _, meth := range botMethods(def.Steps) {
+				kind := visibilityOf[p.name+"."+meth]
+				if kind == "" && p.name == "instagram" {
+					kind = "account_preference_prompt" // every page open may answer "Not Now"
+				}
+				if kind != "" && !slices.Contains(def.Visibility, kind) {
+					t.Errorf("%s/%s: calls %s but visibility %v lacks %s", p.name, name, meth, def.Visibility, kind)
+				}
+			}
+			for _, k := range def.Visibility {
+				if w := visibilityWords[k]; !strings.Contains(def.Description, w) {
+					t.Errorf("%s/%s: visibility %s but the description does not say so (no %q)", p.name, name, k, w)
 				}
 			}
 		}
