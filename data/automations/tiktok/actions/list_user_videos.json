@@ -40,9 +40,11 @@
   },
   "outputs": {
     "success": [
-      "videos",
-      "videosCount",
-      "reachedIndex"
+      "url",
+      "id",
+      "thumbnail",
+      "description",
+      "views"
     ],
     "failure": [
       "failedItems"

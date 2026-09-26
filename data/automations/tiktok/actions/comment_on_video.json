@@ -37,8 +37,11 @@
   },
   "outputs": {
     "success": [
-      "commentsCount",
-      "reachedIndex"
+      "success",
+      "status",
+      "verified",
+      "videoURL",
+      "text"
     ],
     "failure": [
       "failedItems"

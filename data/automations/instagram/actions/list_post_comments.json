@@ -41,9 +41,15 @@
   },
   "outputs": {
     "success": [
-      "comments",
-      "commentsCount",
-      "reachedIndex"
+      "post_url",
+      "author",
+      "author_url",
+      "text",
+      "timestamp",
+      "is_liked",
+      "likes_count",
+      "reply_count",
+      "is_reply"
     ],
     "failure": [
       "failedItems"

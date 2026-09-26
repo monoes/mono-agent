@@ -68,8 +68,10 @@
   },
   "outputs": {
     "success": [
-      "itemsCount",
-      "reachedIndex"
+      "success",
+      "url",
+      "status",
+      "username"
     ],
     "failure": [
       "failedItems"

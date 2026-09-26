@@ -19,7 +19,7 @@
     ]
   },
   "outputs": {
-    "success": [],
+    "success": ["posted", "post_text", "composer", "post_url"],
     "failure": []
   },
   "steps": [

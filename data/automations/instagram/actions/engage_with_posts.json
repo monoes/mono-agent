@@ -71,8 +71,18 @@
   },
   "outputs": {
     "success": [
-      "itemsCount",
-      "reachedIndex"
+      "url",
+      "shortcode",
+      "type",
+      "thumbnail_src",
+      "alt_text",
+      "author",
+      "author_url",
+      "keyword",
+      "success",
+      "status",
+      "verified_by",
+      "username"
     ],
     "failure": [
       "failedItems"

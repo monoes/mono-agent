@@ -41,7 +41,7 @@
     ]
   },
   "outputs": {
-    "success": ["comments", "commentsCount", "reachedIndex"],
+    "success": ["id", "post_url", "author", "author_url", "headline", "text", "timestamp", "likes_count", "reply_count", "parent_id", "is_reply", "liked"],
     "failure": ["failedItems"]
   },
   "steps": [

@@ -36,8 +36,10 @@
   },
   "outputs": {
     "success": [
-      "recipientsCount",
-      "reachedIndex"
+      "success",
+      "recipient",
+      "sent",
+      "name"
     ],
     "failure": [
       "failedItems"

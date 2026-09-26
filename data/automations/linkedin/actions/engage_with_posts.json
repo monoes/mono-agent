@@ -68,8 +68,24 @@
   },
   "outputs": {
     "success": [
-      "itemsCount",
-      "reachedIndex"
+      "url",
+      "urn",
+      "activity_id",
+      "shortcode",
+      "text_preview",
+      "author",
+      "author_url",
+      "timestamp",
+      "likes_count",
+      "comments_count",
+      "reposts_count",
+      "success",
+      "postURL",
+      "reaction",
+      "already_reacted",
+      "current_reaction",
+      "comment_id",
+      "parent_comment_id"
     ],
     "failure": [
       "failedItems"

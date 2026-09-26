@@ -22,8 +22,12 @@
   },
   "outputs": {
     "success": [
-      "likesCount",
-      "reachedIndex"
+      "success",
+      "videoURL",
+      "commentID",
+      "username",
+      "text",
+      "status"
     ],
     "failure": [
       "failedItems"

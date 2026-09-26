@@ -40,7 +40,7 @@
     ]
   },
   "outputs": {
-    "success": ["commentsCount", "reachedIndex"],
+    "success": ["success", "postURL", "comment_id", "parent_comment_id"],
     "failure": ["failedItems"]
   },
   "steps": [

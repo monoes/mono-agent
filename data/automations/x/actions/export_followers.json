@@ -27,8 +27,16 @@
   },
   "outputs": {
     "success": [
-      "resultsCount",
-      "maxResultsCount"
+      "username",
+      "profile_url",
+      "full_name",
+      "bio",
+      "is_following",
+      "follows_you",
+      "is_verified",
+      "profile_picture_url",
+      "source",
+      "source_username"
     ],
     "failure": []
   },
