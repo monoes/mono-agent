@@ -704,18 +704,16 @@ Output is always PNG. Subsequent calls reuse cached model and ORT session.`,
 	{
 		Type:     "service.huggingface",
 		Category: "service",
-		Short:    "Call Hugging Face inference API for text/image models",
-		Config:   `{ "credential_id": "hf-token", "model": "gpt2", "inputs": "{{ $json.prompt }}" }`,
-		Inputs:   "item with prompt/input",
-		Outputs:  "generated_text or other model output",
+		Short:    "DEPRECATED — fails at run time; use agent.ask",
+		Description: `Kept only so old workflows get a migration hint instead of "unknown node type".
+Running it fails with: replace it with the "agent.ask" node (local AI agent via monomind; see "monoagentcli ref node agent.ask").`,
 	},
 	{
 		Type:     "service.openrouter",
 		Category: "service",
-		Short:    "Call any LLM via OpenRouter unified API",
-		Config:   `{ "credential_id": "openrouter-key", "model": "mistralai/mistral-7b-instruct", "prompt": "{{ $json.prompt }}" }`,
-		Inputs:   "item with prompt",
-		Outputs:  "response_text",
+		Short:    "DEPRECATED — fails at run time; use agent.ask",
+		Description: `Kept only so old workflows get a migration hint instead of "unknown node type".
+Running it fails with: replace it with the "agent.ask" node (local AI agent via monomind; see "monoagentcli ref node agent.ask").`,
 	},
 	{
 		Type:     "service.outlook_mail",
@@ -825,18 +823,27 @@ Running it fails with: replace it with the "agent.ask" node.`,
 	{
 		Type:     "ai.read_page",
 		Category: "ai",
-		Short:    "Fetch a URL and extract its text content",
-		Config:   `{ "url": "{{ $json.link }}", "selector": "article" }`,
-		Inputs:   "item with URL",
-		Outputs:  "page_text, title, url",
+		Short:    "Fetch a URL and return its main content as clean markdown (no AI)",
+		Config:   `{ "url": "{{ $json.link }}", "include_links": true, "max_tokens": 4000 }`,
+		Inputs:   "item with URL (config url wins over the item's url)",
+		Outputs:  "url, title, description, author, published_at, markdown, main_text, headings, token_count",
 	},
 	{
 		Type:     "ai.extract_page",
 		Category: "ai",
-		Short:    "Crawl a URL and extract structured data using AI",
-		Config:   `{ "credential_id": "my-ai", "url": "{{ $json.link }}", "schema": { "headline": "string", "date": "string" } }`,
-		Inputs:   "item with URL",
-		Outputs:  "extracted fields",
+		Short:    "Fetch a URL and extract fields with CSS selectors you give or a local agent writes",
+		Description: `extract_mode "natural" (the default) sends the cleaned page and your prompt to a
+local agent runtime through monomind, which writes the selectors; the runtime is
+MONOAGENT_AI_RUNTIME, else the first installed one (claude first). No API key is
+involved; if the agent fails, "extracted" holds the page markdown and "error" says
+why. extract_mode "css" uses the selectors in "fields" ("selector" or
+"selector@attr") and needs no AI. Set "list_selector" to extract one row per
+matching element.`,
+		Config: `{ "url": "{{ $json.link }}", "extract_mode": "natural", "prompt": "the headline and publication date" }
+// or, without AI:
+{ "url": "{{ $json.link }}", "extract_mode": "css", "fields": { "headline": "h1", "date": "time@datetime" } }`,
+		Inputs:  "item with URL (config url wins over the item's url)",
+		Outputs: "url, extracted (object, or a list with list_selector), selectors_used, extract_mode, fetch_time_ms",
 	},
 	{
 		Type:     "ai.embed",
