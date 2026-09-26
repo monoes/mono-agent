@@ -230,6 +230,34 @@ describe('WorkflowImportDialog', () => {
     expect(await screen.findByText("Only works on the sender's machine — recreate it here or ask the sender.")).toBeInTheDocument()
   })
 
+  it('uses builtin and replaceable from the CLI and never renders its hint', async () => {
+    await importFile({ id: 'w1', name: 'M', status: 'created', automations: [
+      { id: 'hackernews', version: '1.1.0', status: 'differs', builtin: true, replaceable: false, changes: { addedDomains: ['x.example.com'] },
+        hint: 'A bundle never replaces a built-in; the installed copy stays.' },
+      { id: 'locked', version: '1.0.0', status: 'differs', replaceable: false, changes: {} },
+      { id: 'shelf-demo', version: '0.1.0', status: 'differs', replaceable: true, changes: { addedDomains: ['cdn.toscrape.com'] },
+        hint: 'Re-import with --replace-automations to review and replace it.' },
+    ] })
+    expect(await screen.findByText('The installed copy is a built-in; a workflow file never replaces it.')).toBeInTheDocument()
+    expect(screen.getByText('This file cannot replace the installed copy.')).toBeInTheDocument()
+    expect(screen.queryByText(/bundle never replaces|--replace-automations/)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByText("Replace with the file's version"))
+    expect(await screen.findByText(/Replace the installed copy with the file's version/)).toBeInTheDocument()
+  })
+
+  it('words not-bundled advice itself instead of the CLI hint', async () => {
+    await importFile({ id: 'w1', name: 'M', status: 'created', automations: [
+      { id: 'ghost-pkg', version: '2.1.0', status: 'missing', notBundled: true, hint: 'Ask the sender to re-run workflow export with --include-automations.',
+        error: 'not in the bundle: no signed copy; the sender can re-run workflow export with --include-automations' },
+      { id: 'local-tool', version: '0.1.0', status: 'missing', notBundled: true, localOnly: true, hint: 'Recreate local-tool on this machine, or ask the sender for it.',
+        error: 'not in the bundle: opens a local address (localhost:8080)' },
+    ] })
+    expect(await screen.findByText('no signed copy')).toBeInTheDocument()
+    expect(screen.getByText('Install it here some other way, or ask the sender to include it in the file.')).toBeInTheDocument()
+    expect(screen.getByText("Only works on the sender's machine — recreate it here or ask the sender.")).toBeInTheDocument()
+    expect(screen.queryByText(/--include-automations|Recreate local-tool/)).not.toBeInTheDocument()
+  })
+
   it('shows CLI errors inline and closes on Escape', async () => {
     const onClose = vi.fn()
     api.importWorkflowFull.mockResolvedValue({ error: 'node "x" has no type' })
@@ -260,5 +288,16 @@ describe('import result helpers', () => {
     expect(r.installable.map(i => i.id)).toEqual(['a'])
     expect(r.notIncluded.map(i => i.id)).toEqual(['b'])
     expect(r.listed.map(i => i.id)).toEqual(['a', 'c'])
+  })
+  it('splitBundle takes replaceable from the CLI, else leaves out built-ins', () => {
+    const r = splitBundle([
+      { id: 'a', status: 'differs', replaceable: true },
+      { id: 'b', status: 'differs', builtin: true, replaceable: false },
+      { id: 'c', status: 'differs', replaceable: false },
+      { id: 'd', status: 'differs', reviewDetail: { replaces: { source: 'builtin' } } },
+      { id: 'e', status: 'differs' },
+    ])
+    expect(r.differs.map(i => i.id)).toEqual(['a', 'b', 'c', 'd', 'e'])
+    expect(r.replaceable.map(i => i.id)).toEqual(['a', 'e'])
   })
 })
