@@ -26,8 +26,8 @@ const filePassphraseFileEnv = "MONOAGENT_FILE_KEYRING_PASSPHRASE_FILE"
 // filePassphraseHint is appended to every "no passphrase available" error so
 // the operator learns the non-interactive option instead of a bare
 // "empty passphrase".
-const filePassphraseHint = "store the passphrase in a file only you can read (chmod 600) and set " +
-	filePassphraseFileEnv + "=/path/to/that/file"
+const filePassphraseHint = "save it with `monoagentcli secret keyring set-passphrase` (or in the desktop app's Settings), " +
+	"or store it in a file only you can read (chmod 600) and set " + filePassphraseFileEnv + "=/path/to/that/file"
 
 // stdinConsumed records that this process has already used stdin for its
 // own input (a secret value, a JSON payload, a confirmation, an MCP
@@ -63,13 +63,19 @@ var (
 //
 //  1. MONOAGENT_FILE_KEYRING_PASSPHRASE_FILE, when set (explicit
 //     configuration wins, and never prompts).
-//  2. stdin, when this command has not used stdin for anything else — the
+//  2. ~/.monoagent/keyring-passphrase, when it exists — the file
+//     `secret keyring set-passphrase` (and the desktop app's Settings)
+//     writes; never prompts either.
+//  3. stdin, when this command has not used stdin for anything else — the
 //     original behaviour (interactive prompt, or `printf pass | …`).
-//  3. the controlling terminal (/dev/tty), when stdin carries data.
-//  4. otherwise a clear error naming option 1.
+//  4. the controlling terminal (/dev/tty), when stdin carries data.
+//  5. otherwise a clear error naming options 1 and 2.
 func promptFilePassphrase() (string, error) {
 	if path := os.Getenv(filePassphraseFileEnv); path != "" {
 		return readPassphraseFile(path)
+	}
+	if path := ConfiguredPassphrasePath(); fileExists(path) {
+		return readPassphraseFileAs(path, "configured passphrase file")
 	}
 	if !stdinConsumed.Load() {
 		fmt.Fprint(passphrasePromptOut, "File-keyring passphrase: ")
@@ -121,23 +127,34 @@ func readPassphraseLine(r io.Reader, echo io.Writer) (string, error) {
 // MONOAGENT_FILE_KEYRING_PASSPHRASE_FILE: the first line, without its line
 // ending. Refuses a file group/others can read (non-Windows).
 func readPassphraseFile(path string) (string, error) {
+	return readPassphraseFileAs(path, filePassphraseFileEnv)
+}
+
+// readPassphraseFileAs is readPassphraseFile with what names the source in
+// errors (the env var, or the configured file).
+func readPassphraseFileAs(path, what string) (string, error) {
 	info, err := os.Stat(path)
 	if err != nil {
-		return "", fmt.Errorf("secrets: %s: %w", filePassphraseFileEnv, err)
+		return "", fmt.Errorf("secrets: %s: %w", what, err)
 	}
 	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
-		return "", fmt.Errorf("secrets: %s=%s is readable by other users (mode %04o); run chmod 600 on it", filePassphraseFileEnv, path, info.Mode().Perm())
+		return "", fmt.Errorf("secrets: %s=%s is readable by other users (mode %04o); run chmod 600 on it", what, path, info.Mode().Perm())
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", fmt.Errorf("secrets: %s: %w", filePassphraseFileEnv, err)
+		return "", fmt.Errorf("secrets: %s: %w", what, err)
 	}
 	pass, _, _ := strings.Cut(string(data), "\n")
 	pass = strings.TrimRight(pass, "\r")
 	if pass == "" {
-		return "", fmt.Errorf("secrets: %s=%s is empty; put the file-keyring passphrase on its first line", filePassphraseFileEnv, path)
+		return "", fmt.Errorf("secrets: %s=%s is empty; put the file-keyring passphrase on its first line", what, path)
 	}
 	return pass, nil
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // knownFilePassphrases remembers, per profile, a passphrase that has already

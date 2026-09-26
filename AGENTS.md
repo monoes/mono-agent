@@ -505,6 +505,15 @@ keychain — any process running as the same user, or anything with read
 *and* the passphrase, can unlock it — so treat it as a CI/container escape
 hatch, not a default. Without the env var, `secret add` fails closed.
 
+`monoagentcli secret keyring status` reports the key store (`os`, `file`,
+`unavailable`) and the passphrase file without prompting;
+`secret keyring set-passphrase` (stdin only) saves the file-keyring
+passphrase to `~/.monoagent/keyring-passphrase` (0600) after checking it
+unlocks any existing file keyring, and `clear-passphrase` removes it. The
+desktop app's Settings › Vault keyring (shown only when the backend is
+`file`) calls these. Lookup order: `MONOAGENT_FILE_KEYRING_PASSPHRASE_FILE`
+→ `~/.monoagent/keyring-passphrase` → stdin → `/dev/tty` → error.
+
 ## TypeSafe Jev (decisions only)
 
 [TypeSafe Jev](https://docs.typesafe.ai/api) answers typed questions about a
@@ -600,7 +609,7 @@ regardless of where the binary runs from.
 | `MONOAGENT_WEBHOOK_TLS_CERT` / `MONOAGENT_WEBHOOK_TLS_KEY` | Explicit TLS certificate/key file paths for a non-loopback webhook bind. Both or neither — setting only one is a startup error. Default: unset — a non-loopback bind auto-generates and caches a self-signed certificate under `~/.monoagent/webhook-tls/` instead. |
 | `MONOAGENT_WEBHOOK_ALLOWED_ORIGINS` | Comma-separated CORS allowlist for the webhook server. Default: unset — no CORS headers are sent. |
 | `MONOAGENT_ALLOW_FILE_KEYRING` | Set to `1` to allow the file-based keyring fallback when no OS keyring exists (see [Secrets](#secrets)). Default: unset — `secret add` fails closed on machines without a keyring. |
-| `MONOAGENT_FILE_KEYRING_PASSPHRASE_FILE` | Path to a chmod-600 file whose first line is the file-keyring passphrase — the non-interactive source for the desktop app and services (a path, never the passphrase itself). Default: unset — prompt on stdin, or on `/dev/tty` when stdin carries the command's input. |
+| `MONOAGENT_FILE_KEYRING_PASSPHRASE_FILE` | Path to a chmod-600 file whose first line is the file-keyring passphrase — the non-interactive source for the desktop app and services (a path, never the passphrase itself). Default: unset — use `~/.monoagent/keyring-passphrase` when `secret keyring set-passphrase` wrote one, else prompt on stdin, or on `/dev/tty` when stdin carries the command's input. |
 | `MONOAGENT_ALLOW_ENV_TEMPLATES` | Set to `1` to let `{{ $env.* }}` template expressions read OS environment variables (see `ref expressions`). Default: unset — `$env` references resolve to empty. |
 | `MONOAGENT_CRASH_REPORT` | Set to `1` to allow crash reports to be filed to GitHub (also requires the `monomind` CLI on `PATH`). Default: unset — crash reports stay in local files under `~/.monoagent/crashes/`. |
 | `MONOAGENT_EXTENSION_PORT` | Bind-port override for the browser-extension bridge server; the extension probes this port and falls back to 9323. Default: unset — 9323 only. |

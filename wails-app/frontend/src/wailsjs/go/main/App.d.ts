@@ -285,6 +285,12 @@ export function JevTestKey():Promise<main.JevKeyTestResult>;
 
 export function JevUsage(arg1:string):Promise<main.JevUsageReport>;
 
+export function KeyringClearPassphrase():Promise<main.KeyringPassphraseResult>;
+
+export function KeyringSetPassphrase(arg1:string):Promise<main.KeyringPassphraseResult>;
+
+export function KeyringStatus():Promise<main.KeyringStatusInfo>;
+
 export function ListAIProviders():Promise<string>;
 
 export function ListAutomations():Promise<string>;

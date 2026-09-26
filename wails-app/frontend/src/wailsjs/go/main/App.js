@@ -562,6 +562,18 @@ export function JevUsage(arg1) {
   return window['go']['main']['App']['JevUsage'](arg1);
 }
 
+export function KeyringClearPassphrase() {
+  return window['go']['main']['App']['KeyringClearPassphrase']();
+}
+
+export function KeyringSetPassphrase(arg1) {
+  return window['go']['main']['App']['KeyringSetPassphrase'](arg1);
+}
+
+export function KeyringStatus() {
+  return window['go']['main']['App']['KeyringStatus']();
+}
+
 export function ListAIProviders() {
   return window['go']['main']['App']['ListAIProviders']();
 }
