@@ -106,11 +106,12 @@ func runAutomationTests(pkg *automation.Package, only string, run fixtureRunner)
 	issues := automation.Validate(pkg)
 	errs, warns := 0, 0
 	for _, is := range issues {
-		if is.Severity == "error" {
+		switch is.Severity {
+		case "error":
 			errs++
-		} else {
+		case "warning":
 			warns++
-		}
+		} // "info" notes are not counted
 	}
 	msg := fmt.Sprintf("validate: %d error(s), %d warning(s)", errs, warns)
 	if errs > 0 {

@@ -202,7 +202,7 @@ func printAutomationDoctor(out io.Writer, rows []doctorAutomationJSON) {
 		for _, s := range r.Selectors {
 			counts[s.Status]++
 		}
-		table.Append([]string{r.ID, r.Version, status, login, fmt.Sprint(len(r.Issues)),
+		table.Append([]string{r.ID, r.Version, status, login, fmt.Sprint(countProblems(r.Issues)),
 			fmt.Sprintf("%d/%d/%d", counts[automation.HealthOK], counts[automation.HealthDecaying], counts[automation.HealthBroken])})
 	}
 	table.Render()

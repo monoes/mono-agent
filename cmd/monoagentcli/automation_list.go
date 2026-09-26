@@ -421,12 +421,29 @@ func printAutomationShow(out io.Writer, info *automation.InstalledInfo, m automa
 	printIssues(out, issues)
 }
 
+// countProblems counts errors and warnings (not "info" notes).
+func countProblems(issues []automation.IssueJSON) int {
+	n := 0
+	for _, is := range issues {
+		if is.Severity == "error" || is.Severity == "warning" {
+			n++
+		}
+	}
+	return n
+}
+
 // printIssues prints validation findings, one per line.
 func printIssues(out io.Writer, issues []automation.IssueJSON) {
 	if len(issues) == 0 {
 		return
 	}
-	fmt.Fprintf(out, "\n%d issue(s):\n", len(issues))
+	// "info" findings (e.g. legacy_suggested_domains) are notes, not
+	// problems: they are listed but not counted.
+	if n := countProblems(issues); n > 0 {
+		fmt.Fprintf(out, "\n%d issue(s):\n", n)
+	} else {
+		fmt.Fprintln(out, "\nnotes:")
+	}
 	for _, is := range issues {
 		loc := is.File
 		if is.StepID != "" {
