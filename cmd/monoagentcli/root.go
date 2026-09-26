@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/monoes/mono-agent/internal/ai"
 	"github.com/monoes/mono-agent/internal/connections"
 	"github.com/monoes/mono-agent/internal/i18n"
 	"github.com/monoes/mono-agent/internal/nodemgr"
@@ -97,7 +96,6 @@ func newRootCmd() *cobra.Command {
 		newApplicationCmd(cfg),
 		newDocumentsCmd(cfg),
 		newHILCmd(cfg),
-		newAICmd(cfg),
 		newAgentCmd(cfg),
 		newChatCmd(cfg),
 		newOrgCmd(cfg),
@@ -200,8 +198,8 @@ func initDB(cfg *globalConfig) (*storage.Database, error) {
 	if _, _, err := secrets.MigrateSessionsToVault(context.Background(), db.DB); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: sessions migration: %v\n", err)
 	}
-	if _, _, err := ai.MigrateProvidersToVault(context.Background(), db.DB); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: ai providers migration: %v\n", err)
+	if _, err := secrets.RetireAIProviderEntries(context.Background(), db.DB, filepath.Join(filepath.Dir(dbPath), "backups")); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: retiring AI provider keys: %v\n", err)
 	}
 	migrateProfilesToPerProfileKeys(db)
 	// Resolve active profile if not overridden on the command line.

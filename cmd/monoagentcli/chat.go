@@ -21,6 +21,21 @@ import (
 	"github.com/monoes/mono-agent/internal/storage"
 )
 
+// openAIStore opens the DB and builds an AIStore over it, creating the chat
+// history tables if they are missing.
+func openAIStore(cfg *globalConfig) (*ai.AIStore, func(), error) {
+	db, err := initDB(cfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("initializing database: %w", err)
+	}
+	store, err := ai.NewAIStore(db.DB)
+	if err != nil {
+		db.Close()
+		return nil, nil, fmt.Errorf("initializing AI store: %w", err)
+	}
+	return store, func() { db.Close() }, nil
+}
+
 // parseDurationFlag accepts plain seconds ("90") or suffixed ("90s", "10m", "2h").
 func parseDurationFlag(s string) (time.Duration, error) {
 	s = strings.TrimSpace(s)

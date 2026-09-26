@@ -107,11 +107,9 @@ func TestLoadDefaultSchema_OutlookAndHumanInLoop(t *testing.T) {
 	}
 }
 
-// TestLoadDefaultSchema_AINodes is a regression test: the six ai.* node types
-// (ai.chat, ai.extract, ai.classify, ai.transform, ai.embed, ai.agent) had no
-// schema file at all, so the main workflow canvas rendered them with zero
-// config fields — every one of them always failed with "provider_id is
-// required" since there was no way to set it through that UI.
+// TestLoadDefaultSchema_AINodes: the six deprecated ai.* node types keep a
+// schema so a saved workflow that still has one renders its config, but the
+// provider_id field is gone with the AI provider stack it pointed at.
 func TestLoadDefaultSchema_AINodes(t *testing.T) {
 	types := []string{"ai.chat", "ai.extract", "ai.classify", "ai.transform", "ai.embed", "ai.agent"}
 	for _, nodeType := range types {
@@ -122,14 +120,10 @@ func TestLoadDefaultSchema_AINodes(t *testing.T) {
 		if len(schema.Fields) == 0 {
 			t.Fatalf("%s: expected non-empty fields, got none", nodeType)
 		}
-		var hasProviderID bool
 		for _, f := range schema.Fields {
 			if f.Key == "provider_id" {
-				hasProviderID = true
+				t.Errorf("%s: still has a provider_id field", nodeType)
 			}
-		}
-		if !hasProviderID {
-			t.Errorf("%s: expected a provider_id field", nodeType)
 		}
 	}
 }
