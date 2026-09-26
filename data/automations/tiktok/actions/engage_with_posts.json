@@ -23,8 +23,18 @@
   },
   "outputs": {
     "success": [
-      "itemsCount",
-      "reachedIndex"
+      "url",
+      "id",
+      "author",
+      "author_name",
+      "description",
+      "thumbnail",
+      "keyword",
+      "success",
+      "status",
+      "verified",
+      "videoURL",
+      "text"
     ],
     "failure": [
       "failedItems"

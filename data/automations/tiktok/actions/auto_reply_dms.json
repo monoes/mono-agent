@@ -24,8 +24,16 @@
   },
   "outputs": {
     "success": [
-      "itemsCount",
-      "reachedIndex"
+      "name",
+      "lastMessage",
+      "time",
+      "unread",
+      "success",
+      "status",
+      "verified",
+      "recipient",
+      "nickname",
+      "conversation"
     ],
     "failure": [
       "failedItems"

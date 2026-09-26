@@ -76,8 +76,14 @@
   },
   "outputs": {
     "success": [
-      "resultsCount",
-      "maxResultsCount"
+      "username",
+      "url",
+      "profile_url",
+      "full_name",
+      "image_url",
+      "is_verified",
+      "source",
+      "source_profile"
     ],
     "failure": []
   },

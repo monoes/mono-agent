@@ -66,8 +66,12 @@
   },
   "outputs": {
     "success": [
-      "likeCount",
-      "reachedIndex"
+      "success",
+      "url",
+      "status",
+      "liked_count",
+      "already_liked_count",
+      "liked_authors"
     ],
     "failure": [
       "failedItems"

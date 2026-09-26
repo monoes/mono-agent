@@ -22,8 +22,14 @@
   },
   "outputs": {
     "success": [
-      "itemsCount",
-      "reachedIndex"
+      "url",
+      "name",
+      "preview",
+      "unread",
+      "conversation_url",
+      "message",
+      "sent",
+      "verified_by"
     ],
     "failure": [
       "failedItems"

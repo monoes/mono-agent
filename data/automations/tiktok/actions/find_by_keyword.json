@@ -20,8 +20,13 @@
   },
   "outputs": {
     "success": [
-      "resultsCount",
-      "maxResultsCount"
+      "url",
+      "id",
+      "author",
+      "author_name",
+      "description",
+      "thumbnail",
+      "keyword"
     ],
     "failure": []
   },

@@ -33,8 +33,15 @@
   },
   "outputs": {
     "success": [
-      "resultsCount",
-      "maxResultsCount"
+      "url",
+      "profile_url",
+      "username",
+      "full_name",
+      "headline",
+      "job_title",
+      "location",
+      "connection_degree",
+      "you_follow"
     ],
     "failure": [
       "failedItems"
