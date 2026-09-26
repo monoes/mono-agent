@@ -100,6 +100,18 @@ func GetImage(ctx context.Context, db *sql.DB, profileID, id string) (*ImageEntr
 	return &im, nil
 }
 
+// ImageFileInProfile reports whether a vault file (by its stored file name,
+// e.g. "img-001.png") belongs to the profile — what the desktop app's
+// /vault-image/ file server checks before serving a file.
+func ImageFileInProfile(ctx context.Context, db *sql.DB, profileID, filename string) (bool, error) {
+	var one int
+	err := db.QueryRowContext(ctx, `SELECT 1 FROM vault_images WHERE filename = ? AND profile_id = ?`, filename, profileID).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 // SetImageLabel sets an image's label; an empty label clears it (NULL).
 func SetImageLabel(ctx context.Context, db *sql.DB, profileID, id, label string) error {
 	var value any

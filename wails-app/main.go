@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"embed"
+	"github.com/monoes/mono-agent/internal/vault"
 	"net/http"
 	"os"
 	"os/exec"
@@ -76,12 +77,10 @@ func vaultImageHandler(app *App) http.Handler {
 		if profileID == "" {
 			profileID = "default"
 		}
-		var exists int
-		err := app.db.QueryRow(
-			`SELECT 1 FROM vault_images WHERE filename = ? AND profile_id = ?`,
-			name, profileID,
-		).Scan(&exists)
-		if err != nil {
+		// Only this profile's files. The lookup is the vault package's (the
+		// CLI's `image` commands use the same code); it stays in-process
+		// because it runs once per <img> request.
+		if ok, err := vault.ImageFileInProfile(r.Context(), app.db, profileID, name); err != nil || !ok {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
