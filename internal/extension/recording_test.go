@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -382,5 +383,42 @@ func TestCloseWaitsForRecordingReaper(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("Close never returned")
+	}
+}
+
+// record.verify's refusal says nothing about the filesystem: a missing
+// path, an existing one and a symlink out of the drafts folder all get the
+// same bad_params answer (security review V3).
+func TestRecordVerifyDoesNotLeakPathExistence(t *testing.T) {
+	srv, ext, _ := startCaptureServer(t)
+	srv.SetRecordRunner(&argvRunner{out: `{}`})
+	home, _ := os.UserHomeDir()
+	drafts, _ := recording.DraftsDir()
+	existing := filepath.Join(home, "secret-project")
+	for _, d := range []string{drafts, existing} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link := filepath.Join(drafts, "link-out")
+	if err := os.Symlink(existing, link); err != nil {
+		t.Fatal(err)
+	}
+	var first string
+	for i, ref := range []string{filepath.Join(home, "no-such-dir"), existing, link, filepath.Join(drafts, "..", "no-such-dir")} {
+		id := "v" + strconv.Itoa(i)
+		ext.ask(id, MethodRecordVerify, map[string]any{"draftDir": ref})
+		reply := ext.settled()
+		if reply.OK || reply.Code != CodeBadParams {
+			t.Fatalf("%s: reply = %+v", ref, reply)
+		}
+		if strings.Contains(reply.Error, "no such file") || strings.Contains(reply.Error, home) {
+			t.Errorf("%s: error %q mentions the filesystem", ref, reply.Error)
+		}
+		if first == "" {
+			first = reply.Error
+		} else if reply.Error != first {
+			t.Errorf("%s: answer %q differs from %q", ref, reply.Error, first)
+		}
 	}
 }
