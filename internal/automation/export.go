@@ -20,6 +20,13 @@ func (r *Registry) Export(id string, w io.Writer, opts ExportOptions) error {
 	if err != nil {
 		return err
 	}
+	if p.Source != SourceBuiltin && len(p.Manifest.Site.Domains) == 0 {
+		why := "it has no site.domains"
+		if p.Manifest.Legacy != nil {
+			why = "it was generated from legacy actions whose sites could not be worked out"
+		}
+		return fmt.Errorf("cannot export %s: %s, so it could not be installed anywhere else — add site.domains (the sites its actions open) to its automation.json to export it", id, why)
+	}
 	files, err := exportFiles(p, opts)
 	if err != nil {
 		return err

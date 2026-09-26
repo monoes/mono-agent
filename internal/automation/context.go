@@ -34,6 +34,10 @@ func (c *pkgContext) Script(name string) (string, error) { return c.pkg.Script(n
 // Form returns forms/<action>.json (the workflow editor's form override).
 func (c *pkgContext) Form(actionName string) ([]byte, error) { return c.pkg.Form(actionName) }
 
+// LegacyPlatform is the original ~/.monoagent/actions/<platform> name of a
+// generated legacy package ("google_maps"), "" otherwise (Package.LegacyAlias).
+func (c *pkgContext) LegacyPlatform() string { return c.pkg.LegacyAlias() }
+
 // Native implements action.NativeBacked: requires.native of the package.
 func (c *pkgContext) Native() string { return c.pkg.Manifest.Requires.Native }
 
