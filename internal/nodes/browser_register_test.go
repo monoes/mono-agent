@@ -63,7 +63,7 @@ type legacyPkg struct {
 	name string
 }
 
-func (p legacyPkg) LegacyAlias() string { return p.name }
+func (p legacyPkg) LegacyPlatform() string { return p.name }
 
 type legacySource struct {
 	fakeSource
