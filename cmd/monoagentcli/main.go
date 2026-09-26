@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -81,12 +83,21 @@ func main() {
 	defer cancel()
 
 	if err := newRootCmd().ExecuteContext(ctx); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		if wantsJSONError(os.Args[1:]) {
-			b, _ := json.Marshal(map[string]string{"error": err.Error()})
-			fmt.Fprintln(os.Stdout, string(b))
-		}
+		reportCommandError(os.Args[1:], err, os.Stdout, os.Stderr)
 		os.Exit(exitCodeFor(err))
+	}
+}
+
+// reportCommandError prints a failed command's error on stderr and, where
+// wantsJSONError asks for it, as {"error": …} on stdout. A reportedError
+// already printed its JSON result (e.g. `org validate` on an invalid org),
+// so nothing is added: stdout stays exactly one document.
+func reportCommandError(args []string, err error, stdout, stderr io.Writer) {
+	fmt.Fprintln(stderr, err)
+	var reported reportedError
+	if wantsJSONError(args) && !errors.As(err, &reported) {
+		b, _ := json.Marshal(map[string]string{"error": err.Error()})
+		fmt.Fprintln(stdout, string(b))
 	}
 }
 

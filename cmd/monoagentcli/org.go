@@ -411,7 +411,15 @@ func newOrgValidateCmd(root func() string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printOrgJSON(b)
+			if err := printOrgJSON(b); err != nil {
+				return err
+			}
+			if valErr != nil {
+				// Exit 1 on an invalid org. The report above is the output:
+				// main adds no second {"error"} for a reportedError.
+				return reportedError{fmt.Errorf("org %s is invalid: %w", name, valErr)}
+			}
+			return nil
 		},
 	}
 }

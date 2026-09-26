@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -516,19 +517,35 @@ func (a *App) cliValidate(root, name string) error {
 	}
 	cmd := exec.Command(cliBin, args...)
 	hideWindow(cmd)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
-	}
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	runErr := cmd.Run()
+	return orgValidateResult(stdout.Bytes(), stderr.Bytes(), runErr)
+}
+
+// orgValidateResult reads `org validate`'s report. The CLI exits 1 for an
+// invalid org but still prints its one JSON report on stdout, so the report
+// wins over the exit status: its "error" is the problem list. Only when
+// there is no report does a failed run fall back to stderr.
+func orgValidateResult(stdout, stderr []byte, runErr error) error {
 	var payload struct {
-		Valid bool   `json:"valid"`
+		Valid *bool  `json:"valid"`
 		Error string `json:"error"`
 	}
-	if jsonErr := json.Unmarshal(out, &payload); jsonErr == nil && !payload.Valid {
+	if json.Unmarshal(bytes.TrimSpace(stdout), &payload) == nil && payload.Valid != nil {
+		if *payload.Valid {
+			return nil
+		}
 		if payload.Error != "" {
 			return fmt.Errorf("%s", payload.Error)
 		}
 		return fmt.Errorf("invalid org config")
+	}
+	if runErr != nil {
+		if msg := strings.TrimSpace(string(stderr)); msg != "" {
+			return fmt.Errorf("%s", msg)
+		}
+		return runErr
 	}
 	return nil
 }

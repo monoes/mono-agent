@@ -11,6 +11,8 @@ import (
 // warning from create-json, validate, and group init.
 func TestChildGoalWarningSurfaces(t *testing.T) {
 	f := newOrgCLIFixture(t) // seeds "growth" with the standing goal "grow"
+	// validate now fails on an invalid org; this monomind accepts both.
+	fakeValidatingMonomind(t, "none")
 	hqJSON := `{"name":"hq","kind":"holding","goal":"g","status":"stopped","schedule":null,"roles":[{"id":"ceo","title":"CEO","type":"boss","reports_to":null,"responsibilities":[]}],"children":[{"org":"growth","start":"on_demand"}]}`
 
 	hasWarning := func(out map[string]interface{}) bool {

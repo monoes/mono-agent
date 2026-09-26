@@ -90,6 +90,15 @@ func runOrgText(ctx context.Context, projectRoot string, args ...string) (string
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {
+		// CombinedOutput leaves ExitError.Stderr empty, so orgCommandError
+		// alone would say only "exit status 1": keep what monomind printed
+		// (for validate, the list of problems).
+		if msg := strings.TrimSpace(string(out)); msg != "" {
+			var ee *exec.ExitError
+			if errors.As(err, &ee) {
+				return "", fmt.Errorf("monomind org %s: %s", strings.Join(args, " "), msg)
+			}
+		}
 		return "", orgCommandError(args, err)
 	}
 	return strings.TrimSpace(string(out)), nil
