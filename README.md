@@ -262,7 +262,7 @@ monoagentcli hil reject <id>        # drop the item
 
 ## How AI works in Mono Agent
 
-Mono Agent has no built-in AI provider and stores no AI API keys. Every AI step (the assistant, `agent.ask`, AI extraction, capture summaries, agent orgs) is one turn run by the [monomind](https://github.com/monoes/monomind) runner on an agent CLI you have already installed and logged in: Claude Code, Codex, OpenCode, GitHub Copilot, Qwen, Grok, Crush, Pi, and others. Each turn uses that CLI's own login and plan.
+Mono Agent has no built-in AI provider and stores no API keys for text AI. Every AI step (the assistant, `agent.ask`, AI extraction, capture summaries, agent orgs) is one turn run by the [monomind](https://github.com/monoes/monomind) runner on an agent CLI you have already installed and logged in: Claude Code, Codex, OpenCode, GitHub Copilot, Qwen, Grok, Crush, Pi, and others. Each turn uses that CLI's own login and plan.
 
 ```bash
 monoagentcli agent scan              # runtimes monomind knows, and which are installed
@@ -273,7 +273,7 @@ monoagentcli doctor --group monomind # Node.js, the monomind binary, version and
 
 monomind is a separate Node.js tool: `npm install -g @monoes/monomindcli`, or let `monoagentcli doctor --fix` install it. If you have no Node.js >= 22.12, `monoagentcli nodejs install` downloads a private copy. Set `MONOMIND_BIN` to use a specific binary. Without monomind, AI steps fail with an install hint and everything else keeps working.
 
-Two features are not agent turns. [TypeSafe Jev](AGENTS.md#typesafe-jev-decisions-only) makes fast typed decisions (classification, suggestions, the element picker) with its own key, and never writes text. The `gemini.*` nodes drive Gemini in your own logged-in browser.
+Some features are not agent turns. [TypeSafe Jev](AGENTS.md#typesafe-jev-decisions-only) makes fast typed decisions (classification, suggestions, the element picker) with its own key, and never writes text. For images there are two paths: `gemini.generate_image` drives Gemini in your own logged-in browser (no key), and `service.huggingface` calls the Hugging Face API with your Hugging Face key. The other `gemini.*` nodes also use the browser session.
 
 ---
 
@@ -313,7 +313,8 @@ Two features are not agent turns. [TypeSafe Jev](AGENTS.md#typesafe-jev-decision
 | `service.gmail` | Send and read Gmail messages |
 | `service.google_drive` | File operations on Google Drive |
 | `service.outlook_mail` | Read/send Outlook via Microsoft Graph |
-| `service.openrouter` · `service.huggingface` | **Deprecated** — fail at run time with a pointer to `agent.ask`; kept so old workflows still load |
+| `service.openrouter` | **Deprecated** — a fail-fast stub that points to `agent.ask`; kept so old workflows still load |
+| `service.huggingface` | Generate images through the Hugging Face API (your Hugging Face key); `generate_text` fails fast with an `agent.ask` hint |
 | `service.github` | Issues, PRs, repos, and more |
 | `service.notion` | Pages, databases, blocks |
 | `service.airtable` | Records, bases, fields |
@@ -386,7 +387,7 @@ Two features are not agent turns. [TypeSafe Jev](AGENTS.md#typesafe-jev-decision
 
 > **TypeSafe Jev** (`browser.jev`, `ai.choose`, and opt-in features such as `org autonomy set --decider jev`, action-step element fallback, capture/inbox classification, people links) answers typed questions in ~0.3 s and never generates text. Store a key in Settings › TypeSafe Jev or with `monoagentcli jev key set` (key on stdin), check it with `monoagentcli jev status`, and switch features on per profile with `monoagentcli jev enable <surface>`.
 
-> **Deprecated:** `ai.chat` · `ai.extract` · `ai.classify` · `ai.transform` · `ai.agent` · `ai.embed` (and `service.openrouter` · `service.huggingface`) still exist only so old workflows fail with a migration hint — running one errors out. Use `agent.ask` (put the extraction/classification/rewrite instruction in its prompt), or `ai.choose` to classify. `ai.embed` has no replacement.
+> **Deprecated:** `ai.chat` · `ai.extract` · `ai.classify` · `ai.transform` · `ai.agent` · `ai.embed` (and `service.openrouter`, plus `service.huggingface`'s `generate_text` operation) still exist only so old workflows fail with a migration hint — running one errors out. Use `agent.ask` (put the extraction/classification/rewrite instruction in its prompt), or `ai.choose` to classify. `ai.embed` has no replacement.
 
 </details>
 
@@ -736,7 +737,7 @@ mono-agent/
 | **Browser** | [go-rod/rod](https://github.com/go-rod/rod) — Chrome DevTools Protocol |
 | **Keyring** | [zalando/go-keyring](https://github.com/zalando/go-keyring) — OS secret storage |
 | **Desktop GUI** | [Wails v2](https://wails.io) + React |
-| **AI** | Local agent CLIs via [monomind](https://github.com/monoes/monomind) (claude, codex, …) · TypeSafe Jev for decisions · Gemini (browser session) |
+| **AI** | Local agent CLIs via [monomind](https://github.com/monoes/monomind) (claude, codex, …) · TypeSafe Jev for decisions · images via Gemini (browser session) or Hugging Face |
 
 ---
 

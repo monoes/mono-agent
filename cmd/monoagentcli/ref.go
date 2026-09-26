@@ -704,9 +704,14 @@ Output is always PNG. Subsequent calls reuse cached model and ORT session.`,
 	{
 		Type:     "service.huggingface",
 		Category: "service",
-		Short:    "DEPRECATED — fails at run time; use agent.ask",
-		Description: `Kept only so old workflows get a migration hint instead of "unknown node type".
-Running it fails with: replace it with the "agent.ask" node (local AI agent via monomind; see "monoagentcli ref node agent.ask").`,
+		Short:    "Generate an image through the Hugging Face inference API",
+		Description: `Needs a Hugging Face connection (API key): monoagentcli connect huggingface.
+generate_image is the only operation. generate_text was removed and fails fast —
+use the "agent.ask" node (local AI agent via monomind; see "monoagentcli ref node agent.ask").
+For images without a key, see "monoagentcli ref node gemini.generate_image".`,
+		Config:  `{ "credential_id": "huggingface", "operation": "generate_image", "prompt": "{{ $json.prompt }}", "model": "black-forest-labs/FLUX.1-schnell" }`,
+		Inputs:  "item(s) whose fields the prompt template reads",
+		Outputs: "input item + file_path (the saved PNG) and url (the model endpoint)",
 	},
 	{
 		Type:     "service.openrouter",

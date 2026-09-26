@@ -357,8 +357,8 @@ exec`) on an agent CLI already installed and logged in on this machine.
 That covers `monoagentcli chat` and the desktop assistant, the `agent.ask`
 workflow node, the AI mode of `ai.extract_page`, capture summaries, and
 orgs (`org.*` nodes, `org` commands, the `model` decider). mono-agent stores
-**no AI API keys** and has no in-app AI provider: the runtime's own login
-(and its bill) is what the turn uses.
+**no API keys for text AI** and has no in-app AI provider: the runtime's own
+login (and its bill) is what the turn uses.
 
 - **Runtimes.** monomind decides which agent CLIs it can drive, so the list
   grows with monomind rather than with this binary. `monoagentcli agent scan`
@@ -390,15 +390,19 @@ orgs (`org.*` nodes, `org` commands, the `model` decider). mono-agent stores
   (`docs/plans/local-agent-monomind-delegation.md`): knowledge of how to
   drive each agent CLI stays out of the Go binary.
 - **Deprecated nodes.** `ai.chat`, `ai.extract`, `ai.classify`,
-  `ai.transform`, `ai.agent`, `ai.embed`, `service.openrouter` and
-  `service.huggingface` are kept only so old workflows load; running one
-  fails at once with a pointer to `agent.ask` (`ai.choose` for
-  classification). `ai.read_page` uses no AI: it fetches and cleans a page.
+  `ai.transform`, `ai.agent` and `ai.embed` are kept only so old workflows
+  load; running one fails at once with a pointer to `agent.ask` (`ai.choose`
+  for classification). `service.openrouter` is a fail-fast stub;
+  `service.huggingface` only generates images (`generate_text` fails fast
+  with an `agent.ask` hint). `ai.read_page` uses no AI: it fetches and
+  cleans a page.
 - **Exceptions.** [TypeSafe Jev](#typesafe-jev-decisions-only) makes typed
   decisions (classification, suggestions, the element picker) and never
-  generates text; it is the only AI service mono-agent calls over HTTP, and
-  it uses its own `typesafe` key. The `gemini.*` nodes drive
-  gemini.google.com in your own logged-in browser session, with no key.
+  generates text; it uses its own `typesafe` key. Images have two paths:
+  `gemini.generate_image` drives gemini.google.com in your own logged-in
+  browser session (no key, like the other `gemini.*` nodes), and
+  `service.huggingface` `generate_image` calls the Hugging Face API with a
+  Hugging Face connection (API key).
 
 ## Orgs, automations, and autonomy
 
@@ -604,10 +608,10 @@ hatch, not a default. Without the env var, `secret add` fails closed.
 JSON state — pick one of N options, yes/no, or a level on a rubric — with
 probabilities, in one ~100–300 ms request. It **never generates text**.
 
-- **Doctrine exception.** Jev is the only AI service monoagent calls over
-  HTTP, and the only AI key it keeps; everything else, generation included,
-  goes to local agent runtimes through monomind (see "How AI works in
-  mono-agent"). Jev is admitted only as a
+- **Doctrine exception.** Text generation goes to local agent runtimes
+  through monomind (see "How AI works in mono-agent"); the only other AI
+  services monoagent calls over HTTP are Jev and Hugging Face image
+  generation, each with its own key. Jev is admitted only as a
   non-generative decision provider: it may pick among options the code
   enumerates, never write field values, rationales or answers. Gates compare
   the top option's probability with a per-surface threshold; below it the
