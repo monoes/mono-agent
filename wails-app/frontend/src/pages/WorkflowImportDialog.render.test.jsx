@@ -176,6 +176,42 @@ describe('WorkflowImportDialog', () => {
     expect(screen.queryByText('Install bundled automations')).not.toBeInTheDocument()
   })
 
+  it('shows differing packages with their changes and replaces them only after a confirm', async () => {
+    const differs = { id: 'shelf-demo', version: '0.1.0', status: 'differs', installedVersion: '0.1.0',
+      error: 'same version, different content: adds domains cdn.toscrape.com; the installed copy was kept. To replace it, re-import with --replace-automations',
+      changes: { addedDomains: ['cdn.toscrape.com'], addedScripts: ['grab.js'] },
+      reviewDetail: { id: 'shelf-demo', version: '0.1.0', domains: [], capabilities: [], replaces: { id: 'shelf-demo', source: 'imported', trust: 'imported', version: '0.1.0' }, replaceRequired: false, visibility: {} } }
+    await importFile({ id: 'w1', name: 'Mixed', status: 'created', automations: [differs] })
+    expect(await screen.findByText('Different from what is installed')).toBeInTheDocument()
+    expect(screen.getByText('New sites it may open: cdn.toscrape.com')).toBeInTheDocument()
+    expect(screen.getByText('New page scripts: grab.js')).toBeInTheDocument()
+    expect(screen.queryByText(/--replace-automations/)).not.toBeInTheDocument()
+    expect(screen.queryByText('Install bundled automations')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByText("Replace with the file's version"))
+    // Confirm lists the changes; cancelling replaces nothing.
+    expect(await screen.findAllByText('New sites it may open: cdn.toscrape.com')).toHaveLength(2)
+    fireEvent.click(screen.getByText('Cancel'))
+    await waitFor(() => expect(api.importWorkflowFull).toHaveBeenCalledTimes(1))
+    api.importWorkflowFull.mockResolvedValueOnce({ id: 'w1', name: 'Mixed', status: 'unchanged', automations: [{ ...differs, status: 'replaced', error: '' }] })
+    fireEvent.click(screen.getByText("Replace with the file's version"))
+    fireEvent.click(await screen.findByText('Replace', { selector: 'button' }))
+    await waitFor(() => expect(api.importWorkflowFull).toHaveBeenLastCalledWith('/w/flow.json', { yes: true, replaceAutomations: true }))
+    expect(await screen.findByText("Replaced 1 installed automation with the file's version.")).toBeInTheDocument()
+    expect(screen.queryByText("Replace with the file's version")).not.toBeInTheDocument()
+  })
+
+  it('never offers to replace a built-in from a file', async () => {
+    await importFile({ id: 'w1', name: 'M', status: 'created', automations: [{ id: 'hackernews', version: '1.1.0', status: 'differs', changes: { addedDomains: ['x.example.com'] },
+      reviewDetail: { replaces: { id: 'hackernews', source: 'builtin', trust: 'builtin', version: '1.1.0' } } }] })
+    expect(await screen.findByText('The installed copy is a built-in; a workflow file never replaces it.')).toBeInTheDocument()
+    expect(screen.queryByText("Replace with the file's version")).not.toBeInTheDocument()
+  })
+
+  it('says a local-only package works only on the sender machine', async () => {
+    await importFile({ id: 'w1', name: 'M', status: 'created', automations: [{ id: 'local-tool', version: '0.1.0', status: 'missing', notBundled: true, localOnly: true, error: 'not in the bundle: opens a local address (localhost:8080)' }] })
+    expect(await screen.findByText("Only works on the sender's machine — recreate it here or ask the sender.")).toBeInTheDocument()
+  })
+
   it('shows CLI errors inline and closes on Escape', async () => {
     const onClose = vi.fn()
     api.importWorkflowFull.mockResolvedValue({ error: 'node "x" has no type' })
