@@ -247,6 +247,9 @@ func newLoginCmd(cfg *globalConfig) *cobra.Command {
 	// Subcommand: login status
 	cmd.AddCommand(newLoginStatusCmd(cfg))
 
+	// Subcommands: login test|delete <session-id>
+	cmd.AddCommand(newLoginTestCmd(cfg), newLoginDeleteCmd(cfg))
+
 	return cmd
 }
 
@@ -453,7 +456,7 @@ func newLogoutCmd(cfg *globalConfig) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "logout [platform]",
 		Short: "Delete saved session for a platform",
-		Long:  "Removes saved cookies/session for the specified platform. Use --all to remove all sessions.",
+		Long:  "Removes saved cookies/session for the specified platform, including the vault entry holding the cookies. Use --all to remove all sessions, or `login delete <id>` for one.",
 		Example: `  monoagentcli logout instagram
   monoagentcli logout --all`,
 		Args: cobra.MaximumNArgs(1),
@@ -465,11 +468,10 @@ func newLogoutCmd(cfg *globalConfig) *cobra.Command {
 			defer db.Close()
 
 			if all {
-				result, err := db.DB.Exec("DELETE FROM crawler_sessions WHERE profile_id = ?", cfg.ProfileID)
+				count, err := deleteSessions(cmd.Context(), db.DB, profileOrDefault(cfg), "1 = 1")
 				if err != nil {
 					return fmt.Errorf("deleting all sessions: %w", err)
 				}
-				count, _ := result.RowsAffected()
 				fmt.Fprintf(os.Stderr, "Deleted %d session(s).\n", count)
 				return nil
 			}
@@ -479,11 +481,10 @@ func newLogoutCmd(cfg *globalConfig) *cobra.Command {
 			}
 
 			platform := strings.ToLower(args[0])
-			result, err := db.DB.Exec("DELETE FROM crawler_sessions WHERE platform = ? AND profile_id = ?", platform, cfg.ProfileID)
+			count, err := deleteSessions(cmd.Context(), db.DB, profileOrDefault(cfg), "platform = ?", platform)
 			if err != nil {
 				return fmt.Errorf("deleting session for %s: %w", platform, err)
 			}
-			count, _ := result.RowsAffected()
 			if count == 0 {
 				fmt.Fprintf(os.Stderr, "No session found for %s.\n", platform)
 			} else {
