@@ -46,10 +46,14 @@ func (f flow) run(t *testing.T, page *bottest.Page) (*action.ExecutionResult, er
 	for k, v := range f.params {
 		params[k] = v
 	}
-	return ae.Execute(&action.StorageAction{
+	res, err := ae.Execute(&action.StorageAction{
 		ID: "test-" + f.actionType, Type: f.actionType, TargetPlatform: "instagram",
 		ContentMessage: f.message, Keywords: f.keywords, Params: params,
 	})
+	if err == nil {
+		assertOutputsDeclared(t, f.actionType, res)
+	}
+	return res, err
 }
 
 func items(urls ...string) []interface{} {

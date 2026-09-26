@@ -363,18 +363,27 @@ func hasIdentityFields(raw map[string]interface{}) bool {
 func recordItems(extracted []map[string]interface{}, platform string) []workflow.Item {
 	items := make([]workflow.Item, 0, len(extracted))
 	for _, raw := range extracted {
-		if skipped, _ := raw["skipped"].(bool); skipped {
-			continue
+		if rec := OutputRecord(raw, platform); rec != nil {
+			items = append(items, workflow.NewItem(rec))
 		}
-		rec := make(map[string]interface{}, len(raw)+4)
-		for k, v := range NormalizeBrowserItem(raw, platform) {
-			if !stepBookkeepingKeys[k] {
-				rec[k] = v
-			}
-		}
-		items = append(items, workflow.NewItem(rec))
 	}
 	return items
+}
+
+// OutputRecord is the output item a browser node emits for one extracted
+// record: normalised (NormalizeBrowserItem) and without step bookkeeping.
+// It is nil for a record a step marked skipped.
+func OutputRecord(raw map[string]interface{}, platform string) map[string]interface{} {
+	if skipped, _ := raw["skipped"].(bool); skipped {
+		return nil
+	}
+	rec := make(map[string]interface{}, len(raw)+4)
+	for k, v := range NormalizeBrowserItem(raw, platform) {
+		if !stepBookkeepingKeys[k] {
+			rec[k] = v
+		}
+	}
+	return rec
 }
 
 // mergeStepResults folds the input item and every step's extracted result
