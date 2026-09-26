@@ -1,6 +1,7 @@
 package recording
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -155,10 +156,70 @@ func TestResolveDraftDir(t *testing.T) {
 			t.Errorf("ResolveDraftDir(%q) = %q, %v", ref, dir, err)
 		}
 	}
+	// Every refusal is the same error, word for word: nothing tells a
+	// caller whether the path exists (security review V3).
 	for _, ref := range []string{"", "-x", root, outside, filepath.Join(root, "..", "elsewhere"),
-		"../elsewhere", "sneaky", filepath.Join(root, "sneaky"), filepath.Join(root, "missing"), "a/b"} {
-		if dir, err := ResolveDraftDir(ref); err == nil {
+		"../elsewhere", "sneaky", filepath.Join(root, "sneaky"), filepath.Join(root, "missing"), "a/b",
+		"/definitely/not/here", filepath.Join(root, "..", "nope"), "/etc", "/etc/passwd"} {
+		dir, err := ResolveDraftDir(ref)
+		if err == nil {
 			t.Errorf("ResolveDraftDir(%q) accepted: %s", ref, dir)
+			continue
+		}
+		if err.Error() != "draft not found or outside the drafts folder" || !errors.Is(err, ErrDraftNotFound) {
+			t.Errorf("ResolveDraftDir(%q) error %q leaks detail", ref, err)
+		}
+	}
+}
+
+func TestResolveDraftDirSameAnswerOutside(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root, _ := DraftsDir()
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	existing := filepath.Join(home, "secret-project")
+	_ = os.MkdirAll(existing, 0o700)
+	link := filepath.Join(root, "link-out")
+	if err := os.Symlink(existing, link); err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]string{
+		"nonexistent outside": filepath.Join(home, "no-such-dir"),
+		"existing outside":    existing,
+		"symlink outside":     link,
+		"traversal missing":   filepath.Join(root, "..", "no-such-dir"),
+		"traversal existing":  filepath.Join(root, "..", "secret-project"),
+	}
+	var msgs []string
+	for name, ref := range cases {
+		_, err := ResolveDraftDir(ref)
+		if err == nil {
+			t.Fatalf("%s accepted", name)
+		}
+		msgs = append(msgs, err.Error())
+		if strings.Contains(err.Error(), "no such file") || strings.Contains(err.Error(), home) {
+			t.Errorf("%s: error %q mentions the filesystem", name, err)
+		}
+	}
+	for _, m := range msgs[1:] {
+		if m != msgs[0] {
+			t.Fatalf("different answers: %q", msgs)
+		}
+	}
+}
+
+func TestFindInvalidIDIsJustNotFound(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	SetInboxes(t.TempDir())
+	t.Cleanup(func() { SetInboxes() })
+	for _, id := range []string{"../etc", "a/b", "-rf", "missing"} {
+		if _, err := Find(id); !errors.Is(err, ErrNotFound) {
+			t.Errorf("Find(%q) = %v, want ErrNotFound", id, err)
+		}
+		if err := Delete(id); !errors.Is(err, ErrNotFound) {
+			t.Errorf("Delete(%q) = %v, want ErrNotFound", id, err)
 		}
 	}
 }
