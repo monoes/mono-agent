@@ -20,6 +20,9 @@ func TestCliAssetNameFor(t *testing.T) {
 		{"windows", "amd64", "monoagentcli-windows-amd64.exe"},
 		// Unknown platforms fall back to a best-effort name rather than panicking.
 		{"freebsd", "amd64", "monoagentcli-freebsd-amd64"},
+		// No silent amd64 fallback for other linux arches: the unpublished
+		// name makes SelfUpdate fail with "no binary found".
+		{"linux", "386", "monoagentcli-linux-386"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.goos+"/"+tc.goarch, func(t *testing.T) {
@@ -27,5 +30,14 @@ func TestCliAssetNameFor(t *testing.T) {
 				t.Fatalf("cliAssetNameFor(%q, %q) = %q, want %q", tc.goos, tc.goarch, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestCliBinaryNameFor(t *testing.T) {
+	if got := cliBinaryNameFor("windows"); got != "monoagentcli.exe" {
+		t.Fatalf("windows: %q", got)
+	}
+	if got := cliBinaryNameFor("linux"); got != "monoagentcli" {
+		t.Fatalf("linux: %q", got)
 	}
 }

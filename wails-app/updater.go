@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/monoes/mono-agent/internal/updatecheck"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -90,25 +91,42 @@ func (a *App) CheckForUpdate() UpdateInfo {
 	}
 }
 
-// SelfUpdate downloads the latest release binary and replaces the CLI.
+// releaseAPIURL is GitHub's latest-release endpoint (a variable so tests
+// can point it at a fake release server).
+var releaseAPIURL = fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", githubOwner, githubRepo)
+
+// SelfUpdate downloads the latest release binary, verifies it against the
+// release's SHA256SUMS.txt and replaces the CLI.
 // The UI app shows a dialog to restart after update.
 func (a *App) SelfUpdate() UpdateResult {
+	cliPath, err := findCLIBinary()
+	if err != nil {
+		return UpdateResult{Error: fmt.Sprintf("cannot locate CLI binary: %v", err)}
+	}
+	return selfUpdate(http.DefaultClient, releaseAPIURL, cliAssetName(), cliPath, func(msg string) {
+		runtime.EventsEmit(a.ctx, "update:progress", msg)
+	})
+}
+
+// selfUpdate is SelfUpdate without the Wails runtime: fetch the release at
+// apiURL, download assetName and the release's SHA256SUMS.txt, and install
+// over cliPath only when the download's sha256 equals the manifest's entry
+// for assetName — the same check `monoagentcli update` makes
+// (internal/updatecheck). A missing manifest, a missing entry, a mismatch
+// or any fetch failure fails closed: cliPath is left untouched.
+func selfUpdate(client *http.Client, apiURL, assetName, cliPath string, progress func(string)) UpdateResult {
 	// 1. Get latest release info
-	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", githubOwner, githubRepo)
 	req, _ := http.NewRequest("GET", apiURL, nil)
 	req.Header.Set("Accept", "application/vnd.github+json")
-
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return UpdateResult{Error: fmt.Sprintf("network error: %v", err)}
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
 		return UpdateResult{Error: fmt.Sprintf("GitHub API %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))}
 	}
-
 	var release struct {
 		TagName string `json:"tag_name"`
 		Assets  []struct {
@@ -120,75 +138,99 @@ func (a *App) SelfUpdate() UpdateResult {
 		return UpdateResult{Error: fmt.Sprintf("parse error: %v", err)}
 	}
 
-	// 2. Find the right asset for this platform
-	assetName := cliAssetName()
-	var downloadURL string
+	// 2. Find the binary for this platform and the checksum manifest
+	var downloadURL, sumsURL string
 	for _, asset := range release.Assets {
-		if asset.Name == assetName {
+		switch asset.Name {
+		case assetName:
 			downloadURL = asset.BrowserDownloadURL
-			break
+		case updatecheck.SumsAssetName:
+			sumsURL = asset.BrowserDownloadURL
 		}
 	}
 	if downloadURL == "" {
 		return UpdateResult{Error: fmt.Sprintf("no binary found for %s/%s (expected %s)", goruntime.GOOS, goruntime.GOARCH, assetName)}
 	}
-
-	// 3. Find the CLI binary path
-	cliPath, err := findCLIBinary()
-	if err != nil {
-		return UpdateResult{Error: fmt.Sprintf("cannot locate CLI binary: %v", err)}
+	if sumsURL == "" {
+		return UpdateResult{Error: fmt.Sprintf("release %s has no %s — cannot verify the download, refusing to update", release.TagName, updatecheck.SumsAssetName)}
 	}
 
-	// 4. Download to temp file
-	runtime.EventsEmit(a.ctx, "update:progress", "Downloading update...")
-	dlResp, err := http.Get(downloadURL)
+	// 3. Download the binary and the manifest, then verify
+	progress("Downloading update...")
+	data, err := getAll(client, downloadURL)
 	if err != nil {
 		return UpdateResult{Error: fmt.Sprintf("download error: %v", err)}
 	}
-	defer dlResp.Body.Close()
-
-	// Temp file next to the CLI, not in os.TempDir: /tmp is often a
-	// separate filesystem and a cross-device rename fails.
-	tmpFile, err := os.CreateTemp(filepath.Dir(cliPath), ".monoagentcli-update-*")
+	sums, err := getAll(client, sumsURL)
 	if err != nil {
-		return UpdateResult{Error: fmt.Sprintf("temp file error: %v", err)}
+		return UpdateResult{Error: fmt.Sprintf("fetch %s: %v — cannot verify the download, nothing was installed", updatecheck.SumsAssetName, err)}
 	}
-	tmpPath := tmpFile.Name()
-
-	if _, err := io.Copy(tmpFile, dlResp.Body); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpPath)
-		return UpdateResult{Error: fmt.Sprintf("download write error: %v", err)}
-	}
-	tmpFile.Close()
-
-	// 5. Replace the CLI binary
-	runtime.EventsEmit(a.ctx, "update:progress", "Installing update...")
-	if err := os.Chmod(tmpPath, 0755); err != nil {
-		os.Remove(tmpPath)
-		return UpdateResult{Error: fmt.Sprintf("chmod error: %v", err)}
+	if err := updatecheck.VerifyReleaseDigest(data, sums, assetName); err != nil {
+		return UpdateResult{Error: err.Error()}
 	}
 
-	// Atomic replace: rename old → .bak, rename new → target, remove .bak
-	bakPath := cliPath + ".bak"
-	os.Remove(bakPath) // clean up any previous backup
-	if err := os.Rename(cliPath, bakPath); err != nil {
-		os.Remove(tmpPath)
-		return UpdateResult{Error: fmt.Sprintf("backup error: %v", err)}
+	// 4. Replace the CLI binary
+	progress("Installing update...")
+	if err := replaceBinary(cliPath, data); err != nil {
+		return UpdateResult{Error: err.Error()}
 	}
-	if err := os.Rename(tmpPath, cliPath); err != nil {
-		// Rollback
-		os.Rename(bakPath, cliPath)
-		os.Remove(tmpPath)
-		return UpdateResult{Error: fmt.Sprintf("install error: %v", err)}
-	}
-	os.Remove(bakPath)
-
-	runtime.EventsEmit(a.ctx, "update:progress", "Update complete!")
+	progress("Update complete!")
 	return UpdateResult{
 		Success:    true,
 		NewVersion: release.TagName,
 	}
+}
+
+// getAll fetches url; any status but 200 is an error (an HTML error page
+// must never be installed as the binary).
+func getAll(client *http.Client, url string) ([]byte, error) {
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("HTTP %d for %s", resp.StatusCode, url)
+	}
+	return io.ReadAll(resp.Body)
+}
+
+// replaceBinary writes data next to cliPath and swaps it in: rename old →
+// .bak, rename new → target, remove .bak (rolling back on failure). The
+// temp file is next to the CLI, not in os.TempDir: /tmp is often a separate
+// filesystem and a cross-device rename fails.
+func replaceBinary(cliPath string, data []byte) error {
+	tmpFile, err := os.CreateTemp(filepath.Dir(cliPath), ".monoagentcli-update-*")
+	if err != nil {
+		return fmt.Errorf("temp file error: %v", err)
+	}
+	tmpPath := tmpFile.Name()
+	if _, err := tmpFile.Write(data); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("download write error: %v", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("download write error: %v", err)
+	}
+	if err := os.Chmod(tmpPath, 0755); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("chmod error: %v", err)
+	}
+	bakPath := cliPath + ".bak"
+	os.Remove(bakPath) // clean up any previous backup
+	if err := os.Rename(cliPath, bakPath); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("backup error: %v", err)
+	}
+	if err := os.Rename(tmpPath, cliPath); err != nil {
+		os.Rename(bakPath, cliPath) // rollback
+		os.Remove(tmpPath)
+		return fmt.Errorf("install error: %v", err)
+	}
+	os.Remove(bakPath)
+	return nil
 }
 
 // cliAssetName returns the expected GitHub release asset name for the current OS/arch.
@@ -198,7 +240,8 @@ func cliAssetName() string {
 
 // cliAssetNameFor returns the expected GitHub release asset name for the
 // given GOOS/GOARCH, mirroring the binaries .github/workflows/release.yml
-// publishes (darwin/linux each in amd64+arm64, windows in amd64 only). Split
+// publishes (darwin/linux each in amd64+arm64, windows in amd64 only; a
+// windows/arm64 app gets the amd64 build, which Windows on ARM emulates). Split
 // out from cliAssetName so tests can cover every platform/arch combination
 // without cross-compiling or overriding runtime.GOOS/GOARCH.
 func cliAssetNameFor(goos, goarch string) string {
@@ -209,10 +252,10 @@ func cliAssetNameFor(goos, goarch string) string {
 		}
 		return "monoagentcli-darwin-amd64"
 	case "linux":
-		if goarch == "arm64" {
-			return "monoagentcli-linux-arm64"
-		}
-		return "monoagentcli-linux-amd64"
+		// No fallback to amd64 for other arches (386, riscv64, …): a wrong-
+		// architecture binary would install and then fail to exec. An
+		// unpublished name ends in a clear "no binary found" instead.
+		return "monoagentcli-linux-" + goarch
 	case "windows":
 		return "monoagentcli-windows-amd64.exe"
 	default:
@@ -242,9 +285,19 @@ func (a *App) backgroundUpdateCheck() {
 	}
 }
 
+// cliBinaryNameFor is the CLI's file name on goos ("monoagentcli.exe" on
+// Windows, where os.Stat needs the extension that LookPath adds itself).
+func cliBinaryNameFor(goos string) string {
+	if goos == "windows" {
+		return "monoagentcli.exe"
+	}
+	return "monoagentcli"
+}
+
 // findCLIBinary locates the monoagentcli binary.
 func findCLIBinary() (string, error) {
 	candidates := []string{}
+	name := cliBinaryNameFor(goruntime.GOOS)
 
 	if p, err := exec.LookPath("monoagentcli"); err == nil {
 		candidates = append(candidates, p)
@@ -252,13 +305,13 @@ func findCLIBinary() (string, error) {
 
 	if exe, err := os.Executable(); err == nil {
 		dir := filepath.Dir(exe)
-		candidates = append(candidates, filepath.Join(dir, "monoagentcli"))
-		candidates = append(candidates, filepath.Join(dir, "..", "bin", "monoagentcli"))
+		candidates = append(candidates, filepath.Join(dir, name))
+		candidates = append(candidates, filepath.Join(dir, "..", "bin", name))
 	}
 
 	if home, err := os.UserHomeDir(); err == nil {
-		candidates = append(candidates, filepath.Join(home, "go", "bin", "monoagentcli"))
-		candidates = append(candidates, filepath.Join(home, ".local", "bin", "monoagentcli"))
+		candidates = append(candidates, filepath.Join(home, "go", "bin", name))
+		candidates = append(candidates, filepath.Join(home, ".local", "bin", name))
 	}
 	candidates = append(candidates, "/usr/local/bin/monoagentcli")
 
