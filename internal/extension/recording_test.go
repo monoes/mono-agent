@@ -189,6 +189,8 @@ func TestRecordMethodArgsValidation(t *testing.T) {
 			"record save " + realDraft + " --as=fragment --new=my-site --name=Create contact --json"},
 		{recordSaveArgs, map[string]any{"draftDir": draft, "force": true}, "record save " + realDraft + " --force --json"},
 		{recordSaveArgs, map[string]any{"draftDir": draft, "force": false}, "record save " + realDraft + " --json"},
+		{recordSaveArgs, map[string]any{"draftDir": draft, "keepPackageSelectors": true}, "record save " + realDraft + " --keep-package-selectors --json"},
+		{recordSaveArgs, map[string]any{"draftDir": draft, "force": true, "keepPackageSelectors": true}, "record save " + realDraft + " --force --keep-package-selectors --json"},
 	}
 	for _, g := range good {
 		args, err := g.build(req(g.p))
@@ -218,6 +220,8 @@ func TestRecordMethodArgsValidation(t *testing.T) {
 		{recordSaveArgs, map[string]any{"draftDir": draft, "name": "a\nb"}},
 		{recordSaveArgs, map[string]any{"draftDir": draft, "force": "true"}},
 		{recordSaveArgs, map[string]any{"draftDir": draft, "force": 1.0}},
+		{recordSaveArgs, map[string]any{"draftDir": draft, "keepPackageSelectors": "true"}},
+		{recordSaveArgs, map[string]any{"draftDir": draft, "keepPackageSelectors": 1.0}},
 	}
 	for _, b := range bad {
 		if args, err := b.build(req(b.p)); err == nil {
