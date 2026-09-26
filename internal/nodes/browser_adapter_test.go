@@ -131,3 +131,27 @@ func TestNormalizeBrowserItem_LinkedInCardText(t *testing.T) {
 		t.Errorf("unexpected headline %q", out["headline"])
 	}
 }
+
+// A TikTok comment/engagement result carries the text it posted; that text
+// is content, not a profile card's name (D6).
+func TestNormalizeBrowserItem_WriteResultTextIsNotAName(t *testing.T) {
+	for _, raw := range []map[string]interface{}{
+		// tiktok engage_with_posts / comment_on_video result record
+		{"success": true, "status": "commented", "verified": true,
+			"videoURL": "https://www.tiktok.com/@natgeo/video/7300000000000000000", "text": "Stunning shot!"},
+		// x reply result
+		{"success": true, "postURL": "https://x.com/natgeo/status/1", "text": "Great thread"},
+		// hacker news reply result
+		{"success": true, "itemID": "41000000", "text": "Agreed."},
+	} {
+		out := NormalizeBrowserItem(raw, "tiktok")
+		for _, k := range []string{"full_name", "name", "job_title", "headline"} {
+			if v, ok := out[k]; ok {
+				t.Errorf("%v: %s = %q copied from the posted text", raw, k, v)
+			}
+		}
+		if out["text"] != raw["text"] {
+			t.Errorf("text changed: %v", out["text"])
+		}
+	}
+}
