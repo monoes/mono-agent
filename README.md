@@ -22,7 +22,7 @@
 > **Project status:** pre-1.0, single maintainer. Core workflow engine and node set are exercised by CI (`go test ./...`), but expect breaking changes between minor versions until 1.0.
 
 - 🔁 **DAG workflow engine** — 167 built-in node types, social platform actions included: services (GitHub, Google Sheets / Gmail / Drive, Stripe, Salesforce, HubSpot, Jira, Linear, Notion, Airtable), databases, HTTP, data transforms, and comms (Gmail, Outlook, Slack, Telegram, Discord, and more)
-- 📦 **Single static Go binary** — zero CGO, SQLite embedded, no Docker, no Node.js runtime, no telemetry. All data stays on your machine (crash reports default to local files — see [SECURITY.md](SECURITY.md))
+- 📦 **Single static Go binary** — zero CGO, SQLite embedded, no Docker, no Node.js runtime, no telemetry (AI steps hand off to the separate monomind runner — see [How AI works](#how-ai-works-in-mono-agent)). All data stays on your machine (crash reports default to local files — see [SECURITY.md](SECURITY.md))
 - 🖥️ **Three ways to drive it** — a visual canvas editor (Wails desktop GUI), a 180+-command CLI with JSON output everywhere, and a built-in MCP server so AI agents can operate it safely
 - 🤝 **Human-in-the-loop as a platform primitive** — pause any workflow for review, edit the payload, then approve or reject; the queue is durable and survives restarts
 - 🌐 **Browser automation where no practical API exists** — drive *your own logged-in Chrome* via the bundled extension bridge, publishing to and reading your own accounts (same model as consumer RPA tools)
@@ -61,7 +61,7 @@ go build -o monoagentcli ./cmd/monoagentcli
 ./monoagentcli workflow import --file examples/morning-briefing.json
 ./monoagentcli workflow activate <id>              # enable its triggers
 ./monoagentcli workflow run <id>                   # run it now
-# Note: the full flagship run needs an OpenRouter API key (`connect openrouter`) — without one it fails cleanly at the summarize step.
+# Note: the summarize step runs on a local AI agent — it needs monomind and an installed runtime (see "How AI works in Mono Agent").
 
 # Run the scheduler daemon (keeps cron/webhook triggers alive)
 ./monoagentcli daemon
@@ -71,7 +71,7 @@ Prefer a prebuilt binary? `curl -fsSL https://raw.githubusercontent.com/monoes/m
 
 ### Flagship example — "Morning Briefing"
 
-Every weekday at 7am: read your favorite feeds, filter for AI news, summarize with an LLM, pause for a human to edit the summary, then email it to you.
+Every weekday at 7am: read your favorite feeds, filter for AI news, summarize each item with a local AI agent, pause for a human to edit the summary, then email it to you.
 
 ```
 [trigger.schedule: 0 0 7 * * 1-5]
@@ -83,7 +83,7 @@ Every weekday at 7am: read your favorite feeds, filter for AI news, summarize wi
 [core.filter]            ← keep items matching a condition
         │
         ▼
-[service.openrouter]     ← generate_text: summarize titles into a brief
+[agent.ask]              ← your local agent (claude, codex, …) summarizes each item
         │
         ▼
 [core.human_in_loop]     ← PAUSE — you review & edit the draft
@@ -99,9 +99,9 @@ Every weekday at 7am: read your favorite feeds, filter for AI news, summarize wi
     { "id": "t1",  "type": "trigger.schedule",   "config": { "cron": "0 0 7 * * 1-5" } },
     { "id": "n1",  "type": "system.rss_read",    "config": { "url": "https://example.com/feed.xml", "limit": 25 } },
     { "id": "n2",  "type": "core.filter",        "config": { "condition": "{{item.title}} contains ai" } },
-    { "id": "n3",  "type": "service.openrouter", "config": {
-        "operation": "generate_text", "model": "anthropic/claude-3-haiku",
-        "prompt": "Summarize these headlines into a 5-bullet briefing:\n{{item.title}}", "credential_id": "YOUR_OR_CRED" } },
+    { "id": "n3",  "type": "agent.ask",          "config": {
+        "runtime": "claude", "output_key": "summary",
+        "prompt": "Summarize this headline in one sentence for a morning briefing: {{ $json.title }}" } },
     { "id": "n4",  "type": "core.human_in_loop", "config": {
         "readonly_fields": ["title", "link"],
         "editable_fields": ["summary"],
@@ -205,8 +205,8 @@ More ready-to-run workflows (RSS→AI→email, Sheets→Gmail, Stripe→Sheets s
 
 ### 🤖 AI Canvas Chat + Desktop GUI
 - Conversational workflow builder: describe the workflow in chat, AI wires the nodes
-- Built-in assistant (`monoagentcli chat`) runs on an AI agent CLI already installed on your machine (claude, codex, kimi, qwen, …) through the monomind engine, with named sessions and **explicit opt-in tools** (`--tools monoagent[,runs]`) — tool access is off by default
-- Workflow AI steps use the same local agents (`agent.ask`); OpenRouter, HuggingFace, and Gemini (your browser session) nodes are also available
+- Built-in assistant runs on an AI agent CLI already installed on your machine (claude, codex, opencode, copilot, …) through the monomind runner, with named sessions. In the desktop app its tools (workflows, vault, people, runs) are on by default and can be switched off in Settings; `monoagentcli chat --runtime <id> "<prompt>"` runs one turn and enables tools only with `--tools monoagent[,runs]`
+- Workflow AI steps use the same local agents (`agent.ask`); the `gemini.*` nodes use your own logged-in Gemini browser session
 - Wails 2 desktop app: canvas editor, HIL review panel, Vault, People, Image Vault
 - Dark-themed, keyboard-navigable, fully local
 
@@ -224,7 +224,7 @@ The pattern Mono Agent recommends for *any* outbound communication — the AI dr
 [service.google_sheets]      ← read prospect rows (name, company, email)
         │
         ▼
-[service.openrouter]         ← generate_text: draft a personalized email
+[agent.ask]                  ← your local agent drafts a personalized email
         │
         ▼
 [core.human_in_loop]         ← PAUSE — reviewer sees:
@@ -257,6 +257,23 @@ monoagentcli hil list               # show pending items
 monoagentcli hil approve <id>       # resume the workflow
 monoagentcli hil reject <id>        # drop the item
 ```
+
+---
+
+## How AI works in Mono Agent
+
+Mono Agent has no built-in AI provider and stores no AI API keys. Every AI step (the assistant, `agent.ask`, AI extraction, capture summaries, agent orgs) is one turn run by the [monomind](https://github.com/monoes/monomind) runner on an agent CLI you have already installed and logged in: Claude Code, Codex, OpenCode, GitHub Copilot, Qwen, Grok, Crush, Pi, and others. Each turn uses that CLI's own login and plan.
+
+```bash
+monoagentcli agent scan              # runtimes monomind knows, and which are installed
+monoagentcli agent install claude    # install one
+monoagentcli agent test claude       # smoke turn; also proves the login works
+monoagentcli doctor --group monomind # Node.js, the monomind binary, version and features
+```
+
+monomind is a separate Node.js tool: `npm install -g @monoes/monomindcli`, or let `monoagentcli doctor --fix` install it. If you have no Node.js >= 22.12, `monoagentcli nodejs install` downloads a private copy. Set `MONOMIND_BIN` to use a specific binary. Without monomind, AI steps fail with an install hint and everything else keeps working.
+
+Two features are not agent turns. [TypeSafe Jev](AGENTS.md#typesafe-jev-decisions-only) makes fast typed decisions (classification, suggestions, the element picker) with its own key, and never writes text. The `gemini.*` nodes drive Gemini in your own logged-in browser.
 
 ---
 
@@ -296,8 +313,7 @@ monoagentcli hil reject <id>        # drop the item
 | `service.gmail` | Send and read Gmail messages |
 | `service.google_drive` | File operations on Google Drive |
 | `service.outlook_mail` | Read/send Outlook via Microsoft Graph |
-| `service.openrouter` | Generate text or images via 200+ AI models |
-| `service.huggingface` | HuggingFace inference (text + images) |
+| `service.openrouter` · `service.huggingface` | **Deprecated** — fail at run time with a pointer to `agent.ask`; kept so old workflows still load |
 | `service.github` | Issues, PRs, repos, and more |
 | `service.notion` | Pages, databases, blocks |
 | `service.airtable` | Records, bases, fields |
@@ -360,7 +376,7 @@ monoagentcli hil reject <id>        # drop the item
 | `ai.choose` | Route each item to one of your cases with a TypeSafe Jev choice (probabilities, `low_confidence` output) |
 | `browser.jev` | Browser agent: give it a URL and a goal, it clicks/types/selects its way there in your own browser (TypeSafe Jev picks each action; port of browser-use/jev-ultrafast) |
 | `org.run` / `org.ask` / `org.send` | Start, question, or message an agent org (via the monomind engine) |
-| `ai.read_page` / `ai.extract_page` | AI-assisted page reading and structured extraction |
+| `ai.read_page` / `ai.extract_page` | Fetch a page as clean markdown (no AI) / extract fields from it with CSS selectors you give or a local agent writes |
 | `gemini.generate_text` · `gemini.generate_image` · `gemini.chat_session` · `gemini.chat_session_many` | Gemini via your own logged-in browser session — no API key |
 | `system.execute_command` | Run a local shell command, capture output |
 | `system.rss_read` | Fetch items from RSS / Atom feeds |
@@ -370,7 +386,7 @@ monoagentcli hil reject <id>        # drop the item
 
 > **TypeSafe Jev** (`browser.jev`, `ai.choose`, and opt-in features such as `org autonomy set --decider jev`, action-step element fallback, capture/inbox classification, people links) answers typed questions in ~0.3 s and never generates text. Store a key in Settings › TypeSafe Jev or with `monoagentcli jev key set` (key on stdin), check it with `monoagentcli jev status`, and switch features on per profile with `monoagentcli jev enable <surface>`.
 
-> **Deprecated:** `ai.chat` · `ai.extract` · `ai.classify` · `ai.transform` · `ai.agent` · `ai.embed` still exist only so old workflows fail with a migration hint — running one errors out. Use `agent.ask` (put the extraction/classification/rewrite instruction in its prompt). `ai.embed` has no replacement.
+> **Deprecated:** `ai.chat` · `ai.extract` · `ai.classify` · `ai.transform` · `ai.agent` · `ai.embed` (and `service.openrouter` · `service.huggingface`) still exist only so old workflows fail with a migration hint — running one errors out. Use `agent.ask` (put the extraction/classification/rewrite instruction in its prompt), or `ai.choose` to classify. `ai.embed` has no replacement.
 
 </details>
 
@@ -720,7 +736,7 @@ mono-agent/
 | **Browser** | [go-rod/rod](https://github.com/go-rod/rod) — Chrome DevTools Protocol |
 | **Keyring** | [zalando/go-keyring](https://github.com/zalando/go-keyring) — OS secret storage |
 | **Desktop GUI** | [Wails v2](https://wails.io) + React |
-| **AI** | Local agent CLIs via [monomind](https://github.com/monoes/monomind) (claude, codex, …) · OpenRouter · HuggingFace · Gemini (browser session) |
+| **AI** | Local agent CLIs via [monomind](https://github.com/monoes/monomind) (claude, codex, …) · TypeSafe Jev for decisions · Gemini (browser session) |
 
 ---
 
