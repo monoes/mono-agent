@@ -14,7 +14,9 @@ function ScheduleChip({ sched, invalid, daemonRunning }) {
   if (!daemonRunning) {
     return <span className="dash-chip" title={t('dashboard.workflows.schedulePausedTitle')}><Clock size={10} /> {t('dashboard.workflows.schedulePaused')}</span>
   }
-  return <span className="dash-chip" title={new Date(sched.next_run).toLocaleString()}><Clock size={10} /> {untilTime(sched.next_run, t)}</span>
+  // "@every" fires relative to when the daemon registered it: show the interval.
+  const label = sched.every ? t('dashboard.workflows.every', { every: sched.every }) : untilTime(sched.next_run, t)
+  return <span className="dash-chip" title={sched.every ? sched.cron : new Date(sched.next_run).toLocaleString()}><Clock size={10} /> {label}</span>
 }
 
 function WorkflowRow({ wf, last, sched, invalid, daemonRunning, onRun, onStop, onToggle, onNavigate }) {

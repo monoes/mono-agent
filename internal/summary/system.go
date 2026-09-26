@@ -172,6 +172,13 @@ func automationsSection(o Options) *AutomationsSection {
 		return s
 	}
 	declared := map[string]map[string]bool{}
+	seen := map[string]map[string]bool{}
+	for _, h := range health {
+		if seen[h.AutomationID] == nil {
+			seen[h.AutomationID] = map[string]bool{}
+		}
+		seen[h.AutomationID][h.Key] = true
+	}
 	for _, h := range health {
 		if !installed[h.AutomationID] {
 			continue // rows of uninstalled packages are not this profile's problem
@@ -200,6 +207,18 @@ func automationsSection(o Options) *AutomationsSection {
 			s.Broken = append(s.Broken, SelectorRef{AutomationID: h.AutomationID, SelectorKey: h.Key})
 		case automation.HealthStale:
 			s.Selectors.Stale++
+		}
+	}
+	// Declared selectors with no runs yet are ok, as in `automation doctor`.
+	for _, i := range infos {
+		keys, ok := declared[i.ID]
+		if !ok {
+			keys, _ = o.Automations.DeclaredKeys(i.ID)
+		}
+		for k := range keys {
+			if !seen[i.ID][k] {
+				s.Selectors.OK++
+			}
 		}
 	}
 	return s

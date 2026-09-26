@@ -18,7 +18,9 @@ import (
 	"github.com/monoes/mono-agent/internal/monomind"
 	"github.com/monoes/mono-agent/internal/profiledir"
 	"github.com/monoes/mono-agent/internal/recording"
+	"github.com/monoes/mono-agent/internal/storage"
 	"github.com/monoes/mono-agent/internal/summary"
+	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // summaryBridgeTimeout bounds the loopback bridge probe: summary is polled.
@@ -50,7 +52,7 @@ func newSummaryCmd(cfg *globalConfig) *cobra.Command {
 			root := profiledir.Root(db.DB, cfg.ProfileID)
 			opts := summary.Options{
 				DB: db.DB, ProfileID: cfg.ProfileID, Now: time.Now(), Sections: want,
-				Workflows:     newHybridStore(db),
+				Workflows:     readOnlyHybridStore(db),
 				DaemonRunning: func() bool { _, live := daemonhb.Read(); return live },
 				Daemon:        summaryDaemon,
 				Bridge:        summaryBridge,
@@ -67,7 +69,13 @@ func newSummaryCmd(cfg *globalConfig) *cobra.Command {
 					}
 					return recording.List()
 				},
-				Captures:     func() ([]capture.Entry, error) { return capture.List(capture.DefaultInbox()) },
+				Captures: func() ([]capture.Entry, error) {
+					inbox, err := capture.ProfileInbox(cfg.ProfileID)
+					if err != nil {
+						return nil, err
+					}
+					return capture.List(inbox)
+				},
 				SummaryState: func(dir string) string { return capturesummary.StateOf(dir, time.Now()) },
 			}
 			if want == nil || want["automations"] {
@@ -85,6 +93,17 @@ func newSummaryCmd(cfg *globalConfig) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&sections, "section", "", "Comma-separated sections to include (default: all): "+strings.Join(summary.SectionNames, ","))
 	return cmd
+}
+
+// readOnlyHybridStore is newHybridStore without its file→SQLite backfill:
+// summary is polled and must not write workflow rows.
+func readOnlyHybridStore(db *storage.Database) *workflow.HybridWorkflowStore {
+	sqlStore := workflow.NewSQLiteWorkflowStore(db.DB)
+	fileStore, err := workflow.NewWorkflowFileStore(expandPath("~/.monoagent/workflows"))
+	if err != nil {
+		return workflow.NewHybridWorkflowStore(nil, sqlStore)
+	}
+	return workflow.NewHybridWorkflowStore(fileStore, sqlStore)
 }
 
 func parseSummarySections(csv string) (map[string]bool, error) {

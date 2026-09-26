@@ -60,10 +60,13 @@ func hilSection(ctx context.Context, o Options) *HILSection {
 		s.Error = noDB
 		return s
 	}
+	// Same scope as `hil list` (h.profile_id), minus org-triggered rows:
+	// those are org items, counted by `org summary` (orgdecide.PendingHIL).
 	var oldest any
 	err := o.DB.QueryRowContext(ctx, `SELECT COUNT(*), MIN(h.created_at) FROM hil_pending h
-		JOIN workflows w ON w.id = h.workflow_id
-		WHERE h.status = 'pending' AND w.profile_id = ?`, o.ProfileID).Scan(&s.WorkflowPending, &oldest)
+		LEFT JOIN workflow_executions e ON e.id = h.execution_id
+		WHERE h.status = 'pending' AND h.profile_id = ?
+		  AND COALESCE(e.trigger_type, '') NOT IN ('org_tool', 'org_message')`, o.ProfileID).Scan(&s.WorkflowPending, &oldest)
 	if err != nil {
 		s.Error = err.Error()
 		return s

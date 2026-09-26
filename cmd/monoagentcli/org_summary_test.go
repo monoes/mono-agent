@@ -2,9 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func runOrgSummary(t *testing.T, root string, args ...string) map[string]interface{} {
@@ -55,5 +57,49 @@ func TestOrgSummaryNoOrgs(t *testing.T) {
 	m := runOrgSummary(t, t.TempDir(), "--fast")
 	if orgs := m["orgs"].([]interface{}); len(orgs) != 0 {
 		t.Fatalf("orgs = %v", orgs)
+	}
+}
+
+// The per-org budget holds even when monomind runs behind a wrapper whose
+// child keeps stdout open past the kill (e.g. an npm .cmd shim).
+func TestOrgSummaryNeedsYouTimeoutHolds(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	bin := filepath.Join(t.TempDir(), "monomind")
+	script := "#!/bin/sh\ncase \"$*\" in\n  *--version*) echo '{\"v\":1,\"version\":\"9.9.9\",\"capabilities\":[\"agent-exec\",\"agent-scan\",\"org-json-v1\"]}' ;;\n  *) sleep 6; echo '[]' ;;\nesac\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MONOMIND_BIN", bin)
+	old := perOrgNeedsYouTimeout
+	perOrgNeedsYouTimeout = time.Second
+	t.Cleanup(func() { perOrgNeedsYouTimeout = old })
+
+	cfg := &globalConfig{DBPath: filepath.Join(t.TempDir(), "o.db"), ProfileID: "default"}
+	env := &orgEnv{cfg: cfg}
+	root := env.Root()
+	writeOrgFile(t, root, "acme.json", `{"name":"acme"}`)
+	cmd := newOrgSummaryCmd(env)
+	var runErr error
+	start := time.Now()
+	out := captureStdout(t, func() { runErr = cmd.Execute() })
+	env.Close()
+	if runErr != nil {
+		t.Fatal(runErr)
+	}
+	if took := time.Since(start); took > 4*time.Second {
+		t.Fatalf("org summary took %v with a 1s per-org budget", took)
+	}
+	var m struct {
+		Orgs []struct {
+			NeedsYou      *int   `json:"needs_you"`
+			NeedsYouError string `json:"needs_you_error"`
+		} `json:"orgs"`
+	}
+	if err := json.Unmarshal([]byte(out), &m); err != nil || len(m.Orgs) != 1 {
+		t.Fatalf("out = %s (%v)", out, err)
+	}
+	if m.Orgs[0].NeedsYou != nil || !strings.Contains(m.Orgs[0].NeedsYouError, "timed out") {
+		t.Fatalf("want a timeout error, got %+v", m.Orgs[0])
 	}
 }

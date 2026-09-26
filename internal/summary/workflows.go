@@ -63,6 +63,9 @@ type ScheduleRow struct {
 	Cron         string `json:"cron"`
 	Timezone     string `json:"timezone"`
 	NextRun      string `json:"next_run"`
+	// Every is set for "@every <d>" specs: they fire relative to when the
+	// daemon registered them, so NextRun is only an estimate — show the interval.
+	Every string `json:"every,omitempty"`
 }
 
 type ScheduleIssue struct {
@@ -80,13 +83,29 @@ type SchedulesSection struct {
 
 const recentLimit = 15
 
+// ownWorkflows drops workflows of other profiles: the file store lists every
+// workflow file whatever its profile (same rule as `workflow executions`).
+func ownWorkflows(ctx context.Context, o Options) ([]workflow.Workflow, error) {
+	all, err := o.Workflows.ListWorkflows(ctx, o.ProfileID)
+	if err != nil {
+		return nil, err
+	}
+	own := all[:0:0]
+	for _, w := range all {
+		if w.ProfileID == "" || w.ProfileID == o.ProfileID {
+			own = append(own, w)
+		}
+	}
+	return own, nil
+}
+
 func workflowsSection(ctx context.Context, o Options) *WorkflowsSection {
 	s := &WorkflowsSection{}
 	if o.Workflows == nil {
 		s.Error = "workflow store unavailable"
 		return s
 	}
-	wfs, err := o.Workflows.ListWorkflows(ctx, o.ProfileID)
+	wfs, err := ownWorkflows(ctx, o)
 	if err != nil {
 		s.Error = err.Error()
 		return s
@@ -106,9 +125,10 @@ func executionsSection(ctx context.Context, o Options) *ExecutionsSection {
 		s.Error = noDB
 		return s
 	}
+	// The status filter matches idx_workflow_executions_profile_live (049).
 	err := o.DB.QueryRowContext(ctx, `SELECT
 		COALESCE(SUM(status = 'RUNNING'),0), COALESCE(SUM(status = 'QUEUED'),0), COALESCE(SUM(status = 'WAITING'),0)
-		FROM workflow_executions WHERE profile_id = ?`, o.ProfileID).Scan(&s.Running, &s.Queued, &s.Waiting)
+		FROM workflow_executions WHERE profile_id = ? AND status IN ('RUNNING', 'QUEUED', 'WAITING')`, o.ProfileID).Scan(&s.Running, &s.Queued, &s.Waiting)
 	if err == nil {
 		err = o.DB.QueryRowContext(ctx, `SELECT COUNT(*),
 			COALESCE(SUM(status IN ('SUCCESS','SUCCESS_WITH_ERRORS','COMPLETED')),0),
@@ -195,7 +215,7 @@ func schedulesSection(ctx context.Context, o Options) *SchedulesSection {
 		s.Error = "workflow store unavailable"
 		return s
 	}
-	wfs, err := o.Workflows.ListWorkflows(ctx, o.ProfileID)
+	wfs, err := ownWorkflows(ctx, o)
 	if err != nil {
 		s.Error = err.Error()
 		return s
@@ -249,6 +269,10 @@ func nextRun(wf *workflow.Workflow, n workflow.WorkflowNode, now time.Time) (Sch
 	if next.IsZero() {
 		return ScheduleRow{}, errors.New("schedule never fires")
 	}
-	return ScheduleRow{WorkflowID: wf.ID, WorkflowName: wf.Name, NodeID: n.ID, Cron: spec, Timezone: tz,
-		NextRun: next.UTC().Format(time.RFC3339)}, nil
+	row := ScheduleRow{WorkflowID: wf.ID, WorkflowName: wf.Name, NodeID: n.ID, Cron: spec, Timezone: tz,
+		NextRun: next.UTC().Format(time.RFC3339)}
+	if d, ok := strings.CutPrefix(spec, "@every "); ok {
+		row.Every = strings.TrimSpace(d)
+	}
+	return row, nil
 }

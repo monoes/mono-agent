@@ -53,7 +53,7 @@ func TestSystemSections(t *testing.T) {
 			{AutomationID: "linkedin", Key: "post.old", OK: 3, Recent: "ooo"},
 			{AutomationID: "gone", Key: "x", Fail: 9, Recent: "fffffffff"},
 		},
-		declared: map[string]map[string]bool{"linkedin": {"post.like": true, "post.send": true}},
+		declared: map[string]map[string]bool{"linkedin": {"post.like": true, "post.send": true, "post.new": true}},
 	}
 	recs := []recording.Summary{{ID: "r1", Complete: true, StartedAt: "2026-09-25T10:00:00Z"},
 		{ID: "r2", Complete: true, Automation: "linkedin", StartedAt: "2026-09-20T10:00:00Z"},
@@ -73,7 +73,8 @@ func TestSystemSections(t *testing.T) {
 	if a.Error != "" || a.Installed != 2 || a.Enabled != 1 || a.Unavailable != 1 || a.PendingUpdate != 1 || a.ScriptsBlocked != 1 {
 		t.Fatalf("automations = %+v", a)
 	}
-	if a.Selectors != (SelectorCounts{OK: 1, Broken: 1, Stale: 1}) || len(a.Broken) != 1 || a.Broken[0].SelectorKey != "post.send" {
+	// post.new is declared with no runs yet: ok, as in `automation doctor`.
+	if a.Selectors != (SelectorCounts{OK: 2, Broken: 1, Stale: 1}) || len(a.Broken) != 1 || a.Broken[0].SelectorKey != "post.send" {
 		t.Fatalf("selectors = %+v / %+v", a.Selectors, a.Broken)
 	}
 	if r := s.Recordings; r.Total != 3 || r.Unsaved != 1 || r.Incomplete != 1 || r.LatestStartedAt != "2026-09-26T10:00:00Z" {

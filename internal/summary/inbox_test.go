@@ -11,10 +11,10 @@ func TestInboxSections(t *testing.T) {
 	db := testDB(t)
 	exec(t, db,
 		`INSERT INTO workflows (id, name, is_active, profile_id) VALUES ('w1','A',1,'default'), ('wx','X',1,'other')`,
-		`INSERT INTO hil_pending (id, execution_id, workflow_id, node_id, node_name, status, created_at) VALUES
-		 ('h1','e1','w1','n','N','pending','2026-09-26 08:00:00'),
-		 ('h2','e1','w1','n','N','approved','2026-09-26 07:00:00'),
-		 ('h3','e9','wx','n','N','pending','2026-09-26 06:00:00')`,
+		`INSERT INTO hil_pending (id, execution_id, workflow_id, node_id, node_name, status, created_at, profile_id) VALUES
+		 ('h1','e1','w1','n','N','pending','2026-09-26 08:00:00','default'),
+		 ('h2','e1','w1','n','N','approved','2026-09-26 07:00:00','default'),
+		 ('h3','e9','wx','n','N','pending','2026-09-26 06:00:00','other')`,
 		`INSERT INTO people (id, profile_id, platform, platform_username, full_name, category, created_at) VALUES
 		 ('p1','default','LINKEDIN','a','A','pending_approval','2026-09-25 10:00:00'),
 		 ('p2','default','LINKEDIN','b','B','',                '2026-09-01 10:00:00'),
@@ -66,5 +66,24 @@ func TestInboxSections(t *testing.T) {
 	if ap.Error != "" || ap.ByStatus["pending"] != 2 || ap.ByStatus["applied"] != 1 || ap.ByStatus["rejected"] != 0 ||
 		ap.Evaluated != 1 || ap.UnevaluatedPending != 1 || ap.Added7d != 1 {
 		t.Fatalf("applications = %+v", ap)
+	}
+}
+
+// HIL counts use the row's own profile (like `hil list`) and leave
+// org-triggered rows to `org summary`.
+func TestHILScopeAndOrgRows(t *testing.T) {
+	db := testDB(t)
+	exec(t, db,
+		`INSERT INTO workflows (id, name, profile_id) VALUES ('wf','W','default')`,
+		`INSERT INTO workflow_executions (id, workflow_id, status, trigger_type, profile_id) VALUES
+		 ('e-org','wf','WAITING','org_tool','default'), ('e-man','wf','WAITING','manual','default')`,
+		`INSERT INTO hil_pending (id, execution_id, workflow_id, node_id, node_name, status, profile_id) VALUES
+		 ('h1','e-man','wf-no-sql-row','n','N','pending','default'),
+		 ('h2','e-missing','wf','n','N','pending','default'),
+		 ('h3','e-org','wf','n','N','pending','default'),
+		 ('h4','e-man','wf','n','N','pending','other')`)
+	h := Build(context.Background(), Options{DB: db.DB, ProfileID: "default", Now: now, Sections: map[string]bool{"hil": true}}).HIL
+	if h.Error != "" || h.WorkflowPending != 2 {
+		t.Fatalf("hil = %+v (want h1 and h2 only)", h)
 	}
 }

@@ -117,7 +117,8 @@
       "openEditor": "Open in editor",
       "schedulePaused": "paused",
       "schedulePausedTitle": "The daemon is not running, so schedules do not fire",
-      "scheduleInvalid": "bad schedule"
+      "scheduleInvalid": "bad schedule",
+      "every": "every {{every}}"
     },
     "recentRuns": {
       "title": "Recent Runs",

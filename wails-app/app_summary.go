@@ -7,6 +7,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"os/exec"
 	"strconv"
 	"time"
@@ -31,6 +33,20 @@ func (a *App) rawCLI(timeout time.Duration, args ...string) string {
 	hideWindow(cmd)
 	out, err := cmd.Output()
 	return cliResultJSON(cliBin, out, err)
+}
+
+// cliJSON runs rawCLI and decodes its stdout into result, turning the
+// {"error": …} shape into an error. Bounded by timeout, unlike runMonoCLI:
+// these bindings are polled, and a stalled CLI must not pile up processes.
+func (a *App) cliJSON(timeout time.Duration, result interface{}, args ...string) error {
+	out := a.rawCLI(timeout, args...)
+	var e struct {
+		Error *string `json:"error"`
+	}
+	if json.Unmarshal([]byte(out), &e) == nil && e.Error != nil {
+		return errors.New(*e.Error)
+	}
+	return json.Unmarshal([]byte(out), result)
 }
 
 // GetSummary returns `monoagentcli summary --json` verbatim.
@@ -93,7 +109,7 @@ func (a *App) GetDashboardStats() DashboardStats {
 	var s statsSummary
 	// On failure the Sidebar/StatusBar show zeros; the dashboard itself
 	// reads GetSummary and surfaces the CLI's error there.
-	if err := a.runMonoCLI("", &s, "summary", "--section", "workflows,executions,people,accounts"); err != nil {
+	if err := a.cliJSON(summaryCLITimeout, &s, "summary", "--section", "workflows,executions,people,accounts"); err != nil {
 		return stats
 	}
 	stats.TotalWorkflows = s.Workflows.Total
@@ -116,7 +132,7 @@ func (a *App) GetRecentExecutions(limit int) ([]WorkflowExecutionSummary, error)
 		limit = 20
 	}
 	rows := []WorkflowExecutionSummary{}
-	if err := a.runMonoCLI("", &rows, "workflow", "executions", "--all", "--limit", strconv.Itoa(limit)); err != nil {
+	if err := a.cliJSON(summaryCLITimeout, &rows, "workflow", "executions", "--all", "--limit", strconv.Itoa(limit)); err != nil {
 		return nil, err
 	}
 	return rows, nil

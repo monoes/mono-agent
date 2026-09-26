@@ -2,10 +2,14 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/monoes/mono-agent/internal/capture"
+	"github.com/monoes/mono-agent/internal/extension"
 	"github.com/monoes/mono-agent/internal/jev/jevtest"
 	"github.com/monoes/mono-agent/internal/storage"
 )
@@ -14,6 +18,8 @@ func newSummaryCLITestDB(t *testing.T) *globalConfig {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("MONOAGENT_DAEMON_HEARTBEAT", filepath.Join(t.TempDir(), "hb.json"))
+	// Never probe the developer's real extension bridge.
+	t.Setenv(extension.ExtensionPortEnv, "1")
 	dbPath := filepath.Join(t.TempDir(), "s.db")
 	db, err := storage.NewDatabase(dbPath)
 	if err != nil {
@@ -23,7 +29,7 @@ func newSummaryCLITestDB(t *testing.T) *globalConfig {
 		t.Fatal(err)
 	}
 	if _, err := db.DB.Exec(`INSERT INTO workflows (id, name, is_active, profile_id) VALUES ('w1','A',1,'default');
-		INSERT INTO hil_pending (id, execution_id, workflow_id, node_id, node_name, status) VALUES ('h1','e','w1','n','N','pending')`); err != nil {
+		INSERT INTO hil_pending (id, execution_id, workflow_id, node_id, node_name, status, profile_id) VALUES ('h1','e','w1','n','N','pending','default')`); err != nil {
 		t.Fatal(err)
 	}
 	db.Close()
@@ -124,5 +130,35 @@ func TestSummaryNeverCallsJev(t *testing.T) {
 	}
 	if n := srv.Calls(); n != 0 {
 		t.Fatalf("summary made %d Jev calls", n)
+	}
+}
+
+// Captures are counted from the profile's own inbox, not the unprofiled one.
+func TestSummaryCountsTheProfilesCaptures(t *testing.T) {
+	cfg := newSummaryCLITestDB(t)
+	inbox, err := capture.ProfileInbox("default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, dir := range []string{filepath.Join(inbox, "c1"), filepath.Join(inbox, "c2"), filepath.Join(capture.DefaultInbox(), "stray")} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		meta := fmt.Sprintf(`{"url":"https://example.com/%d","capturedAt":"2026-09-25T10:00:00Z"}`, i)
+		if err := os.WriteFile(filepath.Join(dir, "meta.json"), []byte(meta), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, err := runSummary(t, cfg, "--section", "activity")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Activity struct {
+			CapturesTotal int `json:"captures_total"`
+		} `json:"activity"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil || got.Activity.CapturesTotal != 2 {
+		t.Fatalf("captures_total = %d, want 2 (the profile inbox only)\n%s", got.Activity.CapturesTotal, out)
 	}
 }

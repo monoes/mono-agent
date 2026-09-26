@@ -129,3 +129,30 @@ func TestNoDatabaseIsASectionError(t *testing.T) {
 		t.Fatalf("want section errors, got %+v %+v", s.Executions, s.HIL)
 	}
 }
+
+// The file store lists every profile's workflows; the summary counts only
+// this profile's (and profile-less legacy ones).
+func TestWorkflowsAreProfileScoped(t *testing.T) {
+	db := testDB(t)
+	sched := func(id string) []workflow.WorkflowNode {
+		return []workflow.WorkflowNode{{ID: id, Type: "trigger.schedule", Config: map[string]interface{}{"cron": "@every 5m"}}}
+	}
+	src := fakeWorkflows{wfs: []workflow.Workflow{
+		{ID: "mine", Name: "Mine", IsActive: true, ProfileID: "default", Nodes: sched("a")},
+		{ID: "legacy", Name: "Legacy", IsActive: true, Nodes: sched("b")},
+		{ID: "theirs", Name: "Theirs", IsActive: true, ProfileID: "other", Nodes: sched("c")},
+	}}
+	s := Build(context.Background(), Options{DB: db.DB, ProfileID: "default", Now: now, Workflows: src,
+		Sections: map[string]bool{"workflows": true, "schedules": true}})
+	if s.Workflows.Total != 2 || len(s.Schedules.Upcoming) != 2 {
+		t.Fatalf("workflows = %+v, upcoming = %+v", s.Workflows, s.Schedules.Upcoming)
+	}
+	for _, u := range s.Schedules.Upcoming {
+		if u.WorkflowID == "theirs" {
+			t.Fatal("another profile's schedule leaked in")
+		}
+		if u.Every != "5m" {
+			t.Fatalf("@every row should carry its interval: %+v", u)
+		}
+	}
+}

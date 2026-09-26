@@ -26,7 +26,7 @@ type orgSummaryRow struct {
 }
 
 // perOrgNeedsYouTimeout bounds the monomind round-trips for one org.
-const perOrgNeedsYouTimeout = 10 * time.Second
+var perOrgNeedsYouTimeout = 10 * time.Second // var: tests shorten it
 
 func newOrgSummaryCmd(env *orgEnv) *cobra.Command {
 	var fast bool
@@ -84,13 +84,29 @@ func newOrgSummaryCmd(env *orgEnv) *cobra.Command {
 					defer wg.Done()
 					ctx, cancel := context.WithTimeout(cmd.Context(), perOrgNeedsYouTimeout)
 					defer cancel()
-					items, err := needsYou(ctx, db, profileID, root, name)
-					if err != nil {
-						rows[i].NeedsYouError = err.Error()
-						return
+					// Killing monomind on timeout only reaches the direct child: a
+					// wrapper's grandchild can hold the pipe open past the deadline.
+					// Stop waiting at the deadline instead of trusting the kill.
+					type result struct {
+						n   int
+						err error
 					}
-					n := len(items)
-					rows[i].NeedsYou = &n
+					done := make(chan result, 1)
+					go func() {
+						items, err := needsYou(ctx, db, profileID, root, name)
+						done <- result{len(items), err}
+					}()
+					select {
+					case r := <-done:
+						if r.err != nil {
+							rows[i].NeedsYouError = r.err.Error()
+							return
+						}
+						n := r.n
+						rows[i].NeedsYou = &n
+					case <-ctx.Done():
+						rows[i].NeedsYouError = "timed out after " + perOrgNeedsYouTimeout.String()
+					}
 				}(i, name)
 			}
 			wg.Wait()

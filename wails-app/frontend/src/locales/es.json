@@ -117,7 +117,8 @@
       "openEditor": "Abrir en el editor",
       "schedulePaused": "en pausa",
       "schedulePausedTitle": "El daemon no está en marcha, así que las programaciones no se disparan",
-      "scheduleInvalid": "programación inválida"
+      "scheduleInvalid": "programación inválida",
+      "every": "cada {{every}}"
     },
     "recentRuns": {
       "title": "Ejecuciones recientes",
