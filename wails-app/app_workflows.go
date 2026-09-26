@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -87,20 +88,12 @@ type WorkflowExecutionSummary struct {
 // Workflow CRUD
 // ─────────────────────────────────────────────────────────────────────────────
 
-// workflowToDetail converts a *workflow.Workflow into a *WorkflowDetail for the frontend.
+// workflowToDetail converts `workflow get`'s document into the editor's shape.
 func workflowToDetail(wf *workflow.Workflow) *WorkflowDetail {
 	detail := &WorkflowDetail{
-		WorkflowSummary: WorkflowSummary{
-			ID:          wf.ID,
-			Name:        wf.Name,
-			Description: wf.Description,
-			IsActive:    wf.IsActive,
-			Version:     wf.Version,
-			CreatedAt:   wf.CreatedAt.Format(time.RFC3339),
-			UpdatedAt:   wf.UpdatedAt.Format(time.RFC3339),
-		},
-		Nodes:       []WorkflowNodeData{},
-		Connections: []WorkflowConnectionData{},
+		WorkflowSummary: workflowSummaryOf(wf),
+		Nodes:           []WorkflowNodeData{},
+		Connections:     []WorkflowConnectionData{},
 	}
 	for _, n := range wf.Nodes {
 		detail.Nodes = append(detail.Nodes, WorkflowNodeData{
@@ -184,47 +177,21 @@ func (a *App) CreateWorkflowFromTemplate(templateID string) (*WorkflowSummary, e
 	return a.SaveWorkflow(req)
 }
 
-// ListWorkflows returns the active profile's workflows via the hybrid store
-// (file-first), so workflows that exist only as JSON files — the canonical
-// form for everything saved through the GUI or `workflow create` — appear
-// even before they have SQL metadata rows.
+// ListWorkflows returns `monoagentcli workflow list`: the active profile's
+// workflows from the file store and SQLite, with node counts, newest first.
 func (a *App) ListWorkflows() ([]WorkflowSummary, error) {
-	if a.wfStore == nil {
-		return nil, fmt.Errorf("workflow store not available")
+	var rows []struct {
+		workflow.Workflow
+		NodeCount int `json:"node_count"`
 	}
-	wfs, err := a.wfStore.ListWorkflows(context.Background(), a.getActiveProfileID())
-	if err != nil {
+	if err := a.runMonoCLI("", &rows, "workflow", "list"); err != nil {
 		return nil, err
 	}
-	profileID := a.getActiveProfileID()
-	// One grouped query for every row, rather than a GetWorkflow per row.
-	// A failure here costs the counts, not the list.
-	nodeCounts, err := a.wfStore.NodeCounts(context.Background(), profileID)
-	if err != nil {
-		a.emitLog("WORKFLOW", "WARN", fmt.Sprintf("could not count workflow nodes: %v", err))
-		nodeCounts = map[string]int{}
-	}
-	summaries := make([]WorkflowSummary, 0, len(wfs))
-	for _, wf := range wfs {
-		// The hybrid store's file half has no profile filter — apply the
-		// same COALESCE(profile_id,'default') semantics its SQL half uses.
-		wfProfile := wf.ProfileID
-		if wfProfile == "" {
-			wfProfile = "default"
-		}
-		if wfProfile != profileID {
-			continue
-		}
-		summaries = append(summaries, WorkflowSummary{
-			ID:          wf.ID,
-			Name:        wf.Name,
-			Description: wf.Description,
-			IsActive:    wf.IsActive,
-			Version:     wf.Version,
-			CreatedAt:   wf.CreatedAt.Format(time.RFC3339),
-			UpdatedAt:   wf.UpdatedAt.Format(time.RFC3339),
-			NodeCount:   nodeCounts[wf.ID],
-		})
+	summaries := make([]WorkflowSummary, 0, len(rows))
+	for _, r := range rows {
+		s := workflowSummaryOf(&r.Workflow)
+		s.NodeCount = r.NodeCount
+		summaries = append(summaries, s)
 	}
 	sort.Slice(summaries, func(i, j int) bool {
 		return summaries[i].UpdatedAt > summaries[j].UpdatedAt
@@ -232,106 +199,56 @@ func (a *App) ListWorkflows() ([]WorkflowSummary, error) {
 	return summaries, nil
 }
 
+// GetWorkflow returns `workflow get <id>`; another profile's workflow is not
+// found.
 func (a *App) GetWorkflow(id string) (*WorkflowDetail, error) {
-	if a.wfStore == nil {
-		return nil, fmt.Errorf("workflow store not available")
+	var wf workflow.Workflow
+	if err := a.runMonoCLI("", &wf, "workflow", "get", id); err != nil {
+		return nil, err
 	}
-	ctx := context.Background()
-	wf, err := a.wfStore.GetWorkflow(ctx, id)
+	return workflowToDetail(&wf), nil
+}
+
+// SaveWorkflow hands the editor's document to `workflow save` on stdin. Its
+// JSON is the shape `workflow get` prints, so the request goes as it is. An
+// existing workflow keeps its activation (that is SetWorkflowActive's job):
+// the editor never sends is_active.
+func (a *App) SaveWorkflow(req SaveWorkflowRequest) (*WorkflowSummary, error) {
+	doc, err := json.Marshal(req)
 	if err != nil {
 		return nil, err
 	}
-	if wf == nil {
-		return nil, fmt.Errorf("workflow %s not found", id)
-	}
-	// Verify caller owns this workflow.
-	if a.db != nil {
-		var wfProfile string
-		_ = a.db.QueryRow(`SELECT profile_id FROM workflows WHERE id = ?`, id).Scan(&wfProfile)
-		if wfProfile != "" && wfProfile != a.getActiveProfileID() {
-			return nil, fmt.Errorf("workflow %s not found", id)
-		}
-	}
-	return workflowToDetail(wf), nil
-}
-
-func (a *App) SaveWorkflow(req SaveWorkflowRequest) (*WorkflowSummary, error) {
-	if a.wfStore == nil {
-		return nil, fmt.Errorf("workflow store not available")
-	}
-	if a.db != nil && req.ID != "" {
-		var wfProfile string
-		_ = a.db.QueryRow(`SELECT profile_id FROM workflows WHERE id = ?`, req.ID).Scan(&wfProfile)
-		if wfProfile != "" && wfProfile != a.getActiveProfileID() {
-			return nil, fmt.Errorf("workflow %s not found", req.ID)
-		}
-	}
-	ctx := context.Background()
-	wf := &workflow.Workflow{
-		ID:          req.ID,
-		Name:        req.Name,
-		Description: req.Description,
-		IsActive:    req.IsActive,
-		ProfileID:   a.getActiveProfileID(),
-	}
-	// Saving an existing workflow edits its definition, not its activation —
-	// that is SetWorkflowActive's job. The editor never sends is_active, so
-	// honouring req.IsActive here deactivated the workflow on every
-	// auto-save-before-run, and the run then failed as "inactive".
-	if req.ID != "" {
-		if existing, err := a.wfStore.GetWorkflow(ctx, req.ID); err == nil && existing != nil {
-			wf.IsActive = existing.IsActive
-		}
-	}
-	for _, n := range req.Nodes {
-		node := workflow.WorkflowNode{
-			ID:        n.ID,
-			Type:      n.NodeType,
-			Name:      n.Name,
-			PositionX: n.PositionX,
-			PositionY: n.PositionY,
-			Disabled:  n.Disabled,
-			Config:    n.Config,
-			Schema:    n.Schema,
-		}
-		if node.Schema == nil {
-			schema, _ := workflow.LoadDefaultSchema(node.Type)
-			node.Schema = schema
-		}
-		wf.Nodes = append(wf.Nodes, node)
-	}
-	for _, c := range req.Connections {
-		wf.Connections = append(wf.Connections, workflow.WorkflowConnection{
-			ID:           c.ID,
-			SourceNodeID: c.SourceNodeID,
-			SourceHandle: c.SourceHandle,
-			TargetNodeID: c.TargetNodeID,
-			TargetHandle: c.TargetHandle,
-			Position:     c.Position,
-		})
-	}
-	if err := a.wfStore.SaveWorkflow(ctx, wf); err != nil {
+	var wf workflow.Workflow
+	if err := a.runMonoCLI(string(doc), &wf, "workflow", "save"); err != nil {
 		return nil, err
 	}
-	// The hybrid store saves file-first and has no profile concept, so the
-	// old follow-up UPDATE hit a nonexistent SQL row and silently no-opped.
-	// Mirror the hybrid store's ensureSQLWorkflow instead: INSERT OR IGNORE a
-	// minimal metadata row (executions and profile scoping reference it),
-	// then tag it with the active profile.
-	if a.db != nil {
-		isActive := 0
-		if wf.IsActive {
-			isActive = 1
-		}
-		_, _ = a.db.Exec(`INSERT OR IGNORE INTO workflows
-			(id, name, description, is_active, version, profile_id, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			wf.ID, wf.Name, wf.Description, isActive, wf.Version, a.getActiveProfileID(),
-			wf.CreatedAt.UTC().Format(time.RFC3339), wf.UpdatedAt.UTC().Format(time.RFC3339))
-		_, _ = a.db.Exec(`UPDATE workflows SET profile_id = ? WHERE id = ?`, a.getActiveProfileID(), wf.ID)
-	}
 	a.emitLog("WORKFLOW", "INFO", fmt.Sprintf("Saved workflow: %s [%s]", wf.Name, wf.ID))
-	return &WorkflowSummary{
+	s := workflowSummaryOf(&wf)
+	return &s, nil
+}
+
+// DeleteWorkflow runs `workflow delete <id> --yes`: no prompt, but a
+// workflow that orgs use is refused with the CLI's explanation.
+func (a *App) DeleteWorkflow(id string) error {
+	if err := a.runMonoCLI("", nil, "workflow", "delete", id, "--yes"); err != nil {
+		return err
+	}
+	a.emitLog("WORKFLOW", "WARN", "Deleted workflow: "+id)
+	return nil
+}
+
+// SetWorkflowActive runs `workflow activate` or `workflow deactivate`.
+func (a *App) SetWorkflowActive(id string, active bool) error {
+	verb := "deactivate"
+	if active {
+		verb = "activate"
+	}
+	return a.runMonoCLI("", nil, "workflow", verb, id)
+}
+
+// workflowSummaryOf is the list/save row for wf, timestamps in RFC 3339.
+func workflowSummaryOf(wf *workflow.Workflow) WorkflowSummary {
+	return WorkflowSummary{
 		ID:          wf.ID,
 		Name:        wf.Name,
 		Description: wf.Description,
@@ -339,45 +256,7 @@ func (a *App) SaveWorkflow(req SaveWorkflowRequest) (*WorkflowSummary, error) {
 		Version:     wf.Version,
 		CreatedAt:   wf.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:   wf.UpdatedAt.Format(time.RFC3339),
-	}, nil
-}
-
-func (a *App) DeleteWorkflow(id string) error {
-	if a.wfStore == nil {
-		return fmt.Errorf("workflow store not available")
 	}
-	if a.db != nil {
-		var wfProfile string
-		_ = a.db.QueryRow(`SELECT profile_id FROM workflows WHERE id = ?`, id).Scan(&wfProfile)
-		if wfProfile != "" && wfProfile != a.getActiveProfileID() {
-			return fmt.Errorf("workflow %s not found", id)
-		}
-	}
-	err := a.wfStore.DeleteWorkflow(context.Background(), id)
-	if err == nil {
-		a.emitLog("WORKFLOW", "WARN", "Deleted workflow: "+id)
-	}
-	return err
-}
-
-func (a *App) SetWorkflowActive(id string, active bool) error {
-	if a.wfStore == nil {
-		return fmt.Errorf("workflow store not available")
-	}
-	ctx := context.Background()
-	if a.db != nil {
-		var wfProfile string
-		_ = a.db.QueryRow(`SELECT profile_id FROM workflows WHERE id = ?`, id).Scan(&wfProfile)
-		if wfProfile != "" && wfProfile != a.getActiveProfileID() {
-			return fmt.Errorf("workflow %s not found", id)
-		}
-	}
-	wf, err := a.wfStore.GetWorkflow(ctx, id)
-	if err != nil || wf == nil {
-		return fmt.Errorf("workflow %s not found", id)
-	}
-	wf.IsActive = active
-	return a.wfStore.SaveWorkflow(ctx, wf)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -393,77 +272,20 @@ type WorkflowImportResult struct {
 	Status string `json:"status,omitempty"`
 }
 
-// workflowFileFromStore converts a stored *workflow.Workflow into the
-// documented WorkflowFile JSON shape — the same shape `monoagentcli workflow
-// export` emits and `workflow import` parses natively — so GUI exports
-// roundtrip through the CLI losslessly.
-func workflowFileFromStore(wf *workflow.Workflow) workflow.WorkflowFile {
-	file := workflow.WorkflowFile{
-		ID:          wf.ID,
-		Name:        wf.Name,
-		Description: wf.Description,
-		Version:     wf.Version,
-		IsActive:    wf.IsActive,
-		ProfileID:   wf.ProfileID,
-		CreatedAt:   wf.CreatedAt,
-		UpdatedAt:   wf.UpdatedAt,
-	}
-	for _, n := range wf.Nodes {
-		fn := workflow.WorkflowFileNode{
-			ID:       n.ID,
-			Type:     n.Type,
-			Name:     n.Name,
-			Disabled: n.Disabled,
-			Config:   n.Config,
-			Schema:   n.Schema,
-		}
-		fn.Position.X = n.PositionX
-		fn.Position.Y = n.PositionY
-		if fn.Config == nil {
-			fn.Config = map[string]interface{}{}
-		}
-		file.Nodes = append(file.Nodes, fn)
-	}
-	for _, c := range wf.Connections {
-		file.Connections = append(file.Connections, workflow.WorkflowFileEdge{
-			ID:           c.ID,
-			Source:       c.SourceNodeID,
-			SourceHandle: c.SourceHandle,
-			Target:       c.TargetNodeID,
-			TargetHandle: c.TargetHandle,
-		})
-	}
-	return file
-}
-
-// ExportWorkflow returns the workflow as JSON in the documented WorkflowFile
-// format — the same output `monoagentcli workflow export <id>` emits.
+// ExportWorkflow returns `monoagentcli workflow export <id>` verbatim: the
+// documented WorkflowFile JSON that `workflow import` reads back.
 func (a *App) ExportWorkflow(workflowID string) (string, error) {
-	if a.wfStore == nil {
-		return "", fmt.Errorf("workflow store not available")
-	}
-	ctx := context.Background()
-	wf, err := a.wfStore.GetWorkflow(ctx, workflowID)
-	if err != nil {
+	var file json.RawMessage
+	if err := a.runMonoCLI("", &file, "workflow", "export", workflowID); err != nil {
 		return "", err
 	}
-	if wf == nil {
-		return "", fmt.Errorf("workflow %s not found", workflowID)
+	var head struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
 	}
-	// Verify caller owns this workflow (same check as GetWorkflow).
-	if a.db != nil {
-		var wfProfile string
-		_ = a.db.QueryRow(`SELECT profile_id FROM workflows WHERE id = ?`, workflowID).Scan(&wfProfile)
-		if wfProfile != "" && wfProfile != a.getActiveProfileID() {
-			return "", fmt.Errorf("workflow %s not found", workflowID)
-		}
-	}
-	data, err := json.MarshalIndent(workflowFileFromStore(wf), "", "  ")
-	if err != nil {
-		return "", err
-	}
-	a.emitLog("WORKFLOW", "INFO", fmt.Sprintf("Exported workflow: %s [%s]", wf.Name, wf.ID))
-	return string(data), nil
+	_ = json.Unmarshal(file, &head)
+	a.emitLog("WORKFLOW", "INFO", fmt.Sprintf("Exported workflow: %s [%s]", head.Name, head.ID))
+	return string(file), nil
 }
 
 // ImportWorkflow imports a workflow from raw WorkflowFile JSON or a path to
@@ -570,20 +392,10 @@ func (a *App) RunWorkflowWithInput(id, inputJSON string) error {
 }
 
 func (a *App) runWorkflowProcess(id, inputJSON string) error {
-	if a.wfStore == nil {
-		return fmt.Errorf("workflow store not available")
-	}
-	ctx := context.Background()
-	if a.db != nil {
-		var wfProfile string
-		_ = a.db.QueryRow(`SELECT profile_id FROM workflows WHERE id = ?`, id).Scan(&wfProfile)
-		if wfProfile != "" && wfProfile != a.getActiveProfileID() {
-			return fmt.Errorf("workflow %s not found", id)
-		}
-	}
-	wf, err := a.wfStore.GetWorkflow(ctx, id)
-	if err != nil || wf == nil {
-		return fmt.Errorf("workflow %s not found", id)
+	// `workflow get` is profile-scoped, so another profile's id is not found.
+	wf, err := a.GetWorkflow(id)
+	if err != nil {
+		return err
 	}
 	// The engine rejects inactive workflows — surface that here instead of
 	// silently flipping is_active behind the user's back.
@@ -611,7 +423,11 @@ func (a *App) runWorkflowProcess(id, inputJSON string) error {
 	if inputJSON != "" {
 		runArgs = append(runArgs, "--input", inputJSON)
 	}
-	cmd := exec.CommandContext(a.ctx, cliBin, runArgs...)
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cmd := exec.CommandContext(ctx, cliBin, runArgs...)
 	hideWindow(cmd)
 	stdout, _ := cmd.StdoutPipe()
 	stderr, _ := cmd.StderrPipe()
@@ -630,6 +446,7 @@ func (a *App) runWorkflowProcess(id, inputJSON string) error {
 	}
 	a.emitLog("WORKFLOW", "INFO", fmt.Sprintf("Workflow %s started (pid %d)", id, cmd.Process.Pid))
 
+	var execID string // set once the CLI names the execution
 	go func() {
 		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
@@ -637,10 +454,18 @@ func (a *App) runWorkflowProcess(id, inputJSON string) error {
 			a.emitLog("WORKFLOW", "INFO", line)
 			// Detect execution ID from CLI output and notify the frontend
 			if strings.HasPrefix(line, "Execution started: ") {
-				execID := strings.TrimPrefix(line, "Execution started: ")
-				runtime.EventsEmit(a.ctx, "workflow:exec-started", map[string]interface{}{
+				started := strings.TrimSpace(strings.TrimPrefix(line, "Execution started: "))
+				// Also track the process by execution id, so CancelWorkflow
+				// can kill it without looking the execution up.
+				a.runningMu.Lock()
+				if a.runningCmds[id] == cmd {
+					execID = started
+					a.runningCmds[execID] = cmd
+				}
+				a.runningMu.Unlock()
+				a.emitWorkflowEvent("workflow:exec-started", map[string]interface{}{
 					"workflow_id":  id,
-					"execution_id": strings.TrimSpace(execID),
+					"execution_id": started,
 				})
 			}
 		}
@@ -652,228 +477,164 @@ func (a *App) runWorkflowProcess(id, inputJSON string) error {
 		}
 	}()
 	go func() {
-		defer func() {
-			a.runningMu.Lock()
-			delete(a.runningCmds, id)
-			a.runningMu.Unlock()
-		}()
 		waitErr := cmd.Wait()
+		a.runningMu.Lock()
+		for key, c := range a.runningCmds {
+			if c == cmd {
+				delete(a.runningCmds, key)
+			}
+		}
+		a.runningMu.Unlock()
 		if waitErr != nil {
 			a.emitLog("WORKFLOW", "ERROR", fmt.Sprintf("Workflow %s failed: %v", id, waitErr))
-			runtime.EventsEmit(a.ctx, "workflow:complete", map[string]interface{}{"workflow_id": id, "success": false})
+			a.emitWorkflowEvent("workflow:complete", map[string]interface{}{"workflow_id": id, "success": false})
 		} else {
 			a.emitLog("WORKFLOW", "INFO", fmt.Sprintf("Workflow %s completed", id))
-			runtime.EventsEmit(a.ctx, "workflow:complete", map[string]interface{}{"workflow_id": id, "success": true})
+			a.emitWorkflowEvent("workflow:complete", map[string]interface{}{"workflow_id": id, "success": true})
 		}
 	}()
 	return nil
 }
 
-func (a *App) GetWorkflowExecutions(workflowID string, limit int) ([]WorkflowExecutionSummary, error) {
-	if a.db == nil {
-		return nil, fmt.Errorf("database not available")
+// emitWorkflowEvent emits to the frontend once the Wails runtime is up
+// (emitLog's guard): tests drive the run bindings without one.
+func (a *App) emitWorkflowEvent(name string, data map[string]interface{}) {
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, name, data)
 	}
+}
+
+// workflowPollCLITimeout bounds the execution bindings the editor polls
+// while a run is in progress.
+const workflowPollCLITimeout = 20 * time.Second
+
+// GetWorkflowExecutions returns `workflow executions <id> --limit <n>`,
+// newest first (50 when limit is not positive).
+func (a *App) GetWorkflowExecutions(workflowID string, limit int) ([]WorkflowExecutionSummary, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	rows, err := a.db.Query(`SELECT we.id, we.workflow_id, we.status, we.trigger_type,
-	                                 COALESCE(we.started_at, '') as started_at,
-	                                 COALESCE(we.finished_at, '') as finished_at,
-	                                 COALESCE(we.error_message, '') as error,
-	                                 we.created_at
-	                          FROM workflow_executions we
-	                          JOIN workflows w ON w.id = we.workflow_id
-	                          WHERE we.workflow_id = ? AND w.profile_id = ?
-	                          ORDER BY we.created_at DESC
-	                          LIMIT ?`, workflowID, a.getActiveProfileID(), limit)
-	if err != nil {
+	var rows []workflow.WorkflowExecution
+	if err := a.cliJSON(workflowPollCLITimeout, &rows, "workflow", "executions", workflowID, "--limit", strconv.Itoa(limit)); err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var execs []WorkflowExecutionSummary
-	for rows.Next() {
-		var e WorkflowExecutionSummary
-		if rows.Scan(&e.ID, &e.WorkflowID, &e.Status, &e.TriggerType,
-			&e.StartedAt, &e.FinishedAt, &e.Error, &e.CreatedAt) == nil {
-			execs = append(execs, e)
+	stamp := func(t *time.Time) string {
+		if t == nil {
+			return ""
 		}
+		return t.Format(time.RFC3339Nano)
 	}
-	if execs == nil {
-		execs = []WorkflowExecutionSummary{}
-	}
-	return execs, rows.Err()
-}
-
-// GetExecutionDetail returns a full execution record with per-node status.
-func (a *App) GetExecutionDetail(executionID string) (map[string]interface{}, error) {
-	if a.db == nil {
-		return nil, fmt.Errorf("database not available")
-	}
-
-	// Fetch the execution itself.
-	var execID, wfID, status, triggerType, startedAt, finishedAt, errMsg, createdAt string
-	err := a.db.QueryRow(`SELECT id, workflow_id, status,
-	                              COALESCE(trigger_type,'') as trigger_type,
-	                              COALESCE(started_at,'') as started_at,
-	                              COALESCE(finished_at,'') as finished_at,
-	                              COALESCE(error_message,'') as error_message,
-	                              created_at
-	                       FROM workflow_executions WHERE id = ? AND profile_id = ?`, executionID, a.getActiveProfileID()).
-		Scan(&execID, &wfID, &status, &triggerType, &startedAt, &finishedAt, &errMsg, &createdAt)
-	if err != nil {
-		return nil, fmt.Errorf("execution not found: %w", err)
-	}
-
-	// Fetch per-node execution rows.
-	rows, err := a.db.Query(`SELECT id, node_id, node_name, status,
-	                                COALESCE(error_message,'') as error_message,
-	                                COALESCE(started_at,'') as started_at,
-	                                COALESCE(finished_at,'') as finished_at,
-	                                COALESCE(input_items,'[]') as input_items,
-	                                COALESCE(output_items,'[]') as output_items,
-	                                retry_count
-	                         FROM workflow_execution_nodes
-	                         WHERE execution_id = ?
-	                         ORDER BY started_at`, executionID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var nodesList []map[string]interface{}
-	for rows.Next() {
-		var nID, nodeID, nodeName, nStatus, nErr, nStarted, nFinished, inputItems, outputItems string
-		var retryCount int
-		if err := rows.Scan(&nID, &nodeID, &nodeName, &nStatus, &nErr, &nStarted, &nFinished, &inputItems, &outputItems, &retryCount); err != nil {
-			continue
-		}
-		nodesList = append(nodesList, map[string]interface{}{
-			"id":            nID,
-			"node_id":       nodeID,
-			"node_name":     nodeName,
-			"status":        nStatus,
-			"error_message": nErr,
-			"started_at":    nStarted,
-			"finished_at":   nFinished,
-			"input_items":   redactExecutionItemsJSON(inputItems),
-			"output_items":  redactExecutionItemsJSON(outputItems),
-			"retry_count":   retryCount,
+	execs := make([]WorkflowExecutionSummary, 0, len(rows))
+	for _, e := range rows {
+		execs = append(execs, WorkflowExecutionSummary{
+			ID:          e.ID,
+			WorkflowID:  e.WorkflowID,
+			Status:      e.Status,
+			TriggerType: e.TriggerType,
+			StartedAt:   stamp(e.StartedAt),
+			FinishedAt:  stamp(e.FinishedAt),
+			Error:       e.ErrorMessage,
+			CreatedAt:   stamp(&e.CreatedAt),
 		})
 	}
-	if nodesList == nil {
-		nodesList = []map[string]interface{}{}
-	}
+	return execs, nil
+}
 
+// GetExecutionDetail returns `workflow execution <id>`: the execution with
+// per-node status, items already redacted by the CLI. The editor reads each
+// node's input_items/output_items as a JSON string, as it always has.
+func (a *App) GetExecutionDetail(executionID string) (map[string]interface{}, error) {
+	var d struct {
+		ID          string `json:"id"`
+		WorkflowID  string `json:"workflow_id"`
+		Status      string `json:"status"`
+		TriggerType string `json:"trigger_type"`
+		StartedAt   string `json:"started_at"`
+		FinishedAt  string `json:"finished_at"`
+		Error       string `json:"error_message"`
+		CreatedAt   string `json:"created_at"`
+		Nodes       []struct {
+			ID           string          `json:"id"`
+			NodeID       string          `json:"node_id"`
+			NodeName     string          `json:"node_name"`
+			Status       string          `json:"status"`
+			ErrorMessage string          `json:"error_message"`
+			StartedAt    string          `json:"started_at"`
+			FinishedAt   string          `json:"finished_at"`
+			InputItems   json.RawMessage `json:"input_items"`
+			OutputItems  json.RawMessage `json:"output_items"`
+			RetryCount   int             `json:"retry_count"`
+		} `json:"nodes"`
+	}
+	if err := a.cliJSON(workflowPollCLITimeout, &d, "workflow", "execution", executionID); err != nil {
+		return nil, err
+	}
+	nodesList := make([]map[string]interface{}, 0, len(d.Nodes))
+	for _, n := range d.Nodes {
+		nodesList = append(nodesList, map[string]interface{}{
+			"id":            n.ID,
+			"node_id":       n.NodeID,
+			"node_name":     n.NodeName,
+			"status":        n.Status,
+			"error_message": n.ErrorMessage,
+			"started_at":    n.StartedAt,
+			"finished_at":   n.FinishedAt,
+			"input_items":   itemsString(n.InputItems),
+			"output_items":  itemsString(n.OutputItems),
+			"retry_count":   n.RetryCount,
+		})
+	}
 	return map[string]interface{}{
-		"id":           execID,
-		"workflow_id":  wfID,
-		"status":       status,
-		"trigger_type": triggerType,
-		"started_at":   startedAt,
-		"finished_at":  finishedAt,
-		"error":        errMsg,
-		"created_at":   createdAt,
+		"id":           d.ID,
+		"workflow_id":  d.WorkflowID,
+		"status":       d.Status,
+		"trigger_type": d.TriggerType,
+		"started_at":   d.StartedAt,
+		"finished_at":  d.FinishedAt,
+		"error":        d.Error,
+		"created_at":   d.CreatedAt,
 		"nodes":        nodesList,
 	}, nil
 }
 
-// redactExecutionItemsJSON parses a workflow_execution_nodes input_items/
-// output_items column value (a JSON array of workflow.Item, see
-// WorkflowExecutionNode.MarshalItems) and re-serializes it after running the
-// same redaction pipeline every other execution-output surface uses —
-// cmd/monoagentcli's execution_json.go (workflow.RedactItemJSON) and
-// internal/mcp/tools.go / internal/httpapi/server.go
-// (workflow.RedactAndTruncateItems) — so nodes like vault.secret_get, which
-// intentionally put decrypted credentials into the item stream relying on
-// display-boundary masking, never show them unmasked in this desktop view.
-// If the stored JSON can't be parsed, the raw string is returned unchanged
-// rather than silently dropping data.
-func redactExecutionItemsJSON(raw string) string {
-	var items []workflow.Item
-	if err := json.Unmarshal([]byte(raw), &items); err != nil {
-		return raw
+// itemsString turns the CLI's item array back into the compact JSON string
+// the editor parses; a value the CLI kept as a string comes back unchanged.
+func itemsString(raw json.RawMessage) string {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
 	}
-	redacted := workflow.RedactAndTruncateItems(items)
-	b, err := json.Marshal(redacted)
-	if err != nil {
-		return raw
+	var buf bytes.Buffer
+	if json.Compact(&buf, raw) != nil {
+		return string(raw)
 	}
-	return string(b)
+	return buf.String()
 }
 
-// CancelWorkflow cancels a running workflow execution.
+// CancelWorkflow cancels a running workflow execution. A process this app
+// started for it (RunWorkflow) is the app's to kill; the rest — stopping a
+// process started elsewhere, which must never be the daemon, and marking
+// the execution cancelled — is `workflow cancel <id>`.
 func (a *App) CancelWorkflow(executionID string) error {
-	if a.db == nil {
-		return fmt.Errorf("database not available")
-	}
-
-	// Look up the workflow_id and pid for this execution, scoped to the active
-	// profile so one profile cannot resolve (and kill) another's subprocess.
-	var workflowID string
-	var pid int
-	_ = a.db.QueryRow(`SELECT workflow_id, COALESCE(pid,0) FROM workflow_executions WHERE id = ? AND profile_id = ?`, executionID, a.getActiveProfileID()).Scan(&workflowID, &pid)
-
-	// Kill the subprocess if tracked by Wails (started via RunWorkflow).
 	a.runningMu.Lock()
-	killed := false
-	if workflowID != "" {
-		if cmd, ok := a.runningCmds[workflowID]; ok && cmd.Process != nil {
+	if cmd, ok := a.runningCmds[executionID]; ok {
+		if cmd.Process != nil {
 			_ = cmd.Process.Kill()
-			delete(a.runningCmds, workflowID)
-			killed = true
 		}
-	}
-	if !killed {
-		if cmd, ok := a.runningCmds[executionID]; ok && cmd.Process != nil {
-			_ = cmd.Process.Kill()
-			delete(a.runningCmds, executionID)
-			killed = true
+		for key, c := range a.runningCmds {
+			if c == cmd {
+				delete(a.runningCmds, key)
+			}
 		}
 	}
 	a.runningMu.Unlock()
 
-	// Kill external CLI process via PID stored in the DB — but only after
-	// two safety checks:
-	//  1. The PID must not be the daemon itself: the long-running daemon
-	//     stamps its own PID on every execution it runs in-process for
-	//     scheduled/webhook triggers (SetExecutionStarted records
-	//     os.Getpid()), so a stuck scheduled execution's "pid" is the
-	//     daemon — signalling it kills the whole daemon (and every other
-	//     profile's active triggers with it), which then gets respawned,
-	//     re-launching Chrome and re-touching Keychain-backed vault secrets
-	//     on every restart.
-	//  2. The PID must still belong to a monoagent binary: a stale pid can
-	//     have been reused by the OS for an unrelated process, and
-	//     signaling it would kill someone else's work (signalWorkflowPID
-	//     verifies before signalling).
-	// On refusal nothing is marked cancelled.
-	if !killed && pid > 0 && !isMonoagentDaemonProcess(pid) {
-		if err := signalWorkflowPID(pid); err != nil {
-			a.emitLog("WORKFLOW", "ERROR", fmt.Sprintf("Execution %s: %v", executionID, err))
-			return err
-		}
+	if err := a.runMonoCLI("", nil, "workflow", "cancel", executionID); err != nil {
+		a.emitLog("WORKFLOW", "ERROR", fmt.Sprintf("Execution %s: %v", executionID, err))
+		return err
 	}
-
-	// Mark cancelled in DB — scoped to the active profile for safety.
-	_, _ = a.db.Exec(`UPDATE workflow_executions SET status = 'CANCELLED', finished_at = CURRENT_TIMESTAMP WHERE id = ? AND profile_id = ?`, executionID, a.getActiveProfileID())
-	// Reject any pending HIL items for this execution so they don't stay blocked forever.
-	_, _ = a.db.Exec(`UPDATE hil_pending SET status='rejected', updated_at=CURRENT_TIMESTAMP WHERE execution_id=? AND status='pending' AND profile_id = ?`, executionID, a.getActiveProfileID())
 	a.emitLog("WORKFLOW", "INFO", fmt.Sprintf("Execution %s cancelled", executionID))
 	return nil
-}
-
-// isMonoagentDaemonProcess reports whether pid is a running `monoagentcli
-// daemon` process, so CancelWorkflow's PID-signal fallback can refuse to
-// kill it — that PID column is also stamped (as the current process's own
-// PID) on every execution the daemon runs in-process for scheduled/webhook
-// triggers, and signalling it would take down the whole daemon.
-func isMonoagentDaemonProcess(pid int) bool {
-	out, err := exec.Command("ps", "-p", fmt.Sprintf("%d", pid), "-o", "command=").Output()
-	if err != nil {
-		return false
-	}
-	cmdline := string(out)
-	return strings.Contains(cmdline, "monoagentcli") && strings.Contains(cmdline, "daemon")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
