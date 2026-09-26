@@ -260,3 +260,25 @@ test("only this extension's pages may drive a recording, and only tabs send even
   await call({ type: "recorder_event", event: { type: "click", url: "https://app.test/7", at: 1 } }, { id: "evil", tab: { id: 7 } });
   assert.equal(wire.filter((f) => f.op === "event").length, 0, "events come only from this extension's page recorders");
 });
+
+test("a verify that fails with its report still hands the report to the panel (R6-1)", async () => {
+  const { g, wire, call, settle } = load();
+  const verifying = call({ type: "record_verify", draftDir: "/d" });
+  await settle();
+  const req = wire.find((f) => f.method === "record.verify");
+  const report = { ok: false, steps: [{ id: "s1", type: "click", status: "fail", message: "no such element" }] };
+  g.MonoAsk.handleFrame({ kind: "reply", id: req.id, ok: false, error: "verify failed", data: report });
+  const res = await verifying;
+  assert.equal(res.ok, true);
+  assert.deepEqual(res.result, Object.assign({ ok: false, error: "verify failed" }, report));
+});
+
+test("a verify that fails with no report is a plain error", async () => {
+  const { g, wire, call, settle } = load();
+  const verifying = call({ type: "record_verify", draftDir: "/d" });
+  await settle();
+  const req = wire.find((f) => f.method === "record.verify");
+  g.MonoAsk.handleFrame({ kind: "reply", id: req.id, ok: false, error: "browser bridge not connected" });
+  const res = await verifying;
+  assert.deepEqual([res.ok, res.error], [false, "browser bridge not connected"]);
+});
