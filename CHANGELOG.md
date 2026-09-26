@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A new dashboard.** The desktop home page now shows everything the app does:
+  - A **Needs you** strip lists only what's waiting on you: approvals, org
+    questions, leads to review, drafts, broken selectors, expired logins,
+    failed runs, health issues, and scheduled workflows that won't fire because
+    the daemon is off. Each item links to where you can act on it.
+  - Each workflow shows when it runs next, or "paused" when the daemon is off.
+  - New cards cover orgs, automation packages (including selector health and
+    recordings), logins that are active, expiring or expired, activity over the
+    last seven days (captures, documents, messages, applications, people), and
+    the system (daemon, browser bridge, org serve, health, Jev usage).
+  - The vault tile shows how many secrets and images you have, never their
+    names or values.
+  - English and Spanish, and the layout reflows when a side panel is open.
+- **`monoagentcli summary`** is one read-only local call with the counts above
+  (`--section` narrows it). It never calls Jev, monomind or the network, so it
+  is safe to poll.
+- **`monoagentcli org summary [--fast]`** gives one row per org: running,
+  autonomy level, queued messages and items that need you. `--fast` reads local
+  files only.
+- **`monoagentcli workflow executions --all`** lists recent runs across every
+  workflow.
+
+### Changed
+
+- The dashboard, sidebar and status-bar counts now come from the CLI instead of
+  the desktop app reading the database itself.
+- The dashboard stops polling while another page is open.
+
+### Fixed
+
+- The dashboard showed successful runs in grey, and the running indicator never
+  pulsed.
+
 ## [0.72.0] - 2026-09-26
 
 ### Added
