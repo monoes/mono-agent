@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.74.0] - 2026-09-26
+
+### Fixed
+
+- **The desktop app's update button** now verifies every download against
+  the release's SHA256SUMS and HTTP status before installing, stages files
+  next to the app (no more "invalid cross-device link" on Linux), and
+  updates the bundled CLI together with the app. The 0.73.0 entry claimed
+  this for a code path the button never used; that unused updater is
+  removed.
+- **Upgrading from older versions:**
+  - Old actions whose platform name contains `_` (e.g. `google_maps`) keep
+    their node names.
+  - Packages generated from `~/.monoagent/actions` get their allowed sites
+    derived from their actions and no longer show validation errors.
+  - Re-importing a workflow imported by an older version no longer
+    duplicates it.
+- **Workflows bundled with legacy automations** can be exported and
+  imported on another machine.
+- **Node forms:**
+  - Hacker News and Product Hunt nodes have forms.
+  - Instagram `list_user_posts` asks for the profile to read, separately
+    from the session.
+  - Every built-in form now asks for its action's required inputs.
+  - Workflows saved with older forms still fill the new fields.
+- **Actions declare the fields they actually return.** A test now checks
+  every flow's output against the declaration.
+- **TikTok and other comment results** no longer get their text copied into
+  `full_name`.
+- **Replacing a package you created** keeps the old copy for rollback and
+  needs confirmation (`--replace`; `--replace-builtin` still works). The
+  install review lists what the site can see and says when trust drops.
+  `automation new --install` refuses an existing id.
+- **Failed `--json` commands** (`automation validate`, `record verify`,
+  `ai provider test`) exit 1.
+- **Safe-mode verify** refuses an upload that a real run would refuse.
+- **`record verify` paths:** errors no longer reveal whether a path exists.
+- **`install.sh`** uses sudo only when the install directory isn't writable.
+- **Connections page:**
+  - The Health tab fits the drawer.
+  - Replacements are labelled as such.
+  - The workflow count refreshes after an import.
+  - Updates warn that script and live-run permissions are reset.
+
 ## [0.73.0] - 2026-09-26
 
 ### Added
