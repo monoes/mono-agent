@@ -12,13 +12,13 @@ const STATUS_COLORS = { ok: 'var(--green-neon)', decaying: 'var(--yellow)', brok
 // isStale: health history for a key the installed package no longer has.
 const isStale = (s) => s.stale === true || s.status === 'stale'
 const WHERE_TEXT = { package: 'in the package', overlay: 'in your local overlay (the package itself is unchanged)' }
-const cell = { ...muted, padding: '6px 10px' }
+const cell = { ...muted, padding: '6px 8px', verticalAlign: 'top' }
 
 // RowAction: decaying and broken selectors show "Re-record" directly; the
 // others keep it behind a small menu so a healthy row stays quiet.
 function RowAction({ s, busy, onRerecord }) {
   const [open, setOpen] = useState(false)
-  if (isStale(s)) return <span style={{ ...muted, fontSize: 10, whiteSpace: 'nowrap' }}>no longer in this package</span>
+  if (isStale(s)) return <span style={{ ...muted, fontSize: 10 }}>no longer in this package</span>
   if (s.status !== 'ok') {
     return (
       <button className="btn btn-secondary btn-sm" disabled={busy} onClick={() => onRerecord(s.key)} style={{ gap: 4, padding: '2px 8px' }}>
@@ -91,26 +91,33 @@ export default function HealthTab({ automationId }) {
       {pickResult && (pickResult.ok ? <OkBox>{pickResult.text}</OkBox> : <ErrorBox>Re-record {pickResult.key}: {pickResult.text}</ErrorBox>)}
       {entry && <IssueList issues={entry.issues} />}
       {selectors.length > 0 && (
-        <div style={{ ...panel, padding: 0, overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        // Five columns and a fixed layout so the table fits the 620px drawer
+        // without horizontal scroll: runs (ok / fail, healed below) and the
+        // last-seen dates are stacked, and long keys and notes wrap.
+        <div style={{ ...panel, padding: 0 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+            <colgroup><col /><col style={{ width: 84 }} /><col style={{ width: 72 }} /><col style={{ width: 104 }} /><col style={{ width: 104 }} /></colgroup>
             <thead>
               <tr>
-                {['Selector', 'Status', 'OK', 'Fail', 'Healed', 'Last OK', 'Last fail', ''].map(h => (
-                  <th key={h || 'action'} scope="col" style={{ ...label, textAlign: 'left', padding: '8px 10px', borderBottom: '1px solid var(--border)' }}>{h}</th>
+                {['Selector', 'Status', 'OK / fail', 'Last', ''].map(h => (
+                  <th key={h || 'action'} scope="col" style={{ ...label, textAlign: 'left', padding: '8px 8px', borderBottom: '1px solid var(--border)' }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {selectors.map(s => (
                 <tr key={s.key} style={{ borderTop: '1px solid var(--border-dim)', opacity: isStale(s) ? 0.5 : 1 }}>
-                  <td style={{ ...mono, fontSize: 10.5, color: 'var(--text)', padding: '6px 10px' }}>{s.key}</td>
-                  <td style={{ padding: '6px 10px' }}><Chip color={STATUS_COLORS[isStale(s) ? 'stale' : s.status] || 'var(--text-muted)'}>{isStale(s) ? 'stale' : s.status}</Chip></td>
-                  <td style={cell}>{s.ok ?? 0}</td>
-                  <td style={{ ...cell, color: s.fail ? 'var(--red)' : 'var(--text-muted)' }}>{s.fail ?? 0}</td>
-                  <td style={cell}>{s.healed ?? 0}</td>
-                  <td style={{ ...cell, whiteSpace: 'nowrap' }}>{fmtShort(s.lastOk)}</td>
-                  <td style={{ ...cell, whiteSpace: 'nowrap' }}>{fmtShort(s.lastFail)}</td>
-                  <td style={{ padding: '4px 10px', textAlign: 'right' }}><RowAction s={s} busy={!!picking} onRerecord={rerecord} /></td>
+                  <td style={{ ...mono, fontSize: 10.5, color: 'var(--text)', padding: '6px 8px', wordBreak: 'break-all', verticalAlign: 'top' }}>{s.key}</td>
+                  <td style={{ padding: '6px 8px', verticalAlign: 'top' }}><Chip color={STATUS_COLORS[isStale(s) ? 'stale' : s.status] || 'var(--text-muted)'}>{isStale(s) ? 'stale' : s.status}</Chip></td>
+                  <td style={cell}>
+                    {s.ok ?? 0} / <span style={{ color: s.fail ? 'var(--red)' : 'var(--text-muted)' }}>{s.fail ?? 0}</span>
+                    {s.healed ? <div style={{ fontSize: 9.5 }}>{s.healed} healed</div> : null}
+                  </td>
+                  <td style={{ ...cell, fontSize: 10 }}>
+                    <div>ok {fmtShort(s.lastOk)}</div>
+                    <div>fail {fmtShort(s.lastFail)}</div>
+                  </td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right', verticalAlign: 'top' }}><RowAction s={s} busy={!!picking} onRerecord={rerecord} /></td>
                 </tr>
               ))}
             </tbody>

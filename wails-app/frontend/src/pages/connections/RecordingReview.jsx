@@ -150,7 +150,7 @@ export default function RecordingReview({ recording, automationId, onBack, onSav
     <>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <button className="btn btn-ghost btn-sm" onClick={onBack} style={{ gap: 5 }}><ArrowLeft size={11} /> Recordings</button>
-        <span style={{ ...mono, fontSize: 11.5, color: 'var(--text)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{recording.title || recording.id}</span>
+        <span title={recording.title || recording.id} style={{ ...mono, fontSize: 11.5, color: 'var(--text)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{recording.title || recording.id}</span>
       </div>
       {phase === 'analyzing' && <Busy text="Analyzing the recording with AI — this can take a minute…" />}
       <ErrorBox>{error}</ErrorBox>
@@ -181,7 +181,7 @@ export default function RecordingReview({ recording, automationId, onBack, onSav
                   <div key={i.name} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                     <input aria-label={`Name for input ${i.name}`} value={inputNames[i.name] ?? i.name} onChange={e => setInputNames(m => ({ ...m, [i.name]: e.target.value }))} style={{ ...inputStyle, width: 180 }} />
                     <span style={{ ...mono, fontSize: 10, color: 'var(--cyan)' }}>{i.type || 'string'}</span>
-                    <span style={{ ...muted, fontSize: 10, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{i.description || (recorded[i.name] !== undefined ? `recorded: ${JSON.stringify(recorded[i.name])}` : i.default != null ? `default: ${JSON.stringify(i.default)}` : '')}</span>
+                    <span style={{ ...muted, fontSize: 10, flex: 1, minWidth: 0, wordBreak: 'break-word' }}>{i.description || (recorded[i.name] !== undefined ? `recorded: ${JSON.stringify(recorded[i.name])}` : i.default != null ? `default: ${JSON.stringify(i.default)}` : '')}</span>
                   </div>
                 ))}
               </div>
@@ -215,7 +215,7 @@ export default function RecordingReview({ recording, automationId, onBack, onSav
                 <span style={{ ...muted, fontSize: 10 }}>No recorded value (secrets are never recorded) — enter one to verify with. It is used for this run only and never saved.</span>
                 {missing.map(i => (
                   <div key={i.name} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                    <span style={{ ...mono, fontSize: 10.5, color: 'var(--text)', width: 140, overflow: 'hidden', textOverflow: 'ellipsis' }}>{i.name}</span>
+                    <span title={i.name} style={{ ...mono, fontSize: 10.5, color: 'var(--text)', width: 140, overflow: 'hidden', textOverflow: 'ellipsis' }}>{i.name}</span>
                     <input type={i.secret ? 'password' : 'text'} autoComplete="off" aria-label={`Value for ${i.name} during verify`} value={verifyInputs[i.name] || ''}
                       onChange={e => setVerifyInputs(m => ({ ...m, [i.name]: e.target.value }))} style={{ ...inputStyle, flex: 1 }} />
                   </div>

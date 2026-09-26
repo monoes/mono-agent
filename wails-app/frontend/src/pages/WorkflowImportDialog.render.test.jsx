@@ -37,6 +37,13 @@ describe('WorkflowImportDialog', () => {
     expect(await screen.findByText(/Updated “Daily digest”/)).toBeInTheDocument()
   })
 
+  it('tells the page a workflow was imported (status bar count)', async () => {
+    const onImported = vi.fn()
+    await importFile({ id: 'w1', name: 'X', status: 'created' }, { onImported })
+    await screen.findByText('Imported “X”.')
+    expect(onImported).toHaveBeenCalledWith(expect.objectContaining({ id: 'w1' }))
+  })
+
   it('opens the imported workflow', async () => {
     const onOpen = vi.fn()
     await importFile({ id: 'w9', name: 'X', status: 'created' }, { onOpen })

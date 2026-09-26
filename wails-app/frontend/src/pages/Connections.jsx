@@ -122,7 +122,7 @@ export default function Connections({ onRefresh }) {
           onChanged={loadAutomations}
         />
       )}
-      {importing && <ImportDialog onClose={() => setImporting(false)} onInstalled={loadAutomations} />}
+      {importing && <ImportDialog installedPackages={automations} onClose={() => setImporting(false)} onInstalled={loadAutomations} />}
       {recordHelp && <RecordHelpDialog onClose={() => setRecordHelp(false)} />}
     </>
   )
