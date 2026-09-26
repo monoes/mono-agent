@@ -107,6 +107,22 @@ test("a failed reply rejects with the backend's code", async () => {
   assert.equal(MonoAsk.isOffline(err), true);
 });
 
+test("a failed reply keeps its data on the error, and one without data has none", async () => {
+  const { MonoAsk, socket } = freshAsk();
+  const conflict = MonoAsk.request("record.save", {});
+  MonoAsk.handleFrame(
+    reply(socket.last().id, { ok: false, error: "selectors differ", code: "selector_conflict", data: { keys: ["contact.name_input"] } })
+  );
+  const err = await conflict.then(() => null, (e) => e);
+  assert.equal(err.code, "selector_conflict");
+  assert.deepEqual(err.data, { keys: ["contact.name_input"] });
+
+  const plain = MonoAsk.request("record.save", {});
+  MonoAsk.handleFrame(reply(socket.last().id, { ok: false, error: "bad", code: "bad_params" }));
+  const err2 = await plain.then(() => null, (e) => e);
+  assert.equal("data" in err2, false, "no data key when the reply had none");
+});
+
 test("asking while the bridge is down fails immediately and sends nothing", async () => {
   const { MonoAsk, socket } = freshAsk(false);
 

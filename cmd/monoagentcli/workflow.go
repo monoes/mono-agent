@@ -1289,6 +1289,7 @@ func newWorkflowImportCmd(cfg *globalConfig) *cobra.Command {
 	var inputFile string
 	var overwrite, yes, asNew bool
 	var replaceID string
+	var replaceAutomations bool
 
 	cmd := &cobra.Command{
 		Use:   "import",
@@ -1336,19 +1337,21 @@ func newWorkflowImportCmd(cfg *globalConfig) *cobra.Command {
 			status := importCreated
 			var match importMatch
 			var warnings []string
+			var copied importCopy
 			switch {
 			case replaceID != "":
 				t := ownedWorkflow(ctx, store, db.DB, cfg.ProfileID, replaceID)
 				if t == nil {
 					return errNotFound("--replace: no workflow %q in this profile", replaceID)
 				}
-				match = importMatch{Target: t, MayUpdate: true}
+				match = importMatch{Target: t, MayUpdate: true, By: matchByID}
 			case !asNew:
 				match = findImportTarget(ctx, store, db.DB, cfg.ProfileID, &wf, source, hash)
 			}
 			target := match.Target
 			if match.Clash != "" {
-				warnings = append(warnings, copyWarning(match.Clash))
+				warnings = append(warnings, copyWarning(match.Clash, ""))
+				copied = importCopy{Of: match.Clash, Reason: copyReasonName}
 			}
 			switch {
 			case target != nil && workflowContentHash(target) == hash:
@@ -1360,16 +1363,22 @@ func newWorkflowImportCmd(cfg *globalConfig) *cobra.Command {
 				if !target.CreatedAt.IsZero() {
 					now = target.CreatedAt
 				}
+			case target != nil && overwrite && match.By == matchByID:
+				// --overwrite keeps the file's id, but that id is a
+				// different, locally edited workflow: never replace it
+				// implicitly, and never quietly import a copy instead.
+				return errInvalidInput("--overwrite: workflow %s already exists here and was edited locally; use --replace %s to replace it, or import without --overwrite to get a copy", target.ID, target.ID)
 			case target != nil:
 				// Edited (or created) locally since: keep the user's work.
-				warnings = append(warnings, copyWarning(target.ID))
+				warnings = append(warnings, copyWarning(target.ID, match.By))
+				copied = importCopy{Of: target.ID, Reason: copyReasonFor(match.By)}
 				wf.ID, overwrite = uuid.New().String(), false
 			case asNew || wf.ID == "":
 				wf.ID = uuid.New().String()
-			case overwrite:
-				// keep the file's id
 			case ownedWorkflow(ctx, store, db.DB, "", wf.ID) == nil:
 				// The id is free here: keep it, so a re-import finds it.
+			case overwrite:
+				return errInvalidInput("--overwrite: id %s is used by a workflow in another profile; import without --overwrite to get a copy with a new id", wf.ID)
 			default:
 				wf.ID = uuid.New().String() // taken by another profile's workflow
 			}
@@ -1377,7 +1386,7 @@ func newWorkflowImportCmd(cfg *globalConfig) *cobra.Command {
 			wf.UpdatedAt = time.Now().UTC()
 			if status == importUnchanged {
 				recordImport(importIndexEntry{ID: wf.ID, Name: wf.Name, Source: source, Hash: hash})
-				return printWorkflowImport(cfg, cmd, &wf, status, warnings, nil, nil, raw, yes, inputFile)
+				return printWorkflowImport(cfg, cmd, &wf, status, warnings, nil, nil, raw, yes, replaceAutomations, inputFile, importCopy{})
 			}
 
 			// workflow_nodes.id and workflow_connections.id are globally
@@ -1497,15 +1506,20 @@ func newWorkflowImportCmd(cfg *globalConfig) *cobra.Command {
 			}
 
 			recordImport(importIndexEntry{ID: wf.ID, Name: wf.Name, Source: source, Hash: hash})
-			return printWorkflowImport(cfg, cmd, &wf, status, warnings, remapped, remappedConns, raw, yes, inputFile)
+			return printWorkflowImport(cfg, cmd, &wf, status, warnings, remapped, remappedConns, raw, yes, replaceAutomations, inputFile, copied)
 		},
 	}
 
 	cmd.Flags().StringVarP(&inputFile, "file", "f", "", "Path to JSON file (default: stdin)")
-	cmd.Flags().BoolVar(&overwrite, "overwrite", false, "Keep the id from the file instead of generating a new one")
+	cmd.Flags().BoolVar(&overwrite, "overwrite", false, "Keep the id from the file; refused when that id is a different, locally edited workflow (use --replace <id>) or belongs to another profile")
 	cmd.Flags().StringVar(&replaceID, "replace", "", "Replace this existing workflow (by id) with the file's content")
 	cmd.Flags().BoolVar(&asNew, "as-new", false, "Always create a new workflow, even when this file was imported before")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Install automations bundled in the file that are not installed yet")
+	cmd.Flags().BoolVar(&replaceAutomations, "replace-automations", false,
+		"Replace installed automations whose bundled copy (same version) has different content, after showing the review (asks unless --yes)")
+	// With --json a failure is also {"error","code"} on stdout (contracts
+	// §5), as the automation commands do; the exit code is unchanged.
+	withJSONErrors(cfg, cmd)
 	return cmd
 }
 

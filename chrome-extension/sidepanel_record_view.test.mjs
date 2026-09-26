@@ -200,3 +200,69 @@ test("a failed verify says why and marks the step it failed on (R6-1)", () => {
   const passed = V.describeVerify({ ok: true, steps: [{ id: "a", status: "pass" }] });
   assert.deepEqual([passed.error, passed.steps[0].failed], ["", false]);
 });
+
+test("a failed report with its own error summary shows its steps and that summary", () => {
+  const v = V.describeVerify({
+    ok: false,
+    error: "step name: element not found",
+    highlighted: true,
+    tabLeftOpen: true,
+    stoppedAt: null,
+    steps: [
+      { id: "open", type: "navigate", status: "pass" },
+      { id: "name", type: "type", status: "fail", message: "element not found", selector: "#name" },
+    ],
+  });
+  assert.equal(v.ok, false);
+  assert.equal(v.error, "step name: element not found", "data.error is the summary line");
+  assert.deepEqual(v.steps.map((s) => [s.id, s.failed]), [["open", false], ["name", true]], "and the steps are still drawn");
+});
+
+// The message `record save` gives for a re-recorded selector (addaction.go +
+// recordanalyze withSelectorConflictHint), passed through by the bridge.
+const CONFLICT =
+  "automation: add-action conflicts with existing package content: 1 item differ from what the package's other actions use " +
+  "(rename them in the source): selectors.json#name_input\nselector(s) name_input differ from the package's current ones " +
+  "(changed since this draft was recorded, e.g. by `automation rerecord`); save with --keep-package-selectors to keep the package's";
+
+test("a save refused over re-recorded selectors is explained in plain words (L2)", () => {
+  const c = V.selectorConflict(CONFLICT, "contact");
+  assert.deepEqual(c.keys, ["contact.name_input"]);
+  assert.equal(c.text, "The package's selectors changed since this recording (re-recorded): contact.name_input");
+  assert.deepEqual(V.selectorConflict("selectors.json#a, selectors.json#b.c -- use --keep-package-selectors").keys, ["a", "b.c"]);
+  assert.equal(V.selectorConflict("draft not found or outside the drafts folder"), null, "other failures are not conflicts");
+});
+
+test("a save's warnings are shown with its result", () => {
+  assert.deepEqual(V.saveResult({ automation: "contact", action: "create", version: "1.0.3", nodeType: "contact.create" }), {
+    text: "Saved as contact.create (v1.0.3).",
+    warn: false,
+  });
+  const kept = V.saveResult({ nodeType: "contact.create", warnings: ["kept the package's current selector(s): name_input"] });
+  assert.equal(kept.text, "Saved as contact.create. kept the package's current selector(s): name_input.");
+  assert.equal(kept.warn, true);
+});
+
+test("the bridge's selector_conflict code and keys come first; other codes still fall back to the text", () => {
+  const byCode = V.selectorConflict(
+    { message: "anything at all", code: "selector_conflict", data: { keys: ["contact.name_input", "contact.save_button"] } },
+    "contact"
+  );
+  assert.deepEqual(byCode.keys, ["contact.name_input", "contact.save_button"], "keys are used as given");
+  assert.equal(byCode.text, "The package's selectors changed since this recording (re-recorded): contact.name_input, contact.save_button");
+  // An older bridge: the conflict only in the text, under a generic code.
+  assert.deepEqual(V.selectorConflict({ message: CONFLICT, code: "internal" }, "contact").keys, ["contact.name_input"]);
+  assert.equal(V.selectorConflict({ message: "draft not found", code: "bad_params" }), null);
+});
+
+test("save as new only while the Automation field holds the analyzer's proposal", () => {
+  const draft = { isNew: true, automation: "e2e-crm-2" };
+  assert.equal(V.saveAsNew(draft, "e2e-crm-2"), true);
+  assert.equal(V.saveAsNew(draft, " e2e-crm-2 "), true);
+  assert.equal(V.saveAsNew(draft, "e2e-crm"), false, "an existing automation typed in");
+  assert.equal(V.saveAsNew(draft, "brand-new"), false, "any other name goes as --automation, which installs it");
+  assert.equal(V.saveAsNew({ isNew: false, automation: "crm" }, "crm"), false);
+  assert.equal(V.alreadyExists(new Error("automation e2e-crm already exists; use --automation e2e-crm")), true);
+  assert.equal(V.alreadyExists(new Error("draft not found")), false);
+  assert.equal(V.existsQuestion("e2e-crm-2"), "An automation named e2e-crm-2 already exists \u2014 add this action to it? Or rename it above and save again.");
+});

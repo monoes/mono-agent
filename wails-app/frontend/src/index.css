@@ -31,6 +31,10 @@
   --green-neon:   #4ade80;
   --orange:       #f97316;
   --red:          #ef4444;
+  /* Opaque surface for error banners laid over content (e.g. the org
+     canvas): readable whatever sits underneath. */
+  --danger-surface: #2a1216;
+  --danger-border:  rgba(239, 68, 68, 0.45);
   --yellow:       #eab308;
 
   /* ── Platform Colors ── */

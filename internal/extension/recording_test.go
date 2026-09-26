@@ -475,7 +475,12 @@ func TestRunRecordJSONOnFailure(t *testing.T) {
 		wantErr string // "" = the output is the result
 	}{
 		{`{"steps":[],"ok":false}`, ""},
+		{`{"steps":[],"ok":false,"error":"step failed"}`, ""},
+		{`{"ok":false,"error":"step failed"}`, ""},
 		{`{"error":"draft not found or outside the drafts folder"}`, "draft not found or outside the drafts folder"},
+		{`{"error":"lint has errors","code":"lint"}`, "lint has errors"},
+		{`{"ok":"no","error":"not a report"}`, "not a report"},
+		{`{"something":"else"}`, "exit status 1"},
 		{``, "exit status 1"},
 		{`panic: boom`, "exit status 1"},
 		{`[1,2]`, "exit status 1"},
@@ -489,6 +494,90 @@ func TestRunRecordJSONOnFailure(t *testing.T) {
 			t.Errorf("%q: no data", c.out)
 		case c.wantErr != "" && (err == nil || !strings.Contains(err.Error(), c.wantErr)):
 			t.Errorf("%q: err %v, want %q", c.out, err, c.wantErr)
+		}
+	}
+}
+
+// verifyFailureReport is the real shape `record verify --json` prints for a
+// failed replay (v0.75.0, e2e r7 broken-cli.json, trimmed): the report
+// carries a top-level "error" summary next to its steps.
+const verifyFailureReport = `{
+  "steps": [
+    {"id": "open", "type": "navigate", "status": "pass"},
+    {"id": "name", "type": "type", "status": "fail",
+     "message": "action execution aborted: step name: type step name: no element to type into: selector \"contact.name_input\": none of 2 selector candidates matched within 10s: extension error: Element not found within 300ms: #contact-name"},
+    {"id": "email", "type": "type", "status": "skipped"},
+    {"id": "save", "type": "click", "status": "skipped"}
+  ],
+  "stoppedAt": null,
+  "ok": false,
+  "error": "action execution aborted: step name: type step name: no element to type into: selector \"contact.name_input\": none of 2 selector candidates matched within 10s: extension error: Element not found within 300ms: #contact-name",
+  "highlighted": false,
+  "tabLeftOpen": false
+}`
+
+// The side panel gets the whole report — steps included — for a failed
+// verify whose report also has "error" (R6-1 on v0.75.0).
+func TestRecordVerifyFailureWithErrorKeyReturnsTheReport(t *testing.T) {
+	srv, ext, _ := startCaptureServer(t)
+	drafts, _ := recording.DraftsDir()
+	if err := os.MkdirAll(filepath.Join(drafts, "rec-1"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	srv.SetRecordRunner(exitRunner{out: verifyFailureReport})
+	ext.ask("v1", MethodRecordVerify, map[string]any{"draftDir": "rec-1"})
+	reply := ext.settled()
+	if !reply.OK {
+		t.Fatalf("failed verify lost its report: %+v", reply)
+	}
+	data, _ := reply.Data.(map[string]any)
+	steps, _ := data["steps"].([]any)
+	if len(steps) != 4 || data["ok"] != false || data["highlighted"] != false || data["tabLeftOpen"] != false {
+		t.Fatalf("report = %v", data)
+	}
+	if msg, _ := data["error"].(string); !strings.Contains(msg, "no element to type into") {
+		t.Fatalf("report error summary = %v", data["error"])
+	}
+	if s2, _ := steps[1].(map[string]any); s2["status"] != "fail" {
+		t.Fatalf("step 2 = %v", steps[1])
+	}
+	if _, has := data["stoppedAt"]; !has {
+		t.Fatalf("stoppedAt dropped: %v", data)
+	}
+}
+
+// A selector conflict on save reaches the side panel as a code and the
+// conflicting keys, not only as text to match.
+func TestRecordSaveConflictPassesCodeAndKeys(t *testing.T) {
+	srv, ext, _ := startCaptureServer(t)
+	drafts, _ := recording.DraftsDir()
+	if err := os.MkdirAll(filepath.Join(drafts, "rec-1"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	srv.SetRecordRunner(exitRunner{out: `{"error":"merge conflict: selectors.json#contact.name_input\nselector(s) contact.name_input differ …","code":"selector_conflict","keys":["contact.name_input","contact.email_input"]}`})
+	ext.ask("s1", MethodRecordSave, map[string]any{"draftDir": "rec-1", "automation": "acme-crm"})
+	reply := ext.settled()
+	if reply.OK || reply.Code != "selector_conflict" || !strings.Contains(reply.Error, "merge conflict") {
+		t.Fatalf("reply = %+v", reply)
+	}
+	data, _ := reply.Data.(map[string]any)
+	keys, _ := data["keys"].([]any)
+	if len(keys) != 2 || keys[0] != "contact.name_input" || keys[1] != "contact.email_input" {
+		t.Fatalf("keys = %v", data)
+	}
+	if _, leaked := data["error"]; leaked {
+		t.Fatalf("data repeats the error: %v", data)
+	}
+}
+
+func TestPlainFailureCodes(t *testing.T) {
+	// A code the bridge would not pass on (not a plain identifier) leaves
+	// a bare error; no code at all likewise.
+	for _, out := range []string{`{"error":"x","code":"Bad Code!"}`, `{"error":"x"}`} {
+		_, err := runRecordJSON(context.Background(), exitRunner{out: out}, []string{"record", "save", "d", "--json"})
+		var re *RequestError
+		if err == nil || asRequestError(err, &re) {
+			t.Errorf("%s: err = %#v", out, err)
 		}
 	}
 }

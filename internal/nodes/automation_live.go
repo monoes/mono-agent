@@ -56,6 +56,10 @@ func checkLiveRun(automationID, actionType string) error {
 	if c, ok := pkg.(interface{ LiveRunConfirmed() bool }); ok && c.LiveRunConfirmed() {
 		return nil
 	}
+	if !action.DeclaresSideEffects(def.SideEffects) {
+		return fmt.Errorf("%s.%s doesn't declare what it changes on the site, so it's treated as a write action, and %s is an imported automation that hasn't been confirmed for live runs yet — run `monoagentcli automation trust %s --live` (or confirm it in Connections) to allow live runs",
+			id, actionType, id, id)
+	}
 	return fmt.Errorf("%s.%s changes data on the site (sideEffects %q) and %s is an imported automation that hasn't been confirmed for live runs yet — run `monoagentcli automation trust %s --live` or confirm it in Connections",
 		id, actionType, def.SideEffects, id, id)
 }

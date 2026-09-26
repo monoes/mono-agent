@@ -1,0 +1,7 @@
+{
+  "credential_platform": null,
+  "fields": [
+    { "key": "sourceType", "label": "List", "type": "select", "required": false, "default": "FOLLOWERS_FETCH", "options": ["FOLLOWERS_FETCH", "FOLLOWING_FETCH"], "help": "Your followers or the accounts you follow. LinkedIn shows these lists only for your own account." },
+    { "key": "limit",      "label": "Max Results", "type": "number", "required": false, "default": 50 }
+  ]
+}

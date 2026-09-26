@@ -43,7 +43,7 @@ export class Cdp {
   }
 }
 
-export async function start(binary) {
+async function launchOnce(binary) {
   const dir = await mkdtemp(join(tmpdir(), "mono-rec-ext-"));
   const child = spawn(
     binary,
@@ -93,16 +93,46 @@ export async function start(binary) {
   return { cdp: new Cdp(ws), close };
 }
 
+// A loaded machine (several browsers starting at once under node --test)
+// can take a while to bring up the extension's service worker.
+export const WORKER_START_MS = 30000;
 
-/** extensionId waits for the extension's service worker and returns its id and target. */
-export async function extensionWorker(cdp) {
-  for (let i = 0; i < 100; i++) {
+/**
+ * start launches the browser and waits for the extension's service worker:
+ * {cdp, close, worker: {id, targetId} | null}. A browser whose worker does
+ * not appear within WORKER_START_MS is closed and launched once more. If
+ * the last launch still has no worker, that browser is returned with
+ * worker null rather than thrown: a test that needs the worker then FAILS
+ * (the extension is broken), where a thrown error would make the suite
+ * skip as if there were no Chrome.
+ */
+export async function start(binary, { attempts = 2, workerMs = WORKER_START_MS } = {}) {
+  for (let attempt = 1; ; attempt++) {
+    const b = await launchOnce(binary);
+    try {
+      b.worker = await extensionWorker(b.cdp, workerMs);
+      return b;
+    } catch (err) {
+      if (attempt >= attempts) {
+        b.worker = null;
+        b.workerError = `${err.message} (after ${attempts} launches)`;
+        return b;
+      }
+      await b.close();
+    }
+  }
+}
+
+/** extensionWorker waits for the extension's service worker and returns its id and target. */
+export async function extensionWorker(cdp, timeoutMs = WORKER_START_MS) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
     const { targetInfos } = await cdp.send("Target.getTargets");
     const sw = targetInfos.find((t) => t.type === "service_worker" && t.url.endsWith("/background.js"));
     if (sw) return { id: new URL(sw.url).host, targetId: sw.targetId };
     await sleep(100);
   }
-  throw new Error("the extension's service worker did not start");
+  throw new Error(`the extension's service worker did not start within ${timeoutMs}ms`);
 }
 
 /** attach opens a flat session on a target (created from `url` when given). */

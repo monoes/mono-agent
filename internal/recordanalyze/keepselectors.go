@@ -56,19 +56,46 @@ func sameSelectorContent(a, b action.SelectorEntry) bool {
 	return string(x) == string(y)
 }
 
+// SelectorConflictError is a save refused because the draft's selectors
+// differ from the target package's current ones. It keeps the message the
+// CLI always printed and carries the keys, so callers (the side panel via
+// `record save --json`) branch on code/keys instead of matching text.
+type SelectorConflictError struct {
+	Keys []string
+	Err  error
+}
+
+// SelectorConflictCode is the JSON error code of a SelectorConflictError.
+const SelectorConflictCode = "selector_conflict"
+
+func (e *SelectorConflictError) Error() string {
+	return fmt.Sprintf("%v\nselector(s) %s differ from the package's current ones (changed since this draft was recorded, e.g. by `automation rerecord`); save with --keep-package-selectors to keep the package's",
+		e.Err, strings.Join(e.Keys, ", "))
+}
+
+func (e *SelectorConflictError) Unwrap() error { return e.Err }
+
+// JSONErrorFields is what `--json` adds next to "error".
+func (e *SelectorConflictError) JSONErrorFields() map[string]any {
+	return map[string]any{"code": SelectorConflictCode, "keys": e.Keys}
+}
+
 // withSelectorConflictHint names the selector keys of a merge conflict and
-// points at --keep-package-selectors.
+// points at --keep-package-selectors, as a *SelectorConflictError.
 func withSelectorConflictHint(err error) error {
 	if err == nil {
 		return nil
 	}
 	var keys []string
+	seen := map[string]bool{}
 	for _, m := range conflictSelectorRe.FindAllStringSubmatch(err.Error(), -1) {
-		keys = append(keys, m[1])
+		if !seen[m[1]] {
+			seen[m[1]] = true
+			keys = append(keys, m[1])
+		}
 	}
 	if len(keys) == 0 {
 		return err
 	}
-	return fmt.Errorf("%w\nselector(s) %s differ from the package's current ones (changed since this draft was recorded, e.g. by `automation rerecord`); save with --keep-package-selectors to keep the package's",
-		err, strings.Join(keys, ", "))
+	return &SelectorConflictError{Keys: keys, Err: err}
 }

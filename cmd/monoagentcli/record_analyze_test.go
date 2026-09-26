@@ -425,6 +425,16 @@ func TestRecordAnalyzeSaveKeepPackageSelectors(t *testing.T) {
 	if err == nil || !strings.Contains(out, "page.go_button") || !strings.Contains(out, "--keep-package-selectors") {
 		t.Fatalf("conflict not explained: %v %s", err, out)
 	}
+	// Machine-readable too: the side panel branches on code/keys, not text.
+	var conflict struct {
+		Error string   `json:"error"`
+		Code  string   `json:"code"`
+		Keys  []string `json:"keys"`
+	}
+	if jerr := json.Unmarshal([]byte(out), &conflict); jerr != nil || conflict.Code != "selector_conflict" ||
+		len(conflict.Keys) != 1 || conflict.Keys[0] != "page.go_button" || conflict.Error == "" {
+		t.Fatalf("conflict JSON = %+v (%v) from %s", conflict, jerr, out)
+	}
 	out, err = runRecordCLI(t, true, "save", res.DraftDir, "--automation", "example-go", "--name", "press go again", "--keep-package-selectors")
 	if err != nil || !strings.Contains(out, "kept the package's current selector(s): page.go_button") {
 		t.Errorf("with flag: %v %s", err, out)

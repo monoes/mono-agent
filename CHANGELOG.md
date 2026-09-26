@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.76.0] - 2026-09-26
+
+### Added
+
+- **`workflow import --replace-automations`** replaces an installed
+  automation whose bundled copy has the same version but different
+  content, after showing what changes. Without it such a package is
+  reported as "differs" and the installed copy is kept. A bundle never
+  replaces a built-in.
+- **`workflow import --json`** reports `copyOf`/`copyReason` when the file
+  was imported as a copy, and `localOnly`, `hint`, `builtin` and
+  `replaceable` on bundled automations. Failures are also printed as
+  `{"error","code"}` on stdout.
+- **`extension status`** says when this client's pairing token doesn't
+  match the running bridge.
+
+### Fixed
+
+- **The side panel shows a failed verify's steps** (the v0.75 fix was
+  incomplete), and can save a recording into an existing automation. When
+  the package's selectors were re-recorded since the recording, it offers
+  to keep them and save. Before adding to an automation that already has
+  the proposed name, it asks.
+- **Re-importing a file after editing the original** makes one copy, not a
+  new one each time. `--overwrite` refuses to replace a locally edited
+  workflow or one from another profile.
+- **The desktop import dialog** shows why a file was imported as a copy
+  (with "Replace the existing workflow instead"), lists automations the file
+  doesn't carry separately, and lets you review and replace differing ones.
+- **Workflow bundles:** automations that only open local addresses are
+  explained as "only works on the sender's machine" instead of suggesting
+  domain flags that can't work. An unknown id in `--automation-domains` is
+  refused.
+- **Suggested domains for legacy actions** are the exact hosts they open
+  (plus the www/bare twin), not the whole parent domain. Actions with URLs
+  built at run time get a hint to list every site they may reach. The
+  generated start URL keeps `http://`.
+- **Imported actions without declared side effects** say so when blocked
+  from live runs, instead of "changes data on the site".
+- **LinkedIn profile scraping** reads the headline, photo and About
+  correctly. **LinkedIn and TikTok follower exports** wait for the list to
+  load and fail clearly instead of returning nothing.
+- **`org validate`** exits 1 on an invalid org, with one JSON report.
+- **Bridge:** the relay and pairing endpoints refuse web pages and requests
+  not addressed to localhost.
+- The org designer's error banner is readable over the canvas.
+
 ## [0.75.0] - 2026-09-26
 
 ### Fixed

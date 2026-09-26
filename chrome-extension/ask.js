@@ -174,8 +174,15 @@
     }
 
     settle(frame.id);
-    if (frame.ok) entry.resolve(frame.data);
-    else entry.reject(askError(frame.error || "the backend refused the request", frame.code || ""));
+    if (frame.ok) {
+      entry.resolve(frame.data);
+    } else {
+      const err = askError(frame.error || "the backend refused the request", frame.code || "");
+      // A refusal may say more than its message (record.save's
+      // selector_conflict names the keys); keep it for callers that use it.
+      if (frame.data !== undefined) err.data = frame.data;
+      entry.reject(err);
+    }
     return true;
   }
 

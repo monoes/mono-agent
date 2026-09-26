@@ -135,6 +135,62 @@
     error: "the page could not be recorded",
   };
 
+  /**
+   * selectorConflict reads a `record save` failure caused by selectors that
+   * changed in the package since the recording (e.g. `automation rerecord`).
+   * The bridge says so with code "selector_conflict" and data.keys; an older
+   * bridge passed only the CLI's text, so that is read as a fallback:
+   * "selector(s) a, b differ from the package's current ones ...
+   * --keep-package-selectors", or the raw "selectors.json#key" mentions.
+   * `err` is the failure ({message, code, data}) or just its message.
+   * Returns {keys, text} for the panel, or null for any other failure.
+   */
+  function selectorConflict(err, automation) {
+    const e = err && typeof err === "object" ? err : { message: err };
+    const m = String(e.message || "");
+    let keys = [];
+    if (e.code === "selector_conflict") {
+      keys = (e.data && Array.isArray(e.data.keys) ? e.data.keys : []).map(String);
+    } else if (!/--keep-package-selectors|differ from the package's current/.test(m)) {
+      return null;
+    }
+    const listed = /selector\(s\) (.+?) differ from the package's current/.exec(m);
+    if (!keys.length && listed) keys = listed[1].split(/,\s*/);
+    if (!keys.length) keys = Array.from(m.matchAll(/selectors\.json#([^,\s]+)/g), (x) => x[1]);
+    keys = Array.from(new Set(keys.map((k) => k.trim()).filter(Boolean)));
+    const named = keys.map((k) => (automation && k.indexOf(".") === -1 ? `${automation}.${k}` : k));
+    const text = named.length
+      ? `The package's selectors changed since this recording (re-recorded): ${named.join(", ")}`
+      : "The package's selectors changed since this recording (re-recorded).";
+    return { keys: named, text };
+  }
+
+  /**
+   * saveAsNew: create a new automation (record save --new) only when the
+   * draft proposed one and the Automation field still holds that proposal.
+   * Any other name -- an existing automation typed in, or a new one -- goes
+   * as --automation, which adds to it or installs it (spec section 8.6,
+   * "new action in an existing automation").
+   */
+  function saveAsNew(draft, automation) {
+    return !!(draft && draft.isNew && String(automation || "").trim() === draft.automation);
+  }
+
+  /** existsQuestion is what the panel asks when the proposed id is taken. */
+  const existsQuestion = (id) => `An automation named ${id} already exists \u2014 add this action to it? Or rename it above and save again.`;
+
+  /** alreadyExists is the save refusal for --new on an installed id. */
+  const alreadyExists = (err) => /already exists; use --automation/.test(String((err && err.message) || err || ""));
+
+  /** saveResult is the line after a save: what was saved, and any warnings. */
+  function saveResult(r) {
+    const res = r || {};
+    const what = res.nodeType || [res.automation, res.action].filter(Boolean).join(".");
+    const line = `Saved${what ? ` as ${what}` : ""}${res.version ? ` (v${res.version})` : ""}.`;
+    const warnings = (res.warnings || []).filter(Boolean);
+    return { text: warnings.length ? `${line} ${warnings.join(". ")}.` : line, warn: warnings.length > 0 };
+  }
+
   /** hasErrors is true when a draft has error-level lint (saving needs "Save anyway"). */
   const hasErrors = (d) => !!d && (d.lint || []).some((l) => /^error$/i.test(l.level));
 
@@ -252,5 +308,5 @@
     return { ok, stoppedAt: r.stoppedAt || null, error, steps };
   }
 
-  root.MonoRecordView = { describe, rows, summary, hasErrors, sensitiveKind, targetName, hostPath, describeDraft, describeVerify };
+  root.MonoRecordView = { describe, rows, summary, hasErrors, selectorConflict, saveResult, saveAsNew, alreadyExists, existsQuestion, sensitiveKind, targetName, hostPath, describeDraft, describeVerify };
 })(globalThis);

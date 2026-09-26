@@ -272,7 +272,11 @@ func newBridgeServeLogger() zerolog.Logger {
 type bridgeStatusReport struct {
 	Running bool              `json:"running"`
 	Bridge  *extension.Status `json:"bridge,omitempty"`
-	Hint    string            `json:"hint,omitempty"`
+	// ClientPairing says whether this client's pairing token is the
+	// bridge's ("ok", "mismatch", or "unknown" for a bridge too old to
+	// ask). A mismatch means every relayed command from here gets 401.
+	ClientPairing extension.PairingState `json:"clientPairing,omitempty"`
+	Hint          string                 `json:"hint,omitempty"`
 }
 
 func newExtensionStatusCmd(cfg *globalConfig) *cobra.Command {
@@ -314,11 +318,21 @@ func runExtensionStatus(out io.Writer, asJSON bool) error {
 		return nil
 	}
 
+	// /monoagent/health is unauthenticated, so "connected" says nothing
+	// about whether THIS client may use the bridge; ask with our token.
+	pairing, _ := extension.CheckPairing(base)
 	if asJSON {
-		return writeBridgeJSON(out, bridgeStatusReport{Running: true, Bridge: &st})
+		report := bridgeStatusReport{Running: true, Bridge: &st, ClientPairing: pairing}
+		if pairing == extension.PairingMismatch {
+			report.Hint = extension.PairingMismatchHint
+		}
+		return writeBridgeJSON(out, report)
 	}
 	fmt.Fprintf(out, "Bridge running on %s (pid %d, up %s)\n",
 		bridgeAddr(st, base), st.PID, bridgeUptime(st))
+	if pairing == extension.PairingMismatch {
+		fmt.Fprintf(out, "  This client: %s\n", extension.PairingMismatchHint)
+	}
 	fmt.Fprintf(out, "  Extension: %s\n", bridgeExtensionLine(st))
 	if st.Status == extension.StatusUnpaired {
 		fmt.Fprintln(out, "  Pair it with: monoagentcli extension pair (paste the token into the extension side panel)")

@@ -19,9 +19,26 @@ const profileJS = `() => {
 	const card = main.querySelector('[componentkey*="Topcard"], [componentkey*="topcard"], section.pv-top-card, .pv-top-card, .ph5') || main.querySelector('section') || main;
 	const nameEl = card.querySelector('h1.text-heading-xlarge, h1, h2');
 	const name = nameEl ? L.text(nameEl) : '';
+	// Lines that are never the headline: the connection degree ("· 3rd",
+	// "2nd degree connection"), any "·"-led fragment, pronouns, counts.
+	const noise = (t) => !t || t === name || /^[·•]/.test(t) ||
+		/^(?:1st|2nd|3rd\+?)(?:\s+degree connection)?$/i.test(t) ||
+		/^(?:he|she|they|ze)\s*\/\s*\w+$/i.test(t) ||
+		/connections?$|followers?$|^contact info$/i.test(t);
 	let headline = '', place = '', about = '';
 	const h = card.querySelector('.text-body-medium.break-words, [data-generated-suggestion-target]');
 	if (h) headline = L.text(h);
+	// Server-driven card: the headline is the first real line after the
+	// name block, found by walking the siblings that follow it outward.
+	if (!headline && nameEl) {
+		for (let blk = nameEl; blk && blk !== card && !headline; blk = blk.parentElement) {
+			for (let sib = blk.nextElementSibling; sib && !headline; sib = sib.nextElementSibling) {
+				if (sib.matches('button, [role="button"]')) continue;
+				const t = L.lines(sib).find((x) => !noise(x));
+				if (t) headline = t;
+			}
+		}
+	}
 	const loc = card.querySelector('span.text-body-small.inline.t-black--light.break-words, .pv-text-details__left-panel span.text-body-small');
 	if (loc) place = L.text(loc);
 	const contact = card.querySelector('a[href*="/overlay/contact-info"], a#top-card-text-details-contact-info');
@@ -33,33 +50,45 @@ const profileJS = `() => {
 			if (first) place = first;
 		}
 	}
-	const ps = Array.from(card.querySelectorAll('p')).map((p) => L.text(p)).filter((t) => t && t !== '·' && t !== name && !/connections?$|followers?$|^contact info$/i.test(t));
-	if (!headline && ps.length) headline = ps[0];
+	if (headline === place) headline = '';
+	if (!headline) {
+		const ps = Array.from(card.querySelectorAll('p')).map((p) => L.text(p)).filter((t) => !noise(t) && t !== place);
+		if (ps.length) headline = ps[0];
+	}
 	const all = L.text(card);
 	const conn = all.match(/([\d,.]+\+?)\s+connections?/i);
 	const fol = L.text(main).match(/([\d,.]+[KkMm]?\+?)\s+followers?/i);
 	const deg = all.match(/(?:·|•)\s*(1st|2nd|3rd\+?)/);
-	const img = card.querySelector('img.pv-top-card-profile-picture__image, img.pv-top-card-profile-picture__image--show, [aria-label="Profile photo"] img, .pv-top-card__photo-wrapper img, figure img');
-	const aboutAnchor = main.querySelector('#about');
-	if (aboutAnchor) {
-		const sec = aboutAnchor.closest('section');
-		const span = sec && sec.querySelector('.inline-show-more-text span[aria-hidden="true"], .inline-show-more-text, [data-testid="expandable-text-box"]');
-		if (span) about = L.text(span);
-	}
-	if (!about) {
-		const hd = Array.from(main.querySelectorAll('h2')).find((x) => /^About$/i.test(L.text(x)));
-		const sec = hd && hd.closest('section');
-		if (sec) {
-			const box = sec.querySelector('[data-testid="expandable-text-box"], .inline-show-more-text');
-			about = box ? L.text(box) : L.text(sec).replace(/^About\s*/i, '');
+	// The profile photo: selectors in priority order, one lookup each (a
+	// comma list would return the first match in document order — the
+	// banner), never the background image.
+	let picture = '';
+	for (const sel of ['img.pv-top-card-profile-picture__image', 'img.pv-top-card-profile-picture__image--show', '[aria-label="Profile photo"] img', '.pv-top-card__photo-wrapper img', 'figure img']) {
+		for (const img of card.querySelectorAll(sel)) {
+			const u = img.currentSrc || img.src || '';
+			if (u && !/displaybackgroundimage/i.test(u)) { picture = u; break; }
 		}
+		if (picture) break;
+	}
+	// About: the section holding the #about anchor, or the one headed
+	// "About" (a <section> or a server-driven card keyed by componentkey).
+	let aboutSec = null;
+	const aboutAnchor = main.querySelector('#about');
+	if (aboutAnchor) aboutSec = aboutAnchor.closest('section') || aboutAnchor.parentElement;
+	if (!aboutSec) {
+		const hd = Array.from(main.querySelectorAll('h2, h3')).find((x) => /^About$/i.test(L.lines(x)[0] || L.text(x)));
+		if (hd) aboutSec = hd.closest('section, [componentkey]') || hd.parentElement;
+	}
+	if (aboutSec) {
+		const box = aboutSec.querySelector('.inline-show-more-text span[aria-hidden="true"], .inline-show-more-text, [data-testid="expandable-text-box"]');
+		about = box ? L.text(box) : L.text(aboutSec).replace(/^About\s*/i, '');
 	}
 	return {
-		name, headline, location: place, about,
+		name, headline, location: place, about, aboutSection: !!aboutSec,
 		connections: conn ? conn[1] : '',
 		followers: fol ? fol[1] : '',
 		degree: deg ? deg[1] : '',
-		picture: img ? (img.currentSrc || img.src || '') : '',
+		picture,
 		isSelf: !!card.querySelector('a[href*="/edit/intro/"], a[href*="/edit/forms/intro"]'),
 		url: window.location.href,
 	};
@@ -70,6 +99,7 @@ type rawProfile struct {
 	Headline    string `json:"headline"`
 	Location    string `json:"location"`
 	About       string `json:"about"`
+	AboutSec    bool   `json:"aboutSection"`
 	Connections string `json:"connections"`
 	Followers   string `json:"followers"`
 	Degree      string `json:"degree"`
@@ -90,6 +120,9 @@ func (b *LinkedInBot) GetProfileData(ctx context.Context, p browser.PageInterfac
 	})
 	if err != nil {
 		return nil, fmt.Errorf("linkedin: no profile name rendered on the page: %w", err)
+	}
+	if raw.About == "" {
+		b.loadAbout(ctx, p, &raw)
 	}
 	pageURL := raw.URL
 	if pageURL == "" {
@@ -113,6 +146,44 @@ func (b *LinkedInBot) GetProfileData(ctx context.Context, p browser.PageInterfac
 		"profile_picture_url": raw.Picture,
 		"is_self":             raw.IsSelf,
 	}, nil
+}
+
+// aboutScrolls bounds how often loadAbout scrolls looking for the About
+// section.
+const aboutScrolls = 4
+
+// scrollAboutJS brings the About section into view when it is on the page,
+// else scrolls a screen further down (LinkedIn renders the section only
+// once it nears the viewport).
+const scrollAboutJS = `() => {
+	const main = document.querySelector('main') || document.body;
+	const a = main.querySelector('#about');
+	const hd = Array.from(main.querySelectorAll('h2, h3')).find((x) => /^About$/i.test(L.lines(x)[0] || L.text(x)));
+	const el = (a && (a.closest('section') || a.parentElement)) || (hd && (hd.closest('section, [componentkey]') || hd.parentElement));
+	if (el) el.scrollIntoView({ block: 'center' });
+	else window.scrollBy(0, window.innerHeight);
+	return !!el;
+}`
+
+// loadAbout scrolls the About section in (or down to where it renders) and
+// reads the profile again, a few times, until the About text shows.
+func (b *LinkedInBot) loadAbout(ctx context.Context, p browser.PageInterface, raw *rawProfile) {
+	for i := 0; i < aboutScrolls && raw.About == ""; i++ {
+		var found bool
+		if err := run(p, scrollAboutJS, &found); err != nil {
+			return
+		}
+		if sleepCtx(ctx, scrollSettle) != nil {
+			return
+		}
+		var again rawProfile
+		if err := run(p, profileJS, &again); err == nil && again.Name != "" {
+			raw.About, raw.AboutSec = again.About, again.AboutSec
+		}
+		if found && raw.About == "" && i > 0 {
+			return // the section is there and empty
+		}
+	}
 }
 
 // GetProfile navigates to a profile (URL or slug) and reads it.
@@ -258,6 +329,21 @@ func (b *LinkedInBot) SearchPeople(ctx context.Context, page browser.PageInterfa
 	return out, nil
 }
 
+// listEmptyJS reports whether a network list shows LinkedIn's empty state
+// ("You're not following anyone yet", "No followers yet", …).
+const listEmptyJS = `() => {
+	const main = document.querySelector('main') || document.body;
+	if (main.querySelector('.artdeco-empty-state, [class*="empty-state"], [data-test-empty-state], [data-testid*="empty-state"]')) return true;
+	return /(not following anyone|don[’']t have any followers|no followers yet|no one is following|you have no followers|no results found)/i.test(L.text(main));
+}`
+
+func listKind(target string) string {
+	if strings.Contains(target, "/following/") {
+		return "following"
+	}
+	return "followers"
+}
+
 // ListFollowers lists the signed-in member's followers (sourceType
 // "followers"/FOLLOWERS_FETCH) or the people they follow
 // ("following"/FOLLOWING_FETCH), up to max. LinkedIn only shows these
@@ -279,6 +365,28 @@ func (b *LinkedInBot) ListFollowers(ctx context.Context, page browser.PageInterf
 		return nil, err
 	}
 	out := []map[string]interface{}{}
+	// Wait for the list to render: person cards, or LinkedIn's empty state.
+	// Neither within findTimeout is an error, never an empty success.
+	var empty bool
+	err := poll(ctx, findTimeout, func() (bool, error) {
+		var raw []rawPerson
+		if run(page, peopleCardsJS, &raw) == nil && len(raw) > 0 {
+			return true, nil
+		}
+		if run(page, listEmptyJS, &empty) == nil && empty {
+			return true, nil
+		}
+		return false, nil
+	})
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, fmt.Errorf("linkedin: the %s list didn't load (no people and no empty-state message within %s)", listKind(target), findTimeout)
+	}
+	if empty {
+		return out, nil
+	}
 	seen := map[string]bool{}
 	stale := 0
 	for len(out) < max && stale < 3 {

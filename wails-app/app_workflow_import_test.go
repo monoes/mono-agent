@@ -37,3 +37,30 @@ func TestBundleReviewLinesMerged(t *testing.T) {
 		t.Fatal("output changed without review lines")
 	}
 }
+
+func TestWorkflowImportReplaceArgs(t *testing.T) {
+	got := workflowImportArgs("p1", "/w/f.json", WorkflowImportOptions{Replace: "wf-1", RemoveCopy: "wf-2"})
+	want := []string{"--profile", "p1", "--json", "workflow", "import", "--file", "/w/f.json", "--replace", "wf-1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v", got)
+	}
+	if got := workflowDeleteArgs("p1", "wf-2"); !reflect.DeepEqual(got, []string{"--profile", "p1", "workflow", "delete", "--force", "--", "wf-2"}) {
+		t.Fatalf("delete: %v", got)
+	}
+	for _, bad := range []string{"", "-x", "a b"} {
+		if validWorkflowID(bad) == nil {
+			t.Fatalf("accepted %q", bad)
+		}
+	}
+	if out := withField(`{"id":"a"}`, "removedCopy", "wf-2"); out != `{"id":"a","removedCopy":"wf-2"}` {
+		t.Fatalf("withField = %s", out)
+	}
+}
+
+func TestWorkflowImportReplaceAutomationsArgs(t *testing.T) {
+	got := workflowImportArgs("", "/w/f.json", WorkflowImportOptions{Yes: true, ReplaceAutomations: true})
+	want := []string{"--json", "workflow", "import", "--file", "/w/f.json", "--yes", "--replace-automations"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v", got)
+	}
+}

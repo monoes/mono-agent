@@ -263,6 +263,12 @@
               <button type="button" id="rec-verify" class="btn-secondary">Verify (safe)</button>
               <button type="button" id="rec-save" class="btn-secondary">Save</button>
             </div>
+            <!-- Shown only when a save failed because the package's selectors
+                 were re-recorded after this recording. -->
+            <button type="button" id="rec-save-keep" class="btn-secondary" hidden>Keep the package's current selectors and save</button>
+            <!-- Shown when the proposed new automation's id is already
+                 installed: adding to it is the person's call, never silent. -->
+            <button type="button" id="rec-save-existing" class="btn-secondary" hidden>Add this action to it</button>
             <!-- The latest verify only: cleared when a new one starts. A failed
                  run's error sits above its steps, the failing step marked. -->
             <p id="rec-verify-error" class="rec-verify-error" role="alert" hidden></p>

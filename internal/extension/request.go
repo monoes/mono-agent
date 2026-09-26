@@ -143,6 +143,9 @@ type RequestHandler func(ctx context.Context, req *Request, progress ProgressFun
 type RequestError struct {
 	Code string
 	Err  error
+	// Data rides along on the failure reply (e.g. the conflicting keys of
+	// a selector_conflict); nil for most errors.
+	Data any
 }
 
 func (e *RequestError) Error() string { return e.Err.Error() }
@@ -378,13 +381,14 @@ func (s *Server) runHandler(handler RequestHandler, req *Request) {
 		settled.Store(true)
 		if out.err != nil {
 			code := CodeInternal
+			var data any
 			var re *RequestError
 			if asRequestError(out.err, &re) {
-				code = re.Code
+				code, data = re.Code, re.Data
 			} else if ctx.Err() != nil {
 				code = CodeTimeout
 			}
-			s.replyError(req.ID, code, out.err)
+			s.writeReply(&Reply{Kind: KindReply, ID: req.ID, OK: false, Error: out.err.Error(), Code: code, Data: data})
 			return
 		}
 		s.writeReply(&Reply{Kind: KindReply, ID: req.ID, OK: true, Data: out.data})

@@ -44,7 +44,7 @@ func TestLegacyActionsRunUnrestricted(t *testing.T) {
 			t.Errorf("off_domain issue: %+v", is)
 		}
 	}
-	if s := p.Manifest.Legacy.SuggestedDomains; strings.Join(s, ",") != "*.google.com,google.com" {
+	if s := p.Manifest.Legacy.SuggestedDomains; strings.Join(s, ",") != "google.com,www.google.com" {
 		t.Errorf("suggested domains: %v", s)
 	}
 	var info bool
@@ -116,7 +116,7 @@ func TestLegacyExport(t *testing.T) {
 	// Without domains: refused, naming the suggestion and the flag.
 	var buf bytes.Buffer
 	err := r.Export(id, &buf, ExportOptions{})
-	if !errors.Is(err, ErrNotExportable) || !strings.Contains(err.Error(), "--domains *.google.com,google.com") {
+	if !errors.Is(err, ErrNotExportable) || !strings.Contains(err.Error(), "--domains google.com,www.google.com") {
 		t.Fatalf("export without domains: %v", err)
 	}
 	if buf.Len() != 0 {

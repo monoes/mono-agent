@@ -35,6 +35,10 @@ func Validate(p *Package) []IssueJSON {
 					Message: "its actions open " + strings.Join(l.SuggestedDomains, ", ") +
 						": add these as site.domains to restrict it, or pass them to export with --domains"})
 			}
+			if h := l.templatedHint(); h != "" {
+				out = append(out, IssueJSON{File: ManifestFile, Severity: "info", Code: "legacy_templated_urls",
+					Message: h + " (before exporting it, or adding site.domains)"})
+			}
 			if len(l.LocalHosts) > 0 {
 				out = append(out, IssueJSON{File: ManifestFile, Severity: "info", Code: "legacy_local_hosts",
 					Message: "its actions open " + strings.Join(l.LocalHosts, ", ") + ", which only works on this computer: it can't be exported"})

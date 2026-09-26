@@ -12,7 +12,7 @@ vi.mock('../services/api.js', () => ({ api }))
 
 import ConfirmHost from '../components/ConfirmDialog.jsx'
 import { onAutomationsChanged } from '../lib/appEvents.js'
-import WorkflowImportDialog from './WorkflowImportDialog.jsx'
+import WorkflowImportDialog, { copyOfExisting, copyReasonOf, splitBundle } from './WorkflowImportDialog.jsx'
 
 afterEach(() => { cleanup(); vi.clearAllMocks() })
 
@@ -128,6 +128,141 @@ describe('WorkflowImportDialog', () => {
     expect(install).not.toBeDisabled()
   })
 
+  it('explains an import kept as a copy in plain words and replaces the existing one on request', async () => {
+    await importFile({ id: 'copy-1', name: 'Daily digest', status: 'created',
+      warnings: ['a workflow with this name already exists: orig-9; imported as a copy — use --replace orig-9 to replace it'] })
+    expect(await screen.findByText(/A workflow named “Daily digest” already exists and was left as it is/)).toBeInTheDocument()
+    expect(screen.queryByText(/--replace/)).not.toBeInTheDocument()
+    api.importWorkflowFull.mockResolvedValueOnce({ id: 'orig-9', name: 'Daily digest', status: 'updated', removedCopy: 'copy-1' })
+    fireEvent.click(screen.getByText('Replace the existing workflow instead'))
+    fireEvent.click(await screen.findByText('Replace', { selector: 'button' }))
+    await waitFor(() => expect(api.importWorkflowFull).toHaveBeenLastCalledWith('/w/flow.json', { replace: 'orig-9', removeCopy: 'copy-1' }))
+    expect(await screen.findByText('Replaced the existing “Daily digest” with this file and removed the copy.')).toBeInTheDocument()
+    expect(screen.queryByText('Replace the existing workflow instead')).not.toBeInTheDocument()
+  })
+
+  it('uses copyOf and words an edited-copy notice from copyReason', async () => {
+    // The CLI's own warning for each reason; the notice stands in for it.
+    const warning = {
+      id: 'a workflow with this id already exists and was edited locally: orig-7; imported as a copy — use --replace orig-7 to replace it',
+      import: 'the workflow imported earlier from this file was edited locally: orig-7; imported as a copy — use --replace orig-7 to replace it',
+    }
+    for (const reason of ['id', 'import']) {
+      await importFile({ id: 'copy-2', name: 'Daily digest', status: 'created', copyOf: 'orig-7', copyReason: reason, warnings: [warning[reason]] })
+      expect(await screen.findByText(/your edited version was kept, so this file was imported as a separate copy/)).toBeInTheDocument()
+      expect(screen.queryByText(/--replace|edited locally/)).not.toBeInTheDocument()
+      api.importWorkflowFull.mockResolvedValueOnce({ id: 'orig-7', name: 'Daily digest', status: 'updated', removedCopy: 'copy-2' })
+      fireEvent.click(screen.getByText('Replace the existing workflow instead'))
+      fireEvent.click(await screen.findByText('Replace', { selector: 'button' }))
+      await waitFor(() => expect(api.importWorkflowFull).toHaveBeenLastCalledWith('/w/flow.json', { replace: 'orig-7', removeCopy: 'copy-2' }))
+      cleanup(); vi.clearAllMocks()
+    }
+  })
+
+  it('keeps the same-name wording for copyReason "name"', async () => {
+    await importFile({ id: 'copy-3', name: 'Daily digest', status: 'created', copyOf: 'orig-8', copyReason: 'name', warnings: ['a workflow with this name already exists: orig-8; imported as a copy'] })
+    expect(await screen.findByText(/A workflow named “Daily digest” already exists and was left as it is/)).toBeInTheDocument()
+  })
+
+  it('shows other warnings as they are', async () => {
+    await importFile({ id: 'w1', name: 'X', status: 'created', warnings: ['node "a" uses a deprecated type'] })
+    expect(await screen.findByText('⚠ node "a" uses a deprecated type')).toBeInTheDocument()
+    expect(screen.queryByText('Replace the existing workflow instead')).not.toBeInTheDocument()
+  })
+
+  it('lists packages the file does not carry apart, without counting or installing them', async () => {
+    await importFile({
+      id: 'w1', name: 'Partial', status: 'created',
+      automations: [
+        { id: 'shelf-demo', version: '0.1.0', status: 'missing' },
+        { id: 'ghost-pkg', version: '2.1.0', status: 'missing', notBundled: true, error: 'not in the bundle: no site domains; install ghost-pkg on this machine first' },
+      ],
+      missingAutomations: ['shelf-demo', 'ghost-pkg'],
+    })
+    expect(await screen.findByText('Not included in this file')).toBeInTheDocument()
+    expect(screen.getByText('no site domains; install ghost-pkg on this machine first')).toBeInTheDocument()
+    expect(screen.getByText(/needs an automation that is not installed\. Its nodes for shelf-demo will not run/)).toBeInTheDocument()
+    api.importWorkflowFull.mockResolvedValueOnce({ id: 'w1', name: 'Partial', status: 'unchanged', automations: [
+      { id: 'shelf-demo', version: '0.1.0', status: 'installed' },
+      { id: 'ghost-pkg', version: '2.1.0', status: 'missing', notBundled: true, error: 'not in the bundle: no site domains; install ghost-pkg on this machine first' },
+    ] })
+    fireEvent.click(screen.getByText('Install bundled automations'))
+    fireEvent.click(await screen.findByText('Install'))
+    expect(await screen.findByText(/Installed 1 bundled automation/)).toBeInTheDocument()
+    expect(screen.queryByText('Install bundled automations')).not.toBeInTheDocument()
+    expect(screen.getByText('Not included in this file')).toBeInTheDocument()
+  })
+
+  it('has no install button when only not-bundled packages are missing', async () => {
+    await importFile({ id: 'w1', name: 'P', status: 'created', automations: [{ id: 'ghost-pkg', version: '2.1.0', status: 'missing', notBundled: true, error: 'not in the bundle: x' }] })
+    expect(await screen.findByText('Not included in this file')).toBeInTheDocument()
+    expect(screen.queryByText('Install bundled automations')).not.toBeInTheDocument()
+  })
+
+  it('shows differing packages with their changes and replaces them only after a confirm', async () => {
+    const differs = { id: 'shelf-demo', version: '0.1.0', status: 'differs', installedVersion: '0.1.0',
+      error: 'same version, different content: adds domains cdn.toscrape.com; the installed copy was kept. To replace it, re-import with --replace-automations',
+      changes: { addedDomains: ['cdn.toscrape.com'], addedScripts: ['grab.js'] },
+      reviewDetail: { id: 'shelf-demo', version: '0.1.0', domains: [], capabilities: [], replaces: { id: 'shelf-demo', source: 'imported', trust: 'imported', version: '0.1.0' }, replaceRequired: false, visibility: {} } }
+    await importFile({ id: 'w1', name: 'Mixed', status: 'created', automations: [differs] })
+    expect(await screen.findByText('Different from what is installed')).toBeInTheDocument()
+    expect(screen.getByText('New sites it may open: cdn.toscrape.com')).toBeInTheDocument()
+    expect(screen.getByText('New page scripts: grab.js')).toBeInTheDocument()
+    expect(screen.queryByText(/--replace-automations/)).not.toBeInTheDocument()
+    expect(screen.queryByText('Install bundled automations')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByText("Replace with the file's version"))
+    // Confirm lists the changes; cancelling replaces nothing.
+    expect(await screen.findAllByText('New sites it may open: cdn.toscrape.com')).toHaveLength(2)
+    fireEvent.click(screen.getByText('Cancel'))
+    await waitFor(() => expect(api.importWorkflowFull).toHaveBeenCalledTimes(1))
+    api.importWorkflowFull.mockResolvedValueOnce({ id: 'w1', name: 'Mixed', status: 'unchanged', automations: [{ ...differs, status: 'replaced', error: '' }] })
+    fireEvent.click(screen.getByText("Replace with the file's version"))
+    fireEvent.click(await screen.findByText('Replace', { selector: 'button' }))
+    await waitFor(() => expect(api.importWorkflowFull).toHaveBeenLastCalledWith('/w/flow.json', { yes: true, replaceAutomations: true }))
+    expect(await screen.findByText("Replaced 1 installed automation with the file's version.")).toBeInTheDocument()
+    expect(screen.queryByText("Replace with the file's version")).not.toBeInTheDocument()
+  })
+
+  it('never offers to replace a built-in from a file', async () => {
+    await importFile({ id: 'w1', name: 'M', status: 'created', automations: [{ id: 'hackernews', version: '1.1.0', status: 'differs', changes: { addedDomains: ['x.example.com'] },
+      reviewDetail: { replaces: { id: 'hackernews', source: 'builtin', trust: 'builtin', version: '1.1.0' } } }] })
+    expect(await screen.findByText('The installed copy is a built-in; a workflow file never replaces it.')).toBeInTheDocument()
+    expect(screen.queryByText("Replace with the file's version")).not.toBeInTheDocument()
+  })
+
+  it('says a local-only package works only on the sender machine', async () => {
+    await importFile({ id: 'w1', name: 'M', status: 'created', automations: [{ id: 'local-tool', version: '0.1.0', status: 'missing', notBundled: true, localOnly: true, error: 'not in the bundle: opens a local address (localhost:8080)' }] })
+    expect(await screen.findByText("Only works on the sender's machine — recreate it here or ask the sender.")).toBeInTheDocument()
+  })
+
+  it('uses builtin and replaceable from the CLI and never renders its hint', async () => {
+    await importFile({ id: 'w1', name: 'M', status: 'created', automations: [
+      { id: 'hackernews', version: '1.1.0', status: 'differs', builtin: true, replaceable: false, changes: { addedDomains: ['x.example.com'] },
+        hint: 'A bundle never replaces a built-in; the installed copy stays.' },
+      { id: 'locked', version: '1.0.0', status: 'differs', replaceable: false, changes: {} },
+      { id: 'shelf-demo', version: '0.1.0', status: 'differs', replaceable: true, changes: { addedDomains: ['cdn.toscrape.com'] },
+        hint: 'Re-import with --replace-automations to review and replace it.' },
+    ] })
+    expect(await screen.findByText('The installed copy is a built-in; a workflow file never replaces it.')).toBeInTheDocument()
+    expect(screen.getByText('This file cannot replace the installed copy.')).toBeInTheDocument()
+    expect(screen.queryByText(/bundle never replaces|--replace-automations/)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByText("Replace with the file's version"))
+    expect(await screen.findByText(/Replace the installed copy with the file's version/)).toBeInTheDocument()
+  })
+
+  it('words not-bundled advice itself instead of the CLI hint', async () => {
+    await importFile({ id: 'w1', name: 'M', status: 'created', automations: [
+      { id: 'ghost-pkg', version: '2.1.0', status: 'missing', notBundled: true, hint: 'Ask the sender to re-run workflow export with --include-automations.',
+        error: 'not in the bundle: no signed copy; the sender can re-run workflow export with --include-automations' },
+      { id: 'local-tool', version: '0.1.0', status: 'missing', notBundled: true, localOnly: true, hint: 'Recreate local-tool on this machine, or ask the sender for it.',
+        error: 'not in the bundle: opens a local address (localhost:8080)' },
+    ] })
+    expect(await screen.findByText('no signed copy')).toBeInTheDocument()
+    expect(screen.getByText('Install it here some other way, or ask the sender to include it in the file.')).toBeInTheDocument()
+    expect(screen.getByText("Only works on the sender's machine — recreate it here or ask the sender.")).toBeInTheDocument()
+    expect(screen.queryByText(/--include-automations|Recreate local-tool/)).not.toBeInTheDocument()
+  })
+
   it('shows CLI errors inline and closes on Escape', async () => {
     const onClose = vi.fn()
     api.importWorkflowFull.mockResolvedValue({ error: 'node "x" has no type' })
@@ -137,5 +272,39 @@ describe('WorkflowImportDialog', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('node "x" has no type')
     fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
     expect(onClose).toHaveBeenCalled()
+  })
+})
+
+describe('import result helpers', () => {
+  it('copyReasonOf maps id/import to edited and defaults to name', () => {
+    expect(copyReasonOf({ copyReason: 'id' })).toBe('edited')
+    expect(copyReasonOf({ copyReason: 'import' })).toBe('edited')
+    expect(copyReasonOf({ copyReason: 'name' })).toBe('name')
+    expect(copyReasonOf({})).toBe('name')
+  })
+
+  it('copyOfExisting prefers a structured field and reads the copy warning', () => {
+    expect(copyOfExisting({ copyOf: 'a1', warnings: ['a workflow with this name already exists: b2; imported as a copy'] })).toBe('a1')
+    expect(copyOfExisting({ warnings: ['a workflow with this name already exists: b2; imported as a copy — use --replace b2'] })).toBe('b2')
+    expect(copyOfExisting({ warnings: ['a workflow with this id already exists and was edited locally: wf-d9; imported as a copy — use --replace wf-d9 to replace it'] })).toBe('wf-d9')
+    expect(copyOfExisting({ warnings: ['the workflow imported earlier from this file was edited locally: 7672; imported as a copy — use --replace 7672 to replace it'] })).toBe('7672')
+    expect(copyOfExisting({ warnings: ['something else'] })).toBe(null)
+  })
+  it('splitBundle keeps not-bundled packages out of the installable set', () => {
+    const r = splitBundle([{ id: 'a', status: 'missing' }, { id: 'b', status: 'missing', notBundled: true }, { id: 'c', status: 'present', notBundled: true }])
+    expect(r.installable.map(i => i.id)).toEqual(['a'])
+    expect(r.notIncluded.map(i => i.id)).toEqual(['b'])
+    expect(r.listed.map(i => i.id)).toEqual(['a', 'c'])
+  })
+  it('splitBundle takes replaceable from the CLI, else leaves out built-ins', () => {
+    const r = splitBundle([
+      { id: 'a', status: 'differs', replaceable: true },
+      { id: 'b', status: 'differs', builtin: true, replaceable: false },
+      { id: 'c', status: 'differs', replaceable: false },
+      { id: 'd', status: 'differs', reviewDetail: { replaces: { source: 'builtin' } } },
+      { id: 'e', status: 'differs' },
+    ])
+    expect(r.differs.map(i => i.id)).toEqual(['a', 'b', 'c', 'd', 'e'])
+    expect(r.replaceable.map(i => i.id)).toEqual(['a', 'e'])
   })
 })

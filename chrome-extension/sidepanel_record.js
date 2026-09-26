@@ -40,6 +40,8 @@
   const saveAutomation = el("rec-save-automation");
   const verifyBtn = el("rec-verify");
   const saveBtn = el("rec-save");
+  const keepBtn = el("rec-save-keep");
+  const existingBtn = el("rec-save-existing");
   const verifySteps = el("rec-verify-steps");
   const verifyError = el("rec-verify-error");
   const draftMsg = el("rec-draft-msg");
@@ -53,6 +55,8 @@
   // closing it still stops the recording.
   let owner = false;
   let confirmSave = false;
+  // The proposed id the person agreed to add to (after "already exists").
+  let addToExisting = "";
   const PING_MS = 20000;
 
   function say(target, kind, text) {
@@ -70,7 +74,12 @@
 
   async function send(message) {
     const res = await ask(message); // sidepanel.js
-    if (!res || res.ok === false) throw new Error((res && res.error) || "the extension did not answer");
+    if (!res || res.ok === false) {
+      const err = new Error((res && res.error) || "the extension did not answer");
+      if (res && res.code) err.code = res.code;
+      if (res && res.data !== undefined) err.data = res.data;
+      throw err;
+    }
     return res;
   }
 
@@ -240,6 +249,9 @@
     }
     confirmSave = false;
     saveBtn.textContent = "Save";
+    keepBtn.hidden = true;
+    existingBtn.hidden = true;
+    addToExisting = "";
     saveAs.value = d.saveAs || "action";
     saveName.value = d.action || "";
     saveAutomation.value = d.automation || "";
@@ -329,36 +341,81 @@
     }
   });
 
+  // Save, optionally keeping the package's current selectors where the
+  // recording's conflict with them (offered after such a failure).
+  async function save(keepPackageSelectors) {
+    const force = View.hasErrors(draft) && confirmSave;
+    saveBtn.disabled = true;
+    keepBtn.disabled = true;
+    const automation = saveAutomation.value.trim();
+    const request = (isNew) =>
+      send({
+        type: "record_save",
+        draftDir: draft.draftDir,
+        saveAs: saveAs.value,
+        name: saveName.value.trim(),
+        automation,
+        isNew,
+        force,
+        keepPackageSelectors: keepPackageSelectors === true,
+      });
+    // `new` only for the analyzer's own proposal; a name the person typed
+    // is an automation to add to (the CLI installs it if it is not there),
+    // and so is a proposal they agreed to add to after "already exists".
+    const asNew = View.saveAsNew(draft, automation) && addToExisting !== automation;
+    existingBtn.hidden = true;
+    try {
+      const res = await request(asNew);
+      keepBtn.hidden = true;
+      const done = View.saveResult(res.result);
+      say(draftMsg, done.warn ? "warn" : "ok", done.text);
+    } catch (err) {
+      const conflict = View.selectorConflict(err, saveAutomation.value.trim());
+      if (asNew && View.alreadyExists(err)) {
+        // The proposed id is taken -- perhaps by an unrelated automation.
+        // Never add to it without asking.
+        keepBtn.hidden = true;
+        say(draftMsg, "warn", View.existsQuestion(automation));
+        existingBtn.hidden = false;
+      } else if (conflict && !keepPackageSelectors) {
+        say(draftMsg, "warn", `${conflict.text}. Save again keeping the package's current selectors, or re-record.`);
+        keepBtn.hidden = false;
+      } else {
+        keepBtn.hidden = true;
+        say(draftMsg, "err", `Save failed: ${err.message}`);
+      }
+    } finally {
+      saveBtn.disabled = false;
+      keepBtn.disabled = false;
+    }
+  }
+
   saveBtn.addEventListener("click", async () => {
     if (!draft) return;
     // Error-level lint: the first click explains, the second saves anyway.
-    const force = View.hasErrors(draft);
-    if (force && !confirmSave) {
+    if (View.hasErrors(draft) && !confirmSave) {
       confirmSave = true;
       saveBtn.textContent = "Save anyway";
       say(draftMsg, "warn", "This draft has errors (listed above) and may not run. Press Save anyway to keep it regardless.");
       return;
     }
-    saveBtn.disabled = true;
-    try {
-      const res = await send({
-        type: "record_save",
-        draftDir: draft.draftDir,
-        saveAs: saveAs.value,
-        name: saveName.value.trim(),
-        automation: saveAutomation.value.trim(),
-        // A new automation stays new under whatever name the person gives it.
-        isNew: draft.isNew,
-        force: force && confirmSave,
-      });
-      const r = res.result || {};
-      const what = r.nodeType || [r.automation, r.action].filter(Boolean).join(".");
-      say(draftMsg, "ok", `Saved${what ? ` as ${what}` : ""}${r.version ? ` (v${r.version})` : ""}.`);
-    } catch (err) {
-      say(draftMsg, "err", `Save failed: ${err.message}`);
-    } finally {
-      saveBtn.disabled = false;
-    }
+    await save(false);
+  });
+
+  existingBtn.addEventListener("click", async () => {
+    if (!draft) return;
+    addToExisting = saveAutomation.value.trim();
+    await save(false);
+  });
+
+  // A different name is a different decision.
+  saveAutomation.addEventListener("input", () => {
+    addToExisting = "";
+    existingBtn.hidden = true;
+  });
+
+  keepBtn.addEventListener("click", async () => {
+    if (draft) await save(true);
   });
 
   // ── the port to the worker ───────────────────────────────────────

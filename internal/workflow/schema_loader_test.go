@@ -44,7 +44,7 @@ func TestLoadDefaultSchema_BrowserFallback(t *testing.T) {
 		{"linkedin.find_by_keyword", "keywords"},
 		{"instagram.send_dms", "targets"},
 		{"x.engage_with_posts", "keywords"},
-		{"tiktok.export_followers", "targets"},
+		{"tiktok.export_followers", "profileUrl"},
 		{"instagram.publish_post", "text"},
 		{"linkedin.scrape_profile_info", "targets"},
 	}
