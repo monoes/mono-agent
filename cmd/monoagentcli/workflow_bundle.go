@@ -106,12 +106,11 @@ func workflowAutomationIDs(nodes []workflow.WorkflowFileNode, resolve func(prefi
 // packageResolver resolves a node-type prefix the way the action loader
 // does (the registry's DefSource, which also maps a legacy platform alias
 // such as "google_maps" to its generated local-* package), then falls back
-// to installed packages the DefSource hides (disabled): an exact id, or a
-// generated legacy package whose recorded platform is the prefix.
+// to installed packages the DefSource hides (disabled): an exact id, or the
+// generated legacy package for that platform (Registry.ResolveLegacyPlatform,
+// which knows hashed ids for colliding names).
 func packageResolver(reg *automation.Registry) func(string) string {
 	src := reg.DefSource()
-	var infos []automation.InstalledInfo
-	listed := false
 	return func(prefix string) string {
 		if src != nil {
 			if pc := src.Package(prefix); pc != nil {
@@ -121,14 +120,8 @@ func packageResolver(reg *automation.Registry) func(string) string {
 		if info, err := reg.Info(prefix); err == nil && !info.Removed {
 			return info.ID
 		}
-		if !listed {
-			infos, _ = reg.List(false)
-			listed = true
-		}
-		for _, info := range infos {
-			if info.LegacyPlatform != "" && strings.EqualFold(info.LegacyPlatform, prefix) {
-				return info.ID
-			}
+		if id, ok := reg.ResolveLegacyPlatform(prefix); ok {
+			return id
 		}
 		return ""
 	}

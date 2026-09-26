@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -210,5 +211,50 @@ func TestCanonicalNodeTypes(t *testing.T) {
 	}
 	if in[0].Type != "foo.x" {
 		t.Fatal("input nodes were mutated")
+	}
+}
+
+// A legacy package whose sites cannot be worked out (no literal navigate)
+// cannot be installed elsewhere; the bundle export fails with registry's
+// explanation instead of writing a bundle that would not import.
+func TestWorkflowBundleLegacyWithoutDomainsFails(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, ".monoagent", "actions", "nosite")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"actionType":"get_heading","platform":"nosite","steps":[{"id":"h","type":"find_element","selector":"h1"}]}`
+	if err := os.WriteFile(filepath.Join(dir, "get_heading.json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &globalConfig{DBPath: filepath.Join(t.TempDir(), "src.db"), JSONOutput: true, ProfileID: "default"}
+	src := filepath.Join(t.TempDir(), "wf.json")
+	wf := `{"name":"nosite-wf","nodes":[{"id":"h","type":"nosite.get_heading","name":"H","position":{"x":0,"y":0},"config":{}}],"connections":[]}`
+	if err := os.WriteFile(src, []byte(wf), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var imported struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(runWorkflowSubcmd(t, cfg, "import", "--file", src)), &imported); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(t.TempDir(), "bundled.json")
+	var runErr error
+	captureStdout(t, func() {
+		cmd := newWorkflowCmd(cfg)
+		cmd.SetArgs([]string{"export", imported.ID, "--bundle-automations", "-o", out})
+		cmd.SilenceUsage, cmd.SilenceErrors = true, true
+		runErr = cmd.Execute()
+	})
+	if runErr == nil || !strings.Contains(runErr.Error(), "cannot export") {
+		t.Fatalf("export of a domainless legacy package: err = %v", runErr)
+	}
+	if b, err := os.ReadFile(out); err == nil && len(b) > 0 {
+		var doc workflowBundleFile
+		if json.Unmarshal(b, &doc) == nil && len(doc.Automations) > 0 {
+			t.Fatal("a bundle with an uninstallable package was written")
+		}
 	}
 }
