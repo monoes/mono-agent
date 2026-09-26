@@ -71,7 +71,7 @@ export default function Dashboard({ onRefresh, onNavigate, onOpenHil }) {
         </div>
       </div>
 
-      <div className="page-body">
+      <div className="page-body dash-page">
         <AttentionStrip items={items} loading={loading} onNavigate={onNavigate} onOpenHil={onOpenHil} />
         <StatRow summary={summary} orgs={orgs} loading={loading} onNavigate={onNavigate} />
         <div className="dashboard-grid">

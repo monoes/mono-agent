@@ -51,7 +51,7 @@ function WorkflowRow({ wf, last, sched, invalid, daemonRunning, onRun, onStop, o
         {wf.is_active ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}
       </button>
 
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <div className="wf-name">
         <div className="dash-ellipsis" style={{ fontWeight: 600, fontSize: 13, color: 'var(--text)' }}>{wf.name}</div>
         {wf.description && (
           <div className="dash-ellipsis" style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>{wf.description}</div>
