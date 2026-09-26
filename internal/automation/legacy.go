@@ -39,6 +39,13 @@ type legacyDir struct {
 
 var nonSlug = regexp.MustCompile(`[^a-z0-9-]+`)
 
+// LegacyPackageID is the id a legacy ~/.monoagent/actions/<platform>
+// directory is wrapped into when no other platform claimed it first
+// ("google_maps" → "local-google-maps"). Colliding or over-long names get
+// a hashed id instead, so to find an installed package prefer
+// Registry.ResolveLegacyPlatform.
+func LegacyPackageID(platform string) string { return legacyID(platform) }
+
 // legacyID is the plain id for platform (truncated to the id length).
 func legacyID(platform string) string {
 	id := strings.Trim(nonSlug.ReplaceAllString("local-"+strings.ToLower(platform), "-"), "-")
