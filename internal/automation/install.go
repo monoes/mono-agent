@@ -226,6 +226,15 @@ func sameInstall(e *indexEntry, p *Package, files map[string][]byte) bool {
 		e.Source == p.Source && e.trust() == p.trust()
 }
 
+// ownUpgrade reports whether p is a newer version of the user's own local
+// package, installed from a directory as local: an ordinary upgrade that
+// needs no confirmation (the current copy stays as the rollback target).
+func ownUpgrade(e *indexEntry, p *Package) bool {
+	return e.Source == SourceLocal && e.trust() == TrustLocal &&
+		p.Source == SourceLocal && p.trust() == TrustLocal &&
+		CompareVersions(p.Manifest.Version, e.Version) > 0
+}
+
 // trustDropEffects says in plain words what a lower trust tier changes.
 func trustDropEffects(to string) string {
 	switch to {
@@ -293,7 +302,7 @@ func (r *Registry) prepareLocked(idx *indexFile, p *Package, files map[string][]
 			why = fmt.Sprintf("REPLACES the installed %s package %q %s with imported content", strings.ToUpper(e.trust()), m.ID, e.Version)
 		case trustRank(e.trust()) >= trustRank(TrustLocal) && incoming == TrustRecorded && !merge:
 			why = fmt.Sprintf("REPLACES the installed %s package %q %s with recorded content", strings.ToUpper(e.trust()), m.ID, e.Version)
-		case e.userOwned() && !merge:
+		case e.userOwned() && !merge && !ownUpgrade(e, p):
 			why = fmt.Sprintf("REPLACES your own package %q %s with different content (the current copy is kept for rollback)", m.ID, e.Version)
 		}
 		if why != "" {

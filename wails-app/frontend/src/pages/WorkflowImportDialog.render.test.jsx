@@ -11,6 +11,7 @@ const api = vi.hoisted(() => ({
 vi.mock('../services/api.js', () => ({ api }))
 
 import ConfirmHost from '../components/ConfirmDialog.jsx'
+import { onAutomationsChanged } from '../lib/appEvents.js'
 import WorkflowImportDialog from './WorkflowImportDialog.jsx'
 
 afterEach(() => { cleanup(); vi.clearAllMocks() })
@@ -93,6 +94,38 @@ describe('WorkflowImportDialog', () => {
     expect(screen.getByText('Installed 1 bundled automation for “Scrape”.')).toBeInTheDocument()
     expect(screen.getByText('Install review')).toBeInTheDocument()
     expect(screen.queryByText('Install bundled automations')).not.toBeInTheDocument()
+  })
+
+  it('announces installed automations so the node palette reloads', async () => {
+    const onAutomationsInstalled = vi.fn(); const heard = vi.fn()
+    const off = onAutomationsChanged(heard)
+    await importFile({ id: 'w1', name: 'Scrape', status: 'created', automations: [{ id: 'books-demo', version: '0.1.0', status: 'missing' }], missingAutomations: ['books-demo'] }, { onAutomationsInstalled })
+    api.importWorkflowFull.mockResolvedValueOnce({ id: 'w1', name: 'Scrape', status: 'unchanged', automations: [{ id: 'books-demo', version: '0.1.0', status: 'installed' }] })
+    fireEvent.click(await screen.findByText('Install bundled automations'))
+    fireEvent.click(await screen.findByText('Install'))
+    await waitFor(() => expect(onAutomationsInstalled).toHaveBeenCalled())
+    expect(heard).toHaveBeenCalledWith({ source: 'workflow-import' })
+    off()
+  })
+
+  it('shows the trust drop and requires a tick when a bundled package replaces one', async () => {
+    await importFile({
+      id: 'w1', name: 'Scrape', status: 'created',
+      automations: [{ id: 'acme', version: '2.0.0', status: 'missing', reviewDetail: {
+        id: 'acme', version: '2.0.0', publisher: 'Jane', domains: ['app.acme.com'],
+        capabilities: ["visits profiles — the profile's owner can see your visit (view_profile)"],
+        replaces: { id: 'acme', source: 'local', trust: 'recorded', version: '1.0.0' }, replaceRequired: true,
+        trustChange: { from: 'recorded', to: 'imported' }, visibility: { profile_view_visible_to_owner: ['view_profile'] } } }],
+      missingAutomations: ['acme'],
+    })
+    expect(await screen.findByText(/Trust drops from recorded to imported/)).toBeInTheDocument()
+    expect(screen.getByText(/visits profiles — the profile's owner can see your visit/)).toBeInTheDocument()
+    expect(screen.getByText('Replaces local acme 1.0.0')).toBeInTheDocument()
+    expect(screen.queryByText('• can open and act on: books.toscrape.com')).not.toBeInTheDocument()
+    const install = screen.getByText('Install bundled automations').closest('button')
+    expect(install).toBeDisabled()
+    fireEvent.click(screen.getByLabelText(/I understand this replaces the local acme/))
+    expect(install).not.toBeDisabled()
   })
 
   it('shows CLI errors inline and closes on Escape', async () => {

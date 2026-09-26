@@ -2,6 +2,7 @@ package automation
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"path"
@@ -20,18 +21,91 @@ func (r *Registry) Export(id string, w io.Writer, opts ExportOptions) error {
 	if err != nil {
 		return err
 	}
-	if p.Source != SourceBuiltin && len(p.Manifest.Site.Domains) == 0 {
-		why := "it has no site.domains"
-		if p.Manifest.Legacy != nil {
-			why = "it was generated from legacy actions whose sites could not be worked out"
-		}
-		return fmt.Errorf("cannot export %s: %s, so it could not be installed anywhere else — add site.domains (the sites its actions open) to its automation.json to export it", id, why)
-	}
 	files, err := exportFiles(p, opts)
 	if err != nil {
 		return err
 	}
+	if len(opts.Domains) > 0 {
+		if files, err = withExportDomains(files, opts.Domains); err != nil {
+			return fmt.Errorf("cannot export %s: %w", id, err)
+		}
+	}
+	if p.Source != SourceBuiltin {
+		if err := checkExportInstallable(id, files); err != nil {
+			return err
+		}
+	}
 	return writeZip(files, w)
+}
+
+// ErrNotExportable is wrapped when an export would produce a package that
+// installing elsewhere (as imported) would refuse.
+var ErrNotExportable = errors.New("cannot export")
+
+// withExportDomains sets site.domains of the exported manifest (only) to
+// domains, checked like manifest domains; a startUrl outside them moves to
+// the first exact domain.
+func withExportDomains(files map[string][]byte, domains []string) (map[string][]byte, error) {
+	for _, d := range domains {
+		if err := checkDomainPattern(d); err != nil {
+			return nil, fmt.Errorf("domain %q: %v", d, err)
+		}
+	}
+	m, err := ParseManifest(files[ManifestFile])
+	if err != nil {
+		return nil, err
+	}
+	m.Site.Domains = append([]string{}, domains...)
+	if urlInDomains(m.Site.StartURL, m.Site.Domains) != nil {
+		m.Site.StartURL = ""
+		for _, d := range m.Site.Domains {
+			if !strings.HasPrefix(d, "*.") {
+				m.Site.StartURL = "https://" + d + "/"
+				break
+			}
+		}
+	}
+	if m.Login != nil && urlInDomains(m.Login.URL, m.Site.Domains) != nil {
+		return nil, fmt.Errorf("login.url %s is outside the domains given", m.Login.URL)
+	}
+	b, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string][]byte, len(files))
+	for n, v := range files {
+		out[n] = v
+	}
+	out[ManifestFile] = append(b, '\n')
+	return out, nil
+}
+
+// checkExportInstallable validates the exported files as an imported
+// package would be on install, and explains in plain words what to do when
+// that would fail.
+func checkExportInstallable(id string, files map[string][]byte) error {
+	ep, err := OpenFS(mapFS(files), SourceImported)
+	if err != nil {
+		return fmt.Errorf("%w %s: %v", ErrNotExportable, id, err)
+	}
+	m := ep.Manifest
+	if l := m.Legacy; l != nil && len(l.LocalHosts) > 0 {
+		return fmt.Errorf("%w %s: it opens %s, which no exported package may allow (local addresses only work on this computer), so it can't be exported",
+			ErrNotExportable, id, strings.Join(l.LocalHosts, ", "))
+	}
+	issues := Validate(ep)
+	if !HasErrors(issues) {
+		return nil
+	}
+	if len(m.Site.Domains) == 0 {
+		if l := m.Legacy; l != nil && len(l.SuggestedDomains) > 0 {
+			return fmt.Errorf("%w %s: it was generated from legacy actions and runs unrestricted here, but an exported package must list the sites it may open: export it with --domains %s (suggested from its actions)",
+				ErrNotExportable, id, strings.Join(l.SuggestedDomains, ","))
+		}
+		return fmt.Errorf("%w %s: it lists no sites (site.domains), which an exported package must: export it with --domains <site,…> naming the sites its actions open",
+			ErrNotExportable, id)
+	}
+	return fmt.Errorf("%w %s: it would not install elsewhere: %s", ErrNotExportable, id, firstError(issues))
 }
 
 // exportFiles returns the files of p an export writes.

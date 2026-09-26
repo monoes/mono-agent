@@ -182,3 +182,21 @@ test("draft review: boolean side effects, error lint, scripts in full, Go's need
 test("a discarded recording says nothing was saved", () => {
   assert.equal(V.summary({ discarded: true, steps: [] }), "Nothing was saved: the recording had no steps.");
 });
+
+test("a failed verify says why and marks the step it failed on (R6-1)", () => {
+  const v = V.describeVerify({
+    ok: false,
+    steps: [
+      { id: "open", type: "navigate", status: "pass" },
+      { id: "name", type: "type", status: "fail", message: "element not found: name_field" },
+      { id: "save", type: "click", status: "skipped" },
+    ],
+  });
+  assert.equal(v.ok, false);
+  assert.deepEqual(v.steps.map((s) => [s.id, s.failed]), [["open", false], ["name", true], ["save", false]]);
+  assert.equal(v.error, "name: element not found: name_field");
+  const withError = V.describeVerify({ ok: false, error: "browser bridge not connected", steps: [] });
+  assert.equal(withError.error, "browser bridge not connected", "the report's own error wins");
+  const passed = V.describeVerify({ ok: true, steps: [{ id: "a", status: "pass" }] });
+  assert.deepEqual([passed.error, passed.steps[0].failed], ["", false]);
+});

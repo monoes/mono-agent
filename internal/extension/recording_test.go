@@ -189,6 +189,8 @@ func TestRecordMethodArgsValidation(t *testing.T) {
 			"record save " + realDraft + " --as=fragment --new=my-site --name=Create contact --json"},
 		{recordSaveArgs, map[string]any{"draftDir": draft, "force": true}, "record save " + realDraft + " --force --json"},
 		{recordSaveArgs, map[string]any{"draftDir": draft, "force": false}, "record save " + realDraft + " --json"},
+		{recordSaveArgs, map[string]any{"draftDir": draft, "keepPackageSelectors": true}, "record save " + realDraft + " --keep-package-selectors --json"},
+		{recordSaveArgs, map[string]any{"draftDir": draft, "force": true, "keepPackageSelectors": true}, "record save " + realDraft + " --force --keep-package-selectors --json"},
 	}
 	for _, g := range good {
 		args, err := g.build(req(g.p))
@@ -218,6 +220,8 @@ func TestRecordMethodArgsValidation(t *testing.T) {
 		{recordSaveArgs, map[string]any{"draftDir": draft, "name": "a\nb"}},
 		{recordSaveArgs, map[string]any{"draftDir": draft, "force": "true"}},
 		{recordSaveArgs, map[string]any{"draftDir": draft, "force": 1.0}},
+		{recordSaveArgs, map[string]any{"draftDir": draft, "keepPackageSelectors": "true"}},
+		{recordSaveArgs, map[string]any{"draftDir": draft, "keepPackageSelectors": 1.0}},
 	}
 	for _, b := range bad {
 		if args, err := b.build(req(b.p)); err == nil {
@@ -419,6 +423,72 @@ func TestRecordVerifyDoesNotLeakPathExistence(t *testing.T) {
 			first = reply.Error
 		} else if reply.Error != first {
 			t.Errorf("%s: answer %q differs from %q", ref, reply.Error, first)
+		}
+	}
+}
+
+// exitRunner answers like a CLI that exited non-zero with out on stdout.
+type exitRunner struct{ out string }
+
+func (r exitRunner) Run(context.Context, ...string) ([]byte, error) {
+	return []byte(r.out), errors.New("monoagentcli record verify: exit status 1")
+}
+
+// A failed replay exits 1 but prints its report; the side panel must get
+// the report, not just "verify failed" (e2e R6-1).
+func TestRecordVerifyFailureReturnsTheReport(t *testing.T) {
+	srv, ext, _ := startCaptureServer(t)
+	drafts, _ := recording.DraftsDir()
+	if err := os.MkdirAll(filepath.Join(drafts, "rec-1"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	report := `{
+  "steps": [
+    {"id": "s1", "type": "click", "status": "pass", "message": "", "selector": "#a"},
+    {"id": "s2", "type": "type", "status": "fail", "message": "element not found", "selector": "#b"}
+  ],
+  "stoppedAt": null,
+  "ok": false
+}`
+	srv.SetRecordRunner(exitRunner{out: report})
+	ext.ask("v1", MethodRecordVerify, map[string]any{"draftDir": "rec-1"})
+	reply := ext.settled()
+	if !reply.OK {
+		t.Fatalf("failed verify lost its report: %+v", reply)
+	}
+	data, _ := reply.Data.(map[string]any)
+	steps, _ := data["steps"].([]any)
+	if len(steps) != 2 || data["ok"] != false {
+		t.Fatalf("report = %v", data)
+	}
+	if s2, _ := steps[1].(map[string]any); s2["status"] != "fail" || s2["message"] != "element not found" {
+		t.Fatalf("step 2 = %v", steps[1])
+	}
+	if _, has := data["stoppedAt"]; !has {
+		t.Fatalf("stoppedAt dropped: %v", data)
+	}
+}
+
+func TestRunRecordJSONOnFailure(t *testing.T) {
+	cases := []struct {
+		out     string
+		wantErr string // "" = the output is the result
+	}{
+		{`{"steps":[],"ok":false}`, ""},
+		{`{"error":"draft not found or outside the drafts folder"}`, "draft not found or outside the drafts folder"},
+		{``, "exit status 1"},
+		{`panic: boom`, "exit status 1"},
+		{`[1,2]`, "exit status 1"},
+	}
+	for _, c := range cases {
+		data, err := runRecordJSON(context.Background(), exitRunner{out: c.out}, []string{"record", "verify", "x", "--json"})
+		switch {
+		case c.wantErr == "" && err != nil:
+			t.Errorf("%q: err %v, want the report", c.out, err)
+		case c.wantErr == "" && data == nil:
+			t.Errorf("%q: no data", c.out)
+		case c.wantErr != "" && (err == nil || !strings.Contains(err.Error(), c.wantErr)):
+			t.Errorf("%q: err %v, want %q", c.out, err, c.wantErr)
 		}
 	}
 }

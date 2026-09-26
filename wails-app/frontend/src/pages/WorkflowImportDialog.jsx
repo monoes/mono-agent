@@ -7,6 +7,7 @@
 import { useState } from 'react'
 import { X, FolderOpen, ExternalLink, Package, Download } from 'lucide-react'
 import { api } from '../services/api.js'
+import { emitAutomationsChanged } from '../lib/appEvents.js'
 import { confirm } from '../components/ConfirmDialog.jsx'
 import { Chip, ErrorBox, OkBox, Busy, body, label, mono, muted, panel, useDialog } from './connections/ui.jsx'
 
@@ -40,14 +41,34 @@ function ReviewDetail({ item }) {
         <>
           <span style={line}>Publisher: {d.publisher || 'unknown'}</span>
           <span style={line}>Domains: {(d.domains || []).join(', ') || 'unrestricted'}</span>
+          {/* The capabilities list already carries the visibility lines
+              ("visits profiles — the profile's owner can see your visit…"),
+              as in the automation import review. */}
           {(d.capabilities || []).length > 0 && (
             <ul style={{ margin: 0, paddingLeft: 16 }}>{d.capabilities.map(c => <li key={c} style={line}>{c}</li>)}</ul>
           )}
-          {d.replaces && <span style={{ ...line, color: 'var(--red)' }}>Replaces {d.replaces.source} {d.replaces.id} {d.replaces.version}</span>}
+          {d.replaceRequired && d.replaces && <span style={{ ...line, color: 'var(--red)' }}>Replaces {d.replaces.source} {d.replaces.id} {d.replaces.version}</span>}
+          {d.trustChange && <span style={{ ...line, color: 'var(--yellow)' }}>⚠ Trust drops from {d.trustChange.from} to {d.trustChange.to}: page scripts stay off and real runs of actions that change things need confirmation again.</span>}
         </>
       ) : item.review ? <span style={line}>{item.review}</span> : null}
       {item.error && <span style={{ ...line, color: 'var(--red)' }}>{item.error}</span>}
     </div>
+  )
+}
+
+// ReviewNotes: what the one-line review leaves out — the replacement, a
+// trust drop, and the plain-language capabilities (visibility included);
+// the technical ones (steps, scripts, tier…) are already in the review line.
+const TECHNICAL_CAP = /^(steps|scripts|tier):|^(downloads|policy-blocked)$/
+function ReviewNotes({ d }) {
+  if (!d) return null
+  const note = { ...muted, fontSize: 10, paddingLeft: 19, wordBreak: 'break-word' }
+  return (
+    <>
+      {d.replaceRequired && d.replaces && <span style={{ ...note, color: 'var(--red)' }}>Replaces {d.replaces.source} {d.replaces.id} {d.replaces.version}</span>}
+      {d.trustChange && <span style={{ ...note, color: 'var(--yellow)' }}>⚠ Trust drops from {d.trustChange.from} to {d.trustChange.to}: page scripts stay off and real runs of actions that change things need confirmation again.</span>}
+      {(d.capabilities || []).filter(c => !TECHNICAL_CAP.test(c)).map(c => <span key={c} style={note}>• {c}</span>)}
+    </>
   )
 }
 
@@ -65,13 +86,14 @@ function Automations({ items }) {
           </div>
           {it.error && <span style={{ ...muted, fontSize: 10, color: 'var(--red)', paddingLeft: 19 }}>{it.error}</span>}
           {it.review && <span style={{ ...muted, fontSize: 10, paddingLeft: 19, wordBreak: 'break-word' }}>{it.review}</span>}
+          <ReviewNotes d={it.reviewDetail} />
         </div>
       ))}
     </div>
   )
 }
 
-export default function WorkflowImportDialog({ onClose, onOpen, onImported }) {
+export default function WorkflowImportDialog({ onClose, onOpen, onImported, onAutomationsInstalled }) {
   const dialog = useDialog(onClose)
   const [path, setPath] = useState('')
   const [pasted, setPasted] = useState('')
@@ -80,6 +102,7 @@ export default function WorkflowImportDialog({ onClose, onOpen, onImported }) {
   const [error, setError] = useState('')
   const [res, setRes] = useState(null)
   const [installRes, setInstallRes] = useState(null)
+  const [replaceOk, setReplaceOk] = useState(false)
 
   const input = pasted.trim() || path.trim()
 
@@ -112,11 +135,20 @@ export default function WorkflowImportDialog({ onClose, onOpen, onImported }) {
     try {
       // Re-import with --yes: the workflow itself comes back unchanged.
       const out = await run({ yes: true })
-      if (out) setInstallRes(out)
+      if (out) {
+        setInstallRes(out)
+        if ((out.automations || []).some(i => i.status === 'installed')) {
+          onAutomationsInstalled?.(out)
+          emitAutomationsChanged({ source: 'workflow-import' })
+        }
+      }
     } finally { setBusy('') }
   }
 
   const stillMissing = missing.length > 0
+  // A bundled package whose install replaces something needs the same
+  // explicit tick as the automation import dialog.
+  const replacing = missing.filter(i => i.reviewDetail?.replaceRequired)
   const edit = (fn) => (e) => { fn(e); setRes(null); setInstallRes(null); setError('') }
   return (
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()} style={{ zIndex: 1100 }}>
@@ -162,7 +194,13 @@ export default function WorkflowImportDialog({ onClose, onOpen, onImported }) {
                     The workflow was imported, but it needs {missing.length === 1 ? 'an automation that is' : `${missing.length} automations that are`} not installed. Its nodes for {missing.map(i => i.id).join(', ')} will not run until you install them.
                   </span>
                   {shown.installCommand && <code style={{ ...mono, fontSize: 10, color: 'var(--text-muted)', wordBreak: 'break-all' }}>{shown.installCommand}</code>}
-                  <button className="btn btn-primary btn-sm" onClick={installMissing} disabled={!!busy} style={{ alignSelf: 'flex-start', gap: 5 }}>
+                  {replacing.length > 0 && (
+                    <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', ...body, fontSize: 11.5, color: 'var(--text)' }}>
+                      <input type="checkbox" checked={replaceOk} onChange={e => setReplaceOk(e.target.checked)} style={{ marginTop: 2 }} />
+                      I understand this replaces {replacing.map(i => `the ${i.reviewDetail.replaces?.source || 'installed'} ${i.id}`).join(', ')}
+                    </label>
+                  )}
+                  <button className="btn btn-primary btn-sm" onClick={installMissing} disabled={!!busy || (replacing.length > 0 && !replaceOk)} style={{ alignSelf: 'flex-start', gap: 5 }}>
                     <Download size={11} /> {busy === 'install' ? 'Installing…' : 'Install bundled automations'}
                   </button>
                 </div>

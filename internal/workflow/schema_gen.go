@@ -112,6 +112,33 @@ func packageForm(automation, actionType string) (*NodeSchema, bool) {
 	return &schema, true
 }
 
+// sessionPlatform is the login/session platform of a browser automation
+// node — what the editor's session picker lists sessions for — or "" when
+// nodeType isn't an automation action. It is the automation id; a legacy
+// local-<p> package runs on <p>'s login, so its original platform name
+// (the registry's LegacyPlatform, else the id without "local-").
+func sessionPlatform(nodeType string) string {
+	dot := strings.Index(nodeType, ".")
+	if dot <= 0 || dot == len(nodeType)-1 {
+		return ""
+	}
+	id := nodeType[:dot]
+	if _, err := loadActionDef(id, nodeType[dot+1:]); err != nil {
+		return ""
+	}
+	if !strings.HasPrefix(id, "local-") {
+		return id
+	}
+	if src := action.CurrentDefSource(); src != nil {
+		if lp, ok := src.Package(id).(interface{ LegacyPlatform() string }); ok {
+			if name := lp.LegacyPlatform(); name != "" {
+				return name
+			}
+		}
+	}
+	return strings.TrimPrefix(id, "local-")
+}
+
 // generateActionSchema builds the form for a browser node type: the
 // package's forms/ override when there is one, else one built from its
 // action's inputs. ok is false when nodeType is not a known action.

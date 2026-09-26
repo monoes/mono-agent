@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -31,6 +32,9 @@ type importIndexEntry struct {
 	Name   string `json:"name"`
 	Source string `json:"source"` // absolute --file path, or "stdin"
 	Hash   string `json:"hash"`   // workflowContentHash at import time
+	// ImportedAt is when the import was recorded (zero in entries written
+	// before v0.75).
+	ImportedAt time.Time `json:"importedAt,omitempty"`
 }
 
 func importIndexPath() string { return expandPath("~/.monoagent/workflow-imports.json") }
@@ -45,6 +49,9 @@ func loadImportIndex() []importIndexEntry {
 
 // recordImport upserts the entry for id (one entry per workflow).
 func recordImport(e importIndexEntry) {
+	if e.ImportedAt.IsZero() {
+		e.ImportedAt = time.Now().UTC()
+	}
 	idx := loadImportIndex()
 	out := idx[:0]
 	for _, old := range idx {
@@ -130,15 +137,41 @@ func ownedWorkflow(ctx context.Context, store *workflow.HybridWorkflowStore, db 
 	return wf
 }
 
-// findImportTarget finds the local workflow an import should update: the
+// importMatch is what findImportTarget decided about an import.
+type importMatch struct {
+	// Target is the local workflow the file corresponds to (nil: none).
+	Target *workflow.Workflow
+	// MayUpdate: Target is an unedited earlier import of this file, so a
+	// changed file may replace it in place. Otherwise a differing file is
+	// imported as a copy — never over the user's own work.
+	MayUpdate bool
+	// Clash names a local workflow with the same name that the import does
+	// not replace (reported as a warning).
+	Clash string
+}
+
+// findImportTarget finds the local workflow an import corresponds to: the
 // file's own id, else a workflow imported earlier from the same source
-// with the same content or the same name.
+// (same content, or same name), else — for workflows the index never saw —
+// only a workflow with IDENTICAL content. Only an indexed earlier import
+// that was not edited since may be updated in place.
 func findImportTarget(ctx context.Context, store *workflow.HybridWorkflowStore, db *sql.DB, profileID string,
-	wf *workflow.Workflow, source, hash string) *workflow.Workflow {
-	if existing := ownedWorkflow(ctx, store, db, profileID, wf.ID); existing != nil {
-		return existing
-	}
+	wf *workflow.Workflow, source, hash string) importMatch {
 	idx := loadImportIndex()
+	entryFor := func(id string) *importIndexEntry {
+		for i := len(idx) - 1; i >= 0; i-- {
+			if idx[i].ID == id {
+				return &idx[i]
+			}
+		}
+		return nil
+	}
+	decide := func(existing *workflow.Workflow) importMatch {
+		return importMatch{Target: existing, MayUpdate: uneditedSinceImport(existing, entryFor(existing.ID))}
+	}
+	if existing := ownedWorkflow(ctx, store, db, profileID, wf.ID); existing != nil {
+		return decide(existing)
+	}
 	for _, match := range []func(importIndexEntry) bool{
 		func(e importIndexEntry) bool { return e.Source == source && e.Hash == hash },
 		func(e importIndexEntry) bool { return e.Source == source && e.Name == wf.Name },
@@ -146,7 +179,7 @@ func findImportTarget(ctx context.Context, store *workflow.HybridWorkflowStore, 
 		for i := len(idx) - 1; i >= 0; i-- {
 			if match(idx[i]) {
 				if existing := ownedWorkflow(ctx, store, db, profileID, idx[i].ID); existing != nil {
-					return existing
+					return decide(existing)
 				}
 			}
 		}
@@ -154,18 +187,27 @@ func findImportTarget(ctx context.Context, store *workflow.HybridWorkflowStore, 
 	return matchUnindexed(ctx, store, db, profileID, wf, hash)
 }
 
-// matchUnindexed finds a local workflow the import index does not know —
-// e.g. one imported by v0.70, which kept no index: first one with the same
-// content (ids and timestamps ignored), else one with the same name and the
-// same node types. Newest first.
+// uneditedSinceImport reports whether w is still exactly what the recorded
+// import e wrote: same content hash, and not saved after e was recorded.
+func uneditedSinceImport(w *workflow.Workflow, e *importIndexEntry) bool {
+	if w == nil || e == nil || e.Hash == "" || workflowContentHash(w) != e.Hash {
+		return false
+	}
+	return e.ImportedAt.IsZero() || !w.UpdatedAt.After(e.ImportedAt.Add(2*time.Second))
+}
+
+// matchUnindexed looks at local workflows the import index does not know
+// (e.g. imported by v0.70, or created by hand) with the same name. Only an
+// IDENTICAL one (ids and timestamps ignored) is a match — reported as
+// unchanged. A same-named workflow with different content is never
+// touched; it is returned as a clash so the import says it made a copy.
 func matchUnindexed(ctx context.Context, store *workflow.HybridWorkflowStore, db *sql.DB, profileID string,
-	wf *workflow.Workflow, hash string) *workflow.Workflow {
+	wf *workflow.Workflow, hash string) importMatch {
 	list, err := store.ListWorkflows(ctx, profileID)
 	if err != nil {
-		return nil
+		return importMatch{}
 	}
-	var sameTypes *workflow.Workflow
-	want := nodeTypeSet(wf)
+	clash := ""
 	for _, cand := range list {
 		if cand.Name != wf.Name {
 			continue
@@ -175,13 +217,18 @@ func matchUnindexed(ctx context.Context, store *workflow.HybridWorkflowStore, db
 			continue
 		}
 		if workflowContentHash(full) == hash {
-			return full
+			return importMatch{Target: full}
 		}
-		if sameTypes == nil && nodeTypeSet(full) == want {
-			sameTypes = full
+		if clash == "" {
+			clash = full.ID
 		}
 	}
-	return sameTypes
+	return importMatch{Clash: clash}
+}
+
+// copyWarning is the warning of an import that did not replace id.
+func copyWarning(id string) string {
+	return fmt.Sprintf("a workflow with this name already exists: %s; imported as a copy — use --replace %s to replace it", id, id)
 }
 
 // nodeTypeSet is the sorted multiset of a workflow's node types.
@@ -225,7 +272,7 @@ func shellQuoteArg(s string) string {
 // printWorkflowImport handles the bundled automations and prints the
 // import result (JSON or human), including the status and, when bundled
 // packages are missing, which ones and the exact command installing them.
-func printWorkflowImport(cfg *globalConfig, cmd *cobra.Command, wf *workflow.Workflow, status string,
+func printWorkflowImport(cfg *globalConfig, cmd *cobra.Command, wf *workflow.Workflow, status string, warnings []string,
 	remapped, remappedConns map[string]string, raw []byte, yes bool, inputFile string) error {
 	// Bundled automations (workflow export --bundle-automations):
 	// report present/missing ones, install missing with --yes or
@@ -240,6 +287,9 @@ func printWorkflowImport(cfg *globalConfig, cmd *cobra.Command, wf *workflow.Wor
 
 	if cfg.JSONOutput {
 		out := map[string]interface{}{"id": wf.ID, "name": wf.Name, "status": status}
+		if len(warnings) > 0 {
+			out["warnings"] = warnings
+		}
 		if bundled != nil {
 			out["automations"] = bundled
 		}
@@ -275,6 +325,9 @@ func printWorkflowImport(cfg *globalConfig, cmd *cobra.Command, wf *workflow.Wor
 		}
 		sort.Strings(parts)
 		fmt.Fprintf(os.Stdout, "Remapped %s (already used by another workflow): %s\n", label, strings.Join(parts, ", "))
+	}
+	for _, w := range warnings {
+		fmt.Fprintln(os.Stdout, "Warning:", w)
 	}
 	printRemapped("node ids", remapped)
 	printRemapped("connection ids", remappedConns)

@@ -68,13 +68,9 @@ func TestReplaceOwnPackageKeepsRollbackCopy(t *testing.T) {
 		t.Fatalf("roll forward: %v", err)
 	}
 
-	// A newer version with different content also needs confirmation; the
-	// old name ReplaceBuiltin still confirms.
-	files["automation.json"] = strings.Replace(files["automation.json"], `"1.2.0"`, `"1.3.0"`, 1)
+	// The old name ReplaceBuiltin still confirms a same-version replace.
+	files["scripts/parse.js"] = "return 'v3';\n"
 	dir = writeTree(t, t.TempDir(), files)
-	if _, err := r.Install(dir, InstallOptions{Trust: TrustLocal}); !errors.Is(err, ErrReplaces) {
-		t.Errorf("unconfirmed update of own package: %v", err)
-	}
 	if _, err := r.Install(dir, InstallOptions{Trust: TrustLocal, ReplaceBuiltin: true}); err != nil {
 		t.Errorf("ReplaceBuiltin alias: %v", err)
 	}

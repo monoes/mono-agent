@@ -687,33 +687,7 @@ platform name to override. Token refresh is handled automatically for OAuth conn
 					allItems = append(allItems, o.Items...)
 				}
 				if len(allItems) > 0 {
-					// Resolve post_id from config selectedListItems[0] (the post URL input declared in the action JSON).
-					postID := ""
-					platform := strings.ToUpper(strings.SplitN(nodeType, ".", 2)[0])
-					postURL := ""
-					if items, ok := config["selectedListItems"].([]interface{}); ok && len(items) > 0 {
-						switch v := items[0].(type) {
-						case string:
-							postURL = v
-						case map[string]interface{}:
-							postURL, _ = v["url"].(string)
-						}
-					}
-					if postURL != "" {
-						shortcode := extractPostShortcode(postURL)
-						if shortcode != "" {
-							_ = rawDB.QueryRowContext(ctx,
-								"SELECT id FROM posts WHERE platform = ? AND shortcode = ?",
-								platform, shortcode,
-							).Scan(&postID)
-						}
-					}
-					if postID == "" {
-						fmt.Fprintf(os.Stderr, "  Warning: post not found in DB — run list_user_posts first\n")
-					} else {
-						saved, skipped, failed := saveCommentsToDB(ctx, rawDB, allItems, postID)
-						fmt.Fprintf(os.Stderr, "  Saved %d comment(s) to post_comments table (%d skipped, %d failed)\n", saved, skipped, failed)
-					}
+					autoSaveComments(ctx, rawDB, nodeType, config, allItems, os.Stderr)
 				}
 			}
 
@@ -784,19 +758,16 @@ func savePostsToDB(ctx context.Context, db *sql.DB, items []workflow.Item, nodeT
 
 	// Resolve person_id: find username from config targets, look up people table scoped to active profile.
 	personID := ""
-	if targets, ok := config["targets"].([]interface{}); ok && len(targets) > 0 {
-		if t, ok := targets[0].(map[string]interface{}); ok {
-			postURL, _ := t["url"].(string)
-			username := ""
-			if factory, ok := bot.PlatformRegistry[platform]; ok {
-				username = factory().ExtractUsername(postURL)
-			}
-			if username != "" {
-				_ = db.QueryRowContext(ctx,
-					"SELECT id FROM people WHERE platform_username = ? AND UPPER(platform) = ? AND profile_id = ?",
-					username, platform, profileID,
-				).Scan(&personID)
-			}
+	if postURL := firstTargetURL(config); postURL != "" {
+		username := ""
+		if factory, ok := bot.PlatformRegistry[platform]; ok {
+			username = factory().ExtractUsername(postURL)
+		}
+		if username != "" {
+			_ = db.QueryRowContext(ctx,
+				"SELECT id FROM people WHERE platform_username = ? AND UPPER(platform) = ? AND profile_id = ?",
+				username, platform, profileID,
+			).Scan(&personID)
 		}
 	}
 

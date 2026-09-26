@@ -40,8 +40,11 @@ type SaveOptions struct {
 	// RenameInputs renames action inputs (old → new) before saving.
 	RenameInputs map[string]string
 	// Force saves a draft whose lint has errors.
-	Force          bool
-	CreateWorkflow WorkflowCreator
+	Force bool
+	// KeepPackageSelectors resolves selector conflicts with the target
+	// package by keeping the package's current entries.
+	KeepPackageSelectors bool
+	CreateWorkflow       WorkflowCreator
 	// LinkRecording records the saved automation on the recording; nil
 	// adds a warning instead.
 	LinkRecording func(recordingID, automationID string) error
@@ -108,6 +111,12 @@ func Save(ctx context.Context, reg Installer, dir string, opts SaveOptions) (*Sa
 	if err := renameStaged(stage, d.Action, opts.RenameInputs, d); err != nil {
 		return nil, err
 	}
+	var kept []string
+	if opts.KeepPackageSelectors {
+		if kept, err = keepPackageSelectors(reg, stage, id); err != nil {
+			return nil, err
+		}
+	}
 
 	var res *SaveResult
 	switch as {
@@ -121,7 +130,13 @@ func Save(ctx context.Context, reg Installer, dir string, opts SaveOptions) (*Sa
 		return nil, fmt.Errorf("--as must be action, fragment or workflow (got %q)", as)
 	}
 	if err != nil {
+		if !opts.KeepPackageSelectors {
+			err = withSelectorConflictHint(err)
+		}
 		return nil, err
+	}
+	if len(kept) > 0 {
+		res.Warnings = append(res.Warnings, "kept the package's current selector(s): "+strings.Join(kept, ", "))
 	}
 	if opts.LinkRecording != nil {
 		if err := opts.LinkRecording(d.RecordingID, res.Automation); err != nil {

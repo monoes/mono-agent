@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.75.0] - 2026-09-26
+
+### Fixed
+
+- **Upgraded legacy actions work as before again.** v0.74 restricted
+  actions from `~/.monoagent/actions` to the sites written in them, which
+  broke templated URLs and redirects (e.g. google.com → www.google.com).
+  They run unrestricted again. The sites found in them are kept as a
+  suggestion for export.
+- **Importing a workflow never overwrites your own work.** A same-named
+  workflow you made or edited is left alone, and the file is imported as a
+  copy with a warning (`--replace <id>` replaces it explicitly). Re-importing
+  an identical file still reports "unchanged".
+- **Workflow bundles export partially.** Automations that can't be exported
+  are listed with the reason instead of failing the whole export.
+  `--automation-domains <id>=<sites>` and `--use-suggested-domains` include
+  legacy ones. `automation export` and `action export` take `--domains` and
+  `--use-suggested-domains` too.
+- **Browser nodes have a session picker** in the editor for every
+  automation, including Hacker News, Product Hunt and imported or recorded
+  ones.
+- **Keyword search nodes** run with only their required fields on every
+  platform.
+- **The extension's side panel** shows a failed verify's step report instead
+  of the previous run's steps.
+- `record save --keep-package-selectors` keeps selectors you re-recorded.
+- **Re-importing an identical action** is a no-op. Upgrading your own local
+  package to a newer version no longer needs `--replace`.
+- **`node run instagram.list_post_comments`** saves comments with form-style
+  targets.
+- **Clearer error** when the bridge rejects a client (pairing mismatch).
+- **Workflow editor:** the node palette refreshes after installs, and the
+  image picker only appears on media fields.
+
+### Note
+
+The desktop app's in-app update on Linux could fail in v0.73.0 when `/tmp`
+is a separate filesystem. If you're on the v0.73.0 desktop app, download
+this release manually once. Updates from v0.74.0 onward work from inside the
+app.
+
 ## [0.74.0] - 2026-09-26
 
 ### Fixed

@@ -1288,6 +1288,7 @@ func normalizeLegacyWorkflowJSON(raw []byte) ([]byte, error) {
 func newWorkflowImportCmd(cfg *globalConfig) *cobra.Command {
 	var inputFile string
 	var overwrite, yes, asNew bool
+	var replaceID string
 
 	cmd := &cobra.Command{
 		Use:   "import",
@@ -1326,25 +1327,43 @@ func newWorkflowImportCmd(cfg *globalConfig) *cobra.Command {
 
 			now := time.Now().UTC()
 
-			// Idempotent import: the file's own id, or an earlier import of
-			// the same source (same content or name), is updated in place —
-			// or left alone when nothing changed. --as-new forces a copy.
+			// Idempotent, never destructive: an identical local workflow is
+			// "unchanged"; only an unedited earlier import of this file (or
+			// --replace <id>) is updated in place; any other same-named
+			// workflow is left alone and the file is imported as a copy.
+			// --as-new always copies.
 			source, hash := workflowImportSource(inputFile), workflowContentHash(&wf)
 			status := importCreated
-			var target *workflow.Workflow
-			if !asNew {
-				target = findImportTarget(ctx, store, db.DB, cfg.ProfileID, &wf, source, hash)
+			var match importMatch
+			var warnings []string
+			switch {
+			case replaceID != "":
+				t := ownedWorkflow(ctx, store, db.DB, cfg.ProfileID, replaceID)
+				if t == nil {
+					return errNotFound("--replace: no workflow %q in this profile", replaceID)
+				}
+				match = importMatch{Target: t, MayUpdate: true}
+			case !asNew:
+				match = findImportTarget(ctx, store, db.DB, cfg.ProfileID, &wf, source, hash)
+			}
+			target := match.Target
+			if match.Clash != "" {
+				warnings = append(warnings, copyWarning(match.Clash))
 			}
 			switch {
 			case target != nil && workflowContentHash(target) == hash:
 				status = importUnchanged
 				wf.ID = target.ID
-			case target != nil:
+			case target != nil && match.MayUpdate:
 				status, overwrite = importUpdated, true
 				wf.ID = target.ID
 				if !target.CreatedAt.IsZero() {
 					now = target.CreatedAt
 				}
+			case target != nil:
+				// Edited (or created) locally since: keep the user's work.
+				warnings = append(warnings, copyWarning(target.ID))
+				wf.ID, overwrite = uuid.New().String(), false
 			case asNew || wf.ID == "":
 				wf.ID = uuid.New().String()
 			case overwrite:
@@ -1358,7 +1377,7 @@ func newWorkflowImportCmd(cfg *globalConfig) *cobra.Command {
 			wf.UpdatedAt = time.Now().UTC()
 			if status == importUnchanged {
 				recordImport(importIndexEntry{ID: wf.ID, Name: wf.Name, Source: source, Hash: hash})
-				return printWorkflowImport(cfg, cmd, &wf, status, nil, nil, raw, yes, inputFile)
+				return printWorkflowImport(cfg, cmd, &wf, status, warnings, nil, nil, raw, yes, inputFile)
 			}
 
 			// workflow_nodes.id and workflow_connections.id are globally
@@ -1478,12 +1497,13 @@ func newWorkflowImportCmd(cfg *globalConfig) *cobra.Command {
 			}
 
 			recordImport(importIndexEntry{ID: wf.ID, Name: wf.Name, Source: source, Hash: hash})
-			return printWorkflowImport(cfg, cmd, &wf, status, remapped, remappedConns, raw, yes, inputFile)
+			return printWorkflowImport(cfg, cmd, &wf, status, warnings, remapped, remappedConns, raw, yes, inputFile)
 		},
 	}
 
 	cmd.Flags().StringVarP(&inputFile, "file", "f", "", "Path to JSON file (default: stdin)")
 	cmd.Flags().BoolVar(&overwrite, "overwrite", false, "Keep the id from the file instead of generating a new one")
+	cmd.Flags().StringVar(&replaceID, "replace", "", "Replace this existing workflow (by id) with the file's content")
 	cmd.Flags().BoolVar(&asNew, "as-new", false, "Always create a new workflow, even when this file was imported before")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Install automations bundled in the file that are not installed yet")
 	return cmd
@@ -1537,7 +1557,8 @@ func workflowFileFromWorkflow(wf *workflow.Workflow) workflow.WorkflowFile {
 // newWorkflowExportCmd exports a workflow as JSON.
 func newWorkflowExportCmd(cfg *globalConfig) *cobra.Command {
 	var outputFile string
-	var bundle bool
+	var bundle, useSuggested bool
+	var autoDomains []string
 
 	cmd := &cobra.Command{
 		Use:   "export <id>",
@@ -1563,23 +1584,32 @@ func newWorkflowExportCmd(cfg *globalConfig) *cobra.Command {
 
 			var wfFile interface{} = workflowFileFromWorkflow(wf)
 			if bundle {
-				if wfFile, err = bundleWorkflowAutomations(workflowFileFromWorkflow(wf)); err != nil {
+				domains, err := parseAutomationDomains(autoDomains)
+				if err != nil {
 					return err
 				}
+				b, err := bundleWorkflowAutomations(workflowFileFromWorkflow(wf),
+					bundleOptions{domains: domains, useSuggested: useSuggested})
+				if err != nil {
+					return err
+				}
+				for _, w := range append(suggestedNotices(b), unbundledWarnings(b)...) {
+					fmt.Fprintln(os.Stderr, w)
+				}
+				wfFile = b
 			}
 
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
 			if outputFile != "" {
-				f, err := os.Create(outputFile)
+				// Encode fully, then write via temp file + rename: a failed
+				// export never leaves an empty or truncated file behind.
+				b, err := json.MarshalIndent(wfFile, "", "  ")
 				if err != nil {
-					return fmt.Errorf("create output file: %w", err)
-				}
-				defer f.Close()
-				enc = json.NewEncoder(f)
-				enc.SetIndent("", "  ")
-				if err := enc.Encode(wfFile); err != nil {
 					return err
+				}
+				if err := writeFileAtomic(outputFile, append(b, '\n')); err != nil {
+					return fmt.Errorf("write output file: %w", err)
 				}
 				fmt.Fprintf(os.Stdout, "Exported workflow %q to %s\n", wf.Name, outputFile)
 				return nil
@@ -1590,6 +1620,10 @@ func newWorkflowExportCmd(cfg *globalConfig) *cobra.Command {
 
 	cmd.Flags().StringVarP(&outputFile, "output", "o", "", "Write to file instead of stdout")
 	cmd.Flags().BoolVar(&bundle, "bundle-automations", false, "Embed the automation packages the workflow's nodes use")
+	cmd.Flags().StringArrayVar(&autoDomains, "automation-domains", nil,
+		"With --bundle-automations: site domains for a bundled package's exported copy, as <id>=<site,...> (repeatable)")
+	cmd.Flags().BoolVar(&useSuggested, "use-suggested-domains", false,
+		"With --bundle-automations: give legacy packages the domains suggested from their navigate URLs")
 	return cmd
 }
 

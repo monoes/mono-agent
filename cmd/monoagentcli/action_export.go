@@ -20,6 +20,7 @@ import (
 
 func newActionExportCmd(cfg *globalConfig) *cobra.Command {
 	var outFile string
+	var df exportDomainFlags
 	cmd := &cobra.Command{
 		Use:   "export <automation>.<action>",
 		Short: "Export one action, with the fragments/selectors/scripts it uses, as a .mpkg",
@@ -36,7 +37,11 @@ func newActionExportCmd(cfg *globalConfig) *cobra.Command {
 			if outFile == "" {
 				outFile = fmt.Sprintf("%s.%s.mpkg", id, name)
 			}
-			opts := automation.ExportOptions{Actions: []string{name}}
+			doms, err := df.resolve(reg, id)
+			if err != nil {
+				return err
+			}
+			opts := automation.ExportOptions{Actions: []string{name}, Domains: doms}
 			sum, err := writeHashed(outFile, func(w io.Writer) error { return reg.Export(id, w, opts) })
 			if err != nil {
 				return err
@@ -45,6 +50,7 @@ func newActionExportCmd(cfg *globalConfig) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVarP(&outFile, "output", "o", "", "Output file (default <automation>.<action>.mpkg)")
+	df.register(cmd)
 	return cmd
 }
 

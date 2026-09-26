@@ -111,7 +111,7 @@ func TestWorkflowBundleLegacyAlias(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			pkgID := packageResolver(reg)(platform)
+			pkgID := packageResolver(reg)(platform, "get_heading")
 			if pkgID == "" {
 				t.Fatalf("prefix %q resolves to no package", platform)
 			}
@@ -134,8 +134,16 @@ func TestWorkflowBundleLegacyAlias(t *testing.T) {
 			if err := json.Unmarshal([]byte(runWorkflowSubcmd(t, cfg, "import", "--file", src)), &imported); err != nil {
 				t.Fatal(err)
 			}
+			// Default: a legacy package runs unrestricted and has no domains,
+			// so it is left out, with a hint listing the suggested domains.
+			_, bare := exportBundle(t, cfg, imported.ID)
+			if u, ok := bare.Unbundled[pkgID]; !ok || len(bare.Automations) != 0 ||
+				!strings.Contains(u.Hint, "example.com") || !strings.Contains(u.Hint, "--use-suggested-domains") {
+				t.Fatalf("default export: bundled %v, unbundled %+v", keysOf(bare.Automations), bare.Unbundled)
+			}
+
 			bundled := filepath.Join(t.TempDir(), "bundled.json")
-			runWorkflowSubcmd(t, cfg, "export", imported.ID, "--bundle-automations", "-o", bundled)
+			runWorkflowSubcmd(t, cfg, "export", imported.ID, "--bundle-automations", "--use-suggested-domains", "-o", bundled)
 			raw, err := os.ReadFile(bundled)
 			if err != nil {
 				t.Fatal(err)
@@ -182,23 +190,23 @@ func TestPackageResolverDisabledLegacy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := packageResolver(reg)("example_site")
+	id := packageResolver(reg)("example_site", "get_heading")
 	if id == "" {
 		t.Fatal("enabled legacy package not resolved")
 	}
 	if err := reg.SetEnabled(id, false); err != nil {
 		t.Fatal(err)
 	}
-	if got := packageResolver(reg)("example_site"); got != id {
+	if got := packageResolver(reg)("example_site", "get_heading"); got != id {
 		t.Fatalf("disabled legacy package resolved to %q, want %q", got, id)
 	}
-	if got := packageResolver(reg)("core"); got != "" {
+	if got := packageResolver(reg)("core", "set"); got != "" {
 		t.Fatalf("core resolved to %q", got)
 	}
 }
 
 func TestCanonicalNodeTypes(t *testing.T) {
-	resolve := func(p string) string {
+	resolve := func(p, _ string) string {
 		return map[string]string{"foo": "local-foo", "hn": "hn", "bar": "local-bar"}[p]
 	}
 	in := []workflow.WorkflowFileNode{{Type: "foo.x"}, {Type: "hn.y"}, {Type: "bar.z"}, {Type: "core.set"}}
@@ -211,50 +219,5 @@ func TestCanonicalNodeTypes(t *testing.T) {
 	}
 	if in[0].Type != "foo.x" {
 		t.Fatal("input nodes were mutated")
-	}
-}
-
-// A legacy package whose sites cannot be worked out (no literal navigate)
-// cannot be installed elsewhere; the bundle export fails with registry's
-// explanation instead of writing a bundle that would not import.
-func TestWorkflowBundleLegacyWithoutDomainsFails(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	dir := filepath.Join(home, ".monoagent", "actions", "nosite")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	body := `{"actionType":"get_heading","platform":"nosite","steps":[{"id":"h","type":"find_element","selector":"h1"}]}`
-	if err := os.WriteFile(filepath.Join(dir, "get_heading.json"), []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cfg := &globalConfig{DBPath: filepath.Join(t.TempDir(), "src.db"), JSONOutput: true, ProfileID: "default"}
-	src := filepath.Join(t.TempDir(), "wf.json")
-	wf := `{"name":"nosite-wf","nodes":[{"id":"h","type":"nosite.get_heading","name":"H","position":{"x":0,"y":0},"config":{}}],"connections":[]}`
-	if err := os.WriteFile(src, []byte(wf), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	var imported struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal([]byte(runWorkflowSubcmd(t, cfg, "import", "--file", src)), &imported); err != nil {
-		t.Fatal(err)
-	}
-	out := filepath.Join(t.TempDir(), "bundled.json")
-	var runErr error
-	captureStdout(t, func() {
-		cmd := newWorkflowCmd(cfg)
-		cmd.SetArgs([]string{"export", imported.ID, "--bundle-automations", "-o", out})
-		cmd.SilenceUsage, cmd.SilenceErrors = true, true
-		runErr = cmd.Execute()
-	})
-	if runErr == nil || !strings.Contains(runErr.Error(), "cannot export") {
-		t.Fatalf("export of a domainless legacy package: err = %v", runErr)
-	}
-	if b, err := os.ReadFile(out); err == nil && len(b) > 0 {
-		var doc workflowBundleFile
-		if json.Unmarshal(b, &doc) == nil && len(doc.Automations) > 0 {
-			t.Fatal("a bundle with an uninstallable package was written")
-		}
 	}
 }
