@@ -953,12 +953,7 @@ downloads it to disk, and returns the local file path.
 
 Setup (one-time): run  monoagentcli login gemini  and log in with your Google account.
 credential_id is optional — omit it and monoagentcli auto-resolves the saved session.
-
-Two methods are available automatically (monoagentcli tries both):
-  1. Browser crawl  — logs into gemini.google.com and generates via the web UI (default, no key needed)
-  2. API fallback   — used only if a Gemini API key is configured as a connection
-
-Always prefer the browser crawl method. It requires only a Google login, no billing.`,
+It requires only a Google login, no API key and no billing.`,
 		Config: `{
   "prompt":              "editorial photo of a city skyline at sunset",
   "maxWaitSeconds":      120,
@@ -1848,7 +1843,7 @@ generations at once) without the runs interfering.`,
 	},
 	{
 		Name:  "connect",
-		Short: "Manage AI and external service connections (OAuth, API keys) — see 'ref connections' for the full model",
+		Short: "Manage external service connections (OAuth, API keys) — see 'ref connections' for the full model",
 		Usage: "monoagentcli connect <platform> | connect <subcommand>",
 		Flags: `  <platform>                              Interactively connect a platform (OAuth or API key)
   list [--all] [--platform x]            List saved connections (--all: every supported platform)
