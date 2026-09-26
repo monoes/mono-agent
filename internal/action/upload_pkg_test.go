@@ -89,3 +89,37 @@ func TestUploadConfinementExemptsBuiltinAndLocal(t *testing.T) {
 		t.Error("recorded package must be confined")
 	}
 }
+
+// Safe mode stops before an upload, but a path the live run would refuse is
+// reported as refused, not as a successful "would upload".
+func TestSafeModeUploadPrecheck(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	uploads := filepath.Join(home, ".monoagent", "uploads", "rec")
+	if err := os.MkdirAll(uploads, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	inside := filepath.Join(uploads, "a.png")
+	if err := os.WriteFile(inside, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run := func(path string) (*ActionExecutor, error) {
+		ae := newPkgExecutor(nil, &coreTrustPkg{fakePkg: fakePkg{id: "rec"}, trust: "recorded"})
+		ae.SetSafeMode(true)
+		ae.SetVariable("file", path)
+		def := &ActionDef{ActionType: "t", SideEffects: "write", Steps: []StepDef{
+			{ID: "up", Type: "upload", Selector: "#f", Text: "{{file}}", SideEffect: true},
+		}}
+		_, err := ae.ExecuteDef(&StorageAction{ID: "a", TargetPlatform: "rec", Type: "t"}, def)
+		return ae, err
+	}
+
+	ae, err := run("/etc/passwd")
+	if !errors.Is(err, ErrRefused) || ae.SafeStopped() != nil {
+		t.Fatalf("outside path: err=%v safeStop=%+v, want a refusal", err, ae.SafeStopped())
+	}
+	ae, err = run(inside)
+	if err != nil || ae.SafeStopped() == nil || ae.SafeStopped().StepID != "up" {
+		t.Fatalf("allowed path: err=%v safeStop=%+v, want a normal safe stop", err, ae.SafeStopped())
+	}
+}

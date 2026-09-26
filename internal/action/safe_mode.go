@@ -7,6 +7,7 @@ package action
 // enclosing executeSteps, whatever the nested handler did with the error.
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -140,4 +141,28 @@ func (ae *ActionExecutor) defaultOnError() *ErrorHandlerDef {
 		return nil
 	}
 	return &ErrorHandlerDef{Action: ErrorActionAbort}
+}
+
+// precheckSafeStop runs, before a safe stop, the refusals the stopped step
+// would have hit, so verification does not report "would upload" for a
+// step the live run refuses. Today: an upload's path confinement (fsconfine
+// and the package rules), resolved exactly as the upload step resolves it.
+// The error wraps ErrRefused.
+func (ae *ActionExecutor) precheckSafeStop(ctx context.Context, step StepDef) error {
+	if step.Type != "upload" {
+		return nil
+	}
+	resolved := ae.resolver.ResolveStepDef(step)
+	raw := splitUploadPaths(resolved)
+	files, err := fsconfine.Paths(ctx, raw)
+	if err == nil {
+		err = ae.confineUploads(ctx, raw, files)
+	}
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, ErrRefused) {
+		err = fmt.Errorf("%w: %w", ErrRefused, err)
+	}
+	return fmt.Errorf("upload step %s: %w", step.ID, err)
 }
