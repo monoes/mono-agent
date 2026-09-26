@@ -28,7 +28,6 @@ import (
 	"github.com/monoes/mono-agent/internal/secrets"
 	"github.com/monoes/mono-agent/internal/storage"
 	"github.com/monoes/mono-agent/internal/vault"
-	"github.com/monoes/mono-agent/internal/workflow"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	_ "modernc.org/sqlite"
 )
@@ -44,7 +43,6 @@ type App struct {
 	aiStore     *ai.AIStore
 	chatService *aichat.ChatService
 	chatSup     *chatSupervisor // new conversation/turn/event supervisor; see app_chat.go
-	wfStore     *workflow.HybridWorkflowStore
 
 	runningMu      sync.Mutex
 	runningCmds    map[string]*exec.Cmd // workflowID / "action:<id>" / "noderun:<id>" → running subprocess
@@ -140,17 +138,6 @@ func (a *App) startup(ctx context.Context) {
 	vaultDir := filepath.Join(home, ".monoagent", "vault")
 	if err := os.MkdirAll(vaultDir, 0700); err != nil {
 		runtime.LogErrorf(ctx, "vault dir error: %v", err)
-	}
-
-	// Initialize workflow hybrid store (file + SQLite) so workflows created
-	// by both the GUI and the CLI are visible.
-	wfDir := filepath.Join(home, ".monoagent", "workflows")
-	fileStore, wfErr := workflow.NewWorkflowFileStore(wfDir)
-	if wfErr != nil {
-		fmt.Printf("workflow file store init error: %v\n", wfErr)
-	} else {
-		sqlStore := workflow.NewSQLiteWorkflowStore(db)
-		a.wfStore = workflow.NewHybridWorkflowStore(fileStore, sqlStore)
 	}
 
 	// Initialize connections manager.

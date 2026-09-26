@@ -28,13 +28,8 @@ func newTestApp(t *testing.T) *App {
 	}
 	t.Cleanup(func() { sdb.DB.Close() })
 
-	fileStore, err := workflow.NewWorkflowFileStore(filepath.Join(t.TempDir(), "workflows"))
-	if err != nil {
-		t.Fatalf("NewWorkflowFileStore: %v", err)
-	}
 	return &App{
 		db:          sdb.DB,
-		wfStore:     workflow.NewHybridWorkflowStore(fileStore, workflow.NewSQLiteWorkflowStore(sdb.DB)),
 		runningCmds: make(map[string]*exec.Cmd),
 	}
 }
