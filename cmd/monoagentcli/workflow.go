@@ -1289,6 +1289,7 @@ func newWorkflowImportCmd(cfg *globalConfig) *cobra.Command {
 	var inputFile string
 	var overwrite, yes, asNew bool
 	var replaceID string
+	var replaceAutomations bool
 
 	cmd := &cobra.Command{
 		Use:   "import",
@@ -1377,7 +1378,7 @@ func newWorkflowImportCmd(cfg *globalConfig) *cobra.Command {
 			wf.UpdatedAt = time.Now().UTC()
 			if status == importUnchanged {
 				recordImport(importIndexEntry{ID: wf.ID, Name: wf.Name, Source: source, Hash: hash})
-				return printWorkflowImport(cfg, cmd, &wf, status, warnings, nil, nil, raw, yes, inputFile)
+				return printWorkflowImport(cfg, cmd, &wf, status, warnings, nil, nil, raw, yes, replaceAutomations, inputFile)
 			}
 
 			// workflow_nodes.id and workflow_connections.id are globally
@@ -1497,7 +1498,7 @@ func newWorkflowImportCmd(cfg *globalConfig) *cobra.Command {
 			}
 
 			recordImport(importIndexEntry{ID: wf.ID, Name: wf.Name, Source: source, Hash: hash})
-			return printWorkflowImport(cfg, cmd, &wf, status, warnings, remapped, remappedConns, raw, yes, inputFile)
+			return printWorkflowImport(cfg, cmd, &wf, status, warnings, remapped, remappedConns, raw, yes, replaceAutomations, inputFile)
 		},
 	}
 
@@ -1506,6 +1507,8 @@ func newWorkflowImportCmd(cfg *globalConfig) *cobra.Command {
 	cmd.Flags().StringVar(&replaceID, "replace", "", "Replace this existing workflow (by id) with the file's content")
 	cmd.Flags().BoolVar(&asNew, "as-new", false, "Always create a new workflow, even when this file was imported before")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Install automations bundled in the file that are not installed yet")
+	cmd.Flags().BoolVar(&replaceAutomations, "replace-automations", false,
+		"Replace installed automations whose bundled copy (same version) has different content, after showing the review (asks unless --yes)")
 	return cmd
 }
 

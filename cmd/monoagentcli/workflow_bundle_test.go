@@ -231,8 +231,10 @@ func TestWorkflowBundleNeverReplacesBuiltin(t *testing.T) {
 	}
 	entries := map[string]bundledAutomation{builtin.ID: packBundle(t, builtin.ID)}
 	var log bytes.Buffer
-	items := handleBundledAutomations(bundleDoc(t, entries), bundleImportOptions{yes: true, out: &log})
-	if len(items) != 1 || items[0].Status != "present" {
+	// Same id and version, other content: reported "differs", and even the
+	// explicit --replace-automations opt-in never replaces a built-in.
+	items := handleBundledAutomations(bundleDoc(t, entries), bundleImportOptions{yes: true, replace: true, out: &log})
+	if len(items) != 1 || items[0].Status != "differs" || !strings.Contains(items[0].Error, "built-in") {
 		t.Fatalf("installed built-in: %+v", items)
 	}
 	after, err := reg.Info(builtin.ID)

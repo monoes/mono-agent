@@ -247,7 +247,9 @@ func nodeTypeSet(wf *workflow.Workflow) string {
 func missingBundleHint(items []bundleImportItem, inputFile string) ([]string, string) {
 	var missing []string
 	for _, it := range items {
-		if it.Status == "missing" {
+		// A package the exporter could not bundle cannot be installed by
+		// re-importing; printBundleImport says what to do instead.
+		if it.Status == "missing" && !it.NotBundled {
 			missing = append(missing, it.ID)
 		}
 	}
@@ -273,12 +275,13 @@ func shellQuoteArg(s string) string {
 // import result (JSON or human), including the status and, when bundled
 // packages are missing, which ones and the exact command installing them.
 func printWorkflowImport(cfg *globalConfig, cmd *cobra.Command, wf *workflow.Workflow, status string, warnings []string,
-	remapped, remappedConns map[string]string, raw []byte, yes bool, inputFile string) error {
+	remapped, remappedConns map[string]string, raw []byte, yes, replaceAutomations bool, inputFile string) error {
 	// Bundled automations (workflow export --bundle-automations):
 	// report present/missing ones, install missing with --yes or
 	// after a prompt (only when stdin is free, i.e. --file).
 	bundled := handleBundledAutomations(raw, bundleImportOptions{
 		yes:         yes,
+		replace:     replaceAutomations,
 		interactive: !cfg.JSONOutput && inputFile != "" && stdinIsTerminal(),
 		in:          cmd.InOrStdin(),
 		out:         os.Stderr,

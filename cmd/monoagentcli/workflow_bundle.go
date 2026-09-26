@@ -5,12 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
-	"os"
-	"path/filepath"
+	"net"
 	"sort"
 	"strings"
 
@@ -59,7 +55,11 @@ type workflowBundleFile struct {
 type unbundledAutomation struct {
 	Version string `json:"version,omitempty"`
 	Reason  string `json:"reason"`
-	Hint    string `json:"hint"`
+	Hint    string `json:"hint,omitempty"` // "" when no export option can help
+	// LocalOnly: the package opens local addresses (localhost, 127.0.0.1,
+	// …), which no exported package may allow; it can only run where it was
+	// made, so the recipient has to recreate it.
+	LocalOnly bool `json:"localOnly,omitempty"`
 }
 
 // bundleOptions controls which site domains an exported package gets.
@@ -110,6 +110,12 @@ func bundleWorkflowAutomations(file workflow.WorkflowFile, opts bundleOptions) (
 		if err := reg.Export(id, &buf, automation.ExportOptions{Domains: domains}); err != nil {
 			if out.Unbundled == nil {
 				out.Unbundled = map[string]unbundledAutomation{}
+			}
+			if hosts := localHosts(reg, id); len(hosts) > 0 {
+				out.Unbundled[id] = unbundledAutomation{Version: info.Version, LocalOnly: true,
+					Reason: fmt.Sprintf("opens a local address (%s) — it can only run on this machine; the recipient has to create it themselves",
+						strings.Join(hosts, ", "))}
+				continue
 			}
 			out.Unbundled[id] = unbundledAutomation{Version: info.Version, Reason: err.Error(), Hint: unbundledHint(reg, id)}
 			continue
@@ -186,311 +192,47 @@ func unbundledWarnings(b workflowBundleFile) []string {
 	var lines []string
 	for _, id := range ids {
 		u := b.Unbundled[id]
-		lines = append(lines, fmt.Sprintf("warning: automation %s not bundled: %s\n  %s", id, u.Reason, u.Hint))
+		line := fmt.Sprintf("warning: automation %s not bundled: %s", id, u.Reason)
+		if u.Hint != "" {
+			line += "\n  " + u.Hint
+		}
+		lines = append(lines, line)
 	}
 	return lines
 }
 
-// bundleImportItem reports what `workflow import` did (or would do) with
-// one bundled automation.
-type bundleImportItem struct {
-	ID               string `json:"id"`
-	Version          string `json:"version"`
-	Status           string `json:"status"` // present | conflict | missing | installed | failed
-	InstalledVersion string `json:"installedVersion,omitempty"`
-	Error            string `json:"error,omitempty"`
-	// NotBundled: the exporter could not include this package (see Error);
-	// --yes cannot install it.
-	NotBundled bool `json:"notBundled,omitempty"`
-	// Review and ReviewDetail describe a "missing" package (a dry-run review
-	// of the pinned bytes, nothing installed), so a GUI can show what it
-	// would install before asking.
-	Review       string              `json:"review,omitempty"`
-	ReviewDetail *bundleReviewDetail `json:"reviewDetail,omitempty"`
-}
-
-// bundleReviewDetail is the structured form of bundleReviewLine.
-type bundleReviewDetail struct {
-	ID           string               `json:"id"`
-	Version      string               `json:"version"`
-	Publisher    string               `json:"publisher,omitempty"`
-	Domains      []string             `json:"domains"`
-	Capabilities []string             `json:"capabilities"`
-	Replaces     *automation.Replaced `json:"replaces,omitempty"`
-	// The install review's confirmation fields, as `automation install
-	// --dry-run` reports them, so the import dialog can show the same.
-	ReplaceRequired bool                    `json:"replaceRequired"`
-	TrustChange     *automation.TrustChange `json:"trustChange,omitempty"`
-	Visibility      map[string][]string     `json:"visibility"`
-}
-
-// bundleImportOptions controls handleBundledAutomations.
-type bundleImportOptions struct {
-	yes         bool // install missing packages without asking
-	interactive bool // a person can answer a prompt on in
-	in          io.Reader
-	out         io.Writer // prompts and reviews
-}
-
-// handleBundledAutomations reads the "automations" field of raw workflow
-// JSON. Bundled packages that are already installed are "present"; the
-// others are installed with --yes (or after a prompt), and otherwise
-// reported as "missing". Returns nil when the file bundles nothing.
-// Failures are reported per package and never fail the workflow import.
-func handleBundledAutomations(raw []byte, o bundleImportOptions) []bundleImportItem {
-	var doc struct {
-		Automations map[string]bundledAutomation   `json:"automations"`
-		Unbundled   map[string]unbundledAutomation `json:"unbundledAutomations"`
-	}
-	if json.Unmarshal(raw, &doc) != nil || len(doc.Automations)+len(doc.Unbundled) == 0 {
+// localHosts returns the local addresses package id opens: a legacy
+// package's recorded local hosts, or local entries of site.domains.
+// Exporting cannot fix these (no exported package may allow them).
+func localHosts(reg *automation.Registry, id string) []string {
+	p, err := reg.Get(id)
+	if err != nil {
 		return nil
 	}
-	ids := make([]string, 0, len(doc.Automations))
-	for id := range doc.Automations {
-		ids = append(ids, id)
+	if p.Manifest.Legacy != nil && len(p.Manifest.Legacy.LocalHosts) > 0 {
+		return p.Manifest.Legacy.LocalHosts
 	}
-	sort.Strings(ids)
-	items := make([]bundleImportItem, 0, len(ids))
-	reg, err := openAutomationRegistry()
-	if err != nil {
-		for _, id := range ids {
-			items = append(items, bundleImportItem{ID: id, Version: doc.Automations[id].Version, Status: "failed", Error: err.Error()})
-		}
-		return items
-	}
-	// Every id in the index, removed built-ins included (Info hides those).
-	all, err := reg.List(true)
-	if err != nil {
-		for _, id := range ids {
-			items = append(items, bundleImportItem{ID: id, Version: doc.Automations[id].Version, Status: "failed", Error: err.Error()})
-		}
-		return items
-	}
-	known := make(map[string]automation.InstalledInfo, len(all))
-	for _, in := range all {
-		known[in.ID] = in
-	}
-	for _, id := range ids {
-		b := doc.Automations[id]
-		item := bundleImportItem{ID: id, Version: b.Version, Status: "missing"}
-		// Never install over an installed id, including an uninstalled
-		// built-in (its index entry stays, marked removed).
-		if info, ok := known[id]; ok {
-			item.Status, item.InstalledVersion = "present", info.Version
-			if info.Removed {
-				item.Status, item.Error = "conflict", "a removed built-in has this id; restore it with `automation restore`"
-			}
-			items = append(items, item)
-			continue
-		}
-		if o.yes || o.interactive {
-			if err := installBundledAutomation(reg, id, b, o); err != nil {
-				item.Status, item.Error = "failed", err.Error()
-			} else {
-				item.Status = "installed"
-			}
-		} else if review, err := reviewBundledAutomation(reg, id, b); err != nil {
-			item.Error = err.Error() // still "missing": --yes would fail the same way
-		} else {
-			item.Review, item.ReviewDetail = bundleReviewLine(review), newBundleReviewDetail(review)
-		}
-		items = append(items, item)
-	}
-	return append(items, unbundledItems(doc.Unbundled, doc.Automations, known)...)
-}
-
-// unbundledItems reports packages the exporter could not bundle: present
-// when installed here, otherwise missing with the exporter's reason and hint.
-func unbundledItems(unbundled map[string]unbundledAutomation, bundled map[string]bundledAutomation,
-	known map[string]automation.InstalledInfo) []bundleImportItem {
-	ids := make([]string, 0, len(unbundled))
-	for id := range unbundled {
-		if _, dup := bundled[id]; !dup {
-			ids = append(ids, id)
+	var out []string
+	for _, d := range p.Manifest.Site.Domains {
+		if isLocalAddress(d) {
+			out = append(out, d)
 		}
 	}
-	sort.Strings(ids)
-	var items []bundleImportItem
-	for _, id := range ids {
-		u := unbundled[id]
-		item := bundleImportItem{ID: id, Version: u.Version, Status: "missing", NotBundled: true,
-			Error: "not in the bundle: " + u.Reason + "; " + u.Hint}
-		if info, ok := known[id]; ok && !info.Removed {
-			item.Status, item.InstalledVersion, item.Error = "present", info.Version, ""
-		}
-		items = append(items, item)
-	}
-	return items
+	return out
 }
 
-// installBundledAutomation installs one bundled package that is not
-// installed yet. The bundle is untrusted input: the sha256 is required and
-// pinned through to the install, the package's manifest id must equal its
-// bundle key, and a one-line review summary is always printed (also with
-// --yes) before anything is written.
-func installBundledAutomation(reg *automation.Registry, id string, b bundledAutomation, o bundleImportOptions) error {
-	path, cleanup, err := stageBundledAutomation(id, b)
-	if err != nil {
-		return err
+// isLocalAddress reports whether host[:port] names this machine or a
+// private network: localhost, *.localhost, *.local, loopback and private
+// IP addresses.
+func isLocalAddress(hostport string) bool {
+	host := strings.ToLower(strings.TrimSpace(hostport))
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
 	}
-	defer cleanup()
-	review, err := reviewStagedBundle(reg, id, b, path)
-	if err != nil {
-		return err
+	host = strings.Trim(host, "[]")
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") || strings.HasSuffix(host, ".local") {
+		return true
 	}
-	out := o.out
-	if out == nil {
-		out = io.Discard
-	}
-	fmt.Fprintln(out, bundleReviewLine(review))
-	if !o.yes && !confirmYes(o.in, out, fmt.Sprintf("Install %s %s?", review.ID, review.Version)) {
-		return errors.New("install declined")
-	}
-	res, err := reg.Install(path, automation.InstallOptions{Source: automation.SourceImported, ExpectSHA256: strings.ToLower(b.SHA256)})
-	if err != nil {
-		return err
-	}
-	if res.ID != id {
-		return fmt.Errorf("bundled package under %q installed as %q", id, res.ID)
-	}
-	return nil
-}
-
-// reviewBundledAutomation is the dry-run half of installBundledAutomation:
-// the same sha256 pinning and id checks, and nothing is installed.
-func reviewBundledAutomation(reg *automation.Registry, id string, b bundledAutomation) (*automation.InstallResult, error) {
-	path, cleanup, err := stageBundledAutomation(id, b)
-	if err != nil {
-		return nil, err
-	}
-	defer cleanup()
-	return reviewStagedBundle(reg, id, b, path)
-}
-
-// stageBundledAutomation decodes one bundled package, checks it against its
-// pinned sha256 and writes it to a private temp file. The caller runs
-// cleanup.
-func stageBundledAutomation(id string, b bundledAutomation) (string, func(), error) {
-	data, err := base64.StdEncoding.DecodeString(b.Mpkg)
-	if err != nil {
-		return "", nil, fmt.Errorf("decode bundled package: %w", err)
-	}
-	want := strings.ToLower(b.SHA256)
-	if want == "" {
-		return "", nil, fmt.Errorf("bundled package %s has no sha256", id)
-	}
-	if sum := sha256.Sum256(data); hex.EncodeToString(sum[:]) != want {
-		return "", nil, fmt.Errorf("bundled package %s: sha256 mismatch", id)
-	}
-	dir, err := os.MkdirTemp("", "workflow-bundle-*")
-	if err != nil {
-		return "", nil, err
-	}
-	cleanup := func() { os.RemoveAll(dir) }
-	path := filepath.Join(dir, "bundle.mpkg")
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		cleanup()
-		return "", nil, err
-	}
-	return path, cleanup, nil
-}
-
-// reviewStagedBundle opens a staged bundle, checks its manifest id and runs
-// the install dry run (pinned to the bundle's sha256).
-func reviewStagedBundle(reg *automation.Registry, id string, b bundledAutomation, path string) (*automation.InstallResult, error) {
-	pkg, err := automation.OpenFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("open bundled package %s: %w", id, err)
-	}
-	if pkg.Manifest.ID != id {
-		return nil, fmt.Errorf("bundled package under %q declares id %q; not installed", id, pkg.Manifest.ID)
-	}
-	review, err := reg.Install(path, automation.InstallOptions{Source: automation.SourceImported, ExpectSHA256: strings.ToLower(b.SHA256), DryRun: true})
-	if err != nil {
-		return nil, err
-	}
-	if review.ID != id {
-		return nil, fmt.Errorf("bundled package under %q reviews as %q; not installed", id, review.ID)
-	}
-	if issuesHaveErrors(review.Issues) {
-		return nil, fmt.Errorf("bundled package %s has validation errors; not installed", id)
-	}
-	return review, nil
-}
-
-// newBundleReviewDetail is bundleReviewLine as data.
-func newBundleReviewDetail(r *automation.InstallResult) *bundleReviewDetail {
-	rv := r.Review
-	// The registry's plain-language capabilities, then the short technical
-	// list the review line prints (steps, scripts, downloads, tier).
-	caps := append(append([]string{}, rv.Capabilities...), bundleCapabilities(rv)...)
-	return &bundleReviewDetail{
-		ID: r.ID, Version: r.Version, Publisher: rv.Publisher,
-		Domains: append([]string{}, rv.Domains...), Capabilities: caps,
-		Replaces:        rv.Replaces,
-		ReplaceRequired: rv.ReplaceRequired,
-		TrustChange:     rv.TrustChange,
-		Visibility:      nonNilVisibility(rv.Visibility),
-	}
-}
-
-func nonNilVisibility(v map[string][]string) map[string][]string {
-	if v == nil {
-		return map[string][]string{}
-	}
-	return v
-}
-
-// bundleReviewLine summarises an install review on one line: id, version,
-// publisher, domains and capabilities.
-func bundleReviewLine(r *automation.InstallResult) string {
-	rv := r.Review
-	return fmt.Sprintf("Bundled automation %s %s — publisher %s — domains %s — %s",
-		r.ID, r.Version, orDash(rv.Publisher), orDash(strings.Join(rv.Domains, ",")), strings.Join(bundleCapabilities(rv), "; "))
-}
-
-// bundleCapabilities is the short capability list of the review line.
-func bundleCapabilities(rv automation.Review) []string {
-	caps := []string{"steps: " + orDash(strings.Join(rv.Steps, ","))}
-	if len(rv.Steps) == 0 {
-		caps[0] = "steps: unrestricted"
-	}
-	if len(rv.Scripts) > 0 {
-		caps = append(caps, "scripts: "+strings.Join(rv.Scripts, ","))
-	}
-	if rv.Downloads {
-		caps = append(caps, "downloads")
-	}
-	if rv.Tier != "" {
-		caps = append(caps, "tier: "+rv.Tier)
-	}
-	if rv.PolicyBlocked {
-		caps = append(caps, "policy-blocked")
-	}
-	return caps
-}
-
-// printBundleImport prints the human summary of handleBundledAutomations.
-func printBundleImport(out io.Writer, items []bundleImportItem) {
-	missing := 0
-	for _, it := range items {
-		if it.NotBundled && it.Status == "missing" {
-			fmt.Fprintf(out, "Automation %s %s: missing (%s)\n", it.ID, it.Version, it.Error)
-			continue
-		}
-		switch it.Status {
-		case "present":
-			fmt.Fprintf(out, "Automation %s: already installed (%s; bundle has %s)\n", it.ID, it.InstalledVersion, it.Version)
-		case "installed":
-			fmt.Fprintf(out, "Automation %s %s: installed from the bundle\n", it.ID, it.Version)
-		case "failed", "conflict":
-			fmt.Fprintf(out, "Automation %s %s: not installed: %s\n", it.ID, it.Version, it.Error)
-		default:
-			missing++
-			fmt.Fprintf(out, "Automation %s %s: missing (bundled)\n", it.ID, it.Version)
-		}
-	}
-	if missing > 0 {
-		fmt.Fprintln(out, "Pass --yes to `workflow import` to install bundled automations.")
-	}
+	ip := net.ParseIP(host)
+	return ip != nil && (ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() || ip.IsLinkLocalUnicast())
 }
