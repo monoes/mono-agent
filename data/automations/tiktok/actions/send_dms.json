@@ -3,8 +3,9 @@
   "actionType": "send_dms",
   "platform": "TIKTOK",
   "version": "1.1.0",
-  "description": "Send direct messages to a list of recipients on TikTok. Each recipient's chat is opened from their profile's Message button; a message counts as sent only when it renders in the chat whose header names that recipient (or the composer is cleared by the send). Recipients without a Message button fail — no other button is clicked instead.",
+  "description": "Send direct messages to a list of recipients on TikTok. Each recipient's chat is opened from their profile's Message button; a message counts as sent only when it renders in the chat whose header names that recipient (or the composer is cleared by the send). Recipients without a Message button fail — no other button is clicked instead. If you and the account both have TikTok's profile view history on, it shows them that you viewed their profile.",
   "sideEffects": "message",
+  "visibility": ["profile_view_visible_to_owner"],
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,

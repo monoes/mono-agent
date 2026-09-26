@@ -42,6 +42,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The dashboard showed successful runs in grey, and the running indicator never
   pulsed.
 
+## [0.73.0] - 2026-09-26
+
+### Added
+
+- **Import workflows in the desktop app.** Workflows › Import workflow
+  takes a file or pasted JSON. It reports whether the workflow was imported,
+  updated or already there, and opens it in the editor. Automations bundled
+  in the file show their status, and missing ones can be installed after a
+  review of what each can do. "Import as a new copy" forces a copy.
+  `workflow import --json` now includes that review for missing bundled
+  automations.
+- **Actions state what the site can see.** A new `visibility` field lists
+  side effects that come from just visiting pages: profile views shown to
+  the owner, searches that may be saved, video views, story views, and
+  Instagram's notification prompt. Each affected action's description says
+  so in plain words, and `automation show` lists it. LinkedIn profile views
+  can only be hidden with LinkedIn's private browsing mode.
+
+### Changed
+
+- **TikTok read actions** keep videos paused and muted while they read a
+  page.
+- **LinkedIn and X searches** no longer tell the site the query was typed
+  into the search box.
+
+### Fixed
+
+- **The desktop app's updater** now verifies the download against the
+  release's SHA256SUMS, as `monoagentcli update` does, and refuses to
+  install on any mismatch. It also no longer installs an HTTP error page as
+  the CLI when a download fails.
+- **The desktop app finds its bundled CLI** on Linux and Windows without it
+  being on PATH. The Linux tarball now ships the CLI as `monoagentcli` next
+  to the app, and the Windows release notes link both files. The updater
+  replaces the same CLI the app runs.
+
 ## [0.72.0] - 2026-09-26
 
 ### Added

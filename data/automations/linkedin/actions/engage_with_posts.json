@@ -3,8 +3,9 @@
   "actionType": "engage_with_posts",
   "platform": "LINKEDIN",
   "version": "2.0.0",
-  "description": "React to (and optionally comment on) LinkedIn posts: the given post URLs, or the posts a keyword search finds",
+  "description": "React to (and optionally comment on) LinkedIn posts: the given post URLs, or the posts a keyword search finds. The search may be kept in your LinkedIn recent searches and counts toward the listed members' search appearances.",
   "sideEffects": "message",
+  "visibility": ["search_may_be_saved"],
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,

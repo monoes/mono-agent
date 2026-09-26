@@ -236,6 +236,11 @@ export const api = {
   getWorkflow:            (id) => GoApp.GetWorkflow(id).catch(guard('get workflow', null)),
   listProfileDocuments:   () => GoApp.ListProfileDocuments().catch(guard('list profile documents', [])),
   getProfileDocument:     (id) => GoApp.GetProfileDocument(id).catch(guard('get profile document', null)),
+  // Workflow import screen: `workflow import --json` verbatim (status,
+  // bundled automations, missingAutomations, installCommand) or {error}.
+  // opts: {asNew, yes}. See wails-app/app_workflow_import.go.
+  importWorkflowFull:     (input, opts = {}) => GoApp.ImportWorkflowFull(input, JSON.stringify(opts || {})).then(JSON.parse).catch(asError),
+  chooseWorkflowFile:     () => GoApp.ChooseWorkflowFile().catch(guard('choose workflow file', '')),
   // Browser automation packages and recordings (Connections page). Every
   // call shells `monoagentcli automation|action|record … --json` (see
   // wails-app/app_automations.go) and resolves to the CLI's JSON or to

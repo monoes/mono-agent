@@ -3,8 +3,9 @@
   "actionType": "like_comments_on_posts",
   "platform": "INSTAGRAM",
   "version": "2.0.0",
-  "description": "Like comments on Instagram posts. With commentAuthor, only that author's comment is liked (a post without one fails — never another person's comment); without it, up to maxCommentsToLike comments are liked in page order. Already-liked comments are never toggled; every like is verified.",
+  "description": "Like comments on Instagram posts. With commentAuthor, only that author's comment is liked (a post without one fails — never another person's comment); without it, up to maxCommentsToLike comments are liked in page order. Already-liked comments are never toggled; every like is verified. If Instagram asks to turn on notifications or save your login, it answers \"Not Now\", which Instagram may remember for your account.",
   "sideEffects": "write",
+  "visibility": ["account_preference_prompt"],
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,

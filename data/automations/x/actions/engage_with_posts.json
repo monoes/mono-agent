@@ -3,8 +3,9 @@
   "actionType": "engage_with_posts",
   "platform": "X",
   "version": "2.0.0",
-  "description": "Like and/or reply to X (Twitter) posts — given post URLs, or the results of a keyword search; each like and reply is verified and already-liked posts are left alone",
+  "description": "Like and/or reply to X (Twitter) posts — given post URLs, or the results of a keyword search; each like and reply is verified and already-liked posts are left alone. The search may be kept in your X search history.",
   "sideEffects": "message",
+  "visibility": ["search_may_be_saved"],
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": true,

@@ -3,8 +3,9 @@
   "actionType": "scrape_profile_info",
   "platform": "INSTAGRAM",
   "version": "2.0.0",
-  "description": "Read public profile data (name, bio, counts, website, verified/private) for a list of profiles: Instagram's own profile endpoint from inside your session, else the rendered profile page.",
+  "description": "Read public profile data (name, bio, counts, website, verified/private) for a list of profiles: Instagram's own profile endpoint from inside your session, else the rendered profile page. If Instagram asks to turn on notifications or save your login, it answers \"Not Now\", which Instagram may remember for your account.",
   "sideEffects": "read",
+  "visibility": ["account_preference_prompt"],
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,

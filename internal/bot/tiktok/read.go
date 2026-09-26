@@ -99,7 +99,9 @@ func (b *TikTokBot) ListUserVideos(ctx context.Context, page browser.PageInterfa
 	if maxCount <= 0 {
 		maxCount = 20
 	}
-	if err := open(ctx, page, u); err != nil {
+	release, err := openQuiet(ctx, page, u)
+	defer release()
+	if err != nil {
 		return nil, err
 	}
 	// Wait for the grid (or its absence) to settle.
@@ -225,7 +227,9 @@ func (b *TikTokBot) ListVideoComments(ctx context.Context, page browser.PageInte
 	if maxCount <= 0 {
 		maxCount = 50
 	}
-	if err := open(ctx, page, u); err != nil {
+	release, err := openQuiet(ctx, page, u)
+	defer release()
+	if err != nil {
 		return nil, err
 	}
 	if err := openComments(ctx, page); err != nil {
@@ -357,7 +361,9 @@ func (b *TikTokBot) getProfileData(ctx context.Context, page browser.PageInterfa
 		if err != nil {
 			return nil, err
 		}
-		if err := open(ctx, page, u); err != nil {
+		release, err := openQuiet(ctx, page, u)
+		defer release()
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -418,7 +424,9 @@ func (b *TikTokBot) SearchVideos(ctx context.Context, page browser.PageInterface
 		maxCount = 20
 	}
 	u := "https://www.tiktok.com/search/video?q=" + url.QueryEscape(keyword)
-	if err := open(ctx, page, u); err != nil {
+	release, err := openQuiet(ctx, page, u)
+	defer release()
+	if err != nil {
 		return nil, err
 	}
 	_, _, _ = page.Race([]string{"[data-e2e='search_video-item']", "[data-e2e='search_top-item']", "[data-e2e='search-card-item']"}, findTimeout)
@@ -518,7 +526,9 @@ func (b *TikTokBot) ListFollowers(ctx context.Context, page browser.PageInterfac
 	if maxCount <= 0 {
 		maxCount = 50
 	}
-	if err := open(ctx, page, u); err != nil {
+	release, err := openQuiet(ctx, page, u)
+	defer release()
+	if err != nil {
 		return nil, err
 	}
 	el, err := page.Element(countSel, findTimeout)

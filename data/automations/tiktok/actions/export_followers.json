@@ -3,8 +3,9 @@
   "actionType": "export_followers",
   "platform": "TIKTOK",
   "version": "1.1.0",
-  "description": "Fetch the followers (sourceType FOLLOWERS_FETCH) or following (FOLLOWING_FETCH) list of a TikTok profile: username, profile URL, display name and follow state (the viewer's relationship button: Follow back, Following, Friends, …) per account",
+  "description": "Fetch the followers (sourceType FOLLOWERS_FETCH) or following (FOLLOWING_FETCH) list of a TikTok profile: username, profile URL, display name and follow state (the viewer's relationship button: Follow back, Following, Friends, …) per account. If you and the account both have TikTok's profile view history on, it shows them that you viewed their profile.",
   "sideEffects": "read",
+  "visibility": ["profile_view_visible_to_owner"],
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": true,

@@ -51,6 +51,8 @@ export function ChooseInstructionsFile():Promise<string>;
 
 export function ChooseProfileFolder():Promise<string>;
 
+export function ChooseWorkflowFile():Promise<string>;
+
 export function ClearAIChatHistory(arg1:string):Promise<string>;
 
 export function ClearLogs():Promise<void>;
@@ -256,6 +258,8 @@ export function HasGeneratedDocuments(arg1:string):Promise<boolean>;
 export function ImportVaultAll(arg1:string,arg2:string):Promise<main.VaultImportResult>;
 
 export function ImportWorkflow(arg1:string):Promise<main.WorkflowImportResult>;
+
+export function ImportWorkflowFull(arg1:string,arg2:string):Promise<string>;
 
 export function IndexProfileDocument(arg1:string):Promise<main.UploadResult>;
 

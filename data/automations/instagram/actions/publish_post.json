@@ -3,8 +3,9 @@
   "actionType": "publish_post",
   "platform": "INSTAGRAM",
   "version": "2.0.0",
-  "description": "Publish a feed post: Create → Post → upload the media file → Next → Next → caption (and location, only a matching suggestion) → Share, confirmed by Instagram's 'Your post has been shared'. The bot method is the only path: a second UI tier could post twice.",
+  "description": "Publish a feed post: Create → Post → upload the media file → Next → Next → caption (and location, only a matching suggestion) → Share, confirmed by Instagram's 'Your post has been shared'. The bot method is the only path: a second UI tier could post twice. If Instagram asks to turn on notifications or save your login, it answers \"Not Now\", which Instagram may remember for your account.",
   "sideEffects": "write",
+  "visibility": ["account_preference_prompt"],
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,

@@ -28,7 +28,7 @@
 <body>
 <header><a data-e2e="nav-profile" href="/@me_tester">Profile</a> <div data-e2e="profile-icon">me</div></header>
 <div class="css-1a-DivVideoWrapper">
-  <div class="css-2b-DivPlayer" data-e2e="browse-video">synthetic video</div>
+  <div class="css-2b-DivPlayer" data-e2e="browse-video">synthetic video <video id="player" autoplay loop playsinline></video></div>
   <section class="css-3c-SectionActionBar">
     <button type="button" id="like-btn" aria-label="Like video" aria-pressed="false"><span data-e2e="like-icon">&#9825;</span><strong data-e2e="like-count">1204</strong></button>
     <button type="button" id="comment-btn" aria-label="Read or add comments"><span data-e2e="comment-icon">&#128172;</span><strong data-e2e="comment-count">4</strong></button>
@@ -48,6 +48,14 @@
   <button type="button" data-e2e="share-stitch" id="stitch">Stitch</button>
   <button type="button" data-e2e="share-duet" id="duet">Duet</button>
 </div>
+<script>
+// Media log for the video-hold tests: every pause() call, and a helper that
+// inserts a new autoplaying video the way TikTok swaps players in.
+window.__media = { pauses: 0 };
+const __origPause = HTMLMediaElement.prototype.pause;
+HTMLMediaElement.prototype.pause = function () { window.__media.pauses++; return __origPause.call(this); };
+window.__addVideo = (id) => { const v = document.createElement('video'); v.id = id; v.autoplay = true; document.body.appendChild(v); return id; };
+</script>
 <script>
 (function () {
   const vid = (location.pathname.match(/\/video\/(\d+)/) || [])[1] || '';

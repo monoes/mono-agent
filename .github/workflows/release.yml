@@ -339,9 +339,14 @@ jobs:
           # Wails linux binary (outputfilename = monoagent-ui)
           cp wails-app/build/bin/monoagent-ui dist/MonoAgent-linux-amd64
           chmod +x dist/MonoAgent-linux-amd64
-          # Bundle with CLI sidecar
-          cp wails-app/monoagentcli-linux dist/monoagentcli-linux-amd64-bundled
-          tar -czf dist/MonoAgent-linux-amd64.tar.gz -C dist MonoAgent-linux-amd64 monoagentcli-linux-amd64-bundled
+          # Bundle with the CLI sidecar under the name the app looks for next
+          # to itself (wails-app/app.go findMonoAgentCLI; older tarballs used
+          # monoagentcli-linux-amd64-bundled, which the app still accepts).
+          mkdir -p dist/linux-pkg
+          cp dist/MonoAgent-linux-amd64 dist/linux-pkg/MonoAgent-linux-amd64
+          cp wails-app/monoagentcli-linux dist/linux-pkg/monoagentcli
+          chmod +x dist/linux-pkg/monoagentcli
+          tar -czf dist/MonoAgent-linux-amd64.tar.gz -C dist/linux-pkg MonoAgent-linux-amd64 monoagentcli
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -479,7 +484,7 @@ jobs:
             echo "| Platform | Download |"
             echo "|----------|----------|"
             echo "| macOS (Apple Silicon) | [MonoAgent-darwin-arm64.zip](https://github.com/monoes/mono-agent/releases/download/${TAG}/MonoAgent-darwin-arm64.zip) |"
-            echo "| Windows | [MonoAgent-windows-amd64.exe](https://github.com/monoes/mono-agent/releases/download/${TAG}/MonoAgent-windows-amd64.exe) |"
+            echo "| Windows | [MonoAgent-windows-amd64.exe](https://github.com/monoes/mono-agent/releases/download/${TAG}/MonoAgent-windows-amd64.exe) + [monoagentcli-windows-amd64-bundled.exe](https://github.com/monoes/mono-agent/releases/download/${TAG}/monoagentcli-windows-amd64-bundled.exe) (save both in the same folder) |"
             echo "| Linux | [MonoAgent-linux-amd64.tar.gz](https://github.com/monoes/mono-agent/releases/download/${TAG}/MonoAgent-linux-amd64.tar.gz) |"
             echo ""
             echo "## CLI Downloads"

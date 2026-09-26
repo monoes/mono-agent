@@ -3,8 +3,9 @@
   "actionType": "duet_video",
   "platform": "TIKTOK",
   "version": "1.0.0",
-  "description": "Open TikTok's duet creator for videos (nothing is recorded or published; finishing the duet needs a person)",
+  "description": "Open TikTok's duet creator for videos (nothing is recorded or published; finishing the duet needs a person). Opening a video page may count as a view.",
   "sideEffects": "write",
+  "visibility": ["video_view_counted"],
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,

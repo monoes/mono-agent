@@ -3,8 +3,9 @@
   "actionType": "share_video",
   "platform": "TIKTOK",
   "version": "1.0.0",
-  "description": "Copy the share link of TikTok videos and return the URL. Nothing is posted, but it clicks Copy link, which replaces your clipboard and may count as a share on TikTok",
+  "description": "Copy the share link of TikTok videos and return the URL. Nothing is posted, but it clicks Copy link, which replaces your clipboard and may count as a share on TikTok. Opening a video page may count as a view.",
   "sideEffects": "write",
+  "visibility": ["video_view_counted"],
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
