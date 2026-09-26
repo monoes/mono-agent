@@ -142,21 +142,28 @@ func (m *Manager) List(ctx context.Context, platform, profileID string) ([]Conne
 	return result, nil
 }
 
-// Test re-validates a connection and updates its status.
-func (m *Manager) Test(ctx context.Context, id string) error {
+// Test re-validates a connection and updates its status, returning the
+// resolved account identifier. An OAuth access token that is expired (or
+// about to be) is silently refreshed first, so a connection with a working
+// refresh_token doesn't test as broken just because an hour has passed.
+// Nothing is printed to stdout: callers own their output (the CLI's --json
+// mode must be the only thing on stdout).
+func (m *Manager) Test(ctx context.Context, id string) (string, error) {
 	conn, err := m.store.Get(ctx, id)
 	if err != nil {
-		return fmt.Errorf("test: get connection: %w", err)
+		return "", fmt.Errorf("test: get connection: %w", err)
 	}
 	if conn == nil {
-		return fmt.Errorf("test: connection %q not found", id)
+		return "", fmt.Errorf("test: connection %q not found", id)
+	}
+	if conn.Method == MethodOAuth {
+		conn, _ = m.store.ensureFreshToken(ctx, conn)
 	}
 
 	accountID, err := ValidateConnection(ctx, conn)
 	if err != nil {
 		_ = m.store.MarkTested(ctx, id, "error", conn.ProfileID)
-		fmt.Printf("✗ Validation failed: %v\n", err)
-		return err
+		return "", err
 	}
 
 	if accountID != "" {
@@ -182,7 +189,7 @@ func (m *Manager) Test(ctx context.Context, id string) error {
 			saveErr := m.store.Save(ctx, conn)
 			m.store.releaseRefreshLock(context.WithoutCancel(ctx), id)
 			if saveErr != nil {
-				return fmt.Errorf("test: update account: %w", saveErr)
+				return "", fmt.Errorf("test: update account: %w", saveErr)
 			}
 		} else {
 			fmt.Fprintf(os.Stderr, "warning: skipping account update for connection %s: refresh lock held by another process\n", id)
@@ -190,10 +197,46 @@ func (m *Manager) Test(ctx context.Context, id string) error {
 	}
 
 	if err := m.store.MarkTested(ctx, id, "active", conn.ProfileID); err != nil {
-		return fmt.Errorf("test: mark tested: %w", err)
+		return "", fmt.Errorf("test: mark tested: %w", err)
 	}
-	fmt.Printf("✓ Connection valid as %s\n", accountID)
-	return nil
+	return accountID, nil
+}
+
+// SaveFields validates and saves a new connection from already-collected
+// credential field values (the GUI's form, `connect save`), with no
+// prompting. The resolved account, when the platform's validator reports
+// one, becomes part of the label.
+func (m *Manager) SaveFields(ctx context.Context, platformID string, method AuthMethod, data map[string]interface{}, profileID string) (*Connection, error) {
+	p, ok := Get(platformID)
+	if !ok {
+		return nil, fmt.Errorf("unknown platform %q", platformID)
+	}
+	if profileID == "" {
+		profileID = "default"
+	}
+	if data == nil {
+		data = map[string]interface{}{}
+	}
+	conn := &Connection{
+		Platform:  platformID,
+		Method:    method,
+		Label:     p.Name,
+		Data:      data,
+		Status:    "active",
+		ProfileID: profileID,
+	}
+	accountID, err := ValidateConnection(ctx, conn)
+	if err != nil {
+		return nil, err
+	}
+	if accountID != "" {
+		conn.AccountID = accountID
+		conn.Label = fmt.Sprintf("%s – %s", p.Name, accountID)
+	}
+	if err := m.store.Save(ctx, conn); err != nil {
+		return nil, fmt.Errorf("save: %w", err)
+	}
+	return conn, nil
 }
 
 // Remove deletes a connection by ID, scoped to profileID.

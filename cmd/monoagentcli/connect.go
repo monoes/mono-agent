@@ -39,6 +39,10 @@ func newConnectCmd(cfg *globalConfig) *cobra.Command {
 		newConnectRemoveCmd(cfg),
 		newConnectRefreshCmd(cfg),
 		newConnectSetOAuthClientCmd(cfg),
+		newConnectGetOAuthClientCmd(cfg),
+		newConnectSaveCmd(cfg),
+		newConnectForNodeCmd(cfg),
+		newConnectOAuthCmd(cfg),
 	)
 
 	return cmd
@@ -54,6 +58,7 @@ func newConnectCmd(cfg *globalConfig) *cobra.Command {
 // separate work/school account).
 func newConnectSetOAuthClientCmd(cfg *globalConfig) *cobra.Command {
 	var clientSecret string
+	var secretStdin bool
 
 	cmd := &cobra.Command{
 		Use:   "set-oauth-client <platform> --client-id <id>",
@@ -62,14 +67,26 @@ func newConnectSetOAuthClientCmd(cfg *globalConfig) *cobra.Command {
 			"platform, scoped to the active/selected profile (--profile). Without this, an OAuth connection's " +
 			"access token expires (typically ~1h) and can only be renewed by re-running the full interactive " +
 			"`connect`/`connect refresh` flow. client_secret may be omitted for public-client apps (e.g. a " +
-			"desktop/native Azure app registration using PKCE).",
+			"desktop/native Azure app registration using PKCE). Prefer --client-secret-stdin: a --client-secret " +
+			"value is visible to other local users in the process list. The secret is stored encrypted under " +
+			"the vault envelope.",
 		Example: `  monoagentcli connect set-oauth-client outlook --client-id a8c1df90-1c79-4bc0-813a-f96b6b93a256
-  monoagentcli connect set-oauth-client outlook --profile work --client-id 8741fd7b-8bbc-41da-81f8-3370e393169a`,
+  printf '%s' "$SECRET" | monoagentcli connect set-oauth-client google_sheets --client-id 123.apps.googleusercontent.com --client-secret-stdin`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			clientID, _ := cmd.Flags().GetString("client-id")
-			if clientID == "" {
-				return fmt.Errorf("--client-id is required")
+			if strings.TrimSpace(clientID) == "" {
+				return errInvalidInput("--client-id is required")
+			}
+			if secretStdin {
+				if clientSecret != "" {
+					return errInvalidInput("--client-secret-stdin cannot be combined with --client-secret")
+				}
+				v, err := readSecretValue(cmd.InOrStdin())
+				if err != nil {
+					return errInvalidInput("%v", err)
+				}
+				clientSecret = v
 			}
 
 			db, err := initDB(cfg)
@@ -78,22 +95,25 @@ func newConnectSetOAuthClientCmd(cfg *globalConfig) *cobra.Command {
 			}
 			defer db.Close()
 
-			_, err = db.DB.Exec(
-				`INSERT OR REPLACE INTO platform_oauth_credentials (platform, profile_id, client_id, client_secret, updated_at)
-				 VALUES (?, ?, ?, ?, ?)`,
-				args[0], cfg.ProfileID, clientID, clientSecret, time.Now().UTC().Format(time.RFC3339),
-			)
-			if err != nil {
-				return fmt.Errorf("saving OAuth client credentials: %w", err)
+			profileID := profileOrDefault(cfg)
+			if err := connections.NewStore(db.DB).SaveOAuthClient(cmd.Context(), args[0], profileID, clientID, clientSecret); err != nil {
+				return scrubSecrets(fmt.Errorf("saving OAuth client credentials: %w", err), clientSecret)
 			}
 
-			fmt.Fprintf(os.Stdout, "Saved OAuth client credentials for %s (profile: %s).\n", args[0], cfg.ProfileID)
+			if cfg.JSONOutput {
+				return writeJSONTo(cmd.OutOrStdout(), map[string]any{
+					"platform": args[0], "profile_id": profileID, "client_id": clientID,
+					"has_client_secret": clientSecret != "", "saved": true,
+				})
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Saved OAuth client credentials for %s (profile: %s).\n", args[0], profileID)
 			return nil
 		},
 	}
 
 	cmd.Flags().String("client-id", "", "OAuth client ID (required)")
-	cmd.Flags().StringVar(&clientSecret, "client-secret", "", "OAuth client secret (omit for public-client apps)")
+	cmd.Flags().StringVar(&clientSecret, "client-secret", "", "OAuth client secret (omit for public-client apps; visible in the process list, prefer --client-secret-stdin)")
+	cmd.Flags().BoolVar(&secretStdin, "client-secret-stdin", false, "Read the OAuth client secret from stdin")
 	_ = cmd.MarkFlagRequired("client-id")
 
 	return cmd
@@ -182,17 +202,15 @@ func newConnectListCmd(cfg *globalConfig) *cobra.Command {
 			}
 
 			if jsonOut || cfg.JSONOutput {
-				enc := json.NewEncoder(os.Stdout)
-				enc.SetIndent("", "  ")
-				return enc.Encode(connections.RedactAll(conns))
+				return writeJSONTo(cmd.OutOrStdout(), connections.RedactAll(conns))
 			}
 
 			if len(conns) == 0 {
-				fmt.Println("No connections saved. Run `monoagentcli connect <platform>` to add one.")
+				fmt.Fprintln(cmd.OutOrStdout(), "No connections saved. Run `monoagentcli connect <platform>` to add one.")
 				return nil
 			}
 
-			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 			fmt.Fprintln(w, "ID\tPLATFORM\tMETHOD\tACCOUNT\tSTATUS\tLAST TESTED")
 			for _, c := range conns {
 				shortID := c.ID
@@ -219,11 +237,24 @@ func newConnectListCmd(cfg *globalConfig) *cobra.Command {
 	return cmd
 }
 
+// getScopedConnection returns connection id when it belongs to the active
+// profile, and a not-found error (exit 2) otherwise: another profile's
+// connection is indistinguishable from a missing one.
+func getScopedConnection(cmd *cobra.Command, cfg *globalConfig, db *sql.DB, id string) (*connections.Connection, error) {
+	conn, err := connections.NewStore(db).Get(cmd.Context(), id, profileOrDefault(cfg))
+	if err != nil || conn == nil {
+		return nil, errNotFound("connection %q not found", id)
+	}
+	return conn, nil
+}
+
 func newConnectTestCmd(cfg *globalConfig) *cobra.Command {
 	return &cobra.Command{
 		Use:   "test <id>",
 		Short: "Test a saved connection by re-validating credentials",
-		Args:  cobra.ExactArgs(1),
+		Long: "Re-validates a saved connection of the active profile (an expired OAuth token is silently " +
+			"refreshed first). Exit code 2 when the id is unknown, 4 when validation fails.",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			db, err := initDB(cfg)
 			if err != nil {
@@ -238,12 +269,20 @@ func newConnectTestCmd(cfg *globalConfig) *cobra.Command {
 
 			// Classify failures for the exit-code contract: unknown id → 2,
 			// anything the validation itself reports (auth, network) → 4.
-			if conn, gerr := mgr.Get(cmd.Context(), args[0]); gerr == nil && conn == nil {
-				return errNotFound("connection %q not found", args[0])
+			conn, err := getScopedConnection(cmd, cfg, db.DB, args[0])
+			if err != nil {
+				return err
 			}
-			if err := mgr.Test(cmd.Context(), args[0]); err != nil {
-				return errAuthConnection("connection test failed: %v", err)
+			accountID, err := mgr.Test(cmd.Context(), conn.ID)
+			if err != nil {
+				return errAuthConnection("%s", scrubSecrets(fmt.Errorf("connection test failed: %w", err), connectionSecrets(conn)...))
 			}
+			if cfg.JSONOutput {
+				return writeJSONTo(cmd.OutOrStdout(), map[string]string{
+					"id": conn.ID, "platform": conn.Platform, "account_id": accountID, "status": "ok",
+				})
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "✓ Connection valid as %s\n", accountID)
 			return nil
 		},
 	}
@@ -253,6 +292,7 @@ func newConnectRemoveCmd(cfg *globalConfig) *cobra.Command {
 	return &cobra.Command{
 		Use:   "remove <id>",
 		Short: "Remove a saved connection",
+		Long:  "Removes a saved connection of the active profile and its vault entry. Exit code 2 when the id is unknown.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			db, err := initDB(cfg)
@@ -266,10 +306,16 @@ func newConnectRemoveCmd(cfg *globalConfig) *cobra.Command {
 				return err
 			}
 
-			if err := mgr.Remove(cmd.Context(), args[0], cfg.ProfileID); err != nil {
+			if _, err := getScopedConnection(cmd, cfg, db.DB, args[0]); err != nil {
 				return err
 			}
-			fmt.Printf("Connection %s removed.\n", args[0])
+			if err := mgr.Remove(cmd.Context(), args[0], profileOrDefault(cfg)); err != nil {
+				return err
+			}
+			if cfg.JSONOutput {
+				return writeJSONTo(cmd.OutOrStdout(), map[string]any{"id": args[0], "removed": true})
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Connection %s removed.\n", args[0])
 			return nil
 		},
 	}
@@ -294,6 +340,9 @@ func newConnectRefreshCmd(cfg *globalConfig) *cobra.Command {
 				return err
 			}
 
+			if _, err := getScopedConnection(cmd, cfg, db.DB, args[0]); err != nil {
+				return err
+			}
 			if err := mgr.Refresh(cmd.Context(), args[0], timeout); err != nil {
 				return err
 			}
