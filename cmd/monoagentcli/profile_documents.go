@@ -110,7 +110,8 @@ func newProfileDocumentsCmd(cfg *globalConfig) *cobra.Command {
 		Use:   "documents",
 		Short: "Manage uploaded profile documents",
 	}
-	cmd.AddCommand(newProfileDocumentsListCmd(cfg), newProfileDocumentsRmCmd(cfg), newProfileDocumentsIndexCmd(cfg))
+	cmd.AddCommand(newProfileDocumentsListCmd(cfg), newProfileDocumentsGetCmd(cfg), newProfileDocumentsCaptureCmd(cfg),
+		newProfileDocumentsRmCmd(cfg), newProfileDocumentsIndexCmd(cfg))
 	return cmd
 }
 
