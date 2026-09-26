@@ -51,6 +51,8 @@ const DRAFT = {
 // The stub worker: record_verify answers come from window.__verify, one per call.
 const STUB = `
   window.__verify = [];
+  window.__save = [];
+  window.__saveRequests = [];
   const ev = () => ({ addListener() {} });
   window.chrome = {
     runtime: {
@@ -61,6 +63,7 @@ const STUB = `
         let r = { ok: true };
         if (m.type === "record_analyze") r = ${JSON.stringify(DRAFT)};
         if (m.type === "record_verify") r = window.__verify.shift();
+        if (m.type === "record_save") { window.__saveRequests.push(m); r = window.__save.shift(); }
         if (cb) setTimeout(() => cb(r), 0);
         return Promise.resolve(r);
       },
@@ -80,7 +83,7 @@ const STUB = `
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-describe("the Record panel's Verify results", { skip: browser ? false : why, concurrency: 1 }, () => {
+describe("the Record panel's Verify and Save results", { skip: browser ? false : why, concurrency: 1 }, () => {
   async function screen() {
     return JSON.parse(
       await browser.evaluate(`JSON.stringify({
@@ -137,5 +140,30 @@ describe("the Record panel's Verify results", { skip: browser ? false : why, con
     );
     assert.equal(order, "above", "the error sits above the step list");
     assert.match(failed.msg, /Verify failed/);
+  });
+
+  it("a save refused over re-recorded selectors offers to keep the package's and retries with it (L2)", async () => {
+    const conflict =
+      "automation: add-action conflicts with existing package content: 1 item differ from what the package's other actions use " +
+      "(rename them in the source): selectors.json#name_input\nselector(s) name_input differ from the package's current ones " +
+      "(changed since this draft was recorded, e.g. by `automation rerecord`); save with --keep-package-selectors to keep the package's";
+    await browser.evaluate(`window.__save.push(${JSON.stringify({ ok: false, error: conflict })}); document.getElementById("rec-save").click(); true`);
+    await sleep(150);
+    const first = JSON.parse(
+      await browser.evaluate(`JSON.stringify({ msg: document.getElementById("rec-draft-msg").textContent, keep: !document.getElementById("rec-save-keep").hidden })`)
+    );
+    assert.match(first.msg, /The package's selectors changed since this recording \(re-recorded\): crm\.name_input/);
+    assert.equal(first.keep, true, "the keep-and-save button is offered");
+
+    await browser.evaluate(
+      `window.__save.push(${JSON.stringify({ ok: true, result: { nodeType: "crm.create_contact", version: "1.0.4", warnings: ["kept the package's current selector(s): name_input"] } })}); document.getElementById("rec-save-keep").click(); true`
+    );
+    await sleep(150);
+    const second = JSON.parse(
+      await browser.evaluate(`JSON.stringify({ msg: document.getElementById("rec-draft-msg").textContent, keep: !document.getElementById("rec-save-keep").hidden, reqs: window.__saveRequests })`)
+    );
+    assert.deepEqual(second.reqs.map((r) => r.keepPackageSelectors), [false, true], "the retry asks to keep the package's selectors");
+    assert.match(second.msg, /Saved as crm\.create_contact \(v1\.0\.4\)\. kept the package's current selector\(s\): name_input/);
+    assert.equal(second.keep, false);
   });
 });

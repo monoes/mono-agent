@@ -40,6 +40,7 @@
   const saveAutomation = el("rec-save-automation");
   const verifyBtn = el("rec-verify");
   const saveBtn = el("rec-save");
+  const keepBtn = el("rec-save-keep");
   const verifySteps = el("rec-verify-steps");
   const verifyError = el("rec-verify-error");
   const draftMsg = el("rec-draft-msg");
@@ -240,6 +241,7 @@
     }
     confirmSave = false;
     saveBtn.textContent = "Save";
+    keepBtn.hidden = true;
     saveAs.value = d.saveAs || "action";
     saveName.value = d.action || "";
     saveAutomation.value = d.automation || "";
@@ -329,17 +331,12 @@
     }
   });
 
-  saveBtn.addEventListener("click", async () => {
-    if (!draft) return;
-    // Error-level lint: the first click explains, the second saves anyway.
-    const force = View.hasErrors(draft);
-    if (force && !confirmSave) {
-      confirmSave = true;
-      saveBtn.textContent = "Save anyway";
-      say(draftMsg, "warn", "This draft has errors (listed above) and may not run. Press Save anyway to keep it regardless.");
-      return;
-    }
+  // Save, optionally keeping the package's current selectors where the
+  // recording's conflict with them (offered after such a failure).
+  async function save(keepPackageSelectors) {
+    const force = View.hasErrors(draft) && confirmSave;
     saveBtn.disabled = true;
+    keepBtn.disabled = true;
     try {
       const res = await send({
         type: "record_save",
@@ -349,16 +346,41 @@
         automation: saveAutomation.value.trim(),
         // A new automation stays new under whatever name the person gives it.
         isNew: draft.isNew,
-        force: force && confirmSave,
+        force,
+        keepPackageSelectors: keepPackageSelectors === true,
       });
-      const r = res.result || {};
-      const what = r.nodeType || [r.automation, r.action].filter(Boolean).join(".");
-      say(draftMsg, "ok", `Saved${what ? ` as ${what}` : ""}${r.version ? ` (v${r.version})` : ""}.`);
+      keepBtn.hidden = true;
+      const done = View.saveResult(res.result);
+      say(draftMsg, done.warn ? "warn" : "ok", done.text);
     } catch (err) {
-      say(draftMsg, "err", `Save failed: ${err.message}`);
+      const conflict = View.selectorConflict(err.message, saveAutomation.value.trim());
+      if (conflict && !keepPackageSelectors) {
+        say(draftMsg, "warn", `${conflict.text}. Save again keeping the package's current selectors, or re-record.`);
+        keepBtn.hidden = false;
+      } else {
+        keepBtn.hidden = true;
+        say(draftMsg, "err", `Save failed: ${err.message}`);
+      }
     } finally {
       saveBtn.disabled = false;
+      keepBtn.disabled = false;
     }
+  }
+
+  saveBtn.addEventListener("click", async () => {
+    if (!draft) return;
+    // Error-level lint: the first click explains, the second saves anyway.
+    if (View.hasErrors(draft) && !confirmSave) {
+      confirmSave = true;
+      saveBtn.textContent = "Save anyway";
+      say(draftMsg, "warn", "This draft has errors (listed above) and may not run. Press Save anyway to keep it regardless.");
+      return;
+    }
+    await save(false);
+  });
+
+  keepBtn.addEventListener("click", async () => {
+    if (draft) await save(true);
   });
 
   // ── the port to the worker ───────────────────────────────────────

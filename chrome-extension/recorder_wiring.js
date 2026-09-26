@@ -210,6 +210,9 @@
       if (msg.name) params.name = msg.name;
       // The person confirmed saving despite error-level lint.
       if (msg.force === true) params.force = true;
+      // The person chose to keep the package's current selectors where they
+      // conflict with the recording's (they were re-recorded since).
+      if (msg.keepPackageSelectors === true) params.keepPackageSelectors = true;
       return { ok: true, result: await request("record.save", params) };
     },
   };

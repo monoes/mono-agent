@@ -217,3 +217,28 @@ test("a failed report with its own error summary shows its steps and that summar
   assert.equal(v.error, "step name: element not found", "data.error is the summary line");
   assert.deepEqual(v.steps.map((s) => [s.id, s.failed]), [["open", false], ["name", true]], "and the steps are still drawn");
 });
+
+// The message `record save` gives for a re-recorded selector (addaction.go +
+// recordanalyze withSelectorConflictHint), passed through by the bridge.
+const CONFLICT =
+  "automation: add-action conflicts with existing package content: 1 item differ from what the package's other actions use " +
+  "(rename them in the source): selectors.json#name_input\nselector(s) name_input differ from the package's current ones " +
+  "(changed since this draft was recorded, e.g. by `automation rerecord`); save with --keep-package-selectors to keep the package's";
+
+test("a save refused over re-recorded selectors is explained in plain words (L2)", () => {
+  const c = V.selectorConflict(CONFLICT, "contact");
+  assert.deepEqual(c.keys, ["contact.name_input"]);
+  assert.equal(c.text, "The package's selectors changed since this recording (re-recorded): contact.name_input");
+  assert.deepEqual(V.selectorConflict("selectors.json#a, selectors.json#b.c -- use --keep-package-selectors").keys, ["a", "b.c"]);
+  assert.equal(V.selectorConflict("draft not found or outside the drafts folder"), null, "other failures are not conflicts");
+});
+
+test("a save's warnings are shown with its result", () => {
+  assert.deepEqual(V.saveResult({ automation: "contact", action: "create", version: "1.0.3", nodeType: "contact.create" }), {
+    text: "Saved as contact.create (v1.0.3).",
+    warn: false,
+  });
+  const kept = V.saveResult({ nodeType: "contact.create", warnings: ["kept the package's current selector(s): name_input"] });
+  assert.equal(kept.text, "Saved as contact.create. kept the package's current selector(s): name_input.");
+  assert.equal(kept.warn, true);
+});
