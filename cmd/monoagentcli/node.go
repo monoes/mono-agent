@@ -274,6 +274,7 @@ func newNodeCmd(cfg *globalConfig) *cobra.Command {
 		newNodeListCmd(cfg),
 		newNodeRunCmd(cfg),
 		newNodeSchemaCmd(cfg),
+		newNodePaletteCmd(cfg),
 	)
 	return cmd
 }

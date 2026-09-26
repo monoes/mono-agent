@@ -70,6 +70,7 @@ func newOrgCmd(cfg *globalConfig) *cobra.Command {
 		newOrgAutomationRoleCmd(env),
 		newOrgGroupCmd(env),
 		newOrgReconcileCmd(env),
+		newOrgReconcileDocCmd(env),
 		newOrgTeardownProfileCmd(env),
 	)
 	return cmd
