@@ -51,7 +51,7 @@ describe('HealthTab layout', () => {
 
 const replaceDry = {
   id: 'gemini', name: 'Gemini (fork)', version: '9.0.0', previousVersion: '1.0.0', sha256: 'f0',
-  review: { replaces: { id: 'gemini', source: 'builtin', trust: 'builtin', version: '1.0.0' }, domains: ['x.example.com'], steps: [], scripts: [], actionEffects: {}, files: [], capabilities: [] },
+  review: { replaces: { id: 'gemini', source: 'builtin', trust: 'builtin', version: '1.0.0' }, replaceRequired: true, domains: ['x.example.com'], steps: [], scripts: [], actionEffects: {}, files: [], capabilities: [] },
   warnings: ['REPLACES the installed BUILTIN package "gemini" 1.0.0 with imported content', 'replacing it requires confirmation (--replace-builtin on the command line)'],
   issues: [],
 }
@@ -73,8 +73,35 @@ describe('ImportDialog round 3', () => {
   })
 
   it('says "Replace local" for a local package', async () => {
-    await openReview({ ...replaceDry, review: { ...replaceDry.review, replaces: { id: 'gemini', source: 'local', trust: 'local', version: '1.0.0' } } })
+    await openReview({ ...replaceDry, review: { ...replaceDry.review, replaces: { id: 'gemini', source: 'local', trust: 'local', version: '1.0.0' }, replaceRequired: true } })
     expect(screen.getByText('Replace local gemini')).toBeInTheDocument()
+  })
+
+  it('asks for confirmation whenever replaceRequired — also for the user\'s own recorded package', async () => {
+    const own = {
+      id: 'acme', name: 'Acme', version: '1.0.1', previousVersion: '1.0.0', sha256: 'cc',
+      review: { replaces: { id: 'acme', source: 'local', trust: 'recorded', version: '1.0.0' }, replaceRequired: true, trustChange: { from: 'recorded', to: 'imported' },
+        capabilities: ['can open and act on: app.acme.com', 'leaves a profile view the page owner can see (view_profile)'],
+        visibility: { profile_view_visible_to_owner: ['view_profile'] }, domains: [], steps: [], scripts: [], actionEffects: {}, files: [] },
+      warnings: ['replacing it requires confirmation (--replace on the command line)', 'trust drops from recorded to imported: secrets must be stored for this automation'],
+      issues: [],
+    }
+    api.installAutomation.mockResolvedValue({ id: 'acme', version: '1.0.1', installed: true, review: {} })
+    await openReview(own)
+    expect(screen.getByText('Replace local acme')).toBeDisabled()
+    expect(screen.getByText('⚠ Trust drops from recorded to imported: secrets must be stored for this automation')).toBeInTheDocument()
+    expect(screen.getByText('leaves a profile view the page owner can see (view_profile)')).toBeInTheDocument()
+    expect(screen.queryByText(/--replace on the command line/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/^⚠ trust drops/)).not.toBeInTheDocument() // shown once, as the Trust line
+    fireEvent.click(screen.getByLabelText(/I understand this replaces the local acme/))
+    fireEvent.click(screen.getByText('Replace local acme'))
+    await waitFor(() => expect(api.installAutomation).toHaveBeenCalledWith('/tmp/p.mpkg', { expectSha256: 'cc', replace: true }))
+  })
+
+  it('does not ask when replaceRequired is false, even if replaces names a built-in', async () => {
+    await openReview({ ...replaceDry, review: { ...replaceDry.review, replaceRequired: false }, warnings: [] })
+    expect(screen.queryByLabelText(/I understand this replaces/)).not.toBeInTheDocument()
+    expect(screen.getByText('Update to 9.0.0')).not.toBeDisabled()
   })
 
   it('warns that an update resets the trust opt-ins when either is on', async () => {

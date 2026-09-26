@@ -24,7 +24,7 @@ const dryRun = {
   id: 'hackernews', name: 'HN (fork)', version: '2.0.0', dryRun: true, sha256: 'abc123',
   review: {
     source: 'imported', trust: 'imported', publisher: 'Someone',
-    replaces: { id: 'hackernews', source: 'builtin', trust: 'builtin', version: '1.1.0' },
+    replaces: { id: 'hackernews', source: 'builtin', trust: 'builtin', version: '1.1.0' }, replaceRequired: true,
     capabilities: ['can run scripts in the page that can read site data and send it anywhere'],
     scriptSources: { 'grab.js': 'return document.cookie' },
     domains: ['news.ycombinator.com'], steps: ['page_script'], scripts: ['grab.js'],
@@ -48,13 +48,13 @@ describe('ImportDialog', () => {
     fireEvent.click(screen.getByLabelText(/I understand this replaces the built-in hackernews/))
     expect(install).not.toBeDisabled()
     fireEvent.click(install)
-    await waitFor(() => expect(api.installAutomation).toHaveBeenCalledWith('/tmp/hn.mpkg', { expectSha256: 'abc123', replaceBuiltin: true }))
+    await waitFor(() => expect(api.installAutomation).toHaveBeenCalledWith('/tmp/hn.mpkg', { expectSha256: 'abc123', replace: true }))
     expect(await screen.findByText(/Installed HN \(fork\) 2.0.0/)).toBeInTheDocument()
   })
 
-  it('treats replacing an earlier import as a plain update (no tick, no --replace-builtin)', async () => {
+  it('treats replacing an earlier import as a plain update (no tick, no --replace)', async () => {
     api.chooseAutomationPackage.mockResolvedValue('/tmp/b.mpkg')
-    api.installAutomationDryRun.mockResolvedValue({ ...dryRun, previousVersion: '1.0.0', review: { ...dryRun.review, replaces: { id: 'hackernews', source: 'imported', trust: 'imported', version: '1.0.0' } } })
+    api.installAutomationDryRun.mockResolvedValue({ ...dryRun, previousVersion: '1.0.0', review: { ...dryRun.review, replaces: { id: 'hackernews', source: 'imported', trust: 'imported', version: '1.0.0' }, replaceRequired: false } })
     api.installAutomation.mockResolvedValue({ id: 'hackernews', version: '2.0.0', installed: true, review: {} })
     render(<ImportDialog onClose={() => {}} />)
     fireEvent.click(screen.getByText('Browse'))
@@ -62,7 +62,7 @@ describe('ImportDialog', () => {
     expect(screen.queryByText(/Replaces/)).not.toBeInTheDocument()
     expect(update).not.toBeDisabled()
     fireEvent.click(update)
-    await waitFor(() => expect(api.installAutomation).toHaveBeenCalledWith('/tmp/b.mpkg', { expectSha256: 'abc123', replaceBuiltin: false }))
+    await waitFor(() => expect(api.installAutomation).toHaveBeenCalledWith('/tmp/b.mpkg', { expectSha256: 'abc123', replace: false }))
   })
 
   it('warns about plain http URLs and closes on Escape', () => {

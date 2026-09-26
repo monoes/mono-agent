@@ -36,8 +36,8 @@ func automationCLIArgs(profileID string, sub ...string) []string {
 
 // InstallSpec is InstallAutomation's JSON argument.
 type InstallSpec struct {
-	ExpectSHA256   string `json:"expectSha256"`   // sha256 from the dry-run review: install exactly those bytes
-	ReplaceBuiltin bool   `json:"replaceBuiltin"` // the user ticked "replaces the built-in"
+	ExpectSHA256 string `json:"expectSha256"` // sha256 from the dry-run review: install exactly those bytes
+	Replace      bool   `json:"replace"`      // the user confirmed replacing the installed package (review.replaceRequired)
 }
 
 // automationInstallArgs builds `automation install --dry-run|--yes … -- <src>`.
@@ -55,8 +55,8 @@ func automationInstallArgs(path string, dryRun bool, spec InstallSpec) ([]string
 		if spec.ExpectSHA256 != "" {
 			args = append(args, "--expect-sha256", spec.ExpectSHA256)
 		}
-		if spec.ReplaceBuiltin {
-			args = append(args, "--replace-builtin")
+		if spec.Replace {
+			args = append(args, "--replace")
 		}
 	}
 	return withPositional(args, path), nil

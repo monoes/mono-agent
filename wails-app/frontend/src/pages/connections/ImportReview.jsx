@@ -16,13 +16,23 @@ function Row({ title, children }) {
 }
 
 const none = <span style={muted}>none</span>
-// replacesProtected: the install overwrites a built-in or local package
-// (the CLI then requires --replace-builtin). Replacing an earlier import of
-// the same package is an ordinary update.
-export function replacesProtected(review) {
-  const r = review?.replaces
-  return !!r && [r.source, r.trust].some(x => x === 'builtin' || x === 'local')
+// needsReplaceConfirm: the registry says this install replaces something
+// the user must confirm (review.replaceRequired → --replace): a built-in, a
+// local or recorded package, or different content in the user's own
+// package. An ordinary update of an import does not.
+export function needsReplaceConfirm(review) {
+  return !!review?.replaceRequired
 }
+
+// replaceTarget names what is replaced: the replaces block when present,
+// else the package itself.
+export function replaceTarget(res) {
+  const r = res?.review?.replaces
+  return { id: r?.id || res?.id, source: r?.source || r?.trust || '' }
+}
+
+export const sourceLabel = (s) => SOURCE_LABELS[s] || s || 'installed'
+
 
 const warnPanel = (color) => ({ ...panel, borderColor: color, display: 'flex', flexDirection: 'column', gap: 6 })
 
@@ -49,7 +59,17 @@ export function ScriptSources({ sources, title = 'Page scripts' }) {
 
 // cliOnly: warnings that tell a terminal user to pass a flag the GUI sets
 // itself (the replace tick box covers --replace-builtin).
-const isReplaceFlagHint = (w) => /--replace-builtin/.test(w)
+const isReplaceFlagHint = (w) => /--replace(-builtin)?\b/.test(w)
+
+// The CLI also words the trust drop as a warning ("trust drops from a to b:
+// <what that means>"); the review shows it once, as its own line, using the
+// CLI's explanation when there is one.
+const isTrustDropWarning = (w) => /^trust drops from /i.test(w)
+function trustDropDetail(warnings) {
+  const w = (warnings || []).find(isTrustDropWarning)
+  const rest = w && w.includes(':') ? w.slice(w.indexOf(':') + 1).trim() : ''
+  return rest || 'page scripts stay off and real runs of actions that change things need confirmation again.'
+}
 
 export default function ImportReview({ res, hideCliConfirmHint = false, resetsTrust = false }) {
   const r = res.review || {}
@@ -61,14 +81,22 @@ export default function ImportReview({ res, hideCliConfirmHint = false, resetsTr
       <div style={{ ...mono, fontSize: 13, color: 'var(--text)', fontWeight: 700 }}>
         {res.name || res.id} <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>{res.id} · {res.previousVersion ? `${res.previousVersion} → ${res.version}` : res.version}</span>
       </div>
-      {replacesProtected(r) && (
-        <div role="alert" style={warnPanel('var(--red)')}>
-          <span style={{ ...label, color: 'var(--red)', display: 'flex', alignItems: 'center', gap: 5 }}>
-            <ShieldAlert size={12} /> Replaces {SOURCE_LABELS[r.replaces.source] || r.replaces.source} {r.replaces.id} {r.replaces.version}
-          </span>
-          <div style={{ ...body, fontSize: 11 }}>
-            Installing this overwrites the {SOURCE_LABELS[r.replaces.source] || r.replaces.source} package with the same id. Workflows that use {r.replaces.id} nodes will run this package's code instead.
+      {needsReplaceConfirm(r) && (() => {
+        const t = replaceTarget(res)
+        return (
+          <div role="alert" style={warnPanel('var(--red)')}>
+            <span style={{ ...label, color: 'var(--red)', display: 'flex', alignItems: 'center', gap: 5 }}>
+              <ShieldAlert size={12} /> Replaces {sourceLabel(t.source)} {t.id}{r.replaces?.version ? ` ${r.replaces.version}` : ''}
+            </span>
+            <div style={{ ...body, fontSize: 11 }}>
+              Installing this overwrites the {sourceLabel(t.source)} package with the same id. Workflows that use {t.id} nodes will run this package's code instead.
+            </div>
           </div>
+        )
+      })()}
+      {r.trustChange && (
+        <div role="note" style={{ ...muted, color: 'var(--yellow)' }}>
+          ⚠ Trust drops from {r.trustChange.from} to {r.trustChange.to}: {trustDropDetail(res.warnings)}
         </div>
       )}
       {r.policyBlocked && (
@@ -120,7 +148,7 @@ export default function ImportReview({ res, hideCliConfirmHint = false, resetsTr
       {resetsTrust && (
         <div role="note" style={{ ...muted, color: 'var(--yellow)' }}>⚠ Updating resets 'Allow scripts' and 'Allow live runs' — you'll need to allow them again.</div>
       )}
-      {(res.warnings || []).filter(w => !(hideCliConfirmHint && isReplaceFlagHint(w))).map((w, i) => <div key={i} style={{ ...muted, color: 'var(--yellow)' }}>⚠ {w}</div>)}
+      {(res.warnings || []).filter(w => !(hideCliConfirmHint && isReplaceFlagHint(w)) && !(r.trustChange && isTrustDropWarning(w))).map((w, i) => <div key={i} style={{ ...muted, color: 'var(--yellow)' }}>⚠ {w}</div>)}
       {(r.files || []).length > 0 && (
         <details style={{ ...panel }}>
           <summary style={{ ...label, cursor: 'pointer' }}>Files ({r.files.length})</summary>
