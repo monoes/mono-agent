@@ -95,9 +95,18 @@ func TestWorkflowImportOverwriteRefusesEditedID(t *testing.T) {
 	cmd.SetArgs([]string{"--file", path, "--overwrite"})
 	cmd.SilenceUsage, cmd.SilenceErrors = true, true
 	var err error
-	captureStdout(t, func() { err = cmd.Execute() })
+	out := captureStdout(t, func() { err = cmd.Execute() })
 	if err == nil || !strings.Contains(err.Error(), "--replace wf-d9") || exitCodeFor(err) != 3 {
 		t.Fatalf("--overwrite over an edited id: %v", err)
+	}
+	// With --json the refusal is also one {"error","code"} document on stdout.
+	dec := json.NewDecoder(strings.NewReader(out))
+	var body map[string]string
+	if derr := dec.Decode(&body); derr != nil || !strings.Contains(body["error"], "--replace wf-d9") || body["code"] != "invalid_input" {
+		t.Fatalf("stdout %q: %v", out, derr)
+	}
+	if dec.More() {
+		t.Fatalf("more than one JSON document: %q", out)
 	}
 	if n := countWorkflows(t, cfg); n != 1 {
 		t.Fatalf("workflows = %d, want 1 (no silent copy)", n)
@@ -128,5 +137,31 @@ func TestWorkflowImportCopyOfByName(t *testing.T) {
 	_, cfg2 := persistTestEnv(t)
 	if r := importJSON(t, cfg2, "--file", writeTempWorkflow(t, validWorkflowFile)); r.CopyOf != "" || r.CopyReason != "" {
 		t.Fatalf("fresh import = %+v", r)
+	}
+}
+
+// TestWorkflowImportJSONErrorNotFound: a missing --file is
+// {"error","code":"not_found"} on stdout with --json (exit 2).
+func TestWorkflowImportJSONErrorNotFound(t *testing.T) {
+	_, cfg := persistTestEnv(t)
+	cmd := newWorkflowImportCmd(cfg)
+	cmd.SetArgs([]string{"--file", "/nonexistent/wf.json"})
+	cmd.SilenceUsage, cmd.SilenceErrors = true, true
+	var err error
+	out := captureStdout(t, func() { err = cmd.Execute() })
+	if err == nil || exitCodeFor(err) != 2 {
+		t.Fatalf("err = %v", err)
+	}
+	var body map[string]string
+	if json.Unmarshal([]byte(strings.TrimSpace(out)), &body) != nil || body["code"] != "not_found" || body["error"] == "" {
+		t.Fatalf("stdout %q", out)
+	}
+	// Without --json nothing goes to stdout.
+	cfg.JSONOutput = false
+	cmd = newWorkflowImportCmd(cfg)
+	cmd.SetArgs([]string{"--file", "/nonexistent/wf.json"})
+	cmd.SilenceUsage, cmd.SilenceErrors = true, true
+	if out := captureStdout(t, func() { _ = cmd.Execute() }); strings.TrimSpace(out) != "" {
+		t.Fatalf("human mode stdout %q", out)
 	}
 }
