@@ -92,6 +92,7 @@ type WaitSpec struct {
 //	lower        Field, To
 //	replace      Field, Pattern (Go regexp), With, To
 //	tree_parent  Field (depth), ID, To, Root, Carry
+//	index        To, Carry (numbers the rows 0, 1, …; with Carry the count continues across pages)
 //	flag         Where, To (per-item true/false from the condition)
 //	sort         Field, Order (stable; numeric when both values are numbers, else string; missing last)
 //	add, subtract, multiply, divide  Field, By, Round, To (numbers parsed like parse_number)
@@ -109,7 +110,7 @@ type TransformOp struct {
 	With    string            `json:"with,omitempty"`  // replace: replacement text ($1 expands)
 	ID      string            `json:"id,omitempty"`    // tree_parent: the row's id field
 	Root    string            `json:"root,omitempty"`  // tree_parent: template, parent of depth-0 rows
-	Carry   string            `json:"carry,omitempty"` // tree_parent: variable holding the open-ancestor stack across pages
+	Carry   string            `json:"carry,omitempty"` // tree_parent: variable holding the open-ancestor stack across pages; index: the row count so far
 	Order   string            `json:"order,omitempty"` // sort: "asc" (default) | "desc"
 	By      float64           `json:"by,omitempty"`    // add/subtract/multiply/divide: the operand
 	Round   bool              `json:"round,omitempty"` // add/subtract/multiply/divide: round the result to an integer

@@ -281,6 +281,32 @@ func TestTransformStepCarriesTreeStack(t *testing.T) {
 	}
 }
 
+// index numbers rows and, with carry, continues across transforms, so a
+// filter on it caps a list read page by page.
+func TestTransformStepIndexCarries(t *testing.T) {
+	ae := newExtExecutor(t, &extPage{})
+	ae.SetVariable("cap", 3.0)
+	step := StepDef{ID: "ix", Type: "transform", Input: "page", VariableName: "out",
+		Ops: []TransformOp{
+			{Op: "index", To: "n", Carry: "seen"},
+			{Op: "filter", Where: &ConditionDef{Variable: "n", Operator: "less_than", Value: "{{cap}}"}},
+		}}
+	ae.SetVariable("page", txItems(txM{"id": "a"}, txM{"id": "b"}))
+	wantOK(t, runExt(t, ae, step))
+	if out := getVar(ae, "out").([]interface{}); len(out) != 2 || out[1].(txM)["n"] != 1 {
+		t.Fatalf("first page = %v", out)
+	}
+	ae.SetVariable("page", txItems(txM{"id": "c"}, txM{"id": "d"}))
+	wantOK(t, runExt(t, ae, step))
+	out := getVar(ae, "out").([]interface{})
+	if len(out) != 1 || out[0].(txM)["id"] != "c" || out[0].(txM)["n"] != 2 {
+		t.Fatalf("second page = %v, want only c at n=2", out)
+	}
+	if seen := getVar(ae, "seen"); seen != 4 {
+		t.Fatalf("carried count = %v, want 4", seen)
+	}
+}
+
 func TestTransformFlag(t *testing.T) {
 	src := txItems(txM{"id": "1", "text": "hi"}, txM{"id": "2"}, txM{"id": "3", "text": ""})
 	got, err := runTransform(src, []TransformOp{

@@ -11,11 +11,20 @@
     "supportsRetry": true
   },
   "inputs": {
+    "required": [
+      {
+        "name": "target_url",
+        "type": "string",
+        "description": "Profile URL or username whose followers (or following) list to export",
+        "aliases": ["profileUrl", "targetUsername", "targets", "selectedListItems"],
+        "ui": { "label": "Profile", "placeholder": "https://www.instagram.com/natgeo/" }
+      }
+    ],
     "optional": [
       {
         "name": "sourceType",
         "type": "string",
-        "description": "Source type: 'followers', 'following', or profile URL",
+        "description": "Source type: 'followers' or 'following'",
         "default": "FOLLOWERS_FETCH"
       },
       {
@@ -77,7 +86,7 @@
       "type": "call_bot_method",
       "methodName": "fetch_followers_list",
       "args": [
-        "{{target_url or profileUrl or targetUsername or sourceType}}",
+        "{{target_url}}",
         "{{sourceType}}",
         "{{maxResultsCount or 100}}"
       ],

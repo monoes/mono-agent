@@ -4,7 +4,7 @@
   "platform": "TIKTOK",
   "version": "1.0.0",
   "description": "Open TikTok's duet creator for videos (nothing is recorded or published; finishing the duet needs a person)",
-  "sideEffects": "none",
+  "sideEffects": "write",
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
@@ -42,6 +42,7 @@
     {
       "id": "t1_duet_video",
       "type": "call_bot_method",
+      "sideEffect": true,
       "methodName": "duet_video",
       "args": [
         "{{item.url or item}}"

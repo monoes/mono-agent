@@ -171,3 +171,38 @@ func TestLikePostServerDrivenMarkup(t *testing.T) {
 		}
 	})
 }
+
+// clickShowMore matches its button by class only; a Follow or Connect button
+// styled the same way and placed first must never be clicked.
+func TestClickShowMoreSkipsLookalikeButtons(t *testing.T) {
+	fastTimings(t)
+	b := bottest.Launch(t)
+
+	t.Run("clicks only the real show more", func(t *testing.T) {
+		p, rec := newPage(t, b, bottest.Route{Pattern: "https://www.linkedin.com/company/*", File: "testdata/show_more_guard.html"})
+		if err := p.Navigate("https://www.linkedin.com/company/example-labs-test/posts/"); err != nil {
+			t.Fatal(err)
+		}
+		clickShowMore(p)
+		if got := evalString(t, p, `window.clicked.join(',')`); got != "more" {
+			t.Fatalf("clicked = %q, want only the Show more button", got)
+		}
+		if w := writes(rec); len(w) != 0 {
+			t.Fatalf("writes = %v", w)
+		}
+	})
+
+	t.Run("no show more, nothing clicked", func(t *testing.T) {
+		p, _ := newPage(t, b, bottest.Route{Pattern: "https://www.linkedin.com/company/*", File: "testdata/show_more_guard.html"})
+		if err := p.Navigate("https://www.linkedin.com/company/example-labs-test/posts/"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := p.EvalCDP(`(() => { document.getElementById('more').remove(); return ''; })()`); err != nil {
+			t.Fatal(err)
+		}
+		clickShowMore(p)
+		if got := evalString(t, p, `window.clicked.join(',')`); got != "" {
+			t.Fatalf("clicked = %q, want nothing", got)
+		}
+	})
+}

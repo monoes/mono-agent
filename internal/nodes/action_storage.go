@@ -64,6 +64,18 @@ func (s *workflowActionStorage) SaveExtractedData(actionID string, items []map[s
 	}
 	now := time.Now().UTC()
 
+	// `node run` executes a node standalone under a synthetic execution ID
+	// ("cli") that has no workflow_executions row; the FK would reject every
+	// insert and fail the whole action. Keep the targets, unattached.
+	executionID := sql.NullString{String: s.executionID, Valid: true}
+	var one int
+	if err := tx.QueryRow(`SELECT 1 FROM workflow_executions WHERE id = ?`, s.executionID).Scan(&one); err != nil {
+		if err != sql.ErrNoRows {
+			return fmt.Errorf("nodes: looking up execution %s: %w", s.executionID, err)
+		}
+		executionID = sql.NullString{}
+	}
+
 	upsertPerson, err := tx.Prepare(`
 		INSERT INTO people (id, platform_username, platform, full_name, image_url,
 		        website, introduction, is_verified, profile_id, created_at, updated_at)
@@ -138,7 +150,7 @@ func (s *workflowActionStorage) SaveExtractedData(actionID string, items []map[s
 		}
 
 		if _, err := insertTarget.Exec(
-			uuid.New().String(), s.executionID, s.nodeID, personID, strings.ToUpper(platform),
+			uuid.New().String(), executionID, s.nodeID, personID, strings.ToUpper(platform),
 			nullIfEmpty(profileURL), "COMPLETED", now.Format(time.RFC3339), nullIfEmpty(commentText), nil, now,
 		); err != nil {
 			return fmt.Errorf("nodes: inserting workflow_node_target: %w", err)
