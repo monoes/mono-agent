@@ -134,7 +134,8 @@ func TestWorkflowBundlePartialExport(t *testing.T) {
 	if got[exSite].Status != "installed" {
 		t.Fatalf("%s: %+v", exSite, got[exSite])
 	}
-	if it := got[noSite]; it.Status != "missing" || !it.NotBundled || !strings.Contains(it.Error, "cannot export") {
+	if it := got[noSite]; it.Status != "missing" || !it.NotBundled || !strings.Contains(it.Error, "cannot export") ||
+		it.LocalOnly || !strings.HasPrefix(it.Hint, "Ask the sender to re-run workflow export") {
 		t.Fatalf("%s: %+v", noSite, it)
 	}
 }

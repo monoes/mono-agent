@@ -31,6 +31,16 @@ type bundleImportItem struct {
 	// NotBundled: the exporter could not include this package (see Error);
 	// --yes cannot install it.
 	NotBundled bool `json:"notBundled,omitempty"`
+	// LocalOnly: a notBundled package that opens local addresses; only
+	// recreating it on this machine helps.
+	LocalOnly bool `json:"localOnly,omitempty"`
+	// Hint is what to do next, as plain text (Error keeps the combined
+	// message for older readers).
+	Hint string `json:"hint,omitempty"`
+	// Builtin and Replaceable qualify a "differs" item: a built-in is never
+	// replaced from a bundle (replaceable false).
+	Builtin     bool  `json:"builtin,omitempty"`
+	Replaceable *bool `json:"replaceable,omitempty"`
 	// Review and ReviewDetail describe a "missing" or "differs" package (a
 	// dry-run review of the pinned bytes, nothing installed), so a GUI can
 	// show what it would install before asking. Changes is the diff against
@@ -148,12 +158,14 @@ func unbundledItems(unbundled map[string]unbundledAutomation, bundled map[string
 	for _, id := range ids {
 		u := unbundled[id]
 		item := bundleImportItem{ID: id, Version: u.Version, Status: "missing", NotBundled: true,
-			Error: "not in the bundle: " + u.Reason}
+			LocalOnly: u.LocalOnly, Error: "not in the bundle: " + u.Reason,
+			Hint: fmt.Sprintf("Recreate %s on this machine, or ask the sender for it.", id)}
 		if u.Hint != "" {
 			item.Error += "; the sender can " + u.Hint
+			item.Hint = "Ask the sender to " + u.Hint + "."
 		}
 		if info, ok := known[id]; ok && !info.Removed {
-			item.Status, item.InstalledVersion, item.Error = "present", info.Version, ""
+			item.Status, item.InstalledVersion, item.Error, item.Hint = "present", info.Version, "", ""
 		}
 		items = append(items, item)
 	}
@@ -353,18 +365,27 @@ func checkDiffers(reg *automation.Registry, id string, b bundledAutomation, o bu
 	item.Status = "differs"
 	item.Review, item.ReviewDetail = bundleReviewLine(review), newBundleReviewDetail(review)
 	item.Changes = review.Review.Changes
+	item.Hint = "Re-import with --replace-automations to review and replace it, or install the bundled copy with `automation install <file> --replace`."
 	item.Error = differsSummary(review) + "; the installed copy was kept. To replace it, re-import with --replace-automations (shows this review and asks), or install the bundled copy with `automation install <file> --replace`"
+	replaceable := true
 	if info, err := reg.Info(id); err == nil && info.Source == automation.SourceBuiltin {
 		// A bundle never replaces a built-in (restore/rollback manage those).
+		replaceable = false
+		item.Builtin, item.Replaceable = true, &replaceable
+		item.Hint = "A bundle never replaces a built-in; the installed copy stays."
 		item.Error = differsSummary(review) + "; the installed copy is a built-in and a bundle never replaces it"
 		return
 	}
+	item.Replaceable = &replaceable
 	if !o.replace {
 		return
 	}
 	if err := replaceBundledAutomation(reg, id, b, review, o); err != nil {
 		item.Error = "not replaced: " + err.Error()
+		if errors.Is(err, errConfirmationRequired) {
+			item.Hint = "Add --yes (or run in a terminal to confirm) together with --replace-automations."
+		}
 		return
 	}
-	item.Status, item.Error = "replaced", ""
+	item.Status, item.Error, item.Hint = "replaced", "", ""
 }

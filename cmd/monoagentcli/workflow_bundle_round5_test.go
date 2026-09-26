@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,6 +51,15 @@ func TestWorkflowBundleLocalOnlyPackage(t *testing.T) {
 	}
 	if _, has := res["installCommand"]; has {
 		t.Fatalf("an install command was offered for a package that is not in the file: %v", res)
+	}
+	items, _ := res["automations"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("automations = %v", res["automations"])
+	}
+	first := items[0].(map[string]any)
+	if first["localOnly"] != true || first["notBundled"] != true || !strings.Contains(fmt.Sprint(first["hint"]), "Recreate "+dev) ||
+		!strings.Contains(fmt.Sprint(first["error"]), "opens a local address") {
+		t.Fatalf("local-only item = %v", first)
 	}
 	cfg3 := &globalConfig{DBPath: filepath.Join(t.TempDir(), "dst3.db"), ProfileID: "default"}
 	out := runWorkflowSubcmd(t, cfg3, "import", "--file", file)
@@ -137,7 +147,8 @@ func TestWorkflowBundleDiffersSameVersion(t *testing.T) {
 	// --yes alone never replaces.
 	it := item("--yes")
 	if it.Status != "differs" || it.Changes == nil || strings.Join(it.Changes.AddedDomains, ",") != "*.example.com" ||
-		!strings.Contains(it.Error, "--replace-automations") || it.ReviewDetail == nil {
+		!strings.Contains(it.Error, "--replace-automations") || it.ReviewDetail == nil ||
+		!strings.Contains(it.Hint, "--replace-automations") || it.Builtin || it.Replaceable == nil || !*it.Replaceable {
 		t.Fatalf("differs item = %+v", it)
 	}
 	if got := domains(); got != "example.com" {
