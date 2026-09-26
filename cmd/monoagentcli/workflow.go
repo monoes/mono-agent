@@ -23,6 +23,7 @@ import (
 	"github.com/monoes/mono-agent/internal/nodes"
 	"github.com/monoes/mono-agent/internal/scheduler"
 	"github.com/monoes/mono-agent/internal/storage"
+	"github.com/monoes/mono-agent/internal/summary"
 	"github.com/monoes/mono-agent/internal/workflow"
 	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
@@ -1073,17 +1074,41 @@ func newWorkflowDeleteCmd(cfg *globalConfig) *cobra.Command {
 func newWorkflowExecutionsCmd(cfg *globalConfig) *cobra.Command {
 	var limit int
 	var jsonOut bool
+	var all bool
 
 	cmd := &cobra.Command{
-		Use:   "executions <workflow-id>",
-		Short: "List recent executions for a workflow",
-		Args:  cobra.ExactArgs(1),
+		Use:   "executions <workflow-id> | --all",
+		Short: "List recent executions for a workflow, or across the profile with --all",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if all == (len(args) == 1) {
+				return errInvalidInput("pass either a workflow id or --all")
+			}
 			db, err := initDB(cfg)
 			if err != nil {
 				return fmt.Errorf("open database: %w", err)
 			}
 			defer db.Close()
+
+			if all {
+				n := limit
+				if n <= 0 {
+					n = -1 // SQLite: no limit
+				}
+				rows, err := summary.RecentExecutions(cmd.Context(), db.DB, cfg.ProfileID, n)
+				if err != nil {
+					return fmt.Errorf("list executions: %w", err)
+				}
+				if jsonOut || cfg.JSONOutput {
+					return json.NewEncoder(os.Stdout).Encode(rows)
+				}
+				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+				fmt.Fprintln(w, "ID\tWORKFLOW\tSTATUS\tTRIGGER TYPE\tCREATED AT\tERROR")
+				for _, r := range rows {
+					fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", r.ID, r.WorkflowName, r.Status, r.TriggerType, r.CreatedAt, r.Error)
+				}
+				return w.Flush()
+			}
 
 			store := newHybridStore(db)
 			ctx := context.Background()
@@ -1134,6 +1159,7 @@ func newWorkflowExecutionsCmd(cfg *globalConfig) *cobra.Command {
 
 	cmd.Flags().IntVar(&limit, "limit", 20, "Maximum number of executions to show (0 = all)")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output in JSON format")
+	cmd.Flags().BoolVar(&all, "all", false, "List recent executions across every workflow in the profile, newest first")
 	return cmd
 }
 
