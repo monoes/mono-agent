@@ -50,6 +50,13 @@ afterEach(() => cleanup())
 async function renderBar() {
   render(<React.StrictMode><AutonomyBar orgName="growth" /></React.StrictMode>)
   await waitFor(() => expect(screen.getByRole('radiogroup', { name: 'Autonomy level' })).toBeInTheDocument())
+  // StrictMode runs the bar's load effect twice, so the radiogroup can appear
+  // while the second getOrgAutonomy is still settling. Interacting in that
+  // window let its update (and the threshold field's effects) land on top of
+  // a fireEvent.change and revert the typed value — the "saves the Jev
+  // threshold" flake under CPU load. Wait for every load this render started
+  // to resolve, inside act, so the bar is settled before the test acts.
+  await act(async () => { await Promise.all(api.getOrgAutonomy.mock.results.map(r => r.value)) })
 }
 
 describe('AutonomyBar', () => {
