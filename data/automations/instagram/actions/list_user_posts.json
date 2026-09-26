@@ -3,7 +3,7 @@
   "actionType": "list_user_posts",
   "platform": "INSTAGRAM",
   "version": "2.0.0",
-  "description": "List posts from an Instagram profile's grid (url, shortcode, type, author, thumbnail, alt text). The profile is target_url; older configs that set targetUsername, targets or username still work. If Instagram asks to turn on notifications or save your login, it answers \"Not Now\", which Instagram may remember for your account.",
+  "description": "List posts from an Instagram profile's grid (url, shortcode, type, author, thumbnail, alt text). The profile is target_url; older configs that set targetUsername, profileUrl, targets or username still work. If Instagram asks to turn on notifications or save your login, it answers \"Not Now\", which Instagram may remember for your account.",
   "sideEffects": "read",
   "visibility": ["account_preference_prompt"],
   "metadata": {
@@ -16,8 +16,8 @@
       {
         "name": "target_url",
         "type": "string",
-        "description": "Profile URL or username (without @) to list posts from",
-        "aliases": ["targetUsername", "targets", "selectedListItems", "username"],
+        "description": "Profile URL or username to list posts from (without @)",
+        "aliases": ["targetUsername", "profileUrl", "targets", "selectedListItems", "username"],
         "ui": { "label": "Profile", "placeholder": "https://www.instagram.com/natgeo/" }
       }
     ],
