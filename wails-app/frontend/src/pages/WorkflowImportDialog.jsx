@@ -28,6 +28,29 @@ function installSummary(r) {
   return parts.join(' ')
 }
 
+// ReviewDetail: what installing one bundled package means, from the CLI's
+// dry-run review (reviewDetail), before anything is installed.
+function ReviewDetail({ item }) {
+  const d = item.reviewDetail
+  const line = { fontFamily: 'var(--font-mono)', fontSize: 10.5 }
+  return (
+    <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '6px 8px', display: 'flex', flexDirection: 'column', gap: 3 }}>
+      <span style={{ ...line, fontSize: 11.5, color: 'var(--text)' }}>{item.id} {item.version}</span>
+      {d ? (
+        <>
+          <span style={line}>Publisher: {d.publisher || 'unknown'}</span>
+          <span style={line}>Domains: {(d.domains || []).join(', ') || 'unrestricted'}</span>
+          {(d.capabilities || []).length > 0 && (
+            <ul style={{ margin: 0, paddingLeft: 16 }}>{d.capabilities.map(c => <li key={c} style={line}>{c}</li>)}</ul>
+          )}
+          {d.replaces && <span style={{ ...line, color: 'var(--red)' }}>Replaces {d.replaces.source} {d.replaces.id} {d.replaces.version}</span>}
+        </>
+      ) : item.review ? <span style={line}>{item.review}</span> : null}
+      {item.error && <span style={{ ...line, color: 'var(--red)' }}>{item.error}</span>}
+    </div>
+  )
+}
+
 function Automations({ items }) {
   if (!items?.length) return null
   return (
@@ -80,9 +103,7 @@ export default function WorkflowImportDialog({ onClose, onOpen }) {
     const message = (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <span>Install {missing.length} bundled automation{missing.length === 1 ? '' : 's'} from this workflow file?</span>
-        <ul style={{ margin: 0, paddingLeft: 18 }}>
-          {missing.map(i => <li key={i.id} style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>{i.id} {i.version}{i.review ? ` — ${i.review}` : ''}</li>)}
-        </ul>
+        {missing.map(i => <ReviewDetail key={i.id} item={i} />)}
         <span>They come from the file, not from a source you chose separately. Each package is checked against its sha256 and reviewed before anything is written.</span>
       </div>
     )

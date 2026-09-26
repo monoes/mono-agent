@@ -57,7 +57,7 @@ describe('WorkflowImportDialog', () => {
     await importFile({
       id: 'w1', name: 'Scrape', status: 'created',
       automations: [
-        { id: 'books-demo', version: '0.1.0', status: 'missing', review: 'Bundled automation books-demo 0.1.0 — publisher Jane — domains books.toscrape.com — steps: navigate' },
+        { id: 'books-demo', version: '0.1.0', status: 'missing', review: 'Bundled automation books-demo 0.1.0 — publisher Jane — domains books.toscrape.com — steps: navigate', reviewDetail: { id: 'books-demo', version: '0.1.0', publisher: 'Jane', domains: ['books.toscrape.com'], capabilities: ['can open and act on: books.toscrape.com'] } },
         { id: 'hackernews', version: '1.1.0', status: 'present', installedVersion: '1.1.0' },
       ],
       missingAutomations: ['books-demo'], installCommand: 'monoagentcli workflow import --file /w/flow.json --yes',
@@ -73,6 +73,10 @@ describe('WorkflowImportDialog', () => {
     fireEvent.click(screen.getByText('Install bundled automations'))
     // The confirm lists the package; cancelling installs nothing.
     expect(await screen.findByText('Install bundled automations', { selector: 'div' })).toBeInTheDocument()
+    // The confirm shows the dry-run review before anything is installed.
+    expect(screen.getByText('Publisher: Jane')).toBeInTheDocument()
+    expect(screen.getByText('Domains: books.toscrape.com')).toBeInTheDocument()
+    expect(screen.getByText('can open and act on: books.toscrape.com')).toBeInTheDocument()
     fireEvent.click(screen.getByText('Cancel'))
     await waitFor(() => expect(api.importWorkflowFull).toHaveBeenCalledTimes(1))
     fireEvent.click(screen.getByText('Install bundled automations'))
