@@ -176,7 +176,7 @@
     ]
   },
   "hackernews.get_post_metrics": {
-    "credential_platform": null,
+    "credential_platform": "hackernews",
     "fields": [
       {
         "key": "username",
@@ -195,7 +195,7 @@
     ]
   },
   "hackernews.list_comments": {
-    "credential_platform": null,
+    "credential_platform": "hackernews",
     "fields": [
       {
         "key": "username",
@@ -231,7 +231,7 @@
     ]
   },
   "hackernews.reply_to_comment": {
-    "credential_platform": null,
+    "credential_platform": "hackernews",
     "fields": [
       {
         "key": "username",
@@ -258,7 +258,7 @@
     ]
   },
   "hackernews.submit_post": {
-    "credential_platform": null,
+    "credential_platform": "hackernews",
     "fields": [
       {
         "key": "username",
@@ -292,7 +292,7 @@
     ]
   },
   "instagram.auto_reply_dms": {
-    "credential_platform": null,
+    "credential_platform": "instagram",
     "fields": [
       {
         "key": "message",
@@ -312,7 +312,7 @@
     ]
   },
   "instagram.comment_on_posts": {
-    "credential_platform": null,
+    "credential_platform": "instagram",
     "fields": [
       {
         "key": "targets",
@@ -339,7 +339,7 @@
     ]
   },
   "instagram.engage_user_posts": {
-    "credential_platform": null,
+    "credential_platform": "instagram",
     "fields": [
       {
         "key": "targets",
@@ -359,7 +359,7 @@
     ]
   },
   "instagram.engage_with_posts": {
-    "credential_platform": null,
+    "credential_platform": "instagram",
     "fields": [
       {
         "key": "keywords",
@@ -379,7 +379,7 @@
     ]
   },
   "instagram.export_followers": {
-    "credential_platform": null,
+    "credential_platform": "instagram",
     "fields": [
       {
         "key": "target_url",
@@ -411,7 +411,7 @@
     ]
   },
   "instagram.extract_post_data": {
-    "credential_platform": null,
+    "credential_platform": "instagram",
     "fields": [
       {
         "key": "targets",
@@ -424,7 +424,7 @@
     ]
   },
   "instagram.find_by_keyword": {
-    "credential_platform": null,
+    "credential_platform": "instagram",
     "fields": [
       {
         "key": "keywords",
@@ -444,7 +444,7 @@
     ]
   },
   "instagram.follow_users": {
-    "credential_platform": null,
+    "credential_platform": "instagram",
     "fields": [
       {
         "key": "targets",
@@ -464,7 +464,7 @@
     ]
   },
   "instagram.like_comments_on_posts": {
-    "credential_platform": null,
+    "credential_platform": "instagram",
     "fields": [
       {
         "key": "targets",
@@ -484,7 +484,7 @@
     ]
   },
   "instagram.like_posts": {
-    "credential_platform": null,
+    "credential_platform": "instagram",
     "fields": [
       {
         "key": "targets",
@@ -504,7 +504,7 @@
     ]
   },
   "instagram.list_post_comments": {
-    "credential_platform": null,
+    "credential_platform": "instagram",
     "fields": [
       {
         "key": "username",
@@ -544,7 +544,7 @@
     ]
   },
   "instagram.list_user_posts": {
-    "credential_platform": null,
+    "credential_platform": "instagram",
     "fields": [
       {
         "key": "username",
@@ -635,7 +635,7 @@
     ]
   },
   "instagram.reply_to_comments": {
-    "credential_platform": null,
+    "credential_platform": "instagram",
     "fields": [
       {
         "key": "username",
@@ -681,7 +681,7 @@
     ]
   },
   "instagram.scrape_profile_info": {
-    "credential_platform": null,
+    "credential_platform": "instagram",
     "fields": [
       {
         "key": "targets",
@@ -694,7 +694,7 @@
     ]
   },
   "instagram.send_dms": {
-    "credential_platform": null,
+    "credential_platform": "instagram",
     "fields": [
       {
         "key": "targets",
@@ -722,7 +722,7 @@
     ]
   },
   "instagram.unfollow_users": {
-    "credential_platform": null,
+    "credential_platform": "instagram",
     "fields": [
       {
         "key": "targets",
@@ -742,7 +742,7 @@
     ]
   },
   "instagram.watch_stories": {
-    "credential_platform": null,
+    "credential_platform": "instagram",
     "fields": [
       {
         "key": "targets",
@@ -762,7 +762,7 @@
     ]
   },
   "linkedin.auto_reply_dms": {
-    "credential_platform": null,
+    "credential_platform": "linkedin",
     "fields": [
       {
         "key": "message",
@@ -782,7 +782,7 @@
     ]
   },
   "linkedin.comment_on_posts": {
-    "credential_platform": null,
+    "credential_platform": "linkedin",
     "fields": [
       {
         "key": "targets",
@@ -809,7 +809,7 @@
     ]
   },
   "linkedin.engage_with_posts": {
-    "credential_platform": null,
+    "credential_platform": "linkedin",
     "fields": [
       {
         "key": "keywords",
@@ -829,7 +829,7 @@
     ]
   },
   "linkedin.export_followers": {
-    "credential_platform": null,
+    "credential_platform": "linkedin",
     "fields": [
       {
         "key": "sourceType",
@@ -861,7 +861,7 @@
     ]
   },
   "linkedin.find_by_keyword": {
-    "credential_platform": null,
+    "credential_platform": "linkedin",
     "fields": [
       {
         "key": "keywords",
@@ -881,7 +881,7 @@
     ]
   },
   "linkedin.like_comments": {
-    "credential_platform": null,
+    "credential_platform": "linkedin",
     "fields": [
       {
         "key": "username",
@@ -917,7 +917,7 @@
     ]
   },
   "linkedin.like_posts": {
-    "credential_platform": null,
+    "credential_platform": "linkedin",
     "fields": [
       {
         "key": "targets",
@@ -937,7 +937,7 @@
     ]
   },
   "linkedin.list_post_comments": {
-    "credential_platform": null,
+    "credential_platform": "linkedin",
     "fields": [
       {
         "key": "username",
@@ -982,7 +982,7 @@
     ]
   },
   "linkedin.list_user_posts": {
-    "credential_platform": null,
+    "credential_platform": "linkedin",
     "fields": [
       {
         "key": "username",
@@ -1031,7 +1031,7 @@
     ]
   },
   "linkedin.publish_post": {
-    "credential_platform": null,
+    "credential_platform": "linkedin",
     "fields": [
       {
         "key": "message",
@@ -1044,7 +1044,7 @@
     ]
   },
   "linkedin.scrape_profile_info": {
-    "credential_platform": null,
+    "credential_platform": "linkedin",
     "fields": [
       {
         "key": "targets",
@@ -1057,7 +1057,7 @@
     ]
   },
   "linkedin.send_dms": {
-    "credential_platform": null,
+    "credential_platform": "linkedin",
     "fields": [
       {
         "key": "targets",
@@ -1085,7 +1085,7 @@
     ]
   },
   "producthunt.comment_on_launch": {
-    "credential_platform": null,
+    "credential_platform": "producthunt",
     "fields": [
       {
         "key": "username",
@@ -1112,7 +1112,7 @@
     ]
   },
   "producthunt.get_launch_metrics": {
-    "credential_platform": null,
+    "credential_platform": "producthunt",
     "fields": [
       {
         "key": "username",
@@ -1131,7 +1131,7 @@
     ]
   },
   "producthunt.list_comments": {
-    "credential_platform": null,
+    "credential_platform": "producthunt",
     "fields": [
       {
         "key": "username",
@@ -1159,7 +1159,7 @@
     ]
   },
   "tiktok.auto_reply_dms": {
-    "credential_platform": null,
+    "credential_platform": "tiktok",
     "fields": [
       {
         "key": "message",
@@ -1179,7 +1179,7 @@
     ]
   },
   "tiktok.comment_on_video": {
-    "credential_platform": null,
+    "credential_platform": "tiktok",
     "fields": [
       {
         "key": "username",
@@ -1217,7 +1217,7 @@
     ]
   },
   "tiktok.duet_video": {
-    "credential_platform": null,
+    "credential_platform": "tiktok",
     "fields": [
       {
         "key": "username",
@@ -1247,7 +1247,7 @@
     ]
   },
   "tiktok.engage_with_posts": {
-    "credential_platform": null,
+    "credential_platform": "tiktok",
     "fields": [
       {
         "key": "keywords",
@@ -1267,7 +1267,7 @@
     ]
   },
   "tiktok.export_followers": {
-    "credential_platform": null,
+    "credential_platform": "tiktok",
     "fields": [
       {
         "key": "sourceType",
@@ -1299,7 +1299,7 @@
     ]
   },
   "tiktok.find_by_keyword": {
-    "credential_platform": null,
+    "credential_platform": "tiktok",
     "fields": [
       {
         "key": "keywords",
@@ -1319,7 +1319,7 @@
     ]
   },
   "tiktok.follow_user": {
-    "credential_platform": null,
+    "credential_platform": "tiktok",
     "fields": [
       {
         "key": "username",
@@ -1349,7 +1349,7 @@
     ]
   },
   "tiktok.like_comment": {
-    "credential_platform": null,
+    "credential_platform": "tiktok",
     "fields": [
       {
         "key": "username",
@@ -1369,7 +1369,7 @@
     ]
   },
   "tiktok.like_video": {
-    "credential_platform": null,
+    "credential_platform": "tiktok",
     "fields": [
       {
         "key": "username",
@@ -1399,7 +1399,7 @@
     ]
   },
   "tiktok.list_user_videos": {
-    "credential_platform": null,
+    "credential_platform": "tiktok",
     "fields": [
       {
         "key": "username",
@@ -1439,7 +1439,7 @@
     ]
   },
   "tiktok.list_video_comments": {
-    "credential_platform": null,
+    "credential_platform": "tiktok",
     "fields": [
       {
         "key": "username",
@@ -1479,7 +1479,7 @@
     ]
   },
   "tiktok.publish_post": {
-    "credential_platform": null,
+    "credential_platform": "tiktok",
     "fields": [
       {
         "key": "message",
@@ -1508,7 +1508,7 @@
     ]
   },
   "tiktok.scrape_profile_info": {
-    "credential_platform": null,
+    "credential_platform": "tiktok",
     "fields": [
       {
         "key": "targets",
@@ -1521,7 +1521,7 @@
     ]
   },
   "tiktok.send_dms": {
-    "credential_platform": null,
+    "credential_platform": "tiktok",
     "fields": [
       {
         "key": "targets",
@@ -1549,7 +1549,7 @@
     ]
   },
   "tiktok.share_video": {
-    "credential_platform": null,
+    "credential_platform": "tiktok",
     "fields": [
       {
         "key": "username",
@@ -1579,7 +1579,7 @@
     ]
   },
   "tiktok.stitch_video": {
-    "credential_platform": null,
+    "credential_platform": "tiktok",
     "fields": [
       {
         "key": "username",
@@ -1609,7 +1609,7 @@
     ]
   },
   "x.auto_reply_dms": {
-    "credential_platform": null,
+    "credential_platform": "x",
     "fields": [
       {
         "key": "message",
@@ -1629,7 +1629,7 @@
     ]
   },
   "x.engage_with_posts": {
-    "credential_platform": null,
+    "credential_platform": "x",
     "fields": [
       {
         "key": "keywords",
@@ -1649,7 +1649,7 @@
     ]
   },
   "x.export_followers": {
-    "credential_platform": null,
+    "credential_platform": "x",
     "fields": [
       {
         "key": "target_url",
@@ -1682,7 +1682,7 @@
     ]
   },
   "x.find_by_keyword": {
-    "credential_platform": null,
+    "credential_platform": "x",
     "fields": [
       {
         "key": "keywords",
@@ -1702,7 +1702,7 @@
     ]
   },
   "x.publish_post": {
-    "credential_platform": null,
+    "credential_platform": "x",
     "fields": [
       {
         "key": "message",
@@ -1715,7 +1715,7 @@
     ]
   },
   "x.scrape_profile_info": {
-    "credential_platform": null,
+    "credential_platform": "x",
     "fields": [
       {
         "key": "targets",
@@ -1728,7 +1728,7 @@
     ]
   },
   "x.send_dms": {
-    "credential_platform": null,
+    "credential_platform": "x",
     "fields": [
       {
         "key": "targets",

@@ -2,6 +2,9 @@ package nodes
 
 import (
 	"encoding/json"
+	"github.com/monoes/mono-agent/internal/automation"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -99,5 +102,72 @@ func TestBuiltinForms_RequiredInputsAreRequiredFields(t *testing.T) {
 				t.Errorf("%s: required input %q has no required form field", nt, in.Name)
 			}
 		}
+	}
+}
+
+// TestBrowserForms_HaveSessionPlatform: every browser automation node's
+// form names its session platform, so the editor offers the session
+// picker (built-ins, and an installed package via the registry).
+func TestBrowserForms_HaveSessionPlatform(t *testing.T) {
+	check := func(label string, want func(nt string) string) {
+		t.Helper()
+		for _, nt := range browserNodeTypes() {
+			s, err := workflow.LoadDefaultSchema(nt)
+			if err != nil {
+				t.Errorf("%s: %s: %v", label, nt, err)
+				continue
+			}
+			w := want(nt)
+			if s.CredentialPlatform == nil || *s.CredentialPlatform != w {
+				got := "<nil>"
+				if s.CredentialPlatform != nil {
+					got = *s.CredentialPlatform
+				}
+				t.Errorf("%s: %s credential_platform = %s, want %s", label, nt, got, w)
+			}
+			if raw, ok := workflow.ReadEmbeddedSchema(nt); ok {
+				var m map[string]any
+				if json.Unmarshal(raw, &m) != nil || m["credential_platform"] != w {
+					t.Errorf("%s: %s node schema JSON credential_platform = %v, want %s", label, nt, m["credential_platform"], w)
+				}
+			}
+		}
+	}
+	prefix := func(nt string) string { return nt[:strings.Index(nt, ".")] }
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	action.SetDefSource(nil)
+	check("legacy", prefix)
+
+	reg, err := BootAutomations(filepath.Join(home, ".monoagent"))
+	if err != nil {
+		t.Fatalf("BootAutomations: %v", err)
+	}
+	t.Cleanup(func() { action.SetDefSource(nil) })
+	src := filepath.Join(t.TempDir(), "acme-crm")
+	for path, body := range map[string]string{
+		"automation.json": `{"schema":"monoagent.automation/v1","id":"acme-crm","name":"Acme CRM","version":"1.0.0",
+		  "site":{"startUrl":"https://app.acme-crm.com/","domains":["app.acme-crm.com"]},
+		  "permissions":{"steps":["navigate"],"scripts":[],"downloads":false},
+		  "actions":["list_deals"],"policy":{"tier":"standard"}}`,
+		"actions/list_deals.json": `{"actionType":"list_deals","automation":"acme-crm","sideEffects":"read",
+		  "steps":[{"id":"open","type":"navigate","url":"https://app.acme-crm.com/deals"}]}`,
+	} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(src, path)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(src, path), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if res, err := reg.Install(src, automation.InstallOptions{Source: automation.SourceLocal}); err != nil || !res.Installed {
+		t.Fatalf("Install: %v %+v", err, res)
+	}
+	check("registry", prefix)
+
+	// Not a browser node: left alone.
+	if s, _ := workflow.LoadDefaultSchema("core.if"); s.CredentialPlatform != nil {
+		t.Errorf("core.if got credential_platform %q", *s.CredentialPlatform)
 	}
 }
