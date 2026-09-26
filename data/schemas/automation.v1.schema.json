@@ -19,8 +19,22 @@
     "LegacyInfo": {
       "description": "LegacyInfo is Manifest.Legacy.",
       "properties": {
+        "localHosts": {
+          "description": "LocalHosts are literal navigate hosts no package may list as a domain (localhost, IP-less single labels…); they make the package unexportable.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "platform": {
           "type": "string"
+        },
+        "suggestedDomains": {
+          "description": "SuggestedDomains are the sites the actions' literal navigate URLs open (each host and its registrable *. glob). A suggestion only: the generated package runs unrestricted, as legacy actions always did.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         }
       },
       "required": [
