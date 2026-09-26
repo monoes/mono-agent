@@ -122,7 +122,7 @@ func TestSearchPosts(t *testing.T) {
 	if got := postIDs(t, res); len(got) != 3 {
 		t.Fatalf("ids = %v", got)
 	}
-	if len(rec.Matching("GET", "https://www.linkedin.com/search/results/content/?keywords=offline+first*")) != 1 {
+	if len(rec.Matching("GET", "https://www.linkedin.com/search/results/content/?keywords=offline+first&origin=SWITCH_SEARCH_VERTICAL")) != 1 {
 		t.Fatalf("requests = %v", rec.Requests())
 	}
 }

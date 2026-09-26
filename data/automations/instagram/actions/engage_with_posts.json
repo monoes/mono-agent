@@ -3,8 +3,9 @@
   "actionType": "engage_with_posts",
   "platform": "INSTAGRAM",
   "version": "2.0.0",
-  "description": "Search Instagram for a hashtag/keyword and engage with the posts found: like (verified, never un-likes), comment when commentText is set, follow the author when 'follow' is in engagementActions and the post link names its author.",
+  "description": "Search Instagram for a hashtag/keyword and engage with the posts found: like (verified, never un-likes), comment when commentText is set, follow the author when 'follow' is in engagementActions and the post link names its author. The search may be kept in your Instagram search history. If Instagram asks to turn on notifications or save your login, it answers \"Not Now\", which Instagram may remember for your account.",
   "sideEffects": "message",
+  "visibility": ["search_may_be_saved", "account_preference_prompt"],
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": true,

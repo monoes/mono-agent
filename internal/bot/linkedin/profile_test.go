@@ -116,7 +116,7 @@ func TestSearchPeople(t *testing.T) {
 		if rui := people[3]; rui["full_name"] != "Rui Stone" || rui["connection_degree"] != "2nd" || rui["headline"] != "No-code builder" || rui["location"] != "Porto, Portugal" {
 			t.Fatalf("fourth = %v", rui)
 		}
-		if len(rec.Matching("GET", "https://www.linkedin.com/search/results/people/?keywords=workflow+automation&origin=GLOBAL_SEARCH_HEADER")) != 1 ||
+		if len(rec.Matching("GET", "https://www.linkedin.com/search/results/people/?keywords=workflow+automation&origin=SWITCH_SEARCH_VERTICAL")) != 1 ||
 			len(rec.Matching("GET", "https://www.linkedin.com/search/results/people/?*page=2*")) != 1 {
 			t.Fatalf("requests = %v", rec.Requests())
 		}

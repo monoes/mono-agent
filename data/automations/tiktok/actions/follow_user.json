@@ -3,8 +3,9 @@
   "actionType": "follow_user",
   "platform": "TIKTOK",
   "version": "1.0.0",
-  "description": "Follow TikTok users from a list of profile URLs",
+  "description": "Follow TikTok users from a list of profile URLs. If you and the account both have TikTok's profile view history on, it shows them that you viewed their profile.",
   "sideEffects": "write",
+  "visibility": ["profile_view_visible_to_owner"],
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,

@@ -3,8 +3,9 @@
   "actionType": "follow_users",
   "platform": "INSTAGRAM",
   "version": "2.0.0",
-  "description": "Follow Instagram users from a list of profile URLs. Only the profile header's Follow button is used (never 'Suggested for you'); a profile already followed or requested is left alone; each follow is verified by the header switching to Following/Requested.",
+  "description": "Follow Instagram users from a list of profile URLs. Only the profile header's Follow button is used (never 'Suggested for you'); a profile already followed or requested is left alone; each follow is verified by the header switching to Following/Requested. If Instagram asks to turn on notifications or save your login, it answers \"Not Now\", which Instagram may remember for your account.",
   "sideEffects": "write",
+  "visibility": ["account_preference_prompt"],
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,

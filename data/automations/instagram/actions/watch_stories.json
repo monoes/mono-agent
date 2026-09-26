@@ -3,8 +3,9 @@
   "actionType": "watch_stories",
   "platform": "INSTAGRAM",
   "version": "2.0.0",
-  "description": "Watch the active stories of a list of profiles (viewing adds you to each story's viewer list). Only the avatar's story ring is opened — never a highlight — and the viewer stops when it moves on to another account. Profiles without an active story report stories_viewed 0.",
+  "description": "Watch the active stories of a list of profiles (viewing adds you to each story's viewer list). Only the avatar's story ring is opened — never a highlight — and the viewer stops when it moves on to another account. Profiles without an active story report stories_viewed 0. Each account can see that you viewed its stories. If Instagram asks to turn on notifications or save your login, it answers \"Not Now\", which Instagram may remember for your account.",
   "sideEffects": "write",
+  "visibility": ["story_view_visible_to_owner", "account_preference_prompt"],
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,

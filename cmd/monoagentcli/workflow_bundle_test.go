@@ -100,8 +100,24 @@ func TestWorkflowBundleRoundTrip(t *testing.T) {
 		}
 		return m
 	}
-	if got := report(runWorkflowSubcmd(t, cfg2, "import", "--file", bundled)); got["acme-test"] != "missing" {
+	missingOut := runWorkflowSubcmd(t, cfg2, "import", "--file", bundled)
+	if got := report(missingOut); got["acme-test"] != "missing" {
 		t.Fatalf("--json without --yes should report missing, got %v", got)
+	}
+	// A missing package carries its dry-run review, as text and as data.
+	var withReview struct {
+		Automations []bundleImportItem `json:"automations"`
+	}
+	if err := json.Unmarshal([]byte(missingOut), &withReview); err != nil || len(withReview.Automations) != 1 {
+		t.Fatalf("parse %q: %v", missingOut, err)
+	}
+	it := withReview.Automations[0]
+	if !strings.HasPrefix(it.Review, "Bundled automation acme-test 1.0.0") {
+		t.Errorf("review = %q", it.Review)
+	}
+	d := it.ReviewDetail
+	if d == nil || d.ID != "acme-test" || d.Version != "1.0.0" || len(d.Domains) == 0 || len(d.Capabilities) == 0 || d.Replaces != nil {
+		t.Errorf("reviewDetail = %+v", d)
 	}
 	reg, err := openAutomationRegistry()
 	if err != nil {

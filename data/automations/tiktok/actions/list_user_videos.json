@@ -3,8 +3,9 @@
   "actionType": "list_user_videos",
   "platform": "TIKTOK",
   "version": "1.0.0",
-  "description": "Collect video URLs from TikTok profile video grids",
+  "description": "Collect video URLs from TikTok profile video grids. If you and the account both have TikTok's profile view history on, it shows them that you viewed their profile.",
   "sideEffects": "read",
+  "visibility": ["profile_view_visible_to_owner"],
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,

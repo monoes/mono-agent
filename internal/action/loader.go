@@ -44,6 +44,12 @@ type ActionDef struct {
 	// SideEffects is the action's strongest effect:
 	// none | read | write | message | destructive.
 	SideEffects string `json:"sideEffects,omitempty"`
+	// Visibility lists what running the action can reveal to others or leave
+	// behind on the site even when it changes nothing, e.g. a profile view
+	// the owner sees or a search kept in the account's history. Values:
+	// profile_view_visible_to_owner | story_view_visible_to_owner |
+	// search_may_be_saved | video_view_counted | account_preference_prompt.
+	Visibility []string `json:"visibility,omitempty"`
 	// OutputSchema is a JSON Schema describing one output item.
 	OutputSchema json.RawMessage `json:"outputSchema,omitempty"`
 	// Provenance records how the action was made (e.g. a recording id).

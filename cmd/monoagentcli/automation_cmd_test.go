@@ -138,9 +138,34 @@ func TestAutomationShowJSONShape(t *testing.T) {
 		if a.NodeType != "hackernews."+a.Name {
 			t.Errorf("nodeType %q for %q", a.NodeType, a.Name)
 		}
-		if a.Inputs == nil || a.Outputs == nil {
-			t.Errorf("%s: inputs/outputs must be arrays", a.Name)
+		if a.Inputs == nil || a.Outputs == nil || a.Visibility == nil {
+			t.Errorf("%s: inputs/outputs/visibility must be arrays", a.Name)
 		}
+	}
+}
+
+// Each action lists what running it can reveal (visibility), [] when nothing.
+func TestAutomationShowJSONVisibility(t *testing.T) {
+	home := t.TempDir()
+	var got struct {
+		Actions []automationActionJSON `json:"actions"`
+	}
+	mustJSON(t, home, &got, "automation", "show", "linkedin")
+	vis := map[string][]string{}
+	for _, a := range got.Actions {
+		if a.Visibility == nil {
+			t.Fatalf("%s: visibility must be an array", a.Name)
+		}
+		vis[a.Name] = a.Visibility
+	}
+	if v := vis["scrape_profile_info"]; len(v) != 1 || v[0] != "profile_view_visible_to_owner" {
+		t.Errorf("scrape_profile_info visibility = %v", v)
+	}
+	if v := vis["find_by_keyword"]; len(v) != 1 || v[0] != "search_may_be_saved" {
+		t.Errorf("find_by_keyword visibility = %v", v)
+	}
+	if v := vis["list_post_comments"]; len(v) != 0 {
+		t.Errorf("list_post_comments visibility = %v, want []", v)
 	}
 }
 

@@ -179,6 +179,14 @@ func TestValidateRules(t *testing.T) {
 		t.Error("page_script should warn script_used")
 	}
 
+	vis := &ActionDef{ActionType: "t", SideEffects: "read", Visibility: []string{"search_may_be_saved", "seen_by_everyone"},
+		Steps: []StepDef{{ID: "a", Type: "log"}}}
+	if is := Validate(vis, nil); !hasCode(is, "invalid_visibility") || !HasErrors(is) {
+		t.Errorf("unknown visibility: want error invalid_visibility, got %v", codes(is, "error"))
+	} else if n := len(codes(is, "error")); n != 1 {
+		t.Errorf("only the unknown value is an error, got %v", codes(is, "error"))
+	}
+
 	noSE := &ActionDef{ActionType: "t", Steps: []StepDef{{ID: "a", Type: "log"}}}
 	if is := Validate(noSE, nil); HasErrors(is) || !hasCode(is, "no_side_effects") {
 		t.Errorf("missing sideEffects: want warning only, got %v", is)

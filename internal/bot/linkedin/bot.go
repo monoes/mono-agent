@@ -94,6 +94,14 @@ func (b *LinkedInBot) ExtractUsername(pageURL string) string {
 }
 
 // SearchURL returns the LinkedIn people search URL for the given keyword.
+// searchOrigin is the origin parameter of the search URLs the bot opens.
+// GLOBAL_SEARCH_HEADER marks a query typed into the search bar, which is
+// what LinkedIn keeps as a recent search; SWITCH_SEARCH_VERTICAL is what
+// LinkedIn itself sends when a results page is reached by switching tabs
+// (People, Posts) and returns the same results. Being searched still counts
+// toward the members' "search appearances" either way.
+const searchOrigin = "SWITCH_SEARCH_VERTICAL"
+
 func (b *LinkedInBot) SearchURL(keyword string) string {
 	encoded := url.QueryEscape(strings.TrimSpace(keyword))
 	return fmt.Sprintf("https://www.linkedin.com/search/results/people/?keywords=%s", encoded)

@@ -3,8 +3,9 @@
   "actionType": "scrape_profile_info",
   "platform": "TIKTOK",
   "version": "1.1.0",
-  "description": "Extract profile information (handle, display name, bio, follower/following/like counts, avatar, link, verified badge) from TikTok profiles",
+  "description": "Extract profile information (handle, display name, bio, follower/following/like counts, avatar, link, verified badge) from TikTok profiles. If you and the account both have TikTok's profile view history on, it shows them that you viewed their profile.",
   "sideEffects": "read",
+  "visibility": ["profile_view_visible_to_owner"],
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,

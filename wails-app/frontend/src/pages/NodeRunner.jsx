@@ -4,7 +4,7 @@ import {
   ChevronDown, ChevronRight, X, Settings2, Copy, RefreshCw,
   AlertCircle, CheckCircle, Clock, Loader, Plus,
   Save, FolderOpen, ToggleLeft, ToggleRight, List,
-  Braces, LayoutDashboard,
+  Braces, LayoutDashboard, Upload,
 } from 'lucide-react'
 import * as WailsApp from '../wailsjs/go/main/App'
 import { api, notify, subscribeEvent } from '../services/api.js'
@@ -17,6 +17,7 @@ import {
   arrayFieldItems, arrayTagLabel, normalizeConfigForSave,
 } from './nodeConfigFields.js'
 import { SaveModal, WorkflowsModal, TriggerInputModal } from './NodeRunnerModals.jsx'
+import WorkflowImportDialog from './WorkflowImportDialog.jsx'
 import { rememberTriggerInput, rememberedTriggerInput } from './triggerInput.js'
 import { usePageVisibleRef } from '../lib/usePageVisible.js'
 
@@ -1051,6 +1052,7 @@ export default function NodeRunner({ onNavigate, navData }) {
   const [saving,        setSaving]       = useState(false)
   const [saveMsg,       setSaveMsg]       = useState(null) // { ok: bool, text: string }
   const [showWfModal,   setShowWfModal]   = useState(false)
+  const [showImport,    setShowImport]    = useState(false)
   const [showSaveModal, setShowSaveModal] = useState(false)
   // { asked, fields, value } — asked flips once the modal has been answered
   // for this run, so a re-run doesn't re-prompt mid-flight.
@@ -1920,6 +1922,9 @@ export default function NodeRunner({ onNavigate, navData }) {
         {/* Load */}
         <button style={tbBtn} onClick={() => setShowWfModal(true)} title="Open saved workflow"><FolderOpen size={13} /></button>
 
+        {/* Import a workflow file (CLI `workflow import`) */}
+        <button style={tbBtn} onClick={() => setShowImport(true)} title="Import workflow" aria-label="Import workflow"><Upload size={13} /></button>
+
         {/* Refresh: reload the open workflow fresh from the backend, discarding unsaved canvas edits */}
         <button
           style={{ ...tbBtn, opacity: wfId ? 1 : 0.4 }}
@@ -2032,6 +2037,13 @@ export default function NodeRunner({ onNavigate, navData }) {
       )}
 
       {/* ── WORKFLOWS MODAL ── */}
+      {showImport && (
+        <WorkflowImportDialog
+          onClose={() => setShowImport(false)}
+          onOpen={(id) => { setShowImport(false); handleLoad(id) }}
+        />
+      )}
+
       {showWfModal && (
         <WorkflowsModal
           currentId={wfId}

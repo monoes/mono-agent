@@ -86,6 +86,64 @@ func open(ctx context.Context, page browser.PageInterface, u string) error {
 	return pause(ctx, 2*time.Second)
 }
 
+// openQuiet is open for the read actions: right after the document loads
+// it pauses and mutes every <video> and keeps them paused (holdVideos), so
+// reading a page does not keep playing, and counting, the videos on it. The
+// page load itself may still register a view, and a video can start before
+// the hold is in place. Call release when done with the page.
+func openQuiet(ctx context.Context, page browser.PageInterface, u string) (release func(), err error) {
+	release = func() {}
+	if err := ctx.Err(); err != nil {
+		return release, err
+	}
+	if err := page.Navigate(u); err != nil {
+		return release, fmt.Errorf("tiktok: navigate to %s: %w", u, err)
+	}
+	if err := page.WaitLoad(); err != nil {
+		return release, fmt.Errorf("tiktok: %s did not load: %w", u, err)
+	}
+	release = holdVideos(page)
+	if err := pause(ctx, 2*time.Second); err != nil {
+		release()
+		return func() {}, err
+	}
+	return release, nil
+}
+
+// holdVideosJS pauses and mutes every video now, and every video added or
+// started later (a MutationObserver plus a capturing play listener), until
+// window.__monoagentHold.stop() removes both.
+const holdVideosJS = `() => {
+	if (window.__monoagentHold) { window.__monoagentHold.apply(); return true; }
+	const quiet = (v) => { try { v.muted = true; v.autoplay = false; v.removeAttribute('autoplay'); v.pause(); } catch (e) {} };
+	const apply = () => document.querySelectorAll('video').forEach(quiet);
+	const onPlay = (e) => { if (e.target && e.target.tagName === 'VIDEO') quiet(e.target); };
+	document.addEventListener('play', onPlay, true);
+	document.addEventListener('playing', onPlay, true);
+	const mo = new MutationObserver(apply);
+	mo.observe(document.documentElement, { childList: true, subtree: true });
+	apply();
+	window.__monoagentHold = { apply, stop: () => {
+		mo.disconnect();
+		document.removeEventListener('play', onPlay, true);
+		document.removeEventListener('playing', onPlay, true);
+		delete window.__monoagentHold;
+	} };
+	return true;
+}`
+
+// holdVideos starts the video hold on the current page and returns the
+// function that stops it. Failures are ignored: a page the hold cannot run
+// on is still read.
+func holdVideos(page browser.PageInterface) (release func()) {
+	var ok bool
+	_ = botpkg.EvalJSON(page, holdVideosJS, &ok)
+	return func() {
+		var done bool
+		_ = botpkg.EvalJSON(page, `() => { if (window.__monoagentHold) window.__monoagentHold.stop(); return true; }`, &done)
+	}
+}
+
 // evalJS runs fnSrc with the shared helper prelude in scope. fnSrc is the
 // BODY of a function whose parameters are named by params, e.g.
 // evalJS(p, "sel", "return document.querySelectorAll(sel).length", &n, sel).

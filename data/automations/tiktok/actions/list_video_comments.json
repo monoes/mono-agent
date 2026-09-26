@@ -3,8 +3,9 @@
   "actionType": "list_video_comments",
   "platform": "TIKTOK",
   "version": "1.0.0",
-  "description": "List comments on TikTok videos from a list of video URLs: id, username, displayName, text, likes, liked. id is TikTok's own when the page carries one, otherwise a stable tth- hash of the author and the text",
+  "description": "List comments on TikTok videos from a list of video URLs: id, username, displayName, text, likes, liked. id is TikTok's own when the page carries one, otherwise a stable tth- hash of the author and the text. Videos are paused and muted while it reads, but opening a video page may still count as a view.",
   "sideEffects": "read",
+  "visibility": ["video_view_counted"],
   "metadata": {
     "requiresAuth": true,
     "supportsPagination": false,
