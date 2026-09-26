@@ -1,7 +1,7 @@
 {
   "id": "instagram-daily-post-v1",
   "name": "Instagram Daily Post",
-  "description": "Daily: reads first todo row from Google Sheet, generates AI image + caption via OpenRouter, posts to Instagram, marks row done.",
+  "description": "Daily: reads first todo row from Google Sheet, generates an image (Hugging Face) and a caption (local AI agent via agent.ask), posts to Instagram, marks row done.",
   "version": 1,
   "is_active": true,
   "nodes": [
@@ -68,29 +68,26 @@
     },
     {
       "id": "n6",
-      "type": "service.openrouter",
+      "type": "service.huggingface",
       "name": "Generate Image",
       "position": { "x": 1350, "y": 200 },
       "config": {
-        "credential_id": "REPLACE_WITH_OPENROUTER_CREDENTIAL_ID",
+        "credential_id": "REPLACE_WITH_HUGGINGFACE_CREDENTIAL_ID",
         "operation": "generate_image",
         "prompt": "{{ $json.image_prompt_resolved }}",
-        "model": "black-forest-labs/flux-1.1-pro",
-        "width": 1024,
-        "height": 1024
+        "model": "black-forest-labs/FLUX.1-schnell"
       }
     },
     {
       "id": "n7",
-      "type": "service.openrouter",
+      "type": "agent.ask",
       "name": "Generate Caption",
       "position": { "x": 1600, "y": 200 },
       "config": {
-        "credential_id": "REPLACE_WITH_OPENROUTER_CREDENTIAL_ID",
-        "operation": "generate_text",
+        "runtime": "claude",
+        "output_key": "text",
         "prompt": "{{ if $json.caption }}{{ $json.caption }}{{ else }}Write an engaging Instagram caption for a post about: {{ $json.title }}. Context: {{ $json.description }}. Tone: {{ default \"inspirational\" $json.tone }}. Keep it under 150 words. Do not include hashtags.{{ end }}",
-        "model": "anthropic/claude-3.5-sonnet",
-        "max_tokens": 500
+        "timeout": 300
       }
     },
     {

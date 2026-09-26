@@ -1,6 +1,6 @@
 {
   "name": "Morning Briefing",
-  "description": "Every weekday at 7am: read an RSS feed, drop items without a title, summarize each with OpenRouter, queue the digest for human review/edit, then email the approved draft. Set the OpenRouter credential and SMTP values before activating.",
+  "description": "Every weekday at 7am: read an RSS feed, drop items without a title, summarize each with a local AI agent (agent.ask via monomind), queue the digest for human review/edit, then email the approved draft. Set the agent runtime (monoagentcli agent scan --installed) and SMTP values before activating.",
   "version": 1,
   "is_active": false,
   "nodes": [
@@ -38,16 +38,15 @@
     },
     {
       "id": "summarize",
-      "type": "service.openrouter",
+      "type": "agent.ask",
       "name": "Summarize with AI",
       "position": { "x": 960, "y": 0 },
       "disabled": false,
       "config": {
-        "credential_id": "",
-        "operation": "generate_text",
-        "prompt": "Summarize this article in two sentences for a morning briefing: {{ $json.title }} — {{ $json.link }}",
-        "model": "openai/gpt-4o-mini",
-        "max_tokens": 200
+        "runtime": "claude",
+        "prompt": "Summarize this article in two sentences for a morning briefing. Reply with the summary only: {{ $json.title }} — {{ $json.link }}",
+        "output_key": "text",
+        "timeout": 300
       }
     },
     {

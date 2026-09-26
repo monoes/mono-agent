@@ -123,8 +123,8 @@ func nodePalette(db *sql.DB) map[string][]paletteNode {
 			mkNode("service.gmail", "Gmail", "service", "Send and read Gmail messages"),
 			mkNode("service.outlook_mail", "Outlook", "service", "Send and read Outlook/Hotmail messages via Microsoft Graph"),
 			mkNode("service.google_drive", "Google Drive", "service", "Manage Google Drive files"),
-			mkNode("service.huggingface", "HuggingFace", "service", "Generate images or text via HuggingFace Inference API"),
-			mkNode("service.openrouter", "OpenRouter", "service", "Generate text or images via OpenRouter AI API"),
+			mkNode("service.huggingface", "HuggingFace", "service", "Generate images via HuggingFace Inference API"),
+			mkNode("service.openrouter", "OpenRouter (deprecated)", "service", "Deprecated — replace with Agent Ask"),
 		},
 		"ai": []paletteNode{
 			mkNode("agent.ask", "Agent Ask", "ai", "Ask a locally-installed AI agent (claude, codex, …) one turn via the monomind engine"),
