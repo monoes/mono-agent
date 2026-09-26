@@ -13,10 +13,21 @@
   },
   "inputs": {
     "required": [
-      "maxContentCount",
-      "searches"
+      {
+        "name": "searches",
+        "type": "array",
+        "aliases": ["keywords", "keyword"],
+        "description": "Hashtags or keywords to search (the node's keywords)"
+      }
     ],
     "optional": [
+      {
+        "name": "maxContentCount",
+        "type": "number",
+        "default": 10,
+        "aliases": ["limit"],
+        "description": "Maximum number of posts to engage with"
+      },
       "commentText",
       "target"
     ]

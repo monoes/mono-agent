@@ -11,12 +11,11 @@
     "supportsRetry": true
   },
   "inputs": {
-    "required": [
+    "required": [],
+    "optional": [
       "startDate",
       "endDate",
-      "pollInterval"
-    ],
-    "optional": [
+      "pollInterval",
       "selectedListItems",
       "replyText",
       "maxReplies"

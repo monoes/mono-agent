@@ -192,7 +192,13 @@ func (b *BrowserNode) Execute(ctx context.Context, input workflow.NodeInput, con
 	// Seed session username so {{username}} resolves in actions that reference it.
 	// If a "targetUsername" key is provided it overrides {{username}} in template context,
 	// allowing callers to distinguish session identity from action target.
-	params["username"] = username
+	// The "unknown" placeholder is never seeded: an action whose target input
+	// falls back to username (e.g. list_user_posts' target_url) would
+	// otherwise run against a profile called "unknown" instead of reporting
+	// the target as missing.
+	if username != "unknown" {
+		params["username"] = username
+	}
 	if targetU, ok := config["targetUsername"].(string); ok && targetU != "" {
 		params["username"] = targetU
 	}
