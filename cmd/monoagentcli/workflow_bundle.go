@@ -126,6 +126,21 @@ type bundleImportItem struct {
 	Status           string `json:"status"` // present | conflict | missing | installed | failed
 	InstalledVersion string `json:"installedVersion,omitempty"`
 	Error            string `json:"error,omitempty"`
+	// Review and ReviewDetail describe a "missing" package (a dry-run review
+	// of the pinned bytes, nothing installed), so a GUI can show what it
+	// would install before asking.
+	Review       string              `json:"review,omitempty"`
+	ReviewDetail *bundleReviewDetail `json:"reviewDetail,omitempty"`
+}
+
+// bundleReviewDetail is the structured form of bundleReviewLine.
+type bundleReviewDetail struct {
+	ID           string               `json:"id"`
+	Version      string               `json:"version"`
+	Publisher    string               `json:"publisher,omitempty"`
+	Domains      []string             `json:"domains"`
+	Capabilities []string             `json:"capabilities"`
+	Replaces     *automation.Replaced `json:"replaces,omitempty"`
 }
 
 // bundleImportOptions controls handleBundledAutomations.
@@ -192,6 +207,10 @@ func handleBundledAutomations(raw []byte, o bundleImportOptions) []bundleImportI
 			} else {
 				item.Status = "installed"
 			}
+		} else if review, err := reviewBundledAutomation(reg, id, b); err != nil {
+			item.Error = err.Error() // still "missing": --yes would fail the same way
+		} else {
+			item.Review, item.ReviewDetail = bundleReviewLine(review), newBundleReviewDetail(review)
 		}
 		items = append(items, item)
 	}
@@ -204,37 +223,12 @@ func handleBundledAutomations(raw []byte, o bundleImportOptions) []bundleImportI
 // bundle key, and a one-line review summary is always printed (also with
 // --yes) before anything is written.
 func installBundledAutomation(reg *automation.Registry, id string, b bundledAutomation, o bundleImportOptions) error {
-	data, err := base64.StdEncoding.DecodeString(b.Mpkg)
-	if err != nil {
-		return fmt.Errorf("decode bundled package: %w", err)
-	}
-	want := strings.ToLower(b.SHA256)
-	if want == "" {
-		return fmt.Errorf("bundled package %s has no sha256", id)
-	}
-	if sum := sha256.Sum256(data); hex.EncodeToString(sum[:]) != want {
-		return fmt.Errorf("bundled package %s: sha256 mismatch", id)
-	}
-	dir, err := os.MkdirTemp("", "workflow-bundle-*")
+	path, cleanup, err := stageBundledAutomation(id, b)
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(dir)
-	path := filepath.Join(dir, "bundle.mpkg")
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return err
-	}
-	pkg, err := automation.OpenFile(path)
-	if err != nil {
-		return fmt.Errorf("open bundled package %s: %w", id, err)
-	}
-	if pkg.Manifest.ID != id {
-		return fmt.Errorf("bundled package under %q declares id %q; not installed", id, pkg.Manifest.ID)
-	}
-	opts := automation.InstallOptions{Source: automation.SourceImported, ExpectSHA256: want}
-	dry := opts
-	dry.DryRun = true
-	review, err := reg.Install(path, dry)
+	defer cleanup()
+	review, err := reviewStagedBundle(reg, id, b, path)
 	if err != nil {
 		return err
 	}
@@ -243,16 +237,10 @@ func installBundledAutomation(reg *automation.Registry, id string, b bundledAuto
 		out = io.Discard
 	}
 	fmt.Fprintln(out, bundleReviewLine(review))
-	if review.ID != id {
-		return fmt.Errorf("bundled package under %q reviews as %q; not installed", id, review.ID)
-	}
-	if issuesHaveErrors(review.Issues) {
-		return fmt.Errorf("bundled package %s has validation errors; not installed", id)
-	}
 	if !o.yes && !confirmYes(o.in, out, fmt.Sprintf("Install %s %s?", review.ID, review.Version)) {
 		return errors.New("install declined")
 	}
-	res, err := reg.Install(path, opts)
+	res, err := reg.Install(path, automation.InstallOptions{Source: automation.SourceImported, ExpectSHA256: strings.ToLower(b.SHA256)})
 	if err != nil {
 		return err
 	}
@@ -262,10 +250,91 @@ func installBundledAutomation(reg *automation.Registry, id string, b bundledAuto
 	return nil
 }
 
+// reviewBundledAutomation is the dry-run half of installBundledAutomation:
+// the same sha256 pinning and id checks, and nothing is installed.
+func reviewBundledAutomation(reg *automation.Registry, id string, b bundledAutomation) (*automation.InstallResult, error) {
+	path, cleanup, err := stageBundledAutomation(id, b)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	return reviewStagedBundle(reg, id, b, path)
+}
+
+// stageBundledAutomation decodes one bundled package, checks it against its
+// pinned sha256 and writes it to a private temp file. The caller runs
+// cleanup.
+func stageBundledAutomation(id string, b bundledAutomation) (string, func(), error) {
+	data, err := base64.StdEncoding.DecodeString(b.Mpkg)
+	if err != nil {
+		return "", nil, fmt.Errorf("decode bundled package: %w", err)
+	}
+	want := strings.ToLower(b.SHA256)
+	if want == "" {
+		return "", nil, fmt.Errorf("bundled package %s has no sha256", id)
+	}
+	if sum := sha256.Sum256(data); hex.EncodeToString(sum[:]) != want {
+		return "", nil, fmt.Errorf("bundled package %s: sha256 mismatch", id)
+	}
+	dir, err := os.MkdirTemp("", "workflow-bundle-*")
+	if err != nil {
+		return "", nil, err
+	}
+	cleanup := func() { os.RemoveAll(dir) }
+	path := filepath.Join(dir, "bundle.mpkg")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	return path, cleanup, nil
+}
+
+// reviewStagedBundle opens a staged bundle, checks its manifest id and runs
+// the install dry run (pinned to the bundle's sha256).
+func reviewStagedBundle(reg *automation.Registry, id string, b bundledAutomation, path string) (*automation.InstallResult, error) {
+	pkg, err := automation.OpenFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("open bundled package %s: %w", id, err)
+	}
+	if pkg.Manifest.ID != id {
+		return nil, fmt.Errorf("bundled package under %q declares id %q; not installed", id, pkg.Manifest.ID)
+	}
+	review, err := reg.Install(path, automation.InstallOptions{Source: automation.SourceImported, ExpectSHA256: strings.ToLower(b.SHA256), DryRun: true})
+	if err != nil {
+		return nil, err
+	}
+	if review.ID != id {
+		return nil, fmt.Errorf("bundled package under %q reviews as %q; not installed", id, review.ID)
+	}
+	if issuesHaveErrors(review.Issues) {
+		return nil, fmt.Errorf("bundled package %s has validation errors; not installed", id)
+	}
+	return review, nil
+}
+
+// newBundleReviewDetail is bundleReviewLine as data.
+func newBundleReviewDetail(r *automation.InstallResult) *bundleReviewDetail {
+	rv := r.Review
+	// The registry's plain-language capabilities, then the short technical
+	// list the review line prints (steps, scripts, downloads, tier).
+	caps := append(append([]string{}, rv.Capabilities...), bundleCapabilities(rv)...)
+	return &bundleReviewDetail{
+		ID: r.ID, Version: r.Version, Publisher: rv.Publisher,
+		Domains: append([]string{}, rv.Domains...), Capabilities: caps,
+		Replaces: rv.Replaces,
+	}
+}
+
 // bundleReviewLine summarises an install review on one line: id, version,
 // publisher, domains and capabilities.
 func bundleReviewLine(r *automation.InstallResult) string {
 	rv := r.Review
+	return fmt.Sprintf("Bundled automation %s %s — publisher %s — domains %s — %s",
+		r.ID, r.Version, orDash(rv.Publisher), orDash(strings.Join(rv.Domains, ",")), strings.Join(bundleCapabilities(rv), "; "))
+}
+
+// bundleCapabilities is the short capability list of the review line.
+func bundleCapabilities(rv automation.Review) []string {
 	caps := []string{"steps: " + orDash(strings.Join(rv.Steps, ","))}
 	if len(rv.Steps) == 0 {
 		caps[0] = "steps: unrestricted"
@@ -282,8 +351,7 @@ func bundleReviewLine(r *automation.InstallResult) string {
 	if rv.PolicyBlocked {
 		caps = append(caps, "policy-blocked")
 	}
-	return fmt.Sprintf("Bundled automation %s %s — publisher %s — domains %s — %s",
-		r.ID, r.Version, orDash(rv.Publisher), orDash(strings.Join(rv.Domains, ",")), strings.Join(caps, "; "))
+	return caps
 }
 
 // printBundleImport prints the human summary of handleBundledAutomations.

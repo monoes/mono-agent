@@ -94,6 +94,10 @@ export function ChooseProfileFolder() {
   return window['go']['main']['App']['ChooseProfileFolder']();
 }
 
+export function ChooseWorkflowFile() {
+  return window['go']['main']['App']['ChooseWorkflowFile']();
+}
+
 export function ClearAIChatHistory(arg1) {
   return window['go']['main']['App']['ClearAIChatHistory'](arg1);
 }
@@ -496,6 +500,10 @@ export function ImportVaultAll(arg1, arg2) {
 
 export function ImportWorkflow(arg1) {
   return window['go']['main']['App']['ImportWorkflow'](arg1);
+}
+
+export function ImportWorkflowFull(arg1, arg2) {
+  return window['go']['main']['App']['ImportWorkflowFull'](arg1, arg2);
 }
 
 export function IndexProfileDocument(arg1) {
