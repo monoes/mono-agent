@@ -114,9 +114,18 @@ func printAutomationTable(out io.Writer, rows []automationListRow) {
 // sessionIndex maps a lower-cased platform to its newest crawler_sessions row.
 type sessionIndex map[string]automationSession
 
+// lookup finds id's session. A legacy-wrapped package local-<p> (the
+// registry's wrap of ~/.monoagent/actions/<p>) runs on <p>'s login, so it
+// falls back to <p>'s session.
 func (s sessionIndex) lookup(id string) automationSession {
-	if v, ok := s[strings.ToLower(id)]; ok {
+	key := strings.ToLower(id)
+	if v, ok := s[key]; ok {
 		return v
+	}
+	if p, ok := strings.CutPrefix(key, "local-"); ok && p != "" {
+		if v, ok := s[p]; ok {
+			return v
+		}
 	}
 	return automationSession{Status: "logged_out"}
 }

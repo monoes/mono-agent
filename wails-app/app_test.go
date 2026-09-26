@@ -10,7 +10,7 @@ import (
 // app.go:1045 — RevealProfileFolder unconditionally ran the macOS-only
 // "open" command, which fails with "executable file not found in $PATH" on
 // the Windows and Linux builds the release pipeline also ships.
-// revealFolderCommand mirrors how updater.go's cliAssetNameFor makes GOOS
+// revealFolderCommand mirrors how app_update.go's appAssetNameFor makes GOOS
 // injectable for testing.
 func TestRevealFolderCommand(t *testing.T) {
 	const dir = "/some/profile/dir"
