@@ -108,9 +108,9 @@ func (r *Registry) addItem(id string, src *Package, actionName, fragmentName str
 				return false, err
 			}
 			m = mergeManifest(cur.Manifest, subPkg.Manifest)
-			source, trust = e.Source, lowerTrust(e.trust(), incoming)
-			if trust == e.trust() && unchanged(cur, m, merged) {
-				// Nothing new: no version bump, no write.
+			if unchanged(cur, m, merged) {
+				// Nothing new: no version bump, no write, and the trust
+				// stays as it is (identical content cannot lower it).
 				what := "action " + actionName
 				if actionName == "" {
 					what = "fragment " + fragmentName
@@ -120,6 +120,7 @@ func (r *Registry) addItem(id string, src *Package, actionName, fragmentName str
 					Warnings: []string{fmt.Sprintf("no changes: %s already has this %s", id, what)}}
 				return false, nil
 			}
+			source, trust = e.Source, lowerTrust(e.trust(), incoming)
 			if e.Source == SourceBuiltin {
 				m.Version = localBuiltinVersion(e)
 			} else {
