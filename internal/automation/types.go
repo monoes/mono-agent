@@ -57,6 +57,14 @@ type Manifest struct {
 // LegacyInfo is Manifest.Legacy.
 type LegacyInfo struct {
 	Platform string `json:"platform"`
+	// SuggestedDomains are the sites the actions' literal navigate URLs
+	// open (each host and its registrable *. glob). A suggestion only: the
+	// generated package runs unrestricted, as legacy actions always did.
+	SuggestedDomains []string `json:"suggestedDomains,omitempty"`
+	// LocalHosts are literal navigate hosts no package may list as a domain
+	// (localhost, IP-less single labels…); they make the package
+	// unexportable.
+	LocalHosts []string `json:"localHosts,omitempty"`
 }
 
 type Publisher struct {
@@ -242,4 +250,8 @@ type IssueJSON struct {
 type ExportOptions struct {
 	Actions        []string // subset; empty = all (closure is computed)
 	WithRecordings bool
+	// Domains sets site.domains in the EXPORTED copy only (the installed
+	// package is untouched), e.g. for a generated legacy package that runs
+	// unrestricted locally. Each is checked like a manifest domain.
+	Domains []string
 }
