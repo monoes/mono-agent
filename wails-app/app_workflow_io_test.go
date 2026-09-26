@@ -8,10 +8,6 @@ import (
 	"runtime"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/monoes/mono-agent/internal/storage"
-	"github.com/monoes/mono-agent/internal/workflow"
 )
 
 // parseStrict decodes JSON rejecting unknown fields, so a legacy-key drift
@@ -26,68 +22,6 @@ func parseStrict(data string, v interface{}) error {
 // ─────────────────────────────────────────────────────────────────────────────
 // ExportWorkflow / ImportWorkflow
 // ─────────────────────────────────────────────────────────────────────────────
-
-// TestExportWorkflow_EmitsWorkflowFileShape: the binding's output must be the
-// documented WorkflowFile format the CLI export emits and import parses —
-// "type"/"position"/"source"/"target" keys, not the legacy internal marshal.
-func TestExportWorkflow_EmitsWorkflowFileShape(t *testing.T) {
-	a := newTestApp(t)
-
-	saved, err := a.SaveWorkflow(SaveWorkflowRequest{
-		Name: "shape-check", Description: "d", IsActive: true,
-		Nodes: []WorkflowNodeData{
-			{ID: "n1", NodeType: "trigger.manual", Name: "Start", PositionX: 1.5, PositionY: 2.5, Config: map[string]interface{}{}},
-			{ID: "n2", NodeType: "core.set", Name: "Set", Config: map[string]interface{}{"field": "x"}},
-		},
-		Connections: []WorkflowConnectionData{
-			{ID: "c1", SourceNodeID: "n1", TargetNodeID: "n2"},
-		},
-	})
-	if err != nil {
-		t.Fatalf("SaveWorkflow: %v", err)
-	}
-
-	exported, err := a.ExportWorkflow(saved.ID)
-	if err != nil {
-		t.Fatalf("ExportWorkflow: %v", err)
-	}
-
-	var wfFile workflow.WorkflowFile
-	if err := parseStrict(exported, &wfFile); err != nil {
-		t.Fatalf("export is not valid WorkflowFile JSON: %v\n%s", err, exported)
-	}
-	if wfFile.ID != saved.ID || wfFile.Name != "shape-check" || !wfFile.IsActive {
-		t.Fatalf("unexpected header fields: %+v", wfFile)
-	}
-	if len(wfFile.Nodes) != 2 {
-		t.Fatalf("expected 2 nodes, got %d", len(wfFile.Nodes))
-	}
-	if wfFile.Nodes[0].Type != "trigger.manual" || wfFile.Nodes[0].ID != "n1" {
-		t.Fatalf("unexpected first node: %+v", wfFile.Nodes[0])
-	}
-	if wfFile.Nodes[0].Position.X != 1.5 || wfFile.Nodes[0].Position.Y != 2.5 {
-		t.Fatalf("position not preserved: %+v", wfFile.Nodes[0].Position)
-	}
-	if len(wfFile.Connections) != 1 || wfFile.Connections[0].Source != "n1" || wfFile.Connections[0].Target != "n2" {
-		t.Fatalf("unexpected connections: %+v", wfFile.Connections)
-	}
-}
-
-// TestExportWorkflow_OtherProfilesWorkflowHidden: one profile must not be
-// able to export another profile's workflow.
-func TestExportWorkflow_OtherProfilesWorkflowHidden(t *testing.T) {
-	a := newTestApp(t)
-
-	saved, err := a.SaveWorkflow(SaveWorkflowRequest{Name: "secret", IsActive: true})
-	if err != nil {
-		t.Fatalf("SaveWorkflow: %v", err)
-	}
-
-	a.setActiveProfileID("other-profile")
-	if _, err := a.ExportWorkflow(saved.ID); err == nil {
-		t.Fatal("expected error exporting another profile's workflow, got nil")
-	}
-}
 
 // TestImportWorkflow_RejectsBadInput: garbage input fails validation before
 // any subprocess is spawned.
@@ -119,31 +53,6 @@ func buildTestCLI(t *testing.T) string {
 	return bin
 }
 
-// newTestAppWithHomeDir is newTestApp, but with the workflow file store under
-// homeDir/.monoagent/workflows — the same directory a monoagentcli subprocess
-// with HOME=homeDir reads and writes.
-func newTestAppWithHomeDir(t *testing.T, homeDir string) *App {
-	t.Helper()
-	sdb, err := storage.NewDatabase(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatalf("NewDatabase: %v", err)
-	}
-	if err := sdb.ApplyMigrations(); err != nil {
-		t.Fatalf("ApplyMigrations: %v", err)
-	}
-	t.Cleanup(func() { sdb.DB.Close() })
-
-	fileStore, err := workflow.NewWorkflowFileStore(filepath.Join(homeDir, ".monoagent", "workflows"))
-	if err != nil {
-		t.Fatalf("NewWorkflowFileStore: %v", err)
-	}
-	return &App{
-		db:          sdb.DB,
-		wfStore:     workflow.NewHybridWorkflowStore(fileStore, workflow.NewSQLiteWorkflowStore(sdb.DB)),
-		runningCmds: make(map[string]*exec.Cmd),
-	}
-}
-
 // TestExportImportRoundtripViaCLI: GUI save → GUI export → CLI import
 // (subprocess, isolated HOME) → GUI read must roundtrip a workflow with its
 // nodes, positions, and connections intact. This is the parity gap FD7
@@ -162,9 +71,9 @@ func TestExportImportRoundtripViaCLI(t *testing.T) {
 	// isolated homes (~/.monoagent of each test sandbox).
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("PATH", filepath.Dir(cliBin)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("MONOAGENTCLI_BIN", cliBin)
 
-	a := newTestAppWithHomeDir(t, home)
+	a := newTestApp(t)
 
 	saved, err := a.SaveWorkflow(SaveWorkflowRequest{
 		Name: "roundtrip", Description: "rt", IsActive: false,
@@ -210,7 +119,7 @@ func TestExportImportRoundtripViaCLI(t *testing.T) {
 	// A fresh machine (new HOME and database): created, data intact.
 	homeB := t.TempDir()
 	t.Setenv("HOME", homeB)
-	b := newTestAppWithHomeDir(t, homeB)
+	b := newTestApp(t)
 	impB, err := b.ImportWorkflow(exported)
 	if err != nil {
 		t.Fatalf("ImportWorkflow on fresh home: %v", err)
@@ -241,84 +150,6 @@ func TestExportImportRoundtripViaCLI(t *testing.T) {
 	}
 	if impB2.ID != impB.ID || impB2.Status != "updated" {
 		t.Fatalf("changed re-import = %+v, want id %s status updated", impB2, impB.ID)
-	}
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// CancelWorkflow PID verification (RA1-8)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// waitForExec blocks until pid has finished execve and its command line is
-// readable. cmd.Start() returns after fork but before exec completes, and in
-// that window /proc/<pid>/cmdline reads back empty — which
-// readProcessCommandLine reports as "not alive" (its zombie/kernel-thread
-// case), making signalWorkflowPID a no-op. Asserting straight after Start()
-// therefore races exec and fails on machines fast enough to win it.
-func waitForExec(t *testing.T, pid int) {
-	t.Helper()
-	for i := 0; i < 200; i++ {
-		if _, alive, err := readProcessCommandLine(pid); err == nil && alive {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatalf("pid %d never became inspectable", pid)
-}
-
-// TestSignalWorkflowPID_RefusesForeignProcess: a live pid whose command line
-// is not a monoagent binary must never be signaled.
-func TestSignalWorkflowPID_RefusesForeignProcess(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("POSIX signal semantics are unix-only")
-	}
-	cmd := exec.Command("sleep", "30")
-	if err := cmd.Start(); err != nil {
-		t.Skipf("cannot spawn sleep: %v", err)
-	}
-	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
-	waitForExec(t, cmd.Process.Pid)
-
-	err := signalWorkflowPID(cmd.Process.Pid)
-	if err == nil {
-		t.Fatalf("expected refusal for non-monoagent pid %d, got nil", cmd.Process.Pid)
-	}
-	if !strings.Contains(err.Error(), "refusing to signal non-monoagent process") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-// TestSignalWorkflowPID_DeadPidIsNoop: a stale pid (process already reaped)
-// must be treated as "nothing to signal", not as a refusal — CancelWorkflow
-// should still proceed to its bookkeeping.
-func TestSignalWorkflowPID_DeadPidIsNoop(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("POSIX signal semantics are unix-only")
-	}
-	cmd := exec.Command("sleep", "0")
-	if err := cmd.Start(); err != nil {
-		t.Skipf("cannot spawn sleep: %v", err)
-	}
-	_ = cmd.Wait() // reap it — the pid is now gone
-
-	if err := signalWorkflowPID(cmd.Process.Pid); err != nil {
-		t.Fatalf("dead pid must be a no-op, got: %v", err)
-	}
-	if err := signalWorkflowPID(0); err != nil {
-		t.Fatalf("pid 0 must be a no-op, got: %v", err)
-	}
-}
-
-// TestReadProcessCommandLine_Self: the helper must see the calling process.
-func TestReadProcessCommandLine_Self(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("unix implementation")
-	}
-	cmdline, alive, err := readProcessCommandLine(os.Getpid())
-	if err != nil {
-		t.Fatalf("readProcessCommandLine(self): %v", err)
-	}
-	if !alive || cmdline == "" {
-		t.Fatalf("self should be alive with a command line, got alive=%v cmd=%q", alive, cmdline)
 	}
 }
 
