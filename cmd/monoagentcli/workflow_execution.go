@@ -24,7 +24,7 @@ type executionDetailJSON struct {
 	TriggerType string                    `json:"trigger_type"`
 	StartedAt   string                    `json:"started_at"`
 	FinishedAt  string                    `json:"finished_at"`
-	Error       string                    `json:"error"`
+	Error       string                    `json:"error_message"`
 	CreatedAt   string                    `json:"created_at"`
 	Nodes       []executionDetailNodeJSON `json:"nodes"`
 }

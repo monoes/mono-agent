@@ -248,3 +248,11 @@ func TestWorkflowCancelEdgeCases(t *testing.T) {
 		t.Errorf("another profile's execution changed to %q", st)
 	}
 }
+
+// readProcessCommandLine sees the calling process.
+func TestReadProcessCommandLineSelf(t *testing.T) {
+	cmdline, alive, err := readProcessCommandLine(os.Getpid())
+	if err != nil || !alive || cmdline == "" {
+		t.Fatalf("self: %q, alive=%v, %v", cmdline, alive, err)
+	}
+}
