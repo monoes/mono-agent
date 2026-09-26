@@ -208,3 +208,58 @@ func TestLegacyRefoldAfterUpgrade(t *testing.T) {
 		t.Errorf("refolded twice: %+v", rep)
 	}
 }
+
+func TestLegacyAPIForRuntimeAndBundles(t *testing.T) {
+	if LegacyPackageID("google_maps") != "local-google-maps" || len(LegacyPackageID(longLegacyName)) > 41 || !ValidID(LegacyPackageID(longLegacyName)) {
+		t.Errorf("LegacyPackageID: %q %q", LegacyPackageID("google_maps"), LegacyPackageID(longLegacyName))
+	}
+
+	// Only google_maps installed: both spellings find it; the context
+	// reports the original name.
+	r := newReg(t)
+	writeTree(t, filepath.Join(r.Home(), "actions", "google_maps"), map[string]string{
+		"get_place.json": `{"actionType":"get_place","steps":[{"id":"n","type":"navigate","url":"https://maps.google.com/"}]}`,
+	})
+	r.Seed(seedFS("1.0.0", "a"))
+	ds := r.DefSource()
+	for _, name := range []string{"google_maps", "google-maps", "GOOGLE_MAPS"} {
+		c := ds.Package(name)
+		if c == nil || c.ID() != "local-google-maps" {
+			t.Fatalf("DefSource.Package(%q) = %v", name, c)
+		}
+		lp, ok := c.(interface{ LegacyPlatform() string })
+		if !ok || lp.LegacyPlatform() != "google_maps" {
+			t.Errorf("LegacyPlatform() via %q", name)
+		}
+	}
+	if c := ds.Package("gemini"); c != nil {
+		t.Errorf("non-installed id resolved: %v", c)
+	}
+
+	// Disabled: DefSource hides it, ResolveLegacyPlatform still finds it.
+	r.SetEnabled("local-google-maps", false)
+	if ds.Package("google_maps") != nil {
+		t.Error("disabled package visible through DefSource")
+	}
+	if id, ok := r.ResolveLegacyPlatform("google_maps"); !ok || id != "local-google-maps" {
+		t.Errorf("ResolveLegacyPlatform: %q %v", id, ok)
+	}
+
+	// Both spellings installed: the exact original name wins.
+	both := newReg(t)
+	writeLegacyDirs(t, both.Home())
+	both.Seed(seedFS("1.0.0", "a"))
+	by := legacyByAlias(t, both)
+	for _, name := range []string{"google_maps", "google-maps"} {
+		if id, _ := both.ResolveLegacyPlatform(name); id != by[name].ID {
+			t.Errorf("ResolveLegacyPlatform(%q) = %q, want %q", name, id, by[name].ID)
+		}
+	}
+
+	// A generated package with no derivable site cannot be exported.
+	var buf bytes.Buffer
+	err := both.Export(by["devtool"].ID, &buf, ExportOptions{})
+	if err == nil || !strings.Contains(err.Error(), "add site.domains") {
+		t.Errorf("export of a domainless legacy package: %v", err)
+	}
+}

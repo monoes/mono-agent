@@ -102,13 +102,23 @@ func (d *defSource) Generation() string {
 	return fmt.Sprintf("%d:%d", idx.Generation, mod)
 }
 
-// resolveLegacyAlias returns the id of the generated legacy package whose
-// original platform name is name (case-insensitive), or "".
+// ResolveLegacyPlatform returns the id of the installed generated legacy
+// package for an old platform name, enabled or not: first an exact
+// (case-insensitive) match of its original name ("google_maps"), then a
+// match of the slug ("google-maps" also finds the google_maps package).
+func (r *Registry) ResolveLegacyPlatform(name string) (string, bool) {
+	id, err := r.resolveLegacyAlias(name)
+	return id, err == nil && id != ""
+}
+
+// resolveLegacyAlias implements ResolveLegacyPlatform ("" when none).
 func (r *Registry) resolveLegacyAlias(name string) (string, error) {
 	idx, err := r.readIndex()
 	if err != nil {
 		return "", err
 	}
+	type cand struct{ id, alias string }
+	var cands []cand
 	for _, id := range sortedIDs(idx) {
 		e := idx.Packages[id]
 		if e.Removed || e.Source != SourceLocal {
@@ -119,8 +129,18 @@ func (r *Registry) resolveLegacyAlias(name string) (string, error) {
 			continue
 		}
 		p.Source, p.Trust = e.Source, e.trust()
-		if a := p.LegacyAlias(); a != "" && strings.EqualFold(a, name) {
-			return id, nil
+		if a := p.LegacyAlias(); a != "" {
+			cands = append(cands, cand{id, a})
+		}
+	}
+	for _, c := range cands {
+		if strings.EqualFold(c.alias, name) {
+			return c.id, nil
+		}
+	}
+	for _, c := range cands {
+		if legacyID(c.alias) == legacyID(name) {
+			return c.id, nil
 		}
 	}
 	return "", nil
