@@ -12,7 +12,8 @@ import (
 func TestVaultImageHandlerIsProfileScoped(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	vaultDir := filepath.Join(home, ".monoagent", "vault")
+	// A profile's images live in its own vault folder, not ~/.monoagent/vault.
+	vaultDir := filepath.Join(home, ".monoagent", "profiles", "p1", ".monoagent", "vault")
 	if err := os.MkdirAll(vaultDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
