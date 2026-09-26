@@ -46,3 +46,39 @@ func TestRequiredInputFilledFromAlias(t *testing.T) {
 		}
 	}
 }
+
+// instagram.list_user_posts takes its profile as target_url; configs that set
+// targetUsername, the node's targets, or only username (the old form) keep
+// working, and an explicit target wins over the session username.
+func TestListUserPostsTargetAliases(t *testing.T) {
+	def, err := GetLoader().Load("instagram", "list_user_posts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name string
+		vars map[string]interface{}
+		want string
+	}{
+		{"target_url", map[string]interface{}{"target_url": "https://www.instagram.com/a/", "username": "session"}, "https://www.instagram.com/a/"},
+		{"targetUsername over username", map[string]interface{}{"targetUsername": "b", "username": "session"}, "b"},
+		{"targets over username", map[string]interface{}{"targets": []interface{}{map[string]interface{}{"url": "https://www.instagram.com/c/"}}, "username": "session"}, "https://www.instagram.com/c/"},
+		{"username only (old form)", map[string]interface{}{"username": "d"}, "d"},
+	}
+	for _, c := range cases {
+		ae, _, _ := newLoopTestExecutor(t, 0)
+		for k, v := range c.vars {
+			ae.SetVariable(k, v)
+		}
+		if err := ae.validateRequiredInputs(def); err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if got, _ := ae.execCtx.GetVariable("target_url"); got != c.want {
+			t.Errorf("%s: target_url = %v, want %q", c.name, got, c.want)
+		}
+	}
+	ae, _, _ := newLoopTestExecutor(t, 0)
+	if err := ae.validateRequiredInputs(def); err == nil || !strings.Contains(err.Error(), "target_url") {
+		t.Errorf("no profile: err = %v, want missing target_url", err)
+	}
+}
