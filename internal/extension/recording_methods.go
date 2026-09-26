@@ -344,6 +344,17 @@ func recordSaveArgs(req *Request) ([]string, error) {
 			args = append(args, "--force")
 		}
 	}
+	// keepPackageSelectors: on selector conflicts keep the automation's
+	// current selectors (record save --keep-package-selectors).
+	if raw, ok := req.Params["keepPackageSelectors"]; ok && raw != nil {
+		keep, isBool := raw.(bool)
+		if !isBool {
+			return nil, badParam("keepPackageSelectors must be a boolean")
+		}
+		if keep {
+			args = append(args, "--keep-package-selectors")
+		}
+	}
 	return append(args, "--json"), nil
 }
 
