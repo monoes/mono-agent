@@ -56,7 +56,8 @@ func TestInboxSections(t *testing.T) {
 		t.Fatalf("people = %+v", p)
 	}
 	a := s.Activity
-	if a.Error != "" || a.Captures7d != 1 || a.CapturesTotal != 2 || a.MessagesIn7d != 1 || a.MessagesOut7d != 1 {
+	// m2 and m3 are inbound and unread (new rows start unread; migration 050).
+	if a.Error != "" || a.Captures7d != 1 || a.CapturesTotal != 2 || a.MessagesIn7d != 1 || a.MessagesOut7d != 1 || a.MessagesUnread != 2 {
 		t.Fatalf("activity = %+v", a)
 	}
 	if d := a.Documents; d.Total != 3 || d.Indexed != 2 || d.IndexErrors != 1 || d.Summarising != 1 || d.SummaryErrors != 1 {

@@ -1804,3 +1804,6 @@ button.dash-row:hover { background: var(--elevated); }
 
 /* Inline spinning icon (lucide Loader2), e.g. System health fix buttons. */
 .spin { animation: spin 0.9s linear infinite; }
+
+/* Unread inbound message */
+.unread-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 5px var(--cyan); flex-shrink: 0; }

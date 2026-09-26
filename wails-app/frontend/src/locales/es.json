@@ -83,7 +83,9 @@
       "unevaluatedApplications_other": "postulaciones por evaluar",
       "unavailable": "No se pudo cargar el resumen — pueden faltar elementos pendientes",
       "partial_one": "{{count}} sección no se pudo leer",
-      "partial_other": "{{count}} secciones no se pudieron leer"
+      "partial_other": "{{count}} secciones no se pudieron leer",
+      "unreadMessages_one": "mensaje sin leer",
+      "unreadMessages_other": "mensajes sin leer"
     },
     "stat": {
       "workflows": "Flujos de trabajo",
@@ -218,7 +220,8 @@
       "applied_one": "{{count}} enviada",
       "applied_other": "{{count}} enviadas",
       "evaluated_one": "{{count}} evaluada",
-      "evaluated_other": "{{count}} evaluadas"
+      "evaluated_other": "{{count}} evaluadas",
+      "unread": "{{count}} sin leer"
     }
   },
   "toasts": {

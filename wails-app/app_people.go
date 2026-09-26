@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -221,32 +222,41 @@ func (a *App) GetPersonInteractions(id string) []PersonInteraction {
 	return interactions
 }
 
-// GetPersonMessages returns a person's message/interaction history (from
-// Outlook, social platforms, manual notes, ...), delegating to the same
-// storage.PersonMessage repo used by `monoagentcli people messages`.
+// GetPersonMessages lists a person's messages, newest first
+// (`people messages list <id>`). Each carries read_at.
 func (a *App) GetPersonMessages(personID string) []*storage.PersonMessage {
-	if a.db == nil {
+	out := []*storage.PersonMessage{}
+	if err := a.runMonoCLI("", &out, "people", "messages", "list", personID, "--limit", "100"); err != nil {
 		return nil
 	}
-	messages, err := (&storage.Database{DB: a.db}).ListPersonMessages(personID, "", a.getActiveProfileID(), 0, 0)
-	if err != nil {
-		return nil
-	}
-	return messages
+	return out
 }
 
-// GetAllPersonMessages returns synced messages across every person in the
-// active profile, newest first — a unified communications feed, delegating
-// to the same repo used by `monoagentcli people messages all`.
+// GetAllPersonMessages is the cross-person feed (`people messages all`).
 func (a *App) GetAllPersonMessages(limit int) []*storage.PersonMessageWithPerson {
-	if a.db == nil {
+	if limit <= 0 {
+		limit = 100
+	}
+	out := []*storage.PersonMessageWithPerson{}
+	if err := a.runMonoCLI("", &out, "people", "messages", "all", "--limit", strconv.Itoa(limit)); err != nil {
 		return nil
 	}
-	messages, err := (&storage.Database{DB: a.db}).ListAllPersonMessages(a.getActiveProfileID(), "", limit, 0)
-	if err != nil {
-		return nil
+	return out
+}
+
+// MarkPersonMessagesRead marks inbound messages read — the given ids, or
+// every message of personID when ids is empty (`people messages read`).
+func (a *App) MarkPersonMessagesRead(personID string, ids []string) error {
+	args := []string{"people", "messages", "read"}
+	if personID != "" {
+		args = append(args, "--person", personID)
 	}
-	return messages
+	return a.runMonoCLI("", nil, append(args, ids...)...)
+}
+
+// MarkPersonMessageUnread marks one inbound message unread again.
+func (a *App) MarkPersonMessageUnread(id string) error {
+	return a.runMonoCLI("", nil, "people", "messages", "unread", id)
 }
 
 // AddPersonMessage records a message/interaction for a person, delegating to

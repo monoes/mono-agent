@@ -6,6 +6,7 @@ import {
   MessageCircle, ChevronDown, ChevronRight,
   ArrowDownLeft, ArrowUpRight
 } from 'lucide-react'
+import { isUnread, UnreadDot } from '../lib/unread.jsx'
 import { api, PLATFORM_COLORS, STATE_COLORS } from '../services/api.js'
 import MessageDetailModal from '../components/MessageDetailModal.jsx'
 import StatusHistoryModal from '../components/StatusHistoryModal.jsx'
@@ -282,10 +283,15 @@ function MessagesSection({ personId, personLabel, personPlatform }) {
   const visibleMessages = directionFilter === 'all' ? messages : messages.filter(m => m.direction === directionFilter)
   const sentCount = messages.filter(m => m.direction === 'outbound').length
 
-  const reload = () => api.getPersonMessages(personId).then(data => setMessages(data || []))
+  const reload = () => api.getPersonMessages(personId).then(data => { setMessages(data || []); return data || [] })
 
+  // Opening a person's conversation marks it read. The list keeps the dots
+  // it loaded with, so what was new stays visible for this visit.
   useEffect(() => {
-    reload().then(() => {}).catch(() => {}).finally(() => setLoading(false))
+    reload()
+      .then(list => { if (list.some(isUnread)) api.markPersonMessagesRead(personId) })
+      .catch(() => {})
+      .finally(() => setLoading(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [personId])
 
@@ -491,6 +497,7 @@ function MessagesSection({ personId, personLabel, personPlatform }) {
                   border: '1px solid var(--border)',
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {isUnread(msg) && <UnreadDot title="New" />}
                     {msg.direction === 'outbound'
                       ? <ArrowUpRight size={11} style={{ color: '#10b981', flexShrink: 0 }} title="Sent" />
                       : <ArrowDownLeft size={11} style={{ color: 'var(--text-muted)', flexShrink: 0 }} title="Received" />

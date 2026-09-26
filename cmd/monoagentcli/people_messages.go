@@ -38,6 +38,8 @@ func newPeopleMessagesCmd(cfg *globalConfig) *cobra.Command {
 		newPeopleMessagesSendDraftCmd(cfg),
 		newPeopleMessagesRejectDraftCmd(cfg),
 		newPeopleMessagesClassifyCmd(cfg),
+		newPeopleMessagesReadCmd(cfg),
+		newPeopleMessagesUnreadCmd(cfg),
 	)
 
 	return cmd
@@ -47,13 +49,15 @@ func newPeopleMessagesAllCmd(cfg *globalConfig) *cobra.Command {
 	var (
 		source string
 		limit  int
+		unread bool
 	)
 
 	cmd := &cobra.Command{
 		Use:   "all",
 		Short: "List synced messages/interactions across every person (a unified communications feed)",
 		Example: `  monoagentcli people messages all
-  monoagentcli people messages all --source outlook --limit 50 --json`,
+  monoagentcli people messages all --source outlook --limit 50 --json
+  monoagentcli people messages all --unread`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			db, err := initDB(cfg)
 			if err != nil {
@@ -61,9 +65,12 @@ func newPeopleMessagesAllCmd(cfg *globalConfig) *cobra.Command {
 			}
 			defer db.Close()
 
-			messages, err := db.ListAllPersonMessages(cfg.ProfileID, source, limit, 0)
+			messages, err := db.ListAllPersonMessagesFiltered(cfg.ProfileID, source, unread, limit, 0)
 			if err != nil {
 				return fmt.Errorf("listing messages: %w", err)
+			}
+			if messages == nil {
+				messages = []*storage.PersonMessageWithPerson{} // [] not null in --json
 			}
 
 			if cfg.JSONOutput {
@@ -110,6 +117,7 @@ func newPeopleMessagesAllCmd(cfg *globalConfig) *cobra.Command {
 
 	cmd.Flags().StringVar(&source, "source", "", "Filter by source")
 	cmd.Flags().IntVarP(&limit, "limit", "n", 100, "Maximum number of results")
+	cmd.Flags().BoolVar(&unread, "unread", false, "Only inbound messages not marked read yet")
 
 	return cmd
 }
@@ -364,6 +372,9 @@ func newPeopleMessagesListCmd(cfg *globalConfig) *cobra.Command {
 			}
 			if intent != "" {
 				messages = filterMessagesByIntent(messages, intent, limit)
+			}
+			if messages == nil {
+				messages = []*storage.PersonMessage{} // [] not null in --json
 			}
 
 			if cfg.JSONOutput {

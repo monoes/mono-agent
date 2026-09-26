@@ -2,12 +2,14 @@ import { useEffect, useState } from 'react'
 import { RefreshCw, Mail } from 'lucide-react'
 import { api } from '../services/api.js'
 import MessageDetailModal from '../components/MessageDetailModal.jsx'
+import { isUnread, UnreadDot } from '../lib/unread.jsx'
 
 export default function Communications({ onProfile }) {
   const [messages, setMessages] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [sourceFilter, setSourceFilter] = useState('')
+  const [unreadOnly, setUnreadOnly] = useState(false)
   const [openMessage, setOpenMessage] = useState(null)
 
   const load = async () => {
@@ -26,7 +28,20 @@ export default function Communications({ onProfile }) {
   useEffect(() => { load() }, [])
 
   const sources = [...new Set(messages.map(m => m.source).filter(Boolean))]
-  const filtered = sourceFilter ? messages.filter(m => m.source === sourceFilter) : messages
+  const unreadCount = messages.filter(isUnread).length
+  const filtered = messages
+    .filter(m => !sourceFilter || m.source === sourceFilter)
+    .filter(m => !unreadOnly || isUnread(m))
+
+  // Opening a message marks it read (the CLI owns the state; this only
+  // mirrors it locally so the dot goes away at once).
+  const openMsg = (msg) => {
+    setOpenMessage(msg)
+    if (!isUnread(msg)) return
+    const now = new Date().toISOString()
+    setMessages(prev => prev.map(m => (m.id === msg.id ? { ...m, read_at: now } : m)))
+    api.markPersonMessagesRead('', [msg.id])
+  }
 
   return (
     <>
@@ -43,8 +58,13 @@ export default function Communications({ onProfile }) {
       </div>
 
       <div className="page-body">
-        {sources.length > 1 && (
+        {(sources.length > 1 || unreadCount > 0 || unreadOnly) && (
           <div className="profile-summary-chips" style={{ marginBottom: 12 }}>
+            {(unreadCount > 0 || unreadOnly) && (
+              <button className={`summary-chip ${unreadOnly ? 'active' : ''}`} onClick={() => setUnreadOnly(u => !u)}>
+                Unread <span>{unreadCount}</span>
+              </button>
+            )}
             <button
               className={`summary-chip ${!sourceFilter ? 'active' : ''}`}
               onClick={() => setSourceFilter('')}
@@ -83,8 +103,8 @@ export default function Communications({ onProfile }) {
                 key={msg.id}
                 role="button"
                 tabIndex={0}
-                onClick={() => setOpenMessage(msg)}
-                onKeyDown={e => { if (e.key === 'Enter') setOpenMessage(msg) }}
+                onClick={() => openMsg(msg)}
+                onKeyDown={e => { if (e.key === 'Enter') openMsg(msg) }}
                 style={{
                   display: 'flex', flexDirection: 'column', gap: 4, textAlign: 'left',
                   padding: '10px 12px', borderRadius: 6, cursor: 'pointer',
@@ -93,6 +113,7 @@ export default function Communications({ onProfile }) {
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {isUnread(msg) && <UnreadDot />}
                   <span style={{
                     padding: '1px 6px', borderRadius: 4,
                     background: 'rgba(0,180,216,0.12)',
