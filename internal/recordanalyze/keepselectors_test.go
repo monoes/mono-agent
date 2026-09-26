@@ -2,6 +2,7 @@ package recordanalyze
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -34,6 +35,13 @@ func TestSaveKeepPackageSelectors(t *testing.T) {
 		_, err := Save(context.Background(), reg, old, opts)
 		if err == nil || !strings.Contains(err.Error(), "contact.save_button") || !strings.Contains(err.Error(), "--keep-package-selectors") {
 			t.Fatalf("%s without flag: err = %v", as, err)
+		}
+		var conflict *SelectorConflictError
+		if !errors.As(err, &conflict) || len(conflict.Keys) != 1 || conflict.Keys[0] != "contact.save_button" {
+			t.Fatalf("%s: not a SelectorConflictError with the key: %#v", as, err)
+		}
+		if f := conflict.JSONErrorFields(); f["code"] != SelectorConflictCode {
+			t.Fatalf("%s: fields = %v", as, f)
 		}
 
 		opts.KeepPackageSelectors = true
