@@ -56,3 +56,11 @@ func TestWorkflowImportReplaceArgs(t *testing.T) {
 		t.Fatalf("withField = %s", out)
 	}
 }
+
+func TestWorkflowImportReplaceAutomationsArgs(t *testing.T) {
+	got := workflowImportArgs("", "/w/f.json", WorkflowImportOptions{Yes: true, ReplaceAutomations: true})
+	want := []string{"--json", "workflow", "import", "--file", "/w/f.json", "--yes", "--replace-automations"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v", got)
+	}
+}

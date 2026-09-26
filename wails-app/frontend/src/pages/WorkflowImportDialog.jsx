@@ -5,134 +5,14 @@
 // automations re-runs the same import with --yes (imports are idempotent),
 // only after an explicit confirmation.
 import { useState } from 'react'
-import { X, FolderOpen, ExternalLink, Package, Download } from 'lucide-react'
+import { X, FolderOpen, ExternalLink, Download, RefreshCw } from 'lucide-react'
 import { api } from '../services/api.js'
 import { emitAutomationsChanged } from '../lib/appEvents.js'
 import { confirm } from '../components/ConfirmDialog.jsx'
-import { Chip, ErrorBox, OkBox, Busy, body, label, mono, muted, panel, useDialog } from './connections/ui.jsx'
+import { ErrorBox, OkBox, Busy, body, label, mono, muted, panel, useDialog } from './connections/ui.jsx'
+import { STATUS_TEXT, installSummary, ReviewDetail, COPY_WARNING, copyOfExisting, splitBundle, NotIncluded, Automations, Differs, ChangeList } from './workflowImport/bundleParts.jsx'
 
-const STATUS_TEXT = {
-  created: (n) => `Imported “${n}”.`,
-  updated: (n) => `Updated “${n}” — it was imported before; this version replaced it.`,
-  unchanged: () => 'Already imported — nothing changed.',
-}
-const ITEM_COLORS = { present: 'var(--green-neon)', installed: 'var(--green-neon)', missing: 'var(--yellow)', conflict: 'var(--red)', failed: 'var(--red)' }
-
-// installSummary describes the --yes re-run: the workflow itself comes back
-// unchanged, so the news is what happened to the bundled packages.
-function installSummary(r) {
-  const items = r.automations || []
-  const done = items.filter(i => i.status === 'installed').length
-  const failed = items.filter(i => i.status === 'failed').length
-  const parts = [`Installed ${done} bundled automation${done === 1 ? '' : 's'} for “${r.name || r.id}”.`]
-  if (failed) parts.push(`${failed} failed — see below.`)
-  return parts.join(' ')
-}
-
-// ReviewDetail: what installing one bundled package means, from the CLI's
-// dry-run review (reviewDetail), before anything is installed.
-function ReviewDetail({ item }) {
-  const d = item.reviewDetail
-  const line = { fontFamily: 'var(--font-mono)', fontSize: 10.5 }
-  return (
-    <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '6px 8px', display: 'flex', flexDirection: 'column', gap: 3 }}>
-      <span style={{ ...line, fontSize: 11.5, color: 'var(--text)' }}>{item.id} {item.version}</span>
-      {d ? (
-        <>
-          <span style={line}>Publisher: {d.publisher || 'unknown'}</span>
-          <span style={line}>Domains: {(d.domains || []).join(', ') || 'unrestricted'}</span>
-          {/* The capabilities list already carries the visibility lines
-              ("visits profiles — the profile's owner can see your visit…"),
-              as in the automation import review. */}
-          {(d.capabilities || []).length > 0 && (
-            <ul style={{ margin: 0, paddingLeft: 16 }}>{d.capabilities.map(c => <li key={c} style={line}>{c}</li>)}</ul>
-          )}
-          {d.replaceRequired && d.replaces && <span style={{ ...line, color: 'var(--red)' }}>Replaces {d.replaces.source} {d.replaces.id} {d.replaces.version}</span>}
-          {d.trustChange && <span style={{ ...line, color: 'var(--yellow)' }}>⚠ Trust drops from {d.trustChange.from} to {d.trustChange.to}: page scripts stay off and real runs of actions that change things need confirmation again.</span>}
-        </>
-      ) : item.review ? <span style={line}>{item.review}</span> : null}
-      {item.error && <span style={{ ...line, color: 'var(--red)' }}>{item.error}</span>}
-    </div>
-  )
-}
-
-// ReviewNotes: what the one-line review leaves out — the replacement, a
-// trust drop, and the plain-language capabilities (visibility included);
-// the technical ones (steps, scripts, tier…) are already in the review line.
-const TECHNICAL_CAP = /^(steps|scripts|tier):|^(downloads|policy-blocked)$/
-function ReviewNotes({ d }) {
-  if (!d) return null
-  const note = { ...muted, fontSize: 10, paddingLeft: 19, wordBreak: 'break-word' }
-  return (
-    <>
-      {d.replaceRequired && d.replaces && <span style={{ ...note, color: 'var(--red)' }}>Replaces {d.replaces.source} {d.replaces.id} {d.replaces.version}</span>}
-      {d.trustChange && <span style={{ ...note, color: 'var(--yellow)' }}>⚠ Trust drops from {d.trustChange.from} to {d.trustChange.to}: page scripts stay off and real runs of actions that change things need confirmation again.</span>}
-      {(d.capabilities || []).filter(c => !TECHNICAL_CAP.test(c)).map(c => <span key={c} style={note}>• {c}</span>)}
-    </>
-  )
-}
-
-// copyOfExisting returns the id of the same-named workflow an import was
-// kept apart from (the CLI's "imported as a copy" warning). A structured
-// field wins when the CLI sends one.
-const COPY_WARNING = /already exists:\s*([^\s;]+);\s*imported as a copy/i
-export function copyOfExisting(res) {
-  if (res?.copyOf) return res.copyOf
-  for (const w of res?.warnings || []) {
-    const m = COPY_WARNING.exec(w)
-    if (m) return m[1]
-  }
-  return null
-}
-
-// splitBundle separates packages the file carries (installable when
-// missing) from ones the exporter could not include (notBundled).
-export function splitBundle(items) {
-  const all = items || []
-  const notIncluded = all.filter(i => i.notBundled && i.status === 'missing')
-  const listed = all.filter(i => !notIncluded.includes(i))
-  const installable = listed.filter(i => i.status === 'missing')
-  return { listed, installable, notIncluded }
-}
-
-function NotIncluded({ items }) {
-  if (!items.length) return null
-  return (
-    <div style={{ ...panel, display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <span style={label}>Not included in this file</span>
-      <span style={{ ...body, fontSize: 11 }}>
-        The workflow uses {items.length === 1 ? 'an automation' : 'automations'} the file does not carry. {items.length === 1 ? 'Its nodes' : 'Their nodes'} will not run until {items.length === 1 ? 'it is' : 'they are'} installed some other way.
-      </span>
-      {items.map(it => (
-        <div key={it.id} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-          <span style={{ ...mono, fontSize: 11, color: 'var(--text)' }}><Package size={11} color="var(--text-muted)" style={{ verticalAlign: -1, marginRight: 6 }} />{it.id} <span style={muted}>{it.version}</span></span>
-          {it.error && <span style={{ ...muted, fontSize: 10, paddingLeft: 19, wordBreak: 'break-word' }}>{it.error.replace(/^not in the bundle:\s*/i, '')}</span>}
-        </div>
-      ))}
-    </div>
-  )
-}
-
-function Automations({ items }) {
-  if (!items?.length) return null
-  return (
-    <div style={{ ...panel, display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <span style={label}>Bundled automations</span>
-      {items.map(it => (
-        <div key={it.id} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <Package size={11} color="var(--text-muted)" />
-            <span style={{ ...mono, fontSize: 11, color: 'var(--text)', flex: 1 }}>{it.id} <span style={muted}>{it.version}</span></span>
-            <Chip color={ITEM_COLORS[it.status] || 'var(--text-muted)'}>{it.status}{it.installedVersion && it.status === 'present' ? ` ${it.installedVersion}` : ''}</Chip>
-          </div>
-          {it.error && <span style={{ ...muted, fontSize: 10, color: 'var(--red)', paddingLeft: 19 }}>{it.error}</span>}
-          {it.review && <span style={{ ...muted, fontSize: 10, paddingLeft: 19, wordBreak: 'break-word' }}>{it.review}</span>}
-          <ReviewNotes d={it.reviewDetail} />
-        </div>
-      ))}
-    </div>
-  )
-}
+export { copyOfExisting, splitBundle }
 
 export default function WorkflowImportDialog({ onClose, onOpen, onImported, onAutomationsInstalled }) {
   const dialog = useDialog(onClose)
@@ -163,7 +43,7 @@ export default function WorkflowImportDialog({ onClose, onOpen, onImported, onAu
     if (p) { setPath(p); setPasted(''); setRes(null); setInstallRes(null); setError('') }
   }
   const shown = installRes || res
-  const { listed, installable: missing, notIncluded } = splitBundle(shown?.automations)
+  const { listed, installable: missing, notIncluded, differs, replaceable } = splitBundle(shown?.automations)
   const existingId = !replaced ? copyOfExisting(res) : null
   const otherWarnings = (shown?.warnings || []).filter(w => !COPY_WARNING.test(w))
   const replaceExisting = async () => {
@@ -190,6 +70,36 @@ export default function WorkflowImportDialog({ onClose, onOpen, onImported, onAu
       if (out) {
         setInstallRes(out)
         if ((out.automations || []).some(i => i.status === 'installed')) {
+          onAutomationsInstalled?.(out)
+          emitAutomationsChanged({ source: 'workflow-import' })
+        }
+      }
+    } finally { setBusy('') }
+  }
+
+  // Replace installed packages whose bundled copy differs — never
+  // automatic: the user confirms the listed changes, then the import is
+  // re-run with --replace-automations --yes.
+  const replaceDiffering = async () => {
+    const message = (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <span>Replace {replaceable.length === 1 ? 'the installed copy' : `${replaceable.length} installed copies`} with the file's version? What changes:</span>
+        {replaceable.map(i => (
+          <div key={i.id} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>{i.id} {i.version}</span>
+            <ChangeList changes={i.changes} />
+          </div>
+        ))}
+        <span>Workflows that use {replaceable.length === 1 ? 'it' : 'them'} will run the file's version from now on.</span>
+      </div>
+    )
+    if (!(await confirm(message, { title: "Replace with the file's version", confirmLabel: 'Replace' }))) return
+    setBusy('replace-automations')
+    try {
+      const out = await run({ yes: true, replaceAutomations: true })
+      if (out) {
+        setInstallRes(out)
+        if ((out.automations || []).some(i => i.status === 'replaced' || i.status === 'installed')) {
           onAutomationsInstalled?.(out)
           emitAutomationsChanged({ source: 'workflow-import' })
         }
@@ -249,6 +159,12 @@ export default function WorkflowImportDialog({ onClose, onOpen, onImported, onAu
               {otherWarnings.map((w, i) => <div key={i} role="note" style={{ ...muted, color: 'var(--yellow)' }}>⚠ {w}</div>)}
               <Automations items={listed} />
               <NotIncluded items={notIncluded} />
+              <Differs items={differs} />
+              {replaceable.length > 0 && (
+                <button className="btn btn-secondary btn-sm" onClick={replaceDiffering} disabled={!!busy} style={{ alignSelf: 'flex-start', gap: 5 }}>
+                  <RefreshCw size={11} /> {busy === 'replace-automations' ? 'Replacing…' : "Replace with the file's version"}
+                </button>
+              )}
               {(shown.reviewLines || []).length > 0 && (
                 <div style={{ ...panel, display: 'flex', flexDirection: 'column', gap: 4 }}>
                   <span style={label}>Install review</span>

@@ -37,6 +37,10 @@ type WorkflowImportOptions struct {
 	// (--replace <id>): the user chose "Replace the existing workflow
 	// instead" after an import that was kept as a copy.
 	Replace string `json:"replace"`
+	// ReplaceAutomations replaces installed automations whose bundled copy
+	// (same version) differs (--replace-automations; used with Yes, after
+	// the user confirmed the listed changes in the dialog).
+	ReplaceAutomations bool `json:"replaceAutomations"`
 	// RemoveCopy is the copy that earlier import made; it is deleted
 	// (`workflow delete --force`) once the replace succeeded.
 	RemoveCopy string `json:"removeCopy"`
@@ -59,6 +63,9 @@ func workflowImportArgs(profileID, file string, o WorkflowImportOptions) []strin
 	}
 	if o.Yes {
 		args = append(args, "--yes")
+	}
+	if o.ReplaceAutomations {
+		args = append(args, "--replace-automations")
 	}
 	if o.Replace != "" {
 		args = append(args, "--replace", o.Replace)
