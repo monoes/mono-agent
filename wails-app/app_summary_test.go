@@ -71,3 +71,20 @@ func TestDashboardStatsSurvivesCLIFailure(t *testing.T) {
 		t.Fatalf("GetRecentExecutions err = %v", err)
 	}
 }
+
+// The HIL badge's poll: `summary --section hil`, never `hil list --suggest`.
+func TestGetSummarySectionsArgv(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "args.log")
+	t.Setenv("MONOAGENTCLI_BIN", fakeCLI(t, `echo "$*" >> '`+log+`'
+echo '{"v":1,"hil":{"total":1}}'
+`))
+	a := newTestApp(t)
+	a.ctx = context.Background()
+	a.setActiveProfileID("work")
+	if got := strings.TrimSpace(a.GetSummarySections("hil")); got != `{"v":1,"hil":{"total":1}}` {
+		t.Fatalf("GetSummarySections = %q", got)
+	}
+	if got := strings.Join(loggedArgs(t, log), "\n"); got != "--profile work --json summary --section hil" {
+		t.Fatalf("argv = %q", got)
+	}
+}

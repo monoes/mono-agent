@@ -330,6 +330,43 @@ func newLoginConfirmCmd(cfg *globalConfig) *cobra.Command {
 	}
 }
 
+type sessionRow struct {
+	ID        int
+	Username  string
+	Platform  string
+	Expiry    time.Time
+	WhenAdded time.Time
+	Status    string // active | expired | logged_out
+}
+
+// loginStatusRow is one `login status --json` row. A logged_out row (an
+// installed automation with no session yet) has no id, expiry or when_added.
+type loginStatusRow struct {
+	ID        int    `json:"id,omitempty"`
+	Username  string `json:"username"`
+	Platform  string `json:"platform"`
+	Expiry    string `json:"expiry,omitempty"`     // RFC3339 UTC
+	WhenAdded string `json:"when_added,omitempty"` // RFC3339 UTC
+	Status    string `json:"status"`               // active | expired | logged_out
+}
+
+// loginStatusJSON is the --json form: snake_case keys, and [] (not null)
+// when there is nothing to report.
+func loginStatusJSON(sessions []sessionRow) []loginStatusRow {
+	out := make([]loginStatusRow, 0, len(sessions))
+	for _, s := range sessions {
+		r := loginStatusRow{ID: s.ID, Username: s.Username, Platform: s.Platform, Status: s.Status}
+		if !s.Expiry.IsZero() {
+			r.Expiry = s.Expiry.UTC().Format(time.RFC3339)
+		}
+		if !s.WhenAdded.IsZero() {
+			r.WhenAdded = s.WhenAdded.UTC().Format(time.RFC3339)
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
 func newLoginStatusCmd(cfg *globalConfig) *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
@@ -349,15 +386,6 @@ func newLoginStatusCmd(cfg *globalConfig) *cobra.Command {
 				return fmt.Errorf("querying sessions: %w", err)
 			}
 			defer rows.Close()
-
-			type sessionRow struct {
-				ID        int
-				Username  string
-				Platform  string
-				Expiry    time.Time
-				WhenAdded time.Time
-				Status    string // active | expired | logged_out
-			}
 
 			var sessions []sessionRow
 			for rows.Next() {
@@ -388,9 +416,7 @@ func newLoginStatusCmd(cfg *globalConfig) *cobra.Command {
 			}
 
 			if cfg.JSONOutput {
-				enc := json.NewEncoder(os.Stdout)
-				enc.SetIndent("", "  ")
-				return enc.Encode(sessions)
+				return writeJSONTo(cmd.OutOrStdout(), loginStatusJSON(sessions))
 			}
 
 			if len(sessions) == 0 {

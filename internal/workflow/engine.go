@@ -1139,6 +1139,14 @@ func (e *WorkflowEngine) ListWorkflows(ctx context.Context) ([]Workflow, error) 
 // tests). Long-lived processes (the daemon) should Stop it after engine Stop.
 func (e *WorkflowEngine) Scheduler() SchedulerInterface { return e.scheduler }
 
+// ScheduledRuns lists the registered schedule triggers and their next fire time.
+func (e *WorkflowEngine) ScheduledRuns() []ScheduledRun {
+	if e.triggerMgr == nil {
+		return nil
+	}
+	return e.triggerMgr.ScheduledRuns()
+}
+
 // GetExecution loads a workflow execution with all node results.
 func (e *WorkflowEngine) GetExecution(ctx context.Context, id string) (*WorkflowExecution, error) {
 	exec, err := e.store.GetExecution(ctx, id)

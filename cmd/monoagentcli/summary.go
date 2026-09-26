@@ -54,8 +54,21 @@ func newSummaryCmd(cfg *globalConfig) *cobra.Command {
 				DB: db.DB, ProfileID: cfg.ProfileID, Now: time.Now(), Sections: want,
 				Workflows:     readOnlyHybridStore(db),
 				DaemonRunning: func() bool { _, live := daemonhb.Read(); return live },
-				Daemon:        summaryDaemon,
-				Bridge:        summaryBridge,
+				DaemonSchedules: func() map[string]time.Time {
+					hb, live := daemonhb.Read()
+					if !live {
+						return nil
+					}
+					out := make(map[string]time.Time, len(hb.Schedules))
+					for _, s := range hb.Schedules {
+						if t, err := time.Parse(time.RFC3339, s.NextRun); err == nil {
+							out[s.WorkflowID+"/"+s.NodeID] = t
+						}
+					}
+					return out
+				},
+				Daemon: summaryDaemon,
+				Bridge: summaryBridge,
 				OrgServe: func() (bool, []string) {
 					hb, live := monomind.ReadServeHeartbeat(root)
 					if hb == nil || !live {

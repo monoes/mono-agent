@@ -50,45 +50,23 @@ func (a *App) GetVersion() VersionInfo {
 	}
 }
 
-// CheckForUpdate queries GitHub for the latest release and compares.
+// CheckForUpdate asks the CLI whether a newer release exists for this
+// app's own version (`monoagentcli update --check --current <version>`):
+// the release lookup lives in the CLI, the app only shows the answer.
 func (a *App) CheckForUpdate() UpdateInfo {
-	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", githubOwner, githubRepo)
-	req, _ := http.NewRequest("GET", apiURL, nil)
-	req.Header.Set("Accept", "application/vnd.github+json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return UpdateInfo{CurrentVersion: version, Error: fmt.Sprintf("network error: %v", err)}
+	info := UpdateInfo{CurrentVersion: version}
+	out := a.rawCLI(updateCheckTimeout, "update", "--check", "--current", version)
+	if err := json.Unmarshal([]byte(out), &info); err != nil {
+		return UpdateInfo{CurrentVersion: version, Error: fmt.Sprintf("update check: %v", err)}
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		return UpdateInfo{CurrentVersion: version, Error: fmt.Sprintf("GitHub API %d: %s", resp.StatusCode, string(body))}
+	if info.CurrentVersion == "" {
+		info.CurrentVersion = version
 	}
-
-	var release struct {
-		TagName string `json:"tag_name"`
-		HTMLURL string `json:"html_url"`
-		Assets  []struct {
-			Name               string `json:"name"`
-			BrowserDownloadURL string `json:"browser_download_url"`
-		} `json:"assets"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return UpdateInfo{CurrentVersion: version, Error: fmt.Sprintf("parse error: %v", err)}
-	}
-
-	latest := strings.TrimPrefix(release.TagName, "v")
-	current := strings.TrimPrefix(version, "v")
-
-	return UpdateInfo{
-		CurrentVersion:  version,
-		LatestVersion:   release.TagName,
-		UpdateAvailable: latest != current && version != "dev",
-		ReleaseURL:      release.HTMLURL,
-	}
+	return info
 }
+
+// updateCheckTimeout bounds `update --check` (one GitHub request).
+const updateCheckTimeout = 30 * time.Second
 
 // releaseAPIURL is GitHub's latest-release endpoint (a variable so tests
 // can point it at a fake release server).

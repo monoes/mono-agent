@@ -28,12 +28,15 @@ type Options struct {
 	Sections      map[string]bool // nil = all
 	Workflows     WorkflowSource
 	DaemonRunning func() bool
-	Daemon        func() *DaemonStatus
-	Bridge        func() (*BridgeStatus, error)
-	OrgServe      func() (running bool, orgs []string)
-	Automations   AutomationSource
-	Recordings    func() ([]recording.Summary, error)
-	Captures      func() ([]capture.Entry, error)
+	// DaemonSchedules is the live daemon's own next fire time per schedule
+	// node, keyed "<workflow_id>/<node_id>" (nil when no daemon runs).
+	DaemonSchedules func() map[string]time.Time
+	Daemon          func() *DaemonStatus
+	Bridge          func() (*BridgeStatus, error)
+	OrgServe        func() (running bool, orgs []string)
+	Automations     AutomationSource
+	Recordings      func() ([]recording.Summary, error)
+	Captures        func() ([]capture.Entry, error)
 	// SummaryState reports a capture directory's AI-summary state
 	// (capturesummary.StateOf); nil leaves the summary counts at zero.
 	SummaryState func(captureDir string) string

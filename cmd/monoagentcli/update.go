@@ -20,12 +20,112 @@ import (
 // release (see .github/workflows/release.yml "Flatten and checksum").
 const sha256SumsAssetName = updatecheck.SumsAssetName
 
-func newUpdateCmd() *cobra.Command {
-	return &cobra.Command{
+func newUpdateCmd(cfg *globalConfig) *cobra.Command {
+	var check bool
+	var current string
+	cmd := &cobra.Command{
 		Use:   "update",
 		Short: "Update monoagentcli to the latest release",
-		RunE:  runUpdate,
+		Long: "Downloads the latest release, verifies it against the release's SHA256SUMS.txt and replaces this binary.\n\n" +
+			"--check only reports whether a newer release exists (nothing is downloaded). --current compares against another " +
+			"version instead of this binary's — the desktop app asks about its own version this way.",
+		Example: `  monoagentcli update
+  monoagentcli --json update --check
+  monoagentcli --json update --check --current v0.72.0`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if check {
+				return runUpdateCheck(cmd, cfg, current)
+			}
+			if current != "" {
+				return errInvalidInput("--current only goes with --check")
+			}
+			return runUpdate(cmd, args)
+		},
 	}
+	cmd.Flags().BoolVar(&check, "check", false, "Only report whether a newer release exists; download nothing")
+	cmd.Flags().StringVar(&current, "current", "", "Version to compare against (default: this binary's)")
+	return cmd
+}
+
+// updateCheck is `update --check --json`.
+type updateCheck struct {
+	CurrentVersion  string `json:"current_version"`
+	LatestVersion   string `json:"latest_version"`
+	UpdateAvailable bool   `json:"update_available"`
+	ReleaseURL      string `json:"release_url"`
+	Error           string `json:"error,omitempty"`
+}
+
+// runUpdateCheck reports the latest release. A release that cannot be
+// fetched is a result (error field, exit 0) in --json mode — the caller is
+// polling, not failing.
+func runUpdateCheck(cmd *cobra.Command, cfg *globalConfig, current string) error {
+	if current == "" {
+		current = getVersion()
+	}
+	res := updateCheck{CurrentVersion: current}
+	release, err := fetchLatestRelease(cmd.Context())
+	if err != nil {
+		if !cfg.JSONOutput {
+			return err
+		}
+		res.Error = err.Error()
+		return writeJSONTo(cmd.OutOrStdout(), res)
+	}
+	res.LatestVersion = release.TagName
+	res.ReleaseURL = release.HTMLURL
+	res.UpdateAvailable = newerRelease(release.TagName, current)
+	if cfg.JSONOutput {
+		return writeJSONTo(cmd.OutOrStdout(), res)
+	}
+	out := cmd.OutOrStdout()
+	switch {
+	case res.UpdateAvailable:
+		fmt.Fprintf(out, "Update available: %s → %s\n%s\n", current, release.TagName, release.HTMLURL)
+	case isDevVersion(current):
+		fmt.Fprintf(out, "Latest release is %s (this is a dev build)\n", release.TagName)
+	default:
+		fmt.Fprintf(out, "Already on the latest version (%s)\n", current)
+	}
+	return nil
+}
+
+// isDevVersion reports a build with no release version: "dev", or a git
+// describe of a commit past a tag ("v0.72.0-3-gabc123").
+func isDevVersion(v string) bool {
+	v = strings.TrimSpace(v)
+	return v == "" || v == "dev" || strings.Contains(v, "-g")
+}
+
+// newerRelease reports whether latest is a newer release than current,
+// comparing dotted numbers (v0.10.0 > v0.9.9). Dev builds never are.
+func newerRelease(latest, current string) bool {
+	if isDevVersion(current) || latest == "" {
+		return false
+	}
+	a := strings.Split(strings.TrimPrefix(strings.TrimSpace(latest), "v"), ".")
+	b := strings.Split(strings.TrimPrefix(strings.TrimSpace(current), "v"), ".")
+	for i := 0; i < len(a) || i < len(b); i++ {
+		x, y := versionPart(a, i), versionPart(b, i)
+		if x != y {
+			return x > y
+		}
+	}
+	return false
+}
+
+func versionPart(parts []string, i int) int {
+	if i >= len(parts) {
+		return 0
+	}
+	n := 0
+	for _, r := range parts[i] {
+		if r < '0' || r > '9' {
+			break // "0-rc1" compares as 0
+		}
+		n = n*10 + int(r-'0')
+	}
+	return n
 }
 
 func runUpdate(_ *cobra.Command, _ []string) error {
@@ -121,6 +221,7 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 // latestRelease is the part of GitHub's latest-release payload we use.
 type latestRelease struct {
 	TagName string `json:"tag_name"`
+	HTMLURL string `json:"html_url"`
 	Assets  []struct {
 		Name               string `json:"name"`
 		BrowserDownloadURL string `json:"browser_download_url"`
@@ -128,9 +229,12 @@ type latestRelease struct {
 }
 
 // fetchLatestRelease asks GitHub for mono-agent's latest release.
+// latestReleaseURL is GitHub's latest-release endpoint (a variable so tests
+// can point it at a fake server).
+var latestReleaseURL = "https://api.github.com/repos/monoes/mono-agent/releases/latest"
+
 func fetchLatestRelease(ctx context.Context) (*latestRelease, error) {
-	apiURL := "https://api.github.com/repos/monoes/mono-agent/releases/latest"
-	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", latestReleaseURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}

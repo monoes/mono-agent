@@ -64,8 +64,11 @@ type ScheduleRow struct {
 	Timezone     string `json:"timezone"`
 	NextRun      string `json:"next_run"`
 	// Every is set for "@every <d>" specs: they fire relative to when the
-	// daemon registered them, so NextRun is only an estimate — show the interval.
+	// daemon registered them, so a computed NextRun is only an estimate.
 	Every string `json:"every,omitempty"`
+	// Source says where NextRun comes from: "daemon" (the running
+	// scheduler's own time) or "computed" (from the cron spec).
+	Source string `json:"source"`
 }
 
 type ScheduleIssue struct {
@@ -220,6 +223,10 @@ func schedulesSection(ctx context.Context, o Options) *SchedulesSection {
 		s.Error = err.Error()
 		return s
 	}
+	var fromDaemon map[string]time.Time
+	if s.DaemonRunning && o.DaemonSchedules != nil {
+		fromDaemon = o.DaemonSchedules()
+	}
 	for i := range wfs {
 		if !wfs[i].IsActive {
 			continue
@@ -241,6 +248,9 @@ func schedulesSection(ctx context.Context, o Options) *SchedulesSection {
 			if err != nil {
 				s.Invalid = append(s.Invalid, ScheduleIssue{WorkflowID: wf.ID, NodeID: n.ID, Error: err.Error()})
 				continue
+			}
+			if t, ok := fromDaemon[wf.ID+"/"+n.ID]; ok && t.After(o.Now) {
+				row.NextRun, row.Source = t.UTC().Format(time.RFC3339), "daemon"
 			}
 			s.Upcoming = append(s.Upcoming, row)
 		}
@@ -270,7 +280,7 @@ func nextRun(wf *workflow.Workflow, n workflow.WorkflowNode, now time.Time) (Sch
 		return ScheduleRow{}, errors.New("schedule never fires")
 	}
 	row := ScheduleRow{WorkflowID: wf.ID, WorkflowName: wf.Name, NodeID: n.ID, Cron: spec, Timezone: tz,
-		NextRun: next.UTC().Format(time.RFC3339)}
+		NextRun: next.UTC().Format(time.RFC3339), Source: "computed"}
 	if d, ok := strings.CutPrefix(spec, "@every "); ok {
 		row.Every = strings.TrimSpace(d)
 	}

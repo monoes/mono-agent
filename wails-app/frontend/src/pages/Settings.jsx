@@ -307,7 +307,7 @@ function LanguageSection() {
 export default function Settings({ onNavigate, navData }) {
   const { t } = useTranslation()
   // Deep links (the dashboard's "health" and "Jev" rows) scroll to a section.
-  const sectionRefs = { health: useRef(null), jev: useRef(null) }
+  const sectionRefs = { health: useRef(null), jev: useRef(null), version: useRef(null) }
   const section = navData?.section
   useEffect(() => {
     const el = section && sectionRefs[section]?.current
@@ -414,7 +414,7 @@ export default function Settings({ onNavigate, navData }) {
         <div ref={sectionRefs.jev} data-section="jev"><JevSection /></div>
 
         {/* Application Info */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+        <div ref={sectionRefs.version} data-section="version" style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: 2 }}>
             Application Info
           </span>

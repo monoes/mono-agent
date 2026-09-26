@@ -4,7 +4,7 @@ import '@testing-library/jest-dom/vitest'
 import { render, screen, cleanup, fireEvent } from '@testing-library/react'
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (k, o) => (o?.count != null ? `${k}:${o.count}` : k) }) }))
 vi.mock('../wailsjs/go/main/App', () => ({ GetVersion: () => Promise.resolve({ version: 'v1.2.3' }) }))
-vi.mock('../services/api.js', () => ({ api: {}, PLATFORM_COLORS: {} }))
+vi.mock('../services/api.js', () => ({ api: {}, PLATFORM_COLORS: {}, subscribeEvent: () => () => {} }))
 vi.mock('../lib/health.js', () => ({
   getHealth: () => ({ report: { results: [] } }),
   subscribeHealth: () => () => {},

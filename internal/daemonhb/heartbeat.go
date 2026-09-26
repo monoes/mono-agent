@@ -26,6 +26,16 @@ type Heartbeat struct {
 	APIAddr    string    `json:"api_addr,omitempty"`    // "" when the API is off
 	BridgeAddr string    `json:"bridge_addr,omitempty"` // "" when the extension bridge is off
 	Version    string    `json:"version,omitempty"`
+	// Schedules are the registered schedule triggers with the scheduler's
+	// own next fire time, refreshed on every write.
+	Schedules []Schedule `json:"schedules,omitempty"`
+}
+
+// Schedule is one registered schedule trigger.
+type Schedule struct {
+	WorkflowID string `json:"workflow_id"`
+	NodeID     string `json:"node_id"`
+	NextRun    string `json:"next_run"` // RFC3339 UTC
 }
 
 // Path returns the heartbeat file path. MONOAGENT_DAEMON_HEARTBEAT
@@ -89,9 +99,16 @@ func IsLive(hb Heartbeat, now time.Time) bool {
 
 // Run writes a heartbeat now and every Interval until ctx ends, then removes
 // the file if it still names this process.
-func Run(ctx context.Context, hb Heartbeat) {
+func Run(ctx context.Context, hb Heartbeat) { RunWith(ctx, hb, nil) }
+
+// RunWith is Run with refresh called before every write, to update fields
+// that change while the daemon runs (e.g. Schedules).
+func RunWith(ctx context.Context, hb Heartbeat, refresh func(*Heartbeat)) {
 	hb.PID = os.Getpid()
 	write := func() {
+		if refresh != nil {
+			refresh(&hb)
+		}
 		hb.TS = time.Now()
 		_ = Write(hb)
 	}

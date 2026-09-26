@@ -52,6 +52,12 @@ func (a *App) cliJSON(timeout time.Duration, result interface{}, args ...string)
 // GetSummary returns `monoagentcli summary --json` verbatim.
 func (a *App) GetSummary() string { return a.rawCLI(summaryCLITimeout, "summary") }
 
+// GetSummarySections returns `summary --section <csv>` verbatim — the
+// cheap, Jev-free counts other surfaces poll (e.g. the HIL badge).
+func (a *App) GetSummarySections(sections string) string {
+	return a.rawCLI(summaryCLITimeout, "summary", "--section", sections)
+}
+
 // GetOrgSummary returns `monoagentcli org summary [--fast]` verbatim.
 func (a *App) GetOrgSummary(fast bool) string {
 	args := []string{"org", "summary"}
