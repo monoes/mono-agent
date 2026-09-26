@@ -3308,3 +3308,28 @@ MSG
 - **Spec coverage** ("update the dashboard with all new stuff added to the system"): orgs → Tasks 5, 13; HIL/people approvals → 2, 11; automation packages + selector health → 3, 14; recordings → 3, 14; captures/documents → 2, 15; people review/links/messages → 2, 11, 15; applications → 2, 15; Jev → 3, 12; health/doctor → 12 (reuses `lib/health.js`); daemon/bridge/org serve → 3, 12; schedules → 1, 10; vault → 3, 15 (counts-only tile, D13 — user confirmed 2026-09-26); logins → 3, 14; i18n → 17; old bugs → 8. Update-available (F2) and unread messages (F4) are deliberately deferred because the CLI can't provide them yet.
 - **Placeholders:** where a real column or helper name could not be confirmed from the survey (e.g. `SelectorHealth` field names, `jevtest` URL field, org test env helper, the `Autonomy` pause field), the step says which file to open and what to check, instead of guessing silently.
 - **Type consistency:** `ExecRow` (Go) ↔ `WorkflowExecutionSummary` (Wails) ↔ `executions[]` (JS) share `id, workflow_id, workflow_name, status, trigger_type, started_at, finished_at, created_at, error`. `summary.schedules.upcoming[].workflow_id/next_run` are used by `WorkflowsCard`. `orgs.orgs[].needs_you` (int|null) and `orgs.totals.needs_you` are used by `attentionItems`, `mergeFast` and `OrgsCard`. `attentionItems` targets `{page,data}|{hil:true}` match `AttentionStrip.go()` and the navData handling in Task 16.
+
+---
+
+## 8. Execution notes (2026-09-26)
+
+Where the implementation differed from the plan above, and why:
+
+- **Exit code.** Invalid input exits with code **3** (`errInvalidInput`, `cmd/monoagentcli/exitcodes.go`), not 2 as Tasks 4 and 6 said. The tests assert 3.
+- **Schema names.** The column is `workflow_executions.error_message` (not `error`), and `crawler_sessions` requires `cookies_json`. `automation.SelectorHealth` uses `Key`/`OK`/`Fail` and already carries `Status`. The stale check uses `automation.RegistrySelectorKeys`, the same as `automation doctor`.
+- **Health levels.** `lib/health.js` `summarize()` returns `ok | issues | broken`, not `warn | fail`. The attention strip and System card use the real levels.
+- **`schedules.upcoming`** is not capped at 5. The workflows card needs the next run of every scheduled workflow, and the list is bounded by the number of schedule nodes anyway. A 5-field cron is rejected by the parser itself (seconds are required, as in the daemon); no extra check is needed.
+- **Bridge probe.** `extension.FetchStatusTimeout` was added. `summary` probes the bridge addresses in parallel with a 400 ms budget.
+- **Org deep link.** This reuses App.jsx's existing `pendingOrgSelect` handoff, which now accepts `{ name, tab }`. The dashboard opens an org on "Needs you" when it has items waiting, otherwise on "Overview".
+- **Layout.** The breakpoints are container queries on `.dash-page` rather than viewport media queries. With the HIL or chat drawer open, the window stays wide while the content area shrinks, and viewport breakpoints squeezed the workflow names out entirely. This was found in the browser check. WebKitGTK 2.52 supports container queries, as do WebView2 and recent macOS WebKit.
+- **Polling while another page is shown.** App.jsx keeps pages mounted behind `display:none`, so `usePageVisible` alone did not stop the dashboard polling on other pages. `Dashboard` now takes `isActive`, gates every poll and event refresh on it, and refreshes once when it becomes active again. This was found in the polling-cost check.
+- **Measured numbers:**
+
+  | What | Result |
+  |---|---|
+  | `summary` (real profile) | about 30 ms |
+  | `workflow executions --all --limit 30` | about 20 ms |
+  | `org summary --fast` | about 19 ms |
+  | `org summary` (1 org) | about 1.6 s |
+  | Polling per dashboard window, per minute | 4 `summary`, 4 `org summary --fast`, 1 `org summary`, 12 `workflow executions --all` |
+  | Polling while another page is shown | none |
