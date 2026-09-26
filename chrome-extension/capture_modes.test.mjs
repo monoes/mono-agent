@@ -168,7 +168,7 @@ test("video summary: the record in meta.video and transcript.md, read from the p
     },
   });
   await env.MonoCaptureBridge.handleMenuClick({ menuItemId: "monoagent-capture-video" }, { id: 42 });
-  assert.deepEqual(artifactNames(sent), ["items.json", "readable.md", "screenshot.png", "transcript.md"]);
+  assert.deepEqual(artifactNames(sent), ["items.json", "readable.md", "transcript.md"]);
   const meta = envelope(sent).meta;
   assert.deepEqual(meta.summarize, { kind: "video" });
   assert.equal(meta.video.title, "Me at the zoo");

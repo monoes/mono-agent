@@ -29,9 +29,9 @@
     full: { label: "Save full page (screenshot + data)", formats: FULL_FORMATS },
     screenshot: { label: "Save screenshot only", formats: ["screenshot"], screenshotOnly: true },
     summary: { label: "Save page summary", formats: FULL_FORMATS, summarize: "page" },
-    // No MHTML for a video: a watch page's archive is tens of megabytes of
-    // player script and says less about the video than its transcript does.
-    video: { label: "Save video summary", formats: ["readable", "screenshot", "video"], summarize: "video" },
+    // No MHTML or screenshot for a video: transcript and readable text
+    // are what matter, and a static watch-page frame adds megabytes of player UI.
+    video: { label: "Save video summary", formats: ["readable", "video"], summarize: "video" },
   };
 
   const ROOT_ID = "monoagent-root";

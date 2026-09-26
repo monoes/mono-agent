@@ -320,11 +320,34 @@
       tables,
       artifacts,
       warnings,
+      dimensions: dimensions(),
       adapter: adapted ? adapted.adapter : null,
       selectionRequested: !!o.selection,
       selectionFound: !!selection,
     };
   }
 
-  root.MonoCapturePage = { prepare, extract, restore, cssPath };
+  function dimensions() {
+    const doc = document.documentElement;
+    const body = document.body;
+    const width = Math.max(
+      (doc && doc.scrollWidth) || 0,
+      (doc && doc.offsetWidth) || 0,
+      (doc && doc.clientWidth) || 0,
+      (body && body.scrollWidth) || 0,
+      (body && body.offsetWidth) || 0,
+      root.innerWidth || 0
+    );
+    const height = Math.max(
+      (doc && doc.scrollHeight) || 0,
+      (doc && doc.offsetHeight) || 0,
+      (doc && doc.clientHeight) || 0,
+      (body && body.scrollHeight) || 0,
+      (body && body.offsetHeight) || 0,
+      root.innerHeight || 0
+    );
+    return { width: Math.ceil(width), height: Math.ceil(height) };
+  }
+
+  root.MonoCapturePage = { prepare, extract, restore, cssPath, dimensions };
 })(globalThis);

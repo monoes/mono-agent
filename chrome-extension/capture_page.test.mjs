@@ -42,7 +42,15 @@ function page({ body = el("body"), scrolled = [] } = {}) {
 
 test("capture_page.js loads at all", () => {
   const { page: mono } = page();
-  assert.deepEqual(Object.keys(mono).sort(), ["cssPath", "extract", "prepare", "restore"]);
+  assert.deepEqual(Object.keys(mono).sort(), ["cssPath", "dimensions", "extract", "prepare", "restore"]);
+});
+
+test("dimensions computes the scrollable page dimensions", () => {
+  const body = el("body", { scrollHeight: 2500, scrollWidth: 1200 });
+  const { page: mono } = page({ body });
+  const dims = mono.dimensions();
+  assert.ok(dims.height >= 2500);
+  assert.ok(dims.width >= 1200);
 });
 
 test("cssPath stops at the nearest id, because that is the stable part", () => {
