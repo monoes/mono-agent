@@ -15,7 +15,7 @@ import { after, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { findChrome } from "./browser_harness.mjs";
-import { attach, extensionWorker, sleep, start } from "./extension_harness.mjs";
+import { attach, sleep, start } from "./extension_harness.mjs";
 
 const FIXTURE = `<!doctype html><html><head><meta charset="utf-8"><title>type_cdp</title>
 <style>body{font:16px sans-serif;margin:20px} .big{min-height:120px;width:600px;border:1px solid #999}</style></head>
@@ -61,7 +61,8 @@ describe("type_cdp types into the element it is given", { skip: browser ? false 
     const { cdp } = browser;
     await new Promise((r) => server.listen(0, "127.0.0.1", r));
     const url = `http://127.0.0.1:${server.address().port}/form`;
-    const worker = await extensionWorker(cdp);
+    assert.ok(browser.worker, browser.workerError);
+    const worker = browser.worker;
     page = await attach(cdp, { url });
     await sleep(700); // content.js is declared at document_idle
     sw = await attach(cdp, { targetId: worker.targetId });

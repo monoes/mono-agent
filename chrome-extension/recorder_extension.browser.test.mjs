@@ -55,16 +55,9 @@ describe("the unpacked extension records a real page", { skip: browser ? false :
     await new Promise((r) => server.listen(0, "127.0.0.1", r));
     const pageUrl = `http://127.0.0.1:${server.address().port}/fixture`;
 
-    // The extension's worker tells us its id.
-    let extId = "";
-    for (let i = 0; i < 100 && !extId; i++) {
-      const { targetInfos } = await cdp.send("Target.getTargets");
-      const sw = targetInfos.find((t) => t.type === "service_worker" && t.url.endsWith("/background.js"));
-      if (sw) extId = new URL(sw.url).host;
-      else await sleep(100);
-    }
-    assert.ok(extId, "the extension's service worker started");
-
+    // The extension's worker tells us its id (start() waited for it).
+    assert.ok(browser.worker, browser.workerError);
+    const extId = browser.worker.id;
     const attach = async (url) => {
       const { targetId } = await cdp.send("Target.createTarget", { url });
       const { sessionId } = await cdp.send("Target.attachToTarget", { targetId, flatten: true });

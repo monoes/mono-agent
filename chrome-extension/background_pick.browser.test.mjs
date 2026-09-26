@@ -15,7 +15,7 @@ import { after, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { findChrome } from "./browser_harness.mjs";
-import { attach, extensionWorker, sleep, start } from "./extension_harness.mjs";
+import { attach, sleep, start } from "./extension_harness.mjs";
 
 const FIXTURE = `<!doctype html><html><head><meta charset="utf-8"><title>pick</title>
 <style>body{font:16px sans-serif;margin:80px 20px} button,input,a{display:block;margin:12px 0;padding:6px}</style></head>
@@ -56,7 +56,8 @@ describe("pick_element", { skip: browser ? false : why, concurrency: 1 }, () => 
     const { cdp } = browser;
     await new Promise((r) => server.listen(0, "127.0.0.1", r));
     const url = `http://127.0.0.1:${server.address().port}/app?session=s3cret`;
-    const worker = await extensionWorker(cdp);
+    assert.ok(browser.worker, browser.workerError);
+    const worker = browser.worker;
     page = await attach(cdp, { url });
     await sleep(600);
     sw = await attach(cdp, { targetId: worker.targetId });
