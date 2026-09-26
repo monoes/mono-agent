@@ -148,7 +148,17 @@ type importMatch struct {
 	// Clash names a local workflow with the same name that the import does
 	// not replace (reported as a warning).
 	Clash string
+	// By says how Target was found: matchByID (the file's own id),
+	// matchByImport (an earlier import of this file) or matchByContent (an
+	// identical unindexed workflow).
+	By string
 }
+
+const (
+	matchByID      = "id"
+	matchByImport  = "import"
+	matchByContent = "content"
+)
 
 // findImportTarget finds the local workflow an import corresponds to: the
 // file's own id, else a workflow imported earlier from the same source
@@ -166,11 +176,30 @@ func findImportTarget(ctx context.Context, store *workflow.HybridWorkflowStore, 
 		}
 		return nil
 	}
-	decide := func(existing *workflow.Workflow) importMatch {
-		return importMatch{Target: existing, MayUpdate: uneditedSinceImport(existing, entryFor(existing.ID))}
+	decide := func(existing *workflow.Workflow, by string) importMatch {
+		return importMatch{Target: existing, MayUpdate: uneditedSinceImport(existing, entryFor(existing.ID)), By: by}
+	}
+	// An identical copy made by an earlier import of this file: once the
+	// original was edited, re-imports land there ("unchanged") instead of
+	// making one more copy each time.
+	identicalCopy := func() *workflow.Workflow {
+		for i := len(idx) - 1; i >= 0; i-- {
+			if e := idx[i]; e.Source == source && e.Hash == hash {
+				if c := ownedWorkflow(ctx, store, db, profileID, e.ID); c != nil && workflowContentHash(c) == hash {
+					return c
+				}
+			}
+		}
+		return nil
 	}
 	if existing := ownedWorkflow(ctx, store, db, profileID, wf.ID); existing != nil {
-		return decide(existing)
+		m := decide(existing, matchByID)
+		if !m.MayUpdate && workflowContentHash(existing) != hash {
+			if c := identicalCopy(); c != nil {
+				return importMatch{Target: c, By: matchByImport}
+			}
+		}
+		return m
 	}
 	for _, match := range []func(importIndexEntry) bool{
 		func(e importIndexEntry) bool { return e.Source == source && e.Hash == hash },
@@ -179,7 +208,7 @@ func findImportTarget(ctx context.Context, store *workflow.HybridWorkflowStore, 
 		for i := len(idx) - 1; i >= 0; i-- {
 			if match(idx[i]) {
 				if existing := ownedWorkflow(ctx, store, db, profileID, idx[i].ID); existing != nil {
-					return decide(existing)
+					return decide(existing, matchByImport)
 				}
 			}
 		}
@@ -217,7 +246,7 @@ func matchUnindexed(ctx context.Context, store *workflow.HybridWorkflowStore, db
 			continue
 		}
 		if workflowContentHash(full) == hash {
-			return importMatch{Target: full}
+			return importMatch{Target: full, By: matchByContent}
 		}
 		if clash == "" {
 			clash = full.ID
@@ -226,9 +255,19 @@ func matchUnindexed(ctx context.Context, store *workflow.HybridWorkflowStore, db
 	return importMatch{Clash: clash}
 }
 
-// copyWarning is the warning of an import that did not replace id.
-func copyWarning(id string) string {
-	return fmt.Sprintf("a workflow with this name already exists: %s; imported as a copy — use --replace %s to replace it", id, id)
+// copyWarning is the warning of an import that did not replace id; by
+// says why id matched (matchByID, matchByImport, or "" for a name clash).
+func copyWarning(id, by string) string {
+	var why string
+	switch by {
+	case matchByID:
+		why = "a workflow with this id already exists and was edited locally"
+	case matchByImport:
+		why = "the workflow imported earlier from this file was edited locally"
+	default:
+		why = "a workflow with this name already exists"
+	}
+	return fmt.Sprintf("%s: %s; imported as a copy — use --replace %s to replace it", why, id, id)
 }
 
 // nodeTypeSet is the sorted multiset of a workflow's node types.
