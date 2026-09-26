@@ -282,7 +282,8 @@ func migrateProfilesToPerProfileKeys(db *storage.Database) {
 }
 
 // resolveProfileID accepts either a profile's ID or its name and returns the
-// canonical ID, erroring if neither matches any row in `profiles`.
+// canonical ID, erroring (exit 3, invalid input) if neither matches any
+// row in `profiles`.
 func resolveProfileID(db *sql.DB, idOrName string) (string, error) {
 	var id string
 	if err := db.QueryRow(`SELECT id FROM profiles WHERE id = ?`, idOrName).Scan(&id); err == nil {
@@ -291,7 +292,7 @@ func resolveProfileID(db *sql.DB, idOrName string) (string, error) {
 	if err := db.QueryRow(`SELECT id FROM profiles WHERE name = ?`, idOrName).Scan(&id); err == nil {
 		return id, nil
 	}
-	return "", fmt.Errorf("profile %q not found (checked both id and name)", idOrName)
+	return "", errInvalidInput("profile %q not found (checked both id and name)", idOrName)
 }
 
 // ensureDir creates a directory if it does not exist.
