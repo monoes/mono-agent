@@ -192,7 +192,7 @@ func (a *App) TestConnection(id string) string {
 					fmt.Printf("token refresh attempted: %v\n", refreshErr)
 				}
 			}
-			if err := a.connMgr.Test(a.ctx, id); err != nil {
+			if _, err := a.connMgr.Test(a.ctx, id); err != nil {
 				return fmt.Sprintf("error: %v", err)
 			}
 			return "ok"
