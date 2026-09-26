@@ -71,3 +71,33 @@ func TestOrgReconcileDocDoesNotSave(t *testing.T) {
 		t.Fatalf("mismatched name: %v", runErr)
 	}
 }
+
+// A new org from a document that asks for manual autonomy keeps its level
+// and its decider policy text (the Org Designer's "new org" save).
+func TestOrgReconcileDocNewOrgKeepsDocumentAutonomy(t *testing.T) {
+	f := newOrgCLIFixture(t)
+	d := orgdesign.NewOrg("careful", "grow", orgdesign.NewOrgOptions{})
+	d.Autonomy = &orgdesign.Autonomy{Level: orgdesign.LevelManual, Policy: "never spend money without asking"}
+	body, _ := json.Marshal(d)
+
+	cmd := newOrgCmd(f.cfg)
+	cmd.SetArgs([]string{"reconcile-doc", "careful", "--new", "--by", "gui"})
+	cmd.SetIn(strings.NewReader(string(body)))
+	var runErr error
+	captureStdout(t, func() { runErr = cmd.Execute() })
+	if runErr != nil {
+		t.Fatal(runErr)
+	}
+	db, err := storage.NewDatabase(f.cfg.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	row, err := orgdecide.NewStore(db.DB).Get(context.Background(), "default", "careful")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Level != orgdesign.LevelManual || row.Policy != "never spend money without asking" {
+		t.Fatalf("starting autonomy = %+v, want manual with the document's policy", row)
+	}
+}
