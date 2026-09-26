@@ -174,6 +174,9 @@ func newPeopleMessagesAddCmd(cfg *globalConfig) *cobra.Command {
 				return fmt.Errorf("saving message: %w", err)
 			}
 
+			if cfg.JSONOutput {
+				return printReviewJSON(msg)
+			}
 			fmt.Fprintf(os.Stdout, "Saved message %s for person %s.\n", msg.ID, msg.PersonID)
 			return nil
 		},
@@ -857,6 +860,9 @@ func newPeopleMessagesDraftsCmd(cfg *globalConfig) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("listing drafts: %w", err)
 			}
+			if drafts == nil {
+				drafts = []*storage.PersonMessageWithPerson{}
+			}
 
 			if cfg.JSONOutput {
 				enc := json.NewEncoder(os.Stdout)
@@ -942,12 +948,17 @@ func newPeopleMessagesSendDraftCmd(cfg *globalConfig) *cobra.Command {
 			// Graph reassigns a new message id when a draft is sent (moved
 			// into Sent Items), so the stored external_id must be updated to
 			// stay valid for a later reply/get_message/delete_message.
+			msg.Status = "sent"
 			if len(outputs) > 0 && len(outputs[0].Items) > 0 {
 				if newID := getStr(outputs[0].Items[0].JSON, "message_id"); newID != "" && newID != msg.ExternalID {
 					if err := db.UpdatePersonMessageExternalID(args[0], newID); err != nil {
 						return fmt.Errorf("updating external id: %w", err)
 					}
+					msg.ExternalID = newID
 				}
+			}
+			if cfg.JSONOutput {
+				return printReviewJSON(msg)
 			}
 			fmt.Fprintf(os.Stdout, "Sent draft %s.\n", args[0])
 			return nil
@@ -993,6 +1004,9 @@ func newPeopleMessagesRejectDraftCmd(cfg *globalConfig) *cobra.Command {
 
 			if err := db.DeletePersonMessage(args[0]); err != nil {
 				return fmt.Errorf("deleting message: %w", err)
+			}
+			if cfg.JSONOutput {
+				return printReviewJSON(map[string]string{"id": args[0], "status": "discarded"})
 			}
 			fmt.Fprintf(os.Stdout, "Discarded draft %s.\n", args[0])
 			return nil

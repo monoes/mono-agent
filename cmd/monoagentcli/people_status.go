@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/monoes/mono-agent/internal/storage"
 	"github.com/spf13/cobra"
 )
 
@@ -109,6 +110,9 @@ func newPeopleStatusHistoryCmd(cfg *globalConfig) *cobra.Command {
 			updates, err := db.ListPersonStatusUpdates(args[0], cfg.ProfileID, limit)
 			if err != nil {
 				return fmt.Errorf("listing status updates: %w", err)
+			}
+			if updates == nil {
+				updates = []*storage.PersonStatusUpdate{}
 			}
 
 			if cfg.JSONOutput {
