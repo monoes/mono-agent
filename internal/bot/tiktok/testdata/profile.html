@@ -68,6 +68,11 @@
     fake_following: { name: 'Fake Following', state: 'Following', videos: 3 },
     fake_friends: { name: 'Fake Friends', state: 'Friends', videos: 0 },
     fake_private: { name: 'Fake Private', private: true, noMessage: true },
+    // Slow loads (live T1): the first click on a count lands before the
+    // page is ready and does nothing; or the popup opens but its rows take
+    // longer than one wait.
+    fake_deafclick: { name: 'Fake Deafclick', ignoreClicks: 1, videos: 1 },
+    fake_slowrows: { name: 'Fake Slowrows', rowsDelay: 3000, videos: 1 },
     fake_stuck: { name: 'Fake Stuck', stuck: true, videos: 1 },
     fake_foreign: { name: 'Fake Foreign', state: 'Seguir', videos: 1 },
     fake_wrongchat: { name: 'Fake Wrongchat', chatWith: 'fake_someone_else', videos: 1 },
@@ -200,9 +205,10 @@
   for (const which of ['followers', 'following']) {
     document.getElementById(which + '-count').addEventListener('click', (e) => {
       if (!trusted(e)) return;
+      if (cfg.ignoreClicks) { cfg.ignoreClicks--; log('ignored-count-click'); return; }
       kind = which; listed = 0; ul.innerHTML = '';
       popup.classList.remove('hidden');
-      if (!cfg.private) setTimeout(() => addUsers(6), 100);
+      if (!cfg.private) setTimeout(() => addUsers(6), cfg.rowsDelay || 100);
     });
   }
   document.getElementById('userlist').addEventListener('scroll', () => setTimeout(() => addUsers(4), 20));

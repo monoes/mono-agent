@@ -454,7 +454,7 @@ func (b *TikTokBot) SearchVideos(ctx context.Context, page browser.PageInterface
 // ---------------------------------------------------------------------------
 
 const jsFollowList = `
-const pop = document.querySelector('[data-e2e="follow-info-popup"]') || [...document.querySelectorAll('[role="dialog"]')].find(visible);
+const pop = [...document.querySelectorAll('[data-e2e="follow-info-popup"]')].find(visible) || [...document.querySelectorAll('[role="dialog"]')].find(visible);
 if (!pop) return {open: false, items: []};
 // rowOf is the widest ancestor of a (inside the popup) that still names only
 // this one account: the avatar link, the texts and the follow button.
@@ -531,22 +531,47 @@ func (b *TikTokBot) ListFollowers(ctx context.Context, page browser.PageInterfac
 	if err != nil {
 		return nil, err
 	}
-	el, err := page.Element(countSel, findTimeout)
-	if err != nil || el == nil {
-		return nil, fmt.Errorf("tiktok: %s count not found on %s", kind, u)
-	}
-	if err := botpkg.ClickTrusted(page, el); err != nil {
-		return nil, fmt.Errorf("tiktok: open %s list: %w", kind, err)
-	}
 	var st struct {
 		Open  bool                     `json:"open"`
 		Items []map[string]interface{} `json:"items"`
 	}
-	ok, _ := waitFor(ctx, findTimeout, func() (bool, error) {
-		err := evalJS(page, "", jsFollowList, &st)
-		return st.Open && len(st.Items) > 0, err
-	})
+	openList := func() error {
+		el, err := page.Element(countSel, findTimeout)
+		if err != nil || el == nil {
+			return fmt.Errorf("tiktok: %s count not found on %s", kind, u)
+		}
+		if err := botpkg.ClickTrusted(page, el); err != nil {
+			return fmt.Errorf("tiktok: open %s list: %w", kind, err)
+		}
+		return nil
+	}
+	loaded := func() bool {
+		ok, _ := waitFor(ctx, findTimeout, func() (bool, error) {
+			err := evalJS(page, "", jsFollowList, &st)
+			return st.Open && len(st.Items) > 0, err
+		})
+		return ok
+	}
+	if err := openList(); err != nil {
+		return nil, err
+	}
+	ok := loaded()
+	// Slow loads: a click that landed before the page was ready opened
+	// nothing — click once more; a popup that opened but is still loading
+	// its rows gets one more wait. Never more than one extra click.
+	if !ok && !st.Open && ctx.Err() == nil {
+		if err := openList(); err != nil {
+			return nil, err
+		}
+		ok = loaded()
+	}
+	if !ok && st.Open && ctx.Err() == nil {
+		ok = loaded()
+	}
 	if !ok {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if st.Open {
 			return nil, fmt.Errorf("tiktok: the %s list of %s is empty or private", kind, u)
 		}
