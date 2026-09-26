@@ -48,6 +48,15 @@ type Manifest struct {
 	Actions     []string       `json:"actions"`
 	Defaults    map[string]any `json:"defaults,omitempty"`
 	Policy      Policy         `json:"policy"`
+	// Legacy marks a package generated from ~/.monoagent/actions/<platform>
+	// (never set by hand). Platform is the original directory name, the
+	// "<platform>.<action>" node types old workflows still use.
+	Legacy *LegacyInfo `json:"legacy,omitempty"`
+}
+
+// LegacyInfo is Manifest.Legacy.
+type LegacyInfo struct {
+	Platform string `json:"platform"`
 }
 
 type Publisher struct {
@@ -121,6 +130,7 @@ type InstalledInfo struct {
 	PreviousVersion   string    `json:"previousVersion,omitempty"` // rollback target
 	PendingUpdate     string    `json:"pendingUpdate,omitempty"`   // newer seed held back because the user modified this built-in
 	ScriptsAllowed    bool      `json:"scriptsAllowed"`            // page_script / http_fetch_in_page may run
+	LegacyPlatform    string    `json:"legacyPlatform,omitempty"`  // generated legacy package: old "<platform>.<action>" node prefix
 	LiveRunConfirmed  bool      `json:"liveRunConfirmed"`          // write-level actions may run for real
 }
 

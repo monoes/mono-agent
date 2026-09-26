@@ -19,6 +19,17 @@ func Validate(p *Package) []IssueJSON {
 	}
 	m := p.Manifest
 	out := validateManifest(m, p.Source)
+	if p.legacyGenerated() {
+		// Documented exception: a package generated from legacy
+		// ~/.monoagent/actions whose actions reveal no site keeps running
+		// unrestricted, as it did before packages existed.
+		for i, is := range out {
+			if is.Code == "missing_domains" || is.Code == "missing_step_permissions" {
+				out[i].Severity = "warning"
+				out[i].Message = "generated from legacy actions: " + is.Message + " (it runs unrestricted, as before the upgrade)"
+			}
+		}
+	}
 	if is := engineIssue(m); is != nil {
 		out = append(out, *is)
 	}
