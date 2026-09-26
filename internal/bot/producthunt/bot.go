@@ -90,7 +90,7 @@ func (b *ProductHuntBot) GetMethodByName(name string) (func(ctx context.Context,
 			if err != nil {
 				return nil, fmt.Errorf("list_comments: %w", err)
 			}
-			max := 0
+			max := defaultMaxComments
 			if s := strings.TrimSpace(a[1]); s != "" {
 				if max, err = strconv.Atoi(s); err != nil || max < 0 {
 					return nil, fmt.Errorf("list_comments: maxComments must be a whole number ≥ 0, got %q", a[1])

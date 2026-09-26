@@ -174,10 +174,170 @@ func readComments(page browser.PageInterface) ([]Comment, error) {
 	return cs, nil
 }
 
-// ListComments returns the comments rendered on a launch page, in page
-// order: top-level comments (depth 0) and replies (depth 1+, parentId set).
-// Comments Product Hunt has not loaded yet ("show more") are not included.
-// maxComments > 0 keeps only the first maxComments.
+// Comment expansion. Product Hunt renders the first page of comments and
+// hides the rest behind a feed-level "Show more comments" button and
+// per-thread "View N more replies" / "Show N replies" buttons. Before
+// reading, ListComments clicks those controls (and nothing else) until none
+// remain, maxComments comments are loaded, or one of these caps is hit.
+var (
+	// expandClicks caps the expansion clicks per ListComments call.
+	expandClicks = 50
+	// expandBudget caps the total time spent expanding.
+	expandBudget = 30 * time.Second
+	// expandSettle is how long one click may take to render new comments
+	// before the control is given up on.
+	expandSettle = 5 * time.Second
+)
+
+// defaultMaxComments is list_comments' maxComments when none is given.
+const defaultMaxComments = 200
+
+const (
+	expandMark  = "data-monoagent-ph-expand"
+	expandTried = "data-monoagent-ph-tried"
+)
+
+// nextExpanderJS tags (with mark) the first comment-expansion control in
+// document order and reports how many comments are loaded. A control
+// qualifies only when all of these hold:
+//   - it is a button, [role=button], or an <a> without a real href (a
+//     link would navigate away);
+//   - it sits inside the comments section (comments-feed or #comments) and
+//     not inside a form (the composer / reply boxes);
+//   - it is visible, enabled, and not already tried without effect;
+//   - its data-test does not name another control (vote, flag, menu,
+//     submit, follow, share);
+//   - its text or aria-label reads like "Show more comments", "View 3 more
+//     replies", "Show 2 replies", "12 more replies", "Load more" — short,
+//     and without any word of another action (upvote, follow, log in,
+//     share, report, edit, delete, hide, ...). A bare "Show more" / "See
+//     more" inside a comment's own subtree expands that comment's text, not
+//     the feed, and is skipped.
+const nextExpanderJS = `(mark, tried) => {
+	document.querySelectorAll('[' + mark + ']').forEach(e => e.removeAttribute(mark));
+	const isC = el => /^comment-[0-9]+$/.test(el.getAttribute('data-test') || '');
+	const count = Array.from(document.querySelectorAll('[data-test^="comment-"]')).filter(isC).length;
+	const roots = Array.from(document.querySelectorAll('[data-test="comments-feed"], #comments'));
+	if (!roots.length) return { count, found: false };
+	const owner = x => { for (let e = x; e; e = e.parentElement) if (isC(e)) return e; return null; };
+	const norm = s => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+	const noun = '(comments?|repl(?:y|ies)|responses?|answers?)';
+	const listy = [
+		new RegExp('^(show|view|load|see|read)( (all|more|older|previous|earlier))*( [0-9][0-9,.]*k?)?( (more|other|previous|older|earlier))?( ' + noun + ')( \\(?[0-9][0-9,.]*k?\\)?)?$'),
+		new RegExp('^[0-9][0-9,.]*k? (more )?' + noun + '$'),
+		new RegExp('^(show|view|see|read) (more|all) \\(?[0-9][0-9,.]*k?\\)?$'),
+	];
+	const bare = /^(show|view|load|see) more$/;
+	const banned = /\b(upvotes?|upvoted|vote|votes|follow|following|unfollow|log ?in|login|sign ?(in|up)|share|report|flag|edit|delete|remove|subscribe|hide|less|collapse|write|post|send|submit)\b/;
+	const badTest = /vote|flag|menu|submit|follow|share|form/i;
+	for (const el of document.querySelectorAll('button, [role="button"], a')) {
+		if (!roots.some(r => r.contains(el))) continue;
+		if (el.closest('form') || el.hasAttribute(tried)) continue;
+		if (badTest.test(el.getAttribute('data-test') || '')) continue;
+		if (el.tagName === 'A') {
+			const h = (el.getAttribute('href') || '').trim();
+			if (h && h !== '#' && !/^javascript:/i.test(h)) continue;
+		}
+		if (el.disabled || el.getAttribute('aria-disabled') === 'true' || el.getClientRects().length === 0) continue;
+		const labels = [norm(el.textContent), norm(el.getAttribute('aria-label'))].filter(Boolean);
+		if (!labels.length || labels.some(l => l.length > 40 || banned.test(l))) continue;
+		let ok = labels.some(l => listy.some(re => re.test(l)));
+		if (!ok && labels.some(l => bare.test(l)) && !owner(el)) ok = true;
+		if (!ok) continue;
+		el.setAttribute(mark, '1');
+		return { count, found: true, label: labels[0] };
+	}
+	return { count, found: false };
+}`
+
+// expandStateJS reports the loaded comment count and whether the tagged
+// control is still in the page.
+const expandStateJS = `(mark) => {
+	const isC = el => /^comment-[0-9]+$/.test(el.getAttribute('data-test') || '');
+	return {
+		count: Array.from(document.querySelectorAll('[data-test^="comment-"]')).filter(isC).length,
+		present: !!document.querySelector('[' + mark + ']'),
+	};
+}`
+
+// giveUpExpanderJS marks the tagged control as tried so it is not picked
+// again (a click that loaded nothing).
+const giveUpExpanderJS = `(mark, tried) => {
+	const e = document.querySelector('[' + mark + ']');
+	if (e) { e.setAttribute(tried, '1'); e.removeAttribute(mark); }
+	return true;
+}`
+
+type expandState struct {
+	Count   int    `json:"count"`
+	Found   bool   `json:"found"`
+	Present bool   `json:"present"`
+	Label   string `json:"label"`
+}
+
+// expandComments clicks the page's comment-expansion controls (trusted
+// clicks, one at a time) until none remain, maxComments (> 0) comments are
+// loaded, expandClicks clicks were made, or expandBudget ran out. After
+// each click it waits up to expandSettle for the comment count to grow; a
+// control that loads nothing is not clicked again. It is best effort:
+// whatever is loaded when it stops is what ListComments reads. It returns
+// the number of clicks made.
+func expandComments(ctx context.Context, page browser.PageInterface, maxComments int) (int, error) {
+	deadline := time.Now().Add(expandBudget)
+	clicks := 0
+	for clicks < expandClicks && time.Now().Before(deadline) {
+		if err := ctx.Err(); err != nil {
+			return clicks, err
+		}
+		var st expandState
+		if err := botpkg.EvalJSON(page, nextExpanderJS, &st, expandMark, expandTried); err != nil {
+			return clicks, nil
+		}
+		if !st.Found || (maxComments > 0 && st.Count >= maxComments) {
+			break
+		}
+		giveUp := func() {
+			var ok bool
+			_ = botpkg.EvalJSON(page, giveUpExpanderJS, &ok, expandMark, expandTried)
+		}
+		el, _, err := botpkg.FindFirst(page, "["+expandMark+"]", nil, 2*time.Second)
+		if err != nil {
+			giveUp()
+			continue
+		}
+		if err := botpkg.ClickTrusted(page, el); err != nil {
+			giveUp()
+			continue
+		}
+		clicks++
+		settle := time.Now().Add(expandSettle)
+		if settle.After(deadline) {
+			settle = deadline
+		}
+		grew := false
+		for !grew && time.Now().Before(settle) {
+			if err := sleepCtx(ctx, pollInterval); err != nil {
+				return clicks, err
+			}
+			var now expandState
+			if botpkg.EvalJSON(page, expandStateJS, &now, expandMark) == nil && now.Count > st.Count {
+				grew = true
+			}
+		}
+		if !grew {
+			giveUp()
+		}
+	}
+	return clicks, nil
+}
+
+// ListComments returns the comments on a launch page, in page order:
+// top-level comments (depth 0) and replies (depth 1+, parentId set). It
+// first expands the comment section — clicking only its "Show more
+// comments" / "View N more replies" controls — until everything is loaded,
+// maxComments comments are, or the click/time caps are hit (see
+// expandComments). maxComments > 0 keeps only the first maxComments; 0
+// keeps every loaded comment.
 func (b *ProductHuntBot) ListComments(ctx context.Context, page browser.PageInterface, launchURL string, maxComments int) ([]map[string]interface{}, error) {
 	u, err := checkLaunchURL(launchURL)
 	if err != nil {
@@ -187,6 +347,9 @@ func (b *ProductHuntBot) ListComments(ctx context.Context, page browser.PageInte
 		return nil, err
 	}
 	if err := commentSection(page); err != nil {
+		return nil, err
+	}
+	if _, err := expandComments(ctx, page, maxComments); err != nil {
 		return nil, err
 	}
 	cs, err := readComments(page)

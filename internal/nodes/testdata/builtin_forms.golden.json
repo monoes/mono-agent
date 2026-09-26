@@ -1144,8 +1144,8 @@
         "label": "Max Comments",
         "type": "number",
         "required": false,
-        "default": 0,
-        "help": "Stop after this many comments (0 = all loaded comments)",
+        "default": 200,
+        "help": "Stop expanding and return at most this many comments (0 = no limit; expansion is still capped at 50 clicks / ~30 s)",
         "min": 0
       }
     ]
