@@ -53,3 +53,48 @@ func TestRegisterBrowserNodes_FromDefSource(t *testing.T) {
 		}
 	}
 }
+
+// legacyPkg is a local-* package context that knows its original name.
+type legacyPkg struct {
+	action.PackageContext
+	name string
+}
+
+func (p legacyPkg) LegacyPlatform() string { return p.name }
+
+type legacySource struct {
+	fakeSource
+	legacy map[string]string
+}
+
+func (s legacySource) Package(id string) action.PackageContext {
+	if n, ok := s.legacy[id]; ok {
+		return legacyPkg{name: n}
+	}
+	return nil
+}
+
+// An upgraded ~/.monoagent/actions/google_maps/get_place.json becomes
+// package local-google-maps; workflows still say google_maps.get_place.
+func TestRegisterBrowserNodes_LegacyAliasUsesOriginalName(t *testing.T) {
+	action.SetDefSource(legacySource{
+		fakeSource: fakeSource{list: []string{"local-google-maps/get_place", "local-widgets/scrape"}},
+		legacy:     map[string]string{"local-google-maps": "google_maps"},
+	})
+	t.Cleanup(func() { action.SetDefSource(nil) })
+
+	r := workflow.NewNodeTypeRegistry()
+	RegisterBrowserNodes(r)
+	if !r.Has("google_maps.get_place") {
+		t.Error("google_maps.get_place (the original name) does not resolve")
+	}
+	if f, ok := r.Get("google_maps.get_place"); ok {
+		if got := f().(*BrowserNode).platform; got != "local-google-maps" {
+			t.Errorf("runs automation %q, want local-google-maps", got)
+		}
+	}
+	// No recorded name: the id without "local-", as before.
+	if !r.Has("widgets.scrape") {
+		t.Error("widgets.scrape does not resolve")
+	}
+}

@@ -48,12 +48,29 @@ func RegisterBrowserNodes(r *workflow.NodeTypeRegistry) {
 	// Legacy ~/.monoagent/actions/<p>/ files are wrapped into a
 	// "local-<p>" package; workflows saved before that still say
 	// "<p>.<action>", so resolve that name wherever no package claims it.
+	// The package id is a sanitised slug (google_maps → local-google-maps),
+	// so the alias uses the original directory name when the registry
+	// records it.
 	for _, la := range locals {
-		legacy := strings.TrimPrefix(la[0], "local-") + "." + la[1]
+		legacy := legacyPlatform(la[0]) + "." + la[1]
 		if !registered[legacy] {
 			r.Alias(legacy, la[0]+"."+la[1])
 		}
 	}
+}
+
+// legacyPlatform is the ~/.monoagent/actions/<p> name a local-* package
+// was made from: the registry's record of it, else the id without
+// "local-".
+func legacyPlatform(id string) string {
+	if src := action.CurrentDefSource(); src != nil {
+		if lp, ok := src.Package(id).(interface{ LegacyPlatform() string }); ok {
+			if name := lp.LegacyPlatform(); name != "" {
+				return name
+			}
+		}
+	}
+	return strings.TrimPrefix(id, "local-")
 }
 
 // listActions returns "<automation>/<action>" entries from the installed
