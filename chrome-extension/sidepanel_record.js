@@ -41,6 +41,7 @@
   const verifyBtn = el("rec-verify");
   const saveBtn = el("rec-save");
   const keepBtn = el("rec-save-keep");
+  const existingBtn = el("rec-save-existing");
   const verifySteps = el("rec-verify-steps");
   const verifyError = el("rec-verify-error");
   const draftMsg = el("rec-draft-msg");
@@ -54,6 +55,8 @@
   // closing it still stops the recording.
   let owner = false;
   let confirmSave = false;
+  // The proposed id the person agreed to add to (after "already exists").
+  let addToExisting = "";
   const PING_MS = 20000;
 
   function say(target, kind, text) {
@@ -247,6 +250,8 @@
     confirmSave = false;
     saveBtn.textContent = "Save";
     keepBtn.hidden = true;
+    existingBtn.hidden = true;
+    addToExisting = "";
     saveAs.value = d.saveAs || "action";
     saveName.value = d.action || "";
     saveAutomation.value = d.automation || "";
@@ -342,24 +347,37 @@
     const force = View.hasErrors(draft) && confirmSave;
     saveBtn.disabled = true;
     keepBtn.disabled = true;
-    try {
-      const res = await send({
+    const automation = saveAutomation.value.trim();
+    const request = (isNew) =>
+      send({
         type: "record_save",
         draftDir: draft.draftDir,
         saveAs: saveAs.value,
         name: saveName.value.trim(),
-        automation: saveAutomation.value.trim(),
-        // A new automation stays new under whatever name the person gives it.
-        isNew: draft.isNew,
+        automation,
+        isNew,
         force,
         keepPackageSelectors: keepPackageSelectors === true,
       });
+    // `new` only for the analyzer's own proposal; a name the person typed
+    // is an automation to add to (the CLI installs it if it is not there),
+    // and so is a proposal they agreed to add to after "already exists".
+    const asNew = View.saveAsNew(draft, automation) && addToExisting !== automation;
+    existingBtn.hidden = true;
+    try {
+      const res = await request(asNew);
       keepBtn.hidden = true;
       const done = View.saveResult(res.result);
       say(draftMsg, done.warn ? "warn" : "ok", done.text);
     } catch (err) {
       const conflict = View.selectorConflict(err, saveAutomation.value.trim());
-      if (conflict && !keepPackageSelectors) {
+      if (asNew && View.alreadyExists(err)) {
+        // The proposed id is taken -- perhaps by an unrelated automation.
+        // Never add to it without asking.
+        keepBtn.hidden = true;
+        say(draftMsg, "warn", View.existsQuestion(automation));
+        existingBtn.hidden = false;
+      } else if (conflict && !keepPackageSelectors) {
         say(draftMsg, "warn", `${conflict.text}. Save again keeping the package's current selectors, or re-record.`);
         keepBtn.hidden = false;
       } else {
@@ -382,6 +400,18 @@
       return;
     }
     await save(false);
+  });
+
+  existingBtn.addEventListener("click", async () => {
+    if (!draft) return;
+    addToExisting = saveAutomation.value.trim();
+    await save(false);
+  });
+
+  // A different name is a different decision.
+  saveAutomation.addEventListener("input", () => {
+    addToExisting = "";
+    existingBtn.hidden = true;
   });
 
   keepBtn.addEventListener("click", async () => {

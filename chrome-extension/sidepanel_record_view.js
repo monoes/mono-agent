@@ -165,6 +165,23 @@
     return { keys: named, text };
   }
 
+  /**
+   * saveAsNew: create a new automation (record save --new) only when the
+   * draft proposed one and the Automation field still holds that proposal.
+   * Any other name -- an existing automation typed in, or a new one -- goes
+   * as --automation, which adds to it or installs it (spec section 8.6,
+   * "new action in an existing automation").
+   */
+  function saveAsNew(draft, automation) {
+    return !!(draft && draft.isNew && String(automation || "").trim() === draft.automation);
+  }
+
+  /** existsQuestion is what the panel asks when the proposed id is taken. */
+  const existsQuestion = (id) => `An automation named ${id} already exists \u2014 add this action to it? Or rename it above and save again.`;
+
+  /** alreadyExists is the save refusal for --new on an installed id. */
+  const alreadyExists = (err) => /already exists; use --automation/.test(String((err && err.message) || err || ""));
+
   /** saveResult is the line after a save: what was saved, and any warnings. */
   function saveResult(r) {
     const res = r || {};
@@ -291,5 +308,5 @@
     return { ok, stoppedAt: r.stoppedAt || null, error, steps };
   }
 
-  root.MonoRecordView = { describe, rows, summary, hasErrors, selectorConflict, saveResult, sensitiveKind, targetName, hostPath, describeDraft, describeVerify };
+  root.MonoRecordView = { describe, rows, summary, hasErrors, selectorConflict, saveResult, saveAsNew, alreadyExists, existsQuestion, sensitiveKind, targetName, hostPath, describeDraft, describeVerify };
 })(globalThis);

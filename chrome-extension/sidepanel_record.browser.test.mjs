@@ -61,7 +61,7 @@ const STUB = `
       onMessage: ev(),
       sendMessage(m, cb) {
         let r = { ok: true };
-        if (m.type === "record_analyze") r = ${JSON.stringify(DRAFT)};
+        if (m.type === "record_analyze") r = window.__draft || ${JSON.stringify(DRAFT)};
         if (m.type === "record_verify") r = window.__verify.shift();
         if (m.type === "record_save") { window.__saveRequests.push(m); r = window.__save.shift(); }
         if (cb) setTimeout(() => cb(r), 0);
@@ -178,5 +178,65 @@ describe("the Record panel's Verify and Save results", { skip: browser ? false :
     await sleep(150);
     const reqs = JSON.parse(await browser.evaluate(`JSON.stringify(window.__saveRequests)`));
     assert.deepEqual(reqs.map((r) => r.keepPackageSelectors), [false, true]);
+  });
+
+  // A panel-analyzed draft proposes a NEW automation (the analyzer suffixes
+  // an existing id: e2e-crm -> e2e-crm-2). The person types the existing id
+  // to add the action there; that must go as `automation`, so the selector
+  // conflict -- and its recovery -- is reachable (e2e v0.76 pre-release).
+  async function analyzeNewDraft() {
+    const draft = JSON.parse(JSON.stringify(DRAFT));
+    draft.result.draft.isNew = true;
+    draft.result.draft.targetAutomation = "e2e-crm-2";
+    draft.result.draft.names.automation = "e2e-crm-2";
+    await browser.evaluate(`window.__draft = ${JSON.stringify(draft)}; window.__saveRequests.length = 0; window.__save.length = 0; document.getElementById("rec-analyze").click(); true`);
+    await sleep(150);
+    return browser.evaluate(`document.getElementById("rec-save-automation").value`);
+  }
+
+  it("saving a new draft into an existing automation goes as automation and reaches the conflict recovery", async () => {
+    assert.equal(await analyzeNewDraft(), "e2e-crm-2", "the analyzer's proposal is prefilled");
+    await browser.evaluate(`document.getElementById("rec-save-automation").value = "e2e-crm"; true`);
+    const refusal = { ok: false, error: "selectors differ", code: "selector_conflict", data: { keys: ["e2e-crm.name_input"] } };
+    await browser.evaluate(`window.__save.push(${JSON.stringify(refusal)}); document.getElementById("rec-save").click(); true`);
+    await sleep(150);
+    const keepShown = await browser.evaluate(`!document.getElementById("rec-save-keep").hidden`);
+    assert.equal(keepShown, true, "the conflict recovery is reachable");
+    await browser.evaluate(`window.__save.push(${JSON.stringify({ ok: true, result: { nodeType: "e2e-crm.create_contact" } })}); document.getElementById("rec-save-keep").click(); true`);
+    await sleep(150);
+    const reqs = JSON.parse(await browser.evaluate(`JSON.stringify(window.__saveRequests)`));
+    assert.deepEqual(
+      reqs.map((r) => [r.automation, r.isNew, r.keepPackageSelectors]),
+      [["e2e-crm", false, false], ["e2e-crm", false, true]],
+      "both saves target the existing automation, not --new"
+    );
+    assert.match(await browser.evaluate(`document.getElementById("rec-draft-msg").textContent`), /Saved as e2e-crm\.create_contact/);
+  });
+
+  it("the unchanged proposal goes as new; if that id exists the panel asks before adding to it", async () => {
+    await analyzeNewDraft();
+    const exists = { ok: false, error: "automation e2e-crm-2 already exists; use --automation e2e-crm-2", code: "internal" };
+    await browser.evaluate(`window.__save.push(${JSON.stringify(exists)}); document.getElementById("rec-save").click(); true`);
+    await sleep(150);
+    const asked = JSON.parse(
+      await browser.evaluate(`JSON.stringify({ msg: document.getElementById("rec-draft-msg").textContent, button: !document.getElementById("rec-save-existing").hidden, n: window.__saveRequests.length })`)
+    );
+    assert.equal(asked.n, 1, "no silent retry");
+    assert.equal(asked.button, true);
+    assert.match(asked.msg, /An automation named e2e-crm-2 already exists \u2014 add this action to it\?/);
+
+    // Renaming is the other way out: the offer goes away.
+    await browser.evaluate(`(() => { const f = document.getElementById("rec-save-automation"); f.value = "e2e-crm-3"; f.dispatchEvent(new Event("input")); return true; })()`);
+    assert.equal(await browser.evaluate(`document.getElementById("rec-save-existing").hidden`), true);
+    await browser.evaluate(`(() => { const f = document.getElementById("rec-save-automation"); f.value = "e2e-crm-2"; f.dispatchEvent(new Event("input")); return true; })()`);
+
+    // Saying yes saves into it as `automation`.
+    await browser.evaluate(`window.__save.push(${JSON.stringify(exists)}); document.getElementById("rec-save").click(); true`);
+    await sleep(150);
+    await browser.evaluate(`window.__save.push(${JSON.stringify({ ok: true, result: { nodeType: "e2e-crm-2.create_contact" } })}); document.getElementById("rec-save-existing").click(); true`);
+    await sleep(150);
+    const reqs = JSON.parse(await browser.evaluate(`JSON.stringify(window.__saveRequests)`));
+    assert.deepEqual(reqs.map((r) => [r.automation, r.isNew]), [["e2e-crm-2", true], ["e2e-crm-2", true], ["e2e-crm-2", false]]);
+    assert.match(await browser.evaluate(`document.getElementById("rec-draft-msg").textContent`), /Saved as e2e-crm-2\.create_contact/);
   });
 });
