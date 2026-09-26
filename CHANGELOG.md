@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.72.0] - 2026-09-26
+
+### Added
+
+- **`maxComments`** on Hacker News and Product Hunt `list_comments` caps
+  how many comments are read (default: all, as before).
+- **Action inputs can declare aliases.** Instagram and X `export_followers`
+  now take the profile as a required `target_url` (shown as "Profile" in
+  the node form). Configs using `profileUrl`, `targetUsername` or a
+  selected list keep working.
+
+### Fixed
+
+- **`monoagentcli update`** and the desktop app's updater failed with
+  "invalid cross-device link" when `/tmp` is a separate filesystem. The new
+  binary is now staged next to the old one.
+- **`node run` of a browser action** failed when the action saves its
+  results (for example Hacker News `get_post_metrics` and `list_comments`),
+  because standalone runs have no workflow execution to attach them to.
+- **LinkedIn "Show more"** now clicks only a button that says show, see or
+  load more. Before, it could hit a look-alike Follow button.
+- **Instagram and X `export_followers` built from the node form** never
+  received the chosen profile.
+- **TikTok `share_video`, `duet_video` and `stitch_video`** are labelled as
+  write actions (they copy a link or open the creator). A test now fails
+  any action labelled read-only that clicks, types or uploads.
+
 ## [0.71.0] - 2026-09-25
 
 ### Added
