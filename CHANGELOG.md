@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- One browser per profile: bind each browser profile's MonoAgent Bridge extension to a monoagent profile (side panel, `monoagentcli extension bind`, or Settings → Browsers). That profile's browser actions run there, so two profiles can run in parallel, even on the same site. `monoagentcli extension browsers` lists them. Extension 1.5.0.
+- Dashboard: a **This profile / All profiles** toggle. All profiles sums every profile's counts, labels each workflow, run and account with its profile, and adds a Profiles card with a Switch button per profile. The CLI side is `--all-profiles` on `summary`, `workflow list`, `workflow executions --all` and `org summary`.
+
 ## [0.81.0] - 2026-09-27
 
 ### Added

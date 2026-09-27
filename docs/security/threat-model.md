@@ -45,6 +45,15 @@ one endpoint, might try to cross:
    Origin/loopback checks are defense-in-depth, not the primary control:
    they stop a hostile web page, not a hostile local process, which is why
    token auth exists on top of them.
+   **Multiple browsers.** The bridge keeps one authenticated socket per
+   browser profile, keyed by an instance id the extension reports. All of
+   them authenticate with the same pairing token, so a token holder can
+   already drive every paired browser; binding adds routing, not a new
+   capability. `/monoagent/health` (unauthenticated) reports only a browser
+   count; which profile and label each browser has is behind the token at
+   `/monoagent/browsers` and `/monoagent/resolve`. A reported profile id
+   that `profiledir.ValidProfileID` rejects is dropped. A command for a
+   profile is never sent to a browser bound to a different profile.
 2. **Extension ↔ page.** Content-script and cookie/debugger access is scoped
    to explicitly granted origins (MA-05) rather than `<all_urls>` by
    default. `chrome.debugger` is called out separately because Chrome does

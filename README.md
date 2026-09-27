@@ -156,6 +156,7 @@ More ready-to-run workflows (RSS→AI→email, Sheets→Gmail, Stripe→Sheets s
 - Workflows, connections, people, vault images, HIL items — all scoped per workspace
 - Switch with `--profile <name>` on any CLI command or via the GUI sidebar
 - Running workflows in one workspace are unaffected when you switch to another
+- Toggle **All profiles** in the dashboard header to see every workspace at once; rows are labelled with their profile, and **Switch** takes you to it
 
 </td>
 <td width="50%">
@@ -573,7 +574,8 @@ Workflow triggers (`trigger.schedule`, `trigger.webhook`) only fire while a proc
 - **Loopback by default** — the bridge server binds loopback, and the extension refuses non-loopback servers. A per-session "Allow non-loopback server (unsafe)" checkbox in the side panel overrides this for one save; it is never persisted
 - **Paired channel** — the bridge requires a shared secret (`~/.monoagent/extension.token`) as the first frame on every connection; run `monoagentcli extension pair` and paste the printed token into the extension side panel once. An unpaired connection is rejected and can never replace an already-paired one. Run `monoagentcli extension reset` to revoke and re-pair
 - **Per-site host permissions** — the extension requests site access on demand (via the side panel's "Authorize a site" field) rather than holding `<all_urls>` by default; grant only the sites your workflows actually target, and revoke from the same side panel
-- **Shared connection** — multiple CLI processes share one extension connection instead of fighting over the browser
+- **Shared connection** — multiple CLI processes share the bridge instead of fighting over the browser
+- **One browser per profile** — every browser profile with the extension connects on its own; bind each to a monoagent profile and that profile's automations run there, in parallel with the others. See [docs/BROWSER_PROFILES.md](docs/BROWSER_PROFILES.md)
 
 See [`docs/security/threat-model.md`](docs/security/threat-model.md) for the full trust-boundary breakdown.
 
