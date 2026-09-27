@@ -17,9 +17,10 @@ const (
 	CheckBridge    = "browser.bridge"
 	CheckPaired    = "browser.paired"
 
-	FixBrowserInstall   = "browser.install"
-	FixExtensionInstall = "browser.extension.install"
-	FixExtensionPair    = "browser.extension.pair"
+	FixBrowserInstall      = "browser.install"
+	FixExtensionInstall    = "browser.extension.install"
+	FixExtensionPair       = "browser.extension.pair"
+	FixExtensionPermission = "browser.extension.permission"
 )
 
 var browserFeatures = []string{"crawling", "page capture", "platform logins"}
@@ -44,6 +45,8 @@ func browserFixes() []Fix {
 			Command: "open chrome://extensions → enable Developer mode → Load unpacked → the chrome-extension folder"}, Apply: manual},
 		{FixInfo: FixInfo{ID: FixExtensionPair, Label: "Pair the extension", Safety: SafetyManual,
 			Command: "monoagentcli extension pair"}, Apply: manual},
+		{FixInfo: FixInfo{ID: FixExtensionPermission, Label: "Grant Full Disk Access", Safety: SafetyManual,
+			Command: "System Settings → Privacy & Security → Full Disk Access → enable your terminal app, then re-run doctor"}, Apply: manual},
 	}
 }
 
@@ -57,12 +60,27 @@ func checkBrowser(_ context.Context, env *Env) Result {
 	return Result{Status: StatusWarn, Summary: "no Chrome, Edge, Chromium or Brave found", FixID: FixBrowserInstall}
 }
 
-func checkExtension(_ context.Context, env *Env) Result {
+func checkExtension(ctx context.Context, env *Env) Result {
+	// A connected extension is stronger proof than any filesystem scan below
+	// — check it first so a false negative from ExtensionInstalled (its
+	// profile directory is unreadable; see the checked flag) never
+	// contradicts what the bridge is watching live.
+	if env.Bridge != nil {
+		if b, ok := env.Bridge(ctx); ok && b.Status == "connected" {
+			return Result{Status: StatusOK, Summary: "connected (" + b.Addr + ")"}
+		}
+	}
 	if env.ExtensionInstalled == nil {
 		return Result{Status: StatusSkip, Summary: "not available"}
 	}
-	if env.ExtensionInstalled() {
+	found, checked := env.ExtensionInstalled()
+	if found {
 		return Result{Status: StatusOK, Summary: "installed in a browser profile"}
+	}
+	if !checked {
+		return Result{Status: StatusWarn, Summary: "could not check — this OS restricts reading browser profiles",
+			Detail: "grant Full Disk Access to your terminal, or ignore this once the extension connects",
+			FixID:  FixExtensionPermission}
 	}
 	res := Result{Status: StatusWarn, Summary: "not found in any browser profile", FixID: FixExtensionInstall}
 	if env.ExtensionDir != nil {

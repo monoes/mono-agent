@@ -117,7 +117,16 @@ func tryOpenPairingPage(bridge connChecker, opened *bool) {
 func findLocalChromePath() string { return browserdetect.FindBrowser() }
 func isChromeRunning() bool       { return browserdetect.IsBrowserRunning() }
 func getExtensionDir() string     { return browserdetect.ExtensionDir() }
-func isExtensionInstalled() bool  { return browserdetect.ExtensionInstalled() }
+
+// isExtensionInstalled reports whether the extension was found. When the
+// scan couldn't tell (e.g. a profile directory is unreadable — see
+// browserdetect.ExtensionInstalled), this returns true so the caller doesn't
+// block on a claim it can't back up; the real answer is whichever way
+// ensureExtensionConnected's own connect-and-wait below actually goes.
+func isExtensionInstalled() bool {
+	found, checked := browserdetect.ExtensionInstalled()
+	return found || !checked
+}
 
 // ensureExtensionConnected returns once the extension bridge is connected.
 // If the extension is not installed, it returns an immediate error without launching Chrome.

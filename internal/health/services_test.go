@@ -10,7 +10,7 @@ import (
 
 func TestBrowserChecks(t *testing.T) {
 	ctx := context.Background()
-	env := &Env{FindBrowser: func() string { return "" }, ExtensionInstalled: func() bool { return false },
+	env := &Env{FindBrowser: func() string { return "" }, ExtensionInstalled: func() (bool, bool) { return false, true },
 		ExtensionDir: func() string { return filepath.Join(string(filepath.Separator), "x", "chrome-extension") }}
 	if res := checkBrowser(ctx, env); res.Status != StatusWarn || res.FixID != FixBrowserInstall {
 		t.Errorf("no browser: %+v", res)
@@ -37,6 +37,33 @@ func TestBrowserChecks(t *testing.T) {
 	env.Version = "v1.2.0-3-gabc"
 	if res := checkBridge(ctx, env); res.Status != StatusOK {
 		t.Errorf("dev build must not report skew: %+v", res)
+	}
+}
+
+// TestCheckExtensionTrustsLiveConnectionOverProfileScan covers the two cases
+// ExtensionInstalled's checked flag exists for: a live-connected extension
+// must win even when the profile scan would say "not found" (e.g. it's
+// loaded in a browser the scan can't currently read), and an unreadable
+// profile directory must be reported as "could not check", never as "not
+// installed" — see internal/browserdetect.ExtensionInstalled.
+func TestCheckExtensionTrustsLiveConnectionOverProfileScan(t *testing.T) {
+	ctx := context.Background()
+
+	env := &Env{
+		ExtensionInstalled: func() (bool, bool) { return false, true }, // scan says "definitely not found"
+		Bridge:             func(context.Context) (BridgeInfo, bool) { return BridgeInfo{Addr: "127.0.0.1:9323", Status: "connected"}, true },
+	}
+	if res := checkExtension(ctx, env); res.Status != StatusOK {
+		t.Errorf("live connection must win over a scan that found nothing: %+v", res)
+	}
+
+	env = &Env{
+		ExtensionInstalled: func() (bool, bool) { return false, false }, // every profile was unreadable
+		Bridge:             func(context.Context) (BridgeInfo, bool) { return BridgeInfo{}, false },
+	}
+	res := checkExtension(ctx, env)
+	if res.Status != StatusWarn || res.FixID != FixExtensionPermission {
+		t.Errorf("unreadable profile must warn with the permission fix, not claim not-installed: %+v", res)
 	}
 }
 
