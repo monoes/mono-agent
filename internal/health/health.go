@@ -181,8 +181,11 @@ type Env struct {
 	InstallRuntime func(ctx context.Context, id string, progress func(string)) error
 
 	// Browser and the MonoAgent extension bridge.
-	FindBrowser        func() string
-	ExtensionInstalled func() bool
+	FindBrowser func() string
+	// ExtensionInstalled scans browser profiles; checked is false when every
+	// existing profile was unreadable (e.g. macOS Full Disk Access), in
+	// which case found says nothing and callers should not treat it as "no".
+	ExtensionInstalled func() (found, checked bool)
 	ExtensionDir       func() string
 	Bridge             func(ctx context.Context) (BridgeInfo, bool)
 

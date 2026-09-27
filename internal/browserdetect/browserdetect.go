@@ -191,15 +191,26 @@ func UserDataDirs() []string {
 	return dirs
 }
 
-// ExtensionInstalled scans browser profiles to verify if the MonoAgent extension is installed.
-func ExtensionInstalled() bool {
+// ExtensionInstalled scans browser profiles to verify if the MonoAgent
+// extension is installed. checked reports whether the scan actually got to
+// look: on macOS, ~/Library/Application Support/<browser> is gated by Full
+// Disk Access, and a process without it gets a permission error reading a
+// profile directory that plainly exists — treating that the same as "not
+// found" would tell someone whose extension is installed and working to go
+// reinstall it. checked is false whenever every existing profile directory
+// was unreadable; found is only meaningful when checked is true. A browser
+// that simply isn't installed (no such directory) doesn't count against
+// checked — that candidate has nothing to fail to read.
+func ExtensionInstalled() (found, checked bool) {
 	userDataDirs := UserDataDirs()
+	sawUnreadable := false
 	for _, baseDir := range userDataDirs {
 		if _, err := os.Stat(baseDir); err != nil {
 			continue
 		}
 		entries, err := os.ReadDir(baseDir)
 		if err != nil {
+			sawUnreadable = true
 			continue
 		}
 		for _, entry := range entries {
@@ -212,18 +223,18 @@ func ExtensionInstalled() bool {
 			for _, prefName := range []string{"Secure Preferences", "Preferences"} {
 				prefPath := filepath.Join(profileDir, prefName)
 				if inPreferencesFile(prefPath) {
-					return true
+					return true, true
 				}
 			}
 
 			// 2. Check Extensions directory
 			extDir := filepath.Join(profileDir, "Extensions")
 			if inExtensionsDir(extDir) {
-				return true
+				return true, true
 			}
 		}
 	}
-	return false
+	return false, !sawUnreadable
 }
 
 // nameLooksLikeMonoAgent applies the same name/description substring match

@@ -21,8 +21,46 @@ func TestExtensionInstalledEmptyHome(t *testing.T) {
 	t.Setenv("CHROME_USER_DATA_DIR", empty)
 	t.Setenv("HOME", empty)
 	t.Setenv("USERPROFILE", empty)
-	if ExtensionInstalled() {
-		t.Fatal("no browser profiles: want false")
+	if found, checked := ExtensionInstalled(); found || !checked {
+		t.Fatalf("no browser profiles: want (false, true), got (%v, %v)", found, checked)
+	}
+}
+
+// TestExtensionInstalledUnreadableProfileIsUnchecked reproduces the bug this
+// signature exists to fix: on macOS, ~/Library/Application Support/<browser>
+// is gated by Full Disk Access, so a process without it gets a permission
+// error reading a profile that plainly exists — that must report
+// checked=false, not found=false, or a working, already-connected extension
+// gets told it "isn't installed". Uses whichever candidate UserDataDirs
+// itself returns for this OS, so it exercises the real path everywhere
+// (chmod-based unreadable dirs, not meaningful on Windows, are skipped).
+func TestExtensionInstalledUnreadableProfileIsUnchecked(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod-based unreadable dirs aren't meaningful on Windows")
+	}
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	home := t.TempDir()
+	t.Setenv("CHROME_USER_DATA_DIR", "")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	dirs := UserDataDirs()
+	if len(dirs) == 0 {
+		t.Fatal("UserDataDirs returned nothing for this OS")
+	}
+	profileRoot := dirs[0]
+	if err := os.MkdirAll(profileRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(profileRoot, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(profileRoot, 0o755) // let t.TempDir() clean up
+
+	if found, checked := ExtensionInstalled(); found || checked {
+		t.Fatalf("unreadable profile dir: want (false, false) — unknown, not a confirmed absence — got (%v, %v)", found, checked)
 	}
 }
 
