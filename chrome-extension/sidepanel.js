@@ -407,6 +407,9 @@ function drawProfiles(state) {
   // the save label back when it is done.
   if (!captureBtn.dataset.busy && !captureBtn.dataset.done) captureLabel.textContent = profiles.saveLabel;
   batchDest.textContent = current.id ? current.name : "the shared inbox";
+
+  // The binding select offers the same list; redraw it when the list changes.
+  if (typeof panelBinding !== "undefined") panelBinding.redraw();
 }
 
 function openProfileMenu() {
@@ -1124,6 +1127,16 @@ shortcutSet.addEventListener("click", () => {
 window.addEventListener("focus", drawShortcut);
 
 // --- connection settings ---------------------------------------------------
+
+// Which profile this browser runs automations for (sidepanel_binding.js).
+// Its select reuses the capture picker's profile list.
+const panelBinding = MonoPanelBinding.install({
+  doc: document,
+  storage: chrome.storage.local,
+  userAgent: navigator.userAgent,
+  profiles: () => (lastFormState && Array.isArray(lastFormState.profiles) ? lastFormState.profiles : []),
+});
+panelBinding.refresh().catch(() => {});
 
 pairBtn.addEventListener("click", async () => {
   const value = pairingTokenInput.value.trim();
