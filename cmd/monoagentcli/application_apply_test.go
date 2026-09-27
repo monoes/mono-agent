@@ -47,7 +47,7 @@ func TestApplicationApplyAutoModeSkipsPrompt(t *testing.T) {
 	// MonoAgent extension/Chrome being connected in whatever environment
 	// runs this suite.
 	origBridge := applicationApplyBridgeFunc
-	applicationApplyBridgeFunc = func() (browserpkg.ExtensionBridge, error) { return nil, nil }
+	applicationApplyBridgeFunc = func(string) (browserpkg.ExtensionBridge, error) { return nil, nil }
 	t.Cleanup(func() { applicationApplyBridgeFunc = origBridge })
 
 	origOpen := apply.OpenForApplicationFunc

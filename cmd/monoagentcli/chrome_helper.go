@@ -150,7 +150,7 @@ func ensureExtensionConnected(bridge connChecker, timeout time.Duration) error {
 			time.Sleep(500 * time.Millisecond)
 		}
 		if !bridge.IsConnected() {
-			return fmt.Errorf("Chrome is running, but the MonoAgent extension did not connect within %s — make sure the extension is enabled in chrome://extensions and reload it if necessary%s%s", timeout, fallbackPortHint(bridge), bridgeLifetimeHint(bridge))
+			return fmt.Errorf("Chrome is running, but the MonoAgent extension did not connect within %s — make sure the extension is enabled in chrome://extensions and reload it if necessary%s%s%s", timeout, fallbackPortHint(bridge), bridgeLifetimeHint(bridge), routeHint(bridge))
 		}
 		return nil
 	}
@@ -175,7 +175,7 @@ func ensureExtensionConnected(bridge connChecker, timeout time.Duration) error {
 		time.Sleep(500 * time.Millisecond)
 	}
 	if !bridge.IsConnected() {
-		return fmt.Errorf("Chrome was opened, but the MonoAgent extension did not connect within %s — make sure it is enabled in chrome://extensions and reload it if necessary%s%s", timeout, fallbackPortHint(bridge), bridgeLifetimeHint(bridge))
+		return fmt.Errorf("Chrome was opened, but the MonoAgent extension did not connect within %s — make sure it is enabled in chrome://extensions and reload it if necessary%s%s%s", timeout, fallbackPortHint(bridge), bridgeLifetimeHint(bridge), routeHint(bridge))
 	}
 	return nil
 }
