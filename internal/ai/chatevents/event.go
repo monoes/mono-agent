@@ -2,7 +2,8 @@
 // types, envelope construction, and (in normalize.go) protocol-to-event
 // normalization. No Wails imports, no database connection, no dependency on
 // the parent ai package: it is a leaf package both internal/ai (the store)
-// and wails-app (the supervisor) import without a cycle.
+// and its users (cmd/monoagentcli, which journals turns, and wails-app,
+// which relays them) import without a cycle.
 //
 // See docs/mastermind/plans/2026-09-11-interactive-agent-chat.md §"Event
 // contract" for the authoritative field-by-field spec this file implements.
@@ -60,7 +61,7 @@ func FormatAt(t time.Time) string {
 // a larger value risks silent precision loss. Real per-turn seq values are
 // small monotonic counters far below this; MaxSafeSeq exists as a sentinel
 // for an event that was never allocated a real seq by the store (e.g.
-// wails-app/app_chat.go's finalize, when the FinalizeTurn write itself
+// a turn.finished whose FinalizeTurn write itself
 // fails) but must still compare as newer than anything the frontend has
 // already applied for its turn.
 const MaxSafeSeq int64 = (1 << 53) - 1
@@ -174,7 +175,7 @@ type NoticePayload struct {
 
 // TurnStatus is turn.finished's terminal classification — see the
 // supervisor's precedence rules (Stop > fatal error > missing terminal
-// evidence > completed) in wails-app/app_chat.go.
+// evidence > completed) in ComputeTurnStatus.
 type TurnStatus string
 
 const (
@@ -195,4 +196,34 @@ type TurnFinishedPayload struct {
 	Reason       string     `json:"reason,omitempty"`
 	ExitCode     *int       `json:"exitCode"`
 	HistorySaved bool       `json:"historySaved"`
+}
+
+// Record is an Event as `monoagentcli chat` prints it: a snake_case
+// envelope around the payload, which is passed through verbatim (it is the
+// stored, versioned payload, keyed as the payload types above define).
+type Record struct {
+	Version        int             `json:"version"`
+	ProfileID      string          `json:"profile_id"`
+	ConversationID string          `json:"conversation_id"`
+	TurnID         string          `json:"turn_id"`
+	Seq            int64           `json:"seq"`
+	At             string          `json:"at"`
+	Type           EventType       `json:"type"`
+	Payload        json.RawMessage `json:"payload"`
+}
+
+// Record converts e to its CLI shape.
+func (e Event) Record() Record {
+	return Record{
+		Version: e.Version, ProfileID: e.ProfileID, ConversationID: e.ConversationID, TurnID: e.TurnID,
+		Seq: e.Seq, At: e.At, Type: e.Type, Payload: e.Payload,
+	}
+}
+
+// Event converts a CLI record back.
+func (r Record) Event() Event {
+	return Event{
+		Version: r.Version, ProfileID: r.ProfileID, ConversationID: r.ConversationID, TurnID: r.TurnID,
+		Seq: r.Seq, At: r.At, Type: r.Type, Payload: r.Payload,
+	}
 }

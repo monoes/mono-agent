@@ -208,6 +208,12 @@ The desktop app does everything through these commands; they are equally usable 
   - `profile list|get|current|switch|create [--root-dir] [--icon]`
   - `profile folder <id>`, `profile move [--check] <id> <dir>` (moves images and documents) and `profile projects`
   - `profile documents list|get|capture|index|rm`
+- **Chat:**
+  - `chat history list|show|create|turns|turn|events|delete|finish|reconcile`, scoped to the active profile (`reconcile` sweeps every profile).
+  - `chat history create --runtime R [--model M] [--workflow W]` makes a conversation, `chat history turns <conv> [--cursor] [--limit]` pages its turns, and `chat history events <conv> <turn> [--after-seq N] [--limit N]` returns the events with the turn's status.
+  - `chat --conversation <conv> --turn <id> [--instance <app-id>] [--tools monoagent[,runs]] -- <message>` runs one turn and journals it itself. It takes the runtime, model and session from the conversation. Stdout is an admission line, then each committed event as NDJSON. A repeated turn id never runs twice.
+  - `chat history delete` refuses a conversation with an active turn (exit 3). `chat history finish <conv> <turn> --status S` records the end of a turn whose process was killed; it does nothing if the turn already finished. `chat history reconcile --except-owner <app-id>` marks turns left active as interrupted, at app startup.
+  - `chat history transcript <history-id>` reads the legacy transcript that plain `chat --history-id` still writes.
 - **Editor and orgs:** `node palette` gives the editor's node catalog. `org reconcile-doc <name>` returns the reconciled org document from stdin without saving it.
 
 ## MCP server
