@@ -28,6 +28,9 @@ func TestFirstTargetURL(t *testing.T) {
 		{"legacy selectedListItems object", map[string]interface{}{"selectedListItems": []interface{}{map[string]interface{}{"url": post}}}, post},
 		{"targets wins over selectedListItems", map[string]interface{}{
 			"targets": []interface{}{post}, "selectedListItems": []interface{}{"https://other/"}}, post},
+		{"single target_url", map[string]interface{}{"target_url": post}, post},
+		{"targets wins over target_url", map[string]interface{}{
+			"targets": []interface{}{post}, "target_url": "https://other/"}, post},
 		{"none", map[string]interface{}{}, ""},
 		{"empty targets", map[string]interface{}{"targets": []interface{}{}}, ""},
 	} {

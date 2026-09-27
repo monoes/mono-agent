@@ -229,7 +229,7 @@ func (b *LinkedInBot) ListUserPosts(ctx context.Context, page browser.PageInterf
 	if maxCount <= 0 {
 		maxCount = 20
 	}
-	feedURL, err := activityFeedURL(b.ResolveURL(strings.TrimSpace(profileURL)), activityType)
+	feedURL, err := activityFeedURL(b.ResolveURL(profileTargetURL(profileURL)), activityType)
 	if err != nil {
 		return nil, err
 	}

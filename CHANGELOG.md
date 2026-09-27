@@ -53,6 +53,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Introductions already filled from a bio stay as they are: they can't be
   told apart from drafts.
 
+## [0.83.3] - 2026-09-27
+
+### Fixed
+- Saved Instagram posts are linked to their owner again: `instagram.list_user_posts` names its profile in `target_url`, which the post saver ignored, and a post URL of the form `instagram.com/<user>/p/<code>/` now links to `<user>` when that person is saved.
+- `linkedin.list_user_posts` accepts a bare username (`jane-doe` or `@jane-doe`) as a target, like `linkedin.scrape_profile_info` already did, instead of failing with "invalid profile URL".
+- LinkedIn text no longer carries invisible zero-width spaces (U+200B, as after "Entrepreneurs'" in "Entrepreneurs' Organization") into names, titles and companies. Joiners stay, so emoji and Persian text are untouched.
+
 ## [0.83.2] - 2026-09-27
 
 ### Fixed

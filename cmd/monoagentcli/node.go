@@ -800,8 +800,10 @@ func savePostsToDB(ctx context.Context, db *sql.DB, items []workflow.Item, nodeT
 		var personIDArg interface{}
 		if personID != "" {
 			personIDArg = personID
-		} else if ref, ok := personitem.Resolve(platform, data); ok && ref.Author {
-			// No target person: link the post to its author when saved.
+		} else if ref, ok := personitem.Resolve(platform, data); ok {
+			// No target person: link the post to whoever its URLs name —
+			// the owner in its own URL (instagram.com/<user>/p/<code>/) or
+			// its author_url — when that person is already saved.
 			var authorID string
 			if db.QueryRowContext(ctx,
 				"SELECT id FROM people WHERE platform_username = ? AND UPPER(platform) = ? AND profile_id = ?",
