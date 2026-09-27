@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"os"
@@ -10,7 +11,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/monoes/mono-agent/internal/ai"
 	"github.com/monoes/mono-agent/internal/connections"
 	"github.com/monoes/mono-agent/internal/secrets"
 	"github.com/monoes/mono-agent/internal/storage"
@@ -585,7 +585,7 @@ func TestSecretImport_RematerializesConnectionOnFreshMachine(t *testing.T) {
 		t.Fatalf("EnsureTable on destination: %v", err)
 	}
 	imported, skipped, err := secrets.Import(ctx, dst.DB, "default", passphrase, data,
-		rematerializeConnection, rematerializeSession, rematerializeProvider)
+		rematerializeConnection, rematerializeSession)
 	if err != nil {
 		t.Fatalf("Import: %v", err)
 	}
@@ -655,7 +655,7 @@ func TestSecretImport_RematerializesConnection_PreservesNonSecretDataOnUpdate(t 
 	}
 
 	imported, skipped, err := secrets.Import(ctx, dst.DB, "default", passphrase, data,
-		rematerializeConnection, rematerializeSession, rematerializeProvider)
+		rematerializeConnection, rematerializeSession)
 	if err != nil {
 		t.Fatalf("Import: %v", err)
 	}
@@ -862,66 +862,84 @@ func swapStdin(t *testing.T, s string) *os.File {
 	return orig
 }
 
-// TestSecretImport_RematerializesProvider_PreservesStatusOnUpdate covers
-// re-importing onto a machine that already has an AI provider with the
-// imported name: rematerializeProvider must carry over the existing row's
-// Status/LastTested instead of resetting them to zero value.
-func TestSecretImport_RematerializesProvider_PreservesStatusOnUpdate(t *testing.T) {
+// legacyAIProviderEntry adds a vault entry of the retired "ai_provider"
+// kind, as the removed AI provider store used to (nothing can create one
+// any more, so the kind is set by hand).
+func legacyAIProviderEntry(t *testing.T, db *sql.DB, name, key string) {
+	t.Helper()
+	id, err := secrets.Add(context.Background(), db, "default", "secret", name, map[string]string{"api_key": key}, "", "", "")
+	if err != nil {
+		t.Fatalf("seeding %s: %v", name, err)
+	}
+	if _, err := db.Exec(`UPDATE vault_secrets SET kind = 'ai_provider' WHERE id = ?`, id); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// An export made before AI providers were removed still imports: its
+// ai_provider entries come back as plain secrets, and nothing is recreated
+// for the provider stack.
+func TestSecretImport_OldAIProviderEntryImportsAsPlainSecret(t *testing.T) {
 	ctx := context.Background()
 	src := newLoginTestDB(t)
-	srcStore, err := ai.NewAIStore(src.DB)
-	if err != nil {
-		t.Fatalf("ai.NewAIStore(src): %v", err)
-	}
-	if err := srcStore.SaveProvider(ai.AIProvider{
-		ID: "prov-src", Name: "OpenAI Work", ProviderID: "openai", Tier: "known",
-		APIKey: "sk-test", ProfileID: "default",
-	}); err != nil {
-		t.Fatalf("seeding source provider: %v", err)
-	}
-
+	legacyAIProviderEntry(t, src.DB, "OpenAI Work", "sk-old-export-1")
 	passphrase, err := secrets.GenerateExportPassword()
 	if err != nil {
-		t.Fatalf("GenerateExportPassword: %v", err)
+		t.Fatal(err)
 	}
-	data, _, _, err := secrets.Export(ctx, src.DB, "default", passphrase)
-	if err != nil {
-		t.Fatalf("Export: %v", err)
+	data, exported, _, err := secrets.Export(ctx, src.DB, "default", passphrase)
+	if err != nil || exported != 1 {
+		t.Fatalf("Export = %d, %v", exported, err)
 	}
 
 	dst := newLoginTestDB(t)
-	dstStore, err := ai.NewAIStore(dst.DB)
-	if err != nil {
-		t.Fatalf("ai.NewAIStore(dst): %v", err)
-	}
-	// Seeded directly (not via SaveProvider) so this row's vault-entry name
-	// never lands in the destination vault, matching the connections test's
-	// rationale above.
-	if _, err := dst.DB.Exec(`INSERT INTO ai_providers (id, name, provider_id, tier, api_key, base_url, default_model, extra_headers, status, last_tested, profile_id, vault_ref, created_at)
-		VALUES ('prov-old', 'OpenAI Work', 'openai', 'known', '', '', '', '', 'active', '2026-01-01T00:00:00Z', 'default', '', '2026-01-01T00:00:00Z')`); err != nil {
-		t.Fatalf("seeding destination provider: %v", err)
-	}
-
 	imported, skipped, err := secrets.Import(ctx, dst.DB, "default", passphrase, data,
-		rematerializeConnection, rematerializeSession, rematerializeProvider)
-	if err != nil {
-		t.Fatalf("Import: %v", err)
+		rematerializeConnection, rematerializeSession)
+	if err != nil || imported != 1 || skipped != 0 {
+		t.Fatalf("Import = %d imported, %d skipped, %v; want 1, 0, nil", imported, skipped, err)
 	}
-	if imported != 1 || skipped != 0 {
-		t.Fatalf("expected imported=1 skipped=0, got imported=%d skipped=%d", imported, skipped)
+	entries, err := secrets.List(ctx, dst.DB, "default")
+	if err != nil || len(entries) != 1 || entries[0].Kind != "secret" || entries[0].Name != "OpenAI Work" {
+		t.Fatalf("imported entries = %+v, %v; want one plain secret", entries, err)
 	}
+	fields, _, err := secrets.DecryptFields(ctx, dst.DB, "default", entries[0].ID)
+	if err != nil || fields["api_key"] != "sk-old-export-1" {
+		t.Fatalf("imported key = %v, %v", fields, err)
+	}
+	var n int
+	_ = dst.DB.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name = 'ai_providers'`).Scan(&n)
+	if n != 0 {
+		t.Error("import recreated the ai_providers table")
+	}
+}
 
-	restored, err := dstStore.ListProviders("default")
+// The CLI's startup retires the ai_provider vault entries: a backup lands
+// next to the database and the entries are gone.
+func TestInitDBRetiresAIProviderEntries(t *testing.T) {
+	keyring.MockInit()
+	dir := t.TempDir()
+	cfg := &globalConfig{DBPath: filepath.Join(dir, "monoagent.db"), ProfileID: "default"}
+	db, err := initDB(cfg)
 	if err != nil {
-		t.Fatalf("ListProviders on destination: %v", err)
+		t.Fatal(err)
 	}
-	if len(restored) != 1 {
-		t.Fatalf("expected the import to update the existing provider in place, not add a second one, got %d", len(restored))
+	legacyAIProviderEntry(t, db.DB, "Claude key", "sk-ant-startup-1")
+	db.Close()
+
+	db, err = initDB(cfg)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if restored[0].ID != "prov-old" {
-		t.Fatalf("expected the existing row's ID to be preserved, got %q", restored[0].ID)
+	defer db.Close()
+	var n int
+	if err := db.DB.QueryRow(`SELECT COUNT(*) FROM vault_secrets WHERE kind = 'ai_provider'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("ai_provider entries after startup = %d, %v", n, err)
 	}
-	if restored[0].Status != "active" || restored[0].LastTested != "2026-01-01T00:00:00Z" {
-		t.Fatalf("expected the pre-existing Status/LastTested to survive the rematerialize update, got status=%q last_tested=%q", restored[0].Status, restored[0].LastTested)
+	if files, _ := filepath.Glob(filepath.Join(dir, "backups", "retired-ai-providers-default-*.json")); len(files) != 1 {
+		t.Fatalf("backups = %v, want one", files)
+	}
+	entries, _ := secrets.List(context.Background(), db.DB, "default")
+	if len(entries) != 1 || entries[0].Name != secrets.RetiredAIProviderBackupName {
+		t.Fatalf("vault after startup = %+v, want only the backup passphrase", entries)
 	}
 }

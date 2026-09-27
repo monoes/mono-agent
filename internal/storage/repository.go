@@ -759,7 +759,7 @@ func (d *Database) ListPersonMessages(personID, source, profileID string, limit,
 	query := `
 		SELECT pm.id, pm.person_id, pm.source, pm.external_id, pm.direction,
 		       COALESCE(pm.sender,''), COALESCE(pm.subject,''), COALESCE(pm.body,''),
-		       COALESCE(pm.metadata,''), pm.status, pm.sent_at, pm.created_at
+		       COALESCE(pm.metadata,''), pm.status, pm.sent_at, pm.created_at, pm.read_at
 		FROM person_messages pm
 		JOIN people p ON p.id = pm.person_id
 		WHERE pm.person_id = ? AND COALESCE(p.profile_id,'default') = ?`
@@ -781,16 +781,17 @@ func (d *Database) ListPersonMessages(personID, source, profileID string, limit,
 	var messages []*PersonMessage
 	for rows.Next() {
 		m := &PersonMessage{}
-		var sentAt sql.NullTime
+		var sentAt, readAt sql.NullTime
 		if err := rows.Scan(
 			&m.ID, &m.PersonID, &m.Source, &m.ExternalID, &m.Direction,
-			&m.Sender, &m.Subject, &m.Body, &m.Metadata, &m.Status, &sentAt, &m.CreatedAt,
+			&m.Sender, &m.Subject, &m.Body, &m.Metadata, &m.Status, &sentAt, &m.CreatedAt, &readAt,
 		); err != nil {
 			return nil, fmt.Errorf("scanning person message row: %w", err)
 		}
 		if sentAt.Valid {
 			m.SentAt = sentAt.Time
 		}
+		m.ReadAt = nullTimePtr(readAt)
 		messages = append(messages, m)
 	}
 	return messages, rows.Err()
@@ -799,15 +800,15 @@ func (d *Database) ListPersonMessages(personID, source, profileID string, limit,
 // GetPersonMessage returns a single message by ID, or nil if not found.
 func (d *Database) GetPersonMessage(id string) (*PersonMessage, error) {
 	m := &PersonMessage{}
-	var sentAt sql.NullTime
+	var sentAt, readAt sql.NullTime
 	err := d.DB.QueryRow(`
 		SELECT id, person_id, source, external_id, direction,
 		       COALESCE(sender,''), COALESCE(subject,''), COALESCE(body,''),
-		       COALESCE(metadata,''), status, sent_at, created_at
+		       COALESCE(metadata,''), status, sent_at, created_at, read_at
 		FROM person_messages WHERE id = ?`, id,
 	).Scan(
 		&m.ID, &m.PersonID, &m.Source, &m.ExternalID, &m.Direction,
-		&m.Sender, &m.Subject, &m.Body, &m.Metadata, &m.Status, &sentAt, &m.CreatedAt,
+		&m.Sender, &m.Subject, &m.Body, &m.Metadata, &m.Status, &sentAt, &m.CreatedAt, &readAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -818,6 +819,7 @@ func (d *Database) GetPersonMessage(id string) (*PersonMessage, error) {
 	if sentAt.Valid {
 		m.SentAt = sentAt.Time
 	}
+	m.ReadAt = nullTimePtr(readAt)
 	return m, nil
 }
 
@@ -863,7 +865,7 @@ func (d *Database) ListPersonMessagesByStatus(profileID, status string) ([]*Pers
 		SELECT pm.id, pm.person_id, pm.source, pm.external_id, pm.direction,
 		       COALESCE(pm.sender,''), COALESCE(pm.subject,''), COALESCE(pm.body,''),
 		       COALESCE(pm.metadata,''), pm.status, pm.sent_at, pm.created_at,
-		       COALESCE(p.full_name,''), p.platform_username, p.platform
+		       COALESCE(p.full_name,''), p.platform_username, p.platform, pm.read_at
 		FROM person_messages pm
 		JOIN people p ON p.id = pm.person_id
 		WHERE COALESCE(p.profile_id,'default') = ? AND pm.status = ?
@@ -877,17 +879,18 @@ func (d *Database) ListPersonMessagesByStatus(profileID, status string) ([]*Pers
 	var messages []*PersonMessageWithPerson
 	for rows.Next() {
 		m := &PersonMessageWithPerson{}
-		var sentAt sql.NullTime
+		var sentAt, readAt sql.NullTime
 		if err := rows.Scan(
 			&m.ID, &m.PersonID, &m.Source, &m.ExternalID, &m.Direction,
 			&m.Sender, &m.Subject, &m.Body, &m.Metadata, &m.Status, &sentAt, &m.CreatedAt,
-			&m.PersonFullName, &m.PersonPlatformUsername, &m.PersonPlatform,
+			&m.PersonFullName, &m.PersonPlatformUsername, &m.PersonPlatform, &readAt,
 		); err != nil {
 			return nil, fmt.Errorf("scanning person message row: %w", err)
 		}
 		if sentAt.Valid {
 			m.SentAt = sentAt.Time
 		}
+		m.ReadAt = nullTimePtr(readAt)
 		messages = append(messages, m)
 	}
 	return messages, rows.Err()
@@ -906,6 +909,12 @@ type PersonMessageWithPerson struct {
 // profile, newest first, optionally filtered by source. Pass an empty
 // source to skip that filter.
 func (d *Database) ListAllPersonMessages(profileID, source string, limit, offset int) ([]*PersonMessageWithPerson, error) {
+	return d.ListAllPersonMessagesFiltered(profileID, source, false, limit, offset)
+}
+
+// ListAllPersonMessagesFiltered is ListAllPersonMessages, optionally only
+// the unread inbound messages.
+func (d *Database) ListAllPersonMessagesFiltered(profileID, source string, unreadOnly bool, limit, offset int) ([]*PersonMessageWithPerson, error) {
 	if profileID == "" {
 		profileID = "default"
 	}
@@ -920,7 +929,7 @@ func (d *Database) ListAllPersonMessages(profileID, source string, limit, offset
 		SELECT pm.id, pm.person_id, pm.source, pm.external_id, pm.direction,
 		       COALESCE(pm.sender,''), COALESCE(pm.subject,''), COALESCE(pm.body,''),
 		       COALESCE(pm.metadata,''), pm.status, pm.sent_at, pm.created_at,
-		       COALESCE(p.full_name,''), p.platform_username, p.platform
+		       COALESCE(p.full_name,''), p.platform_username, p.platform, pm.read_at
 		FROM person_messages pm
 		JOIN people p ON p.id = pm.person_id
 		WHERE COALESCE(p.profile_id,'default') = ?`
@@ -929,6 +938,9 @@ func (d *Database) ListAllPersonMessages(profileID, source string, limit, offset
 	if source != "" {
 		query += " AND pm.source = ?"
 		args = append(args, source)
+	}
+	if unreadOnly {
+		query += " AND pm.direction = 'inbound' AND pm.read_at IS NULL"
 	}
 	query += " ORDER BY COALESCE(pm.sent_at, pm.created_at) DESC LIMIT ? OFFSET ?"
 	args = append(args, limit, offset)
@@ -942,17 +954,18 @@ func (d *Database) ListAllPersonMessages(profileID, source string, limit, offset
 	var messages []*PersonMessageWithPerson
 	for rows.Next() {
 		m := &PersonMessageWithPerson{}
-		var sentAt sql.NullTime
+		var sentAt, readAt sql.NullTime
 		if err := rows.Scan(
 			&m.ID, &m.PersonID, &m.Source, &m.ExternalID, &m.Direction,
 			&m.Sender, &m.Subject, &m.Body, &m.Metadata, &m.Status, &sentAt, &m.CreatedAt,
-			&m.PersonFullName, &m.PersonPlatformUsername, &m.PersonPlatform,
+			&m.PersonFullName, &m.PersonPlatformUsername, &m.PersonPlatform, &readAt,
 		); err != nil {
 			return nil, fmt.Errorf("scanning person message row: %w", err)
 		}
 		if sentAt.Valid {
 			m.SentAt = sentAt.Time
 		}
+		m.ReadAt = nullTimePtr(readAt)
 		messages = append(messages, m)
 	}
 	return messages, rows.Err()

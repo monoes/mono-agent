@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/monoes/mono-agent/internal/ai"
 	"github.com/monoes/mono-agent/internal/workflow"
 )
 
@@ -102,11 +101,11 @@ func (ct *CanvasTools) CheckWorkflowOwnership(workflowID string) error {
 }
 
 // ToolDefs returns the tool definitions the AI model can call.
-func (ct *CanvasTools) ToolDefs() []ai.ToolDef {
-	return []ai.ToolDef{
+func (ct *CanvasTools) ToolDefs() []ToolDef {
+	return []ToolDef{
 		{
 			Type: "function",
-			Function: ai.ToolFunction{
+			Function: ToolFunction{
 				Name:        "get_workflow_state",
 				Description: "Get the current workflow nodes and connections",
 				Parameters: map[string]interface{}{
@@ -120,7 +119,7 @@ func (ct *CanvasTools) ToolDefs() []ai.ToolDef {
 		},
 		{
 			Type: "function",
-			Function: ai.ToolFunction{
+			Function: ToolFunction{
 				Name:        "create_workflow",
 				Description: "Create a new workflow. Returns the new workflow_id. You MUST call this first before creating nodes when the current workflow_id is 'general' or 'draft'.",
 				Parameters: map[string]interface{}{
@@ -135,7 +134,7 @@ func (ct *CanvasTools) ToolDefs() []ai.ToolDef {
 		},
 		{
 			Type: "function",
-			Function: ai.ToolFunction{
+			Function: ToolFunction{
 				Name:        "create_nodes",
 				Description: "Create one or more new nodes in a workflow",
 				Parameters: map[string]interface{}{
@@ -164,7 +163,7 @@ func (ct *CanvasTools) ToolDefs() []ai.ToolDef {
 		},
 		{
 			Type: "function",
-			Function: ai.ToolFunction{
+			Function: ToolFunction{
 				Name:        "update_node_config",
 				Description: "Update a node's configuration by merging new values into the existing config",
 				Parameters: map[string]interface{}{
@@ -180,7 +179,7 @@ func (ct *CanvasTools) ToolDefs() []ai.ToolDef {
 		},
 		{
 			Type: "function",
-			Function: ai.ToolFunction{
+			Function: ToolFunction{
 				Name:        "delete_nodes",
 				Description: "Delete one or more nodes and their connections from a workflow",
 				Parameters: map[string]interface{}{
@@ -199,7 +198,7 @@ func (ct *CanvasTools) ToolDefs() []ai.ToolDef {
 		},
 		{
 			Type: "function",
-			Function: ai.ToolFunction{
+			Function: ToolFunction{
 				Name:        "connect_nodes",
 				Description: "Create a connection between two nodes",
 				Parameters: map[string]interface{}{
@@ -217,7 +216,7 @@ func (ct *CanvasTools) ToolDefs() []ai.ToolDef {
 		},
 		{
 			Type: "function",
-			Function: ai.ToolFunction{
+			Function: ToolFunction{
 				Name:        "disconnect_nodes",
 				Description: "Remove a connection between two nodes",
 				Parameters: map[string]interface{}{
@@ -233,7 +232,7 @@ func (ct *CanvasTools) ToolDefs() []ai.ToolDef {
 		},
 		{
 			Type: "function",
-			Function: ai.ToolFunction{
+			Function: ToolFunction{
 				Name:        "list_available_nodes",
 				Description: "List the available node types that can be added to a workflow",
 				Parameters: map[string]interface{}{

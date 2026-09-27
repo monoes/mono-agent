@@ -53,15 +53,3 @@ func terminateCLI(cmd *exec.Cmd) error {
 func killChatProcessGroup(cmd *exec.Cmd) {
 	proctree.Kill(cmd)
 }
-
-// readProcessCommandLine is a stub on Windows where /proc and ps are unavailable.
-func readProcessCommandLine(pid int) (cmdline string, alive bool, err error) {
-	return "", false, nil
-}
-
-// signalWorkflowPID is a no-op on Windows: POSIX signals are not supported
-// (Process.Signal always errors), so the external-PID cancel path was already
-// ineffective there — no pid verification needed (RA1-8).
-func signalWorkflowPID(pid int) error {
-	return nil
-}

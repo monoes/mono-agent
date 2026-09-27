@@ -20,7 +20,6 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/monoes/mono-agent/internal/ai"
 	cfgpkg "github.com/monoes/mono-agent/internal/config"
 	"github.com/monoes/mono-agent/internal/connections"
 	"github.com/monoes/mono-agent/internal/noderegistry"
@@ -186,8 +185,8 @@ func newRuntime(opts Options) (*runtime, error) {
 	if _, _, err := secrets.MigrateSessionsToVault(ctx, db.DB); err != nil {
 		fmt.Fprintf(os.Stderr, "httpapi: warning: sessions migration: %v\n", err)
 	}
-	if _, _, err := ai.MigrateProvidersToVault(ctx, db.DB); err != nil {
-		fmt.Fprintf(os.Stderr, "httpapi: warning: ai providers migration: %v\n", err)
+	if _, err := secrets.RetireAIProviderEntries(ctx, db.DB, filepath.Join(filepath.Dir(dbPath), "backups")); err != nil {
+		fmt.Fprintf(os.Stderr, "httpapi: warning: retiring AI provider keys: %v\n", err)
 	}
 	migrateProfilesToPerProfileKeys(ctx, db.DB)
 

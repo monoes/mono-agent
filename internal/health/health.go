@@ -203,8 +203,6 @@ type Env struct {
 	Connections       func(ctx context.Context) ([]ConnectionInfo, error)
 	TestConnection    func(ctx context.Context, id string) error
 	RefreshConnection func(ctx context.Context, id string) error // silent refresh_token exchange only
-	AIProviders       func(ctx context.Context) ([]ProviderInfo, error)
-	TestAIProvider    func(ctx context.Context, id string) error
 	LoginSessions     func(ctx context.Context) ([]SessionInfo, error)
 
 	// TypeSafe Jev: where the active profile's key comes from (config,
@@ -212,17 +210,16 @@ type Env struct {
 	// that proves the API accepts it (network).
 	JevKey    func(ctx context.Context) (source string, err error)
 	JevModels func(ctx context.Context) error
+
+	// Automations reads installed packages and their selector health
+	// (local files and the database; never seeds or installs).
+	Automations func(ctx context.Context) (*AutomationsInfo, error)
 }
 
 // ConnectionInfo is a saved connection, without any secret.
 type ConnectionInfo struct {
 	ID, Platform, Label, Method string
 	HasRefreshToken             bool
-}
-
-// ProviderInfo is an AI connection (legacy provider), without its key.
-type ProviderInfo struct {
-	ID, Name, ProviderID, Model string
 }
 
 // SessionInfo is a saved platform login session.

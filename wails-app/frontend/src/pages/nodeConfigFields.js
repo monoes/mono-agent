@@ -393,7 +393,6 @@ export const NODE_CONFIG_FIELDS = {
     { key: 'concurrency', label: 'Concurrency', type: 'number', default: 4, help: 'Requests in flight (max 8).' },
   ],
   'ai.chat': [
-    { key: 'provider_id', label: 'AI Provider', type: 'text', default: '' },
     { key: 'model', label: 'Model', type: 'text', default: '' },
     { key: 'system_prompt', label: 'System Prompt', type: 'textarea', default: '' },
     { key: 'prompt', label: 'Prompt', type: 'textarea', default: '{{$json.text}}' },
@@ -402,7 +401,6 @@ export const NODE_CONFIG_FIELDS = {
     { key: 'output_key', label: 'Output Key', type: 'text', default: 'ai_response' },
   ],
   'ai.extract': [
-    { key: 'provider_id', label: 'AI Provider', type: 'text', default: '' },
     { key: 'model', label: 'Model', type: 'text', default: '' },
     { key: 'prompt', label: 'Extraction Prompt', type: 'textarea', default: '' },
     { key: 'output_schema', label: 'Output Schema (JSON)', type: 'textarea', default: '' },
@@ -411,7 +409,6 @@ export const NODE_CONFIG_FIELDS = {
     { key: 'output_key', label: 'Output Key', type: 'text', default: 'extracted' },
   ],
   'ai.classify': [
-    { key: 'provider_id', label: 'AI Provider', type: 'text', default: '' },
     { key: 'model', label: 'Model', type: 'text', default: '' },
     { key: 'categories', label: 'Categories (comma-separated)', type: 'text', default: '' },
     { key: 'prompt_template', label: 'Custom Prompt', type: 'textarea', default: '' },
@@ -419,7 +416,6 @@ export const NODE_CONFIG_FIELDS = {
     { key: 'max_tokens', label: 'Max Tokens', type: 'number', default: '256' },
   ],
   'ai.transform': [
-    { key: 'provider_id', label: 'AI Provider', type: 'text', default: '' },
     { key: 'model', label: 'Model', type: 'text', default: '' },
     { key: 'instruction', label: 'Instruction', type: 'textarea', default: '' },
     { key: 'input_field', label: 'Input Field', type: 'text', default: '' },
@@ -428,13 +424,11 @@ export const NODE_CONFIG_FIELDS = {
     { key: 'output_key', label: 'Output Key', type: 'text', default: 'transformed' },
   ],
   'ai.embed': [
-    { key: 'provider_id', label: 'AI Provider', type: 'text', default: '' },
     { key: 'model', label: 'Model', type: 'text', default: '' },
     { key: 'input_field', label: 'Input Field', type: 'text', default: '' },
     { key: 'output_key', label: 'Output Key', type: 'text', default: 'embedding' },
   ],
   'ai.agent': [
-    { key: 'provider_id', label: 'AI Provider', type: 'text', default: '' },
     { key: 'model', label: 'Model', type: 'text', default: '' },
     { key: 'goal', label: 'Goal', type: 'textarea', default: '' },
     { key: 'max_steps', label: 'Max Steps', type: 'number', default: '5' },

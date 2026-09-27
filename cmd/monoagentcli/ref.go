@@ -704,18 +704,21 @@ Output is always PNG. Subsequent calls reuse cached model and ORT session.`,
 	{
 		Type:     "service.huggingface",
 		Category: "service",
-		Short:    "Call Hugging Face inference API for text/image models",
-		Config:   `{ "credential_id": "hf-token", "model": "gpt2", "inputs": "{{ $json.prompt }}" }`,
-		Inputs:   "item with prompt/input",
-		Outputs:  "generated_text or other model output",
+		Short:    "Generate an image through the Hugging Face inference API",
+		Description: `Needs a Hugging Face connection (API key): monoagentcli connect huggingface.
+generate_image is the only operation. generate_text was removed and fails fast —
+use the "agent.ask" node (local AI agent via monomind; see "monoagentcli ref node agent.ask").
+For images without a key, see "monoagentcli ref node gemini.generate_image".`,
+		Config:  `{ "credential_id": "huggingface", "operation": "generate_image", "prompt": "{{ $json.prompt }}", "model": "black-forest-labs/FLUX.1-schnell" }`,
+		Inputs:  "item(s) whose fields the prompt template reads",
+		Outputs: "input item + file_path (the saved PNG), url (the model endpoint) and vault_id (its Image Vault entry)",
 	},
 	{
 		Type:     "service.openrouter",
 		Category: "service",
-		Short:    "Call any LLM via OpenRouter unified API",
-		Config:   `{ "credential_id": "openrouter-key", "model": "mistralai/mistral-7b-instruct", "prompt": "{{ $json.prompt }}" }`,
-		Inputs:   "item with prompt",
-		Outputs:  "response_text",
+		Short:    "DEPRECATED — fails at run time; use agent.ask",
+		Description: `Kept only so old workflows get a migration hint instead of "unknown node type".
+Running it fails with: replace it with the "agent.ask" node (local AI agent via monomind; see "monoagentcli ref node agent.ask"); for images use "service.huggingface" with operation generate_image.`,
 	},
 	{
 		Type:     "service.outlook_mail",
@@ -825,18 +828,27 @@ Running it fails with: replace it with the "agent.ask" node.`,
 	{
 		Type:     "ai.read_page",
 		Category: "ai",
-		Short:    "Fetch a URL and extract its text content",
-		Config:   `{ "url": "{{ $json.link }}", "selector": "article" }`,
-		Inputs:   "item with URL",
-		Outputs:  "page_text, title, url",
+		Short:    "Fetch a URL and return its main content as clean markdown (no AI)",
+		Config:   `{ "url": "{{ $json.link }}", "include_links": true, "max_tokens": 4000 }`,
+		Inputs:   "item with URL (config url wins over the item's url)",
+		Outputs:  "url, title, description, author, published_at, markdown, main_text, headings, token_count",
 	},
 	{
 		Type:     "ai.extract_page",
 		Category: "ai",
-		Short:    "Crawl a URL and extract structured data using AI",
-		Config:   `{ "credential_id": "my-ai", "url": "{{ $json.link }}", "schema": { "headline": "string", "date": "string" } }`,
-		Inputs:   "item with URL",
-		Outputs:  "extracted fields",
+		Short:    "Fetch a URL and extract fields with CSS selectors you give or a local agent writes",
+		Description: `extract_mode "natural" (the default) sends the cleaned page and your prompt to a
+local agent runtime through monomind, which writes the selectors; the runtime is
+MONOAGENT_AI_RUNTIME, else the first installed one (claude first). No API key is
+involved; if the agent fails, "extracted" holds the page markdown and "error" says
+why. extract_mode "css" uses the selectors in "fields" ("selector" or
+"selector@attr") and needs no AI. Set "list_selector" to extract one row per
+matching element.`,
+		Config: `{ "url": "{{ $json.link }}", "extract_mode": "natural", "prompt": "the headline and publication date" }
+// or, without AI:
+{ "url": "{{ $json.link }}", "extract_mode": "css", "fields": { "headline": "h1", "date": "time@datetime" } }`,
+		Inputs:  "item with URL (config url wins over the item's url)",
+		Outputs: "url, extracted (object, or a list with list_selector), selectors_used, extract_mode, fetch_time_ms",
 	},
 	{
 		Type:     "ai.embed",
@@ -946,12 +958,7 @@ downloads it to disk, and returns the local file path.
 
 Setup (one-time): run  monoagentcli login gemini  and log in with your Google account.
 credential_id is optional — omit it and monoagentcli auto-resolves the saved session.
-
-Two methods are available automatically (monoagentcli tries both):
-  1. Browser crawl  — logs into gemini.google.com and generates via the web UI (default, no key needed)
-  2. API fallback   — used only if a Gemini API key is configured as a connection
-
-Always prefer the browser crawl method. It requires only a Google login, no billing.`,
+It requires only a Google login, no API key and no billing.`,
 		Config: `{
   "prompt":              "editorial photo of a city skyline at sunset",
   "maxWaitSeconds":      120,
@@ -1841,7 +1848,7 @@ generations at once) without the runs interfering.`,
 	},
 	{
 		Name:  "connect",
-		Short: "Manage AI and external service connections (OAuth, API keys) — see 'ref connections' for the full model",
+		Short: "Manage external service connections (OAuth, API keys) — see 'ref connections' for the full model",
 		Usage: "monoagentcli connect <platform> | connect <subcommand>",
 		Flags: `  <platform>                              Interactively connect a platform (OAuth or API key)
   list [--all] [--platform x]            List saved connections (--all: every supported platform)

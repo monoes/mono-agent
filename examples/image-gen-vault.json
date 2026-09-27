@@ -1,6 +1,6 @@
 {
   "name": "Image Gen to Vault",
-  "description": "Manual run: generate an image from a prompt with HuggingFace and store the result in the local image vault. Set the HuggingFace credential before running.",
+  "description": "Manual run: generate an image from a prompt with Gemini in your own logged-in browser session (no API key) and store the result in the local image vault. Run `monoagentcli login gemini` once before running.",
   "version": 1,
   "is_active": false,
   "nodes": [
@@ -14,15 +14,12 @@
     },
     {
       "id": "generate",
-      "type": "service.huggingface",
+      "type": "gemini.generate_image",
       "name": "Generate Image",
       "position": { "x": 320, "y": 0 },
       "disabled": false,
       "config": {
-        "credential_id": "",
-        "operation": "generate_image",
-        "prompt": "A minimal poster of a lighthouse at dawn, flat colors",
-        "model": "black-forest-labs/FLUX.1-schnell"
+        "prompt": "A minimal poster of a lighthouse at dawn, flat colors"
       }
     }
   ],

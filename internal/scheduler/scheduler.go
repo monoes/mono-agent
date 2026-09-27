@@ -45,6 +45,11 @@ func (s *Scheduler) AddWorkflowJob(spec string, fn func()) (cron.EntryID, error)
 	return id, nil
 }
 
+// NextRun is when the entry fires next (zero when it isn't scheduled).
+func (s *Scheduler) NextRun(id cron.EntryID) time.Time {
+	return s.cron.Entry(id).Next
+}
+
 // RemoveJob removes a cron job by entry ID.
 func (s *Scheduler) RemoveJob(id cron.EntryID) {
 	s.cron.Remove(id)

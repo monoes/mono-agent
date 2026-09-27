@@ -149,3 +149,37 @@ func TestManagerConnectBrowserPointsToLogin(t *testing.T) {
 		t.Fatalf("error should point to `login instagram`, got: %v", err)
 	}
 }
+
+// SaveFields saves a prompt-free connection under the given profile, and
+// Test re-validates it without writing anything to stdout.
+func TestManagerSaveFieldsThenTest(t *testing.T) {
+	mgr, _ := newManagerDB(t)
+	ctx := context.Background()
+
+	conn, err := mgr.SaveFields(ctx, "postgresql", MethodConnStr,
+		map[string]interface{}{"connection_string": "postgres://u:p@localhost:5432/db"}, "work")
+	if err != nil {
+		t.Fatalf("SaveFields: %v", err)
+	}
+	if conn.ID == "" || conn.ProfileID != "work" || conn.Status != "active" || !strings.HasPrefix(conn.Label, "PostgreSQL") {
+		t.Fatalf("saved = %+v", conn)
+	}
+	if list, _ := mgr.List(ctx, "postgresql", "work"); len(list) != 1 || list[0].ID != conn.ID {
+		t.Fatalf("List(work) = %+v", list)
+	}
+	if list, _ := mgr.List(ctx, "postgresql", "default"); len(list) != 0 {
+		t.Fatalf("List(default) = %+v, want none", list)
+	}
+
+	if _, err := mgr.Test(ctx, conn.ID); err != nil {
+		t.Fatalf("Test: %v", err)
+	}
+	got, _ := mgr.Get(ctx, conn.ID)
+	if got.LastTested == "" || got.Status != "active" {
+		t.Fatalf("after Test: %+v", got)
+	}
+
+	if _, err := mgr.SaveFields(ctx, "nope", MethodAPIKey, nil, ""); err == nil {
+		t.Fatal("SaveFields accepted an unknown platform")
+	}
+}

@@ -1,11 +1,9 @@
 // @vitest-environment jsdom
-// Focused mount tests for AIChatPanel's conversation-bucket bookkeeping —
-// not a general-purpose harness for the whole panel (there isn't one yet),
-// just enough mocked surface to prove one specific fix: switching backends
-// (agents <-> providers) must never leave a stale conversationId from the
-// OTHER backend bound, since StartChatTurn dispatches on the *stored*
-// conversation's own Backend field, not on whatever this panel's current
-// mode is.
+// Focused mount tests for AIChatPanel's conversation bookkeeping — not a
+// general-purpose harness for the whole panel (there isn't one yet), just
+// enough mocked surface to prove that chat is agent-only: a new chat
+// creates an "agent" conversation, and a conversation from the removed
+// in-app AI provider stays readable but read-only.
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import '@testing-library/jest-dom/vitest'
 import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react'
@@ -18,6 +16,7 @@ Element.prototype.scrollTo = Element.prototype.scrollTo || (() => {})
 const listChatConversations = vi.fn()
 const createChatConversation = vi.fn()
 const startChatTurn = vi.fn()
+const getChatTurns = vi.fn()
 
 vi.mock('../services/api.js', async (importOriginal) => {
   const actual = await importOriginal()
@@ -26,12 +25,11 @@ vi.mock('../services/api.js', async (importOriginal) => {
     api: {
       ...actual.api,
       scanAgentRuntimes: vi.fn().mockResolvedValue({ agents: [{ id: 'claude', installed: true, binary: '' }] }),
-      getAgentRuntimeModels: vi.fn().mockResolvedValue([]),
-      listAIProviders: vi.fn().mockResolvedValue([{ id: 1, name: 'openai', status: 'active', default_model: 'gpt' }]),
+      getAgentRuntimeModels: vi.fn().mockResolvedValue([{ id: 'sonnet' }]),
       listChatConversations: (...args) => listChatConversations(...args),
       createChatConversation: (...args) => createChatConversation(...args),
       startChatTurn: (...args) => startChatTurn(...args),
-      getChatTurns: vi.fn().mockResolvedValue({ items: [] }),
+      getChatTurns: (...args) => getChatTurns(...args),
       getChatEvents: vi.fn().mockResolvedValue({ items: [], hasMore: false }),
     },
   }
@@ -39,68 +37,73 @@ vi.mock('../services/api.js', async (importOriginal) => {
 
 import AIChatPanel from './AIChatPanel.jsx'
 
-// deferred() gives the test explicit control over exactly when each
-// listChatConversations call resolves, instead of racing incidental
-// microtask ordering between the runtime-scan effect (which flips
-// useAgents true asynchronously) and the bucket effect it triggers.
-function deferred() {
-  let resolve
-  const promise = new Promise(r => { resolve = r })
-  return { promise, resolve }
-}
+const readOnlyNote = 'This conversation used a removed AI provider. Start a new chat to continue.'
 
 beforeEach(() => {
   vi.clearAllMocks()
+  getChatTurns.mockImplementation((convId) => Promise.resolve({
+    items: [{ id: `turn-${convId}`, prompt: `prompt of ${convId}`, status: 'completed' }],
+  }))
 })
 
 afterEach(() => {
   cleanup()
 })
 
-describe('AIChatPanel conversation bucket switching', () => {
-  it('clears a stale conversationId from the other backend when the new bucket is empty', async () => {
-    const providerBucket = deferred() // the initial mount's "general:provider" bucket (useAgents defaults false)
-    const agentBucket = deferred()    // "general:agent", once the runtime scan flips useAgents true
-    const providerBucketAgain = deferred() // back to "general:provider" after the user switches
+describe('AIChatPanel agent-only chat', () => {
+  it('creates an agent conversation on the selected runtime for a new chat', async () => {
+    listChatConversations.mockResolvedValue({ items: [] })
+    createChatConversation.mockResolvedValueOnce({ id: 'agent-conv-1', backend: 'agent' })
+    startChatTurn.mockResolvedValueOnce({ ok: true, turnId: 'ignored-by-mock', status: 'active' })
 
-    let call = 0
-    listChatConversations.mockImplementation(() => {
-      call += 1
-      if (call === 1) return providerBucket.promise
-      if (call === 2) return agentBucket.promise
-      return providerBucketAgain.promise
+    render(<AIChatPanel workflowID="general" isOpen={true} onClose={() => {}} />)
+    const textarea = await screen.findByPlaceholderText('Type a message...')
+    fireEvent.change(textarea, { target: { value: 'hello' } })
+    const sendButton = screen.getByRole('button', { name: 'Send message' })
+    await waitFor(() => expect(sendButton).not.toBeDisabled())
+    fireEvent.click(sendButton)
+
+    await waitFor(() => expect(createChatConversation).toHaveBeenCalledWith('general', 'claude', 'sonnet'))
+    expect(startChatTurn).toHaveBeenCalledWith('agent-conv-1', expect.any(String), 'hello', expect.any(Boolean), expect.any(Boolean))
+    expect(screen.queryByTitle('Chat backend')).not.toBeInTheDocument()
+  })
+
+  it('auto-continues the latest agent conversation, never a newer provider one', async () => {
+    listChatConversations.mockResolvedValue({
+      items: [
+        { id: 'prov-conv', backend: 'provider', workflowContext: 'general', providerId: 'p1', model: 'gpt', updatedAt: '2026-09-12T00:00:02.000Z' },
+        { id: 'agent-conv', backend: 'agent', workflowContext: 'general', runtimeId: 'claude', model: 'sonnet', updatedAt: '2026-09-12T00:00:01.000Z' },
+      ],
     })
 
     render(<AIChatPanel workflowID="general" isOpen={true} onClose={() => {}} />)
+    await screen.findByText('prompt of agent-conv')
+    expect(getChatTurns).not.toHaveBeenCalledWith('prov-conv', expect.anything(), expect.anything())
+    expect(screen.queryByText(readOnlyNote)).not.toBeInTheDocument()
+  })
 
-    providerBucket.resolve({ items: [] })
-    await waitFor(() => expect(listChatConversations).toHaveBeenCalledTimes(2)) // agent bucket fired once the scan resolved
-
-    // Agent bucket already has a conversation from a prior send() — auto-
-    // continued on mount, matching today's "resume the most recent one"
-    // behavior.
-    agentBucket.resolve({
-      items: [{ id: 'agent-conv-1', backend: 'agent', workflowContext: 'general', runtimeId: 'claude', model: '', updatedAt: '2026-09-12T00:00:00.000Z' }],
+  it('shows a provider conversation read-only: history loads, the composer is disabled', async () => {
+    listChatConversations.mockResolvedValue({
+      items: [
+        { id: 'prov-conv', backend: 'provider', workflowContext: 'general', providerId: 'p1', model: 'gpt', updatedAt: '2026-09-12T00:00:02.000Z' },
+      ],
     })
-    const backendSelect = await screen.findByTitle('Chat backend')
-    await waitFor(() => expect(backendSelect.value).toBe('agents'))
 
-    // Flip to providers — that bucket resolves empty.
-    fireEvent.change(backendSelect, { target: { value: 'providers' } })
-    await waitFor(() => expect(listChatConversations).toHaveBeenCalledTimes(3))
-    providerBucketAgain.resolve({ items: [] })
+    render(<AIChatPanel workflowID="general" isOpen={true} onClose={() => {}} />)
+    await screen.findByPlaceholderText('Type a message...')
 
-    // Send a message under "providers" — it must create a NEW provider
-    // conversation, never reuse the stale agent-backend id left over from
-    // step 2 above.
-    createChatConversation.mockResolvedValueOnce({ id: 'provider-conv-1', backend: 'provider' })
-    startChatTurn.mockResolvedValueOnce({ ok: true, turnId: 'ignored-by-mock', status: 'active' })
+    fireEvent.click(screen.getByTitle('Past sessions'))
+    const row = await screen.findByRole('option', { name: /read-only/ })
+    fireEvent.click(row)
 
-    const textarea = await screen.findByPlaceholderText('Type a message...')
-    fireEvent.change(textarea, { target: { value: 'hello' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await screen.findByText('prompt of prov-conv')
+    // Shown in the composer banner (and announced in the live region).
+    await waitFor(() => expect(screen.getAllByText(readOnlyNote).length).toBeGreaterThan(0))
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled()
 
-    await waitFor(() => expect(createChatConversation).toHaveBeenCalledWith('provider', 'general', '', '1', 'gpt'))
-    expect(startChatTurn).toHaveBeenCalledWith('provider-conv-1', expect.any(String), 'hello', false, false)
+    // A new chat leaves the read-only conversation and can send again.
+    fireEvent.click(screen.getByTitle('New chat'))
+    await waitFor(() => expect(screen.queryByText(readOnlyNote)).not.toBeInTheDocument())
+    expect(createChatConversation).not.toHaveBeenCalled()
   })
 })

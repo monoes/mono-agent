@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,7 +27,11 @@ func (a *App) runMonoCLI(stdin string, result interface{}, args ...string) error
 		return err
 	}
 	fullArgs := append([]string{"--profile", a.getActiveProfileID(), "--json"}, args...)
-	cmd := exec.CommandContext(a.ctx, cliBin, fullArgs...)
+	ctx := a.ctx
+	if ctx == nil { // before startup, and in tests (which keep ctx nil so emitLog skips the Wails runtime)
+		ctx = context.Background()
+	}
+	cmd := exec.CommandContext(ctx, cliBin, fullArgs...)
 	hideWindow(cmd)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)

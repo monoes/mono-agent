@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -14,8 +15,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/monoes/mono-agent/internal/ai"
 	"github.com/monoes/mono-agent/internal/docscan"
+	"github.com/monoes/mono-agent/internal/imagescan"
 	"github.com/monoes/mono-agent/internal/monomind"
 	"github.com/monoes/mono-agent/internal/noderegistry"
 	"github.com/monoes/mono-agent/internal/orgdecide"
@@ -405,16 +406,16 @@ func intParam(desc string) map[string]interface{} {
 }
 
 // ToolDefs returns every monoagent-domain tool the model can call.
-func (mt *MonoagentTools) ToolDefs() []ai.ToolDef {
-	def := func(name, desc string, props map[string]interface{}, required []string) ai.ToolDef {
+func (mt *MonoagentTools) ToolDefs() []ToolDef {
+	def := func(name, desc string, props map[string]interface{}, required []string) ToolDef {
 		params := map[string]interface{}{"type": "object", "properties": props}
 		if len(required) > 0 {
 			params["required"] = required
 		}
-		return ai.ToolDef{Type: "function", Function: ai.ToolFunction{Name: name, Description: desc, Parameters: params}}
+		return ToolDef{Type: "function", Function: ToolFunction{Name: name, Description: desc, Parameters: params}}
 	}
 
-	defs := []ai.ToolDef{
+	defs := []ToolDef{
 		// Workflows
 		def("list_workflows", "List all workflows in the active profile", nil, nil),
 		def("get_workflow", "Get a workflow's metadata, nodes, and connections", map[string]interface{}{
@@ -458,6 +459,11 @@ func (mt *MonoagentTools) ToolDefs() []ai.ToolDef {
 		def("save_document", "Save generated content — a report, summary, write-up, or other deliverable — as a real file in this profile's docs/ folder. It appears in the Documents vault within a few seconds. Use this whenever you're asked to produce, deliver, or hand off a document; don't just print long deliverable content inline in chat. Only "+allowedDocumentExtensionsText()+" filenames are accepted (matches what the Documents vault indexes). For a styled report, use either .md, or a self-contained .html file with inline <style> and no external resources — the vault preview renders it in a sandboxed frame that strips out any <script>, so treat it as static markup only, never something that needs JavaScript to display correctly. Include the topic and date in the filename (e.g. \"iran-war-debate-2026-09-11.md\") since an exact-duplicate filename is refused rather than overwritten.", map[string]interface{}{
 			"filename": strParam("File name including extension, e.g. \"iran-war-debate-2026-09-11.md\". Any directory portion is stripped — it always lands directly in docs/."),
 			"content":  strParam("The full file content to write, as UTF-8 text."),
+		}, []string{"filename", "content"}),
+		def("save_image", "Save an image — a generated graphic, banner, photo, icon, or diagram — into this profile's image vault so it appears in the Image Vault immediately. Provide the filename (e.g. \"banner.png\", \"icon.svg\") and image content (base64-encoded image bytes, SVG markup, or a local file path). Supported formats: png, jpg, jpeg, gif, webp, svg, bmp, ico.", map[string]interface{}{
+			"filename": strParam("Image filename with extension (e.g. \"header.png\", \"diagram.svg\"). Any directory portion is stripped."),
+			"content":  strParam("Image data: base64-encoded binary data (with or without data:image/...;base64, prefix), raw SVG markup, or local file path."),
+			"label":    strParam("Optional human-readable label or description for the image."),
 		}, []string{"filename", "content"}),
 
 		// Credentials vault — metadata/reference only, never returns values
@@ -619,6 +625,8 @@ func (mt *MonoagentTools) ExecuteContext(ctx context.Context, name string, args 
 		return mt.searchProfileDocuments(args)
 	case "save_document":
 		return mt.saveDocument(args)
+	case "save_image":
+		return mt.saveImage(args)
 	case "list_secrets":
 		return mt.listSecrets(args)
 	case "add_secret":
@@ -1212,6 +1220,96 @@ func (mt *MonoagentTools) saveDocument(args string) (string, error) {
 	if docID, _, err := vault.RegisterDiscoveredDocument(context.Background(), mt.db, mt.ProfileID(), dest, name, int64(len(a.Content))); err == nil {
 		resp["vault_document_id"] = docID
 	}
+	return marshalJSON(resp)
+}
+
+type saveImageArgs struct {
+	Filename string `json:"filename"`
+	Content  string `json:"content"`
+	Label    string `json:"label"`
+}
+
+func (mt *MonoagentTools) saveImage(args string) (string, error) {
+	if err := mt.checkInjectionGate("save_image"); err != nil {
+		return "", err
+	}
+	var a saveImageArgs
+	if err := json.Unmarshal([]byte(args), &a); err != nil {
+		return "", fmt.Errorf("invalid args: %w", err)
+	}
+	name := filepath.Base(strings.TrimSpace(a.Filename))
+	if name == "" || name == "." || name == string(filepath.Separator) {
+		return "", fmt.Errorf("filename is required")
+	}
+	if a.Content == "" {
+		return "", fmt.Errorf("content is required")
+	}
+	if !imagescan.IsImageFile(name) {
+		return "", fmt.Errorf("%q has an unsupported image extension — supported: png, jpg, jpeg, gif, webp, svg, bmp, ico", name)
+	}
+
+	var rawBytes []byte
+	// Check if content is a path to an existing regular file
+	if fi, err := os.Stat(a.Content); err == nil && !fi.IsDir() {
+		b, err := os.ReadFile(a.Content)
+		if err != nil {
+			return "", fmt.Errorf("read image file %s: %w", a.Content, err)
+		}
+		rawBytes = b
+	} else {
+		trimmed := strings.TrimSpace(a.Content)
+		if strings.HasPrefix(trimmed, "data:") {
+			if idx := strings.Index(trimmed, ","); idx != -1 {
+				trimmed = trimmed[idx+1:]
+			}
+		}
+		decoded, err := base64.StdEncoding.DecodeString(trimmed)
+		if err == nil && len(decoded) > 0 {
+			rawBytes = decoded
+		} else if strings.HasSuffix(strings.ToLower(name), ".svg") {
+			rawBytes = []byte(a.Content)
+		} else {
+			return "", fmt.Errorf("invalid image content: must be base64-encoded bytes or valid file path")
+		}
+	}
+
+	root := mt.profileRoot()
+	if root == "" {
+		return "", fmt.Errorf("no profile root resolved")
+	}
+	imagesDir := filepath.Join(root, "images")
+	if err := os.MkdirAll(imagesDir, 0700); err != nil {
+		return "", fmt.Errorf("prepare images folder: %w", err)
+	}
+	dest := filepath.Join(imagesDir, name)
+
+	if err := os.WriteFile(dest, rawBytes, 0600); err != nil {
+		return "", fmt.Errorf("write image %q: %w", name, err)
+	}
+
+	resp := map[string]interface{}{
+		"filename":   name,
+		"path":       dest,
+		"size_bytes": len(rawBytes),
+		"source":     "chat",
+	}
+	if a.Label != "" {
+		resp["label"] = a.Label
+	}
+
+	vaultCtx := vault.ContextWithProfileID(context.Background(), mt.ProfileID())
+	vaultID, err := vault.Register(vaultCtx, mt.db, dest, "chat", "", "")
+	if err != nil {
+		if docID, _, disErr := vault.RegisterDiscoveredImage(context.Background(), mt.db, mt.ProfileID(), dest, name, int64(len(rawBytes))); disErr == nil {
+			resp["vault_image_id"] = docID
+		}
+	} else {
+		resp["vault_image_id"] = vaultID
+		if a.Label != "" {
+			_, _ = mt.db.Exec(`UPDATE vault_images SET label = ? WHERE id = ? AND profile_id = ?`, a.Label, vaultID, mt.ProfileID())
+		}
+	}
+
 	return marshalJSON(resp)
 }
 

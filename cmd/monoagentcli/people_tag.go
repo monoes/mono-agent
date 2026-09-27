@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/monoes/mono-agent/internal/peopletags"
 	"github.com/spf13/cobra"
@@ -19,7 +20,7 @@ func newPeopleTagCmd(cfg *globalConfig) *cobra.Command {
 		Long: "Tags belong to the profile and are matched by name, case-insensitively. A person " +
 			"has at most 10. Tags are addressed by id or name.",
 	}
-	cmd.AddCommand(newPeopleTagListCmd(cfg), newPeopleTagAddCmd(cfg), newPeopleTagRemoveCmd(cfg), newPeopleTagColorCmd(cfg))
+	cmd.AddCommand(newPeopleTagListCmd(cfg), newPeopleTagMapCmd(cfg), newPeopleTagAddCmd(cfg), newPeopleTagRemoveCmd(cfg), newPeopleTagColorCmd(cfg))
 	return cmd
 }
 
@@ -44,6 +45,47 @@ func newPeopleTagListCmd(cfg *globalConfig) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&person, "person", "", "Only this person's tags")
 	return cmd
+}
+
+// newPeopleTagMapCmd bulk-loads tags for a page of people in one query.
+func newPeopleTagMapCmd(cfg *globalConfig) *cobra.Command {
+	return &cobra.Command{
+		Use:   "map <person-id>...",
+		Short: "Show several people's tags at once, keyed by person id",
+		Long: "Prints {person_id: [tags]} for the given people. People without tags, or not in " +
+			"the profile, are left out.",
+		Example: `  monoagentcli --json people tag map 3f2a… 9b1c…`,
+		Args:    cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return withTagDB(cfg, func(db *sql.DB) error {
+				byPerson, err := peopletags.ByPerson(cmd.Context(), db, cfg.ProfileID, args)
+				if err != nil {
+					return tagErr(err)
+				}
+				if cfg.JSONOutput {
+					return printReviewJSON(byPerson)
+				}
+				if len(byPerson) == 0 {
+					fmt.Println("No tags.")
+					return nil
+				}
+				table := newPlainTable(os.Stdout, []string{"Person", "Tags"}, nil)
+				for _, id := range args {
+					tags, ok := byPerson[id]
+					if !ok {
+						continue
+					}
+					names := make([]string, len(tags))
+					for i, t := range tags {
+						names[i] = t.Name
+					}
+					table.Append([]string{id, strings.Join(names, ", ")})
+				}
+				table.Render()
+				return nil
+			})
+		},
+	}
 }
 
 func newPeopleTagAddCmd(cfg *globalConfig) *cobra.Command {

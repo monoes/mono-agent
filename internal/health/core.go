@@ -42,7 +42,7 @@ func coreChecks() []Check {
 		{ID: CheckHome, Group: GroupCore, Title: "Data folder", Required: true, Run: checkHome},
 		{ID: CheckDB, Group: GroupCore, Title: "Database", Required: true, DependsOn: []string{CheckHome}, Run: checkDB},
 		{ID: CheckProfile, Group: GroupCore, Title: "Active profile", Required: true, DependsOn: []string{CheckDB}, Run: checkProfile},
-		{ID: CheckVault, Group: GroupCore, Title: "Secrets vault", Features: []string{"credentials", "connections", "AI connections"}, DependsOn: []string{CheckProfile}, Run: checkVault},
+		{ID: CheckVault, Group: GroupCore, Title: "Secrets vault", Features: []string{"credentials", "connections"}, DependsOn: []string{CheckProfile}, Run: checkVault},
 		{ID: CheckPath, Group: GroupCore, Title: "Login shell PATH", Features: []string{"tools installed via nvm/Homebrew/mise"}, Run: checkPath},
 		{ID: CheckDisk, Group: GroupCore, Title: "Disk space", DependsOn: []string{CheckHome}, Run: checkDisk},
 		{ID: CheckUpdate, Group: GroupCore, Title: "Updates", Network: true, Timeout: 20 * time.Second, Run: checkUpdate},

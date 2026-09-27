@@ -190,3 +190,38 @@ func List(ctx context.Context, db *sql.DB, profileID, personID string) ([]Tag, e
 	}
 	return out, rows.Err()
 }
+
+// ByPerson returns the tags of each of the given people, keyed by person id,
+// each list ordered by name. People not in the profile, or without tags, are
+// left out. It is one query, for bulk-loading a page of people.
+func ByPerson(ctx context.Context, db *sql.DB, profileID string, personIDs []string) (map[string][]Tag, error) {
+	out := map[string][]Tag{}
+	if len(personIDs) == 0 {
+		return out, nil
+	}
+	args := make([]any, 0, len(personIDs)+2)
+	for _, id := range personIDs {
+		args = append(args, id)
+	}
+	args = append(args, profileID, profileID)
+	rows, err := db.QueryContext(ctx, `
+		SELECT pt.person_id, t.id, t.name, t.color
+		FROM people_tags pt
+		JOIN tags t ON t.id = pt.tag_id
+		JOIN people p ON pt.person_id = p.id
+		WHERE pt.person_id IN (?`+strings.Repeat(",?", len(personIDs)-1)+`) AND t.profile_id = ? AND p.profile_id = ?
+		ORDER BY t.name COLLATE NOCASE`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var pid string
+		var t Tag
+		if err := rows.Scan(&pid, &t.ID, &t.Name, &t.Color); err != nil {
+			return nil, err
+		}
+		out[pid] = append(out[pid], t)
+	}
+	return out, rows.Err()
+}

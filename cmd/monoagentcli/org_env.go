@@ -145,6 +145,21 @@ func orgAPIAddr(db *storage.Database) string {
 // it. Every CLI path that writes an org JSON goes through here, so a doc
 // never reaches disk carrying grants or providers no row backs.
 func saveOrgReconciled(ctx context.Context, db *storage.Database, profileID, root string, doc *orgdesign.Doc, opts orggrant.GenOptions) (*orggrant.Report, error) {
+	rep, err := reconcileOrgRows(ctx, db, profileID, doc, opts)
+	if err != nil {
+		return rep, err
+	}
+	if _, err := orgdesign.Save(root, doc); err != nil {
+		return rep, err
+	}
+	return rep, nil
+}
+
+// reconcileOrgRows is saveOrgReconciled without the save: it rewrites
+// doc's generated blocks from the grant, endpoint, and autonomy rows (and
+// lowers the enforced autonomy to match the document), leaving the write to
+// the caller.
+func reconcileOrgRows(ctx context.Context, db *storage.Database, profileID string, doc *orgdesign.Doc, opts orggrant.GenOptions) (*orggrant.Report, error) {
 	rep, err := orggrant.Reconcile(ctx, orggrant.NewStore(db.DB), doc, opts)
 	if err != nil {
 		return nil, err
@@ -158,9 +173,6 @@ func saveOrgReconciled(ctx context.Context, db *storage.Database, profileID, roo
 	}
 	if auto.Ignored != "" {
 		rep.Findings = append(rep.Findings, orggrant.Finding{Kind: "autonomy_raise_ignored", Detail: auto.Ignored})
-	}
-	if _, err := orgdesign.Save(root, doc); err != nil {
-		return rep, err
 	}
 	return rep, nil
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -142,5 +143,55 @@ func TestLoginStatusTableRightAlignsNumericIDColumn(t *testing.T) {
 	pos100 := strings.Index(line100, "100")
 	if pos1 <= pos100 {
 		t.Fatalf("expected the single-digit ID to start further right than the 3-digit ID (right-alignment), got ID \"1\" at column %d and \"100\" at column %d\nrow1:   %q\nrow100: %q", pos1, pos100, line1, line100)
+	}
+}
+
+// `login status --json` uses snake_case keys and prints [] (not null) when
+// there is nothing to report.
+func TestLoginStatusJSONShape(t *testing.T) {
+	keyring.MockInit()
+	t.Setenv("HOME", t.TempDir()) // no installed automations with a login block
+	dbPath := t.TempDir() + "/login-json.db"
+	db, err := storage.NewDatabase(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.ApplyMigrations(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.DB.Close() })
+	run := func() string {
+		cmd := newLoginCmd(&globalConfig{DBPath: dbPath, JSONOutput: true, ProfileID: "default"})
+		cmd.SetArgs([]string{"status"})
+		var out bytes.Buffer
+		cmd.SetOut(&out)
+		if err := cmd.Execute(); err != nil {
+			t.Fatal(err)
+		}
+		return out.String()
+	}
+	if got := strings.TrimSpace(run()); got != "[]" && !strings.Contains(got, `"status": "logged_out"`) {
+		t.Fatalf("empty output = %q, want []", got)
+	}
+	exp := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	if _, err := db.DB.Exec(`INSERT INTO crawler_sessions (id, username, platform, cookies_json, expiry, when_added, profile_id, vault_ref)
+		VALUES (7, 'me', 'linkedin', '{}', ?, ?, 'default', '')`, exp, exp.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(run()), &rows); err != nil {
+		t.Fatal(err)
+	}
+	var li map[string]any
+	for _, r := range rows {
+		if r["platform"] == "linkedin" {
+			li = r
+		}
+	}
+	if li == nil || li["id"] != float64(7) || li["username"] != "me" || li["expiry"] != "2026-10-01T12:00:00Z" || li["when_added"] != "2026-10-01T11:00:00Z" {
+		t.Fatalf("row = %v (all rows: %v)", li, rows)
+	}
+	if _, old := li["Platform"]; old {
+		t.Fatal("Go field names leaked into the JSON")
 	}
 }

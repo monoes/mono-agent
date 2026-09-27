@@ -390,23 +390,43 @@ type DiscoveredFile struct {
 // Continues past per-file errors, collecting them, so one bad file never
 // blocks the rest of a scan from being reconciled.
 func ReconcileDiscoveredDocuments(ctx context.Context, db *sql.DB, profileID string, found []DiscoveredFile) (added int, removed int, errs []error) {
+	r := SyncDiscoveredDocuments(ctx, db, profileID, found)
+	return r.Added, r.Removed, r.Errs
+}
+
+// ReconcileResult counts what one reconcile pass changed. Updated is a
+// tracked file whose size_bytes was refreshed.
+type ReconcileResult struct {
+	Added, Updated, Removed int
+	Errs                    []error
+}
+
+// Changed reports whether the pass wrote anything.
+func (r ReconcileResult) Changed() bool { return r.Added+r.Updated+r.Removed > 0 }
+
+// SyncDiscoveredDocuments is ReconcileDiscoveredDocuments with the
+// size refreshes counted too -- what `profile documents sync` reports.
+func SyncDiscoveredDocuments(ctx context.Context, db *sql.DB, profileID string, found []DiscoveredFile) (res ReconcileResult) {
 	existing := make(map[string]int64, len(found))
 	rows, err := db.QueryContext(ctx, `SELECT path, size_bytes FROM vault_documents WHERE profile_id = ? AND source = 'discovered'`, profileID)
 	if err != nil {
-		return 0, 0, []error{fmt.Errorf("vault.ReconcileDiscoveredDocuments: loading existing: %w", err)}
+		res.Errs = []error{fmt.Errorf("vault.ReconcileDiscoveredDocuments: loading existing: %w", err)}
+		return res
 	}
 	for rows.Next() {
 		var path string
 		var size int64
 		if scanErr := rows.Scan(&path, &size); scanErr != nil {
 			rows.Close()
-			return 0, 0, []error{fmt.Errorf("vault.ReconcileDiscoveredDocuments: scanning existing: %w", scanErr)}
+			res.Errs = []error{fmt.Errorf("vault.ReconcileDiscoveredDocuments: scanning existing: %w", scanErr)}
+			return res
 		}
 		existing[path] = size
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return 0, 0, []error{fmt.Errorf("vault.ReconcileDiscoveredDocuments: %w", err)}
+		res.Errs = []error{fmt.Errorf("vault.ReconcileDiscoveredDocuments: %w", err)}
+		return res
 	}
 
 	foundPaths := make(map[string]bool, len(found))
@@ -420,18 +440,20 @@ func ReconcileDiscoveredDocuments(ctx context.Context, db *sql.DB, profileID str
 			// created=false here rather than inserting a duplicate.
 			_, created, regErr := RegisterDiscoveredDocument(ctx, db, profileID, f.Path, f.Filename, f.SizeBytes)
 			if regErr != nil {
-				errs = append(errs, fmt.Errorf("registering %s: %w", f.Path, regErr))
+				res.Errs = append(res.Errs, fmt.Errorf("registering %s: %w", f.Path, regErr))
 				continue
 			}
 			if created {
-				added++
+				res.Added++
 			}
 			continue
 		}
 		if size != f.SizeBytes {
 			if _, updErr := db.ExecContext(ctx, `UPDATE vault_documents SET size_bytes = ? WHERE profile_id = ? AND path = ?`, f.SizeBytes, profileID, f.Path); updErr != nil {
-				errs = append(errs, fmt.Errorf("refreshing size for %s: %w", f.Path, updErr))
+				res.Errs = append(res.Errs, fmt.Errorf("refreshing size for %s: %w", f.Path, updErr))
+				continue
 			}
+			res.Updated++
 		}
 	}
 
@@ -440,11 +462,10 @@ func ReconcileDiscoveredDocuments(ctx context.Context, db *sql.DB, profileID str
 			continue
 		}
 		if _, delErr := db.ExecContext(ctx, `DELETE FROM vault_documents WHERE profile_id = ? AND path = ? AND source = 'discovered'`, profileID, path); delErr != nil {
-			errs = append(errs, fmt.Errorf("removing vanished %s: %w", path, delErr))
+			res.Errs = append(res.Errs, fmt.Errorf("removing vanished %s: %w", path, delErr))
 			continue
 		}
-		removed++
+		res.Removed++
 	}
-
-	return added, removed, errs
+	return res
 }

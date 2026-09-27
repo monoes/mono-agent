@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -14,6 +15,47 @@ import (
 type SchedulerInterface interface {
 	AddWorkflowJob(spec string, fn func()) (cron.EntryID, error)
 	RemoveJob(id cron.EntryID)
+}
+
+// NextRunner is implemented by schedulers that can report when an entry
+// fires next (internal/scheduler does).
+type NextRunner interface {
+	NextRun(id cron.EntryID) time.Time
+}
+
+// ScheduledRun is one registered schedule trigger and when it fires next.
+type ScheduledRun struct {
+	WorkflowID string
+	NodeID     string
+	Next       time.Time
+}
+
+// ScheduledRuns lists the registered schedule triggers with their real next
+// fire time, soonest first — what the daemon publishes in its heartbeat.
+func (tm *TriggerManager) ScheduledRuns() []ScheduledRun {
+	nr, ok := tm.scheduler.(NextRunner)
+	if !ok {
+		return nil
+	}
+	tm.mu.Lock()
+	var out []ScheduledRun
+	for wfID, nodes := range tm.active {
+		for nodeID, e := range nodes {
+			if e.kind != "schedule" {
+				continue
+			}
+			out = append(out, ScheduledRun{WorkflowID: wfID, NodeID: nodeID, Next: nr.NextRun(e.cronID)})
+		}
+	}
+	tm.mu.Unlock()
+	kept := out[:0]
+	for _, r := range out {
+		if !r.Next.IsZero() {
+			kept = append(kept, r)
+		}
+	}
+	sort.Slice(kept, func(i, j int) bool { return kept[i].Next.Before(kept[j].Next) })
+	return kept
 }
 
 // triggerEntry holds state for an active trigger registration.

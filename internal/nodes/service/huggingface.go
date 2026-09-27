@@ -4,32 +4,42 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 
+	"github.com/monoes/mono-agent/internal/vault"
 	"github.com/monoes/mono-agent/internal/workflow"
 )
 
-// HuggingFaceNode implements service.huggingface for image and text generation
-// via the HuggingFace Inference API (free tier).
+// HuggingFaceNode implements service.huggingface for image generation via
+// the HuggingFace Inference API (free tier).
 //
 // generate_image: POST to /models/{model} with {"inputs": prompt}, response is binary image.
-// generate_text:  POST to /models/{model} with {"inputs": prompt}, response is JSON array.
+// generate_text:  removed — text generation over HTTP with the node's own
+// key is LLM inference, which runs through local agents (agent.ask) now.
+// Local agents cannot generate images, so generate_image stays.
 type HuggingFaceNode struct{}
+
+// huggingFaceTextRemoved is generate_text's fail-fast error.
+var huggingFaceTextRemoved = errors.New(`huggingface: operation generate_text was removed by the local-agent transition — replace it with the "agent.ask" node (local AI agent via monomind; see "monoagentcli ref node agent.ask"); generate_image still works`)
 
 func (n *HuggingFaceNode) Type() string { return "service.huggingface" }
 
 func (n *HuggingFaceNode) Execute(ctx context.Context, input workflow.NodeInput, config map[string]interface{}) ([]workflow.NodeOutput, error) {
-	apiKey := strVal(config, "api_key")
-	if apiKey == "" {
-		return nil, fmt.Errorf("huggingface: api_key is required")
-	}
-
 	operation := strVal(config, "operation")
 	if operation == "" {
 		operation = "generate_image"
+	}
+	if operation == "generate_text" {
+		return nil, huggingFaceTextRemoved
+	}
+
+	apiKey := strVal(config, "api_key")
+	if apiKey == "" {
+		return nil, fmt.Errorf("huggingface: api_key is required")
 	}
 
 	items := input.Items
@@ -44,8 +54,6 @@ func (n *HuggingFaceNode) Execute(ctx context.Context, input workflow.NodeInput,
 		switch operation {
 		case "generate_image":
 			enriched, err = n.generateImage(ctx, apiKey, config, item)
-		case "generate_text":
-			enriched, err = n.generateText(ctx, apiKey, config, item)
 		default:
 			return nil, fmt.Errorf("huggingface: unknown operation %q", operation)
 		}
@@ -107,62 +115,22 @@ func (n *HuggingFaceNode) generateImage(ctx context.Context, apiKey string, conf
 	enriched := copyItem(item)
 	enriched.JSON["file_path"] = filePath
 	enriched.JSON["url"] = url
+
+	if vaultDB := vault.DBFromContext(ctx); vaultDB != nil {
+		wfID, execID := vault.ExecIDsFromContext(ctx)
+		if vaultID, err := vault.Register(ctx, vaultDB, filePath, "huggingface", wfID, execID); err == nil {
+			enriched.JSON["vault_id"] = vaultID
+		}
+	}
 	return enriched, nil
 }
 
-func (n *HuggingFaceNode) generateText(ctx context.Context, apiKey string, config map[string]interface{}, item workflow.Item) (workflow.Item, error) {
-	prompt := strVal(config, "prompt")
-	if prompt == "" {
-		return item, fmt.Errorf("huggingface generate_text: prompt is required")
+// copyItem returns item with a shallow copy of its JSON, for a node that
+// enriches its input item rather than replacing it.
+func copyItem(item workflow.Item) workflow.Item {
+	newJSON := make(map[string]interface{}, len(item.JSON)+2)
+	for k, v := range item.JSON {
+		newJSON[k] = v
 	}
-	model := strVal(config, "model")
-	if model == "" {
-		model = "meta-llama/Llama-3.2-3B-Instruct"
-	}
-
-	params := map[string]interface{}{}
-	if maxTokens := intVal(config, "max_tokens"); maxTokens > 0 {
-		params["max_new_tokens"] = maxTokens
-	}
-	reqPayload := map[string]interface{}{
-		"inputs": prompt,
-	}
-	if len(params) > 0 {
-		reqPayload["parameters"] = params
-	}
-	body, _ := json.Marshal(reqPayload)
-	url := fmt.Sprintf("https://router.huggingface.co/hf-inference/models/%s", model)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return item, err
-	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return item, fmt.Errorf("huggingface generate_text: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return item, fmt.Errorf("huggingface: read response: %w", err)
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return item, fmt.Errorf("huggingface generate_text: HTTP %d: %s", resp.StatusCode, string(respBytes))
-	}
-
-	// Response is [{generated_text: "..."}]
-	var result []map[string]interface{}
-	text := ""
-	if json.Unmarshal(respBytes, &result) == nil && len(result) > 0 {
-		text, _ = result[0]["generated_text"].(string)
-	}
-
-	enriched := copyItem(item)
-	enriched.JSON["text"] = text
-	return enriched, nil
+	return workflow.Item{JSON: newJSON, Binary: item.Binary}
 }

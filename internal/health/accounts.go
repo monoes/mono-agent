@@ -16,7 +16,6 @@ const GroupAccounts = "accounts"
 
 const (
 	CheckConnections = "accounts.connections"
-	CheckAIProviders = "accounts.ai_connections"
 	CheckLogins      = "accounts.logins"
 
 	// FixConnectionRefresh and FixConnectionTryRefresh are parameterized by
@@ -27,7 +26,6 @@ const (
 	FixConnectionRefresh    = "accounts.connection.refresh"
 	FixConnectionTryRefresh = "accounts.connection.try_refresh"
 	FixReconnect            = "accounts.connection.reconnect"
-	FixAIProviderKey        = "accounts.ai_connection.edit"
 	FixLogin                = "accounts.login"
 )
 
@@ -35,7 +33,7 @@ const accountTimeout = 2 * time.Minute
 
 // Variables so tests can shrink them.
 var (
-	// Connections and AI connections are tested accountParallel at a time,
+	// Connections are tested accountParallel at a time,
 	// each for at most accountItemTimeout, so a few slow services cannot
 	// run the whole check into its timeout and lose every row.
 	accountParallel    = 4
@@ -49,8 +47,6 @@ func accountChecks() []Check {
 	return []Check{
 		{ID: CheckConnections, Group: GroupAccounts, Title: "Connections", Features: []string{"workflow nodes using them"},
 			DependsOn: []string{CheckProfile}, Network: true, Timeout: accountTimeout, Run: checkConnections},
-		{ID: CheckAIProviders, Group: GroupAccounts, Title: "AI connections (legacy)", Features: []string{"AI nodes using them"},
-			DependsOn: []string{CheckProfile}, Network: true, Timeout: accountTimeout, Run: checkAIProviders},
 		{ID: CheckLogins, Group: GroupAccounts, Title: "Platform logins", Features: []string{"social platform actions"},
 			DependsOn: []string{CheckProfile}, Run: checkLogins},
 	}
@@ -73,8 +69,6 @@ func accountFixes() []Fix {
 		// Rows replace these generic commands with their own (FixCommand).
 		{FixInfo: FixInfo{ID: FixReconnect, Label: "Reconnect the account", Safety: SafetyManual,
 			Command: "monoagentcli connect <platform> (or Connections in the app)"}, Apply: manual},
-		{FixInfo: FixInfo{ID: FixAIProviderKey, Label: "Update the API key", Safety: SafetyManual,
-			Command: "Settings › AI connections (legacy), or: monoagentcli ai provider add"}, Apply: manual},
 		{FixInfo: FixInfo{ID: FixLogin, Label: "Log in again", Safety: SafetyManual,
 			Command: "monoagentcli login <platform>"}, Apply: manual},
 	}
@@ -259,42 +253,6 @@ func checkConnections(ctx context.Context, env *Env) Result {
 	return res
 }
 
-func checkAIProviders(ctx context.Context, env *Env) Result {
-	if env.AIProviders == nil || env.TestAIProvider == nil {
-		return Result{Status: StatusSkip, Summary: "not available"}
-	}
-	providers, err := env.AIProviders(ctx)
-	if err != nil {
-		return Result{Status: StatusFail, Summary: "cannot list AI connections", Detail: err.Error()}
-	}
-	if len(providers) == 0 {
-		return Result{Status: StatusInfo, Summary: "none configured"}
-	}
-	errs := testEach(ctx, len(providers), func(ctx context.Context, i int) error { return env.TestAIProvider(ctx, providers[i].ID) })
-	res, tally := Result{}, accountTally{total: len(providers)}
-	for i, p := range providers {
-		child := Result{ID: "accounts.ai_connection." + shortID(p.ID), Title: p.Name,
-			Summary: joinNonEmpty(" · ", p.ProviderID, p.Model)}
-		if accountRow(&child, errs[i], &tally) {
-			child.FixID = FixAIProviderKey
-			child.FixCommand = aiKeyCommand(p)
-		}
-		res.Children = append(res.Children, child)
-	}
-	tally.finish(&res, "answering")
-	return res
-}
-
-// aiKeyCommand is how to give one AI connection a new key from the CLI,
-// which has no edit command: add it again, then delete the old one.
-func aiKeyCommand(p ProviderInfo) string {
-	add := fmt.Sprintf("monoagentcli ai provider add --name %q --provider %s", p.Name, orDefault(p.ProviderID, "<provider>"))
-	if p.Model != "" {
-		add += " --model " + p.Model
-	}
-	return fmt.Sprintf("Settings › AI connections (legacy), or: %s --api-key <new key> && monoagentcli ai provider delete %s", add, p.ID)
-}
-
 func checkLogins(ctx context.Context, env *Env) Result {
 	if env.LoginSessions == nil {
 		return Result{Status: StatusSkip, Summary: "not available"}
@@ -360,16 +318,6 @@ func idPart(s string) string {
 		}
 		return '_'
 	}, s)
-}
-
-func joinNonEmpty(sep string, parts ...string) string {
-	var out []string
-	for _, p := range parts {
-		if p != "" {
-			out = append(out, p)
-		}
-	}
-	return strings.Join(out, sep)
 }
 
 func orDefault(s, def string) string {

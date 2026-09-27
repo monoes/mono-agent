@@ -53,8 +53,6 @@ export function ChooseProfileFolder():Promise<string>;
 
 export function ChooseWorkflowFile():Promise<string>;
 
-export function ClearAIChatHistory(arg1:string):Promise<string>;
-
 export function ClearLogs():Promise<void>;
 
 export function ComposePersonMessage(arg1:string,arg2:string,arg3:string,arg4:string,arg5:boolean):Promise<storage.PersonMessage>;
@@ -63,7 +61,7 @@ export function ConfirmSocialLogin(arg1:string):Promise<string>;
 
 export function ConnectPlatformOAuth(arg1:string):Promise<string>;
 
-export function CreateChatConversation(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string):Promise<string>;
+export function CreateChatConversation(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function CreateOrgDesign(arg1:string):Promise<string>;
 
@@ -72,8 +70,6 @@ export function CreateProfile(arg1:string,arg2:string,arg3:string):Promise<main.
 export function CreateResource(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.ResourceItemResult>;
 
 export function CreateWorkflowFromTemplate(arg1:string):Promise<main.WorkflowSummary>;
-
-export function DeleteAIProvider(arg1:string):Promise<string>;
 
 export function DeleteChatConversation(arg1:string):Promise<string>;
 
@@ -117,12 +113,6 @@ export function GateApproveOrgAction(arg1:string,arg2:string,arg3:string):Promis
 
 export function GateRejectOrgAction(arg1:string,arg2:string,arg3:string):Promise<string>;
 
-export function GetAIChatHistory(arg1:string):Promise<string>;
-
-export function GetAIModels(arg1:string):Promise<string>;
-
-export function GetAIRegistry():Promise<string>;
-
 export function GetActiveProfile():Promise<main.ProfileInfo>;
 
 export function GetAgentRuntimeModels(arg1:string,arg2:string):Promise<string>;
@@ -138,8 +128,6 @@ export function GetApplications(arg1:string,arg2:string,arg3:string):Promise<Arr
 export function GetCaptureView(arg1:string):Promise<main.CaptureView>;
 
 export function GetChatEvents(arg1:string,arg2:string,arg3:number,arg4:number):Promise<string>;
-
-export function GetChatSessionMessages(arg1:string,arg2:string):Promise<string>;
 
 export function GetChatTurns(arg1:string,arg2:string,arg3:number):Promise<string>;
 
@@ -189,6 +177,8 @@ export function GetOrgReport(arg1:string,arg2:boolean,arg3:string):Promise<strin
 
 export function GetOrgStatus(arg1:string):Promise<string>;
 
+export function GetOrgSummary(arg1:boolean):Promise<string>;
+
 export function GetPendingPeopleApprovals():Promise<Array<main.PendingPersonApproval>>;
 
 export function GetPeople(arg1:string,arg2:string,arg3:number,arg4:number):Promise<Array<main.PersonInfo>>;
@@ -228,6 +218,10 @@ export function GetSecretFields(arg1:string):Promise<main.VaultFieldsAndNotes>;
 export function GetSessions():Promise<Array<main.SessionInfo>>;
 
 export function GetSocialLists():Promise<Array<main.SocialListInfo>>;
+
+export function GetSummary():Promise<string>;
+
+export function GetSummarySections(arg1:string):Promise<string>;
 
 export function GetTemplates():Promise<Array<main.TemplateInfo>>;
 
@@ -285,13 +279,9 @@ export function JevTestKey():Promise<main.JevKeyTestResult>;
 
 export function JevUsage(arg1:string):Promise<main.JevUsageReport>;
 
-export function ListAIProviders():Promise<string>;
-
 export function ListAutomations():Promise<string>;
 
 export function ListChatConversations(arg1:string,arg2:number):Promise<string>;
-
-export function ListChatSessions(arg1:string):Promise<string>;
 
 export function ListConnections(arg1:string):Promise<Array<connections.SafeConnection>>;
 
@@ -330,6 +320,10 @@ export function ListWorkflowTemplates():Promise<Array<workflow.Template>>;
 export function ListWorkflows():Promise<Array<main.WorkflowSummary>>;
 
 export function LoginSocial(arg1:string):Promise<string>;
+
+export function MarkPersonMessageUnread(arg1:string):Promise<void>;
+
+export function MarkPersonMessagesRead(arg1:string,arg2:Array<string>):Promise<void>;
 
 export function MoveProfileFolder(arg1:string,arg2:string):Promise<void>;
 
@@ -395,8 +389,6 @@ export function RunWorkflow(arg1:string):Promise<void>;
 
 export function RunWorkflowWithInput(arg1:string,arg2:string):Promise<void>;
 
-export function SaveAIProvider(arg1:string):Promise<string>;
-
 export function SaveConnectionDirect(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function SaveDraft(arg1:string,arg2:string):Promise<string>;
@@ -443,10 +435,6 @@ export function StartChatTurn(arg1:string,arg2:string,arg3:string,arg4:boolean,a
 
 export function StartOrgGroup(arg1:string):Promise<string>;
 
-export function StopAIChat(arg1:string):Promise<string>;
-
-export function StopAgentChat(arg1:string):Promise<string>;
-
 export function StopChatTurn(arg1:string,arg2:string):Promise<string>;
 
 export function StopNodeRun(arg1:string):Promise<void>;
@@ -455,17 +443,11 @@ export function StopOrgEvents(arg1:string):Promise<string>;
 
 export function StopOrgGroup(arg1:string):Promise<string>;
 
-export function StreamAIChat(arg1:string,arg2:string,arg3:string,arg4:string):Promise<string>;
-
-export function StreamAgentChat(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:boolean,arg7:boolean,arg8:boolean):Promise<string>;
-
 export function StreamOrgEvents(arg1:string):Promise<string>;
 
 export function SwitchProfile(arg1:string):Promise<void>;
 
 export function TagApplication(arg1:string,arg2:string,arg3:string):Promise<void>;
-
-export function TestAIProvider(arg1:string):Promise<string>;
 
 export function TestAutomation(arg1:string,arg2:string,arg3:boolean):Promise<string>;
 

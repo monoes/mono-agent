@@ -98,10 +98,6 @@ export function ChooseWorkflowFile() {
   return window['go']['main']['App']['ChooseWorkflowFile']();
 }
 
-export function ClearAIChatHistory(arg1) {
-  return window['go']['main']['App']['ClearAIChatHistory'](arg1);
-}
-
 export function ClearLogs() {
   return window['go']['main']['App']['ClearLogs']();
 }
@@ -118,8 +114,8 @@ export function ConnectPlatformOAuth(arg1) {
   return window['go']['main']['App']['ConnectPlatformOAuth'](arg1);
 }
 
-export function CreateChatConversation(arg1, arg2, arg3, arg4, arg5) {
-  return window['go']['main']['App']['CreateChatConversation'](arg1, arg2, arg3, arg4, arg5);
+export function CreateChatConversation(arg1, arg2, arg3) {
+  return window['go']['main']['App']['CreateChatConversation'](arg1, arg2, arg3);
 }
 
 export function CreateOrgDesign(arg1) {
@@ -136,10 +132,6 @@ export function CreateResource(arg1, arg2, arg3, arg4) {
 
 export function CreateWorkflowFromTemplate(arg1) {
   return window['go']['main']['App']['CreateWorkflowFromTemplate'](arg1);
-}
-
-export function DeleteAIProvider(arg1) {
-  return window['go']['main']['App']['DeleteAIProvider'](arg1);
 }
 
 export function DeleteChatConversation(arg1) {
@@ -226,18 +218,6 @@ export function GateRejectOrgAction(arg1, arg2, arg3) {
   return window['go']['main']['App']['GateRejectOrgAction'](arg1, arg2, arg3);
 }
 
-export function GetAIChatHistory(arg1) {
-  return window['go']['main']['App']['GetAIChatHistory'](arg1);
-}
-
-export function GetAIModels(arg1) {
-  return window['go']['main']['App']['GetAIModels'](arg1);
-}
-
-export function GetAIRegistry() {
-  return window['go']['main']['App']['GetAIRegistry']();
-}
-
 export function GetActiveProfile() {
   return window['go']['main']['App']['GetActiveProfile']();
 }
@@ -268,10 +248,6 @@ export function GetCaptureView(arg1) {
 
 export function GetChatEvents(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['GetChatEvents'](arg1, arg2, arg3, arg4);
-}
-
-export function GetChatSessionMessages(arg1, arg2) {
-  return window['go']['main']['App']['GetChatSessionMessages'](arg1, arg2);
 }
 
 export function GetChatTurns(arg1, arg2, arg3) {
@@ -370,6 +346,10 @@ export function GetOrgStatus(arg1) {
   return window['go']['main']['App']['GetOrgStatus'](arg1);
 }
 
+export function GetOrgSummary(arg1) {
+  return window['go']['main']['App']['GetOrgSummary'](arg1);
+}
+
 export function GetPendingPeopleApprovals() {
   return window['go']['main']['App']['GetPendingPeopleApprovals']();
 }
@@ -448,6 +428,14 @@ export function GetSessions() {
 
 export function GetSocialLists() {
   return window['go']['main']['App']['GetSocialLists']();
+}
+
+export function GetSummary() {
+  return window['go']['main']['App']['GetSummary']();
+}
+
+export function GetSummarySections(arg1) {
+  return window['go']['main']['App']['GetSummarySections'](arg1);
 }
 
 export function GetTemplates() {
@@ -562,20 +550,12 @@ export function JevUsage(arg1) {
   return window['go']['main']['App']['JevUsage'](arg1);
 }
 
-export function ListAIProviders() {
-  return window['go']['main']['App']['ListAIProviders']();
-}
-
 export function ListAutomations() {
   return window['go']['main']['App']['ListAutomations']();
 }
 
 export function ListChatConversations(arg1, arg2) {
   return window['go']['main']['App']['ListChatConversations'](arg1, arg2);
-}
-
-export function ListChatSessions(arg1) {
-  return window['go']['main']['App']['ListChatSessions'](arg1);
 }
 
 export function ListConnections(arg1) {
@@ -652,6 +632,14 @@ export function ListWorkflows() {
 
 export function LoginSocial(arg1) {
   return window['go']['main']['App']['LoginSocial'](arg1);
+}
+
+export function MarkPersonMessageUnread(arg1) {
+  return window['go']['main']['App']['MarkPersonMessageUnread'](arg1);
+}
+
+export function MarkPersonMessagesRead(arg1, arg2) {
+  return window['go']['main']['App']['MarkPersonMessagesRead'](arg1, arg2);
 }
 
 export function MoveProfileFolder(arg1, arg2) {
@@ -782,10 +770,6 @@ export function RunWorkflowWithInput(arg1, arg2) {
   return window['go']['main']['App']['RunWorkflowWithInput'](arg1, arg2);
 }
 
-export function SaveAIProvider(arg1) {
-  return window['go']['main']['App']['SaveAIProvider'](arg1);
-}
-
 export function SaveConnectionDirect(arg1, arg2, arg3) {
   return window['go']['main']['App']['SaveConnectionDirect'](arg1, arg2, arg3);
 }
@@ -878,14 +862,6 @@ export function StartOrgGroup(arg1) {
   return window['go']['main']['App']['StartOrgGroup'](arg1);
 }
 
-export function StopAIChat(arg1) {
-  return window['go']['main']['App']['StopAIChat'](arg1);
-}
-
-export function StopAgentChat(arg1) {
-  return window['go']['main']['App']['StopAgentChat'](arg1);
-}
-
 export function StopChatTurn(arg1, arg2) {
   return window['go']['main']['App']['StopChatTurn'](arg1, arg2);
 }
@@ -902,14 +878,6 @@ export function StopOrgGroup(arg1) {
   return window['go']['main']['App']['StopOrgGroup'](arg1);
 }
 
-export function StreamAIChat(arg1, arg2, arg3, arg4) {
-  return window['go']['main']['App']['StreamAIChat'](arg1, arg2, arg3, arg4);
-}
-
-export function StreamAgentChat(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) {
-  return window['go']['main']['App']['StreamAgentChat'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
-}
-
 export function StreamOrgEvents(arg1) {
   return window['go']['main']['App']['StreamOrgEvents'](arg1);
 }
@@ -920,10 +888,6 @@ export function SwitchProfile(arg1) {
 
 export function TagApplication(arg1, arg2, arg3) {
   return window['go']['main']['App']['TagApplication'](arg1, arg2, arg3);
-}
-
-export function TestAIProvider(arg1) {
-  return window['go']['main']['App']['TestAIProvider'](arg1);
 }
 
 export function TestAutomation(arg1, arg2, arg3) {
