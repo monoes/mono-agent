@@ -822,6 +822,11 @@ export namespace main {
 	    contact_details: string;
 	    created_at: string;
 	    updated_at: string;
+	    headline: string;
+	    location: string;
+	    about: string;
+	    experience: any[];
+	    education: any[];
 	
 	    static createFrom(source: any = {}) {
 	        return new PersonDetailInfo(source);
@@ -846,6 +851,11 @@ export namespace main {
 	        this.contact_details = source["contact_details"];
 	        this.created_at = source["created_at"];
 	        this.updated_at = source["updated_at"];
+	        this.headline = source["headline"];
+	        this.location = source["location"];
+	        this.about = source["about"];
+	        this.experience = source["experience"];
+	        this.education = source["education"];
 	    }
 	}
 	export class PersonInfo {

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
-  ArrowLeft, ExternalLink, CheckCircle, Globe, Mail,
+  ArrowLeft, ExternalLink, CheckCircle, Globe, Mail, MapPin,
   Users, FileText, Heart, MessageSquare, Send, Eye,
   UserPlus, UserMinus, Search, RefreshCw, Zap,
   MessageCircle, ChevronDown, ChevronRight,
@@ -10,6 +11,7 @@ import { isUnread, UnreadDot } from '../lib/unread.jsx'
 import { api, PLATFORM_COLORS, STATE_COLORS } from '../services/api.js'
 import MessageDetailModal from '../components/MessageDetailModal.jsx'
 import StatusHistoryModal from '../components/StatusHistoryModal.jsx'
+import { ExperienceSection, EducationSection } from '../components/ProfileDetails.jsx'
 
 // Map action types to icons + labels
 const ACTION_META = {
@@ -655,6 +657,7 @@ function stripHTML(body) {
 }
 
 export default function Profile({ id, onBack, onOpenURL, onOpenPost }) {
+  const { t } = useTranslation()
   const [person, setPerson] = useState(null)
   const [interactions, setInteractions] = useState([])
   const [loading, setLoading] = useState(true)
@@ -781,14 +784,26 @@ export default function Profile({ id, onBack, onOpenURL, onOpenPost }) {
               ) : (
                 <div className="profile-username">@{person.username}</div>
               )}
-              {(person.job_title || person.category) && (
-                <div className="profile-role">{person.job_title || person.category}</div>
+              {(person.headline || person.job_title || person.category) && (
+                <div className="profile-role">{person.headline || person.job_title || person.category}</div>
               )}
-              {person.introduction && (
-                <p className="profile-bio">{person.introduction}</p>
+              {/* about is the profile's own bio; introduction is the drafted
+                  outreach message, shown as the bio only when there is none. */}
+              {(person.about || person.introduction) && (
+                <p className="profile-bio">{person.about || person.introduction}</p>
+              )}
+              {person.about && person.introduction && (
+                <div className="profile-intro">
+                  <span className="profile-entry-label">{t('personProfile.introduction')}:</span> {person.introduction}
+                </div>
               )}
               <StatusSection personId={id} platformColor={platformColor} />
               <div className="profile-links">
+                {person.location && (
+                  <span className="profile-meta-link">
+                    <MapPin size={12} /> {person.location}
+                  </span>
+                )}
                 {person.website && (
                   <button className="profile-meta-link" onClick={() => onOpenURL(person.website)}>
                     <Globe size={12} /> {person.website.replace(/^https?:\/\//, '')}
@@ -837,6 +852,10 @@ export default function Profile({ id, onBack, onOpenURL, onOpenPost }) {
             })}
           </div>
         )}
+
+        {/* ── Experience / education (profile reads) ── */}
+        <ExperienceSection experience={person.experience} onOpenURL={onOpenURL} />
+        <EducationSection education={person.education} onOpenURL={onOpenURL} />
 
         {/* ── Posts section ── */}
         <PostsSection

@@ -46,6 +46,15 @@ type PersonDetailInfo struct {
 	ContactDetails string `json:"contact_details"`
 	CreatedAt      string `json:"created_at"`
 	UpdatedAt      string `json:"updated_at"`
+	// Profile details from a profile read (LinkedIn): experience entries
+	// carry title/company/date_range/location/description…, education
+	// entries school/degree/field_of_study/date_range… (see
+	// data/migrations/053_people_profile_details.sql).
+	Headline   string                   `json:"headline"`
+	Location   string                   `json:"location"`
+	About      string                   `json:"about"`
+	Experience []map[string]interface{} `json:"experience"`
+	Education  []map[string]interface{} `json:"education"`
 }
 
 type PersonInteraction struct {

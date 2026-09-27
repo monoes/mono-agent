@@ -465,5 +465,13 @@
     "refresh": "Actualizar",
     "banner": "Los entornos de agentes de IA (Claude Code, Codex, …) de la página <strong>Agentes de IA</strong> son la forma recomendada de usar la IA. Estas conexiones con clave de API se mantienen para los nodos de IA de flujos existentes que las usan.",
     "keyKeepPlaceholder": "Déjalo en blanco para conservar la clave guardada"
+  },
+  "personProfile": {
+    "experience": "Experiencia",
+    "education": "Educación",
+    "introduction": "Presentación",
+    "skills": "Aptitudes",
+    "grade": "Nota",
+    "activities": "Actividades"
   }
 }
