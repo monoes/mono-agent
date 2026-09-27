@@ -162,3 +162,53 @@ func TestSummaryCountsTheProfilesCaptures(t *testing.T) {
 		t.Fatalf("captures_total = %d, want 2 (the profile inbox only)\n%s", got.Activity.CapturesTotal, out)
 	}
 }
+
+func TestSummaryAllProfilesRollsUp(t *testing.T) {
+	cfg := newSummaryCLITestDB(t) // profile "default": workflow w1 (active), one pending HIL
+	db, err := storage.NewDatabase(cfg.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.DB.Exec(`INSERT INTO profiles (id, name) VALUES ('p-work', 'Work');
+		INSERT INTO workflows (id, name, is_active, profile_id) VALUES ('w2','B',1,'p-work'), ('w3','C',0,'p-work');
+		INSERT INTO hil_pending (id, execution_id, workflow_id, node_id, node_name, status, profile_id) VALUES ('h2','e2','w2','n','N','pending','p-work')`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	out, err := runSummary(t, cfg, "--all-profiles")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Scope     string `json:"scope"`
+		Workflows struct {
+			Total  int `json:"total"`
+			Active int `json:"active"`
+		} `json:"workflows"`
+		HIL struct {
+			WorkflowPending int `json:"workflow_pending"`
+		} `json:"hil"`
+		Services json.RawMessage `json:"services"`
+		Profiles []struct {
+			ID      string `json:"id"`
+			Name    string `json:"name"`
+			Current bool   `json:"current"`
+		} `json:"profiles"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, out)
+	}
+	if got.Scope != "global" || got.Workflows.Total != 3 || got.Workflows.Active != 2 || got.HIL.WorkflowPending != 2 || len(got.Services) == 0 {
+		t.Fatalf("global summary = %s", out)
+	}
+	if len(got.Profiles) != 2 || got.Profiles[0].ID != "default" || !got.Profiles[0].Current || got.Profiles[1].Name != "Work" {
+		t.Fatalf("profiles = %+v", got.Profiles)
+	}
+
+	// The profile view is unchanged apart from saying which it is.
+	out, err = runSummary(t, cfg)
+	if err != nil || !strings.Contains(out, `"scope": "profile"`) || strings.Contains(out, `"profiles"`) {
+		t.Fatalf("profile summary = %s (%v)", out, err)
+	}
+}

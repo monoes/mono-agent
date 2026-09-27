@@ -94,6 +94,10 @@ type SessionRow struct {
 	Username string `json:"username"`
 	Expiry   string `json:"expiry"`
 	Status   string `json:"status"` // active | expiring | expired
+	// ProfileID and ProfileName are set only in the All profiles view
+	// (Merge), so every row says whose it is.
+	ProfileID   string `json:"profile_id,omitempty"`
+	ProfileName string `json:"profile_name,omitempty"`
 }
 
 type AccountsSection struct {
