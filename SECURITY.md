@@ -133,6 +133,21 @@ The variable holds a path, never the passphrase; a file readable by group
 or others is refused. When it is set it wins over stdin and the terminal.
 Without it, a command that has no source fails with an error naming it.
 
+Without an environment variable, the same can be configured once with
+`monoagentcli secret keyring set-passphrase` (passphrase on stdin, or typed
+at a no-echo prompt) — or from the desktop app's **Settings › Vault
+keyring**, shown only on hosts with no OS keychain. It writes
+`~/.monoagent/keyring-passphrase` (mode 0600, `~/.monoagent` 0700), after
+checking the passphrase unlocks every existing file keyring; a passphrase
+that doesn't is rejected and nothing is written. `secret keyring status`
+reports the key store (`os`/`file`/`unavailable`) and the passphrase
+file's state without prompting; `secret keyring clear-passphrase` deletes
+it. The passphrase is looked up in this order: the file named by
+`MONOAGENT_FILE_KEYRING_PASSPHRASE_FILE`, `~/.monoagent/keyring-passphrase`,
+stdin, the terminal. Keeping the passphrase next to the keyring means
+anyone who can read your home directory as you can open the vault — the
+same trade-off as the environment-variable file.
+
 ## Assistant tools (chat `--tools`)
 
 The `chat` command can expose a monoagent tool surface to the assistant

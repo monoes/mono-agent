@@ -47,6 +47,9 @@ func passphraseIO(t *testing.T, stdin io.Reader, tty *fakeTTY) *int {
 	forgetFilePassphrases()
 	stdinConsumed.Store(false)
 	t.Setenv(filePassphraseFileEnv, "")
+	// A temp HOME: no configured ~/.monoagent/keyring-passphrase unless the
+	// test writes one.
+	t.Setenv("HOME", t.TempDir())
 	filePassphraseFunc = promptFilePassphrase
 	passphraseStdin = stdin
 	passphrasePromptOut = io.Discard

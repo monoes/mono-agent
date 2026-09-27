@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Vault keyring passphrase from Settings.** On hosts with no OS keychain
+  (file keyring, `MONOAGENT_ALLOW_FILE_KEYRING=1`), Settings › Vault
+  keyring saves the file-keyring passphrase so the desktop app can write
+  vault secrets (e.g. the Jev key) without
+  `MONOAGENT_FILE_KEYRING_PASSPHRASE_FILE` in its environment. New
+  `monoagentcli secret keyring status | set-passphrase | clear-passphrase`;
+  the passphrase is read from stdin only, checked against an existing
+  file keyring, and stored in `~/.monoagent/keyring-passphrase` (0600).
+  The block is hidden on hosts with an OS keychain.
+
 ## [0.76.0] - 2026-09-26
 
 ### Added

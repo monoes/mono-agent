@@ -42,8 +42,9 @@ func newSecretCmd(cfg *globalConfig) *cobra.Command {
 			"The file keyring is protected by a passphrase. It is read from stdin, or\n" +
 			"from the terminal (/dev/tty) when stdin carries the command's own input\n" +
 			"(e.g. `secret add` reading the value, `jev key set`). Where nobody can type\n" +
-			"it (the desktop app, services), put it in a chmod-600 file and set\n" +
-			"MONOAGENT_FILE_KEYRING_PASSPHRASE_FILE=/path/to/that/file.",
+			"it (the desktop app, services), save it with `secret keyring set-passphrase`\n" +
+			"(~/.monoagent/keyring-passphrase, mode 0600), or put it in a chmod-600 file\n" +
+			"and set MONOAGENT_FILE_KEYRING_PASSPHRASE_FILE=/path/to/that/file.",
 	}
 	cmd.AddCommand(
 		newSecretAddCmd(cfg),
@@ -55,6 +56,7 @@ func newSecretCmd(cfg *globalConfig) *cobra.Command {
 		newSecretEncryptConnectionsCmd(cfg),
 		newSecretExportCmd(cfg),
 		newSecretImportCmd(cfg),
+		newSecretKeyringCmd(cfg),
 	)
 	return cmd
 }
