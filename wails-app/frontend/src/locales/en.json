@@ -222,6 +222,19 @@
       "evaluated_one": "{{count}} evaluated",
       "evaluated_other": "{{count}} evaluated",
       "unread": "{{count}} unread"
+    },
+    "scope": {
+      "label": "Show",
+      "profile": "This profile",
+      "global": "All profiles"
+    },
+    "profiles": {
+      "title": "Profiles",
+      "current": "current",
+      "switch": "Switch",
+      "switchTo": "Switch to {{name}}",
+      "chipTitle": "From profile {{name}}",
+      "line": "{{active}} active · {{running}} running · {{failed}} failed (24h) · {{waiting}} waiting for you"
     }
   },
   "agentSetup": {

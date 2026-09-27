@@ -4,6 +4,9 @@ import { GitBranch, Play, ChevronRight, ToggleLeft, ToggleRight, Loader, StopCir
 import { execStatus } from '../../lib/execStatus.js'
 import { relTime, untilTime } from './format.js'
 import { ExecStatusDot } from './RecentRunsCard.jsx'
+import ProfileChip from './ProfileChip.jsx'
+import { ownRow } from './scope.js'
+import { switchToProfile } from './profileSwitch.js'
 
 function ScheduleChip({ sched, invalid, daemonRunning }) {
   const { t } = useTranslation()
@@ -21,7 +24,7 @@ function ScheduleChip({ sched, invalid, daemonRunning }) {
   return <span className="dash-chip" title={interval ? sched.cron : new Date(sched.next_run).toLocaleString()}><Clock size={10} /> {label}</span>
 }
 
-function WorkflowRow({ wf, last, sched, invalid, daemonRunning, onRun, onStop, onToggle, onNavigate }) {
+function WorkflowRow({ wf, last, sched, invalid, daemonRunning, onRun, onStop, onToggle, onNavigate, own, onSwitch }) {
   const { t } = useTranslation()
   const [running, setRunning] = useState(false)
   const [stopping, setStopping] = useState(false)
@@ -46,8 +49,8 @@ function WorkflowRow({ wf, last, sched, invalid, daemonRunning, onRun, onStop, o
     <div className="wf-row" style={{ opacity: wf.is_active ? 1 : 0.55 }}>
       <button
         className="btn btn-ghost btn-icon"
-        onClick={handleToggle}
-        disabled={toggling}
+        onClick={own ? handleToggle : undefined}
+        disabled={toggling || !own}
         title={wf.is_active ? t('dashboard.workflows.deactivate') : t('dashboard.workflows.activate')}
         aria-label={wf.is_active ? t('dashboard.workflows.deactivate') : t('dashboard.workflows.activate')}
         style={{ color: wf.is_active ? 'var(--cyan)' : 'var(--text-dim)', padding: 2 }}
@@ -60,6 +63,7 @@ function WorkflowRow({ wf, last, sched, invalid, daemonRunning, onRun, onStop, o
         {wf.description && (
           <div className="dash-ellipsis" style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>{wf.description}</div>
         )}
+        <ProfileChip row={wf} />
       </div>
 
       <ScheduleChip sched={sched} invalid={invalid} daemonRunning={daemonRunning} />
@@ -78,7 +82,12 @@ function WorkflowRow({ wf, last, sched, invalid, daemonRunning, onRun, onStop, o
         )}
       </div>
 
-      {st.live ? (
+      {!own ? (
+        <button className="btn btn-ghost btn-sm" onClick={() => onSwitch(wf.profile_id)}
+          title={t('dashboard.profiles.switchTo', { name: wf.profile_name || wf.profile_id })}>
+          {t('dashboard.profiles.switch')}
+        </button>
+      ) : st.live ? (
         <button className="btn btn-sm dash-stop-btn" onClick={handleStop} disabled={stopping} title={t('dashboard.workflows.stopTitle')}>
           {stopping ? <Loader size={11} style={{ animation: 'spin 1s linear infinite' }} /> : <StopCircle size={11} />}
           {t('dashboard.workflows.stop')}
@@ -90,20 +99,22 @@ function WorkflowRow({ wf, last, sched, invalid, daemonRunning, onRun, onStop, o
         </button>
       )}
 
-      <button
-        className="btn btn-ghost btn-icon"
-        onClick={() => onNavigate('noderunner', last ? { workflowId: wf.id, executionId: last.id } : { workflowId: wf.id })}
-        style={{ padding: 3, color: 'var(--text-dim)' }}
-        title={t('dashboard.workflows.openEditor')}
-        aria-label={`${t('dashboard.workflows.openEditor')}: ${wf.name || ''}`}
-      >
-        <ChevronRight size={14} />
-      </button>
+      {own && (
+        <button
+          className="btn btn-ghost btn-icon"
+          onClick={() => onNavigate('noderunner', last ? { workflowId: wf.id, executionId: last.id } : { workflowId: wf.id })}
+          style={{ padding: 3, color: 'var(--text-dim)' }}
+          title={t('dashboard.workflows.openEditor')}
+          aria-label={`${t('dashboard.workflows.openEditor')}: ${wf.name || ''}`}
+        >
+          <ChevronRight size={14} />
+        </button>
+      )}
     </div>
   )
 }
 
-export default function WorkflowsCard({ workflows, executions, schedules, onRun, onStop, onToggle, onNavigate }) {
+export default function WorkflowsCard({ workflows, executions, schedules, onRun, onStop, onToggle, onNavigate, currentId = '', onSwitch = switchToProfile }) {
   const { t } = useTranslation()
   const lastByWf = useMemo(() => {
     const m = {}
@@ -143,7 +154,8 @@ export default function WorkflowsCard({ workflows, executions, schedules, onRun,
           {workflows.map(wf => (
             <WorkflowRow key={wf.id} wf={wf} last={lastByWf[wf.id]} sched={schedByWf[wf.id]} invalid={invalidByWf[wf.id]}
               daemonRunning={!!schedules?.daemon_running}
-              onRun={onRun} onStop={onStop} onToggle={onToggle} onNavigate={onNavigate} />
+              onRun={onRun} onStop={onStop} onToggle={onToggle} onNavigate={onNavigate}
+              own={ownRow(wf, currentId)} onSwitch={onSwitch} />
           ))}
         </div>
       )}
