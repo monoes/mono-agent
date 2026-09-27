@@ -13,13 +13,19 @@ import (
 // firstTargetURL returns the URL of the first list target a node run was
 // given, reading the keys the browser adapter reads and in the same order
 // (internal/nodes/browser_adapter.go): "targets", else the legacy
-// "selectedListItems". A target is a string (the URL itself) or an object;
+// "selectedListItems", else a single "target_url". A target is a string (the URL itself) or an object;
 // for an object the adapter's normalized fields are tried: url, href, then
 // username. "" when there is none.
 func firstTargetURL(config map[string]interface{}) string {
 	raw, ok := config["targets"]
 	if !ok {
 		raw = config["selectedListItems"]
+	}
+	if raw == nil {
+		// Single-target nodes (instagram.list_user_posts) name it target_url.
+		if s, _ := config["target_url"].(string); s != "" {
+			return s
+		}
 	}
 	items, ok := raw.([]interface{})
 	if !ok || len(items) == 0 {
