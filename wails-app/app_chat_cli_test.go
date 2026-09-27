@@ -4,6 +4,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -117,7 +118,7 @@ func TestApp_StartChatTurn_RunsTheCLITurnAndRelaysItsEvents(t *testing.T) {
 		t.Errorf("emitted %d events, want 3", n)
 	}
 	got := readArgsLog(t, argsLog)
-	want := "--profile work chat --conversation conv-1 --turn turn-1 --instance " + a.chatSup.instanceID + " --tools monoagent,runs -- hello world"
+	want := "--profile work --json chat --conversation conv-1 --turn turn-1 --instance " + a.chatSup.instanceID + " --tools monoagent,runs -- hello world"
 	if len(got) != 1 || got[0] != want {
 		t.Errorf("CLI calls = %q\nwant one: %q (a turn that finished itself needs no finish call)", got, want)
 	}
@@ -205,6 +206,31 @@ func TestApp_StartChatTurn_CLIRefusalsAreErrorsAndReleaseTheSlot(t *testing.T) {
 				t.Errorf("emitted %d events for a refused turn", n)
 			}
 		})
+	}
+}
+
+// A refusal the CLI classified keeps its code: the chat panel links an
+// agent_not_setup refusal to the AI agents page.
+func TestApp_StartChatTurn_RefusalKeepsTheCLIErrorCode(t *testing.T) {
+	bin, _ := chatFakeCLI(t, fakeChatReply{
+		match:  "chat --conversation",
+		stdout: `{"code":"agent_not_setup","error":"monomind not found (AI engine)"}` + "\n",
+		stderr: "monomind not found (AI engine)\n",
+		code:   1,
+	})
+	a, _ := newCLIChatApp(t, bin)
+	var r struct {
+		Error string `json:"error"`
+		Code  string `json:"code"`
+	}
+	if err := json.Unmarshal([]byte(a.StartChatTurn("conv-1", "turn-1", "hi", false, false)), &r); err != nil {
+		t.Fatal(err)
+	}
+	if r.Code != "agent_not_setup" || !strings.Contains(r.Error, "monomind not found") {
+		t.Errorf("Start = %+v, want the agent_not_setup code", r)
+	}
+	if a.chatSup.lookup("conv-1", "turn-1") != nil {
+		t.Error("refused turn still admitted")
 	}
 }
 
@@ -506,5 +532,34 @@ func TestChatSupervisor_ReconcileShellsOutExceptItsOwnTurns(t *testing.T) {
 	a.chatSup.findCLI = func() (string, error) { return bin2, nil }
 	if errs := a.chatSup.reconcileOrphanedTurns(); len(errs) != 1 {
 		t.Errorf("a failing CLI must surface as an error: %v", errs)
+	}
+}
+
+func TestAIErrorCarriesAgentNotSetupCode(t *testing.T) {
+	var body map[string]string
+	json.Unmarshal([]byte(aiError(errors.New("agent.ask: monomind not found "+agentNotSetupMarker))), &body)
+	if body["code"] != "agent_not_setup" || !strings.Contains(body["error"], "monomind not found") {
+		t.Errorf("aiError(marked) = %v", body)
+	}
+	json.Unmarshal([]byte(aiError(&codedError{msg: "not set up", code: "agent_not_setup"})), &body)
+	if body["code"] != "agent_not_setup" {
+		t.Errorf("aiError(coded) = %v", body)
+	}
+	if got := aiError(errors.New("boom")); got != `{"error":"boom"}` {
+		t.Errorf("aiError(boom) = %s", got)
+	}
+}
+
+func TestAgentSetupWatchMarksFailedRun(t *testing.T) {
+	w := &agentSetupWatch{}
+	w.note("Status: FAILED")
+	ev := w.apply(map[string]interface{}{"workflow_id": "w1", "success": false})
+	if _, ok := ev["code"]; ok {
+		t.Errorf("unmarked output gave %v", ev)
+	}
+	w.note("Error:  node n1 (Ask): agent.ask (claude) turn failed: runner-error: Not logged in " + agentNotSetupMarker)
+	ev = w.apply(map[string]interface{}{"workflow_id": "w1", "success": false})
+	if ev["code"] != "agent_not_setup" || !strings.Contains(ev["error"].(string), "Not logged in") {
+		t.Errorf("marked output gave %v", ev)
 	}
 }

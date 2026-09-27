@@ -13,7 +13,7 @@ export function initialChatState() {
     notices: [],         // [{ code, message, severity }], append-only
     usage: null,          // latest { inputTokens, outputTokens, costUsd, source } snapshot, never summed
     session: null,          // { runtime, sessionId } once session.bound fires
-    terminal: null,          // { status, reason, exitCode, historySaved } once turn.finished fires
+    terminal: null,          // { status, reason, code, exitCode, historySaved } once turn.finished fires
     startedAt: null,          // turn.started's "at", for local elapsed-time display
     lastEventAt: null,          // "at" of the most recently applied event, any type — drives "no new activity for Ns"
     lastSeq: 0,
@@ -104,6 +104,9 @@ function eventPatch(state, ev) {
           reason: payload.reason,
           exitCode: payload.exitCode ?? null,
           historySaved: !!payload.historySaved,
+          // agent_not_setup when the AI agent is not installed or not
+          // logged in (the chat panel then links to the AI agents page).
+          ...(payload.code ? { code: payload.code } : {}),
         },
       }
 

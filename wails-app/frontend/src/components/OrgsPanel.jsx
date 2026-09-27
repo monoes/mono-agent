@@ -490,7 +490,7 @@ export default function OrgsPanel({ embedded = false, isOpen = true, onClose, pa
     setEvents([{ type: 'status', msg: `Starting run for ${selected}…` }])
     const res = await api.runOrg(selected, task)
     if (res?.error) {
-      notify('org run', res.error)
+      notify('org run', res.error, res.code)
       setEvents(prev => [...prev, { type: 'status', msg: `Failed to start: ${res.error}` }])
       setRunningOrgs(prev => {
         const next = new Set(prev)

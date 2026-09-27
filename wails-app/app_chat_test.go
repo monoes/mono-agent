@@ -253,7 +253,7 @@ func TestChatSupervisor_RelaysCommittedEventsInOrder(t *testing.T) {
 	if resp != `{"ok":true,"turnId":"turn-1","status":"active"}` {
 		t.Fatalf("startTurn = %s", resp)
 	}
-	wantArgv := "--profile default chat --conversation conv-1 --turn turn-1 --instance " + sup.instanceID + " -- hi"
+	wantArgv := "--profile default --json chat --conversation conv-1 --turn turn-1 --instance " + sup.instanceID + " -- hi"
 	if got := strings.Join(q.argvs[0], " "); got != wantArgv {
 		t.Errorf("argv = %q\nwant   %q", got, wantArgv)
 	}
@@ -297,7 +297,7 @@ func TestChatSupervisor_ToolsFlagInArgv(t *testing.T) {
 		{true, true, "--tools monoagent,runs "},
 	} {
 		got := strings.Join(chatTurnArgs("p", "c", "t", "i", "-x history", tc.tools, tc.allowRuns), " ")
-		want := "--profile p chat --conversation c --turn t --instance i " + tc.want + "-- -x history"
+		want := "--profile p --json chat --conversation c --turn t --instance i " + tc.want + "-- -x history"
 		if got != want {
 			t.Errorf("chatTurnArgs(tools=%v, runs=%v) = %q, want %q", tc.tools, tc.allowRuns, got, want)
 		}

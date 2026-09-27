@@ -224,6 +224,12 @@
       "unread": "{{count}} unread"
     }
   },
+  "agentSetup": {
+    "action": "Set up AI agents",
+    "title": "Open the AI agents page to install an agent or sign in to one",
+    "notSetup": "The AI agent isn't set up.",
+    "noRuntime": "No AI agent is installed."
+  },
   "toasts": {
     "failed": "Failed: {{op}}",
     "dismiss": "Dismiss"

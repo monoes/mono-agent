@@ -224,6 +224,12 @@
       "unread": "{{count}} sin leer"
     }
   },
+  "agentSetup": {
+    "action": "Configurar agentes de IA",
+    "title": "Abre la página de agentes de IA para instalar un agente o iniciar sesión en él",
+    "notSetup": "El agente de IA no está configurado.",
+    "noRuntime": "No hay ningún agente de IA instalado."
+  },
   "toasts": {
     "failed": "Error: {{op}}",
     "dismiss": "Descartar"

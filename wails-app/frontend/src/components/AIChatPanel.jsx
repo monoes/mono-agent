@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import { X, Trash2, Plus, History, Maximize2, Minimize2, ArrowDown, Loader } from 'lucide-react'
 import { api, notify } from '../services/api.js'
 import { useChatStream, loadTurnState } from './chat/useChatStream.js'
@@ -13,6 +14,8 @@ import { useResolvedArtifacts } from './chat/useResolvedArtifacts.js'
 import './chat/chat.css'
 import { cachedAgentScan, isMonomindNotFound } from '../lib/agentRuntimes.js'
 import { getAssistantTools, getAssistantAllowRuns } from '../lib/assistantTools.js'
+import { isAgentNotSetup, withoutAgentSetupMarker } from '../lib/agentSetup.js'
+import AgentSetupLink from './AgentSetupLink.jsx'
 
 // Shared style for the runtime/model <select>s in the selector row.
 // Without `appearance: none`, WebKitGTK draws the closed box with native
@@ -115,7 +118,7 @@ function relativeTime(iso) {
 // component used to also handle; a prior version's now-dead `toolCalls`
 // prop and its ToolCallCard were removed for exactly that reason (nothing
 // ever constructed a message carrying one).
-export function MessageBubble({ role, content, isError }) {
+export function MessageBubble({ role, content, isError, code, onNavigate }) {
   const isUser = role === 'user'
   return (
     <div style={{
@@ -152,15 +155,17 @@ export function MessageBubble({ role, content, isError }) {
           // auto-loaded images — rather than a second, less-careful
           // markdown config (an error string ultimately traces back to a
           // subprocess failure message, not first-party copy).
-          <ChatMarkdown content={content} />
+          <ChatMarkdown content={withoutAgentSetupMarker(content)} />
         )}
+        {isError && isAgentNotSetup({ code, message: content }) && <AgentSetupLink onNavigate={onNavigate} />}
       </div>
     </div>
   )
 }
 
 // ── Main panel ─────────────────────────────────────────────────────────────────
-export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifact, initialRuntime, canvasMode = true }) {
+export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifact, initialRuntime, canvasMode = true, onNavigate }) {
+  const { t } = useTranslation()
   const [messages, setMessages]             = useState([])
   const [input, setInput]                   = useState('')
   // conversationId is this panel's current app-conversation (new chat
@@ -635,6 +640,11 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
   // readable, but no new turn can run on it.
   const readOnly = conversationBackend === 'provider'
 
+  // The scan settled without a usable runtime (monomind missing or
+  // unusable, or none installed), or the chosen one is not initialized:
+  // the AI agents page is where that gets fixed.
+  const agentNotSetup = runtimeUninitialized || (!runtimesLoading && runtimes.length === 0)
+
   // ── Send message ────────────────────────────────────────────────────────
   const send = useCallback(async () => {
     const text = input.trim()
@@ -674,7 +684,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
       activeStreamRef.current = null
       setMessages(msgs => [
         ...msgs,
-        { role: 'error', content: String(err) },
+        { role: 'error', content: String(err), code: err?.code || '' },
       ])
     }
   }, [input, activeTurnId, workflowID, readOnly, selectedRuntime, runtimeUninitialized, selectedModel, conversationId])
@@ -701,6 +711,8 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
             ? 'monomind not found — install with npm install -g @monoes/monomindcli'
             : scanError
             ? `monomind couldn't be used: ${scanError}`
+            : agentNotSetup
+            ? t('agentSetup.noRuntime')
             : 'Select an agent runtime above to start chatting'))
     : ''
 
@@ -1093,15 +1105,28 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
               // isn't found, staying silent here just leaves the panel
               // looking broken. Surface the same fix Agents.jsx's empty
               // state gives, right where the user is already looking.
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, textAlign: 'center', lineHeight: 1.6 }}>
-                monomind (the local AI agent engine) isn't installed.<br />
-                Install it with <code>npm install -g @monoes/monomindcli</code>
-              </span>
+              <>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, textAlign: 'center', lineHeight: 1.6 }}>
+                  monomind (the local AI agent engine) isn't installed.<br />
+                  Install it with <code>npm install -g @monoes/monomindcli</code>
+                </span>
+                <AgentSetupLink onNavigate={onNavigate} />
+              </>
             ) : scanError && !hasBackend ? (
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, textAlign: 'center', lineHeight: 1.6, wordBreak: 'break-word' }}>
-                monomind couldn't be used:<br />
-                <code>{scanError}</code>
-              </span>
+              <>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, textAlign: 'center', lineHeight: 1.6, wordBreak: 'break-word' }}>
+                  monomind couldn't be used:<br />
+                  <code>{scanError}</code>
+                </span>
+                <AgentSetupLink onNavigate={onNavigate} />
+              </>
+            ) : agentNotSetup ? (
+              <>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, textAlign: 'center', lineHeight: 1.6 }}>
+                  {runtimeUninitialized ? t('agentSetup.notSetup') : t('agentSetup.noRuntime')}
+                </span>
+                <AgentSetupLink onNavigate={onNavigate} />
+              </>
             ) : (
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, textAlign: 'center', lineHeight: 1.6 }}>
                 {workflowID === 'general'
@@ -1124,6 +1149,7 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
                   : null
               })}
               <TurnStatus state={msg.state} stopRequested={false} ownedByThisInstance={msg.ownedByThisInstance} />
+              {isAgentNotSetup(msg.state.terminal?.code) && <AgentSetupLink onNavigate={onNavigate} />}
             </div>
           ) : (
             <MessageBubble
@@ -1131,6 +1157,8 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
               role={msg.role}
               content={msg.content}
               isError={msg.role === 'error'}
+              code={msg.code}
+              onNavigate={onNavigate}
             />
           )
         ))}
@@ -1188,13 +1216,15 @@ export default function AIChatPanel({ workflowID, isOpen, onClose, onOpenArtifac
         disabledReason={readOnly
           ? readOnlyReason
           : runtimeUninitialized
-          ? 'This runtime reports no models — it is not initialized, so chatting is unavailable'
+          ? <>This runtime reports no models — it is not initialized, so chatting is unavailable <AgentSetupLink onNavigate={onNavigate} compact /></>
           : runtimesLoading && !hasBackend
           ? 'Loading available AI systems…'
           : (monomindMissing
-              ? <>monomind not found — install with <code>npm install -g @monoes/monomindcli</code></>
+              ? <>monomind not found — install with <code>npm install -g @monoes/monomindcli</code> <AgentSetupLink onNavigate={onNavigate} compact /></>
               : scanError
-              ? <>monomind couldn't be used: <code>{scanError}</code></>
+              ? <>monomind couldn't be used: <code>{scanError}</code> <AgentSetupLink onNavigate={onNavigate} compact /></>
+              : agentNotSetup
+              ? <>{t('agentSetup.noRuntime')} <AgentSetupLink onNavigate={onNavigate} compact /></>
               : 'Select an agent runtime above to start chatting')}
       />
     </div>

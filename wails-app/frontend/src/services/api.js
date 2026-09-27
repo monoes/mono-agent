@@ -16,13 +16,15 @@ export function onApiError(callback) {
 function reportError(op, e) {
   const message = e?.message || String(e)
   console.warn(`API error (${op}):`, e)
-  errorBus.dispatchEvent(new CustomEvent('api:error', { detail: { op, message } }))
+  errorBus.dispatchEvent(new CustomEvent('api:error', { detail: { op, message, code: e?.code || '' } }))
 }
 
 // notify surfaces a message on the same toast bus for non-API failures, so UI
-// code can report errors without a blocking native alert().
-export function notify(op, message) {
-  errorBus.dispatchEvent(new CustomEvent('api:error', { detail: { op, message: String(message) } }))
+// code can report errors without a blocking native alert(). code is the
+// CLI's error code, when it gave one (e.g. agent_not_setup, which the toast
+// answers with a link to the AI agents page).
+export function notify(op, message, code = '') {
+  errorBus.dispatchEvent(new CustomEvent('api:error', { detail: { op, message: String(message), code: code || message?.code || '' } }))
 }
 
 // Wrap a binding call so failures are reported and fall back to `fallback`.
@@ -38,8 +40,15 @@ const asError = (e) => ({ error: e?.message || String(e) })
 // existing catch blocks run.
 function parseStreamResult(s) {
   const r = JSON.parse(s)
-  if (r?.error) throw new Error(r.error)
+  if (r?.error) throw codedError(r.error, r.code)
   return r
+}
+
+// An Error carrying the CLI's error code (e.g. agent_not_setup) as .code.
+function codedError(message, code) {
+  const err = new Error(message)
+  if (code) err.code = code
+  return err
 }
 
 // Bindings that return the CLI's stdout verbatim yield either the payload or
@@ -47,7 +56,7 @@ function parseStreamResult(s) {
 const parseCLIJSON = (label) => (raw) => {
   const v = typeof raw === 'string' ? JSON.parse(raw) : raw
   if (v && typeof v === 'object' && !Array.isArray(v) && typeof v.error === 'string' && v.v === undefined) {
-    throw new Error(`${label}: ${v.error}`)
+    throw codedError(`${label}: ${v.error}`, v.code)
   }
   return v
 }
