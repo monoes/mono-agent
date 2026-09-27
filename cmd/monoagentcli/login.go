@@ -222,7 +222,7 @@ func newLoginCmd(cfg *globalConfig) *cobra.Command {
 			}
 			db.Close()
 
-			bridge := setupExtensionBridge(newExtensionBridgeLogger(), 3*time.Second)
+			bridge := setupProfileBridge(cfg.ProfileID, newExtensionBridgeLogger(), 3*time.Second)
 			if err := ensureExtensionConnected(bridge, 30*time.Second); err != nil {
 				return err
 			}
@@ -296,7 +296,7 @@ func newLoginConfirmCmd(cfg *globalConfig) *cobra.Command {
 				return err
 			}
 
-			bridge := setupExtensionBridge(newExtensionBridgeLogger(), 3*time.Second)
+			bridge := setupProfileBridge(cfg.ProfileID, newExtensionBridgeLogger(), 3*time.Second)
 			if err := ensureExtensionConnected(bridge, 30*time.Second); err != nil {
 				return err
 			}

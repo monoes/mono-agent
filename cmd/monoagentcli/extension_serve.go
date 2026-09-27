@@ -229,33 +229,75 @@ func watchBridgeConnection(ctx context.Context, srv *extension.Server, out io.Wr
 	go func() {
 		ticker := time.NewTicker(bridgeWatchInterval)
 		defer ticker.Stop()
-		connected := srv.IsConnected()
+		prev := srv.Browsers()
 		explained := false
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				now := srv.IsConnected()
-				if now == connected {
-					continue
-				}
-				connected = now
+				cur := srv.Browsers()
 				stamp := time.Now().Format("15:04:05")
-				if now {
-					fmt.Fprintf(out, "[%s] extension connected\n", stamp)
-					continue
+				for _, line := range narrateBrowsers(prev, cur, &explained) {
+					fmt.Fprintf(out, "[%s] %s\n", stamp, line)
 				}
-				if explained {
-					fmt.Fprintf(out, "[%s] extension disconnected\n", stamp)
-					continue
-				}
-				explained = true
-				fmt.Fprintf(out, "[%s] extension disconnected — normal: Chrome suspends the extension when it "+
-					"goes idle and it reconnects on the next event.\n", stamp)
+				prev = cur
 			}
 		}
 	}()
+}
+
+// narrateBrowsers says which browsers attached, reattached or left between
+// two looks at the bridge. Each browser profile has its own socket, so a
+// line names the browser (its label, else its short id) and the profile it
+// runs; a reconnect is a new connectedAt for the same instance.
+func narrateBrowsers(prev, cur []extension.ConnInfo, explained *bool) []string {
+	before := make(map[string]extension.ConnInfo, len(prev))
+	for _, b := range prev {
+		before[b.Instance] = b
+	}
+	var lines []string
+	now := make(map[string]bool, len(cur))
+	for _, b := range cur {
+		now[b.Instance] = true
+		old, had := before[b.Instance]
+		switch {
+		case !had:
+			lines = append(lines, "extension connected: "+browserName(b))
+		case !old.ConnectedAt.Equal(b.ConnectedAt):
+			lines = append(lines, "extension reconnected: "+browserName(b))
+		}
+	}
+	for _, b := range prev {
+		if now[b.Instance] {
+			continue
+		}
+		line := "extension disconnected: " + browserName(b)
+		if !*explained {
+			*explained = true
+			line += " — normal: Chrome suspends the extension when it goes idle and it reconnects on the next event."
+		}
+		lines = append(lines, line)
+	}
+	return lines
+}
+
+// browserName is how the bridge's narration refers to one browser.
+func browserName(b extension.ConnInfo) string {
+	name := b.Label
+	if name == "" {
+		name = b.Instance
+		if len(name) > 8 {
+			name = name[:8]
+		}
+	}
+	if b.Legacy {
+		return name + " (extension older than 1.5.0)"
+	}
+	if b.Profile == "" {
+		return name + " (any profile)"
+	}
+	return name + " (profile " + b.Profile + ")"
 }
 
 // newBridgeServeLogger keeps the server's own logging out of the command's
@@ -334,6 +376,9 @@ func runExtensionStatus(out io.Writer, asJSON bool) error {
 		fmt.Fprintf(out, "  This client: %s\n", extension.PairingMismatchHint)
 	}
 	fmt.Fprintf(out, "  Extension: %s\n", bridgeExtensionLine(st))
+	if pairing != extension.PairingMismatch && st.Browsers > 1 {
+		fmt.Fprintf(out, "  Browsers: %d attached — see `monoagentcli extension browsers`\n", st.Browsers)
+	}
 	if st.Status == extension.StatusUnpaired {
 		fmt.Fprintln(out, "  Pair it with: monoagentcli extension pair (paste the token into the extension side panel)")
 	}

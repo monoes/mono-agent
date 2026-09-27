@@ -95,7 +95,7 @@ func startPackageLogin(cfg *globalConfig, m *automation.Manifest) error {
 	if err := checkLoginURL(m); err != nil {
 		return err
 	}
-	bridge := setupExtensionBridge(newExtensionBridgeLogger(), 3*time.Second)
+	bridge := setupProfileBridge(browserProfile(cfg), newExtensionBridgeLogger(), 3*time.Second)
 	if err := ensureExtensionConnected(bridge, 30*time.Second); err != nil {
 		return err
 	}
@@ -136,7 +136,7 @@ func confirmPackageLogin(ctx context.Context, cfg *globalConfig, db *sql.DB, m *
 	if err != nil {
 		return err
 	}
-	bridge := setupExtensionBridge(newExtensionBridgeLogger(), 3*time.Second)
+	bridge := setupProfileBridge(cfg.ProfileID, newExtensionBridgeLogger(), 3*time.Second)
 	if err := ensureExtensionConnected(bridge, 30*time.Second); err != nil {
 		return err
 	}

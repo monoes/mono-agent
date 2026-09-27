@@ -8,8 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gorilla/websocket"
-
 	"github.com/monoes/mono-agent/internal/capture"
 	"github.com/monoes/mono-agent/internal/recording"
 )
@@ -142,7 +140,7 @@ func frameKind(msg []byte) string {
 }
 
 // serveRecording applies one recording frame and acks it.
-func (s *Server) serveRecording(msg []byte) {
+func (s *Server) serveRecording(c *extConn, msg []byte) {
 	var f recording.Frame
 	if err := json.Unmarshal(msg, &f); err != nil {
 		// Never log the payload: events carry typed values.
@@ -153,23 +151,23 @@ func (s *Server) serveRecording(msg []byte) {
 	out, err := ing.Handle(&f)
 	if err != nil {
 		s.logger.Warn().Err(err).Str("op", f.Op).Str("recording", f.RecordingID).Msg("recording frame refused")
-		s.ackRecording(f.ID, false, nil, err.Error())
+		s.ackRecording(c, f.ID, false, nil, err.Error())
 		return
 	}
 	if out.Stopped != nil {
-		go s.finishRecording(ing, out.Stopped, f.ID)
+		go s.finishRecording(c, ing, out.Stopped, f.ID)
 		return
 	}
 	var data any
 	if out.Dropped != "" {
 		data = map[string]any{"dropped": out.Dropped}
 	}
-	s.ackRecording(f.ID, true, data, "")
+	s.ackRecording(c, f.ID, true, data, "")
 }
 
 // finishRecording writes a stopped recording and, when the stop frame
 // carried an id, acks it with where the envelope landed.
-func (s *Server) finishRecording(ing *recording.Ingest, st *recording.Stopped, ackID string) {
+func (s *Server) finishRecording(c *extConn, ing *recording.Ingest, st *recording.Stopped, ackID string) {
 	res, err := ing.Finalize(st)
 	s.recMu.Lock()
 	fn := s.onRecording
@@ -180,16 +178,16 @@ func (s *Server) finishRecording(ing *recording.Ingest, st *recording.Stopped, a
 	if errors.Is(err, recording.ErrNoEvents) {
 		// A failed or abandoned start: nothing to keep, nothing wrong.
 		s.logger.Info().Str("recording", st.RecordingID()).Msg("discarded a recording with no events")
-		s.ackRecording(ackID, true, map[string]any{"recordingId": st.RecordingID(), "discarded": "no events"}, "")
+		s.ackRecording(c, ackID, true, map[string]any{"recordingId": st.RecordingID(), "discarded": "no events"}, "")
 		return
 	}
 	if err != nil {
 		s.logger.Error().Err(err).Str("recording", st.RecordingID()).Msg("recording could not be written")
-		s.ackRecording(ackID, false, nil, err.Error())
+		s.ackRecording(c, ackID, false, nil, err.Error())
 		return
 	}
 	s.logger.Info().Str("recording", st.RecordingID()).Str("path", res.Path).Msg("recording saved")
-	s.ackRecording(ackID, true, map[string]any{
+	s.ackRecording(c, ackID, true, map[string]any{
 		"recordingId": st.RecordingID(),
 		"id":          filepath.Base(res.Path),
 		"path":        res.Path,
@@ -197,25 +195,17 @@ func (s *Server) finishRecording(ing *recording.Ingest, st *recording.Stopped, a
 	}, "")
 }
 
-// ackRecording writes a Response for a frame that carried an id.
-func (s *Server) ackRecording(id string, ok bool, data any, errMsg string) {
-	if id == "" {
+// ackRecording writes a Response for a frame that carried an id, on the
+// socket the frame came in on.
+func (s *Server) ackRecording(c *extConn, id string, ok bool, data any, errMsg string) {
+	if id == "" || c == nil {
 		return
 	}
 	blob, err := json.Marshal(&Response{ID: id, Success: ok, Data: data, Error: errMsg, Type: RecordingAckType})
 	if err != nil {
 		return
 	}
-	s.connMu.Lock()
-	conn := s.conn
-	s.connMu.Unlock()
-	if conn == nil {
-		return
-	}
-	s.writeMu.Lock()
-	err = conn.WriteMessage(websocket.TextMessage, blob)
-	s.writeMu.Unlock()
-	if err != nil {
+	if err := c.write(blob); err != nil {
 		s.logger.Debug().Err(err).Str("id", id).Msg("could not ack recording frame")
 	}
 }
@@ -237,7 +227,7 @@ func (s *Server) recordingReaper(ctx context.Context) {
 		inboxes = []string{ing.Writer.Inbox}
 	}
 	for _, st := range ing.Recover(inboxes...) {
-		s.finishRecording(ing, st, "")
+		s.finishRecording(nil, ing, st, "")
 	}
 	ticker := time.NewTicker(s.recordingReapInterval())
 	defer ticker.Stop()
@@ -248,7 +238,7 @@ func (s *Server) recordingReaper(ctx context.Context) {
 		case <-ticker.C:
 			ing := s.recordingIngest()
 			for _, st := range ing.Reap() {
-				s.finishRecording(ing, st, "")
+				s.finishRecording(nil, ing, st, "")
 			}
 		}
 	}

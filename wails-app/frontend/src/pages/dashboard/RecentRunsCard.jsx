@@ -5,6 +5,9 @@ import { execStatus } from '../../lib/execStatus.js'
 import { duration, relTime } from './format.js'
 import { isAgentNotSetup, withoutAgentSetupMarker } from '../../lib/agentSetup.js'
 import AgentSetupLink from '../../components/AgentSetupLink.jsx'
+import ProfileChip from './ProfileChip.jsx'
+import { ownRow } from './scope.js'
+import { switchToProfile } from './profileSwitch.js'
 
 export function ExecStatusDot({ status }) {
   const { tone, live } = execStatus(status)
@@ -18,18 +21,23 @@ export function ExecStatusDot({ status }) {
   )
 }
 
-const ExecRow = memo(function ExecRow({ exec, onNavigate }) {
+const ExecRow = memo(function ExecRow({ exec, onNavigate, currentId, onSwitch }) {
   const { t } = useTranslation()
   const dur = duration(exec.started_at, exec.finished_at)
-  const open = () => onNavigate('noderunner', { executionId: exec.id, workflowId: exec.workflow_id })
+  const own = ownRow(exec, currentId)
+  const open = own
+    ? () => onNavigate('noderunner', { executionId: exec.id, workflowId: exec.workflow_id })
+    : () => onSwitch(exec.profile_id)
   const error = withoutAgentSetupMarker(exec.error)
   const row = (
-    <button className="dash-exec-row" onClick={open} title={t('dashboard.recentRuns.openTitle')}>
+    <button className="dash-exec-row" onClick={open}
+      title={own ? t('dashboard.recentRuns.openTitle') : t('dashboard.profiles.switchTo', { name: exec.profile_name || exec.profile_id })}>
       <ExecStatusDot status={exec.status} />
       <span style={{ flex: 1, minWidth: 0, textAlign: 'left', display: 'block' }}>
         <span className="dash-ellipsis" style={{ display: 'block', fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text)' }}>
           {exec.workflow_name || (exec.workflow_id || '').slice(0, 8)}
         </span>
+        <ProfileChip row={exec} />
         {error && (
           <span className="dash-ellipsis" style={{ display: 'block', fontSize: 10, color: '#ef4444', marginTop: 1 }} title={error}>
             {error}
@@ -53,7 +61,7 @@ const ExecRow = memo(function ExecRow({ exec, onNavigate }) {
   )
 })
 
-export default function RecentRunsCard({ executions, onNavigate }) {
+export default function RecentRunsCard({ executions, onNavigate, currentId = '', onSwitch = switchToProfile }) {
   const { t } = useTranslation()
   return (
     <div className="card">
@@ -63,7 +71,7 @@ export default function RecentRunsCard({ executions, onNavigate }) {
       {executions.length === 0 ? (
         <div className="dash-empty">{t('dashboard.recentRuns.empty')}</div>
       ) : (
-        <div>{executions.slice(0, 15).map(e => <ExecRow key={e.id} exec={e} onNavigate={onNavigate} />)}</div>
+        <div>{executions.slice(0, 15).map(e => <ExecRow key={e.id} exec={e} onNavigate={onNavigate} currentId={currentId} onSwitch={onSwitch} />)}</div>
       )}
     </div>
   )

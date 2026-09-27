@@ -6,6 +6,7 @@ import { GetVersion, CheckForUpdate, AppSelfUpdate } from '../wailsjs/go/main/Ap
 import { getAssistantTools, getAssistantAllowRuns, setAssistantTools, setAssistantAllowRuns } from '../lib/assistantTools.js'
 import RefreshButton from '../components/RefreshButton.jsx'
 import HealthSection from '../components/settings/HealthSection.jsx'
+import BrowserBindingsSection from '../components/settings/BrowserBindingsSection.jsx'
 import JevSection from '../components/settings/JevSection.jsx'
 import VaultKeyringSection from '../components/settings/VaultKeyringSection.jsx'
 
@@ -361,6 +362,7 @@ export default function Settings({ onNavigate, navData }) {
         </div>
 
         <HealthSection onNavigate={onNavigate} collapsible defaultExpanded={false} />
+        <BrowserBindingsSection />
 
         {/* Quick access cards */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>

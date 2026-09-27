@@ -73,6 +73,11 @@ const (
 	CmdWaitLoad    = "wait_load"
 	CmdWaitElement = "wait_element"
 	CmdRace        = "race"
+
+	// CmdSetBinding asks one browser's extension to bind itself to a
+	// monoagent profile (params: profile, optional label). Sent by
+	// `monoagentcli extension bind` and the app's Settings → Browsers.
+	CmdSetBinding = "set_binding"
 )
 
 // HighlightsArtifact is the envelope member carrying a page's saved
@@ -82,6 +87,11 @@ const (
 // ingest side reads it by this name; see
 // packages/@monomind/cli/src/knowledge/highlights.ts.
 const HighlightsArtifact = "highlights.json"
+
+// KindBinding is a push from the extension saying its binding changed (the
+// user picked another profile in the side panel). Not acked: the next
+// command routed by it is the acknowledgement.
+const KindBinding = "binding"
 
 // KindRecording marks an extension → Go activity-recording frame
 // (internal/recording.Frame; see recording.go). Acks for frames that carry

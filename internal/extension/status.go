@@ -75,6 +75,10 @@ type Status struct {
 	// sharing this bridge) are counted the same as this process's own,
 	// because they drive the same browser.
 	InFlight int `json:"inFlight"`
+	// Browsers is how many browser profiles are attached right now. Only
+	// the count is public here; which profile each one runs is behind the
+	// relay token, at /monoagent/browsers.
+	Browsers int `json:"browsers"`
 }
 
 // SetVersion records the build string reported in Status. Optional: an
@@ -110,6 +114,7 @@ func (s *Server) Status() Status {
 		PID:       os.Getpid(),
 		Version:   version,
 		InFlight:  s.inFlightCommands(),
+		Browsers:  len(s.connList()),
 	}
 	if bound {
 		st.Addr = addr

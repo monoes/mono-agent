@@ -30,7 +30,10 @@ func TestCheckWorkflowProfile(t *testing.T) {
 	}{
 		{"same profile", &Workflow{ID: "wf-1", ProfileID: "profile-a"}, false},
 		{"different profile", &Workflow{ID: "wf-2", ProfileID: "profile-b"}, true},
-		{"unset profile (legacy row)", &Workflow{ID: "wf-3", ProfileID: ""}, false},
+		// A legacy row with no profile id is the default profile's (the
+		// store's COALESCE rule), not everyone's: see
+		// TestCheckWorkflowProfileUnownedMeansDefault.
+		{"unset profile (legacy row) from another profile", &Workflow{ID: "wf-3", ProfileID: ""}, true},
 	}
 
 	for _, tc := range cases {

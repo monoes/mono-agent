@@ -18,10 +18,15 @@ import SystemCard from './dashboard/SystemCard.jsx'
 import OrgsCard from './dashboard/OrgsCard.jsx'
 import AutomationsCard from './dashboard/AutomationsCard.jsx'
 import AccountsCard from './dashboard/AccountsCard.jsx'
+import { loadScope, saveScope, currentProfileId } from './dashboard/scope.js'
+import ProfilesCard from './dashboard/ProfilesCard.jsx'
 
 export default function Dashboard({ isActive = true, onRefresh, onNavigate, onOpenHil }) {
   const { t } = useTranslation()
-  const { summary, summaryFailed, orgs, workflows, executions, loading, refresh, setExecutions, reloadLists } = useDashboardData({ active: isActive })
+  const [scope, setScopeState] = useState(loadScope)
+  const setScope = (s) => { saveScope(s); setScopeState(s) }
+  const { summary, summaryFailed, orgs, workflows, executions, loading, refresh, setExecutions, reloadLists } = useDashboardData({ active: isActive, scope })
+  const currentId = currentProfileId(summary)
   const [ver, setVer] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
   const [health, setHealth] = useState(getHealth())
@@ -61,6 +66,16 @@ export default function Dashboard({ isActive = true, onRefresh, onNavigate, onOp
           <div className="page-subtitle">{t('dashboard.subtitle')}{ver ? ` · v${ver.version.replace(/^v/, '')}` : ''}</div>
         </div>
         <div className="page-header-right">
+          <div className="dash-scope" role="group" aria-label={t('dashboard.scope.label')}>
+            <button className={`btn btn-sm ${scope === 'profile' ? 'btn-secondary' : 'btn-ghost'}`}
+              aria-pressed={scope === 'profile'} onClick={() => setScope('profile')}>
+              {t('dashboard.scope.profile')}
+            </button>
+            <button className={`btn btn-sm ${scope === 'global' ? 'btn-secondary' : 'btn-ghost'}`}
+              aria-pressed={scope === 'global'} onClick={() => setScope('global')}>
+              {t('dashboard.scope.global')}
+            </button>
+          </div>
           <button className="btn btn-ghost btn-sm" onClick={handleRefresh} style={{ gap: 5 }}>
             <RefreshCw size={13} style={{ animation: refreshing ? 'spin 0.7s linear infinite' : 'none' }} />
             {t('dashboard.refresh')}
@@ -78,11 +93,13 @@ export default function Dashboard({ isActive = true, onRefresh, onNavigate, onOp
         <div className="dashboard-grid">
           <div className="dash-col">
             <WorkflowsCard workflows={workflows} executions={executions} schedules={summary?.schedules}
-              onRun={handleRun} onStop={handleStop} onToggle={handleToggle} onNavigate={onNavigate} />
-            <RecentRunsCard executions={executions} onNavigate={onNavigate} />
+              onRun={handleRun} onStop={handleStop} onToggle={handleToggle} onNavigate={onNavigate}
+              currentId={currentId} />
+            <RecentRunsCard executions={executions} onNavigate={onNavigate} currentId={currentId} />
             <ActivityCard summary={summary} onNavigate={onNavigate} />
           </div>
           <div className="dash-col">
+            {scope === 'global' && <ProfilesCard summary={summary} />}
             <SystemCard summary={summary} onNavigate={onNavigate} />
             <OrgsCard orgs={orgs} onNavigate={onNavigate} />
             <AutomationsCard summary={summary} onNavigate={onNavigate} />

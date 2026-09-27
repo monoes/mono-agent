@@ -47,6 +47,7 @@ type Summary struct {
 	V            int                  `json:"v"`
 	GeneratedAt  string               `json:"generated_at"`
 	ProfileID    string               `json:"profile_id"`
+	Scope        string               `json:"scope"`
 	Workflows    *WorkflowsSection    `json:"workflows,omitempty"`
 	Executions   *ExecutionsSection   `json:"executions,omitempty"`
 	Schedules    *SchedulesSection    `json:"schedules,omitempty"`
@@ -60,6 +61,7 @@ type Summary struct {
 	Jev          *JevSection          `json:"jev,omitempty"`
 	Accounts     *AccountsSection     `json:"accounts,omitempty"`
 	Vault        *VaultSection        `json:"vault,omitempty"`
+	Profiles     []ProfileHeadline    `json:"profiles,omitempty"`
 }
 
 func (o Options) want(name string) bool { return o.Sections == nil || o.Sections[name] }
@@ -70,7 +72,7 @@ func Build(ctx context.Context, o Options) Summary {
 	if o.Now.IsZero() {
 		o.Now = time.Now()
 	}
-	s := Summary{V: 1, GeneratedAt: o.Now.UTC().Format(time.RFC3339), ProfileID: o.ProfileID}
+	s := Summary{V: 1, GeneratedAt: o.Now.UTC().Format(time.RFC3339), ProfileID: o.ProfileID, Scope: ScopeProfile}
 	if o.want("workflows") {
 		s.Workflows = workflowsSection(ctx, o)
 	}

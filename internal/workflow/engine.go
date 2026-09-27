@@ -809,7 +809,14 @@ func (e *WorkflowEngine) checkWorkflowProfile(wf *Workflow) error {
 	if e.allowAllProfiles {
 		return nil
 	}
-	if wf.ProfileID != "" && wf.ProfileID != e.profileID {
+	// A workflow with no profile id is the default profile's, the rule the
+	// store's SQLite half and `workflow list` apply. Treating it as
+	// everyone's let any profile run it and tag the run as its own.
+	owner := wf.ProfileID
+	if owner == "" {
+		owner = "default"
+	}
+	if owner != e.profileID {
 		return fmt.Errorf("workflow belongs to a different profile")
 	}
 	return nil

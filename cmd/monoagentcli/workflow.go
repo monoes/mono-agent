@@ -24,6 +24,7 @@ import (
 	"github.com/monoes/mono-agent/internal/scheduler"
 	"github.com/monoes/mono-agent/internal/storage"
 	"github.com/monoes/mono-agent/internal/summary"
+	"github.com/monoes/mono-agent/internal/vault"
 	"github.com/monoes/mono-agent/internal/workflow"
 	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
@@ -169,7 +170,7 @@ func buildEngine(cfg *globalConfig, allowAllProfiles bool) (*workflow.WorkflowEn
 	// every engine command (workflow run/activate/daemon) for up to ~60s
 	// and launched the user's real Chrome even for browserless workflows.
 	extLogger := logger.With().Str("component", "extension").Logger()
-	sessionProvider := &lazyBrowserSessionProvider{logger: extLogger}
+	sessionProvider := &lazyBrowserSessionProvider{logger: extLogger, defaultProfile: cfg.ProfileID}
 	nodes.SetGlobalSessionProvider(sessionProvider)
 	nodes.SetGlobalBotRegistry(&cliBotRegistry{})
 	nodes.SetGlobalCredentialStore(connections.NewStore(db.DB))
@@ -201,33 +202,58 @@ func buildEngine(cfg *globalConfig, allowAllProfiles bool) (*workflow.WorkflowEn
 
 // lazyBrowserSessionProvider implements nodes.SessionProvider by connecting
 // the Chrome extension bridge on first use instead of at engine build time.
-// Browser nodes call GetPage when they execute, so the connect sequence —
-// setupExtensionBridge (waits for the extension), then
-// ensureExtensionConnected (launches the user's real Chrome if needed) —
-// runs only for workflows that actually contain a browser node, and its
-// cost is paid by that first node rather than by every engine command.
+// Browser nodes call GetPage when they execute, so the connect sequence
+// runs only for workflows that actually contain a browser node.
+//
+// Each GetPage is narrowed to the browser bound to the run's profile: the
+// execution's profile id rides ctx (WorkflowEngine.runExecution), so a
+// daemon running many profiles' workflows sends each one to its own
+// browser. Only building the shared bridge is serialised; waiting for a
+// profile's browser is not, so one profile's slow browser never holds up
+// another's run.
 type lazyBrowserSessionProvider struct {
-	logger zerolog.Logger
+	logger         zerolog.Logger
+	defaultProfile string // the engine's profile, for a ctx that carries none
+
+	// setup and ensure default to setupExtensionBridge (3s wait) and
+	// ensureExtensionConnected; tests replace them.
+	setup  func() browserpkg.ExtensionBridge
+	ensure func(connChecker, time.Duration) error
+
 	mu     sync.Mutex
-	inner  *browserpkg.HybridSessionProvider
+	bridge browserpkg.ExtensionBridge
+}
+
+func (p *lazyBrowserSessionProvider) base() browserpkg.ExtensionBridge {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.bridge == nil {
+		if p.setup != nil {
+			p.bridge = p.setup()
+		} else {
+			p.bridge = setupExtensionBridge(p.logger, 3*time.Second)
+		}
+	}
+	return p.bridge
 }
 
 func (p *lazyBrowserSessionProvider) GetPage(ctx context.Context, platform, username string) (browserpkg.PageInterface, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.inner == nil {
-		bridge := setupExtensionBridge(p.logger, 3*time.Second)
-		if !bridge.IsConnected() {
-			// No throwaway automation browser — launch the user's real
-			// Chrome (same mechanism as `login`) so the extension can
-			// attach, then wait.
-			if err := ensureExtensionConnected(bridge, 30*time.Second); err != nil {
-				return nil, fmt.Errorf("browser session: %w", err)
-			}
-		}
-		p.inner = &browserpkg.HybridSessionProvider{ExtBridge: bridge, Logger: p.logger}
+	profileID, ok := vault.ProfileIDInContext(ctx)
+	if !ok {
+		profileID = p.defaultProfile
 	}
-	return p.inner.GetPage(ctx, platform, username)
+	bridge := bridgeForProfile(p.base(), profileID)
+	ensure := p.ensure
+	if ensure == nil {
+		ensure = ensureExtensionConnected
+	}
+	// No throwaway automation browser. When this profile's browser is not
+	// attached, launch the user's real Chrome (same mechanism as `login`)
+	// and wait for it.
+	if err := ensure(bridge, 30*time.Second); err != nil {
+		return nil, fmt.Errorf("browser session: %w", err)
+	}
+	return (&browserpkg.HybridSessionProvider{ExtBridge: bridge, Logger: p.logger}).GetPage(ctx, platform, username)
 }
 
 // Close matches the cleanup signature buildEngine hands back. There is
@@ -609,6 +635,7 @@ func newWorkflowTemplatesUseCmd(cfg *globalConfig) *cobra.Command {
 // newWorkflowListCmd lists all workflows.
 func newWorkflowListCmd(cfg *globalConfig) *cobra.Command {
 	var jsonOut bool
+	var allProfiles bool
 
 	cmd := &cobra.Command{
 		Use:   "list",
@@ -623,21 +650,12 @@ func newWorkflowListCmd(cfg *globalConfig) *cobra.Command {
 			store := newHybridStore(db)
 			ctx := context.Background()
 
-			all, err := store.ListWorkflows(ctx, cfg.ProfileID)
+			if allProfiles {
+				return printAllProfilesWorkflows(ctx, db, store, jsonOut || cfg.JSONOutput)
+			}
+			workflows, err := profileWorkflows(ctx, store, cfg.ProfileID)
 			if err != nil {
 				return fmt.Errorf("list workflows: %w", err)
-			}
-			// The store's file half has no profile filter: apply the same
-			// COALESCE(profile_id,'default') rule its SQLite half uses.
-			workflows := make([]workflow.Workflow, 0, len(all))
-			for _, wf := range all {
-				owner := wf.ProfileID
-				if owner == "" {
-					owner = "default"
-				}
-				if owner == cfg.ProfileID {
-					workflows = append(workflows, wf)
-				}
 			}
 
 			if jsonOut || cfg.JSONOutput {
@@ -675,6 +693,7 @@ func newWorkflowListCmd(cfg *globalConfig) *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output in JSON format")
+	cmd.Flags().BoolVar(&allProfiles, "all-profiles", false, "List every profile's workflows, each tagged with its profile")
 	return cmd
 }
 
@@ -1117,6 +1136,7 @@ func newWorkflowExecutionsCmd(cfg *globalConfig) *cobra.Command {
 	var limit int
 	var jsonOut bool
 	var all bool
+	var allProfiles bool
 
 	cmd := &cobra.Command{
 		Use:   "executions <workflow-id> | --all",
@@ -1125,6 +1145,9 @@ func newWorkflowExecutionsCmd(cfg *globalConfig) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if all == (len(args) == 1) {
 				return errInvalidInput("pass either a workflow id or --all")
+			}
+			if allProfiles && !all {
+				return errInvalidInput("--all-profiles goes with --all")
 			}
 			db, err := initDB(cfg)
 			if err != nil {
@@ -1137,7 +1160,12 @@ func newWorkflowExecutionsCmd(cfg *globalConfig) *cobra.Command {
 				if n <= 0 {
 					n = -1 // SQLite: no limit
 				}
-				rows, err := summary.RecentExecutions(cmd.Context(), db.DB, cfg.ProfileID, n)
+				var rows []summary.ExecRow
+				if allProfiles {
+					rows, err = allProfilesRecentExecutions(cmd.Context(), db.DB, n)
+				} else {
+					rows, err = summary.RecentExecutions(cmd.Context(), db.DB, cfg.ProfileID, n)
+				}
 				if err != nil {
 					return fmt.Errorf("list executions: %w", err)
 				}
@@ -1205,6 +1233,7 @@ func newWorkflowExecutionsCmd(cfg *globalConfig) *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", 20, "Maximum number of executions to show (0 = all)")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output in JSON format")
 	cmd.Flags().BoolVar(&all, "all", false, "List recent executions across every workflow in the profile, newest first")
+	cmd.Flags().BoolVar(&allProfiles, "all-profiles", false, "With --all: every profile's runs, tagged with their profile")
 	return cmd
 }
 
@@ -1540,6 +1569,11 @@ func newWorkflowImportCmd(cfg *globalConfig) *cobra.Command {
 					wf.Connections[i].ID = newID
 				}
 			}
+
+			// An import lands in the profile it was run for. The file's own
+			// profile_id is where it was exported from (or nothing, which
+			// the store reads as default), never where it is going.
+			wf.ProfileID = cfg.ProfileID
 
 			// Finalize every id BEFORE any store call: assign fresh UUIDs to
 			// nodes/connections that arrived without one. This must happen

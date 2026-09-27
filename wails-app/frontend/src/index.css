@@ -1541,6 +1541,8 @@ button.dash-row:hover { background: var(--elevated); }
   color: var(--text-muted); border: 1px solid var(--border-dim); border-radius: 999px; padding: 1px 7px; white-space: nowrap; flex-shrink: 0; }
 .dash-chip-warn { color: #fbbf24; border-color: rgba(251, 191, 36, .35); }
 .dash-chip-bad { color: #ef4444; border-color: rgba(239, 68, 68, .35); }
+.dash-chip-profile { color: var(--purple-light); }
+.dash-scope { display: inline-flex; gap: 2px; margin-right: 6px; }
 .dash-warn-text { color: #fbbf24; }
 .dash-bad-text { color: #ef4444; }
 .dash-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; color: var(--text); }
@@ -1592,7 +1594,7 @@ button.dash-row:hover { background: var(--elevated); }
 }
 @container (max-width: 560px) {
   .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .wf-row .dash-chip { display: none; }
+  .wf-row .dash-chip:not(.dash-chip-profile) { display: none; }
 }
 
 /* Workflow row */

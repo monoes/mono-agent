@@ -21,7 +21,7 @@
 // that answers sidepanel.js. tables.js (CLIP-11) is absent on purpose — it runs in
 // the page, injected by capture.js, not in this worker.
 importScripts("capture_meta.js", "capture.js", "capture_modes.js", "youtube_video.js", "youtube_transcript.js", "capture_bridge.js");
-importScripts("capture_form.js", "capture_profile.js", "summary_ai.js", "capture_batch.js", "capture_queue.js", "capture_actions.js");
+importScripts("capture_form.js", "capture_profile.js", "browser_binding.js", "summary_ai.js", "capture_batch.js", "capture_queue.js", "capture_actions.js");
 // The in-page recall group (RCL-02/04/05): the extension→Go request channel
 // and the three things that ride it. ask.js must come first — the others
 // install against it.
@@ -45,6 +45,17 @@ importScripts("bridge_health.js");
 
 let ws = null;
 let connectionStatus = "disconnected"; // "connected" | "disconnected" | "connecting" | "unpaired"
+// This browser's identity and binding (browser_binding.js), loaded before
+// every dial and kept current by the storage listener below.
+let binding = { instance: "", profile: "", label: "" };
+
+function loadBinding() {
+  return MonoBrowserBinding.load(chrome.storage.local, {
+    crypto: self.crypto,
+    userAgent: navigator.userAgent,
+    create: true,
+  });
+}
 // Why we are in that state, when the socket can tell. A browser WebSocket
 // never reports the reason a handshake failed, so this is inferred from the
 // one thing that is observable: whether onopen ever fired before onclose. A
@@ -343,6 +354,7 @@ async function doConnect() {
   }
 
   await stickyLoaded;
+  binding = await loadBinding();
 
   // Ask before dialling. Chrome logs every WebSocket that fails to connect as
   // an extension error — twice, once for the browser and once for onerror —
@@ -400,6 +412,9 @@ async function doConnect() {
     const authFrame = { type: "auth" };
     const secretFieldName = ["to", "ken"].join("");
     authFrame[secretFieldName] = pairingSecret;
+    // Which browser this is and which profile it runs: the bridge keeps one
+    // socket per browser and routes each profile's commands by this.
+    Object.assign(authFrame, MonoBrowserBinding.authFields(binding, chrome.runtime.getManifest().version));
     ws.send(JSON.stringify(authFrame));
     setStatus("connected");
     fastRetryCount = FAST_RETRY_MAX; // Stop fast retry — we're connected
@@ -518,6 +533,7 @@ function statusPayload() {
     status: connectionStatus,
     reason: connectionReason,
     since: connectionSince,
+    binding: { instance: binding.instance, profile: binding.profile, label: binding.label },
   };
 }
 
@@ -624,6 +640,11 @@ async function handleCommand(cmd) {
       case "query_text":
       case "fetch_image_base64":
         result = await sendToContent(params.tabId, { ...cmd, params });
+        break;
+      case "set_binding":
+        // `monoagentcli extension bind` / the app's Settings → Browsers. The
+        // storage listener below reports it back with a binding frame.
+        result = await MonoBrowserBinding.setBinding(chrome.storage.local, params);
         break;
       default:
         throw new Error(`Unknown command type: ${cmd.type}`);
@@ -1186,6 +1207,22 @@ chrome.storage.onChanged.addListener((changes, area) => {
   fastRetryCount = 0;
   connect();
   fastRetryConnect();
+});
+
+// The binding changed (side panel or set_binding). Tell the bridge on the
+// open socket instead of reconnecting, which would drop a running
+// workflow's in-flight commands. A bound browser also saves captures into
+// its profile by default.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (!MonoBrowserBinding.isBindingChange(changes, area)) return;
+  loadBinding()
+    .then((state) => {
+      binding = state;
+      if (state.profile) MonoCaptureProfile.remember(chrome.storage.local, state.profile);
+      sendFrame(MonoBrowserBinding.bindingFrame(state));
+      broadcastStatus();
+    })
+    .catch((err) => console.warn("[monoagent] binding update:", err.message));
 });
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {

@@ -25,6 +25,14 @@ type ExtensionBridge interface {
 	NewPage(tabID int) PageInterface
 }
 
+// ProfileRouter is an ExtensionBridge that can reach several browsers, one
+// per monoagent profile. ForProfile returns a bridge that only ever drives
+// the browser bound to profileID (or the default browser when none is), so
+// a run for one profile never opens tabs in another profile's accounts.
+type ProfileRouter interface {
+	ForProfile(profileID string) ExtensionBridge
+}
+
 // HybridSessionProvider gets browser pages exclusively through the Chrome
 // extension bridge. There is no local browser fallback: if the extension
 // isn't connected, GetPage fails instead of launching a browser process.

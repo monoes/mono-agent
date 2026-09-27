@@ -117,7 +117,16 @@ func tryOpenPairingPage(bridge connChecker, opened *bool) {
 func findLocalChromePath() string { return browserdetect.FindBrowser() }
 func isChromeRunning() bool       { return browserdetect.IsBrowserRunning() }
 func getExtensionDir() string     { return browserdetect.ExtensionDir() }
-func isExtensionInstalled() bool  { return browserdetect.ExtensionInstalled() }
+
+// isExtensionInstalled reports whether the extension was found. When the
+// scan couldn't tell (e.g. a profile directory is unreadable — see
+// browserdetect.ExtensionInstalled), this returns true so the caller doesn't
+// block on a claim it can't back up; the real answer is whichever way
+// ensureExtensionConnected's own connect-and-wait below actually goes.
+func isExtensionInstalled() bool {
+	found, checked := browserdetect.ExtensionInstalled()
+	return found || !checked
+}
 
 // ensureExtensionConnected returns once the extension bridge is connected.
 // If the extension is not installed, it returns an immediate error without launching Chrome.
@@ -126,6 +135,22 @@ func isExtensionInstalled() bool  { return browserdetect.ExtensionInstalled() }
 func ensureExtensionConnected(bridge connChecker, timeout time.Duration) error {
 	if bridge.IsConnected() {
 		return nil
+	}
+
+	// 0. Browsers are attached, just none this profile may use. The
+	// extension is plainly installed and a browser is plainly running, so
+	// neither check below applies, and launching another browser would not
+	// pick the right one. Wait for this profile's browser (its service
+	// worker may be asleep), then say how to bind one.
+	if hint := routeHint(bridge); hint != "" {
+		deadline := time.Now().Add(timeout)
+		for !bridge.IsConnected() && time.Now().Before(deadline) {
+			time.Sleep(routeWaitPoll)
+		}
+		if bridge.IsConnected() {
+			return nil
+		}
+		return fmt.Errorf("no browser for this profile connected within %s%s", timeout, routeHint(bridge))
 	}
 
 	// 1. Check if the extension is installed
@@ -150,7 +175,7 @@ func ensureExtensionConnected(bridge connChecker, timeout time.Duration) error {
 			time.Sleep(500 * time.Millisecond)
 		}
 		if !bridge.IsConnected() {
-			return fmt.Errorf("Chrome is running, but the MonoAgent extension did not connect within %s — make sure the extension is enabled in chrome://extensions and reload it if necessary%s%s", timeout, fallbackPortHint(bridge), bridgeLifetimeHint(bridge))
+			return fmt.Errorf("Chrome is running, but the MonoAgent extension did not connect within %s — make sure the extension is enabled in chrome://extensions and reload it if necessary%s%s%s", timeout, fallbackPortHint(bridge), bridgeLifetimeHint(bridge), routeHint(bridge))
 		}
 		return nil
 	}
@@ -175,7 +200,7 @@ func ensureExtensionConnected(bridge connChecker, timeout time.Duration) error {
 		time.Sleep(500 * time.Millisecond)
 	}
 	if !bridge.IsConnected() {
-		return fmt.Errorf("Chrome was opened, but the MonoAgent extension did not connect within %s — make sure it is enabled in chrome://extensions and reload it if necessary%s%s", timeout, fallbackPortHint(bridge), bridgeLifetimeHint(bridge))
+		return fmt.Errorf("Chrome was opened, but the MonoAgent extension did not connect within %s — make sure it is enabled in chrome://extensions and reload it if necessary%s%s%s", timeout, fallbackPortHint(bridge), bridgeLifetimeHint(bridge), routeHint(bridge))
 	}
 	return nil
 }

@@ -45,6 +45,10 @@ type ExecRow struct {
 	FinishedAt   string `json:"finished_at"`
 	CreatedAt    string `json:"created_at"`
 	Error        string `json:"error"`
+	// ProfileID and ProfileName are set only in the All profiles view
+	// (Merge), so every row says whose it is.
+	ProfileID   string `json:"profile_id,omitempty"`
+	ProfileName string `json:"profile_name,omitempty"`
 }
 
 type ExecutionsSection struct {
@@ -69,12 +73,20 @@ type ScheduleRow struct {
 	// Source says where NextRun comes from: "daemon" (the running
 	// scheduler's own time) or "computed" (from the cron spec).
 	Source string `json:"source"`
+	// ProfileID and ProfileName are set only in the All profiles view
+	// (Merge), so every row says whose it is.
+	ProfileID   string `json:"profile_id,omitempty"`
+	ProfileName string `json:"profile_name,omitempty"`
 }
 
 type ScheduleIssue struct {
 	WorkflowID string `json:"workflow_id"`
 	NodeID     string `json:"node_id"`
 	Error      string `json:"error"`
+	// ProfileID and ProfileName are set only in the All profiles view
+	// (Merge), so every row says whose it is.
+	ProfileID   string `json:"profile_id,omitempty"`
+	ProfileName string `json:"profile_name,omitempty"`
 }
 
 type SchedulesSection struct {
@@ -93,9 +105,17 @@ func ownWorkflows(ctx context.Context, o Options) ([]workflow.Workflow, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A workflow with no profile id is the default profile's, the same
+	// COALESCE(profile_id,'default') rule the store's SQLite half and
+	// `workflow list` use. Counting it in every profile made the All
+	// profiles view count it once per profile.
 	own := all[:0:0]
 	for _, w := range all {
-		if w.ProfileID == "" || w.ProfileID == o.ProfileID {
+		owner := w.ProfileID
+		if owner == "" {
+			owner = "default"
+		}
+		if owner == o.ProfileID {
 			own = append(own, w)
 		}
 	}

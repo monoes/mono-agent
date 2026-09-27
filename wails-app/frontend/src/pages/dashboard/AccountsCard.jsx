@@ -3,6 +3,7 @@ import { Shield, ChevronRight } from 'lucide-react'
 import { PLATFORM_COLORS } from '../../services/api.js'
 import { untilTime } from './format.js'
 import { TONE } from './SystemCard.jsx'
+import ProfileChip from './ProfileChip.jsx'
 
 const STATUS_TONE = { active: TONE.ok, expiring: TONE.warn, expired: TONE.bad }
 
@@ -36,6 +37,7 @@ export default function AccountsCard({ summary, onNavigate }) {
                   <div className="dash-ellipsis" style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text)' }}>{s.username || '—'}</div>
                   <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: s.status === 'active' ? 'var(--text-muted)' : STATUS_TONE[s.status] }}>{state}</div>
                 </div>
+                <ProfileChip row={s} />
                 <span className="badge" style={{ background: color + '20', color, borderColor: color + '40' }}>{s.platform || '—'}</span>
               </div>
             )

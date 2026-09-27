@@ -595,7 +595,7 @@ platform name to override. Token refresh is handled automatically for OAuth conn
 				if !cfg.Verbose {
 					extLogger = extLogger.Level(zerolog.WarnLevel)
 				}
-				extBridge := setupExtensionBridge(extLogger, 3*time.Second)
+				extBridge := setupProfileBridge(cfg.ProfileID, extLogger, 3*time.Second)
 				if !extBridge.IsConnected() {
 					// No throwaway automation browser — launch the user's real
 					// Chrome (same mechanism as `login`) so the extension can

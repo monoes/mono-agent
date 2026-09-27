@@ -67,3 +67,27 @@ describe('RecentRunsCard', () => {
     expect(screen.getByText('dashboard.recentRuns.empty')).toBeInTheDocument()
   })
 })
+
+describe('WorkflowsCard in the All profiles view', () => {
+  const mixed = [
+    { id: 'w1', name: 'Scraper', is_active: true, profile_id: 'default', profile_name: 'Default' },
+    { id: 'w9', name: 'Outreach', is_active: true, profile_id: 'p-work', profile_name: 'Work' },
+  ]
+  it('another profile\'s row shows its profile and Switch instead of Run', () => {
+    const onSwitch = vi.fn()
+    render(<WorkflowsCard workflows={mixed} executions={[]} schedules={null} currentId="default" onSwitch={onSwitch} {...noop} />)
+    expect(screen.getByText('Work')).toBeInTheDocument()
+    expect(screen.getAllByText('dashboard.workflows.run')).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: 'dashboard.profiles.switch' }))
+    expect(onSwitch).toHaveBeenCalledWith('p-work')
+  })
+  it('recent runs from another profile switch instead of opening', () => {
+    const onSwitch = vi.fn()
+    const onNavigate = vi.fn()
+    render(<RecentRunsCard currentId="default" onSwitch={onSwitch} onNavigate={onNavigate}
+      executions={[{ id: 'e9', workflow_id: 'w9', workflow_name: 'Outreach', status: 'FAILED', profile_id: 'p-work', profile_name: 'Work', created_at: new Date().toISOString() }]} />)
+    fireEvent.click(screen.getByText('Outreach'))
+    expect(onSwitch).toHaveBeenCalledWith('p-work')
+    expect(onNavigate).not.toHaveBeenCalled()
+  })
+})
