@@ -70,11 +70,16 @@ const L = {
     const s = getComputedStyle(el);
     return s.visibility !== 'hidden' && s.display !== 'none';
   },
-  text(el) { return el ? (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim() : ''; },
+  // zw drops the zero-width spaces LinkedIn embeds in names and titles
+  // ("Entrepreneurs'\u200b Organization"): invisible, but they break
+  // matching and search on the saved text. Joiners (U+200C/D) stay:
+  // emoji sequences and Persian/Arabic text need them.
+  zw(s) { return String(s || '').replace(/[\u200B\u2060\uFEFF]/g, ''); },
+  text(el) { return el ? L.zw(el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim() : ''; },
   lines(el) {
     if (!el) return [];
     const out = [];
-    for (const raw of (el.innerText || '').split('\n')) {
+    for (const raw of L.zw(el.innerText || '').split('\n')) {
       const t = raw.replace(/\s+/g, ' ').trim();
       if (t && out[out.length - 1] !== t) out.push(t);
     }
