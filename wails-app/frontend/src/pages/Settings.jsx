@@ -288,9 +288,10 @@ function LanguageSection() {
         style={{
           // backgroundColor, not the `background` shorthand: a shorthand here
           // would reset backgroundImage below to none regardless of order.
-          backgroundColor: 'var(--elevated)', color: 'var(--text-primary)',
+          backgroundColor: 'var(--elevated)', color: 'var(--text)',
           border: '1px solid var(--border)', borderRadius: 6,
           padding: '6px 28px 6px 10px', fontFamily: 'var(--font-mono)', fontSize: 12,
+          outline: 'none', cursor: 'pointer',
           // WebKitGTK draws <select> with native GTK chrome (light bg, dark
           // text) unless appearance is explicitly reset — see AIChatPanel.jsx.
           appearance: 'none',
