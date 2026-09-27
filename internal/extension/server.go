@@ -18,7 +18,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog"
 
@@ -371,74 +370,17 @@ func (s *Server) IsConnected() bool {
 	return len(s.conns) > 0
 }
 
-// SendCommand sends a command to the Chrome extension and waits for the
-// matching response. If the response indicates failure, an error is returned.
+// SendCommand sends a command to the default browser (see resolve) and
+// waits for the matching response.
 func (s *Server) SendCommand(cmd *Command, timeout time.Duration) (*Response, error) {
-	if cmd.ID == "" {
-		cmd.ID = uuid.New().String()
-	}
-
-	ch := make(chan *Response, 1)
-	s.pendMu.Lock()
-	s.pending[cmd.ID] = ch
-	s.pendMu.Unlock()
-
-	defer func() {
-		s.pendMu.Lock()
-		delete(s.pending, cmd.ID)
-		s.pendMu.Unlock()
-	}()
-
-	if err := s.writeCommand(cmd); err != nil {
-		return nil, err
-	}
-
-	s.logger.Debug().Str("id", cmd.ID).Str("type", cmd.Type).Msg("command sent")
-
-	select {
-	case resp := <-ch:
-		if !resp.Success {
-			return resp, fmt.Errorf("extension error: %s", resp.Error)
-		}
-		return resp, nil
-	case <-time.After(timeout):
-		return nil, fmt.Errorf("command %s timed out after %s", cmd.Type, timeout)
-	}
+	return s.SendCommandTo(Target{}, cmd, timeout)
 }
 
-// CreateTab asks the extension to open a new tab with the given URL and returns
-// the tab ID.
-func (s *Server) CreateTab(url string) (int, error) {
-	resp, err := s.SendCommand(&Command{
-		Type:   CmdCreateTab,
-		Params: map[string]interface{}{"url": url},
-	}, 30*time.Second)
-	if err != nil {
-		return 0, err
-	}
-	dataMap, _ := resp.Data.(map[string]interface{})
-	if dataMap == nil {
-		return 0, fmt.Errorf("create_tab response missing data")
-	}
-	tabIDRaw, ok := dataMap["tabId"]
-	if !ok {
-		return 0, fmt.Errorf("create_tab response missing tabId")
-	}
-	tabID, ok := tabIDRaw.(float64)
-	if !ok {
-		return 0, fmt.Errorf("tabId is not a number: %T", tabIDRaw)
-	}
-	return int(tabID), nil
-}
+// CreateTab opens a tab in the default browser.
+func (s *Server) CreateTab(url string) (int, error) { return s.CreateTabFor(Target{}, url) }
 
-// CloseTab asks the extension to close the tab with the given ID.
-func (s *Server) CloseTab(tabID int) error {
-	_, err := s.SendCommand(&Command{
-		Type:  CmdCloseTab,
-		TabID: tabID,
-	}, 30*time.Second)
-	return err
-}
+// CloseTab closes a tab in the default browser.
+func (s *Server) CloseTab(tabID int) error { return s.CloseTabFor(Target{}, tabID) }
 
 // Close gracefully shuts down the server and closes the WebSocket connection.
 func (s *Server) Close() error {
@@ -835,6 +777,9 @@ func (s *Server) readLoop(c *extConn) {
 			// An activity-recording frame (recording.go): a push that
 			// is acked, never a response to anything this process sent.
 			s.serveRecording(c, msg)
+			continue
+		case KindBinding:
+			s.serveBinding(c, msg)
 			continue
 		}
 

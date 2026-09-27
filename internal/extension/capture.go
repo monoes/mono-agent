@@ -96,6 +96,10 @@ type CaptureRequest struct {
 	// relay hop as a query parameter instead (see
 	// RemoteSender.CapturePage).
 	Inbox string
+	// Target picks the browser to capture in. The zero Target is the
+	// default browser. Like Inbox, it rides the relay hop as query
+	// parameters and never reaches the extension.
+	Target Target
 }
 
 // Capturer is implemented by both bridges — the one that owns the extension
@@ -307,7 +311,7 @@ func (s *Server) CapturePage(req CaptureRequest) (*capture.Result, error) {
 		assembler.Drop(cmd.ID)
 	}()
 
-	if err := s.writeCommand(cmd); err != nil {
+	if err := s.writeCommand(req.Target, cmd); err != nil {
 		return nil, err
 	}
 	s.logger.Debug().Str("id", cmd.ID).Str("type", cmd.Type).Msg("command sent")
@@ -336,22 +340,6 @@ func (s *Server) CapturePage(req CaptureRequest) (*capture.Result, error) {
 			return nil, fmt.Errorf("page_capture timed out after %s", req.timeout())
 		}
 	}
-}
-
-// writeCommand marshals and writes one command to the default browser.
-func (s *Server) writeCommand(cmd *Command) error {
-	data, err := json.Marshal(cmd)
-	if err != nil {
-		return fmt.Errorf("marshal command: %w", err)
-	}
-	c, err := s.resolve(Target{})
-	if err != nil {
-		return err
-	}
-	if err := c.write(data); err != nil {
-		return fmt.Errorf("write command: %w", err)
-	}
-	return nil
 }
 
 // dispatch routes one decoded response from the extension. A capture is

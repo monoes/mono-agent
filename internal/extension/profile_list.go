@@ -3,6 +3,7 @@ package extension
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/monoes/mono-agent/internal/profiledir"
 )
@@ -56,14 +57,16 @@ func (s *Server) SetProfileSource(src ProfileSource) {
 		s.handlerMu.Unlock()
 		return
 	}
-	s.HandleRequest(MethodProfileList, func(ctx context.Context, _ *Request, _ ProgressFunc) (any, error) {
-		return listProfiles(ctx, src)
+	s.HandleRequest(MethodProfileList, func(ctx context.Context, req *Request, _ ProgressFunc) (any, error) {
+		return listProfiles(ctx, src, req.Origin.Profile)
 	})
 }
 
 // listProfiles is the handler's body, kept separate so a test can call it
-// without a server.
-func listProfiles(ctx context.Context, src ProfileSource) (*ProfileList, error) {
+// without a server. bound is the profile the asking browser is bound to.
+// When that profile exists it becomes the default, so the capture picker
+// and the automations agree on which brain this browser belongs to.
+func listProfiles(ctx context.Context, src ProfileSource, bound string) (*ProfileList, error) {
 	profiles, err := src(ctx)
 	if err != nil {
 		// Not an error the user did anything about: no database yet, a
@@ -75,6 +78,11 @@ func listProfiles(ctx context.Context, src ProfileSource) (*ProfileList, error) 
 	if out.Profiles == nil {
 		// A picker renders an empty list; it cannot render a null.
 		out.Profiles = []profiledir.Profile{}
+	}
+	if bound != "" && slices.ContainsFunc(out.Profiles, func(p profiledir.Profile) bool { return p.ID == bound }) {
+		for i := range out.Profiles {
+			out.Profiles[i].Default = out.Profiles[i].ID == bound
+		}
 	}
 	for _, p := range out.Profiles {
 		if p.Default {
