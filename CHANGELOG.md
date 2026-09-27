@@ -133,9 +133,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   folder first.
 - **`workflow executions`** failed on runs with no error message, and
   `people list --platform` missed upper-case platform names.
-- **`ai.extract_page` in natural mode** used the fields the AI generated
-  instead of ignoring them. It falls back to the list selector, then to
-  markdown.
+- **`ai.extract_page` in natural mode ignored the fields the AI generated.**
+  It now uses them, then falls back to the list selector, then to markdown.
 - **The test suite wrote into the real `~/.monoagent`.** Test binaries now get
   a throwaway HOME.
 - The dashboard showed successful runs in grey, and the running indicator never

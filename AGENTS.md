@@ -190,7 +190,7 @@ The desktop app does everything through these commands; they are equally usable 
   - `people status set|get|history`
   - `people messages list|all [--unread]|add|compose|drafts|send-draft|reject-draft|read|unread`
 - **Social lists:** `list ls`.
-- **Image vault:** `image list|search|get|data|add|label|delete|stats|export`, scoped to the active profile. `image data` returns a data URL.
+- **Image vault:** `image list|search|get|data|add|label|delete|stats|export`, scoped to the active profile. `image data` returns a data URL. `image sync` scans the profile folder and reconciles discovered images.
 - **Workflows:**
   - `workflow save` creates or replaces a workflow from the editor's document on stdin.
   - `workflow execution <id>` shows run detail with redacted items.
@@ -203,16 +203,18 @@ The desktop app does everything through these commands; they are equally usable 
   - `connect save <platform> --method M --stdin-json`: field values arrive on stdin.
   - `connect get-oauth-client <platform> [--reveal]` and `connect set-oauth-client <platform> --client-id X [--client-secret-stdin]`. Secrets travel on stdin and are only printed with `--reveal`.
   - `connect for-node <node-type>` and `connect oauth <platform>` (progress is NDJSON on stderr).
+  - `connect resources <credential-id> --platform P --type T [--query Q]` lists a connection's spreadsheets, folders, labels or channels for the node editor's picker.
 - **Profiles:**
   - `profile list|get|current|switch|create [--root-dir] [--icon]`
   - `profile folder <id>`, `profile move [--check] <id> <dir>` (moves images and documents) and `profile projects`
-  - `profile documents list|get|capture|index|rm`
+  - `profile documents list|get|capture|index|rm`, and `profile documents sync`, which scans the profile folder and reconciles documents
 - **Chat:**
   - `chat history list|show|create|turns|turn|events|delete|finish|reconcile`, scoped to the active profile (`reconcile` sweeps every profile).
   - `chat history create --runtime R [--model M] [--workflow W]` makes a conversation, `chat history turns <conv> [--cursor] [--limit]` pages its turns, and `chat history events <conv> <turn> [--after-seq N] [--limit N]` returns the events with the turn's status.
   - `chat --conversation <conv> --turn <id> [--instance <app-id>] [--tools monoagent[,runs]] -- <message>` runs one turn and journals it itself. It takes the runtime, model and session from the conversation. Stdout is an admission line, then each committed event as NDJSON. A repeated turn id never runs twice.
   - `chat history delete` refuses a conversation with an active turn (exit 3). `chat history finish <conv> <turn> --status S` records the end of a turn whose process was killed; it does nothing if the turn already finished. `chat history reconcile --except-owner <app-id>` marks turns left active as interrupted, at app startup.
   - `chat history transcript <history-id>` reads the legacy transcript that plain `chat --history-id` still writes.
+- **Updates:** `update --check [--current <version>]` reports a newer release without downloading; `update --app <exe>` updates the desktop app, verified against SHA256SUMS.
 - **Editor and orgs:** `node palette` gives the editor's node catalog. `org reconcile-doc <name>` returns the reconciled org document from stdin without saving it.
 
 ## MCP server
