@@ -47,6 +47,24 @@ func IsImageFile(filename string) bool {
 	return AllowedExtensions[ext]
 }
 
+// InScannedTree reports whether path lies under root somewhere Scan(root)
+// walks: not root itself and not inside a dot-directory or node_modules.
+// Both are compared as given (after cleaning), so pass them in the same
+// form Scan would see them.
+func InScannedTree(root, path string) bool {
+	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(path))
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return false
+	}
+	dirs := strings.Split(filepath.Dir(rel), string(filepath.Separator))
+	for _, d := range dirs {
+		if d != "." && isSkipDir(d) {
+			return false
+		}
+	}
+	return true
+}
+
 // FileInfo is one matched file from a scan.
 type FileInfo struct {
 	Path      string // absolute or root-relative path

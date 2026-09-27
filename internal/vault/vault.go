@@ -79,6 +79,10 @@ func EnsureVaultDir(db *sql.DB, profileID string) error {
 // returns the new vault ID (e.g. "img-001").
 // source should be "gemini", "upload", "huggingface", etc.
 // workflowID and executionID may be empty strings.
+//
+// A file that already sits in the profile's folder, where `image sync`
+// would find it, is recorded in place instead (see registerInPlace): a
+// copy would show up twice once the folder is scanned.
 func Register(ctx context.Context, db *sql.DB, src, source, workflowID, executionID string) (string, error) {
 	if db == nil {
 		return "", fmt.Errorf("vault.Register: db is nil")
@@ -96,6 +100,10 @@ func Register(ctx context.Context, db *sql.DB, src, source, workflowID, executio
 	vaultDir := VaultDir(db, profileID)
 	if strings.HasPrefix(absSrc, vaultDir+string(os.PathSeparator)) || absSrc == vaultDir {
 		return "", fmt.Errorf("vault.Register: src must not be inside the vault directory")
+	}
+
+	if inPlace, ok := profileFolderPath(db, profileID, absSrc); ok {
+		return registerInPlace(ctx, db, profileID, inPlace, source, workflowID, executionID)
 	}
 
 	if err := EnsureVaultDir(db, profileID); err != nil {
@@ -176,6 +184,13 @@ func Register(ctx context.Context, db *sql.DB, src, source, workflowID, executio
 	}
 	committed = true
 
+	syncImageToKG(db, profileID, id, source, workflowID, executionID)
+	return id, nil
+}
+
+// syncImageToKG indexes a newly registered image in the knowledge graph in
+// the background (see Wait).
+func syncImageToKG(db *sql.DB, profileID, id, source, workflowID, executionID string) {
 	background.Add(1)
 	go func() {
 		defer background.Done()
@@ -189,8 +204,6 @@ func Register(ctx context.Context, db *sql.DB, src, source, workflowID, executio
 		node := monomind.KGNode{Name: id, Type: "file", Description: desc}
 		_ = monomind.SyncToKnowledgeGraph(context.Background(), db, profileID, []monomind.KGNode{node}, nil, "vault:"+id)
 	}()
-
-	return id, nil
 }
 
 // legacyVaultDir is the single flat directory every profile's files used to

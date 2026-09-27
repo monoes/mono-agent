@@ -135,17 +135,36 @@ func SetImageLabel(ctx context.Context, db *sql.DB, profileID, id, label string)
 }
 
 // DeleteImage removes an image's row, then its file (best-effort: a file
-// that is already gone does not fail the delete). A discovered image is
-// the user's own project file, tracked in place, so only its row goes.
+// that is already gone does not fail the delete). An image tracked in place
+// — discovered in the profile folder, or saved there by the chat, a
+// workflow or `image add` — is the user's own project file: only its row
+// goes, and its path is recorded in vault_image_ignored so `image sync`
+// does not add it straight back.
 func DeleteImage(ctx context.Context, db *sql.DB, profileID, id string) error {
 	im, err := GetImage(ctx, db, profileID, id)
 	if err != nil {
 		return err
 	}
-	if _, err := db.ExecContext(ctx, `DELETE FROM vault_images WHERE id = ? AND profile_id = ?`, id, profileID); err != nil {
+	_, inFolder := profileFolderPath(db, profileID, im.Path)
+	keepFile := im.Source == "discovered" || inFolder
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
 		return fmt.Errorf("delete record: %w", err)
 	}
-	if im.Source != "discovered" {
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM vault_images WHERE id = ? AND profile_id = ?`, id, profileID); err != nil {
+		return fmt.Errorf("delete record: %w", err)
+	}
+	if keepFile {
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO vault_image_ignored (profile_id, path) VALUES (?, ?)`, profileID, im.Path); err != nil {
+			return fmt.Errorf("ignore %s: %w", im.Path, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("delete record: %w", err)
+	}
+	if !keepFile {
 		_ = os.Remove(im.Path)
 	}
 	return nil

@@ -21,7 +21,7 @@ import (
 func newImageCmd(cfg *globalConfig) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "image",
-		Short: "Manage the image vault: list, add, label, export, delete, sync",
+		Short: "Manage the image vault: list, add, label, export, delete, sync, unignore",
 		Long: "Images belong to the active profile and are addressed by id (img-001, …). " +
 			"Workflows refer to them as @img-001.",
 	}
@@ -36,6 +36,7 @@ func newImageCmd(cfg *globalConfig) *cobra.Command {
 		newImageStatsCmd(cfg),
 		newImageExportCmd(cfg),
 		newImageSyncCmd(cfg),
+		newImageUnignoreCmd(cfg),
 	)
 	return cmd
 }
@@ -206,7 +207,9 @@ func newImageAddCmd(cfg *globalConfig) *cobra.Command {
 		Use:   "add <file>",
 		Short: "Copy an image file into the vault",
 		Long: "Copies the file into the profile's vault folder as img-NNN<ext> and prints the new " +
-			"image. The original file is left where it is.",
+			"image. The original file is left where it is. A file already in the profile's folder " +
+			"(where `image sync` finds images) is recorded where it is instead of copied, and " +
+			"adding one that was deleted from the vault brings it back.",
 		Example: `  monoagentcli image add ~/Pictures/logo.png --label "Logo"`,
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -270,8 +273,12 @@ func newImageDeleteCmd(cfg *globalConfig) *cobra.Command {
 	return &cobra.Command{
 		Use:     "delete <id>",
 		Aliases: []string{"rm"},
-		Short:   "Delete an image and its file (a discovered image keeps its file)",
-		Args:    cobra.ExactArgs(1),
+		Short:   "Delete an image and its file (an image in the profile folder keeps its file)",
+		Long: "Deletes the image and its vault file. An image that lives in the profile's folder " +
+			"(discovered there, or saved there by the chat, a workflow or `image add`) keeps its " +
+			"file, and `image sync` leaves it out from then on; `image add <path>` or " +
+			"`image unignore <path>` brings it back.",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withImageDB(cfg, func(db *sql.DB) error {
 				if err := vault.DeleteImage(cmd.Context(), db, cfg.ProfileID, args[0]); err != nil {
@@ -281,6 +288,37 @@ func newImageDeleteCmd(cfg *globalConfig) *cobra.Command {
 					return writeJSONTo(cmd.OutOrStdout(), map[string]string{"id": args[0]})
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "Deleted %s.\n", args[0])
+				return nil
+			})
+		},
+	}
+}
+
+// newImageUnignoreCmd forgets that an image in the profile folder was
+// deleted, so the next `image sync` lists it again.
+func newImageUnignoreCmd(cfg *globalConfig) *cobra.Command {
+	return &cobra.Command{
+		Use:     "unignore <path>",
+		Short:   "Let image sync pick up a deleted profile-folder image again",
+		Example: `  monoagentcli image unignore ~/.monoagent/profiles/<id>/images/logo.png`,
+		Args:    cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			path, err := filepath.Abs(args[0])
+			if err != nil {
+				return errInvalidInput("%v", err)
+			}
+			return withImageDB(cfg, func(db *sql.DB) error {
+				ok, err := vault.UnignoreImagePath(cmd.Context(), db, cfg.ProfileID, path)
+				if err != nil {
+					return err
+				}
+				if !ok {
+					return errNotFound("%s is not a deleted image of this profile", path)
+				}
+				if cfg.JSONOutput {
+					return writeJSONTo(cmd.OutOrStdout(), map[string]any{"path": path, "unignored": true})
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "The next image sync will add %s again.\n", path)
 				return nil
 			})
 		},

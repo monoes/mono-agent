@@ -78,3 +78,25 @@ func TestScan(t *testing.T) {
 		t.Errorf("Unexpected filenames found: %+v", names)
 	}
 }
+
+func TestInScannedTree(t *testing.T) {
+	root := filepath.Join(string(filepath.Separator)+"p", "root")
+	for _, c := range []struct {
+		path string
+		want bool
+	}{
+		{filepath.Join(root, "logo.png"), true},
+		{filepath.Join(root, "images", "a", "logo.png"), true},
+		{filepath.Join(root, ".hidden.png"), true},
+		{filepath.Join(root, ".monoagent", "vault", "img-001.png"), false},
+		{filepath.Join(root, "site", "node_modules", "x.png"), false},
+		{filepath.Join(root, "a", ".git", "x.png"), false},
+		{root, false},
+		{filepath.Join(root, "..", "other", "x.png"), false},
+		{filepath.Join(root+"-sibling", "x.png"), false},
+	} {
+		if got := imagescan.InScannedTree(root, c.path); got != c.want {
+			t.Errorf("InScannedTree(%q) = %v, want %v", c.path, got, c.want)
+		}
+	}
+}

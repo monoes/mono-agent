@@ -284,3 +284,95 @@ func TestImageDeleteKeepsDiscoveredFile(t *testing.T) {
 		t.Fatalf("get after delete: exit %d", exitCode(err))
 	}
 }
+
+// Adding a file that is already in the profile folder records it in place
+// (no copy, so `image sync` does not list it twice); deleting it keeps the
+// file and keeps it out of later syncs, and adding it again brings it back.
+func TestImageAddInProfileFolderDeleteAndReAdd(t *testing.T) {
+	cfg, _ := newImageCLITestDB(t)
+	home, _ := os.UserHomeDir()
+	src := filepath.Join(home, ".monoagent", "profiles", "default", "art", "cover.png")
+	if err := os.MkdirAll(filepath.Dir(src), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(src, []byte("cover"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	add := func() vault.ImageEntry {
+		t.Helper()
+		out, err := runImage(t, cfg, "add", src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var im vault.ImageEntry
+		if err := json.Unmarshal([]byte(out), &im); err != nil {
+			t.Fatal(err)
+		}
+		return im
+	}
+	im := add()
+	if im.Path != src || im.Filename != "cover.png" || im.Source != "upload" {
+		t.Fatalf("add = %+v, want the file recorded in place", im)
+	}
+	syncCounts := func() [3]int {
+		t.Helper()
+		r := runFolderSync(t, cfg, newImageCmd, "sync")
+		return [3]int{r.Added, r.Updated, r.Removed}
+	}
+	if c := syncCounts(); c != [3]int{0, 0, 0} {
+		t.Fatalf("sync after add = %v, want no duplicate", c)
+	}
+
+	if _, err := runImage(t, cfg, "delete", im.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(src); err != nil {
+		t.Fatalf("delete removed the user's file: %v", err)
+	}
+	if c := syncCounts(); c != [3]int{0, 0, 0} {
+		t.Fatalf("sync after delete = %v, want it to stay deleted", c)
+	}
+
+	if again := add(); again.Path != src {
+		t.Fatalf("re-add = %+v", again)
+	}
+	out, _ := runImage(t, cfg, "list")
+	if n := strings.Count(out, src); n != 1 {
+		t.Fatalf("list has %s %d times after re-add:\n%s", src, n, out)
+	}
+}
+
+// `image unignore <path>` lets sync pick a deleted discovered image up again.
+func TestImageUnignore(t *testing.T) {
+	cfg, _ := newImageCLITestDB(t)
+	home, _ := os.UserHomeDir()
+	path := filepath.Join(home, ".monoagent", "profiles", "default", "logo.png")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("logo"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if r := runFolderSync(t, cfg, newImageCmd, "sync"); r.Added != 1 {
+		t.Fatalf("first sync = %+v", r)
+	}
+	out, _ := runImage(t, cfg, "list")
+	var rows []vault.ImageEntry
+	_ = json.Unmarshal([]byte(out), &rows)
+	if _, err := runImage(t, cfg, "delete", rows[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if r := runFolderSync(t, cfg, newImageCmd, "sync"); r.Added != 0 {
+		t.Fatalf("sync after delete = %+v", r)
+	}
+	out, err := runImage(t, cfg, "unignore", path)
+	if err != nil || !strings.Contains(out, `"unignored": true`) {
+		t.Fatalf("unignore = %s, %v", out, err)
+	}
+	if r := runFolderSync(t, cfg, newImageCmd, "sync"); r.Added != 1 {
+		t.Fatalf("sync after unignore = %+v", r)
+	}
+	if _, err := runImage(t, cfg, "unignore", path); exitCode(err) != 2 {
+		t.Errorf("unignore of a path that is not ignored: exit %d, want 2", exitCode(err))
+	}
+}

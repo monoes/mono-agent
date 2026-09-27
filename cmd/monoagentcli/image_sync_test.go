@@ -52,7 +52,8 @@ func TestImageSync(t *testing.T) {
 	}
 	defer store.Close()
 	db := store.DB
-	// An image the chat saved into the folder keeps its own row.
+	// An image the chat saved into the folder keeps its own row (its stale
+	// size is refreshed: any row on a scanned path tracks that file).
 	if _, err := db.Exec(`INSERT INTO vault_images (id, seq, path, filename, size_bytes, source, profile_id, created_at)
 		VALUES ('img-001', 1, ?, 'chat.png', 1, 'chat', 'work', '2026-09-26 10:00:00')`, chat); err != nil {
 		t.Fatal(err)
@@ -62,7 +63,7 @@ func TestImageSync(t *testing.T) {
 	sync := func() folderSyncResult { return runFolderSync(t, work, newImageCmd, "sync") }
 
 	r := sync()
-	if syncCounts(r) != [3]int{2, 0, 0} || !r.Changed || r.Scanned != 3 || r.Root != root || r.ProfileID != "work" || r.Errors == nil {
+	if syncCounts(r) != [3]int{2, 1, 0} || !r.Changed || r.Scanned != 3 || r.Root != root || r.ProfileID != "work" || r.Errors == nil {
 		t.Fatalf("first sync = %+v", r)
 	}
 	if r := sync(); syncCounts(r) != [3]int{0, 0, 0} || r.Changed || len(r.Errors) != 0 {
