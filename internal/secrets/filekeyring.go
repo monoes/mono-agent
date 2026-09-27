@@ -23,6 +23,14 @@ const fileKeyringEnv = "MONOAGENT_ALLOW_FILE_KEYRING"
 // machinery, not a user-facing artifact.
 const fileKeyringFilename = ".file-keyring-"
 
+// legacyFileKeyringFilename is the singleton file-based KEK every profile
+// shared before per-profile keys existed: the file keyring briefly (commit
+// 482bfac3, before the per-profile vault landed in 21d1ec39) stored ONE raw
+// 32-byte KEK at ~/.monoagent/vault/.file-keyring — the file-keyring
+// counterpart of the OS keychain's legacyKeyringAccount. Read-only, used
+// only by fetchLegacyKEK on hosts without an OS keyring.
+const legacyFileKeyringFilename = ".file-keyring"
+
 // fileKeyringWarn is printed to stderr on EVERY use of the file-based KEK
 // (read or create): the fallback is weaker than the OS keychain and must
 // never slip in silently.
@@ -276,4 +284,27 @@ func fetchOrCreateFileKEK(profileID string) ([]byte, error) {
 	}
 	rememberFilePassphrase(profileID, passphrase)
 	return kek, nil
+}
+
+// readLegacyFileKEK is fetchLegacyKEK's file-keyring counterpart: it reads the
+// pre-per-profile singleton KEK file (legacyFileKeyringFilename) without ever
+// creating it. A missing file — the normal case, since no released build
+// wrote it — is found=false with no error and no warning, so hosts without
+// an OS keyring don't log a spurious vault-key-migration warning on every
+// run. A present file that can't be read or isn't a raw 32-byte KEK (the
+// only format that singleton was ever written in) is a real error.
+func readLegacyFileKEK() (kek []byte, found bool, err error) {
+	path := filepath.Join(defaultVaultDir(), legacyFileKeyringFilename)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("secrets: reading legacy file-based KEK: %w", err)
+	}
+	if len(data) != 32 {
+		return nil, false, fmt.Errorf("secrets: legacy file-based KEK %s is %d bytes, want 32", path, len(data))
+	}
+	warnFileKeyring()
+	return data, true, nil
 }
