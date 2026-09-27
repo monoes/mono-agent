@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.77.0] - 2026-09-27
+## [0.78.0] - 2026-09-27
 
 ### Added
 
@@ -31,6 +31,145 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Hosts without an OS keyring no longer log a misleading
   `vault key migration … reading legacy KEK from keychain` warning on every
   vault access.
+
+## [0.77.0] - 2026-09-27
+
+### Removed
+
+- **The legacy in-app AI provider is gone. All AI now runs through monomind
+  on your local agents** (Claude Code, Codex and others). Removed:
+  - `monoagentcli ai provider …`;
+  - the AI Providers page and the "AI connections (legacy)" Settings card;
+  - the provider choice in the chat panel, which now uses agents only;
+  - the OpenRouter connection type (saved ones still list and delete).
+
+  `service.openrouter` and the `generate_text` operation of
+  `service.huggingface` fail with a hint to use `agent.ask`;
+  `service.huggingface` still generates images. Migration 051 drops the
+  `ai_providers` table. Saved provider keys are first exported to
+  `~/.monoagent/backups/retired-ai-providers-<profile>-<time>.json`. Its
+  passphrase is kept as the secret "Retired AI provider keys backup", and
+  `secret import` restores the keys as plain secrets. Old provider
+  conversations stay readable.
+
+### Added
+
+- **A new dashboard.** The desktop home page now shows everything the app does:
+  - A **Needs you** strip lists only what's waiting on you: approvals, org
+    questions, leads to review, drafts, broken selectors, expired logins,
+    failed runs, health issues, and scheduled workflows that won't fire because
+    the daemon is off. Each item links to where you can act on it.
+  - Each workflow shows when it runs next, or "paused" when the daemon is off.
+  - New cards cover orgs, automation packages (including selector health and
+    recordings), logins that are active, expiring or expired, activity over the
+    last seven days (captures, documents, messages, applications, people), and
+    the system (daemon, browser bridge, org serve, health, Jev usage).
+  - The vault tile shows how many secrets and images you have, never their
+    names or values.
+  - English and Spanish, and the layout reflows when a side panel is open.
+- **`monoagentcli summary`** is one read-only local call with the counts above
+  (`--section` narrows it). It never calls Jev, monomind or the network, so it
+  is safe to poll.
+- **`monoagentcli org summary [--fast]`** gives one row per org: running,
+  autonomy level, queued messages and items that need you. `--fast` reads local
+  files only.
+- **`monoagentcli workflow executions --all`** lists recent runs across every
+  workflow.
+- **`monoagentcli update --check [--current <version>]`** reports whether a
+  newer release exists without downloading anything. The desktop app now asks
+  the CLI instead of calling GitHub itself, and the dashboard shows an
+  available update.
+- **`doctor` has an `automations` group** that lists unavailable packages and
+  broken or decaying selectors, each with its `automation rerecord` fix. It
+  also appears under Settings › System health.
+- **Unread messages.** New inbound messages start unread; messages that
+  already exist count as read. The CLI gains `people messages read|unread`
+  and `messages all --unread`. Communications shows an unread dot and an
+  Unread filter, and opening a message or a person's conversation marks it
+  read. The dashboard shows how many are unread.
+- **`monoagentcli update --app <exe>`** updates the desktop app from the
+  CLI.
+- **`monoagentcli chat history …`** lists, shows, creates and deletes chat
+  conversations, and reads their turns and events. `chat --conversation C
+  --turn T` runs one journaled turn. The desktop chat now goes through
+  these commands, and its history is restored after a restart.
+- **`monoagentcli image sync`** and **`profile documents sync`** scan the
+  profile folder and reconcile the vault in one pass. The desktop app's
+  folder watchers now only notice changes and run these commands.
+- **Project images are discovered automatically.** Images in the profile
+  folder appear in the Image Vault. Images made in the chat or by workflows
+  are added too. An image saved into the profile folder is recorded where it
+  is, not copied. Deleting one keeps your file and keeps it out of later
+  syncs; `image add <path>` or the new `image unignore <path>` brings it
+  back.
+- **Settings › System health** groups the checks with severity badges.
+- **The daemon publishes its scheduler's real next run times** in its
+  heartbeat. `summary` prefers them (`"source": "daemon"`), so `@every`
+  schedules show their actual next run.
+
+### Changed
+
+- **The desktop app no longer reads or writes the database itself** for
+  people, tags, lists, posts, the image vault, workflows and runs, sessions
+  and connections, profiles, templates, the node palette, documents and
+  captures. Every one of those goes through a `monoagentcli` command, which
+  is equally usable from scripts (see AGENTS.md, "What the desktop app
+  calls"). New commands:
+  - `people count`, `people interactions`, `people posts …` and
+    `people tag map`; `people list` gains `--search` and `--offset`.
+  - `image …`.
+  - `workflow save`, `workflow execution` and `workflow cancel`.
+  - `login test|delete`.
+  - `connect save|get-oauth-client|set-oauth-client|for-node|oauth`.
+  - `profile get|folder|move|projects` and
+    `profile documents get|capture`.
+  - `node palette` and `org reconcile-doc`.
+- Image Vault thumbnails load as they scroll into view.
+- **The desktop app's update installer lives in the CLI** (`update --app`),
+  and the node editor's resource picker goes through the CLI.
+- **An unknown `--profile` exits with code 3** (invalid input) for every
+  command. Before, it exited with 1.
+- The "AI agents" tab is hidden from the sidebar.
+- The AI docs describe monomind and the supported local agents.
+- The dashboard, sidebar and status-bar counts now come from the CLI instead of
+  the desktop app reading the database itself.
+- The dashboard stops polling while another page is open.
+- The HIL badge counts pending items from `summary`, which is local and makes
+  no Jev calls. Before, the sidebar polled `hil list --suggest` every
+  5 seconds, which could ask Jev about every unrated item. The badge is also
+  current now while the HIL drawer is closed.
+- **`login status --json`** uses snake_case keys (`id`, `username`,
+  `platform`, `expiry`, `when_added`, `status`) and prints `[]` instead of
+  `null` when there is nothing to report. Scripts that read the old
+  Go-style keys need updating.
+
+### Fixed
+
+- **OAuth client secrets were stored in plain text** by
+  `connect set-oauth-client`. They are now encrypted, like every other
+  secret.
+- **Cancelling a run that had already finished** overwrote its
+  SUCCESS/FAILED status with CANCELLED. It is now left alone.
+- **Workflow image previews (`/vault-image/…`) never loaded.** The file
+  server looked in `~/.monoagent/vault`, but images live in the profile's
+  own vault folder. It now serves each image from its stored path, and only
+  the active profile's images.
+- **The liked/commented flags on a person's posts were always empty.** They
+  read tables that a migration had dropped.
+- **Moving a profile folder left documents behind**, pointing at the old
+  folder. It now moves them along with the images, and checks the new
+  folder first.
+- **`workflow executions`** failed on runs with no error message, and
+  `people list --platform` missed upper-case platform names.
+- **`ai.extract_page` in natural mode ignored the fields the AI generated.**
+  It now uses them, then falls back to the list selector, then to markdown.
+- **Image Vault URLs** (`/vault-image/<id>`) use the image id, so two files
+  with the same name in different folders no longer collide. Old
+  filename URLs still work.
+- **The test suite wrote into the real `~/.monoagent`.** Test binaries now get
+  a throwaway HOME.
+- The dashboard showed successful runs in grey, and the running indicator never
+  pulsed.
 
 ## [0.76.0] - 2026-09-26
 

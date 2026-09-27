@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Link2, Brain, ExternalLink, Download, Bot } from 'lucide-react'
+import { Link2, ExternalLink, Download, Bot } from 'lucide-react'
 import { api } from '../services/api.js'
 import { GetVersion, CheckForUpdate, AppSelfUpdate } from '../wailsjs/go/main/App'
 import { getAssistantTools, getAssistantAllowRuns, setAssistantTools, setAssistantAllowRuns } from '../lib/assistantTools.js'
@@ -153,7 +153,7 @@ function ExportRow() {
 
 // ── AssistantToolsSection ────────────────────────────────────────────────────
 
-// GX2 contract: StreamAgentChat takes monoagentTools + allowRuns flags (both
+// GX2 contract: StartChatTurn takes tools + allowRuns flags (both
 // default ON — see lib/assistantTools.js). Persisted to localStorage and
 // read by the AI chat panels at send time; a visible indicator in the panel
 // shows when tools are active. Toggling applies to the next message sent.
@@ -305,8 +305,16 @@ function LanguageSection() {
   )
 }
 
-export default function Settings({ onNavigate }) {
+export default function Settings({ onNavigate, navData }) {
   const { t } = useTranslation()
+  // Deep links (the dashboard's "health" and "Jev" rows) scroll to a section.
+  const sectionRefs = { health: useRef(null), jev: useRef(null), version: useRef(null) }
+  const section = navData?.section
+  useEffect(() => {
+    const el = section && sectionRefs[section]?.current
+    if (el) el.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navData])
   const [dbPath, setDbPath] = useState('')
   const [dbConnected, setDbConnected] = useState(false)
   const [connCount, setConnCount] = useState(null)
@@ -345,14 +353,14 @@ export default function Settings({ onNavigate }) {
 
       <div className="page-body">
         {/* System health (monoagentcli doctor) */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+        <div ref={sectionRefs.health} data-section="health" style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: 2 }}>
             {t('settings.health.sectionTitle')}
           </span>
           <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
         </div>
 
-        <HealthSection onNavigate={onNavigate} />
+        <HealthSection onNavigate={onNavigate} collapsible defaultExpanded={false} />
 
         {/* Quick access cards */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
@@ -375,12 +383,6 @@ export default function Settings({ onNavigate }) {
             title={t('settings.aiAgentsTitle')}
             description={t('settings.aiAgentsDesc')}
             onClick={() => onNavigate?.('ai')}
-          />
-          <QuickAccessCard
-            icon={Brain}
-            title={t('settings.aiProvidersTitle')}
-            description={t('settings.aiProvidersDesc')}
-            onClick={() => onNavigate?.('aiProviders')}
           />
         </div>
 
@@ -406,10 +408,10 @@ export default function Settings({ onNavigate }) {
 
         <VaultKeyringSection />
 
-        <JevSection />
+        <div ref={sectionRefs.jev} data-section="jev"><JevSection /></div>
 
         {/* Application Info */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+        <div ref={sectionRefs.version} data-section="version" style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: 2 }}>
             Application Info
           </span>

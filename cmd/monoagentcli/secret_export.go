@@ -10,11 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/monoes/mono-agent/internal/ai"
 	"github.com/monoes/mono-agent/internal/connections"
 	"github.com/monoes/mono-agent/internal/secrets"
 
-	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 )
 
@@ -104,7 +102,7 @@ func newSecretImportCmd(cfg *globalConfig) *cobra.Command {
 			}
 
 			imported, skipped, err := secrets.Import(cmd.Context(), db.DB, profileID, passphrase, data,
-				rematerializeConnection, rematerializeSession, rematerializeProvider)
+				rematerializeConnection, rematerializeSession)
 			if err != nil {
 				return fmt.Errorf("importing vault: %w", err)
 			}
@@ -173,43 +171,4 @@ func rematerializeSession(ctx context.Context, db *sql.DB, profileID, vaultID, n
 			meta["username"], meta["platform"], vaultID, expiry, profileID)
 	}
 	return err
-}
-
-// rematerializeProvider reconnects an imported vault entry to an AI
-// provider row, matched by provider name. It deliberately leaves the
-// returned AIProvider's credential field at its zero value — the vault
-// entry (vaultID, already imported by Import before this callback runs) is
-// the credential; SaveProvider's vault-write branch only fires when that
-// field is non-empty, so this just persists p.VaultRef as given.
-func rematerializeProvider(ctx context.Context, db *sql.DB, profileID, vaultID, name string, meta map[string]string) error {
-	store, err := ai.NewAIStore(db)
-	if err != nil {
-		return fmt.Errorf("opening AI store: %w", err)
-	}
-	existing, err := store.ListProviders(profileID)
-	if err != nil {
-		return fmt.Errorf("checking for an existing provider: %w", err)
-	}
-	p := ai.AIProvider{
-		Name:         name,
-		ProviderID:   meta["provider_id"],
-		Tier:         meta["tier"],
-		BaseURL:      meta["base_url"],
-		DefaultModel: meta["default_model"],
-		ExtraHeaders: meta["extra_headers"],
-		ProfileID:    profileID,
-		VaultRef:     vaultID,
-	}
-	for _, e := range existing {
-		if e.Name == name {
-			p.ID = e.ID
-			p.Status = e.Status
-			p.LastTested = e.LastTested
-			break
-		}
-	}
-	if p.ID == "" {
-		p.ID = uuid.NewString()
-	}
-	return store.SaveProvider(p)
 }

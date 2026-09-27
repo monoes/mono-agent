@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/monoes/mono-agent/internal/ai"
 	"github.com/monoes/mono-agent/internal/connections"
 	"github.com/monoes/mono-agent/internal/i18n"
 	"github.com/monoes/mono-agent/internal/nodemgr"
@@ -80,11 +79,12 @@ func newRootCmd() *cobra.Command {
 		newConfigCmd(cfg),
 		newExportCmd(cfg),
 		newStatusCmd(cfg),
+		newSummaryCmd(cfg),
 		newDoctorCmd(cfg),
 		newSetupCmd(cfg),
 		newNodejsCmd(cfg),
 		newVersionCmd(),
-		newUpdateCmd(),
+		newUpdateCmd(cfg),
 		newWorkflowCmd(cfg),
 		newDaemonCmd(cfg),
 		newExtensionCmd(cfg),
@@ -96,7 +96,6 @@ func newRootCmd() *cobra.Command {
 		newApplicationCmd(cfg),
 		newDocumentsCmd(cfg),
 		newHILCmd(cfg),
-		newAICmd(cfg),
 		newAgentCmd(cfg),
 		newChatCmd(cfg),
 		newOrgCmd(cfg),
@@ -105,6 +104,7 @@ func newRootCmd() *cobra.Command {
 		newJevCmd(cfg),
 		newAutomationCmd(cfg),
 		newRecordCmd(cfg),
+		newImageCmd(cfg),
 	)
 
 	// `workflow run --full-outputs`: skip credential-key redaction of
@@ -198,8 +198,8 @@ func initDB(cfg *globalConfig) (*storage.Database, error) {
 	if _, _, err := secrets.MigrateSessionsToVault(context.Background(), db.DB); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: sessions migration: %v\n", err)
 	}
-	if _, _, err := ai.MigrateProvidersToVault(context.Background(), db.DB); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: ai providers migration: %v\n", err)
+	if _, err := secrets.RetireAIProviderEntries(context.Background(), db.DB, filepath.Join(filepath.Dir(dbPath), "backups")); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: retiring AI provider keys: %v\n", err)
 	}
 	migrateProfilesToPerProfileKeys(db)
 	// Resolve active profile if not overridden on the command line.
@@ -280,7 +280,8 @@ func migrateProfilesToPerProfileKeys(db *storage.Database) {
 }
 
 // resolveProfileID accepts either a profile's ID or its name and returns the
-// canonical ID, erroring if neither matches any row in `profiles`.
+// canonical ID, erroring (exit 3, invalid input) if neither matches any
+// row in `profiles`.
 func resolveProfileID(db *sql.DB, idOrName string) (string, error) {
 	var id string
 	if err := db.QueryRow(`SELECT id FROM profiles WHERE id = ?`, idOrName).Scan(&id); err == nil {
@@ -289,7 +290,7 @@ func resolveProfileID(db *sql.DB, idOrName string) (string, error) {
 	if err := db.QueryRow(`SELECT id FROM profiles WHERE name = ?`, idOrName).Scan(&id); err == nil {
 		return id, nil
 	}
-	return "", fmt.Errorf("profile %q not found (checked both id and name)", idOrName)
+	return "", errInvalidInput("profile %q not found (checked both id and name)", idOrName)
 }
 
 // ensureDir creates a directory if it does not exist.

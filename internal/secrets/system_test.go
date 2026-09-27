@@ -93,7 +93,7 @@ func TestDeleteCascade_RemovesLinkedConnectionRow(t *testing.T) {
 	ctx := context.Background()
 
 	// crawler_sessions is created by the real migrations newSecretsTestDB
-	// applies; connections/ai_providers are not (see Task 1's note), so this
+	// applies; connections is not (see Task 1's note), so this
 	// test creates a minimal connections table by hand — mirroring how
 	// internal/connections/storage_test.go hand-creates vault_keys instead
 	// of importing internal/secrets.

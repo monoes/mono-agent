@@ -2,10 +2,6 @@
 package main
 
 import (
-	"context"
-	"fmt"
-
-	"github.com/monoes/mono-agent/internal/vault"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -66,27 +62,16 @@ func (a *App) ListProfileDocuments() ([]ProfileDocument, error) {
 }
 
 // GetProfileDocument returns one document by id, scoped to the active
-// profile — a single-row counterpart to ListProfileDocuments for callers
-// (chatArtifacts.js's resolveArtifact) that only need to re-validate one
-// id rather than pay for and scan the whole vault. Mirrors GetWorkflow's
-// shape (app_workflows.go): direct DB access, no CLI subprocess hop,
-// nil+error on not-found rather than an empty result — a.db is the same
-// handle app_documents_watch.go already calls internal/vault with
-// directly, so this needs no new plumbing.
+// profile (`profile documents get`) — a single-row counterpart to
+// ListProfileDocuments for callers (chatArtifacts.js's resolveArtifact)
+// that only need to re-validate one id rather than pay for and scan the
+// whole vault. nil+error on not-found rather than an empty result.
 func (a *App) GetProfileDocument(id string) (*ProfileDocument, error) {
-	doc, err := vault.GetDocument(context.Background(), a.db, a.getActiveProfileID(), id)
-	if err != nil {
+	var doc ProfileDocument
+	if err := a.cliJSON(profileCLITimeout, &doc, "profile", "documents", "get", id); err != nil {
 		return nil, err
 	}
-	if doc == nil {
-		return nil, fmt.Errorf("document %s not found", id)
-	}
-	return &ProfileDocument{
-		ID: doc.ID, Filename: doc.Filename, Path: doc.Path, SizeBytes: doc.SizeBytes,
-		Source: doc.Source, ApplicationID: doc.ApplicationID, CreatedAt: doc.CreatedAt,
-		Indexed: doc.Indexed, IndexError: doc.IndexError, Stale: doc.Stale,
-		URL: doc.URL, CaptureDir: doc.CaptureDir,
-	}, nil
+	return &doc, nil
 }
 
 // UploadResult is UploadProfileDocument's return value.

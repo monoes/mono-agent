@@ -70,12 +70,13 @@ monoagentcli setup [--yes] [--runtime claude] [--autostart] [--mcp]  # guided: f
 Groups: `core` (data folder, database, profile, vault, PATH, disk), `monomind`
 (Node.js, monomind install/version/features, profile `monomind init`) and
 `runtimes` (one row per AI agent runtime), `browser` (browser, extension,
-bridge, pairing), `services` (daemon, start at login) and `integrations`
+bridge, pairing), `automations` (installed packages that are unavailable,
+and broken or decaying selectors — each with its `automation rerecord` fix;
+read-only, never seeds packages), `services` (daemon, start at login) and `integrations`
 (Claude Code skills, MCP registration, TypeSafe Jev key; `jev.api` runs
 on demand with `--deep`), `accounts` (platform login expiry;
-with `--deep` also live tests of saved connections and AI connections
-(legacy) — a failing OAuth connection with a refresh token gets a silent
-refresh fix when the service refused its credentials (401/403) or the token
+with `--deep` also live tests of saved connections — a failing OAuth
+connection with a refresh token gets a silent refresh fix when the service refused its credentials (401/403) or the token
 has expired, and a refresh that asks first for other failures). With a monomind that has `doctor-json`, the `monomind` group also lists
 monomind's own checks for the profile folder (fixes: `doctor fix
 monomind.doctor.fix:<component>`); `--projects` / `--project <path|name>` run
@@ -139,10 +140,82 @@ Typical agent loop: `workflow search --json` → inspect template with
 `workflow templates show <id>` → `workflow run --dry-run` → real run with
 `--json` → read per-node outputs.
 
+### At a glance: `summary`
+
+`monoagentcli --json summary [--section workflows,executions,…]` is one
+read-only call that returns counts for:
+
+- workflows
+- runs (running/queued, last 24 h, recent 15)
+- next scheduled run per `trigger.schedule` node, plus `daemon_running`. `source` says where the time comes from: `daemon` means the running daemon's own scheduler, as published in its heartbeat; `computed` means it was worked out from the cron spec
+- things waiting for a person: workflow HIL, leads to review, drafts, suggested person links
+- people
+- captures, documents and messages (7 days)
+- applications by status
+- automation packages and selector health
+- recordings
+- Jev usage (24 h, from the local usage table)
+- logins: active, expiring within 72 h, expired
+- vault counts (counts only, never secret names or values)
+- daemon, extension bridge and org-serve state
+
+It is local-only: it never calls Jev, monomind or the network (apart from a
+loopback probe of the extension bridge), so it is safe to poll. The desktop
+dashboard polls it. A failing section reports `"error"` inside itself, and the
+command still exits 0. For orgs, use `monoagentcli org summary [--fast]`. For
+the full run list, use `monoagentcli --json workflow executions --all --limit N`.
+
 > **Importing a workflow is equivalent to executing code.** Workflows can
 > run shell commands (`system.execute_command`), inline JavaScript
 > (`core.code`), and template expressions against local files. Only import
 > workflows from sources you trust.
+
+### Updating
+
+- `monoagentcli update` replaces this binary with the latest release.
+- `update --check [--current <v>]` only reports whether a newer release exists.
+- `update --app <exe> [--current <v>]` updates the desktop app at that path. On Linux it also updates the `monoagentcli` bundled next to the app.
+- Every download must match the release's `SHA256SUMS.txt`, or nothing is installed.
+- With `--json`, progress is NDJSON on stderr and the result goes to stdout.
+
+### What the desktop app calls
+
+The desktop app does everything through these commands; they are equally usable from scripts. All support `--json`: snake_case keys, `[]` for empty lists, exit 2 for not found and exit 3 for invalid input.
+
+- **People:**
+  - `people list [--platform P] [--search Q] [--limit N] [--offset M]` and `people count [--platform] [--search]`
+  - `people get <id>` and `people interactions <id>`
+  - `people posts list <person>`, `people posts get <post>` and `people posts comments <post>`
+  - `people tag list [--person]`, `people tag map -- <ids…>` and `people tag add|color|remove`
+  - `people status set|get|history`
+  - `people messages list|all [--unread]|add|compose|drafts|send-draft|reject-draft|read|unread`
+- **Social lists:** `list ls`.
+- **Image vault:** `image list|search|get|data|add|label|delete|stats|export`, scoped to the active profile. `image data` returns a data URL. `image sync` scans the profile folder and reconciles discovered images. `image delete` keeps files that live in the profile folder and hides them from later syncs; `image unignore <path>` or `image add <path>` brings one back.
+- **Workflows:**
+  - `workflow save` creates or replaces a workflow from the editor's document on stdin.
+  - `workflow execution <id>` shows run detail with redacted items.
+  - `workflow cancel <execution-id>` stops the recorded process (never the daemon), marks the run cancelled and rejects its pending HIL items. It leaves a finished run alone.
+  - `workflow delete <id> --yes` refuses a workflow that an org uses; `--force` also revokes its grants.
+  - `workflow get`, `workflow export` and `workflow delete` are profile-scoped.
+- **Sessions and connections:**
+  - `login test <id>` and `login delete <id>` (delete also removes the vault entry).
+  - `connect list|test|remove|refresh` are profile-scoped.
+  - `connect save <platform> --method M --stdin-json`: field values arrive on stdin.
+  - `connect get-oauth-client <platform> [--reveal]` and `connect set-oauth-client <platform> --client-id X [--client-secret-stdin]`. Secrets travel on stdin and are only printed with `--reveal`.
+  - `connect for-node <node-type>` and `connect oauth <platform>` (progress is NDJSON on stderr).
+  - `connect resources <credential-id> --platform P --type T [--query Q]` lists a connection's spreadsheets, folders, labels or channels for the node editor's picker.
+- **Profiles:**
+  - `profile list|get|current|switch|create [--root-dir] [--icon]`
+  - `profile folder <id>`, `profile move [--check] <id> <dir>` (moves images and documents) and `profile projects`
+  - `profile documents list|get|capture|index|rm`, and `profile documents sync`, which scans the profile folder and reconciles documents
+- **Chat:**
+  - `chat history list|show|create|turns|turn|events|delete|finish|reconcile`, scoped to the active profile (`reconcile` sweeps every profile).
+  - `chat history create --runtime R [--model M] [--workflow W]` makes a conversation, `chat history turns <conv> [--cursor] [--limit]` pages its turns, and `chat history events <conv> <turn> [--after-seq N] [--limit N]` returns the events with the turn's status.
+  - `chat --conversation <conv> --turn <id> [--instance <app-id>] [--tools monoagent[,runs]] -- <message>` runs one turn and journals it itself. It takes the runtime, model and session from the conversation. Stdout is an admission line, then each committed event as NDJSON. A repeated turn id never runs twice.
+  - `chat history delete` refuses a conversation with an active turn (exit 3). `chat history finish <conv> <turn> --status S` records the end of a turn whose process was killed; it does nothing if the turn already finished. `chat history reconcile --except-owner <app-id>` marks turns left active as interrupted, at app startup.
+  - `chat history transcript <history-id>` reads the legacy transcript that plain `chat --history-id` still writes.
+- **Updates:** `update --check [--current <version>]` reports a newer release without downloading; `update --app <exe>` updates the desktop app, verified against SHA256SUMS.
+- **Editor and orgs:** `node palette` gives the editor's node catalog. `org reconcile-doc <name>` returns the reconciled org document from stdin without saving it.
 
 ## MCP server
 
@@ -244,28 +317,35 @@ everything to 200/500.
 
 ## Assistant chat & tools
 
-`monoagentcli chat` is a conversational assistant over the local agent
-runtime, with named sessions and an optional tool surface:
+`monoagentcli chat` runs one assistant turn on a local agent runtime
+(through monomind) and streams NDJSON events (`start`, `session`,
+`assistant`, `tool_call`, `tool_result`, `usage`, `result`, `done`) to
+stdout; the desktop app consumes the same stream. `--runtime` and a prompt
+are required:
 
 ```bash
-monoagentcli chat                          # interactive chat, no tools
-monoagentcli chat --history-id <session>   # persist this turn under a named session bucket
-monoagentcli chat --resume <session-id>    # resume a prior runtime session (provider-issued id)
-monoagentcli chat --tools monoagent        # + workflows, vault, people, actions, comms tools
-monoagentcli chat --tools monoagent,runs   # + run/execution tools (second explicit gate)
+monoagentcli chat --runtime claude "summarize my failed runs"            # no tools
+monoagentcli chat --runtime claude --history-id <session> "…"            # persist this turn under a named session bucket
+monoagentcli chat --runtime claude --resume <session-id> "continue"      # resume a prior runtime session (runtime-issued id)
+monoagentcli chat --runtime claude --tools monoagent "…"                 # + workflows, vault, people, actions, comms tools
+monoagentcli chat --runtime claude --tools monoagent,runs "…"            # + run/execution tools (second explicit gate)
+monoagentcli chat --runtime codex --canvas <workflow-id> "add a Slack step"  # workflow-builder mode
 ```
 
-Each `chat` invocation runs one turn and exits — `--history-id` only tags
+`--model`, `--timeout` and `--budget-usd` are optional per turn. Each
+`chat` invocation runs one turn and exits — `--history-id` only tags
 where the transcript is persisted (for later lookup/GUI display, e.g. by
 `--canvas`'s id when unset); it does not reload prior messages into the
 next turn. To actually continue a conversation across invocations, pass
 `--resume <session-id>` with the id the runtime printed in its `session`
 event.
 
-- Tools are **off by default** — plain `chat` answers without touching
-  workflows, secrets, or data. `--tools` is an explicit opt-in, and
-  `runs` is a second gate on top of it. The GUI mirrors this with a
-  settings toggle that also defaults to off.
+- On the CLI, tools are **off unless `--tools` is passed** — plain `chat`
+  answers without touching workflows, secrets, or data, and `runs` is a
+  second gate on top of `monoagent`. The desktop app's assistant is
+  different: Settings › "Assistant tool access" has both toggles (tools,
+  and run execution) **on by default**; turning tools off also turns runs
+  off.
 - Tool responses never expose secret values: vault tooling returns
   metadata only, and workflow definitions fetched via `get_workflow`
   are redacted for credential-shaped values.
@@ -278,38 +358,63 @@ event.
 - Tool-call timeouts derive from the caller's context, so a cancelled
   session stops in-flight tool work.
 
-The `agent` and `org` commands (monomind-backed agent/organization
-management) also exist — see `monoagentcli agent --help` and
-`monoagentcli org --help`. These, plus AI chat/agent-ask, delegate to an
-external `monomind` binary — see "Monomind (external agent runtime)" below
-for the install prerequisite and version requirement.
+## How AI works in mono-agent
 
-### Monomind (external agent runtime)
+Every AI feature runs through the **monomind runner** (`monomind agent
+exec`) on an agent CLI already installed and logged in on this machine.
+That covers `monoagentcli chat` and the desktop assistant, the `agent.ask`
+workflow node, the AI mode of `ai.extract_page`, capture summaries, and
+orgs (`org.*` nodes, `org` commands, the `model` decider). mono-agent stores
+**no API keys for text AI** and has no in-app AI provider: the runtime's own
+login (and its bill) is what the turn uses.
 
-`monoagentcli`'s AI/agent surfaces (`agent`, `org`, `chat`, `agent_ask`,
-`agent.ask` workflow node) are thin proxies over a separately-installed
-`monomind` binary (protocol handshake in `internal/monomind/`) — this repo
-does not vendor it. This is a deliberate architectural decision (see
-`docs/plans/local-agent-monomind-delegation.md`), not an oversight: it keeps
-runner-specific knowledge (which local AI CLIs are installed, how to drive
-each one) entirely out of the Go binary.
-
-- **Install**: `npm install -g @monoes/monomindcli` (requires Node.js).
-  `.mcp.json` pins the exact MCP-server version this repo was tested
-  against; the globally-installed CLI just needs to satisfy the version
-  floor below.
-- **Version floor**: `internal/monomind.MinMonomindVersion` (currently
-  `2.10.0`) — `Handshake()` rejects an older or protocol-incompatible
-  binary with a clear error rather than misbehaving silently.
-- **Graceful degradation**: if `monomind` is not found on `PATH` (or in the
-  bundled-install fallback locations under `~/.monoagent/`), every
-  monomind-backed command fails at invocation time with an actionable
-  install-hint error (`internal/monomind.ErrNotFound`) — not a panic, not a
-  silent no-op. Everything else in `monoagentcli` (the workflow engine,
-  node execution, the CLI/MCP surface) works with no `monomind` installed
-  at all.
+- **Runtimes.** monomind decides which agent CLIs it can drive, so the list
+  grows with monomind rather than with this binary. `monoagentcli agent scan`
+  shows every runtime it knows and whether each is installed (monomind 2.16:
+  `claude`, `codex`, `kimicode`, `opencode`, `vercel`, `antigravity`,
+  `grok`, `qwen`, `crush`, `copilot`, `pi`, `hermes`, plus `qwen-rpc` and
+  `pi-rpc` transports). `monoagentcli agent install <runtime>` installs one
+  (see "Health check"), `monoagentcli agent test <runtime>` runs a smoke turn
+  that also proves the login works.
+- **Picking a runtime.** `chat` and `agent.ask` take an explicit runtime
+  (`--runtime` / `"runtime"`). `ai.extract_page` uses `MONOAGENT_AI_RUNTIME`,
+  else the first installed runtime in a fixed order starting with `claude`
+  and `codex`. Capture summaries use `MONOAGENT_SUMMARY_RUNTIME` (see
+  "Runtime environment variables").
+- **Finding monomind.** `MONOMIND_BIN` wins; otherwise `PATH`, then
+  `~/.monoagent/monomind-bundle/bin`, `~/.monoagent/npm-global/bin` (where
+  an install through the managed Node lands), `~/.npm-global/bin`,
+  `~/.local/bin`, nvm installs and the Homebrew prefixes. monomind needs
+  Node.js >= 22.12; without one, `monoagentcli nodejs install` provides a
+  private copy. Install monomind itself with
+  `npm install -g @monoes/monomindcli` or the `monomind.install` doctor fix.
+- **Checking it.** `monoagentcli doctor --group monomind` checks Node.js,
+  the binary, the protocol handshake (version floor
+  `internal/monomind.MinMonomindVersion`, currently `2.10.0`), capabilities
+  and the profile's `monomind init`; `--group runtimes` lists each runtime.
+- **Without monomind** every AI surface fails at call time with an install
+  hint (`internal/monomind.ErrNotFound`); the rest of `monoagentcli` works.
+  This repo does not vendor monomind by design
+  (`docs/plans/local-agent-monomind-delegation.md`): knowledge of how to
+  drive each agent CLI stays out of the Go binary.
+- **Deprecated nodes.** `ai.chat`, `ai.extract`, `ai.classify`,
+  `ai.transform`, `ai.agent` and `ai.embed` are kept only so old workflows
+  load; running one fails at once with a pointer to `agent.ask` (`ai.choose`
+  for classification). `service.openrouter` is a fail-fast stub;
+  `service.huggingface` only generates images (`generate_text` fails fast
+  with an `agent.ask` hint). `ai.read_page` uses no AI: it fetches and
+  cleans a page.
+- **Exceptions.** [TypeSafe Jev](#typesafe-jev-decisions-only) makes typed
+  decisions (classification, suggestions, the element picker) and never
+  generates text; it uses its own `typesafe` key. Images have two paths:
+  `gemini.generate_image` drives gemini.google.com in your own logged-in
+  browser session (no key, like the other `gemini.*` nodes), and
+  `service.huggingface` `generate_image` calls the Hugging Face API with a
+  Hugging Face connection (API key).
 
 ## Orgs, automations, and autonomy
+
+`monoagentcli org summary [--fast]` prints one row per org (running, autonomy level, paused, queued messages, `needs_you`) plus totals. `--fast` reads only local files and the database and leaves `needs_you` null. Without it, `needs_you` is computed for every org in parallel (monomind round-trips, each org capped at 10 s).
 
 An **org** is a team of agent roles run by monomind (`monomind org serve`).
 Its config lives in the active profile's folder:
@@ -470,7 +575,7 @@ AES-256-GCM payloads) — never in argv or shell history:
 
 ```bash
 # Preferred: pipe the value via stdin (omit --value/--field entirely to read stdin)
-printf '%s' "$TOKEN" | monoagentcli secret add --kind secret --name openai-key
+printf '%s' "$TOKEN" | monoagentcli secret add --kind secret --name github-token
 ```
 
 Stdin input is accepted with **or without** a trailing newline —
@@ -520,8 +625,10 @@ desktop app's Settings › Vault keyring (shown only when the backend is
 JSON state — pick one of N options, yes/no, or a level on a rubric — with
 probabilities, in one ~100–300 ms request. It **never generates text**.
 
-- **Doctrine exception.** monoagent otherwise has no HTTP AI providers
-  (generation goes to local agents via monomind). Jev is admitted only as a
+- **Doctrine exception.** Text generation goes to local agent runtimes
+  through monomind (see "How AI works in mono-agent"); the only other AI
+  services monoagent calls over HTTP are Jev and Hugging Face image
+  generation, each with its own key. Jev is admitted only as a
   non-generative decision provider: it may pick among options the code
   enumerates, never write field values, rationales or answers. Gates compare
   the top option's probability with a per-surface threshold; below it the
@@ -614,9 +721,10 @@ regardless of where the binary runs from.
 | `MONOAGENT_CRASH_REPORT` | Set to `1` to allow crash reports to be filed to GitHub (also requires the `monomind` CLI on `PATH`). Default: unset — crash reports stay in local files under `~/.monoagent/crashes/`. |
 | `MONOAGENT_EXTENSION_PORT` | Bind-port override for the browser-extension bridge server; the extension probes this port and falls back to 9323. Default: unset — 9323 only. |
 | `MONOAGENT_SUMMARY_RUNTIME` | Agent runtime the extension bridge uses to write `summary.md` for captures saved with "Save page summary" / "Save video summary" (`extension serve --summary-runtime` wins over it). This is the default: a capture can name its own installed runtime and model (the side panel's "AI for summaries" picker, or `capture page --summary-runtime/--summary-model`), and `summary.json` records the pair used. `off` disables summaries; each capture that asked then records why in `summary.json`. Default: unset — `claude`. |
+| `MONOMIND_BIN` | Path to the `monomind` binary; checked before `PATH` and the other install locations (see [How AI works in mono-agent](#how-ai-works-in-mono-agent)). Default: unset — discovered. |
+| `MONOAGENT_AI_RUNTIME` | Agent runtime `ai.extract_page` uses to generate selectors. Default: unset — the first installed runtime, `claude` first. |
 | `MONOAGENT_PROFILE` | Profile name the built-in MCP server operates against. Default: unset — the MCP server's default profile. |
 | `MONOAGENT_DEBUG` | Set to any non-empty value to enable verbose browser-adapter logging. Default: unset. |
-| `MONOAGENT_GOOGLE_DEBUG` | Set to `1` to log raw Google AI (Gemini) request/response bodies. Default: unset — off, since responses may contain user content. |
 | `MONOAGENTCLI_BIN` | Path override for the `monoagentcli` binary the desktop GUI (`wails-app/`) shells out to. Default: unset — resolved relative to the GUI binary. |
 | `CHROME_USER_DATA_DIR` | Overrides the Chrome profile directory used for browser automation. Default: unset — a dedicated Mono Agent profile under `~/.monoagent/`. |
 

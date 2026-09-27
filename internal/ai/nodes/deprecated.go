@@ -2,7 +2,6 @@ package ainodes
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/monoes/mono-agent/internal/workflow"
 )
@@ -21,15 +20,11 @@ type DeprecatedNodeExecutor struct {
 func (n *DeprecatedNodeExecutor) Type() string { return n.TypeName }
 
 func (n *DeprecatedNodeExecutor) Execute(_ context.Context, _ workflow.NodeInput, _ map[string]interface{}) ([]workflow.NodeOutput, error) {
-	hint, _ := workflow.IsDeprecatedNodeType(n.TypeName)
-	return nil, fmt.Errorf("%s node %q is deprecated by the local-agent transition — %s (docs/plans/local-agent-monomind-delegation.md)",
-		"ai", n.TypeName, hint)
+	return nil, workflow.DeprecatedNodeError(n.TypeName)
 }
 
 // RegisterDeprecated registers fail-fast stubs for every historical ai.*
-// provider node type. Replaces RegisterAll in the production registry — the
-// provider-backed implementations remain for their unit tests until the
-// Phase-5 rip-out.
+// provider node type (the provider-backed implementations are gone).
 func RegisterDeprecated(r *workflow.NodeTypeRegistry) {
 	for _, typeName := range []string{
 		"ai.chat", "ai.extract", "ai.classify", "ai.transform", "ai.embed", "ai.agent",

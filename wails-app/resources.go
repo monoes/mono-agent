@@ -1,13 +1,6 @@
 package main
 
 import (
-	"bytes"
-	"context"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
-	"net/url"
 	"strings"
 	"time"
 )
@@ -34,308 +27,44 @@ type ResourceItemResult struct {
 	Error string        `json:"error,omitempty"`
 }
 
-// ListResources lists external resources for a given platform and resource type.
-// credentialID is the connection ID. query is an optional search string.
+// resourcesCLITimeout bounds one picker call: a token refresh and a
+// provider request, each capped at 30 s inside the CLI.
+const resourcesCLITimeout = 90 * time.Second
+
+// ListResources lists external resources for a given platform and resource
+// type via `monoagentcli connect resources`, which resolves the credential in
+// the active profile and refreshes an expiring token. credentialID is the
+// connection ID. query is an optional search string.
 func (a *App) ListResources(platform, resourceType, credentialID, query string) ResourceListResult {
-	ctx := context.Background()
-	creds, err := a.getResourceCredentialData(ctx, credentialID)
-	if err != nil {
-		return ResourceListResult{Error: fmt.Sprintf("credential lookup: %v", err), NeedsReauth: true}
+	args := []string{"connect", "resources", "--platform=" + platform, "--type=" + resourceType}
+	if query != "" {
+		args = append(args, "--query="+query)
 	}
 	var result ResourceListResult
-	switch platform {
-	case "google_sheets", "google_drive":
-		result = listGoogleDriveResources(creds, resourceType, query)
-	case "gmail":
-		result = listGmailResources(creds, resourceType, query)
-	case "slack":
-		result = listSlackResources(creds, resourceType, query)
-	default:
-		return ResourceListResult{Error: fmt.Sprintf("platform %q not supported for resource listing", platform)}
+	if err := a.cliJSON(resourcesCLITimeout, &result, append(args, "--", credentialID)...); err != nil {
+		return ResourceListResult{Items: []ResourceItem{}, Error: err.Error(), NeedsReauth: resourceNeedsReauth(err.Error())}
 	}
-	// Detect authentication failures — signal the frontend to offer reconnect.
-	if result.Error != "" && (strings.Contains(result.Error, "401") || strings.Contains(result.Error, "UNAUTHENTICATED") || strings.Contains(result.Error, "Invalid Credentials")) {
-		result.NeedsReauth = true
+	if result.Items == nil {
+		result.Items = []ResourceItem{}
 	}
 	return result
 }
 
-// CreateResource creates a new external resource and returns the created item.
+// CreateResource creates a new external resource via `monoagentcli connect
+// resources create` and returns the created item.
 func (a *App) CreateResource(platform, resourceType, credentialID, name string) ResourceItemResult {
-	ctx := context.Background()
-	creds, err := a.getResourceCredentialData(ctx, credentialID)
-	if err != nil {
-		return ResourceItemResult{Error: fmt.Sprintf("credential lookup: %v", err)}
+	var result ResourceItemResult
+	if err := a.cliJSON(resourcesCLITimeout, &result, "connect", "resources", "create",
+		"--platform="+platform, "--type="+resourceType, "--name="+name, "--", credentialID); err != nil {
+		return ResourceItemResult{Error: err.Error()}
 	}
-	switch platform {
-	case "google_sheets":
-		return createGoogleSheet(creds, name)
-	case "google_drive":
-		return createGoogleDriveFolder(creds, name)
-	default:
-		return ResourceItemResult{Error: fmt.Sprintf("create not supported for platform %q", platform)}
-	}
+	return result
 }
 
-// getResourceCredentialData fetches credential data from the connections manager.
-// If the stored access token is expired and a refresh token is available, it
-// silently refreshes the token before returning.
-// credentialID must be an exact connection ID; if it does not resolve to a
-// connection in the active profile this fails rather than silently
-// substituting a different connection (which would send data through the
-// wrong account).
-func (a *App) getResourceCredentialData(ctx context.Context, credentialID string) (map[string]interface{}, error) {
-	if a.connMgr == nil {
-		return nil, fmt.Errorf("connections manager not available")
-	}
-	conn, err := a.connMgr.Get(ctx, credentialID)
-	if err != nil || conn == nil {
-		return nil, fmt.Errorf("credential %s not found", credentialID)
-	}
-	// Verify the fetched connection belongs to the active profile.
-	if conn.ProfileID != "" && conn.ProfileID != a.getActiveProfileID() {
-		return nil, fmt.Errorf("credential %s not in active profile", credentialID)
-	}
-
-	// Check if token needs refresh (OAuth connections with expires_at).
-	if expiresStr, _ := conn.Data["expires_at"].(string); expiresStr != "" {
-		if expiresAt, err := time.Parse(time.RFC3339, expiresStr); err == nil {
-			// Refresh if token expires within the next 60 seconds. Shares the
-			// same silent refresh_token exchange (per-profile client
-			// credentials, /consumers/ audience fallback) as every other
-			// refresh call site — CLI, daemon, and `connect refresh`.
-			if time.Now().UTC().After(expiresAt.Add(-60 * time.Second)) {
-				if err := a.connMgr.RefreshToken(ctx, conn); err == nil {
-					return conn.Data, nil
-				}
-				// If refresh fails, fall through and try with the existing token.
-			}
-		}
-	}
-
-	return conn.Data, nil
-}
-
-// listGoogleDriveResources lists Google Drive/Sheets resources.
-func listGoogleDriveResources(creds map[string]interface{}, resourceType, query string) ResourceListResult {
-	accessToken, _ := creds["access_token"].(string)
-	if accessToken == "" {
-		return ResourceListResult{Error: "google: access_token not found in credential"}
-	}
-	var apiURL string
-	switch resourceType {
-	case "spreadsheets":
-		q := "mimeType='application/vnd.google-apps.spreadsheet' and trashed=false"
-		if query != "" {
-			q += " and name contains '" + strings.ReplaceAll(query, "'", "\\'") + "'"
-		}
-		apiURL = "https://www.googleapis.com/drive/v3/files?q=" + url.QueryEscape(q) + "&fields=files(id,name,modifiedTime)&pageSize=50"
-	case "folders":
-		q := "mimeType='application/vnd.google-apps.folder' and trashed=false"
-		if query != "" {
-			q += " and name contains '" + strings.ReplaceAll(query, "'", "\\'") + "'"
-		}
-		apiURL = "https://www.googleapis.com/drive/v3/files?q=" + url.QueryEscape(q) + "&fields=files(id,name,modifiedTime)&pageSize=50"
-	default:
-		return ResourceListResult{Error: fmt.Sprintf("google_drive: unsupported resource type %q", resourceType)}
-	}
-	body, err := googleAPIGet(apiURL, accessToken)
-	if err != nil {
-		return ResourceListResult{Error: err.Error()}
-	}
-	var resp struct {
-		Files []struct {
-			ID           string `json:"id"`
-			Name         string `json:"name"`
-			ModifiedTime string `json:"modifiedTime"`
-		} `json:"files"`
-	}
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return ResourceListResult{Error: fmt.Sprintf("google: parse response: %v", err)}
-	}
-	items := make([]ResourceItem, 0, len(resp.Files))
-	for _, f := range resp.Files {
-		items = append(items, ResourceItem{
-			ID:   f.ID,
-			Name: f.Name,
-			Metadata: map[string]interface{}{
-				"modified_time": f.ModifiedTime,
-			},
-		})
-	}
-	return ResourceListResult{Items: items}
-}
-
-// listGmailResources lists Gmail labels.
-func listGmailResources(creds map[string]interface{}, resourceType, query string) ResourceListResult {
-	accessToken, _ := creds["access_token"].(string)
-	if accessToken == "" {
-		return ResourceListResult{Error: "gmail: access_token not found in credential"}
-	}
-	if resourceType != "labels" {
-		return ResourceListResult{Error: fmt.Sprintf("gmail: unsupported resource type %q", resourceType)}
-	}
-	body, err := googleAPIGet("https://gmail.googleapis.com/gmail/v1/users/me/labels", accessToken)
-	if err != nil {
-		return ResourceListResult{Error: err.Error()}
-	}
-	var resp struct {
-		Labels []struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
-		} `json:"labels"`
-	}
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return ResourceListResult{Error: fmt.Sprintf("gmail: parse response: %v", err)}
-	}
-	items := make([]ResourceItem, 0, len(resp.Labels))
-	for _, l := range resp.Labels {
-		items = append(items, ResourceItem{ID: l.ID, Name: l.Name})
-	}
-	return ResourceListResult{Items: items}
-}
-
-// listSlackResources lists Slack channels or users.
-func listSlackResources(creds map[string]interface{}, resourceType, query string) ResourceListResult {
-	token, _ := creds["access_token"].(string)
-	if token == "" {
-		token, _ = creds["bot_token"].(string)
-	}
-	if token == "" {
-		return ResourceListResult{Error: "slack: access_token or bot_token not found in credential"}
-	}
-	var apiURL string
-	switch resourceType {
-	case "channels":
-		apiURL = "https://slack.com/api/conversations.list?limit=200&exclude_archived=true"
-	case "users":
-		apiURL = "https://slack.com/api/users.list?limit=200"
-	default:
-		return ResourceListResult{Error: fmt.Sprintf("slack: unsupported resource type %q", resourceType)}
-	}
-	req, _ := http.NewRequest("GET", apiURL, nil)
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return ResourceListResult{Error: fmt.Sprintf("slack: http: %v", err)}
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	var slackResp struct {
-		OK       bool   `json:"ok"`
-		Error    string `json:"error"`
-		Channels []struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
-		} `json:"channels"`
-		Members []struct {
-			ID      string `json:"id"`
-			Name    string `json:"name"`
-			Profile struct {
-				RealName string `json:"real_name"`
-			} `json:"profile"`
-		} `json:"members"`
-	}
-	if err := json.Unmarshal(body, &slackResp); err != nil {
-		return ResourceListResult{Error: fmt.Sprintf("slack: parse: %v", err)}
-	}
-	if !slackResp.OK {
-		return ResourceListResult{Error: fmt.Sprintf("slack: API error: %s", slackResp.Error)}
-	}
-	var items []ResourceItem
-	for _, c := range slackResp.Channels {
-		items = append(items, ResourceItem{ID: c.ID, Name: "#" + c.Name})
-	}
-	for _, m := range slackResp.Members {
-		displayName := m.Profile.RealName
-		if displayName == "" {
-			displayName = m.Name
-		}
-		items = append(items, ResourceItem{ID: m.ID, Name: displayName})
-	}
-	if items == nil {
-		items = []ResourceItem{}
-	}
-	return ResourceListResult{Items: items}
-}
-
-// createGoogleSheet creates a new Google Sheet.
-func createGoogleSheet(creds map[string]interface{}, name string) ResourceItemResult {
-	accessToken, _ := creds["access_token"].(string)
-	if accessToken == "" {
-		return ResourceItemResult{Error: "google: access_token not found"}
-	}
-	payload := fmt.Sprintf(`{"properties":{"title":%q}}`, name)
-	req, _ := http.NewRequest("POST", "https://sheets.googleapis.com/v4/spreadsheets",
-		bytes.NewBufferString(payload))
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return ResourceItemResult{Error: fmt.Sprintf("google: create sheet: %v", err)}
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	var created struct {
-		SpreadsheetID string `json:"spreadsheetId"`
-		Properties    struct {
-			Title string `json:"title"`
-		} `json:"properties"`
-	}
-	if err := json.Unmarshal(body, &created); err != nil || created.SpreadsheetID == "" {
-		return ResourceItemResult{Error: fmt.Sprintf("google: parse create response: %s", string(body))}
-	}
-	return ResourceItemResult{Item: &ResourceItem{
-		ID:   created.SpreadsheetID,
-		Name: created.Properties.Title,
-	}}
-}
-
-// createGoogleDriveFolder creates a new folder in Google Drive.
-func createGoogleDriveFolder(creds map[string]interface{}, name string) ResourceItemResult {
-	accessToken, _ := creds["access_token"].(string)
-	if accessToken == "" {
-		return ResourceItemResult{Error: "google: access_token not found"}
-	}
-	payload := fmt.Sprintf(`{"name":%q,"mimeType":"application/vnd.google-apps.folder"}`, name)
-	req, _ := http.NewRequest("POST", "https://www.googleapis.com/drive/v3/files",
-		bytes.NewBufferString(payload))
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return ResourceItemResult{Error: fmt.Sprintf("google drive: create folder: %v", err)}
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	var created struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
-	}
-	if err := json.Unmarshal(body, &created); err != nil || created.ID == "" {
-		return ResourceItemResult{Error: fmt.Sprintf("google drive: parse create response: %s", string(body))}
-	}
-	return ResourceItemResult{Item: &ResourceItem{ID: created.ID, Name: created.Name}}
-}
-
-// googleAPIGet performs a GET to a Google API endpoint with Bearer auth.
-func googleAPIGet(apiURL, accessToken string) ([]byte, error) {
-	req, err := http.NewRequest("GET", apiURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("google API GET: %w", err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("google API read body: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("google API returned %d: %s", resp.StatusCode, string(body))
-	}
-	return body, nil
+// resourceNeedsReauth reports whether a picker error should offer to
+// reconnect: the credential is gone (or another profile's), or the provider
+// rejected the token.
+func resourceNeedsReauth(msg string) bool {
+	return strings.HasPrefix(msg, "credential lookup:") ||
+		strings.Contains(msg, "401") || strings.Contains(msg, "UNAUTHENTICATED") || strings.Contains(msg, "Invalid Credentials")
 }

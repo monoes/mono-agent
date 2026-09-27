@@ -2,40 +2,13 @@ package ai
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
-	"strings"
 	"testing"
 
 	"github.com/zalando/go-keyring"
 
 	"github.com/monoes/mono-agent/internal/storage"
 )
-
-// TestProviderJSONOmitsAPIKey is a regression test: serializing an AIProvider
-// (as ListAIProviders/SaveAIProvider do for the GUI) must never leak the
-// plaintext API key.
-func TestProviderJSONOmitsAPIKey(t *testing.T) {
-	p := AIProvider{
-		ID:         "p1",
-		Name:       "My OpenAI",
-		ProviderID: "openai",
-		Tier:       "known",
-		APIKey:     "sk-supersecret",
-	}
-	b, err := json.Marshal(p)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	if strings.Contains(string(b), "sk-supersecret") {
-		t.Errorf("serialized provider leaked API key: %s", b)
-	}
-	// A slice (as returned by ListProviders) must also be redacted.
-	b2, _ := json.Marshal([]AIProvider{p})
-	if strings.Contains(string(b2), "sk-supersecret") {
-		t.Errorf("serialized provider slice leaked API key: %s", b2)
-	}
-}
 
 func openTestDB(t *testing.T) *sql.DB {
 	t.Helper()
@@ -80,11 +53,14 @@ func TestStoreInitTables(t *testing.T) {
 	}
 	_ = store
 
-	// Verify ai_providers table exists by inserting a raw row.
-	_, err = db.Exec(`INSERT INTO ai_providers (id, name, provider_id, tier, api_key, created_at)
-		VALUES ('test', 'Test', 'openai', 'known', 'sk-xxx', '2025-01-01T00:00:00Z')`)
-	if err != nil {
-		t.Fatalf("insert into ai_providers: %v", err)
+	// The provider table is gone: a migration drops it and the store must
+	// not bring it back.
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'ai_providers'`).Scan(&n); err != nil {
+		t.Fatalf("sqlite_master: %v", err)
+	}
+	if n != 0 {
+		t.Error("NewAIStore created ai_providers")
 	}
 
 	// Verify ai_chat_messages table exists by inserting a raw row.
@@ -92,146 +68,6 @@ func TestStoreInitTables(t *testing.T) {
 		VALUES ('msg1', 'wf1', 'user', 'hello', '2025-01-01T00:00:00Z')`)
 	if err != nil {
 		t.Fatalf("insert into ai_chat_messages: %v", err)
-	}
-}
-
-func TestProviderCRUD(t *testing.T) {
-	db := openTestDB(t)
-	store, err := NewAIStore(db)
-	if err != nil {
-		t.Fatalf("NewAIStore: %v", err)
-	}
-
-	p := AIProvider{
-		ID:           "p1",
-		Name:         "My OpenAI",
-		ProviderID:   "openai",
-		Tier:         "known",
-		APIKey:       "sk-abc",
-		BaseURL:      "https://api.openai.com/v1",
-		DefaultModel: "gpt-4o",
-		Status:       "untested",
-	}
-
-	// Save
-	if err := store.SaveProvider(p); err != nil {
-		t.Fatalf("SaveProvider: %v", err)
-	}
-
-	// Get
-	got, err := store.GetProvider("p1", "default")
-	if err != nil {
-		t.Fatalf("GetProvider: %v", err)
-	}
-	if got.Name != "My OpenAI" {
-		t.Errorf("Name = %q, want %q", got.Name, "My OpenAI")
-	}
-	if got.APIKey != "sk-abc" {
-		t.Errorf("APIKey = %q, want %q", got.APIKey, "sk-abc")
-	}
-	if got.CreatedAt == "" {
-		t.Error("CreatedAt should be auto-set when empty")
-	}
-
-	// List
-	providers, err := store.ListProviders("default")
-	if err != nil {
-		t.Fatalf("ListProviders: %v", err)
-	}
-	if len(providers) != 1 {
-		t.Fatalf("ListProviders len = %d, want 1", len(providers))
-	}
-
-	// Update (re-save with new name)
-	p.Name = "My OpenAI Updated"
-	p.CreatedAt = got.CreatedAt // preserve original timestamp
-	if err := store.SaveProvider(p); err != nil {
-		t.Fatalf("SaveProvider (update): %v", err)
-	}
-	got2, err := store.GetProvider("p1", "default")
-	if err != nil {
-		t.Fatalf("GetProvider after update: %v", err)
-	}
-	if got2.Name != "My OpenAI Updated" {
-		t.Errorf("Name after update = %q, want %q", got2.Name, "My OpenAI Updated")
-	}
-
-	// Delete
-	if err := store.DeleteProvider("p1", "default"); err != nil {
-		t.Fatalf("DeleteProvider: %v", err)
-	}
-	_, err = store.GetProvider("p1", "default")
-	if err != sql.ErrNoRows {
-		t.Errorf("GetProvider after delete: err = %v, want sql.ErrNoRows", err)
-	}
-}
-
-// TestDeleteProvider_RemovesLinkedVaultEntry is a regression test: deleting a
-// provider must also remove its linked vault_secrets row, mirroring
-// connections.Store.Delete — otherwise the vault is left with an orphaned
-// entry for a provider that no longer exists.
-func TestDeleteProvider_RemovesLinkedVaultEntry(t *testing.T) {
-	db := openTestDB(t)
-	store, err := NewAIStore(db)
-	if err != nil {
-		t.Fatalf("NewAIStore: %v", err)
-	}
-
-	p := AIProvider{ID: "p1", Name: "My OpenAI", ProviderID: "openai", Tier: "known", APIKey: "sk-abc"}
-	if err := store.SaveProvider(p); err != nil {
-		t.Fatalf("SaveProvider: %v", err)
-	}
-
-	got, err := store.GetProvider("p1", "default")
-	if err != nil {
-		t.Fatalf("GetProvider: %v", err)
-	}
-	if got.VaultRef == "" {
-		t.Fatal("expected a vault_ref to be set after SaveProvider")
-	}
-
-	if err := store.DeleteProvider("p1", "default"); err != nil {
-		t.Fatalf("DeleteProvider: %v", err)
-	}
-
-	var count int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM vault_secrets WHERE id = ?`, got.VaultRef).Scan(&count); err != nil {
-		t.Fatalf("querying vault_secrets: %v", err)
-	}
-	if count != 0 {
-		t.Fatalf("expected linked vault entry %s to be removed after DeleteProvider, got count=%d", got.VaultRef, count)
-	}
-}
-
-// TestProviderProfileIsolation is a regression test: a provider saved under one
-// profile must not be visible, testable, or deletable from a different profile.
-func TestProviderProfileIsolation(t *testing.T) {
-	db := openTestDB(t)
-	store, err := NewAIStore(db)
-	if err != nil {
-		t.Fatalf("NewAIStore: %v", err)
-	}
-
-	p := AIProvider{ID: "p-a", Name: "Profile A Key", ProviderID: "openai", Tier: "known", APIKey: "sk-a", ProfileID: "profile-a"}
-	if err := store.SaveProvider(p); err != nil {
-		t.Fatalf("SaveProvider: %v", err)
-	}
-
-	if _, err := store.GetProvider("p-a", "profile-b"); err == nil {
-		t.Error("GetProvider: expected error reading another profile's provider, got nil")
-	}
-	list, err := store.ListProviders("profile-b")
-	if err != nil {
-		t.Fatalf("ListProviders: %v", err)
-	}
-	if len(list) != 0 {
-		t.Errorf("ListProviders(profile-b) = %d providers, want 0", len(list))
-	}
-	if err := store.DeleteProvider("p-a", "profile-b"); err != nil {
-		t.Fatalf("DeleteProvider from wrong profile should not error (no rows affected): %v", err)
-	}
-	if _, err := store.GetProvider("p-a", "profile-a"); err != nil {
-		t.Errorf("provider should still exist after cross-profile delete attempt: %v", err)
 	}
 }
 
@@ -375,9 +211,9 @@ func TestChatMessageProfileIsolation(t *testing.T) {
 // would have left it, bypassing SaveChatMessage entirely) must not be
 // silently attributed to whichever profile happens to be named "default" —
 // it must be invisible to every profile, including "default" itself. This
-// is a deliberate departure from ai_providers' COALESCE(profile_id,'default')
-// convention: chat history rows are per-user content, not app config, so
-// misattributing one profile's old conversation to another is a real
+// is a deliberate departure from the COALESCE(profile_id,'default')
+// convention app-config tables use: chat history rows are per-user content,
+// not app config, so misattributing one profile's old conversation to another is a real
 // privacy concern, not just a minor inconvenience.
 func TestChatMessageLegacyAmbiguousRowsAreExcluded(t *testing.T) {
 	db := openTestDB(t)
@@ -473,137 +309,6 @@ func TestChatHistorySameTimestampKeepsInsertOrder(t *testing.T) {
 		if m.ID != fmt.Sprintf("m%d", i) {
 			t.Errorf("history[%d].ID = %q, want m%d (insert order not preserved)", i, m.ID, i)
 		}
-	}
-}
-
-func TestSaveAndGetProvider_APIKeyGoesThroughVault(t *testing.T) {
-	db := openTestDB(t)
-	store, err := NewAIStore(db)
-	if err != nil {
-		t.Fatalf("NewAIStore: %v", err)
-	}
-
-	cred := "PLACEHOLDER-one"
-	p := AIProvider{ID: "p1", Name: "My OpenAI"}
-	p.ProviderID = "openai"
-	p.Tier = "known"
-	p.APIKey = cred
-	if err := store.SaveProvider(p); err != nil {
-		t.Fatalf("SaveProvider: %v", err)
-	}
-
-	var rawStoredValue, vaultRef string
-	if err := db.QueryRow(`SELECT api_key, vault_ref FROM ai_providers WHERE id = 'p1'`).Scan(&rawStoredValue, &vaultRef); err != nil {
-		t.Fatalf("reading raw row: %v", err)
-	}
-	if rawStoredValue != "" {
-		t.Fatalf("expected ai_providers.api_key to be empty after save, got %q", rawStoredValue)
-	}
-	if vaultRef == "" {
-		t.Fatal("expected vault_ref to be populated")
-	}
-
-	got, err := store.GetProvider("p1", "default")
-	if err != nil {
-		t.Fatalf("GetProvider: %v", err)
-	}
-	if got.APIKey != cred {
-		t.Fatalf("expected GetProvider to resolve the real credential, got %q", got.APIKey)
-	}
-
-	list, err := store.ListProviders("default")
-	if err != nil {
-		t.Fatalf("ListProviders: %v", err)
-	}
-	if len(list) != 1 {
-		t.Fatalf("expected one provider, got %d", len(list))
-	}
-	if list[0].APIKey != "" {
-		t.Fatal("expected ListProviders to never decrypt the credential, same invariant as vault_secrets.List")
-	}
-}
-
-func TestSaveProvider_UpdatingReusesSameVaultEntry(t *testing.T) {
-	db := openTestDB(t)
-	store, err := NewAIStore(db)
-	if err != nil {
-		t.Fatalf("NewAIStore: %v", err)
-	}
-
-	credA := "PLACEHOLDER-one"
-	p := AIProvider{ID: "p1", Name: "My OpenAI"}
-	p.ProviderID = "openai"
-	p.Tier = "known"
-	p.APIKey = credA
-	if err := store.SaveProvider(p); err != nil {
-		t.Fatalf("first SaveProvider: %v", err)
-	}
-	first, err := store.GetProvider("p1", "default")
-	if err != nil {
-		t.Fatalf("GetProvider: %v", err)
-	}
-
-	credB := "PLACEHOLDER-two"
-	p.APIKey = credB
-	p.VaultRef = first.VaultRef
-	if err := store.SaveProvider(p); err != nil {
-		t.Fatalf("second SaveProvider: %v", err)
-	}
-	second, err := store.GetProvider("p1", "default")
-	if err != nil {
-		t.Fatalf("GetProvider after update: %v", err)
-	}
-	if second.VaultRef != first.VaultRef {
-		t.Fatalf("expected the same vault entry to be reused, got %q want %q", second.VaultRef, first.VaultRef)
-	}
-	if second.APIKey != credB {
-		t.Fatalf("expected updated credential, got %q", second.APIKey)
-	}
-}
-
-func TestProviderStatus(t *testing.T) {
-	db := openTestDB(t)
-	store, err := NewAIStore(db)
-	if err != nil {
-		t.Fatalf("NewAIStore: %v", err)
-	}
-
-	p := AIProvider{
-		ID:         "ps1",
-		Name:       "Status Test",
-		ProviderID: "openai",
-		Tier:       "known",
-		APIKey:     "sk-test",
-		Status:     "untested",
-	}
-	if err := store.SaveProvider(p); err != nil {
-		t.Fatalf("SaveProvider: %v", err)
-	}
-
-	// Verify initial status
-	got, err := store.GetProvider("ps1", "default")
-	if err != nil {
-		t.Fatalf("GetProvider: %v", err)
-	}
-	if got.Status != "untested" {
-		t.Errorf("initial Status = %q, want %q", got.Status, "untested")
-	}
-
-	// Update status
-	testedAt := "2025-06-15T12:00:00Z"
-	if err := store.UpdateProviderStatus("ps1", "active", testedAt, "default"); err != nil {
-		t.Fatalf("UpdateProviderStatus: %v", err)
-	}
-
-	got, err = store.GetProvider("ps1", "default")
-	if err != nil {
-		t.Fatalf("GetProvider after status update: %v", err)
-	}
-	if got.Status != "active" {
-		t.Errorf("Status = %q, want %q", got.Status, "active")
-	}
-	if got.LastTested != testedAt {
-		t.Errorf("LastTested = %q, want %q", got.LastTested, testedAt)
 	}
 }
 

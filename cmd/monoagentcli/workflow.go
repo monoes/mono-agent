@@ -23,6 +23,7 @@ import (
 	"github.com/monoes/mono-agent/internal/nodes"
 	"github.com/monoes/mono-agent/internal/scheduler"
 	"github.com/monoes/mono-agent/internal/storage"
+	"github.com/monoes/mono-agent/internal/summary"
 	"github.com/monoes/mono-agent/internal/workflow"
 	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
@@ -256,6 +257,9 @@ func newWorkflowCmd(cfg *globalConfig) *cobra.Command {
 		newWorkflowDeactivateCmd(cfg),
 		newWorkflowDeleteCmd(cfg),
 		newWorkflowExecutionsCmd(cfg),
+		newWorkflowExecutionCmd(cfg),
+		newWorkflowCancelCmd(cfg),
+		newWorkflowSaveCmd(cfg),
 		newWorkflowNodeCmd(cfg),
 		newWorkflowConnectCmd(cfg),
 		newWorkflowDisconnectCmd(cfg),
@@ -619,13 +623,39 @@ func newWorkflowListCmd(cfg *globalConfig) *cobra.Command {
 			store := newHybridStore(db)
 			ctx := context.Background()
 
-			workflows, err := store.ListWorkflows(ctx, cfg.ProfileID)
+			all, err := store.ListWorkflows(ctx, cfg.ProfileID)
 			if err != nil {
 				return fmt.Errorf("list workflows: %w", err)
 			}
+			// The store's file half has no profile filter: apply the same
+			// COALESCE(profile_id,'default') rule its SQLite half uses.
+			workflows := make([]workflow.Workflow, 0, len(all))
+			for _, wf := range all {
+				owner := wf.ProfileID
+				if owner == "" {
+					owner = "default"
+				}
+				if owner == cfg.ProfileID {
+					workflows = append(workflows, wf)
+				}
+			}
 
 			if jsonOut || cfg.JSONOutput {
-				return json.NewEncoder(os.Stdout).Encode(workflows)
+				// One grouped count for every row; a failure costs the
+				// counts, not the list.
+				counts, err := store.NodeCounts(ctx, cfg.ProfileID)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "warning: could not count workflow nodes: %v\n", err)
+				}
+				type listed struct {
+					workflow.Workflow
+					NodeCount int `json:"node_count"`
+				}
+				rows := make([]listed, 0, len(workflows))
+				for _, wf := range workflows {
+					rows = append(rows, listed{Workflow: wf, NodeCount: counts[wf.ID]})
+				}
+				return json.NewEncoder(os.Stdout).Encode(rows)
 			}
 
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
@@ -668,7 +698,7 @@ func newWorkflowGetCmd(cfg *globalConfig) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("get workflow: %w", err)
 			}
-			if wf == nil {
+			if wf == nil || ownedWorkflow(ctx, store, db.DB, cfg.ProfileID, args[0]) == nil {
 				return errNotFound("workflow %q not found", args[0])
 			}
 
@@ -962,6 +992,9 @@ func newWorkflowActivateCmd(cfg *globalConfig) *cobra.Command {
 			if err := engine.ActivateWorkflow(ctx, args[0]); err != nil {
 				return fmt.Errorf("activate workflow: %w", err)
 			}
+			if cfg.JSONOutput {
+				return json.NewEncoder(os.Stdout).Encode(map[string]interface{}{"id": args[0], "is_active": true})
+			}
 
 			fmt.Fprintf(os.Stdout, "Workflow %s activated.\n", args[0])
 			fmt.Fprintln(os.Stdout, "Note: run `monoagentcli daemon` (kept running continuously) for this workflow's triggers to actually fire — activation alone only registers them for this command's lifetime.")
@@ -992,6 +1025,9 @@ func newWorkflowDeactivateCmd(cfg *globalConfig) *cobra.Command {
 			if err := engine.DeactivateWorkflow(ctx, args[0]); err != nil {
 				return fmt.Errorf("deactivate workflow: %w", err)
 			}
+			if cfg.JSONOutput {
+				return json.NewEncoder(os.Stdout).Encode(map[string]interface{}{"id": args[0], "is_active": false})
+			}
 
 			fmt.Fprintf(os.Stdout, "Workflow %s deactivated.\n", args[0])
 			return nil
@@ -1001,7 +1037,7 @@ func newWorkflowDeactivateCmd(cfg *globalConfig) *cobra.Command {
 
 // newWorkflowDeleteCmd deletes a workflow (with confirmation unless --force).
 func newWorkflowDeleteCmd(cfg *globalConfig) *cobra.Command {
-	var force bool
+	var force, yes bool
 
 	cmd := &cobra.Command{
 		Use:   "delete <id>",
@@ -1019,6 +1055,9 @@ func newWorkflowDeleteCmd(cfg *globalConfig) *cobra.Command {
 			}
 			store := newHybridStore(preDB)
 			existing, gerr := store.GetWorkflow(context.Background(), workflowID)
+			if existing != nil && ownedWorkflow(context.Background(), store, preDB.DB, cfg.ProfileID, workflowID) == nil {
+				existing = nil // another profile's: not found here, and its grants untouched
+			}
 			closeErr := preDB.Close()
 			if gerr != nil {
 				return fmt.Errorf("get workflow: %w", gerr)
@@ -1033,7 +1072,7 @@ func newWorkflowDeleteCmd(cfg *globalConfig) *cobra.Command {
 				return err
 			}
 
-			if !force {
+			if !force && !yes {
 				fmt.Fprintf(os.Stdout, "Delete workflow %q? This is irreversible. [y/N] ", workflowID)
 				reader := bufio.NewReader(os.Stdin)
 				answer, _ := reader.ReadString('\n')
@@ -1059,13 +1098,17 @@ func newWorkflowDeleteCmd(cfg *globalConfig) *cobra.Command {
 			if err := engine.DeleteWorkflow(ctx, workflowID); err != nil {
 				return fmt.Errorf("delete workflow: %w", err)
 			}
+			if cfg.JSONOutput {
+				return json.NewEncoder(os.Stdout).Encode(map[string]interface{}{"id": workflowID, "deleted": true})
+			}
 
 			fmt.Fprintf(os.Stdout, "Workflow %s deleted.\n", workflowID)
 			return nil
 		},
 	}
 
-	cmd.Flags().BoolVar(&force, "force", false, "Skip confirmation prompt")
+	cmd.Flags().BoolVar(&force, "force", false, "Skip confirmation prompt, and revoke org grants and automation roles that use the workflow")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Skip confirmation prompt (still refuses a workflow that orgs use)")
 	return cmd
 }
 
@@ -1073,17 +1116,41 @@ func newWorkflowDeleteCmd(cfg *globalConfig) *cobra.Command {
 func newWorkflowExecutionsCmd(cfg *globalConfig) *cobra.Command {
 	var limit int
 	var jsonOut bool
+	var all bool
 
 	cmd := &cobra.Command{
-		Use:   "executions <workflow-id>",
-		Short: "List recent executions for a workflow",
-		Args:  cobra.ExactArgs(1),
+		Use:   "executions <workflow-id> | --all",
+		Short: "List recent executions for a workflow, or across the profile with --all",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if all == (len(args) == 1) {
+				return errInvalidInput("pass either a workflow id or --all")
+			}
 			db, err := initDB(cfg)
 			if err != nil {
 				return fmt.Errorf("open database: %w", err)
 			}
 			defer db.Close()
+
+			if all {
+				n := limit
+				if n <= 0 {
+					n = -1 // SQLite: no limit
+				}
+				rows, err := summary.RecentExecutions(cmd.Context(), db.DB, cfg.ProfileID, n)
+				if err != nil {
+					return fmt.Errorf("list executions: %w", err)
+				}
+				if jsonOut || cfg.JSONOutput {
+					return json.NewEncoder(os.Stdout).Encode(rows)
+				}
+				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+				fmt.Fprintln(w, "ID\tWORKFLOW\tSTATUS\tTRIGGER TYPE\tCREATED AT\tERROR")
+				for _, r := range rows {
+					fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", r.ID, r.WorkflowName, r.Status, r.TriggerType, r.CreatedAt, r.Error)
+				}
+				return w.Flush()
+			}
 
 			store := newHybridStore(db)
 			ctx := context.Background()
@@ -1105,6 +1172,9 @@ func newWorkflowExecutionsCmd(cfg *globalConfig) *cobra.Command {
 			executions, err := store.ListExecutions(ctx, args[0], limit)
 			if err != nil {
 				return fmt.Errorf("list executions: %w", err)
+			}
+			if executions == nil {
+				executions = []workflow.WorkflowExecution{}
 			}
 
 			if jsonOut || cfg.JSONOutput {
@@ -1134,6 +1204,7 @@ func newWorkflowExecutionsCmd(cfg *globalConfig) *cobra.Command {
 
 	cmd.Flags().IntVar(&limit, "limit", 20, "Maximum number of executions to show (0 = all)")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output in JSON format")
+	cmd.Flags().BoolVar(&all, "all", false, "List recent executions across every workflow in the profile, newest first")
 	return cmd
 }
 
@@ -1592,7 +1663,7 @@ func newWorkflowExportCmd(cfg *globalConfig) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("get workflow: %w", err)
 			}
-			if wf == nil {
+			if wf == nil || ownedWorkflow(ctx, store, db.DB, cfg.ProfileID, args[0]) == nil {
 				return errNotFound("workflow %q not found", args[0])
 			}
 

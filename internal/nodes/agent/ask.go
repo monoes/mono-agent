@@ -23,7 +23,7 @@ var templatePattern = regexp.MustCompile(`\{\{\$json\.(\w+)\}\}`)
 //
 // Config fields:
 //
-//	"runtime" (string, required): agent runtime id — claude, codex, kimi, …
+//	"runtime" (string, required): agent runtime id — claude, codex, kimicode, …
 //	  (list with `monoagentcli agent scan --installed`).
 //	"prompt" (string, required): user prompt template. Supports {{$json.FIELD}} placeholders.
 //	"model" (string): model override for the runtime.

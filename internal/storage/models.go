@@ -103,6 +103,9 @@ type PersonMessage struct {
 	Status     string    `json:"status,omitempty"` // draft | sent | failed; meaningful for outbound compose messages
 	SentAt     time.Time `json:"sent_at,omitempty"`
 	CreatedAt  time.Time `json:"created_at"`
+	// ReadAt is when an inbound message was read; nil = unread. Outbound
+	// messages are never unread.
+	ReadAt *time.Time `json:"read_at,omitempty"`
 }
 
 // PersonStatusUpdate represents a single manually-written status/note entry

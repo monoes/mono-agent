@@ -568,6 +568,39 @@ func TestReconcileDiscoveredDocumentsRefreshesSize(t *testing.T) {
 	}
 }
 
+// SyncDiscoveredDocuments counts each kind of write, and a pass over an
+// unchanged snapshot writes nothing.
+func TestSyncDiscoveredDocumentsCountsEachChange(t *testing.T) {
+	db := newTestDB(t)
+	ctx := vault.ContextWithDB(context.Background(), db.DB)
+	a, b := writeTestFile(t, "a"), writeTestFile(t, "b")
+	snap := func(sizeA int64, withB bool) []vault.DiscoveredFile {
+		out := []vault.DiscoveredFile{{Path: a, Filename: filepath.Base(a), SizeBytes: sizeA}}
+		if withB {
+			out = append(out, vault.DiscoveredFile{Path: b, Filename: filepath.Base(b), SizeBytes: 1})
+		}
+		return out
+	}
+	steps := []struct {
+		found                   []vault.DiscoveredFile
+		added, updated, removed int
+	}{
+		{snap(1, true), 2, 0, 0},
+		{snap(1, true), 0, 0, 0},
+		{snap(5, true), 0, 1, 0},
+		{snap(5, false), 0, 0, 1},
+	}
+	for i, s := range steps {
+		r := vault.SyncDiscoveredDocuments(ctx, db.DB, "default", s.found)
+		if len(r.Errs) != 0 || r.Added != s.added || r.Updated != s.updated || r.Removed != s.removed {
+			t.Fatalf("step %d: got %+v, want added=%d updated=%d removed=%d", i, r, s.added, s.updated, s.removed)
+		}
+		if r.Changed() != (s.added+s.updated+s.removed > 0) {
+			t.Fatalf("step %d: Changed() = %v", i, r.Changed())
+		}
+	}
+}
+
 // TestReconcileDiscoveredDocumentsRemovesVanishedDiscoveredFile is the
 // regression test for the gap that let ~1450 stale dot-folder rows survive
 // indefinitely in a real install: a "discovered" row whose path no longer

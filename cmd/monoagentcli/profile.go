@@ -1,12 +1,17 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
+
+	"github.com/monoes/mono-agent/internal/profiledir"
 )
 
 // printJSON writes v to stdout as indented JSON. Small shared helper for the
@@ -24,14 +29,56 @@ func newProfileCmd(cfg *globalConfig) *cobra.Command {
 	}
 	cmd.AddCommand(
 		newProfileListCmd(cfg),
+		newProfileGetCmd(cfg),
 		newProfileCreateCmd(cfg),
 		newProfileSwitchCmd(cfg),
 		newProfileCurrentCmd(cfg),
+		newProfileFolderCmd(cfg),
+		newProfileMoveCmd(cfg),
+		newProfileProjectsCmd(cfg),
 		newProfileUploadDocumentCmd(cfg),
 		newProfileDocumentsCmd(cfg),
 		newProfileSearchKnowledgeCmd(cfg),
 	)
 	return cmd
+}
+
+// profileJSON is one profile as `profile list/get/create --json` print it.
+// RootDir is the resolved folder (the default location when no override is
+// set), so callers never need the fallback rule themselves.
+type profileJSON struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	CreatedAt string `json:"created_at"`
+	RootDir   string `json:"root_dir"`
+	Icon      string `json:"icon"`
+	Active    bool   `json:"active"`
+}
+
+// activeProfileSetting reads the persisted active profile id ("" if unset).
+func activeProfileSetting(db *sql.DB) string {
+	var id string
+	_ = db.QueryRow(`SELECT value FROM settings WHERE key = 'active_profile_id'`).Scan(&id)
+	return id
+}
+
+// lookupProfile resolves nameOrID to a profile row. An exact id wins over a
+// name, so a profile whose name happens to be another's id can't shadow it.
+func lookupProfile(db *sql.DB, nameOrID string) (*profileJSON, error) {
+	var p profileJSON
+	err := db.QueryRow(`SELECT id, name, created_at, icon FROM profiles
+		WHERE id = ? OR LOWER(name) = LOWER(?)
+		ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END LIMIT 1`,
+		nameOrID, nameOrID, nameOrID).Scan(&p.ID, &p.Name, &p.CreatedAt, &p.Icon)
+	if err == sql.ErrNoRows {
+		return nil, errNotFound("profile %q not found", nameOrID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("look up profile: %w", err)
+	}
+	p.RootDir = profiledir.Root(db, p.ID)
+	p.Active = p.ID == activeProfileSetting(db)
+	return &p, nil
 }
 
 func newProfileListCmd(cfg *globalConfig) *cobra.Command {
@@ -49,37 +96,30 @@ func newProfileListCmd(cfg *globalConfig) *cobra.Command {
 			// below — running a second query while `rows` is still open (not
 			// yet closed/drained) can hold the connection pool's only
 			// connection when the pool is capped to one, deadlocking.
-			var activeID string
-			_ = db.DB.QueryRow(`SELECT value FROM settings WHERE key = 'active_profile_id'`).Scan(&activeID)
+			activeID := activeProfileSetting(db.DB)
 
-			rows, err := db.DB.Query(`SELECT id, name, created_at FROM profiles ORDER BY created_at ASC`)
+			rows, err := db.DB.Query(`SELECT id, name, created_at, icon FROM profiles ORDER BY created_at ASC`)
 			if err != nil {
 				return fmt.Errorf("list profiles: %w", err)
 			}
-			defer rows.Close()
-
-			type profileRow struct {
-				ID        string `json:"id"`
-				Name      string `json:"name"`
-				CreatedAt string `json:"created_at"`
-				Active    bool   `json:"active"`
-			}
-			var profiles []profileRow
+			profiles := []profileJSON{}
 			for rows.Next() {
-				var p profileRow
-				if rows.Scan(&p.ID, &p.Name, &p.CreatedAt) == nil {
+				var p profileJSON
+				if rows.Scan(&p.ID, &p.Name, &p.CreatedAt, &p.Icon) == nil {
 					p.Active = p.ID == activeID
 					profiles = append(profiles, p)
 				}
 			}
+			rows.Close()
 			if err := rows.Err(); err != nil {
 				return err
 			}
+			// Root reads profiles.root_dir, so only once the cursor is closed.
+			for i := range profiles {
+				profiles[i].RootDir = profiledir.Root(db.DB, profiles[i].ID)
+			}
 
 			if cfg.JSONOutput {
-				if profiles == nil {
-					profiles = []profileRow{}
-				}
 				return printJSON(profiles)
 			}
 
@@ -96,10 +136,10 @@ func newProfileListCmd(cfg *globalConfig) *cobra.Command {
 	}
 }
 
-func newProfileCreateCmd(cfg *globalConfig) *cobra.Command {
+func newProfileGetCmd(cfg *globalConfig) *cobra.Command {
 	return &cobra.Command{
-		Use:   "create <name>",
-		Short: "Create a new profile",
+		Use:   "get <name-or-id>",
+		Short: "Show one profile (its folder, icon, and whether it is active)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			db, err := initDB(cfg)
@@ -107,20 +147,77 @@ func newProfileCreateCmd(cfg *globalConfig) *cobra.Command {
 				return err
 			}
 			defer db.Close()
-
-			id := uuid.New().String()
-			name := args[0]
-			_, err = db.DB.Exec(`INSERT INTO profiles (id, name) VALUES (?, ?)`, id, name)
+			p, err := lookupProfile(db.DB, args[0])
 			if err != nil {
-				return fmt.Errorf("create profile: %w", err)
+				return err
 			}
 			if cfg.JSONOutput {
-				return printJSON(map[string]string{"id": id, "name": name})
+				return printJSON(p)
+			}
+			fmt.Printf("%s (%s)\nfolder: %s\ncreated: %s\n", p.Name, p.ID, p.RootDir, p.CreatedAt)
+			return nil
+		},
+	}
+}
+
+// profileCreateResult is `profile create --json`: the new profile, plus
+// why its folder could not be prepared, if it couldn't (the profile itself
+// still exists; the next start of the app retries the folder).
+type profileCreateResult struct {
+	profileJSON
+	LayoutError string `json:"layout_error,omitempty"`
+}
+
+func newProfileCreateCmd(cfg *globalConfig) *cobra.Command {
+	var rootDir, icon string
+	cmd := &cobra.Command{
+		Use:   "create <name>",
+		Short: "Create a new profile",
+		Long: "Create a new profile. --root-dir points its data at a folder of your choice instead of " +
+			"~/.monoagent/profiles/<id>/ (an absolute path; an existing, non-empty folder such as a coding " +
+			"project is fine). --icon is an id from the shared agent-avatars manifest.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := strings.TrimSpace(args[0])
+			if name == "" {
+				return errInvalidInput("profile name cannot be empty")
+			}
+			rootDir = strings.TrimSpace(rootDir)
+			if rootDir != "" {
+				if err := validateFolderChoice(rootDir); err != nil {
+					return err
+				}
+			}
+			db, err := initDB(cfg)
+			if err != nil {
+				return err
+			}
+			defer db.Close()
+
+			id := uuid.New().String()
+			now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+			icon = strings.TrimSpace(icon)
+			if _, err := db.DB.Exec(`INSERT INTO profiles (id, name, created_at, root_dir, icon) VALUES (?, ?, ?, ?, ?)`,
+				id, name, now, rootDir, icon); err != nil {
+				return fmt.Errorf("create profile: %w", err)
+			}
+			res := profileCreateResult{profileJSON: profileJSON{
+				ID: id, Name: name, CreatedAt: now, RootDir: profiledir.Root(db.DB, id), Icon: icon,
+			}}
+			if err := profiledir.EnsureLayout(db.DB, id); err != nil {
+				res.LayoutError = err.Error()
+				fmt.Fprintf(os.Stderr, "warning: profile %s: creating folder layout: %v\n", id, err)
+			}
+			if cfg.JSONOutput {
+				return printJSON(res)
 			}
 			fmt.Printf("Created profile: %s (%s)\n", name, id)
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&rootDir, "root-dir", "", "Absolute folder for this profile's data (default ~/.monoagent/profiles/<id>/)")
+	cmd.Flags().StringVar(&icon, "icon", "", "Icon id from the agent-avatars manifest")
+	return cmd
 }
 
 func newProfileSwitchCmd(cfg *globalConfig) *cobra.Command {
@@ -135,15 +232,11 @@ func newProfileSwitchCmd(cfg *globalConfig) *cobra.Command {
 			}
 			defer db.Close()
 
-			nameOrID := args[0]
-			// Try by exact ID first, then by name (case-insensitive).
-			var id string
-			err = db.DB.QueryRow(`SELECT id FROM profiles WHERE id = ? OR LOWER(name) = LOWER(?) LIMIT 1`,
-				nameOrID, nameOrID).Scan(&id)
+			p, err := lookupProfile(db.DB, args[0])
 			if err != nil {
-				return errNotFound("profile %q not found", nameOrID)
+				return err
 			}
-
+			id := p.ID
 			_, err = db.DB.Exec(`INSERT OR REPLACE INTO settings (key, value) VALUES ('active_profile_id', ?)`, id)
 			if err != nil {
 				return fmt.Errorf("switch profile: %w", err)

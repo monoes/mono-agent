@@ -32,18 +32,31 @@ const guard = (op, fallback) => (e) => { reportError(op, e); return fallback }
 // same {error} shape the Go side returns, so callers have one check.
 const asError = (e) => ({ error: e?.message || String(e) })
 
-// Parses a StreamAIChat/StreamAgentChat result, throwing on the synchronous
-// {"error": "..."} shape those two return when the chat process never even
-// started (see the comment on streamAIChat below) — turns that JSON payload
-// into an actual promise rejection so callers' existing catch blocks run.
+// Parses a chat binding's result, throwing on the synchronous
+// {"error": "..."} shape they return when the call never even started —
+// turns that JSON payload into an actual promise rejection so callers'
+// existing catch blocks run.
 function parseStreamResult(s) {
   const r = JSON.parse(s)
   if (r?.error) throw new Error(r.error)
   return r
 }
 
+// Bindings that return the CLI's stdout verbatim yield either the payload or
+// {"error": "..."}; turn the latter into a rejection so guard() reports it.
+const parseCLIJSON = (label) => (raw) => {
+  const v = typeof raw === 'string' ? JSON.parse(raw) : raw
+  if (v && typeof v === 'object' && !Array.isArray(v) && typeof v.error === 'string' && v.v === undefined) {
+    throw new Error(`${label}: ${v.error}`)
+  }
+  return v
+}
+
 export const api = {
   getDashboardStats:    () => GoApp.GetDashboardStats().catch(guard('dashboard stats', null)),
+  getSummary:           () => GoApp.GetSummary().then(parseCLIJSON('summary')).catch(guard('summary', null)),
+  getSummarySections:   (csv) => GoApp.GetSummarySections(csv).then(parseCLIJSON('summary')).catch(guard('summary', null)),
+  getOrgSummary:        (fast = true) => GoApp.GetOrgSummary(fast).then(parseCLIJSON('org summary')).catch(guard('org summary', null)),
   listWorkflows:        () => GoApp.ListWorkflows().catch(guard('list workflows', [])),
   runWorkflow:          (id) => GoApp.RunWorkflow(id).catch(e => { reportError('run workflow', e); return `error: ${e}` }),
   runWorkflowWithInput: (id, input) => GoApp.RunWorkflowWithInput(id, input || '').catch(e => { reportError('run workflow', e); return `error: ${e}` }),
@@ -83,6 +96,8 @@ export const api = {
   getPersonPosts:   (personId) => GoApp.GetPersonPosts(personId).catch(guard('person posts', [])),
   getPersonMessages:(personId) => GoApp.GetPersonMessages(personId).catch(guard('person messages', [])),
   getAllPersonMessages:(limit) => GoApp.GetAllPersonMessages(limit ?? 200).catch(guard('all messages', [])),
+  markPersonMessagesRead: (personId, ids = []) => GoApp.MarkPersonMessagesRead(personId || '', ids).catch(guard('mark messages read', null)),
+  markPersonMessageUnread: (id) => GoApp.MarkPersonMessageUnread(id).catch(guard('mark message unread', null)),
   composePersonMessage:(personId, connectionId, subject, body, asDraft) => GoApp.ComposePersonMessage(personId, connectionId, subject, body, asDraft),
   getDraftPersonMessages: () => GoApp.GetDraftPersonMessages().catch(guard('draft messages', [])),
   sendDraftPersonMessage: (id) => GoApp.SendDraftPersonMessage(id),
@@ -115,13 +130,6 @@ export const api = {
   confirmSocialLogin:     (platform)                         => GoApp.ConfirmSocialLogin(platform),
   getOAuthCredentials:    (platformID)                       => GoApp.GetOAuthCredentials(platformID).catch(guard('oauth credentials', '')),
   setOAuthCredentials:    (platformID, clientID, clientSecret) => GoApp.SetOAuthCredentials(platformID, clientID, clientSecret),
-  // AI Providers
-  listAIProviders:    () => GoApp.ListAIProviders().then(s => JSON.parse(s)).catch(guard('list AI providers', [])),
-  saveAIProvider:     (provider) => GoApp.SaveAIProvider(JSON.stringify(provider)).then(s => JSON.parse(s)),
-  deleteAIProvider:   (id) => GoApp.DeleteAIProvider(id).then(s => JSON.parse(s)),
-  testAIProvider:     (id) => GoApp.TestAIProvider(id).then(s => JSON.parse(s)),
-  getAIModels:        (providerID) => GoApp.GetAIModels(providerID).then(s => JSON.parse(s)).catch(guard('AI models', [])),
-  getAIRegistry:      () => GoApp.GetAIRegistry().then(s => JSON.parse(s)).catch(guard('AI registry', [])),
   // Agent Chat (monomind delegation — local AI agent runtimes)
   scanAgentRuntimes:  () => GoApp.ScanAgentRuntimes().then(s => JSON.parse(s)).catch(guard('scan agent runtimes', null)),
   // binary is a runtime's ScanEntry.binary (from scanAgentRuntimes) — required
@@ -129,14 +137,14 @@ export const api = {
   // out to themselves; harmless to omit for claude (curated list, ignores it).
   getAgentRuntimeModels: (runtimeID, binary) => GoApp.GetAgentRuntimeModels(runtimeID, binary || '').then(s => JSON.parse(s)).catch(guard('agent runtime models', [])),
   // New chat bindings (interactive-agent-chat plan §"Proposed Wails
-  // bindings"). Every call goes through parseStreamResult, same as
-  // streamAIChat/streamAgentChat above: a synchronous {"error":...} shape
+  // bindings"). Every call goes through parseStreamResult: a synchronous
+  // {"error":...} shape
   // must become a real rejection, never a resolved value the caller has to
   // remember to check. A business-status reply (e.g. StartChatTurn's
   // {ok:false,status:"busy"}) is NOT that shape, so it passes through as a
   // normal value for the caller to branch on.
-  createChatConversation: (backend, workflowID, runtimeID, providerID, model) =>
-    GoApp.CreateChatConversation(backend, workflowID, runtimeID, providerID, model).then(parseStreamResult),
+  createChatConversation: (workflowID, runtimeID, model) =>
+    GoApp.CreateChatConversation(workflowID, runtimeID, model).then(parseStreamResult),
   startChatTurn: (conversationID, turnID, message, tools, allowRuns) =>
     GoApp.StartChatTurn(conversationID, turnID, message, tools, allowRuns).then(parseStreamResult),
   stopChatTurn: (conversationID, turnID) =>
@@ -263,6 +271,8 @@ export const api = {
   // Native pickers; resolve to '' when cancelled.
   chooseAutomationPackage:    () => GoApp.ChooseAutomationPackage().catch(guard('choose package', '')),
   chooseAutomationExportPath: (defaultName = '') => GoApp.ChooseAutomationExportPath(defaultName).catch(guard('choose export path', '')),
+  getVaultImage:          (id) => GoApp.GetVaultImage(id).catch(guard('get vault image', null)),
+  getVaultImages:         (limit = 200) => GoApp.GetVaultImages(limit).catch(guard('get vault images', [])),
 }
 
 // The Wails runtime (window.runtime / window.go) only exists inside the desktop
@@ -325,7 +335,7 @@ export function onAgentSession(callback) {
 
 // onChatEvent streams the new GUI chat supervisor's journal — one call per
 // chat:event envelope ({version,profileId,conversationId,turnId,seq,at,type,
-// payload}), covering both the agent and provider backends. useChatStream.js
+// payload}). useChatStream.js
 // is the sole consumer; it filters by conversationId/turnId itself rather
 // than this helper doing it, so multiple independent subscribers (this
 // panel's live turn view, a future activity/detail view) never fight over
@@ -368,6 +378,12 @@ export function onMonomindInitEvent(callback) {
 // discipline) -- callers always just re-fetch via listProfileDocuments.
 export function onDocumentsChanged(callback) {
   return subscribeEvent('documents:changed', callback)
+}
+
+// onImagesChanged fires when the background image watcher discovers
+// or updates files under the active profile's folder, or when images are added/deleted.
+export function onImagesChanged(callback) {
+  return subscribeEvent('images:changed', callback)
 }
 
 export const PLATFORMS = ['INSTAGRAM', 'LINKEDIN', 'X', 'TIKTOK']

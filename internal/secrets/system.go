@@ -7,26 +7,25 @@ import (
 )
 
 // systemKinds are the vault_secrets kinds created exclusively by other
-// subsystems (connections, crawler sessions, AI providers) via
-// PutSystemEntry, never via the public Add/CLI `secret add --kind`.
+// subsystems (connections, crawler sessions) via PutSystemEntry, never via
+// the public Add/CLI `secret add --kind`. The retired "ai_provider" kind is
+// handled by RetireAIProviderEntries.
 var systemKinds = map[string]bool{
-	"connection":  true,
-	"session":     true,
-	"ai_provider": true,
+	"connection": true,
+	"session":    true,
 }
 
 // systemTableForKind maps a system kind to the table holding its owning
 // row, for DeleteCascade and the raw-SQL Meta lookups Export uses. Referenced
-// by literal table name rather than by importing internal/connections or
-// internal/ai, which would cycle back to this package.
+// by literal table name rather than by importing internal/connections,
+// which would cycle back to this package.
 var systemTableForKind = map[string]string{
-	"connection":  "connections",
-	"session":     "crawler_sessions",
-	"ai_provider": "ai_providers",
+	"connection": "connections",
+	"session":    "crawler_sessions",
 }
 
 // PutSystemEntry upserts a system-managed vault entry (kind must be
-// "connection", "session", or "ai_provider") on behalf of another
+// "connection" or "session") on behalf of another
 // subsystem. If existingID is non-empty, the entry's fields (and
 // username/url) are updated in place and its name is left untouched — a
 // rename the user made in the Vault UI is never silently reverted by the
@@ -80,7 +79,7 @@ func disambiguateName(ctx context.Context, db *sql.DB, profileID, name string) (
 }
 
 // DeleteCascade deletes vault_secrets entry id and, if its kind is
-// system-managed, the linked row in connections/crawler_sessions/ai_providers
+// system-managed, the linked row in connections/crawler_sessions
 // (matched by vault_ref = id) too — the vault entry and the linked row are
 // the same credential, so deleting one and not the other would leave the
 // app pointing at a token that no longer exists anywhere. For kind

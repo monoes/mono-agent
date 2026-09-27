@@ -5,6 +5,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 vi.mock('../wailsjs/go/main/App', () => ({
   GetPeople: vi.fn(),
   GetDashboardStats: vi.fn(),
+  GetSummary: vi.fn(),
+  GetOrgSummary: vi.fn(),
   ListWorkflows: vi.fn(),
   DeleteSession: vi.fn(),
   CreateChatConversation: vi.fn(),
@@ -65,6 +67,19 @@ describe('api error handling', () => {
     expect(events).toHaveLength(1)
     expect(events[0].op).toBe('dashboard stats')
     expect(events[0].message).toContain('boom')
+    off()
+  })
+
+  it('parses the CLI summary and turns its {error} shape into a reported failure', async () => {
+    GoApp.GetSummary.mockResolvedValueOnce('{"v":1,"hil":{"total":2}}')
+    expect(await api.getSummary()).toEqual({ v: 1, hil: { total: 2 } })
+
+    const events = []
+    const off = onApiError((detail) => events.push(detail))
+    GoApp.GetOrgSummary.mockResolvedValueOnce('{"error":"monoagentcli not found"}')
+    expect(await api.getOrgSummary(true)).toBeNull()
+    expect(GoApp.GetOrgSummary).toHaveBeenLastCalledWith(true)
+    expect(events[0].message).toContain('monoagentcli not found')
     off()
   })
 
@@ -139,13 +154,13 @@ describe('new chat bindings', () => {
 
   it('createChatConversation parses a successful conversation payload', async () => {
     GoApp.CreateChatConversation.mockResolvedValueOnce(JSON.stringify({ id: 'conv-1', backend: 'agent' }))
-    const conv = await api.createChatConversation('agent', 'general', 'claude', '', '')
+    const conv = await api.createChatConversation('general', 'claude', '')
     expect(conv).toEqual({ id: 'conv-1', backend: 'agent' })
   })
 
   it('createChatConversation rejects on the {error} shape instead of resolving it', async () => {
     GoApp.CreateChatConversation.mockResolvedValueOnce(JSON.stringify({ error: 'boom' }))
-    await expect(api.createChatConversation('agent', 'general', 'claude', '', '')).rejects.toThrow('boom')
+    await expect(api.createChatConversation('general', 'claude', '')).rejects.toThrow('boom')
   })
 
   it('startChatTurn passes through a business-status response (not an error) unchanged', async () => {

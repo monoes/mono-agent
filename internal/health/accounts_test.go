@@ -150,18 +150,9 @@ func TestAccountChecksAreDeepOnlyExceptLogins(t *testing.T) {
 	}
 }
 
-func TestAIProvidersAndLogins(t *testing.T) {
+func TestLogins(t *testing.T) {
 	ctx := context.Background()
 	env := &Env{
-		AIProviders: func(context.Context) ([]ProviderInfo, error) {
-			return []ProviderInfo{{ID: "p1", Name: "ok", ProviderID: "openai"}, {ID: "p2", Name: "bad", ProviderID: "anthropic", Model: "claude-x"}}, nil
-		},
-		TestAIProvider: func(_ context.Context, id string) error {
-			if id == "p2" {
-				return errors.New("invalid key")
-			}
-			return nil
-		},
 		LoginSessions: func(context.Context) ([]SessionInfo, error) {
 			return []SessionInfo{
 				{Platform: "x", Username: "me", Expiry: time.Now().Add(-time.Hour)},
@@ -169,22 +160,7 @@ func TestAIProvidersAndLogins(t *testing.T) {
 			}, nil
 		},
 	}
-	res := checkAIProviders(ctx, env)
-	if res.Status != StatusWarn || len(res.Children) != 2 || res.Children[1].FixID != FixAIProviderKey {
-		t.Fatalf("providers: %+v", res)
-	}
-	// No model: no dangling separator.
-	if s := res.Children[0].Summary; s != "openai" {
-		t.Errorf("summary without a model = %q", s)
-	}
-	if s := res.Children[1].Summary; s != "anthropic · claude-x" {
-		t.Errorf("summary = %q", s)
-	}
-	if c := res.Children[1].FixCommand; !strings.Contains(c, `--name "bad" --provider anthropic --model claude-x`) || !strings.Contains(c, "delete p2") {
-		t.Errorf("AI fix command = %q", c)
-	}
-
-	res = checkLogins(ctx, env)
+	res := checkLogins(ctx, env)
 	if res.Status != StatusWarn || res.Children[0].FixID != FixLogin || res.Children[1].Status != StatusOK {
 		t.Fatalf("logins: %+v", res)
 	}

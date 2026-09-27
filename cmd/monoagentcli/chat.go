@@ -21,6 +21,21 @@ import (
 	"github.com/monoes/mono-agent/internal/storage"
 )
 
+// openAIStore opens the DB and builds an AIStore over it, creating the chat
+// history tables if they are missing.
+func openAIStore(cfg *globalConfig) (*ai.AIStore, func(), error) {
+	db, err := initDB(cfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("initializing database: %w", err)
+	}
+	store, err := ai.NewAIStore(db.DB)
+	if err != nil {
+		db.Close()
+		return nil, nil, fmt.Errorf("initializing AI store: %w", err)
+	}
+	return store, func() { db.Close() }, nil
+}
+
 // parseDurationFlag accepts plain seconds ("90") or suffixed ("90s", "10m", "2h").
 func parseDurationFlag(s string) (time.Duration, error) {
 	s = strings.TrimSpace(s)
@@ -48,6 +63,10 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 		budget    float64
 		tools     string
 		noHistory bool
+
+		conversationID string
+		turnID         string
+		instanceID     string
 	)
 	cmd := &cobra.Command{
 		Use:   "chat [prompt]",
@@ -58,27 +77,72 @@ func newChatCmd(cfg *globalConfig) *cobra.Command {
 			"With --canvas <workflowID> the turn runs as a workflow-builder assistant: the eight " +
 			"canvas tools (create workflow/nodes/connections, …) execute against this machine's " +
 			"database over the stdio tool bridge, and the conversation is persisted to the chat " +
-			"history table.",
+			"history table.\n\n" +
+			"With --conversation <id> --turn <id> the turn belongs to a stored conversation (see " +
+			"`chat history`): its runtime, model and session come from the conversation, and the turn " +
+			"and its events are journaled as they happen. Stdout is then an admission line followed by " +
+			"the committed events. Put the prompt after `--` so it is never read as a flag or as the " +
+			"`history` subcommand.",
 		Args: cobra.MinimumNArgs(1),
 		Example: `  monoagentcli chat --runtime claude "summarize the output folder"
   monoagentcli chat --runtime codex --canvas general "build a gmail digest workflow"
-  monoagentcli chat --runtime claude --resume th_9f2a "continue"`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if runtime == "" {
-				return fmt.Errorf("--runtime is required (see `agent scan --installed`)")
-			}
+  monoagentcli chat --runtime claude --resume th_9f2a "continue"
+  monoagentcli chat --conversation <id> --turn <uuid> --tools monoagent -- "what changed today?"`,
+		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			prompt := strings.Join(args, " ")
 			timeout, err := parseDurationFlag(timeoutS)
 			if err != nil {
 				return err
 			}
-			ctx := cmd.Context()
-			bin, _, err := monomind.Ensure(ctx)
+			wantMonoagentTools, wantRuns, err := parseToolsFlag(tools)
 			if err != nil {
 				return err
 			}
+			ctx := cmd.Context()
 
-			wantMonoagentTools, wantRuns, err := parseToolsFlag(tools)
+			// A journaled turn takes its runtime, model and session from
+			// the conversation, and writes the event journal instead of the
+			// legacy transcript.
+			var journal *turnJournal
+			if conversationID != "" || turnID != "" {
+				if conversationID == "" || turnID == "" {
+					return errInvalidInput("--conversation and --turn go together")
+				}
+				if runtime != "" || model != "" || resume != "" || canvasID != "" || historyID != "" {
+					return errInvalidInput("--runtime, --model, --resume, --canvas and --history-id come from the conversation; drop them with --conversation")
+				}
+				jstore, jprofile, closeJournal, err := openChatHistory(cfg)
+				if err != nil {
+					return err
+				}
+				defer closeJournal()
+				conv, turn, existed, err := admitJournaledTurn(jstore, jprofile, conversationID, turnID, instanceID, prompt)
+				if err != nil {
+					return err
+				}
+				journal = newTurnJournal(jstore, jprofile, conversationID, turnID, conv.RuntimeID, os.Stdout)
+				journal.print(chatAdmission{Admitted: !existed, Existed: existed, Turn: turn.Record()})
+				if existed {
+					return nil // a retried start of a turn that already ran
+				}
+				if err := journal.start(conv.Model, prompt); err != nil {
+					journal.fail(err)
+					return err
+				}
+				// Anything that stops the turn before monomind reports a
+				// result still finishes it.
+				defer func() {
+					if retErr != nil {
+						journal.fail(retErr)
+					}
+				}()
+				runtime, model, resume = conv.RuntimeID, conv.Model, conv.SessionID
+				noHistory = true
+			}
+			if runtime == "" {
+				return fmt.Errorf("--runtime is required (see `agent scan --installed`)")
+			}
+			bin, _, err := monomind.Ensure(ctx)
 			if err != nil {
 				return err
 			}
@@ -345,9 +409,19 @@ Changes made this way appear in the app automatically — orgs are picked up liv
 			// res.ResultText holds the reply even when the result event has
 			// no text (monomind.ApplyEventToResult assembles it from the
 			// assistant events), including a failed turn's partial reply.
-			res, err := monomind.Exec(ctx, opts, func(ev monomind.Event) {
-				emit(ev)
-			})
+			onEvent := func(ev monomind.Event) { emit(ev) }
+			if journal != nil {
+				onEvent = journal.handle
+			}
+			res, err := monomind.Exec(ctx, opts, onEvent)
+			if journal != nil {
+				// Finished here, with the real result, rather than by the
+				// deferred fail above (a no-op once finished).
+				if err != nil && res == nil {
+					res = &monomind.TurnResult{Err: &monomind.ProtocolError{Code: monomind.ErrRunnerError, Message: err.Error()}}
+				}
+				journal.finish(ctx.Err() != nil, res)
+			}
 			if err != nil {
 				return err
 			}
@@ -363,7 +437,7 @@ Changes made this way appear in the app automatically — orgs are picked up liv
 			//
 			// noHistory (--no-history) suppresses only this legacy
 			// transcript write, never store/profile/tool initialization
-			// above — the GUI supervisor passes it because its own journal
+			// above. A --conversation turn sets it, since its event journal
 			// (internal/ai/chat_events.go) is that caller's history source
 			// instead, and a dual writer would double-persist the same
 			// turn. Checked here, not by clearing effectiveHistoryID: that
@@ -412,7 +486,7 @@ Changes made this way appear in the app automatically — orgs are picked up liv
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&runtime, "runtime", "", "Agent runtime id (claude, codex, kimi, … — see `agent scan`)")
+	cmd.Flags().StringVar(&runtime, "runtime", "", "Agent runtime id (claude, codex, kimicode, … — see `agent scan`)")
 	cmd.Flags().StringVar(&model, "model", "", "Model override for the runtime")
 	cmd.Flags().StringVar(&resume, "resume", "", "Session/thread id to resume (from the session event)")
 	cmd.Flags().StringVar(&canvasID, "canvas", "", "Workflow-builder mode for this workflow id")
@@ -420,7 +494,11 @@ Changes made this way appear in the app automatically — orgs are picked up liv
 	cmd.Flags().StringVar(&tools, "tools", "", `Comma-separated tool surface to enable: "monoagent" gives the agent read/write access (no run execution) to workflows, vault, people, communications; append ",runs" (i.e. "monoagent,runs") to also allow run_workflow execution`)
 	cmd.Flags().StringVar(&timeoutS, "timeout", "", "Overall timeout (e.g. 90s, 10m)")
 	cmd.Flags().Float64Var(&budget, "budget-usd", 0, "Spend cap for this turn")
-	cmd.Flags().BoolVar(&noHistory, "no-history", false, "Suppress this legacy chat-history table write (the GUI supervisor's own journal is its history source instead; profile/tool init and runtime session events are unaffected)")
+	cmd.Flags().StringVar(&conversationID, "conversation", "", "Run the turn in this stored conversation (see chat history), journaling its events")
+	cmd.Flags().StringVar(&turnID, "turn", "", "Client-chosen turn id for --conversation; a repeated id never runs twice")
+	cmd.Flags().StringVar(&instanceID, "instance", "", "App instance id recorded as the turn's owner (used with --conversation)")
+	cmd.AddCommand(newChatHistoryCmd(cfg))
+	cmd.Flags().BoolVar(&noHistory, "no-history", false, "Suppress this legacy chat-history table write (profile/tool init and runtime session events are unaffected; a --conversation turn never writes it)")
 	return cmd
 }
 

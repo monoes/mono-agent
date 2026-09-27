@@ -43,7 +43,6 @@ vi.mock('../services/api.js', async (importOriginal) => {
         ],
       }),
       getAgentRuntimeModels: (...args) => getAgentRuntimeModels(...args),
-      listAIProviders: vi.fn().mockResolvedValue([]),
       listChatConversations: vi.fn().mockResolvedValue({ items: [] }),
       createChatConversation: vi.fn().mockResolvedValue({ id: 'conv-1' }),
       startChatTurn: (...args) => startChatTurn(...args),

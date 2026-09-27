@@ -49,3 +49,13 @@ it('opens the New Profile modal when "+ New profile" is clicked', async () => {
 
   expect(screen.getByTestId('new-profile-modal')).toBeInTheDocument()
 })
+
+it('does not render AI agents tab in sidebar navigation', async () => {
+  render(<Sidebar activePage="dashboard" onNavigate={() => {}} stats={{}} dbConnected={true} />)
+
+  expect(screen.getByText('sidebar.nav.dashboard')).toBeInTheDocument()
+  expect(screen.getByText('sidebar.nav.orgs')).toBeInTheDocument()
+  expect(screen.getByText('sidebar.nav.settings')).toBeInTheDocument()
+  expect(screen.queryByText('sidebar.nav.ai')).not.toBeInTheDocument()
+})
+
