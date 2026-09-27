@@ -321,6 +321,8 @@ type chatAdmission struct {
 
 // chatTurnArgs builds the turn process's argv. --json makes a turn that
 // fails before admission print {"error","code"} as its only stdout line.
+// A coder conversation's turn is started with tools=false: the CLI takes
+// its mode and folder from the conversation and refuses --tools for it.
 func chatTurnArgs(profileID, conversationID, turnID, instanceID, message string, tools, allowRuns bool) []string {
 	args := []string{"--profile", profileID, "--json", "chat", "--conversation", conversationID, "--turn", turnID, "--instance", instanceID}
 	if tools {

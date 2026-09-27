@@ -315,10 +315,10 @@ func TestApp_StopAll_KillsRunningTurnsAndWaitsForTheirFinish(t *testing.T) {
 // --- history bindings ---
 
 func TestApp_CreateChatConversation_ShellsOutAndKeepsTheShape(t *testing.T) {
-	bin, argsLog := chatFakeCLI(t, fakeChatReply{match: "chat history create", stdout: `{"id":"c1","profile_id":"default","backend":"agent","workflow_context":"general","runtime_id":"fake-runtime","provider_id":"","model":"m1","session_id":"","created_at":"2026-09-26T10:00:00Z","updated_at":"2026-09-26T10:00:00Z"}`})
+	bin, argsLog := chatFakeCLI(t, fakeChatReply{match: "chat history create", stdout: `{"id":"c1","profile_id":"default","backend":"agent","workflow_context":"general","runtime_id":"fake-runtime","provider_id":"","model":"m1","session_id":"","mode":"assistant","cwd":"","created_at":"2026-09-26T10:00:00Z","updated_at":"2026-09-26T10:00:00Z"}`})
 	a, _ := newCLIChatApp(t, bin)
 	out := a.CreateChatConversation("general", "fake-runtime", "m1")
-	want := `{"id":"c1","profileId":"default","backend":"agent","workflowContext":"general","runtimeId":"fake-runtime","model":"m1","createdAt":"2026-09-26T10:00:00Z","updatedAt":"2026-09-26T10:00:00Z"}`
+	want := `{"id":"c1","profileId":"default","backend":"agent","workflowContext":"general","runtimeId":"fake-runtime","model":"m1","mode":"assistant","cwd":"","createdAt":"2026-09-26T10:00:00Z","updatedAt":"2026-09-26T10:00:00Z"}`
 	if out != want {
 		t.Errorf("CreateChatConversation = %s\nwant %s", out, want)
 	}
@@ -334,11 +334,11 @@ func TestApp_CreateChatConversation_ShellsOutAndKeepsTheShape(t *testing.T) {
 }
 
 func TestApp_ListChatConversations_ShellsOut(t *testing.T) {
-	bin, argsLog := chatFakeCLI(t, fakeChatReply{match: "chat history list", stdout: `{"items":[{"id":"c1","profile_id":"work","backend":"provider","workflow_context":"general","runtime_id":"","provider_id":"old","model":"gpt-x","session_id":"","created_at":"t0","updated_at":"t1"}],"next_cursor":"t1|c1"}`})
+	bin, argsLog := chatFakeCLI(t, fakeChatReply{match: "chat history list", stdout: `{"items":[{"id":"c1","profile_id":"work","backend":"provider","workflow_context":"general","runtime_id":"","provider_id":"old","model":"gpt-x","session_id":"","mode":"assistant","cwd":"","created_at":"t0","updated_at":"t1"},{"id":"c2","profile_id":"work","backend":"agent","workflow_context":"general","runtime_id":"claude","provider_id":"","model":"sonnet","session_id":"","mode":"coder","cwd":"/w/proj","created_at":"t0","updated_at":"t0"}],"next_cursor":"t1|c1"}`})
 	a, _ := newCLIChatApp(t, bin)
 	a.setActiveProfileID("work")
 	out := a.ListChatConversations("t9|c9", 999)
-	want := `{"items":[{"id":"c1","profileId":"work","backend":"provider","workflowContext":"general","providerId":"old","model":"gpt-x","createdAt":"t0","updatedAt":"t1"}],"nextCursor":"t1|c1"}`
+	want := `{"items":[{"id":"c1","profileId":"work","backend":"provider","workflowContext":"general","providerId":"old","model":"gpt-x","mode":"assistant","cwd":"","createdAt":"t0","updatedAt":"t1"},{"id":"c2","profileId":"work","backend":"agent","workflowContext":"general","runtimeId":"claude","model":"sonnet","mode":"coder","cwd":"/w/proj","createdAt":"t0","updatedAt":"t0"}],"nextCursor":"t1|c1"}`
 	if out != want {
 		t.Errorf("ListChatConversations = %s\nwant %s", out, want)
 	}

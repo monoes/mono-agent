@@ -172,6 +172,22 @@ export const api = {
     GoApp.GetChatEvents(conversationID, turnID, afterSeq, limit).then(parseStreamResult),
   deleteChatConversation: (conversationID) =>
     GoApp.DeleteChatConversation(conversationID).then(parseStreamResult),
+  // Coder mode (#203): `monoagentcli coder …` and coder conversations. Same
+  // parseStreamResult contract, so a refusal rejects with the CLI's code
+  // (coder_disabled, needs_monomind_update) on err.code.
+  coderStatus:        () => GoApp.CoderStatus().then(parseStreamResult),
+  coderEnable:        () => GoApp.CoderEnable().then(parseStreamResult),
+  coderDisable:       () => GoApp.CoderDisable().then(parseStreamResult),
+  // budgetUsd 0 clears the per-turn budget; see coderSetArgs (app_coder.go).
+  coderSet:           ({ workspaceRoot = '', maxTurns = 0, timeout = '', budgetUsd = -1 }) =>
+    GoApp.CoderSet(workspaceRoot, maxTurns, timeout, budgetUsd).then(parseStreamResult),
+  coderWorkspaceNew:  () => GoApp.CoderWorkspaceNew().then(parseStreamResult),
+  coderWorkspaceList: () => GoApp.CoderWorkspaceList().then(parseStreamResult),
+  createCoderConversation: (runtimeID, model, cwd, newWorkspace = false) =>
+    GoApp.CreateCoderConversation(runtimeID, model, cwd, newWorkspace).then(parseStreamResult),
+  // Native folder picker; resolves '' when cancelled.
+  pickCoderFolder:    () => GoApp.PickCoderFolder(),
+  openPathWithOS:     (path) => GoApp.OpenPathWithOS(path),
   // Orgs (monomind Org Runtime v2)
   listOrgs:           () => GoApp.ListOrgs().then(s => JSON.parse(s)).catch(guard('list orgs', null)),
   getOrgStatus:       (name = '') => GoApp.GetOrgStatus(name).then(s => JSON.parse(s)).catch(guard('org status', null)),
