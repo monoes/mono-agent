@@ -16,7 +16,8 @@ var ErrImageNotFound = errors.New("vault image not found")
 
 // ImageEntry is one row from vault_images, in the JSON shape the desktop
 // app's image vault has always used (URL is the app's asset route for the
-// file, derived from Filename).
+// file, /vault-image/<id>: file names are not unique once images are
+// tracked in place across the profile folder).
 type ImageEntry struct {
 	ID          string `json:"id"`
 	Seq         int    `json:"seq"`
@@ -48,7 +49,7 @@ func scanImage(scan func(dest ...any) error) (ImageEntry, error) {
 		&im.WorkflowID, &im.ExecutionID, &im.Label, &im.CreatedAt); err != nil {
 		return im, err
 	}
-	im.URL = "/vault-image/" + im.Filename
+	im.URL = "/vault-image/" + im.ID
 	return im, nil
 }
 
@@ -101,13 +102,15 @@ func GetImage(ctx context.Context, db *sql.DB, profileID, id string) (*ImageEntr
 }
 
 // ImagePathInProfile returns where a vault image (by id, or by its stored
-// file name, e.g. "img-001.png") lives, if it belongs to the profile — what
-// the desktop app's /vault-image/ file server serves. The stored path is
+// file name, e.g. "img-001.png", which older URLs used) lives, if it belongs
+// to the profile — what the desktop app's /vault-image/ file server serves.
+// A file name shared by several images resolves to the newest. The stored
+// path is
 // authoritative: uploads live in the profile's own vault folder, and
 // discovered images are served from wherever they sit in the project.
 func ImagePathInProfile(ctx context.Context, db *sql.DB, profileID, name string) (string, bool, error) {
 	var path string
-	err := db.QueryRowContext(ctx, `SELECT path FROM vault_images WHERE (id = ? OR filename = ?) AND profile_id = ? ORDER BY id = ? DESC LIMIT 1`,
+	err := db.QueryRowContext(ctx, `SELECT path FROM vault_images WHERE (id = ? OR filename = ?) AND profile_id = ? ORDER BY id = ? DESC, seq DESC LIMIT 1`,
 		name, name, profileID, name).Scan(&path)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
@@ -135,17 +138,36 @@ func SetImageLabel(ctx context.Context, db *sql.DB, profileID, id, label string)
 }
 
 // DeleteImage removes an image's row, then its file (best-effort: a file
-// that is already gone does not fail the delete). A discovered image is
-// the user's own project file, tracked in place, so only its row goes.
+// that is already gone does not fail the delete). An image tracked in place
+// — discovered in the profile folder, or saved there by the chat, a
+// workflow or `image add` — is the user's own project file: only its row
+// goes, and its path is recorded in vault_image_ignored so `image sync`
+// does not add it straight back.
 func DeleteImage(ctx context.Context, db *sql.DB, profileID, id string) error {
 	im, err := GetImage(ctx, db, profileID, id)
 	if err != nil {
 		return err
 	}
-	if _, err := db.ExecContext(ctx, `DELETE FROM vault_images WHERE id = ? AND profile_id = ?`, id, profileID); err != nil {
+	_, inFolder := profileFolderPath(db, profileID, im.Path)
+	keepFile := im.Source == "discovered" || inFolder
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
 		return fmt.Errorf("delete record: %w", err)
 	}
-	if im.Source != "discovered" {
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM vault_images WHERE id = ? AND profile_id = ?`, id, profileID); err != nil {
+		return fmt.Errorf("delete record: %w", err)
+	}
+	if keepFile {
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO vault_image_ignored (profile_id, path) VALUES (?, ?)`, profileID, im.Path); err != nil {
+			return fmt.Errorf("ignore %s: %w", im.Path, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("delete record: %w", err)
+	}
+	if !keepFile {
 		_ = os.Remove(im.Path)
 	}
 	return nil

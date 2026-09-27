@@ -97,9 +97,12 @@ func imageIDByPath(ctx context.Context, db *sql.DB, profileID, path string) (id 
 // that already are, and removes any "discovered"-sourced row whose path no
 // longer appears in found (e.g. a deleted or moved project image).
 //
-// Only rows with source="discovered" are ever candidates for removal:
-// manually uploaded, workflow-generated, or chat-generated images are never
-// purged here.
+// A row of any source whose path is in found counts as tracking that file
+// (the chat, workflows and `image add` record profile-folder files in
+// place), and paths in vault_image_ignored — images the user deleted but
+// kept on disk — are skipped. Only rows with source="discovered" are ever
+// candidates for removal: manually uploaded, workflow-generated, or
+// chat-generated images are never purged here.
 func ReconcileDiscoveredImages(ctx context.Context, db *sql.DB, profileID string, found []DiscoveredFile) (added int, removed int, errs []error) {
 	r := SyncDiscoveredImages(ctx, db, profileID, found)
 	return r.Added, r.Removed, r.Errs
@@ -111,36 +114,51 @@ func SyncDiscoveredImages(ctx context.Context, db *sql.DB, profileID string, fou
 	if profileID == "" {
 		profileID = "default"
 	}
-	existing := make(map[string]int64, len(found))
-	rows, err := db.QueryContext(ctx, `SELECT path, size_bytes FROM vault_images WHERE profile_id = ? AND source = 'discovered'`, profileID)
+	type trackedRow struct {
+		size       int64
+		discovered bool
+	}
+	existing := make(map[string]trackedRow, len(found))
+	rows, err := db.QueryContext(ctx, `SELECT path, size_bytes, source FROM vault_images WHERE profile_id = ?`, profileID)
 	if err != nil {
 		res.Errs = []error{fmt.Errorf("vault.ReconcileDiscoveredImages: loading existing: %w", err)}
 		return res
 	}
 	for rows.Next() {
-		var path string
+		var path, source string
 		var size int64
-		if scanErr := rows.Scan(&path, &size); scanErr != nil {
+		if scanErr := rows.Scan(&path, &size, &source); scanErr != nil {
 			rows.Close()
 			res.Errs = []error{fmt.Errorf("vault.ReconcileDiscoveredImages: scanning existing: %w", scanErr)}
 			return res
 		}
-		existing[path] = size
+		// Two rows can share a path (an in-place row and a discovered
+		// duplicate left by an older build); either one tracks the file.
+		prev := existing[path]
+		existing[path] = trackedRow{size: size, discovered: prev.discovered || source == "discovered"}
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		res.Errs = []error{fmt.Errorf("vault.ReconcileDiscoveredImages: %w", err)}
 		return res
 	}
+	ignored, err := ignoredImagePaths(ctx, db, profileID)
+	if err != nil {
+		res.Errs = []error{fmt.Errorf("vault.ReconcileDiscoveredImages: loading ignored: %w", err)}
+		return res
+	}
 
 	foundPaths := make(map[string]bool, len(found))
 	for _, f := range found {
 		foundPaths[f.Path] = true
-		size, tracked := existing[f.Path]
+		row, tracked := existing[f.Path]
 		if !tracked {
-			// RegisterDiscoveredImage matches by path regardless of source,
-			// so an image the chat or a workflow saved into the folder keeps
-			// its own row and reports created=false.
+			if ignored[f.Path] {
+				continue
+			}
+			// RegisterDiscoveredImage re-checks by path inside its
+			// transaction, so a row another process just added for the
+			// file is kept and reports created=false.
 			_, created, regErr := RegisterDiscoveredImage(ctx, db, profileID, f.Path, f.Filename, f.SizeBytes)
 			if regErr != nil {
 				res.Errs = append(res.Errs, fmt.Errorf("registering %s: %w", f.Path, regErr))
@@ -151,8 +169,8 @@ func SyncDiscoveredImages(ctx context.Context, db *sql.DB, profileID string, fou
 			}
 			continue
 		}
-		if size != f.SizeBytes {
-			if _, updErr := db.ExecContext(ctx, `UPDATE vault_images SET size_bytes = ? WHERE profile_id = ? AND path = ? AND source = 'discovered'`, f.SizeBytes, profileID, f.Path); updErr != nil {
+		if row.size != f.SizeBytes {
+			if _, updErr := db.ExecContext(ctx, `UPDATE vault_images SET size_bytes = ? WHERE profile_id = ? AND path = ?`, f.SizeBytes, profileID, f.Path); updErr != nil {
 				res.Errs = append(res.Errs, fmt.Errorf("refreshing size for %s: %w", f.Path, updErr))
 				continue
 			}
@@ -160,8 +178,8 @@ func SyncDiscoveredImages(ctx context.Context, db *sql.DB, profileID string, fou
 		}
 	}
 
-	for path := range existing {
-		if foundPaths[path] {
+	for path, row := range existing {
+		if foundPaths[path] || !row.discovered {
 			continue
 		}
 		if _, delErr := db.ExecContext(ctx, `DELETE FROM vault_images WHERE profile_id = ? AND path = ? AND source = 'discovered'`, profileID, path); delErr != nil {

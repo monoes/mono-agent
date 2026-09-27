@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/monoes/mono-agent/internal/docscan"
+	"github.com/monoes/mono-agent/internal/imagescan"
 	"github.com/monoes/mono-agent/internal/profiledir"
 	"github.com/monoes/mono-agent/internal/storage"
 	"github.com/monoes/mono-agent/internal/vault"
@@ -879,6 +880,46 @@ func TestMonoagentTools_SaveImage(t *testing.T) {
 	var count int
 	if err := mt.db.QueryRow(`SELECT COUNT(*) FROM vault_images WHERE id = ?`, res.VaultImageID).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("vault_images row not found for %s", res.VaultImageID)
+	}
+}
+
+// save_image in the profile folder records the file itself (source chat),
+// so the `image sync` the app runs next does not list it a second time.
+func TestSaveImage_ProfileFolderImageIsNotDuplicatedBySync(t *testing.T) {
+	db := newMonoagentTestDB(t)
+	mt := NewMonoagentTools(db.DB, "")
+	t.Cleanup(vault.Wait)
+	args, _ := json.Marshal(map[string]interface{}{"filename": "chart.svg", "content": `<svg width="1" height="1"/>`})
+	out, err := mt.Execute("save_image", string(args))
+	if err != nil {
+		t.Fatalf("save_image: %v", err)
+	}
+	var res struct {
+		Path         string `json:"path"`
+		VaultImageID string `json:"vault_image_id"`
+	}
+	mustJSON(t, out, &res)
+	ctx := context.Background()
+	im, err := vault.GetImage(ctx, mt.db, mt.ProfileID(), res.VaultImageID)
+	if err != nil || im.Path != res.Path || im.Source != "chat" {
+		t.Fatalf("vault image = %+v, %v; want the chat row for %s", im, err, res.Path)
+	}
+
+	root := profiledir.Root(mt.db, mt.ProfileID())
+	files, err := imagescan.Scan(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := make([]vault.DiscoveredFile, len(files))
+	for i, f := range files {
+		found[i] = vault.DiscoveredFile{Path: f.Path, Filename: f.Filename, SizeBytes: f.SizeBytes}
+	}
+	if r := vault.SyncDiscoveredImages(ctx, mt.db, mt.ProfileID(), found); r.Added != 0 || len(r.Errs) != 0 || len(found) != 1 {
+		t.Fatalf("sync of %v after save_image = %+v, want no duplicate", found, r)
+	}
+	var count int
+	if err := mt.db.QueryRow(`SELECT COUNT(*) FROM vault_images WHERE profile_id = ?`, mt.ProfileID()).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("%d vault_images rows after sync, want 1 (%v)", count, err)
 	}
 }
 

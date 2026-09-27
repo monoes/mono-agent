@@ -2,7 +2,9 @@ package secrets
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -22,13 +24,18 @@ const RetiredAIProviderBackupName = "Retired AI provider keys backup"
 
 // RetireAIProviderEntries exports, then deletes, every vault entry of the
 // retired "ai_provider" kind. For each profile that has any, it writes
-// backupDir/retired-ai-providers-<profile>-<time>.json (an ordinary vault
+// backupDir/retired-ai-providers-<profile>-<time>-<random>.json (an ordinary vault
 // export, so `monoagentcli secret import` restores the keys as plain
 // secrets), saves that file's generated passphrase as a plain secret named
 // RetiredAIProviderBackupName, and only then deletes the entries. A profile
 // whose entries cannot all be decrypted (the keyring may be locked right
 // now) is left untouched and retried on the next start. Idempotent and a
 // single query once nothing is left, like the other vault migrations.
+//
+// Safe to run from two processes at once (the app and a CLI starting
+// together): each writes its own uniquely named backup with its own
+// passphrase before deleting anything, and a run that finds another one
+// already deleted its entries discards its redundant backup and passphrase.
 func RetireAIProviderEntries(ctx context.Context, db *sql.DB, backupDir string) (retired int, err error) {
 	rows, err := db.QueryContext(ctx, `SELECT DISTINCT profile_id FROM vault_secrets WHERE kind = ?`, retiredAIProviderKind)
 	if err != nil {
@@ -97,7 +104,10 @@ func retireProfileAIProviders(ctx context.Context, db *sql.DB, profileID, backup
 	if err != nil {
 		return 0, err
 	}
-	path := filepath.Join(backupDir, fmt.Sprintf("retired-ai-providers-%s-%s.json", fileSafe(profileID), now.Format("20060102T150405Z")))
+	path, err := retiredBackupPath(backupDir, profileID, now)
+	if err != nil {
+		return 0, err
+	}
 	if err := writeFileAtomic(path, data); err != nil {
 		return 0, fmt.Errorf("writing backup: %w", err)
 	}
@@ -112,19 +122,49 @@ func retireProfileAIProviders(ctx context.Context, db *sql.DB, profileID, backup
 		"Restore them as plain secrets with: monoagentcli secret import %s. "+
 		"Delete this entry and the file once you no longer need them.",
 		path, len(ids), now.Format("2006-01-02"), path)
-	if _, err := addEntry(ctx, db, profileID, "secret", name, map[string]string{"passphrase": passphrase}, "", "", notes); err != nil {
+	passID, err := addEntry(ctx, db, profileID, "secret", name, map[string]string{"passphrase": passphrase}, "", "", notes)
+	if err != nil {
 		os.Remove(path)
 		return 0, fmt.Errorf("saving the backup passphrase: %w", err)
 	}
 
-	retired := 0
-	for _, id := range ids {
-		if err := Delete(ctx, db, profileID, id); err != nil {
-			return retired, fmt.Errorf("deleting %s (backed up in %s): %w", id, path, err)
-		}
-		retired++
+	if beforeRetireDelete != nil {
+		beforeRetireDelete()
 	}
-	return retired, nil
+	// One statement, so a concurrent run's deletes are seen: only entries
+	// still present are counted as retired by this run.
+	args := []any{profileID, retiredAIProviderKind}
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	res, err := db.ExecContext(ctx, `DELETE FROM vault_secrets WHERE profile_id = ? AND kind = ? AND id IN (?`+strings.Repeat(", ?", len(ids)-1)+`)`, args...)
+	if err != nil {
+		return 0, fmt.Errorf("deleting the retired entries (backed up in %s): %w", path, err)
+	}
+	retired, _ := res.RowsAffected()
+	if retired == 0 {
+		// Another run retired them first and kept its own backup; this
+		// one's is a duplicate.
+		_ = Delete(ctx, db, profileID, passID)
+		os.Remove(path)
+	}
+	return int(retired), nil
+}
+
+// beforeRetireDelete, when set by a test, runs between saving a backup's
+// passphrase and deleting the entries it backs up.
+var beforeRetireDelete func()
+
+// retiredBackupPath names a new backup file. The random part keeps two runs
+// in the same second (two processes starting together) from writing, and
+// overwriting, the same file with different passphrases.
+func retiredBackupPath(backupDir, profileID string, now time.Time) (string, error) {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("naming the backup: %w", err)
+	}
+	return filepath.Join(backupDir, fmt.Sprintf("retired-ai-providers-%s-%s-%s.json",
+		fileSafe(profileID), now.Format("20060102T150405Z"), hex.EncodeToString(b[:]))), nil
 }
 
 // fileSafe keeps letters, digits, '-' and '_' so a profile id can go in a
