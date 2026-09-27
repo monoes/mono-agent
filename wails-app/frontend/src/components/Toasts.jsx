@@ -2,10 +2,14 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AlertTriangle, X } from 'lucide-react'
 import { onApiError } from '../services/api.js'
+import { isAgentNotSetup, withoutAgentSetupMarker } from '../lib/agentSetup.js'
+import AgentSetupLink from './AgentSetupLink.jsx'
 
 // Listens to the api error bus and shows transient toasts, so a failed backend
-// call is visible instead of silently degrading a page to empty data.
-export default function Toasts() {
+// call is visible instead of silently degrading a page to empty data. A
+// failure because the AI agent is not set up gets a link to the AI agents
+// page (onNavigate), and stays up longer so there is time to use it.
+export default function Toasts({ onNavigate }) {
   const { t } = useTranslation()
   const [toasts, setToasts] = useState([])
   const seq = useRef(0)
@@ -15,14 +19,15 @@ export default function Toasts() {
   }, [])
 
   useEffect(() => {
-    return onApiError(({ op, message }) => {
+    return onApiError(({ op, message, code }) => {
       const id = ++seq.current
+      const agentSetup = isAgentNotSetup({ code, message })
       setToasts(prev => {
         // Collapse a rapid burst of the same op into one toast.
         const filtered = prev.filter(t => t.op !== op)
-        return [...filtered, { id, op, message }].slice(-4)
+        return [...filtered, { id, op, message: withoutAgentSetupMarker(message), agentSetup }].slice(-4)
       })
-      setTimeout(() => dismiss(id), 6000)
+      setTimeout(() => dismiss(id), agentSetup ? 15000 : 6000)
     })
   }, [dismiss])
 
@@ -49,6 +54,7 @@ export default function Toasts() {
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ color: '#fecaca', fontWeight: 600, marginBottom: 2 }}>{t('toasts.failed', { op: toast.op })}</div>
             <div style={{ color: '#f8a5a5', wordBreak: 'break-word', whiteSpace: 'pre-line', opacity: 0.85 }}>{toast.message}</div>
+            {toast.agentSetup && <AgentSetupLink onNavigate={onNavigate} onDone={() => dismiss(toast.id)} />}
           </div>
           <button
             onClick={() => dismiss(toast.id)}

@@ -51,8 +51,9 @@ const CatalogTTL = 5 * time.Minute
 // started it, so a caller that gives up early still leaves a warm cache.
 const scanTimeout = 90 * time.Second
 
-// ErrUnknownRuntime is a runtime id the scan did not find installed.
-var ErrUnknownRuntime = errors.New("agent runtime is not installed")
+// ErrUnknownRuntime is a runtime id the scan did not find installed. It is
+// monomind.ErrRuntimeNotInstalled, so it classifies as agent_not_setup.
+var ErrUnknownRuntime = monomind.ErrRuntimeNotInstalled
 
 var (
 	runtimePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)

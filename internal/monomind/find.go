@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -160,21 +159,21 @@ func Handshake(ctx context.Context, bin string) (*VersionInfo, error) {
 	defer cancel()
 	out, err := exec.CommandContext(cctx, bin, "--version", "--json").Output()
 	if err != nil {
-		return nil, fmt.Errorf("handshake with %s failed: %w", bin, err)
+		return nil, unusable("handshake with %s failed: %w", bin, err)
 	}
 	var vi VersionInfo
 	if err := json.Unmarshal(JSONBody(out), &vi); err != nil {
-		return nil, fmt.Errorf("handshake: %s did not speak the protocol (unparseable --version --json): %w", bin, err)
+		return nil, unusable("handshake: %s did not speak the protocol (unparseable --version --json): %w", bin, err)
 	}
 	if vi.V != ProtocolVersion {
-		return nil, fmt.Errorf("handshake: protocol v%d, client implements v%d — update monomind or mono-agent", vi.V, ProtocolVersion)
+		return nil, unusable("handshake: protocol v%d, client implements v%d — update monomind or mono-agent", vi.V, ProtocolVersion)
 	}
 	if !versionAtLeast(vi.Version, MinMonomindVersion) {
-		return nil, fmt.Errorf("monomind %s is too old (need >= %s): run `npm install -g @monoes/monomindcli@latest`", vi.Version, MinMonomindVersion)
+		return nil, unusable("monomind %s is too old (need >= %s): run `npm install -g @monoes/monomindcli@latest`", vi.Version, MinMonomindVersion)
 	}
 	for _, cap := range RequiredCapabilities {
 		if !vi.HasCapability(cap) {
-			return nil, fmt.Errorf("monomind %s lacks capability %q — update it: `npm install -g @monoes/monomindcli@latest`", vi.Version, cap)
+			return nil, unusable("monomind %s lacks capability %q — update it: `npm install -g @monoes/monomindcli@latest`", vi.Version, cap)
 		}
 	}
 	return &vi, nil

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -111,4 +112,69 @@ func TestAskNodeFailsFastOnIncompatibleMonomind(t *testing.T) {
 	if !strings.Contains(err.Error(), "handshake") {
 		t.Errorf("Execute() error = %q, want it to mention the handshake failure", err.Error())
 	}
+	// Stored as a run's error_message, the text alone still classifies.
+	if !strings.HasSuffix(err.Error(), monomind.AgentNotSetupMarker) {
+		t.Errorf("Execute() error = %q, want the %s marker", err.Error(), monomind.AgentNotSetupMarker)
+	}
+}
+
+// A runtime that is not logged in fails the node with a marked error.
+func TestAskNodeMarksNotLoggedIn(t *testing.T) {
+	bin := writeFakeMonomindScript(t, `if [ "$1" = "--version" ]; then
+  echo '{"v":1,"version":"2.16.0","min_caller":"1.0.0","capabilities":["agent-exec","agent-scan","org-json-v1"]}'
+  exit 0
+fi
+echo '{"v":1,"type":"start","runtime":"claude","cwd":"/app","pid":1}'
+echo '{"v":1,"type":"assistant","text":"Not logged in · Please run /login"}'
+echo '{"v":1,"type":"error","code":"runner-error","fatal":false,"message":"Claude Code returned an error result: Not logged in · Please run /login"}'
+echo '{"v":1,"type":"done","exit_code":1}'
+exit 1
+`)
+	t.Setenv(monomind.EnvOverride, bin)
+
+	_, err := (&AskNode{}).Execute(context.Background(), workflow.NodeInput{
+		Items: []workflow.Item{{JSON: map[string]interface{}{}}},
+	}, map[string]interface{}{"runtime": "claude", "prompt": "say hi"})
+	if err == nil {
+		t.Fatal("Execute() = nil error, want the not-logged-in failure")
+	}
+	if !strings.Contains(err.Error(), "Not logged in") || !strings.HasSuffix(err.Error(), monomind.AgentNotSetupMarker) {
+		t.Errorf("Execute() error = %q, want the cause and the %s marker", err.Error(), monomind.AgentNotSetupMarker)
+	}
+	if !monomind.IsAgentNotSetup(err) {
+		t.Error("IsAgentNotSetup = false")
+	}
+}
+
+// An ordinary turn failure is not marked.
+func TestAskNodeLeavesOtherFailuresUnmarked(t *testing.T) {
+	bin := writeFakeMonomindScript(t, `if [ "$1" = "--version" ]; then
+  echo '{"v":1,"version":"2.16.0","min_caller":"1.0.0","capabilities":["agent-exec","agent-scan","org-json-v1"]}'
+  exit 0
+fi
+echo '{"v":1,"type":"start","runtime":"claude","cwd":"/app","pid":1}'
+echo '{"v":1,"type":"error","code":"quota","fatal":true,"message":"usage limit reached"}'
+echo '{"v":1,"type":"done","exit_code":1}'
+exit 1
+`)
+	t.Setenv(monomind.EnvOverride, bin)
+
+	_, err := (&AskNode{}).Execute(context.Background(), workflow.NodeInput{
+		Items: []workflow.Item{{JSON: map[string]interface{}{}}},
+	}, map[string]interface{}{"runtime": "claude", "prompt": "say hi"})
+	if err == nil || strings.Contains(err.Error(), monomind.AgentNotSetupMarker) {
+		t.Errorf("Execute() error = %v, want an unmarked quota failure", err)
+	}
+}
+
+func writeFakeMonomindScript(t *testing.T, body string) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("fake monomind is a shell script")
+	}
+	path := filepath.Join(t.TempDir(), "monomind")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body), 0o755); err != nil {
+		t.Fatalf("write fake monomind: %v", err)
+	}
+	return path
 }

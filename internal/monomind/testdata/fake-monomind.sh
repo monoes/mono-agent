@@ -8,6 +8,9 @@
 #                               then finishes with success events.
 #   env FAKE_MODE=hang        → exec ignores everything forever (kill test
 #                               is handled by fake-monolith.sh instead).
+#   env FAKE_MODE=not_logged_in / missing_binary / runner_missing_cli →
+#                               exec fails the way an agent that is not
+#                               set up does.
 DIR="$(cd "$(dirname "$0")" && pwd)"
 
 if [ "$1" = "--version" ] && [ "$2" = "--json" ]; then
@@ -34,6 +37,34 @@ if [ "$1" = "agent" ] && [ "$2" = "exec" ] && [ "$FAKE_MODE" = "no_result_text" 
   echo '{"v":1,"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","input_tokens":2,"output_tokens":9,"cost_usd":0.001}'
   echo '{"v":1,"type":"done","exit_code":0}'
   exit 0
+fi
+
+if [ "$1" = "agent" ] && [ "$2" = "exec" ] && [ "$FAKE_MODE" = "not_logged_in" ]; then
+  # Real monomind 2.16 driving a Claude Code with no login: the answer is
+  # the "Not logged in" text and a NON-fatal runner-error, then done 1.
+  echo '{"v":1,"type":"start","runtime":"claude","cwd":"/app","pid":4215,"streams_incrementally":true}'
+  echo '{"v":1,"type":"session","session_id":"th_fake_not_logged_in"}'
+  echo '{"v":1,"type":"assistant","text":"Not logged in · Please run /login"}'
+  echo '{"v":1,"type":"usage","input_tokens":0,"output_tokens":0,"cost_usd":0}'
+  echo '{"v":1,"type":"error","code":"runner-error","fatal":false,"message":"Claude Code returned an error result: Not logged in · Please run /login"}'
+  echo '{"v":1,"type":"done","exit_code":1}'
+  exit 1
+fi
+
+if [ "$1" = "agent" ] && [ "$2" = "exec" ] && [ "$FAKE_MODE" = "runner_missing_cli" ]; then
+  # A runner that checks for its CLI itself (grok) reports it as a plain
+  # runner-error; scan above lists codex as not installed.
+  echo '{"v":1,"type":"start","runtime":"codex","cwd":"/app","pid":4217}'
+  echo '{"v":1,"type":"error","code":"runner-error","fatal":false,"message":"CodexAgentRunner requires the codex CLI on PATH"}'
+  echo '{"v":1,"type":"done","exit_code":1}'
+  exit 1
+fi
+
+if [ "$1" = "agent" ] && [ "$2" = "exec" ] && [ "$FAKE_MODE" = "missing_binary" ]; then
+  echo '{"v":1,"type":"start","runtime":"codex","cwd":"/app","pid":4216}'
+  echo '{"v":1,"type":"error","code":"missing-binary","fatal":true,"message":"codex CLI not found — npm install -g @openai/codex"}'
+  echo '{"v":1,"type":"done","exit_code":1}'
+  exit 1
 fi
 
 if [ "$1" = "agent" ] && [ "$2" = "exec" ] && [ "$FAKE_MODE" = "streamed_deltas" ]; then

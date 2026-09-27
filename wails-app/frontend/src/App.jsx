@@ -26,6 +26,7 @@ import Documents from './pages/Documents.jsx'
 import FileViewerModal, { fileViewerKind } from './components/FileViewerModal.jsx'
 import * as WailsApp from './wailsjs/go/main/App'
 import { api, notify, onLogEntry, onOrgDesignUpdated, subscribeEvent } from './services/api.js'
+import { isAgentNotSetup } from './lib/agentSetup.js'
 
 // Mirrors Documents.jsx's own cap (the backend GetProfileDocumentData limit)
 // — kept as a local literal there too, so duplicating it here rather than
@@ -228,7 +229,10 @@ export default function App() {
 
   // Workflow-run completion refresh
   useEffect(() => {
-    const off = subscribeEvent('workflow:complete', async () => {
+    const off = subscribeEvent('workflow:complete', async (data) => {
+      // A run that failed because the AI agent is not set up says so, with
+      // the link to the AI agents page (Toasts).
+      if (data?.success === false && isAgentNotSetup(data?.code)) notify('run workflow', data.error || '', data.code)
       const s = await api.getDashboardStats()
       if (s) setStats(s)
       setPeopleRefreshKey(k => k + 1)
@@ -327,6 +331,7 @@ export default function App() {
           initialRuntime={globalChatRuntime}
           onClose={() => setGlobalChatOpen(false)}
           onOpenArtifact={onOpenArtifact}
+          onNavigate={navigate}
         />
       </div>
 
@@ -343,7 +348,7 @@ export default function App() {
         onToggleHil={() => setGlobalHilOpen(v => !v)}
         onOpenHealth={() => navigate('settings')}
       />
-      <Toasts />
+      <Toasts onNavigate={navigate} />
       <ConfirmHost />
       {viewingArtifactDoc && (
         <FileViewerModal doc={viewingArtifactDoc} onClose={() => setViewingArtifactDoc(null)} />

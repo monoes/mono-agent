@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/monoes/mono-agent/internal/i18n"
+	"github.com/monoes/mono-agent/internal/monomind"
 )
 
 // version/buildDate are set via -ldflags in release builds (see
@@ -96,7 +97,13 @@ func reportCommandError(args []string, err error, stdout, stderr io.Writer) {
 	fmt.Fprintln(stderr, err)
 	var reported reportedError
 	if wantsJSONError(args) && !errors.As(err, &reported) {
-		b, _ := json.Marshal(map[string]string{"error": err.Error()})
+		body := map[string]string{"error": err.Error()}
+		// An org command that needs the AI agent says so by code, as
+		// withJSONErrors does; its other failures keep {"error"} alone.
+		if monomind.IsAgentNotSetup(err) {
+			body["code"] = monomind.AgentNotSetupCode
+		}
+		b, _ := json.Marshal(body)
 		fmt.Fprintln(stdout, string(b))
 	}
 }

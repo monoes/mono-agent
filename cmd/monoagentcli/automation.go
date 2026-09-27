@@ -12,6 +12,7 @@ import (
 
 	"github.com/monoes/mono-agent/data"
 	"github.com/monoes/mono-agent/internal/automation"
+	"github.com/monoes/mono-agent/internal/monomind"
 	"github.com/spf13/cobra"
 )
 
@@ -91,10 +92,15 @@ type jsonErrorFields interface {
 	JSONErrorFields() map[string]any
 }
 
-// jsonErrorCode names a classified error's exit-code class for
-// {"error","code"}: not_found (2), invalid_input (3), auth_or_connection
-// (4); "" for a plain error (exit 1), which prints {"error"} alone.
+// jsonErrorCode names a classified error for {"error","code"}:
+// agent_not_setup (the AI agent is not installed or not logged in; its
+// exit code is unchanged), else its exit-code class — not_found (2),
+// invalid_input (3), auth_or_connection (4); "" for a plain error (exit 1),
+// which prints {"error"} alone.
 func jsonErrorCode(err error) string {
+	if monomind.IsAgentNotSetup(err) {
+		return monomind.AgentNotSetupCode
+	}
 	switch exitCodeFor(err) {
 	case 2:
 		return "not_found"

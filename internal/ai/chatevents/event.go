@@ -192,10 +192,14 @@ const (
 // turn but durable persistence fell behind (see chat_events.go's
 // last_committed_seq / historySaved semantics).
 type TurnFinishedPayload struct {
-	Status       TurnStatus `json:"status"`
-	Reason       string     `json:"reason,omitempty"`
-	ExitCode     *int       `json:"exitCode"`
-	HistorySaved bool       `json:"historySaved"`
+	Status TurnStatus `json:"status"`
+	Reason string     `json:"reason,omitempty"`
+	// Code classifies a failure the UI can act on: "agent_not_setup"
+	// (monomind.AgentNotSetupCode) when the AI agent is not installed or not
+	// logged in. Empty otherwise.
+	Code         string `json:"code,omitempty"`
+	ExitCode     *int   `json:"exitCode"`
+	HistorySaved bool   `json:"historySaved"`
 }
 
 // Record is an Event as `monoagentcli chat` prints it: a snake_case

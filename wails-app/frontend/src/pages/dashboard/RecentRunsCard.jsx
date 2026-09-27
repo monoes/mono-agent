@@ -3,6 +3,8 @@ import { useTranslation } from 'react-i18next'
 import { Clock } from 'lucide-react'
 import { execStatus } from '../../lib/execStatus.js'
 import { duration, relTime } from './format.js'
+import { isAgentNotSetup, withoutAgentSetupMarker } from '../../lib/agentSetup.js'
+import AgentSetupLink from '../../components/AgentSetupLink.jsx'
 
 export function ExecStatusDot({ status }) {
   const { tone, live } = execStatus(status)
@@ -20,16 +22,17 @@ const ExecRow = memo(function ExecRow({ exec, onNavigate }) {
   const { t } = useTranslation()
   const dur = duration(exec.started_at, exec.finished_at)
   const open = () => onNavigate('noderunner', { executionId: exec.id, workflowId: exec.workflow_id })
-  return (
+  const error = withoutAgentSetupMarker(exec.error)
+  const row = (
     <button className="dash-exec-row" onClick={open} title={t('dashboard.recentRuns.openTitle')}>
       <ExecStatusDot status={exec.status} />
       <span style={{ flex: 1, minWidth: 0, textAlign: 'left', display: 'block' }}>
         <span className="dash-ellipsis" style={{ display: 'block', fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text)' }}>
           {exec.workflow_name || (exec.workflow_id || '').slice(0, 8)}
         </span>
-        {exec.error && (
-          <span className="dash-ellipsis" style={{ display: 'block', fontSize: 10, color: '#ef4444', marginTop: 1 }} title={exec.error}>
-            {exec.error}
+        {error && (
+          <span className="dash-ellipsis" style={{ display: 'block', fontSize: 10, color: '#ef4444', marginTop: 1 }} title={error}>
+            {error}
           </span>
         )}
       </span>
@@ -38,6 +41,15 @@ const ExecRow = memo(function ExecRow({ exec, onNavigate }) {
         <span style={{ display: 'block', fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-dim)' }}>{relTime(exec.created_at, t)}</span>
       </span>
     </button>
+  )
+  // A run that failed because the AI agent is not set up links to the AI
+  // agents page — beside the row, since a button cannot hold another.
+  if (!isAgentNotSetup(exec.error)) return row
+  return (
+    <div>
+      {row}
+      <div style={{ padding: '0 0 6px 17px' }}><AgentSetupLink onNavigate={onNavigate} compact /></div>
+    </div>
   )
 })
 

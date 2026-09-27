@@ -81,7 +81,7 @@ func (n *OrgRunNode) Execute(ctx context.Context, input workflow.NodeInput, conf
 
 	raw, err := monomind.OrgStatus(ctx, root, orgName)
 	if err != nil {
-		return nil, fmt.Errorf("org.run (%s): %w", orgName, err)
+		return nil, fmt.Errorf("org.run (%s): %w", orgName, monomind.MarkNotSetup(err))
 	}
 	var st orgStatus
 	if err := json.Unmarshal(raw, &st); err != nil {
@@ -140,7 +140,7 @@ func (n *OrgRunNode) Execute(ctx context.Context, input workflow.NodeInput, conf
 		}
 		if err := monomind.OrgRunStart(ctx, root, orgName, task); err != nil {
 			_ = ledger.SetStatus(ctx, adm.ID, orgbridge.StatusError)
-			return nil, fmt.Errorf("org.run (%s): %w", orgName, err)
+			return nil, fmt.Errorf("org.run (%s): %w", orgName, monomind.MarkNotSetup(err))
 		}
 		if !wait {
 			return startedOutput(input, outputKey, orgName, nil), nil

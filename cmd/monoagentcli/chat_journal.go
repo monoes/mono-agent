@@ -212,6 +212,15 @@ func (j *turnJournal) handle(ev monomind.Event) {
 // write fails, the event is still printed, live-only: seq MaxSafeSeq so
 // the UI never drops it as stale, and historySaved false.
 func (j *turnJournal) finish(stopRequested bool, res *monomind.TurnResult) {
+	code := ""
+	if !stopRequested && res != nil && res.Err != nil && monomind.IsAgentNotSetup(res.Err) {
+		code = monomind.AgentNotSetupCode
+	}
+	j.finishCode(stopRequested, res, code)
+}
+
+// finishCode is finish with turn.finished's failure code given.
+func (j *turnJournal) finishCode(stopRequested bool, res *monomind.TurnResult, code string) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if j.finished {
@@ -226,12 +235,12 @@ func (j *turnJournal) finish(stopRequested bool, res *monomind.TurnResult) {
 		v := res.ExitCode
 		exitCode = &v
 	}
-	ev, already, err := j.store.FinalizeTurn(j.profileID, j.conversationID, j.turnID, status, reason, exitCode, true)
+	ev, already, err := j.store.FinalizeTurnCode(j.profileID, j.conversationID, j.turnID, status, reason, code, exitCode, true)
 	switch {
 	case err != nil:
 		fmt.Fprintf(os.Stderr, "warning: finalizing turn %s: %v\n", j.turnID, err)
 		live, buildErr := chatevents.New(j.profileID, j.conversationID, j.turnID, chatevents.MaxSafeSeq, time.Now(), chatevents.EventTurnFinished, chatevents.TurnFinishedPayload{
-			Status: status, Reason: reason, ExitCode: exitCode, HistorySaved: false,
+			Status: status, Reason: reason, Code: code, ExitCode: exitCode, HistorySaved: false,
 		})
 		if buildErr == nil {
 			j.print(live.Record())
@@ -246,5 +255,9 @@ func (j *turnJournal) finish(stopRequested bool, res *monomind.TurnResult) {
 // fail finalizes the turn as failed because of err, raised before or
 // instead of a protocol result.
 func (j *turnJournal) fail(err error) {
-	j.finish(false, &monomind.TurnResult{Err: &monomind.ProtocolError{Code: monomind.ErrRunnerError, Message: err.Error()}})
+	code := ""
+	if monomind.IsAgentNotSetup(err) {
+		code = monomind.AgentNotSetupCode
+	}
+	j.finishCode(false, &monomind.TurnResult{Err: &monomind.ProtocolError{Code: monomind.ErrRunnerError, Message: err.Error()}}, code)
 }

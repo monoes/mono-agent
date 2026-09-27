@@ -86,7 +86,7 @@ func (g *AgentGenerator) resolve(ctx context.Context) (bin, runtime string, err 
 			return g.resolvedBin, g.resolvedRuntime, nil
 		}
 	}
-	return "", "", fmt.Errorf("cache-only mode: no AI agent runtime installed (see `monoagentcli agent scan`)")
+	return "", "", fmt.Errorf("cache-only mode: %w", monomind.ErrNoRuntime)
 }
 
 const agentSystemPrompt = `You generate field-extraction config JSON for Mono Agent browser automation.

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -10,7 +11,26 @@ import (
 	"github.com/monoes/mono-agent/internal/monomind"
 )
 
+// agentNotSetupCode / agentNotSetupMarker name the CLI's classification of
+// "the AI agent is not set up" (see monomind.AgentNotSetupCode): a code on
+// JSON errors, a marker at the end of a stored run error.
+const (
+	agentNotSetupCode   = monomind.AgentNotSetupCode
+	agentNotSetupMarker = monomind.AgentNotSetupMarker
+)
+
 func aiError(err error) string {
+	code := ""
+	var ce *codedError
+	if errors.As(err, &ce) {
+		code = ce.code
+	} else if monomind.IsAgentNotSetup(err) {
+		code = agentNotSetupCode
+	}
+	if code != "" {
+		b, _ := json.Marshal(map[string]string{"error": err.Error(), "code": code})
+		return string(b)
+	}
 	return fmt.Sprintf(`{"error":%q}`, err.Error())
 }
 

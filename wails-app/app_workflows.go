@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -447,11 +448,16 @@ func (a *App) runWorkflowProcess(id, inputJSON string) error {
 	a.emitLog("WORKFLOW", "INFO", fmt.Sprintf("Workflow %s started (pid %d)", id, cmd.Process.Pid))
 
 	var execID string // set once the CLI names the execution
+	notSetup := &agentSetupWatch{}
+	var outputDone sync.WaitGroup
+	outputDone.Add(2)
 	go func() {
+		defer outputDone.Done()
 		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
 			line := scanner.Text()
 			a.emitLog("WORKFLOW", "INFO", line)
+			notSetup.note(line)
 			// Detect execution ID from CLI output and notify the frontend
 			if strings.HasPrefix(line, "Execution started: ") {
 				started := strings.TrimSpace(strings.TrimPrefix(line, "Execution started: "))
@@ -471,13 +477,17 @@ func (a *App) runWorkflowProcess(id, inputJSON string) error {
 		}
 	}()
 	go func() {
+		defer outputDone.Done()
 		scanner := bufio.NewScanner(stderr)
 		for scanner.Scan() {
 			a.emitLog("WORKFLOW", "INFO", scanner.Text())
+			notSetup.note(scanner.Text())
 		}
 	}()
 	go func() {
 		waitErr := cmd.Wait()
+		// Wait closed the pipes, so the readers end; notSetup is final.
+		outputDone.Wait()
 		a.runningMu.Lock()
 		for key, c := range a.runningCmds {
 			if c == cmd {
@@ -487,7 +497,7 @@ func (a *App) runWorkflowProcess(id, inputJSON string) error {
 		a.runningMu.Unlock()
 		if waitErr != nil {
 			a.emitLog("WORKFLOW", "ERROR", fmt.Sprintf("Workflow %s failed: %v", id, waitErr))
-			a.emitWorkflowEvent("workflow:complete", map[string]interface{}{"workflow_id": id, "success": false})
+			a.emitWorkflowEvent("workflow:complete", notSetup.apply(map[string]interface{}{"workflow_id": id, "success": false}))
 		} else {
 			a.emitLog("WORKFLOW", "INFO", fmt.Sprintf("Workflow %s completed", id))
 			a.emitWorkflowEvent("workflow:complete", map[string]interface{}{"workflow_id": id, "success": true})
@@ -501,6 +511,34 @@ func (a *App) runWorkflowProcess(id, inputJSON string) error {
 
 // emitWorkflowEvent emits to the frontend once the Wails runtime is up
 // (emitLog's guard): tests drive the run bindings without one.
+// agentSetupWatch keeps the run output line that says the run failed
+// because the AI agent is not set up (the CLI marks it with
+// agentNotSetupMarker), so the failed workflow:complete carries
+// code agent_not_setup and the frontend can link to the AI agents page.
+type agentSetupWatch struct {
+	mu   sync.Mutex
+	line string
+}
+
+func (w *agentSetupWatch) note(line string) {
+	if strings.Contains(line, agentNotSetupMarker) {
+		w.mu.Lock()
+		w.line = strings.TrimSpace(line)
+		w.mu.Unlock()
+	}
+}
+
+// apply adds "code" and "error" to a failed run's event when a marked line
+// was seen.
+func (w *agentSetupWatch) apply(ev map[string]interface{}) map[string]interface{} {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.line != "" {
+		ev["code"], ev["error"] = agentNotSetupCode, w.line
+	}
+	return ev
+}
+
 func (a *App) emitWorkflowEvent(name string, data map[string]interface{}) {
 	if a.ctx != nil {
 		runtime.EventsEmit(a.ctx, name, data)

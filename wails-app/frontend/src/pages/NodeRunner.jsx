@@ -22,6 +22,8 @@ import { derivePlatformId, isSessionPicker, isMediaField, automationIdsFrom } fr
 import { onAutomationsChanged } from '../lib/appEvents.js'
 import { rememberTriggerInput, rememberedTriggerInput } from './triggerInput.js'
 import { usePageVisibleRef } from '../lib/usePageVisible.js'
+import { isAgentNotSetup, withoutAgentSetupMarker } from '../lib/agentSetup.js'
+import AgentSetupLink from '../components/AgentSetupLink.jsx'
 
 // ── Wails bindings with mock fallback ────────────────────────────────────────
 const RunNode               = WailsApp.RunNode               ?? (async (req) => ({ outputs: [{ handle: 'main', items: [{ mock: true, node_type: req.node_type }] }], duration_ms: 42 }))
@@ -858,8 +860,9 @@ function Inspector({ node, onConfigChange, onClose, onNavigate, liveSchemas, aut
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#ef4444' }}>ERROR</span>
                 </div>
                 <pre style={{ margin: 0, fontFamily: 'var(--font-mono)', fontSize: 11, color: '#fca5a5', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                  {node.runError}
+                  {withoutAgentSetupMarker(node.runError)}
                 </pre>
+                {isAgentNotSetup(node.runError) && <AgentSetupLink onNavigate={onNavigate} />}
               </div>
             )}
             {node.runStatus === 'skipped' && (
@@ -1033,7 +1036,7 @@ export default function NodeRunner({ onNavigate, navData, onWorkflowsChanged }) 
   // Shared: map execution detail → node badges
   const applyExecDetail = (detail) => {
     if (!detail) return
-    setExecOverlay({ id: detail.id, status: detail.status, nodes: detail.nodes || [], hint: detail.hint || null })
+    setExecOverlay({ id: detail.id, status: detail.status, nodes: detail.nodes || [], hint: detail.hint || null, error: detail.error || '' })
     setNodes(prev => {
       const byId = {}; const byName = {}
       ;(detail.nodes || []).forEach(en => { byId[en.node_id] = en; byName[en.node_name] = en })
@@ -1851,6 +1854,7 @@ export default function NodeRunner({ onNavigate, navData, onWorkflowsChanged }) 
             }}>
               Execution: {execOverlay.status}
             </span>
+            {execOverlay.status === 'FAILED' && isAgentNotSetup(execOverlay.error) && <AgentSetupLink onNavigate={onNavigate} compact />}
             <button
               style={{
                 background: 'none', border: 'none', cursor: 'pointer', padding: 2,

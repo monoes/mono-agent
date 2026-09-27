@@ -694,6 +694,17 @@ profiles or credentials.
 
 Branch on these instead of parsing stderr.
 
+With `--json`, a classified failure's `{"error"}` object also carries a
+`"code"`: `not_found` (2), `invalid_input` (3), `auth_or_connection` (4),
+or `agent_not_setup` — the AI agent is not set up (monomind missing or
+unusable, no runtime installed, the requested runtime missing or unknown,
+or the runtime not logged in); its exit code is the failure's own. A plain
+error (exit 1) prints `{"error"}` alone. `agent_not_setup` also appears as
+`code` on a chat turn's `turn.finished` event, and as an `[agent_not_setup]`
+marker at the end of a workflow run's stored error (`agent.ask`,
+`browser.jev`'s text helper, `org.run`). The desktop app answers it with a
+link to its AI agents page. Classification: `internal/monomind.IsAgentNotSetup`.
+
 ## Building from source
 
 ```bash

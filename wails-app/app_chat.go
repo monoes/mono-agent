@@ -319,9 +319,10 @@ type chatAdmission struct {
 	Turn     ai.TurnRecord `json:"turn"`
 }
 
-// chatTurnArgs builds the turn process's argv.
+// chatTurnArgs builds the turn process's argv. --json makes a turn that
+// fails before admission print {"error","code"} as its only stdout line.
 func chatTurnArgs(profileID, conversationID, turnID, instanceID, message string, tools, allowRuns bool) []string {
-	args := []string{"--profile", profileID, "chat", "--conversation", conversationID, "--turn", turnID, "--instance", instanceID}
+	args := []string{"--profile", profileID, "--json", "chat", "--conversation", conversationID, "--turn", turnID, "--instance", instanceID}
 	if tools {
 		toolsFlag := "monoagent"
 		if allowRuns {
@@ -399,8 +400,10 @@ func (sup *chatSupervisor) startTurn(h *chatTurnHandle, message string, tools, a
 	var adm chatAdmission
 	select {
 	case line, ok := <-out.lines:
+		var refusal chatRefusal
 		if ok {
 			err = json.Unmarshal(line, &adm)
+			_ = json.Unmarshal(line, &refusal)
 		}
 		if !ok || err != nil || adm.Turn.ID == "" {
 			proc.Kill()
@@ -413,7 +416,7 @@ func (sup *chatSupervisor) startTurn(h *chatTurnHandle, message string, tools, a
 				// the turn before it died.
 				sup.finishStoppedStart(h)
 			}
-			return "", admissionError(waitErr, stderr)
+			return "", admissionError(waitErr, stderr, refusal)
 		}
 	case <-time.After(chatAdmissionTimeout):
 		proc.Kill()
@@ -449,14 +452,38 @@ func (sup *chatSupervisor) startTurn(h *chatTurnHandle, message string, tools, a
 	return fmt.Sprintf(`{"ok":true,"turnId":%q,"status":"active"}`, h.turnID), nil
 }
 
+// chatRefusal is the {"error","code"} line a turn process prints (under
+// --json) when it fails before admitting its turn.
+type chatRefusal struct {
+	Error string `json:"error"`
+	Code  string `json:"code"`
+}
+
+// codedError is an error the CLI classified: its code travels to the
+// frontend next to the message (e.g. agent_not_setup).
+type codedError struct {
+	msg  string
+	code string
+}
+
+func (e *codedError) Error() string { return e.msg }
+
 // admissionError explains a turn process that exited without admitting
-// its turn. An older monoagentcli that predates --conversation is called
-// out, since it would otherwise read like any other failure.
-func admissionError(waitErr error, stderr string) error {
+// its turn, keeping the CLI's error code when it printed one. An older
+// monoagentcli that predates --conversation is called out, since it would
+// otherwise read like any other failure.
+func admissionError(waitErr error, stderr string, refusal chatRefusal) error {
 	if strings.Contains(stderr, "unknown flag") {
 		return fmt.Errorf("the installed monoagentcli does not recognize a flag this app requires (%s); update monoagentcli to match this app's version", lastLine(stderr))
 	}
-	if msg := lastLine(stderr); msg != "" {
+	msg := lastLine(stderr)
+	if msg == "" {
+		msg = refusal.Error // the process was killed before its stderr
+	}
+	if msg != "" {
+		if refusal.Code != "" {
+			return &codedError{msg: msg, code: refusal.Code}
+		}
 		return errors.New(msg)
 	}
 	if waitErr != nil {
