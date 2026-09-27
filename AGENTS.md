@@ -184,7 +184,7 @@ The desktop app does everything through these commands; they are equally usable 
 
 - **People:**
   - `people list [--platform P] [--search Q] [--limit N] [--offset M]` and `people count [--platform] [--search]`
-  - `people get <id>` and `people interactions <id>`
+  - `people get <id>` (with `headline`, `location`, `about`, and `experience`/`education` arrays once a profile read filled them) and `people interactions <id>`
   - `people posts list <person>`, `people posts get <post>` and `people posts comments <post>`
   - `people tag list [--person]`, `people tag map -- <ids…>` and `people tag add|color|remove`
   - `people status set|get|history`

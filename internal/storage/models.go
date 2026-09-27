@@ -68,23 +68,31 @@ type ActionTarget struct {
 
 // Person represents a row in the people table.
 type Person struct {
-	ID               string    `json:"id"`
-	PlatformUsername string    `json:"platform_username"`
-	Platform         string    `json:"platform"`
-	FullName         string    `json:"full_name,omitempty"`
-	ImageURL         string    `json:"image_url,omitempty"`
-	ContactDetails   string    `json:"contact_details,omitempty"`
-	Website          string    `json:"website,omitempty"`
-	ContentCount     int       `json:"content_count"`
-	FollowerCount    string    `json:"follower_count,omitempty"`
-	FollowingCount   int       `json:"following_count"`
-	Introduction     string    `json:"introduction,omitempty"`
-	IsVerified       bool      `json:"is_verified"`
-	Category         string    `json:"category,omitempty"`
-	JobTitle         string    `json:"job_title,omitempty"`
-	ProfileID        string    `json:"profile_id,omitempty"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	ID               string `json:"id"`
+	PlatformUsername string `json:"platform_username"`
+	Platform         string `json:"platform"`
+	FullName         string `json:"full_name,omitempty"`
+	ImageURL         string `json:"image_url,omitempty"`
+	ContactDetails   string `json:"contact_details,omitempty"`
+	Website          string `json:"website,omitempty"`
+	ContentCount     int    `json:"content_count"`
+	FollowerCount    string `json:"follower_count,omitempty"`
+	FollowingCount   int    `json:"following_count"`
+	Introduction     string `json:"introduction,omitempty"`
+	IsVerified       bool   `json:"is_verified"`
+	Category         string `json:"category,omitempty"`
+	JobTitle         string `json:"job_title,omitempty"`
+	// Profile details a profile read fills (LinkedIn): the tagline, where
+	// they are, the About text, and JSON arrays of positions and schools
+	// (see data/migrations/053_people_profile_details.sql for their shape).
+	Headline   string          `json:"headline,omitempty"`
+	Location   string          `json:"location,omitempty"`
+	About      string          `json:"about,omitempty"`
+	Experience json.RawMessage `json:"experience,omitempty"`
+	Education  json.RawMessage `json:"education,omitempty"`
+	ProfileID  string          `json:"profile_id,omitempty"`
+	CreatedAt  time.Time       `json:"created_at"`
+	UpdatedAt  time.Time       `json:"updated_at"`
 }
 
 // PersonMessage represents a row in the person_messages table: one message
