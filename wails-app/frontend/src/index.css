@@ -873,6 +873,11 @@ body {
   flex-direction: column;
   gap: 16px;
 }
+/* The body scrolls; its cards (overflow: hidden) must keep their height
+   instead of shrinking to fit it. */
+.profile-body > * {
+  flex-shrink: 0;
+}
 
 /* Hero card */
 .profile-hero {
