@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- Fixed unstyled native `<select>` dropdowns in the WebKitGTK UI (Add Application modal and Settings dropdowns), ensuring all selects consistently use MonoAgent's dark theme, custom cyan chevron arrow, and pointer cursor.
+- Fixed unstyled native `<select>` dropdowns in the WebKitGTK UI (Add Application modal and Settings dropdowns) and extension side panel, ensuring all selects consistently use dark theme styling, custom cyan chevron arrow, and pointer cursor.
 
 ## [0.83.0] - 2026-09-27
 
