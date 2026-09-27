@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **"Set up AI agents" on agent errors.** A failure because the AI agent
+  is not set up — monomind missing or unusable, no runtime installed, the
+  requested runtime missing or unknown, or the runtime not logged in — now
+  has a button that opens the AI agents page: on a failed chat turn, a
+  refused chat start and an empty runtime picker in the assistant panel, on
+  toasts (including a workflow run that failed this way), on the
+  dashboard's recent runs, and on a run's execution banner and node error
+  in the editor. The CLI classifies these as `agent_not_setup`: the `code`
+  of `--json` errors (`chat --json` now prints its `{"error","code"}`
+  object), a `code` field on a chat turn's `turn.finished` event, and an
+  `[agent_not_setup]` marker at the end of an `agent.ask`, `browser.jev`
+  text-helper or `org.run` node error, so a run's stored error keeps it.
+
+### Fixed
+
+- **Claude Code's "Not logged in" is the chat error.** A turn that ended
+  that way reported `done reported nonzero exit_code 1`; it now reports the
+  runtime's own message.
+- **A chat turn that fails with a fatal protocol error exits non-zero.**
+  It exited 0, because only `done` carries the exit code.
+
 ## [0.78.0] - 2026-09-27
 
 ### Added
