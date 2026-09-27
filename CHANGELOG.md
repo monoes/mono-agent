@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.84.0] - 2026-09-28
+## [0.84.0] - 2026-09-27
 
 ### Added
 
@@ -52,6 +52,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   category no longer lands in `category`, which holds the review state.
   Introductions already filled from a bio stay as they are: they can't be
   told apart from drafts.
+
+## [0.83.2] - 2026-09-27
+
+### Fixed
+- Fixed unstyled native `<select>` dropdowns in the WebKitGTK UI (Add Application modal and Settings dropdowns) and extension side panel, ensuring all selects consistently use dark theme styling, custom cyan chevron arrow, and pointer cursor.
 
 ## [0.83.0] - 2026-09-27
 
