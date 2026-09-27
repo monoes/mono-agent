@@ -486,5 +486,45 @@
     "skills": "Aptitudes",
     "grade": "Nota",
     "activities": "Actividades"
+  },
+  "profileDetails": {
+    "title": "Detalles del perfil",
+    "category": "Categoría",
+    "accountType": "Tipo de cuenta",
+    "verification": "Verificación",
+    "visibility": "Visibilidad",
+    "private": "Privada",
+    "public": "Pública",
+    "pronouns": "Pronombres",
+    "company": "Empresa",
+    "connectionDegree": "Conexión",
+    "likes_count": "Me gusta",
+    "friend_count": "Amigos",
+    "affiliates_count": "Afiliados",
+    "connection_count": "Contactos",
+    "joined": "Se unió",
+    "born": "Nacimiento",
+    "language": "Idioma",
+    "threads": "Threads",
+    "links": "Enlaces",
+    "email": "Correo",
+    "phone": "Teléfono",
+    "address": "Dirección",
+    "highlights": "Destacadas",
+    "pinnedPost": "Publicación fijada",
+    "openPost": "Abrir publicación",
+    "banner": "Banner del perfil",
+    "accountTypes": {
+      "personal": "Personal",
+      "business": "Empresa",
+      "creator": "Creador",
+      "organization": "Organización"
+    },
+    "verificationTypes": {
+      "blue": "Verificada (azul)",
+      "business": "Empresa verificada",
+      "government": "Gobierno verificado",
+      "verified": "Verificada"
+    }
   }
 }

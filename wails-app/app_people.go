@@ -55,6 +55,10 @@ type PersonDetailInfo struct {
 	About      string                   `json:"about"`
 	Experience []map[string]interface{} `json:"experience"`
 	Education  []map[string]interface{} `json:"education"`
+	// ProfileDetails holds a profile read's platform extras (links,
+	// pronouns, likes, join date, verification type, pinned post…; see
+	// data/migrations/054_people_profile_extras.sql). Nil when none.
+	ProfileDetails map[string]interface{} `json:"profile_details"`
 }
 
 type PersonInteraction struct {

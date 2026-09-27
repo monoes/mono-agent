@@ -1895,3 +1895,55 @@ button.dash-row:hover { background: var(--elevated); }
   color: var(--cyan);
   text-decoration: underline;
 }
+.profile-detail-banner {
+  display: block;
+  width: 100%;
+  max-height: 140px;
+  object-fit: cover;
+  border-bottom: 1px solid var(--border-dim);
+}
+.profile-detail-rows {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: 16px;
+  row-gap: 6px;
+  padding: 12px 16px;
+}
+.profile-detail-row {
+  display: contents;
+}
+.profile-detail-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.profile-detail-value {
+  font-size: 12px;
+  color: var(--text-secondary);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.profile-detail-link {
+  color: var(--cyan);
+  text-align: left;
+}
+.profile-detail-block {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-dim);
+}
+.profile-detail-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.profile-detail-chip {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
