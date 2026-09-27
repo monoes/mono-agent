@@ -1594,7 +1594,7 @@ button.dash-row:hover { background: var(--elevated); }
 }
 @container (max-width: 560px) {
   .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .wf-row .dash-chip { display: none; }
+  .wf-row .dash-chip:not(.dash-chip-profile) { display: none; }
 }
 
 /* Workflow row */
