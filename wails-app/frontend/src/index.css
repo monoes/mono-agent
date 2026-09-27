@@ -964,6 +964,7 @@ select option {
   line-height: 1.6;
   margin-bottom: 10px;
   max-width: 540px;
+  white-space: pre-line; /* bios keep their line breaks */
 }
 
 .profile-links {
