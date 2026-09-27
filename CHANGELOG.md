@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.81.0] - 2026-09-27
+
+### Added
+
+- **Full LinkedIn profiles.** `linkedin.scrape_profile_info` now also
+  reads the member's work experience and education from the profile's
+  Experience and Education details pages: every position (title, company
+  and its page, employment type, dates, duration, location and workplace
+  type, description, skills; roles grouped under one company become one
+  position each) and every school (degree, field of study, dates, grade,
+  activities, description), plus the cover image, the current company and
+  a `job_title` taken from the current position (the headline when none
+  is current). A new `includeDetails` option (on by default) skips the
+  details pages when turned off.
+- **Profile details on people.** People gain `headline`, `location`,
+  `about`, `experience` and `education`. A profile read fills them, along
+  with the photo (`image_url`) and job title, whether it runs in a workflow
+  or through `node run`. `people get` (and `--json`), the assistant's and
+  MCP's `get_person`, and the app's person page show them; the page has
+  Experience and Education sections and shows the About text as the bio.
+  The About text is kept apart from `introduction`, the drafted outreach
+  message.
+
+### Fixed
+
+- **LinkedIn posts are no longer saved as people.** Saving extracted
+  posts made each post a "person" named `urn:li:activity:<id>` whose link
+  did not open. A person is now only made from a URL that names a profile;
+  a post or comment links its author instead, and a company page is nobody.
+  Instagram and TikTok post URLs and Hacker News items no longer become
+  people either. Migration 053 removes the post "people" already saved;
+  the runs and posts that pointed at them are kept, unlinked.
+- **`node run linkedin.scrape_profile_info` saves into the active
+  profile.** It saved people into the `default` profile; `people.save`
+  without a `profile_id` now uses the profile the run belongs to.
+- **Person page layout.** The cards on a person's page no longer shrink
+  and clip their content when the page is longer than the window.
+
 ## [0.80.0] - 2026-09-27
 
 ### Added
