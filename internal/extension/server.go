@@ -276,6 +276,8 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/monoagent/cdp", s.handleCdpSocket)
 	mux.HandleFunc("/monoagent/pair", s.handlePairPage)
 	mux.HandleFunc("/monoagent/pair/exchange", s.handlePairExchange)
+	mux.HandleFunc("/monoagent/resolve", s.handleResolve)
+	mux.HandleFunc("/monoagent/browsers", s.handleBrowsers)
 
 	addr := loopbackAddr(s.addr)
 	s.server = &http.Server{
@@ -720,14 +722,17 @@ func (s *Server) handleRelay(w http.ResponseWriter, r *http.Request) {
 			timeout = n
 		}
 	}
+	// Which browser, for callers new enough to say. An older caller sends
+	// neither parameter and gets the default browser, as it always did.
+	target := targetFromQuery(r.URL.Query())
 	// A relayed capture is executed and *written* here, by the process
 	// that owns the extension connection, so the caller gets back a small
 	// Result instead of a multi-megabyte envelope over loopback HTTP.
 	if cmd.Type == CmdPageCapture {
-		s.serveRelayCapture(w, &cmd, timeout, r.URL.Query().Get("inbox"))
+		s.serveRelayCapture(w, target, &cmd, timeout, r.URL.Query().Get("inbox"))
 		return
 	}
-	resp, err := s.SendCommand(&cmd, timeout)
+	resp, err := s.SendCommandTo(target, &cmd, timeout)
 	w.Header().Set("Content-Type", "application/json")
 	if resp == nil {
 		resp = &Response{ID: cmd.ID}

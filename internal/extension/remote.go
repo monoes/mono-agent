@@ -67,6 +67,12 @@ func Probe(baseURL string) bool {
 }
 
 func (r *RemoteSender) SendCommand(cmd *Command, timeout time.Duration) (*Response, error) {
+	return r.SendCommandTo(Target{}, cmd, timeout)
+}
+
+// SendCommandTo relays cmd to the browser t resolves to. An old bridge
+// ignores the target parameters and uses its one browser.
+func (r *RemoteSender) SendCommandTo(t Target, cmd *Command, timeout time.Duration) (*Response, error) {
 	body, err := json.Marshal(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("marshal command: %w", err)
@@ -75,6 +81,9 @@ func (r *RemoteSender) SendCommand(cmd *Command, timeout time.Duration) (*Respon
 		timeout = defaultTimeout // what handleRelay applies to a missing timeout
 	}
 	url := fmt.Sprintf("%s/monoagent/relay?timeout_ms=%d", r.baseURL, timeout.Milliseconds())
+	if enc := targetValues(t).Encode(); enc != "" {
+		url += "&" + enc
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout+r.requestSlack())
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
@@ -108,6 +117,16 @@ func (r *RemoteSender) SendCommand(cmd *Command, timeout time.Duration) (*Respon
 // this process's pairing token is not the bridge's — a different HOME, or
 // the token was reset since.
 var ErrRelayUnauthorized = errors.New("the bridge rejected this client: pairing token mismatch — run `monoagentcli extension status` / re-pair")
+
+// ErrBridgeTooOld means the bridge answering predates multi-browser routing
+// (no /monoagent/resolve). Commands still work but go to its one browser;
+// restarting the bridge (the daemon, or `monoagentcli extension serve`)
+// on the current version turns routing on.
+var ErrBridgeTooOld = errors.New("the running bridge predates per-profile browsers — restart it (the daemon or `monoagentcli extension serve`) to route by profile")
+
+// routeProbeTimeout bounds one resolve/browsers request: loopback, and the
+// bridge answers from memory.
+const routeProbeTimeout = 2 * time.Second
 
 // relayBodyPreview bounds how much of an unexpected relay body is quoted.
 const relayBodyPreview = 200
@@ -166,37 +185,87 @@ func (r *RemoteSender) Status() (Status, error) {
 	return FetchStatus(r.baseURL)
 }
 
-// CreateTab asks the remote server's extension to open a new tab.
-func (r *RemoteSender) CreateTab(url string) (int, error) {
-	resp, err := r.SendCommand(&Command{
+// CreateTab asks the remote server's default browser to open a new tab.
+func (r *RemoteSender) CreateTab(url string) (int, error) { return r.CreateTabFor(Target{}, url) }
+
+// CreateTabFor opens a tab in the browser t resolves to.
+func (r *RemoteSender) CreateTabFor(t Target, url string) (int, error) {
+	resp, err := r.SendCommandTo(t, &Command{
 		Type:   CmdCreateTab,
 		Params: map[string]interface{}{"url": url},
 	}, 30*time.Second)
 	if err != nil {
 		return 0, err
 	}
-	dataMap, _ := resp.Data.(map[string]interface{})
-	if dataMap == nil {
-		return 0, fmt.Errorf("create_tab response missing data")
-	}
-	tabIDRaw, ok := dataMap["tabId"]
-	if !ok {
-		return 0, fmt.Errorf("create_tab response missing tabId")
-	}
-	tabID, ok := tabIDRaw.(float64)
-	if !ok {
-		return 0, fmt.Errorf("tabId is not a number: %T", tabIDRaw)
-	}
-	return int(tabID), nil
+	return parseTabID(resp)
 }
 
-// CloseTab asks the remote server's extension to close a tab.
-func (r *RemoteSender) CloseTab(tabID int) error {
-	_, err := r.SendCommand(&Command{
-		Type:  CmdCloseTab,
-		TabID: tabID,
-	}, 30*time.Second)
+// CloseTab asks the remote server's default browser to close a tab.
+func (r *RemoteSender) CloseTab(tabID int) error { return r.CloseTabFor(Target{}, tabID) }
+
+// CloseTabFor closes a tab in the browser t resolves to.
+func (r *RemoteSender) CloseTabFor(t Target, tabID int) error {
+	_, err := r.SendCommandTo(t, &Command{Type: CmdCloseTab, TabID: tabID}, 30*time.Second)
 	return err
+}
+
+// ResolveTarget asks the bridge which browser t resolves to right now.
+func (r *RemoteSender) ResolveTarget(t Target) (ConnInfo, error) {
+	var info ConnInfo
+	err := r.getRoute("/monoagent/resolve?"+targetValues(t).Encode(), &info)
+	return info, err
+}
+
+// Browsers lists the browsers attached to the bridge, newest first.
+func (r *RemoteSender) Browsers() ([]ConnInfo, error) {
+	var body struct {
+		Browsers []ConnInfo `json:"browsers"`
+	}
+	err := r.getRoute("/monoagent/browsers", &body)
+	return body.Browsers, err
+}
+
+// SetBinding binds one browser to a monoagent profile ("" unbinds it). An
+// empty label leaves the browser's label alone.
+func (r *RemoteSender) SetBinding(instance, profile, label string) error {
+	params := map[string]interface{}{"profile": profile}
+	if label != "" {
+		params["label"] = label
+	}
+	_, err := r.SendCommandTo(Target{Instance: instance}, &Command{Type: CmdSetBinding, Params: params}, 10*time.Second)
+	return err
+}
+
+// getRoute does one authenticated GET against a routing endpoint and turns
+// its error body back into the error the bridge raised.
+func (r *RemoteSender) getRoute(path string, out any) error {
+	ctx, cancel := context.WithTimeout(context.Background(), routeProbeTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, r.baseURL+path, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set(tokenHeader, r.token)
+	resp, err := r.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("bridge request: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return json.Unmarshal(body, out)
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return ErrRelayUnauthorized
+	}
+	var re routeError
+	if json.Unmarshal(body, &re) != nil || re.Code == "" {
+		if resp.StatusCode == http.StatusNotFound {
+			return ErrBridgeTooOld // Go's mux 404: no such endpoint
+		}
+		return fmt.Errorf("bridge answered %s: %s", resp.Status, previewBody(body))
+	}
+	return re.err()
 }
 
 // RemoteBridge adapts *RemoteSender to satisfy browser.ExtensionBridge, the

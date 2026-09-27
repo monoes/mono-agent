@@ -3,6 +3,7 @@ package extension
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -118,6 +119,12 @@ type cdpClient struct {
 	// tabs this client attached, so they can be detached if it vanishes.
 	tabsMu sync.Mutex
 	tabs   map[int]struct{}
+	// target is the one browser this client drives. It is resolved once, at
+	// connect, so every command and every event stays in one browser even
+	// though tab ids repeat across browsers. The zero Target (nothing was
+	// connected yet) resolves per command, and events from any browser
+	// reach it, which is the pre-routing behaviour.
+	target Target
 }
 
 func newCdpClient(conn *websocket.Conn) *cdpClient {
@@ -261,10 +268,15 @@ func isCdpEvent(resp *Response) bool {
 // HTTP relay call: console messages, network responses and trace chunks all
 // arrive unasked-for, and an instrument that only saw command replies would
 // see nothing at all.
-func (s *Server) fanoutCdpEvent(resp *Response) {
+func (s *Server) fanoutCdpEvent(origin *extConn, resp *Response) {
 	s.cdpMu.Lock()
 	clients := make([]*cdpClient, 0, len(s.cdpClients))
 	for c := range s.cdpClients {
+		// A client pinned to another browser must not see this one's
+		// events: tab 5 here is not its tab 5.
+		if origin != nil && c.target.Instance != "" && c.target.Instance != origin.id {
+			continue
+		}
 		clients = append(clients, c)
 	}
 	s.cdpMu.Unlock()
@@ -308,6 +320,13 @@ func (s *Server) handleCdpSocket(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	target := targetFromQuery(r.URL.Query())
+	if c, err := s.resolve(target); err == nil {
+		target = Target{Instance: c.id}
+	} else if !errors.Is(err, ErrNoExtension) {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
 
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -317,6 +336,7 @@ func (s *Server) handleCdpSocket(w http.ResponseWriter, r *http.Request) {
 	conn.SetReadLimit(maxMessageSize)
 
 	client := newCdpClient(conn)
+	client.target = target
 	s.addCdpClient(client)
 	go client.writeEvents()
 	s.logger.Debug().Msg("cdp relay client connected")
@@ -331,7 +351,7 @@ func (s *Server) handleCdpSocket(w http.ResponseWriter, r *http.Request) {
 		// notices 30 seconds later.
 		for _, tabID := range client.attachedTabs() {
 			go func(id int) {
-				_, err := s.SendCommand(&Command{Type: CmdCdpDetach, TabID: id}, cdpCommandTimeout)
+				_, err := s.SendCommandTo(client.target, &Command{Type: CmdCdpDetach, TabID: id}, cdpCommandTimeout)
 				if err != nil {
 					s.logger.Debug().Err(err).Int("tabId", id).Msg("cdp detach on disconnect failed")
 				}
@@ -386,7 +406,7 @@ func (s *Server) relayCdpCommand(client *cdpClient, cmd *Command) {
 	// client's are only unique to itself. SendCommand mints one when empty.
 	cmd.ID = ""
 
-	resp, err := s.SendCommand(cmd, cdpCommandTimeout)
+	resp, err := s.SendCommandTo(client.target, cmd, cdpCommandTimeout)
 	if resp == nil {
 		resp = &Response{}
 	}

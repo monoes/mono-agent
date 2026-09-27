@@ -372,7 +372,7 @@ func (s *Server) dispatch(c *extConn, resp *Response) {
 		// The extension's own keepalive (background.js, every 20s): it
 		// only keeps the socket busy, so there is nothing to route.
 	case isCdpEvent(resp):
-		s.fanoutCdpEvent(resp)
+		s.fanoutCdpEvent(c, resp)
 	case isCaptureResponse(resp):
 		s.acceptUnsolicitedCapture(resp)
 	default:
@@ -466,8 +466,10 @@ func (s *Server) sweepCaptures() {
 // process that owns the extension connection is the one that assembles and
 // writes the envelope; the caller gets back only the small Result, so a
 // 60MB archive never crosses the loopback HTTP hop.
-func (s *Server) serveRelayCapture(w http.ResponseWriter, cmd *Command, timeout time.Duration, inbox string) {
-	res, err := s.CapturePage(captureRequestFromCommand(cmd, timeout, inbox))
+func (s *Server) serveRelayCapture(w http.ResponseWriter, target Target, cmd *Command, timeout time.Duration, inbox string) {
+	req := captureRequestFromCommand(cmd, timeout, inbox)
+	req.Target = target
+	res, err := s.CapturePage(req)
 	resp := &Response{ID: cmd.ID, Type: CmdPageCapture}
 	if err != nil {
 		resp.Error = err.Error()
@@ -496,6 +498,9 @@ func (r *RemoteSender) CapturePage(req CaptureRequest) (*capture.Result, error) 
 	url := fmt.Sprintf("%s/monoagent/relay?timeout_ms=%d", r.baseURL, timeout.Milliseconds())
 	if req.Inbox != "" {
 		url += "&inbox=" + neturl.QueryEscape(req.Inbox)
+	}
+	if enc := targetValues(req.Target).Encode(); enc != "" {
+		url += "&" + enc
 	}
 	httpReq, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
