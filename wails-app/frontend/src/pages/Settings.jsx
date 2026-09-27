@@ -7,6 +7,7 @@ import { getAssistantTools, getAssistantAllowRuns, setAssistantTools, setAssista
 import RefreshButton from '../components/RefreshButton.jsx'
 import HealthSection from '../components/settings/HealthSection.jsx'
 import JevSection from '../components/settings/JevSection.jsx'
+import VaultKeyringSection from '../components/settings/VaultKeyringSection.jsx'
 
 // ── VersionRow ──────────────────────────────────────────────────────────────
 
@@ -404,6 +405,8 @@ export default function Settings({ onNavigate, navData }) {
         </div>
 
         <AssistantToolsSection />
+
+        <VaultKeyringSection />
 
         <div ref={sectionRefs.jev} data-section="jev"><JevSection /></div>
 

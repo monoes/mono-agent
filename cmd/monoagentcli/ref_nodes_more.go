@@ -404,7 +404,7 @@ Jev is weak at arithmetic, counting and date comparison — compute those first.
 	{
 		Type:     "producthunt.list_comments",
 		Category: "producthunt",
-		Short:    "List the visible comments on a Product Hunt launch page",
+		Short:    "List a Product Hunt launch's comments, expanding \"show more\"/replies first",
 		Config:   `{ "launchURL": "https://www.producthunt.com/posts/…" }`,
 		Notes:    socialBrowserNote,
 	},

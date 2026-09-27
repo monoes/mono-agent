@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Synthetic Gadget - Gadgets for tests | Product Hunt</title></head>
+<body>
+<!-- Synthetic launch page whose comments load in pages, modelled on
+     launch_threads.html (each comment-<id> in its own thread-<id>, a
+     reply's thread inside its parent thread's inset wrapper). The feed ends
+     in a "Show more comments" button that appends the next page after a
+     delay; some threads hide replies behind "View 3 more replies" /
+     "Show 2 replies". Every click is recorded in window.__clicks so tests
+     can prove only expansion controls were clicked. Names, ids and text
+     are synthetic. -->
+<main>
+<div data-test="header"><h1>Synthetic Gadget</h1><p>Gadgets for tests</p>
+<button data-test="vote-button" type="button">Upvote 321</button>
+<button type="button">Follow</button></div>
+<div id="comments">
+<form data-test="comment-form" autocomplete="off"><div class="box"><p class="placeholder">What do you think? …</p><button type="submit" data-test="form-submit-button" disabled>Comment</button></div></form>
+<div data-test="comments-feed" class="feed"></div>
+<a href="/login">Log in to comment</a>
+<button type="button" id="dud">Load more</button>
+</div>
+<aside><a href="/posts/other-gadget">View more launches</a><button type="button">Show more</button></aside>
+</main>
+<script>
+window.__clicks = [];
+document.addEventListener('click', e => {
+	const b = e.target.closest('button, a, [role="button"]');
+	window.__clicks.push({ label: b ? b.textContent.replace(/\s+/g, ' ').trim() : e.target.tagName, trusted: e.isTrusted });
+	if (b && b.tagName === 'A') e.preventDefault();
+}, true);
+
+const users = { sam: ['Sam Maker', 'sam_maker'], pat: ['Pat Example', 'pat_example'], lee: ['Lee Example', 'lee_example'], kim: ['Kim Example', 'kim_example'] };
+
+// thread builds one thread-<id> exactly like launch_threads.html; inset is
+// extra markup for the replies wrapper.
+function thread(id, who, text, votes, inset) {
+	const [name, user] = users[who];
+	const d = document.createElement('div');
+	d.setAttribute('data-test', 'thread-' + id);
+	d.className = 'relative flex flex-col gap-6';
+	d.innerHTML = '<div class="absolute rail"></div><div class="relative">' +
+		'<div data-test="comment-' + id + '" class="relative flex flex-row gap-1"><div class="absolute rail"></div>' +
+		'<a data-test="user-image-link-1" href="/@' + user + '" class="block h-fit rounded-full"><img class="rounded-full" alt="" src="data:,"></a>' +
+		'<div class="flex flex-1 flex-col gap-2">' +
+		'<div class="flex flex-row flex-wrap items-center gap"><button type="button"><a href="/@' + user + '" class="line-clamp-1 text-base font-semibold">' + name + '</a></button></div>' +
+		'<div><div><div class="prose styles-module__x__richText">' + text + '</div></div></div>' +
+		'<div><div class="flex flex-col gap-2"><div class="flex flex-row flex-wrap items-center gap">' +
+		'<button data-test="action-bar-vote-button" type="button">(' + votes + ')<span class="hidden sm:block">Upvote</span></button>' +
+		'<button type="button">Reply</button>' +
+		'<div data-test="action-bar-flag-button" class="inline"><span>Report</span></div>' +
+		'<div class="inline"><button type="button"><span>Share</span></button></div>' +
+		'<span><time>3h ago</time></span><div data-test="comment-menu-button" class="flex items-center"></div>' +
+		'</div></div></div></div></div></div>' +
+		'<div class="ml-[--thread-inset] relative flex flex-col" data-inset="' + id + '">' + (inset || '') + '</div>';
+	return d;
+}
+function insetOf(id) { return document.querySelector('[data-inset="' + id + '"]'); }
+// moreButton appends replies to thread id (after a delay, like a fetch)
+// and removes itself.
+function moreButton(id, label, replies) {
+	const b = document.createElement('button');
+	b.type = 'button';
+	b.textContent = label;
+	b.addEventListener('click', () => setTimeout(() => {
+		const w = insetOf(id);
+		replies.forEach(r => w.insertBefore(thread(...r), b));
+		b.remove();
+	}, 200));
+	insetOf(id).appendChild(b);
+}
+
+const feed = document.querySelector('[data-test="comments-feed"]');
+feed.appendChild(thread('700001', 'sam', '<p>Hello testers!</p>', 5));
+insetOf('700001').appendChild(thread('700002', 'pat', 'First!', 2));
+moreButton('700001', 'View 3 more replies', [
+	['700003', 'lee', 'Reply three', 0], ['700004', 'kim', 'Reply four', 1], ['700005', 'sam', 'Reply five', 0],
+]);
+const hide = document.createElement('button');
+hide.type = 'button'; hide.textContent = 'Hide replies';
+insetOf('700001').appendChild(hide);
+feed.appendChild(thread('700010', 'lee', '<p>A long comment… <button type="button">Show more</button></p>', 1));
+
+const pages = [
+	() => {
+		feed.insertBefore(thread('700020', 'kim', 'Pricing?', 3), more);
+		moreButton('700020', 'Show 2 replies', [['700021', 'sam', 'Free for now.', 0], ['700022', 'kim', 'Thanks!', 0]]);
+		feed.insertBefore(thread('700030', 'pat', 'Offline mode?', 0), more);
+	},
+	() => { feed.insertBefore(thread('700040', 'lee', 'Last one.', 0), more); more.remove(); },
+];
+const more = document.createElement('button');
+more.type = 'button';
+more.innerHTML = '<span>Show more comments</span>';
+more.addEventListener('click', () => { const p = pages.shift(); setTimeout(p, 200); });
+feed.appendChild(more);
+</script>
+</body></html>
