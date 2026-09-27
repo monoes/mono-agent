@@ -1089,6 +1089,12 @@ globalThis.MonoPanelPage = {
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
   if (changes.captureQueue || changes.captureFailures) refreshQueue();
+  // The binding can change while this panel is open (`extension bind`, the
+  // app's Settings → Browsers). Redraw it, or the next Save would write the
+  // stale choice back and silently undo that bind.
+  if ((changes[MonoBrowserBinding.PROFILE_KEY] || changes[MonoBrowserBinding.LABEL_KEY]) && typeof panelBinding !== "undefined") {
+    panelBinding.refresh().catch(() => {});
+  }
   if (changes.captureProfile && lastFormState) {
     const id = changes.captureProfile.newValue || "";
     if (!profiles.current || profiles.current.id !== id) {

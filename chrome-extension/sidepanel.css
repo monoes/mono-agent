@@ -622,7 +622,8 @@ label,
   margin-bottom: var(--sp-1);
 }
 
-input[type="text"] {
+input[type="text"],
+#binding-profile {
   width: 100%;
   min-width: 0;
   padding: 7px 9px;
@@ -1589,4 +1590,10 @@ progress::-webkit-progress-value {
   border-radius: var(--r-sm);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* The binding field stacks two controls; give the second label room. */
+#binding-field label[for="binding-label"] {
+  display: block;
+  margin-top: var(--sp-3);
 }
