@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/monoes/mono-agent/internal/storage"
@@ -245,5 +246,34 @@ func TestPeopleMessagesAndStatusJSON(t *testing.T) {
 	}
 	if m, _ := db.GetPersonMessage("d1"); m != nil {
 		t.Fatalf("draft still stored: %+v", m)
+	}
+}
+
+// `people get` shows what a social profile read stored: the bio as about
+// (the introduction is the draft, labelled as such), and profile_details
+// as an object in --json and as labelled rows in the table.
+func TestPeopleGetProfileDetails(t *testing.T) {
+	cfg, db := newReviewCLITestDB(t)
+	if _, err := db.DB.Exec(`UPDATE people SET platform = 'INSTAGRAM', about = 'Synthetic bio', introduction = 'Hi Sam',
+		profile_details = '{"links":[{"url":"https://example.test/a","title":"Shop"}],"pronouns":["they/them"],"likes_count":5600,"is_private":false,"pinned_post":{"url":"https://x.test/s/1","text":"Hello"}}'
+		WHERE id = 'p1'`); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runPeople(t, cfg, "get", "p1")
+	p := decodeJSON[map[string]any](t, out, err)
+	d, _ := p["profile_details"].(map[string]any)
+	if p["about"] != "Synthetic bio" || p["introduction"] != "Hi Sam" || d["likes_count"] != float64(5600) || d["pronouns"] == nil {
+		t.Fatalf("get = %v", p)
+	}
+
+	cfg.JSONOutput = false
+	out, err = runPeople(t, cfg, "get", "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Synthetic bio", "Introduction", "Hi Sam", "Shop · https://example.test/a", "they/them", "5600", "Private", "Hello · https://x.test/s/1"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("table lacks %q:\n%s", want, out)
+		}
 	}
 }

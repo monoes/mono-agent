@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -238,7 +240,7 @@ func newPeopleGetCmd(cfg *globalConfig) *cobra.Command {
 			var verified, contentCount, followingCount sql.NullInt64
 			var fullName, imageURL, contactDetails, website, profileURL sql.NullString
 			var followerCount, introduction, category, jobTitle sql.NullString
-			var headline, location, about, experience, education sql.NullString
+			var headline, location, about, experience, education, details sql.NullString
 
 			err = db.DB.QueryRow(
 				`SELECT id, COALESCE(platform_username, ''), COALESCE(platform, ''), full_name,
@@ -247,14 +249,14 @@ func newPeopleGetCmd(cfg *globalConfig) *cobra.Command {
 				        COALESCE(following_count, 0), introduction, COALESCE(is_verified, 0),
 				        category, job_title,
 				        created_at, updated_at, profile_url,
-				        headline, location, about, experience, education
+				        headline, location, about, experience, education, profile_details
 				 FROM people WHERE id = ? AND profile_id = ?`, personID, cfg.ProfileID,
 			).Scan(
 				&p.ID, &p.PlatformUsername, &p.Platform, &fullName,
 				&imageURL, &contactDetails, &website, &contentCount,
 				&followerCount, &followingCount, &introduction,
 				&verified, &category, &jobTitle, &p.CreatedAt, &p.UpdatedAt, &profileURL,
-				&headline, &location, &about, &experience, &education,
+				&headline, &location, &about, &experience, &education, &details,
 			)
 			if err == sql.ErrNoRows {
 				return errNotFound("person %q not found", personID)
@@ -279,6 +281,7 @@ func newPeopleGetCmd(cfg *globalConfig) *cobra.Command {
 			p.About = about.String
 			p.Experience = jsonArrayOrNil(experience.String)
 			p.Education = jsonArrayOrNil(education.String)
+			p.ProfileDetails = jsonObjectOrNil(details.String)
 
 			links := confirmedLinks(db, cfg.ProfileID, p.ID)
 			if cfg.JSONOutput {
@@ -315,11 +318,11 @@ func newPeopleGetCmd(cfg *globalConfig) *cobra.Command {
 			if p.ContactDetails != "" {
 				table.Append([]string{"Contact", p.ContactDetails})
 			}
-			if p.Introduction != "" {
-				table.Append([]string{"Bio", truncateStr(p.Introduction, 60)})
-			}
 			if p.About != "" {
 				table.Append([]string{"About", truncateStr(p.About, 60)})
+			}
+			if p.Introduction != "" {
+				table.Append([]string{"Introduction", truncateStr(p.Introduction, 60)})
 			}
 			if p.ImageURL != "" {
 				table.Append([]string{"Image", truncateStr(p.ImageURL, 60)})
@@ -329,6 +332,9 @@ func newPeopleGetCmd(cfg *globalConfig) *cobra.Command {
 			}
 			for i, line := range profileEntryLines(p.Education, "school", "degree", "date_range") {
 				table.Append([]string{labelOnFirst(i, "Education"), line})
+			}
+			for _, row := range profileDetailRows(p.ProfileDetails) {
+				table.Append(row)
 			}
 			for _, l := range links {
 				table.Append([]string{"Same person as", l.String()})
@@ -546,6 +552,125 @@ func profileEntryLines(raw json.RawMessage, fields ...string) []string {
 		}
 	}
 	return lines
+}
+
+// jsonObjectOrNil returns a stored JSON object as raw JSON, or nil when it
+// is empty or not an object.
+func jsonObjectOrNil(s string) json.RawMessage {
+	var obj map[string]json.RawMessage
+	if s == "" || json.Unmarshal([]byte(s), &obj) != nil || len(obj) == 0 {
+		return nil
+	}
+	return json.RawMessage(s)
+}
+
+// profileDetailLabels orders and labels the profile_details keys in the
+// `people get` table; keys not listed follow, labelled by their name.
+var profileDetailLabels = []struct{ key, label string }{
+	{"profile_category", "Profile Category"},
+	{"account_type", "Account Type"},
+	{"verification_type", "Verification"},
+	{"is_private", "Private"},
+	{"pronouns", "Pronouns"},
+	{"links", "Link"},
+	{"threads_handle", "Threads"},
+	{"contact", "Contact"},
+	{"likes_count", "Likes"},
+	{"friend_count", "Friends"},
+	{"affiliates_count", "Affiliates"},
+	{"connection_count", "Connections"},
+	{"connection_degree", "Connection"},
+	{"current_company", "Company"},
+	{"join_date", "Joined"},
+	{"birth_date", "Born"},
+	{"language", "Language"},
+	{"highlights", "Highlights"},
+	{"pinned_post", "Pinned Post"},
+	{"banner_url", "Banner"},
+	{"platform_id", "Platform ID"},
+}
+
+// profileDetailRows renders a stored profile_details object as table rows:
+// one row per link, lists joined, objects as their values.
+func profileDetailRows(raw json.RawMessage) [][]string {
+	var d map[string]interface{}
+	if len(raw) == 0 || json.Unmarshal(raw, &d) != nil {
+		return nil
+	}
+	var rows [][]string
+	add := func(key, label string) {
+		v, ok := d[key]
+		if !ok {
+			return
+		}
+		delete(d, key)
+		if key == "links" {
+			links, _ := v.([]interface{})
+			for i, l := range links {
+				m, _ := l.(map[string]interface{})
+				u, _ := m["url"].(string)
+				if t, _ := m["title"].(string); t != "" && t != u {
+					u = t + " · " + u
+				}
+				if u != "" {
+					rows = append(rows, []string{labelOnFirst(i, "Links"), truncateStr(u, 80)})
+				}
+			}
+			return
+		}
+		if s := detailText(v); s != "" {
+			rows = append(rows, []string{label, truncateStr(s, 80)})
+		}
+	}
+	for _, l := range profileDetailLabels {
+		add(l.key, l.label)
+	}
+	rest := make([]string, 0, len(d))
+	for k := range d {
+		rest = append(rest, k)
+	}
+	sort.Strings(rest)
+	for _, k := range rest {
+		add(k, k)
+	}
+	return rows
+}
+
+// detailText renders one profile_details value as text.
+func detailText(v interface{}) string {
+	switch t := v.(type) {
+	case string:
+		return t
+	case bool:
+		if t {
+			return "yes"
+		}
+		return "no"
+	case float64:
+		return strconv.FormatFloat(t, 'f', -1, 64)
+	case []interface{}:
+		parts := make([]string, 0, len(t))
+		for _, e := range t {
+			if s := detailText(e); s != "" {
+				parts = append(parts, s)
+			}
+		}
+		return strings.Join(parts, ", ")
+	case map[string]interface{}:
+		keys := make([]string, 0, len(t))
+		for k := range t {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		parts := make([]string, 0, len(keys))
+		for _, k := range keys {
+			if s := detailText(t[k]); s != "" {
+				parts = append(parts, s)
+			}
+		}
+		return strings.Join(parts, " · ")
+	}
+	return ""
 }
 
 func labelOnFirst(i int, label string) string {

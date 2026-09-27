@@ -235,7 +235,7 @@ func monoagentAdaptedTools() []tool {
 				"full_name":         strParam("Optional full name"),
 				"category":          strParam("Optional category"),
 				"job_title":         strParam("Optional job title"),
-				"introduction":      strParam("Optional bio/introduction"),
+				"introduction":      strParam("Optional drafted outreach message (not the profile bio)"),
 			}, "platform_username", "platform"),
 			annotations: map[string]bool{"readOnlyHint": false},
 			mutating:    true,
