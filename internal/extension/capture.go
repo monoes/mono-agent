@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/gorilla/websocket"
 
 	"github.com/monoes/mono-agent/internal/capture"
 )
@@ -339,24 +338,17 @@ func (s *Server) CapturePage(req CaptureRequest) (*capture.Result, error) {
 	}
 }
 
-// writeCommand marshals and writes one command to the extension socket.
+// writeCommand marshals and writes one command to the default browser.
 func (s *Server) writeCommand(cmd *Command) error {
 	data, err := json.Marshal(cmd)
 	if err != nil {
 		return fmt.Errorf("marshal command: %w", err)
 	}
-
-	s.connMu.Lock()
-	conn := s.conn
-	s.connMu.Unlock()
-	if conn == nil {
-		return fmt.Errorf("no extension connected")
-	}
-
-	s.writeMu.Lock()
-	err = conn.WriteMessage(websocket.TextMessage, data)
-	s.writeMu.Unlock()
+	c, err := s.resolve(Target{})
 	if err != nil {
+		return err
+	}
+	if err := c.write(data); err != nil {
 		return fmt.Errorf("write command: %w", err)
 	}
 	return nil
@@ -369,7 +361,7 @@ func (s *Server) writeCommand(cmd *Command) error {
 // process was down (CLIP-08). Every send here is non-blocking: the read
 // loop must never be parked by a slow or vanished receiver, because that
 // would stall the whole extension connection.
-func (s *Server) dispatch(resp *Response) {
+func (s *Server) dispatch(c *extConn, resp *Response) {
 	s.pendMu.Lock()
 	stream, streaming := s.streams[resp.ID]
 	pending, waiting := s.pending[resp.ID]

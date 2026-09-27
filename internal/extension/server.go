@@ -28,10 +28,11 @@ import (
 // Server is a WebSocket server that accepts a single connection from the
 // Chrome Extension and dispatches commands/responses.
 type Server struct {
-	addr    string
-	conn    *websocket.Conn
+	addr string
+	// conns holds one socket per connected browser, keyed by the instance
+	// id its extension reports (see conns.go). Guarded by connMu.
+	conns   map[string]*extConn
 	connMu  sync.Mutex
-	writeMu sync.Mutex // serializes writes; gorilla/websocket forbids concurrent writers
 	pending map[string]chan *Response
 	pendMu  sync.Mutex
 
@@ -362,11 +363,12 @@ func (s *Server) WaitForConnection(timeout time.Duration) error {
 	}
 }
 
-// IsConnected returns true if the Chrome extension is currently connected.
+// IsConnected reports whether at least one browser's extension is
+// connected. Which one a command reaches is resolve's business.
 func (s *Server) IsConnected() bool {
 	s.connMu.Lock()
 	defer s.connMu.Unlock()
-	return s.conn != nil
+	return len(s.conns) > 0
 }
 
 // SendCommand sends a command to the Chrome extension and waits for the
@@ -447,14 +449,17 @@ func (s *Server) Close() error {
 	// server is still running (or writing an envelope) once Close returns.
 	s.waitRecordingReaper()
 	s.connMu.Lock()
-	conn := s.conn
-	s.conn = nil
+	conns := s.conns
+	s.conns = nil
 	s.connMu.Unlock()
 
-	if conn != nil {
-		return conn.Close()
+	var firstErr error
+	for _, c := range conns {
+		if err := c.ws.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
-	return nil
+	return firstErr
 }
 
 // authTimeout bounds how long a newly-upgraded socket has to send its auth
@@ -469,11 +474,19 @@ const unauthorizedCloseCode = 4401
 // authFrame is the first message an extension socket must send after
 // upgrade. Anything else — wrong type, wrong/missing token, or no message
 // within authTimeout — gets the connection closed without ever being
-// installed as s.conn, so an unauthenticated client can never replace an
+// installed, so an unauthenticated client can never replace an
 // already-authenticated one.
+//
+// Instance, Profile, Label and Version come from extension ≥1.5 (see
+// chrome-extension/browser_binding.js). An older extension omits them and
+// lands in the legacy slot; an older bridge ignores them.
 type authFrame struct {
-	Type  string `json:"type"`
-	Token string `json:"token"`
+	Type     string `json:"type"`
+	Token    string `json:"token"`
+	Instance string `json:"instance,omitempty"`
+	Profile  string `json:"profile,omitempty"`
+	Label    string `json:"label,omitempty"`
+	Version  string `json:"version,omitempty"`
 }
 
 // handleWS upgrades an incoming HTTP request to a WebSocket connection and
@@ -490,7 +503,8 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 	conn.SetReadLimit(maxMessageSize)
 
-	if !s.authenticate(conn) {
+	auth, ok := s.authenticate(conn)
+	if !ok {
 		_ = conn.Close()
 		return
 	}
@@ -501,42 +515,33 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 
-	// Replace any existing connection. Only reached after authenticate
-	// succeeds, so an unauthenticated socket never gets here.
-	s.connMu.Lock()
-	old := s.conn
-	s.conn = conn
-	s.connMu.Unlock()
-
-	if old != nil {
-		// Routine, not suspicious: an MV3 service worker that respawns
-		// before its previous socket has been reaped reconnects on top of
-		// itself many times a day.
-		s.logger.Info().Msg("replacing the previous extension connection")
-		_ = old.Close()
-	}
+	// Only reached after authenticate succeeds, so an unauthenticated
+	// socket never replaces anything.
+	c := newExtConn(conn, auth, time.Now())
+	s.installConn(c)
 
 	s.connOnce.Do(func() { close(s.connected) })
-	s.logger.Info().Str("remote", conn.RemoteAddr().String()).Msg("extension connected")
+	s.logger.Info().Str("remote", conn.RemoteAddr().String()).Str("instance", c.id).
+		Str("profile", c.boundProfile()).Msg("extension connected")
 
 	done := make(chan struct{})
-	go s.pingLoop(conn, done)
-	s.readLoop(conn)
+	go s.pingLoop(c, done)
+	s.readLoop(c)
 	close(done)
 }
 
 // authenticate reads exactly one frame from a freshly-upgraded connection
 // and requires it to be a well-formed authFrame carrying the current
-// extension token, compared in constant time. It never touches s.conn:
+// extension token, compared in constant time. It never installs the connection:
 // callers are responsible for installing the connection only on a true
 // result.
-func (s *Server) authenticate(conn *websocket.Conn) bool {
+func (s *Server) authenticate(conn *websocket.Conn) (authFrame, bool) {
 	conn.SetReadDeadline(time.Now().Add(authTimeout))
 	_, msg, err := conn.ReadMessage()
 	if err != nil {
 		s.noteAuthFailure()
 		s.logger.Warn().Err(err).Msg("extension connection closed before authenticating")
-		return false
+		return authFrame{}, false
 	}
 
 	var auth authFrame
@@ -549,14 +554,15 @@ func (s *Server) authenticate(conn *websocket.Conn) bool {
 		_ = conn.WriteControl(websocket.CloseMessage,
 			websocket.FormatCloseMessage(unauthorizedCloseCode, "unauthorized"),
 			time.Now().Add(time.Second))
-		return false
+		return authFrame{}, false
 	}
-	return true
+	return auth, true
 }
 
-// pingLoop periodically pings the connection so a dead peer is detected via
-// the read deadline in handleWS/readLoop instead of hanging indefinitely.
-func (s *Server) pingLoop(conn *websocket.Conn, done <-chan struct{}) {
+// pingLoop periodically pings one browser's socket so a dead peer is
+// detected via the read deadline in handleWS/readLoop instead of hanging
+// indefinitely.
+func (s *Server) pingLoop(c *extConn, done <-chan struct{}) {
 	ticker := time.NewTicker(pingInterval)
 	defer ticker.Stop()
 	for {
@@ -566,10 +572,7 @@ func (s *Server) pingLoop(conn *websocket.Conn, done <-chan struct{}) {
 			// arriving has nobody waiting on it when it was the extension
 			// flushing its queue, so something has to time it out.
 			s.sweepCaptures()
-			s.writeMu.Lock()
-			err := conn.WriteMessage(websocket.PingMessage, nil)
-			s.writeMu.Unlock()
-			if err != nil {
+			if err := c.ping(); err != nil {
 				return
 			}
 		case <-done:
@@ -795,19 +798,15 @@ func (s *Server) handleRelay(w http.ResponseWriter, r *http.Request) {
 
 // readLoop reads messages from the WebSocket and dispatches responses to
 // waiting callers.
-func (s *Server) readLoop(conn *websocket.Conn) {
+func (s *Server) readLoop(c *extConn) {
 	defer func() {
-		s.connMu.Lock()
-		if s.conn == conn {
-			s.conn = nil
-		}
-		s.connMu.Unlock()
-		_ = conn.Close()
-		s.logger.Info().Msg("extension disconnected")
+		s.removeConn(c)
+		_ = c.ws.Close()
+		s.logger.Info().Str("instance", c.id).Msg("extension disconnected")
 	}()
 
 	for {
-		_, msg, err := conn.ReadMessage()
+		_, msg, err := c.ws.ReadMessage()
 		if err != nil {
 			// CloseAbnormalClosure/CloseNoStatusReceived are on this list
 			// because that is what Chrome suspending an idle MV3 service
@@ -830,12 +829,12 @@ func (s *Server) readLoop(conn *websocket.Conn) {
 		// dispatch as an unmatched failure.
 		switch frameKind(msg) {
 		case KindRequest:
-			s.serveRequest(msg)
+			s.serveRequest(c, msg)
 			continue
 		case KindRecording:
 			// An activity-recording frame (recording.go): a push that
 			// is acked, never a response to anything this process sent.
-			s.serveRecording(msg)
+			s.serveRecording(c, msg)
 			continue
 		}
 
@@ -851,6 +850,6 @@ func (s *Server) readLoop(conn *websocket.Conn) {
 
 		s.logger.Debug().Str("id", resp.ID).Bool("success", resp.Success).Str("error", resp.Error).Msg("response received")
 
-		s.dispatch(&resp)
+		s.dispatch(c, &resp)
 	}
 }

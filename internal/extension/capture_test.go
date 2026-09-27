@@ -509,11 +509,11 @@ func TestRelayedCaptureSurfacesError(t *testing.T) {
 func TestDispatchIgnoresKeepalivePing(t *testing.T) {
 	var buf bytes.Buffer
 	srv := NewServer("127.0.0.1:0", zerolog.New(&buf))
-	srv.dispatch(&Response{Type: "ping"})
+	srv.dispatch(nil, &Response{Type: "ping"})
 	if strings.Contains(buf.String(), "no pending request") {
 		t.Fatalf("keepalive ping was logged as unmatched: %s", buf.String())
 	}
-	srv.dispatch(&Response{ID: "stray", Type: "something_else"})
+	srv.dispatch(nil, &Response{ID: "stray", Type: "something_else"})
 	if !strings.Contains(buf.String(), "no pending request") {
 		t.Fatal("a genuinely unmatched response is no longer reported")
 	}
