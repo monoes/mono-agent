@@ -90,9 +90,13 @@ type Person struct {
 	About      string          `json:"about,omitempty"`
 	Experience json.RawMessage `json:"experience,omitempty"`
 	Education  json.RawMessage `json:"education,omitempty"`
-	ProfileID  string          `json:"profile_id,omitempty"`
-	CreatedAt  time.Time       `json:"created_at"`
-	UpdatedAt  time.Time       `json:"updated_at"`
+	// ProfileDetails is the JSON object of platform extras a profile read
+	// returns (links, pronouns, likes, join date, verification type…; see
+	// data/migrations/054_people_profile_extras.sql).
+	ProfileDetails json.RawMessage `json:"profile_details,omitempty"`
+	ProfileID      string          `json:"profile_id,omitempty"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
 }
 
 // PersonMessage represents a row in the person_messages table: one message
