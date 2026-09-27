@@ -35,11 +35,16 @@ func TestVaultImageHandlerIsProfileScoped(t *testing.T) {
 		h.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
 		return rec.Code, rec.Body.String()
 	}
-	if code, body := get("/vault-image/img-001.png"); code != 200 || body != "png:img-001.png" {
-		t.Fatalf("own image: %d %q", code, body)
+	if code, body := get("/vault-image/img-001"); code != 200 || body != "png:img-001.png" {
+		t.Fatalf("own image by id: %d %q", code, body)
 	}
-	if code, _ := get("/vault-image/img-002.png"); code != 404 {
-		t.Fatalf("another profile's image: %d, want 404", code)
+	if code, body := get("/vault-image/img-001.png"); code != 200 || body != "png:img-001.png" {
+		t.Fatalf("own image by the older filename URL: %d %q", code, body)
+	}
+	for _, u := range []string{"/vault-image/img-002", "/vault-image/img-002.png"} {
+		if code, _ := get(u); code != 404 {
+			t.Fatalf("another profile's image %s: %d, want 404", u, code)
+		}
 	}
 	if code, _ := get("/vault-image/../../etc/passwd"); code != 404 {
 		t.Fatalf("traversal: %d, want 404", code)

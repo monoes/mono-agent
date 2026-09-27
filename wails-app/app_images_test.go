@@ -14,7 +14,7 @@ import (
 // database.
 func TestImageVaultBindingsShellOut(t *testing.T) {
 	log := filepath.Join(t.TempDir(), "args.log")
-	row := `{"id":"img-002","seq":2,"path":"/v/img-002.png","filename":"img-002.png","size_bytes":9,"source":"upload","workflow_id":"","execution_id":"","label":"Logo","created_at":"2026-09-26T11:00:00Z","url":"/vault-image/img-002.png"}`
+	row := `{"id":"img-002","seq":2,"path":"/v/img-002.png","filename":"img-002.png","size_bytes":9,"source":"upload","workflow_id":"","execution_id":"","label":"Logo","created_at":"2026-09-26T11:00:00Z","url":"/vault-image/img-002"}`
 	t.Setenv("MONOAGENTCLI_BIN", fakeCLI(t, `echo "$*" >> '`+log+`'
 case "$*" in
   *" image list "*) echo '[`+row+`]' ;;
@@ -37,7 +37,7 @@ esac
 		events = append(events, fmt.Sprintf("%s %v", name, data))
 	})
 
-	if rows, err := a.GetVaultImages(0); err != nil || len(rows) != 1 || rows[0]["url"] != "/vault-image/img-002.png" || rows[0]["size_bytes"] != float64(9) {
+	if rows, err := a.GetVaultImages(0); err != nil || len(rows) != 1 || rows[0]["url"] != "/vault-image/img-002" || rows[0]["size_bytes"] != float64(9) {
 		t.Fatalf("GetVaultImages = %v, %v", rows, err)
 	}
 	if rows, err := a.SearchVaultImages("-logo"); err != nil || rows == nil || len(rows) != 0 {

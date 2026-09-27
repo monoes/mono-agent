@@ -86,7 +86,7 @@ func TestImageListIsProfileScopedAndSnakeCase(t *testing.T) {
 			t.Errorf("missing %q in %v", k, rows[1])
 		}
 	}
-	if rows[1]["url"] != "/vault-image/img-001.png" || rows[1]["label"] != "" || rows[1]["workflow_id"] != "wf-banner" {
+	if rows[1]["url"] != "/vault-image/img-001" || rows[1]["label"] != "" || rows[1]["workflow_id"] != "wf-banner" {
 		t.Errorf("row = %v", rows[1])
 	}
 	if out, _ := runImage(t, cfg, "list", "--limit", "1"); strings.Join(imageIDs(t, out), ",") != "img-002" {
@@ -311,7 +311,7 @@ func TestImageAddInProfileFolderDeleteAndReAdd(t *testing.T) {
 		return im
 	}
 	im := add()
-	if im.Path != src || im.Filename != "cover.png" || im.Source != "upload" {
+	if im.Path != src || im.Filename != "cover.png" || im.Source != "upload" || im.URL != "/vault-image/"+im.ID {
 		t.Fatalf("add = %+v, want the file recorded in place", im)
 	}
 	syncCounts := func() [3]int {

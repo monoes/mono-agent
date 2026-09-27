@@ -11,7 +11,7 @@ import (
 // Every image-vault binding shells out to `monoagentcli image …`, which
 // owns the vault_images queries and the vault folder. The rows come back in
 // the shape these bindings have always returned (snake_case keys, url
-// /vault-image/<file>). User-supplied text (paths, labels, queries) goes
+// /vault-image/<id>). User-supplied text (paths, labels, queries) goes
 // after "--" so a leading "-" is never read as a flag.
 
 func (a *App) GetVaultImages(limit int) ([]map[string]interface{}, error) {
@@ -141,8 +141,9 @@ func (a *App) UpdateVaultImageLabel(id, label string) error {
 	return nil
 }
 
-// DeleteVaultImage removes an image from the vault. A discovered image's
-// file stays in the project folder (`image delete` removes only its row).
+// DeleteVaultImage removes an image from the vault. An image in the
+// profile folder keeps its file there (`image delete` removes only its row
+// and keeps later syncs from adding it back).
 func (a *App) DeleteVaultImage(id string) error {
 	if err := a.runMonoCLI("", nil, "image", "delete", "--", id); err != nil {
 		return err

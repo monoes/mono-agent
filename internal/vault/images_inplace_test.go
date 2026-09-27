@@ -233,3 +233,30 @@ func TestDeleteImage_UploadRemovesVaultCopy(t *testing.T) {
 		t.Errorf("%d ignore entries for an uploaded image", n)
 	}
 }
+
+// Two discovered files with the same name get distinct URLs, each serving
+// its own file.
+func TestImageURLIsByID(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	a := writeProfileImage(t, db.DB, filepath.Join("a", "logo.png"), "a")
+	b := writeProfileImage(t, db.DB, filepath.Join("b", "logo.png"), "b")
+	syncProfileFolder(t, db.DB)
+	images, err := vault.ListImages(ctx, db.DB, "default", 10)
+	if err != nil || len(images) != 2 {
+		t.Fatalf("ListImages = %v, %v", images, err)
+	}
+	if images[0].URL == images[1].URL {
+		t.Fatalf("both images have URL %s", images[0].URL)
+	}
+	want := map[string]bool{a: true, b: true}
+	for _, im := range images {
+		if im.URL != "/vault-image/"+im.ID {
+			t.Errorf("URL = %s, want /vault-image/%s", im.URL, im.ID)
+		}
+		path, ok, err := vault.ImagePathInProfile(ctx, db.DB, "default", filepath.Base(im.URL))
+		if err != nil || !ok || path != im.Path || !want[path] {
+			t.Errorf("URL %s serves %q (%v, %v), want %s", im.URL, path, ok, err, im.Path)
+		}
+	}
+}

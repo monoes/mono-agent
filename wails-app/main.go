@@ -54,8 +54,10 @@ var assets embed.FS
 var appIcon []byte
 
 // vaultImageHandler serves the active profile's vault images at
-// /vault-image/<filename>, from each image's stored path, so one profile
-// cannot enumerate or view another profile's vault images.
+// /vault-image/<id> (the url `image list` gives each image; the older
+// /vault-image/<filename> form still resolves), from each image's stored
+// path, so one profile cannot enumerate or view another profile's vault
+// images.
 func vaultImageHandler(app *App) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.URL.Path, "/vault-image/") {

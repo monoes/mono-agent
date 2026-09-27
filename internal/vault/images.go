@@ -16,7 +16,8 @@ var ErrImageNotFound = errors.New("vault image not found")
 
 // ImageEntry is one row from vault_images, in the JSON shape the desktop
 // app's image vault has always used (URL is the app's asset route for the
-// file, derived from Filename).
+// file, /vault-image/<id>: file names are not unique once images are
+// tracked in place across the profile folder).
 type ImageEntry struct {
 	ID          string `json:"id"`
 	Seq         int    `json:"seq"`
@@ -48,7 +49,7 @@ func scanImage(scan func(dest ...any) error) (ImageEntry, error) {
 		&im.WorkflowID, &im.ExecutionID, &im.Label, &im.CreatedAt); err != nil {
 		return im, err
 	}
-	im.URL = "/vault-image/" + im.Filename
+	im.URL = "/vault-image/" + im.ID
 	return im, nil
 }
 
@@ -101,13 +102,15 @@ func GetImage(ctx context.Context, db *sql.DB, profileID, id string) (*ImageEntr
 }
 
 // ImagePathInProfile returns where a vault image (by id, or by its stored
-// file name, e.g. "img-001.png") lives, if it belongs to the profile — what
-// the desktop app's /vault-image/ file server serves. The stored path is
+// file name, e.g. "img-001.png", which older URLs used) lives, if it belongs
+// to the profile — what the desktop app's /vault-image/ file server serves.
+// A file name shared by several images resolves to the newest. The stored
+// path is
 // authoritative: uploads live in the profile's own vault folder, and
 // discovered images are served from wherever they sit in the project.
 func ImagePathInProfile(ctx context.Context, db *sql.DB, profileID, name string) (string, bool, error) {
 	var path string
-	err := db.QueryRowContext(ctx, `SELECT path FROM vault_images WHERE (id = ? OR filename = ?) AND profile_id = ? ORDER BY id = ? DESC LIMIT 1`,
+	err := db.QueryRowContext(ctx, `SELECT path FROM vault_images WHERE (id = ? OR filename = ?) AND profile_id = ? ORDER BY id = ? DESC, seq DESC LIMIT 1`,
 		name, name, profileID, name).Scan(&path)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil

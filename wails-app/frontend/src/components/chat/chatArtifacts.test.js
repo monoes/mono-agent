@@ -179,9 +179,9 @@ describe('resolveArtifact', () => {
   // ── image ────────────────────────────────────────────────────────────
 
   it('resolves an image candidate to trusted metadata via api.getVaultImage', async () => {
-    const api = { getVaultImage: async (id) => (id === 'img-001' ? { id: 'img-001', filename: 'photo.png', label: 'My Photo', path: '/vault/img-001.png', url: '/vault-image/photo.png' } : null) }
+    const api = { getVaultImage: async (id) => (id === 'img-001' ? { id: 'img-001', filename: 'photo.png', label: 'My Photo', path: '/vault/img-001.png', url: '/vault-image/img-001' } : null) }
     const result = await resolveArtifact({ type: 'image', id: 'img-001' }, api)
-    expect(result).toEqual({ type: 'image', id: 'img-001', filename: 'photo.png', label: 'My Photo', path: '/vault/img-001.png', url: '/vault-image/photo.png' })
+    expect(result).toEqual({ type: 'image', id: 'img-001', filename: 'photo.png', label: 'My Photo', path: '/vault/img-001.png', url: '/vault-image/img-001' })
   })
 
   it('returns null for a deleted image id (api.getVaultImage resolves null)', async () => {
