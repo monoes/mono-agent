@@ -229,11 +229,15 @@ func (b *LinkedInBot) methods() map[string]method {
 			return b.ListConversations(ctx, p, n, unread)
 		},
 		"get_profile_data": func(ctx context.Context, args ...interface{}) (interface{}, error) {
-			p, a, err := botpkg.Args(args, 1, "profileURL")
+			p, a, err := botpkg.Args(args, 2, "profileURL", "includeDetails?")
 			if err != nil {
 				return nil, fmt.Errorf("get_profile_data: %w", err)
 			}
-			return b.GetProfile(ctx, p, a[0])
+			details, err := boolArg(a[1], true)
+			if err != nil {
+				return nil, fmt.Errorf("get_profile_data: includeDetails: %w", err)
+			}
+			return b.getProfile(ctx, p, a[0], details)
 		},
 		"search_people": func(ctx context.Context, args ...interface{}) (interface{}, error) {
 			p, a, err := botpkg.Args(args, 2, "keyword", "max?")

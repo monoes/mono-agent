@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"testing"
 
+	"github.com/monoes/mono-agent/internal/vault"
 	"github.com/monoes/mono-agent/internal/workflow"
 	_ "modernc.org/sqlite"
 )
@@ -38,6 +39,11 @@ func setupTestDB(t *testing.T) *sql.DB {
 		is_verified INTEGER DEFAULT 0,
 		category TEXT,
 		job_title TEXT,
+		headline TEXT,
+		location TEXT,
+		about TEXT,
+		experience TEXT,
+		education TEXT,
 		profile_url TEXT,
 		profile_id TEXT NOT NULL DEFAULT 'default',
 		created_at DATETIME,
@@ -261,5 +267,90 @@ func TestPeopleSaveNode_CategoryAndIntroduction(t *testing.T) {
 	}
 	if fullName != "Charlie Founder" {
 		t.Fatalf("expected full_name 'Charlie Founder', got %q", fullName)
+	}
+}
+
+// A post is not a person: a LinkedIn post item saves its author, and a
+// post without a member author saves nobody (it used to save a "person"
+// named urn:li:activity:…).
+func TestPeopleSaveNode_PostSavesAuthorNotPost(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	SetGlobalPeopleDB(db)
+
+	items := []workflow.Item{
+		workflow.NewItem(map[string]interface{}{
+			"url":    "https://www.linkedin.com/feed/update/urn:li:activity:7509522219027554305/",
+			"author": "Ada First", "author_url": "https://www.linkedin.com/in/ada-first-test/",
+			"text_preview": "Hello",
+		}),
+		workflow.NewItem(map[string]interface{}{
+			"url":    "https://www.linkedin.com/feed/update/urn:li:activity:7508827577256460288/",
+			"author": "Example Works", "author_url": "https://www.linkedin.com/company/example-works/",
+		}),
+		workflow.NewItem(map[string]interface{}{"url": "https://www.linkedin.com/feed/update/urn:li:activity:1/"}),
+	}
+	outputs, err := (&PeopleSaveNode{}).Execute(context.Background(), workflow.NodeInput{Items: items}, map[string]interface{}{})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if len(outputs[0].Items) != 1 {
+		t.Fatalf("saved %d items, want only the post with a member author", len(outputs[0].Items))
+	}
+	var username, fullName, profileURL string
+	if err := db.QueryRow(`SELECT platform_username, full_name, profile_url FROM people`).Scan(&username, &fullName, &profileURL); err != nil {
+		t.Fatal(err)
+	}
+	if username != "ada-first-test" || fullName != "Ada First" || profileURL != "https://www.linkedin.com/in/ada-first-test/" {
+		t.Fatalf("person = %s / %s / %s", username, fullName, profileURL)
+	}
+}
+
+// A LinkedIn profile read fills the profile columns: photo, about,
+// headline, location, current job title, experience and education.
+func TestPeopleSaveNode_LinkedInProfileDetails(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	SetGlobalPeopleDB(db)
+
+	item := map[string]interface{}{
+		"username": "ada-first-test", "profile_url": "https://www.linkedin.com/in/ada-first-test/",
+		"full_name": "Ada First", "headline": "Robotics engineer at Example Works", "job_title": "Robotics engineer",
+		"location": "Lisbon, Portugal", "about": "Builds things.", "profile_picture_url": "https://media.example/ada.jpg",
+		"experience": []interface{}{map[string]interface{}{"title": "Robotics engineer", "company": "Example Works", "end": "Present"}},
+		"education":  []interface{}{map[string]interface{}{"school": "Example University", "degree": "BSc"}},
+	}
+	if _, err := (&PeopleSaveNode{}).Execute(context.Background(), workflow.NodeInput{Items: []workflow.Item{workflow.NewItem(item)}},
+		map[string]interface{}{"profile_id": "p1"}); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	var imageURL, about, headline, jobTitle, location, experience, education sql.NullString
+	if err := db.QueryRow(`SELECT image_url, about, headline, job_title, location, experience, education FROM people WHERE platform_username = 'ada-first-test' AND profile_id = 'p1'`).
+		Scan(&imageURL, &about, &headline, &jobTitle, &location, &experience, &education); err != nil {
+		t.Fatal(err)
+	}
+	if imageURL.String != "https://media.example/ada.jpg" || about.String != "Builds things." || headline.String != "Robotics engineer at Example Works" ||
+		jobTitle.String != "Robotics engineer" || location.String != "Lisbon, Portugal" ||
+		experience.String != `[{"company":"Example Works","end":"Present","title":"Robotics engineer"}]` ||
+		education.String != `[{"degree":"BSc","school":"Example University"}]` {
+		t.Fatalf("person = %v %v %v %v %v %v %v", imageURL, about, headline, jobTitle, location, experience, education)
+	}
+}
+
+// Without a profile_id in the config the people belong to the profile the
+// run belongs to, not "default".
+func TestPeopleSaveNode_ProfileFromContext(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	SetGlobalPeopleDB(db)
+
+	ctx := vault.ContextWithProfileID(context.Background(), "p2")
+	items := []workflow.Item{workflow.NewItem(map[string]interface{}{"profile_url": "https://www.linkedin.com/in/kit/"})}
+	if _, err := (&PeopleSaveNode{}).Execute(ctx, workflow.NodeInput{Items: items}, map[string]interface{}{}); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	var profileID string
+	if err := db.QueryRow(`SELECT profile_id FROM people WHERE platform_username = 'kit'`).Scan(&profileID); err != nil || profileID != "p2" {
+		t.Fatalf("profile_id = %q (%v), want p2", profileID, err)
 	}
 }

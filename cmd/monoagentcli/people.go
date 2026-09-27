@@ -238,6 +238,7 @@ func newPeopleGetCmd(cfg *globalConfig) *cobra.Command {
 			var verified, contentCount, followingCount sql.NullInt64
 			var fullName, imageURL, contactDetails, website, profileURL sql.NullString
 			var followerCount, introduction, category, jobTitle sql.NullString
+			var headline, location, about, experience, education sql.NullString
 
 			err = db.DB.QueryRow(
 				`SELECT id, COALESCE(platform_username, ''), COALESCE(platform, ''), full_name,
@@ -245,13 +246,15 @@ func newPeopleGetCmd(cfg *globalConfig) *cobra.Command {
 				        website, COALESCE(content_count, 0), follower_count,
 				        COALESCE(following_count, 0), introduction, COALESCE(is_verified, 0),
 				        category, job_title,
-				        created_at, updated_at, profile_url
+				        created_at, updated_at, profile_url,
+				        headline, location, about, experience, education
 				 FROM people WHERE id = ? AND profile_id = ?`, personID, cfg.ProfileID,
 			).Scan(
 				&p.ID, &p.PlatformUsername, &p.Platform, &fullName,
 				&imageURL, &contactDetails, &website, &contentCount,
 				&followerCount, &followingCount, &introduction,
 				&verified, &category, &jobTitle, &p.CreatedAt, &p.UpdatedAt, &profileURL,
+				&headline, &location, &about, &experience, &education,
 			)
 			if err == sql.ErrNoRows {
 				return errNotFound("person %q not found", personID)
@@ -271,6 +274,11 @@ func newPeopleGetCmd(cfg *globalConfig) *cobra.Command {
 			p.IsVerified = verified.Valid && verified.Int64 != 0
 			p.Category = category.String
 			p.JobTitle = jobTitle.String
+			p.Headline = headline.String
+			p.Location = location.String
+			p.About = about.String
+			p.Experience = jsonArrayOrNil(experience.String)
+			p.Education = jsonArrayOrNil(education.String)
 
 			links := confirmedLinks(db, cfg.ProfileID, p.ID)
 			if cfg.JSONOutput {
@@ -292,6 +300,12 @@ func newPeopleGetCmd(cfg *globalConfig) *cobra.Command {
 			table.Append([]string{"Verified", fmt.Sprintf("%v", p.IsVerified)})
 			table.Append([]string{"Category", p.Category})
 			table.Append([]string{"Job Title", p.JobTitle})
+			if p.Headline != "" {
+				table.Append([]string{"Headline", p.Headline})
+			}
+			if p.Location != "" {
+				table.Append([]string{"Location", p.Location})
+			}
 			table.Append([]string{"Followers", p.FollowerCount})
 			table.Append([]string{"Following", fmt.Sprintf("%d", p.FollowingCount)})
 			table.Append([]string{"Content Count", fmt.Sprintf("%d", p.ContentCount)})
@@ -304,8 +318,17 @@ func newPeopleGetCmd(cfg *globalConfig) *cobra.Command {
 			if p.Introduction != "" {
 				table.Append([]string{"Bio", truncateStr(p.Introduction, 60)})
 			}
+			if p.About != "" {
+				table.Append([]string{"About", truncateStr(p.About, 60)})
+			}
 			if p.ImageURL != "" {
 				table.Append([]string{"Image", truncateStr(p.ImageURL, 60)})
+			}
+			for i, line := range profileEntryLines(p.Experience, "title", "company", "date_range") {
+				table.Append([]string{labelOnFirst(i, "Experience"), line})
+			}
+			for i, line := range profileEntryLines(p.Education, "school", "degree", "date_range") {
+				table.Append([]string{labelOnFirst(i, "Education"), line})
 			}
 			for _, l := range links {
 				table.Append([]string{"Same person as", l.String()})
@@ -491,6 +514,45 @@ func newPeopleImportCmd(cfg *globalConfig) *cobra.Command {
 	_ = cmd.MarkFlagRequired("platform")
 
 	return cmd
+}
+
+// jsonArrayOrNil returns a stored JSON array as raw JSON, or nil when it is
+// empty or not an array (so it drops out of the JSON output).
+func jsonArrayOrNil(s string) json.RawMessage {
+	var arr []json.RawMessage
+	if s == "" || json.Unmarshal([]byte(s), &arr) != nil || len(arr) == 0 {
+		return nil
+	}
+	return json.RawMessage(s)
+}
+
+// profileEntryLines renders each entry of a stored experience/education
+// array as one line: the given fields that are set, joined by " · ".
+func profileEntryLines(raw json.RawMessage, fields ...string) []string {
+	var entries []map[string]interface{}
+	if len(raw) == 0 || json.Unmarshal(raw, &entries) != nil {
+		return nil
+	}
+	lines := make([]string, 0, len(entries))
+	for _, e := range entries {
+		var parts []string
+		for _, f := range fields {
+			if v, _ := e[f].(string); v != "" {
+				parts = append(parts, v)
+			}
+		}
+		if len(parts) > 0 {
+			lines = append(lines, truncateStr(strings.Join(parts, " · "), 80))
+		}
+	}
+	return lines
+}
+
+func labelOnFirst(i int, label string) string {
+	if i == 0 {
+		return label
+	}
+	return ""
 }
 
 // nullableStr returns a sql.NullString; empty strings map to NULL.

@@ -2,8 +2,8 @@
   "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "scrape_profile_info",
   "platform": "LINKEDIN",
-  "version": "2.0.0",
-  "description": "Extract profile information (name, headline, location, about, connection and follower counts) from LinkedIn profiles. Visiting a profile shows you in that member's \"Who viewed your profile\"; LinkedIn only hides this when you switch to private mode in LinkedIn's settings (Visibility > Profile viewing options).",
+  "version": "2.1.0",
+  "description": "Extract profile information from LinkedIn profiles: name, headline, location, about, profile photo and cover image, connection and follower counts, and the full work experience (titles, companies, dates, locations, descriptions) and education (schools, degrees, fields of study, dates) from the profile's details pages. Visiting a profile shows you in that member's \"Who viewed your profile\"; LinkedIn only hides this when you switch to private mode in LinkedIn's settings (Visibility > Profile viewing options).",
   "sideEffects": "read",
   "visibility": ["profile_view_visible_to_owner"],
   "metadata": {
@@ -26,6 +26,12 @@
         "default": 3,
         "min": 1,
         "max": 120
+      },
+      {
+        "name": "includeDetails",
+        "type": "boolean",
+        "default": true,
+        "description": "Also open the profile's Experience and Education details pages to read every entry (the profile page shows only the first few)"
       }
     ]
   },
@@ -41,7 +47,12 @@
       "follower_count",
       "connection_degree",
       "profile_picture_url",
-      "is_self"
+      "cover_image_url",
+      "is_self",
+      "job_title",
+      "current_company",
+      "experience",
+      "education"
     ],
     "failure": [
       "failedItems"
@@ -53,10 +64,11 @@
       "type": "call_bot_method",
       "methodName": "get_profile_data",
       "args": [
-        "{{item.url or item.href or item.username or item}}"
+        "{{item.url or item.href or item.username or item}}",
+        "{{includeDetails}}"
       ],
       "variable_name": "profile",
-      "timeout": 90,
+      "timeout": 150,
       "onError": {
         "action": "mark_failed"
       }

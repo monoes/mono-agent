@@ -465,5 +465,13 @@
     "refresh": "Refresh",
     "banner": "AI agent runtimes (Claude Code, Codex, …) on the <strong>AI agents</strong> page are the recommended way to use AI. These API-key connections remain for existing workflow AI nodes that use them.",
     "keyKeepPlaceholder": "Leave blank to keep the saved key"
+  },
+  "personProfile": {
+    "experience": "Experience",
+    "education": "Education",
+    "introduction": "Introduction",
+    "skills": "Skills",
+    "grade": "Grade",
+    "activities": "Activities"
   }
 }

@@ -8,12 +8,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/monoes/mono-agent/internal/bot"
 	_ "github.com/monoes/mono-agent/internal/bot/instagram"
 	_ "github.com/monoes/mono-agent/internal/bot/linkedin"
 	_ "github.com/monoes/mono-agent/internal/bot/tiktok"
 	_ "github.com/monoes/mono-agent/internal/bot/x"
+	"github.com/monoes/mono-agent/internal/personitem"
 	"github.com/monoes/mono-agent/internal/util"
+	"github.com/monoes/mono-agent/internal/vault"
 	"github.com/monoes/mono-agent/internal/workflow"
 )
 
@@ -62,7 +63,12 @@ func (n *PeopleSaveNode) Execute(
 	// Config-level platform override.
 	configPlatform, _ := config["platform"].(string)
 
+	// The owning profile: the node's config, else the profile the run
+	// belongs to, else "default".
 	profileID, _ := config["profile_id"].(string)
+	if profileID == "" {
+		profileID = vault.ProfileIDFromContext(ctx)
+	}
 	if profileID == "" {
 		profileID = "default"
 	}
@@ -77,8 +83,9 @@ func (n *PeopleSaveNode) Execute(
 		`INSERT INTO people (id, platform_username, platform, full_name, image_url,
 		        contact_details, website, content_count, follower_count,
 		        following_count, introduction, is_verified, category, job_title,
+		        headline, location, about, experience, education,
 		        profile_url, profile_id, created_at, updated_at)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		 ON CONFLICT(platform_username, platform, profile_id)
 		 DO UPDATE SET
 		   full_name       = COALESCE(excluded.full_name,       people.full_name),
@@ -92,6 +99,11 @@ func (n *PeopleSaveNode) Execute(
 		   is_verified     = COALESCE(excluded.is_verified,     people.is_verified),
 		   category        = COALESCE(excluded.category,        people.category),
 		   job_title       = COALESCE(excluded.job_title,       people.job_title),
+		   headline        = COALESCE(excluded.headline,        people.headline),
+		   location        = COALESCE(excluded.location,        people.location),
+		   about           = COALESCE(excluded.about,           people.about),
+		   experience      = COALESCE(excluded.experience,      people.experience),
+		   education       = COALESCE(excluded.education,       people.education),
 		   updated_at      = excluded.updated_at`,
 	)
 	if err != nil {
@@ -113,53 +125,42 @@ func (n *PeopleSaveNode) Execute(
 			ExecutionID: input.ExecutionID,
 		}
 
-		// Resolve profile URL (prefer explicit profile_url, fall back to url or href).
-		profileURL := firstString(data, "profile_url", "url", "href")
-
 		// Resolve platform (config override > URL inference > item field).
 		platform := configPlatform
-		if platform == "" && profileURL != "" {
-			lowerURL := strings.ToLower(profileURL)
-			if strings.Contains(lowerURL, "linkedin.com") {
-				platform = "LINKEDIN"
-			} else if strings.Contains(lowerURL, "instagram.com") {
-				platform = "INSTAGRAM"
-			} else if strings.Contains(lowerURL, "twitter.com") || strings.Contains(lowerURL, "x.com") {
-				platform = "X"
-			} else if strings.Contains(lowerURL, "tiktok.com") {
-				platform = "TIKTOK"
-			}
+		if platform == "" {
+			platform = platformFromURL(firstString(data, "profile_url", "url", "href", "author_url"))
 		}
 		if platform == "" {
 			platform, _ = data["platform"].(string)
 		}
 		platformUpper := strings.ToUpper(platform)
 
-		// Extract username from profile URL via platform adapter.
-		username := ""
-		if profileURL != "" {
-			if factory, ok := bot.PlatformRegistry[platformUpper]; ok {
-				extracted := factory().ExtractUsername(profileURL)
-				if extracted != "gemini-user" && extracted != "" {
-					username = extracted
-				}
-			}
-			if username == "" {
-				// Generic fallback: last path segment.
-				parts := strings.Split(strings.Trim(profileURL, "/"), "/")
-				if len(parts) > 0 {
-					username = strings.TrimPrefix(parts[len(parts)-1], "@")
+		// The person the item is about: its own profile URL, or the author
+		// of a post or comment. A URL that names no person (a post
+		// permalink, a company page) saves nobody.
+		lookup := data
+		if _, ok := data["url"]; !ok {
+			if href, ok := data["href"].(string); ok {
+				lookup = map[string]interface{}{"url": href}
+				for k, v := range data {
+					lookup[k] = v
 				}
 			}
 		}
-		if username == "" {
+		ref, ok := personitem.Resolve(platformUpper, lookup)
+		if !ok {
 			continue // Cannot save without a username.
 		}
+		username, profileURL := ref.Username, ref.ProfileURL
+		prof := personitem.Profile{FullName: ref.FullName}
+		if !ref.Author {
+			prof = personitem.ProfileOf(data)
+		}
 
-		fullName := firstString(data, "full_name", "name")
-		imageURL, _ := data["image_url"].(string)
-		website, _ := data["website"].(string)
-		jobTitle := firstString(data, "job_title", "position", "headline")
+		fullName := prof.FullName
+		imageURL := prof.ImageURL
+		website := prof.Website
+		jobTitle := prof.JobTitle
 		if jobTitle == "" {
 			if jt, ok := config["job_title"].(string); ok && jt != "" {
 				if res, err := exprEngine.EvaluateString(jt, exprCtx); err == nil && res != "" {
@@ -224,6 +225,11 @@ func (n *PeopleSaveNode) Execute(
 			isVerified,
 			nullableStr(category),
 			nullableStr(jobTitle),
+			nullableStr(prof.Headline),
+			nullableStr(prof.Location),
+			nullableStr(prof.About),
+			nullableStr(prof.Experience),
+			nullableStr(prof.Education),
 			nullableStr(profileURL),
 			profileID,
 			now,
@@ -259,6 +265,22 @@ func (n *PeopleSaveNode) Execute(
 	return []workflow.NodeOutput{
 		{Handle: "main", Items: savedItems},
 	}, nil
+}
+
+// platformFromURL infers the platform from a URL's host.
+func platformFromURL(u string) string {
+	lowerURL := strings.ToLower(u)
+	switch {
+	case strings.Contains(lowerURL, "linkedin.com"):
+		return "LINKEDIN"
+	case strings.Contains(lowerURL, "instagram.com"):
+		return "INSTAGRAM"
+	case strings.Contains(lowerURL, "twitter.com") || strings.Contains(lowerURL, "x.com"):
+		return "X"
+	case strings.Contains(lowerURL, "tiktok.com"):
+		return "TIKTOK"
+	}
+	return ""
 }
 
 // firstString returns the first non-empty string value found under the given keys.

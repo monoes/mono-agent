@@ -1045,6 +1045,24 @@
         "required": true,
         "help": "Usernames or profile URLs to scrape.",
         "item_type": "text"
+      },
+      {
+        "key": "includeDetails",
+        "label": "Full experience \u0026 education",
+        "type": "boolean",
+        "required": false,
+        "default": true,
+        "help": "Also open each profile's Experience and Education pages to read every entry (the profile page shows only the first few)."
+      },
+      {
+        "key": "delayBetweenProfiles",
+        "label": "Delay Between Profiles",
+        "type": "number",
+        "required": false,
+        "default": 3,
+        "help": "Seconds to wait between profiles",
+        "min": 1,
+        "max": 120
       }
     ]
   },

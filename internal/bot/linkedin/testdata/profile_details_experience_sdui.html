@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Pat Example | LinkedIn</title>
+<!-- SYNTHETIC fixture: /in/<slug>/details/experience/ in the server-driven
+     markup, modelled on a real capture (2026-09). Entries are
+     componentkey'd blocks separated by <hr>; each starts with a company
+     logo link. "Example Labs" groups two roles in a <ul>, each role with an
+     expandable description and a media attachment ("Show all 3 media")
+     that is not part of the position. Invented person and companies. -->
+</head>
+<body>
+<main>
+<section aria-label="Primary content">
+<div componentkey="com.linkedin.sdui.profile.card.refACoAAFakeFakeFake0002ExperienceDetailsSection">
+  <div>
+    <button aria-label="Navigate back to profile main screen"><svg aria-hidden="true"></svg></button>
+    <p>Experience</p>
+  </div>
+  <div>
+    <!-- Grouped: one company, two roles. -->
+    <div componentkey="entity-collection-item-1a2b3c4d">
+      <hr role="presentation">
+      <div>
+        <div>
+          <a href="https://www.linkedin.com/company/1111/"><figure><svg role="img" aria-label="Example Labs logo"></svg><img alt="Example Labs logo" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></figure></a>
+          <div>
+            <a href="https://www.linkedin.com/company/1111/"><div><div><div>
+              <p>Example Labs</p>
+              <p>Full-time · 9 yrs 2 mos</p>
+            </div></div>
+            <p>Lisbon, Portugal</p></div></a>
+          </div>
+        </div>
+      </div>
+      <ul>
+        <li>
+          <div><div></div></div>
+          <div>
+            <a href="https://www.linkedin.com/company/1111/"><div>
+              <p>Chief Technology Officer</p>
+              <p>Mar 2021 - Present · 5 yrs 7 mos</p>
+            </div></a>
+            <div>
+              <p><span data-testid="expandable-text-box">Leads the platform team.<br>Hired the first twenty engineers.<button aria-hidden="true" data-testid="expandable-text-button"><span><span>…</span><span>more</span></span></button></span></p>
+              <div>
+                <a href="https://www.linkedin.com/in/pat-example-test/overlay/Position/1/treasury/?profileId=x"><div><figure><img alt="Thumbnail for Launch talk" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></figure><div><p>Launch talk</p><p><span>Our launch talk at Example Conf.</span></p></div></div></a>
+                <a href="https://www.linkedin.com/in/pat-example-test/overlay/Position/1/image-list/?profileId=x"><span><span>Show all 3 media</span></span></a>
+              </div>
+            </div>
+          </div>
+        </li>
+        <li>
+          <div><div></div></div>
+          <div>
+            <a href="https://www.linkedin.com/company/1111/"><div>
+              <p>Software Engineer</p>
+              <p>Part-time</p>
+              <p>Aug 2017 - Feb 2021 · 3 yrs 7 mos</p>
+              <p>Porto, Portugal · Hybrid</p>
+            </div></a>
+            <div>
+              <p><span data-testid="expandable-text-box">Built the billing service.</span></p>
+            </div>
+          </div>
+        </li>
+      </ul>
+    </div>
+    <!-- Single role, company and employment type on one line, workplace
+         type after the location, skills line, no description box. -->
+    <div componentkey="entity-collection-item-5e6f7a8b">
+      <hr role="presentation">
+      <div style="display: contents" data-display-contents="true"><div><div><div>
+        <a href="https://www.linkedin.com/company/2222/"><figure><img alt="Sample Studio logo" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></figure></a>
+        <div>
+          <a href="https://www.linkedin.com/company/2222/"><div><div><div>
+            <p>Product Designer</p>
+            <p>Sample Studio · Contract</p>
+          </div></div>
+          <p>Jan 2015 - Jul 2017 · 2 yrs 7 mos</p>
+          <p>Berlin, Germany · Remote</p></div></a>
+          <p>Figma, Design Systems and +2 skills</p>
+        </div>
+      </div></div></div></div>
+    </div>
+    <!-- A company without a LinkedIn page: a ghost logo, no company link,
+         a year-only range. -->
+    <div componentkey="entity-collection-item-9c0d1e2f">
+      <hr role="presentation">
+      <div><div><div>
+        <div><figure><svg role="img" aria-label="Corner Cafe logo"></svg></figure></div>
+        <div>
+          <div><div>
+            <p>Barista</p>
+            <p>Corner Cafe</p>
+          </div>
+          <p>2012 – 2014</p></div>
+        </div>
+      </div></div></div>
+    </div>
+  </div>
+</div>
+</section>
+</main>
+</body>
+</html>

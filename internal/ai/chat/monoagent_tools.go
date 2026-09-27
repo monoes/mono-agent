@@ -1498,15 +1498,18 @@ func (mt *MonoagentTools) getPerson(args string) (string, error) {
 		return "", err
 	}
 	var id, username, platform, fullName, imageURL, contact, website, followerCount, intro, category, jobTitle string
+	var headline, location, about, experience, education string
 	var followingCount, contentCount int
 	var isVerified bool
 	if err := mt.db.QueryRow(
 		`SELECT id, platform_username, platform, COALESCE(full_name,''), COALESCE(image_url,''),
-		        COALESCE(contact_details,''), COALESCE(website,''), content_count, COALESCE(follower_count,''),
-		        following_count, COALESCE(introduction,''), is_verified, COALESCE(category,''), COALESCE(job_title,'')
+		        COALESCE(contact_details,''), COALESCE(website,''), COALESCE(content_count,0), COALESCE(follower_count,''),
+		        COALESCE(following_count,0), COALESCE(introduction,''), COALESCE(is_verified,0), COALESCE(category,''), COALESCE(job_title,''),
+		        COALESCE(headline,''), COALESCE(location,''), COALESCE(about,''), COALESCE(experience,''), COALESCE(education,'')
 		 FROM people WHERE id = ?`, a.PersonID,
 	).Scan(&id, &username, &platform, &fullName, &imageURL, &contact, &website, &contentCount, &followerCount,
-		&followingCount, &intro, &isVerified, &category, &jobTitle); err != nil {
+		&followingCount, &intro, &isVerified, &category, &jobTitle,
+		&headline, &location, &about, &experience, &education); err != nil {
 		return "", fmt.Errorf("query person: %w", err)
 	}
 	p := map[string]interface{}{
@@ -1514,6 +1517,13 @@ func (mt *MonoagentTools) getPerson(args string) (string, error) {
 		"image_url": imageURL, "contact_details": contact, "website": website, "content_count": contentCount,
 		"follower_count": followerCount, "following_count": followingCount, "introduction": intro,
 		"is_verified": isVerified, "category": category, "job_title": jobTitle,
+		"headline": headline, "location": location, "about": about,
+	}
+	for k, raw := range map[string]string{"experience": experience, "education": education} {
+		var entries []interface{}
+		if raw != "" && json.Unmarshal([]byte(raw), &entries) == nil {
+			p[k] = entries
+		}
 	}
 	return marshalJSON(p)
 }

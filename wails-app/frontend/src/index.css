@@ -873,6 +873,11 @@ body {
   flex-direction: column;
   gap: 16px;
 }
+/* The body scrolls; its cards (overflow: hidden) must keep their height
+   instead of shrinking to fit it. */
+.profile-body > * {
+  flex-shrink: 0;
+}
 
 /* Hero card */
 .profile-hero {
@@ -1811,3 +1816,78 @@ button.dash-row:hover { background: var(--elevated); }
 
 /* Unread inbound message */
 .unread-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 5px var(--cyan); flex-shrink: 0; }
+
+/* Profile experience / education entries */
+.profile-intro {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin-bottom: 10px;
+  max-width: 540px;
+}
+.profile-entries {
+  display: flex;
+  flex-direction: column;
+}
+.profile-entry {
+  display: flex;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-dim);
+}
+.profile-entry:last-child {
+  border-bottom: none;
+}
+.profile-entry-icon {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius);
+  background: var(--cyan-glow);
+  color: var(--cyan-dim);
+}
+.profile-entry-body {
+  min-width: 0;
+  flex: 1;
+}
+.profile-entry-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.profile-entry-org {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+.profile-entry-meta {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.profile-entry-label {
+  color: var(--text-dim);
+}
+.profile-entry-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.55;
+  margin-top: 6px;
+  white-space: pre-line;
+}
+.profile-entry-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.profile-entry-link:hover {
+  color: var(--cyan);
+  text-decoration: underline;
+}
