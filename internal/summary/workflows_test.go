@@ -187,3 +187,18 @@ func TestDaemonSchedulesPreferred(t *testing.T) {
 		t.Fatalf("no daemon: %+v", up["every"])
 	}
 }
+
+// A workflow with no profile id belongs to "default", the same rule
+// `workflow list` applies; it must not be counted in every profile.
+func TestOwnWorkflowsUnownedMeansDefault(t *testing.T) {
+	src := fakeWorkflows{wfs: []workflow.Workflow{
+		{ID: "legacy", IsActive: true},
+		{ID: "work", IsActive: true, ProfileID: "p-work"},
+	}}
+	for profile, want := range map[string]string{"default": "legacy", "p-work": "work"} {
+		got, err := ownWorkflows(context.Background(), Options{ProfileID: profile, Workflows: src})
+		if err != nil || len(got) != 1 || got[0].ID != want {
+			t.Errorf("%s: got %+v, %v; want only %s", profile, got, err, want)
+		}
+	}
+}

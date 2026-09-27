@@ -105,9 +105,17 @@ func ownWorkflows(ctx context.Context, o Options) ([]workflow.Workflow, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A workflow with no profile id is the default profile's, the same
+	// COALESCE(profile_id,'default') rule the store's SQLite half and
+	// `workflow list` use. Counting it in every profile made the All
+	// profiles view count it once per profile.
 	own := all[:0:0]
 	for _, w := range all {
-		if w.ProfileID == "" || w.ProfileID == o.ProfileID {
+		owner := w.ProfileID
+		if owner == "" {
+			owner = "default"
+		}
+		if owner == o.ProfileID {
 			own = append(own, w)
 		}
 	}
