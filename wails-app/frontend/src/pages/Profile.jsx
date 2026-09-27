@@ -403,7 +403,8 @@ function MessagesSection({ personId, personLabel, personPlatform }) {
                   onChange={e => setConnectionId(e.target.value)}
                   style={{
                     fontFamily: 'var(--font-mono)', fontSize: 11, padding: '4px 22px 4px 6px', borderRadius: 4,
-                    background: 'var(--bg)', border: '1px solid var(--border)', color: 'var(--text)',
+                    backgroundColor: 'var(--bg)', border: '1px solid var(--border)', color: 'var(--text)',
+                    cursor: 'pointer', outline: 'none',
                     // WebKitGTK draws <select> with native GTK chrome (light
                     // bg, dark text) unless appearance is explicitly reset.
                     appearance: 'none',
