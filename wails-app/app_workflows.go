@@ -36,6 +36,9 @@ type WorkflowSummary struct {
 	// Nodes unpopulated on purpose, so the UI had nothing to count and
 	// showed "0 nodes" for every workflow.
 	NodeCount int `json:"node_count"`
+	// Set only in the dashboard's All profiles view.
+	ProfileID   string `json:"profile_id,omitempty"`
+	ProfileName string `json:"profile_name,omitempty"`
 }
 
 type WorkflowNodeData struct {
@@ -83,6 +86,9 @@ type WorkflowExecutionSummary struct {
 	FinishedAt   string `json:"finished_at"`
 	Error        string `json:"error"`
 	CreatedAt    string `json:"created_at"`
+	// Set only in the dashboard's All profiles view.
+	ProfileID   string `json:"profile_id,omitempty"`
+	ProfileName string `json:"profile_name,omitempty"`
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

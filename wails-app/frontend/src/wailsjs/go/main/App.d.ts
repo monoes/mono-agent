@@ -37,6 +37,8 @@ export function ApproveOrgAction(arg1:string,arg2:string,arg3:string):Promise<st
 
 export function ApprovePendingPerson(arg1:string,arg2:string,arg3:boolean):Promise<void>;
 
+export function BindBrowser(arg1:string,arg2:string):Promise<main.BrowserRow>;
+
 export function CancelHealthRun(arg1:string):Promise<string>;
 
 export function CancelWorkflow(arg1:string):Promise<void>;
@@ -119,11 +121,15 @@ export function GetAgentRuntimeModels(arg1:string,arg2:string):Promise<string>;
 
 export function GetAllPersonMessages(arg1:number):Promise<Array<storage.PersonMessageWithPerson>>;
 
+export function GetAllProfilesRecentExecutions(arg1:number):Promise<Array<main.WorkflowExecutionSummary>>;
+
 export function GetAllTags():Promise<Array<main.TagInfo>>;
 
 export function GetApplication(arg1:string):Promise<main.ApplicationDetail>;
 
 export function GetApplications(arg1:string,arg2:string,arg3:string):Promise<Array<main.ApplicationSummary>>;
+
+export function GetBrowsers():Promise<main.BrowsersReport>;
 
 export function GetCaptureView(arg1:string):Promise<main.CaptureView>;
 
@@ -144,6 +150,10 @@ export function GetDraftPersonMessages():Promise<Array<storage.PersonMessageWith
 export function GetEffectiveTools(arg1:string,arg2:string):Promise<string>;
 
 export function GetExecutionDetail(arg1:string):Promise<Record<string, any>>;
+
+export function GetGlobalOrgSummary(arg1:boolean):Promise<string>;
+
+export function GetGlobalSummary():Promise<string>;
 
 export function GetHILItems():Promise<Array<main.HILItem>>;
 
@@ -284,6 +294,8 @@ export function KeyringClearPassphrase():Promise<main.KeyringPassphraseResult>;
 export function KeyringSetPassphrase(arg1:string):Promise<main.KeyringPassphraseResult>;
 
 export function KeyringStatus():Promise<main.KeyringStatusInfo>;
+
+export function ListAllProfilesWorkflows():Promise<Array<main.WorkflowSummary>>;
 
 export function ListAutomations():Promise<string>;
 

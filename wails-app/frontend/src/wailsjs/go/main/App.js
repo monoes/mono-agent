@@ -66,6 +66,10 @@ export function ApprovePendingPerson(arg1, arg2, arg3) {
   return window['go']['main']['App']['ApprovePendingPerson'](arg1, arg2, arg3);
 }
 
+export function BindBrowser(arg1, arg2) {
+  return window['go']['main']['App']['BindBrowser'](arg1, arg2);
+}
+
 export function CancelHealthRun(arg1) {
   return window['go']['main']['App']['CancelHealthRun'](arg1);
 }
@@ -230,6 +234,10 @@ export function GetAllPersonMessages(arg1) {
   return window['go']['main']['App']['GetAllPersonMessages'](arg1);
 }
 
+export function GetAllProfilesRecentExecutions(arg1) {
+  return window['go']['main']['App']['GetAllProfilesRecentExecutions'](arg1);
+}
+
 export function GetAllTags() {
   return window['go']['main']['App']['GetAllTags']();
 }
@@ -240,6 +248,10 @@ export function GetApplication(arg1) {
 
 export function GetApplications(arg1, arg2, arg3) {
   return window['go']['main']['App']['GetApplications'](arg1, arg2, arg3);
+}
+
+export function GetBrowsers() {
+  return window['go']['main']['App']['GetBrowsers']();
 }
 
 export function GetCaptureView(arg1) {
@@ -280,6 +292,14 @@ export function GetEffectiveTools(arg1, arg2) {
 
 export function GetExecutionDetail(arg1) {
   return window['go']['main']['App']['GetExecutionDetail'](arg1);
+}
+
+export function GetGlobalOrgSummary(arg1) {
+  return window['go']['main']['App']['GetGlobalOrgSummary'](arg1);
+}
+
+export function GetGlobalSummary() {
+  return window['go']['main']['App']['GetGlobalSummary']();
 }
 
 export function GetHILItems() {
@@ -560,6 +580,10 @@ export function KeyringSetPassphrase(arg1) {
 
 export function KeyringStatus() {
   return window['go']['main']['App']['KeyringStatus']();
+}
+
+export function ListAllProfilesWorkflows() {
+  return window['go']['main']['App']['ListAllProfilesWorkflows']();
 }
 
 export function ListAutomations() {

@@ -36,7 +36,7 @@ function useInterval(fn, ms) {
   }, [ms])
 }
 
-export function useDashboardData({ active = true } = {}) {
+export function useDashboardData({ active = true, scope = 'profile' } = {}) {
   const [summary, setSummary] = useState(null)
   const [summaryFailed, setSummaryFailed] = useState(false)
   const [orgs, setOrgs] = useState(null)
@@ -46,6 +46,11 @@ export function useDashboardData({ active = true } = {}) {
   const windowVisible = usePageVisibleRef()
   const activeRef = useRef(active)
   activeRef.current = active
+  // Which view: this profile's reads, or their --all-profiles forms. A
+  // reply that comes back after the view changed belongs to the other view
+  // and is dropped, even a full org summary.
+  const globalRef = useRef(scope === 'global')
+  globalRef.current = scope === 'global'
   const visible = { get current() { return windowVisible.current && activeRef.current } }
   const haveFull = useRef(false)
 
@@ -54,14 +59,17 @@ export function useDashboardData({ active = true } = {}) {
   const seq = useRef({ summary: 0, lists: 0, orgs: 0 })
   const loadSummary = useCallback(async () => {
     const n = ++seq.current.summary
-    const s = await api.getSummary()
-    if (n !== seq.current.summary) return
+    const g = globalRef.current
+    const s = await (g ? api.getGlobalSummary() : api.getSummary())
+    if (n !== seq.current.summary || g !== globalRef.current) return
     if (s) setSummary(s)
     setSummaryFailed(!s)
   }, [])
   const loadOrgs = useCallback(async (fast = true) => {
     const n = ++seq.current.orgs
-    const o = await api.getOrgSummary(fast)
+    const g = globalRef.current
+    const o = await (g ? api.getGlobalOrgSummary(fast) : api.getOrgSummary(fast))
+    if (g !== globalRef.current) return
     // A full reply is never discarded (it is the only source of needs_you);
     // a fast one is, when a newer request is in flight.
     if (!o || (fast && n !== seq.current.orgs)) return
@@ -70,8 +78,11 @@ export function useDashboardData({ active = true } = {}) {
   }, [])
   const loadLists = useCallback(async () => {
     const n = ++seq.current.lists
-    const [w, e] = await Promise.all([api.listWorkflows(), api.getRecentExecutions(30)])
-    if (n !== seq.current.lists) return
+    const g = globalRef.current
+    const [w, e] = await Promise.all(g
+      ? [api.listAllWorkflows(), api.getAllRecentExecutions(30)]
+      : [api.listWorkflows(), api.getRecentExecutions(30)])
+    if (n !== seq.current.lists || g !== globalRef.current) return
     setWorkflows(w || [])
     setExecutions(e || [])
   }, [])
@@ -88,6 +99,17 @@ export function useDashboardData({ active = true } = {}) {
     if (active && !wasActive.current) refresh()
     wasActive.current = active
   }, [active, refresh])
+
+  // Switching view: clear what the other view showed and read it all again.
+  const firstScope = useRef(true)
+  useEffect(() => {
+    if (firstScope.current) { firstScope.current = false; return }
+    haveFull.current = false
+    setSummary(null)
+    setOrgs(null)
+    setLoading(true)
+    refresh().then(() => loadOrgs(false))
+  }, [scope, refresh, loadOrgs])
 
   useEffect(() => {
     const offs = REFRESH_EVENTS.map(n => subscribeEvent(n, () => {

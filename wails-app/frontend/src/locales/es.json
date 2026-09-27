@@ -222,6 +222,19 @@
       "evaluated_one": "{{count}} evaluada",
       "evaluated_other": "{{count}} evaluadas",
       "unread": "{{count}} sin leer"
+    },
+    "scope": {
+      "label": "Mostrar",
+      "profile": "Este perfil",
+      "global": "Todos los perfiles"
+    },
+    "profiles": {
+      "title": "Perfiles",
+      "current": "actual",
+      "switch": "Cambiar",
+      "switchTo": "Cambiar a {{name}}",
+      "chipTitle": "Del perfil {{name}}",
+      "line": "{{active}} activos · {{running}} en curso · {{failed}} fallidos (24 h) · {{waiting}} esperándote"
     }
   },
   "agentSetup": {

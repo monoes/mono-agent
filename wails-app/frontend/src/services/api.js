@@ -66,6 +66,12 @@ export const api = {
   getSummary:           () => GoApp.GetSummary().then(parseCLIJSON('summary')).catch(guard('summary', null)),
   getSummarySections:   (csv) => GoApp.GetSummarySections(csv).then(parseCLIJSON('summary')).catch(guard('summary', null)),
   getOrgSummary:        (fast = true) => GoApp.GetOrgSummary(fast).then(parseCLIJSON('org summary')).catch(guard('org summary', null)),
+  // The dashboard's All profiles view: the same reads across every profile,
+  // each row tagged with profile_id/profile_name.
+  getGlobalSummary:       () => GoApp.GetGlobalSummary().then(parseCLIJSON('summary')).catch(guard('summary', null)),
+  getGlobalOrgSummary:    (fast = true) => GoApp.GetGlobalOrgSummary(fast).then(parseCLIJSON('org summary')).catch(guard('org summary', null)),
+  listAllWorkflows:       () => GoApp.ListAllProfilesWorkflows().catch(guard('list workflows', [])),
+  getAllRecentExecutions: (limit = 20) => GoApp.GetAllProfilesRecentExecutions(limit).catch(guard('recent executions', [])),
   listWorkflows:        () => GoApp.ListWorkflows().catch(guard('list workflows', [])),
   runWorkflow:          (id) => GoApp.RunWorkflow(id).catch(e => { reportError('run workflow', e); return `error: ${e}` }),
   runWorkflowWithInput: (id, input) => GoApp.RunWorkflowWithInput(id, input || '').catch(e => { reportError('run workflow', e); return `error: ${e}` }),
