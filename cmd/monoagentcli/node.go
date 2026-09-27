@@ -30,6 +30,7 @@ import (
 	"github.com/monoes/mono-agent/internal/noderegistry"
 	"github.com/monoes/mono-agent/internal/nodes"
 	peoplenodes "github.com/monoes/mono-agent/internal/nodes/people"
+	"github.com/monoes/mono-agent/internal/personitem"
 	"github.com/monoes/mono-agent/internal/secrets"
 	"github.com/monoes/mono-agent/internal/vault"
 	"github.com/monoes/mono-agent/internal/workflow"
@@ -799,6 +800,15 @@ func savePostsToDB(ctx context.Context, db *sql.DB, items []workflow.Item, nodeT
 		var personIDArg interface{}
 		if personID != "" {
 			personIDArg = personID
+		} else if ref, ok := personitem.Resolve(platform, data); ok && ref.Author {
+			// No target person: link the post to its author when saved.
+			var authorID string
+			if db.QueryRowContext(ctx,
+				"SELECT id FROM people WHERE platform_username = ? AND UPPER(platform) = ? AND profile_id = ?",
+				ref.Username, platform, profileID,
+			).Scan(&authorID) == nil {
+				personIDArg = authorID
+			}
 		}
 
 		_, err := db.ExecContext(ctx,

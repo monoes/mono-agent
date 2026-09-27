@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/monoes/mono-agent/internal/bot"
+	"github.com/monoes/mono-agent/internal/personitem"
 )
 
 // workflowActionStorage implements action.StorageInterface backed by the
@@ -36,12 +36,12 @@ func (s *workflowActionStorage) UpdateActionState(id, state string) error { retu
 func (s *workflowActionStorage) UpdateActionReachedIndex(id string, index int) error { return nil }
 
 // SaveExtractedData writes one workflow_node_targets row per extracted item,
-// upserting a people row for any item whose target can be resolved to a
-// username (mirroring the person-upsert the legacy `monoagentcli run` path
-// did, minus its richer count-parsing — extracted items reaching here have
-// already been through NormalizeBrowserItem). Items that can't be resolved
-// to a username still get a workflow_node_targets row (person_id left null)
-// so the interaction is still visible, just not linked to a person.
+// upserting a people row for the person the item is about (a profile, or
+// the author of a post or comment — see personitem.Resolve; extracted items
+// reaching here have already been through NormalizeBrowserItem). Items that
+// name no person (a post without an author, a company page) still get a
+// workflow_node_targets row (person_id left null) so the interaction is
+// still visible, just not linked to a person.
 func (s *workflowActionStorage) SaveExtractedData(actionID string, items []map[string]interface{}) error {
 	if s.db == nil || len(items) == 0 {
 		return nil
@@ -78,8 +78,9 @@ func (s *workflowActionStorage) SaveExtractedData(actionID string, items []map[s
 
 	upsertPerson, err := tx.Prepare(`
 		INSERT INTO people (id, platform_username, platform, full_name, image_url,
-		        website, introduction, is_verified, profile_id, created_at, updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?)
+		        website, introduction, is_verified, job_title, headline, location, about,
+		        experience, education, profile_url, profile_id, created_at, updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(platform_username, platform, profile_id)
 		DO UPDATE SET
 		  full_name    = COALESCE(excluded.full_name, people.full_name),
@@ -87,6 +88,13 @@ func (s *workflowActionStorage) SaveExtractedData(actionID string, items []map[s
 		  website      = COALESCE(excluded.website, people.website),
 		  introduction = COALESCE(excluded.introduction, people.introduction),
 		  is_verified  = COALESCE(excluded.is_verified, people.is_verified),
+		  job_title    = COALESCE(excluded.job_title, people.job_title),
+		  headline     = COALESCE(excluded.headline, people.headline),
+		  location     = COALESCE(excluded.location, people.location),
+		  about        = COALESCE(excluded.about, people.about),
+		  experience   = COALESCE(excluded.experience, people.experience),
+		  education    = COALESCE(excluded.education, people.education),
+		  profile_url  = COALESCE(people.profile_url, excluded.profile_url),
 		  updated_at   = excluded.updated_at`)
 	if err != nil {
 		return fmt.Errorf("nodes: preparing person upsert: %w", err)
@@ -113,33 +121,41 @@ func (s *workflowActionStorage) SaveExtractedData(actionID string, items []map[s
 		if platform == "" {
 			platform = s.platform
 		}
-		profileURL, _ := item["url"].(string)
-		if profileURL == "" {
-			profileURL, _ = item["profile_url"].(string)
+		// The target's link is what the node acted on (a profile, a post).
+		link, _ := item["url"].(string)
+		if link == "" {
+			link, _ = item["profile_url"].(string)
 		}
 
-		username := extractUsernameFromURL(platform, profileURL)
-
 		var personID sql.NullString
-		if username != "" {
-			fullName, _ := item["full_name"].(string)
-			imageURL, _ := item["image_url"].(string)
-			website, _ := item["website"].(string)
-			introduction, _ := item["introduction"].(string)
-			var isVerified int
-			if v, ok := item["is_verified"].(bool); ok && v {
-				isVerified = 1
+		if ref, ok := personitem.Resolve(platform, item); ok {
+			// An item about a post or comment names its author: only the
+			// author's name describes the person, the rest is the post's.
+			var prof personitem.Profile
+			var introduction string
+			var isVerified interface{}
+			if ref.Author {
+				prof.FullName = ref.FullName
+			} else {
+				prof = personitem.ProfileOf(item)
+				introduction, _ = item["introduction"].(string)
+				if v, ok := item["is_verified"].(bool); ok && v {
+					isVerified = 1
+				}
 			}
-
+			platformUpper := strings.ToUpper(platform)
 			if _, err := upsertPerson.Exec(
-				uuid.New().String(), username, strings.ToUpper(platform),
-				nullIfEmpty(fullName), nullIfEmpty(imageURL), nullIfEmpty(website),
-				nullIfEmpty(introduction), isVerified, profileID, now, now,
+				uuid.New().String(), ref.Username, platformUpper,
+				nullIfEmpty(prof.FullName), nullIfEmpty(prof.ImageURL), nullIfEmpty(prof.Website),
+				nullIfEmpty(introduction), isVerified, nullIfEmpty(prof.JobTitle),
+				nullIfEmpty(prof.Headline), nullIfEmpty(prof.Location), nullIfEmpty(prof.About),
+				nullIfEmpty(prof.Experience), nullIfEmpty(prof.Education), nullIfEmpty(ref.ProfileURL),
+				profileID, now, now,
 			); err != nil {
-				return fmt.Errorf("nodes: upserting person %s: %w", username, err)
+				return fmt.Errorf("nodes: upserting person %s: %w", ref.Username, err)
 			}
 			var pid string
-			if err := lookupPerson.QueryRow(username, strings.ToUpper(platform), profileID).Scan(&pid); err == nil {
+			if err := lookupPerson.QueryRow(ref.Username, platformUpper, profileID).Scan(&pid); err == nil {
 				personID = sql.NullString{String: pid, Valid: true}
 			}
 		}
@@ -151,7 +167,7 @@ func (s *workflowActionStorage) SaveExtractedData(actionID string, items []map[s
 
 		if _, err := insertTarget.Exec(
 			uuid.New().String(), executionID, s.nodeID, personID, strings.ToUpper(platform),
-			nullIfEmpty(profileURL), "COMPLETED", now.Format(time.RFC3339), nullIfEmpty(commentText), nil, now,
+			nullIfEmpty(link), "COMPLETED", now.Format(time.RFC3339), nullIfEmpty(commentText), nil, now,
 		); err != nil {
 			return fmt.Errorf("nodes: inserting workflow_node_target: %w", err)
 		}
@@ -220,25 +236,4 @@ func nullIfEmpty(s string) interface{} {
 		return nil
 	}
 	return s
-}
-
-// extractUsernameFromURL mirrors the username-extraction fallback chain the
-// legacy `monoagentcli run` execution path used: try the platform's bot
-// adapter first (ExtractUsername understands each platform's URL shape),
-// then fall back to the URL's last path segment.
-func extractUsernameFromURL(platform, profileURL string) string {
-	platformUpper := strings.ToUpper(platform)
-	if factory, ok := bot.PlatformRegistry[platformUpper]; ok {
-		if u := factory().ExtractUsername(profileURL); u != "" {
-			return u
-		}
-	}
-	if profileURL == "" {
-		return ""
-	}
-	parts := strings.Split(strings.Trim(profileURL, "/"), "/")
-	if len(parts) == 0 {
-		return ""
-	}
-	return strings.TrimPrefix(parts[len(parts)-1], "@")
 }
