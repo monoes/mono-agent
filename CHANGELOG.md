@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.77.0] - 2026-09-27
+
 ### Added
 
 - **Vault keyring passphrase from Settings.** On hosts with no OS keychain
@@ -18,6 +20,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the passphrase is read from stdin only, checked against an existing
   file keyring, and stored in `~/.monoagent/keyring-passphrase` (0600).
   The block is hidden on hosts with an OS keychain.
+
+### Fixed
+
+- **`producthunt.list_comments` returns every comment.** It now clicks
+  Product Hunt's "Show more comments" and "View N more replies" buttons
+  before reading, so it no longer stops at the comments shown first. It
+  stops at `maxComments` (default 200), at 50 clicks, or after about 30 s.
+  Only expansion buttons are ever clicked.
+- Hosts without an OS keyring no longer log a misleading
+  `vault key migration … reading legacy KEK from keychain` warning on every
+  vault access.
 
 ## [0.76.0] - 2026-09-26
 
