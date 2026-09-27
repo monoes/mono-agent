@@ -78,15 +78,14 @@ func (s *workflowActionStorage) SaveExtractedData(actionID string, items []map[s
 
 	upsertPerson, err := tx.Prepare(`
 		INSERT INTO people (id, platform_username, platform, full_name, image_url,
-		        website, introduction, is_verified, job_title, headline, location, about,
-		        experience, education, profile_url, profile_id, created_at, updated_at)
+		        website, is_verified, job_title, headline, location, about,
+		        experience, education, profile_details, profile_url, profile_id, created_at, updated_at)
 		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(platform_username, platform, profile_id)
 		DO UPDATE SET
 		  full_name    = COALESCE(excluded.full_name, people.full_name),
 		  image_url    = COALESCE(excluded.image_url, people.image_url),
 		  website      = COALESCE(excluded.website, people.website),
-		  introduction = COALESCE(excluded.introduction, people.introduction),
 		  is_verified  = COALESCE(excluded.is_verified, people.is_verified),
 		  job_title    = COALESCE(excluded.job_title, people.job_title),
 		  headline     = COALESCE(excluded.headline, people.headline),
@@ -94,6 +93,7 @@ func (s *workflowActionStorage) SaveExtractedData(actionID string, items []map[s
 		  about        = COALESCE(excluded.about, people.about),
 		  experience   = COALESCE(excluded.experience, people.experience),
 		  education    = COALESCE(excluded.education, people.education),
+		  profile_details = ` + personitem.DetailsMergeSQL + `,
 		  profile_url  = COALESCE(people.profile_url, excluded.profile_url),
 		  updated_at   = excluded.updated_at`)
 	if err != nil {
@@ -131,14 +131,14 @@ func (s *workflowActionStorage) SaveExtractedData(actionID string, items []map[s
 		if ref, ok := personitem.Resolve(platform, item); ok {
 			// An item about a post or comment names its author: only the
 			// author's name describes the person, the rest is the post's.
+			// Extracted items never carry an introduction (the outreach
+			// draft): a profile's bio is its About.
 			var prof personitem.Profile
-			var introduction string
 			var isVerified interface{}
 			if ref.Author {
 				prof.FullName = ref.FullName
 			} else {
 				prof = personitem.ProfileOf(item)
-				introduction, _ = item["introduction"].(string)
 				if v, ok := item["is_verified"].(bool); ok && v {
 					isVerified = 1
 				}
@@ -147,9 +147,10 @@ func (s *workflowActionStorage) SaveExtractedData(actionID string, items []map[s
 			if _, err := upsertPerson.Exec(
 				uuid.New().String(), ref.Username, platformUpper,
 				nullIfEmpty(prof.FullName), nullIfEmpty(prof.ImageURL), nullIfEmpty(prof.Website),
-				nullIfEmpty(introduction), isVerified, nullIfEmpty(prof.JobTitle),
+				isVerified, nullIfEmpty(prof.JobTitle),
 				nullIfEmpty(prof.Headline), nullIfEmpty(prof.Location), nullIfEmpty(prof.About),
-				nullIfEmpty(prof.Experience), nullIfEmpty(prof.Education), nullIfEmpty(ref.ProfileURL),
+				nullIfEmpty(prof.Experience), nullIfEmpty(prof.Education), nullIfEmpty(prof.Details),
+				nullIfEmpty(ref.ProfileURL),
 				profileID, now, now,
 			); err != nil {
 				return fmt.Errorf("nodes: upserting person %s: %w", ref.Username, err)
