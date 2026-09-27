@@ -190,7 +190,7 @@ The desktop app does everything through these commands; they are equally usable 
   - `people status set|get|history`
   - `people messages list|all [--unread]|add|compose|drafts|send-draft|reject-draft|read|unread`
 - **Social lists:** `list ls`.
-- **Image vault:** `image list|search|get|data|add|label|delete|stats|export`, scoped to the active profile. `image data` returns a data URL. `image sync` scans the profile folder and reconciles discovered images.
+- **Image vault:** `image list|search|get|data|add|label|delete|stats|export`, scoped to the active profile. `image data` returns a data URL. `image sync` scans the profile folder and reconciles discovered images. `image delete` keeps files that live in the profile folder and hides them from later syncs; `image unignore <path>` or `image add <path>` brings one back.
 - **Workflows:**
   - `workflow save` creates or replaces a workflow from the editor's document on stdin.
   - `workflow execution <id>` shows run detail with redacted items.

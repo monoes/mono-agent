@@ -73,7 +73,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   folder watchers now only notice changes and run these commands.
 - **Project images are discovered automatically.** Images in the profile
   folder appear in the Image Vault. Images made in the chat or by workflows
-  are added too. Deleting a discovered image keeps your file.
+  are added too. An image saved into the profile folder is recorded where it
+  is, not copied. Deleting one keeps your file and keeps it out of later
+  syncs; `image add <path>` or the new `image unignore <path>` brings it
+  back.
 - **Settings › System health** groups the checks with severity badges.
 - **The daemon publishes its scheduler's real next run times** in its
   heartbeat. `summary` prefers them (`"source": "daemon"`), so `@every`
@@ -135,6 +138,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `people list --platform` missed upper-case platform names.
 - **`ai.extract_page` in natural mode ignored the fields the AI generated.**
   It now uses them, then falls back to the list selector, then to markdown.
+- **Image Vault URLs** (`/vault-image/<id>`) use the image id, so two files
+  with the same name in different folders no longer collide. Old
+  filename URLs still work.
 - **The test suite wrote into the real `~/.monoagent`.** Test binaries now get
   a throwaway HOME.
 - The dashboard showed successful runs in grey, and the running indicator never
