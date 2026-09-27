@@ -89,6 +89,9 @@ type TurnResult struct {
 	// whether a result event supplied its own text (which then wins).
 	streamed   []byte
 	resultText bool
+	// warning is the last non-fatal error event: the cause a later nonzero
+	// done reports (Claude Code's "Not logged in" arrives this way).
+	warning *ProtocolError
 }
 
 // ApplyEventToResult updates res's terminal-state fields (SessionID,
@@ -177,19 +180,31 @@ func ApplyEventToResult(res *TurnResult, ev Event) {
 		// signal) should surface as the turn's terminal res.Err.
 		if ev.Fatal {
 			res.Err = &ProtocolError{Code: ev.Code, Message: ev.ErrMessage, Fatal: ev.Fatal}
+		} else {
+			res.warning = &ProtocolError{Code: ev.Code, Message: ev.ErrMessage}
 		}
 	case EventDone:
 		res.SawDone = true
 		res.ExitCode = ev.ExitCode
+		// A fatal error event carries no exit code of its own (protocol
+		// §3.4: only done does); without this the turn's error would exit 0.
+		if res.Err != nil && res.Err.ExitCode == 0 {
+			res.Err.ExitCode = ev.ExitCode
+		}
 		// A nonzero protocol exit_code is a failure signal on its own,
 		// independent of the OS process's own exit status — the two can
 		// disagree (protocol says failure, process still exits 0). Only
 		// set if nothing already recorded a more specific error.
+		// A non-fatal error just before it is the likelier cause, and
+		// says more than the exit code alone.
 		if ev.ExitCode != 0 && res.Err == nil {
 			res.Err = &ProtocolError{
 				Code:     ErrRunnerError,
 				Message:  fmt.Sprintf("done reported nonzero exit_code %d", ev.ExitCode),
 				ExitCode: ev.ExitCode,
+			}
+			if w := res.warning; w != nil && w.Message != "" {
+				res.Err.Code, res.Err.Message = w.Code, w.Message
 			}
 		}
 	}

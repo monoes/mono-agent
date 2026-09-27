@@ -54,9 +54,11 @@ func (n *AskNode) Execute(ctx context.Context, input workflow.NodeInput, config 
 	// Handshake once per node execution — catches a missing or
 	// protocol-incompatible monomind up front with an actionable error,
 	// instead of every item silently returning an empty answer.
+	// A failure because the agent is not set up is marked
+	// (monomind.MarkNotSetup), so the run's stored error still says so.
 	bin, _, err := monomind.Ensure(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("agent.ask: %w", err)
+		return nil, fmt.Errorf("agent.ask: %w", monomind.MarkNotSetup(err))
 	}
 
 	items := make([]workflow.Item, 0, len(input.Items))
@@ -74,10 +76,11 @@ func (n *AskNode) Execute(ctx context.Context, input workflow.NodeInput, config 
 			Timeout:      time.Duration(timeoutSec) * time.Second,
 		}, nil)
 		if err != nil {
-			return nil, fmt.Errorf("agent.ask (%s): %w", runtime, err)
+			return nil, fmt.Errorf("agent.ask (%s): %w", runtime, monomind.MarkNotSetup(err))
 		}
 		if res.Err != nil {
-			return nil, fmt.Errorf("agent.ask (%s) turn failed: %s", runtime, res.Err.Error())
+			monomind.ReclassifyMissingRuntime(ctx, runtime, res)
+			return nil, fmt.Errorf("agent.ask (%s) turn failed: %w", runtime, monomind.MarkNotSetup(res.Err))
 		}
 		answer := strings.TrimSpace(res.ResultText)
 

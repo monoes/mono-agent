@@ -345,7 +345,7 @@ func monomindWriter(runtime, model string) textWriter {
 	return func(ctx context.Context, field map[string]any) (string, error) {
 		bin, _, err := monomind.Ensure(ctx)
 		if err != nil {
-			return "", fmt.Errorf("TYPE_TEXT needs a local agent: %w", err)
+			return "", fmt.Errorf("TYPE_TEXT needs a local agent: %w", monomind.MarkNotSetup(err))
 		}
 		prompt, _ := json.Marshal(field)
 		res, err := monomind.Exec(ctx, monomind.ExecOptions{
@@ -353,10 +353,11 @@ func monomindWriter(runtime, model string) textWriter {
 			SystemPrompt: textValueRules, Timeout: 90 * time.Second,
 		}, nil)
 		if err != nil {
-			return "", fmt.Errorf("text helper (%s): %w", runtime, err)
+			return "", fmt.Errorf("text helper (%s): %w", runtime, monomind.MarkNotSetup(err))
 		}
 		if res.Err != nil {
-			return "", fmt.Errorf("text helper (%s) turn failed: %s", runtime, res.Err.Error())
+			monomind.ReclassifyMissingRuntime(ctx, runtime, res)
+			return "", fmt.Errorf("text helper (%s) turn failed: %w", runtime, monomind.MarkNotSetup(res.Err))
 		}
 		return parseTextValue(res.ResultText)
 	}

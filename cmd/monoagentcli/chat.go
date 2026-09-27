@@ -414,6 +414,9 @@ Changes made this way appear in the app automatically — orgs are picked up liv
 				onEvent = journal.handle
 			}
 			res, err := monomind.Exec(ctx, opts, onEvent)
+			if err == nil {
+				monomind.ReclassifyMissingRuntime(ctx, runtime, res)
+			}
 			if journal != nil {
 				// Finished here, with the real result, rather than by the
 				// deferred fail above (a no-op once finished).
@@ -499,6 +502,9 @@ Changes made this way appear in the app automatically — orgs are picked up liv
 	cmd.Flags().StringVar(&instanceID, "instance", "", "App instance id recorded as the turn's owner (used with --conversation)")
 	cmd.AddCommand(newChatHistoryCmd(cfg))
 	cmd.Flags().BoolVar(&noHistory, "no-history", false, "Suppress this legacy chat-history table write (profile/tool init and runtime session events are unaffected; a --conversation turn never writes it)")
+	// With --json a failure also ends stdout with {"error","code"}; an agent
+	// that is not installed or not logged in is code agent_not_setup.
+	withJSONErrors(cfg, cmd)
 	return cmd
 }
 
