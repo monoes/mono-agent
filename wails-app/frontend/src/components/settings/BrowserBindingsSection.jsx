@@ -16,9 +16,19 @@ const errText = { fontFamily: mono, fontSize: 10.5, color: 'var(--red)', lineHei
 const warnText = { fontFamily: 'var(--font-body)', fontSize: 10.5, color: 'var(--yellow)', lineHeight: 1.5 }
 const row = { display: 'flex', alignItems: 'center', gap: 12, borderTop: '1px solid var(--border)', paddingTop: 10 }
 const name = { fontFamily: 'var(--font-body)', fontSize: 12.5, color: 'var(--text)' }
-const input = {
-  background: 'var(--elevated)', border: '1px solid var(--border)', color: 'var(--text)',
-  borderRadius: 'var(--radius)', fontFamily: mono, fontSize: 12, padding: '6px 10px', minWidth: 180,
+const selectStyle = {
+  // backgroundColor, not the `background` shorthand: a shorthand here
+  // would reset backgroundImage below to none regardless of order.
+  backgroundColor: 'var(--elevated)', border: '1px solid var(--border)', color: 'var(--text)',
+  borderRadius: 6, fontFamily: mono, fontSize: 12, padding: '6px 28px 6px 10px', minWidth: 180,
+  outline: 'none',
+  // WebKitGTK draws <select> with native GTK chrome (light bg, dark
+  // text) unless appearance is explicitly reset — see AIChatPanel.jsx / Settings.jsx.
+  appearance: 'none',
+  backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2300b4d8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E\")",
+  backgroundRepeat: 'no-repeat',
+  backgroundPosition: 'right 10px center',
+  cursor: 'pointer',
 }
 
 export const BROWSERS_POLL_MS = 10000
@@ -96,7 +106,10 @@ export default function BrowserBindingsSection() {
               value={b.profile_id || ''}
               disabled={b.legacy || busy === b.instance}
               onChange={(e) => bind(b.instance, e.target.value)}
-              style={input}
+              style={{
+                ...selectStyle,
+                ...((b.legacy || busy === b.instance) ? { opacity: 0.5, cursor: 'not-allowed' } : {}),
+              }}
             >
               <option value="">Any profile (default browser)</option>
               {profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
