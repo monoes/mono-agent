@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dashboard: a **This profile / All profiles** toggle. All profiles sums every profile's counts, labels each workflow, run and account with its profile, and adds a Profiles card with a Switch button per profile. The CLI side is `--all-profiles` on `summary`, `workflow list`, `workflow executions --all` and `org summary`.
 
 ### Fixed
+- `--profile <p> workflow import` now saves into that profile; it used to keep the file's own profile id, usually landing in default.
+- A workflow with no profile id belongs to the default profile everywhere: another profile can no longer run it by id and have the run filed under itself.
+- The extension health check trusts a live bridge connection over a browser-folder scan it could not complete (#195).
 - The dashboard no longer counts a workflow saved without a profile id in every profile; it belongs to the default profile, as `workflow list` already treated it.
 
 ## [0.81.0] - 2026-09-27
