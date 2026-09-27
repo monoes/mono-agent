@@ -21,7 +21,7 @@ import (
 func newImageCmd(cfg *globalConfig) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "image",
-		Short: "Manage the image vault: list, add, label, export, delete",
+		Short: "Manage the image vault: list, add, label, export, delete, sync",
 		Long: "Images belong to the active profile and are addressed by id (img-001, …). " +
 			"Workflows refer to them as @img-001.",
 	}
@@ -35,6 +35,7 @@ func newImageCmd(cfg *globalConfig) *cobra.Command {
 		newImageSearchCmd(cfg),
 		newImageStatsCmd(cfg),
 		newImageExportCmd(cfg),
+		newImageSyncCmd(cfg),
 	)
 	return cmd
 }
@@ -269,7 +270,7 @@ func newImageDeleteCmd(cfg *globalConfig) *cobra.Command {
 	return &cobra.Command{
 		Use:     "delete <id>",
 		Aliases: []string{"rm"},
-		Short:   "Delete an image and its file",
+		Short:   "Delete an image and its file (a discovered image keeps its file)",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return withImageDB(cfg, func(db *sql.DB) error {

@@ -271,6 +271,8 @@ export const api = {
   // Native pickers; resolve to '' when cancelled.
   chooseAutomationPackage:    () => GoApp.ChooseAutomationPackage().catch(guard('choose package', '')),
   chooseAutomationExportPath: (defaultName = '') => GoApp.ChooseAutomationExportPath(defaultName).catch(guard('choose export path', '')),
+  getVaultImage:          (id) => GoApp.GetVaultImage(id).catch(guard('get vault image', null)),
+  getVaultImages:         (limit = 200) => GoApp.GetVaultImages(limit).catch(guard('get vault images', [])),
 }
 
 // The Wails runtime (window.runtime / window.go) only exists inside the desktop
@@ -376,6 +378,12 @@ export function onMonomindInitEvent(callback) {
 // discipline) -- callers always just re-fetch via listProfileDocuments.
 export function onDocumentsChanged(callback) {
   return subscribeEvent('documents:changed', callback)
+}
+
+// onImagesChanged fires when the background image watcher discovers
+// or updates files under the active profile's folder, or when images are added/deleted.
+export function onImagesChanged(callback) {
+  return subscribeEvent('images:changed', callback)
 }
 
 export const PLATFORMS = ['INSTAGRAM', 'LINKEDIN', 'X', 'TIKTOK']

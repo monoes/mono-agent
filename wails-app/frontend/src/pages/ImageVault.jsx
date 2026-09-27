@@ -9,6 +9,7 @@ import { limiter } from '../lib/limiter.js'
 // scrolled into view and at most 4 at a time — a vault of hundreds of images
 // must not start hundreds of processes at once.
 const loadThumb = limiter(4)
+import { onImagesChanged } from '../services/api.js'
 
 function VaultThumb({ id }) {
   const [src, setSrc] = useState(null)
@@ -49,9 +50,13 @@ const fmtDate = (s) => {
 }
 
 const SOURCE_COLORS = {
-  gemini: { bg: 'rgba(124,58,237,0.15)', border: 'rgba(124,58,237,0.3)', color: '#a78bfa' },
-  upload: { bg: 'rgba(16,185,129,0.1)', border: 'rgba(16,185,129,0.25)', color: '#34d399' },
-  huggingface: { bg: 'rgba(0,180,216,0.1)', border: 'rgba(0,180,216,0.25)', color: '#00b4d8' },
+  gemini:      { bg: 'rgba(124,58,237,0.15)', border: 'rgba(124,58,237,0.3)', color: '#a78bfa' },
+  upload:      { bg: 'rgba(16,185,129,0.1)',  border: 'rgba(16,185,129,0.25)', color: '#34d399' },
+  huggingface: { bg: 'rgba(0,180,216,0.1)',   border: 'rgba(0,180,216,0.25)',  color: '#00b4d8' },
+  openrouter:  { bg: 'rgba(245,158,11,0.15)', border: 'rgba(245,158,11,0.3)',  color: '#fbbf24' },
+  workflow:    { bg: 'rgba(59,130,246,0.15)', border: 'rgba(59,130,246,0.3)',  color: '#60a5fa' },
+  chat:        { bg: 'rgba(236,72,153,0.15)', border: 'rgba(236,72,153,0.3)',  color: '#f472b6' },
+  discovered:  { bg: 'rgba(99,102,241,0.15)', border: 'rgba(99,102,241,0.3)',  color: '#818cf8' },
 }
 const sourceBadge = (source) => {
   const s = SOURCE_COLORS[source] || { bg: '#1a2332', border: '#334', color: '#64748b' }
@@ -86,7 +91,15 @@ export default function ImageVault() {
     }
   }, [])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    load()
+    const unsub = onImagesChanged(() => {
+      load()
+    })
+    return () => {
+      if (typeof unsub === 'function') unsub()
+    }
+  }, [load])
 
   const handleRefresh = async () => {
     setRefreshing(true)

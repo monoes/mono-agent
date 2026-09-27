@@ -1,4 +1,4 @@
-import { Workflow, Building2, FileText, Copy, ExternalLink } from 'lucide-react'
+import { Workflow, Building2, FileText, Image as ImageIcon, Copy, ExternalLink } from 'lucide-react'
 
 function copyToClipboard(text) {
   try { navigator.clipboard?.writeText(text) } catch { /* clipboard unavailable — copy is a convenience, not required */ }
@@ -98,6 +98,27 @@ export function ChatArtifactCard({ artifact, onOpenArtifact }) {
           onClick={() => onOpenArtifact?.(artifact)}
           title="Open document"
           aria-label="Open document"
+          style={actionBtnStyle}
+        >
+          <ExternalLink size={11} /> Open
+        </button>
+      </div>
+    )
+  }
+
+  if (artifact.type === 'image') {
+    return (
+      <div style={cardStyle}>
+        <ImageIcon size={12} color="#00b4d8" style={{ flexShrink: 0 }} />
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={labelStyle}>{artifact.label || artifact.filename}</div>
+          <div style={subStyle}>{artifact.filename || artifact.id}</div>
+        </div>
+        <button
+          type="button"
+          onClick={() => onOpenArtifact?.(artifact)}
+          title="Open image in vault"
+          aria-label="Open image in vault"
           style={actionBtnStyle}
         >
           <ExternalLink size={11} /> Open

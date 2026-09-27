@@ -66,8 +66,21 @@ func (a *App) AddVaultImage(srcPath, label string) (map[string]interface{}, erro
 	if err := a.runMonoCLI("", &out, append(args, "--", srcPath)...); err != nil {
 		return nil, err
 	}
+	a.emitImagesChanged(map[string]interface{}{"added": 1})
 	return out, nil
 }
+
+// emitImagesChanged tells open Image Vault pages to re-list after an edit
+// made through the app; the folder watcher emits the same event for
+// changes on disk.
+func (a *App) emitImagesChanged(data map[string]interface{}) {
+	data["profileID"] = a.getActiveProfileID()
+	emitImageEvent(a, "images:changed", data)
+}
+
+// emitImageEvent is the Wails event emitter, a variable so tests can
+// record the events.
+var emitImageEvent = (*App).emitFolderEvent
 
 // OpenVaultFilePicker opens a native file picker and returns the selected file path (empty if cancelled).
 func (a *App) OpenVaultFilePicker() string {
@@ -121,11 +134,21 @@ func (a *App) UpdateVaultImageLabel(id, label string) error {
 	if label != "" {
 		args = append(args, label)
 	}
-	return a.runMonoCLI("", nil, args...)
+	if err := a.runMonoCLI("", nil, args...); err != nil {
+		return err
+	}
+	a.emitImagesChanged(map[string]interface{}{"updated": id})
+	return nil
 }
 
+// DeleteVaultImage removes an image from the vault. A discovered image's
+// file stays in the project folder (`image delete` removes only its row).
 func (a *App) DeleteVaultImage(id string) error {
-	return a.runMonoCLI("", nil, "image", "delete", "--", id)
+	if err := a.runMonoCLI("", nil, "image", "delete", "--", id); err != nil {
+		return err
+	}
+	a.emitImagesChanged(map[string]interface{}{"deleted": id})
+	return nil
 }
 
 func (a *App) GetVaultStats() (map[string]interface{}, error) {

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/monoes/mono-agent/internal/vault"
 	"github.com/monoes/mono-agent/internal/workflow"
 )
 
@@ -114,6 +115,13 @@ func (n *HuggingFaceNode) generateImage(ctx context.Context, apiKey string, conf
 	enriched := copyItem(item)
 	enriched.JSON["file_path"] = filePath
 	enriched.JSON["url"] = url
+
+	if vaultDB := vault.DBFromContext(ctx); vaultDB != nil {
+		wfID, execID := vault.ExecIDsFromContext(ctx)
+		if vaultID, err := vault.Register(ctx, vaultDB, filePath, "huggingface", wfID, execID); err == nil {
+			enriched.JSON["vault_id"] = vaultID
+		}
+	}
 	return enriched, nil
 }
 
