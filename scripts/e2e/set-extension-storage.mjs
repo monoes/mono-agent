@@ -1,6 +1,7 @@
 // Writes keys into the MonoAgent Bridge extension's chrome.storage.local in
 // a browser started with --remote-debugging-port, through the extension's
-// service worker. Usage: node set-extension-storage.mjs <debugPort> '<json>'
+// service worker, then asks the worker to connect (a worker that read
+// storage before this write would otherwise sit unpaired). Usage: node set-extension-storage.mjs <debugPort> '<json>'
 const [port, json] = process.argv.slice(2);
 const values = JSON.parse(json);
 
@@ -31,7 +32,7 @@ const reply = new Promise((resolve) => {
 ws.send(JSON.stringify({
   id: 1,
   method: "Runtime.evaluate",
-  params: { expression: `chrome.storage.local.set(${JSON.stringify(values)}).then(() => "ok")`, awaitPromise: true },
+  params: { expression: `chrome.storage.local.set(${JSON.stringify(values)}).then(() => { if (typeof connect === "function") connect(); return "ok"; })`, awaitPromise: true },
 }));
 const msg = await reply;
 ws.close();
