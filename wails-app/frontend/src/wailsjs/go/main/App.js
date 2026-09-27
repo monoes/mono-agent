@@ -234,6 +234,10 @@ export function GetAllPersonMessages(arg1) {
   return window['go']['main']['App']['GetAllPersonMessages'](arg1);
 }
 
+export function GetAllProfilesRecentExecutions(arg1) {
+  return window['go']['main']['App']['GetAllProfilesRecentExecutions'](arg1);
+}
+
 export function GetAllTags() {
   return window['go']['main']['App']['GetAllTags']();
 }
@@ -288,6 +292,14 @@ export function GetEffectiveTools(arg1, arg2) {
 
 export function GetExecutionDetail(arg1) {
   return window['go']['main']['App']['GetExecutionDetail'](arg1);
+}
+
+export function GetGlobalOrgSummary(arg1) {
+  return window['go']['main']['App']['GetGlobalOrgSummary'](arg1);
+}
+
+export function GetGlobalSummary() {
+  return window['go']['main']['App']['GetGlobalSummary']();
 }
 
 export function GetHILItems() {
@@ -568,6 +580,10 @@ export function KeyringSetPassphrase(arg1) {
 
 export function KeyringStatus() {
   return window['go']['main']['App']['KeyringStatus']();
+}
+
+export function ListAllProfilesWorkflows() {
+  return window['go']['main']['App']['ListAllProfilesWorkflows']();
 }
 
 export function ListAutomations() {

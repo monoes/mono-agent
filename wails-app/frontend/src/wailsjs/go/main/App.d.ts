@@ -121,6 +121,8 @@ export function GetAgentRuntimeModels(arg1:string,arg2:string):Promise<string>;
 
 export function GetAllPersonMessages(arg1:number):Promise<Array<storage.PersonMessageWithPerson>>;
 
+export function GetAllProfilesRecentExecutions(arg1:number):Promise<Array<main.WorkflowExecutionSummary>>;
+
 export function GetAllTags():Promise<Array<main.TagInfo>>;
 
 export function GetApplication(arg1:string):Promise<main.ApplicationDetail>;
@@ -148,6 +150,10 @@ export function GetDraftPersonMessages():Promise<Array<storage.PersonMessageWith
 export function GetEffectiveTools(arg1:string,arg2:string):Promise<string>;
 
 export function GetExecutionDetail(arg1:string):Promise<Record<string, any>>;
+
+export function GetGlobalOrgSummary(arg1:boolean):Promise<string>;
+
+export function GetGlobalSummary():Promise<string>;
 
 export function GetHILItems():Promise<Array<main.HILItem>>;
 
@@ -288,6 +294,8 @@ export function KeyringClearPassphrase():Promise<main.KeyringPassphraseResult>;
 export function KeyringSetPassphrase(arg1:string):Promise<main.KeyringPassphraseResult>;
 
 export function KeyringStatus():Promise<main.KeyringStatusInfo>;
+
+export function ListAllProfilesWorkflows():Promise<Array<main.WorkflowSummary>>;
 
 export function ListAutomations():Promise<string>;
 

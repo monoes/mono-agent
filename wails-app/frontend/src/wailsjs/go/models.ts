@@ -1542,6 +1542,8 @@ export namespace main {
 	    created_at: string;
 	    updated_at: string;
 	    node_count: number;
+	    profile_id?: string;
+	    profile_name?: string;
 	    nodes: WorkflowNodeData[];
 	    connections: WorkflowConnectionData[];
 	
@@ -1559,6 +1561,8 @@ export namespace main {
 	        this.created_at = source["created_at"];
 	        this.updated_at = source["updated_at"];
 	        this.node_count = source["node_count"];
+	        this.profile_id = source["profile_id"];
+	        this.profile_name = source["profile_name"];
 	        this.nodes = this.convertValues(source["nodes"], WorkflowNodeData);
 	        this.connections = this.convertValues(source["connections"], WorkflowConnectionData);
 	    }
@@ -1591,6 +1595,8 @@ export namespace main {
 	    finished_at: string;
 	    error: string;
 	    created_at: string;
+	    profile_id?: string;
+	    profile_name?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new WorkflowExecutionSummary(source);
@@ -1607,6 +1613,8 @@ export namespace main {
 	        this.finished_at = source["finished_at"];
 	        this.error = source["error"];
 	        this.created_at = source["created_at"];
+	        this.profile_id = source["profile_id"];
+	        this.profile_name = source["profile_name"];
 	    }
 	}
 	export class WorkflowImportResult {
@@ -1635,6 +1643,8 @@ export namespace main {
 	    created_at: string;
 	    updated_at: string;
 	    node_count: number;
+	    profile_id?: string;
+	    profile_name?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new WorkflowSummary(source);
@@ -1650,6 +1660,8 @@ export namespace main {
 	        this.created_at = source["created_at"];
 	        this.updated_at = source["updated_at"];
 	        this.node_count = source["node_count"];
+	        this.profile_id = source["profile_id"];
+	        this.profile_name = source["profile_name"];
 	    }
 	}
 
