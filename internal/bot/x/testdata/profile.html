@@ -62,7 +62,11 @@
   // which one was read. The badge is gold (a business).
   if (who === 'synth_fiber') {
     document.getElementById('name').textContent = 'Synth Fiber';
-    document.getElementById('timeline').remove();
+    // The timeline (without a Pinned label here) renders after the header.
+    document.getElementById('timeline').innerHTML = '';
+    setTimeout(() => { document.getElementById('timeline').innerHTML =
+      '<article data-testid="tweet"><a href="/Synth_Fiber/status/1900000000000000009"><time datetime="2026-01-01T00:00:00Z">Jan 1</time></a>' +
+      '<div data-testid="tweetText"><span>Synthetic fiber pinned post</span></div></article>'; }, 400);
     const box = document.querySelector("[data-testid='UserName']");
     box.insertAdjacentHTML('afterbegin', '<svg data-testid="icon-verified" aria-label="Verified account"><linearGradient id="g"></linearGradient><path fill="url(#g)"></path></svg>');
     box['__reactFiber$synthetic'] = { memoizedProps: { children: [] }, return: { memoizedProps: { user: {

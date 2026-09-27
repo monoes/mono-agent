@@ -323,9 +323,30 @@ func (b *XBot) scrapeProfile(ctx context.Context, p browser.PageInterface, pageU
 	}
 	if u := r.User; u != nil && strings.EqualFold(u.ScreenName, username) {
 		u.apply(data)
+		if pin, _ := data["pinned_post"].(map[string]interface{}); pin != nil && pin["text"] == nil && len(u.PinnedTweetIDsStr) > 0 {
+			// The pinned post's text is in the timeline, which renders after
+			// the header.
+			var text string
+			_ = poll(ctx, loadTimeout/2, func() (bool, error) {
+				if err := botpkg.EvalJSON(p, pinnedTextJS, &text, u.PinnedTweetIDsStr[0]); err != nil {
+					return false, nil
+				}
+				return text != "", nil
+			})
+			if text != "" {
+				pin["text"] = text
+			}
+		}
 	}
 	return data, nil
 }
+
+// pinnedTextJS returns the text of the timeline post with the given id.
+const pinnedTextJS = `(id) => {
+	const a = document.querySelector("[data-testid='primaryColumn'] article a[href*='/status/" + id + "']");
+	const t = a && a.closest('article') && a.closest('article').querySelector("[data-testid='tweetText']");
+	return t ? (t.innerText || t.textContent || '').trim() : '';
+}`
 
 // apply overlays the header's user object onto the page read: it has exact
 // counts, the website behind t.co, exact dates and the badge's kind.

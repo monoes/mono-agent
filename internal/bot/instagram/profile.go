@@ -113,7 +113,7 @@ const storeProfileScript = `(username) => {
 			if (r && r.__typename === 'XDTReelDict' && String(r.id || '').startsWith('highlight:') && r.user && r.user.__ref === rec.__id) reelTitle(r);
 		}
 	}
-	return { state: 'ok', user: JSON.parse(JSON.stringify(user)), highlights: titles };
+	return { state: 'ok', user: JSON.parse(JSON.stringify(user)), highlights: titles, tray: Array.isArray(edges) };
 }`
 
 // profileFromStore reads the profile from the page's data store, or
@@ -123,15 +123,19 @@ func (b *InstagramBot) profileFromStore(ctx context.Context, p browser.PageInter
 		State      string                 `json:"state"`
 		User       map[string]interface{} `json:"user"`
 		Highlights []string               `json:"highlights"`
+		Tray       bool                   `json:"tray"`
 	}
-	headerSeen := 0
+	headerSeen, trayWait := 0, 0
 	_ = poll(ctx, findTimeout, func() (bool, error) {
 		if err := evalJS(p, storeProfileScript, &out, username); err != nil {
 			return false, err
 		}
 		switch out.State {
 		case "ok":
-			return true, nil
+			// The highlights tray is a query of its own that can resolve
+			// after the profile's: give it a moment.
+			trayWait++
+			return out.Tray || len(out.Highlights) > 0 || trayWait >= 6, nil
 		case "header":
 			// The record arrives shortly after the header; don't wait for
 			// one the page will never hold.

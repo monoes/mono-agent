@@ -219,7 +219,7 @@ func TestBrowserProfile(t *testing.T) {
 			"profile_picture_url": "https://pbs.example.test/avatars/fiber_400x400.jpg",
 			"banner_url":          "https://pbs.example.test/banners/fiber/1500x500",
 			"affiliates_count":    int64(3), "is_protected": false,
-			"pinned_post": map[string]interface{}{"url": "https://x.com/Synth_Fiber/status/1900000000000000009"},
+			"pinned_post": map[string]interface{}{"url": "https://x.com/Synth_Fiber/status/1900000000000000009", "text": "Synthetic fiber pinned post"},
 			"links": []map[string]interface{}{
 				{"url": "https://synth-fiber.example/home", "title": "synth-fiber.example/home"},
 				{"url": "https://shop.example.test/", "title": "shop.example.test"},
