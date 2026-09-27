@@ -1,0 +1,27 @@
+-- Platform-specific profile details on people.
+--
+-- profile_details is a JSON object holding what a profile read returns that
+-- has no column of its own. Keys are generic, not per platform; a read sets
+-- only the ones its platform shows:
+--   links             [{url, title}] - bio links / link-in-bio list
+--   pronouns          ["she/her", ...]
+--   profile_category  the account's category ("Non-profit organisation",
+--                     "Science & Technology"). Not the category column:
+--                     that is the people review state.
+--   account_type      "personal" | "business" | "creator" | "organization"
+--   is_private        protected / private account
+--   contact           {email, phone, address} shown publicly
+--   highlights        ["title", ...] - story highlight titles
+--   threads_handle    Instagram's Threads badge
+--   likes_count, friend_count, affiliates_count
+--   language          the account's language code
+--   join_date         "YYYY-MM-DD" or "YYYY-MM"
+--   birth_date        as the profile shows it ("October 1, 1958")
+--   verification_type "blue" | "business" | "government" | "verified"
+--   banner_url        header / cover image
+--   pinned_post       {url, text}
+--   current_company, connection_count, connection_degree (LinkedIn)
+--   platform_id       the platform's own id for the account
+-- A later read merges into it (json_patch): keys it returns replace the
+-- stored ones, keys it doesn't return are kept.
+ALTER TABLE people ADD COLUMN profile_details TEXT;

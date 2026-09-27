@@ -503,7 +503,7 @@ func (mt *MonoagentTools) ToolDefs() []ToolDef {
 			"full_name":         strParam("Optional full name"),
 			"category":          strParam("Optional category"),
 			"job_title":         strParam("Optional job title"),
-			"introduction":      strParam("Optional bio/introduction"),
+			"introduction":      strParam("Optional drafted outreach message (not the profile bio)"),
 		}, []string{"platform_username", "platform"}),
 		def("delete_person", "Delete a person from the CRM", map[string]interface{}{
 			"person_id": strParam("Person ID"),
@@ -1498,18 +1498,19 @@ func (mt *MonoagentTools) getPerson(args string) (string, error) {
 		return "", err
 	}
 	var id, username, platform, fullName, imageURL, contact, website, followerCount, intro, category, jobTitle string
-	var headline, location, about, experience, education string
+	var headline, location, about, experience, education, details string
 	var followingCount, contentCount int
 	var isVerified bool
 	if err := mt.db.QueryRow(
 		`SELECT id, platform_username, platform, COALESCE(full_name,''), COALESCE(image_url,''),
 		        COALESCE(contact_details,''), COALESCE(website,''), COALESCE(content_count,0), COALESCE(follower_count,''),
 		        COALESCE(following_count,0), COALESCE(introduction,''), COALESCE(is_verified,0), COALESCE(category,''), COALESCE(job_title,''),
-		        COALESCE(headline,''), COALESCE(location,''), COALESCE(about,''), COALESCE(experience,''), COALESCE(education,'')
+		        COALESCE(headline,''), COALESCE(location,''), COALESCE(about,''), COALESCE(experience,''), COALESCE(education,''),
+		        COALESCE(profile_details,'')
 		 FROM people WHERE id = ?`, a.PersonID,
 	).Scan(&id, &username, &platform, &fullName, &imageURL, &contact, &website, &contentCount, &followerCount,
 		&followingCount, &intro, &isVerified, &category, &jobTitle,
-		&headline, &location, &about, &experience, &education); err != nil {
+		&headline, &location, &about, &experience, &education, &details); err != nil {
 		return "", fmt.Errorf("query person: %w", err)
 	}
 	p := map[string]interface{}{
@@ -1524,6 +1525,12 @@ func (mt *MonoagentTools) getPerson(args string) (string, error) {
 		if raw != "" && json.Unmarshal([]byte(raw), &entries) == nil {
 			p[k] = entries
 		}
+	}
+	// Platform extras from a profile read: links, pronouns, likes, join
+	// date, verification type, pinned post… (migration 054).
+	var extras map[string]interface{}
+	if details != "" && json.Unmarshal([]byte(details), &extras) == nil && len(extras) > 0 {
+		p["profile_details"] = extras
 	}
 	return marshalJSON(p)
 }

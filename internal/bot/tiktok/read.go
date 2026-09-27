@@ -350,7 +350,125 @@ func (b *TikTokBot) GetProfileData(ctx context.Context, page browser.PageInterfa
 	if bio, _ := data["bio"].(string); bioPlaceholder.MatchString(strings.TrimSpace(bio)) {
 		data["bio"] = ""
 	}
+	if w, _ := data["website"].(string); w != "" {
+		data["website"] = unwrapBioLink(w)
+		data["links"] = []map[string]interface{}{{"url": data["website"]}}
+	}
+	// The page's own data has what the header doesn't show as text (exact
+	// counts, video count, private flag, language) and is not subject to
+	// the layout.
+	var u universalProfile
+	if err := evalJS(page, "", jsUniversalProfile, &u); err == nil && u.User.UniqueID != "" &&
+		(username == "" || normUser(u.User.UniqueID) == normUser(username)) {
+		u.apply(data)
+	}
 	return data, nil
+}
+
+// jsUniversalProfile returns the profile's user and stats from the JSON
+// tiktok.com embeds in the page (__UNIVERSAL_DATA_FOR_REHYDRATION__), or
+// null. After in-app navigation that JSON can still describe the page the
+// tab first loaded; the caller checks it names this profile.
+const jsUniversalProfile = `
+const s = document.getElementById('__UNIVERSAL_DATA_FOR_REHYDRATION__');
+if (!s) return null;
+let d;
+try { d = JSON.parse(s.textContent); } catch (e) { return null; }
+const info = d && d.__DEFAULT_SCOPE__ && d.__DEFAULT_SCOPE__['webapp.user-detail'] && d.__DEFAULT_SCOPE__['webapp.user-detail'].userInfo;
+if (!info || !info.user) return null;
+return { user: info.user, stats: info.statsV2 || info.stats || {} };
+`
+
+// universalProfile is the part of the embedded profile JSON we read.
+type universalProfile struct {
+	User struct {
+		ID             string `json:"id"`
+		UniqueID       string `json:"uniqueId"`
+		Nickname       string `json:"nickname"`
+		Signature      string `json:"signature"`
+		AvatarLarger   string `json:"avatarLarger"`
+		AvatarMedium   string `json:"avatarMedium"`
+		Verified       bool   `json:"verified"`
+		PrivateAccount bool   `json:"privateAccount"`
+		Language       string `json:"language"`
+		IsOrganization int    `json:"isOrganization"`
+		BioLink        *struct {
+			Link string `json:"link"`
+		} `json:"bioLink"`
+		CommerceUserInfo *struct {
+			CommerceUser bool   `json:"commerceUser"`
+			Category     string `json:"category"`
+		} `json:"commerceUserInfo"`
+	} `json:"user"`
+	// statsV2 holds exact counts as strings, stats rounded numbers.
+	Stats map[string]interface{} `json:"stats"`
+}
+
+// apply overlays the embedded JSON onto the header read.
+func (u universalProfile) apply(data map[string]interface{}) {
+	set := func(k, v string) {
+		if v = strings.TrimSpace(v); v != "" {
+			data[k] = v
+		}
+	}
+	set("username", u.User.UniqueID)
+	set("handle", u.User.UniqueID)
+	set("full_name", u.User.Nickname)
+	if !bioPlaceholder.MatchString(strings.TrimSpace(u.User.Signature)) {
+		set("bio", u.User.Signature)
+	}
+	set("profile_picture_url", firstNonEmpty(u.User.AvatarLarger, u.User.AvatarMedium))
+	set("language", u.User.Language)
+	set("platform_id", u.User.ID)
+	data["is_verified"] = u.User.Verified || data["is_verified"] == true
+	data["is_private"] = u.User.PrivateAccount
+	if u.User.BioLink != nil && strings.TrimSpace(u.User.BioLink.Link) != "" {
+		link := withScheme(u.User.BioLink.Link)
+		data["website"] = link
+		data["links"] = []map[string]interface{}{{"url": link}}
+	}
+	if c := u.User.CommerceUserInfo; c != nil {
+		set("profile_category", c.Category)
+	}
+	switch {
+	case u.User.IsOrganization == 1:
+		data["account_type"] = "organization"
+	case u.User.CommerceUserInfo != nil && u.User.CommerceUserInfo.CommerceUser:
+		data["account_type"] = "business"
+	}
+	for key, stat := range map[string]string{
+		"follower_count": "followerCount", "following_count": "followingCount", "likes_count": "heartCount",
+		"content_count": "videoCount", "friend_count": "friendCount",
+	} {
+		switch v := u.Stats[stat].(type) {
+		case string:
+			set(key, v)
+		case float64:
+			data[key] = fmt.Sprintf("%.0f", v)
+		}
+	}
+}
+
+// withScheme makes a bio link ("linktr.ee/x") an absolute URL.
+func withScheme(link string) string {
+	link = strings.TrimSpace(link)
+	if link == "" || strings.Contains(link, "://") {
+		return link
+	}
+	return "https://" + link
+}
+
+// unwrapBioLink turns tiktok.com's /link/v2?target=<url> redirect into the
+// destination.
+func unwrapBioLink(link string) string {
+	u, err := url.Parse(link)
+	if err != nil || !strings.HasSuffix(u.Hostname(), "tiktok.com") || !strings.HasPrefix(u.Path, "/link") {
+		return link
+	}
+	if t := u.Query().Get("target"); t != "" {
+		return withScheme(t)
+	}
+	return link
 }
 
 // getProfileData navigates to target (profile URL or handle) when given and

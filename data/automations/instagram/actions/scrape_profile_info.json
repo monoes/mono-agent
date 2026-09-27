@@ -2,8 +2,8 @@
   "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "scrape_profile_info",
   "platform": "INSTAGRAM",
-  "version": "2.0.0",
-  "description": "Read public profile data (name, bio, counts, website, verified/private) for a list of profiles: Instagram's own profile endpoint from inside your session, else the rendered profile page. If Instagram asks to turn on notifications or save your login, it answers \"Not Now\", which Instagram may remember for your account.",
+  "version": "2.1.0",
+  "description": "Read public profile data for a list of profiles: name, bio, category, pronouns, account type, all bio links, Threads handle, posts/followers/following counts, verified and private flags, public business contact (email, phone, address), HD profile picture and story highlight titles. It reads what the profile page loads, else Instagram's profile endpoint from inside your session, else the rendered header. If Instagram asks to turn on notifications or save your login, it answers \"Not Now\", which Instagram may remember for your account.",
   "sideEffects": "read",
   "visibility": ["account_preference_prompt"],
   "metadata": {
@@ -39,7 +39,7 @@
       "username",
       "url",
       "full_name",
-      "introduction",
+      "bio",
       "is_verified",
       "is_private",
       "image_url",
@@ -47,7 +47,14 @@
       "follower_count",
       "following_count",
       "content_count",
-      "category"
+      "links",
+      "pronouns",
+      "account_type",
+      "threads_handle",
+      "contact",
+      "highlights",
+      "platform_id",
+      "profile_category"
     ],
     "failure": [
       "failedProfileSearches"

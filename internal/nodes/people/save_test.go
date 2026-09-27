@@ -44,6 +44,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 		about TEXT,
 		experience TEXT,
 		education TEXT,
+		profile_details TEXT,
 		profile_url TEXT,
 		profile_id TEXT NOT NULL DEFAULT 'default',
 		created_at DATETIME,
@@ -352,5 +353,40 @@ func TestPeopleSaveNode_ProfileFromContext(t *testing.T) {
 	var profileID string
 	if err := db.QueryRow(`SELECT profile_id FROM people WHERE platform_username = 'kit'`).Scan(&profileID); err != nil || profileID != "p2" {
 		t.Fatalf("profile_id = %q (%v), want p2", profileID, err)
+	}
+}
+
+// An Instagram profile read saves the bio as About and the extras in
+// profile_details. The introduction stays the drafted message and the
+// category the review state: the account's category is a detail.
+func TestPeopleSaveNode_SocialProfileBioAndDetails(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	SetGlobalPeopleDB(db)
+	if _, err := db.Exec(`INSERT INTO people (id, platform_username, platform, introduction, category, profile_id)
+		VALUES ('p', 'fake.ada', 'INSTAGRAM', 'Hi Ada', 'pending_approval', 'p1')`); err != nil {
+		t.Fatal(err)
+	}
+	item := map[string]interface{}{
+		"username": "fake.ada", "url": "https://www.instagram.com/fake.ada/", "full_name": "Ada Fixture",
+		"bio": "Synthetic bio", "profile_category": "Artist", "pronouns": []interface{}{"she/her"},
+		"follower_count": "1234", "following_count": "56", "content_count": "12", "is_verified": true,
+		"highlights": []interface{}{"Travel", "Food"}, "threads_handle": "fake.ada",
+	}
+	if _, err := (&PeopleSaveNode{}).Execute(context.Background(), workflow.NodeInput{Items: []workflow.Item{workflow.NewItem(item)}},
+		map[string]interface{}{"profile_id": "p1"}); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	var intro, category, about, details sql.NullString
+	var followers sql.NullInt64
+	if err := db.QueryRow(`SELECT introduction, category, about, profile_details, follower_count FROM people WHERE id = 'p'`).
+		Scan(&intro, &category, &about, &details, &followers); err != nil {
+		t.Fatal(err)
+	}
+	if intro.String != "Hi Ada" || category.String != "pending_approval" || about.String != "Synthetic bio" || followers.Int64 != 1234 {
+		t.Fatalf("introduction/category/about/followers = %v / %v / %v / %v", intro, category, about, followers)
+	}
+	if details.String != `{"highlights":["Travel","Food"],"profile_category":"Artist","pronouns":["she/her"],"threads_handle":"fake.ada"}` {
+		t.Fatalf("profile_details = %s", details.String)
 	}
 }

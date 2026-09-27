@@ -83,9 +83,9 @@ func (n *PeopleSaveNode) Execute(
 		`INSERT INTO people (id, platform_username, platform, full_name, image_url,
 		        contact_details, website, content_count, follower_count,
 		        following_count, introduction, is_verified, category, job_title,
-		        headline, location, about, experience, education,
+		        headline, location, about, experience, education, profile_details,
 		        profile_url, profile_id, created_at, updated_at)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		 ON CONFLICT(platform_username, platform, profile_id)
 		 DO UPDATE SET
 		   full_name       = COALESCE(excluded.full_name,       people.full_name),
@@ -104,6 +104,7 @@ func (n *PeopleSaveNode) Execute(
 		   about           = COALESCE(excluded.about,           people.about),
 		   experience      = COALESCE(excluded.experience,      people.experience),
 		   education       = COALESCE(excluded.education,       people.education),
+		   profile_details = `+personitem.DetailsMergeSQL+`,
 		   updated_at      = excluded.updated_at`,
 	)
 	if err != nil {
@@ -230,6 +231,7 @@ func (n *PeopleSaveNode) Execute(
 			nullableStr(prof.About),
 			nullableStr(prof.Experience),
 			nullableStr(prof.Education),
+			nullableStr(prof.Details),
 			nullableStr(profileURL),
 			profileID,
 			now,
@@ -304,6 +306,8 @@ func toNumericString(m map[string]interface{}, keys ...string) string {
 		case float64:
 			return fmt.Sprintf("%d", int64(v))
 		case int64:
+			return fmt.Sprintf("%d", v)
+		case int:
 			return fmt.Sprintf("%d", v)
 		}
 	}

@@ -1341,3 +1341,28 @@ func TestSearchProfileDocumentsToolRequiresQuery(t *testing.T) {
 		t.Fatal("expected error for missing query, got nil")
 	}
 }
+
+// get_person returns what a profile read stored: the bio as about, apart
+// from the drafted introduction, and the platform extras as an object.
+func TestMonoagentTools_GetPersonProfileDetails(t *testing.T) {
+	db := newMonoagentTestDB(t)
+	if _, err := db.DB.Exec(`INSERT INTO people (id, platform_username, platform, profile_id, about, introduction, profile_details)
+		VALUES ('p', 'fake_creator', 'TIKTOK', 'default', 'Synthetic bio', 'Hi there', '{"likes_count":5600,"links":[{"url":"https://example.test/"}]}')`); err != nil {
+		t.Fatal(err)
+	}
+	mt := NewMonoagentTools(db.DB, "")
+	mt.SetProfileID("default")
+	out, err := mt.Execute("get_person", `{"person_id":"p"}`)
+	if err != nil {
+		t.Fatalf("get_person: %v", err)
+	}
+	var p struct {
+		About          string                 `json:"about"`
+		Introduction   string                 `json:"introduction"`
+		ProfileDetails map[string]interface{} `json:"profile_details"`
+	}
+	mustJSON(t, out, &p)
+	if p.About != "Synthetic bio" || p.Introduction != "Hi there" || p.ProfileDetails["likes_count"] != float64(5600) || p.ProfileDetails["links"] == nil {
+		t.Fatalf("get_person = %s", out)
+	}
+}

@@ -11,7 +11,7 @@ import { isUnread, UnreadDot } from '../lib/unread.jsx'
 import { api, PLATFORM_COLORS, STATE_COLORS } from '../services/api.js'
 import MessageDetailModal from '../components/MessageDetailModal.jsx'
 import StatusHistoryModal from '../components/StatusHistoryModal.jsx'
-import { ExperienceSection, EducationSection } from '../components/ProfileDetails.jsx'
+import { ExperienceSection, EducationSection, ProfileDetailsSection } from '../components/ProfileDetails.jsx'
 
 // Map action types to icons + labels
 const ACTION_META = {
@@ -855,6 +855,7 @@ export default function Profile({ id, onBack, onOpenURL, onOpenPost }) {
         )}
 
         {/* ── Experience / education (profile reads) ── */}
+        <ProfileDetailsSection details={person.profile_details} onOpenURL={onOpenURL} />
         <ExperienceSection experience={person.experience} onOpenURL={onOpenURL} />
         <EducationSection education={person.education} onOpenURL={onOpenURL} />
 

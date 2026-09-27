@@ -47,7 +47,7 @@ func TestGetUserInfo2026HeaderCountsAndWebsite(t *testing.T) {
 	}
 	m := resultMap(t, res)
 	want := map[string]interface{}{
-		"username": "fake.me", "full_name": "Ada Fixture", "introduction": "Synthetic bio used only by tests",
+		"username": "fake.me", "full_name": "Ada Fixture", "bio": "Synthetic bio used only by tests",
 		"follower_count": "1240", "following_count": "50", "content_count": "13", "website": "example.test",
 	}
 	for k, v := range want {

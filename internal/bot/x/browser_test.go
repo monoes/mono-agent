@@ -138,12 +138,15 @@ func TestBrowserProfile(t *testing.T) {
 		want := map[string]interface{}{
 			"username": "synth_alice", "profile_url": "https://x.com/synth_alice", "full_name": "Synth Alice",
 			"bio": "Building imaginary things. Tea & tests.", "location": "Nowhere, Testland",
-			"website": "synth-alice.example", "website_href": "https://t.co/synthetic1", "join_date": "Joined March 2011",
+			"website": "synth-alice.example", "website_href": "https://t.co/synthetic1", "join_date": "2011-03",
 			"is_verified": true, "is_protected": false, "can_dm": true,
-			"followers_count": int64(12500), "following_count": int64(321),
+			"followers_count": int64(12500), "following_count": int64(321), "content_count": int64(1234),
 			"followers_text": "12.5K", "following_text": "321",
 			"profile_picture_url": "https://pbs.example.test/avatars/synthetic_400x400.jpg",
 			"banner_url":          "https://pbs.example.test/banners/synthetic_1500x500.jpg",
+			"profile_category":    "Synthetic Science", "birth_date": "April 2, 1990", "verification_type": "blue",
+			"pinned_post": map[string]interface{}{"url": "https://x.com/synth_alice/status/1900000000000000001", "text": "Synthetic pinned post"},
+			"links":       []map[string]interface{}{{"url": "https://t.co/synthetic1", "title": "synth-alice.example"}},
 		}
 		for k, v := range want {
 			if !reflect.DeepEqual(got[k], v) {
@@ -183,12 +186,44 @@ func TestBrowserProfile(t *testing.T) {
 		want := map[string]interface{}{
 			"username": "synth_dave", "profile_url": "https://x.com/synth_dave", "full_name": "Synth Dave",
 			"bio": "just testing", "location": "Somewhere, Synthland",
-			"website": "dave.example", "website_href": "https://t.co/synthdave", "join_date": "Joined February 2007",
+			"website": "dave.example", "website_href": "https://t.co/synthdave", "join_date": "2007-02",
 			"is_verified": true, "is_protected": false, "can_dm": false,
 			"followers_count": int64(60700000), "following_count": int64(7),
 			"followers_text": "60.7m", "following_text": "7",
 			"profile_picture_url": "https://pbs.example.test/avatars/dave_400x400.jpg",
 			"banner_url":          "https://pbs.example.test/banners/dave_1500x500",
+		}
+		for k, v := range want {
+			if !reflect.DeepEqual(got[k], v) {
+				t.Errorf("%s = %#v, want %#v", k, got[k], v)
+			}
+		}
+	})
+
+	// The header's components hold X's user object: exact counts, the
+	// website behind t.co, exact join date, birth date, badge kind,
+	// professional category, pinned post id.
+	t.Run("user object behind the header", func(t *testing.T) {
+		p := xPage(t, b)
+		got, err := bot.GetProfile(ctxT(t), p, "synth_fiber")
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := map[string]interface{}{
+			"username": "synth_fiber", "full_name": "Synth Fiber", "location": "Fiberland",
+			"bio":     "Building imaginary things. Tea & tests.", // the rendered text wins
+			"website": "https://synth-fiber.example/home", "website_href": "https://t.co/synthetic1",
+			"followers_count": int64(12345), "following_count": int64(67), "content_count": int64(8910),
+			"join_date": "2011-03-14", "birth_date": "April 2", "verification_type": "business", "is_verified": true,
+			"profile_category": "Synthetic Business", "account_type": "business", "platform_id": "4200000001",
+			"profile_picture_url": "https://pbs.example.test/avatars/fiber_400x400.jpg",
+			"banner_url":          "https://pbs.example.test/banners/fiber/1500x500",
+			"affiliates_count":    int64(3), "is_protected": false,
+			"pinned_post": map[string]interface{}{"url": "https://x.com/Synth_Fiber/status/1900000000000000009", "text": "Synthetic fiber pinned post"},
+			"links": []map[string]interface{}{
+				{"url": "https://synth-fiber.example/home", "title": "synth-fiber.example/home"},
+				{"url": "https://shop.example.test/", "title": "shop.example.test"},
+			},
 		}
 		for k, v := range want {
 			if !reflect.DeepEqual(got[k], v) {

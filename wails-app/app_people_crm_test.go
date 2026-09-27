@@ -17,7 +17,7 @@ func TestPeopleBindingsShellOut(t *testing.T) {
 case "$*" in
   *" people list "*) echo '[{"id":"p1","platform_username":"sam","platform":"LINKEDIN","full_name":"Sam","image_url":"i","profile_url":"u","follower_count":"5","following_count":2,"is_verified":true,"created_at":"2026-09-01 10:00:00"}]' ;;
   *" people count"*) echo '{"count":42}' ;;
-  *" people get "*) echo '{"id":"p1","platform_username":"sam","platform":"LINKEDIN","content_count":3,"profile_url":"u","introduction":"hi","created_at":"2026-09-01T10:00:00Z","updated_at":"2026-09-02T10:00:00Z","links":[]}' ;;
+  *" people get "*) echo '{"id":"p1","platform_username":"sam","platform":"LINKEDIN","content_count":3,"profile_url":"u","introduction":"hi","created_at":"2026-09-01T10:00:00Z","updated_at":"2026-09-02T10:00:00Z","links":[],"profile_details":{"likes_count":5600,"links":[{"url":"https://example.test/"}]}}' ;;
   *" people interactions "*) echo '[{"execution_id":"e1","node_name":"Like","status":"COMPLETED"}]' ;;
   *" posts list "*) echo '[{"id":"po1","url":"x","like_count":5,"we_liked":true}]' ;;
   *" posts get "*) echo '{"id":"po1","shortcode":"abc","caption":"c"}' ;;
@@ -47,7 +47,8 @@ esac
 	if n := a.GetPeopleCount("", ""); n != 42 {
 		t.Fatalf("GetPeopleCount (no filter) = %d", n)
 	}
-	if p := a.GetPersonDetail("p1"); p == nil || p.Username != "sam" || p.ContentCount != 3 || p.ProfileURL != "u" || p.UpdatedAt == "" {
+	if p := a.GetPersonDetail("p1"); p == nil || p.Username != "sam" || p.ContentCount != 3 || p.ProfileURL != "u" || p.UpdatedAt == "" ||
+		p.ProfileDetails["likes_count"] != float64(5600) || p.ProfileDetails["links"] == nil {
 		t.Fatalf("GetPersonDetail = %+v", p)
 	}
 	if i := a.GetPersonInteractions("p1"); len(i) != 1 || i[0].NodeName != "Like" {

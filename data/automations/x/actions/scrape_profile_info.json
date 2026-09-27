@@ -2,8 +2,8 @@
   "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "scrape_profile_info",
   "platform": "X",
-  "version": "2.0.0",
-  "description": "Extract profile information (name, bio, location, website, join date, follower/following counts, avatar) from X (Twitter) profiles",
+  "version": "2.1.0",
+  "description": "Extract profile information from X (Twitter) profiles: name, handle, bio, location, website (behind t.co) and bio links, join date, birth date, professional category, exact follower/following/post counts, verification type (blue, business, government), protected flag, avatar, banner and pinned post",
   "sideEffects": "read",
   "metadata": {
     "requiresAuth": true,
@@ -36,7 +36,16 @@
       "followers_text",
       "following_text",
       "followers_count",
-      "following_count"
+      "following_count",
+      "content_count",
+      "links",
+      "birth_date",
+      "profile_category",
+      "account_type",
+      "verification_type",
+      "pinned_post",
+      "affiliates_count",
+      "platform_id"
     ],
     "failure": [
       "failedProfileSearches"

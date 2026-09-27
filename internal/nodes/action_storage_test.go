@@ -2,6 +2,7 @@ package nodes
 
 import (
 	"database/sql"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 
@@ -130,5 +131,48 @@ func TestSaveExtractedDataStoresProfileDetails(t *testing.T) {
 		about != "Builds things." || imageURL != "https://media.example/ada.jpg" ||
 		experience != `[{"company":"Example Works","title":"Engineer"}]` || education != `[{"school":"Example University"}]` {
 		t.Fatalf("person = %q %q %q %q %q %q %s %s", fullName, headline, jobTitle, location, about, imageURL, experience, education)
+	}
+}
+
+// An Instagram/TikTok/X profile read stores the bio as the person's About,
+// never as the introduction (the outreach draft the review flow sends),
+// and its platform extras in profile_details; a later read merges into
+// them and leaves a drafted introduction alone.
+func TestSaveExtractedDataBioIsAboutAndExtrasAreDetails(t *testing.T) {
+	db := newTargetsDB(t)
+	if _, err := db.Exec(`INSERT INTO people (id, platform_username, platform, introduction, category, profile_id)
+		VALUES ('p', 'fake_creator', 'TIKTOK', 'Hi, loved your videos', 'pending_approval', 'p1')`); err != nil {
+		t.Fatal(err)
+	}
+	s := &workflowActionStorage{db: db, profileID: "p1", executionID: "cli", nodeID: "cli-node", platform: "tiktok"}
+	read := func(item map[string]interface{}) {
+		t.Helper()
+		if err := s.SaveExtractedData("a", []map[string]interface{}{item}); err != nil {
+			t.Fatalf("SaveExtractedData: %v", err)
+		}
+	}
+	read(map[string]interface{}{
+		"profile_url": "https://www.tiktok.com/@fake_creator", "username": "fake_creator", "full_name": "Fake Creator",
+		"bio": "Synthetic bio", "introduction": "must not be stored", "profile_category": "Artist",
+		"likes_count": "5.6K", "language": "en", "is_private": false,
+		"links": []interface{}{map[string]interface{}{"url": "https://example.test/fake-link"}},
+	})
+	read(map[string]interface{}{
+		"profile_url": "https://www.tiktok.com/@fake_creator", "username": "fake_creator", "bio": "Synthetic bio",
+		"likes_count": "5700",
+	})
+	var intro, category, about, details string
+	if err := db.QueryRow(`SELECT introduction, category, about, profile_details FROM people WHERE id = 'p'`).Scan(&intro, &category, &about, &details); err != nil {
+		t.Fatal(err)
+	}
+	if intro != "Hi, loved your videos" || category != "pending_approval" || about != "Synthetic bio" {
+		t.Fatalf("introduction/category/about = %q / %q / %q", intro, category, about)
+	}
+	var d map[string]interface{}
+	if err := json.Unmarshal([]byte(details), &d); err != nil {
+		t.Fatalf("details %q: %v", details, err)
+	}
+	if d["likes_count"] != float64(5700) || d["profile_category"] != "Artist" || d["language"] != "en" || d["is_private"] != false || d["links"] == nil {
+		t.Fatalf("details = %s", details)
 	}
 }

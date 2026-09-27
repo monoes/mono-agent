@@ -887,6 +887,7 @@ export namespace main {
 	    about: string;
 	    experience: any[];
 	    education: any[];
+	    profile_details: Record<string, any>;
 	
 	    static createFrom(source: any = {}) {
 	        return new PersonDetailInfo(source);
@@ -916,6 +917,7 @@ export namespace main {
 	        this.about = source["about"];
 	        this.experience = source["experience"];
 	        this.education = source["education"];
+	        this.profile_details = source["profile_details"];
 	    }
 	}
 	export class PersonInfo {

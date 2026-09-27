@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/monoes/mono-agent/internal/bot"
+	"github.com/monoes/mono-agent/internal/util"
 )
 
 // Ref is the person an item resolves to.
@@ -123,6 +124,12 @@ func genericUsername(rawURL string) string {
 
 // Profile holds the people columns an item describing a person fills.
 // Empty fields leave the stored value alone.
+//
+// A profile's own bio is About. It never fills introduction: that column is
+// the drafted outreach message `people review` edits and sends, so a
+// profile read must not overwrite it. Likewise the platform's account
+// category goes to Details (profile_category), not the category column,
+// which holds the review state.
 type Profile struct {
 	FullName   string
 	ImageURL   string
@@ -133,6 +140,7 @@ type Profile struct {
 	About      string
 	Experience string // JSON array
 	Education  string // JSON array
+	Details    string // JSON object for people.profile_details
 }
 
 // ProfileOf maps an item's fields, as the platforms name them, onto people
@@ -144,7 +152,7 @@ func ProfileOf(item map[string]interface{}) Profile {
 		Website:  firstString(item, "website"),
 		Headline: firstString(item, "headline"),
 		Location: firstString(item, "location"),
-		About:    firstString(item, "about", "bio"),
+		About:    firstString(item, "about", "bio", "biography"),
 	}
 	p.JobTitle = firstString(item, "job_title", "position")
 	if p.JobTitle == "" {
@@ -152,8 +160,147 @@ func ProfileOf(item map[string]interface{}) Profile {
 	}
 	p.Experience = JSONList(item["experience"])
 	p.Education = JSONList(item["education"])
+	if d := DetailsOf(item); len(d) > 0 {
+		if b, err := json.Marshal(d); err == nil {
+			p.Details = string(b)
+		}
+	}
 	return p
 }
+
+// detailFields maps the item fields a profile read returns that have no
+// column of their own to their key in people.profile_details (see
+// data/migrations/054_people_profile_extras.sql). The keys are generic;
+// where platforms name the same thing differently, the first field set
+// wins.
+var detailFields = []struct{ field, key string }{
+	{"links", "links"},
+	{"pronouns", "pronouns"},
+	{"profile_category", "profile_category"},
+	{"account_type", "account_type"},
+	{"is_private", "is_private"},
+	{"is_protected", "is_private"},
+	{"contact", "contact"},
+	{"highlights", "highlights"},
+	{"threads_handle", "threads_handle"},
+	{"likes_count", "likes_count"},
+	{"friend_count", "friend_count"},
+	{"affiliates_count", "affiliates_count"},
+	{"language", "language"},
+	{"join_date", "join_date"},
+	{"birth_date", "birth_date"},
+	{"verification_type", "verification_type"},
+	{"banner_url", "banner_url"},
+	{"cover_image_url", "banner_url"},
+	{"pinned_post", "pinned_post"},
+	{"current_company", "current_company"},
+	{"connection_count", "connection_count"},
+	{"connection_degree", "connection_degree"},
+	{"platform_id", "platform_id"},
+}
+
+// DetailsOf collects an item's platform-specific profile fields into the
+// people.profile_details object. Empty values are left out; counts become
+// numbers ("5.6K" → 5600).
+func DetailsOf(item map[string]interface{}) map[string]interface{} {
+	out := map[string]interface{}{}
+	for _, f := range detailFields {
+		if _, done := out[f.key]; done {
+			continue
+		}
+		v := detailValue(item[f.field])
+		if v == nil {
+			continue
+		}
+		if strings.HasSuffix(f.key, "_count") {
+			if s, ok := v.(string); ok {
+				n, err := util.ConvertAbbreviatedNumber(strings.Fields(s)[0])
+				if err != nil {
+					continue
+				}
+				v = n
+			}
+		}
+		out[f.key] = v
+	}
+	return out
+}
+
+// detailValue returns v without its empty parts, or nil when nothing is
+// left: blank strings, empty lists and objects are empty; false is a value.
+func detailValue(v interface{}) interface{} {
+	switch t := v.(type) {
+	case nil:
+		return nil
+	case string:
+		if s := strings.TrimSpace(t); s != "" {
+			return s
+		}
+		return nil
+	case []interface{}:
+		var out []interface{}
+		for _, e := range t {
+			if e = detailValue(e); e != nil {
+				out = append(out, e)
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	case []string:
+		var out []interface{}
+		for _, e := range t {
+			if e = strings.TrimSpace(e); e != "" {
+				out = append(out, e)
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	case map[string]interface{}:
+		out := map[string]interface{}{}
+		for k, e := range t {
+			if e = detailValue(e); e != nil {
+				out[k] = e
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	case map[string]string:
+		out := map[string]interface{}{}
+		for k, e := range t {
+			if e = strings.TrimSpace(e); e != "" {
+				out[k] = e
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	case []map[string]interface{}:
+		l := make([]interface{}, len(t))
+		for i, e := range t {
+			l[i] = e
+		}
+		return detailValue(l)
+	case []map[string]string:
+		l := make([]interface{}, len(t))
+		for i, e := range t {
+			l[i] = e
+		}
+		return detailValue(l)
+	}
+	return v
+}
+
+// DetailsMergeSQL is the upsert expression for people.profile_details: a
+// new read's keys replace the stored ones, keys it didn't return are kept.
+// A stored value that isn't valid JSON is replaced.
+const DetailsMergeSQL = `COALESCE(json_patch(CASE WHEN json_valid(people.profile_details) THEN people.profile_details END, excluded.profile_details), excluded.profile_details, people.profile_details)`
 
 // JSONList renders a list value as JSON text, or "" when it is absent or
 // empty. A string is taken to already be JSON and kept when it is an array.

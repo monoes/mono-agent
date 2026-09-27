@@ -6,7 +6,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
+	"time"
 
 	botpkg "github.com/monoes/mono-agent/internal/bot"
 	"github.com/monoes/mono-agent/internal/browser"
@@ -120,6 +122,46 @@ const scrapeProfileJS = `() => {
 	const banner = q("a[href$='/header_photo'] img");
 	out.banner_url = banner ? (banner.getAttribute('src') || '') : '';
 	out.can_dm = !!q("[data-testid='sendDMFromProfile']");
+	out.professional_category = txt(q("[data-testid='UserProfessionalCategory']"));
+	out.birth_date = txt(q("[data-testid='UserBirthdate']"));
+	// Posts count: the column's top bar, under the name ("74.3K posts").
+	for (const h of col.querySelectorAll('h2')) {
+		const m = txt(h.parentElement).match(/([\d.,]+\s*[KMB]?)\s+(posts?|tweets?)\b/i);
+		if (m) { out.posts_text = m[1]; break; }
+	}
+	// Badge kind: gold (a gradient) is a business, grey a government or
+	// multilateral organisation, anything else a paid (blue) check.
+	const badge = nameBox && nameBox.querySelector("[data-testid='icon-verified']");
+	if (badge) {
+		const html = badge.outerHTML;
+		out.verification_type = /lineargradient|url\(#/i.test(html) ? 'business' : /#829aab/i.test(html) ? 'government' : 'blue';
+	}
+	// Pinned post: the timeline post marked Pinned.
+	for (const art of col.querySelectorAll("article[data-testid='tweet']")) {
+		const sc = art.querySelector("[data-testid='socialContext']");
+		if (!sc || !/pinned|angeheftet|épinglé|fijado|fissato/i.test(txt(sc))) continue;
+		const links = [...art.querySelectorAll("a[href*='/status/']")];
+		const a = links.find((x) => x.querySelector('time')) || links[0];
+		out.pinned_url = a ? new URL(a.getAttribute('href'), location.href).href.split('?')[0] : '';
+		// textContent: innerText puts each @mention on a line of its own.
+		const tt = art.querySelector("[data-testid='tweetText']");
+		out.pinned_text = tt ? (tt.textContent || '').trim() : '';
+		break;
+	}
+	// The profile's own data, as the header's components hold it: exact
+	// counts, the expanded website, dates, badge type, category.
+	const fk = nameBox && Object.keys(nameBox).find((k) => k.startsWith('__reactFiber$'));
+	for (let f = fk ? nameBox[fk] : null, i = 0; f && i < 40; f = f.return, i++) {
+		const u = f.memoizedProps && f.memoizedProps.user;
+		if (!u || typeof u !== 'object' || !u.screen_name) continue;
+		const pick = {};
+		for (const k of ['id_str', 'name', 'screen_name', 'description', 'location', 'entities', 'followers_count',
+			'friends_count', 'statuses_count', 'verified', 'verified_type', 'is_blue_verified', 'protected',
+			'profile_image_url_https', 'profile_banner_url', 'created_at', 'birthdate', 'professional',
+			'pinned_tweet_ids_str', 'business_account']) if (u[k] !== undefined) pick[k] = u[k];
+		try { out.user = JSON.parse(JSON.stringify(pick)); } catch (e) {}
+		break;
+	}
 	return out;
 }`
 
@@ -139,6 +181,61 @@ type rawProfile struct {
 	ProfilePictureURL string `json:"profile_picture_url"`
 	BannerURL         string `json:"banner_url"`
 	CanDM             bool   `json:"can_dm"`
+	ProfCategory      string `json:"professional_category"`
+	BirthDate         string `json:"birth_date"`
+	PostsText         string `json:"posts_text"`
+	VerificationType  string `json:"verification_type"`
+	PinnedURL         string `json:"pinned_url"`
+	PinnedText        string `json:"pinned_text"`
+	User              *xUser `json:"user"`
+}
+
+// xUser is the part of the user object X's profile header renders from.
+type xUser struct {
+	IDStr       string `json:"id_str"`
+	Name        string `json:"name"`
+	ScreenName  string `json:"screen_name"`
+	Description string `json:"description"`
+	Location    string `json:"location"`
+	Entities    struct {
+		URL struct {
+			URLs []xURL `json:"urls"`
+		} `json:"url"`
+		Description struct {
+			URLs []xURL `json:"urls"`
+		} `json:"description"`
+	} `json:"entities"`
+	FollowersCount    *int64   `json:"followers_count"`
+	FriendsCount      *int64   `json:"friends_count"`
+	StatusesCount     *int64   `json:"statuses_count"`
+	Verified          bool     `json:"verified"`
+	VerifiedType      string   `json:"verified_type"`
+	IsBlueVerified    bool     `json:"is_blue_verified"`
+	Protected         bool     `json:"protected"`
+	ProfileImageURL   string   `json:"profile_image_url_https"`
+	ProfileBannerURL  string   `json:"profile_banner_url"`
+	CreatedAt         string   `json:"created_at"`
+	PinnedTweetIDsStr []string `json:"pinned_tweet_ids_str"`
+	Birthdate         *struct {
+		Day   int `json:"day"`
+		Month int `json:"month"`
+		Year  int `json:"year"`
+	} `json:"birthdate"`
+	Professional *struct {
+		ProfessionalType string `json:"professional_type"`
+		Category         []struct {
+			Name string `json:"name"`
+		} `json:"category"`
+	} `json:"professional"`
+	BusinessAccount *struct {
+		AffiliatesCount *int64 `json:"affiliates_count"`
+	} `json:"business_account"`
+}
+
+type xURL struct {
+	URL         string `json:"url"`
+	ExpandedURL string `json:"expanded_url"`
+	DisplayURL  string `json:"display_url"`
 }
 
 // GetProfile opens a profile (URL or handle) and returns its header data.
@@ -211,5 +308,162 @@ func (b *XBot) scrapeProfile(ctx context.Context, p browser.PageInterface, pageU
 	if n, ok := parseCount(r.FollowingText); ok {
 		data["following_count"] = n
 	}
+	if n, ok := parseCount(r.PostsText); ok {
+		data["content_count"] = n
+	}
+	data["join_date"] = joinDate(r.JoinDate)
+	data["birth_date"] = strings.TrimSpace(strings.TrimPrefix(r.BirthDate, "Born "))
+	data["profile_category"] = r.ProfCategory
+	if r.IsVerified {
+		data["verification_type"] = r.VerificationType
+	}
+	if r.PinnedURL != "" {
+		data["pinned_post"] = map[string]interface{}{"url": r.PinnedURL, "text": r.PinnedText}
+	}
+	if r.WebsiteHref != "" || r.Website != "" {
+		data["links"] = []map[string]interface{}{{"url": firstNonEmptyStr(r.WebsiteHref, r.Website), "title": r.Website}}
+	}
+	if u := r.User; u != nil && strings.EqualFold(u.ScreenName, username) {
+		u.apply(data)
+		if pin, _ := data["pinned_post"].(map[string]interface{}); pin != nil && pin["text"] == nil && len(u.PinnedTweetIDsStr) > 0 {
+			// The pinned post's text is in the timeline, which renders after
+			// the header.
+			var text string
+			_ = poll(ctx, loadTimeout/2, func() (bool, error) {
+				if err := botpkg.EvalJSON(p, pinnedTextJS, &text, u.PinnedTweetIDsStr[0]); err != nil {
+					return false, nil
+				}
+				return text != "", nil
+			})
+			if text != "" {
+				pin["text"] = text
+			}
+		}
+	}
 	return data, nil
+}
+
+// pinnedTextJS returns the text of the timeline post with the given id.
+const pinnedTextJS = `(id) => {
+	const a = document.querySelector("[data-testid='primaryColumn'] article a[href*='/status/" + id + "']");
+	const t = a && a.closest('article') && a.closest('article').querySelector("[data-testid='tweetText']");
+	return t ? (t.textContent || '').trim() : ''; // innerText splits out each @mention
+}`
+
+// apply overlays the header's user object onto the page read: it has exact
+// counts, the website behind t.co, exact dates and the badge's kind.
+func (u *xUser) apply(data map[string]interface{}) {
+	set := func(k, v string) {
+		if v = strings.TrimSpace(v); v != "" {
+			data[k] = v
+		}
+	}
+	set("full_name", u.Name)
+	set("location", u.Location)
+	set("platform_id", u.IDStr)
+	if data["bio"] == "" {
+		bio := u.Description
+		for _, l := range u.Entities.Description.URLs {
+			if l.URL != "" && l.ExpandedURL != "" {
+				bio = strings.ReplaceAll(bio, l.URL, l.ExpandedURL)
+			}
+		}
+		set("bio", bio)
+	}
+	var links []map[string]interface{}
+	for _, l := range append(append([]xURL{}, u.Entities.URL.URLs...), u.Entities.Description.URLs...) {
+		if l.ExpandedURL != "" {
+			links = append(links, map[string]interface{}{"url": l.ExpandedURL, "title": l.DisplayURL})
+		}
+	}
+	if len(links) > 0 {
+		data["links"] = links
+	}
+	if len(u.Entities.URL.URLs) > 0 {
+		set("website", u.Entities.URL.URLs[0].ExpandedURL)
+	}
+	if u.FollowersCount != nil {
+		data["followers_count"] = *u.FollowersCount
+	}
+	if u.FriendsCount != nil {
+		data["following_count"] = *u.FriendsCount
+	}
+	if u.StatusesCount != nil {
+		data["content_count"] = *u.StatusesCount
+	}
+	if t, err := time.Parse(time.RFC3339, u.CreatedAt); err == nil {
+		data["join_date"] = t.UTC().Format("2006-01-02")
+	} else if t, err := time.Parse(time.RubyDate, u.CreatedAt); err == nil {
+		data["join_date"] = t.UTC().Format("2006-01-02")
+	}
+	if b := u.Birthdate; b != nil && b.Month >= 1 && b.Month <= 12 && b.Day > 0 {
+		d := fmt.Sprintf("%s %d", time.Month(b.Month), b.Day)
+		if b.Year > 0 {
+			d += fmt.Sprintf(", %d", b.Year)
+		}
+		data["birth_date"] = d
+	}
+	if p := u.Professional; p != nil {
+		if len(p.Category) > 0 {
+			set("profile_category", p.Category[0].Name)
+		}
+		set("account_type", strings.ToLower(p.ProfessionalType))
+	}
+	switch {
+	case u.VerifiedType != "":
+		data["verification_type"] = strings.ToLower(u.VerifiedType)
+	case u.IsBlueVerified:
+		data["verification_type"] = "blue"
+	case u.Verified:
+		data["verification_type"] = "verified"
+	}
+	if data["verification_type"] != nil && data["verification_type"] != "" {
+		data["is_verified"] = true
+	}
+	data["is_protected"] = u.Protected || data["is_protected"] == true
+	if img := u.ProfileImageURL; img != "" {
+		data["profile_picture_url"] = largeAvatar(img)
+	}
+	if u.ProfileBannerURL != "" {
+		data["banner_url"] = u.ProfileBannerURL + "/1500x500"
+	}
+	if _, ok := data["pinned_post"]; !ok && len(u.PinnedTweetIDsStr) > 0 {
+		data["pinned_post"] = map[string]interface{}{"url": "https://x.com/" + u.ScreenName + "/status/" + u.PinnedTweetIDsStr[0]}
+	}
+	if b := u.BusinessAccount; b != nil && b.AffiliatesCount != nil && *b.AffiliatesCount > 0 {
+		data["affiliates_count"] = *b.AffiliatesCount
+	}
+}
+
+// avatarSizeRe matches the size suffix of an X avatar URL (_normal.jpg,
+// _bigger.png, _200x200.jpg).
+var avatarSizeRe = regexp.MustCompile(`_(normal|bigger|mini|\d+x\d+)(\.[a-z]+)$`)
+
+// largeAvatar returns the 400x400 version of an X avatar URL.
+func largeAvatar(u string) string {
+	return avatarSizeRe.ReplaceAllString(u, "_400x400$2")
+}
+
+// joinDateRe reads the header's "Joined March 2011".
+var joinDateRe = regexp.MustCompile(`(?i)([A-Z][a-z]+)\s+(\d{4})`)
+
+// joinDate turns "Joined March 2011" into "2011-03"; text it can't read is
+// returned as is.
+func joinDate(s string) string {
+	s = strings.TrimSpace(s)
+	if m := joinDateRe.FindStringSubmatch(s); m != nil {
+		if t, err := time.Parse("January 2006", m[1]+" "+m[2]); err == nil {
+			return t.Format("2006-01")
+		}
+	}
+	return s
+}
+
+func firstNonEmptyStr(ss ...string) string {
+	for _, s := range ss {
+		if strings.TrimSpace(s) != "" {
+			return s
+		}
+	}
+	return ""
 }

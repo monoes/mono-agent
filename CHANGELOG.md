@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.84.0] - 2026-09-27
+
+### Added
+
+- **Full Instagram, TikTok and X profiles.** The profile reads now return
+  everything a public profile shows:
+  - `instagram.scrape_profile_info` reads what the profile page itself
+    loaded (before Instagram's profile endpoint, which rate-limits, and the
+    rendered header): name, bio, category, pronouns, account type
+    (personal/business/creator), every link-in-bio entry, the Threads
+    handle, counts, verified and private flags, the public business email,
+    phone and address, the HD profile picture and the story highlight
+    titles.
+  - `tiktok.scrape_profile_info` reads the profile data tiktok.com embeds
+    in the page: exact follower/following/like counts, video and friend
+    counts, private flag, language, business category, account type, the
+    bio link and the large avatar.
+  - `x.scrape_profile_info` adds the professional category, birth date,
+    post count, verification type (blue, business, government), pinned
+    post, bio links and affiliates count; the website comes back expanded
+    instead of the t.co link, with the exact join date, 400x400 avatar and
+    banner.
+- **Profile details on people.** People gain `profile_details`, a JSON
+  object of the platform extras (links, pronouns, likes, join date,
+  verification type, pinned post, contact, highlights…; LinkedIn's cover
+  image, current company and connection count too). Each read merges into
+  it. `people get` (and `--json`), the assistant's and MCP's `get_person`,
+  and a new Profile details section on the app's person page show them.
+
+### Changed
+
+- The Instagram profile read returns the bio as `bio` (was
+  `introduction`) and the account category as `profile_category` (was
+  `category`). X's `join_date` is a date (`2011-03`, or `2011-03-14` when
+  exact) instead of "Joined March 2011". The `people get` table labels the
+  outreach draft "Introduction" (it said "Bio").
+
+### Fixed
+
+- **A profile read no longer overwrites the outreach draft.** Instagram
+  reads saved the bio into `introduction`, the message `people review`
+  edits and sends; every platform's bio now goes to `about`. The account
+  category no longer lands in `category`, which holds the review state.
+  Introductions already filled from a bio stay as they are: they can't be
+  told apart from drafts.
+
 ## [0.83.3] - 2026-09-27
 
 ### Fixed

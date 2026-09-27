@@ -1,6 +1,9 @@
 package personitem
 
 import (
+	"encoding/json"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/monoes/mono-agent/internal/bot"
@@ -109,5 +112,66 @@ func TestProfileOf(t *testing.T) {
 	}
 	if got := JSONList("not json"); got != "" {
 		t.Fatalf("JSONList(garbage) = %q", got)
+	}
+}
+
+// A profile read's bio is the person's About, on every platform: it never
+// becomes the introduction (the drafted outreach message), and the
+// platform's account category never becomes the review category.
+func TestProfileOfBioIsAboutNotIntroduction(t *testing.T) {
+	for _, item := range []map[string]interface{}{
+		{"platform": "INSTAGRAM", "bio": "Synthetic IG bio", "profile_category": "Artist"},
+		{"platform": "TIKTOK", "bio": "Synthetic IG bio"},
+		{"platform": "X", "bio": "Synthetic IG bio"},
+		{"platform": "LINKEDIN", "about": "Synthetic IG bio"},
+		{"biography": "Synthetic IG bio"},
+	} {
+		p := ProfileOf(item)
+		if p.About != "Synthetic IG bio" {
+			t.Errorf("%v: about = %q", item, p.About)
+		}
+		if strings.Contains(p.Details, "Synthetic IG bio") {
+			t.Errorf("%v: bio leaked into details %s", item, p.Details)
+		}
+	}
+}
+
+func TestProfileOfDetails(t *testing.T) {
+	p := ProfileOf(map[string]interface{}{
+		"full_name":        "Ada Fixture",
+		"bio":              "Synthetic bio",
+		"links":            []interface{}{map[string]interface{}{"url": "https://example.test/a", "title": "Shop"}, map[string]interface{}{"url": ""}},
+		"pronouns":         []string{"she/her"},
+		"profile_category": "Artist",
+		"is_private":       false,
+		"is_protected":     true, // is_private came first
+		"contact":          map[string]interface{}{"email": "ada@example.test", "phone": ""},
+		"highlights":       []interface{}{},
+		"likes_count":      "5.6K",
+		"friend_count":     float64(17),
+		"cover_image_url":  "https://media.example/cover.jpg",
+		"threads_handle":   "  ",
+		"pinned_post":      map[string]interface{}{"url": "https://x.com/fake/status/1", "text": "Hello"},
+	})
+	var d map[string]interface{}
+	if err := json.Unmarshal([]byte(p.Details), &d); err != nil {
+		t.Fatalf("details %q: %v", p.Details, err)
+	}
+	want := map[string]interface{}{
+		"links":            []interface{}{map[string]interface{}{"url": "https://example.test/a", "title": "Shop"}},
+		"pronouns":         []interface{}{"she/her"},
+		"profile_category": "Artist",
+		"is_private":       false,
+		"contact":          map[string]interface{}{"email": "ada@example.test"},
+		"likes_count":      float64(5600),
+		"friend_count":     float64(17),
+		"banner_url":       "https://media.example/cover.jpg",
+		"pinned_post":      map[string]interface{}{"url": "https://x.com/fake/status/1", "text": "Hello"},
+	}
+	if !reflect.DeepEqual(d, want) {
+		t.Fatalf("details = %v\nwant      %v", d, want)
+	}
+	if got := ProfileOf(map[string]interface{}{"full_name": "Nobody"}).Details; got != "" {
+		t.Fatalf("no details = %q, want none", got)
 	}
 }
