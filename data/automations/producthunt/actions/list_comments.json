@@ -2,8 +2,8 @@
   "$schema": "../../../schemas/action.v1.schema.json",
   "actionType": "list_comments",
   "platform": "PRODUCTHUNT",
-  "version": "1.2.0",
-  "description": "List the comments loaded on a Product Hunt launch page, in page order: top-level comments (depth 0) and replies (depth 1+, with parentId)",
+  "version": "1.3.0",
+  "description": "List the comments on a Product Hunt launch page, in page order: top-level comments (depth 0) and replies (depth 1+, with parentId). First expands the comment section by clicking only its \"Show more comments\" / \"View N more replies\" controls (at most 50 clicks, about 30 s) until everything or maxComments is loaded",
   "sideEffects": "read",
   "metadata": {
     "requiresAuth": false,
@@ -22,8 +22,8 @@
       {
         "name": "maxComments",
         "type": "number",
-        "description": "Stop after this many comments (0 = all loaded comments)",
-        "default": 0,
+        "description": "Stop expanding and return at most this many comments (0 = no limit; expansion is still capped at 50 clicks / ~30 s)",
+        "default": 200,
         "min": 0
       }
     ]
@@ -49,10 +49,10 @@
       "methodName": "list_comments",
       "args": [
         "{{launchURL}}",
-        "{{maxComments or 0}}"
+        "{{maxComments or 200}}"
       ],
       "variable_name": "commentsResult",
-      "timeout": 45,
+      "timeout": 90,
       "onError": {
         "action": "mark_failed"
       }
